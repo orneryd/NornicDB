@@ -39,6 +39,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if stripped, ok := stripUnionBranchFinishes(cypher); ok {
 		cypher = strings.TrimSpace(stripped)
 		finishTerminated = true
+		ctx = withFinishedStatement(ctx, cypher)
 	}
 	if cypher == "" {
 		if finishTerminated {

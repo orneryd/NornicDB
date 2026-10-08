@@ -481,10 +481,9 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "EXPLAIN cannot be combined with PROFILE")
 	}
 	if _, ok := trailingBareFinish(cypher); ok {
-		// FINISH only terminates reading/writing clauses; after RETURN, WITH
-		// or YIELD it is invalid. Valid trailing FINISH positions were
-		// stripped before validation.
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "FINISH cannot follow RETURN, WITH or YIELD")
+		// FINISH can't follow RETURN, as in Neo4j; every valid trailing
+		// FINISH was stripped before validation.
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "RETURN can only be used at the end of the query")
 	}
 	if !hasValidStartKeyword(cypher) {
 		// Neo4j reports an unrecognized statement as a syntax error; classify

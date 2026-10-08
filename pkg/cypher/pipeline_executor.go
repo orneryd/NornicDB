@@ -162,14 +162,16 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 			return nil, false
 		}
 	}
-	// Single graph reads, writes and CALL subqueries own their seed row.
+	// Single graph reads, writes and CALL subqueries own their seed row. A
+	// lone WITH or UNWIND is a whole statement only before FINISH (#907),
+	// and runs on the seed row too.
 	if len(clauses) < 2 {
 		if len(clauses) == 0 {
 			return nil, false
 		}
 		switch clauses[0].kind {
 		case pipelineClauseMatch, pipelineClauseCreate, pipelineClauseMerge, pipelineClauseForeach, pipelineClauseCallSubquery,
-			pipelineClauseSet, pipelineClauseRemove, pipelineClauseDelete:
+			pipelineClauseSet, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseWith, pipelineClauseUnwind:
 		default:
 			return nil, false
 		}

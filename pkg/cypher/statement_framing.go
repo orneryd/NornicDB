@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -193,13 +194,13 @@ func stripCypherPreamble(query string) (string, bool) {
 	return query, false
 }
 
-// finishProhibitedClauses are the clause keywords a statement may end with
-// before FINISH. A trailing FINISH after a projection clause (RETURN, WITH,
-// YIELD) is invalid in Neo4j and stays in the text so validation rejects it.
+// finishProhibitedClauses are the clause keywords a statement may not end
+// with before FINISH. Neo4j 5.26 rejects FINISH only after RETURN ("RETURN can
+// only be used at the end of the query"); after WITH or YIELD it ends the
+// statement like after any other clause and returns no rows (#907). A
+// prohibited trailing FINISH stays in the text so validation rejects it.
 var finishProhibitedClauses = map[string]bool{
 	"RETURN": true,
-	"WITH":   true,
-	"YIELD":  true,
 }
 
 // trailingBareFinish reports whether the statement ends with a standalone
@@ -229,9 +230,9 @@ func trailingBareFinish(cypher string) (string, bool) {
 }
 
 // stripTrailingFinish removes a trailing FINISH clause terminator (Neo4j 5.19+:
-// FINISH ends a query without returning rows). FINISH counts only when the
-// preceding top-level clause is a reading/writing clause — a trailing FINISH
-// after RETURN/WITH/YIELD stays in the text so validation rejects it. The
+// FINISH ends a query without returning rows). FINISH counts unless the
+// preceding top-level clause is RETURN (finishProhibitedClauses); a trailing
+// FINISH after RETURN stays in the text so validation rejects it. The
 // preceding clause comes from the shared name-aware scanner
 // lastTopLevelClauseWord (validator_strictness.go): one clause scanner for
 // both the FINISH position and the dangling-UNWIND rule.
@@ -244,6 +245,24 @@ func stripTrailingFinish(cypher string) (string, bool) {
 		return cypher, false
 	}
 	return remainder, true
+}
+
+type finishedStatementKey struct{}
+
+// withFinishedStatement records that statement (the text left after its
+// trailing FINISH was stripped) ended in FINISH. A CALL … YIELD with WHERE,
+// ORDER BY, SKIP or LIMIT that is the whole statement is then not a
+// standalone call: FINISH is the clause after it, as in Neo4j (#907).
+func withFinishedStatement(ctx context.Context, statement string) context.Context {
+	return context.WithValue(ctx, finishedStatementKey{}, strings.Join(strings.Fields(statement), " "))
+}
+
+// endsInFinish reports whether statement is the one withFinishedStatement
+// recorded, compared with whitespace normalized: a CALL a subquery or a
+// procedure runs inside the statement is not.
+func endsInFinish(ctx context.Context, statement string) bool {
+	finished, _ := ctx.Value(finishedStatementKey{}).(string)
+	return finished != "" && finished == strings.Join(strings.Fields(statement), " ")
 }
 
 // topLevelUnionCut returns the offset of the first top-level UNION keyword

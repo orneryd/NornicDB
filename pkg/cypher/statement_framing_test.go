@@ -457,6 +457,50 @@ func TestFinishTerminatorReturnsNoRows(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "FINISH", res.Rows[0][0])
 
+	// FINISH after WITH or YIELD ends the statement like after any other
+	// clause, with its writes, as in Neo4j 5.26.30 (#907).
+	_, err = exec.Execute(ctx, "CREATE (:FinW {v: 1})", nil)
+	require.NoError(t, err)
+	for _, query := range []string{
+		"WITH 1 AS x FINISH",
+		"UNWIND [1] AS x WITH x ORDER BY x FINISH",
+		"WITH 1 AS x WHERE x = 1 FINISH",
+		"WITH 1 AS x WITH x FINISH",
+		"UNWIND [1, 2] AS x FINISH",
+		"CALL db.labels() YIELD label FINISH",
+		"CALL db.labels() YIELD label WHERE label = 'x' FINISH",
+		"WITH 1 AS x FINISH UNION WITH 2 AS x FINISH",
+	} {
+		assertNoRows(t, query)
+	}
+	assertNoRows(t, "CREATE (n:FinW {v: 1}) WITH n FINISH")
+	require.Equal(t, int64(2), count(t, "MATCH (n:FinW) RETURN count(n)"))
+	assertNoRows(t, "MATCH (n:FinW) WITH n SET n.v = 2 WITH n FINISH")
+	require.Equal(t, int64(2), count(t, "MATCH (n:FinW {v: 2}) RETURN count(n)"))
+	// A subquery ending in WITH … FINISH is a unit subquery.
+	res, err = exec.Execute(ctx, "CALL () { WITH 1 AS x FINISH } RETURN 1 AS one", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, res.Rows)
+	res, err = exec.Execute(ctx, "UNWIND [1, 2] AS i CALL { WITH i CREATE (:FinW2 {i: i}) WITH i FINISH } RETURN count(*) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}}, res.Rows)
+	require.Equal(t, int64(2), count(t, "MATCH (n:FinW2) RETURN count(n)"))
+
+	// Statements the executor runs internally follow the same rule.
+	res, err = exec.executeInternal(ctx, "CALL db.labels() YIELD label WHERE label = 'x' FINISH", nil)
+	require.NoError(t, err)
+	require.Empty(t, res.Rows)
+	// Only a CALL with a scope clause reads its body's leading WITH as a
+	// projection; an unscoped one still checks it as an import list.
+	require.True(t, callSubqueryHasScopeClause("CALL () { WITH 1 AS x }"))
+	require.False(t, callSubqueryHasScopeClause("CALL { WITH 1 AS x }"))
+	require.False(t, callSubqueryHasScopeClause("MATCH (n) CALL () { RETURN 1 }"))
+	_, err = exec.Execute(ctx, "UNWIND [1] AS i CALL { WITH i } RETURN 1 AS one", nil)
+	require.Error(t, err)
+	_, _, handled, err := exec.pipelineApplyCallSubquery(ctx, []pipelineRow{{"i": int64(1)}}, "CALL { WITH i }")
+	require.True(t, handled)
+	require.Error(t, err)
+
 	// FINISH must be last, and can't follow RETURN: these are syntax
 	// errors, as in Neo4j. FINISH is not reserved, so `finish` as a variable
 	// (WITH 1 AS finish RETURN finish) is valid; TestFinishAsNameMatchesNeo4j
@@ -464,6 +508,9 @@ func TestFinishTerminatorReturnsNoRows(t *testing.T) {
 	for _, query := range []string{
 		"FINISH RETURN 1",
 		"MATCH (n:Fin) RETURN n FINISH",
+		"RETURN 1 AS x FINISH",
+		"WITH 1 AS x RETURN x FINISH",
+		"WITH 1 AS x FINISH UNION ALL RETURN 2 AS x",
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
