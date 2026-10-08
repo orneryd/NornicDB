@@ -471,7 +471,9 @@ type ServerConfig struct {
 	// Env: NORNICDB_BOLT_AUTH_TIMEOUT
 	BoltAuthTimeout time.Duration
 	// BoltStatementTimeout bounds a single Bolt RUN when the client did
-	// not supply tx_timeout. Zero disables the server-side fallback cap.
+	// not supply tx_timeout, including the time its rows are pulled when
+	// they are produced as PULL asks for them. Zero disables the
+	// server-side fallback cap.
 	// Env: NORNICDB_BOLT_STATEMENT_TIMEOUT
 	BoltStatementTimeout time.Duration
 

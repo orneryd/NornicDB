@@ -291,6 +291,9 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 		hint.limit, hint.earlyLimit = -1, -1
 	}
 	templates := plan.templates
+	if hint.streamScan && len(templates) == 1 {
+		return e.pipelineStreamedNodeMatchSource(ctx, inputSource, templates[0], hint), true, nil
+	}
 	type candidateCache struct {
 		key          string
 		nodes        []*storage.Node
@@ -392,6 +395,59 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 		})
 		return completed && valid
 	}, true, nil
+}
+
+// pipelineStreamedNodeMatchSource is the source of a one-pattern node MATCH
+// of a streamed statement (#939): it reads the pattern's candidates as the
+// rows are consumed (visitPipelineInitialNodeCandidates) instead of
+// collecting them first, with the same matching as
+// pipelineNodeMatchSourceWithHint.
+func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, inputSource pipelineRowSource, template *pipelineNodeMatchTemplate, hint pipelineMatchPhysicalHint) pipelineRowSource {
+	return func(yield func(pipelineRow) bool) bool {
+		valid := true
+		current := make(pipelineRow)
+		completed := inputSource(func(input pipelineRow) bool {
+			clear(current)
+			for name, value := range input {
+				current[name] = value
+			}
+			pattern, ok := template.node(ctx, e, input)
+			if !ok {
+				pipelineItemUnevaluable(ctx, template.pattern)
+				valid = false
+				return false
+			}
+			// The MATCH is the statement's first clause and its input binds no
+			// variable (hint.streamScan), so the pattern's variable is unbound.
+			candidateCtx := ctx
+			if len(input) > 0 {
+				candidateCtx = withValueBindings(ctx, input)
+			}
+			accepted := true
+			err := e.visitPipelineInitialNodeCandidates(candidateCtx, pattern, hint, func(node *storage.Node) error {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				if !pipelineNodeMatchesPattern(node, pattern) {
+					return nil
+				}
+				current[pattern.variable] = node
+				accepted = yield(current)
+				delete(current, pattern.variable)
+				if !accepted {
+					return storage.ErrIterationStopped
+				}
+				return nil
+			})
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				valid = false
+				return false
+			}
+			return accepted
+		})
+		return completed && valid
+	}
 }
 
 func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipelineRowSource, plan pipelineRowWith) pipelineRowSource {

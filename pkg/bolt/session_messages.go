@@ -293,7 +293,19 @@ func (s *Session) handleRun(data []byte) error {
 	}
 
 	runStart := time.Now()
-	result, err := executor.Execute(ctx, query, params)
+	var result *QueryResult
+	if !s.inTransaction && !isWrite && s.messageQueue != nil {
+		// An auto-commit read produces its rows as PULL asks for them
+		// once it has more than lazyResultThreshold (#939); RUN and those
+		// PULLs are then already answered.
+		var served bool
+		result, served, err = s.runStreamed(ctx, runCancel, executor, query, params, dbName, runStart)
+		if served {
+			return nil
+		}
+	} else {
+		result, err = executor.Execute(ctx, query, params)
+	}
 	// Complete any RUN-owned timeout cleanup before sending a response. The
 	// defer remains the panic/early-return safety net; finishRun is idempotent.
 	var finishErr error
@@ -750,6 +762,7 @@ func (s *Session) selectResultStream(statementID int64) (resultStream, int64, bo
 		index:    s.resultIndex,
 		isWrite:  s.lastQueryIsWrite,
 		database: s.lastQueryDatabase,
+		lazy:     s.lastLazy,
 	}, -1, true
 }
 
@@ -767,9 +780,11 @@ func (s *Session) updateResultStream(statementID int64, stream resultStream, has
 	if hasMore {
 		s.lastResult = stream.result
 		s.resultIndex = stream.index
+		s.lastLazy = stream.lazy
 	} else {
 		s.lastResult = nil
 		s.resultIndex = 0
+		s.lastLazy = nil
 	}
 }
 
@@ -794,6 +809,13 @@ func (s *Session) handlePull(data []byte) error {
 			return err
 		}
 		return s.flushIfPending()
+	}
+
+	// A lazy result produces the rows this PULL takes (#939). An error the
+	// statement meets fails this PULL after the rows before it.
+	var lazyFailure *lazyStatementError
+	if err := s.fillLazyResult(&stream, options.limit); err != nil {
+		lazyFailure = err.(*lazyStatementError)
 	}
 
 	// Stream records - use batched writing for large result sets
@@ -828,8 +850,13 @@ func (s *Session) handlePull(data []byte) error {
 		}
 	}
 
+	if lazyFailure != nil {
+		s.updateResultStream(statementID, stream, false)
+		return s.sendLazyFailure(lazyFailure)
+	}
+
 	// Check if more records available
-	hasMore := stream.index < len(stream.result.Rows)
+	hasMore := stream.index < len(stream.result.Rows) || stream.lazy != nil
 	s.updateResultStream(statementID, stream, hasMore)
 
 	// Clear result if done
@@ -949,13 +976,31 @@ func (s *Session) handleDiscard(data []byte) error {
 		return s.flushIfPending()
 	}
 
-	remaining := len(stream.result.Rows) - stream.index
-	discardCount := remaining
-	if options.limit > 0 && discardCount > options.limit {
-		discardCount = options.limit
+	if stream.lazy != nil && options.limit <= 0 {
+		// Discarding the rest of a lazy result stops its statement.
+		stream.lazy.close()
+		s.clearActiveRun()
+		stream.lazy = nil
+		stream.index = len(stream.result.Rows)
 	}
-	stream.index += discardCount
-	hasMore := stream.index < len(stream.result.Rows)
+	discarded := 0
+	for {
+		remaining := len(stream.result.Rows) - stream.index
+		discardCount := remaining
+		if options.limit > 0 && discardCount > options.limit-discarded {
+			discardCount = options.limit - discarded
+		}
+		stream.index += discardCount
+		discarded += discardCount
+		if stream.lazy == nil || discarded == options.limit {
+			break
+		}
+		if err := s.fillLazyResult(&stream, options.limit-discarded); err != nil {
+			s.updateResultStream(statementID, stream, false)
+			return s.sendLazyFailure(err.(*lazyStatementError))
+		}
+	}
+	hasMore := stream.index < len(stream.result.Rows) || stream.lazy != nil
 	s.updateResultStream(statementID, stream, hasMore)
 	if hasMore {
 		if err := s.sendSuccessNoFlush(map[string]any{"has_more": true}); err != nil {

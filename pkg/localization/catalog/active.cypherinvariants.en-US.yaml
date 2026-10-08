@@ -7,3 +7,6 @@
 - id: cypherinvariants.pipeline_declined_after_write
   description: A statement the pipeline executor started writing could not be finished there; running it again on another route would repeat the writes. Clause is the untranslated Cypher clause text.
   other: 'pipeline could not finish a statement after it had written ({{.Clause}}); the statement was not run again'
+- id: cypherinvariants.pipeline_declined_after_streaming
+  description: A statement the pipeline executor had started sending rows for could not be finished there; running it again on another route would send those rows twice. Clause is the untranslated Cypher clause text.
+  other: 'pipeline could not finish a statement after it had sent rows ({{.Clause}}); the statement was not run again'

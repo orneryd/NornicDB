@@ -408,6 +408,9 @@ type resultStream struct {
 	index    int
 	isWrite  bool
 	database string
+	// lazy produces the rows after result's when the statement is still
+	// running (#939); nil once it has finished.
+	lazy *lazyResult
 }
 
 // QueryStats holds write counters emitted in the Bolt PULL completion metadata.
@@ -621,7 +624,10 @@ type Config struct {
 	// present, takes precedence (Neo4j semantics: client-supplied
 	// timeout wins; server cap is the fallback). The cancellation
 	// propagates via context to the Cypher executor, which honors
-	// ctx.Err() at every traversal/match boundary.
+	// ctx.Err() at every traversal/match boundary. An auto-commit read
+	// whose rows are produced as PULL asks for them (#939) runs until its
+	// last row is pulled or discarded, so the cap covers that time too, as
+	// Neo4j's transaction timeout does.
 	BoltStatementTimeout time.Duration
 	// WebSocketEnabled controls whether WebSocket transport is accepted on
 	// the Bolt port. When false, the server returns the discovery response
@@ -1525,6 +1531,11 @@ type Session struct {
 	// Query result state (for streaming with PULL)
 	lastResult        *QueryResult
 	resultIndex       int
+	lastLazy          *lazyResult
+	// pendingMessage and pendingErr are what a lazy result's helper read
+	// and handed back to the message loop (serveLazyResult).
+	pendingMessage *boltMessage
+	pendingErr     error
 	resultStreams     map[int64]*resultStream
 	latestStatementID int64
 
@@ -1785,15 +1796,33 @@ func (s *Session) handleQueuedMessage() error {
 	if s.messageQueue == nil || s.readErrQueue == nil {
 		return s.handleMessage()
 	}
+	msg, err := s.nextQueuedMessage()
+	if err != nil {
+		return err
+	}
+	return s.processMessage(msg)
+}
 
+// nextQueuedMessage is the next message to process: one a lazy result's
+// helper handed back (pendingMessage) or the next from the reader; or the
+// error that ends the connection (pendingErr, a read error, or io.EOF).
+func (s *Session) nextQueuedMessage() (*boltMessage, error) {
+	if err := s.pendingErr; err != nil {
+		s.pendingErr = nil
+		return nil, err
+	}
+	if msg := s.pendingMessage; msg != nil {
+		s.pendingMessage = nil
+		return msg, nil
+	}
 	select {
 	case msg := <-s.messageQueue:
 		if msg == nil {
-			return io.EOF
+			return nil, io.EOF
 		}
-		return s.processMessage(msg)
+		return msg, nil
 	case err := <-s.readErrQueue:
-		return err
+		return nil, err
 	}
 }
 

@@ -104,6 +104,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			}
 		}
 	}()
+	// A result stream the caller passed is for this statement only, not for
+	// the statements it runs on its behalf (#939).
+	stream, ctx := takeResultStream(ctx)
 	e.resetHotPathTrace()
 	// A result served from the result cache that returns no node or
 	// relationship has no access to record (resultHasMaterializedEntities).
@@ -253,12 +256,16 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return e.executeOnDatabase(ctx, useDB, cypher, params)
 	}
 
+	// The quoted-variable and label-expression rewrites map the finished
+	// result's rows back, so a statement with either doesn't stream.
+	rowsRewritten := false
 	// Backtick-quoted variables become plain identifiers here, once, for
 	// every route; the result's columns and errors are mapped back (#734).
 	if canonical, names := canonicalizeQuotedVariables(cypher); names != nil {
 		cypher = canonical
 		params = names.parameterValues(params)
 		ctx = withQuotedVariableNames(ctx, names)
+		rowsRewritten = true
 		defer func() { result, retErr = names.restore(result, retErr, e.parseReturnItems) }()
 	}
 
@@ -270,6 +277,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return nil, err
 	}
 	if labelRewrite != nil {
+		rowsRewritten = true
 		cypher = desugared
 		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
 	}
@@ -654,6 +662,19 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return result, nil
 	}
 
+	// An auto-commit read hands its rows to the caller's result stream as it
+	// produces them (#939). The result-limit truncation and the restores of
+	// rewritten rows below need the whole result, so a statement with
+	// either keeps it. A streamed result is not cached.
+	if stream != nil && info.IsReadOnly && !rowsRewritten && !finishTerminated && e.maxResults() == 0 {
+		ctx = armResultStream(ctx, stream, cypher, func(columns []string) []string {
+			restored, _ := rewrite.restore(&ExecuteResult{Columns: columns}, nil)
+			return restored.Columns
+		}, func(rows [][]interface{}) {
+			e.recordMaterializedResultAccess(&ExecuteResult{Rows: rows})
+		})
+	}
+
 	// Auto-commit single query - use async path for performance
 	// This uses AsyncEngine's write-behind cache instead of synchronous disk I/O
 	// For strict ACID, users should use explicit BEGIN/COMMIT transactions
@@ -674,33 +695,14 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Apply result limit if set
 	if err == nil && result != nil {
-		if namespacedEngine, ok := e.storage.(interface {
-			GetQueryLimitChecker() interface {
-				CheckQueryRate() error
-				CheckQueryLimits(context.Context) (context.Context, context.CancelFunc, error)
-				GetQueryLimits() interface{}
-			}
-		}); ok {
-			if qlc := namespacedEngine.GetQueryLimitChecker(); qlc != nil {
-				if queryLimits := qlc.GetQueryLimits(); queryLimits != nil {
-					// Type assert to check if it has MaxResults field
-					// We use reflection-like approach: check if it's a struct with MaxResults
-					if limits, ok := queryLimits.(interface {
-						GetMaxResults() int64
-					}); ok {
-						if maxResults := limits.GetMaxResults(); maxResults > 0 && int64(len(result.Rows)) > maxResults {
-							// Truncate results to limit
-							result.Rows = result.Rows[:maxResults]
-						}
-					}
-				}
-			}
+		if maxResults := e.maxResults(); maxResults > 0 && int64(len(result.Rows)) > maxResults {
+			result.Rows = result.Rows[:maxResults]
 		}
 	}
 
 	// Retain the revision captured before execution. A read overlapping a
 	// mutation must not publish its stale result under the newer revision.
-	if err == nil && resultCacheKey != "" {
+	if err == nil && resultCacheKey != "" && !stream.streamed() {
 		e.cache.putWithLabelsAndTrace(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), e.LastHotPathTrace())
 	}
 
@@ -723,4 +725,32 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 
 	return result, err
+}
+
+// maxResults is the database's result-row limit (0 for none): the result of
+// a statement is cut to it.
+func (e *StorageExecutor) maxResults() int64 {
+	namespacedEngine, ok := e.storage.(interface {
+		GetQueryLimitChecker() interface {
+			CheckQueryRate() error
+			CheckQueryLimits(context.Context) (context.Context, context.CancelFunc, error)
+			GetQueryLimits() interface{}
+		}
+	})
+	if !ok {
+		return 0
+	}
+	qlc := namespacedEngine.GetQueryLimitChecker()
+	if qlc == nil {
+		return 0
+	}
+	queryLimits := qlc.GetQueryLimits()
+	if queryLimits == nil {
+		return 0
+	}
+	limits, ok := queryLimits.(interface{ GetMaxResults() int64 })
+	if !ok {
+		return 0
+	}
+	return limits.GetMaxResults()
 }

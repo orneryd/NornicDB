@@ -572,15 +572,38 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 	limit int,
 	projection []string,
 ) ([]*storage.Node, error) {
-	store := e.getStorage(ctx)
-	viewport, hasViewport := TemporalViewportFromContext(ctx)
-	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
-	hideSystemNodes := shouldHideSystemNodes(store)
 	capacity := 0
 	if limit > 0 {
 		capacity = limit
 	}
 	collected := make([]*storage.Node, 0, capacity)
+	if err := e.visitNodesWithStreamingProjection(ctx, labels, properties, whereVariable, whereClause, limit, projection, &collected, nil); err != nil {
+		return nil, err
+	}
+	return collected, nil
+}
+
+// visitNodesWithStreamingProjection is collectNodesWithStreamingProjection
+// appending each node to *collected, or handing it to visit when visit is
+// set, as the scan reads it, in the same order. visit returning
+// storage.ErrIterationStopped ends the scan without error; any other error
+// ends it with that error.
+func (e *StorageExecutor) visitNodesWithStreamingProjection(
+	ctx context.Context,
+	labels []string,
+	properties map[string]interface{},
+	whereVariable string,
+	whereClause string,
+	limit int,
+	projection []string,
+	collected *[]*storage.Node,
+	visit func(*storage.Node) error,
+) error {
+	store := e.getStorage(ctx)
+	viewport, hasViewport := TemporalViewportFromContext(ctx)
+	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
+	hideSystemNodes := shouldHideSystemNodes(store)
+	visited := 0
 	var whereFilter FilterFunc
 	if strings.TrimSpace(whereClause) != "" {
 		whereFilter = e.compileNodeWhereFilter(ctx, whereVariable, whereClause)
@@ -607,11 +630,24 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 				return nil
 			}
 		}
-		collected = append(collected, node)
-		if limit > 0 && len(collected) >= limit {
+		if visit == nil {
+			*collected = append(*collected, node)
+		} else if err := visit(node); err != nil {
+			return err
+		}
+		visited++
+		if limit > 0 && visited >= limit {
 			return storage.ErrIterationStopped
 		}
 		return nil
+	}
+	// A materialized fallback's nodes go to visit as a list.
+	visitAll := func(nodes []*storage.Node) error {
+		if visit == nil {
+			*collected = append(*collected, nodes...)
+			return nil
+		}
+		return visitNodeList(nodes, visit)
 	}
 
 	// A label-indexed stream is the primary physical scan for every labelled
@@ -622,9 +658,9 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 		if reader, ok := store.(storage.ProjectedLabelNodeReader); ok {
 			err := reader.StreamNodesByLabelProjected(labels[0], projection, collect)
 			if err == nil || err == storage.ErrIterationStopped {
-				return collected, nil
+				return nil
 			}
-			return nil, err
+			return err
 		}
 	}
 
@@ -633,13 +669,13 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 	if limit > 0 && len(labels) == 1 && len(properties) == 0 && strings.TrimSpace(whereClause) == "" {
 		ids, err := storage.NodeIDsByLabel(store, labels[0], limit)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		filtered := make([]*storage.Node, 0, util.SafePreallocCap(len(ids)))
 		for _, id := range ids {
 			node, getErr := store.GetNode(id)
 			if getErr != nil {
-				return nil, getErr
+				return getErr
 			}
 			if node == nil {
 				continue
@@ -650,7 +686,7 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 			if hasViewport && canCheckViewport {
 				visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
 				if err != nil {
-					return nil, err
+					return err
 				}
 				if !visible {
 					continue
@@ -661,7 +697,7 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 				break
 			}
 		}
-		return filtered, nil
+		return visitAll(filtered)
 	}
 
 	var nodes []*storage.Node
@@ -708,9 +744,9 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 			return collect(node)
 		})
 		if err != nil && err != storage.ErrIterationStopped {
-			return nil, err
+			return err
 		}
-		return collected, nil
+		return nil
 	}
 
 	// Streaming is the shared scan primitive for the converged executor. Apply
@@ -723,10 +759,7 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 		if err == storage.ErrIterationStopped {
 			err = nil
 		}
-		if err != nil {
-			return nil, err
-		}
-		return collected, nil
+		return err
 	}
 
 	// Compatibility fallback for storage implementations without StreamingEngine.
@@ -736,7 +769,7 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 		nodes, err = store.AllNodes()
 	}
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Filter out system nodes (labels starting with _)
@@ -753,7 +786,7 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 	if hasViewport && canCheckViewport {
 		nodes, err = filterNodesByTemporalViewport(nodes, viewport, checker)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 
@@ -768,7 +801,22 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 		nodes = nodes[:limit]
 	}
 
-	return nodes, nil
+	return visitAll(nodes)
+}
+
+// visitNodeList hands nodes to visit in order. visit returning
+// storage.ErrIterationStopped ends the visit without error; any other error
+// ends it with that error.
+func visitNodeList(nodes []*storage.Node, visit func(*storage.Node) error) error {
+	for _, node := range nodes {
+		if err := visit(node); err != nil {
+			if err == storage.ErrIterationStopped {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // labellessScanRequiredProperties returns the property values every node a
