@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -237,7 +238,11 @@ func TestSystemCommands_CreateDatabase(t *testing.T) {
 	t.Run("invalid syntax", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "CREATE DATABASE", nil)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "database name expected")
+		// A SyntaxError, as in Neo4j; the message is the parser's own (#957).
+		assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+		if !config.IsANTLRParser() {
+			assert.Contains(t, err.Error(), "database name expected")
+		}
 	})
 }
 
@@ -308,7 +313,10 @@ func TestSystemCommands_DropDatabase(t *testing.T) {
 	t.Run("invalid syntax", func(t *testing.T) {
 		_, err := exec.Execute(ctx, "DROP DATABASE", nil)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "database name expected")
+		assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+		if !config.IsANTLRParser() {
+			assert.Contains(t, err.Error(), "database name expected")
+		}
 	})
 }
 

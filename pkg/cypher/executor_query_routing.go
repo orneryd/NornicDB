@@ -444,7 +444,7 @@ func (e *StorageExecutor) validateSyntax(cypher string) error {
 // validateSyntaxANTLR uses ANTLR for strict OpenCypher grammar validation.
 // Provides detailed error messages with line/column information.
 func (e *StorageExecutor) validateSyntaxANTLR(cypher string) error {
-	if isKnowledgePolicyDDLStatement(cypher) {
+	if isNornicExtensionStatement(cypher) {
 		return e.validateSyntaxNornic(cypher)
 	}
 	parserError := antlr.Validate(cypher)
@@ -458,6 +458,17 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string) error {
 		return err
 	}
 	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", parserError.Error())
+}
+
+// isNornicExtensionStatement reports whether cypher is a NornicDB-only
+// statement, outside Neo4j's Cypher and so outside the ANTLR grammar, which
+// the Nornic validator checks instead under NORNICDB_PARSER=antlr (#957):
+// knowledge-policy DDL, procedure DDL (CREATE [OR REPLACE] PROCEDURE, DROP
+// PROCEDURE) and database limits (ALTER DATABASE … SET LIMIT, SHOW LIMITS).
+func isNornicExtensionStatement(cypher string) bool {
+	return isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
+		startsWithKeywords(cypher, "SHOW", "LIMITS") ||
+		(startsWithKeywords(cypher, "ALTER", "DATABASE") && findKeywordIndex(cypher, "SET LIMIT") >= 0)
 }
 
 // validateSyntaxNornic performs fast inline syntax validation.

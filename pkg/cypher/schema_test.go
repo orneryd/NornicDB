@@ -560,6 +560,10 @@ func TestVectorIndexWithDifferentOptions(t *testing.T) {
 		query     string
 		wantDims  int
 		wantSimFn string
+		// nornicOnly marks a NornicDB leniency: Neo4j 5.26 rejects
+		// string-literal map keys, and so does NORNICDB_PARSER=antlr's
+		// grammar, so the case runs under the Nornic parser (#957).
+		nornicOnly bool
 	}{
 		{
 			name:      "WithOptions",
@@ -576,13 +580,17 @@ func TestVectorIndexWithDifferentOptions(t *testing.T) {
 		{
 			name:      "QuotedOptionKeys",
 			query:     `CREATE VECTOR INDEX vec3 FOR (n:Node) ON (n.embedding_quoted) OPTIONS {indexConfig: {"vector.dimensions": 384, "vector.similarity_function": "dot"}}`,
-			wantDims:  384,
-			wantSimFn: "dot",
+			wantDims:   384,
+			wantSimFn:  "dot",
+			nornicOnly: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.nornicOnly {
+				t.Cleanup(config.WithNornicParser())
+			}
 			_, err := exec.Execute(ctx, tt.query, nil)
 			if err != nil {
 				t.Fatalf("Failed to create vector index: %v", err)
@@ -1019,7 +1027,12 @@ func TestSchemaDDL_AllowsTrailingOptionsAndBacktickIdentifiers(t *testing.T) {
 		require.NoError(t, err, "expected DDL with OPTIONS/backticks to parse: %s", q)
 	}
 
+	// DROP CONSTRAINT IF EXISTS name is a NornicDB leniency: Neo4j 5.26 and
+	// NORNICDB_PARSER=antlr's grammar take only DROP CONSTRAINT name IF
+	// EXISTS, so it runs under the Nornic parser (#957).
+	restoreParser := config.WithNornicParser()
 	_, err := exec.Execute(ctx, "DROP CONSTRAINT IF EXISTS `uq order id`", nil)
+	restoreParser()
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "DROP CONSTRAINT `uq order id` IF EXISTS", nil)
 	require.NoError(t, err)

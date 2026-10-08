@@ -61,7 +61,7 @@ transactionStatement
 
 // statements
 query
-    : queryPrefix* useClause? (regularQuery | standaloneCall | schemaCommand | administrationCommand | showCommand)
+    : queryPrefix* useClause? (regularQuery | standaloneCall | schemaCommand | administrationCommand | showCommand | terminateCommand)
     ;
 
 useClause
@@ -78,8 +78,23 @@ queryPrefix
 showCommand
         : SHOW ((ALL | FULLTEXT | RANGE_INDEX | TEXT | POINT | VECTOR | LOOKUP)? (INDEXES | INDEX)
             | CONSTRAINTS | CONSTRAINT CONTRACTS? | PROCEDURES | FUNCTIONS | COMPOSITE? (DATABASE | DATABASES)
-            | ALIASES (FOR (DATABASE qualifiedName | DATABASES))? | USERS | CURRENT USER | ALL)
-            (YIELD (MULT | yieldItems) orderSt? skipSt? limitSt? returnSt?)?
+            | ALIASES (FOR (DATABASE qualifiedName | DATABASES))? | USERS | CURRENT USER | ALL
+            | (TRANSACTION | TRANSACTIONS) (expression (COMMA expression)*)?
+            | (SETTING | SETTINGS) (expression (COMMA expression)*)?
+            | (DEFAULT | HOME) DATABASE
+            | ROLES | PRIVILEGES | USER name PRIVILEGES | SERVERS)
+            showTail?
+    ;
+
+// SHOW … WHERE …, or SHOW … YIELD … [WHERE …] [ORDER BY …] [SKIP …] [LIMIT …] [RETURN …].
+showTail
+    : where
+    | YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? returnSt?
+    ;
+
+// TERMINATE TRANSACTION[S] id[, id …] [YIELD …]
+terminateCommand
+    : TERMINATE (TRANSACTION | TRANSACTIONS) expression (COMMA expression)* (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? returnSt?)?
     ;
 
 administrationCommand
@@ -108,7 +123,7 @@ schemaCommand
     ;
 
 constraintRequirement
-    : (expression | parenExpressionChain) IS (UNIQUE | NOT NULL_W | (NODE | RELATIONSHIP) KEY | COLON COLON propertyTypeName | TYPED propertyTypeName | TEMPORAL NO OVERLAP)
+    : (expression | parenExpressionChain) IS (UNIQUE | NOT NULL_W | (NODE | RELATIONSHIP) KEY | COLON COLON propertyTypeName | TYPED propertyTypeName | TEMPORAL (NO OVERLAP)?)
     | expression IN listLit
     | MAX COUNT integerLit
     | ALLOWED
@@ -701,6 +716,14 @@ symbol
     | UNIQUE
     | REQUIRE
     | TYPED
+    | DEFAULT
+    | HOME
+    | SETTING
+    | SETTINGS
+    | ROLES
+    | PRIVILEGES
+    | SERVERS
+    | TERMINATE
     | NORMALIZED
     | NFC
     | NFD

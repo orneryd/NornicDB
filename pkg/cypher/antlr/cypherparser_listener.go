@@ -31,6 +31,12 @@ type CypherParserListener interface {
 	// EnterShowCommand is called when entering the showCommand production.
 	EnterShowCommand(c *ShowCommandContext)
 
+	// EnterShowTail is called when entering the showTail production.
+	EnterShowTail(c *ShowTailContext)
+
+	// EnterTerminateCommand is called when entering the terminateCommand production.
+	EnterTerminateCommand(c *TerminateCommandContext)
+
 	// EnterAdministrationCommand is called when entering the administrationCommand production.
 	EnterAdministrationCommand(c *AdministrationCommandContext)
 
@@ -396,6 +402,12 @@ type CypherParserListener interface {
 
 	// ExitShowCommand is called when exiting the showCommand production.
 	ExitShowCommand(c *ShowCommandContext)
+
+	// ExitShowTail is called when exiting the showTail production.
+	ExitShowTail(c *ShowTailContext)
+
+	// ExitTerminateCommand is called when exiting the terminateCommand production.
+	ExitTerminateCommand(c *TerminateCommandContext)
 
 	// ExitAdministrationCommand is called when exiting the administrationCommand production.
 	ExitAdministrationCommand(c *AdministrationCommandContext)
