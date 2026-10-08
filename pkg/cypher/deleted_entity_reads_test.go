@@ -249,3 +249,47 @@ func TestDeletedEntityViewsReplace(t *testing.T) {
 	exec.applyDeleteReturnProjection(res, "MATCH p = ()-->() DELETE p RETURN size(nodes(p)) AS n", "p", deleteProjectionInfo{ctx: context.Background(), input: input})
 	require.Equal(t, [][]interface{}{{int64(2)}}, res.Rows)
 }
+
+func TestDeletedEntityEdgeCases(t *testing.T) {
+	var nilNode *storage.Node
+	var nilEdge *storage.Edge
+	deleted := &deletedEntities{}
+	deleted.add([]storage.NodeID{"n"}, map[storage.EdgeID]struct{}{"e": {}})
+	require.False(t, deleted.holdsDeleted(nilNode, false))
+	require.False(t, deleted.holdsDeleted(nilEdge, false))
+	require.False(t, deleted.holdsDeleted(&storage.Node{ID: "n"}, true))
+	require.True(t, deleted.holdsDeleted([]interface{}{int64(1), &storage.Edge{ID: "e"}}, true))
+	require.False(t, deleted.holdsDeleted([]interface{}{int64(1)}, false))
+	require.Empty(t, iterationSourceVariable("RETURN x", "x"))
+
+	targets, detach, ok := deleteClauseTargets("REMOVE n.p")
+	require.False(t, ok)
+	require.False(t, detach)
+	require.Nil(t, targets)
+	targets, detach, ok = deleteClauseTargets("DETACH DELETE a, b")
+	require.True(t, ok)
+	require.True(t, detach)
+	require.Equal(t, []string{"a", "b"}, targets)
+
+	// The DELETE step outside a statement's run (no deleted record in ctx)
+	// still empties the rows' views.
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "delete_without_record"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:Lone {p: 1})", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (n:Lone) RETURN n", nil)
+	require.NoError(t, err)
+	rows := []pipelineRow{{"n": result.Rows[0][0]}}
+	_, handled, err := exec.pipelineApplyDelete(ctx, rows, map[string]struct{}{"n": {}}, "DELETE n")
+	require.NoError(t, err)
+	require.True(t, handled)
+	require.Empty(t, rows[0]["n"].(*storage.Node).Properties)
+
+	// A DELETE target's static type error, and a quoted variable's property.
+	for _, query := range []string{"MATCH (n:Lone) DELETE toUpper(5)", "MATCH (n:Lone) DELETE `n`.p"} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+		code, _ := nornicerrors.Neo4jStatus(err)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, query)
+	}
+}

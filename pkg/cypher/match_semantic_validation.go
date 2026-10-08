@@ -1092,7 +1092,7 @@ func deleteTargetTypeError(clause string, scope matchSemanticScope) error {
 	for _, expression := range targets {
 		expression = strings.TrimSpace(expression)
 		if variable, _, property := parseVarPropertyRef(expression); property && isEntityPropertyAccess(expression, variable) {
-			switch scope[variable] {
+			switch scope[normalizeProjectionColumnName(variable)] {
 			case matchBindingNode, matchBindingRelationship:
 				return typeNameMismatchError("Node, Path or Relationship", "a property value")
 			}
@@ -1101,13 +1101,11 @@ func deleteTargetTypeError(clause string, scope matchSemanticScope) error {
 	return nil
 }
 
-// isEntityPropertyAccess reports whether expression is exactly variable.key,
-// with nothing after the key (no subscript or further access).
+// isEntityPropertyAccess reports whether expression, which parseVarPropertyRef
+// read as variable.key, is exactly that, with nothing after the key (no
+// subscript or further access).
 func isEntityPropertyAccess(expression, variable string) bool {
 	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(expression), variable))
-	if !strings.HasPrefix(rest, ".") {
-		return false
-	}
-	key := strings.TrimSpace(rest[1:])
+	key := strings.TrimSpace(strings.TrimPrefix(rest, "."))
 	return isValidIdentifier(key) || isBacktickQuotedName(key)
 }
