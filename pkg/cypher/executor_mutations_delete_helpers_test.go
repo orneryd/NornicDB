@@ -104,7 +104,8 @@ CREATE (:Person {id:'p1', team:'red'}),
 	require.Equal(t, []string{"count(r)", "r", "type(r)"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 	require.EqualValues(t, 3, res.Rows[0][0])
-	require.Equal(t, edge, res.Rows[0][1])
+	// The deleted relationship reads as its empty view (#907).
+	require.Equal(t, &storage.Edge{ID: "r1", Type: "R"}, res.Rows[0][1])
 	require.Equal(t, "R", res.Rows[0][2])
 
 	res = &ExecuteResult{Stats: &QueryStats{NodesDeleted: 2, RelationshipsDeleted: 3}}

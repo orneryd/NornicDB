@@ -66,6 +66,7 @@ func TestDeletedEntityReadsMatchNeo4j(t *testing.T) {
 		"MATCH (n:Q {id: 1}) DETACH DELETE n RETURN [n.s] AS v",
 		"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN r.w AS v",
 		"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN keys(r) AS v",
+		"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN properties(r) AS v",
 	} {
 		t.Run(query, func(t *testing.T) {
 			_, err := inRolledBackTransaction(query)
@@ -77,7 +78,7 @@ func TestDeletedEntityReadsMatchNeo4j(t *testing.T) {
 }
 
 func TestDeletedEntityReadsIn(t *testing.T) {
-	require.Equal(t, []deletedEntityRead{{variable: "n"}, {variable: "m", keys: true}, {variable: "r"}},
+	require.Equal(t, []deletedEntityRead{{variable: "n"}, {variable: "m", relationshipOnly: true}, {variable: "r"}},
 		deletedEntityReadsIn("n.a + size(keys( m )) + 'x.y' + size(labels(r)) + `q`.z"))
 	require.Empty(t, deletedEntityReadsIn("range(1..2)"))
 	require.Empty(t, deletedEntityReadsIn("keys(f(n))"))
@@ -112,4 +113,45 @@ func TestDeleteTargetTypesMatchNeo4j(t *testing.T) {
 	result, err = exec.Execute(ctx, "MATCH (n) RETURN count(n) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(3)}}, result.Rows)
+}
+
+func TestDeletedEntityViewsReplace(t *testing.T) {
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	gone := &storage.Node{ID: "gone", Labels: []string{"L"}, Properties: map[string]interface{}{"p": 1}}
+	kept := &storage.Node{ID: "kept"}
+	edge := &storage.Edge{ID: "e", Type: "R", StartNode: "gone", EndNode: "kept", Properties: map[string]interface{}{"w": 1}}
+	views := deletedEntityViews{executor: exec,
+		nodes: map[storage.NodeID]struct{}{"gone": {}},
+		edges: map[storage.EdgeID]struct{}{"e": {}}}
+
+	var nilNode *storage.Node
+	var nilEdge *storage.Edge
+	var nilPath *PathResult
+	for _, value := range []interface{}{nilNode, nilEdge, kept, []interface{}{kept, int64(1)},
+		map[string]interface{}{"a": gone}, map[string]interface{}{"_pathResult": nilPath},
+		map[string]interface{}{"_pathResult": PathResult{Nodes: []*storage.Node{kept}}}} {
+		replaced, changed := views.replace(value)
+		require.False(t, changed)
+		require.Equal(t, value, replaced)
+	}
+	view, changed := views.replace(edge)
+	require.True(t, changed)
+	require.Equal(t, &storage.Edge{ID: "e", Type: "R", StartNode: "gone", EndNode: "kept"}, view)
+
+	path := &PathResult{Nodes: []*storage.Node{gone, kept}, Relationships: []*storage.Edge{edge}, Length: 1}
+	replaced, changed := views.replace(map[string]interface{}{"_pathResult": path})
+	require.True(t, changed)
+	parts := replaced.(map[string]interface{})["_pathResult"].(PathResult)
+	require.Equal(t, &storage.Node{ID: "gone"}, parts.Nodes[0])
+	require.Same(t, kept, parts.Nodes[1])
+	require.Equal(t, storage.EdgeID("e"), parts.Relationships[0].ID)
+	require.Nil(t, parts.Relationships[0].Properties)
+
+	// A path target deletes its nodes and relationships; elements of
+	// another type are skipped.
+	res := &ExecuteResult{Stats: &QueryStats{}}
+	input := &ExecuteResult{Columns: []string{"p"}, Rows: [][]interface{}{{map[string]interface{}{
+		"nodes": []interface{}{gone, "x"}, "rels": []interface{}{edge, int64(1)}}}}}
+	exec.applyDeleteReturnProjection(res, "MATCH p = ()-->() DELETE p RETURN size(nodes(p)) AS n", "p", deleteProjectionInfo{ctx: context.Background(), input: input})
+	require.Equal(t, [][]interface{}{{int64(2)}}, res.Rows)
 }
