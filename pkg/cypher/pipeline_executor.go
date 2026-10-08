@@ -678,7 +678,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		// Row by row only while no clause of the stretch reads what another
 		// one writes (pipelineWriteStretchConflicts); otherwise clause by
 		// clause, as Neo4j does.
-		if writes && !pipelineWriteStretchConflicts(clauses[:prefix]) {
+		if writes && !pipelineWriteStretchConflicts(clauses[:prefix], clauses[prefix:]) {
 			var retained []pipelineRow
 			for _, row := range rows {
 				rowScope := make(map[string]struct{}, len(scope))
