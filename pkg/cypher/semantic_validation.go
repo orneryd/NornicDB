@@ -46,6 +46,9 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := validateWithProjectionSemantics(cypher); err != nil {
 		return err
 	}
+	if err := validateAggregatingProjectionScopes(cypher); err != nil {
+		return err
+	}
 	if err := validateExistsSubqueryClauseComposition(cypher); err != nil {
 		return err
 	}

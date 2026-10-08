@@ -130,3 +130,6 @@
 - id: cyphermatching.single_relationship_type_required
   description: Expanded pseudo-locale single relationship type required.
   other: "[!! A single relationship type must be specified for {{.Clause}} !!]"
+- id: cyphermatching.aggregation_scope_variable
+  description: Expanded pseudo-locale variable out of scope after DISTINCT or an aggregation.
+  other: "[!! In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN: {{.Variable}} !!]"

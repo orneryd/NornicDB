@@ -9,6 +9,7 @@ const (
 	MessageCypherMatchingMatchPatternRequired                     MessageID = "cyphermatching.match_pattern_required"
 	MessageCypherMatchingMatchNodePatternRequired                 MessageID = "cyphermatching.match_node_pattern_required"
 	MessageCypherMatchingReturnExpressionRequired                 MessageID = "cyphermatching.return_expression_required"
+	MessageCypherMatchingAggregationScopeVariable                 MessageID = "cyphermatching.aggregation_scope_variable"
 	MessageCypherMatchingReturnExpressionEmpty                    MessageID = "cyphermatching.return_expression_empty"
 	MessageCypherMatchingStorageFailed                            MessageID = "cyphermatching.storage_failed"
 	MessageCypherMatchingCollectSubqueryFailed                    MessageID = "cyphermatching.collect_subquery_failed"
@@ -277,4 +278,13 @@ func CypherMatchingIsNotOperandInvalid(input string) Message {
 // CypherMatchingSingleRelationshipTypeRequired is Neo4j's SyntaxError for alternative relationship types ([:R|S]) in a CREATE or MERGE pattern.
 func CypherMatchingSingleRelationshipTypeRequired(clause string) Message {
 	return cypherMatchingMessage(MessageCypherMatchingSingleRelationshipTypeRequired, "A single relationship type must be specified for "+clause, map[string]any{"Clause": clause})
+}
+
+// CypherMatchingAggregationScopeVariable identifies a WITH or RETURN with
+// DISTINCT or an aggregation whose WHERE or ORDER BY reads a variable that
+// the projection doesn't carry.
+func CypherMatchingAggregationScopeVariable(variable string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingAggregationScopeVariable,
+		"In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN: "+variable,
+		map[string]any{"Variable": variable})
 }
