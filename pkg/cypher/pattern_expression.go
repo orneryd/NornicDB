@@ -210,7 +210,7 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 // evaluator with graph expressions that require storage access. Callers with
 // an execution context use this as the converged expression entry point.
 func evaluateBoundRowValue(expr string, values pipelineRow) (interface{}, bool) {
-	if value, bound := values[expr]; bound {
+	if value, bound := values[expr]; bound && !isLiteralKeyword(expr) {
 		return value, true
 	}
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {

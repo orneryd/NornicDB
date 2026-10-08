@@ -4567,14 +4567,9 @@ func parseLiteralScalarForPipeline(s string) (interface{}, bool) {
 	if isWholeCypherQuotedString(s) {
 		return decodeCypherQuotedString(s)
 	}
-	// Bool.
-	switch lowerASCII(s) {
-	case "true":
-		return true, true
-	case "false":
-		return false, true
-	case "null":
-		return nil, true
+	// true, false, null, NaN, Infinity.
+	if value, ok := literalKeywordValue(s); ok {
+		return value, true
 	}
 	// Int.
 	if i, ok := parseIntFast(s); ok {

@@ -482,7 +482,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		return true
 	}
 	value, ok := row[state.expression]
-	if !ok {
+	if !ok || isLiteralKeyword(state.expression) {
 		value, ok = executor.evaluateRowExpressionWithContext(ctx, state.expression, row)
 	}
 	if !ok {
