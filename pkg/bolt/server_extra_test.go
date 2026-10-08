@@ -20,6 +20,18 @@ import (
 // its Neo4j-compatible error code.
 func failureCodeFromResponse(t *testing.T, data []byte) string {
 	t.Helper()
+	metadata := failureMetadataFromResponse(t, data)
+	code, ok := metadata["code"].(string)
+	if !ok {
+		t.Fatalf("failure metadata missing string code: %#v", metadata)
+	}
+	return code
+}
+
+// failureMetadataFromResponse decodes the metadata of the FAILURE message in
+// data, whose chunks it joins.
+func failureMetadataFromResponse(t *testing.T, data []byte) map[string]any {
+	t.Helper()
 	if len(data) < 4 {
 		t.Fatalf("response too short: %d bytes", len(data))
 	}
@@ -47,11 +59,7 @@ func failureCodeFromResponse(t *testing.T, data []byte) string {
 	if err != nil {
 		t.Fatalf("decode failure metadata: %v", err)
 	}
-	code, ok := metadata["code"].(string)
-	if !ok {
-		t.Fatalf("failure metadata missing string code: %#v", metadata)
-	}
-	return code
+	return metadata
 }
 
 // TestFailureCodeFromResponseConcatenatesChunks verifies that test assertions
@@ -724,6 +732,22 @@ func TestHandleCommitWithTransactionalExecutor(t *testing.T) {
 
 		if !session.inTransaction {
 			t.Error("unknown backend ownership must remain fail-closed on commit error")
+		}
+	})
+
+	t.Run("commit failure keeps the error's conformance detail", func(t *testing.T) {
+		executor := &mockTransactionalExecutor{
+			commitError: &storage.NodeStillConnectedError{NodeID: "nornic:abc", Namespace: "nornic"},
+		}
+		conn := &mockConn{}
+		session := newTestSession(conn, executor)
+		session.inTransaction = true
+		primeTestTransactionLifecycle(t, session)
+
+		_ = session.handleCommit(nil)
+		metadata := failureMetadataFromResponse(t, conn.writeData)
+		if metadata["code"] != "Neo.ClientError.Schema.ConstraintValidationFailed" || metadata["gql_status"] != "DeleteConnectedNode" {
+			t.Fatalf("failure metadata = %#v, want ConstraintValidationFailed with gql_status DeleteConnectedNode", metadata)
 		}
 	})
 
