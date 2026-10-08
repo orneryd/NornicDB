@@ -120,7 +120,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		scope[caseBinding] = caseValue
 		return e.evaluateRowValue(caseBinding+expr[caseEnd:], scope)
 	}
-	if value, ok := values[expr]; ok {
+	if value, ok := values[expr]; ok && !isLiteralKeyword(expr) {
 		return value, true, nil
 	}
 	// A plain property chain on a row variable (e.uuid, n.a.b) can't match

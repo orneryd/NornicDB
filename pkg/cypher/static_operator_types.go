@@ -690,7 +690,7 @@ func endsWithOperand(text string) bool {
 		start--
 	}
 	word := text[start:]
-	return !isCypherKeyword(word) || isBooleanOrNullLiteral(word)
+	return !isCypherKeyword(word) || isLiteralKeyword(word)
 }
 
 // staticMapProjectionSplit splits a map projection (variable{.a, k: v})
@@ -784,7 +784,7 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		if typeName := checker.scope.typeOf(variable); typeName != "" {
 			return knownOperand(typeName), nil
 		}
-		if checker.scope.complete && !checker.scope.bound(variable) && !isBooleanOrNullLiteral(variable) {
+		if checker.scope.complete && !checker.scope.bound(variable) && !isLiteralKeyword(variable) {
 			return staticOperand{}, createUndefinedVariableError(variable)
 		}
 	}

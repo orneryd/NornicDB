@@ -275,6 +275,12 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		}
 		inner := strings.TrimSpace(text[open+1 : closing])
 		inner, _ = cutDistinctArgument(inner)
+		if strings.EqualFold(inner, "ALL") {
+			// f(all) is f's ALL modifier with no argument, as in Neo4j
+			// (count(all) fails "Insufficient parameters"), not a variable
+			// named all (#907).
+			inner = ""
+		}
 		if strings.EqualFold(name, "trim") {
 			if parameters, fromForm := trimFromArguments(inner); fromForm {
 				for _, expression := range parameters {

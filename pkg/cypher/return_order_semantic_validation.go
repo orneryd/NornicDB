@@ -534,8 +534,11 @@ func maskSemanticBraceBodies(expression string) string {
 // isSemanticLiteralWord reports whether an identifier-shaped word is a
 // literal or an operator / expression keyword, not a variable.
 func isSemanticLiteralWord(value string) bool {
+	if isLiteralKeyword(value) {
+		return true
+	}
 	switch upperASCII(value) {
-	case "TRUE", "FALSE", "NULL", "NAN", "ASC", "ASCENDING", "DESC", "DESCENDING",
+	case "ASC", "ASCENDING", "DESC", "DESCENDING",
 		"AND", "IN", "NOT", "OR", "WHERE", "XOR", "IS", "STARTS", "ENDS", "WITH", "CONTAINS",
 		"CASE", "WHEN", "THEN", "ELSE", "END", "DISTINCT":
 		return true

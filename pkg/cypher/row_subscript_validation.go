@@ -35,7 +35,7 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 		receiver := strings.TrimSpace(text[start:index])
 		// A bracket after a keyword (RETURN [..], x IN [..]) opens a list,
 		// not a subscript; true, false and null are values.
-		if !isOperandExpressionText(receiver) || (isCypherKeyword(receiver) && !isBooleanOrNullLiteral(receiver)) {
+		if !isOperandExpressionText(receiver) || (isCypherKeyword(receiver) && !isLiteralKeyword(receiver)) {
 			continue
 		}
 		if _, err := checker.checkPostfix(receiver, text[index+1:end], true); err != nil {

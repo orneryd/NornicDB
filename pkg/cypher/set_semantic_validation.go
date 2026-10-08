@@ -432,8 +432,11 @@ func nextSetExpressionByte(text string, index int) byte {
 }
 
 func setExpressionKeyword(token string) bool {
+	if isLiteralKeyword(token) {
+		return true
+	}
 	switch token {
-	case "NULL", "TRUE", "FALSE", "CASE", "WHEN", "THEN", "ELSE", "END",
+	case "CASE", "WHEN", "THEN", "ELSE", "END",
 		"IN", "WHERE", "AND", "OR", "XOR", "NOT", "IS", "STARTS", "ENDS",
 		"WITH", "CONTAINS", "DISTINCT", "AS":
 		return true
