@@ -308,8 +308,7 @@ func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr strin
 	} else {
 		// Searched CASE: evaluate each WHEN condition
 		for _, clause := range ce.whenClauses {
-			conditionResult := e.evaluateCondition(ctx, clause.condition, nodes, rels)
-			if isTruthy(conditionResult) {
+			if e.evaluateCondition(ctx, clause.condition, nodes, rels) {
 				return e.evaluateExpressionWithContextFull(ctx, clause.result, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			}
 		}
@@ -322,45 +321,46 @@ func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr strin
 	return nil
 }
 
-// evaluateCondition evaluates a boolean condition expression.
+// evaluateCondition reports whether a CASE WHEN (or WITH … WHERE) condition
+// holds: its value read as a predicate (cypherPredicateTruth), so a
+// non-predicate value is a TypeError, recorded on ctx (#907).
 func (e *StorageExecutor) evaluateCondition(ctx context.Context, condition string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
+	truth, err := cypherPredicateTruth(e.conditionValue(ctx, condition, nodes, rels))
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
+	}
+	return truth == truthTrue
+}
+
+// conditionValue is the value of a condition (evaluateCondition): OR, XOR,
+// AND and NOT as everywhere (evaluateLogicalExpression), then the
+// predicates conditions read directly, then any other expression.
+func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
 	condition = strings.TrimSpace(condition)
 	upper := upperASCII(condition)
 
-	// Handle AND - split and evaluate both sides
-	// Need to find AND at top level (not inside parentheses)
-	andIdx := findTopLevelKeyword(condition, " AND ")
-	if andIdx > 0 {
-		left := strings.TrimSpace(condition[:andIdx])
-		right := strings.TrimSpace(condition[andIdx+5:])
-		return e.evaluateCondition(ctx, left, nodes, rels) && e.evaluateCondition(ctx, right, nodes, rels)
-	}
-
-	// Handle OR - split and evaluate both sides
-	orIdx := findTopLevelKeyword(condition, " OR ")
-	if orIdx > 0 {
-		left := strings.TrimSpace(condition[:orIdx])
-		right := strings.TrimSpace(condition[orIdx+4:])
-		return e.evaluateCondition(ctx, left, nodes, rels) || e.evaluateCondition(ctx, right, nodes, rels)
-	}
-
-	// Handle NOT prefix
-	if strings.HasPrefix(upper, "NOT ") {
-		inner := strings.TrimSpace(condition[4:])
-		if truth, ok := inPredicateTruth(inner, func(expr string) interface{} {
-			return e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
-		}); ok {
-			return truth == truthFalse
+	if value, logical, _, err := evaluateLogicalExpression(condition, func(operand string) (interface{}, bool, error) {
+		return e.conditionValue(ctx, operand, nodes, rels), true, nil
+	}); logical {
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil
 		}
-		return !e.evaluateCondition(ctx, inner, nodes, rels)
+		return value
 	}
 
 	resolveComparisonOperand := func(operand string) interface{} {
 		return e.evaluateExpressionWithContext(ctx, operand, nodes, rels)
 	}
+	// IN and NOT IN are unknown for a null in the list (x IN [1, null]).
+	if indexASCIIFold(condition, " in ") >= 0 {
+		if truth, ok := inPredicateTruth(condition, resolveComparisonOperand); ok {
+			return truth.value()
+		}
+	}
 	if result, ok := evaluateComparisonChain(condition, resolveComparisonOperand, compareCypherPredicateValue); ok {
-		matched, _ := result.(bool)
-		return matched
+		return result
 	}
 
 	// Handle IS NULL / IS NOT NULL
@@ -424,9 +424,7 @@ func (e *StorageExecutor) evaluateCondition(ctx context.Context, condition strin
 		}
 	}
 
-	// Otherwise evaluate as expression and check truthiness
-	result := e.evaluateExpressionWithContext(ctx, condition, nodes, rels)
-	return isTruthy(result)
+	return e.evaluateExpressionWithContext(ctx, condition, nodes, rels)
 }
 
 // findTopLevelKeyword finds a keyword at the top level (not inside parentheses or strings)
@@ -629,23 +627,6 @@ func compareWithOperator(left, right interface{}, op string) bool {
 	}
 
 	return false
-}
-
-// isTruthy checks if a value is considered true in a boolean context.
-func isTruthy(val interface{}) bool {
-	if val == nil {
-		return false
-	}
-	if b, ok := val.(bool); ok {
-		return b
-	}
-	if num, ok := toFloat64(val); ok {
-		return num != 0
-	}
-	if str, ok := val.(string); ok {
-		return str != ""
-	}
-	return true
 }
 
 // indexCaseInsensitive finds the index of a keyword in a case-insensitive manner.

@@ -181,52 +181,6 @@ func TestHasLogicalOperator_TopLevelAndQuoteAndParenIsolation(t *testing.T) {
 }
 
 // ============================================================================
-// evaluateLogicalAnd / OR / XOR — every branch including the
-// "expression cannot be split" guard.
-// ============================================================================
-
-func TestEvaluateLogicalAnd_AllBranches(t *testing.T) {
-	e := freshExecutorForOperators(t)
-	ctx := context.Background()
-	nodes := map[string]*storage.Node{}
-	rels := map[string]*storage.Edge{}
-
-	require.Equal(t, true, e.evaluateLogicalAnd(ctx, "true AND true", nodes, rels))
-	require.Equal(t, false, e.evaluateLogicalAnd(ctx, "true AND false", nodes, rels))
-	require.Equal(t, false, e.evaluateLogicalAnd(ctx, "false AND true", nodes, rels),
-		"short-circuit must return false without evaluating right side")
-	require.Nil(t, e.evaluateLogicalAnd(ctx, "true", nodes, rels),
-		"expression without AND must return nil")
-}
-
-func TestEvaluateLogicalOr_AllBranches(t *testing.T) {
-	e := freshExecutorForOperators(t)
-	ctx := context.Background()
-	nodes := map[string]*storage.Node{}
-	rels := map[string]*storage.Edge{}
-
-	require.Equal(t, true, e.evaluateLogicalOr(ctx, "true OR false", nodes, rels))
-	require.Equal(t, true, e.evaluateLogicalOr(ctx, "false OR true", nodes, rels))
-	require.Equal(t, false, e.evaluateLogicalOr(ctx, "false OR false", nodes, rels))
-	require.Nil(t, e.evaluateLogicalOr(ctx, "true", nodes, rels),
-		"expression without OR must return nil")
-}
-
-func TestEvaluateLogicalXor_AllBranches(t *testing.T) {
-	e := freshExecutorForOperators(t)
-	ctx := context.Background()
-	nodes := map[string]*storage.Node{}
-	rels := map[string]*storage.Edge{}
-
-	require.Equal(t, true, e.evaluateLogicalXor(ctx, "true XOR false", nodes, rels))
-	require.Equal(t, true, e.evaluateLogicalXor(ctx, "false XOR true", nodes, rels))
-	require.Equal(t, false, e.evaluateLogicalXor(ctx, "true XOR true", nodes, rels))
-	require.Equal(t, false, e.evaluateLogicalXor(ctx, "false XOR false", nodes, rels))
-	require.Nil(t, e.evaluateLogicalXor(ctx, "true", nodes, rels),
-		"expression without XOR must return nil")
-}
-
-// ============================================================================
 // hasComparisonOperator — every documented operator + negative.
 // ============================================================================
 

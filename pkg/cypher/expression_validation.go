@@ -320,7 +320,9 @@ func (e *StorageExecutor) validateStaticBooleanOperands(ctx context.Context, exp
 		return nil
 	}
 	for _, operator := range []string{" OR ", " XOR ", " AND "} {
-		left, right, found := splitByOperatorWithOptions(expression, operator, true, false)
+		// Only the expression's own operators: not those inside a list, a
+		// comprehension, a map or a CASE.
+		left, right, found := splitByOperatorOutsideCase(expression, operator, true, true)
 		if !found {
 			continue
 		}

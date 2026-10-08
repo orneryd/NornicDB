@@ -1079,14 +1079,6 @@ func TestCypherHelpers_ComparisonConversionAndTemporalHelpers(t *testing.T) {
 
 	assert.True(t, valuesEqual(int64(1), "1"))
 	assert.False(t, valuesEqual(1, 2))
-	assert.False(t, isTruthy(nil))
-	assert.False(t, isTruthy(false))
-	assert.False(t, isTruthy(int64(0)))
-	assert.False(t, isTruthy(""))
-	assert.True(t, isTruthy(true))
-	assert.True(t, isTruthy(2))
-	assert.True(t, isTruthy("x"))
-	assert.True(t, isTruthy(struct{}{}))
 }
 
 func TestCypherHelpers_DatabaseNameAndRemoveNodeFromSearch(t *testing.T) {

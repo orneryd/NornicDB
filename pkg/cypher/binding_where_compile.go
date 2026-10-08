@@ -42,6 +42,22 @@ func (t cypherTruth) not() cypherTruth {
 	}
 }
 
+// xor is Kleene XOR: unknown when either side is unknown.
+func (t cypherTruth) xor(other cypherTruth) cypherTruth {
+	if t == truthUnknown || other == truthUnknown {
+		return truthUnknown
+	}
+	return truthOf(t != other)
+}
+
+// value is the truth as a Cypher value: true, false or null.
+func (t cypherTruth) value() interface{} {
+	if t == truthUnknown {
+		return nil
+	}
+	return t == truthTrue
+}
+
 // truthAndLazy is Kleene AND; right is evaluated only when left is not false.
 func truthAndLazy(left cypherTruth, right func() cypherTruth) cypherTruth {
 	if left == truthFalse {

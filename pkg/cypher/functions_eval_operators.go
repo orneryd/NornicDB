@@ -21,16 +21,6 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	// Boolean/Comparison Operators (must be before property access)
 	// ========================================
 
-	// NOT expr
-	if hasPrefixFoldASCII(expr, "not ") {
-		inner := strings.TrimSpace(expr[4:])
-		result := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if b, ok := result.(bool); ok {
-			return !b
-		}
-		return nil
-	}
-
 	// BETWEEN must be checked before AND (because BETWEEN x AND y uses AND)
 	if betweenLeft, betweenRight, ok := splitByOperatorWithOptions(expr, " BETWEEN ", true, true); ok {
 		value := e.evaluateExpressionWithContextFull(ctx, betweenLeft, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -42,46 +32,15 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 		}
 	}
 
-	// AND operator
-	if left, right, ok := splitByOperatorWithOptions(expr, " AND ", true, false); ok {
-		leftValue := e.evaluateExpressionWithContextFull(ctx, left, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if leftValue == false {
-			return false
-		}
-		rightValue := e.evaluateExpressionWithContextFull(ctx, right, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if rightValue == false {
-			return false
-		}
-		if leftValue == nil || rightValue == nil {
+	// OR, XOR, AND and NOT (evaluateLogicalExpression).
+	if value, logical, _, err := evaluateLogicalExpression(expr, func(operand string) (interface{}, bool, error) {
+		return e.evaluateExpressionWithContextFull(ctx, operand, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), true, nil
+	}); logical {
+		if err != nil {
+			recordExpressionFailure(ctx, err)
 			return nil
 		}
-		return leftValue == true && rightValue == true
-	}
-
-	// OR operator
-	if left, right, ok := splitByOperatorWithOptions(expr, " OR ", true, false); ok {
-		leftValue := e.evaluateExpressionWithContextFull(ctx, left, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if leftValue == true {
-			return true
-		}
-		rightValue := e.evaluateExpressionWithContextFull(ctx, right, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if rightValue == true {
-			return true
-		}
-		if leftValue == nil || rightValue == nil {
-			return nil
-		}
-		return false
-	}
-
-	// XOR operator
-	if left, right, ok := splitByOperatorWithOptions(expr, " XOR ", true, false); ok {
-		leftValue := e.evaluateExpressionWithContextFull(ctx, left, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		rightValue := e.evaluateExpressionWithContextFull(ctx, right, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if leftValue == nil || rightValue == nil {
-			return nil
-		}
-		return (leftValue == true) != (rightValue == true)
+		return value
 	}
 
 	// ========================================

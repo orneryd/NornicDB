@@ -30,19 +30,30 @@ func runtimeTypeError(message string) error {
 	return newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", message)
 }
 
-func predicateTruthFromValue(value interface{}) (cypherTruth, error) {
+// cypherPredicateTruth is a value read as a predicate, as Neo4j reads a
+// WHERE, a CASE WHEN, a list predicate's WHERE and the operands of AND, OR,
+// XOR and NOT (evaluateLogicalExpression): a Boolean is itself, null is
+// unknown, and a list or a path is true when it isn't empty (a conversion
+// Neo4j 5 deprecates but still makes). Any other value is a TypeError (#907).
+func cypherPredicateTruth(value interface{}) (cypherTruth, error) {
 	switch boolean := value.(type) {
 	case bool:
 		return truthOf(boolean), nil
 	case nil:
 		return truthUnknown, nil
+	case *PathResult:
+		return truthOf(boolean != nil), nil
+	case []byte:
 	default:
-		return truthFalse, newSemanticError(
-			"Neo.ClientError.Statement.TypeError",
-			"TypeMismatch",
-			fmt.Sprintf("Type mismatch: expected Boolean but was %s", cypherTypeName(value)),
-		)
+		if kind := reflect.TypeOf(value).Kind(); kind == reflect.Slice || kind == reflect.Array {
+			return truthOf(reflect.ValueOf(value).Len() > 0), nil
+		}
 	}
+	return truthFalse, newSemanticError(
+		"Neo.ClientError.Statement.TypeError",
+		"TypeMismatch",
+		fmt.Sprintf("Type mismatch: expected Boolean but was %s", cypherTypeName(value)),
+	)
 }
 
 func predicateValueIsTrue(ctx context.Context, value interface{}, expression string) bool {
@@ -59,7 +70,7 @@ func predicateValueIsTrue(ctx context.Context, value interface{}, expression str
 			return boolean
 		}
 	}
-	truth, err := predicateTruthFromValue(value)
+	truth, err := cypherPredicateTruth(value)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false

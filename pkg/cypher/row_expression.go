@@ -576,51 +576,16 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		}
 	}
 
-	for _, operator := range []string{" OR ", " XOR ", " AND "} {
-		if left, right, ok := splitByOperatorWithOptions(expr, operator, true, true); ok {
-			leftValue, leftOK, err := e.evaluateRowValue(left, values)
-			if err != nil {
-				return nil, false, err
-			}
-			rightValue, rightOK, err := e.evaluateRowValue(right, values)
-			if err != nil {
-				return nil, false, err
-			}
-			if !leftOK || !rightOK {
-				return nil, false, nil
-			}
-			if _, err := predicateTruthFromValue(leftValue); err != nil {
-				return nil, false, err
-			}
-			if _, err := predicateTruthFromValue(rightValue); err != nil {
-				return nil, false, err
-			}
-			value, ok := evaluateRowBooleanOperator(strings.TrimSpace(operator), leftValue, rightValue)
-			return value, ok, nil
-		}
-	}
-
-	// NOT binds less tightly than comparisons and postfix predicates. Parsing
-	// it before those operators makes the complete remainder its operand, so
-	// `NOT a = b`, `NOT a IS NULL`, and `NOT a IN xs` follow Cypher's grammar.
-	if len(expr) > len("NOT") && strings.EqualFold(expr[:len("NOT")], "NOT") &&
-		(isASCIISpace(expr[len("NOT")]) || expr[len("NOT")] == '(') {
-		value, ok, err := e.evaluateRowValue(strings.TrimSpace(expr[len("NOT"):]), values)
-		if err != nil {
+	// OR, XOR, AND and NOT (evaluateLogicalExpression). NOT binds less
+	// tightly than comparisons and postfix predicates, so NOT a = b, NOT a
+	// IS NULL and NOT a IN xs negate the whole remainder.
+	if value, logical, ok, err := evaluateLogicalExpression(expr, func(operand string) (interface{}, bool, error) {
+		return e.evaluateRowValue(operand, values)
+	}); logical {
+		if err != nil || !ok {
 			return nil, false, err
 		}
-		if !ok {
-			return nil, false, nil
-		}
-		if value == nil {
-			return nil, true, nil
-		}
-		boolean, ok := value.(bool)
-		if !ok {
-			_, err := predicateTruthFromValue(value)
-			return nil, false, err
-		}
-		return !boolean, true, nil
+		return value, true, nil
 	}
 
 	// =~ raises a type or pattern error, which the comparison chain can't.
@@ -1291,7 +1256,24 @@ func (e *StorageExecutor) evaluateRowCaseExpression(expr string, values map[stri
 		}
 	} else {
 		for _, clause := range parsed.whenClauses {
-			if e.evaluateRowPredicate(context.Background(), clause.condition, values) {
+			// The condition's value read as a predicate (cypherPredicateTruth):
+			// a non-predicate value is a TypeError (#907). A form only the
+			// predicate evaluator reads (a pattern, EXISTS) is evaluated there.
+			condition, evaluated, err := e.evaluateRowValue(clause.condition, values)
+			if err != nil {
+				return nil, false, err
+			}
+			matched := false
+			if evaluated {
+				truth, err := cypherPredicateTruth(condition)
+				if err != nil {
+					return nil, false, err
+				}
+				matched = truth == truthTrue
+			} else {
+				matched = e.evaluateRowPredicate(context.Background(), clause.condition, values)
+			}
+			if matched {
 				return e.evaluateRowValue(clause.result, values)
 			}
 		}
@@ -1340,7 +1322,7 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 			if !evaluated {
 				return nil, true, false, nil
 			}
-			truth, err := predicateTruthFromValue(condition)
+			truth, err := cypherPredicateTruth(condition)
 			if err != nil {
 				return nil, true, false, err
 			}
@@ -1691,39 +1673,6 @@ func stripEnclosingRowDelimiter(expr string, open, close byte) (string, bool) {
 	return strings.TrimSpace(expr[1 : len(expr)-1]), true
 }
 
-func evaluateRowBooleanOperator(operator string, left, right interface{}) (interface{}, bool) {
-	leftBool, leftIsBool := left.(bool)
-	rightBool, rightIsBool := right.(bool)
-	if (left != nil && !leftIsBool) || (right != nil && !rightIsBool) {
-		return nil, false
-	}
-	switch operator {
-	case "AND":
-		if (leftIsBool && !leftBool) || (rightIsBool && !rightBool) {
-			return false, true
-		}
-		if left == nil || right == nil {
-			return nil, true
-		}
-		return leftBool && rightBool, true
-	case "OR":
-		if (leftIsBool && leftBool) || (rightIsBool && rightBool) {
-			return true, true
-		}
-		if left == nil || right == nil {
-			return nil, true
-		}
-		return false, true
-	case "XOR":
-		if left == nil || right == nil {
-			return nil, true
-		}
-		return leftBool != rightBool, true
-	default:
-		return nil, false
-	}
-}
-
 func rowSubscriptIndex(value interface{}) (int, bool) {
 	switch number := value.(type) {
 	case int:
@@ -1901,38 +1850,21 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 // the predicate is evaluated from its text. A planned part whose operand the
 // plan can't resolve directly is evaluated here.
 func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expression string, values map[string]interface{}) bool {
-	if left, right, ok := splitByOperatorWithOptions(expression, " OR ", true, true); ok {
-		return e.evaluateRowPredicateParts(ctx, left, values) || e.evaluateRowPredicateParts(ctx, right, values)
-	}
-	if left, right, ok := splitByOperatorWithOptions(expression, " XOR ", true, true); ok {
-		leftValue, leftOK := e.rowPredicateOperand(ctx, left, values)
-		rightValue, rightOK := e.rowPredicateOperand(ctx, right, values)
-		if !leftOK || !rightOK || leftValue == nil || rightValue == nil {
-			return false
-		}
-		leftBool, leftBoolean := leftValue.(bool)
-		rightBool, rightBoolean := rightValue.(bool)
-		return leftBoolean && rightBoolean && leftBool != rightBool
-	}
-	if left, right, ok := splitByOperatorWithOptions(expression, " AND ", true, true); ok {
-		return e.evaluateRowPredicateParts(ctx, left, values) && e.evaluateRowPredicateParts(ctx, right, values)
-	}
-	// EXISTS and NOT EXISTS are complete predicates. Resolve both before the
-	// generic NOT operator so a subquery is evaluated against its correlated
-	// typed row bindings rather than being treated as a scalar expression.
+	// EXISTS and NOT EXISTS are complete predicates, evaluated against the
+	// row's correlated typed bindings rather than as a scalar NOT.
 	if matched, recognized := e.evaluateRowExistsPredicate(ctx, expression, values); recognized {
 		return matched
 	}
-	if hasPrefixFoldASCII(expression, "NOT ") {
-		inner := strings.TrimSpace(expression[4:])
-		if value, resolved := e.rowPredicateOperand(ctx, inner, values); resolved {
-			if value == nil {
-				return false
-			}
-			boolean, isBoolean := value.(bool)
-			return isBoolean && !boolean
+	// OR, XOR, AND and NOT (evaluateLogicalExpression) over the operands'
+	// values (rowPredicateValue); the result is read as a predicate.
+	if value, logical, ok, err := evaluateLogicalExpression(expression, func(operand string) (interface{}, bool, error) {
+		return e.rowPredicateValue(ctx, operand, values), true, nil
+	}); logical {
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return false
 		}
-		return !e.evaluateRowPredicateParts(ctx, inner, values)
+		return ok && predicateValueIsTrue(ctx, value, expression)
 	}
 	if plan := planRowSubqueries(expression); plan != nil {
 		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
@@ -2050,6 +1982,17 @@ func evaluateCypherSizeInteger(value interface{}) (int64, bool, error) {
 		return 0, false, nil
 	}
 	return int64(reflect.ValueOf(value).Len()), true, nil
+}
+
+// rowPredicateValue is the value of an operand of a row predicate's AND,
+// OR, XOR or NOT: its expression value (rowPredicateOperand), or, for a
+// predicate form only the predicate evaluator reads (a pattern, EXISTS),
+// whether it holds.
+func (e *StorageExecutor) rowPredicateValue(ctx context.Context, operand string, values map[string]interface{}) interface{} {
+	if value, resolved := e.rowPredicateOperand(ctx, operand, values); resolved {
+		return value
+	}
+	return e.evaluateRowPredicateParts(ctx, operand, values)
 }
 
 // rowPredicateOperand evaluates an operand of a row predicate. An error is
