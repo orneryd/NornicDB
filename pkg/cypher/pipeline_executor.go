@@ -67,6 +67,11 @@ const (
 type pipelineClause struct {
 	kind pipelineClauseKind
 	text string
+	// optional marks OPTIONAL CALL (kinds pipelineClauseCall and
+	// pipelineClauseCallSubquery; text is the CALL itself): an input row the
+	// call produces no row for is kept, with null for the call's columns
+	// (#907).
+	optional bool
 }
 
 // pipelineMatchPhysicalHint describes downstream row requirements that a
@@ -305,13 +310,21 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 	// from context and respect node bindings supplied by the caller.
 	if topLevelKeywordIndex(cypher, "CALL") >= 0 {
 		topLevelCall = true
-		keywords = append(keywords, kw{"CALL", pipelineClauseCall})
+		keywords = append(keywords, kw{"OPTIONAL CALL", pipelineClauseCall}, kw{"CALL", pipelineClauseCall})
 	}
 
 	// Collect boundary positions for each supported keyword.
 	var boundaries []pipelineBoundary
 	for _, k := range keywords {
 		for _, p := range findAllTopLevelPipelineKeywordPositions(cypher, k.name) {
+			if k.name == "CALL" {
+				// OPTIONAL CALL is one clause, unless optional is a variable.
+				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
+				if end := len(strings.TrimRight(cypher[:p], " \t\n\r")); strings.HasSuffix(preceding, "OPTIONAL") &&
+					!clauseKeywordUsedAsName(cypher, end-len("OPTIONAL"), end, "OPTIONAL") {
+					continue
+				}
+			}
 			if k.kind == pipelineClauseMatch {
 				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
 				// OPTIONAL MATCH is one clause, unless optional is a variable
@@ -376,16 +389,55 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 			continue
 		}
 		kind := b.kind
-		if b.name == "CALL" {
+		optional := b.name == "OPTIONAL CALL"
+		if optional {
+			text = strings.TrimSpace(text[len("OPTIONAL"):])
+		}
+		if b.name == "CALL" || optional {
 			if startsWithCallSubquery(text) {
 				kind = pipelineClauseCallSubquery
 			} else if !pipelineProcedureCallsAreClauses(text) {
 				return nil, false, topLevelCall
 			}
 		}
-		out = append(out, pipelineClause{kind: kind, text: text})
+		out = append(out, pipelineClause{kind: kind, text: text, optional: optional})
 	}
 	return out, true, topLevelCall
+}
+
+// pipelineApplyOptionally runs an OPTIONAL CALL (pipelineClause.optional)
+// over rows one row at a time through apply, which returns the call's rows
+// for one input row and the call's column names. An input row the call
+// produces no row for is kept, with null for each of the call's columns, as
+// Neo4j's OPTIONAL CALL does (#907). *ok reports false when apply can't run
+// the call.
+func pipelineApplyOptionally(rows []pipelineRow, apply func(row []pipelineRow) ([]pipelineRow, []string, bool, error), ok *bool) ([]pipelineRow, error) {
+	out := make([]pipelineRow, 0, len(rows))
+	for index := range rows {
+		produced, columns, handled, err := apply(rows[index : index+1])
+		if err != nil {
+			return nil, err
+		}
+		if !handled {
+			*ok = false
+			return nil, nil
+		}
+		if len(produced) > 0 {
+			out = append(out, produced...)
+			continue
+		}
+		kept := make(pipelineRow, len(rows[index])+len(columns))
+		for name, value := range rows[index] {
+			kept[name] = value
+		}
+		for _, name := range columns {
+			if _, bound := kept[name]; !bound {
+				kept[name] = nil
+			}
+		}
+		out = append(out, kept)
+	}
+	return out, nil
 }
 
 // findAllTopLevelPipelineKeywordPositions returns clause boundaries outside
@@ -835,7 +887,19 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return remaining, handled, err
 			}
 		case pipelineClauseCall:
-			newRows, yielded, ok, err := e.pipelineApplyProcedureCall(ctx, rows, clause.text)
+			var newRows []pipelineRow
+			var yielded []string
+			ok := true
+			var err error
+			if clause.optional {
+				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
+					rowsOut, names, handled, err := e.pipelineApplyProcedureCall(ctx, row, clause.text)
+					yielded = names
+					return rowsOut, names, handled, err
+				}, &ok)
+			} else {
+				newRows, yielded, ok, err = e.pipelineApplyProcedureCall(ctx, rows, clause.text)
+			}
 			if err != nil {
 				return nil, true, err
 			}
@@ -851,7 +915,23 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 		case pipelineClauseCallSubquery:
 			callMetadata := &pipelineCallMetadata{scope: scope}
-			newRows, stats, ok, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, rows, clause.text, callMetadata)
+			var newRows []pipelineRow
+			var stats *QueryStats
+			ok := true
+			var err error
+			if clause.optional {
+				body, _, _, _ := e.parseCallSubquery(clause.text)
+				columns := e.inferTopLevelReturnColumns(body)
+				stats = &QueryStats{}
+				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
+					rowsOut, rowStats, handled, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, row, clause.text, callMetadata)
+					addQueryStats(stats, rowStats)
+					return rowsOut, columns, handled, err
+				}, &ok)
+				callMetadata.columns = columns
+			} else {
+				newRows, stats, ok, err = e.pipelineApplyCallSubqueryWithMetadata(ctx, rows, clause.text, callMetadata)
+			}
 			addQueryStats(result.Stats, stats)
 			if err != nil {
 				return result, true, err

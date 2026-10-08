@@ -176,7 +176,8 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE"),
 		startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY"):
 		return e.executeKnowledgePolicyDDL(ctx, cypher)
-	case startsWithKeywords(cypher, "OPTIONAL", "MATCH"):
+	case startsWithKeywords(cypher, "OPTIONAL", "MATCH"),
+		startsWithKeywords(cypher, "OPTIONAL", "CALL"):
 		return e.executeRequiredPipeline(ctx, cypher)
 	case startsWithMatch:
 		return e.executeRequiredPipeline(ctx, cypher)
