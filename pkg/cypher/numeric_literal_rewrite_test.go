@@ -38,6 +38,10 @@ func TestNumericLiteralDigitGroupingMatchesNeo4j(t *testing.T) {
 		{"RETURN 0x1_F AS v", int64(31)},
 		{"RETURN 0x1F_E AS v", int64(510)},
 		{"RETURN 0o1_7 AS v", int64(15)},
+		// A NornicDB extension kept from before (#907): Neo4j 5 rejects the
+		// uppercase prefixes, NornicDB reads them as 0x and 0o.
+		{"RETURN 0X1F AS v", int64(31)},
+		{"RETURN 0O17 AS v", int64(15)},
 		{"RETURN 0o_17 AS v", int64(15)},
 		{"RETURN 0x7FFF_FFFF_FFFF_FFFF AS v", int64(9223372036854775807)},
 		{"RETURN 9_223_372_036_854_775_807 AS v", int64(9223372036854775807)},
@@ -93,9 +97,6 @@ func TestNumericLiteralDigitGroupingMatchesNeo4j(t *testing.T) {
 		"RETURN 01_0 AS v",
 		"RETURN 01 AS v",
 		"RETURN 00 AS v",
-		"RETURN 0X1F AS v",
-		"RETURN 0X1_f AS v",
-		"RETURN 0O17 AS v",
 		"RETURN 0x8000_0000_0000_0000 AS v",
 		"RETURN 9_223_372_036_854_775_808 AS v",
 		"RETURN [1,2,3][0_1..2] AS v",
