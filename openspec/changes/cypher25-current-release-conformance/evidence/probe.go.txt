@@ -1,0 +1,90 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/cypher"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+func main() {
+	cases := []struct{ ID, Query string }{
+		{"P01", "CYPHER 25 RETURN 1 AS v"},
+		{"P02", "CYPHER 5 RETURN 1 AS v"},
+		{"P03", "LET x = 2 RETURN x + 1 AS v"},
+		{"P04", "UNWIND [1, 2, 3] AS x FILTER x > 1 RETURN x ORDER BY x"},
+		{"P05", "FOR x IN [1, 2] RETURN x ORDER BY x"},
+		{"P06", "RETURN 1 AS x NEXT RETURN x + 1 AS v"},
+		{"P07", "WHEN true THEN RETURN 1 AS v ELSE RETURN 2 AS v"},
+		{"P08", "{ RETURN 1 AS v UNION RETURN 1 AS v } UNION ALL RETURN 2 AS v"},
+		{"P09", "RETURN ALL 1 AS v"},
+		{"P10", "WITH ALL 1 AS v RETURN v"},
+		{"P11", "UNWIND [1, 1, 2] AS x RETURN x, count(*) AS c GROUP BY x"},
+		{"P12", "WITH {a: 1, b: 2} AS m RETURN {k: v IN m | k: v * 10} AS v"},
+		{"P13", "WITH 'Ada' AS name RETURN s\"Hello, {name}!\" AS v"},
+		{"P14", "RETURN cardinality({a: 1, b: 2}) AS v"},
+		{"P15", "RETURN coll.distinct([1, 1, 2]) AS v"},
+		{"P16", "RETURN string.join(['a', 'b'], ',') AS v"},
+		{"P17", "RETURN format(date('2020-01-02'), 'dd/MM/yyyy') AS v"},
+		{"P18", "RETURN date('02/01/2020', 'dd/MM/yyyy') AS v"},
+		{"P19", "RETURN valueType(uuid('550e8400-e29b-41d4-a716-446655440000')) AS v"},
+		{"P20", "RETURN valueType(vector([1, 2, 3], 3, INTEGER)) AS v"},
+		{"P21", "RETURN allReduce(acc = 0, x IN [1, 2] | acc + x, acc < 4) AS v"},
+		{"P22", "RETURN stDev(null) AS v"},
+		{"P23", "RETURN toString({a: 1}) AS v"},
+		{"P24", "RETURN replace('hello', 'l', '', 1) AS v"},
+		{"P25", "RETURN ceiling(1.2) AS v, sinh(0) AS s, char_length('abc') AS c"},
+		{"P26", "RETURN ln(1) AS v"},
+		{"P27", "MATCH DIFFERENT RELATIONSHIPS (a)-[r]->(b) RETURN count(r) AS v"},
+		{"P28", "MATCH REPEATABLE ELEMENTS p = (a:Start)-[:R]->{1,3}(b:End) RETURN length(p) AS v"},
+		{"P29", "MATCH p = ANY SHORTEST (a:Start)-[:R]->{1,3}(b:End) RETURN length(p) AS v"},
+		{"P30", "MATCH p = ACYCLIC (a:Start)-[:R]->{1,3}(b:End) RETURN length(p) AS v"},
+		{"P31", "MATCH (n) WHERE PROPERTY_EXISTS(n, 'x') RETURN count(n) AS v"},
+		{"P32", "MATCH (n) RETURN n IS LABELED Start AS v"},
+		{"P33", "MATCH (n) SEARCH n IN (VECTOR INDEX missing FOR [1.0, 0.0] LIMIT 2) RETURN n"},
+		{"P34", "SHOW CURRENT GRAPH TYPE"},
+		{"P35", "SHOW FUNCTIONS YIELD name FILTER name = 'ceil' RETURN name"},
+		{"P36", "SHOW TRANSACTIONS null"},
+		{"P37", "RETURN $0hello AS v"},
+		{"P38", "RETURN sinh(0) AS v"},
+		{"P39", "RETURN char_length('abc') AS v"},
+		{"P40", "MATCH p = (a:Start)-[:R]->{1,3}(b:End) RETURN length(p) AS v"},
+		{"P41", "MATCH (n:$( 'Start' )) RETURN count(n) AS v"},
+		{"P42", "RETURN valueType(1) AS v"},
+		{"P43", "MATCH (n) WHERE n.x IS NOT NULL RETURN count(n) AS v"},
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	for _, parser := range []string{"nornic", "antlr"} {
+		config.SetParserType(parser)
+		for _, c := range cases {
+			store := storage.NewMemoryEngine()
+			exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "probe"))
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, err := exec.Execute(ctx, "CREATE (a:Start {x: 1})-[:R]->(b:End {x: 2})", nil)
+			if err != nil {
+				panic(err)
+			}
+			result, err := exec.Execute(ctx, c.Query, map[string]interface{}{"0hello": int64(7)})
+			row := map[string]interface{}{"id": c.ID, "parser": parser, "query": c.Query}
+			if err != nil {
+				code, _ := nornicerrors.Neo4jStatus(err)
+				row["code"], row["error"] = code, err.Error()
+			} else {
+				row["columns"], row["rows"] = result.Columns, result.Rows
+			}
+			cancel()
+			if err := store.Close(); err != nil {
+				panic(err)
+			}
+			if err := encoder.Encode(row); err != nil {
+				panic(fmt.Errorf("encode %s: %w", c.ID, err))
+			}
+		}
+	}
+}

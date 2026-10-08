@@ -1,8 +1,17 @@
 # NornicDB Cypher Compatibility
 
 **Date**: November 26, 2025  
-**Status**: Complete — production ready  
-**Purpose**: Comprehensive audit of Cypher implementation against Neo4j
+**Status**: Historical feature inventory; not a complete language conformance claim
+
+**Purpose**: Inventory of implemented Cypher features and native extensions
+
+The original inventory below predates Cypher 25 acceptance testing and is not
+proof of current Neo4j parity. The [Cypher 25 audit and catch-up plan](../../openspec/changes/cypher25-current-release-conformance/README.md)
+records explicit version rejection, missing features and executable evidence.
+It plans additive support with query prefixes overriding
+`NORNICDB_CYPHER_VERSION=5|25`, without persisted database-language migration
+or removal of existing APIs. Native schema extensions below are not necessarily
+Neo4j syntax. No full Cypher 25 or ISO GQL compliance is claimed.
 
 ---
 
