@@ -1055,8 +1055,9 @@ func isLeadingWithFollower(word string) bool {
 // subquery's body: whether any UNION branch (or the body, without UNION)
 // starts with an importing WITH (branchLeadingWithImport), and the
 // variables those WITHs list. A branch that imports nothing adds none,
-// whatever the other branches import, and sees no outer variable, as in
-// Neo4j 5.26 (#907). A CALL with a scope clause has no importing WITH
+// whatever the other branches import (#907); it still reads outer variables
+// through NornicDB's implicit import (pipelineApplyCallSubqueryWithMetadata).
+// A CALL with a scope clause has no importing WITH
 // (callSubqueryHasScopeClause).
 //
 // names is filled only when collectNames.

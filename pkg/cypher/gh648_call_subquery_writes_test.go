@@ -75,20 +75,50 @@ func TestGh648_WriteSubqueryWithoutImportsRunsPerRow(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:T {id: 1}), (:T {id: 2}), (:T {id: 3})", nil)
 	require.NoError(t, err)
 
-	// The body reads the outer variable without importing it: Neo4j
-	// 5.26.30 rejects it ("Variable `n` not defined", #907). With the
-	// import it runs once per outer row.
-	_, err = exec.Execute(ctx, "MATCH (n:T) CALL { CREATE (:X {from: n.id}) } RETURN n.id AS id ORDER BY id", nil)
-	require.Error(t, err)
-	code, _ := nornicerrors.Neo4jStatus(err)
-	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
-	result, err := exec.Execute(ctx, "MATCH (n:T) CALL { WITH n CREATE (:X {from: n.id}) } RETURN n.id AS id ORDER BY id", nil)
+	// The body references the outer variable without a (n) import list:
+	// NornicDB imports it implicitly and runs the body once per outer row
+	// (an extension: Neo4j 5.26.30 rejects it, TestGh648_ImplicitImportExtension).
+	result, err := exec.Execute(ctx, "MATCH (n:T) CALL { CREATE (:X {from: n.id}) } RETURN n.id AS id ORDER BY id", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}, {int64(3)}}, result.Rows)
 
 	count, err := exec.Execute(ctx, "MATCH (x:X) RETURN count(x) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), count.Rows[0][0], "one X per outer row")
+}
+
+// An unscoped CALL { … } body reads outer variables it doesn't import with a
+// leading WITH or a (vars) scope clause. This is an intentional NornicDB
+// extension, kept at the project owner's direction (#907): Neo4j 5.26.30
+// rejects every statement below with "Variable `x` not defined"
+// (SyntaxError). It covers the body, each UNION branch, and reads after a
+// local projection or a MATCH in the body.
+func TestGh648_ImplicitImportExtension(t *testing.T) {
+	exec := newGh648Executor(t)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:CQ {id: 1})", nil)
+	require.NoError(t, err)
+	for _, testCase := range []struct {
+		query string
+		rows  [][]interface{}
+	}{
+		{"UNWIND [1] AS i CALL { RETURN i AS j } RETURN j", [][]interface{}{{int64(1)}}},
+		{"WITH 1 AS i CALL { WITH i RETURN i AS j UNION RETURN i AS j } RETURN j", [][]interface{}{{int64(1)}}},
+		{"WITH 1 AS v CALL { RETURN 2 AS x UNION RETURN v AS x } RETURN x ORDER BY x", [][]interface{}{{int64(1)}, {int64(2)}}},
+		{"WITH 1 AS i CALL { MATCH (n:CQ) WHERE n.id = i RETURN n.id AS v } RETURN v", [][]interface{}{{int64(1)}}},
+		{"WITH 1 AS i, 2 AS z CALL { WITH i RETURN i + z AS j } RETURN j", [][]interface{}{{int64(3)}}},
+	} {
+		t.Run(testCase.query, func(t *testing.T) {
+			result, err := exec.Execute(ctx, testCase.query, nil)
+			require.NoError(t, err)
+			require.Equal(t, testCase.rows, result.Rows)
+		})
+	}
+	// A leading WITH that reads no outer variable can't define one.
+	_, err = exec.Execute(ctx, "MATCH (:CQ) CALL { WITH seed RETURN seed } RETURN 1 AS v", nil)
+	require.Error(t, err)
+	code, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
 }
 
 func TestGh648_UncorrelatedUnitSubqueryRunsPerRow(t *testing.T) {

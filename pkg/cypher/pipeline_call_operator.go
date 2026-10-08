@@ -88,10 +88,13 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			return nil, nil, true, importErr
 		}
 	}
-	// CALL (*) imports every outer variable the body reads. An unscoped
-	// subquery without an importing WITH imports nothing (#907).
+	// CALL (*) imports every outer variable the body reads. So does an
+	// unscoped subquery without an importing WITH: a NornicDB extension.
+	// Neo4j 5.26 rejects the outer variable there ("Variable `n` not
+	// defined"); NornicDB keeps running such statements as before, since
+	// the import is unambiguous (#907, kept at the owner's direction).
 	imports := scopedImports
-	if scopedImports == nil && scoped && len(rows) > 0 {
+	if scopedImports == nil && (scoped || !hasLegacyImports) && len(rows) > 0 {
 		for name := range rows[0] {
 			if !strings.HasPrefix(name, "$") && isIdentifierReferenced(body, name) {
 				imports = append(imports, name)
