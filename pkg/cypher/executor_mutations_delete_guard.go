@@ -266,38 +266,72 @@ func pipelineUnwindAlias(clause string) string {
 // "MATCH (a)-[r]->(b) DELETE a, r"); edgeIDs holds every edge this
 // statement is about to remove, so those are subtracted before the check.
 func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) error {
-	if len(nodeIDs) == 0 {
-		return nil
+	beingDeleted := deletingEdgeSet(edgeIDs)
+	for _, nodeID := range nodeIDs {
+		connected, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
+		if err != nil {
+			return err
+		}
+		if connected {
+			return residualRelationshipDeleteError(nodeID)
+		}
 	}
+	return nil
+}
 
+// connectedDeleteTargets returns the nodes of nodeIDs that relationships
+// other than edgeIDs (this DELETE's own) still connect: a non-DETACH DELETE
+// deletes them for now, and the transaction's commit fails unless a later
+// clause deletes those relationships, as in Neo4j
+// (storage.ConnectedNodeDeleter).
+func connectedDeleteTargets(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) (map[storage.NodeID]struct{}, error) {
+	beingDeleted := deletingEdgeSet(edgeIDs)
+	var connected map[storage.NodeID]struct{}
+	for _, nodeID := range nodeIDs {
+		residual, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
+		if err != nil {
+			return nil, err
+		}
+		if residual {
+			if connected == nil {
+				connected = make(map[storage.NodeID]struct{})
+			}
+			connected[nodeID] = struct{}{}
+		}
+	}
+	return connected, nil
+}
+
+func deletingEdgeSet(edgeIDs []storage.EdgeID) map[storage.EdgeID]struct{} {
 	beingDeleted := make(map[storage.EdgeID]struct{}, len(edgeIDs))
 	for _, id := range edgeIDs {
 		beingDeleted[id] = struct{}{}
 	}
+	return beingDeleted
+}
 
-	for _, nodeID := range nodeIDs {
-		outgoing, err := store.GetOutgoingEdges(nodeID)
-		if err != nil {
-			return err
-		}
-		for _, edge := range outgoing {
-			if _, deleting := beingDeleted[edge.ID]; !deleting {
-				return residualRelationshipDeleteError(nodeID)
-			}
-		}
-
-		incoming, err := store.GetIncomingEdges(nodeID)
-		if err != nil {
-			return err
-		}
-		for _, edge := range incoming {
-			if _, deleting := beingDeleted[edge.ID]; !deleting {
-				return residualRelationshipDeleteError(nodeID)
-			}
+// nodeHasResidualRelationships reports whether a relationship other than
+// those beingDeleted connects nodeID.
+func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
+	outgoing, err := store.GetOutgoingEdges(nodeID)
+	if err != nil {
+		return false, err
+	}
+	for _, edge := range outgoing {
+		if _, deleting := beingDeleted[edge.ID]; !deleting {
+			return true, nil
 		}
 	}
-
-	return nil
+	incoming, err := store.GetIncomingEdges(nodeID)
+	if err != nil {
+		return false, err
+	}
+	for _, edge := range incoming {
+		if _, deleting := beingDeleted[edge.ID]; !deleting {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // residualRelationshipDeleteError builds the error returned when a

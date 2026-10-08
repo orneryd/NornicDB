@@ -1489,8 +1489,17 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	}
 	nodeIDs, edgeIDs := collectDeleteMutationTargets(projected)
 	store := e.getStorage(ctx)
+	// A node relationships still connect is deleted for now and checked at
+	// commit, when the transaction can hold it (connectedNodeDeletes); a
+	// store without transactions checks here.
+	var connected map[storage.NodeID]struct{}
 	if !detach {
-		if err := validateNoResidualRelationships(store, nodeIDs, edgeIDs); err != nil {
+		if _, deferred := store.(storage.ConnectedNodeDeleter); deferred {
+			var err error
+			if connected, err = connectedDeleteTargets(store, nodeIDs, edgeIDs); err != nil {
+				return nil, true, err
+			}
+		} else if err := validateNoResidualRelationships(store, nodeIDs, edgeIDs); err != nil {
 			return nil, true, err
 		}
 	}
@@ -1521,7 +1530,11 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	}
 	stats := &QueryStats{RelationshipsDeleted: len(deletedEdges)}
 	for _, nodeID := range nodeIDs {
-		if err := store.DeleteNode(nodeID); err != nil {
+		deleteNode := store.DeleteNode
+		if _, stillConnected := connected[nodeID]; stillConnected {
+			deleteNode = store.(storage.ConnectedNodeDeleter).DeleteConnectedNode
+		}
+		if err := deleteNode(nodeID); err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
 			}

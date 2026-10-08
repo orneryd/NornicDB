@@ -109,6 +109,12 @@ type BadgerTransaction struct {
 	cancelledEdgeWrites map[EdgeID]struct{}
 	deletedNodes        map[NodeID]struct{}
 	deletedEdges        map[EdgeID]struct{}
+	// connectedDeletes are nodes a non-DETACH DELETE deleted while
+	// relationships still connected them (DeleteConnectedNode), with their
+	// state before: deleted for scans and lookups by label, still the
+	// endpoints of those relationships, and deleted for good at commit when
+	// none is left (resolveConnectedDeletesLocked). Nil until the first one.
+	connectedDeletes map[NodeID]*Node
 	// snapshotLabelNodes retains completed, immutable label streams for the
 	// lifetime of this pinned snapshot. Bounded/aborted streams are never
 	// cached, so LIMIT preserves early termination and memory proportionality.
@@ -1241,8 +1247,13 @@ func (tx *BadgerTransaction) DeleteNode(nodeID NodeID) error {
 		}
 	}
 
-	// Delete with the same semantics as BadgerEngine.DeleteNode (cascade edges + embedding cleanup),
-	// but buffer all writes for batch commit.
+	return tx.deleteNodeLocked(nodeID, oldNode)
+}
+
+// deleteNodeLocked deletes nodeID, whose state before is oldNode, with the
+// same semantics as BadgerEngine.DeleteNode (cascade edges + embedding
+// cleanup), buffering every write for the batch commit.
+func (tx *BadgerTransaction) deleteNodeLocked(nodeID NodeID, oldNode *Node) error {
 	edgesDeleted, deletedEdgeIDs, err := tx.deleteNodeBuffered(nodeID, oldNode)
 	if err != nil {
 		return err
@@ -1262,6 +1273,93 @@ func (tx *BadgerTransaction) DeleteNode(nodeID NodeID) error {
 		DeletedEdgeIDs: deletedEdgeIDs,
 	})
 
+	return nil
+}
+
+// DeleteConnectedNode deletes a node that relationships still connect, as a
+// non-DETACH DELETE does in Neo4j: the relationships stay, and the
+// transaction's commit fails (NodeStillConnectedError) unless they are
+// deleted before it. Until then the node is deleted for scans, lookups by
+// label and a second DELETE (ErrNotFound), and is still the endpoint the
+// relationships lead to (GetNode, RelationshipEndpointVisible), so that a
+// later clause can match and delete them:
+//
+//	MATCH (n {id: 1}) DELETE n WITH 1 AS one MATCH ({id: 2})-[r]-() DELETE r
+func (tx *BadgerTransaction) DeleteConnectedNode(nodeID NodeID) error {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+
+	if err := tx.ensureDataWriteAllowedLocked(); err != nil {
+		return err
+	}
+	if nodeID == "" {
+		return ErrInvalidID
+	}
+	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
+		return err
+	}
+	if _, deleted := tx.deletedNodes[nodeID]; deleted {
+		return ErrNotFound
+	}
+	if err := tx.materializeDeferredEdgesLocked(); err != nil {
+		return err
+	}
+	var oldNode *Node
+	if pending, exists := tx.pendingNodes[nodeID]; exists {
+		oldNode = copyNode(pending)
+	} else {
+		var err error
+		if oldNode, err = tx.getCommittedNodeLocked(nodeID); err != nil {
+			return err
+		}
+	}
+	if tx.connectedDeletes == nil {
+		tx.connectedDeletes = make(map[NodeID]*Node)
+	}
+	tx.connectedDeletes[nodeID] = oldNode
+	tx.deletedNodes[nodeID] = struct{}{}
+	return nil
+}
+
+// resolveConnectedDeletesLocked finishes the deletes of DeleteConnectedNode at
+// commit: a node no relationship connects any more is deleted for good; one
+// that is still connected fails the commit, as Neo4j's DeleteConnectedNode
+// constraint does. Nodes are checked in ID order, so the error names the
+// same node every time.
+func (tx *BadgerTransaction) resolveConnectedDeletesLocked() error {
+	if len(tx.connectedDeletes) == 0 {
+		return nil
+	}
+	ids := make([]NodeID, 0, len(tx.connectedDeletes))
+	for id := range tx.connectedDeletes {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		for _, direction := range [...]EdgeDirection{Outgoing, Incoming} {
+			committed, err := tx.getCommittedAdjacentEdgesLocked(id, direction)
+			if err != nil {
+				return err
+			}
+			remaining := tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
+				if direction == Outgoing {
+					return edge.StartNode == id
+				}
+				return edge.EndNode == id
+			})
+			if len(remaining) > 0 {
+				return &NodeStillConnectedError{NodeID: id, Namespace: tx.namespace}
+			}
+		}
+	}
+	for _, id := range ids {
+		oldNode := tx.connectedDeletes[id]
+		delete(tx.deletedNodes, id)
+		if err := tx.deleteNodeLocked(id, oldNode); err != nil {
+			return err
+		}
+	}
+	tx.connectedDeletes = nil
 	return nil
 }
 
@@ -1695,6 +1793,11 @@ func (tx *BadgerTransaction) GetNode(nodeID NodeID) (*Node, error) {
 		return nil, err
 	}
 
+	// A node deleted while relationships still connect it is still their
+	// endpoint (DeleteConnectedNode).
+	if node, connected := tx.connectedDeletes[nodeID]; connected {
+		return copyNode(node), nil
+	}
 	// Check deleted
 	if _, deleted := tx.deletedNodes[nodeID]; deleted {
 		return nil, ErrNotFound
@@ -1722,6 +1825,9 @@ func (tx *BadgerTransaction) RelationshipEndpointVisible(id NodeID) (visible, an
 	defer tx.mu.Unlock()
 	if tx.ensureLifecycleActiveLocked() != nil || tx.pinNamespaceFromIDLocked(string(id)) != nil {
 		return false, false
+	}
+	if _, connected := tx.connectedDeletes[id]; connected {
+		return true, true
 	}
 	if _, deleted := tx.deletedNodes[id]; deleted {
 		return false, true
@@ -2388,6 +2494,13 @@ func (tx *BadgerTransaction) Commit() error {
 	}
 	defer releaseCommitLocks()
 
+	// Nodes a non-DETACH DELETE left connected: deleted now, or the commit
+	// fails (DeleteConnectedNode).
+	if err := tx.resolveConnectedDeletesLocked(); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
+
 	// Final constraint validation before commit
 	if err := tx.validateAllConstraints(); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
@@ -2764,7 +2877,9 @@ func (tx *BadgerTransaction) GetMetadata() map[string]interface{} {
 func (tx *BadgerTransaction) OperationCount() int {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
-	return len(tx.operations)
+	// A delete DeleteConnectedNode left for the commit to finish counts:
+	// the commit deletes the node or fails.
+	return len(tx.operations) + len(tx.connectedDeletes)
 }
 
 func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error) {
