@@ -642,6 +642,7 @@ func TestBranchDeclaresVariable(t *testing.T) {
 		{"MATCH (m {n: 1}), (n) RETURN m", "n", true},
 		{"MATCH (m) WHERE m.n = 1 RETURN $n, 'n'", "n", false},
 		{"MATCH (m {k: [n]}) RETURN m", "n", false},
+		{"MATCH (m {k: size(n)}) RETURN m", "n", false},
 		{"RETURN 1 AS x", "n", false},
 		{"SET n.p = 1", "n", false},
 		{"MATCH (m) RETURN `n`", "n", false},
