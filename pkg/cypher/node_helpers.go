@@ -362,41 +362,19 @@ func (e *StorageExecutor) applyArraySuffix(collected []interface{}, suffix strin
 	// Extract the index/slice expression inside [ ]
 	indexExpr := suffix[1 : len(suffix)-1]
 
-	// Check for slice notation [..N] or [N..M] or [N..]
-	if strings.Contains(indexExpr, "..") {
-		parts := strings.SplitN(indexExpr, "..", 2)
-		startIdx := int64(0)
-		endIdx := int64(len(collected))
-
-		if parts[0] != "" {
-			if n, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64); err == nil {
-				startIdx = n
-			}
+	// Slice notation [..N], [N..M] or [N..] (cypherListSlice); the bounds
+	// are integer literals here.
+	if lowerExpr, upperExpr, isSlice := strings.Cut(indexExpr, ".."); isSlice {
+		lowerExpr, upperExpr = strings.TrimSpace(lowerExpr), strings.TrimSpace(upperExpr)
+		var lower, upper interface{}
+		if n, err := strconv.ParseInt(lowerExpr, 10, 64); err == nil {
+			lower = n
 		}
-		if len(parts) > 1 && parts[1] != "" {
-			if n, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64); err == nil {
-				endIdx = n
-			}
+		if n, err := strconv.ParseInt(upperExpr, 10, 64); err == nil {
+			upper = n
 		}
-
-		// Handle negative indices
-		if startIdx < 0 {
-			startIdx = int64(len(collected)) + startIdx
-		}
-		if endIdx < 0 {
-			endIdx = int64(len(collected)) + endIdx
-		}
-		// Clamp
-		if startIdx < 0 {
-			startIdx = 0
-		}
-		if endIdx > int64(len(collected)) {
-			endIdx = int64(len(collected))
-		}
-		if startIdx >= endIdx {
-			return []interface{}{}
-		}
-		return collected[startIdx:endIdx]
+		value, _ := cypherListSlice(collected, lower, upper, lower != nil, upper != nil)
+		return value
 	}
 
 	// Single index access [N]

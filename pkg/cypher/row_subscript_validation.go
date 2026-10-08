@@ -85,10 +85,9 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		if !baseOK || base == nil {
 			return nil
 		}
-		baseType := reflect.TypeOf(base)
-		if baseType == nil || (baseType.Kind() != reflect.Slice && baseType.Kind() != reflect.Array) {
-			return invalidSubscriptTypeError("slice receiver must be a LIST", base)
-		}
+		// A value that isn't a list is sliced as a list of it
+		// (cypherListSlice); a type known before the statement runs is
+		// checked statically.
 		for _, boundExpression := range []string{strings.TrimSpace(indexExpression[:rangeIndex]), strings.TrimSpace(indexExpression[rangeIndex+2:])} {
 			if boundExpression == "" {
 				continue
