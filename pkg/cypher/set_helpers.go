@@ -51,7 +51,6 @@ import (
 	"time"
 
 	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
-	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -154,7 +153,8 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 // The "embedding" property is treated like any other property — it is stored in
 // node.Properties and indexed normally. Managed embeddings (from WITH EMBEDDING
 // or the background worker) are stored separately in node.ChunkEmbeddings via
-// ApplyManagedEmbedding and are not affected by user property writes.
+// ApplyManagedEmbedding; storage keeps or invalidates them when the node is
+// updated, by whether the change touches the embedding source (#963).
 //
 // # Parameters
 //
@@ -162,13 +162,6 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 //   - propName: The property name
 //   - value: The value to set
 func setNodeProperty(node *storage.Node, propName string, value interface{}) {
-	// For managed embeddings (ChunkEmbeddings), any mutation to non-metadata properties
-	// should invalidate the embedding so it can be regenerated. This prevents stale
-	// embeddings after SET/REMOVE operations.
-	if !embeddingutil.IsMetadataPropertyKey(propName) {
-		embeddingutil.InvalidateManagedEmbeddings(node)
-	}
-
 	if node.Properties == nil {
 		node.Properties = make(map[string]interface{})
 	}

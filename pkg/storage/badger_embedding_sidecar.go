@@ -200,8 +200,9 @@ var embeddingSourceCheckedHook atomic.Pointer[func()]
 
 // checkEmbeddingSourceInTxn reads the stored node in txn and reports
 // ErrNotFound when it is gone and ErrEmbeddingSourceChanged when its
-// properties or labels differ from embedded's, the copy the embedding was
-// computed from (#889). The read is conflict-tracked by txn.
+// embedding source (the properties and labels the embedding text policy
+// feeds) differs from embedded's, the copy the embedding was computed from
+// (#889, #963). The read is conflict-tracked by txn.
 func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node) error {
 	item, err := txn.Get(nodeKey(embedded.ID))
 	if errors.Is(err, badger.ErrKeyNotFound) {
@@ -218,37 +219,10 @@ func (b *BadgerEngine) checkEmbeddingSourceInTxn(txn *badger.Txn, embedded *Node
 	if err != nil {
 		return err
 	}
-	if !sameEmbeddingSource(stored, embedded) {
+	if !b.sameEmbeddingSource(stored, embedded) {
 		return ErrEmbeddingSourceChanged
 	}
 	return nil
-}
-
-// sameEmbeddingSource reports whether two copies of a node have the same
-// labels (in any order) and the same properties, comparing values as stored
-// values rather than by Go type: a copy taken from a cache may hold an int or
-// a []string where a decoded one holds an int64 or a []any.
-func sameEmbeddingSource(a, b *Node) bool {
-	if len(a.Labels) != len(b.Labels) || len(a.Properties) != len(b.Properties) {
-		return false
-	}
-	labels := make(map[string]int, len(a.Labels))
-	for _, label := range a.Labels {
-		labels[label]++
-	}
-	for _, label := range b.Labels {
-		if labels[label] == 0 {
-			return false
-		}
-		labels[label]--
-	}
-	for name, value := range a.Properties {
-		other, ok := b.Properties[name]
-		if !ok || !sameStoredValue(value, other) {
-			return false
-		}
-	}
-	return true
 }
 
 // sameStoredValue compares two property values as stored values: numbers by

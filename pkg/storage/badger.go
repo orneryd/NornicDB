@@ -356,6 +356,9 @@ type BadgerEngine struct {
 	// will consume it — saves one Badger Set per user node on hot-path writes.
 	embeddingsEnabled      atomic.Bool
 	embeddingLabelPolicies atomic.Pointer[embeddingLabelPolicies]
+	// embeddingTextPolicy says which properties and labels feed managed
+	// embedding text (SetEmbeddingTextPolicy, #963).
+	embeddingTextPolicy atomic.Pointer[EmbeddingTextPolicy]
 
 	// log is the structured *slog.Logger for storage subsystem emissions.
 	// Tagged at construction with component=storage, engine=badger.

@@ -415,6 +415,11 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		if node.UpdatedAt.IsZero() {
 			node.UpdatedAt = time.Now()
 		}
+		// The body write is authoritative: nil embeddings clear them and new
+		// ones replace them; ones carried over unchanged are dropped when the
+		// embedding source changed, and the sidecar cleanup below removes
+		// them from storage too (#963).
+		dropStaleCarriedEmbeddings(b, existingNode, node)
 
 		if err := b.validateNodeConstraintsInTxn(txn, node, schema, dbName, node.ID); err != nil {
 			return err

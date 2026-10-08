@@ -45,6 +45,7 @@ import (
 	"github.com/google/uuid"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/encryption"
 	"github.com/orneryd/nornicdb/pkg/inference"
@@ -1009,6 +1010,8 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	if be := unwrapToBadgerEngine(db.baseStorage); be != nil {
 		be.SetEmbeddingsEnabled(config.Memory.EmbeddingEnabled)
 		be.SetEmbeddingLabelPolicy("", config.EmbeddingWorker.EligibleLabels, config.EmbeddingWorker.ExcludedLabels)
+		be.SetEmbeddingTextPolicy(embeddingutil.TextPolicy(embeddingutil.EmbedTextOptionsFromFields(
+			config.EmbeddingWorker.PropertiesInclude, config.EmbeddingWorker.PropertiesExclude, config.EmbeddingWorker.IncludeLabels)))
 	}
 
 	// Initialize knowledge-layer decay: wire scorer into BadgerEngine read paths.

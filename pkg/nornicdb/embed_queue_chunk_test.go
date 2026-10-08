@@ -190,8 +190,8 @@ func TestNonFileNodeChunking(t *testing.T) {
 		_, ok := node.Properties["chunk_embeddings"]
 		assert.False(t, ok, "chunk_embeddings should NOT be in properties (opaque to users)")
 
-		// Update node with new property
-		node.Properties["updated"] = true
+		// Update node with a property that doesn't feed the embedding text
+		node.Properties["updatedAt"] = "2026-10-08T00:00:00Z"
 		err = engine.UpdateNode(node)
 		require.NoError(t, err)
 
@@ -200,7 +200,15 @@ func TestNonFileNodeChunking(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, updatedNode.ChunkEmbeddings, "ChunkEmbeddings should be preserved")
 		assert.Equal(t, originalChunkCount, len(updatedNode.ChunkEmbeddings), "Chunk count should be preserved")
-		assert.True(t, updatedNode.Properties["updated"].(bool), "New property should be added")
+		assert.Equal(t, "2026-10-08T00:00:00Z", updatedNode.Properties["updatedAt"], "New property should be added")
+
+		// A change to the embedded text leaves the old vectors behind
+		// (#963): the node is embedded again.
+		updatedNode.Properties["content"] = "Different content."
+		require.NoError(t, engine.UpdateNode(updatedNode))
+		changedNode, err := engine.GetNode("test-node")
+		require.NoError(t, err)
+		assert.Empty(t, changedNode.ChunkEmbeddings, "stale ChunkEmbeddings should be dropped")
 	})
 }
 

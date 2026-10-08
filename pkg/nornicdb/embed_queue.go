@@ -1777,6 +1777,19 @@ func NewEmbedQueue(embedder embed.Embedder, storage storage.Engine, config *Embe
 }
 
 // Enqueue is now just a trigger - tells worker to check for work.
+//
+// A write to the node ends its recently-processed wait (wasRecentlyProcessed):
+// the wait covers the worker's own embedding write becoming visible, not a
+// later change to the node, which may have changed its embedding source and
+// is checked at once (#963). nodeID may carry its database prefix or not.
 func (ew *EmbedWorker) Enqueue(nodeID string) {
+	ew.mu.Lock()
+	for id := range ew.recentlyProcessed {
+		if id == nodeID || strings.HasSuffix(id, ":"+nodeID) {
+			delete(ew.recentlyProcessed, id)
+			delete(ew.loggedSkip, id)
+		}
+	}
+	ew.mu.Unlock()
 	ew.Trigger()
 }

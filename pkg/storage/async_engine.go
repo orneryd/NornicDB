@@ -860,7 +860,11 @@ func rebaseNodeUpdate(base, pending, latest *Node) *Node {
 // view entries from the object it replaces. Every nodeCache write goes
 // through here, so the pending view always matches the cache. Caller holds
 // ae.mu.
+// The cache keeps its own copy, and readers get copies of it, so neither the
+// writer nor a reader changing its node object changes the queued write
+// (#963).
 func (ae *AsyncEngine) setCachedNodeLocked(node *Node) {
+	node = copyNodeForCaller(node)
 	ae.pending.replace(ae.nodeCache[node.ID], node)
 	ae.nodeCache[node.ID] = node
 }
@@ -1022,6 +1026,13 @@ func (ae *AsyncEngine) UpdateNode(node *Node) error {
 	// Cached creates remain creates while in flight. Flush promotes a newer
 	// queued object only once the outstanding write succeeds.
 
+	// Readers see the queued copy until it flushes, so stale embeddings
+	// carried over with a changed embedding source go now (#963).
+	previous := ae.nodeCache[node.ID]
+	if previous == nil {
+		previous = ae.nodeUpdateBaseline[node.ID]
+	}
+	dropStaleCarriedEmbeddings(ae.engine, previous, node)
 	ae.setCachedNodeLocked(node)
 	ae.pendingWrites++
 	ae.graphMutationVersions.changed(namespaceForNodeID(node.ID))
@@ -1310,7 +1321,7 @@ func (ae *AsyncEngine) GetNode(id NodeID) (*Node, error) {
 	// Check cache
 	if node, ok := ae.nodeCache[id]; ok {
 		ae.mu.RUnlock()
-		return node, nil
+		return copyNodeForCaller(node), nil
 	}
 	ae.mu.RUnlock()
 
@@ -1444,7 +1455,7 @@ func (ae *AsyncEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 			if !ae.deleteNodes[id] && nodeIDInScope(id, scope) {
 				if node := ae.nodeCache[id]; node != nil {
 					ae.mu.RUnlock()
-					return node, nil
+					return copyNodeForCaller(node), nil
 				}
 			}
 		}
@@ -1495,7 +1506,7 @@ func (ae *AsyncEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 			if node == nil {
 				continue
 			}
-			cachedNodes = append(cachedNodes, node)
+			cachedNodes = append(cachedNodes, copyNodeForCaller(node))
 		}
 	}
 	ae.mu.RUnlock()
@@ -1531,7 +1542,7 @@ func (ae *AsyncEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 		}
 		if cached, overridden := ae.nodeCache[node.ID]; overridden {
 			if cached != nil && hasLabel(cached.Labels, label) {
-				result = append(result, cached)
+				result = append(result, copyNodeForCaller(cached))
 				seenIDs[node.ID] = true
 			}
 			continue
@@ -1619,7 +1630,7 @@ func (ae *AsyncEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 
 		// Check cache first
 		if node, exists := ae.nodeCache[id]; exists {
-			result[id] = node
+			result[id] = copyNodeForCaller(node)
 			continue
 		}
 
