@@ -56,7 +56,7 @@ import (
 // applySetMapMergeToNode applies SET n += <expr>: every key of the map (or of
 // the node / relationship) is written, and a null value removes the key.
 // Row bindings from UNWIND / WITH that travel in the parameter context are
-// visible to the expression. Non-map values are an error (setMergeMap).
+// visible to the expression. Non-map values are an error (setSourceMap).
 func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, writes *setWrites) error {
 	if node == nil {
 		return nil
@@ -94,7 +94,7 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 		}
 		evalCtx = withValueBindings(ctx, values)
 	}
-	props, err := e.setMergeMap(evalCtx, rightExpr, nodes, rels)
+	props, err := e.setSourceMap(evalCtx, rightExpr, "+=", nodes, rels)
 	if err != nil {
 		return err
 	}

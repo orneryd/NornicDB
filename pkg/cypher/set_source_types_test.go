@@ -60,6 +60,15 @@ func TestSetSourceTypesMatchNeo4j(t *testing.T) {
 		{bound + "SET n = 1 RETURN n {.*} AS v", "Neo.ClientError.Statement.SyntaxError"},
 		{bound + "SET r += 'x' RETURN r {.*} AS v", "Neo.ClientError.Statement.SyntaxError"},
 		{bound + "SET n = {a: 1} {.*} RETURN n {.*} AS v", "Neo.ClientError.Statement.SyntaxError"},
+		// A variable whose type WITH or UNWIND fixes is typed before the
+		// statement runs, rows or not; null reads the same for = and +=.
+		{"WITH 5 AS s MATCH (n:Q {id: 1}) SET n = s RETURN 1 AS v", "Neo.ClientError.Statement.SyntaxError"},
+		{"WITH 5 AS s MATCH (n:Nope) SET n = s RETURN 1 AS v", "Neo.ClientError.Statement.SyntaxError"},
+		{"UNWIND [5] AS s MATCH (n:Q {id: 1}) SET n += s RETURN 1 AS v", "Neo.ClientError.Statement.SyntaxError"},
+		{"WITH [1] AS s MATCH (n:Q {id: 1}) SET n = s RETURN 1 AS v", "Neo.ClientError.Statement.SyntaxError"},
+		{"WITH 'x' AS s MATCH (n:Q {id: 1}) SET n = s RETURN 1 AS v", "Neo.ClientError.Statement.SyntaxError"},
+		{"WITH null AS x MATCH (n:Q {id: 1}) SET n = x RETURN 1 AS v", "Neo.ClientError.Statement.TypeError"},
+		{"WITH null AS x MATCH (n:Q {id: 1}) SET n += x RETURN 1 AS v", "Neo.ClientError.Statement.TypeError"},
 	} {
 		t.Run(testCase.query, func(t *testing.T) {
 			_, err := inRolledBackTransaction(testCase.query)
@@ -72,4 +81,14 @@ func TestSetSourceTypesMatchNeo4j(t *testing.T) {
 	result, err := exec.Execute(ctx, "MATCH (n:Q {id: 1}) RETURN n {.*} AS v", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{map[string]interface{}{"id": int64(1), "s": "ab"}}}, result.Rows)
+
+	// Copying from an entity without properties clears them.
+	for _, query := range []string{
+		"CREATE (e:E) WITH e MATCH (n:Q {id: 1}) SET n = e RETURN n {.*} AS v",
+		"CREATE (e:E) WITH e MATCH (:Q {id: 1})-[r:R]->() SET r = e RETURN r {.*} AS v",
+	} {
+		result, err := inRolledBackTransaction(query)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{map[string]interface{}{}}}, result.Rows, query)
+	}
 }

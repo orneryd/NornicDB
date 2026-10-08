@@ -984,16 +984,15 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 			}
 			switch {
 			case operator == "=" && propName == "":
-				props, err := e.setReplacementMap(ctx, right, nodeContext, fullRelContext)
+				props, err := e.setSourceMap(ctx, right, "=", nodeContext, fullRelContext)
 				if err != nil {
 					return writes.count, err
 				}
-				if props != nil {
-					writes.mapEntries(edge.Properties, props, true)
-					edge.Properties = setPropertyMap(props)
-				}
+				// A source without properties (an empty node) clears them.
+				writes.mapEntries(edge.Properties, props, true)
+				edge.Properties = setPropertyMap(props)
 			case operator == "+=":
-				props, err := e.setMergeMap(ctx, right, nodeContext, fullRelContext)
+				props, err := e.setSourceMap(ctx, right, "+=", nodeContext, fullRelContext)
 				if err != nil {
 					return writes.count, err
 				}
@@ -1066,14 +1065,13 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 				return err
 			}
 		case operator == "=" && propName == "":
-			props, err := e.setReplacementMap(ctx, right, fullContext, relContext)
+			props, err := e.setSourceMap(ctx, right, "=", fullContext, relContext)
 			if err != nil {
 				return err
 			}
-			if props != nil {
-				writes.mapEntries(node.Properties, props, true)
-				node.Properties = setPropertyMap(props)
-			}
+			// A source without properties (an empty node) clears them.
+			writes.mapEntries(node.Properties, props, true)
+			node.Properties = setPropertyMap(props)
 		case operator == ":":
 			labelExpr := right
 			if labelExpr == "" {
@@ -1139,11 +1137,15 @@ func (e *StorageExecutor) setPropertyValue(ctx context.Context, expr string, nod
 	return value, nil
 }
 
-// setReplacementMap evaluates the right-hand side of SET x = <expr>: a map, or
-// a node / relationship whose properties are copied. It returns (nil, nil)
-// for null, which leaves the entity unchanged, and an error for any other
-// value or for a map holding a value a property cannot store.
-func (e *StorageExecutor) setReplacementMap(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (map[string]interface{}, error) {
+// setSourceMap evaluates the right-hand side of SET x = <expr> or
+// SET x += <expr> (operator): a map, or a node / relationship whose
+// properties are copied. Any other value, null included, is a TypeError
+// (setPropertyMapValue, #907), as is a map holding a value a property cannot
+// store. An inline literal the evaluator hands back unresolved, as its own
+// text, goes through the literal parser. Both operators read their source
+// the same way; every SET route (pipeline, MERGE actions, FOREACH, the UNWIND
+// batch routes) calls this.
+func (e *StorageExecutor) setSourceMap(ctx context.Context, expr, operator string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (map[string]interface{}, error) {
 	if err := requireSetParameter(ctx, expr); err != nil {
 		return nil, err
 	}
@@ -1153,31 +1155,11 @@ func (e *StorageExecutor) setReplacementMap(ctx context.Context, expr string, no
 	}
 	if !ok {
 		value = e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels)
+		if text, isText := value.(string); isText && strings.TrimSpace(text) == strings.TrimSpace(expr) {
+			value = e.parseValue(ctx, strings.TrimSpace(expr))
+		}
 	}
-	return setPropertyMapValue(value, "=")
-}
-
-// setMergeMap evaluates the right-hand side of SET x += <expr> with the same
-// rules as setReplacementMap. Unresolved inline literals fall back to the
-// literal parser.
-func (e *StorageExecutor) setMergeMap(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (map[string]interface{}, error) {
-	if err := requireSetParameter(ctx, expr); err != nil {
-		return nil, err
-	}
-	if v, ok := resolveDirectParamRef(ctx, expr); ok {
-		return setPropertyMapValue(v, "+=")
-	}
-	if v, ok := resolveContextPathRef(ctx, expr); ok {
-		return setPropertyMapValue(v, "+=")
-	}
-	evaluated := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
-	if s, ok := evaluated.(string); ok && strings.TrimSpace(s) == strings.TrimSpace(expr) {
-		evaluated = e.parseValue(ctx, strings.TrimSpace(expr))
-	}
-	if evaluated == nil {
-		evaluated = e.parseValue(ctx, strings.TrimSpace(expr))
-	}
-	return setPropertyMapValue(evaluated, "+=")
+	return setPropertyMapValue(value, operator)
 }
 
 // splitSetAssignment splits one SET assignment into its target variable,

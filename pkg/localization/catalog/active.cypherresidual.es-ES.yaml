@@ -34,8 +34,6 @@
   other: "patrón no válido: {{.Pattern}}"
 - id: cypherresidual.set_merge_map_or_parameter_required
   other: 'SET += requiere un mapa o parámetro (recibido: "{{.Value}}")'
-- id: cypherresidual.set_assignment_invalid
-  other: 'asignación SET no válida: "{{.Assignment}}" (se esperaba n.property = value o n:Label)'
 - id: cypherresidual.set_entity_assignment_invalid
   other: 'asignación SET no válida: "{{.Assignment}}" (se esperaba variable.property = value o variable = {property: value}): {{.Cause}}'
 - id: cypherresidual.collect_subquery_syntax_invalid

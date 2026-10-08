@@ -50,8 +50,10 @@ func TestTypeErrorMessagesNameCypherTypes(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:TypeNames {a: 1})", nil)
 	require.NoError(t, err)
 	for query, want := range map[string]string{
-		"MATCH (n:TypeNames) WITH n, 1 AS v SET n = v":         "got type Integer",
-		"MATCH (n:TypeNames) WITH n, [1, 'a'] AS v SET n += v": "got type List",
+		// Sources whose type is only known at run time (a mixed list's
+		// element); a statically typed one fails before the statement runs.
+		"MATCH (n:TypeNames) UNWIND [1, 'a'] AS v WITH n, v LIMIT 1 SET n = v":       "got type Integer",
+		"MATCH (n:TypeNames) UNWIND [[1, 'a'], 2] AS v WITH n, v LIMIT 1 SET n += v": "got type List",
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)

@@ -21,7 +21,6 @@ const (
 	MessageCypherResidualCreateWithExpressionInvalid    MessageID = "cypherresidual.create_with_expression_invalid"
 	MessageCypherResidualMergePatternInvalid            MessageID = "cypherresidual.merge_pattern_invalid"
 	MessageCypherResidualSetMergeMapOrParameterRequired MessageID = "cypherresidual.set_merge_map_or_parameter_required"
-	MessageCypherResidualSetAssignmentInvalid           MessageID = "cypherresidual.set_assignment_invalid"
 	MessageCypherResidualSetEntityAssignmentInvalid     MessageID = "cypherresidual.set_entity_assignment_invalid"
 	MessageCypherResidualCollectSubquerySyntaxInvalid   MessageID = "cypherresidual.collect_subquery_syntax_invalid"
 	MessageCypherResidualCollectSubqueryReturnRequired  MessageID = "cypherresidual.collect_subquery_return_required"
@@ -125,11 +124,6 @@ func CypherResidualMergePatternInvalid(pattern string) Message {
 // CypherResidualSetMergeMapOrParameterRequired identifies an invalid SET += source.
 func CypherResidualSetMergeMapOrParameterRequired(value string) Message {
 	return cypherResidualMessage(MessageCypherResidualSetMergeMapOrParameterRequired, fmt.Sprintf("SET += requires a map or parameter (got: %q)", value), map[string]any{"Value": value})
-}
-
-// CypherResidualSetAssignmentInvalid identifies malformed SET assignment syntax.
-func CypherResidualSetAssignmentInvalid(assignment string) Message {
-	return cypherResidualMessage(MessageCypherResidualSetAssignmentInvalid, fmt.Sprintf("invalid SET assignment: %q (expected n.property = value or n:Label)", assignment), map[string]any{"Assignment": assignment})
 }
 
 // CypherResidualSetEntityAssignmentInvalid identifies a wrapped invalid entity assignment.

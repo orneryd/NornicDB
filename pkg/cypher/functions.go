@@ -102,13 +102,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		// row evaluator's (evaluateRowMapProjection), whatever evaluates it:
 		// SET n = o {.s} among others (#907).
 		if _, _, projection := rowMapProjectionSplit(expr); projection {
-			row := entityRow(nodes, rels)
-			for name, value := range valueBindingsFromContext(ctx) {
-				if _, bound := row[name]; !bound {
-					row[name] = value
-				}
-			}
-			value, _ := e.evaluateRowExpressionWithContext(ctx, expr, row)
+			value, _ := e.evaluateRowExpressionWithContext(ctx, expr, entityRow(nodes, rels))
 			return value
 		}
 	}

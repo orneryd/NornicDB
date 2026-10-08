@@ -1815,7 +1815,7 @@ func pipelineSimplePropertyAssignment(assignments []string) (target, property, e
 // x.p = v, x += map and x:L1:L2 with a bound-identifier target, a non-empty
 // right-hand side, a parseable inline map for += and a valid label chain
 // (setLabelChain). The source type of x = and x += is checked after the
-// variables (setSourceLiteralTypeError, validateSetClauseScope). Forms are split by
+// variables (setSourceTypeError, validateSetClauseScope). Forms are split by
 // splitSetAssignment, the splitter the applicators use.
 func validatePipelineSetAssignments(assignments []string) error {
 	for _, raw := range assignments {
@@ -4929,19 +4929,43 @@ func precededByOptionalKeyword(cypher string, position int) bool {
 		!clauseKeywordUsedAsName(cypher, end-len("OPTIONAL"), end, "OPTIONAL")
 }
 
-// setSourceLiteralTypeError rejects SET x = <source> and SET x += <source>
-// (property "") whose source is a literal of a type other than a map: Neo4j
-// 5.26 types it before the statement runs ("Type mismatch: expected Map, Node
-// or Relationship"). A null source passes here and is a TypeError when the
-// SET runs (setPropertyMapValue), as in Neo4j (#907).
-func setSourceLiteralTypeError(property, operator, source string) error {
+// setSourceTypeError rejects SET x = <source> and SET x += <source>
+// (property "") whose source has a static type other than a map, node or
+// relationship: a literal, or a variable or parameter whose type types /
+// params give (propertyAccessExpressionType, the owner of static expression
+// types). Neo4j 5.26 types it before the statement runs ("Type mismatch:
+// expected Map, Node or Relationship"). A source of unknown type, null
+// included, is checked when the SET runs (setPropertyMapValue), as in Neo4j
+// (#907).
+func setSourceTypeError(property, operator, source string, types map[string]string, params map[string]interface{}) error {
 	if property != "" || (operator != "=" && operator != "+=") {
 		return nil
 	}
-	switch typeName := staticLiteralTypeName(source); typeName {
-	case "", "Map", "Null":
+	switch typeName := propertyAccessExpressionType(source, types, params); typeName {
+	case "", "Map", "Node", "Relationship":
 		return nil
 	default:
 		return typeNameMismatchError("Map, Node or Relationship", typeName)
 	}
+}
+
+// setClauseSourceTypeError is setSourceTypeError for the assignments of a
+// SET clause whose source is a variable or parameter, with the static types
+// of the variables in scope. Literal sources are checked with each item's
+// scope check (validateSetClauseScope), in item order, as Neo4j reports them.
+func setClauseSourceTypeError(clause string, types map[string]string, params map[string]interface{}) error {
+	body := strings.TrimSpace(clause)
+	if startsWithKeywordFold(body, "SET") {
+		body = body[len("SET"):]
+	}
+	for _, assignment := range splitSetAssignments(body) {
+		_, property, operator, source := splitSetAssignment(assignment)
+		if staticLiteralTypeName(source) != "" {
+			continue
+		}
+		if err := setSourceTypeError(property, operator, source, types, params); err != nil {
+			return err
+		}
+	}
+	return nil
 }
