@@ -617,6 +617,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphermutations.set_merge_variable_required", Constructor: "CypherMutationsSetMergeVariableRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphermutations.set_property_entity_required", Constructor: "CypherMutationsSetPropertyEntityRequired", Fields: []string{"Property", "Variable"}, PluralForms: []string{"other"}},
 	{ID: "cyphermutations.set_property_failed", Constructor: "CypherMutationsSetPropertyFailed", Fields: []string{"Cause", "Property", "Variable"}, PluralForms: []string{"other"}},
+	{ID: "cyphermutations.set_source_not_map", Constructor: "CypherMutationsSetSourceNotMap", Fields: []string{"Operator", "Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphermutations.unknown_set_merge_variable", Constructor: "CypherMutationsUnknownSetMergeVariable", Fields: []string{"Variable"}, PluralForms: []string{"other"}},
 	{ID: "cyphermutations.unknown_set_variable", Constructor: "CypherMutationsUnknownSetVariable", Fields: []string{"Variable"}, PluralForms: []string{"other"}},
 	{ID: "cyphermutations.unwind_as_required", Constructor: "CypherMutationsUnwindASRequired", Fields: []string{}, PluralForms: []string{"other"}},

@@ -6,7 +6,6 @@ package cypher
 import (
 	"context"
 
-	"fmt"
 
 	"strconv"
 	"strings"
@@ -1237,19 +1236,18 @@ func requireSetParameter(ctx context.Context, expr string) error {
 
 // setPropertyMapValue converts a SET x = / x += source value into the property
 // map to write: maps as-is, nodes and relationships by their properties
-// (propertyMapForSetValue). Null yields (nil, nil). Anything else, or a map
-// holding a value a property cannot store, is an error.
+// (propertyMapForSetValue). Anything else is a TypeError, null included (Neo4j
+// 5.26: "Expected Null() to be a map", #907), as is a map holding a value a
+// property cannot store.
 func setPropertyMapValue(value interface{}, operator string) (map[string]interface{}, error) {
-	if value == nil {
-		return nil, nil
+	typeName := "NULL"
+	if value != nil {
+		typeName = cypherTypeName(value)
 	}
 	props, ok := propertyMapForSetValue(value)
-	if !ok {
-		return nil, newSemanticError(
-			"Neo.ClientError.Statement.TypeError",
-			"InvalidArgumentType",
-			fmt.Sprintf("SET %s requires a map, node or relationship, got type %s", operator, cypherTypeName(value)),
-		)
+	if value == nil || !ok {
+		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+			localization.CypherMutationsSetSourceNotMap(operator, typeName))
 	}
 	for _, v := range props {
 		if err := validateSetPropertyValue(v); err != nil {

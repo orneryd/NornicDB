@@ -30,6 +30,7 @@ const (
 	MessageCypherMutationsSetAssignmentParameterNameRequired  MessageID = "cyphermutations.set_assignment_parameter_name_required"
 	MessageCypherMutationsSetAssignmentParametersRequired     MessageID = "cyphermutations.set_assignment_parameters_required"
 	MessageCypherMutationsSetAssignmentParameterNotFound      MessageID = "cyphermutations.set_assignment_parameter_not_found"
+	MessageCypherMutationsSetSourceNotMap                     MessageID = "cyphermutations.set_source_not_map"
 	MessageCypherMutationsReplaceNodePropertiesFailed         MessageID = "cyphermutations.replace_node_properties_failed"
 	MessageCypherMutationsReplaceEdgePropertiesFailed         MessageID = "cyphermutations.replace_edge_properties_failed"
 	MessageCypherMutationsUnknownSetVariable                  MessageID = "cyphermutations.unknown_set_variable"
@@ -604,4 +605,10 @@ func CypherMutationsForeachInRequired() Message {
 // CypherMutationsForeachSeparatorRequired identifies FOREACH without its update separator.
 func CypherMutationsForeachSeparatorRequired() Message {
 	return cypherMutationsMessage(MessageCypherMutationsForeachSeparatorRequired, "FOREACH requires | separator", nil)
+}
+
+// CypherMutationsSetSourceNotMap is the TypeError for SET x = <source> or
+// SET x += <source> whose value is not a map, node or relationship.
+func CypherMutationsSetSourceNotMap(operator, typeName string) Message {
+	return cypherMutationsMessage(MessageCypherMutationsSetSourceNotMap, "SET "+operator+" requires a map, node or relationship, got type "+typeName, map[string]any{"Operator": operator, "Type": typeName})
 }

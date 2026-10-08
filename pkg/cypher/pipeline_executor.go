@@ -1813,8 +1813,9 @@ func pipelineSimplePropertyAssignment(assignments []string) (target, property, e
 // validatePipelineSetAssignments statically checks SET assignment shapes for
 // every route (it runs from validateSetClauseScope before execution): x = v,
 // x.p = v, x += map and x:L1:L2 with a bound-identifier target, a non-empty
-// right-hand side, a parseable inline map for +=, no scalar literal for +=,
-// and a valid label chain (setLabelChain). Forms are split by
+// right-hand side, a parseable inline map for += and a valid label chain
+// (setLabelChain). The source type of x = and x += is checked after the
+// variables (setSourceLiteralTypeError, validateSetClauseScope). Forms are split by
 // splitSetAssignment, the splitter the applicators use.
 func validatePipelineSetAssignments(assignments []string) error {
 	for _, raw := range assignments {
@@ -1835,8 +1836,6 @@ func validatePipelineSetAssignments(assignments []string) error {
 				if _, err := parseSetMergeMapExpressionsStrict(right); err != nil {
 					return localizedError(localization.CypherMutationsSetMergeParseFailed(err), err)
 				}
-			} else if _, scalar := parseLiteralScalarForPipeline(right); scalar {
-				return localizedError(localization.CypherResidualSetAssignmentInvalid(assignment), nil)
 			}
 		case ":":
 			if strings.HasPrefix(right, "$(") {
@@ -4928,4 +4927,21 @@ func precededByOptionalKeyword(cypher string, position int) bool {
 	end := len(strings.TrimRight(cypher[:position], " \t\n\r"))
 	return end >= len("OPTIONAL") && equalFoldASCII(cypher[end-len("OPTIONAL"):end], "OPTIONAL") &&
 		!clauseKeywordUsedAsName(cypher, end-len("OPTIONAL"), end, "OPTIONAL")
+}
+
+// setSourceLiteralTypeError rejects SET x = <source> and SET x += <source>
+// (property "") whose source is a literal of a type other than a map: Neo4j
+// 5.26 types it before the statement runs ("Type mismatch: expected Map, Node
+// or Relationship"). A null source passes here and is a TypeError when the
+// SET runs (setPropertyMapValue), as in Neo4j (#907).
+func setSourceLiteralTypeError(property, operator, source string) error {
+	if property != "" || (operator != "=" && operator != "+=") {
+		return nil
+	}
+	switch typeName := staticLiteralTypeName(source); typeName {
+	case "", "Map", "Null":
+		return nil
+	default:
+		return typeNameMismatchError("Map, Node or Relationship", typeName)
+	}
 }

@@ -2459,10 +2459,11 @@ func TestCreateSetAndSetMergeBranches(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.ParameterMissing")
 
-	// property replacement must use map
+	// property replacement must use a map: a literal of another type is a
+	// SyntaxError before the statement runs (Neo4j 5.26.30, #907)
 	_, err = exec.Execute(ctx, "CREATE (n:Person) SET n = 1 RETURN n", nil)
 	require.Error(t, err)
-	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.TypeError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	// unknown variable branches
 	_, err = exec.Execute(ctx, "CREATE (n:Person) SET m.age = 1 RETURN n", nil)

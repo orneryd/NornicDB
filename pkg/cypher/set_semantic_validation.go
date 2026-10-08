@@ -190,6 +190,11 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 		if err := validateKnownFunctionsInExpression(expression); err != nil {
 			return err
 		}
+		if _, property, setOperator, source := splitSetAssignment(assignment); setOperator != "" {
+			if err := setSourceLiteralTypeError(property, setOperator, source); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

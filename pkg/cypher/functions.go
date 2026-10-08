@@ -97,6 +97,21 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 			}
 		}
 	}
+	if expr[len(expr)-1] == '}' {
+		// A map projection (o {.s}, n {.*, k: 1}) has one implementation, the
+		// row evaluator's (evaluateRowMapProjection), whatever evaluates it:
+		// SET n = o {.s} among others (#907).
+		if _, _, projection := rowMapProjectionSplit(expr); projection {
+			row := entityRow(nodes, rels)
+			for name, value := range valueBindingsFromContext(ctx) {
+				if _, bound := row[name]; !bound {
+					row[name] = value
+				}
+			}
+			value, _ := e.evaluateRowExpressionWithContext(ctx, expr, row)
+			return value
+		}
+	}
 	if plan := planRowSubqueries(expr); plan != nil {
 		// Subquery expressions nested in a larger expression are evaluated
 		// for this row and the rest runs on the row evaluator.
