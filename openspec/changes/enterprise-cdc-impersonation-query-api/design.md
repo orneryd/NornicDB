@@ -114,6 +114,15 @@ creation, old HTTP sessions, Query API sessions and CALL IN TRANSACTIONS childre
 one commit's events all use its final metadata snapshot. Deep-copy nested values.
 User changes to metadata cannot spoof authenticated/executing user or timestamps.
 
+Separate delivery into ordinary/system attribution (tasks 2a) and canonical
+impersonation integration (2b). Ordinary adapters already know the authenticated
+principal and set authenticated=executing; internal writers use explicit system
+origin. The transport-neutral dual-user attribute type, metadata setter,
+transaction propagation and ordinary cleanup tests need no #935 evaluator.
+Only target resolution/impersonated attribution and corresponding SHOW/lifecycle
+tests wait on canonical security. Do not make CDC storage/event work transitively
+depend on full RBAC merely because it consumes transaction attributes.
+
 Expose attributes from active transactions to SHOW and query/audit logging.
 Keep both users internally even if 5.26 SHOW exposes only a formatted username;
 render precisely the oracle's columns/values. Keep repository structured logging
@@ -173,8 +182,8 @@ MVCC sequence numbers as a published CDC transaction ID.
 
 Add a namespace-scoped logical commit coordinator (new
 `pkg/storage/change_capture.go`) for capture-enabled graph commits. Take its
-gate last: after the commit's unique-key commit locks (#961, #964's
-`acquireUniqueConstraintCommitLocks`) and constraint/count validation, and hold
+gate after the commit's unique-key commit locks (#961, #964's
+`acquireUniqueConstraintCommitLocks`) and constraint validation, and hold
 it only while assigning a monotonically increasing integer logical txId,
 staging graph changes, events and durable head, and publishing through
 commitWriter. A commit can wait on another transaction's unique-key lock until
@@ -183,14 +192,27 @@ gate while waiting for B's key and B wait for the gate to commit, a cycle the
 key-lock deadlock detector cannot see. Gaps are allowed; visible commits cannot
 reorder and abandoned reservations cannot block readers. Use one acquisition per
 logical commit, not per physical batch or nested direct write. Establish and
-test a lock-order contract against unique-key commit locks, schema commits,
-large commits, close, retention and option transitions before wiring the gate.
+test an acquisition/release ledger against unique-key locks, write barriers,
+count locks, physical large-commit gates, schema commits, close, retention and
+option transitions before wiring the gate. "After key locks" is not a blanket
+claim that every publication lock can simply be taken last. Preserve existing
+count-before-large-commit ordering, establish the coordinator's exact placement
+relative to those locks, and never reacquire unique keys while holding it.
+Controlled-schedule tests must force the reported A/B wait and verify progress
+and release after small/large commit failure, cancellation and recovery.
 
 The existing managed commitOracle remains the authority for physical
 visibility/recovery; this coordinator is only logical per-database ordering.
 No new global mutex serializes unrelated databases. OFF mode need not retain
 event bodies, but the shared durable commit-position service for bookmarks must
 still describe real published commits on those databases.
+Reuse the existing commitWriter/publication/durability machinery for positions
+rather than adding a separately synced head transaction merely for bookmarks.
+Position tracking cannot be assumed free: benchmark the position-only OFF
+implementation against the pre-position baseline before CDC is layered on,
+including head writes, fsyncs, allocations, RSS and same/independent-database
+contention. OFF bypasses event construction/serialization, not durable position
+correctness; retain the performance/memory budgets below.
 
 Reserve 0x26 only after checking the family registry at implementation time.
 Use length-delimited namespace plus record kind; event keys include capture
@@ -267,7 +289,7 @@ Because manager metadata is in system storage while capture state belongs to a
 data namespace, implement a durable transition intent plus startup completion
 under the namespace fence; do not rely on two unrelated successful writes.
 
-Register three procedures in the existing registry, with typed invocation and
+Implement three procedures in the existing registry, with typed invocation and
 normal YIELD/WHERE/RETURN support (new `pkg/cypher/call_cdc.go`). Use a narrow
 storage read capability passed through wrappers, not storage downcasts scattered
 across Cypher. Current/earliest need ACCESS and ordinary EXECUTE.
@@ -275,6 +297,16 @@ Query needs ACCESS, EXECUTE and EXECUTE BOOSTED (including DENY/glob semantics)
 and then returns all captured changes irrespective of graph read filters.
 Do not require the admin role name or run the query through the target's
 filtered entity reader after successful boosted authorization.
+
+Separate implementation readiness from public enablement. Core options,
+events, selectors, scans and retention use internal fixtures and ordinary
+attributes without waiting on full #935. Public option DDL requires canonical
+database-administration privileges; current/earliest require canonical
+ACCESS/EXECUTE; query also requires BOOSTED. These are the shared persisted
+privilege/evaluator subset (1a), not a temporary policy engine. Keep each public
+procedure unregistered until its authorization tests pass; no admin-name or
+coarse-read fallback. Full graph/impersonation acceptance remains gated on
+1b/2b, but does not block core implementation or ordinary-user subset tests.
 
 ### 8. Cursors, selectors and bounded scans
 
@@ -286,13 +318,29 @@ encoding, version, database UUID, epoch, retention floor and future positions
 with oracle-mapped errors. Restore/drop-recreate cannot reuse old cursors.
 
 Implement namespace/epoch/txId/seq range iteration with a stable published upper
-bound, context cancellation and bounded batches. Stream through existing result
-interfaces; no full history scan into memory for LIMIT 1. Procedures return
-their rows as one slice today, and Bolt's lazy results (#939) only stream a
-pipeline RETURN, so this needs a streaming procedure result: rows yielded on
-demand into the CALL's YIELD/WHERE/RETURN and on into the Bolt result stream,
-with LIMIT ending the scan. Protect active scans
-from concurrent pruning using the existing managed read/snapshot model.
+bound, context cancellation and bounded batches. Procedures currently return
+materialized slices; add a streaming result contract to the registry and CALL
+operator rather than assuming transport streaming makes the source lazy.
+Wire demand/stop through YIELD/WHERE/RETURN to consuming Bolt/HTTP adapters.
+#939's lazy Bolt work in #968 was OPEN at review on 2026-10-08; reuse that
+infrastructure once available, but explicitly extend CALL sources and LIMIT
+instead of treating plain RETURN support as sufficient.
+
+Instrument event visits, peak buffered rows/bytes and iterator/snapshot closure.
+For a nonblocking unfiltered LIMIT 1, seek to the cursor without visiting
+earlier events and visit at most 1+B events, where B is a fixed documented total
+prefetch budget across iterator and producer, independent of history size.
+With selectors/WHERE, the first match at position k may require k+B visits;
+no-match may consume the published window while keeping buffering bounded.
+ORDER BY and aggregation are blocking operators and may consume that window;
+test correct results and report their materialization cost separately rather
+than promising constant scan work/memory for every composition.
+
+Stop upstream iteration once LIMIT is satisfied within the fixed prefetch
+budget. Release iterators, snapshots and producer tasks on exhaustion, early
+termination, errors, PULL/DISCARD/RESET, cancellation and HTTP disconnect.
+Protect active scans from concurrent pruning using the managed snapshot model;
+do not pin readers beyond consumer lifetime.
 
 Compile and validate selectors once per invocation. OR across selectors, AND
 across all fields, deduplicate matches by event identity. Support e/n/r,

@@ -8,27 +8,34 @@ then record the passing command and persistent-state evidence. IDs refer to
 | Phase | Depends on | Deliverable |
 | --- | --- | --- |
 | 0 | None | Enterprise observations and failing baseline |
-| 1 | 0 and #935 canonical privilege/effective-graph foundation | Canonical security and privilege cutover |
-| 2 | 0, 1 | Shared identity, metadata and attribution |
-| 3 | 0, 1, 2 | Bolt impersonation |
+| 1a | 0 and #935 canonical persisted privilege/evaluator subset | Database administration and ACCESS/EXECUTE/BOOSTED checks (1.1, 1.8) |
+| 1b | 0, 1a and #935 effective-graph foundation | Full security/impersonation cutover (1.2-1.7) |
+| 2a | 0 | Ordinary/system transaction attributes and metadata (2.1-2.4, 2.6) |
+| 2b | 0, 1b, 2a | Impersonated identity, SHOW and lifecycle integration (2.5, 2.7) |
+| 3 | 0, 1b, 2b | Bolt impersonation |
 | 4 | 0 | Durable commit positions and bookmarks |
-| 5 | 0, 1, 2, 4 | Query API v2 |
-| 6 | 0, 4 | CDC storage and complete write-path coverage |
-| 7 | 0, 6 | Database enrichment options |
-| 8 | 0, 2, 6, 7; 8.6 also 1 | Events, procedures and selectors |
-| 9 | 0, 4, 6, 7, 8 | Retention, recovery and restore |
+| 5 | 0, 1b, 2b, 4 | Query API v2 including impersonation |
+| 6 | 0, 2a, 4 | CDC storage and complete write-path coverage |
+| 7 | 0, 6 for 7.1-7.4; public enablement 7.5 also 1a | Database enrichment options |
+| 8a | 0, 2a, 6, 7.1-7.4 | Event/cursor/selector/stream implementation (8.1-8.5, 8.7); no public registration |
+| 8b | 0, 1a, 8a; impersonation acceptance also 2b | Authorization, public registration and examples (8.6, 8.8) |
+| 9 | 0, 4, 6, 7.1-7.4, 8a; privileged settings/checkpoint exposure also 1a | Retention, recovery and restore |
 | 10 | All phases and #935 effective-graph acceptance | Integrated acceptance and cutover |
 
-Phase 4 and security work can proceed independently after phase 0. Phase 6
+Phases 2a, 4 and security work can proceed independently after phase 0. Phase 6
 uses internal configuration fixtures before public DDL is enabled. Do not
 admit DIFF/FULL before phase 6 is safe or claim impersonation acceptance with
 only current database read/write booleans.
 
-Only `db.cdc.query`'s authorization (8.6) needs #935's canonical privileges:
-options DDL is ordinary database administration, and current/earliest need
-ACCESS and EXECUTE. So phases 7 and 8 (except 8.6) do not wait on phase 1.
-`db.cdc.query` stays unregistered until 8.6 passes; there is no interim coarse
-guard such as an admin-role check.
+Storage, ordinary attribution, option parsing/transitions, events, selectors,
+scans and retention do not wait on full RBAC or impersonation. Implement them
+with internal test fixtures before public enablement. Public option DDL needs
+canonical administration checks (7.5); current/earliest need ACCESS/EXECUTE,
+and query additionally needs BOOSTED (8.6). These checks use 1a's canonical
+subset, not a second evaluator or an admin-role fallback. Each CDC procedure
+stays unregistered until its own authorization tests pass. Impersonated cases
+and full release acceptance still require 1b/2b. Core 7/8a/9 tasks do not
+depend on the public gates or 2b, avoiding an indirect #935 dependency.
 
 ## 0. Freeze the Enterprise contract
 
@@ -39,25 +46,31 @@ guard such as an admin-role check.
 - [ ] 0.5 Capture `QAPI-01..05`, including all five endpoints, encodings, statuses, continuation ownership/target fields and version-specific fields. Verify fixtures target 5.26 rather than the evolving current docs.
 - [ ] 0.6 Add strict comparison tests: preserve CDC order without ORDER BY; compare fields/types/nulls/errors/lifecycle and fresh-session graph effects. Verify deliberately reordered events, missing same-tx resume rows and invented fields fail.
 - [ ] 0.7 Record existing Community/openCypher results separately and document all Enterprise baseline failures. Verify missing promised capabilities are failures, not informational unsupported cases.
+- [ ] 0.8 Promote the recorded CDC-01 option responses into executable reference fixtures with exact columns/types/errors and NornicDB failing reproductions. Preserve the supplied digest/config/driver provenance; add successful parameter values, mixed-case values, database-kind/admin-transaction cases and authenticated grant/deny observations. The auth-disabled capture is partial DDL evidence, not authorization acceptance; do not repeat completed observations unnecessarily or mark CDC-01 complete from the text file alone.
 
 ## 1. Integrate canonical privileges
 
-- [ ] 1.1 Pin #935's persisted grant/deny, effective graph, principal/revision, home database and EXECUTE/BOOSTED interfaces. Verify dependency tests distinguish TRAVERSE/READ, DENY/missing grant and target/caller roles (`IMP-04/06`, `CDC-07`).
+- [ ] 1.1 Pin #935's canonical persisted grant/deny, principal/revision, database-administration and ACCESS/EXECUTE/BOOSTED interfaces as subset 1a. Verify named/wildcard procedures, DENY/missing grants and restart; use the same canonical records/evaluator later consumed by full effective-graph work, not parallel temporary permission strings (`CDC-01/07`).
 - [ ] 1.2 Implement IMPERSONATE scopes and syntax through #935's administration parser/renderer and `pkg/auth` canonical records. Add `TestEnterpriseImpersonatePrivileges` for named/wildcard/multi-role/immutable/revoke/SHOW AS COMMANDS and restart (`IMP-01`).
 - [ ] 1.3 Implement immutable security context and target resolver in `pkg/auth`; test lookup/error precedence, no-auth/self/disabled/unknown target and updating-admin restriction in `TestEnterpriseImpersonationResolution` (`IMP-02/04/05`).
 - [ ] 1.4 Replace coarse prechecks on affected routes, including `/db/` middleware and procedure checks. Verify caller-without-graph-READ can impersonate a permitted target, while target cannot borrow caller rights (`IMP-04`, `QAPI-04`, `CDC-07`).
 - [ ] 1.5 Implement one-time migration of role/allowlist/privilege records with a dry-run mapping and actionable ambiguity errors. Verify idempotence, credential/ID preservation and failed-migration recovery before deleting dual reads/global fallbacks.
 - [ ] 1.6 Migrate native access-management API/UI consumers to canonical records or explicitly retire lossy matrix mutation. Verify native updates cannot erase fine-grained grants/denies and no old evaluator remains; document breaking migration examples.
 - [ ] 1.7 Wire effective policy identity/revision to #935 caches and local/remote USE/composite execution. Verify `IMP-06`, including native search/path/procedure surfaces and no service-account-only remote forwarding.
+- [ ] 1.8 Verify the ordinary-user canonical subset independently of full graph filtering and impersonation, including database option administration, ACCESS/EXECUTE for current/earliest, and BOOSTED for query. Add `TestEnterpriseCDCPrivilegeFoundation` with positive/negative/glob/DENY/reopen cases; these results unlock only the corresponding public gates, not #935 or impersonation acceptance (`CDC-01/07`).
 
 ## 2. Carry attribution into actual transactions
 
-- [ ] 2.1 Add `TestEnterpriseTransactionAttribution` reproducing metadata loss through Bolt `BeginTransaction` and single-user RequestIdentity. Record failures for `ATTR-01/02` before changing these paths.
-- [ ] 2.2 Add storage transaction-attribute values and extend Cypher request/transaction context; wire Bolt BEGIN/autocommit and implicit transaction creation. Verify trusted users/connections reach storage without storage importing auth/protocol packages.
+Tasks 2.1-2.4/2.6 form 2a and can land without phase 1. Tasks 2.5/2.7
+form 2b and integrate the canonical impersonation context after 1b.
+
+- [ ] 2.1 Add ordinary-session `TestEnterpriseTransactionAttribution` reproducing metadata loss through Bolt `BeginTransaction`; record failing `ATTR-01/02` cases before changes. Use authenticated=executing for ordinary callers and an explicit system origin for internal writers; impersonated RequestIdentity cases belong to 2.7.
+- [ ] 2.2 Add storage transaction-attribute values and extend Cypher request/transaction context; wire ordinary Bolt BEGIN/autocommit and implicit transaction creation. Verify trusted users/connections reach storage without storage importing auth/protocol packages. The transport-neutral dual-user value type does not depend on resolving impersonation.
 - [ ] 2.3 Wire old HTTP sessions, txsession and CALL IN TRANSACTIONS child creation. Verify each child has its own commit identity and inherited attribution and rollback emits nothing (`ATTR-02`).
 - [ ] 2.4 Use one deep-copying metadata setter for protocol metadata and tx.setMetaData. Verify oracle semantics/limits, final same-commit snapshot and resistance to spoofing trusted fields (`ATTR-01`).
 - [ ] 2.5 Update SHOW CURRENT USER, SHOW TRANSACTIONS and structured query/audit attribution. Verify exact projection/user formatting and existing redaction; document ordinary/impersonated output (`IMP-04`, `ATTR-01/02`).
-- [ ] 2.6 Add race/cleanup tests for metadata and identity reuse across retries, rollback, timeout, HTTP continuation, child batches and internal system writers (`ATTR-02`, `IMP-05`).
+- [ ] 2.6 Add ordinary/system race/cleanup tests for metadata and identity reuse across retries, rollback, timeout, HTTP continuation, child batches and internal writers; verify snapshot/deep-copy ownership without canonical target resolution (`ATTR-02`).
+- [ ] 2.7 After 1b and 2a, attach resolved authenticated/executing identities from the canonical security context to all transaction creation paths. Add the failing single-user RequestIdentity reproduction, then verify impersonated retries, child batches, continuation, rollback and pooled-session cleanup without caller/target role union (`ATTR-01/02`, `IMP-05`).
 
 ## 3. Implement Bolt impersonation
 
@@ -71,10 +84,10 @@ guard such as an admin-role check.
 
 - [ ] 4.1 Add `TestEnterpriseCommitPosition` for delayed/failed reservations, restart and multi-batch publication. Record why current process-counter/wall-clock/MVCC-reservation tokens fail (`CDC-05/09`, `QAPI-05`).
 - [ ] 4.2 Implement per-database logical commit positions with `badger_commit_writer.go`/`badger_managed.go`, durable head and recovery seeding. Verify logical commits are distinct from physical batches.
-- [ ] 4.3 Establish and test lock order against write barriers, unique-key commit locks (#961/#964), constraints/counts/schema, close and large-commit gates; the ordering gate is taken after the unique-key locks. Verify no deadlock under race tests, including concurrent MERGE on one unique key with capture on, and unrelated databases do not share a new global serialization gate.
+- [ ] 4.3 Establish an acquisition/release ledger for write barriers, unique-key locks (#961/#964), constraint validation, count locks, CDC ordering, physical large-commit gates, close, retention and option transitions before wiring the gate. Add `TestCDCCommitLockOrder` with controlled schedules reproducing A waiting for B's key while B commits; take the CDC gate only after key locks/validation and never reacquire keys while holding it. Verify progress, abort/recovery lock release and unrelated-database independence under race tests, for small and multi-batch commits (`CDC-09`).
 - [ ] 4.4 Extract shared committed-position/bookmark capability for Bolt/HTTP, with database scope, waiting, cancellation/deadline and reference errors. Verify cross-transport/restart/future-token cases (`QAPI-05`).
 - [ ] 4.5 Replace wall-clock HTTP bookmarks and Bolt process-counter/placeholder fallback. Integrate receipts only where they prove durable state; verify old placeholder acceptance is gone and document client token reacquisition.
-- [ ] 4.6 Verify OFF-mode positions and benchmark same-database versus independent-database commit contention before CDC is layered on; record results and durability semantics. The position service runs on every commit, including OFF databases: compare OFF-mode commit latency, throughput and allocations against the pre-phase-4 baseline with the design's 5% budget before phase 6 starts.
+- [ ] 4.6 Verify OFF-mode positions and benchmark same-database versus independent-database commit contention before phase 6. Reuse the existing publication/durability boundary; avoid a separately synced head write merely for position tracking. Compare pre-phase-4 and position-only OFF commits for latency percentiles, throughput, allocations, RSS, head writes and fsync count; report rather than assume zero cost, with the design's 5% performance/10% memory budgets and reviewed justification for exceptions.
 
 ## 5. Implement Query API v2
 
@@ -105,16 +118,17 @@ guard such as an admin-role check.
 - [ ] 7.2 Extend DatabaseInfo, multidb persistence and Cypher manager interface; implement fenced durable transition between system metadata and namespace mode/epoch. Verify crash recovery at every transition failure point.
 - [ ] 7.3 Extract shared option parsing from executor_show.go; fully consume statements and replace conflicting name-row/placeholder-options responses. Verify invalid syntax makes no effects and native LIMIT/policy extensions remain intact.
 - [ ] 7.4 Wire oracle-defined in-flight transaction mode semantics, OFF invalidation and DIFF/FULL continuity. Verify fresh-session/reopen state and document configuration/DDL examples (`CDC-01/08`).
+- [ ] 7.5 Gate public enrichment DDL on phase 6 safety and 1a's canonical database-administration checks. Add authenticated CDC-01 allowed/denied tests with unchanged option state after denial; internal parser/transition tests need neither this gate nor full phase 1b.
 
 ## 8. Complete events, procedures and selectors
 
 - [ ] 8.1 Add `TestEnterpriseCDCEvents` for FULL/DIFF schema, typed values, labels, keys, endpoints and net-change order. Verify exact rows/types rather than event counts (`CDC-03/04`).
 - [ ] 8.2 Implement materialization from net states/committed schema/attributes, including equivalent uniqueness-plus-existence keys. Verify captured top-level label/key/endpoint rules, category ordering and stable seq.
 - [ ] 8.3 Add narrow storage CDC read capability and wrapper forwarding. Implement versioned cursor kinds and validation in `TestEnterpriseCDCCursors`, including same-tx resume and earliest/current boundaries (`CDC-02/05`).
-- [ ] 8.4 Register procedures and handlers in new `pkg/cypher/call_cdc.go` with exact signatures/defaults/SHOW PROCEDURES metadata and typed args. Verify YIELD/WHERE/RETURN/LIMIT composition (`CDC-02`).
+- [ ] 8.4 Implement procedure handlers and metadata in new `pkg/cypher/call_cdc.go` with exact signatures/defaults and typed args; exercise YIELD/WHERE/RETURN/LIMIT through internal test registration. Production registration is separately gated by each procedure's 8.6 authorization tests, not merely by handler completion (`CDC-02`).
 - [ ] 8.5 Implement compiled selector validation/matching with `TestEnterpriseCDCSelectors`; verify every field, OR/AND, deduplication, nested endpoints, historic matching and null/type/unknown-field errors (`CDC-06`).
-- [ ] 8.6 Implement canonical ACCESS/EXECUTE/BOOSTED checks and `TestEnterpriseCDCAuthorization`. Verify grants/denies/globs, impersonated target rights and all-events visibility despite graph restrictions (`CDC-07`).
-- [ ] 8.7 Implement bounded published-window scans with cancellation and safe snapshot ownership. Add a streaming procedure result (rows yielded on demand through CALL … YIELD/WHERE/RETURN into #939's Bolt result stream) so LIMIT ends the scan. Verify LIMIT 1, resume, concurrent commits, PULL/DISCARD/HTTP disconnect and memory independent of total history size.
+- [ ] 8.6 Using 1a, implement canonical ACCESS/EXECUTE for current/earliest and ACCESS/EXECUTE/BOOSTED for query with `TestEnterpriseCDCAuthorization`; verify grants/denies/globs before enabling each production registration. Ordinary-user acceptance can proceed independently; target-only impersonation and graph-restricted all-events cases additionally require 1b/2b. No coarse interim guard (`CDC-07`).
+- [ ] 8.7 Implement a streaming procedure result through the registry, CALL/YIELD/WHERE/RETURN and consuming transports, with bounded iterator/producer buffering, cancellation and safe snapshot ownership. Reuse #939/#968's Bolt infrastructure only once available; #968 was OPEN at review on 2026-10-08 and does not itself stream CALL sources. Add `TestCDCProcedureStreaming` measuring events visited, rows/bytes buffered and iterator/snapshot release: no event visits before the cursor; unfiltered LIMIT 1 visits at most 1+B events for a fixed documented total prefetch budget B independent of history; a first match at position k visits at most k+B; no-match may scan the window with bounded buffering. ORDER BY/aggregation may consume the window and must retain correct results with separately reported materialization cost. Verify LIMIT, late errors, resume, concurrent commits, PULL/DISCARD/RESET, cancellation and HTTP disconnect (`CDC-02/06/08`).
 - [ ] 8.8 Document procedure signatures, event schemas, selectors and ordinary/impersonated consumers; execute examples in both HTTP encodings and Bolt. Include the privileged all-events visibility warning.
 
 ## 9. Implement retention and storage lifecycle

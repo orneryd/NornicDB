@@ -9,9 +9,10 @@ Research date: 2026-10-08 UTC. Repository baseline:
 `7a2ae51ac6ab929ad6dfef8288602a889c4b88b2`.
 
 The issue bodies/comments and sources below were read. **An Enterprise instance
-was not run during drafting.** Exact error text, ambiguous edge cases, and
-version-sensitive result shapes below are mandatory phase-0 oracle work, not
-claimed verified facts. Capture the image digest, server version, driver
+was not run during initial drafting.** Subsequently supplied CDC-01 responses
+are recorded below, but were not independently replayed during this review.
+Unobserved exact errors, edge cases and version-sensitive shapes remain
+mandatory phase-0 oracle work. Capture the image digest, server version, driver
 version, protocol version, auth fixture, locale, configuration, commands, and
 raw responses before implementing these cases.
 
@@ -60,6 +61,13 @@ Raw responses are kept under [evidence/](evidence/) with the image digest,
 driver, configuration and capture date. They are reference outcomes only;
 fixture tests with NornicDB's failing results are still phase-0 work.
 
+The supplied capture used auth disabled and system-database autocommit. It
+establishes the recorded DDL responses, not RBAC/impersonation acceptance.
+Promote these observations into executable fixtures without marking the whole
+CDC-01 group complete. Successful parameter values, mixed-case coverage,
+system/composite/alias legality, explicit admin transactions and authenticated
+grant/deny behavior still need observations and failing local reproductions.
+
 | ID | Evidence | Observed on `neo4j:5.26.30-enterprise` (`sha256:8befcd4e…`) |
 | --- | --- | --- |
 | `CDC-01` (part) | [cdc-01-database-options.txt](evidence/cdc-01-database-options.txt) | `txLogEnrichment` accepts `FULL`, `DIFF`, `OFF` in any case and stores them upper-case. A wrong value, a non-string or an unknown option fails with `Neo.ClientError.General.InvalidArguments` (messages list the expected values or options). An unset option is absent: `options` is `{}`, not `{txLogEnrichment: 'OFF'}`; REMOVE OPTION returns to `{}`. ALTER on a missing database fails with `Neo.ClientError.Database.DatabaseNotFound`, and succeeds with no rows under `IF EXISTS`. SET OPTION combines with other SET clauses. `CREATE … WAIT` returns `address`, `state`, `message`, `success`; without WAIT, no rows. A missing `$opts` parameter fails with `ParameterMissing`. |
@@ -80,11 +88,11 @@ commit fixtures/test cases; a documentation entry is not a passing test.
 | `ATTR-01` | Bolt BEGIN/autocommit tx_metadata, tx.setMetaData replacement/merge and size/type limits, metadata visibility while idle, immutable user attribution |
 | `ATTR-02` | Existing HTTP and Query API autocommit/explicit metadata and connection fields; batch subtransactions, retries, rollback, disconnect, background writes |
 | `CDC-01` | CREATE/ALTER/REMOVE options, parameters/case/type/errors, IF NOT EXISTS/IF EXISTS/OR REPLACE/WAIT where valid, SHOW projections, system/composite/alias rules, admin transaction mode |
-| `CDC-02` | Procedure signatures/defaults, nullable versus omitted args, empty database/enabled-with-no-history/OFF states, SHOW PROCEDURES metadata, YIELD/WHERE/RETURN/LIMIT |
+| `CDC-02` | Procedure signatures/defaults, nullable versus omitted args, empty database/enabled-with-no-history/OFF states, SHOW PROCEDURES metadata, YIELD/WHERE/RETURN/LIMIT; native instrumentation for cursor seek, fixed prefetch, visited events and early iterator closure (not Neo4j internal counters) |
 | `CDC-03` | Exact FULL/DIFF c/u/d shapes and native value types; property and label additions/removals, keys and endpoint snapshots |
 | `CDC-04` | Net-zero/update-revert/create-delete/delete-recreate, repeated writes, detach/self-loop/shared-edge deletion, ordering within event categories and seq allocation |
 | `CDC-05` | Current boundary versus event cursor; resume halfway through a transaction; earliest inclusion; invalid/foreign/future/expired/old-epoch IDs; concurrent commits and failures |
-| `CDC-06` | Every selector field, before/after label/key matching, nested endpoints, unknown fields, wrong types, nulls, duplicate selectors, empty arrays/maps and missing select |
+| `CDC-06` | Every selector field, before/after label/key matching, nested endpoints, unknown fields, wrong types, nulls, duplicate selectors, empty arrays/maps and missing select; late-match/no-match scans versus blocking ORDER BY/aggregation, with correct results and separately measured native cost |
 | `CDC-07` | ACCESS/EXECUTE/BOOSTED independently granted/denied, procedure globs, target-only rights during impersonation, full unfiltered event visibility once authorized |
 | `CDC-08` | Retention grammar/default/settings introspection, rotation/checkpoint, whole-transaction expiry, active reader overlap, restart, OFF/re-enable, drop/recreate and restore |
 | `CDC-09` | Crash/fault at every managed commit batch, direct writes, all wrappers, one tx per statement/batch and no capture side effect on query/rollback |

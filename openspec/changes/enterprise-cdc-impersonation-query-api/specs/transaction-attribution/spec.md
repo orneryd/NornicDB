@@ -84,6 +84,11 @@ prevent later published commits from being read.
 - **WHEN** a transaction exceeds one physical batch
 - **THEN** all graph mutations, events and the published head become visible atomically as one logical transaction and remain consistent after reopen (`CDC-09`)
 
+#### Scenario: Capture is off but a commit returns a bookmark
+
+- **WHEN** a graph write commits with enrichment OFF
+- **THEN** its durable position survives reopen without constructing CDC event bodies, and the position-only implementation has recorded before/after latency, throughput, allocations, memory, head-write and fsync measurements before CDC is layered on (`CDC-09`, `QAPI-05`)
+
 ### Requirement: Shared causal bookmark semantics
 
 Bolt, old HTTP transactions and Query API SHALL produce and consume bookmarks

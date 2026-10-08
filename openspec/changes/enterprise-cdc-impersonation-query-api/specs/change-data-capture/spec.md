@@ -59,6 +59,24 @@ no events where the reference emits none.
 - **WHEN** enabling capture or executing a capture-required write encounters an incapable engine or wrapper
 - **THEN** it reports an explicit error before effects and does not fall back to uncaptured direct execution (`CDC-09`)
 
+### Requirement: CDC ordering respects commit lock ownership
+
+The CDC ordering gate SHALL be acquired after unique-key commit locks and
+constraint validation, without reacquiring unique keys while holding it.
+Its placement relative to count locks and physical large-commit gates SHALL
+follow a tested acquisition/release contract covering commit, abort, option
+transitions, pruning and close.
+
+#### Scenario: Peer owns a required unique key
+
+- **WHEN** A waits for a unique key owned by B while B commits in the same capture-enabled database
+- **THEN** A does not hold the CDC gate during that wait, B can finish, and both transactions terminate with valid graph/event/head state rather than an undetectable key/gate cycle (`CDC-09`)
+
+#### Scenario: Publication fails while locks are held
+
+- **WHEN** a small or multi-batch commit fails after acquiring publication locks
+- **THEN** abort/recovery releases its locks and a later commit, option transition and close can complete without publishing partial graph/events (`CDC-09`)
+
 ### Requirement: Native event envelope
 
 Query rows SHALL have `id`, `txId`, `seq`, `metadata` and `event` in the pinned
@@ -142,6 +160,42 @@ shared execution semantics.
 - **WHEN** a caller pipes earliest into query and returns LIMIT 1
 - **THEN** it gets the first retained event with bounded-memory iteration and no new CDC event caused by the read (`CDC-02`, `CDC-08`)
 
+### Requirement: Demand-driven nonblocking CDC composition
+
+CDC query SHALL expose a streaming procedure source through CALL and
+nonblocking YIELD/WHERE/RETURN/LIMIT. Cursor seeks SHALL not visit earlier
+events. Iterator/producer prefetch SHALL have a fixed documented total budget
+B independent of history size; native tests SHALL measure visits and peak
+buffered rows/bytes. Blocking operators SHALL retain correct semantics and
+report materialization cost separately.
+
+#### Scenario: Unfiltered limit stops promptly
+
+- **WHEN** an unfiltered query returns LIMIT 1 from a cursor in increasingly large histories
+- **THEN** at most 1+B events are visited, no earlier events are visited, buffering remains bounded by the declared budget and consumed event sizes, and the source closes when the limit is satisfied (`CDC-02`, `CDC-08`)
+
+#### Scenario: A selector matches late or not at all
+
+- **WHEN** the first matching event is at position k after the cursor, or no event matches the published window
+- **THEN** LIMIT 1 visits at most k+B events in the first case; the second may scan the window with bounded buffering, without falsely promising constant scan work (`CDC-02`, `CDC-06`)
+
+#### Scenario: Blocking composition needs additional input
+
+- **WHEN** ORDER BY or aggregation requires consuming the published window before producing a result
+- **THEN** result/error semantics match the reference and measured materialization cost is reported separately from nonblocking bounds (`CDC-02`, `CDC-06`)
+
+### Requirement: Streaming consumers release CDC resources
+
+CDC iterators, snapshots and producer tasks SHALL terminate on exhaustion,
+early LIMIT completion, error, discard/reset, cancellation or client
+disconnect. Active readers SHALL retain a safe published window during their
+lifetime, not indefinitely after the consuming query ends.
+
+#### Scenario: Consumer stops before exhaustion
+
+- **WHEN** Bolt PULL/DISCARD/RESET, cancellation, a late error or HTTP disconnect ends a scan
+- **THEN** cleanup occurs exactly once, producers stop and snapshot/iterator ownership is released so pruning/close can proceed (`CDC-02`, `CDC-08`)
+
 ### Requirement: Complete selector semantics
 
 Selectors SHALL implement OR across the list and AND within each selector,
@@ -182,6 +236,24 @@ restrictions. Impersonation SHALL evaluate these privileges on the target.
 
 - **WHEN** the user has all CDC query privileges but cannot traverse a changed node
 - **THEN** query still returns that node's matching event, rather than filtering it as an ordinary graph read (`CDC-07`)
+
+### Requirement: Public CDC enablement uses canonical privilege gates
+
+Public option DDL SHALL require tested canonical database-administration
+checks. Each CDC procedure SHALL remain unregistered until its own
+ACCESS/EXECUTE and, for query, BOOSTED checks pass. Internal storage/handler
+tests MAY precede full graph filtering and impersonation; public guards SHALL
+NOT substitute an admin-role name or coarse-read permission.
+
+#### Scenario: Handler exists before authorization is ready
+
+- **WHEN** CDC core and internal handler tests pass but a procedure's canonical authorization gate has not passed
+- **THEN** that handler is not registered for client requests and partial implementation is not reported as authorized Enterprise parity (`CDC-02`, `CDC-07`)
+
+#### Scenario: Option change is denied
+
+- **WHEN** an authenticated caller lacks the canonical administration privilege for enrichment DDL
+- **THEN** the reference authorization error occurs with unchanged mode, options and epoch; passing parser/storage tests alone does not enable the public operation (`CDC-01`, `CDC-07`)
 
 ### Requirement: Native journal retention and history lifecycle
 
