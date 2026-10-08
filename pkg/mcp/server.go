@@ -353,8 +353,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // splitMCPPath splits an MCP request path into the endpoint path the handlers
 // know and, when the first segment after /mcp is a database name, the pinned
-// database. Known literal segments (initialize, tools, health) are never
-// treated as database names.
+// database. Only the exact legacy endpoint paths bypass pin parsing, so
+// databases named "initialize", "tools" or "health" still pin through their
+// own nested routes (e.g. /mcp/tools/tools/call targets database "tools").
 func splitMCPPath(path string) (endpoint, database string) {
 	if path == "/mcp" {
 		return path, ""
@@ -363,11 +364,11 @@ func splitMCPPath(path string) (endpoint, database string) {
 		return path, ""
 	}
 	rest := strings.TrimPrefix(path, "/mcp/")
-	segments := strings.Split(rest, "/")
-	switch segments[0] {
-	case "initialize", "tools", "health":
+	switch rest {
+	case "initialize", "tools/list", "tools/call", "health":
 		return path, ""
 	}
+	segments := strings.Split(rest, "/")
 	pinned := strings.TrimSpace(segments[0])
 	if pinned == "" {
 		return "/mcp", ""
@@ -578,14 +579,9 @@ func (s *Server) handleListTools(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	if database := urlDatabaseFromContext(ctx); database != "" {
-		ctx = ContextWithDatabase(ctx, database)
-	}
 	result := s.doListTools(ctx)
 	s.writeJSON(w, http.StatusOK, result)
 }
-
-// handleCallTool executes a tool.
 func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.PostRequired())
@@ -660,6 +656,9 @@ func (s *Server) doInitialize(params map[string]interface{}) (interface{}, error
 // reflect it so clients can discover which database the URL targets.
 func (s *Server) doListTools(ctx context.Context) ListToolsResponse {
 	database := DatabaseFromContext(ctx)
+	if database == "" {
+		database = urlDatabaseFromContext(ctx)
+	}
 	if database == "" {
 		database = s.DefaultDatabaseName()
 	}

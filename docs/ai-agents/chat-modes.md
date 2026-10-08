@@ -89,7 +89,7 @@ After configuring MCP, restart Cursor to load the new server.
 
 ## 🛠️ Available MCP Tools
 
-NornicDB provides **8 tools** via MCP:
+NornicDB provides **7 tools** via MCP:
 
 | Tool       | Purpose                           | Required Params                   |
 | ---------- | --------------------------------- | --------------------------------- |
@@ -97,8 +97,7 @@ NornicDB provides **8 tools** via MCP:
 | `recall`   | Retrieve by ID or filters         | (none - all optional)             |
 | `discover` | Semantic search by meaning        | `query`                           |
 | `link`     | Connect related concepts          | `from`, `to`, `relation`          |
-| `task`     | Create/update single task         | `title` (create) or `id` (update) |
-| `tasks`    | Query multiple tasks              | (none - all optional)             |
+| `tasks`    | Create, update and query tasks    | `title` (create), `id` (update)   |
 
 > **Note:** `index` and `unindex` tools are handled by the application layer, not NornicDB directly.
 

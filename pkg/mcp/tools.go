@@ -274,17 +274,31 @@ func getTasksTool(defaultDatabase string) Tool {
 				"description": "Detailed task description.",
 			},
 			"status": map[string]interface{}{
-				"type":        []string{"string", "array"},
 				"description": "Create/update: task status, or omit for auto-toggle (pending→active→completed). List: filter by status.",
-				"enum":        []string{"pending", "active", "completed", "blocked"},
-				"items":       map[string]interface{}{"type": "string", "enum": []string{"pending", "active", "completed", "blocked"}},
+				"oneOf": []interface{}{
+					map[string]interface{}{
+						"type": "string",
+						"enum": []string{"pending", "active", "completed", "blocked"},
+					},
+					map[string]interface{}{
+						"type":  "array",
+						"items": map[string]interface{}{"type": "string", "enum": []string{"pending", "active", "completed", "blocked"}},
+					},
+				},
 			},
 			"priority": map[string]interface{}{
-				"type":        []string{"string", "array"},
-				"description": "Create: task priority level (default: medium). List: filter by priority.",
-				"enum":        []string{"low", "medium", "high", "critical"},
-				"items":       map[string]interface{}{"type": "string", "enum": []string{"low", "medium", "high", "critical"}},
+				"description": "Create: task priority level. List: filter by priority.",
 				"default":     "medium",
+				"oneOf": []interface{}{
+					map[string]interface{}{
+						"type": "string",
+						"enum": []string{"low", "medium", "high", "critical"},
+					},
+					map[string]interface{}{
+						"type":  "array",
+						"items": map[string]interface{}{"type": "string", "enum": []string{"low", "medium", "high", "critical"}},
+					},
+				},
 			},
 			"depends_on": map[string]interface{}{
 				"type":        "array",

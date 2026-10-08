@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -571,6 +572,28 @@ func TestGetToolDefinitions_ReturnsExpectedSet(t *testing.T) {
 	for _, key := range []string{"id", "title", "status", "priority", "depends_on", "assign", "complete", "delete", "assigned_to", "unblocked_only", "limit", "database"} {
 		require.Contains(t, string(tasksTool.InputSchema), `"`+key+`"`,
 			"tasks schema must cover %s", key)
+	}
+
+	var tasksSchema struct {
+		Properties struct {
+			Status struct {
+				OneOf []map[string]interface{} `json:"oneOf"`
+			} `json:"status"`
+			Priority struct {
+				OneOf []map[string]interface{} `json:"oneOf"`
+			} `json:"priority"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(tasksTool.InputSchema, &tasksSchema))
+	require.Len(t, tasksSchema.Properties.Status.OneOf, 2,
+		"status must offer scalar and array variants")
+	require.Len(t, tasksSchema.Properties.Priority.OneOf, 2,
+		"priority must offer scalar and array variants")
+	for _, variant := range tasksSchema.Properties.Status.OneOf {
+		require.Contains(t, variant, "type", "status variants must be typed")
+	}
+	for _, variant := range tasksSchema.Properties.Priority.OneOf {
+		require.Contains(t, variant, "type", "priority variants must be typed")
 	}
 }
 
