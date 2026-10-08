@@ -126,7 +126,11 @@ ORDER BY rel.scope_id`, nil)
 	require.Equal(t, [][]interface{}{{"retired"}, {"scope-a"}}, result.Rows)
 }
 
-func TestUnwindRelationshipMergeIdentityReevaluatesMutatedIdentityBetweenRows(t *testing.T) {
+// Every row's MERGE runs before the SET that changes the relationship's
+// identity property: all three rows merge the one relationship, which the
+// last SET leaves at scope-a (Neo4j 5.26.30 plans an Eager barrier there,
+// #907).
+func TestUnwindRelationshipMergeRunsBeforeTheSetThatMutatesItsIdentity(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
@@ -153,7 +157,7 @@ MATCH (:A {key: 'a1'})-[rel:ASSERTS]->(:B {key: 'b1'})
 RETURN rel.scope_id
 ORDER BY rel.scope_id`, nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{"retired-1"}, {"retired-2"}, {"scope-a"}}, result.Rows)
+	require.Equal(t, [][]interface{}{{"scope-a"}}, result.Rows)
 }
 
 func TestUnwindRelationshipMergeIdentityNormalizesNumericReplayValues(t *testing.T) {
@@ -234,7 +238,9 @@ RETURN count(rel)`, nil)
 	require.Equal(t, int64(1), count)
 }
 
-func TestUnwindRelationshipMergeBatchPreservesMutatedPatternIdentity(t *testing.T) {
+// The rows merge one relationship before SET rel = row replaces its
+// identity properties, as in Neo4j 5.26.30 (#907).
+func TestUnwindRelationshipMergeBatchMergesBeforeSetReplacesIdentity(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
@@ -280,7 +286,7 @@ RETURN row.match_uuid AS uuid`
 	count := mustCountRows(t, exec, ctx, `
 MATCH (:Service {key: 'svc-a'})-[rel:PUBLISHES]->(:Topic {key: 'topic-a'})
 RETURN count(rel)`, nil)
-	require.Equal(t, int64(3), count)
+	require.Equal(t, int64(1), count)
 }
 
 func TestUnwindRelationshipMergeBatchNormalizesMixedNumericIdentityWidths(t *testing.T) {
