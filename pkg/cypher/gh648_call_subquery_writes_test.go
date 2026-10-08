@@ -583,3 +583,72 @@ func TestGh648_UnscopedImportForms(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
 }
+
+// A branch of an unscoped CALL body that declares an outer variable's name
+// itself (a pattern variable, a path name, UNWIND … AS) gets a new variable,
+// as in Cypher and Neo4j 5.26.30 (#907): the implicit import only covers a
+// name the branch reads first. On the chain 1 → 2 → 3, MATCH (n)-->(m) inside
+// the body matches every relationship for every outer row.
+func TestGh648_UnscopedBranchDeclaresOuterName(t *testing.T) {
+	exec := newGh648Executor(t)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:CQ {id: 1})-[:R]->(:CQ {id: 2})-[:R]->(:CQ {id: 3})", nil)
+	require.NoError(t, err)
+	everyPair := [][]interface{}{
+		{int64(1), int64(2)}, {int64(1), int64(3)}, {int64(2), int64(2)},
+		{int64(2), int64(3)}, {int64(3), int64(2)}, {int64(3), int64(3)},
+	}
+	for _, testCase := range []struct {
+		query string
+		rows  [][]interface{}
+	}{
+		{"MATCH (n:CQ) CALL { MATCH (n)-->(m) RETURN m.id AS x } RETURN n.id AS id, x ORDER BY id, x", everyPair},
+		{"MATCH (n:CQ) CALL { OPTIONAL MATCH (n)-->(m) RETURN m.id AS x } RETURN n.id AS id, x ORDER BY id, x", everyPair},
+		{"MATCH (n:CQ {id: 1}) CALL { MATCH p = (n)-->() RETURN count(p) AS x } RETURN x", [][]interface{}{{int64(2)}}},
+		{"MATCH (r:CQ {id: 1}) CALL { MATCH ()-[r]->(k) RETURN k.id AS x } RETURN x ORDER BY x", [][]interface{}{{int64(2)}, {int64(3)}}},
+		{"MATCH (n:CQ {id: 1}) CALL { UNWIND [7] AS n RETURN n AS x } RETURN x", [][]interface{}{{int64(7)}}},
+		// An explicit import, and a name read before any declaration, keep the
+		// outer value (the read is NornicDB's implicit import).
+		{"MATCH (n:CQ {id: 1}) CALL { WITH n MATCH (n)-->(m) RETURN m.id AS x } RETURN x", [][]interface{}{{int64(2)}}},
+		{"MATCH (n:CQ) CALL { MATCH (m:CQ) WHERE m.id > n.id RETURN count(m) AS x } RETURN n.id AS id, x ORDER BY id", [][]interface{}{{int64(1), int64(2)}, {int64(2), int64(1)}, {int64(3), int64(0)}}},
+		{"MATCH (n:CQ {id: 1}) CALL { MATCH (m:CQ) WHERE m.id = size([n]) RETURN m.id AS x } RETURN x", [][]interface{}{{int64(1)}}},
+		// Each UNION branch decides for itself.
+		{"MATCH (n:CQ {id: 1}) CALL { MATCH (n)-->(m) RETURN m.id AS x UNION RETURN n.id AS x } RETURN x ORDER BY x", [][]interface{}{{int64(1)}, {int64(2)}, {int64(3)}}},
+	} {
+		t.Run(testCase.query, func(t *testing.T) {
+			result, err := exec.Execute(ctx, testCase.query, nil)
+			require.NoError(t, err)
+			require.Equal(t, testCase.rows, result.Rows)
+		})
+	}
+}
+
+func TestBranchDeclaresVariable(t *testing.T) {
+	for _, testCase := range []struct {
+		branch, variable string
+		declares         bool
+	}{
+		{"MATCH (n)-->(m) RETURN m", "n", true},
+		{"OPTIONAL MATCH (a)-[n:R]->(m) RETURN m", "n", true},
+		{"MATCH p = (a)-->(b) RETURN p", "p", true},
+		{"CREATE (n:New {k: 1}) RETURN n", "n", true},
+		{"MERGE (n {k: 1}) ON CREATE SET n.x = 1 RETURN n", "n", true},
+		{"UNWIND [1] AS n RETURN n", "n", true},
+		{"WITH 2 AS n RETURN n", "n", true},
+		{"WITH n MATCH (n)-->(m) RETURN m", "n", false},
+		{"MATCH (m) WHERE m.id = n.id RETURN m", "n", false},
+		{"MATCH (m) WHERE size(n) > 1 RETURN m", "n", false},
+		{"MATCH (m {k: n}) RETURN m", "n", false},
+		{"MATCH (m {n: 1}), (n) RETURN m", "n", true},
+		{"MATCH (m) WHERE m.n = 1 RETURN $n, 'n'", "n", false},
+		{"MATCH (m {k: [n]}) RETURN m", "n", false},
+		{"RETURN 1 AS x", "n", false},
+		{"SET n.p = 1", "n", false},
+		{"MATCH (m) RETURN `n`", "n", false},
+	} {
+		require.Equal(t, testCase.declares, branchDeclaresVariable(testCase.branch, testCase.variable), testCase.branch)
+	}
+	require.Equal(t, []string{"n"}, unscopedBranchLocals("MATCH (n)-->(m) RETURN m, k", []string{"n", "k"}))
+	require.Equal(t, byte(0), previousNonSpace("  ", 2))
+	require.Equal(t, byte(0), nextNonSpace("a  ", 1))
+}

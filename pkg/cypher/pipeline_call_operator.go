@@ -105,6 +105,29 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
 	_, unionAll, _, isUnion := parseTopLevelUnionBranches(body)
 
+	// A branch of an unscoped body that declares an outer variable's name
+	// itself (MATCH (n)-->(m)) gets a new variable, as in Cypher, not the
+	// implicitly imported outer value (unscopedBranchLocals, #907).
+	var branchLocals map[string][]string
+	if !scoped && len(rows) > 0 {
+		var outerNames []string
+		for name := range rows[0] {
+			if !strings.HasPrefix(name, "$") {
+				outerNames = append(outerNames, name)
+			}
+		}
+		branchLocals = map[string][]string{}
+		branches := []string{body}
+		if unionBranches, _, _, union := parseTopLevelUnionBranches(body); union {
+			branches = unionBranches
+		}
+		for _, branch := range branches {
+			if locals := unscopedBranchLocals(branch, outerNames); len(locals) > 0 {
+				branchLocals[strings.TrimSpace(branch)] = locals
+			}
+		}
+	}
+
 	run := func(runExec *StorageExecutor, runCtx context.Context, outerRows []pipelineRow) ([]pipelineRow, *QueryStats, bool, error) {
 		clauses, ok := pipelineClausesFor(body)
 		if !ok && !isUnion {
@@ -145,6 +168,10 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					if !strings.HasPrefix(name, "$") {
 						scope[name] = struct{}{}
 					}
+				}
+				for _, name := range branchLocals[strings.TrimSpace(query)] {
+					delete(branchInput, name)
+					delete(scope, name)
 				}
 				inner, handled, execErr := runExec.runPipelineClauseRows(withValueBindings(runCtx, branchInput), []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
 				if execErr == nil {
