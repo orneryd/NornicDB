@@ -2532,6 +2532,11 @@ func compareValuesForSort(a, b interface{}) int {
 		}
 		return 1
 	}
+	if left, isDuration := asCypherDuration(a); isDuration {
+		if right, bothDurations := asCypherDuration(b); bothDurations {
+			return compareDurationOrdering(left, right)
+		}
+	}
 
 	if aList, ok := cypherSortList(a); ok {
 		bList, _ := cypherSortList(b)
@@ -2555,6 +2560,16 @@ func compareValuesForSort(a, b interface{}) int {
 		}
 		if aNumber > bNumber {
 			return 1
+		}
+		// -0.0 orders before 0.0 (Neo4j orders floats as Java's
+		// Double.compare does), so max picks 0.0 and min -0.0.
+		if _, leftFloat := a.(float64); leftFloat && aNumber == 0 {
+			if _, rightFloat := b.(float64); rightFloat && math.Signbit(aNumber) != math.Signbit(bNumber) {
+				if math.Signbit(aNumber) {
+					return -1
+				}
+				return 1
+			}
 		}
 		return 0
 	}

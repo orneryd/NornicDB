@@ -53,6 +53,7 @@ package cypher
 import (
 	"encoding/binary"
 	"fmt"
+	"math/big"
 	"regexp"
 	"strconv"
 	"strings"
@@ -580,3 +581,41 @@ var (
 	durationDatePartPattern = regexp.MustCompile(`(\d+)([YMD])`)
 	durationTimePartPattern = regexp.MustCompile(`(\d+\.?\d*)([HMS])`)
 )
+
+// durationAverageSecondsPerMonth is the average month Neo4j orders durations
+// by: a Gregorian year of 365.2425 days over twelve months.
+const durationAverageSecondsPerMonth = 2_629_746
+
+// compareDurationOrdering orders two durations as Neo4j 5.26 does (#907):
+// by their average length, a month counting durationAverageSecondsPerMonth
+// seconds and a day 86,400 (P1M < P31D, P30D < P1M, P365D < P1Y, PT9H <
+// PT10H); durations of one length by months, then days, then seconds, then
+// nanoseconds (PT24H < P1D). The length is exact (big integers), whatever
+// the components' size.
+func compareDurationOrdering(left, right *CypherDuration) int {
+	if comparison := durationLengthNanos(left).Cmp(durationLengthNanos(right)); comparison != 0 {
+		return comparison
+	}
+	leftMonths, leftDays, leftSeconds, leftNanos := durationGroups(left)
+	rightMonths, rightDays, rightSeconds, rightNanos := durationGroups(right)
+	for _, pair := range [...][2]int64{{leftMonths, rightMonths}, {leftDays, rightDays}, {leftSeconds, rightSeconds}, {leftNanos, rightNanos}} {
+		if pair[0] != pair[1] {
+			if pair[0] < pair[1] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+// durationLengthNanos is a duration's average length in nanoseconds
+// (compareDurationOrdering).
+func durationLengthNanos(duration *CypherDuration) *big.Int {
+	months, days, seconds, nanos := durationGroups(duration)
+	total := new(big.Int).Mul(big.NewInt(months), big.NewInt(durationAverageSecondsPerMonth))
+	total.Add(total, new(big.Int).Mul(big.NewInt(days), big.NewInt(86_400)))
+	total.Add(total, big.NewInt(seconds))
+	total.Mul(total, big.NewInt(1_000_000_000))
+	return total.Add(total, big.NewInt(nanos))
+}

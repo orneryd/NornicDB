@@ -60,7 +60,11 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 	if len(values) == 0 {
 		return nil, true
 	}
-	sort.SliceStable(values, func(left, right int) bool { return values[left].numeric < values[right].numeric })
+	// Ordered as ORDER BY orders numbers (compareValuesForSort): NaN after
+	// every number, -0.0 before 0.0, integers and floats exactly (#907).
+	sort.SliceStable(values, func(left, right int) bool {
+		return compareValuesForSort(values[left].original, values[right].original) < 0
+	})
 
 	if name == "percentiledisc" {
 		index := int(math.Ceil(percentile*float64(len(values)))) - 1
