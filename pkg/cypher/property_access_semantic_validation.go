@@ -172,6 +172,11 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 			if err := checkPropertyAccesses(text, types, params); err != nil {
 				return err
 			}
+			if clause.kind == pipelineClauseSet {
+				if err := setClauseSourceTypeError(text, types, params); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil

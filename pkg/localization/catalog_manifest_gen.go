@@ -800,7 +800,6 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cypherresidual.policy_disallowed", Constructor: "CypherResidualPolicyDisallowed", Fields: []string{"EdgeType", "Name", "SourceLabel", "TargetLabel"}, PluralForms: []string{"other"}},
 	{ID: "cypherresidual.property_map_syntax_invalid", Constructor: "CypherResidualPropertyMapSyntaxInvalid", Fields: []string{"Pattern"}, PluralForms: []string{"other"}},
 	{ID: "cypherresidual.relationship_connector_expected", Constructor: "CypherResidualRelationshipConnectorExpected", Fields: []string{"Connector"}, PluralForms: []string{"other"}},
-	{ID: "cypherresidual.set_assignment_invalid", Constructor: "CypherResidualSetAssignmentInvalid", Fields: []string{"Assignment"}, PluralForms: []string{"other"}},
 	{ID: "cypherresidual.set_entity_assignment_invalid", Constructor: "CypherResidualSetEntityAssignmentInvalid", Fields: []string{"Assignment", "Cause"}, PluralForms: []string{"other"}},
 	{ID: "cypherresidual.set_merge_map_or_parameter_required", Constructor: "CypherResidualSetMergeMapOrParameterRequired", Fields: []string{"Value"}, PluralForms: []string{"other"}},
 	{ID: "cypherresidual.show_aliases_manager_unavailable", Constructor: "CypherResidualShowAliasesManagerUnavailable", Fields: []string{}, PluralForms: []string{"other"}},

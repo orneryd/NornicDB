@@ -158,29 +158,21 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 		return err
 	}
 	for _, assignment := range assignments {
-		assignment = strings.TrimSpace(assignment)
-		operator := strings.Index(assignment, "+=")
-		operatorWidth := 2
-		if operator < 0 {
-			operator = strings.Index(assignment, "=")
-			operatorWidth = 1
-		}
-		if operator < 0 {
+		target, property, operator, expression := splitSetAssignment(assignment)
+		if operator == ":" {
 			// Label assignment `n:Label[:Label2]`: the variable before the
 			// first colon must be bound, as for a property assignment.
-			if colon := strings.Index(assignment, ":"); colon > 0 {
-				target := normalizeProjectionColumnName(assignment[:colon])
-				if isValidIdentifier(target) && !scope.contains(target) {
-					return createUndefinedVariableError(target)
-				}
+			if target = normalizeProjectionColumnName(target); isValidIdentifier(target) && !scope.contains(target) {
+				return createUndefinedVariableError(target)
 			}
 			continue
 		}
-		target, _, _ := parseSetAssignmentTarget(assignment[:operator])
+		if operator == "" {
+			continue
+		}
 		if target != "" && !scope.contains(target) {
 			return createUndefinedVariableError(target)
 		}
-		expression := strings.TrimSpace(assignment[operator+operatorWidth:])
 		if err := validateExpressionOperandCompleteness(expression); err != nil {
 			return err
 		}
@@ -190,10 +182,10 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 		if err := validateKnownFunctionsInExpression(expression); err != nil {
 			return err
 		}
-		if _, property, setOperator, source := splitSetAssignment(assignment); setOperator != "" {
-			if err := setSourceLiteralTypeError(property, setOperator, source); err != nil {
-				return err
-			}
+		// Literal sources here; the statement walker
+		// (validatePropertyAccessClauses) also knows WITH / UNWIND types.
+		if err := setSourceTypeError(property, operator, expression, nil, nil); err != nil {
+			return err
 		}
 	}
 	return nil

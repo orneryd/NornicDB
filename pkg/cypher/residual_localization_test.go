@@ -73,7 +73,6 @@ func TestResidualCypherDescriptorsPreserveContracts(t *testing.T) {
 		{localization.CypherResidualCreateWithExpressionInvalid("missing"), localization.MessageCypherResidualCreateWithExpressionInvalid, `invalid CREATE...WITH query: invalid WITH expression "missing"`},
 		{localization.CypherResidualMergePatternInvalid("broken"), localization.MessageCypherResidualMergePatternInvalid, "invalid pattern: broken"},
 		{localization.CypherResidualSetMergeMapOrParameterRequired("broken"), localization.MessageCypherResidualSetMergeMapOrParameterRequired, `SET += requires a map or parameter (got: "broken")`},
-		{localization.CypherResidualSetAssignmentInvalid("broken"), localization.MessageCypherResidualSetAssignmentInvalid, `invalid SET assignment: "broken" (expected n.property = value or n:Label)`},
 		{localization.CypherResidualSetEntityAssignmentInvalid("n = broken", cause), localization.MessageCypherResidualSetEntityAssignmentInvalid, `invalid SET assignment: "n = broken" (expected variable.property = value or variable = {property: value}): forced failure`},
 		{localization.CypherResidualCollectSubquerySyntaxInvalid(), localization.MessageCypherResidualCollectSubquerySyntaxInvalid, "invalid COLLECT subquery syntax"},
 		{localization.CypherResidualCollectSubqueryReturnRequired(), localization.MessageCypherResidualCollectSubqueryReturnRequired, "COLLECT subquery must have a RETURN clause"},
@@ -85,7 +84,7 @@ func TestResidualCypherDescriptorsPreserveContracts(t *testing.T) {
 		{localization.CypherResidualShowAliasesSyntaxInvalid(), localization.MessageCypherResidualShowAliasesSyntaxInvalid, "invalid SHOW ALIASES syntax"},
 	}
 
-	require.Len(t, testCases, 28)
+	require.Len(t, testCases, 27)
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {

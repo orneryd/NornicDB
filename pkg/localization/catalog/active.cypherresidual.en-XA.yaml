@@ -34,8 +34,6 @@
   other: "[!! invalid pattern: {{.Pattern}} !!]"
 - id: cypherresidual.set_merge_map_or_parameter_required
   other: '[!! SET += requires a map or parameter (got: "{{.Value}}") !!]'
-- id: cypherresidual.set_assignment_invalid
-  other: '[!! invalid SET assignment: "{{.Assignment}}" (expected n.property = value or n:Label) !!]'
 - id: cypherresidual.set_entity_assignment_invalid
   other: '[!! invalid SET assignment: "{{.Assignment}}" (expected variable.property = value or variable = {property: value}): {{.Cause}} !!]'
 - id: cypherresidual.collect_subquery_syntax_invalid
