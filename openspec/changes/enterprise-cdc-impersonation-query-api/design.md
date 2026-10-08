@@ -63,7 +63,10 @@ also prohibits updating administration commands, even when the target is admin.
 
 Bolt's connection authResult remains the authenticated principal. BEGIN pins
 execution identity; RUN inside that transaction cannot replace it. Autocommit
-identity lasts through PULL/DISCARD/commit, not just handleRun. ROUTE uses the
+identity lasts through PULL/DISCARD/commit, not just handleRun: a streamed
+auto-commit read (#939) keeps running until its last PULL, with a helper
+goroutine answering PULLs, so the identity must travel in the statement's
+context rather than be read from the session while it streams. ROUTE uses the
 target home database/access without changing the connection principal.
 RESET, timeout, failed BEGIN, rollback, disconnect, LOGOFF/LOGON and pool reuse
 must not leak a target to the next request. Avoid closures reading mutable
@@ -169,14 +172,19 @@ Do not use tx.ID strings, wall-clock HTTP bookmarks, WAL offsets, or reserved
 MVCC sequence numbers as a published CDC transaction ID.
 
 Add a namespace-scoped logical commit coordinator (new
-`pkg/storage/change_capture.go`) for capture-enabled graph commits. Acquire its
-gate before commit-time engine/constraint/count/publication locks, validate,
-assign a monotonically increasing integer logical txId, stage graph changes,
-events and durable head, then publish through commitWriter. Gaps are allowed;
-visible commits cannot reorder and abandoned reservations cannot block readers.
-Use one acquisition per logical commit, not per physical batch or nested direct
-write. Establish and test a lock-order contract against schema commits, large
-commits, close, retention and option transitions before wiring the gate.
+`pkg/storage/change_capture.go`) for capture-enabled graph commits. Take its
+gate last: after the commit's unique-key commit locks (#961, #964's
+`acquireUniqueConstraintCommitLocks`) and constraint/count validation, and hold
+it only while assigning a monotonically increasing integer logical txId,
+staging graph changes, events and durable head, and publishing through
+commitWriter. A commit can wait on another transaction's unique-key lock until
+that transaction commits; a gate taken before those locks would let A hold the
+gate while waiting for B's key and B wait for the gate to commit, a cycle the
+key-lock deadlock detector cannot see. Gaps are allowed; visible commits cannot
+reorder and abandoned reservations cannot block readers. Use one acquisition per
+logical commit, not per physical batch or nested direct write. Establish and
+test a lock-order contract against unique-key commit locks, schema commits,
+large commits, close, retention and option transitions before wiring the gate.
 
 The existing managed commitOracle remains the authority for physical
 visibility/recovery; this coordinator is only logical per-database ordering.
@@ -240,7 +248,10 @@ remove the affected direct-execution capability fallback.
 ### 7. Database options and procedure authorization
 
 Persist txLogEnrichment with DatabaseInfo and expose it via the existing manager
-interface. Add shared lexical parsing for CREATE OPTIONS, ALTER SET OPTION and
+interface. Observed on the reference ([CDC-01 evidence](evidence/cdc-01-database-options.txt)):
+values are case-insensitive and stored upper-case; an unset option is absent
+from `options` (`{}`), not `OFF`, and REMOVE OPTION returns to that state.
+Add shared lexical parsing for CREATE OPTIONS, ALTER SET OPTION and
 REMOVE OPTION; consume all tokens and support parameter expressions allowed
 by 5.26. System/composite/alias legality and explicit admin transaction behavior
 are oracle-defined. Replace CREATE's current name-row response where it
@@ -276,7 +287,11 @@ with oracle-mapped errors. Restore/drop-recreate cannot reuse old cursors.
 
 Implement namespace/epoch/txId/seq range iteration with a stable published upper
 bound, context cancellation and bounded batches. Stream through existing result
-interfaces; no full history scan into memory for LIMIT 1. Protect active scans
+interfaces; no full history scan into memory for LIMIT 1. Procedures return
+their rows as one slice today, and Bolt's lazy results (#939) only stream a
+pipeline RETURN, so this needs a streaming procedure result: rows yielded on
+demand into the CALL's YIELD/WHERE/RETURN and on into the Bolt result stream,
+with LIMIT ending the scan. Protect active scans
 from concurrent pruning using the existing managed read/snapshot model.
 
 Compile and validate selectors once per invocation. OR across selectors, AND
