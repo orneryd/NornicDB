@@ -25,15 +25,19 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	if strings.TrimSpace(afterCall) != "" {
 		return nil, nil, false, nil
 	}
+	// An unscoped body imports through its branches' leading WITHs
+	// (unscopedCallImports, #907).
+	scoped := callSubqueryHasScopeClause(clause)
 	if metadata != nil {
 		declared := parseCallSubqueryImportVariables(clause)
-		if declared == nil && !callSubqueryHasScopeClause(clause) {
-			leading, _, hasImports, importErr := parseLeadingWithImports(body)
+		if declared == nil && !scoped {
+			var importErr error
+			declared, _, importErr = unscopedCallImports(body, func(name string) bool {
+				_, exists := metadata.scope[name]
+				return exists
+			}, true)
 			if importErr != nil {
 				return nil, nil, true, importErr
-			}
-			if hasImports {
-				declared = leading
 			}
 		}
 		for _, name := range declared {
@@ -74,14 +78,20 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 
 	scopedImports := parseCallSubqueryImportVariables(clause)
 	hasLegacyImports := false
-	if !callSubqueryHasScopeClause(clause) {
-		var err error
-		if _, _, hasLegacyImports, err = parseLeadingWithImports(body); err != nil {
-			return nil, nil, true, err
+	if !scoped {
+		var importErr error
+		_, hasLegacyImports, importErr = unscopedCallImports(body, func(name string) bool {
+			_, exists := rows[0][name]
+			return exists && !strings.HasPrefix(name, "$")
+		}, false)
+		if importErr != nil {
+			return nil, nil, true, importErr
 		}
 	}
+	// CALL (*) imports every outer variable the body reads. An unscoped
+	// subquery without an importing WITH imports nothing (#907).
 	imports := scopedImports
-	if scopedImports == nil && !hasLegacyImports && len(rows) > 0 {
+	if scopedImports == nil && scoped && len(rows) > 0 {
 		for name := range rows[0] {
 			if !strings.HasPrefix(name, "$") && isIdentifierReferenced(body, name) {
 				imports = append(imports, name)
