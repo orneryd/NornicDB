@@ -81,6 +81,10 @@ type pipelineMatchPhysicalHint struct {
 	// reads; nil otherwise. A label scan uses it to read only the properties
 	// those clauses use (pipelineLabelScanProjection).
 	readTail []string
+	// streamScan lets the MATCH hand its candidates on as the scan reads
+	// them: the statement only reads and streams its result to the client,
+	// and the MATCH runs once (#939).
+	streamScan bool
 }
 
 // pipelineReadOnlyTail returns the texts of remaining when every clause only
@@ -469,6 +473,7 @@ func sortBoundariesByPos(bs []pipelineBoundary) {
 // step. Its outcome distinguishes a safe decline from a parse rejection or a
 // runtime failure, so callers only retry the NotApplicable state.
 func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (outcome pipelineDispatchOutcome) {
+	statement := cypher
 	ctx = withExpressionFailureSlot(ctx)
 	defer func() {
 		if recorded := getExpressionFailure(ctx); recorded != nil && outcome.err == nil {
@@ -554,6 +559,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 		scope[name] = struct{}{}
 	}
 
+	bindResultStream(ctx, statement, clauses)
 	result, handled, err := e.runPipelineClauses(ctx, rows, scope, clauses, originalClauses)
 	return newPipelineDispatchOutcome(result, handled, err)
 }
@@ -634,7 +640,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		clause := clauses[idx]
 		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
 			!(clause.kind == pipelineClauseCreate && independentCreate) &&
-			!(clause.kind == pipelineClauseReturn && pipelineClauseAggregates(clause)) {
+			!(clause.kind == pipelineClauseReturn && (pipelineClauseAggregates(clause) || streamsReturn(ctx, clauses, idx))) {
 			var completed bool
 			rows, completed = materializePipelineSource(source)
 			source = nil
@@ -645,7 +651,8 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		switch clause.kind {
 		case pipelineClauseMatch:
 			hint := e.pipelineMatchHint(clauses[idx+1:])
-			input := source
+			hint.streamScan = source == nil && len(rows) == 1 && len(scope) == 0 && streamsScan(ctx, clauses)
+						input := source
 			if input == nil {
 				input = pipelineRowsSource(rows)
 			}
@@ -806,7 +813,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				scope = pipelineProjectionScope(scope, clauses[idx+offset].text)
 			}
 			idx += consumed
-			if idx+1 < len(clauses) && pipelineClauseAggregates(clauses[idx+1]) {
+			if idx+1 < len(clauses) && (pipelineClauseAggregates(clauses[idx+1]) || streamsReturn(ctx, clauses, idx+1)) {
 				source = unwound
 				rows = nil
 				continue
@@ -872,6 +879,14 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			addQueryStats(result.Stats, stats)
 			wrote = true
 		case pipelineClauseReturn:
+			if streamsReturn(ctx, clauses, idx) {
+				columns, streamedRows, handled, err := e.pipelineStreamReturn(ctx, boundResultStream(ctx, &clauses[idx]), rows, source, clauses, originalClauses, idx, scope, wrote)
+				if !handled || err != nil {
+					return nil, handled, err
+				}
+				result.Columns, result.Rows = columns, streamedRows
+				return result, true, nil
+			}
 			if err := validateDeletedEntityProjection(rows, clause.text); err != nil {
 				return nil, true, err
 			}
@@ -2517,23 +2532,67 @@ func (e *StorageExecutor) whereIsSimpleIndexedIn(ctx context.Context, variable, 
 type pipelinePrefetchedNodeCandidatesKey struct{}
 
 func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
-	if prefetched, ok := ctx.Value(pipelinePrefetchedNodeCandidatesKey{}).(map[nodeBatchMatchKey]map[string]*storage.Node); ok && len(nodePattern.labels) == 1 && len(nodePattern.properties) == 1 {
-		for property, value := range nodePattern.properties {
-			key := nodeBatchMatchKey{label: nodePattern.labels[0], prop: property}
-			if node := prefetched[key][propEqKeyBatch(value)]; node != nil && pipelineNodeMatchesPattern(node, nodePattern) {
-				return []*storage.Node{node}, false, nil
-			}
-		}
+	if node := prefetchedPipelineCandidate(ctx, nodePattern); node != nil {
+		return []*storage.Node{node}, false, nil
 	}
 	nodes, whereApplied, used, err := e.collectPipelineIndexedNodeCandidates(ctx, nodePattern, whereClause, hint)
 	if err != nil || used {
 		return nodes, whereApplied, err
 	}
-	streamingWhere := ""
+	properties, streamingWhere, projection := e.pipelineLabelScanArguments(ctx, nodePattern, whereClause, hint)
+	nodes, err = e.collectNodesWithStreamingProjection(ctx, nodePattern.labels, properties, nodePattern.variable, streamingWhere, hint.earlyLimit, projection)
+	if len(nodePattern.properties) > 0 {
+		e.markMergeScanFallbackUsed()
+	}
+	return nodes, false, err
+}
+
+// visitPipelineInitialNodeCandidates is collectPipelineInitialNodeCandidates
+// for a MATCH whose rows are consumed as they are made (#939): the
+// candidates go to visit as the scan reads them, so the scan advances only
+// as far as the rows consumed. An indexed seed is read first, as there.
+// visit returning storage.ErrIterationStopped ends the scan without error.
+func (e *StorageExecutor) visitPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, hint pipelineMatchPhysicalHint, visit func(*storage.Node) error) error {
+	// A streamed MATCH is the statement's first clause, over one row, so
+	// no batch prefetch applies to it (prefetchedPipelineCandidate).
+	nodes, _, used, err := e.collectPipelineIndexedNodeCandidates(ctx, nodePattern, "", hint)
+	if err != nil {
+		return err
+	}
+	if used {
+		return visitNodeList(nodes, visit)
+	}
+	properties, streamingWhere, projection := e.pipelineLabelScanArguments(ctx, nodePattern, "", hint)
+	err = e.visitNodesWithStreamingProjection(ctx, nodePattern.labels, properties, nodePattern.variable, streamingWhere, hint.earlyLimit, projection, nil, visit)
+	if len(nodePattern.properties) > 0 {
+		e.markMergeScanFallbackUsed()
+	}
+	return err
+}
+
+// prefetchedPipelineCandidate is the node a batch prefetch already found for
+// a one-label, one-property pattern, or nil.
+func prefetchedPipelineCandidate(ctx context.Context, nodePattern nodePatternInfo) *storage.Node {
+	prefetched, ok := ctx.Value(pipelinePrefetchedNodeCandidatesKey{}).(map[nodeBatchMatchKey]map[string]*storage.Node)
+	if !ok || len(nodePattern.labels) != 1 || len(nodePattern.properties) != 1 {
+		return nil
+	}
+	for property, value := range nodePattern.properties {
+		key := nodeBatchMatchKey{label: nodePattern.labels[0], prop: property}
+		if node := prefetched[key][propEqKeyBatch(value)]; node != nil && pipelineNodeMatchesPattern(node, nodePattern) {
+			return node
+		}
+	}
+	return nil
+}
+
+// pipelineLabelScanArguments are the filters and projection of the label
+// (or label-less) scan that seeds a MATCH no index narrows.
+func (e *StorageExecutor) pipelineLabelScanArguments(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (properties map[string]interface{}, streamingWhere string, projection []string) {
 	if hint.earlyLimit > 0 {
 		streamingWhere = whereClause
 	}
-	properties := nodePattern.properties
+	properties = nodePattern.properties
 	if len(nodePattern.labels) == 0 && streamingWhere == "" {
 		// The rows are filtered by the WHERE afterwards; its top-level
 		// equalities still let a label-less scan skip the nodes that can't
@@ -2544,11 +2603,7 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 	if !projected {
 		projection = nil
 	}
-	nodes, err = e.collectNodesWithStreamingProjection(ctx, nodePattern.labels, properties, nodePattern.variable, streamingWhere, hint.earlyLimit, projection)
-	if len(nodePattern.properties) > 0 {
-		e.markMergeScanFallbackUsed()
-	}
-	return nodes, false, err
+	return properties, streamingWhere, projection
 }
 
 // pipelineApplyChainedMatch expands a MATCH against graph bindings already in
@@ -4132,31 +4187,11 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	// result rows: no per-row map or ORDER BY scope is needed.
 	if modifiers == "" && !returnDistinct {
 		result.Rows = make([][]interface{}, 0, len(rows))
-		failed := false
-		if rows == nil && source != nil {
-			sourceFailed := false
-			if !source(func(row pipelineRow) bool {
-				values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
-				sourceFailed = !evaluated
-				if evaluated {
-					result.Rows = append(result.Rows, values)
-				}
-				return evaluated
-			}) {
-				return nil, false
-			}
-			failed = sourceFailed
-		} else {
-			for _, row := range rows {
-				values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
-				if !evaluated {
-					failed = true
-					break
-				}
-				result.Rows = append(result.Rows, values)
-			}
+		projected, completed := e.pipelineProjectPlainReturn(ctx, projs, rows, source, &result.Rows, nil)
+		if !completed {
+			return nil, false
 		}
-		if failed {
+		if !projected {
 			if failure := getExpressionFailure(ctx); failure == nil || newPipelineDispatchOutcome(nil, true, failure).state == pipelineDispatchParseRejected {
 				return nil, false
 			}
@@ -4227,6 +4262,126 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		result.Rows = append(result.Rows, outRow)
 	}
 	return result, true
+}
+
+// pipelineProjectPlainReturn projects the rows of a RETURN without DISTINCT,
+// ORDER BY, SKIP, LIMIT or aggregation: rows, or source's rows when rows is
+// nil. Each projected row is appended to *out, or handed to emit when emit
+// is set, which stops the projection by returning false. projected is false
+// when a row could not be projected (the expression error, if any, is
+// recorded); completed is false when source declined its shape.
+func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs []returnProjection, rows []pipelineRow, source pipelineRowSource, out *[][]interface{}, emit func([]interface{}) bool) (projected, completed bool) {
+	if rows == nil && source != nil {
+		projected = true
+		completed = source(func(row pipelineRow) bool {
+			values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
+			if !evaluated {
+				projected = false
+				return false
+			}
+			if emit != nil {
+				return emit(values)
+			}
+			*out = append(*out, values)
+			return true
+		})
+		return projected, completed
+	}
+	for _, row := range rows {
+		values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
+		if !evaluated {
+			return false, true
+		}
+		if emit == nil {
+			*out = append(*out, values)
+		} else if !emit(values) {
+			break
+		}
+	}
+	return true, true
+}
+
+// pipelineStreamReturn runs the statement's RETURN into stream (#939), for
+// a RETURN streamsReturn takes: its rows go to the stream as they are
+// projected. A RETURN that ends before the stream started returns its
+// rows, as usual (nil after streaming). Its errors and declines are the
+// usual RETURN's until the stream started (a decline is handled false and
+// no error, pipelineDecline); after, a decline is an error, since the
+// client already has rows and no other route may run the statement again.
+func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *ResultStream, rows []pipelineRow, source pipelineRowSource, clauses, originalClauses []pipelineClause, idx int, scope map[string]struct{}, wrote bool) (columns []string, out [][]interface{}, handled bool, err error) {
+	clause := clauses[idx]
+	plan := returnProjectionPlanFor(clause.text)
+	// The statement only reads, so no row holds an entity it deleted
+	// (validateDeletedEntityProjection), and the RETURN doesn't aggregate
+	// (validatePipelinePercentileArguments). The argument checks run on each
+	// row as it arrives, as WITH's do: a row that fails them fails the
+	// statement where the row is, as in Neo4j.
+	if err := e.validatePipelineProjectionValues(rows, clause.text, "RETURN"); err != nil {
+		return nil, nil, true, err
+	}
+	var validationErr error
+	if rows == nil && source != nil && strings.ContainsAny(clause.text, "([") {
+		input := source
+		source = func(yield func(pipelineRow) bool) bool {
+			return input(func(row pipelineRow) bool {
+				if err := e.validatePipelineProjectionValues([]pipelineRow{row}, clause.text, "RETURN"); err != nil {
+					validationErr = err
+					return false
+				}
+				return yield(row)
+			})
+		}
+	}
+	named := &ExecuteResult{Columns: append([]string(nil), plan.columns...)}
+	pipelineNameReturnColumns(named, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
+	stream.begin(named.Columns)
+	stopped := false
+	projected, completed := e.pipelineProjectPlainReturn(ctx, plan.projections, rows, source, nil, func(values []interface{}) bool {
+		if !stream.emit(ctx, values) {
+			stopped = true
+			return false
+		}
+		return true
+	})
+	buffered, streamed := stream.end()
+	switch {
+	case stopped:
+		return nil, nil, true, ctx.Err()
+	case validationErr != nil:
+		stream.discard()
+		return nil, nil, true, validationErr
+	case projected && completed:
+		if streamed {
+			return named.Columns, nil, true, nil
+		}
+		if buffered == nil {
+			buffered = [][]interface{}{}
+		}
+		return named.Columns, buffered, true, nil
+	case !streamed:
+		stream.discard()
+		_, handled, err := pipelineDecline(ctx, wrote, clause.text)
+		return nil, nil, handled, err
+	}
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, nil, true, failure
+	}
+	return nil, nil, true, localizedError(localization.CypherInvariantsPipelineDeclinedAfterStreaming(clause.text), nil)
+}
+
+// streamableReturnPlan reports whether a RETURN's rows can go to a result
+// stream as they are projected: no DISTINCT, ORDER BY, SKIP, LIMIT,
+// aggregation or *.
+func streamableReturnPlan(plan *returnProjectionPlan) bool {
+	return plan.valid && !plan.star && !plan.hasAggregate && !plan.distinct && plan.modifiers == ""
+}
+
+// streamsReturn reports whether clauses[idx] is a RETURN the statement's
+// result stream takes (pipelineStreamReturn), so its input may stay a row
+// source.
+func streamsReturn(ctx context.Context, clauses []pipelineClause, idx int) bool {
+	return clauses[idx].kind == pipelineClauseReturn && boundResultStream(ctx, &clauses[idx]) != nil &&
+		streamableReturnPlan(returnProjectionPlanFor(clauses[idx].text))
 }
 
 func deduplicatePipelineResultRows(rows [][]interface{}) [][]interface{} {

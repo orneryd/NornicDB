@@ -7,3 +7,6 @@
 - id: cypherinvariants.pipeline_declined_after_write
   description: La canalización no pudo terminar una sentencia después de escribir; ejecutarla de nuevo por otra ruta repetiría las escrituras. Clause no se traduce.
   other: 'la canalización no pudo terminar una sentencia después de haber escrito ({{.Clause}}); la sentencia no se volvió a ejecutar'
+- id: cypherinvariants.pipeline_declined_after_streaming
+  description: La canalización no pudo terminar una sentencia después de enviar filas; ejecutarla de nuevo por otra ruta enviaría esas filas dos veces. Clause no se traduce.
+  other: 'la canalización no pudo terminar una sentencia después de haber enviado filas ({{.Clause}}); la sentencia no se volvió a ejecutar'
