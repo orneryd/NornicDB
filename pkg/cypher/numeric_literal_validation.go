@@ -71,17 +71,14 @@ func validateNumericLiteralAt(cypher string, start int) (int, error) {
 
 	if start+1 < len(cypher) && cypher[start] == '0' {
 		switch cypher[start+1] {
-		case 'x':
+		// The uppercase prefixes 0X and 0O are a NornicDB extension: Neo4j 5
+		// takes only 0x and 0o, but the value is unambiguous, so NornicDB
+		// keeps accepting them, as before (#907, at the owner's direction).
+		// Digit grouping is for the lowercase forms (groupedNumericLiteralEnd).
+		case 'x', 'X':
 			base = 16
-		case 'o':
+		case 'o', 'O':
 			base = 8
-		case 'X', 'O':
-			// Neo4j 5 takes only the lowercase prefixes (#907).
-			invalidEnd := start + 2
-			for invalidEnd < len(cypher) && isNumericIdentifierByte(cypher[invalidEnd]) {
-				invalidEnd++
-			}
-			return invalidEnd, numericLiteralError("InvalidNumberLiteral", cypher[start:invalidEnd])
 		}
 	}
 	if base != 10 {
@@ -135,7 +132,10 @@ func validateNumericLiteralAt(cypher string, start int) (int, error) {
 	if end < len(cypher) && cypher[end] == '#' {
 		return end, numericLiteralError("UnexpectedSyntax", cypher[start:end+1])
 	}
-	// 01 is the legacy octal form, which Neo4j 5 rejects (#907).
+	// 01 is the legacy octal form, which Neo4j 5 rejects (#907). It stays
+	// rejected, unlike the uppercase prefixes: Cypher before 5 read 010 as
+	// octal 8, and NornicDB read it as decimal 10, so accepting it would give
+	// a statement written for that Cypher a different value.
 	if cypher[start] == '0' && end-start > 1 {
 		return end, numericLiteralError("InvalidNumberLiteral", cypher[start:end])
 	}
