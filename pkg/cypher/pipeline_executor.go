@@ -590,6 +590,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	if output != nil {
 		wrote = output.wrote
 	}
+	if pipelineClausesMayDelete(clauses) {
+		ctx = withDeletedEntities(ctx)
+	}
 	independentCreate, _ := ctx.Value(pipelineIndependentCreateBatchKey{}).(bool)
 	if len(rows) > 1 && !independentCreate {
 		prefix, writes := 0, false
@@ -646,6 +649,11 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			source = nil
 			if !completed {
 				return pipelineDecline(ctx, wrote, clause.text)
+			}
+		}
+		if deleted := deletedEntitiesOf(ctx); !deleted.empty() {
+			if err := validateDeletedEntityReads(rows, deletedEntityReadText(clause), deleted); err != nil {
+				return nil, true, err
 			}
 		}
 		switch clause.kind {
@@ -886,9 +894,6 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				}
 				result.Columns, result.Rows = columns, streamedRows
 				return result, true, nil
-			}
-			if err := validateDeletedEntityProjection(rows, clause.text); err != nil {
-				return nil, true, err
 			}
 			if err := e.validatePipelinePercentileArguments(rows, clause.text, "RETURN"); err != nil {
 				return nil, true, err
@@ -1427,17 +1432,8 @@ func normalizePipelineWhitespace(query string) string {
 // mutation, preserving statement atomicity while retaining input rows for
 // subsequent WITH and RETURN clauses.
 func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clause string) (*QueryStats, bool, error) {
-	body := strings.TrimSpace(clause)
-	detach := startsWithKeywordFold(body, "DETACH DELETE")
-	if detach {
-		body = strings.TrimSpace(body[len("DETACH DELETE"):])
-	} else if startsWithKeywordFold(body, "DELETE") {
-		body = strings.TrimSpace(body[len("DELETE"):])
-	} else {
-		return nil, false, nil
-	}
-	targets := splitTopLevelComma(body)
-	if len(targets) == 0 {
+	targets, detach, ok := deleteClauseTargets(clause)
+	if !ok || len(targets) == 0 {
 		return nil, false, nil
 	}
 	for _, expression := range targets {
@@ -1530,8 +1526,12 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		stats.NodesDeleted++
 		e.removeNodeFromSearch(string(nodeID))
 	}
-	markPipelineRowsDeletedEntities(rows, nodeIDs, deletedEdges)
-	e.replaceDeletedEntityViews(rows)
+	deleted := deletedEntitiesOf(ctx)
+	if deleted == nil {
+		deleted = &deletedEntities{}
+	}
+	deleted.add(nodeIDs, deletedEdges)
+	e.replaceDeletedEntityViews(rows, deleted)
 	return stats, true, nil
 }
 
@@ -4284,7 +4284,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 	clause := clauses[idx]
 	plan := returnProjectionPlanFor(clause.text)
 	// The statement only reads, so no row holds an entity it deleted
-	// (validateDeletedEntityProjection), and the RETURN doesn't aggregate
+	// (validateDeletedEntityReads), and the RETURN doesn't aggregate
 	// (validatePipelinePercentileArguments). The argument checks run on each
 	// row as it arrives, as WITH's do: a row that fails them fails the
 	// statement where the row is, as in Neo4j.

@@ -11,21 +11,26 @@ import (
 func TestDeletedEntityProjectionRejectsPropertyAndLabelAccess(t *testing.T) {
 	node := &storage.Node{ID: "deleted"}
 	rows := []pipelineRow{{"node": node}}
-	markPipelineRowsDeletedEntities(rows, []storage.NodeID{node.ID}, nil)
+	deleted := &deletedEntities{}
+	deleted.add([]storage.NodeID{node.ID}, nil)
 
-	requireDeletedEntityError(t, validateDeletedEntityProjection(rows, "RETURN node.value"))
-	requireDeletedEntityError(t, validateDeletedEntityProjection(rows, "RETURN labels(node)"))
+	requireDeletedEntityError(t, validateDeletedEntityReads(rows, "RETURN node.value", deleted))
+	requireDeletedEntityError(t, validateDeletedEntityReads(rows, "RETURN labels(node)", deleted))
+	require.NoError(t, validateDeletedEntityReads(rows, "RETURN keys(node)", deleted))
+	require.NoError(t, validateDeletedEntityReads(rows, "RETURN node.value", nil))
 }
 
 func TestDeletedRelationshipProjectionAllowsTypeButRejectsProperties(t *testing.T) {
 	edge := &storage.Edge{ID: "deleted", Type: "REL"}
 	rows := []pipelineRow{{"relationship": edge}}
-	markPipelineRowsDeletedEntities(rows, nil, map[storage.EdgeID]struct{}{edge.ID: {}})
+	deleted := &deletedEntities{}
+	deleted.add(nil, map[storage.EdgeID]struct{}{edge.ID: {}})
 
-	if err := validateDeletedEntityProjection(rows, "RETURN type(relationship)"); err != nil {
+	if err := validateDeletedEntityReads(rows, "RETURN type(relationship)", deleted); err != nil {
 		t.Fatalf("type() must remain available after deletion: %v", err)
 	}
-	requireDeletedEntityError(t, validateDeletedEntityProjection(rows, "RETURN relationship.value"))
+	requireDeletedEntityError(t, validateDeletedEntityReads(rows, "RETURN relationship.value", deleted))
+	requireDeletedEntityError(t, validateDeletedEntityReads(rows, "RETURN keys(relationship)", deleted))
 }
 
 func requireDeletedEntityError(t *testing.T, err error) {

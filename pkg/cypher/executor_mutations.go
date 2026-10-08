@@ -422,9 +422,13 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 	edgeIDs := make(map[storage.EdgeID]struct{})
 	if info.input != nil {
 		store := e.getStorage(ctx)
+		seenNodes, seenEdges := map[string]struct{}{}, map[string]struct{}{}
+		var targetEdges []storage.EdgeID
 		for _, values := range info.input.Rows {
 			row := pipelineRow(buildRowValueMap(info.input.Columns, values))
 			rows = append(rows, row)
+			// An entity the DELETE removed without naming it (a DETACH
+			// DELETE's relationships) is gone from storage.
 			for _, value := range row {
 				switch entity := value.(type) {
 				case *storage.Node:
@@ -441,40 +445,28 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 					}
 				}
 			}
+			// The DELETE's targets, as the pipeline DELETE collects them (a
+			// path's nodes and relationships, a list's entities).
 			for _, target := range splitTopLevelComma(deleteVars) {
 				value, ok := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(target), row)
 				if !ok {
 					pipelineItemUnevaluable(ctx, target)
 					return
 				}
-				entity := classifyDeleteTargetValue(value)
-				if entity.kind == deleteProjectionNode {
-					nodeIDs = append(nodeIDs, entity.nodeID)
-				} else if entity.kind == deleteProjectionRelationship {
-					edgeIDs[entity.edgeID] = struct{}{}
-				} else if pathMap, isMap := value.(map[string]interface{}); isMap {
-					// A deleted path deletes its nodes and relationships.
-					nodes, relationships, _, _ := pathValueParts(pathMap)
-					for _, node := range nodes {
-						if node, isNode := node.(*storage.Node); isNode && node != nil {
-							nodeIDs = append(nodeIDs, node.ID)
-						}
-					}
-					for _, relationship := range relationships {
-						if relationship, isEdge := relationship.(*storage.Edge); isEdge && relationship != nil {
-							edgeIDs[relationship.ID] = struct{}{}
-						}
-					}
-				}
+				collectDeleteTargetValue(value, seenNodes, seenEdges, &nodeIDs, &targetEdges)
 			}
 		}
+		for _, id := range targetEdges {
+			edgeIDs[id] = struct{}{}
+		}
 	}
-	markPipelineRowsDeletedEntities(rows, nodeIDs, edgeIDs)
-	if err := validateDeletedEntityProjection(rows, cypher[returnIdx:]); err != nil {
+	deleted := &deletedEntities{}
+	deleted.add(nodeIDs, edgeIDs)
+	if err := validateDeletedEntityReads(rows, cypher[returnIdx:], deleted); err != nil {
 		recordExpressionFailure(ctx, err)
 		return
 	}
-	e.replaceDeletedEntityViews(rows)
+	e.replaceDeletedEntityViews(rows, deleted)
 	projected, err := e.projectMergeReturn(ctx, rows, cypher[returnIdx:])
 	if err != nil {
 		return

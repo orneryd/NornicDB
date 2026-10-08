@@ -1079,15 +1079,12 @@ func addMatchPatternBindingKinds(scope matchSemanticScope, clause string) {
 // deleteTargetTypeError rejects a DELETE target whose type, known before the
 // statement runs, isn't a node, relationship or path: a property of a node or
 // relationship (n.p, a stored value) or a list of relationships (the variable
-// of a variable-length relationship). A map's key (m.k) has no static type. Neo4j 5.26: "Type mismatch: expected Node,
-// Path or Relationship" (#907). null is a valid target that deletes nothing.
+// of a variable-length relationship). A map's key (m.k) has no static type.
+// Neo4j 5.26: "Type mismatch: expected Node, Path or Relationship" (#907).
+// null is a valid target that deletes nothing.
 func deleteTargetTypeError(clause string, scope matchSemanticScope) error {
-	body := strings.TrimSpace(clause)
-	if startsWithKeywordFold(body, "DETACH") {
-		body = strings.TrimSpace(body[len("DETACH"):])
-	}
-	body = strings.TrimSpace(body[len("DELETE"):])
-	for _, expression := range splitTopLevelComma(body) {
+	targets, _, _ := deleteClauseTargets(clause)
+	for _, expression := range targets {
 		expression = strings.TrimSpace(expression)
 		if variable, _, property := parseVarPropertyRef(expression); property && isEntityPropertyAccess(expression, variable) {
 			switch scope[variable] {
