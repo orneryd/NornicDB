@@ -563,7 +563,9 @@ func TestSetWithoutMatchRegression(t *testing.T) {
 	`, nil)
 
 	assert.Error(t, err, "SET without MATCH should return an error")
-	assert.Contains(t, err.Error(), "syntax error", "Error should indicate syntax error")
+	// Neo4j: SyntaxError "Variable `n` not defined"; the message is the
+	// parser's own (#957).
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 }
 
 // ============================================================================

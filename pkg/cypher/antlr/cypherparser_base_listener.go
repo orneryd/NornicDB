@@ -68,6 +68,18 @@ func (s *BaseCypherParserListener) EnterShowCommand(ctx *ShowCommandContext) {}
 // ExitShowCommand is called when production showCommand is exited.
 func (s *BaseCypherParserListener) ExitShowCommand(ctx *ShowCommandContext) {}
 
+// EnterShowTail is called when production showTail is entered.
+func (s *BaseCypherParserListener) EnterShowTail(ctx *ShowTailContext) {}
+
+// ExitShowTail is called when production showTail is exited.
+func (s *BaseCypherParserListener) ExitShowTail(ctx *ShowTailContext) {}
+
+// EnterTerminateCommand is called when production terminateCommand is entered.
+func (s *BaseCypherParserListener) EnterTerminateCommand(ctx *TerminateCommandContext) {}
+
+// ExitTerminateCommand is called when production terminateCommand is exited.
+func (s *BaseCypherParserListener) ExitTerminateCommand(ctx *TerminateCommandContext) {}
+
 // EnterAdministrationCommand is called when production administrationCommand is entered.
 func (s *BaseCypherParserListener) EnterAdministrationCommand(ctx *AdministrationCommandContext) {}
 

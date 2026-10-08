@@ -10,6 +10,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,7 +48,11 @@ func TestUnhandledStatementsReturnClassifiedSyntaxErrors(t *testing.T) {
 					res, err := exec.Execute(ctx, tc.stmt, nil)
 					require.Error(t, err)
 					require.Nil(t, res, "unhandled statement must not return rows")
-					require.Contains(t, err.Error(), tc.errMsg)
+					// The message names the Nornic route's terminal; the
+					// ANTLR grammar rejects these with its own (#957).
+					if !config.IsANTLRParser() {
+						require.Contains(t, err.Error(), tc.errMsg)
+					}
 
 					var classified interface{ BoltErrorCode() string }
 					require.ErrorAs(t, err, &classified, "terminal error must carry a Neo4j Bolt classification")
