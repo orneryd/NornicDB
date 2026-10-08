@@ -8,9 +8,10 @@ import (
 func TestGetToolDefinitions(t *testing.T) {
 	tools := GetToolDefinitions()
 
-	// Note: index/unindex tools removed - handled by the application layer
-	if len(tools) != 6 {
-		t.Errorf("Expected 6 tools, got %d", len(tools))
+	// Note: index/unindex tools removed - handled by the application layer.
+	// The standalone task tool is folded into tasks.
+	if len(tools) != 5 {
+		t.Errorf("Expected 5 tools, got %d", len(tools))
 	}
 
 	// Check all tools are present
@@ -19,7 +20,6 @@ func TestGetToolDefinitions(t *testing.T) {
 		ToolRecall:   false,
 		ToolDiscover: false,
 		ToolLink:     false,
-		ToolTask:     false,
 		ToolTasks:    false,
 	}
 
@@ -52,23 +52,21 @@ func TestToolConstants(t *testing.T) {
 	if ToolLink != "link" {
 		t.Error("ToolLink should be 'link'")
 	}
-	// Note: ToolIndex and ToolUnindex removed - handled by the application layer
-	if ToolTask != "task" {
-		t.Error("ToolTask should be 'task'")
-	}
+	// Note: ToolIndex and ToolUnindex removed - handled by the application layer.
+	// The standalone ToolTask is folded into ToolTasks.
 	if ToolTasks != "tasks" {
 		t.Error("ToolTasks should be 'tasks'")
 	}
 }
 
 func TestToolPermissions(t *testing.T) {
-	// Verify ToolPermissions map is populated (6 tools now - index/unindex removed)
-	if len(ToolPermissions) != 6 {
-		t.Errorf("Expected 6 tool permissions, got %d", len(ToolPermissions))
+	// Verify ToolPermissions map is populated (5 tools - index/unindex removed, task folded into tasks)
+	if len(ToolPermissions) != 5 {
+		t.Errorf("Expected 5 tool permissions, got %d", len(ToolPermissions))
 	}
 
 	// Check each tool has a permission
-	tools := []string{ToolStore, ToolRecall, ToolDiscover, ToolLink, ToolTask, ToolTasks}
+	tools := []string{ToolStore, ToolRecall, ToolDiscover, ToolLink, ToolTasks}
 	for _, tool := range tools {
 		if _, exists := ToolPermissions[tool]; !exists {
 			t.Errorf("Missing permission for tool: %s", tool)

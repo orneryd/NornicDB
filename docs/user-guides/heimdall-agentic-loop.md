@@ -94,7 +94,7 @@ Notifications (e.g. `NotifyInfo`, `NotifyError`) from hooks are sent as **stream
 
 | Aspect | Plugin actions | MCP tools (when enabled) |
 |--------|----------------|---------------------------|
-| **Examples** | `heimdall_watcher_query`, `heimdall_watcher_status` | `store`, `recall`, `discover`, `link`, `task`, `tasks` |
+| **Examples** | `heimdall_watcher_query`, `heimdall_watcher_status` | `store`, `recall`, `discover`, `link`, `tasks` |
 | **Defined by** | Heimdall plugins (Watcher, your .so) | NornicDB MCP server (built-in) |
 | **Execution** | Dispatched to plugin’s action handler | Run in process by MCP server (store/recall/link etc.) |
 | **Enabled by** | Loading the plugin (Heimdall enabled) | `mcp_enable: true` (+ optional allowlist) |

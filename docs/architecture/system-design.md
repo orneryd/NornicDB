@@ -10,7 +10,7 @@ NornicDB is a **high-performance graph database** compatible with Neo4j's Cypher
 - Full Neo4j protocol compatibility (Bolt, Cypher, HTTP/REST)
 - Hybrid vector + graph semantics for embedding-driven applications
 
-- **MCP Server** - Native LLM tool integration (6 tools)
+- **MCP Server** - Native LLM tool integration (5 tools)
 - **Auto-Embedding** - Server-side embedding for vector queries
 - **GPU Acceleration** - 10-100x speedup (Metal/CUDA/OpenCL/Vulkan)
 - **Hybrid Search** - RRF fusion of vector + BM25
@@ -157,7 +157,7 @@ Key Design Decisions:
 │      ▼                      ▼                      ▼               │
 │  ┌──────────┐          ┌────────────┐          ┌──────────┐       │
 │  │ Cypher   │          │ Embedding  │          │ MCP Tools│       │
-│  │ Executor │◄────────►│ Service    │◄────────►│ (6 tools)│       │
+│  │ Executor │◄────────►│ Service    │◄────────►│ (5 tools)│       │
 │  │          │          │            │          │          │       │
 │  │ • Parse  │          │ • Auto-emb │          │ • store  │       │
 │  │ • Execute│          │ • Cache    │          │ • recall │       │
@@ -202,7 +202,7 @@ Key Design Decisions:
 
 ### MCP Server (`pkg/mcp`)
 
-Optional LLM-native tool interface (Claude, Cursor, etc.) with 6 tools:
+Optional LLM-native tool interface (Claude, Cursor, etc.) with 5 tools:
 
 ```
 store    - Create/update graph nodes with metadata
@@ -321,7 +321,7 @@ nornicdb/
 ├── cmd/nornicdb/          # CLI entry point
 ├── pkg/
 │   ├── nornicdb/          # Main DB API
-│   ├── mcp/               # MCP server (6 tools)
+│   ├── mcp/               # MCP server (5 tools)
 │   ├── embed/             # Embedding service + cache
 │   ├── storage/           # BadgerDB + WAL
 │   ├── search/            # Vector + BM25 + RRF

@@ -220,7 +220,7 @@ node-893 "Go middleware authentication"
 
 Creating a task to track this work..."
 
-→ task(title="Implement user authentication", description="Add JWT-based auth to Go API", priority="high")
+→ tasks(title="Implement user authentication", description="Add JWT-based auth to Go API", priority="high")
 ← task-456 created
 
 → link(from="task-456", to="node-892", relation="implements")
@@ -238,7 +238,7 @@ Shall I start implementation?"
 User: "Yes, go ahead"
 
 Agent: Starting work on task-456...
-→ task(id="task-456", status="active")
+→ tasks(id="task-456", status="active")
 
 [... implementation work ...]
 
@@ -248,7 +248,7 @@ Agent: Starting work on task-456...
 → link(from="node-897", to="task-456", relation="implements")
 ← edge created
 
-→ task(id="task-456", status="done")
+→ tasks(id="task-456", status="done")
 
 "Task completed! Stored the implementation decision as node-897 for future reference."
 ```
@@ -313,7 +313,7 @@ discover(query="database connection pooling", type=["file"])
 Create task chains with blocking dependencies:
 
 ```
-task(title="Deploy to staging", depends_on=["task-123", "task-456"])
+tasks(title="Deploy to staging", depends_on=["task-123", "task-456"])
 ```
 
 Query only unblocked tasks:

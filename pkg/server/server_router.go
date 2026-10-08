@@ -233,29 +233,31 @@ func (s *Server) registerMCPRoutes(mux *http.ServeMux) {
 	// ==========================================================================
 	// Register MCP routes on the same server (port 7474)
 	// Routes: /mcp, /mcp/initialize, /mcp/tools/list, /mcp/tools/call, /mcp/health
-	// All MCP endpoints require authentication (PermRead minimum for tool calls)
+	// plus database-pinned variants /mcp/{database}, /mcp/{database}/initialize,
+	// /mcp/{database}/tools/list and /mcp/{database}/tools/call, where the URL
+	// database becomes the tool's database argument and cannot be overridden by
+	// the payload. All MCP endpoints require authentication (PermRead minimum).
 	if s.mcpServer == nil {
 		return
 	}
 
+	serveMCP := func(w http.ResponseWriter, r *http.Request) {
+		r = s.withBifrostRBAC(r)
+		s.mcpServer.ServeHTTP(w, r)
+	}
+
 	// Wrap MCP endpoints with auth - MCP is a powerful API that allows full DB access
-	mux.HandleFunc("/mcp", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
-		r = s.withBifrostRBAC(r)
-		s.mcpServer.ServeHTTP(w, r)
-	}, auth.PermRead))
-	mux.HandleFunc("/mcp/initialize", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
-		r = s.withBifrostRBAC(r)
-		s.mcpServer.ServeHTTP(w, r)
-	}, auth.PermRead))
-	mux.HandleFunc("/mcp/tools/list", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
-		r = s.withBifrostRBAC(r)
-		s.mcpServer.ServeHTTP(w, r)
-	}, auth.PermRead))
-	mux.HandleFunc("/mcp/tools/call", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
-		r = s.withBifrostRBAC(r)
-		s.mcpServer.ServeHTTP(w, r)
-	}, auth.PermRead))
+	mux.HandleFunc("/mcp", s.withAuth(serveMCP, auth.PermRead))
+	mux.HandleFunc("/mcp/initialize", s.withAuth(serveMCP, auth.PermRead))
+	mux.HandleFunc("/mcp/tools/list", s.withAuth(serveMCP, auth.PermRead))
+	mux.HandleFunc("/mcp/tools/call", s.withAuth(serveMCP, auth.PermRead))
 	mux.HandleFunc("/mcp/health", s.handleHealth) // Health check can remain public
+
+	// Database-pinned variants. ServeHTTP extracts the database from the path.
+	mux.HandleFunc("/mcp/{database}", s.withAuth(serveMCP, auth.PermRead))
+	mux.HandleFunc("/mcp/{database}/initialize", s.withAuth(serveMCP, auth.PermRead))
+	mux.HandleFunc("/mcp/{database}/tools/list", s.withAuth(serveMCP, auth.PermRead))
+	mux.HandleFunc("/mcp/{database}/tools/call", s.withAuth(serveMCP, auth.PermRead))
 }
 
 func (s *Server) registerHeimdallRoutes(mux *http.ServeMux) {

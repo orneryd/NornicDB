@@ -12,13 +12,15 @@
 //   - Rich, Actionable Responses: Return IDs, next-step hints, relationship counts
 //   - Progressive Disclosure: Common case is simple, advanced features available
 //
-// Tool Surface (6 Tools):
+// Tool Surface (5 Tools):
 //   - store: Store knowledge/memory as a node in the graph
 //   - recall: Retrieve knowledge by ID or criteria
 //   - discover: Semantic search by meaning (vector embeddings)
 //   - link: Create relationships between nodes
-//   - task: Create/manage individual tasks
-//   - tasks: Query/list multiple tasks
+//   - tasks: Create, manage and list tasks
+//
+// The former standalone `task` tool has been folded into `tasks`: the same
+// tool creates, updates, completes, deletes and lists tasks in one surface.
 //
 // Note: File indexing (index/unindex) is handled by the application layer.
 // NornicDB is the storage/embedding layer - it receives already-processed content.
@@ -80,8 +82,33 @@ var toolDatabaseAccessByName = map[string]toolDatabaseAccess{
 	ToolRecall:   toolDatabaseRead,
 	ToolDiscover: toolDatabaseRead,
 	ToolLink:     toolDatabaseWrite,
-	ToolTask:     toolDatabaseWrite,
 	ToolTasks:    toolDatabaseRead,
+}
+
+// taskArgsMutate reports whether the tasks tool arguments request a task
+// mutation (create, update, complete or delete) rather than a listing. Scalar
+// status/priority values mutate; array values filter the listing. Mutating
+// calls are gated as writes on the request database.
+func taskArgsMutate(args map[string]interface{}) bool {
+	if args == nil {
+		return false
+	}
+	for _, key := range []string{"id", "title", "description", "depends_on", "assign"} {
+		if _, present := args[key]; present {
+			return true
+		}
+	}
+	for _, key := range []string{"status", "priority"} {
+		if _, scalar := args[key].(string); scalar {
+			return true
+		}
+	}
+	for _, key := range []string{"complete", "delete"} {
+		if enabled, ok := args[key].(bool); ok && enabled {
+			return true
+		}
+	}
+	return false
 }
 
 // Embedder interface for generating embeddings (abstracts Ollama/OpenAI).
@@ -176,6 +203,11 @@ type ServerConfig struct {
 	// explicit labels or type. Defaults to "Memory" for backward compatibility.
 	// Configured via NORNICDB_DEFAULT_NODE_LABEL env var or config.Memory.DefaultNodeLabel.
 	DefaultNodeLabel string
+
+	// DefaultDatabase overrides the database MCP tools target when no database
+	// is supplied by the URL pin, the tool payload or the request context.
+	// When empty, the server derives it from the DB instance's namespace.
+	DefaultDatabase string `yaml:"-"`
 }
 
 // DefaultServerConfig returns sensible defaults for the MCP server.
@@ -232,6 +264,14 @@ func (s *Server) SetDatabaseScopedStorage(fn func(dbName string) (storage.Engine
 	s.config.DatabaseScopedStorage = fn
 }
 
+// SetDefaultDatabase sets the database targeted when no URL pin, payload
+// database or request context selects one. Call this after the server is
+// created so multi-database deployments target the configured default database
+// instead of the namespace of the single DB instance the server was opened with.
+func (s *Server) SetDefaultDatabase(name string) {
+	s.config.DefaultDatabase = strings.TrimSpace(name)
+}
+
 // registerHandlers registers all MCP tool handlers.
 func (s *Server) registerHandlers() {
 	// Core memory tools
@@ -240,8 +280,7 @@ func (s *Server) registerHandlers() {
 	s.handlers[ToolDiscover] = s.handleDiscover
 	s.handlers[ToolLink] = s.handleLink
 
-	// Task management tools
-	s.handlers[ToolTask] = s.handleTask
+	// Task management and listing share one tool surface
 	s.handlers[ToolTasks] = s.handleTasks
 }
 
@@ -254,6 +293,12 @@ func (s *Server) registerHandlers() {
 //   - GET/POST /mcp/tools/list - List available tools
 //   - POST /mcp/tools/call - Execute a tool
 //   - GET /mcp/health     - MCP health check
+//
+// Every endpoint is also available with a database pin in the URL path:
+// /mcp/{database}, /mcp/{database}/initialize, /mcp/{database}/tools/list and
+// /mcp/{database}/tools/call pin all tool execution to that database. The pin
+// is injected as the tool's `database` argument, so any database in the tool
+// payload is ignored while a pin is active.
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.started = time.Now()
 
@@ -263,17 +308,34 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/mcp/tools/list", s.localizedHandler(s.handleListTools))
 	mux.HandleFunc("/mcp/tools/call", s.localizedHandler(s.handleCallTool))
 	mux.HandleFunc("/mcp/health", s.localizedHandler(s.handleHealth))
+
+	// Database-pinned variants. ServeHTTP extracts the database from the path
+	// and injects it as the tool's database argument before dispatching.
+	mux.HandleFunc("/mcp/{database}", s.localizedHandler(s.ServeHTTP))
+	mux.HandleFunc("/mcp/{database}/initialize", s.localizedHandler(s.ServeHTTP))
+	mux.HandleFunc("/mcp/{database}/tools/list", s.localizedHandler(s.ServeHTTP))
+	mux.HandleFunc("/mcp/{database}/tools/call", s.localizedHandler(s.ServeHTTP))
 }
 
 // ServeHTTP implements http.Handler for routing MCP requests.
 // Use this when integrating with a server that wraps handlers (e.g., for auth middleware).
+//
+// A path of the form /mcp/{database}, /mcp/{database}/initialize,
+// /mcp/{database}/tools/list or /mcp/{database}/tools/call pins the request to
+// {database}: the pin becomes the tool's database argument and any database
+// supplied in the tool payload is ignored.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.started.IsZero() {
 		s.started = time.Now()
 	}
 	r = s.withLocalization(r)
 
-	switch r.URL.Path {
+	endpoint, pinnedDatabase := splitMCPPath(r.URL.Path)
+	if pinnedDatabase != "" {
+		r = r.WithContext(contextWithURLDatabase(r.Context(), pinnedDatabase))
+	}
+
+	switch endpoint {
 	case "/mcp":
 		s.handleMCP(w, r)
 	case "/mcp/initialize":
@@ -287,6 +349,50 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// splitMCPPath splits an MCP request path into the endpoint path the handlers
+// know and, when the first segment after /mcp is a database name, the pinned
+// database. Known literal segments (initialize, tools, health) are never
+// treated as database names.
+func splitMCPPath(path string) (endpoint, database string) {
+	if path == "/mcp" {
+		return path, ""
+	}
+	if !strings.HasPrefix(path, "/mcp/") {
+		return path, ""
+	}
+	rest := strings.TrimPrefix(path, "/mcp/")
+	segments := strings.Split(rest, "/")
+	switch segments[0] {
+	case "initialize", "tools", "health":
+		return path, ""
+	}
+	pinned := strings.TrimSpace(segments[0])
+	if pinned == "" {
+		return "/mcp", ""
+	}
+	if len(segments) == 1 {
+		return "/mcp", pinned
+	}
+	return "/mcp/" + strings.Join(segments[1:], "/"), pinned
+}
+
+// pinArgumentsFromURL installs the URL-pinned database as the tool's
+// "database" argument, replacing any payload-supplied database/db so the pin
+// cannot be overridden. It reports whether a pin was applied.
+func pinArgumentsFromURL(ctx context.Context, args map[string]interface{}) (map[string]interface{}, bool) {
+	database := urlDatabaseFromContext(ctx)
+	if database == "" {
+		return args, false
+	}
+	if args == nil {
+		args = make(map[string]interface{})
+	}
+	delete(args, "database")
+	delete(args, "db")
+	args["database"] = database
+	return args, true
 }
 
 // Start begins listening for HTTP connections on a SEPARATE server.
@@ -391,6 +497,15 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A URL-pinned database becomes the tool's database argument; any database
+	// in the JSON-RPC payload is ignored while the pin is active.
+	payloadArgs, _ := req.Params["arguments"].(map[string]interface{})
+	if injectedArgs, pinned := pinArgumentsFromURL(r.Context(), payloadArgs); pinned {
+		if req.Params == nil {
+			req.Params = make(map[string]interface{})
+		}
+		req.Params["arguments"] = injectedArgs
+	}
 	// Route to appropriate handler
 	var result interface{}
 	var rpcErr error
@@ -399,7 +514,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	case "initialize":
 		result, rpcErr = s.doInitialize(req.Params)
 	case "tools/list":
-		result = s.doListTools()
+		result = s.doListTools(r.Context())
 	case "tools/call":
 		toolResult, err := s.doCallTool(r.Context(), req.Params)
 		if err != nil {
@@ -462,7 +577,11 @@ func (s *Server) handleListTools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := s.doListTools()
+	ctx := r.Context()
+	if database := urlDatabaseFromContext(ctx); database != "" {
+		ctx = ContextWithDatabase(ctx, database)
+	}
+	result := s.doListTools(ctx)
 	s.writeJSON(w, http.StatusOK, result)
 }
 
@@ -483,6 +602,10 @@ func (s *Server) handleCallTool(w http.ResponseWriter, r *http.Request) {
 		s.writeLocalizedError(w, r, http.StatusBadRequest, localization.MCPInvalidRequestBody())
 		return
 	}
+
+	// A URL-pinned database becomes the tool's database argument; any database
+	// in the payload is ignored while the pin is active.
+	req.Arguments, _ = pinArgumentsFromURL(r.Context(), req.Arguments)
 
 	result, err := s.doCallTool(r.Context(), map[string]interface{}{
 		"name":      req.Name,
@@ -532,9 +655,16 @@ func (s *Server) doInitialize(params map[string]interface{}) (interface{}, error
 	}, nil
 }
 
-func (s *Server) doListTools() ListToolsResponse {
+// doListTools returns the tool definitions. When the request pinned a database
+// (or the context carries one), the shared `database` parameter schema defaults
+// reflect it so clients can discover which database the URL targets.
+func (s *Server) doListTools(ctx context.Context) ListToolsResponse {
+	database := DatabaseFromContext(ctx)
+	if database == "" {
+		database = s.DefaultDatabaseName()
+	}
 	return ListToolsResponse{
-		Tools: s.ToolDefinitions(),
+		Tools: GetToolDefinitionsWithDefaultDatabase(database),
 	}
 }
 
@@ -552,6 +682,11 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 	accessRequirement, ok := toolDatabaseAccessByName[name]
 	if !ok {
 		return nil, localizedError(localization.MCPUnknownTool(name), nil)
+	}
+	// The tasks tool lists by default (read) and mutates when task-management
+	// arguments are present; mutations require write access to the database.
+	if name == ToolTasks && taskArgsMutate(args) {
+		accessRequirement = toolDatabaseWrite
 	}
 
 	databaseSelection := extractDatabaseArg(args)
@@ -590,9 +725,16 @@ func (s *Server) CallTool(ctx context.Context, name string, arguments map[string
 }
 
 // DefaultDatabaseName returns the configured default database name for this server.
-// This is derived from the DB's namespaced storage (which is configured during DB open).
+// An explicit ServerConfig.DefaultDatabase (or SetDefaultDatabase) wins; otherwise
+// the name is derived from the DB's namespaced storage (configured during DB open).
 func (s *Server) DefaultDatabaseName() string {
-	if s == nil || s.db == nil {
+	if s == nil {
+		return ""
+	}
+	if configured := strings.TrimSpace(s.config.DefaultDatabase); configured != "" {
+		return configured
+	}
+	if s.db == nil {
 		return ""
 	}
 	if ns, ok := s.db.GetStorage().(*storage.NamespacedEngine); ok && ns != nil {
@@ -1192,8 +1334,10 @@ func linkNodeFromCypherRow(row []interface{}) (*nornicdb.Node, string, bool) {
 	}, elementID, true
 }
 
-// handleTask implements the task tool - creates/manages tasks.
-func (s *Server) handleTask(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+// handleTaskMutation implements the task-management side of the tasks tool:
+// creating, updating, completing, deleting and toggling individual tasks.
+// It is dispatched by handleTasks whenever the arguments request a mutation.
+func (s *Server) handleTaskMutation(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	id := getString(args, "id")
 	title := getString(args, "title")
 	description := getString(args, "description")
@@ -1432,6 +1576,13 @@ type TaskStatRow struct {
 }
 
 func (s *Server) handleTasks(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	// Task-management arguments (id, title, status, priority, depends_on,
+	// assign, complete, delete) switch the tasks tool from listing into
+	// create/update/delete mode, replacing the former standalone task tool.
+	if taskArgsMutate(args) {
+		return s.handleTaskMutation(ctx, args)
+	}
+
 	statuses := getStringSlice(args, "status")
 	priorities := getStringSlice(args, "priority")
 	assignedTo := getString(args, "assigned_to")

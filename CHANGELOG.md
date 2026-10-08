@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Pin MCP tools to a database through the URL path: `/mcp/{database}`,
+  `/mcp/{database}/initialize`, `/mcp/{database}/tools/list` and
+  `/mcp/{database}/tools/call` target `{database}` for every tool call. The
+  pinned database is injected as the tool's `database` argument, so a
+  `database` value in the payload cannot override it. Without a pin, the
+  payload database, request context, and finally the configured default
+  database apply, and MCP now defaults to the configured default database
+  instead of the namespace of the single DB instance.
+
 - Clear deleted entries out of the scanned ranges after a mass delete. Badger
   keeps a delete marker for every deleted node and relationship until a
   compaction it never runs on a small or idle database, and every scan steps
@@ -24,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rejected queries in memory.
 
 ### Changed
+
+- Fold the standalone `task` MCP tool into `tasks`: management arguments
+  (`id`, `title`, `status`, `priority`, `depends_on`, `assign`, `complete`,
+  `delete`) create, update, complete or delete a task, while filter arguments
+  list tasks with stats. Task mutations require write access to the request
+  database; listing remains read-only.
 
 - Harden Cypher regression controls for string SUM rejection and invalid query
   syntax across both parsers without depending on parser-specific messages.
