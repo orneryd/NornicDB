@@ -14,8 +14,8 @@ then record the passing command and persistent-state evidence. IDs refer to
 | 4 | 0 | Durable commit positions and bookmarks |
 | 5 | 0, 1, 2, 4 | Query API v2 |
 | 6 | 0, 4 | CDC storage and complete write-path coverage |
-| 7 | 0, 1, 6 | Database enrichment options |
-| 8 | 0, 1, 2, 6, 7 | Events, procedures and selectors |
+| 7 | 0, 6 | Database enrichment options |
+| 8 | 0, 2, 6, 7; 8.6 also 1 | Events, procedures and selectors |
 | 9 | 0, 4, 6, 7, 8 | Retention, recovery and restore |
 | 10 | All phases and #935 effective-graph acceptance | Integrated acceptance and cutover |
 
@@ -24,12 +24,18 @@ uses internal configuration fixtures before public DDL is enabled. Do not
 admit DIFF/FULL before phase 6 is safe or claim impersonation acceptance with
 only current database read/write booleans.
 
+Only `db.cdc.query`'s authorization (8.6) needs #935's canonical privileges:
+options DDL is ordinary database administration, and current/earliest need
+ACCESS and EXECUTE. So phases 7 and 8 (except 8.6) do not wait on phase 1.
+`db.cdc.query` stays unregistered until 8.6 passes; there is no interim coarse
+guard such as an admin-role check.
+
 ## 0. Freeze the Enterprise contract
 
 - [ ] 0.1 Add `scripts/cypher-tck/run-enterprise-differential.sh` (new): pin `neo4j:5.26.30-enterprise` plus resolved digest, require explicit evaluation-license opt-in, enable auth and use isolated dynamic ports/synthetic data. Verify readiness/version and explicit failure without license/reference availability; never substitute Community.
 - [ ] 0.2 Add `testing/cypher/enterprise/` (new), reusing existing driver facilities for authenticated raw-Bolt and HTTP probes. Verify it records digest, version, protocol, locale, configuration and raw results; document the runner and license mechanism alongside the script.
 - [ ] 0.3 Capture `IMP-01..06` and `ATTR-01..02`, including exact errors, SHOW user representation, revocation timing and metadata setter behavior. Verify fixtures have both reference outcomes and failing NornicDB results.
-- [ ] 0.4 Capture `CDC-01..09`, resolving metadata key/type ambiguity, defaults/nulls, event order/net-zero cases, cursor boundaries, retention and admin transaction modes. Verify every matrix case has raw reference evidence.
+- [ ] 0.4 Capture `CDC-01..09` (CDC-01 option DDL, values, errors and SHOW projections recorded in [evidence/cdc-01-database-options.txt](evidence/cdc-01-database-options.txt); parameters, system/composite/alias targets and admin transaction modes remain), resolving metadata key/type ambiguity, defaults/nulls, event order/net-zero cases, cursor boundaries, retention and admin transaction modes. Verify every matrix case has raw reference evidence.
 - [ ] 0.5 Capture `QAPI-01..05`, including all five endpoints, encodings, statuses, continuation ownership/target fields and version-specific fields. Verify fixtures target 5.26 rather than the evolving current docs.
 - [ ] 0.6 Add strict comparison tests: preserve CDC order without ORDER BY; compare fields/types/nulls/errors/lifecycle and fresh-session graph effects. Verify deliberately reordered events, missing same-tx resume rows and invented fields fail.
 - [ ] 0.7 Record existing Community/openCypher results separately and document all Enterprise baseline failures. Verify missing promised capabilities are failures, not informational unsupported cases.
@@ -65,10 +71,10 @@ only current database read/write booleans.
 
 - [ ] 4.1 Add `TestEnterpriseCommitPosition` for delayed/failed reservations, restart and multi-batch publication. Record why current process-counter/wall-clock/MVCC-reservation tokens fail (`CDC-05/09`, `QAPI-05`).
 - [ ] 4.2 Implement per-database logical commit positions with `badger_commit_writer.go`/`badger_managed.go`, durable head and recovery seeding. Verify logical commits are distinct from physical batches.
-- [ ] 4.3 Establish and test lock order against write barriers, constraints/counts/schema, close and large-commit gates. Verify no deadlock under race tests and unrelated databases do not share a new global serialization gate.
+- [ ] 4.3 Establish and test lock order against write barriers, unique-key commit locks (#961/#964), constraints/counts/schema, close and large-commit gates; the ordering gate is taken after the unique-key locks. Verify no deadlock under race tests, including concurrent MERGE on one unique key with capture on, and unrelated databases do not share a new global serialization gate.
 - [ ] 4.4 Extract shared committed-position/bookmark capability for Bolt/HTTP, with database scope, waiting, cancellation/deadline and reference errors. Verify cross-transport/restart/future-token cases (`QAPI-05`).
 - [ ] 4.5 Replace wall-clock HTTP bookmarks and Bolt process-counter/placeholder fallback. Integrate receipts only where they prove durable state; verify old placeholder acceptance is gone and document client token reacquisition.
-- [ ] 4.6 Verify OFF-mode positions and benchmark same-database versus independent-database commit contention before CDC is layered on; record results and durability semantics.
+- [ ] 4.6 Verify OFF-mode positions and benchmark same-database versus independent-database commit contention before CDC is layered on; record results and durability semantics. The position service runs on every commit, including OFF databases: compare OFF-mode commit latency, throughput and allocations against the pre-phase-4 baseline with the design's 5% budget before phase 6 starts.
 
 ## 5. Implement Query API v2
 
@@ -108,7 +114,7 @@ only current database read/write booleans.
 - [ ] 8.4 Register procedures and handlers in new `pkg/cypher/call_cdc.go` with exact signatures/defaults/SHOW PROCEDURES metadata and typed args. Verify YIELD/WHERE/RETURN/LIMIT composition (`CDC-02`).
 - [ ] 8.5 Implement compiled selector validation/matching with `TestEnterpriseCDCSelectors`; verify every field, OR/AND, deduplication, nested endpoints, historic matching and null/type/unknown-field errors (`CDC-06`).
 - [ ] 8.6 Implement canonical ACCESS/EXECUTE/BOOSTED checks and `TestEnterpriseCDCAuthorization`. Verify grants/denies/globs, impersonated target rights and all-events visibility despite graph restrictions (`CDC-07`).
-- [ ] 8.7 Implement bounded published-window scans with cancellation and safe snapshot ownership. Verify LIMIT 1, resume, concurrent commits, PULL/DISCARD/HTTP disconnect and memory independent of total history size.
+- [ ] 8.7 Implement bounded published-window scans with cancellation and safe snapshot ownership. Add a streaming procedure result (rows yielded on demand through CALL … YIELD/WHERE/RETURN into #939's Bolt result stream) so LIMIT ends the scan. Verify LIMIT 1, resume, concurrent commits, PULL/DISCARD/HTTP disconnect and memory independent of total history size.
 - [ ] 8.8 Document procedure signatures, event schemas, selectors and ordinary/impersonated consumers; execute examples in both HTTP encodings and Bolt. Include the privileged all-events visibility warning.
 
 ## 9. Implement retention and storage lifecycle

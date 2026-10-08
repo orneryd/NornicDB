@@ -20,6 +20,11 @@ against capture admission/finalization without partial transaction modes.
 - **WHEN** a permitted administrator creates a database with FULL enrichment and lists it after restart
 - **THEN** SHOW DATABASES reports the persisted option and DDL result shape matches the reference rather than a Nornic-only name row (`CDC-01`)
 
+#### Scenario: Option spelling and the unset state
+
+- **WHEN** an option value is given in lower or mixed case, or the option is never set or is removed
+- **THEN** the stored and shown value is upper-case, and an unset or removed option is absent from `options` (`{}`) rather than shown as `OFF` (`CDC-01`)
+
 #### Scenario: Invalid mode or invalid database kind
 
 - **WHEN** an option value has the wrong type/value or targets a disallowed system/composite/alias form

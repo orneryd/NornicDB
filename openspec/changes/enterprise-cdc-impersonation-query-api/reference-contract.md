@@ -54,6 +54,16 @@ Current documentation is not a version lock. In particular:
   authentication-failure lifecycle statement. Verify the actual
   `/db/{database}/query/v2/tx/{id}` DELETE endpoint and lifecycle.
 
+## Observations recorded so far
+
+Raw responses are kept under [evidence/](evidence/) with the image digest,
+driver, configuration and capture date. They are reference outcomes only;
+fixture tests with NornicDB's failing results are still phase-0 work.
+
+| ID | Evidence | Observed on `neo4j:5.26.30-enterprise` (`sha256:8befcd4e…`) |
+| --- | --- | --- |
+| `CDC-01` (part) | [cdc-01-database-options.txt](evidence/cdc-01-database-options.txt) | `txLogEnrichment` accepts `FULL`, `DIFF`, `OFF` in any case and stores them upper-case. A wrong value, a non-string or an unknown option fails with `Neo.ClientError.General.InvalidArguments` (messages list the expected values or options). An unset option is absent: `options` is `{}`, not `{txLogEnrichment: 'OFF'}`; REMOVE OPTION returns to `{}`. ALTER on a missing database fails with `Neo.ClientError.Database.DatabaseNotFound`, and succeeds with no rows under `IF EXISTS`. SET OPTION combines with other SET clauses. `CREATE … WAIT` returns `address`, `state`, `message`, `success`; without WAIT, no rows. A missing `$opts` parameter fails with `ParameterMissing`. |
+
 ## Phase-0 fixture matrix
 
 These are planned test IDs. Record the initial NornicDB failures and then

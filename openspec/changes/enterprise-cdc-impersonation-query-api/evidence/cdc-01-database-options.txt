@@ -1,0 +1,93 @@
+# CDC-01 database options: raw responses
+# reference: neo4j:5.26.30-enterprise (neo4j@sha256:8befcd4e0f48ebd34c58ae071c3e960ca0479675d1046ec35580f8a1dd19891c),
+#   NEO4J_ACCEPT_LICENSE_AGREEMENT=eval, auth disabled, default configuration, standalone
+# client: Python neo4j driver 5.28.7, session database 'system'; one statement per auto-commit transaction
+# captured: 2026-10-08 UTC. Each statement is followed by its columns and rows, or by its error code and message.
+
+CREATE DATABASE cdcfull OPTIONS {txLogEnrichment: 'FULL'} WAIT
+    columns ['address', 'state', 'message', 'success']
+    rows [['localhost:7687', 'CaughtUp', 'caught up', True]]
+CREATE DATABASE cdcdiff IF NOT EXISTS OPTIONS {txLogEnrichment: 'DIFF'}
+    columns []
+    rows []
+CREATE DATABASE cdcoff OPTIONS {txLogEnrichment: 'OFF'}
+    columns []
+    rows []
+CREATE DATABASE cdclow OPTIONS {txLogEnrichment: 'full'}
+    columns []
+    rows []
+CREATE DATABASE cdcbad OPTIONS {txLogEnrichment: 'MAYBE'}
+    Neo.ClientError.General.InvalidArguments Could not create database with specified txLogEnrichment 'MAYBE', Expected one of 'FULL', 'DIFF', 'OFF'.
+CREATE DATABASE cdcnum OPTIONS {txLogEnrichment: 1}
+    Neo.ClientError.General.InvalidArguments Could not create database with specified txLogEnrichment 'Long(1)', String expected.
+CREATE DATABASE cdcunk OPTIONS {notAnOption: 'x'}
+    Neo.ClientError.General.InvalidArguments Could not create database with unrecognised option(s): 'notanoption'. Expected 'seedConfig', 'existingDataSeedServer', 'existingData', 'seedCredentials', 'seedURI', 'existingDataSeedInstance', 'existingMetadata', 'txLogEnrichment', 'storeFormat'.
+CREATE DATABASE cdcempty OPTIONS {}
+    columns []
+    rows []
+CREATE DATABASE cdcparam OPTIONS $opts
+    Neo.ClientError.Statement.ParameterMissing Expected parameter(s): opts
+CREATE DATABASE cdcfull OPTIONS {txLogEnrichment: 'DIFF'}
+    Neo.ClientError.Database.ExistingDatabaseFound Failed to create the specified database 'cdcfull': Database name or alias already exists.
+CREATE DATABASE cdcfull IF NOT EXISTS OPTIONS {txLogEnrichment: 'DIFF'}
+    columns []
+    rows []
+CREATE OR REPLACE DATABASE cdcdiff OPTIONS {txLogEnrichment: 'FULL'}
+    columns []
+    rows []
+SHOW DATABASES YIELD name, options WHERE name STARTS WITH 'cdc' RETURN name, options ORDER BY name
+    columns ['name', 'options']
+    rows [['cdcdiff', {'txLogEnrichment': 'FULL'}], ['cdcempty', {}], ['cdcfull', {'txLogEnrichment': 'FULL'}], ['cdclow', {'txLogEnrichment': 'FULL'}], ['cdcoff', {'txLogEnrichment': 'OFF'}]]
+SHOW DATABASE cdcfull YIELD options
+    columns ['options']
+    rows [[{'txLogEnrichment': 'FULL'}]]
+SHOW DATABASE neo4j YIELD options
+    columns ['options']
+    rows [[{}]]
+ALTER DATABASE cdcoff SET OPTION txLogEnrichment 'DIFF'
+    columns []
+    rows []
+ALTER DATABASE cdcoff SET OPTION txLogEnrichment 'diff'
+    columns []
+    rows []
+ALTER DATABASE cdcoff SET OPTION txLogEnrichment 'NOPE'
+    Neo.ClientError.General.InvalidArguments Could not alter database with specified txLogEnrichment 'NOPE', Expected one of 'FULL', 'DIFF', 'OFF'.
+ALTER DATABASE cdcoff SET OPTION notAnOption 'x'
+    Neo.ClientError.General.InvalidArguments Could not alter database with unrecognised option(s): 'notanoption'. Expected 'txLogEnrichment'.
+ALTER DATABASE cdcfull REMOVE OPTION txLogEnrichment
+    columns []
+    rows []
+ALTER DATABASE cdcfull REMOVE OPTION notAnOption
+    Neo.ClientError.General.InvalidArguments Could not alter database remove with unrecognised option(s): 'notAnOption'. Expected 'txLogEnrichment'.
+ALTER DATABASE nosuchdb SET OPTION txLogEnrichment 'FULL'
+    Neo.ClientError.Database.DatabaseNotFound Failed to alter the specified database 'nosuchdb': Database does not exist.
+ALTER DATABASE nosuchdb IF EXISTS SET OPTION txLogEnrichment 'FULL'
+    columns []
+    rows []
+ALTER DATABASE cdcoff SET OPTION txLogEnrichment 'FULL' SET ACCESS READ ONLY
+    columns []
+    rows []
+ALTER DATABASE cdcoff SET OPTION txLogEnrichment 'OFF'
+    columns []
+    rows []
+SHOW DATABASES YIELD name, options WHERE name STARTS WITH 'cdc' RETURN name, options ORDER BY name
+    columns ['name', 'options']
+    rows [['cdcdiff', {'txLogEnrichment': 'FULL'}], ['cdcempty', {}], ['cdcfull', {}], ['cdclow', {'txLogEnrichment': 'FULL'}], ['cdcoff', {'txLogEnrichment': 'OFF'}]]
+SHOW DATABASES YIELD * WHERE name = 'cdcoff'
+    columns ['name', 'type', 'aliases', 'access', 'databaseID', 'serverID', 'address', 'role', 'writer', 'requestedStatus', 'currentStatus', 'statusMessage', 'default', 'home', 'currentPrimariesCount', 'currentSecondariesCount', 'requestedPrimariesCount', 'requestedSecondariesCount', 'creationTime', 'lastStartTime', 'lastStopTime', 'store', 'lastCommittedTxn', 'replicationLag', 'constituents', 'options']
+    rows [['cdcoff', 'standard', [], 'read-only', '84387E73E86751108F852144C6FB0F9F8CE4BFAD1029B1ABEEC3D203CBCBEDCC', '221fa5b8-ad27-49f4-9068-68531d691cb5', 'localhost:7687', 'primary', True, 'online', 'online', '', False, False, {'int': '1'}, {'int': '0'}, {'int': '1'}, {'int': '0'}, {'DateTime': '2026-10-08T11:07:10.328000000+00:00'}, {'DateTime': '2026-10-08T11:07:10.328000000+00:00'}, None, 'block-block-1.1', {'int': '2'}, {'int': '0'}, [], {'txLogEnrichment': 'OFF'}]]
+DROP DATABASE cdcfull IF EXISTS
+    columns []
+    rows []
+DROP DATABASE cdcdiff IF EXISTS
+    columns []
+    rows []
+DROP DATABASE cdcoff IF EXISTS
+    columns []
+    rows []
+DROP DATABASE cdclow IF EXISTS
+    columns []
+    rows []
+DROP DATABASE cdcempty IF EXISTS
+    columns []
+    rows []
