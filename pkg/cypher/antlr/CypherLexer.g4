@@ -242,7 +242,10 @@ fragment ExponentPart: [e] [+-]? [0-9]+;
 fragment HexInteger  : '0' [xX] HexDigit+;
 fragment HexDigit    : [0-9a-fA-F];
 fragment OctalInteger: '0' [oO]? [0-7]+;
-fragment DecimalInteger: '0' | [1-9] [0-9]*;
+// Digits may be grouped with single underscores (1_000; #907). Only a
+// parameter name ($1_0) reaches the parser with them: literals lose theirs
+// first (canonicalizeNumericLiterals).
+fragment DecimalInteger: '0' | [1-9] ('_'? [0-9])*;
 
 fragment LetterOrDigit: Letter | [0-9];
 

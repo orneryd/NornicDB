@@ -173,6 +173,12 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		cypher = canonical
 		defer func() { result, retErr = rewrite.restore(result, retErr) }()
 	}
+	// Digit-grouping underscores (1_000) go here, on every route; columns
+	// and messages keep the client's text (#907).
+	if grouped, numericRewrite := canonicalizeNumericLiterals(cypher); numericRewrite != nil {
+		cypher = grouped
+		defer func() { result, retErr = numericRewrite.restore(result, retErr) }()
+	}
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
 	if err := validateCypherPreamble(cypher); err != nil {
