@@ -1574,6 +1574,12 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 	}
 	simpleTarget, simpleProperty, simpleExpression, simplePropertyAssignment := pipelineSimplePropertyAssignment(assignments)
 	targets := pipelineSetTargetVariables(assignments)
+	var runBuffer [4]setRun
+	runs := appendSetClauseRuns(runBuffer[:0], body, assignments)
+	var stateBuffer [4]setEntityState
+	wrapSetError := func(state setEntityState, err error) error {
+		return fmt.Errorf("SET %s: %w", pipelineSetOperation(state.variable, assignments), err)
+	}
 	if len(targets) == 0 {
 		return nil, false, nil
 	}
@@ -1626,80 +1632,43 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 		if values != nil {
 			rowCtx = withValueBindings(rowCtx, values)
 		}
-		for _, variable := range targets {
-			if node := nodes[variable]; node != nil {
-				beforeProperties := cloneStringAnyMap(node.Properties)
-				beforeLabels := append([]string(nil), node.Labels...)
-				written := 0
-				if simplePropertyAssignment && simpleTarget == variable {
-					value, err := e.setPropertyValue(rowCtx, simpleExpression, evalNodes, rels)
-					if err != nil {
-						return nil, true, err
-					}
-					written = simplePropertyWrites(node.Properties, simpleProperty, value)
-					setNodeProperty(node, simpleProperty, value)
-				} else {
-					var err error
-					if written, err = e.applySetToNodeWithContext(rowCtx, node, variable, body, evalNodes, rels); err != nil {
-						node.Properties = beforeProperties
-						node.Labels = beforeLabels
-						return nil, true, err
-					}
+		if simplePropertyAssignment {
+			if node := nodes[simpleTarget]; node != nil {
+				value, err := e.setPropertyValue(rowCtx, simpleExpression, evalNodes, rels)
+				if err != nil {
+					return nil, true, err
 				}
-				if !reflect.DeepEqual(beforeLabels, node.Labels) {
-					if err := validatePolicyOnLabelChange(store, node, beforeLabels); err != nil {
-						node.Properties = beforeProperties
-						node.Labels = beforeLabels
-						return nil, true, err
-					}
+				before := cloneStringAnyMap(node.Properties)
+				written := simplePropertyWrites(node.Properties, simpleProperty, value)
+				setNodeProperty(node, simpleProperty, value)
+				if _, err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, node: node, properties: before, labels: node.Labels, written: written}}, stats, nil, wrapSetError); err != nil {
+					return nil, true, err
 				}
-				if reflect.DeepEqual(beforeProperties, node.Properties) && reflect.DeepEqual(beforeLabels, node.Labels) {
-					stats.PropertiesSet += written
-					continue
-				}
-				if err := store.UpdateNode(node); err != nil {
-					node.Properties = beforeProperties
-					node.Labels = beforeLabels
-					return nil, true, fmt.Errorf("SET %s: %w", pipelineSetOperation(variable, assignments), err)
-				}
-				stats.PropertiesSet += written
-				stats.LabelsAdded += addedLabelCount(beforeLabels, node.Labels)
-				e.notifyNodeMutated(string(node.ID))
 				continue
 			}
-			if relationship := rels[variable]; relationship != nil {
-				beforeProperties := cloneStringAnyMap(relationship.Properties)
-				written := 0
-				if simplePropertyAssignment && simpleTarget == variable {
-					value, err := e.setPropertyValue(rowCtx, simpleExpression, evalNodes, rels)
-					if err != nil {
-						return nil, true, err
-					}
-					written = simplePropertyWrites(relationship.Properties, simpleProperty, value)
-					setRelationshipProperty(relationship, simpleProperty, value)
-				} else {
-					var err error
-					if written, err = e.applySetToRelationshipWithContext(rowCtx, relationship, variable, body, evalNodes, rels); err != nil {
-						relationship.Properties = beforeProperties
-						return nil, true, err
-					}
+			if relationship := rels[simpleTarget]; relationship != nil {
+				value, err := e.setPropertyValue(rowCtx, simpleExpression, evalNodes, rels)
+				if err != nil {
+					return nil, true, err
 				}
-				if reflect.DeepEqual(beforeProperties, relationship.Properties) {
-					stats.PropertiesSet += written
-					continue
+				before := cloneStringAnyMap(relationship.Properties)
+				written := simplePropertyWrites(relationship.Properties, simpleProperty, value)
+				setRelationshipProperty(relationship, simpleProperty, value)
+				if _, err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, relationship: relationship, properties: before, written: written}}, stats, nil, wrapSetError); err != nil {
+					return nil, true, err
 				}
-				if err := store.UpdateEdge(relationship); err != nil {
-					relationship.Properties = beforeProperties
-					return nil, true, fmt.Errorf("SET %s: %w", pipelineSetOperation(variable, assignments), err)
-				}
-				stats.PropertiesSet += written
-				e.notifyEdgeMutated(string(relationship.ID))
 				continue
 			}
-			if _, bound := row[variable]; bound {
-				continue
-			}
-			return nil, false, nil
+		}
+		states, handled, err := e.applySetRuns(rowCtx, runs, evalNodes, rels, func(variable string) bool {
+			_, bound := row[variable]
+			return bound
+		}, stateBuffer[:0])
+		if !handled || err != nil {
+			return nil, handled, err
+		}
+		if _, err := e.persistSetEntities(store, states, stats, nil, wrapSetError); err != nil {
+			return nil, true, err
 		}
 	}
 	return stats, true, nil
