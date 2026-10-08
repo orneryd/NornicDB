@@ -49,14 +49,13 @@ func (e *StorageExecutor) replaceDeletedEntityViews(rows []pipelineRow) {
 	}
 }
 
-// deletedEntityViews builds the views of replaceDeletedEntityViews, one per
-// deleted entity, shared by every row that holds it.
+// deletedEntityViews builds the views of replaceDeletedEntityViews: a copy
+// with the ID (a relationship's type and endpoints too) and no labels or
+// properties. A view is equal to the entity by ID, as entities compare.
 type deletedEntityViews struct {
-	executor  *StorageExecutor
-	nodes     map[storage.NodeID]struct{}
-	edges     map[storage.EdgeID]struct{}
-	nodeViews map[storage.NodeID]*storage.Node
-	edgeViews map[storage.EdgeID]*storage.Edge
+	executor *StorageExecutor
+	nodes    map[storage.NodeID]struct{}
+	edges    map[storage.EdgeID]struct{}
 }
 
 // replace returns value with its deleted entities replaced by their views,
@@ -127,34 +126,18 @@ func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
 }
 
 func (v *deletedEntityViews) node(node *storage.Node) *storage.Node {
-	if view, built := v.nodeViews[node.ID]; built {
-		return view
-	}
-	if v.nodeViews == nil {
-		v.nodeViews = make(map[storage.NodeID]*storage.Node)
-	}
-	view := &storage.Node{ID: node.ID, Properties: map[string]interface{}{}}
-	v.nodeViews[node.ID] = view
-	return view
+	return &storage.Node{ID: node.ID}
 }
 
 func (v *deletedEntityViews) edge(edge *storage.Edge) *storage.Edge {
-	if view, built := v.edgeViews[edge.ID]; built {
-		return view
-	}
-	if v.edgeViews == nil {
-		v.edgeViews = make(map[storage.EdgeID]*storage.Edge)
-	}
-	view := &storage.Edge{ID: edge.ID, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode, Properties: map[string]interface{}{}}
-	v.edgeViews[edge.ID] = view
-	return view
+	return &storage.Edge{ID: edge.ID, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
 }
 
 // validateDeletedEntityProjection rejects a RETURN that reads a property or
-// the labels of a node or relationship the statement deleted, or the keys of
-// a deleted relationship, anywhere in an item (n.p + 1 too): Neo4j 5.26's
-// EntityNotFound. keys and properties of a deleted node, and n {.*}, are
-// empty instead (replaceDeletedEntityViews).
+// the labels of a node or relationship the statement deleted, or the keys or
+// properties() of a deleted relationship, anywhere in an item (n.p + 1 too):
+// Neo4j 5.26's EntityNotFound. keys and properties of a deleted node, and
+// n {.*}, are empty instead (replaceDeletedEntityViews).
 func validateDeletedEntityProjection(rows []pipelineRow, clause string) error {
 	for _, expression := range projectionExpressions(clause, "RETURN") {
 		reads := deletedEntityReadsIn(expression)
@@ -163,7 +146,7 @@ func validateDeletedEntityProjection(rows []pipelineRow, clause string) error {
 		}
 		for _, row := range rows {
 			for _, read := range reads {
-				if rowReferencesDeletedEntity(row, read.variable, read.keys) {
+				if rowReferencesDeletedEntity(row, read.variable, read.relationshipOnly) {
 					return newSemanticError(
 						"Neo.ClientError.Statement.EntityNotFound",
 						"DeletedEntityAccess",
@@ -177,14 +160,16 @@ func validateDeletedEntityProjection(rows []pipelineRow, clause string) error {
 }
 
 // deletedEntityRead is a variable an expression reads a property or the
-// labels of (keys false), or the keys of (keys true).
+// labels of, or (relationshipOnly) the keys or properties() of: an error only
+// for a relationship.
 type deletedEntityRead struct {
-	variable string
-	keys     bool
+	variable         string
+	relationshipOnly bool
 }
 
 // deletedEntityReadsIn returns the variables expression reads a property, the
-// labels or the keys of, outside string literals: v.p, labels(v), keys(v).
+// labels, the keys or properties() of, outside string literals: v.p,
+// labels(v), keys(v), properties(v).
 func deletedEntityReadsIn(expression string) []deletedEntityRead {
 	var reads []deletedEntityRead
 	for index := 0; index < len(expression); {
@@ -209,14 +194,14 @@ func deletedEntityReadsIn(expression string) []deletedEntityRead {
 		switch {
 		case next < len(expression) && expression[next] == '.' && next+1 < len(expression) && expression[next+1] != '.':
 			reads = append(reads, deletedEntityRead{variable: word})
-		case next < len(expression) && expression[next] == '(' && (strings.EqualFold(word, "labels") || strings.EqualFold(word, "keys")):
+		case next < len(expression) && expression[next] == '(' && (strings.EqualFold(word, "labels") || strings.EqualFold(word, "keys") || strings.EqualFold(word, "properties")):
 			argumentStart := skipSpaceIndex(expression, next+1)
 			argumentEnd := argumentStart
 			for argumentEnd < len(expression) && isCypherIdentByte(expression[argumentEnd]) {
 				argumentEnd++
 			}
 			if close := skipSpaceIndex(expression, argumentEnd); argumentEnd > argumentStart && close < len(expression) && expression[close] == ')' {
-				reads = append(reads, deletedEntityRead{variable: expression[argumentStart:argumentEnd], keys: strings.EqualFold(word, "keys")})
+				reads = append(reads, deletedEntityRead{variable: expression[argumentStart:argumentEnd], relationshipOnly: !strings.EqualFold(word, "labels")})
 			}
 		}
 	}
@@ -231,12 +216,12 @@ func skipSpaceIndex(text string, index int) int {
 }
 
 // rowReferencesDeletedEntity reports whether row binds variable to a node or
-// relationship the statement deleted. For a keys() read (keys) only a
-// relationship counts: the keys of a deleted node are empty.
-func rowReferencesDeletedEntity(row pipelineRow, variable string, keys bool) bool {
+// relationship the statement deleted. For a keys() / properties() read
+// (relationshipOnly) only a relationship counts: a deleted node's are empty.
+func rowReferencesDeletedEntity(row pipelineRow, variable string, relationshipOnly bool) bool {
 	switch entity := row[variable].(type) {
 	case *storage.Node:
-		if keys {
+		if relationshipOnly {
 			return false
 		}
 		deleted, _ := row[pipelineDeletedNodesKey].(map[storage.NodeID]struct{})

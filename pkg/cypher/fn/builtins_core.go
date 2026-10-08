@@ -226,10 +226,17 @@ func evalProperties(ctx Context, args []string) (interface{}, error) {
 		return nil, nil
 	}
 	inner := strings.TrimSpace(args[0])
+	// An entity without properties has the empty map, never null.
 	if node, ok := ctx.Nodes[inner]; ok && node != nil {
+		if node.Properties == nil {
+			return map[string]interface{}{}, nil
+		}
 		return node.Properties, nil
 	}
 	if rel, ok := ctx.Rels[inner]; ok && rel != nil {
+		if rel.Properties == nil {
+			return map[string]interface{}{}, nil
+		}
 		return rel.Properties, nil
 	}
 	value, _ := ctx.Eval(inner)
