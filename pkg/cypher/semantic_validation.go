@@ -240,16 +240,17 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string) error {
 			body = stripped
 		}
 		// An unscoped body's branches (the body, or each UNION branch)
-		// import with their own leading WITH; a branch that imports nothing
-		// sees no outer variable and is checked as a statement of its own
-		// (#907).
+		// import with their own leading WITH (#907). A branch that imports
+		// nothing still sees the outer variables it reads, a NornicDB
+		// extension over Neo4j 5.26 (which rejects them): only a leading
+		// WITH that reads no outer variable at all is checked here.
 		if !scoped {
 			outer := func(variable string) bool { return isIdentifierReferenced(cypher[:position], variable) }
 			branches := []string{body}
 			if unionBranches, _, _, union := parseTopLevelUnionBranches(body); union {
 				branches = unionBranches
 			}
-			for _, branch := range branches {
+			for index, branch := range branches {
 				// A malformed import is reported where the CALL runs.
 				if _, importing, _ := branchLeadingWithImport(branch, outer, false); !importing {
 					// A leading WITH that imports nothing is the branch's first
@@ -257,9 +258,14 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string) error {
 					if err := leadingWithUndefinedVariable(branch); err != nil {
 						return err
 					}
-					if err := e.validateMatchSemanticScopes(branch); err != nil {
-						return err
-					}
+					continue
+				}
+				// The import form is checked on the first branch only, as
+				// before: a later branch's importing WITH may carry WHERE or an
+				// alias (WITH x WHERE x IS NOT NULL), which NornicDB runs as a
+				// projection over its implicit imports (an extension; Neo4j
+				// 5.26 rejects it).
+				if index > 0 {
 					continue
 				}
 				if clauses, ok := splitPipelineClauses(branch); ok && len(clauses) > 0 {

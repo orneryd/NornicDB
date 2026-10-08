@@ -89,7 +89,7 @@ func TestExecuteChainedCallSubquery_ImplicitScalarCorrelationOptionalAggregate(t
 		},
 	}
 
-	res, err := exec.sharedSeededCallForTest(ctx, seed, "CALL (person_id) { OPTIONAL MATCH (o:Order) WHERE o.owner_id = person_id AND o.amount >= $min_amount RETURN collect(o.order_id) AS order_ids, count(o) AS order_count } RETURN person_id, person_name, order_ids, order_count")
+	res, err := exec.sharedSeededCallForTest(ctx, seed, "CALL { OPTIONAL MATCH (o:Order) WHERE o.owner_id = person_id AND o.amount >= $min_amount RETURN collect(o.order_id) AS order_ids, count(o) AS order_count } RETURN person_id, person_name, order_ids, order_count")
 	require.NoError(t, err)
 	require.Equal(t, []string{"person_id", "person_name", "order_ids", "order_count"}, res.Columns)
 	require.Len(t, res.Rows, 2)
