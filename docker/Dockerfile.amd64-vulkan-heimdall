@@ -91,7 +91,7 @@ FROM debian:bookworm-slim
 WORKDIR /app
 
 # Install Vulkan runtime libraries and dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates tzdata wget \
     libvulkan1 \
     mesa-vulkan-drivers \
