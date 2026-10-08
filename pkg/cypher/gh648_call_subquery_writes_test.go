@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -74,9 +75,14 @@ func TestGh648_WriteSubqueryWithoutImportsRunsPerRow(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:T {id: 1}), (:T {id: 2}), (:T {id: 3})", nil)
 	require.NoError(t, err)
 
-	// The body references the outer variable without a (n) import list:
-	// Neo4j still runs it once per outer row.
-	result, err := exec.Execute(ctx, "MATCH (n:T) CALL { CREATE (:X {from: n.id}) } RETURN n.id AS id ORDER BY id", nil)
+	// The body reads the outer variable without importing it: Neo4j
+	// 5.26.30 rejects it ("Variable `n` not defined", #907). With the
+	// import it runs once per outer row.
+	_, err = exec.Execute(ctx, "MATCH (n:T) CALL { CREATE (:X {from: n.id}) } RETURN n.id AS id ORDER BY id", nil)
+	require.Error(t, err)
+	code, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
+	result, err := exec.Execute(ctx, "MATCH (n:T) CALL { WITH n CREATE (:X {from: n.id}) } RETURN n.id AS id ORDER BY id", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}, {int64(2)}, {int64(3)}}, result.Rows)
 
@@ -269,6 +275,13 @@ func TestGh648_OuterScopeAndColumnNames(t *testing.T) {
 		{"WITH 'x' AS v CALL { RETURN 2 AS c } RETURN v, c", []string{"v", "c"}, [][]interface{}{{"x", int64(2)}}},
 		{"WITH 1 AS v, 3 AS w CALL { RETURN 2 AS c } RETURN v, w, c", []string{"v", "w", "c"}, [][]interface{}{{int64(1), int64(3), int64(2)}}},
 		{"MATCH (t:T) WITH t, 5 AS z CALL (t) { RETURN t.id * 2 AS d } RETURN z, d", []string{"z", "d"}, [][]interface{}{{int64(5), int64(2)}}},
+		// Unscoped bodies (Neo4j 5.26.30, #907): WITH * imports, a leading
+		// WITH of literals imports nothing, and each UNION branch decides.
+		{"WITH 1 AS v CALL { WITH * RETURN v * 2 AS d } RETURN v, d", []string{"v", "d"}, [][]interface{}{{int64(1), int64(2)}}},
+		{"WITH 1 AS v CALL { WITH 2 AS x RETURN x } RETURN v, x", []string{"v", "x"}, [][]interface{}{{int64(1), int64(2)}}},
+		{"WITH 1 AS v CALL { WITH 2 AS x RETURN x UNION WITH * RETURN v AS x } RETURN v, x", []string{"v", "x"}, [][]interface{}{{int64(1), int64(2)}, {int64(1), int64(1)}}},
+		{"WITH 1 AS v CALL { RETURN 2 AS x UNION WITH v RETURN v AS x } RETURN v, x", []string{"v", "x"}, [][]interface{}{{int64(1), int64(2)}, {int64(1), int64(1)}}},
+		{"WITH 1 AS v CALL { RETURN 0 AS x UNION WITH v CALL db.labels() YIELD label WITH v LIMIT 1 RETURN v AS x } RETURN v, x", []string{"v", "x"}, [][]interface{}{{int64(1), int64(0)}, {int64(1), int64(1)}}},
 	} {
 		t.Run(testCase.query, func(t *testing.T) {
 			exec := newGh648Executor(t)
@@ -518,4 +531,25 @@ func TestPR771TransactionalCallOuterBatchPersistence(t *testing.T) {
 			require.Equal(t, [][]interface{}{{int64(2)}}, stored.Rows)
 		})
 	}
+}
+
+// An unscoped body's importing WITH (Neo4j 5.26.30, #907): plain references
+// only, also when an expression reads the outer variable, and a branch
+// that only imports is not a query of its own.
+func TestGh648_UnscopedImportForms(t *testing.T) {
+	exec := newGh648Executor(t)
+	ctx := context.Background()
+	for _, query := range []string{
+		"WITH 1 AS v CALL { WITH [v] AS l, v RETURN v AS x } RETURN x",
+		"WITH 1 AS v CALL { WITH v, size([1, 2]) AS n RETURN n AS x } RETURN x",
+		"WITH 1 AS v CALL { RETURN 1 AS x UNION WITH v } RETURN x",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+		code, _ := nornicerrors.Neo4jStatus(err)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, query)
+	}
+	result, err := exec.Execute(ctx, "WITH [1, 2] AS l CALL { WITH l RETURN size(l) AS x } RETURN x", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
 }

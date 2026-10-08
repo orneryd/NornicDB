@@ -239,18 +239,35 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string) error {
 		if stripped, finishes := stripUnionBranchFinishes(body); finishes {
 			body = stripped
 		}
-		if !scoped && startsWithKeywordFold(body, "WITH") {
-			if clauses, ok := splitPipelineClauses(body); ok && len(clauses) > 0 {
-				projection, tail := projectionSemanticBodyAndTail(clauses[0].text, "WITH")
-				importsOuter := false
-				for _, variable := range expressionFreeVariables(projection) {
-					if isIdentifierReferenced(cypher[:position], variable) {
-						importsOuter = true
+		// An unscoped body's branches (the body, or each UNION branch)
+		// import with their own leading WITH; a branch that imports nothing
+		// sees no outer variable and is checked as a statement of its own
+		// (#907).
+		if !scoped {
+			outer := func(variable string) bool { return isIdentifierReferenced(cypher[:position], variable) }
+			branches := []string{body}
+			if unionBranches, _, _, union := parseTopLevelUnionBranches(body); union {
+				branches = unionBranches
+			}
+			for _, branch := range branches {
+				// A malformed import is reported where the CALL runs.
+				if _, importing, _ := branchLeadingWithImport(branch, outer, false); !importing {
+					// A leading WITH that imports nothing is the branch's first
+					// clause: any variable it reads is undefined there.
+					if err := leadingWithUndefinedVariable(branch); err != nil {
+						return err
 					}
+					if err := e.validateMatchSemanticScopes(branch); err != nil {
+						return err
+					}
+					continue
 				}
-				if importsOuter && (strings.TrimSpace(tail) != "" || topLevelKeywordIndex(projection, "AS") >= 0) {
-					return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
-						"Importing WITH must contain only simple references to outside variables")
+				if clauses, ok := splitPipelineClauses(branch); ok && len(clauses) > 0 {
+					projection, tail := projectionSemanticBodyAndTail(clauses[0].text, "WITH")
+					if strings.TrimSpace(tail) != "" || topLevelKeywordIndex(projection, "AS") >= 0 {
+						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
+							"Importing WITH must contain only simple references to outside variables")
+					}
 				}
 			}
 		}
@@ -263,6 +280,8 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string) error {
 		if body == "" {
 			continue
 		}
+		// A body that imports nothing (CALL () { … }) sees no outer
+		// variable: it is checked as a statement of its own.
 		if scoped && imports == "" {
 			if err := e.validateMatchSemanticScopes(body); err != nil {
 				return err
@@ -273,6 +292,28 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string) error {
 		}
 		if err := e.validateCallSubqueryScopes(body); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// leadingWithUndefinedVariable is "Variable `x` not defined" for a subquery
+// branch whose leading WITH imports nothing but reads a variable
+// (MATCH (:P) CALL { WITH seed RETURN seed }): as its first clause, nothing
+// before it in the branch defines one (#907).
+func leadingWithUndefinedVariable(branch string) error {
+	branch = strings.TrimSpace(branch)
+	if !startsWithKeywordFold(branch, "WITH") {
+		return nil
+	}
+	clause, _ := leadingWithClause(branch)
+	projection, _ := projectionSemanticBodyAndTail(clause, "WITH")
+	for _, item := range splitTopLevelComma(projection) {
+		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
+		for _, variable := range expressionFreeVariables(expression) {
+			if !isSemanticLiteralWord(variable) {
+				return createUndefinedVariableError(variable)
+			}
 		}
 	}
 	return nil

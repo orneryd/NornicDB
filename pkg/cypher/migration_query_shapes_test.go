@@ -1153,6 +1153,7 @@ CALL {
   RETURN t
   UNION
   WITH existing, translatedText, submitter
+  WITH existing, translatedText, submitter
   WHERE existing IS NOT NULL
   SET existing.translatedText = translatedText,
       existing.auditedText = null,

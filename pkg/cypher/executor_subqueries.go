@@ -991,6 +991,149 @@ func detectReferencedCallSubquerySeedColumns(seedResult *ExecuteResult, subquery
 // importing WITH list (parseLeadingWithImports).
 var withImportClauseKeywords = []string{"WHERE", "OPTIONAL MATCH", "MATCH", "UNWIND", "MERGE", "CREATE", "SET", "DETACH DELETE", "DELETE", "REMOVE", "CALL", "RETURN", "WITH"}
 
+// leadingWithClause returns the leading WITH clause of text, which starts
+// with WITH (its WHERE, ORDER BY, SKIP and LIMIT included), and whether a
+// clause follows it. Unlike splitPipelineClauses it reads no further than
+// the next clause, in one pass, and it takes texts with procedure calls
+// (WITH p CALL db.x() …).
+func leadingWithClause(text string) (clause string, followed bool) {
+	depth := 0
+	for index := len("WITH"); index < len(text); index++ {
+		switch c := text[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(text, index, c) - 1
+			continue
+		case '(', '[', '{':
+			depth++
+			continue
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		if depth > 0 || !isASCIIIdentifierStart(text[index]) || isIdentChar(text[index-1]) {
+			continue
+		}
+		end := index + 1
+		for end < len(text) && isIdentChar(text[end]) {
+			end++
+		}
+		previous := text[index-1]
+		if previous != '.' && previous != '$' && previous != ':' && isLeadingWithFollower(text[index:end]) &&
+			!(equalFoldASCII(text[index:end], "with") && isOperatorWith(text, index)) {
+			return text[:index], true
+		}
+		index = end - 1
+	}
+	return text, false
+}
+
+// isLeadingWithFollower reports whether word starts a clause that can follow
+// a leading WITH.
+func isLeadingWithFollower(word string) bool {
+	switch len(word) {
+	case 3:
+		return equalFoldASCII(word, "set") || equalFoldASCII(word, "use")
+	case 4:
+		return equalFoldASCII(word, "call") || equalFoldASCII(word, "with") || equalFoldASCII(word, "load")
+	case 5:
+		return equalFoldASCII(word, "match") || equalFoldASCII(word, "merge") || equalFoldASCII(word, "union")
+	case 6:
+		return equalFoldASCII(word, "unwind") || equalFoldASCII(word, "create") || equalFoldASCII(word, "insert") ||
+			equalFoldASCII(word, "delete") || equalFoldASCII(word, "detach") || equalFoldASCII(word, "remove") ||
+			equalFoldASCII(word, "return") || equalFoldASCII(word, "finish")
+	case 7:
+		return equalFoldASCII(word, "foreach")
+	case 8:
+		return equalFoldASCII(word, "optional") || equalFoldASCII(word, "nodetach")
+	}
+	return false
+}
+
+// unscopedCallImports reads the importing WITHs of an unscoped CALL
+// subquery's body: whether any UNION branch (or the body, without UNION)
+// starts with an importing WITH (branchLeadingWithImport), and the
+// variables those WITHs list. A branch that imports nothing adds none,
+// whatever the other branches import, and sees no outer variable, as in
+// Neo4j 5.26 (#907). A CALL with a scope clause has no importing WITH
+// (callSubqueryHasScopeClause).
+//
+// names is filled only when collectNames.
+func unscopedCallImports(subqueryBody string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
+	trimmed := strings.TrimSpace(subqueryBody)
+	if indexASCIIFold(trimmed, "with") < 0 {
+		return nil, false, nil
+	}
+	if indexASCIIFold(trimmed, "union") >= 0 {
+		if branches, _, _, union := parseTopLevelUnionBranches(trimmed); union {
+			for _, branch := range branches {
+				branchNames, branchImports, err := branchLeadingWithImport(branch, outer, collectNames)
+				if err != nil {
+					return nil, false, err
+				}
+				if branchImports {
+					importing = true
+					names = append(names, branchNames...)
+				}
+			}
+			return names, importing, nil
+		}
+	}
+	return branchLeadingWithImport(trimmed, outer, collectNames)
+}
+
+// branchLeadingWithImport reports whether one branch of an unscoped CALL
+// body starts with an importing WITH: WITH * or a WITH that reads a
+// variable from outside (outer), and the variables it lists (not *). Any
+// other leading WITH (WITH 1 AS x, WITH 2 AS i over an outer i) is an
+// ordinary projection inside the subquery (#907). An importing WITH must
+// be followed by a query clause: CALL { WITH x } imports and is an error.
+func branchLeadingWithImport(branch string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
+	trimmed := strings.TrimSpace(branch)
+	if !startsWithKeywordFold(trimmed, "WITH") {
+		return nil, false, nil
+	}
+	clause, followed := leadingWithClause(trimmed)
+	projection, _ := projectionSemanticBodyAndTail(clause, "WITH")
+	var buffer [8]string
+	for _, item := range appendTopLevelComma(buffer[:0], projection) {
+		expression, alias := parseProjectionExprAlias(item)
+		expression = strings.TrimSpace(expression)
+		if expression == "*" {
+			importing = true
+			continue
+		}
+		if collectNames {
+			// The item's name: the variable itself for a plain reference.
+			names = append(names, alias)
+		} else if importing {
+			break
+		}
+		if importing || expression == "" {
+			continue
+		}
+		// A plain reference (the usual import) needs no expression scan.
+		if expression[0] != '`' && isSimpleIdentifier(expression) {
+			importing = outer(expression)
+			continue
+		}
+		for _, variable := range expressionFreeVariables(expression) {
+			if outer(variable) {
+				importing = true
+				break
+			}
+		}
+	}
+	if !importing {
+		return nil, false, nil
+	}
+	if !followed {
+		return names, true, localizedError(localization.CypherSubqueriesWithQueryClauseRequired(), nil)
+	}
+	return names, true, nil
+}
+
 func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody string, hasWith bool, err error) {
 	trimmed := strings.TrimSpace(subqueryBody)
 	if !hasPrefixFoldASCII(trimmed, "WITH ") {
