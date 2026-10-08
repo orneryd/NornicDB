@@ -314,18 +314,34 @@ func expressionFreeVariables(expression string) []string {
 			}
 		}
 		mapKey := following == ':' && len(delimiters) > 0 && delimiters[len(delimiters)-1] == '{' && (previous == '{' || previous == ',')
-		if previous != '$' && previous != '.' && following != '(' && !mapKey && !setExpressionKeyword(upper) {
+		// x IS NFC NORMALIZED: the normal form names a form, not a variable.
+		normalForm := false
+		switch upper {
+		case "NFC", "NFD", "NFKC", "NFKD":
+			form, _, word := scanIdentifierToken(expression, skipSpaces(expression, next))
+			normalForm = word && strings.EqualFold(form, "NORMALIZED")
+		}
+		if previous != '$' && previous != '.' && following != '(' && !mapKey && !normalForm && !setExpressionKeyword(upper) {
 			if _, exists := locals[name]; !exists {
 				names = append(names, name)
 			}
 		}
 		index = next
 		if following == ':' && !mapKey {
+			// The labels of n:A:B and of a label expression n:A|B&!C or
+			// n:%: names of labels, not variables.
 			labelStart := skipSpaces(expression, next)
-			for labelStart < len(expression) && expression[labelStart] == ':' {
-				_, labelEnd, valid := scanIdentifierToken(expression, skipSpaces(expression, labelStart+1))
-				if !valid {
-					break
+			for labelStart < len(expression) && strings.IndexByte(":|&", expression[labelStart]) >= 0 {
+				labelName := skipSpaces(expression, labelStart+1)
+				for labelName < len(expression) && expression[labelName] == '!' {
+					labelName = skipSpaces(expression, labelName+1)
+				}
+				labelEnd := labelName + 1
+				if labelName >= len(expression) || expression[labelName] != '%' {
+					var valid bool
+					if _, labelEnd, valid = scanIdentifierToken(expression, labelName); !valid {
+						break
+					}
 				}
 				labelStart = skipSpaces(expression, labelEnd)
 				index = labelStart
@@ -438,7 +454,7 @@ func setExpressionKeyword(token string) bool {
 	switch token {
 	case "CASE", "WHEN", "THEN", "ELSE", "END",
 		"IN", "WHERE", "AND", "OR", "XOR", "NOT", "IS", "STARTS", "ENDS",
-		"WITH", "CONTAINS", "DISTINCT", "AS":
+		"WITH", "CONTAINS", "DISTINCT", "AS", "NORMALIZED":
 		return true
 	default:
 		return false

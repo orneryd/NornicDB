@@ -175,6 +175,11 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 				if err := projectionAliasError(raw); err != nil {
 					return err
 				}
+				if expression != "*" {
+					if err := undefinedExpressionVariable(scope, expression); err != nil {
+						return err
+					}
+				}
 			}
 			input := staticTypeScope{kinds: scope, values: valueTypes, complete: true}
 			if err := validateStaticFunctionVariables(projection, input); err != nil {
@@ -193,6 +198,9 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 			}
 		case pipelineClauseUnwind:
 			if err := validateUnwindAlias(clause.text); err != nil {
+				return err
+			}
+			if err := undefinedExpressionVariable(scope, unwindSourceExpression(clause.text)); err != nil {
 				return err
 			}
 			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
@@ -336,21 +344,8 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 		if err := validateKnownFunctionsInExpression(expression); err != nil {
 			return err
 		}
-		if _, _, call := parseFunctionCallWS(expression); call {
-			for _, name := range expressionFreeVariables(expression) {
-				if _, found := scope[name]; !found {
-					return createUndefinedVariableError(name)
-				}
-			}
-		}
-		if base, _, access := splitPostfixPropertyAccess(expression); access {
-			if _, _, call := parseFunctionCallWS(base); call {
-				for _, name := range expressionFreeVariables(base) {
-					if _, found := scope[name]; !found {
-						return createUndefinedVariableError(name)
-					}
-				}
-			}
+		if err := undefinedExpressionVariable(scope, expression); err != nil {
+			return err
 		}
 		if expression == "*" {
 			if len(scope) == 0 {
@@ -377,6 +372,39 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 			if _, found := scope[variable]; !found {
 				return createUndefinedVariableError(variable)
 			}
+		}
+	}
+	return nil
+}
+
+// undefinedExpressionVariable is "Variable `x` not defined" for the first
+// variable expression reads that scope doesn't bind: anywhere in it,
+// inside a CASE, a list, a map projection or a comprehension's WHERE and
+// projection included, as in Neo4j (#907). A comprehension's or a
+// reduce's own variable is bound inside it (expressionFreeVariables).
+func undefinedExpressionVariable(scope matchSemanticScope, expression string) error {
+	// A literal, a variable or a property chain reads at most its base
+	// variable: checked without the scanner.
+	if _, literal := parseLiteralValueFromComputedRow(expression); literal {
+		return nil
+	}
+	variable := simpleSemanticIdentifier(expression)
+	if variable == "" {
+		if base, _, chain := rowPropertyChainShape(expression); chain {
+			variable = base
+		}
+	}
+	if variable != "" {
+		if _, found := scope[variable]; !found && !isLiteralKeyword(variable) {
+			return createUndefinedVariableError(variable)
+		}
+		return nil
+	}
+	// expressionFreeVariables leaves out true, false, null and the other
+	// literal words.
+	for _, name := range expressionFreeVariables(expression) {
+		if _, found := scope[name]; !found {
+			return createUndefinedVariableError(name)
 		}
 	}
 	return nil
@@ -878,11 +906,17 @@ func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSem
 	return output
 }
 
-func unwindMatchSemanticKind(clause string, scope matchSemanticScope) matchBindingKind {
+// unwindSourceExpression is the list expression of an UNWIND clause.
+func unwindSourceExpression(clause string) string {
 	body := strings.TrimSpace(clause[len("UNWIND"):])
 	if asIndex := findKeywordIndexInContext(body, "AS"); asIndex >= 0 {
 		body = strings.TrimSpace(body[:asIndex])
 	}
+	return body
+}
+
+func unwindMatchSemanticKind(clause string, scope matchSemanticScope) matchBindingKind {
+	body := unwindSourceExpression(clause)
 	if source := simpleSemanticIdentifier(body); source != "" {
 		switch scope[source] {
 		case matchBindingNodeList:
