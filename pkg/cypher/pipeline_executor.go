@@ -4272,11 +4272,13 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 // recorded); completed is false when source declined its shape.
 func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs []returnProjection, rows []pipelineRow, source pipelineRowSource, out *[][]interface{}, emit func([]interface{}) bool) (projected, completed bool) {
 	if rows == nil && source != nil {
-		projected = true
-		completed = source(func(row pipelineRow) bool {
+		// A local the closure captures, so the rows path below doesn't pay
+		// for a captured result variable.
+		sourceProjected := true
+		sourceCompleted := source(func(row pipelineRow) bool {
 			values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
 			if !evaluated {
-				projected = false
+				sourceProjected = false
 				return false
 			}
 			if emit != nil {
@@ -4285,7 +4287,7 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 			*out = append(*out, values)
 			return true
 		})
-		return projected, completed
+		return sourceProjected, sourceCompleted
 	}
 	for _, row := range rows {
 		values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
