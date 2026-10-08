@@ -2113,6 +2113,22 @@ func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interfa
 	return false, true
 }
 
+// existsFromRows is [NOT] EXISTS of a correlated subquery query: whether it
+// returns a row. Its error is recorded on ctx (the statement fails), never
+// read as "no rows".
+func (e *StorageExecutor) existsFromRows(ctx context.Context, query string, values map[string]interface{}, negated bool) bool {
+	result, err := e.runCorrelatedSubquery(ctx, query, values)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
+	}
+	matched := result != nil && len(result.Rows) > 0
+	if negated {
+		matched = !matched
+	}
+	return matched
+}
+
 func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expression string, values map[string]interface{}) (bool, bool) {
 	trimmed := strings.TrimSpace(expression)
 	// Only a whole [NOT] EXISTS { } is this predicate: EXISTS { … } = false
@@ -2129,13 +2145,12 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 	if subquery == "" {
 		return false, false
 	}
-	if clauses, ok := splitPipelineClauses(subquery); ok && len(clauses) > 1 {
-		result, err := e.runCorrelatedSubquery(ctx, subquery, values)
-		matched := err == nil && result != nil && len(result.Rows) > 0
-		if negated {
-			matched = !matched
-		}
-		return matched, true
+	// A full query body (several clauses, or a UNION of them) runs as a
+	// correlated subquery; its error fails the statement, it doesn't read as
+	// "no rows".
+	_, _, _, union := parseTopLevelUnionBranches(subquery)
+	if clauses, ok := splitPipelineClauses(subquery); union || (ok && len(clauses) > 1) {
+		return e.existsFromRows(ctx, subquery, values, negated), true
 	}
 	if !hasPrefixFold(strings.TrimSpace(subquery), "MATCH ") {
 		subquery = "MATCH " + strings.TrimSpace(subquery)
@@ -2144,12 +2159,7 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 	// comprehension variable, a WITH value) runs as a correlated pipeline,
 	// which sees every row value; the path matcher sees only entities.
 	if subqueryReadsScalarRowValue(subquery, values) {
-		result, err := e.runCorrelatedSubquery(ctx, subquery+" RETURN 1 AS __exists", values)
-		matched := err == nil && result != nil && len(result.Rows) > 0
-		if negated {
-			matched = !matched
-		}
-		return matched, true
+		return e.existsFromRows(ctx, subquery+" RETURN 1 AS __exists", values, negated), true
 	}
 	path := PathContext{nodes: make(map[string]*storage.Node), rels: make(map[string]*storage.Edge)}
 	for name, value := range values {

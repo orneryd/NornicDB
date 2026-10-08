@@ -1887,7 +1887,13 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 				Rows:    make([][]interface{}, 0),
 				Stats:   &QueryStats{},
 			}
-		} else if !reflect.DeepEqual(combinedResult.Columns, result.Columns) {
+		} else if order, sameNames := unionColumnOrder(combinedResult.Columns, result.Columns); sameNames {
+			// The same names in another order: the branch's rows are
+			// reordered into the first branch's columns, as in Neo4j 5.26.
+			if order != nil {
+				result.Rows = reorderUnionRows(result.Rows, order)
+			}
+		} else {
 			message := fmt.Sprintf(
 				"UNION queries must return the same columns (got %v and %v)",
 				combinedResult.Columns,
@@ -1925,6 +1931,54 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 	}
 
 	return combinedResult, nil
+}
+
+// unionColumnOrder reports whether a UNION branch returns the same column
+// names as the first branch (columns), in any order, and when the order
+// differs, for each of columns the index of that column in branch. Neo4j
+// 5.26 matches UNION columns by name (#907).
+func unionColumnOrder(columns, branch []string) (order []int, sameNames bool) {
+	if len(columns) != len(branch) {
+		return nil, false
+	}
+	inOrder := true
+	for index := range columns {
+		if columns[index] != branch[index] {
+			inOrder = false
+			break
+		}
+	}
+	if inOrder {
+		return nil, true
+	}
+	positions := make(map[string]int, len(branch))
+	for index, name := range branch {
+		positions[name] = index
+	}
+	order = make([]int, len(columns))
+	for index, name := range columns {
+		position, found := positions[name]
+		if !found {
+			return nil, false
+		}
+		order[index] = position
+	}
+	return order, true
+}
+
+// reorderUnionRows rewrites rows into the column order unionColumnOrder gave.
+func reorderUnionRows(rows [][]interface{}, order []int) [][]interface{} {
+	reordered := make([][]interface{}, len(rows))
+	for index, row := range rows {
+		values := make([]interface{}, len(order))
+		for column, position := range order {
+			if position < len(row) {
+				values[column] = row[position]
+			}
+		}
+		reordered[index] = values
+	}
+	return reordered
 }
 
 // ========================================

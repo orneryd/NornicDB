@@ -37,9 +37,9 @@
 - id: cyphersubqueries.correlated_union_branch_failed
   description: Expanded pseudo-locale correlated UNION branch failure.
   other: "[!! failed correlated UNION subquery branch {{.Branch}} for seed {{.Seed}}: {{.Cause}} !!]"
-- id: cyphersubqueries.union_column_count_mismatch
-  description: Expanded pseudo-locale UNION column mismatch.
-  other: "[!! UNION queries must return the same number of columns (got {{.First}} and {{.Second}}) !!]"
+- id: cyphersubqueries.collect_single_column
+  description: Expanded pseudo-locale COLLECT column count.
+  other: "[!! a COLLECT subquery must return exactly one column (got {{.Columns}}) !!]"
 - id: cyphersubqueries.correlated_import_failed
   description: Expanded pseudo-locale correlated import failure.
   other: "[!! failed to resolve correlated import {{.Import}}: {{.Cause}} !!]"

@@ -239,6 +239,11 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string) error {
 		if stripped, finishes := stripUnionBranchFinishes(body); finishes {
 			body = stripped
 		}
+		// A RETURN inside the body projects its columns too: two items of
+		// one name are as malformed there as at the top level.
+		if err := e.validateDuplicateReturnColumnName(body, nil); err != nil {
+			return err
+		}
 		// An unscoped body's branches (the body, or each UNION branch)
 		// import with their own leading WITH (#907). A branch that imports
 		// nothing still sees the outer variables it reads, a NornicDB

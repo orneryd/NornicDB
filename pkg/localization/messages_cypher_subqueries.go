@@ -19,7 +19,7 @@ const (
 	MessageCypherSubqueriesUnionWithImportsFailed            MessageID = "cyphersubqueries.union_with_imports_failed"
 	MessageCypherSubqueriesStaticUnionBranchFailed           MessageID = "cyphersubqueries.static_union_branch_failed"
 	MessageCypherSubqueriesCorrelatedUnionBranchFailed       MessageID = "cyphersubqueries.correlated_union_branch_failed"
-	MessageCypherSubqueriesUnionColumnCountMismatch          MessageID = "cyphersubqueries.union_column_count_mismatch"
+	MessageCypherSubqueriesCollectSingleColumn               MessageID = "cyphersubqueries.collect_single_column"
 	MessageCypherSubqueriesCorrelatedImportFailed            MessageID = "cyphersubqueries.correlated_import_failed"
 	MessageCypherSubqueriesOptionalImportFallbackFailed      MessageID = "cyphersubqueries.optional_import_fallback_failed"
 	MessageCypherSubqueriesWithImportUnknownVariable         MessageID = "cyphersubqueries.with_import_unknown_variable"
@@ -118,8 +118,10 @@ func CypherSubqueriesCorrelatedUnionBranchFailed(branch int, seed string, cause 
 	return cypherSubqueriesMessage(MessageCypherSubqueriesCorrelatedUnionBranchFailed, fmt.Sprintf("failed correlated UNION subquery branch %d for seed %s: %s", branch, seed, cause), map[string]any{"Branch": branch, "Seed": seed, "Cause": cause.Error()})
 }
 
-func CypherSubqueriesUnionColumnCountMismatch(first, second int) Message {
-	return cypherSubqueriesMessage(MessageCypherSubqueriesUnionColumnCountMismatch, fmt.Sprintf("UNION queries must return the same number of columns (got %d and %d)", first, second), map[string]any{"First": first, "Second": second})
+// CypherSubqueriesCollectSingleColumn identifies a COLLECT subquery whose
+// RETURN doesn't have exactly one column.
+func CypherSubqueriesCollectSingleColumn(columns int) Message {
+	return cypherSubqueriesMessage(MessageCypherSubqueriesCollectSingleColumn, fmt.Sprintf("a COLLECT subquery must return exactly one column (got %d)", columns), map[string]any{"Columns": columns})
 }
 
 func CypherSubqueriesCorrelatedImportFailed(importVariable string, cause error) Message {
