@@ -9,6 +9,7 @@ type databaseContextKey string
 const (
 	keyDatabase           databaseContextKey = "mcp:database"
 	keyAuthorizedDatabase databaseContextKey = "mcp:authorized_database"
+	keyURLDatabase        databaseContextKey = "mcp:url_database"
 )
 
 // ContextWithDatabase returns a context that carries the database name for MCP tool execution.
@@ -24,6 +25,27 @@ func ContextWithDatabase(ctx context.Context, dbName string) context.Context {
 func contextWithAuthorizedDatabase(ctx context.Context, dbName string) context.Context {
 	ctx = ContextWithDatabase(ctx, dbName)
 	return context.WithValue(ctx, keyAuthorizedDatabase, true)
+}
+
+// contextWithURLDatabase carries the database pinned by the request URL path
+// (/mcp/{database}/...) from routing to the HTTP handlers. The handlers inject
+// it as the tool's database argument, so the payload database cannot override
+// the URL pin.
+func contextWithURLDatabase(ctx context.Context, dbName string) context.Context {
+	if dbName == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, keyURLDatabase, dbName)
+}
+
+func urlDatabaseFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if s, ok := ctx.Value(keyURLDatabase).(string); ok {
+		return s
+	}
+	return ""
 }
 
 func hasAuthorizedDatabase(ctx context.Context) bool {

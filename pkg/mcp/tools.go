@@ -44,7 +44,6 @@ func GetToolDefinitionsWithDefaultDatabase(defaultDatabase string) []Tool {
 		getRecallTool(defaultDatabase),
 		getDiscoverTool(defaultDatabase),
 		getLinkTool(defaultDatabase),
-		getTaskTool(defaultDatabase),
 		getTasksTool(defaultDatabase),
 	}
 }
@@ -255,14 +254,16 @@ Examples:
 	}
 }
 
-// getTaskTool returns the task tool definition
-func getTaskTool(defaultDatabase string) Tool {
+// getTasksTool returns the tasks tool definition. It covers both task
+// management (create, update, complete, delete) and task listing/filtering in
+// one surface; management arguments switch it out of listing mode.
+func getTasksTool(defaultDatabase string) Tool {
 	schema := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"id": map[string]interface{}{
 				"type":        "string",
-				"description": "Task ID for update/complete/delete. Omit for creating new tasks.",
+				"description": "Task ID for update/complete/delete. Omit for creating new tasks or listing.",
 			},
 			"title": map[string]interface{}{
 				"type":        "string",
@@ -273,85 +274,47 @@ func getTaskTool(defaultDatabase string) Tool {
 				"description": "Detailed task description.",
 			},
 			"status": map[string]interface{}{
-				"type":        "string",
-				"description": "Task status. Omit for auto-toggle (pending→active→completed).",
+				"type":        []string{"string", "array"},
+				"description": "Create/update: task status, or omit for auto-toggle (pending→active→completed). List: filter by status.",
 				"enum":        []string{"pending", "active", "completed", "blocked"},
+				"items":       map[string]interface{}{"type": "string", "enum": []string{"pending", "active", "completed", "blocked"}},
 			},
 			"priority": map[string]interface{}{
-				"type":        "string",
-				"description": "Task priority level.",
+				"type":        []string{"string", "array"},
+				"description": "Create: task priority level (default: medium). List: filter by priority.",
 				"enum":        []string{"low", "medium", "high", "critical"},
+				"items":       map[string]interface{}{"type": "string", "enum": []string{"low", "medium", "high", "critical"}},
 				"default":     "medium",
 			},
 			"depends_on": map[string]interface{}{
 				"type":        "array",
 				"items":       map[string]interface{}{"type": "string"},
-				"description": "IDs of tasks that must complete before this one.",
+				"description": "Create: IDs of tasks that must complete before this one.",
 			},
 			"assign": map[string]interface{}{
 				"type":        "string",
-				"description": "Assign to agent or person.",
+				"description": "Create/update: assign to agent or person.",
 			},
 			"complete": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Set to true to mark task as completed. Shorthand for status='completed'.",
+				"description": "Update: set to true to mark task as completed. Shorthand for status='completed'.",
 			},
 			"delete": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Set to true to delete the task.",
-			},
-			"database": databaseParamSchema(defaultDatabase),
-		},
-		"required": []string{},
-	}
-
-	schemaJSON, _ := json.Marshal(schema)
-	return Tool{
-		Name: "task",
-		Description: `Create or manage a task. Tasks are special nodes with status tracking (pending/active/completed).
-Automatically embedded for semantic search. Returns task with context for next steps.
-
-Status auto-toggle: If you provide an ID without status, it advances the status:
-- pending → active
-- active → completed
-
-Examples:
-- task(title="Implement auth", priority="high")
-- task(id="task-123", complete=true)
-- task(id="task-123", status="blocked")
-- task(id="task-456")  # Toggle status
-- task(id="task-789", delete=true)`,
-		InputSchema: schemaJSON,
-	}
-}
-
-// getTasksTool returns the tasks tool definition
-func getTasksTool(defaultDatabase string) Tool {
-	schema := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"status": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string", "enum": []string{"pending", "active", "completed", "blocked"}},
-				"description": "Filter by status.",
-			},
-			"priority": map[string]interface{}{
-				"type":        "array",
-				"items":       map[string]interface{}{"type": "string", "enum": []string{"low", "medium", "high", "critical"}},
-				"description": "Filter by priority.",
+				"description": "Update: set to true to delete the task.",
 			},
 			"assigned_to": map[string]interface{}{
 				"type":        "string",
-				"description": "Filter by assignee.",
+				"description": "List: filter by assignee.",
 			},
 			"unblocked_only": map[string]interface{}{
 				"type":        "boolean",
-				"description": "Only return tasks with no blocking dependencies.",
+				"description": "List: only return tasks with no blocking dependencies.",
 				"default":     false,
 			},
 			"limit": map[string]interface{}{
 				"type":        "integer",
-				"description": "Maximum number of results.",
+				"description": "List: maximum number of results.",
 				"default":     20,
 				"minimum":     1,
 				"maximum":     100,
@@ -364,10 +327,23 @@ func getTasksTool(defaultDatabase string) Tool {
 	schemaJSON, _ := json.Marshal(schema)
 	return Tool{
 		Name: "tasks",
-		Description: `List or query multiple tasks with filtering. Use for dashboards, status checks,
-or finding work. Returns tasks sorted by priority and dependency order.
+		Description: `Create, manage and list tasks. Tasks are special nodes with status tracking
+(pending/active/completed/blocked) and are automatically embedded for semantic search.
+
+Management arguments (id, title, status, priority, depends_on, assign, complete, delete)
+switch the tool into create/update/delete mode and return the affected task. Without them,
+the tool lists tasks sorted by priority and dependency order, with optional filters and stats.
+
+Status auto-toggle: If you provide an ID without status, it advances the status:
+- pending → active
+- active → completed
 
 Examples:
+- tasks(title="Implement auth", priority="high")
+- tasks(id="task-123", complete=true)
+- tasks(id="task-123", status="blocked")
+- tasks(id="task-456")  # Toggle status
+- tasks(id="task-789", delete=true)
 - tasks(status=["pending"], unblocked_only=true)
 - tasks(priority=["high", "critical"])
 - tasks(assigned_to="agent-worker-1", limit=10)
@@ -382,7 +358,6 @@ const (
 	ToolRecall   = "recall"
 	ToolDiscover = "discover"
 	ToolLink     = "link"
-	ToolTask     = "task"
 	ToolTasks    = "tasks"
 )
 
@@ -393,7 +368,6 @@ func AllTools() []string {
 		ToolRecall,
 		ToolDiscover,
 		ToolLink,
-		ToolTask,
 		ToolTasks,
 	}
 }
@@ -419,15 +393,16 @@ func InferOperation(tool string, args map[string]interface{}) string {
 		return "read"
 	case ToolLink:
 		return "create"
-	case ToolTask:
+	case ToolTasks:
 		if _, hasID := args["id"]; hasID {
 			if del, ok := args["delete"].(bool); ok && del {
 				return "delete"
 			}
 			return "update"
 		}
-		return "create"
-	case ToolTasks:
+		if taskArgsMutate(args) {
+			return "create"
+		}
 		return "read"
 	default:
 		return "unknown"
@@ -451,7 +426,7 @@ func ExtractResourceType(tool string, args map[string]interface{}) string {
 		return "*"
 	case ToolLink:
 		return "edge"
-	case ToolTask, ToolTasks:
+	case ToolTasks:
 		return "task"
 	default:
 		return "*"

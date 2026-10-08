@@ -154,9 +154,13 @@ func TestNewServer(t *testing.T) {
 	if server == nil {
 		t.Fatal("NewServer() returned nil")
 	}
-	// Note: 6 handlers now - index/unindex removed (handled by the application layer)
-	if len(server.handlers) != 6 {
-		t.Errorf("Expected 6 handlers, got %d", len(server.handlers))
+	// 5 handlers: index/unindex removed (application layer) and the standalone
+	// task tool is folded into tasks.
+	if len(server.handlers) != 5 {
+		t.Errorf("Expected 5 handlers, got %d", len(server.handlers))
+	}
+	if _, ok := server.handlers[ToolTasks]; !ok {
+		t.Error("tasks handler must be registered")
 	}
 }
 
@@ -256,9 +260,10 @@ func TestHandleListTools(t *testing.T) {
 
 	var resp ListToolsResponse
 	json.NewDecoder(rec.Body).Decode(&resp)
-	// Note: 6 tools now - index/unindex removed (handled by the application layer)
-	if len(resp.Tools) != 6 {
-		t.Errorf("Expected 6 tools, got %d", len(resp.Tools))
+	// 5 tools: index/unindex removed (application layer) and the standalone
+	// task tool is folded into tasks.
+	if len(resp.Tools) != 5 {
+		t.Errorf("Expected 5 tools, got %d", len(resp.Tools))
 	}
 }
 
@@ -1519,7 +1524,7 @@ func TestHandleTask_NoDB(t *testing.T) {
 	server := NewServer(nil, nil)
 	ctx := context.Background()
 
-	result, err := server.handleTask(ctx, map[string]interface{}{
+	result, err := server.handleTasks(ctx, map[string]interface{}{
 		"title": "Test Task",
 	})
 	if err != nil {
@@ -1531,13 +1536,18 @@ func TestHandleTask_NoDB(t *testing.T) {
 		t.Error("Expected task ID")
 	}
 
-	// Missing title
-	_, err = server.handleTask(ctx, map[string]interface{}{})
+	// Missing title on a mutation request (scalar status switches to mutation
+	// mode); a bare call lists instead.
+	_, err = server.handleTasks(ctx, map[string]interface{}{"status": "active"})
 	if err == nil {
 		t.Error("Expected error for missing title")
 	}
 
-	result, err = server.handleTask(ctx, map[string]interface{}{
+	listResult, err := server.handleTasks(ctx, map[string]interface{}{})
+	require.NoError(t, err)
+	require.IsType(t, TasksResult{}, listResult)
+
+	result, err = server.handleTasks(ctx, map[string]interface{}{
 		"id":     "task-123",
 		"status": "active",
 	})
@@ -1546,7 +1556,7 @@ func TestHandleTask_NoDB(t *testing.T) {
 	require.Equal(t, normalizeNodeElementID("task-123"), taskResult.Task.ID)
 	require.Equal(t, "active", taskResult.Task.Properties["status"])
 
-	result, err = server.handleTask(ctx, map[string]interface{}{
+	result, err = server.handleTasks(ctx, map[string]interface{}{
 		"id":     "task-123",
 		"delete": true,
 	})
@@ -1564,7 +1574,7 @@ func TestHandleTaskAndTasks_WithDB(t *testing.T) {
 	ctx := context.Background()
 
 	makeTask := func(args map[string]interface{}) TaskResult {
-		result, err := server.handleTask(ctx, args)
+		result, err := server.handleTasks(ctx, args)
 		require.NoError(t, err)
 		taskResult := result.(TaskResult)
 		require.NotEmpty(t, taskResult.Task.ID)
@@ -1595,7 +1605,7 @@ func TestHandleTaskAndTasks_WithDB(t *testing.T) {
 	})
 	require.Equal(t, "completed", completedTask.Task.Properties["status"])
 
-	updatedRaw, err := server.handleTask(ctx, map[string]interface{}{
+	updatedRaw, err := server.handleTasks(ctx, map[string]interface{}{
 		"id":          mainTask.Task.ID,
 		"title":       "Main Task Updated",
 		"description": "updated description",
@@ -1610,7 +1620,7 @@ func TestHandleTaskAndTasks_WithDB(t *testing.T) {
 	require.Equal(t, "critical", updated.Task.Properties["priority"])
 	require.Equal(t, "carol", updated.Task.Properties["assigned_to"])
 
-	completedRaw, err := server.handleTask(ctx, map[string]interface{}{
+	completedRaw, err := server.handleTasks(ctx, map[string]interface{}{
 		"id":       mainTask.Task.ID,
 		"complete": true,
 	})
@@ -1643,7 +1653,7 @@ func TestHandleTaskAndTasks_WithDB(t *testing.T) {
 		require.NotEqual(t, mainTask.Task.ID, task.ID)
 	}
 
-	deletedRaw, err := server.handleTask(ctx, map[string]interface{}{
+	deletedRaw, err := server.handleTasks(ctx, map[string]interface{}{
 		"id":     dependency.Task.ID,
 		"delete": true,
 	})
@@ -1655,14 +1665,14 @@ func TestHandleTaskAndTasks_WithDB(t *testing.T) {
 	toggleTask := makeTask(map[string]interface{}{
 		"title": "Toggle Task",
 	})
-	toggledRaw, err := server.handleTask(ctx, map[string]interface{}{
+	toggledRaw, err := server.handleTasks(ctx, map[string]interface{}{
 		"id": toggleTask.Task.ID,
 	})
 	require.NoError(t, err)
 	toggled := toggledRaw.(TaskResult)
 	require.Equal(t, "active", toggled.Task.Properties["status"])
 
-	toggledRaw, err = server.handleTask(ctx, map[string]interface{}{
+	toggledRaw, err = server.handleTasks(ctx, map[string]interface{}{
 		"id": toggleTask.Task.ID,
 	})
 	require.NoError(t, err)
@@ -1670,7 +1680,7 @@ func TestHandleTaskAndTasks_WithDB(t *testing.T) {
 	require.Equal(t, "completed", toggled.Task.Properties["status"])
 
 	fallbackServer := NewServer(nil, nil)
-	fallbackRaw, err := fallbackServer.handleTask(ctx, map[string]interface{}{
+	fallbackRaw, err := fallbackServer.handleTasks(ctx, map[string]interface{}{
 		"id":       "task-fallback",
 		"complete": true,
 	})
@@ -1678,12 +1688,12 @@ func TestHandleTaskAndTasks_WithDB(t *testing.T) {
 	fallback := fallbackRaw.(TaskResult)
 	require.Equal(t, "completed", fallback.Task.Properties["status"])
 
-	_, err = server.handleTask(ctx, map[string]interface{}{
+	_, err = server.handleTasks(ctx, map[string]interface{}{
 		"id": "missing-task",
 	})
 	require.ErrorContains(t, err, "task not found")
 
-	_, err = server.handleTask(ctx, map[string]interface{}{
+	_, err = server.handleTasks(ctx, map[string]interface{}{
 		"delete": true,
 	})
 	require.ErrorContains(t, err, "id is required for delete")

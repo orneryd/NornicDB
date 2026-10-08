@@ -471,13 +471,14 @@ func TestServer_DefaultDatabaseName_AllBranches(t *testing.T) {
 func TestIsValidToolAndAllTools(t *testing.T) {
 	tools := AllTools()
 	require.ElementsMatch(t,
-		[]string{ToolStore, ToolRecall, ToolDiscover, ToolLink, ToolTask, ToolTasks},
+		[]string{ToolStore, ToolRecall, ToolDiscover, ToolLink, ToolTasks},
 		tools)
 	for _, name := range tools {
 		require.True(t, IsValidTool(name), "%s must be valid", name)
 	}
 	require.False(t, IsValidTool("nonexistent"))
 	require.False(t, IsValidTool(""))
+	require.False(t, IsValidTool("task"))
 }
 
 func TestInferOperation_AllTools(t *testing.T) {
@@ -491,10 +492,11 @@ func TestInferOperation_AllTools(t *testing.T) {
 		{ToolDiscover, nil, "read"},
 		{ToolLink, nil, "create"},
 		{ToolTasks, nil, "read"},
-		{ToolTask, nil, "create"},
-		{ToolTask, map[string]interface{}{"id": "x"}, "update"},
-		{ToolTask, map[string]interface{}{"id": "x", "delete": true}, "delete"},
-		{ToolTask, map[string]interface{}{"id": "x", "delete": false}, "update"},
+		{ToolTasks, map[string]interface{}{"title": "x"}, "create"},
+		{ToolTasks, map[string]interface{}{"id": "x"}, "update"},
+		{ToolTasks, map[string]interface{}{"id": "x", "delete": true}, "delete"},
+		{ToolTasks, map[string]interface{}{"id": "x", "delete": false}, "update"},
+		{ToolTasks, map[string]interface{}{"status": []interface{}{"pending"}}, "read"},
 		{"unknown-tool", nil, "unknown"},
 	}
 	for _, tc := range cases {
@@ -518,7 +520,6 @@ func TestExtractResourceType_AllTools(t *testing.T) {
 		{ToolRecall, map[string]interface{}{"type": []interface{}{42}}, "*"},
 		{ToolDiscover, map[string]interface{}{"type": []interface{}{"Concept"}}, "Concept"},
 		{ToolLink, nil, "edge"},
-		{ToolTask, nil, "task"},
 		{ToolTasks, nil, "task"},
 		{"unknown", nil, "*"},
 	}
@@ -549,7 +550,7 @@ func itoaTest(i int) string {
 
 func TestGetToolDefinitions_ReturnsExpectedSet(t *testing.T) {
 	tools := GetToolDefinitions()
-	require.Len(t, tools, 6)
+	require.Len(t, tools, 5)
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		names = append(names, tool.Name)
@@ -557,7 +558,20 @@ func TestGetToolDefinitions_ReturnsExpectedSet(t *testing.T) {
 		require.NotEmpty(t, tool.Description, "%s description must not be empty", tool.Name)
 	}
 	require.ElementsMatch(t,
-		[]string{"store", "recall", "discover", "link", "task", "tasks"}, names)
+		[]string{"store", "recall", "discover", "link", "tasks"}, names)
+
+	var tasksTool Tool
+	for _, tool := range tools {
+		if tool.Name == ToolTasks {
+			tasksTool = tool
+			break
+		}
+	}
+	require.NotEmpty(t, tasksTool.InputSchema)
+	for _, key := range []string{"id", "title", "status", "priority", "depends_on", "assign", "complete", "delete", "assigned_to", "unblocked_only", "limit", "database"} {
+		require.Contains(t, string(tasksTool.InputSchema), `"`+key+`"`,
+			"tasks schema must cover %s", key)
+	}
 }
 
 func TestGetToolDefinitionsWithDefaultDatabase_PropagatesDefault(t *testing.T) {

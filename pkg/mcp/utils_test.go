@@ -92,7 +92,7 @@ func TestAllTools(t *testing.T) {
 		assert.NotEmpty(t, name, "tool name should not be empty")
 	}
 	// All known tools should be in the list
-	for _, expected := range []string{ToolStore, ToolRecall, ToolDiscover, ToolLink, ToolTask, ToolTasks} {
+	for _, expected := range []string{ToolStore, ToolRecall, ToolDiscover, ToolLink, ToolTasks} {
 		assert.Contains(t, tools, expected)
 	}
 }
@@ -100,7 +100,7 @@ func TestAllTools(t *testing.T) {
 func TestIsValidTool(t *testing.T) {
 	// Known valid tool names
 	validTools := []string{
-		ToolStore, ToolRecall, ToolDiscover, ToolLink, ToolTask, ToolTasks,
+		ToolStore, ToolRecall, ToolDiscover, ToolLink, ToolTasks,
 	}
 	for _, name := range validTools {
 		assert.True(t, IsValidTool(name), "expected %q to be a valid tool", name)
@@ -122,12 +122,14 @@ func TestInferOperation(t *testing.T) {
 	assert.Equal(t, "read", InferOperation(ToolTasks, nil))
 	assert.Equal(t, "unknown", InferOperation("unknown_tool", nil))
 
-	// Task: create (no id)
-	assert.Equal(t, "create", InferOperation(ToolTask, map[string]interface{}{"title": "t"}))
-	// Task: update (has id, no delete)
-	assert.Equal(t, "update", InferOperation(ToolTask, map[string]interface{}{"id": "123"}))
-	// Task: delete (has id and delete=true)
-	assert.Equal(t, "delete", InferOperation(ToolTask, map[string]interface{}{"id": "123", "delete": true}))
+	// Tasks: create (no id, mutation args present)
+	assert.Equal(t, "create", InferOperation(ToolTasks, map[string]interface{}{"title": "t"}))
+	// Tasks: update (has id, no delete)
+	assert.Equal(t, "update", InferOperation(ToolTasks, map[string]interface{}{"id": "123"}))
+	// Tasks: delete (has id and delete=true)
+	assert.Equal(t, "delete", InferOperation(ToolTasks, map[string]interface{}{"id": "123", "delete": true}))
+	// Tasks: listing filters alone stay a read
+	assert.Equal(t, "read", InferOperation(ToolTasks, map[string]interface{}{"status": []string{"pending"}}))
 }
 
 func TestExtractResourceType(t *testing.T) {
@@ -136,7 +138,6 @@ func TestExtractResourceType(t *testing.T) {
 	assert.Equal(t, "*", ExtractResourceType(ToolRecall, nil))
 	assert.Equal(t, "*", ExtractResourceType(ToolDiscover, nil))
 	assert.Equal(t, "edge", ExtractResourceType(ToolLink, nil))
-	assert.Equal(t, "task", ExtractResourceType(ToolTask, nil))
 	assert.Equal(t, "task", ExtractResourceType(ToolTasks, nil))
 	assert.Equal(t, "*", ExtractResourceType("unknown_tool", nil))
 

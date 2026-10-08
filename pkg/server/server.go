@@ -1669,6 +1669,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		mcpServer.SetDatabaseScopedStorage(func(dbName string) (storage.Engine, error) {
 			return s.dbManager.GetStorage(dbName)
 		})
+		// Without a URL pin or payload database, MCP tools target the configured
+		// default database instead of the namespace of the single DB instance.
+		mcpServer.SetDefaultDatabase(dbManager.DefaultDatabaseName())
 	}
 
 	// Initialize OAuth manager if authenticator is available

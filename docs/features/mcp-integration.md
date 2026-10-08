@@ -11,7 +11,7 @@
 **Know the ID, need to fetch?** → `recall`  
 **Search by meaning/topic?** → `discover`  
 **Connect two things?** → `link`  
-**Work with tasks?** → `task` (single) or `tasks` (multiple)
+**Work with tasks?** → `tasks` (create, manage and list)
 
 ---
 
@@ -23,8 +23,7 @@
 | `recall` | Getting something by ID or filters | `recall(id="node-123")` |
 | `discover` | Finding by meaning, not keywords | `discover(query="auth implementation")` |
 | `link` | Connecting two nodes (from/to must be node IDs from store or Cypher) | `link(from="node-abc", to="node-xyz", relation="depends_on")` |
-| `task` | Single task CRUD | `task(title="Fix bug", priority="high")` |
-| `tasks` | Query/list multiple tasks | `tasks(status=["pending"], unblocked_only=true)` |
+| `tasks` | Task CRUD and listing | `tasks(title="Fix bug", priority="high")`, `tasks(status=["pending"], unblocked_only=true)` |
 
 ---
 
@@ -47,8 +46,8 @@
 ### Task Workflow Pattern
 ```
 1. tasks(status=["pending"], unblocked_only=true)  # Find work
-2. task(id="task-123", status="active")           # Start task
-3. task(id="task-123", status="done")             # Complete task
+2. tasks(id="task-123", status="active")         # Start task
+3. tasks(id="task-123", status="done")           # Complete task
 ```
 
 ### Code Search Pattern
@@ -99,7 +98,7 @@ strength: 1.0 (0.0-1.0)
 metadata: {key: "value"}
 ```
 
-### task
+### tasks
 ```yaml
 # CREATE:
 title: "Fix auth bug" ✅ REQUIRED
@@ -112,10 +111,8 @@ assign: "agent-worker-1"
 # UPDATE:
 id: "task-123" ✅ REQUIRED
 status: "done" (or omit to toggle: pending→active→done)
-```
 
-### tasks
-```yaml
+# LIST (management args absent):
 status: ["pending", "active"]
 priority: ["high", "critical"]
 assigned_to: "agent-worker-1"
@@ -145,10 +142,11 @@ limit: 20
 ✅ link(from=A, to=B, relation="relates_to") # Valid
 ```
 
-### ❌ Using tasks for single task operations
+### ❌ Mixing management and listing arguments
 ```
-❌ tasks(id="task-123")            # tasks is for multiple!
-✅ task(id="task-123")             # task is for single
+❌ tasks(id="task-123", unblocked_only=true)  # id switches to update mode
+✅ tasks(id="task-123")                      # update/toggle one task
+✅ tasks(unblocked_only=true)                 # list unblocked tasks
 ```
 
 ---
@@ -246,7 +244,7 @@ pending → active → done
    ↓         ↓       ↑
    └──> blocked ────┘
 
-Use task(id=X) with no status to auto-advance:
+Use tasks(id=X) with no status to auto-advance:
 - pending → active
 - active → done
 - done → (no change)
@@ -320,7 +318,7 @@ I recommend starting with:
 ## 📚 Further Reading
 
 - **Using MCP tools in Bifrost (agentic loop):** The same tools can be exposed to the Heimdall chat assistant so the LLM can call store/recall/link etc. in process. They are **off by default**. See [Enabling MCP tools in the agentic loop](../user-guides/heimdall-mcp-tools.md).
-- **Rationale and tool set:** This document describes the current MCP tool set (store, recall, discover, link, task, tasks); implementation lives in `pkg/mcp/`.
+- **Rationale and tool set:** This document describes the current MCP tool set (store, recall, discover, link, tasks); implementation lives in `pkg/mcp/`.
 - **Configuration:** To enable or restrict which MCP tools are available in the agentic loop, see [Configuration Guide](../operations/configuration.md) (Heimdall / MCP sections) and [heimdall-mcp-tools](../user-guides/heimdall-mcp-tools.md).
 
 ---

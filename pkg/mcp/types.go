@@ -179,38 +179,34 @@ type LinkResult struct {
 	Receipt   interface{} `json:"receipt,omitempty"`
 }
 
-// Note: IndexParams, IndexResult, UnindexParams, UnindexResult removed
-// File indexing is handled by the application layer, not NornicDB
-
-// TaskParams - Input for task tool
-type TaskParams struct {
-	ID          string   `json:"id,omitempty"`          // Optional, for update/complete
-	Title       string   `json:"title,omitempty"`       // Required for create
-	Description string   `json:"description,omitempty"` // Optional
-	Status      string   `json:"status,omitempty"`      // Optional: pending|active|completed|blocked
-	Priority    string   `json:"priority,omitempty"`    // Optional: low|medium|high|critical
-	DependsOn   []string `json:"depends_on,omitempty"`  // Optional, task IDs
-	Assign      string   `json:"assign,omitempty"`      // Optional, agent/person
-	Database    string   `json:"database,omitempty"`    // Optional, default: configured default database
+// TasksParams - Input for the tasks tool. Management fields (id, title,
+// description, status, priority, depends_on, assign, complete, delete) switch
+// the tool into create/update/delete mode; the filter fields (assigned_to,
+// unblocked_only, limit) apply to listing. Status and priority accept a scalar
+// when mutating and a list when filtering.
+type TasksParams struct {
+	ID            string   `json:"id,omitempty"`             // Optional, for update/complete/delete
+	Title         string   `json:"title,omitempty"`          // Required for create
+	Description   string   `json:"description,omitempty"`    // Optional
+	Status        any      `json:"status,omitempty"`         // string to set status; []string to filter listing
+	Priority      any      `json:"priority,omitempty"`       // string to set priority; []string to filter listing
+	DependsOn     []string `json:"depends_on,omitempty"`     // Optional, task IDs
+	Assign        string   `json:"assign,omitempty"`         // Optional, agent/person
+	Complete      bool     `json:"complete,omitempty"`       // Optional, shorthand for status='completed'
+	Delete        bool     `json:"delete,omitempty"`         // Optional, delete the task
+	AssignedTo    string   `json:"assigned_to,omitempty"`    // Optional, filter by assignee
+	UnblockedOnly bool     `json:"unblocked_only,omitempty"` // Optional, default: false
+	Limit         int      `json:"limit,omitempty"`          // Optional, default: 20
+	Database      string   `json:"database,omitempty"`       // Optional, default: configured default database
 }
 
-// TaskResult - Output from task tool
+// TaskResult - Output from a tasks-tool mutation (create/update/complete/delete).
 type TaskResult struct {
 	Task       Node        `json:"task"`
 	Blockers   []Node      `json:"blockers,omitempty"`
 	Subtasks   []Node      `json:"subtasks,omitempty"`
 	NextAction string      `json:"next_action,omitempty"`
 	Receipt    interface{} `json:"receipt,omitempty"`
-}
-
-// TasksParams - Input for tasks tool
-type TasksParams struct {
-	Status        []string `json:"status,omitempty"`         // Optional, filter by status
-	Priority      []string `json:"priority,omitempty"`       // Optional, filter by priority
-	AssignedTo    string   `json:"assigned_to,omitempty"`    // Optional, filter by assignee
-	UnblockedOnly bool     `json:"unblocked_only,omitempty"` // Optional, default: false
-	Limit         int      `json:"limit,omitempty"`          // Optional, default: 20
-	Database      string   `json:"database,omitempty"`       // Optional, default: configured default database
 }
 
 // TasksResult - Output from tasks tool

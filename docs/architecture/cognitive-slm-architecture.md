@@ -147,7 +147,7 @@ The minimal env var set:
 | `NORNICDB_HEIMDALL_BATCH_SIZE`   | Local batch size.                                                                                                   |
 | `NORNICDB_HEIMDALL_MAX_TOKENS`   | Max tokens per response.                                                                                            |
 | `NORNICDB_HEIMDALL_TEMPERATURE`  | Sampling temperature.                                                                                               |
-| `NORNICDB_HEIMDALL_MCP_ENABLE`   | Add MCP memory tools (`store`, `recall`, `discover`, `link`, `task`, `tasks`) to the agentic loop. Default `false`. |
+| `NORNICDB_HEIMDALL_MCP_ENABLE`   | Add MCP memory tools (`store`, `recall`, `discover`, `link`, `tasks`) to the agentic loop. Default `false`. |
 | `NORNICDB_HEIMDALL_MCP_TOOLS`    | Allowlist for MCP tools. Unset = all (when MCP enabled); empty = none; comma-separated list = subset.               |
 
 For the complete reference (including the token-budget overrides above) see [Environment Variables Reference](../operations/environment-variables.md).

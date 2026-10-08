@@ -2144,6 +2144,11 @@ func TestRegisterMCPRoutes_AllEndpoints(t *testing.T) {
 		"/mcp/tools/list",
 		"/mcp/tools/call",
 		"/mcp/health",
+		// Database-pinned variants
+		"/mcp/tenant_a",
+		"/mcp/tenant_a/initialize",
+		"/mcp/tenant_a/tools/list",
+		"/mcp/tenant_a/tools/call",
 	}
 
 	for _, p := range paths {

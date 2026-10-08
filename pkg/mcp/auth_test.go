@@ -116,7 +116,6 @@ func TestCanUseTool(t *testing.T) {
 		{RoleSuperAdmin, ToolDiscover, true},
 		{RoleSuperAdmin, ToolLink, true},
 		// Note: ToolIndex/ToolUnindex removed - file indexing handled by the application layer
-		{RoleSuperAdmin, ToolTask, true},
 		{RoleSuperAdmin, ToolTasks, true},
 
 		// OrgViewer can only use read tools
@@ -129,7 +128,6 @@ func TestCanUseTool(t *testing.T) {
 		// LLMAgent can use graph tools
 		{RoleLLMAgent, ToolStore, true},
 		{RoleLLMAgent, ToolRecall, true},
-		{RoleLLMAgent, ToolTask, true},
 
 		// Unknown tool returns false
 		{RoleSuperAdmin, "unknown_tool", false},

@@ -128,12 +128,13 @@ var MCPRolePermissions = map[MCPRole][]MCPPermission{
 }
 
 // ToolPermissions maps each MCP tool to its required permission.
+// The tasks tool serves both listing and mutation; task mutations are
+// additionally gated as database writes at call time (see doCallTool).
 var ToolPermissions = map[string]MCPPermission{
 	ToolStore:    PermissionStore,
 	ToolRecall:   PermissionRecall,
 	ToolDiscover: PermissionDiscover,
 	ToolLink:     PermissionLink,
-	ToolTask:     PermissionTask,
 	ToolTasks:    PermissionTasks,
 }
 

@@ -93,4 +93,52 @@ func TestMCPHTTPAuthorizationResolvesScopeBeforeDatabaseAccess(t *testing.T) {
 		require.Zero(t, storageCalls)
 		require.Equal(t, "tenant_a", resolvedDatabase)
 	})
+
+	t.Run("URL pin overrides payload database", func(t *testing.T) {
+		resetSpies()
+		req := httptest.NewRequest(http.MethodPost, "/mcp/tenant_a/tools/call", bytes.NewBufferString(`{"name":"recall","arguments":{"database":"private","id":"node-1"}}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		require.Equal(t, 1, executorCalls)
+		require.Zero(t, storageCalls)
+		require.Equal(t, "tenant_a", resolvedDatabase)
+	})
+
+	t.Run("URL pin cannot reach a disallowed database", func(t *testing.T) {
+		resetSpies()
+		req := httptest.NewRequest(http.MethodPost, "/mcp/private/tools/call", bytes.NewBufferString(`{"name":"recall","arguments":{"id":"node-1"}}`))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, req)
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		require.Contains(t, recorder.Body.String(), `"isError":true`)
+		require.Zero(t, executorCalls)
+		require.Zero(t, storageCalls)
+	})
+
+	t.Run("read-only principal cannot mutate via tasks tool", func(t *testing.T) {
+		resetSpies()
+		response := callTool(`{"name":"tasks","arguments":{"database":"primary","title":"blocked"}}`)
+
+		require.Equal(t, http.StatusOK, response.Code)
+		require.Contains(t, response.Body.String(), `"isError":true`)
+		require.Zero(t, executorCalls)
+		require.Zero(t, storageCalls)
+	})
+
+	t.Run("read-only principal can list via tasks tool", func(t *testing.T) {
+		resetSpies()
+		response := callTool(`{"name":"tasks","arguments":{"database":"primary","limit":5}}`)
+
+		require.Equal(t, http.StatusOK, response.Code)
+		require.Equal(t, 1, executorCalls)
+		require.Zero(t, storageCalls)
+		require.Equal(t, "tenant_a", resolvedDatabase)
+	})
 }
