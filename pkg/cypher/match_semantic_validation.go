@@ -1077,11 +1077,16 @@ func addMatchPatternBindingKinds(scope matchSemanticScope, clause string) {
 }
 
 // deleteTargetTypeError rejects a DELETE target whose type, known before the
-// statement runs, isn't a node, relationship or path: a property of a node or
-// relationship (n.p, a stored value) or a list of relationships (the variable
-// of a variable-length relationship). A map's key (m.k) has no static type.
-// Neo4j 5.26: "Type mismatch: expected Node, Path or Relationship" (#907).
-// null is a valid target that deletes nothing.
+// statement runs, is a property of a node or relationship (n.p, a stored
+// value): Neo4j 5.26's "Type mismatch: expected Node, Path or Relationship"
+// (#907). DELETE removes entities, and a property is removed with REMOVE;
+// NornicDB used to accept the statement and delete nothing. A map's key (m.k)
+// has no static type. null is a valid target that deletes nothing.
+//
+// A list of nodes or relationships (the variable of a variable-length
+// relationship, MATCH ()-[x*]->() DELETE x) is a NornicDB extension: Neo4j
+// 5.26 rejects it, NornicDB deletes each entity in it, as before (at the
+// project owner's direction).
 func deleteTargetTypeError(clause string, scope matchSemanticScope) error {
 	targets, _, _ := deleteClauseTargets(clause)
 	for _, expression := range targets {
@@ -1090,14 +1095,6 @@ func deleteTargetTypeError(clause string, scope matchSemanticScope) error {
 			switch scope[variable] {
 			case matchBindingNode, matchBindingRelationship:
 				return typeNameMismatchError("Node, Path or Relationship", "a property value")
-			}
-		}
-		if variable := simpleSemanticIdentifier(expression); variable != "" {
-			switch scope[variable] {
-			case matchBindingRelationshipList:
-				return typeNameMismatchError("Node, Path or Relationship", "List<Relationship>")
-			case matchBindingNodeList:
-				return typeNameMismatchError("Node, Path or Relationship", "List<Node>")
 			}
 		}
 	}
