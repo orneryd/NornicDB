@@ -1529,13 +1529,13 @@ type Session struct {
 	rawTransactionExecutor          bool
 
 	// Query result state (for streaming with PULL)
-	lastResult        *QueryResult
-	resultIndex       int
-	lastLazy          *lazyResult
+	lastResult  *QueryResult
+	resultIndex int
+	lastLazy    *lazyResult
 	// pendingMessage and pendingErr are what a lazy result's helper read
 	// and handed back to the message loop (serveLazyResult).
-	pendingMessage *boltMessage
-	pendingErr     error
+	pendingMessage    *boltMessage
+	pendingErr        error
 	resultStreams     map[int64]*resultStream
 	latestStatementID int64
 

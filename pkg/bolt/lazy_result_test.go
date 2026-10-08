@@ -126,6 +126,21 @@ func TestBoltLazyResultErrorFailsThePullThatReachesIt(t *testing.T) {
 	requireNoError(t, SendReset(t, conn))
 	requireNoError(t, ReadSuccess(t, conn))
 
+	// Failing on the row right after the first lazyResultThreshold rows is
+	// past them: RUN succeeds and the PULL asking past them fails.
+	requireNoError(t, SendRun(t, conn, "UNWIND range(1, 5000) AS i RETURN 10 / (i - 1001) AS x", nil, nil))
+	requireNoError(t, ReadSuccess(t, conn))
+	records, success, failure = pullBatch(t, conn, 1000)
+	if failure != "" || len(records) != 1000 || success["has_more"] != true {
+		t.Fatalf("boundary first PULL: %d records, %v, failure %q", len(records), success, failure)
+	}
+	records, _, failure = pullBatch(t, conn, 1000)
+	if failure != "Neo.ClientError.Statement.ArithmeticError" || len(records) != 0 {
+		t.Fatalf("boundary second PULL: %d records, failure %q", len(records), failure)
+	}
+	requireNoError(t, SendReset(t, conn))
+	requireNoError(t, ReadSuccess(t, conn))
+
 	code, _ := runBoltQueryExpectFailure(t, conn, "UNWIND range(1, 500) AS i RETURN 10 / (i - 200) AS x")
 	if code != "Neo.ClientError.Statement.ArithmeticError" {
 		t.Fatalf("small result RUN failure = %q", code)

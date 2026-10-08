@@ -652,7 +652,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		case pipelineClauseMatch:
 			hint := e.pipelineMatchHint(clauses[idx+1:])
 			hint.streamScan = source == nil && len(rows) == 1 && len(scope) == 0 && streamsScan(ctx, clauses)
-						input := source
+			input := source
 			if input == nil {
 				input = pipelineRowsSource(rows)
 			}
@@ -4345,6 +4345,13 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 		}
 		return true
 	})
+	failure := validationErr
+	if failure == nil && !stopped && !(projected && completed) {
+		failure = getExpressionFailure(ctx)
+	}
+	if failure != nil {
+		stream.fail()
+	}
 	buffered, streamed := stream.end()
 	switch {
 	case stopped:
@@ -4365,7 +4372,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 		_, handled, err := pipelineDecline(ctx, wrote, clause.text)
 		return nil, nil, handled, err
 	}
-	if failure := getExpressionFailure(ctx); failure != nil {
+	if failure != nil {
 		return nil, nil, true, failure
 	}
 	return nil, nil, true, localizedError(localization.CypherInvariantsPipelineDeclinedAfterStreaming(clause.text), nil)
