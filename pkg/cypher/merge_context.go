@@ -25,37 +25,6 @@ func emptyRelationshipContexts(n int) []map[string]*storage.Edge {
 	return contexts
 }
 
-func (e *StorageExecutor) evaluateWhereForNodeMap(ctx context.Context, nodeMap map[string]*storage.Node, wherePart string) bool {
-	wherePart = strings.Join(strings.Fields(strings.TrimSpace(wherePart)), " ")
-	if wherePart == "" {
-		return true
-	}
-	if andIdx := findTopLevelKeyword(wherePart, " AND "); andIdx > 0 {
-		left := strings.TrimSpace(wherePart[:andIdx])
-		right := strings.TrimSpace(wherePart[andIdx+5:])
-		return e.evaluateWhereForNodeMap(ctx, nodeMap, left) && e.evaluateWhereForNodeMap(ctx, nodeMap, right)
-	}
-	if handled, ok := e.evaluateSimpleWhereClauseForNodeMap(ctx, nodeMap, wherePart); handled {
-		return ok
-	}
-	for varName, node := range nodeMap {
-		if node == nil {
-			continue
-		}
-		if !e.evaluateWhere(ctx, node, varName, wherePart) {
-			lowerWhere := lowerASCII(wherePart)
-			refsVar := strings.Contains(wherePart, varName+".") ||
-				strings.Contains(wherePart, varName+" ") ||
-				strings.Contains(lowerWhere, "id("+varName+")") ||
-				strings.Contains(lowerWhere, "elementid("+varName+")")
-			if refsVar {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 // lookupPatternCandidatesUsingPropertyIndex returns a narrowed node candidate
 // set when the pattern carries inline equality on one or more indexed
 // properties. It is the pattern-inline counterpart of
@@ -348,56 +317,6 @@ func parseWhereLiteral(token string) (interface{}, bool) {
 		return f, true
 	}
 	return nil, false
-}
-
-func (e *StorageExecutor) evaluateSimpleWhereClauseForNodeMap(ctx context.Context, nodeMap map[string]*storage.Node, clause string) (bool, bool) {
-	clause = strings.TrimSpace(clause)
-	if clause == "" {
-		return true, true
-	}
-	upper := upperASCII(clause)
-	if inIdx := strings.Index(upper, " IN "); inIdx > 0 {
-		left := strings.TrimSpace(clause[:inIdx])
-		right := strings.TrimSpace(clause[inIdx+4:])
-		lv, lok := lookupNodeMapProperty(nodeMap, left)
-		if !lok {
-			return false, false
-		}
-		rv := e.evaluateExpressionWithContext(ctx, right, nodeMap, make(map[string]*storage.Edge))
-		items, ok := normalizeWhereList(rv)
-		if !ok {
-			return true, false
-		}
-		for _, it := range items {
-			if e.compareEqual(lv, it) {
-				return true, true
-			}
-		}
-		return true, false
-	}
-	if eqIdx := strings.Index(clause, "="); eqIdx > 0 &&
-		!strings.Contains(clause, ">=") &&
-		!strings.Contains(clause, "<=") &&
-		!strings.Contains(clause, "!=") &&
-		!strings.Contains(clause, "<>") {
-		left := strings.TrimSpace(clause[:eqIdx])
-		right := strings.TrimSpace(clause[eqIdx+1:])
-		lv, lok := lookupNodeMapProperty(nodeMap, left)
-		rv, rok := lookupNodeMapProperty(nodeMap, right)
-		switch {
-		case lok && rok:
-			return true, e.compareEqual(lv, rv)
-		case lok:
-			rvExpr := e.evaluateExpressionWithContext(ctx, right, nodeMap, make(map[string]*storage.Edge))
-			return true, e.compareEqual(lv, rvExpr)
-		case rok:
-			lvExpr := e.evaluateExpressionWithContext(ctx, left, nodeMap, make(map[string]*storage.Edge))
-			return true, e.compareEqual(lvExpr, rv)
-		default:
-			return false, false
-		}
-	}
-	return false, false
 }
 
 func lookupNodeMapProperty(nodeMap map[string]*storage.Node, expr string) (interface{}, bool) {

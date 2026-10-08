@@ -489,7 +489,9 @@ func TestEvaluateCondition_OperatorAndPredicateMatrix(t *testing.T) {
 		{"n.age CONTAINS '1'", false},
 		{"n:Person", true},
 		{"n:Other", false},
-		{"n.name", true},
+		// A string is not a predicate: a TypeError, so the condition doesn't
+		// hold (Neo4j 5.26, #907).
+		{"n.name", false},
 	}
 
 	for _, tt := range tests {

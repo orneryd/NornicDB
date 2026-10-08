@@ -1258,7 +1258,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 			for _, item := range items {
 				bindEvaluationValue(varName, item, boundNodes, boundRels, values)
 				predicate := e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
-				truth, err := predicateTruthFromValue(predicate)
+				truth, err := cypherPredicateTruth(predicate)
 				if err != nil {
 					recordExpressionFailure(ctx, err)
 					return nil

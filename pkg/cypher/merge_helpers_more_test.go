@@ -8,44 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestEvaluateSimpleWhereClauseForNodeMap_MoreBranches(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	ctx := context.Background()
-
-	nodeMap := map[string]*storage.Node{
-		"n": {ID: "n1", Properties: map[string]interface{}{"k": "v", "x": int64(2), "y": int64(3)}},
-		"m": {ID: "m1", Properties: map[string]interface{}{"k": "v2", "x": int64(2)}},
-	}
-
-	ok, pass := exec.evaluateSimpleWhereClauseForNodeMap(ctx, nodeMap, "")
-	require.True(t, ok)
-	require.True(t, pass)
-
-	ok, pass = exec.evaluateSimpleWhereClauseForNodeMap(ctx, nodeMap, "n.k IN $vals")
-	require.True(t, ok)
-	require.False(t, pass) // non-list rhs in this context
-
-	ok, pass = exec.evaluateSimpleWhereClauseForNodeMap(ctx, nodeMap, "n.k IN ['x','v']")
-	require.True(t, ok)
-	require.True(t, pass)
-
-	ok, pass = exec.evaluateSimpleWhereClauseForNodeMap(ctx, nodeMap, "n.x = m.x")
-	require.True(t, ok)
-	require.True(t, pass)
-
-	ok, pass = exec.evaluateSimpleWhereClauseForNodeMap(ctx, nodeMap, "n.y = 3")
-	require.True(t, ok)
-	require.True(t, pass)
-
-	ok, pass = exec.evaluateSimpleWhereClauseForNodeMap(ctx, nodeMap, "3 = m.x")
-	require.True(t, ok)
-	require.False(t, pass)
-
-	ok, pass = exec.evaluateSimpleWhereClauseForNodeMap(ctx, nodeMap, "missing.prop = 1")
-	require.False(t, ok)
-	require.False(t, pass)
-}
-
 func TestMergeSharedScannerQuotedKeywordsAndModifiers(t *testing.T) {
 	query := "MERGE (n:Node {name:'MATCH in string'}) ON MATCH SET n.a = 1 WITH n OPTIONAL MATCH (m:Node) RETURN n"
 	clauses, ok := splitPipelineClauses(query)
