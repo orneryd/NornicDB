@@ -65,6 +65,14 @@ type approximateCandidateDepthPlanner interface {
 	preferredCandidateDepth(target, maximum int) int
 }
 
+// candidatePopulationReporter is a generator that knows how many vectors it
+// searches. A request for at least that many candidates reaches all it ever
+// will, so the adaptive widening stops there (requestCoversCandidatePopulation)
+// instead of repeating the same search with ever larger limits.
+type candidatePopulationReporter interface {
+	candidatePopulation() int
+}
+
 // candidateGeneratorWithExhaustion lets generators distinguish a genuinely
 // exhausted index from a short approximate result. That distinction keeps the
 // adaptive search loop from treating an ANN miss as end-of-data.
@@ -220,6 +228,13 @@ func NewHNSWCandidateGen(hnswIndex *HNSWIndex) *HNSWCandidateGen {
 	return &HNSWCandidateGen{
 		hnswIndex: hnswIndex,
 	}
+}
+
+// candidatePopulation is the number of live vectors in the HNSW index: a
+// search clamps its result count and beam to it, so a wider request repeats
+// the same traversal.
+func (h *HNSWCandidateGen) candidatePopulation() int {
+	return h.hnswIndex.Size()
 }
 
 // SearchCandidates generates candidates using HNSW approximate search.

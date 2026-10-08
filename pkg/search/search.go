@@ -4853,6 +4853,9 @@ func (s *Service) adaptiveVectorSearch(
 	requestLimit := config.initialLimit
 	var stats vectorOverfetchStats
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, stats, err
+		}
 		scored, exhausted, err := pipeline.searchWithExhaustionFromEntries(ctx, embedding, requestLimit, opts.GetMinSimilarity(0.5), lexicalEntryIDs)
 		if err != nil {
 			return nil, stats, err
@@ -4874,19 +4877,40 @@ func (s *Service) adaptiveVectorSearch(
 		if !config.adaptive || exhausted {
 			return results, stats, nil
 		}
-		if requestLimit >= config.maxLimit {
+		// A request as wide as the generator's whole population repeats
+		// the same search when widened: what it can't reach stays out of
+		// reach, so the budget ends there (#974).
+		if requestLimit >= config.maxLimit || requestCoversCandidatePopulation(pipeline, requestLimit) {
 			if postProcess == nil || explicitCandidateCap(opts) {
 				return results, stats, nil
 			}
 			return s.completeVectorSearch(ctx, embedding, opts, config.target, postProcess, stats)
 		}
-		nextLimit := int(math.Ceil(float64(requestLimit) * config.growthFactor))
-		if nextLimit <= requestLimit {
-			nextLimit = requestLimit + 1
-		}
-		requestLimit = min(nextLimit, config.maxLimit)
+		requestLimit = nextCandidateLimit(requestLimit, config.growthFactor, config.maxLimit)
 		stats.retries++
 	}
+}
+
+// nextCandidateLimit widens an overfetch request by factor, at least by one
+// and at most to ceiling. It saturates at ceiling rather than overflowing,
+// since an unbounded budget's ceiling is the largest int (#974).
+func nextCandidateLimit(current int, factor float64, ceiling int) int {
+	if current >= ceiling {
+		return ceiling
+	}
+	grown := math.Ceil(float64(current) * factor)
+	if grown >= float64(ceiling) {
+		return ceiling
+	}
+	return max(int(grown), current+1)
+}
+
+// requestCoversCandidatePopulation reports whether a request of limit
+// candidates already asks the pipeline's generator for every vector it holds
+// (candidatePopulationReporter), so that a wider one can't return more.
+func requestCoversCandidatePopulation(pipeline *VectorSearchPipeline, limit int) bool {
+	reporter, ok := pipeline.candidateGen.(candidatePopulationReporter)
+	return ok && limit >= reporter.candidatePopulation()
 }
 
 // completeVectorSearch fills a vector page the approximate search's budget
@@ -5025,11 +5049,7 @@ func (s *Service) adaptiveBM25Search(
 			}
 			return s.completeBM25Search(ctx, search, query, index.Count(), config.target, requestLimit, filter, stats)
 		}
-		nextLimit := int(math.Ceil(float64(requestLimit) * config.growthFactor))
-		if nextLimit <= requestLimit {
-			nextLimit = requestLimit + 1
-		}
-		requestLimit = min(nextLimit, config.maxLimit)
+		requestLimit = nextCandidateLimit(requestLimit, config.growthFactor, config.maxLimit)
 		stats.retries++
 	}
 }
