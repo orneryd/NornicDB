@@ -223,6 +223,13 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
 				return err
 			}
+		case pipelineClauseDelete:
+			if err := deleteTargetTypeError(clause.text, scope); err != nil {
+				return err
+			}
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+				return err
+			}
 		case pipelineClauseCreate, pipelineClauseMerge:
 			addMatchPatternBindingKinds(scope, clause.text)
 			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
@@ -1067,4 +1074,32 @@ func addMatchPatternBindingKinds(scope matchSemanticScope, clause string) {
 			}
 		}
 	}
+}
+
+// deleteTargetTypeError rejects a DELETE target whose type, known before the
+// statement runs, isn't a node, relationship or path: a property (n.p, any
+// stored value type) or a list of relationships (the variable of a
+// variable-length relationship). Neo4j 5.26: "Type mismatch: expected Node,
+// Path or Relationship" (#907). null is a valid target that deletes nothing.
+func deleteTargetTypeError(clause string, scope matchSemanticScope) error {
+	body := strings.TrimSpace(clause)
+	if startsWithKeywordFold(body, "DETACH") {
+		body = strings.TrimSpace(body[len("DETACH"):])
+	}
+	body = strings.TrimSpace(body[len("DELETE"):])
+	for _, expression := range splitTopLevelComma(body) {
+		expression = strings.TrimSpace(expression)
+		if _, _, property := parseVarPropertyRef(expression); property {
+			return typeNameMismatchError("Node, Path or Relationship", "a property value")
+		}
+		if variable := simpleSemanticIdentifier(expression); variable != "" {
+			switch scope[variable] {
+			case matchBindingRelationshipList:
+				return typeNameMismatchError("Node, Path or Relationship", "List<Relationship>")
+			case matchBindingNodeList:
+				return typeNameMismatchError("Node, Path or Relationship", "List<Node>")
+			}
+		}
+	}
+	return nil
 }

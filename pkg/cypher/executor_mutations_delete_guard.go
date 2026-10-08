@@ -143,6 +143,10 @@ func hasTopLevelDeleteLabelQualifier(expression string) bool {
 	return false
 }
 
+// deleteExpressionRootIdentifier returns the variable a DELETE target starts
+// with (n in n, n.list[0], `n`), "" for a function call or a literal: null,
+// true and false are never variables there (DELETE null deletes nothing, as
+// in Neo4j, #907).
 func deleteExpressionRootIdentifier(expression string) string {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
@@ -163,6 +167,10 @@ func deleteExpressionRootIdentifier(expression string) string {
 		end++
 	}
 	if end == 0 || (end < len(expression) && expression[end] == '(') {
+		return ""
+	}
+	switch lowerASCII(expression[:end]) {
+	case "null", "true", "false":
 		return ""
 	}
 	return expression[:end]
