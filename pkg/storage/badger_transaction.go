@@ -797,8 +797,13 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 		}
 	}
 
+	body, err := tx.reconcileManagedEmbeddingsLocked(oldNode, node)
+	if err != nil {
+		return err
+	}
+
 	// Buffer updated node write
-	nodeBytes, _, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), node)
+	nodeBytes, _, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), body)
 	if err != nil {
 		return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 	}
@@ -871,6 +876,57 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	})
 
 	return nil
+}
+
+// reconcileManagedEmbeddingsLocked keeps or invalidates node's managed
+// embeddings across an update from oldNode, and returns the node to encode as
+// the stored body (#963):
+//   - an update that leaves the embedding source unchanged (every property
+//     and label the embedding text policy feeds, sameEmbeddingSource) keeps
+//     oldNode's embeddings on node, so readers, the node cache and the search
+//     index keep its vectors. When they live in the embedding sidecar, the
+//     body is stored without them and the sidecar stays their source;
+//   - an update that changes the source invalidates them: node loses them,
+//     and the sidecar is deleted with the update, so the embed worker finds
+//     the node unembedded and embeds the new text.
+//
+// Embeddings the caller set on node itself (different vectors) are kept as
+// written.
+func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Node) (*Node, error) {
+	if len(oldNode.ChunkEmbeddings) == 0 && oldNode.EmbedMeta == nil {
+		return node, nil
+	}
+	if len(node.ChunkEmbeddings) > 0 && !sameChunkEmbeddings(node.ChunkEmbeddings, oldNode.ChunkEmbeddings) {
+		return node, nil
+	}
+	var sidecar bool
+	if err := tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
+		_, fresh, err := tx.engine.loadEmbeddingSidecar(txn, oldNode, node.ID)
+		sidecar = fresh
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	if tx.engine.sameEmbeddingSource(oldNode, node) {
+		node.ChunkEmbeddings = oldNode.ChunkEmbeddings
+		node.EmbedMeta = oldNode.EmbedMeta
+		if !sidecar {
+			return node, nil
+		}
+		body := *node
+		body.ChunkEmbeddings = nil
+		body.EmbedMeta = nil
+		return &body, nil
+	}
+	node.ChunkEmbeddings = nil
+	node.EmbedMeta = nil
+	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(node.ID), func(key []byte) error {
+		tx.bufferDelete(key)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return node, nil
 }
 
 func (tx *BadgerTransaction) pendingCreateNodeOperationIndexLocked(nodeID NodeID) int {
@@ -1887,6 +1943,16 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	if hasPending {
 		seen = make(map[NodeID]struct{}, len(tx.pendingNodes))
 	}
+	// A whole node the stream hands out is also the one a later write of
+	// the node takes as its old version (snapshotLabelNodeByID), so the
+	// caller gets a copy it may change (#965). A projected node is only
+	// read: nothing writes it back.
+	forCaller := func(node *Node) *Node {
+		if properties == nil {
+			return copyNodeForCaller(node)
+		}
+		return node
+	}
 	emitCommitted := func(node *Node) error {
 		if node == nil {
 			return nil
@@ -1895,7 +1961,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 			tx.cacheCommittedNodeLabelsLocked(node)
 		}
 		if !hasPending {
-			return invokeVisit(node)
+			return invokeVisit(forCaller(node))
 		}
 		if _, deleted := tx.deletedNodes[node.ID]; deleted {
 			seen[node.ID] = struct{}{}
@@ -1908,7 +1974,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 			}
 			return nil
 		}
-		return invokeVisit(node)
+		return invokeVisit(forCaller(node))
 	}
 
 	cacheKey := label

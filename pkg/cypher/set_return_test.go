@@ -664,7 +664,7 @@ func TestSetReturnWhitespaceVariations(t *testing.T) {
 	}
 }
 
-func TestSetNodeProperty_ManagedEmbeddingInvalidation(t *testing.T) {
+func TestSetNodeProperty_LeavesManagedEmbeddingsToStorage(t *testing.T) {
 	node := &storage.Node{
 		ID:              "n1",
 		ChunkEmbeddings: [][]float32{{1, 2, 3}},
@@ -672,18 +672,12 @@ func TestSetNodeProperty_ManagedEmbeddingInvalidation(t *testing.T) {
 		Properties:      map[string]interface{}{"name": "old"},
 	}
 
-	// Non-metadata mutation should invalidate managed embedding fields.
+	// SET only changes the property. Storage decides at the write whether
+	// the embeddings still match the node's text (#963).
 	setNodeProperty(node, "name", "new")
-	assert.Nil(t, node.ChunkEmbeddings)
-	assert.Nil(t, node.EmbedMeta)
+	assert.Equal(t, [][]float32{{1, 2, 3}}, node.ChunkEmbeddings)
+	assert.Equal(t, map[string]interface{}{"model": "m1"}, node.EmbedMeta)
 	assert.Equal(t, "new", node.Properties["name"])
-
-	// Metadata-only keys should not force invalidation.
-	node.ChunkEmbeddings = [][]float32{{4, 5, 6}}
-	node.EmbedMeta = map[string]interface{}{"model": "m2"}
-	setNodeProperty(node, "updatedAt", "2026-01-01T00:00:00Z")
-	assert.NotNil(t, node.ChunkEmbeddings)
-	assert.NotNil(t, node.EmbedMeta)
 
 	// embedding key is stored as a regular property (no special routing).
 	setNodeProperty(node, "embedding", []float32{0.1, 0.2, 0.3})

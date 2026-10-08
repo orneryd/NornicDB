@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -909,14 +908,10 @@ func (e *StorageExecutor) applyRemoveToMatchedRows(
 				if entity == nil {
 					continue
 				}
-				invalidated := false
 				for _, prop := range propTargets {
 					if _, exists := entity.Properties[prop]; exists {
 						delete(entity.Properties, prop)
 						result.Stats.PropertiesSet++
-						if !embeddingutil.IsMetadataPropertyKey(prop) {
-							invalidated = true
-						}
 					}
 				}
 				if len(labelTargets) > 0 {
@@ -931,9 +926,6 @@ func (e *StorageExecutor) applyRemoveToMatchedRows(
 						}
 						result.Stats.LabelsRemoved += int(removed)
 					}
-				}
-				if invalidated {
-					embeddingutil.InvalidateManagedEmbeddings(entity)
 				}
 				if err := store.UpdateNode(entity); err != nil {
 					return err

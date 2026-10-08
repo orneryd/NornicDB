@@ -127,8 +127,8 @@ func TestSameEmbeddingSource(t *testing.T) {
 		{"label count", node([]string{"A"}, nil), node([]string{"A", "A"}, nil), false},
 		{"other kinds", node(nil, map[string]any{"v": true}), node(nil, map[string]any{"v": []any{true}}), false},
 	} {
-		require.Equal(t, tc.same, sameEmbeddingSource(tc.a, tc.b), tc.name)
-		require.Equal(t, tc.same, sameEmbeddingSource(tc.b, tc.a), tc.name)
+		require.Equal(t, tc.same, (*BadgerEngine)(nil).sameEmbeddingSource(tc.a, tc.b), tc.name)
+		require.Equal(t, tc.same, (*BadgerEngine)(nil).sameEmbeddingSource(tc.b, tc.a), tc.name)
 	}
 }
 

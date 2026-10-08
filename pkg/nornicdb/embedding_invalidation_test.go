@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -151,4 +152,68 @@ func TestEmbeddingInvalidationHelpers(t *testing.T) {
 		require.Nil(t, node.ChunkEmbeddings)
 		require.Nil(t, node.EmbedMeta)
 	})
+}
+
+// TestUpdateKeepsManagedEmbeddingsForUnembeddedProperties: with only `text`
+// embedded, an update of another property keeps the node's embeddings, and
+// one of `text` invalidates them, through DB.UpdateNode and Cypher SET
+// (#963).
+func TestUpdateKeepsManagedEmbeddingsForUnembeddedProperties(t *testing.T) {
+	ctx := context.Background()
+	cfg := DefaultConfig()
+	cfg.EmbeddingWorker.PropertiesInclude = []string{"text"}
+	db, err := Open(t.TempDir(), cfg)
+	require.NoError(t, err)
+	defer db.Close()
+
+	for _, id := range []string{"keep-admin", "keep-cypher"} {
+		_, err = db.storage.CreateNode(&storage.Node{
+			ID:              storage.NodeID(id),
+			Labels:          []string{"Src"},
+			Properties:      map[string]any{"id": id, "text": "boiler invoice", "tags": []any{"a"}},
+			EmbedMeta:       map[string]any{"has_embedding": true, "chunk_count": 1},
+			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
+		})
+		require.NoError(t, err)
+	}
+
+	_, err = db.UpdateNode(ctx, "keep-admin", map[string]any{"tags": []any{"a", "b"}})
+	require.NoError(t, err)
+	_, err = db.ExecuteCypher(ctx, "MATCH (n:Src {id: 'keep-cypher'}) SET n.tags = ['a', 'b'] RETURN n", nil)
+	require.NoError(t, err)
+	for _, id := range []string{"keep-admin", "keep-cypher"} {
+		got, err := db.storage.GetNode(storage.NodeID(id))
+		require.NoError(t, err)
+		require.Equal(t, [][]float32{{0.1, 0.2, 0.3}}, got.ChunkEmbeddings, id)
+	}
+
+	_, err = db.UpdateNode(ctx, "keep-admin", map[string]any{"text": "boiler receipt"})
+	require.NoError(t, err)
+	_, err = db.ExecuteCypher(ctx, "MATCH (n:Src {id: 'keep-cypher'}) SET n.text = 'boiler receipt' RETURN n", nil)
+	require.NoError(t, err)
+	for _, id := range []string{"keep-admin", "keep-cypher"} {
+		got, err := db.storage.GetNode(storage.NodeID(id))
+		require.NoError(t, err)
+		require.Empty(t, got.ChunkEmbeddings, id)
+	}
+}
+
+// TestEnqueueEndsRecentlyProcessedWait: a write to a node ends the worker's
+// recently-processed wait for it, with or without its database prefix, so a
+// changed embedding source is embedded at once (#963).
+func TestEnqueueEndsRecentlyProcessedWait(t *testing.T) {
+	worker := &EmbedWorker{
+		trigger: make(chan struct{}, 1),
+		recentlyProcessed: map[string]time.Time{
+			"nornic:a": time.Now(),
+			"b":        time.Now(),
+			"nornic:c": time.Now(),
+		},
+		loggedSkip: map[string]bool{"nornic:a": true},
+	}
+	worker.Enqueue("a")
+	worker.Enqueue("b")
+	require.False(t, worker.wasRecentlyProcessed("nornic:a"))
+	require.False(t, worker.wasRecentlyProcessed("b"))
+	require.True(t, worker.wasRecentlyProcessed("nornic:c"))
 }

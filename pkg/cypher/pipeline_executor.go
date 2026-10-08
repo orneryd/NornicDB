@@ -33,7 +33,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -1636,7 +1635,6 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 						node.Labels = beforeLabels
 						return nil, true, err
 					}
-					embeddingutil.InvalidateManagedEmbeddings(node)
 				}
 				if reflect.DeepEqual(beforeProperties, node.Properties) && reflect.DeepEqual(beforeLabels, node.Labels) {
 					stats.PropertiesSet += written

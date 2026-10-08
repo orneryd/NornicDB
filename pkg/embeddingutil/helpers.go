@@ -3,6 +3,7 @@ package embeddingutil
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,29 +29,20 @@ func BuildText(properties map[string]interface{}, labels []string, opts *EmbedTe
 		parts = append(parts, fmt.Sprintf("labels: %s", strings.Join(labels, ", ")))
 	}
 
-	excludeSet := make(map[string]bool, len(metadataPropertyKeys)+len(opts.Exclude))
-	for key := range metadataPropertyKeys {
-		excludeSet[key] = true
+	// One rule decides which properties feed the text: storage's, which also
+	// decides when an update changes a node's embedding source (#963). Keys
+	// are taken in order so the same content always gives the same text.
+	policy := storage.EmbeddingTextPolicy{Include: opts.Include, Exclude: opts.Exclude, IncludeLabels: opts.IncludeLabels}
+	keys := make([]string, 0, len(properties))
+	for key := range properties {
+		if policy.FeedsText(key) {
+			keys = append(keys, key)
+		}
 	}
-	for _, key := range opts.Exclude {
-		excludeSet[key] = true
-	}
+	sort.Strings(keys)
 
-	var includeSet map[string]bool
-	if len(opts.Include) > 0 {
-		includeSet = make(map[string]bool, len(opts.Include))
-		for _, key := range opts.Include {
-			includeSet[key] = true
-		}
-	}
-
-	for key, val := range properties {
-		if excludeSet[key] {
-			continue
-		}
-		if includeSet != nil && !includeSet[key] {
-			continue
-		}
+	for _, key := range keys {
+		val := properties[key]
 
 		var strVal string
 		switch v := val.(type) {
@@ -91,7 +83,15 @@ func BuildText(properties map[string]interface{}, labels []string, opts *EmbedTe
 
 // IsMetadataPropertyKey reports whether a property key is internal embedding metadata.
 func IsMetadataPropertyKey(key string) bool {
-	return metadataPropertyKeys[key]
+	return storage.IsEmbeddingMetadataProperty(key)
+}
+
+// TextPolicy is opts as storage's embedding text policy.
+func TextPolicy(opts *EmbedTextOptions) storage.EmbeddingTextPolicy {
+	if opts == nil {
+		return storage.EmbeddingTextPolicy{IncludeLabels: true}
+	}
+	return storage.EmbeddingTextPolicy{Include: opts.Include, Exclude: opts.Exclude, IncludeLabels: opts.IncludeLabels}
 }
 
 // InvalidateManagedEmbeddings clears worker-managed embedding state on a node.
@@ -140,16 +140,3 @@ func ApplyManagedEmbedding(node *storage.Node, embeddings [][]float32, model str
 	node.EmbedMeta["embedded_at"] = embeddedAt.Format(time.RFC3339)
 }
 
-var metadataPropertyKeys = map[string]bool{
-	"embedding":            true,
-	"has_embedding":        true,
-	"embedding_skipped":    true,
-	"embedding_model":      true,
-	"embedding_dimensions": true,
-	"embedded_at":          true,
-	"has_chunks":           true,
-	"chunk_count":          true,
-	"createdAt":            true,
-	"updatedAt":            true,
-	"id":                   true,
-}

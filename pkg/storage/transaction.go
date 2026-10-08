@@ -131,6 +131,23 @@ func copyNode(node *Node) *Node {
 	return nodeCopy
 }
 
+// copyNodeForCaller is a copy of a node the transaction keeps in its snapshot
+// caches, for a caller that may change it: its labels, properties and
+// embedding metadata are its own, so a caller writing the node (a Cypher SET)
+// leaves the cached snapshot copy, and the old version an update compares
+// against, unchanged (#963). The embedding vectors, which callers replace
+// rather than modify, are shared.
+func copyNodeForCaller(node *Node) *Node {
+	nodeCopy := copyNodeWithoutEmbeddings(node)
+	if nodeCopy == nil {
+		return nil
+	}
+	nodeCopy.ChunkEmbeddings = node.ChunkEmbeddings
+	nodeCopy.NamedEmbeddings = node.NamedEmbeddings
+	nodeCopy.VisibilitySuppressed = node.VisibilitySuppressed
+	return nodeCopy
+}
+
 func copyNodeWithoutEmbeddings(node *Node) *Node {
 	if node == nil {
 		return nil

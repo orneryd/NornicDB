@@ -110,3 +110,23 @@ func TestApplyManagedEmbedding(t *testing.T) {
 	assert.Equal(t, true, node.EmbedMeta["has_embedding"])
 	assert.Equal(t, "2026-04-01T12:00:00Z", node.EmbedMeta["embedded_at"])
 }
+
+// TestBuildTextOrderAndPolicy: properties appear in key order, so the same
+// content always gives the same text, and TextPolicy mirrors the options
+// (#963).
+func TestBuildTextOrderAndPolicy(t *testing.T) {
+	props := map[string]interface{}{"zeta": "z", "alpha": "a", "mid": "m", "id": "x"}
+	opts := &EmbedTextOptions{}
+	want := "alpha: a\nmid: m\nzeta: z"
+	for i := 0; i < 20; i++ {
+		if got := BuildText(props, nil, opts); got != want {
+			t.Fatalf("BuildText = %q, want %q", got, want)
+		}
+	}
+	if p := TextPolicy(nil); !p.IncludeLabels || p.Include != nil {
+		t.Fatalf("TextPolicy(nil) = %+v", p)
+	}
+	if p := TextPolicy(&EmbedTextOptions{Include: []string{"text"}, Exclude: []string{"x"}}); p.IncludeLabels || p.Include[0] != "text" || p.Exclude[0] != "x" {
+		t.Fatalf("TextPolicy = %+v", p)
+	}
+}
