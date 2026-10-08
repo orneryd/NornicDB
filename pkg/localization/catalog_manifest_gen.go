@@ -442,6 +442,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cypherknowledgepolicy.unsupported_command", Constructor: "CypherKnowledgePolicyUnsupportedCommand", Fields: []string{"Command"}, PluralForms: []string{"other"}},
 	{ID: "cypherknowledgepolicy.unsupported_command_type", Constructor: "CypherKnowledgePolicyUnsupportedCommandType", Fields: []string{"CommandType"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.aggregate_call_expected", Constructor: "CypherMatchingAggregateCallExpected", Fields: []string{"Expression"}, PluralForms: []string{"other"}},
+	{ID: "cyphermatching.aggregation_scope_variable", Constructor: "CypherMatchingAggregationScopeVariable", Fields: []string{"Variable"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.collect_subquery_failed", Constructor: "CypherMatchingCollectSubqueryFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.function_parameters_insufficient", Constructor: "CypherMatchingFunctionParametersInsufficient", Fields: []string{"Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.initial_traversal_match_failed", Constructor: "CypherMatchingInitialTraversalMatchFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},

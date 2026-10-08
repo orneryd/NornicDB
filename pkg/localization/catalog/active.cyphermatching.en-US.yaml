@@ -130,3 +130,6 @@
 - id: cyphermatching.single_relationship_type_required
   description: A CREATE or MERGE relationship pattern lists alternative types. Clause is a Cypher keyword and is not translated.
   other: "A single relationship type must be specified for {{.Clause}}"
+- id: cyphermatching.aggregation_scope_variable
+  description: A WITH or RETURN with DISTINCT or an aggregation reads, in its WHERE or ORDER BY, a variable it doesn't project. WITH, RETURN and DISTINCT are untranslated Cypher syntax; Variable is the untranslated variable name.
+  other: "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN: {{.Variable}}"

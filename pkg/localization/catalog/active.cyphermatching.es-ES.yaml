@@ -130,3 +130,6 @@
 - id: cyphermatching.single_relationship_type_required
   description: Un patrón de relación de CREATE o MERGE enumera tipos alternativos. Clause es una palabra clave de Cypher y no se traduce.
   other: "Se debe especificar un único tipo de relación para {{.Clause}}"
+- id: cyphermatching.aggregation_scope_variable
+  description: Un WITH o RETURN con DISTINCT o una agregación lee, en su WHERE u ORDER BY, una variable que no proyecta. WITH, RETURN y DISTINCT no se traducen; Variable es el nombre de la variable, sin traducir.
+  other: "En un WITH/RETURN con DISTINCT o una agregación no se puede acceder a variables declaradas antes del WITH/RETURN: {{.Variable}}"
