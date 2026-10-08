@@ -42,15 +42,7 @@ func validateNumericLiterals(cypher string) error {
 			}
 		}
 
-		if !isASCIIDigit(cypher[index]) && !(cypher[index] == '.' && index+1 < len(cypher) && isASCIIDigit(cypher[index+1])) {
-			index++
-			continue
-		}
-		if index > 0 && isNumericIdentifierByte(cypher[index-1]) {
-			index++
-			continue
-		}
-		if index > 0 && cypher[index-1] == ':' {
+		if !numericLiteralStartsAt(cypher, index) || index > 0 && cypher[index-1] == ':' {
 			index++
 			continue
 		}
@@ -79,10 +71,17 @@ func validateNumericLiteralAt(cypher string, start int) (int, error) {
 
 	if start+1 < len(cypher) && cypher[start] == '0' {
 		switch cypher[start+1] {
-		case 'x', 'X':
+		case 'x':
 			base = 16
-		case 'o', 'O':
+		case 'o':
 			base = 8
+		case 'X', 'O':
+			// Neo4j 5 takes only the lowercase prefixes (#907).
+			invalidEnd := start + 2
+			for invalidEnd < len(cypher) && isNumericIdentifierByte(cypher[invalidEnd]) {
+				invalidEnd++
+			}
+			return invalidEnd, numericLiteralError("InvalidNumberLiteral", cypher[start:invalidEnd])
 		}
 	}
 	if base != 10 {
@@ -135,6 +134,10 @@ func validateNumericLiteralAt(cypher string, start int) (int, error) {
 	}
 	if end < len(cypher) && cypher[end] == '#' {
 		return end, numericLiteralError("UnexpectedSyntax", cypher[start:end+1])
+	}
+	// 01 is the legacy octal form, which Neo4j 5 rejects (#907).
+	if cypher[start] == '0' && end-start > 1 {
+		return end, numericLiteralError("InvalidNumberLiteral", cypher[start:end])
 	}
 	magnitude, parseErr := strconv.ParseUint(cypher[start:end], 10, 64)
 	if parseErr != nil || numericMagnitudeOverflowsInt64(magnitude, negative) {
