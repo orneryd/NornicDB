@@ -1,5 +1,7 @@
 package cypher
 
+import "github.com/orneryd/nornicdb/pkg/storage"
+
 // setWrites counts the properties a SET writes to one node or relationship,
 // by Neo4j's properties_set rule (#678). Neo4j counts writes, not changes:
 //   - x.p = v counts 1 when v is not null, or when it removes a key the
@@ -98,4 +100,64 @@ func (w *setWrites) mapEntries(before, props map[string]interface{}, replace boo
 			w.count++
 		}
 	}
+}
+
+// setPropertyRun holds the values of a run of x.p = <expr> assignments to
+// one entity (setWrites' run: consecutive, same entity, same SET clause).
+// Neo4j evaluates every right-hand side of a run before it writes any of
+// them, so SET n.a = 1, n.b = n.a + 1 reads n.a as it was before the SET
+// (#907). Callers add each evaluated value and apply the run when it ends.
+type setPropertyRun struct {
+	// The first assignments of a run sit in the arrays (no allocation);
+	// the rest spill to overflow.
+	length   int
+	keys     [8]string
+	values   [8]interface{}
+	overflow []setPropertyAssignment
+}
+
+type setPropertyAssignment struct {
+	key   string
+	value interface{}
+}
+
+func (r *setPropertyRun) add(key string, value interface{}) {
+	if r.length < len(r.keys) {
+		r.keys[r.length], r.values[r.length] = key, value
+		r.length++
+		return
+	}
+	r.overflow = append(r.overflow, setPropertyAssignment{key: key, value: value})
+}
+
+// each calls write with the run's assignments in order and empties the run.
+func (r *setPropertyRun) each(write func(key string, value interface{})) {
+	for i := 0; i < r.length; i++ {
+		write(r.keys[i], r.values[i])
+		r.values[i] = nil
+	}
+	for _, assignment := range r.overflow {
+		write(assignment.key, assignment.value)
+	}
+	r.length, r.overflow = 0, r.overflow[:0]
+}
+
+// applyToNode writes the run's values to node in order, recording each on
+// writes against the node's properties as they are then, and empties the
+// run.
+func (r *setPropertyRun) applyToNode(node *storage.Node, writes *setWrites) {
+	r.each(func(key string, value interface{}) {
+		_, existed := node.Properties[key]
+		writes.property(existed, key, value)
+		setNodeProperty(node, key, value)
+	})
+}
+
+// applyToRelationship is applyToNode for a relationship.
+func (r *setPropertyRun) applyToRelationship(edge *storage.Edge, writes *setWrites) {
+	r.each(func(key string, value interface{}) {
+		_, existed := edge.Properties[key]
+		writes.property(existed, key, value)
+		setRelationshipProperty(edge, key, value)
+	})
 }

@@ -1061,44 +1061,21 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 			}
 		}
 		setClause := strings.TrimSpace(cypher[clauseIdx+keywordLength : setEnd])
-		for variable, node := range nodeContext {
-			beforeProperties := cloneNodePropertiesMap(node.Properties)
-			beforeLabels := append([]string(nil), node.Labels...)
-			written, err := e.applySetToNodeWithContext(ctx, node, variable, setClause, nodeContext, relContext)
-			if err != nil {
-				node.Properties = beforeProperties
-				node.Labels = beforeLabels
-				return err
-			}
-			result.Stats.PropertiesSet += written
-			labelsAdded := addedLabelCount(beforeLabels, node.Labels)
-			if labelsAdded == 0 && changedPropertyCount(beforeProperties, node.Properties) == 0 {
-				continue
-			}
-			if err := store.UpdateNode(node); err != nil {
-				node.Properties = beforeProperties
-				node.Labels = beforeLabels
+		// The clause's items apply in order across the entities they name
+		// (applySetRuns), not entity by entity.
+		var stateBuffer [4]setEntityState
+		states, _, err := e.applySetRuns(ctx, setClauseRuns(setClause), nodeContext, relContext, func(string) bool { return true }, stateBuffer[:0])
+		if err != nil {
+			return err
+		}
+		_, err = e.persistSetEntities(store, states, result.Stats, nil, func(state setEntityState, err error) error {
+			if state.node != nil {
 				return localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
 			}
-			result.Stats.LabelsAdded += labelsAdded
-			e.notifyNodeMutated(string(node.ID))
-		}
-		for variable, relationship := range relContext {
-			beforeProperties := cloneNodePropertiesMap(relationship.Properties)
-			written, err := e.applySetToRelationshipWithContext(ctx, relationship, variable, setClause, nodeContext, relContext)
-			if err != nil {
-				relationship.Properties = beforeProperties
-				return err
-			}
-			result.Stats.PropertiesSet += written
-			if changedPropertyCount(beforeProperties, relationship.Properties) == 0 {
-				continue
-			}
-			if err := store.UpdateEdge(relationship); err != nil {
-				relationship.Properties = beforeProperties
-				return localizedError(localization.CypherMergeUpdateEdgePropertyFailed(err), err)
-			}
-			e.notifyEdgeMutated(string(relationship.ID))
+			return localizedError(localization.CypherMergeUpdateEdgePropertyFailed(err), err)
+		})
+		if err != nil {
+			return err
 		}
 		return nil
 	}
@@ -1209,7 +1186,9 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 	fullRelContext[varName] = edge
 
 	var writes setWrites
+	var run setPropertyRun
 	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
+		run.applyToRelationship(edge, &writes)
 		writes.endRun()
 		for _, assignment := range splitSetAssignments(segment) {
 			assignment = strings.TrimSpace(assignment)
@@ -1219,6 +1198,7 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 
 			target, propName, operator, right := splitSetAssignment(assignment)
 			if target != varName || propName == "" {
+				run.applyToRelationship(edge, &writes)
 				writes.endRun()
 			}
 			if target != varName {
@@ -1245,17 +1225,17 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 				}
 			case operator == "=":
 				// Direct $param resolution (in setPropertyValue) preserves declared
-				// types (e.g. []string, []float64) end-to-end.
+				// types (e.g. []string, []float64) end-to-end. The run's values
+				// are written together (setPropertyRun).
 				value, err := e.setPropertyValue(ctx, right, nodeContext, fullRelContext)
 				if err != nil {
 					return writes.count, err
 				}
-				_, existed := edge.Properties[propName]
-				writes.property(existed, propName, value)
-				setRelationshipProperty(edge, propName, value)
+				run.add(propName, value)
 			}
 		}
 	}
+	run.applyToRelationship(edge, &writes)
 	return writes.count, nil
 }
 
@@ -1277,9 +1257,10 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 	fullContext[varName] = node
 
 	var writes setWrites
+	var run setPropertyRun
 	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
 		writes.endRun()
-		if err := e.applyNodeSetClause(ctx, node, varName, segment, fullContext, relContext, &writes); err != nil {
+		if err := e.applyNodeSetClause(ctx, node, varName, segment, fullContext, relContext, &writes, &run); err != nil {
 			return writes.count, err
 		}
 	}
@@ -1288,12 +1269,14 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 
 // applyNodeSetClause applies the assignments of one SET clause that target
 // varName to node (applySetToNodeWithContext), recording what they write.
-func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.Node, varName string, setClause string, fullContext map[string]*storage.Node, relContext map[string]*storage.Edge, writes *setWrites) error {
+func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.Node, varName string, setClause string, fullContext map[string]*storage.Node, relContext map[string]*storage.Edge, writes *setWrites, run *setPropertyRun) error {
+	defer run.applyToNode(node, writes)
 	for _, assignment := range splitSetAssignments(setClause) {
 		assignment = strings.TrimSpace(assignment)
 
 		target, propName, operator, right := splitSetAssignment(assignment)
 		if target != varName || propName == "" {
+			run.applyToNode(node, writes)
 			writes.endRun()
 		}
 		if target != varName {
@@ -1347,14 +1330,13 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 			}
 		case operator == "=":
 			// Direct $param resolution (in setPropertyValue) preserves declared
-			// types end-to-end.
+			// types end-to-end. The run's values are written together
+			// (setPropertyRun).
 			value, err := e.setPropertyValue(ctx, right, fullContext, relContext)
 			if err != nil {
 				return err
 			}
-			_, existed := node.Properties[propName]
-			writes.property(existed, propName, value)
-			setNodeProperty(node, propName, value)
+			run.add(propName, value)
 		}
 	}
 	return nil
