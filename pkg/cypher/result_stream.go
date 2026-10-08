@@ -20,8 +20,10 @@ import (
 // Next asks for, plus at most one batch ahead (Next). Execute then returns
 // once the statement has finished,
 // with the statement's counters and error and without the streamed rows. An
-// error the statement meets after Started is the error Execute returns, so
-// a caller reports it where the client reaches it, as Neo4j does.
+// error the statement meets after its first threshold rows (making the
+// next row included) starts the stream too and is the error Execute
+// returns, so a caller reports it where the client reaches it, as Neo4j
+// does.
 //
 // The statement stops when the context passed to Execute is cancelled;
 // a caller that stops reading cancels it and waits for Done.
@@ -35,11 +37,11 @@ type ResultStream struct {
 	onStart   ResultStreamStarter
 
 	// Set by Execute before the statement runs; read by the statement.
-	statement     string
-	mapColumns    func([]string) []string
-	recordAccess  func([][]interface{})
-	frame         *pipelineClause
-	columns       []string
+	statement    string
+	mapColumns   func([]string) []string
+	recordAccess func([][]interface{})
+	frame        *pipelineClause
+	columns      []string
 
 	// Rows the statement produced before it started streaming. The
 	// statement appends while it hasn't started; Next pops them after.
@@ -218,6 +220,16 @@ func (s *ResultStream) end() ([][]interface{}, bool) {
 	rows := s.buffered
 	s.buffered = nil
 	return rows, false
+}
+
+// fail is told the statement failed making its next row. When it had made
+// threshold rows, the failure is past the first threshold rows: the stream
+// starts, so those rows reach the client and the error reaches the request
+// that asks past them, as an error after the stream started does (#939).
+func (s *ResultStream) fail() {
+	if !s.started && len(s.buffered) >= s.threshold {
+		s.start()
+	}
 }
 
 // discard drops what a RETURN buffered before it started streaming: the

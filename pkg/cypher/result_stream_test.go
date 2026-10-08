@@ -180,3 +180,32 @@ func TestResultStreamErrorsAndCancellation(t *testing.T) {
 	<-run.stream.Done()
 	require.True(t, errors.Is(run.err, context.Canceled), "err = %v", run.err)
 }
+
+// An error making the row after the first threshold rows is past them: the
+// stream starts with those rows and Execute returns the error, for a
+// projection and for a scan alike. One row earlier, the statement fails
+// before streaming, as before (#939).
+func TestResultStreamErrorRightAfterTheThreshold(t *testing.T) {
+	exec, engine := newStreamTestExecutor(t, 20)
+	run := executeStreamed(context.Background(), exec, "UNWIND range(1, 100) AS i RETURN 10 / (i - 11) AS x", 10)
+	<-run.stream.Started()
+	rows, done := run.stream.Next(-1)
+	require.True(t, done)
+	require.Len(t, rows, 10)
+	<-run.stream.Done()
+	require.ErrorContains(t, run.err, "/ by zero")
+
+	run = executeStreamed(context.Background(), exec, "UNWIND range(1, 100) AS i RETURN 10 / (i - 10) AS x", 10)
+	<-run.stream.Done()
+	require.False(t, run.stream.streamed())
+	require.ErrorContains(t, run.err, "/ by zero")
+
+	engine.failAfter.Store(10)
+	run = executeStreamed(context.Background(), exec, "MATCH (n:Item) RETURN n.k AS k", 10)
+	<-run.stream.Started()
+	rows, done = run.stream.Next(-1)
+	require.True(t, done)
+	require.Len(t, rows, 10)
+	<-run.stream.Done()
+	require.ErrorContains(t, run.err, "scan failed")
+}
