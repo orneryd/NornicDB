@@ -489,7 +489,7 @@ func TestExecuteCallInTransactions_AdditionalBatchingBranches(t *testing.T) {
 	// Known-row-count path: read-only conversion succeeds, but write batch fails.
 	_, err = exec.sharedCallTransactionsForTest(ctx, "MATCH (n:Person) SET n += 1 RETURN n.name AS name", 2)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "n += 1")
+	assert.Contains(t, err.Error(), "expected Map, Node or Relationship but was Integer")
 
 	// Guard branch error path for non-batchable writes.
 	_, err = exec.sharedCallTransactionsForTest(ctx, "CREATE (n:TmpBad RETURN n", 1)

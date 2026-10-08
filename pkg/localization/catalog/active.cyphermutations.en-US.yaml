@@ -192,3 +192,5 @@
   other: 'FOREACH requires IN clause (e.g., FOREACH (x IN list | SET ...))'
 - id: cyphermutations.foreach_separator_required
   other: 'FOREACH requires | separator'
+- id: cyphermutations.set_source_not_map
+  other: "SET {{.Operator}} requires a map, node or relationship, got type {{.Type}}"
