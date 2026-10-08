@@ -1531,6 +1531,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		e.removeNodeFromSearch(string(nodeID))
 	}
 	markPipelineRowsDeletedEntities(rows, nodeIDs, deletedEdges)
+	e.replaceDeletedEntityViews(rows)
 	return stats, true, nil
 }
 

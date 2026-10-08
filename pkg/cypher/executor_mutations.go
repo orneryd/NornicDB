@@ -452,6 +452,19 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 					nodeIDs = append(nodeIDs, entity.nodeID)
 				} else if entity.kind == deleteProjectionRelationship {
 					edgeIDs[entity.edgeID] = struct{}{}
+				} else if pathMap, isMap := value.(map[string]interface{}); isMap {
+					// A deleted path deletes its nodes and relationships.
+					nodes, relationships, _, _ := pathValueParts(pathMap)
+					for _, node := range nodes {
+						if node, isNode := node.(*storage.Node); isNode && node != nil {
+							nodeIDs = append(nodeIDs, node.ID)
+						}
+					}
+					for _, relationship := range relationships {
+						if relationship, isEdge := relationship.(*storage.Edge); isEdge && relationship != nil {
+							edgeIDs[relationship.ID] = struct{}{}
+						}
+					}
 				}
 			}
 		}
@@ -461,6 +474,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 		recordExpressionFailure(ctx, err)
 		return
 	}
+	e.replaceDeletedEntityViews(rows)
 	projected, err := e.projectMergeReturn(ctx, rows, cypher[returnIdx:])
 	if err != nil {
 		return

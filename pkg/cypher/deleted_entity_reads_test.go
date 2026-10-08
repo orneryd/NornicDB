@@ -1,0 +1,115 @@
+package cypher
+
+import (
+	"context"
+	"testing"
+
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+// After a DELETE, a statement reads the deleted node or relationship as Neo4j
+// 5.26.30 does: as an empty entity (no labels or properties; keys, n {.*} and
+// properties empty), while a property or its labels (or a relationship's
+// keys) is EntityNotFound, nested in an expression too (#907).
+func TestDeletedEntityReadsMatchNeo4j(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "deleted_reads"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:Q {id: 1, s: 'a'})-[:R {w: 1}]->(:Q {id: 2}), (:P {id: 4})", nil)
+	require.NoError(t, err)
+	inRolledBackTransaction := func(query string) (*ExecuteResult, error) {
+		_, err := exec.Execute(ctx, "BEGIN", nil)
+		require.NoError(t, err)
+		defer func() {
+			_, err := exec.Execute(ctx, "ROLLBACK", nil)
+			require.NoError(t, err)
+		}()
+		return exec.Execute(ctx, query, nil)
+	}
+
+	for _, testCase := range []struct {
+		query string
+		want  interface{}
+	}{
+		{"MATCH (n:P) DELETE n RETURN n {.*} AS v", map[string]interface{}{}},
+		{"MATCH (n:P) DELETE n RETURN keys(n) AS v", []interface{}{}},
+		{"MATCH (n:P) DELETE n RETURN properties(n) AS v", map[string]interface{}{}},
+		{"MATCH (n:P) DELETE n RETURN id(n) IS NOT NULL AS v", true},
+		{"MATCH (n:P) DELETE n RETURN 'n.id' AS v", "n.id"},
+		{"MATCH (n:Q {id: 1}) DETACH DELETE n RETURN n {.*} AS v", map[string]interface{}{}},
+		{"MATCH (n:Q {id: 1}) DETACH DELETE n RETURN keys(n) AS v", []interface{}{}},
+		{"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN r {.*} AS v", map[string]interface{}{}},
+		{"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN type(r) AS v", "R"},
+		{"MATCH p = (:Q {id: 1})-[:R]->(:Q {id: 2}) DETACH DELETE p RETURN [x IN nodes(p) | x {.*}] AS v", []interface{}{map[string]interface{}{}, map[string]interface{}{}}},
+		{"MATCH (n:P) WITH collect(n) AS ns UNWIND ns AS n DELETE n RETURN n {.*} AS v", map[string]interface{}{}},
+	} {
+		t.Run(testCase.query, func(t *testing.T) {
+			result, err := inRolledBackTransaction(testCase.query)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{testCase.want}}, result.Rows)
+		})
+	}
+
+	// The entity itself is empty.
+	result, err := inRolledBackTransaction("MATCH (n:Q {id: 1}) DETACH DELETE n RETURN n")
+	require.NoError(t, err)
+	node, isNode := result.Rows[0][0].(*storage.Node)
+	require.True(t, isNode, "%T", result.Rows[0][0])
+	require.Empty(t, node.Labels)
+	require.Empty(t, node.Properties)
+
+	for _, query := range []string{
+		"MATCH (n:P) DELETE n RETURN n.id AS v",
+		"MATCH (n:P) DELETE n RETURN n.id + 1 AS v",
+		"MATCH (n:P) DELETE n RETURN labels(n) AS v",
+		"MATCH (n:Q {id: 1}) DETACH DELETE n RETURN [n.s] AS v",
+		"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN r.w AS v",
+		"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN keys(r) AS v",
+	} {
+		t.Run(query, func(t *testing.T) {
+			_, err := inRolledBackTransaction(query)
+			require.Error(t, err)
+			code, _ := nornicerrors.Neo4jStatus(err)
+			require.Equal(t, "Neo.ClientError.Statement.EntityNotFound", code)
+		})
+	}
+}
+
+func TestDeletedEntityReadsIn(t *testing.T) {
+	require.Equal(t, []deletedEntityRead{{variable: "n"}, {variable: "m", keys: true}, {variable: "r"}},
+		deletedEntityReadsIn("n.a + size(keys( m )) + 'x.y' + size(labels(r)) + `q`.z"))
+	require.Empty(t, deletedEntityReadsIn("range(1..2)"))
+	require.Empty(t, deletedEntityReadsIn("keys(f(n))"))
+	require.Empty(t, deletedEntityReadsIn("'unterminated"))
+}
+
+// A DELETE target must be a node, relationship or path (or null, which
+// deletes nothing); a property or a variable-length relationship list is a
+// SyntaxError before the statement runs (Neo4j 5.26.30, #907).
+func TestDeleteTargetTypesMatchNeo4j(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "delete_targets"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:Q {id: 1, s: 'a'})-[:R]->(:Q {id: 2})-[:R]->(:Q {id: 3})", nil)
+	require.NoError(t, err)
+
+	result, err := exec.Execute(ctx, "DELETE null RETURN 1 AS v", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+
+	for _, query := range []string{
+		"MATCH (n:Q {id: 1})-[x*]->() DELETE x RETURN count(*) AS c",
+		"MATCH (n:Q {id: 1}) DELETE n.s",
+		"MATCH (n:Q {id: 1}) DETACH DELETE n.s",
+	} {
+		t.Run(query, func(t *testing.T) {
+			_, err := exec.Execute(ctx, query, nil)
+			require.Error(t, err)
+			code, _ := nornicerrors.Neo4jStatus(err)
+			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
+		})
+	}
+	result, err = exec.Execute(ctx, "MATCH (n) RETURN count(n) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(3)}}, result.Rows)
+}
