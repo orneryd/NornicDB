@@ -27,7 +27,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 	if metadata != nil {
 		declared := parseCallSubqueryImportVariables(clause)
-		if declared == nil {
+		if declared == nil && !callSubqueryHasScopeClause(clause) {
 			leading, _, hasImports, importErr := parseLeadingWithImports(body)
 			if importErr != nil {
 				return nil, nil, true, importErr
@@ -73,9 +73,12 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 
 	scopedImports := parseCallSubqueryImportVariables(clause)
-	_, _, hasLegacyImports, err := parseLeadingWithImports(body)
-	if err != nil {
-		return nil, nil, true, err
+	hasLegacyImports := false
+	if !callSubqueryHasScopeClause(clause) {
+		var err error
+		if _, _, hasLegacyImports, err = parseLeadingWithImports(body); err != nil {
+			return nil, nil, true, err
+		}
 	}
 	imports := scopedImports
 	if scopedImports == nil && !hasLegacyImports && len(rows) > 0 {

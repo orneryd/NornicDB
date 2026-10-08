@@ -696,6 +696,20 @@ func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall stri
 	return body, afterCall, inTransactions, batchSize
 }
 
+// callSubqueryHasScopeClause reports whether a CALL subquery declares its
+// imports with a scope clause (CALL () { … }, CALL (x, y) { … }, CALL (*)
+// { … }). Its body's leading WITH is then an ordinary projection, never an
+// import list (parseLeadingWithImports): CALL () { WITH 1 AS x FINISH } is a
+// unit subquery whose body is just that WITH (#907).
+func callSubqueryHasScopeClause(cypher string) bool {
+	trimmed := strings.TrimSpace(cypher)
+	if findKeywordIndex(trimmed, "CALL") != 0 {
+		return false
+	}
+	idx := skipSpaces(trimmed, len("CALL"))
+	return idx < len(trimmed) && trimmed[idx] == '('
+}
+
 func parseCallSubqueryImportVariables(cypher string) []string {
 	trimmed := strings.TrimSpace(cypher)
 	if findKeywordIndex(trimmed, "CALL") != 0 {

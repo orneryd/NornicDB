@@ -1561,7 +1561,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 
 	// Parse YIELD clause for post-processing
 	yield := parseYieldClause(callCypher)
-	if err := e.validateYieldModifiers(yield, inQuery || strings.TrimSpace(tailCypher) != ""); err != nil {
+	if err := e.validateYieldModifiers(yield, inQuery || strings.TrimSpace(tailCypher) != "" || endsInFinish(ctx, cypher)); err != nil {
 		return nil, err
 	}
 
