@@ -42,11 +42,88 @@ func TestWriteStretchReadsAreClauseByClause(t *testing.T) {
 		inRolledBackTransaction("UNWIND [1, 1, 1] AS k MERGE (m:M {k: k}) WITH DISTINCT m RETURN count(m) AS c"))
 }
 
+// Reads the conflict check must see however they are written: a label test
+// or labels() in WHERE, a pattern in EXISTS, a quoted label or key, a
+// subscript, a map projection, and a RETURN after the stretch (Neo4j
+// 5.26.30, #907).
+func TestWriteStretchSeesEveryReadForm(t *testing.T) {
+	for _, testCase := range []struct {
+		setup, query string
+		rows         [][]interface{}
+	}{
+		{"CREATE (:EA)", "UNWIND [1, 2] AS k MATCH (a:EA) WHERE NOT a:EB SET a:EB RETURN count(*) AS c", [][]interface{}{{int64(2)}}},
+		{"CREATE (:EA)", "UNWIND [1, 2] AS k MATCH (a:EA) WITH a, k WHERE size(labels(a)) = 1 SET a:EB RETURN count(*) AS c", [][]interface{}{{int64(2)}}},
+		{"CREATE (:EA)", "UNWIND [1, 2] AS k MATCH (a:EA) WHERE NOT EXISTS { (:EA)-[:ER]->() } CREATE (a)-[:ER]->(:EB) RETURN count(*) AS c", [][]interface{}{{int64(2)}}},
+		{"CREATE (:EA {k: 1}), (:EA {k: 2})", "UNWIND [1, 2] AS k MATCH (a:EA {k: k}) SET a:`EX Y` WITH k MATCH (m:`EX Y`) RETURN k, count(m) AS c ORDER BY k", [][]interface{}{{int64(1), int64(2)}, {int64(2), int64(2)}}},
+		{"CREATE (:EDone {flag: false})", "UNWIND [1, 2] AS k MATCH (d:EDone) SET d.flag = (k = 2) WITH k MATCH (x:EDone) WHERE x.`flag` = true RETURN k, count(x) AS c ORDER BY k", [][]interface{}{{int64(1), int64(1)}, {int64(2), int64(1)}}},
+		{"CREATE (:EDone {flag: false})", "UNWIND [1, 2] AS k MATCH (d:EDone) SET d.flag = (k = 2) WITH k MATCH (x:EDone) WHERE x['flag'] = true RETURN k, count(x) AS c ORDER BY k", [][]interface{}{{int64(1), int64(1)}, {int64(2), int64(1)}}},
+		{"CREATE (:EDone {flag: false})", "UNWIND [1, 2] AS k MATCH (d:EDone) SET d.flag = (k = 2) WITH k MATCH (x:EDone) RETURN k, x {.flag} AS v ORDER BY k", [][]interface{}{{int64(1), map[string]interface{}{"flag": true}}, {int64(2), map[string]interface{}{"flag": true}}}},
+		{"CREATE (:EA {k: 1}), (:EA {k: 2})", "UNWIND [1, 2] AS k MATCH (a:EA {k: k}) SET a.v = k WITH k MATCH (m:EA) WHERE m.v IS NOT NULL RETURN k, count(m) AS c ORDER BY k", [][]interface{}{{int64(1), int64(2)}, {int64(2), int64(2)}}},
+	} {
+		t.Run(testCase.query, func(t *testing.T) {
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "write_stretch_reads"))
+			_, err := exec.Execute(context.Background(), testCase.setup, nil)
+			require.NoError(t, err)
+			result, err := exec.Execute(context.Background(), testCase.query, nil)
+			require.NoError(t, err)
+			require.Equal(t, testCase.rows, result.Rows)
+		})
+	}
+}
+
+func TestStretchReadAnalysis(t *testing.T) {
+	var tokens stretchTokens
+	addStretchExpressionReads("WHERE a:B:`C D` AND x.k = 1 AND m {k: 1}.k = 1 AND 'n:Q' = s", &tokens)
+	require.Contains(t, tokens.labels, "B")
+	require.Contains(t, tokens.labels, "C D")
+	require.NotContains(t, tokens.labels, "Q")
+	require.Contains(t, tokens.keys, "k")
+	require.False(t, tokens.anyNode)
+
+	for _, text := range []string{"labels(a) = []", "(a)-[:R]->()", "a:A|B", "a:$(x)", "COUNT { (a) } > 0"} {
+		var any stretchTokens
+		addStretchExpressionReads(text, &any)
+		require.True(t, any.anyNode, text)
+	}
+	for _, text := range []string{"x.`k`", "x . k", "x['k']", "x[$p]", "x {.k}", "keys(x)", "x.*"} {
+		var any stretchTokens
+		addStretchPropertyReads(text, &any)
+		require.True(t, any.anyKey, text)
+	}
+	var numbers stretchTokens
+	addStretchPropertyReads("1.5 + x.k + [1..2]", &numbers)
+	require.False(t, numbers.anyKey)
+	require.Equal(t, map[string]struct{}{"k": {}}, numbers.keys)
+
+	var chain stretchTokens
+	addStretchLabelChain(":", &chain)
+	require.True(t, chain.anyNode)
+
+	var types stretchTokens
+	addStretchPattern("(a)-[:`R S`]->(b)", &types, false)
+	require.True(t, types.anyRelationship)
+
+	// A read-only procedure only reads; an unknown one may write.
+	var reads, writes stretchTokens
+	analyzeStretchClause(pipelineClause{kind: pipelineClauseCall, text: "CALL db.labels() YIELD label"}, &reads, &writes)
+	require.True(t, reads.everything)
+	require.False(t, writes.everything)
+	reads, writes = stretchTokens{}, stretchTokens{}
+	analyzeStretchClause(pipelineClause{kind: pipelineClauseCall, text: "CALL no.such() YIELD x"}, &reads, &writes)
+	require.True(t, writes.everything)
+
+	// A RETURN after the stretch that reads what it writes.
+	clauses, ok, _ := parsePipelineClauses("MATCH (d:Done) SET d.flag = true RETURN d.flag")
+	require.True(t, ok)
+	require.True(t, pipelineWriteStretchConflicts(clauses[:2], clauses[2:]))
+	require.False(t, pipelineWriteStretchConflicts(clauses[:2], []pipelineClause{{kind: pipelineClauseReturn, text: "RETURN count(*)"}}))
+}
+
 func TestPipelineWriteStretchConflicts(t *testing.T) {
 	conflicts := func(query string) bool {
 		clauses, ok, _ := parsePipelineClauses(query)
 		require.True(t, ok, query)
-		return pipelineWriteStretchConflicts(clauses)
+		return pipelineWriteStretchConflicts(clauses, nil)
 	}
 	// Bulk-load shapes stay row by row: nothing read is written.
 	for _, query := range []string{

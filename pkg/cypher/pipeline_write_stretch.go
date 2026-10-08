@@ -65,8 +65,12 @@ func stretchSetsMeet(read, written map[string]struct{}, readAny, writtenAny bool
 }
 
 // pipelineWriteStretchConflicts reports whether some clause of stretch reads
-// a label, relationship type or property key another clause of it writes.
-func pipelineWriteStretchConflicts(stretch []pipelineClause) bool {
+// a label, relationship type or property key another clause of it writes,
+// or a clause after the stretch (after: its RETURN, its later WITHs) reads
+// one the stretch writes. A row carries the entities it matched as they were
+// then, so a later clause would read a row's entity before later rows of the
+// stretch wrote it; Neo4j reads it after every row did.
+func pipelineWriteStretchConflicts(stretch, after []pipelineClause) bool {
 	reads := make([]stretchTokens, len(stretch))
 	writes := make([]stretchTokens, len(stretch))
 	for index, clause := range stretch {
@@ -75,6 +79,15 @@ func pipelineWriteStretchConflicts(stretch []pipelineClause) bool {
 	for reader := range stretch {
 		for writer := range stretch {
 			if reader != writer && reads[reader].observes(&writes[writer]) {
+				return true
+			}
+		}
+	}
+	for _, clause := range after {
+		var laterReads, laterWrites stretchTokens
+		analyzeStretchClause(clause, &laterReads, &laterWrites)
+		for writer := range stretch {
+			if laterReads.observes(&writes[writer]) {
 				return true
 			}
 		}
@@ -97,7 +110,8 @@ func analyzeStretchClause(clause pipelineClause, reads, writes *stretchTokens) {
 			pattern = body[:where]
 		}
 		addStretchPattern(pattern, reads, false)
-		addStretchPropertyReads(body, reads)
+		addStretchExpressionReads(body[len(pattern):], reads)
+		addStretchPropertyReads(pattern, reads)
 	case pipelineClauseMerge:
 		pattern, onCreate, onMatch := splitMergeClauseActions(strings.TrimSpace(pipelineClauseBody(text, "MERGE")))
 		addStretchPattern(pattern, reads, false)
@@ -117,18 +131,22 @@ func analyzeStretchClause(clause pipelineClause, reads, writes *stretchTokens) {
 			if _, property, isProperty := parseVarPropertyRef(item); isProperty {
 				writes.add(&writes.keys, property)
 			} else if colon := indexByteOutsideBackticks(item, ':'); colon > 0 {
-				for _, label := range strings.Split(item[colon+1:], ":") {
-					writes.add(&writes.labels, strings.Trim(strings.TrimSpace(label), "`"))
-				}
+				addStretchLabelChain(item[colon:], writes)
 			} else {
 				writes.everything = true
 			}
 		}
-	case pipelineClauseWith, pipelineClauseUnwind:
-		addStretchPropertyReads(text, reads)
+	case pipelineClauseWith, pipelineClauseUnwind, pipelineClauseReturn:
+		addStretchExpressionReads(text, reads)
+	case pipelineClauseCall:
+		// A procedure the registry knows to be read-only only reads.
+		reads.everything = true
+		if procedure, found := globalProcedureRegistry.Get(extractProcedureName(text)); !found || procedure.Spec.Mode == ProcedureModeWrite {
+			writes.everything = true
+		}
 	default:
-		// DELETE, FOREACH, CALL and anything else: assume it reads and
-		// writes everything.
+		// DELETE, FOREACH, CALL subqueries and anything else: assume it
+		// reads and writes everything.
 		reads.everything = true
 		writes.everything = true
 	}
@@ -157,9 +175,7 @@ func addStretchPattern(pattern string, tokens *stretchTokens, written bool) {
 				tokens.anyNode = true
 				return
 			}
-			for _, label := range strings.FieldsFunc(chain, func(r rune) bool { return r == ':' || r == '&' || r == '|' || r == ' ' }) {
-				tokens.add(&tokens.labels, strings.Trim(label, "`!"))
-			}
+			addStretchLabelChain(":"+chain, tokens)
 			return
 		}
 		if star := strings.IndexByte(head, '*'); star >= 0 {
@@ -170,10 +186,83 @@ func addStretchPattern(pattern string, tokens *stretchTokens, written bool) {
 			tokens.anyRelationship = true
 			return
 		}
-		for _, relationshipType := range strings.Split(head[colon+1:], "|") {
-			tokens.add(&tokens.types, strings.Trim(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(relationshipType), ":")), "`!"))
+		typeText := head[colon+1:]
+		if strings.ContainsAny(typeText, "`$&!%()") {
+			// A quoted, dynamic or expression type: any relationship.
+			tokens.anyRelationship = true
+			return
+		}
+		for _, relationshipType := range strings.Split(typeText, "|") {
+			tokens.add(&tokens.types, strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(relationshipType), ":")))
 		}
 	})
+}
+
+// addStretchLabelChain records the labels of a chain (":A:`B C`"), read by
+// the label-chain owner (labelChainNames). A label expression (A|B, !A, %),
+// a dynamic label ($(e)) or a chain the owner can't read stands for any
+// label.
+func addStretchLabelChain(chain string, tokens *stretchTokens) {
+	if strings.ContainsAny(chain, "$&|!%()") {
+		tokens.anyNode = true
+		return
+	}
+	names := labelChainNames(chain)
+	if len(names) == 0 {
+		tokens.anyNode = true
+		return
+	}
+	for _, name := range names {
+		tokens.add(&tokens.labels, name)
+	}
+}
+
+// addStretchExpressionReads records what an expression text (a WHERE, a
+// WITH or UNWIND, a SET value) reads: property keys
+// (addStretchPropertyReads), labels tested with v:Label or labels(v), and
+// for a pattern predicate or a subquery (EXISTS { … }, COUNT { … },
+// COLLECT { … }, (a)-[:R]->(b), a pattern comprehension) any node and any
+// relationship, since the analysis doesn't model their patterns.
+func addStretchExpressionReads(text string, tokens *stretchTokens) {
+	addStretchPropertyReads(text, tokens)
+	lower := lowerASCII(text)
+	if strings.Contains(lower, "labels(") {
+		tokens.anyNode = true
+	}
+	if strings.Contains(text, "-[") || strings.Contains(text, "]-") || strings.Contains(text, ")-") ||
+		strings.Contains(text, "<-") || strings.Contains(text, "-(") ||
+		strings.Contains(lower, "exists") || strings.Contains(lower, "count {") || strings.Contains(lower, "count{") ||
+		strings.Contains(lower, "collect {") || strings.Contains(lower, "collect{") {
+		tokens.anyNode = true
+		tokens.anyRelationship = true
+	}
+	depth := 0
+	for index := 0; index < len(text); index++ {
+		switch character := text[index]; character {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(text, index, character) - 1
+		case '{':
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+		case ':':
+			// v:Label (a label test) outside a map literal's keys.
+			if depth == 0 && index > 0 && (isCypherIdentByte(text[index-1]) || text[index-1] == '`' || text[index-1] == ')') {
+				end := index
+				for end < len(text) && (isCypherIdentByte(text[end]) || strings.IndexByte(":`|&!%", text[end]) >= 0) {
+					if text[end] == '`' {
+						end = skipCypherQuotedText(text, end, '`')
+						continue
+					}
+					end++
+				}
+				addStretchLabelChain(strings.TrimSpace(text[index:end]), tokens)
+				index = end - 1
+			}
+		}
+	}
 }
 
 // addStretchMapKeys records the keys of a "{k: v, …}" map.
@@ -196,44 +285,56 @@ func addStretchSetItems(list string, reads, writes *stretchTokens) {
 		_, property, operator, right := splitSetAssignment(item)
 		switch {
 		case operator == ":":
-			if strings.HasPrefix(strings.TrimSpace(right), "$") {
-				writes.anyNode = true
-				continue
-			}
-			for _, label := range strings.Split(right, ":") {
-				writes.add(&writes.labels, strings.Trim(strings.TrimSpace(label), "`"))
-			}
+			addStretchLabelChain(":"+right, writes)
+			continue
 		case property != "":
 			writes.add(&writes.keys, property)
 		default:
 			writes.anyKey = true
 		}
-		addStretchPropertyReads(right, reads)
+		addStretchExpressionReads(right, reads)
 	}
 }
 
 // addStretchPropertyReads records the property keys text reads: v.key
-// outside string literals, and any key for v {.*}, properties() or keys().
+// outside string literals. Any key for what this scan can't name: v {.*} or
+// any map projection, properties(), keys(), a quoted key (v.`key`), spaces
+// around the dot, and a subscript (v['key'], v[$k]), which may read any key.
 func addStretchPropertyReads(text string, tokens *stretchTokens) {
 	lower := lowerASCII(text)
-	if strings.Contains(text, ".*") || strings.Contains(lower, "properties(") || strings.Contains(lower, "keys(") {
+	if strings.Contains(text, ".*") || strings.Contains(text, "{.") || strings.Contains(text, "{ .") ||
+		strings.Contains(lower, "properties(") || strings.Contains(lower, "keys(") {
 		tokens.anyKey = true
 	}
 	for index := 0; index < len(text); index++ {
 		switch character := text[index]; {
 		case character == '\'' || character == '"' || character == '`':
 			index = skipCypherQuotedText(text, index, character) - 1
-		case character == '.' && index > 0 && isCypherIdentByte(text[index-1]) && index+1 < len(text) && isIdentStartByte(text[index+1]):
-			end := index + 1
+		case character == '[' && index > 0 && (isCypherIdentByte(text[index-1]) || text[index-1] == ')' || text[index-1] == ']'):
+			tokens.anyKey = true
+		case character == '.' && index+1 < len(text) && text[index+1] != '.' && (index == 0 || text[index-1] != '.'):
+			before, after := index, index+1
+			for before > 0 && isASCIISpace(text[before-1]) {
+				before--
+			}
+			for after < len(text) && isASCIISpace(text[after]) {
+				after++
+			}
+			if before == 0 || !(isCypherIdentByte(text[before-1]) || text[before-1] == ')' || text[before-1] == '`') || after >= len(text) {
+				continue
+			}
+			if before != index || after != index+1 || text[after] == '`' || !isIdentifierStart(text[after]) {
+				if text[after] == '`' || isIdentifierStart(text[after]) {
+					tokens.anyKey = true
+				}
+				continue
+			}
+			end := after
 			for end < len(text) && isCypherIdentByte(text[end]) {
 				end++
 			}
-			tokens.add(&tokens.keys, text[index+1:end])
+			tokens.add(&tokens.keys, text[after:end])
 			index = end - 1
 		}
 	}
-}
-
-func isIdentStartByte(character byte) bool {
-	return character == '_' || (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z')
 }
