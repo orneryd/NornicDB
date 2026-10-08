@@ -31,6 +31,13 @@ func TestSplitMCPPath(t *testing.T) {
 		{"/mcp/tenant_a/tools/call", "/mcp/tools/call", "tenant_a"},
 		{"/mcp/tenant_a/unknown", "/mcp/unknown", "tenant_a"},
 		{"/mcp/ tenant_a /tools/call", "/mcp/tools/call", "tenant_a"},
+		// Database names that collide with legacy endpoint segments still pin.
+		{"/mcp/tools", "/mcp", "tools"},
+		{"/mcp/tools/initialize", "/mcp/initialize", "tools"},
+		{"/mcp/tools/tools/list", "/mcp/tools/list", "tools"},
+		{"/mcp/tools/tools/call", "/mcp/tools/call", "tools"},
+		{"/mcp/health/tools/call", "/mcp/tools/call", "health"},
+		{"/mcp/initialize/tools/call", "/mcp/tools/call", "initialize"},
 		{"/other", "/other", ""},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
@@ -124,6 +131,84 @@ func TestHandleListTools_URLPinAdvertisesPinnedDefault(t *testing.T) {
 	require.NoError(t, json.Unmarshal(storeTool.InputSchema, &schema))
 	require.Equal(t, "tenant_a", schema.Properties.Database.Default,
 		"pinned tools/list must advertise the pinned database as the default")
+}
+
+func TestHandleMCP_JSONRPCURLPinAdvertisesPinnedDefault(t *testing.T) {
+	server := NewServer(nil, nil)
+	server.SetDefaultDatabase("fallback")
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp/tenant_a", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var response struct {
+		Result ListToolsResponse `json:"result"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	require.Len(t, response.Result.Tools, 5)
+	var storeTool Tool
+	for _, tool := range response.Result.Tools {
+		if tool.Name == ToolStore {
+			storeTool = tool
+			break
+		}
+	}
+	require.NotEmpty(t, storeTool.InputSchema)
+	var schema struct {
+		Properties struct {
+			Database struct {
+				Default string `json:"default"`
+			} `json:"database"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(storeTool.InputSchema, &schema))
+	require.Equal(t, "tenant_a", schema.Properties.Database.Default,
+		"pinned JSON-RPC tools/list must advertise the pinned database as the default")
+}
+
+func TestHandleListTools_UnpinnedAdvertisesConfiguredDefault(t *testing.T) {
+	server := NewServer(nil, nil)
+	server.SetDefaultDatabase("fallback")
+
+	req := httptest.NewRequest(http.MethodGet, "/mcp/tools/list", nil)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp ListToolsResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	var storeTool Tool
+	for _, tool := range resp.Tools {
+		if tool.Name == ToolStore {
+			storeTool = tool
+			break
+		}
+	}
+	require.NotEmpty(t, storeTool.InputSchema)
+	var schema struct {
+		Properties struct {
+			Database struct {
+				Default string `json:"default"`
+			} `json:"database"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(storeTool.InputSchema, &schema))
+	require.Equal(t, "fallback", schema.Properties.Database.Default)
+}
+
+func TestServeHTTP_ReservedNameDatabasePinDispatches(t *testing.T) {
+	server, resolved := urlPinSpyServer(t)
+
+	body := `{"name":"recall","arguments":{"id":"node-1","database":"other"}}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp/tools/tools/call", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []string{"tools"}, *resolved,
+		"a database named like an endpoint segment must still pin through nested routes")
 }
 
 func TestRegisterRoutes_URLPinnedPathDispatches(t *testing.T) {

@@ -28,7 +28,7 @@ Plugins register **actions** (e.g. `heimdall_watcher_query`, `heimdall_watcher_s
 
 ### 2. MCP memory tools (opt-in)
 
-When [MCP tools are enabled](heimdall-mcp-tools.md), the loop also gets **store**, **recall**, **discover**, **link**, **task**, **tasks**. These run in process against the same database (no separate MCP HTTP call). You can enable all of them or an allowlist (e.g. only `store` and `link`).
+When [MCP tools are enabled](heimdall-mcp-tools.md), the loop also gets **store**, **recall**, **discover**, **link**, **tasks**. These run in process against the same database (no separate MCP HTTP call). You can enable all of them or an allowlist (e.g. only `store` and `link`).
 
 ## Flow diagram
 

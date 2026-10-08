@@ -170,7 +170,7 @@ Both fit comfortably on Apple Silicon's unified memory and on NVIDIA GPUs with 4
 - [Heimdall AI Assistant](../user-guides/heimdall-ai-assistant.md) — operator setup and configuration.
 - [Heimdall Context & Tokens](../user-guides/heimdall-context.md) — token budgeting and provider-specific context windows.
 - [Heimdall Agentic Loop](../user-guides/heimdall-agentic-loop.md) — how plugin actions and MCP tools chain together.
-- [Enabling MCP Tools](../user-guides/heimdall-mcp-tools.md) — how to add `store/recall/discover/link/task/tasks` to the loop.
+- [Enabling MCP Tools](../user-guides/heimdall-mcp-tools.md) — how to add `store/recall/discover/link/tasks` to the loop.
 - [Heimdall Plugins](../user-guides/heimdall-plugins.md) — writing custom plugins, lifecycle hooks, autonomous invocation.
 - [Event Triggers and Automatic Remediation](../user-guides/heimdall-event-triggers-remediation.md) — wiring database events through the SLM.
 - [Auto-TLP Heimdall](../features/auto-tlp-heimdall.md) — SLM-gated edge inference.

@@ -34,7 +34,7 @@ graph TB
     subgraph Protocol["📡 Protocol Layer"]
         BoltServer["Bolt Protocol<br/>:7687"]
         HTTPServer["HTTP/REST<br/>:7474"]
-        MCPServer["MCP JSON-RPC<br/>/mcp endpoint<br/>• store/recall/discover<br/>• link/task/tasks"]
+        MCPServer["MCP JSON-RPC<br/>/mcp endpoint<br/>• store/recall/discover<br/>• link/tasks"]
     end
 
     subgraph Embedding["🧠 Embedding Layer"]
@@ -209,8 +209,7 @@ store    - Create/update graph nodes with metadata
 recall   - Retrieve by ID, type, tags, date range
 discover - Semantic search with graph traversal
 link     - Create edges and relationships
-task     - Create/manage tasks with status/priority
-tasks    - Query tasks with filtering and sorting
+tasks    - Create/manage tasks with status/priority and query with filtering/sorting
 ```
 
 MCP is configurable and can be disabled entirely for application-only deployments.
