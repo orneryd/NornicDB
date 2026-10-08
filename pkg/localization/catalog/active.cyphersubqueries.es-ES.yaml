@@ -37,9 +37,9 @@
 - id: cyphersubqueries.correlated_union_branch_failed
   description: Error de rama UNION correlacionada. Branch, Seed y Cause no se traducen.
   other: "error en la rama {{.Branch}} de la subconsulta UNION correlacionada para la semilla {{.Seed}}: {{.Cause}}"
-- id: cyphersubqueries.union_column_count_mismatch
-  description: Proyecciones UNION incompatibles. First y Second no se traducen.
-  other: "las consultas UNION deben devolver el mismo número de columnas (se obtuvieron {{.First}} y {{.Second}})"
+- id: cyphersubqueries.collect_single_column
+  description: Subconsulta COLLECT con otro número de columnas. Columns no se traduce.
+  other: "una subconsulta COLLECT debe devolver exactamente una columna (se obtuvieron {{.Columns}})"
 - id: cyphersubqueries.correlated_import_failed
   description: Error al resolver una importación correlacionada. Import y Cause no se traducen.
   other: "no se pudo resolver la importación correlacionada {{.Import}}: {{.Cause}}"

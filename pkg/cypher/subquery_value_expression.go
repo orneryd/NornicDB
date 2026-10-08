@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -340,6 +341,12 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 	if kind == "COUNT" {
 		return int64(len(result.Rows)), true, nil
 	}
+	// A COLLECT subquery collects one value per row: its RETURN has
+	// exactly one column (Neo4j 5.26 rejects any other RETURN, #907).
+	if len(result.Columns) != 1 {
+		return nil, false, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidCollectSubquery",
+			localization.CypherSubqueriesCollectSingleColumn(len(result.Columns)))
+	}
 	collected := make([]interface{}, 0, len(result.Rows))
 	for _, row := range result.Rows {
 		if len(row) > 0 {
@@ -355,6 +362,13 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 // procedure call in it, …). EXISTS, COUNT and COLLECT all run their bodies
 // here, so a body gives the same rows whichever of them wraps it.
 func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+	// A UNION body: each branch runs for the row, and the shared UNION
+	// combiner (executeUnionBranches) joins them, as for a top-level UNION.
+	if _, unionAll, _, union := parseTopLevelUnionBranches(query); union {
+		return e.executeUnionBranches(query, unionAll, func(branch string) (*ExecuteResult, error) {
+			return e.runCorrelatedSubquery(ctx, branch, values)
+		})
+	}
 	outcome := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)
 	if outcome.terminal() {
 		return outcome.result, outcome.err

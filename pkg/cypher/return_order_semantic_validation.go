@@ -439,7 +439,17 @@ func semanticExpressionReferences(expression string) []string {
 			index++
 			continue
 		}
+		// A name after a dot is a property key, not a variable: the receiver
+		// may be a list element or a call's result (collect(n)[0].id,
+		// head(xs).id), which the scan doesn't read as a reference itself.
+		before := index
+		for before > 0 && isASCIIWhitespace(expression[before-1]) {
+			before--
+		}
 		index = next
+		if before > 0 && expression[before-1] == '.' && (before < 2 || expression[before-2] != '.') {
+			continue
+		}
 		cursor := next
 		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
 			cursor++
