@@ -172,8 +172,8 @@ func TestDeletedEntityReadsIn(t *testing.T) {
 }
 
 // A DELETE target must be a node, relationship or path (or null, which
-// deletes nothing); a property or a variable-length relationship list is a
-// SyntaxError before the statement runs (Neo4j 5.26.30, #907).
+// deletes nothing); a property is a SyntaxError before the statement runs
+// (Neo4j 5.26.30, #907). A list of relationships is a NornicDB extension.
 func TestDeleteTargetTypesMatchNeo4j(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "delete_targets"))
 	ctx := context.Background()
@@ -185,7 +185,6 @@ func TestDeleteTargetTypesMatchNeo4j(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 
 	for _, query := range []string{
-		"MATCH (n:Q {id: 1})-[x*]->() DELETE x RETURN count(*) AS c",
 		"MATCH (n:Q {id: 1}) DELETE n.s",
 		"MATCH (n:Q {id: 1}) DETACH DELETE n.s",
 	} {
@@ -199,6 +198,15 @@ func TestDeleteTargetTypesMatchNeo4j(t *testing.T) {
 	result, err = exec.Execute(ctx, "MATCH (n) RETURN count(n) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(3)}}, result.Rows)
+
+	// A NornicDB extension kept from before (#907): Neo4j 5.26 rejects a
+	// list of relationships as a DELETE target; NornicDB deletes them.
+	result, err = exec.Execute(ctx, "MATCH (n:Q {id: 1})-[x*2]->() DELETE x RETURN count(*) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+	result, err = exec.Execute(ctx, "MATCH ()-[r]->() RETURN count(r) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
 }
 
 func TestDeletedEntityViewsReplace(t *testing.T) {
