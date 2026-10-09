@@ -1207,7 +1207,9 @@ func startsWithKeywordFold(s string, keywordUpper string) bool {
 // enters the executor, into one form: every run of whitespace and comments
 // outside string literals and quoted names becomes one space. Whitespace is
 // anything Neo4j accepts: space, tab, CR, LF, form feed, vertical tab and
-// the Unicode spaces.
+// the Unicode spaces. Inside a relationship arrow of a MATCH, MERGE or
+// CREATE pattern, (b) <- [r] - (a) and (a)-[r]- >(b), a gap is removed
+// instead: (b)<-[r]-(a), (a)-[r]->(b) (arrowGap, inPatternClause).
 //
 // NornicDB's statements with a syntax of its own (hasOwnStatementSyntax), and
 // the shell command lines that can start a statement (:USE db), keep their
@@ -1406,7 +1408,7 @@ func queryMayNeedCanonicalRewrite(query string) bool {
 	for i := 0; i < len(query); i++ {
 		switch c := query[i]; {
 		case c == ' ':
-			if i+1 < len(query) && query[i+1] == ' ' {
+			if i+1 < len(query) && (query[i+1] == ' ' || i > 0 && arrowGap(query[i-1], query[i+1])) {
 				return true
 			}
 		case c == '/':
@@ -1488,7 +1490,12 @@ func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 			continue
 		}
 		if end := queryGapEnd(query, index); end > index {
-			if end != index+1 || c != ' ' {
+			if index > 0 && end < len(query) && arrowGap(query[index-1], query[end]) && inPatternClause(query, index) {
+				replace(index, end, "")
+				if memoized != nil {
+					return memoized.canonical, memoized
+				}
+			} else if end != index+1 || c != ' ' {
 				replace(index, end, " ")
 				if memoized != nil {
 					return memoized.canonical, memoized
@@ -1508,6 +1515,76 @@ func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 		canonicalRewrites.slot(query).Store(rewrite)
 	}
 	return rewrite.canonical, rewrite
+}
+
+// arrowGap reports whether a gap between before and after can be inside a
+// relationship arrow: one side is a dash or an arrowhead, the other a node or
+// relationship bracket, a dash or a head ((b) <-, - [, ] -, - >, -> ().
+func arrowGap(before, after byte) bool {
+	arrowPart := func(c byte) bool { return c == '-' || c == '<' || c == '>' }
+	return (arrowPart(before) || before == ')' || before == ']') &&
+		(arrowPart(after) || after == '[' || after == '(') &&
+		(arrowPart(before) || arrowPart(after))
+}
+
+// inPatternClause reports whether query[index] is between the elements of a
+// MATCH, MERGE or CREATE pattern: the nearest clause keyword before it, in
+// its subquery or braces, is one of those (not ON CREATE or ON MATCH), and it
+// is inside no parenthesis or bracket of that clause. There a dash or an
+// arrowhead is part of an arrow; in an expression, x < - -1 and (2) - [3][0]
+// keep their spaces.
+func inPatternClause(query string, index int) bool {
+	type frame struct {
+		keyword string
+		depth   int
+	}
+	frames := []frame{{}}
+	previous := ""
+	for i := 0; i < index; {
+		c := query[i]
+		switch {
+		case c == '\'' || c == '"' || c == '`':
+			i = skipCypherQuotedText(query, i, c)
+			continue
+		case c == '/':
+			if end := queryCommentEnd(query, i); end >= 0 {
+				i = end
+				continue
+			}
+		case c == '{':
+			frames = append(frames, frame{})
+		case c == '}':
+			if len(frames) > 1 {
+				frames = frames[:len(frames)-1]
+			}
+		case c == '(' || c == '[':
+			frames[len(frames)-1].depth++
+		case c == ')' || c == ']':
+			frames[len(frames)-1].depth--
+		case isIdentByte(c) && (c < '0' || c > '9') && (i == 0 || !isIdentByte(query[i-1]) && query[i-1] != '.' && query[i-1] != '$'):
+			end := i + 1
+			for end < len(query) && isIdentByte(query[end]) {
+				end++
+			}
+			word := upperASCII(query[i:end])
+			switch word {
+			case "MATCH", "MERGE", "CREATE":
+				if previous == "ON" {
+					word = "ON"
+				}
+				frames[len(frames)-1].keyword = word
+			case "ON", "WHERE", "RETURN", "WITH", "UNWIND", "SET", "DELETE", "REMOVE", "FOREACH", "CALL", "YIELD",
+				"ORDER", "SKIP", "LIMIT", "UNION", "FINISH", "LET", "FILTER", "USE", "LOAD", "OFFSET":
+				frames[len(frames)-1].keyword = word
+			}
+			previous = word
+			i = end
+			continue
+		}
+		i++
+	}
+	top := frames[len(frames)-1]
+	return top.depth == 0 && (top.keyword == "MATCH" || top.keyword == "MERGE" || top.keyword == "CREATE")
 }
 
 // StripComments returns query without its Cypher comments: // to the end of
