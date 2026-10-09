@@ -441,7 +441,9 @@ func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr strin
 	}
 
 	for _, op := range ops {
-		leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, op.op, false, false)
+		// An operator inside a list, map or parentheses isn't the expression's
+		// comparison ([CASE WHEN a = 1 THEN 1 END] is a list, #907).
+		leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, op.op, false, true)
 		if ok {
 			left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)

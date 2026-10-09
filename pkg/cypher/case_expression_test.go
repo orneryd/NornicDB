@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCompareWithOperatorCoverage(t *testing.T) {
@@ -506,4 +507,22 @@ func TestCaseExpressionEdgeCases(t *testing.T) {
 			t.Errorf("Expected 'empty', got %v", result.Rows[0][0])
 		}
 	})
+}
+
+// A searched CASE inside a list literal is the list's element: the
+// comparison of its WHEN isn't the expression's (#907).
+func TestCaseInListLiteral(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "case_in_list"))
+	ctx := context.Background()
+	for query, want := range map[string]interface{}{
+		"WITH 1 AS a RETURN [CASE WHEN a = 1 THEN 1 ELSE 2 END] AS v":        []interface{}{int64(1)},
+		"WITH 1 AS a RETURN [CASE WHEN a = 1 THEN 1 ELSE 2 END, 3] AS v":     []interface{}{int64(1), int64(3)},
+		"WITH 1 AS a RETURN size([CASE WHEN a <> 1 THEN 1 ELSE 2 END]) AS v": int64(1),
+		"UNWIND [CASE WHEN 1 = 2 THEN 1 ELSE 2 END] AS v RETURN v":           int64(2),
+		"WITH [1] AS l RETURN l[0] = 1 AS v":                                 true,
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, want, result.Rows[0][0], query)
+	}
 }
