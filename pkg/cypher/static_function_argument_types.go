@@ -352,6 +352,9 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 				if position >= len(arguments) {
 					break
 				}
+				if len(arguments[position].options) == 0 {
+					continue // a position no type is checked at
+				}
 				if err := check(arguments[position], expression); err != nil {
 					return err
 				}

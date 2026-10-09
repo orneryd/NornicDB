@@ -111,8 +111,24 @@ func propertyExistsKeyName(query string, open int) (start, end int, literal stri
 	return start, end, "'" + strings.ReplaceAll(strings.ReplaceAll(key, `\`, `\\`), `'`, `\'`) + "'"
 }
 
-// mayCallFunctionAlias is canonicalizeFunctionAliases's quick check: every
-// alias but ln and ceiling has an underscore, as has property_exists.
+// mayCallFunctionAlias is canonicalizeFunctionAliases's quick check, in one
+// pass over the statement: every alias but ln and ceiling has an underscore,
+// as has property_exists.
 func mayCallFunctionAlias(query string) bool {
-	return strings.IndexByte(query, '_') >= 0 || containsFold(query, "ln") || containsFold(query, "ceiling")
+	for i := 0; i < len(query); i++ {
+		if query[i] == '_' {
+			return true
+		}
+		switch query[i] | 0x20 {
+		case 'l':
+			if i+1 < len(query) && query[i+1]|0x20 == 'n' {
+				return true
+			}
+		case 'c':
+			if len(query)-i >= len("ceiling") && strings.EqualFold(query[i:i+len("ceiling")], "ceiling") {
+				return true
+			}
+		}
+	}
+	return false
 }
