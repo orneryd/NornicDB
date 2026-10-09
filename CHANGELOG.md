@@ -552,6 +552,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Make `^` and `power()` return Neo4j's correctly rounded result instead of
+  `math.Pow`'s value, which is 1 ulp away for inputs such as `3 ^ 2.5`.
+  The exponential, logarithmic, power and hyperbolic functions now run on a
+  musl-derived libm (`pkg/math/libm`, Arm optimized-routines under MIT) that
+  matches Java's `Math.pow`/`exp`/`log` (#981).
 - Resolve the 17 reopened #908 write, WHERE and MATCH reproductions: reject
   null MERGE keys and malformed CREATE patterns, preserve ON-action/SET order
   and nullable counts, share predicate precedence and complete seed constraints,

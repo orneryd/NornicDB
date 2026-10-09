@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"encoding/json"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 	"strings"
 

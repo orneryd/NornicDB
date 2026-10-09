@@ -3,7 +3,7 @@ package search
 
 import (
 	"errors"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"os"
 	"sort"
 	"strings"

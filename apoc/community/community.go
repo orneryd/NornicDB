@@ -6,7 +6,7 @@
 package community
 
 import (
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/rand"
 	"sort"
 

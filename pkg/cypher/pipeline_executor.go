@@ -25,7 +25,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"slices"
 	"sort"
@@ -1764,7 +1764,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 				before := cloneStringAnyMap(node.Properties)
 				written := simplePropertyWrites(node.Properties, simpleProperty, value)
 				setNodeProperty(node, simpleProperty, value)
-				if _, err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, node: node, properties: before, labels: node.Labels, written: written}}, stats, nil, wrapSetError); err != nil {
+				if err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, node: node, properties: before, labels: node.Labels, written: written}}, stats, wrapSetError); err != nil {
 					return nil, true, err
 				}
 				continue
@@ -1777,7 +1777,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 				before := cloneStringAnyMap(relationship.Properties)
 				written := simplePropertyWrites(relationship.Properties, simpleProperty, value)
 				setRelationshipProperty(relationship, simpleProperty, value)
-				if _, err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, relationship: relationship, properties: before, written: written}}, stats, nil, wrapSetError); err != nil {
+				if err := e.persistSetEntities(store, []setEntityState{{variable: simpleTarget, relationship: relationship, properties: before, written: written}}, stats, wrapSetError); err != nil {
 					return nil, true, err
 				}
 				continue
@@ -1790,7 +1790,7 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 		if !handled || err != nil {
 			return nil, handled, err
 		}
-		if _, err := e.persistSetEntities(store, states, stats, nil, wrapSetError); err != nil {
+		if err := e.persistSetEntities(store, states, stats, wrapSetError); err != nil {
 			return nil, true, err
 		}
 	}
@@ -3039,6 +3039,17 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		identities = newRelationshipMergeIdentityCache()
 	}
 	template := e.pipelineMergeTemplateFor(clause)
+	// The clause's pattern and actions (each action clause a SET of its own,
+	// in order) are the same for every row.
+	clauseBody := strings.TrimSpace(clause)
+	isMerge := startsWithKeywordFold(clauseBody, "MERGE")
+	var clausePattern, onCreateSet, onMatchSet string
+	multiRelationship := false
+	if isMerge {
+		parts := splitMergeClauseActions(strings.TrimSpace(clauseBody[len("MERGE"):]))
+		clausePattern, onCreateSet, onMatchSet = parts.pattern, parts.onCreate.setText(), parts.onMatch.setText()
+		multiRelationship = e.isMultiRelationshipPattern(clausePattern)
+	}
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
@@ -3056,7 +3067,6 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				continue
 			}
 		}
-		substituted := clause
 		nodeContext := make(map[string]*storage.Node)
 		relContext := make(map[string]*storage.Edge)
 		for name, value := range row {
@@ -3070,13 +3080,27 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		var relationshipPattern *mergeRelationshipPattern
 		var nodePathVariable string
 		var nodePathBinding string
-		mergeBody := strings.TrimSpace(substituted)
-		// The MERGE pattern without its ON CREATE SET / ON MATCH SET actions.
-		mergePattern := mergeBody
-		onCreateSet, onMatchSet := "", ""
-		if startsWithKeywordFold(mergeBody, "MERGE") {
-			mergeBody = strings.TrimSpace(mergeBody[len("MERGE"):])
-			mergePattern, onCreateSet, onMatchSet = splitMergeClauseActions(mergeBody)
+		mergePattern := clauseBody
+		if isMerge {
+			mergePattern = clausePattern
+			if multiRelationship {
+				produced, pathStats, created, err := e.pipelineMergePath(ctx, row, mergePattern, nodeContext, relContext)
+				if err != nil {
+					return nil, nil, err
+				}
+				addQueryStats(stats, pathStats)
+				actions := onMatchSet
+				if created {
+					actions = onCreateSet
+				}
+				if err := e.applyMergeActions(ctx, produced, actions, stats); err != nil {
+					return nil, nil, err
+				}
+				// It may have written between any pair of nodes.
+				identities.reset()
+				out = append(out, produced...)
+				continue
+			}
 			if open, _ := firstRelationshipBracket(mergePattern); open >= 0 {
 				var parseErr error
 				relationshipPattern, parseErr = e.parseMergeRelationshipPattern(ctx, mergePattern, nodeContext, relContext)
@@ -3089,10 +3113,8 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					}
 				}
 			} else if nodePathVariable = extractPathAssignmentVariable(mergePattern); nodePathVariable != "" {
-				mergeBody = strings.TrimSpace(mergeBody[strings.Index(mergeBody, "=")+1:])
 				mergePattern = strings.TrimSpace(mergePattern[strings.Index(mergePattern, "=")+1:])
 				nodePathBinding = e.extractVarName(mergePattern)
-				substituted = "MERGE " + mergeBody
 			}
 		}
 		if relationshipPattern == nil {
@@ -3126,15 +3148,8 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 						}
 						// ON MATCH SET applies to every matched row, through
 						// the shared SET applicator.
-						if onMatchSet != "" {
-							setStats, ok, setErr := e.pipelineApplySet(ctx, matchedRows, "SET "+onMatchSet)
-							if setErr != nil {
-								return nil, nil, setErr
-							}
-							if !ok {
-								return nil, nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid ON MATCH SET: "+onMatchSet)
-							}
-							addQueryStats(stats, setStats)
+						if err := e.applyMergeActions(ctx, matchedRows, onMatchSet, stats); err != nil {
+							return nil, nil, err
 						}
 						out = append(out, matchedRows...)
 						continue
@@ -3162,14 +3177,9 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					if onMatchSet != "" {
 						// It can change identity values.
 						identities.reset()
-						setStats, ok, setErr := e.pipelineApplySet(ctx, matchedRows, "SET "+onMatchSet)
-						if setErr != nil {
-							return nil, nil, setErr
-						}
-						if !ok {
-							return nil, nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid ON MATCH SET: "+onMatchSet)
-						}
-						addQueryStats(stats, setStats)
+					}
+					if err := e.applyMergeActions(ctx, matchedRows, onMatchSet, stats); err != nil {
+						return nil, nil, err
 					}
 					out = append(out, matchedRows...)
 					continue
@@ -3178,7 +3188,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		}
 		boundEndpoints := relationshipPattern != nil &&
 			nodeContext[relationshipPattern.startVariable] != nil && nodeContext[relationshipPattern.endVariable] != nil
-		merged, err := e.executeMergeWithContext(ctx, substituted, nodeContext, relContext)
+		merged, err := e.executeMergeWithContext(ctx, "MERGE "+mergePattern, nodeContext, relContext)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -3187,9 +3197,17 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			// written between any pair.
 			identities.reset()
 		}
+		patternCreated := false
 		if merged != nil && merged.Stats != nil {
 			addQueryStats(stats, merged.Stats)
+			patternCreated = merged.Stats.NodesCreated > 0 || merged.Stats.RelationshipsCreated > 0
 		}
+		// The MERGE created its pattern (ON CREATE) or found it (ON MATCH).
+		actions := onMatchSet
+		if patternCreated {
+			actions = onCreateSet
+		}
+		var produced []pipelineRow
 		newRow := make(pipelineRow, util.SafePreallocSum(len(row), len(nodeContext), len(relContext)))
 		for name, value := range row {
 			newRow[name] = value
@@ -3230,12 +3248,21 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					matches = found
 				}
 				if len(matches) > 0 {
-					out = append(out, e.mergeRelationshipRows(newRow, nil, nil, relationshipPattern, startNode, endNode, matches)...)
-					continue
+					produced = e.mergeRelationshipRows(newRow, nil, nil, relationshipPattern, startNode, endNode, matches)
 				}
 			}
 		}
-		out = append(out, newRow)
+		if produced == nil {
+			produced = []pipelineRow{newRow}
+		}
+		if actions != "" {
+			// It can change identity values.
+			identities.reset()
+		}
+		if err := e.applyMergeActions(ctx, produced, actions, stats); err != nil {
+			return nil, nil, err
+		}
+		out = append(out, produced...)
 	}
 	return out, stats, nil
 }
@@ -3275,33 +3302,6 @@ func containsRemoveClauseAnywhere(cypher string) bool {
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	return keywordIndexFrom(cypher, "REMOVE", 0, opts) >= 0
-}
-
-// splitMergeClauseActions splits the text after MERGE ("pattern [ON CREATE
-// SET a] [ON MATCH SET b]", actions in either order) into the pattern and the
-// ON CREATE SET / ON MATCH SET assignment lists ("" when absent).
-func splitMergeClauseActions(mergeBody string) (pattern, onCreateSet, onMatchSet string) {
-	onCreate := findKeywordIndex(mergeBody, "ON CREATE SET")
-	onMatch := findKeywordIndex(mergeBody, "ON MATCH SET")
-	end := len(mergeBody)
-	for _, index := range [...]int{onCreate, onMatch} {
-		if index >= 0 && index < end {
-			end = index
-		}
-	}
-	action := func(start, keywordLength, other int) string {
-		if start < 0 {
-			return ""
-		}
-		stop := len(mergeBody)
-		if other > start {
-			stop = other
-		}
-		return strings.TrimSpace(mergeBody[start+keywordLength : stop])
-	}
-	return strings.TrimSpace(mergeBody[:end]),
-		action(onCreate, len("ON CREATE SET"), onMatch),
-		action(onMatch, len("ON MATCH SET"), onCreate)
 }
 
 // materializePipelinePropertyExpressions evaluates property-map values using

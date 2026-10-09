@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/big"
 	"sort"
 	"strconv"

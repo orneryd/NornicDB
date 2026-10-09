@@ -33,7 +33,7 @@
 package cypher
 
 import (
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"regexp"
 	"strconv"
 	"strings"

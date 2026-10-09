@@ -494,7 +494,11 @@ func withMergeNodeAbsent(ctx context.Context) context.Context {
 	return context.WithValue(ctx, mergeNodeAbsentKey{}, true)
 }
 
-// executeMergeWithContext executes a MERGE clause with context from a prior MATCH.
+// executeMergeWithContext runs one MERGE pattern, the text "MERGE pattern"
+// without ON CREATE / ON MATCH actions (pipelineApplyMerge splits them off and
+// applies them), with the row's bound nodes and relationships: it binds what
+// it matched or created into nodeContext / relContext. Its stats report what
+// it created, which tells the caller whether ON CREATE or ON MATCH applies.
 func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*ExecuteResult, error) {
 	// The caller's finding applies to this MERGE's node pattern only, not to
 	// the clauses that follow it.
@@ -509,79 +513,14 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	}
 	store := e.getStorage(ctx)
 
-	// Find clauses - use word boundary detection
-	mergeIdx := findKeywordIndex(cypher, "MERGE")
-	if mergeIdx == -1 {
-		mergeIdx = 0 // Already stripped
+	mergePattern := strings.TrimSpace(cypher)
+	if startsWithKeywordFold(mergePattern, "MERGE") {
+		mergePattern = strings.TrimSpace(mergePattern[len("MERGE"):])
 	}
-
-	onCreateIdx := findKeywordIndex(cypher, "ON CREATE SET")
-	onMatchIdx := findKeywordIndex(cypher, "ON MATCH SET")
-	// Use quote-aware search for RETURN and WITH since text content may contain these keywords
-	returnIdx := findKeywordIndexInContext(cypher, "RETURN")
-	withIdx := findKeywordIndexInContext(cypher, "WITH")
-
-	setIdx := findStandaloneSetInMergeSegment(cypher)
-
-	// Find MERGE pattern end
-	patternEnd := len(cypher)
-	for _, idx := range []int{onCreateIdx, onMatchIdx, setIdx, returnIdx, withIdx} {
-		if idx > 0 && idx < patternEnd {
-			patternEnd = idx
-		}
-	}
-
-	// Handle second MERGE in compound query (handle any whitespace before MERGE)
-	// Use quote-aware search since text content may contain "MERGE" keyword
-	secondMergeIdx := findKeywordIndexInContext(cypher[mergeIdx+5:], "MERGE")
-	// segmentEnd is where this MERGE's clauses end: at the next MERGE, whose
-	// ON CREATE SET / ON MATCH SET / SET belong to it. Without this bound
-	// "ON CREATE SET t.x = true MERGE (s)-[:R]->(t) ..." took the following
-	// MERGE text as part of the SET value.
-	segmentEnd := len(cypher)
-	if secondMergeIdx > 0 {
-		// There's a second MERGE clause - this is for relationships
-		// Handle the first MERGE, then process second
-		firstMergeEnd := mergeIdx + 5 + secondMergeIdx
-		if firstMergeEnd < patternEnd {
-			patternEnd = firstMergeEnd
-		}
-		segmentEnd = firstMergeEnd
-		for _, clauseIdx := range []*int{&onCreateIdx, &onMatchIdx, &setIdx} {
-			if *clauseIdx >= segmentEnd {
-				*clauseIdx = -1
-			}
-		}
-	}
-
-	// Extract and parse MERGE pattern
-	mergePattern := strings.TrimSpace(cypher[mergeIdx+5 : patternEnd])
 
 	// Check if this is a relationship pattern: (a)-[r:TYPE]->(b)
 	if strings.Contains(mergePattern, "->") || strings.Contains(mergePattern, "<-") || strings.Contains(mergePattern, "]-") {
-		// Relationship MERGE - create relationship, then continue processing chained MERGE clauses.
-		relationshipResult, err := e.executeMergeRelationshipWithContext(ctx, cypher, mergePattern, nodeContext, relContext)
-		if err != nil {
-			return nil, err
-		}
-		if secondMergeIdx > 0 {
-			secondMergePart := strings.TrimSpace(cypher[mergeIdx+5+secondMergeIdx:])
-			if !strings.HasPrefix(upperASCII(secondMergePart), "MERGE ") {
-				trimmed := strings.TrimSpace(secondMergePart)
-				if strings.HasPrefix(trimmed, "(") {
-					secondMergePart = "MERGE " + trimmed
-				}
-			}
-			nextResult, err := e.executeMergeWithContext(ctx, secondMergePart, nodeContext, relContext)
-			if err != nil {
-				return nil, err
-			}
-			if relationshipResult != nil && relationshipResult.Stats != nil && nextResult != nil && nextResult.Stats != nil {
-				addQueryStats(nextResult.Stats, relationshipResult.Stats)
-			}
-			return nextResult, nil
-		}
-		return relationshipResult, nil
+		return e.executeMergeRelationshipWithContext(ctx, mergePattern, nodeContext, relContext)
 	}
 
 	// Parse node pattern
@@ -615,23 +554,6 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	var node *storage.Node
 	if existingNode != nil {
 		node = existingNode
-		e.cacheMergeNode(labels, matchProps, node)
-		if onMatchIdx > 0 {
-			setEnd := segmentEnd
-			for _, idx := range []int{onCreateIdx, returnIdx, withIdx, setIdx} {
-				if idx > onMatchIdx && idx < setEnd {
-					setEnd = idx
-				}
-			}
-			setClause := strings.TrimSpace(cypher[onMatchIdx+13 : setEnd])
-			if _, err := e.applyCountedNodeSet(ctx, node, varName, setClause, nodeContext, relContext, result.Stats); err != nil {
-				return nil, err
-			}
-			if err := store.UpdateNode(node); err != nil {
-				return nil, localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
-			}
-			e.notifyNodeMutated(string(node.ID))
-		}
 	} else {
 		node = &storage.Node{
 			ID:         storage.NodeID(e.generateID()),
@@ -643,68 +565,24 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		}
 		actualID, err := store.CreateNode(node)
 		if err != nil {
-			if mergeCreateConflict(err) {
-				recoveredNode, findErr := e.findMergeNode(store, labels, matchProps)
-				if findErr != nil {
-					return nil, findErr
-				}
-				if recoveredNode != nil {
-					existingNode = recoveredNode
-					node = recoveredNode
-					e.cacheMergeNode(labels, matchProps, node)
-				} else {
-					return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
-				}
-			} else {
+			if !mergeCreateConflict(err) {
 				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
 			}
-		}
-		if existingNode == nil {
+			// A concurrent MERGE created it first: this MERGE matched it.
+			recoveredNode, findErr := e.findMergeNode(store, labels, matchProps)
+			if findErr != nil {
+				return nil, findErr
+			}
+			if recoveredNode == nil {
+				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
+			}
+			node = recoveredNode
+		} else {
 			node.ID = actualID
 			e.notifyNodeMutated(string(node.ID))
 			result.Stats.NodesCreated = 1
 			countCreatedEntity(result.Stats, node.Labels, node.Properties)
-			e.cacheMergeNode(labels, matchProps, node)
-
-			if onCreateIdx > 0 {
-				setEnd := segmentEnd
-				for _, idx := range []int{setIdx, onMatchIdx, withIdx, returnIdx} {
-					if idx > onCreateIdx && idx < setEnd {
-						setEnd = idx
-					}
-				}
-				setClause := strings.TrimSpace(cypher[onCreateIdx+13 : setEnd])
-				if _, err := e.applyCountedNodeSet(ctx, node, varName, setClause, nodeContext, relContext, result.Stats); err != nil {
-					return nil, err
-				}
-			}
 		}
-	}
-
-	// Apply standalone SET
-	if setIdx > 0 {
-		setEnd := len(cypher)
-		// Also check for second MERGE - SET clause ends there too
-		secondMergeAbsIdx := -1
-		if secondMergeIdx > 0 {
-			secondMergeAbsIdx = mergeIdx + 5 + secondMergeIdx
-		}
-		for _, idx := range []int{withIdx, returnIdx, secondMergeAbsIdx} {
-			if idx > setIdx && idx < setEnd {
-				setEnd = idx
-			}
-		}
-		setClause := strings.TrimSpace(cypher[setIdx+3 : setEnd])
-		if _, err := e.applyCountedNodeSet(ctx, node, varName, setClause, nodeContext, relContext, result.Stats); err != nil {
-			return nil, err
-		}
-	}
-
-	if setIdx > 0 || (existingNode == nil && onCreateIdx > 0) {
-		if err := store.UpdateNode(node); err != nil {
-			return nil, localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
-		}
-		e.notifyNodeMutated(string(node.ID))
 	}
 	e.cacheMergeNode(labels, matchProps, node)
 
@@ -712,31 +590,6 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	if varName != "" {
 		nodeContext[varName] = node
 	}
-
-	// Handle second MERGE (usually relationship creation)
-	if secondMergeIdx > 0 {
-		secondMergePart := strings.TrimSpace(cypher[mergeIdx+5+secondMergeIdx:])
-		if !strings.HasPrefix(upperASCII(secondMergePart), "MERGE ") {
-			trimmed := strings.TrimSpace(secondMergePart)
-			if strings.HasPrefix(trimmed, "(") {
-				secondMergePart = "MERGE " + trimmed
-			}
-		}
-		_, err := e.executeMergeWithContext(ctx, secondMergePart, nodeContext, relContext)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Handle RETURN clause
-	if returnIdx > 0 {
-		projected, err := e.projectMergeReturn(ctx, []pipelineRow{e.mergeBindingRow(ctx, nodeContext, relContext)}, cypher[returnIdx:])
-		if err != nil {
-			return nil, err
-		}
-		result.Columns, result.Rows = projected.Columns, projected.Rows
-	}
-
 	return result, nil
 }
 
@@ -795,19 +648,16 @@ func (e *StorageExecutor) parseMergeNodePattern(ctx context.Context, pattern str
 	return variable, labels, e.parseMergeProperties(ctx, props, nodeContext, relContext), nil
 }
 
-// executeMergeRelationshipWithContext handles MERGE for relationship patterns.
-func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Context, cypher string, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*ExecuteResult, error) {
+// executeMergeRelationshipWithContext runs a relationship MERGE pattern (see
+// executeMergeWithContext): it binds the relationship it matched or created,
+// and the endpoints, into relContext / nodeContext.
+func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
 		Stats:   &QueryStats{},
 	}
 	store := e.getStorage(ctx)
-
-	returnIdx := findKeywordIndex(cypher, "RETURN")
-	withIdx := findKeywordIndexInContext(cypher, "WITH")
-	onCreateIdx := findKeywordIndex(cypher, "ON CREATE SET")
-	onMatchIdx := findKeywordIndex(cypher, "ON MATCH SET")
 
 	parsedPattern, err := e.parseMergeRelationshipPattern(ctx, pattern, nodeContext, relContext)
 	if err != nil {
@@ -822,12 +672,6 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	if err := validateMergePatternProperties(parsedPattern.properties, "relationship"); err != nil {
 		return nil, err
 	}
-
-	setSearchStart := 0
-	if patternIdx := strings.Index(cypher, pattern); patternIdx >= 0 {
-		setSearchStart = patternIdx + len(pattern)
-	}
-	setIdx := findStandaloneSetInMergeSegmentFrom(cypher, setSearchStart)
 
 	// Get start and end nodes from context
 	startNode := nodeContext[parsedPattern.startVariable]
@@ -1009,7 +853,6 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	}
 
 	var edge *storage.Edge
-	relationshipCreated := false
 	if existingEdge != nil {
 		edge = existingEdge
 	} else {
@@ -1027,10 +870,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 		}
 		edge = createdEdge
 		if created {
-			relationshipCreated = true
 			result.Stats.RelationshipsCreated = 1
-			// Its pattern properties; an ON CREATE SET is counted by
-			// applySetClause below.
 			countCreatedEntity(result.Stats, nil, edge.Properties)
 			e.notifyEdgeMutated(string(edge.ID))
 			e.notifyNodeMutated(string(edge.StartNode))
@@ -1044,67 +884,6 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	if parsedPattern.relVariable != "" {
 		relContext[parsedPattern.relVariable] = edge
 	}
-	applySetClause := func(clauseIdx, keywordLength int) error {
-		if clauseIdx < 0 {
-			return nil
-		}
-		setEnd := len(cypher)
-		for _, boundary := range []int{onCreateIdx, onMatchIdx, setIdx, withIdx, returnIdx} {
-			if boundary > clauseIdx && boundary < setEnd {
-				setEnd = boundary
-			}
-		}
-		if nextMergeRel := findKeywordIndexInContext(cypher[clauseIdx+keywordLength:], "MERGE"); nextMergeRel >= 0 {
-			mergeAbs := clauseIdx + keywordLength + nextMergeRel
-			if mergeAbs > clauseIdx && mergeAbs < setEnd {
-				setEnd = mergeAbs
-			}
-		}
-		setClause := strings.TrimSpace(cypher[clauseIdx+keywordLength : setEnd])
-		// The clause's items apply in order across the entities they name
-		// (applySetRuns), not entity by entity.
-		var stateBuffer [4]setEntityState
-		states, _, err := e.applySetRuns(ctx, setClauseRuns(setClause), nodeContext, relContext, func(string) bool { return true }, stateBuffer[:0])
-		if err != nil {
-			return err
-		}
-		_, err = e.persistSetEntities(store, states, result.Stats, nil, func(state setEntityState, err error) error {
-			if state.node != nil {
-				return localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
-			}
-			return localizedError(localization.CypherMergeUpdateEdgePropertyFailed(err), err)
-		})
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-
-	if relationshipCreated {
-		if err := applySetClause(onCreateIdx, len("ON CREATE SET")); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := applySetClause(onMatchIdx, len("ON MATCH SET")); err != nil {
-			return nil, err
-		}
-	}
-
-	if setIdx > 0 && parsedPattern.relVariable != "" {
-		if err := applySetClause(setIdx, len("SET")); err != nil {
-			return nil, err
-		}
-	}
-
-	// Handle RETURN
-	if returnIdx > 0 {
-		projected, err := e.projectMergeReturn(ctx, []pipelineRow{e.mergeBindingRow(ctx, nodeContext, relContext)}, cypher[returnIdx:])
-		if err != nil {
-			return nil, err
-		}
-		result.Columns, result.Rows = projected.Columns, projected.Rows
-	}
-
 	return result, nil
 }
 

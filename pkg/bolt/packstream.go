@@ -4,7 +4,7 @@ package bolt
 import (
 	"encoding/binary"
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 	"time"
 

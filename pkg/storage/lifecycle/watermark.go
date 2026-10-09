@@ -1,7 +1,7 @@
 package lifecycle
 
 import (
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"

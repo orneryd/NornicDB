@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 	"sync"
 
@@ -140,8 +140,15 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		}
 	}
 	if relationshipPattern {
-		if err := validateMergeRelationshipShape(pattern); err != nil {
-			return err
+		// Every relationship of a MERGE path (mergePathSegments).
+		segments := mergePathSegments(pattern)
+		if len(segments) < 2 {
+			segments = []string{pattern}
+		}
+		for _, segment := range segments {
+			if err := validateMergeRelationshipShape(segment); err != nil {
+				return err
+			}
 		}
 	}
 	for _, nodePattern := range e.splitNodePatterns(pattern) {
@@ -181,26 +188,12 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 }
 
 func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope, clause string) error {
-	type actionPosition struct {
-		index   int
-		keyword string
-	}
-	actions := make([]actionPosition, 0, 2)
-	for _, keyword := range []string{"ON CREATE SET", "ON MATCH SET"} {
-		if index := findKeywordIndexInContext(clause, keyword); index >= 0 {
-			actions = append(actions, actionPosition{index: index, keyword: keyword})
-		}
-	}
-	for _, action := range actions {
-		end := len(clause)
-		for _, candidate := range actions {
-			if candidate.index > action.index && candidate.index < end {
-				end = candidate.index
+	parts := splitMergeClauseActions(mergeClauseBody(clause))
+	for _, clauses := range [...]mergeActionClauses{parts.onCreate, parts.onMatch} {
+		for index := 0; index < clauses.len(); index++ {
+			if err := e.validateSetClauseScope(scope, clauses.set(index)); err != nil {
+				return err
 			}
-		}
-		body := strings.TrimSpace(clause[action.index+len(action.keyword) : end])
-		if err := e.validateSetClauseScope(scope, "SET "+body); err != nil {
-			return err
 		}
 	}
 	return nil
@@ -250,17 +243,16 @@ func validateMergeRelationshipShape(pattern string) error {
 }
 
 func mergeClausePattern(clause string) string {
+	return splitMergeClauseActions(mergeClauseBody(clause)).pattern
+}
+
+// mergeClauseBody is a MERGE clause's text after the MERGE keyword.
+func mergeClauseBody(clause string) string {
 	body := strings.TrimSpace(clause)
 	if startsWithKeywordFold(body, "MERGE") {
 		body = strings.TrimSpace(body[len("MERGE"):])
 	}
-	end := len(body)
-	for _, keyword := range []string{"ON CREATE SET", "ON MATCH SET"} {
-		if index := findKeywordIndexInContext(body, keyword); index >= 0 && index < end {
-			end = index
-		}
-	}
-	return strings.TrimSpace(body[:end])
+	return body
 }
 
 func mergePatternUsesParameterPredicate(pattern string) bool {

@@ -44,7 +44,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"os"
 	"sort"
 	"sync"

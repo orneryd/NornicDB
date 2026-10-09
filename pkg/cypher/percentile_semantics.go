@@ -3,9 +3,11 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows []pipelineRow, name, expression string, distinct bool) (interface{}, bool) {
@@ -60,7 +62,11 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 	if len(values) == 0 {
 		return nil, true
 	}
-	sort.SliceStable(values, func(left, right int) bool { return values[left].numeric < values[right].numeric })
+	// Ordered as ORDER BY orders numbers (compareValuesForSort): NaN after
+	// every number, -0.0 before 0.0, integers and floats exactly (#907).
+	sort.SliceStable(values, func(left, right int) bool {
+		return compareValuesForSort(values[left].original, values[right].original) < 0
+	})
 
 	if name == "percentiledisc" {
 		index := int(math.Ceil(percentile*float64(len(values)))) - 1
@@ -92,6 +98,12 @@ func (e *StorageExecutor) validatePercentileCalls(expression string, row pipelin
 			}
 			if !resolved {
 				continue
+			}
+			if value == nil {
+				// Neo4j can't read null as the percentile number: a
+				// TypeError, not the range check's ArgumentError (#907).
+				return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+					localization.CypherCorePercentileNotNumber("NO_VALUE"))
 			}
 			percentile, _, _, numeric := pipelineAggregateNumber(value)
 			if !numeric || math.IsNaN(percentile) || percentile < 0 || percentile > 1 {

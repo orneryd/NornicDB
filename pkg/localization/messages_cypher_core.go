@@ -82,6 +82,7 @@ const (
 	MessageCypherCoreTemporalUnsupportedUnit             MessageID = "cyphercore.temporal_unsupported_unit"
 	MessageCypherCoreTemporalNoSuchField                 MessageID = "cyphercore.temporal_no_such_field"
 	MessageCypherCoreMapProjectionCoercion               MessageID = "cyphercore.map_projection_coercion"
+	MessageCypherCorePercentileNotNumber                 MessageID = "cyphercore.percentile_not_number"
 	MessageCypherCoreMapProjectionReceiver               MessageID = "cyphercore.map_projection_receiver"
 	MessageCypherCoreTemporalInvalidNanosecond           MessageID = "cyphercore.temporal_invalid_nanosecond"
 	MessageCypherCoreTemporalMissingComponent            MessageID = "cyphercore.temporal_missing_component"
@@ -473,6 +474,7 @@ func CypherCorePointMapKeysInvalid(keys string) Message {
 func CypherCorePointCoordinatesMissing() Message {
 	return cypherCoreMessage(MessageCypherCorePointCoordinatesMissing, "A point must contain either 'x' and 'y' or 'latitude' and 'longitude'", nil)
 }
+
 // CypherCoreAggregateNumberOrDurationOnly is sum() or avg() over a value that
 // is neither a number nor a duration.
 func CypherCoreAggregateNumberOrDurationOnly(function string) Message {
@@ -559,6 +561,14 @@ func CypherCoreApocPathLimit(limit int) Message {
 // (d{.*}).
 func CypherCoreMapProjectionCoercion(value string) Message {
 	return cypherCoreMessage(MessageCypherCoreMapProjectionCoercion, "Can't coerce `"+value+"` to Map", map[string]any{"Value": value})
+}
+
+// CypherCorePercentileNotNumber is Neo4j's TypeError for a percentile
+// argument that reaches percentileCont / percentileDisc as a value that
+// isn't a number (null from a variable or parameter): "Can't coerce
+// `NO_VALUE` to Number".
+func CypherCorePercentileNotNumber(value string) Message {
+	return cypherCoreMessage(MessageCypherCorePercentileNotNumber, "Can't coerce `"+value+"` to Number", map[string]any{"Value": value})
 }
 
 // CypherCoreMapProjectionReceiver is a map projection whose receiver isn't a

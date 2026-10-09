@@ -2,7 +2,7 @@ package tck
 
 import (
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strconv"
 	"strings"
 	"unicode"

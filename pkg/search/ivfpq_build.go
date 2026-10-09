@@ -3,7 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/rand"
 	"time"
 

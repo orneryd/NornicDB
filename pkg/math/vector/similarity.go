@@ -15,7 +15,7 @@
 package vector
 
 import (
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/orneryd/nornicdb/pkg/simd"
 )

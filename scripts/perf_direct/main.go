@@ -3,8 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"log"
-	"math"
 	"os"
 	"sort"
 	"time"

@@ -540,46 +540,21 @@ func (b *ASTBuilder) parseCreate(text string) *ASTCreate {
 	return create
 }
 
-// parseMerge parses a MERGE clause.
+// parseMerge parses a MERGE clause through the MERGE action parser
+// (splitMergeClauseActions): OnCreate and OnMatch hold the items of every
+// ON CREATE SET / ON MATCH SET clause, in order.
 func (b *ASTBuilder) parseMerge(text string) *ASTMerge {
 	merge := &ASTMerge{}
-
-	// Find ON CREATE SET and ON MATCH SET
-	upper := upperASCII(text)
-	onCreateIdx := strings.Index(upper, "ON CREATE SET")
-	onMatchIdx := strings.Index(upper, "ON MATCH SET")
-
-	// Find pattern end
-	patternEnd := len(text)
-	if onCreateIdx > 0 {
-		patternEnd = onCreateIdx
-	}
-	if onMatchIdx > 0 && onMatchIdx < patternEnd {
-		patternEnd = onMatchIdx
-	}
-
-	patternText := strings.TrimSpace(text[len("MERGE"):patternEnd])
-	patterns := b.parsePatterns(patternText)
-	if len(patterns) > 0 {
+	parts := splitMergeClauseActions(strings.TrimSpace(text[len("MERGE"):]))
+	if patterns := b.parsePatterns(parts.pattern); len(patterns) > 0 {
 		merge.Pattern = patterns[0]
 	}
-
-	// Parse ON CREATE SET
-	if onCreateIdx > 0 {
-		endIdx := len(text)
-		if onMatchIdx > onCreateIdx {
-			endIdx = onMatchIdx
-		}
-		setItems := text[onCreateIdx+len("ON CREATE SET") : endIdx]
-		merge.OnCreate = b.parseSetItems(setItems)
+	for index := 0; index < parts.onCreate.len(); index++ {
+		merge.OnCreate = append(merge.OnCreate, b.parseSetItems(parts.onCreate.assignments(index))...)
 	}
-
-	// Parse ON MATCH SET
-	if onMatchIdx > 0 {
-		setItems := text[onMatchIdx+len("ON MATCH SET"):]
-		merge.OnMatch = b.parseSetItems(setItems)
+	for index := 0; index < parts.onMatch.len(); index++ {
+		merge.OnMatch = append(merge.OnMatch, b.parseSetItems(parts.onMatch.assignments(index))...)
 	}
-
 	return merge
 }
 

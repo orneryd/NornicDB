@@ -49,7 +49,7 @@ func TestExecuteMergeWithContext_AnonymousNodePatternAndChainedNoSpace(t *testin
 	require.EqualValues(t, 1, res.Rows[0][0])
 
 	// Ensure no-space chained MERGE form is handled and both nodes are created.
-	res2, err := exec.executeMergeWithContext(ctx, "MERGE (a:NodeX {id:'1'})MERGE (b:NodeY {id:'2'}) RETURN a.id AS aid", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	res2, err := exec.Execute(ctx, "MERGE (a:NodeX {id:'1'})MERGE (b:NodeY {id:'2'}) RETURN a.id AS aid", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"aid"}, res2.Columns)
 	require.Len(t, res2.Rows, 1)

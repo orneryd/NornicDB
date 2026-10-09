@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"cmp"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 )
 

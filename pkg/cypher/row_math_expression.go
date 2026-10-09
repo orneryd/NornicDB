@@ -1,7 +1,7 @@
 package cypher
 
 import (
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 )
 
 // evaluateRowMathFunction evaluates scalar math functions for the converged

@@ -2,7 +2,7 @@ package util
 
 import (
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strconv"
 )
 

@@ -30,7 +30,7 @@ package cypher
 import (
 	"context"
 	"crypto/rand"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	mathrand "math/rand"
 	"runtime"
 	"strconv"

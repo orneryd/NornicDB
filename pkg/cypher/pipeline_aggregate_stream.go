@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"context"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"runtime"
 	"sort"
 	"strconv"
@@ -402,7 +402,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 					state := &group.projections[index].states[stateIndex]
 					other := &partial.projections[index].states[stateIndex]
 					state.count += other.count
-					state.integerTotal += other.integerTotal
+					state.mergeSum(other)
 				}
 			}
 		}
@@ -533,17 +533,11 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		}
 		state.count++
 		if state.name == "sum" {
-			if integer && !state.hasFloat {
-				state.integerTotal += exactInteger
-			} else {
-				if !state.hasFloat {
-					state.floatingTotal = float64(state.integerTotal)
-					state.hasFloat = true
-				}
-				state.floatingTotal += numeric
-			}
+			state.addSum(numeric, exactInteger, integer)
 		} else if state.name == "avg" {
-			state.floatingTotal += numeric
+			// A running mean, as Neo4j 5.26 averages (avg of 0.1, 0.2, 0.3
+			// is 0.2, not the sum's 0.19999999999999998 over 3, #907).
+			state.mean += (numeric - state.mean) / float64(state.count)
 		} else {
 			delta := numeric - state.mean
 			state.mean += delta / float64(state.count)
@@ -562,6 +556,47 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		return false
 	}
 	return true
+}
+
+// addSum adds a number to a sum: exactly while every number is an integer
+// and the total fits an int64; in floating point once a float is added or
+// the integer total overflows, as Neo4j 5.26 does (9223372036854775807 + 1
+// is 9.223372036854776e18, #907). The sum stays floating point after that.
+func (state *pipelineAggregateState) addSum(numeric float64, exactInteger int64, integer bool) {
+	if integer && !state.hasFloat {
+		if total, overflow := addInt64(state.integerTotal, exactInteger); !overflow {
+			state.integerTotal = total
+			return
+		}
+		state.floatingTotal = float64(state.integerTotal) + numeric
+		state.hasFloat = true
+		return
+	}
+	if !state.hasFloat {
+		state.floatingTotal = float64(state.integerTotal)
+		state.hasFloat = true
+	}
+	state.floatingTotal += numeric
+}
+
+// mergeSum adds a partial sum of the same aggregate (the parallel
+// Cartesian aggregation's partitions) with addSum's overflow rule.
+func (state *pipelineAggregateState) mergeSum(other *pipelineAggregateState) {
+	if other.hasFloat {
+		if !state.hasFloat {
+			state.floatingTotal = float64(state.integerTotal)
+			state.hasFloat = true
+		}
+		state.floatingTotal += other.floatingTotal
+		return
+	}
+	state.addSum(float64(other.integerTotal), other.integerTotal, true)
+}
+
+// addInt64 is left + right and whether it overflows an int64.
+func addInt64(left, right int64) (int64, bool) {
+	total := left + right
+	return total, (right > 0 && total < left) || (right < 0 && total > left)
 }
 
 func (state *pipelineAggregateState) result(ctx context.Context, executor *StorageExecutor) (interface{}, bool) {
@@ -586,7 +621,7 @@ func (state *pipelineAggregateState) result(ctx context.Context, executor *Stora
 			average, _ := scaleTemporalDuration(state.duration, 1/float64(state.count))
 			return average, true
 		}
-		return state.floatingTotal / float64(state.count), true
+		return state.mean, true
 	case "min", "max":
 		return state.selected, true
 	case "collect":

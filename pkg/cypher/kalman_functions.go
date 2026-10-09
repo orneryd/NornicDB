@@ -103,7 +103,7 @@ package cypher
 
 import (
 	"encoding/json"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/orneryd/nornicdb/pkg/util"
 )

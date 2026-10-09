@@ -21,8 +21,6 @@
   other: "[!! find relationship for MERGE: {{.Cause}} !!]"
 - id: cyphermerge.create_relationship_failed
   other: "[!! failed to create relationship: {{.Cause}} !!]"
-- id: cyphermerge.update_edge_property_failed
-  other: "[!! failed to update edge property: {{.Cause}} !!]"
 - id: cyphermerge.initial_merge_failed
   other: "[!! initial MERGE failed: {{.Cause}} !!]"
 - id: cyphermerge.foreach_failed
@@ -127,3 +125,5 @@
   other: "[!! Failed to create relationship, node `{{.Variable}}` is missing !!]"
 - id: cyphermerge.property_value_not_mergeable
   other: "[!! Cannot merge the following {{.Entity}} because of {{.Value}} property value for '{{.Property}}' !!]"
+- id: cyphermerge.invalid_action
+  other: "[!! invalid MERGE action: {{.Action}} !!]"

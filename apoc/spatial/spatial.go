@@ -5,7 +5,7 @@
 package spatial
 
 import (
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 )
 
 // Point represents a geographic point.

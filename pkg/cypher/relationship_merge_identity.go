@@ -3,7 +3,7 @@ package cypher
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"strconv"
 

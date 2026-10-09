@@ -144,6 +144,8 @@ SHOW INDEXES, SHOW CONSTRAINTS and SHOW DATABASES return Neo4j 5's columns and v
 
 `CALL db.labels()` and `CALL db.relationshipTypes()` list tokens currently in use in allocation order, not alphabetical order. Namespace writes persist token positions with schema metadata, including transactional and bulk writes. Deleting the last entity hides its token; recreating it retains the original position, including after restart. Legacy or directly imported tokens without recorded positions follow known tokens in alphabetical order because their original allocation history is unavailable.
 
+`keys()` lists a node's, relationship's, or map's property names in alphabetical order on every route. Neo4j's order is unspecified and unstable — it follows the property-store layout for stored entities and hash order for map literals, and it changes with the storage layout and map contents — so NornicDB keeps the deterministic sorted order introduced by #602/#671 as an intentional, documented difference. Cypher defines no order for `keys()`, and the openCypher TCK grades `keys()` results ignoring list order, so the sorted result is conformant. Code that pairs `keys(n)` with a separately built list must not assume Neo4j's order.
+
 ### Aggregation Functions
 
 - ✅ **COUNT()** - Count aggregation
