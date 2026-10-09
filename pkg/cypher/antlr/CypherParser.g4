@@ -603,7 +603,7 @@ reduceExpression
     ;
 
 parameter
-    : DOLLAR (name | numLit)
+    : DOLLAR (name | numLit | DIGIT_NAME)
     ;
 
 // literals
