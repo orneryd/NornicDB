@@ -148,6 +148,17 @@ isn't a list is a TypeError; an empty list, a list holding a non-number or
 a non-finite number, a zero vector (cosine) or vectors of different
 dimensions are an ArgumentError, as in Neo4j.
 
+**VECTOR and UUID values (Cypher 25).** `vector(value, dimension, coordinateType)` builds a VECTOR of `INTEGER64` (`INTEGER`), `INTEGER32`, `INTEGER16`, `INTEGER8`, `FLOAT64` (`FLOAT`) or `FLOAT32` coordinates from a list of numbers or its text; `uuid()` is a random version 7 UUID. Both can be stored as properties, compared with `=`, sorted, and tested with `IS :: VECTOR<INTEGER>(3)` / `IS :: UUID`. A vector is not a list: `toIntegerList`, `toFloatList` and `size` read it. Bolt 5 clients receive both as the placeholder map `{reason: 'UNKNOWN_TYPE', originalType: 'VECTOR(3, INTEGER64)'}` (or `'UUID'`), as Neo4j sends them; the HTTP API writes a UUID as its text.
+
+| Function | What It Does | Example |
+| --- | --- | --- |
+| `vector(value, dimension, type)` | A VECTOR | `RETURN vector([1, 2, 3], 3, INTEGER)` |
+| `vector_dimension_count(v)` | Its dimension | `RETURN vector_dimension_count(vector([1, 2], 2, FLOAT))` |
+| `vector_distance(a, b, metric)` | Distance by `EUCLIDEAN`, `EUCLIDEAN_SQUARED`, `MANHATTAN`, `COSINE`, `DOT` or `HAMMING` | `RETURN vector_distance(vector([1, 2], 2, FLOAT), vector([2, 4], 2, FLOAT), EUCLIDEAN)` |
+| `vector_norm(v, metric)` | Distance to the origin by `EUCLIDEAN` or `MANHATTAN` | `RETURN vector_norm(vector([3, 4], 2, INTEGER), EUCLIDEAN)` |
+| `uuid()` / `uuid(text)` / `uuid(msb, lsb)` | A UUID | `RETURN toString(uuid(1, 2))` |
+| `uuid.mostSignificantBits(u)` / `uuid.leastSignificantBits(u)` | Its halves as integers | `RETURN uuid.mostSignificantBits(uuid())` |
+
 ### 📈 Kalman Filter Functions (10 functions)
 
 Real-time signal filtering and prediction for time series data. Perfect for smoothing noisy sensor readings, tracking market sentiment, or predicting trends.
