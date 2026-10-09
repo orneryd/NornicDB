@@ -160,8 +160,12 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 	case pipelineClauseSet:
 		return staticSetItemsTokenError(splitSetAssignments(collapseChainedSetClauses(pipelineClauseBody(clause.text, "SET"))), scope)
 	case pipelineClauseMerge:
-		if indexASCIIFold(clause.text, " SET ") < 0 {
+		set := indexASCIIFold(clause.text, " SET ")
+		if set < 0 {
 			return nil // no ON CREATE / ON MATCH SET
+		}
+		if actions := clause.text[set:]; !strings.ContainsAny(actions, ":[") && !mentionsNonEntity(actions, scope) {
+			return nil // the pattern's labels aren't items
 		}
 		actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"))
 		if err := staticSetItemsTokenError(mergeActionAssignments(actions.onCreate), scope); err != nil {
@@ -194,17 +198,28 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 	return nil
 }
 
-// mentionsNonEntity reports whether text names a variable of scope whose
-// static type is known and isn't a node or a relationship. It compares the
-// words of text in place, so it allocates nothing.
+// mentionsNonEntity reports whether an item of the SET or REMOVE clauses in
+// text starts with a variable of scope whose static type is known and isn't
+// a node or a relationship: the target of a write that needs one. It reads
+// the words of text in place, so it allocates nothing.
 func mentionsNonEntity(text string, scope staticTypeScope) bool {
 	if len(scope.values) == 0 && len(scope.kinds) == 0 {
 		return false
 	}
+	previous := ""
 	for index := 0; index < len(text); {
 		name, next, ok := scanIdentifierToken(text, index)
 		if !ok {
+			if c := text[index]; c > ' ' {
+				previous = text[index : index+1]
+			}
 			index++
+			continue
+		}
+		head := previous == "," || strings.EqualFold(previous, "SET") || strings.EqualFold(previous, "REMOVE")
+		previous = name
+		index = next
+		if !head {
 			continue
 		}
 		if kind, bound := scope.kinds[name]; bound {
@@ -214,7 +229,6 @@ func mentionsNonEntity(text string, scope staticTypeScope) bool {
 		} else if _, typed := scope.values[name]; typed {
 			return true
 		}
-		index = next
 	}
 	return false
 }
