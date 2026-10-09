@@ -87,8 +87,8 @@ export function Header({
 
   return (
     <header className="bg-norse-shadow border-b border-norse-rune px-4 py-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex shrink-0 items-center gap-3">
           {/* NornicDB Logo - Interwoven threads with gold nexus */}
           <svg
             viewBox="0 0 200 180"
@@ -175,22 +175,22 @@ export function Header({
         </div>
 
         {/* Connection Status */}
-        <div className="flex items-center gap-6">
+        <div className="flex min-w-0 flex-1 basis-[42rem] flex-wrap items-center justify-end gap-2">
           {stats?.database && (
             <>
-              <div className="flex items-center gap-2 text-sm">
+              <div className="flex shrink-0 items-center gap-2 whitespace-nowrap text-sm">
                 <Network className="w-4 h-4 text-norse-silver" />
                 <span className="text-norse-silver">
                   {stats.database.nodes?.toLocaleString() ?? "?"} nodes
                 </span>
               </div>
-              <div className="flex items-center gap-2 text-sm">
+              <div className="flex shrink-0 items-center gap-2 whitespace-nowrap text-sm">
                 <HardDrive className="w-4 h-4 text-norse-silver" />
                 <span className="text-norse-silver">
                   {stats.database.edges?.toLocaleString() ?? "?"} edges
                 </span>
               </div>
-              <div className="flex items-center gap-2 text-sm">
+              <div className="flex shrink-0 items-center gap-2 whitespace-nowrap text-sm">
                 <Clock className="w-4 h-4 text-norse-silver" />
                 <span className="text-norse-silver">
                   {formatUptime(stats.server?.uptime_seconds ?? 0)}
@@ -201,7 +201,7 @@ export function Header({
           <button
             type="button"
             onClick={onRegenerateClick}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-red-300 border border-red-500/30"
+            className="flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-red-300 border border-red-500/30"
             title="Warning: This will clear and regenerate ALL embeddings"
           >
             <Zap className="w-4 h-4" />
@@ -211,7 +211,7 @@ export function Header({
           <button
             type="button"
             disabled={embedTriggering}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+            className={`flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
               embedData.stats?.running
                 ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
                 : "bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune"
@@ -241,7 +241,7 @@ export function Header({
           <button
             type="button"
             onClick={onAIChatClick}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-valhalla-gold/20 hover:bg-valhalla-gold/30 text-valhalla-gold border border-valhalla-gold/30"
+            className="flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-valhalla-gold/20 hover:bg-valhalla-gold/30 text-valhalla-gold border border-valhalla-gold/30"
             title="Open AI Assistant"
           >
             <MessageCircle className="w-4 h-4" />
@@ -251,7 +251,7 @@ export function Header({
           <button
             type="button"
             onClick={() => navigate("/databases")}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune"
+            className="flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune"
             title="Manage Databases"
           >
             <Database className="w-4 h-4" />
@@ -261,7 +261,7 @@ export function Header({
           <button
             type="button"
             onClick={onSecurityClick}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune"
+            className="flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune"
             title="Security & API Tokens"
           >
             <Shield className="w-4 h-4" />
@@ -273,16 +273,16 @@ export function Header({
               type="button"
               onClick={handleLogout}
               disabled={loggingOut}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune"
+              aria-label="Log out"
+              className="flex shrink-0 items-center rounded-lg border border-norse-rune bg-norse-shadow px-2.5 py-1.5 text-norse-silver transition-all hover:bg-norse-rune hover:text-white"
               title="Sign out of NornicDB"
             >
               <LogOut className="w-4 h-4" />
-              <span>Log out</span>
             </button>
           )}
 
           <div
-            className={`flex items-center gap-2 px-3 py-1 rounded-full ${
+            className={`flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-1 rounded-full ${
               connected
                 ? "bg-nornic-primary/20 status-connected"
                 : "bg-red-500/20"
