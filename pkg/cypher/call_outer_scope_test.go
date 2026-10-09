@@ -56,3 +56,24 @@ func TestCallSubqueryColumnsCannotRedeclareOuterVariables(t *testing.T) {
 		require.Equal(t, rows, result.Rows, query)
 	}
 }
+
+func TestCallSubqueryReturnsOuterUnchangedBranches(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_outer_branches"))
+	// RETURN * returns the body's variables (Neo4j 5.26.30: 1, 2).
+	for _, query := range []string{
+		"WITH 1 AS a CALL { UNWIND [2] AS b RETURN * } RETURN a, b",
+		"WITH 1 AS a CALL () { UNWIND [2] AS b RETURN *, 3 AS c } RETURN a, b",
+	} {
+		result, err := exec.Execute(context.Background(), query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{int64(1), int64(2)}}, result.Rows, query)
+	}
+	require.True(t, callSubqueryReturnsOuterUnchanged([]string{"WITH a RETURN a"}, "a"))
+	for _, branch := range []string{
+		"MATCH (n)", // no RETURN: the branch returns nothing unchanged
+		"CALL db.labels() YIELD * RETURN a",
+		"CALL db.labels() YIELD label AS a RETURN a",
+	} {
+		require.False(t, callSubqueryReturnsOuterUnchanged([]string{branch}, "a"), branch)
+	}
+}
