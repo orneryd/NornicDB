@@ -150,8 +150,10 @@
   other: "[!! Pattern, `{{.Pattern}}`, does not match input, `{{.Input}}`. Verify that the pattern is valid for constructing `{{.Type}}`. !!]"
 - id: cyphercore.temporal_pattern_requires_string
   other: "[!! A pattern can only be used in conjunction with a `STRING` input. !!]"
-- id: cyphercore.all_reduce_invalid_syntax
-  other: "[!! Invalid syntax for the `allReduce` function. The function allReduce must have the signature allReduce(accumulator :: VARIABLE = initial :: ANY, variable :: VARIABLE IN list :: LIST<ANY> | reducer :: ANY, predicate :: BOOLEAN) :: BOOLEAN !!]"
+- id: cyphercore.reduce_form_invalid_syntax
+  other: "[!! Invalid syntax for the `{{.Function}}` function. The function {{.Function}} must have the signature {{.Signature}} !!]"
+- id: cyphercore.predicate_not_boolean
+  other: "[!! Don't know how to treat that as a predicate: {{.Value}} !!]"
 - id: cyphercore.regex_replacement_illegal_group_reference
   other: "[!! Illegal group reference !!]"
 - id: cyphercore.regex_replacement_group_index_missing

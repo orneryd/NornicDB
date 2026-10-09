@@ -309,13 +309,22 @@ func javaDayPeriod(minuteOfDay int) (full, narrow string) {
 
 // javaDayPeriods are the day periods a B field reads, with the minutes of the
 // day each covers.
-var javaDayPeriods = []struct {
-	full, narrow string
-	from, to     int
-}{
+var javaDayPeriods = []javaDayPeriodRange{
 	{"midnight", "mi", 0, 0}, {"noon", "n", 720, 720}, {"in the morning", "in the morning", 0, 719},
 	{"in the afternoon", "in the afternoon", 720, 1079}, {"in the evening", "in the evening", 1080, 1259},
 	{"at night", "at night", 1260, 1439},
+}
+
+// javaDayPeriodRange is a day period's texts and its first and last minute
+// of the day.
+type javaDayPeriodRange struct {
+	full, narrow string
+	from, to     int
+}
+
+// contains reports whether a minute of the day is in the period.
+func (period javaDayPeriodRange) contains(minute int) bool {
+	return minute >= period.from && minute <= period.to
 }
 
 // US weeks: Sunday is the first day, and week 1 is the week holding 1

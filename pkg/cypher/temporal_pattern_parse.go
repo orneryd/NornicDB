@@ -336,11 +336,9 @@ func parseJavaNumber(text string, pos int, spec numericSpec, subsequent int) (in
 	return value, end, true
 }
 
-// parseOffsetID reads +hh, +hh:mm or +hh:mm:ss (or the same without colons).
+// parseOffsetID reads +hh, +hh:mm or +hh:mm:ss (or the same without colons)
+// at pos, which holds the sign.
 func parseOffsetID(text string, pos int) (int, int, bool) {
-	if pos >= len(text) || text[pos] != '+' && text[pos] != '-' {
-		return 0, pos, false
-	}
 	sign := 1
 	if text[pos] == '-' {
 		sign = -1
@@ -550,11 +548,10 @@ func (state *patternParse) resolve() (resolvedPattern, bool) {
 		if !ok || month < 1 || month > 12 {
 			return result, false
 		}
-		// The week must be one of the month's; its day may fall in the month
-		// before or after, as SMART resolution allows.
+		// Weeks 0 to 6 are valid; the day may fall in the month before or
+		// after, as SMART resolution allows.
 		first := time.Date(int(year), time.Month(month), 1, 0, 0, 0, 0, time.UTC)
-		last := first.AddDate(0, 1, -1)
-		if week := v[fieldWeekOfMonth]; week < 1 || int(week) > usWeekOf(last.Day(), usDayOfWeek(last)) {
+		if week := v[fieldWeekOfMonth]; week < 0 || week > 6 {
 			return result, false
 		}
 		result.date, result.hasDate = first.AddDate(0, 0, 1-usDayOfWeek(first)+int(v[fieldWeekOfMonth]-1)*7+weekday-1), true
@@ -634,16 +631,11 @@ func (state *patternParse) resolveTime(result *resolvedPattern, excessDays *int,
 			hour, hasHour = v[fieldAmPm]*12+hourOfAmPm, true
 			hourFields = append(hourFields, fieldAmPm, fieldHourOfAmPm, fieldClockHourOfAmPm)
 		case has[fieldDayPeriod]:
-			period := javaDayPeriods[v[fieldDayPeriod]]
-			minute := int(v[fieldMinute])
-			for _, candidate := range []int64{hourOfAmPm, hourOfAmPm + 12} {
-				if at := int(candidate)*60 + minute; at >= period.from && at <= period.to {
-					hour, hasHour = candidate, true
-					break
-				}
-			}
-			if !hasHour {
-				return false
+			// The afternoon hour when the period holds it, else the morning
+			// one, as Java resolves a day period with an hour of AM / PM.
+			hour, hasHour = hourOfAmPm, true
+			if javaDayPeriods[v[fieldDayPeriod]].contains(int(hourOfAmPm+12)*60 + int(floorModInt(int(v[fieldMinute]), 60))) {
+				hour += 12
 			}
 			hourFields = append(hourFields, fieldDayPeriod, fieldHourOfAmPm, fieldClockHourOfAmPm)
 		}
@@ -717,7 +709,7 @@ func (state *patternParse) crossCheckTime(result resolvedPattern, used *[pattern
 	}
 	if state.has[fieldDayPeriod] && !used[fieldDayPeriod] {
 		period := javaDayPeriods[state.values[fieldDayPeriod]]
-		if at := int(hour)*60 + result.minute; at < period.from || at > period.to {
+		if !period.contains(int(hour)*60 + result.minute) {
 			return false
 		}
 	}

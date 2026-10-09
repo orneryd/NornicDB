@@ -299,8 +299,8 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			index = next
 			continue
 		}
-		if strings.EqualFold(name, "allReduce") {
-			if err := checkAllReduceForm(text, open, check); err != nil {
+		if isReduceFormFunction(name) {
+			if err := checkReduceForm(name, text, open, check); err != nil {
 				return err
 			}
 			index = open + 1
@@ -654,21 +654,32 @@ func uniformListElementType(list string) string {
 	return elementType
 }
 
-// checkAllReduceForm is Neo4j's compile-time check of an allReduce call
-// whose parentheses open at open: the call must have allReduce's form, a
-// list of a known type must be a list, and a predicate of a known type a
-// boolean.
-func checkAllReduceForm(text string, open int, check func(staticArgumentType, string) error) error {
+// checkReduceForm is Neo4j's compile-time check of a reduce or allReduce
+// call whose parentheses open at open: the call must have the function's
+// form (parseReduceForm), a list of a known type must be a list, and an
+// allReduce predicate of a known type a boolean.
+func checkReduceForm(function, text string, open int, check func(staticArgumentType, string) error) error {
 	closing := findMatchingDelimiter(text, open, '(', ')')
 	if closing < 0 {
 		return nil
 	}
-	form, ok := parseReduceForm("allreduce", text[open+1:closing])
+	form, ok := parseReduceForm(function, text[open+1:closing])
 	if !ok {
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherCoreAllReduceInvalidSyntax())
+		name, signature := reduceFormSignature(function)
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherCoreReduceFormInvalidSyntax(name, signature))
 	}
-	if err := check(staticArgumentType{expected: "List<T>", options: []string{"List<T>"}}, form.list); err != nil {
+	if err := check(staticArgumentType{expected: "List<T>", options: []string{"List<T>"}}, form.list); err != nil || !form.all {
 		return err
 	}
 	return check(staticArgumentType{expected: "Boolean", options: []string{"Boolean"}}, form.predicate)
+}
+
+// reduceFormSignature is a reduce form function's catalog name and signature.
+func reduceFormSignature(function string) (name, signature string) {
+	for _, entry := range cypherFunctionCatalog {
+		if strings.EqualFold(entry.name, function) {
+			return entry.name, entry.signature
+		}
+	}
+	return function, ""
 }

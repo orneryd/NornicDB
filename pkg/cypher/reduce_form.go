@@ -3,7 +3,7 @@ package cypher
 import (
 	"strings"
 
-	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // reduceForm is a call written with reduce's own syntax:
@@ -99,7 +99,15 @@ func runReduceForm(form reduceForm, accumulator interface{}, items []interface{}
 				return false, nil
 			}
 		default:
-			return nil, typeMismatchFromFunctionError(&cypherfn.TypeMismatchError{Function: "allReduce", Expected: "Boolean", Value: holds})
+			// A parameter predicate is checked with the statement, as Neo4j
+			// types parameters; any other value fails when it is met.
+			if parameter := strings.TrimSpace(form.predicate); parameter[0] == '$' && simpleSemanticIdentifier(parameter[1:]) != "" {
+				operand := staticParameterOperand(holds)
+				operand.parameter = parameter[1:]
+				return nil, operandMismatch(operand, "Boolean")
+			}
+			return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+				localization.CypherCorePredicateNotBoolean(neo4jValueRepr(holds)))
 		}
 	}
 	if form.all {

@@ -72,7 +72,8 @@ const (
 	MessageCypherCoreDurationPatternUnbalancedEscapes    MessageID = "cyphercore.duration_pattern_unbalanced_escapes"
 	MessageCypherCoreTemporalPatternMismatch             MessageID = "cyphercore.temporal_pattern_mismatch"
 	MessageCypherCoreTemporalPatternRequiresString       MessageID = "cyphercore.temporal_pattern_requires_string"
-	MessageCypherCoreAllReduceInvalidSyntax              MessageID = "cyphercore.all_reduce_invalid_syntax"
+	MessageCypherCoreReduceFormInvalidSyntax             MessageID = "cyphercore.reduce_form_invalid_syntax"
+	MessageCypherCorePredicateNotBoolean                 MessageID = "cyphercore.predicate_not_boolean"
 	MessageCypherCoreRegexReplacementIllegalGroupReference    MessageID = "cyphercore.regex_replacement_illegal_group_reference"
 	MessageCypherCoreRegexReplacementGroupIndexMissing        MessageID = "cyphercore.regex_replacement_group_index_missing"
 	MessageCypherCoreRegexReplacementEscapeMissing            MessageID = "cyphercore.regex_replacement_escape_missing"
@@ -434,10 +435,16 @@ func CypherCoreRegexReplacementNoNamedGroup(name string) Message {
 	return cypherCoreMessage(MessageCypherCoreRegexReplacementNoNamedGroup, "No group with name {"+name+"}", map[string]any{"Name": name})
 }
 
-// CypherCoreAllReduceInvalidSyntax is Neo4j's message for an allReduce call
-// without allReduce's form.
-func CypherCoreAllReduceInvalidSyntax() Message {
-	return cypherCoreMessage(MessageCypherCoreAllReduceInvalidSyntax, "Invalid syntax for the `allReduce` function. The function allReduce must have the signature allReduce(accumulator :: VARIABLE = initial :: ANY, variable :: VARIABLE IN list :: LIST<ANY> | reducer :: ANY, predicate :: BOOLEAN) :: BOOLEAN", nil)
+// CypherCoreReduceFormInvalidSyntax is Neo4j's message for an allReduce (or
+// reduce) call without the function's form.
+func CypherCoreReduceFormInvalidSyntax(function, signature string) Message {
+	return cypherCoreMessage(MessageCypherCoreReduceFormInvalidSyntax, "Invalid syntax for the `"+function+"` function. The function "+function+" must have the signature "+signature, map[string]any{"Function": function, "Signature": signature})
+}
+
+// CypherCorePredicateNotBoolean is Neo4j's message for a predicate whose value
+// isn't a boolean or null.
+func CypherCorePredicateNotBoolean(value string) Message {
+	return cypherCoreMessage(MessageCypherCorePredicateNotBoolean, "Don't know how to treat that as a predicate: "+value, map[string]any{"Value": value})
 }
 
 // CypherCoreTemporalPatternRequiresString is Neo4j's message for a temporal

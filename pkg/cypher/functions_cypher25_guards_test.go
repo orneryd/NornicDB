@@ -183,7 +183,7 @@ func TestReduceFormAndPatternHelpers(t *testing.T) {
 
 	require.Empty(t, quantifiedExpressionBindings("reduce + 1"))
 	require.Empty(t, quantifiedExpressionBindings("reduce(s = 0"))
-	require.NoError(t, checkAllReduceForm("allReduce(a", 9, nil))
+	require.NoError(t, checkReduceForm("allReduce", "allReduce(a", 9, nil))
 	rewritten, rewrite := canonicalizeFunctionAliases("WITH 1 AS ln RETURN ln, PROPERTY_EXISTS(n.s, s), property_exists(n s), property_exists(n, s t)")
 	require.Nil(t, rewrite)
 	require.Equal(t, "WITH 1 AS ln RETURN ln, PROPERTY_EXISTS(n.s, s), property_exists(n s), property_exists(n, s t)", rewritten)

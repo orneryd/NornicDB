@@ -127,6 +127,10 @@ PARSE = [
     ("date", "2020-01-01 5", "yyyy-MM-dd e"), ("date", "2020-01-01 58849", "yyyy-MM-dd g"), ("date", "2020-01-01 1", "yyyy-MM-dd F"),
     ("date", "2020-01-01 2", "yyyy-MM-dd F"), ("date", "2020-01-01 2020-01-1", "yyyy-MM-dd YYYY-ww-e"),
     ("localtime", "1 PM 13", "h a H"), ("localtime", "1 PM 12", "h a H"), ("localtime", "13:45:30.5 5", "HH:mm:ss.S n"),
+    ("date", "20", "yyyyMM"), ("date", "20ab", "yyyyMM"), ("time", "13:45 +x", "HH:mm X"), ("time", "13:45 +01", "HH:mm XXX"),
+    ("date", "2021-02 6 Mon", "yyyy-MM W EEE"), ("localtime", "at night 3", "B h"),
+    ("date", "2021-02 7 Mon", "yyyy-MM W EEE"), ("date", "2021-02 0 Mon", "yyyy-MM W EEE"), ("localtime", "03:00 at night", "HH:mm B"),
+    ("localtime", "at night 7", "B h"),
 ]
 
 
