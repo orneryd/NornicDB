@@ -798,12 +798,20 @@ func validateLeadingNodePatternTransition(cypher string) error {
 	if open >= len(query) || query[open] != '(' {
 		return nil
 	}
+	if groupOpen, _, _, grouped := nextQuantifiedGroup(query, open); grouped && groupOpen == open {
+		// A pattern may start with a quantified path pattern: ((x)-->(y))+.
+		return nil
+	}
 	close := findMatchingParen(query, open)
 	if close < 0 {
 		return nil
 	}
 	remaining := strings.TrimSpace(query[close+1:])
 	if remaining == "" || remaining[0] == ',' || remaining[0] == '-' || remaining[0] == '<' || remaining[0] == ';' {
+		return nil
+	}
+	// A quantified path pattern follows its node directly: (a)((x)-->(y))+.
+	if open, _, _, ok := nextQuantifiedGroup(remaining, 0); ok && open == 0 && keyword == "MATCH" {
 		return nil
 	}
 	for _, allowed := range []string{"WHERE", "USING", "RETURN", "WITH", "MATCH", "OPTIONAL", "CREATE", "MERGE", "SET", "REMOVE", "DELETE", "UNWIND", "CALL", "FOREACH", "ORDER", "SKIP", "LIMIT", "UNION", "LET", "FILTER", "FOR"} {

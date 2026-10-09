@@ -166,3 +166,21 @@
 - id: cyphermatching.repeatable_elements_path_mode
   description: "Expanded pseudo-locale repeatable elements path mode."
   other: "[!! REPEATABLE ELEMENTS with {{.Mode}} path mode is not supported. !!]"
+- id: cyphermatching.quantified_path_zero_limit
+  description: "Expanded pseudo-locale quantified path zero limit."
+  other: "[!! A quantifier for a path pattern must not be limited by 0. !!]"
+- id: cyphermatching.quantified_path_variable_outside
+  description: "Expanded pseudo-locale quantified path variable outside."
+  other: "[!! The variable `{{.Variable}}` occurs both inside and outside a quantified path pattern and needs to be renamed. !!]"
+- id: cyphermatching.quantified_path_nested
+  description: "Expanded pseudo-locale quantified path nested."
+  other: "[!! Quantified path patterns are not allowed to be nested. !!]"
+- id: cyphermatching.quantified_path_no_relationship
+  description: "Expanded pseudo-locale quantified path no relationship."
+  other: "[!! A quantified path pattern needs to have at least one relationship. !!]"
+- id: cyphermatching.quantifier_bounds_reversed
+  description: "Expanded pseudo-locale quantifier bounds reversed."
+  other: "[!! A quantifier for a path pattern must not have a lower bound which exceeds its upper bound. !!]"
+- id: cyphermatching.quantified_path_variable_bound
+  description: "Expanded pseudo-locale quantified path variable bound."
+  other: "[!! The variable `{{.Variable}}` is already defined in a previous clause, it cannot be referenced as a node or as a relationship variable inside of a quantified path pattern. !!]"

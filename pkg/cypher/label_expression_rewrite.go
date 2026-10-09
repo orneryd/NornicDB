@@ -83,7 +83,7 @@ func (m labelPatternMode) clause() string {
 func desugarLabelExpressions(query string, params map[string]interface{}) (string, *queryRewrite, error) {
 	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) && indexASCIIFold(query, "shortestpath") < 0 &&
 		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
-		!mayRepeatRelationshipVariable(query) {
+		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) {
 		return query, nil, nil
 	}
 	r := &labelExpressionRewriter{query: query, params: params}
@@ -388,6 +388,9 @@ func (r *labelExpressionRewriter) statement(start, end int) error {
 				return err
 			}
 		case "CREATE", "MERGE":
+			if hasQuantifiedGroup(r.query[clause.bodyStart:clause.end]) {
+				return labelExpressionSyntaxError(localization.CypherMatchingQuantifiedPathInWritePattern(clause.keyword))
+			}
 			if err := writePatternSelectorError(r.query, clause); err != nil {
 				return err
 			}
@@ -497,9 +500,15 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 				return nil
 			}
 			inner := skipASCIISpaces(q, i+1, close)
-			if inner < close && q[inner] == '(' || i > start && isIdentByte(q[i-1]) {
-				// A parenthesised path, a quantified group, or
-				// shortestPath(…): its elements are pattern elements.
+			if inner < close && q[inner] == '(' && mode == labelPatternMatch && quantifiedGroupAt(q, close, end) {
+				// A quantified group's predicates are its own WHERE's.
+				if err := r.quantifiedGroup(i, close); err != nil {
+					return err
+				}
+			} else if inner < close && q[inner] == '(' || i > start && isIdentByte(q[i-1]) {
+				// A parenthesised path, a quantified group in a write
+				// pattern, or shortestPath(…): its elements are pattern
+				// elements.
 				if err := r.patternElements(i+1, close, mode, predicates); err != nil {
 					return err
 				}

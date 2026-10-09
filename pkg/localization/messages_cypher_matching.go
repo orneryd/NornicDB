@@ -62,6 +62,12 @@ const (
 	MessageCypherMatchingVariableTypeConflict                     MessageID = "cyphermatching.variable_type_conflict"
 	MessageCypherMatchingRepeatableElementsUnbounded              MessageID = "cyphermatching.repeatable_elements_unbounded"
 	MessageCypherMatchingRepeatableElementsPathMode               MessageID = "cyphermatching.repeatable_elements_path_mode"
+	MessageCypherMatchingQuantifiedPathZeroLimit                  MessageID = "cyphermatching.quantified_path_zero_limit"
+	MessageCypherMatchingQuantifiedPathVariableOutside            MessageID = "cyphermatching.quantified_path_variable_outside"
+	MessageCypherMatchingQuantifiedPathNested                     MessageID = "cyphermatching.quantified_path_nested"
+	MessageCypherMatchingQuantifiedPathNoRelationship             MessageID = "cyphermatching.quantified_path_no_relationship"
+	MessageCypherMatchingQuantifierBoundsReversed                 MessageID = "cyphermatching.quantifier_bounds_reversed"
+	MessageCypherMatchingQuantifiedPathVariableBound              MessageID = "cyphermatching.quantified_path_variable_bound"
 )
 
 func cypherMatchingMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -372,4 +378,40 @@ func CypherMatchingRepeatableElementsUnbounded() Message {
 // ELEMENTS.
 func CypherMatchingRepeatableElementsPathMode(mode string) Message {
 	return cypherMatchingMessage(MessageCypherMatchingRepeatableElementsPathMode, "REPEATABLE ELEMENTS with "+mode+" path mode is not supported.", map[string]any{"Mode": mode})
+}
+
+// CypherMatchingQuantifiedPathZeroLimit is Neo4j's SyntaxError for a
+// quantified path pattern repeated at most 0 times ({0}, {,0}).
+func CypherMatchingQuantifiedPathZeroLimit() Message {
+	return cypherMatchingMessage(MessageCypherMatchingQuantifiedPathZeroLimit, "A quantifier for a path pattern must not be limited by 0.", nil)
+}
+
+// CypherMatchingQuantifiedPathVariableOutside is Neo4j's SyntaxError for a
+// variable named both inside and outside a quantified path pattern.
+func CypherMatchingQuantifiedPathVariableOutside(variable string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingQuantifiedPathVariableOutside, "The variable `"+variable+"` occurs both inside and outside a quantified path pattern and needs to be renamed.", map[string]any{"Variable": variable})
+}
+
+// CypherMatchingQuantifiedPathNested is Neo4j's SyntaxError for a quantified
+// path pattern or relationship quantifier inside a quantified path pattern.
+func CypherMatchingQuantifiedPathNested() Message {
+	return cypherMatchingMessage(MessageCypherMatchingQuantifiedPathNested, "Quantified path patterns are not allowed to be nested.", nil)
+}
+
+// CypherMatchingQuantifiedPathNoRelationship is Neo4j's SyntaxError for a
+// quantified path pattern without a relationship (((x))+).
+func CypherMatchingQuantifiedPathNoRelationship() Message {
+	return cypherMatchingMessage(MessageCypherMatchingQuantifiedPathNoRelationship, "A quantified path pattern needs to have at least one relationship.", nil)
+}
+
+// CypherMatchingQuantifierBoundsReversed is Neo4j's SyntaxError for a
+// quantifier whose lower bound exceeds its upper bound ({2,1}).
+func CypherMatchingQuantifierBoundsReversed() Message {
+	return cypherMatchingMessage(MessageCypherMatchingQuantifierBoundsReversed, "A quantifier for a path pattern must not have a lower bound which exceeds its upper bound.", nil)
+}
+
+// CypherMatchingQuantifiedPathVariableBound is Neo4j's SyntaxError for a
+// variable an earlier clause binds, named inside a quantified path pattern.
+func CypherMatchingQuantifiedPathVariableBound(variable string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingQuantifiedPathVariableBound, "The variable `"+variable+"` is already defined in a previous clause, it cannot be referenced as a node or as a relationship variable inside of a quantified path pattern.", map[string]any{"Variable": variable})
 }

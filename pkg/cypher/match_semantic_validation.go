@@ -473,7 +473,8 @@ func (e *StorageExecutor) validateMatchClauseBindings(scope matchSemanticScope, 
 		}
 	}
 	whereClause := ""
-	if where := findKeywordIndexInContext(pattern, "WHERE"); where >= 0 {
+	// A WHERE inside parentheses is a quantified path pattern's own.
+	if where := topLevelKeywordIndex(pattern, "WHERE"); where >= 0 {
 		whereClause = strings.TrimSpace(pattern[where+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:where])
 	}
@@ -493,6 +494,17 @@ func (e *StorageExecutor) validateMatchClauseBindings(scope matchSemanticScope, 
 	}
 
 	variableLengthRelationships := variableLengthRelationshipVariableSet(pattern)
+	groupNodes, groupRelationships := quantifiedGroupVariables(pattern)
+	for variable := range groupNodes {
+		if _, bound := scope[variable]; bound {
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound", localization.CypherMatchingQuantifiedPathVariableBound(variable))
+		}
+	}
+	for variable := range groupRelationships {
+		if _, bound := scope[variable]; bound {
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound", localization.CypherMatchingQuantifiedPathVariableBound(variable))
+		}
+	}
 	for _, patternPart := range splitTopLevelComma(pattern) {
 		patternPart = strings.TrimSpace(patternPart)
 		pathVariable := extractPathAssignmentVariable(patternPart)
@@ -519,7 +531,11 @@ func (e *StorageExecutor) validateMatchClauseBindings(scope matchSemanticScope, 
 					fmt.Sprintf("path variable %s is already bound", pathVariable),
 				)
 			}
-			if err := bindMatchSemanticKind(scope, variable, matchBindingNode); err != nil {
+			kind := matchBindingNode
+			if _, grouped := groupNodes[variable]; grouped {
+				kind = matchBindingNodeList
+			}
+			if err := bindMatchSemanticKind(scope, variable, kind); err != nil {
 				return err
 			}
 		}
@@ -533,6 +549,9 @@ func (e *StorageExecutor) validateMatchClauseBindings(scope matchSemanticScope, 
 			}
 			kind := matchBindingRelationship
 			if _, variableLength := variableLengthRelationships[variable]; variableLength {
+				kind = matchBindingRelationshipList
+			}
+			if _, grouped := groupRelationships[variable]; grouped {
 				kind = matchBindingRelationshipList
 			}
 			if err := bindMatchSemanticKind(scope, variable, kind); err != nil {
@@ -1067,14 +1086,21 @@ func addMatchPatternBindingKinds(scope matchSemanticScope, clause string) {
 			break
 		}
 	}
+	groupNodes, groupRelationships := quantifiedGroupVariables(pattern)
 	for _, variable := range extractNodeVariables(pattern) {
 		if _, found := scope[variable]; !found {
 			scope[variable] = matchBindingNode
+			if _, grouped := groupNodes[variable]; grouped {
+				scope[variable] = matchBindingNodeList
+			}
 		}
 	}
 	for _, variable := range extractRelationshipVariables(pattern) {
 		if _, found := scope[variable]; !found {
 			scope[variable] = matchBindingRelationship
+			if _, grouped := groupRelationships[variable]; grouped {
+				scope[variable] = matchBindingRelationshipList
+			}
 		}
 	}
 	for _, patternPart := range splitTopLevelComma(pattern) {

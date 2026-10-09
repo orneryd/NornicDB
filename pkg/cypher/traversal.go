@@ -1236,8 +1236,13 @@ type TraversalSegment struct {
 
 // parseTraversalPattern parses (a:Label)-[r:TYPE]->(b:Label) style patterns
 // Also handles chained patterns like (a)<-[:R1]-(b)-[:R2]->(c)
+// A pattern with a quantified path pattern (((x)-->(y))+) is none: only
+// the clause pipeline runs one (quantified_path_pattern.go).
 // Uses a state machine instead of regex to properly handle parentheses in property values
 func (e *StorageExecutor) parseTraversalPattern(ctx context.Context, pattern string) *TraversalMatch {
+	if hasQuantifiedGroup(pattern) {
+		return nil
+	}
 	pattern = normalizeAnonymousTraversalRelationships(pattern)
 	// First check if this is a chained pattern (has multiple relationship segments)
 	if e.isChainedPattern(pattern) {

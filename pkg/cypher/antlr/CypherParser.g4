@@ -488,8 +488,24 @@ pathFunction
     ;
 
 patternElem
-    : nodePattern patternElemChain*
+    : patternElemStart patternElemPart*
     | LPAREN patternElem RPAREN
+    ;
+
+// A quantified path pattern repeats a parenthesised path; the node patterns
+// around it may be left out (((a)-->(b))+, (a)((x)-->(y)){1,3}(b)).
+patternElemStart
+    : nodePattern
+    | quantifiedPath nodePattern?
+    ;
+
+patternElemPart
+    : patternElemChain
+    | quantifiedPath nodePattern?
+    ;
+
+quantifiedPath
+    : LPAREN patternElem where? RPAREN relationshipQuantifier
     ;
 
 patternElemChain
