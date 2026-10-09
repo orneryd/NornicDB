@@ -157,3 +157,6 @@
 - id: cyphermatching.path_selector_outside_match
   description: "A path selector reached a step that does not run path patterns."
   other: "a path selector can only be used in a MATCH pattern"
+- id: cyphermatching.variable_type_conflict
+  description: "A variable is bound as two types in one pattern. Variable is the variable name; Defined and Expected are Cypher type names; none is translated."
+  other: "Type mismatch: {{.Variable}} defined with conflicting type {{.Defined}} (expected {{.Expected}})"

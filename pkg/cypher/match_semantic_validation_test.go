@@ -104,12 +104,18 @@ func TestUndirectedMatchEmitsSelfRelationshipOnce(t *testing.T) {
 	require.Equal(t, [][]interface{}{{"LOOP"}}, result.Rows)
 }
 
-func TestMatchRejectsRelationshipReuseWithinOnePattern(t *testing.T) {
+// A relationship variable named twice in one MATCH binds one relationship to
+// both places, which relationship uniqueness never allows: the clause matches
+// nothing, as in Neo4j (#907), even over a self-loop.
+func TestMatchRelationshipReuseWithinOnePatternMatchesNothing(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_relationship_uniqueness"))
 	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (a:L)-[:R]->(a)", nil)
+	require.NoError(t, err)
 
-	_, err := exec.Execute(ctx, "MATCH (a)-[r]->()-[r]->(a) RETURN r", nil)
-	requireMatchSemanticDetail(t, err, "RelationshipUniquenessViolation")
+	result, err := exec.Execute(ctx, "MATCH (a)-[r]->()-[r]->(a) RETURN r", nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
 }
 
 func TestMatchRejectsPathVariableAlreadyBoundByAnotherEntity(t *testing.T) {
