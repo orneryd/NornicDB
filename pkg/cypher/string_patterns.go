@@ -5,7 +5,6 @@
 // than their regex equivalents.
 //
 // Performance comparison (benchmark on M1 Mac):
-//   - splitByKeyword vs regex Split: ~8x faster
 //   - extractLimitSkip vs regex FindStringSubmatch: ~6x faster
 //   - extractParameter vs regex FindAllStringSubmatch: ~5x faster
 package cypher
