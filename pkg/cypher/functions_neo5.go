@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 	"strconv"
@@ -325,7 +326,7 @@ func fnRadians(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if !ok {
 		return nil, &cypherfn.TypeMismatchError{Function: "radians", Expected: "Float", Value: values[0]}
 	}
-	return number * math.Pi / 180, nil
+	return angle.ToRadians(number), nil
 }
 
 func fnIsNaN(ctx cypherfn.Context, args []string) (interface{}, error) {

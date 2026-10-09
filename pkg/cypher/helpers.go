@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 
@@ -176,22 +177,25 @@ func getLatLon(m map[string]interface{}) (float64, float64, bool) {
 	return lat, lon, okLat && okLon
 }
 
-// haversineDistance calculates the distance between two lat/lon points in
-// meters, on the Earth radius Neo4j's point.distance uses.
+// haversineDistance is the great-circle distance in meters between two
+// latitude / longitude points in degrees, on the Earth radius Neo4j's
+// point.distance uses (greatCircleAngle).
 func haversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
-	const earthRadius = earthRadiusMeters
+	return earthRadiusMeters * greatCircleAngle(lat1, lon1, lat2, lon2)
+}
 
-	lat1Rad := lat1 * math.Pi / 180
-	lat2Rad := lat2 * math.Pi / 180
-	deltaLat := (lat2 - lat1) * math.Pi / 180
-	deltaLon := (lon2 - lon1) * math.Pi / 180
-
-	a := math.Sin(deltaLat/2)*math.Sin(deltaLat/2) +
-		math.Cos(lat1Rad)*math.Cos(lat2Rad)*
-			math.Sin(deltaLon/2)*math.Sin(deltaLon/2)
-	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
-
-	return earthRadius * c
+// greatCircleAngle is the central angle in radians between two latitude /
+// longitude points in degrees, by the haversine formula as Neo4j 5.26.30
+// computes it: each coordinate converted to radians once (angle), then
+// differenced. Converting the degree differences instead, or both, differs
+// from Neo4j in the last bits, and by up to 1e-10 for points close together
+// (#907).
+func greatCircleAngle(lat1, lon1, lat2, lon2 float64) float64 {
+	lat1Rad, lat2Rad := angle.ToRadians(lat1), angle.ToRadians(lat2)
+	deltaLat := lat2Rad - lat1Rad
+	deltaLon := angle.ToRadians(lon2) - angle.ToRadians(lon1)
+	a := math.Sin(deltaLat/2)*math.Sin(deltaLat/2) + math.Cos(lat1Rad)*math.Cos(lat2Rad)*math.Sin(deltaLon/2)*math.Sin(deltaLon/2)
+	return 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 }
 
 // pointInPolygon uses the ray casting algorithm to determine if a point is inside a polygon.

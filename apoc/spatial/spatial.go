@@ -5,6 +5,7 @@
 package spatial
 
 import (
+	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 )
 
@@ -33,10 +34,10 @@ func HaversineDistance(lat1, lon1, lat2, lon2 float64) float64 {
 	const R = 6371 // Earth radius in kilometers
 
 	// Convert to radians
-	lat1Rad := lat1 * math.Pi / 180
-	lat2Rad := lat2 * math.Pi / 180
-	dLat := (lat2 - lat1) * math.Pi / 180
-	dLon := (lon2 - lon1) * math.Pi / 180
+	lat1Rad := angle.ToRadians(lat1)
+	lat2Rad := angle.ToRadians(lat2)
+	dLat := angle.ToRadians(lat2 - lat1)
+	dLon := angle.ToRadians(lon2 - lon1)
 
 	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
 		math.Cos(lat1Rad)*math.Cos(lat2Rad)*
@@ -64,14 +65,14 @@ func VincentyDistance(lat1, lon1, lat2, lon2 float64) float64 {
 //
 //	apoc.spatial.bearing(point1, point2) => bearing in degrees
 func Bearing(p1, p2 *Point) float64 {
-	lat1 := p1.Latitude * math.Pi / 180
-	lat2 := p2.Latitude * math.Pi / 180
-	dLon := (p2.Longitude - p1.Longitude) * math.Pi / 180
+	lat1 := angle.ToRadians(p1.Latitude)
+	lat2 := angle.ToRadians(p2.Latitude)
+	dLon := angle.ToRadians(p2.Longitude - p1.Longitude)
 
 	y := math.Sin(dLon) * math.Cos(lat2)
 	x := math.Cos(lat1)*math.Sin(lat2) - math.Sin(lat1)*math.Cos(lat2)*math.Cos(dLon)
 
-	bearing := math.Atan2(y, x) * 180 / math.Pi
+	bearing := angle.ToDegrees(math.Atan2(y, x))
 
 	// Normalize to 0-360
 	return math.Mod(bearing+360, 360)
@@ -85,9 +86,9 @@ func Bearing(p1, p2 *Point) float64 {
 func Destination(start *Point, bearing, distance float64) *Point {
 	const R = 6371000 // Earth radius in meters
 
-	lat1 := start.Latitude * math.Pi / 180
-	lon1 := start.Longitude * math.Pi / 180
-	bearingRad := bearing * math.Pi / 180
+	lat1 := angle.ToRadians(start.Latitude)
+	lon1 := angle.ToRadians(start.Longitude)
+	bearingRad := angle.ToRadians(bearing)
 
 	lat2 := math.Asin(math.Sin(lat1)*math.Cos(distance/R) +
 		math.Cos(lat1)*math.Sin(distance/R)*math.Cos(bearingRad))
@@ -97,8 +98,8 @@ func Destination(start *Point, bearing, distance float64) *Point {
 		math.Cos(distance/R)-math.Sin(lat1)*math.Sin(lat2))
 
 	return &Point{
-		Latitude:  lat2 * 180 / math.Pi,
-		Longitude: lon2 * 180 / math.Pi,
+		Latitude:  angle.ToDegrees(lat2),
+		Longitude: angle.ToDegrees(lon2),
 	}
 }
 
@@ -108,10 +109,10 @@ func Destination(start *Point, bearing, distance float64) *Point {
 //
 //	apoc.spatial.midpoint(point1, point2) => midpoint
 func Midpoint(p1, p2 *Point) *Point {
-	lat1 := p1.Latitude * math.Pi / 180
-	lon1 := p1.Longitude * math.Pi / 180
-	lat2 := p2.Latitude * math.Pi / 180
-	dLon := (p2.Longitude - p1.Longitude) * math.Pi / 180
+	lat1 := angle.ToRadians(p1.Latitude)
+	lon1 := angle.ToRadians(p1.Longitude)
+	lat2 := angle.ToRadians(p2.Latitude)
+	dLon := angle.ToRadians(p2.Longitude - p1.Longitude)
 
 	bx := math.Cos(lat2) * math.Cos(dLon)
 	by := math.Cos(lat2) * math.Sin(dLon)
@@ -123,8 +124,8 @@ func Midpoint(p1, p2 *Point) *Point {
 	lon3 := lon1 + math.Atan2(by, math.Cos(lat1)+bx)
 
 	return &Point{
-		Latitude:  lat3 * 180 / math.Pi,
-		Longitude: lon3 * 180 / math.Pi,
+		Latitude:  angle.ToDegrees(lat3),
+		Longitude: angle.ToDegrees(lon3),
 	}
 }
 
@@ -196,10 +197,10 @@ func Area(polygon []*Point) float64 {
 		p1 := polygon[i]
 		p2 := polygon[(i+1)%len(polygon)]
 
-		lat1 := p1.Latitude * math.Pi / 180
-		lon1 := p1.Longitude * math.Pi / 180
-		lat2 := p2.Latitude * math.Pi / 180
-		lon2 := p2.Longitude * math.Pi / 180
+		lat1 := angle.ToRadians(p1.Latitude)
+		lon1 := angle.ToRadians(p1.Longitude)
+		lat2 := angle.ToRadians(p2.Latitude)
+		lon2 := angle.ToRadians(p2.Longitude)
 
 		area += (lon2 - lon1) * (2 + math.Sin(lat1) + math.Sin(lat2))
 	}
