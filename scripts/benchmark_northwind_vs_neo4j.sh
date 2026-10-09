@@ -683,18 +683,32 @@ install_engines() {
 }
 
 install_ladybug() {
-	if [[ ! -f "${LADYBUG_LIB_DIR}/liblbug.dylib" && ! -f "${LADYBUG_LIB_DIR}/liblbug.so" ]]; then
+	if ! ls "${LADYBUG_LIB_DIR}"/liblbug*.dylib >/dev/null 2>&1 && ! ls "${LADYBUG_LIB_DIR}"/liblbug.so* >/dev/null 2>&1; then
 		log "downloading LadybugDB precompiled library into ${LADYBUG_LIB_DIR}…"
 		mkdir -p "${LADYBUG_LIB_DIR}"
 		curl -fsSL https://raw.githubusercontent.com/LadybugDB/ladybug/refs/heads/main/scripts/download-liblbug.sh \
 			| LBUG_TARGET_DIR="${LADYBUG_LIB_DIR}" bash || die "LadybugDB library download failed"
-		if [[ "$(uname)" == "Darwin" ]]; then
-			ln -sf liblbug.dylib "${LADYBUG_LIB_DIR}/liblbug.0.dylib"
-		else
-			ln -sf liblbug.so "${LADYBUG_LIB_DIR}/liblbug.so.0"
-		fi
 	else
 		log "LadybugDB library already present in ${LADYBUG_LIB_DIR}"
+	fi
+	# The release tarball ships `liblbug.dylib -> liblbug.0.dylib` but not the
+	# versioned SONAME link itself, so `-llbug` cannot resolve until
+	# liblbug.0.dylib points at the real library. Recreate it pointing at the
+	# versioned file whenever one exists (idempotent). `find` is used instead
+	# of a glob so `set -euo pipefail` cannot kill the script when the glob
+	# has no match.
+	local versioned=""
+	if [[ "$(uname)" == "Darwin" ]]; then
+		versioned=$(find "${LADYBUG_LIB_DIR}" -maxdepth 1 -name 'liblbug.[0-9]*.dylib' 2>/dev/null | head -1)
+	else
+		versioned=$(find "${LADYBUG_LIB_DIR}" -maxdepth 1 -name 'liblbug.so.[0-9]*' 2>/dev/null | head -1)
+	fi
+	if [[ -z "${versioned}" ]]; then
+		versioned="${LADYBUG_LIB_DIR}/liblbug.dylib"
+	fi
+	ln -sf "$(basename "${versioned}")" "${LADYBUG_LIB_DIR}/liblbug.0.dylib"
+	if [[ "$(uname)" != "Darwin" ]]; then
+		ln -sf "$(basename "${versioned}")" "${LADYBUG_LIB_DIR}/liblbug.so.0"
 	fi
 	log "fetching go-ladybug binding (records go.mod/go.sum changes)…"
 	go get github.com/LadybugDB/go-ladybug@v0.17.0 || die "go get github.com/LadybugDB/go-ladybug failed"
@@ -743,7 +757,7 @@ run_docker_engine() {
 		if nc -z 127.0.0.1 "${host_port}" 2>/dev/null; then break; fi
 		sleep 1
 		if ! docker ps --format '{{.Names}}' | grep -qx "${container}"; then
-			die "${label} container exited during startup; see ${REPORT_DIR}/${label}.docker.log"
+			die "${label} container failed to start or exited during startup; see ${REPORT_DIR}/${label}.docker.log"
 		fi
 	done
 	nc -z 127.0.0.1 "${host_port}" 2>/dev/null || die "${label} port never came up — see ${REPORT_DIR}/${label}.docker.log"
@@ -828,11 +842,10 @@ run_falkor() {
 }
 
 run_memgraph() {
-	# Memgraph maps the host dir into its data directory and logs to stderr so
-	# the report can classify the store. No auth by default.
+	# Memgraph maps the host dir into its data directory. No auth by default;
+	# the report classifies the store from the data dir itself.
 	run_docker_engine "memgraph" "${MEMGRAPH_IMAGE}" "${MEMGRAPH_BOLT_PORT}" "7687" \
-		"${MEMGRAPH_DATA_DIR}" "/var/lib/memgraph" "${MEMGRAPH_DATABASE}" "none" "bolt" \
-		--also-log-to-stderr
+		"${MEMGRAPH_DATA_DIR}" "/var/lib/memgraph" "${MEMGRAPH_DATABASE}" "none" "bolt"
 }
 
 run_ladybug() {
@@ -847,7 +860,9 @@ run_ladybug() {
 	mkdir -p "$(dirname "${LADYBUG_DATA_DIR}")"
 
 	log "building ladybug-enabled benchmark runner"
-	CGO_ENABLED=1 CGO_LDFLAGS="-L${LADYBUG_LIB_DIR} -llbug -Wl,-rpath,${LADYBUG_LIB_DIR}" \
+	CGO_ENABLED=1 \
+		CGO_CFLAGS="-I${LADYBUG_LIB_DIR}" \
+		CGO_LDFLAGS="-L${LADYBUG_LIB_DIR} -llbug -Wl,-rpath,${LADYBUG_LIB_DIR}" \
 		go build -tags "ladybug,system_ladybug" -o "${LADYBUG_BENCH_BIN}" ./testing/benchmarks/northwind_power \
 		|| die "ladybug runner build failed (check ${LADYBUG_LIB_DIR} and the go-ladybug dependency)"
 

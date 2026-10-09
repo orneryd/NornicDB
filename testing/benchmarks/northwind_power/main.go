@@ -438,8 +438,22 @@ func main() {
 	}
 	defer driver.Close(ctx)
 
-	if err := driver.VerifyConnectivity(ctx); err != nil {
-		die("connectivity: %v", err)
+	// Memgraph opens its Bolt socket before the server can complete a
+	// handshake — the first connect attempts fail with EOF — and a cold
+	// Neo4j can take a while to accept connections. Retry briefly so the
+	// orchestrator never reports a false failure during engine startup.
+	var connectErr error
+	for i := 0; i < 60; i++ {
+		if err := driver.VerifyConnectivity(ctx); err == nil {
+			connectErr = nil
+			break
+		} else {
+			connectErr = err
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if connectErr != nil {
+		die("connectivity: %v", connectErr)
 	}
 
 	report := &Report{
