@@ -60,6 +60,11 @@ const (
 	MessageCypherCoreListIndexTypeMismatch               MessageID = "cyphercore.list_index_type_mismatch"
 	MessageCypherCoreMapKeyTypeMismatch                  MessageID = "cyphercore.map_key_type_mismatch"
 	MessageCypherCoreEntityPropertyKeyTypeMismatch       MessageID = "cyphercore.entity_property_key_type_mismatch"
+	MessageCypherCoreTokenNameInvalid                    MessageID = "cyphercore.token_name_invalid"
+	MessageCypherCoreTokenNameNull                       MessageID = "cyphercore.token_name_null"
+	MessageCypherCoreDynamicLabelValueInvalid            MessageID = "cyphercore.dynamic_label_value_invalid"
+	MessageCypherCoreDynamicLabelTypeMismatch            MessageID = "cyphercore.dynamic_label_type_mismatch"
+	MessageCypherCoreLabelTargetTypeMismatch             MessageID = "cyphercore.label_target_type_mismatch"
 	MessageCypherCoreRegexPatternTypeMismatch            MessageID = "cyphercore.regex_pattern_type_mismatch"
 	MessageCypherCoreDurationArithmeticOverflow          MessageID = "cyphercore.duration_arithmetic_overflow"
 	MessageCypherCoreFunctionArgumentCount               MessageID = "cyphercore.function_argument_count"
@@ -366,6 +371,37 @@ func CypherCoreMapKeyTypeMismatch(typeName string) Message {
 
 func CypherCoreEntityPropertyKeyTypeMismatch(typeName string) Message {
 	return cypherCoreMessage(MessageCypherCoreEntityPropertyKeyTypeMismatch, "Type mismatch: node or relationship property key must be given as String, but was "+typeName, map[string]any{"Type": typeName})
+}
+
+// CypherCoreTokenNameInvalid is the TokenNameError of a label, relationship
+// type or property key name that is empty or holds a null byte (name).
+func CypherCoreTokenNameInvalid(name string) Message {
+	return cypherCoreMessage(MessageCypherCoreTokenNameInvalid, "'"+name+"' is not a valid token name. Token names cannot be empty or contain any null-bytes.", map[string]any{"Name": name})
+}
+
+// CypherCoreTokenNameNull is the error of a null label, relationship type or
+// property key name.
+func CypherCoreTokenNameNull() Message {
+	return cypherCoreMessage(MessageCypherCoreTokenNameNull, "Null is not a valid token name. Token names cannot be empty or contain any null-bytes.", nil)
+}
+
+// CypherCoreDynamicLabelValueInvalid is the TypeError of a dynamic label
+// ($(expr)) whose value is neither a string nor a list of strings.
+func CypherCoreDynamicLabelValueInvalid() Message {
+	return cypherCoreMessage(MessageCypherCoreDynamicLabelValueInvalid, "Expected node label to be a string or list of strings.", nil)
+}
+
+// CypherCoreDynamicLabelTypeMismatch is the compile-time error of a dynamic
+// label ($(expr)) whose static type (typeName) is neither STRING nor
+// LIST<STRING>.
+func CypherCoreDynamicLabelTypeMismatch(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreDynamicLabelTypeMismatch, "Type mismatch: expected String or List<String> but was "+typeName, map[string]any{"Type": typeName})
+}
+
+// CypherCoreLabelTargetTypeMismatch is the error of a SET or REMOVE label
+// item whose target (typeName) isn't a node.
+func CypherCoreLabelTargetTypeMismatch(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreLabelTargetTypeMismatch, "Type mismatch: expected Node but was "+typeName, map[string]any{"Type": typeName})
 }
 
 func CypherCoreFunctionArgumentCount(function string, want string, got int) Message {

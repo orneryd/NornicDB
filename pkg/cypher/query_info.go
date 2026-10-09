@@ -589,7 +589,8 @@ func setItemKeepsMergeKey(item, property string, mergeKeys map[string][]string, 
 	switch {
 	case operator == ":":
 		return true
-	case operator == "":
+	case operator == "", operator == "[]=":
+		// A dynamic key (x[key] = v) may name any property.
 		return false
 	case setProperty != "":
 		if normalizePropertyKey(setProperty) != property {

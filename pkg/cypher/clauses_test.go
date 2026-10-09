@@ -1813,11 +1813,6 @@ RETURN n._mongo_collection AS coll, n._mongo_database AS db, n._mongo_id AS id
 // ========================================
 
 func TestParseRemoveProperties(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	e := NewStorageExecutor(store)
-
 	tests := []struct {
 		input    string
 		expected []string
@@ -1830,9 +1825,16 @@ func TestParseRemoveProperties(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := e.parseRemoveProperties(tt.input)
-			if len(result) != len(tt.expected) {
-				t.Errorf("Expected %d props, got %d: %v", len(tt.expected), len(result), result)
+			items, err := parseRemoveItems(tt.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := make([]string, 0, len(items))
+			for _, item := range items {
+				result = append(result, item.property)
+			}
+			if !reflect.DeepEqual(result, tt.expected) {
+				t.Errorf("Expected props %v, got %v", tt.expected, result)
 			}
 		})
 	}

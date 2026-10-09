@@ -753,37 +753,6 @@ func normalizePropValue(value interface{}) interface{} {
 	}
 }
 
-// parseRemoveItems parses "n.prop1, n:LabelA:LabelB, m.prop3" into
-// property names and label names.
-func (e *StorageExecutor) parseRemoveItems(removePart string) ([]string, []string) {
-	var props []string
-	var labels []string
-	parts := strings.Split(removePart, ",")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		if dotIdx := strings.Index(part, "."); dotIdx >= 0 {
-			propName := strings.TrimSpace(part[dotIdx+1:])
-			if propName != "" {
-				props = append(props, propName)
-			}
-			continue
-		}
-		if _, chain, hasLabels := splitNodeHead(part); hasLabels {
-			labels = append(labels, labelChainNames(chain)...)
-		}
-	}
-	return props, labels
-}
-
-// parseRemoveProperties is kept for test and call-site compatibility.
-func (e *StorageExecutor) parseRemoveProperties(removePart string) []string {
-	props, _ := e.parseRemoveItems(removePart)
-	return props
-}
-
 func removeNodeLabels(existing []string, labelsToRemove []string) ([]string, int64) {
 	if len(existing) == 0 || len(labelsToRemove) == 0 {
 		return existing, 0
@@ -802,72 +771,6 @@ func removeNodeLabels(existing []string, labelsToRemove []string) ([]string, int
 		next = append(next, label)
 	}
 	return next, removed
-}
-
-func (e *StorageExecutor) applyRemoveToMatchedRows(
-	store storage.Engine,
-	matchResult *ExecuteResult,
-	removePart string,
-	result *ExecuteResult,
-) error {
-	removeTargets := parseRemoveTargetBindings(removePart)
-	for _, row := range matchResult.Rows {
-		for colIdx, val := range row {
-			if colIdx >= len(matchResult.Columns) {
-				continue
-			}
-			varName := matchResult.Columns[colIdx]
-			propTargets := removeTargets.propertyNames(varName)
-			labelTargets := removeTargets.labelNames(varName)
-			if len(propTargets) == 0 && len(labelTargets) == 0 {
-				continue
-			}
-			switch entity := val.(type) {
-			case *storage.Node:
-				if entity == nil {
-					continue
-				}
-				for _, prop := range propTargets {
-					if _, exists := entity.Properties[prop]; exists {
-						delete(entity.Properties, prop)
-						result.Stats.PropertiesSet++
-					}
-				}
-				if len(labelTargets) > 0 {
-					oldLabels := make([]string, len(entity.Labels))
-					copy(oldLabels, entity.Labels)
-					next, removed := removeNodeLabels(entity.Labels, labelTargets)
-					if removed > 0 {
-						entity.Labels = next
-						if err := validatePolicyOnLabelChange(store, entity, oldLabels); err != nil {
-							entity.Labels = oldLabels
-							return err
-						}
-						result.Stats.LabelsRemoved += int(removed)
-					}
-				}
-				if err := store.UpdateNode(entity); err != nil {
-					return err
-				}
-				e.notifyNodeMutated(string(entity.ID))
-			case *storage.Edge:
-				if entity == nil {
-					continue
-				}
-				for _, prop := range propTargets {
-					if _, exists := entity.Properties[prop]; exists {
-						delete(entity.Properties, prop)
-						result.Stats.PropertiesSet++
-					}
-				}
-				if err := store.UpdateEdge(entity); err != nil {
-					return err
-				}
-				e.notifyEdgeMutated(string(entity.ID))
-			}
-		}
-	}
-	return nil
 }
 
 // executeCall handles CALL procedure queries.

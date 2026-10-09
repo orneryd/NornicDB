@@ -1615,27 +1615,6 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	return stats, true, nil
 }
 
-func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipelineRow, clause string, result *ExecuteResult) error {
-	body := strings.TrimSpace(clause[len("REMOVE"):])
-	store := e.getStorage(ctx)
-	for _, bindings := range rows {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		columns := make([]string, 0, len(bindings))
-		row := make([]interface{}, 0, len(bindings))
-		for name, value := range bindings {
-			columns = append(columns, name)
-			row = append(row, value)
-		}
-		matched := &ExecuteResult{Columns: columns, Rows: [][]interface{}{row}}
-		if err := e.applyRemoveToMatchedRows(store, matched, body, result); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // pipelineApplySet mutates entities already bound in each pipeline row. Scalar
 // and map bindings are attached as typed context values so assignments such as
 // SET target = row retain their original Go/Cypher types.
@@ -1684,35 +1663,8 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 		if err := ctx.Err(); err != nil {
 			return nil, true, err
 		}
-		nodes := make(map[string]*storage.Node)
+		rowCtx, nodes, rels := e.pipelineRowWriteContext(ctx, row)
 		evalNodes := nodes
-		rels := make(map[string]*storage.Edge)
-		params := make(map[string]interface{})
-		for name, value := range getParamsFromContext(ctx) {
-			params[name] = value
-		}
-		var values map[string]interface{}
-		for name, value := range row {
-			switch entity := value.(type) {
-			case *storage.Node:
-				nodes[name] = entity
-			case *storage.Edge:
-				rels[name] = entity
-			default:
-				// Row values (UNWIND / WITH maps, lists, scalars) are variables in
-				// the value scope; they also stay reachable as parameters for
-				// resolveContextPathRef.
-				params[name] = value
-				if values == nil {
-					values = valueBindingsLayer(ctx, len(row))
-				}
-				values[name] = value
-			}
-		}
-		rowCtx := withParams(ctx, params)
-		if values != nil {
-			rowCtx = withValueBindings(rowCtx, values)
-		}
 		if simplePropertyAssignment {
 			if node := nodes[simpleTarget]; node != nil {
 				value, err := e.setPropertyValue(rowCtx, simpleExpression, evalNodes, rels)
@@ -1770,9 +1722,9 @@ func pipelineSimplePropertyAssignment(assignments []string) (target, property, e
 
 // validatePipelineSetAssignments statically checks SET assignment shapes for
 // every route (it runs from validateSetClauseScope before execution): x = v,
-// x.p = v, x += map and x:L1:L2 with a bound-identifier target, a non-empty
-// right-hand side, a parseable inline map for += and a valid label chain
-// (setLabelChain). The source type of x = and x += is checked after the
+// x.p = v, x[key] = v, x += map and x:L1:$(expr) with a bound-identifier
+// target, a non-empty right-hand side, a parseable inline map for += and a
+// valid label chain (setLabelChainItems). The source type of x = and x += is checked after the
 // variables (setSourceTypeError, validateSetClauseScope). Forms are split by
 // splitSetAssignment, the splitter the applicators use.
 func validatePipelineSetAssignments(assignments []string) error {
@@ -1796,10 +1748,9 @@ func validatePipelineSetAssignments(assignments []string) error {
 				}
 			}
 		case ":":
-			if strings.HasPrefix(right, "$(") {
-				continue // dynamic labels are resolved at run time
-			}
-			if _, err := setLabelChain(right); err != nil {
+			// Static labels are checked here; a $(expr) item's value is read
+			// at run time (chainLabelNames).
+			if _, err := setLabelChainItems(right); err != nil {
 				return err
 			}
 		}

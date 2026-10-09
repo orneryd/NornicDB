@@ -231,7 +231,7 @@ func TestBug_RemoveOnOptionalMatchRelVar(t *testing.T) {
 	assert.Nil(t, verify.Rows[0][0], "the property removal must persist on the real stored edge")
 }
 
-// TestBug_ChainedSetRemoveOnRelationshipVar exercises applyRemoveToMatchedRows
+// TestBug_ChainedSetRemoveOnRelationshipVar exercises pipelineApplyRemove
 // (the helper backing a chained "SET ... REMOVE ..." clause in a single
 // statement) with a relationship variable, proving its *storage.Edge branch
 // removes the property from the real edge rather than silently skipping

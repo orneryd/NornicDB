@@ -152,6 +152,16 @@
   other: "Tipo no coincidente: la clave del mapa debe ser String, pero era {{.Type}}"
 - id: cyphercore.entity_property_key_type_mismatch
   other: "Tipo no coincidente: la clave de propiedad de un nodo o relación debe ser String, pero era {{.Type}}"
+- id: cyphercore.token_name_invalid
+  other: "'{{.Name}}' no es un nombre de token válido. Los nombres de token no pueden estar vacíos ni contener bytes nulos."
+- id: cyphercore.token_name_null
+  other: "Null no es un nombre de token válido. Los nombres de token no pueden estar vacíos ni contener bytes nulos."
+- id: cyphercore.dynamic_label_value_invalid
+  other: "Se esperaba que la etiqueta del nodo fuera una cadena o una lista de cadenas."
+- id: cyphercore.dynamic_label_type_mismatch
+  other: "Tipo no coincidente: se esperaba String o List<String> pero era {{.Type}}"
+- id: cyphercore.label_target_type_mismatch
+  other: "Tipo no coincidente: se esperaba Node pero era {{.Type}}"
 - id: cyphercore.function_argument_count
   other: "{{.Function}}() espera {{.Expected}} argumento(s), recibió {{.Got}}"
 - id: cyphercore.trim_character_length

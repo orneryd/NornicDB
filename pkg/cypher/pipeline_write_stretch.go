@@ -130,14 +130,29 @@ func analyzeStretchClause(clause pipelineClause, reads, writes *stretchTokens) {
 	case pipelineClauseSet:
 		addStretchSetItems(pipelineClauseBody(text, "SET"), reads, writes)
 	case pipelineClauseRemove:
-		for _, item := range splitTopLevelComma(pipelineClauseBody(text, "REMOVE")) {
-			item = strings.TrimSpace(item)
-			if _, property, isProperty := parseVarPropertyRef(item); isProperty {
-				writes.add(&writes.keys, property)
-			} else if colon := indexByteOutsideBackticks(item, ':'); colon > 0 {
-				addStretchLabelChain(item[colon:], writes)
-			} else {
-				writes.everything = true
+		// The REMOVE item reader (parseRemoveItems) names what each item
+		// removes; a dynamic label or key stands for any.
+		items, err := parseRemoveItems(pipelineClauseBody(text, "REMOVE"))
+		if err != nil {
+			writes.everything = true
+			break
+		}
+		for _, item := range items {
+			switch {
+			case len(item.labels) > 0:
+				for _, label := range item.labels {
+					if label.expression != "" {
+						writes.anyNode = true
+						addStretchExpressionReads(label.expression, reads)
+						continue
+					}
+					writes.add(&writes.labels, label.name)
+				}
+			case item.key != "":
+				writes.anyKey = true
+				addStretchExpressionReads(item.key, reads)
+			default:
+				writes.add(&writes.keys, item.property)
 			}
 		}
 	case pipelineClauseWith, pipelineClauseUnwind, pipelineClauseReturn:
@@ -290,7 +305,14 @@ func addStretchSetItems(list string, reads, writes *stretchTokens) {
 		switch {
 		case operator == ":":
 			addStretchLabelChain(":"+right, writes)
+			// A dynamic label's expression ($(e)) reads what e reads.
+			addStretchExpressionReads(right, reads)
 			continue
+		case operator == "[]=":
+			// x[key] = v writes the key its expression names, read like any
+			// expression.
+			writes.anyKey = true
+			addStretchExpressionReads(property, reads)
 		case property != "":
 			writes.add(&writes.keys, property)
 		default:
