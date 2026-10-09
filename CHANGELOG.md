@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An OPTIONAL MATCH reusing a variable that an earlier OPTIONAL MATCH bound to
+  null enumerated its pattern as if the variable were unbound: a full node scan
+  per null row (seconds per row on a server holding other databases). Such a
+  pattern cannot match, so the row is null-extended without reading storage.
 - `MATCH … WHERE … MATCH … OPTIONAL MATCH … RETURN` returned no rows. The
   pipeline's separate optional-match plan sliced the statement text, so the
   second MATCH became part of the first clause's WHERE. That side path is

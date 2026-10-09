@@ -256,12 +256,20 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 	out := make([]traversalOptRow, 0, len(rows))
 	for _, row := range rows {
 		scope := pipelineRowFromTraversalOptionalRow(row)
-		matched, handled, err := e.pipelineApplyMatch(withValueBindings(ctx, scope), []pipelineRow{scope}, matchClause)
-		if err != nil {
-			return nil, err
-		}
-		if !handled {
-			return nil, unsupportedOptionalMatchShapeError(matchClause)
+		var matched []pipelineRow
+		// A pattern that reuses a variable bound to null (an earlier OPTIONAL
+		// MATCH found nothing) cannot match; enumerating it as if the variable
+		// were unbound would scan every node for nothing.
+		if !patternVariableBoundToNull(scope, allVars) {
+			var handled bool
+			var err error
+			matched, handled, err = e.pipelineApplyMatch(withValueBindings(ctx, scope), []pipelineRow{scope}, matchClause)
+			if err != nil {
+				return nil, err
+			}
+			if !handled {
+				return nil, unsupportedOptionalMatchShapeError(matchClause)
+			}
 		}
 		for _, binding := range matched {
 			candidate := extendTraversalRowMulti(row, nil, nil, nil)
@@ -305,6 +313,17 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 		}
 	}
 	return out, nil
+}
+
+// patternVariableBoundToNull reports whether any pattern variable is already
+// bound in scope to null.
+func patternVariableBoundToNull(scope pipelineRow, variables []string) bool {
+	for _, name := range variables {
+		if value, bound := scope[name]; bound && value == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func candidateValuesAgreeWithRow(row, candidate traversalOptRow, variables []string) bool {
