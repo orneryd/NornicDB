@@ -54,6 +54,15 @@ const (
 	MessageCypherCoreInvalidInputExpectedExpression      MessageID = "cyphercore.invalid_input_expected_expression"
 	MessageCypherCoreInvalidInputExpectedIdentifier      MessageID = "cyphercore.invalid_input_expected_identifier"
 	MessageCypherCoreListOperandTypeMismatch             MessageID = "cyphercore.list_operand_type_mismatch"
+	MessageCypherCoreVectorDimensionRange                MessageID = "cyphercore.vector_dimension_range"
+	MessageCypherCoreVectorDimensionMismatch             MessageID = "cyphercore.vector_dimension_mismatch"
+	MessageCypherCoreVectorCoordinateType                MessageID = "cyphercore.vector_coordinate_type"
+	MessageCypherCoreVectorCoordinatesNotFinite          MessageID = "cyphercore.vector_coordinates_not_finite"
+	MessageCypherCoreVectorCoordinateRange               MessageID = "cyphercore.vector_coordinate_range"
+	MessageCypherCoreVectorDistanceDimensions            MessageID = "cyphercore.vector_distance_dimensions"
+	MessageCypherCoreVectorInnerTypeInvalid              MessageID = "cyphercore.vector_inner_type_invalid"
+	MessageCypherCoreVectorMetricInvalid                 MessageID = "cyphercore.vector_metric_invalid"
+	MessageCypherCoreUUIDInvalidText                     MessageID = "cyphercore.uuid_invalid_text"
 	MessageCypherCoreListParameterTypeMismatch           MessageID = "cyphercore.list_parameter_type_mismatch"
 	MessageCypherCoreParameterTypeMismatch               MessageID = "cyphercore.parameter_type_mismatch"
 	MessageCypherCoreListCoercionToBoolean               MessageID = "cyphercore.list_coercion_to_boolean"
@@ -689,4 +698,60 @@ func CypherCorePercentileNotNumber(value string) Message {
 // variable (3{.a}, n.prop{.a}, {a: 1}{.a}).
 func CypherCoreMapProjectionReceiver(receiver string) Message {
 	return cypherCoreMessage(MessageCypherCoreMapProjectionReceiver, "Invalid input '{': only a variable can be projected, not "+receiver, map[string]any{"Receiver": receiver})
+}
+
+// CypherCoreVectorDimensionRange is Neo4j's error for a vector dimension
+// outside 1 to 4096.
+func CypherCoreVectorDimensionRange(value string) Message {
+	return cypherCoreMessage(MessageCypherCoreVectorDimensionRange, "Invalid input. '"+value+"' is not a valid value. Must be a number in the range 1 to 4096.", map[string]any{"Value": value})
+}
+
+// CypherCoreVectorDimensionMismatch is Neo4j's TypeError for vector()
+// coordinates whose number isn't the dimension.
+func CypherCoreVectorDimensionMismatch(expected, got string) Message {
+	return cypherCoreMessage(MessageCypherCoreVectorDimensionMismatch, "Expected a "+expected+", but got "+got, map[string]any{"Expected": expected, "Got": got})
+}
+
+// CypherCoreVectorCoordinateType is Neo4j's TypeError for a vector()
+// coordinate that isn't a number (Function is vector() for a list, vector
+// for a string, as Neo4j writes them).
+func CypherCoreVectorCoordinateType(function, got string) Message {
+	return cypherCoreMessage(MessageCypherCoreVectorCoordinateType, "Invalid input for function '"+function+"': Expected a NUMBER, got: "+got, map[string]any{"Function": function, "Got": got})
+}
+
+// CypherCoreVectorCoordinatesNotFinite is Neo4j's ArgumentError for a float
+// vector coordinate that isn't finite (as written, with its GQL status).
+func CypherCoreVectorCoordinatesNotFinite() Message {
+	return cypherCoreMessage(MessageCypherCoreVectorCoordinatesNotFinite, "22NBG: Invalid vector coordinates. The vector coordinates must be finite.", nil)
+}
+
+// CypherCoreVectorCoordinateRange is Neo4j's ArithmeticError for an integer
+// vector coordinate outside its type's range.
+func CypherCoreVectorCoordinateRange() Message {
+	return cypherCoreMessage(MessageCypherCoreVectorCoordinateRange, "numeric value out of range", nil)
+}
+
+// CypherCoreVectorDistanceDimensions is Neo4j's ArgumentError for
+// vector_distance() of vectors of different dimensions.
+func CypherCoreVectorDistanceDimensions() Message {
+	return cypherCoreMessage(MessageCypherCoreVectorDistanceDimensions, "The argument `vector1` and `vector2` in the `vector_distance()` function must be of the same dimension.", nil)
+}
+
+// CypherCoreVectorInnerTypeInvalid is Neo4j's SyntaxError for a vector()
+// coordinate type that isn't one.
+func CypherCoreVectorInnerTypeInvalid() Message {
+	return cypherCoreMessage(MessageCypherCoreVectorInnerTypeInvalid, "Invalid vector inner type, expected INTEGER64, INTEGER32, INTEGER16, INTEGER8, FLOAT64 or FLOAT32", nil)
+}
+
+// CypherCoreVectorMetricInvalid is Neo4j's SyntaxError for a
+// vector_distance() or vector_norm() metric it doesn't take; Expected lists
+// the ones it does.
+func CypherCoreVectorMetricInvalid(expected string) Message {
+	return cypherCoreMessage(MessageCypherCoreVectorMetricInvalid, "Invalid vector distance metric, expected "+expected, map[string]any{"Expected": expected})
+}
+
+// CypherCoreUUIDInvalidText is Neo4j's ArgumentError for uuid(text) of text
+// that doesn't name a UUID.
+func CypherCoreUUIDInvalidText() Message {
+	return cypherCoreMessage(MessageCypherCoreUUIDInvalidText, "The argument `input` in the `uuid()` function must be a valid uuid string.", nil)
 }

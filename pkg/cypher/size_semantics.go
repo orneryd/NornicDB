@@ -41,6 +41,9 @@ func sizeArgumentError(value interface{}) error {
 	if _, isString := value.(string); isString {
 		return nil
 	}
+	if _, sized := value.(cypherfn.Sized); sized {
+		return nil
+	}
 	if path, isMap := toStringAnyMap(value); isMap {
 		if _, isPath := path["_pathResult"]; isPath {
 			return typeMismatchError(sizeArgumentTypes, pathTypeMarker{})

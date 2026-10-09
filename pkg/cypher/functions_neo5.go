@@ -651,6 +651,10 @@ func fnListConversion(name string, convert func(interface{}) interface{}) cypher
 			return nil, err
 		}
 		items, isList := cypherListValue(values[0])
+		if vector, isVector := values[0].(CypherVector); isVector {
+			// A vector's coordinates convert as a list's items would.
+			items, isList = vector.coordinates(), true
+		}
 		if !isList {
 			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "List<T>", Value: values[0]}
 		}
@@ -798,9 +802,9 @@ type valueType struct {
 
 // Neo4j's order of types in a union.
 var valueTypeOrder = map[string]int{
-	"BOOLEAN": 0, "STRING": 1, "INTEGER": 2, "FLOAT": 3, "DATE": 4, "LOCAL TIME": 5, "ZONED TIME": 6,
-	"LOCAL DATETIME": 7, "ZONED DATETIME": 8, "DURATION": 9, "POINT": 10, "NODE": 11, "RELATIONSHIP": 12,
-	"MAP": 13, "LIST": 14, "PATH": 15, "ANY": 16,
+	"BOOLEAN": 0, "STRING": 1, "UUID": 2, "INTEGER": 3, "FLOAT": 4, "DATE": 5, "LOCAL TIME": 6, "ZONED TIME": 7,
+	"LOCAL DATETIME": 8, "ZONED DATETIME": 9, "DURATION": 10, "POINT": 11, "NODE": 12, "RELATIONSHIP": 13,
+	"VECTOR": 14, "MAP": 15, "LIST": 16, "PATH": 17, "ANY": 18,
 }
 
 func namedValueType(name string) valueType {
@@ -812,6 +816,11 @@ func namedValueType(name string) valueType {
 // its element types.
 func valueTypeOf(value interface{}) valueType {
 	kind := cypherValueKindOf(value)
+	if kind == valueKindVector {
+		// VECTOR<INTEGER NOT NULL>(3): its coordinate type and dimension.
+		vector, _ := vectorArgument(value)
+		return valueType{order: valueTypeOrder["VECTOR"], name: "VECTOR<" + vectorCoordinateTypeNames[vector.Type].valueType + " NOT NULL>(" + strconv.Itoa(vector.Dimension()) + ")"}
+	}
 	if kind != valueKindList {
 		return namedValueType(valueTypeNames[kind].typeSystem)
 	}

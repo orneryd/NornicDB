@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"strconv"
 	"strings"
 )
 
@@ -23,6 +24,10 @@ type cypherTypeMember struct {
 	name    string
 	element *cypherTypeSpec
 	notNull bool
+	// vectorType and vectorDimension narrow a VECTOR member
+	// (VECTOR<INTEGER32>(3)); nil and 0 take any.
+	vectorType      *VectorCoordinateType
+	vectorDimension int
 }
 
 // typePredicateOperators are the spellings of a type predicate, longest
@@ -129,6 +134,7 @@ var cypherTypeSynonyms = map[string]string{
 	"NULL":           "NULL",
 	"PROPERTY VALUE": "PROPERTY VALUE", "ANY PROPERTY VALUE": "PROPERTY VALUE",
 	"LIST": "LIST", "ARRAY": "LIST",
+	"UUID": "UUID",
 }
 
 // parseCypherTypeMember parses one member: a simple type, LIST<…> /
@@ -139,6 +145,14 @@ func parseCypherTypeMember(text string) (cypherTypeMember, error) {
 	if len(words) >= 2 && strings.EqualFold(words[len(words)-2], "NOT") && strings.EqualFold(words[len(words)-1], "NULL") {
 		notNull = true
 		text = strings.TrimSpace(text[:strings.LastIndex(upperASCII(text), "NOT")])
+	}
+	if len(text) >= len("VECTOR") && strings.EqualFold(text[:len("VECTOR")], "VECTOR") {
+		member, ok := parseVectorTypeMember(strings.TrimSpace(text[len("VECTOR"):]))
+		if !ok {
+			return cypherTypeMember{}, typePredicateSyntaxError(text)
+		}
+		member.notNull = notNull
+		return member, nil
 	}
 	if open := strings.IndexByte(text, '<'); open >= 0 {
 		if !strings.HasSuffix(text, ">") {
@@ -174,6 +188,33 @@ func parseCypherTypeMember(text string) (cypherTypeMember, error) {
 	return cypherTypeMember{name: name, notNull: notNull}, nil
 }
 
+// parseVectorTypeMember reads what follows VECTOR in a type: an optional
+// <coordinate type> and an optional (dimension).
+func parseVectorTypeMember(rest string) (cypherTypeMember, bool) {
+	member := cypherTypeMember{name: "VECTOR"}
+	if strings.HasPrefix(rest, "<") {
+		close := strings.IndexByte(rest, '>')
+		if close < 0 {
+			return member, false
+		}
+		coordinateType, ok := parseVectorCoordinateType(rest[1:close])
+		if !ok {
+			return member, false
+		}
+		member.vectorType = &coordinateType
+		rest = strings.TrimSpace(rest[close+1:])
+	}
+	if strings.HasPrefix(rest, "(") && strings.HasSuffix(rest, ")") {
+		dimension, err := strconv.Atoi(strings.TrimSpace(rest[1 : len(rest)-1]))
+		if err != nil || dimension < 1 || dimension > vectorDimensionLimit {
+			return member, false
+		}
+		member.vectorDimension = dimension
+		rest = ""
+	}
+	return member, rest == ""
+}
+
 // matches reports whether value is of the type.
 func (spec cypherTypeSpec) matches(value interface{}) bool {
 	for _, member := range spec.members {
@@ -205,6 +246,10 @@ func (member cypherTypeMember) matches(value interface{}) bool {
 		return member.element.matches(value)
 	case "PROPERTY VALUE":
 		return isCypherPropertyValue(value)
+	case "VECTOR":
+		vector, err := vectorArgument(value)
+		return err == nil && (member.vectorType == nil || *member.vectorType == vector.Type) &&
+			(member.vectorDimension == 0 || member.vectorDimension == vector.Dimension())
 	case "LIST":
 		items, isList := cypherListValue(value)
 		if !isList || cypherValueKindOf(value) != valueKindList {
@@ -260,7 +305,9 @@ var typeGrammarWords = map[string]bool{
 	"FLOAT": true, "DATE": true, "LOCAL": true, "ZONED": true, "TIME": true, "DATETIME": true, "TIMESTAMP": true,
 	"WITH": true, "WITHOUT": true, "ZONE": true, "DURATION": true, "POINT": true, "NODE": true, "VERTEX": true,
 	"RELATIONSHIP": true, "EDGE": true, "MAP": true, "PATH": true, "ANY": true, "VALUE": true, "NOTHING": true,
-	"NULL": true, "NOT": true, "PROPERTY": true, "LIST": true, "ARRAY": true,
+	"NULL": true, "NOT": true, "PROPERTY": true, "LIST": true, "ARRAY": true, "UUID": true, "VECTOR": true,
+	"INTEGER8": true, "INTEGER16": true, "INTEGER32": true, "INTEGER64": true, "INT8": true, "INT16": true,
+	"INT32": true, "INT64": true, "FLOAT32": true, "FLOAT64": true,
 }
 
 // maskTypePredicateTypes blanks the type after each `::` and `TYPED` in an

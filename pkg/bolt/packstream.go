@@ -368,6 +368,10 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 			return append(dst, 0xC0)
 		}
 		return encodePackStreamPointInto(dst, *val)
+	case cypher.CypherVector, cypher.CypherUUID:
+		// Bolt 5 has no structure for these: Neo4j's placeholder map.
+		placeholder, _ := cypher.UnsupportedTypePlaceholder(val)
+		return encodePackStreamMapIntoWithUTC(dst, placeholder, useUTCDateTimeStructs)
 	case time.Duration:
 		// Encode duration as milliseconds (signed).
 		return encodePackStreamIntInto(dst, val.Milliseconds())
@@ -442,6 +446,9 @@ func encodePackStreamValue(v any) []byte {
 			return []byte{0xC0}
 		}
 		return encodePackStreamPointInto(nil, *val)
+	case cypher.CypherVector, cypher.CypherUUID:
+		placeholder, _ := cypher.UnsupportedTypePlaceholder(val)
+		return encodePackStreamMapIntoWithUTC(nil, placeholder, true)
 	case string:
 		return encodePackStreamString(val)
 	// List types

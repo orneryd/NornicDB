@@ -42,6 +42,8 @@ const (
 	valueKindLocalDateTime
 	valueKindDuration
 	valueKindPoint
+	valueKindVector
+	valueKindUUID
 )
 
 // valueTypeName is one kind's name in each style.
@@ -72,6 +74,8 @@ var valueTypeNames = [...]valueTypeName{
 	valueKindLocalDateTime: {cypher: "LocalDateTime", runtime: "LocalDateTime", typeSystem: "LOCAL DATETIME", apoc: "LOCAL_DATE_TIME"},
 	valueKindDuration:      {cypher: "Duration", runtime: "Duration", typeSystem: "DURATION", apoc: "DURATION"},
 	valueKindPoint:         {cypher: "Point", runtime: "Point", typeSystem: "POINT", apoc: "POINT"},
+	valueKindVector:        {cypher: "Vector", runtime: "Vector", typeSystem: "VECTOR", apoc: "VECTOR"},
+	valueKindUUID:          {cypher: "UUID", runtime: "UUID", typeSystem: "UUID", apoc: "UUID"},
 }
 
 // pathTypeMarker names a path value (paths are carried as maps holding a
@@ -112,6 +116,10 @@ func cypherValueKindOf(value interface{}) cypherValueKind {
 		return valueKindDuration
 	case CypherPoint, *CypherPoint:
 		return valueKindPoint
+	case CypherVector, *CypherVector:
+		return valueKindVector
+	case CypherUUID, *CypherUUID:
+		return valueKindUUID
 	case map[string]interface{}:
 		if _, isPath := v["_pathResult"]; isPath {
 			return valueKindPath

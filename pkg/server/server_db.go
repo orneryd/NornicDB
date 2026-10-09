@@ -1337,6 +1337,10 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 			return nil, []interface{}{nil}
 		}
 		return typed.String(), []interface{}{nil}
+	case cypher.CypherUUID:
+		return typed.String(), []interface{}{nil}
+	case cypher.CypherVector:
+		return transactionHTTPVector(typed), []interface{}{nil}
 	case cypher.CypherPoint:
 		return transactionHTTPPoint(typed), []interface{}{map[string]interface{}{"type": "point"}}
 	case *cypher.CypherPoint:

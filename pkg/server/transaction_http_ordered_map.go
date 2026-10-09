@@ -76,3 +76,19 @@ func transactionHTTPPoint(point cypher.CypherPoint) transactionHTTPOrderedMap {
 	}
 	return transactionHTTPOrderedMap{keys: []string{"type", "coordinates", "crs"}, values: map[string]interface{}{"type": "Point", "coordinates": coordinates, "crs": crs}}
 }
+
+// transactionHTTPVectorTypeNames are the vector classes Neo4j's HTTP API
+// names, by coordinate type.
+var transactionHTTPVectorTypeNames = map[cypher.VectorCoordinateType]string{
+	cypher.VectorInteger64: "Int64Vector", cypher.VectorInteger32: "Int32Vector", cypher.VectorInteger16: "Int16Vector",
+	cypher.VectorInteger8: "Int8Vector", cypher.VectorFloat64: "Float64Vector", cypher.VectorFloat32: "Float32Vector",
+}
+
+// transactionHTTPVector is a VECTOR as Neo4j 2026.09's HTTP API writes it:
+// not its coordinates but {"typeName":"Int64Vector","incomparableType":true,
+// "sequenceValue":false}, keys in that order (#907).
+func transactionHTTPVector(vector cypher.CypherVector) transactionHTTPOrderedMap {
+	return transactionHTTPOrderedMap{keys: []string{"typeName", "incomparableType", "sequenceValue"}, values: map[string]interface{}{
+		"typeName": transactionHTTPVectorTypeNames[vector.Type], "incomparableType": true, "sequenceValue": false,
+	}}
+}

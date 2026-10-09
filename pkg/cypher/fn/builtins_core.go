@@ -263,9 +263,18 @@ func evalSize(ctx Context, args []string) (interface{}, error) {
 	if kind := reflect.TypeOf(v).Kind(); kind == reflect.Slice || kind == reflect.Array {
 		return int64(reflect.ValueOf(v).Len()), nil
 	}
+	if sized, ok := v.(Sized); ok {
+		return sized.CypherSize(), nil
+	}
 	// size() takes a String or a List; a map, node, relationship, path,
 	// number or boolean is a type error, not null.
 	return nil, &TypeMismatchError{Function: "size", Expected: sizeArgumentTypes, Value: v}
+}
+
+// Sized is a value size() measures that is neither a string nor a list (a
+// VECTOR: its dimension).
+type Sized interface {
+	CypherSize() int64
 }
 
 // sizeArgumentTypes is size()'s accepted argument types as Neo4j names them.
