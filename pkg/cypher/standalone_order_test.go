@@ -107,3 +107,14 @@ func TestDesugarStandaloneOrderClauses(t *testing.T) {
 		require.Equal(t, want, got, query)
 	}
 }
+
+// A statement the rewrite leaves as it is costs no allocation to scan.
+func TestDesugarStandaloneOrderClausesAllocatesNothingWithoutEdits(t *testing.T) {
+	query := "MATCH (n:Person)-[:KNOWS]->(friend) WHERE n.age > $min RETURN friend.name AS name ORDER BY name SKIP 5 LIMIT 10"
+	allocations := testing.AllocsPerRun(100, func() {
+		if _, rewrite := desugarStandaloneOrderClauses(query); rewrite != nil {
+			t.Fatal("unexpected rewrite")
+		}
+	})
+	require.Zero(t, allocations)
+}
