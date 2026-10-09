@@ -1900,30 +1900,28 @@ func findMatchingDelimiter(text string, start int, opener, closer rune) int {
 	if start < 0 || start >= len(text) || rune(text[start]) != opener {
 		return -1
 	}
+	// The delimiters are ASCII, never a quote or '/': each byte is compared
+	// with them first, and quoted text and comments are skipped whole.
+	open, close := byte(opener), byte(closer)
 	depth := 0
 	for index := start; index < len(text); index++ {
-		character := text[index]
-		switch character {
-		case '\'', '"', '`':
+		switch character := text[index]; {
+		case character == open:
+			depth++
+		case character == close:
+			depth--
+			if depth == 0 {
+				return index
+			}
+		case character == '\'' || character == '"' || character == '`':
 			end, closed := scanCypherQuotedText(text, index, character)
 			if !closed {
 				return -1
 			}
 			index = end - 1
-			continue
-		case '/':
+		case character == '/' && index+1 < len(text) && (text[index+1] == '/' || text[index+1] == '*'):
 			if end := queryCommentEnd(text, index); end >= 0 {
 				index = end - 1
-				continue
-			}
-		}
-		switch rune(character) {
-		case opener:
-			depth++
-		case closer:
-			depth--
-			if depth == 0 {
-				return index
 			}
 		}
 	}
