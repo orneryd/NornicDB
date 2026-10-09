@@ -128,13 +128,13 @@ func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
 			index--
 		}
 		wordEnd := index + 1
-		for index >= 0 && isWordChar(query[index]) {
+		for index >= 0 && isIdentByte(query[index]) {
 			index--
 		}
 		return strings.EqualFold(query[index+1:wordEnd], "CALL")
 	}
 	end := index + 1
-	for index >= 0 && isWordChar(query[index]) {
+	for index >= 0 && isIdentByte(query[index]) {
 		index--
 	}
 	start := index + 1
@@ -188,7 +188,7 @@ func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 		return true
 	}
 	start := index
-	for index < len(query) && isWordChar(query[index]) {
+	for index < len(query) && isIdentByte(query[index]) {
 		index++
 	}
 	if index == start {
@@ -309,7 +309,7 @@ func colonIsMapKeySeparator(query string, colon int) bool {
 		index--
 	} else {
 		end := index
-		for index >= 0 && isWordChar(query[index]) {
+		for index >= 0 && isIdentByte(query[index]) {
 			index--
 		}
 		if index == end {

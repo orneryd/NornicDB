@@ -510,10 +510,10 @@ func referencesUnwindBinding(expr, unwindVar string) bool {
 	}
 	for i := 0; i < len(expr); {
 		ch := expr[i]
-		if isIdentifierStartByte(ch) {
+		if isIdentStartByte(ch) {
 			start := i
 			i++
-			for i < len(expr) && isIdentifierPartByte(expr[i]) {
+			for i < len(expr) && isIdentByte(expr[i]) {
 				i++
 			}
 			if expr[start:i] == unwindVar {
@@ -524,14 +524,6 @@ func referencesUnwindBinding(expr, unwindVar string) bool {
 		i++
 	}
 	return false
-}
-
-func isIdentifierStartByte(ch byte) bool {
-	return (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || ch == '_'
-}
-
-func isIdentifierPartByte(ch byte) bool {
-	return isIdentifierStartByte(ch) || (ch >= '0' && ch <= '9')
 }
 
 // parseSimpleCreateClause returns either a node spec or edge spec. kind is

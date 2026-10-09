@@ -464,11 +464,11 @@ func namedPathAssignmentPrefix(pattern string) bool {
 	if len(name) >= 2 && name[0] == '`' && name[len(name)-1] == '`' {
 		return strings.TrimSpace(pattern[i+1:]) != ""
 	}
-	if name == "" || !isCypherIdentifierStart(name[0]) {
+	if name == "" || !isIdentStartByte(name[0]) {
 		return false
 	}
 	for k := 1; k < len(name); k++ {
-		if !isCypherIdentifierPart(name[k]) {
+		if !isIdentByte(name[k]) {
 			return false
 		}
 	}
@@ -716,7 +716,7 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 			// Preserve path assignment prefixes like "p=(:A)-[:R]->(:B)".
 			// We drop whitespace, but keep identifiers and "=" before the first "(".
 			if depth == 0 && !inRelationship {
-				if isWordChar(byte(c)) || c == '=' {
+				if isIdentByte(byte(c)) || c == '=' {
 					current.WriteByte(c)
 				}
 			}
@@ -854,14 +854,14 @@ func findAllKeywordPositions(cypher string, keyword string) []int {
 			// Check word boundary before
 			if i > 0 {
 				prevChar := cypher[i-1]
-				if isAlphaNumericByte(prevChar) {
+				if isIdentByte(prevChar) {
 					continue // Part of another word
 				}
 			}
 			// Check word boundary after
 			if i+keywordLen < len(cypher) {
 				nextChar := cypher[i+keywordLen]
-				if isAlphaNumericByte(nextChar) {
+				if isIdentByte(nextChar) {
 					continue // Part of another word
 				}
 			}
@@ -878,11 +878,6 @@ func findAllKeywordPositions(cypher string, keyword string) []int {
 	}
 
 	return validPositions
-}
-
-// isAlphaNumericByte checks if a byte is alphanumeric or underscore
-func isAlphaNumericByte(c byte) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
 }
 
 // isInsideQuotes checks if a position is inside quotes

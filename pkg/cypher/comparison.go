@@ -53,7 +53,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"unicode"
+	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -345,8 +345,9 @@ func containsIdentifierToken(expr, ident string) bool {
 	return flush()
 }
 
+// isIdentRune is isIdentByte for a decoded character.
 func isIdentRune(r rune) bool {
-	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
+	return r >= utf8.RuneSelf || isIdentByte(byte(r))
 }
 
 // evaluateIsNull handles IS NULL / IS NOT NULL.

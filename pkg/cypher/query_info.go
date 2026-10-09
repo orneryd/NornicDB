@@ -673,9 +673,9 @@ func containsKeyword(upper, keyword string) bool {
 		idx += searchFrom // Adjust to absolute position
 
 		// Check it's not part of a larger word
-		isWordStart := idx == 0 || (!isAlphaNumericByte(upper[idx-1]) && upper[idx-1] != '_')
+		isWordStart := idx == 0 || (!isIdentByte(upper[idx-1]) && upper[idx-1] != '_')
 		end := idx + len(keyword)
-		isWordEnd := end >= len(upper) || (!isAlphaNumericByte(upper[end]) && upper[end] != '_')
+		isWordEnd := end >= len(upper) || (!isIdentByte(upper[end]) && upper[end] != '_')
 
 		if isWordStart && isWordEnd {
 			return true

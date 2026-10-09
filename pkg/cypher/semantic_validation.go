@@ -345,7 +345,7 @@ func hasUnexpectedIdentifierAfterNumber(expression string) bool {
 			quote = expression[index]
 			continue
 		}
-		if expression[index] < '0' || expression[index] > '9' || (index > 0 && isIdentCharByte(expression[index-1])) {
+		if expression[index] < '0' || expression[index] > '9' || (index > 0 && isIdentByte(expression[index-1])) {
 			continue
 		}
 		end := index + 1
@@ -519,7 +519,7 @@ func maskPathFunctionCalls(expression string) string {
 				break
 			}
 			idx += searchStart
-			if idx > 0 && isWordChar(expression[idx-1]) {
+			if idx > 0 && isIdentByte(expression[idx-1]) {
 				searchStart = idx + 1
 				continue
 			}

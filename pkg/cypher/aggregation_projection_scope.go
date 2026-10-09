@@ -156,8 +156,8 @@ func maskProjectedExpression(text, expression string) string {
 		}
 		end := index + len(expression)
 		if strings.HasPrefix(text[index:], expression) &&
-			(index == 0 || !(isIdentCharByte(text[index-1]) || text[index-1] == '.' || text[index-1] == '$')) &&
-			(end == len(text) || !isIdentCharByte(text[end])) {
+			(index == 0 || !(isIdentByte(text[index-1]) || text[index-1] == '.' || text[index-1] == '$')) &&
+			(end == len(text) || !isIdentByte(text[end])) {
 			out.WriteString(projectedExpressionPlaceholder)
 			index = end
 			continue

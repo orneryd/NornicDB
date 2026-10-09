@@ -248,13 +248,13 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			index++
 			continue
 		}
-		if index > 0 && (text[index-1] == '.' || text[index-1] == '$' || text[index-1] == ':' || isIdentifierPart(text[index-1])) {
+		if index > 0 && (text[index-1] == '.' || text[index-1] == '$' || text[index-1] == ':' || isIdentByte(text[index-1])) {
 			index = next
 			continue
 		}
 		// A namespaced name (date.truncate, vector.similarity.cosine) is one
 		// function name.
-		for next < len(text) && text[next] == '.' && next+1 < len(text) && isIdentifierStart(text[next+1]) {
+		for next < len(text) && text[next] == '.' && next+1 < len(text) && isIdentStartByte(text[next+1]) {
 			_, end, _ := scanIdentifierToken(text, next+1)
 			name, next = text[index:end], end
 		}

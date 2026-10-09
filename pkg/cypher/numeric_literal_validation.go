@@ -84,7 +84,7 @@ func validateNumericLiteralAt(cypher string, start int) (int, error) {
 	if base != 10 {
 		end = start + 2
 		digitStart := end
-		for end < len(cypher) && isASCIIAlphaNumeric(cypher[end]) {
+		for end < len(cypher) && isIdentByte(cypher[end]) {
 			if !isDigitForBase(cypher[end], base) {
 				return end, numericLiteralError("InvalidNumberLiteral", cypher[start:end+1])
 			}
@@ -122,9 +122,9 @@ func validateNumericLiteralAt(cypher string, start int) (int, error) {
 	if end < len(cypher) && (cypher[end] == 'e' || cypher[end] == 'E') {
 		return validateFloatingLiteralTail(cypher, start, end)
 	}
-	if end < len(cypher) && isASCIIIdentifierStart(cypher[end]) {
+	if end < len(cypher) && isIdentStartByte(cypher[end]) {
 		invalidEnd := end + 1
-		for invalidEnd < len(cypher) && isNumericIdentifierByte(cypher[invalidEnd]) {
+		for invalidEnd < len(cypher) && isIdentByte(cypher[invalidEnd]) {
 			invalidEnd++
 		}
 		return invalidEnd, numericLiteralError("InvalidNumberLiteral", cypher[start:invalidEnd])
@@ -160,9 +160,9 @@ func validateFloatingLiteralTail(cypher string, start, end int) (int, error) {
 			return end, numericLiteralError("InvalidNumberLiteral", cypher[start:end])
 		}
 	}
-	if end < len(cypher) && isASCIIIdentifierStart(cypher[end]) {
+	if end < len(cypher) && isIdentStartByte(cypher[end]) {
 		invalidEnd := end + 1
-		for invalidEnd < len(cypher) && isNumericIdentifierByte(cypher[invalidEnd]) {
+		for invalidEnd < len(cypher) && isIdentByte(cypher[invalidEnd]) {
 			invalidEnd++
 		}
 		return invalidEnd, numericLiteralError("InvalidNumberLiteral", cypher[start:invalidEnd])
@@ -205,11 +205,11 @@ func numericLiteralHasUnaryMinus(cypher string, numberStart int) bool {
 	if strings.ContainsRune("([{,:=<>+-*/%|&", rune(cypher[previous])) {
 		return true
 	}
-	if !isASCIIIdentifierPart(cypher[previous]) {
+	if !isIdentByte(cypher[previous]) {
 		return false
 	}
 	wordEnd := previous + 1
-	for previous >= 0 && isASCIIIdentifierPart(cypher[previous]) {
+	for previous >= 0 && isIdentByte(cypher[previous]) {
 		previous--
 	}
 	word := cypher[previous+1 : wordEnd]
@@ -249,22 +249,6 @@ func numericLiteralError(detail, literal string) error {
 }
 
 func isASCIIDigit(value byte) bool { return value >= '0' && value <= '9' }
-
-func isASCIIAlphaNumeric(value byte) bool {
-	return isASCIIDigit(value) || isASCIIIdentifierStart(value)
-}
-
-func isASCIIIdentifierStart(value byte) bool {
-	return value == '_' || value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z'
-}
-
-func isASCIIIdentifierPart(value byte) bool {
-	return isASCIIIdentifierStart(value) || isASCIIDigit(value)
-}
-
-func isNumericIdentifierByte(value byte) bool {
-	return isASCIIIdentifierPart(value) || value >= 0x80
-}
 
 func isDigitForBase(value byte, base int) bool {
 	if isASCIIDigit(value) {

@@ -227,12 +227,12 @@ func deletedEntityReadsIn(expression string) []deletedEntityRead {
 			}
 			index += end + 2
 			continue
-		case !isCypherIdentByte(character) || (index > 0 && (isCypherIdentByte(expression[index-1]) || expression[index-1] == '.')):
+		case !isIdentByte(character) || (index > 0 && (isIdentByte(expression[index-1]) || expression[index-1] == '.')):
 			index++
 			continue
 		}
 		start := index
-		for index < len(expression) && isCypherIdentByte(expression[index]) {
+		for index < len(expression) && isIdentByte(expression[index]) {
 			index++
 		}
 		word := expression[start:index]
@@ -245,7 +245,7 @@ func deletedEntityReadsIn(expression string) []deletedEntityRead {
 		case next < len(expression) && expression[next] == '(' && (strings.EqualFold(word, "labels") || strings.EqualFold(word, "keys") || strings.EqualFold(word, "properties")):
 			argumentStart := skipSpaceIndex(expression, next+1)
 			argumentEnd := argumentStart
-			for argumentEnd < len(expression) && isCypherIdentByte(expression[argumentEnd]) {
+			for argumentEnd < len(expression) && isIdentByte(expression[argumentEnd]) {
 				argumentEnd++
 			}
 			if close := skipSpaceIndex(expression, argumentEnd); argumentEnd > argumentStart && close < len(expression) && expression[close] == ')' {
@@ -305,7 +305,7 @@ func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool)
 // index is followed by IS NULL or IS NOT NULL: Neo4j tests a deleted
 // entity's property for null without an error (it has none).
 func propertyNullTestFollows(expression string, index int) bool {
-	for index < len(expression) && isCypherIdentByte(expression[index]) {
+	for index < len(expression) && isIdentByte(expression[index]) {
 		index++
 	}
 	rest := expression[skipSpaceIndex(expression, index):]
@@ -336,7 +336,7 @@ func iterationSourceVariable(clause, variable string) string {
 		}
 		rest = strings.TrimLeft(rest[len("IN"):], " \t\r\n")
 		end := 0
-		for end < len(rest) && isCypherIdentByte(rest[end]) {
+		for end < len(rest) && isIdentByte(rest[end]) {
 			end++
 		}
 		if end > 0 {
@@ -358,11 +358,11 @@ func indexIdentifierFold(text, identifier string) int {
 			}
 			index += end + 2
 			continue
-		case (index > 0 && isCypherIdentByte(text[index-1])) || !strings.EqualFold(text[index:index+len(identifier)], identifier):
+		case (index > 0 && isIdentByte(text[index-1])) || !strings.EqualFold(text[index:index+len(identifier)], identifier):
 			index++
 			continue
 		}
-		if end := index + len(identifier); end < len(text) && isCypherIdentByte(text[end]) {
+		if end := index + len(identifier); end < len(text) && isIdentByte(text[end]) {
 			index++
 			continue
 		}

@@ -1391,23 +1391,16 @@ func isIdentifierReferenced(query, identifier string) bool {
 		if q[i:i+idLen] != id {
 			continue
 		}
-		if i > 0 && isIdentChar(q[i-1]) {
+		if i > 0 && isIdentByte(q[i-1]) {
 			continue
 		}
 		end := i + idLen
-		if end < len(q) && isIdentChar(q[end]) {
+		if end < len(q) && isIdentByte(q[end]) {
 			continue
 		}
 		return true
 	}
 	return false
-}
-
-func isIdentChar(b byte) bool {
-	return (b >= 'A' && b <= 'Z') ||
-		(b >= 'a' && b <= 'z') ||
-		(b >= '0' && b <= '9') ||
-		b == '_'
 }
 
 // findKeywordIndexInContext finds a keyword in context, avoiding matches inside quotes

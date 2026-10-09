@@ -302,13 +302,13 @@ func substituteWithWhereLabelTests(whereClause string, values map[string]interfa
 			i++
 			continue
 		}
-		if !isWithWhereIdentStart(c) || (i > 0 && isWithWhereIdentPart(whereClause[i-1])) {
+		if !isIdentStartByte(c) || (i > 0 && isIdentByte(whereClause[i-1])) {
 			out.WriteByte(c)
 			i++
 			continue
 		}
 		j := i
-		for j < len(whereClause) && isWithWhereIdentPart(whereClause[j]) {
+		for j < len(whereClause) && isIdentByte(whereClause[j]) {
 			j++
 		}
 		if j >= len(whereClause) || whereClause[j] != ':' {
@@ -347,14 +347,6 @@ func substituteWithWhereLabelTests(whereClause string, values map[string]interfa
 		i = k
 	}
 	return out.String()
-}
-
-func isWithWhereIdentStart(c byte) bool {
-	return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-}
-
-func isWithWhereIdentPart(c byte) bool {
-	return isWithWhereIdentStart(c) || (c >= '0' && c <= '9')
 }
 
 // withWhereValueContext splits the computed WITH values into the node and edge

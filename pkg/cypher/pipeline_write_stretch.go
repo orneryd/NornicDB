@@ -253,9 +253,9 @@ func addStretchExpressionReads(text string, tokens *stretchTokens) {
 			}
 		case ':':
 			// v:Label (a label test) outside a map literal's keys.
-			if depth == 0 && index > 0 && (isCypherIdentByte(text[index-1]) || text[index-1] == '`' || text[index-1] == ')') {
+			if depth == 0 && index > 0 && (isIdentByte(text[index-1]) || text[index-1] == '`' || text[index-1] == ')') {
 				end := index
-				for end < len(text) && (isCypherIdentByte(text[end]) || strings.IndexByte(":`|&!%", text[end]) >= 0) {
+				for end < len(text) && (isIdentByte(text[end]) || strings.IndexByte(":`|&!%", text[end]) >= 0) {
 					if text[end] == '`' {
 						end = skipCypherQuotedText(text, end, '`')
 						continue
@@ -314,7 +314,7 @@ func addStretchPropertyReads(text string, tokens *stretchTokens) {
 		switch character := text[index]; {
 		case character == '\'' || character == '"' || character == '`':
 			index = skipCypherQuotedText(text, index, character) - 1
-		case character == '[' && index > 0 && (isCypherIdentByte(text[index-1]) || text[index-1] == ')' || text[index-1] == ']'):
+		case character == '[' && index > 0 && (isIdentByte(text[index-1]) || text[index-1] == ')' || text[index-1] == ']'):
 			tokens.anyKey = true
 		case character == '.' && index+1 < len(text) && text[index+1] != '.' && (index == 0 || text[index-1] != '.'):
 			before, after := index, index+1
@@ -324,17 +324,17 @@ func addStretchPropertyReads(text string, tokens *stretchTokens) {
 			for after < len(text) && isASCIISpace(text[after]) {
 				after++
 			}
-			if before == 0 || !(isCypherIdentByte(text[before-1]) || text[before-1] == ')' || text[before-1] == '`') || after >= len(text) {
+			if before == 0 || !(isIdentByte(text[before-1]) || text[before-1] == ')' || text[before-1] == '`') || after >= len(text) {
 				continue
 			}
-			if before != index || after != index+1 || text[after] == '`' || !isIdentifierStart(text[after]) {
-				if text[after] == '`' || isIdentifierStart(text[after]) {
+			if before != index || after != index+1 || text[after] == '`' || !isIdentStartByte(text[after]) {
+				if text[after] == '`' || isIdentStartByte(text[after]) {
 					tokens.anyKey = true
 				}
 				continue
 			}
 			end := after
-			for end < len(text) && isCypherIdentByte(text[end]) {
+			for end < len(text) && isIdentByte(text[end]) {
 				end++
 			}
 			tokens.add(&tokens.keys, text[after:end])

@@ -257,7 +257,7 @@ func lastTopLevelClauseWord(s string) string {
 		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 {
 			continue
 		}
-		if i > 0 && isIdentCharByte(s[i-1]) {
+		if i > 0 && isIdentByte(s[i-1]) {
 			continue
 		}
 		for _, keywordIndex := range validatorKeywordFirst[foldByte(c)] {
@@ -302,7 +302,7 @@ func forIterationClauseAt(s string, pos int) bool {
 		return false
 	}
 	end += 2
-	return end == len(s) || !isAlphaNumericByte(s[end])
+	return end == len(s) || !isIdentByte(s[end])
 }
 
 // isExpressionWith reports whether the top-level word WITH at s[start:end] is
@@ -343,7 +343,7 @@ func previousSignificantWord(s string, i int) string {
 		break
 	}
 	end := j
-	for j > 0 && isIdentCharByte(s[j-1]) {
+	for j > 0 && isIdentByte(s[j-1]) {
 		j--
 	}
 	if j == end {
@@ -378,7 +378,7 @@ func nextSignificantWords(s string, j int) [2]string {
 			break
 		}
 		start := j
-		for j < len(s) && isIdentCharByte(s[j]) {
+		for j < len(s) && isIdentByte(s[j]) {
 			j++
 		}
 		return s[start:j]

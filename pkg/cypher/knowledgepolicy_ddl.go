@@ -20,20 +20,12 @@ func kpSkipSpaces(s string, i int) int {
 	return i
 }
 
-func kpIsIdentStart(b byte) bool {
-	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '_'
-}
-
-func kpIsIdentByte(b byte) bool {
-	return kpIsIdentStart(b) || (b >= '0' && b <= '9')
-}
-
 func kpScanIdent(s string, i int) (string, int) {
-	if i >= len(s) || !kpIsIdentStart(s[i]) {
+	if i >= len(s) || !isIdentStartByte(s[i]) {
 		return "", i
 	}
 	start := i
-	for i < len(s) && kpIsIdentByte(s[i]) {
+	for i < len(s) && isIdentByte(s[i]) {
 		i++
 	}
 	return s[start:i], i
@@ -56,7 +48,7 @@ func kpMatchKeywordAt(s string, i int, kw string) int {
 		}
 	}
 	end := i + len(kw)
-	if end < len(s) && kpIsIdentByte(s[end]) {
+	if end < len(s) && isIdentByte(s[end]) {
 		return -1
 	}
 	return end
@@ -696,7 +688,7 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 		}
 
 		// Plan syntax: <var>.<prop> directives (e.g., n.tenantId NO DECAY)
-		if kpIsIdentStart(body[i]) {
+		if isIdentStartByte(body[i]) {
 			ident, j := kpScanIdent(body, i)
 			if ident != "" && j < len(body) && body[j] == '.' {
 				propName, k := kpScanIdent(body, j+1)

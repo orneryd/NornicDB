@@ -319,7 +319,7 @@ func (r *labelExpressionRewriter) clauses(start, end int) []labelClause {
 			depth--
 			continue
 		}
-		if depth != 0 || !isASCIILetter(c) || (i > start && isIdentByte(q[i-1])) {
+		if depth != 0 || !isIdentStartByte(c) || (i > start && isIdentByte(q[i-1])) {
 			continue
 		}
 		j := i
@@ -732,7 +732,7 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 				return err
 			}
 			i = next - 1
-		case isASCIILetter(c) || c == '_':
+		case isIdentStartByte(c) || c == '_':
 			if i > start && (isIdentByte(q[i-1]) || q[i-1] == '.' || q[i-1] == '$') {
 				continue
 			}
@@ -1124,8 +1124,4 @@ func trimRightIndex(q string, start, end int) int {
 		end--
 	}
 	return end
-}
-
-func isASCIILetter(c byte) bool {
-	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }

@@ -477,8 +477,8 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 		}
 		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && asciiUpper(character) == first &&
 			i+len(keyword) <= len(query) && strings.EqualFold(query[i:i+len(keyword)], keyword) &&
-			(i == 0 || !isAlphaNumericByte(query[i-1])) &&
-			(i+len(keyword) == len(query) || !isAlphaNumericByte(query[i+len(keyword)])) {
+			(i == 0 || !isIdentByte(query[i-1])) &&
+			(i+len(keyword) == len(query) || !isIdentByte(query[i+len(keyword)])) {
 			if (!withSearch || !isOperatorWith(query, i)) && !clauseKeywordUsedAsName(query, i, i+len(keyword), keyword) {
 				if positions == nil {
 					positions = make([]int, 0, 4)

@@ -261,17 +261,13 @@ func matchKeywordAt(s string, i int, keyword string) bool {
 	if i < 0 || i+len(keyword) > len(s) {
 		return false
 	}
-	if i > 0 && isIdentCharByte(s[i-1]) {
+	if i > 0 && isIdentByte(s[i-1]) {
 		return false
 	}
-	if i+len(keyword) < len(s) && isIdentCharByte(s[i+len(keyword)]) {
+	if i+len(keyword) < len(s) && isIdentByte(s[i+len(keyword)]) {
 		return false
 	}
 	return strings.EqualFold(s[i:i+len(keyword)], keyword)
-}
-
-func isIdentCharByte(b byte) bool {
-	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 // StorageExecutor executes Cypher queries against a storage backend.
