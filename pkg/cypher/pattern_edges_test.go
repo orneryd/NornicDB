@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -15,12 +16,13 @@ func TestPatternEdges(t *testing.T) {
 	exec, ctx := newPathSelectorExecutor(t)
 	l := func(values ...interface{}) []interface{} { return values }
 	for query, want := range map[string][][]interface{}{
-		"MATCH ((x)-->(y))*(b:SP {id: 1}) RETURN count(*) AS c":                                          {l(int64(5))},
-		"MATCH (b:SP {id: 2}) MATCH (a:SP {id: 1})((x)-->(y))+(b) RETURN count(*) AS c":                  {l(int64(2))},
-		"MATCH p = ANY SHORTEST (:SP {id: 1})-->+(:SP {id: 5}) RETURN length(p) AS l":                    {l(int64(3))},
-		"MATCH p = (:SP|X {id: 1}) RETURN length(p) AS l":                                                {l(int64(0))},
-		"MATCH p = ANY SHORTEST ((a:SP {id: 1})-->+(b) WHERE b:SP|X AND b.id = 5) RETURN length(p) AS l": {l(int64(3))},
-		"RETURN __nornic_acyclic(1) AS a":                                                                {l(nil)},
+		"MATCH ((x)-->(y))*(b:SP {id: 1}) RETURN count(*) AS c":                                           {l(int64(5))},
+		"MATCH (b:SP {id: 2}) MATCH (a:SP {id: 1})((x)-->(y))+(b) RETURN count(*) AS c":                   {l(int64(2))},
+		"MATCH p = ANY SHORTEST (:SP {id: 1})-->+(:SP {id: 5}) RETURN length(p) AS l":                     {l(int64(3))},
+		"MATCH p = (:SP|X {id: 1}) RETURN length(p) AS l":                                                 {l(int64(0))},
+		"MATCH p = ANY SHORTEST ((a:SP {id: 1})-->+(b) WHERE b:SP|X AND b.id = 5) RETURN length(p) AS l":  {l(int64(3))},
+		"MATCH p = ANY SHORTEST ((a:SP {id: 1})-->+(b) WHERE b IS SP AND b.id = 5) RETURN length(p) AS l": {l(int64(3))},
+		"RETURN __nornic_acyclic(1) AS a":                                                                 {l(nil)},
 	} {
 		result, err := exec.Execute(ctx, query, nil)
 		require.NoError(t, err, query)
@@ -36,6 +38,7 @@ func TestPatternEdges(t *testing.T) {
 		"MATCH p = ANY SHORTEST ((a)-->(b) WHERE a:A:B|C) RETURN p":                                               "Mixing label expression symbols",
 		"MATCH ((x)-->(y) WHERE x:A:B|C)+ RETURN 1":                                                               "Mixing label expression symbols",
 		"MATCH ((x:A:B|C)-->(y))+ RETURN 1":                                                                       "Mixing label expression symbols",
+		"MATCH ((x)-->(y))*(b:SP {id: 1}) WHERE b.id / 0 = 1 RETURN 1":                                            "by zero",
 		"RETURN __nornic_acyclic(1 / 0) AS a":                                                                     "by zero",
 		"MATCH p = shortestPath((a)-->(b)), (c) WHERE __nornic_path_selector('ANY', 1, false, '', true) RETURN p": "Multiple path patterns cannot be used",
 		"MATCH shortestPath((a)-->(b)) WHERE __nornic_path_selector('ANY', 1, false, '', true) RETURN 1":          "Multiple path patterns cannot be used",
@@ -82,6 +85,11 @@ func TestPatternEdges(t *testing.T) {
 	} {
 		require.Equal(t, unbounded, hasUnboundedRepetition(text, 0, len(text)), text)
 	}
+	// A pattern the clause pipeline can't run fails the step.
+	_, err = exec.selectMatchedPaths(ctx, &shortestPathMatch{pathVariable: "p", pattern: "(a) (b)", selector: &pathSelector{}}, pipelineRow{}, 1)
+	require.Error(t, err)
+	err = exec.matchQuantifiedChain(ctx, "(a) (b)", "a", "", quantifiedPathState{used: map[storage.EdgeID]struct{}{}}, func(quantifiedPathState, pipelineRow) error { return nil })
+	require.Error(t, err)
 	require.False(t, parenthesisedPathAt("((a)", 0, 3))
 	require.False(t, parenthesisedPathAt("(  )", 0, 3))
 }
