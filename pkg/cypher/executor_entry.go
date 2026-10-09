@@ -203,8 +203,14 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return nil, err
 	}
 	cypher = expanded
-	for _, expressionRewrite := range expressionRewrites {
-		defer func() { result, retErr = expressionRewrite.restore(withoutGeneratedColumns(result), retErr) }()
+	if len(expressionRewrites) > 0 {
+		// One defer, not one per pass: a defer in a loop would make every
+		// statement pay for heap-allocated defers. Restored last pass first.
+		defer func() {
+			for index := len(expressionRewrites) - 1; index >= 0; index-- {
+				result, retErr = expressionRewrites[index].restore(withoutGeneratedColumns(result), retErr)
+			}
+		}()
 	}
 	// Cypher 25 composition (NEXT, WHEN, braced query parts) becomes the
 	// CALL subqueries and UNIONs it stands for, once, here; columns and
