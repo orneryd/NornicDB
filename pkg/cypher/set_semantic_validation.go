@@ -182,10 +182,8 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 			if target = normalizeProjectionColumnName(target); isValidIdentifier(target) && !scope.contains(target) {
 				return createUndefinedVariableError(target)
 			}
-			items, err := setLabelChainItems(expression)
-			if err != nil {
-				return err
-			}
+			// The chain was read above (validatePipelineSetAssignments).
+			items, _ := setLabelChainItems(expression)
 			for _, item := range items {
 				if item.expression == "" {
 					continue
