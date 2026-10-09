@@ -146,6 +146,12 @@ SHOW INDEXES, SHOW CONSTRAINTS and SHOW DATABASES return Neo4j 5's columns and v
 
 `keys()` lists a node's, relationship's, or map's property names in alphabetical order on every route. Neo4j's order is unspecified and unstable — it follows the property-store layout for stored entities and hash order for map literals, and it changes with the storage layout and map contents — so NornicDB keeps the deterministic sorted order introduced by #602/#671 as an intentional, documented difference. Cypher defines no order for `keys()`, and the openCypher TCK grades `keys()` results ignoring list order, so the sorted result is conformant. Code that pairs `keys(n)` with a separately built list must not assume Neo4j's order.
 
+`CALL { … }` subqueries accept three unambiguous forms that Neo4j 5.26 rejects, as intentional extensions (#907):
+
+- An unscoped body may read an outer variable without an importing `WITH`: `MATCH (p) CALL { MATCH (p)-->(f) RETURN count(f) AS c } RETURN p, c`. Neo4j reports `Variable p not defined`.
+- A body may return an outer variable as itself when it never declares that name again: `MATCH (seed) CALL (seed) { MATCH (seed)--(c) RETURN seed, collect(c) AS cs } RETURN seed, cs`. The column is the outer value. Returning any other value under an outer name is rejected, as in Neo4j (`Variable a already declared in outer scope`).
+- A scoped body (`CALL (a)`, `CALL (*)`) may declare an imported name again, as a top-level `WITH 1 AS a WITH 2 AS a` does: `CALL (a) { WITH a * 10 AS a … }`. The new value holds inside the body only; the enclosing query keeps its own. Neo4j reports that the variable is shadowing an imported variable.
+
 ### Aggregation Functions
 
 - ✅ **COUNT()** - Count aggregation

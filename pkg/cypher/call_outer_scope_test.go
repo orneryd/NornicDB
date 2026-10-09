@@ -77,3 +77,23 @@ func TestCallSubqueryReturnsOuterUnchangedBranches(t *testing.T) {
 		require.False(t, callSubqueryReturnsOuterUnchanged([]string{branch}, "a"), branch)
 	}
 }
+
+// A scoped body may declare an imported name again, as top-level WITH can: the
+// new value holds inside the body, and the enclosing query keeps its own.
+// Neo4j 5.26.30 rejects this ("shadowing an imported variable"); NornicDB
+// keeps it as an extension (#907, owner's rule: no Neo4j-only rejections).
+func TestScopedCallBodyRedeclaresImportedName(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_shadow"))
+	ctx := context.Background()
+	for query, rows := range map[string][][]interface{}{
+		"WITH 1 AS a CALL (a) { WITH 2 AS a RETURN a AS b } RETURN a, b":                            {{int64(1), int64(2)}},
+		"WITH 1 AS a CALL (*) { WITH 2 AS a RETURN a AS b } RETURN a, b":                            {{int64(1), int64(2)}},
+		"WITH 1 AS a CALL (a) { UNWIND [2, 3] AS a RETURN a AS b } RETURN a, b":                     {{int64(1), int64(2)}, {int64(1), int64(3)}},
+		"UNWIND [1, 2] AS a CALL (a) { WITH a * 10 AS a RETURN a AS b } RETURN a, b":                {{int64(1), int64(10)}, {int64(2), int64(20)}},
+		"WITH 1 AS a CALL (a) { CALL (a) { WITH 2 AS a RETURN a AS c } RETURN c AS b } RETURN a, b": {{int64(1), int64(2)}},
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, rows, result.Rows, query)
+	}
+}
