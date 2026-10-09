@@ -508,6 +508,7 @@ func TestExecuteImplicitAsync_MatchCreateDeleteSingleQuery(t *testing.T) {
 // Run with: go test -v -run BenchmarkMatchCreateDelete -count 1 ./pkg/cypher/
 // KEEP THIS TEST - it's the primary test for relationship write performance
 func TestBenchmarkMatchCreateDelete(t *testing.T) {
+	requirePerformanceWorkload(t)
 	baseEngine := newTestMemoryEngine(t)
 
 	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
@@ -564,6 +565,7 @@ func TestBenchmarkMatchCreateDelete(t *testing.T) {
 // TestBenchmarkMatchCreateDelete_WithFlush simulates the Bolt path where we flush after each query
 // KEEP THIS TEST - it shows the impact of flushing on performance
 func TestBenchmarkMatchCreateDelete_WithFlush(t *testing.T) {
+	requirePerformanceWorkload(t)
 	baseEngine := newTestMemoryEngine(t)
 
 	asyncEngine := storage.NewAsyncEngine(baseEngine, nil)
@@ -613,6 +615,7 @@ func TestBenchmarkMatchCreateDelete_WithFlush(t *testing.T) {
 // TestBenchmarkMatchCreateDelete_WithBadger tests with BadgerDB for realistic disk I/O
 // KEEP THIS TEST - it shows the impact of disk I/O on performance
 func TestBenchmarkMatchCreateDelete_WithBadger(t *testing.T) {
+	requirePerformanceWorkload(t)
 	skipDiskIOTestOnWindows(t)
 	tmpDir := t.TempDir()
 
@@ -668,6 +671,7 @@ func TestBenchmarkMatchCreateDelete_WithBadger(t *testing.T) {
 // TestBenchmarkMatchCreateDelete_WithBadgerAndFlush - realistic Bolt simulation
 // KEEP THIS TEST - this is the closest to actual Bolt benchmark conditions
 func TestBenchmarkMatchCreateDelete_WithBadgerAndFlush(t *testing.T) {
+	requirePerformanceWorkload(t)
 	skipDiskIOTestOnWindows(t)
 	tmpDir := t.TempDir()
 
@@ -752,6 +756,7 @@ func BenchmarkPipelineLimitedCartesianCreateDelete(b *testing.B) {
 }
 
 func TestBenchmarkMatchCreateDelete_LargeDataset_Direct(t *testing.T) {
+	requirePerformanceWorkload(t)
 	baseEngine := newTestMemoryEngine(t)
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -804,6 +809,7 @@ func TestBenchmarkMatchCreateDelete_LargeDataset_Direct(t *testing.T) {
 
 // TestBenchmarkMatchCreateDelete_LargeDataset_WithFlush tests flush impact
 func TestBenchmarkMatchCreateDelete_LargeDataset_WithFlush(t *testing.T) {
+	requirePerformanceWorkload(t)
 	baseEngine := newTestMemoryEngine(t)
 
 	asyncEngine := storage.NewAsyncEngine(baseEngine, nil)
@@ -843,6 +849,7 @@ func TestBenchmarkMatchCreateDelete_LargeDataset_WithFlush(t *testing.T) {
 
 // TestBenchmarkMatchCreateDelete_Badger_LargeDataset tests BadgerDB with large dataset
 func TestBenchmarkMatchCreateDelete_Badger_LargeDataset(t *testing.T) {
+	requirePerformanceWorkload(t)
 	skipDiskIOTestOnWindows(t)
 	tmpDir := t.TempDir()
 	badgerEngine, err := storage.NewBadgerEngine(tmpDir)

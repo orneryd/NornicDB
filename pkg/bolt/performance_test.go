@@ -33,9 +33,7 @@ func (p *performanceQueryExecutor) Execute(ctx context.Context, query string, pa
 // startPerfTestServer starts a server for performance testing
 func startPerfTestServer(t *testing.T) (*Server, int) {
 	t.Helper()
-	if !performanceTestsEnabled(os.Getenv("NORNICDB_RUN_PERFORMANCE_TESTS"), boltRaceEnabled, testing.Short()) {
-		t.Skip("timing assertions require NORNICDB_RUN_PERFORMANCE_TESTS=1, without -race or -short")
-	}
+	requireBoltPerformanceWorkload(t)
 	store := storage.NewMemoryEngine()
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &performanceQueryExecutor{executor: cypherExec}
@@ -60,6 +58,16 @@ func startPerfTestServer(t *testing.T) (*Server, int) {
 	t.Logf("Bolt server listening on bolt://localhost:%d", port)
 
 	return server, port
+}
+
+// requireBoltPerformanceWorkload skips a test with timing assertions unless
+// NORNICDB_RUN_PERFORMANCE_TESTS=1, without -race or -short: its floors hold
+// on a quiet machine, not beside other work.
+func requireBoltPerformanceWorkload(t *testing.T) {
+	t.Helper()
+	if !performanceTestsEnabled(os.Getenv("NORNICDB_RUN_PERFORMANCE_TESTS"), boltRaceEnabled, testing.Short()) {
+		t.Skip("timing assertions require NORNICDB_RUN_PERFORMANCE_TESTS=1, without -race or -short")
+	}
 }
 
 func performanceTestsEnabled(optIn string, raceEnabled, short bool) bool {

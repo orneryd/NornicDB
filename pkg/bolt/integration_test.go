@@ -1138,6 +1138,7 @@ func TestBoltServerStress(t *testing.T) {
 // TestBoltBenchmarkCreateDeleteRelationship measures real Bolt network performance
 // KEEP THIS TEST - this is the actual Bolt layer benchmark
 func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
+	requireBoltPerformanceWorkload(t)
 	// Create storage chain matching production: base -> async -> namespaced.
 	// AsyncEngine requires fully-qualified IDs; NamespacedEngine provides that for Cypher-generated IDs.
 	baseStore := storage.NewMemoryEngine()
@@ -1212,6 +1213,7 @@ func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
 // TestBoltBenchmarkCreateDeleteRelationship_LargeDataset simulates real benchmark conditions
 // KEEP THIS TEST - this shows performance with realistic data volume (100 actors, 150 movies)
 func TestBoltBenchmarkCreateDeleteRelationship_LargeDataset(t *testing.T) {
+	requireBoltPerformanceWorkload(t)
 	baseStore := storage.NewMemoryEngine()
 	asyncBase := storage.NewAsyncEngine(baseStore, nil)
 	store := storage.NewNamespacedEngine(asyncBase, "test")
@@ -1275,6 +1277,7 @@ func TestBoltBenchmarkCreateDeleteRelationship_LargeDataset(t *testing.T) {
 // TestBoltBenchmarkCreateDeleteRelationship_Badger tests with BadgerDB (realistic)
 // KEEP THIS TEST - shows performance with disk-based storage
 func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
+	requireBoltPerformanceWorkload(t)
 	skipDiskIOTestOnWindows(t)
 	tmpDir := t.TempDir()
 	badgerEngine, err := storage.NewBadgerEngine(tmpDir)
@@ -1425,6 +1428,7 @@ func TestBoltResponseMetadata(t *testing.T) {
 // TestBoltLatencyBreakdown measures where time is spent in protocol exchange
 // KEEP THIS TEST - helps identify bottlenecks in protocol handling
 func TestBoltLatencyBreakdown(t *testing.T) {
+	requireBoltPerformanceWorkload(t)
 	baseStore := storage.NewMemoryEngine()
 	asyncBase := storage.NewAsyncEngine(baseStore, nil)
 	store := storage.NewNamespacedEngine(asyncBase, "test")
