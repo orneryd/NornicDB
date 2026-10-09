@@ -543,7 +543,7 @@ func extractNodeVariables(matchClause string) []string {
 			for next < len(matchClause) && isWhitespace(matchClause[next]) {
 				next++
 			}
-			if next < len(matchClause) && matchClause[next] != ':' && matchClause[next] != ')' && matchClause[next] != '{' {
+			if next < len(matchClause) && matchClause[next] != ':' && matchClause[next] != ')' && matchClause[next] != '{' && matchClause[next] != '$' {
 				continue
 			}
 		}
