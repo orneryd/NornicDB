@@ -86,6 +86,7 @@ func validateCypherPreamble(query string) error {
 	argumentError := func(message string) error {
 		return nornicerrors.MarkCompileTime(newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", message))
 	}
+	var seenVersion string
 	for rest != "" {
 		if matchKeywordAt(rest, 0, "EXPLAIN") || matchKeywordAt(rest, 0, "PROFILE") {
 			rest = strings.TrimSpace(rest[len("EXPLAIN"):])
@@ -100,9 +101,14 @@ func validateCypherPreamble(query string) error {
 			for end < len(rest) && ((rest[end] >= '0' && rest[end] <= '9') || rest[end] == '.') {
 				end++
 			}
-			if version := rest[:end]; version != "5" && version != "25" {
+			version := rest[:end]
+			if version != "5" && version != "25" {
 				return argumentError(fmt.Sprintf("%s is not a valid option for cypher version. Valid options are: 5, 25", version))
 			}
+			if seenVersion != "" && seenVersion != version {
+				return argumentError("Can't specify multiple conflicting values for cypher version")
+			}
+			seenVersion = version
 			rest = strings.TrimSpace(rest[end:])
 		}
 		for rest != "" && !startsWithClauseKeyword(rest) {

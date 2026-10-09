@@ -687,7 +687,7 @@ func isSyntaxBoundaryKeyword(word string) bool {
 		return true
 	}
 	switch upperASCII(word) {
-	case "AS", "END", "STARTS", "ENDS", "MATCH", "OPTIONAL", "CREATE", "MERGE", "SET", "REMOVE", "DETACH", "FOREACH", "CALL", "ON", "ORDER", "ASC", "DESC", "ASCENDING", "DESCENDING", "NULL", "ROWS", "ROW", "TRANSACTIONS", "TRANSACTION", "REPORT", "STATUS", "BREAK", "CONTINUE", "FAIL", "ERROR", "UNION", "FINISH", "USING", "INDEX", "JOIN", "SCAN":
+	case "AS", "END", "STARTS", "ENDS", "MATCH", "OPTIONAL", "CREATE", "MERGE", "SET", "REMOVE", "DETACH", "FOREACH", "CALL", "ON", "ORDER", "ASC", "DESC", "ASCENDING", "DESCENDING", "NULL", "ROWS", "ROW", "TRANSACTIONS", "TRANSACTION", "REPORT", "STATUS", "BREAK", "CONTINUE", "FAIL", "ERROR", "UNION", "FINISH", "USING", "INDEX", "JOIN", "SCAN", "LET", "FILTER", "FOR":
 		return true
 	}
 	return false
@@ -782,7 +782,7 @@ func validateLeadingNodePatternTransition(cypher string) error {
 	if remaining == "" || remaining[0] == ',' || remaining[0] == '-' || remaining[0] == '<' || remaining[0] == ';' {
 		return nil
 	}
-	for _, allowed := range []string{"WHERE", "USING", "RETURN", "WITH", "MATCH", "OPTIONAL", "CREATE", "MERGE", "SET", "REMOVE", "DELETE", "UNWIND", "CALL", "FOREACH", "ORDER", "SKIP", "LIMIT", "UNION"} {
+	for _, allowed := range []string{"WHERE", "USING", "RETURN", "WITH", "MATCH", "OPTIONAL", "CREATE", "MERGE", "SET", "REMOVE", "DELETE", "UNWIND", "CALL", "FOREACH", "ORDER", "SKIP", "LIMIT", "UNION", "LET", "FILTER", "FOR"} {
 		if matchKeywordAt(remaining, 0, allowed) {
 			return nil
 		}

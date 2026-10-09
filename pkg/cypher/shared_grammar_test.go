@@ -81,6 +81,79 @@ func TestSharedCypherGrammarErrorsBeforeWrites(t *testing.T) {
 	}
 }
 
+// TestSharedCypherGrammarAfterNodePattern pins the review feedback that
+// LET / FILTER / FOR must work immediately after a leading MATCH or CREATE
+// node pattern, and after OPTIONAL MATCH.
+func TestSharedCypherGrammarAfterNodePattern(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "pattern")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
+			prefix := ""
+			if parser == "antlr" {
+				prefix = "CYPHER 25 "
+			}
+			_, err := exec.Execute(ctx, "CREATE (:Q {id: 1, i: 10})", nil)
+			require.NoError(t, err)
+			for _, query := range []string{
+				"MATCH (n:Q) LET x = n.id RETURN x ORDER BY x",
+				"MATCH (n:Q) FILTER n.id > 0 RETURN n.id AS id ORDER BY id",
+				"MATCH (n:Q) FOR x IN [1,2] RETURN n.id AS id, x ORDER BY x",
+				"MATCH (n:Q {id: 1}) LET v = n.i + 1 SET n.v = v RETURN n.v AS v",
+				"OPTIONAL MATCH (n:Nope) FILTER n IS NULL RETURN count(*) AS c",
+			} {
+				result, err := exec.Execute(ctx, prefix+query, nil)
+				require.NoError(t, err, query)
+				require.NotEmpty(t, result.Rows, query)
+			}
+		})
+	}
+}
+
+// TestSharedCypherGrammarRuleBreaks pins the Neo4j rules the shared grammar
+// must still enforce rather than silently extend.
+func TestSharedCypherGrammarRuleBreaks(t *testing.T) {
+	for _, parser := range []string{"nornic", "antlr"} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "rules")
+			exec := NewStorageExecutor(store)
+			ctx := context.Background()
+			_, err := exec.Execute(ctx, "CREATE (:Q {id: 1})", nil)
+			require.NoError(t, err)
+			prefix := ""
+			if parser == "antlr" {
+				prefix = "CYPHER 25 "
+			}
+			for _, query := range []string{
+				"LET a = 1 LET a = 2 RETURN a",
+				"LET a = 1, a = 2 RETURN a",
+				"MATCH (n:Q) LET n = 1 RETURN n",
+				"WITH 1 AS x FOR x IN [2] RETURN x",
+				"FILTER [] RETURN 1",
+				"FILTER [1] RETURN 1",
+				"FILTER 1 RETURN 1",
+				"FILTER 'a' RETURN 1",
+				"MATCH (n:Q) FILTER count(n) > 1 RETURN 1",
+				"CYPHER 5 CYPHER 25 RETURN 1",
+			} {
+				_, err := exec.Execute(ctx, prefix+query, nil)
+				require.Error(t, err, query)
+			}
+			// FOR over a scalar iterates it once, like UNWIND.
+			result, err := exec.Execute(ctx, prefix+"FOR x IN 1 RETURN x", nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+		})
+	}
+}
+
 func TestSharedCypherGrammarWrites(t *testing.T) {
 	for _, parser := range []string{"nornic", "antlr"} {
 		t.Run(parser, func(t *testing.T) {

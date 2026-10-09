@@ -132,6 +132,9 @@ func (e *StorageExecutor) validateSharedClause(scope matchSemanticScope, values 
 		if expression == "" {
 			return sharedClauseSyntaxError("FILTER requires a predicate")
 		}
+		if pipelineExpressionContainsAggregate(expression) {
+			return sharedClauseSyntaxError("Aggregation is not allowed in FILTER")
+		}
 		if err := undefinedExpressionVariable(scope, expression); err != nil {
 			return err
 		}
