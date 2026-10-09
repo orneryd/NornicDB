@@ -156,10 +156,18 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 	if err := staticPatternTokenError(clause, scope); err != nil {
 		return err
 	}
+	// Every item check needs a label item or a dynamic key (: or [), or a
+	// target that isn't an entity: other clauses cost one scan.
+	if !strings.ContainsAny(clause.text, ":[") && !scopeHasNonEntity(scope) {
+		return nil
+	}
 	switch clause.kind {
 	case pipelineClauseSet:
 		return staticSetItemsTokenError(splitSetAssignments(collapseChainedSetClauses(pipelineClauseBody(clause.text, "SET"))), scope)
 	case pipelineClauseMerge:
+		if indexASCIIFold(clause.text, " SET ") < 0 {
+			return nil // no ON CREATE / ON MATCH SET
+		}
 		actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"))
 		if err := staticSetItemsTokenError(mergeActionAssignments(actions.onCreate), scope); err != nil {
 			return err
@@ -189,6 +197,17 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 		}
 	}
 	return nil
+}
+
+// scopeHasNonEntity reports whether scope binds a variable whose static type
+// is known and isn't a node or a relationship.
+func scopeHasNonEntity(scope staticTypeScope) bool {
+	for _, kind := range scope.kinds {
+		if kind != matchBindingNode && kind != matchBindingRelationship && kind != matchBindingUnknown {
+			return true
+		}
+	}
+	return len(scope.values) > 0
 }
 
 func staticSetItemsTokenError(assignments []string, scope staticTypeScope) error {
