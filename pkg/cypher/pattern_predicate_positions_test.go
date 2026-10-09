@@ -19,9 +19,9 @@ func TestPatternPredicatesInBooleanPositions(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:SQ {v: 3})-[:R]->(:SQ {v: 1})", nil)
 	require.NoError(t, err)
 	for query, rows := range map[string][][]interface{}{
-		"MATCH (n:SQ) FILTER (n)-[:R]->() RETURN count(*) AS c":                                           {{int64(1)}},
-		"MATCH (n:SQ) FILTER NOT (n)-[:R]->() RETURN count(*) AS c":                                       {{int64(1)}},
-		"MATCH (n:SQ) FILTER n:SQ AND (n)<-[:R]-() RETURN n.v AS v":                                       {{int64(1)}},
+		"CYPHER 25 MATCH (n:SQ) FILTER (n)-[:R]->() RETURN count(*) AS c":                                 {{int64(1)}},
+		"CYPHER 25 MATCH (n:SQ) FILTER NOT (n)-[:R]->() RETURN count(*) AS c":                             {{int64(1)}},
+		"CYPHER 25 MATCH (n:SQ) FILTER n:SQ AND (n)<-[:R]-() RETURN n.v AS v":                             {{int64(1)}},
 		"MATCH (n:SQ) WITH n, exists((n)-[:R]->()) AS e RETURN n.v AS v, e ORDER BY v":                    {{int64(1), false}, {int64(3), true}},
 		"MATCH (n:SQ) RETURN n.v AS v, exists((n)-[:R]->()) AS e ORDER BY v":                              {{int64(1), false}, {int64(3), true}},
 		"MATCH (n:SQ) RETURN n.v AS v, NOT (n)-[:R]->() AS e ORDER BY v":                                  {{int64(1), true}, {int64(3), false}},
@@ -36,12 +36,21 @@ func TestPatternPredicatesInBooleanPositions(t *testing.T) {
 	for _, query := range []string{
 		"MATCH (n:SQ) RETURN n.v AS v, (n)-[:R]->() AS e",
 		"MATCH (n:SQ) RETURN size((n)-[:R]->()) AS e",
-		"MATCH (n:SQ) FILTER (n)-[:R]->(m) RETURN count(*) AS c",
+		"MATCH (n:SQ) RETURN ((n)-[:R]->()) AS e",
+		"CYPHER 25 MATCH (n:SQ) FILTER (n)-[:R]->(m) RETURN count(*) AS c",
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
 		code, _ := nornicerrors.Neo4jStatus(err)
 		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, query)
+	}
+	// An operand's evaluation error is the statement's.
+	for _, query := range []string{
+		"MATCH (n:SQ) RETURN (n)-[:R]->() AND 1 / 0 = 1 AS e",
+		"MATCH (n:SQ) RETURN [x IN [1] WHERE (n)-[:R]->() AND x / 0 = 1 | x] AS e",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.ErrorContains(t, err, "/ by zero", query)
 	}
 }
 

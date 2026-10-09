@@ -86,6 +86,17 @@ func TestDesugarStandaloneOrderClauses(t *testing.T) {
 		"MATCH (n) WHERE n.s = 'ORDER BY x' RETURN n":                "MATCH (n) WHERE n.s = 'ORDER BY x' RETURN n",
 		"SHOW INDEXES YIELD name ORDER BY name RETURN name":          "SHOW INDEXES YIELD name ORDER BY name RETURN name",
 		"MATCH (n) WHERE EXISTS { MATCH (n)--(m) LIMIT 1 } RETURN n": "MATCH (n) WHERE EXISTS { MATCH (n)--(m) WITH * LIMIT 1 } RETURN n",
+		"MATCH (n) /* c */ ORDER BY n.v RETURN n":                    "MATCH (n) /* c */ WITH * ORDER BY n.v RETURN n",
+		"WITH * MATCH (m) ORDER BY m.v RETURN m":                     "WITH * MATCH (m) WITH * ORDER BY m.v RETURN m",
+		// A keyword where an operand is expected is a variable.
+		"WITH 1 AS finish RETURN finish ORDER BY finish":         "WITH 1 AS finish RETURN finish ORDER BY finish",
+		"MATCH (n) RETURN n.v AS optional ORDER BY optional":     "MATCH (n) RETURN n.v AS optional ORDER BY optional",
+		"WITH 1 AS a, 2 AS match RETURN a, match ORDER BY a":     "WITH 1 AS a, 2 AS match RETURN a, match ORDER BY a",
+		"UNWIND [2] AS distinct RETURN distinct AS v ORDER BY v": "UNWIND [2] AS distinct RETURN distinct AS v ORDER BY v",
+		"WITH 1 AS limit MATCH (m) ORDER BY limit RETURN m":      "WITH 1 AS limit MATCH (m) WITH * ORDER BY limit RETURN m",
+		// Unbalanced text is left for the parser to report.
+		"MATCH (n ORDER BY n.v RETURN n":                      "MATCH (n ORDER BY n.v RETURN n",
+		"MATCH (n) WHERE EXISTS { MATCH (m) LIMIT 1 RETURN n": "MATCH (n) WHERE EXISTS { MATCH (m) LIMIT 1 RETURN n",
 	} {
 		got, _ := desugarStandaloneOrderClauses(query)
 		require.Equal(t, want, got, query)
