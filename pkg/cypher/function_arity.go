@@ -12,8 +12,11 @@ type functionArity struct {
 // from its signatures: coalesce takes any number of arguments, trim also takes
 // the forms its FROM syntax stands for, trim(specification, input) and
 // trim(specification, characters, input), and timestamp takes an ignored one.
+// format takes a value and a pattern, or, as NornicDB's printf extension, a
+// template and any number of values.
 var functionArityOverrides = map[string]functionArity{
 	"coalesce":  {minimum: 1, maximum: -1},
+	"format":    {minimum: 1, maximum: -1},
 	"trim":      {minimum: 1, maximum: 3},
 	"timestamp": {minimum: 0, maximum: 1},
 }

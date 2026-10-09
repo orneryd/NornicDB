@@ -68,6 +68,10 @@ const (
 	MessageCypherCoreFunctionArgumentOutOfRange          MessageID = "cyphercore.function_argument_out_of_range"
 	MessageCypherCoreStringJoinElementType               MessageID = "cyphercore.string_join_element_type"
 	MessageCypherCoreReplaceLimitNegative                MessageID = "cyphercore.replace_limit_negative"
+	MessageCypherCoreTemporalPatternInvalidCharacter     MessageID = "cyphercore.temporal_pattern_invalid_character"
+	MessageCypherCoreDurationPatternUnbalancedEscapes    MessageID = "cyphercore.duration_pattern_unbalanced_escapes"
+	MessageCypherCoreTemporalPatternMismatch             MessageID = "cyphercore.temporal_pattern_mismatch"
+	MessageCypherCoreTemporalPatternRequiresString       MessageID = "cyphercore.temporal_pattern_requires_string"
 	MessageCypherCoreListCoercionToBoolean               MessageID = "cyphercore.list_coercion_to_boolean"
 	MessageCypherCoreListIndexTypeMismatch               MessageID = "cyphercore.list_index_type_mismatch"
 	MessageCypherCoreMapKeyTypeMismatch                  MessageID = "cyphercore.map_key_type_mismatch"
@@ -367,6 +371,30 @@ func CypherCoreStringJoinElementType(value string) Message {
 // replace() limit.
 func CypherCoreReplaceLimitNegative() Message {
 	return cypherCoreMessage(MessageCypherCoreReplaceLimitNegative, "The limit needs to be greater than or equal to 0.", nil)
+}
+
+// CypherCoreTemporalPatternInvalidCharacter is Neo4j's message for a format()
+// pattern that isn't valid or names a field the value doesn't have.
+func CypherCoreTemporalPatternInvalidCharacter(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalPatternInvalidCharacter, "An invalid character is used in the pattern. Verify that all characters are supported by `"+typeName+"`.", map[string]any{"Type": typeName})
+}
+
+// CypherCoreDurationPatternUnbalancedEscapes is Neo4j's message for a
+// format() duration pattern with an unterminated quote.
+func CypherCoreDurationPatternUnbalancedEscapes() Message {
+	return cypherCoreMessage(MessageCypherCoreDurationPatternUnbalancedEscapes, "Pattern parsing failed. Make sure that an even number of escapes are used in the pattern.", nil)
+}
+
+// CypherCoreTemporalPatternMismatch is Neo4j's message for a temporal
+// constructor whose pattern doesn't read its input as the type it builds.
+func CypherCoreTemporalPatternMismatch(pattern, input, typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalPatternMismatch, "Pattern, `"+pattern+"`, does not match input, `"+input+"`. Verify that the pattern is valid for constructing `"+typeName+"`.", map[string]any{"Pattern": pattern, "Input": input, "Type": typeName})
+}
+
+// CypherCoreTemporalPatternRequiresString is Neo4j's message for a temporal
+// constructor given a pattern and an input that isn't a string.
+func CypherCoreTemporalPatternRequiresString() Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalPatternRequiresString, "A pattern can only be used in conjunction with a `STRING` input.", nil)
 }
 
 func CypherCoreListOperandTypeMismatch(typeName string) Message {

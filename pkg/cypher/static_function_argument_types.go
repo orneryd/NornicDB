@@ -87,14 +87,21 @@ var staticArgumentOverrides = map[string][]string{
 // function catalog's signatures: a position accepts what any signature
 // accepts there, and isn't checked when some signature takes a type Neo4j
 // doesn't check. Checked against Neo4j 5.26 with a literal of a wrong type at
-// every position of every function. Positions past the end aren't checked.
+// every position of every function. Positions past the end aren't checked,
+// nor is a function with a NornicDB extension form, whose entry doesn't list
+// its arguments (format(template, values…)): its evaluator rejects what
+// neither form takes.
 var staticFunctionArguments, maxStaticFunctionNameLength = buildStaticFunctionArguments()
 
 func buildStaticFunctionArguments() (map[string][]staticArgumentType, int) {
 	positions := make(map[string][][]string)
 	unchecked := make(map[string]map[int]bool)
+	extensions := make(map[string]bool)
 	for _, function := range cypherFunctionCatalog {
 		name := lowerASCII(function.name)
+		if function.arguments == nil {
+			extensions[name] = true
+		}
 		if function.arguments == nil || functionSyntaxForms[name] {
 			continue
 		}
@@ -120,6 +127,9 @@ func buildStaticFunctionArguments() (map[string][]staticArgumentType, int) {
 	built := make(map[string][]staticArgumentType, len(positions))
 	longest := 0
 	for name, typed := range positions {
+		if extensions[name] {
+			continue
+		}
 		arguments := make([]staticArgumentType, len(typed))
 		checked := false
 		for index, options := range typed {

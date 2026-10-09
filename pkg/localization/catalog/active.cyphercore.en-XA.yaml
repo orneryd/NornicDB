@@ -142,6 +142,14 @@
   other: "[!! Expected a string value for `string.join`, but got: {{.Value}}; consider converting it to a string with toString(). !!]"
 - id: cyphercore.replace_limit_negative
   other: "[!! The limit needs to be greater than or equal to 0. !!]"
+- id: cyphercore.temporal_pattern_invalid_character
+  other: "[!! An invalid character is used in the pattern. Verify that all characters are supported by `{{.Type}}`. !!]"
+- id: cyphercore.duration_pattern_unbalanced_escapes
+  other: "[!! Pattern parsing failed. Make sure that an even number of escapes are used in the pattern. !!]"
+- id: cyphercore.temporal_pattern_mismatch
+  other: "[!! Pattern, `{{.Pattern}}`, does not match input, `{{.Input}}`. Verify that the pattern is valid for constructing `{{.Type}}`. !!]"
+- id: cyphercore.temporal_pattern_requires_string
+  other: "[!! A pattern can only be used in conjunction with a `STRING` input. !!]"
 - id: cyphercore.list_operand_type_mismatch
   other: "[!! Type mismatch: expected List<T> but was {{.Type}} !!]"
 - id: cyphercore.list_parameter_type_mismatch

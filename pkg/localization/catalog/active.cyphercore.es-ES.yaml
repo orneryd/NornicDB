@@ -142,6 +142,14 @@
   other: "Se esperaba un valor de cadena para `string.join`, pero se obtuvo: {{.Value}}; considere convertirlo en cadena con toString()."
 - id: cyphercore.replace_limit_negative
   other: "El límite debe ser mayor o igual que 0."
+- id: cyphercore.temporal_pattern_invalid_character
+  other: "Se usa un carácter no válido en el patrón. Verifique que `{{.Type}}` admite todos los caracteres."
+- id: cyphercore.duration_pattern_unbalanced_escapes
+  other: "Error al analizar el patrón. Asegúrese de usar un número par de caracteres de escape en el patrón."
+- id: cyphercore.temporal_pattern_mismatch
+  other: "El patrón `{{.Pattern}}` no coincide con la entrada `{{.Input}}`. Verifique que el patrón sea válido para construir `{{.Type}}`."
+- id: cyphercore.temporal_pattern_requires_string
+  other: "Un patrón solo se puede usar con una entrada `STRING`."
 - id: cyphercore.list_operand_type_mismatch
   other: "Tipo no coincidente: se esperaba List<T> pero era {{.Type}}"
 - id: cyphercore.list_parameter_type_mismatch

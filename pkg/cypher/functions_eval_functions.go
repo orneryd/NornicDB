@@ -803,29 +803,6 @@ skipArrayIndexing:
 		return nil
 	}
 
-	// format(template, ...args) - string formatting (printf-style)
-	if matchFuncStartAndSuffix(expr, "format") {
-		inner := extractFuncArgs(expr, "format")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 1 {
-			template := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			// Remove quotes from template
-			template = strings.Trim(template, "'\"")
-
-			// Evaluate remaining arguments
-			formatArgs := make([]interface{}, 0, len(args)-1)
-			for i := 1; i < len(args); i++ {
-				val := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[i]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				formatArgs = append(formatArgs, val)
-			}
-
-			// Simple format string replacement
-			// Supports %s (string), %d (integer), %f (float), %v (any)
-			return fmt.Sprintf(template, formatArgs...)
-		}
-		return nil
-	}
-
 	// ========================================
 	// Date/Time Functions (Neo4j compatible)
 	// ========================================
