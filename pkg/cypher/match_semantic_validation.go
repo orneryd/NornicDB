@@ -1086,21 +1086,14 @@ func addMatchPatternBindingKinds(scope matchSemanticScope, clause string) {
 			break
 		}
 	}
-	groupNodes, groupRelationships := quantifiedGroupVariables(pattern)
 	for _, variable := range extractNodeVariables(pattern) {
 		if _, found := scope[variable]; !found {
 			scope[variable] = matchBindingNode
-			if _, grouped := groupNodes[variable]; grouped {
-				scope[variable] = matchBindingNodeList
-			}
 		}
 	}
 	for _, variable := range extractRelationshipVariables(pattern) {
 		if _, found := scope[variable]; !found {
 			scope[variable] = matchBindingRelationship
-			if _, grouped := groupRelationships[variable]; grouped {
-				scope[variable] = matchBindingRelationshipList
-			}
 		}
 	}
 	for _, patternPart := range splitTopLevelComma(pattern) {
