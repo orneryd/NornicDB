@@ -134,6 +134,8 @@
   other: "Invalid input '{{.Token}}': expected an expression"
 - id: cyphercore.invalid_input_expected_identifier
   other: "Invalid input '{{.Token}}': expected an identifier"
+- id: cyphercore.parameter_type_mismatch
+  other: "Type mismatch for parameter '{{.Parameter}}': expected {{.Expected}} but was {{.Type}}"
 - id: cyphercore.list_operand_type_mismatch
   other: "Type mismatch: expected List<T> but was {{.Type}}"
 - id: cyphercore.list_parameter_type_mismatch

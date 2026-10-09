@@ -365,6 +365,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.map_projection_receiver", Constructor: "CypherCoreMapProjectionReceiver", Fields: []string{"Receiver"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.normalize_form_invalid", Constructor: "CypherCoreNormalizeFormInvalid", Fields: []string{"Form"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.optional_match_required", Constructor: "CypherCoreOptionalMatchRequired", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.parameter_type_mismatch", Constructor: "CypherCoreParameterTypeMismatch", Fields: []string{"Expected", "Parameter", "Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.parse_failed", Constructor: "CypherCoreParseFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.percentile_not_number", Constructor: "CypherCorePercentileNotNumber", Fields: []string{"Value"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.percentile_out_of_range", Constructor: "CypherCorePercentileOutOfRange", Fields: []string{"Value"}, PluralForms: []string{"other"}},

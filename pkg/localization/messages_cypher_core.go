@@ -55,6 +55,7 @@ const (
 	MessageCypherCoreInvalidInputExpectedIdentifier      MessageID = "cyphercore.invalid_input_expected_identifier"
 	MessageCypherCoreListOperandTypeMismatch             MessageID = "cyphercore.list_operand_type_mismatch"
 	MessageCypherCoreListParameterTypeMismatch           MessageID = "cyphercore.list_parameter_type_mismatch"
+	MessageCypherCoreParameterTypeMismatch               MessageID = "cyphercore.parameter_type_mismatch"
 	MessageCypherCoreListCoercionToBoolean               MessageID = "cyphercore.list_coercion_to_boolean"
 	MessageCypherCoreListIndexTypeMismatch               MessageID = "cyphercore.list_index_type_mismatch"
 	MessageCypherCoreMapKeyTypeMismatch                  MessageID = "cyphercore.map_key_type_mismatch"
@@ -315,10 +316,17 @@ func CypherCoreInvalidInputExpectedExpression(token string) Message {
 }
 
 // CypherCoreInvalidInputExpectedIdentifier is Neo4j's message for a token
-// (or the end of the statement, '') where a name must come, as after the
+// (or the end of the statement, ”) where a name must come, as after the
 // dot of a property access (RETURN n.).
 func CypherCoreInvalidInputExpectedIdentifier(token string) Message {
 	return cypherCoreMessage(MessageCypherCoreInvalidInputExpectedIdentifier, "Invalid input '"+token+"': expected an identifier", map[string]any{"Token": token})
+}
+
+// CypherCoreParameterTypeMismatch is Neo4j's message for a parameter whose
+// value has a type its position doesn't take ("Type mismatch for parameter
+// 'p': expected Map, Node or Relationship but was Integer").
+func CypherCoreParameterTypeMismatch(parameter, expected, typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreParameterTypeMismatch, "Type mismatch for parameter '"+parameter+"': expected "+expected+" but was "+typeName, map[string]any{"Parameter": parameter, "Expected": expected, "Type": typeName})
 }
 
 func CypherCoreListOperandTypeMismatch(typeName string) Message {
