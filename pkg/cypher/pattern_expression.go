@@ -401,10 +401,9 @@ func (e *StorageExecutor) entityIdentityDatabase(ctx context.Context, anchor sto
 // false for any other expression.
 func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, expr string, values pipelineRow) (value interface{}, ok, handled bool) {
 	trimmed := strings.TrimSpace(expr)
+	// A chain's first node closes before it ends, so these parentheses
+	// only ever group.
 	for len(trimmed) > 1 && trimmed[0] == '(' && findMatchingParen(trimmed, 0) == len(trimmed)-1 {
-		if _, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain {
-			break
-		}
 		trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
 	}
 	if chainEnd, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain && chainEnd == len(trimmed) {

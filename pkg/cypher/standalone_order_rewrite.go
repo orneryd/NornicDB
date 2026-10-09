@@ -53,13 +53,16 @@ const (
 // query[start:end], appending its edits in order.
 func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewriteEdit) {
 	inProjection, stage := false, standaloneStageItems
-	previousWord := ""
+	// previousWord is the last word read, "" after any other token; last is
+	// the last character of the last token, comments and spaces skipped (0
+	// at the start of the block).
+	previousWord, last := "", byte(0)
 	for index := start; index < end; {
 		character := query[index]
 		switch {
 		case character == '\'' || character == '"' || character == '`':
 			index = skipCypherQuotedText(query, index, character)
-			previousWord = ""
+			previousWord, last = "", character
 			continue
 		case character == '/':
 			if commentEnd := queryCommentEnd(query, index); commentEnd > index {
@@ -76,7 +79,7 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 				return
 			}
 			index = close + 1
-			previousWord = ""
+			previousWord, last = "", closer
 			continue
 		case character == '{':
 			close := findMatchingDelimiter(query[:end], index, '{', '}')
@@ -87,24 +90,31 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 				scanStandaloneOrderClauses(query, index+1, close, edits)
 			}
 			index = close + 1
-			previousWord = ""
+			previousWord, last = "", '}'
 			continue
 		}
 		name, next, ok := scanIdentifierToken(query, index)
 		if !ok {
 			if character > ' ' {
-				previousWord = ""
+				previousWord, last = "", character
 			}
 			index++
 			continue
 		}
 		if index > start && (query[index-1] == '.' || query[index-1] == '$') {
-			previousWord = ""
+			previousWord, last = "", query[next-1]
 			index = next
 			continue
 		}
 		upper := upperASCII(name)
 		kind := standaloneClauseKind(query, upper, next, end)
+		if kind == standaloneStageItems && standaloneOperandPosition(previousWord, last) {
+			// A keyword where an operand is expected is a variable:
+			// RETURN finish, n.id AS optional, WITH a, match.
+			previousWord, last = "", query[next-1]
+			index = next
+			continue
+		}
 		if kind == standaloneStageItems {
 			switch upper {
 			case "WITH", "RETURN", "YIELD":
@@ -118,12 +128,13 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 				"DELETE", "DETACH", "FOREACH", "CALL", "UNION", "LOAD", "USE", "FINISH":
 				inProjection = false
 			}
-			previousWord = upper
+			previousWord, last = upper, query[next-1]
 			index = next
 			continue
 		}
-		if !standaloneClausePosition(query, previousWord, index, start) {
-			previousWord = upper
+		if !standaloneClausePosition(previousWord, last) {
+			// A variable: x > limit, AS skip.
+			previousWord, last = "", query[next-1]
 			index = next
 			continue
 		}
@@ -138,9 +149,27 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 		if upper == "ORDER" {
 			next = skipSpaces(query, next) + len("BY")
 		}
-		previousWord = upper
+		previousWord, last = upper, query[next-1]
 		index = next
 	}
+}
+
+// standaloneOperandWord reports whether word (upper case) expects an
+// operand after it: an operator word, AS, BY, or a clause's opening keyword.
+func standaloneOperandWord(word string) bool {
+	switch word {
+	case "AND", "OR", "XOR", "NOT", "IN", "IS", "AS", "BY", "THEN", "ELSE", "WHEN", "CASE", "DISTINCT",
+		"STARTS", "ENDS", "CONTAINS", "WITH", "RETURN", "WHERE", "UNWIND", "SET", "SKIP", "OFFSET", "LIMIT":
+		return true
+	}
+	return false
+}
+
+// standaloneOperandPosition reports whether an operand is expected after
+// the token previousWord / last: after a standaloneOperandWord, a comma or an
+// operator character (not *, which after WITH or RETURN is the wildcard).
+func standaloneOperandPosition(previousWord string, last byte) bool {
+	return standaloneOperandWord(previousWord) || (last != 0 && strings.IndexByte(",:=<>+-/%^|", last) >= 0)
 }
 
 // standaloneClauseKind is the projection stage the word upper at
@@ -161,23 +190,16 @@ func standaloneClauseKind(query, upper string, next, end int) int {
 	return standaloneStageItems
 }
 
-// standaloneClausePosition reports whether a clause can start at
-// query[index]: at the start of the block, or after a complete expression or
-// pattern, not after an operator or a word that expects an operand (a
-// variable named skip or limit is read as one: x > limit, AS skip).
-func standaloneClausePosition(query, previousWord string, index, start int) bool {
-	before := strings.TrimRight(query[start:index], " \t\r\n")
-	if before == "" {
+// standaloneClausePosition reports whether a clause can start after the
+// token previousWord / last: at the start of the block, or after a complete
+// expression or pattern, not after an operator or a word that expects an
+// operand (a variable named skip or limit is read as one: x > limit, AS skip).
+func standaloneClausePosition(previousWord string, last byte) bool {
+	switch {
+	case last == 0:
 		return true
-	}
-	switch previousWord {
-	case "AND", "OR", "XOR", "NOT", "IN", "IS", "AS", "BY", "THEN", "ELSE", "WHEN", "CASE", "DISTINCT",
-		"STARTS", "ENDS", "CONTAINS", "WITH", "RETURN", "WHERE", "UNWIND", "SET", "SKIP", "OFFSET", "LIMIT":
+	case standaloneOperandWord(previousWord):
 		return false
 	}
-	switch last := before[len(before)-1]; {
-	case isIdentByte(last), last == ')', last == ']', last == '}', last == '\'', last == '"', last == '`':
-		return true
-	}
-	return false
+	return isIdentByte(last) || strings.IndexByte(")]}'\"`", last) >= 0
 }
