@@ -57,9 +57,12 @@ import (
 
 // Reranker is a Stage-2 reranking component.
 //
-// Implementations MUST be fail-open: if reranking cannot be performed (service
-// unavailable, parse error, timeout), they should return a pass-through ranking
-// rather than failing the overall search request.
+// When reranking cannot be performed (service unavailable, unusable
+// response, timeout), Rerank returns an error instead of a pass-through
+// ranking. The Service owns the fail-open: a search keeps its fused order and
+// reports the fallback (SearchFallbackRerankFailed), and RerankCandidates
+// returns the candidates in their given order. A disabled reranker passes
+// candidates through unchanged.
 type Reranker interface {
 	// Name identifies the reranker implementation for observability.
 	// Examples: "cross_encoder", "heimdall_llm".
@@ -148,20 +151,7 @@ type RerankResult = voyage.RankedCandidate
 // Rerank takes a query and candidates, returns reranked results.
 func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error) {
 	if ce == nil || ce.config == nil || !ce.config.Enabled {
-		// Pass through without reranking
-		results := make([]RerankResult, len(candidates))
-		for i, c := range candidates {
-			results[i] = RerankResult{
-				ID:           c.ID,
-				Content:      c.Content,
-				OriginalRank: i + 1,
-				NewRank:      i + 1,
-				BiScore:      c.Score,
-				CrossScore:   c.Score,
-				FinalScore:   c.Score,
-			}
-		}
-		return results, nil
+		return voyage.PassThrough(candidates), nil
 	}
 
 	if len(candidates) == 0 {
@@ -180,8 +170,7 @@ func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []R
 	// Call reranking API
 	scores, err := ce.callRerankAPI(ctx, query, candidates)
 	if err != nil {
-		// Fallback to original ranking on error
-		return ce.passThrough(candidates), nil
+		return nil, err
 	}
 
 	// Build results with new scores
@@ -212,23 +201,6 @@ func (ce *CrossEncoder) Rerank(ctx context.Context, query string, candidates []R
 	}
 
 	return filtered, nil
-}
-
-// passThrough returns results without reranking.
-func (ce *CrossEncoder) passThrough(candidates []RerankCandidate) []RerankResult {
-	results := make([]RerankResult, len(candidates))
-	for i, c := range candidates {
-		results[i] = RerankResult{
-			ID:           c.ID,
-			Content:      c.Content,
-			OriginalRank: i + 1,
-			NewRank:      i + 1,
-			BiScore:      c.Score,
-			CrossScore:   c.Score,
-			FinalScore:   c.Score,
-		}
-	}
-	return results
 }
 
 // callRerankAPI calls the cross-encoder service.

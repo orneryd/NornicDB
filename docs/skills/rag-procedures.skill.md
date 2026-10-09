@@ -56,6 +56,7 @@ Behavior:
 - `search_method` reports the winning path: `rrf_hybrid`, `rrf_hybrid+rerank`, `vector_only`, or `bm25_only`.
 - `fallback_triggered: true` means one strategy returned nothing and the engine fell back.
 - `fallback_reason` explains why the requested search path changed using a stable code such as `query_embedding_failed`, `query_embedding_unavailable`, `no_embedder`, `no_hybrid_results`, or `hybrid_search_failed`. Provider error text is logged, not returned to callers.
+- `search_method` names `+rerank` only when the reranker ordered the results. When a requested rerank didn't (`rerank_failed`: the provider failed; `rerank_scores_flat`: it scored every candidate nearly the same; `rerank_no_candidates`: no candidate had content to score), the results keep their fused order and `fallback_triggered` is `true`. A failed rerank isn't cached.
 
 ### Durable continuation
 
@@ -121,7 +122,7 @@ RETURN id, final_score
 ORDER BY final_score DESC
 ```
 
-`db.rerank` exercises the cross-encoder when one is configured (`NORNICDB_SEARCH_RERANK_ENABLED=true` plus a provider). Without a configured reranker the procedure still succeeds and returns candidates in pass-through order — the `cross_score` and `final_score` simply equal the input `score`, and rank order is unchanged. Candidates must include a non-empty `id`; missing `content` is allowed but will hurt rerank quality when the reranker is on.
+`db.rerank` exercises the cross-encoder when one is configured (`NORNICDB_SEARCH_RERANK_ENABLED=true` plus a provider). Without a configured reranker the procedure still succeeds and returns candidates in pass-through order — the `cross_score` and `final_score` simply equal the input `score`, and rank order is unchanged. When a configured reranker fails, the call fails with `rerank failed (<reranker>)`; the provider's error is in the server log. Candidates must include a non-empty `id`; missing `content` is allowed but will hurt rerank quality when the reranker is on.
 
 ## `db.infer` — LLM generation
 

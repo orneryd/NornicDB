@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/voyage"
 )
 
 // LLMFunc is a minimal, dependency-free function signature for calling an LLM.
@@ -17,8 +20,8 @@ type LLMFunc func(ctx context.Context, prompt string) (string, error)
 
 // LLMRerankerConfig controls LLM-based reranking behavior.
 //
-// This reranker is designed to be "fail-open": on errors or malformed output,
-// it returns the original candidate order (pass-through).
+// A failed LLM call or unusable output is reported as an error; the search
+// Service falls back to the original order and reports that it did.
 type LLMRerankerConfig struct {
 	Enabled bool
 
@@ -82,11 +85,12 @@ func (r *LLMReranker) IsAvailable(ctx context.Context) bool {
 
 // Rerank takes a query and candidates, returns reranked results.
 //
-// It is fail-open: if the LLM errors or returns malformed output, it returns the
-// original ranking (pass-through).
+// An LLM error, or output that ranks none of the candidates, is an error (see
+// Reranker). When the LLM scores every candidate below MinScore, the
+// candidates keep their order.
 func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error) {
 	if !r.Enabled() {
-		return r.passThrough(candidates), nil
+		return voyage.PassThrough(candidates), nil
 	}
 	if len(candidates) == 0 {
 		return []RerankResult{}, nil
@@ -118,12 +122,12 @@ func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []Rer
 
 	raw, err := r.llm(callCtx, prompt)
 	if err != nil {
-		return r.passThrough(candidates), nil
+		return nil, err
 	}
 
 	order, scores := parseLLMRerankResponse(strings.TrimSpace(raw), len(candidates))
 	if len(order) == 0 {
-		return r.passThrough(candidates), nil
+		return nil, localizedError(localization.SearchRerankResponseUnrecognized(), nil)
 	}
 
 	// Build reranked results.
@@ -174,8 +178,11 @@ func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []Rer
 		})
 	}
 
+	if len(seen) == 0 {
+		return nil, localizedError(localization.SearchRerankResponseUnrecognized(), nil)
+	}
 	if len(results) == 0 {
-		return r.passThrough(candidates), nil
+		return voyage.PassThrough(candidates), nil
 	}
 
 	// Fill any candidates the model omitted (fail-open), preserving original order.
@@ -201,22 +208,6 @@ func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []Rer
 	}
 
 	return results, nil
-}
-
-func (r *LLMReranker) passThrough(candidates []RerankCandidate) []RerankResult {
-	results := make([]RerankResult, len(candidates))
-	for i, c := range candidates {
-		results[i] = RerankResult{
-			ID:           c.ID,
-			Content:      c.Content,
-			OriginalRank: i + 1,
-			NewRank:      i + 1,
-			BiScore:      c.Score,
-			CrossScore:   c.Score,
-			FinalScore:   c.Score,
-		}
-	}
-	return results
 }
 
 func (r *LLMReranker) buildPrompt(query string, candidates []RerankCandidate) string {

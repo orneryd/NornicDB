@@ -16,3 +16,6 @@
 - id: search.rerank_response_unrecognized
   description: Respuesta de la API de reclasificación con un formato no compatible.
   other: no se pudo analizar la respuesta de reclasificación
+- id: search.rerank_failed
+  description: Reclasificación solicitada que el reclasificador no pudo realizar; la causa se registra, no se devuelve.
+  other: "la reclasificación falló ({{.Reranker}}); el registro del servidor tiene la causa"

@@ -16,3 +16,6 @@
 - id: search.rerank_response_unrecognized
   description: Rerank API response that does not match a supported response shape.
   other: unable to parse rerank response
+- id: search.rerank_failed
+  description: Requested rerank the reranker could not perform; the cause is logged, not returned.
+  other: "rerank failed ({{.Reranker}}); the server log has the cause"

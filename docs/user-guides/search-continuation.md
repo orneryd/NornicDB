@@ -155,7 +155,9 @@ Bolt's `RUN` `SUCCESS` message when more results exist.
 
 `fallback_reason` is a stable diagnostic code, not a provider error string.
 Current values are `query_embedding_failed`, `query_embedding_unavailable`,
-`no_embedder`, `no_hybrid_results`, and `hybrid_search_failed`. This keeps
+`no_embedder`, `no_hybrid_results`, `hybrid_search_failed`, and, when a
+requested rerank didn't order the results, `rerank_failed`,
+`rerank_scores_flat` and `rerank_no_candidates`. This keeps
 provider credentials and response bodies out of caller-visible metadata while
 the corresponding warning log retains the operational error.
 

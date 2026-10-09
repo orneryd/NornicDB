@@ -85,16 +85,18 @@ func (r *testReranker) Rerank(ctx context.Context, query string, candidates []Re
 	if r.results != nil {
 		return r.results, nil
 	}
+	// Keep the order, with scores spread enough to count as a rerank.
 	out := make([]RerankResult, len(candidates))
 	for i, c := range candidates {
+		score := 1 - 0.1*float64(i)
 		out[i] = RerankResult{
 			ID:           c.ID,
 			Content:      c.Content,
 			OriginalRank: i + 1,
 			NewRank:      i + 1,
 			BiScore:      c.Score,
-			CrossScore:   c.Score,
-			FinalScore:   c.Score,
+			CrossScore:   score,
+			FinalScore:   score,
 		}
 	}
 	return out, nil
@@ -3622,17 +3624,19 @@ func TestService_RerankerPlumbingAndStage2(t *testing.T) {
 		{ID: "a", RRFScore: 0.9, VectorRank: 1, BM25Rank: 2, OriginalScore: 0.95},
 		{ID: "b", RRFScore: 0.8, VectorRank: 2, BM25Rank: 1, OriginalScore: 0.70},
 	}
-	out := svc.applyStage2Rerank(ctx, "q", base, DefaultSearchOptions(), map[string]bool{}, &testReranker{enabled: false})
+	out, reason := svc.applyStage2Rerank(ctx, "q", base, DefaultSearchOptions(), map[string]bool{}, &testReranker{enabled: false})
 	require.Len(t, out, 2)
+	assert.Equal(t, SearchFallbackNone, reason)
 	assert.Equal(t, base[0].ID, out[0].ID)
 
 	// applyStage2Rerank: reranker error -> pass through.
-	out = svc.applyStage2Rerank(ctx, "q", base, DefaultSearchOptions(), map[string]bool{}, &testReranker{enabled: true, err: fmt.Errorf("boom")})
+	out, reason = svc.applyStage2Rerank(ctx, "q", base, DefaultSearchOptions(), map[string]bool{}, &testReranker{enabled: true, err: fmt.Errorf("boom")})
 	require.Len(t, out, 2)
+	assert.Equal(t, SearchFallbackRerankFailed, reason)
 	assert.Equal(t, base[0].ID, out[0].ID)
 
 	// applyStage2Rerank: near-identical scores -> keep original order.
-	out = svc.applyStage2Rerank(ctx, "q", base, DefaultSearchOptions(), map[string]bool{}, &testReranker{
+	out, reason = svc.applyStage2Rerank(ctx, "q", base, DefaultSearchOptions(), map[string]bool{}, &testReranker{
 		enabled: true,
 		results: []RerankResult{
 			{ID: "b", FinalScore: 0.51, BiScore: 0.2},
@@ -3641,11 +3645,12 @@ func TestService_RerankerPlumbingAndStage2(t *testing.T) {
 	})
 	require.Len(t, out, 2)
 	assert.Equal(t, "a", out[0].ID) // original order preserved
+	assert.Equal(t, SearchFallbackRerankScoresFlat, reason)
 
 	// applyStage2Rerank: reranked with score spread and min-score filter.
 	opts := DefaultSearchOptions()
 	opts.RerankMinScore = 0.6
-	out = svc.applyStage2Rerank(ctx, "q", base, opts, map[string]bool{}, &testReranker{
+	out, reason = svc.applyStage2Rerank(ctx, "q", base, opts, map[string]bool{}, &testReranker{
 		enabled: true,
 		results: []RerankResult{
 			{ID: "b", FinalScore: 0.9, BiScore: 0.4},
@@ -3653,6 +3658,7 @@ func TestService_RerankerPlumbingAndStage2(t *testing.T) {
 		},
 	})
 	require.Len(t, out, 1)
+	assert.Equal(t, SearchFallbackNone, reason)
 	assert.Equal(t, "b", out[0].ID)
 	assert.Equal(t, 2, out[0].VectorRank) // preserved from original map
 	assert.Equal(t, 0.70, out[0].OriginalScore, "reranking must preserve the vector cosine score")
@@ -3692,6 +3698,66 @@ func TestService_RerankTopKBudgetDoesNotReportRetrievalExhausted(t *testing.T) {
 	require.True(t, response.CandidateBudgetReached)
 	require.False(t, response.RetrievalExhausted)
 	require.Equal(t, "rrf_hybrid+rerank", response.SearchMethod)
+}
+
+// countingReranker counts its calls and answers with err, or with results.
+type countingReranker struct {
+	testReranker
+	calls int
+}
+
+func (r *countingReranker) Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error) {
+	r.calls++
+	return r.testReranker.Rerank(ctx, query, candidates)
+}
+
+// A rerank that didn't order the results isn't reported as one (#1019): the
+// method is the fused one and the fallback says why. A failed rerank isn't
+// cached, so the next search tries the reranker again.
+func TestService_HybridSearchReportsRerankFallback(t *testing.T) {
+	eng := newNamespacedEngine(t)
+	svc := NewServiceWithDimensions(eng, 2)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	ctx := context.Background()
+	for _, doc := range []struct {
+		id     storage.NodeID
+		vector []float32
+	}{{"a", []float32{1, 0}}, {"b", []float32{0.8, 0.2}}} {
+		_, err := eng.CreateNode(&storage.Node{ID: doc.id, Labels: []string{"Document"}, Properties: map[string]any{"content": "library transcript " + string(doc.id)}})
+		require.NoError(t, err)
+		require.NoError(t, svc.vectorIndex.Add(string(doc.id), doc.vector))
+	}
+	svc.vectorPipeline = NewVectorSearchPipeline(NewBruteForceCandidateGen(svc.vectorIndex), NewCPUExactScorer(svc.vectorIndex))
+	opts := DefaultSearchOptions()
+	opts.RerankEnabled = true
+
+	failing := &countingReranker{testReranker: testReranker{enabled: true, err: fmt.Errorf("provider unavailable")}}
+	svc.SetReranker(failing)
+	for attempt := 1; attempt <= 2; attempt++ {
+		response, err := svc.Search(ctx, "library transcript", []float32{1, 0}, opts)
+		require.NoError(t, err)
+		require.Len(t, response.Results, 2)
+		require.Equal(t, "rrf_hybrid", response.SearchMethod)
+		require.True(t, response.FallbackTriggered)
+		require.Equal(t, SearchFallbackRerankFailed, response.FallbackReason)
+		require.Equal(t, map[string]string{"X-NornicDB-Search-Fallback-Reason": "rerank_failed"}, response.ResponseHeaders())
+		require.Equal(t, attempt, failing.calls, "a failed rerank isn't served from the cache")
+	}
+
+	flat := &countingReranker{testReranker: testReranker{enabled: true, results: []RerankResult{{ID: "b", FinalScore: 0.51}, {ID: "a", FinalScore: 0.5}}}}
+	svc.SetReranker(flat)
+	response, err := svc.Search(ctx, "library transcript", []float32{0.9, 0.1}, opts)
+	require.NoError(t, err)
+	require.Equal(t, "rrf_hybrid", response.SearchMethod)
+	require.Equal(t, SearchFallbackRerankScoresFlat, response.FallbackReason)
+	require.Equal(t, "a", string(response.Results[0].NodeID), "the fused order stands")
+
+	svc.SetReranker(&testReranker{enabled: true})
+	response, err = svc.Search(ctx, "library transcript", []float32{0.7, 0.3}, opts)
+	require.NoError(t, err)
+	require.Equal(t, "rrf_hybrid+rerank", response.SearchMethod)
+	require.False(t, response.FallbackTriggered)
+	require.Empty(t, response.FallbackReason)
 }
 
 func TestService_RerankTopKBudgetIsDeclaredOnlyAtRequestedDepth(t *testing.T) {
@@ -3764,10 +3830,11 @@ func TestService_RerankCandidatesBranches(t *testing.T) {
 	require.Len(t, out, 1)
 	assert.Equal(t, "b", out[0].ID)
 
-	// Error path.
-	svc.SetReranker(&testReranker{enabled: true, err: fmt.Errorf("rerank failed")})
+	// Error path: an explicit rerank that fails is an error, naming the reranker.
+	svc.SetReranker(&testReranker{enabled: true, err: fmt.Errorf("provider unavailable")})
 	_, err = svc.RerankCandidates(ctx, "q", candidates, DefaultSearchOptions())
-	require.Error(t, err)
+	require.EqualError(t, err, "rerank failed (test_reranker); the server log has the cause")
+	require.ErrorContains(t, errors.Unwrap(err), "provider unavailable")
 }
 
 // TestSearchService_VectorSearchOnly tests vector-only search mode.
