@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -288,4 +289,145 @@ func staticDynamicTokenError(expression string, scope staticTypeScope, use dynam
 	default:
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreEntityPropertyKeyTypeMismatch(typeName))
 	}
+}
+
+// dynamicLabelTestFunction is the predicate a dynamic label or type in a
+// MATCH pattern becomes when its value depends on the row
+// (labelExpression.predicate): __nornic_haslabels(entity, value, any) is
+// whether a node has every label value names (any: one of them), or a
+// relationship's type is every (any: one) name. A constant value is
+// resolved to plain labels instead (resolveDynamicChain).
+const dynamicLabelTestFunction = "__nornic_haslabels"
+
+func init() {
+	cypherfn.Register(dynamicLabelTestFunction, fnDynamicLabelTest)
+}
+
+func fnDynamicLabelTest(ctx cypherfn.Context, args []string) (interface{}, error) {
+	if len(args) != 3 {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
+			localization.CypherCoreFunctionArgumentCount(dynamicLabelTestFunction, "3", len(args)))
+	}
+	values := make([]interface{}, len(args))
+	for i, arg := range args {
+		value, err := ctx.Eval(arg)
+		if err != nil {
+			return nil, err
+		}
+		values[i] = value
+	}
+	names, err := dynamicLabelNames(values[1])
+	if err != nil {
+		return nil, err
+	}
+	any, _ := values[2].(bool)
+	switch entity := values[0].(type) {
+	case *storage.Node:
+		return labelsSatisfyNames(entity.Labels, names, any), nil
+	case *storage.Edge:
+		return labelsSatisfyNames([]string{entity.Type}, names, any), nil
+	}
+	return nil, nil
+}
+
+// labelsSatisfyNames reports whether labels hold every one of names (any:
+// one of them). Every is true for no names, one is false.
+func labelsSatisfyNames(labels, names []string, any bool) bool {
+	for _, name := range names {
+		if containsString(labels, name) == any {
+			return any
+		}
+	}
+	return !any
+}
+
+// hasDynamicToken reports whether text holds a dynamic label or type ($(e),
+// $all(e), $any(e)) outside quoted text.
+func hasDynamicToken(text string) bool {
+	if strings.IndexByte(text, '$') < 0 {
+		return false
+	}
+	for i := 0; i < len(text); i++ {
+		switch c := text[i]; c {
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(text, i, c) - 1
+		case '$':
+			if dynamicLabelStartsAt(text, i) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// resolveRowDynamicTokens replaces the dynamic labels and types of a CREATE
+// or MERGE pattern whose values depend on the row (the label-expression
+// rewrite resolves the constant ones) with the names their values give in
+// the row's context: a node gets every label ($(e), $all(e); an empty list
+// none), a relationship exactly one type, or Neo4j's ExecutionFailed. A
+// property map's text is left as it is.
+func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (string, error) {
+	var out strings.Builder
+	out.Grow(len(pattern))
+	last, brackets := 0, 0
+	for i := 0; i < len(pattern); i++ {
+		switch c := pattern[i]; c {
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(pattern, i, c) - 1
+		case '{':
+			if closing := findMatchingDelimiter(pattern, i, '{', '}'); closing > 0 {
+				i = closing
+			}
+		case '[':
+			brackets++
+		case ']':
+			brackets--
+		case '$':
+			if !dynamicLabelStartsAt(pattern, i) {
+				continue
+			}
+			open := i + strings.IndexByte(pattern[i:], '(')
+			closing := findMatchingDelimiter(pattern, open, '(', ')')
+			if closing < 0 {
+				return pattern, nil
+			}
+			value, err := e.dynamicTokenValue(ctx, pattern[open+1:closing], nodes, rels)
+			if err != nil {
+				return "", err
+			}
+			names, err := dynamicLabelNames(value)
+			if err != nil {
+				return "", err
+			}
+			start := i
+			if brackets > 0 {
+				if len(names) != 1 {
+					return "", localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "ExecutionFailed",
+						localization.CypherCoreDynamicRelationshipTypeCount(len(names)))
+				}
+			} else if len(names) == 0 {
+				// No labels: the colon before goes too.
+				for start > last && isASCIISpace(pattern[start-1]) {
+					start--
+				}
+				if start > last && pattern[start-1] == ':' {
+					start--
+				}
+			}
+			out.WriteString(pattern[last:start])
+			for index, name := range names {
+				if index > 0 {
+					out.WriteByte(':')
+				}
+				out.WriteString(labelExpressionNameText(name))
+			}
+			last = closing + 1
+			i = closing
+		}
+	}
+	if last == 0 {
+		return pattern, nil
+	}
+	out.WriteString(pattern[last:])
+	return out.String(), nil
 }

@@ -2914,7 +2914,16 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 	}
 	for _, clause := range clauses {
 		rowCtx := withValueBindings(ctx, newRow)
-		paths, err := e.planCreatePatterns(rowCtx, pipelineClauseBody(clause.text, "CREATE"), nodes, edges, plan)
+		pattern := pipelineClauseBody(clause.text, "CREATE")
+		if hasDynamicToken(pattern) {
+			// Labels and types whose values depend on the row.
+			resolved, err := e.resolveRowDynamicTokens(rowCtx, pattern, nodes, edges)
+			if err != nil {
+				return nil, err
+			}
+			pattern = resolved
+		}
+		paths, err := e.planCreatePatterns(rowCtx, pattern, nodes, edges, plan)
 		if err != nil {
 			if failure := getExpressionFailure(rowCtx); failure != nil {
 				return nil, failure
@@ -2938,6 +2947,11 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 // bindings for subsequent clauses. This preserves Cypher's row-at-a-time
 // mutation semantics after UNWIND/WITH without duplicating MERGE behavior.
 func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, error) {
+	if body := strings.TrimSpace(clause); startsWithKeywordFold(body, "MERGE") {
+		if actions := splitMergeClauseActions(strings.TrimSpace(body[len("MERGE"):])); hasDynamicToken(actions.pattern) {
+			return e.pipelineApplyRowDynamicMerge(ctx, rows, clause, actions.pattern)
+		}
+	}
 	stats := &QueryStats{}
 	out := make([]pipelineRow, 0, len(rows))
 	// The relationship lookups of this MERGE over its rows share one read
@@ -3171,6 +3185,30 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		if err := e.applyMergeActions(ctx, produced, actions, stats); err != nil {
 			return nil, nil, err
 		}
+		out = append(out, produced...)
+	}
+	return out, stats, nil
+}
+
+// pipelineApplyRowDynamicMerge applies a MERGE whose pattern has labels or
+// types whose values depend on the row: each row merges the pattern with
+// them resolved (resolveRowDynamicTokens), as a MERGE of its own, in order,
+// so a row sees what the rows before it merged.
+func (e *StorageExecutor) pipelineApplyRowDynamicMerge(ctx context.Context, rows []pipelineRow, clause, pattern string) ([]pipelineRow, *QueryStats, error) {
+	stats := &QueryStats{}
+	out := make([]pipelineRow, 0, len(rows))
+	at := strings.Index(clause, pattern)
+	for _, row := range rows {
+		rowCtx, nodes, rels := e.pipelineRowWriteContext(ctx, row)
+		resolved, err := e.resolveRowDynamicTokens(rowCtx, pattern, nodes, rels)
+		if err != nil {
+			return nil, nil, err
+		}
+		produced, rowStats, err := e.pipelineApplyMerge(ctx, []pipelineRow{row}, clause[:at]+resolved+clause[at+len(pattern):])
+		if err != nil {
+			return nil, nil, err
+		}
+		addQueryStats(stats, rowStats)
 		out = append(out, produced...)
 	}
 	return out, stats, nil

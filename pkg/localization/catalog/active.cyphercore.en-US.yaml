@@ -160,6 +160,12 @@
   other: "Type mismatch: expected String or List<String> but was {{.Type}}"
 - id: cyphercore.label_target_type_mismatch
   other: "Type mismatch: expected Node but was {{.Type}}"
+- id: cyphercore.dynamic_token_position_invalid
+  other: "Dynamic Label and Types are only allowed in MATCH, CREATE, MERGE, SET and REMOVE clauses."
+- id: cyphercore.dynamic_any_in_write_pattern
+  other: "Dynamic labels using `$any()` are not allowed in CREATE or MERGE."
+- id: cyphercore.dynamic_relationship_type_count
+  other: "Exactly one relationship type must be specified, but {{.Count}} were found."
 - id: cyphercore.function_argument_count
   other: "{{.Function}}() expects {{.Expected}} argument(s), got {{.Got}}"
 - id: cyphercore.trim_character_length

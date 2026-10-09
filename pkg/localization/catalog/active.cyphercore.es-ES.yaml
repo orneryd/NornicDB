@@ -160,6 +160,12 @@
   other: "Tipo no coincidente: se esperaba String o List<String> pero era {{.Type}}"
 - id: cyphercore.label_target_type_mismatch
   other: "Tipo no coincidente: se esperaba Node pero era {{.Type}}"
+- id: cyphercore.dynamic_token_position_invalid
+  other: "Las etiquetas y tipos dinámicos solo se permiten en las cláusulas MATCH, CREATE, MERGE, SET y REMOVE."
+- id: cyphercore.dynamic_any_in_write_pattern
+  other: "Las etiquetas dinámicas con `$any()` no se permiten en CREATE ni en MERGE."
+- id: cyphercore.dynamic_relationship_type_count
+  other: "Se debe especificar exactamente un tipo de relación, pero se encontraron {{.Count}}."
 - id: cyphercore.function_argument_count
   other: "{{.Function}}() espera {{.Expected}} argumento(s), recibió {{.Got}}"
 - id: cyphercore.trim_character_length

@@ -229,6 +229,11 @@ func validateMergeRelationshipShape(pattern string) error {
 		)
 	}
 	typeDeclaration := strings.TrimSpace(declaration[colon+1:])
+	if hasDynamicToken(typeDeclaration) {
+		// $(e): the number of types it names is checked per row
+		// (resolveRowDynamicTokens).
+		return nil
+	}
 	if strings.Contains(typeDeclaration, "|") {
 		return singleRelationshipTypeError("MERGE")
 	}
@@ -280,6 +285,14 @@ func mergePatternUsesParameterPredicate(pattern string) bool {
 				depth--
 			}
 		case '$':
+			if dynamicLabelStartsAt(pattern, index) {
+				// A dynamic label or type ($(e), $all(e), $any(e)), not a
+				// parameter map.
+				if closing := findMatchingDelimiter(pattern, strings.IndexByte(pattern[index:], '(')+index, '(', ')'); closing > 0 {
+					index = closing
+				}
+				continue
+			}
 			if depth == 0 {
 				return true
 			}

@@ -64,6 +64,9 @@ const (
 	MessageCypherCoreDynamicLabelValueInvalid            MessageID = "cyphercore.dynamic_label_value_invalid"
 	MessageCypherCoreDynamicLabelTypeMismatch            MessageID = "cyphercore.dynamic_label_type_mismatch"
 	MessageCypherCoreLabelTargetTypeMismatch             MessageID = "cyphercore.label_target_type_mismatch"
+	MessageCypherCoreDynamicTokenPositionInvalid         MessageID = "cyphercore.dynamic_token_position_invalid"
+	MessageCypherCoreDynamicAnyInWritePattern            MessageID = "cyphercore.dynamic_any_in_write_pattern"
+	MessageCypherCoreDynamicRelationshipTypeCount        MessageID = "cyphercore.dynamic_relationship_type_count"
 	MessageCypherCoreRegexPatternTypeMismatch            MessageID = "cyphercore.regex_pattern_type_mismatch"
 	MessageCypherCoreDurationArithmeticOverflow          MessageID = "cyphercore.duration_arithmetic_overflow"
 	MessageCypherCoreFunctionArgumentCount               MessageID = "cyphercore.function_argument_count"
@@ -388,6 +391,25 @@ func CypherCoreDynamicLabelValueInvalid() Message {
 // LIST<STRING>.
 func CypherCoreDynamicLabelTypeMismatch(typeName string) Message {
 	return cypherCoreMessage(MessageCypherCoreDynamicLabelTypeMismatch, "Type mismatch: expected String or List<String> but was "+typeName, map[string]any{"Type": typeName})
+}
+
+// CypherCoreDynamicTokenPositionInvalid is the SyntaxError of a dynamic
+// label or type ($(e)) outside a pattern or a SET or REMOVE item: a label
+// test in an expression (WHERE n:$(e)).
+func CypherCoreDynamicTokenPositionInvalid() Message {
+	return cypherCoreMessage(MessageCypherCoreDynamicTokenPositionInvalid, "Dynamic Label and Types are only allowed in MATCH, CREATE, MERGE, SET and REMOVE clauses.", nil)
+}
+
+// CypherCoreDynamicAnyInWritePattern is the SyntaxError of $any() in a
+// CREATE or MERGE pattern: a written entity gets every label it names.
+func CypherCoreDynamicAnyInWritePattern() Message {
+	return cypherCoreMessage(MessageCypherCoreDynamicAnyInWritePattern, "Dynamic labels using `$any()` are not allowed in CREATE or MERGE.", nil)
+}
+
+// CypherCoreDynamicRelationshipTypeCount is the error of a CREATE or MERGE
+// relationship whose dynamic type ($(e)) names count types, not one.
+func CypherCoreDynamicRelationshipTypeCount(count int) Message {
+	return cypherCoreMessage(MessageCypherCoreDynamicRelationshipTypeCount, "Exactly one relationship type must be specified, but "+strconv.Itoa(count)+" were found.", map[string]any{"Count": count})
 }
 
 // CypherCoreLabelTargetTypeMismatch is the error of a SET or REMOVE label
