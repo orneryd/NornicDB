@@ -69,12 +69,23 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 		return err
 	}
 	store := e.getStorage(ctx)
+	// Only a dynamic label or key reads the row's other values.
+	dynamic := false
+	for _, item := range items {
+		dynamic = dynamic || item.key != ""
+		for _, label := range item.labels {
+			dynamic = dynamic || label.expression != ""
+		}
+	}
 	touched := make([]interface{}, 0, len(items))
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		rowCtx, nodes, rels := e.pipelineRowWriteContext(ctx, row)
+		rowCtx, nodes, rels := ctx, map[string]*storage.Node(nil), map[string]*storage.Edge(nil)
+		if dynamic {
+			rowCtx, nodes, rels = e.pipelineRowWriteContext(ctx, row)
+		}
 		touched = touched[:0]
 		for _, item := range items {
 			switch entity := row[item.variable].(type) {

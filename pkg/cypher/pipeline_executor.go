@@ -2947,7 +2947,7 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 // bindings for subsequent clauses. This preserves Cypher's row-at-a-time
 // mutation semantics after UNWIND/WITH without duplicating MERGE behavior.
 func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, error) {
-	if body := strings.TrimSpace(clause); startsWithKeywordFold(body, "MERGE") {
+	if body := strings.TrimSpace(clause); hasDynamicToken(body) && startsWithKeywordFold(body, "MERGE") {
 		if actions := splitMergeClauseActions(strings.TrimSpace(body[len("MERGE"):])); hasDynamicToken(actions.pattern) {
 			return e.pipelineApplyRowDynamicMerge(ctx, rows, clause, actions.pattern)
 		}

@@ -1231,7 +1231,11 @@ func (e *StorageExecutor) setSourceMap(ctx context.Context, expr, operator strin
 // yields an empty operator.
 func splitSetAssignment(assignment string) (target, property, operator, right string) {
 	assignment = strings.TrimSpace(assignment)
-	eq := findTopLevelByte(assignment, '=')
+	eq := strings.IndexByte(assignment, '=')
+	if bracket := strings.IndexByte(assignment, '['); bracket >= 0 && (eq < 0 || bracket < eq) {
+		// A dynamic key's brackets may hold an "=" of their own.
+		eq = findTopLevelByte(assignment, '=')
+	}
 	if colon := strings.IndexByte(assignment, ':'); colon > 0 && (eq < 0 || colon < eq) {
 		// Label form x:L1:L2 / x:$(expr); a dynamic label expression may
 		// itself contain "=".
