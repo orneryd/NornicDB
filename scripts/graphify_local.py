@@ -905,13 +905,17 @@ def import_graph(graph_path, uri, user, password, batch_size, repo_root, databas
             def ensure_index(label):
                 if label in indexed_labels:
                     return
-                # Indexes are created before the first write so MERGE lookups
-                # never fall back to full-label scans.
+                # Nodes are keyed by (id, repo). Only id gets an index: it is
+                # the selective key (one node per id in a graph), while repo is
+                # the same for every node in the ingest. A repo index is not
+                # just useless, it is harmful — the node MATCH in write_edges
+                # probes every indexed inline property and intersects the
+                # candidate sets, so a repo index materialises the whole label
+                # on every edge batch (a ~14x slowdown at 20k nodes and far
+                # worse at graph scale). The repo equality is instead applied
+                # as the residual node-pattern filter.
                 run_retry(
                     f"CREATE INDEX graphify_{label.lower()}_id IF NOT EXISTS FOR (n:{label}) ON (n.id)"
-                ).consume()
-                run_retry(
-                    f"CREATE INDEX graphify_{label.lower()}_repo IF NOT EXISTS FOR (n:{label}) ON (n.repo)"
                 ).consume()
                 indexed_labels.add(label)
 
