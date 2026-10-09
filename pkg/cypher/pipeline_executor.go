@@ -3725,12 +3725,10 @@ func respellAggregateCalls(text string, spellings map[string]string) string {
 
 // aggregateCallKey is an aggregate call with its function name and a
 // leading DISTINCT upper-cased and whitespace outside quotes removed: two
-// calls with one key are one expression.
+// calls with one key are one expression. call is a call semanticAggregateCalls
+// found: a name, then its parenthesized arguments.
 func aggregateCallKey(call string) string {
 	open := strings.IndexByte(call, '(')
-	if open < 0 {
-		return call
-	}
 	arguments := strings.TrimSpace(call[open+1:])
 	if len(arguments) > len("DISTINCT") && strings.EqualFold(arguments[:len("DISTINCT")], "DISTINCT") && !isIdentByte(arguments[len("DISTINCT")]) {
 		arguments = "DISTINCT " + arguments[len("DISTINCT"):]
