@@ -54,6 +54,7 @@ func TestStandaloneOrderClausesMatchNeo4j(t *testing.T) {
 		"MATCH (n:SQ) WITH n ORDER BY n.v LIMIT 1 ORDER BY n.v DESC RETURN n.v AS v": ints(1),
 		"CALL { MATCH (n:SQ) ORDER BY n.v LIMIT 1 RETURN n.v AS v } RETURN v":        ints(1),
 		"RETURN COUNT { MATCH (n:SQ) LIMIT 2 RETURN n } AS c":                        ints(2),
+		"MATCH (n:%) WHERE n.v > 1 RETURN n.v AS v ORDER BY v":                       ints(2, 3),
 		// A variable named skip, limit or offset stays a variable.
 		"WITH 2 AS limit MATCH (n:SQ) WHERE n.v >= limit RETURN count(*) AS c": ints(2),
 		"WITH 1 AS skip, 2 AS offset RETURN skip + offset AS v":                ints(3),
@@ -94,6 +95,10 @@ func TestDesugarStandaloneOrderClauses(t *testing.T) {
 		"WITH 1 AS a, 2 AS match RETURN a, match ORDER BY a":     "WITH 1 AS a, 2 AS match RETURN a, match ORDER BY a",
 		"UNWIND [2] AS distinct RETURN distinct AS v ORDER BY v": "UNWIND [2] AS distinct RETURN distinct AS v ORDER BY v",
 		"WITH 1 AS limit MATCH (m) ORDER BY limit RETURN m":      "WITH 1 AS limit MATCH (m) WITH * ORDER BY limit RETURN m",
+		// The label wildcard is an operand, not the modulo operator.
+		"MATCH (a)-->(b) WHERE a:% RETURN a.id AS x ORDER BY x": "MATCH (a)-->(b) WHERE a:% RETURN a.id AS x ORDER BY x",
+		"MATCH (a) WHERE a:A|% ORDER BY a.id RETURN a":          "MATCH (a) WHERE a:A|% WITH * ORDER BY a.id RETURN a",
+		"WITH 7 AS v RETURN v % 2 AS m ORDER BY m":              "WITH 7 AS v RETURN v % 2 AS m ORDER BY m",
 		// Unbalanced text is left for the parser to report.
 		"MATCH (n ORDER BY n.v RETURN n":                      "MATCH (n ORDER BY n.v RETURN n",
 		"MATCH (n) WHERE EXISTS { MATCH (m) LIMIT 1 RETURN n": "MATCH (n) WHERE EXISTS { MATCH (m) LIMIT 1 RETURN n",

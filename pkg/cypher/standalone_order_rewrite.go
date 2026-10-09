@@ -95,7 +95,11 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 		}
 		name, next, ok := scanIdentifierToken(query, index)
 		if !ok {
-			if character > ' ' {
+			if character == '%' && last != 0 && strings.IndexByte(":|&!", last) >= 0 {
+				// The label wildcard (a:%) is a complete operand, not the
+				// modulo operator.
+				previousWord, last = "", ')'
+			} else if character > ' ' {
 				previousWord, last = "", character
 			}
 			index++
