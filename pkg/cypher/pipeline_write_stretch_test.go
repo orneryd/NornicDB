@@ -153,3 +153,24 @@ func TestPipelineWriteStretchConflicts(t *testing.T) {
 		require.True(t, conflicts(query), query)
 	}
 }
+
+func TestStretchAnalysisEdgeBranches(t *testing.T) {
+	var tokens stretchTokens
+	tokens.add(&tokens.labels, "")
+	require.Nil(t, tokens.labels)
+
+	// A REMOVE item that is neither a property nor a label stands for any write.
+	var reads, writes stretchTokens
+	analyzeStretchClause(pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n"}, &reads, &writes)
+	require.True(t, writes.everything)
+
+	// A variable-length relationship reads its types without the length.
+	var pattern stretchTokens
+	addStretchPattern("(a)-[:R*1..3]->(b)", &pattern, false)
+	require.Contains(t, pattern.types, "R")
+
+	// A map that doesn't close names no keys.
+	var keys stretchTokens
+	addStretchMapKeys("{k: 1", &keys)
+	require.Nil(t, keys.keys)
+}
