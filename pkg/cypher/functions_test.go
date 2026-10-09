@@ -1951,7 +1951,7 @@ func TestFunctionAdditionalMathAndStringCoverage(t *testing.T) {
 		expr string
 		want interface{}
 	}{
-		{"cot(1)", 1.0 / math.Tan(1)},
+		{"cot(1)", 0.6420926159343306}, // Neo4j 5.26.30's value (#907)
 		{"haversin(1)", (1 - math.Cos(1)) / 2},
 		{"normalize('cafe')", "cafe"},
 		{"lpad('go', 5, '.')", "...go"},
