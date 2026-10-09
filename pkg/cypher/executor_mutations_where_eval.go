@@ -173,12 +173,12 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} 
 		isIdent := true
 		for i, ch := range s {
 			if i == 0 {
-				if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_') {
+				if !isIdentStartRune(ch) {
 					isIdent = false
 					break
 				}
 			} else {
-				if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
+				if !isIdentRune(ch) {
 					isIdent = false
 					break
 				}

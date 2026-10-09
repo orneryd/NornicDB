@@ -941,7 +941,7 @@ func isSimpleVariable(content string) bool {
 		return false
 	}
 	for _, r := range content {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+		if !isIdentRune(r) {
 			return false
 		}
 	}
@@ -1019,13 +1019,13 @@ func parseParamPathParts(source string) ([]string, bool) {
 			return "", start, false
 		}
 		ch := source[start]
-		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_') {
+		if !isIdentStartByte(ch) {
 			return "", start, false
 		}
 		j := start + 1
 		for j < len(source) {
 			c := source[j]
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+			if !isIdentByte(c) {
 				break
 			}
 			j++

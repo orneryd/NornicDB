@@ -627,12 +627,12 @@ func looksLikeFunctionCall(s string) bool {
 	for i, c := range name {
 		if i == 0 {
 			// First char must be letter or underscore
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
+			if !isIdentStartRune(c) {
 				return false
 			}
 		} else {
 			// Subsequent chars can be alphanumeric, underscore, or dot
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.') {
+			if !(isIdentRune(c) || c == '.') {
 				return false
 			}
 		}

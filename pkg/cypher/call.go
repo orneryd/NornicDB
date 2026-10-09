@@ -1431,7 +1431,7 @@ func findKeywordIndexInContext(s, keyword string) int {
 			// Check left boundary (must be start or non-alphanumeric)
 			if i > 0 {
 				prev := s[i-1]
-				if (prev >= 'A' && prev <= 'Z') || (prev >= 'a' && prev <= 'z') || (prev >= '0' && prev <= '9') || prev == '_' {
+				if isIdentByte(prev) {
 					continue
 				}
 			}
@@ -1439,7 +1439,7 @@ func findKeywordIndexInContext(s, keyword string) int {
 			end := i + len(keyword)
 			if end < len(s) {
 				next := s[end]
-				if (next >= 'A' && next <= 'Z') || (next >= 'a' && next <= 'z') || (next >= '0' && next <= '9') || next == '_' {
+				if isIdentByte(next) {
 					continue
 				}
 			}

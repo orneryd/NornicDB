@@ -234,7 +234,7 @@ func scanParameterReferences(query string, visit func(dollar, start, end int)) {
 			return
 		}
 		first := query[start]
-		if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
+		if !isIdentStartByte(first) {
 			i = start
 			continue
 		}
@@ -395,10 +395,7 @@ func resolveDirectParamRef(ctx context.Context, expr string) (interface{}, bool)
 	// Reject anything beyond a single identifier — e.g. "$name + 1" or
 	// "$name.foo" must keep going through the expression evaluator.
 	for _, r := range name {
-		if !(r == '_' ||
-			(r >= 'a' && r <= 'z') ||
-			(r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9')) {
+		if !isIdentRune(r) {
 			return nil, false
 		}
 	}
@@ -646,7 +643,7 @@ func isSimpleCypherMapKey(key string) bool {
 		return false
 	}
 	first := key[0]
-	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
+	if !isIdentStartByte(first) {
 		return false
 	}
 	for i := 1; i < len(key); i++ {

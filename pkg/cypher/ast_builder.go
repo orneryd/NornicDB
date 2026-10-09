@@ -444,7 +444,7 @@ func findKeywordPosition(s, keyword string) int {
 	// Check word boundaries
 	if idx > 0 {
 		prev := s[idx-1]
-		if (prev >= 'A' && prev <= 'Z') || (prev >= 'a' && prev <= 'z') || (prev >= '0' && prev <= '9') || prev == '_' {
+		if isIdentByte(prev) {
 			// Try to find next occurrence
 			rest := findKeywordPosition(s[idx+1:], keyword)
 			if rest < 0 {
@@ -457,7 +457,7 @@ func findKeywordPosition(s, keyword string) int {
 	end := idx + len(keyword)
 	if end < len(s) {
 		next := s[end]
-		if (next >= 'A' && next <= 'Z') || (next >= 'a' && next <= 'z') || (next >= '0' && next <= '9') || next == '_' {
+		if isIdentByte(next) {
 			// Try to find next occurrence
 			rest := findKeywordPosition(s[idx+1:], keyword)
 			if rest < 0 {

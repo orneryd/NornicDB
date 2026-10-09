@@ -800,7 +800,7 @@ func extractLabelsFromQuery(cypher string) []string {
 		end := start + 1
 		for end < len(cypher) {
 			c := cypher[end]
-			if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' {
+			if isIdentByte(c) {
 				end++
 				continue
 			}
@@ -838,7 +838,7 @@ func extractLabelsFromQuery(cypher string) []string {
 			j++
 			for j < len(cypher) {
 				c := cypher[j]
-				if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' {
+				if isIdentByte(c) {
 					j++
 					continue
 				}

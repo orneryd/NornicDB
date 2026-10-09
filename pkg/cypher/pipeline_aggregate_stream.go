@@ -192,7 +192,7 @@ func cartesianAggregateProperty(expression string, patterns []struct {
 	}
 	property := expression[separator+1:]
 	for _, character := range property {
-		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '_') {
+		if !isIdentRune(character) {
 			return 0, "", false
 		}
 	}
