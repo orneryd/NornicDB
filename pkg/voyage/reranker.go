@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Candidate is a document submitted for provider-native reranking.
@@ -90,10 +93,12 @@ func (r *Reranker) Enabled() bool {
 // IsAvailable performs the cheap local availability check required by search.
 func (r *Reranker) IsAvailable(context.Context) bool { return r.Enabled() }
 
-// Rerank applies Voyage's native reranking while failing open on provider errors.
+// Rerank applies Voyage's native reranking. A failed request, or a response
+// that ranks none of the candidates, is an error: the caller decides how to
+// fall back, and can report that it did.
 func (r *Reranker) Rerank(ctx context.Context, query string, candidates []Candidate) ([]RankedCandidate, error) {
 	if !r.Enabled() {
-		return passThrough(candidates), nil
+		return PassThrough(candidates), nil
 	}
 	if len(candidates) == 0 {
 		return []RankedCandidate{}, nil
@@ -111,7 +116,7 @@ func (r *Reranker) Rerank(ctx context.Context, query string, candidates []Candid
 		Model: r.config.Model, TopK: topK, ReturnDocuments: false, Truncation: true,
 	})
 	if err != nil {
-		return passThrough(head), nil
+		return nil, err
 	}
 	results := make([]RankedCandidate, 0, len(resp.Data))
 	seenValidResult := false
@@ -131,12 +136,15 @@ func (r *Reranker) Rerank(ctx context.Context, query string, candidates []Candid
 		})
 	}
 	if !seenValidResult {
-		return passThrough(head), nil
+		message := localization.SearchRerankResponseUnrecognized()
+		return nil, nornicerrors.NewLocalized(string(message.ID), message, nil)
 	}
 	return results, nil
 }
 
-func passThrough(candidates []Candidate) []RankedCandidate {
+// PassThrough ranks candidates in their given order with their given scores:
+// the ranking when nothing reranked them.
+func PassThrough(candidates []Candidate) []RankedCandidate {
 	results := make([]RankedCandidate, len(candidates))
 	for i, candidate := range candidates {
 		results[i] = RankedCandidate{

@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/voyage"
 )
 
 // RerankScorer scores a (query, document) pair for relevance.
@@ -75,11 +77,12 @@ func (r *LocalReranker) IsAvailable(ctx context.Context) bool {
 	return err == nil
 }
 
-// Rerank scores each candidate with the scorer and returns results sorted by score (desc).
-// Fail-open: on error returns original order.
+// Rerank scores each candidate with the scorer and returns results sorted by
+// score (desc). A scorer error is an error (see Reranker); when every
+// candidate scores below MinScore, the candidates keep their order.
 func (r *LocalReranker) Rerank(ctx context.Context, query string, candidates []RerankCandidate) ([]RerankResult, error) {
 	if !r.Enabled() {
-		return r.passThrough(candidates), nil
+		return voyage.PassThrough(candidates), nil
 	}
 	if len(candidates) == 0 {
 		return nil, nil
@@ -118,7 +121,7 @@ func (r *LocalReranker) Rerank(ctx context.Context, query string, candidates []R
 		}
 		score, err := r.scorer.Score(callCtx, q, doc)
 		if err != nil {
-			return r.passThrough(candidates), nil
+			return nil, err
 		}
 		s := float64(score)
 		if r.cfg.MinScore > 0 && s < r.cfg.MinScore {
@@ -128,7 +131,7 @@ func (r *LocalReranker) Rerank(ctx context.Context, query string, candidates []R
 	}
 
 	if len(scores) == 0 {
-		return r.passThrough(candidates), nil
+		return voyage.PassThrough(candidates), nil
 	}
 
 	sort.Slice(scores, func(i, j int) bool { return scores[i].score > scores[j].score })
@@ -147,20 +150,4 @@ func (r *LocalReranker) Rerank(ctx context.Context, query string, candidates []R
 		})
 	}
 	return results, nil
-}
-
-func (r *LocalReranker) passThrough(candidates []RerankCandidate) []RerankResult {
-	out := make([]RerankResult, len(candidates))
-	for i, c := range candidates {
-		out[i] = RerankResult{
-			ID:           c.ID,
-			Content:      c.Content,
-			OriginalRank: i + 1,
-			NewRank:      i + 1,
-			BiScore:      c.Score,
-			CrossScore:   c.Score,
-			FinalScore:   c.Score,
-		}
-	}
-	return out
 }

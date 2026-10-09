@@ -119,6 +119,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
+	"github.com/orneryd/nornicdb/pkg/voyage"
 	"go.opentelemetry.io/otel/attribute"
 )
 
@@ -275,6 +276,12 @@ const (
 	SearchFallbackNoEmbedder                SearchFallbackReason = "no_embedder"
 	SearchFallbackNoHybridResults           SearchFallbackReason = "no_hybrid_results"
 	SearchFallbackHybridSearchFailed        SearchFallbackReason = "hybrid_search_failed"
+	// The requested Stage-2 rerank didn't order the results, which keep
+	// their fused order: the reranker failed, gave every candidate nearly
+	// the same score, or had no candidate content to score.
+	SearchFallbackRerankFailed       SearchFallbackReason = "rerank_failed"
+	SearchFallbackRerankScoresFlat   SearchFallbackReason = "rerank_scores_flat"
+	SearchFallbackRerankNoCandidates SearchFallbackReason = "rerank_no_candidates"
 )
 
 // SearchResponse is the response from a search operation.
@@ -4441,7 +4448,7 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	// Try RRF hybrid search
 	response, err := s.rrfHybridSearch(ctx, query, embedding, opts)
 	if err == nil && len(response.Results) > 0 {
-		if s.resultCache != nil {
+		if s.resultCache != nil && response.FallbackReason != SearchFallbackRerankFailed {
 			s.resultCache.Put(cacheKey, response)
 		}
 		s.maybeLogSearchTiming(query, response, time.Since(start), false)
@@ -4624,17 +4631,21 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 		message = fmt.Sprintf("%s + MMR diversification (λ=%.2f)", message, opts.MMRLambda)
 	}
 
-	// Step 6: Stage-2 reranking (optional)
+	// Step 6: Stage-2 reranking (optional). The method names the rerank only
+	// when it ordered the results; otherwise the fallback says why not.
+	rerankFallback := SearchFallbackNone
 	if opts.RerankEnabled && reranker != nil && reranker.Enabled() {
 		rerankTopK := effectiveRerankTopK(opts)
 		candidateBudgetReached = opts.Limit >= rerankTopK && len(fusedResults) > rerankTopK
-		fusedResults = s.applyStage2Rerank(ctx, query, fusedResults, opts, seenOrphans, reranker)
-		if searchMethod == "rrf_hybrid" {
-			searchMethod = "rrf_hybrid+rerank"
-			message = fmt.Sprintf("RRF + Reranking (%s)", reranker.Name())
-		} else {
-			searchMethod += "+rerank"
-			message += fmt.Sprintf(" + Reranking (%s)", reranker.Name())
+		fusedResults, rerankFallback = s.applyStage2Rerank(ctx, query, fusedResults, opts, seenOrphans, reranker)
+		if rerankFallback == SearchFallbackNone {
+			if searchMethod == "rrf_hybrid" {
+				searchMethod = "rrf_hybrid+rerank"
+				message = fmt.Sprintf("RRF + Reranking (%s)", reranker.Name())
+			} else {
+				searchMethod += "+rerank"
+				message += fmt.Sprintf(" + Reranking (%s)", reranker.Name())
+			}
 		}
 	}
 
@@ -4656,6 +4667,8 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 		TotalCandidates:        len(fusedResults),
 		Returned:               len(results),
 		SearchMethod:           searchMethod,
+		FallbackTriggered:      rerankFallback != SearchFallbackNone,
+		FallbackReason:         rerankFallback,
 		Message:                message,
 		Metrics: &SearchMetrics{
 			VectorSearchTimeMs:     vectorMs,
@@ -6551,12 +6564,12 @@ func (s *Service) applyMMR(ctx context.Context, results []rrfResult, queryEmbedd
 //   - Stage 2 (accurate): Optional reranking of top candidates (LLM or cross-encoder)
 //
 // Reranking is slower than Stage 1, so it should be used on a bounded TopK.
-func (s *Service) applyStage2Rerank(ctx context.Context, query string, results []rrfResult, opts *SearchOptions, seenOrphans map[string]bool, reranker Reranker) []rrfResult {
-	if len(results) == 0 {
-		return results
-	}
-	if reranker == nil || !reranker.Enabled() {
-		return results
+//
+// The reason is SearchFallbackNone when the reranker ordered the results, and
+// otherwise why the results keep their fused order.
+func (s *Service) applyStage2Rerank(ctx context.Context, query string, results []rrfResult, opts *SearchOptions, seenOrphans map[string]bool, reranker Reranker) ([]rrfResult, SearchFallbackReason) {
+	if len(results) == 0 || reranker == nil || !reranker.Enabled() {
+		return results, SearchFallbackNone
 	}
 
 	// Limit to top-K (optional; keeps prompt/service bounded).
@@ -6606,7 +6619,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 	}
 
 	if len(candidates) == 0 && len(reranked) == 0 && memoHits == 0 {
-		return results
+		return results, SearchFallbackRerankNoCandidates
 	}
 
 	if len(candidates) > 0 {
@@ -6616,9 +6629,8 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 
 		newResults, err := reranker.Rerank(ctx, query, candidates)
 		if err != nil {
-			// Fallback to original results on error
 			s.logPrintf("⚠️ Reranking failed (%s): %v; using original order", reranker.Name(), err)
-			return results
+			return results, SearchFallbackRerankFailed
 		}
 		memo.put(query, candidates, newResults)
 		reranked = append(reranked, newResults...)
@@ -6652,7 +6664,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 	}
 	if scoreMax-scoreMin < minScoreRange {
 		s.logPrintf("ℹ️ Reranking produced nearly identical scores (range=%.4f); using RRF order and scores", scoreMax-scoreMin)
-		return results
+		return results, SearchFallbackRerankScoresFlat
 	}
 
 	// Build map by ID so we can reliably preserve VectorRank/BM25Rank when converting
@@ -6701,7 +6713,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 		}
 	}
 
-	return rerankedResults
+	return rerankedResults, SearchFallbackNone
 }
 
 func originalMatchID(result *rrfResult) string {
@@ -6801,19 +6813,7 @@ func (s *Service) RerankCandidates(ctx context.Context, query string, candidates
 
 	// No configured reranker: return pass-through order/scores.
 	if reranker == nil || !reranker.Enabled() {
-		out := make([]RerankResult, len(candidates))
-		for i, c := range candidates {
-			out[i] = RerankResult{
-				ID:           c.ID,
-				Content:      c.Content,
-				OriginalRank: i + 1,
-				NewRank:      i + 1,
-				BiScore:      c.Score,
-				CrossScore:   c.Score,
-				FinalScore:   c.Score,
-			}
-		}
-		return out, nil
+		return voyage.PassThrough(candidates), nil
 	}
 
 	topK := opts.RerankTopK
@@ -6821,9 +6821,13 @@ func (s *Service) RerankCandidates(ctx context.Context, query string, candidates
 		candidates = candidates[:topK]
 	}
 
+	// An explicit rerank request has no fallback to report, so a failed
+	// rerank is an error rather than the candidates in their given order.
+	// The provider's error text is logged, not returned.
 	reranked, err := reranker.Rerank(ctx, query, candidates)
 	if err != nil {
-		return nil, err
+		s.logPrintf("⚠️ Reranking failed (%s): %v", reranker.Name(), err)
+		return nil, localizedError(localization.SearchRerankFailed(reranker.Name()), err)
 	}
 
 	if opts.RerankMinScore > 0 {

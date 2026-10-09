@@ -45,7 +45,8 @@ func TestRerankerRequestsNativeEndpoint(t *testing.T) {
 	require.Equal(t, []string{"b", "a"}, []string{results[0].ID, results[1].ID})
 }
 
-func TestRerankerFailsOpen(t *testing.T) {
+// A failed request is an error, so the caller can fall back and say so.
+func TestRerankerReportsProviderFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "temporary", http.StatusTooManyRequests)
 	}))
@@ -54,8 +55,23 @@ func TestRerankerFailsOpen(t *testing.T) {
 	require.NoError(t, err)
 	candidates := []Candidate{{ID: "a", Content: "alpha", Score: 0.4}, {ID: "b", Content: "beta", Score: 0.3}}
 	results, err := reranker.Rerank(context.Background(), "query", candidates)
+	require.ErrorContains(t, err, "429")
+	require.Nil(t, results)
+}
+
+// A response that ranks none of the candidates is an error too.
+func TestRerankerReportsUnusableResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"index": 7, "relevance_score": 0.9}},
+		}))
+	}))
+	t.Cleanup(server.Close)
+	reranker, err := NewReranker(&RerankerConfig{Enabled: true, APIURL: server.URL, APIKey: "test-key", Timeout: time.Second})
 	require.NoError(t, err)
-	require.Equal(t, []string{"a", "b"}, []string{results[0].ID, results[1].ID})
+	results, err := reranker.Rerank(context.Background(), "query", []Candidate{{ID: "a", Content: "alpha", Score: 0.4}})
+	require.ErrorContains(t, err, "unable to parse rerank response")
+	require.Nil(t, results)
 }
 
 func TestRerankerRequiresExplicitAPIKey(t *testing.T) {

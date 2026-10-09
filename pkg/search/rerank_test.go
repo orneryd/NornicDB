@@ -217,13 +217,10 @@ func TestCrossEncoderAPIError(t *testing.T) {
 		{ID: "2", Content: "Second", Score: 0.8},
 	}
 
-	// Should fallback to original ranking on error
+	// The API error is reported; the search Service owns the fallback.
 	results, err := ce.Rerank(context.Background(), "query", candidates)
-	require.NoError(t, err) // No error returned - graceful fallback
-
-	// Original order preserved
-	assert.Equal(t, "1", results[0].ID)
-	assert.Equal(t, "2", results[1].ID)
+	require.Error(t, err)
+	assert.Nil(t, results)
 }
 
 func TestCrossEncoderEmptyCandidates(t *testing.T) {
@@ -299,7 +296,7 @@ func TestCrossEncoderAdditionalAPIResponseBranches(t *testing.T) {
 		assert.Equal(t, 0.95, out[0].CrossScore)
 	})
 
-	t.Run("malformed response falls back", func(t *testing.T) {
+	t.Run("malformed response is an error", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte("not-json"))
 		}))
@@ -310,13 +307,11 @@ func TestCrossEncoderAdditionalAPIResponseBranches(t *testing.T) {
 			{ID: "a", Content: "alpha", Score: 0.9},
 			{ID: "b", Content: "beta", Score: 0.8},
 		})
-		require.NoError(t, err)
-		require.Len(t, out, 2)
-		assert.Equal(t, "a", out[0].ID)
-		assert.Equal(t, 0.9, out[0].FinalScore)
+		require.ErrorContains(t, err, "failed to parse response")
+		assert.Nil(t, out)
 	})
 
-	t.Run("unrecognized response and invalid request url fall back", func(t *testing.T) {
+	t.Run("unrecognized response and invalid request url are errors", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
 		}))
@@ -325,15 +320,13 @@ func TestCrossEncoderAdditionalAPIResponseBranches(t *testing.T) {
 		candidates := []RerankCandidate{{ID: "a", Content: "alpha", Score: 0.7}}
 		ce := NewCrossEncoder(&CrossEncoderConfig{Enabled: true, APIURL: server.URL, Timeout: time.Second})
 		out, err := ce.Rerank(context.Background(), "query", candidates)
-		require.NoError(t, err)
-		require.Len(t, out, 1)
-		assert.Equal(t, "a", out[0].ID)
+		require.ErrorContains(t, err, "unable to parse rerank response")
+		assert.Nil(t, out)
 
 		badURL := NewCrossEncoder(&CrossEncoderConfig{Enabled: true, APIURL: "://bad-url", Timeout: time.Second})
 		out, err = badURL.Rerank(context.Background(), "query", candidates)
-		require.NoError(t, err)
-		require.Len(t, out, 1)
-		assert.Equal(t, "a", out[0].ID)
+		require.ErrorContains(t, err, "failed to create request")
+		assert.Nil(t, out)
 	})
 }
 
@@ -449,15 +442,21 @@ func TestLLMReranker_RerankScoredFilteredAndFallbacks(t *testing.T) {
 	assert.Equal(t, "b", out[0].ID)
 	assert.Equal(t, 1, out[0].NewRank)
 
-	// Malformed response falls back to pass-through.
+	// A malformed response is an error.
 	rBad := NewLLMReranker(cfg, func(ctx context.Context, prompt string) (string, error) {
 		return "{}", nil
 	})
 	out, err = rBad.Rerank(context.Background(), "q", cands[:2])
-	require.NoError(t, err)
-	require.Len(t, out, 2)
-	assert.Equal(t, "a", out[0].ID)
-	assert.Equal(t, "b", out[1].ID)
+	require.ErrorContains(t, err, "unable to parse rerank response")
+	assert.Nil(t, out)
+
+	// So is an order that names no candidate.
+	rOutOfRange := NewLLMReranker(cfg, func(ctx context.Context, prompt string) (string, error) {
+		return `{"order":[7,9]}`, nil
+	})
+	out, err = rOutOfRange.Rerank(context.Background(), "q", cands[:2])
+	require.ErrorContains(t, err, "unable to parse rerank response")
+	assert.Nil(t, out)
 }
 
 func TestLLMReranker_RerankOrderFillsOmittedAndErrorFallback(t *testing.T) {
@@ -495,8 +494,6 @@ func TestLLMReranker_RerankOrderFillsOmittedAndErrorFallback(t *testing.T) {
 		return "", context.Canceled
 	})
 	out, err = rErr.Rerank(context.Background(), "query", cands[:2])
-	require.NoError(t, err)
-	require.Len(t, out, 2)
-	assert.Equal(t, "a", out[0].ID)
-	assert.Equal(t, "b", out[1].ID)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, out)
 }

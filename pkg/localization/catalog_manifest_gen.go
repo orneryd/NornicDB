@@ -1536,6 +1536,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "search.query_embedding_required", Constructor: "SearchQueryEmbeddingRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "search.query_required", Constructor: "QueryRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "search.rerank_api_status", Constructor: "SearchRerankAPIStatus", Fields: []string{"Status"}, PluralForms: []string{"other"}},
+	{ID: "search.rerank_failed", Constructor: "SearchRerankFailed", Fields: []string{"Reranker"}, PluralForms: []string{"other"}},
 	{ID: "search.rerank_request_creation_failed", Constructor: "SearchRerankRequestCreationFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "search.rerank_request_failed", Constructor: "SearchRerankRequestFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "search.rerank_request_marshal_failed", Constructor: "SearchRerankRequestMarshalFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},

@@ -91,6 +91,14 @@ stable code such as `query_embedding_failed`, `query_embedding_unavailable`,
 `no_embedder`, `no_hybrid_results`, or `hybrid_search_failed`. Provider error
 details are written to the warning log and are not exposed in query results.
 
+`search_method` ends in `+rerank` only when the reranker ordered the results.
+When a requested rerank didn't, the results keep their fused order,
+`fallback_triggered` is `true`, and `fallback_reason` is `rerank_failed` (the
+provider failed; such a result isn't cached), `rerank_scores_flat` (it scored
+every candidate nearly the same) or `rerank_no_candidates` (no candidate had
+content to score). `db.rerank`, which has no fallback to report, fails with
+`rerank failed (<reranker>)` instead.
+
 ```cypher
 CALL db.retrieve({query: 'zero-trust architecture', limit: 20}) YIELD node, score
 WITH collect({id: node.id, content: coalesce(node.content, toString(node)), score: score}) AS candidates

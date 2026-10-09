@@ -138,7 +138,8 @@ func TestLocalReranker_Rerank_ReordersByScore(t *testing.T) {
 	}
 }
 
-func TestLocalReranker_Rerank_ScorerError_PassThrough(t *testing.T) {
+// A scorer error is reported, so the search can fall back and say so.
+func TestLocalReranker_Rerank_ScorerErrorIsReported(t *testing.T) {
 	scorer := &failingScorer{}
 	cfg := DefaultLocalRerankerConfig()
 	cfg.Enabled = true
@@ -147,12 +148,11 @@ func TestLocalReranker_Rerank_ScorerError_PassThrough(t *testing.T) {
 		{ID: "a", Content: "docA", Score: 0.5},
 	}
 	results, err := r.Rerank(context.Background(), "q", candidates)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatalf("expected the scorer error, got results %v", results)
 	}
-	// Fail-open: pass-through order
-	if len(results) != 1 || results[0].ID != "a" {
-		t.Errorf("expected pass-through on scorer error: got %v", results)
+	if results != nil {
+		t.Errorf("expected no results on scorer error: got %v", results)
 	}
 }
 

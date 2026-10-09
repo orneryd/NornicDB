@@ -9,6 +9,7 @@ const (
 	MessageSearchRerankAPIStatus             MessageID = "search.rerank_api_status"
 	MessageSearchRerankResponseParseFailed   MessageID = "search.rerank_response_parse_failed"
 	MessageSearchRerankResponseUnrecognized  MessageID = "search.rerank_response_unrecognized"
+	MessageSearchRerankFailed                MessageID = "search.rerank_failed"
 )
 
 // SearchRerankRequestMarshalFailed identifies rerank request serialization failure.
@@ -39,4 +40,10 @@ func SearchRerankResponseParseFailed(cause error) Message {
 // SearchRerankResponseUnrecognized identifies an unsupported rerank response shape.
 func SearchRerankResponseUnrecognized() Message {
 	return Message{ID: MessageSearchRerankResponseUnrecognized, Fallback: "unable to parse rerank response"}
+}
+
+// SearchRerankFailed identifies a requested rerank the named reranker could
+// not perform; the provider's error is logged, not shown.
+func SearchRerankFailed(reranker string) Message {
+	return Message{ID: MessageSearchRerankFailed, Fallback: "rerank failed (" + reranker + "); the server log has the cause", Data: map[string]any{"Reranker": reranker}}
 }

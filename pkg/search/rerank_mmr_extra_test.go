@@ -117,9 +117,17 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 		{ID: "nornic:a", RRFScore: 0.9, VectorRank: 1, BM25Rank: 2, OriginalScore: 0.9},
 		{ID: "nornic:b", RRFScore: 0.8, VectorRank: 2, BM25Rank: 1, OriginalScore: 0.8},
 	}
-	require.Equal(t, base, svc.applyStage2Rerank(ctx, "query", base, &SearchOptions{}, nil, nil))
-	require.Equal(t, []rrfResult{}, svc.applyStage2Rerank(ctx, "query", []rrfResult{}, &SearchOptions{}, nil, &coverageReranker{enabled: true}))
-	require.Equal(t, base, svc.applyStage2Rerank(ctx, "query", base, &SearchOptions{}, nil, &coverageReranker{enabled: false}))
+	rerank := func(results []rrfResult, opts *SearchOptions, reranker Reranker, want SearchFallbackReason) []rrfResult {
+		t.Helper()
+		out, reason := svc.applyStage2Rerank(ctx, "query", results, opts, nil, reranker)
+		require.Equal(t, want, reason)
+		return out
+	}
+	require.Equal(t, base, rerank(base, &SearchOptions{}, nil, SearchFallbackNone))
+	require.Equal(t, []rrfResult{}, rerank([]rrfResult{}, &SearchOptions{}, &coverageReranker{enabled: true}, SearchFallbackNone))
+	require.Equal(t, base, rerank(base, &SearchOptions{}, &coverageReranker{enabled: false}, SearchFallbackNone))
+	// No candidate has content to score yet: nothing reranks.
+	require.Equal(t, base, rerank(base, &SearchOptions{}, &coverageReranker{enabled: true}, SearchFallbackRerankNoCandidates))
 
 	_, err := engine.CreateNode(&storage.Node{ID: "nornic:a", Labels: []string{"Doc"}, Properties: map[string]interface{}{"title": "Alpha", "content": "alpha content"}})
 	require.NoError(t, err)
@@ -129,7 +137,7 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 	require.NoError(t, err)
 
 	failing := &coverageReranker{enabled: true, err: errors.New("rerank failed")}
-	require.Equal(t, base[:1], svc.applyStage2Rerank(ctx, "query", base, &SearchOptions{RerankTopK: 1}, nil, failing))
+	require.Equal(t, base[:1], rerank(base, &SearchOptions{RerankTopK: 1}, failing, SearchFallbackRerankFailed))
 	require.Len(t, failing.seen, 1)
 
 	extended := append(append([]rrfResult(nil), base...), rrfResult{ID: "nornic:c", RRFScore: 0.7, VectorRank: 3, BM25Rank: 3, OriginalScore: 0.7})
@@ -137,14 +145,14 @@ func TestSearchRerankExtraApplyStage2Branches(t *testing.T) {
 	require.Equal(t, []rrfResult{
 		{ID: "nornic:b", RRFScore: 0.97, VectorRank: 2, BM25Rank: 1, OriginalScore: 0.8},
 		{ID: "nornic:a", RRFScore: 0.2, VectorRank: 1, BM25Rank: 2, OriginalScore: 0.9},
-	}, svc.applyStage2Rerank(ctx, "query", extended, &SearchOptions{RerankTopK: 2}, nil, bounded))
+	}, rerank(extended, &SearchOptions{RerankTopK: 2}, bounded, SearchFallbackNone))
 	require.Len(t, bounded.seen, 2)
 
 	flat := &coverageReranker{enabled: true, results: []RerankResult{{ID: "nornic:b", BiScore: 0.8, FinalScore: 0.51}, {ID: "nornic:a", BiScore: 0.9, FinalScore: 0.50}}}
-	require.Equal(t, base, svc.applyStage2Rerank(ctx, "query", base, &SearchOptions{}, nil, flat))
+	require.Equal(t, base, rerank(base, &SearchOptions{}, flat, SearchFallbackRerankScoresFlat))
 
 	reranker := &coverageReranker{enabled: true, results: []RerankResult{{ID: "nornic:b", BiScore: 0.8, FinalScore: 0.95}, {ID: "missing", BiScore: 0.1, FinalScore: 0.2}, {ID: "nornic:a", BiScore: 0.9, FinalScore: 0.1}}}
-	reranked := svc.applyStage2Rerank(ctx, "query", base, &SearchOptions{RerankMinScore: 0.15}, nil, reranker)
+	reranked := rerank(base, &SearchOptions{RerankMinScore: 0.15}, reranker, SearchFallbackNone)
 	require.Equal(t, []rrfResult{{ID: "nornic:b", RRFScore: 0.95, VectorRank: 2, BM25Rank: 1, OriginalScore: 0.8}, {ID: "missing", RRFScore: 0.2, OriginalScore: 0.1}}, reranked)
 }
 
@@ -229,9 +237,12 @@ func TestStage2RerankMemoSubmitsOnlyNewCandidates(t *testing.T) {
 	reranker := &recordingReranker{}
 	ctx := withRerankMemo(context.Background(), newRerankMemo())
 	first := []rrfResult{{ID: "nornic:a", RRFScore: 0.9}, {ID: "nornic:b", RRFScore: 0.8}}
-	require.Len(t, svc.applyStage2Rerank(ctx, "query", first, &SearchOptions{}, nil, reranker), 2)
+	firstOut, _ := svc.applyStage2Rerank(ctx, "query", first, &SearchOptions{}, nil, reranker)
+	require.Len(t, firstOut, 2)
 	second := append(append([]rrfResult(nil), first...), rrfResult{ID: "nornic:c", RRFScore: 0.7})
-	require.Len(t, svc.applyStage2Rerank(ctx, "query", second, &SearchOptions{}, nil, reranker), 3)
+	secondOut, reason := svc.applyStage2Rerank(ctx, "query", second, &SearchOptions{}, nil, reranker)
+	require.Len(t, secondOut, 3)
+	require.Equal(t, SearchFallbackNone, reason, "remembered scores still rerank")
 
 	require.Len(t, reranker.calls, 2)
 	require.Len(t, reranker.calls[0], 2)
