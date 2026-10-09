@@ -1796,9 +1796,15 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 	} else {
 		currentPaths = e.traverseGraph(ctx, simpleMatch)
 	}
-	for index := range currentPaths {
-		currentPaths[index].SegmentLengths = []int{len(currentPaths[index].Relationships)}
+	repeats := chainRepeatedNodes(match.Segments)
+	kept := currentPaths[:0]
+	for _, path := range currentPaths {
+		path.SegmentLengths = []int{len(path.Relationships)}
+		if repeats.consistent(path, 1) {
+			kept = append(kept, path)
+		}
 	}
+	currentPaths = kept
 
 	// For each subsequent segment, extend paths
 	for segIdx := 1; segIdx < len(match.Segments); segIdx++ {
@@ -1848,7 +1854,9 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 				extended.Relationships = append(extended.Relationships, path.Relationships...)
 				extended.Relationships = append(extended.Relationships, segPath.Relationships...)
 
-				extendedPaths = append(extendedPaths, extended)
+				if repeats.consistent(extended, segIdx+1) {
+					extendedPaths = append(extendedPaths, extended)
+				}
 			}
 		}
 
@@ -1856,6 +1864,59 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 	}
 
 	return currentPaths
+}
+
+// chainNodeRepeats lists, for each node position of a chain (position j
+// ends segment j-1; position 0 starts the chain), the earlier position that
+// names the same variable, or -1. A variable named twice in one chain, as b
+// in (a)-[:R]->(b)-[:S]->(b), binds one node: Neo4j matches only the paths
+// whose two positions are that node. It is nil when no variable repeats.
+type chainNodeRepeats []int
+
+func chainRepeatedNodes(segments []TraversalSegment) chainNodeRepeats {
+	variables := make([]string, len(segments)+1)
+	variables[0] = segments[0].FromNode.variable
+	for index, segment := range segments {
+		variables[index+1] = segment.ToNode.variable
+	}
+	var repeats chainNodeRepeats
+	for position := 1; position < len(variables); position++ {
+		if variables[position] == "" {
+			continue
+		}
+		for earlier := 0; earlier < position; earlier++ {
+			if variables[earlier] != variables[position] {
+				continue
+			}
+			if repeats == nil {
+				repeats = make(chainNodeRepeats, len(variables))
+				for index := range repeats {
+					repeats[index] = -1
+				}
+			}
+			repeats[position] = earlier
+			break
+		}
+	}
+	return repeats
+}
+
+// consistent reports whether path, which has its first position segments
+// (path.SegmentLengths), binds the node at position to the node at the
+// earlier position of the same variable.
+func (repeats chainNodeRepeats) consistent(path PathResult, position int) bool {
+	if repeats == nil || repeats[position] < 0 {
+		return true
+	}
+	return chainPositionNode(path, position).ID == chainPositionNode(path, repeats[position]).ID
+}
+
+func chainPositionNode(path PathResult, position int) *storage.Node {
+	offset := 0
+	for _, length := range path.SegmentLengths[:position] {
+		offset += length
+	}
+	return path.Nodes[offset]
 }
 
 func pathResultsReuseRelationship(left, right PathResult) bool {
