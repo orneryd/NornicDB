@@ -70,6 +70,9 @@ type TraversalContext struct {
 	// relationshipsNeedOnlyHeaders is set when nothing in the statement reads
 	// the relationships' properties (traversalRelationshipsNeedOnlyHeaders).
 	relationshipsNeedOnlyHeaders bool
+	// repeatable lets a path repeat relationships: a walk, under MATCH
+	// REPEATABLE ELEMENTS (repeatable_elements.go).
+	repeatable bool
 }
 
 // traversalEndpointsNeedOnlyExist reports whether the nodes a traversal
@@ -1668,6 +1671,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			temporalViewport:             viewport,
 			temporalChecker:              checker,
 			cancelCtx:                    ctx,
+			repeatable:                   repeatableElements(ctx),
 			endpointsNeedOnlyExist:       traversalEndpointsNeedOnlyExist(match),
 			relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 		}
@@ -1736,6 +1740,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					temporalViewport:             viewport,
 					temporalChecker:              checker,
 					cancelCtx:                    ctx,
+					repeatable:                   repeatableElements(ctx),
 					endpointsNeedOnlyExist:       traversalEndpointsNeedOnlyExist(match),
 					relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 				}
@@ -1821,7 +1826,7 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 
 			// Join paths: combine current path with each segment path
 			for _, segPath := range segPaths {
-				if pathResultsReuseRelationship(path, segPath) {
+				if !repeatableElements(ctx) && pathResultsReuseRelationship(path, segPath) {
 					continue
 				}
 				// Create extended path
@@ -1969,6 +1974,7 @@ func (e *StorageExecutor) newTraversalContext(traversalCtx context.Context, star
 		usedEdges:     make(map[storage.EdgeID]bool),
 		nodeCache:     make(map[storage.NodeID]*storage.Node),
 		cancelCtx:     traversalCtx,
+		repeatable:    repeatableElements(traversalCtx),
 	}
 	if viewport, ok := TemporalViewportFromContext(traversalCtx); ok {
 		ctx.temporalViewport = viewport
@@ -2087,7 +2093,7 @@ func (e *StorageExecutor) findPaths(
 		// A Cypher path may revisit a node, but it cannot reuse a relationship.
 		// This also prevents an undirected expansion from walking the same edge
 		// immediately back in the opposite direction.
-		if ctx.usedEdges[edge.ID] {
+		if ctx.usedEdges[edge.ID] && !ctx.repeatable {
 			continue
 		}
 		// Check relationship type filter
