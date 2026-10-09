@@ -227,6 +227,11 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	if value, bound := evaluateBoundRowValue(expr, values); bound {
 		return value, true
 	}
+	if containsRelExistencePattern(expr) {
+		if value, ok, handled := e.evaluatePatternPredicateValue(ctx, expr, values); handled {
+			return value, ok
+		}
+	}
 	var extended pipelineRow
 	bind := func(name string, value interface{}) {
 		if _, exists := values[name]; exists {
@@ -387,4 +392,35 @@ func (e *StorageExecutor) entityIdentityDatabase(ctx context.Context, anchor sto
 		}
 	}
 	return db
+}
+
+// evaluatePatternPredicateValue is the value of a pattern predicate in a
+// projection: a bare pattern (in grouping parentheses or not) is whether it
+// matches, as EXISTS { pattern }; NOT, AND, OR and XOR over operands that
+// hold one combine their values with Cypher's null logic (#907). handled is
+// false for any other expression.
+func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, expr string, values pipelineRow) (value interface{}, ok, handled bool) {
+	trimmed := strings.TrimSpace(expr)
+	for len(trimmed) > 1 && trimmed[0] == '(' && findMatchingParen(trimmed, 0) == len(trimmed)-1 {
+		if _, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain {
+			break
+		}
+		trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+	}
+	if chainEnd, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain && chainEnd == len(trimmed) {
+		nodes, rels := entityScopesFromValues(values)
+		return e.evaluateExistsSubqueryValue(ctx, "EXISTS { "+trimmed+" }", nodes, rels), true, true
+	}
+	logicalValue, logical, logicalOK, err := evaluateLogicalExpression(trimmed, func(operand string) (interface{}, bool, error) {
+		operandValue, resolved := e.evaluateRowExpressionWithContext(ctx, operand, values)
+		return operandValue, resolved, nil
+	})
+	if !logical {
+		return nil, false, false
+	}
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil, false, true
+	}
+	return logicalValue, logicalOK, true
 }

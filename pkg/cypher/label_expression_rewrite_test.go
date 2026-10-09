@@ -361,8 +361,7 @@ func TestRelationshipChainEnd(t *testing.T) {
 		{"(a", 0, false},
 		{"((a)-->(b))", 0, false},
 	} {
-		r := &labelExpressionRewriter{query: tc.text}
-		end, ok := r.relationshipChainEnd(0, len(tc.text))
+		end, ok := relationshipChainEnd(tc.text, 0, len(tc.text))
 		require.Equal(t, tc.ok, ok, tc.text)
 		if ok {
 			require.Equal(t, tc.end, end, tc.text)

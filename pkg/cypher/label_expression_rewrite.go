@@ -912,7 +912,7 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, erro
 	}
 	call := open > start && isIdentByte(q[open-1])
 	if !call {
-		if chainEnd, ok := r.relationshipChainEnd(open, end); ok {
+		if chainEnd, ok := relationshipChainEnd(r.query, open, end); ok {
 			return chainEnd, r.patternPredicate(open, chainEnd, -1, -1)
 		}
 	} else {
@@ -923,7 +923,7 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, erro
 		}
 		inner := skipASCIISpaces(q, open+1, close)
 		if strings.EqualFold(q[nameStart:open], "exists") {
-			if chainEnd, ok := r.relationshipChainEnd(inner, close); ok && skipASCIISpaces(q, chainEnd, close) == close {
+			if chainEnd, ok := relationshipChainEnd(r.query, inner, close); ok && skipASCIISpaces(q, chainEnd, close) == close {
 				return close + 1, r.patternPredicate(inner, chainEnd, nameStart, close)
 			}
 		}
@@ -962,7 +962,7 @@ func (r *labelExpressionRewriter) comprehension(open, close int) (bool, error) {
 	if i >= close || q[i] != '(' {
 		return false, nil
 	}
-	chainEnd, ok := r.relationshipChainEnd(i, close)
+	chainEnd, ok := relationshipChainEnd(r.query, i, close)
 	if !ok {
 		return false, nil
 	}
@@ -1008,9 +1008,11 @@ func (r *labelExpressionRewriter) projectionBar(start, end int) int {
 }
 
 // relationshipChainEnd returns where the pattern starting with the node at
-// query[open] ends when it has at least one relationship: (a)-[r]->(b)<--(c).
-func (r *labelExpressionRewriter) relationshipChainEnd(open, end int) (int, bool) {
-	q := r.query
+// q[open] ends, within q[:end], when it has at least one relationship:
+// (a)-[r]->(b)<--(c). It is the one reader of a pattern's extent in an
+// expression: the label-expression rewriter, the free-variable scan and the
+// pattern placement check use it.
+func relationshipChainEnd(q string, open, end int) (int, bool) {
 	close := findMatchingDelimiter(q[:end], open, '(', ')')
 	if close < 0 {
 		return 0, false

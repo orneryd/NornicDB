@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/bits"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -255,6 +256,28 @@ func expressionFreeVariables(expression string) []string {
 				index++
 			}
 			continue
+		}
+		if character == '(' {
+			// A pattern predicate ((n)-[:R]->(m:L)) reads the variables its
+			// nodes and relationships name, never its labels, types or
+			// property keys; it can't introduce one (Neo4j: "PatternExpressions
+			// are not allowed to introduce new variables").
+			if chainEnd, chain := relationshipChainEnd(expression, index, len(expression)); chain {
+				bindings := make(matchSemanticScope)
+				addMatchPatternBindingKinds(bindings, expression[index:chainEnd])
+				references := make([]string, 0, len(bindings))
+				for reference := range bindings {
+					references = append(references, reference)
+				}
+				sort.Strings(references)
+				for _, reference := range references {
+					if _, local := locals[reference]; !local {
+						names = append(names, reference)
+					}
+				}
+				index = chainEnd
+				continue
+			}
 		}
 		switch character {
 		case '(', '[', '{':
