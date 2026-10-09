@@ -27,8 +27,9 @@ var (
 	remPio2_3t = 8.47842766036889956997e-32
 )
 
-// remPio2 reduces x, |x| > pi/4, to y0 + y1 in [-pi/4, pi/4] with
-// x = n*pi/2 + y0 + y1; it returns n.
+// remPio2 reduces a finite x, |x| > pi/4, to y0 + y1 in [-pi/4, pi/4] with
+// x = n*pi/2 + y0 + y1; it returns n. Sin, Cos and Tan return NaN for an
+// infinite or NaN argument before reducing it.
 func remPio2(x float64) (n int32, y0, y1 float64) {
 	u := math.Float64bits(x)
 	sign := u>>63 != 0
@@ -105,10 +106,6 @@ func remPio2(x float64) (n int32, y0, y1 float64) {
 		y1 = (r - y0) - w
 		return n, y0, y1
 	}
-	if ix >= 0x7ff00000 { // Inf or NaN
-		y0 = x - x
-		return 0, y0, y0
-	}
 	// z = scalbn(|x|, -ilogb(x)+23)
 	z := math.Float64frombits(u&(^uint64(0)>>12) | uint64(0x3ff+23)<<52)
 	var tx [3]float64
@@ -164,10 +161,9 @@ func remPio2Large(x []float64, e0 int) (int32, float64, float64) {
 	var iq [20]int32
 	var f, fq, q [20]float64
 	jx := len(x) - 1
+	// remPio2 calls this for |x| >= 2^20*(pi/2) only, so e0 >= -3 and jv,
+	// which musl clamps at 0 for its float callers, is never negative.
 	jv := (e0 - 3) / 24
-	if jv < 0 {
-		jv = 0
-	}
 	q0 := e0 - 24*(jv+1)
 	j := jv - jx
 	m := jx + jk

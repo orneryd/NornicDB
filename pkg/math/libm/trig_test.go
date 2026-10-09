@@ -8,9 +8,12 @@ import (
 )
 
 // The trigonometric functions and Log10 return musl 1.2.5's results bit for
-// bit: a sample of 20,030 seeded inputs per function computed with musl's
-// libm (small, medium and huge arguments, subnormals, special values; all
-// matched on amd64 and arm64), pinned here as input and result bits (#907).
+// bit (#907). The port matched musl's libm on 20,030 seeded inputs per
+// function (small, medium and huge arguments, subnormals, special values), on
+// amd64 and arm64. The inputs pinned here, with musl's result bits, are a
+// sample that reaches every branch: the argument reduction's rounding
+// corrections and Payne-Hanek recomputation, and atan2's zero and infinite
+// arguments.
 func TestTrigMatchesMusl(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -95,6 +98,44 @@ func TestTrigMatchesMusl(t *testing.T) {
 		{"atan2", 0x3ec0b28c4751e89c, 0x3ed09dc6aea2546d, 0x3fe014005cc237a0},
 		{"atan2", 0xc015478713d2ce71, 0xbfe1e8f9fe5e7870, 0x4020fb7821173c68},
 		{"atan2", 0xc021330859ccc288, 0xbf0df46ff3e2ec3a, 0x41025fa65560d8e0},
+		{"sin", 0xbff0000000000000, 0xbfeaed548f090cee, 0},
+		{"sin", 0x3ff921fb54442d18, 0x3ff0000000000000, 0},
+		{"sin", 0x4012d97c7f3321d2, 0xbff0000000000000, 0},
+		{"sin", 0x401921fb54442d18, 0xbcb1a62633145c07, 0},
+		{"sin", 0xfe37e43c8800759c, 0x3fea2c16b010e385, 0},
+		{"sin", 0x7fe0000000000000, 0x3fe205248cbdb760, 0},
+		{"sin", 0xc019350a06d83546, 0xbf930e6a7b605ccd, 0},
+		{"sin", 0xc014fb5d2f5d1569, 0x3feb8f4fb824f44b, 0},
+		{"sin", 0xf8f9b5bfecbc5147, 0xbfe783b69f208b03, 0},
+		{"sin", 0xc13e1f8358c72329, 0xbfedda58c9105338, 0},
+		{"cos", 0x401921fb54442d18, 0x3ff0000000000000, 0},
+		{"asin", 0x01a56e1fc2f8f359, 0x01a56e1fc2f8f359, 0},
+		{"asin", 0x3fef333333333333, 0x3ff58c2b5ce0c3e5, 0},
+		{"atan", 0x3ff0000000000000, 0x3fe921fb54442d18, 0},
+		{"atan", 0xfe37e43c8800759c, 0xbff921fb54442d18, 0},
+		{"atan2", 0xfe37e43c8800759c, 0xbff921fb54442d18, 0xc01e4f8a4dbf2544},
+		{"atan2", 0x0000000000000000, 0x0000000000000000, 0x3ff8000000000000},
+		{"atan2", 0x8000000000000000, 0x8000000000000000, 0x4000000000000000},
+		{"sin", 0x40ebf085dcba563d, 0xbfe6a09e667f9bb5, 0},
+		{"cos", 0x40ebf085dcba563d, 0x3fe6a09e667edbe4, 0},
+		{"tan", 0x40ebf085dcba563d, 0xbff00000000087a3, 0},
+		{"sin", 0x411bea4d132259dd, 0xbfe6a09e667ffd89, 0},
+		{"cos", 0x411bea4d132259dd, 0xbfe6a09e667e7a10, 0},
+		{"tan", 0x411bea4d132259dd, 0x3ff00000000111fc, 0},
+		{"sin", 0x7a616710f95b9696, 0xbfeffffffffffff5, 0},
+		{"cos", 0x7a616710f95b9696, 0x3e6a07f69b4de0bc, 0},
+		{"tan", 0x7a616710f95b9696, 0xc173ab34e3793e20, 0},
+		{"atan2", 0x3ff8000000000000, 0x3ff921fb54442d18, 0x0000000000000000},
+		{"atan2", 0xbff8000000000000, 0xbff921fb54442d18, 0x0000000000000000},
+		{"atan2", 0x3ff8000000000000, 0x3ff921fb54442d18, 0x8000000000000000},
+		{"atan2", 0x7ff0000000000000, 0x3fe921fb54442d18, 0x7ff0000000000000},
+		{"atan2", 0xfff0000000000000, 0xbfe921fb54442d18, 0x7ff0000000000000},
+		{"atan2", 0x7ff0000000000000, 0x4002d97c7f3321d2, 0xfff0000000000000},
+		{"atan2", 0xfff0000000000000, 0xc002d97c7f3321d2, 0xfff0000000000000},
+		{"atan2", 0x3ff8000000000000, 0x0000000000000000, 0x7ff0000000000000},
+		{"atan2", 0xbff8000000000000, 0x8000000000000000, 0x7ff0000000000000},
+		{"atan2", 0x3ff8000000000000, 0x400921fb54442d18, 0xfff0000000000000},
+		{"atan2", 0xbff8000000000000, 0xc00921fb54442d18, 0xfff0000000000000},
 	} {
 		x := math.Float64frombits(tc.in)
 		var got float64
