@@ -244,11 +244,8 @@ func (e *StorageExecutor) selectSearchedPaths(ctx context.Context, m *shortestPa
 	}
 	var out []pipelineRow
 	for _, pair := range pairs {
-		start, _ := pair[m.startVariable].(*storage.Node)
-		end, _ := pair[m.endVariable].(*storage.Node)
-		if start == nil || end == nil {
-			continue
-		}
+		// The endpoint match binds both endpoints to nodes.
+		start, end := pair[m.startVariable].(*storage.Node), pair[m.endVariable].(*storage.Node)
 		paths, err := e.selectedPathsBetween(ctx, m, start, end, pair, count)
 		if err != nil {
 			return nil, err
