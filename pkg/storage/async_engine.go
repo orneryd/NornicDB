@@ -33,6 +33,9 @@ import (
 // flushed to the underlying engine asynchronously.
 type AsyncEngine struct {
 	engine Engine
+	// keyRegistry is engine's PropertyKeyRegistry, nil when it keeps none;
+	// asserted once so every write notes its key names without it.
+	keyRegistry PropertyKeyRegistry
 
 	// In-memory cache for pending writes
 	nodeCache   map[NodeID]*Node
@@ -227,6 +230,7 @@ func NewAsyncEngine(engine Engine, config *AsyncEngineConfig) *AsyncEngine {
 		lastFlush:          time.Now(),
 		log:                config.Logger.With("component", "storage", "engine", "async"),
 	}
+	ae.keyRegistry, _ = engine.(PropertyKeyRegistry)
 
 	// Start background flush goroutine
 	if ae.adaptiveFlush {
@@ -919,16 +923,15 @@ func (ae *AsyncEngine) trackPendingValues(pairs []pendingPropertyKey) {
 // A buffered write encodes them only when it flushes, so every write notes
 // its names when it is taken.
 func (ae *AsyncEngine) NotePropertyKeysInNamespace(namespace string, properties map[string]interface{}) {
-	if registry, ok := ae.engine.(PropertyKeyRegistry); ok {
-		registry.NotePropertyKeysInNamespace(namespace, properties)
+	if ae.keyRegistry != nil && len(properties) > 0 {
+		ae.keyRegistry.NotePropertyKeysInNamespace(namespace, properties)
 	}
 }
 
 // PropertyKeyKnownInNamespace forwards the property-key lookup
 // (PropertyKeyRegistry).
 func (ae *AsyncEngine) PropertyKeyKnownInNamespace(namespace, name string) bool {
-	registry, ok := ae.engine.(PropertyKeyRegistry)
-	return ok && registry.PropertyKeyKnownInNamespace(namespace, name)
+	return ae.keyRegistry != nil && ae.keyRegistry.PropertyKeyKnownInNamespace(namespace, name)
 }
 
 func (ae *AsyncEngine) CreateNode(node *Node) (NodeID, error) {
