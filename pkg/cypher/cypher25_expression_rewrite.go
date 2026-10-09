@@ -19,7 +19,8 @@ import (
 //     Neo4j converts an interpolated value (interpolatedValue); null in, null
 //     out; \{ is a brace;
 //   - {k: v IN map [WHERE p] | key: value}: a map built from each entry, as
-//     apoc.map.fromPairs over nested list comprehensions that bind k and v.
+//     apoc.map.fromPairs over nested list comprehensions that bind k and v;
+//   - RETURN / WITH … GROUP BY keys: the grouping it names (groupByEdits).
 //
 // Each pass's edits are kept (queryRewrite), so columns and messages show the
 // client's text.
@@ -35,7 +36,7 @@ const interpolateFunction = "__nornic_interpolate"
 // the result with each pass's rewrite, in order (restore them in reverse).
 func desugarCypher25Expressions(query string) (string, []*queryRewrite, error) {
 	var rewrites []*queryRewrite
-	for _, pass := range []func(string) ([]labelRewriteEdit, error){interpolationEdits, mapComprehensionEdits, projectionAllEdits} {
+	for _, pass := range []func(string) ([]labelRewriteEdit, error){interpolationEdits, mapComprehensionEdits, projectionAllEdits, groupByEdits} {
 		edits, err := pass(query)
 		if err != nil {
 			return query, nil, err

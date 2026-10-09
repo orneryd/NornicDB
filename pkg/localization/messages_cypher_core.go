@@ -55,6 +55,7 @@ const (
 	MessageCypherCoreInvalidInputExpectedIdentifier      MessageID = "cyphercore.invalid_input_expected_identifier"
 	MessageCypherCoreConditionalColumnNames              MessageID = "cyphercore.conditional_column_names"
 	MessageCypherCoreInterpolationWrongType              MessageID = "cyphercore.interpolation_wrong_type"
+	MessageCypherCoreGroupByImplicitGroupingKey          MessageID = "cyphercore.group_by_implicit_grouping_key"
 	MessageCypherCoreConditionalColumnCount              MessageID = "cyphercore.conditional_column_count"
 	MessageCypherCoreListOperandTypeMismatch             MessageID = "cyphercore.list_operand_type_mismatch"
 	MessageCypherCoreVectorDimensionRange                MessageID = "cyphercore.vector_dimension_range"
@@ -343,6 +344,12 @@ func CypherCoreConditionalColumnNames() Message {
 // value of a type a string can't hold.
 func CypherCoreInterpolationWrongType(typeName string) Message {
 	return cypherCoreMessage(MessageCypherCoreInterpolationWrongType, "Wrong type. Expected BOOLEAN, STRING, UUID, INTEGER, FLOAT, TEMPORAL, DURATION or VECTOR, got "+typeName, map[string]any{"Type": typeName})
+}
+
+// CypherCoreGroupByImplicitGroupingKey is Neo4j's message for a projected
+// item GROUP BY's keys don't cover; illegal lists the variables it reads.
+func CypherCoreGroupByImplicitGroupingKey(illegal string) Message {
+	return cypherCoreMessage(MessageCypherCoreGroupByImplicitGroupingKey, "Aggregation column contains implicit grouping expressions. For example, in 'RETURN n.a, n.a + n.b + count(*)' the aggregation expression 'n.a + n.b + count(*)' includes the implicit grouping key 'n.b'. It may be possible to rewrite the query by extracting these grouping/aggregation expressions into a preceding WITH clause. Illegal expression(s): "+illegal, map[string]any{"Illegal": illegal})
 }
 
 // CypherCoreConditionalColumnCount is Neo4j's message for WHEN branches that

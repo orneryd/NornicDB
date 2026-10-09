@@ -142,6 +142,8 @@
   other: "[!! All conditional queries must return the same number of columns. !!]"
 - id: cyphercore.interpolation_wrong_type
   other: "[!! Wrong type. Expected BOOLEAN, STRING, UUID, INTEGER, FLOAT, TEMPORAL, DURATION or VECTOR, got {{.Type}} !!]"
+- id: cyphercore.group_by_implicit_grouping_key
+  other: "[!! Aggregation column contains implicit grouping expressions. For example, in 'RETURN n.a, n.a + n.b + count(*)' the aggregation expression 'n.a + n.b + count(*)' includes the implicit grouping key 'n.b'. It may be possible to rewrite the query by extracting these grouping/aggregation expressions into a preceding WITH clause. Illegal expression(s): {{.Illegal}} !!]"
 - id: cyphercore.list_operand_type_mismatch
   other: "[!! Type mismatch: expected List<T> but was {{.Type}} !!]"
 - id: cyphercore.list_parameter_type_mismatch
