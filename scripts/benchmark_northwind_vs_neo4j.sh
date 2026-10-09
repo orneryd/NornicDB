@@ -664,6 +664,20 @@ run_neo4j() {
 # FalkorDB / Memgraph (docker) and LadybugDB (embedded) install + runs
 # ------------------------------------------------------------------------
 
+# Memgraph wants vm.max_map_count >= 524288 and warns "is too low" below that; Docker Desktop's Linux VM
+# ships 262144 and forgets any change when it restarts. Raise it for the run (a privileged container
+# reaches the VM's sysctl through nsenter). Failing to do so only warns: it is Memgraph's own check.
+ensure_docker_max_map_count() {
+	local want=524288 have
+	have=$(docker run --rm --privileged --pid=host alpine:latest nsenter -t 1 -m -u -n -i cat /proc/sys/vm/max_map_count 2>/dev/null | tail -1)
+	if [[ "${have}" =~ ^[0-9]+$ ]] && (( have >= want )); then
+		return 0
+	fi
+	log "raising the Docker VM's vm.max_map_count (${have:-unknown} -> ${want}) for Memgraph"
+	docker run --rm --privileged --pid=host alpine:latest nsenter -t 1 -m -u -n -i sysctl -w "vm.max_map_count=${want}" >/dev/null 2>&1 \
+		|| log "WARNING: could not raise vm.max_map_count; Memgraph may warn or fail. Run: docker run --rm --privileged --pid=host alpine nsenter -t 1 -m -u -n -i sysctl -w vm.max_map_count=${want}"
+}
+
 install_engines() {
 	if [[ "${SKIP_FALKOR}" != "1" || "${SKIP_MEMGRAPH}" != "1" ]]; then
 		require docker
@@ -676,6 +690,7 @@ install_engines() {
 	if [[ "${SKIP_MEMGRAPH}" != "1" ]]; then
 		log "pulling ${MEMGRAPH_IMAGE}…"
 		docker pull "${MEMGRAPH_IMAGE}"
+		ensure_docker_max_map_count
 	fi
 	if [[ "${SKIP_LADYBUG}" != "1" ]]; then
 		install_ladybug
@@ -722,6 +737,30 @@ install_ladybug() {
 # BENCH_BIN over Bolt (Memgraph), "falkor" runs it over native RESP
 # (falkordb-go). Extra args are passed to `docker run` (e.g.
 # `-e REDIS_ARGS=...` or `--also-log-to-stderr`).
+# True once the engine itself (not just Docker's port forwarder) answers: a Bolt handshake (a live server
+# replies with the 4 bytes of the version it picked) or a RESP PING.
+engine_answers() {
+	local driver_mode="$1" host_port="$2" reply
+	case "${driver_mode}" in
+		bolt)
+			reply=$(printf '\x60\x60\xb0\x17\x00\x00\x04\x04\x00\x00\x03\x04\x00\x00\x02\x04\x00\x00\x01\x04' \
+				| nc -w 2 127.0.0.1 "${host_port}" 2>/dev/null | od -An -tx1 | tr -d ' \n')
+			[[ -n "${reply}" ]]
+			;;
+		falkor)
+			reply=$(printf 'PING\r\n' | nc -w 2 127.0.0.1 "${host_port}" 2>/dev/null | tr -d '\r\n')
+			[[ "${reply}" == *PONG* || "${reply}" == *NOAUTH* ]]
+			;;
+		*) nc -z 127.0.0.1 "${host_port}" 2>/dev/null ;;
+	esac
+}
+
+# Keep the container's own output next to the report: the cleanup trap removes the container, and a
+# crash message such as "data dir owned by root" is otherwise lost.
+save_container_logs() {
+	docker logs "$1" >"${REPORT_DIR}/$2.container.log" 2>&1 || true
+}
+
 run_docker_engine() {
 	local label="$1" image="$2" host_port="$3" container_port="$4" data_dir="$5" container_data_dir="$6" database="$7" auth_mode="$8" driver_mode="$9"
 	shift 9
@@ -738,6 +777,12 @@ run_docker_engine() {
 		fi
 	fi
 	mkdir -p "${data_dir}"
+	# Run under sudo, mkdir makes this directory root-owned. Docker Desktop writes bind mounts as the macOS
+	# user who started it, so even root inside the container then gets "Permission denied" (Memgraph:
+	# "Failed to open /var/lib/memgraph/.lock", exit 133). Hand the directory to that user.
+	if [[ -n "${SUDO_USER:-}" ]]; then
+		chown -R "${SUDO_USER}" "${data_dir}"
+	fi
 
 	if [[ "${SKIP_POWERMETRICS}" != "1" ]]; then
 		log "starting powermetrics sampler (covers startup + benchmark + shutdown)"
@@ -753,14 +798,23 @@ run_docker_engine() {
 		"$@" \
 		"${image}" >"${REPORT_DIR}/${label}.docker.log" 2>&1
 
-	for i in {1..60}; do
-		if nc -z 127.0.0.1 "${host_port}" 2>/dev/null; then break; fi
-		sleep 1
+	# Docker's port forwarder accepts connections as soon as the container starts, long before the engine
+	# inside is listening (or after it has already crashed), so a bare port check is not readiness. Require
+	# the container to be running AND the engine to answer its own protocol: a Bolt handshake for Bolt
+	# engines, PING for RESP (FalkorDB).
+	local ready=0
+	for i in {1..90}; do
 		if ! docker ps --format '{{.Names}}' | grep -qx "${container}"; then
-			die "${label} container failed to start or exited during startup; see ${REPORT_DIR}/${label}.docker.log"
+			save_container_logs "${container}" "${label}"
+			die "${label} container exited during startup; see ${REPORT_DIR}/${label}.container.log"
 		fi
+		if engine_answers "${driver_mode}" "${host_port}"; then ready=1; break; fi
+		sleep 1
 	done
-	nc -z 127.0.0.1 "${host_port}" 2>/dev/null || die "${label} port never came up — see ${REPORT_DIR}/${label}.docker.log"
+	if [[ "${ready}" != "1" ]]; then
+		save_container_logs "${container}" "${label}"
+		die "${label} never answered on port ${host_port}; see ${REPORT_DIR}/${label}.container.log"
+	fi
 	log "${label} ready (container ${container})"
 
 	local bench_args=(
@@ -793,11 +847,11 @@ run_docker_engine() {
 	esac
 	if [[ "${auth_mode}" == "none" ]]; then
 		"${BENCH_BIN}" "${bench_args[@]}" -no-auth 2>"${REPORT_DIR}/${label}.bench.log" \
-			|| die "${label} benchmark failed — see ${REPORT_DIR}/${label}.bench.log"
+			|| { save_container_logs "${container}" "${label}"; die "${label} benchmark failed — see ${REPORT_DIR}/${label}.bench.log and ${REPORT_DIR}/${label}.container.log"; }
 	else
 		local engine_user="${auth_mode%%:*}" engine_pass="${auth_mode#*:}"
 		"${BENCH_BIN}" "${bench_args[@]}" -user "${engine_user}" -pass "${engine_pass}" 2>"${REPORT_DIR}/${label}.bench.log" \
-			|| die "${label} benchmark failed — see ${REPORT_DIR}/${label}.bench.log"
+			|| { save_container_logs "${container}" "${label}"; die "${label} benchmark failed — see ${REPORT_DIR}/${label}.bench.log and ${REPORT_DIR}/${label}.container.log"; }
 	fi
 
 	# Graceful stop so the engine flushes its write cache before `du`.
@@ -844,8 +898,10 @@ run_falkor() {
 run_memgraph() {
 	# Memgraph maps the host dir into its data directory. No auth by default;
 	# the report classifies the store from the data dir itself.
+	# --user root: memgraph/memgraph 3.13+ exits at startup ("process is running as user memgraph, but
+	# '/var/lib/memgraph' is owned by user root") when a root-owned host directory is bind-mounted.
 	run_docker_engine "memgraph" "${MEMGRAPH_IMAGE}" "${MEMGRAPH_BOLT_PORT}" "7687" \
-		"${MEMGRAPH_DATA_DIR}" "/var/lib/memgraph" "${MEMGRAPH_DATABASE}" "none" "bolt"
+		"${MEMGRAPH_DATA_DIR}" "/var/lib/memgraph" "${MEMGRAPH_DATABASE}" "none" "bolt" --user root
 }
 
 run_ladybug() {

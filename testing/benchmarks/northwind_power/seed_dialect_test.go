@@ -66,3 +66,17 @@ func TestFoldChainedCreates(t *testing.T) {
 		t.Fatal("bolt orders seed statement was modified")
 	}
 }
+
+func TestLadybugDialectQuotesTheOrderLabelOnly(t *testing.T) {
+	got := ladybugDialect("MATCH (c:Customer)-[:PURCHASED]->(o:Order) MATCH (x:OrderLine) WHERE o.orderID = 1 RETURN o ORDER BY o.orderID")
+	want := "MATCH (c:Customer)-[:PURCHASED]->(o:`Order`) MATCH (x:OrderLine) WHERE o.orderID = 1 RETURN o ORDER BY o.orderID"
+	if got != want {
+		t.Fatalf("ladybugDialect:\n got  %s\n want %s", got, want)
+	}
+	if got := ladybugDialect(categoriesCreateCypher); got != categoriesCreateCypher {
+		t.Fatalf("statements without the Order label must be unchanged, got %q", got)
+	}
+	if got := ladybugDialect(ordersCreateCypher); !strings.Contains(got, "(o:`Order` {") {
+		t.Fatalf("the orders seed must quote the label, got %q", got)
+	}
+}

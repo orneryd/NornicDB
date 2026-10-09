@@ -288,3 +288,11 @@ func falkorIndexQuery(q string) (string, bool) {
 	}
 	return "CREATE INDEX FOR " + m[1], true
 }
+
+var ladybugOrderLabelRe = regexp.MustCompile(`:Order\b`)
+
+// ladybugDialect adapts the shared Cypher to LadybugDB: ORDER is a keyword to its parser, so the Order
+// label must be backtick-quoted wherever it is used. The other engines receive the statements unchanged.
+func ladybugDialect(cypher string) string {
+	return ladybugOrderLabelRe.ReplaceAllString(cypher, ":`Order`")
+}

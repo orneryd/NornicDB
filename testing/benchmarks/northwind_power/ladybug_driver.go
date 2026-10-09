@@ -60,10 +60,16 @@ func runLadybugReport(ctx context.Context, dataDir string, cfg seedConfig, label
 			label, cfg.categories, cfg.suppliers, cfg.customers, cfg.products, cfg.orders, cfg.batchSize, cfg.parallel, cfg.seed)
 		log("[%s] note: LadybugDB (Kuzu) has no CREATE INDEX ... FOR syntax; index setup is skipped", label)
 
+		// LadybugDB (Kuzu) is schema-strict: node and relationship tables must exist before the first
+		// CREATE, unlike the Bolt engines which create labels on first use. Not part of the timed seed.
+		if err := createLadybugSchema(conn); err != nil {
+			return fmt.Errorf("create schema: %w", err)
+		}
+
 		seedStart := time.Now()
 		plan := buildSeedPlan(cfg)
 		for _, phase := range plan.phases {
-			phaseCypher := foldChainedCreates(phase.name, phase.cypher)
+			phaseCypher := ladybugDialect(foldChainedCreates(phase.name, phase.cypher))
 			stmt, err := conn.Prepare(phaseCypher)
 			if err != nil {
 				return fmt.Errorf("prepare %s: %w", phase.name, err)
@@ -154,7 +160,7 @@ func runLadybugReport(ctx context.Context, dataDir string, cfg seedConfig, label
 // timed iteration re-fingerprints the result set for intra-run stability.
 func runQueryLadybug(ctx context.Context, conn *lbug.Connection, q benchQuery, iterations, warmup int) (QueryStat, error) {
 	execCollect := func() ([]resultRow, []string, error) {
-		res, err := conn.Query(q.cypher)
+		res, err := conn.Query(ladybugDialect(q.cypher))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -240,7 +246,7 @@ func runQueryLadybug(ctx context.Context, conn *lbug.Connection, q benchQuery, i
 func countSeedGraphLadybug(ctx context.Context, conn *lbug.Connection) (SeedCounts, error) {
 	var sc SeedCounts
 	for _, pair := range seedCountQueries {
-		res, err := conn.Query(pair.query)
+		res, err := conn.Query(ladybugDialect(pair.query))
 		if err != nil {
 			return sc, fmt.Errorf("count query %q: %w", pair.query, err)
 		}
@@ -281,4 +287,30 @@ func ladybugCountToInt64(v any) int64 {
 	default:
 		return 0
 	}
+}
+
+// ladybugSchema declares the Northwind tables the seed statements write to, with the property types the
+// seed rows carry (see buildSeedPlan). The primary keys are the *ID properties the queries look up by.
+var ladybugSchema = []string{
+	"CREATE NODE TABLE Category(categoryID INT64, categoryName STRING, description STRING, PRIMARY KEY (categoryID))",
+	"CREATE NODE TABLE Supplier(supplierID INT64, companyName STRING, contactName STRING, country STRING, region STRING, phone STRING, notes STRING, PRIMARY KEY (supplierID))",
+	"CREATE NODE TABLE Customer(customerID INT64, companyName STRING, contactName STRING, country STRING, city STRING, address STRING, PRIMARY KEY (customerID))",
+	"CREATE NODE TABLE Product(productID INT64, productName STRING, sku STRING, unitPrice DOUBLE, unitsInStock INT64, discontinued BOOLEAN, description STRING, tags STRING[], PRIMARY KEY (productID))",
+	"CREATE NODE TABLE `Order`(orderID INT64, shipCity STRING, shipCountry STRING, orderDate INT64, notes STRING, PRIMARY KEY (orderID))",
+	"CREATE REL TABLE PART_OF(FROM Product TO Category)",
+	"CREATE REL TABLE SUPPLIES(FROM Supplier TO Product)",
+	"CREATE REL TABLE PURCHASED(FROM Customer TO `Order`)",
+	"CREATE REL TABLE ORDERS(FROM `Order` TO Product, quantity INT64, discount DOUBLE)",
+}
+
+// createLadybugSchema runs ladybugSchema on a fresh database.
+func createLadybugSchema(conn *lbug.Connection) error {
+	for _, ddl := range ladybugSchema {
+		result, err := conn.Query(ddl)
+		if err != nil {
+			return fmt.Errorf("%s: %w", ddl, err)
+		}
+		result.Close()
+	}
+	return nil
 }
