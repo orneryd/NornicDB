@@ -198,7 +198,14 @@ type BadgerEngine struct {
 	// Dramatically speeds up repeated MATCH lookups
 	nodeCache   map[NodeID]*Node
 	nodeCacheMu sync.RWMutex
-	cacheHits   int64
+	// The generations order each read cache's fills against its writes
+	// (see cacheGeneration).
+	nodeCacheGen       cacheGeneration
+	edgeCacheGen       cacheGeneration
+	edgeTypeCacheGen   cacheGeneration
+	adjCacheGen        cacheGeneration
+	labelFirstCacheGen cacheGeneration
+	cacheHits          int64
 	cacheMisses int64
 
 	// Current primary-key body cache for MVCC GetNodeVisibleAt reads. Entries

@@ -142,7 +142,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		require.NoError(t, err)
 
 		staleID := NodeID(prefixTestID("foreach-stale"))
-		b.labelCacheSetFirst("Person", staleID)
+		b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Person", staleID)
 
 		var visited []NodeID
 		err = b.ForEachNodeIDByLabel("Person", func(id NodeID) bool {

@@ -37,12 +37,51 @@ type nodeBodyCacheEntry struct {
 	referenced  atomic.Bool
 }
 
+// cacheGeneration orders a read cache's fills against its writes (#1024).
+// A read fills the cache with what it read after its read ends, so without
+// it a read that started before a write could put back the version that
+// write had just cached or removed, and later reads would return it. Every
+// write to the cache (an entity written, deleted or invalidated) advances
+// the generation while holding the cache's lock; a read captures it before
+// it opens its view and, under the same lock, fills only if it hasn't
+// moved.
+type cacheGeneration struct{ n atomic.Uint64 }
+
+func (g *cacheGeneration) current() uint64 { return g.n.Load() }
+
+// advance records a write; the caller holds the cache's lock.
+func (g *cacheGeneration) advance() { g.n.Add(1) }
+
+// cacheStoreNode caches node as written (a write: see cacheGeneration).
 func (b *BadgerEngine) cacheStoreNode(node *Node) {
 	if node == nil {
 		return
 	}
-
 	b.nodeCacheMu.Lock()
+	b.nodeCacheGen.advance()
+	b.putNodeLocked(node)
+	b.nodeCacheMu.Unlock()
+	b.cacheDeleteNodeBody(node.ID)
+}
+
+// cacheFillNode caches node as read by a read that captured gen before it
+// read; a write since then means node may be stale, and it isn't cached.
+func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node) {
+	if node == nil {
+		return
+	}
+	b.nodeCacheMu.Lock()
+	if b.nodeCacheGen.current() != gen {
+		b.nodeCacheMu.Unlock()
+		return
+	}
+	b.putNodeLocked(node)
+	b.nodeCacheMu.Unlock()
+	b.cacheDeleteNodeBody(node.ID)
+}
+
+// putNodeLocked stores a copy of node; the caller holds nodeCacheMu.
+func (b *BadgerEngine) putNodeLocked(node *Node) {
 	// Simple eviction: if cache is too large, clear it.
 	// Keeps behavior consistent with existing code paths.
 	if b.nodeCacheMaxEntries > 0 && len(b.nodeCache) > b.nodeCacheMaxEntries {
@@ -51,9 +90,6 @@ func (b *BadgerEngine) cacheStoreNode(node *Node) {
 	cached := copyNode(node)
 	normalizePropertyMapShapes(cached.Properties)
 	b.nodeCache[node.ID] = cached
-	b.nodeCacheMu.Unlock()
-
-	b.cacheDeleteNodeBody(node.ID)
 }
 
 func (b *BadgerEngine) cacheLoadNodeBody(id NodeID, itemVersion uint64) (*Node, bool) {
@@ -185,20 +221,40 @@ func (b *BadgerEngine) cacheLoadEdge(id EdgeID) (*Edge, bool) {
 	return cached, true
 }
 
-// cacheStoreEdge inserts edge into the per-engine edge body cache. Stores a
-// deep copy so callers cannot mutate the cached state.
+// cacheStoreEdge inserts edge into the per-engine edge body cache as written
+// (a write: see cacheGeneration). Stores a deep copy so callers cannot
+// mutate the cached state.
 func (b *BadgerEngine) cacheStoreEdge(edge *Edge) {
 	if edge == nil {
 		return
 	}
 	b.edgeCacheMu.Lock()
+	b.edgeCacheGen.advance()
+	b.putEdgeLocked(edge)
+	b.edgeCacheMu.Unlock()
+}
+
+// cacheFillEdge caches edge as read by a read that captured gen before it
+// read, unless the edge cache was written since.
+func (b *BadgerEngine) cacheFillEdge(gen uint64, edge *Edge) {
+	if edge == nil {
+		return
+	}
+	b.edgeCacheMu.Lock()
+	if b.edgeCacheGen.current() == gen {
+		b.putEdgeLocked(edge)
+	}
+	b.edgeCacheMu.Unlock()
+}
+
+// putEdgeLocked stores a copy of edge; the caller holds edgeCacheMu.
+func (b *BadgerEngine) putEdgeLocked(edge *Edge) {
 	if b.edgeCacheMaxItems > 0 && len(b.edgeCache) > b.edgeCacheMaxItems {
 		b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
 	}
 	cached := copyEdge(edge)
 	normalizePropertyMapShapes(cached.Properties)
 	b.edgeCache[edge.ID] = cached
-	b.edgeCacheMu.Unlock()
 }
 
 // cacheDeleteEdge drops an edge from the body cache. Called from the edge
@@ -208,6 +264,7 @@ func (b *BadgerEngine) cacheDeleteEdge(id EdgeID) {
 		return
 	}
 	b.edgeCacheMu.Lock()
+	b.edgeCacheGen.advance()
 	delete(b.edgeCache, id)
 	b.edgeCacheMu.Unlock()
 }
@@ -216,6 +273,7 @@ func (b *BadgerEngine) cacheDeleteEdge(id EdgeID) {
 // delete and other callers that can't enumerate affected IDs cheaply.
 func (b *BadgerEngine) cacheInvalidateEdges() {
 	b.edgeCacheMu.Lock()
+	b.edgeCacheGen.advance()
 	b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
 	b.edgeCacheMu.Unlock()
 }
@@ -237,8 +295,14 @@ func (b *BadgerEngine) adjCacheLoadIncoming(nodeID NodeID) ([]EdgeID, bool) {
 	return ids, ok
 }
 
-func (b *BadgerEngine) adjCacheStoreOutgoing(nodeID NodeID, ids []EdgeID) {
+// adjCacheStoreOutgoing caches the outgoing IDs a read captured gen before
+// reading, unless the adjacency cache was written since (cacheGeneration).
+func (b *BadgerEngine) adjCacheStoreOutgoing(gen uint64, nodeID NodeID, ids []EdgeID) {
 	b.adjCacheMu.Lock()
+	defer b.adjCacheMu.Unlock()
+	if b.adjCacheGen.current() != gen {
+		return
+	}
 	if b.adjCacheMaxNodes > 0 && len(b.outgoingAdjCache) > b.adjCacheMaxNodes {
 		b.outgoingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
 	}
@@ -247,18 +311,21 @@ func (b *BadgerEngine) adjCacheStoreOutgoing(nodeID NodeID, ids []EdgeID) {
 	cached := make([]EdgeID, len(ids))
 	copy(cached, ids)
 	b.outgoingAdjCache[nodeID] = cached
-	b.adjCacheMu.Unlock()
 }
 
-func (b *BadgerEngine) adjCacheStoreIncoming(nodeID NodeID, ids []EdgeID) {
+// adjCacheStoreIncoming is adjCacheStoreOutgoing for incoming IDs.
+func (b *BadgerEngine) adjCacheStoreIncoming(gen uint64, nodeID NodeID, ids []EdgeID) {
 	b.adjCacheMu.Lock()
+	defer b.adjCacheMu.Unlock()
+	if b.adjCacheGen.current() != gen {
+		return
+	}
 	if b.adjCacheMaxNodes > 0 && len(b.incomingAdjCache) > b.adjCacheMaxNodes {
 		b.incomingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
 	}
 	cached := make([]EdgeID, len(ids))
 	copy(cached, ids)
 	b.incomingAdjCache[nodeID] = cached
-	b.adjCacheMu.Unlock()
 }
 
 // adjCacheInvalidateForEdge drops the entries for both endpoints of edge.
@@ -269,6 +336,7 @@ func (b *BadgerEngine) adjCacheInvalidateForEdge(edge *Edge) {
 		return
 	}
 	b.adjCacheMu.Lock()
+	b.adjCacheGen.advance()
 	delete(b.outgoingAdjCache, edge.StartNode)
 	delete(b.incomingAdjCache, edge.EndNode)
 	b.adjCacheMu.Unlock()
@@ -281,6 +349,7 @@ func (b *BadgerEngine) adjCacheInvalidateForEdge(edge *Edge) {
 // time made deleting n edges cost n full-size allocations.
 func (b *BadgerEngine) adjCacheInvalidateAll() {
 	b.adjCacheMu.Lock()
+	b.adjCacheGen.advance()
 	if len(b.outgoingAdjCache) == 0 && len(b.incomingAdjCache) == 0 {
 		b.adjCacheMu.Unlock()
 		return
@@ -300,16 +369,21 @@ func (b *BadgerEngine) labelCacheGetFirst(label string) (NodeID, bool) {
 	return id, ok
 }
 
-func (b *BadgerEngine) labelCacheSetFirst(label string, id NodeID) {
+// labelCacheSetFirst caches the first node of label a read captured gen
+// before reading, unless the label cache was written since (cacheGeneration).
+func (b *BadgerEngine) labelCacheSetFirst(gen uint64, label string, id NodeID) {
 	if label == "" || id == "" {
 		return
 	}
 	b.labelFirstNodeCacheMu.Lock()
+	defer b.labelFirstNodeCacheMu.Unlock()
+	if b.labelFirstCacheGen.current() != gen {
+		return
+	}
 	if b.labelFirstCacheMax > 0 && len(b.labelFirstNodeCache) > b.labelFirstCacheMax {
 		b.labelFirstNodeCache = make(map[string]NodeID, b.labelFirstCacheMax)
 	}
 	b.labelFirstNodeCache[label] = id
-	b.labelFirstNodeCacheMu.Unlock()
 }
 
 func (b *BadgerEngine) labelCacheInvalidateForNodeLabels(labels []string, nodeID NodeID) {
@@ -317,6 +391,7 @@ func (b *BadgerEngine) labelCacheInvalidateForNodeLabels(labels []string, nodeID
 		return
 	}
 	b.labelFirstNodeCacheMu.Lock()
+	b.labelFirstCacheGen.advance()
 	for _, label := range labels {
 		if cached, ok := b.labelFirstNodeCache[label]; ok && cached == nodeID {
 			delete(b.labelFirstNodeCache, label)
@@ -340,6 +415,7 @@ func (b *BadgerEngine) labelCacheInvalidateForRemovedLabels(oldLabels, newLabels
 	}
 
 	b.labelFirstNodeCacheMu.Lock()
+	b.labelFirstCacheGen.advance()
 	for _, label := range oldLabels {
 		if _, ok := newSet[label]; ok {
 			continue
@@ -356,6 +432,7 @@ func (b *BadgerEngine) cacheDeleteNode(id NodeID) {
 		return
 	}
 	b.nodeCacheMu.Lock()
+	b.nodeCacheGen.advance()
 	delete(b.nodeCache, id)
 	b.nodeCacheMu.Unlock()
 	b.cacheDeleteNodeBody(id)

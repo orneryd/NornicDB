@@ -168,6 +168,7 @@ func restoreEngine(engine Engine, path string) error {
 
 func (b *BadgerEngine) invalidateCachesAfterRestore() {
 	b.nodeCacheMu.Lock()
+	b.nodeCacheGen.advance()
 	b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
 	b.nodeCacheMu.Unlock()
 
@@ -178,19 +179,23 @@ func (b *BadgerEngine) invalidateCachesAfterRestore() {
 	b.nodeBodyCacheMu.Unlock()
 
 	b.edgeTypeCacheMu.Lock()
+	b.edgeTypeCacheGen.advance()
 	b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
 	b.edgeTypeCacheMu.Unlock()
 
 	b.edgeCacheMu.Lock()
+	b.edgeCacheGen.advance()
 	b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
 	b.edgeCacheMu.Unlock()
 
 	b.adjCacheMu.Lock()
+	b.adjCacheGen.advance()
 	b.outgoingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
 	b.incomingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
 	b.adjCacheMu.Unlock()
 
 	b.labelFirstNodeCacheMu.Lock()
+	b.labelFirstCacheGen.advance()
 	b.labelFirstNodeCache = make(map[string]NodeID, b.labelFirstCacheMax)
 	b.labelFirstNodeCacheMu.Unlock()
 }
@@ -418,6 +423,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 
 	// Clear/adjust caches and cached counters.
 	b.nodeCacheMu.Lock()
+	b.nodeCacheGen.advance()
 	for id := range b.nodeCache {
 		if strings.HasPrefix(string(id), prefix) {
 			delete(b.nodeCache, id)
@@ -426,6 +432,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	b.nodeCacheMu.Unlock()
 
 	b.edgeTypeCacheMu.Lock()
+	b.edgeTypeCacheGen.advance()
 	b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
 	b.edgeTypeCacheMu.Unlock()
 
