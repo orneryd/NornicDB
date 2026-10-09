@@ -82,7 +82,7 @@ func (m labelPatternMode) clause() string {
 // and nil when nothing changes.
 func desugarLabelExpressions(query string, params map[string]interface{}) (string, *queryRewrite, error) {
 	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) && indexASCIIFold(query, "shortestpath") < 0 &&
-		!mayAssignAnonymousNodePath(query) {
+		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) {
 		return query, nil, nil
 	}
 	r := &labelExpressionRewriter{query: query, params: params}
@@ -387,6 +387,9 @@ func (r *labelExpressionRewriter) statement(start, end int) error {
 				return err
 			}
 		case "CREATE", "MERGE":
+			if err := writePatternSelectorError(r.query, clause); err != nil {
+				return err
+			}
 			if first := skipASCIISpaces(r.query, clause.bodyStart, clause.end); first >= clause.end ||
 				r.query[first] != '(' && !startsPathAssignment(r.query, first, clause.end) {
 				// CREATE INDEX … FOR (n:A|B), CREATE CONSTRAINT …: not a
@@ -423,10 +426,25 @@ func (r *labelExpressionRewriter) statement(start, end int) error {
 // pattern's label expressions become are ANDed in front of the WHERE body,
 // which is parenthesised when it has a top-level OR or XOR.
 func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, whereEnd int) error {
-	r.nameSingleNodePaths(start, end)
-	predicates, err := r.pattern(start, end, labelPatternMatch)
+	prefixes, err := r.pathPrefixes(start, end)
 	if err != nil {
 		return err
+	}
+	r.nameSingleNodePaths(start, end)
+	predicates, err := r.pattern(prefixes.patternStart, prefixes.patternEnd, labelPatternMatch)
+	if err != nil {
+		return err
+	}
+	predicates = append(predicates, prefixes.acyclic...)
+	if prefixes.selector != "" {
+		if prefixes.where != "" {
+			predicates = append(predicates, prefixes.where)
+		}
+		predicate := "true"
+		if len(predicates) > 0 {
+			predicate = strings.Join(predicates, " AND ")
+		}
+		predicates = []string{prefixes.selector + predicate + ")"}
 	}
 	switch {
 	case whereStart >= 0 && len(predicates) > 0:

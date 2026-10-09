@@ -130,3 +130,30 @@
 - id: cyphermatching.aggregation_scope_variable
   description: Expanded pseudo-locale variable out of scope after DISTINCT or an aggregation.
   other: "[!! In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN: {{.Variable}} !!]"
+- id: cyphermatching.path_selector_path_count_not_positive
+  description: "Expanded pseudo-locale path selector path count not positive."
+  other: "[!! The path count needs to be greater than 0. !!]"
+- id: cyphermatching.path_selector_group_count_not_positive
+  description: "Expanded pseudo-locale path selector group count not positive."
+  other: "[!! The group count needs to be greater than 0. !!]"
+- id: cyphermatching.path_selector_multiple_patterns
+  description: "Expanded pseudo-locale path selector multiple patterns."
+  other: "[!! Multiple path patterns cannot be used in the same clause in combination with a selective path selector. You may want to use multiple MATCH clauses, or you might want to consider using the REPEATABLE ELEMENTS match mode. !!]"
+- id: cyphermatching.path_selector_with_shortest_path_function
+  description: "Expanded pseudo-locale path selector with shortest path function."
+  other: "[!! Mixing shortestPath/allShortestPaths with path selectors (e.g. `ANY SHORTEST`), explicit match modes (e.g. `DIFFERENT RELATIONSHIPS`) or explicit path modes (e.g. `ACYCLIC`) is not allowed. !!]"
+- id: cyphermatching.path_mode_variable_length
+  description: "Expanded pseudo-locale path mode variable length."
+  other: "[!! Using a variable-length relationship such as `-[*]->` together with explicit path mode `{{.Mode}}` is not available. !!]"
+- id: cyphermatching.path_selector_in_write_pattern
+  description: "Expanded pseudo-locale path selector in write pattern."
+  other: "[!! Path selectors such as `SHORTEST 1 PATHS` cannot be used in a {{.Clause}} clause, but only in a MATCH clause. !!]"
+- id: cyphermatching.path_selector_count_invalid
+  description: "Expanded pseudo-locale path selector count invalid."
+  other: "[!! Count requires positive integer argument, got `{{.Value}}` !!]"
+- id: cyphermatching.path_selector_count_type
+  description: "Expanded pseudo-locale path selector count type."
+  other: "[!! Expected Integer but got {{.Type}} !!]"
+- id: cyphermatching.path_selector_outside_match
+  description: "Expanded pseudo-locale path selector outside match."
+  other: "[!! a path selector can only be used in a MATCH pattern !!]"
