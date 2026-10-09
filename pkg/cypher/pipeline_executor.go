@@ -3790,6 +3790,9 @@ func aggregateCallKey(call string) string {
 // from NOTa.
 func stripExpressionWhitespace(expression string) string {
 	expression = strings.TrimSpace(expression)
+	if strings.IndexAny(expression, " \t\n\r") < 0 {
+		return expression
+	}
 	var stripped strings.Builder
 	stripped.Grow(len(expression))
 	var quote byte

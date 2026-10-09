@@ -1874,22 +1874,24 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 type chainNodeRepeats []int
 
 func chainRepeatedNodes(segments []TraversalSegment) chainNodeRepeats {
-	variables := make([]string, len(segments)+1)
-	variables[0] = segments[0].FromNode.variable
-	for index, segment := range segments {
-		variables[index+1] = segment.ToNode.variable
+	variable := func(position int) string {
+		if position == 0 {
+			return segments[0].FromNode.variable
+		}
+		return segments[position-1].ToNode.variable
 	}
 	var repeats chainNodeRepeats
-	for position := 1; position < len(variables); position++ {
-		if variables[position] == "" {
+	for position := 1; position <= len(segments); position++ {
+		name := variable(position)
+		if name == "" {
 			continue
 		}
 		for earlier := 0; earlier < position; earlier++ {
-			if variables[earlier] != variables[position] {
+			if variable(earlier) != name {
 				continue
 			}
 			if repeats == nil {
-				repeats = make(chainNodeRepeats, len(variables))
+				repeats = make(chainNodeRepeats, len(segments)+1)
 				for index := range repeats {
 					repeats[index] = -1
 				}
