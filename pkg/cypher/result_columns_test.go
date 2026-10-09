@@ -33,6 +33,11 @@ func TestResultColumnsMatchNeo4j(t *testing.T) {
 		{"RETURN EXISTS { MATCH (n:CQ) RETURN n UNION MATCH (m:CP) RETURN m AS n } AS e", []string{"e"}, [][]interface{}{{true}}},
 		{"MATCH (q:CQ) WHERE EXISTS { MATCH (n:CQ) RETURN n.id AS i UNION RETURN 5 AS i } RETURN count(q) AS c", []string{"c"}, [][]interface{}{{int64(2)}}},
 		{"MATCH (q:CQ) WHERE NOT EXISTS { MATCH (n:Nope) RETURN n.id AS i UNION MATCH (m:Nope2) RETURN m.id AS i } RETURN count(q) AS c", []string{"c"}, [][]interface{}{{int64(2)}}},
+		{"UNWIND [1] AS k WITH k WHERE NOT EXISTS { MATCH (n:Nope) RETURN n.id AS i UNION RETURN 7 AS i } RETURN count(*) AS c", []string{"c"}, [][]interface{}{{int64(0)}}},
+		{"UNWIND [1] AS k WITH k WHERE NOT EXISTS { MATCH (n:Nope) RETURN n.id AS i UNION MATCH (m:Nope2) RETURN m.id AS i } RETURN count(*) AS c", []string{"c"}, [][]interface{}{{int64(1)}}},
+		{"RETURN [k IN [1] WHERE NOT EXISTS { MATCH (n:Nope) RETURN n.id AS i UNION RETURN 7 AS i }] AS l", []string{"l"}, [][]interface{}{{[]interface{}{}}}},
+		{"RETURN CASE WHEN NOT EXISTS { MATCH (n:Nope) RETURN n.id AS i UNION RETURN 7 AS i } THEN 1 ELSE 2 END AS v", []string{"v"}, [][]interface{}{{int64(2)}}},
+		{"RETURN NOT EXISTS { MATCH (n:Nope) RETURN n.id AS i UNION MATCH (m:Nope2) RETURN m.id AS i } AS v", []string{"v"}, [][]interface{}{{true}}},
 		{"MATCH (n:CQ) WITH n ORDER BY n.id RETURN collect(n)[0].id AS v", []string{"v"}, [][]interface{}{{int64(1)}}},
 		{"MATCH (n:CQ) WITH n ORDER BY n.id RETURN head(collect(n)).id AS v", []string{"v"}, [][]interface{}{{int64(1)}}},
 	} {
@@ -59,6 +64,12 @@ func TestResultColumnsMatchNeo4j(t *testing.T) {
 			require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
 		})
 	}
+	// A subquery that fails while it runs fails the statement; it never
+	// reads as "no rows".
+	_, err = exec.Execute(ctx, "MATCH (q:CQ) WHERE EXISTS { MATCH (n:CQ) WHERE n.id = 1 / (q.id - q.id) RETURN n.id AS i UNION RETURN 5 AS i } RETURN count(q) AS c", nil)
+	require.Error(t, err)
+	code, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, "Neo.ClientError.Statement.ArithmeticError", code)
 }
 
 func TestUnionColumnOrder(t *testing.T) {

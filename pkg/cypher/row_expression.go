@@ -2113,23 +2113,21 @@ func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interfa
 	return false, true
 }
 
-// existsFromRows is [NOT] EXISTS of a correlated subquery query: whether it
+// existsFromRows is EXISTS of a correlated subquery query: whether it
 // returns a row. Its error is recorded on ctx (the statement fails), never
 // read as "no rows".
-func (e *StorageExecutor) existsFromRows(ctx context.Context, query string, values map[string]interface{}, negated bool) bool {
+func (e *StorageExecutor) existsFromRows(ctx context.Context, query string, values map[string]interface{}) bool {
 	result, err := e.runCorrelatedSubquery(ctx, query, values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false
 	}
-	matched := result != nil && len(result.Rows) > 0
-	if negated {
-		matched = !matched
-	}
-	return matched
+	return result != nil && len(result.Rows) > 0
 }
 
-func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expression string, values map[string]interface{}) (bool, bool) {
+// evaluateRowExistsPredicate evaluates expression when it is a whole
+// [NOT] EXISTS { } predicate; recognized is false otherwise.
+func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expression string, values map[string]interface{}) (matched bool, recognized bool) {
 	trimmed := strings.TrimSpace(expression)
 	// Only a whole [NOT] EXISTS { } is this predicate: EXISTS { … } = false
 	// is a comparison, evaluated with the subquery as one of its values.
@@ -2141,6 +2139,13 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 	if negated {
 		exists = strings.TrimSpace(trimmed[len("NOT"):])
 	}
+	matched, recognized = e.rowExistsSubqueryMatches(ctx, exists, values)
+	return matched != negated, recognized
+}
+
+// rowExistsSubqueryMatches is EXISTS { subquery } for a row: exists is the
+// whole EXISTS { } text; recognized is false for an empty body.
+func (e *StorageExecutor) rowExistsSubqueryMatches(ctx context.Context, exists string, values map[string]interface{}) (matched bool, recognized bool) {
 	subquery := strings.TrimSpace(exists[strings.IndexByte(exists, '{')+1 : len(exists)-1])
 	if subquery == "" {
 		return false, false
@@ -2150,7 +2155,7 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 	// "no rows".
 	_, _, _, union := parseTopLevelUnionBranches(subquery)
 	if clauses, ok := splitPipelineClauses(subquery); union || (ok && len(clauses) > 1) {
-		return e.existsFromRows(ctx, subquery, values, negated), true
+		return e.existsFromRows(ctx, subquery, values), true
 	}
 	if !hasPrefixFold(strings.TrimSpace(subquery), "MATCH ") {
 		subquery = "MATCH " + strings.TrimSpace(subquery)
@@ -2159,7 +2164,7 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 	// comprehension variable, a WITH value) runs as a correlated pipeline,
 	// which sees every row value; the path matcher sees only entities.
 	if subqueryReadsScalarRowValue(subquery, values) {
-		return e.existsFromRows(ctx, subquery+" RETURN 1 AS __exists", values, negated), true
+		return e.existsFromRows(ctx, subquery+" RETURN 1 AS __exists", values), true
 	}
 	path := PathContext{nodes: make(map[string]*storage.Node), rels: make(map[string]*storage.Edge)}
 	for name, value := range values {
@@ -2174,11 +2179,7 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 			}
 		}
 	}
-	matched := e.pathSubqueryMatches(ctx, path, subquery)
-	if negated {
-		matched = !matched
-	}
-	return matched, true
+	return e.pathSubqueryMatches(ctx, path, subquery), true
 }
 
 func (e *StorageExecutor) evaluateRowStringPredicate(ctx context.Context, left, right string, values map[string]interface{}, predicate func(string, string) bool) bool {
