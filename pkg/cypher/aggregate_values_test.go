@@ -80,4 +80,38 @@ func TestAggregateSumHelpers(t *testing.T) {
 	require.Equal(t, 0, compareDurationOrdering(&CypherDuration{Days: 1}, &CypherDuration{Days: 1}))
 	require.Equal(t, -1, compareDurationOrdering(&CypherDuration{Hours: 24}, &CypherDuration{Days: 1}))
 	require.Equal(t, 1, compareDurationOrdering(&CypherDuration{Days: 1, Nanos: 2}, &CypherDuration{Days: 1, Nanos: 1}))
+	// The same length: more months is the larger one.
+	require.Equal(t, 1, compareDurationOrdering(&CypherDuration{Months: 1}, &CypherDuration{Seconds: 2629746}))
+}
+
+// A group whose rows several workers aggregate merges their partial sums
+// (mergeSum); enough rows that every worker takes some.
+func TestParallelAggregateSumMergesPartials(t *testing.T) {
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	others := make([]*storage.Node, 20000)
+	for index := range others {
+		others[index] = &storage.Node{}
+	}
+	patterns := []struct {
+		variable string
+		nodes    []*storage.Node
+	}{
+		{"a", []*storage.Node{
+			{Properties: map[string]interface{}{"key": "k", "value": int64(1)}},
+			{Properties: map[string]interface{}{"key": "k", "value": int64(2)}},
+			{Properties: map[string]interface{}{"key": "k", "value": int64(3)}},
+			{Properties: map[string]interface{}{"key": "j", "value": int64(4)}},
+		}},
+		{"b", others},
+	}
+	clause := "RETURN a.key AS key, sum(a.value) AS total ORDER BY key"
+	for _, workers := range []int{1, 4} {
+		ctx := withExpressionFailureSlot(context.Background())
+		groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(clause), workers)
+		require.True(t, handled)
+		require.NoError(t, err)
+		result, err := exec.projectMergeReturnSource(ctx, nil, clause, nil, groups)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{"j", int64(80000)}, {"k", int64(120000)}}, result.Rows, workers)
+	}
 }
