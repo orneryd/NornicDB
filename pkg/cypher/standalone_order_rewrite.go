@@ -110,7 +110,7 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 			index = next
 			continue
 		}
-		upper := upperASCII(name)
+		upper := standaloneKeyword(name)
 		kind := standaloneClauseKind(query, upper, next, end)
 		if kind == standaloneStageItems && standaloneOperandPosition(previousWord, last) {
 			// A keyword where an operand is expected is a variable:
@@ -157,6 +157,37 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 		index = next
 	}
 }
+
+// standaloneKeyword is word's upper-case form when it is a keyword the scan
+// reads, else "". The result is a constant, so scanning allocates nothing.
+func standaloneKeyword(word string) string {
+	if len(word) > len("CONTAINS") {
+		return ""
+	}
+	var buffer [len("CONTAINS")]byte
+	for index := 0; index < len(word); index++ {
+		character := word[index]
+		if 'a' <= character && character <= 'z' {
+			character -= 'a' - 'A'
+		}
+		buffer[index] = character
+	}
+	// Indexing a map by a converted byte slice doesn't allocate.
+	return standaloneKeywords[string(buffer[:len(word)])]
+}
+
+// standaloneKeywords maps each keyword standaloneKeyword reads to itself, so
+// the name it returns is the map's string, not the scan buffer.
+var standaloneKeywords = func() map[string]string {
+	keywords := make(map[string]string)
+	for _, keyword := range []string{"AND", "OR", "XOR", "NOT", "IN", "IS", "AS", "BY", "THEN", "ELSE", "WHEN", "CASE", "DISTINCT",
+		"STARTS", "ENDS", "CONTAINS", "WITH", "RETURN", "WHERE", "UNWIND", "SET", "SKIP", "OFFSET", "LIMIT",
+		"ORDER", "YIELD", "MATCH", "OPTIONAL", "FOR", "LET", "FILTER", "CREATE", "MERGE", "REMOVE",
+		"DELETE", "DETACH", "FOREACH", "CALL", "UNION", "LOAD", "USE", "FINISH"} {
+		keywords[keyword] = keyword
+	}
+	return keywords
+}()
 
 // standaloneOperandWord reports whether word (upper case) expects an
 // operand after it: an operator word, AS, BY, or a clause's opening keyword.
