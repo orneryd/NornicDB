@@ -44,6 +44,16 @@ func TestPatternPredicatesInBooleanPositions(t *testing.T) {
 		code, _ := nornicerrors.Neo4jStatus(err)
 		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, query)
 	}
+	// A runtime operand that isn't a boolean is a TypeError, as in Neo4j
+	// ("Don't know how to treat that as a predicate").
+	for _, query := range []string{
+		"MATCH (n:SQ) RETURN n.v AS v, (n)-[:R]->() OR n.v AS e ORDER BY v",
+		"MATCH (n:SQ) RETURN n.v AS v, NOT (n)-[:R]->() AND n.v AS e ORDER BY v",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		code, _ := nornicerrors.Neo4jStatus(err)
+		require.Equal(t, "Neo.ClientError.Statement.TypeError", code, query)
+	}
 	// An operand's evaluation error is the statement's.
 	for _, query := range []string{
 		"MATCH (n:SQ) RETURN (n)-[:R]->() AND 1 / 0 = 1 AS e",
