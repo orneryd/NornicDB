@@ -52,6 +52,12 @@ type propertyKeyDictionary struct {
 	txnMu             sync.Mutex
 	txnCounters       map[*badger.Txn]map[string]uint64
 	txnPendingForward map[*badger.Txn]map[propKeyName]uint64
+
+	// noted holds the names a buffered write has used that have no ID yet:
+	// a transaction's or the async layer's write allocates IDs only when
+	// it encodes, at commit or flush, and a rolled-back one never does.
+	// Guarded by mu; never removed, never persisted.
+	noted map[string]map[string]struct{} // namespace -> names
 }
 
 // propKeyName is a property name within a namespace.
@@ -67,6 +73,7 @@ func newPropertyKeyDictionary() *propertyKeyDictionary {
 		nextID:            make(map[string]*atomic.Uint64),
 		txnCounters:       make(map[*badger.Txn]map[string]uint64),
 		txnPendingForward: make(map[*badger.Txn]map[propKeyName]uint64),
+		noted:             make(map[string]map[string]struct{}),
 	}
 }
 
@@ -213,6 +220,35 @@ func (d *propertyKeyDictionary) lookupID(namespace, name string) (uint64, bool) 
 	defer d.mu.RUnlock()
 	id, ok := d.forward[namespace][name]
 	return id, ok
+}
+
+// note records name as used by a write in namespace without allocating
+// it an ID (noted): allocating outside the encoding txn would leave an ID
+// the store never persists.
+func (d *propertyKeyDictionary) note(namespace, name string) {
+	if d.known(namespace, name) {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	names := d.noted[namespace]
+	if names == nil {
+		names = make(map[string]struct{})
+		d.noted[namespace] = names
+	}
+	names[name] = struct{}{}
+}
+
+// known reports whether a write in namespace has used name: it has an ID,
+// or a buffered write noted it.
+func (d *propertyKeyDictionary) known(namespace, name string) bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if _, ok := d.forward[namespace][name]; ok {
+		return true
+	}
+	_, ok := d.noted[namespace][name]
+	return ok
 }
 
 func (d *propertyKeyDictionary) lookup(namespace string, id uint64) (string, bool) {
@@ -497,6 +533,24 @@ func (b *BadgerEngine) PropKeyDictCounters() map[string]uint64 {
 	}
 	b.propKeyDict.mu.RUnlock()
 	return out
+}
+
+// NotePropertyKeysInNamespace records the keys of properties that hold a
+// value as used in namespace (PropertyKeyRegistry). Writes that encode
+// allocate their names; buffered ones (BadgerTransaction, AsyncEngine)
+// call this when they take the write.
+func (b *BadgerEngine) NotePropertyKeysInNamespace(namespace string, properties map[string]interface{}) {
+	for name, value := range properties {
+		if value != nil {
+			b.propKeyDict.note(namespace, name)
+		}
+	}
+}
+
+// PropertyKeyKnownInNamespace reports whether a write in namespace has
+// stored a value under name (PropertyKeyRegistry).
+func (b *BadgerEngine) PropertyKeyKnownInNamespace(namespace, name string) bool {
+	return b.propKeyDict.known(namespace, name)
 }
 
 // isPropertyKeyDictionaryKey reports whether key is a property-key token

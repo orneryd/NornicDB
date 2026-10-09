@@ -1046,6 +1046,21 @@ func (w *WALEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
 	return w.engine.EdgeCountByEndLabel(label, edgeType)
 }
 
+// NotePropertyKeysInNamespace forwards to the wrapped engine
+// (PropertyKeyRegistry); the WAL applies each write to it as it logs it.
+func (w *WALEngine) NotePropertyKeysInNamespace(namespace string, properties map[string]interface{}) {
+	if registry, ok := w.engine.(PropertyKeyRegistry); ok {
+		registry.NotePropertyKeysInNamespace(namespace, properties)
+	}
+}
+
+// PropertyKeyKnownInNamespace forwards the property-key lookup
+// (PropertyKeyRegistry).
+func (w *WALEngine) PropertyKeyKnownInNamespace(namespace, name string) bool {
+	registry, ok := w.engine.(PropertyKeyRegistry)
+	return ok && registry.PropertyKeyKnownInNamespace(namespace, name)
+}
+
 func (w *WALEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
 	if stats, ok := w.engine.(NamespaceLabelStatsProvider); ok {
 		return stats.NodeCountByLabelInNamespace(namespace, label)

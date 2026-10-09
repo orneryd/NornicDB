@@ -606,6 +606,24 @@ type NamespaceLister interface {
 	ListNamespaces() []string
 }
 
+// PropertyKeyRegistry is an optional extension interface for the
+// property-key names each namespace's writes have used: Neo4j's
+// property-key tokens. A name is known once a write stores a value under
+// it, even a write later rolled back or a key later removed, and it stays
+// known (a name no commit stored is forgotten on restart; Neo4j keeps it).
+// Reads, and writes of null, make no name known. Cypher's SET counts a null
+// written for a known key the entity lacks (properties_set, #907).
+type PropertyKeyRegistry interface {
+	NotePropertyKeysInNamespace(namespace string, properties map[string]interface{})
+	PropertyKeyKnownInNamespace(namespace, name string) bool
+}
+
+// PropertyKeyLookup is PropertyKeyRegistry's lookup on an engine bound to
+// one namespace (NamespacedEngine).
+type PropertyKeyLookup interface {
+	PropertyKeyKnown(name string) bool
+}
+
 // NamespaceSchemaProvider is an optional extension interface that provides per-namespace schema.
 //
 // This enables multi-database deployments to maintain isolated constraints/indexes per database,

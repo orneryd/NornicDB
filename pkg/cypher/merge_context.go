@@ -1012,7 +1012,7 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 	}
 	fullRelContext[varName] = edge
 
-	var writes setWrites
+	writes := setWrites{known: propertyKeyLookup(e.getStorage(ctx))}
 	var run setPropertyRun
 	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
 		run.applyToRelationship(edge, &writes)
@@ -1082,7 +1082,7 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 	}
 	fullContext[varName] = node
 
-	var writes setWrites
+	writes := setWrites{known: propertyKeyLookup(e.getStorage(ctx))}
 	var run setPropertyRun
 	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
 		writes.endRun()

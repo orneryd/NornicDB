@@ -85,6 +85,14 @@ func (n *NamespacedEngine) ListNamespaces() []string {
 	return []string{n.namespace}
 }
 
+// PropertyKeyKnown reports whether a write in this view's database has
+// stored a value under name (PropertyKeyLookup): false when the inner
+// engine keeps no PropertyKeyRegistry.
+func (n *NamespacedEngine) PropertyKeyKnown(name string) bool {
+	registry, ok := n.inner.(PropertyKeyRegistry)
+	return ok && registry.PropertyKeyKnownInNamespace(n.namespace, name)
+}
+
 // NodeCountByLabelInNamespace forwards the namespace-scoped label count.
 func (n *NamespacedEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
 	if stats, ok := n.inner.(NamespaceLabelStatsProvider); ok {
