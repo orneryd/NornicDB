@@ -5,9 +5,18 @@ All notable changes to NornicDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.1]
 
 ### Added
+
+- Add the shared Cypher 5 / 25 grammar foundation: `LET`, `FILTER`, and
+  `FOR` reading clauses execute in the existing pipeline with an optional
+  `CYPHER 5` / `CYPHER 25` header. The SRD parser accepts the new clauses
+  without a header; the ANTLR parser requires `CYPHER 25` for them and
+  parses the header itself. `LET`/`FOR` redeclaration, aggregates and
+  non-boolean predicates in `FILTER`, and conflicting `CYPHER` versions are
+  rejected as in Neo4j. This is the foundation slice of the Cypher 25
+  conformance plan, not full 2026.09 conformance.
 
 - Pin MCP tools to a database through the URL path: `/mcp/{database}`,
   `/mcp/{database}/initialize`, `/mcp/{database}/tools/list` and
