@@ -52,7 +52,6 @@ func init() {
 		cypherfn.Register(name, fnMathUnary(name, operation))
 	}
 	cypherfn.Register("ceil", fnMathUnary("ceil", math.Ceil))
-	cypherfn.Register("ceiling", fnMathUnary("ceiling", math.Ceil))
 	cypherfn.Register("floor", fnMathUnary("floor", math.Floor))
 	cypherfn.Register("atan2", fnMathBinary("atan2", math.Atan2))
 	cypherfn.Register("power", fnMathBinary("power", math.Pow))
@@ -207,7 +206,8 @@ func fnStringOperation(name string) cypherfn.Func {
 		if name == "substring" {
 			maximum = 3
 		} else if name == "replace" {
-			minimum, maximum = 3, 3
+			// replace(text, search, replacement[, limit]) (Neo4j 2025.06).
+			minimum, maximum = 3, 4
 		}
 		if len(args) < minimum || len(args) > maximum {
 			return nil, argumentCountError(name, strconv.Itoa(minimum), len(args))
@@ -240,7 +240,13 @@ func fnStringOperation(name string) cypherfn.Func {
 				if err != nil {
 					return nil, err
 				}
-				return strings.ReplaceAll(text, separator, replacement), nil
+				limit := -1
+				if len(values) == 4 {
+					if limit, err = replaceLimit(args[3], values[3]); err != nil {
+						return nil, err
+					}
+				}
+				return strings.Replace(text, separator, replacement, limit), nil
 			}
 			parts := strings.Split(text, separator)
 			result := make([]interface{}, len(parts))
@@ -304,6 +310,24 @@ func evalArgs(ctx cypherfn.Context, args []string) ([]interface{}, error) {
 		values[i] = value
 	}
 	return values, nil
+}
+
+// replaceLimit is replace()'s limit, the most occurrences it replaces. A
+// negative literal is Neo4j's compile-time SyntaxError; a negative value known
+// only at run time is out of range (ArgumentError).
+func replaceLimit(argument string, value interface{}) (int, error) {
+	limit, ok := cypherIntegerValue(value)
+	if !ok {
+		return 0, &cypherfn.TypeMismatchError{Function: "replace", Expected: "Integer", Value: value}
+	}
+	if limit >= 0 {
+		return int(limit), nil
+	}
+	if _, err := strconv.ParseInt(strings.TrimSpace(argument), 10, 64); err == nil {
+		return 0, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
+			localization.CypherCoreReplaceLimitNegative())
+	}
+	return 0, functionArgumentOutOfRange("replace")
 }
 
 // argumentCountError is the error of a function called with the wrong number

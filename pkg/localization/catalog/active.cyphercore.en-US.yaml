@@ -136,6 +136,12 @@
   other: "Invalid input '{{.Token}}': expected an identifier"
 - id: cyphercore.parameter_type_mismatch
   other: "Type mismatch for parameter '{{.Parameter}}': expected {{.Expected}} but was {{.Type}}"
+- id: cyphercore.function_argument_out_of_range
+  other: "Function argument to '{{.Function}}()' is out of range"
+- id: cyphercore.string_join_element_type
+  other: "Expected a string value for `string.join`, but got: {{.Value}}; consider converting it to a string with toString()."
+- id: cyphercore.replace_limit_negative
+  other: "The limit needs to be greater than or equal to 0."
 - id: cyphercore.list_operand_type_mismatch
   other: "Type mismatch: expected List<T> but was {{.Type}}"
 - id: cyphercore.list_parameter_type_mismatch

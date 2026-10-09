@@ -27,6 +27,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		cypher, _ = canonicalizeQueryText(cypher)
 	}
 	cypher, _ = canonicalizeNumericLiterals(cypher)
+	cypher, _ = canonicalizeFunctionAliases(cypher)
 	cypher, _, err := desugarLabelExpressions(cypher, params)
 	if err != nil {
 		return nil, err

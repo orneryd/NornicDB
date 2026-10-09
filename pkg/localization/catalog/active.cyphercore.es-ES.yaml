@@ -136,6 +136,12 @@
   other: "Entrada no válida '{{.Token}}': se esperaba un identificador"
 - id: cyphercore.parameter_type_mismatch
   other: "Tipo no coincidente para el parámetro '{{.Parameter}}': se esperaba {{.Expected}} pero era {{.Type}}"
+- id: cyphercore.function_argument_out_of_range
+  other: "El argumento de la función '{{.Function}}()' está fuera de rango"
+- id: cyphercore.string_join_element_type
+  other: "Se esperaba un valor de cadena para `string.join`, pero se obtuvo: {{.Value}}; considere convertirlo en cadena con toString()."
+- id: cyphercore.replace_limit_negative
+  other: "El límite debe ser mayor o igual que 0."
 - id: cyphercore.list_operand_type_mismatch
   other: "Tipo no coincidente: se esperaba List<T> pero era {{.Type}}"
 - id: cyphercore.list_parameter_type_mismatch

@@ -20,7 +20,7 @@ func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, val
 func isSharedMathFunction(name string) bool {
 	switch name {
 	case "pi", "e", "round", "sin", "cos", "tan", "cot", "asin", "acos", "atan", "atan2",
-		"exp", "log", "log10", "sqrt", "ceil", "ceiling", "floor", "degrees", "radians", "haversin",
+		"exp", "log", "log10", "sqrt", "ceil", "floor", "degrees", "radians", "haversin",
 		"sinh", "cosh", "tanh", "coth", "power":
 		return true
 	default:

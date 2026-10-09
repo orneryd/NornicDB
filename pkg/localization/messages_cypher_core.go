@@ -65,6 +65,9 @@ const (
 	MessageCypherCoreUUIDInvalidText                     MessageID = "cyphercore.uuid_invalid_text"
 	MessageCypherCoreListParameterTypeMismatch           MessageID = "cyphercore.list_parameter_type_mismatch"
 	MessageCypherCoreParameterTypeMismatch               MessageID = "cyphercore.parameter_type_mismatch"
+	MessageCypherCoreFunctionArgumentOutOfRange          MessageID = "cyphercore.function_argument_out_of_range"
+	MessageCypherCoreStringJoinElementType               MessageID = "cyphercore.string_join_element_type"
+	MessageCypherCoreReplaceLimitNegative                MessageID = "cyphercore.replace_limit_negative"
 	MessageCypherCoreListCoercionToBoolean               MessageID = "cyphercore.list_coercion_to_boolean"
 	MessageCypherCoreListIndexTypeMismatch               MessageID = "cyphercore.list_index_type_mismatch"
 	MessageCypherCoreMapKeyTypeMismatch                  MessageID = "cyphercore.map_key_type_mismatch"
@@ -346,6 +349,24 @@ func CypherCoreInvalidInputExpectedIdentifier(token string) Message {
 // 'p': expected Map, Node or Relationship but was Integer").
 func CypherCoreParameterTypeMismatch(parameter, expected, typeName string) Message {
 	return cypherCoreMessage(MessageCypherCoreParameterTypeMismatch, "Type mismatch for parameter '"+parameter+"': expected "+expected+" but was "+typeName, map[string]any{"Parameter": parameter, "Expected": expected, "Type": typeName})
+}
+
+// CypherCoreFunctionArgumentOutOfRange is Neo4j's message for an index or
+// count outside what a function takes (coll.insert, coll.remove, replace).
+func CypherCoreFunctionArgumentOutOfRange(function string) Message {
+	return cypherCoreMessage(MessageCypherCoreFunctionArgumentOutOfRange, "Function argument to '"+function+"()' is out of range", map[string]any{"Function": function})
+}
+
+// CypherCoreStringJoinElementType is Neo4j's message for a list item
+// string.join can't join.
+func CypherCoreStringJoinElementType(value string) Message {
+	return cypherCoreMessage(MessageCypherCoreStringJoinElementType, "Expected a string value for `string.join`, but got: "+value+"; consider converting it to a string with toString().", map[string]any{"Value": value})
+}
+
+// CypherCoreReplaceLimitNegative is Neo4j's message for a negative literal
+// replace() limit.
+func CypherCoreReplaceLimitNegative() Message {
+	return cypherCoreMessage(MessageCypherCoreReplaceLimitNegative, "The limit needs to be greater than or equal to 0.", nil)
 }
 
 func CypherCoreListOperandTypeMismatch(typeName string) Message {
