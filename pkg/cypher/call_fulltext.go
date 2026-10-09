@@ -624,7 +624,7 @@ func fulltextFieldPresenceQuery(query string) (string, bool) {
 	// would mean the query is something like `name OR foo:*` (a more
 	// complex Lucene expression that needs the BM25 path).
 	for _, r := range name {
-		if !(r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+		if !isIdentRune(r) {
 			return "", false
 		}
 	}

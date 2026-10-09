@@ -1154,6 +1154,16 @@ func isIdentStartByte(b byte) bool {
 	return b >= 0x80 || b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 }
 
+// isIdentStartRune is isIdentStartByte for a decoded character.
+func isIdentStartRune(r rune) bool {
+	return r >= utf8.RuneSelf || isIdentStartByte(byte(r))
+}
+
+// isIdentRune is isIdentByte for a decoded character.
+func isIdentRune(r rune) bool {
+	return r >= utf8.RuneSelf || isIdentByte(byte(r))
+}
+
 // isIdentByte reports whether b can continue an unquoted name: what
 // isIdentStartByte takes, or a digit.
 func isIdentByte(b byte) bool {

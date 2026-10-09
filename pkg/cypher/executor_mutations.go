@@ -411,7 +411,7 @@ func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars str
 	}
 	// Basic identifier check
 	for i, r := range deleteVars {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' || (i > 0 && r >= '0' && r <= '9') {
+		if isIdentStartRune(r) || (i > 0 && r >= '0' && r <= '9') {
 			continue
 		}
 		return false

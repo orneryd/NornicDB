@@ -280,7 +280,7 @@ func isSimpleIdentifierOrProperty(expr string) bool {
 				return false
 			}
 			expectIdentStart = true
-		case c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'):
+		case isIdentStartByte(c):
 			expectIdentStart = false
 		case c >= '0' && c <= '9':
 			if expectIdentStart {

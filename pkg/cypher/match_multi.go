@@ -1168,7 +1168,7 @@ func isSimpleIdentifierCartesian(s string) bool {
 	}
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
-		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' {
+		if isIdentStartByte(ch) {
 			continue
 		}
 		if i > 0 && ch >= '0' && ch <= '9' {

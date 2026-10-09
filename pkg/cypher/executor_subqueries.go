@@ -2105,12 +2105,12 @@ func isSimpleIdentifier(s string) bool {
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
 		if i == 0 {
-			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_') {
+			if !isIdentStartByte(ch) {
 				return false
 			}
 			continue
 		}
-		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
+		if !isIdentByte(ch) {
 			return false
 		}
 	}
@@ -2123,7 +2123,7 @@ func containsStandaloneIdentifier(expr, ident string) bool {
 		return false
 	}
 	isWord := func(b byte) bool {
-		return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+		return isIdentByte(b)
 	}
 	inSingle, inDouble, inBacktick := false, false, false
 	for i := 0; i < len(expr); i++ {
@@ -2198,7 +2198,7 @@ func expandMapMemberAccess(query, ident string, mapVal map[string]interface{}) s
 		return query
 	}
 	isWord := func(b byte) bool {
-		return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+		return isIdentByte(b)
 	}
 
 	var out strings.Builder

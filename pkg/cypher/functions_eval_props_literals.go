@@ -159,12 +159,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	isValidIdentifier := true
 	for i, ch := range expr {
 		if i == 0 {
-			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_') {
+			if !isIdentStartRune(ch) {
 				isValidIdentifier = false
 				break
 			}
 		} else {
-			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
+			if !isIdentRune(ch) {
 				isValidIdentifier = false
 				break
 			}

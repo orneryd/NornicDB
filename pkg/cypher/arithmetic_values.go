@@ -207,7 +207,7 @@ func isConstantNumericExpression(expr string) bool {
 			i++
 			for i < len(expr) {
 				c := expr[i]
-				if c >= '0' && c <= '9' || c == '.' || c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' {
+				if c >= '0' && c <= '9' || c == '.' || isIdentStartByte(c) {
 					i++
 				} else if (c == '+' || c == '-') && (expr[i-1] == 'e' || expr[i-1] == 'E') && !strings.ContainsAny(expr[start:i], "xX") {
 					i++

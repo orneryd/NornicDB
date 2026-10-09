@@ -801,7 +801,7 @@ func startsWithKeywordAtLocal(s string, i int, kw string) bool {
 	}
 	if i > 0 {
 		prev := s[i-1]
-		if (prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z') || (prev >= '0' && prev <= '9') || prev == '_' {
+		if isIdentByte(prev) {
 			return false
 		}
 	}
@@ -811,7 +811,7 @@ func startsWithKeywordAtLocal(s string, i int, kw string) bool {
 	j := i + len(kw)
 	if j < len(s) {
 		next := s[j]
-		if (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || (next >= '0' && next <= '9') || next == '_' {
+		if isIdentByte(next) {
 			return false
 		}
 	}

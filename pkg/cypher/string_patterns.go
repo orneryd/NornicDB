@@ -370,7 +370,7 @@ func isValidIdentifier(s string) bool {
 		return false
 	}
 	first := s[0]
-	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
+	if !isIdentStartByte(first) {
 		return false
 	}
 	for i := 1; i < len(s); i++ {
@@ -424,7 +424,7 @@ func ExtractParameters(query string) []string {
 
 		// First character must be letter or underscore
 		first := query[start]
-		if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z') || first == '_') {
+		if !isIdentStartByte(first) {
 			i = start
 			continue
 		}

@@ -161,7 +161,7 @@ func deleteExpressionRootIdentifier(expression string) string {
 	end := 0
 	for end < len(expression) {
 		character := expression[end]
-		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || character == '_' || (end > 0 && character >= '0' && character <= '9')) {
+		if !(isIdentStartByte(character) || (end > 0 && character >= '0' && character <= '9')) {
 			break
 		}
 		end++
