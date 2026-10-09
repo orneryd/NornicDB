@@ -15,9 +15,9 @@ import (
 func formatCypherValueString(value interface{}) string {
 	switch typed := value.(type) {
 	case float64:
-		return formatCypherFloat(typed, 64)
+		return FormatFloat(typed, 64)
 	case float32:
-		return formatCypherFloat(float64(typed), 32)
+		return FormatFloat(float64(typed), 32)
 	case CypherDate:
 		return typed.String()
 	case *CypherDate:
@@ -55,7 +55,14 @@ func formatCypherValueString(value interface{}) string {
 	}
 }
 
-func formatCypherFloat(value float64, bits int) string {
+// FormatFloat writes a float as Neo4j does (Java's Double.toString): plain
+// decimals with at least one fractional digit from 10^-3 up to 10^7
+// ("0.001", "9999999.0"), scientific notation with an upper-case E outside
+// that range ("1.0E7", "1.23456789E-4"), and "Infinity", "-Infinity" and
+// "NaN". bits is the value's precision (32 or 64), so a float32 keeps its
+// shortest text. It is the one text of a float: toString(), point text and
+// the HTTP API's numbers use it.
+func FormatFloat(value float64, bits int) string {
 	if math.IsInf(value, 1) {
 		return "Infinity"
 	}

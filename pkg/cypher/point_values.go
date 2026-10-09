@@ -84,9 +84,9 @@ func (p CypherPoint) Coordinates() []float64 {
 // String is the point's own text, as Neo4j shows the value:
 // point({srid:7203, x:1.0, y:2.0}).
 func (p CypherPoint) String() string {
-	text := "point({srid:" + strconv.Itoa(p.SRID) + ", x:" + formatCypherFloat(p.X, 64) + ", y:" + formatCypherFloat(p.Y, 64)
+	text := "point({srid:" + strconv.Itoa(p.SRID) + ", x:" + FormatFloat(p.X, 64) + ", y:" + FormatFloat(p.Y, 64)
 	if p.Is3D() {
-		text += ", z:" + formatCypherFloat(p.Z, 64)
+		text += ", z:" + FormatFloat(p.Z, 64)
 	}
 	return text + "})"
 }
@@ -94,9 +94,9 @@ func (p CypherPoint) String() string {
 // cypherText is the text toString() gives a point:
 // point({x: 1.0, y: 2.0, crs: 'cartesian'}).
 func (p CypherPoint) cypherText() string {
-	text := "point({x: " + formatCypherFloat(p.X, 64) + ", y: " + formatCypherFloat(p.Y, 64)
+	text := "point({x: " + FormatFloat(p.X, 64) + ", y: " + FormatFloat(p.Y, 64)
 	if p.Is3D() {
-		text += ", z: " + formatCypherFloat(p.Z, 64)
+		text += ", z: " + FormatFloat(p.Z, 64)
 	}
 	return text + ", crs: '" + p.CRSName() + "'})"
 }
@@ -226,7 +226,7 @@ func newPointFromMap(fields map[string]interface{}) (point CypherPoint, ok bool,
 	}
 	if crs.geographic {
 		if point.Y < -90 || point.Y > 90 {
-			return CypherPoint{}, false, pointArgumentError(fmt.Sprintf("Cannot create WGS84 point with invalid coordinate: [%s, %s]. Valid range for Y coordinate is [-90, 90].", formatCypherFloat(point.X, 64), formatCypherFloat(point.Y, 64)))
+			return CypherPoint{}, false, pointArgumentError(fmt.Sprintf("Cannot create WGS84 point with invalid coordinate: [%s, %s]. Valid range for Y coordinate is [-90, 90].", FormatFloat(point.X, 64), FormatFloat(point.Y, 64)))
 		}
 		point.X = wrapLongitude(point.X)
 	}
@@ -259,7 +259,7 @@ func neo4jValueDescription(value interface{}) string {
 		return "Long(" + strconv.FormatInt(integer, 10) + ")"
 	}
 	if number, ok := toFloat64(value); ok {
-		return "Double(" + formatCypherFloat(number, 64) + ")"
+		return "Double(" + FormatFloat(number, 64) + ")"
 	}
 	return fmt.Sprint(value)
 }
