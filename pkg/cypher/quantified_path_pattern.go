@@ -135,11 +135,7 @@ func parseQuantifiedPathMatch(body string) (*quantifiedPathMatch, bool, error) {
 		return generatedVariablePrefix + "qpp" + strconv.Itoa(generated)
 	}
 	outside := map[string]bool{}
-	for at := 0; at < len(pattern); {
-		at = skipASCIISpaces(pattern, at, len(pattern))
-		if at >= len(pattern) {
-			break
-		}
+	for at := 0; at < len(pattern); at = skipASCIISpaces(pattern, at, len(pattern)) {
 		open, close, quantifier, grouped := nextQuantifiedGroup(pattern, at)
 		if grouped && open == at {
 			inner := strings.TrimSpace(pattern[open+1 : close])
@@ -236,10 +232,10 @@ func nameChainEnds(chain string, name func() string) (string, string, string) {
 // chain, -1 when it has none.
 func lastNodePatternStart(chain string) int {
 	last := -1
+	// A chain's top level holds patterns and arrows; quoted text is inside
+	// brackets.
 	for i := 0; i < len(chain); i++ {
 		switch c := chain[i]; c {
-		case '\'', '"', '`':
-			i = skipCypherQuotedText(chain, i, c) - 1
 		case '[', '{':
 			closeBy := map[byte]byte{'[': ']', '{': '}'}[c]
 			if close := findMatchingDelimiter(chain, i, rune(c), rune(closeBy)); close > i {
@@ -408,21 +404,16 @@ func (e *StorageExecutor) matchQuantifiedChain(ctx context.Context, chain, first
 	}
 	repeatable := repeatableElements(ctx)
 	for _, result := range matched {
+		// The chain's path value carries its PathResult (pathToMap), whose
+		// nodes and relationships are storage entities.
 		value, _ := result[pathVariable].(map[string]interface{})
-		nodes, relationships, hasNodes, _ := pathValueParts(value)
-		if !hasNodes || len(nodes) == 0 {
-			continue
-		}
+		nodes, relationships, _, _ := pathValueParts(value)
 		next := quantifiedPathState{row: result, used: state.used, checks: state.checks}
 		next.nodes = append([]*storage.Node(nil), state.nodes...)
 		next.relationships = append([]*storage.Edge(nil), state.relationships...)
 		for i, item := range nodes {
-			node, ok := item.(*storage.Node)
-			if !ok {
-				break
-			}
 			if i > 0 || len(state.nodes) == 0 {
-				next.nodes = append(next.nodes, node)
+				next.nodes = append(next.nodes, item.(*storage.Node))
 			}
 		}
 		reused := false
@@ -433,10 +424,7 @@ func (e *StorageExecutor) matchQuantifiedChain(ctx context.Context, chain, first
 			}
 		}
 		for _, item := range relationships {
-			edge, ok := item.(*storage.Edge)
-			if !ok || edge == nil {
-				continue
-			}
+			edge := item.(*storage.Edge)
 			if !repeatable {
 				if _, exists := next.used[edge.ID]; exists {
 					reused = true

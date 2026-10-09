@@ -65,11 +65,12 @@ func splitPathSelectorTerm(where string) (*pathSelector, string, []string, bool)
 // WHERE conjuncts that read only the endpoints or earlier variables select
 // the endpoints, and the others filter the selected paths.
 func (e *StorageExecutor) parseSelectedPathMatch(ctx context.Context, pattern, pathVariable string, others []string, selector *pathSelector, predicate string, terms []string) (*shortestPathMatch, bool, error) {
-	m := &shortestPathMatch{others: others, selector: selector, pathVariable: pathVariable}
-	if m.pathVariable == "" {
-		m.pathVariable = generatedVariablePrefix + "sp_path"
+	if len(others) > 0 || pathVariable == "" {
+		// The statement rewrite names the path and allows no other pattern
+		// (path_selector.go); a hand-written selector call may do neither.
+		return nil, true, labelExpressionSyntaxError(localization.CypherMatchingPathSelectorMultiplePatterns())
 	}
-	m.setOthersVariables()
+	m := &shortestPathMatch{selector: selector, pathVariable: pathVariable}
 	startPattern, endPattern, ok := shortestPathEndpointPatterns(pattern)
 	var traversal *TraversalMatch
 	if ok {
@@ -111,10 +112,7 @@ func (e *StorageExecutor) parseSelectedPathMatch(ctx context.Context, pattern, p
 		}
 	}
 	for _, term := range terms {
-		if term = strings.TrimSpace(term); term == "" {
-			continue
-		}
-		if readsPath(term) {
+		if term = strings.TrimSpace(term); readsPath(term) {
 			postTerms = append(postTerms, term)
 		} else {
 			endpointTerms = append(endpointTerms, term)
@@ -137,31 +135,25 @@ func (e *StorageExecutor) pipelineApplySelectedPathMatch(ctx context.Context, ro
 	}
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		bases, err := e.shortestPathBases(ctx, m, row)
+		var selected []pipelineRow
+		if m.pattern != "" {
+			selected, err = e.selectMatchedPaths(ctx, m, row, count)
+		} else {
+			selected, err = e.selectSearchedPaths(ctx, m, row, count)
+		}
 		if err != nil {
 			return nil, err
 		}
 		found := 0
-		for _, base := range bases {
-			var selected []pipelineRow
-			if m.pattern != "" {
-				selected, err = e.selectMatchedPaths(ctx, m, base, count)
-			} else {
-				selected, err = e.selectSearchedPaths(ctx, m, base, count)
-			}
-			if err != nil {
-				return nil, err
-			}
-			for _, bound := range selected {
-				if m.postWhere != "" && !e.evaluateWithWhereCondition(ctx, m.postWhere, map[string]interface{}(bound)) {
-					if err := getExpressionFailure(ctx); err != nil {
-						return nil, err
-					}
-					continue
+		for _, bound := range selected {
+			if m.postWhere != "" && !e.evaluateWithWhereCondition(ctx, m.postWhere, map[string]interface{}(bound)) {
+				if err := getExpressionFailure(ctx); err != nil {
+					return nil, err
 				}
-				out = append(out, bound)
-				found++
+				continue
 			}
+			out = append(out, bound)
+			found++
 		}
 		if optional && found == 0 {
 			out = append(out, m.unmatchedRow(row))
@@ -195,9 +187,6 @@ func pathSelectorCount(ctx context.Context, count string) (int, error) {
 	if number <= 0 {
 		return 0, localizedStatusError("Neo.ClientError.General.InvalidArguments", "InvalidArguments",
 			localization.CypherMatchingPathSelectorCountInvalid(strconv.FormatInt(number, 10)))
-	}
-	if number > int64(^uint(0)>>1) {
-		number = int64(^uint(0) >> 1)
 	}
 	return int(number), nil
 }
