@@ -1407,6 +1407,10 @@ func classificationText(query string) string {
 func queryMayNeedCanonicalRewrite(query string) bool {
 	for i := 0; i < len(query); i++ {
 		switch c := query[i]; {
+		case c == ')' || c == ']' || c == '}' || c == '\'' || c == '"' || c == '`':
+			if gluedAliasKeywordAt(query, i+1) {
+				return true
+			}
 		case c == ' ':
 			if i+1 < len(query) && (query[i+1] == ' ' || arrowGapClass[query[i+1]]&arrowGapAfter != 0 && i > 0 && arrowGap(query[i-1], query[i+1])) {
 				return true
@@ -1420,6 +1424,16 @@ func queryMayNeedCanonicalRewrite(query string) bool {
 		}
 	}
 	return false
+}
+
+// gluedAliasKeywordAt reports whether the keyword AS starts at query[at],
+// right after a closing bracket or quote: AS, then a space, a backtick or
+// the end.
+func gluedAliasKeywordAt(query string, at int) bool {
+	if at+2 > len(query) || !equalFoldASCII(query[at:at+2], "AS") {
+		return false
+	}
+	return at+2 == len(query) || isASCIISpace(query[at+2]) || query[at+2] == '`'
 }
 
 // canonicalizeQueryText returns the canonical form of query (see above) and
@@ -1470,6 +1484,22 @@ func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 		c := query[index]
 		if c == '\'' || c == '"' || c == '`' {
 			index = skipCypherQuotedText(query, index, c)
+			if index >= verbatimEnd && gluedAliasKeywordAt(query, index) {
+				replace(index, index, " ")
+				if memoized != nil {
+					return memoized.canonical, memoized
+				}
+			}
+			continue
+		}
+		if (c == ')' || c == ']' || c == '}') && index >= verbatimEnd && gluedAliasKeywordAt(query, index+1) {
+			// [1, 2][0]AS x: AS is the alias keyword, spaced as every
+			// clause reader expects.
+			replace(index+1, index+1, " ")
+			if memoized != nil {
+				return memoized.canonical, memoized
+			}
+			index++
 			continue
 		}
 		if c > ' ' && c != '/' && c < utf8.RuneSelf {
