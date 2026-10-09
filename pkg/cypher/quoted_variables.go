@@ -225,7 +225,7 @@ func (names *quotedVariableNames) parameterName(name string) string {
 // as a variable: an identifier that isn't a Cypher keyword.
 func isPlainVariableName(name string) bool {
 	_, end, ok := scanIdentifierToken(name, 0)
-	return ok && end == len(name) && !isCypherKeyword(name)
+	return ok && end == len(name) && isUnquotedName(name) && !isCypherKeyword(name)
 }
 
 // internalVariableIdentifier is the plain identifier a quoted variable is
