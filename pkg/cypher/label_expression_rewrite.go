@@ -56,6 +56,9 @@ type labelExpressionRewriter struct {
 	// writeItems is set while a SET or REMOVE clause is read: its item
 	// heads may name dynamic labels (n:$(e)), nothing else may.
 	writeItems bool
+	// named holds the variables given to anonymous elements, by the index of
+	// their opening bracket, so an element is named once.
+	named map[int]string
 }
 
 // labelPatternMode is how a pattern's label expressions are read.
@@ -78,7 +81,8 @@ func (m labelPatternMode) clause() string {
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when nothing changes.
 func desugarLabelExpressions(query string, params map[string]interface{}) (string, *queryRewrite, error) {
-	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) && indexASCIIFold(query, "shortestpath") < 0 {
+	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) && indexASCIIFold(query, "shortestpath") < 0 &&
+		!mayAssignAnonymousNodePath(query) {
 		return query, nil, nil
 	}
 	r := &labelExpressionRewriter{query: query, params: params}
@@ -419,6 +423,7 @@ func (r *labelExpressionRewriter) statement(start, end int) error {
 // pattern's label expressions become are ANDed in front of the WHERE body,
 // which is parenthesised when it has a top-level OR or XOR.
 func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, whereEnd int) error {
+	r.nameSingleNodePaths(start, end)
 	predicates, err := r.pattern(start, end, labelPatternMatch)
 	if err != nil {
 		return err
@@ -781,9 +786,73 @@ func (r *labelExpressionRewriter) elementVariable(open int, variable string) str
 	if variable != "" {
 		return variable
 	}
+	if named, ok := r.named[open]; ok {
+		return named
+	}
 	variable = r.variable()
 	r.edit(open+1, open+1, variable)
+	if r.named == nil {
+		r.named = make(map[int]string)
+	}
+	r.named[open] = variable
 	return variable
+}
+
+// nameSingleNodePaths names the node of each path assignment in the MATCH
+// pattern query[start:end] that is a single anonymous node (p = (:L {k: 1})),
+// so every route binds the node, and the path, as for p = (n:L) (#907).
+func (r *labelExpressionRewriter) nameSingleNodePaths(start, end int) {
+	q := r.query
+	partStart := start
+	for i := start; i <= end; i++ {
+		if i < end {
+			switch c := q[i]; c {
+			case '\'', '"', '`':
+				i = skipCypherQuotedText(q[:end], i, c) - 1
+				continue
+			case '(', '[', '{':
+				closer := map[byte]rune{'(': ')', '[': ']', '{': '}'}[c]
+				if close := findMatchingDelimiter(q[:end], i, rune(c), closer); close > i {
+					i = close
+				}
+				continue
+			case ',':
+			default:
+				continue
+			}
+		}
+		first := skipASCIISpaces(q, partStart, i)
+		if startsPathAssignment(q, first, i) {
+			open := skipASCIISpaces(q, strings.IndexByte(q[first:i], '=')+first+1, i)
+			close := findMatchingDelimiter(q[:i], open, '(', ')')
+			inner := skipASCIISpaces(q, open+1, i)
+			// Nothing follows the node (a single-node path), and it has no
+			// variable: its text starts with ":", ")" or "{".
+			if close > open && trimRightIndex(q, close+1, i) == close+1 && strings.IndexByte(":){", q[inner]) >= 0 {
+				r.elementVariable(open, "")
+			}
+		}
+		partStart = i + 1
+	}
+}
+
+// mayAssignAnonymousNodePath is the quick check for nameSingleNodePaths: an
+// "= (" whose node starts without a variable (":", ")" or "{").
+func mayAssignAnonymousNodePath(query string) bool {
+	for i := strings.IndexByte(query, '='); i >= 0; {
+		open := skipASCIISpaces(query, i+1, len(query))
+		if open < len(query) && query[open] == '(' {
+			if inner := skipASCIISpaces(query, open+1, len(query)); inner < len(query) && strings.IndexByte(":){", query[inner]) >= 0 {
+				return true
+			}
+		}
+		next := strings.IndexByte(query[i+1:], '=')
+		if next < 0 {
+			return false
+		}
+		i += next + 1
+	}
+	return false
 }
 
 // foreach rewrites FOREACH (x IN list | clauses).
