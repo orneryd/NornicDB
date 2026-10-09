@@ -859,11 +859,7 @@ func (e *StorageExecutor) inferExplainColumns(query string) []string {
 			}
 			cols := make([]string, 0, len(items))
 			for _, item := range items {
-				if item.alias != "" {
-					cols = append(cols, item.alias)
-				} else {
-					cols = append(cols, item.expr)
-				}
+				cols = append(cols, item.column())
 			}
 			return cols
 		}

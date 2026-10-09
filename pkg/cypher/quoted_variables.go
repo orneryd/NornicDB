@@ -810,7 +810,7 @@ func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parse
 		return
 	}
 	for i, item := range items {
-		if item.alias != "" && item.alias != strings.TrimSpace(item.expr) {
+		if item.alias != strings.TrimSpace(item.expr) {
 			result.Columns[i] = normalizeProjectionColumnName(item.alias)
 			continue
 		}

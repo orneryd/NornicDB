@@ -1157,10 +1157,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 	if !ok {
 		return nil, false, nil
 	}
-	column := items[0].expr
-	if items[0].alias != "" {
-		column = items[0].alias
-	}
+	column := items[0].column()
 	return &ExecuteResult{Columns: []string{column}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{}}, true, nil
 }
 
@@ -1207,10 +1204,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 						if err != nil {
 							return nil, true, localizedError(localization.CypherMatchingStorageFailed(err), err)
 						}
-						column := items[0].expr
-						if items[0].alias != "" {
-							column = items[0].alias
-						}
+						column := items[0].column()
 						return &ExecuteResult{Columns: []string{column}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{}}, true, nil
 					}
 				}
@@ -1280,10 +1274,7 @@ func pipelineSingleNodeCountProjection(items []returnItem, variable string) (str
 	if inner != "*" && inner != variable {
 		return "", false
 	}
-	column := items[0].expr
-	if items[0].alias != "" {
-		column = items[0].alias
-	}
+	column := items[0].column()
 	return column, true
 }
 
@@ -1410,10 +1401,7 @@ func projectPipelineSimpleNodeRead(nodes []*storage.Node, items []returnItem, va
 		Stats:   &QueryStats{},
 	}
 	for index, item := range items {
-		result.Columns[index] = item.expr
-		if item.alias != "" {
-			result.Columns[index] = item.alias
-		}
+		result.Columns[index] = item.column()
 	}
 	prefix := variable + "."
 	for _, node := range nodes {
@@ -3462,7 +3450,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			continue
 		}
 		expr, alias := parseProjectionExprAlias(item)
-		if expr == "" || alias == "" {
+		if expr == "" {
 			return nil, false
 		}
 		projection := withProjection{expr: expr, alias: alias}
@@ -4189,11 +4177,7 @@ func (plan *returnProjectionPlan) addProjection(expr, alias string) {
 func returnProjectionPlanFromItems(items []returnItem) *returnProjectionPlan {
 	plan := &returnProjectionPlan{}
 	for _, item := range items {
-		alias := item.alias
-		if alias == "" {
-			alias = item.expr
-		}
-		plan.addProjection(item.expr, alias)
+		plan.addProjection(item.expr, item.column())
 	}
 	plan.valid = len(plan.projections) > 0
 	return plan

@@ -400,10 +400,7 @@ func pipelineReturnSourceColumns(clause string) []string {
 	}
 	columns := make([]string, 0)
 	for _, item := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(item))
-		if alias == "" {
-			alias = expression
-		}
+		_, alias := parseProjectionExprAlias(strings.TrimSpace(item))
 		columns = append(columns, alias)
 	}
 	return columns

@@ -61,7 +61,7 @@ func compilePipelineRowWith(clause string) (pipelineRowWith, bool) {
 			continue
 		}
 		expression, alias := parseProjectionExprAlias(item)
-		if expression == "" || alias == "" || pipelineExpressionContainsAggregate(expression) {
+		if expression == "" || pipelineExpressionContainsAggregate(expression) {
 			return pipelineRowWith{}, false
 		}
 		plan.projections = append(plan.projections, pipelineRowProjection{expression, alias})

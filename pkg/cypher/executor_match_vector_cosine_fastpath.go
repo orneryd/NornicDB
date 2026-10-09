@@ -115,11 +115,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 	if limit == 0 {
 		columns := make([]string, len(returnItems))
 		for i, item := range returnItems {
-			if item.alias != "" {
-				columns[i] = item.alias
-			} else {
-				columns[i] = item.expr
-			}
+			columns[i] = item.column()
 		}
 		e.markCosineVectorIndexFastPathUsed()
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
@@ -150,11 +146,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 
 	columns := make([]string, len(returnItems))
 	for i, item := range returnItems {
-		if item.alias != "" {
-			columns[i] = item.alias
-		} else {
-			columns[i] = item.expr
-		}
+		columns[i] = item.column()
 	}
 
 	rows := make([][]interface{}, 0, len(nodeScores))
@@ -340,11 +332,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 
 	columns := make([]string, len(returnItems))
 	for i, item := range returnItems {
-		if item.alias != "" {
-			columns[i] = item.alias
-		} else {
-			columns[i] = item.expr
-		}
+		columns[i] = item.column()
 	}
 	if limit == 0 {
 		e.markCosineVectorIndexFastPathUsed()
@@ -554,11 +542,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 
 	columns := make([]string, len(returnItems))
 	for i, item := range returnItems {
-		if item.alias != "" {
-			columns[i] = item.alias
-		} else {
-			columns[i] = item.expr
-		}
+		columns[i] = item.column()
 	}
 	if limit == 0 {
 		e.markCosineVectorIndexFastPathUsed()
@@ -711,11 +695,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 
 	columns := make([]string, len(returnItems))
 	for i, item := range returnItems {
-		if item.alias != "" {
-			columns[i] = item.alias
-		} else {
-			columns[i] = item.expr
-		}
+		columns[i] = item.column()
 	}
 	if limit == 0 {
 		e.markCosineVectorIndexFastPathUsed()
@@ -1312,11 +1292,7 @@ func parseCosineReturnShape(items []returnItem, varName string) (cosineIdx int, 
 		cosineIdx = i
 		vectorProp = property
 		queryExpr = query
-		if item.alias != "" {
-			scoreRef = item.alias
-		} else {
-			scoreRef = item.expr
-		}
+		scoreRef = item.column()
 	}
 
 	if cosineIdx < 0 || strings.TrimSpace(vectorProp) == "" || strings.TrimSpace(queryExpr) == "" {
