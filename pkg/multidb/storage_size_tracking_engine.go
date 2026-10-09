@@ -31,6 +31,7 @@ var _ storage.MVCCIndexedVisibilityEngine = (*sizeTrackingEngine)(nil)
 var _ storage.MVCCHeadEngine = (*sizeTrackingEngine)(nil)
 var _ storage.MVCCLifecycleEngine = (*sizeTrackingEngine)(nil)
 var _ storage.ProjectedLabelNodeReader = (*sizeTrackingEngine)(nil)
+var _ storage.PropertyKeyLookup = (*sizeTrackingEngine)(nil)
 
 func (t *sizeTrackingEngine) ensureStorageSizeInitialized() error {
 	t.writeMu.Lock()
@@ -655,4 +656,12 @@ func (t *sizeTrackingEngine) GraphMutationVersion() (uint64, bool) {
 		return 0, false
 	}
 	return provider.GraphMutationVersion()
+}
+
+// PropertyKeyKnown forwards the database's property-key lookup
+// (storage.PropertyKeyLookup), so Cypher's SET counter sees the key names
+// through the server's wrapper as it does on the namespaced engine (#907).
+func (t *sizeTrackingEngine) PropertyKeyKnown(name string) bool {
+	lookup, ok := t.Engine.(storage.PropertyKeyLookup)
+	return ok && lookup.PropertyKeyKnown(name)
 }
