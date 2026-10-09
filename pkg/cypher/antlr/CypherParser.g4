@@ -41,6 +41,21 @@ script
     | query (SEMI query)* SEMI? EOF
     ;
 
+// An optional CYPHER 5 / CYPHER 25 language and option group before each
+// statement. The parser accepts and discards it so callers need not strip
+// the preamble themselves; it does not change execution semantics.
+cypherPreamble
+    : cypherGroup*
+    ;
+
+cypherGroup
+    : CYPHER (INTEGER | FLOAT)? cypherOption*
+    ;
+
+cypherOption
+    : ID (ASSIGN (ID | INTEGER | FLOAT | STRING_LITERAL | CHAR_LITERAL))?
+    ;
+
 shellCommand
     : COLON name shellCommandElement*
     ;
@@ -61,7 +76,7 @@ transactionStatement
 
 // statements
 query
-    : queryPrefix* useClause? (regularQuery | standaloneCall | schemaCommand | administrationCommand | showCommand | terminateCommand)
+    : queryPrefix* cypherPreamble? useClause? (regularQuery | standaloneCall | schemaCommand | administrationCommand | showCommand | terminateCommand)
     ;
 
 useClause
@@ -231,9 +246,28 @@ unwindSt
     : UNWIND expression AS symbol where?
     ;
 
+letSt
+    : LET letItem (COMMA letItem)*
+    ;
+
+letItem
+    : symbol ASSIGN expression
+    ;
+
+filterSt
+    : FILTER WHERE? expression
+    ;
+
+forSt
+    : FOR symbol IN expression
+    ;
+
 readingStatement
     : matchSt
     | unwindSt
+    | letSt
+    | filterSt
+    | forSt
     | queryCallSt
     | callSubquery
     ;
@@ -637,6 +671,7 @@ symbol
     | MAX
     | COLLECT
     | FILTER
+    | LET
     | EXTRACT
     | REDUCE
     | FOREACH
@@ -778,6 +813,7 @@ reservedWord
     | TRUE
     | NULL_W
     | CONSTRAINT
+    | CYPHER
     | DO
     | FOR
     | REQUIRE

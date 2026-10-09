@@ -127,6 +127,39 @@ go test -v ./...
 
 ## Modifying the Grammar
 
+### Shared Cypher 5/25 Read-Clause Foundation
+
+The existing grammar accepts these clauses wherever `readingStatement` is supported,
+including multipart queries and subqueries:
+
+```cypher
+FOR x IN [1, 2, 3]
+LET y = x + 1, z = y * 2
+FILTER WHERE z > 4
+RETURN z
+```
+
+`FILTER expression` also works without `WHERE`. `LET`, `FILTER`, and `FOR`
+remain usable as identifiers. This is syntax support in one shared grammar,
+not a separate version-specific parser or an execution implementation.
+
+`Parse` and `Validate` accept and discard an optional `CYPHER 5` / `CYPHER 25`
+language and option preamble (for example `CYPHER 25 runtime=slotted RETURN 1`)
+as part of the grammar. Callers pass the statement as written; they do not
+strip the preamble themselves.
+
+Generated `IReadingStatementContext` exposes `LetSt()`, `FilterSt()`, and
+`ForSt()`. `ILetStContext.AllLetItem()` preserves binding order; each
+`ILetItemContext` has `Symbol()` and `Expression()`. `IFilterStContext`
+has `WHERE()` (optional) and `Expression()`; `IForStContext` has `Symbol()`
+and `Expression()`. Corresponding listener callbacks are generated.
+
+The handwritten `QueryInfo`/`ClauseInfo` analyzers do not expose metadata or
+extracted contents for these clauses. Integrations must not infer pipeline
+execution order from those legacy summaries: use the native ordered execution
+pipeline or inspect the generated parse contexts. Token/rule numeric constants
+are generated implementation details and may change on regeneration.
+
 ### Adding a New Keyword
 
 1. Add to `CypherLexer.g4`:

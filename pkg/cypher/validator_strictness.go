@@ -158,7 +158,7 @@ func hasAdjacentStringLiterals(cypher string) bool {
 var validatorClauseKeywords = []string{
 	"RETURN", "WITH", "YIELD", "MATCH", "OPTIONAL", "CREATE", "MERGE",
 	"SET", "UNWIND", "CALL", "FOREACH", "DELETE", "DETACH", "REMOVE",
-	"LOAD", "UNION", "SHOW",
+	"LOAD", "UNION", "SHOW", "LET", "FILTER",
 }
 
 // validatorKeywordFirst is a first-byte index into validatorClauseKeywords so

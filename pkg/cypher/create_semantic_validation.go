@@ -56,6 +56,10 @@ func (e *StorageExecutor) validateCreateSemanticScopes(cypher string) error {
 			}
 		case pipelineClauseWith:
 			scope = projectedBindingScope(scope, clause.text)
+		case pipelineClauseLet:
+			if err := bindPipelineLet(scope, clause.text); err != nil {
+				return err
+			}
 		case pipelineClauseUnwind:
 			if alias := unwindBindingName(clause.text); alias != "" {
 				scope.bind(alias)
@@ -115,9 +119,9 @@ func projectedBindingScope(input *semanticBindingScope, clause string) *semantic
 // variable, as Neo4j does: UNWIND takes no WHERE, so "UNWIND l AS x WHERE …"
 // and "UNWIND l AS x y" are SyntaxErrors (Invalid input 'WHERE').
 func validateUnwindAlias(clause string) error {
-	_, alias, ok := splitUnwindBody(pipelineClauseBody(clause, "UNWIND"))
+	_, alias, ok := parsePipelineIteration(clause)
 	if !ok {
-		return nil
+		return sharedClauseSyntaxError("iteration requires a variable and an expression")
 	}
 	_, next, identifier := scanIdentifierToken(alias, 0)
 	if !identifier {
@@ -133,7 +137,7 @@ func validateUnwindAlias(clause string) error {
 
 // unwindBindingName is the variable an UNWIND clause binds (splitUnwindBody).
 func unwindBindingName(clause string) string {
-	if _, alias, ok := splitUnwindBody(clause); ok {
+	if _, alias, ok := parsePipelineIteration(clause); ok {
 		if name, _, symbolic := scanSymbolicName(alias, 0); symbolic {
 			return normalizeProjectionColumnName(name)
 		}

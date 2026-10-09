@@ -488,10 +488,10 @@ func isNameableClauseKeyword(keyword string) bool {
 // The clause keywords a name can be spelled as (isNameableClauseKeyword),
 // by length.
 var (
-	nameableClauseKeywords3 = [...]string{"SET"}
+	nameableClauseKeywords3 = [...]string{"SET", "LET", "FOR"}
 	nameableClauseKeywords4 = [...]string{"WITH", "SKIP", "CALL"}
 	nameableClauseKeywords5 = [...]string{"MATCH", "MERGE", "UNION", "LIMIT", "ORDER", "WHERE"}
-	nameableClauseKeywords6 = [...]string{"RETURN", "DELETE", "CREATE", "REMOVE", "UNWIND", "FINISH"}
+	nameableClauseKeywords6 = [...]string{"RETURN", "DELETE", "CREATE", "REMOVE", "UNWIND", "FINISH", "FILTER"}
 	nameableClauseKeywords7 = [...]string{"FOREACH"}
 	nameableClauseKeywords8 = [...]string{"OPTIONAL"}
 )
@@ -598,7 +598,7 @@ func isExpressionBoundaryWord(word string) bool {
 	default:
 		return false
 	}
-	for _, keyword := range [...]string{"AS", "WITH", "RETURN", "WHERE", "BY", "DISTINCT", "AND", "OR", "XOR", "NOT", "IN", "CASE", "WHEN", "THEN", "ELSE", "UNWIND", "SET", "YIELD", "DELETE"} {
+	for _, keyword := range [...]string{"AS", "WITH", "RETURN", "WHERE", "BY", "DISTINCT", "AND", "OR", "XOR", "NOT", "IN", "CASE", "WHEN", "THEN", "ELSE", "UNWIND", "SET", "YIELD", "DELETE", "LET", "FOR", "FILTER"} {
 		if len(keyword) != len(word) {
 			continue
 		}

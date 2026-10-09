@@ -42,6 +42,10 @@ func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause,
 			}
 		case pipelineClauseWith:
 			scope = projectedBindingScope(scope, clause.text)
+		case pipelineClauseLet:
+			if err := bindPipelineLet(scope, clause.text); err != nil {
+				return err
+			}
 		case pipelineClauseUnwind:
 			if alias := unwindBindingName(clause.text); alias != "" {
 				scope.bind(alias)

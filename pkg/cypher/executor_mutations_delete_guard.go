@@ -252,6 +252,9 @@ func pipelineProjectionScope(previous map[string]struct{}, clause string) map[st
 }
 
 func pipelineUnwindAlias(clause string) string {
+	if _, alias, ok := parsePipelineIteration(clause); ok {
+		return normalizeProjectionColumnName(alias)
+	}
 	if index := findKeywordIndexInContext(clause, "AS"); index >= 0 {
 		return strings.TrimSpace(clause[index+len("AS"):])
 	}

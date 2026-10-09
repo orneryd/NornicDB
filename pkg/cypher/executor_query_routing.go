@@ -113,7 +113,8 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if startsWithCreate && withIdx > 0 {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
-	if findKeywordIndex(cypher, "UNWIND") == 0 {
+	if findKeywordIndex(cypher, "UNWIND") == 0 || startsWithKeywordFold(cypher, "FOR") ||
+		startsWithKeywordFold(cypher, "LET") || startsWithKeywordFold(cypher, "FILTER") {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
@@ -795,7 +796,7 @@ func validateLeadingNodePatternTransition(cypher string) error {
 var validSyntaxStarts = [...]string{
 	"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH",
 	"UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN",
-	"PROFILE", "ALTER", "USE", "BEGIN", "COMMIT", "ROLLBACK", "TERMINATE",
+	"PROFILE", "ALTER", "USE", "BEGIN", "COMMIT", "ROLLBACK", "TERMINATE", "LET", "FILTER", "FOR",
 }
 
 func hasValidStartKeyword(cypher string) bool {

@@ -50,7 +50,7 @@ var cypherClauseStarts = [...]string{
 	"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH",
 	"UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN",
 	"PROFILE", "ALTER", "USE", "BEGIN", "COMMIT", "ROLLBACK", "TERMINATE",
-	"UNION", "CYPHER", "FINISH",
+	"UNION", "CYPHER", "FINISH", "LET", "FILTER", "FOR",
 }
 
 func startsWithClauseKeyword(s string) bool {
@@ -100,8 +100,8 @@ func validateCypherPreamble(query string) error {
 			for end < len(rest) && ((rest[end] >= '0' && rest[end] <= '9') || rest[end] == '.') {
 				end++
 			}
-			if version := rest[:end]; version != "5" {
-				return argumentError(fmt.Sprintf("%s is not a valid option for cypher version. Valid options are: 5", version))
+			if version := rest[:end]; version != "5" && version != "25" {
+				return argumentError(fmt.Sprintf("%s is not a valid option for cypher version. Valid options are: 5, 25", version))
 			}
 			rest = strings.TrimSpace(rest[end:])
 		}

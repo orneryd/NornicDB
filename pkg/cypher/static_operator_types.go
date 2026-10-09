@@ -930,6 +930,18 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 		return visit(predicate, afterProjection)
 	}
 	switch clause.kind {
+	case pipelineClauseLet:
+		projections, err := parsePipelineLet(clause.text)
+		if err != nil {
+			return err
+		}
+		for _, projection := range projections {
+			if err := visit(projection.expression, false); err != nil {
+				return err
+			}
+		}
+	case pipelineClauseFilter:
+		return visit(pipelineFilterExpression(clause.text), false)
 	case pipelineClauseReturn, pipelineClauseWith:
 		keyword := "RETURN"
 		if clause.kind == pipelineClauseWith {
@@ -982,10 +994,7 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 			}
 		}
 	case pipelineClauseUnwind:
-		body := strings.TrimSpace(text[len("UNWIND"):])
-		if as := findKeywordIndexInContext(body, "AS"); as >= 0 {
-			return visit(body[:as], false)
-		}
+		return visit(unwindSourceExpression(text), false)
 	}
 	return nil
 }

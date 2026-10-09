@@ -93,6 +93,24 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 			}
 		}
 		switch clause.kind {
+		case pipelineClauseLet, pipelineClauseFilter:
+			if err := e.validateSharedClause(scope, valueTypes, clause); err != nil {
+				return err
+			}
+			if clause.kind == pipelineClauseLet {
+				projections, err := parsePipelineLet(clause.text)
+				if err != nil {
+					return err
+				}
+				for _, projection := range projections {
+					kind := matchBindingValue
+					if bound, exists := scope[simpleSemanticIdentifier(projection.expression)]; exists {
+						kind = bound
+					}
+					scope[projection.alias] = kind
+					delete(valueTypes, projection.alias)
+				}
+			}
 		case pipelineClauseCallSubquery:
 			body, _, _, _ := e.parseCallSubquery(clause.text)
 			if branches, _, _, union := parseTopLevelUnionBranches(body); union && len(branches) > 0 {
@@ -915,11 +933,8 @@ func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSem
 
 // unwindSourceExpression is the list expression of an UNWIND clause.
 func unwindSourceExpression(clause string) string {
-	body := strings.TrimSpace(clause[len("UNWIND"):])
-	if asIndex := findKeywordIndexInContext(body, "AS"); asIndex >= 0 {
-		body = strings.TrimSpace(body[:asIndex])
-	}
-	return body
+	expression, _, _ := parsePipelineIteration(clause)
+	return expression
 }
 
 func unwindMatchSemanticKind(clause string, scope matchSemanticScope) matchBindingKind {
