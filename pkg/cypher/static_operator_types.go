@@ -82,7 +82,7 @@ var staticFunctionResultTypes = map[string]string{
 	// The temporal namespaces (Neo4j 5.26, #907).
 	"duration.between": "Duration", "duration.inmonths": "Duration", "duration.indays": "Duration",
 	"duration.inseconds": "Duration",
-	"date.truncate": "Date", "date.realtime": "Date", "date.statement": "Date", "date.transaction": "Date",
+	"date.truncate":      "Date", "date.realtime": "Date", "date.statement": "Date", "date.transaction": "Date",
 	"datetime.truncate": "DateTime", "datetime.realtime": "DateTime", "datetime.statement": "DateTime",
 	"datetime.transaction": "DateTime", "datetime.fromepoch": "DateTime", "datetime.fromepochmillis": "DateTime",
 	"localdatetime.truncate": "LocalDateTime", "localdatetime.realtime": "LocalDateTime",
@@ -1066,6 +1066,17 @@ func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, sco
 			predicateScope = projectedScope()
 		}
 		checker := staticOperatorChecker{scope: predicateScope, params: params}
+		operand, err := checker.check(predicate)
+		if err != nil {
+			return err
+		}
+		if err := requireBooleanOperand(operand); err != nil {
+			return err
+		}
+	}
+	if clause.kind == pipelineClauseFilter {
+		predicate := pipelineFilterExpression(clause.text)
+		checker := staticOperatorChecker{scope: scope, params: params}
 		operand, err := checker.check(predicate)
 		if err != nil {
 			return err

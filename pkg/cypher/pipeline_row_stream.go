@@ -604,13 +604,6 @@ func parseProjectionExpressions(clause, keyword string) []string {
 	if len(body) < len(keyword) || !strings.EqualFold(body[:len(keyword)], keyword) {
 		return nil
 	}
-	if strings.EqualFold(keyword, "UNWIND") {
-		body = strings.TrimSpace(body[len(keyword):])
-		if asIndex := topLevelKeywordIndex(body, "AS"); asIndex > 0 {
-			return []string{strings.TrimSpace(body[:asIndex])}
-		}
-		return nil
-	}
 	body, _ = projectionSemanticBodyAndTail(body, keyword)
 	if body == "" || body == "*" {
 		return nil

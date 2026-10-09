@@ -103,6 +103,10 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 					return err
 				}
 				for _, projection := range projections {
+					if _, exists := scope[projection.alias]; exists {
+						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+							fmt.Sprintf("variable %s is already declared", projection.alias))
+					}
 					kind := matchBindingValue
 					if bound, exists := scope[simpleSemanticIdentifier(projection.expression)]; exists {
 						kind = bound
@@ -225,6 +229,14 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 				return err
 			}
 			if alias := unwindBindingName(clause.text); alias != "" {
+				// FOR is new syntax: unlike the pre-existing permissive UNWIND,
+				// it must not redeclare an already-bound variable, as in Neo4j.
+				if startsWithKeywordFold(clause.text, "FOR") {
+					if _, bound := scope[alias]; bound {
+						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+							fmt.Sprintf("variable %s is already declared", alias))
+					}
+				}
 				scope[alias] = unwindMatchSemanticKind(clause.text, scope)
 				delete(valueTypes, alias)
 				if typeName := unwindStaticValueType(clause.text); typeName != "" {

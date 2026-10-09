@@ -23,7 +23,7 @@ import (
 func validateListOperands(cypher string, params map[string]interface{}) error {
 	return forEachListOperand(cypher, func(start, in int) error {
 		// FOREACH (x IN 5 | …) runs once with x = 5 in Neo4j, not a type error.
-		if foreachDeclaration(cypher, in) {
+		if foreachDeclaration(cypher, in) || forIterationDeclaration(cypher, in) {
 			return nil
 		}
 		end, typeName, parameter := staticListOperand(cypher, start, params)
@@ -104,7 +104,7 @@ func staticListOperandTypeError(text string, scope staticTypeScope) error {
 		if typeName == "" || strings.HasPrefix(typeName, "List<") {
 			return nil
 		}
-		if foreachDeclaration(text, in) || localListBindingShadowsOperand(text, start, name) {
+		if foreachDeclaration(text, in) || forIterationDeclaration(text, in) || localListBindingShadowsOperand(text, start, name) {
 			return nil
 		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreListOperandTypeMismatch(typeName))
@@ -133,6 +133,32 @@ func foreachDeclaration(text string, in int) bool {
 			}
 		}
 		from = start + len("FOREACH")
+	}
+	return false
+}
+
+// forIterationDeclaration reports whether the IN at offset in is a FOR
+// iteration clause's own (`FOR x IN …`). FOR iterates like UNWIND, coercing a
+// non-list operand to a single item, so its operand is not a list type error.
+func forIterationDeclaration(text string, in int) bool {
+	if !containsFold(text[:in], "FOR") {
+		return false
+	}
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens = false
+	opts.SkipBrackets = false
+	for from := 0; from < in; {
+		start := keywordIndexFrom(text, "FOR", from, opts)
+		if start < 0 || start >= in {
+			return false
+		}
+		nameStart := queryGapEnd(text, start+len("FOR"))
+		if nameStart < in {
+			if _, nameEnd, ok := scanIdentifierToken(text, nameStart); ok && queryGapEnd(text, nameEnd) == in {
+				return true
+			}
+		}
+		from = start + len("FOR")
 	}
 	return false
 }
