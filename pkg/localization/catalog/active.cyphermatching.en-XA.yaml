@@ -82,9 +82,6 @@
 - id: cyphermatching.optional_match_target_endpoint_unterminated
   description: Expanded pseudo-locale unterminated optional target endpoint.
   other: "[!! optional match pattern {{.Pattern}} has an unterminated target endpoint !!]"
-- id: cyphermatching.initial_traversal_match_failed
-  description: Expanded pseudo-locale initial traversal MATCH failure.
-  other: "[!! failed to execute initial traversal MATCH: {{.Cause}} !!]"
 - id: cyphermatching.aggregate_call_expected
   description: Expanded pseudo-locale expected whole aggregate call.
   other: "[!! not a whole aggregate call: {{.Expression}} !!]"

@@ -35,17 +35,17 @@ func TestBadgerConstraintValidation_NodeScanBranchCoverage(t *testing.T) {
 		err = engine.scanForNodeKeyViolationInTxn(txn, "test", "User", []string{"tenant", "uid"}, []any{"t1", "1"}, "test:u1")
 		require.NoError(t, err)
 
-		err = engine.legacyScanForTemporalOverlapInTxn(txn, "test", "User", "k", "from", "to", "bucket-1", now.Add(30*time.Minute), now.Add(90*time.Minute), true, "")
+		err = engine.legacyScanForTemporalOverlapInTxn(txn, "test", Constraint{Type: ConstraintTemporal, Label: "User", Properties: []string{"k", "from", "to"}}, "bucket-1", now.Add(30*time.Minute), now.Add(90*time.Minute), true, "")
 		require.Error(t, err)
 
-		err = engine.legacyScanForTemporalOverlapInTxn(txn, "test", "User", "k", "from", "to", "bucket-1", now.Add(30*time.Minute), now.Add(90*time.Minute), true, "test:u1")
+		err = engine.legacyScanForTemporalOverlapInTxn(txn, "test", Constraint{Type: ConstraintTemporal, Label: "User", Properties: []string{"k", "from", "to"}}, "bucket-1", now.Add(30*time.Minute), now.Add(90*time.Minute), true, "test:u1")
 		require.NoError(t, err)
 
-		err = engine.legacyScanForTemporalOverlapInTxn(txn, "test", "User", "k", "from", "to", "bucket-bad", now, now.Add(time.Hour), true, "")
+		err = engine.legacyScanForTemporalOverlapInTxn(txn, "test", Constraint{Type: ConstraintTemporal, Label: "User", Properties: []string{"k", "from", "to"}}, "bucket-bad", now, now.Add(time.Hour), true, "")
 		require.Error(t, err)
 
 		// scanForTemporalOverlapInTxn should fall back to legacy path when no temporal history index entries exist.
-		err = engine.scanForTemporalOverlapInTxn(txn, "test", "User", "k", "from", "to", "bucket-1", now.Add(30*time.Minute), now.Add(90*time.Minute), true, "")
+		err = engine.scanForTemporalOverlapInTxn(txn, "test", Constraint{Type: ConstraintTemporal, Label: "User", Properties: []string{"k", "from", "to"}}, "bucket-1", now.Add(30*time.Minute), now.Add(90*time.Minute), true, "")
 		require.Error(t, err)
 		return nil
 	}))

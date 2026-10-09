@@ -82,9 +82,6 @@
 - id: cyphermatching.optional_match_target_endpoint_unterminated
   description: OPTIONAL MATCH pattern has an unterminated target endpoint. Pattern includes untranslated Go quoting.
   other: "optional match pattern {{.Pattern}} has an unterminated target endpoint"
-- id: cyphermatching.initial_traversal_match_failed
-  description: Initial traversal MATCH execution failed. Cause is untranslated diagnostic text.
-  other: "failed to execute initial traversal MATCH: {{.Cause}}"
 - id: cyphermatching.aggregate_call_expected
   description: Expression is not one complete aggregate call. Expression includes untranslated Go quoting.
   other: "not a whole aggregate call: {{.Expression}}"

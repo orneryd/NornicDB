@@ -25,6 +25,9 @@ type temporalIndexDescriptor struct {
 	keyHash   string
 }
 
+// temporalConstraintForLookup finds the single-key temporal constraint on label
+// whose properties are exactly (keyProp, startProp, endProp). Composite-key
+// constraints are not addressable by one key property.
 func temporalConstraintForLookup(schema *SchemaManager, label, keyProp, startProp, endProp string) (Constraint, bool) {
 	if schema == nil {
 		return Constraint{}, false
@@ -48,21 +51,30 @@ func temporalConstraintsForLabels(schema *SchemaManager, labels []string) []Cons
 	constraints := schema.GetConstraintsForLabels(labels)
 	out := make([]Constraint, 0, len(constraints))
 	for _, c := range constraints {
-		if c.Type == ConstraintTemporal && len(c.Properties) == 3 {
+		if c.Type != ConstraintTemporal || c.EffectiveEntityType() != ConstraintEntityNode {
+			continue
+		}
+		if _, ok := splitTemporalKeySpec(c.Properties); ok {
 			out = append(out, c)
 		}
 	}
 	return out
 }
 
+// makeTemporalDescriptor builds the index descriptor of one grouping key of a
+// temporal constraint. Single-key constraints produce the same descriptor (and
+// so the same persisted index keys) as before composite keys were supported;
+// composite keys join their property names with temporalKeyPropSeparator and
+// hash the []interface{} key value as a composite key.
 func makeTemporalDescriptor(namespace string, c Constraint, keyValue interface{}) temporalIndexDescriptor {
+	spec, _ := splitTemporalKeySpec(c.Properties)
 	return temporalIndexDescriptor{
 		namespace: namespace,
 		label:     c.Label,
-		keyProp:   c.Properties[0],
-		startProp: c.Properties[1],
-		endProp:   c.Properties[2],
-		keyHash:   constraintValueKey(keyValue),
+		keyProp:   spec.indexKeyProp(),
+		startProp: spec.startProp,
+		endProp:   spec.endProp,
+		keyHash:   spec.keyHash(keyValue),
 	}
 }
 
@@ -124,20 +136,29 @@ func extractNodeIDFromTemporalHistoryKey(key []byte, prefixLen int) NodeID {
 	return NodeID(key[offset:])
 }
 
+// temporalNodeState returns the grouping key value (see temporalKeySpec) and
+// validity window of node under temporal constraint c; ok is false when the
+// key is incomplete or the start is not a temporal value.
 func temporalNodeState(node *Node, c Constraint) (interface{}, time.Time, time.Time, bool, bool) {
-	if node == nil || len(c.Properties) != 3 {
+	spec, ok := splitTemporalKeySpec(c.Properties)
+	if node == nil || !ok {
 		return nil, time.Time{}, time.Time{}, false, false
 	}
-	keyValue, ok := node.Properties[c.Properties[0]]
-	if !ok || keyValue == nil {
+	keyValue, missing := spec.keyValue(node.Properties)
+	if missing != "" {
 		return nil, time.Time{}, time.Time{}, false, false
 	}
-	start, ok := coerceTemporalTime(node.Properties[c.Properties[1]])
+	interval, ok := spec.interval(node.Properties)
 	if !ok {
 		return nil, time.Time{}, time.Time{}, false, false
 	}
-	end, hasEnd := coerceTemporalTime(node.Properties[c.Properties[2]])
-	return keyValue, start, end, hasEnd, true
+	return keyValue, interval.start, interval.end, interval.hasEnd, true
+}
+
+// temporalKeyValuesEqual compares two grouping key values of constraint c.
+func temporalKeyValuesEqual(c Constraint, a, b interface{}) bool {
+	spec, ok := splitTemporalKeySpec(c.Properties)
+	return ok && spec.keyEqual(a, b)
 }
 
 func temporalTargetForNode(namespace string, node *Node, c Constraint) (temporalRefreshTarget, time.Time, bool) {
@@ -192,7 +213,7 @@ func nodeMatchesTemporalLookup(node *Node, c Constraint, keyValue interface{}, a
 		return false
 	}
 	value, start, end, hasEnd, ok := temporalNodeState(node, c)
-	if !ok || !compareValues(value, keyValue) {
+	if !ok || !temporalKeyValuesEqual(c, value, keyValue) {
 		return false
 	}
 	if asOf.Before(start) {
@@ -812,7 +833,7 @@ func (tx *BadgerTransaction) refreshTemporalCurrentPointers(w *batchWriter, targ
 				continue
 			}
 			keyValue, start, end, hasEnd, ok := temporalNodeState(node, target.constraint)
-			if !ok || !compareValues(keyValue, target.keyValue) {
+			if !ok || !temporalKeyValuesEqual(target.constraint, keyValue, target.keyValue) {
 				continue
 			}
 			if now.Before(start) || (hasEnd && !now.Before(end)) {

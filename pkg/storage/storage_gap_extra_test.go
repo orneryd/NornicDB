@@ -815,7 +815,7 @@ func TestConstraintValidationCreationHelpers(t *testing.T) {
 			Label:      "Person",
 			Properties: []string{"id", "from"},
 		})
-		require.ErrorContains(t, err, "requires 3 properties")
+		require.ErrorContains(t, err, "requires at least 3 properties")
 
 		engine := &constraintValidationEngine{
 			Engine: base,

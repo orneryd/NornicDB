@@ -15,7 +15,7 @@
   other: "TEMPORAL constraint requires at least 3 properties (key..., valid_from, valid_to)"
 - id: cypherschema.temporal_node_arity_required
   description: Node temporal constraint property requirement. Property roles are machine identifiers.
-  other: "TEMPORAL constraint requires 3 properties (key, valid_from, valid_to)"
+  other: "TEMPORAL constraint requires at least 3 properties (key..., valid_from, valid_to)"
 - id: cypherschema.domain_value_list_invalid
   description: Domain value parser failure. Cause is untranslated diagnostic data.
   other: "invalid domain value list: {{.Cause}}"

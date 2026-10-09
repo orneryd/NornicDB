@@ -819,7 +819,7 @@ func TestCreateConstraint_SyntaxVariantCoverage(t *testing.T) {
 	}
 
 	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT bad_temporal FOR (t:BrokenTemporal) REQUIRE (t.key, t.from) IS TEMPORAL")
-	if err == nil || !strings.Contains(err.Error(), "TEMPORAL constraint requires 3 properties") {
+	if err == nil || !strings.Contains(err.Error(), "TEMPORAL constraint requires at least 3 properties") {
 		t.Fatalf("expected TEMPORAL property-count validation error, got: %v", err)
 	}
 }

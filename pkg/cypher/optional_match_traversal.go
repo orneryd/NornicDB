@@ -234,67 +234,6 @@ func extendTraversalRow(row traversalOptRow, nodeVar string, node *storage.Node,
 	return out
 }
 
-// matchTraversalOptRows runs one MATCH clause (pattern plus optional WHERE)
-// through the pipeline's MATCH operator; each result row binds exactly the
-// clause's node, relationship and path variables. Both the seed MATCH and the
-// general OPTIONAL MATCH clauses enumerate their rows with it: rebuilding the
-// clause as a query for the legacy MATCH executor ran a second matcher, which
-// dropped the pattern's own properties when the WHERE picked the nodes by an
-// index (#821, #898). A clause the operator declines is rejected.
-func (e *StorageExecutor) matchTraversalOptRows(ctx context.Context, clause string) ([]traversalOptRow, error) {
-	matched, handled, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, clause)
-	if err != nil {
-		return nil, err
-	}
-	if !handled {
-		return nil, unsupportedOptionalMatchShapeError(clause)
-	}
-	rows := make([]traversalOptRow, 0, len(matched))
-	for _, bindings := range matched {
-		row := traversalOptRow{
-			nodes: make(map[string]*storage.Node, len(bindings)),
-			rels:  make(map[string]*storage.Edge),
-		}
-		for variable, value := range bindings {
-			switch typed := value.(type) {
-			case *storage.Node:
-				row.nodes[variable] = typed
-			case *storage.Edge:
-				row.rels[variable] = typed
-			default:
-				if row.values == nil {
-					row.values = make(map[string]interface{})
-				}
-				row.values[variable] = typed
-			}
-		}
-		rows = append(rows, row)
-	}
-	return rows, nil
-}
-
-// executeTraversalSeededOptionalMatch executes a
-// "MATCH <pattern> [WHERE …] OPTIONAL MATCH ... [OPTIONAL MATCH ...] RETURN ..."
-// query. initialSection is everything between MATCH and the first OPTIONAL
-// MATCH (pattern plus optional WHERE), optSection is the raw text of all
-// OPTIONAL MATCH clauses, and restOfQuery begins at the RETURN after them.
-func (e *StorageExecutor) executeTraversalSeededOptionalMatch(ctx context.Context, initialSection, optSection, restOfQuery string) (*ExecuteResult, error) {
-	optionalClauses := splitOptionalMatchClauses(optSection)
-
-	rows, err := e.matchTraversalOptRows(ctx, "MATCH "+initialSection)
-	if err != nil {
-		return nil, localizedError(localization.CypherMatchingInitialTraversalMatchFailed(err), err)
-	}
-	for _, clause := range optionalClauses {
-		rows, err = e.applyTraversalOptionalClause(ctx, rows, clause)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return e.projectTraversalOptionalRows(ctx, rows, restOfQuery)
-}
-
 // applyTraversalOptionalClause left-outer-joins one OPTIONAL MATCH clause
 // against every row, routing by pattern shape (mirroring how Neo4j's planner
 // picks OptionalExpandAll for a connected single hop and Apply + Optional for
@@ -311,22 +250,6 @@ func (e *StorageExecutor) executeTraversalSeededOptionalMatch(ctx context.Contex
 //     Optional contract. No valid shape is rejected.
 func (e *StorageExecutor) applyTraversalOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
 	return e.applyGeneralOptionalClause(ctx, rows, clause)
-}
-
-// projectTraversalOptionalRows evaluates the RETURN clause of restOfQuery
-// against the joined rows using the real expression evaluator, routing
-// aggregate projections through implicit-grouping aggregation, then applies
-// ORDER BY / SKIP / LIMIT.
-func (e *StorageExecutor) projectTraversalOptionalRows(ctx context.Context, rows []traversalOptRow, restOfQuery string) (*ExecuteResult, error) {
-	returnIdx := findKeywordIndex(restOfQuery, "RETURN")
-	if returnIdx < 0 {
-		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	}
-	bindings := make([]pipelineRow, len(rows))
-	for index, row := range rows {
-		bindings[index] = pipelineRowFromTraversalOptionalRow(row)
-	}
-	return e.projectMergeReturn(ctx, bindings, restOfQuery[returnIdx:])
 }
 
 // isSimpleTraversalIdentifier reports whether s is a bare Cypher identifier

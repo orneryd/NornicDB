@@ -32,7 +32,6 @@ const (
 	MessageCypherMatchingOptionalMatchNodeEndpointUnterminated    MessageID = "cyphermatching.optional_match_node_endpoint_unterminated"
 	MessageCypherMatchingOptionalMatchTargetEndpointMissing       MessageID = "cyphermatching.optional_match_target_endpoint_missing"
 	MessageCypherMatchingOptionalMatchTargetEndpointUnterminated  MessageID = "cyphermatching.optional_match_target_endpoint_unterminated"
-	MessageCypherMatchingInitialTraversalMatchFailed              MessageID = "cyphermatching.initial_traversal_match_failed"
 	MessageCypherMatchingAggregateCallExpected                    MessageID = "cyphermatching.aggregate_call_expected"
 	MessageCypherMatchingFunctionParametersInsufficient           MessageID = "cyphermatching.function_parameters_insufficient"
 	MessageCypherMatchingLabelExpressionMixedColon                MessageID = "cyphermatching.label_expression_mixed_colon"
@@ -175,10 +174,6 @@ func CypherMatchingOptionalMatchTargetEndpointMissing(pattern string) Message {
 func CypherMatchingOptionalMatchTargetEndpointUnterminated(pattern string) Message {
 	quoted := strconv.Quote(pattern)
 	return cypherMatchingMessage(MessageCypherMatchingOptionalMatchTargetEndpointUnterminated, "optional match pattern "+quoted+" has an unterminated target endpoint", map[string]any{"Pattern": quoted})
-}
-
-func CypherMatchingInitialTraversalMatchFailed(cause error) Message {
-	return cypherMatchingCauseMessage(MessageCypherMatchingInitialTraversalMatchFailed, "failed to execute initial traversal MATCH: ", cause)
 }
 
 func CypherMatchingAggregateCallExpected(expression string) Message {

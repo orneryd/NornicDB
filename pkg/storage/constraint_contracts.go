@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -325,14 +326,24 @@ func ValidateConstraintContractOnCreationForEngine(engine Engine, contract Const
 			}
 		}
 	case ConstraintEntityRelationship:
-		edges, err := engine.GetEdgesByType(contract.TargetLabelOrType)
-		if err != nil {
-			return localizedError(localization.StorageSchemaScanRelationshipsFailed(err), err)
-		}
-		for _, edge := range edges {
+		// Stream the relationship type (scoped to the engine's database)
+		// instead of loading every edge of the type into memory.
+		var violation error
+		err := StreamEdgesByType(context.Background(), engine, contract.TargetLabelOrType, func(edge *Edge) error {
+			if edge == nil {
+				return nil
+			}
 			if err := validateConstraintContractForEdgeEngine(engine, contract, edge); err != nil {
+				violation = err
 				return err
 			}
+			return nil
+		})
+		if violation != nil {
+			return violation
+		}
+		if err != nil {
+			return localizedError(localization.StorageSchemaScanRelationshipsFailed(err), err)
 		}
 	default:
 		return localizedError(localization.StorageSchemaUnsupportedContractTargetEntityType(contract.TargetEntityType), nil)

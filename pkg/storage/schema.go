@@ -1086,8 +1086,9 @@ func (sm *SchemaManager) lockConstraintKeysOf(ctx context.Context, owner string,
 				properties = c.Properties
 			case c.Type == ConstraintNodeKey:
 				properties = c.Properties
-			case c.Type == ConstraintTemporal && len(c.Properties) == 3:
-				properties = c.Properties[:1]
+			case c.Type == ConstraintTemporal && len(c.Properties) >= 3:
+				// The grouping key: every property before (valid_from, valid_to).
+				properties = c.Properties[:len(c.Properties)-2]
 			default:
 				continue
 			}

@@ -593,10 +593,6 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 			}
 		}
 	}
-	if result, handled, err := e.tryExecutePipelineOptionalMatchPlan(ctx, cypher, clauses); handled || err != nil {
-		return newPipelineDispatchOutcome(result, handled, err)
-	}
-
 	// Start with one binding row. Parameters retain their typed values under
 	// their `$name` expression keys so list/map inputs are not stringified while
 	// crossing WITH and UNWIND horizons.
@@ -1458,52 +1454,6 @@ func pipelineSimpleNodeProjections(items []returnItem, variable string) bool {
 	return true
 }
 
-// tryExecutePipelineOptionalMatchPlan selects the optimized physical operator
-// for a read-only MATCH followed by one or more OPTIONAL MATCH clauses. The
-// query still enters through the row pipeline; clause count never changes the
-// logical handler. The traversal operator performs the same N-ary left-outer
-// join while avoiding repeated row materialization for graph-only queries.
-func (e *StorageExecutor) tryExecutePipelineOptionalMatchPlan(ctx context.Context, cypher string, clauses []pipelineClause) (*ExecuteResult, bool, error) {
-	if len(clauses) < 3 || clauses[0].kind != pipelineClauseMatch || clauses[len(clauses)-1].kind != pipelineClauseReturn {
-		return nil, false, nil
-	}
-	seenOptional := false
-	for index, clause := range clauses {
-		switch clause.kind {
-		case pipelineClauseMatch:
-			if seenOptional {
-				return nil, false, nil
-			}
-		case pipelineClauseOptionalMatch:
-			seenOptional = true
-		case pipelineClauseReturn:
-			if index != len(clauses)-1 {
-				return nil, false, nil
-			}
-		default:
-			return nil, false, nil
-		}
-	}
-	if !seenOptional || indexASCIIFold(cypher, "shortestpath") >= 0 {
-		return nil, false, nil
-	}
-
-	optionalIndex := findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH")
-	returnIndex := topLevelKeywordIndex(cypher, "RETURN")
-	if optionalIndex <= len("MATCH") || returnIndex <= optionalIndex {
-		return nil, false, nil
-	}
-	initialSection := strings.TrimSpace(cypher[len("MATCH"):optionalIndex])
-	optionalSection := strings.TrimSpace(cypher[optionalIndex+len("OPTIONAL MATCH") : returnIndex])
-	restOfQuery := strings.TrimSpace(cypher[returnIndex:])
-	if initialSection == "" || optionalSection == "" {
-		return nil, false, nil
-	}
-
-	result, err := e.executeTraversalSeededOptionalMatch(ctx, initialSection, optionalSection, restOfQuery)
-	return result, true, err
-}
-
 func pipelineHasClauseKind(clauses []pipelineClause, kind pipelineClauseKind) bool {
 	for _, clause := range clauses {
 		if clause.kind == kind {
@@ -1965,7 +1915,9 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 		relationshipVariables[variable] = struct{}{}
 	}
 
-	out := make([]pipelineRow, 0, len(rows))
+	// Convert every row, then left-outer-join the clause in one call: each
+	// output row starts from a full copy of its input row, in input order.
+	traversalRows := make([]traversalOptRow, 0, len(rows))
 	for _, row := range rows {
 		traversalRow := traversalOptRow{
 			nodes: make(map[string]*storage.Node),
@@ -1994,35 +1946,34 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 				traversalRow.values[name] = value
 			}
 		}
+		traversalRows = append(traversalRows, traversalRow)
+	}
 
-		expanded, err := e.applyTraversalOptionalClause(ctx, []traversalOptRow{traversalRow}, optionalClause[0])
-		if err != nil {
-			return nil, err
+	expanded, err := e.applyTraversalOptionalClause(ctx, traversalRows, optionalClause[0])
+	if err != nil {
+		return nil, err
+	}
+	out := make([]pipelineRow, 0, len(expanded))
+	for _, expandedRow := range expanded {
+		joined := make(pipelineRow, len(expandedRow.nodes)+len(expandedRow.rels)+len(expandedRow.values))
+		for name, node := range expandedRow.nodes {
+			if node == nil {
+				joined[name] = nil
+			} else {
+				joined[name] = node
+			}
 		}
-		for _, expandedRow := range expanded {
-			joined := make(pipelineRow, util.SafePreallocSum(len(row), len(expandedRow.nodes)+len(expandedRow.rels)))
-			for name, value := range row {
-				joined[name] = value
+		for name, relationship := range expandedRow.rels {
+			if relationship == nil {
+				joined[name] = nil
+			} else {
+				joined[name] = relationship
 			}
-			for name, node := range expandedRow.nodes {
-				if node == nil {
-					joined[name] = nil
-				} else {
-					joined[name] = node
-				}
-			}
-			for name, relationship := range expandedRow.rels {
-				if relationship == nil {
-					joined[name] = nil
-				} else {
-					joined[name] = relationship
-				}
-			}
-			for name, value := range expandedRow.values {
-				joined[name] = value
-			}
-			out = append(out, joined)
 		}
+		for name, value := range expandedRow.values {
+			joined[name] = value
+		}
+		out = append(out, joined)
 	}
 	return out, nil
 }

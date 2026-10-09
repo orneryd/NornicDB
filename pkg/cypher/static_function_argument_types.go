@@ -252,6 +252,13 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			index = next
 			continue
 		}
+		if precededByTypeAnnotation(text, index) {
+			// `x IS :: DATE` names a type, not a call: in a REQUIRE { ... }
+			// block the next entry may start with "(", which must not read
+			// as DATE(...).
+			index = next
+			continue
+		}
 		// A namespaced name (date.truncate, vector.similarity.cosine) is one
 		// function name.
 		for next < len(text) && text[next] == '.' && next+1 < len(text) && isIdentifierStart(text[next+1]) {
@@ -317,6 +324,31 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		index = open + 1
 	}
 	return nil
+}
+
+// precededByTypeAnnotation reports whether the identifier at index is written
+// as a type: after "::", "TYPED", or the ZONED / LOCAL qualifier of a temporal
+// type (IS :: ZONED DATETIME, IS TYPED LOCAL TIME).
+func precededByTypeAnnotation(text string, index int) bool {
+	end := index
+	for end > 0 && isSpaceByte(text[end-1]) {
+		end--
+	}
+	if end >= 2 && text[end-2:end] == "::" {
+		return true
+	}
+	start := end
+	for start > 0 && isIdentifierPart(text[start-1]) {
+		start--
+	}
+	word := text[start:end]
+	switch {
+	case strings.EqualFold(word, "TYPED"):
+		return true
+	case strings.EqualFold(word, "ZONED"), strings.EqualFold(word, "LOCAL"):
+		return precededByTypeAnnotation(text, start)
+	}
+	return false
 }
 
 // trimFromArguments reads trim's FROM form, trim([LEADING | TRAILING |

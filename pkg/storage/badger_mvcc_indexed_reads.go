@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -403,43 +404,9 @@ func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVers
 // index in that snapshot represents membership at BEGIN, so unrelated edge
 // bodies are never decoded.
 func (b *BadgerEngine) getEdgesByTypeVisibleAtSnapshotWithView(edgeType string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
-	deregister, err := b.beginMVCCSnapshotRead(version)
-	if err != nil {
-		return nil, err
-	}
-	defer deregister()
-
 	edges := make([]*Edge, 0)
-	err = view(func(txn *badger.Txn) error {
-		if edgeType == "" {
-			return b.iterateEdgesVisibleAtInTxn(txn, version, func(edge *Edge) error {
-				edges = append(edges, edge)
-				return nil
-			})
-		}
-		prefix := edgeTypeIndexPrefix(edgeType)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			edgeNum, ok := extractEdgeNumIDFromEdgeTypeKey(it.Item().Key())
-			if !ok {
-				continue
-			}
-			edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
-			if !ok || edgeID == "" {
-				continue
-			}
-			edge, getErr := b.getEdgeVisibleAtInTxn(txn, edgeID, version)
-			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
-				continue
-			}
-			if getErr != nil {
-				return getErr
-			}
-			if edge != nil && edge.Type == edgeType {
-				edges = append(edges, edge)
-			}
-		}
+	err := b.streamEdgesByTypeVisibleAtSnapshotWithView(context.Background(), "", edgeType, version, view, func(edge *Edge) error {
+		edges = append(edges, edge)
 		return nil
 	})
 	if err != nil {

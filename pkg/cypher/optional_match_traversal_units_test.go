@@ -828,14 +828,6 @@ func TestGh713TraversalAggregatePlannerParity(t *testing.T) {
 	}
 }
 
-func TestTraversalOptionalProjectionWithoutReturn(t *testing.T) {
-	executor, ctx := newUnitExecutor(t)
-	result, err := executor.projectTraversalOptionalRows(ctx, nil, "")
-	require.NoError(t, err)
-	require.Empty(t, result.Columns)
-	require.Empty(t, result.Rows)
-}
-
 func TestExtractRelationshipVariables_Whitespace(t *testing.T) {
 	require.Equal(t, []string{"r"}, extractRelationshipVariables("(a)-[ r :T ]->(b)"), "whitespace around the variable is tolerated")
 	require.Empty(t, extractRelationshipVariables("(a)-[ :T ]->(b)"), "whitespace before an anonymous type yields no variable")

@@ -1275,7 +1275,7 @@ func TestCypherHelpers_CreateAndDropConstraintVariants(t *testing.T) {
 			"CREATE CONSTRAINT c_temporal_bad IF NOT EXISTS FOR (n:Fact) REQUIRE (n.key, n.valid_from) IS TEMPORAL",
 		)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "TEMPORAL constraint requires 3 properties")
+		assert.Contains(t, err.Error(), "TEMPORAL constraint requires at least 3 properties")
 	})
 }
 
@@ -1901,10 +1901,10 @@ func TestCypherHelpers_ExecuteCreateConstraint_MultiSyntaxCoverage(t *testing.T)
 		require.NoError(t, err, q)
 	}
 
-	// Temporal constraint requires exactly 3 properties.
+	// Temporal constraint requires at least 3 properties (key..., valid_from, valid_to).
 	_, err := exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT bad_temporal FOR (n:Versioned) REQUIRE (n.key, n.valid_from) IS TEMPORAL")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "TEMPORAL constraint requires 3 properties")
+	assert.Contains(t, err.Error(), "TEMPORAL constraint requires at least 3 properties")
 }
 
 func TestCypherHelpers_ExecuteCreateConstraint_ValidationFailureBranches(t *testing.T) {
