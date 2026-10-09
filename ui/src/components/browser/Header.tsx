@@ -3,6 +3,7 @@
  * Extracted from Browser.tsx for reusability
  */
 
+import { useEffect, useState } from "react";
 import {
   Network,
   HardDrive,
@@ -13,9 +14,13 @@ import {
   MessageCircle,
   Shield,
   Database,
+  LogOut,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useAppStore } from "../../store/appStore";
+import { api } from "../../utils/api";
 import type { DatabaseStats } from "../../utils/api";
+import { BASE_PATH, joinBasePath } from "../../utils/basePath";
 
 interface HeaderProps {
   stats: DatabaseStats | null;
@@ -44,6 +49,26 @@ export function Header({
   onSecurityClick,
 }: HeaderProps) {
   const navigate = useNavigate();
+  const logout = useAppStore((state) => state.logout);
+  const [authEnabled, setAuthEnabled] = useState(false);
+  const [logoutError, setLogoutError] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  useEffect(() => {
+    api.getAuthConfig().then((config) => setAuthEnabled(config.securityEnabled));
+  }, []);
+
+  const handleLogout = async () => {
+    setLogoutError(false);
+    setLoggingOut(true);
+    try {
+      await logout();
+      window.location.replace(joinBasePath(BASE_PATH, "/login"));
+    } catch {
+      setLogoutError(true);
+      setLoggingOut(false);
+    }
+  };
   const totalNodes = stats?.database?.nodes ?? 0;
   const pendingNodes = Math.max(0, embedData.pendingNodes ?? 0);
   const queueCompletePct =
@@ -243,6 +268,19 @@ export function Header({
             <span>Security</span>
           </button>
 
+          {authEnabled && (
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all bg-norse-shadow hover:bg-norse-rune text-norse-silver hover:text-white border border-norse-rune"
+              title="Sign out of NornicDB"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>Log out</span>
+            </button>
+          )}
+
           <div
             className={`flex items-center gap-2 px-3 py-1 rounded-full ${
               connected
@@ -269,6 +307,11 @@ export function Header({
       {embedMessage && (
         <div className="absolute top-16 right-4 bg-norse-shadow border border-norse-rune rounded-lg px-4 py-2 text-sm text-norse-silver shadow-lg">
           {embedMessage}
+        </div>
+      )}
+      {logoutError && (
+        <div role="alert" className="absolute top-16 right-4 bg-norse-shadow border border-red-500 rounded-lg px-4 py-2 text-sm text-red-400 shadow-lg">
+          Sign out failed. Please try again.
         </div>
       )}
     </header>

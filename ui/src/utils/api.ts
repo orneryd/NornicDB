@@ -1132,10 +1132,11 @@ class NornicDBClient {
   }
 
   async logout(): Promise<void> {
-    await fetch(joinBasePath(BASE_PATH, "/auth/logout"), {
+    const res = await fetch(joinBasePath(BASE_PATH, "/auth/logout"), {
       method: "POST",
       credentials: "include",
     });
+    if (!res.ok) throw new Error("Sign out failed");
     // Tear down the Bolt driver so the next login uses a fresh cookie.
     await this.closeBoltDriver();
   }
