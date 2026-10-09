@@ -43,41 +43,30 @@ cohesive helper cannot fit the existing file-size boundary.
 | [call_vector.go](../../../pkg/cypher/call_vector.go), [call_fulltext.go](../../../pkg/cypher/call_fulltext.go), [schema.go](../../../pkg/storage/schema.go), [search/](../../../pkg/search) | Native SEARCH operators reuse retrieval services; persist multi-target/filter index metadata and real option effects; do not rewrite clauses into CALL text |
 | [schema_contracts.go](../../../pkg/cypher/schema_contracts.go), [storage/constraint_contracts.go](../../../pkg/storage/constraint_contracts.go), [storage/schema_write_checks.go](../../../pkg/storage/schema_write_checks.go), [badger_transaction_schema.go](../../../pkg/storage/badger_transaction_schema.go) | Open graph types lower to canonical schema rules with provenance/classification; reuse enforcement but distinguish native contract extensions |
 | [executor_show.go](../../../pkg/cypher/executor_show.go), [show_admin.go](../../../pkg/cypher/show_admin.go), [show_schema_values.go](../../../pkg/cypher/show_schema_values.go), [procedure_registry_builtin.go](../../../pkg/cypher/procedure_registry_builtin.go) | Explicit-25 columns/types/catalogs and composable SHOW/TERMINATE; preserve existing API availability and response contracts outside opt-in language differences |
-| [config/config.go](../../../pkg/config/config.go), [cypher/executor.go](../../../pkg/cypher/executor.go), [nornicdb/db.go](../../../pkg/nornicdb/db.go), [cmd/nornicdb/main.go](../../../cmd/nornicdb/main.go) | Validate NORNICDB_CYPHER_VERSION and inject an immutable resolved process default into every executor construction path, including database/session/cache-policy executors; no per-query environment reads |
-| [multidb/routing.go](../../../pkg/multidb/routing.go) | Carry resolved language across USE/aliases without target-database reselection; no new persisted database defaults or default-language DDL |
+| [statement_framing.go](../../../pkg/cypher/statement_framing.go), [antlr grammar](../../../pkg/cypher/antlr) | Accept optional CYPHER 5 / CYPHER 25 preambles in one shared grammar; both parsers consume the preamble themselves so callers pass statements as written. No language default setting, config field or DDL is introduced |
 | [testing/cypher/](../../../testing/cypher), [scripts/cypher-tck/](../../../scripts/cypher-tck), [cypher-conformance.yml](../../../.github/workflows/cypher-conformance.yml) | Current oracle lane plus existing 5/TCK evidence; explicit release/language/edition/protocol matrices and release-drift reporting |
 
 ## Shared execution details
 
-### Query-expressed language selection
+### One shared grammar, optional headers
 
-Carry resolved language through implicit/explicit transaction execution, nested
-CALL/EXISTS/COUNT/COLLECT, USE/composites, streams and procedures. Verify on the
-oracle whether individual statements may select different languages inside
-an explicit transaction; never assume a transaction pins one language merely
-because it pins security/database.
+There is one grammar for Cypher 5 and Cypher 25 surface. The optional
+`CYPHER 5` / `CYPHER 25` header is accepted and discarded by both parsers; no
+language default setting, config field, database field or default-language DDL
+is introduced, and no execution context is keyed on the version. Unprefixed
+statements run through the same clause kinds and operators as prefixed ones.
 
-Resolve language as: explicit CYPHER 5 / CYPHER 25, otherwise the validated
-process default `NORNICDB_CYPHER_VERSION`, otherwise 5 when the variable is
-absent. With the default set to 25, unprefixed queries have the same language
-admission and semantics as explicit 25, including new constructs. An explicit
-5 prefix still selects 5 under a 25 default, and vice versa.
-
-Read configuration at startup/executor construction, not while executing each
-query. Accept only 5 or 25; a present empty or invalid value surfaces a named
-configuration error before requests are accepted, never a silent 5 fallback.
-Use existing configuration load/validation error paths. Ensure config-file and
-environment entry points and database/session/cache-policy executor creation
-agree on the resolved value; avoid independent default decisions in transports.
-
-There is no database language field, Neo4j db.query.default_language setting,
-ALTER DEFAULT LANGUAGE or alias-default inheritance work in this delivery.
-Carry resolved language through routing without changing database/security
-resolution or rereading defaults in a nested query.
+The SRD parser is permissive: `LET`, `FILTER`, `FOR` and correlated unscoped
+`CALL` bodies execute without a header. The ANTLR parser keeps the strict
+Cypher 5.26 contract for those additive forms (it requires `CYPHER 25`) and
+still rejects implicit CALL imports, but it also parses and discards the
+preamble itself, so callers never strip headers before invoking `Parse` or
+`Validate`. Both parsers feed the same pipeline clause kinds and operators;
+ANTLR is a syntax front end, not a separate execution path.
 
 Neo4j's own default configuration and upstream syntax removals are reference
 facts, not automatic implementation requirements. Preserve existing supported
-input and APIs, including retained extensions when explicit 25 is requested.
+input and APIs, including retained extensions.
 Report those differences honestly rather than claiming identical rejection
 behavior. The source-backed examples and scope decision are recorded in
 [language selection research](language-selection-research.md).

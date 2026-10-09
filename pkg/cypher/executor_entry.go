@@ -184,6 +184,12 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err := validateCypherPreamble(cypher); err != nil {
 		return nil, err
 	}
+	if config.IsANTLRParser() {
+		body, _ := stripCypherPreamble(cypher)
+		if cypherGrammarVersion(cypher) != "25" && usesSharedGrammarClauses(body) {
+			return nil, sharedClauseSyntaxError("LET, FILTER and FOR require CYPHER 25 with the ANTLR parser")
+		}
+	}
 	// Neo4j 5 statement framing: leading CYPHER [version] [option=value …]
 	// groups run the statement they precede, and a trailing FINISH (on every
 	// UNION branch) runs it and returns no rows.
@@ -508,8 +514,23 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 				}
 			}
 		}
+		// FOR is shared with administration and schema DDL (CREATE ALIAS …
+		// FOR DATABASE …, CREATE INDEX … FOR (n:Label)), so it is not a
+		// dangling-reading keyword on its own. Only a trailing FOR iteration
+		// clause (FOR x IN …) is a reading clause with nothing after it.
+		if last != "UNWIND" && last != "MATCH" && last != "OPTIONAL" && last != "WITH" &&
+			last != "LET" && last != "FILTER" {
+			if clauses, ok := splitPipelineClausesAllowingProcedureCalls(cypher); ok && len(clauses) > 0 {
+				tail := clauses[len(clauses)-1]
+				if tail.kind == pipelineClauseUnwind && startsWithKeywordFold(tail.text, "FOR") {
+					if _, _, iteration := parsePipelineIteration(tail.text); iteration {
+						last = "FOR"
+					}
+				}
+			}
+		}
 		switch last {
-		case "UNWIND", "MATCH", "OPTIONAL", "WITH":
+		case "UNWIND", "MATCH", "OPTIONAL", "WITH", "LET", "FILTER", "FOR":
 			return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 				fmt.Sprintf("Invalid input: %s must be followed by a clause", last))
 		}

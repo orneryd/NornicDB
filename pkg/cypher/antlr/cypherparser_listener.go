@@ -10,6 +10,15 @@ type CypherParserListener interface {
 	// EnterScript is called when entering the script production.
 	EnterScript(c *ScriptContext)
 
+	// EnterCypherPreamble is called when entering the cypherPreamble production.
+	EnterCypherPreamble(c *CypherPreambleContext)
+
+	// EnterCypherGroup is called when entering the cypherGroup production.
+	EnterCypherGroup(c *CypherGroupContext)
+
+	// EnterCypherOption is called when entering the cypherOption production.
+	EnterCypherOption(c *CypherOptionContext)
+
 	// EnterShellCommand is called when entering the shellCommand production.
 	EnterShellCommand(c *ShellCommandContext)
 
@@ -120,6 +129,18 @@ type CypherParserListener interface {
 
 	// EnterUnwindSt is called when entering the unwindSt production.
 	EnterUnwindSt(c *UnwindStContext)
+
+	// EnterLetSt is called when entering the letSt production.
+	EnterLetSt(c *LetStContext)
+
+	// EnterLetItem is called when entering the letItem production.
+	EnterLetItem(c *LetItemContext)
+
+	// EnterFilterSt is called when entering the filterSt production.
+	EnterFilterSt(c *FilterStContext)
+
+	// EnterForSt is called when entering the forSt production.
+	EnterForSt(c *ForStContext)
 
 	// EnterReadingStatement is called when entering the readingStatement production.
 	EnterReadingStatement(c *ReadingStatementContext)
@@ -382,6 +403,15 @@ type CypherParserListener interface {
 	// ExitScript is called when exiting the script production.
 	ExitScript(c *ScriptContext)
 
+	// ExitCypherPreamble is called when exiting the cypherPreamble production.
+	ExitCypherPreamble(c *CypherPreambleContext)
+
+	// ExitCypherGroup is called when exiting the cypherGroup production.
+	ExitCypherGroup(c *CypherGroupContext)
+
+	// ExitCypherOption is called when exiting the cypherOption production.
+	ExitCypherOption(c *CypherOptionContext)
+
 	// ExitShellCommand is called when exiting the shellCommand production.
 	ExitShellCommand(c *ShellCommandContext)
 
@@ -492,6 +522,18 @@ type CypherParserListener interface {
 
 	// ExitUnwindSt is called when exiting the unwindSt production.
 	ExitUnwindSt(c *UnwindStContext)
+
+	// ExitLetSt is called when exiting the letSt production.
+	ExitLetSt(c *LetStContext)
+
+	// ExitLetItem is called when exiting the letItem production.
+	ExitLetItem(c *LetItemContext)
+
+	// ExitFilterSt is called when exiting the filterSt production.
+	ExitFilterSt(c *FilterStContext)
+
+	// ExitForSt is called when exiting the forSt production.
+	ExitForSt(c *ForStContext)
 
 	// ExitReadingStatement is called when exiting the readingStatement production.
 	ExitReadingStatement(c *ReadingStatementContext)

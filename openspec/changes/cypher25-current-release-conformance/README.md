@@ -3,16 +3,20 @@
 ## Outcome and scope
 
 NornicDB currently rejects `CYPHER 25` and has additional semantic gaps.
-This is a planning/evidence change, not an implementation or certification.
 The reference target is Neo4j 2026.09.0; current Enterprise differential
 acceptance has not been run.
 
-Implement new features inline in the existing pipeline. Query prefixes override
-the process default `NORNICDB_CYPHER_VERSION=5|25`; unprefixed queries use that
-version. Unset retains 5; invalid settings fail validation. Preserve existing
-queries/APIs. No automatic default cutover, persisted database-language
-migration, default-language DDL, separate executor or retry as 5. Retained
-constructs removed upstream are documented NornicDB extensions.
+Implement new features inline in the existing pipeline with one shared grammar.
+There is no language default setting and no header is required: `CYPHER 5` /
+`CYPHER 25` headers are optional and accepted directly by both parsers.
+The SRD parser accepts `LET`/`FILTER`/`FOR` and correlated unscoped `CALL`
+without a header; the ANTLR parser keeps the strict Cypher 5.26 contract
+(those additive clauses need `CYPHER 25`) while consuming the preamble itself.
+Preserve existing queries/APIs; no automatic default cutover, persisted
+database-language migration, default-language DDL, separate executor or
+retry-as-5. Retained constructs removed upstream are documented NornicDB
+extensions. The first implemented slice is this shared grammar foundation;
+the remaining inventory in [tasks](tasks.md) stays open.
 
 ## Artifacts
 
@@ -46,5 +50,7 @@ Validate this plan:
 OPENSPEC_TELEMETRY=0 npx --yes @fission-ai/openspec validate cypher25-current-release-conformance --strict
 ```
 
-All implementation tasks stay unchecked until independently verified.
-Default 25 enables new syntax unprefixed; explicit 5 still selects 5.
+All remaining implementation tasks stay unchecked until independently
+verified. The shared grammar makes new syntax available unprefixed through the
+SRD parser; the optional `CYPHER 5` / `CYPHER 25` header still works on both
+parsers.

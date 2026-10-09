@@ -115,7 +115,7 @@ func (e *StorageExecutor) pipelineProjectWithRow(ctx context.Context, row pipeli
 }
 
 func pipelineUnwindUsesRange(clause string) bool {
-	expression, _, ok := splitUnwindBody(pipelineClauseBody(clause, "UNWIND"))
+	expression, _, ok := parsePipelineIteration(clause)
 	function, _, call := parseFunctionCallWS(strings.TrimSpace(expression))
 	return ok && call && strings.EqualFold(function, "range")
 }
@@ -523,7 +523,7 @@ func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pi
 }
 
 func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) (pipelineRowSource, int, bool) {
-	expression, alias, ok := splitUnwindBody(pipelineClauseBody(clauses[0].text, "UNWIND"))
+	expression, alias, ok := parsePipelineIteration(clauses[0].text)
 	if !ok {
 		return nil, 0, false
 	}
@@ -594,6 +594,12 @@ func projectionExpressions(clause, keyword string) []string {
 }
 
 func parseProjectionExpressions(clause, keyword string) []string {
+	if strings.EqualFold(keyword, "UNWIND") {
+		if expression, _, ok := parsePipelineIteration(clause); ok {
+			return []string{expression}
+		}
+		return nil
+	}
 	body := strings.TrimSpace(clause)
 	if len(body) < len(keyword) || !strings.EqualFold(body[:len(keyword)], keyword) {
 		return nil

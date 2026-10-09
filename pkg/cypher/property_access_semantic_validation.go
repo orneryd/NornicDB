@@ -67,6 +67,26 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 	for _, clause := range clauses {
 		text := clause.text
 		switch clause.kind {
+		case pipelineClauseLet:
+			projections, err := parsePipelineLet(text)
+			if err != nil {
+				return err
+			}
+			next := make(map[string]string, len(types)+len(projections))
+			for name, typeName := range types {
+				next[name] = typeName
+			}
+			for _, projection := range projections {
+				if err := checkExpressionPropertyAccesses(projection.expression, types, params); err != nil {
+					return err
+				}
+				next[projection.alias] = propertyAccessExpressionType(projection.expression, types, params)
+			}
+			types = next
+		case pipelineClauseFilter:
+			if err := checkExpressionPropertyAccesses(pipelineFilterExpression(text), types, params); err != nil {
+				return err
+			}
 		case pipelineClauseWith, pipelineClauseReturn:
 			keyword := "WITH"
 			if clause.kind == pipelineClauseReturn {
@@ -118,21 +138,20 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 			}
 			types = next
 		case pipelineClauseUnwind:
-			body := strings.TrimSpace(text[len("UNWIND"):])
-			as := findKeywordIndexInContext(body, "AS")
-			if as < 0 {
+			expression, alias, ok := parsePipelineIteration(text)
+			if !ok {
 				continue
 			}
-			if err := checkExpressionPropertyAccesses(body[:as], types, params); err != nil {
+			if err := checkExpressionPropertyAccesses(expression, types, params); err != nil {
 				return err
 			}
-			variable := normalizeProjectionColumnName(strings.TrimSpace(body[as+len("AS"):]))
+			variable := normalizeProjectionColumnName(alias)
 			if _, imported := outer[variable]; imported {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
 					fmt.Sprintf("Variable `%s` already declared in outer scope", variable))
 			}
 			element := ""
-			listType := propertyAccessExpressionType(body[:as], types, params)
+			listType := propertyAccessExpressionType(expression, types, params)
 			if strings.HasPrefix(listType, "List<") && strings.HasSuffix(listType, ">") && !strings.Contains(listType, ",") {
 				if inner := listType[len("List<") : len(listType)-1]; inner != "T" {
 					element = inner

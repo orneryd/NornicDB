@@ -1,71 +1,44 @@
 ## ADDED Requirements
 
-### Requirement: One pipeline with explicit language semantics
+### Requirement: One shared grammar with optional headers
 
-CYPHER 5 and CYPHER 25 SHALL execute through the same shared pipeline and
-semantic helpers. The selected language SHALL remain available to admission,
-evaluation, catalogs and response rendering. Unsupported 25 behavior SHALL
-NOT retry through 5 or an independently interpreted query-text path.
+Cypher 5 and Cypher 25 surface SHALL execute through the same shared pipeline,
+clause kinds and operators. The `CYPHER 5` / `CYPHER 25` header SHALL be
+optional, accepted and discarded by both parsers, and callers SHALL pass
+statements as written without stripping the preamble. No language default,
+configuration setting, persisted database field or default-language DDL SHALL
+be introduced. Unsupported 25 behavior SHALL NOT retry through 5 or an
+independently interpreted query-text path.
 
-#### Scenario: Explicit 25 reaches execution
+#### Scenario: Explicit header is accepted
 
 - **WHEN** `CYPHER 25 RETURN 1 AS v` executes through either parser and any supported transport
 - **THEN** it returns integer 1 rather than the current version ArgumentError (`V01`, probe P01)
+
+#### Scenario: Headerless additive syntax
+
+- **WHEN** `FOR x IN [1,2,3] LET scaled = x * 10 FILTER scaled > 10 RETURN x, scaled` executes through the SRD parser
+- **THEN** it returns (2, 20) and (3, 30) without a header; the same statement with `CYPHER 25` also succeeds on both parsers (`Q01`, probe P03)
 
 #### Scenario: Existing syntax remains supported
 
 - **WHEN** an existing supported statement uses a construct upstream removed in 25
 - **THEN** NornicDB retains its working implementation, including under explicit 25, and records the upstream difference instead of introducing a breaking rejection (`R01`)
 
-### Requirement: Query prefix overrides configured process default
+### Requirement: Parser agreement within one grammar
 
-An explicit CYPHER 5 / CYPHER 25 prefix SHALL override the process default
-configured by `NORNICDB_CYPHER_VERSION=5|25`. Unprefixed queries SHALL use the
-configured version, including its new syntax; an absent setting SHALL retain
-5. No persisted database defaults, language migration or default-language DDL
-SHALL be introduced.
+Both parsers SHALL accept the optional preamble and feed the same pipeline
+operators. The SRD parser MAY accept additive clauses and correlated unscoped
+CALL bodies without a header; the ANTLR parser SHALL keep the strict Cypher
+5.26 admission for those forms. Divergent admission between the two front ends
+SHALL be explicit, tested and documented, never a silent execution difference.
 
-#### Scenario: Configured default and query overrides
+#### Scenario: ANTLR requires the header for additive clauses
 
-- **WHEN** each default 5/25 is tested with unprefixed, explicit 5 and explicit 25 queries
-- **THEN** unprefixed queries use the configured version and each explicit prefix wins; FOR/LET/FILTER works unprefixed under default 25 (`V01`)
+- **WHEN** `FOR x IN [1] RETURN x` is validated by the ANTLR parser without a header
+- **THEN** it fails with the documented strict error, while `CYPHER 25 FOR x IN [1] RETURN x` succeeds (`V01`)
 
-#### Scenario: Existing queries survive upgrade and reopen
+#### Scenario: Implicit CALL import remains a tested difference
 
-- **WHEN** an existing database is upgraded and reopened
-- **THEN** existing unprefixed queries retain their configured-language contracts, explicit 5 remains 5 regardless of the process default, and no persisted language migration occurs (`V01`, `R01`)
-
-#### Scenario: Routing preserves the query prefix
-
-- **WHEN** a prefixed query resolves USE or an alias through supported routing
-- **THEN** the selected query language is retained without introducing database/alias defaults or changing authorization (`V01`)
-
-### Requirement: Validate language configuration before execution
-
-Invalid or present-empty NORNICDB_CYPHER_VERSION settings SHALL surface
-configuration errors before serving requests, not silently fall back.
-Configuration SHALL be resolved outside the per-query hot path and passed
-consistently to all executor construction paths.
-
-#### Scenario: Invalid configured version
-
-- **WHEN** NORNICDB_CYPHER_VERSION is present with an empty value or anything other than 5 or 25
-- **THEN** startup/configuration validation reports the setting and prevents request serving without silently selecting another version (`V01`)
-
-### Requirement: Language-safe preparation and caches
-
-Preparation SHALL select language before version-sensitive normalization and
-semantic validation. Cached analysis, validation, plans and results SHALL be
-partitioned by resolved query language and relevant schema/security revision.
-Unprefixed statements SHALL resolve language before cache lookup.
-Bound subqueries and streams SHALL retain the required context.
-
-#### Scenario: Same text in two language contexts
-
-- **WHEN** the same query body runs under both configured defaults and explicit CYPHER 5 / CYPHER 25 overrides
-- **THEN** a cache cannot reuse incompatible admission, output types or result values (`V01`, `A01`)
-
-#### Scenario: Explicit transaction changes statement language
-
-- **WHEN** statements inside one explicit transaction request different language prefixes
-- **THEN** admission and context propagation match the pinned oracle without losing transaction identity or reusing another statement's language (`V01`)
+- **WHEN** a correlated unscoped CALL body reads an outer variable without importing it
+- **THEN** the SRD parser executes it and the ANTLR parser rejects it with the Cypher 5.26 contract; both behaviors are pinned by tests (`R01`)

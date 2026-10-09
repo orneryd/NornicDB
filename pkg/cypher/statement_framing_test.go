@@ -269,7 +269,6 @@ func TestResidualCypherPreambleAdmission(t *testing.T) {
 			t.Cleanup(func() { config.SetParserType(previous) })
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "preamble"))
 			for _, testCase := range []struct{ prefix, code string }{
-				{"CYPHER 25", "Neo.ClientError.Statement.ArgumentError"},
 				{"CYPHER 5.0", "Neo.ClientError.Statement.ArgumentError"},
 				{"CYPHER 3.5", "Neo.ClientError.Statement.ArgumentError"},
 				{"CYPHER 4.4", "Neo.ClientError.Statement.ArgumentError"},

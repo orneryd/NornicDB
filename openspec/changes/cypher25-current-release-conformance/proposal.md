@@ -13,14 +13,16 @@ stable release verified on 2026-10-08 UTC, without creating a parallel executor.
 - Keep fast paths and the parser adapter on those same semantic helpers.
   No separate Cypher 25 interpreter, duplicated router or reconstructed-query
   fallback is introduced.
-- Support explicit CYPHER 5 and CYPHER 25 in that one execution path. Use a
-  small immutable language context only for real differences in admission,
-  semantics, catalogs and response values; do not fork the execution engine.
-- Select language with CYPHER 5 / CYPHER 25 in query text, overriding the
-  process default `NORNICDB_CYPHER_VERSION=5|25`. Unprefixed queries use that
-  configured version; unset retains 5. Reject invalid configured values.
-  No automatic installation default cutover, persisted database-language
-  migration or default-language DDL.
+- One shared grammar accepts both Cypher 5 and Cypher 25 surface. There is no
+  separate version parser, dispatcher, or retry-as-5 path, and no language
+  default setting: `CYPHER 5` / `CYPHER 25` headers are optional and accepted
+  directly by both parsers. Unprefixed statements use the shared grammar.
+- The SRD parser is permissive: `LET`, `FILTER`, `FOR` and correlated
+  unscoped `CALL` bodies work without a header. The ANTLR parser stays strict
+  like Neo4j 5.26 (additive clauses need `CYPHER 25`; implicit CALL imports
+  are rejected), but it also consumes the preamble itself so callers do not
+  strip it. No installation/database default, default-language DDL, or
+  persisted language migration is introduced.
 - Preserve existing queries and APIs. Add current features without upstream
   removals becoming NornicDB deletions or new rejection rules for existing
   supported input. Record retained extensions as explicit compatibility
@@ -36,7 +38,7 @@ stable release verified on 2026-10-08 UTC, without creating a parallel executor.
 
 ### New Capabilities
 
-- `cypher-language-selection`: query override and configured process default in one pipeline.
+- `cypher-language-selection`: optional query prefix and one shared grammar in one pipeline.
 - `cypher-current-query-semantics`: current clauses, composition, expressions,
   path behavior and batch transactions.
 - `cypher-current-values-schema-search`: persistent value types, graph types
@@ -63,4 +65,6 @@ Related open dependencies: #935 (effective graph/security), #936
 (impersonation), #937 (CDC), #938 (authorized search pagination).
 Follow [convergence Step 1](../../../docs/plans/cypher-convergence-plan.md#step-1--install-the-correctness-baseline-before-parser-changes):
 independent evidence before changing semantics, shared execution, no replay
-after effects. Only planning/evidence/documentation is delivered here.
+after effects. The first implemented slice is the shared grammar foundation
+(optional headers, LET/FILTER/FOR, permissive correlated CALL); the remaining
+inventory in [tasks](tasks.md) stays open.

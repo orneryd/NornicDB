@@ -59,6 +59,8 @@ const (
 	pipelineClauseCallSubquery
 	// pipelineClauseCall is a procedure call, CALL proc(args) YIELD … [WHERE …].
 	pipelineClauseCall
+	pipelineClauseLet
+	pipelineClauseFilter
 )
 
 // pipelineClause is one segment of the pipeline. `text` includes the leading
@@ -180,7 +182,7 @@ func canExecuteAsPipeline(cypher string) ([]pipelineClause, bool) {
 		}
 		switch clauses[0].kind {
 		case pipelineClauseMatch, pipelineClauseCreate, pipelineClauseMerge, pipelineClauseForeach, pipelineClauseCallSubquery,
-			pipelineClauseSet, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseWith, pipelineClauseUnwind:
+			pipelineClauseSet, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseWith, pipelineClauseUnwind, pipelineClauseLet, pipelineClauseFilter:
 		default:
 			return nil, false
 		}
@@ -299,6 +301,9 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 		{"REMOVE", pipelineClauseRemove},
 		{"WITH", pipelineClauseWith},
 		{"UNWIND", pipelineClauseUnwind},
+		{"FOR", pipelineClauseUnwind},
+		{"LET", pipelineClauseLet},
+		{"FILTER", pipelineClauseFilter},
 		{"FOREACH", pipelineClauseForeach},
 		{"RETURN", pipelineClauseReturn},
 	}
@@ -347,6 +352,14 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 			if k.name == "DELETE" {
 				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
 				if strings.HasSuffix(preceding, "DETACH") {
+					continue
+				}
+			}
+			// FOR is only an iteration clause in the shared grammar. In
+			// schema and alias DDL it is a specifier (CREATE INDEX … FOR
+			// (n:Label), CREATE ALIAS … FOR DATABASE …): not a clause.
+			if k.name == "FOR" {
+				if _, _, iteration := parsePipelineIteration(strings.TrimSpace(cypher[p:])); !iteration {
 					continue
 				}
 			}
@@ -689,6 +702,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	for idx := 0; idx < len(clauses); idx++ {
 		clause := clauses[idx]
 		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
+			clause.kind != pipelineClauseLet && clause.kind != pipelineClauseFilter &&
 			!(clause.kind == pipelineClauseCreate && independentCreate) &&
 			!(clause.kind == pipelineClauseReturn && (pipelineClauseAggregates(clause) || streamsReturn(ctx, clauses, idx))) {
 			var completed bool
@@ -704,6 +718,26 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 		}
 		switch clause.kind {
+		case pipelineClauseLet, pipelineClauseFilter:
+			input := source
+			if input == nil {
+				input = pipelineRowsSource(rows)
+			}
+			transformed, err := e.pipelineSharedClauseSource(ctx, input, clause)
+			if err != nil {
+				return nil, true, err
+			}
+			if clause.kind == pipelineClauseLet {
+				projections, err := parsePipelineLet(clause.text)
+				if err != nil {
+					return nil, true, err
+				}
+				for _, projection := range projections {
+					scope[projection.alias] = struct{}{}
+				}
+			}
+			source, rows = transformed, nil
+			continue
 		case pipelineClauseMatch:
 			hint := e.pipelineMatchHint(clauses[idx+1:])
 			hint.streamScan = source == nil && len(rows) == 1 && len(scope) == 0 && streamsScan(ctx, clauses)

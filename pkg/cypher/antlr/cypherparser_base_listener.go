@@ -26,6 +26,24 @@ func (s *BaseCypherParserListener) EnterScript(ctx *ScriptContext) {}
 // ExitScript is called when production script is exited.
 func (s *BaseCypherParserListener) ExitScript(ctx *ScriptContext) {}
 
+// EnterCypherPreamble is called when production cypherPreamble is entered.
+func (s *BaseCypherParserListener) EnterCypherPreamble(ctx *CypherPreambleContext) {}
+
+// ExitCypherPreamble is called when production cypherPreamble is exited.
+func (s *BaseCypherParserListener) ExitCypherPreamble(ctx *CypherPreambleContext) {}
+
+// EnterCypherGroup is called when production cypherGroup is entered.
+func (s *BaseCypherParserListener) EnterCypherGroup(ctx *CypherGroupContext) {}
+
+// ExitCypherGroup is called when production cypherGroup is exited.
+func (s *BaseCypherParserListener) ExitCypherGroup(ctx *CypherGroupContext) {}
+
+// EnterCypherOption is called when production cypherOption is entered.
+func (s *BaseCypherParserListener) EnterCypherOption(ctx *CypherOptionContext) {}
+
+// ExitCypherOption is called when production cypherOption is exited.
+func (s *BaseCypherParserListener) ExitCypherOption(ctx *CypherOptionContext) {}
+
 // EnterShellCommand is called when production shellCommand is entered.
 func (s *BaseCypherParserListener) EnterShellCommand(ctx *ShellCommandContext) {}
 
@@ -247,6 +265,30 @@ func (s *BaseCypherParserListener) EnterUnwindSt(ctx *UnwindStContext) {}
 
 // ExitUnwindSt is called when production unwindSt is exited.
 func (s *BaseCypherParserListener) ExitUnwindSt(ctx *UnwindStContext) {}
+
+// EnterLetSt is called when production letSt is entered.
+func (s *BaseCypherParserListener) EnterLetSt(ctx *LetStContext) {}
+
+// ExitLetSt is called when production letSt is exited.
+func (s *BaseCypherParserListener) ExitLetSt(ctx *LetStContext) {}
+
+// EnterLetItem is called when production letItem is entered.
+func (s *BaseCypherParserListener) EnterLetItem(ctx *LetItemContext) {}
+
+// ExitLetItem is called when production letItem is exited.
+func (s *BaseCypherParserListener) ExitLetItem(ctx *LetItemContext) {}
+
+// EnterFilterSt is called when production filterSt is entered.
+func (s *BaseCypherParserListener) EnterFilterSt(ctx *FilterStContext) {}
+
+// ExitFilterSt is called when production filterSt is exited.
+func (s *BaseCypherParserListener) ExitFilterSt(ctx *FilterStContext) {}
+
+// EnterForSt is called when production forSt is entered.
+func (s *BaseCypherParserListener) EnterForSt(ctx *ForStContext) {}
+
+// ExitForSt is called when production forSt is exited.
+func (s *BaseCypherParserListener) ExitForSt(ctx *ForStContext) {}
 
 // EnterReadingStatement is called when production readingStatement is entered.
 func (s *BaseCypherParserListener) EnterReadingStatement(ctx *ReadingStatementContext) {}

@@ -98,10 +98,12 @@ evaluator. There is no separate executor, text-rewrite replay or retry as 5.
 Existing queries and APIs remain supported, including constructs removed by
 upstream 25. Record retained constructs as explicit NornicDB extensions.
 That intentionally prevents a claim of identical upstream rejection behavior.
-The default for unprefixed queries is configured as
-`NORNICDB_CYPHER_VERSION=5|25`; explicit prefixes override it. Unset retains 5,
-while present-empty/invalid settings fail startup validation. With default 25,
-the second example also works without its prefix. Configuration is resolved
-once outside query execution and passed to every executor/transport.
-No persisted database-language migration, default-language DDL or automatic
-cutover to 25 is introduced.
+
+There is no language default: `CYPHER 5` / `CYPHER 25` headers are optional and
+both parsers accept and discard them directly, so callers pass statements as
+written. Unprefixed statements use the shared grammar. The SRD parser accepts
+`LET`/`FILTER`/`FOR` and correlated unscoped `CALL` without a header; the
+ANTLR parser requires `CYPHER 25` for those additive clauses and keeps the
+strict Cypher 5.26 implicit-CALL-import rejection. No persisted
+database-language migration, default-language DDL, configuration setting or
+automatic cutover is introduced.
