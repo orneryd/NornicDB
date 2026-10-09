@@ -2208,6 +2208,10 @@ func TestFunctionFullMathAdditionalCoverage(t *testing.T) {
 	if got := eval("e()", nil, nil, 0).(float64); math.Abs(got-math.E) > 0.0001 {
 		t.Fatalf("e() = %v", got)
 	}
+	// acos() reads musl's acos, the one every route uses (#907).
+	if got := eval("acos(0.5)", nil, nil, 0).(float64); math.Abs(got-math.Pi/3) > 1e-15 {
+		t.Fatalf("acos(0.5) = %v", got)
+	}
 	if got := eval("startNode(r)", nil, nil, 0).(*storage.Node); got.ID != a.ID {
 		t.Fatalf("startNode(r) = %s, want %s", got.ID, a.ID)
 	}

@@ -218,3 +218,11 @@ func TestTrigSpecialValues(t *testing.T) {
 	require.True(t, math.Signbit(Atan2(-1, math.Inf(1))))
 	require.True(t, math.IsNaN(Atan2(math.NaN(), 1)))
 }
+
+// Log1p and Expm1 are the standard library's.
+func TestLog1pExpm1AreStandard(t *testing.T) {
+	for _, x := range []float64{-0.5, 0, 1e-10, 0.75, 3} {
+		require.Equal(t, math.Log1p(x), Log1p(x))
+		require.Equal(t, math.Expm1(x), Expm1(x))
+	}
+}
