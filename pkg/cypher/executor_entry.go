@@ -293,6 +293,12 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		cypher = desugared
 		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
 	}
+	// ORDER BY, SKIP / OFFSET and LIMIT as clauses of their own become the
+	// WITH * they stand for, once, here; errors are mapped back (#907).
+	if desugared, orderRewrite := desugarStandaloneOrderClauses(cypher); orderRewrite != nil {
+		cypher = desugared
+		defer func() { result, retErr = orderRewrite.restore(result, retErr) }()
+	}
 
 	// Route multi-graph CALL { USE ... } queries through the Fabric planner/executor
 	// so subquery decomposition and cross-graph routing use a single deterministic path.
