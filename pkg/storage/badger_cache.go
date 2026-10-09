@@ -386,6 +386,24 @@ func (b *BadgerEngine) labelCacheSetFirst(gen uint64, label string, id NodeID) {
 	b.labelFirstNodeCache[label] = id
 }
 
+// labelCacheDropStaleFirst drops label's cached first node id, which a read
+// that captured gen found gone. It returns the generation the read keeps:
+// still current when nothing else wrote the cache since gen, so the read
+// may cache the first node it finds instead; otherwise stale.
+func (b *BadgerEngine) labelCacheDropStaleFirst(gen uint64, label string, id NodeID) uint64 {
+	b.labelFirstNodeCacheMu.Lock()
+	defer b.labelFirstNodeCacheMu.Unlock()
+	if cached, ok := b.labelFirstNodeCache[label]; ok && cached == id {
+		delete(b.labelFirstNodeCache, label)
+	}
+	unchanged := b.labelFirstCacheGen.current() == gen
+	b.labelFirstCacheGen.advance()
+	if unchanged {
+		return b.labelFirstCacheGen.current()
+	}
+	return gen
+}
+
 func (b *BadgerEngine) labelCacheInvalidateForNodeLabels(labels []string, nodeID NodeID) {
 	if len(labels) == 0 || nodeID == "" {
 		return

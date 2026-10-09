@@ -92,7 +92,7 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 		if cachedOK && cachedID != "" {
 			cachedKey := b.labelIndexKeyStringLookup(label, cachedID)
 			if cachedKey == nil {
-				b.labelCacheInvalidateForNodeLabels([]string{label}, cachedID)
+				labelGen = b.labelCacheDropStaleFirst(labelGen, label, cachedID)
 			} else {
 				_, err := txn.Get(cachedKey)
 				switch err {
@@ -102,7 +102,7 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 						return ErrIterationStopped
 					}
 				case badger.ErrKeyNotFound:
-					b.labelCacheInvalidateForNodeLabels([]string{label}, cachedID)
+					labelGen = b.labelCacheDropStaleFirst(labelGen, label, cachedID)
 				default:
 					return err
 				}
