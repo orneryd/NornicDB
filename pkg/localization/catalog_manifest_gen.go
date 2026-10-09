@@ -478,6 +478,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphermatching.optional_match_target_endpoint_missing", Constructor: "CypherMatchingOptionalMatchTargetEndpointMissing", Fields: []string{"Pattern"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.optional_match_target_endpoint_unterminated", Constructor: "CypherMatchingOptionalMatchTargetEndpointUnterminated", Fields: []string{"Pattern"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.order_by_parse_failed", Constructor: "CypherMatchingOrderByParseFailed", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "cyphermatching.parenthesised_path_juxtaposed", Constructor: "CypherMatchingParenthesisedPathJuxtaposed", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.path_mode_variable_length", Constructor: "CypherMatchingPathModeVariableLength", Fields: []string{"Mode"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.path_pattern_invalid", Constructor: "CypherMatchingPathPatternInvalid", Fields: []string{"Pattern"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.path_selector_count_invalid", Constructor: "CypherMatchingPathSelectorCountInvalid", Fields: []string{"Value"}, PluralForms: []string{"other"}},

@@ -83,7 +83,8 @@ func (m labelPatternMode) clause() string {
 func desugarLabelExpressions(query string, params map[string]interface{}) (string, *queryRewrite, error) {
 	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) && indexASCIIFold(query, "shortestpath") < 0 &&
 		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
-		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) {
+		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) &&
+		!mayUseParenthesisedPath(query) {
 		return query, nil, nil
 	}
 	r := &labelExpressionRewriter{query: query, params: params}
@@ -445,6 +446,7 @@ func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, where
 	}
 	predicates = append(predicates, repeated...)
 	predicates = append(predicates, prefixes.acyclic...)
+	predicates = append(predicates, prefixes.pathWheres...)
 	if prefixes.selector != "" {
 		if prefixes.where != "" {
 			predicates = append(predicates, prefixes.where)
@@ -508,8 +510,15 @@ func (r *labelExpressionRewriter) patternElements(start, end int, mode labelPatt
 			} else if inner < close && q[inner] == '(' || i > start && isIdentByte(q[i-1]) {
 				// A parenthesised path, a quantified group in a write
 				// pattern, or shortestPath(…): its elements are pattern
-				// elements.
-				if err := r.patternElements(i+1, close, mode, predicates); err != nil {
+				// elements, up to a parenthesised path's own WHERE (which
+				// pathPrefixes moves to the clause's).
+				stop := close
+				if inner < close && q[inner] == '(' {
+					if where := topLevelKeywordIndex(q[i+1:close], "WHERE"); where >= 0 {
+						stop = i + 1 + where
+					}
+				}
+				if err := r.patternElements(i+1, stop, mode, predicates); err != nil {
 					return err
 				}
 			} else if err := r.element(i, close, false, false, mode, predicates); err != nil {

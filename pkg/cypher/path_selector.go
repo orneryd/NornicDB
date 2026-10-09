@@ -211,6 +211,9 @@ type pathPrefixRewrite struct {
 	acyclic []string
 	// repeatable marks MATCH REPEATABLE ELEMENTS.
 	repeatable bool
+	// pathWheres are the WHEREs of plain parenthesised paths, rewritten:
+	// filters of the clause.
+	pathWheres []string
 }
 
 // pathPrefixes rewrites the match mode and the selectors and path modes of
@@ -251,6 +254,15 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 		prefix, ok, err := scanPathPatternPrefix(q, at, part[1])
 		if err != nil {
 			return rewrite, err
+		}
+		if !ok || !prefix.selective() {
+			patternAt := at
+			if ok {
+				patternAt = prefix.end
+			}
+			if err := r.plainParenthesisedPath(patternAt, part[1], &rewrite); err != nil {
+				return rewrite, err
+			}
 		}
 		if !ok {
 			continue
@@ -325,23 +337,109 @@ func (r *labelExpressionRewriter) parenthesisedPathWhere(start, end int, rewrite
 	where += start + 1
 	rewrite.patternEnd = where
 	r.edit(trimRightIndex(q, start+1, where), end-1, "")
-	sub := &labelExpressionRewriter{query: q, generated: r.generated, named: r.named}
-	bodyStart, bodyEnd := skipASCIISpaces(q, where+len("WHERE"), end-1), trimRightIndex(q, where+len("WHERE"), end-1)
-	if err := sub.expression(bodyStart, bodyEnd); err != nil {
+	text, err := r.rewrittenExpression(skipASCIISpaces(q, where+len("WHERE"), end-1), trimRightIndex(q, where+len("WHERE"), end-1))
+	if err != nil {
 		return true, err
+	}
+	rewrite.where = "(" + text + ")"
+	return true, nil
+}
+
+// rewrittenExpression returns the expression query[start:end] with the
+// rewrite's edits applied, for text that moves elsewhere in the statement.
+func (r *labelExpressionRewriter) rewrittenExpression(start, end int) (string, error) {
+	q := r.query
+	sub := &labelExpressionRewriter{query: q, generated: r.generated, named: r.named}
+	if err := sub.expression(start, end); err != nil {
+		return "", err
 	}
 	r.generated = sub.generated
 	sort.SliceStable(sub.edits, func(i, j int) bool { return sub.edits[i].start < sub.edits[j].start })
 	var text strings.Builder
-	last := bodyStart
+	last := start
 	for _, edit := range sub.edits {
 		text.WriteString(q[last:edit.start])
 		text.WriteString(edit.text)
 		last = edit.end
 	}
-	text.WriteString(q[last:bodyEnd])
-	rewrite.where = "(" + text.String() + ")"
-	return true, nil
+	text.WriteString(q[last:end])
+	return text.String(), nil
+}
+
+// mayUseParenthesisedPath reports whether query may hold a parenthesised
+// path: a ( that opens a node pattern, then a relationship arrow
+// (parenthesisedPathAt). It never answers false for one.
+func mayUseParenthesisedPath(query string) bool {
+	for i := strings.IndexByte(query, '('); i >= 0; {
+		if next := skipASCIISpaces(query, i+1, len(query)); next < len(query) && query[next] == '(' {
+			if close := findMatchingParen(query, i); close > i && parenthesisedPathAt(query, i, close) {
+				return true
+			}
+		}
+		following := strings.IndexByte(query[i+1:], '(')
+		if following < 0 {
+			return false
+		}
+		i += 1 + following
+	}
+	return false
+}
+
+// plainParenthesisedPath rewrites the pattern part query[start:end] when it
+// is a parenthesised path without a quantifier, ((a)-->(b) [WHERE p]), as
+// Neo4j reads it: the path, with its WHERE a filter of the clause (redundant
+// parentheses around it are dropped). Such a path written next to another
+// element is Neo4j's juxtaposition error; only quantified paths juxtapose.
+func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite *pathPrefixRewrite) error {
+	q := r.query
+	end = trimRightIndex(q, start, end)
+	for i := start; i < end; i++ {
+		switch c := q[i]; c {
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(q, i, c) - 1
+		case '[', '{':
+			if close := findMatchingDelimiter(q[:end], i, rune(c), map[byte]rune{'[': ']', '{': '}'}[c]); close > i {
+				i = close
+			}
+		case '(':
+			close := findMatchingDelimiter(q[:end], i, '(', ')')
+			if close < 0 {
+				return nil
+			}
+			// A function call's parentheses (shortestPath(…)) and a quantified
+			// path are not plain parenthesised paths.
+			before := trimRightIndex(q, start, i)
+			if inner := skipASCIISpaces(q, i+1, close); inner >= close || q[inner] != '(' || quantifiedGroupAt(q, close, len(q)) ||
+				before > start && isIdentByte(q[before-1]) {
+				i = close
+				continue
+			}
+			if i != start || close != end-1 {
+				return labelExpressionSyntaxError(localization.CypherMatchingParenthesisedPathJuxtaposed())
+			}
+			open, last := i, close
+			for {
+				inner := skipASCIISpaces(q, open+1, last)
+				if inner >= last || q[inner] != '(' || findMatchingDelimiter(q[:last], inner, '(', ')') != trimRightIndex(q, inner, last)-1 {
+					break
+				}
+				open, last = inner, trimRightIndex(q, inner, last)-1
+			}
+			r.edit(i, open+1, "")
+			r.edit(last, close+1, "")
+			if where := topLevelKeywordIndex(q[open+1:last], "WHERE"); where >= 0 {
+				where += open + 1
+				r.edit(trimRightIndex(q, open+1, where), last, "")
+				text, err := r.rewrittenExpression(skipASCIISpaces(q, where+len("WHERE"), last), trimRightIndex(q, where+len("WHERE"), last))
+				if err != nil {
+					return err
+				}
+				rewrite.pathWheres = append(rewrite.pathWheres, "("+text+")")
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 // writePatternSelectorError is Neo4j's SyntaxError for a path selector in
