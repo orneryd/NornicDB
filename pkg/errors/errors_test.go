@@ -173,3 +173,13 @@ func TestMarkCommitRolledBackIsIdempotent(t *testing.T) {
 		t.Fatal("marked error must report rolled back")
 	}
 }
+
+// A read or write turned away while a restore replaces the store is
+// DatabaseUnavailable, which drivers retry.
+func TestNeo4jStatusRestoringIsTransient(t *testing.T) {
+	err := fmt.Errorf("read: %w", storage.ErrStorageRestoring)
+	code, message := Neo4jStatus(err)
+	if code != TransientDatabaseUnavailable || message != err.Error() || !HasNeo4jStatus(err) {
+		t.Fatalf("got %q %q", code, message)
+	}
+}

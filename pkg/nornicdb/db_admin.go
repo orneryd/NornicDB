@@ -1396,8 +1396,14 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 	return nil
 }
 
+// restoreEmbeddingDrainTimeout bounds how long Restore waits for the nodes the
+// embedding worker is embedding when it starts.
+const restoreEmbeddingDrainTimeout = 30 * time.Second
+
 // Restore restores a native streaming backup, or a legacy JSON backup when
-// the current engine does not provide native restore support.
+// the current engine does not provide native restore support. The embedding
+// worker is held for the duration, so it neither reads nor drops pending
+// nodes of a store being replaced, and scans the restored store afterwards.
 //
 // Example:
 //
@@ -1409,7 +1415,15 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 		return ErrClosed
 	}
 	restorable, supportsNativeRestore := db.storage.(RestorableEngine)
+	embedQueue := db.embedQueue
 	db.mu.RUnlock()
+
+	// Hold the embedding worker before taking db.mu: a node it is finishing
+	// may need the lock, and the hold waits for those (#1020).
+	if embedQueue != nil {
+		release := embedQueue.holdForRestore(restoreEmbeddingDrainTimeout)
+		defer release()
+	}
 
 	if supportsNativeRestore {
 		isJSON, err := isJSONBackupFile(path)

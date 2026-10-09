@@ -46,7 +46,8 @@ func TestStagedKV_ExistenceSeesStagedWrites(t *testing.T) {
 	require.True(t, it.ValidForPrefix(committed))
 	it.Close()
 
-	txn, readTs := engine.db.beginTxn(false)
+	txn, readTs, err := engine.db.beginTxn(false)
+	require.NoError(t, err)
 	defer engine.db.endRead(readTs)
 	defer txn.Discard()
 	require.False(t, kvStagedDeleted(txn, committed), "a Badger transaction has no staged deletes")

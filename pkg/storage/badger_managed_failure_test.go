@@ -189,7 +189,8 @@ func TestLargeCommit_FailureAtAnyBatchRollsBack(t *testing.T) {
 func TestPropertyKeyDict_ManyNamesRefusedStayUnpersisted(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
 	defer engine.Close()
-	txn, readTs := engine.db.beginTxn(true)
+	txn, readTs, err := engine.db.beginTxn(true)
+	require.NoError(t, err)
 	defer engine.db.endRead(readTs)
 	defer txn.Discard()
 	for i := 0; i < 40000; i++ {
@@ -201,7 +202,7 @@ func TestPropertyKeyDict_ManyNamesRefusedStayUnpersisted(t *testing.T) {
 	require.ErrorContains(t, engine.propKeyDict.persistTxnCounters(engine.db, drain), "refuses writes until restart")
 	again := engine.db.DB.NewTransactionAt(engine.db.oracle.published.Load(), true)
 	defer again.Discard()
-	_, err := engine.propKeyDict.resolveOrAllocateInTxn(again, "test", "refused_0")
+	_, err = engine.propKeyDict.resolveOrAllocateInTxn(again, "test", "refused_0")
 	require.NoError(t, err)
 	require.Len(t, engine.propKeyDict.flushTxnCounters(again).pending, 1)
 }
@@ -321,7 +322,8 @@ func TestCommitWriter_BeforeLargeRunsOnceWhenTheCommitTurnsLarge(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
 	defer engine.Close()
 	write := func(n int, prefix string) int {
-		txn, readTs := engine.db.beginTxn(true)
+		txn, readTs, err := engine.db.beginTxn(true)
+		require.NoError(t, err)
 		defer engine.db.endRead(readTs)
 		cw := engine.newCommitWriter(engine.db, txn)
 		defer cw.discard()

@@ -11,6 +11,9 @@ const (
 	TransientDeadlockDetected = "Neo.TransientError.Transaction.DeadlockDetected"
 	// TransientOutdated is the retryable wire error code for stale MVCC snapshots.
 	TransientOutdated = "Neo.TransientError.Transaction.Outdated"
+	// TransientDatabaseUnavailable is the retryable code for a database that
+	// is briefly unavailable, such as while a restore replaces its store.
+	TransientDatabaseUnavailable = "Neo.TransientError.General.DatabaseUnavailable"
 	// ClientTransactionOutOfMemory is Neo4j's code for a transaction that used
 	// more memory than one transaction may. NornicDB reports Badger's "Txn is
 	// too big" with it (#703). It is a ClientError, not transient: retrying

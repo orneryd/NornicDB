@@ -241,7 +241,10 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 	badgerDB := b.db
 	b.mu.RUnlock()
 
-	snapshotTx, badgerReadTs := badgerDB.beginTxn(false)
+	snapshotTx, badgerReadTs, err := badgerDB.beginTxn(false)
+	if err != nil {
+		return nil, err
+	}
 	readTS := b.currentMVCCReadVersion("")
 	beginSnapshot := b.snapshotNamespaceVersions()
 	txID := generateTxID()
@@ -3929,8 +3932,13 @@ func (tx *BadgerTransaction) observedLocked() bool {
 // refreshSnapshotLocked moves a transaction that has observed nothing to a
 // snapshot taken now, as if it had just begun: new Badger reader and writer
 // transactions, the namespaces' current MVCC versions, and empty snapshot
-// caches.
+// caches. The new snapshot is opened first, so a refresh turned away (a
+// restore holding reads) leaves the transaction on its current one.
 func (tx *BadgerTransaction) refreshSnapshotLocked() error {
+	snapshotTx, badgerReadTs, err := tx.badgerDB.beginTxn(false)
+	if err != nil {
+		return err
+	}
 	if tx.badgerTx != nil && tx.engine.idDict != nil {
 		tx.engine.idDict.discardTxnCounters(tx.badgerTx)
 	}
@@ -3947,7 +3955,6 @@ func (tx *BadgerTransaction) refreshSnapshotLocked() error {
 		tx.badgerDB.endRead(tx.badgerReadTs)
 		tx.badgerReadHeld = false
 	}
-	snapshotTx, badgerReadTs := tx.badgerDB.beginTxn(false)
 	tx.snapshotTx = snapshotTx
 	tx.badgerReadTs = badgerReadTs
 	tx.badgerReadHeld = true

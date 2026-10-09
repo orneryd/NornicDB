@@ -42,6 +42,10 @@
   other: "receipt: hash marshal failed: {{.Cause}}"
 - id: storage.client.storage_closed
   other: storage closed
+- id: storage.client.restoring
+  other: "the database is being restored; retry when the restore completes"
+- id: storage.client.restore.busy
+  other: "restore not started: reads or transactions were still open after {{.Wait}}; retry when they have finished"
 - id: storage.client.backup.file_create_failed
   other: "failed to create backup file: {{.Cause}}"
 - id: storage.client.backup.failed

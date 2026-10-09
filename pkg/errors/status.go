@@ -134,6 +134,9 @@ func neo4jStatus(err error) (code, message string, classified bool) {
 	if transientCode, ok := MapTransientTransactionError(err); ok {
 		return transientCode, message, true
 	}
+	if stderrors.Is(err, storage.ErrStorageRestoring) {
+		return TransientDatabaseUnavailable, message, true
+	}
 	if storage.IsTransactionTooBig(err) {
 		return ClientTransactionOutOfMemory, transactionTooBigMessage(message), true
 	}

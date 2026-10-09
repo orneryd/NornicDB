@@ -1726,6 +1726,8 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "storage.client.receipt.transaction_id_required", Constructor: "StorageClientReceiptTransactionIDRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "storage.client.receipt.wal_range_invalid", Constructor: "StorageClientReceiptWALRangeInvalid", Fields: []string{"WALSeqEnd", "WALSeqStart"}, PluralForms: []string{"other"}},
 	{ID: "storage.client.receipt.wal_sequence_required", Constructor: "StorageClientReceiptWALSequenceRequired", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "storage.client.restore.busy", Constructor: "StorageClientRestoreBusy", Fields: []string{"Wait"}, PluralForms: []string{"other"}},
+	{ID: "storage.client.restoring", Constructor: "StorageClientRestoring", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "storage.client.storage_closed", Constructor: "StorageClientStorageClosed", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "storage.loader.converting_node", Constructor: "StorageLoaderConvertingNode", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "storage.loader.converting_relationship", Constructor: "StorageLoaderConvertingRelationship", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
