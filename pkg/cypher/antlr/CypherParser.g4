@@ -340,7 +340,7 @@ dynamicPropertyExpression
     ;
 
 nodeLabels
-    : ((COLON | IS) (labelExpression | DOLLAR LPAREN expression RPAREN))+
+    : ((COLON | IS) labelExpression)+
     ;
 
 labelExpression
@@ -352,7 +352,13 @@ labelConjunction
     ;
 
 labelNegation
-    : BANG* (name | MOD | LPAREN labelExpression RPAREN)
+    : BANG* (name | MOD | LPAREN labelExpression RPAREN | dynamicLabel)
+    ;
+
+// A dynamic label or relationship type (Neo4j 5.26): $(expr), $all(expr),
+// $any(expr).
+dynamicLabel
+    : DOLLAR (ALL | ANY)? LPAREN expression RPAREN
     ;
 
 createSt
