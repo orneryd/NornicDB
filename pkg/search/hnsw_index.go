@@ -24,7 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/bits"
 	"math/rand"
 	"os"

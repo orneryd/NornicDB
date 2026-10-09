@@ -3,7 +3,7 @@ package storage
 import (
 	"encoding/binary"
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"

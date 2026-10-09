@@ -5,7 +5,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"

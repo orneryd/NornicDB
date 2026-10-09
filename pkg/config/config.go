@@ -45,8 +45,8 @@ package config
 
 import (
 	"fmt"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"log/slog"
-	"math"
 	"os"
 	"path/filepath"
 	"runtime/debug"

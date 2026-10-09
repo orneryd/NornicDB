@@ -31,7 +31,7 @@
 package temporal
 
 import (
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sync"
 	"time"
 )

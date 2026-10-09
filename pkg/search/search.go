@@ -98,9 +98,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"hash/fnv"
 	"log/slog"
-	"math"
 	"os"
 	"reflect"
 	"sort"
@@ -210,9 +210,9 @@ func newBM25IndexWithAnalyzer(engine string, analyzer Analyzer) (bm25Index, stri
 // Save/Load are no-ops so persistence checkpointing doesn't blow up.
 type disabledBM25Index struct{}
 
-func (disabledBM25Index) Index(string, string)                        {}
-func (disabledBM25Index) Remove(string)                               {}
-func (disabledBM25Index) Search(string, int) []indexResult            { return nil }
+func (disabledBM25Index) Index(string, string)             {}
+func (disabledBM25Index) Remove(string)                    {}
+func (disabledBM25Index) Search(string, int) []indexResult { return nil }
 func (disabledBM25Index) SearchAllowed(string, int, func(string) bool) []indexResult {
 	return nil
 }

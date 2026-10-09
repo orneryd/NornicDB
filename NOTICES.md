@@ -334,6 +334,72 @@ SOFTWARE.
 
 **Description:** Tensor library for machine learning, used by llama.cpp for model inference.
 
+### musl libm
+
+**Source:** https://musl.libc.org/  
+**License:** MIT License  
+**Copyright:** Copyright © 2005-2024 Rich Felker, et al.
+
+**Description:** Double-precision math functions ported to Go in `pkg/math/libm` (the exponential, logarithmic, power and hyperbolic functions). Used so `^`, `exp`, `log`, and the hyperbolic functions return the correctly rounded results Neo4j's Java `Math` returns.
+
+**License Text:**
+```
+MIT License
+
+Copyright © 2005-2024 Rich Felker, et al.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Arm optimized-routines
+
+**Source:** https://github.com/ARM-software/optimized-routines (vendored by musl)  
+**License:** MIT License  
+**Copyright:** Copyright (c) 2018, Arm Limited
+
+**Description:** Correctly rounded `exp`, `exp2`, `log`, `log2`, and `pow` implementations ported to Go in `pkg/math/libm`. musl carries these files under the SPDX identifier `MIT`.
+
+**License Text:**
+```
+MIT License
+
+Copyright (c) 2018, Arm Limited
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ---
 
 ## JavaScript/TypeScript Dependencies

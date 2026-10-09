@@ -2,8 +2,8 @@ package cypher
 
 import (
 	"fmt"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"iter"
-	"math"
 	"strings"
 )
 

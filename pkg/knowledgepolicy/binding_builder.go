@@ -2,7 +2,7 @@ package knowledgepolicy
 
 import (
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 	"strings"
 )

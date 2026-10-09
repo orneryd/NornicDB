@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"io"
-	"math"
 	"sync"
 	"sync/atomic"
 

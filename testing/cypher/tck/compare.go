@@ -3,7 +3,7 @@ package tck
 import (
 	"encoding/json"
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"sort"
 	"time"

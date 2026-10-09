@@ -3,7 +3,7 @@
 package simd
 
 import (
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/viterin/vek/vek32"
 )

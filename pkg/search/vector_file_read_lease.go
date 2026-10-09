@@ -3,7 +3,7 @@ package search
 import (
 	"encoding/binary"
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 	"sync"
 	"unsafe"

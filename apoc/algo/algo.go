@@ -6,7 +6,7 @@ package algo
 
 import (
 	"container/heap"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 )
 
 // Node represents a graph node.

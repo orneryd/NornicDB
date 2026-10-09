@@ -5,7 +5,7 @@
 package stats
 
 import (
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 
 	"github.com/orneryd/nornicdb/apoc/storage"

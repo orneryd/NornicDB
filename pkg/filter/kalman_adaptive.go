@@ -31,7 +31,7 @@
 package filter
 
 import (
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/config"

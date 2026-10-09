@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"sort"
 )
@@ -14,10 +14,10 @@ import (
 // number, a boolean, NaN or an integer beyond 2^53 against a float don't
 // compare consistently, and an index holding them is never narrowed.
 type propertyIndexKeyKinds struct {
-	strings       bool // every key is a string
-	integers      bool // every key is an integer
-	exactNumbers  bool // every key is a float (not NaN) or an integer within ±2^53
-	hasKeys       bool
+	strings      bool // every key is a string
+	integers     bool // every key is an integer
+	exactNumbers bool // every key is a float (not NaN) or an integer within ±2^53
+	hasKeys      bool
 }
 
 // maxExactFloatInteger is 2^53, the largest magnitude below which every
