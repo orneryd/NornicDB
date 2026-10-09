@@ -184,3 +184,6 @@
 - id: cyphermatching.quantified_path_variable_bound
   description: "A variable an earlier clause binds is named inside a quantified path pattern. Variable is the untranslated variable name."
   other: "The variable `{{.Variable}}` is already defined in a previous clause, it cannot be referenced as a node or as a relationship variable inside of a quantified path pattern."
+- id: cyphermatching.parenthesised_path_juxtaposed
+  description: "A parenthesised path without a quantifier next to another pattern element."
+  other: "Juxtaposition is currently only supported for quantified path patterns."

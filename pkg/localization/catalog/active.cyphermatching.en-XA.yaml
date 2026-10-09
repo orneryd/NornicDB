@@ -184,3 +184,6 @@
 - id: cyphermatching.quantified_path_variable_bound
   description: "Expanded pseudo-locale quantified path variable bound."
   other: "[!! The variable `{{.Variable}}` is already defined in a previous clause, it cannot be referenced as a node or as a relationship variable inside of a quantified path pattern. !!]"
+- id: cyphermatching.parenthesised_path_juxtaposed
+  description: "Expanded pseudo-locale parenthesised path juxtaposed."
+  other: "[!! Juxtaposition is currently only supported for quantified path patterns. !!]"

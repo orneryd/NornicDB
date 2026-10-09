@@ -68,6 +68,7 @@ const (
 	MessageCypherMatchingQuantifiedPathNoRelationship             MessageID = "cyphermatching.quantified_path_no_relationship"
 	MessageCypherMatchingQuantifierBoundsReversed                 MessageID = "cyphermatching.quantifier_bounds_reversed"
 	MessageCypherMatchingQuantifiedPathVariableBound              MessageID = "cyphermatching.quantified_path_variable_bound"
+	MessageCypherMatchingParenthesisedPathJuxtaposed              MessageID = "cyphermatching.parenthesised_path_juxtaposed"
 )
 
 func cypherMatchingMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -414,4 +415,10 @@ func CypherMatchingQuantifierBoundsReversed() Message {
 // variable an earlier clause binds, named inside a quantified path pattern.
 func CypherMatchingQuantifiedPathVariableBound(variable string) Message {
 	return cypherMatchingMessage(MessageCypherMatchingQuantifiedPathVariableBound, "The variable `"+variable+"` is already defined in a previous clause, it cannot be referenced as a node or as a relationship variable inside of a quantified path pattern.", map[string]any{"Variable": variable})
+}
+
+// CypherMatchingParenthesisedPathJuxtaposed is Neo4j's SyntaxError for a
+// parenthesised path without a quantifier written next to another element.
+func CypherMatchingParenthesisedPathJuxtaposed() Message {
+	return cypherMatchingMessage(MessageCypherMatchingParenthesisedPathJuxtaposed, "Juxtaposition is currently only supported for quantified path patterns.", nil)
 }
