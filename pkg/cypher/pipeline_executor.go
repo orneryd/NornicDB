@@ -3712,9 +3712,6 @@ func aggregateCallSpellings(expressions []string) map[string]string {
 // respellAggregateCalls writes each aggregate call of text that spellings
 // holds as spellings spells it: COUNT(distinct n) as count(DISTINCT n).
 func respellAggregateCalls(text string, spellings map[string]string) string {
-	if len(spellings) == 0 {
-		return text
-	}
 	for _, call := range semanticAggregateCalls(text) {
 		if spelling, ok := spellings[aggregateCallKey(call)]; ok && spelling != call {
 			text = strings.Replace(text, call, spelling, 1)
