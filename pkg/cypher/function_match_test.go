@@ -183,3 +183,22 @@ func BenchmarkMatchFuncStart(b *testing.B) {
 		}
 	})
 }
+
+// The function-match helpers on input with no call to read: a nil matcher,
+// an empty name, a missing or unclosed parenthesis.
+func TestFunctionMatchHelpersWithoutCall(t *testing.T) {
+	var nilMatcher *funcMatcher
+	assert.False(t, nilMatcher.MatchString("count(n)"))
+	assert.Empty(t, nilMatcher.String())
+	assert.Equal(t, "func:", getFuncMatcher("  ").String())
+	assert.Empty(t, extractFuncArgs("count(n", "count"))
+	args, open := extractFuncArgsLen("count(n", "count")
+	assert.Empty(t, args)
+	assert.Equal(t, -1, open)
+	_, _, ok := extractFuncArgsWithSuffix("count(n", "count")
+	assert.False(t, ok)
+	_, open = extractFuncArgsLen("sum(n)", "count")
+	assert.Equal(t, -1, open)
+	_, _, ok = extractFuncArgsWithSuffix("sum(n)", "count")
+	assert.False(t, ok)
+}
