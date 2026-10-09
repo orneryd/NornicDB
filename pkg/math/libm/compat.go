@@ -7,11 +7,11 @@ import "math"
 // "github.com/orneryd/nornicdb/pkg/math/libm" (aliased as math) with no call
 // site changes.
 //
-// The transcendental functions whose values can differ from Java's correctly
-// rounded Math functions (Exp, Exp2, Log, Log2, Pow, and the hyperbolic
-// family) are ported from musl in this package. Everything else — exact
-// functions, fdlibm-derived functions that musl and Go share byte-for-byte,
-// and the integer/float limits — is re-exported from the standard library.
+// The transcendental functions whose values can differ from Java's Math
+// functions (Exp, Exp2, Log, Log2, Pow, the hyperbolic family, and the
+// trigonometric functions with Log10) are ported from musl in this package.
+// Everything else (exact functions, Log1p, Expm1, and the integer/float
+// limits) is re-exported from the standard library.
 
 const (
 	E   = math.E
@@ -75,17 +75,9 @@ func Float64frombits(b uint64) float64 { return math.Float64frombits(b) }
 func Float32bits(f float32) uint32     { return math.Float32bits(f) }
 func Float32frombits(b uint32) float32 { return math.Float32frombits(b) }
 
-// Sin, Cos, Tan, Asin, Acos, Atan, Atan2, Log10, Log1p and Expm1 are
-// fdlibm-derived in both musl and Go's math package (the Sun Microsystems
-// sources), so the two implementations are identical and the standard library
-// is re-exported directly.
-func Sin(x float64) float64      { return math.Sin(x) }
-func Cos(x float64) float64      { return math.Cos(x) }
-func Tan(x float64) float64      { return math.Tan(x) }
-func Asin(x float64) float64     { return math.Asin(x) }
-func Acos(x float64) float64     { return math.Acos(x) }
-func Atan(x float64) float64     { return math.Atan(x) }
-func Atan2(y, x float64) float64 { return math.Atan2(y, x) }
-func Log10(x float64) float64    { return math.Log10(x) }
-func Log1p(x float64) float64    { return math.Log1p(x) }
-func Expm1(x float64) float64    { return math.Expm1(x) }
+// Log1p and Expm1 are re-exported from the standard library. Sin, Cos, Tan,
+// Asin, Acos, Atan, Atan2 and Log10 are ported from musl (trig.go,
+// invtrig.go): Go's sin, cos, tan and atan come from Cephes, not fdlibm, and
+// differed from Neo4j's results for a quarter to a third of inputs (#907).
+func Log1p(x float64) float64 { return math.Log1p(x) }
+func Expm1(x float64) float64 { return math.Expm1(x) }
