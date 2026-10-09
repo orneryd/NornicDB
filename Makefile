@@ -109,7 +109,7 @@ BGE_RERANKER_URL := https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/reso
 .PHONY: build-llama-cuda push-llama-cuda deploy-llama-cuda ensure-llama-cuda
 .PHONY: build run build-ui build-binary build-admin build-localllm build-headless build-localllm-headless sync-version test lint-slog install-hooks clean images help macos-menubar macos-install macos-uninstall macos-all macos-clean macos-package macos-package-lite macos-package-full macos-package-all macos-package-signed homebrew-artifacts
 .PHONY: download-models download-bge download-qwen download-bge-reranker check-models
-.PHONY: antlr-generate antlr-clean antlr-test antlr-test-full test-parsers
+.PHONY: antlr-generate antlr-clean antlr-test antlr-test-full test-parsers graphify
 
 # ==============================================================================
 # Model Downloads (Heimdall prerequisites)
@@ -1540,6 +1540,16 @@ test-parsers:
 	NORNICDB_PARSER=antlr go test -timeout 30m ./pkg/cypher/...
 	@echo ""
 	@echo "✅ Both parsers passed all Cypher tests"
+
+# ==============================================================================
+# Graphify Code Graph
+# ==============================================================================
+# Extract the code graph and load it into the local NornicDB behind /graphify.
+# Requires the graphify CLI (uv tool install graphify) and a running local
+# NornicDB on :7474 (admin/password, database nornicdbcode by default).
+graphify:
+	"$(shell uv tool dir --bin)/graphify" extract . --code-only --no-cluster
+	"$(shell uv tool dir)/graphifyy/bin/python" scripts/graphify_local.py --graph graphify-out/graph.json
 
 .PHONY: cypher-tck-inventory cypher-tck cypher-tck-ratchet cypher-tck-vetted cypher-tck-update-ratchet cypher-conformance cypher-differential cypher-differential-ratchet
 
