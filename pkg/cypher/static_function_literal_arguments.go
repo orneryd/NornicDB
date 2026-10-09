@@ -9,8 +9,8 @@ import (
 
 // checkStaticLiteralArguments is Neo4j's compile-time check of literal
 // argument values, which fails the statement whatever the data:
-//   - percentileCont / percentileDisc with a number literal outside 0.0..1.0
-//     as the percentile (an expression such as 0.5 + 1 is checked when it
+//   - percentileCont / percentileDisc with a number literal outside 0.0..1.0,
+//     or the null literal, as the percentile (an expression such as 0.5 + 1 is checked when it
 //     runs, an ArgumentError);
 //   - point() with a map literal whose keys don't describe a point (neither x
 //     and y nor latitude and longitude); a map value is checked when it runs
@@ -24,7 +24,10 @@ func checkStaticLiteralArguments(function string, arguments []string) error {
 		text := strings.TrimSpace(arguments[1])
 		value, literal := parseLiteralValueFromComputedRow(text)
 		number, numeric := toFloat64(value)
-		if literal && numeric && (number < 0 || number > 1) {
+		// A null literal is no percentile either (Neo4j 5.26: "Invalid
+		// input 'NULL' is not a valid argument"); a null reaching it through
+		// a variable or parameter is checked when it runs.
+		if literal && (value == nil || numeric && (number < 0 || number > 1)) {
 			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
 				localization.CypherCorePercentileOutOfRange(text))
 		}
