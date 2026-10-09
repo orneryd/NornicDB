@@ -47,179 +47,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
-
-// nodeSetSnapshotPool holds the before-images applyCountedNodeSet counts
-// against.
-var nodeSetSnapshotPool = sync.Pool{New: func() any { return make(map[string]interface{}, 8) }}
-
-// applyCountedNodeSet applies the assignments of setClause that target
-// varName to node, and adds what they wrote to stats.
-//
-// MERGE's ON CREATE SET, ON MATCH SET and SET use it, so they apply SET with
-// the same per-entity applicator as MATCH ... SET and the pipeline
-// (applySetToNodeWithContext: same null, label and map semantics) and count
-// it by the same rule (Neo4j's properties_set, setWrites; addedLabelCount).
-// It reports whether the node changed (changedPropertyCount), so callers
-// persist only a changed node. stats may be nil.
-//
-//	applyCountedNodeSet(ctx, node, "n", "n.name = 'Alice', n.age = 30", nil, nil, stats)
-//	// node.Properties["name"] = "Alice", node.Properties["age"] = int64(30)
-func (e *StorageExecutor) applyCountedNodeSet(ctx context.Context, node *storage.Node, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge, stats *QueryStats) (bool, error) {
-	if !setClauseTargetsOnly(setClause, varName) {
-		return e.applyCountedSetRuns(ctx, node, varName, setClause, nodeContext, relContext, stats)
-	}
-	// The before-image only lives for this call; a pooled map keeps MERGE's
-	// SET allocation-free. SET only appends labels, so their count is enough.
-	beforeProperties := nodeSetSnapshotPool.Get().(map[string]interface{})
-	defer func() {
-		clear(beforeProperties)
-		nodeSetSnapshotPool.Put(beforeProperties)
-	}()
-	for key, value := range node.Properties {
-		beforeProperties[key] = value
-	}
-	labelsBefore := len(node.Labels)
-	written, err := e.applySetToNodeWithContext(ctx, node, varName, setClause, nodeContext, relContext)
-	if err != nil {
-		return false, err
-	}
-	labelsAdded := len(node.Labels) - labelsBefore
-	if stats != nil {
-		stats.PropertiesSet += written
-		stats.LabelsAdded += labelsAdded
-	}
-	return labelsAdded > 0 || changedPropertyCount(beforeProperties, node.Properties) > 0, nil
-}
-
-// applyCountedSetRuns is applyCountedNodeSet for a clause that also writes
-// other entities (MERGE (n) ON CREATE SET n.a = 1, m.b = n.a): its items
-// apply in order to every entity they name (applySetRuns), and the other
-// entities a run changed are stored here; node is left for the caller.
-func (e *StorageExecutor) applyCountedSetRuns(ctx context.Context, node *storage.Node, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge, stats *QueryStats) (bool, error) {
-	nodes := make(map[string]*storage.Node, len(nodeContext)+1)
-	for name, entity := range nodeContext {
-		nodes[name] = entity
-	}
-	nodes[varName] = node
-	var stateBuffer [4]setEntityState
-	states, _, err := e.applySetRuns(ctx, setClauseRuns(setClause), nodes, relContext, func(string) bool { return true }, stateBuffer[:0])
-	if err != nil {
-		return false, err
-	}
-	return e.persistSetEntities(e.getStorage(ctx), states, stats, node, func(state setEntityState, err error) error {
-		if state.node != nil {
-			return localizedError(localization.CypherMutationsUpdateNodeFailed(err), err)
-		}
-		return localizedError(localization.CypherMergeUpdateEdgePropertyFailed(err), err)
-	})
-}
-
-// persistSetEntities stores the entities a SET clause wrote (applySetRuns)
-// and counts what it wrote in stats (which may be nil): every route stores
-// SET's writes this one way. An entity the clause left as it was isn't
-// stored, though its writes count (Neo4j counts writes, not changes); a
-// node whose labels changed is checked against the label policies first.
-// keep is an entity its caller stores itself: it is checked and counted,
-// not stored, and kept reports whether it changed. On an error the entity
-// is restored and the error is wrapped by its caller (wrap).
-func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setEntityState, stats *QueryStats, keep *storage.Node, wrap func(state setEntityState, err error) error) (kept bool, err error) {
-	for index := range states {
-		state := &states[index]
-		if stats != nil {
-			stats.PropertiesSet += state.written
-		}
-		if node := state.node; node != nil {
-			labelsAdded := addedLabelCount(state.labels, node.Labels)
-			if labelsAdded == 0 && changedPropertyCount(state.properties, node.Properties) == 0 {
-				continue
-			}
-			restore := func() {
-				node.Properties = state.properties
-				node.Labels = state.labels
-			}
-			if labelsAdded > 0 {
-				if err := validatePolicyOnLabelChange(store, node, state.labels); err != nil {
-					restore()
-					return false, err
-				}
-			}
-			if stats != nil {
-				stats.LabelsAdded += labelsAdded
-			}
-			if node == keep {
-				kept = true
-				continue
-			}
-			if err := store.UpdateNode(node); err != nil {
-				restore()
-				return false, wrap(*state, err)
-			}
-			e.notifyNodeMutated(string(node.ID))
-			continue
-		}
-		relationship := state.relationship
-		if changedPropertyCount(state.properties, relationship.Properties) == 0 {
-			continue
-		}
-		if err := store.UpdateEdge(relationship); err != nil {
-			relationship.Properties = state.properties
-			return false, wrap(*state, err)
-		}
-		e.notifyEdgeMutated(string(relationship.ID))
-	}
-	return kept, nil
-}
-
-// setClauseTargetsOnly reports whether every item of a SET body names
-// variable (variable.p = …, variable += …, variable:Label), without
-// splitting the body.
-func setClauseTargetsOnly(body, variable string) bool {
-	depth := 0
-	itemStart := true
-	for index := 0; index < len(body); index++ {
-		switch c := body[index]; c {
-		case '\'', '"', '`':
-			index = skipCypherQuotedText(body, index, c) - 1
-			itemStart = false
-			continue
-		case '(', '[', '{':
-			depth++
-		case ')', ']', '}':
-			depth--
-		case ',':
-			if depth == 0 {
-				itemStart = true
-				continue
-			}
-		case ' ', '\t', '\n', '\r':
-			continue
-		}
-		// A chained SET clause (SET a SET b) starts its items after SET.
-		if depth == 0 && (index == 0 || body[index-1] == ' ') && len(body)-index > len("SET") &&
-			equalFoldASCII(body[index:index+len("SET")], "SET") && !isIdentChar(body[index+len("SET")]) {
-			index += len("SET") - 1
-			itemStart = true
-			continue
-		}
-		if !itemStart {
-			continue
-		}
-		itemStart = false
-		end := index + len(variable)
-		if end > len(body) || body[index:end] != variable || (end < len(body) && isIdentChar(body[end])) {
-			return false
-		}
-		index = end - 1
-	}
-	return true
-}
 
 // applySetMapMergeToNode applies SET n += <expr>: every key of the map (or of
 // the node / relationship) is written, and a null value removes the key.
@@ -714,6 +546,57 @@ func (e *StorageExecutor) generateUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
+// persistSetEntities stores the entities a SET clause wrote (applySetRuns)
+// and counts what it wrote in stats (which may be nil): every route stores
+// SET's writes this one way. An entity the clause left as it was isn't
+// stored, though its writes count (Neo4j counts writes, not changes); a
+// node whose labels changed is checked against the label policies first.
+// On an error the entity is restored and the error is wrapped by its caller
+// (wrap).
+func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
+	for index := range states {
+		state := &states[index]
+		if stats != nil {
+			stats.PropertiesSet += state.written
+		}
+		if node := state.node; node != nil {
+			labelsAdded := addedLabelCount(state.labels, node.Labels)
+			if labelsAdded == 0 && changedPropertyCount(state.properties, node.Properties) == 0 {
+				continue
+			}
+			restore := func() {
+				node.Properties = state.properties
+				node.Labels = state.labels
+			}
+			if labelsAdded > 0 {
+				if err := validatePolicyOnLabelChange(store, node, state.labels); err != nil {
+					restore()
+					return err
+				}
+			}
+			if stats != nil {
+				stats.LabelsAdded += labelsAdded
+			}
+			if err := store.UpdateNode(node); err != nil {
+				restore()
+				return wrap(*state, err)
+			}
+			e.notifyNodeMutated(string(node.ID))
+			continue
+		}
+		relationship := state.relationship
+		if changedPropertyCount(state.properties, relationship.Properties) == 0 {
+			continue
+		}
+		if err := store.UpdateEdge(relationship); err != nil {
+			relationship.Properties = state.properties
+			return wrap(*state, err)
+		}
+		e.notifyEdgeMutated(string(relationship.ID))
+	}
+	return nil
+}
+
 // setRun is a stretch of a SET clause: its consecutive assignments that
 // name one variable (text). The per-entity appliers apply a stretch with
 // Neo4j's runs inside it (setPropertyRun); stretches apply in order.
@@ -722,18 +605,12 @@ type setRun struct {
 	text     string
 }
 
-// setClauseRuns returns the stretches of a SET body, in order. Neo4j applies
-// a SET clause's items in order, a run of property assignments to one
-// variable at once (setPropertyRun): SET n.a = 1, m.b = n.a reads the new
-// n.a, while SET n.a = 1, n.b = n.a reads the old one (#907). A chained SET
-// clause (SET a SET b) starts new stretches. A stretch's text is a slice of
-// the body.
-func setClauseRuns(body string) []setRun {
-	return appendSetClauseRuns(nil, body, nil)
-}
-
-// appendSetClauseRuns is setClauseRuns appending to runs (a caller's
-// buffer). assignments, when not nil, are body's assignments already split
+// appendSetClauseRuns appends the stretches of a SET body to runs (a
+// caller's buffer), in order. Neo4j applies a SET clause's items in order, a
+// run of property assignments to one variable at once (setPropertyRun):
+// SET n.a = 1, m.b = n.a reads the new n.a, while SET n.a = 1, n.b = n.a
+// reads the old one (#907). A chained SET clause (SET a SET b) starts new
+// stretches. A stretch's text is a slice of the body. assignments, when not nil, are body's assignments already split
 // (splitSetAssignments): they are used when body is one SET clause.
 func appendSetClauseRuns(runs []setRun, body string, assignments []string) []setRun {
 	for segment, next, ok := nextChainedSetClause(body, 0); ok; segment, next, ok = nextChainedSetClause(body, next) {
@@ -776,7 +653,7 @@ type setEntityState struct {
 	written      int
 }
 
-// applySetRuns applies a SET clause's runs (setClauseRuns) in order to the
+// applySetRuns applies a SET clause's runs (appendSetClauseRuns) in order to the
 // nodes and relationships they name, and returns the entities written,
 // first written first, appended to states (a caller's buffer). A run on a variable bound to null does nothing; a
 // run on a variable that names no entity reports ok false. On an error,

@@ -127,27 +127,12 @@ func TestMergeSetRunsInvalidValue(t *testing.T) {
 	}
 }
 
-func TestSetClauseRunsAndTargets(t *testing.T) {
-	require.Equal(t, []setRun{{variable: "n", text: "n.a = 1, , n.b = 2"}}, setClauseRuns("n.a = 1, , n.b = 2"))
+func TestSetClauseRuns(t *testing.T) {
+	require.Equal(t, []setRun{{variable: "n", text: "n.a = 1, , n.b = 2"}}, appendSetClauseRuns(nil, "n.a = 1, , n.b = 2", nil))
 	require.Equal(t, []setRun{
 		{variable: "n", text: "n.a = 1, n.b = n.a"},
 		{variable: "m", text: "m.c = 2"},
 		{variable: "n", text: "n:L, n.d = 3"},
 		{variable: "n", text: "n.e = 4"},
-	}, setClauseRuns("n.a = 1, n.b = n.a, m.c = 2, n:L, n.d = 3 SET n.e = 4"))
-
-	for _, testCase := range []struct {
-		body string
-		want bool
-	}{
-		{"n.a = 1, n.b = 'x, m.c'", true},
-		{"n += {a: 1, b: [m, 2]}, n:L", true},
-		{"n.a = 1 SET n.b = 2", true},
-		{"n.a = 1, m.b = 2", false},
-		{"n.a = 1 SET m.b = 2", false},
-		{"nn.a = 1", false},
-		{"n.a = (m.b)", true},
-	} {
-		require.Equal(t, testCase.want, setClauseTargetsOnly(testCase.body, "n"), testCase.body)
-	}
+	}, appendSetClauseRuns(nil, "n.a = 1, n.b = n.a, m.c = 2, n:L, n.d = 3 SET n.e = 4", nil))
 }

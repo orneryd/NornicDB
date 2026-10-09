@@ -5,7 +5,7 @@ package cypher
 // (#651): every non-null property it was created with counts as a property
 // set, every label as a label added. The node / relationship itself is
 // counted by the caller, and a SET / ON CREATE SET applied to it afterwards
-// is counted by the SET rule (applyCountedNodeSet).
+// is counted by the SET rule (pipelineApplySet).
 func countCreatedEntity(stats *QueryStats, labels []string, properties map[string]interface{}) {
 	if stats == nil {
 		return

@@ -2563,15 +2563,12 @@ func TestExecuteMergeWithContextDirect(t *testing.T) {
 
 		e := NewStorageExecutor(store)
 
-		nodeContext := map[string]*storage.Node{}
-		relContext := map[string]*storage.Edge{}
-
-		result, err := e.executeMergeWithContext(ctx, "MERGE (t:Target {name: 'Test'}) ON CREATE SET t.created = true", nodeContext, relContext)
+		result, err := e.Execute(ctx, "MERGE (t:Target {name: 'Test'}) ON CREATE SET t.created = true RETURN t.created AS c", nil)
 		if err != nil {
-			t.Fatalf("executeMergeWithContext failed: %v", err)
+			t.Fatalf("MERGE failed: %v", err)
 		}
-		if result == nil {
-			t.Fatal("Expected non-nil result")
+		if len(result.Rows) != 1 || result.Rows[0][0] != true {
+			t.Fatalf("ON CREATE SET not applied: %v", result.Rows)
 		}
 	})
 
@@ -2583,12 +2580,12 @@ func TestExecuteMergeWithContextDirect(t *testing.T) {
 
 		e := NewStorageExecutor(store)
 
-		result, err := e.executeMergeWithContext(ctx, "MERGE (t:Target {name: 'Test'}) RETURN t", map[string]*storage.Node{}, map[string]*storage.Edge{})
+		result, err := e.Execute(ctx, "MERGE (t:Target {name: 'Test'}) RETURN t", nil)
 		if err != nil {
-			t.Fatalf("executeMergeWithContext failed: %v", err)
+			t.Fatalf("MERGE failed: %v", err)
 		}
-		if result == nil {
-			t.Fatal("Expected non-nil result")
+		if len(result.Rows) != 1 {
+			t.Fatalf("expected one row, got %v", result.Rows)
 		}
 	})
 

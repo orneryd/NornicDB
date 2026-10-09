@@ -20,8 +20,6 @@
   other: "no se pudo buscar la relación para MERGE: {{.Cause}}"
 - id: cyphermerge.create_relationship_failed
   other: "no se pudo crear la relación: {{.Cause}}"
-- id: cyphermerge.update_edge_property_failed
-  other: "no se pudo actualizar la propiedad de la relación: {{.Cause}}"
 - id: cyphermerge.initial_merge_failed
   other: "falló el MERGE inicial: {{.Cause}}"
 - id: cyphermerge.foreach_failed
@@ -126,3 +124,5 @@
   other: "No se pudo crear la relación: falta el nodo `{{.Variable}}`"
 - id: cyphermerge.property_value_not_mergeable
   other: "No se puede fusionar el siguiente {{.Entity}} debido al valor de propiedad {{.Value}} de '{{.Property}}'"
+- id: cyphermerge.invalid_action
+  other: "acción de MERGE no válida: {{.Action}}"

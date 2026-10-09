@@ -447,10 +447,10 @@ func mergeStatementSetItems(statement, label string) (items []mergeSetItem, merg
 				items = append(items, mergeSetItem{text: assignment})
 			}
 		case pipelineClauseMerge:
-			pattern, onCreate, onMatch := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]))
-			mergeKeys = appendPatternPropertyExpressions(mergeKeys, pattern, label)
-			introduced := patternNodeLabels(pattern)
-			for _, assignment := range splitSetAssignments(onCreate) {
+			parts := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]))
+			mergeKeys = appendPatternPropertyExpressions(mergeKeys, parts.pattern, label)
+			introduced := patternNodeLabels(parts.pattern)
+			for _, assignment := range mergeActionAssignments(parts.onCreate) {
 				item := mergeSetItem{text: assignment}
 				target, _, _, _ := splitSetAssignment(assignment)
 				if labels, named := introduced[target]; named && !dynamicLabels[target] && !referencedIn(clauses[:index], target) {
@@ -459,7 +459,7 @@ func mergeStatementSetItems(statement, label string) (items []mergeSetItem, merg
 				}
 				items = append(items, item)
 			}
-			for _, assignment := range splitSetAssignments(onMatch) {
+			for _, assignment := range mergeActionAssignments(parts.onMatch) {
 				items = append(items, mergeSetItem{text: assignment})
 			}
 		}
@@ -472,8 +472,8 @@ func mergeStatementSetItems(statement, label string) (items []mergeSetItem, merg
 // lists), and the variables given a label that isn't static (SET x:$(expr)).
 func statementSetLabels(clauses []pipelineClause) (added map[string][]string, dynamic map[string]bool) {
 	added, dynamic = map[string][]string{}, map[string]bool{}
-	note := func(list string) {
-		for _, assignment := range splitSetAssignments(list) {
+	note := func(assignments []string) {
+		for _, assignment := range assignments {
 			target, _, operator, right := splitSetAssignment(assignment)
 			if operator != ":" {
 				continue
@@ -489,11 +489,11 @@ func statementSetLabels(clauses []pipelineClause) (added map[string][]string, dy
 	for _, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseSet:
-			note(strings.TrimSpace(clause.text[len("SET"):]))
+			note(splitSetAssignments(strings.TrimSpace(clause.text[len("SET"):])))
 		case pipelineClauseMerge:
-			_, onCreate, onMatch := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]))
-			note(onCreate)
-			note(onMatch)
+			parts := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]))
+			note(mergeActionAssignments(parts.onCreate))
+			note(mergeActionAssignments(parts.onMatch))
 		}
 	}
 	return added, dynamic
