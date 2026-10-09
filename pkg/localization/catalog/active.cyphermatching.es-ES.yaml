@@ -184,3 +184,6 @@
 - id: cyphermatching.quantified_path_variable_bound
   description: "Una variable vinculada por una cláusula anterior aparece dentro de un patrón de camino cuantificado. Variable es el nombre de la variable, sin traducir."
   other: "La variable `{{.Variable}}` ya está definida en una cláusula anterior; no se puede usar como variable de nodo o de relación dentro de un patrón de camino cuantificado."
+- id: cyphermatching.parenthesised_path_juxtaposed
+  description: "Un camino entre paréntesis sin cuantificador junto a otro elemento del patrón."
+  other: "La yuxtaposición solo se admite por ahora en los patrones de camino cuantificados."
