@@ -351,6 +351,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.index_hint_not_found", Constructor: "CypherCoreIndexHintNotFound", Fields: []string{"Hint", "Label", "Property"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.invalid_input", Constructor: "CypherCoreInvalidInput", Fields: []string{"Token"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.invalid_input_expected_expression", Constructor: "CypherCoreInvalidInputExpectedExpression", Fields: []string{"Token"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.invalid_input_expected_identifier", Constructor: "CypherCoreInvalidInputExpectedIdentifier", Fields: []string{"Token"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.invalid_label_name", Constructor: "CypherCoreInvalidLabelName", Fields: []string{"Label"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.invalid_label_reserved", Constructor: "CypherCoreInvalidLabelReserved", Fields: []string{"Label"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.invalid_property_key", Constructor: "CypherCoreInvalidPropertyKey", Fields: []string{"Key"}, PluralForms: []string{"other"}},

@@ -72,3 +72,35 @@ func TestOrderByRepeatedAggregate(t *testing.T) {
 		require.Equal(t, want, result.Rows, query)
 	}
 }
+
+// A dot of a property access is followed by the key: RETURN n. is Neo4j's
+// "Invalid input ”: expected an identifier".
+func TestPropertyAccessNeedsKey(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "dangling_dot"))
+	ctx := context.Background()
+	for query, token := range map[string]string{
+		"WITH {k: 1} AS n RETURN n.":        "",
+		"WITH {k: 1} AS n RETURN n. , 1":    ",",
+		"WITH {k: 1} AS n RETURN n.$k AS a": "$",
+		"MATCH (n) RETURN n.k.":             "",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+		require.Contains(t, err.Error(), "Invalid input '"+token+"': expected an identifier", query)
+	}
+	for query, want := range map[string][][]interface{}{
+		"RETURN .5 AS a":                       {{0.5}},
+		"WITH {k: 1} AS n RETURN n . k AS a":   {{int64(1)}},
+		"WITH {k: 1} AS n RETURN n {.*} AS a":  {{map[string]interface{}{"k": int64(1)}}},
+		"WITH {k: 1} AS n RETURN n {. k} AS a": {{map[string]interface{}{"k": int64(1)}}},
+		"RETURN [1, 2, 3][0..1] AS a":          {{[]interface{}{int64(1)}}},
+		"RETURN 1 AS a // end.":                {{int64(1)}},
+		"RETURN 1 AS a /* x. */":               {{int64(1)}},
+		"RETURN 'a.' AS a":                     {{"a."}},
+		"WITH {k: 1} AS n RETURN n.`k` AS a":   {{int64(1)}},
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, want, result.Rows, query)
+	}
+}

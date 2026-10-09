@@ -52,6 +52,7 @@ const (
 	MessageCypherCoreYieldPaginationInvalid              MessageID = "cyphercore.yield_pagination_invalid"
 	MessageCypherCoreInvalidInput                        MessageID = "cyphercore.invalid_input"
 	MessageCypherCoreInvalidInputExpectedExpression      MessageID = "cyphercore.invalid_input_expected_expression"
+	MessageCypherCoreInvalidInputExpectedIdentifier      MessageID = "cyphercore.invalid_input_expected_identifier"
 	MessageCypherCoreListOperandTypeMismatch             MessageID = "cyphercore.list_operand_type_mismatch"
 	MessageCypherCoreListParameterTypeMismatch           MessageID = "cyphercore.list_parameter_type_mismatch"
 	MessageCypherCoreListCoercionToBoolean               MessageID = "cyphercore.list_coercion_to_boolean"
@@ -309,6 +310,13 @@ func CypherCoreInvalidInput(token string) Message {
 
 func CypherCoreInvalidInputExpectedExpression(token string) Message {
 	return cypherCoreMessage(MessageCypherCoreInvalidInputExpectedExpression, "Invalid input '"+token+"': expected an expression", map[string]any{"Token": token})
+}
+
+// CypherCoreInvalidInputExpectedIdentifier is Neo4j's message for a token
+// (or the end of the statement, '') where a name must come, as after the
+// dot of a property access (RETURN n.).
+func CypherCoreInvalidInputExpectedIdentifier(token string) Message {
+	return cypherCoreMessage(MessageCypherCoreInvalidInputExpectedIdentifier, "Invalid input '"+token+"': expected an identifier", map[string]any{"Token": token})
 }
 
 func CypherCoreListOperandTypeMismatch(typeName string) Message {
