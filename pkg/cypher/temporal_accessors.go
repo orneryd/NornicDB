@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"bytes"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
@@ -74,19 +75,31 @@ func FormatFloat(value float64, bits int) string {
 	}
 	magnitude := math.Abs(value)
 	if magnitude == 0 || magnitude >= 1e-3 && magnitude < 1e7 {
-		text := strconv.FormatFloat(value, 'f', -1, bits)
-		if !strings.Contains(text, ".") {
-			text += ".0"
+		var buffer [32]byte
+		text := strconv.AppendFloat(buffer[:0], value, 'f', -1, bits)
+		if bytes.IndexByte(text, '.') < 0 {
+			text = append(text, '.', '0')
 		}
-		return text
+		return string(text)
 	}
-	text := strconv.FormatFloat(value, 'e', -1, bits)
-	parts := strings.SplitN(text, "e", 2)
-	if !strings.Contains(parts[0], ".") {
-		parts[0] += ".0"
+	// Go writes 1.23456789e+08 or 1e-07: keep the mantissa (with a
+	// fractional digit), then E, the exponent's sign when negative and its
+	// digits without leading zeros.
+	var buffer [32]byte
+	scientific := strconv.AppendFloat(buffer[:0], value, 'e', -1, bits)
+	marker := bytes.IndexByte(scientific, 'e')
+	var out [40]byte
+	text := append(out[:0], scientific[:marker]...)
+	if bytes.IndexByte(text, '.') < 0 {
+		text = append(text, '.', '0')
 	}
-	exponent, _ := strconv.Atoi(parts[1])
-	return parts[0] + "E" + strconv.Itoa(exponent)
+	text = append(text, 'E')
+	exponent := scientific[marker+1:]
+	if exponent[0] == '-' {
+		text = append(text, '-')
+	}
+	exponent = bytes.TrimLeft(exponent[1:], "0")
+	return string(append(text, exponent...))
 }
 
 func formatZonedDateTimeString(value time.Time, zoneID string) string {
