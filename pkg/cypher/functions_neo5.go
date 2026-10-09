@@ -36,7 +36,7 @@ func init() {
 		"tan":      math.Tan,
 		"cot":      rowMathCot,
 		"asin":     math.Asin,
-		"acos":     fdlibmAcos,
+		"acos":     math.Acos,
 		"atan":     math.Atan,
 		"exp":      math.Exp,
 		"log":      math.Log,
