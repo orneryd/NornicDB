@@ -113,12 +113,16 @@ func analyzeStretchClause(clause pipelineClause, reads, writes *stretchTokens) {
 		addStretchExpressionReads(body[len(pattern):], reads)
 		addStretchPropertyReads(pattern, reads)
 	case pipelineClauseMerge:
-		pattern, onCreate, onMatch := splitMergeClauseActions(strings.TrimSpace(pipelineClauseBody(text, "MERGE")))
-		addStretchPattern(pattern, reads, false)
-		addStretchPattern(pattern, writes, true)
-		addStretchPropertyReads(pattern, reads)
-		addStretchSetItems(onCreate, reads, writes)
-		addStretchSetItems(onMatch, reads, writes)
+		actions := splitMergeClauseActions(strings.TrimSpace(pipelineClauseBody(text, "MERGE")))
+		addStretchPattern(actions.pattern, reads, false)
+		addStretchPattern(actions.pattern, writes, true)
+		addStretchPropertyReads(actions.pattern, reads)
+		for _, item := range mergeActionAssignments(actions.onCreate) {
+			addStretchSetItems(item, reads, writes)
+		}
+		for _, item := range mergeActionAssignments(actions.onMatch) {
+			addStretchSetItems(item, reads, writes)
+		}
 	case pipelineClauseCreate:
 		pattern := pipelineClauseBody(text, "CREATE")
 		addStretchPattern(pattern, writes, true)
