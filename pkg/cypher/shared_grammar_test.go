@@ -64,6 +64,9 @@ func TestSharedCypherGrammarErrorsBeforeWrites(t *testing.T) {
 				"CREATE (:Shared) FOR x [1,2] RETURN x",
 				"CREATE (:Shared) FILTER RETURN 1",
 				"CREATE (:Shared) CALL () { RETURN missing AS x } RETURN x",
+				"FOR x IN [1,2,3]",
+				"LET x = 1",
+				"FILTER true",
 			} {
 				t.Run(query, func(t *testing.T) {
 					exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "errors"))

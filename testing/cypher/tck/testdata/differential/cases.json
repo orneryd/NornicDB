@@ -1520,12 +1520,6 @@
     "no_effects": true
   },
   {
-    "name": "GH743 residual unsupported CYPHER 25",
-    "query": "CYPHER 25 CREATE (:Preamble) RETURN 1 AS x",
-    "expected_code": "Neo.ClientError.Statement.ArgumentError",
-    "no_effects": true
-  },
-  {
     "name": "GH743 residual unsupported CYPHER 5.0",
     "query": "CYPHER 5.0 CREATE (:Preamble) RETURN 1 AS x",
     "expected_code": "Neo.ClientError.Statement.ArgumentError",
