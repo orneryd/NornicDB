@@ -219,6 +219,12 @@ func (w *transactionStorageWrapper) DeleteNode(id storage.NodeID) error {
 	return w.tx.DeleteNode(w.prefixNodeID(id))
 }
 
+// DeleteConnectedNode is BadgerTransaction.DeleteConnectedNode for this
+// wrapper's namespace (storage.ConnectedNodeDeleter).
+func (w *transactionStorageWrapper) DeleteConnectedNode(id storage.NodeID) error {
+	return w.tx.DeleteConnectedNode(w.prefixNodeID(id))
+}
+
 func (w *transactionStorageWrapper) CreateEdge(edge *storage.Edge) error {
 	if edge == nil {
 		return storage.ErrInvalidData

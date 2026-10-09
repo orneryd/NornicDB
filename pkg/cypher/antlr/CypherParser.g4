@@ -149,7 +149,7 @@ singleQuery
     ;
 
 standaloneCall
-    : CALL invocationName parenExpressionChain? (YIELD (MULT | yieldItems) orderSt? skipSt? limitSt?)?
+    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT | yieldItems) orderSt? skipSt? limitSt?)?
     ;
 
 // Subqueries
@@ -166,7 +166,7 @@ collectSubquery
     ;
 
 callSubquery
-    : CALL (LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN)? LBRACE subqueryBody RBRACE (IN TRANSACTIONS (OF (numLit | parameter) (ROW | ROWS))?)?
+    : OPTIONAL? CALL (LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN)? LBRACE subqueryBody RBRACE (IN TRANSACTIONS (OF (numLit | parameter) (ROW | ROWS))?)?
     ;
 
 // Subquery body can start with WITH (to import variables) or have statements
@@ -265,7 +265,7 @@ foreachSt
     ;
 
 queryCallSt
-    : CALL invocationName parenExpressionChain? (YIELD (MULT | yieldItems) orderSt? skipSt? limitSt?)?
+    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT | yieldItems) orderSt? skipSt? limitSt?)?
     ;
 
 parenExpressionChain

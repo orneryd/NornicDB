@@ -1290,7 +1290,9 @@ func (s *Session) handleCommit(data []byte) error {
 			} else {
 				s.markTransactionCleanupFailed()
 			}
-			if sendErr := s.sendTransactionControlFailure(code, message); sendErr != nil {
+			// The failure keeps its conformance detail (a commit-time
+			// DeleteConnectedNode, as the DELETE-time error has).
+			if sendErr := s.sendTransactionControlFailureWithDetail(code, message, boltErrorDetail(err)); sendErr != nil {
 				return sendErr
 			}
 			if flushErr := s.flushIfPending(); flushErr != nil {
@@ -1683,8 +1685,14 @@ func (s *Session) sendRunFailureWithDetail(code, message, detail string) error {
 }
 
 func (s *Session) sendTransactionControlFailure(code, message string) error {
+	return s.sendTransactionControlFailureWithDetail(code, message, "")
+}
+
+// sendTransactionControlFailureWithDetail is sendTransactionControlFailure
+// with the error's conformance detail (gql_status), "" for none.
+func (s *Session) sendTransactionControlFailureWithDetail(code, message, detail string) error {
 	s.failedUntilReset = true
-	return s.sendFailure(code, message)
+	return s.sendFailureWithDetail(code, message, detail)
 }
 
 func (s *Session) sendTransactionTimeoutFailure() error {

@@ -126,9 +126,10 @@ func TestDeleteConnectedNodeExplicitTransactionRollback_Errors(t *testing.T) {
 	_, err := exec.Execute(ctx, "BEGIN", nil)
 	require.NoError(t, err)
 
+	// As in Neo4j, the remaining relationships are checked at COMMIT (a
+	// later statement could delete them, #907); the DELETE itself succeeds.
 	_, err = exec.Execute(ctx, `MATCH (n:Item {name: 'connected'}) DELETE n`, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "still has relationships")
+	require.NoError(t, err)
 
 	_, err = exec.Execute(ctx, "ROLLBACK", nil)
 	require.NoError(t, err)
