@@ -1,0 +1,400 @@
+# github.com/orneryd/nornicdb/pkg/cypher.test
+ld: warning: ignoring duplicate libraries: '-lobjc'
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000000.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000001.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000002.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000003.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000004.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000005.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000006.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000007.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000008.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000009.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000010.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000011.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000012.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000013.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000014.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000015.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000016.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000017.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000018.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000019.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000020.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000021.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000022.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000023.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000024.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000025.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000026.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/private/var/folders/fd/pctbxxj119nf3t_3n0vkmykh0000gn/T/go-link-900387692/000027.o) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[2](ggml-blas.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[3](ggml-metal.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[4](ggml-metal-device.m.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[5](ggml-metal-device.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[6](ggml-metal-common.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[7](ggml-metal-context.m.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[8](ggml-metal-fusion.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[9](ggml-metal-ops.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[10](ggml-metal-tuning.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[11](ggml-metal-embed-fa.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[12](ggml-metal-embed-mul_mv.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[13](ggml-metal-embed-mul_mm.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[14](ggml-metal-embed-quantize.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[15](ggml-metal-embed-softmax.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[16](ggml-metal-embed-norm.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[17](ggml-metal-embed-unary.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[18](ggml-metal-embed-binbcast.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[19](ggml-metal-embed-reduce.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[20](ggml-metal-embed-tri.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[21](ggml-metal-embed-ssm.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[22](ggml-metal-embed-wkv.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[23](ggml-metal-embed-gated_delta_net.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[24](ggml-metal-embed-solve_tri.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[25](ggml-metal-embed-rope.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[26](ggml-metal-embed-conv.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[27](ggml-metal-embed-upscale.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[28](ggml-metal-embed-argsort.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[29](ggml-metal-embed-pool.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[30](ggml-metal-embed-misc.s.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[31](ggml.c.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[33](ggml-alloc.c.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[34](ggml-backend.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[35](ggml-backend-meta.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[36](ggml-opt.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[37](ggml-threading.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[38](ggml-quants.c.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[39](gguf.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[40](ggml-cpu.c.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[41](ggml-cpu.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[42](repack.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[43](iqp.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[45](quants.c.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[46](traits.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[49](binary-ops.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[50](unary-ops.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[51](vec.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[52](ops.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[54](quants.c.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[55](repack.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[56](ggml-backend-dl.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[57](ggml-backend-reg.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[58](unity_9_cxx.cxx.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[59](unity_8_cxx.cxx.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[60](unity_7_cxx.cxx.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[61](unity_6_cxx.cxx.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[62](unity_5_cxx.cxx.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[63](unity_4_cxx.cxx.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[64](unity_3_cxx.cxx.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[65](unity_2_cxx.cxx.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[66](unity_1_cxx.cxx.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[67](unity_0_cxx.cxx.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[68](llama.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[69](llama-adapter.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[70](llama-arch.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[71](llama-batch.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[72](llama-chat.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[73](llama-context.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[75](llama-grammar.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[76](llama-graph.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[77](llama-hparams.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[78](llama-impl.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[79](llama-io.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[80](llama-kv-cache.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[81](llama-kv-cache-iswa.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[82](llama-kv-cache-dsa.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[83](llama-kv-cache-dsa-iswa.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[84](llama-kv-cache-msa.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[85](llama-kv-cache-dsv4.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[86](llama-memory.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[87](llama-memory-hybrid.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[88](llama-memory-hybrid-iswa.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[89](llama-memory-hybrid-idx.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[90](llama-memory-recurrent.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[91](llama-mmap.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[92](llama-model-loader.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[93](llama-model-saver.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[94](llama-model.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[96](llama-sampler.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[97](llama-vocab.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[98](unicode-data.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+ld: warning: object file (/Users/tjsweet/src/NornicDB/lib/llama/libllama_darwin_arm64.a[99](unicode.cpp.o)) was built for newer 'macOS' version (27.0) than being linked (26.0)
+=== RUN   TestParserScaling
+    parser_scaling_report_test.go:213: return_items   n=8    tok=80    nornic validate         1271 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: return_items   n=8    tok=80    antlr  validate        20955 ns      263 allocs      33914 B
+    parser_scaling_report_test.go:213: return_items   n=8    tok=80    nornic parse            3031 ns       92 allocs       6103 B
+    parser_scaling_report_test.go:213: return_items   n=8    tok=80    antlr  parse          124733 ns     2612 allocs     204742 B
+    parser_scaling_report_test.go:213: return_items   n=16   tok=152   nornic validate         2362 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: return_items   n=16   tok=152   antlr  validate        37856 ns      480 allocs      64135 B
+    parser_scaling_report_test.go:213: return_items   n=16   tok=152   nornic parse            5314 ns      158 allocs      11013 B
+    parser_scaling_report_test.go:213: return_items   n=16   tok=152   antlr  parse          147349 ns     3054 allocs     241386 B
+    parser_scaling_report_test.go:213: return_items   n=32   tok=296   nornic validate         4314 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: return_items   n=32   tok=296   antlr  validate        70172 ns      912 allocs     114845 B
+    parser_scaling_report_test.go:213: return_items   n=32   tok=296   nornic parse            9841 ns      288 allocs      20909 B
+    parser_scaling_report_test.go:213: return_items   n=32   tok=296   antlr  parse          189496 ns     3935 allocs     305002 B
+    parser_scaling_report_test.go:213: return_items   n=64   tok=584   nornic validate         8973 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: return_items   n=64   tok=584   antlr  validate       137450 ns     1777 allocs     225744 B
+    parser_scaling_report_test.go:213: return_items   n=64   tok=584   nornic parse           18545 ns      546 allocs      40939 B
+    parser_scaling_report_test.go:213: return_items   n=64   tok=584   antlr  parse          278623 ns     5697 allocs     441714 B
+    parser_scaling_report_test.go:213: return_items   n=128  tok=1160  nornic validate        16973 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: return_items   n=128  tok=1160  antlr  validate       274282 ns     3507 allocs     469567 B
+    parser_scaling_report_test.go:213: return_items   n=128  tok=1160  nornic parse           36030 ns     1060 allocs      80682 B
+    parser_scaling_report_test.go:213: return_items   n=128  tok=1160  antlr  parse          451906 ns     9220 allocs     737433 B
+    parser_scaling_report_test.go:213: return_items   n=256  tok=2312  nornic validate        33727 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: return_items   n=256  tok=2312  antlr  validate       539150 ns     6964 allocs     916225 B
+    parser_scaling_report_test.go:213: return_items   n=256  tok=2312  nornic parse           70713 ns     2086 allocs     160220 B
+    parser_scaling_report_test.go:213: return_items   n=256  tok=2312  antlr  parse          804932 ns    16262 allocs    1287661 B
+    parser_scaling_report_test.go:213: return_items   n=512  tok=4616  nornic validate        70987 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: return_items   n=512  tok=4616  antlr  validate      1081568 ns    13878 allocs    1866924 B
+    parser_scaling_report_test.go:213: return_items   n=512  tok=4616  nornic parse          139541 ns     4136 allocs     319004 B
+    parser_scaling_report_test.go:213: return_items   n=512  tok=4616  antlr  parse         1489406 ns    30345 allocs    2442742 B
+    parser_scaling_report_test.go:213: where_and      n=8    tok=91    nornic validate         1386 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: where_and      n=8    tok=91    antlr  validate        29007 ns      349 allocs      44570 B
+    parser_scaling_report_test.go:213: where_and      n=8    tok=91    nornic parse            1790 ns       42 allocs       3834 B
+    parser_scaling_report_test.go:213: where_and      n=8    tok=91    antlr  parse          263987 ns     5865 allocs     481946 B
+    parser_scaling_report_test.go:213: where_and      n=16   tok=171   nornic validate         2446 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: where_and      n=16   tok=171   antlr  validate        51524 ns      630 allocs      82729 B
+    parser_scaling_report_test.go:213: where_and      n=16   tok=171   nornic parse            2333 ns       42 allocs       4293 B
+    parser_scaling_report_test.go:213: where_and      n=16   tok=171   antlr  parse          436561 ns     9715 allocs     809619 B
+    parser_scaling_report_test.go:213: where_and      n=32   tok=331   nornic validate         4460 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: where_and      n=32   tok=331   antlr  validate        98180 ns     1191 allocs     158790 B
+    parser_scaling_report_test.go:213: where_and      n=32   tok=331   nornic parse            3519 ns       42 allocs       5337 B
+    parser_scaling_report_test.go:213: where_and      n=32   tok=331   antlr  parse          765983 ns    17413 allocs    1465005 B
+    parser_scaling_report_test.go:213: where_and      n=64   tok=651   nornic validate         8133 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: where_and      n=64   tok=651   antlr  validate       187024 ns     2312 allocs     308350 B
+    parser_scaling_report_test.go:213: where_and      n=64   tok=651   nornic parse            5770 ns       42 allocs       7501 B
+    parser_scaling_report_test.go:213: where_and      n=64   tok=651   antlr  parse         1427773 ns    32807 allocs    2773154 B
+    parser_scaling_report_test.go:213: where_and      n=128  tok=1291  nornic validate        16255 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: where_and      n=128  tok=1291  antlr  validate       368302 ns     4553 allocs     599275 B
+    parser_scaling_report_test.go:213: where_and      n=128  tok=1291  nornic parse           10597 ns       42 allocs      11681 B
+    parser_scaling_report_test.go:213: where_and      n=128  tok=1291  antlr  parse         2820786 ns    63593 allocs    5381537 B
+    parser_scaling_report_test.go:213: where_and      n=256  tok=2571  nornic validate        37216 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: where_and      n=256  tok=2571  antlr  validate       728302 ns     9035 allocs    1230291 B
+    parser_scaling_report_test.go:213: where_and      n=256  tok=2571  nornic parse           19381 ns       42 allocs      23011 B
+    parser_scaling_report_test.go:213: where_and      n=256  tok=2571  antlr  parse         5372326 ns   125164 allocs   10649288 B
+    parser_scaling_report_test.go:213: where_and      n=512  tok=5131  nornic validate        73357 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: where_and      n=512  tok=5131  antlr  validate      1451531 ns    17997 allocs    2484121 B
+    parser_scaling_report_test.go:213: where_and      n=512  tok=5131  nornic parse           37045 ns       42 allocs      41744 B
+    parser_scaling_report_test.go:213: where_and      n=512  tok=5131  antlr  parse        10838964 ns   248303 allocs   21176065 B
+    parser_scaling_report_test.go:213: arith_chain    n=8    tok=31    nornic validate          468 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: arith_chain    n=8    tok=31    antlr  validate        10387 ns      141 allocs      16654 B
+    parser_scaling_report_test.go:213: arith_chain    n=8    tok=31    nornic parse             579 ns       16 allocs        920 B
+    parser_scaling_report_test.go:213: arith_chain    n=8    tok=31    antlr  parse          216210 ns     4694 allocs     365265 B
+    parser_scaling_report_test.go:213: arith_chain    n=16   tok=63    nornic validate          789 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: arith_chain    n=16   tok=63    antlr  validate        20868 ns      254 allocs      31123 B
+    parser_scaling_report_test.go:213: arith_chain    n=16   tok=63    nornic parse             891 ns       18 allocs       1208 B
+    parser_scaling_report_test.go:213: arith_chain    n=16   tok=63    antlr  parse          273462 ns     6040 allocs     474827 B
+    parser_scaling_report_test.go:213: arith_chain    n=32   tok=127   nornic validate         1401 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: arith_chain    n=32   tok=127   antlr  validate        45381 ns      479 allocs      60062 B
+    parser_scaling_report_test.go:213: arith_chain    n=32   tok=127   nornic parse            1478 ns       19 allocs       1624 B
+    parser_scaling_report_test.go:213: arith_chain    n=32   tok=127   antlr  parse          389221 ns     8730 allocs     694029 B
+    parser_scaling_report_test.go:213: arith_chain    n=64   tok=255   nornic validate         2610 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: arith_chain    n=64   tok=255   antlr  validate       109235 ns      928 allocs     118195 B
+    parser_scaling_report_test.go:213: arith_chain    n=64   tok=255   nornic parse            2623 ns       20 allocs       2456 B
+    parser_scaling_report_test.go:213: arith_chain    n=64   tok=255   antlr  parse          669502 ns    14108 allocs    1132691 B
+    parser_scaling_report_test.go:213: arith_chain    n=128  tok=511   nornic validate         5566 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: arith_chain    n=128  tok=511   antlr  validate       309827 ns     1825 allocs     234209 B
+    parser_scaling_report_test.go:213: arith_chain    n=128  tok=511   nornic parse            5042 ns       21 allocs       4120 B
+    parser_scaling_report_test.go:213: arith_chain    n=128  tok=511   antlr  parse         1221703 ns    24862 allocs    2010122 B
+    parser_scaling_report_test.go:213: arith_chain    n=256  tok=1023  nornic validate        11318 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: arith_chain    n=256  tok=1023  antlr  validate       978998 ns     3619 allocs     488258 B
+    parser_scaling_report_test.go:213: arith_chain    n=256  tok=1023  nornic parse           10942 ns       23 allocs       9240 B
+    parser_scaling_report_test.go:213: arith_chain    n=256  tok=1023  antlr  parse         2699902 ns    46369 allocs    3787451 B
+    parser_scaling_report_test.go:213: arith_chain    n=512  tok=2047  nornic validate        23208 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: arith_chain    n=512  tok=2047  antlr  validate      3670708 ns     7204 allocs     955384 B
+    parser_scaling_report_test.go:213: arith_chain    n=512  tok=2047  nornic parse           21977 ns       24 allocs      15384 B
+    parser_scaling_report_test.go:213: arith_chain    n=512  tok=2047  antlr  parse         6662570 ns    89379 allocs    7297680 B
+    parser_scaling_report_test.go:213: list_literal   n=8    tok=26    nornic validate          496 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: list_literal   n=8    tok=26    antlr  validate        13849 ns      194 allocs      23600 B
+    parser_scaling_report_test.go:213: list_literal   n=8    tok=26    nornic parse            1208 ns       30 allocs       3512 B
+    parser_scaling_report_test.go:213: list_literal   n=8    tok=26    antlr  parse          180671 ns     3815 allocs     292253 B
+    parser_scaling_report_test.go:213: list_literal   n=16   tok=50    nornic validate          845 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: list_literal   n=16   tok=50    antlr  validate        25370 ns      347 allocs      43448 B
+    parser_scaling_report_test.go:213: list_literal   n=16   tok=50    nornic parse            2117 ns       41 allocs       6664 B
+    parser_scaling_report_test.go:213: list_literal   n=16   tok=50    antlr  parse          197156 ns     4113 allocs     315297 B
+    parser_scaling_report_test.go:213: list_literal   n=32   tok=98    nornic validate         1492 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: list_literal   n=32   tok=98    antlr  validate        47409 ns      652 allocs      83143 B
+    parser_scaling_report_test.go:213: list_literal   n=32   tok=98    nornic parse            3988 ns       60 allocs      12936 B
+    parser_scaling_report_test.go:213: list_literal   n=32   tok=98    antlr  parse          225291 ns     4707 allocs     361520 B
+    parser_scaling_report_test.go:213: list_literal   n=64   tok=194   nornic validate         2889 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: list_literal   n=64   tok=194   antlr  validate        89962 ns     1261 allocs     162789 B
+    parser_scaling_report_test.go:213: list_literal   n=64   tok=194   nornic parse            7330 ns       95 allocs      25736 B
+    parser_scaling_report_test.go:213: list_literal   n=64   tok=194   antlr  parse          283532 ns     5893 allocs     454199 B
+    parser_scaling_report_test.go:213: list_literal   n=128  tok=386   nornic validate         5575 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: list_literal   n=128  tok=386   antlr  validate       175622 ns     2478 allocs     321820 B
+    parser_scaling_report_test.go:213: list_literal   n=128  tok=386   nornic parse           14482 ns      163 allocs      52360 B
+    parser_scaling_report_test.go:213: list_literal   n=128  tok=386   antlr  parse          394548 ns     8263 allocs     639835 B
+    parser_scaling_report_test.go:213: list_literal   n=256  tok=770   nornic validate        11874 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: list_literal   n=256  tok=770   antlr  validate       375672 ns     4911 allocs     637323 B
+    parser_scaling_report_test.go:213: list_literal   n=256  tok=770   nornic parse           31368 ns      294 allocs     110216 B
+    parser_scaling_report_test.go:213: list_literal   n=256  tok=770   antlr  parse          684347 ns    13001 allocs    1008222 B
+    parser_scaling_report_test.go:213: list_literal   n=512  tok=1538  nornic validate        24310 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: list_literal   n=512  tok=1538  antlr  validate       751494 ns     9777 allocs    1301102 B
+    parser_scaling_report_test.go:213: list_literal   n=512  tok=1538  nornic parse           63992 ns      810 allocs     221832 B
+    parser_scaling_report_test.go:213: list_literal   n=512  tok=1538  antlr  parse         1075952 ns    22476 allocs    1775754 B
+    parser_scaling_report_test.go:213: map_literal    n=8    tok=50    nornic validate          766 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: map_literal    n=8    tok=50    antlr  validate        17583 ns      242 allocs      30004 B
+    parser_scaling_report_test.go:213: map_literal    n=8    tok=50    nornic parse            1745 ns       39 allocs       2840 B
+    parser_scaling_report_test.go:213: map_literal    n=8    tok=50    antlr  parse          186557 ns     3917 allocs     300844 B
+    parser_scaling_report_test.go:213: map_literal    n=16   tok=98    nornic validate         1456 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: map_literal    n=16   tok=98    antlr  validate        32740 ns      443 allocs      56381 B
+    parser_scaling_report_test.go:213: map_literal    n=16   tok=98    nornic parse            3717 ns       62 allocs       6096 B
+    parser_scaling_report_test.go:213: map_literal    n=16   tok=98    antlr  parse          207638 ns     4319 allocs     332910 B
+    parser_scaling_report_test.go:213: map_literal    n=32   tok=194   nornic validate         2705 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: map_literal    n=32   tok=194   antlr  validate        62864 ns      844 allocs     109395 B
+    parser_scaling_report_test.go:213: map_literal    n=32   tok=194   nornic parse            7587 ns       99 allocs      12256 B
+    parser_scaling_report_test.go:213: map_literal    n=32   tok=194   antlr  parse          250249 ns     5120 allocs     394934 B
+    parser_scaling_report_test.go:213: map_literal    n=64   tok=386   nornic validate         5213 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: map_literal    n=64   tok=386   antlr  validate       121993 ns     1645 allocs     215163 B
+    parser_scaling_report_test.go:213: map_literal    n=64   tok=386   nornic parse           14353 ns      167 allocs      23808 B
+    parser_scaling_report_test.go:213: map_literal    n=64   tok=386   antlr  parse          322393 ns     6722 allocs     521033 B
+    parser_scaling_report_test.go:213: map_literal    n=128  tok=770   nornic validate        10427 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: map_literal    n=128  tok=770   antlr  validate       239075 ns     3246 allocs     424129 B
+    parser_scaling_report_test.go:213: map_literal    n=128  tok=770   nornic parse           29196 ns      327 allocs      47072 B
+    parser_scaling_report_test.go:213: map_literal    n=128  tok=770   antlr  parse          478312 ns     9924 allocs     771179 B
+    parser_scaling_report_test.go:213: map_literal    n=256  tok=1538  nornic validate        21516 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: map_literal    n=256  tok=1538  antlr  validate       475304 ns     6448 allocs     874843 B
+    parser_scaling_report_test.go:213: map_literal    n=256  tok=1538  nornic parse           60530 ns      716 allocs      97792 B
+    parser_scaling_report_test.go:213: map_literal    n=256  tok=1538  antlr  parse          790330 ns    16327 allocs    1304816 B
+    parser_scaling_report_test.go:213: map_literal    n=512  tok=3074  nornic validate        44584 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: map_literal    n=512  tok=3074  antlr  validate       950585 ns    12849 allocs    1702555 B
+    parser_scaling_report_test.go:213: map_literal    n=512  tok=3074  nornic parse          125611 ns     1746 allocs     209824 B
+    parser_scaling_report_test.go:213: map_literal    n=512  tok=3074  antlr  parse         1422817 ns    29130 allocs    2319256 B
+    parser_scaling_report_test.go:213: match_hops     n=8    tok=89    nornic validate         1222 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: match_hops     n=8    tok=89    antlr  validate        19297 ns      225 allocs      28754 B
+    parser_scaling_report_test.go:213: match_hops     n=8    tok=89    nornic parse            4221 ns       73 allocs       7759 B
+    parser_scaling_report_test.go:213: match_hops     n=8    tok=89    antlr  parse          125326 ns     2590 allocs     201073 B
+    parser_scaling_report_test.go:213: match_hops     n=16   tok=169   nornic validate         2027 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: match_hops     n=16   tok=169   antlr  validate        33373 ns      394 allocs      52572 B
+    parser_scaling_report_test.go:213: match_hops     n=16   tok=169   nornic parse            7219 ns      101 allocs      11966 B
+    parser_scaling_report_test.go:213: match_hops     n=16   tok=169   antlr  parse          143191 ns     2992 allocs     232627 B
+    parser_scaling_report_test.go:213: match_hops     n=32   tok=329   nornic validate         3830 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: match_hops     n=32   tok=329   antlr  validate        68749 ns      731 allocs      99952 B
+    parser_scaling_report_test.go:213: match_hops     n=32   tok=329   nornic parse           14295 ns      153 allocs      21117 B
+    parser_scaling_report_test.go:213: match_hops     n=32   tok=329   antlr  parse          179421 ns     3794 allocs     295616 B
+    parser_scaling_report_test.go:213: match_hops     n=64   tok=649   nornic validate         7366 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: match_hops     n=64   tok=649   antlr  validate       114554 ns     1404 allocs     192140 B
+    parser_scaling_report_test.go:213: match_hops     n=64   tok=649   nornic parse           26608 ns      254 allocs      41614 B
+    parser_scaling_report_test.go:213: match_hops     n=64   tok=649   antlr  parse          248894 ns     5395 allocs     416331 B
+    parser_scaling_report_test.go:213: match_hops     n=128  tok=1289  nornic validate        14279 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: match_hops     n=128  tok=1289  antlr  validate       224025 ns     2749 allocs     368342 B
+    parser_scaling_report_test.go:213: match_hops     n=128  tok=1289  nornic parse           61124 ns      452 allocs      85482 B
+    parser_scaling_report_test.go:213: match_hops     n=128  tok=1289  antlr  parse          396877 ns     8597 allocs     652402 B
+    parser_scaling_report_test.go:213: match_hops     n=256  tok=2569  nornic validate        28894 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: match_hops     n=256  tok=2569  antlr  validate       443606 ns     5439 allocs     769879 B
+    parser_scaling_report_test.go:213: match_hops     n=256  tok=2569  nornic parse          145709 ns      842 allocs     174190 B
+    parser_scaling_report_test.go:213: match_hops     n=256  tok=2569  antlr  parse          673127 ns    15000 allocs    1174342 B
+    parser_scaling_report_test.go:213: match_hops     n=512  tok=5129  nornic validate        56659 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: match_hops     n=512  tok=5129  antlr  validate       877007 ns    10817 allocs    1564736 B
+    parser_scaling_report_test.go:213: match_hops     n=512  tok=5129  nornic parse          341443 ns     1616 allocs     349849 B
+    parser_scaling_report_test.go:213: match_hops     n=512  tok=5129  antlr  parse         1250771 ns    27803 allocs    2209272 B
+    parser_scaling_report_test.go:213: with_chain     n=8    tok=73    nornic validate         1285 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: with_chain     n=8    tok=73    antlr  validate        22308 ns      274 allocs      35541 B
+    parser_scaling_report_test.go:213: with_chain     n=8    tok=73    nornic parse            4474 ns      120 allocs      13471 B
+    parser_scaling_report_test.go:213: with_chain     n=8    tok=73    antlr  parse          129668 ns     2615 allocs     205664 B
+    parser_scaling_report_test.go:213: with_chain     n=16   tok=137   nornic validate         2373 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: with_chain     n=16   tok=137   antlr  validate        39972 ns      490 allocs      61150 B
+    parser_scaling_report_test.go:213: with_chain     n=16   tok=137   nornic parse            8491 ns      211 allocs      26786 B
+    parser_scaling_report_test.go:213: with_chain     n=16   tok=137   antlr  parse          151703 ns     3040 allocs     236835 B
+    parser_scaling_report_test.go:213: with_chain     n=32   tok=265   nornic validate         4436 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: with_chain     n=32   tok=265   antlr  validate        76533 ns      923 allocs     117234 B
+    parser_scaling_report_test.go:213: with_chain     n=32   tok=265   nornic parse           14066 ns      387 allocs      35492 B
+    parser_scaling_report_test.go:213: with_chain     n=32   tok=265   antlr  parse          196867 ns     3890 allocs     304169 B
+    parser_scaling_report_test.go:213: with_chain     n=64   tok=521   nornic validate         8735 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: with_chain     n=64   tok=521   antlr  validate       141367 ns     1788 allocs     229147 B
+    parser_scaling_report_test.go:213: with_chain     n=64   tok=521   nornic parse           27027 ns      743 allocs      70958 B
+    parser_scaling_report_test.go:213: with_chain     n=64   tok=521   antlr  parse          283734 ns     5587 allocs     436540 B
+    parser_scaling_report_test.go:213: with_chain     n=128  tok=1033  nornic validate        17075 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: with_chain     n=128  tok=1033  antlr  validate       290097 ns     3518 allocs     475011 B
+    parser_scaling_report_test.go:213: with_chain     n=128  tok=1033  nornic parse           59746 ns     1451 allocs     142796 B
+    parser_scaling_report_test.go:213: with_chain     n=128  tok=1033  antlr  parse          467115 ns     8982 allocs     725067 B
+    parser_scaling_report_test.go:213: with_chain     n=256  tok=2057  nornic validate        35707 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: with_chain     n=256  tok=2057  antlr  validate       564124 ns     6975 allocs     925694 B
+    parser_scaling_report_test.go:213: with_chain     n=256  tok=2057  nornic parse          116311 ns     2863 allocs     291377 B
+    parser_scaling_report_test.go:213: with_chain     n=256  tok=2057  antlr  parse          813431 ns    15768 allocs    1261124 B
+    parser_scaling_report_test.go:213: with_chain     n=512  tok=4105  nornic validate        71691 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: with_chain     n=512  tok=4105  antlr  validate      1136413 ns    13889 allocs    1884515 B
+    parser_scaling_report_test.go:213: with_chain     n=512  tok=4105  nornic parse          249867 ns     5683 allocs     585048 B
+    parser_scaling_report_test.go:213: with_chain     n=512  tok=4105  antlr  parse         1551488 ns    29339 allocs    2394976 B
+    parser_scaling_report_test.go:213: case_branches  n=8    tok=105   nornic validate         1718 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: case_branches  n=8    tok=105   antlr  validate        39829 ns      513 allocs      65117 B
+    parser_scaling_report_test.go:213: case_branches  n=8    tok=105   nornic parse            1710 ns       19 allocs       1624 B
+    parser_scaling_report_test.go:213: case_branches  n=8    tok=105   antlr  parse          366310 ns     8072 allocs     634803 B
+    parser_scaling_report_test.go:213: case_branches  n=16   tok=201   nornic validate         3149 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: case_branches  n=16   tok=201   antlr  validate        73793 ns      962 allocs     124271 B
+    parser_scaling_report_test.go:213: case_branches  n=16   tok=201   nornic parse            3008 ns       20 allocs       2456 B
+    parser_scaling_report_test.go:213: case_branches  n=16   tok=201   antlr  parse          433220 ns     9609 allocs     752967 B
+    parser_scaling_report_test.go:213: case_branches  n=32   tok=393   nornic validate         6023 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: case_branches  n=32   tok=393   antlr  validate       143009 ns     1859 allocs     242323 B
+    parser_scaling_report_test.go:213: case_branches  n=32   tok=393   nornic parse            5679 ns       21 allocs       3992 B
+    parser_scaling_report_test.go:213: case_branches  n=32   tok=393   antlr  parse          564605 ns    12683 allocs     991157 B
+    parser_scaling_report_test.go:213: case_branches  n=64   tok=777   nornic validate        11746 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: case_branches  n=64   tok=777   antlr  validate       275053 ns     3652 allocs     475868 B
+    parser_scaling_report_test.go:213: case_branches  n=64   tok=777   nornic parse           10714 ns       22 allocs       6680 B
+    parser_scaling_report_test.go:213: case_branches  n=64   tok=777   antlr  parse          828730 ns    18829 allocs    1465498 B
+    parser_scaling_report_test.go:213: case_branches  n=128  tok=1545  nornic validate        23777 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: case_branches  n=128  tok=1545  antlr  validate       543734 ns     7238 allocs     975731 B
+    parser_scaling_report_test.go:213: case_branches  n=128  tok=1545  nornic parse           22012 ns       24 allocs      14616 B
+    parser_scaling_report_test.go:213: case_branches  n=128  tok=1545  antlr  parse         1346915 ns    31120 allocs    2446585 B
+    parser_scaling_report_test.go:213: case_branches  n=256  tok=3081  nornic validate        48139 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: case_branches  n=256  tok=3081  antlr  validate      1076045 ns    14407 allocs    1901699 B
+    parser_scaling_report_test.go:213: case_branches  n=256  tok=3081  nornic parse           46346 ns       27 allocs      37912 B
+    parser_scaling_report_test.go:213: case_branches  n=256  tok=3081  antlr  parse         2398122 ns    55699 allocs    4356934 B
+    parser_scaling_report_test.go:213: case_branches  n=512  tok=6153  nornic validate        97598 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: case_branches  n=512  tok=6153  antlr  validate      2345768 ns    28746 allocs    3827332 B
+    parser_scaling_report_test.go:213: case_branches  n=512  tok=6153  nornic parse           90054 ns       29 allocs      71960 B
+    parser_scaling_report_test.go:213: case_branches  n=512  tok=6153  antlr  parse         4560103 ns   104854 allocs    8216777 B
+    parser_scaling_report_test.go:213: nested_parens  n=8    tok=19    nornic validate          384 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: nested_parens  n=8    tok=19    antlr  validate        12724 ns      171 allocs      20878 B
+    parser_scaling_report_test.go:213: nested_parens  n=8    tok=19    nornic parse             493 ns       16 allocs        904 B
+    parser_scaling_report_test.go:213: nested_parens  n=8    tok=19    antlr  parse          180783 ns     3786 allocs     289440 B
+    parser_scaling_report_test.go:213: nested_parens  n=16   tok=35    nornic validate          521 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: nested_parens  n=16   tok=35    antlr  validate        23568 ns      300 allocs      37907 B
+    parser_scaling_report_test.go:213: nested_parens  n=16   tok=35    nornic parse             628 ns       17 allocs       1016 B
+    parser_scaling_report_test.go:213: nested_parens  n=16   tok=35    antlr  parse          194611 ns     4059 allocs     309592 B
+    parser_scaling_report_test.go:213: nested_parens  n=32   tok=67    nornic validate          838 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: nested_parens  n=32   tok=67    antlr  validate        42853 ns      556 allocs      69661 B
+    parser_scaling_report_test.go:213: nested_parens  n=32   tok=67    nornic parse             858 ns       18 allocs       1208 B
+    parser_scaling_report_test.go:213: nested_parens  n=32   tok=67    antlr  parse          220817 ns     4603 allocs     347619 B
+    parser_scaling_report_test.go:213: nested_parens  n=64   tok=131   nornic validate         1359 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: nested_parens  n=64   tok=131   antlr  validate        82862 ns     1069 allocs     135474 B
+    parser_scaling_report_test.go:213: nested_parens  n=64   tok=131   nornic parse            1343 ns       19 allocs       1592 B
+    parser_scaling_report_test.go:213: nested_parens  n=64   tok=131   antlr  parse          273396 ns     5692 allocs     425987 B
+    parser_scaling_report_test.go:213: nested_parens  n=128  tok=259   nornic validate         2475 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: nested_parens  n=128  tok=259   antlr  validate       159335 ns     2094 allocs     267353 B
+    parser_scaling_report_test.go:213: nested_parens  n=128  tok=259   nornic parse            2214 ns       20 allocs       2392 B
+    parser_scaling_report_test.go:213: nested_parens  n=128  tok=259   antlr  parse          375275 ns     7869 allocs     582987 B
+    parser_scaling_report_test.go:213: nested_parens  n=256  tok=515   nornic validate         4584 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: nested_parens  n=256  tok=515   antlr  validate       316644 ns     4143 allocs     530863 B
+    parser_scaling_report_test.go:213: nested_parens  n=256  tok=515   nornic parse            4038 ns       21 allocs       3864 B
+    parser_scaling_report_test.go:213: nested_parens  n=256  tok=515   antlr  parse          586933 ns    12222 allocs     896778 B
+    parser_scaling_report_test.go:213: nested_parens  n=512  tok=1027  nornic validate         9127 ns        0 allocs          0 B
+    parser_scaling_report_test.go:213: nested_parens  n=512  tok=1027  antlr  validate       662653 ns     8241 allocs    1079865 B
+    parser_scaling_report_test.go:213: nested_parens  n=512  tok=1027  nornic parse            7688 ns       22 allocs       6424 B
+    parser_scaling_report_test.go:213: nested_parens  n=512  tok=1027  antlr  parse         1023424 ns    20928 allocs    1546751 B
+    parser_scaling_report_test.go:163: wrote /Users/tjsweet/src/NornicDB/scripts/parser_scaling_reports/run1/scaling.json
+--- PASS: TestParserScaling (71.88s)
+=== RUN   TestParserTailLatency
+    parser_scaling_report_test.go:295: return_items/n=32  nornic p50=8042 p99=42750 max=159625 gc=60
+    parser_scaling_report_test.go:295: return_items/n=32  antlr  p50=180875 p99=566500 max=3018375 gc=929
+    parser_scaling_report_test.go:295: where_and/n=32     nornic p50=3125 p99=10083 max=182959 gc=15
+    parser_scaling_report_test.go:295: where_and/n=32     antlr  p50=718083 p99=1442042 max=9613875 gc=4353
+    parser_scaling_report_test.go:295: arith_chain/n=32   nornic p50=1458 p99=5542 max=77125 gc=4
+    parser_scaling_report_test.go:295: arith_chain/n=32   antlr  p50=357666 p99=840042 max=4024750 gc=2117
+    parser_scaling_report_test.go:295: list_literal/n=32  nornic p50=2875 p99=20834 max=100667 gc=36
+    parser_scaling_report_test.go:295: list_literal/n=32  antlr  p50=205291 p99=577250 max=2350042 gc=1114
+    parser_scaling_report_test.go:295: map_literal/n=32   nornic p50=6583 p99=27375 max=129583 gc=37
+    parser_scaling_report_test.go:295: map_literal/n=32   antlr  p50=228833 p99=665666 max=1103000 gc=1212
+    parser_scaling_report_test.go:295: match_hops/n=32    nornic p50=12000 p99=48084 max=178167 gc=62
+    parser_scaling_report_test.go:295: match_hops/n=32    antlr  p50=164000 p99=466375 max=1516791 gc=908
+    parser_scaling_report_test.go:295: with_chain/n=32    nornic p50=11542 p99=67333 max=182500 gc=101
+    parser_scaling_report_test.go:295: with_chain/n=32    antlr  p50=180209 p99=523625 max=947375 gc=923
+    parser_scaling_report_test.go:295: case_branches/n=32 nornic p50=5584 p99=11667 max=209458 gc=12
+    parser_scaling_report_test.go:295: case_branches/n=32 antlr  p50=510792 p99=1020250 max=5662584 gc=3033
+    parser_scaling_report_test.go:295: nested_parens/n=32 nornic p50=750 p99=2291 max=40458 gc=3
+    parser_scaling_report_test.go:295: nested_parens/n=32 antlr  p50=199167 p99=561208 max=1960625 gc=1067
+    parser_scaling_report_test.go:163: wrote /Users/tjsweet/src/NornicDB/scripts/parser_scaling_reports/run1/tail.json
+--- PASS: TestParserTailLatency (65.01s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/cypher	137.438s
+done
