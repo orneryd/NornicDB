@@ -2,7 +2,7 @@ package search
 
 import (
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"

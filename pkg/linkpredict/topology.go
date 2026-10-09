@@ -70,7 +70,7 @@ package linkpredict
 
 import (
 	"context"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/storage"

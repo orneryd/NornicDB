@@ -1,7 +1,7 @@
 package cypher
 
 import (
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 
 	"github.com/orneryd/nornicdb/pkg/storage"

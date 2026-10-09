@@ -3,8 +3,8 @@ package ir
 import (
 	"bufio"
 	"fmt"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"io"
-	"math"
 	"sort"
 	"strconv"
 	"strings"

@@ -2,7 +2,7 @@ package knowledgepolicy
 
 import (
 	"context"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/orneryd/nornicdb/pkg/observability"
 )

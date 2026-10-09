@@ -7,8 +7,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"log"
-	"math"
 	"os"
 	"time"
 

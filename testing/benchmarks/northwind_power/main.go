@@ -27,7 +27,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/rand/v2"
 	"os"
 	"sort"

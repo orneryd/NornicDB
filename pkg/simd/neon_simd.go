@@ -9,7 +9,7 @@ package simd
 */
 import "C"
 import (
-	"math"
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"unsafe"
 )
 
