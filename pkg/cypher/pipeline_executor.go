@@ -1188,7 +1188,10 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		whereClause = strings.TrimSpace(matchBody[whereIndex+len("WHERE"):])
 		matchBody = strings.TrimSpace(matchBody[:whereIndex])
 	}
-	if strings.Contains(matchBody, "-[") || strings.Contains(matchBody, "]-") || len(e.splitNodePatterns(matchBody)) != 1 {
+	// A path assignment (p = (n:L)) is the general route's, which binds the
+	// path: read as a node, its variable would be "p = (n".
+	if strings.Contains(matchBody, "-[") || strings.Contains(matchBody, "]-") || len(e.splitNodePatterns(matchBody)) != 1 ||
+		extractPathAssignmentVariable(matchBody) != "" {
 		return nil, false, nil
 	}
 	nodePattern := e.parseNodePattern(ctx, matchBody)
@@ -2334,8 +2337,10 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			if !isNode || node == nil || !pipelineNodeMatchesPattern(node, nodePattern) {
 				continue
 			}
-			if materializedWhere == "" || e.evaluateMatchWhereCondition(ctx, materializedWhere, map[string]interface{}(row)) {
-				out = append(out, e.pipelineBindZeroLengthPath(row, pathVariable, node))
+			// The WHERE sees the path too (WHERE length(p) = 0).
+			bound := e.pipelineBindZeroLengthPath(row, pathVariable, node)
+			if materializedWhere == "" || e.evaluateMatchWhereCondition(ctx, materializedWhere, map[string]interface{}(bound)) {
+				out = append(out, bound)
 			}
 			continue
 		}
@@ -2347,10 +2352,17 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 				break
 			}
 		}
+		// A WHERE that reads the path is tested below, where the path is
+		// bound; the candidates are collected without it.
+		candidateWhere := materializedWhere
+		if pathVariable != "" && referencesVariable(whereClause, pathVariable) {
+			candidateWhere = ""
+			cacheKey = ""
+		}
 		candidates, cached := candidateCache[cacheKey]
 		if cacheKey == "" || !cached {
 			var err error
-			candidates.nodes, candidates.whereApplied, err = e.collectPipelineInitialNodeCandidates(withValueBindings(ctx, row), nodePattern, materializedWhere, candidateHint)
+			candidates.nodes, candidates.whereApplied, err = e.collectPipelineInitialNodeCandidates(withValueBindings(ctx, row), nodePattern, candidateWhere, candidateHint)
 			if err != nil {
 				return nil, true, err
 			}
