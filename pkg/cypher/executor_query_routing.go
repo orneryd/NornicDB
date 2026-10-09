@@ -864,6 +864,11 @@ func unsupportedOptionalMatchShapeError(cypher string) error {
 // a SHOW command's YIELD may be followed by any clause (CALL { … }, DELETE,
 // SET, …), and the command still runs as a SHOW (#907).
 func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher string) (*ExecuteResult, bool, error) {
+	// Every statement passes here: one prefix test spares the others the
+	// command checks below.
+	if !hasPrefixFold(cypher, "SHOW") && !hasPrefixFold(cypher, "TERMINATE") {
+		return nil, false, nil
+	}
 	switch {
 	case startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEXES"),
 		startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEX"),

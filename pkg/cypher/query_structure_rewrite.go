@@ -31,13 +31,20 @@ const whenBranchVariable = generatedVariablePrefix + "when"
 type structureRewriter struct {
 	query   string
 	edits   []labelRewriteEdit
-	columns func(query string) []string
+	columns statementColumner
+}
+
+// statementColumner names a statement's result columns
+// (StorageExecutor.StatementColumns). An interface, not a method value, so
+// Execute passes the executor to desugarQueryStructure without allocating.
+type statementColumner interface {
+	StatementColumns(query string) []string
 }
 
 // desugarQueryStructure returns query with NEXT, WHEN and braced query parts
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when it has none. columns names a query's result columns.
-func desugarQueryStructure(query string, columns func(string) []string) (string, *queryRewrite, error) {
+func desugarQueryStructure(query string, columns statementColumner) (string, *queryRewrite, error) {
 	if !mayUseQueryStructure(query) {
 		return query, nil, nil
 	}
@@ -201,7 +208,7 @@ func (r *structureRewriter) unionParts(start, end int) error {
 			}
 			if outerAll && r.hasDistinctUnion(open+1, close) {
 				r.edit(open, open+1, "CALL (*) {")
-				r.edit(close+1, close+1, returnColumnsText(r.columns(r.query[open+1:close])))
+				r.edit(close+1, close+1, returnColumnsText(r.columns.StatementColumns(r.query[open+1:close])))
 			} else {
 				r.edit(open, open+1, "")
 				r.edit(close, close+1, "")
@@ -269,7 +276,7 @@ func (r *structureRewriter) conditional(start, end int) error {
 	var cases strings.Builder
 	cases.WriteString("UNWIND [CASE")
 	for index, branch := range branches {
-		bodyColumns := r.columns(r.unbraced(branch.bodyStart, branch.bodyEnd))
+		bodyColumns := r.columns.StatementColumns(r.unbraced(branch.bodyStart, branch.bodyEnd))
 		if index == 0 {
 			columns = bodyColumns
 		} else if len(bodyColumns) != len(columns) {

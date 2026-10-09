@@ -14,7 +14,7 @@ import (
 // texts that aren't a conditional (left for the parser to reject).
 func TestQueryStructureRewriteEdges(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "structure_edges"))
-	columns := exec.StatementColumns
+	columns := exec
 
 	rewritten, rewrite, err := desugarQueryStructure("RETURN 1 AS x /* NEXT */ NEXT RETURN x + 1 AS y", columns)
 	require.NoError(t, err)

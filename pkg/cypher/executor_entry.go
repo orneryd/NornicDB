@@ -209,7 +209,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Cypher 25 composition (NEXT, WHEN, braced query parts) becomes the
 	// CALL subqueries and UNIONs it stands for, once, here; columns and
 	// errors are mapped back (#907).
-	if composed, structureRewrite, err := desugarQueryStructure(cypher, e.StatementColumns); err != nil {
+	if composed, structureRewrite, err := desugarQueryStructure(cypher, e); err != nil {
 		return nil, err
 	} else if structureRewrite != nil {
 		cypher = composed
