@@ -2574,6 +2574,10 @@ func compareValuesForSort(a, b interface{}) int {
 		return 0
 	}
 	switch left := a.(type) {
+	case CypherVector:
+		return compareVectors(left, b.(CypherVector))
+	case CypherUUID:
+		return compareUUIDs(left, b.(CypherUUID))
 	case string:
 		right := b.(string)
 		if left < right {
@@ -2616,7 +2620,7 @@ func compareValuesForSort(a, b interface{}) int {
 // number < NaN (#817, #837).
 func cypherSortRank(value interface{}) int {
 	if _, ok := pointValue(value); ok {
-		return 5
+		return 6
 	}
 	if kind, _, ok := temporalOrderParts(value); ok {
 		return temporalSortRanks[kind]
@@ -2628,12 +2632,16 @@ func cypherSortRank(value interface{}) int {
 		return 2
 	case PathResult, *PathResult:
 		return 4
+	case CypherVector, *CypherVector:
+		return 5
 	case CypherDuration, *CypherDuration:
-		return 11
-	case string:
 		return 12
-	case bool:
+	case string:
 		return 13
+	case bool:
+		return 14
+	case CypherUUID, *CypherUUID:
+		return 15
 	}
 	if object, isMap := toStringAnyMap(value); isMap {
 		if _, isPath := object["_pathResult"]; isPath {
@@ -2642,9 +2650,9 @@ func cypherSortRank(value interface{}) int {
 	}
 	if number, ok := strictNumericValue(value); ok {
 		if math.IsNaN(number) {
-			return 15
+			return 17
 		}
-		return 14
+		return 16
 	}
 	typeOf := reflect.TypeOf(value)
 	if typeOf != nil {
@@ -2659,7 +2667,7 @@ func cypherSortRank(value interface{}) int {
 }
 
 // temporalSortRanks are the temporal kinds' positions in cypherSortRank.
-var temporalSortRanks = map[string]int{"datetime": 6, "localdatetime": 7, "date": 8, "time": 9, "localtime": 10}
+var temporalSortRanks = map[string]int{"datetime": 7, "localdatetime": 8, "date": 9, "time": 10, "localtime": 11}
 
 func cypherSortList(value interface{}) ([]interface{}, bool) {
 	typeOf := reflect.TypeOf(value)

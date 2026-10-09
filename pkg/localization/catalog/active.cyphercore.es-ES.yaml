@@ -264,3 +264,21 @@
   other: "No se puede convertir `{{.Value}}` en Number"
 - id: cyphercore.map_projection_receiver
   other: "Entrada no válida '{': solo se puede proyectar una variable, no {{.Receiver}}"
+- id: cyphercore.vector_dimension_range
+  other: "Entrada no válida. '{{.Value}}' no es un valor válido. Debe ser un número entre 1 y 4096."
+- id: cyphercore.vector_dimension_mismatch
+  other: "Se esperaba un {{.Expected}}, pero se recibió {{.Got}}"
+- id: cyphercore.vector_coordinate_type
+  other: "Entrada no válida para la función '{{.Function}}': se esperaba un NUMBER, se recibió: {{.Got}}"
+- id: cyphercore.vector_coordinates_not_finite
+  other: "22NBG: Coordenadas de vector no válidas. Las coordenadas deben ser finitas."
+- id: cyphercore.vector_coordinate_range
+  other: "valor numérico fuera de rango"
+- id: cyphercore.vector_distance_dimensions
+  other: "Los argumentos `vector1` y `vector2` de la función `vector_distance()` deben tener la misma dimensión."
+- id: cyphercore.vector_inner_type_invalid
+  other: "Tipo interno de vector no válido; se esperaba INTEGER64, INTEGER32, INTEGER16, INTEGER8, FLOAT64 o FLOAT32"
+- id: cyphercore.vector_metric_invalid
+  other: "Métrica de distancia de vector no válida; se esperaba {{.Expected}}"
+- id: cyphercore.uuid_invalid_text
+  other: "El argumento `input` de la función `uuid()` debe ser una cadena UUID válida."

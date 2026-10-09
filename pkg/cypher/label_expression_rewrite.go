@@ -84,7 +84,7 @@ func desugarLabelExpressions(query string, params map[string]interface{}) (strin
 	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) &&
 		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
 		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) &&
-		!mayUseParenthesisedPath(query) {
+		!mayUseParenthesisedPath(query) && !mayUseVectorCall(query) {
 		return query, nil, nil
 	}
 	r := &labelExpressionRewriter{query: query, params: params}
@@ -979,6 +979,9 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 				j++
 			}
 			if err := shortestPathExpressionError(q, i, j, end); err != nil {
+				return err
+			}
+			if err := r.vectorCall(i, j, end); err != nil {
 				return err
 			}
 			if err := r.labelTest(j, end); err != nil {

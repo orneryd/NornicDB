@@ -264,3 +264,21 @@
   other: "Can't coerce `{{.Value}}` to Number"
 - id: cyphercore.map_projection_receiver
   other: "Invalid input '{': only a variable can be projected, not {{.Receiver}}"
+- id: cyphercore.vector_dimension_range
+  other: "Invalid input. '{{.Value}}' is not a valid value. Must be a number in the range 1 to 4096."
+- id: cyphercore.vector_dimension_mismatch
+  other: "Expected a {{.Expected}}, but got {{.Got}}"
+- id: cyphercore.vector_coordinate_type
+  other: "Invalid input for function '{{.Function}}': Expected a NUMBER, got: {{.Got}}"
+- id: cyphercore.vector_coordinates_not_finite
+  other: "22NBG: Invalid vector coordinates. The vector coordinates must be finite."
+- id: cyphercore.vector_coordinate_range
+  other: "numeric value out of range"
+- id: cyphercore.vector_distance_dimensions
+  other: "The argument `vector1` and `vector2` in the `vector_distance()` function must be of the same dimension."
+- id: cyphercore.vector_inner_type_invalid
+  other: "Invalid vector inner type, expected INTEGER64, INTEGER32, INTEGER16, INTEGER8, FLOAT64 or FLOAT32"
+- id: cyphercore.vector_metric_invalid
+  other: "Invalid vector distance metric, expected {{.Expected}}"
+- id: cyphercore.uuid_invalid_text
+  other: "The argument `input` in the `uuid()` function must be a valid uuid string."

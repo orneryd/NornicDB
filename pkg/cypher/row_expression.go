@@ -1990,6 +1990,9 @@ func evaluateCypherSizeInteger(value interface{}) (int64, bool, error) {
 		// (invalid UTF-8 bytes become U+FFFD), without the allocation.
 		return int64(utf8.RuneCountInString(text)), true, nil
 	}
+	if sized, ok := value.(cypherfn.Sized); ok {
+		return sized.CypherSize(), true, nil
+	}
 	valueType := reflect.TypeOf(value)
 	if valueType == nil || (valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array) {
 		if err := sizeArgumentError(value); err != nil {
