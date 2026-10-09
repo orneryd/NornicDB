@@ -1428,21 +1428,15 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 	}
 }
 
+// transactionHTTPFloat is a float as Neo4j's HTTP API writes it: a JSON
+// number in Java's text (cypher.FormatFloat: 1.0, 1.0E20, 1.0E-7), or, for a
+// value JSON can't hold, the string "Infinity", "-Infinity" or "NaN".
 func transactionHTTPFloat(value float64, bits int) interface{} {
-	switch {
-	case math.IsInf(value, 1):
-		return "Infinity"
-	case math.IsInf(value, -1):
-		return "-Infinity"
-	case math.IsNaN(value):
-		return "NaN"
-	default:
-		text := strconv.FormatFloat(value, 'g', -1, bits)
-		if !strings.ContainsAny(text, ".eE") {
-			text += ".0"
-		}
-		return json.Number(text)
+	text := cypher.FormatFloat(value, bits)
+	if math.IsInf(value, 0) || math.IsNaN(value) {
+		return text
 	}
+	return json.Number(text)
 }
 
 // entityDatabase resolves the database an entity actually lives in for

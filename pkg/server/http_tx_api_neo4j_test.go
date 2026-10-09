@@ -876,6 +876,18 @@ func TestGh668_HTTPFloatTokens(t *testing.T) {
 	}
 }
 
+// TestHTTPFloatText pins Neo4j 5.26.30's text for floats outside 10^-3 to
+// 10^7 (Java's Double.toString), in a row, a list, a map and a point.
+func TestHTTPFloatText(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	token := "Bearer " + getAuthToken(t, authenticator, "admin")
+	response := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]any{
+		"statements": []map[string]any{{"statement": "RETURN 9007199254740992.0 * 9007199254740992.0, 1e300, 1e-7, 123456789.0, 1e7, 9999999.0, 0.001, -0.0, [1e20], {x: 1e20}, point({x: 1e20, y: 0.0001})"}},
+	}, token)
+	require.Contains(t, response.Body.String(), `"row":[8.112963841460668E31,1.0E300,1.0E-7,1.23456789E8,1.0E7,9999999.0,0.001,-0.0,[1.0E20],{"x":1.0E20},{"type":"Point","coordinates":[1.0E20,1.0E-4]`)
+	require.Equal(t, json.Number("1.0E20"), transactionHTTPFloat(float64(float32(1e20)), 32))
+}
+
 func TestGh668_HTTPNonfiniteRecursiveProperties(t *testing.T) {
 	server := &Server{}
 	values := []interface{}{math.Inf(1), math.Inf(-1), math.NaN(), float32(5), float64(5)}
