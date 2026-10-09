@@ -323,6 +323,13 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 			return int64(len(e.evaluateBoundPatternRows(ctx, body, nodes, rels))), true, nil
 		}
 	}
+	if cypherVersionFromContext(ctx) != "25" {
+		grouped, err := cypher5ImportGrouping(body, values)
+		if err != nil {
+			return nil, false, err
+		}
+		body = grouped
+	}
 	query := strings.TrimSpace(body)
 	patternOnly := strings.HasPrefix(query, "(")
 	if patternOnly {
