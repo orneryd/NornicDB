@@ -16,13 +16,10 @@ type reduceForm struct {
 	all                                                   bool
 }
 
-// isReduceFormFunction reports reduce and allReduce, case-insensitively.
+// isReduceFormFunction reports reduce and allReduce, case-insensitively,
+// without allocating: every call name the checks scan passes through it.
 func isReduceFormFunction(name string) bool {
-	switch lowerASCII(name) {
-	case "reduce", "allreduce":
-		return true
-	}
-	return false
+	return strings.EqualFold(name, "reduce") || strings.EqualFold(name, "allReduce")
 }
 
 // parseReduceForm reads the arguments of a reduce or allReduce call; ok is

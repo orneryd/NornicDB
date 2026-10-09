@@ -35,9 +35,6 @@ func loadPinnedTemporalLocation(zoneID string) (*time.Location, bool) {
 	if zoneID == "UTC" {
 		return time.UTC, true
 	}
-	if id, offset, length, ok := prefixedOffsetZone(zoneID); ok && length == len(zoneID) && id == zoneID {
-		return time.FixedZone(zoneID, offset), true
-	}
 	if cached, ok := temporalLocationCache.get(zoneID); ok {
 		return cached, true
 	}
@@ -55,6 +52,10 @@ func loadPinnedTemporalLocation(zoneID string) (*time.Location, bool) {
 	})
 	file := temporalZoneFiles[zoneID]
 	if file == nil {
+		// UTC+01:00 and the like are zones of their own (prefixedOffsetZone).
+		if id, offset, length, ok := prefixedOffsetZone(zoneID); ok && length == len(zoneID) && id == zoneID {
+			return time.FixedZone(zoneID, offset), true
+		}
 		return nil, false
 	}
 	reader, err := file.Open()
