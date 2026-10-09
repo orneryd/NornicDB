@@ -731,10 +731,21 @@ func bareWordBeforeLiteral(cypher string, start, end int) bool {
 	if next == end || next >= len(cypher) {
 		return false
 	}
-	// A $parameter after a word can be a node pattern's property map
-	// parameter ((n:Label $props)), so only string and number literals count.
 	switch c := cypher[next]; {
 	case c == '\'' || c == '"' || (c >= '0' && c <= '9'):
+	case c == '$':
+		// A $parameter after a node or relationship pattern's variable or
+		// label is its property map ((n:Label $props), [r $props]);
+		// elsewhere it is an operand after an operand (RETURN a $b) or a
+		// parameter where a name must be (UNWIND [1] AS $x), Neo4j's
+		// "Invalid input '$'".
+		before := start
+		for before > 0 && isASCIIWhitespace(cypher[before-1]) {
+			before--
+		}
+		if before > 0 && strings.IndexByte("([:|&!", cypher[before-1]) >= 0 {
+			return false
+		}
 	default:
 		return false
 	}
