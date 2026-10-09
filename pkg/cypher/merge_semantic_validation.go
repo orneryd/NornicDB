@@ -2,8 +2,11 @@ package cypher
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"sync"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 type semanticValidationCache struct {
@@ -309,14 +312,21 @@ func (e *StorageExecutor) mergePatternContainsNullProperty(pattern string) bool 
 	return false
 }
 
+// validateMergePatternProperties rejects a MERGE pattern's property whose
+// value can't identify an entity (null or NaN) with Neo4j's SemanticError,
+// then checks the values are storable (validatePropertyValues). entity
+// ("node" or "relationship") names the pattern element in the message.
 func validateMergePatternProperties(properties map[string]interface{}, entity string) error {
 	for property, value := range properties {
-		if value == nil {
-			return newSemanticError(
-				"Neo.ClientError.Statement.SemanticError",
-				"MergeNullPropertyValue",
-				fmt.Sprintf("Cannot merge the following %s because of null property value for '%s'", entity, property),
-			)
+		switch {
+		case value == nil:
+			return localizedStatusError("Neo.ClientError.Statement.SemanticError", "MergeNullPropertyValue",
+				localization.CypherMergePropertyValueNotMergeable(entity, "null", property))
+		case isNaNValue(value):
+			// NaN equals nothing, itself included, so it can't identify an
+			// entity; a NaN inside a list can (Neo4j 5.26, #907).
+			return localizedStatusError("Neo.ClientError.Statement.SemanticError", "MergeNaNPropertyValue",
+				localization.CypherMergePropertyValueNotMergeable(entity, "NaN", property))
 		}
 	}
 	return validatePropertyValues(properties)
@@ -328,4 +338,15 @@ func mergeVariableAlreadyBoundError(variable string) error {
 		"VariableAlreadyBound",
 		fmt.Sprintf("variable %s is already bound and cannot be redeclared by MERGE", variable),
 	)
+}
+
+// isNaNValue reports whether value is a floating-point NaN.
+func isNaNValue(value interface{}) bool {
+	switch typed := value.(type) {
+	case float64:
+		return math.IsNaN(typed)
+	case float32:
+		return math.IsNaN(float64(typed))
+	}
+	return false
 }

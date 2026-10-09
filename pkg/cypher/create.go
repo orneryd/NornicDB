@@ -364,6 +364,9 @@ func (e *StorageExecutor) planCreateEndpoint(ctx context.Context, content string
 	if node := nodes[variable]; variable != "" && node != nil {
 		return node, nil
 	}
+	if missingRelationshipEndpoint(valueBindingsFromContext(ctx), variable) {
+		return nil, relationshipEndpointMissingError(variable)
+	}
 	return e.planCreateNode(ctx, "("+content+")", nodes, edges, plan)
 }
 

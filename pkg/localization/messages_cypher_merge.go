@@ -68,6 +68,8 @@ const (
 	MessageCypherMergeUpdateEdgeFailed                 MessageID = "cyphermerge.update_edge_failed"
 	MessageCypherMergeGetNodesByLabelFailed            MessageID = "cyphermerge.get_nodes_by_label_failed"
 	MessageCypherMergeGetEdgesBetweenFailed            MessageID = "cyphermerge.get_edges_between_failed"
+	MessageCypherMergeRelationshipEndpointMissing      MessageID = "cyphermerge.relationship_endpoint_missing"
+	MessageCypherMergePropertyValueNotMergeable        MessageID = "cyphermerge.property_value_not_mergeable"
 )
 
 func cypherMergeMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -324,4 +326,16 @@ func CypherMergeGetNodesByLabelFailed(label string, cause error) Message {
 
 func CypherMergeGetEdgesBetweenFailed(startID, endID string, cause error) Message {
 	return cypherMergeMessage(MessageCypherMergeGetEdgesBetweenFailed, fmt.Sprintf("GetEdgesBetween(%s,%s): %s", startID, endID, cause), map[string]any{"StartID": startID, "EndID": endID, "Cause": cause.Error()})
+}
+
+// CypherMergeRelationshipEndpointMissing is Neo4j's ArgumentError for a
+// CREATE or MERGE relationship whose endpoint variable is null.
+func CypherMergeRelationshipEndpointMissing(variable string) Message {
+	return cypherMergeMessage(MessageCypherMergeRelationshipEndpointMissing, "Failed to create relationship, node `"+variable+"` is missing", map[string]any{"Variable": variable})
+}
+
+// CypherMergePropertyValueNotMergeable is Neo4j's SemanticError for a MERGE
+// pattern property whose value (null or NaN) can't identify an entity.
+func CypherMergePropertyValueNotMergeable(entity, value, property string) Message {
+	return cypherMergeMessage(MessageCypherMergePropertyValueNotMergeable, "Cannot merge the following "+entity+" because of "+value+" property value for '"+property+"'", map[string]any{"Entity": entity, "Value": value, "Property": property})
 }

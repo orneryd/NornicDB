@@ -122,3 +122,7 @@
   other: "GetNodesByLabel({{.Label}}): {{.Cause}}"
 - id: cyphermerge.get_edges_between_failed
   other: "GetEdgesBetween({{.StartID}},{{.EndID}}): {{.Cause}}"
+- id: cyphermerge.relationship_endpoint_missing
+  other: "No se pudo crear la relación: falta el nodo `{{.Variable}}`"
+- id: cyphermerge.property_value_not_mergeable
+  other: "No se puede fusionar el siguiente {{.Entity}} debido al valor de propiedad {{.Value}} de '{{.Property}}'"

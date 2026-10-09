@@ -123,3 +123,7 @@
   other: "[!! GetNodesByLabel({{.Label}}): {{.Cause}} !!]"
 - id: cyphermerge.get_edges_between_failed
   other: "[!! GetEdgesBetween({{.StartID}},{{.EndID}}): {{.Cause}} !!]"
+- id: cyphermerge.relationship_endpoint_missing
+  other: "[!! Failed to create relationship, node `{{.Variable}}` is missing !!]"
+- id: cyphermerge.property_value_not_mergeable
+  other: "[!! Cannot merge the following {{.Entity}} because of {{.Value}} property value for '{{.Property}}' !!]"
