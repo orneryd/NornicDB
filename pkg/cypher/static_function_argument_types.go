@@ -527,6 +527,18 @@ func unwindStaticValueType(clause string) string {
 	if asIndex := findKeywordIndexInContext(body, "AS"); asIndex >= 0 {
 		body = strings.TrimSpace(body[:asIndex])
 	}
+	if elementType := literalListElementType(body); elementType != "" {
+		return elementType
+	}
+	// A list of computed expressions of one known type ([date('2020-01-01'),
+	// date('2021-01-01')]) binds that type, as Neo4j types it before the
+	// statement runs; a mixed list ([1, date(…)]) binds no static type.
+	return uniformListElementType(body)
+}
+
+// literalListElementType is the element type of a list literal of literals,
+// as Neo4j names it, "" when the literal typing doesn't type the list.
+func literalListElementType(body string) string {
 	listType := staticLiteralTypeName(body)
 	// A list typed as several list types gives an element of any of their
 	// element types, as Neo4j names it: UNWIND [{k: 1}] binds a "Map, Node or
@@ -540,4 +552,32 @@ func unwindStaticValueType(clause string) string {
 		elements = append(elements, strings.TrimSuffix(strings.TrimPrefix(choice, "List<"), ">"))
 	}
 	return joinTypeNames(elements)
+}
+
+// uniformListElementType is the static type every element of a list literal
+// has (a literal's, or a computed element's as the operator check infers it),
+// "" when the text isn't a list literal, an element's type is
+// unknown or several types, or the elements differ.
+func uniformListElementType(list string) string {
+	inner, isList := stripEnclosingRowDelimiter(strings.TrimSpace(list), '[', ']')
+	if !isList || strings.TrimSpace(inner) == "" {
+		return ""
+	}
+	elementType := ""
+	for _, element := range splitTopLevelComma(inner) {
+		element = strings.TrimSpace(element)
+		typeName := staticLiteralTypeName(element)
+		if typeName == "" {
+			// A computed element (date('…')) keeps the type the operator check
+			// infers for it, as a WITH projection does.
+			if operand, err := (staticOperatorChecker{}).check(element); err == nil && operand.known() {
+				typeName = operand.kind
+			}
+		}
+		if typeName == "" || len(staticTypeChoices(typeName)) != 1 || (elementType != "" && typeName != elementType) {
+			return ""
+		}
+		elementType = typeName
+	}
+	return elementType
 }

@@ -230,5 +230,7 @@
   other: "limit must be -1 (no limit) or at least 0, but was {{.Limit}}"
 - id: cyphercore.map_projection_coercion
   other: "Can't coerce `{{.Value}}` to Map"
+- id: cyphercore.percentile_not_number
+  other: "Can't coerce `{{.Value}}` to Number"
 - id: cyphercore.map_projection_receiver
   other: "Invalid input '{': only a variable can be projected, not {{.Receiver}}"

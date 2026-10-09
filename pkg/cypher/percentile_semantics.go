@@ -6,6 +6,8 @@ import (
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows []pipelineRow, name, expression string, distinct bool) (interface{}, bool) {
@@ -92,6 +94,12 @@ func (e *StorageExecutor) validatePercentileCalls(expression string, row pipelin
 			}
 			if !resolved {
 				continue
+			}
+			if value == nil {
+				// Neo4j can't read null as the percentile number: a
+				// TypeError, not the range check's ArgumentError (#907).
+				return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+					localization.CypherCorePercentileNotNumber("NO_VALUE"))
 			}
 			percentile, _, _, numeric := pipelineAggregateNumber(value)
 			if !numeric || math.IsNaN(percentile) || percentile < 0 || percentile > 1 {
