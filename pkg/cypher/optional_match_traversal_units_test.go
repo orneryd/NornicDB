@@ -137,7 +137,7 @@ func TestGh713SharedAggregateAdapterBoundaries(t *testing.T) {
 	})
 	t.Run("unaliased aggregate", func(t *testing.T) {
 		executor, ctx := newUnitExecutor(t)
-		items := []returnItem{{expr: "count(*)"}}
+		items := []returnItem{{expr: "count(*)", alias: "count(*)"}}
 		plan := returnProjectionPlanFromItems(items)
 		require.True(t, plan.valid)
 		require.Equal(t, []string{"count(*)"}, plan.columns)

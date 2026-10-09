@@ -29,3 +29,30 @@ func TestEmptyAliasNamesTheColumnEmpty(t *testing.T) {
 		require.Equal(t, columns, result.Columns, query)
 	}
 }
+
+// Every route names its columns from the items: the traversal wildcard, the
+// vector fast path's empty result, and a CALL tail's WITH.
+func TestColumnNamesOnEveryRoute(t *testing.T) {
+	expanded := expandTraversalWildcardReturnItems([]returnItem{{expr: "*", alias: "*"}}, &TraversalMatch{
+		StartNode:    nodePatternInfo{variable: "a"},
+		EndNode:      nodePatternInfo{variable: "b"},
+		Relationship: RelationshipPattern{Variable: "r"},
+	}, "p")
+	require.Equal(t, []returnItem{{expr: "a", alias: "a"}, {expr: "b", alias: "b"}, {expr: "p", alias: "p"}, {expr: "r", alias: "r"}}, expanded)
+
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "empty_column_vector"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE VECTOR INDEX ec_emb FOR (n:ECV) ON (n.emb) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:ECV {uuid: 'a', emb: [1.0, 0.0, 0.0]})", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (n:ECV) RETURN n.uuid AS ``, vector.similarity.cosine(n.emb, $q) AS score ORDER BY score DESC LIMIT 0",
+		map[string]interface{}{"q": []float64{1, 0, 0}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"", "score"}, result.Columns)
+	require.Empty(t, result.Rows)
+	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
+
+	_, ok := callTailWithProjectionColumns("WITH a,,b")
+	require.False(t, ok)
+}
