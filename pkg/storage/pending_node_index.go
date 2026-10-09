@@ -310,9 +310,9 @@ func (sm *SchemaManager) trackPendingPairs() {
 		return
 	}
 	sm.mu.RLock()
-	pairs := make([]pendingPropertyKey, 0, len(sm.propertyIndexes)+len(sm.uniqueConstraints))
-	for _, idx := range sm.propertyIndexes {
-		if len(idx.Properties) > 0 {
+	pairs := make([]pendingPropertyKey, 0, len(sm.compositeIndexes)+len(sm.uniqueConstraints))
+	for _, idx := range sm.compositeIndexes {
+		if len(idx.Properties) == 1 {
 			pairs = append(pairs, pendingPropertyKey{label: idx.Label, property: idx.Properties[0]})
 		}
 	}

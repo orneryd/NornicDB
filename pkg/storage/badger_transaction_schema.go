@@ -83,18 +83,12 @@ func (tx *BadgerTransaction) StageSchemaChanges() error {
 			staged.mu.RUnlock()
 		}
 	}
-	for key, index := range snapshot.propertyIndexes {
-		if staged := view.propertyIndexes[key]; samePropertyIndex(index, staged) {
+	for name, index := range snapshot.compositeIndexes {
+		if staged := view.compositeIndexes[name]; staged != nil && reflect.DeepEqual(index.Properties, staged.Properties) {
 			staged.mu.RLock()
 			index.values = cloneSchemaIndexValues(staged.values)
 			index.keysDirty = true
 			index.unfilled.Store(staged.unfilled.Load())
-			staged.mu.RUnlock()
-		}
-	}
-	for name, index := range snapshot.compositeIndexes {
-		if staged := view.compositeIndexes[name]; staged != nil && reflect.DeepEqual(index.Properties, staged.Properties) {
-			staged.mu.RLock()
 			index.fullIndex = cloneSchemaIndexValues(staged.fullIndex)
 			index.prefixIndex = cloneSchemaIndexValues(staged.prefixIndex)
 			staged.mu.RUnlock()
@@ -123,19 +117,10 @@ func cloneSchemaIndexValues[Key comparable](values map[Key][]NodeID) map[Key][]N
 	return cloned
 }
 
-func samePropertyIndex(first, second *PropertyIndex) bool {
-	return first != nil && second != nil && first.Name == second.Name && first.Label == second.Label && reflect.DeepEqual(first.Properties, second.Properties)
-}
-
 func (sm *SchemaManager) installTransactionSchemaLocked(snapshot *SchemaManager) {
 	for key, constraint := range snapshot.uniqueConstraints {
 		if existing := sm.uniqueConstraints[key]; existing != nil && existing.Name == constraint.Name {
 			snapshot.uniqueConstraints[key] = existing
-		}
-	}
-	for key, index := range snapshot.propertyIndexes {
-		if existing := sm.propertyIndexes[key]; samePropertyIndex(index, existing) {
-			snapshot.propertyIndexes[key] = existing
 		}
 	}
 	for name, index := range snapshot.compositeIndexes {
@@ -153,7 +138,6 @@ func (sm *SchemaManager) installTransactionSchemaLocked(snapshot *SchemaManager)
 	sm.constraints = snapshot.constraints
 	sm.constraintContracts = snapshot.constraintContracts
 	sm.propertyTypeConstraints = snapshot.propertyTypeConstraints
-	sm.propertyIndexes = snapshot.propertyIndexes
 	sm.compositeIndexes = snapshot.compositeIndexes
 	sm.fulltextIndexes = snapshot.fulltextIndexes
 	sm.vectorIndexes = snapshot.vectorIndexes

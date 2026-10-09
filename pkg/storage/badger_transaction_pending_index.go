@@ -85,3 +85,60 @@ func (tx *BadgerTransaction) MergePendingPropertyMatches(ids []NodeID, label, pr
 	}
 	return append(kept, tx.pendingValueMatchesLocked(label, property, valueKey)...)
 }
+
+// MergePendingCompositeMatches is MergePendingPropertyMatches for a composite
+// index: committed IDs the transaction rewrote or deleted are dropped, and
+// pending nodes that carry label and match the leading values of the index's
+// properties (full or prefix) are added. values are raw pattern values; they
+// are canonicalized the same way IndexNode/LookupFull canonicalize, so a
+// pending node equals a committed entry exactly when it keys identically.
+func (tx *BadgerTransaction) MergePendingCompositeMatches(ids []NodeID, label string, properties []string, values []interface{}) []NodeID {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if len(tx.pendingNodes) == 0 && len(tx.deletedNodes) == 0 {
+		return ids
+	}
+	kept := ids[:0]
+	for _, id := range ids {
+		if _, rewritten := tx.pendingNodes[id]; rewritten {
+			continue
+		}
+		if _, deleted := tx.deletedNodes[id]; deleted {
+			continue
+		}
+		kept = append(kept, id)
+	}
+	if len(tx.pendingNodes) == 0 {
+		return kept
+	}
+	for id, node := range tx.pendingNodes {
+		if compositeNodeMatches(node, label, properties, values) {
+			kept = append(kept, id)
+		}
+	}
+	return kept
+}
+
+// compositeNodeMatches reports whether a pending node carries label and its
+// properties equal the given leading index values under composite-index key
+// semantics (the same canonicalization as IndexNode).
+func compositeNodeMatches(node *Node, label string, properties []string, values []interface{}) bool {
+	if node == nil || !hasLabel(node.Labels, label) || len(values) == 0 || len(values) > len(properties) {
+		return false
+	}
+	for i, value := range values {
+		propValue, exists := node.Properties[properties[i]]
+		if !exists {
+			return false
+		}
+		want, ok := indexValueKey(value)
+		if !ok {
+			return false
+		}
+		got, ok := indexValueKey(propValue)
+		if !ok || got != want {
+			return false
+		}
+	}
+	return true
+}

@@ -102,8 +102,11 @@ type SchemaManager struct {
 	// Nil when writes reach the engine directly.
 	pendingWrites atomic.Pointer[pendingWriteAttachment]
 
-	// Indexes
-	propertyIndexes  map[string]*PropertyIndex       // key: "Label:property" (single property)
+	// Indexes. compositeIndexes is the single home of every property index:
+	// a single-property index is an arity-1 CompositeIndex (see the
+	// PropertyIndex type alias). fulltext/vector/range/lookup keep their own
+	// structures because they are ordered, token or vector indexes, not
+	// equality indexes.
 	compositeIndexes map[string]*CompositeIndex      // key: index name
 	fulltextIndexes  map[string]*FulltextIndex       // key: index_name
 	vectorIndexes    map[string]*VectorIndex         // key: index_name
@@ -183,11 +186,7 @@ type SchemaManager struct {
 //	schema := storage.NewSchemaManager()
 //
 //	// Index for fast lookups
-//	schema.AddPropertyIndex(&storage.PropertyIndex{
-//		Name:       "idx_user_email",
-//		Label:      "User",
-//		Properties: []string{"email"},
-//	})
+//	schema.AddPropertyIndex("idx_user_email", "User", []string{"email"})
 //
 //	// Vector index for semantic search
 //	schema.AddVectorIndex(&storage.VectorIndex{
@@ -216,7 +215,6 @@ func NewSchemaManager() *SchemaManager {
 		constraints:             make(map[string]Constraint),
 		constraintContracts:     make(map[string]ConstraintContract),
 		propertyTypeConstraints: make(map[string]PropertyTypeConstraint),
-		propertyIndexes:         make(map[string]*PropertyIndex),
 		compositeIndexes:        make(map[string]*CompositeIndex),
 		fulltextIndexes:         make(map[string]*FulltextIndex),
 		vectorIndexes:           make(map[string]*VectorIndex),
@@ -294,8 +292,8 @@ func (sm *SchemaManager) admitConstraintLocked(c Constraint, silentOnDuplicate b
 
 	// The constraint's index can't duplicate an index of its own, even under
 	// IF NOT EXISTS: they are different schema rules (#884).
-	if key := constraintPropertyIndexKey(c); key != "" {
-		if idx, exists := sm.propertyIndexes[key]; exists && idx.OwningConstraint == "" {
+	if constraintPropertyIndexKey(c) != "" {
+		if idx, exists := sm.arity1PropertyIndexLocked(c.Label, c.Properties[0]); exists && idx.OwningConstraint == "" {
 			return false, newSchemaAdmissionError("IndexAlreadyExists", localization.StorageSchemaConstraintOverIndex(c.Label, c.Properties[0]))
 		}
 	}
@@ -348,9 +346,10 @@ func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
 	}
 }
 
-// constraintPropertyIndexKey is the property index key ("Label:property") of
-// a constraint that owns a single-property node index (uniqueness or node
-// key), or "".
+// constraintPropertyIndexKey reports whether a constraint owns a
+// single-property node equality index (uniqueness or node key): it is the
+// index's canonical name ("Label:property") when it does, "" otherwise. It
+// is still used by callers that need to know whether c owns such an index.
 func constraintPropertyIndexKey(c Constraint) string {
 	if (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) || len(c.Properties) != 1 || c.EffectiveEntityType() != ConstraintEntityNode {
 		return ""
@@ -358,27 +357,37 @@ func constraintPropertyIndexKey(c Constraint) string {
 	return c.Label + ":" + c.Properties[0]
 }
 
-// addConstraintPropertyIndexLocked registers the property index a
+// arity1PropertyIndexLocked returns the arity-1 composite index on label's
+// property, or nil. The caller holds sm.mu.
+func (sm *SchemaManager) arity1PropertyIndexLocked(label, property string) (*CompositeIndex, bool) {
+	for _, idx := range sm.compositeIndexes {
+		if idx != nil && idx.Label == label && len(idx.Properties) == 1 && idx.Properties[0] == property {
+			return idx, true
+		}
+	}
+	return nil, false
+}
+
+// addConstraintPropertyIndexLocked registers the equality index a
 // single-property uniqueness or node key constraint owns (#875), so property
 // seeks use it as they use CREATE INDEX's. It starts empty and unfilled, so
 // seeks ignore it until it is filled: by the caller that creates the
 // constraint (cypher's addSchemaConstraint), by the startup rebuild with the
-// other property indexes, or by an import's rebuild. A store from before this
-// index existed may already have an index of its own on the property, which
-// then serves the seeks.
+// other indexes, or by an import's rebuild. A store from before this index
+// existed may already have an index of its own on the property, which then
+// serves the seeks.
 func (sm *SchemaManager) addConstraintPropertyIndexLocked(c Constraint) {
-	key := constraintPropertyIndexKey(c)
-	if key == "" {
+	if constraintPropertyIndexKey(c) == "" {
 		return
 	}
-	if _, exists := sm.propertyIndexes[key]; exists {
+	if _, exists := sm.arity1PropertyIndexLocked(c.Label, c.Properties[0]); exists {
 		return
 	}
 	name := c.OwnedIndex
 	if name == "" {
 		name = c.Name
 	}
-	sm.propertyIndexes[key] = &PropertyIndex{
+	sm.compositeIndexes[name] = &CompositeIndex{
 		Name:             name,
 		Label:            c.Label,
 		Properties:       []string{c.Properties[0]},
@@ -386,54 +395,54 @@ func (sm *SchemaManager) addConstraintPropertyIndexLocked(c Constraint) {
 		values:           make(map[interface{}][]NodeID),
 		keysDirty:        true,
 	}
-	sm.propertyIndexes[key].unfilled.Store(true)
+	sm.compositeIndexes[name].unfilled.Store(true)
 }
 
-// seekablePropertyIndexLocked returns the property index on label's property
+// seekablePropertyIndexLocked returns the arity-1 index on label's property
 // that seeks may use: one that exists and is filled (#875). The caller holds
 // sm.mu.
 func (sm *SchemaManager) seekablePropertyIndexLocked(label, property string) (*PropertyIndex, bool) {
-	idx, exists := sm.propertyIndexes[label+":"+property]
+	idx, exists := sm.arity1PropertyIndexLocked(label, property)
 	if !exists || idx == nil || idx.unfilled.Load() {
 		return nil, false
 	}
 	return idx, true
 }
 
-// MaintainsPropertyIndex reports whether writes must maintain a property
+// MaintainsPropertyIndex reports whether writes must maintain an arity-1
 // index on label's property, filled or not (#875): node writes and index
 // rebuilds use it, seeks use GetPropertyIndex.
 func (sm *SchemaManager) MaintainsPropertyIndex(label, property string) bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	_, exists := sm.propertyIndexes[label+":"+property]
+	_, exists := sm.arity1PropertyIndexLocked(label, property)
 	return exists
 }
 
-// MarkPropertyIndexesFilled lets seeks use every property index, once a
+// MarkPropertyIndexesFilled lets seeks use every equality index, once a
 // rebuild has filled them all from the stored nodes (#875).
 func (sm *SchemaManager) MarkPropertyIndexesFilled() {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	for _, idx := range sm.propertyIndexes {
+	for _, idx := range sm.compositeIndexes {
 		idx.unfilled.Store(false)
 	}
 }
 
-// ConstraintPropertyIndex returns the property index constraint name owns
+// ConstraintPropertyIndex returns the equality index constraint name owns
 // (#875), if it has one.
 func (sm *SchemaManager) ConstraintPropertyIndex(name string) (*PropertyIndex, bool) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	c, exists := sm.constraints[name]
-	if !exists {
+	if _, exists := sm.constraints[name]; !exists {
 		return nil, false
 	}
-	idx, exists := sm.propertyIndexes[constraintPropertyIndexKey(c)]
-	if !exists || idx.OwningConstraint != name {
-		return nil, false
+	for _, idx := range sm.compositeIndexes {
+		if idx.OwningConstraint == name {
+			return idx, true
+		}
 	}
-	return idx, true
+	return nil, false
 }
 
 // SetPersister sets an optional persistence hook for schema changes.
@@ -464,32 +473,12 @@ type UniqueConstraint struct {
 	mu                  sync.RWMutex
 }
 
-// PropertyIndex represents a property index for faster lookups.
-type PropertyIndex struct {
-	Name       string
-	Label      string
-	Properties []string
-	// OwningConstraint names the uniqueness or node key constraint whose
-	// index this is (#875): its equality and IN seeks use it like any
-	// property index. It is listed, persisted and dropped as the
-	// constraint's RANGE index, not as an index of its own. Empty for an
-	// index created on its own.
-	OwningConstraint string
-	// unfilled is true while a constraint's index doesn't hold the stored
-	// nodes yet (#875). Writes maintain it, but seeks don't use it until a
-	// fill (BackfillPropertyIndex, the startup rebuild or
-	// MarkPropertyIndexesFilled) clears it; until then they scan, as they
-	// did before the constraint had an index.
-	unfilled atomic.Bool
-	values   map[interface{}][]NodeID // Property value -> node IDs
-	// sortedNonNilKeys caches non-nil keys in ascending order.
-	// It is rebuilt lazily when values are mutated.
-	sortedNonNilKeys []interface{}
-	// sortedKeyKinds describes sortedNonNilKeys, rebuilt with it.
-	sortedKeyKinds propertyIndexKeyKinds
-	keysDirty      bool
-	mu             sync.RWMutex
-}
+// PropertyIndex is the arity-1 form of a CompositeIndex. It is a type alias
+// so every existing single-property index call site keeps working while the
+// underlying value is the same composite index type used for multi-property
+// indexes. The single-property ordered-scan fields (values, sortedNonNilKeys,
+// sortedKeyKinds, keysDirty) and OwningConstraint live on CompositeIndex.
+type PropertyIndex = CompositeIndex
 
 // CompositeKey represents a key composed of multiple property values.
 // The key is a hash of all property values in order for efficient lookup.
@@ -601,16 +590,34 @@ type CompositeIndex struct {
 	Label      string
 	Properties []string // Ordered list of property names
 
-	// Primary index: full composite key -> node IDs
+	// OwningConstraint names the uniqueness or node key constraint whose
+	// index this is (#875): its equality and IN seeks use it like any
+	// property index. It is listed, persisted and dropped as the
+	// constraint's RANGE index, not as an index of its own. Empty for an
+	// index created on its own.
+	OwningConstraint string
+
+	// unfilled is true while the index doesn't hold the stored nodes yet
+	// (#875). Writes and rebuilds maintain it, but seeks don't use it until a
+	// fill (BackfillPropertyIndex / BackfillCompositeIndex, the startup
+	// rebuild or MarkPropertyIndexesFilled) clears it; until then they scan,
+	// as they did before the index existed.
+	unfilled atomic.Bool
+
+	// Single-property ordered-scan state, used by the arity-1 indexes that
+	// answer ORDER BY, range and not-null seeks. values maps a canonical
+	// property value to node IDs; the sorted views are rebuilt lazily.
+	values           map[interface{}][]NodeID
+	sortedNonNilKeys []interface{}
+	sortedKeyKinds   propertyIndexKeyKinds
+	keysDirty        bool
+
+	// Primary index: full composite key -> node IDs.
 	fullIndex map[string][]NodeID
 
 	// Prefix indexes for partial key lookups
 	// Key format: "prop1Value|prop2Value|..." -> node IDs
 	prefixIndex map[string][]NodeID
-
-	// Individual property value tracking for range queries
-	// propertyValues[propIndex][value] = sorted list of (otherValues, nodeID)
-	// This enables efficient range queries on any property
 
 	mu sync.RWMutex
 }
@@ -1369,38 +1376,20 @@ func (sm *SchemaManager) UnregisterUniqueValue(label, property string, value int
 	constraint.mu.Unlock()
 }
 
-// AddPropertyIndex adds a property index.
+// AddPropertyIndex adds an arity-1 equality index. It is the single-property
+// spelling of AddCompositeIndex: the index lives in compositeIndexes and the
+// arity-1 encoding (values) drives equality, ORDER BY, range and not-null
+// seeks.
 func (sm *SchemaManager) AddPropertyIndex(name, label string, properties []string) error {
-	defer sm.trackPendingPairs()
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	key := fmt.Sprintf("%s:%s", label, properties[0]) // Use first property as key
-	if _, exists := sm.propertyIndexes[key]; exists {
-		return nil // Already exists
+	if len(properties) == 0 {
+		return localizedError(localization.StorageSchemaRangeIndexPropertiesRequired(), nil)
 	}
-
-	sm.propertyIndexes[key] = &PropertyIndex{
-		Name:       name,
-		Label:      label,
-		Properties: properties,
-		values:     make(map[interface{}][]NodeID),
-		keysDirty:  true,
-	}
-
-	if sm.persist != nil {
-		def := sm.exportDefinitionLocked()
-		if err := sm.persist(def); err != nil {
-			delete(sm.propertyIndexes, key)
-			return err
-		}
-	}
-
-	return nil
+	return sm.AddCompositeIndex(name, label, properties)
 }
 
-// AddCompositeIndex creates a composite index on multiple properties.
-// Composite indexes enable efficient queries that filter on multiple properties.
+// AddCompositeIndex creates a composite (equality) index on one or more
+// properties. An arity-1 index is the single-property index; arity >= 2 adds
+// prefix lookups.
 //
 // Example usage:
 //
@@ -1411,9 +1400,14 @@ func (sm *SchemaManager) AddPropertyIndex(name, label string, properties []strin
 //   - WHERE country = 'US' AND city = 'NYC' (prefix match)
 //   - WHERE country = 'US' (prefix match, uses first property only)
 func (sm *SchemaManager) AddCompositeIndex(name, label string, properties []string) error {
-	if len(properties) < 2 {
+	if len(properties) == 0 {
 		return localizedError(localization.StorageSchemaCompositeIndexMinProperties(len(properties)), nil)
 	}
+
+	// A new arity-1 index changes which (label, property) pairs an attached
+	// AsyncEngine indexes by value (#719); refresh its pending-pair tracking
+	// once the lock is released.
+	defer sm.trackPendingPairs()
 
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -1426,9 +1420,16 @@ func (sm *SchemaManager) AddCompositeIndex(name, label string, properties []stri
 		Name:        name,
 		Label:       label,
 		Properties:  properties,
+		values:      make(map[interface{}][]NodeID),
+		keysDirty:   true,
 		fullIndex:   make(map[string][]NodeID),
 		prefixIndex: make(map[string][]NodeID),
 	}
+	// Like the historical single-property index, a standalone equality index
+	// is seekable as soon as it is declared: the DDL path (cypher's
+	// addPropertyIndex) backfills it from the stored nodes before the
+	// statement returns. A constraint-owned index starts unfilled instead
+	// (#875), because its fill is deferred to a rebuild.
 
 	if sm.persist != nil {
 		def := sm.exportDefinitionLocked()
@@ -1464,32 +1465,127 @@ func (sm *SchemaManager) GetCompositeIndexesForLabel(label string) []*CompositeI
 	return indexes
 }
 
-// IndexNodeComposite indexes a node in a composite index.
+// SeekableCompositeIndexesForLabel returns label's composite indexes that
+// seek paths may use: filled only. Writes and rebuilds maintain every index
+// through GetCompositeIndexesForLabel, so a DDL-created index mid-backfill is
+// populated but never trusted for reads (#875).
+func (sm *SchemaManager) SeekableCompositeIndexesForLabel(label string) []*CompositeIndex {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	var indexes []*CompositeIndex
+	for _, idx := range sm.compositeIndexes {
+		if idx != nil && idx.Label == label && !idx.unfilled.Load() {
+			indexes = append(indexes, idx)
+		}
+	}
+	return indexes
+}
+
+// BackfillCompositeIndex fills a newly created composite index from the
+// already-stored nodes, mirroring BackfillPropertyIndex. Nodes with pending
+// writes in an attached AsyncEngine are skipped: the engine indexes them when
+// they are flushed, and lookups see them through the pending view until then
+// (#719). On success the index is marked filled so seeks can use it.
+func (sm *SchemaManager) BackfillCompositeIndex(name string, entries map[NodeID]map[string]interface{}) error {
+	view, source := sm.beginPendingRead()
+	defer endPendingRead(source)
+
+	sm.mu.RLock()
+	idx := sm.compositeIndexes[name]
+	sm.mu.RUnlock()
+	if idx == nil {
+		return localizedError(localization.StorageSchemaIndexNotFound(name), nil)
+	}
+	for nodeID, props := range entries {
+		if !view.keep(nodeID) {
+			continue
+		}
+		if err := idx.IndexNode(nodeID, props); err != nil {
+			return err
+		}
+	}
+	idx.unfilled.Store(false)
+	return nil
+}
+
+// compositeIndexValues returns the canonical index-key forms of the leading
+// values of idx.Properties present in properties. It stops at the first
+// property that is missing or whose value a composite index cannot key
+// (nil, byte arrays, ...). This is exactly what IndexNode stores: the longest
+// leading prefix whose every value can be keyed, so full and prefix lookups
+// key the same way as inserts and removes.
+func compositeIndexValues(idx *CompositeIndex, properties map[string]interface{}) []interface{} {
+	if idx == nil {
+		return nil
+	}
+	values := make([]interface{}, 0, len(idx.Properties))
+	for _, propName := range idx.Properties {
+		val, exists := properties[propName]
+		if !exists {
+			break
+		}
+		key, ok := indexValueKey(val)
+		if !ok {
+			break
+		}
+		values = append(values, key)
+	}
+	return values
+}
+
+// compositeLookupKeyValues canonicalizes lookup values the way inserts do.
+// It reports false when a value has no index key (so no stored entry can
+// equal it).
+func compositeLookupKeyValues(values []interface{}) ([]interface{}, bool) {
+	canonical := make([]interface{}, len(values))
+	for i, value := range values {
+		key, ok := indexValueKey(value)
+		if !ok {
+			return nil, false
+		}
+		canonical[i] = key
+	}
+	return canonical, true
+}
+
+// IndexNodeComposite indexes a node in a composite index. An arity-1 index
+// files the node under its canonical single-property key (values, the
+// encoding ORDER BY / range / equality seeks read); an arity >= 2 index files
+// it under its full and every leading-prefix composite key.
 // Call this when creating or updating a node with the indexed properties.
 func (idx *CompositeIndex) IndexNode(nodeID NodeID, properties map[string]interface{}) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	// Extract values in property order
-	values := make([]interface{}, len(idx.Properties))
-	for i, propName := range idx.Properties {
-		val, exists := properties[propName]
+	if len(idx.Properties) == 1 {
+		value, exists := properties[idx.Properties[0]]
 		if !exists {
-			// Node doesn't have all properties - can't be fully indexed
-			// But we can still index prefixes
-			values = values[:i]
-			break
+			return nil
 		}
-		values[i] = val
+		valueKey, ok := indexValueKey(value)
+		if !ok {
+			return nil // null / byte array / non-comparable: no key to file
+		}
+		if idx.values == nil {
+			idx.values = make(map[interface{}][]NodeID)
+		}
+		if _, exists := idx.values[valueKey]; !exists {
+			idx.keysDirty = true
+		}
+		idx.values[valueKey] = appendUnique(idx.values[valueKey], nodeID)
+		return nil
 	}
 
-	// Index full key if all properties present
+	values := compositeIndexValues(idx, properties)
+
+	// Index full key if all properties present and keyable.
 	if len(values) == len(idx.Properties) {
 		key := NewCompositeKey(values...)
 		idx.fullIndex[key.Hash] = appendUnique(idx.fullIndex[key.Hash], nodeID)
 	}
 
-	// Index all prefixes for partial lookups
+	// Index all prefixes for partial lookups.
 	for i := 1; i <= len(values); i++ {
 		prefixKey := NewCompositeKey(values[:i]...)
 		idx.prefixIndex[prefixKey.Hash] = appendUnique(idx.prefixIndex[prefixKey.Hash], nodeID)
@@ -1504,17 +1600,28 @@ func (idx *CompositeIndex) RemoveNode(nodeID NodeID, properties map[string]inter
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	// Extract values in property order
-	values := make([]interface{}, 0, len(idx.Properties))
-	for _, propName := range idx.Properties {
-		val, exists := properties[propName]
+	if len(idx.Properties) == 1 {
+		value, exists := properties[idx.Properties[0]]
 		if !exists {
-			break
+			return
 		}
-		values = append(values, val)
+		valueKey, ok := indexValueKey(value)
+		if !ok {
+			return
+		}
+		ids := removeNodeID(idx.values[valueKey], nodeID)
+		if len(ids) > 0 {
+			idx.values[valueKey] = ids
+		} else {
+			delete(idx.values, valueKey)
+			idx.keysDirty = true
+		}
+		return
 	}
 
-	// Remove from full index
+	values := compositeIndexValues(idx, properties)
+
+	// Remove from full index.
 	if len(values) == len(idx.Properties) {
 		key := NewCompositeKey(values...)
 		idx.fullIndex[key.Hash] = removeNodeID(idx.fullIndex[key.Hash], nodeID)
@@ -1523,7 +1630,7 @@ func (idx *CompositeIndex) RemoveNode(nodeID NodeID, properties map[string]inter
 		}
 	}
 
-	// Remove from all prefix indexes
+	// Remove from all prefix indexes.
 	for i := 1; i <= len(values); i++ {
 		prefixKey := NewCompositeKey(values[:i]...)
 		idx.prefixIndex[prefixKey.Hash] = removeNodeID(idx.prefixIndex[prefixKey.Hash], nodeID)
@@ -1539,11 +1646,27 @@ func (idx *CompositeIndex) LookupFull(values ...interface{}) []NodeID {
 	if len(values) != len(idx.Properties) {
 		return nil // Must specify all properties for full lookup
 	}
+	if len(idx.Properties) == 1 {
+		valueKey, ok := indexValueKey(values[0])
+		if !ok {
+			return nil
+		}
+		idx.mu.RLock()
+		defer idx.mu.RUnlock()
+		nodes := idx.values[valueKey]
+		result := make([]NodeID, len(nodes))
+		copy(result, nodes)
+		return result
+	}
+	canonical, ok := compositeLookupKeyValues(values)
+	if !ok {
+		return nil // a value no index entry can hold: no match
+	}
 
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
-	key := NewCompositeKey(values...)
+	key := NewCompositeKey(canonical...)
 	if nodes, exists := idx.fullIndex[key.Hash]; exists {
 		// Return a copy to avoid race conditions
 		result := make([]NodeID, len(nodes))
@@ -1555,7 +1678,8 @@ func (idx *CompositeIndex) LookupFull(values ...interface{}) []NodeID {
 
 // LookupPrefix finds nodes matching a prefix of property values.
 // Specify 1 to N-1 property values (where N is total properties in index).
-// Returns all nodes that match the prefix.
+// Returns all nodes that match the prefix. For an arity-1 index a one-value
+// lookup is a full match.
 //
 // Example: For index on (country, city, zipcode)
 //   - LookupPrefix("US") returns all nodes in the US
@@ -1564,13 +1688,20 @@ func (idx *CompositeIndex) LookupPrefix(values ...interface{}) []NodeID {
 	if len(values) == 0 || len(values) > len(idx.Properties) {
 		return nil
 	}
+	if len(idx.Properties) == 1 {
+		return idx.LookupFull(values...)
+	}
+	canonical, ok := compositeLookupKeyValues(values)
+	if !ok {
+		return nil // a value no index entry can hold: no match
+	}
 
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
 	// Check if this is a full match (not a prefix)
-	if len(values) == len(idx.Properties) {
-		key := NewCompositeKey(values...)
+	if len(canonical) == len(idx.Properties) {
+		key := NewCompositeKey(canonical...)
 		if nodes, exists := idx.fullIndex[key.Hash]; exists {
 			result := make([]NodeID, len(nodes))
 			copy(result, nodes)
@@ -1580,7 +1711,7 @@ func (idx *CompositeIndex) LookupPrefix(values ...interface{}) []NodeID {
 	}
 
 	// Prefix lookup
-	key := NewCompositeKey(values...)
+	key := NewCompositeKey(canonical...)
 	if nodes, exists := idx.prefixIndex[key.Hash]; exists {
 		result := make([]NodeID, len(nodes))
 		copy(result, nodes)
@@ -1624,6 +1755,7 @@ func (idx *CompositeIndex) Stats() map[string]interface{} {
 		"properties":       idx.Properties,
 		"fullIndexEntries": len(idx.fullIndex),
 		"prefixEntries":    len(idx.prefixIndex),
+		"valueEntries":     len(idx.values),
 	}
 }
 
@@ -2092,7 +2224,11 @@ func (sm *SchemaManager) DropIndex(name string) error {
 	var d dropped
 
 	// compositeIndexes, fulltextIndexes, vectorIndexes, rangeIndexes are keyed by name.
-	if _, ok := sm.compositeIndexes[name]; ok {
+	if idx, ok := sm.compositeIndexes[name]; ok {
+		if idx.OwningConstraint != "" {
+			return &schemaAdmissionError{code: "Neo.DatabaseError.Schema.IndexDropFailed",
+				cause: localizedError(localization.StorageSchemaIndexBelongsToConstraint(idx.OwningConstraint), nil)}
+		}
 		d = dropped{kind: "composite", key: name}
 	} else if _, ok := sm.fulltextIndexes[name]; ok {
 		d = dropped{kind: "fulltext", key: name}
@@ -2112,14 +2248,6 @@ func (sm *SchemaManager) DropIndex(name string) error {
 			}
 		}
 		return nil
-	} else {
-		// propertyIndexes are keyed by "label:property[0]", so search by name.
-		for key, idx := range sm.propertyIndexes {
-			if idx.Name == name && idx.OwningConstraint == "" {
-				d = dropped{kind: "property", key: key}
-				break
-			}
-		}
 	}
 
 	if d.kind == "" {
@@ -2127,16 +2255,12 @@ func (sm *SchemaManager) DropIndex(name string) error {
 	}
 
 	// Stash the old value for rollback, then delete.
-	var oldProperty *PropertyIndex
 	var oldComposite *CompositeIndex
 	var oldFulltext *FulltextIndex
 	var oldVector *VectorIndex
 	var oldRange *RangeIndex
 
 	switch d.kind {
-	case "property":
-		oldProperty = sm.propertyIndexes[d.key]
-		delete(sm.propertyIndexes, d.key)
 	case "composite":
 		oldComposite = sm.compositeIndexes[d.key]
 		delete(sm.compositeIndexes, d.key)
@@ -2156,8 +2280,6 @@ func (sm *SchemaManager) DropIndex(name string) error {
 		if err := sm.persist(def); err != nil {
 			// Rollback in-memory delete.
 			switch d.kind {
-			case "property":
-				sm.propertyIndexes[d.key] = oldProperty
 			case "composite":
 				sm.compositeIndexes[d.key] = oldComposite
 			case "fulltext":
@@ -2194,10 +2316,10 @@ func (sm *SchemaManager) DropConstraint(name string) error {
 		droppedConstraint = &c
 		delete(sm.constraints, name)
 
-		if key := constraintPropertyIndexKey(c); key != "" {
-			if idx, ok := sm.propertyIndexes[key]; ok && idx.OwningConstraint == name {
-				droppedPropertyIndex, droppedPropertyIndexKey = idx, key
-				delete(sm.propertyIndexes, key)
+		if constraintPropertyIndexKey(c) != "" {
+			if idx, ok := sm.arity1PropertyIndexLocked(c.Label, c.Properties[0]); ok && idx.OwningConstraint == name {
+				droppedPropertyIndex, droppedPropertyIndexKey = idx, idx.Name
+				delete(sm.compositeIndexes, idx.Name)
 			}
 		}
 
@@ -2236,7 +2358,7 @@ func (sm *SchemaManager) DropConstraint(name string) error {
 					sm.rangeIndexes[droppedOwnedIndexName] = droppedOwnedIndex
 				}
 				if droppedPropertyIndex != nil {
-					sm.propertyIndexes[droppedPropertyIndexKey] = droppedPropertyIndex
+					sm.compositeIndexes[droppedPropertyIndexKey] = droppedPropertyIndex
 				}
 			}
 			if droppedTypeConstraint != nil {
@@ -2288,8 +2410,8 @@ func (sm *SchemaManager) SchemaObjectCounts() (indexes, constraints int) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
-	indexes = len(sm.compositeIndexes) + len(sm.fulltextIndexes) + len(sm.vectorIndexes)
-	for _, idx := range sm.propertyIndexes {
+	indexes = len(sm.fulltextIndexes) + len(sm.vectorIndexes)
+	for _, idx := range sm.compositeIndexes {
 		if idx.OwningConstraint == "" {
 			indexes++
 		}
@@ -2310,22 +2432,17 @@ func (sm *SchemaManager) GetIndexes() []interface{} {
 
 	indexes := make([]interface{}, 0)
 
-	for _, idx := range sm.propertyIndexes {
+	for _, idx := range sm.compositeIndexes {
 		if idx.OwningConstraint != "" {
 			continue // listed as its constraint's RANGE index
 		}
+		indexType := "COMPOSITE"
+		if len(idx.Properties) == 1 {
+			indexType = "PROPERTY"
+		}
 		indexes = append(indexes, map[string]interface{}{
 			"name":       idx.Name,
-			"type":       "PROPERTY",
-			"label":      idx.Label,
-			"properties": idx.Properties,
-		})
-	}
-
-	for _, idx := range sm.compositeIndexes {
-		indexes = append(indexes, map[string]interface{}{
-			"name":       idx.Name,
-			"type":       "COMPOSITE",
+			"type":       indexType,
 			"label":      idx.Label,
 			"properties": idx.Properties,
 		})
@@ -2425,20 +2542,16 @@ func (sm *SchemaManager) GetRangeIndex(name string) (*RangeIndex, bool) {
 func (sm *SchemaManager) GetPropertyIndex(label, property string) (*PropertyIndex, bool) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-
-	key := fmt.Sprintf("%s:%s", label, property)
-	idx, exists := sm.propertyIndexes[key]
-	if exists && idx.unfilled.Load() {
-		return nil, false // not filled yet (#875): seeks scan
-	}
-	return idx, exists
+	return sm.seekablePropertyIndexLocked(label, property)
 }
 
-// PropertyIndexInsert adds a node to a property index.
+// PropertyIndexInsert adds a node to an arity-1 index. It is the
+// single-property spelling of IndexNode for callers that carry the value
+// directly (imports, backfills); node-write maintenance calls IndexNode.
 func (sm *SchemaManager) PropertyIndexInsert(label, property string, nodeID NodeID, value interface{}) error {
-	sm.mu.Lock()
-	idx, exists := sm.propertyIndexes[fmt.Sprintf("%s:%s", label, property)]
-	sm.mu.Unlock()
+	sm.mu.RLock()
+	idx, exists := sm.arity1PropertyIndexLocked(label, property)
+	sm.mu.RUnlock()
 
 	if !exists {
 		return localizedError(localization.StorageSchemaPropertyIndexNotFound(label, property), nil)
@@ -2461,15 +2574,22 @@ func (sm *SchemaManager) PropertyIndexInsert(label, property string, nodeID Node
 	if _, exists := idx.values[valueKey]; !exists {
 		idx.keysDirty = true
 	}
-	idx.values[valueKey] = append(idx.values[valueKey], nodeID)
+	idx.values[valueKey] = appendUnique(idx.values[valueKey], nodeID)
 	return nil
 }
 
-// BackfillPropertyIndex fills a newly created property index with values
+// BackfillPropertyIndex fills a newly created arity-1 index with values
 // (node ID → property value). Nodes with pending writes in an attached
 // AsyncEngine are skipped: the engine indexes them when they are flushed,
 // and lookups see them through the pending view until then (#719).
 func (sm *SchemaManager) BackfillPropertyIndex(label, property string, values map[NodeID]interface{}) error {
+	sm.mu.RLock()
+	idx, exists := sm.arity1PropertyIndexLocked(label, property)
+	sm.mu.RUnlock()
+	if !exists {
+		return localizedError(localization.StorageSchemaPropertyIndexNotFound(label, property), nil)
+	}
+
 	view, source := sm.beginPendingRead()
 	defer endPendingRead(source)
 	for nodeID, value := range values {
@@ -2480,19 +2600,15 @@ func (sm *SchemaManager) BackfillPropertyIndex(label, property string, values ma
 			return err
 		}
 	}
-	sm.mu.RLock()
-	if idx, exists := sm.propertyIndexes[label+":"+property]; exists {
-		idx.unfilled.Store(false)
-	}
-	sm.mu.RUnlock()
+	idx.unfilled.Store(false)
 	return nil
 }
 
-// PropertyIndexDelete removes a node from a property index.
+// PropertyIndexDelete removes a node from an arity-1 index.
 func (sm *SchemaManager) PropertyIndexDelete(label, property string, nodeID NodeID, value interface{}) error {
-	sm.mu.Lock()
-	idx, exists := sm.propertyIndexes[fmt.Sprintf("%s:%s", label, property)]
-	sm.mu.Unlock()
+	sm.mu.RLock()
+	idx, exists := sm.arity1PropertyIndexLocked(label, property)
+	sm.mu.RUnlock()
 
 	if !exists {
 		return nil // Not indexed
@@ -2523,8 +2639,8 @@ func (sm *SchemaManager) PropertyIndexDelete(label, property string, nodeID Node
 	return nil
 }
 
-// HasPropertyIndex reports whether a property index exists for the given
-// label+property combination. Callers can use this to choose between
+// HasPropertyIndex reports whether a filled arity-1 index exists for the
+// given label+property combination. Callers can use this to choose between
 // index-backed per-row lookups and batch preloads.
 func (sm *SchemaManager) HasPropertyIndex(label, property string) bool {
 	sm.mu.RLock()
@@ -2533,16 +2649,20 @@ func (sm *SchemaManager) HasPropertyIndex(label, property string) bool {
 	return exists
 }
 
-// HasAnyPropertyIndexForLabel reports whether ANY property index is
-// declared against the given label. Used by storage-side index
-// maintenance to short-circuit per-property lookups when no index touches
-// the label at all.
+// HasAnyPropertyIndexForLabel reports whether ANY equality index (arity-1 or
+// composite) is declared against the given label. Used by storage-side index
+// maintenance to short-circuit per-node work when no index touches the label.
 func (sm *SchemaManager) HasAnyPropertyIndexForLabel(label string) bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	prefix := label + ":"
-	for key := range sm.propertyIndexes {
-		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+	return sm.hasAnyCompositeIndexForLabelLocked(label)
+}
+
+// hasAnyCompositeIndexForLabelLocked reports whether any composite index is
+// declared against label. The caller holds sm.mu.
+func (sm *SchemaManager) hasAnyCompositeIndexForLabelLocked(label string) bool {
+	for _, idx := range sm.compositeIndexes {
+		if idx != nil && idx.Label == label {
 			return true
 		}
 	}
@@ -2569,17 +2689,10 @@ func (sm *SchemaManager) PropertyIndexLookupAnyLabel(property string, value inte
 		return nil
 	}
 	sm.mu.RLock()
-	suffix := ":" + property
 	indexes := make([]*PropertyIndex, 0, 2)
-	for key, idx := range sm.propertyIndexes {
-		if !endsWith(key, suffix) {
+	for _, idx := range sm.compositeIndexes {
+		if idx == nil || len(idx.Properties) != 1 || idx.Properties[0] != property {
 			continue
-		}
-		// Defensive: ensure the suffix is the whole property segment (i.e. the
-		// character before `:` is the end of the label, not a `:property`
-		// suffix of a longer property name).
-		if len(key) == len(suffix) {
-			continue // would mean an empty label, which is impossible — skip
 		}
 		if idx.unfilled.Load() {
 			// A label whose index isn't filled can't be answered from the
@@ -2620,15 +2733,6 @@ func (idx *PropertyIndex) lookupLocked(view pendingWriteView, out []NodeID, prop
 	}
 	idx.mu.RUnlock()
 	return view.appendInNamespace(out, pending)
-}
-
-// endsWith is a tiny ASCII suffix helper. We keep it local to the schema
-// package so this hot-path does not pull in `strings` solely for HasSuffix.
-func endsWith(s, suffix string) bool {
-	if len(suffix) > len(s) {
-		return false
-	}
-	return s[len(s)-len(suffix):] == suffix
 }
 
 // PropertyIndexLookup looks up node IDs by property value using an index,
@@ -2816,31 +2920,41 @@ func (sm *SchemaManager) GetIndexStats() []IndexStats {
 
 	var stats []IndexStats
 
-	// Property indexes
-	for _, idx := range sm.propertyIndexes {
+	// Equality indexes (arity-1 "property" and arity-N "composite" alike).
+	for _, idx := range sm.compositeIndexes {
 		if idx.OwningConstraint != "" {
 			continue // counted as its constraint's RANGE index
 		}
 		idx.mu.RLock()
 		totalEntries := int64(0)
-		for _, ids := range idx.values {
-			totalEntries += int64(len(ids))
+		uniqueValues := int64(0)
+		if len(idx.Properties) == 1 {
+			for _, ids := range idx.values {
+				totalEntries += int64(len(ids))
+			}
+			uniqueValues = int64(len(idx.values))
+		} else {
+			for _, ids := range idx.fullIndex {
+				totalEntries += int64(len(ids))
+			}
+			uniqueValues = int64(len(idx.fullIndex))
 		}
-		uniqueValues := int64(len(idx.values))
 		selectivity := float64(0)
 		if totalEntries > 0 {
 			selectivity = float64(uniqueValues) / float64(totalEntries)
 		}
 		idx.mu.RUnlock()
 
+		indexType := "COMPOSITE"
 		prop := ""
-		if len(idx.Properties) > 0 {
+		if len(idx.Properties) == 1 {
+			indexType = "PROPERTY"
 			prop = idx.Properties[0]
 		}
 
 		stats = append(stats, IndexStats{
 			Name:         idx.Name,
-			Type:         "PROPERTY",
+			Type:         indexType,
 			Label:        idx.Label,
 			Property:     prop,
 			Properties:   idx.Properties,
@@ -2867,29 +2981,6 @@ func (sm *SchemaManager) GetIndexStats() []IndexStats {
 			Type:         string(idx.effectiveKind()),
 			Label:        idx.Label,
 			Property:     idx.Property,
-			TotalEntries: totalEntries,
-			UniqueValues: uniqueValues,
-			Selectivity:  selectivity,
-		})
-	}
-
-	// Composite indexes
-	for _, idx := range sm.compositeIndexes {
-		totalEntries := int64(0)
-		for _, ids := range idx.fullIndex {
-			totalEntries += int64(len(ids))
-		}
-		uniqueValues := int64(len(idx.fullIndex))
-		selectivity := float64(0)
-		if totalEntries > 0 {
-			selectivity = float64(uniqueValues) / float64(totalEntries)
-		}
-
-		stats = append(stats, IndexStats{
-			Name:         idx.Name,
-			Type:         "COMPOSITE",
-			Label:        idx.Label,
-			Properties:   idx.Properties,
 			TotalEntries: totalEntries,
 			UniqueValues: uniqueValues,
 			Selectivity:  selectivity,

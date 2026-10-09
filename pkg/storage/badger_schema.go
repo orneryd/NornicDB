@@ -139,22 +139,17 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 	// Fast skip: if there are no derived schema caches, there's nothing to rebuild.
 	sm.mu.RLock()
 	hasUnique := len(sm.uniqueConstraints) > 0
-	hasPropertyIndexes := len(sm.propertyIndexes) > 0
 	hasCompositeIndexes := len(sm.compositeIndexes) > 0
 	uniqueConstraints := make([]*UniqueConstraint, 0, len(sm.uniqueConstraints))
 	for _, uc := range sm.uniqueConstraints {
 		uniqueConstraints = append(uniqueConstraints, uc)
-	}
-	propertyIndexes := make([]*PropertyIndex, 0, len(sm.propertyIndexes))
-	for _, idx := range sm.propertyIndexes {
-		propertyIndexes = append(propertyIndexes, idx)
 	}
 	compositeIndexes := make([]*CompositeIndex, 0, len(sm.compositeIndexes))
 	for _, idx := range sm.compositeIndexes {
 		compositeIndexes = append(compositeIndexes, idx)
 	}
 	sm.mu.RUnlock()
-	if !hasUnique && !hasPropertyIndexes && !hasCompositeIndexes {
+	if !hasUnique && !hasCompositeIndexes {
 		return nil
 	}
 
@@ -165,15 +160,11 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 		uc.valuesCacheComplete = false
 		uc.mu.Unlock()
 	}
-	for _, idx := range propertyIndexes {
+	for _, idx := range compositeIndexes {
 		idx.mu.Lock()
 		idx.values = make(map[interface{}][]NodeID)
 		idx.sortedNonNilKeys = nil
 		idx.keysDirty = true
-		idx.mu.Unlock()
-	}
-	for _, idx := range compositeIndexes {
-		idx.mu.Lock()
 		idx.fullIndex = make(map[string][]NodeID)
 		idx.prefixIndex = make(map[string][]NodeID)
 		idx.mu.Unlock()
@@ -216,25 +207,14 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 				}
 			}
 
-			if hasPropertyIndexes {
-				for _, label := range node.Labels {
-					for propName, propValue := range node.Properties {
-						if !sm.MaintainsPropertyIndex(label, propName) {
-							continue
-						}
-						if err := sm.PropertyIndexInsert(label, propName, node.ID, propValue); err != nil {
-							return fmt.Errorf("schema: rebuild property indexes: namespace=%q label=%q property=%q: %w", namespace, label, propName, err)
-						}
-					}
-				}
-			}
-
 			if hasCompositeIndexes {
 				for _, label := range node.Labels {
 					for _, idx := range sm.GetCompositeIndexesForLabel(label) {
 						if idx == nil {
 							continue
 						}
+						// IndexNode files arity-1 under values and arity-N
+						// under full/prefix, so one pass fills every index.
 						if err := idx.IndexNode(node.ID, node.Properties); err != nil {
 							return fmt.Errorf("schema: rebuild composite indexes: namespace=%q index=%q: %w", namespace, idx.Name, err)
 						}
@@ -252,7 +232,7 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 		uc.valuesCacheComplete = true
 		uc.mu.Unlock()
 	}
-	for _, idx := range propertyIndexes {
+	for _, idx := range compositeIndexes {
 		idx.unfilled.Store(false)
 	}
 

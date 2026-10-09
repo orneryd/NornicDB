@@ -146,16 +146,25 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 		})
 	}
 
-	// Property indexes.
-	if len(sm.propertyIndexes) > 0 {
-		def.PropertyIndexes = make([]SchemaPropertyIndexDef, 0, len(sm.propertyIndexes))
-		for _, idx := range sm.propertyIndexes {
+	// Equality indexes split into the two persisted arrays for on-disk
+	// compatibility: arity-1 (PropertyIndexes) and arity-N (CompositeIndexes).
+	// Both load back into the single compositeIndexes map.
+	if len(sm.compositeIndexes) > 0 {
+		for _, idx := range sm.compositeIndexes {
 			if idx.OwningConstraint != "" {
 				continue // derived from its constraint
 			}
 			props := make([]string, len(idx.Properties))
 			copy(props, idx.Properties)
-			def.PropertyIndexes = append(def.PropertyIndexes, SchemaPropertyIndexDef{
+			if len(props) == 1 {
+				def.PropertyIndexes = append(def.PropertyIndexes, SchemaPropertyIndexDef{
+					Name:       idx.Name,
+					Label:      idx.Label,
+					Properties: props,
+				})
+				continue
+			}
+			def.CompositeIndexes = append(def.CompositeIndexes, SchemaCompositeIndexDef{
 				Name:       idx.Name,
 				Label:      idx.Label,
 				Properties: props,
@@ -167,20 +176,6 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 			}
 			return def.PropertyIndexes[i].Name < def.PropertyIndexes[j].Name
 		})
-	}
-
-	// Composite indexes.
-	if len(sm.compositeIndexes) > 0 {
-		def.CompositeIndexes = make([]SchemaCompositeIndexDef, 0, len(sm.compositeIndexes))
-		for _, idx := range sm.compositeIndexes {
-			props := make([]string, len(idx.Properties))
-			copy(props, idx.Properties)
-			def.CompositeIndexes = append(def.CompositeIndexes, SchemaCompositeIndexDef{
-				Name:       idx.Name,
-				Label:      idx.Label,
-				Properties: props,
-			})
-		}
 		sort.Slice(def.CompositeIndexes, func(i, j int) bool {
 			if def.CompositeIndexes[i].Label != def.CompositeIndexes[j].Label {
 				return def.CompositeIndexes[i].Label < def.CompositeIndexes[j].Label
@@ -342,7 +337,6 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 	sm.constraints = make(map[string]Constraint)
 	sm.constraintContracts = make(map[string]ConstraintContract)
 	sm.propertyTypeConstraints = make(map[string]PropertyTypeConstraint)
-	sm.propertyIndexes = make(map[string]*PropertyIndex)
 	sm.compositeIndexes = make(map[string]*CompositeIndex)
 	sm.fulltextIndexes = make(map[string]*FulltextIndex)
 	sm.vectorIndexes = make(map[string]*VectorIndex)
@@ -401,15 +395,15 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 		}
 	}
 
-	// Property indexes.
+	// Equality indexes load into the single compositeIndexes map, keyed by
+	// name: PropertyIndexes (arity-1) and CompositeIndexes (arity-N).
 	for _, idx := range def.PropertyIndexes {
 		props := make([]string, len(idx.Properties))
 		copy(props, idx.Properties)
 		if len(props) == 0 {
 			continue
 		}
-		key := idx.Label + ":" + props[0]
-		sm.propertyIndexes[key] = &PropertyIndex{
+		sm.compositeIndexes[idx.Name] = &CompositeIndex{
 			Name:       idx.Name,
 			Label:      idx.Label,
 			Properties: props,
@@ -417,13 +411,12 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 		}
 	}
 
-	// A constraint's own property index (#875), unless an index of its own
+	// A constraint's own equality index (#875), unless an index of its own
 	// already covers the property.
 	for _, c := range sm.constraints {
 		sm.addConstraintPropertyIndexLocked(c)
 	}
 
-	// Composite indexes.
 	for _, idx := range def.CompositeIndexes {
 		props := make([]string, len(idx.Properties))
 		copy(props, idx.Properties)
@@ -434,6 +427,7 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 			Name:        idx.Name,
 			Label:       idx.Label,
 			Properties:  props,
+			values:      make(map[interface{}][]NodeID),
 			fullIndex:   make(map[string][]NodeID),
 			prefixIndex: make(map[string][]NodeID),
 		}

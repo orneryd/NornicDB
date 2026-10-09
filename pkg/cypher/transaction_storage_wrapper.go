@@ -25,6 +25,23 @@ func propertyIndexLookup(engine storage.Engine, schema *storage.SchemaManager, l
 	return ids
 }
 
+// compositeIndexLookup is the composite-index counterpart of
+// propertyIndexLookup: a full or prefix lookup against committed state, with
+// the transaction's own pending node writes merged in. full selects LookupFull
+// (all index properties equal) over LookupPrefix (leading properties equal).
+func compositeIndexLookup(engine storage.Engine, idx *storage.CompositeIndex, values []interface{}, full bool) []storage.NodeID {
+	var ids []storage.NodeID
+	if full {
+		ids = idx.LookupFull(values...)
+	} else {
+		ids = idx.LookupPrefix(values...)
+	}
+	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+		return wrapper.tx.MergePendingCompositeMatches(ids, idx.Label, idx.Properties, values)
+	}
+	return ids
+}
+
 // labellessPropertyIndexUsable reports whether a pattern without a label may
 // take its candidates from the property indexes read through engine. The
 // indexes are per label, so their union for a property lists only the nodes

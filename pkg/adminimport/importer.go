@@ -1011,13 +1011,6 @@ func rebuildSchemaDerivedState(engine storage.Engine, schema *storage.SchemaMana
 	}
 	for _, node := range nodes {
 		for _, label := range node.Labels {
-			for property, value := range node.Properties {
-				if schema.MaintainsPropertyIndex(label, property) {
-					if err := schema.PropertyIndexInsert(label, property, node.ID, value); err != nil {
-						return err
-					}
-				}
-			}
 			for _, idx := range schema.GetCompositeIndexesForLabel(label) {
 				if idx == nil {
 					continue

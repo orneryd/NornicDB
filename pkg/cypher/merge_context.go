@@ -6,7 +6,6 @@ package cypher
 import (
 	"context"
 
-
 	"strconv"
 	"strings"
 
@@ -56,6 +55,56 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 	// index can serve. Each set narrows the result via intersection.
 	var idSets []map[storage.NodeID]struct{}
 	usedAnyIndex := false
+
+	// Composite indexes answer a whole equality prefix in one lookup, which
+	// is far narrower than intersecting one set per property. Use the longest
+	// covered leading prefix: all index properties → LookupFull, otherwise
+	// the leading k properties → LookupPrefix. The residual nodeMatchesProps
+	// step still enforces every non-indexed predicate.
+	if len(nodeInfo.labels) > 0 {
+		for _, idx := range schema.SeekableCompositeIndexesForLabel(nodeInfo.labels[0]) {
+			if idx == nil || len(idx.Properties) < 2 {
+				// Arity-1 indexes are served by the per-property loop below,
+				// whose authoritative-miss logic handles values an index can't
+				// key (lists, maps) without a false negative.
+				continue
+			}
+			covered := 0
+			for covered < len(idx.Properties) {
+				if _, ok := nodeInfo.properties[idx.Properties[covered]]; !ok {
+					break
+				}
+				covered++
+			}
+			if covered == 0 {
+				continue
+			}
+			// Every covered value must be a scalar the index files under an
+			// equality-exact key; otherwise a miss is not authoritative and
+			// the caller's scan must decide.
+			authoritative := true
+			for i := 0; i < covered; i++ {
+				if !propertyIndexMissIsAuthoritative(nodeInfo.properties[idx.Properties[i]]) {
+					authoritative = false
+					break
+				}
+			}
+			if !authoritative {
+				continue
+			}
+			values := make([]interface{}, covered)
+			for i := 0; i < covered; i++ {
+				values[i] = nodeInfo.properties[idx.Properties[i]]
+			}
+			ids := compositeIndexLookup(store, idx, values, covered == len(idx.Properties))
+			usedAnyIndex = true
+			set := make(map[storage.NodeID]struct{}, len(ids))
+			for _, id := range ids {
+				set[id] = struct{}{}
+			}
+			idSets = append(idSets, set)
+		}
+	}
 
 	for prop, val := range nodeInfo.properties {
 		var ids []storage.NodeID

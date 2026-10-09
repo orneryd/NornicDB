@@ -94,7 +94,7 @@ func TestMonster531CompositeAfterSinglePropertyIndex(t *testing.T) {
 			require.Equal(t, "ix_a", result.Rows[0][0])
 			require.Equal(t, "ix_ab", result.Rows[1][0])
 			require.ElementsMatch(t, []string{"a", "b"}, result.Rows[1][1])
-			index, exists := exec.storage.GetSchema().GetRangeIndex("ix_ab")
+			index, exists := exec.storage.GetSchema().GetCompositeIndex("ix_ab")
 			require.True(t, exists)
 			require.Equal(t, []string{"a", "b"}, index.Properties)
 			_, err = exec.Execute(ctx, "CREATE (:P {a: 3, b: 4})", nil)
@@ -548,4 +548,56 @@ func TestParseIndexProperties(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCompositeIndexEqualitySeekAndMerge exercises a multi-property index the
+// whole way: DDL creates a backfilled CompositeIndex, MERGE resolves a full-key
+// pattern through it, and inline MATCH equality uses its full and prefix
+// lookups. It also pins the shim: a single-property index is an arity-1
+// CompositeIndex.
+func TestCompositeIndexEqualitySeekAndMerge(t *testing.T) {
+	baseStore := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(baseStore, "test")
+	exec := NewStorageExecutor(store)
+	ctx := context.Background()
+
+	// Data created before the index: the DDL backfill must list it.
+	_, err := exec.Execute(ctx, `CREATE (:L {a: 1, b: 2}), (:L {a: 1, b: 3}), (:L {a: 2, b: 2})`, nil)
+	require.NoError(t, err)
+
+	_, err = exec.Execute(ctx, `CREATE INDEX ix_ab FOR (n:L) ON (n.a, n.b)`, nil)
+	require.NoError(t, err)
+
+	schema := store.GetSchema()
+	idx, ok := schema.GetCompositeIndex("ix_ab")
+	require.True(t, ok)
+	require.Equal(t, []string{"a", "b"}, idx.Properties)
+	// Backfilled and therefore seekable.
+	require.Len(t, schema.SeekableCompositeIndexesForLabel("L"), 1)
+
+	// MERGE resolves the full key through the composite index (no label scan).
+	result, err := exec.Execute(ctx, `MERGE (n:L {a: 1, b: 2}) ON CREATE SET n.created = true RETURN n.created`, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+	require.Nil(t, result.Rows[0][0]) // matched an existing node: ON CREATE did not run
+	require.True(t, exec.LastHotPathTrace().MergeSchemaLookupUsed)
+
+	// Inline full-key equality: exactly one match.
+	result, err = exec.Execute(ctx, `MATCH (n:L {a: 1, b: 2}) RETURN count(n)`, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+
+	// Inline prefix equality: every node with the leading property.
+	result, err = exec.Execute(ctx, `MATCH (n:L {a: 1}) RETURN count(n)`, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
+
+	// A single-property index is the same composite type at arity 1.
+	_, err = exec.Execute(ctx, `CREATE INDEX ix_a FOR (n:L) ON (n.a)`, nil)
+	require.NoError(t, err)
+	pi, ok := schema.GetPropertyIndex("L", "a")
+	require.True(t, ok)
+	require.NotNil(t, pi)
+	_, isComposite := interface{}(pi).(*storage.CompositeIndex)
+	require.True(t, isComposite, "single-property index should be an arity-1 CompositeIndex")
 }

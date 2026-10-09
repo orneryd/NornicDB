@@ -30,8 +30,9 @@ import (
 	"log/slog"
 )
 
-// maintainPropertyIndexesOnNodeCreated inserts every indexed (label, prop)
-// entry for a freshly-created node.
+// maintainPropertyIndexesOnNodeCreated inserts the freshly-created node into
+// every equality index that covers one of its labels. Arity-1 indexes file
+// the node under its single-property key; arity-N indexes under full/prefix.
 func (b *BadgerEngine) maintainPropertyIndexesOnNodeCreated(node *Node) {
 	if node == nil {
 		return
@@ -40,16 +41,22 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeCreated(node *Node) {
 	if sm == nil {
 		return
 	}
+	b.maintainCompositeIndexesOnNodeCreated(node, sm)
+}
+
+// maintainCompositeIndexesOnNodeCreated indexes the node under every equality
+// index that covers one of its labels.
+func (b *BadgerEngine) maintainCompositeIndexesOnNodeCreated(node *Node, sm *SchemaManager) {
 	for _, label := range node.Labels {
-		for propName, propValue := range node.Properties {
-			if !sm.MaintainsPropertyIndex(label, propName) {
+		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
+			if idx == nil {
 				continue
 			}
-			if err := sm.PropertyIndexInsert(label, propName, node.ID, propValue); err != nil {
-				b.log.Warn("property index insert failed",
+			if err := idx.IndexNode(node.ID, node.Properties); err != nil {
+				b.log.Warn("composite index insert failed",
 					slog.String("component", "storage"),
 					slog.String("label", label),
-					slog.String("property", propName))
+					slog.String("index", idx.Name))
 			}
 		}
 	}
@@ -68,44 +75,41 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeUpdated(node, oldNode *Node)
 	if sm == nil {
 		return
 	}
+	b.maintainCompositeIndexesOnNodeUpdated(node, oldNode, sm)
+}
 
+// maintainCompositeIndexesOnNodeUpdated removes the node's stale entries
+// (from oldNode, when available) and inserts its current entries.
+func (b *BadgerEngine) maintainCompositeIndexesOnNodeUpdated(node, oldNode *Node, sm *SchemaManager) {
 	if oldNode != nil {
 		for _, label := range oldNode.Labels {
-			for propName, propValue := range oldNode.Properties {
-				if !sm.MaintainsPropertyIndex(label, propName) {
+			for _, idx := range sm.GetCompositeIndexesForLabel(label) {
+				if idx == nil {
 					continue
 				}
-				if err := sm.PropertyIndexDelete(label, propName, oldNode.ID, propValue); err != nil {
-					b.log.Warn("property index delete (old) failed",
-						slog.String("component", "storage"),
-						slog.String("label", label),
-						slog.String("property", propName))
-				}
+				idx.RemoveNode(oldNode.ID, oldNode.Properties)
 			}
 		}
 	}
-
 	for _, label := range node.Labels {
-		for propName, propValue := range node.Properties {
-			if !sm.MaintainsPropertyIndex(label, propName) {
+		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
+			if idx == nil {
 				continue
 			}
-			if err := sm.PropertyIndexInsert(label, propName, node.ID, propValue); err != nil {
-				b.log.Warn("property index insert (new) failed",
+			if err := idx.IndexNode(node.ID, node.Properties); err != nil {
+				b.log.Warn("composite index insert (new) failed",
 					slog.String("component", "storage"),
 					slog.String("label", label),
-					slog.String("property", propName))
+					slog.String("index", idx.Name))
 			}
 		}
 	}
 }
 
 // maintainPropertyIndexesOnNodeDeletedWithLabels removes index entries for
-// every indexed (label, prop) that the deleted node touched. The caller
-// provides the labels (via cacheOnNodeDeletedWithLabels) because the node
-// itself is already gone from the cache. We fetch the property payload
-// from storage only when an index exists for that (label, property),
-// keeping the delete cheap on label/prop combinations that aren't indexed.
+// every equality index the deleted node touched. The caller provides the
+// labels (via cacheOnNodeDeletedWithLabels) because the node itself is
+// already gone from the cache; the cached copy supplies the property payload.
 func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithLabels(id NodeID, labels []string) {
 	if len(labels) == 0 {
 		return
@@ -115,11 +119,11 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithLabels(id NodeID,
 		return
 	}
 	// Only read the pre-delete snapshot when at least one indexed label
-	// applies to this node. If none of the labels declare indexed
-	// properties, skip the read entirely.
+	// applies to this node. If none of the labels declare an index, skip
+	// the read entirely.
 	anyIndexed := false
 	for _, label := range labels {
-		if sm.HasAnyPropertyIndexForLabel(label) {
+		if len(sm.GetCompositeIndexesForLabel(label)) > 0 {
 			anyIndexed = true
 			break
 		}
@@ -139,17 +143,18 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithLabels(id NodeID,
 	if !hit || cached == nil {
 		return
 	}
+	b.maintainCompositeIndexesOnNodeDeleted(id, cached, sm)
+}
+
+// maintainCompositeIndexesOnNodeDeleted removes the node from every equality
+// index its cached copy could have been filed under.
+func (b *BadgerEngine) maintainCompositeIndexesOnNodeDeleted(id NodeID, cached *Node, sm *SchemaManager) {
 	for _, label := range cached.Labels {
-		for propName, propValue := range cached.Properties {
-			if !sm.MaintainsPropertyIndex(label, propName) {
+		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
+			if idx == nil {
 				continue
 			}
-			if err := sm.PropertyIndexDelete(label, propName, id, propValue); err != nil {
-				b.log.Warn("property index delete failed",
-					slog.String("component", "storage"),
-					slog.String("label", label),
-					slog.String("property", propName))
-			}
+			idx.RemoveNode(id, cached.Properties)
 		}
 	}
 }
