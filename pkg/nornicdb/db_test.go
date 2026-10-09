@@ -1916,6 +1916,31 @@ func TestRestore(t *testing.T) {
 		assert.Equal(t, "Bob", restored2.Properties["name"])
 	})
 
+	t.Run("holds the embedding worker for the restore", func(t *testing.T) {
+		db, err := Open(t.TempDir(), nil)
+		require.NoError(t, err)
+		defer db.Close()
+		_, err = db.CreateNode(ctx, []string{"Doc"}, map[string]interface{}{"name": "kept"})
+		require.NoError(t, err)
+		backupPath := filepath.Join(t.TempDir(), "backup.bin")
+		require.NoError(t, db.Backup(ctx, backupPath))
+
+		worker := NewEmbedWorker(nil, db.baseStorage, &EmbedWorkerConfig{NumWorkers: 0, EmbedBatchSize: 1, ChunkSize: 512, MaxRetries: 1, DeferWorkerStart: true})
+		defer worker.Close()
+		db.mu.Lock()
+		db.embedQueue = worker
+		db.mu.Unlock()
+		defer func() {
+			db.mu.Lock()
+			db.embedQueue = nil
+			db.mu.Unlock()
+		}()
+
+		require.NoError(t, db.Restore(ctx, backupPath))
+		require.Zero(t, worker.restoreHolds.Load(), "the hold is released")
+		require.Len(t, worker.trigger, 1, "the worker scans the restored store")
+	})
+
 	t.Run("restore with empty backup", func(t *testing.T) {
 		db, err := Open(t.TempDir(), nil)
 		require.NoError(t, err)
