@@ -334,13 +334,46 @@ SOFTWARE.
 
 **Description:** Tensor library for machine learning, used by llama.cpp for model inference.
 
+### fdlibm (via musl libm and FreeBSD msun)
+
+**Source:** https://musl.libc.org/ (`src/math`, files of FreeBSD msun origin)  
+**License:** fdlibm notice (permissive)  
+**Copyright:** Copyright (C) 1993 by Sun Microsystems, Inc.; Copyright 2004 Sun Microsystems, Inc.
+
+**Description:** `sin`, `cos`, `tan` (with their kernels and the pi/2 argument reduction), `asin`, `acos`, `atan`, `atan2` and `log10`, ported to Go in `pkg/math/libm` (`trig.go`, `rem_pio2.go`, `invtrig.go`) from musl 1.2.5. Go's math package takes its sine, cosine, tangent and arctangent from Cephes, which differed from Neo4j's results for a quarter to a third of inputs.
+
+**License Text:**
+```
+Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+
+Developed at SunPro, a Sun Microsystems, Inc. business.
+Permission to use, copy, modify, and distribute this
+software is freely granted, provided that this notice
+is preserved.
+```
+```
+Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+
+Developed at SunSoft, a Sun Microsystems, Inc. business.
+Permission to use, copy, modify, and distribute this
+software is freely granted, provided that this notice
+is preserved.
+```
+```
+Copyright 2004 Sun Microsystems, Inc.  All Rights Reserved.
+
+Permission to use, copy, modify, and distribute this
+software is freely granted, provided that this notice
+is preserved.
+```
+
 ### musl libm
 
 **Source:** https://musl.libc.org/  
 **License:** MIT License  
 **Copyright:** Copyright © 2005-2024 Rich Felker, et al.
 
-**Description:** Double-precision math functions ported to Go in `pkg/math/libm` (the exponential, logarithmic, power and hyperbolic functions). Used so `^`, `exp`, `log`, and the hyperbolic functions return the correctly rounded results Neo4j's Java `Math` returns.
+**Description:** Double-precision math functions ported to Go in `pkg/math/libm` (the exponential, logarithmic, power, hyperbolic and trigonometric functions; the trigonometric ones and `log10` carry the fdlibm notice above). Used so `^`, `exp`, `log`, and the hyperbolic functions return the correctly rounded results Neo4j's Java `Math` returns.
 
 **License Text:**
 ```

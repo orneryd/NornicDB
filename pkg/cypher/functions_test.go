@@ -1951,7 +1951,7 @@ func TestFunctionAdditionalMathAndStringCoverage(t *testing.T) {
 		expr string
 		want interface{}
 	}{
-		{"cot(1)", 1.0 / math.Tan(1)},
+		{"cot(1)", 0.6420926159343306}, // Neo4j 5.26.30's value (#907)
 		{"haversin(1)", (1 - math.Cos(1)) / 2},
 		{"normalize('cafe')", "cafe"},
 		{"lpad('go', 5, '.')", "...go"},
@@ -2207,6 +2207,10 @@ func TestFunctionFullMathAdditionalCoverage(t *testing.T) {
 	}
 	if got := eval("e()", nil, nil, 0).(float64); math.Abs(got-math.E) > 0.0001 {
 		t.Fatalf("e() = %v", got)
+	}
+	// acos() reads musl's acos, the one every route uses (#907).
+	if got := eval("acos(0.5)", nil, nil, 0).(float64); math.Abs(got-math.Pi/3) > 1e-15 {
+		t.Fatalf("acos(0.5) = %v", got)
 	}
 	if got := eval("startNode(r)", nil, nil, 0).(*storage.Node); got.ID != a.ID {
 		t.Fatalf("startNode(r) = %s, want %s", got.ID, a.ID)

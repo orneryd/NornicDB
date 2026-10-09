@@ -81,7 +81,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		inner := extractFuncArgs(expr, "acos")
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
-			return fdlibmAcos(f)
+			return math.Acos(f)
 		}
 		return nil
 	}
@@ -1385,61 +1385,6 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// ========================================
 
 	return e.evaluateExpressionWithContextFullOperators(ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-}
-
-// fdlibmAcos uses fdlibm's split-square-root reduction for StrictMath parity.
-func fdlibmAcos(value float64) float64 {
-	const (
-		pio2Hi = 1.57079632679489655800e+00
-		pio2Lo = 6.12323399573676603587e-17
-	)
-	if math.IsNaN(value) {
-		return value
-	}
-	if value < -1 || value > 1 {
-		return math.NaN()
-	}
-	if value == 1 {
-		return 0
-	}
-	if value == -1 {
-		return math.Pi + 2*pio2Lo
-	}
-	if math.Abs(value) < 0.5 {
-		if math.Abs(value) < 0x1p-57 {
-			return pio2Hi + pio2Lo
-		}
-		return pio2Hi - (value - (pio2Lo - value*fdlibmAcosR(value)))
-	}
-	if value < 0 {
-		squareRoot := math.Sqrt((1 + value) * 0.5)
-		correction := fdlibmAcosR(squareRoot)*squareRoot - pio2Lo
-		return math.Pi - 2*(squareRoot+correction)
-	}
-	z := (1 - value) * 0.5
-	squareRoot := math.Sqrt(z)
-	truncated := math.Float64frombits(math.Float64bits(squareRoot) & 0xffffffff00000000)
-	correction := (z - truncated*truncated) / (squareRoot + truncated)
-	return 2 * (truncated + fdlibmAcosR(squareRoot)*squareRoot + correction)
-}
-
-func fdlibmAcosR(value float64) float64 {
-	const (
-		p0 = 1.66666666666666657415e-01
-		p1 = -3.25565818622400915405e-01
-		p2 = 2.01212532134862925881e-01
-		p3 = -4.00555345006794114027e-02
-		p4 = 7.91534994289814532176e-04
-		p5 = 3.47933107596021167570e-05
-		q1 = -2.40339491173441421878e+00
-		q2 = 2.02094576023350569471e+00
-		q3 = -6.88283971605453293030e-01
-		q4 = 7.70381505559019352791e-02
-	)
-	z := value * value
-	p := z * (p0 + z*(p1+z*(p2+z*(p3+z*(p4+z*p5)))))
-	q := 1 + z*(q1+z*(q2+z*(q3+z*q4)))
-	return p / q
 }
 
 // evaluateQuantifierWithContext evaluates the list predicate function

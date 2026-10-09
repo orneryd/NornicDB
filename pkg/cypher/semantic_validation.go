@@ -436,9 +436,10 @@ func containsMalformedCreateClauseToken(expression string) bool {
 	return false
 }
 
-// validatePatternExpressionPlacement enforces the openCypher rule that legacy
-// pattern expressions are predicates confined to WHERE. They cannot be
-// projected as values or embedded in an updating expression.
+// validatePatternExpressionPlacement enforces the rule that a pattern
+// expression only tests whether its pattern exists: it is valid wherever a
+// boolean is expected (maskPredicatePatterns), and never as a value of its
+// own in a projection or an updating expression (Neo4j 5.26.30, #907).
 func validatePatternExpressionPlacement(cypher string) error {
 	clauses, ok := splitPipelineClauses(cypher)
 	if !ok {
@@ -453,12 +454,12 @@ func validatePatternExpressionPlacement(cypher string) error {
 			}
 			for _, item := range splitTopLevelComma(projectionSemanticBody(clause.text, keyword)) {
 				expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
-				if containsIllegalProjectedPatternExpression(expression) {
+				if containsIllegalProjectedPatternExpression(maskPredicatePatterns(expression)) {
 					return invalidPatternExpressionPlacementError()
 				}
 			}
 		case pipelineClauseSet:
-			if containsIllegalProjectedPatternExpression(clause.text) {
+			if containsIllegalProjectedPatternExpression(maskPredicatePatterns(clause.text)) {
 				return invalidPatternExpressionPlacementError()
 			}
 		}
@@ -540,6 +541,104 @@ func maskPathFunctionCalls(expression string) string {
 		}
 	}
 	return string(masked)
+}
+
+// maskPredicatePatterns blanks, keeping byte offsets, every pattern in
+// expression that stands where a boolean is expected, which Neo4j allows
+// anywhere: the argument of exists(), an operand of NOT, AND, OR or XOR, a
+// CASE WHEN condition, or the WHERE of a list comprehension or quantifier.
+// A pattern left is a value (RETURN (n)-->() AS x).
+func maskPredicatePatterns(expression string) string {
+	var masked []byte
+	for index := 0; index < len(expression); index++ {
+		switch character := expression[index]; character {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(expression, index, character) - 1
+			continue
+		case '(':
+		default:
+			continue
+		}
+		if index > 0 && expression[index-1] == '[' { // a pattern comprehension
+			continue
+		}
+		chainEnd, chain := relationshipChainEnd(expression, index, len(expression))
+		if !chain {
+			continue
+		}
+		if patternInBooleanPosition(expression, index, chainEnd) {
+			if masked == nil {
+				masked = []byte(expression)
+			}
+			for position := index; position < chainEnd; position++ {
+				masked[position] = ' '
+			}
+		}
+		index = chainEnd - 1
+	}
+	if masked == nil {
+		return expression
+	}
+	return string(masked)
+}
+
+// patternInBooleanPosition reports whether the pattern expression[start:end]
+// is a boolean operand: inside exists(...), or between a boolean keyword
+// (NOT, AND, OR, XOR, WHEN, WHERE, or the start of the expression) and a
+// boolean boundary (AND, OR, XOR, THEN, |, a closing parenthesis, or the
+// end), with grouping parentheses around it allowed. A whole projection that
+// is only the pattern is a value.
+func patternInBooleanPosition(expression string, start, end int) bool {
+	before := strings.TrimRight(expression[:start], " \t\r\n")
+	after := strings.TrimLeft(expression[end:], " \t\r\n")
+	for strings.HasSuffix(before, "(") && strings.HasPrefix(after, ")") {
+		call := strings.TrimRight(before[:len(before)-1], " \t\r\n")
+		if name := trailingIdentifier(call); name != "" && !isBooleanKeyword(name) {
+			return strings.EqualFold(name, "exists")
+		}
+		before = call
+		after = strings.TrimLeft(after[1:], " \t\r\n")
+	}
+	leftKeyword := ""
+	switch name := trailingIdentifier(before); {
+	case before == "":
+	case isBooleanKeyword(name):
+		leftKeyword = name
+	default:
+		return false
+	}
+	rightBoundary := after == "" || strings.HasPrefix(after, ")") || strings.HasPrefix(after, "|")
+	for _, keyword := range []string{"AND", "OR", "XOR", "THEN"} {
+		if matchKeywordAt(after, 0, keyword) {
+			rightBoundary = true
+		}
+	}
+	if !rightBoundary {
+		return false
+	}
+	// The pattern alone, with nothing before it, is a projected value unless
+	// a boolean operator follows it.
+	return leftKeyword != "" || (after != "" && !strings.HasPrefix(after, ")"))
+}
+
+// isBooleanKeyword reports whether name introduces a boolean operand: NOT,
+// AND, OR, XOR, WHEN or WHERE.
+func isBooleanKeyword(name string) bool {
+	switch upperASCII(name) {
+	case "NOT", "AND", "OR", "XOR", "WHEN", "WHERE":
+		return true
+	}
+	return false
+}
+
+// trailingIdentifier is the identifier text ends with, or "".
+func trailingIdentifier(text string) string {
+	end := len(text)
+	start := end
+	for start > 0 && isIdentByte(text[start-1]) {
+		start--
+	}
+	return text[start:end]
 }
 
 func invalidPatternExpressionPlacementError() error {

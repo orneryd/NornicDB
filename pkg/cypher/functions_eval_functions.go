@@ -284,9 +284,15 @@ skipArrayIndexing:
 		return int64(0)
 	}
 
-	// exists(n.prop) - check if property exists
+	// exists(n.prop) - check if property exists; exists(pattern) - whether
+	// the pattern matches, as EXISTS { pattern } (#907)
 	if matchFuncStartAndSuffix(expr, "exists") {
 		inner := extractFuncArgs(expr, "exists")
+		if trimmed := strings.TrimSpace(inner); strings.HasPrefix(trimmed, "(") {
+			if chainEnd, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain && chainEnd == len(trimmed) {
+				return e.evaluateExistsSubqueryValue(ctx, "EXISTS { "+trimmed+" }", nodes, rels)
+			}
+		}
 		// Check for property access
 		if dotIdx := strings.Index(inner, "."); dotIdx > 0 {
 			varName := inner[:dotIdx]

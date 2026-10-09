@@ -1319,7 +1319,18 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 			scope[name] = value
 		}
 		scope[variable] = item
-		if predicate != "" {
+		if predicate != "" && containsRelExistencePattern(predicate) {
+			// A pattern predicate reads the graph: the row predicate
+			// evaluator tests it as WHERE does (#907).
+			ctx := withExpressionFailureSlot(context.Background())
+			holds := e.evaluateRowPredicateText(ctx, predicate, scope)
+			if failure := getExpressionFailure(ctx); failure != nil {
+				return nil, true, false, failure
+			}
+			if !holds {
+				continue
+			}
+		} else if predicate != "" {
 			condition, evaluated, err := e.evaluateRowValue(predicate, scope)
 			if err != nil {
 				return nil, true, false, err
