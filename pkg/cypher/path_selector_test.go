@@ -145,7 +145,7 @@ func TestPathSelectorErrors(t *testing.T) {
 		"MATCH p = ANY $b (a:SP {id: 1})-->+(b:SP {id: 5}) RETURN length(p) AS l":                     "Expected Integer but got Boolean",
 		"MATCH p = ANY $list (a:SP {id: 1})-->+(b:SP {id: 5}) RETURN length(p) AS l":                  "Expected Integer but got List",
 		"MATCH p = ANY $map (a:SP {id: 1})-->+(b:SP {id: 5}) RETURN length(p) AS l":                   "Expected Integer but got Map",
-		"RETURN __nornic_path_selector('ANY', 1, false, '', true) AS x":                               "a path selector can only be used in a MATCH pattern",
+		"RETURN __nornic_path_selector('ANY', 1, false, '', true) AS x":                               "a path selector or match mode can only be used in a MATCH pattern",
 	} {
 		params := map[string]interface{}{"z": int64(0), "n": nil, "f": 1.5, "s": "2", "b": true, "list": []interface{}{int64(1)}, "map": map[string]interface{}{"a": int64(1)}}
 		_, err := exec.Execute(ctx, query, params)

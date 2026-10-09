@@ -1850,6 +1850,9 @@ func samePropertyValue(a, b interface{}) bool {
 // ---- clause appliers ----
 
 func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, error) {
+	if body, repeatable := stripRepeatableElements(strings.TrimSpace(clause[len("OPTIONAL MATCH"):])); repeatable {
+		ctx, clause = withRepeatableElements(ctx), "OPTIONAL MATCH "+body
+	}
 	if shortest, ok, err := e.parseShortestPathMatch(ctx, strings.TrimSpace(clause[len("OPTIONAL MATCH"):])); ok || err != nil {
 		if err != nil {
 			return nil, err
@@ -1942,6 +1945,9 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 
 func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
 	body := pipelineClauseBody(clause, "MATCH")
+	if stripped, repeatable := stripRepeatableElements(body); repeatable {
+		ctx, body, clause = withRepeatableElements(ctx), stripped, "MATCH "+stripped
+	}
 	if shortest, ok, err := e.parseShortestPathMatch(ctx, body); ok || err != nil {
 		if err != nil {
 			return nil, true, err
@@ -2716,7 +2722,7 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
 		relationships, ok := pipelineRelationshipList(row[match.Relationship.Variable])
-		if !ok || len(relationships) == 0 || relationshipListReusesEdge(relationships) {
+		if !ok || len(relationships) == 0 || !repeatableElements(ctx) && relationshipListReusesEdge(relationships) {
 			continue
 		}
 		for _, endpoints := range traceRelationshipList(relationships, match.Relationship.Direction) {

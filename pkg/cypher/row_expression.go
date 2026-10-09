@@ -2174,9 +2174,10 @@ func (e *StorageExecutor) rowExistsSubqueryMatches(ctx context.Context, exists s
 	// A body that reads a row value other than a node or relationship (a
 	// comprehension variable, a WITH value) runs as a correlated pipeline,
 	// which sees every row value; the path matcher sees only entities. So
-	// does a shortestPath or selected pattern (ANY SHORTEST), which only the
-	// pipeline's MATCH step runs.
-	if subqueryReadsScalarRowValue(subquery, values) || indexASCIIFold(subquery, "shortestpath") >= 0 {
+	// does a shortestPath or selected pattern (ANY SHORTEST) or a MATCH
+	// REPEATABLE ELEMENTS, which only the pipeline's MATCH step runs.
+	if subqueryReadsScalarRowValue(subquery, values) || indexASCIIFold(subquery, "shortestpath") >= 0 ||
+		indexASCIIFold(subquery, repeatableElementsFunction) >= 0 {
 		return e.existsFromRows(ctx, subquery+" RETURN 1 AS __exists", values), true
 	}
 	path := PathContext{nodes: make(map[string]*storage.Node), rels: make(map[string]*storage.Edge)}

@@ -452,6 +452,11 @@ func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, where
 		}
 		predicates = []string{prefixes.selector + predicate + ")"}
 	}
+	if prefixes.repeatable {
+		// The mode marker comes first: the MATCH step reads it before a
+		// selector (repeatable_elements.go).
+		predicates = append([]string{repeatableElementsFunction + "()"}, predicates...)
+	}
 	switch {
 	case whereStart >= 0 && len(predicates) > 0:
 		return r.whereWithPredicates(whereStart, whereEnd, predicates)

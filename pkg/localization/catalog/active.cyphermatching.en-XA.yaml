@@ -154,9 +154,15 @@
 - id: cyphermatching.path_selector_count_type
   description: "Expanded pseudo-locale path selector count type."
   other: "[!! Expected Integer but got {{.Type}} !!]"
-- id: cyphermatching.path_selector_outside_match
-  description: "Expanded pseudo-locale path selector outside match."
-  other: "[!! a path selector can only be used in a MATCH pattern !!]"
+- id: cyphermatching.pattern_marker_outside_match
+  description: "Expanded pseudo-locale pattern marker outside match."
+  other: "[!! a path selector or match mode can only be used in a MATCH pattern !!]"
 - id: cyphermatching.variable_type_conflict
   description: "Expanded pseudo-locale variable type conflict."
   other: "[!! Type mismatch: {{.Variable}} defined with conflicting type {{.Defined}} (expected {{.Expected}}) !!]"
+- id: cyphermatching.repeatable_elements_unbounded
+  description: "Expanded pseudo-locale repeatable elements unbounded."
+  other: "[!! The quantified path pattern may yield an infinite number of rows under match mode 'REPEATABLE ELEMENTS'. Add an upper bound to the quantified path pattern. !!]"
+- id: cyphermatching.repeatable_elements_path_mode
+  description: "Expanded pseudo-locale repeatable elements path mode."
+  other: "[!! REPEATABLE ELEMENTS with {{.Mode}} path mode is not supported. !!]"

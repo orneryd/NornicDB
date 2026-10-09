@@ -42,7 +42,8 @@ import (
 
 func init() {
 	cypherfn.Register(acyclicPathFunction, fnAcyclicPath)
-	cypherfn.Register(pathSelectorFunction, fnPathSelector)
+	cypherfn.Register(pathSelectorFunction, fnPatternMarker)
+	cypherfn.Register(repeatableElementsFunction, fnPatternMarker)
 }
 
 // acyclicPathFunction reports whether a path's nodes are all distinct.
@@ -51,6 +52,11 @@ const acyclicPathFunction = "__nornic_acyclic"
 // pathSelectorFunction carries a selective selector to the shortestPath
 // MATCH step; it is never evaluated as an expression.
 const pathSelectorFunction = "__nornic_path_selector"
+
+// repeatableElementsFunction marks a MATCH REPEATABLE ELEMENTS for the
+// pipeline's MATCH step (repeatable_elements.go); it is never evaluated as
+// an expression.
+const repeatableElementsFunction = "__nornic_repeatable_elements"
 
 // pathPatternPrefix is the selector and path mode at query[start:end]
 // before a path pattern.
@@ -203,6 +209,8 @@ type pathPrefixRewrite struct {
 	where string
 	// acyclic are the __nornic_acyclic predicates of ACYCLIC patterns.
 	acyclic []string
+	// repeatable marks MATCH REPEATABLE ELEMENTS.
+	repeatable bool
 }
 
 // pathPrefixes rewrites the match mode and the selectors and path modes of
@@ -211,10 +219,11 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 	rewrite := pathPrefixRewrite{patternStart: start, patternEnd: end}
 	q := r.query
 	explicitMode := false
-	if modeEnd, ok := matchModeAt(q, start, end); ok {
+	if modeEnd, repeatable, ok := matchModeAt(q, start, end); ok {
 		explicitMode = true
 		r.edit(skipASCIISpaces(q, start, end), modeEnd, "")
 		start = modeEnd
+		rewrite.repeatable = repeatable
 	}
 	var parts [][2]int
 	for partStart := start; partStart <= end; {
@@ -245,6 +254,9 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 		}
 		if !ok {
 			continue
+		}
+		if rewrite.repeatable && (prefix.mode == "TRAIL" || prefix.mode == "ACYCLIC") {
+			return rewrite, labelExpressionSyntaxError(localization.CypherMatchingRepeatableElementsPathMode(prefix.mode))
 		}
 		if prefix.selective() && len(parts) > 1 {
 			return rewrite, labelExpressionSyntaxError(localization.CypherMatchingPathSelectorMultiplePatterns())
@@ -290,6 +302,9 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 		default:
 			r.edit(prefix.start, prefix.end, "")
 		}
+	}
+	if rewrite.repeatable && hasUnboundedRepetition(q, start, end) {
+		return rewrite, labelExpressionSyntaxError(localization.CypherMatchingRepeatableElementsUnbounded())
 	}
 	return rewrite, nil
 }
@@ -345,19 +360,73 @@ func writePatternSelectorError(q string, clause labelClause) error {
 }
 
 // matchModeAt returns the end of the match mode at the start of the MATCH
-// body query[start:end]: DIFFERENT RELATIONSHIP(S). REPEATABLE ELEMENT(S)
-// is left to the match mode rewrite.
-func matchModeAt(q string, start, end int) (int, bool) {
-	at := skipASCIISpaces(q, start, end)
-	word, wordEnd, ok := scanSymbolicName(q[:end], at)
-	if !ok || !strings.EqualFold(word, "DIFFERENT") {
-		return 0, false
+// body query[start:end]: DIFFERENT RELATIONSHIP(S), or REPEATABLE ELEMENT(S)
+// [BINDINGS] (repeatable).
+func matchModeAt(q string, start, end int) (int, bool, bool) {
+	word, wordEnd, ok := scanSymbolicName(q[:end], skipASCIISpaces(q, start, end))
+	if !ok {
+		return 0, false, false
 	}
 	next, nextEnd, ok := scanSymbolicName(q[:end], skipASCIISpaces(q, wordEnd, end))
-	if !ok || !strings.EqualFold(next, "RELATIONSHIP") && !strings.EqualFold(next, "RELATIONSHIPS") {
-		return 0, false
+	switch {
+	case !ok:
+		return 0, false, false
+	case strings.EqualFold(word, "DIFFERENT") && (strings.EqualFold(next, "RELATIONSHIP") || strings.EqualFold(next, "RELATIONSHIPS")):
+		return nextEnd, false, true
+	case strings.EqualFold(word, "REPEATABLE") && (strings.EqualFold(next, "ELEMENT") || strings.EqualFold(next, "ELEMENTS")):
+		if bindings, bindingsEnd, ok := scanSymbolicName(q[:end], skipASCIISpaces(q, nextEnd, end)); ok && strings.EqualFold(bindings, "BINDINGS") {
+			nextEnd = bindingsEnd
+		}
+		return nextEnd, true, true
 	}
-	return nextEnd, true
+	return 0, false, false
+}
+
+// hasUnboundedRepetition reports whether the pattern q[start:end] repeats a
+// relationship without an upper bound: a quantifier (+, *, {m,}) or a
+// variable-length relationship (-[*]->, -[*2..]->).
+func hasUnboundedRepetition(q string, start, end int) bool {
+	for i := start; i < end; i++ {
+		switch c := q[i]; c {
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(q, i, c) - 1
+		case '{':
+			if close := findMatchingDelimiter(q[:end], i, '{', '}'); close > i {
+				i = close
+			}
+		case '[':
+			close := findMatchingDelimiter(q[:end], i, '[', ']')
+			if close < 0 {
+				return false
+			}
+			if quantifier, _, ok := quantifierAfterArrow(q, close, end); ok && quantifier.max < 0 {
+				return true
+			}
+			inner := close
+			if where := elementWhereIndex(q, i, close); where >= 0 {
+				inner = where
+			}
+			if brace := indexOutsideQuotes(q[i+1:inner], '{'); brace >= 0 {
+				inner = i + 1 + brace
+			}
+			if star := indexOutsideQuotes(q[i+1:inner], '*'); star >= 0 {
+				length := strings.TrimSpace(q[i+1+star+1 : inner])
+				if dots := strings.Index(length, ".."); length == "" || dots >= 0 && strings.TrimSpace(length[dots+2:]) == "" {
+					return true
+				}
+			}
+			i = close
+		case '-', '<':
+			arrowEnd := arrowRunEnd(q, i, end)
+			if next := skipASCIISpaces(q, arrowEnd, end); next < end && q[next] != '[' {
+				if quantifier, ok := relationshipQuantifierAt(q, next, end); ok && quantifier.max < 0 {
+					return true
+				}
+			}
+			i = arrowEnd - 1
+		}
+	}
+	return false
 }
 
 // hasVariableLengthRelationship reports whether the pattern q[start:end]
@@ -407,10 +476,10 @@ func fnAcyclicPath(ctx cypherfn.Context, args []string) (interface{}, error) {
 	return distinctNodeIDs(nodes), nil
 }
 
-// fnPathSelector is reached only when a step other than the shortestPath
-// MATCH step reads a selected pattern.
-func fnPathSelector(cypherfn.Context, []string) (interface{}, error) {
-	return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherMatchingPathSelectorOutsideMatch())
+// fnPatternMarker is reached only when a step other than the MATCH step a
+// selector or match mode is written for reads it.
+func fnPatternMarker(cypherfn.Context, []string) (interface{}, error) {
+	return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherMatchingPatternMarkerOutsideMatch())
 }
 
 // pathNodeIDs returns the IDs of a path value's nodes in order.
