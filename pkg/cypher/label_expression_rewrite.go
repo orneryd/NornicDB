@@ -82,7 +82,8 @@ func (m labelPatternMode) clause() string {
 // and nil when nothing changes.
 func desugarLabelExpressions(query string, params map[string]interface{}) (string, *queryRewrite, error) {
 	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) && indexASCIIFold(query, "shortestpath") < 0 &&
-		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) {
+		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
+		!mayRepeatRelationshipVariable(query) {
 		return query, nil, nil
 	}
 	r := &labelExpressionRewriter{query: query, params: params}
@@ -435,6 +436,11 @@ func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, where
 	if err != nil {
 		return err
 	}
+	repeated, err := r.repeatedRelationshipVariables(prefixes.patternStart, prefixes.patternEnd)
+	if err != nil {
+		return err
+	}
+	predicates = append(predicates, repeated...)
 	predicates = append(predicates, prefixes.acyclic...)
 	if prefixes.selector != "" {
 		if prefixes.where != "" {

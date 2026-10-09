@@ -59,6 +59,7 @@ const (
 	MessageCypherMatchingPathSelectorCountInvalid                 MessageID = "cyphermatching.path_selector_count_invalid"
 	MessageCypherMatchingPathSelectorCountType                    MessageID = "cyphermatching.path_selector_count_type"
 	MessageCypherMatchingPathSelectorOutsideMatch                 MessageID = "cyphermatching.path_selector_outside_match"
+	MessageCypherMatchingVariableTypeConflict                     MessageID = "cyphermatching.variable_type_conflict"
 )
 
 func cypherMatchingMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -347,4 +348,12 @@ func CypherMatchingPathSelectorCountType(valueType string) Message {
 // the statement rewrite left for a MATCH step that did not run it.
 func CypherMatchingPathSelectorOutsideMatch() Message {
 	return cypherMatchingMessage(MessageCypherMatchingPathSelectorOutsideMatch, "a path selector can only be used in a MATCH pattern", nil)
+}
+
+// CypherMatchingVariableTypeConflict is Neo4j's SyntaxError for a variable
+// a pattern binds as two types, such as a relationship and a list of them
+// (-[r]->, -[r*1..2]->). Defined is the type it was bound as, Expected the
+// type this place binds.
+func CypherMatchingVariableTypeConflict(variable, defined, expected string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingVariableTypeConflict, "Type mismatch: "+variable+" defined with conflicting type "+defined+" (expected "+expected+")", map[string]any{"Variable": variable, "Defined": defined, "Expected": expected})
 }
