@@ -217,10 +217,10 @@ func groupByEdit(query string, clause projectionWord, groupStart, keysStart, key
 		}
 		projected = append(projected, expression+" AS "+column)
 	}
+	// DISTINCT applies to the grouped rows, which their keys already make
+	// distinct: projecting a key away doesn't remove a row (RETURN DISTINCT
+	// n.name, count(*) GROUP BY n.name, n.age keeps both Ann rows in Neo4j).
 	keyword := query[clause.start:clause.end]
-	if distinct {
-		keyword += " DISTINCT"
-	}
 	text := "WITH " + strings.Join(grouping, ", ") + " " + keyword + " " + strings.Join(projected, ", ")
 	if keysEnd < len(query) && !isASCIISpace(query[keysEnd]) {
 		text += " "

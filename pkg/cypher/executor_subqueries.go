@@ -638,22 +638,10 @@ func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall stri
 		return "", "", false, batchSize
 	}
 
-	// Find matching closing brace
-	depth := 0
-	braceEnd := -1
-	for i := braceStart; i < len(trimmed); i++ {
-		if trimmed[i] == '{' {
-			depth++
-		} else if trimmed[i] == '}' {
-			depth--
-			if depth == 0 {
-				braceEnd = i
-				break
-			}
-		}
-	}
-
-	if braceEnd == -1 {
+	// The matching closing brace; a brace in quoted text isn't one
+	// (CALL () { RETURN '}' AS y } …).
+	braceEnd := findMatchingDelimiter(trimmed, braceStart, '{', '}')
+	if braceEnd < 0 {
 		return "", "", false, batchSize
 	}
 
