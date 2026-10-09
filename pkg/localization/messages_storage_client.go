@@ -25,6 +25,8 @@ const (
 	MessageStorageClientReceiptNilReceiver                 MessageID = "storage.client.receipt.nil_receiver"
 	MessageStorageClientReceiptHashMarshalFailed           MessageID = "storage.client.receipt.hash_marshal_failed"
 	MessageStorageClientStorageClosed                      MessageID = "storage.client.storage_closed"
+	MessageStorageClientRestoring                          MessageID = "storage.client.restoring"
+	MessageStorageClientRestoreBusy                        MessageID = "storage.client.restore.busy"
 	MessageStorageClientBackupFileCreateFailed             MessageID = "storage.client.backup.file_create_failed"
 	MessageStorageClientBackupFailed                       MessageID = "storage.client.backup.failed"
 	MessageStorageClientBackupFlushFailed                  MessageID = "storage.client.backup.flush_failed"
@@ -156,6 +158,18 @@ func StorageClientReceiptHashMarshalFailed(cause error) Message {
 
 func StorageClientStorageClosed() Message {
 	return storageClientMessage(MessageStorageClientStorageClosed, "storage closed", nil)
+}
+
+// StorageClientRestoring identifies an operation turned away while a restore
+// replaces the store.
+func StorageClientRestoring() Message {
+	return storageClientMessage(MessageStorageClientRestoring, "the database is being restored; retry when the restore completes", nil)
+}
+
+// StorageClientRestoreBusy identifies a restore that did not start because
+// reads or transactions were still open after waiting for them.
+func StorageClientRestoreBusy(wait string) Message {
+	return storageClientMessage(MessageStorageClientRestoreBusy, "restore not started: reads or transactions were still open after "+wait+"; retry when they have finished", map[string]any{"Wait": wait})
 }
 
 func StorageClientBackupFileCreateFailed(path string, cause error) Message {

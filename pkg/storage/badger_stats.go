@@ -24,7 +24,8 @@ func (b *BadgerEngine) initializeCounts() error {
 	namespaceNodeCounts := make(map[string]int64)
 	namespaceEdgeCounts := make(map[string]int64)
 
-	err := b.db.View(func(txn *badger.Txn) error {
+	// A loader: it reads past a restore's hold (viewHeld).
+	err := b.db.viewHeld(func(txn *badger.Txn) error {
 		// Count nodes
 		nodePrefix := []byte{prefixNode}
 		nodeIt := txn.NewIterator(badgerPrefixIteratorOptions(nodePrefix))

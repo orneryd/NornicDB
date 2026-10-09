@@ -424,7 +424,7 @@ func (d *propertyKeyDictionary) discardTxnCounters(txn *badger.Txn) {
 
 // loadFromBadger hydrates the in-memory dictionary from persisted
 // forward, reverse, and counter keys. Called once on engine open.
-func (d *propertyKeyDictionary) loadFromBadger(db badgerKV) error {
+func (d *propertyKeyDictionary) loadFromBadger(db badgerViewer) error {
 	return db.View(func(txn *badger.Txn) error {
 		// Forward map.
 		{
@@ -583,4 +583,19 @@ func isPropertyKeyDictionaryKey(key []byte) bool {
 		return true
 	}
 	return false
+}
+
+// replaceWith makes d hold fresh's names and counters, for Restore: d stays
+// the engine's dictionary, and the swap is made under d's locks, so nothing
+// reads a dictionary that is being built. Staged per-transaction state is
+// dropped with the store it belonged to.
+func (d *propertyKeyDictionary) replaceWith(fresh *propertyKeyDictionary) {
+	d.mu.Lock()
+	d.forward, d.reverse, d.persisted = fresh.forward, fresh.reverse, fresh.persisted
+	d.nextID, d.noted = fresh.nextID, fresh.noted
+	d.mu.Unlock()
+	d.txnMu.Lock()
+	d.txnCounters = make(map[*badger.Txn]map[string]uint64)
+	d.txnPendingForward = make(map[*badger.Txn]map[propKeyName]uint64)
+	d.txnMu.Unlock()
 }

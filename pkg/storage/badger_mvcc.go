@@ -183,7 +183,7 @@ func mvccPruneFloorKey(logical []byte) []byte {
 	return key
 }
 
-func (b *BadgerEngine) loadMVCCFloorKeys(db badgerKV) error {
+func (b *BadgerEngine) loadMVCCFloorKeys(db badgerViewer) error {
 	keys := make(map[[9]byte]struct{})
 	err := db.View(func(txn *badger.Txn) error {
 		prefix := []byte{prefixMVCCPruneFloor}

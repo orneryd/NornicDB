@@ -433,7 +433,8 @@ func TestManagedBadger_FirstBatchConflictWritesNothing(t *testing.T) {
 	defer m.Close()
 	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("a")) }))
 
-	txn, readTs := m.beginTxn(true)
+	txn, readTs, err := m.beginTxn(true)
+	require.NoError(t, err)
 	defer m.endRead(readTs)
 	_, err = txn.Get([]byte("k"))
 	require.NoError(t, err)
@@ -492,7 +493,8 @@ func TestManagedBadger_OpensUnmanagedStoreBothWays(t *testing.T) {
 
 func TestCommitOracle_DiscardStaysBelowOpenReads(t *testing.T) {
 	o := newCommitOracle(10)
-	readTs := o.beginRead()
+	readTs, err := o.beginRead()
+	require.NoError(t, err)
 	require.Equal(t, uint64(10), readTs)
 	for i := 0; i < 3; i++ {
 		ts, err := o.assign()

@@ -104,7 +104,10 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) err
 	defer b.txnWG.Done()
 	var nodeMax, edgeMax uint64
 	err = recoverBadgerClosedPanic(func() error {
-		txn, readTs := db.beginTxn(true)
+		txn, readTs, err := db.beginTxn(true)
+		if err != nil {
+			return err
+		}
 		defer db.endRead(readTs)
 		cw := b.newCommitWriter(db, txn)
 		defer cw.discard()

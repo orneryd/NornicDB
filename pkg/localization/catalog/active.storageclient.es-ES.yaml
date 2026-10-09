@@ -42,6 +42,10 @@
   other: "recibo: no se pudo serializar el hash: {{.Cause}}"
 - id: storage.client.storage_closed
   other: almacenamiento cerrado
+- id: storage.client.restoring
+  other: "la base de datos se está restaurando; vuelva a intentarlo cuando termine la restauración"
+- id: storage.client.restore.busy
+  other: "restauración no iniciada: seguía habiendo lecturas o transacciones abiertas después de {{.Wait}}; vuelva a intentarlo cuando hayan terminado"
 - id: storage.client.backup.file_create_failed
   other: "no se pudo crear el archivo de copia de seguridad: {{.Cause}}"
 - id: storage.client.backup.failed

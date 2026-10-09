@@ -313,7 +313,8 @@ func BenchmarkLabelRecordReads(b *testing.B) {
 		}
 		require.NoError(b, eng.BulkCreateNodes(nodes))
 	}
-	txn, readTs := eng.db.beginTxn(false)
+	txn, readTs, err := eng.db.beginTxn(false)
+	require.NoError(b, err)
 	b.Cleanup(func() {
 		txn.Discard()
 		eng.db.endRead(readTs)

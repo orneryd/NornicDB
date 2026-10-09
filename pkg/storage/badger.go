@@ -1085,7 +1085,7 @@ func (b *BadgerEngine) initializeMVCCSequence() error {
 
 func (b *BadgerEngine) loadPersistedMVCCSequence() (uint64, error) {
 	var seq uint64
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.db.viewHeld(func(txn *badger.Txn) error {
 		item, err := txn.Get(mvccSequenceKey())
 		if errors.Is(err, badger.ErrKeyNotFound) {
 			return nil

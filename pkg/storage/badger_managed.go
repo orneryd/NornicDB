@@ -9,6 +9,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -99,12 +100,34 @@ func (m *managedBadgerDB) View(fn func(txn *badger.Txn) error) error {
 	if m.DB.IsClosed() {
 		return badger.ErrDBClosed
 	}
-	readTs := m.oracle.beginRead()
+	readTs, err := m.oracle.beginRead()
+	if err != nil {
+		return err
+	}
 	defer m.oracle.endRead(readTs)
 	txn := m.DB.NewTransactionAt(readTs, false)
 	defer txn.Discard()
 	return fn(txn)
 }
+
+// viewHeld is View for the loaders that rebuild the engine's in-memory state
+// from Badger: at open, before anything else reads, and in Restore, while
+// holdReads turns every other read away. It reads past the hold.
+func (m *managedBadgerDB) viewHeld(fn func(txn *badger.Txn) error) error {
+	if m.DB.IsClosed() {
+		return badger.ErrDBClosed
+	}
+	readTs := m.oracle.beginReadHeld()
+	defer m.oracle.endRead(readTs)
+	txn := m.DB.NewTransactionAt(readTs, false)
+	defer txn.Discard()
+	return fn(txn)
+}
+
+// heldViewer is viewHeld for the loaders that take a badgerViewer.
+type heldViewer struct{ db *managedBadgerDB }
+
+func (v heldViewer) View(fn func(txn *badger.Txn) error) error { return v.db.viewHeld(fn) }
 
 // Update runs fn in a read-write transaction at the published timestamp and
 // commits it as one ordinary commit. Badger's per-batch size limit applies.
@@ -112,7 +135,10 @@ func (m *managedBadgerDB) Update(fn func(txn *badger.Txn) error) error {
 	if m.DB.IsClosed() {
 		return badger.ErrDBClosed
 	}
-	readTs := m.oracle.beginRead()
+	readTs, err := m.oracle.beginRead()
+	if err != nil {
+		return err
+	}
 	defer m.oracle.endRead(readTs)
 	txn := m.DB.NewTransactionAt(readTs, true)
 	defer txn.Discard()
@@ -125,10 +151,14 @@ func (m *managedBadgerDB) Update(fn func(txn *badger.Txn) error) error {
 // beginTxn opens a transaction at the published timestamp and registers the
 // timestamp as an open read, which keeps compaction from dropping the
 // versions it reads. The caller must call endRead(readTs) once it has
-// discarded or committed every transaction opened at readTs.
-func (m *managedBadgerDB) beginTxn(update bool) (*badger.Txn, uint64) {
-	readTs := m.oracle.beginRead()
-	return m.DB.NewTransactionAt(readTs, update), readTs
+// discarded or committed every transaction opened at readTs. While Restore
+// holds reads (holdReads), it opens nothing and returns ErrStorageRestoring.
+func (m *managedBadgerDB) beginTxn(update bool) (*badger.Txn, uint64, error) {
+	readTs, err := m.oracle.beginRead()
+	if err != nil {
+		return nil, 0, err
+	}
+	return m.DB.NewTransactionAt(readTs, update), readTs, nil
 }
 
 // newTxnAt opens another transaction at a read timestamp the caller already
@@ -205,7 +235,10 @@ func (m *managedBadgerDB) GetSequence(key []byte, bandwidth uint64) (*badger.Seq
 // Backup streams every key visible at the published timestamp, with versions
 // newer than since, to w.
 func (m *managedBadgerDB) Backup(w io.Writer, since uint64) (uint64, error) {
-	readTs := m.oracle.beginRead()
+	readTs, err := m.oracle.beginRead()
+	if err != nil {
+		return 0, err
+	}
 	defer m.oracle.endRead(readTs)
 	stream := m.DB.NewStreamAt(readTs)
 	stream.LogPrefix = "DB.Backup"
@@ -548,6 +581,9 @@ type commitOracle struct {
 	readers   map[uint64]int
 	discardTs uint64
 	failed    error
+	// readsHeld turns new reads away while Restore replaces the store
+	// (holdReads); changed is broadcast when the last open read ends.
+	readsHeld bool
 }
 
 func newCommitOracle(maxVersion uint64) *commitOracle {
@@ -561,12 +597,30 @@ func newCommitOracle(maxVersion uint64) *commitOracle {
 	return o
 }
 
-// beginRead returns the published timestamp and registers it as read.
-func (o *commitOracle) beginRead() uint64 {
+// beginRead returns the published timestamp and registers it as read. While
+// reads are held (holdReads) it registers nothing and returns
+// ErrStorageRestoring: a transient error, returned at once rather than after
+// a wait, so a read nested in one that is already open can't deadlock the
+// restore that waits for the outer one.
+func (o *commitOracle) beginRead() (uint64, error) {
 	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.readsHeld {
+		return 0, localizedError(localization.StorageClientRestoring(), ErrStorageRestoring)
+	}
+	return o.registerReadLocked(), nil
+}
+
+// beginReadHeld is beginRead for viewHeld: it reads past a hold.
+func (o *commitOracle) beginReadHeld() uint64 {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.registerReadLocked()
+}
+
+func (o *commitOracle) registerReadLocked() uint64 {
 	ts := o.published.Load()
 	o.readers[ts]++
-	o.mu.Unlock()
 	return ts
 }
 
@@ -577,6 +631,41 @@ func (o *commitOracle) endRead(ts uint64) {
 	} else {
 		o.readers[ts] = n - 1
 	}
+	if o.readsHeld && len(o.readers) == 0 {
+		o.changed.Broadcast()
+	}
+	o.mu.Unlock()
+}
+
+// holdReads turns new reads away (beginRead returns ErrStorageRestoring) and
+// waits up to timeout for the open ones to end: views, engine writes and
+// open transactions. It reports whether they did; when they didn't, reads
+// are let in again.
+func (o *commitOracle) holdReads(timeout time.Duration) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.readsHeld = true
+	deadline := time.Now().Add(timeout)
+	wake := time.AfterFunc(timeout, func() {
+		o.mu.Lock()
+		o.changed.Broadcast()
+		o.mu.Unlock()
+	})
+	defer wake.Stop()
+	for len(o.readers) > 0 {
+		if !time.Now().Before(deadline) {
+			o.readsHeld = false
+			return false
+		}
+		o.changed.Wait()
+	}
+	return true
+}
+
+// releaseReads lets reads in again after holdReads.
+func (o *commitOracle) releaseReads() {
+	o.mu.Lock()
+	o.readsHeld = false
 	o.mu.Unlock()
 }
 
@@ -677,6 +766,11 @@ func (o *commitOracle) fail(cause error) {
 type badgerKV interface {
 	View(fn func(txn *badger.Txn) error) error
 	Update(fn func(txn *badger.Txn) error) error
+}
+
+// badgerViewer is the read side of badgerKV, for the loaders.
+type badgerViewer interface {
+	View(fn func(txn *badger.Txn) error) error
 }
 
 // failure returns the error that stopped commits, if any (see fail).

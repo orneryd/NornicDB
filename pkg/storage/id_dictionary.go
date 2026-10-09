@@ -389,7 +389,7 @@ func (d *idDictionary) freelistStagedCount(db badgerKV, kind byte) (int, error) 
 // allocation reissues a live numID and two string IDs share one compact key
 // in every numID-keyed index (adjacency, label, edge-between, MVCC heads),
 // silently merging the two entities.
-func (d *idDictionary) loadFromBadger(db badgerKV) error {
+func (d *idDictionary) loadFromBadger(db badgerViewer) error {
 	var maxNodeNum, maxEdgeNum uint64
 	return db.View(func(txn *badger.Txn) error {
 		// Node forward map.
@@ -848,4 +848,22 @@ func encodeNumID(num uint64) []byte {
 	out := make([]byte, 8)
 	binary.BigEndian.PutUint64(out, num)
 	return out
+}
+
+// replaceWith makes d hold fresh's entries, counters and freelist counts, for
+// Restore: d stays the engine's dictionary, and the swap is made under d's
+// locks, so nothing reads a dictionary that is being built. Staged
+// per-transaction counters are dropped with the store they belonged to.
+func (d *idDictionary) replaceWith(fresh *idDictionary) {
+	d.mu.Lock()
+	d.nodeForward, d.nodeReverse = fresh.nodeForward, fresh.nodeReverse
+	d.edgeForward, d.edgeReverse = fresh.edgeForward, fresh.edgeReverse
+	d.nextNode.Store(fresh.nextNode.Load())
+	d.nextEdge.Store(fresh.nextEdge.Load())
+	d.nodeFreelistPending.Store(fresh.nodeFreelistPending.Load())
+	d.edgeFreelistPending.Store(fresh.edgeFreelistPending.Load())
+	d.mu.Unlock()
+	d.txnMu.Lock()
+	d.txnCounters = make(map[*badger.Txn]*txnCounterState)
+	d.txnMu.Unlock()
 }

@@ -65,6 +65,9 @@ type EmbedWorker struct {
 	parked    atomic.Int64
 	inFlight  atomic.Int64
 	closed    atomic.Bool // Set to true when Close() is called
+	// restoreHolds counts the restores holding the worker (holdForRestore);
+	// while one does, it claims no nodes and doesn't scan the store.
+	restoreHolds atomic.Int32
 
 	// Recently processed node IDs to prevent re-processing before DB commit is visible
 	// This prevents the same node being processed multiple times in quick succession
@@ -749,6 +752,9 @@ func (ew *EmbedWorker) processUntilEmpty() {
 	maxConsecutiveEmpty := 3 // Stop after 3 consecutive empty checks
 
 	for {
+		if ew.restoreHolds.Load() > 0 {
+			return // the release triggers a new pass
+		}
 		select {
 		case <-ew.ctx.Done():
 			return
@@ -788,10 +794,37 @@ func (ew *EmbedWorker) processUntilEmpty() {
 	}
 }
 
+// nodeGone reports whether a pending node's read found it deleted: not
+// found, or no node without an error. A failed read (for example while a
+// restore replaces the store) isn't, and the node stays pending.
+func nodeGone(node *storage.Node, err error) bool {
+	return errors.Is(err, storage.ErrNotFound) || err == nil && node == nil
+}
+
+// holdForRestore keeps the worker from claiming nodes or scanning the store
+// while a restore replaces it, and waits up to wait for the nodes it is
+// embedding to finish, so none is read from a store being replaced (#1020).
+// The returned release lets it work again and starts a scan of the restored
+// store.
+func (ew *EmbedWorker) holdForRestore(wait time.Duration) (release func()) {
+	ew.restoreHolds.Add(1)
+	for deadline := time.Now().Add(wait); ew.inFlight.Load() > 0 && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	return func() {
+		ew.restoreHolds.Add(-1)
+		ew.TriggerImmediate()
+	}
+}
+
 // processNextBatch finds and processes nodes without embeddings.
 // Returns true if it did useful work (processed or permanently skipped a node).
-// Returns false if there was nothing to process or if a node was temporarily skipped.
+// Returns false if there was nothing to process, if a node was temporarily
+// skipped, or while a restore holds the worker.
 func (ew *EmbedWorker) processNextBatch() bool {
+	if ew.restoreHolds.Load() > 0 {
+		return false
+	}
 	ew.mu.Lock()
 	hasResolver := ew.embedderResolver != nil
 	embedder := ew.embedder
@@ -1394,7 +1427,7 @@ func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr e
 	if err != nil || node == nil {
 		// A deleted node does not need retrying; an unexpected storage read error
 		// does, so leave it pending in that case.
-		if errors.Is(err, storage.ErrNotFound) || node == nil {
+		if nodeGone(node, err) {
 			ew.markNodeEmbedded(nodeID)
 		}
 		return
@@ -1458,7 +1491,12 @@ func (ew *EmbedWorker) claimNextNode() *storage.Node {
 
 	node, err := ew.storage.GetNode(pending.ID)
 	if err != nil || node == nil {
-		ew.markNodeEmbedded(pending.ID)
+		// A deleted node needs no embedding; one that couldn't be read (for
+		// example while a restore replaces the store) stays pending, as in
+		// markNodeEmbeddingFailed.
+		if nodeGone(node, err) {
+			ew.markNodeEmbedded(pending.ID)
+		}
 		return nil
 	}
 	if ew.wasRecentlyProcessed(node.ID) {

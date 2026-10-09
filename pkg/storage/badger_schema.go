@@ -23,8 +23,9 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 	}
 	var loadedSchemas []loaded
 
-	// Phase 1: read + decode schema definitions.
-	if err := b.withView(func(txn *badger.Txn) error {
+	// Phase 1: read + decode schema definitions. A loader: it reads past a
+	// restore's hold (viewHeld).
+	if err := b.db.viewHeld(func(txn *badger.Txn) error {
 		opts := badgerIteratorOptions()
 		opts.Prefix = []byte{prefixSchema}
 		it := txn.NewIterator(opts)
@@ -198,7 +199,9 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 	prefix = append(prefix, []byte(namespace)...)
 	prefix = append(prefix, ':')
 
-	if err := b.withView(func(txn *badger.Txn) error {
+	// Called by loadPersistedSchemas, a loader: it reads past a restore's
+	// hold (viewHeld).
+	if err := b.db.viewHeld(func(txn *badger.Txn) error {
 		opts := badgerIteratorOptions()
 		opts.Prefix = prefix
 		it := txn.NewIterator(opts)

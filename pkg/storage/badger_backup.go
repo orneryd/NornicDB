@@ -5,8 +5,10 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -53,9 +55,45 @@ func (b *BadgerEngine) Backup(path string) error {
 	return nil
 }
 
+// restoreReadDrainTimeout bounds how long Restore waits for the reads and
+// transactions open when it starts to end. A variable for tests.
+var restoreReadDrainTimeout = 30 * time.Second
+
 // Restore loads a Badger streaming backup into the engine. The backup format
 // is the protobuf stream emitted by Backup, not the legacy JSON export.
+//
+// The store is offline while it is replaced (#1020). Restore stops the
+// background index backfills, holds off writes (writeBarrier) and reads
+// (holdReads: a read or write that starts meanwhile fails at once with
+// ErrStorageRestoring, which is transient), and waits up to
+// restoreReadDrainTimeout for the reads and transactions already open. If
+// they are still open then, Restore fails and changes nothing. Otherwise no
+// reader sees a half-restored store or decodes with a half-built
+// dictionary: the in-memory state (ID and property-key dictionaries, MVCC
+// floors and sequence, schemas, caches, counts) is rebuilt from the restored
+// store before reads resume. The backfills then start again if the restored
+// store needs them.
 func (b *BadgerEngine) Restore(path string) error {
+	b.stopEdgeBetweenIndexBackfill()
+	b.stopLabelIndexBackfill()
+	restoreErr := b.restoreOffline(path)
+	return errors.Join(restoreErr, b.restartIndexBackfills())
+}
+
+// restartIndexBackfills starts the index backfills the store needs, as open
+// does. It holds the write barrier so Close, which stops the backfills before
+// taking it, can't run in between; a closed engine has nothing to backfill.
+func (b *BadgerEngine) restartIndexBackfills() error {
+	b.writeBarrier.RLock()
+	defer b.writeBarrier.RUnlock()
+	if b.ensureOpen() != nil {
+		return nil
+	}
+	return errors.Join(b.ensureEdgeBetweenIndex(), b.ensureLabelIndex())
+}
+
+// restoreOffline is Restore's work with writes and reads held off.
+func (b *BadgerEngine) restoreOffline(path string) error {
 	b.writeBarrier.Lock()
 	defer b.writeBarrier.Unlock()
 
@@ -73,23 +111,30 @@ func (b *BadgerEngine) Restore(path string) error {
 	}
 	defer file.Close()
 
+	if !db.oracle.holdReads(restoreReadDrainTimeout) {
+		return localizedError(localization.StorageClientRestoreBusy(restoreReadDrainTimeout.String()), nil)
+	}
+	defer db.oracle.releaseReads()
+
 	if err := db.DropAll(); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	if err := db.Load(bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
-	if err := b.loadMVCCFloorKeys(db); err != nil {
+	loader := heldViewer{db: db}
+	if err := b.loadMVCCFloorKeys(loader); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
-	b.idDict = newIDDictionary()
-	b.propKeyDict = newPropertyKeyDictionary()
-	if err := b.idDict.loadFromBadger(db); err != nil {
+	ids, keys := newIDDictionary(), newPropertyKeyDictionary()
+	if err := ids.loadFromBadger(loader); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
-	if err := b.propKeyDict.loadFromBadger(db); err != nil {
+	if err := keys.loadFromBadger(loader); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
+	b.idDict.replaceWith(ids)
+	b.propKeyDict.replaceWith(keys)
 	b.mvccByNamespaceMu.Lock()
 	b.mvccByNamespace = make(map[string]*namespaceMVCCState)
 	b.mvccByNamespaceMu.Unlock()

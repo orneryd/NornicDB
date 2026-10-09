@@ -67,6 +67,10 @@ var (
 	ErrNotImplemented   = errors.New("not implemented")
 	ErrInvalidEdge      = errors.New("invalid edge: start or end node not found")
 	ErrStorageClosed    = errors.New("storage closed")
+	// ErrStorageRestoring is returned by a read or write that starts while
+	// Restore replaces the store. It is transient (DatabaseUnavailable):
+	// retrying once the restore completes succeeds.
+	ErrStorageRestoring = errors.New("storage restoring")
 	ErrIterationStopped = errors.New("iteration stopped") // Sentinel to stop streaming early
 	// ErrEmbeddingSourceChanged is returned by an embedding writeback whose
 	// node changed (properties or labels) after the worker read it: the
