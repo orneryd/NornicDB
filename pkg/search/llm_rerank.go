@@ -178,9 +178,6 @@ func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []Rer
 		})
 	}
 
-	if len(seen) == 0 {
-		return nil, localizedError(localization.SearchRerankResponseUnrecognized(), nil)
-	}
 	if len(results) == 0 {
 		return voyage.PassThrough(candidates), nil
 	}

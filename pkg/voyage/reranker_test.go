@@ -74,6 +74,18 @@ func TestRerankerReportsUnusableResponse(t *testing.T) {
 	require.Nil(t, results)
 }
 
+// A disabled reranker passes candidates through in their order.
+func TestDisabledRerankerPassesThrough(t *testing.T) {
+	var reranker *Reranker
+	candidates := []Candidate{{ID: "a", Content: "alpha", Score: 0.4}, {ID: "b", Content: "beta", Score: 0.3}}
+	results, err := reranker.Rerank(context.Background(), "query", candidates)
+	require.NoError(t, err)
+	require.Equal(t, []RankedCandidate{
+		{ID: "a", Content: "alpha", OriginalRank: 1, NewRank: 1, BiScore: 0.4, CrossScore: 0.4, FinalScore: 0.4},
+		{ID: "b", Content: "beta", OriginalRank: 2, NewRank: 2, BiScore: 0.3, CrossScore: 0.3, FinalScore: 0.3},
+	}, results)
+}
+
 func TestRerankerRequiresExplicitAPIKey(t *testing.T) {
 	_, err := NewReranker(&RerankerConfig{Enabled: true})
 	require.ErrorContains(t, err, "requires an API key")
