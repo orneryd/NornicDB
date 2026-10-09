@@ -437,7 +437,7 @@ func parseSimpleMatchClause(clause, unwindVar string) (matchClauseSpec, bool) {
 	if !strings.HasPrefix(body, "(") {
 		return matchClauseSpec{}, false
 	}
-	closeIdx := indexMatchingParen(body)
+	closeIdx := findMatchingParen(body, 0)
 	if closeIdx < 0 || closeIdx != len(body)-1 {
 		return matchClauseSpec{}, false
 	}
@@ -563,7 +563,7 @@ func parseSimpleCreateNode(body, unwindVar string) (createNodeSpec, bool) {
 	if !strings.HasPrefix(body, "(") {
 		return createNodeSpec{}, false
 	}
-	closeIdx := indexMatchingParen(body)
+	closeIdx := findMatchingParen(body, 0)
 	if closeIdx < 0 || closeIdx != len(body)-1 {
 		return createNodeSpec{}, false
 	}
@@ -769,25 +769,4 @@ func coerceFloat64(v interface{}) (float64, bool) {
 		return float64(i), true
 	}
 	return 0, false
-}
-
-// indexMatchingParen returns the index of the `)` that matches the `(` at
-// position 0, respecting nested parens. Returns -1 if not found.
-func indexMatchingParen(s string) int {
-	if len(s) == 0 || s[0] != '(' {
-		return -1
-	}
-	depth := 0
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				return i
-			}
-		}
-	}
-	return -1
 }

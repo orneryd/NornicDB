@@ -217,7 +217,7 @@ func expressionFreeVariables(expression string) []string {
 	for index := 0; index < len(expression); {
 		character := expression[index]
 		if character == '[' {
-			if closing := matchingListBracket(expression, index); closing >= 0 {
+			if closing := findMatchingBracket(expression, index); closing >= 0 {
 				if pattern, projection, comprehension := splitPatternComprehension(expression[index : closing+1]); comprehension {
 					bindings := make(matchSemanticScope)
 					addMatchPatternBindingKinds(bindings, pattern)

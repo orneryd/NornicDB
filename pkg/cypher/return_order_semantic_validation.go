@@ -125,7 +125,7 @@ func semanticAggregateCalls(expression string) []string {
 			index = next
 			continue
 		}
-		close := matchingExpressionParenthesis(expression, cursor)
+		close := findMatchingParen(expression, cursor)
 		if close < 0 {
 			return calls
 		}
@@ -298,7 +298,7 @@ func quantifiedExpressionBindings(expression string) map[string]struct{} {
 		if expression[index] != '[' {
 			continue
 		}
-		close := matchingExpressionBracket(expression, index)
+		close := findMatchingBracket(expression, index)
 		if close < 0 {
 			continue
 		}
@@ -309,34 +309,6 @@ func quantifiedExpressionBindings(expression string) map[string]struct{} {
 		index = close
 	}
 	return bindings
-}
-
-func matchingExpressionBracket(expression string, open int) int {
-	depth := 0
-	var quote byte
-	for index := open; index < len(expression); index++ {
-		current := expression[index]
-		if quote != 0 {
-			if current == quote && !isBackslashEscaped(expression, index) {
-				quote = 0
-			}
-			continue
-		}
-		if current == '\'' || current == '"' || current == '`' {
-			quote = current
-			continue
-		}
-		switch current {
-		case '[':
-			depth++
-		case ']':
-			depth--
-			if depth == 0 {
-				return index
-			}
-		}
-	}
-	return -1
 }
 
 func aggregateContains(expression string, predicate func(string) bool) bool {
@@ -354,7 +326,7 @@ func aggregateContains(expression string, predicate func(string) bool) bool {
 			index = next
 			continue
 		}
-		close := matchingExpressionParenthesis(expression, cursor)
+		close := findMatchingParen(expression, cursor)
 		if close < 0 {
 			return false
 		}
@@ -570,7 +542,7 @@ func removeAggregateCalls(expression string) string {
 			index = next
 			continue
 		}
-		close := matchingExpressionParenthesis(expression, cursor)
+		close := findMatchingParen(expression, cursor)
 		if close < 0 {
 			return expression
 		}
@@ -589,32 +561,4 @@ func isAggregateFunctionName(name string) bool {
 	default:
 		return false
 	}
-}
-
-func matchingExpressionParenthesis(expression string, open int) int {
-	depth := 0
-	var quote byte
-	for index := open; index < len(expression); index++ {
-		current := expression[index]
-		if quote != 0 {
-			if current == quote && !isBackslashEscaped(expression, index) {
-				quote = 0
-			}
-			continue
-		}
-		if current == '\'' || current == '"' || current == '`' {
-			quote = current
-			continue
-		}
-		switch current {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				return index
-			}
-		}
-	}
-	return -1
 }

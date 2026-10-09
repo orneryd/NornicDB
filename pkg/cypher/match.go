@@ -39,38 +39,16 @@ func isAggregateFuncName(expr, funcName string) bool {
 // extractFuncInner extracts the inner expression from a function call (whitespace-tolerant)
 // e.g., "COUNT(n)" -> "n", "SUM (x.val)" -> "x.val", "collect({a:1})[..10]" -> "{a:1}"
 func extractFuncInner(expr string) string {
-	// Find opening paren (may have whitespace before it)
-	openIdx := strings.Index(expr, "(")
-	if openIdx < 0 {
+	open := strings.IndexByte(expr, '(')
+	if open < 0 {
 		return ""
 	}
-
-	// Find the MATCHING closing paren, not just the last one
-	// This properly handles cases like collect({...})[..10]
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i := openIdx; i < len(expr); i++ {
-		ch := rune(expr[i])
-		switch {
-		case (ch == '\'' || ch == '"') && !inQuote:
-			inQuote = true
-			quoteChar = ch
-		case ch == quoteChar && inQuote:
-			inQuote = false
-			quoteChar = 0
-		case ch == '(' && !inQuote:
-			depth++
-		case ch == ')' && !inQuote:
-			depth--
-			if depth == 0 {
-				// Found the matching closing parenthesis
-				return strings.TrimSpace(expr[openIdx+1 : i])
-			}
-		}
+	// The matching closing paren, not the last one: collect({…})[..10].
+	close := findMatchingParen(expr, open)
+	if close < 0 {
+		return ""
 	}
-	return ""
+	return strings.TrimSpace(expr[open+1 : close])
 }
 
 // compareForSort compares two values for sorting, returns true if a < b

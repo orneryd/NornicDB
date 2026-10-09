@@ -86,22 +86,11 @@ func findAggregateSpans(expr string) []aggregateSpan {
 			if j >= len(expr) || expr[j] != '(' {
 				continue
 			}
-			depth := 0
-			end := -1
-			for k := j; k < len(expr) && end < 0; k++ {
-				switch expr[k] {
-				case '(':
-					depth++
-				case ')':
-					depth--
-					if depth == 0 {
-						end = k + 1
-					}
-				}
-			}
-			if end < 0 {
+			close := findMatchingParen(expr, j)
+			if close < 0 {
 				continue
 			}
+			end := close + 1
 			spans = append(spans, aggregateSpan{start: i, end: end})
 			i = end
 			matched = true
