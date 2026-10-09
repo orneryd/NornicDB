@@ -326,7 +326,11 @@ func clauseKeywordUsedAsName(s string, pos, end int, keyword string) bool {
 			// n:% (any label, #860) ends an operand; a remainder operator
 			// follows one.
 			return !labelWildcardAt(s, i)
-		case '+', '-', '^', '=', '<', '>', ',', '(', '[':
+		case '+':
+			// ((a)-->(b))+ RETURN …: a quantified path pattern's + ends the
+			// pattern.
+			return !quantifiedGroupQuantifierAt(s, i)
+		case '-', '^', '=', '<', '>', ',', '(', '[':
 			return true
 		}
 	}

@@ -386,6 +386,16 @@ func matchModeAt(q string, start, end int) (int, bool, bool) {
 // relationship without an upper bound: a quantifier (+, *, {m,}) or a
 // variable-length relationship (-[*]->, -[*2..]->).
 func hasUnboundedRepetition(q string, start, end int) bool {
+	for from := start; ; {
+		_, close, quantifier, ok := nextQuantifiedGroup(q[:end], from)
+		if !ok {
+			break
+		}
+		if quantifier.max < 0 {
+			return true
+		}
+		from = close + 1
+	}
 	for i := start; i < end; i++ {
 		switch c := q[i]; c {
 		case '\'', '"', '`':

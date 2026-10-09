@@ -104,6 +104,9 @@ func (r *labelExpressionRewriter) quantifiedRelationship(open, close, at int, qu
 	if mode != labelPatternMatch {
 		return labelExpressionSyntaxError(localization.CypherMatchingQuantifiedPathInWritePattern(mode.clause()))
 	}
+	if err := quantifierBoundsError(quantifier); err != nil {
+		return err
+	}
 	q := r.query
 	insert := close
 	if where := elementWhereIndex(q, open, close); where >= 0 {
@@ -127,6 +130,9 @@ func (r *labelExpressionRewriter) quantifiedRelationship(open, close, at int, qu
 func (r *labelExpressionRewriter) quantifiedArrow(start, arrowEnd, at int, quantifier relationshipQuantifier, mode labelPatternMode) error {
 	if mode != labelPatternMatch {
 		return labelExpressionSyntaxError(localization.CypherMatchingQuantifiedPathInWritePattern(mode.clause()))
+	}
+	if err := quantifierBoundsError(quantifier); err != nil {
+		return err
 	}
 	arrow := r.query[start:arrowEnd]
 	left, right := "-", "-"

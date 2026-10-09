@@ -1955,6 +1955,13 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 		expanded, err := e.pipelineApplyShortestPathMatch(ctx, rows, shortest, false)
 		return expanded, true, err
 	}
+	if quantified, ok, err := parseQuantifiedPathMatch(body); ok || err != nil {
+		if err != nil {
+			return nil, true, err
+		}
+		expanded, err := e.pipelineApplyQuantifiedPathMatch(ctx, rows, quantified)
+		return expanded, true, err
+	}
 	patternEnd := len(body)
 	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
 		patternEnd = where
