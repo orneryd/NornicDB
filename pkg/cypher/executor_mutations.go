@@ -888,7 +888,7 @@ func (e *StorageExecutor) parseReturnItems(returnPart string) []returnItem {
 	}
 	plan := returnProjectionPlanFor("RETURN " + returnPart)
 	if plan.star {
-		items := []returnItem{{expr: "*"}}
+		items := []returnItem{{expr: "*", alias: "*"}}
 		for _, item := range plan.starItems {
 			expr, alias := parseProjectionExprAlias(item)
 			items = append(items, returnItem{expr: expr, alias: alias})

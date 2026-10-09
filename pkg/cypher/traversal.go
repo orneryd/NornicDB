@@ -282,11 +282,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	}
 	returnItems = expandTraversalWildcardReturnItems(returnItems, matches, pathVariable)
 	for _, item := range returnItems {
-		if item.alias != "" {
-			result.Columns = append(result.Columns, item.alias)
-		} else {
-			result.Columns = append(result.Columns, item.expr)
-		}
+		result.Columns = append(result.Columns, item.column())
 	}
 
 	// Store the path variable for path functions (relationships(path), nodes(path), length(path))
@@ -640,7 +636,7 @@ func expandTraversalWildcardReturnItems(items []returnItem, match *TraversalMatc
 	sort.Strings(columns)
 	expanded := make([]returnItem, len(columns))
 	for index, name := range columns {
-		expanded[index] = returnItem{expr: name}
+		expanded[index] = returnItem{expr: name, alias: name}
 	}
 	return expanded
 }
@@ -706,11 +702,7 @@ func (e *StorageExecutor) tryExecuteTraversalEndSeedOrderLimit(ctx context.Conte
 
 	result := &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}, Stats: &QueryStats{}}
 	for _, item := range returnItems {
-		if item.alias != "" {
-			result.Columns = append(result.Columns, item.alias)
-		} else {
-			result.Columns = append(result.Columns, item.expr)
-		}
+		result.Columns = append(result.Columns, item.column())
 	}
 	if len(seedNodes) == 0 {
 		e.markTraversalEndSeedTopKUsed()

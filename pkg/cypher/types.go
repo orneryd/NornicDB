@@ -43,3 +43,9 @@ type returnItem struct {
 	expr  string
 	alias string
 }
+
+// column is the item's result column: its alias. Every returnItem builder
+// names the column (parseProjectionExprAlias names an item without AS after
+// its expression), so an empty alias is an explicit empty name, RETURN x AS
+// ``, whose column is "" as in Neo4j 5.26.30 (#907).
+func (item returnItem) column() string { return item.alias }

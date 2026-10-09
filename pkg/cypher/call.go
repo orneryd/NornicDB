@@ -493,7 +493,7 @@ func callTailWithProjectionColumns(withClause string) ([]string, bool) {
 	columns := make([]string, 0, len(items))
 	for _, item := range items {
 		expr, alias := parseProjectionExprAlias(strings.TrimSpace(item))
-		if expr == "" || alias == "" {
+		if expr == "" {
 			return nil, false
 		}
 		columns = append(columns, normalizeProjectionColumnName(alias))
@@ -1228,7 +1228,7 @@ func (e *StorageExecutor) planCallTailProjection(tail string) *callTailProjectio
 		}
 	}
 	for _, item := range withItems {
-		if !isValidIdentifier(item.expr) || (item.alias != "" && item.alias != item.expr) {
+		if !isValidIdentifier(item.expr) || item.alias != item.expr {
 			plan.passThroughWith = false
 		}
 	}

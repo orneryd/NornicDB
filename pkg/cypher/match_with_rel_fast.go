@@ -170,11 +170,7 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 	}
 
 	for _, it := range returnItems {
-		if it.alias != "" {
-			result.Columns = append(result.Columns, it.alias)
-		} else {
-			result.Columns = append(result.Columns, it.expr)
-		}
+		result.Columns = append(result.Columns, it.column())
 	}
 
 	for productID, revenue := range revenueByProduct {

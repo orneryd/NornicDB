@@ -416,11 +416,7 @@ func (e *StorageExecutor) extractReturnItemsFromQuery(query string) []returnItem
 func (e *StorageExecutor) buildColumnsFromReturnItems(items []returnItem) []string {
 	columns := make([]string, len(items))
 	for i, item := range items {
-		if item.alias != "" {
-			columns[i] = item.alias
-		} else {
-			columns[i] = item.expr
-		}
+		columns[i] = item.column()
 	}
 	return columns
 }
