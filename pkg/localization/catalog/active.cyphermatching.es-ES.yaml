@@ -154,9 +154,15 @@
 - id: cyphermatching.path_selector_count_type
   description: "El parámetro de número de un selector de caminos no es un entero. Type es el nombre del tipo de Cypher y no se traduce."
   other: "Se esperaba Integer pero se recibió {{.Type}}"
-- id: cyphermatching.path_selector_outside_match
-  description: "Un selector de caminos llegó a un paso que no ejecuta patrones de camino."
-  other: "un selector de caminos solo se puede usar en un patrón de MATCH"
+- id: cyphermatching.pattern_marker_outside_match
+  description: "Un selector de caminos o un modo de coincidencia llegó a un paso que no ejecuta patrones de camino."
+  other: "un selector de caminos o un modo de coincidencia solo se puede usar en un patrón de MATCH"
 - id: cyphermatching.variable_type_conflict
   description: "Una variable se vincula con dos tipos en un patrón. Variable es el nombre de la variable; Defined y Expected son nombres de tipos de Cypher; ninguno se traduce."
   other: "Tipos incompatibles: {{.Variable}} está definida con el tipo {{.Defined}} (se esperaba {{.Expected}})"
+- id: cyphermatching.repeatable_elements_unbounded
+  description: "Un cuantificador sin límite superior en MATCH REPEATABLE ELEMENTS. REPEATABLE ELEMENTS no se traduce."
+  other: "El patrón de camino cuantificado puede producir un número infinito de filas con el modo de coincidencia 'REPEATABLE ELEMENTS'. Añada un límite superior al patrón de camino cuantificado."
+- id: cyphermatching.repeatable_elements_path_mode
+  description: "Un modo de camino TRAIL o ACYCLIC en MATCH REPEATABLE ELEMENTS. Mode y REPEATABLE ELEMENTS no se traducen."
+  other: "REPEATABLE ELEMENTS con el modo de camino {{.Mode}} no es compatible."

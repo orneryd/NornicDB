@@ -58,8 +58,10 @@ const (
 	MessageCypherMatchingPathSelectorInWritePattern               MessageID = "cyphermatching.path_selector_in_write_pattern"
 	MessageCypherMatchingPathSelectorCountInvalid                 MessageID = "cyphermatching.path_selector_count_invalid"
 	MessageCypherMatchingPathSelectorCountType                    MessageID = "cyphermatching.path_selector_count_type"
-	MessageCypherMatchingPathSelectorOutsideMatch                 MessageID = "cyphermatching.path_selector_outside_match"
+	MessageCypherMatchingPatternMarkerOutsideMatch                MessageID = "cyphermatching.pattern_marker_outside_match"
 	MessageCypherMatchingVariableTypeConflict                     MessageID = "cyphermatching.variable_type_conflict"
+	MessageCypherMatchingRepeatableElementsUnbounded              MessageID = "cyphermatching.repeatable_elements_unbounded"
+	MessageCypherMatchingRepeatableElementsPathMode               MessageID = "cyphermatching.repeatable_elements_path_mode"
 )
 
 func cypherMatchingMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -344,10 +346,10 @@ func CypherMatchingPathSelectorCountType(valueType string) Message {
 	return cypherMatchingMessage(MessageCypherMatchingPathSelectorCountType, "Expected Integer but got "+valueType, map[string]any{"Type": valueType})
 }
 
-// CypherMatchingPathSelectorOutsideMatch is the error for a path selector
-// the statement rewrite left for a MATCH step that did not run it.
-func CypherMatchingPathSelectorOutsideMatch() Message {
-	return cypherMatchingMessage(MessageCypherMatchingPathSelectorOutsideMatch, "a path selector can only be used in a MATCH pattern", nil)
+// CypherMatchingPatternMarkerOutsideMatch is the error for a path selector or
+// match mode the statement rewrite left for a MATCH step that did not run it.
+func CypherMatchingPatternMarkerOutsideMatch() Message {
+	return cypherMatchingMessage(MessageCypherMatchingPatternMarkerOutsideMatch, "a path selector or match mode can only be used in a MATCH pattern", nil)
 }
 
 // CypherMatchingVariableTypeConflict is Neo4j's SyntaxError for a variable
@@ -356,4 +358,18 @@ func CypherMatchingPathSelectorOutsideMatch() Message {
 // type this place binds.
 func CypherMatchingVariableTypeConflict(variable, defined, expected string) Message {
 	return cypherMatchingMessage(MessageCypherMatchingVariableTypeConflict, "Type mismatch: "+variable+" defined with conflicting type "+defined+" (expected "+expected+")", map[string]any{"Variable": variable, "Defined": defined, "Expected": expected})
+}
+
+// CypherMatchingRepeatableElementsUnbounded is Neo4j's SyntaxError for a
+// quantifier or variable-length relationship without an upper bound in a
+// MATCH REPEATABLE ELEMENTS, where it could repeat without end.
+func CypherMatchingRepeatableElementsUnbounded() Message {
+	return cypherMatchingMessage(MessageCypherMatchingRepeatableElementsUnbounded, "The quantified path pattern may yield an infinite number of rows under match mode 'REPEATABLE ELEMENTS'. Add an upper bound to the quantified path pattern.", nil)
+}
+
+// CypherMatchingRepeatableElementsPathMode is Neo4j's SyntaxError for a
+// path mode that forbids repeating (TRAIL, ACYCLIC) in a MATCH REPEATABLE
+// ELEMENTS.
+func CypherMatchingRepeatableElementsPathMode(mode string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingRepeatableElementsPathMode, "REPEATABLE ELEMENTS with "+mode+" path mode is not supported.", map[string]any{"Mode": mode})
 }

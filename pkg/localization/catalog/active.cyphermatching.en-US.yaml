@@ -154,9 +154,15 @@
 - id: cyphermatching.path_selector_count_type
   description: "A path selector's count parameter is not an integer. Type is the Cypher type name and is not translated."
   other: "Expected Integer but got {{.Type}}"
-- id: cyphermatching.path_selector_outside_match
-  description: "A path selector reached a step that does not run path patterns."
-  other: "a path selector can only be used in a MATCH pattern"
+- id: cyphermatching.pattern_marker_outside_match
+  description: "A path selector or match mode reached a step that does not run path patterns."
+  other: "a path selector or match mode can only be used in a MATCH pattern"
 - id: cyphermatching.variable_type_conflict
   description: "A variable is bound as two types in one pattern. Variable is the variable name; Defined and Expected are Cypher type names; none is translated."
   other: "Type mismatch: {{.Variable}} defined with conflicting type {{.Defined}} (expected {{.Expected}})"
+- id: cyphermatching.repeatable_elements_unbounded
+  description: "A quantifier without an upper bound in MATCH REPEATABLE ELEMENTS. REPEATABLE ELEMENTS is untranslated Cypher syntax."
+  other: "The quantified path pattern may yield an infinite number of rows under match mode 'REPEATABLE ELEMENTS'. Add an upper bound to the quantified path pattern."
+- id: cyphermatching.repeatable_elements_path_mode
+  description: "A TRAIL or ACYCLIC path mode in MATCH REPEATABLE ELEMENTS. Mode and REPEATABLE ELEMENTS are untranslated Cypher syntax."
+  other: "REPEATABLE ELEMENTS with {{.Mode}} path mode is not supported."

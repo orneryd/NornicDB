@@ -79,7 +79,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 		if len(paths) > 1 {
 			filtered := rows[:0]
 			for _, row := range rows {
-				if pipelineProductPathsUnique(row, paths) {
+				if repeatableElements(ctx) || pipelineProductPathsUnique(row, paths) {
 					filtered = append(filtered, row)
 				}
 			}
