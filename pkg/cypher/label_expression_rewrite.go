@@ -94,12 +94,20 @@ func desugarLabelExpressions(query string, params map[string]interface{}) (strin
 	if len(r.edits) == 0 {
 		return query, nil, nil
 	}
-	sort.SliceStable(r.edits, func(i, j int) bool { return r.edits[i].start < r.edits[j].start })
-	rewrite := &queryRewrite{original: query, edits: make([]queryTextEdit, 0, len(r.edits)), verbatimColumns: true}
+	rewritten, rewrite := applyLabelRewriteEdits(query, r.edits, true)
+	return rewritten, rewrite, nil
+}
+
+// applyLabelRewriteEdits applies non-overlapping edits to query and returns
+// the result with the rewrite that maps it back (verbatimColumns: a column
+// whose text the client wrote is kept as is).
+func applyLabelRewriteEdits(query string, edits []labelRewriteEdit, verbatimColumns bool) (string, *queryRewrite) {
+	sort.SliceStable(edits, func(i, j int) bool { return edits[i].start < edits[j].start })
+	rewrite := &queryRewrite{original: query, edits: make([]queryTextEdit, 0, len(edits)), verbatimColumns: verbatimColumns}
 	var out strings.Builder
-	out.Grow(len(query) + 32*len(r.edits))
+	out.Grow(len(query) + 32*len(edits))
 	last := 0
-	for _, edit := range r.edits {
+	for _, edit := range edits {
 		out.WriteString(query[last:edit.start])
 		canonStart := out.Len()
 		out.WriteString(edit.text)
@@ -108,7 +116,7 @@ func desugarLabelExpressions(query string, params map[string]interface{}) (strin
 	}
 	out.WriteString(query[last:])
 	rewrite.canonical = out.String()
-	return rewrite.canonical, rewrite, nil
+	return rewrite.canonical, rewrite
 }
 
 // mayUsePatternPredicate reports whether query may hold a pattern element's

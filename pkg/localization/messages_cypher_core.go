@@ -53,6 +53,8 @@ const (
 	MessageCypherCoreInvalidInput                        MessageID = "cyphercore.invalid_input"
 	MessageCypherCoreInvalidInputExpectedExpression      MessageID = "cyphercore.invalid_input_expected_expression"
 	MessageCypherCoreInvalidInputExpectedIdentifier      MessageID = "cyphercore.invalid_input_expected_identifier"
+	MessageCypherCoreConditionalColumnNames              MessageID = "cyphercore.conditional_column_names"
+	MessageCypherCoreConditionalColumnCount              MessageID = "cyphercore.conditional_column_count"
 	MessageCypherCoreListOperandTypeMismatch             MessageID = "cyphercore.list_operand_type_mismatch"
 	MessageCypherCoreVectorDimensionRange                MessageID = "cyphercore.vector_dimension_range"
 	MessageCypherCoreVectorDimensionMismatch             MessageID = "cyphercore.vector_dimension_mismatch"
@@ -328,6 +330,18 @@ func CypherCoreYieldPaginationInvalid() Message {
 
 func CypherCoreInvalidInput(token string) Message {
 	return cypherCoreMessage(MessageCypherCoreInvalidInput, "Invalid input '"+token+"'", map[string]any{"Token": token})
+}
+
+// CypherCoreConditionalColumnNames is Neo4j's message for WHEN branches
+// whose columns have different names.
+func CypherCoreConditionalColumnNames() Message {
+	return cypherCoreMessage(MessageCypherCoreConditionalColumnNames, "All conditional queries must have the same return column names. Use `AS` to ensure columns have the same name.", nil)
+}
+
+// CypherCoreConditionalColumnCount is Neo4j's message for WHEN branches that
+// return different numbers of columns.
+func CypherCoreConditionalColumnCount() Message {
+	return cypherCoreMessage(MessageCypherCoreConditionalColumnCount, "All conditional queries must return the same number of columns.", nil)
 }
 
 func CypherCoreInvalidInputExpectedExpression(token string) Message {
