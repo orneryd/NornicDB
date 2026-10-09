@@ -415,6 +415,18 @@ func TestLLMReranker_BuildPromptAndParseResponse(t *testing.T) {
 	require.Nil(t, scores)
 }
 
+// When the LLM scores every candidate below MinScore, they keep their order:
+// the rerank ran, and found nothing to promote.
+func TestLLMReranker_AllBelowMinScoreKeepsOrder(t *testing.T) {
+	r := NewLLMReranker(&LLMRerankerConfig{Enabled: true, Timeout: time.Second, MinScore: 0.5}, func(context.Context, string) (string, error) {
+		return `{"ranked":[{"index":1,"score":0.2},{"index":0,"score":0.1}]}`, nil
+	})
+	out, err := r.Rerank(context.Background(), "q", []RerankCandidate{{ID: "a", Content: "alpha", Score: 0.8}, {ID: "b", Content: "beta", Score: 0.6}})
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "b"}, []string{out[0].ID, out[1].ID})
+	assert.Equal(t, 0.8, out[0].FinalScore)
+}
+
 func TestLLMReranker_RerankScoredFilteredAndFallbacks(t *testing.T) {
 	cfg := &LLMRerankerConfig{
 		Enabled:       true,

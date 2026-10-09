@@ -3758,6 +3758,14 @@ func TestService_HybridSearchReportsRerankFallback(t *testing.T) {
 	require.Equal(t, "rrf_hybrid+rerank", response.SearchMethod)
 	require.False(t, response.FallbackTriggered)
 	require.Empty(t, response.FallbackReason)
+
+	// After another stage, the rerank is appended to its method.
+	opts.MMREnabled = true
+	response, err = svc.Search(ctx, "library transcript", []float32{0.6, 0.4}, opts)
+	require.NoError(t, err)
+	require.Equal(t, "rrf_hybrid+mmr+rerank", response.SearchMethod)
+	require.Contains(t, response.Message, "+ Reranking (test_reranker)")
+	require.False(t, response.FallbackTriggered)
 }
 
 func TestService_RerankTopKBudgetIsDeclaredOnlyAtRequestedDepth(t *testing.T) {
