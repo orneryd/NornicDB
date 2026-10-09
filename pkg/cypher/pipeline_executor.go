@@ -3500,6 +3500,13 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if !ok {
 			return nil, false
 		}
+		if len(orderTerms) > 0 {
+			expressions := make([]string, len(projections))
+			for index, projection := range projections {
+				expressions[index] = projection.expr
+			}
+			orderTerms = alignOrderTerms(orderTerms, expressions)
+		}
 
 		out := make([]pipelineRow, 0, len(groups))
 		needsOrderScopes := len(orderTerms) > 0 || postWithWhere != "" || withDistinct || windowedWhere != ""
@@ -3700,6 +3707,121 @@ func orderedProjectionExpressions(terms []orderByTerm, count int, item func(inde
 		}
 	}
 	return ordered
+}
+
+// alignOrderTerms respells the aggregate calls of ORDER BY terms as the
+// projection expressions (expressions) spell them, and a term that is a
+// projection expression up to that spelling and whitespace as that
+// expression: COUNT(*) DESC after RETURN k, count(*) AS c reads count(*).
+// The order scope maps a projection's text to its value, so the term then
+// reads the projected value, as in Neo4j, where a function name's case and
+// the whitespace between tokens don't change an expression. Terms are
+// returned unchanged (not copied) when nothing differs.
+func alignOrderTerms(terms []orderByTerm, expressions []string) []orderByTerm {
+	spellings := aggregateCallSpellings(expressions)
+	var aligned []orderByTerm
+	for index, term := range terms {
+		column := respellAggregateCalls(term.column, spellings)
+		key := stripExpressionWhitespace(column)
+		for _, expression := range expressions {
+			if expression != column && stripExpressionWhitespace(expression) == key {
+				column = expression
+				break
+			}
+		}
+		if column == term.column {
+			continue
+		}
+		if aligned == nil {
+			aligned = append([]orderByTerm(nil), terms...)
+		}
+		aligned[index].column = column
+	}
+	if aligned == nil {
+		return terms
+	}
+	return aligned
+}
+
+// aggregateCallSpellings maps the key (aggregateCallKey) of each aggregate
+// call in expressions to its text there. Nil when there is none.
+func aggregateCallSpellings(expressions []string) map[string]string {
+	var spellings map[string]string
+	for _, expression := range expressions {
+		for _, call := range semanticAggregateCalls(expression) {
+			if spellings == nil {
+				spellings = make(map[string]string)
+			}
+			spellings[aggregateCallKey(call)] = call
+		}
+	}
+	return spellings
+}
+
+// respellAggregateCalls writes each aggregate call of text that spellings
+// holds as spellings spells it: COUNT(distinct n) as count(DISTINCT n).
+func respellAggregateCalls(text string, spellings map[string]string) string {
+	if len(spellings) == 0 {
+		return text
+	}
+	for _, call := range semanticAggregateCalls(text) {
+		if spelling, ok := spellings[aggregateCallKey(call)]; ok && spelling != call {
+			text = strings.Replace(text, call, spelling, 1)
+		}
+	}
+	return text
+}
+
+// aggregateCallKey is an aggregate call with its function name and a
+// leading DISTINCT upper-cased and whitespace outside quotes removed: two
+// calls with one key are one expression.
+func aggregateCallKey(call string) string {
+	open := strings.IndexByte(call, '(')
+	if open < 0 {
+		return call
+	}
+	arguments := strings.TrimSpace(call[open+1:])
+	if len(arguments) > len("DISTINCT") && strings.EqualFold(arguments[:len("DISTINCT")], "DISTINCT") && !isIdentByte(arguments[len("DISTINCT")]) {
+		arguments = "DISTINCT " + arguments[len("DISTINCT"):]
+	}
+	return upperASCII(strings.TrimSpace(call[:open])) + "(" + stripExpressionWhitespace(arguments)
+}
+
+// stripExpressionWhitespace removes the whitespace outside quoted text, but
+// for one space between two identifier characters, so NOT a stays apart
+// from NOTa.
+func stripExpressionWhitespace(expression string) string {
+	expression = strings.TrimSpace(expression)
+	var stripped strings.Builder
+	stripped.Grow(len(expression))
+	var quote byte
+	for index := 0; index < len(expression); index++ {
+		current := expression[index]
+		switch {
+		case quote != 0:
+			if current == '\\' && quote != '`' && index+1 < len(expression) {
+				stripped.WriteByte(current)
+				index++
+				current = expression[index]
+			} else if current == quote {
+				quote = 0
+			}
+		case current == '\'' || current == '"' || current == '`':
+			quote = current
+		case isASCIIWhitespace(current):
+			next := index + 1
+			for next < len(expression) && isASCIIWhitespace(expression[next]) {
+				next++
+			}
+			if isIdentByte(expression[index-1]) && isIdentByte(expression[next]) {
+				stripped.WriteByte(' ')
+			}
+			index = next - 1
+			continue
+		}
+		stripped.WriteByte(current)
+	}
+	return stripped.String()
 }
 
 // orderPipelineRowsWithScopes is orderPipelineRows with each row's terms
@@ -4264,6 +4386,19 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 			}
 		}
 
+		// ORDER BY reads a group's grouping keys, its projected columns, and
+		// a projection's expression text as its value (count(*) in
+		// RETURN k, count(*) AS c ORDER BY count(*) DESC, k), as after an
+		// aggregating WITH.
+		orderTerms := parseOrderByTerms(modifiers)
+		if len(orderTerms) > 0 {
+			expressions := make([]string, len(projs))
+			for index, projection := range projs {
+				expressions[index] = projection.expr
+			}
+			orderTerms = alignOrderTerms(orderTerms, expressions)
+		}
+		var projectedRows, orderScopes []pipelineRow
 		for _, group := range groups {
 			outRow := make([]interface{}, 0, len(projs))
 			for index, projection := range projs {
@@ -4274,7 +4409,27 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 				}
 				outRow = append(outRow, value)
 			}
-			result.Rows = append(result.Rows, outRow)
+			if len(orderTerms) == 0 {
+				result.Rows = append(result.Rows, outRow)
+				continue
+			}
+			projected := make(pipelineRow, len(projs))
+			scope := make(pipelineRow, len(group.first)+2*len(projs))
+			for name, value := range group.first {
+				scope[name] = value
+			}
+			for index, projection := range projs {
+				scope[projection.expr] = outRow[index]
+			}
+			for index, column := range result.Columns {
+				projected[column] = outRow[index]
+				scope[column] = outRow[index]
+			}
+			projectedRows = append(projectedRows, projected)
+			orderScopes = append(orderScopes, scope)
+		}
+		if len(orderTerms) > 0 {
+			return e.finishPipelineReturn(ctx, result, projectedRows, orderScopes, orderTerms, modifiers, returnDistinct)
 		}
 		if returnDistinct {
 			result.Rows = deduplicatePipelineResultRows(result.Rows)
@@ -4338,6 +4493,13 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		}
 		orderScopes = append(orderScopes, scope)
 	}
+	return e.finishPipelineReturn(ctx, result, projectedRows, orderScopes, orderTerms, modifiers, returnDistinct)
+}
+
+// finishPipelineReturn applies DISTINCT, ORDER BY (each row's terms read in
+// orderScopes[i]), SKIP and LIMIT to a RETURN's projected rows and writes
+// them to result in its column order.
+func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *ExecuteResult, projectedRows, orderScopes []pipelineRow, orderTerms []orderByTerm, modifiers string, returnDistinct bool) (*ExecuteResult, bool) {
 	if returnDistinct {
 		projectedRows, orderScopes = deduplicatePipelineRowsWithScopes(projectedRows, orderScopes, result.Columns)
 	}
