@@ -37,6 +37,21 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 	require.Contains(t, engine.edgeCache, EdgeID("gen:e"))
 	engine.cacheFillEdge(0, nil)
 
+	// A read through the adjacency cache fills the edge bodies it misses.
+	_, err = engine.CreateNode(&Node{ID: "gen:s"})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: "gen:t"})
+	require.NoError(t, err)
+	require.NoError(t, engine.CreateEdge(&Edge{ID: "gen:st", StartNode: "gen:s", EndNode: "gen:t", Type: "T"}))
+	_, err = engine.GetOutgoingEdges("gen:s")
+	require.NoError(t, err)
+	require.Contains(t, engine.outgoingAdjCache, NodeID("gen:s"))
+	engine.cacheInvalidateEdges()
+	edges, err := engine.GetOutgoingEdges("gen:s")
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+	require.Contains(t, engine.edgeCache, EdgeID("gen:st"))
+
 	gen = engine.adjCacheGen.current()
 	engine.adjCacheInvalidateForEdge(&Edge{StartNode: "gen:a", EndNode: "gen:b"})
 	engine.adjCacheStoreOutgoing(gen, "gen:a", []EdgeID{"gen:e"})
@@ -48,6 +63,17 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 	engine.labelCacheInvalidateForNodeLabels([]string{"L"}, "gen:n")
 	engine.labelCacheSetFirst(gen, "L", "gen:n")
 	require.NotContains(t, engine.labelFirstNodeCache, "L")
+	// A read that drops the stale first node it found keeps its generation
+	// only when nothing else wrote the cache meanwhile.
+	gen = engine.labelFirstCacheGen.current()
+	engine.labelCacheSetFirst(gen, "L", "gen:stale")
+	kept := engine.labelCacheDropStaleFirst(gen, "L", "gen:stale")
+	require.NotContains(t, engine.labelFirstNodeCache, "L")
+	engine.labelCacheSetFirst(kept, "L", "gen:n")
+	require.Equal(t, NodeID("gen:n"), engine.labelFirstNodeCache["L"])
+	stale := engine.labelFirstCacheGen.current() - 1
+	require.Equal(t, stale, engine.labelCacheDropStaleFirst(stale, "L", "gen:other"), "another write since: stays stale")
+	require.Equal(t, NodeID("gen:n"), engine.labelFirstNodeCache["L"], "only the stale id is dropped")
 
 	_, err = engine.GetEdgesByType("T")
 	require.NoError(t, err)
