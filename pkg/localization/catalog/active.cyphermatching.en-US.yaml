@@ -130,3 +130,30 @@
 - id: cyphermatching.aggregation_scope_variable
   description: A WITH or RETURN with DISTINCT or an aggregation reads, in its WHERE or ORDER BY, a variable it doesn't project. WITH, RETURN and DISTINCT are untranslated Cypher syntax; Variable is the untranslated variable name.
   other: "In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN: {{.Variable}}"
+- id: cyphermatching.path_selector_path_count_not_positive
+  description: "A path selector's path count is 0 (SHORTEST 0, ANY 0)."
+  other: "The path count needs to be greater than 0."
+- id: cyphermatching.path_selector_group_count_not_positive
+  description: "A SHORTEST k GROUPS selector's group count is 0."
+  other: "The group count needs to be greater than 0."
+- id: cyphermatching.path_selector_multiple_patterns
+  description: "A MATCH with a selective path selector (ANY, SHORTEST) has another pattern. MATCH and REPEATABLE ELEMENTS are untranslated Cypher syntax."
+  other: "Multiple path patterns cannot be used in the same clause in combination with a selective path selector. You may want to use multiple MATCH clauses, or you might want to consider using the REPEATABLE ELEMENTS match mode."
+- id: cyphermatching.path_selector_with_shortest_path_function
+  description: "shortestPath or allShortestPaths is used with a path selector, a match mode or a path mode. The Cypher in backquotes is not translated."
+  other: "Mixing shortestPath/allShortestPaths with path selectors (e.g. `ANY SHORTEST`), explicit match modes (e.g. `DIFFERENT RELATIONSHIPS`) or explicit path modes (e.g. `ACYCLIC`) is not allowed."
+- id: cyphermatching.path_mode_variable_length
+  description: "An explicit path mode is used with a variable-length relationship. Mode is a Cypher keyword and is not translated."
+  other: "Using a variable-length relationship such as `-[*]->` together with explicit path mode `{{.Mode}}` is not available."
+- id: cyphermatching.path_selector_in_write_pattern
+  description: "A path selector in CREATE or MERGE. Clause is the clause keyword."
+  other: "Path selectors such as `SHORTEST 1 PATHS` cannot be used in a {{.Clause}} clause, but only in a MATCH clause."
+- id: cyphermatching.path_selector_count_invalid
+  description: "A path selector's count parameter is not positive. Value is the parameter's value."
+  other: "Count requires positive integer argument, got `{{.Value}}`"
+- id: cyphermatching.path_selector_count_type
+  description: "A path selector's count parameter is not an integer. Type is the Cypher type name and is not translated."
+  other: "Expected Integer but got {{.Type}}"
+- id: cyphermatching.path_selector_outside_match
+  description: "A path selector reached a step that does not run path patterns."
+  other: "a path selector can only be used in a MATCH pattern"

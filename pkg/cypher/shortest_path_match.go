@@ -31,6 +31,15 @@ type shortestPathMatch struct {
 	// relationship variable and constrains the search (Neo4j returns the
 	// shortest path that satisfies it).
 	endpointWhere, pathWhere string
+	// selector is the pattern's path selector (ANY, SHORTEST), nil for
+	// shortestPath and allShortestPaths (path_selector_match.go).
+	selector *pathSelector
+	// postWhere filters a selector's selected paths: the clause's WHERE
+	// conjuncts that read the path, its relationships or its inner nodes.
+	postWhere string
+	// pattern is a selected pattern the search can't run (more than one
+	// relationship, or none): it is matched whole, with pathWhere.
+	pattern string
 }
 
 // parseShortestPathMatch reads the body of a MATCH clause (after MATCH or
@@ -66,6 +75,9 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 		return nil, false, nil
 	}
 	funcName, inner, _, _ := extractShortestPathCall(call)
+	if selector, predicate, terms, ok := splitPathSelectorTerm(where); ok {
+		return e.parseSelectedPathMatch(ctx, inner, pathVariable, others, selector, predicate, terms)
+	}
 	startPattern, endPattern, ok := shortestPathEndpointPatterns(inner)
 	traversal := e.parseTraversalPattern(ctx, inner)
 	if !ok || traversal == nil || traversal.IsChained {
@@ -113,14 +125,19 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 	}
 	m.endpointWhere = strings.Join(endpointTerms, " AND ")
 	m.pathWhere = strings.Join(pathTerms, " AND ")
-	for _, part := range others {
+	m.setOthersVariables()
+	return m, true, nil
+}
+
+// setOthersVariables lists the variables the clause's other patterns bind.
+func (m *shortestPathMatch) setOthersVariables() {
+	for _, part := range m.others {
 		m.othersVariables = append(m.othersVariables, extractNodeVariables(part)...)
 		m.othersVariables = append(m.othersVariables, extractRelationshipVariables(part)...)
 		if variable := extractPathAssignmentVariable(part); variable != "" {
 			m.othersVariables = append(m.othersVariables, variable)
 		}
 	}
-	return m, true, nil
 }
 
 // shortestPathPatternError is Neo4j's SyntaxError for a shortestPath or
@@ -210,20 +227,14 @@ func shortestPathEndpointPatterns(pattern string) (string, string, bool) {
 // OPTIONAL MATCH keeps a row that finds no path, with the clause's new
 // variables null.
 func (e *StorageExecutor) pipelineApplyShortestPathMatch(ctx context.Context, rows []pipelineRow, m *shortestPathMatch, optional bool) ([]pipelineRow, error) {
-	relationship := m.traversal.Relationship.Variable
+	if m.selector != nil {
+		return e.pipelineApplySelectedPathMatch(ctx, rows, m, optional)
+	}
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		bases := []pipelineRow{row}
-		for _, part := range m.others {
-			var next []pipelineRow
-			for _, base := range bases {
-				matched, err := e.pipelineMatchRows(ctx, base, "MATCH "+part)
-				if err != nil {
-					return nil, err
-				}
-				next = append(next, matched...)
-			}
-			bases = next
+		bases, err := e.shortestPathBases(ctx, m, row)
+		if err != nil {
+			return nil, err
 		}
 		var pairs []pipelineRow
 		for _, base := range bases {
@@ -242,32 +253,70 @@ func (e *StorageExecutor) pipelineApplyShortestPathMatch(ctx context.Context, ro
 				return nil, err
 			}
 			for _, path := range paths {
-				bound := make(pipelineRow, len(pair)+2)
-				for name, value := range pair {
-					bound[name] = value
-				}
-				bound[m.pathVariable] = e.pathToMap(path)
-				if relationship != "" {
-					bound[relationship] = e.evaluateExpressionWithPathContext(ctx, relationship, e.buildPathContext(path, m.traversal))
-				}
-				out = append(out, bound)
+				out = append(out, e.bindShortestPath(ctx, m, pair, path))
 				found++
 			}
 		}
 		if optional && found == 0 {
-			bound := make(pipelineRow, len(row)+4)
-			for name, value := range row {
-				bound[name] = value
-			}
-			for _, name := range append([]string{m.startVariable, m.endVariable, m.pathVariable, relationship}, m.othersVariables...) {
-				if _, exists := bound[name]; !exists && name != "" {
-					bound[name] = nil
-				}
-			}
-			out = append(out, bound)
+			out = append(out, m.unmatchedRow(row))
 		}
 	}
 	return out, nil
+}
+
+// shortestPathBases returns the rows the clause's other patterns bind for
+// one input row, matched one at a time.
+func (e *StorageExecutor) shortestPathBases(ctx context.Context, m *shortestPathMatch, row pipelineRow) ([]pipelineRow, error) {
+	bases := []pipelineRow{row}
+	for _, part := range m.others {
+		var next []pipelineRow
+		for _, base := range bases {
+			matched, err := e.pipelineMatchRows(ctx, base, "MATCH "+part)
+			if err != nil {
+				return nil, err
+			}
+			next = append(next, matched...)
+		}
+		bases = next
+	}
+	return bases, nil
+}
+
+// bindShortestPath returns pair with the path, and the relationship
+// variable when there is one, bound.
+func (e *StorageExecutor) bindShortestPath(ctx context.Context, m *shortestPathMatch, pair pipelineRow, path PathResult) pipelineRow {
+	bound := make(pipelineRow, len(pair)+2)
+	for name, value := range pair {
+		bound[name] = value
+	}
+	bound[m.pathVariable] = e.pathToMap(path)
+	if relationship := m.traversal.Relationship.Variable; relationship != "" {
+		bound[relationship] = e.evaluateExpressionWithPathContext(ctx, relationship, e.buildPathContext(path, m.traversal))
+	}
+	return bound
+}
+
+// unmatchedRow is an OPTIONAL MATCH's row for an input row that matches
+// nothing: the clause's new variables are null.
+func (m *shortestPathMatch) unmatchedRow(row pipelineRow) pipelineRow {
+	names := append([]string{m.startVariable, m.endVariable, m.pathVariable}, m.othersVariables...)
+	if m.traversal != nil {
+		names = append(names, m.traversal.Relationship.Variable)
+	}
+	if m.pattern != "" {
+		names = append(names, extractNodeVariables(m.pattern)...)
+		names = append(names, extractRelationshipVariables(m.pattern)...)
+	}
+	bound := make(pipelineRow, len(row)+len(names))
+	for name, value := range row {
+		bound[name] = value
+	}
+	for _, name := range names {
+		if _, exists := bound[name]; !exists && name != "" {
+			bound[name] = nil
+		}
+	}
+	return bound
 }
 
 // shortestPathEndpointPairs returns the rows that bind the clause's start
