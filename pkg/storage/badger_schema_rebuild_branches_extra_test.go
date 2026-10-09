@@ -55,11 +55,20 @@ func TestBadgerEngine_RebuildUniqueConstraintValues_PropertyCompositeAndErrors(t
 		require.Len(t, pidx.values, 2)
 		pidx.mu.RUnlock()
 
+		// Every equality index lives in compositeIndexes now: the constraint's
+		// email index, the arity-1 name index and the arity-2 full-name index.
 		cidxs := sm.GetCompositeIndexesForLabel("User")
-		require.Len(t, cidxs, 1)
-		cidxs[0].mu.RLock()
-		require.NotEmpty(t, cidxs[0].fullIndex)
-		cidxs[0].mu.RUnlock()
+		require.Len(t, cidxs, 3)
+		var fullName *CompositeIndex
+		for _, idx := range cidxs {
+			if len(idx.Properties) == 2 {
+				fullName = idx
+			}
+		}
+		require.NotNil(t, fullName)
+		fullName.mu.RLock()
+		require.NotEmpty(t, fullName.fullIndex)
+		fullName.mu.RUnlock()
 	})
 
 	t.Run("rebuild returns error on duplicate unique values", func(t *testing.T) {

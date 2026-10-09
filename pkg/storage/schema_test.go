@@ -671,13 +671,16 @@ func TestCompositeIndex(t *testing.T) {
 		}
 	})
 
-	t.Run("CompositeIndexRequiresMultipleProperties", func(t *testing.T) {
+	t.Run("CompositeIndexRequiresAtLeastOneProperty", func(t *testing.T) {
 		sm := NewSchemaManager()
 
-		// Single property should fail
+		// A single-property composite index is the arity-1 equality index.
 		err := sm.AddCompositeIndex("single_idx", "User", []string{"name"})
-		if err == nil {
-			t.Error("Expected error for single-property composite index")
+		if err != nil {
+			t.Errorf("Expected arity-1 composite index to succeed, got: %v", err)
+		}
+		if idx, ok := sm.GetCompositeIndex("single_idx"); !ok || len(idx.Properties) != 1 {
+			t.Errorf("Expected arity-1 composite index with one property")
 		}
 
 		// Empty should fail
@@ -1017,7 +1020,8 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 		sm.AddCompositeIndex("test_idx", "User", []string{"a", "b"})
 		idx, _ := sm.GetCompositeIndex("test_idx")
 
-		// Indexing with nil value
+		// Indexing with a nil leading value: like a single-property index,
+		// null has no index key, so the node is not filed under any key.
 		err := idx.IndexNode("user1", map[string]interface{}{
 			"a": nil,
 			"b": "test",
@@ -1026,10 +1030,10 @@ func TestCompositeIndexEdgeCases(t *testing.T) {
 			t.Errorf("Unexpected error with nil value: %v", err)
 		}
 
-		// Should be findable
+		// A nil lookup therefore finds nothing through the index.
 		results := idx.LookupFull(nil, "test")
-		if len(results) != 1 {
-			t.Errorf("Expected 1 result with nil key, got %d", len(results))
+		if len(results) != 0 {
+			t.Errorf("Expected 0 results with nil key, got %d", len(results))
 		}
 	})
 

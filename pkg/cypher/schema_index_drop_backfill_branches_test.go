@@ -112,7 +112,7 @@ func TestSchema_DropIndexAndDropConstraintBranches(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestSchema_BackfillPropertyIndex_ErrorBranches(t *testing.T) {
+func TestSchema_BackfillCompositeIndex_ErrorBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// GetNodesByLabel error branch.
@@ -126,24 +126,20 @@ func TestSchema_BackfillPropertyIndex_ErrorBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, errStore.GetSchema().AddPropertyIndex("idx_err_label", "ErrLabel", []string{"p"}))
 
-	err = errExec.backfillPropertyIndex("ErrLabel", []string{"p"})
+	err = errExec.backfillCompositeIndex("idx_err_label", "ErrLabel", []string{"p"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to backfill index for label ErrLabel")
 
-	// PropertyIndexInsert error branch (index missing for target property).
+	// Index missing for the target: BackfillCompositeIndex reports not found.
 	baseMissing := newTestMemoryEngine(t)
 	missingStore := storage.NewNamespacedEngine(baseMissing, "schema_backfill_missing_idx")
 	missingExec := NewStorageExecutor(missingStore)
 
 	_, err = missingStore.CreateNode(&storage.Node{ID: storage.NodeID("m1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"p": "v"}})
 	require.NoError(t, err)
-	err = missingExec.backfillPropertyIndex("Doc", []string{"p"})
+	err = missingExec.backfillCompositeIndex("missing_idx", "Doc", []string{"p"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to backfill property index")
-
-	// len(properties) != 1 short-circuit branch.
-	err = missingExec.backfillPropertyIndex("Doc", []string{"p", "q"})
-	require.NoError(t, err)
 
 	// Keep ctx used to avoid lints in future edits.
 	require.NotNil(t, ctx)

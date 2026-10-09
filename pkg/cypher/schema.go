@@ -2193,64 +2193,60 @@ func (e *StorageExecutor) addSchemaConstraint(constraint storage.Constraint, ifN
 	if existed || !owned {
 		return nil
 	}
-	if err := e.backfillPropertyIndex(index.Label, index.Properties); err != nil {
+	if err := e.backfillCompositeIndex(index.Name, index.Label, index.Properties); err != nil {
 		_ = schema.DropConstraint(constraint.Name)
 		return err
 	}
 	return nil
 }
 
-// addPropertyIndex creates a property index and, when it didn't exist yet,
-// fills it from the label's nodes. An existing index is left as it is: it is
-// already maintained, and filling it again would list its nodes twice. A new
-// index whose fill fails is dropped again: index lookups trust an index to
-// hold every node with the value, so a half-filled one would drop rows.
+// addPropertyIndex creates an equality index (arity-1 or composite) and,
+// when it didn't exist yet, fills it from the label's nodes. An existing
+// index is left as it is: it is already maintained, and filling it again
+// would list its nodes twice. A new index whose fill fails is dropped again:
+// index lookups trust an index to hold every node with the value, so a
+// half-filled one would drop rows.
 func (e *StorageExecutor) addPropertyIndex(name, label string, properties []string) error {
 	schema := e.storage.GetSchema()
-	if len(properties) > 1 {
-		return schema.AddRangeIndexForEntity(name, label, properties, storage.ConstraintEntityNode)
-	}
-	existed := len(properties) > 0 && schema.HasPropertyIndex(label, properties[0])
-	if err := schema.AddPropertyIndex(name, label, properties); err != nil {
+	_, existed := schema.GetCompositeIndex(name)
+	if err := schema.AddCompositeIndex(name, label, properties); err != nil {
 		return err
 	}
 	if existed {
 		return nil
 	}
-	if err := e.backfillPropertyIndex(label, properties); err != nil {
+	if err := e.backfillCompositeIndex(name, label, properties); err != nil {
 		_ = schema.DropIndex(name)
 		return err
 	}
 	return nil
 }
 
-func (e *StorageExecutor) backfillPropertyIndex(label string, properties []string) error {
-	// Current runtime lookup path uses single-property indexes.
-	if len(properties) != 1 {
-		return nil
-	}
-	property := properties[0]
+// backfillCompositeIndex fills a newly created equality index from the
+// label's stored nodes. A new index whose fill fails is dropped by
+// addPropertyIndex / addSchemaConstraint, since index lookups trust an index
+// to hold every matching node.
+func (e *StorageExecutor) backfillCompositeIndex(name, label string, properties []string) error {
 	schema := e.storage.GetSchema()
 	if schema == nil {
 		return nil
 	}
-
 	nodes, err := e.storage.GetNodesByLabel(label)
 	if err != nil {
 		return localizedError(localization.CypherSchemaBackfillIndexFailed(label, err), err)
 	}
-	values := make(map[storage.NodeID]interface{}, len(nodes))
+	entries := make(map[storage.NodeID]map[string]interface{}, len(nodes))
 	for _, node := range nodes {
 		if node == nil || node.Properties == nil {
 			continue
 		}
-		value, ok := node.Properties[property]
-		if !ok {
-			continue
-		}
-		values[storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, node.ID)] = value
+		entries[storage.EnsureNodeIDDatabasePrefixForEngine(e.storage, node.ID)] = node.Properties
 	}
-	if err := schema.BackfillPropertyIndex(label, property, values); err != nil {
+	if err := schema.BackfillCompositeIndex(name, entries); err != nil {
+		property := ""
+		if len(properties) > 0 {
+			property = properties[0]
+		}
 		return localizedError(localization.CypherSchemaBackfillPropertyIndexFailed(label, property, err), err)
 	}
 	return nil

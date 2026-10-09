@@ -305,13 +305,13 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 	if schema != nil {
 		label := labels[0]
 
-		for _, idx := range schema.GetCompositeIndexesForLabel(label) {
+		for _, idx := range schema.SeekableCompositeIndexesForLabel(label) {
 			if !mergeIndexMatchesAllProperties(idx, props) {
 				continue
 			}
 			schemaLookupUsed = true
 			e.markMergeSchemaLookupUsed()
-			candidateNodes := e.loadMergeCandidateNodes(store, idx.LookupFull(compositeLookupValues(idx, props)...))
+			candidateNodes := e.loadMergeCandidateNodes(store, compositeIndexLookup(store, idx, compositeLookupValues(idx, props), true))
 			for _, n := range candidateNodes {
 				if mergeNodeMatches(n, labels, props) {
 					e.cacheMergeNode(labels, props, n)
@@ -472,10 +472,10 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(store storage.Engine, lab
 			return nil, true
 		}
 	}
-	for _, idx := range schema.GetCompositeIndexesForLabel(label) {
+	for _, idx := range schema.SeekableCompositeIndexesForLabel(label) {
 		if mergeIndexMatchesAllProperties(idx, props) {
 			e.markMergeSchemaLookupUsed()
-			return idx.LookupFull(compositeLookupValues(idx, props)...), true
+			return compositeIndexLookup(store, idx, compositeLookupValues(idx, props), true), true
 		}
 	}
 	var best []storage.NodeID

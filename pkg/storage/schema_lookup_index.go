@@ -118,11 +118,6 @@ func (sm *SchemaManager) indexNameTakenLocked(name string) bool {
 	if _, ok := sm.rangeIndexes[name]; ok {
 		return true
 	}
-	for _, idx := range sm.propertyIndexes {
-		if idx.Name == name {
-			return true
-		}
-	}
 	for _, existing := range sm.lookupIndexes {
 		if existing == name {
 			return true

@@ -49,7 +49,7 @@ func TestSchemaManagerPropertyIndexHelpers(t *testing.T) {
 	require.True(t, sm.HasAnyPropertyIndexForLabel("Doc"))
 	require.False(t, sm.HasAnyPropertyIndexForLabel("Other"))
 
-	idx := sm.propertyIndexes["Doc:rank"]
+	idx, _ := sm.GetPropertyIndex("Doc", "rank")
 	idx.mu.Lock()
 	idx.values[2] = []NodeID{"n2b", "n2a"}
 	idx.values[1] = []NodeID{"n1"}
@@ -74,7 +74,7 @@ func TestSchemaManager_RemoveFromPropertyIndex_PartialRemovalRetainsBucket(t *te
 
 	require.NoError(t, sm.PropertyIndexDelete("Doc", "rank", "n1", int64(5)))
 
-	idx := sm.propertyIndexes["Doc:rank"]
+	idx, _ := sm.GetPropertyIndex("Doc", "rank")
 	require.NotNil(t, idx)
 	require.Equal(t, []NodeID{"n2"}, sm.PropertyIndexLookup("Doc", "rank", int64(5)))
 }

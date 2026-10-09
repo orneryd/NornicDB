@@ -117,7 +117,7 @@ func StorageSchemaUniqueConstraintViolation(label, property string, value any) M
 }
 
 func StorageSchemaCompositeIndexMinProperties(count int) Message {
-	return storageSchemaMessage(MessageStorageSchemaCompositeIndexMinProperties, "composite index requires at least 2 properties, got "+strconv.Itoa(count), map[string]any{"Count": count})
+	return storageSchemaMessage(MessageStorageSchemaCompositeIndexMinProperties, "composite index requires at least 1 property, got "+strconv.Itoa(count), map[string]any{"Count": count})
 }
 
 func StorageSchemaRangeIndexPropertiesRequired() Message {
