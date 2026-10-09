@@ -1058,6 +1058,20 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 					return writes.count, err
 				}
 				run.add(propName, value)
+			case operator == "[]=":
+				key, err := e.dynamicPropertyKeyOf(ctx, propName, nodeContext, fullRelContext, false)
+				if err != nil {
+					return writes.count, err
+				}
+				value, err := e.setPropertyValue(ctx, right, nodeContext, fullRelContext)
+				if err != nil {
+					return writes.count, err
+				}
+				run.add(key, value)
+			case operator == ":":
+				// Labels belong to nodes (validateSetClauseScope rejects a
+				// relationship target it can see statically).
+				return writes.count, labelTargetTypeError("Relationship")
 			}
 		}
 	}
@@ -1122,37 +1136,29 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 			writes.mapEntries(node.Properties, props, true)
 			node.Properties = setPropertyMap(props)
 		case operator == ":":
-			labelExpr := right
-			if labelExpr == "" {
-				continue
-			}
-			if strings.HasPrefix(labelExpr, "$(") && strings.HasSuffix(labelExpr, ")") {
-				innerExpr := strings.TrimSpace(labelExpr[2 : len(labelExpr)-1])
-				labelValue, ok := resolveContextPathRef(ctx, innerExpr)
-				if !ok {
-					labelValue = e.evaluateExpressionWithContext(ctx, innerExpr, fullContext, relContext)
-				}
-				labels := toStringSlice(labelValue)
-				if len(labels) == 0 {
-					labels = toStringSlice(e.parseValue(ctx, innerExpr))
-				}
-				for _, label := range labels {
-					if label == "" || !isValidIdentifier(label) || containsReservedKeyword(label) || containsString(node.Labels, label) {
-						continue
-					}
-					node.Labels = append(node.Labels, label)
-				}
-				continue
-			}
-			labels, err := setLabelChain(labelExpr)
+			items, err := setLabelChainItems(right)
 			if err != nil {
-				continue // rejected by validatePipelineSetAssignments before execution
+				return err
+			}
+			labels, err := e.chainLabelNames(ctx, items, fullContext, relContext)
+			if err != nil {
+				return err
 			}
 			for _, label := range labels {
 				if !containsString(node.Labels, label) {
 					node.Labels = append(node.Labels, label)
 				}
 			}
+		case operator == "[]=":
+			key, err := e.dynamicPropertyKeyOf(ctx, propName, fullContext, relContext, false)
+			if err != nil {
+				return err
+			}
+			value, err := e.setPropertyValue(ctx, right, fullContext, relContext)
+			if err != nil {
+				return err
+			}
+			run.add(key, value)
 		case operator == "=":
 			// Direct $param resolution (in setPropertyValue) preserves declared
 			// types end-to-end. The run's values are written together
@@ -1214,12 +1220,18 @@ func (e *StorageExecutor) setSourceMap(ctx context.Context, expr, operator strin
 // splitSetAssignment splits one SET assignment into its target variable,
 // property (for x.p = v), operator ("=", "+=" or ":" for labels) and
 // right-hand side. The operator is the first top-level "=" (preceded by "+"
-// for +=), so "=" or "+=" inside a value string does not change the form.
-// Targets may be parenthesized: SET (n).p = v. Unrecognized text yields an
-// empty operator.
+// for +=), so "=" or "+=" inside a value string, or inside a dynamic key's
+// brackets, does not change the form. Targets may be parenthesized:
+// SET (n).p = v.
+//
+// A dynamic property key, x[expr] = v (Neo4j 5.26), has operator "[]=" and
+// its key expression in property; the key is a property name only once
+// evaluated (dynamicPropertyKeyOf), so readers that need the name treat the
+// item as writing any key. x[expr] += v is not Cypher. Unrecognized text
+// yields an empty operator.
 func splitSetAssignment(assignment string) (target, property, operator, right string) {
 	assignment = strings.TrimSpace(assignment)
-	eq := strings.IndexByte(assignment, '=')
+	eq := findTopLevelByte(assignment, '=')
 	if colon := strings.IndexByte(assignment, ':'); colon > 0 && (eq < 0 || colon < eq) {
 		// Label form x:L1:L2 / x:$(expr); a dynamic label expression may
 		// itself contain "=".
@@ -1236,11 +1248,20 @@ func splitSetAssignment(assignment string) (target, property, operator, right st
 		left = assignment[:eq-1]
 		operator = "+="
 	}
+	right = strings.TrimSpace(assignment[eq+1:])
+	if receiver, key, subscript, ok := staticPostfixSplit(strings.TrimSpace(left)); ok && subscript {
+		key = strings.TrimSpace(key)
+		if operator == "+=" || key == "" {
+			return "", "", "", ""
+		}
+		variable, _, _ := parseSetAssignmentTarget(receiver)
+		return variable, key, "[]=", right
+	}
 	target, property, hasProperty := parseSetAssignmentTarget(left)
 	if operator == "+=" && hasProperty {
 		return "", "", "", ""
 	}
-	return target, property, operator, strings.TrimSpace(assignment[eq+1:])
+	return target, property, operator, right
 }
 
 // requireSetParameter reports a SET value that is a bare $name parameter not

@@ -15,16 +15,51 @@ import (
 
 // eachChainLabel calls visit for every label of a label chain (the text after
 // the variable's first colon, "L1:`L 2`"), in order, with backtick labels
-// unquoted. An empty segment ("A::B", a trailing ':') is visited as an empty
-// unquoted name. It returns false when the chain is malformed: a backtick left
-// open, or text other than spaces between a quoted label and the next ':'.
-// Names are slices of chain unless a doubled backtick has to be unescaped, so
-// scanning allocates nothing for ordinary labels.
+// unquoted (eachChainItem). A dynamic label $(expr) is visited as its text,
+// an unquoted name the label rules reject: only SET and REMOVE take them
+// (setLabelChainItems).
 func eachChainLabel(chain string, visit func(name string, quoted bool)) bool {
+	return eachChainItem(chain, func(text string, quoted, dynamic bool) {
+		if dynamic {
+			visit("$("+text+")", false)
+			return
+		}
+		visit(text, quoted)
+	})
+}
+
+// eachChainItem calls visit for every item of a label chain, in order: a
+// label name (backtick labels unquoted, quoted true) or the expression of a
+// dynamic label $(expr) (dynamic true). An empty segment ("A::B", a trailing
+// ':') is visited as an empty unquoted name. It returns false when the chain
+// is malformed: a backtick or $( left open, or text other than spaces between
+// a quoted label or a $(expr) and the next ':'. Names are slices of chain
+// unless a doubled backtick has to be unescaped, so scanning allocates
+// nothing for ordinary labels.
+func eachChainItem(chain string, visit func(text string, quoted, dynamic bool)) bool {
 	for start := 0; ; {
 		index := start
 		for index < len(chain) && isASCIISpace(chain[index]) {
 			index++
+		}
+		if index+1 < len(chain) && chain[index] == '$' && chain[index+1] == '(' {
+			closing := findMatchingDelimiter(chain, index+1, '(', ')')
+			if closing < 0 {
+				return false
+			}
+			end := closing + 1
+			for end < len(chain) && isASCIISpace(chain[end]) {
+				end++
+			}
+			if end < len(chain) && chain[end] != ':' {
+				return false
+			}
+			visit(strings.TrimSpace(chain[index+2:closing]), false, true)
+			if end >= len(chain) {
+				return true
+			}
+			start = end + 1
+			continue
 		}
 		if index < len(chain) && chain[index] == '`' {
 			name, end, ok := scanQuotedName(chain, index)
@@ -37,7 +72,7 @@ func eachChainLabel(chain string, visit func(name string, quoted bool)) bool {
 			if end < len(chain) && chain[end] != ':' {
 				return false
 			}
-			visit(name, true)
+			visit(name, true, false)
 			if end >= len(chain) {
 				return true
 			}
@@ -54,7 +89,7 @@ func eachChainLabel(chain string, visit func(name string, quoted bool)) bool {
 		if strings.IndexByte(segment, '`') >= 0 {
 			return false
 		}
-		visit(strings.TrimSpace(segment), false)
+		visit(strings.TrimSpace(segment), false, false)
 		if end >= len(chain) {
 			return true
 		}
@@ -97,19 +132,48 @@ func parseLabelChain(chain string) ([]string, error) {
 	return names, labelErr
 }
 
-// setLabelChain parses and validates the label part of a SET n:L1:`L 2` or
-// REMOVE n:L1 item into label names. An empty chain or an invalid unquoted
-// label is an error.
-func setLabelChain(chain string) ([]string, error) {
-	names, err := parseLabelChain(chain)
-	if err != nil {
+// labelChainItem is one item of a SET or REMOVE label chain: a label name,
+// or the expression of a dynamic label $(expr) (dynamicLabelNames reads its
+// value).
+type labelChainItem struct {
+	name       string
+	expression string
+}
+
+// setLabelChainItems parses and validates the label part of a SET
+// n:L1:`L 2`:$(expr) or REMOVE n:L1:$(expr) item into its items, in order.
+// An empty chain, an empty $(), or an invalid unquoted label is an error.
+func setLabelChainItems(chain string) ([]labelChainItem, error) {
+	items := make([]labelChainItem, 0, strings.Count(chain, ":")+1)
+	var labelErr error
+	wellFormed := eachChainItem(chain, func(text string, quoted, dynamic bool) {
+		switch {
+		case dynamic:
+			items = append(items, labelChainItem{expression: text})
+			if text == "" && labelErr == nil {
+				labelErr = localizedError(localization.CypherMutationsInvalidLabelName("$()"), nil)
+			}
+			return
+		case text == "" && !quoted:
+			return
+		case text != "":
+			items = append(items, labelChainItem{name: text})
+		}
+		if labelErr == nil {
+			labelErr = validateChainLabel(text, quoted)
+		}
+	})
+	if labelErr == nil && (!wellFormed || len(items) == 0) {
+		labelErr = localizedError(localization.CypherMutationsInvalidLabelName(chain), nil)
+	}
+	if labelErr != nil {
 		return nil, &classifiedCypherError{
-			cause:  err,
+			cause:  labelErr,
 			code:   "Neo.ClientError.Statement.SyntaxError",
 			detail: "InvalidLabel",
 		}
 	}
-	return names, nil
+	return items, nil
 }
 
 // labelChainNames returns the label names of a chain without validating them,

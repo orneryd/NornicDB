@@ -82,6 +82,7 @@ const (
 	MessageCypherMutationsSetMergeStringKeysRequired          MessageID = "cyphermutations.set_merge_string_keys_required"
 	MessageCypherMutationsSetMergeMapRequired                 MessageID = "cyphermutations.set_merge_map_required"
 	MessageCypherMutationsRemoveMatchRequired                 MessageID = "cyphermutations.remove_match_required"
+	MessageCypherMutationsRemoveItemInvalid                   MessageID = "cyphermutations.remove_item_invalid"
 	MessageCypherMutationsUnwindParameterNameRequired         MessageID = "cyphermutations.unwind_parameter_name_required"
 	MessageCypherMutationsUnwindParametersRequired            MessageID = "cyphermutations.unwind_parameters_required"
 	MessageCypherMutationsUnwindParameterNotFound             MessageID = "cyphermutations.unwind_parameter_not_found"
@@ -493,6 +494,12 @@ func CypherMutationsSetMergeMapRequired(source, valueType string) Message {
 }
 
 // CypherMutationsRemoveMatchRequired identifies REMOVE without MATCH.
+// CypherMutationsRemoveItemInvalid is the SyntaxError of a REMOVE item that
+// names no label (n:L, n IS L), property (n.p) or dynamic key (n[k]).
+func CypherMutationsRemoveItemInvalid(item string) Message {
+	return cypherMutationsMessage(MessageCypherMutationsRemoveItemInvalid, "Invalid REMOVE item: "+item+" (expected n:Label, n.property or n[key])", map[string]any{"Item": item})
+}
+
 func CypherMutationsRemoveMatchRequired() Message {
 	return cypherMutationsMessage(MessageCypherMutationsRemoveMatchRequired, "REMOVE requires a MATCH clause first (e.g., MATCH (n) REMOVE n.property)", nil)
 }

@@ -95,17 +95,32 @@ func pipelineClauseKeyword(kind pipelineClauseKind) string {
 	}
 }
 
-// validateRemoveClauseScope rejects a REMOVE item (m.x, m:L) whose variable
-// is not bound, as SET does and as Neo4j does ("Variable `m` not defined").
+// validateRemoveClauseScope rejects a REMOVE item (m.x, m:L, m[k],
+// m:$(e)) whose variable is not bound, as SET does and as Neo4j does
+// ("Variable `m` not defined"), and checks the expressions of its dynamic
+// keys and labels like a SET value's (validateWriteExpressionScope).
 func validateRemoveClauseScope(scope *semanticBindingScope, clause string) error {
-	body := strings.TrimSpace(clause[len("REMOVE"):])
-	for _, item := range splitTopLevelComma(body) {
-		variable, _, ok := scanIdentifierToken(strings.TrimSpace(item), 0)
-		if !ok || variable == "" {
-			continue
+	items, err := parseRemoveItems(strings.TrimSpace(clause[len("REMOVE"):]))
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if !scope.contains(item.variable) {
+			return createUndefinedVariableError(item.variable)
 		}
-		if !scope.contains(variable) {
-			return createUndefinedVariableError(variable)
+		expressions := make([]string, 0, len(item.labels)+1)
+		if item.key != "" {
+			expressions = append(expressions, item.key)
+		}
+		for _, label := range item.labels {
+			if label.expression != "" {
+				expressions = append(expressions, label.expression)
+			}
+		}
+		for _, expression := range expressions {
+			if err := validateWriteExpressionScope(expression, scope); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -162,9 +177,22 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 		target, property, operator, expression := splitSetAssignment(assignment)
 		if operator == ":" {
 			// Label assignment `n:Label[:Label2]`: the variable before the
-			// first colon must be bound, as for a property assignment.
+			// first colon must be bound, as for a property assignment, and so
+			// must the variables a dynamic label's expression reads.
 			if target = normalizeProjectionColumnName(target); isValidIdentifier(target) && !scope.contains(target) {
 				return createUndefinedVariableError(target)
+			}
+			items, err := setLabelChainItems(expression)
+			if err != nil {
+				return err
+			}
+			for _, item := range items {
+				if item.expression == "" {
+					continue
+				}
+				if err := validateWriteExpressionScope(item.expression, scope); err != nil {
+					return err
+				}
 			}
 			continue
 		}
@@ -174,13 +202,13 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 		if target != "" && !scope.contains(target) {
 			return createUndefinedVariableError(target)
 		}
-		if err := validateExpressionOperandCompleteness(expression); err != nil {
-			return err
+		if operator == "[]=" {
+			// x[key] = v: the key is an expression too.
+			if err := validateWriteExpressionScope(property, scope); err != nil {
+				return err
+			}
 		}
-		if missing := firstUndefinedSetExpressionVariable(expression, scope); missing != "" {
-			return createUndefinedVariableError(missing)
-		}
-		if err := validateKnownFunctionsInExpression(expression); err != nil {
+		if err := validateWriteExpressionScope(expression, scope); err != nil {
 			return err
 		}
 		// Literal sources here; the statement walker
@@ -190,6 +218,19 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 		}
 	}
 	return nil
+}
+
+// validateWriteExpressionScope checks an expression a SET or REMOVE item
+// evaluates (a value, a dynamic key or label): complete operands, bound
+// variables and known functions.
+func validateWriteExpressionScope(expression string, scope *semanticBindingScope) error {
+	if err := validateExpressionOperandCompleteness(expression); err != nil {
+		return err
+	}
+	if missing := firstUndefinedSetExpressionVariable(expression, scope); missing != "" {
+		return createUndefinedVariableError(missing)
+	}
+	return validateKnownFunctionsInExpression(expression)
 }
 
 func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindingScope) string {

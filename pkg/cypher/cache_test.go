@@ -298,6 +298,22 @@ func TestSmartQueryCache_LabelExtraction(t *testing.T) {
 			query:    "MATCH (n)-[e:MENTIONS|:RELATES_TO | HAS_MEMBER]->(m) RETURN e",
 			expected: []string{"MENTIONS", "RELATES_TO", "HAS_MEMBER"},
 		},
+		{
+			// Its labels are known only at run time: every write counts.
+			name:     "dynamic label",
+			query:    "MATCH (n:P) SET n:$('Q') RETURN n",
+			expected: nil,
+		},
+		{
+			name:     "dynamic label after a static one",
+			query:    "MATCH (n:P) SET n:A:$all(['Q']) RETURN n",
+			expected: nil,
+		},
+		{
+			name:     "parameter in a compact map is not a dynamic label",
+			query:    "MATCH (n:P {k:$v}) RETURN n",
+			expected: []string{"P"},
+		},
 	}
 
 	for _, tt := range tests {

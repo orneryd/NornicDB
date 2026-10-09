@@ -148,6 +148,8 @@
   other: "SET += {{.Source}} debe ser un mapa; se obtuvo el tipo {{.ValueType}}"
 - id: cyphermutations.remove_match_required
   other: "REMOVE requiere primero una cláusula MATCH (p. ej., MATCH (n) REMOVE n.property)"
+- id: cyphermutations.remove_item_invalid
+  other: "Elemento de REMOVE no válido: {{.Item}} (se esperaba n:Label, n.property o n[key])"
 - id: cyphermutations.unwind_parameter_name_required
   other: "UNWIND requiere un nombre de parámetro válido después de $"
 - id: cyphermutations.unwind_parameters_required

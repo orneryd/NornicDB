@@ -292,6 +292,7 @@ removeSt
 removeItem
     : symbol nodeLabels
     | propertyExpression
+    | dynamicPropertyExpression
     ;
 
 foreachSt
@@ -328,8 +329,14 @@ setSt
 
 setItem
     : propertyExpression ASSIGN expression
+    | dynamicPropertyExpression ASSIGN expression
     | symbol (ASSIGN | ADD_ASSIGN) expression
     | symbol nodeLabels
+    ;
+
+// A dynamic property key (Neo4j 5.26): n[expr], (n).p[expr].
+dynamicPropertyExpression
+    : propertyExpression LBRACK expression RBRACK
     ;
 
 nodeLabels

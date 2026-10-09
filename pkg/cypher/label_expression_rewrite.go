@@ -786,6 +786,19 @@ func (r *labelExpressionRewriter) labelTest(wordEnd, end int) error {
 		return labelExpressionSyntaxError(localization.CypherMatchingIsNotOperandInvalid(operand))
 	}
 	textStart := skipASCIISpaces(q, is+2, end)
+	if textStart+1 < end && q[textStart] == '$' && q[textStart+1] == '(' {
+		// A dynamic label: x IS $(e) is x:$(e); IS takes one label, so a
+		// colon after it is an error as for a static chain.
+		closing := findMatchingDelimiter(q[:end], textStart+1, '(', ')')
+		if closing < 0 {
+			return nil
+		}
+		if after := skipASCIISpaces(q, closing+1, end); after < end && q[after] == ':' {
+			return labelExpressionSyntaxError(localization.CypherMatchingLabelExpressionMixedIs(q[textStart : closing+1]))
+		}
+		r.edit(wordEnd, textStart, ":")
+		return nil
+	}
 	chain, ok := scanLabelChain(q[textStart:end], false)
 	if !ok {
 		return nil

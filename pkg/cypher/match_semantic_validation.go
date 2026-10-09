@@ -745,6 +745,9 @@ func (e *StorageExecutor) validateStaticClauseTypes(clause pipelineClause, scope
 	if err := validateStaticPropertySubscripts(clause.text, scope); err != nil {
 		return err
 	}
+	if err := staticWriteTokenError(clause, scope); err != nil {
+		return err
+	}
 	if len(scope.values) > 0 {
 		if err := staticListOperandTypeError(clause.text, scope); err != nil {
 			return err
