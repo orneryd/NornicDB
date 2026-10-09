@@ -63,9 +63,7 @@ func parseReduceForm(function, arguments string) (reduceForm, bool) {
 		return form, false
 	}
 	if form.all {
-		if form.predicate = strings.TrimSpace(parts[2]); form.predicate == "" {
-			return form, false
-		}
+		form.predicate = parts[2]
 	}
 	return form, true
 }

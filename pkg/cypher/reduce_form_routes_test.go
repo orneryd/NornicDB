@@ -66,3 +66,32 @@ func TestReduceFormRoutes(t *testing.T) {
 	require.False(t, resolved, "a step the row evaluator can't resolve")
 	_ = err
 }
+
+// The reduce evaluator, property-access check and alias rewrite on input the
+// statement checks reject before they reach them.
+func TestReduceFormGuards(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "reduce_guards"))
+	ctx := context.Background()
+	require.Nil(t, exec.evaluateReduceForm(ctx, "reduce", "a, x IN [1] | x", nil, nil, nil, nil, nil, 0))
+	require.Nil(t, exec.evaluateReduceForm(ctx, "allReduce", "a = 0, x IN [1] | a, 'x'", nil, nil, nil, nil, nil, 0))
+	require.Equal(t, int64(3), exec.evaluateReduceForm(ctx, "reduce", "a = 1, x IN 2 | a + x", nil, nil, nil, nil, nil, 0))
+	require.Error(t, checkBindingFunctionPropertyAccesses("reduce", "s = 0, x IN [1] | s + i.p", map[string]string{"i": "Integer"}, nil))
+	rewritten, rewrite := canonicalizeFunctionAliases("RETURN /* ln(1) */ ceiling(1.2) AS v")
+	require.NotNil(t, rewrite)
+	require.Equal(t, "RETURN /* ln(1) */ ceil(1.2) AS v", rewritten)
+}
+
+// Every zone the generated Java zone tables name loads from NornicDB's zone
+// database, so a zone a pattern reads always resolves.
+func TestJavaZoneNamesLoad(t *testing.T) {
+	for zoneID := range javaZoneNames {
+		_, ok := loadTemporalLocation(zoneID)
+		require.True(t, ok, zoneID)
+	}
+	for _, names := range []map[string]string{javaZoneShortNameZones, javaZoneLongNameZones} {
+		for name, zoneID := range names {
+			_, ok := loadTemporalLocation(zoneID)
+			require.True(t, ok, name+" -> "+zoneID)
+		}
+	}
+}

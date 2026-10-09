@@ -665,8 +665,8 @@ func checkReduceForm(function, text string, open int, check func(staticArgumentT
 	}
 	form, ok := parseReduceForm(function, text[open+1:closing])
 	if !ok {
-		name, signature := reduceFormSignature(function)
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherCoreReduceFormInvalidSyntax(name, signature))
+		entry := reduceFormEntries[lowerASCII(function)]
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherCoreReduceFormInvalidSyntax(entry.name, entry.signature))
 	}
 	if err := check(staticArgumentType{expected: "List<T>", options: []string{"List<T>"}}, form.list); err != nil || !form.all {
 		return err
@@ -674,12 +674,14 @@ func checkReduceForm(function, text string, open int, check func(staticArgumentT
 	return check(staticArgumentType{expected: "Boolean", options: []string{"Boolean"}}, form.predicate)
 }
 
-// reduceFormSignature is a reduce form function's catalog name and signature.
-func reduceFormSignature(function string) (name, signature string) {
+// reduceFormEntries are the catalog entries of reduce and allReduce, by
+// lower-case name, whose signatures their form errors quote.
+var reduceFormEntries = func() map[string]cypherFunctionSpec {
+	entries := make(map[string]cypherFunctionSpec, 2)
 	for _, entry := range cypherFunctionCatalog {
-		if strings.EqualFold(entry.name, function) {
-			return entry.name, entry.signature
+		if isReduceFormFunction(entry.name) {
+			entries[lowerASCII(entry.name)] = entry
 		}
 	}
-	return function, ""
-}
+	return entries
+}()

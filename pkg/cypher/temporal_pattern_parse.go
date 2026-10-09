@@ -267,10 +267,8 @@ func (state *patternParse) parseZoneID(pos int, names map[string]string) (int, b
 	if best == "" {
 		return pos, false
 	}
-	location, ok := loadTemporalLocation(zoneID)
-	if !ok {
-		return pos, false
-	}
+	// Every zone the tables name loads (TestJavaZoneNamesLoad).
+	location, _ := loadTemporalLocation(zoneID)
 	// A later zone replaces an earlier one, as in Java.
 	state.zoneID, state.location, state.hasZone = zoneID, location, true
 	return pos + len(best), true
