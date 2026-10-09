@@ -302,7 +302,7 @@ func (e *StorageExecutor) parseConstraintContractEntry(rawEntry, variable string
 		return storage.ConstraintContractEntry{}, nil, nil, nestedConstraintContractEntryError(entryText)
 	}
 
-	entryName := fmt.Sprintf("%s__entry_%02d", contractName, index+1)
+	entryName := storage.ConstraintContractEntryName(contractName, index)
 	if compiledConstraint, contractEntry, ok, err := e.parseConstraintContractPrimitive(entryText, variable, entityType, labelOrType, entryName); ok || err != nil {
 		return contractEntry, compiledConstraint, nil, err
 	}

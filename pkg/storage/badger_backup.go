@@ -278,6 +278,9 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	}
 	b.idDict.mu.Unlock()
 	if wholeNamespace {
+		if err := b.dropNamespaceSchema(namespace); err != nil {
+			return 0, 0, err
+		}
 		b.propKeyDict.mu.Lock()
 		delete(b.propKeyDict.forward, namespace)
 		delete(b.propKeyDict.reverse, namespace)

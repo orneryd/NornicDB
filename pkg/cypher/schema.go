@@ -2321,27 +2321,6 @@ func (e *StorageExecutor) parseConstraintProperties(propertiesStr string) []stri
 	return properties
 }
 
-func parsePropertyType(typeName string) (storage.PropertyType, error) {
-	switch upperASCII(strings.TrimSpace(typeName)) {
-	case "STRING":
-		return storage.PropertyTypeString, nil
-	case "INTEGER", "INT":
-		return storage.PropertyTypeInteger, nil
-	case "FLOAT":
-		return storage.PropertyTypeFloat, nil
-	case "BOOLEAN", "BOOL":
-		return storage.PropertyTypeBoolean, nil
-	case "DATE":
-		return storage.PropertyTypeDate, nil
-	case "DATETIME", "ZONED DATETIME", "ZONEDDATETIME":
-		return storage.PropertyTypeZonedDateTime, nil
-	case "LOCAL DATETIME", "LOCALDATETIME":
-		return storage.PropertyTypeLocalDateTime, nil
-	default:
-		return "", localizedError(localization.CypherSchemaUnsupportedPropertyType(typeName), nil)
-	}
-}
-
 // executeCreateFulltextIndex handles CREATE FULLTEXT INDEX commands.
 //
 // Supported syntax:

@@ -131,6 +131,29 @@ func (b *BadgerEngine) persistSchemaDefinition(namespace string, def *SchemaDefi
 	})
 }
 
+// dropNamespaceSchema removes a namespace's schema from memory and disk, so a
+// database recreated under the same name starts with an empty schema. The
+// detached SchemaManager keeps working for holders of a stale reference but no
+// longer persists, so it cannot write the dropped schema back.
+func (b *BadgerEngine) dropNamespaceSchema(namespace string) error {
+	if namespace == "" {
+		return fmt.Errorf("schema: namespace is required")
+	}
+	b.schemasMu.Lock()
+	if sm := b.schemas[namespace]; sm != nil {
+		sm.SetPersister(nil)
+		delete(b.schemas, namespace)
+	}
+	b.schemasMu.Unlock()
+
+	if err := b.withUpdate(func(txn *badger.Txn) error {
+		return txn.Delete(schemaKey(namespace))
+	}); err != nil {
+		return fmt.Errorf("schema: drop %q: %w", namespace, err)
+	}
+	return nil
+}
+
 func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *SchemaManager) error {
 	if namespace == "" || sm == nil {
 		return nil
