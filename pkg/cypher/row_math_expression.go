@@ -64,8 +64,6 @@ func roundRowNumber(value float64, mode string) (float64, bool) {
 
 func rowMathCot(value float64) float64 { return 1 / math.Tan(value) }
 
-func rowMathRadians(value float64) float64 { return angle.ToRadians(value) }
-
 func rowMathDegrees(value float64) float64 { return angle.ToDegrees(value) }
 
 func rowMathHaversin(value float64) float64 { return (1 - math.Cos(value)) / 2 }
