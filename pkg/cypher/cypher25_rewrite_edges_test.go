@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -103,7 +104,7 @@ func TestCypher25ExpressionRewriteEdges(t *testing.T) {
 	} {
 		rewritten, _, err := desugarCypher25Expressions(query)
 		require.NoError(t, err, query)
-		require.NotContains(t, rewritten, "apoc.map.fromPairs", query)
+		require.NotContains(t, rewritten, mapFromPairsFunction, query)
 	}
 
 	var words []string
@@ -186,4 +187,54 @@ func TestCypher25BatchTwoEdges(t *testing.T) {
 	result, err = exec.Execute(ctx, "WITH 1 AS g RETURN COLLECT { UNWIND [] AS x WITH DISTINCT count(*) AS c RETURN c + g } AS v", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{[]interface{}{}}}, result.Rows)
+}
+
+// Sweep mismatches of batch 2, with Neo4j 2026.09's answers: a braced UNION
+// ALL inside a UNION, RETURN ALL DISTINCT and an empty GROUP BY rejected,
+// and reads after writes without a WITH (both parsers).
+func TestCypher25BatchTwoSweepCases(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "batch_two_sweep"))
+	ctx := context.Background()
+	result, err := exec.Execute(ctx, "CYPHER 25 { RETURN 1 AS x UNION ALL RETURN 1 AS x } UNION RETURN 2 AS x", nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, [][]interface{}{{int64(1)}, {int64(2)}}, result.Rows)
+	result, err = exec.Execute(ctx, "CYPHER 25 { RETURN 1 AS x UNION RETURN 1 AS x } UNION ALL RETURN 1 AS x", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}, {int64(1)}}, result.Rows)
+
+	for query, message := range map[string]string{
+		"UNWIND ['a'] AS g RETURN ALL DISTINCT g AS v":  "Invalid input 'g'",
+		"RETURN ALL DISTINCT 1 AS x":                    "Invalid input '1'",
+		"UNWIND [1] AS x RETURN count(*) AS c GROUP BY": "Invalid input '': expected an expression",
+	} {
+		_, err := exec.Execute(ctx, "CYPHER 25 "+query, nil)
+		require.ErrorContains(t, err, message, query)
+		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	}
+	// Map comprehensions build their map without APOC, with Neo4j's answers.
+	rewritten, _, err := desugarCypher25Expressions("RETURN {k: v IN {a: 1} | k: v} AS r")
+	require.NoError(t, err)
+	require.NotContains(t, strings.ToLower(rewritten), "apoc")
+	for query, want := range map[string]interface{}{
+		"RETURN {k: v IN {a: 1, b: 2} | 'x': v} AS r":           map[string]interface{}{"x": int64(2)},
+		"RETURN {k: v IN {a: 1, b: null} | k: v} AS r":          map[string]interface{}{"a": int64(1), "b": nil},
+		"RETURN {k: v IN {a: 1, b: 2} WHERE v > 1 | k: v} AS r": map[string]interface{}{"b": int64(2)},
+	} {
+		result, err := exec.Execute(ctx, "CYPHER 25 "+query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, want, result.Rows[0][0], query)
+	}
+	_, err = exec.Execute(ctx, "CYPHER 25 RETURN {k: v IN {a: 1} | null: v} AS r", nil)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.TypeError")
+	require.ErrorContains(t, err, "Expected a STRING map key")
+
+	result, err = exec.Execute(ctx, "CYPHER 25 WITH 1 AS distinct RETURN ALL distinct AS v", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows, "DISTINCT read as a variable")
+
+	for _, prefix := range []string{"CYPHER 25 ", ""} {
+		result, err = exec.Execute(ctx, prefix+"CREATE (:Rw25) MATCH (p:Rw25) RETURN count(p) AS c", nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, result.Rows)
+	}
 }

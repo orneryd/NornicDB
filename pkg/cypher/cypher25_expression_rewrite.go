@@ -19,7 +19,8 @@ import (
 //     Neo4j converts an interpolated value (interpolatedValue); null in, null
 //     out; \{ is a brace;
 //   - {k: v IN map [WHERE p] | key: value}: a map built from each entry, as
-//     apoc.map.fromPairs over nested list comprehensions that bind k and v;
+//     __nornic_map_from_pairs over nested list comprehensions that bind k
+//     and v (an internal function, so the form doesn't depend on APOC);
 //   - RETURN / WITH … GROUP BY keys: the grouping it names (groupByEdits).
 //
 // Each pass's edits are kept (queryRewrite), so columns and messages show the
@@ -27,10 +28,15 @@ import (
 
 func init() {
 	cypherfn.Register(interpolateFunction, fnInterpolate)
+	cypherfn.Register(mapFromPairsFunction, fnMapFromPairs)
 }
 
 // interpolateFunction converts an interpolated value to its text.
 const interpolateFunction = "__nornic_interpolate"
+
+// mapFromPairsFunction builds a map comprehension's map from its [key,
+// value] pairs.
+const mapFromPairsFunction = "__nornic_map_from_pairs"
 
 // desugarCypher25Expressions rewrites the forms above in turn and returns
 // the result with each pass's rewrite, in order (restore them in reverse).
@@ -268,6 +274,31 @@ func fnInterpolate(ctx cypherfn.Context, args []string) (interface{}, error) {
 		localization.CypherCoreInterpolationWrongType(valueTypeOf(values[0]).render(true)))
 }
 
+// fnMapFromPairs is the map a map comprehension builds from its [key, value]
+// pairs, as Neo4j does: a later key replaces an earlier one, a null value is
+// kept, and a key that isn't a string is a TypeError.
+func fnMapFromPairs(ctx cypherfn.Context, args []string) (interface{}, error) {
+	values, err := evalArgs(ctx, args)
+	if err != nil || len(values) != 1 || values[0] == nil {
+		return nil, err
+	}
+	pairs, _ := toInterfaceSlice(values[0])
+	result := make(map[string]interface{}, len(pairs))
+	for _, item := range pairs {
+		pair, _ := toInterfaceSlice(item)
+		if len(pair) != 2 {
+			continue
+		}
+		key, isString := pair[0].(string)
+		if !isString {
+			return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+				localization.CypherCoreMapComprehensionKeyNotString(valueTypeOf(pair[0]).render(true)))
+		}
+		result[key] = pair[1]
+	}
+	return result, nil
+}
+
 // mapComprehensionEdits rewrites each {k: v IN map [WHERE p] | key: value}.
 func mapComprehensionEdits(query string) ([]labelRewriteEdit, error) {
 	if !strings.Contains(query, "|") {
@@ -298,7 +329,7 @@ func mapComprehensionEdits(query string) ([]labelRewriteEdit, error) {
 // map comprehension inside its parts is rewritten too. Each key binds k, and
 // a one-item comprehension over its value binds v:
 //
-//	apoc.map.fromPairs([k IN keys(m) WHERE any(v IN [m[k]] WHERE p) |
+//	__nornic_map_from_pairs([k IN keys(m) WHERE any(v IN [m[k]] WHERE p) |
 //	    [v IN [m[k]] | [key, value]][0]])
 func mapComprehensionText(body string) (string, bool) {
 	key, end, ok := scanIdentifierToken(body, skipASCIISpaces(body, 0, len(body)))
@@ -341,6 +372,6 @@ func mapComprehensionText(body string) (string, bool) {
 	if predicate != "" {
 		filter = " WHERE any(" + valueName + " IN " + entry + " WHERE " + predicate + ")"
 	}
-	return "CASE WHEN (" + source + ") IS NULL THEN null ELSE apoc.map.fromPairs([" + keyName + " IN keys(" + source + ")" + filter +
+	return "CASE WHEN (" + source + ") IS NULL THEN null ELSE " + mapFromPairsFunction + "([" + keyName + " IN keys(" + source + ")" + filter +
 		" | [" + valueName + " IN " + entry + " | [" + keyExpression + ", " + valueExpression + "]][0]]) END", true
 }

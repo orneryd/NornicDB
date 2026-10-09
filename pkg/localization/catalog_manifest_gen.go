@@ -372,6 +372,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.list_index_type_mismatch", Constructor: "CypherCoreListIndexTypeMismatch", Fields: []string{"Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.list_operand_type_mismatch", Constructor: "CypherCoreListOperandTypeMismatch", Fields: []string{"Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.list_parameter_type_mismatch", Constructor: "CypherCoreListParameterTypeMismatch", Fields: []string{"Parameter", "Type"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.map_comprehension_key_not_string", Constructor: "CypherCoreMapComprehensionKeyNotString", Fields: []string{"Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.map_key_type_mismatch", Constructor: "CypherCoreMapKeyTypeMismatch", Fields: []string{"Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.map_projection_coercion", Constructor: "CypherCoreMapProjectionCoercion", Fields: []string{"Value"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.map_projection_receiver", Constructor: "CypherCoreMapProjectionReceiver", Fields: []string{"Receiver"}, PluralForms: []string{"other"}},

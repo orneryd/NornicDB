@@ -142,6 +142,8 @@
   other: "Todas las consultas condicionales deben devolver el mismo número de columnas."
 - id: cyphercore.interpolation_wrong_type
   other: "Tipo incorrecto. Se esperaba BOOLEAN, STRING, UUID, INTEGER, FLOAT, TEMPORAL, DURATION o VECTOR, pero se obtuvo {{.Type}}"
+- id: cyphercore.map_comprehension_key_not_string
+  other: "Se esperaba una clave de mapa STRING, pero se obtuvo {{.Type}}"
 - id: cyphercore.group_by_implicit_grouping_key
   other: "La columna de agregación contiene expresiones de agrupación implícitas. Por ejemplo, en 'RETURN n.a, n.a + n.b + count(*)' la expresión de agregación 'n.a + n.b + count(*)' incluye la clave de agrupación implícita 'n.b'. Puede reescribir la consulta extrayendo estas expresiones de agrupación o agregación a una cláusula WITH anterior. Expresiones no válidas: {{.Illegal}}"
 - id: cyphercore.list_operand_type_mismatch

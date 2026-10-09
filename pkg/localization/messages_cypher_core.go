@@ -55,6 +55,7 @@ const (
 	MessageCypherCoreInvalidInputExpectedIdentifier      MessageID = "cyphercore.invalid_input_expected_identifier"
 	MessageCypherCoreConditionalColumnNames              MessageID = "cyphercore.conditional_column_names"
 	MessageCypherCoreInterpolationWrongType              MessageID = "cyphercore.interpolation_wrong_type"
+	MessageCypherCoreMapComprehensionKeyNotString        MessageID = "cyphercore.map_comprehension_key_not_string"
 	MessageCypherCoreGroupByImplicitGroupingKey          MessageID = "cyphercore.group_by_implicit_grouping_key"
 	MessageCypherCoreConditionalColumnCount              MessageID = "cyphercore.conditional_column_count"
 	MessageCypherCoreListOperandTypeMismatch             MessageID = "cyphercore.list_operand_type_mismatch"
@@ -338,6 +339,12 @@ func CypherCoreInvalidInput(token string) Message {
 // whose columns have different names.
 func CypherCoreConditionalColumnNames() Message {
 	return cypherCoreMessage(MessageCypherCoreConditionalColumnNames, "All conditional queries must have the same return column names. Use `AS` to ensure columns have the same name.", nil)
+}
+
+// CypherCoreMapComprehensionKeyNotString is the TypeError for a map
+// comprehension key that isn't a string.
+func CypherCoreMapComprehensionKeyNotString(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreMapComprehensionKeyNotString, "Expected a STRING map key, got "+typeName, map[string]any{"Type": typeName})
 }
 
 // CypherCoreInterpolationWrongType is Neo4j's message for an interpolated
