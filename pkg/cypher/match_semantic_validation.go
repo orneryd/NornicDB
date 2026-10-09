@@ -117,14 +117,25 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 			}
 		case pipelineClauseCallSubquery:
 			body, _, _, _ := e.parseCallSubquery(clause.text)
-			if branches, _, _, union := parseTopLevelUnionBranches(body); union && len(branches) > 0 {
-				body = branches[0]
+			branches := []string{body}
+			if unionBranches, _, _, union := parseTopLevelUnionBranches(body); union && len(unionBranches) > 0 {
+				branches = unionBranches
 			}
-			if returnIndex := topLevelKeywordIndex(body, "RETURN"); returnIndex >= 0 {
-				for _, name := range pipelineReturnSourceColumns(body[returnIndex:]) {
-					if name != "*" {
-						scope[name] = matchBindingUnknown
+			if returnIndex := topLevelKeywordIndex(branches[0], "RETURN"); returnIndex >= 0 {
+				for _, name := range pipelineReturnSourceColumns(branches[0][returnIndex:]) {
+					if name == "*" {
+						continue
 					}
+					// A returned column is a new variable of the enclosing
+					// query: one it already binds is declared twice
+					// (Neo4j 5.26.30's VariableAlreadyBound), unless every
+					// branch returns that outer variable itself, unchanged
+					// (callSubqueryReturnsOuterUnchanged).
+					if _, bound := scope[name]; bound && !callSubqueryReturnsOuterUnchanged(branches, name) {
+						return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+							localization.CypherCoreVariableDeclaredInOuterScope(name))
+					}
+					scope[name] = matchBindingUnknown
 				}
 			}
 		case pipelineClauseCall:
@@ -1135,4 +1146,63 @@ func isEntityPropertyAccess(expression, variable string) bool {
 	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(expression), variable))
 	key := strings.TrimSpace(strings.TrimPrefix(rest, "."))
 	return isValidIdentifier(key) || isBacktickQuotedName(key)
+}
+
+// callSubqueryReturnsOuterUnchanged reports whether every branch of a CALL
+// subquery returns the enclosing query's variable name as itself (RETURN
+// name, or name AS name) without declaring name again in its body. Neo4j
+// rejects even that as VariableAlreadyBound; NornicDB accepts it as an
+// extension, since the column is the outer value and nothing is ambiguous
+// (#907; the implicit import is the same kind of extension). A branch that
+// rebinds name (WITH … AS name, UNWIND … AS name, YIELD name, a nested CALL
+// returning it) or returns another value under it is rejected.
+func callSubqueryReturnsOuterUnchanged(branches []string, name string) bool {
+	for _, branch := range branches {
+		clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch)
+		if !ok || len(clauses) == 0 || clauses[len(clauses)-1].kind != pipelineClauseReturn {
+			return false
+		}
+		for _, clause := range clauses {
+			switch clause.kind {
+			case pipelineClauseWith, pipelineClauseReturn:
+				keyword := "WITH"
+				if clause.kind == pipelineClauseReturn {
+					keyword = "RETURN"
+				}
+				items, _ := projectionSemanticBodyAndTail(clause.text, keyword)
+				items, _ = cutDistinct(strings.TrimSpace(items))
+				for _, raw := range splitTopLevelComma(items) {
+					expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
+					if normalizeProjectionColumnName(alias) == name && normalizeProjectionColumnName(expression) != name {
+						return false
+					}
+				}
+			case pipelineClauseUnwind:
+				if unwindBindingName(clause.text) == name {
+					return false
+				}
+			case pipelineClauseCallSubquery:
+				inner, _, _, _ := (&StorageExecutor{}).parseCallSubquery(clause.text)
+				if returnIndex := topLevelKeywordIndex(inner, "RETURN"); returnIndex >= 0 {
+					for _, column := range pipelineReturnSourceColumns(inner[returnIndex:]) {
+						if column == name {
+							return false
+						}
+					}
+				}
+			case pipelineClauseCall:
+				if yield := parseYieldClause(clause.text); yield != nil {
+					if yield.yieldAll {
+						return false
+					}
+					for _, item := range yield.items {
+						if item.name == name || item.alias == name {
+							return false
+						}
+					}
+				}
+			}
+		}
+	}
+	return true
 }

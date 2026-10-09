@@ -1,7 +1,7 @@
 package cypher
 
 import (
-	"fmt"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"reflect"
 	"strings"
 )
@@ -116,8 +116,8 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 					}
 					name = normalizeProjectionColumnName(name)
 					if _, imported := outer[name]; imported && simpleSemanticIdentifier(expression) != name {
-						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
-							fmt.Sprintf("Variable `%s` already declared in outer scope", name))
+						return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+							localization.CypherCoreVariableDeclaredInOuterScope(name))
 					}
 					next[name] = propertyAccessExpressionType(expression, types, params)
 				}
@@ -147,8 +147,8 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 			}
 			variable := normalizeProjectionColumnName(alias)
 			if _, imported := outer[variable]; imported {
-				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
-					fmt.Sprintf("Variable `%s` already declared in outer scope", variable))
+				return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+					localization.CypherCoreVariableDeclaredInOuterScope(variable))
 			}
 			element := ""
 			listType := propertyAccessExpressionType(expression, types, params)

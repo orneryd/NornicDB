@@ -64,6 +64,7 @@ const (
 	MessageCypherCoreTrimCharacterLength                 MessageID = "cyphercore.trim_character_length"
 	MessageCypherCoreNormalizeFormInvalid                MessageID = "cyphercore.normalize_form_invalid"
 	MessageCypherCoreProcedureOutputShadowsVariable      MessageID = "cyphercore.procedure_output_shadows_variable"
+	MessageCypherCoreVariableDeclaredInOuterScope        MessageID = "cyphercore.variable_declared_in_outer_scope"
 	MessageCypherCoreExpressionUnevaluable               MessageID = "cyphercore.expression_unevaluable"
 	MessageCypherCoreStandaloneCallModifiers             MessageID = "cyphercore.standalone_call_modifiers"
 	MessageCypherCoreYieldWhereMisplaced                 MessageID = "cyphercore.yield_where_misplaced"
@@ -363,6 +364,12 @@ func CypherCoreNormalizeFormInvalid(form string) Message {
 
 func CypherCoreProcedureOutputShadowsVariable(variable string) Message {
 	return cypherCoreMessage(MessageCypherCoreProcedureOutputShadowsVariable, "procedure output "+variable+" shadows an existing variable", map[string]any{"Variable": variable})
+}
+
+// CypherCoreVariableDeclaredInOuterScope is the error for a subquery that
+// declares, or returns, a name the enclosing query already binds.
+func CypherCoreVariableDeclaredInOuterScope(variable string) Message {
+	return cypherCoreMessage(MessageCypherCoreVariableDeclaredInOuterScope, "Variable `"+variable+"` already declared in outer scope", map[string]any{"Variable": variable})
 }
 
 func CypherCoreExpressionUnevaluable(expression string) Message {

@@ -156,6 +156,8 @@
   other: "la forma normal de normalize() debe ser NFC, NFD, NFKC o NFKD; se recibió: {{.Form}}"
 - id: cyphercore.procedure_output_shadows_variable
   other: "la salida del procedimiento {{.Variable}} oculta una variable existente"
+- id: cyphercore.variable_declared_in_outer_scope
+  other: "La variable `{{.Variable}}` ya está declarada en el ámbito exterior"
 - id: cyphercore.expression_unevaluable
   other: "no se pudo evaluar la expresión: {{.Expression}}"
 - id: cyphercore.standalone_call_modifiers
