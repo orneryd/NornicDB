@@ -306,7 +306,7 @@ func isOperatorExpressionText(text string) bool {
 	for brace := strings.IndexByte(text, '{'); brace > 0; {
 		before := strings.TrimSpace(text[:brace])
 		word := len(before)
-		for word > 0 && isIdentifierPart(before[word-1]) {
+		for word > 0 && isIdentByte(before[word-1]) {
 			word--
 		}
 		if word < len(before) && !isCypherKeyword(before[word:]) {

@@ -45,7 +45,7 @@ func SplitByKeyword(s, keyword string) []string {
 		}
 
 		// Check word boundary before (start of string or non-alphanumeric)
-		if i > 0 && isWordChar(s[i-1]) {
+		if i > 0 && isIdentByte(s[i-1]) {
 			continue
 		}
 
@@ -101,11 +101,6 @@ func SplitByCreate(s string) []string {
 		searchFrom = lastEnd
 	}
 	return append(result, s[lastEnd:])
-}
-
-// isWordChar returns true if c is a word character (alphanumeric or underscore)
-func isWordChar(c byte) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
 }
 
 // =============================================================================
@@ -245,13 +240,13 @@ func FindKeywordIndex(s, keyword string) int {
 		}
 
 		// Check word boundary before
-		if i > 0 && isWordChar(s[i-1]) {
+		if i > 0 && isIdentByte(s[i-1]) {
 			continue
 		}
 
 		// Check word boundary after
 		afterIdx := i + keywordLen
-		if afterIdx < len(s) && isWordChar(s[afterIdx]) {
+		if afterIdx < len(s) && isIdentByte(s[afterIdx]) {
 			continue
 		}
 
@@ -380,7 +375,7 @@ func isValidIdentifier(s string) bool {
 	}
 	for i := 1; i < len(s); i++ {
 		c := s[i]
-		if !isWordChar(c) {
+		if !isIdentByte(c) {
 			return false
 		}
 	}
@@ -436,7 +431,7 @@ func ExtractParameters(query string) []string {
 
 		// Find end of identifier
 		end := start + 1
-		for end < len(query) && isWordChar(query[end]) {
+		for end < len(query) && isIdentByte(query[end]) {
 			end++
 		}
 

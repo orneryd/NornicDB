@@ -374,7 +374,7 @@ func previousWord(query string, index int) string {
 		end--
 	}
 	start := end
-	for start > 0 && isIdentifierPart(query[start-1]) {
+	for start > 0 && isIdentByte(query[start-1]) {
 		start--
 	}
 	return query[start:end]
@@ -420,7 +420,7 @@ func isLabelColon(query string, colon int, inner byte) bool {
 		for start = beforeIndex - 1; start >= 0 && query[start] != '`'; start-- {
 		}
 	} else {
-		for start > 0 && isIdentifierPart(query[start-1]) {
+		for start > 0 && isIdentByte(query[start-1]) {
 			start--
 		}
 	}
@@ -439,8 +439,8 @@ func inLabelExpression(query string, index int, inner byte) bool {
 	if before == '`' {
 		for start = beforeIndex - 1; start >= 0 && query[start] != '`'; start-- {
 		}
-	} else if isIdentifierPart(before) {
-		for start > 0 && isIdentifierPart(query[start-1]) {
+	} else if isIdentByte(before) {
+		for start > 0 && isIdentByte(query[start-1]) {
 			start--
 		}
 	} else {
@@ -484,7 +484,7 @@ func mapProjectionBrace(query string, index int) bool {
 				continue
 			}
 			before, _ := previousSignificant(query, i)
-			return before == '`' || isIdentifierPart(before)
+			return before == '`' || isIdentByte(before)
 		}
 	}
 	return false
@@ -800,7 +800,7 @@ func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parse
 	}
 	body := strings.TrimSpace(names.canonical[start:end])
 	body, _ = cutDistinct(body)
-	if strings.HasPrefix(body, "*") && (len(body) == 1 || !isIdentifierPart(body[1])) && topLevelKeywordIndex(body, "UNION") < 0 {
+	if strings.HasPrefix(body, "*") && (len(body) == 1 || !isIdentByte(body[1])) && topLevelKeywordIndex(body, "UNION") < 0 {
 		sortColumnsByName(result)
 		return
 	}

@@ -652,7 +652,7 @@ func hasAdjacentOperands(cypher string) bool {
 				return true
 			}
 			index++
-			for index < len(cypher) && (isIdentCharByte(cypher[index]) ||
+			for index < len(cypher) && (isIdentByte(cypher[index]) ||
 				(cypher[index] == '.' && index+1 < len(cypher) && cypher[index+1] >= '0' && cypher[index+1] <= '9')) {
 				index++
 			}
@@ -662,13 +662,13 @@ func hasAdjacentOperands(cypher string) bool {
 				return true
 			}
 			index++
-			for index < len(cypher) && isIdentCharByte(cypher[index]) {
+			for index < len(cypher) && isIdentByte(cypher[index]) {
 				index++
 			}
 			operandEnded = true
-		case isIdentCharByte(c):
+		case isIdentByte(c):
 			start := index
-			for index < len(cypher) && isIdentCharByte(cypher[index]) {
+			for index < len(cypher) && isIdentByte(cypher[index]) {
 				index++
 			}
 			startsProperty := index < len(cypher) && cypher[index] == '.' &&

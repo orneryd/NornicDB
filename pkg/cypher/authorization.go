@@ -196,13 +196,13 @@ func queryKeywords(query string) map[string]bool {
 			}
 		}
 
-		if !isCypherIdentifierStart(query[index]) {
+		if !isIdentStartByte(query[index]) {
 			index++
 			continue
 		}
 		start := index
 		index++
-		for index < len(query) && isCypherIdentifierPart(query[index]) {
+		for index < len(query) && isIdentByte(query[index]) {
 			index++
 		}
 		if isQualifiedOrMapKey(query, start, index) {
@@ -226,14 +226,6 @@ func isQualifiedOrMapKey(query string, start, end int) bool {
 		right++
 	}
 	return right < len(query) && query[right] == ':'
-}
-
-func isCypherIdentifierStart(value byte) bool {
-	return value == '_' || value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z'
-}
-
-func isCypherIdentifierPart(value byte) bool {
-	return isCypherIdentifierStart(value) || value >= '0' && value <= '9'
 }
 
 // PermissionChecker answers whether the caller holds an entitlement.

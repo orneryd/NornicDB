@@ -1012,11 +1012,11 @@ func leadingWithClause(text string) (clause string, followed bool) {
 			}
 			continue
 		}
-		if depth > 0 || !isASCIIIdentifierStart(text[index]) || isIdentChar(text[index-1]) {
+		if depth > 0 || !isIdentStartByte(text[index]) || isIdentByte(text[index-1]) {
 			continue
 		}
 		end := index + 1
-		for end < len(text) && isIdentChar(text[end]) {
+		for end < len(text) && isIdentByte(text[end]) {
 			end++
 		}
 		previous := text[index-1]
@@ -1203,7 +1203,7 @@ func firstVariableOccurrence(text, variable string) int {
 			continue
 		}
 		end := index + len(variable)
-		if (index > 0 && isIdentChar(text[index-1])) || (end < len(text) && isIdentChar(text[end])) {
+		if (index > 0 && isIdentByte(text[index-1])) || (end < len(text) && isIdentByte(text[end])) {
 			continue
 		}
 		previous, next := previousNonSpace(text, index), nextNonSpace(text, end)
@@ -1247,7 +1247,7 @@ func wordBefore(text string, index int) string {
 		end--
 	}
 	start := end
-	for start > 0 && isIdentChar(text[start-1]) {
+	for start > 0 && isIdentByte(text[start-1]) {
 		start--
 	}
 	return text[start:end]
@@ -1265,7 +1265,7 @@ func precededByAS(text string, index int) bool {
 	for end > 0 && isASCIISpace(text[end-1]) {
 		end--
 	}
-	return end >= 3 && equalFoldASCII(text[end-2:end], "AS") && !isIdentChar(text[end-3])
+	return end >= 3 && equalFoldASCII(text[end-2:end], "AS") && !isIdentByte(text[end-3])
 }
 
 // previousNonSpace is the last non-space byte before index, 0 at the start.

@@ -239,7 +239,7 @@ func scanParameterReferences(query string, visit func(dollar, start, end int)) {
 			continue
 		}
 		end := start + 1
-		for end < len(query) && isWordChar(query[end]) {
+		for end < len(query) && isIdentByte(query[end]) {
 			end++
 		}
 		visit(next, start, end)
@@ -345,7 +345,7 @@ func statementMissingParameters(cypher string, bound func(name string) bool) []s
 				index = end - 1
 			} else {
 				end := start
-				for end < len(cypher) && isWordChar(cypher[end]) {
+				for end < len(cypher) && isIdentByte(cypher[end]) {
 					end++
 				}
 				name = cypher[start:end]
@@ -650,7 +650,7 @@ func isSimpleCypherMapKey(key string) bool {
 		return false
 	}
 	for i := 1; i < len(key); i++ {
-		if !isWordChar(key[i]) {
+		if !isIdentByte(key[i]) {
 			return false
 		}
 	}

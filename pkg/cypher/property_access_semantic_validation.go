@@ -366,8 +366,8 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 				}
 			}
 			index = next - 1
-		case isIdentifierStart(c):
-			if index > 0 && (isIdentifierPart(text[index-1]) || text[index-1] == '.' || text[index-1] == '$') {
+		case isIdentStartByte(c):
+			if index > 0 && (isIdentByte(text[index-1]) || text[index-1] == '.' || text[index-1] == '$') {
 				continue
 			}
 			name, next, _ := scanIdentifierToken(text, index)
@@ -470,7 +470,7 @@ func propertyAccessFollows(text string, index int) bool {
 		return false
 	}
 	next := queryGapEnd(text, index+1)
-	return next < len(text) && (isIdentifierStart(text[next]) || text[next] == '`')
+	return next < len(text) && (isIdentStartByte(text[next]) || text[next] == '`')
 }
 
 // namespacedCallFollows reports whether text[index:] continues a namespaced
@@ -497,7 +497,7 @@ func isSubqueryBrace(text string, index int) bool {
 		before--
 	}
 	start := before
-	for start >= 0 && isIdentifierPart(text[start]) {
+	for start >= 0 && isIdentByte(text[start]) {
 		start--
 	}
 	switch upperASCII(text[start+1 : before+1]) {
@@ -533,7 +533,7 @@ func parameterMayRejectPropertyAccess(cypher string, params map[string]interface
 		index = next - 1
 		after := queryGapEnd(cypher, next)
 		accessed := propertyAccessFollows(cypher, next) || after < len(cypher) && cypher[after] == '['
-		projected := after+2 <= len(cypher) && strings.EqualFold(cypher[after:after+2], "AS") && (after+2 == len(cypher) || !isIdentifierPart(cypher[after+2]))
+		projected := after+2 <= len(cypher) && strings.EqualFold(cypher[after:after+2], "AS") && (after+2 == len(cypher) || !isIdentByte(cypher[after+2]))
 		if !accessed && !projected {
 			continue
 		}

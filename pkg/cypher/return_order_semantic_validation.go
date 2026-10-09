@@ -524,7 +524,7 @@ func maskSemanticBraceBodies(expression string) string {
 			end--
 		}
 		start := end
-		for start > 0 && isAlphaNumericByte(expression[start-1]) {
+		for start > 0 && isIdentByte(expression[start-1]) {
 			start--
 		}
 		switch upperASCII(expression[start:end]) {

@@ -554,7 +554,7 @@ func containsIdentifierWord(text, name string) bool {
 		}
 		start := from + index
 		end := start + len(name)
-		if (start == 0 || !isWordChar(text[start-1])) && (end == len(text) || !isWordChar(text[end])) {
+		if (start == 0 || !isIdentByte(text[start-1])) && (end == len(text) || !isIdentByte(text[end])) {
 			return true
 		}
 		from = start + 1

@@ -961,7 +961,7 @@ func collectNodePropertyRefsForProjection(varName string, expr string, props map
 		}
 		start := offset + idx
 		end := start + len(varName)
-		if (start > 0 && isCypherIdentByte(expr[start-1])) || (end < len(expr) && isCypherIdentByte(expr[end])) {
+		if (start > 0 && isIdentByte(expr[start-1])) || (end < len(expr) && isIdentByte(expr[end])) {
 			offset = end
 			continue
 		}
@@ -994,24 +994,17 @@ func collectNodePropertyRefsForProjection(varName string, expr string, props map
 			offset = j + 1 + k + 1
 			continue
 		}
-		if !isCypherIdentByte(expr[j]) {
+		if !isIdentByte(expr[j]) {
 			return false
 		}
 		k := j + 1
-		for k < len(expr) && isCypherIdentByte(expr[k]) {
+		for k < len(expr) && isIdentByte(expr[k]) {
 			k++
 		}
 		props[expr[j:k]] = struct{}{}
 		offset = k
 	}
 	return true
-}
-
-func isCypherIdentByte(b byte) bool {
-	return (b >= 'a' && b <= 'z') ||
-		(b >= 'A' && b <= 'Z') ||
-		(b >= '0' && b <= '9') ||
-		b == '_'
 }
 
 func prepareWiredNodeVectorService(ctx context.Context, svc *search.Service, wantDims int) (bool, error) {

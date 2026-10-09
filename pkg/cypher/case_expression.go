@@ -197,7 +197,7 @@ func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
 			continue
 		}
 		end := index + 1
-		for end < len(expression) && isNumericIdentifierByte(expression[end]) {
+		for end < len(expression) && isIdentByte(expression[end]) {
 			end++
 		}
 		word := expression[index:end]
@@ -214,8 +214,8 @@ func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
 }
 
 func isCaseWordStart(expression string, index int) bool {
-	return (index == 0 || !isNumericIdentifierByte(expression[index-1])) &&
-		isASCIIIdentifierStart(expression[index])
+	return (index == 0 || !isIdentByte(expression[index-1])) &&
+		isIdentStartByte(expression[index])
 }
 
 // parseWhenClause parses a single WHEN ... THEN ... clause.
@@ -680,9 +680,9 @@ func splitByKeyword(s, keyword string) []string {
 		if !inString && parenDepth == 0 && i+keywordLen <= len(s) {
 			if strings.EqualFold(s[i:i+keywordLen], keyword) {
 				// Check word boundary (not part of a longer word)
-				validStart := i == 0 || !isAlphaNumeric(rune(s[i-1]))
+				validStart := i == 0 || !isIdentByte(s[i-1])
 				endPos := i + keywordLen
-				validEnd := endPos >= len(s) || !isAlphaNumeric(rune(s[endPos]))
+				validEnd := endPos >= len(s) || !isIdentByte(s[endPos])
 
 				if validStart && validEnd {
 					// Found keyword at word boundary
@@ -701,9 +701,4 @@ func splitByKeyword(s, keyword string) []string {
 	// Add remaining content
 	result = append(result, current.String())
 	return result
-}
-
-// isAlphaNumeric checks if a character is alphanumeric or underscore.
-func isAlphaNumeric(ch rune) bool {
-	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_'
 }

@@ -72,7 +72,7 @@ func canonicalizeNumericLiterals(query string) (string, *queryRewrite) {
 func mayHaveGroupedNumericLiteral(query string) bool {
 	for index := strings.IndexByte(query, '_'); index >= 0; {
 		start := index
-		for start > 0 && isNumericIdentifierByte(query[start-1]) {
+		for start > 0 && isIdentByte(query[start-1]) {
 			start--
 		}
 		if start < index && isASCIIDigit(query[start]) {
@@ -100,7 +100,7 @@ func numericLiteralStartsAt(query string, index int) bool {
 		return true
 	}
 	previous := query[index-1]
-	return !isNumericIdentifierByte(previous) && previous != '$' && !(c == '.' && previous == '.')
+	return !isIdentByte(previous) && previous != '$' && !(c == '.' && previous == '.')
 }
 
 // groupedNumericLiteralEnd returns the end of the numeric literal at

@@ -877,11 +877,6 @@ func (e *StorageExecutor) smartSplitReturnItems(returnPart string) []string {
 	return splitTopLevelComma(returnPart)
 }
 
-// isAlphaNum checks if a character is alphanumeric or underscore
-func isAlphaNum(ch rune) bool {
-	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_'
-}
-
 func (e *StorageExecutor) parseReturnItems(returnPart string) []returnItem {
 	if strings.TrimSpace(returnPart) == "" {
 		returnPart = "*"

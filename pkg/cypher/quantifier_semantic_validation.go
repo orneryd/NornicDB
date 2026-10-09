@@ -106,8 +106,8 @@ func identifierAt(text string, index int, identifier string) bool {
 	if index < 0 || index+len(identifier) > len(text) || !strings.EqualFold(text[index:index+len(identifier)], identifier) {
 		return false
 	}
-	return (index == 0 || !isIdentChar(text[index-1])) &&
-		(index+len(identifier) == len(text) || !isIdentChar(text[index+len(identifier)]))
+	return (index == 0 || !isIdentByte(text[index-1])) &&
+		(index+len(identifier) == len(text) || !isIdentByte(text[index+len(identifier)]))
 }
 
 func isNumericOnlyOperatorByte(character byte) bool {

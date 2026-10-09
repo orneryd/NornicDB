@@ -25,7 +25,7 @@ import (
 func cutDistinct(text string) (string, bool) {
 	text = strings.TrimSpace(text)
 	const keyword = "DISTINCT"
-	if len(text) <= len(keyword) || !strings.EqualFold(text[:len(keyword)], keyword) || isAlphaNumericByte(text[len(keyword)]) {
+	if len(text) <= len(keyword) || !strings.EqualFold(text[:len(keyword)], keyword) || isIdentByte(text[len(keyword)]) {
 		return text, false
 	}
 	rest := strings.TrimSpace(text[len(keyword):])
@@ -1143,6 +1143,19 @@ func indexASCIIFold(text, lowerSub string) int {
 	return -1
 }
 
+// isIdentStartByte reports whether b can start an unquoted name: an ASCII
+// letter, '_', or any byte of a non-ASCII character. The scanners read the
+// UTF-8 bytes of a non-ASCII character as part of a name, as the ANTLR
+// lexer's Letter does, so ñRETURN is one name and RETURN in it is no
+// keyword. Which non-ASCII characters Neo4j takes in a name is checked once,
+// per character, by validateUnicodeOperators (isIdentifierStartRune,
+// isIdentifierPartRune). It and isIdentByte are the scanners' one rule.
+func isIdentStartByte(b byte) bool {
+	return b >= 0x80 || b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
+// isIdentByte reports whether b can continue an unquoted name: what
+// isIdentStartByte takes, or a digit.
 func isIdentByte(b byte) bool {
 	if b >= 0x80 {
 		return true
@@ -1852,11 +1865,11 @@ func scanIdentifierToken(text string, start int) (string, int, bool) {
 		}
 		return strings.ReplaceAll(text[start+1:end-1], "``", "`"), end, true
 	}
-	if !isIdentifierStart(text[start]) {
+	if !isIdentStartByte(text[start]) {
 		return "", start, false
 	}
 	end := start + 1
-	for end < len(text) && isIdentifierPart(text[end]) {
+	for end < len(text) && isIdentByte(text[end]) {
 		end++
 	}
 	return text[start:end], end, true
@@ -1869,14 +1882,6 @@ func parseIdentifierToken(text string) (string, string, bool) {
 		return "", "", false
 	}
 	return name, text[end:], true
-}
-
-func isIdentifierStart(character byte) bool {
-	return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || character == '_'
-}
-
-func isIdentifierPart(character byte) bool {
-	return isIdentifierStart(character) || (character >= '0' && character <= '9')
 }
 
 // findMatchingDelimiter skips Cypher quoted text and comments while matching

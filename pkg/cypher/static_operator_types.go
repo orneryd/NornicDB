@@ -496,7 +496,7 @@ func staticPostfixSplit(expression string) (receiver, inner string, subscript, o
 		case ']':
 			depth--
 		case '.':
-			if depth == 0 && index > 0 && index+1 < len(expression) && isIdentifierStart(expression[index+1]) {
+			if depth == 0 && index > 0 && index+1 < len(expression) && isIdentStartByte(expression[index+1]) {
 				last, subscript = index, false
 			}
 		}
@@ -708,11 +708,11 @@ func endsWithOperand(text string) bool {
 	switch {
 	case last == '\'' || last == '"' || last == '`' || last == ')' || last == ']' || last == '}':
 		return true
-	case !isIdentifierPart(last):
+	case !isIdentByte(last):
 		return false
 	}
 	start := len(text)
-	for start > 0 && isIdentifierPart(text[start-1]) {
+	for start > 0 && isIdentByte(text[start-1]) {
 		start--
 	}
 	word := text[start:]
