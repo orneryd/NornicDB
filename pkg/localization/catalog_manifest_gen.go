@@ -120,6 +120,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "bolt.invalid_or_expired_token", Constructor: "BoltInvalidOrExpiredToken", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "bolt.log.authentication_failed", Constructor: "BoltLogAuthenticationFailed", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "bolt.log.connection_handler_panic", Constructor: "BoltLogConnectionHandlerPanic", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "bolt.log.connection_limit_reached", Constructor: "BoltLogConnectionLimitReached", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "bolt.log.discovery_refresh_failed", Constructor: "BoltLogDiscoveryRefreshFailed", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "bolt.log.handshake_failed", Constructor: "BoltLogHandshakeFailed", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "bolt.log.hello", Constructor: "BoltLogHello", Fields: []string{}, PluralForms: []string{"other"}},

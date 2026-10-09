@@ -7,6 +7,9 @@
 - id: bolt.log.unencrypted_connection_rejected
   description: Rechazo de una conexión Bolt cuando se requiere TLS.
   other: rechazando conexión sin cifrar
+- id: bolt.log.connection_limit_reached
+  description: Rechazo de conexiones Bolt al alcanzar el límite de conexiones.
+  other: "rechazando conexiones: se alcanzó el límite de conexiones Bolt"
 - id: bolt.log.transport_sniff_failed
   description: Error de detección del transporte Bolt.
   other: error al detectar el transporte

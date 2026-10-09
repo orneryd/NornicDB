@@ -276,6 +276,9 @@ type Server struct {
 	// (tcp, tcp_tls, ws, ws_tls); the accept loop closes new conns past
 	// MaxConnections.
 	activeConnections atomic.Int64
+	// connectionLimit counts and logs the connections MaxConnections turns
+	// away (logConnectionLimit).
+	connectionLimit connectionLimitLog
 
 	// discoveryResponse holds the pre-encoded HTTP/1.1 200 response served
 	// to plain GET / probes on the Bolt port. Refreshed by a 1s ticker so
@@ -1102,6 +1105,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			if ms := s.metricsState; ms != nil && ms.bag != nil {
 				incBoltConnectionsRejected(ms.bag, "max_connections")
 			}
+			s.logConnectionLimit(conn, max, time.Now())
 			_ = conn.Close()
 			return
 		}
