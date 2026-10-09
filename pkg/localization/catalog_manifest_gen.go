@@ -359,6 +359,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.implicit_transaction_start_failed", Constructor: "CypherCoreImplicitTransactionStartFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.implicit_transaction_wal_begin_failed", Constructor: "CypherCoreImplicitTransactionWALBeginFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.index_hint_not_found", Constructor: "CypherCoreIndexHintNotFound", Fields: []string{"Hint", "Label", "Property"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.interpolation_wrong_type", Constructor: "CypherCoreInterpolationWrongType", Fields: []string{"Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.invalid_input", Constructor: "CypherCoreInvalidInput", Fields: []string{"Token"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.invalid_input_expected_expression", Constructor: "CypherCoreInvalidInputExpectedExpression", Fields: []string{"Token"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.invalid_input_expected_identifier", Constructor: "CypherCoreInvalidInputExpectedIdentifier", Fields: []string{"Token"}, PluralForms: []string{"other"}},

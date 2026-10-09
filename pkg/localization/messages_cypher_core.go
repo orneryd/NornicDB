@@ -54,6 +54,7 @@ const (
 	MessageCypherCoreInvalidInputExpectedExpression      MessageID = "cyphercore.invalid_input_expected_expression"
 	MessageCypherCoreInvalidInputExpectedIdentifier      MessageID = "cyphercore.invalid_input_expected_identifier"
 	MessageCypherCoreConditionalColumnNames              MessageID = "cyphercore.conditional_column_names"
+	MessageCypherCoreInterpolationWrongType              MessageID = "cyphercore.interpolation_wrong_type"
 	MessageCypherCoreConditionalColumnCount              MessageID = "cyphercore.conditional_column_count"
 	MessageCypherCoreListOperandTypeMismatch             MessageID = "cyphercore.list_operand_type_mismatch"
 	MessageCypherCoreVectorDimensionRange                MessageID = "cyphercore.vector_dimension_range"
@@ -336,6 +337,12 @@ func CypherCoreInvalidInput(token string) Message {
 // whose columns have different names.
 func CypherCoreConditionalColumnNames() Message {
 	return cypherCoreMessage(MessageCypherCoreConditionalColumnNames, "All conditional queries must have the same return column names. Use `AS` to ensure columns have the same name.", nil)
+}
+
+// CypherCoreInterpolationWrongType is Neo4j's message for an interpolated
+// value of a type a string can't hold.
+func CypherCoreInterpolationWrongType(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreInterpolationWrongType, "Wrong type. Expected BOOLEAN, STRING, UUID, INTEGER, FLOAT, TEMPORAL, DURATION or VECTOR, got "+typeName, map[string]any{"Type": typeName})
 }
 
 // CypherCoreConditionalColumnCount is Neo4j's message for WHEN branches that

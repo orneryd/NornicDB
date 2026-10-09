@@ -992,7 +992,7 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 			if err := r.vectorCall(i, j, end); err != nil {
 				return err
 			}
-			if err := r.labelTest(j, end); err != nil {
+			if err := r.labelTest(i, j, end); err != nil {
 				return err
 			}
 			i = j - 1
@@ -1001,10 +1001,11 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 	return nil
 }
 
-// labelTest checks the word that ends at query[wordEnd]: a variable followed by
-// a colon test (mixing colons with symbols is rejected) or by IS and a label
-// expression (rewritten to a colon test).
-func (r *labelExpressionRewriter) labelTest(wordEnd, end int) error {
+// labelTest checks the word at query[wordStart:wordEnd]: a variable followed
+// by a colon test (mixing colons with symbols is rejected), by IS and a label
+// expression (rewritten to a colon test), or by Cypher 25's IS [NOT] LABELED
+// and one (rewritten to the colon test, or NOT it).
+func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 	q := r.query
 	if wordEnd < end && q[wordEnd] == ':' && (wordEnd+1 >= end || q[wordEnd+1] != ':') {
 		// n:A|B:C (written without spaces: a list comprehension's
@@ -1043,6 +1044,9 @@ func (r *labelExpressionRewriter) labelTest(wordEnd, end int) error {
 	if is == wordEnd || is+2 >= end || !strings.EqualFold(q[is:is+2], "IS") || isIdentByte(q[is+2]) || !isLabelIsKeyword(q[:end], is+2) {
 		return nil
 	}
+	if handled := r.isLabeledTest(wordStart, wordEnd, is+2, end); handled {
+		return nil
+	}
 	if not := skipASCIISpaces(q, is+2, end); not+3 <= end && strings.EqualFold(q[not:not+3], "NOT") && (not+3 == end || !isIdentByte(q[not+3])) {
 		// isLabelIsKeyword let IS NOT through: a label follows it.
 		operand, _ := isNotLabelOperand(q[:end], not+3)
@@ -1075,6 +1079,31 @@ func (r *labelExpressionRewriter) labelTest(wordEnd, end int) error {
 	}
 	r.edit(wordEnd, textStart, ":")
 	return nil
+}
+
+// isLabeledTest rewrites x IS [NOT] LABELED <label expression>, whose IS
+// ends at query[afterIs], to (x:<expression>) or (NOT x:<expression>);
+// handled is false when LABELED doesn't follow.
+func (r *labelExpressionRewriter) isLabeledTest(wordStart, wordEnd, afterIs, end int) bool {
+	q := r.query
+	at, negated := skipASCIISpaces(q, afterIs, end), false
+	if matchKeywordAt(q[:end], at, "NOT") {
+		at, negated = skipASCIISpaces(q, at+3, end), true
+	}
+	if !matchKeywordAt(q[:end], at, "LABELED") {
+		return false
+	}
+	textStart := skipASCIISpaces(q, at+len("LABELED"), end)
+	chain, ok := scanLabelChain(q[textStart:end], false)
+	if !ok || chain.colons {
+		return true
+	}
+	test := q[wordStart:wordEnd] + ":" + chain.expr.String()
+	if negated {
+		test = "NOT " + test
+	}
+	r.edit(wordStart, textStart+chain.end, "("+test+")")
+	return true
 }
 
 // opensSubquery reports whether the { at query[brace] opens a subquery body:

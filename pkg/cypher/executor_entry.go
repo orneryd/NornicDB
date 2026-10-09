@@ -195,6 +195,16 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// UNION branch) runs it and returns no rows.
 	cypher, _ = stripCypherPreamble(cypher)
 	cypher = strings.TrimSpace(cypher)
+	// Cypher 25 expression forms (RETURN ALL, s"…{x}…", map comprehensions)
+	// become the expressions they stand for, once, here (#907).
+	expanded, expressionRewrites, err := desugarCypher25Expressions(cypher)
+	if err != nil {
+		return nil, err
+	}
+	cypher = expanded
+	for _, expressionRewrite := range expressionRewrites {
+		defer func() { result, retErr = expressionRewrite.restore(withoutGeneratedColumns(result), retErr) }()
+	}
 	// Cypher 25 composition (NEXT, WHEN, braced query parts) becomes the
 	// CALL subqueries and UNIONs it stands for, once, here; columns and
 	// errors are mapped back (#907).

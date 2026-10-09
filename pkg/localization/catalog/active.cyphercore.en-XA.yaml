@@ -140,6 +140,8 @@
   other: "[!! All conditional queries must have the same return column names. Use `AS` to ensure columns have the same name. !!]"
 - id: cyphercore.conditional_column_count
   other: "[!! All conditional queries must return the same number of columns. !!]"
+- id: cyphercore.interpolation_wrong_type
+  other: "[!! Wrong type. Expected BOOLEAN, STRING, UUID, INTEGER, FLOAT, TEMPORAL, DURATION or VECTOR, got {{.Type}} !!]"
 - id: cyphercore.list_operand_type_mismatch
   other: "[!! Type mismatch: expected List<T> but was {{.Type}} !!]"
 - id: cyphercore.list_parameter_type_mismatch
