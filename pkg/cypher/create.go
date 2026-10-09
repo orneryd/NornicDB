@@ -876,13 +876,15 @@ func splitPatternParameterMap(text string) (rest, parameter string, ok bool) {
 }
 
 // createParameterProperties is the property map a CREATE pattern's $name
-// gives: a copy of the parameter's map, or Neo4j's TypeError when the
-// parameter isn't a map.
+// gives: a copy of the parameter's map, or Neo4j's SyntaxError ("Type
+// mismatch for parameter 'p': expected Map, Node or Relationship but was
+// Integer") when it isn't a map.
 func createParameterProperties(ctx context.Context, parameter string) (map[string]interface{}, error) {
-	value, resolved := resolveDirectParamRef(ctx, parameter)
+	value, _ := resolveDirectParamRef(ctx, parameter)
 	properties, isMap := toStringAnyMap(value)
-	if !resolved || !isMap {
-		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidPropertyValue", "CREATE properties must be a map")
+	if !isMap {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
+			localization.CypherCoreParameterTypeMismatch(parameter[1:], "Map, Node or Relationship", staticParameterOperand(value).display))
 	}
 	return cloneNodePropertiesMap(properties), nil
 }

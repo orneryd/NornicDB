@@ -26,6 +26,11 @@ func TestParameterPosition(t *testing.T) {
 		_, err = exec.Execute(ctx, query, nil)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
+	for _, query := range []string{"CREATE (n $p) RETURN n", "CREATE ()-[r:R $p]->() RETURN r"} {
+		_, err := exec.Execute(ctx, query, map[string]interface{}{"p": int64(5)})
+		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+		require.Contains(t, err.Error(), "Type mismatch for parameter 'p': expected Map, Node or Relationship but was Integer", query)
+	}
 	params := map[string]interface{}{"props": map[string]interface{}{"k": int64(1)}, "l": []interface{}{int64(1), int64(2)}, "n": int64(1)}
 	for query, want := range map[string][][]interface{}{
 		"CREATE (n:PP $props) RETURN n.k":                                          {{int64(1)}},

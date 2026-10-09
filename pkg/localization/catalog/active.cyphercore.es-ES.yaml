@@ -134,6 +134,8 @@
   other: "Entrada no válida '{{.Token}}': se esperaba una expresión"
 - id: cyphercore.invalid_input_expected_identifier
   other: "Entrada no válida '{{.Token}}': se esperaba un identificador"
+- id: cyphercore.parameter_type_mismatch
+  other: "Tipo no coincidente para el parámetro '{{.Parameter}}': se esperaba {{.Expected}} pero era {{.Type}}"
 - id: cyphercore.list_operand_type_mismatch
   other: "Tipo no coincidente: se esperaba List<T> pero era {{.Type}}"
 - id: cyphercore.list_parameter_type_mismatch
