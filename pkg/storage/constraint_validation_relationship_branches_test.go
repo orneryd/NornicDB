@@ -19,6 +19,22 @@ func (e *allEdgesOverrideEngine) AllEdges() ([]*Edge, error) {
 	return e.edges, nil
 }
 
+// GetEdgesByType serves the injected edges to the typed read that
+// relationship-constraint validation uses (StreamEdgesByType falls back to it
+// for engines without EdgeTypeStreamer).
+func (e *allEdgesOverrideEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
+	if e.err != nil {
+		return nil, e.err
+	}
+	var out []*Edge
+	for _, edge := range e.edges {
+		if edge != nil && edge.Type == edgeType {
+			out = append(out, edge)
+		}
+	}
+	return out, nil
+}
+
 func TestValidateRelationshipConstraintOnCreationForEngine_Branches(t *testing.T) {
 	t.Run("all-edges scan error is propagated", func(t *testing.T) {
 		eng := &allEdgesOverrideEngine{

@@ -9,7 +9,7 @@
 - id: cypherschema.temporal_relationship_arity_required
   other: "la restricción TEMPORAL requiere al menos 3 propiedades (key..., valid_from, valid_to)"
 - id: cypherschema.temporal_node_arity_required
-  other: "la restricción TEMPORAL requiere 3 propiedades (key, valid_from, valid_to)"
+  other: "la restricción TEMPORAL requiere al menos 3 propiedades (key..., valid_from, valid_to)"
 - id: cypherschema.domain_value_list_invalid
   other: "lista de valores de dominio no válida: {{.Cause}}"
 - id: cypherschema.domain_allowed_value_required

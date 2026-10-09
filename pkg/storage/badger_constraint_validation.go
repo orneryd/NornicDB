@@ -183,34 +183,30 @@ func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node,
 				}
 			}
 		case ConstraintTemporal:
-			if len(c.Properties) != 3 {
-				return fmt.Errorf("TEMPORAL constraint requires 3 properties (key, valid_from, valid_to)")
+			spec, ok := splitTemporalKeySpec(c.Properties)
+			if !ok {
+				return fmt.Errorf("TEMPORAL constraint requires at least 3 properties (key..., valid_from, valid_to)")
 			}
-			keyProp := c.Properties[0]
-			startProp := c.Properties[1]
-			endProp := c.Properties[2]
-
-			keyVal := node.Properties[keyProp]
-			if keyVal == nil {
+			keyVal, missing := spec.keyValue(node.Properties)
+			if missing != "" {
 				return &ConstraintViolationError{
 					Type:       ConstraintTemporal,
 					Label:      c.Label,
 					Properties: c.Properties,
-					Message:    fmt.Sprintf("TEMPORAL key property %s cannot be null", keyProp),
+					Message:    fmt.Sprintf("TEMPORAL key property %s cannot be null", missing),
 				}
 			}
-			start, ok := coerceTemporalTime(node.Properties[startProp])
+			interval, ok := spec.interval(node.Properties)
 			if !ok {
 				return &ConstraintViolationError{
 					Type:       ConstraintTemporal,
 					Label:      c.Label,
 					Properties: c.Properties,
-					Message:    fmt.Sprintf("TEMPORAL start property %s must be a datetime", startProp),
+					Message:    fmt.Sprintf("TEMPORAL start property %s must be a datetime", spec.startProp),
 				}
 			}
-			end, hasEnd := coerceTemporalTime(node.Properties[endProp])
 
-			if err := b.scanForTemporalOverlapInTxn(txn, namespace, c.Label, keyProp, startProp, endProp, keyVal, start, end, hasEnd, excludeNodeID); err != nil {
+			if err := b.scanForTemporalOverlapInTxn(txn, namespace, c, keyVal, interval.start, interval.end, interval.hasEnd, excludeNodeID); err != nil {
 				return err
 			}
 		case ConstraintDomain:
@@ -373,7 +369,43 @@ func (b *BadgerEngine) scanForNodeKeyViolationInTxn(txn *badger.Txn, namespace, 
 	return nil
 }
 
-func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namespace, label, keyProp, startProp, endProp string, keyValue interface{}, start time.Time, end time.Time, hasEnd bool, excludeNodeID NodeID) error {
+// temporalOverlapViolation reports whether existing overlaps the interval for
+// keyValue under constraint c, returning the violation to surface.
+func temporalOverlapViolation(c Constraint, spec temporalKeySpec, existing *Node, keyValue interface{}, interval temporalInterval) error {
+	if existing == nil || !spec.keyMatches(existing.Properties, keyValue) {
+		return nil
+	}
+	existingInterval, ok := spec.interval(existing.Properties)
+	if !ok {
+		return &ConstraintViolationError{
+			Type:       ConstraintTemporal,
+			Label:      c.Label,
+			Properties: c.Properties,
+			Message:    fmt.Sprintf("TEMPORAL constraint requires %s for node %s", spec.startProp, existing.ID),
+		}
+	}
+	if intervalsOverlap(interval, existingInterval) {
+		return &ConstraintViolationError{
+			Type:       ConstraintTemporal,
+			Label:      c.Label,
+			Properties: c.Properties,
+			Message: fmt.Sprintf("TEMPORAL constraint violation: overlap with node %s for %s=%v",
+				existing.ID, spec.keyLabel(), keyValue),
+		}
+	}
+	return nil
+}
+
+// legacyScanForTemporalOverlapInTxn scans every node of c.Label in namespace
+// for an interval overlapping [start, end) under the same grouping key. It is
+// the fallback when no temporal history index entries exist for the key.
+func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namespace string, c Constraint, keyValue interface{}, start time.Time, end time.Time, hasEnd bool, excludeNodeID NodeID) error {
+	spec, ok := splitTemporalKeySpec(c.Properties)
+	if !ok {
+		return nil
+	}
+	interval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
+	label := c.Label
 	prefix := labelIndexPrefix(label)
 	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer iter.Close()
@@ -414,53 +446,26 @@ func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namesp
 		if err != nil {
 			return err
 		}
-
-		existingKey, ok := existingNode.Properties[keyProp]
-		if !ok || existingKey == nil {
-			continue
-		}
-		if !compareValues(existingKey, keyValue) {
-			continue
-		}
-
-		existingStart, ok := coerceTemporalTime(existingNode.Properties[startProp])
-		if !ok {
-			return &ConstraintViolationError{
-				Type:       ConstraintTemporal,
-				Label:      label,
-				Properties: []string{keyProp, startProp, endProp},
-				Message:    fmt.Sprintf("TEMPORAL constraint requires %s for node %s", startProp, existingNode.ID),
-			}
-		}
-		existingEnd, existingHasEnd := coerceTemporalTime(existingNode.Properties[endProp])
-
-		if intervalsOverlap(temporalInterval{
-			start:  start,
-			end:    end,
-			hasEnd: hasEnd,
-		}, temporalInterval{
-			start:  existingStart,
-			end:    existingEnd,
-			hasEnd: existingHasEnd,
-		}) {
-			return &ConstraintViolationError{
-				Type:       ConstraintTemporal,
-				Label:      label,
-				Properties: []string{keyProp, startProp, endProp},
-				Message: fmt.Sprintf("TEMPORAL constraint violation: overlap with node %s for %s=%v",
-					existingNode.ID, keyProp, keyValue),
-			}
+		if err := temporalOverlapViolation(c, spec, existingNode, keyValue, interval); err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace, label, keyProp, startProp, endProp string, keyValue interface{}, start time.Time, end time.Time, hasEnd bool, excludeNodeID NodeID) error {
+// scanForTemporalOverlapInTxn checks the interval [start, end) for keyValue
+// against the temporal history index (its two neighbours by start time), or
+// falls back to a label scan when the key has no indexed history yet.
+func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace string, c Constraint, keyValue interface{}, start time.Time, end time.Time, hasEnd bool, excludeNodeID NodeID) error {
+	spec, ok := splitTemporalKeySpec(c.Properties)
+	if !ok {
+		return nil
+	}
 	constraint := Constraint{
 		Type:       ConstraintTemporal,
-		Label:      label,
-		Properties: []string{keyProp, startProp, endProp},
+		Label:      c.Label,
+		Properties: c.Properties,
 	}
 	target := temporalRefreshTarget{
 		constraint: constraint,
@@ -476,41 +481,23 @@ func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace, l
 	}
 	it.Close()
 	if !hasIndexedEntries {
-		return b.legacyScanForTemporalOverlapInTxn(txn, namespace, label, keyProp, startProp, endProp, keyValue, start, end, hasEnd, excludeNodeID)
+		return b.legacyScanForTemporalOverlapInTxn(txn, namespace, constraint, keyValue, start, end, hasEnd, excludeNodeID)
 	}
 
 	prevNode, nextNode, err := b.temporalAdjacentNodesInTxn(txn, target, start, excludeNodeID)
 	if err != nil {
 		return err
 	}
-	if prevNode != nil {
-		_, prevStart, prevEnd, prevHasEnd, ok := temporalNodeState(prevNode, constraint)
-		if ok && intervalsOverlap(
-			temporalInterval{start: start, end: end, hasEnd: hasEnd},
-			temporalInterval{start: prevStart, end: prevEnd, hasEnd: prevHasEnd},
-		) {
-			return &ConstraintViolationError{
-				Type:       ConstraintTemporal,
-				Label:      label,
-				Properties: []string{keyProp, startProp, endProp},
-				Message: fmt.Sprintf("TEMPORAL constraint violation: overlap with node %s for %s=%v",
-					prevNode.ID, keyProp, keyValue),
-			}
+	interval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
+	for _, neighbour := range []*Node{prevNode, nextNode} {
+		if neighbour == nil {
+			continue
 		}
-	}
-	if nextNode != nil {
-		_, nextStart, nextEnd, nextHasEnd, ok := temporalNodeState(nextNode, constraint)
-		if ok && intervalsOverlap(
-			temporalInterval{start: start, end: end, hasEnd: hasEnd},
-			temporalInterval{start: nextStart, end: nextEnd, hasEnd: nextHasEnd},
-		) {
-			return &ConstraintViolationError{
-				Type:       ConstraintTemporal,
-				Label:      label,
-				Properties: []string{keyProp, startProp, endProp},
-				Message: fmt.Sprintf("TEMPORAL constraint violation: overlap with node %s for %s=%v",
-					nextNode.ID, keyProp, keyValue),
-			}
+		if _, _, _, _, ok := temporalNodeState(neighbour, constraint); !ok {
+			continue
+		}
+		if err := temporalOverlapViolation(constraint, spec, neighbour, keyValue, interval); err != nil {
+			return err
 		}
 	}
 

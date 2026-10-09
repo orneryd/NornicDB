@@ -75,7 +75,6 @@ func TestCypherMatchingDescriptorsPreserveExactEnglish(t *testing.T) {
 		{localization.CypherMatchingOptionalMatchNodeEndpointUnterminated("(a-[r]->(b)"), `optional match pattern "(a-[r]->(b)" has an unterminated node endpoint`},
 		{localization.CypherMatchingOptionalMatchTargetEndpointMissing("(a)-[r]->"), `optional match pattern "(a)-[r]->" has no target endpoint`},
 		{localization.CypherMatchingOptionalMatchTargetEndpointUnterminated("(a)-[r]->(b"), `optional match pattern "(a)-[r]->(b" has an unterminated target endpoint`},
-		{localization.CypherMatchingInitialTraversalMatchFailed(cause), "failed to execute initial traversal MATCH: forced matching failure"},
 		{localization.CypherMatchingAggregateCallExpected("count"), `not a whole aggregate call: "count"`},
 		{localization.CypherMatchingFunctionParametersInsufficient("count"), "insufficient parameters for function 'count'"},
 	}

@@ -346,7 +346,7 @@ func (e *StorageExecutor) parseConstraintContractPrimitive(entryText, variable s
 			return constraint, storage.ConstraintContractEntry{Kind: storage.ConstraintContractKindPrimitiveNode, PrimitiveType: string(storage.ConstraintNodeKey), Properties: properties, Expression: entryText}, true, nil
 		}
 		if properties, ok := e.parseTemporalConstraintPredicate(entryText); ok {
-			if len(properties) != 3 {
+			if len(properties) < 3 {
 				return nil, storage.ConstraintContractEntry{}, true, localizedError(localization.CypherSchemaTemporalNodeArityRequired(), nil)
 			}
 			constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintTemporal, EntityType: entityType, Label: labelOrType, Properties: properties}

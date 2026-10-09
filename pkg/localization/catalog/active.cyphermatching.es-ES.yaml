@@ -82,9 +82,6 @@
 - id: cyphermatching.optional_match_target_endpoint_unterminated
   description: El nodo de destino del patrón OPTIONAL MATCH no está terminado. Pattern conserva las comillas de Go.
   other: "el patrón de coincidencia opcional {{.Pattern}} tiene un nodo de destino sin terminar"
-- id: cyphermatching.initial_traversal_match_failed
-  description: Error al ejecutar el MATCH de recorrido inicial. Cause no se traduce.
-  other: "no se pudo ejecutar el MATCH de recorrido inicial: {{.Cause}}"
 - id: cyphermatching.aggregate_call_expected
   description: La expresión no es una llamada de agregado completa. Expression conserva las comillas de Go.
   other: "no es una llamada de agregado completa: {{.Expression}}"

@@ -60,6 +60,31 @@ FOR (n:FactVersion)
 REQUIRE (n.fact_key, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP
 ```
 
+The last two properties are always the validity window `(valid_from, valid_to)`;
+every property before them forms the grouping key. Node and relationship
+constraints both accept a composite key of one or more properties, and two
+windows conflict only when **all** key values match:
+
+```cypher
+CREATE CONSTRAINT tenant_fact_version_no_overlap
+FOR (n:FactVersion)
+REQUIRE (n.tenant, n.fact_key, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP
+
+CREATE CONSTRAINT employment_no_overlap
+FOR ()-[r:WORKS_AT]-()
+REQUIRE (r.from_id, r.to_id, r.valid_from, r.valid_to) IS TEMPORAL NO OVERLAP
+```
+
+- Every key property must be non-null; a null key property is a violation.
+- A null `valid_to` is an open-ended window that overlaps every later window
+  for the same key.
+- Windows are half-open: a window ending exactly when the next one starts
+  (`valid_to` = next `valid_from`) does not overlap.
+- Creating the constraint validates existing data, and the same form is accepted
+  inside a `REQUIRE { ... }` contract.
+- `db.temporal.asOf` and `db.temporal.assertNoOverlap` address a single key
+  property, so they apply to single-key constraints.
+
 ### Cardinality constraints
 
 Limit outgoing or incoming relationship count per node. Direction is encoded in the `FOR` clause.
@@ -137,7 +162,7 @@ Inside a block, primitive entries compile into the existing primitive constraint
 - `n.name IS NOT NULL`
 - `n.age IS :: INTEGER`
 - `(n.tenant, n.externalId) IS NODE KEY`
-- `(n.key, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP`
+- `(n.key, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP` (or a composite key such as `(n.tenant, n.key, n.valid_from, n.valid_to)`)
 - `r.id IS UNIQUE`
 - `r.startedAt IS NOT NULL`
 - `r.role IS :: STRING`

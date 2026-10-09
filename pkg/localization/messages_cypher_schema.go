@@ -72,7 +72,7 @@ func CypherSchemaTemporalRelationshipArityRequired() Message {
 }
 
 func CypherSchemaTemporalNodeArityRequired() Message {
-	return cypherSchemaMessage(MessageCypherSchemaTemporalNodeArityRequired, "TEMPORAL constraint requires 3 properties (key, valid_from, valid_to)", nil)
+	return cypherSchemaMessage(MessageCypherSchemaTemporalNodeArityRequired, "TEMPORAL constraint requires at least 3 properties (key..., valid_from, valid_to)", nil)
 }
 
 func CypherSchemaDomainValueListInvalid(cause error) Message {

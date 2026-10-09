@@ -4,6 +4,7 @@ package storage
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -73,27 +74,51 @@ func RefreshUniqueConstraintValuesForEngine(engine Engine, schema *SchemaManager
 		uc.mu.Unlock()
 	}
 
-	nodes, err := engine.AllNodes()
-	if err != nil {
-		return localizedError(localization.StorageValidationRefreshUniqueScanFailed(err), err)
-	}
-	for _, node := range nodes {
-		if node == nil {
-			continue
+	// Only the labels that carry a UNIQUE constraint are read, each through
+	// the label-scoped stream with just the constrained properties decoded:
+	// a refresh in one database never scans the whole server (AllNodes).
+	propertiesByLabel := make(map[string][]string)
+	labels := make([]string, 0)
+	for _, uc := range uniqueConstraints {
+		if _, ok := propertiesByLabel[uc.Label]; !ok {
+			labels = append(labels, uc.Label)
 		}
-		// Pinned by docs/plans/consumer-pinned-error-contract-plan.md §2.3 and
-		// TestRefreshUniqueConstraint_KeepsPrefixedIDs_UnderNamespacedEngine. Removing
-		// EnsureNodeIDDatabasePrefixForEngine re-introduces a known false-UNIQUE failure
-		// mode for namespaced engines (the cache holds unprefixed IDs while transaction
-		// commit validation passes prefixed IDs).
-		storageNodeID := EnsureNodeIDDatabasePrefixForEngine(engine, node.ID)
-		for _, label := range node.Labels {
-			for propName, propValue := range node.Properties {
+		if !slices.Contains(propertiesByLabel[uc.Label], uc.Property) {
+			propertiesByLabel[uc.Label] = append(propertiesByLabel[uc.Label], uc.Property)
+		}
+	}
+	sort.Strings(labels)
+	for _, label := range labels {
+		properties := propertiesByLabel[label]
+		var violation error
+		err := streamNodesByLabelForValidation(engine, label, properties, func(node *Node) error {
+			if node == nil {
+				return nil
+			}
+			// Pinned by docs/plans/consumer-pinned-error-contract-plan.md §2.3 and
+			// TestRefreshUniqueConstraint_KeepsPrefixedIDs_UnderNamespacedEngine. Removing
+			// EnsureNodeIDDatabasePrefixForEngine re-introduces a known false-UNIQUE failure
+			// mode for namespaced engines (the cache holds unprefixed IDs while transaction
+			// commit validation passes prefixed IDs).
+			storageNodeID := EnsureNodeIDDatabasePrefixForEngine(engine, node.ID)
+			for _, propName := range properties {
+				propValue, ok := node.Properties[propName]
+				if !ok {
+					continue
+				}
 				if err := schema.CheckUniqueConstraint(label, propName, propValue, storageNodeID); err != nil {
-					return localizedError(localization.StorageValidationRefreshUniqueFailed(err), err)
+					violation = localizedError(localization.StorageValidationRefreshUniqueFailed(err), err)
+					return violation
 				}
 				schema.RegisterUniqueValue(label, propName, propValue, storageNodeID)
 			}
+			return nil
+		})
+		if violation != nil {
+			return violation
+		}
+		if err != nil {
+			return localizedError(localization.StorageValidationRefreshUniqueScanFailed(err), err)
 		}
 	}
 
@@ -102,185 +127,6 @@ func RefreshUniqueConstraintValuesForEngine(engine Engine, schema *SchemaManager
 		uc.valuesCacheComplete = true
 		uc.mu.Unlock()
 	}
-	return nil
-}
-
-// validateRelationshipConstraintOnCreationForEngine validates relationship constraints
-// using the Engine interface. It scans all edges for violations.
-func validateRelationshipConstraintOnCreationForEngine(engine Engine, c Constraint) error {
-	edges, err := engine.AllEdges()
-	if err != nil {
-		return localizedError(localization.StorageValidationScanEdgesFailed(err), err)
-	}
-
-	switch c.Type {
-	case ConstraintUnique:
-		return validateRelUniquenessOnEdges(edges, c)
-	case ConstraintExists:
-		return validateRelExistenceOnEdges(edges, c)
-	case ConstraintPropertyType:
-		// Handled separately via PropertyTypeConstraint path
-		return nil
-	case ConstraintRelationshipKey:
-		// Relationship key = existence + uniqueness on all key properties
-		if err := validateRelExistenceOnEdges(edges, c); err != nil {
-			return err
-		}
-		return validateRelCompositeUniquenessOnEdges(edges, c)
-	case ConstraintTemporal:
-		return validateRelTemporalOnCreationForEngine(edges, c)
-	case ConstraintDomain:
-		return validateRelDomainOnCreationForEngine(edges, c)
-	case ConstraintCardinality:
-		return validateCardinalityOnCreationForEngine(edges, c)
-	case ConstraintPolicy:
-		return validatePolicyOnCreationForEngine(engine, edges, c)
-	default:
-		return localizedError(localization.StorageValidationRelationshipConstraintTypeUnsupported(string(c.Type)), nil)
-	}
-}
-
-// validateRelUniquenessOnEdges checks uniqueness for relationship properties.
-func validateRelUniquenessOnEdges(edges []*Edge, c Constraint) error {
-	if len(c.Properties) == 1 {
-		property := c.Properties[0]
-		seen := make(map[interface{}]EdgeID)
-		for _, edge := range edges {
-			if edge.Type != c.Label {
-				continue
-			}
-			value := edge.Properties[property]
-			if value == nil {
-				continue
-			}
-			if existingID, found := seen[value]; found {
-				message := localization.StorageValidationRelationshipUniqueDuplicate(string(existingID), string(edge.ID), property, value)
-				return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{property}, message, nil)
-			}
-			seen[value] = edge.ID
-		}
-		return nil
-	}
-	return validateRelCompositeUniquenessOnEdges(edges, c)
-}
-
-// validateRelCompositeUniquenessOnEdges checks composite uniqueness for relationship properties.
-func validateRelCompositeUniquenessOnEdges(edges []*Edge, c Constraint) error {
-	type compositeKey string
-	seen := make(map[compositeKey]EdgeID)
-	for _, edge := range edges {
-		if edge.Type != c.Label {
-			continue
-		}
-		// Build composite key — skip if any property is nil
-		allPresent := true
-		parts := make([]string, len(c.Properties))
-		for i, prop := range c.Properties {
-			val := edge.Properties[prop]
-			if val == nil {
-				allPresent = false
-				break
-			}
-			parts[i] = fmt.Sprintf("%v", val)
-		}
-		if !allPresent {
-			continue
-		}
-		key := compositeKey(strings.Join(parts, "\x00"))
-		if existingID, found := seen[key]; found {
-			message := localization.StorageValidationRelationshipCompositeDuplicate(string(existingID), string(edge.ID), parts)
-			return newLocalizedConstraintViolation(ConstraintUnique, c.Label, c.Properties, message, nil)
-		}
-		seen[key] = edge.ID
-	}
-	return nil
-}
-
-// validateRelExistenceOnEdges checks existence for relationship properties.
-func validateRelExistenceOnEdges(edges []*Edge, c Constraint) error {
-	for _, edge := range edges {
-		if edge.Type != c.Label {
-			continue
-		}
-		for _, prop := range c.Properties {
-			value := edge.Properties[prop]
-			if value == nil {
-				message := localization.StorageValidationRelationshipPropertyMissing(string(edge.ID), prop)
-				return newLocalizedConstraintViolation(ConstraintExists, c.Label, []string{prop}, message, nil)
-			}
-		}
-	}
-	return nil
-}
-
-// temporalCompositeKey builds a composite key string from multiple key property values on an edge.
-func temporalCompositeKey(edge *Edge, keyProps []string) (string, error) {
-	parts := make([]string, len(keyProps))
-	for i, prop := range keyProps {
-		val := edge.Properties[prop]
-		if val == nil {
-			return "", localizedError(localization.StorageValidationEdgeKeyNull(string(edge.ID), prop), nil)
-		}
-		parts[i] = fmt.Sprint(val)
-	}
-	return strings.Join(parts, "\x00"), nil
-}
-
-// validateRelTemporalOnCreationForEngine checks temporal no-overlap for relationship properties.
-// Supports 3+ properties: the last 2 are always (valid_from, valid_to), everything before
-// that forms a composite key (e.g., from_id, to_id, valid_from, valid_to).
-func validateRelTemporalOnCreationForEngine(edges []*Edge, c Constraint) error {
-	if len(c.Properties) < 3 {
-		return localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
-	}
-
-	keyProps := c.Properties[:len(c.Properties)-2]
-	startProp := c.Properties[len(c.Properties)-2]
-	endProp := c.Properties[len(c.Properties)-1]
-
-	type edgeInterval struct {
-		temporalInterval
-		edgeID EdgeID
-	}
-
-	byKey := make(map[string][]edgeInterval)
-	for _, edge := range edges {
-		if edge.Type != c.Label {
-			continue
-		}
-		key, err := temporalCompositeKey(edge, keyProps)
-		if err != nil {
-			message := localization.StorageValidationTemporalCreationFailed(err.Error())
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, err)
-		}
-
-		start, ok := coerceTemporalTime(edge.Properties[startProp])
-		if !ok {
-			message := localization.StorageValidationTemporalEdgeInvalid(string(edge.ID), startProp)
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
-		}
-		end, hasEnd := coerceTemporalTime(edge.Properties[endProp])
-
-		byKey[key] = append(byKey[key], edgeInterval{
-			temporalInterval: temporalInterval{start: start, end: end, hasEnd: hasEnd},
-			edgeID:           edge.ID,
-		})
-	}
-
-	for _, intervals := range byKey {
-		sort.Slice(intervals, func(i, j int) bool {
-			return intervals[i].start.Before(intervals[j].start)
-		})
-		for i := 1; i < len(intervals); i++ {
-			prev := intervals[i-1]
-			curr := intervals[i]
-			if intervalsOverlap(prev.temporalInterval, curr.temporalInterval) {
-				message := localization.StorageValidationTemporalEdgesOverlap(string(prev.edgeID), string(curr.edgeID))
-				return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
-			}
-		}
-	}
-
 	return nil
 }
 
@@ -321,115 +167,6 @@ func validateDomainConstraintOnCreationForEngine(engine Engine, c Constraint) er
 		}
 	}
 
-	return nil
-}
-
-// validateRelDomainOnCreationForEngine validates that all existing edges satisfy the domain constraint.
-func validateRelDomainOnCreationForEngine(edges []*Edge, c Constraint) error {
-	if len(c.Properties) != 1 {
-		return localizedError(localization.StorageValidationDomainPropertyCount(len(c.Properties)), nil)
-	}
-	if len(c.AllowedValues) == 0 {
-		return localizedError(localization.StorageValidationDomainAllowedValuesRequired(), nil)
-	}
-
-	property := c.Properties[0]
-
-	for _, edge := range edges {
-		if edge.Type != c.Label {
-			continue
-		}
-		value := edge.Properties[property]
-		if value == nil {
-			continue // NULL is valid for domain constraints
-		}
-		if !isValueInAllowedList(value, c.AllowedValues) {
-			message := localization.StorageValidationDomainEdgeInvalid(string(edge.ID), property, value, c.AllowedValues)
-			return newLocalizedConstraintViolation(ConstraintDomain, c.Label, []string{property}, message, nil)
-		}
-	}
-
-	return nil
-}
-
-// validateCardinalityOnCreationForEngine checks that no node exceeds the max edge count.
-func validateCardinalityOnCreationForEngine(edges []*Edge, c Constraint) error {
-	counts := make(map[NodeID]int)
-	for _, edge := range edges {
-		if edge.Type != c.Label {
-			continue
-		}
-		var anchor NodeID
-		if c.Direction == "OUTGOING" {
-			anchor = NodeID(edge.StartNode)
-		} else {
-			anchor = NodeID(edge.EndNode)
-		}
-		counts[anchor]++
-	}
-	for nodeID, count := range counts {
-		if count > c.MaxCount {
-			message := localization.StorageValidationCardinalityCreationExceeded(string(nodeID), count, strings.ToLower(c.Direction), c.Label, c.MaxCount)
-			return newLocalizedConstraintViolation(ConstraintCardinality, c.Label, nil, message, nil)
-		}
-	}
-	return nil
-}
-
-// validatePolicyOnCreationForEngine checks that all existing edges satisfy the policy.
-func validatePolicyOnCreationForEngine(engine Engine, edges []*Edge, c Constraint) error {
-	// For ALLOWED policies, gather the full set of ALLOWED policies for this relationship type
-	// (existing ones from the schema plus the new one being created) and verify every edge
-	// of this type is covered by at least one ALLOWED pair.
-	var allowedSet []Constraint
-	if c.PolicyMode == "ALLOWED" {
-		schema := engine.GetSchema()
-		if schema != nil {
-			for _, existing := range schema.GetAllConstraints() {
-				if existing.Type == ConstraintPolicy && existing.Label == c.Label && existing.PolicyMode == "ALLOWED" {
-					allowedSet = append(allowedSet, existing)
-				}
-			}
-		}
-		// Add the new constraint being created (not yet in schema).
-		allowedSet = append(allowedSet, c)
-	}
-
-	for _, edge := range edges {
-		if edge.Type != c.Label {
-			continue
-		}
-		srcNode, err := engine.GetNode(NodeID(edge.StartNode))
-		if err != nil || srcNode == nil {
-			continue
-		}
-		tgtNode, err := engine.GetNode(NodeID(edge.EndNode))
-		if err != nil || tgtNode == nil {
-			continue
-		}
-
-		if c.PolicyMode == "DISALLOWED" {
-			srcHas := hasLabel(srcNode.Labels, c.SourceLabel)
-			tgtHas := hasLabel(tgtNode.Labels, c.TargetLabel)
-			if srcHas && tgtHas {
-				message := localization.StorageValidationDisallowedPolicyCreation(string(edge.ID), string(edge.StartNode), c.SourceLabel, string(edge.EndNode), c.TargetLabel, c.Label)
-				return newLocalizedConstraintViolation(ConstraintPolicy, c.Label, nil, message, nil)
-			}
-		} else if c.PolicyMode == "ALLOWED" {
-			// Check that this edge is covered by at least one ALLOWED pair in the full set.
-			matched := false
-			for _, ap := range allowedSet {
-				if hasLabel(srcNode.Labels, ap.SourceLabel) && hasLabel(tgtNode.Labels, ap.TargetLabel) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				message := localization.StorageValidationAllowedPolicyCreation(string(edge.ID), string(edge.StartNode), string(edge.EndNode), c.Label)
-				return newLocalizedConstraintViolation(ConstraintPolicy, c.Label, nil, message, nil)
-			}
-		}
-	}
 	return nil
 }
 
@@ -556,14 +293,13 @@ func validateExistenceConstraintOnCreationWithEngine(engine Engine, c Constraint
 }
 
 // validateTemporalConstraintOnCreationWithEngine enforces no-overlap for temporal intervals.
+// Every property before the trailing (valid_from, valid_to) pair forms the
+// grouping key (see temporalKeySpec).
 func validateTemporalConstraintOnCreationWithEngine(engine Engine, c Constraint) error {
-	if len(c.Properties) != 3 {
-		return localizedError(localization.StorageValidationTemporalPropertiesExactlyThree(), nil)
+	spec, ok := splitTemporalKeySpec(c.Properties)
+	if !ok {
+		return localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
 	}
-
-	keyProp := c.Properties[0]
-	startProp := c.Properties[1]
-	endProp := c.Properties[2]
 
 	nodes, err := engine.GetNodesByLabel(c.Label)
 	if err != nil {
@@ -572,26 +308,19 @@ func validateTemporalConstraintOnCreationWithEngine(engine Engine, c Constraint)
 
 	byKey := make(map[string][]temporalInterval)
 	for _, node := range nodes {
-		keyVal := node.Properties[keyProp]
-		if keyVal == nil {
-			message := localization.StorageValidationTemporalNodeKeyNullCreation(string(node.ID), keyProp)
+		keyVal, missing := spec.keyValue(node.Properties)
+		if missing != "" {
+			message := localization.StorageValidationTemporalNodeKeyNullCreation(string(node.ID), missing)
 			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
 		}
-		key := fmt.Sprint(keyVal)
+		key := spec.groupString(keyVal)
 
-		start, ok := coerceTemporalTime(node.Properties[startProp])
+		interval, ok := spec.interval(node.Properties)
 		if !ok {
-			message := localization.StorageValidationTemporalNodeInvalidCreation(string(node.ID), startProp)
+			message := localization.StorageValidationTemporalNodeInvalidCreation(string(node.ID), spec.startProp)
 			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
 		}
-		end, hasEnd := coerceTemporalTime(node.Properties[endProp])
-
-		interval := temporalInterval{
-			start:  start,
-			end:    end,
-			hasEnd: hasEnd,
-			nodeID: node.ID,
-		}
+		interval.nodeID = node.ID
 		byKey[key] = append(byKey[key], interval)
 	}
 
@@ -632,68 +361,33 @@ func (b *BadgerEngine) ValidateRelationshipConstraint(rc RelationshipConstraint)
 	}
 }
 
-// validateUniqueRelationshipConstraint checks relationship property uniqueness.
+// validateUniqueRelationshipConstraint checks relationship property uniqueness
+// over the edges of rc.RelType only (streamed from the edge type index).
 func (b *BadgerEngine) validateUniqueRelationshipConstraint(rc RelationshipConstraint) error {
 	if len(rc.Properties) != 1 {
 		return localizedError(localization.StorageValidationRelationshipUniquePropertyCount(), nil)
 	}
-
-	property := rc.Properties[0]
-	seen := make(map[interface{}]EdgeID)
-
-	// Scan all relationships of this type
-	edges, err := b.AllEdges()
-	if err != nil {
-		return localizedError(localization.StorageValidationScanEdgesFailed(err), err)
-	}
-
-	for _, edge := range edges {
-		if edge.Type != rc.RelType {
-			continue
-		}
-
-		value := edge.Properties[property]
-		if value == nil {
-			continue
-		}
-
-		if existingEdgeID, found := seen[value]; found {
-			message := localization.StorageValidationRelationshipUniqueDuplicate(string(existingEdgeID), string(edge.ID), property, value)
-			return newLocalizedConstraintViolation(ConstraintUnique, rc.RelType, []string{property}, message, nil)
-		}
-
-		seen[value] = edge.ID
-	}
-
-	return nil
+	return runRelEdgeCheck(b, rc.RelType, newRelUniquenessCheck(Constraint{
+		Type:       ConstraintUnique,
+		Label:      rc.RelType,
+		Properties: rc.Properties,
+	}))
 }
 
-// validateExistenceRelationshipConstraint checks required relationship properties.
+// validateExistenceRelationshipConstraint checks required relationship
+// properties over the edges of rc.RelType only.
 func (b *BadgerEngine) validateExistenceRelationshipConstraint(rc RelationshipConstraint) error {
 	if len(rc.Properties) != 1 {
 		return localizedError(localization.StorageValidationRelationshipExistsPropertyCount(), nil)
 	}
-
 	property := rc.Properties[0]
-
-	edges, err := b.AllEdges()
-	if err != nil {
-		return localizedError(localization.StorageValidationScanEdgesFailed(err), err)
-	}
-
-	for _, edge := range edges {
-		if edge.Type != rc.RelType {
-			continue
-		}
-
-		value := edge.Properties[property]
-		if value == nil {
+	return runRelEdgeCheck(b, rc.RelType, relEdgeCheck{visit: ofType(rc.RelType, func(edge *Edge) error {
+		if edge.Properties[property] == nil {
 			message := localization.StorageValidationRelationshipExistsMissing(string(edge.ID), property)
 			return newLocalizedConstraintViolation(ConstraintExists, rc.RelType, []string{property}, message, nil)
 		}
-	}
-
-	return nil
+		return nil
+	})})
 }
 
 // PropertyTypeConstraint represents a type constraint on properties.
@@ -923,22 +617,8 @@ func ValidatePropertyTypeConstraintOnCreationForEngine(engine Engine, ptc Proper
 	return nil
 }
 
-// validateRelPropertyTypeOnCreationForEngine validates property type constraints on relationships.
+// validateRelPropertyTypeOnCreationForEngine validates property type
+// constraints on relationships, streaming only the edges of ptc.Label.
 func validateRelPropertyTypeOnCreationForEngine(engine Engine, ptc PropertyTypeConstraint) error {
-	edges, err := engine.AllEdges()
-	if err != nil {
-		return localizedError(localization.StorageValidationScanEdgesFailed(err), err)
-	}
-
-	for _, edge := range edges {
-		if edge.Type != ptc.Label {
-			continue
-		}
-		value := edge.Properties[ptc.Property]
-		if err := ValidatePropertyType(value, ptc.ExpectedType); err != nil {
-			return localizedError(localization.StorageValidationRelationshipPropertyInvalid(string(edge.ID), ptc.Property, err), err)
-		}
-	}
-
-	return nil
+	return runRelEdgeCheck(engine, ptc.Label, newRelPropertyTypeCheck(ptc))
 }

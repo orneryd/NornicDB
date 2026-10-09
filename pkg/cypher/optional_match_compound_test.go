@@ -65,10 +65,6 @@ func TestGh713OptionalProjectionExpressionPagination(t *testing.T) {
 					result, err := executor.Execute(ctx, query, params)
 					require.NoError(t, err)
 					require.Equal(t, test.want, result.Rows)
-					fallback, err := executor.executeTraversalSeededOptionalMatch(withParams(ctx, params), "(a:Anchor)-[:HAS]->(p:Product)", "OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)", test.tail)
-					require.NoError(t, err)
-					require.Equal(t, result.Columns, fallback.Columns)
-					require.Equal(t, test.want, fallback.Rows)
 				})
 			}
 			t.Run("matched entity counts", func(t *testing.T) {
@@ -79,10 +75,6 @@ func TestGh713OptionalProjectionExpressionPagination(t *testing.T) {
 				result, err := executor.Execute(ctx, "MATCH (a:Anchor)-[:HAS]->(p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) "+tail, params)
 				require.NoError(t, err)
 				require.Equal(t, [][]interface{}{{"B", int64(1), int64(1)}}, result.Rows)
-				fallback, err := executor.executeTraversalSeededOptionalMatch(withParams(ctx, params), "(a:Anchor)-[:HAS]->(p:Product)", "OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)", tail)
-				require.NoError(t, err)
-				require.Equal(t, result.Columns, fallback.Columns)
-				require.Equal(t, result.Rows, fallback.Rows)
 			})
 		})
 	}

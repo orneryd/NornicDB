@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `MATCH … WHERE … MATCH … OPTIONAL MATCH … RETURN` returned no rows. The
+  pipeline's separate optional-match plan sliced the statement text, so the
+  second MATCH became part of the first clause's WHERE. That side path is
+  removed: such statements run through the main pipeline (MATCH clauses applied
+  one by one, OPTIONAL MATCH applied in one batched left-outer join).
+- A temporal type name followed by "(" was read as a function call by the
+  static arity check: a `REQUIRE { }` contract with `n.at IS :: ZONED DATETIME`
+  (or DATE, LOCAL DATETIME) before a `( … ) IS TEMPORAL NO OVERLAP` entry failed
+  with "Too many parameters for function 'DATETIME'". Names after `::`, `TYPED`,
+  `ZONED` or `LOCAL` are types, not calls.
 - `DROP DATABASE` now removes the database's schema (constraints, contracts,
   indexes) along with its data. Previously the schema survived the drop, so a
   database recreated under the same name came back with every constraint of the
@@ -31,6 +41,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   property is absent, matching primitive domain/type constraints and SQL `CHECK`
   semantics. Previously `IN` rejected a missing property, and comparisons against a
   missing property compared the string `"<nil>"`.
+- Node `TEMPORAL NO OVERLAP` constraints accept a composite grouping key, like
+  relationship temporal constraints: every property before the trailing
+  `(valid_from, valid_to)` pair forms the key
+  (`REQUIRE (n.k1, n.k2, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP`), as a
+  primitive and inside `REQUIRE { ... }` contracts. Previously node constraints
+  failed with "TEMPORAL constraint requires 3 properties". Single-key constraints
+  and their persisted temporal indexes are unchanged.
+- Creating a constraint no longer reads every database on the server. Relationship
+  constraints (`UNIQUE`, `IS NOT NULL`, `KEY`, `TEMPORAL`, `DOMAIN`, type,
+  `MAX COUNT`, `ALLOWED`/`DISALLOWED`) and relationship contracts now stream only the
+  constrained relationship type of their own database, one edge at a time, and the
+  `UNIQUE` value cache rebuild streams only the constrained labels and properties.
+  Previously creation loaded every edge (or node) of every database into memory, so
+  DDL on an empty database took hundreds of milliseconds to seconds on a server
+  holding large databases (benchmark with 100k edges in another database: 55 ms →
+  0.13 ms per relationship constraint; 22.6 ms → 2 ms per `UNIQUE` refresh). Engines
+  expose the new optional `storage.EdgeTypeStreamer` interface and
+  `storage.StreamEdgesByType` helper.
 
 ## [1.4.1]
 

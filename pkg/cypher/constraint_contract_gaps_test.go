@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -201,4 +202,37 @@ func TestBug_DropConstraintContract(t *testing.T) {
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, `DROP CONSTRAINT person_contract`, nil)
 	require.Error(t, err)
+}
+
+// BUG: the static function-arity check read a temporal type name followed by
+// "(" as a call: in a REQUIRE { } block, `n.at IS :: ZONED DATETIME` followed
+// by a `(n.k, n.from, n.to) IS TEMPORAL NO OVERLAP` entry failed with
+// "Too many parameters for function 'DATETIME'" (DATE likewise).
+func TestBug_TypeAnnotationNotReadAsFunctionCall(t *testing.T) {
+	ctx := context.Background()
+	exec, store := newConstraintGapExecutor(t)
+
+	for _, typ := range []string{"ZONED DATETIME", "DATETIME", "DATE", "LOCAL DATETIME"} {
+		label := "T" + strings.ReplaceAll(typ, " ", "")
+		_, err := exec.Execute(ctx, `
+			CREATE CONSTRAINT `+strings.ToLower(label)+`_contract FOR (n:`+label+`) REQUIRE {
+			  n.at IS :: `+typ+`
+			  (n.k, n.vf, n.vt) IS TEMPORAL NO OVERLAP
+			}`, nil)
+		require.NoError(t, err, typ)
+	}
+	require.Len(t, store.GetSchema().GetAllConstraintContracts(), 4)
+
+	_, err := exec.Execute(ctx, `CREATE (:Ev {d: date('2026-01-01'), n: 2})`, nil)
+	require.NoError(t, err)
+	res, err := exec.Execute(ctx, "MATCH (e:Ev) WHERE e.d IS :: DATE\n AND (e.n > 1) RETURN count(e)", nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, res.Rows[0][0])
+	res, err = exec.Execute(ctx, "MATCH (e:Ev) WHERE e.d IS TYPED DATE AND (e.n > 1) RETURN count(e)", nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, res.Rows[0][0])
+
+	// Real calls are still arity-checked.
+	_, err = exec.Execute(ctx, `RETURN date('2026-01-01', 1, 2)`, nil)
+	require.ErrorContains(t, err, "Too many parameters for function")
 }

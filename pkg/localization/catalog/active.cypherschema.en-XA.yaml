@@ -9,7 +9,7 @@
 - id: cypherschema.temporal_relationship_arity_required
   other: "[!! TEMPORAL constraint requires at least 3 properties (key..., valid_from, valid_to) !!]"
 - id: cypherschema.temporal_node_arity_required
-  other: "[!! TEMPORAL constraint requires 3 properties (key, valid_from, valid_to) !!]"
+  other: "[!! TEMPORAL constraint requires at least 3 properties (key..., valid_from, valid_to) !!]"
 - id: cypherschema.domain_value_list_invalid
   other: "[!! invalid domain value list: {{.Cause}} !!]"
 - id: cypherschema.domain_allowed_value_required

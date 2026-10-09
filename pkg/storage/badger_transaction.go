@@ -3723,66 +3723,60 @@ func (tx *BadgerTransaction) checkExistenceConstraint(node *Node, c Constraint) 
 }
 
 // checkTemporalConstraint enforces TEMPORAL NO OVERLAP constraints within a transaction.
+// Every property before the trailing (valid_from, valid_to) pair forms the
+// grouping key (see temporalKeySpec).
 //
 // It must validate against:
 // - other pending nodes in this transaction (read-your-writes), and
 // - existing committed nodes in storage (via the label index scan).
 func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) error {
-	if len(c.Properties) != 3 {
-		return localizedError(localization.StorageValidationTemporalPropertiesExactlyThree(), nil)
-	}
-
-	keyProp := c.Properties[0]
-	startProp := c.Properties[1]
-	endProp := c.Properties[2]
-
-	keyVal := node.Properties[keyProp]
-	if keyVal == nil {
-		message := localization.StorageValidationTemporalKeyNull(keyProp)
-		return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
-	}
-
-	start, ok := coerceTemporalTime(node.Properties[startProp])
+	spec, ok := splitTemporalKeySpec(c.Properties)
 	if !ok {
-		message := localization.StorageValidationTemporalStartInvalid(startProp)
+		return localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
+	}
+
+	keyVal, missing := spec.keyValue(node.Properties)
+	if missing != "" {
+		message := localization.StorageValidationTemporalKeyNull(missing)
 		return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
 	}
-	end, hasEnd := coerceTemporalTime(node.Properties[endProp])
+
+	interval, ok := spec.interval(node.Properties)
+	if !ok {
+		message := localization.StorageValidationTemporalStartInvalid(spec.startProp)
+		return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+	}
 
 	if err := tx.pinNamespaceFromIDLocked(string(node.ID)); err != nil {
 		return err
 	}
 	nsPrefix := tx.namespace + ":"
 
+	collides := func(other *Node) error {
+		if !spec.keyMatches(other.Properties, keyVal) {
+			return nil
+		}
+		otherInterval, ok := spec.interval(other.Properties)
+		if !ok {
+			message := localization.StorageValidationTemporalNodeRequired(spec.startProp, string(other.ID))
+			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+		}
+		if intervalsOverlap(interval, otherInterval) {
+			message := localization.StorageValidationTemporalNodeOverlap(string(other.ID), spec.keyLabel(), keyVal)
+			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+		}
+		return nil
+	}
+
 	// All pending nodes share the transaction's pinned namespace by
 	// invariant; only the committed-data scan still needs the prefix filter
 	// because the label index spans namespaces.
 	for id, other := range tx.pendingNodes {
-		if id == node.ID {
+		if id == node.ID || !hasLabel(other.Labels, c.Label) {
 			continue
 		}
-		if !hasLabel(other.Labels, c.Label) {
-			continue
-		}
-
-		otherKey := other.Properties[keyProp]
-		if otherKey == nil || !compareValues(otherKey, keyVal) {
-			continue
-		}
-
-		otherStart, ok := coerceTemporalTime(other.Properties[startProp])
-		if !ok {
-			message := localization.StorageValidationTemporalNodeRequired(startProp, string(id))
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, []string{keyProp, startProp, endProp}, message, nil)
-		}
-		otherEnd, otherHasEnd := coerceTemporalTime(other.Properties[endProp])
-
-		if intervalsOverlap(
-			temporalInterval{start: start, end: end, hasEnd: hasEnd},
-			temporalInterval{start: otherStart, end: otherEnd, hasEnd: otherHasEnd},
-		) {
-			message := localization.StorageValidationTemporalNodeOverlap(string(id), keyProp, keyVal)
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, []string{keyProp, startProp, endProp}, message, nil)
+		if err := collides(other); err != nil {
+			return err
 		}
 	}
 
@@ -3792,28 +3786,11 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 		return err
 	}
 	for _, other := range visibleNodes {
-		if other == nil || other.ID == node.ID {
+		if other == nil || other.ID == node.ID || !strings.HasPrefix(string(other.ID), nsPrefix) {
 			continue
 		}
-		if !strings.HasPrefix(string(other.ID), nsPrefix) {
-			continue
-		}
-		otherKey := other.Properties[keyProp]
-		if otherKey == nil || !compareValues(otherKey, keyVal) {
-			continue
-		}
-		otherStart, ok := coerceTemporalTime(other.Properties[startProp])
-		if !ok {
-			message := localization.StorageValidationTemporalNodeRequired(startProp, string(other.ID))
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, []string{keyProp, startProp, endProp}, message, nil)
-		}
-		otherEnd, otherHasEnd := coerceTemporalTime(other.Properties[endProp])
-		if intervalsOverlap(
-			temporalInterval{start: start, end: end, hasEnd: hasEnd},
-			temporalInterval{start: otherStart, end: otherEnd, hasEnd: otherHasEnd},
-		) {
-			message := localization.StorageValidationTemporalNodeOverlap(string(other.ID), keyProp, keyVal)
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, []string{keyProp, startProp, endProp}, message, nil)
+		if err := collides(other); err != nil {
+			return err
 		}
 	}
 	return nil

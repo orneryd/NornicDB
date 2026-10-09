@@ -283,7 +283,8 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 		}
 
-		if len(parsed.properties) != 3 {
+		// Like relationships: (key..., valid_from, valid_to) with a 1..n property grouping key.
+		if len(parsed.properties) < 3 {
 			return nil, localizedError(localization.CypherSchemaTemporalNodeArityRequired(), nil)
 		}
 		constraintName := parsed.name
