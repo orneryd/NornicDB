@@ -1055,8 +1055,9 @@ func isLeadingWithFollower(word string) bool {
 // subquery's body: whether any UNION branch (or the body, without UNION)
 // starts with an importing WITH (branchLeadingWithImport), and the
 // variables those WITHs list. A branch that imports nothing adds none,
-// whatever the other branches import, and sees no outer variable, as in
-// Neo4j 5.26 (#907). A CALL with a scope clause has no importing WITH
+// whatever the other branches import (#907); it still reads outer variables
+// through NornicDB's implicit import (pipelineApplyCallSubqueryWithMetadata).
+// A CALL with a scope clause has no importing WITH
 // (callSubqueryHasScopeClause).
 //
 // names is filled only when collectNames.
@@ -1132,6 +1133,160 @@ func branchLeadingWithImport(branch string, outer func(string) bool, collectName
 		return names, true, localizedError(localization.CypherSubqueriesWithQueryClauseRequired(), nil)
 	}
 	return names, true, nil
+}
+
+// unscopedBranchLocals returns the outer variables (names) that one branch
+// of an unscoped CALL body declares itself (branchDeclaresVariable): the
+// branch doesn't receive their outer values through NornicDB's implicit
+// import, so they are new variables there, as in Cypher (#907).
+func unscopedBranchLocals(branch string, names []string) []string {
+	var locals []string
+	for _, name := range names {
+		if branchDeclaresVariable(branch, name) {
+			locals = append(locals, name)
+		}
+	}
+	return locals
+}
+
+// branchDeclaresVariable reports whether a branch of an unscoped CALL body
+// declares variable before it reads it: its first use is a node or
+// relationship variable of a MATCH, OPTIONAL MATCH, CREATE or MERGE pattern
+// (or the pattern's path name), or the name UNWIND … AS or WITH … AS binds.
+// Cypher gives such a branch a new variable; NornicDB's implicit import of an
+// outer variable applies only to a name the branch reads first (#907).
+func branchDeclaresVariable(branch, variable string) bool {
+	clauses, ok := splitPipelineClauses(strings.TrimSpace(branch))
+	if !ok {
+		return false
+	}
+	for _, clause := range clauses {
+		index := firstVariableOccurrence(clause.text, variable)
+		if index < 0 {
+			continue
+		}
+		switch clause.kind {
+		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseCreate, pipelineClauseMerge:
+			return index < patternPartEnd(clause) && isPatternVariableAt(clause.text, index, len(variable))
+		case pipelineClauseUnwind, pipelineClauseWith:
+			return precededByAS(clause.text, index)
+		}
+		return false
+	}
+	return false
+}
+
+// patternPartEnd is where a MATCH, CREATE or MERGE clause's pattern ends:
+// at its WHERE, or MERGE's ON CREATE / ON MATCH, else the clause's end.
+func patternPartEnd(clause pipelineClause) int {
+	end := len(clause.text)
+	for _, keyword := range [...]string{"WHERE", "ON"} {
+		if index := topLevelKeywordIndex(clause.text, keyword); index > 0 && index < end {
+			end = index
+		}
+	}
+	return end
+}
+
+// firstVariableOccurrence is the index of the first use of variable in text
+// as a variable: a whole word outside string literals, not a property key
+// (m.variable), a parameter ($variable) or a map key ({variable: …}).
+// -1 when there is none.
+func firstVariableOccurrence(text, variable string) int {
+	for index := 0; index+len(variable) <= len(text); index++ {
+		switch c := text[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(text, index, c) - 1
+			continue
+		}
+		if text[index:index+len(variable)] != variable {
+			continue
+		}
+		end := index + len(variable)
+		if (index > 0 && isIdentChar(text[index-1])) || (end < len(text) && isIdentChar(text[end])) {
+			continue
+		}
+		previous, next := previousNonSpace(text, index), nextNonSpace(text, end)
+		if previous == '.' || previous == '$' || ((previous == '{' || previous == ',') && next == ':') {
+			continue
+		}
+		return index
+	}
+	return -1
+}
+
+// isPatternVariableAt reports whether the word at index is a pattern's node
+// or relationship variable ((n:L), (n), -[r:T]->) or its path name (p = …).
+func isPatternVariableAt(text string, index, length int) bool {
+	next := nextNonSpace(text, index+length)
+	switch previousNonSpace(text, index) {
+	case '(':
+		// Not a function call's argument (size(n)): a name before the
+		// parenthesis is a function, unless it is the clause keyword
+		// (MATCH (n), OPTIONAL MATCH (n), CREATE (n), MERGE (n)).
+		opening := strings.LastIndexByte(text[:index], '(')
+		if word := wordBefore(text, opening); word != "" && !isPatternClauseKeyword(word) {
+			return false
+		}
+		return next == ':' || next == ')' || next == '{'
+	case '[':
+		opening := strings.LastIndexByte(text[:index], '[')
+		if before := previousNonSpace(text, opening); before != '-' && before != '<' {
+			return false
+		}
+		return next == ':' || next == ']' || next == '{' || next == '*'
+	}
+	return next == '=' && nextNonSpace(text, strings.IndexByte(text[index:], '=')+index+1) == '('
+}
+
+// wordBefore is the identifier that ends right before index (spaces
+// skipped), "" when another character comes first.
+func wordBefore(text string, index int) string {
+	end := index
+	for end > 0 && isASCIISpace(text[end-1]) {
+		end--
+	}
+	start := end
+	for start > 0 && isIdentChar(text[start-1]) {
+		start--
+	}
+	return text[start:end]
+}
+
+// isPatternClauseKeyword reports whether word is a keyword a pattern
+// follows: MATCH, CREATE, MERGE.
+func isPatternClauseKeyword(word string) bool {
+	return equalFoldASCII(word, "MATCH") || equalFoldASCII(word, "CREATE") || equalFoldASCII(word, "MERGE")
+}
+
+// precededByAS reports whether the word at index follows the keyword AS.
+func precededByAS(text string, index int) bool {
+	end := index
+	for end > 0 && isASCIISpace(text[end-1]) {
+		end--
+	}
+	return end >= 3 && equalFoldASCII(text[end-2:end], "AS") && !isIdentChar(text[end-3])
+}
+
+// previousNonSpace is the last non-space byte before index, 0 at the start.
+func previousNonSpace(text string, index int) byte {
+	for index > 0 {
+		index--
+		if !isASCIISpace(text[index]) {
+			return text[index]
+		}
+	}
+	return 0
+}
+
+// nextNonSpace is the first non-space byte at or after index, 0 at the end.
+func nextNonSpace(text string, index int) byte {
+	for ; index < len(text); index++ {
+		if !isASCIISpace(text[index]) {
+			return text[index]
+		}
+	}
+	return 0
 }
 
 func parseLeadingWithImports(subqueryBody string) (withVars []string, innerBody string, hasWith bool, err error) {
