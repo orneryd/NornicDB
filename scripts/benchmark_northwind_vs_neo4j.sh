@@ -2,11 +2,11 @@
 #
 # benchmark_northwind_vs_neo4j.sh
 #
-# Serialized Northwind benchmark for NornicDB and Neo4j:
+# Serialized Northwind benchmark for NornicDB, Neo4j, FalkorDB, Memgraph and
+# LadybugDB (embedded, Kuzu fork):
 #
-#   0. Wipe NornicDB's data directory and Neo4j's databases/ + transactions/
-#      subtrees up front so both engines start from a fresh store. Any stale
-#      Neo4j JVM is SIGKILL'd before the wipe.
+#   0. Wipe every engine's data directory up front so each run starts from a
+#      fresh store. Any stale Neo4j JVM is SIGKILL'd before the wipe.
 #   1. Start NornicDB, sample powermetrics during seed+benchmark,
 #      measure on-disk data size, stop NornicDB.
 #      Step 1 runs once per NornicDB parser mode (NORNIC_PARSER_MODES, default
@@ -15,16 +15,19 @@
 #      `nornicdb.*` file names; the ANTLR mode writes `nornicdb-antlr.*`.
 #   2. Start local Neo4j, sample powermetrics during seed+benchmark,
 #      measure on-disk data size, stop Neo4j.
-#   3. Generate the Markdown reports:
-#        - reports/<timestamp>/nornicdb.md
-#        - reports/<timestamp>/nornicdb-antlr.md   (when the ANTLR mode ran)
-#        - reports/<timestamp>/neo4j.md
-#        - reports/<timestamp>/comparison.md       (ANTLR rows/columns added)
-#        - reports/<timestamp>/parser-modes.md     (default vs ANTLR query latency)
+#   3. Start FalkorDB (docker), sample powermetrics, measure data dir, stop it.
+#   4. Start Memgraph (docker), same isolated envelope.
+#   5. Run LadybugDB embedded in the benchmark runner against a fresh data
+#      directory, same isolated envelope.
+#   6. Generate the Markdown reports:
+#        - reports/<timestamp>/<engine>.md for every engine that ran
+#        - reports/<timestamp>/comparison.md      (NornicDB vs Neo4j)
+#        - reports/<timestamp>/parser-modes.md    (default vs ANTLR)
+#        - reports/<timestamp>/sweep.md           (all engines in one table)
 #
 # Requires: sudo (for powermetrics), Neo4j installed locally (brew install neo4j),
-# Go toolchain, Python 3. Invokes `sudo -v` up front so powermetrics can run
-# non-interactively.
+# docker (for FalkorDB/Memgraph), Go toolchain, Python 3. Invokes `sudo -v` up
+# front so powermetrics can run non-interactively.
 #
 # Configuration via env (with defaults):
 #   ITERATIONS=30           iterations per query (per-DB, per-query)
@@ -37,6 +40,16 @@
 #   NEO4J_HOME              Neo4j install dir (default /opt/homebrew/opt/neo4j)
 #   NEO4J_DATA_DIR          Neo4j data dir (default /opt/homebrew/var/neo4j/data)
 #   NEO4J_PASSWORD          Neo4j password (default "testpass123")
+#   FALKOR_IMAGE            FalkorDB docker image (default falkordb/falkordb:latest)
+#   FALKOR_BOLT_PORT        host Bolt port for FalkorDB (default 17688)
+#   FALKOR_USER/FALKOR_PASS FalkorDB Bolt credentials (default falkordb/falkordb;
+#                           set FALKOR_AUTH=none to use no-auth Bolt)
+#   FALKOR_DATA_DIR         FalkorDB data dir (default ./bench-data/falkor)
+#   MEMGRAPH_IMAGE          Memgraph docker image (default memgraph/memgraph:latest)
+#   MEMGRAPH_BOLT_PORT      host Bolt port for Memgraph (default 17689)
+#   MEMGRAPH_DATA_DIR       Memgraph data dir (default ./bench-data/memgraph)
+#   LADYBUG_DATA_DIR        LadybugDB data dir (default ./bench-data/ladybug)
+#   LADYBUG_LIB_DIR         LadybugDB precompiled lib dir (default ./lib-ladybug)
 #   REPORT_DIR              Parent dir for timestamped reports (default scripts/benchmark_reports)
 #   NORNIC_PARSER_MODES     NornicDB parser modes to benchmark, in order (default
 #                           "nornic antlr"). Run "antlr nornic" as well to see
@@ -44,6 +57,9 @@
 #   SKIP_POWERMETRICS=1     do not sample power (no sudo needed); power rows read 0.
 #   SKIP_NEO4J=1            benchmark NornicDB only (Neo4j is neither required nor run);
 #                           the parser-mode report is still generated.
+#   SKIP_FALKOR=1           skip the FalkorDB run (image neither pulled nor required).
+#   SKIP_MEMGRAPH=1         skip the Memgraph run.
+#   SKIP_LADYBUG=1          skip the embedded LadybugDB run (no library download).
 #   GRAPH_ONLY=1            (default 1) Disable BM25 fulltext + vector ANN index
 #                           build/maintenance for the NornicDB run via the per-DB
 #                           --search-bm25-enabled=false / --search-vector-enabled=false
@@ -84,6 +100,25 @@ GRAPH_ONLY="${GRAPH_ONLY:-1}"
 NORNIC_PARSER_MODES="${NORNIC_PARSER_MODES:-nornic antlr}"
 SKIP_POWERMETRICS="${SKIP_POWERMETRICS:-0}"
 SKIP_NEO4J="${SKIP_NEO4J:-0}"
+FALKOR_IMAGE="${FALKOR_IMAGE:-falkordb/falkordb:latest}"
+FALKOR_BOLT_PORT="${FALKOR_BOLT_PORT:-17688}"
+FALKOR_AUTH="${FALKOR_AUTH:-userpass}"
+FALKOR_USER="${FALKOR_USER:-falkordb}"
+FALKOR_PASS="${FALKOR_PASS:-falkordb}"
+FALKOR_DATA_DIR="${FALKOR_DATA_DIR:-${REPO_ROOT}/bench-data/falkor}"
+FALKOR_CONTAINER_DATA_DIR="${FALKOR_CONTAINER_DATA_DIR:-/data}"
+FALKOR_DATABASE="${FALKOR_DATABASE:-falkor}"
+FALKOR_ENV_ARGS="${FALKOR_ENV_ARGS:-BOLT_PORT 7687}"
+MEMGRAPH_IMAGE="${MEMGRAPH_IMAGE:-memgraph/memgraph:latest}"
+MEMGRAPH_BOLT_PORT="${MEMGRAPH_BOLT_PORT:-17689}"
+MEMGRAPH_DATA_DIR="${MEMGRAPH_DATA_DIR:-${REPO_ROOT}/bench-data/memgraph}"
+MEMGRAPH_DATABASE="${MEMGRAPH_DATABASE:-memgraph}"
+LADYBUG_DATA_DIR="${LADYBUG_DATA_DIR:-${REPO_ROOT}/bench-data/ladybug}"
+LADYBUG_LIB_DIR="${LADYBUG_LIB_DIR:-${REPO_ROOT}/lib-ladybug}"
+LADYBUG_BENCH_BIN="${LADYBUG_BENCH_BIN:-${REPO_ROOT}/northwind_power_bench_ladybug}"
+SKIP_FALKOR="${SKIP_FALKOR:-0}"
+SKIP_MEMGRAPH="${SKIP_MEMGRAPH:-0}"
+SKIP_LADYBUG="${SKIP_LADYBUG:-0}"
 for mode in ${NORNIC_PARSER_MODES}; do
   case "${mode}" in
     nornic|antlr) ;;
@@ -125,6 +160,12 @@ cleanup() {
     log "cleanup: killing Neo4j (pid ${NEO4J_PID})"
     kill -KILL "${NEO4J_PID}" 2>/dev/null || true
   fi
+  for container in northwind-falkor northwind-memgraph; do
+    if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' | grep -qx "${container}"; then
+      log "cleanup: removing container ${container}"
+      docker rm -f "${container}" >/dev/null 2>&1 || true
+    fi
+  done
   exit "$rc"
 }
 trap cleanup EXIT INT TERM
@@ -150,6 +191,7 @@ log "config: categories=${CATEGORIES} suppliers=${SUPPLIERS} customers=${CUSTOME
 log "config: products=${PRODUCTS} orders=${ORDERS} order_lines=${ORDER_LINES_MIN}..${ORDER_LINES_MAX} seed=${SEED}"
 log "config: report_dir=${REPORT_DIR}"
 log "config: nornicdb parser modes=${NORNIC_PARSER_MODES} skip_powermetrics=${SKIP_POWERMETRICS} skip_neo4j=${SKIP_NEO4J}"
+log "config: skip_falkor=${SKIP_FALKOR} skip_memgraph=${SKIP_MEMGRAPH} skip_ladybug=${SKIP_LADYBUG}"
 if [[ "${GRAPH_ONLY}" == "1" ]]; then
   log "config: GRAPH_ONLY=1 — NornicDB will run with BM25 + vector indexes disabled (graph-only mode)"
 else
@@ -582,6 +624,225 @@ run_neo4j() {
 }
 
 # ------------------------------------------------------------------------
+# FalkorDB / Memgraph (docker) and LadybugDB (embedded) install + runs
+# ------------------------------------------------------------------------
+
+install_engines() {
+	if [[ "${SKIP_FALKOR}" != "1" || "${SKIP_MEMGRAPH}" != "1" ]]; then
+		require docker
+		docker info >/dev/null 2>&1 || die "docker daemon is not running (needed for FalkorDB/Memgraph; set SKIP_FALKOR=1 SKIP_MEMGRAPH=1 to skip the docker engines)"
+	fi
+	if [[ "${SKIP_FALKOR}" != "1" ]]; then
+		log "pulling ${FALKOR_IMAGE}…"
+		docker pull "${FALKOR_IMAGE}"
+	fi
+	if [[ "${SKIP_MEMGRAPH}" != "1" ]]; then
+		log "pulling ${MEMGRAPH_IMAGE}…"
+		docker pull "${MEMGRAPH_IMAGE}"
+	fi
+	if [[ "${SKIP_LADYBUG}" != "1" ]]; then
+		install_ladybug
+	fi
+}
+
+install_ladybug() {
+	if [[ ! -f "${LADYBUG_LIB_DIR}/liblbug.dylib" && ! -f "${LADYBUG_LIB_DIR}/liblbug.so" ]]; then
+		log "downloading LadybugDB precompiled library into ${LADYBUG_LIB_DIR}…"
+		mkdir -p "${LADYBUG_LIB_DIR}"
+		curl -fsSL https://raw.githubusercontent.com/LadybugDB/ladybug/refs/heads/main/scripts/download-liblbug.sh \
+			| LBUG_TARGET_DIR="${LADYBUG_LIB_DIR}" bash || die "LadybugDB library download failed"
+		if [[ "$(uname)" == "Darwin" ]]; then
+			ln -sf liblbug.dylib "${LADYBUG_LIB_DIR}/liblbug.0.dylib"
+		else
+			ln -sf liblbug.so "${LADYBUG_LIB_DIR}/liblbug.so.0"
+		fi
+	else
+		log "LadybugDB library already present in ${LADYBUG_LIB_DIR}"
+	fi
+	log "fetching go-ladybug binding (records go.mod/go.sum changes)…"
+	go get github.com/LadybugDB/go-ladybug@v0.17.0 || die "go get github.com/LadybugDB/go-ladybug failed"
+}
+
+# run_docker_engine <label> <image> <bolt_port> <data_dir> <container_data_dir>
+#                  <database> <auth_mode> <env_args...>
+#
+# auth_mode: "none" for no-auth Bolt, or "user:pass". Extra args are passed to
+# `docker run` (e.g. `-e FALKORDB_ARGS=...` for the FalkorDB Bolt listener).
+run_docker_engine() {
+	local label="$1" image="$2" bolt_port="$3" data_dir="$4" container_data_dir="$5" database="$6" auth_mode="$7"
+	shift 7
+	local container="northwind-${label}"
+	log "=== ${label} run (docker ${image}) ==="
+
+	if nc -z 127.0.0.1 "${bolt_port}" 2>/dev/null; then
+		die "${label} Bolt port ${bolt_port} is already in use"
+	fi
+	docker rm -f "${container}" >/dev/null 2>&1 || true
+	if [[ -d "${data_dir}" ]]; then
+		if ! rm -rf "${data_dir}" 2>/dev/null; then
+			sudo rm -rf "${data_dir}"
+		fi
+	fi
+	mkdir -p "${data_dir}"
+
+	if [[ "${SKIP_POWERMETRICS}" != "1" ]]; then
+		log "starting powermetrics sampler (covers startup + benchmark + shutdown)"
+		POWER_PID=$(start_powermetrics "${REPORT_DIR}/${label}.powermetrics.plist")
+	fi
+	VMSTAT_PID=$(start_vmstat "${REPORT_DIR}/${label}.vmstat.log")
+	local t0=$(date +%s.%N)
+
+	log "starting ${label} container (bolt=${bolt_port})"
+	docker run -d --name "${container}" \
+		-p "127.0.0.1:${bolt_port}:7687" \
+		-v "${data_dir}:${container_data_dir}" \
+		"$@" \
+		"${image}" >"${REPORT_DIR}/${label}.docker.log" 2>&1
+
+	for i in {1..60}; do
+		if nc -z 127.0.0.1 "${bolt_port}" 2>/dev/null; then break; fi
+		sleep 1
+		if ! docker ps --format '{{.Names}}' | grep -qx "${container}"; then
+			die "${label} container exited during startup; see ${REPORT_DIR}/${label}.docker.log"
+		fi
+	done
+	nc -z 127.0.0.1 "${bolt_port}" 2>/dev/null || die "${label} bolt port never came up — see ${REPORT_DIR}/${label}.docker.log"
+	log "${label} ready (container ${container})"
+
+	local bench_args=(
+		-uri "bolt://localhost:${bolt_port}"
+		-database "${database}"
+		-categories "${CATEGORIES}"
+		-suppliers "${SUPPLIERS}"
+		-customers "${CUSTOMERS}"
+		-products "${PRODUCTS}"
+		-orders "${ORDERS}"
+		-order-lines-min "${ORDER_LINES_MIN}"
+		-order-lines-max "${ORDER_LINES_MAX}"
+		-batch-size "${BATCH_SIZE}"
+		-parallel "${SEED_PARALLEL}"
+		-seed "${SEED}"
+		-iterations "${ITERATIONS}"
+		-warmup "${WARMUP}"
+		-label "${label}"
+		-out "${REPORT_DIR}/${label}.results.json"
+	)
+	if [[ "${auth_mode}" == "none" ]]; then
+		"${BENCH_BIN}" "${bench_args[@]}" -no-auth 2>"${REPORT_DIR}/${label}.bench.log" \
+			|| die "${label} benchmark failed — see ${REPORT_DIR}/${label}.bench.log"
+	else
+		local engine_user="${auth_mode%%:*}" engine_pass="${auth_mode#*:}"
+		"${BENCH_BIN}" "${bench_args[@]}" -user "${engine_user}" -pass "${engine_pass}" 2>"${REPORT_DIR}/${label}.bench.log" \
+			|| die "${label} benchmark failed — see ${REPORT_DIR}/${label}.bench.log"
+	fi
+
+	# Graceful stop so the engine flushes its write cache before `du`.
+	log "stopping ${label} container gracefully"
+	docker stop "${container}" >/dev/null 2>&1 || true
+	docker rm -f "${container}" >/dev/null 2>&1 || true
+
+	local t1=$(date +%s.%N)
+	if [[ -n "${POWER_PID:-}" ]]; then
+		log "stopping powermetrics sampler"
+		stop_powermetrics "${POWER_PID}"
+		POWER_PID=""
+	fi
+	stop_vmstat "${VMSTAT_PID}"
+	VMSTAT_PID=""
+
+	python3 -c "print(f'{float(${t1}) - float(${t0}):.3f}')" > "${REPORT_DIR}/${label}.wall_seconds.txt"
+
+	sync
+	log "measuring ${label} on-disk size"
+	du -sk "${data_dir}" | awk '{print $1 * 1024}' > "${REPORT_DIR}/${label}.disk_bytes.txt"
+	du -sh "${data_dir}" > "${REPORT_DIR}/${label}.disk_human.txt" || true
+	echo "${data_dir}" > "${REPORT_DIR}/${label}.data_dir.txt"
+	log "${label} run complete"
+}
+
+run_falkor() {
+	if [[ "${FALKOR_AUTH}" == "none" ]]; then
+		local auth="none"
+	else
+		local auth="${FALKOR_USER}:${FALKOR_PASS}"
+	fi
+	# FalkorDB serves Bolt only when the listener is enabled; FALKOR_ENV_ARGS
+	# defaults to "BOLT_PORT 7687" inside the container.
+	run_docker_engine "falkor" "${FALKOR_IMAGE}" "${FALKOR_BOLT_PORT}" \
+		"${FALKOR_DATA_DIR}" "${FALKOR_CONTAINER_DATA_DIR}" "${FALKOR_DATABASE}" "${auth}" \
+		-e "FALKORDB_ARGS=${FALKOR_ENV_ARGS}"
+}
+
+run_memgraph() {
+	# Memgraph maps the host dir into its data directory and logs to stderr so
+	# the report can classify the store. No auth by default.
+	run_docker_engine "memgraph" "${MEMGRAPH_IMAGE}" "${MEMGRAPH_BOLT_PORT}" \
+		"${MEMGRAPH_DATA_DIR}" "/var/lib/memgraph" "${MEMGRAPH_DATABASE}" "none" \
+		--also-log-to-stderr
+}
+
+run_ladybug() {
+	local label="ladybug"
+	log "=== LadybugDB run (embedded, Kuzu fork) ==="
+
+	if [[ -d "${LADYBUG_DATA_DIR}" ]]; then
+		if ! rm -rf "${LADYBUG_DATA_DIR}" 2>/dev/null; then
+			sudo rm -rf "${LADYBUG_DATA_DIR}"
+		fi
+	fi
+	mkdir -p "$(dirname "${LADYBUG_DATA_DIR}")"
+
+	log "building ladybug-enabled benchmark runner"
+	CGO_ENABLED=1 CGO_LDFLAGS="-L${LADYBUG_LIB_DIR} -llbug -Wl,-rpath,${LADYBUG_LIB_DIR}" \
+		go build -tags "ladybug,system_ladybug" -o "${LADYBUG_BENCH_BIN}" ./testing/benchmarks/northwind_power \
+		|| die "ladybug runner build failed (check ${LADYBUG_LIB_DIR} and the go-ladybug dependency)"
+
+	if [[ "${SKIP_POWERMETRICS}" != "1" ]]; then
+		log "starting powermetrics sampler (covers startup + benchmark + shutdown)"
+		POWER_PID=$(start_powermetrics "${REPORT_DIR}/${label}.powermetrics.plist")
+	fi
+	VMSTAT_PID=$(start_vmstat "${REPORT_DIR}/${label}.vmstat.log")
+	local t0=$(date +%s.%N)
+
+	"${LADYBUG_BENCH_BIN}" \
+		-driver ladybug \
+		-ladybug-dir "${LADYBUG_DATA_DIR}" \
+		-categories "${CATEGORIES}" \
+		-suppliers "${SUPPLIERS}" \
+		-customers "${CUSTOMERS}" \
+		-products "${PRODUCTS}" \
+		-orders "${ORDERS}" \
+		-order-lines-min "${ORDER_LINES_MIN}" \
+		-order-lines-max "${ORDER_LINES_MAX}" \
+		-batch-size "${BATCH_SIZE}" \
+		-parallel "${SEED_PARALLEL}" \
+		-seed "${SEED}" \
+		-iterations "${ITERATIONS}" \
+		-warmup "${WARMUP}" \
+		-label "${label}" \
+		-out "${REPORT_DIR}/${label}.results.json" \
+		2>"${REPORT_DIR}/${label}.bench.log" || die "LadybugDB benchmark failed — see ${REPORT_DIR}/${label}.bench.log"
+
+	local t1=$(date +%s.%N)
+	if [[ -n "${POWER_PID:-}" ]]; then
+		log "stopping powermetrics sampler"
+		stop_powermetrics "${POWER_PID}"
+		POWER_PID=""
+	fi
+	stop_vmstat "${VMSTAT_PID}"
+	VMSTAT_PID=""
+
+	python3 -c "print(f'{float(${t1}) - float(${t0}):.3f}')" > "${REPORT_DIR}/${label}.wall_seconds.txt"
+
+	sync
+	log "measuring ${label} on-disk size"
+	du -sk "${LADYBUG_DATA_DIR}" | awk '{print $1 * 1024}' > "${REPORT_DIR}/${label}.disk_bytes.txt"
+	du -sh "${LADYBUG_DATA_DIR}" > "${REPORT_DIR}/${label}.disk_human.txt" || true
+	echo "${LADYBUG_DATA_DIR}" > "${REPORT_DIR}/${label}.data_dir.txt"
+	log "LadybugDB run complete"
+}
+
+# ------------------------------------------------------------------------
 # Reports
 # ------------------------------------------------------------------------
 
@@ -599,11 +860,23 @@ generate_reports() {
   ls -la "${REPORT_DIR}"/*.md 2>/dev/null || true
 }
 
+# Install engines before any run so downloads/network issues surface up front.
+install_engines
+
 for mode in ${NORNIC_PARSER_MODES}; do
   run_nornic "${mode}"
 done
 if [[ "${SKIP_NEO4J}" != "1" ]]; then
   run_neo4j
+fi
+if [[ "${SKIP_FALKOR}" != "1" ]]; then
+  run_falkor
+fi
+if [[ "${SKIP_MEMGRAPH}" != "1" ]]; then
+  run_memgraph
+fi
+if [[ "${SKIP_LADYBUG}" != "1" ]]; then
+  run_ladybug
 fi
 generate_reports
 

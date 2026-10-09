@@ -370,6 +370,8 @@ func main() {
 		out           = flag.String("out", "", "output path for JSON report (stdout if empty)")
 		label         = flag.String("label", "db", "label for this run (e.g. nornicdb, neo4j)")
 		skipSeed      = flag.Bool("skip-seed", false, "assume dataset is already present")
+		driverName    = flag.String("driver", "bolt", "benchmark backend: bolt (default) or ladybug (embedded LadybugDB)")
+		ladybugDir    = flag.String("ladybug-dir", "", "LadybugDB data directory path (required when -driver ladybug)")
 	)
 	flag.Parse()
 
@@ -381,6 +383,26 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	if *driverName == "ladybug" {
+		cfg := seedConfig{
+			categories:    *categories,
+			suppliers:     *suppliers,
+			customers:     *customersN,
+			products:      *products,
+			orders:        *ordersN,
+			orderLinesMin: *orderLinesMin,
+			orderLinesMax: *orderLinesMax,
+			batchSize:     *batchSize,
+			parallel:      *parallel,
+			seed:          *seed,
+			label:         *label,
+		}
+		if err := runLadybugReport(ctx, *ladybugDir, cfg, *label, *iterations, *warmup, *skipSeed, *out); err != nil {
+			die("ladybug: %v", err)
+		}
+		return
+	}
 
 	var authToken neo4j.AuthToken
 	if *noAuth {
@@ -572,28 +594,8 @@ func seedNorthwind(ctx context.Context, driver neo4j.DriverWithContext, database
 	//      CREATE (a)-[:REL]->(b) pass, once per relationship type.
 	// This pattern is ~50× faster on NornicDB and still fast on Neo4j 5
 	// thanks to the indexes below.
-	ensureIndexes := []string{
-		// PK / FK indexes — required so MATCH-by-ID in UNWIND batches hits
-		// the fast path instead of scanning the full label population.
-		"CREATE INDEX category_id IF NOT EXISTS FOR (n:Category) ON (n.categoryID)",
-		"CREATE INDEX supplier_id IF NOT EXISTS FOR (n:Supplier) ON (n.supplierID)",
-		"CREATE INDEX customer_id IF NOT EXISTS FOR (n:Customer) ON (n.customerID)",
-		"CREATE INDEX product_id IF NOT EXISTS FOR (n:Product) ON (n.productID)",
-		"CREATE INDEX order_id IF NOT EXISTS FOR (n:Order) ON (n.orderID)",
-		"CREATE INDEX product_category_fk IF NOT EXISTS FOR (n:Product) ON (n._categoryID)",
-		"CREATE INDEX product_supplier_fk IF NOT EXISTS FOR (n:Product) ON (n._supplierID)",
-		"CREATE INDEX order_customer_fk IF NOT EXISTS FOR (n:Order) ON (n._customerID)",
-		// Name indexes — ORDER BY tiebreaker columns used by the query
-		// suite (customer_category_distinct_orders, optional_match_orders_
-		// count, revenue_by_product). Declared up front so both engines
-		// plan sort-merges identically and neither penalises the
-		// tiebreaker on a cold cache.
-		"CREATE INDEX product_name IF NOT EXISTS FOR (n:Product) ON (n.productName)",
-		"CREATE INDEX customer_name IF NOT EXISTS FOR (n:Customer) ON (n.companyName)",
-		"CREATE INDEX category_name IF NOT EXISTS FOR (n:Category) ON (n.categoryName)",
-	}
 	indexStart := time.Now()
-	for _, q := range ensureIndexes {
+	for _, q := range ensureIndexQueries {
 		result, err := session.Run(ctx, q, nil)
 		if err != nil {
 			return stats, fmt.Errorf("create index %q: %w", q, err)
@@ -605,162 +607,26 @@ func seedNorthwind(ctx context.Context, driver neo4j.DriverWithContext, database
 	stats.indexMs = float64(time.Since(indexStart).Microseconds()) / 1000.0
 
 	ingestionStart := time.Now()
-	r := newRNG(cfg.seed)
 
-	// --- Categories ---
-	catRows := make([]map[string]any, 0, cfg.categories)
-	for i := 0; i < cfg.categories; i++ {
-		name := fmt.Sprintf("Category-%d-%s", i+1, r.pick(adjectives))
-		desc := r.joinN(descBlocks, 1, 3)
-		catRows = append(catRows, map[string]any{
-			"categoryID":   int64(i + 1),
-			"categoryName": name,
-			"description":  desc,
-		})
-	}
-	if err := batchWriteParallel(ctx, driver, database, catRows, cfg.batchSize, cfg.parallel,
-		`UNWIND $rows AS row
-		 CREATE (:Category {categoryID: row.categoryID, categoryName: row.categoryName, description: row.description})`,
-	); err != nil {
-		return stats, fmt.Errorf("categories: %w", err)
-	}
-	stats.nodes += len(catRows)
-	stats.approxPayloadBytes += approxBytes(catRows)
-
-	// --- Suppliers ---
-	supRows := make([]map[string]any, 0, cfg.suppliers)
-	for i := 0; i < cfg.suppliers; i++ {
-		supRows = append(supRows, map[string]any{
-			"supplierID":  int64(i + 1),
-			"companyName": fmt.Sprintf("%s %s Supply Co. #%d", r.pick(adjectives), r.pick(nouns), i+1),
-			"contactName": fmt.Sprintf("%s %s", r.pick(firstNames), r.pick(lastNames)),
-			"country":     r.pick(countries),
-			"region":      r.pick(regions),
-			"phone":       fmt.Sprintf("+%d-%03d-%03d-%04d", 1+r.IntN(99), r.IntN(1000), r.IntN(1000), r.IntN(10000)),
-			"notes":       r.joinN(descBlocks, 0, 2),
-		})
-	}
-	if err := batchWriteParallel(ctx, driver, database, supRows, cfg.batchSize, cfg.parallel,
-		`UNWIND $rows AS row
-		 CREATE (:Supplier {supplierID: row.supplierID, companyName: row.companyName, contactName: row.contactName,
-		                    country: row.country, region: row.region, phone: row.phone, notes: row.notes})`,
-	); err != nil {
-		return stats, fmt.Errorf("suppliers: %w", err)
-	}
-	stats.nodes += len(supRows)
-	stats.approxPayloadBytes += approxBytes(supRows)
-
-	// --- Customers ---
-	custRows := make([]map[string]any, 0, cfg.customers)
-	for i := 0; i < cfg.customers; i++ {
-		custRows = append(custRows, map[string]any{
-			"customerID":  int64(i + 1),
-			"companyName": fmt.Sprintf("%s %s LLC #%d", r.pick(adjectives), r.pick(nouns), i+1),
-			"contactName": fmt.Sprintf("%s %s", r.pick(firstNames), r.pick(lastNames)),
-			"country":     r.pick(countries),
-			"city":        r.pick(cities),
-			"address":     r.joinN(descBlocks, 0, 2),
-		})
-	}
-	if err := batchWriteParallel(ctx, driver, database, custRows, cfg.batchSize, cfg.parallel,
-		`UNWIND $rows AS row
-		 CREATE (:Customer {customerID: row.customerID, companyName: row.companyName, contactName: row.contactName,
-		                    country: row.country, city: row.city, address: row.address})`,
-	); err != nil {
-		return stats, fmt.Errorf("customers: %w", err)
-	}
-	stats.nodes += len(custRows)
-	stats.approxPayloadBytes += approxBytes(custRows)
-
-	// --- Products (+ PART_OF, SUPPLIES) ---
-	prodRows := make([]map[string]any, 0, cfg.products)
-	for i := 0; i < cfg.products; i++ {
-		prodRows = append(prodRows, map[string]any{
-			"productID":    int64(i + 1),
-			"productName":  fmt.Sprintf("%s %s %d", r.pick(adjectives), r.pick(nouns), i+1),
-			"sku":          fmt.Sprintf("SKU-%06d-%c%c", i+1, 'A'+r.IntN(26), 'A'+r.IntN(26)),
-			"unitPrice":    math.Round((0.5+r.Float64()*199.5)*100) / 100,
-			"unitsInStock": int64(r.IntN(500)),
-			"discontinued": r.IntN(20) == 0,
-			"description":  r.joinN(descBlocks, 1, 4),
-			"tags":         anySlice(r.uniqueSubset(tagPool, 1+r.IntN(4))),
-			"categoryID":   int64((i % cfg.categories) + 1),
-			"supplierID":   int64((i % cfg.suppliers) + 1),
-		})
-	}
-	if err := batchWriteParallel(ctx, driver, database, prodRows, cfg.batchSize, cfg.parallel,
-		`UNWIND $rows AS row
-		 MATCH (c:Category {categoryID: row.categoryID})
-		 MATCH (s:Supplier {supplierID: row.supplierID})
-		 CREATE (p:Product {productID: row.productID, productName: row.productName, sku: row.sku,
-		                    unitPrice: row.unitPrice, unitsInStock: row.unitsInStock, discontinued: row.discontinued,
-		                    description: row.description, tags: row.tags})
-		 CREATE (p)-[:PART_OF]->(c)
-		 CREATE (s)-[:SUPPLIES]->(p)`,
-	); err != nil {
-		return stats, fmt.Errorf("products: %w", err)
-	}
-	stats.nodes += len(prodRows)
-	stats.relationships += len(prodRows) * 2 // PART_OF + SUPPLIES
-	stats.approxPayloadBytes += approxBytes(prodRows)
-
-	// --- Orders (+ PURCHASED) — flat rows only, nested UNWIND omitted.
-	// NornicDB's Cypher parser currently rejects nested UNWIND with inline
-	// MATCH property-maps (it tokenizes `{key:` incorrectly inside the inner
-	// UNWIND), so we seed orders and order-line edges in two passes.
-	ordRows := make([]map[string]any, 0, cfg.orders)
-	lineRows := make([]map[string]any, 0, cfg.orders*(cfg.orderLinesMin+cfg.orderLinesMax)/2)
-	var totalLines int
-	for i := 0; i < cfg.orders; i++ {
-		lines := cfg.orderLinesMin
-		if cfg.orderLinesMax > cfg.orderLinesMin {
-			lines += r.IntN(cfg.orderLinesMax - cfg.orderLinesMin + 1)
+	plan := buildSeedPlan(cfg)
+	for _, phase := range plan.phases {
+		if err := batchWriteParallel(ctx, driver, database, phase.rows, cfg.batchSize, cfg.parallel, phase.cypher); err != nil {
+			return stats, fmt.Errorf("%s: %w", phase.name, err)
 		}
-		orderID := int64(10000 + i)
-		ordRows = append(ordRows, map[string]any{
-			"orderID":     orderID,
-			"customerID":  int64(r.IntN(cfg.customers) + 1),
-			"shipCity":    r.pick(cities),
-			"shipCountry": r.pick(countries),
-			"orderDate":   time.Now().Add(-time.Duration(r.IntN(365)) * 24 * time.Hour).Unix(),
-			"notes":       r.joinN(notesBlocks, 0, 2),
-		})
-		for j := 0; j < lines; j++ {
-			lineRows = append(lineRows, map[string]any{
-				"orderID":   orderID,
-				"productID": int64(r.IntN(cfg.products) + 1),
-				"quantity":  int64(1 + r.IntN(25)),
-				"discount":  math.Round(r.Float64()*25*100) / 100,
-			})
+		switch phase.name {
+		case "products":
+			stats.nodes += len(phase.rows)
+			stats.relationships += len(phase.rows) * 2 // PART_OF + SUPPLIES
+		case "order-lines":
+			stats.relationships += len(phase.rows)
+		case "orders":
+			stats.nodes += len(phase.rows)
+			stats.relationships += len(phase.rows) // PURCHASED
+		default:
+			stats.nodes += len(phase.rows)
 		}
-		totalLines += lines
+		stats.approxPayloadBytes += approxBytes(phase.rows)
 	}
-
-	// Pass 1: create Order nodes and PURCHASED edges (one match per row).
-	if err := batchWriteParallel(ctx, driver, database, ordRows, cfg.batchSize, cfg.parallel,
-		`UNWIND $rows AS row
-		 MATCH (c:Customer {customerID: row.customerID})
-		 CREATE (o:Order {orderID: row.orderID, shipCity: row.shipCity, shipCountry: row.shipCountry,
-		                  orderDate: row.orderDate, notes: row.notes})
-		 CREATE (c)-[:PURCHASED]->(o)`,
-	); err != nil {
-		return stats, fmt.Errorf("orders: %w", err)
-	}
-	stats.nodes += len(ordRows)
-	stats.relationships += len(ordRows) // PURCHASED
-	stats.approxPayloadBytes += approxBytes(ordRows)
-
-	// Pass 2: create ORDERS edges (flat rows — order_id + product_id + edge props).
-	if err := batchWriteParallel(ctx, driver, database, lineRows, cfg.batchSize, cfg.parallel,
-		`UNWIND $rows AS row
-		 MATCH (o:Order {orderID: row.orderID})
-		 MATCH (p:Product {productID: row.productID})
-		 CREATE (o)-[:ORDERS {quantity: row.quantity, discount: row.discount}]->(p)`,
-	); err != nil {
-		return stats, fmt.Errorf("order lines: %w", err)
-	}
-	stats.relationships += totalLines
-	stats.approxPayloadBytes += approxBytes(lineRows)
 	stats.ingestionMs = float64(time.Since(ingestionStart).Microseconds()) / 1000.0
 
 	return stats, nil
@@ -944,13 +810,21 @@ func anySlice(ss []string) []any {
 // subsequent call produces the same fingerprint — this catches partial
 // reads, non-deterministic ordering, or intra-run mutation bugs that would
 // otherwise be invisible.
+// resultRow is a backend-neutral result row: the query's RETURN keys in
+// order plus the values keyed by name. The Bolt backend converts neo4j
+// records into it; the embedded LadybugDB backend converts flat tuples.
+type resultRow struct {
+	keys   []string
+	values map[string]any
+}
+
 func runQuery(ctx context.Context, driver neo4j.DriverWithContext, database string, q benchQuery, iterations, warmup int) (QueryStat, error) {
 	session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: database})
 	defer session.Close(ctx)
 
 	// execCollect runs the query and returns (rows, keys, err). We keep the
 	// rows so we can fingerprint them.
-	execCollect := func() ([]*neo4j.Record, []string, error) {
+	execCollect := func() ([]resultRow, []string, error) {
 		res, err := session.Run(ctx, q.cypher, nil)
 		if err != nil {
 			return nil, nil, err
@@ -963,7 +837,16 @@ func runQuery(ctx context.Context, driver neo4j.DriverWithContext, database stri
 		if err != nil {
 			return nil, nil, err
 		}
-		return records, keys, nil
+		rows := make([]resultRow, 0, len(records))
+		for _, rec := range records {
+			values := make(map[string]any, len(keys))
+			for _, k := range keys {
+				v, _ := rec.Get(k)
+				values[k] = v
+			}
+			rows = append(rows, resultRow{keys: keys, values: values})
+		}
+		return rows, keys, nil
 	}
 
 	// First call: capture the reference fingerprint. Use the warmup budget
@@ -974,8 +857,8 @@ func runQuery(ctx context.Context, driver neo4j.DriverWithContext, database stri
 		return QueryStat{}, fmt.Errorf("first call: %w", err)
 	}
 	refRowCount := len(refRecords)
-	refHash := fingerprintRecords(refRecords, refKeys)
-	refFirstRows := snapshotRecords(refRecords, refKeys, MaxFingerprintRows)
+	refHash := fingerprintRows(refKeys, refRecords)
+	refFirstRows := snapshotRows(refKeys, refRecords, MaxFingerprintRows)
 	correctnessOK := true
 
 	// Remaining warmups (first call already consumed one).
@@ -984,7 +867,7 @@ func runQuery(ctx context.Context, driver neo4j.DriverWithContext, database stri
 		if err != nil {
 			return QueryStat{}, fmt.Errorf("warmup %d: %w", i, err)
 		}
-		if h := fingerprintRecords(recs, keys); h != refHash {
+		if h := fingerprintRows(keys, recs); h != refHash {
 			correctnessOK = false
 		}
 	}
@@ -999,7 +882,7 @@ func runQuery(ctx context.Context, driver neo4j.DriverWithContext, database stri
 			return QueryStat{}, fmt.Errorf("iter %d: %w", i, err)
 		}
 		latencies = append(latencies, float64(elapsed.Microseconds())/1000.0)
-		if h := fingerprintRecords(recs, keys); h != refHash {
+		if h := fingerprintRows(keys, recs); h != refHash {
 			correctnessOK = false
 		}
 	}
@@ -1029,10 +912,10 @@ func runQuery(ctx context.Context, driver neo4j.DriverWithContext, database stri
 	return stat, nil
 }
 
-// fingerprintRecords returns a SHA-256 hex digest of the canonicalised
+// fingerprintRows returns a SHA-256 hex digest of the canonicalised
 // result set. Canonicalisation:
 //   - each row is encoded as "<key1>=<value>|<key2>=<value>|…" with keys
-//     in the order returned by the driver (Cypher RETURN order is stable
+//     in the order returned by the backend (Cypher RETURN order is stable
 //     by spec; this matches how operators read the query).
 //   - the per-row strings are sorted lexically before hashing so that
 //     result sets ordered only by a non-unique tie-breaker (e.g.
@@ -1040,15 +923,14 @@ func runQuery(ctx context.Context, driver neo4j.DriverWithContext, database stri
 //     engines even when the tied-row order differs.
 //   - floats are formatted with %v which produces canonical Go float
 //     output; ints / strings / bools encode natively.
-func fingerprintRecords(records []*neo4j.Record, keys []string) string {
-	rowStrings := make([]string, 0, len(records))
-	for _, rec := range records {
+func fingerprintRows(keys []string, rows []resultRow) string {
+	rowStrings := make([]string, 0, len(rows))
+	for _, row := range rows {
 		var sb []byte
 		for _, k := range keys {
 			sb = appendCanonical(sb, k)
 			sb = append(sb, '=')
-			val, _ := rec.Get(k)
-			sb = appendValue(sb, val)
+			sb = appendValue(sb, row.values[k])
 			sb = append(sb, '|')
 		}
 		rowStrings = append(rowStrings, string(sb))
@@ -1057,7 +939,7 @@ func fingerprintRecords(records []*neo4j.Record, keys []string) string {
 	h := sha256.New()
 	// Prefix with row count so an empty result set and a deleted-rows set
 	// hash differently from an unrelated query that also has zero rows.
-	h.Write([]byte(fmt.Sprintf("rowcount=%d\n", len(records))))
+	h.Write([]byte(fmt.Sprintf("rowcount=%d\n", len(rows))))
 	for _, s := range rowStrings {
 		h.Write([]byte(s))
 		h.Write([]byte{'\n'})
@@ -1106,19 +988,18 @@ func appendValue(buf []byte, v interface{}) []byte {
 	}
 }
 
-// snapshotRecords returns the first limit rows as map[string]any for the
+// snapshotRows returns the first limit rows as map[string]any for the
 // report JSON. Values are passed through unchanged — the JSON marshaler
 // handles neo4j.Node / neo4j.Path etc. via their String methods.
-func snapshotRecords(records []*neo4j.Record, keys []string, limit int) []map[string]any {
-	if limit > len(records) {
-		limit = len(records)
+func snapshotRows(keys []string, rows []resultRow, limit int) []map[string]any {
+	if limit > len(rows) {
+		limit = len(rows)
 	}
 	out := make([]map[string]any, 0, limit)
 	for i := 0; i < limit; i++ {
 		row := make(map[string]any, len(keys))
 		for _, k := range keys {
-			v, _ := records[i].Get(k)
-			row[k] = v
+			row[k] = rows[i].values[k]
 		}
 		out = append(out, row)
 	}
@@ -1157,26 +1038,12 @@ func countSeedGraph(ctx context.Context, driver neo4j.DriverWithContext, databas
 	}
 
 	sc := SeedCounts{}
-	pairs := []struct {
-		dst   *int64
-		query string
-	}{
-		{&sc.Categories, "MATCH (n:Category) RETURN count(n) AS n"},
-		{&sc.Suppliers, "MATCH (n:Supplier) RETURN count(n) AS n"},
-		{&sc.Customers, "MATCH (n:Customer) RETURN count(n) AS n"},
-		{&sc.Products, "MATCH (n:Product) RETURN count(n) AS n"},
-		{&sc.Orders, "MATCH (n:Order) RETURN count(n) AS n"},
-		{&sc.PartOfEdges, "MATCH ()-[r:PART_OF]->() RETURN count(r) AS n"},
-		{&sc.SuppliesEdges, "MATCH ()-[r:SUPPLIES]->() RETURN count(r) AS n"},
-		{&sc.PurchasedEdges, "MATCH ()-[r:PURCHASED]->() RETURN count(r) AS n"},
-		{&sc.OrdersEdges, "MATCH ()-[r:ORDERS]->() RETURN count(r) AS n"},
-	}
-	for _, p := range pairs {
-		n, err := scalar(p.query)
+	for _, pair := range seedCountQueries {
+		n, err := scalar(pair.query)
 		if err != nil {
-			return sc, fmt.Errorf("count query %q: %w", p.query, err)
+			return sc, fmt.Errorf("count query %q: %w", pair.query, err)
 		}
-		*p.dst = n
+		setSeedCount(&sc, pair.field, n)
 	}
 	return sc, nil
 }

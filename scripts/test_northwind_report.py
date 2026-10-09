@@ -1,6 +1,13 @@
 import unittest
 
-from northwind_report import benchmark_throughput, parser_mode_lines, render_comparison, render_single_report
+from northwind_report import (
+    benchmark_throughput,
+    parser_mode_lines,
+    render_comparison,
+    render_single_report,
+    render_sweep,
+    rules_for_label,
+)
 
 
 def make_query(name, mean_ms=20.0, latencies_ms=None):
@@ -180,6 +187,71 @@ class NorthwindReportTests(unittest.TestCase):
         runs["nornicdb"]["results"]["random_seed"] = 42
         text = "\n".join(parser_mode_lines(runs["nornicdb"], runs["nornicdb-antlr"]))
         self.assertIn("Invalid parser-mode comparison", text)
+
+    def test_rules_for_label_dispatches_per_engine(self):
+        self.assertIs(rules_for_label("nornicdb"), rules_for_label("nornicdb-antlr"))
+        self.assertIsNot(rules_for_label("falkor"), rules_for_label("memgraph"))
+        self.assertIsNot(rules_for_label("ladybug"), rules_for_label("neo4j"))
+        # The falkor rules classify unknown files as raw data (catch-all last).
+        from northwind_report import FALKOR_RULES, MEMGRAPH_RULES, LADYBUG_RULES
+
+        self.assertEqual(FALKOR_RULES[-1][0], "raw_data")
+        self.assertEqual(MEMGRAPH_RULES[-1][0], "raw_data")
+        self.assertEqual(LADYBUG_RULES[-1][0], "raw_data")
+
+    def test_sweep_renders_all_engines_and_flags_row_mismatch(self):
+        def run_for(engine, row_count):
+            run = make_run([make_query("shared", mean_ms=20.0)], 2, 100.0)
+            run["results"]["queries"][0]["row_count"] = row_count
+            run["results"].update(
+                seed_duration_ms=1000,
+                seed_nodes=700,
+                seed_relationships=1400,
+                seed_counts={
+                    "categories": 8,
+                    "suppliers": 12,
+                    "customers": 20,
+                    "products": 10,
+                    "orders": 10,
+                    "part_of_edges": 10,
+                    "supplies_edges": 10,
+                    "purchased_edges": 10,
+                    "orders_edges": 0,
+                },
+            )
+            run["power"] = {"package_power_mw_avg": 12000.0, "energy_joules": 12.5}
+            return run
+
+        nornic = run_for("nornicdb", 1)
+        neo4j = run_for("neo4j", 1)
+        falkor = run_for("falkor", 2)  # intentionally disagrees with the others
+        memgraph = run_for("memgraph", 1)
+        ladybug = run_for("ladybug", 1)
+
+        sweep = render_sweep(
+            {
+                "nornicdb": nornic,
+                "neo4j": neo4j,
+                "falkor": falkor,
+                "memgraph": memgraph,
+                "ladybug": ladybug,
+            }
+        )
+
+        self.assertIn("# Northwind Benchmark Sweep — All Engines", sweep)
+        self.assertIn("**NornicDB**", sweep)
+        self.assertIn("**Neo4j**", sweep)
+        self.assertIn("**FalkorDB**", sweep)
+        self.assertIn("**Memgraph**", sweep)
+        self.assertIn("**LadybugDB**", sweep)
+        self.assertIn("## Seed Counts Cross-Check", sweep)
+        self.assertIn("| Category | 8 | 8 | 8 | 8 | 8 |", sweep)
+        self.assertIn("## Query Result Cross-Check", sweep)
+        # FalkorDB's row count differs, so agreement must be flagged.
+        self.assertIn("| ❌ |", sweep)
+
+        # Fewer than two engines → no sweep report.
+        self.assertEqual(render_sweep({"nornicdb": nornic}), "")
 
 
 if __name__ == "__main__":

@@ -103,6 +103,51 @@ NEO4J_RULES = [
     ("raw_data",   _ext("neostore*.db.*")),   # .names, .labels, .arrays, .strings, .keys, .index
 ]
 
+FALKOR_RULES = [
+    ("skip",       _ext("*.lock")),
+    ("skip",       _exact("LOCK")),
+    ("skip",       _ext("*.tmp*")),
+    ("logs",       _ext("*.log")),
+    # FalkorDB persists the graph in a RocksDB store under the data dir and
+    # additionally writes Redis RDB snapshots.
+    ("raw_data",   _any_in_path("falkordb")),
+    ("raw_data",   _ext("*.rdb")),
+    ("raw_data",   lambda rel, name: True),    # anything left is user data
+]
+
+MEMGRAPH_RULES = [
+    # `snapshots/` holds periodic copies of the same in-memory dataset, so
+    # count it separately from live storage (never double-count raw data).
+    ("skip",       _any_in_path("snapshots")),
+    ("logs",       _any_in_path("wal")),
+    ("meta",       _any_in_path("durable_metadata")),
+    ("meta",       _exact("repl_cluster")),
+    ("raw_data",   lambda rel, name: True),    # anything left is user data
+]
+
+LADYBUG_RULES = [
+    # Kuzu/Ladybug layout: data.kz is the actual store; the remaining .kz
+    # files are catalog/schema metadata; wal/ is the write-ahead log.
+    ("logs",       _any_in_path("wal")),
+    ("raw_data",   _exact("data.kz")),
+    ("meta",       _exact("metadata.kz")),
+    ("meta",       _exact("catalog.kz")),
+    ("meta",       _exact("schema.kz")),
+    ("raw_data",   lambda rel, name: True),
+]
+
+
+def rules_for_label(label: str) -> list:
+    if label.startswith("nornicdb"):
+        return NORNIC_RULES
+    if label == "falkor":
+        return FALKOR_RULES
+    if label == "memgraph":
+        return MEMGRAPH_RULES
+    if label == "ladybug":
+        return LADYBUG_RULES
+    return NEO4J_RULES
+
 
 def classify_dir(root: Path, rules) -> dict:
     """Walk root, classify each file into buckets by the first matching rule.
@@ -387,8 +432,7 @@ def load_run(dir_: Path, label: str) -> dict:
                "files": {}, "root": ""}
     if data_dir_path.exists():
         root = Path(data_dir_path.read_text().strip())
-        rules = NORNIC_RULES if label.startswith("nornicdb") else NEO4J_RULES
-        storage = classify_dir(root, rules)
+        storage = classify_dir(root, rules_for_label(label))
 
     return {
         "label": label,
@@ -498,7 +542,7 @@ def render_single_report(run: dict, iterations: int, warmup: int, batch_size: in
     wall = run["wall_seconds"]
     throughput = benchmark_throughput(r)
 
-    display_name = {"nornicdb": "NornicDB", "nornicdb-antlr": "NornicDB (ANTLR parser)", "neo4j": "Neo4j"}.get(label, label)
+    display_name = display_label(label)
 
     lines = []
     lines.append(f"# {display_name} — Northwind Benchmark Report")
@@ -1097,6 +1141,133 @@ def render_comparison(runs: dict[str, dict], iterations: int, warmup: int, batch
     return "\n".join(lines)
 
 
+DISPLAY_NAMES = {
+    "nornicdb": "NornicDB",
+    "nornicdb-antlr": "NornicDB (ANTLR parser)",
+    "neo4j": "Neo4j",
+    "falkor": "FalkorDB",
+    "memgraph": "Memgraph",
+    "ladybug": "LadybugDB",
+}
+
+
+def display_label(label: str) -> str:
+    return DISPLAY_NAMES.get(label, label)
+
+
+def render_sweep(runs: dict[str, dict]) -> str:
+    """Full-sweep report: every engine that ran in one breakdown.
+
+    Engines run in strict isolation (fresh store, own powermetrics/vmstat
+    samplers, own on-disk measurement), so all rows below come from the same
+    workload and are directly comparable.
+    """
+    labels = [l for l in ("nornicdb", "nornicdb-antlr", "neo4j", "falkor", "memgraph", "ladybug") if l in runs]
+    if len(labels) < 2:
+        return ""
+
+    lines = ["# Northwind Benchmark Sweep — All Engines", ""]
+    lines.append("Every engine below ran the **same deterministic Northwind corpus** in strict "
+                 "isolation: fresh store per run, its own powermetrics + vmstat sampling window, "
+                 "and its own on-disk measurement. Same query corpus, iterations, warmup, batch "
+                 "size, and parallelism.")
+    lines.append("")
+
+    # --- Summary table -----------------------------------------------------
+    lines.append("## Summary")
+    lines.append("")
+    header = ("| Engine | Mean latency (ms) | Query ops/s (latency) | End-to-end ops/s | "
+              "Seed (ms) | Seed nodes/s | Power (W avg) | Energy (J) | Disk (MiB) | Wall (s) |")
+    sep = "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+    lines.append(header)
+    lines.append(sep)
+    for label in labels:
+        run = runs[label]
+        r = run["results"]
+        throughput = benchmark_throughput(r)
+        power_avg_w = run["power"].get("package_power_mw_avg", 0) / 1000.0
+        energy = run["power"].get("energy_joules", 0.0)
+        disk_mib = run["disk_total_bytes"] / (1024 * 1024)
+        lines.append(
+            f"| **{display_label(label)}** | {fmt_ms(r.get('overall_mean_ms', 0))} | "
+            f"{fmt_num(throughput['query_latency_ops_per_second'], 1)} | "
+            f"{fmt_num(throughput['end_to_end_ops_per_second'], 1)} | "
+            f"{fmt_ms(r.get('seed_duration_ms', 0))} | "
+            f"{fmt_num(seed_rate_per_second(r, 'seed_nodes'), 1)} | "
+            f"{fmt_num(power_avg_w, 1)} | {fmt_num(energy, 2)} | "
+            f"{fmt_num(disk_mib, 1)} | {fmt_num(run['wall_seconds'], 1)} |"
+        )
+    lines.append("")
+
+    # --- Per-query latency table -------------------------------------------
+    lines.append("## Per-Query Latency (mean ms)")
+    lines.append("")
+    query_name_maps = [{q["name"]: q for q in runs[l]["results"].get("queries", [])} for l in labels]
+    query_names = ordered_query_names(*query_name_maps)
+    lines.append("| Query | " + " | ".join(display_label(l) for l in labels) + " |")
+    lines.append("|---|" + "---:|" * len(labels))
+    for qname in query_names:
+        cells = []
+        for label, qmap in zip(labels, query_name_maps):
+            q = qmap.get(qname)
+            cells.append(fmt_ms(q["mean_ms"]) if q else "—")
+        lines.append(f"| `{qname}` | " + " | ".join(cells) + " |")
+    lines.append("")
+
+    # --- Seed counts cross-engine ------------------------------------------
+    lines.append("## Seed Counts Cross-Check")
+    lines.append("")
+    lines.append("Same seed data, verified by each engine's own `count(...)` queries.")
+    lines.append("")
+    lines.append("| Entity | " + " | ".join(display_label(l) for l in labels) + " |")
+    lines.append("|---|" + "---:|" * len(labels))
+    entities = [
+        ("Category", "categories"), ("Supplier", "suppliers"), ("Customer", "customers"),
+        ("Product", "products"), ("Order", "orders"),
+        ("PART_OF edges", "part_of_edges"), ("SUPPLIES edges", "supplies_edges"),
+        ("PURCHASED edges", "purchased_edges"), ("ORDERS edges", "orders_edges"),
+    ]
+    for name, key in entities:
+        cells = []
+        for label in labels:
+            sc = runs[label]["results"].get("seed_counts", {})
+            cells.append(f"{sc.get(key, 0):,}" if sc else "—")
+        lines.append(f"| {name} | " + " | ".join(cells) + " |")
+    lines.append("")
+
+    # --- Result fingerprints cross-engine ----------------------------------
+    lines.append("## Query Result Cross-Check")
+    lines.append("")
+    lines.append("Row counts must agree across engines (same deterministic dataset). "
+                 "Hashes may legitimately differ when engines order results differently; "
+                 "disagreements in row count or intra-run stability are flagged.")
+    lines.append("")
+    lines.append("| Query | " + " | ".join(f"{display_label(l)} rows" for l in labels) + " | Agreement |")
+    lines.append("|---|" + "---:|" * len(labels) + "|:---:|")
+    for qname in query_names:
+        cells = []
+        counts = []
+        for label in labels:
+            qmap = {q["name"]: q for q in runs[label]["results"].get("queries", [])}
+            q = qmap.get(qname)
+            if q is None:
+                cells.append("—")
+                counts.append(None)
+                continue
+            ok = q.get("correctness_ok", True)
+            mark = "" if ok else " ⚠️unstable"
+            cells.append(f"{q.get('row_count', 0):,}{mark}")
+            counts.append(q.get("row_count", 0))
+        present = [c for c in counts if c is not None]
+        agree = "✅" if present and all(c == present[0] for c in present) else "❌"
+        lines.append(f"| `{qname}` | " + " | ".join(cells) + f" | {agree} |")
+    lines.append("")
+    lines.append("> Result hashes per engine are in each per-engine report; this table checks "
+                 "cross-engine row-count agreement and intra-run stability.")
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", required=True, type=Path)
@@ -1114,7 +1285,7 @@ def main():
         sys.exit(1)
 
     runs = {}
-    for label in ("nornicdb", "nornicdb-antlr", "neo4j"):
+    for label in ("nornicdb", "nornicdb-antlr", "neo4j", "falkor", "memgraph", "ladybug"):
         try:
             runs[label] = load_run(out_dir, label)
         except FileNotFoundError as e:
@@ -1143,6 +1314,13 @@ def main():
         print(f"wrote {out_dir / 'parser-modes.md'}")
     elif "nornicdb-antlr" in runs:
         print("note: parser-modes report skipped (missing the default-parser NornicDB run)", file=sys.stderr)
+
+    sweep = render_sweep(runs)
+    if sweep:
+        (out_dir / "sweep.md").write_text(sweep)
+        print(f"wrote {out_dir / 'sweep.md'}")
+    else:
+        print("note: sweep report skipped (fewer than two engines ran)", file=sys.stderr)
 
 
 if __name__ == "__main__":

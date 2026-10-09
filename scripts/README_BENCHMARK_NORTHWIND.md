@@ -1,15 +1,23 @@
-# Northwind Power & Storage Benchmark: NornicDB vs. Neo4j
+# Northwind Power & Storage Benchmark: NornicDB vs. Neo4j, FalkorDB, Memgraph & LadybugDB
 
 Serialized benchmark that starts each database in turn, runs a fixed Northwind
 workload against it, samples power draw with `powermetrics`, measures on-disk
-storage, and generates three Markdown reports:
+storage, and generates per-engine Markdown reports plus a combined sweep:
 
 - `nornicdb.md` — NornicDB results
+- `nornicdb-antlr.md` — NornicDB ANTLR-parser results (when that mode ran)
 - `neo4j.md` — Neo4j results
-- `comparison.md` — side-by-side
+- `falkor.md` — FalkorDB results (docker)
+- `memgraph.md` — Memgraph results (docker)
+- `ladybug.md` — LadybugDB results (embedded, Kuzu fork)
+- `comparison.md` — side-by-side NornicDB vs. Neo4j
+- `parser-modes.md` — NornicDB default vs. ANTLR query latency
+- `sweep.md` — every engine that ran in one breakdown (summary, per-query
+  latency, seed-count and result cross-checks)
 
-The two databases are **never running at the same time**, so power and disk
-numbers are isolated.
+No two engines are **ever running at the same time**, so power and disk
+numbers are isolated. Every engine seeds the identical deterministic dataset
+(`SEED`) and runs the same query corpus with the same iterations and warmup.
 
 ## What the workload does
 
@@ -55,8 +63,10 @@ For each database:
 7. Seed writes use configurable `BATCH_SIZE` UNWIND chunks and
    `SEED_PARALLEL` independent Bolt sessions per phase (default 500 rows and 4
    sessions). Dependencies between seed phases remain ordered.
-8. Stop the databases cleanly: NornicDB receives SIGTERM to flush storage, and
-   Neo4j is stopped through its CLI.
+8. Stop the engines cleanly: NornicDB receives SIGTERM to flush storage,
+   Neo4j is stopped through its CLI, and the docker engines are `docker stop`
+   (graceful flush) before their data directories are measured. LadybugDB
+   closes its embedded store when the runner exits.
 9. Stop powermetrics.
 10. Measure on-disk data directory size (`du -sk`) after the DB has exited.
 
@@ -79,9 +89,22 @@ reported energy covers the full run, not just the query window.
 
   The script defaults to `NEO4J_HOME=/opt/homebrew/opt/neo4j` and the data
   directory at `/opt/homebrew/var/neo4j/data`. Override via env vars if your
-  install lives elsewhere.
+  install lives elsewhere. Set `SKIP_NEO4J=1` to benchmark without it.
 
-- `cypher-shell` on PATH (brew pulls this in as a dependency).
+- `cypher-shell` on PATH (brew pulls this in as a dependency; only needed
+  when Neo4j runs).
+- **Docker** (only when FalkorDB or Memgraph runs). The script pulls
+  `falkordb/falkordb` and `memgraph/memgraph` automatically; set
+  `SKIP_FALKOR=1` / `SKIP_MEMGRAPH=1` to skip the docker engines entirely.
+- **LadybugDB** (only when the Ladybug run is enabled): nothing to install
+  by hand. The script downloads the precompiled LadybugDB library into
+  `lib-ladybug/` and builds a `ladybug,system_ladybug`-tagged runner that
+  embeds the store. This records a `github.com/LadybugDB/go-ladybug`
+  requirement in `go.mod`/`go.sum`. Set `SKIP_LADYBUG=1` to skip it.
+
+  Dialect note: LadybugDB (Kuzu fork) has no Bolt server and no
+  `CREATE INDEX … FOR (n:L) ON (n.prop)` syntax, so the embedded runner
+  skips the index-setup phase — its `seed_index_ms` reads 0.
 
 ## Files produced by this benchmark
 
@@ -99,7 +122,14 @@ nornicdb.bench.log           bench runner stderr
 neo4j.*                      same set for Neo4j
 nornicdb.md                  single-DB report
 neo4j.md                     single-DB report
+falkor.*                     FalkorDB result/plist/vmstat/disk/wall files
+falkor.md                    FalkorDB single-DB report
+memgraph.*                   Memgraph result/plist/vmstat/disk/wall files
+memgraph.md                  Memgraph single-DB report
+ladybug.*                    LadybugDB result/plist/vmstat/disk/wall files
+ladybug.md                   LadybugDB single-DB report
 comparison.md                side-by-side report
+sweep.md                     all engines in one breakdown
 ```
 
 ## Step-by-step instructions
@@ -168,16 +198,19 @@ comparison.md                side-by-side report
    [nornicdb] products_per_category            mean=   3.47ms p95=   4.88ms ops/s= 287.4
    ...
    [11:08:19] === Neo4j run ===
+   [11:10:01] === falkor run (docker falkordb/falkordb:latest) ===
+   [11:11:12] === memgraph run (docker memgraph/memgraph:latest) ===
+   [11:12:30] === LadybugDB run (embedded, Kuzu fork) ===
    ...
-   [11:11:44] generating reports
-   [11:11:44] DONE — reports: .../benchmark_reports/20260511_111144
+   [11:13:44] generating reports
+   [11:13:44] DONE — reports: .../benchmark_reports/20260511_111144
    ```
 
 5. **Read the reports**:
 
    ```bash
    ls scripts/benchmark_reports/$(ls -t scripts/benchmark_reports | head -1)
-   open scripts/benchmark_reports/$(ls -t scripts/benchmark_reports | head -1)/comparison.md
+   open scripts/benchmark_reports/$(ls -t scripts/benchmark_reports | head -1)/sweep.md
    ```
 
 ## Environment variables
@@ -205,10 +238,27 @@ comparison.md                side-by-side report
 | `NEO4J_DATABASE` | `neo4j` | Default database name for Neo4j. |
 | `CYPHER_SHELL` | `$(command -v cypher-shell)` | Override cypher-shell binary. |
 | `REPORT_DIR` | `./scripts/benchmark_reports` | Parent directory for timestamped reports. |
+| `SKIP_POWERMETRICS` | `0` | Set to `1` to skip power sampling (no sudo needed); power rows read 0. |
+| `SKIP_NEO4J` | `0` | Set to `1` to skip the Neo4j phase (Neo4j is then neither required nor run). |
+| `SKIP_FALKOR` | `0` | Set to `1` to skip the FalkorDB phase (image neither pulled nor required). |
+| `SKIP_MEMGRAPH` | `0` | Set to `1` to skip the Memgraph phase. |
+| `SKIP_LADYBUG` | `0` | Set to `1` to skip the embedded LadybugDB phase (no library download). |
+| `FALKOR_IMAGE` | `falkordb/falkordb:latest` | FalkorDB docker image. |
+| `FALKOR_BOLT_PORT` | `17688` | Host port mapped to FalkorDB's Bolt listener (container 7687). |
+| `FALKOR_AUTH` | `userpass` | `userpass` uses `FALKOR_USER`/`FALKOR_PASS`; `none` uses no-auth Bolt. |
+| `FALKOR_USER` / `FALKOR_PASS` | `falkordb` / `falkordb` | FalkorDB Bolt credentials. |
+| `FALKOR_DATA_DIR` | `./bench-data/falkor` | FalkorDB data dir on the host (mapped to `/data`). Wiped each run. |
+| `MEMGRAPH_IMAGE` | `memgraph/memgraph:latest` | Memgraph docker image. |
+| `MEMGRAPH_BOLT_PORT` | `17689` | Host port mapped to Memgraph's Bolt listener (container 7687). |
+| `MEMGRAPH_DATA_DIR` | `./bench-data/memgraph` | Memgraph data dir on the host (mapped to `/var/lib/memgraph`). Wiped each run. |
+| `LADYBUG_DATA_DIR` | `./bench-data/ladybug` | LadybugDB embedded store directory. Wiped each run. |
+| `LADYBUG_LIB_DIR` | `./lib-ladybug` | Precompiled LadybugDB library download directory. |
 
 NornicDB runs on non-default ports (`17687` bolt, `17474` HTTP) so it can
 coexist with a developer's Neo4j on standard ports while still letting Neo4j
-use its defaults during its own phase.
+use its defaults during its own phase. FalkorDB and Memgraph containers map
+their Bolt listeners to host ports `17688` and `17689` respectively — the
+script refuses to start if either port is already in use.
 
 ## Repeating a run
 
@@ -218,6 +268,9 @@ Repeat runs are designed to be deterministic in shape:
   phase.
 - Neo4j's `databases/` and `transactions/` subdirectories are wiped before its
   phase (the install itself is not touched).
+- `$FALKOR_DATA_DIR`, `$MEMGRAPH_DATA_DIR`, and `$LADYBUG_DATA_DIR` are wiped
+  before their respective phases, and each docker run starts a fresh
+  `northwind-<engine>` container.
 - Seeded row counts, query set, and warmup counts are identical each run.
 
 Latency and power figures will vary between runs — laptop thermals, OS
