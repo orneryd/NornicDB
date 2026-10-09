@@ -422,45 +422,47 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// ========================================
 
 	// reduce(acc = initial, x IN list | step) and allReduce(…, predicate)
-	if function, inner, isCall := parseFunctionCallWS(expr); isCall && isReduceFormFunction(function) {
-		form, ok := parseReduceForm(function, inner)
-		if !ok {
-			return nil
-		}
-		acc := e.evaluateExpressionWithContextFull(ctx, form.initial, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		list := e.evaluateExpressionWithContextFull(ctx, form.list, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if list == nil {
-			return nil
-		}
-		items, isList := list.([]interface{})
-		if !isList {
-			items = []interface{}{list}
-		}
-		// The accumulator and item are bound as variables (bindEvaluationValue):
-		// nodes / relationships as entities, anything else in the value scope.
-		tempNodes := make(map[string]*storage.Node, len(nodes)+2)
-		for k, v := range nodes {
-			tempNodes[k] = v
-		}
-		tempRels := make(map[string]*storage.Edge, len(rels)+2)
-		for k, v := range rels {
-			tempRels[k] = v
-		}
-		values := valueBindingsLayer(ctx, 2)
-		itemCtx := withValueBindings(ctx, values)
-		evaluate := func(expression string) func(accumulator, item interface{}) (interface{}, error) {
-			return func(accumulator, item interface{}) (interface{}, error) {
-				bindEvaluationValue(form.accumulator, accumulator, tempNodes, tempRels, values)
-				bindEvaluationValue(form.variable, item, tempNodes, tempRels, values)
-				return e.evaluateExpressionWithContextFull(itemCtx, expression, tempNodes, tempRels, paths, allPathEdges, allPathNodes, pathLength), nil
+	if matchFuncStartAndSuffix(expr, "reduce") || matchFuncStartAndSuffix(expr, "allReduce") {
+		if function, inner, isCall := parseFunctionCallWS(expr); isCall && isReduceFormFunction(function) {
+			form, ok := parseReduceForm(function, inner)
+			if !ok {
+				return nil
 			}
+			acc := e.evaluateExpressionWithContextFull(ctx, form.initial, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			list := e.evaluateExpressionWithContextFull(ctx, form.list, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			if list == nil {
+				return nil
+			}
+			items, isList := list.([]interface{})
+			if !isList {
+				items = []interface{}{list}
+			}
+			// The accumulator and item are bound as variables (bindEvaluationValue):
+			// nodes / relationships as entities, anything else in the value scope.
+			tempNodes := make(map[string]*storage.Node, len(nodes)+2)
+			for k, v := range nodes {
+				tempNodes[k] = v
+			}
+			tempRels := make(map[string]*storage.Edge, len(rels)+2)
+			for k, v := range rels {
+				tempRels[k] = v
+			}
+			values := valueBindingsLayer(ctx, 2)
+			itemCtx := withValueBindings(ctx, values)
+			evaluate := func(expression string) func(accumulator, item interface{}) (interface{}, error) {
+				return func(accumulator, item interface{}) (interface{}, error) {
+					bindEvaluationValue(form.accumulator, accumulator, tempNodes, tempRels, values)
+					bindEvaluationValue(form.variable, item, tempNodes, tempRels, values)
+					return e.evaluateExpressionWithContextFull(itemCtx, expression, tempNodes, tempRels, paths, allPathEdges, allPathNodes, pathLength), nil
+				}
+			}
+			result, err := runReduceForm(form, acc, items, evaluate(form.step), evaluate(form.predicate))
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
+			return result
 		}
-		result, err := runReduceForm(form, acc, items, evaluate(form.step), evaluate(form.predicate))
-		if err != nil {
-			recordExpressionFailure(ctx, err)
-			return nil
-		}
-		return result
 	}
 
 	// ========================================
