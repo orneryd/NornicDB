@@ -43,6 +43,7 @@ func TestBoltLogEventsRenderDeterministicallyAcrossLocales(t *testing.T) {
 	}{
 		{"server listening", localization.BoltServerListeningEvent("localhost", 7687), "bolt server listening", "El servidor Bolt está escuchando"},
 		{"connection panic", localization.BoltConnectionHandlerPanicEvent("panic"), "connection handler panic", "pánico en el controlador de conexión"},
+		{"connection limit", localization.BoltConnectionLimitReachedEvent("remote", 100, 1), "rejecting connections: Bolt connection limit reached", "rechazando conexiones: se alcanzó el límite de conexiones Bolt"},
 		{"unencrypted rejected", localization.BoltUnencryptedConnectionRejectedEvent("remote"), "rejecting unencrypted connection", "rechazando conexión sin cifrar"},
 		{"transport sniff", localization.BoltTransportSniffFailedEvent("remote", testErr), "transport sniff failed", "error al detectar el transporte"},
 		{"handshake", localization.BoltHandshakeFailedEvent("remote", testErr), "handshake failed", "error en la negociación"},

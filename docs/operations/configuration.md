@@ -90,8 +90,6 @@ The `retention:` block is inert until retention is enabled.
 database:
   path: /data/nornicdb.db
   default_database: "nornic" # Default database name (like Neo4j's "neo4j")
-  max_connections: 100
-  connection_timeout: 30s
   storage_serializer: msgpack # default: msgpack; MVCC metadata uses msgpack on the hot path
   mvcc_retention_max_versions: 1
   mvcc_retention_ttl: 168h
@@ -469,6 +467,7 @@ The official drivers' URL parsers reject `ws://` / `wss://` — the WebSocket tr
 
 ```yaml
 server:
+  bolt_max_connections: 100 # concurrent Bolt connections, every transport; 0 = no cap
   bolt_tls_enabled: true
   bolt_tls_cert: /etc/nornicdb/tls/cert.pem
   bolt_tls_key: /etc/nornicdb/tls/key.pem
@@ -490,6 +489,7 @@ server:
 
 | Key                                         | Default  | Notes                                                     |
 | ------------------------------------------- | -------- | --------------------------------------------------------- |
+| `NORNICDB_BOLT_MAX_CONNECTIONS`             | `100`    | concurrent connections, every transport; `0` = no cap     |
 | `NORNICDB_BOLT_TLS_ENABLED`                 | `false`  | enables TLS-on-first-byte sniffing                        |
 | `NORNICDB_BOLT_TLS_CERT`                    |          | path to cert PEM                                          |
 | `NORNICDB_BOLT_TLS_KEY`                     |          | path to key PEM                                           |

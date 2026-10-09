@@ -865,6 +865,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	boltConfig := bolt.DefaultConfig()
 	boltConfig.Host = resolvedAddress
 	boltConfig.Port = boltPort
+	boltConfig.MaxConnections = cfg.Server.BoltMaxConnections
 	boltConfig.LogQueries = logQueries
 	boltConfig.ServerAnnouncement = cfg.Server.BoltServerAnnouncement
 	// `logger` is the same *slog.Logger reference Provider.Logger() returns

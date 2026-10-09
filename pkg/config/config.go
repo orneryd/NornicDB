@@ -447,6 +447,11 @@ type ServerConfig struct {
 	// Use this only as a client compatibility workaround for strict Neo4j-only tools.
 	// Env: NORNICDB_BOLT_SERVER_ANNOUNCEMENT
 	BoltServerAnnouncement string
+	// BoltMaxConnections caps concurrent Bolt connections across every
+	// transport (default 100); 0 removes the cap. A connection past it is
+	// closed straight away, and the rejection is logged.
+	// Env: NORNICDB_BOLT_MAX_CONNECTIONS, YAML: server.bolt_max_connections
+	BoltMaxConnections int
 	// BoltTLSEnabled for encrypted connections
 	BoltTLSEnabled bool
 	// BoltTLSCert path to certificate
@@ -1467,7 +1472,24 @@ type YAMLConfig struct {
 		HTTPEnabled            bool     `yaml:"http_enabled"`             // Enable HTTP API
 		BoltServerAnnouncement string   `yaml:"bolt_server_announcement"` // Override Bolt HELLO server metadata
 		BoltStatementTimeout   string   `yaml:"bolt_statement_timeout"`
-		TLS                    struct {
+		// The Bolt listener settings, by their NORNICDB_BOLT_* names. A
+		// pointer tells an explicit zero or false from an omitted key.
+		BoltMaxConnections           *int   `yaml:"bolt_max_connections"`
+		BoltTLSEnabled               *bool  `yaml:"bolt_tls_enabled"`
+		BoltTLSCert                  string `yaml:"bolt_tls_cert"`
+		BoltTLSKey                   string `yaml:"bolt_tls_key"`
+		BoltTLSRequire               *bool  `yaml:"bolt_tls_require"`
+		BoltTLSClientCAFile          string `yaml:"bolt_tls_client_ca_file"`
+		BoltTLSClientAuthMode        string `yaml:"bolt_tls_client_auth_mode"`
+		BoltSniffTimeout             string `yaml:"bolt_sniff_timeout"`
+		BoltAuthTimeout              string `yaml:"bolt_auth_timeout"`
+		BoltWebSocketEnabled         *bool  `yaml:"bolt_websocket_enabled"`
+		BoltWebSocketAllowedOrigins  string `yaml:"bolt_websocket_allowed_origins"`
+		BoltWebSocketMaxMessageSize  *int64 `yaml:"bolt_websocket_max_message_size"`
+		BoltWebSocketWriteBufferSize *int   `yaml:"bolt_websocket_write_buffer_size"`
+		BoltWebSocketPingInterval    string `yaml:"bolt_websocket_ping_interval"`
+		BoltWebSocketPongTimeout     string `yaml:"bolt_websocket_pong_timeout"`
+		TLS                          struct {
 			Enabled  bool   `yaml:"enabled"`
 			CertFile string `yaml:"cert_file"`
 			KeyFile  string `yaml:"key_file"`
@@ -1924,6 +1946,7 @@ func LoadDefaults() *Config {
 	config.Server.BoltPort = 7687
 	config.Server.BoltAddress = "0.0.0.0"
 	config.Server.BoltServerAnnouncement = ""
+	config.Server.BoltMaxConnections = 100
 	config.Server.BoltTLSEnabled = false
 	config.Server.BoltTLSRequire = false
 	config.Server.BoltTLSClientAuthMode = "none"
@@ -2269,6 +2292,9 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := strings.TrimSpace(getEnv("NORNICDB_BOLT_SERVER_ANNOUNCEMENT", "")); v != "" {
 		config.Server.BoltServerAnnouncement = v
+	}
+	if v := getEnvInt("NORNICDB_BOLT_MAX_CONNECTIONS", -1); v >= 0 {
+		config.Server.BoltMaxConnections = v
 	}
 	if getEnv("NORNICDB_BOLT_TLS_ENABLED", "") == "true" {
 		config.Server.BoltTLSEnabled = true
@@ -3038,6 +3064,56 @@ func ApplyEnvVars(config *Config) error {
 	return applyEnvVars(config)
 }
 
+// applyYAMLBoltSettings applies the server.bolt_* listener keys, after
+// server.tls so the Bolt-specific ones win. Each takes the values its
+// NORNICDB_BOLT_* variable does; a duration that doesn't parse, or isn't
+// positive, is ignored like the other YAML durations.
+func applyYAMLBoltSettings(config *Config, yamlCfg *YAMLConfig) {
+	server := &yamlCfg.Server
+	duration := func(text string, target *time.Duration) {
+		if d, err := time.ParseDuration(text); err == nil && d > 0 {
+			*target = d
+		}
+	}
+	if v := server.BoltMaxConnections; v != nil && *v >= 0 {
+		config.Server.BoltMaxConnections = *v
+	}
+	if v := server.BoltTLSEnabled; v != nil {
+		config.Server.BoltTLSEnabled = *v
+	}
+	if server.BoltTLSCert != "" {
+		config.Server.BoltTLSCert = server.BoltTLSCert
+	}
+	if server.BoltTLSKey != "" {
+		config.Server.BoltTLSKey = server.BoltTLSKey
+	}
+	if v := server.BoltTLSRequire; v != nil {
+		config.Server.BoltTLSRequire = *v
+	}
+	if server.BoltTLSClientCAFile != "" {
+		config.Server.BoltTLSClientCAFile = server.BoltTLSClientCAFile
+	}
+	if server.BoltTLSClientAuthMode != "" {
+		config.Server.BoltTLSClientAuthMode = server.BoltTLSClientAuthMode
+	}
+	duration(server.BoltSniffTimeout, &config.Server.BoltSniffTimeout)
+	duration(server.BoltAuthTimeout, &config.Server.BoltAuthTimeout)
+	if v := server.BoltWebSocketEnabled; v != nil {
+		config.Server.BoltWebSocketEnabled = *v
+	}
+	if server.BoltWebSocketAllowedOrigins != "" {
+		config.Server.BoltWebSocketAllowedOrigins = server.BoltWebSocketAllowedOrigins
+	}
+	if v := server.BoltWebSocketMaxMessageSize; v != nil && *v >= 0 {
+		config.Server.BoltWebSocketMaxMessageSize = *v
+	}
+	if v := server.BoltWebSocketWriteBufferSize; v != nil && *v >= 0 {
+		config.Server.BoltWebSocketWriteBufferSize = *v
+	}
+	duration(server.BoltWebSocketPingInterval, &config.Server.BoltWebSocketPingInterval)
+	duration(server.BoltWebSocketPongTimeout, &config.Server.BoltWebSocketPongTimeout)
+}
+
 // LoadFromFile loads configuration with proper precedence:
 //  1. Built-in defaults (lowest priority)
 //  2. YAML config file
@@ -3143,6 +3219,7 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Server.HTTPS.Enabled {
 		config.Server.HTTPSEnabled = true
 	}
+	applyYAMLBoltSettings(config, &yamlCfg)
 	if yamlCfg.Server.HTTPS.Port > 0 {
 		config.Server.HTTPSPort = yamlCfg.Server.HTTPS.Port
 	}

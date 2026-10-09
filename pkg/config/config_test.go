@@ -1567,6 +1567,83 @@ func TestLoadFromFile_BoltStatementTimeoutAndEnvOverride(t *testing.T) {
 	require.Equal(t, 90*time.Second, cfg.Server.BoltStatementTimeout)
 }
 
+// Every documented server.bolt_* key reaches the Bolt settings, and
+// NORNICDB_BOLT_MAX_CONNECTIONS overrides the file.
+func TestLoadFromFile_BoltListenerSettings(t *testing.T) {
+	clearEnvVars(t)
+
+	defaults := LoadDefaults()
+	require.Equal(t, 100, defaults.Server.BoltMaxConnections)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yamlText := `server:
+  tls:
+    enabled: true
+    cert_file: /shared/cert.pem
+    key_file: /shared/key.pem
+  bolt_max_connections: 512
+  bolt_tls_enabled: false
+  bolt_tls_cert: /bolt/cert.pem
+  bolt_tls_key: /bolt/key.pem
+  bolt_tls_require: true
+  bolt_tls_client_ca_file: /bolt/ca.pem
+  bolt_tls_client_auth_mode: require_verify
+  bolt_sniff_timeout: 2s
+  bolt_auth_timeout: 15s
+  bolt_websocket_enabled: false
+  bolt_websocket_allowed_origins: https://app.example.com
+  bolt_websocket_max_message_size: 1024
+  bolt_websocket_write_buffer_size: 4096
+  bolt_websocket_ping_interval: 10s
+  bolt_websocket_pong_timeout: 20s
+`
+	require.NoError(t, os.WriteFile(path, []byte(yamlText), 0o644))
+	cfg, err := LoadFromFile(path)
+	require.NoError(t, err)
+	server := cfg.Server
+	require.Equal(t, 512, server.BoltMaxConnections)
+	require.False(t, server.BoltTLSEnabled, "bolt_tls_enabled wins over server.tls.enabled")
+	require.True(t, server.HTTPSEnabled, "server.tls still enables HTTPS")
+	require.Equal(t, "/bolt/cert.pem", server.BoltTLSCert)
+	require.Equal(t, "/bolt/key.pem", server.BoltTLSKey)
+	require.Equal(t, "/shared/cert.pem", server.HTTPTLSCert)
+	require.True(t, server.BoltTLSRequire)
+	require.Equal(t, "/bolt/ca.pem", server.BoltTLSClientCAFile)
+	require.Equal(t, "require_verify", server.BoltTLSClientAuthMode)
+	require.Equal(t, 2*time.Second, server.BoltSniffTimeout)
+	require.Equal(t, 15*time.Second, server.BoltAuthTimeout)
+	require.False(t, server.BoltWebSocketEnabled)
+	require.Equal(t, "https://app.example.com", server.BoltWebSocketAllowedOrigins)
+	require.Equal(t, int64(1024), server.BoltWebSocketMaxMessageSize)
+	require.Equal(t, 4096, server.BoltWebSocketWriteBufferSize)
+	require.Equal(t, 10*time.Second, server.BoltWebSocketPingInterval)
+	require.Equal(t, 20*time.Second, server.BoltWebSocketPongTimeout)
+
+	t.Setenv("NORNICDB_BOLT_MAX_CONNECTIONS", "0")
+	cfg, err = LoadFromFile(path)
+	require.NoError(t, err)
+	require.Equal(t, 0, cfg.Server.BoltMaxConnections, "0 removes the cap")
+
+	// Out-of-range values keep the defaults, as the variables do.
+	t.Setenv("NORNICDB_BOLT_MAX_CONNECTIONS", "-1")
+	require.NoError(t, os.WriteFile(path, []byte(`server:
+  bolt_max_connections: -5
+  bolt_sniff_timeout: soon
+  bolt_auth_timeout: 0s
+  bolt_websocket_max_message_size: -1
+  bolt_websocket_write_buffer_size: -1
+`), 0o644))
+	cfg, err = LoadFromFile(path)
+	require.NoError(t, err)
+	require.Equal(t, defaults.Server.BoltMaxConnections, cfg.Server.BoltMaxConnections)
+	require.Equal(t, defaults.Server.BoltSniffTimeout, cfg.Server.BoltSniffTimeout)
+	require.Equal(t, defaults.Server.BoltAuthTimeout, cfg.Server.BoltAuthTimeout)
+	require.Equal(t, defaults.Server.BoltWebSocketMaxMessageSize, cfg.Server.BoltWebSocketMaxMessageSize)
+	require.Equal(t, defaults.Server.BoltWebSocketWriteBufferSize, cfg.Server.BoltWebSocketWriteBufferSize)
+	require.True(t, cfg.Server.BoltWebSocketEnabled)
+}
+
 func TestLoadFromFile_MissingFileReturnsDefaults(t *testing.T) {
 	clearEnvVars(t)
 
