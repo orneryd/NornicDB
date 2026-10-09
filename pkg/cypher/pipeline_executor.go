@@ -823,6 +823,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				addQueryStats(result.Stats, stats)
 			}
 			wrote = true
+			if idx+1 < len(clauses) {
+				e.refreshRowEntities(ctx, rows)
+			}
 		case pipelineClauseDelete:
 			stats, ok, err := e.pipelineApplyDelete(ctx, rows, scope, clause.text)
 			if err != nil {
@@ -839,6 +842,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				idx++
 				assignment += " " + clauses[idx].text
 			}
+			// Rows that bind one entity through different copies write one
+			// entity: each row reads what the rows before it wrote.
+			e.refreshRowEntities(ctx, rows)
 			stats, ok, err := e.pipelineApplySet(ctx, rows, assignment)
 			if err != nil {
 				return nil, true, err
@@ -848,11 +854,18 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			addQueryStats(result.Stats, stats)
 			wrote = true
+			if idx+1 < len(clauses) {
+				e.refreshRowEntities(ctx, rows)
+			}
 		case pipelineClauseRemove:
+			e.refreshRowEntities(ctx, rows)
 			if err := e.pipelineApplyRemove(ctx, rows, clause.text, result); err != nil {
 				return nil, true, err
 			}
 			wrote = true
+			if idx+1 < len(clauses) {
+				e.refreshRowEntities(ctx, rows)
+			}
 		case pipelineClauseWith:
 			if source != nil {
 				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause.text); supported {
@@ -992,12 +1005,16 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				wrote = true
 			}
 		case pipelineClauseForeach:
+			e.refreshRowEntities(ctx, rows)
 			stats, err := e.pipelineApplyForeach(ctx, rows, clause.text)
 			if err != nil {
 				return nil, true, err
 			}
 			addQueryStats(result.Stats, stats)
 			wrote = true
+			if idx+1 < len(clauses) {
+				e.refreshRowEntities(ctx, rows)
+			}
 		case pipelineClauseReturn:
 			if streamsReturn(ctx, clauses, idx) {
 				columns, streamedRows, handled, err := e.pipelineStreamReturn(ctx, boundResultStream(ctx, &clauses[idx]), rows, source, clauses, originalClauses, idx, scope, wrote)
