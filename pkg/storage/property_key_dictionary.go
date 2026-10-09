@@ -222,11 +222,30 @@ func (d *propertyKeyDictionary) lookupID(namespace, name string) (uint64, bool) 
 	return id, ok
 }
 
-// note records name as used by a write in namespace without allocating
-// it an ID (noted): allocating outside the encoding txn would leave an ID
-// the store never persists.
-func (d *propertyKeyDictionary) note(namespace, name string) {
-	if d.known(namespace, name) {
+// noteProperties records the keys of properties that hold a value as used
+// by a write in namespace, without allocating IDs (noted): allocating outside
+// the encoding txn would leave an ID the store never persists. Most writes
+// use only known names, so it checks them all under one read lock and takes
+// the write lock only when one is new.
+func (d *propertyKeyDictionary) noteProperties(namespace string, properties map[string]interface{}) {
+	d.mu.RLock()
+	allKnown := true
+	forward, noted := d.forward[namespace], d.noted[namespace]
+	for name, value := range properties {
+		if value == nil {
+			continue
+		}
+		if _, ok := forward[name]; ok {
+			continue
+		}
+		if _, ok := noted[name]; ok {
+			continue
+		}
+		allKnown = false
+		break
+	}
+	d.mu.RUnlock()
+	if allKnown {
 		return
 	}
 	d.mu.Lock()
@@ -236,7 +255,11 @@ func (d *propertyKeyDictionary) note(namespace, name string) {
 		names = make(map[string]struct{})
 		d.noted[namespace] = names
 	}
-	names[name] = struct{}{}
+	for name, value := range properties {
+		if value != nil {
+			names[name] = struct{}{}
+		}
+	}
 }
 
 // known reports whether a write in namespace has used name: it has an ID,
@@ -540,11 +563,7 @@ func (b *BadgerEngine) PropKeyDictCounters() map[string]uint64 {
 // allocate their names; buffered ones (BadgerTransaction, AsyncEngine)
 // call this when they take the write.
 func (b *BadgerEngine) NotePropertyKeysInNamespace(namespace string, properties map[string]interface{}) {
-	for name, value := range properties {
-		if value != nil {
-			b.propKeyDict.note(namespace, name)
-		}
-	}
+	b.propKeyDict.noteProperties(namespace, properties)
 }
 
 // PropertyKeyKnownInNamespace reports whether a write in namespace has

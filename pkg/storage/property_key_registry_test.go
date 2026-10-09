@@ -79,8 +79,9 @@ func TestPropertyKeyRegistryAcrossStack(t *testing.T) {
 // for any new name.
 func TestPropertyKeyDictionaryNoteAllocatesNothing(t *testing.T) {
 	dictionary := newPropertyKeyDictionary()
-	dictionary.note("ns", "a")
-	dictionary.note("ns", "a")
+	dictionary.noteProperties("ns", map[string]interface{}{"a": 1, "z": nil})
+	dictionary.noteProperties("ns", map[string]interface{}{"a": 2})
+	require.False(t, dictionary.known("ns", "z"))
 	require.True(t, dictionary.known("ns", "a"))
 	require.False(t, dictionary.known("other", "a"))
 	_, allocated := dictionary.lookupID("ns", "a")
