@@ -152,6 +152,18 @@
   other: "A pattern can only be used in conjunction with a `STRING` input."
 - id: cyphercore.all_reduce_invalid_syntax
   other: "Invalid syntax for the `allReduce` function. The function allReduce must have the signature allReduce(accumulator :: VARIABLE = initial :: ANY, variable :: VARIABLE IN list :: LIST<ANY> | reducer :: ANY, predicate :: BOOLEAN) :: BOOLEAN"
+- id: cyphercore.regex_replacement_illegal_group_reference
+  other: "Illegal group reference"
+- id: cyphercore.regex_replacement_group_index_missing
+  other: "Illegal group reference: group index is missing"
+- id: cyphercore.regex_replacement_escape_missing
+  other: "character to be escaped is missing"
+- id: cyphercore.regex_replacement_named_group_unterminated
+  other: "named capturing group is missing trailing '}'"
+- id: cyphercore.regex_replacement_no_group
+  other: "No group {{.Group}}"
+- id: cyphercore.regex_replacement_no_named_group
+  other: 'No group with name {{"{"}}{{.Name}}{{"}"}}'
 - id: cyphercore.list_operand_type_mismatch
   other: "Type mismatch: expected List<T> but was {{.Type}}"
 - id: cyphercore.list_parameter_type_mismatch

@@ -37,61 +37,14 @@ const (
 	patternFieldCount
 )
 
-func (item patternItem) field() patternField {
-	switch item.letter {
-	case 'G':
-		return fieldEra
-	case 'y':
-		return fieldYearOfEra
-	case 'u':
-		return fieldYear
-	case 'Y':
-		return fieldWeekBasedYear
-	case 'D':
-		return fieldDayOfYear
-	case 'M', 'L':
-		return fieldMonth
-	case 'd':
-		return fieldDayOfMonth
-	case 'g':
-		return fieldModifiedJulianDay
-	case 'Q', 'q':
-		return fieldQuarter
-	case 'w':
-		return fieldWeekOfWeekBasedYear
-	case 'W':
-		return fieldWeekOfMonth
-	case 'E':
-		return fieldDayOfWeek
-	case 'e', 'c':
-		if item.count <= 2 {
-			return fieldUSDayOfWeek
-		}
-		return fieldDayOfWeek
-	case 'F':
-		return fieldAlignedWeekOfMonth
-	case 'a':
-		return fieldAmPm
-	case 'B':
-		return fieldDayPeriod
-	case 'h':
-		return fieldClockHourOfAmPm
-	case 'K':
-		return fieldHourOfAmPm
-	case 'k':
-		return fieldClockHourOfDay
-	case 'H':
-		return fieldHourOfDay
-	case 'm':
-		return fieldMinute
-	case 's':
-		return fieldSecond
-	case 'S', 'n':
-		return fieldNano
-	case 'A':
-		return fieldMilliOfDay
-	}
-	return fieldNanoOfDay
+// numericPatternFields are the fields the numeric pattern letters read (e
+// and c only as numbers, at one or two letters).
+var numericPatternFields = map[byte]patternField{
+	'y': fieldYearOfEra, 'u': fieldYear, 'Y': fieldWeekBasedYear, 'D': fieldDayOfYear, 'M': fieldMonth, 'L': fieldMonth,
+	'd': fieldDayOfMonth, 'g': fieldModifiedJulianDay, 'Q': fieldQuarter, 'q': fieldQuarter, 'w': fieldWeekOfWeekBasedYear,
+	'W': fieldWeekOfMonth, 'e': fieldUSDayOfWeek, 'c': fieldUSDayOfWeek, 'F': fieldAlignedWeekOfMonth,
+	'h': fieldClockHourOfAmPm, 'K': fieldHourOfAmPm, 'k': fieldClockHourOfDay, 'H': fieldHourOfDay, 'm': fieldMinute,
+	's': fieldSecond, 'S': fieldNano, 'n': fieldNano, 'A': fieldMilliOfDay, 'N': fieldNanoOfDay,
 }
 
 // patternParse is the state of reading text with a pattern: the fields read
@@ -180,7 +133,7 @@ func (state *patternParse) parseField(item patternItem, pos int) (int, bool) {
 				value *= 10
 			}
 		}
-		return next, state.set(item.field(), value)
+		return next, state.set(numericPatternFields[item.letter], value)
 	}
 	text := state.text[pos:]
 	switch item.letter {
@@ -280,26 +233,20 @@ func (state *patternParse) setOffset(seconds int) bool {
 	return true
 }
 
-// parseZoneID reads a zone: an offset (+01:00, Z), UTC / GMT / UT with or
-// without an offset, the longest known zone ID, or the longest of names
-// (Java's English zone names, which stand for the zone they map to).
+// parseZoneID reads a zone: an offset (+01:00, Z), UTC / GMT / UT with an
+// offset (a zone of its own, prefixedOffsetZone), the longest known zone ID,
+// or the longest of names (Java's English zone names, which stand for the
+// zone they map to).
 func (state *patternParse) parseZoneID(pos int, names map[string]string) (int, bool) {
 	text := state.text[pos:]
 	if strings.HasPrefix(text, "+") || strings.HasPrefix(text, "-") {
 		seconds, next, ok := parseOffsetID(state.text, pos)
 		return next, ok && state.setOffset(seconds)
 	}
-	for _, prefix := range []string{"UTC", "GMT", "UT"} {
-		if !strings.HasPrefix(text, prefix) {
-			continue
-		}
-		if len(text) > len(prefix) && (text[len(prefix)] == '+' || text[len(prefix)] == '-') {
-			if seconds, next, ok := parseOffsetID(state.text, pos+len(prefix)); ok {
-				// GMT+01:00 is a zone of its own in Neo4j; NornicDB keeps its offset.
-				return next, state.setOffset(seconds)
-			}
-		}
-		break
+	if zoneID, _, length, ok := prefixedOffsetZone(text); ok {
+		location, _ := loadTemporalLocation(zoneID)
+		state.zoneID, state.location, state.hasZone = zoneID, location, true
+		return pos + length, true
 	}
 	best := ""
 	for end := len(text); end > 0 && best == ""; end-- {
@@ -324,9 +271,7 @@ func (state *patternParse) parseZoneID(pos int, names map[string]string) (int, b
 	if !ok {
 		return pos, false
 	}
-	if state.hasZone && state.zoneID != zoneID {
-		return pos, false
-	}
+	// A later zone replaces an earlier one, as in Java.
 	state.zoneID, state.location, state.hasZone = zoneID, location, true
 	return pos + len(best), true
 }
@@ -438,7 +383,7 @@ func parseLocalizedOffset(text string, pos int, full bool) (int, int, bool) {
 	if !ok && !full {
 		hours, next, ok = readFixedDigits(text, pos+1, 1)
 	}
-	if !ok || hours > 18 {
+	if !ok {
 		return 0, pos, false
 	}
 	total := hours * 3600
@@ -471,7 +416,7 @@ func parsePatternOffset(text string, pos int, letter byte, count int) (int, int,
 		sign = -1
 	}
 	hours, next, ok := readFixedDigits(text, pos+1, 2)
-	if !ok || hours > 18 {
+	if !ok {
 		return 0, pos, false
 	}
 	total := hours * 3600
@@ -526,11 +471,13 @@ type resolvedPattern struct {
 }
 
 // resolve combines the fields read into a date and a time of day, as Java's
-// SMART resolver does, and checks every field read against the result; ok
-// is false for an invalid or contradictory value. A date or time the fields
-// don't make is absent, not an error.
+// SMART resolver does, and checks every field the resolution didn't use
+// against the result (Mon for a Tuesday fails); ok is false for an invalid or
+// contradictory value. A date or time the fields don't make is absent, not
+// an error.
 func (state *patternParse) resolve() (resolvedPattern, bool) {
 	var result resolvedPattern
+	var used [patternFieldCount]bool
 	v, has := state.values, state.has
 	// Year: a year of era is the year in the Common Era unless an era says BC.
 	year, hasYear := v[fieldYear], has[fieldYear]
@@ -547,20 +494,26 @@ func (state *patternParse) resolve() (resolvedPattern, bool) {
 		}
 		year, hasYear = fromEra, true
 	}
-	clamped := false
+	use := func(fields ...patternField) {
+		for _, field := range fields {
+			used[field] = true
+		}
+	}
+	yearUsed := true
 	switch {
 	case has[fieldModifiedJulianDay]:
 		result.date, result.hasDate = time.Unix((v[fieldModifiedJulianDay]-40_587)*86_400, 0).UTC(), true
+		use(fieldModifiedJulianDay)
+		yearUsed = false
 	case hasYear && has[fieldMonth] && has[fieldDayOfMonth]:
 		month, day := v[fieldMonth], v[fieldDayOfMonth]
 		if month < 1 || month > 12 || day < 1 || day > 31 {
 			return result, false
 		}
+		// A day past the month's end is its last day.
 		first := time.Date(int(year), time.Month(month), 1, 0, 0, 0, 0, time.UTC)
-		if last := first.AddDate(0, 1, -1).Day(); int(day) > last {
-			day, clamped = int64(last), true
-		}
-		result.date, result.hasDate = first.AddDate(0, 0, int(day)-1), true
+		result.date, result.hasDate = first.AddDate(0, 0, min(int(day), first.AddDate(0, 1, -1).Day())-1), true
+		use(fieldMonth, fieldDayOfMonth)
 	case hasYear && has[fieldDayOfYear]:
 		first := time.Date(int(year), 1, 1, 0, 0, 0, 0, time.UTC)
 		day := v[fieldDayOfYear]
@@ -568,19 +521,18 @@ func (state *patternParse) resolve() (resolvedPattern, bool) {
 			return result, false
 		}
 		result.date, result.hasDate = first.AddDate(0, 0, int(day)-1), true
+		use(fieldDayOfYear)
 	case hasYear && has[fieldMonth] && has[fieldAlignedWeekOfMonth] && has[fieldDayOfWeek]:
 		month, week, weekday := v[fieldMonth], v[fieldAlignedWeekOfMonth], v[fieldDayOfWeek]
 		if month < 1 || month > 12 || week < 1 || week > 5 || weekday < 1 || weekday > 7 {
 			return result, false
 		}
+		// The day may fall in the next month, as SMART resolution allows.
 		date := time.Date(int(year), time.Month(month), 1+int(week-1)*7, 0, 0, 0, 0, time.UTC)
-		date = date.AddDate(0, 0, floorModInt(int(weekday)%7-int(date.Weekday()), 7))
-		if date.Month() != time.Month(month) {
-			return result, false
-		}
-		result.date, result.hasDate = date, true
+		result.date, result.hasDate = date.AddDate(0, 0, floorModInt(int(weekday)%7-int(date.Weekday()), 7)), true
+		use(fieldMonth, fieldAlignedWeekOfMonth, fieldDayOfWeek)
 	case has[fieldWeekBasedYear] && has[fieldWeekOfWeekBasedYear] && (has[fieldUSDayOfWeek] || has[fieldDayOfWeek]):
-		weekday, ok := state.usWeekday()
+		weekday, weekdayField, ok := state.usWeekday()
 		if !ok {
 			return result, false
 		}
@@ -590,26 +542,40 @@ func (state *patternParse) resolve() (resolvedPattern, bool) {
 			return result, false
 		}
 		result.date, result.hasDate = date, true
+		use(fieldWeekBasedYear, fieldWeekOfWeekBasedYear, weekdayField)
+		yearUsed = false
 	case hasYear && has[fieldMonth] && has[fieldWeekOfMonth] && (has[fieldUSDayOfWeek] || has[fieldDayOfWeek]):
-		weekday, ok := state.usWeekday()
+		weekday, weekdayField, ok := state.usWeekday()
 		month := v[fieldMonth]
 		if !ok || month < 1 || month > 12 {
 			return result, false
 		}
+		// The week must be one of the month's; its day may fall in the month
+		// before or after, as SMART resolution allows.
 		first := time.Date(int(year), time.Month(month), 1, 0, 0, 0, 0, time.UTC)
-		date := first.AddDate(0, 0, 1-usDayOfWeek(first)+int(v[fieldWeekOfMonth]-1)*7+weekday-1)
-		if date.Month() != time.Month(month) {
+		last := first.AddDate(0, 1, -1)
+		if week := v[fieldWeekOfMonth]; week < 1 || int(week) > usWeekOf(last.Day(), usDayOfWeek(last)) {
 			return result, false
 		}
-		result.date, result.hasDate = date, true
+		result.date, result.hasDate = first.AddDate(0, 0, 1-usDayOfWeek(first)+int(v[fieldWeekOfMonth]-1)*7+weekday-1), true
+		use(fieldMonth, fieldWeekOfMonth, weekdayField)
+	default:
+		yearUsed = false
+	}
+	if yearUsed {
+		use(fieldYear, fieldYearOfEra)
+		if has[fieldYearOfEra] {
+			// The era made the year of era a year; with u alone it is checked.
+			use(fieldEra)
+		}
 	}
 
 	excessDays := 0
-	if ok := state.resolveTime(&result, &excessDays); !ok {
+	if ok := state.resolveTime(&result, &excessDays, &used); !ok {
 		return result, false
 	}
 	if result.hasDate {
-		if !state.crossCheckDate(result.date, year, hasYear, clamped) {
+		if !state.crossCheckDate(result.date, &used) {
 			return result, false
 		}
 		result.date = result.date.AddDate(0, 0, excessDays)
@@ -617,36 +583,41 @@ func (state *patternParse) resolve() (resolvedPattern, bool) {
 	return result, true
 }
 
-// usWeekday is the US day of the week (Sunday 1) of the e / c or E field read.
-func (state *patternParse) usWeekday() (int, bool) {
+// usWeekday is the US day of the week (Sunday 1) of the e / c or E field
+// read, and which of the two it is.
+func (state *patternParse) usWeekday() (int, patternField, bool) {
 	if state.has[fieldUSDayOfWeek] {
 		weekday := state.values[fieldUSDayOfWeek]
-		return int(weekday), weekday >= 1 && weekday <= 7
+		return int(weekday), fieldUSDayOfWeek, weekday >= 1 && weekday <= 7
 	}
 	weekday := state.values[fieldDayOfWeek]
-	return int(weekday)%7 + 1, weekday >= 1 && weekday <= 7
+	return int(weekday)%7 + 1, fieldDayOfWeek, weekday >= 1 && weekday <= 7
 }
 
 // resolveTime makes the time of day: hour of day from H, k, a with h / K, or
 // B with h / K; then minute, second and nanosecond, each defaulting to zero
-// only when nothing smaller was read; or the milli / nano of the day.
-func (state *patternParse) resolveTime(result *resolvedPattern, excessDays *int) bool {
+// only when nothing smaller was read; or the milli / nano of the day. The
+// fields it uses are marked in used.
+func (state *patternParse) resolveTime(result *resolvedPattern, excessDays *int, used *[patternFieldCount]bool) bool {
 	v, has := state.values, state.has
 	hour, hasHour := v[fieldHourOfDay], has[fieldHourOfDay]
+	hourFields := []patternField{fieldHourOfDay}
 	if has[fieldClockHourOfDay] {
+		// SMART resolution takes 0 as well as 1 to 24 (and 0 to 12 below).
 		clock := v[fieldClockHourOfDay]
-		if clock < 1 || clock > 24 {
+		if clock < 0 || clock > 24 {
 			return false
 		}
 		if hasHour && hour != clock%24 {
 			return false
 		}
 		hour, hasHour = clock%24, true
+		hourFields = append(hourFields, fieldClockHourOfDay)
 	}
 	hourOfAmPm, hasHourOfAmPm := v[fieldHourOfAmPm], has[fieldHourOfAmPm]
 	if has[fieldClockHourOfAmPm] {
 		clock := v[fieldClockHourOfAmPm]
-		if clock < 1 || clock > 12 {
+		if clock < 0 || clock > 12 {
 			return false
 		}
 		if hasHourOfAmPm && hourOfAmPm != clock%12 {
@@ -661,6 +632,7 @@ func (state *patternParse) resolveTime(result *resolvedPattern, excessDays *int)
 		switch {
 		case has[fieldAmPm]:
 			hour, hasHour = v[fieldAmPm]*12+hourOfAmPm, true
+			hourFields = append(hourFields, fieldAmPm, fieldHourOfAmPm, fieldClockHourOfAmPm)
 		case has[fieldDayPeriod]:
 			period := javaDayPeriods[v[fieldDayPeriod]]
 			minute := int(v[fieldMinute])
@@ -673,14 +645,14 @@ func (state *patternParse) resolveTime(result *resolvedPattern, excessDays *int)
 			if !hasHour {
 				return false
 			}
+			hourFields = append(hourFields, fieldDayPeriod, fieldHourOfAmPm, fieldClockHourOfAmPm)
 		}
 	}
 	minute, second, nano := v[fieldMinute], v[fieldSecond], v[fieldNano]
 	switch {
 	case hasHour:
 		if !has[fieldMinute] && (has[fieldSecond] || has[fieldNano]) || has[fieldMinute] && !has[fieldSecond] && has[fieldNano] {
-			hasHour = false
-			break
+			return true
 		}
 		if minute < 0 || minute > 59 || second < 0 || second > 59 || nano < 0 || nano > 999_999_999 {
 			return false
@@ -691,10 +663,11 @@ func (state *patternParse) resolveTime(result *resolvedPattern, excessDays *int)
 		if hour < 0 || hour > 23 {
 			return false
 		}
+		hourFields = append(hourFields, fieldMinute, fieldSecond, fieldNano)
 	case has[fieldNanoOfDay] || has[fieldMilliOfDay]:
-		ofDay := v[fieldNanoOfDay]
+		ofDay, field := v[fieldNanoOfDay], fieldNanoOfDay
 		if !has[fieldNanoOfDay] {
-			ofDay = v[fieldMilliOfDay] * 1_000_000
+			ofDay, field = v[fieldMilliOfDay]*1_000_000, fieldMilliOfDay
 		}
 		if ofDay < 0 || ofDay >= 86_400_000_000_000 {
 			return false
@@ -703,64 +676,57 @@ func (state *patternParse) resolveTime(result *resolvedPattern, excessDays *int)
 		if !has[fieldNano] {
 			nano = ofDay % 1_000_000_000
 		}
-		hasHour = true
-	}
-	if !hasHour {
+		hourFields = []patternField{field}
+	default:
 		return true
 	}
+	for _, field := range hourFields {
+		used[field] = true
+	}
 	result.hour, result.minute, result.second, result.nano, result.hasTime = int(hour), int(minute), int(second), int(nano), true
-	return state.crossCheckTime(*result, *excessDays)
+	return state.crossCheckTime(*result, used)
 }
 
-// crossCheckDate checks every date field read against the resolved date
-// (Mon for a Tuesday fails); the day of the month a short month clamped
-// isn't checked.
-func (state *patternParse) crossCheckDate(date time.Time, year int64, hasYear, clamped bool) bool {
+// crossCheckDate checks every date field read that resolving didn't use
+// against the resolved date.
+func (state *patternParse) crossCheckDate(date time.Time, used *[patternFieldCount]bool) bool {
 	weekBasedYear, week := usWeekBasedYear(date)
-	era := int64(1)
+	era, yearOfEra := int64(1), int64(date.Year())
 	if date.Year() <= 0 {
-		era = 0
+		era, yearOfEra = 0, 1-yearOfEra
 	}
 	expected := map[patternField]int64{
-		fieldEra: era, fieldDayOfYear: int64(date.YearDay()), fieldMonth: int64(date.Month()),
-		fieldModifiedJulianDay: modifiedJulianDay(date), fieldQuarter: int64((int(date.Month()) + 2) / 3),
-		fieldWeekBasedYear: int64(weekBasedYear), fieldWeekOfWeekBasedYear: int64(week),
-		fieldWeekOfMonth: int64(usWeekOf(date.Day(), usDayOfWeek(date))), fieldDayOfWeek: int64((int(date.Weekday())+6)%7 + 1),
-		fieldUSDayOfWeek: int64(usDayOfWeek(date)), fieldAlignedWeekOfMonth: int64((date.Day()-1)/7 + 1),
+		fieldEra: era, fieldYear: int64(date.Year()), fieldYearOfEra: yearOfEra, fieldDayOfYear: int64(date.YearDay()),
+		fieldMonth: int64(date.Month()), fieldDayOfMonth: int64(date.Day()), fieldModifiedJulianDay: modifiedJulianDay(date),
+		fieldQuarter: int64((int(date.Month()) + 2) / 3), fieldWeekBasedYear: int64(weekBasedYear),
+		fieldWeekOfWeekBasedYear: int64(week), fieldWeekOfMonth: int64(usWeekOf(date.Day(), usDayOfWeek(date))),
+		fieldDayOfWeek: int64((int(date.Weekday())+6)%7 + 1), fieldUSDayOfWeek: int64(usDayOfWeek(date)),
+		fieldAlignedWeekOfMonth: int64((date.Day()-1)/7 + 1),
 	}
-	if !clamped {
-		expected[fieldDayOfMonth] = int64(date.Day())
-	}
-	if hasYear && int64(date.Year()) != year {
-		return false
-	}
-	for field, value := range expected {
-		if state.has[field] && state.values[field] != value {
-			return false
-		}
-	}
-	return true
+	return state.crossCheck(expected, used)
 }
 
-// crossCheckTime checks the clock fields read against the resolved time.
-func (state *patternParse) crossCheckTime(result resolvedPattern, excessDays int) bool {
+// crossCheckTime checks the clock fields read that resolving didn't use
+// against the resolved time.
+func (state *patternParse) crossCheckTime(result resolvedPattern, used *[patternFieldCount]bool) bool {
 	hour := int64(result.hour)
 	ofDay := hour*3_600_000_000_000 + int64(result.minute)*60_000_000_000 + int64(result.second)*1_000_000_000 + int64(result.nano)
 	expected := map[patternField]int64{
-		fieldAmPm: hour / 12, fieldHourOfAmPm: hour % 12, fieldClockHourOfAmPm: (hour+11)%12 + 1,
+		fieldAmPm: hour / 12, fieldHourOfAmPm: hour % 12, fieldClockHourOfAmPm: (hour+11)%12 + 1, fieldHourOfDay: hour,
 		fieldClockHourOfDay: (hour+23)%24 + 1, fieldMilliOfDay: ofDay / 1_000_000, fieldNanoOfDay: ofDay,
 	}
-	if excessDays == 0 {
-		expected[fieldHourOfDay] = hour
-	}
-	for field, value := range expected {
-		if state.has[field] && state.values[field] != value {
+	if state.has[fieldDayPeriod] && !used[fieldDayPeriod] {
+		period := javaDayPeriods[state.values[fieldDayPeriod]]
+		if at := int(hour)*60 + result.minute; at < period.from || at > period.to {
 			return false
 		}
 	}
-	if state.has[fieldDayPeriod] {
-		period := javaDayPeriods[state.values[fieldDayPeriod]]
-		if at := int(hour)*60 + result.minute; at < period.from || at > period.to {
+	return state.crossCheck(expected, used)
+}
+
+func (state *patternParse) crossCheck(expected map[patternField]int64, used *[patternFieldCount]bool) bool {
+	for field, value := range expected {
+		if state.has[field] && !used[field] && state.values[field] != value {
 			return false
 		}
 	}
@@ -791,6 +757,10 @@ func parseTemporalPattern(kind, text, pattern string) (interface{}, bool) {
 	needsTime := kind == "localtime" || kind == "time"
 	if needsDate && !resolved.hasDate || needsTime && !resolved.hasTime {
 		return nil, false
+	}
+	// An offset beyond 18 hours, which a pattern offset may read, is no offset.
+	if state.offset < -64_800 || state.offset > 64_800 {
+		state.hasOff, state.offset = false, 0
 	}
 	d := resolved.date
 	clock := func(location *time.Location) time.Time {

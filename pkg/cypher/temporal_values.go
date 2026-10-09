@@ -678,6 +678,13 @@ func temporalLocation(fields map[string]interface{}, zoned bool) (*time.Location
 	if offset, ok := parseTemporalOffset(zoneID); ok {
 		return time.FixedZone(zoneID, offset), "", true
 	}
+	if id, offset, length, ok := prefixedOffsetZone(zoneID); ok && length == len(zoneID) {
+		if offset == 0 {
+			location, _ := loadTemporalLocation(id)
+			return location, id, true
+		}
+		return time.FixedZone(id, offset), id, true
+	}
 	location, err := time.LoadLocation(zoneID)
 	if err != nil {
 		return nil, "", false

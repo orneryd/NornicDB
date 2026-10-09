@@ -73,6 +73,12 @@ const (
 	MessageCypherCoreTemporalPatternMismatch             MessageID = "cyphercore.temporal_pattern_mismatch"
 	MessageCypherCoreTemporalPatternRequiresString       MessageID = "cyphercore.temporal_pattern_requires_string"
 	MessageCypherCoreAllReduceInvalidSyntax              MessageID = "cyphercore.all_reduce_invalid_syntax"
+	MessageCypherCoreRegexReplacementIllegalGroupReference    MessageID = "cyphercore.regex_replacement_illegal_group_reference"
+	MessageCypherCoreRegexReplacementGroupIndexMissing        MessageID = "cyphercore.regex_replacement_group_index_missing"
+	MessageCypherCoreRegexReplacementEscapeMissing            MessageID = "cyphercore.regex_replacement_escape_missing"
+	MessageCypherCoreRegexReplacementNamedGroupUnterminated   MessageID = "cyphercore.regex_replacement_named_group_unterminated"
+	MessageCypherCoreRegexReplacementNoGroup                  MessageID = "cyphercore.regex_replacement_no_group"
+	MessageCypherCoreRegexReplacementNoNamedGroup             MessageID = "cyphercore.regex_replacement_no_named_group"
 	MessageCypherCoreListCoercionToBoolean               MessageID = "cyphercore.list_coercion_to_boolean"
 	MessageCypherCoreListIndexTypeMismatch               MessageID = "cyphercore.list_index_type_mismatch"
 	MessageCypherCoreMapKeyTypeMismatch                  MessageID = "cyphercore.map_key_type_mismatch"
@@ -390,6 +396,42 @@ func CypherCoreDurationPatternUnbalancedEscapes() Message {
 // constructor whose pattern doesn't read its input as the type it builds.
 func CypherCoreTemporalPatternMismatch(pattern, input, typeName string) Message {
 	return cypherCoreMessage(MessageCypherCoreTemporalPatternMismatch, "Pattern, `"+pattern+"`, does not match input, `"+input+"`. Verify that the pattern is valid for constructing `"+typeName+"`.", map[string]any{"Pattern": pattern, "Input": input, "Type": typeName})
+}
+
+// CypherCoreRegexReplacementIllegalGroupReference is Java's message for a regex replacement it rejects
+// (string.regexReplace).
+func CypherCoreRegexReplacementIllegalGroupReference() Message {
+	return cypherCoreMessage(MessageCypherCoreRegexReplacementIllegalGroupReference, "Illegal group reference", nil)
+}
+
+// CypherCoreRegexReplacementGroupIndexMissing is Java's message for a regex replacement it rejects
+// (string.regexReplace).
+func CypherCoreRegexReplacementGroupIndexMissing() Message {
+	return cypherCoreMessage(MessageCypherCoreRegexReplacementGroupIndexMissing, "Illegal group reference: group index is missing", nil)
+}
+
+// CypherCoreRegexReplacementEscapeMissing is Java's message for a regex replacement it rejects
+// (string.regexReplace).
+func CypherCoreRegexReplacementEscapeMissing() Message {
+	return cypherCoreMessage(MessageCypherCoreRegexReplacementEscapeMissing, "character to be escaped is missing", nil)
+}
+
+// CypherCoreRegexReplacementNamedGroupUnterminated is Java's message for a regex replacement it rejects
+// (string.regexReplace).
+func CypherCoreRegexReplacementNamedGroupUnterminated() Message {
+	return cypherCoreMessage(MessageCypherCoreRegexReplacementNamedGroupUnterminated, "named capturing group is missing trailing '}'", nil)
+}
+
+// CypherCoreRegexReplacementNoGroup is Java's message for a regex replacement it rejects
+// (string.regexReplace).
+func CypherCoreRegexReplacementNoGroup(group int) Message {
+	return cypherCoreMessage(MessageCypherCoreRegexReplacementNoGroup, "No group "+strconv.Itoa(group), map[string]any{"Group": group})
+}
+
+// CypherCoreRegexReplacementNoNamedGroup is Java's message for a regex replacement it rejects
+// (string.regexReplace).
+func CypherCoreRegexReplacementNoNamedGroup(name string) Message {
+	return cypherCoreMessage(MessageCypherCoreRegexReplacementNoNamedGroup, "No group with name {"+name+"}", map[string]any{"Name": name})
 }
 
 // CypherCoreAllReduceInvalidSyntax is Neo4j's message for an allReduce call

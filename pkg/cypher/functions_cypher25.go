@@ -283,7 +283,8 @@ func fnStringJoin(ctx cypherfn.Context, args []string) (interface{}, error) {
 
 // fnStringRegexReplace is string.regexReplace(text, regex, replacement):
 // every match of regex replaced, with Java's replacement syntax ($1, ${name},
-// \ escapes) as Neo4j uses.
+// \ escapes) as Neo4j uses. A replacement Java rejects is an error only when
+// regex matches, as in Neo4j.
 func fnStringRegexReplace(ctx cypherfn.Context, args []string) (interface{}, error) {
 	texts, null, err := stringArguments(ctx, "string.regexReplace", args, 3)
 	if err != nil || null {
@@ -293,35 +294,59 @@ func fnStringRegexReplace(ctx cypherfn.Context, args []string) (interface{}, err
 	if err != nil {
 		return nil, newSemanticError("Neo.ClientError.Statement.SemanticError", "InvalidRegex", "Invalid Regex: "+err.Error())
 	}
-	return re.ReplaceAllString(texts[0], javaReplacementTemplate(texts[2], re)), nil
+	if !re.MatchString(texts[0]) {
+		return texts[0], nil
+	}
+	template, err := javaReplacementTemplate(texts[2], re)
+	if err != nil {
+		return nil, err
+	}
+	return re.ReplaceAllString(texts[0], template), nil
 }
 
 // javaReplacementTemplate turns a Java Matcher replacement into a Go
 // Regexp.Expand template: $n takes as many digits as name an existing group
 // (Java's rule), ${name} a named group, a backslash escapes the next
-// character, and a literal $ is written $$.
-func javaReplacementTemplate(replacement string, re *regexp.Regexp) string {
+// character, and a literal $ is written $$. A reference Java rejects (no
+// such group, a $ naming nothing, a trailing backslash) is Neo4j's
+// ExecutionFailed with Java's message.
+func javaReplacementTemplate(replacement string, re *regexp.Regexp) (string, error) {
+	fail := func(message localization.Message) (string, error) {
+		return "", localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgument", message)
+	}
 	var template strings.Builder
 	for index := 0; index < len(replacement); index++ {
 		character := replacement[index]
 		switch {
-		case character == '\\' && index+1 < len(replacement):
-			index++
+		case character == '\\':
+			if index++; index >= len(replacement) {
+				return fail(localization.CypherCoreRegexReplacementEscapeMissing())
+			}
 			if replacement[index] == '$' {
 				template.WriteString("$$")
 			} else {
 				template.WriteByte(replacement[index])
 			}
-		case character == '$' && index+1 < len(replacement) && replacement[index+1] == '{':
+		case character != '$':
+			template.WriteByte(character)
+		case index+1 >= len(replacement):
+			return fail(localization.CypherCoreRegexReplacementGroupIndexMissing())
+		case replacement[index+1] == '{':
 			end := strings.IndexByte(replacement[index:], '}')
 			if end < 0 {
-				template.WriteString("$$")
-				continue
+				return fail(localization.CypherCoreRegexReplacementNamedGroupUnterminated())
 			}
-			template.WriteString(replacement[index : index+end+1])
+			name := replacement[index+2 : index+end]
+			if re.SubexpIndex(name) < 0 {
+				return fail(localization.CypherCoreRegexReplacementNoNamedGroup(name))
+			}
+			template.WriteString("${" + name + "}")
 			index += end
-		case character == '$' && index+1 < len(replacement) && replacement[index+1] >= '0' && replacement[index+1] <= '9':
+		case replacement[index+1] >= '0' && replacement[index+1] <= '9':
 			group := int(replacement[index+1] - '0')
+			if group > re.NumSubexp() {
+				return fail(localization.CypherCoreRegexReplacementNoGroup(group))
+			}
 			end := index + 2
 			for end < len(replacement) && replacement[end] >= '0' && replacement[end] <= '9' {
 				next := group*10 + int(replacement[end]-'0')
@@ -333,13 +358,11 @@ func javaReplacementTemplate(replacement string, re *regexp.Regexp) string {
 			}
 			template.WriteString("${" + strconv.Itoa(group) + "}")
 			index = end - 1
-		case character == '$':
-			template.WriteString("$$")
 		default:
-			template.WriteByte(character)
+			return fail(localization.CypherCoreRegexReplacementIllegalGroupReference())
 		}
 	}
-	return template.String()
+	return template.String(), nil
 }
 
 // fnCardinality is cardinality(value): a list's or map's number of items, a

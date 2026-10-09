@@ -558,13 +558,12 @@ func formatPatternField(item patternItem, value patternTemporal) (string, bool) 
 		return name, true
 	case 'O':
 		return localizedGMTOffset(seconds, count == 4), true
-	case 'X', 'x', 'Z':
-		if item.letter == 'Z' && count == 4 {
-			return localizedGMTOffset(seconds, true), true
-		}
-		return formatPatternOffset(item.letter, count, seconds), true
 	}
-	return "", false
+	// X, x and Z; ZZZZ is the localized offset.
+	if item.letter == 'Z' && count == 4 {
+		return localizedGMTOffset(seconds, true), true
+	}
+	return formatPatternOffset(item.letter, count, seconds), true
 }
 
 // javaZoneNameSet is a zone's English names: specific short and full names
