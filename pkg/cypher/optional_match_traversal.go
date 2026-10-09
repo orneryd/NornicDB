@@ -125,7 +125,7 @@ func extractRelationshipVariables(matchClause string) []string {
 			next++
 		}
 		if next < len(matchClause) &&
-			(matchClause[next] == ':' || matchClause[next] == ']' || matchClause[next] == '*' || matchClause[next] == '{') {
+			(matchClause[next] == ':' || matchClause[next] == ']' || matchClause[next] == '*' || matchClause[next] == '{' || matchClause[next] == '$') {
 			vars = append(vars, name)
 		}
 	}
