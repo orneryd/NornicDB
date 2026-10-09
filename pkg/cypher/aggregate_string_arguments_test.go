@@ -31,3 +31,10 @@ func TestAggregateStringArguments(t *testing.T) {
 		require.Equal(t, want, result.Rows, query)
 	}
 }
+
+func TestExtractFuncInnerQuotedText(t *testing.T) {
+	require.Equal(t, "'a)b'", extractFuncInner("count('a)b')"))
+	require.Equal(t, `'it\'s'`, extractFuncInner(`count('it\'s')`))
+	require.Equal(t, "", extractFuncInner("count('a)b'"))
+	require.Equal(t, "", extractFuncInner("count"))
+}
