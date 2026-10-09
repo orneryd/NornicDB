@@ -26,9 +26,8 @@ func TestDeletedRelationshipProjectionAllowsTypeButRejectsProperties(t *testing.
 	deleted := &deletedEntities{}
 	deleted.add(nil, map[storage.EdgeID]struct{}{edge.ID: {}})
 
-	if err := validateDeletedEntityReads(rows, "RETURN type(relationship)", deleted); err != nil {
-		t.Fatalf("type() must remain available after deletion: %v", err)
-	}
+	// Neo4j 5.26.30: type() of a deleted relationship is EntityNotFound too.
+	requireDeletedEntityError(t, validateDeletedEntityReads(rows, "RETURN type(relationship)", deleted))
 	requireDeletedEntityError(t, validateDeletedEntityReads(rows, "RETURN relationship.value", deleted))
 	requireDeletedEntityError(t, validateDeletedEntityReads(rows, "RETURN keys(relationship)", deleted))
 }

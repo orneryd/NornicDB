@@ -100,13 +100,13 @@ CREATE (:Person {id:'p1', team:'red'}),
 	res = &ExecuteResult{Stats: &QueryStats{RelationshipsDeleted: 3}}
 	edge := &storage.Edge{ID: "r1", Type: "R"}
 	input = &ExecuteResult{Columns: []string{"r"}, Rows: [][]interface{}{{edge}, {edge}, {edge}}}
-	exec.applyDeleteReturnProjection(res, "MATCH ()-[r]->() DELETE r RETURN count(r), r, type(r)", "r", deleteProjectionInfo{ctx: ctx, input: input})
-	require.Equal(t, []string{"count(r)", "r", "type(r)"}, res.Columns)
+	exec.applyDeleteReturnProjection(res, "MATCH ()-[r]->() DELETE r RETURN count(r), r", "r", deleteProjectionInfo{ctx: ctx, input: input})
+	require.Equal(t, []string{"count(r)", "r"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 	require.EqualValues(t, 3, res.Rows[0][0])
-	// The deleted relationship reads as its empty view (#907).
-	require.Equal(t, &storage.Edge{ID: "r1", Type: "R"}, res.Rows[0][1])
-	require.Equal(t, "R", res.Rows[0][2])
+	// The deleted relationship reads as its empty view, without a type, as
+	// Neo4j returns it (#907); type(r) of it is EntityNotFound.
+	require.Equal(t, &storage.Edge{ID: "r1"}, res.Rows[0][1])
 
 	res = &ExecuteResult{Stats: &QueryStats{NodesDeleted: 2, RelationshipsDeleted: 3}}
 	info := deleteProjectionInfo{ctx: ctx, input: &ExecuteResult{Columns: []string{"n", "r"}, Rows: [][]interface{}{{node, edge}}}}

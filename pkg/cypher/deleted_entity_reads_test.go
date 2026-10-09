@@ -40,7 +40,7 @@ func TestDeletedEntityReadsMatchNeo4j(t *testing.T) {
 		{"MATCH (n:Q {id: 1}) DETACH DELETE n RETURN n {.*} AS v", map[string]interface{}{}},
 		{"MATCH (n:Q {id: 1}) DETACH DELETE n RETURN keys(n) AS v", []interface{}{}},
 		{"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN r {.*} AS v", map[string]interface{}{}},
-		{"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN type(r) AS v", "R"},
+		{"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN startNode(r) IS NOT NULL AS v", true},
 		{"MATCH p = (:Q {id: 1})-[:R]->(:Q {id: 2}) DETACH DELETE p RETURN [x IN nodes(p) | x {.*}] AS v", []interface{}{map[string]interface{}{}, map[string]interface{}{}}},
 		{"MATCH (n:P) WITH collect(n) AS ns UNWIND ns AS n DELETE n RETURN n {.*} AS v", map[string]interface{}{}},
 	} {
@@ -67,6 +67,8 @@ func TestDeletedEntityReadsMatchNeo4j(t *testing.T) {
 		"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN r.w AS v",
 		"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN keys(r) AS v",
 		"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN properties(r) AS v",
+		"MATCH (:Q {id: 1})-[r:R]->() DELETE r RETURN type(r) AS v",
+		"MATCH (:Q {id: 1})-[r:R]->() DELETE r WITH r RETURN type(r) AS v",
 	} {
 		t.Run(query, func(t *testing.T) {
 			_, err := inRolledBackTransaction(query)
@@ -134,7 +136,7 @@ func TestDeletedEntityReadsAfterWithMatchNeo4j(t *testing.T) {
 		{"MATCH (n:DQ {id: 1}) DETACH DELETE n WITH collect(n) AS ns RETURN [x IN ns | x {.*}] AS v", []interface{}{map[string]interface{}{}}},
 		{"MATCH (a:DQ {id: 1}), (b:DQ {id: 2}) DETACH DELETE a WITH b RETURN b.p AS v", int64(6)},
 		{"MATCH (a)-[r:DR]->(b) DELETE r WITH r, a RETURN a.p AS v", int64(5)},
-		{"MATCH (a)-[r:DR]->(b) DELETE r WITH r RETURN type(r) AS v", "DR"},
+		{"MATCH (a)-[r:DR]->(b) DELETE r WITH r RETURN id(r) IS NOT NULL AS v", true},
 	} {
 		t.Run(testCase.query, func(t *testing.T) {
 			result, err := inRolledBackTransaction(testCase.query)
@@ -230,7 +232,7 @@ func TestDeletedEntityViewsReplace(t *testing.T) {
 	}
 	view, changed := views.replace(edge)
 	require.True(t, changed)
-	require.Equal(t, &storage.Edge{ID: "e", Type: "R", StartNode: "gone", EndNode: "kept"}, view)
+	require.Equal(t, &storage.Edge{ID: "e", StartNode: "gone", EndNode: "kept"}, view)
 
 	path := &PathResult{Nodes: []*storage.Node{gone, kept}, Relationships: []*storage.Edge{edge}, Length: 1}
 	replaced, changed := views.replace(map[string]interface{}{"_pathResult": path})
@@ -292,4 +294,20 @@ func TestDeletedEntityEdgeCases(t *testing.T) {
 		code, _ := nornicerrors.Neo4jStatus(err)
 		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, query)
 	}
+}
+
+// A deleted relationship returned to the client has no type, as Neo4j
+// 5.26.30 sends it, while its endpoints stay (#907).
+func TestDeletedRelationshipValueHasNoType(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "deleted_relationship_type"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:DT1)-[:DR {w: 1}]->(:DT2)", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (:DT1)-[r:DR]->() DELETE r RETURN r AS rel", nil)
+	require.NoError(t, err)
+	relationship, isEdge := result.Rows[0][0].(*storage.Edge)
+	require.True(t, isEdge, "%T", result.Rows[0][0])
+	require.Empty(t, relationship.Type)
+	require.Empty(t, relationship.Properties)
+	require.NotEmpty(t, relationship.StartNode)
 }

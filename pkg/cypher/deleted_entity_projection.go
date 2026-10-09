@@ -71,8 +71,10 @@ func (d *deletedEntities) empty() bool {
 // replaceDeletedEntityViews replaces, in rows, every node and relationship in
 // deleted with what Neo4j 5.26 returns for it after the DELETE: the same
 // entity without labels or properties, so RETURN n is an empty node and
-// n {.*}, properties(n) and keys(n) are empty. A relationship keeps its type
-// and endpoints (type(r) still answers). Paths and lists holding a deleted
+// n {.*}, properties(n) and keys(n) are empty. A relationship keeps its
+// endpoints (startNode(r), endNode(r) answer) and has no type: Neo4j 5.26.30
+// returns it with an empty type, and type(r) is EntityNotFound
+// (validateDeletedEntityReads). Paths and lists holding a deleted
 // entity are rebuilt with its view (#907). Reading a deleted entity's
 // property or labels is an error instead (validateDeletedEntityReads).
 func (e *StorageExecutor) replaceDeletedEntityViews(rows []pipelineRow, deleted *deletedEntities) {
@@ -90,7 +92,7 @@ func (e *StorageExecutor) replaceDeletedEntityViews(rows []pipelineRow, deleted 
 }
 
 // deletedEntityViews builds the views of replaceDeletedEntityViews: a copy
-// with the ID (a relationship's type and endpoints too) and no labels or
+// with the ID (a relationship's endpoints too) and no type, labels or
 // properties. A view is equal to the entity by ID, as entities compare.
 type deletedEntityViews struct {
 	executor *StorageExecutor
@@ -170,7 +172,7 @@ func (v *deletedEntityViews) node(node *storage.Node) *storage.Node {
 }
 
 func (v *deletedEntityViews) edge(edge *storage.Edge) *storage.Edge {
-	return &storage.Edge{ID: edge.ID, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
+	return &storage.Edge{ID: edge.ID, StartNode: edge.StartNode, EndNode: edge.EndNode}
 }
 
 // validateDeletedEntityReads rejects a clause that, after a DELETE in the
@@ -242,7 +244,7 @@ func deletedEntityReadsIn(expression string) []deletedEntityRead {
 			if !propertyNullTestFollows(expression, next+1) {
 				reads = append(reads, deletedEntityRead{variable: word})
 			}
-		case next < len(expression) && expression[next] == '(' && (strings.EqualFold(word, "labels") || strings.EqualFold(word, "keys") || strings.EqualFold(word, "properties")):
+		case next < len(expression) && expression[next] == '(' && (strings.EqualFold(word, "labels") || strings.EqualFold(word, "keys") || strings.EqualFold(word, "properties") || strings.EqualFold(word, "type")):
 			argumentStart := skipSpaceIndex(expression, next+1)
 			argumentEnd := argumentStart
 			for argumentEnd < len(expression) && isCypherIdentByte(expression[argumentEnd]) {
