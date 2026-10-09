@@ -588,6 +588,24 @@ func (s *BaseCypherParserListener) EnterPatternElem(ctx *PatternElemContext) {}
 // ExitPatternElem is called when production patternElem is exited.
 func (s *BaseCypherParserListener) ExitPatternElem(ctx *PatternElemContext) {}
 
+// EnterPatternElemStart is called when production patternElemStart is entered.
+func (s *BaseCypherParserListener) EnterPatternElemStart(ctx *PatternElemStartContext) {}
+
+// ExitPatternElemStart is called when production patternElemStart is exited.
+func (s *BaseCypherParserListener) ExitPatternElemStart(ctx *PatternElemStartContext) {}
+
+// EnterPatternElemPart is called when production patternElemPart is entered.
+func (s *BaseCypherParserListener) EnterPatternElemPart(ctx *PatternElemPartContext) {}
+
+// ExitPatternElemPart is called when production patternElemPart is exited.
+func (s *BaseCypherParserListener) ExitPatternElemPart(ctx *PatternElemPartContext) {}
+
+// EnterQuantifiedPath is called when production quantifiedPath is entered.
+func (s *BaseCypherParserListener) EnterQuantifiedPath(ctx *QuantifiedPathContext) {}
+
+// ExitQuantifiedPath is called when production quantifiedPath is exited.
+func (s *BaseCypherParserListener) ExitQuantifiedPath(ctx *QuantifiedPathContext) {}
+
 // EnterPatternElemChain is called when production patternElemChain is entered.
 func (s *BaseCypherParserListener) EnterPatternElemChain(ctx *PatternElemChainContext) {}
 

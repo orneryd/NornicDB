@@ -289,6 +289,15 @@ type CypherParserListener interface {
 	// EnterPatternElem is called when entering the patternElem production.
 	EnterPatternElem(c *PatternElemContext)
 
+	// EnterPatternElemStart is called when entering the patternElemStart production.
+	EnterPatternElemStart(c *PatternElemStartContext)
+
+	// EnterPatternElemPart is called when entering the patternElemPart production.
+	EnterPatternElemPart(c *PatternElemPartContext)
+
+	// EnterQuantifiedPath is called when entering the quantifiedPath production.
+	EnterQuantifiedPath(c *QuantifiedPathContext)
+
 	// EnterPatternElemChain is called when entering the patternElemChain production.
 	EnterPatternElemChain(c *PatternElemChainContext)
 
@@ -687,6 +696,15 @@ type CypherParserListener interface {
 
 	// ExitPatternElem is called when exiting the patternElem production.
 	ExitPatternElem(c *PatternElemContext)
+
+	// ExitPatternElemStart is called when exiting the patternElemStart production.
+	ExitPatternElemStart(c *PatternElemStartContext)
+
+	// ExitPatternElemPart is called when exiting the patternElemPart production.
+	ExitPatternElemPart(c *PatternElemPartContext)
+
+	// ExitQuantifiedPath is called when exiting the quantifiedPath production.
+	ExitQuantifiedPath(c *QuantifiedPathContext)
 
 	// ExitPatternElemChain is called when exiting the patternElemChain production.
 	ExitPatternElemChain(c *PatternElemChainContext)

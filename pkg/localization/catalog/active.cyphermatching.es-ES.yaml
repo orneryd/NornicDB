@@ -166,3 +166,21 @@
 - id: cyphermatching.repeatable_elements_path_mode
   description: "Un modo de camino TRAIL o ACYCLIC en MATCH REPEATABLE ELEMENTS. Mode y REPEATABLE ELEMENTS no se traducen."
   other: "REPEATABLE ELEMENTS con el modo de camino {{.Mode}} no es compatible."
+- id: cyphermatching.quantified_path_zero_limit
+  description: "El límite superior de un patrón de camino cuantificado es 0."
+  other: "Un cuantificador de un patrón de camino no puede estar limitado por 0."
+- id: cyphermatching.quantified_path_variable_outside
+  description: "Una variable aparece dentro y fuera de un patrón de camino cuantificado. Variable es el nombre de la variable, sin traducir."
+  other: "La variable `{{.Variable}}` aparece dentro y fuera de un patrón de camino cuantificado y se debe renombrar."
+- id: cyphermatching.quantified_path_nested
+  description: "Un patrón de camino cuantificado o un cuantificador dentro de otro patrón de camino cuantificado."
+  other: "No se permite anidar patrones de camino cuantificados."
+- id: cyphermatching.quantified_path_no_relationship
+  description: "Un patrón de camino cuantificado no tiene relaciones."
+  other: "Un patrón de camino cuantificado debe tener al menos una relación."
+- id: cyphermatching.quantifier_bounds_reversed
+  description: "El límite inferior de un cuantificador de camino supera al superior."
+  other: "El límite inferior de un cuantificador de un patrón de camino no puede superar su límite superior."
+- id: cyphermatching.quantified_path_variable_bound
+  description: "Una variable vinculada por una cláusula anterior aparece dentro de un patrón de camino cuantificado. Variable es el nombre de la variable, sin traducir."
+  other: "La variable `{{.Variable}}` ya está definida en una cláusula anterior; no se puede usar como variable de nodo o de relación dentro de un patrón de camino cuantificado."

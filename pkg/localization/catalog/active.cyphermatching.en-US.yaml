@@ -166,3 +166,21 @@
 - id: cyphermatching.repeatable_elements_path_mode
   description: "A TRAIL or ACYCLIC path mode in MATCH REPEATABLE ELEMENTS. Mode and REPEATABLE ELEMENTS are untranslated Cypher syntax."
   other: "REPEATABLE ELEMENTS with {{.Mode}} path mode is not supported."
+- id: cyphermatching.quantified_path_zero_limit
+  description: "A quantified path pattern's upper bound is 0."
+  other: "A quantifier for a path pattern must not be limited by 0."
+- id: cyphermatching.quantified_path_variable_outside
+  description: "A variable is named inside and outside a quantified path pattern. Variable is the untranslated variable name."
+  other: "The variable `{{.Variable}}` occurs both inside and outside a quantified path pattern and needs to be renamed."
+- id: cyphermatching.quantified_path_nested
+  description: "A quantified path pattern or quantifier inside a quantified path pattern."
+  other: "Quantified path patterns are not allowed to be nested."
+- id: cyphermatching.quantified_path_no_relationship
+  description: "A quantified path pattern has no relationship."
+  other: "A quantified path pattern needs to have at least one relationship."
+- id: cyphermatching.quantifier_bounds_reversed
+  description: "A path quantifier's lower bound exceeds its upper bound."
+  other: "A quantifier for a path pattern must not have a lower bound which exceeds its upper bound."
+- id: cyphermatching.quantified_path_variable_bound
+  description: "A variable an earlier clause binds is named inside a quantified path pattern. Variable is the untranslated variable name."
+  other: "The variable `{{.Variable}}` is already defined in a previous clause, it cannot be referenced as a node or as a relationship variable inside of a quantified path pattern."

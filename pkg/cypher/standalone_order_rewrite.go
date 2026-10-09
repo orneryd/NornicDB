@@ -99,6 +99,10 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 				// The label wildcard (a:%) is a complete operand, not the
 				// modulo operator.
 				previousWord, last = "", ')'
+			} else if (character == '+' || character == '*') && last == ')' && quantifiedGroupQuantifierAt(query, index) {
+				// A quantified path pattern's quantifier ends the pattern:
+				// ((a)-->(b))+ RETURN ….
+				previousWord = ""
 			} else if character > ' ' {
 				previousWord, last = "", character
 			}
