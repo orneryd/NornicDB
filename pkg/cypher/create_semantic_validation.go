@@ -239,6 +239,11 @@ func validateCreateRelationshipShape(pattern string) error {
 		)
 	}
 	typeDeclaration := strings.TrimSpace(declaration[colon+1:])
+	if hasDynamicToken(typeDeclaration) {
+		// $(e): the number of types it names is checked per row
+		// (resolveRowDynamicTokens).
+		return nil
+	}
 	if strings.Contains(typeDeclaration, "|") {
 		return singleRelationshipTypeError("CREATE")
 	}

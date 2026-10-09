@@ -284,7 +284,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Label expressions in patterns become the label forms and WHERE
 	// predicates every route reads, once, here; the result's columns and
 	// errors are mapped back (#860).
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher)
+	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params)
 	if err != nil {
 		return nil, err
 	}

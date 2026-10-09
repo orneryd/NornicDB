@@ -73,7 +73,7 @@ func TestDesugarLabelExpressionsRewrites(t *testing.T) {
 		{"CREATE p = (a:A&B)-[:R]->(b) RETURN p", "CREATE p = (a:A:B)-[:R]->(b) RETURN p"},
 		{"MERGE (a)-[:(R)]->(b)", "MERGE (a)-[:R]->(b)"},
 	} {
-		got, rewrite, err := desugarLabelExpressions(tc.in)
+		got, rewrite, err := desugarLabelExpressions(tc.in, nil)
 		require.NoError(t, err, tc.in)
 		require.Equal(t, tc.want, got, tc.in)
 		require.NotNil(t, rewrite, tc.in)
@@ -101,7 +101,7 @@ func TestDesugarLabelExpressionsLeavesOtherStatements(t *testing.T) {
 		"RETURN 1",
 		"",
 	} {
-		got, rewrite, err := desugarLabelExpressions(q)
+		got, rewrite, err := desugarLabelExpressions(q, nil)
 		require.NoError(t, err, q)
 		require.Equal(t, q, got, q)
 		require.Nil(t, rewrite, q)
@@ -141,7 +141,7 @@ func TestDesugarLabelExpressionsRejects(t *testing.T) {
 		{"MATCH (n) WHERE exists((n)-[:R:S]->()) RETURN n", "may not be combined using ':'"},
 		{"MATCH (n) RETURN [(n)-->(m) WHERE EXISTS { (m)-->(:A|B:C) } | m] AS ms", "This expression could be expressed as :A|(B&C)."},
 	} {
-		_, _, err := desugarLabelExpressions(tc.query)
+		_, _, err := desugarLabelExpressions(tc.query, nil)
 		require.Error(t, err, tc.query)
 		require.Contains(t, err.Error(), tc.message, tc.query)
 		var classified interface{ BoltErrorCode() string }
@@ -152,7 +152,7 @@ func TestDesugarLabelExpressionsRejects(t *testing.T) {
 
 func TestDesugarLabelExpressionsMapsTextBack(t *testing.T) {
 	query := "MATCH (n) RETURN n IS A, [(n)-->(m:A|B) | m.x], n.r AS r"
-	got, rewrite, err := desugarLabelExpressions(query)
+	got, rewrite, err := desugarLabelExpressions(query, nil)
 	require.NoError(t, err)
 	require.Equal(t, "MATCH (n) RETURN n:A, [(n)-->(m) WHERE m:A|B | m.x], n.r AS r", got)
 	require.Equal(t, "n IS A", rewrite.originalText("n:A"))
@@ -160,7 +160,7 @@ func TestDesugarLabelExpressionsMapsTextBack(t *testing.T) {
 	require.Equal(t, "r", rewrite.originalText("r"), "a column the client wrote is kept")
 
 	// A generated variable never collides with one in the statement.
-	got, _, err = desugarLabelExpressions("MATCH (__nornic_lx0)-->(:A|B) RETURN __nornic_lx0")
+	got, _, err = desugarLabelExpressions("MATCH (__nornic_lx0)-->(:A|B) RETURN __nornic_lx0", nil)
 	require.NoError(t, err)
 	require.Equal(t, "MATCH (__nornic_lx0)-->(__nornic_lx1) WHERE __nornic_lx1:A|B RETURN __nornic_lx0", got)
 }
@@ -328,7 +328,7 @@ func TestDesugarLabelExpressionsNestedAndMalformedInput(t *testing.T) {
 		{"MATCH `p` = (n:A|B) RETURN `p`", "MATCH `p` = (n) WHERE n:A|B RETURN `p`"},
 		{"RETURN n:A|B) AS x", "RETURN n:A|B) AS x"},
 	} {
-		got, _, err := desugarLabelExpressions(tc.in)
+		got, _, err := desugarLabelExpressions(tc.in, nil)
 		require.NoError(t, err, tc.in)
 		require.Equal(t, tc.want, got, tc.in)
 	}
@@ -339,7 +339,7 @@ func TestDesugarLabelExpressionsNestedAndMalformedInput(t *testing.T) {
 		"RETURN [1, (n)-->(:A|B:C)] AS l",
 		"MATCH (n) WHERE EXISTS { (n)-->(m:A|B) WHERE m:C|D:E } RETURN n",
 	} {
-		_, _, err := desugarLabelExpressions(q)
+		_, _, err := desugarLabelExpressions(q, nil)
 		require.Error(t, err, q)
 		require.Contains(t, err.Error(), "Mixing label expression symbols", q)
 	}

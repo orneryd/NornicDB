@@ -194,6 +194,9 @@ var cypherFunctionCatalog = []cypherFunctionSpec{
 	{name: "allshortestpaths"},
 	{name: "reduce", category: "List", signature: "reduce(accumulator :: VARIABLE = initial :: ANY, variable :: VARIABLE IN list :: LIST<ANY> | expression :: ANY) :: ANY", description: "Runs an expression against individual elements of a `LIST<ANY>`, storing the result of the expression in an accumulator.", arguments: []ProcedureParam{{Name: "accumulator", Type: "ANY", Description: "A variable that holds the result as the list is iterated."}, {Name: "variable", Type: "LIST<ANY>", Description: "A variable that can be used within the reducing expression."}}, listed: true, aggregating: false, isDeprecated: false},
 	{name: "shortestpath"},
+	// The predicate a MATCH pattern's row-dependent dynamic label or type
+	// becomes (dynamicLabelTestFunction); not listed.
+	{name: dynamicLabelTestFunction},
 }
 
 // builtInCypherFunctions is every catalog name, lower-cased, for the

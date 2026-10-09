@@ -655,6 +655,15 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 			}
 		}
 
+		if c == '$' && dynamicLabelStartsAt(pattern, i) {
+			// $(e): a dynamic label's or type's expression, not a node.
+			if end := findMatchingDelimiter(pattern, i+strings.IndexByte(pattern[i:], '('), '(', ')'); end >= 0 {
+				current.WriteString(pattern[i : end+1])
+				i = end
+				continue
+			}
+		}
+
 		// Normal parsing outside string literals
 		switch c {
 		case '{':
@@ -760,6 +769,16 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 					current.WriteString(pattern[i:end])
 				}
 				i = end - 1
+				continue
+			}
+		}
+		if c == '$' && dynamicLabelStartsAt(pattern, i) {
+			// $(e): a dynamic label's or type's expression, not a node.
+			if end := findMatchingDelimiter(pattern, i+strings.IndexByte(pattern[i:], '('), '(', ')'); end >= 0 {
+				if depth > 0 {
+					current.WriteString(pattern[i : end+1])
+				}
+				i = end
 				continue
 			}
 		}
