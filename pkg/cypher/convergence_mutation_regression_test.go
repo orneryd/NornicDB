@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -1071,9 +1072,8 @@ func TestMergeComputedNullPropertiesAreRejectedBeforeWrites(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := exec.Execute(ctx, test.query, map[string]interface{}{"missing": nil})
 			require.Error(t, err)
-			var semanticError *SemanticError
-			require.ErrorAs(t, err, &semanticError)
-			require.Equal(t, "Neo.ClientError.Statement.SemanticError", semanticError.Code)
+			code, _ := nornicerrors.Neo4jStatus(err)
+			require.Equal(t, "Neo.ClientError.Statement.SemanticError", code)
 
 			result, err := exec.Execute(ctx, test.count, nil)
 			require.NoError(t, err)

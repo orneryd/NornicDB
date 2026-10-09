@@ -5,6 +5,7 @@ import (
 	"math"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -34,7 +35,10 @@ func TestRelationshipMergeNumericIdentityCanonicalization(t *testing.T) {
 	require.False(t, relationshipMergeValuesEqual(math.NaN(), math.NaN()))
 }
 
-func TestRelationshipMergeNaNIdentityNeverMatches(t *testing.T) {
+// A NaN relationship property can't identify a relationship: Neo4j 5.26.30
+// fails the MERGE with SemanticError and writes nothing, on the UNWIND batch
+// route too (#907).
+func TestRelationshipMergeRejectsNaNIdentity(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
@@ -50,17 +54,20 @@ RETURN count(rel) AS merged`
 	_, err = exec.Execute(ctx, query, map[string]interface{}{
 		"rows": []map[string]interface{}{{"weight": math.NaN()}, {"weight": math.NaN()}},
 	})
-	require.NoError(t, err)
-	require.True(t, exec.LastHotPathTrace().UnwindMergeChainBatch)
+	require.Error(t, err)
+	code, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, "Neo.ClientError.Statement.SemanticError", code)
 
 	result, err := exec.Execute(ctx, `
 MATCH (:Source {id: 'source'})-[rel:ASSERTS]->(:Target {id: 'target'})
 RETURN count(rel)`, nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
+	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
 }
 
-func TestUnwindRelationshipMergeBatchFallsBackForNaNIdentity(t *testing.T) {
+// The relationship-batch route rejects a NaN identity as the row route does
+// (TestRelationshipMergeRejectsNaNIdentity).
+func TestUnwindRelationshipMergeBatchRejectsNaNIdentity(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
@@ -86,13 +93,14 @@ RETURN row.ordinal AS ordinal`
 		},
 	}
 	_, err := exec.Execute(ctx, query, map[string]interface{}{"rows": rows})
-	require.NoError(t, err)
-	require.False(t, exec.LastHotPathTrace().UnwindRelationshipMergeBatch)
+	require.Error(t, err)
+	code, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, "Neo.ClientError.Statement.SemanticError", code)
 
 	count := mustCountRows(t, exec, ctx, `
 MATCH (:Service {key: 'svc-a'})-[rel:PUBLISHES]->(:Topic {key: 'topic-a'})
 RETURN count(rel)`, nil)
-	require.Equal(t, int64(2), count)
+	require.Equal(t, int64(0), count)
 }
 
 func TestRelationshipMergeIdentityTreatsEquivalentNumbersAsOneIdentity(t *testing.T) {

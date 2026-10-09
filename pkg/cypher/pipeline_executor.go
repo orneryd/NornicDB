@@ -3049,6 +3049,11 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				if parseErr != nil {
 					return nil, nil, parseErr
 				}
+				for _, variable := range [...]string{relationshipPattern.startVariable, relationshipPattern.endVariable} {
+					if missingRelationshipEndpoint(row, variable) {
+						return nil, nil, relationshipEndpointMissingError(variable)
+					}
+				}
 			} else if nodePathVariable = extractPathAssignmentVariable(mergePattern); nodePathVariable != "" {
 				mergeBody = strings.TrimSpace(mergeBody[strings.Index(mergeBody, "=")+1:])
 				mergePattern = strings.TrimSpace(mergePattern[strings.Index(mergePattern, "=")+1:])
