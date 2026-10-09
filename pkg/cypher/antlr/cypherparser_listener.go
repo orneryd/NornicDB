@@ -184,6 +184,9 @@ type CypherParserListener interface {
 	// EnterSetItem is called when entering the setItem production.
 	EnterSetItem(c *SetItemContext)
 
+	// EnterDynamicPropertyExpression is called when entering the dynamicPropertyExpression production.
+	EnterDynamicPropertyExpression(c *DynamicPropertyExpressionContext)
+
 	// EnterNodeLabels is called when entering the nodeLabels production.
 	EnterNodeLabels(c *NodeLabelsContext)
 
@@ -195,6 +198,9 @@ type CypherParserListener interface {
 
 	// EnterLabelNegation is called when entering the labelNegation production.
 	EnterLabelNegation(c *LabelNegationContext)
+
+	// EnterDynamicLabel is called when entering the dynamicLabel production.
+	EnterDynamicLabel(c *DynamicLabelContext)
 
 	// EnterCreateSt is called when entering the createSt production.
 	EnterCreateSt(c *CreateStContext)
@@ -577,6 +583,9 @@ type CypherParserListener interface {
 	// ExitSetItem is called when exiting the setItem production.
 	ExitSetItem(c *SetItemContext)
 
+	// ExitDynamicPropertyExpression is called when exiting the dynamicPropertyExpression production.
+	ExitDynamicPropertyExpression(c *DynamicPropertyExpressionContext)
+
 	// ExitNodeLabels is called when exiting the nodeLabels production.
 	ExitNodeLabels(c *NodeLabelsContext)
 
@@ -588,6 +597,9 @@ type CypherParserListener interface {
 
 	// ExitLabelNegation is called when exiting the labelNegation production.
 	ExitLabelNegation(c *LabelNegationContext)
+
+	// ExitDynamicLabel is called when exiting the dynamicLabel production.
+	ExitDynamicLabel(c *DynamicLabelContext)
 
 	// ExitCreateSt is called when exiting the createSt production.
 	ExitCreateSt(c *CreateStContext)
