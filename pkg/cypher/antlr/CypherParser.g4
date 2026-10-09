@@ -101,15 +101,16 @@ showCommand
             showTail?
     ;
 
-// SHOW … WHERE …, or SHOW … YIELD … [WHERE …] [ORDER BY …] [SKIP …] [LIMIT …] [RETURN …].
+// SHOW … WHERE …, or SHOW … YIELD … [WHERE …] [ORDER BY …] [SKIP …] [LIMIT …]
+// then RETURN …, or (Cypher 25 composition) any query over the yielded columns.
 showTail
     : where
-    | YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? returnSt?
+    | YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? regularQuery?
     ;
 
 // TERMINATE TRANSACTION[S] id[, id …] [YIELD …]
 terminateCommand
-    : TERMINATE (TRANSACTION | TRANSACTIONS) expression (COMMA expression)* (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? returnSt?)?
+    : TERMINATE (TRANSACTION | TRANSACTIONS) expression (COMMA expression)* (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? regularQuery?)?
     ;
 
 administrationCommand
