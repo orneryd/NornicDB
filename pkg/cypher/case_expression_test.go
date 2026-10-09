@@ -526,3 +526,34 @@ func TestCaseInListLiteral(t *testing.T) {
 		require.Equal(t, want, result.Rows[0][0], query)
 	}
 }
+
+// List literals and comprehensions as Neo4j reads them: an element is split
+// only at a top-level comma ([f(a, b)] is one element), a comprehension's
+// parts are found at its top level, a source that isn't a list is a one-item
+// list, null is null, and [x IN v] is v itself (#907).
+func TestListLiteralsAndComprehensions(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "list_comprehensions"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:LC {id: 5, s: 'ab'})", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (n:LC) RETURN [x IN n.id | x * 2] AS a, [x IN n.id WHERE x > 0] AS b, [x IN n.id] AS c, [x IN n.s | x] AS d, [x IN n.nope | x] AS e, [x IN n.nope WHERE true] AS f", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{int64(10)}, []interface{}{int64(5)}, int64(5), []interface{}{"ab"}, nil, nil}}, result.Rows)
+	for query, want := range map[string]interface{}{
+		"RETURN [x IN null | x] AS v":        nil,
+		"RETURN [x IN null] AS v":            nil,
+		"RETURN [coalesce(null, 1), 2] AS v": []interface{}{int64(1), int64(2)},
+		"RETURN [v IN [{b: 1}] | [1, CASE WHEN false THEN 'n' ELSE [k IN keys(v) | k] END]] AS v": []interface{}{[]interface{}{int64(1), []interface{}{"b"}}},
+		"RETURN [x IN [1, 2] | [y IN [x] | y * 10]] AS v":                                         []interface{}{[]interface{}{int64(10)}, []interface{}{int64(20)}},
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, want, result.Rows[0][0], query)
+	}
+	require.Equal(t, []interface{}{int64(1), int64(2)}, exec.evaluateExpressionWithContextFull(ctx, "[coalesce(null, 1), 2]", nil, nil, nil, nil, nil, 0))
+	require.Nil(t, exec.evaluateExpressionWithContextFull(ctx, "[x IN null | x]", nil, nil, nil, nil, nil, 0))
+	require.Equal(t, int64(5), exec.evaluateExpressionWithContextFull(ctx, "[x IN 5]", nil, nil, nil, nil, nil, 0))
+	require.Equal(t, []interface{}{"a"}, exec.evaluateExpressionWithContextFull(ctx, "[x IN ['a', 'b'] WHERE x = 'a']", nil, nil, nil, nil, nil, 0))
+	require.Equal(t, []interface{}{int64(10)}, exec.evaluateExpressionWithContextFull(ctx, "[x IN 5 | x * 2]", nil, nil, nil, nil, nil, 0))
+	require.Equal(t, []interface{}{"R"}, exec.evaluateExpressionWithContextFull(ctx, "[r IN [{type: 'R'}] | type(r)]", nil, nil, nil, nil, nil, 0))
+}

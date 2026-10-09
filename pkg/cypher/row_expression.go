@@ -1311,6 +1311,10 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 	if listValue == nil {
 		return nil, true, true, nil
 	}
+	if predicate == "" && projection == "" {
+		// [x IN v] is v itself, list or not, as in Neo4j.
+		return listValue, true, true, nil
+	}
 	items := coerceToUnwindItems(listValue)
 	result := make([]interface{}, 0, len(items))
 	for _, item := range items {
