@@ -1327,6 +1327,12 @@ func normalizeCypherSyntaxConfusables(query string) string {
 				continue
 			}
 
+			if replacement, ok := cypherArrowReplacement(runes, i); ok {
+				builder.WriteByte(replacement)
+				changed = true
+				continue
+			}
+
 			if replacement, ok := cypherSyntaxConfusableReplacement(r); ok {
 				builder.WriteString(replacement)
 				changed = changed || replacement != string(r)
@@ -1499,6 +1505,55 @@ func cypherSyntaxConfusableReplacement(r rune) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// cypherArrowReplacement is the ASCII form of runes[i] when it is a Unicode
+// dash or arrowhead in a relationship arrow, as Neo4j's lexer reads them:
+// ‐ ‑ ‒ – — ― ﹘ ﹣ － and the soft hyphen as -, ⟨ 〈 ﹤ before a dash as <,
+// ⟩ 〉 ﹥ after one as >. A dash is in an arrow when it follows a node, a
+// relationship, a head or another dash and precedes one of those:
+// (a)—[r]—>(b), (a)<—(b). Elsewhere they aren't operators (RETURN 2—1 is
+// rejected by validateUnicodeOperators) and the soft hyphen is part of a
+// name.
+func cypherArrowReplacement(runes []rune, i int) (byte, bool) {
+	neighbour := func(step int) rune {
+		for j := i + step; j >= 0 && j < len(runes); j += step {
+			if !unicode.IsSpace(runes[j]) {
+				return runes[j]
+			}
+		}
+		return 0
+	}
+	switch r := runes[i]; {
+	case isArrowDashRune(r):
+		previous, next := neighbour(-1), neighbour(1)
+		before := previous == ')' || previous == ']' || previous == '<' || previous == '-' || isArrowDashRune(previous) || isArrowLeftHeadRune(previous)
+		after := next == '(' || next == '[' || next == '>' || next == '-' || isArrowDashRune(next) || isArrowRightHeadRune(next)
+		return '-', before && after
+	case isArrowLeftHeadRune(r):
+		next := neighbour(1)
+		return '<', next == '-' || isArrowDashRune(next)
+	case isArrowRightHeadRune(r):
+		previous := neighbour(-1)
+		return '>', previous == '-' || isArrowDashRune(previous)
+	}
+	return 0, false
+}
+
+func isArrowDashRune(r rune) bool {
+	switch r {
+	case '\u00AD', '‐', '‑', '‒', '–', '—', '―', '﹘', '﹣', '－':
+		return true
+	}
+	return false
+}
+
+func isArrowLeftHeadRune(r rune) bool {
+	return r == '⟨' || r == '〈' || r == '﹤' || r == '＜'
+}
+
+func isArrowRightHeadRune(r rune) bool {
+	return r == '⟩' || r == '〉' || r == '﹥' || r == '＞'
 }
 
 func cypherWhitespaceReplacement(r rune) (rune, bool) {
