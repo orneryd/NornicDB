@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 
@@ -162,7 +163,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		inner := extractFuncArgs(expr, "degrees")
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
-			return f * 180.0 / math.Pi
+			return angle.ToDegrees(f)
 		}
 		return nil
 	}

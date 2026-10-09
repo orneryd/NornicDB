@@ -355,8 +355,9 @@ func comparePointOrdering(left, right interface{}) (int, bool) {
 const earthRadiusMeters = 6378140.0
 
 // pointDistance is point.distance: Euclidean for cartesian points, the
-// haversine great-circle distance (with the height difference for 3D) for
-// geographic points, and null for points of different systems.
+// haversine great-circle distance for geographic points (for 3D, the arc at
+// the points' average height combined with their height difference), and
+// null for points of different systems.
 func pointDistance(left, right CypherPoint) (float64, bool) {
 	if left.SRID != right.SRID {
 		return 0, false
@@ -365,16 +366,14 @@ func pointDistance(left, right CypherPoint) (float64, bool) {
 		dx, dy, dz := left.X-right.X, left.Y-right.Y, left.Z-right.Z
 		return math.Sqrt(dx*dx + dy*dy + dz*dz), true
 	}
-	lat1, lat2 := left.Y*math.Pi/180, right.Y*math.Pi/180
-	dLat := lat2 - lat1
-	dLon := (right.X - left.X) * math.Pi / 180
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Cos(lat1)*math.Cos(lat2)*math.Sin(dLon/2)*math.Sin(dLon/2)
-	distance := earthRadiusMeters * 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
-	if left.Is3D() {
-		dz := left.Z - right.Z
-		distance = math.Sqrt(distance*distance + dz*dz)
+	if !left.Is3D() {
+		return haversineDistance(left.Y, left.X, right.Y, right.X), true
 	}
-	return distance, true
+	// 3D: the arc at the points' average height, then the height
+	// difference, as Neo4j measures it.
+	arc := (earthRadiusMeters + (left.Z+right.Z)/2) * greatCircleAngle(left.Y, left.X, right.Y, right.X)
+	dz := left.Z - right.Z
+	return math.Sqrt(arc*arc + dz*dz), true
 }
 
 // pointWithinBBox is point.withinBBox: whether point lies in the box with the

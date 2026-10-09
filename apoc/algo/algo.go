@@ -6,6 +6,7 @@ package algo
 
 import (
 	"container/heap"
+	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 )
 
@@ -543,11 +544,11 @@ func heuristic(from, to *Node, latProp, lonProp string) float64 {
 	// Haversine formula
 	const R = 6371 // Earth radius in km
 
-	dLat := (lat2 - lat1) * math.Pi / 180
-	dLon := (lon2 - lon1) * math.Pi / 180
+	dLat := angle.ToRadians(lat2 - lat1)
+	dLon := angle.ToRadians(lon2 - lon1)
 
 	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
-		math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*
+		math.Cos(angle.ToRadians(lat1))*math.Cos(angle.ToRadians(lat2))*
 			math.Sin(dLon/2)*math.Sin(dLon/2)
 
 	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
