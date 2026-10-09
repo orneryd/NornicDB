@@ -50,6 +50,15 @@ const (
 	MessageCypherMatchingIsNotOperandInvalid                      MessageID = "cyphermatching.is_not_operand_invalid"
 	MessageCypherMatchingReturnStarNoVariables                    MessageID = "cyphermatching.return_star_no_variables"
 	MessageCypherMatchingOptionalMatchShapeUnsupported            MessageID = "cyphermatching.optional_match_shape_unsupported"
+	MessageCypherMatchingPathSelectorPathCountNotPositive         MessageID = "cyphermatching.path_selector_path_count_not_positive"
+	MessageCypherMatchingPathSelectorGroupCountNotPositive        MessageID = "cyphermatching.path_selector_group_count_not_positive"
+	MessageCypherMatchingPathSelectorMultiplePatterns             MessageID = "cyphermatching.path_selector_multiple_patterns"
+	MessageCypherMatchingPathSelectorWithShortestPathFunction     MessageID = "cyphermatching.path_selector_with_shortest_path_function"
+	MessageCypherMatchingPathModeVariableLength                   MessageID = "cyphermatching.path_mode_variable_length"
+	MessageCypherMatchingPathSelectorInWritePattern               MessageID = "cyphermatching.path_selector_in_write_pattern"
+	MessageCypherMatchingPathSelectorCountInvalid                 MessageID = "cyphermatching.path_selector_count_invalid"
+	MessageCypherMatchingPathSelectorCountType                    MessageID = "cyphermatching.path_selector_count_type"
+	MessageCypherMatchingPathSelectorOutsideMatch                 MessageID = "cyphermatching.path_selector_outside_match"
 )
 
 func cypherMatchingMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -282,4 +291,60 @@ func CypherMatchingAggregationScopeVariable(variable string) Message {
 	return cypherMatchingMessage(MessageCypherMatchingAggregationScopeVariable,
 		"In a WITH/RETURN with DISTINCT or an aggregation, it is not possible to access variables declared before the WITH/RETURN: "+variable,
 		map[string]any{"Variable": variable})
+}
+
+// CypherMatchingPathSelectorPathCountNotPositive is Neo4j's SyntaxError for
+// a path selector whose path count is 0 (SHORTEST 0, ANY 0).
+func CypherMatchingPathSelectorPathCountNotPositive() Message {
+	return cypherMatchingMessage(MessageCypherMatchingPathSelectorPathCountNotPositive, "The path count needs to be greater than 0.", nil)
+}
+
+// CypherMatchingPathSelectorGroupCountNotPositive is Neo4j's SyntaxError for
+// SHORTEST 0 GROUPS.
+func CypherMatchingPathSelectorGroupCountNotPositive() Message {
+	return cypherMatchingMessage(MessageCypherMatchingPathSelectorGroupCountNotPositive, "The group count needs to be greater than 0.", nil)
+}
+
+// CypherMatchingPathSelectorMultiplePatterns is Neo4j's SyntaxError for a
+// MATCH with a selective path selector (ANY, SHORTEST) and another pattern.
+func CypherMatchingPathSelectorMultiplePatterns() Message {
+	return cypherMatchingMessage(MessageCypherMatchingPathSelectorMultiplePatterns, "Multiple path patterns cannot be used in the same clause in combination with a selective path selector. You may want to use multiple MATCH clauses, or you might want to consider using the REPEATABLE ELEMENTS match mode.", nil)
+}
+
+// CypherMatchingPathSelectorWithShortestPathFunction is Neo4j's SyntaxError
+// for shortestPath or allShortestPaths with a path selector, an explicit
+// match mode or an explicit path mode.
+func CypherMatchingPathSelectorWithShortestPathFunction() Message {
+	return cypherMatchingMessage(MessageCypherMatchingPathSelectorWithShortestPathFunction, "Mixing shortestPath/allShortestPaths with path selectors (e.g. `ANY SHORTEST`), explicit match modes (e.g. `DIFFERENT RELATIONSHIPS`) or explicit path modes (e.g. `ACYCLIC`) is not allowed.", nil)
+}
+
+// CypherMatchingPathModeVariableLength is Neo4j's SyntaxError for an
+// explicit path mode (WALK, TRAIL, ACYCLIC) on a pattern with a
+// variable-length relationship (-[*]->).
+func CypherMatchingPathModeVariableLength(mode string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingPathModeVariableLength, "Using a variable-length relationship such as `-[*]->` together with explicit path mode `"+mode+"` is not available.", map[string]any{"Mode": mode})
+}
+
+// CypherMatchingPathSelectorInWritePattern is Neo4j's SyntaxError for a path
+// selector in a CREATE or MERGE pattern.
+func CypherMatchingPathSelectorInWritePattern(clause string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingPathSelectorInWritePattern, "Path selectors such as `SHORTEST 1 PATHS` cannot be used in a "+clause+" clause, but only in a MATCH clause.", map[string]any{"Clause": clause})
+}
+
+// CypherMatchingPathSelectorCountInvalid is Neo4j's error for a path
+// selector count parameter that is not positive (SHORTEST $k with $k = 0).
+func CypherMatchingPathSelectorCountInvalid(value string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingPathSelectorCountInvalid, "Count requires positive integer argument, got `"+value+"`", map[string]any{"Value": value})
+}
+
+// CypherMatchingPathSelectorCountType is Neo4j's TypeError for a path
+// selector count parameter that is not an integer.
+func CypherMatchingPathSelectorCountType(valueType string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingPathSelectorCountType, "Expected Integer but got "+valueType, map[string]any{"Type": valueType})
+}
+
+// CypherMatchingPathSelectorOutsideMatch is the error for a path selector
+// the statement rewrite left for a MATCH step that did not run it.
+func CypherMatchingPathSelectorOutsideMatch() Message {
+	return cypherMatchingMessage(MessageCypherMatchingPathSelectorOutsideMatch, "a path selector can only be used in a MATCH pattern", nil)
 }

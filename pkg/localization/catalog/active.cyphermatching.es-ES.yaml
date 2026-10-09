@@ -130,3 +130,30 @@
 - id: cyphermatching.aggregation_scope_variable
   description: Un WITH o RETURN con DISTINCT o una agregación lee, en su WHERE u ORDER BY, una variable que no proyecta. WITH, RETURN y DISTINCT no se traducen; Variable es el nombre de la variable, sin traducir.
   other: "En un WITH/RETURN con DISTINCT o una agregación no se puede acceder a variables declaradas antes del WITH/RETURN: {{.Variable}}"
+- id: cyphermatching.path_selector_path_count_not_positive
+  description: "El número de caminos de un selector es 0 (SHORTEST 0, ANY 0)."
+  other: "El número de caminos debe ser mayor que 0."
+- id: cyphermatching.path_selector_group_count_not_positive
+  description: "El número de grupos de un selector SHORTEST k GROUPS es 0."
+  other: "El número de grupos debe ser mayor que 0."
+- id: cyphermatching.path_selector_multiple_patterns
+  description: "Un MATCH con un selector de caminos selectivo (ANY, SHORTEST) tiene otro patrón. MATCH y REPEATABLE ELEMENTS no se traducen."
+  other: "No se pueden usar varios patrones de camino en la misma cláusula junto con un selector de caminos selectivo. Puede usar varias cláusulas MATCH o el modo de coincidencia REPEATABLE ELEMENTS."
+- id: cyphermatching.path_selector_with_shortest_path_function
+  description: "shortestPath o allShortestPaths se usa con un selector de caminos, un modo de coincidencia o un modo de camino. El Cypher entre comillas invertidas no se traduce."
+  other: "No se permite combinar shortestPath/allShortestPaths con selectores de caminos (p. ej. `ANY SHORTEST`), modos de coincidencia explícitos (p. ej. `DIFFERENT RELATIONSHIPS`) o modos de camino explícitos (p. ej. `ACYCLIC`)."
+- id: cyphermatching.path_mode_variable_length
+  description: "Un modo de camino explícito se usa con una relación de longitud variable. Mode es una palabra clave de Cypher y no se traduce."
+  other: "No se puede usar una relación de longitud variable como `-[*]->` junto con el modo de camino explícito `{{.Mode}}`."
+- id: cyphermatching.path_selector_in_write_pattern
+  description: "Selector de caminos en CREATE o MERGE. Clause es la palabra clave de la cláusula."
+  other: "Los selectores de caminos como `SHORTEST 1 PATHS` no se pueden usar en una cláusula {{.Clause}}, solo en una cláusula MATCH."
+- id: cyphermatching.path_selector_count_invalid
+  description: "El parámetro de número de un selector de caminos no es positivo. Value es el valor del parámetro."
+  other: "El número requiere un entero positivo; se recibió `{{.Value}}`"
+- id: cyphermatching.path_selector_count_type
+  description: "El parámetro de número de un selector de caminos no es un entero. Type es el nombre del tipo de Cypher y no se traduce."
+  other: "Se esperaba Integer pero se recibió {{.Type}}"
+- id: cyphermatching.path_selector_outside_match
+  description: "Un selector de caminos llegó a un paso que no ejecuta patrones de camino."
+  other: "un selector de caminos solo se puede usar en un patrón de MATCH"
