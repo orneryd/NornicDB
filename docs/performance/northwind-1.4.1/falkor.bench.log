@@ -1,0 +1,18 @@
+[falkor] seeding Northwind (categories=96 suppliers=144 customers=1200 products=48000 orders=48000 batch_size=500 parallel=4 seed=42)
+[falkor] seeded in 9320.9ms (97440 nodes, 312050 rels, ~35.4 MiB payload)
+[falkor] seed verified: categories=96 suppliers=144 customers=1200 products=48000 orders=48000 part_of=48000 supplies=48000 purchased=48000 orders_edges=168050
+[falkor] products_per_category              mean=   7.77ms p95=   8.51ms ops/s=   127.9 rows=96
+[falkor] customer_category_distinct_orders  mean= 167.69ms p95= 170.53ms ops/s=     6.0 rows=10
+[falkor] optional_match_orders_count        mean=  73.29ms p95=  77.24ms ops/s=    13.6 rows=100
+[falkor] revenue_by_product                 mean=  72.60ms p95=  74.65ms ops/s=    13.8 rows=10
+[falkor] products_by_supplier               mean=   4.94ms p95=   5.15ms ops/s=   201.3 rows=25
+[falkor] orders_by_customer                 mean=   5.93ms p95=   6.07ms ops/s=   168.0 rows=25
+[falkor] revenue_by_category                mean=  53.82ms p95=  54.60ms ops/s=    18.5 rows=96
+[falkor] revenue_by_supplier                mean=  56.08ms p95=  57.48ms ops/s=    17.8 rows=25
+[falkor] revenue_by_customer                mean=  53.10ms p95=  57.27ms ops/s=    18.8 rows=25
+[falkor] order_line_sales_by_country        mean=  41.13ms p95=  42.57ms ops/s=    24.3 rows=15
+[falkor] low_stock_products                 mean=   2.22ms p95=   2.31ms ops/s=   425.6 rows=100
+[falkor] products_in_category               mean=   0.68ms p95=   0.78ms ops/s=  1289.0 rows=100
+[falkor] order_line_quantity_distribution   mean=  40.96ms p95=  41.65ms ops/s=    24.4 rows=25
+[falkor] customer_order_details             mean=   0.76ms p95=   0.88ms ops/s=  1115.4 rows=100
+[falkor] wrote /Users/tjsweet/src/NornicDB/scripts/benchmark_reports/20261009_093018/falkor.results.json

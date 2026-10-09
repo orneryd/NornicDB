@@ -1,0 +1,72 @@
+[nornicdb-antlr] seeding Northwind (categories=96 suppliers=144 customers=1200 products=48000 orders=48000, batch_size=500 parallel=4 seed=42)
+  .. wrote 5000 / 48000 rows
+  .. wrote 10000 / 48000 rows
+  .. wrote 15000 / 48000 rows
+  .. wrote 20000 / 48000 rows
+  .. wrote 25000 / 48000 rows
+  .. wrote 30000 / 48000 rows
+  .. wrote 35000 / 48000 rows
+  .. wrote 40000 / 48000 rows
+  .. wrote 45000 / 48000 rows
+  .. wrote 48000 / 48000 rows
+  .. wrote 5000 / 48000 rows
+  .. wrote 10000 / 48000 rows
+  .. wrote 15000 / 48000 rows
+  .. wrote 20000 / 48000 rows
+  .. wrote 25000 / 48000 rows
+  .. wrote 30000 / 48000 rows
+  .. wrote 35000 / 48000 rows
+  .. wrote 40000 / 48000 rows
+  .. wrote 45000 / 48000 rows
+  .. wrote 48000 / 48000 rows
+  .. wrote 5000 / 168050 rows
+  .. wrote 10000 / 168050 rows
+  .. wrote 15000 / 168050 rows
+  .. wrote 20000 / 168050 rows
+  .. wrote 25000 / 168050 rows
+  .. wrote 30000 / 168050 rows
+  .. wrote 35000 / 168050 rows
+  .. wrote 40000 / 168050 rows
+  .. wrote 45000 / 168050 rows
+  .. wrote 50000 / 168050 rows
+  .. wrote 55000 / 168050 rows
+  .. wrote 60000 / 168050 rows
+  .. wrote 65000 / 168050 rows
+  .. wrote 70000 / 168050 rows
+  .. wrote 75000 / 168050 rows
+  .. wrote 80000 / 168050 rows
+  .. wrote 85000 / 168050 rows
+  .. wrote 90000 / 168050 rows
+  .. wrote 95000 / 168050 rows
+  .. wrote 100000 / 168050 rows
+  .. wrote 105000 / 168050 rows
+  .. wrote 110000 / 168050 rows
+  .. wrote 115000 / 168050 rows
+  .. wrote 120000 / 168050 rows
+  .. wrote 125000 / 168050 rows
+  .. wrote 130000 / 168050 rows
+  .. wrote 135000 / 168050 rows
+  .. wrote 140000 / 168050 rows
+  .. wrote 145000 / 168050 rows
+  .. wrote 150000 / 168050 rows
+  .. wrote 155000 / 168050 rows
+  .. wrote 160000 / 168050 rows
+  .. wrote 165000 / 168050 rows
+  .. wrote 168050 / 168050 rows
+[nornicdb-antlr] seeded in 5354.8ms (97440 nodes, 312050 rels, ~35.4 MiB payload)
+[nornicdb-antlr] seed verified: categories=96 suppliers=144 customers=1200 products=48000 orders=48000 part_of=48000 supplies=48000 purchased=48000 orders_edges=168050
+[nornicdb-antlr] products_per_category              mean=   0.18ms p95=   0.21ms ops/s=  5020.3 rows=96
+[nornicdb-antlr] customer_category_distinct_orders  mean=   0.18ms p95=   0.22ms ops/s=  5488.6 rows=10
+[nornicdb-antlr] optional_match_orders_count        mean=   0.19ms p95=   0.23ms ops/s=  4807.9 rows=100
+[nornicdb-antlr] revenue_by_product                 mean=   0.16ms p95=   0.18ms ops/s=  6224.7 rows=10
+[nornicdb-antlr] products_by_supplier               mean=   0.14ms p95=   0.16ms ops/s=  6700.7 rows=25
+[nornicdb-antlr] orders_by_customer                 mean=   0.13ms p95=   0.15ms ops/s=  7268.5 rows=25
+[nornicdb-antlr] revenue_by_category                mean=   0.20ms p95=   0.24ms ops/s=  4367.6 rows=96
+[nornicdb-antlr] revenue_by_supplier                mean=   0.16ms p95=   0.19ms ops/s=  5986.0 rows=25
+[nornicdb-antlr] revenue_by_customer                mean=   0.16ms p95=   0.18ms ops/s=  6132.3 rows=25
+[nornicdb-antlr] order_line_sales_by_country        mean=   0.14ms p95=   0.17ms ops/s=  6835.8 rows=15
+[nornicdb-antlr] low_stock_products                 mean=   0.20ms p95=   0.22ms ops/s=  4488.3 rows=100
+[nornicdb-antlr] products_in_category               mean=   0.19ms p95=   0.20ms ops/s=  4635.4 rows=100
+[nornicdb-antlr] order_line_quantity_distribution   mean=   0.14ms p95=   0.17ms ops/s=  7048.9 rows=25
+[nornicdb-antlr] customer_order_details             mean=   0.21ms p95=   0.22ms ops/s=  4188.5 rows=100
+[nornicdb-antlr] wrote /Users/tjsweet/src/NornicDB/scripts/benchmark_reports/20261009_093018/nornicdb-antlr.results.json

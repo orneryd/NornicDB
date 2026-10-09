@@ -1,0 +1,1883 @@
+{
+  "label": "nornicdb-antlr",
+  "uri": "bolt://localhost:17687",
+  "database": "nornic",
+  "started_at": "2026-10-09T09:30:52.442158-07:00",
+  "finished_at": "2026-10-09T09:31:17.72512-07:00",
+  "seed_duration_ms": 5354.844,
+  "seed_wipe_ms": 22.649,
+  "seed_index_ms": 10.053,
+  "seed_ingestion_ms": 5322.121,
+  "seed_batch_size": 500,
+  "seed_parallelism": 4,
+  "total_benchmark_duration_ms": 19923.08,
+  "total_benchmark_operations": 420,
+  "iterations_per_query": 30,
+  "warmup_iterations": 5,
+  "categories": 96,
+  "suppliers": 144,
+  "customers": 1200,
+  "products": 48000,
+  "orders": 48000,
+  "order_lines_min": 1,
+  "order_lines_max": 6,
+  "random_seed": 42,
+  "seed_nodes": 97440,
+  "seed_relationships": 312050,
+  "approx_seed_payload_bytes": 37124459,
+  "seed_counts": {
+    "categories": 96,
+    "suppliers": 144,
+    "customers": 1200,
+    "products": 48000,
+    "orders": 48000,
+    "part_of_edges": 48000,
+    "supplies_edges": 48000,
+    "purchased_edges": 48000,
+    "orders_edges": 168050
+  },
+  "queries": [
+    {
+      "name": "products_per_category",
+      "description": "Product counts grouped by category, with a full result sort.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (c:Category)\u003c-[:PART_OF]-(p:Product)\n\t\t\tRETURN c.categoryName AS categoryName, count(p) AS productCount\n\t\t\tORDER BY productCount DESC",
+      "latencies_ms": [
+        0.175,
+        0.186,
+        0.176,
+        0.234,
+        0.17,
+        0.145,
+        0.162,
+        0.166,
+        0.181,
+        0.167,
+        0.17,
+        0.189,
+        0.149,
+        0.174,
+        0.193,
+        0.197,
+        0.179,
+        0.21,
+        0.186,
+        0.187,
+        0.167,
+        0.181,
+        0.178,
+        0.172,
+        0.166,
+        0.176,
+        0.169,
+        0.169,
+        0.183,
+        0.219
+      ],
+      "mean_ms": 0.17919999999999994,
+      "median_ms": 0.176,
+      "p95_ms": 0.21494999999999997,
+      "p99_ms": 0.22965,
+      "min_ms": 0.145,
+      "max_ms": 0.234,
+      "stddev_ms": 0.018413638124105656,
+      "ops_per_second": 5020.3256250138065,
+      "row_count": 96,
+      "result_hash": "91e9f1f063680a6de80e8d7285769fd3831c5709688b1afaa85521c3d3b31c43",
+      "first_rows": [
+        {
+          "categoryName": "Category-1-hand-picked",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-2-roasted",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-3-cold-pressed",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-4-small-batch",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-5-small-batch",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-6-grass-fed",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-7-hand-picked",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-8-organic",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-9-premium",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-10-heritage",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-11-organic",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-12-small-batch",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-13-artisanal",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-14-wild-caught",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-15-fair-trade",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-16-hand-picked",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-17-cold-pressed",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-18-free-range",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-19-fair-trade",
+          "productCount": 500
+        },
+        {
+          "categoryName": "Category-20-aged",
+          "productCount": 500
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "customer_category_distinct_orders",
+      "description": "Four-hop customer-to-category traversal with distinct-order aggregation.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (c:Customer)-[:PURCHASED]-\u003e(o:Order)-[:ORDERS]-\u003e(p:Product)-[:PART_OF]-\u003e(cat:Category)\n\t\t\tRETURN c.companyName AS companyName, cat.categoryName AS categoryName, count(DISTINCT o) AS orders\n\t\t\tORDER BY orders DESC, companyName ASC, categoryName ASC\n\t\t\tLIMIT 10",
+      "latencies_ms": [
+        0.208,
+        0.213,
+        0.203,
+        0.178,
+        0.189,
+        0.218,
+        0.17,
+        0.167,
+        0.174,
+        0.172,
+        0.152,
+        0.161,
+        0.167,
+        0.156,
+        0.165,
+        0.155,
+        0.163,
+        0.155,
+        0.166,
+        0.155,
+        0.163,
+        0.152,
+        0.177,
+        0.181,
+        0.176,
+        0.16,
+        0.151,
+        0.179,
+        0.32,
+        0.179
+      ],
+      "mean_ms": 0.17750000000000002,
+      "median_ms": 0.1685,
+      "p95_ms": 0.21575,
+      "p99_ms": 0.29041999999999996,
+      "min_ms": 0.151,
+      "max_ms": 0.32,
+      "stddev_ms": 0.032445976319265615,
+      "ops_per_second": 5488.641895937912,
+      "row_count": 10,
+      "result_hash": "5da36214d5163220e30b2ea89cfe9f0d55b978d9e74ea1094b078271ac314be8",
+      "first_rows": [
+        {
+          "categoryName": "Category-15-fair-trade",
+          "companyName": "cold-pressed condiment LLC #350",
+          "orders": 9
+        },
+        {
+          "categoryName": "Category-51-small-batch",
+          "companyName": "aged biscuit LLC #153",
+          "orders": 8
+        },
+        {
+          "categoryName": "Category-68-small-batch",
+          "companyName": "aged biscuit LLC #247",
+          "orders": 8
+        },
+        {
+          "categoryName": "Category-15-fair-trade",
+          "companyName": "aged oil LLC #225",
+          "orders": 8
+        },
+        {
+          "categoryName": "Category-94-heritage",
+          "companyName": "cold-pressed condiment LLC #833",
+          "orders": 8
+        },
+        {
+          "categoryName": "Category-73-premium",
+          "companyName": "cold-pressed oil LLC #1133",
+          "orders": 8
+        },
+        {
+          "categoryName": "Category-34-cold-pressed",
+          "companyName": "cold-pressed spread LLC #241",
+          "orders": 8
+        },
+        {
+          "categoryName": "Category-4-small-batch",
+          "companyName": "cold-pressed wine LLC #30",
+          "orders": 8
+        },
+        {
+          "categoryName": "Category-90-aged",
+          "companyName": "organic preserve LLC #500",
+          "orders": 8
+        },
+        {
+          "categoryName": "Category-35-free-range",
+          "companyName": "premium cheese LLC #232",
+          "orders": 8
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "optional_match_orders_count",
+      "description": "Optional product-to-order traversal with zero-match preservation and top-100 sorting.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (p:Product)\n\t\t\tOPTIONAL MATCH (p)\u003c-[r:ORDERS]-(o:Order)\n\t\t\tRETURN p.productName AS productName, count(o) AS orderCount\n\t\t\tORDER BY orderCount DESC, productName ASC\n\t\t\tLIMIT 100",
+      "latencies_ms": [
+        0.237,
+        0.203,
+        0.222,
+        0.19,
+        0.205,
+        0.221,
+        0.197,
+        0.165,
+        0.213,
+        0.178,
+        0.173,
+        0.179,
+        0.184,
+        0.194,
+        0.257,
+        0.203,
+        0.201,
+        0.202,
+        0.201,
+        0.166,
+        0.166,
+        0.158,
+        0.174,
+        0.171,
+        0.178,
+        0.163,
+        0.159,
+        0.16,
+        0.18,
+        0.156
+      ],
+      "mean_ms": 0.18853333333333339,
+      "median_ms": 0.182,
+      "p95_ms": 0.23024999999999998,
+      "p99_ms": 0.2512,
+      "min_ms": 0.156,
+      "max_ms": 0.257,
+      "stddev_ms": 0.025023758825306927,
+      "ops_per_second": 4807.917293565661,
+      "row_count": 100,
+      "result_hash": "8950fcdaab16eaeb0b647ca818401cdcae8271087add813303d2afca875a6065",
+      "first_rows": [
+        {
+          "orderCount": 14,
+          "productName": "aged cracker 2168"
+        },
+        {
+          "orderCount": 13,
+          "productName": "grass-fed soda 38745"
+        },
+        {
+          "orderCount": 13,
+          "productName": "heritage sauce 703"
+        },
+        {
+          "orderCount": 13,
+          "productName": "premium coffee 45593"
+        },
+        {
+          "orderCount": 13,
+          "productName": "wild-caught jerky 11371"
+        },
+        {
+          "orderCount": 12,
+          "productName": "free-range coffee 43306"
+        },
+        {
+          "orderCount": 12,
+          "productName": "grass-fed biscuit 5131"
+        },
+        {
+          "orderCount": 12,
+          "productName": "hand-picked coffee 4788"
+        },
+        {
+          "orderCount": 12,
+          "productName": "heritage tea 2021"
+        },
+        {
+          "orderCount": 12,
+          "productName": "roasted cracker 26678"
+        },
+        {
+          "orderCount": 12,
+          "productName": "wild-caught preserve 6336"
+        },
+        {
+          "orderCount": 11,
+          "productName": "aged coffee 40413"
+        },
+        {
+          "orderCount": 11,
+          "productName": "aged condiment 27879"
+        },
+        {
+          "orderCount": 11,
+          "productName": "aged condiment 46221"
+        },
+        {
+          "orderCount": 11,
+          "productName": "aged oil 3638"
+        },
+        {
+          "orderCount": 11,
+          "productName": "artisanal cracker 46911"
+        },
+        {
+          "orderCount": 11,
+          "productName": "artisanal oil 38339"
+        },
+        {
+          "orderCount": 11,
+          "productName": "artisanal preserve 27315"
+        },
+        {
+          "orderCount": 11,
+          "productName": "artisanal preserve 29869"
+        },
+        {
+          "orderCount": 11,
+          "productName": "artisanal sauce 20406"
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "revenue_by_product",
+      "description": "Relationship-property arithmetic and revenue aggregation grouped by product.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (p:Product)\u003c-[r:ORDERS]-(:Order)\n\t\t\tWITH p, sum(p.unitPrice * r.quantity) AS revenue\n\t\t\tRETURN p.productName AS productName, revenue\n\t\t\tORDER BY revenue DESC, productName ASC\n\t\t\tLIMIT 10",
+      "latencies_ms": [
+        0.2,
+        0.178,
+        0.161,
+        0.175,
+        0.183,
+        0.164,
+        0.171,
+        0.166,
+        0.149,
+        0.151,
+        0.155,
+        0.149,
+        0.138,
+        0.142,
+        0.142,
+        0.147,
+        0.161,
+        0.171,
+        0.151,
+        0.146,
+        0.148,
+        0.142,
+        0.147,
+        0.138,
+        0.184,
+        0.137,
+        0.133,
+        0.171,
+        0.155,
+        0.16
+      ],
+      "mean_ms": 0.15716666666666662,
+      "median_ms": 0.153,
+      "p95_ms": 0.18355,
+      "p99_ms": 0.19536,
+      "min_ms": 0.133,
+      "max_ms": 0.2,
+      "stddev_ms": 0.016358238108763076,
+      "ops_per_second": 6224.712107065048,
+      "row_count": 10,
+      "result_hash": "60b64c678f4c01fdca98d0683c8ad0e700ba61be88091eb445c990f1b0fffc84",
+      "first_rows": [
+        {
+          "productName": "artisanal preserve 27315",
+          "revenue": 34738.53
+        },
+        {
+          "productName": "artisanal cheese 9341",
+          "revenue": 31481.82
+        },
+        {
+          "productName": "free-range honey 38500",
+          "revenue": 31387.960000000003
+        },
+        {
+          "productName": "roasted condiment 1530",
+          "revenue": 30462.100000000006
+        },
+        {
+          "productName": "heritage jerky 41096",
+          "revenue": 30170.879999999997
+        },
+        {
+          "productName": "fair-trade jerky 47148",
+          "revenue": 29594.079999999998
+        },
+        {
+          "productName": "stone-milled soda 8087",
+          "revenue": 29096.6
+        },
+        {
+          "productName": "free-range pasta 42014",
+          "revenue": 28811.499999999993
+        },
+        {
+          "productName": "stone-milled pasta 3570",
+          "revenue": 28132.559999999998
+        },
+        {
+          "productName": "stone-milled pasta 45022",
+          "revenue": 28117.499999999993
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "products_by_supplier",
+      "description": "Supplier-to-product traversal with top-N aggregation and deterministic ties.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (s:Supplier)-[:SUPPLIES]-\u003e(p:Product)\n\t\t\tRETURN s.companyName AS supplier, count(p) AS products\n\t\t\tORDER BY products DESC, supplier ASC\n\t\t\tLIMIT 25",
+      "latencies_ms": [
+        0.152,
+        0.139,
+        0.177,
+        0.145,
+        0.153,
+        0.134,
+        0.139,
+        0.132,
+        0.142,
+        0.14,
+        0.169,
+        0.139,
+        0.146,
+        0.148,
+        0.143,
+        0.152,
+        0.142,
+        0.154,
+        0.14,
+        0.129,
+        0.14,
+        0.136,
+        0.128,
+        0.137,
+        0.126,
+        0.139,
+        0.134,
+        0.139,
+        0.146,
+        0.137
+      ],
+      "mean_ms": 0.14256666666666665,
+      "median_ms": 0.14,
+      "p95_ms": 0.16224999999999998,
+      "p99_ms": 0.17468,
+      "min_ms": 0.126,
+      "max_ms": 0.177,
+      "stddev_ms": 0.010953454291662525,
+      "ops_per_second": 6700.665845165035,
+      "row_count": 25,
+      "result_hash": "af1e9b5d1d663a021caaa6b6a9edb877439198ce1b6d0999b6c5ba554542f6e6",
+      "first_rows": [
+        {
+          "products": 334,
+          "supplier": "aged condiment Supply Co. #45"
+        },
+        {
+          "products": 334,
+          "supplier": "aged soda Supply Co. #12"
+        },
+        {
+          "products": 334,
+          "supplier": "aged syrup Supply Co. #24"
+        },
+        {
+          "products": 334,
+          "supplier": "artisanal tea Supply Co. #37"
+        },
+        {
+          "products": 334,
+          "supplier": "artisanal wine Supply Co. #44"
+        },
+        {
+          "products": 334,
+          "supplier": "cold-pressed cracker Supply Co. #31"
+        },
+        {
+          "products": 334,
+          "supplier": "cold-pressed honey Supply Co. #15"
+        },
+        {
+          "products": 334,
+          "supplier": "cold-pressed preserve Supply Co. #6"
+        },
+        {
+          "products": 334,
+          "supplier": "cold-pressed sauce Supply Co. #5"
+        },
+        {
+          "products": 334,
+          "supplier": "fair-trade biscuit Supply Co. #36"
+        },
+        {
+          "products": 334,
+          "supplier": "fair-trade cheese Supply Co. #9"
+        },
+        {
+          "products": 334,
+          "supplier": "fair-trade chocolate Supply Co. #25"
+        },
+        {
+          "products": 334,
+          "supplier": "fair-trade coffee Supply Co. #46"
+        },
+        {
+          "products": 334,
+          "supplier": "fair-trade jerky Supply Co. #13"
+        },
+        {
+          "products": 334,
+          "supplier": "fair-trade pasta Supply Co. #11"
+        },
+        {
+          "products": 334,
+          "supplier": "fair-trade pasta Supply Co. #26"
+        },
+        {
+          "products": 334,
+          "supplier": "fair-trade pasta Supply Co. #43"
+        },
+        {
+          "products": 334,
+          "supplier": "fair-trade preserve Supply Co. #3"
+        },
+        {
+          "products": 334,
+          "supplier": "fair-trade sauce Supply Co. #7"
+        },
+        {
+          "products": 334,
+          "supplier": "free-range cheese Supply Co. #29"
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "orders_by_customer",
+      "description": "Customer-to-order traversal grouped into a top-25 order-count ranking.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (c:Customer)-[:PURCHASED]-\u003e(o:Order)\n\t\t\tRETURN c.companyName AS customer, count(o) AS orders\n\t\t\tORDER BY orders DESC, customer ASC\n\t\t\tLIMIT 25",
+      "latencies_ms": [
+        0.147,
+        0.158,
+        0.141,
+        0.129,
+        0.144,
+        0.142,
+        0.136,
+        0.118,
+        0.132,
+        0.126,
+        0.143,
+        0.131,
+        0.14,
+        0.126,
+        0.139,
+        0.123,
+        0.133,
+        0.131,
+        0.13,
+        0.143,
+        0.143,
+        0.138,
+        0.128,
+        0.125,
+        0.118,
+        0.117,
+        0.136,
+        0.126,
+        0.119,
+        0.121
+      ],
+      "mean_ms": 0.13276666666666664,
+      "median_ms": 0.1315,
+      "p95_ms": 0.14564999999999997,
+      "p99_ms": 0.15481,
+      "min_ms": 0.117,
+      "max_ms": 0.158,
+      "stddev_ms": 0.010050504647934895,
+      "ops_per_second": 7268.542354402011,
+      "row_count": 25,
+      "result_hash": "ecff10cfcfa9cc3425c142f028ec5ae4ad847d7a40d11e9ed0e281d214ddf80e",
+      "first_rows": [
+        {
+          "customer": "aged cracker LLC #64",
+          "orders": 62
+        },
+        {
+          "customer": "hand-picked tea LLC #295",
+          "orders": 61
+        },
+        {
+          "customer": "fair-trade biscuit LLC #781",
+          "orders": 59
+        },
+        {
+          "customer": "grass-fed syrup LLC #947",
+          "orders": 58
+        },
+        {
+          "customer": "premium preserve LLC #720",
+          "orders": 58
+        },
+        {
+          "customer": "small-batch pasta LLC #316",
+          "orders": 58
+        },
+        {
+          "customer": "aged honey LLC #540",
+          "orders": 57
+        },
+        {
+          "customer": "organic honey LLC #450",
+          "orders": 57
+        },
+        {
+          "customer": "grass-fed cheese LLC #426",
+          "orders": 56
+        },
+        {
+          "customer": "hand-picked pasta LLC #53",
+          "orders": 56
+        },
+        {
+          "customer": "hand-picked spread LLC #974",
+          "orders": 56
+        },
+        {
+          "customer": "cold-pressed soda LLC #735",
+          "orders": 55
+        },
+        {
+          "customer": "wild-caught cracker LLC #44",
+          "orders": 55
+        },
+        {
+          "customer": "free-range sauce LLC #913",
+          "orders": 54
+        },
+        {
+          "customer": "organic jerky LLC #1064",
+          "orders": 54
+        },
+        {
+          "customer": "small-batch preserve LLC #436",
+          "orders": 54
+        },
+        {
+          "customer": "wild-caught coffee LLC #1029",
+          "orders": 54
+        },
+        {
+          "customer": "cold-pressed soda LLC #941",
+          "orders": 53
+        },
+        {
+          "customer": "cold-pressed syrup LLC #1200",
+          "orders": 53
+        },
+        {
+          "customer": "fair-trade spread LLC #1139",
+          "orders": 53
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "revenue_by_category",
+      "description": "Three-hop category revenue aggregation from order-line quantities and product prices.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (c:Category)\u003c-[:PART_OF]-(p:Product)\u003c-[r:ORDERS]-(:Order)\n\t\t\tRETURN c.categoryName AS category, sum(p.unitPrice * r.quantity) AS revenue\n\t\t\tORDER BY revenue DESC, category ASC",
+      "latencies_ms": [
+        0.236,
+        0.225,
+        0.199,
+        0.238,
+        0.207,
+        0.197,
+        0.202,
+        0.198,
+        0.218,
+        0.202,
+        0.204,
+        0.208,
+        0.209,
+        0.192,
+        0.199,
+        0.212,
+        0.201,
+        0.188,
+        0.181,
+        0.199,
+        0.206,
+        0.253,
+        0.187,
+        0.195,
+        0.193,
+        0.195,
+        0.186,
+        0.206,
+        0.205,
+        0.185
+      ],
+      "mean_ms": 0.20420000000000008,
+      "median_ms": 0.2015,
+      "p95_ms": 0.23709999999999998,
+      "p99_ms": 0.24864999999999998,
+      "min_ms": 0.181,
+      "max_ms": 0.253,
+      "stddev_ms": 0.01629766219748858,
+      "ops_per_second": 4367.55350325834,
+      "row_count": 96,
+      "result_hash": "23ba39858bf74ace5d01d62fde92465471a57165d5010dd37da120950050233c",
+      "first_rows": [
+        {
+          "category": "Category-1-hand-picked",
+          "revenue": 2481938.800000007
+        },
+        {
+          "category": "Category-20-aged",
+          "revenue": 2452834.9900000016
+        },
+        {
+          "category": "Category-45-small-batch",
+          "revenue": 2434016.679999998
+        },
+        {
+          "category": "Category-57-organic",
+          "revenue": 2423760.720000003
+        },
+        {
+          "category": "Category-33-premium",
+          "revenue": 2420384.2299999995
+        },
+        {
+          "category": "Category-14-wild-caught",
+          "revenue": 2410197.2199999993
+        },
+        {
+          "category": "Category-89-grass-fed",
+          "revenue": 2398615.9999999935
+        },
+        {
+          "category": "Category-25-wild-caught",
+          "revenue": 2392799.5899999975
+        },
+        {
+          "category": "Category-72-stone-milled",
+          "revenue": 2391127.8500000015
+        },
+        {
+          "category": "Category-73-premium",
+          "revenue": 2391082.710000004
+        },
+        {
+          "category": "Category-17-cold-pressed",
+          "revenue": 2383568.130000007
+        },
+        {
+          "category": "Category-8-organic",
+          "revenue": 2376365.7499999995
+        },
+        {
+          "category": "Category-47-roasted",
+          "revenue": 2368808.2799999984
+        },
+        {
+          "category": "Category-27-hand-picked",
+          "revenue": 2359005.3599999985
+        },
+        {
+          "category": "Category-18-free-range",
+          "revenue": 2356923.4999999986
+        },
+        {
+          "category": "Category-63-free-range",
+          "revenue": 2350227.920000001
+        },
+        {
+          "category": "Category-11-organic",
+          "revenue": 2332516.269999999
+        },
+        {
+          "category": "Category-96-heritage",
+          "revenue": 2329574.2000000007
+        },
+        {
+          "category": "Category-21-aged",
+          "revenue": 2322727.4899999974
+        },
+        {
+          "category": "Category-15-fair-trade",
+          "revenue": 2316330.5500000003
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "revenue_by_supplier",
+      "description": "Supplier-to-product-to-order traversal with revenue aggregation and top-25 sorting.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (s:Supplier)-[:SUPPLIES]-\u003e(p:Product)\u003c-[r:ORDERS]-(:Order)\n\t\t\tRETURN s.companyName AS supplier, sum(p.unitPrice * r.quantity) AS revenue\n\t\t\tORDER BY revenue DESC, supplier ASC\n\t\t\tLIMIT 25",
+      "latencies_ms": [
+        0.207,
+        0.196,
+        0.178,
+        0.155,
+        0.19,
+        0.176,
+        0.166,
+        0.149,
+        0.15,
+        0.155,
+        0.136,
+        0.164,
+        0.149,
+        0.162,
+        0.14,
+        0.166,
+        0.16,
+        0.148,
+        0.157,
+        0.161,
+        0.163,
+        0.154,
+        0.159,
+        0.156,
+        0.155,
+        0.155,
+        0.158,
+        0.155,
+        0.149,
+        0.156
+      ],
+      "mean_ms": 0.16083333333333333,
+      "median_ms": 0.1565,
+      "p95_ms": 0.1933,
+      "p99_ms": 0.20381,
+      "min_ms": 0.136,
+      "max_ms": 0.207,
+      "stddev_ms": 0.015375940303925646,
+      "ops_per_second": 5985.983221688095,
+      "row_count": 25,
+      "result_hash": "41900ee05a8f994afd3d03c3c58d02cbdffd9c8be376a04a05858e433ac74972",
+      "first_rows": [
+        {
+          "revenue": 1745280.1200000003,
+          "supplier": "small-batch cheese Supply Co. #57"
+        },
+        {
+          "revenue": 1665387.1599999992,
+          "supplier": "roasted biscuit Supply Co. #90"
+        },
+        {
+          "revenue": 1665299.3300000003,
+          "supplier": "cold-pressed syrup Supply Co. #141"
+        },
+        {
+          "revenue": 1656497.7199999986,
+          "supplier": "heritage cracker Supply Co. #116"
+        },
+        {
+          "revenue": 1656276.0100000016,
+          "supplier": "roasted spread Supply Co. #21"
+        },
+        {
+          "revenue": 1641875.6100000003,
+          "supplier": "organic jerky Supply Co. #41"
+        },
+        {
+          "revenue": 1627588.3199999991,
+          "supplier": "fair-trade pasta Supply Co. #143"
+        },
+        {
+          "revenue": 1618870.62,
+          "supplier": "stone-milled syrup Supply Co. #56"
+        },
+        {
+          "revenue": 1618745.3399999999,
+          "supplier": "free-range jerky Supply Co. #54"
+        },
+        {
+          "revenue": 1618519.5100000026,
+          "supplier": "heritage preserve Supply Co. #121"
+        },
+        {
+          "revenue": 1615564.6100000003,
+          "supplier": "premium sauce Supply Co. #114"
+        },
+        {
+          "revenue": 1615212.4600000007,
+          "supplier": "hand-picked chocolate Supply Co. #49"
+        },
+        {
+          "revenue": 1613864.110000001,
+          "supplier": "wild-caught syrup Supply Co. #129"
+        },
+        {
+          "revenue": 1599215.4799999974,
+          "supplier": "wild-caught sauce Supply Co. #16"
+        },
+        {
+          "revenue": 1598529.61,
+          "supplier": "free-range sauce Supply Co. #17"
+        },
+        {
+          "revenue": 1591295.9100000006,
+          "supplier": "heritage oil Supply Co. #144"
+        },
+        {
+          "revenue": 1588717.62,
+          "supplier": "premium soda Supply Co. #67"
+        },
+        {
+          "revenue": 1585664.8200000022,
+          "supplier": "aged cracker Supply Co. #126"
+        },
+        {
+          "revenue": 1584805.1,
+          "supplier": "premium coffee Supply Co. #81"
+        },
+        {
+          "revenue": 1583319.96,
+          "supplier": "small-batch cheese Supply Co. #73"
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "revenue_by_customer",
+      "description": "Customer-order-product traversal with relationship-property revenue aggregation.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (c:Customer)-[:PURCHASED]-\u003e(:Order)-[r:ORDERS]-\u003e(p:Product)\n\t\t\tRETURN c.companyName AS customer, sum(p.unitPrice * r.quantity) AS revenue\n\t\t\tORDER BY revenue DESC, customer ASC\n\t\t\tLIMIT 25",
+      "latencies_ms": [
+        0.177,
+        0.171,
+        0.173,
+        0.172,
+        0.164,
+        0.167,
+        0.149,
+        0.182,
+        0.154,
+        0.168,
+        0.169,
+        0.137,
+        0.151,
+        0.148,
+        0.153,
+        0.137,
+        0.169,
+        0.159,
+        0.167,
+        0.167,
+        0.164,
+        0.139,
+        0.148,
+        0.152,
+        0.141,
+        0.148,
+        0.146,
+        0.144,
+        0.152,
+        0.151
+      ],
+      "mean_ms": 0.15729999999999997,
+      "median_ms": 0.1535,
+      "p95_ms": 0.1752,
+      "p99_ms": 0.18055,
+      "min_ms": 0.137,
+      "max_ms": 0.182,
+      "stddev_ms": 0.012641338864054791,
+      "ops_per_second": 6132.304468916882,
+      "row_count": 25,
+      "result_hash": "639a286559282c97e83cad605c21a94f1ecb1156b0b755f6527ffd2498fbe249",
+      "first_rows": [
+        {
+          "customer": "hand-picked tea LLC #295",
+          "revenue": 315227.4
+        },
+        {
+          "customer": "roasted honey LLC #423",
+          "revenue": 285728.40999999986
+        },
+        {
+          "customer": "fair-trade biscuit LLC #781",
+          "revenue": 276510.29999999993
+        },
+        {
+          "customer": "organic preserve LLC #340",
+          "revenue": 273653.64999999997
+        },
+        {
+          "customer": "aged cracker LLC #1198",
+          "revenue": 273475.95999999985
+        },
+        {
+          "customer": "hand-picked sauce LLC #319",
+          "revenue": 272257.39000000013
+        },
+        {
+          "customer": "organic honey LLC #450",
+          "revenue": 269148.30000000005
+        },
+        {
+          "customer": "grass-fed syrup LLC #947",
+          "revenue": 269000.89999999997
+        },
+        {
+          "customer": "aged oil LLC #718",
+          "revenue": 267085.20999999996
+        },
+        {
+          "customer": "organic syrup LLC #376",
+          "revenue": 265942.8499999999
+        },
+        {
+          "customer": "fair-trade tea LLC #846",
+          "revenue": 263557.73000000004
+        },
+        {
+          "customer": "grass-fed cheese LLC #426",
+          "revenue": 261972.09000000005
+        },
+        {
+          "customer": "heritage wine LLC #140",
+          "revenue": 259692.61999999997
+        },
+        {
+          "customer": "wild-caught spread LLC #1116",
+          "revenue": 256912.20999999993
+        },
+        {
+          "customer": "cold-pressed soda LLC #941",
+          "revenue": 256620.67999999967
+        },
+        {
+          "customer": "artisanal spread LLC #19",
+          "revenue": 255034.11
+        },
+        {
+          "customer": "wild-caught preserve LLC #124",
+          "revenue": 254578.53999999992
+        },
+        {
+          "customer": "wild-caught coffee LLC #1029",
+          "revenue": 253162.50999999983
+        },
+        {
+          "customer": "stone-milled cracker LLC #1066",
+          "revenue": 251800.76999999987
+        },
+        {
+          "customer": "grass-fed chocolate LLC #1008",
+          "revenue": 251561.9799999999
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "order_line_sales_by_country",
+      "description": "Order-line scan grouped by shipping country with line-count and unit aggregation.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (o:Order)-[r:ORDERS]-\u003e(:Product)\n\t\t\tRETURN o.shipCountry AS country, count(r) AS orderLines, sum(r.quantity) AS units\n\t\t\tORDER BY orderLines DESC, country ASC",
+      "latencies_ms": [
+        0.17,
+        0.19,
+        0.143,
+        0.169,
+        0.136,
+        0.132,
+        0.135,
+        0.169,
+        0.137,
+        0.132,
+        0.133,
+        0.143,
+        0.136,
+        0.147,
+        0.133,
+        0.126,
+        0.128,
+        0.16,
+        0.132,
+        0.169,
+        0.131,
+        0.128,
+        0.151,
+        0.14,
+        0.139,
+        0.137,
+        0.119,
+        0.137,
+        0.139,
+        0.122
+      ],
+      "mean_ms": 0.14210000000000003,
+      "median_ms": 0.137,
+      "p95_ms": 0.16955,
+      "p99_ms": 0.1842,
+      "min_ms": 0.119,
+      "max_ms": 0.19,
+      "stddev_ms": 0.016696788871537235,
+      "ops_per_second": 6835.788634681101,
+      "row_count": 15,
+      "result_hash": "a86030b2ba5eede99443d4932fa921fc46d219e0f8158cb08969ae313415d0bf",
+      "first_rows": [
+        {
+          "country": "NL",
+          "orderLines": 11449,
+          "units": 147793
+        },
+        {
+          "country": "FR",
+          "orderLines": 11329,
+          "units": 146502
+        },
+        {
+          "country": "ZA",
+          "orderLines": 11324,
+          "units": 146046
+        },
+        {
+          "country": "JP",
+          "orderLines": 11310,
+          "units": 147770
+        },
+        {
+          "country": "SE",
+          "orderLines": 11305,
+          "units": 146972
+        },
+        {
+          "country": "US",
+          "orderLines": 11298,
+          "units": 146112
+        },
+        {
+          "country": "IN",
+          "orderLines": 11250,
+          "units": 147372
+        },
+        {
+          "country": "BR",
+          "orderLines": 11245,
+          "units": 145774
+        },
+        {
+          "country": "DE",
+          "orderLines": 11243,
+          "units": 145118
+        },
+        {
+          "country": "AU",
+          "orderLines": 11171,
+          "units": 146438
+        },
+        {
+          "country": "UK",
+          "orderLines": 11158,
+          "units": 145104
+        },
+        {
+          "country": "IT",
+          "orderLines": 11095,
+          "units": 145726
+        },
+        {
+          "country": "MX",
+          "orderLines": 11061,
+          "units": 143710
+        },
+        {
+          "country": "ES",
+          "orderLines": 11019,
+          "units": 143019
+        },
+        {
+          "country": "CA",
+          "orderLines": 10793,
+          "units": 139463
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "low_stock_products",
+      "description": "Selective numeric property filter followed by a stable top-100 product sort.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (p:Product)\n\t\t\tWHERE p.unitsInStock \u003c 25\n\t\t\tRETURN p.productName AS product, p.unitsInStock AS unitsInStock, p.unitPrice AS unitPrice\n\t\t\tORDER BY unitsInStock ASC, product ASC\n\t\t\tLIMIT 100",
+      "latencies_ms": [
+        0.219,
+        0.242,
+        0.227,
+        0.204,
+        0.2,
+        0.195,
+        0.21,
+        0.189,
+        0.205,
+        0.202,
+        0.187,
+        0.196,
+        0.185,
+        0.193,
+        0.195,
+        0.202,
+        0.199,
+        0.186,
+        0.202,
+        0.193,
+        0.186,
+        0.177,
+        0.186,
+        0.188,
+        0.183,
+        0.178,
+        0.181,
+        0.181,
+        0.191,
+        0.18
+      ],
+      "mean_ms": 0.19539999999999993,
+      "median_ms": 0.193,
+      "p95_ms": 0.2234,
+      "p99_ms": 0.23765,
+      "min_ms": 0.177,
+      "max_ms": 0.242,
+      "stddev_ms": 0.014726471590888343,
+      "ops_per_second": 4488.302138137373,
+      "row_count": 100,
+      "result_hash": "a8f2f994d920e6d8ae57eadc26307c585f3e5d99733ee6452a92ae70668d6ae4",
+      "first_rows": [
+        {
+          "product": "aged biscuit 7705",
+          "unitPrice": 183.87,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged cheese 22851",
+          "unitPrice": 188.23,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged cheese 9484",
+          "unitPrice": 174.62,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged coffee 4912",
+          "unitPrice": 144.08,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged honey 7722",
+          "unitPrice": 53.15,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged sauce 32280",
+          "unitPrice": 143.49,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged spread 42102",
+          "unitPrice": 9.42,
+          "unitsInStock": 0
+        },
+        {
+          "product": "aged tea 37722",
+          "unitPrice": 112.68,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal biscuit 36865",
+          "unitPrice": 89.53,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal coffee 25601",
+          "unitPrice": 194.08,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal cracker 3272",
+          "unitPrice": 92.71,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal jerky 40297",
+          "unitPrice": 48.28,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal preserve 12317",
+          "unitPrice": 25.59,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal preserve 4528",
+          "unitPrice": 170.96,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal sauce 12625",
+          "unitPrice": 195.41,
+          "unitsInStock": 0
+        },
+        {
+          "product": "artisanal sauce 43343",
+          "unitPrice": 75.74,
+          "unitsInStock": 0
+        },
+        {
+          "product": "cold-pressed biscuit 46826",
+          "unitPrice": 113.99,
+          "unitsInStock": 0
+        },
+        {
+          "product": "cold-pressed chocolate 14465",
+          "unitPrice": 164.3,
+          "unitsInStock": 0
+        },
+        {
+          "product": "cold-pressed jerky 17284",
+          "unitPrice": 122.33,
+          "unitsInStock": 0
+        },
+        {
+          "product": "cold-pressed jerky 30273",
+          "unitPrice": 74.45,
+          "unitsInStock": 0
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "products_in_category",
+      "description": "Selective category lookup and adjacent product traversal with a top-100 result.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (c:Category {categoryID: 7})\u003c-[:PART_OF]-(p:Product)\n\t\t\tRETURN p.productName AS product, p.unitPrice AS unitPrice, p.unitsInStock AS unitsInStock\n\t\t\tORDER BY product ASC\n\t\t\tLIMIT 100",
+      "latencies_ms": [
+        0.194,
+        0.195,
+        0.181,
+        0.188,
+        0.202,
+        0.175,
+        0.198,
+        0.185,
+        0.196,
+        0.187,
+        0.193,
+        0.187,
+        0.184,
+        0.184,
+        0.182,
+        0.184,
+        0.197,
+        0.196,
+        0.21,
+        0.192,
+        0.176,
+        0.186,
+        0.174,
+        0.187,
+        0.186,
+        0.187,
+        0.179,
+        0.194,
+        0.181,
+        0.174
+      ],
+      "mean_ms": 0.18780000000000008,
+      "median_ms": 0.187,
+      "p95_ms": 0.20020000000000002,
+      "p99_ms": 0.20768,
+      "min_ms": 0.174,
+      "max_ms": 0.21,
+      "stddev_ms": 0.008587882401263488,
+      "ops_per_second": 4635.352286773795,
+      "row_count": 100,
+      "result_hash": "e207262bf51ed857ac41573f2b31db119608b1fb9264ca76c47c92447db2c4fc",
+      "first_rows": [
+        {
+          "product": "aged biscuit 16903",
+          "unitPrice": 30.28,
+          "unitsInStock": 370
+        },
+        {
+          "product": "aged biscuit 19111",
+          "unitPrice": 179.27,
+          "unitsInStock": 118
+        },
+        {
+          "product": "aged biscuit 37351",
+          "unitPrice": 23.01,
+          "unitsInStock": 310
+        },
+        {
+          "product": "aged cheese 20647",
+          "unitPrice": 31.21,
+          "unitsInStock": 366
+        },
+        {
+          "product": "aged chocolate 27271",
+          "unitPrice": 95.57,
+          "unitsInStock": 157
+        },
+        {
+          "product": "aged chocolate 27367",
+          "unitPrice": 187.14,
+          "unitsInStock": 366
+        },
+        {
+          "product": "aged coffee 15079",
+          "unitPrice": 120.38,
+          "unitsInStock": 95
+        },
+        {
+          "product": "aged condiment 40807",
+          "unitPrice": 19.17,
+          "unitsInStock": 23
+        },
+        {
+          "product": "aged cracker 35911",
+          "unitPrice": 187.8,
+          "unitsInStock": 173
+        },
+        {
+          "product": "aged cracker 7111",
+          "unitPrice": 121.2,
+          "unitsInStock": 426
+        },
+        {
+          "product": "aged honey 17287",
+          "unitPrice": 52.79,
+          "unitsInStock": 32
+        },
+        {
+          "product": "aged honey 23239",
+          "unitPrice": 135.32,
+          "unitsInStock": 202
+        },
+        {
+          "product": "aged honey 23431",
+          "unitPrice": 58.55,
+          "unitsInStock": 218
+        },
+        {
+          "product": "aged jerky 37639",
+          "unitPrice": 29.33,
+          "unitsInStock": 112
+        },
+        {
+          "product": "aged jerky 45703",
+          "unitPrice": 19.42,
+          "unitsInStock": 364
+        },
+        {
+          "product": "aged oil 16327",
+          "unitPrice": 31.91,
+          "unitsInStock": 294
+        },
+        {
+          "product": "aged oil 18919",
+          "unitPrice": 166.92,
+          "unitsInStock": 469
+        },
+        {
+          "product": "aged pasta 12775",
+          "unitPrice": 17.55,
+          "unitsInStock": 372
+        },
+        {
+          "product": "aged pasta 33895",
+          "unitPrice": 149.27,
+          "unitsInStock": 388
+        },
+        {
+          "product": "aged preserve 1159",
+          "unitPrice": 117.43,
+          "unitsInStock": 477
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "order_line_quantity_distribution",
+      "description": "Full relationship-property scan grouped by line quantity.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH ()-[r:ORDERS]-\u003e()\n\t\t\tRETURN r.quantity AS quantity, count(r) AS lineCount\n\t\t\tORDER BY quantity ASC",
+      "latencies_ms": [
+        0.154,
+        0.17,
+        0.161,
+        0.159,
+        0.174,
+        0.153,
+        0.16,
+        0.153,
+        0.148,
+        0.136,
+        0.127,
+        0.145,
+        0.141,
+        0.13,
+        0.135,
+        0.114,
+        0.131,
+        0.111,
+        0.11,
+        0.121,
+        0.133,
+        0.132,
+        0.116,
+        0.119,
+        0.135,
+        0.125,
+        0.134,
+        0.117,
+        0.134,
+        0.14
+      ],
+      "mean_ms": 0.13726666666666668,
+      "median_ms": 0.1345,
+      "p95_ms": 0.16595,
+      "p99_ms": 0.17284,
+      "min_ms": 0.11,
+      "max_ms": 0.174,
+      "stddev_ms": 0.017427551182822132,
+      "ops_per_second": 7048.872180451128,
+      "row_count": 25,
+      "result_hash": "e239e5f47878c8623d950bce0df2aea0ca5ceb71481dc28a88c2422268b717fe",
+      "first_rows": [
+        {
+          "lineCount": 6776,
+          "quantity": 1
+        },
+        {
+          "lineCount": 6818,
+          "quantity": 2
+        },
+        {
+          "lineCount": 6801,
+          "quantity": 3
+        },
+        {
+          "lineCount": 6727,
+          "quantity": 4
+        },
+        {
+          "lineCount": 6809,
+          "quantity": 5
+        },
+        {
+          "lineCount": 6789,
+          "quantity": 6
+        },
+        {
+          "lineCount": 6720,
+          "quantity": 7
+        },
+        {
+          "lineCount": 6548,
+          "quantity": 8
+        },
+        {
+          "lineCount": 6804,
+          "quantity": 9
+        },
+        {
+          "lineCount": 6641,
+          "quantity": 10
+        },
+        {
+          "lineCount": 6651,
+          "quantity": 11
+        },
+        {
+          "lineCount": 6682,
+          "quantity": 12
+        },
+        {
+          "lineCount": 6627,
+          "quantity": 13
+        },
+        {
+          "lineCount": 6737,
+          "quantity": 14
+        },
+        {
+          "lineCount": 6658,
+          "quantity": 15
+        },
+        {
+          "lineCount": 6662,
+          "quantity": 16
+        },
+        {
+          "lineCount": 6795,
+          "quantity": 17
+        },
+        {
+          "lineCount": 6668,
+          "quantity": 18
+        },
+        {
+          "lineCount": 6706,
+          "quantity": 19
+        },
+        {
+          "lineCount": 6637,
+          "quantity": 20
+        }
+      ],
+      "correctness_ok": true
+    },
+    {
+      "name": "customer_order_details",
+      "description": "Selective customer lookup followed by order-line expansion and computed row projection.",
+      "iterations": 30,
+      "cypher": "\n\t\t\tMATCH (c:Customer {customerID: 42})-[:PURCHASED]-\u003e(o:Order)-[r:ORDERS]-\u003e(p:Product)\n\t\t\tRETURN o.orderID AS orderID, p.productName AS product, r.quantity AS quantity,\n\t\t\t       p.unitPrice * r.quantity AS extendedPrice\n\t\t\tORDER BY orderID ASC, product ASC\n\t\t\tLIMIT 100",
+      "latencies_ms": [
+        0.213,
+        0.222,
+        0.213,
+        0.201,
+        0.193,
+        0.219,
+        0.227,
+        0.206,
+        0.212,
+        0.226,
+        0.218,
+        0.214,
+        0.207,
+        0.206,
+        0.207,
+        0.196,
+        0.201,
+        0.198,
+        0.188,
+        0.208,
+        0.204,
+        0.21,
+        0.217,
+        0.213,
+        0.194,
+        0.189,
+        0.205,
+        0.213,
+        0.191,
+        0.198
+      ],
+      "mean_ms": 0.20696666666666666,
+      "median_ms": 0.207,
+      "p95_ms": 0.2242,
+      "p99_ms": 0.22671,
+      "min_ms": 0.188,
+      "max_ms": 0.227,
+      "stddev_ms": 0.010594348959943574,
+      "ops_per_second": 4188.505651480867,
+      "row_count": 100,
+      "result_hash": "9d6ef178ee445057678660149407cfe91461a7143fc8c381ebb4cafb83749a55",
+      "first_rows": [
+        {
+          "extendedPrice": 1628.76,
+          "orderID": 11058,
+          "product": "fair-trade cracker 32670",
+          "quantity": 21
+        },
+        {
+          "extendedPrice": 133.16,
+          "orderID": 11058,
+          "product": "organic pasta 46113",
+          "quantity": 2
+        },
+        {
+          "extendedPrice": 308.07,
+          "orderID": 11058,
+          "product": "small-batch tea 45959",
+          "quantity": 9
+        },
+        {
+          "extendedPrice": 2385.84,
+          "orderID": 11058,
+          "product": "stone-milled preserve 20183",
+          "quantity": 24
+        },
+        {
+          "extendedPrice": 455.88,
+          "orderID": 11871,
+          "product": "cold-pressed preserve 36887",
+          "quantity": 12
+        },
+        {
+          "extendedPrice": 490.32,
+          "orderID": 11871,
+          "product": "stone-milled oil 21793",
+          "quantity": 3
+        },
+        {
+          "extendedPrice": 2434.68,
+          "orderID": 11871,
+          "product": "wild-caught jerky 39860",
+          "quantity": 18
+        },
+        {
+          "extendedPrice": 2355.2,
+          "orderID": 11871,
+          "product": "wild-caught wine 4734",
+          "quantity": 16
+        },
+        {
+          "extendedPrice": 2267.7999999999997,
+          "orderID": 12919,
+          "product": "hand-picked oil 27988",
+          "quantity": 23
+        },
+        {
+          "extendedPrice": 566.8,
+          "orderID": 12919,
+          "product": "heritage soda 24095",
+          "quantity": 20
+        },
+        {
+          "extendedPrice": 4002.39,
+          "orderID": 12919,
+          "product": "stone-milled coffee 8485",
+          "quantity": 21
+        },
+        {
+          "extendedPrice": 402.04,
+          "orderID": 12919,
+          "product": "wild-caught chocolate 43375",
+          "quantity": 4
+        },
+        {
+          "extendedPrice": 3283.77,
+          "orderID": 12919,
+          "product": "wild-caught wine 45962",
+          "quantity": 21
+        },
+        {
+          "extendedPrice": 834.3000000000001,
+          "orderID": 13817,
+          "product": "cold-pressed biscuit 19342",
+          "quantity": 5
+        },
+        {
+          "extendedPrice": 972.5799999999999,
+          "orderID": 13817,
+          "product": "cold-pressed oil 28941",
+          "quantity": 7
+        },
+        {
+          "extendedPrice": 790.4,
+          "orderID": 13817,
+          "product": "free-range preserve 23678",
+          "quantity": 16
+        },
+        {
+          "extendedPrice": 1866.06,
+          "orderID": 13817,
+          "product": "hand-picked biscuit 4839",
+          "quantity": 21
+        },
+        {
+          "extendedPrice": 1356.52,
+          "orderID": 13817,
+          "product": "hand-picked honey 43373",
+          "quantity": 11
+        },
+        {
+          "extendedPrice": 302.4,
+          "orderID": 13817,
+          "product": "premium wine 28690",
+          "quantity": 5
+        },
+        {
+          "extendedPrice": 259.92,
+          "orderID": 16209,
+          "product": "heritage cheese 736",
+          "quantity": 19
+        }
+      ],
+      "correctness_ok": true
+    }
+  ],
+  "overall_mean_ms": 0.16925714285714272,
+  "overall_ops_per_second": 21.081077825316164,
+  "query_latency_only_ops_per_second": 5908.170155300478
+}

@@ -1,0 +1,72 @@
+[memgraph] seeding Northwind (categories=96 suppliers=144 customers=1200 products=48000 orders=48000, batch_size=500 parallel=4 seed=42)
+  .. wrote 5000 / 48000 rows
+  .. wrote 10000 / 48000 rows
+  .. wrote 15000 / 48000 rows
+  .. wrote 20000 / 48000 rows
+  .. wrote 25000 / 48000 rows
+  .. wrote 30000 / 48000 rows
+  .. wrote 35000 / 48000 rows
+  .. wrote 40000 / 48000 rows
+  .. wrote 45000 / 48000 rows
+  .. wrote 48000 / 48000 rows
+  .. wrote 5000 / 48000 rows
+  .. wrote 10000 / 48000 rows
+  .. wrote 15000 / 48000 rows
+  .. wrote 20000 / 48000 rows
+  .. wrote 25000 / 48000 rows
+  .. wrote 30000 / 48000 rows
+  .. wrote 35000 / 48000 rows
+  .. wrote 40000 / 48000 rows
+  .. wrote 45000 / 48000 rows
+  .. wrote 48000 / 48000 rows
+  .. wrote 5000 / 168050 rows
+  .. wrote 10000 / 168050 rows
+  .. wrote 15000 / 168050 rows
+  .. wrote 20000 / 168050 rows
+  .. wrote 25000 / 168050 rows
+  .. wrote 30000 / 168050 rows
+  .. wrote 35000 / 168050 rows
+  .. wrote 40000 / 168050 rows
+  .. wrote 45000 / 168050 rows
+  .. wrote 50000 / 168050 rows
+  .. wrote 55000 / 168050 rows
+  .. wrote 60000 / 168050 rows
+  .. wrote 65000 / 168050 rows
+  .. wrote 70000 / 168050 rows
+  .. wrote 75000 / 168050 rows
+  .. wrote 80000 / 168050 rows
+  .. wrote 85000 / 168050 rows
+  .. wrote 90000 / 168050 rows
+  .. wrote 95000 / 168050 rows
+  .. wrote 100000 / 168050 rows
+  .. wrote 105000 / 168050 rows
+  .. wrote 110000 / 168050 rows
+  .. wrote 115000 / 168050 rows
+  .. wrote 120000 / 168050 rows
+  .. wrote 125000 / 168050 rows
+  .. wrote 130000 / 168050 rows
+  .. wrote 135000 / 168050 rows
+  .. wrote 140000 / 168050 rows
+  .. wrote 145000 / 168050 rows
+  .. wrote 150000 / 168050 rows
+  .. wrote 155000 / 168050 rows
+  .. wrote 160000 / 168050 rows
+  .. wrote 165000 / 168050 rows
+  .. wrote 168050 / 168050 rows
+[memgraph] seeded in 1603.2ms (97440 nodes, 312050 rels, ~35.4 MiB payload)
+[memgraph] seed verified: categories=96 suppliers=144 customers=1200 products=48000 orders=48000 part_of=48000 supplies=48000 purchased=48000 orders_edges=168050
+[memgraph] products_per_category              mean=   9.94ms p95=  10.91ms ops/s=    99.8 rows=96
+[memgraph] customer_category_distinct_orders  mean= 226.41ms p95= 234.03ms ops/s=     4.4 rows=10
+[memgraph] optional_match_orders_count        mean=  88.75ms p95=  91.99ms ops/s=    11.3 rows=100
+[memgraph] revenue_by_product                 mean=  80.61ms p95=  83.02ms ops/s=    12.4 rows=10
+[memgraph] products_by_supplier               mean=   8.80ms p95=   9.12ms ops/s=   113.2 rows=25
+[memgraph] orders_by_customer                 mean=   9.66ms p95=  10.04ms ops/s=   103.2 rows=25
+[memgraph] revenue_by_category                mean=  71.88ms p95=  74.75ms ops/s=    13.9 rows=96
+[memgraph] revenue_by_supplier                mean=  72.60ms p95=  79.81ms ops/s=    13.8 rows=25
+[memgraph] revenue_by_customer                mean=  99.63ms p95= 108.72ms ops/s=    10.0 rows=25
+[memgraph] order_line_sales_by_country        mean=  41.53ms p95=  42.88ms ops/s=    24.1 rows=15
+[memgraph] low_stock_products                 mean=   8.79ms p95=   9.10ms ops/s=   112.3 rows=100
+[memgraph] products_in_category               mean=   0.85ms p95=   0.96ms ops/s=  1034.4 rows=100
+[memgraph] order_line_quantity_distribution   mean=  25.35ms p95=  36.95ms ops/s=    39.4 rows=25
+[memgraph] customer_order_details             mean=   0.65ms p95=   0.98ms ops/s=  1326.6 rows=100
+[memgraph] wrote /Users/tjsweet/src/NornicDB/scripts/benchmark_reports/20261009_093018/memgraph.results.json

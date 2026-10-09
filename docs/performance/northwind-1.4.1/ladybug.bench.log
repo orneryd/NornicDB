@@ -1,0 +1,19 @@
+[ladybug] seeding Northwind (categories=96 suppliers=144 customers=1200 products=48000 orders=48000 batch_size=500 parallel=4 seed=42)
+[ladybug] note: LadybugDB (Kuzu) has no CREATE INDEX ... FOR syntax; index setup is skipped
+[ladybug] seeded in 4944.2ms (97440 nodes, 312050 rels, ~35.4 MiB payload)
+[ladybug] seed verified: categories=96 suppliers=144 customers=1200 products=48000 orders=48000 part_of=48000 supplies=48000 purchased=48000 orders_edges=168050
+[ladybug] products_per_category              mean=   0.88ms p95=   1.00ms ops/s=  1112.6 rows=96
+[ladybug] customer_category_distinct_orders  mean=  58.22ms p95=  59.67ms ops/s=    17.2 rows=10
+[ladybug] optional_match_orders_count        mean=  10.22ms p95=  10.69ms ops/s=    97.7 rows=100
+[ladybug] revenue_by_product                 mean=   5.08ms p95=   5.26ms ops/s=   196.5 rows=10
+[ladybug] products_by_supplier               mean=   0.77ms p95=   0.81ms ops/s=  1292.9 rows=25
+[ladybug] orders_by_customer                 mean=   0.98ms p95=   1.03ms ops/s=  1016.1 rows=25
+[ladybug] revenue_by_category                mean=  34.45ms p95=  35.41ms ops/s=    29.0 rows=96
+[ladybug] revenue_by_supplier                mean=  35.09ms p95=  35.69ms ops/s=    28.5 rows=25
+[ladybug] revenue_by_customer                mean=  61.75ms p95=  63.54ms ops/s=    16.2 rows=25
+[ladybug] order_line_sales_by_country        mean=   2.05ms p95=   2.17ms ops/s=   485.0 rows=15
+[ladybug] low_stock_products                 mean=   2.33ms p95=   2.57ms ops/s=   424.0 rows=100
+[ladybug] products_in_category               mean=   2.22ms p95=   2.38ms ops/s=   445.9 rows=100
+[ladybug] order_line_quantity_distribution   mean=   1.51ms p95=   1.68ms ops/s=   660.2 rows=25
+[ladybug] customer_order_details             mean=   2.63ms p95=   2.79ms ops/s=   375.2 rows=100
+[ladybug] wrote /Users/tjsweet/src/NornicDB/scripts/benchmark_reports/20261009_093018/ladybug.results.json
