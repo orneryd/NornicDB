@@ -149,8 +149,13 @@ func labelTargetTypeError(typeName string) error {
 // REMOVE or MERGE action item: a label item whose target isn't a node, a
 // property write whose target isn't a node or relationship, or a dynamic
 // label or property key whose value is known not to name one
-// (staticDynamicTokenError). Everything else is read at run time.
+// (staticDynamicTokenError); and a pattern's dynamic label or type whose
+// value depends on the row (staticPatternTokenError). Everything else is
+// read at run time.
 func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
+	if err := staticPatternTokenError(clause, scope); err != nil {
+		return err
+	}
 	switch clause.kind {
 	case pipelineClauseSet:
 		return staticSetItemsTokenError(splitSetAssignments(collapseChainedSetClauses(pipelineClauseBody(clause.text, "SET"))), scope)
@@ -430,4 +435,51 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 	}
 	out.WriteString(pattern[last:])
 	return out.String(), nil
+}
+
+// staticPatternTokenError checks the dynamic labels and types of a clause's
+// patterns whose values depend on the row against their static types (a
+// variable bound to a literal by WITH or UNWIND): the MATCH predicates they
+// became (dynamicLabelTestFunction) and the $(e) a CREATE or MERGE pattern
+// keeps until its rows run.
+func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error {
+	text := clause.text
+	if strings.IndexByte(text, '$') < 0 && !strings.Contains(text, dynamicLabelTestFunction) {
+		return nil
+	}
+	for i := 0; i < len(text); i++ {
+		switch c := text[i]; c {
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(text, i, c) - 1
+		case '$':
+			if (clause.kind != pipelineClauseCreate && clause.kind != pipelineClauseMerge) || !dynamicLabelStartsAt(text, i) {
+				continue
+			}
+			open := i + strings.IndexByte(text[i:], '(')
+			closing := findMatchingDelimiter(text, open, '(', ')')
+			if closing < 0 {
+				return nil
+			}
+			if err := staticDynamicTokenError(text[open+1:closing], scope, dynamicTokenLabel); err != nil {
+				return err
+			}
+			i = closing
+		case '_':
+			if !strings.HasPrefix(text[i:], dynamicLabelTestFunction+"(") {
+				continue
+			}
+			open := i + len(dynamicLabelTestFunction)
+			closing := findMatchingDelimiter(text, open, '(', ')')
+			if closing < 0 {
+				return nil
+			}
+			if args := splitTopLevelComma(text[open+1 : closing]); len(args) == 3 {
+				if err := staticDynamicTokenError(args[1], scope, dynamicTokenLabel); err != nil {
+					return err
+				}
+			}
+			i = closing
+		}
+	}
+	return nil
 }
