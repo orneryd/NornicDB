@@ -30,6 +30,7 @@ func TestQueryStructureRewriteEdges(t *testing.T) {
 		"{ WHEN true THEN RETURN 1 AS x ELSE RETURN 2 AS y }",
 		"RETURN COUNT { WHEN true THEN RETURN 1 AS x ELSE RETURN 2 AS y } AS c",
 		"WHEN true THEN { WHEN true THEN RETURN 1 AS x ELSE RETURN 1 AS y } ELSE RETURN 1 AS x",
+		"WHEN true THEN RETURN COUNT { WHEN true THEN RETURN 1 AS x ELSE RETURN 2 AS y } AS c ELSE RETURN 1 AS c",
 	} {
 		_, _, err := desugarQueryStructure(query, columns)
 		require.Error(t, err, query)
@@ -38,6 +39,7 @@ func TestQueryStructureRewriteEdges(t *testing.T) {
 
 	for _, query := range []string{
 		"RETURN COUNT { MATCH (n)",
+		"RETURN 1 AS x NEXT RETURN COUNT { MATCH (n)",
 		"WHEN true WHEN false THEN RETURN 1 AS x",
 		"WHEN true THEN RETURN 1 AS x THEN RETURN 2 AS x",
 		"WHEN true",
@@ -73,6 +75,7 @@ func TestCypher25ExpressionRewriteEdges(t *testing.T) {
 	for query, want := range map[string][][]interface{}{
 		"WITH 1 AS all RETURN all, 2 AS b":        {{int64(1), int64(2)}},
 		"WITH 1 AS all RETURN all AS x":           {{int64(1)}},
+		"WITH 1 AS all RETURN all , 2 AS b":       {{int64(1), int64(2)}},
 		`RETURN s"a\tb{1}" AS v`:                  {{"a\tb1"}},
 		"RETURN [x IN ['a'] | x] /* s'{' */ AS v": {{[]interface{}{"a"}}},
 	} {
@@ -155,6 +158,23 @@ func TestCypher25BatchTwoEdges(t *testing.T) {
 
 	_, err = exec.Execute(ctx, "MATCH (n:LcB) RETURN [x IN [{a: 1}] | type(x)] AS t", nil)
 	require.Error(t, err)
+
+	// The same comprehensions where the full evaluator runs them (WHERE).
+	result, err = exec.Execute(ctx, "MATCH (n:LcB) WHERE size([x IN labels(n)]) = 2 RETURN count(n) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+	result, err = exec.Execute(ctx, "MATCH ()-[r:LcR]->() WHERE size([x IN [r] | id(x)]) = 1 AND [x IN [r] | type(x)] = ['LcR'] RETURN count(r) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+
+	// A string list a Go caller stored ([]string) is read as a list.
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "string_lists")
+	stringLists := NewStorageExecutor(engine)
+	_, err = engine.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Tagged"}, Properties: map[string]interface{}{"tags": []string{"a", "b"}}})
+	require.NoError(t, err)
+	result, err = stringLists.Execute(ctx, "MATCH (n:Tagged) SET n.copy = [x IN n.tags] RETURN n.copy AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{"a", "b"}}}, result.Rows)
 
 	_, _ = exec.Execute(ctx, "SHOW CONSTITUENTS", nil)
 
