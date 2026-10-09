@@ -511,6 +511,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphermatching.unwind_as_required", Constructor: "CypherMatchingUnwindASRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.variable_length_in_quantified_path", Constructor: "CypherMatchingVariableLengthInQuantifiedPath", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.variable_length_type_expression", Constructor: "CypherMatchingVariableLengthTypeExpression", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "cyphermatching.variable_type_conflict", Constructor: "CypherMatchingVariableTypeConflict", Fields: []string{"Defined", "Expected", "Variable"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.with_return_clauses_required", Constructor: "CypherMatchingWithReturnClausesRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphermerge.bulk_create_edges_failed", Constructor: "CypherMergeBulkCreateEdgesFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphermerge.bulk_create_nodes_failed", Constructor: "CypherMergeBulkCreateNodesFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},

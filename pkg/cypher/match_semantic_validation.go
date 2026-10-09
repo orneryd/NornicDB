@@ -493,7 +493,6 @@ func (e *StorageExecutor) validateMatchClauseBindings(scope matchSemanticScope, 
 	}
 
 	variableLengthRelationships := variableLengthRelationshipVariableSet(pattern)
-	seenRelationships := make(map[string]struct{})
 	for _, patternPart := range splitTopLevelComma(pattern) {
 		patternPart = strings.TrimSpace(patternPart)
 		pathVariable := extractPathAssignmentVariable(patternPart)
@@ -539,14 +538,6 @@ func (e *StorageExecutor) validateMatchClauseBindings(scope matchSemanticScope, 
 			if err := bindMatchSemanticKind(scope, variable, kind); err != nil {
 				return err
 			}
-			if _, exists := seenRelationships[variable]; exists {
-				return newSemanticError(
-					"Neo.ClientError.Statement.SyntaxError",
-					"RelationshipUniquenessViolation",
-					fmt.Sprintf("relationship variable %s is used more than once in the same pattern", variable),
-				)
-			}
-			seenRelationships[variable] = struct{}{}
 		}
 
 	}

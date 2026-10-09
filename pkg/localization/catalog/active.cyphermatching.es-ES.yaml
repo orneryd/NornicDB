@@ -157,3 +157,6 @@
 - id: cyphermatching.path_selector_outside_match
   description: "Un selector de caminos llegó a un paso que no ejecuta patrones de camino."
   other: "un selector de caminos solo se puede usar en un patrón de MATCH"
+- id: cyphermatching.variable_type_conflict
+  description: "Una variable se vincula con dos tipos en un patrón. Variable es el nombre de la variable; Defined y Expected son nombres de tipos de Cypher; ninguno se traduce."
+  other: "Tipos incompatibles: {{.Variable}} está definida con el tipo {{.Defined}} (se esperaba {{.Expected}})"
