@@ -238,3 +238,34 @@ func TestCypher25BatchTwoSweepCases(t *testing.T) {
 		require.NotEmpty(t, result.Rows)
 	}
 }
+
+// The remaining batch-2 helpers on their edges.
+func TestCypher25BatchTwoHelperEdges(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "batch_two_helpers"))
+	ctx := context.Background()
+
+	// The map comprehension builder: a null pair list is null, and an item
+	// that isn't a [key, value] pair is skipped.
+	result, err := exec.Execute(ctx, "RETURN __nornic_map_from_pairs(null) AS a, __nornic_map_from_pairs([[1], ['k', 2]]) AS b", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{nil, map[string]interface{}{"k": int64(2)}}}, result.Rows)
+
+	require.Equal(t, 0, indexFold("abc", ""))
+	require.Equal(t, 1, indexFold("aBc", "bC"))
+	require.Equal(t, -1, indexFold("abc", "x"))
+
+	// A nested statement keeps the outer statement's language version.
+	outer := withCypherVersion(ctx, "CYPHER 25 RETURN 1")
+	require.Equal(t, "25", cypherVersionFromContext(outer))
+	require.Equal(t, outer, withCypherVersion(outer, "RETURN 1"))
+	require.Equal(t, "5", cypherVersionFromContext(withCypherVersion(ctx, "RETURN 1")))
+
+	// type(x) / id(x) of relationship items, where SET evaluates them.
+	_, err = exec.Execute(ctx, "CREATE (:Hr)-[:HrR]->(:Hr)", nil)
+	require.NoError(t, err)
+	result, err = exec.Execute(ctx, "MATCH ()-[r:HrR]->() SET r.t = [x IN [r] | type(x)], r.i = [x IN [r] | id(x)], r.m = [x IN [{_edgeId: 'e', type: 'M'}] | id(x)] RETURN r.t AS t, size(r.i) AS i, r.m AS m", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{"HrR"}, int64(1), []interface{}{"e"}}}, result.Rows)
+	_, err = exec.Execute(ctx, "MATCH ()-[r:HrR]->() SET r.u = [x IN [{a: 1}] | type(x)] RETURN r.u AS u", nil)
+	require.Error(t, err)
+}
