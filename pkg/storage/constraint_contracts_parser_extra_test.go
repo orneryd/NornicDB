@@ -158,7 +158,8 @@ func TestConstraintContract_ParsersAndComparators(t *testing.T) {
 
 	t.Run("evaluate and compare helpers", func(t *testing.T) {
 		require.True(t, evaluatePropertyInExpression(int64(5), []interface{}{int64(4), int64(5)}))
-		require.False(t, evaluatePropertyInExpression(nil, []interface{}{nil}))
+		require.True(t, evaluatePropertyInExpression(nil, []interface{}{"a"}), "absent property satisfies IN")
+		require.True(t, compareConstraintExpressionValue(nil, ">", int64(0)), "absent property satisfies comparisons")
 
 		require.True(t, compareConstraintExpressionValue(int64(5), ">", int64(3)))
 		require.True(t, compareConstraintExpressionValue("b", ">", "a"))

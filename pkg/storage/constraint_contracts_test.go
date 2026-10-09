@@ -570,8 +570,10 @@ func TestEvaluatePropertyInExpression_NotFound(t *testing.T) {
 }
 
 func TestEvaluatePropertyInExpression_NilActual(t *testing.T) {
-	if evaluatePropertyInExpression(nil, []interface{}{"a", "b"}) {
-		t.Fatal("expected nil actual to return false")
+	// CHECK semantics: an absent property satisfies a domain entry; presence
+	// is required separately with IS NOT NULL.
+	if !evaluatePropertyInExpression(nil, []interface{}{"a", "b"}) {
+		t.Fatal("expected nil actual to satisfy the IN predicate")
 	}
 }
 

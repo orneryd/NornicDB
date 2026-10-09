@@ -152,6 +152,10 @@ Boolean predicates remain runtime contract entries. Examples include:
 - `startNode(r).tenant = endNode(r).tenant`
 - `r.hoursPerWeek > 0`
 
+Property predicates (`n.status IN [...]`, `r.hoursPerWeek > 0`) follow SQL `CHECK` semantics: a node or relationship that does not have the property satisfies them, the same way primitive domain and type constraints accept null. Add `n.status IS NOT NULL` to the block when the property is required.
+
+Every boolean predicate is compiled when the contract is created. A predicate the engine cannot evaluate (for example `n.status IS NULL OR n.status IN [...]`) fails `CREATE CONSTRAINT` with `unsupported node predicate` / `unsupported relationship predicate`, even when the target label has no data yet, and nothing is stored.
+
 This split matters operationally:
 
 - compiled entries reuse the current primitive storage and enforcement path
@@ -313,6 +317,14 @@ RETURN n.id, n.status
 ```
 
 This is especially important for runtime predicates such as cardinality-style checks embedded in a block.
+
+### Drop a contract
+
+```cypher
+DROP CONSTRAINT person_contract IF EXISTS
+```
+
+Dropping a contract by name removes the contract metadata and every primitive constraint compiled from it (`person_contract__entry_NN`). `SHOW CONSTRAINTS` and `SHOW CONSTRAINT CONTRACTS` both stop listing it, and the name can be reused. Contracts have no `ALTER`; to change one, drop it and create the new definition.
 
 ### Treat contract edits as schema migrations
 

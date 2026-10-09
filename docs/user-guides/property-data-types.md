@@ -269,7 +269,11 @@ NornicDB supports property type constraints for schema enforcement on both nodes
 - `FLOAT` - Float values only
 - `BOOLEAN` - Boolean values only
 - `DATE` - Date values only
-- `DATETIME` - DateTime values only
+- `DATETIME` / `ZONED DATETIME` - Zoned DateTime values only
+- `LOCAL DATETIME` - Local DateTime values only
+- `LIST<T NOT NULL>` - Lists whose elements are all of scalar type `T` (any of the above). `LIST<T>` is accepted and stored as the canonical `LIST<T NOT NULL>`; nested lists are not supported.
+
+An absent (null) property satisfies a type constraint; use `IS NOT NULL` to require it.
 
 ### Node property type constraints
 
@@ -281,6 +285,17 @@ CREATE (p:Person {age: "thirty"})  // Error: expected INTEGER, got string
 
 // This will succeed:
 CREATE (p:Person {age: 30})  // Valid
+```
+
+### List property type constraints
+
+```cypher
+CREATE CONSTRAINT doc_tags_type FOR (d:Doc) REQUIRE d.tags IS :: LIST<STRING NOT NULL>
+
+CREATE (:Doc {tags: ['tax', '2026']})  // Valid
+CREATE (:Doc {tags: []})               // Valid: an empty list matches any element type
+CREATE (:Doc {tags: ['tax', 2026]})    // Error: every element must be a STRING
+CREATE (:Doc {tags: 'tax'})            // Error: a scalar is not a list
 ```
 
 ### Relationship property type constraints

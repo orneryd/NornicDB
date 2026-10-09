@@ -3,6 +3,7 @@ package storage
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -814,9 +815,49 @@ func ValidatePropertyType(value interface{}, expectedType PropertyType) error {
 			return localizedError(localization.StorageValidationExpectedType("LOCAL DATETIME", fmt.Sprintf("%T", value)), nil)
 		}
 	default:
+		if element, ok := ListElementPropertyType(expectedType); ok {
+			return validateListPropertyType(value, expectedType, element)
+		}
 		return localizedError(localization.StorageValidationUnknownPropertyType(string(expectedType)), nil)
 	}
 
+	return nil
+}
+
+// ListPropertyType returns the canonical LIST<T NOT NULL> property type for a
+// scalar element type.
+func ListPropertyType(element PropertyType) PropertyType {
+	return PropertyType("LIST<" + string(element) + " NOT NULL>")
+}
+
+// ListElementPropertyType reports the element type of a LIST<T NOT NULL>
+// property type.
+func ListElementPropertyType(pt PropertyType) (PropertyType, bool) {
+	s := string(pt)
+	if !strings.HasPrefix(s, "LIST<") || !strings.HasSuffix(s, " NOT NULL>") {
+		return "", false
+	}
+	element := PropertyType(strings.TrimSuffix(strings.TrimPrefix(s, "LIST<"), " NOT NULL>"))
+	if element == "" {
+		return "", false
+	}
+	return element, true
+}
+
+func validateListPropertyType(value interface{}, listType, element PropertyType) error {
+	rv := reflect.ValueOf(value)
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
+		return localizedError(localization.StorageValidationExpectedType(string(listType), fmt.Sprintf("%T", value)), nil)
+	}
+	for i := 0; i < rv.Len(); i++ {
+		item := rv.Index(i).Interface()
+		if item == nil {
+			return localizedError(localization.StorageValidationExpectedType(string(listType), "list containing null"), nil)
+		}
+		if err := ValidatePropertyType(item, element); err != nil {
+			return localizedError(localization.StorageValidationExpectedType(string(listType), fmt.Sprintf("list containing %T", item)), nil)
+		}
+	}
 	return nil
 }
 

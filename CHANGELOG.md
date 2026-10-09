@@ -5,6 +5,33 @@ All notable changes to NornicDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Support `LIST<T>` property type constraints (`REQUIRE n.tags IS :: LIST<STRING NOT NULL>`)
+  for scalar element types, as primitives and inside `REQUIRE { ... }` contracts.
+  `LIST<T>` is stored as Neo4j's canonical `LIST<T NOT NULL>`; every element must
+  match `T`, and creation validates existing data.
+
+### Fixed
+
+- `DROP DATABASE` now removes the database's schema (constraints, contracts,
+  indexes) along with its data. Previously the schema survived the drop, so a
+  database recreated under the same name came back with every constraint of the
+  dropped one, including after a restart.
+- `DROP CONSTRAINT <contract>` now drops a constraint contract together with the
+  primitives compiled from it. Previously it reported that the constraint did not
+  exist while `SHOW CONSTRAINT CONTRACTS` still listed it, so contracts could not
+  be removed.
+- Contract creation now rejects boolean entries the engine cannot evaluate (for
+  example `n.x IS NULL OR n.x IN [...]`). Previously such a contract was created
+  on an empty label and then rejected every later write to that label.
+- Contract property predicates (`x.p IN [...]`, `x.p > v`) are satisfied when the
+  property is absent, matching primitive domain/type constraints and SQL `CHECK`
+  semantics. Previously `IN` rejected a missing property, and comparisons against a
+  missing property compared the string `"<nil>"`.
+
 ## [1.4.1]
 
 ### Added

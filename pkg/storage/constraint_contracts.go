@@ -152,6 +152,12 @@ const (
 	ConstraintContractKindBooleanRelationship   = "boolean-relationship"
 )
 
+// ConstraintContractEntryName is the name of the primitive constraint compiled
+// from the entry at index idx (0-based) of a contract.
+func ConstraintContractEntryName(contractName string, idx int) string {
+	return fmt.Sprintf("%s__entry_%02d", contractName, idx+1)
+}
+
 type ConstraintContract struct {
 	Name              string                    `json:"name"`
 	TargetEntityType  string                    `json:"target_entity_type"`
@@ -303,6 +309,9 @@ func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract
 }
 
 func ValidateConstraintContractOnCreationForEngine(engine Engine, contract ConstraintContract) error {
+	if err := ValidateConstraintContractExpressions(contract); err != nil {
+		return err
+	}
 	entityType := ConstraintEntityType(contract.TargetEntityType)
 	switch entityType {
 	case ConstraintEntityNode:
@@ -402,39 +411,66 @@ func evaluateNodeConstraintContractExpressionEngine(engine Engine, node *Node, e
 }
 
 func evaluateNodeConstraintContractExpression(view constraintGraphView, node *Node, expr string) (bool, error) {
-	if matched, values, property, err := parsePropertyInExpression(expr); err != nil {
+	predicate, err := compileNodeConstraintContractExpression(expr)
+	if err != nil {
 		return false, err
+	}
+	return predicate(view, node)
+}
+
+// contractNodePredicate / contractRelationshipPredicate are compiled runtime
+// contract entries. Compiling is pure parsing, so contract creation compiles
+// every boolean entry up front (an unsupported predicate is rejected at
+// CREATE CONSTRAINT instead of blocking every later write), and write-time
+// evaluation goes through the same compiler.
+type contractNodePredicate func(view constraintGraphView, node *Node) (bool, error)
+type contractRelationshipPredicate func(view constraintGraphView, edge *Edge) (bool, error)
+
+// Property predicates (`x.p IN [...]`, `x.p > v`) follow SQL CHECK semantics:
+// an absent property satisfies them, the same way primitive domain and type
+// constraints accept null. Presence is required with `x.p IS NOT NULL`.
+func compileNodeConstraintContractExpression(expr string) (contractNodePredicate, error) {
+	if matched, values, property, err := parsePropertyInExpression(expr); err != nil {
+		return nil, err
 	} else if matched {
-		return evaluatePropertyInExpression(node.Properties[property], values), nil
+		return func(_ constraintGraphView, node *Node) (bool, error) {
+			return evaluatePropertyInExpression(node.Properties[property], values), nil
+		}, nil
 	}
 
 	if matched, property, comparator, value, err := parseRelationshipPropertyComparisonExpression(expr); err != nil {
-		return false, err
+		return nil, err
 	} else if matched {
-		return compareConstraintExpressionValue(node.Properties[property], comparator, value), nil
+		return func(_ constraintGraphView, node *Node) (bool, error) {
+			return compareConstraintExpressionValue(node.Properties[property], comparator, value), nil
+		}, nil
 	}
 
 	if matched, pattern, comparator, threshold, err := parseCountPatternExpression(expr); err != nil {
-		return false, err
+		return nil, err
 	} else if matched {
-		count, err := countMatchingPatternEdges(view, node, pattern)
-		if err != nil {
-			return false, err
-		}
-		return compareInt(count, comparator, threshold), nil
+		return func(view constraintGraphView, node *Node) (bool, error) {
+			count, err := countMatchingPatternEdges(view, node, pattern)
+			if err != nil {
+				return false, err
+			}
+			return compareInt(count, comparator, threshold), nil
+		}, nil
 	}
 
 	if matched, pattern, err := parseNotExistsPatternExpression(expr); err != nil {
-		return false, err
+		return nil, err
 	} else if matched {
-		count, err := countMatchingPatternEdges(view, node, pattern)
-		if err != nil {
-			return false, err
-		}
-		return count == 0, nil
+		return func(view constraintGraphView, node *Node) (bool, error) {
+			count, err := countMatchingPatternEdges(view, node, pattern)
+			if err != nil {
+				return false, err
+			}
+			return count == 0, nil
+		}, nil
 	}
 
-	return false, localizedError(localization.StorageSchemaUnsupportedNodePredicate(), nil)
+	return nil, localizedError(localization.StorageSchemaUnsupportedNodePredicate(), nil)
 }
 
 func evaluateRelationshipConstraintContractExpressionEngine(engine Engine, edge *Edge, expr string) (bool, error) {
@@ -442,38 +478,74 @@ func evaluateRelationshipConstraintContractExpressionEngine(engine Engine, edge 
 }
 
 func evaluateRelationshipConstraintContractExpression(view constraintGraphView, edge *Edge, expr string) (bool, error) {
-	if matched, property, values, err := parseRelationshipPropertyInExpression(expr); err != nil {
+	predicate, err := compileRelationshipConstraintContractExpression(expr)
+	if err != nil {
 		return false, err
+	}
+	return predicate(view, edge)
+}
+
+func compileRelationshipConstraintContractExpression(expr string) (contractRelationshipPredicate, error) {
+	if matched, property, values, err := parseRelationshipPropertyInExpression(expr); err != nil {
+		return nil, err
 	} else if matched {
-		return evaluatePropertyInExpression(edge.Properties[property], values), nil
+		return func(_ constraintGraphView, edge *Edge) (bool, error) {
+			return evaluatePropertyInExpression(edge.Properties[property], values), nil
+		}, nil
 	}
 
 	if isDistinctEndpointsExpression(expr) {
-		return edge.StartNode != edge.EndNode, nil
+		return func(_ constraintGraphView, edge *Edge) (bool, error) {
+			return edge.StartNode != edge.EndNode, nil
+		}, nil
 	}
 
 	if matched, leftProp, rightProp := parseEndpointPropertyEqualityExpression(expr); matched {
-		startNode, err := view.Node(edge.StartNode)
-		if err != nil {
-			return false, err
-		}
-		endNode, err := view.Node(edge.EndNode)
-		if err != nil {
-			return false, err
-		}
-		if startNode == nil || endNode == nil {
-			return false, localizedError(localization.StorageSchemaMissingRelationshipEndpoint(), nil)
-		}
-		return compareValues(startNode.Properties[leftProp], endNode.Properties[rightProp]), nil
+		return func(view constraintGraphView, edge *Edge) (bool, error) {
+			startNode, err := view.Node(edge.StartNode)
+			if err != nil {
+				return false, err
+			}
+			endNode, err := view.Node(edge.EndNode)
+			if err != nil {
+				return false, err
+			}
+			if startNode == nil || endNode == nil {
+				return false, localizedError(localization.StorageSchemaMissingRelationshipEndpoint(), nil)
+			}
+			return compareValues(startNode.Properties[leftProp], endNode.Properties[rightProp]), nil
+		}, nil
 	}
 
 	if matched, property, comparator, value, err := parseRelationshipPropertyComparisonExpression(expr); err != nil {
-		return false, err
+		return nil, err
 	} else if matched {
-		return compareConstraintExpressionValue(edge.Properties[property], comparator, value), nil
+		return func(_ constraintGraphView, edge *Edge) (bool, error) {
+			return compareConstraintExpressionValue(edge.Properties[property], comparator, value), nil
+		}, nil
 	}
 
-	return false, localizedError(localization.StorageSchemaUnsupportedRelationshipPredicate(), nil)
+	return nil, localizedError(localization.StorageSchemaUnsupportedRelationshipPredicate(), nil)
+}
+
+// ValidateConstraintContractExpressions compiles every boolean entry of a
+// contract so unsupported predicates fail at creation, even on an empty graph.
+func ValidateConstraintContractExpressions(contract ConstraintContract) error {
+	for _, entry := range contract.Entries {
+		var err error
+		switch entry.Kind {
+		case ConstraintContractKindBooleanNode:
+			_, err = compileNodeConstraintContractExpression(entry.Expression)
+		case ConstraintContractKindBooleanRelationship:
+			_, err = compileRelationshipConstraintContractExpression(entry.Expression)
+		default:
+			continue
+		}
+		if err != nil {
+			return localizedError(localization.StorageSchemaConstraintContractInvalid(contract.Name, entry.Expression, err), err)
+		}
+	}
+	return nil
 }
 
 type contractPattern struct {
@@ -1068,7 +1140,7 @@ func splitTopLevelCSV(raw string) []string {
 
 func evaluatePropertyInExpression(actual interface{}, values []interface{}) bool {
 	if actual == nil {
-		return false
+		return true
 	}
 	for _, value := range values {
 		if compareValues(actual, value) {
@@ -1079,6 +1151,9 @@ func evaluatePropertyInExpression(actual interface{}, values []interface{}) bool
 }
 
 func compareConstraintExpressionValue(actual interface{}, comparator string, expected interface{}) bool {
+	if actual == nil {
+		return true
+	}
 	switch comparator {
 	case "=":
 		return compareValues(actual, expected)
