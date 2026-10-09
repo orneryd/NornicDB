@@ -149,7 +149,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 // miss decode via decode, decay filter and optional cache store. GetNode and
 // GetNodeWithoutEmbeddings differ only in the decode function, the cache-hit
 // copy shape and whether the decoded node is cached.
-func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val []byte) (*Node, error), hitCopy func(*Node) *Node, cacheStore func(*Node)) (*Node, error) {
+func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val []byte) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node)) (*Node, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
@@ -172,6 +172,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 	b.nodeCacheMu.RUnlock()
 	atomic.AddInt64(&b.cacheMisses, 1)
 
+	gen := b.nodeCacheGen.current()
 	var node *Node
 	err := b.withView(func(txn *badger.Txn) error {
 		item, err := txn.Get(nodeKey(id))
@@ -196,8 +197,8 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 	if b.filterNodeByDecay(node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
-	if cacheStore != nil {
-		cacheStore(node)
+	if cacheFill != nil {
+		cacheFill(gen, node)
 	}
 	return node, nil
 }
@@ -209,7 +210,7 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 			return b.decodeNodeWithEmbeddings(txn, val, id)
 		},
 		copyNode,
-		b.cacheStoreNode,
+		b.cacheFillNode,
 	)
 }
 

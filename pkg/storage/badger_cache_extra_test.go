@@ -12,7 +12,7 @@ func TestBadgerCache_LabelCacheLifecycle_Extra(t *testing.T) {
 	nid := NodeID(prefixTestID("node-1"))
 
 	// set/get
-	b.labelCacheSetFirst("Person", nid)
+	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Person", nid)
 	got, ok := b.labelCacheGetFirst("Person")
 	assert.True(t, ok)
 	assert.Equal(t, nid, got)
@@ -25,7 +25,7 @@ func TestBadgerCache_LabelCacheLifecycle_Extra(t *testing.T) {
 	assert.False(t, ok)
 
 	// re-add and invalidate removed labels
-	b.labelCacheSetFirst("Employee", nid)
+	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Employee", nid)
 	b.labelCacheInvalidateForRemovedLabels([]string{"Employee", "Person"}, []string{"Person"}, nid)
 	_, ok = b.labelCacheGetFirst("Employee")
 	assert.False(t, ok)
@@ -45,7 +45,7 @@ func TestBadgerCache_NodeCreateUpdateDelete_Extra(t *testing.T) {
 	assert.Equal(t, "b", b.nodeCache[n.ID].Properties["name"])
 
 	old := &Node{ID: n.ID, Labels: []string{"Person", "Legacy"}, Properties: map[string]interface{}{}}
-	b.labelCacheSetFirst("Legacy", n.ID)
+	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Legacy", n.ID)
 	b.cacheOnNodeUpdatedWithOldNode(n2, old)
 	_, ok = b.labelCacheGetFirst("Legacy")
 	assert.False(t, ok)
@@ -114,8 +114,8 @@ func TestBadgerCache_NoopBranches_Extra(t *testing.T) {
 	// nil / empty guards
 	b.cacheStoreNode(nil)
 	b.cacheDeleteNode("")
-	b.labelCacheSetFirst("", NodeID("x"))
-	b.labelCacheSetFirst("L", "")
+	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "", NodeID("x"))
+	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "L", "")
 	b.labelCacheInvalidateForNodeLabels(nil, NodeID("x"))
 	b.labelCacheInvalidateForRemovedLabels(nil, nil, NodeID("x"))
 	b.cacheOnEdgeCreated(nil)
