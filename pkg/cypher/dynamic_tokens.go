@@ -153,7 +153,7 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 	}
 	// Every item check needs a label item or a dynamic key (: or [), or a
 	// target that isn't an entity: other clauses cost one scan.
-	if !strings.ContainsAny(clause.text, ":[") && !scopeHasNonEntity(scope) {
+	if !strings.ContainsAny(clause.text, ":[") && !mentionsNonEntity(clause.text, scope) {
 		return nil
 	}
 	switch clause.kind {
@@ -194,15 +194,29 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 	return nil
 }
 
-// scopeHasNonEntity reports whether scope binds a variable whose static type
-// is known and isn't a node or a relationship.
-func scopeHasNonEntity(scope staticTypeScope) bool {
-	for _, kind := range scope.kinds {
-		if kind != matchBindingNode && kind != matchBindingRelationship && kind != matchBindingUnknown {
+// mentionsNonEntity reports whether text names a variable of scope whose
+// static type is known and isn't a node or a relationship. It compares the
+// words of text in place, so it allocates nothing.
+func mentionsNonEntity(text string, scope staticTypeScope) bool {
+	if len(scope.values) == 0 && len(scope.kinds) == 0 {
+		return false
+	}
+	for index := 0; index < len(text); {
+		name, next, ok := scanIdentifierToken(text, index)
+		if !ok {
+			index++
+			continue
+		}
+		if kind, bound := scope.kinds[name]; bound {
+			if kind != matchBindingNode && kind != matchBindingRelationship && kind != matchBindingUnknown {
+				return true
+			}
+		} else if _, typed := scope.values[name]; typed {
 			return true
 		}
+		index = next
 	}
-	return len(scope.values) > 0
+	return false
 }
 
 func staticSetItemsTokenError(assignments []string, scope staticTypeScope) error {
