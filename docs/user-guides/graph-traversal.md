@@ -61,6 +61,53 @@ MATCH path = allShortestPaths(
 RETURN path
 ```
 
+### Path Selectors (GQL)
+
+A selector before a path pattern picks paths for each pair of start and end
+nodes, shortest first. Unlike `shortestPath()`, a selector works on any
+pattern (chains, quantified path patterns, a minimum length above 1, a start
+node that is also the end node), and the clause's `WHERE` filters the
+selected paths.
+
+```cypher
+MATCH p = ANY SHORTEST (a:Station {name: 'A'})-[:LINK]->+(b:Station {name: 'B'}) RETURN p
+MATCH p = ALL SHORTEST (a:Station {name: 'A'})-[:LINK]->+(b:Station {name: 'B'}) RETURN p
+MATCH p = SHORTEST 3 (a:Station {name: 'A'})-[:LINK]->+(b:Station) RETURN b, length(p)
+MATCH p = SHORTEST 2 GROUPS (a:Station {name: 'A'})-[:LINK]->+(b:Station {name: 'B'}) RETURN p
+MATCH p = ANY 5 PATHS (a:Station {name: 'A'})-[:LINK]->+(b:Station {name: 'B'}) RETURN p
+MATCH p = SHORTEST $k (a:Station {name: 'A'})-[:LINK]->+(b:Station {name: 'B'}) RETURN p
+```
+
+`ALL` (or `ALL PATHS`) keeps every path, as a plain pattern does.
+
+### Path Modes and Match Modes (Cypher 25)
+
+A path mode after the selector says whether a path may repeat elements:
+`TRAIL` (the default: no relationship repeats), `ACYCLIC` (no node repeats)
+and `WALK`. A match mode after `MATCH` applies to the whole clause:
+`DIFFERENT RELATIONSHIPS` (the default: no relationship appears twice in the
+clause) or `REPEATABLE ELEMENTS`, under which relationships may repeat and
+every quantifier needs an upper bound.
+
+```cypher
+MATCH p = ACYCLIC (a:Station {name: 'A'})-->+(b) RETURN p
+MATCH p = SHORTEST 2 ACYCLIC (a)-->+(b {name: 'B'}) RETURN p
+MATCH REPEATABLE ELEMENTS p = (a {name: 'A'})-->{1,4}(a) RETURN p   -- walks back to a
+```
+
+NornicDB reads path modes and match modes in Cypher 5 statements as well.
+
+### Quantified Path Patterns
+
+A parenthesised path followed by a quantifier (`+`, `*`, `{n}`, `{m,n}`)
+repeats it. A variable inside it binds a list, one value per repetition, and
+its own `WHERE` applies to each repetition:
+
+```cypher
+MATCH p = (a:Station {name: 'A'})((x)-[r:LINK]->(y) WHERE r.open){1,3}(b:Station)
+RETURN [n IN y | n.name] AS stops, [l IN r | l.minutes] AS legs
+```
+
 ---
 
 ## Filtering Paths
@@ -375,6 +422,8 @@ RETURN nodeId, embedding
 | Find any path between two nodes                 | Variable-length pattern `-[*1..N]->`               |
 | Find shortest unweighted path                   | `shortestPath()`                                   |
 | Find all shortest unweighted paths              | `allShortestPaths()`                               |
+| Find the k shortest paths per start and end     | `MATCH p = SHORTEST k (a)-->+(b)`                  |
+| Repeat a multi-hop step with its own filter     | Quantified path pattern `((x)-[r]->(y) WHERE …)+`  |
 | Find shortest weighted path                     | `apoc.algo.dijkstra`                               |
 | Find shortest weighted path with heuristic      | `apoc.algo.aStar`                                  |
 | Enumerate every simple path (bounded)           | `apoc.algo.allSimplePaths`                         |
