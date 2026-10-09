@@ -507,19 +507,19 @@ func TestCoverageLiftApplySetToNodeMapAndDynamicLabels(t *testing.T) {
 		"labels": []interface{}{"Engineer", "Base", "MATCH", "bad-label", "Analyst"},
 	})
 
-	exec.applyCountedNodeSet(ctx, node, "n", "n = $props", nil, nil, nil)
+	_, _ = exec.applySetToNodeWithContext(ctx, node, "n", "n = $props", nil, nil)
 	assert.Equal(t, map[string]interface{}{"name": "Ada", "age": int64(37)}, node.Properties)
 	node.Properties["name"] = "mutated"
 	assert.Equal(t, "Ada", getParamsFromContext(ctx)["props"].(map[string]interface{})["name"])
 
-	exec.applyCountedNodeSet(ctx, node, "n", "n = $payload.replacement", nil, nil, nil)
+	_, _ = exec.applySetToNodeWithContext(ctx, node, "n", "n = $payload.replacement", nil, nil)
 	assert.Equal(t, map[string]interface{}{"name": "Grace", "active": true}, node.Properties)
 
-	exec.applyCountedNodeSet(ctx, node, "n", "n:$($labels), n:Reviewer, n:Reviewer, ignored = true, n", nil, nil, nil)
+	_, _ = exec.applySetToNodeWithContext(ctx, node, "n", "n:$($labels), n:Reviewer, n:Reviewer, ignored = true, n", nil, nil)
 	assert.ElementsMatch(t, []string{"Base", "Engineer", "MATCH", "Analyst", "Reviewer"}, node.Labels)
 	assert.NotContains(t, node.Labels, "bad-label")
 
-	exec.applyCountedNodeSet(ctx, node, "n", "n += $props", nil, nil, nil)
+	_, _ = exec.applySetToNodeWithContext(ctx, node, "n", "n += $props", nil, nil)
 	assert.Equal(t, "Ada", node.Properties["name"])
 	assert.Equal(t, int64(37), node.Properties["age"])
 }

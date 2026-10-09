@@ -8,17 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFindStandaloneSetInMergeSegmentFrom_Branches(t *testing.T) {
-	segment := "MERGE (n:Node {id:'1'}) ON CREATE SET n.created = true ON MATCH SET n.seen = true SET n.final = true RETURN n"
-
-	idx := findStandaloneSetInMergeSegmentFrom(segment, -10)
-	require.Greater(t, idx, 0)
-	require.Equal(t, "SET n.final = true RETURN n", segment[idx:])
-
-	require.Equal(t, -1, findStandaloneSetInMergeSegmentFrom(segment, idx+1))
-	require.Equal(t, -1, findStandaloneSetInMergeSegmentFrom("MERGE (n:Node {asset:'x'}) RETURN n", 0))
-}
-
 func TestApplyWithProjection_ExpressionFallbackBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "merge_with_more_cov"))
 	ctx := context.Background()
@@ -89,11 +78,8 @@ func TestExecuteMergeWithContext_RelationshipChainAndSet(t *testing.T) {
 	_, err = store.CreateNode(c)
 	require.NoError(t, err)
 
-	nodeCtx := map[string]*storage.Node{"a": a, "b": b, "c": c}
-	relCtx := map[string]*storage.Edge{}
-
-	q := "MERGE (a)-[r:KNOWS]->(b) SET r.weight = 1 MERGE (b)-[s:KNOWS]->(c) RETURN r.weight AS rw"
-	res, err := exec.executeMergeWithContext(ctx, q, nodeCtx, relCtx)
+	q := "MATCH (a:Person {id: 'a'}), (b:Person {id: 'b'}), (c:Person {id: 'c'}) MERGE (a)-[r:KNOWS]->(b) SET r.weight = 1 MERGE (b)-[s:KNOWS]->(c) RETURN r.weight AS rw"
+	res, err := exec.Execute(ctx, q, nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"rw"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -106,7 +92,7 @@ func TestExecuteMergeWithContext_RelationshipChainAndSet(t *testing.T) {
 	require.EqualValues(t, 1, verify.Rows[0][0])
 
 	// Second execution should reuse existing relationships (MERGE semantics).
-	res2, err := exec.executeMergeWithContext(ctx, q, nodeCtx, relCtx)
+	res2, err := exec.Execute(ctx, q, nil)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, res2.Stats.RelationshipsCreated)
 }

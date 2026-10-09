@@ -17,11 +17,8 @@ func TestExecuteMergeWithContext_OnCreateOnMatchAndContextProps(t *testing.T) {
 	_, err := store.CreateNode(source)
 	require.NoError(t, err)
 
-	nodeCtx := map[string]*storage.Node{"s": source}
-	relCtx := map[string]*storage.Edge{}
-
-	q := "MERGE (n:Doc {k: s.name}) ON CREATE SET n.created = true ON MATCH SET n.seen = true RETURN n.k AS k, n.created AS created, n.seen AS seen"
-	res, err := exec.executeMergeWithContext(ctx, q, nodeCtx, relCtx)
+	q := "MATCH (s:Source) MERGE (n:Doc {k: s.name}) ON CREATE SET n.created = true ON MATCH SET n.seen = true RETURN n.k AS k, n.created AS created, n.seen AS seen"
+	res, err := exec.Execute(ctx, q, nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"k", "created", "seen"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -30,7 +27,7 @@ func TestExecuteMergeWithContext_OnCreateOnMatchAndContextProps(t *testing.T) {
 	require.Nil(t, res.Rows[0][2])
 	require.EqualValues(t, 1, res.Stats.NodesCreated)
 
-	res, err = exec.executeMergeWithContext(ctx, q, nodeCtx, relCtx)
+	res, err = exec.Execute(ctx, q, nil)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, "source-name", res.Rows[0][0])
@@ -44,10 +41,7 @@ func TestExecuteMergeWithContext_StandaloneSetAndRelationshipMerge(t *testing.T)
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	res, err := exec.executeMergeWithContext(ctx,
-		"MERGE (a:Person {id:'a'}) SET a.name = 'Alice' RETURN a.name AS name",
-		map[string]*storage.Node{}, map[string]*storage.Edge{},
-	)
+	res, err := exec.Execute(ctx, "MERGE (a:Person {id:'a'}) SET a.name = 'Alice' RETURN a.name AS name", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"name"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -57,11 +51,7 @@ func TestExecuteMergeWithContext_StandaloneSetAndRelationshipMerge(t *testing.T)
 	_, err = store.CreateNode(b)
 	require.NoError(t, err)
 
-	res, err = exec.executeMergeWithContext(ctx,
-		"MERGE (a)-[:KNOWS]->(b) RETURN count(*) AS c",
-		map[string]*storage.Node{"a": findNodeByProp(t, store, "Person", "id", "a"), "b": b},
-		map[string]*storage.Edge{},
-	)
+	res, err = exec.Execute(ctx, "MATCH (a:Person {id: 'a'}), (b:Person {id: 'b'}) MERGE (a)-[:KNOWS]->(b) RETURN count(*) AS c", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"c"}, res.Columns)
 	require.Len(t, res.Rows, 1)

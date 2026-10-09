@@ -572,42 +572,6 @@ func (e *StorageExecutor) findMergeNodeAnyLabel(store storage.Engine, labels []s
 	return nil, nil
 }
 
-func findStandaloneSetInMergeSegment(segment string) int {
-	return findStandaloneSetInMergeSegmentFrom(segment, 0)
-}
-
-func findStandaloneSetInMergeSegmentFrom(segment string, start int) int {
-	if start < 0 {
-		start = 0
-	}
-	searchFrom := 0
-	if start > searchFrom {
-		searchFrom = start
-	}
-	for searchFrom < len(segment) {
-		idx := keywordIndexFrom(segment, "SET", searchFrom, defaultKeywordScanOpts())
-		if idx < 0 {
-			return -1
-		}
-		if idx > 0 && !isASCIISpace(segment[idx-1]) {
-			searchFrom = idx + 3
-			continue
-		}
-		end := idx + 3
-		if end < len(segment) && !isASCIISpace(segment[end]) {
-			searchFrom = idx + 3
-			continue
-		}
-		prefix := upperASCII(strings.TrimSpace(segment[:idx]))
-		if strings.HasSuffix(prefix, "ON CREATE") || strings.HasSuffix(prefix, "ON MATCH") {
-			searchFrom = idx + 3
-			continue
-		}
-		return idx
-	}
-	return -1
-}
-
 func (e *StorageExecutor) evaluateWhereForMergeContext(ctx context.Context, whereClause string, nodeCtx map[string]*storage.Node, relCtx map[string]*storage.Edge) bool {
 	whereClause = strings.TrimSpace(whereClause)
 	if whereClause == "" {

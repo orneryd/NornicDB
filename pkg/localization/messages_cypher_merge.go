@@ -17,7 +17,6 @@ const (
 	MessageCypherMergeMalformedRelationshipPattern     MessageID = "cyphermerge.malformed_relationship_pattern"
 	MessageCypherMergeFindRelationshipFailed           MessageID = "cyphermerge.find_relationship_failed"
 	MessageCypherMergeCreateRelationshipFailed         MessageID = "cyphermerge.create_relationship_failed"
-	MessageCypherMergeUpdateEdgePropertyFailed         MessageID = "cyphermerge.update_edge_property_failed"
 	MessageCypherMergeInitialMergeFailed               MessageID = "cyphermerge.initial_merge_failed"
 	MessageCypherMergeForeachFailed                    MessageID = "cyphermerge.foreach_failed"
 	MessageCypherMergeSegmentClauseNotFound            MessageID = "cyphermerge.segment_clause_not_found"
@@ -70,6 +69,7 @@ const (
 	MessageCypherMergeGetEdgesBetweenFailed            MessageID = "cyphermerge.get_edges_between_failed"
 	MessageCypherMergeRelationshipEndpointMissing      MessageID = "cyphermerge.relationship_endpoint_missing"
 	MessageCypherMergePropertyValueNotMergeable        MessageID = "cyphermerge.property_value_not_mergeable"
+	MessageCypherMergeInvalidAction                    MessageID = "cyphermerge.invalid_action"
 )
 
 func cypherMergeMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -122,10 +122,6 @@ func CypherMergeFindRelationshipFailed(cause error) Message {
 
 func CypherMergeCreateRelationshipFailed(cause error) Message {
 	return cypherMergeCauseMessage(MessageCypherMergeCreateRelationshipFailed, "failed to create relationship: ", cause)
-}
-
-func CypherMergeUpdateEdgePropertyFailed(cause error) Message {
-	return cypherMergeCauseMessage(MessageCypherMergeUpdateEdgePropertyFailed, "failed to update edge property: ", cause)
 }
 
 func CypherMergeInitialMergeFailed(cause error) Message {
@@ -338,4 +334,10 @@ func CypherMergeRelationshipEndpointMissing(variable string) Message {
 // pattern property whose value (null or NaN) can't identify an entity.
 func CypherMergePropertyValueNotMergeable(entity, value, property string) Message {
 	return cypherMergeMessage(MessageCypherMergePropertyValueNotMergeable, "Cannot merge the following "+entity+" because of "+value+" property value for '"+property+"'", map[string]any{"Entity": entity, "Value": value, "Property": property})
+}
+
+// CypherMergeInvalidAction is the error for a MERGE's ON CREATE / ON MATCH
+// SET text the SET applier can't run.
+func CypherMergeInvalidAction(action string) Message {
+	return cypherMergeMessage(MessageCypherMergeInvalidAction, "invalid MERGE action: "+action, map[string]any{"Action": action})
 }

@@ -112,17 +112,11 @@ func TestMergeReturnProjectionErrors(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
-	a1, err := exec.Execute(ctx, "MATCH (a:A {name: 'a1'}) RETURN a", getParamsFromContext(ctx))
-	require.NoError(t, err)
-	b1, err := exec.Execute(ctx, "MATCH (b:B {name: 'b1'}) RETURN b", getParamsFromContext(ctx))
-	require.NoError(t, err)
-	nodes := map[string]*storage.Node{"a": a1.Rows[0][0].(*storage.Node), "b": b1.Rows[0][0].(*storage.Node)}
-
-	_, err = exec.executeMergeWithContext(withExpressionFailures(ctx), "MERGE (m:N {id: 1}) RETURN 1 / 0 AS x", nodes, map[string]*storage.Edge{})
+	_, err = exec.Execute(withExpressionFailures(ctx), "MATCH (a:A {name: 'a1'}), (b:B {name: 'b1'}) MERGE (m:N {id: 1}) RETURN 1 / 0 AS x", getParamsFromContext(ctx))
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
 
-	_, err = exec.executeMergeWithContext(withExpressionFailures(ctx), "MERGE (a)-[s:S2]->(b) RETURN 1 / 0 AS x", nodes, map[string]*storage.Edge{})
+	_, err = exec.Execute(withExpressionFailures(ctx), "MATCH (a:A {name: 'a1'}), (b:B {name: 'b1'}) MERGE (a)-[s:S2]->(b) RETURN 1 / 0 AS x", getParamsFromContext(ctx))
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
 }
