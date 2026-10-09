@@ -40,6 +40,8 @@ func (w *WALEngine) logger() *slog.Logger {
 //     unbounded WAL growth.
 type WALEngine struct {
 	engine Engine
+	// keyRegistry is engine's PropertyKeyRegistry, nil when it keeps none.
+	keyRegistry PropertyKeyRegistry
 	wal    *WAL
 	// mutationMu serializes auto-compaction snapshots against in-flight mutating
 	// operations to avoid WAL/engine state skew during snapshot truncation.
@@ -285,6 +287,7 @@ func NewWALEngine(engine Engine, wal *WAL) *WALEngine {
 		engine: engine,
 		wal:    wal,
 	}
+	w.keyRegistry, _ = engine.(PropertyKeyRegistry)
 	// Existing WAL state predates this process's compaction cadence. Treat it
 	// as the baseline so an idle restart does not rewrite the entire database;
 	// the first subsequent mutation advances the sequence and triggers a snapshot.
@@ -1049,16 +1052,15 @@ func (w *WALEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
 // NotePropertyKeysInNamespace forwards to the wrapped engine
 // (PropertyKeyRegistry); the WAL applies each write to it as it logs it.
 func (w *WALEngine) NotePropertyKeysInNamespace(namespace string, properties map[string]interface{}) {
-	if registry, ok := w.engine.(PropertyKeyRegistry); ok {
-		registry.NotePropertyKeysInNamespace(namespace, properties)
+	if w.keyRegistry != nil {
+		w.keyRegistry.NotePropertyKeysInNamespace(namespace, properties)
 	}
 }
 
 // PropertyKeyKnownInNamespace forwards the property-key lookup
 // (PropertyKeyRegistry).
 func (w *WALEngine) PropertyKeyKnownInNamespace(namespace, name string) bool {
-	registry, ok := w.engine.(PropertyKeyRegistry)
-	return ok && registry.PropertyKeyKnownInNamespace(namespace, name)
+	return w.keyRegistry != nil && w.keyRegistry.PropertyKeyKnownInNamespace(namespace, name)
 }
 
 func (w *WALEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
