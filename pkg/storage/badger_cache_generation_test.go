@@ -134,3 +134,24 @@ func TestNodeCacheNotStaleAfterConcurrentUpdates(t *testing.T) {
 		require.EqualValues(t, want, got.Properties["v"], "round %d", round)
 	}
 }
+
+// A label scan that finds its cached first node no longer has the label
+// drops it and caches the node it finds instead.
+func TestLabelScanReplacesFirstNodeThatLostTheLabel(t *testing.T) {
+	engine, err := NewBadgerEngine(t.TempDir())
+	require.NoError(t, err)
+	defer engine.Close()
+	_, err = engine.CreateNode(&Node{ID: "gen:other", Labels: []string{"Other"}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: "gen:person", Labels: []string{"Person"}})
+	require.NoError(t, err)
+	engine.labelCacheSetFirst(engine.labelFirstCacheGen.current(), "Person", "gen:other")
+
+	var visited []NodeID
+	require.NoError(t, engine.ForEachNodeIDByLabel("Person", func(id NodeID) bool {
+		visited = append(visited, id)
+		return true
+	}))
+	require.Equal(t, []NodeID{"gen:person"}, visited)
+	require.Equal(t, NodeID("gen:person"), engine.labelFirstNodeCache["Person"])
+}
