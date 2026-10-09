@@ -145,4 +145,63 @@ func TestDynamicTokenBranches(t *testing.T) {
 	items2, err := setLabelChainItems("A: $(x) :B")
 	require.NoError(t, err)
 	require.Equal(t, []labelChainItem{{name: "A"}, {expression: "x"}, {name: "B"}}, items2)
+
+	// Readers of the new item forms.
+	readText := deletedEntityReadText(pipelineClause{kind: pipelineClauseSet, text: "SET n[m.k] = m.v, n:$(m.l), n:Fixed"})
+	require.Contains(t, readText, "m.k")
+	require.Contains(t, readText, "m.v")
+	require.Contains(t, readText, "$(m.l)")
+	require.NotContains(t, readText, "Fixed")
+	var reads, writes stretchTokens
+	analyzeStretchClause(pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n:$(m.l):A, n[m.k], n.p"}, &reads, &writes)
+	require.True(t, writes.anyNode)
+	require.True(t, writes.anyKey)
+	require.Contains(t, writes.labels, "A")
+	require.Contains(t, reads.keys, "l")
+	require.Contains(t, reads.keys, "k")
+	reads, writes = stretchTokens{}, stretchTokens{}
+	analyzeStretchClause(pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n"}, &reads, &writes)
+	require.True(t, writes.everything)
+
+	// Label expressions: the predicate of %, a nested term's error.
+	require.Equal(t, "n:%", (&labelExpression{kind: labelExpressionAny}).predicate("n"))
+	negated := &labelExpression{kind: labelExpressionNot, operands: []*labelExpression{{kind: labelExpressionDynamic, expression: "x"}}}
+	_, _, err = negated.resolveDynamic(func(string) (interface{}, bool, error) { return nil, true, nil })
+	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
+	r := &labelExpressionRewriter{query: "n:$(x)", writeItems: true}
+	value2, constant, err := r.resolveConstant("$1")
+	require.NoError(t, err)
+	require.False(t, constant)
+	require.Nil(t, value2)
+	require.False(t, r.writeItemHead(0))
+	got, _, err := desugarLabelExpressions("MATCH (n) SET n IS $(x RETURN n", nil)
+	require.NoError(t, err)
+	require.Equal(t, "MATCH (n) SET n IS $(x RETURN n", got)
+	var references []string
+	scanParameterReferences("RETURN $all(x), $p", func(dollar, start, end int) {
+		references = append(references, "RETURN $all(x), $p"[start:end])
+	})
+	require.Equal(t, []string{"p"}, references)
+
+	// Statements: a relationship's dynamic type, a MERGE's row value.
+	for query, code := range map[string]string{
+		"MATCH ()-[r:$(null)]->() RETURN r":                 "Neo.ClientError.Statement.SyntaxError",
+		"WITH null AS l MERGE (n:$(l) {k: 1}) RETURN n":      "Neo.ClientError.Statement.TypeError",
+		"WITH 'A' AS l MATCH (n:DB) SET n[1 +] = 1 RETURN n": "Neo.ClientError.Statement.SyntaxError",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		requireCode(t, err, code)
+	}
+
+	// The scope checks, called directly as the MERGE validator calls them.
+	scope2 := newSemanticBindingScope()
+	scope2.bind("n")
+	require.Error(t, exec.validateSetClauseScope(scope2, "SET n[1 +] = 1"))
+	require.Error(t, exec.validateSetClauseScope(scope2, "SET n:$(missing)"))
+	require.Error(t, exec.validateSetClauseScope(scope2, "SET n:$()"))
+	require.Error(t, validateRemoveClauseScope(scope2, "REMOVE n"))
+	require.Error(t, validateRemoveClauseScope(scope2, "REMOVE n[missing]"))
+	require.Error(t, validateRemoveClauseScope(scope2, "REMOVE n:$(missing)"))
+	require.Error(t, validateRemoveClauseScope(scope2, "REMOVE m.p"))
+	require.NoError(t, validateRemoveClauseScope(scope2, "REMOVE n:$('A'), n['k'], n.p"))
 }
