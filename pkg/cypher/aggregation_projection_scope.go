@@ -67,8 +67,11 @@ func aggregatingProjectionScopeError(clause, keyword string) error {
 	// Longest first, so a projected x + 1 is masked whole before a
 	// projected x inside it.
 	sort.Slice(expressions, func(i, j int) bool { return len(expressions[i]) > len(expressions[j]) })
+	// An aggregate call spelled otherwise (COUNT(distinct n) for a
+	// projected count(DISTINCT n)) is the projected one.
+	spellings := aggregateCallSpellings(expressions)
 	for _, part := range aggregatingProjectionTailExpressions(tail) {
-		masked := strings.Join(strings.Fields(part), " ")
+		masked := respellAggregateCalls(strings.Join(strings.Fields(part), " "), spellings)
 		for _, expression := range expressions {
 			masked = maskProjectedExpression(masked, expression)
 		}
