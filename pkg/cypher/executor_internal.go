@@ -31,6 +31,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err != nil {
 		return nil, err
 	}
+	cypher, _ = desugarStandaloneOrderClauses(cypher)
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
 	if err := e.validateStatementFraming(cypher); err != nil {
