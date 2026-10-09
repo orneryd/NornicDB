@@ -9,7 +9,7 @@
 //
 // The var-block below turns every missing forward into a compile error.
 // NamespaceLister, NamespaceSchemaProvider, PrefixStatsEngine,
-// NamespaceLabelStatsProvider, StartupMaintenanceStateEngine,
+// NamespaceLabelStatsProvider, PropertyKeyRegistry, StartupMaintenanceStateEngine,
 // MVCCMaintenanceEngine, TemporalMaintenanceEngine and StorageEventNotifier
 // are declared in types.go; the four interfaces below complete the set of
 // capabilities the report found forwarded unevenly.
@@ -90,6 +90,11 @@ var (
 	_ PrefixStatsEngine             = (*AsyncEngine)(nil)
 	_ PrefixStatsEngine             = (*NamespacedEngine)(nil)
 	_ PrefixStatsEngine             = (*MemoryEngine)(nil)
+	_ PropertyKeyRegistry           = (*BadgerEngine)(nil)
+	_ PropertyKeyRegistry           = (*WALEngine)(nil)
+	_ PropertyKeyRegistry           = (*AsyncEngine)(nil)
+	_ PropertyKeyRegistry           = (*MemoryEngine)(nil)
+	_ PropertyKeyLookup             = (*NamespacedEngine)(nil)
 	_ NamespaceLabelStatsProvider   = (*BadgerEngine)(nil)
 	_ NamespaceLabelStatsProvider   = (*WALEngine)(nil)
 	_ NamespaceLabelStatsProvider   = (*AsyncEngine)(nil)

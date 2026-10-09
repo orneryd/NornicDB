@@ -108,6 +108,17 @@ type transactionStorageWrapper struct {
 	txNodeLookupCacheMu *sync.RWMutex
 }
 
+// PropertyKeyKnown reports whether a write in the transaction's database has
+// stored a value under name (storage.PropertyKeyLookup), from the engine the
+// transaction reads through.
+func (w *transactionStorageWrapper) PropertyKeyKnown(name string) bool {
+	if lookup, ok := w.underlying.(storage.PropertyKeyLookup); ok {
+		return lookup.PropertyKeyKnown(name)
+	}
+	registry, ok := w.underlying.(storage.PropertyKeyRegistry)
+	return ok && registry.PropertyKeyKnownInNamespace(w.namespace, name)
+}
+
 func (w *transactionStorageWrapper) Namespace() string {
 	if w == nil {
 		return ""

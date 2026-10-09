@@ -661,6 +661,8 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	if err := tx.pinNamespaceFromIDLocked(string(node.ID)); err != nil {
 		return "", err
 	}
+	// The write uses its key names now; it encodes them only at commit.
+	tx.engine.NotePropertyKeysInNamespace(tx.namespace, node.Properties)
 
 	// Validate constraints BEFORE writing
 	if !tx.deferConstraintValidation {
@@ -765,6 +767,7 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	if err := tx.pinNamespaceFromIDLocked(string(node.ID)); err != nil {
 		return err
 	}
+	tx.engine.NotePropertyKeysInNamespace(tx.namespace, node.Properties)
 
 	// Validate constraints
 	if !tx.deferConstraintValidation {
@@ -1482,6 +1485,7 @@ func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(Nod
 // counters for its endpoints' labels (as validateNewEdgeLocked returned
 // them), the read-your-writes copy and the create operation.
 func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLabels []string) error {
+	tx.engine.NotePropertyKeysInNamespace(namespaceForEdgeID(edge.ID), edge.Properties)
 	delete(tx.cancelledEdgeWrites, edge.ID)
 	_, recreated := tx.deletedEdges[edge.ID]
 	if !recreated && len(edge.Properties) == 0 && !tx.engine.GetSchema().HasWriteRules() {
@@ -1546,6 +1550,7 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 	if err := tx.pinEdgeNamespaceLocked(edge); err != nil {
 		return err
 	}
+	tx.engine.NotePropertyKeysInNamespace(tx.namespace, edge.Properties)
 	if _, deleted := tx.deletedEdges[edge.ID]; deleted {
 		return ErrNotFound
 	}

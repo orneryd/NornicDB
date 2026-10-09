@@ -914,6 +914,23 @@ func (ae *AsyncEngine) trackPendingValues(pairs []pendingPropertyKey) {
 }
 
 // CreateNode adds to cache and returns immediately.
+// NotePropertyKeysInNamespace records the keys of properties that hold a
+// value as used in namespace, on the engine it wraps (PropertyKeyRegistry).
+// A buffered write encodes them only when it flushes, so every write notes
+// its names when it is taken.
+func (ae *AsyncEngine) NotePropertyKeysInNamespace(namespace string, properties map[string]interface{}) {
+	if registry, ok := ae.engine.(PropertyKeyRegistry); ok {
+		registry.NotePropertyKeysInNamespace(namespace, properties)
+	}
+}
+
+// PropertyKeyKnownInNamespace forwards the property-key lookup
+// (PropertyKeyRegistry).
+func (ae *AsyncEngine) PropertyKeyKnownInNamespace(namespace, name string) bool {
+	registry, ok := ae.engine.(PropertyKeyRegistry)
+	return ok && registry.PropertyKeyKnownInNamespace(namespace, name)
+}
+
 func (ae *AsyncEngine) CreateNode(node *Node) (NodeID, error) {
 	if node == nil {
 		return "", ErrInvalidData
@@ -921,6 +938,7 @@ func (ae *AsyncEngine) CreateNode(node *Node) (NodeID, error) {
 	if err := validatePropertiesForStorage(node.Properties); err != nil {
 		return "", err
 	}
+	ae.NotePropertyKeysInNamespace(namespaceForNodeID(node.ID), node.Properties)
 	ae.writeGate.RLock()
 	defer ae.writeGate.RUnlock()
 	checked, err := ae.nodeWriteChecked(node, nil)
@@ -987,6 +1005,7 @@ func (ae *AsyncEngine) UpdateNode(node *Node) error {
 	if err := validatePropertiesForStorage(node.Properties); err != nil {
 		return err
 	}
+	ae.NotePropertyKeysInNamespace(namespaceForNodeID(node.ID), node.Properties)
 	ae.writeGate.RLock()
 	defer ae.writeGate.RUnlock()
 	var previousLabels []string
@@ -1180,6 +1199,7 @@ func (ae *AsyncEngine) CreateEdge(edge *Edge) error {
 	if err := validatePropertiesForStorage(edge.Properties); err != nil {
 		return err
 	}
+	ae.NotePropertyKeysInNamespace(namespaceForEdgeID(edge.ID), edge.Properties)
 	ae.writeGate.RLock()
 	defer ae.writeGate.RUnlock()
 	if ae.edgeWriteChecked(edge) {
@@ -1232,6 +1252,7 @@ func (ae *AsyncEngine) UpdateEdge(edge *Edge) error {
 	if err := validatePropertiesForStorage(edge.Properties); err != nil {
 		return err
 	}
+	ae.NotePropertyKeysInNamespace(namespaceForEdgeID(edge.ID), edge.Properties)
 	ae.writeGate.RLock()
 	defer ae.writeGate.RUnlock()
 	if ae.edgeWriteChecked(edge) {
@@ -2623,6 +2644,9 @@ func (ae *AsyncEngine) BulkCreateNodes(nodes []*Node) error {
 			return err
 		}
 	}
+	for _, node := range nodes {
+		ae.NotePropertyKeysInNamespace(namespaceForNodeID(node.ID), node.Properties)
+	}
 	ae.writeGate.RLock()
 	defer ae.writeGate.RUnlock()
 	// A batch with any checked node goes through to the engine whole: the
@@ -2681,6 +2705,9 @@ func (ae *AsyncEngine) BulkCreateEdges(edges []*Edge) error {
 		if err := validatePropertiesForStorage(edge.Properties); err != nil {
 			return err
 		}
+	}
+	for _, edge := range edges {
+		ae.NotePropertyKeysInNamespace(namespaceForEdgeID(edge.ID), edge.Properties)
 	}
 	ae.writeGate.RLock()
 	defer ae.writeGate.RUnlock()
