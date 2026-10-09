@@ -482,7 +482,7 @@ func containsIllegalProjectedPatternExpression(expression string) bool {
 		if expression[index] != '[' || (index > 0 && expression[index-1] == '-') {
 			continue
 		}
-		close := matchingListBracket(expression, index)
+		close := findMatchingBracket(expression, index)
 		if close < 0 {
 			continue
 		}
@@ -659,7 +659,7 @@ func validateExistsSubqueryClauseComposition(cypher string) error {
 		if open >= len(cypher) || cypher[open] != '{' {
 			continue
 		}
-		close := matchingSemanticBrace(cypher, open)
+		close := findMatchingDelimiter(cypher, open, '{', '}')
 		if close < 0 {
 			continue
 		}
@@ -727,7 +727,7 @@ func invalidAggregationInListComprehension(cypher string) bool {
 		if cypher[start] != '[' {
 			continue
 		}
-		end := matchingListBracket(cypher, start)
+		end := findMatchingBracket(cypher, start)
 		if end < 0 {
 			continue
 		}
@@ -737,41 +737,4 @@ func invalidAggregationInListComprehension(cypher string) bool {
 		}
 	}
 	return false
-}
-
-func matchingListBracket(expression string, start int) int {
-	depth := 0
-	var quote byte
-	escaped := false
-	for index := start; index < len(expression); index++ {
-		current := expression[index]
-		if quote != 0 {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if current == '\\' {
-				escaped = true
-				continue
-			}
-			if current == quote {
-				quote = 0
-			}
-			continue
-		}
-		if strings.ContainsRune("'\"`", rune(current)) {
-			quote = current
-			continue
-		}
-		switch current {
-		case '[':
-			depth++
-		case ']':
-			depth--
-			if depth == 0 {
-				return index
-			}
-		}
-	}
-	return -1
 }

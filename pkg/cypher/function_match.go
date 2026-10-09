@@ -141,32 +141,9 @@ func isFunctionCallWS(expr, funcName string) bool {
 	if !matchFuncStart(expr, funcName) {
 		return false
 	}
-
-	// Find the matching closing parenthesis for the opening one
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i, ch := range expr {
-		switch {
-		case (ch == '\'' || ch == '"') && !inQuote:
-			inQuote = true
-			quoteChar = ch
-		case ch == quoteChar && inQuote:
-			inQuote = false
-			quoteChar = 0
-		case ch == '(' && !inQuote:
-			depth++
-		case ch == ')' && !inQuote:
-			depth--
-			if depth == 0 {
-				// Found the matching closing parenthesis
-				// Check if this is the end of the expression
-				return i == len(expr)-1
-			}
-		}
-	}
-	return false
+	// The call's closing parenthesis ends the expression.
+	open := strings.IndexByte(expr, '(')
+	return findMatchingParen(expr, open) == len(expr)-1
 }
 
 // extractFuncArgsWithSuffix extracts function arguments and any suffix after the function call.
@@ -185,40 +162,12 @@ func extractFuncArgsWithSuffix(expr, funcName string) (args string, suffix strin
 	if !matchFuncStart(expr, funcName) {
 		return "", "", false
 	}
-
-	// Find the opening parenthesis
-	openIdx := strings.IndexByte(expr, '(')
-	if openIdx == -1 {
+	open := strings.IndexByte(expr, '(')
+	close := findMatchingParen(expr, open)
+	if close < 0 {
 		return "", "", false
 	}
-
-	// Find the matching closing parenthesis
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i, ch := range expr[openIdx:] {
-		actualIdx := openIdx + i
-		switch {
-		case (ch == '\'' || ch == '"') && !inQuote:
-			inQuote = true
-			quoteChar = ch
-		case ch == quoteChar && inQuote:
-			inQuote = false
-			quoteChar = 0
-		case ch == '(' && !inQuote:
-			depth++
-		case ch == ')' && !inQuote:
-			depth--
-			if depth == 0 {
-				// Found the matching closing parenthesis
-				args = strings.TrimSpace(expr[openIdx+1 : actualIdx])
-				suffix = expr[actualIdx+1:]
-				return args, suffix, true
-			}
-		}
-	}
-	return "", "", false
+	return strings.TrimSpace(expr[open+1 : close]), expr[close+1:], true
 }
 
 func isSpaceByte(b byte) bool {

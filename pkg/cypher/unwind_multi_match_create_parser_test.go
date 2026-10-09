@@ -129,9 +129,9 @@ func TestBuildPropsFromSpecAndIndexMatchingParen(t *testing.T) {
 	require.False(t, ok)
 	require.Equal(t, true, props["k3"])
 
-	require.Equal(t, 5, indexMatchingParen("(a(b))"))
-	require.Equal(t, -1, indexMatchingParen("a(b)"))
-	require.Equal(t, -1, indexMatchingParen("(a(b)"))
+	require.Equal(t, 5, findMatchingParen("(a(b))", 0))
+	require.Equal(t, -1, findMatchingParen("a(b)", 0))
+	require.Equal(t, -1, findMatchingParen("(a(b)", 0))
 }
 
 func TestIsSimpleWithPassthroughClause(t *testing.T) {

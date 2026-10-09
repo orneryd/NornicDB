@@ -687,7 +687,7 @@ func maskSubqueryBodies(expression string) string {
 		if open >= len(expression) || expression[open] != '{' {
 			continue
 		}
-		close := matchingSemanticBrace(expression, open)
+		close := findMatchingDelimiter(expression, open, '{', '}')
 		if close < 0 {
 			continue
 		}
@@ -697,34 +697,6 @@ func maskSubqueryBodies(expression string) string {
 		index = close
 	}
 	return string(masked)
-}
-
-func matchingSemanticBrace(expression string, open int) int {
-	depth := 0
-	var quote byte
-	for index := open; index < len(expression); index++ {
-		current := expression[index]
-		if quote != 0 {
-			if current == quote && !isBackslashEscaped(expression, index) {
-				quote = 0
-			}
-			continue
-		}
-		if current == '\'' || current == '"' || current == '`' {
-			quote = current
-			continue
-		}
-		switch current {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return index
-			}
-		}
-	}
-	return -1
 }
 
 func bindMatchSemanticKind(scope matchSemanticScope, variable string, kind matchBindingKind) error {
