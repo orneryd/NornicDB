@@ -1385,7 +1385,7 @@ func queryMayNeedCanonicalRewrite(query string) bool {
 	for i := 0; i < len(query); i++ {
 		switch c := query[i]; {
 		case c == ' ':
-			if i+1 < len(query) && (query[i+1] == ' ' || i > 0 && arrowGap(query[i-1], query[i+1])) {
+			if i+1 < len(query) && (query[i+1] == ' ' || arrowGapClass[query[i+1]]&arrowGapAfter != 0 && i > 0 && arrowGap(query[i-1], query[i+1])) {
 				return true
 			}
 		case c == '/':
@@ -1498,11 +1498,26 @@ func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 // relationship arrow: one side is a dash or an arrowhead, the other a node or
 // relationship bracket, a dash or a head ((b) <-, - [, ] -, - >, -> ().
 func arrowGap(before, after byte) bool {
-	arrowPart := func(c byte) bool { return c == '-' || c == '<' || c == '>' }
-	return (arrowPart(before) || before == ')' || before == ']') &&
-		(arrowPart(after) || after == '[' || after == '(') &&
-		(arrowPart(before) || arrowPart(after))
+	b, a := arrowGapClass[before], arrowGapClass[after]
+	return b&arrowGapBefore != 0 && a&arrowGapAfter != 0 && (b|a)&arrowGapPart != 0
 }
+
+// arrowGapClass classifies the bytes arrowGap reads: one that can end the
+// text before a gap in an arrow, one that can start the text after it, and
+// an arrow's own dash or head. A table, so the quick check that runs on
+// every space of a statement (queryMayNeedCanonicalRewrite) costs two loads.
+var arrowGapClass = [256]uint8{
+	')': arrowGapBefore, ']': arrowGapBefore, '(': arrowGapAfter, '[': arrowGapAfter,
+	'-': arrowGapBefore | arrowGapAfter | arrowGapPart,
+	'<': arrowGapBefore | arrowGapAfter | arrowGapPart,
+	'>': arrowGapBefore | arrowGapAfter | arrowGapPart,
+}
+
+const (
+	arrowGapBefore uint8 = 1 << iota
+	arrowGapAfter
+	arrowGapPart
+)
 
 // inPatternClause reports whether query[index] is between the elements of a
 // MATCH, MERGE or CREATE pattern: the nearest clause keyword before it, in
