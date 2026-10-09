@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -122,10 +123,15 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 				branches = unionBranches
 			}
 			if returnIndex := topLevelKeywordIndex(branches[0], "RETURN"); returnIndex >= 0 {
-				for _, name := range pipelineReturnSourceColumns(branches[0][returnIndex:]) {
-					if name == "*" {
-						continue
-					}
+				columns := pipelineReturnSourceColumns(branches[0][returnIndex:])
+				if columns == nil || slices.Contains(columns, "*") {
+					// RETURN * returns every variable of the body, which
+					// names nothing statically: as after YIELD *, the rest
+					// of the statement isn't checked (#907; checking it
+					// rejected CALL { UNWIND [2] AS b RETURN * } RETURN b).
+					return nil
+				}
+				for _, name := range columns {
 					// A returned column is a new variable of the enclosing
 					// query: one it already binds is declared twice
 					// (Neo4j 5.26.30's VariableAlreadyBound), unless every
