@@ -69,9 +69,16 @@ func aggregatingProjectionScopeError(clause, keyword string) error {
 	sort.Slice(expressions, func(i, j int) bool { return len(expressions[i]) > len(expressions[j]) })
 	// An aggregate call spelled otherwise (COUNT(distinct n) for a
 	// projected count(DISTINCT n)) is the projected one.
-	spellings := aggregateCallSpellings(expressions)
+	var spellings map[string]string
+	spelled := false
 	for _, part := range aggregatingProjectionTailExpressions(tail) {
-		masked := respellAggregateCalls(strings.Join(strings.Fields(part), " "), spellings)
+		masked := strings.Join(strings.Fields(part), " ")
+		if containsAggregateFunc(masked) {
+			if !spelled {
+				spellings, spelled = aggregateCallSpellings(expressions), true
+			}
+			masked = respellAggregateCalls(masked, spellings)
+		}
 		for _, expression := range expressions {
 			masked = maskProjectedExpression(masked, expression)
 		}
