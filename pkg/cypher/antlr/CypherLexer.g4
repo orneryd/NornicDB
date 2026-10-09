@@ -221,6 +221,11 @@ DIGIT : HexInteger | OctalInteger | [0-9];
 // ID must come after numbers so they aren't matched as IDs
 ID: Letter LetterOrDigit*;
 
+// A name that starts with a digit ($0hello, $1abc) is a parameter name only.
+// After ID and DIGIT, so a float (2d, 1e5) or a hex number (0x1F) of the
+// same length stays one.
+DIGIT_NAME: [0-9]+ Letter LetterOrDigit*;
+
 ESC_LITERAL    : '`' ('``' | ~'`')* '`';
 // Single-quoted strings can contain any characters except unescaped quotes
 CHAR_LITERAL   : '\'' (~['\\] | EscapeSequence)* '\'';
