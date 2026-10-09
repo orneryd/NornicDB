@@ -79,6 +79,34 @@ var staticFunctionResultTypes = map[string]string{
 	"date": "Date", "datetime": "DateTime", "localdatetime": "LocalDateTime",
 	"time": "Time", "localtime": "LocalTime", "duration": "Duration",
 	"point": "Point", "properties": "Map",
+	// The temporal namespaces (Neo4j 5.26, #907).
+	"duration.between": "Duration", "duration.inmonths": "Duration", "duration.indays": "Duration",
+	"duration.inseconds": "Duration",
+	"date.truncate": "Date", "date.realtime": "Date", "date.statement": "Date", "date.transaction": "Date",
+	"datetime.truncate": "DateTime", "datetime.realtime": "DateTime", "datetime.statement": "DateTime",
+	"datetime.transaction": "DateTime", "datetime.fromepoch": "DateTime", "datetime.fromepochmillis": "DateTime",
+	"localdatetime.truncate": "LocalDateTime", "localdatetime.realtime": "LocalDateTime",
+	"localdatetime.statement": "LocalDateTime", "localdatetime.transaction": "LocalDateTime",
+	"time.truncate": "Time", "time.realtime": "Time", "time.statement": "Time", "time.transaction": "Time",
+	"localtime.truncate": "LocalTime", "localtime.realtime": "LocalTime", "localtime.statement": "LocalTime",
+	"localtime.transaction": "LocalTime",
+}
+
+// staticFunctionResultType is the result type of a call to function with
+// arguments, when it is known before the statement runs: the function's own
+// (staticFunctionResultTypes), or, for reduce(acc = init, x IN list | step),
+// its accumulator's when init is a literal (reduce(a = 0, …) is an Integer,
+// as Neo4j types it).
+func staticFunctionResultType(function, arguments string) string {
+	name := lowerASCII(function)
+	if name == "reduce" {
+		accumulator, _, _ := strings.Cut(arguments, ",")
+		if _, initial, assigned := strings.Cut(accumulator, "="); assigned {
+			return staticLiteralTypeName(strings.TrimSpace(initial))
+		}
+		return ""
+	}
+	return staticFunctionResultTypes[name]
 }
 
 // staticOperatorChecker infers expression types for the operator checks, from
@@ -219,10 +247,8 @@ func checkOperator(op byte, left, right staticOperand) (staticOperand, error) {
 		if right.known() && !right.numeric() {
 			return staticOperand{}, operandMismatch(right, "Float")
 		}
-		if left.known() && right.known() {
-			return knownOperand("Float"), nil
-		}
-		return staticOperand{}, nil
+		// A power is a Float whatever its operands are (m.a ^ 2 too).
+		return knownOperand("Float"), nil
 	}
 	if left.numeric() && right.numeric() {
 		if left.kind == "Integer" && right.kind == "Integer" {
@@ -595,8 +621,8 @@ var staticSubqueryExpressionTypes = map[string]string{"COUNT": "Integer", "COLLE
 // operator check doesn't read (it holds a pattern): a whole function call's
 // or subquery expression's, or unknown.
 func staticPatternExpressionType(expression string) staticOperand {
-	if function, _, call := parseFunctionCallWS(expression); call && function != "" {
-		return knownOperand(staticFunctionResultTypes[lowerASCII(function)])
+	if function, arguments, call := parseFunctionCallWS(expression); call && function != "" {
+		return knownOperand(staticFunctionResultType(function, arguments))
 	}
 	name, next, ok := scanIdentifierToken(expression, 0)
 	if !ok {
@@ -775,7 +801,7 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 				}
 			}
 		}
-		return knownOperand(staticFunctionResultTypes[lowerASCII(function)]), nil
+		return knownOperand(staticFunctionResultType(function, arguments)), nil
 	}
 	if typeName := staticLiteralTypeName(expression); typeName != "" {
 		return knownOperand(typeName), nil
