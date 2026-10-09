@@ -100,14 +100,17 @@ See [transaction implementation details](docs/user-guides/transactions.md), [his
 
 ## Performance Snapshot
 
-**Northwind benchmark** (M3 Max, 64 GB; 48,000 products and 48,000 orders; 10 measured iterations after 2 warmups):
+**Northwind benchmark** (48,000 products and 48,000 orders; 30 measured iterations per query after 5 warmups):
 
-| Metric                     |    NornicDB |      Neo4j |                 Difference |
-| -------------------------- | ----------: | ---------: | -------------------------: |
-| Overall mean query latency |     0.23 ms |   98.64 ms | **-99.8% (432.38x ratio)** |
-| Overall throughput         | 17.70 ops/s | 7.76 ops/s |        **+128.1% (2.28x)** |
-| Benchmark wall-clock       |     14.00 s |    31.63 s |   **-55.7% (2.26x ratio)** |
-| Energy during benchmark    |    118.00 J |   264.87 J |   **-55.5% (2.24x ratio)** |
+| Metric                                  |       NornicDB |        Neo4j |                 Difference |
+| --------------------------------------- | -------------: | -----------: | -------------------------: |
+| Overall mean query latency              |        0.13 ms |      54.69 ms | **-99.8% (413.40x ratio)** |
+| Query-latency-only aggregate throughput | 7,559.12 ops/s |   18.29 ops/s |   **+41240.3% (413.40x)** |
+| End-to-end query-loop throughput        |    16.58 ops/s |   15.14 ops/s |        **+9.6% (1.10x)** |
+| Query-loop duration                     |       25.327 s |     27.746 s |         **-8.7% (1.10x)** |
+| Benchmark wall-clock                    |        35.12 s |      55.06 s |   **-36.2% (1.57x ratio)** |
+| Energy during benchmark                 |       325.30 J |     383.86 J |   **-15.3% (1.18x ratio)** |
+| Peak memory used                        |       17.4 GiB |     17.7 GiB |    **-1.6% (1.02x ratio)** |
 
 All seed counts and per-query result fingerprints matched between NornicDB and Neo4j. See the [full Northwind benchmark report](docs/performance/1.1.0-northwind-results/comparison.md) for per-query latency, correctness, power, memory, and storage results.
 
@@ -161,8 +164,8 @@ In benchmarks performing **Automata Learning (L\*)**—a high-iteration logic pr
 ### What Recent Deep-Dives Show
 
 - **Hybrid execution model (streaming fast paths + general engine)**: NornicDB uses shape-specialized streaming executors for common traversal/aggregation patterns while retaining a general Cypher path for coverage and correctness.
-- **Runtime parser mode switching**: the default `nornic` parser is optimized for low-overhead hot-path routing, while `antlr` mode prioritizes strict parsing and diagnostics when debugging and validation matter more than throughput.
-- **Measured parser-path deltas on benchmark suites**: internal Northwind comparisons show large overhead differences on certain query shapes when full parse-tree paths are used, which is why the production default remains the custom parser path.
+- **Scannerless recursive-descent (SRD) parser by default**: the `nornic` parser scans the raw query text with no lexer and no parse tree — clause boundaries and precedence are found by scanning for top-level keywords and operators — so hot-path routing is allocation-free. The `antlr` parser remains for strict parsing and diagnostics.
+- **Shared Cypher 5 / 25 grammar**: `LET`, `FILTER`, and `FOR` reading clauses execute in the existing pipeline with an optional `CYPHER 5` / `CYPHER 25` header. The SRD parser accepts them without a header; the ANTLR parser requires `CYPHER 25` for them and parses the header itself.
 - **HNSW build acceleration from insertion-order optimization**: BM25-seeded insertion order reduced a 1M embedding build from ~27 minutes to ~10 minutes (~2.7x) in published tests by reducing traversal waste during construction, without changing core quality knobs.
 - **Shared seed strategy across indexing stages**: the same lexical seed extraction supports HNSW insertion ordering and improves k-means centroid initialization spread for vector pipeline efficiency.
 
@@ -215,7 +218,7 @@ with driver.session() as session:
 
 ## Why Switch from Neo4j?
 
-- **99.8% lower overall mean query latency** on the current 48k-product / 48k-order Northwind comparison (432.38x ratio), with matching result fingerprints.
+- **99.8% lower overall mean query latency** on the current 48k-product / 48k-order Northwind comparison (413.40x ratio), with matching result fingerprints.
 - **Measured retrieval quality** on the official 300-query BEIR SciFact test set, including 0.72292 nDCG@10 with native BGE-M3 reranking.
 - **Native graph + vector** in one engine (no separate vector sidecar required).
 - **GPU acceleration paths** (Metal/CUDA/Vulkan) for semantic + graph workloads.
@@ -248,7 +251,8 @@ Designed to work with existing Neo4j drivers and Bolt/Cypher workflows, with min
 
 - **Bolt Protocol** — Use official Neo4j drivers
 - **Cypher Queries** — Full query language support
-- **Schema Management** — Constraints, indexes, vector indexes
+- **Cypher 25** — `LET`, `FILTER` and `FOR` reading clauses with the optional `CYPHER 5` / `CYPHER 25` header
+- **Schema Management** — Constraints, indexes (single- and multi-property), vector indexes
 - **Qdrant gRPC API Compatible** — Works with Qdrant-style gRPC vector workflows
 
 > 🤖 **Agent skill:** [Bolt Client](docs/skills/bolt-client.skill.md) — connection defaults, retry classification, MERGE under concurrent writers, batch sizing.
@@ -595,25 +599,34 @@ make cross-all             # All platforms
 - [x] Neo4j Bolt protocol
 - [x] Configurable RBAC and oAuth support
 - [x] Cypher query engine (52 functions)
+- [x] Cypher 25 shared grammar foundation — `LET`, `FILTER`, `FOR` reading clauses and the `CYPHER 5` / `CYPHER 25` header
+- [x] Correctly-rounded math — musl `libm` ports for `exp`/`log`/`pow` and trigonometry
+- [x] MCP database pinning — `/mcp/{database}` targets one database for every tool call
 - [x] Memory decay system
 - [x] GPU acceleration (Metal, CUDA)
 - [x] Vector & full-text search
 - [x] Auto-relationship engine
 - [x] HNSW vector index
-- [x] Metadata/Property Indexing
+- [x] Metadata/Property Indexing (single- and multi-property)
 - [x] SIMD Implementation
 - [x] Clustering support
 - [x] Sharding (Composite DB + Remote Constituents)
 - [x] Data Explorer UI (Browser query editor, semantic search, node details)
 - [x] GDPR Compliance
-- [x] per-DB Search Index Overrides for BM2 and HNSW as independently levers for deferred or skipped construction (`docs/plans/nornicdb-admin-import-plan.md`)
+- [x] per-DB Search Index Overrides for BM2 and HNSW as independently levers for deferred or skipped construction (`docs/plans/okf-admin-import-export-plan.md`)
 - [x] Bulk Import Tool
-- [x] Cross-platform GPU-assisted HNSW construction with CPU-serving persistence parity (`docs/plans/gpu-hnsw-construction-plan.md`)
+- [x] Cross-platform GPU-assisted HNSW construction with CPU-serving persistence parity (`docs/plans/archive/gpu-hnsw-construction-plan.md`)
+- [x] Production message localization (message catalog, all core phases complete) (`docs/plans/archive/localization-consolidation-plan.md`)
 
 ### Planned (from `docs/plans`)
 
 - [ ] Neo4j-compatible end-to-end streaming execution + wrapper driver/ORM (`docs/plans/neo4j-compatible-streaming-driver-and-server-plan.md`)
 - [ ] UI enhancement backlog (search/config/admin UX improvements) (`docs/plans/ui-enhancements.md`)
+- [ ] Fine-grained RBAC: security administration commands and graph privileges, including property-based rules ([#935](https://github.com/orneryd/NornicDB/issues/935))
+- [ ] User impersonation: `IMPERSONATE` privilege and Bolt `imp_user` ([#936](https://github.com/orneryd/NornicDB/issues/936))
+- [ ] Change Data Capture: `txLogEnrichment`, `db.cdc.*` procedures and change events ([#937](https://github.com/orneryd/NornicDB/issues/937))
+- [ ] Query API v2 (typed JSON transactions, bookmarks, impersonated user)
+- [ ] Full Cypher 25 conformance beyond the shared grammar foundation (`docs/plans/cypher-convergence-plan.md`)
 
 ## Contributors
 

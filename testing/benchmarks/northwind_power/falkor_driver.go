@@ -1,5 +1,3 @@
-//go:build ladybug
-
 package main
 
 import (
@@ -10,36 +8,68 @@ import (
 	"strings"
 	"time"
 
-	lbug "github.com/LadybugDB/go-ladybug"
+	falkordb "github.com/FalkorDB/falkordb-go/v2"
 )
 
-// runLadybugReport drives the embedded LadybugDB (Kuzu fork) backend with the
-// same deterministic Northwind seed and query corpus the Bolt backends run.
-// The data directory is wiped before opening so each run starts from a fresh
-// store, exactly like the other engines in the sweep.
-func runLadybugReport(ctx context.Context, dataDir string, cfg seedConfig, label string, iterations, warmup int, skipSeed bool, out string) error {
-	if strings.TrimSpace(dataDir) == "" {
-		return fmt.Errorf("-ladybug-dir is required with -driver ladybug")
+// runFalkorReport drives FalkorDB over its native RESP protocol using the
+// official falkordb-go client. FalkorDB v6 (the current engine) no longer
+// ships a Bolt listener — BOLT_PORT is accepted as a config value but read by
+// nothing — so the sweep uses the production protocol instead of the
+// experimental Bolt support of the legacy C engine. The same deterministic
+// Northwind seed and query corpus runs here as on every other engine.
+func runFalkorReport(ctx context.Context, uri, graphName, username, password string, noAuth bool, cfg seedConfig, label string, iterations, warmup int, skipSeed bool, out string) error {
+	if strings.TrimSpace(graphName) == "" {
+		graphName = "falkor"
 	}
-	if err := os.RemoveAll(dataDir); err != nil {
-		return fmt.Errorf("wipe data dir: %w", err)
+	addr := strings.TrimPrefix(strings.TrimPrefix(uri, "falkor://"), "falkors://")
+	if addr == "" {
+		addr = "localhost:6379"
 	}
 
-	db, err := lbug.OpenDatabase(dataDir, lbug.DefaultSystemConfig())
-	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+	options := &falkordb.ConnectionOption{Addr: addr}
+	if !noAuth {
+		options.Username = username
+		options.Password = password
 	}
-	defer db.Close()
-	conn, err := lbug.OpenConnection(db)
+	// The seed phases are large: each UNWIND batch MATCHes by index twice per
+	// row, and at 48k-order scale a single phase runs far longer than the
+	// go-redis default 3s read timeout. Set generous deadlines so the client
+	// never aborts a legitimate long-running query.
+	options.DialTimeout = 30 * time.Second
+	options.ReadTimeout = 30 * time.Minute
+	options.WriteTimeout = 30 * time.Minute
+	db, err := falkordb.FalkorDBNew(options)
 	if err != nil {
-		return fmt.Errorf("open connection: %w", err)
+		return fmt.Errorf("connect: %w", err)
 	}
-	defer conn.Close()
+	defer db.Conn.Close()
+	if err := db.Conn.Ping(context.Background()).Err(); err != nil {
+		return fmt.Errorf("ping: %w", err)
+	}
+	graph := db.SelectGraph(graphName)
+	// Wipe any pre-existing graph so the run starts from a fresh store,
+	// like every other engine in the sweep. The error is ignored: deleting
+	// a graph that does not exist yet is also reported as an error by the
+	// server.
+	_ = graph.Delete()
+
+	// Declare the same FK/name indexes the Bolt engines create, rewritten
+	// to FalkorDB's syntax (no index name, no IF NOT EXISTS). FalkorDB uses
+	// them automatically once a filtered query references the pair.
+	for _, q := range ensureIndexQueries {
+		rewritten, ok := falkorIndexQuery(q)
+		if !ok {
+			return fmt.Errorf("index statement does not match the expected Neo4j pattern: %q", q)
+		}
+		if _, err := graph.Query(rewritten, nil, nil); err != nil {
+			return fmt.Errorf("create index %q: %w", q, err)
+		}
+	}
 
 	report := &Report{
 		Label:           label,
-		URI:             "ladybug://embedded/" + dataDir,
-		Database:        dataDir,
+		URI:             uri,
+		Database:        graphName,
 		Iterations:      iterations,
 		Warmup:          warmup,
 		SeedBatchSize:   cfg.batchSize,
@@ -58,26 +88,13 @@ func runLadybugReport(ctx context.Context, dataDir string, cfg seedConfig, label
 	if !skipSeed {
 		log("[%s] seeding Northwind (categories=%d suppliers=%d customers=%d products=%d orders=%d batch_size=%d parallel=%d seed=%d)",
 			label, cfg.categories, cfg.suppliers, cfg.customers, cfg.products, cfg.orders, cfg.batchSize, cfg.parallel, cfg.seed)
-		log("[%s] note: LadybugDB (Kuzu) has no CREATE INDEX ... FOR syntax; index setup is skipped", label)
 
 		seedStart := time.Now()
 		plan := buildSeedPlan(cfg)
 		for _, phase := range plan.phases {
-			phaseCypher := foldChainedCreates(phase.name, phase.cypher)
-			stmt, err := conn.Prepare(phaseCypher)
-			if err != nil {
-				return fmt.Errorf("prepare %s: %w", phase.name, err)
+			if err := falkorSeedPhase(graph, phase.name, phase.cypher, phase.rows, cfg.batchSize); err != nil {
+				return fmt.Errorf("seed %s: %w", phase.name, err)
 			}
-			rowsAny := make([]any, len(phase.rows))
-			for i := range phase.rows {
-				rowsAny[i] = phase.rows[i]
-			}
-			result, execErr := conn.Execute(stmt, map[string]any{"rows": rowsAny})
-			stmt.Close()
-			if execErr != nil {
-				return fmt.Errorf("seed %s: %w", phase.name, execErr)
-			}
-			result.Close()
 		}
 		report.SeedDurationMs = float64(time.Since(seedStart).Microseconds()) / 1000.0
 		report.SeedNodes, report.SeedRelationships = planSeedNodesAndRelationships(plan)
@@ -86,7 +103,7 @@ func runLadybugReport(ctx context.Context, dataDir string, cfg seedConfig, label
 			label, report.SeedDurationMs, report.SeedNodes, report.SeedRelationships,
 			float64(report.ApproxSeedBytes)/(1024*1024))
 
-		sc, countErr := countSeedGraphLadybug(ctx, conn)
+		sc, countErr := countSeedGraphFalkor(graph)
 		if countErr != nil {
 			return fmt.Errorf("seed verification: %w", countErr)
 		}
@@ -107,7 +124,7 @@ func runLadybugReport(ctx context.Context, dataDir string, cfg seedConfig, label
 	totalOps := 0
 	var allLatencies []float64
 	for _, q := range queries {
-		stat, err := runQueryLadybug(ctx, conn, q, iterations, warmup)
+		stat, err := runQueryFalkor(ctx, graph, q, iterations, warmup)
 		if err != nil {
 			return fmt.Errorf("query %s: %w", q.name, err)
 		}
@@ -149,27 +166,55 @@ func runLadybugReport(ctx context.Context, dataDir string, cfg seedConfig, label
 	return nil
 }
 
-// runQueryLadybug mirrors runQuery for the embedded backend: the reference
+// falkorSeedPhase writes one seed phase to the graph in UNWIND batches of at
+// most batchSize rows, mirroring the Bolt seeder's chunking. A single giant
+// GRAPH.QUERY (the order-lines phase is ~170k rows at the default scale) is
+// both memory-heavy and slow enough to trip client read timeouts.
+func falkorSeedPhase(graph *falkordb.Graph, phaseName, cypher string, rows []map[string]any, batchSize int) error {
+	phaseCypher := foldChainedCreates(phaseName, cypher)
+	if len(rows) == 0 {
+		return nil
+	}
+	if batchSize <= 0 {
+		batchSize = len(rows)
+	}
+	for start := 0; start < len(rows); start += batchSize {
+		end := start + batchSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batch := make([]any, end-start)
+		for i, row := range rows[start:end] {
+			batch[i] = row
+		}
+		if _, err := graph.Query(phaseCypher, map[string]any{"rows": batch}, nil); err != nil {
+			return fmt.Errorf("%s batch %d..%d: %w", phaseName, start, end, err)
+		}
+	}
+	return nil
+}
+
+// runQueryFalkor mirrors runQuery for the RESP backend: the reference
 // fingerprint is captured on the first call, warmups re-verify it, and every
 // timed iteration re-fingerprints the result set for intra-run stability.
-func runQueryLadybug(ctx context.Context, conn *lbug.Connection, q benchQuery, iterations, warmup int) (QueryStat, error) {
+func runQueryFalkor(ctx context.Context, graph *falkordb.Graph, q benchQuery, iterations, warmup int) (QueryStat, error) {
 	execCollect := func() ([]resultRow, []string, error) {
-		res, err := conn.Query(q.cypher)
+		res, err := graph.Query(q.cypher, nil, nil)
 		if err != nil {
 			return nil, nil, err
 		}
-		defer res.Close()
-		keys := res.GetColumnNames()
 		var rows []resultRow
-		for res.HasNext() {
-			tup, err := res.Next()
-			if err != nil {
-				return nil, nil, err
+		var keys []string
+		for res.Next() {
+			r := res.Record()
+			if keys == nil {
+				keys = r.Keys()
 			}
-			values, err := tup.GetAsMap()
-			tup.Close()
-			if err != nil {
-				return nil, nil, err
+			values := make(map[string]any, len(keys))
+			for _, k := range keys {
+				if v, ok := r.Get(k); ok {
+					values[k] = v
+				}
 			}
 			rows = append(rows, resultRow{keys: keys, values: values})
 		}
@@ -235,40 +280,29 @@ func runQueryLadybug(ctx context.Context, conn *lbug.Connection, q benchQuery, i
 	return stat, nil
 }
 
-// countSeedGraphLadybug runs the shared seed-count queries against the
-// embedded database and reports what is actually on disk.
-func countSeedGraphLadybug(ctx context.Context, conn *lbug.Connection) (SeedCounts, error) {
+// countSeedGraphFalkor runs the shared seed-count queries over RESP and
+// reports what is actually in the graph.
+func countSeedGraphFalkor(graph *falkordb.Graph) (SeedCounts, error) {
 	var sc SeedCounts
 	for _, pair := range seedCountQueries {
-		res, err := conn.Query(pair.query)
+		res, err := graph.Query(pair.query, nil, nil)
 		if err != nil {
 			return sc, fmt.Errorf("count query %q: %w", pair.query, err)
 		}
 		var count int64
-		if res.HasNext() {
-			tup, err := res.Next()
-			if err != nil {
-				res.Close()
-				return sc, fmt.Errorf("count query %q: %w", pair.query, err)
-			}
-			values, err := tup.GetAsMap()
-			tup.Close()
-			if err != nil {
-				res.Close()
-				return sc, fmt.Errorf("count query %q: %w", pair.query, err)
-			}
-			// Every seedCountQueries entry aliases its count as `n`.
-			if v, ok := values["n"]; ok {
-				count = ladybugCountToInt64(v)
+		if res.Next() {
+			if r := res.Record(); r != nil {
+				if v, err := r.GetByIndex(0); err == nil {
+					count = falkorCountToInt64(v)
+				}
 			}
 		}
-		res.Close()
 		setSeedCount(&sc, pair.field, count)
 	}
 	return sc, nil
 }
 
-func ladybugCountToInt64(v any) int64 {
+func falkorCountToInt64(v any) int64 {
 	switch x := v.(type) {
 	case int64:
 		return x

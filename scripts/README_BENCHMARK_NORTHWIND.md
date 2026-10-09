@@ -96,6 +96,9 @@ reported energy covers the full run, not just the query window.
 - **Docker** (only when FalkorDB or Memgraph runs). The script pulls
   `falkordb/falkordb` and `memgraph/memgraph` automatically; set
   `SKIP_FALKOR=1` / `SKIP_MEMGRAPH=1` to skip the docker engines entirely.
+  FalkorDB is queried over its native RESP protocol (port 6379, mapped to
+  host port `17690`) via the official `falkordb-go` client — FalkorDB v6 no
+  longer ships the experimental Bolt listener of the legacy C engine.
 - **LadybugDB** (only when the Ladybug run is enabled): nothing to install
   by hand. The script downloads the precompiled LadybugDB library into
   `lib-ladybug/` and builds a `ladybug,system_ladybug`-tagged runner that
@@ -105,6 +108,11 @@ reported energy covers the full run, not just the query window.
   Dialect note: LadybugDB (Kuzu fork) has no Bolt server and no
   `CREATE INDEX … FOR (n:L) ON (n.prop)` syntax, so the embedded runner
   skips the index-setup phase — its `seed_index_ms` reads 0.
+
+  FalkorDB dialect note: seed statements are written through the native
+  RESP protocol in `BATCH_SIZE` chunks (the Bolt seeder's chunking), and
+  the Neo4j-style named indexes are rewritten to FalkorDB's supported
+  `CREATE INDEX FOR … ON …` form (no index name, no `IF NOT EXISTS`).
 
 ## Files produced by this benchmark
 
@@ -172,6 +180,19 @@ sweep.md                     all engines in one breakdown
    ```bash
    ./scripts/benchmark_northwind_vs_neo4j.sh
    ```
+
+   To test a single engine without running the rest of the sweep, use one
+   of the only-mode flags:
+
+   ```bash
+   ./scripts/benchmark_northwind_vs_neo4j.sh --falkor-only
+   ./scripts/benchmark_northwind_vs_neo4j.sh --memgraph-only
+   ./scripts/benchmark_northwind_vs_neo4j.sh --ladybug-only
+   ```
+
+   Each only-mode flag skips every other phase (including NornicDB and
+   Neo4j) and generates that engine's single-engine report. The combined
+   `sweep.md` needs at least two engines and is skipped in only-mode.
 
    You will be prompted once for your sudo password (for `powermetrics`).
    After that the script runs unattended. Runtime depends on dataset scale,
@@ -244,9 +265,9 @@ sweep.md                     all engines in one breakdown
 | `SKIP_MEMGRAPH` | `0` | Set to `1` to skip the Memgraph phase. |
 | `SKIP_LADYBUG` | `0` | Set to `1` to skip the embedded LadybugDB phase (no library download). |
 | `FALKOR_IMAGE` | `falkordb/falkordb:latest` | FalkorDB docker image. |
-| `FALKOR_BOLT_PORT` | `17688` | Host port mapped to FalkorDB's Bolt listener (container 7687). |
-| `FALKOR_AUTH` | `userpass` | `userpass` uses `FALKOR_USER`/`FALKOR_PASS`; `none` uses no-auth Bolt. |
-| `FALKOR_USER` / `FALKOR_PASS` | `falkordb` / `falkordb` | FalkorDB Bolt credentials. |
+| `FALKOR_PORT` | `17690` | Host port mapped to FalkorDB's RESP listener (container 6379). |
+| `FALKOR_AUTH` | `none` | `none` for no-auth RESP; `userpass` uses `FALKOR_USER`/`FALKOR_PASS` and starts Redis with `--requirepass`. |
+| `FALKOR_USER` / `FALKOR_PASS` | `falkordb` / `falkordb` | FalkorDB RESP credentials (used when `FALKOR_AUTH=userpass`). |
 | `FALKOR_DATA_DIR` | `./bench-data/falkor` | FalkorDB data dir on the host (mapped to `/data`). Wiped each run. |
 | `MEMGRAPH_IMAGE` | `memgraph/memgraph:latest` | Memgraph docker image. |
 | `MEMGRAPH_BOLT_PORT` | `17689` | Host port mapped to Memgraph's Bolt listener (container 7687). |
@@ -256,9 +277,9 @@ sweep.md                     all engines in one breakdown
 
 NornicDB runs on non-default ports (`17687` bolt, `17474` HTTP) so it can
 coexist with a developer's Neo4j on standard ports while still letting Neo4j
-use its defaults during its own phase. FalkorDB and Memgraph containers map
-their Bolt listeners to host ports `17688` and `17689` respectively — the
-script refuses to start if either port is already in use.
+use its defaults during its own phase. FalkorDB's RESP listener maps to host
+port `17690` and Memgraph's Bolt listener to `17689` — the script refuses to
+start if either port is already in use.
 
 ## Repeating a run
 

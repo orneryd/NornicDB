@@ -27,13 +27,14 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/rand/v2"
 	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -370,7 +371,7 @@ func main() {
 		out           = flag.String("out", "", "output path for JSON report (stdout if empty)")
 		label         = flag.String("label", "db", "label for this run (e.g. nornicdb, neo4j)")
 		skipSeed      = flag.Bool("skip-seed", false, "assume dataset is already present")
-		driverName    = flag.String("driver", "bolt", "benchmark backend: bolt (default) or ladybug (embedded LadybugDB)")
+		driverName    = flag.String("driver", "bolt", "benchmark backend: bolt (default), ladybug (embedded LadybugDB), or falkor (native RESP via falkordb-go)")
 		ladybugDir    = flag.String("ladybug-dir", "", "LadybugDB data directory path (required when -driver ladybug)")
 	)
 	flag.Parse()
@@ -400,6 +401,26 @@ func main() {
 		}
 		if err := runLadybugReport(ctx, *ladybugDir, cfg, *label, *iterations, *warmup, *skipSeed, *out); err != nil {
 			die("ladybug: %v", err)
+		}
+		return
+	}
+
+	if *driverName == "falkor" {
+		cfg := seedConfig{
+			categories:    *categories,
+			suppliers:     *suppliers,
+			customers:     *customersN,
+			products:      *products,
+			orders:        *ordersN,
+			orderLinesMin: *orderLinesMin,
+			orderLinesMax: *orderLinesMax,
+			batchSize:     *batchSize,
+			parallel:      *parallel,
+			seed:          *seed,
+			label:         *label,
+		}
+		if err := runFalkorReport(ctx, *uri, *database, *user, *pass, *noAuth, cfg, *label, *iterations, *warmup, *skipSeed, *out); err != nil {
+			die("falkor: %v", err)
 		}
 		return
 	}

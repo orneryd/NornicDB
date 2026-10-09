@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -254,12 +255,12 @@ func setSeedCount(sc *SeedCounts, field string, n int64) {
 	}
 }
 
-// ladybugCypherForPhase returns a Kuzu-compatible variant of a seed
-// statement. Kuzu accepts comma-separated patterns inside a single CREATE
-// clause but rejects chained CREATE clauses in one query, so the two
-// multi-clause seed statements are folded. The Bolt engines keep the
-// original Neo4j-flavored statements unchanged.
-func ladybugCypherForPhase(phaseName, cypher string) string {
+// foldChainedCreates returns a variant of a seed statement with chained
+// CREATE clauses folded into one comma-separated CREATE pattern list. Kuzu
+// (LadybugDB) rejects chained CREATE clauses, and FalkorDB's planner handles
+// the folded form more reliably on large UNWIND batches. The Bolt engines
+// keep the original Neo4j-flavored statements unchanged.
+func foldChainedCreates(phaseName, cypher string) string {
 	switch phaseName {
 	case "products":
 		return strings.Replace(cypher,
@@ -272,4 +273,18 @@ func ladybugCypherForPhase(phaseName, cypher string) string {
 	default:
 		return cypher
 	}
+}
+
+var falkorIndexRe = regexp.MustCompile(`^CREATE INDEX \S+ IF NOT EXISTS FOR (.+)$`)
+
+// falkorIndexQuery rewrites a Neo4j-style named CREATE INDEX statement into
+// FalkorDB's supported form: no index name and no IF NOT EXISTS clause.
+// The second return value is false when the statement does not match the
+// expected pattern (and was returned unchanged).
+func falkorIndexQuery(q string) (string, bool) {
+	m := falkorIndexRe.FindStringSubmatch(strings.TrimSpace(q))
+	if m == nil {
+		return q, false
+	}
+	return "CREATE INDEX FOR " + m[1], true
 }

@@ -60,6 +60,12 @@
 #   SKIP_FALKOR=1           skip the FalkorDB run (image neither pulled nor required).
 #   SKIP_MEMGRAPH=1         skip the Memgraph run.
 #   SKIP_LADYBUG=1          skip the embedded LadybugDB run (no library download).
+#
+# CLI flags (for testing a single engine without running the rest of the sweep):
+#   --falkor-only           run only the FalkorDB phase
+#   --memgraph-only         run only the Memgraph phase
+#   --ladybug-only          run only the embedded LadybugDB phase
+#
 #   GRAPH_ONLY=1            (default 1) Disable BM25 fulltext + vector ANN index
 #                           build/maintenance for the NornicDB run via the per-DB
 #                           --search-bm25-enabled=false / --search-vector-enabled=false
@@ -101,14 +107,16 @@ NORNIC_PARSER_MODES="${NORNIC_PARSER_MODES:-nornic antlr}"
 SKIP_POWERMETRICS="${SKIP_POWERMETRICS:-0}"
 SKIP_NEO4J="${SKIP_NEO4J:-0}"
 FALKOR_IMAGE="${FALKOR_IMAGE:-falkordb/falkordb:latest}"
-FALKOR_BOLT_PORT="${FALKOR_BOLT_PORT:-17688}"
-FALKOR_AUTH="${FALKOR_AUTH:-userpass}"
+# FalkorDB v6+ serves queries over native RESP (the production protocol); the
+# experimental Bolt listener of the legacy C engine no longer exists, so the
+# sweep talks RESP via the official falkordb-go client.
+FALKOR_PORT="${FALKOR_PORT:-17690}"
+FALKOR_AUTH="${FALKOR_AUTH:-none}"
 FALKOR_USER="${FALKOR_USER:-falkordb}"
 FALKOR_PASS="${FALKOR_PASS:-falkordb}"
 FALKOR_DATA_DIR="${FALKOR_DATA_DIR:-${REPO_ROOT}/bench-data/falkor}"
 FALKOR_CONTAINER_DATA_DIR="${FALKOR_CONTAINER_DATA_DIR:-/data}"
 FALKOR_DATABASE="${FALKOR_DATABASE:-falkor}"
-FALKOR_ENV_ARGS="${FALKOR_ENV_ARGS:-BOLT_PORT 7687}"
 MEMGRAPH_IMAGE="${MEMGRAPH_IMAGE:-memgraph/memgraph:latest}"
 MEMGRAPH_BOLT_PORT="${MEMGRAPH_BOLT_PORT:-17689}"
 MEMGRAPH_DATA_DIR="${MEMGRAPH_DATA_DIR:-${REPO_ROOT}/bench-data/memgraph}"
@@ -119,6 +127,32 @@ LADYBUG_BENCH_BIN="${LADYBUG_BENCH_BIN:-${REPO_ROOT}/northwind_power_bench_ladyb
 SKIP_FALKOR="${SKIP_FALKOR:-0}"
 SKIP_MEMGRAPH="${SKIP_MEMGRAPH:-0}"
 SKIP_LADYBUG="${SKIP_LADYBUG:-0}"
+
+# Per-engine-only CLI flags: run exactly one phase for quick isolated testing.
+# Any env-provided SKIP_* / parser-mode settings are overridden so the selected
+# engine is the only thing that runs.
+ONLY_ENGINE=""
+for arg in "$@"; do
+  case "${arg}" in
+    --falkor-only)   ONLY_ENGINE="falkor" ;;
+    --memgraph-only) ONLY_ENGINE="memgraph" ;;
+    --ladybug-only)  ONLY_ENGINE="ladybug" ;;
+    -*)              die "unknown option: ${arg}" ;;
+    *)               die "unexpected argument: ${arg}" ;;
+  esac
+done
+if [[ -n "${ONLY_ENGINE}" ]]; then
+  NORNIC_PARSER_MODES=""
+  SKIP_NEO4J=1
+  SKIP_FALKOR=1
+  SKIP_MEMGRAPH=1
+  SKIP_LADYBUG=1
+  case "${ONLY_ENGINE}" in
+    falkor)   SKIP_FALKOR=0 ;;
+    memgraph) SKIP_MEMGRAPH=0 ;;
+    ladybug)  SKIP_LADYBUG=0 ;;
+  esac
+fi
 for mode in ${NORNIC_PARSER_MODES}; do
   case "${mode}" in
     nornic|antlr) ;;
@@ -192,6 +226,9 @@ log "config: products=${PRODUCTS} orders=${ORDERS} order_lines=${ORDER_LINES_MIN
 log "config: report_dir=${REPORT_DIR}"
 log "config: nornicdb parser modes=${NORNIC_PARSER_MODES} skip_powermetrics=${SKIP_POWERMETRICS} skip_neo4j=${SKIP_NEO4J}"
 log "config: skip_falkor=${SKIP_FALKOR} skip_memgraph=${SKIP_MEMGRAPH} skip_ladybug=${SKIP_LADYBUG}"
+if [[ -n "${ONLY_ENGINE}" ]]; then
+  log "only-engine mode: running ${ONLY_ENGINE} and skipping every other phase"
+fi
 if [[ "${GRAPH_ONLY}" == "1" ]]; then
   log "config: GRAPH_ONLY=1 — NornicDB will run with BM25 + vector indexes disabled (graph-only mode)"
 else
@@ -663,19 +700,22 @@ install_ladybug() {
 	go get github.com/LadybugDB/go-ladybug@v0.17.0 || die "go get github.com/LadybugDB/go-ladybug failed"
 }
 
-# run_docker_engine <label> <image> <bolt_port> <data_dir> <container_data_dir>
-#                  <database> <auth_mode> <env_args...>
+# run_docker_engine <label> <image> <host_port> <container_port> <data_dir>
+#                  <container_data_dir> <database> <auth_mode> <driver_mode>
+#                  [extra docker args...]
 #
-# auth_mode: "none" for no-auth Bolt, or "user:pass". Extra args are passed to
-# `docker run` (e.g. `-e FALKORDB_ARGS=...` for the FalkorDB Bolt listener).
+# auth_mode: "none" for no-auth, or "user:pass". driver_mode: "bolt" runs the
+# BENCH_BIN over Bolt (Memgraph), "falkor" runs it over native RESP
+# (falkordb-go). Extra args are passed to `docker run` (e.g.
+# `-e REDIS_ARGS=...` or `--also-log-to-stderr`).
 run_docker_engine() {
-	local label="$1" image="$2" bolt_port="$3" data_dir="$4" container_data_dir="$5" database="$6" auth_mode="$7"
-	shift 7
+	local label="$1" image="$2" host_port="$3" container_port="$4" data_dir="$5" container_data_dir="$6" database="$7" auth_mode="$8" driver_mode="$9"
+	shift 9
 	local container="northwind-${label}"
 	log "=== ${label} run (docker ${image}) ==="
 
-	if nc -z 127.0.0.1 "${bolt_port}" 2>/dev/null; then
-		die "${label} Bolt port ${bolt_port} is already in use"
+	if nc -z 127.0.0.1 "${host_port}" 2>/dev/null; then
+		die "${label} port ${host_port} is already in use"
 	fi
 	docker rm -f "${container}" >/dev/null 2>&1 || true
 	if [[ -d "${data_dir}" ]]; then
@@ -692,25 +732,24 @@ run_docker_engine() {
 	VMSTAT_PID=$(start_vmstat "${REPORT_DIR}/${label}.vmstat.log")
 	local t0=$(date +%s.%N)
 
-	log "starting ${label} container (bolt=${bolt_port})"
+	log "starting ${label} container (port=${host_port})"
 	docker run -d --name "${container}" \
-		-p "127.0.0.1:${bolt_port}:7687" \
+		-p "127.0.0.1:${host_port}:${container_port}" \
 		-v "${data_dir}:${container_data_dir}" \
 		"$@" \
 		"${image}" >"${REPORT_DIR}/${label}.docker.log" 2>&1
 
 	for i in {1..60}; do
-		if nc -z 127.0.0.1 "${bolt_port}" 2>/dev/null; then break; fi
+		if nc -z 127.0.0.1 "${host_port}" 2>/dev/null; then break; fi
 		sleep 1
 		if ! docker ps --format '{{.Names}}' | grep -qx "${container}"; then
 			die "${label} container exited during startup; see ${REPORT_DIR}/${label}.docker.log"
 		fi
 	done
-	nc -z 127.0.0.1 "${bolt_port}" 2>/dev/null || die "${label} bolt port never came up — see ${REPORT_DIR}/${label}.docker.log"
+	nc -z 127.0.0.1 "${host_port}" 2>/dev/null || die "${label} port never came up — see ${REPORT_DIR}/${label}.docker.log"
 	log "${label} ready (container ${container})"
 
 	local bench_args=(
-		-uri "bolt://localhost:${bolt_port}"
 		-database "${database}"
 		-categories "${CATEGORIES}"
 		-suppliers "${SUPPLIERS}"
@@ -727,6 +766,17 @@ run_docker_engine() {
 		-label "${label}"
 		-out "${REPORT_DIR}/${label}.results.json"
 	)
+	case "${driver_mode}" in
+		bolt)
+			bench_args=(-uri "bolt://localhost:${host_port}" "${bench_args[@]}")
+			;;
+		falkor)
+			bench_args=(-driver falkor -uri "falkor://localhost:${host_port}" "${bench_args[@]}")
+			;;
+		*)
+			die "unknown driver mode: ${driver_mode}"
+			;;
+	esac
 	if [[ "${auth_mode}" == "none" ]]; then
 		"${BENCH_BIN}" "${bench_args[@]}" -no-auth 2>"${REPORT_DIR}/${label}.bench.log" \
 			|| die "${label} benchmark failed — see ${REPORT_DIR}/${label}.bench.log"
@@ -761,23 +811,27 @@ run_docker_engine() {
 }
 
 run_falkor() {
-	if [[ "${FALKOR_AUTH}" == "none" ]]; then
-		local auth="none"
-	else
-		local auth="${FALKOR_USER}:${FALKOR_PASS}"
+	local extra_docker_args=()
+	local auth="none"
+	if [[ "${FALKOR_AUTH}" != "none" ]]; then
+		auth="${FALKOR_USER}:${FALKOR_PASS}"
+		# FalkorDB authenticates RESP clients through Redis ACLs; require a
+		# password so the configured credentials actually gate the server.
+		extra_docker_args=(-e "REDIS_ARGS=--requirepass ${FALKOR_PASS}")
 	fi
-	# FalkorDB serves Bolt only when the listener is enabled; FALKOR_ENV_ARGS
-	# defaults to "BOLT_PORT 7687" inside the container.
-	run_docker_engine "falkor" "${FALKOR_IMAGE}" "${FALKOR_BOLT_PORT}" \
-		"${FALKOR_DATA_DIR}" "${FALKOR_CONTAINER_DATA_DIR}" "${FALKOR_DATABASE}" "${auth}" \
-		-e "FALKORDB_ARGS=${FALKOR_ENV_ARGS}"
+	# Native RESP: the official falkordb-go client speaks GRAPH.QUERY over
+	# port 6379 (mapped to FALKOR_PORT). The empty-array expansion is guarded
+	# for `set -u` (bash 3.2 on macOS trips on a bare empty array).
+	run_docker_engine "falkor" "${FALKOR_IMAGE}" "${FALKOR_PORT}" "6379" \
+		"${FALKOR_DATA_DIR}" "${FALKOR_CONTAINER_DATA_DIR}" "${FALKOR_DATABASE}" "${auth}" "falkor" \
+		${extra_docker_args[@]+"${extra_docker_args[@]}"}
 }
 
 run_memgraph() {
 	# Memgraph maps the host dir into its data directory and logs to stderr so
 	# the report can classify the store. No auth by default.
-	run_docker_engine "memgraph" "${MEMGRAPH_IMAGE}" "${MEMGRAPH_BOLT_PORT}" \
-		"${MEMGRAPH_DATA_DIR}" "/var/lib/memgraph" "${MEMGRAPH_DATABASE}" "none" \
+	run_docker_engine "memgraph" "${MEMGRAPH_IMAGE}" "${MEMGRAPH_BOLT_PORT}" "7687" \
+		"${MEMGRAPH_DATA_DIR}" "/var/lib/memgraph" "${MEMGRAPH_DATABASE}" "none" "bolt" \
 		--also-log-to-stderr
 }
 
