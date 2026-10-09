@@ -508,24 +508,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		if last == "WITH" {
 			if scope, ok := stripWithEmbeddingSuffix(cypher); ok {
 				switch lastTopLevelClauseWord(scope) {
-				case "", "UNWIND", "MATCH", "OPTIONAL", "WITH", "CALL":
+				case "", "UNWIND", "MATCH", "OPTIONAL", "WITH", "CALL", "LET", "FILTER", "FOR":
 				default:
 					last = ""
-				}
-			}
-		}
-		// FOR is shared with administration and schema DDL (CREATE ALIAS …
-		// FOR DATABASE …, CREATE INDEX … FOR (n:Label)), so it is not a
-		// dangling-reading keyword on its own. Only a trailing FOR iteration
-		// clause (FOR x IN …) is a reading clause with nothing after it.
-		if last != "UNWIND" && last != "MATCH" && last != "OPTIONAL" && last != "WITH" &&
-			last != "LET" && last != "FILTER" {
-			if clauses, ok := splitPipelineClausesAllowingProcedureCalls(cypher); ok && len(clauses) > 0 {
-				tail := clauses[len(clauses)-1]
-				if tail.kind == pipelineClauseUnwind && startsWithKeywordFold(tail.text, "FOR") {
-					if _, _, iteration := parsePipelineIteration(tail.text); iteration {
-						last = "FOR"
-					}
 				}
 			}
 		}

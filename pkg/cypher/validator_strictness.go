@@ -158,7 +158,7 @@ func hasAdjacentStringLiterals(cypher string) bool {
 var validatorClauseKeywords = []string{
 	"RETURN", "WITH", "YIELD", "MATCH", "OPTIONAL", "CREATE", "MERGE",
 	"SET", "UNWIND", "CALL", "FOREACH", "DELETE", "DETACH", "REMOVE",
-	"LOAD", "UNION", "SHOW", "LET", "FILTER",
+	"LOAD", "UNION", "SHOW", "LET", "FILTER", "FOR",
 }
 
 // validatorKeywordFirst is a first-byte index into validatorClauseKeywords so
@@ -271,12 +271,38 @@ func lastTopLevelClauseWord(s string) string {
 				if keyword == "WITH" && isExpressionWith(s, i, i+len(keyword)) {
 					continue
 				}
+				// FOR is only an iteration clause in the shared grammar: in
+				// schema and alias DDL it is a specifier (CREATE INDEX …
+				// FOR (n:Label), CREATE ALIAS … FOR DATABASE …), not a
+				// dangling reading clause.
+				if keyword == "FOR" && !forIterationClauseAt(s, i) {
+					continue
+				}
 				last = keyword
 				break
 			}
 		}
 	}
 	return last
+}
+
+// forIterationClauseAt reports whether the FOR keyword at s[pos] starts a
+// shared-grammar iteration clause (FOR variable IN expression) rather than a
+// DDL FOR specifier (CREATE INDEX … FOR (n:Label), CREATE ALIAS … FOR
+// DATABASE …). It scans without allocating, mirroring parsePipelineIteration's
+// whitespace-only prefix.
+func forIterationClauseAt(s string, pos int) bool {
+	end := skipSpaces(s, pos+len("FOR"))
+	_, end, ok := scanSymbolicName(s, end)
+	if !ok {
+		return false
+	}
+	end = skipSpaces(s, end)
+	if end+2 > len(s) || !strings.EqualFold(s[end:end+2], "IN") {
+		return false
+	}
+	end += 2
+	return end == len(s) || !isAlphaNumericByte(s[end])
 }
 
 // isExpressionWith reports whether the top-level word WITH at s[start:end] is
