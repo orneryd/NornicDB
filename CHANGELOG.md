@@ -5,7 +5,7 @@ All notable changes to NornicDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v1.4.0]
+## [Unreleased]
 
 ### Added
 
@@ -17,20 +17,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   payload database, request context, and finally the configured default
   database apply, and MCP now defaults to the configured default database
   instead of the namespace of the single DB instance.
-
-- Clear deleted entries out of the scanned ranges after a mass delete. Badger
-  keeps a delete marker for every deleted node and relationship until a
-  compaction it never runs on a small or idle database, and every scan steps
-  over them: a 40,000-node property lookup went from 13 ms to 55 ms after
-  140,000 nodes were deleted and stayed there. After 50,000 deletes, once
-  deletes have stopped for 30 seconds, the engine has Badger compact them
-  away (0.6 s; commits wait meanwhile), and the lookup takes 8 ms. Dropping a
-  key prefix, which this and `DROP DATABASE` use, now makes commits wait
-  instead of failing them with Badger's blocked-writes error (#911).
-- Log classified Cypher syntax rejections at INFO with a bounded redacted
-  statement shape, allowlisted statement class and stable grouping hash.
-  JSON logs can be grouped into an optimization backlog without retaining
-  rejected queries in memory.
 
 ### Changed
 
@@ -75,6 +61,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Bound the buffered tail to 1,024 candidates and use streaming point reads
   for larger tails. Unreadable records now fail scans and explicit transaction
   constraint validation instead of being silently skipped (#930).
+
+### Fixed
+
+- Make `^` and `power()` return Neo4j's correctly rounded result instead of
+  `math.Pow`'s value, which is 1 ulp away for inputs such as `3 ^ 2.5`.
+  The exponential, logarithmic, power and hyperbolic functions now run on a
+  musl-derived libm (`pkg/math/libm`, Arm optimized-routines under MIT) that
+  matches Java's `Math.pow`/`exp`/`log` (#981).
+- Resolve the 17 reopened #908 write, WHERE and MATCH reproductions: reject
+  null MERGE keys and malformed CREATE patterns, preserve ON-action/SET order
+  and nullable counts, share predicate precedence and complete seed constraints,
+  respect constrained OPTIONAL MATCH and zero-length paths, and enforce comma
+  relationship uniqueness and anonymous multiplicity. Hash joins now use shared
+  Cypher value keys so integer and floating-point equivalents match.
+- Plan STARTS WITH, ENDS WITH and CONTAINS in the shared row predicate owner,
+  and reuse a predicate plan for streamed counts instead of reparsing each node.
+
+- Fail storage scans, batch reads and constraint checks on record read or
+  decode errors. Only missing records (stale index entries) are skipped, so
+  corruption no longer silently reduces query results or bypasses constraints
+  (#930).
+
+## [v1.4.0]
+
+### Added
+
+- Clear deleted entries out of the scanned ranges after a mass delete. Badger
+  keeps a delete marker for every deleted node and relationship until a
+  compaction it never runs on a small or idle database, and every scan steps
+  over them: a 40,000-node property lookup went from 13 ms to 55 ms after
+  140,000 nodes were deleted and stayed there. After 50,000 deletes, once
+  deletes have stopped for 30 seconds, the engine has Badger compact them
+  away (0.6 s; commits wait meanwhile), and the lookup takes 8 ms. Dropping a
+  key prefix, which this and `DROP DATABASE` use, now makes commits wait
+  instead of failing them with Badger's blocked-writes error (#911).
+- Log classified Cypher syntax rejections at INFO with a bounded redacted
+  statement shape, allowlisted statement class and stable grouping hash.
+  JSON logs can be grouped into an optimization backlog without retaining
+  rejected queries in memory.
+
+### Changed
 
 - Delete the legacy procedure dispatch switch entirely: every built-in
   procedure is now served by the registry, and unrecognized names are
@@ -551,25 +578,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#911).
 
 ### Fixed
-
-- Make `^` and `power()` return Neo4j's correctly rounded result instead of
-  `math.Pow`'s value, which is 1 ulp away for inputs such as `3 ^ 2.5`.
-  The exponential, logarithmic, power and hyperbolic functions now run on a
-  musl-derived libm (`pkg/math/libm`, Arm optimized-routines under MIT) that
-  matches Java's `Math.pow`/`exp`/`log` (#981).
-- Resolve the 17 reopened #908 write, WHERE and MATCH reproductions: reject
-  null MERGE keys and malformed CREATE patterns, preserve ON-action/SET order
-  and nullable counts, share predicate precedence and complete seed constraints,
-  respect constrained OPTIONAL MATCH and zero-length paths, and enforce comma
-  relationship uniqueness and anonymous multiplicity. Hash joins now use shared
-  Cypher value keys so integer and floating-point equivalents match.
-- Plan STARTS WITH, ENDS WITH and CONTAINS in the shared row predicate owner,
-  and reuse a predicate plan for streamed counts instead of reparsing each node.
-
-- Fail storage scans, batch reads and constraint checks on record read or
-  decode errors. Only missing records (stale index entries) are skipped, so
-  corruption no longer silently reduces query results or bypasses constraints
-  (#930).
 
 - Compare explicit HTTP differential failures after commit, where Neo4j can
   defer connected-node DELETE validation. Roll back open reference transactions
