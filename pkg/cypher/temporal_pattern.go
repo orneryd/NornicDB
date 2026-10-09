@@ -356,9 +356,9 @@ func modifiedJulianDay(date time.Time) int64 {
 // patternTemporal is a temporal value as a pattern sees it: the fields it has
 // and its wall clock in its zone.
 type patternTemporal struct {
-	value                       time.Time
-	date, clock, offset, zoned  bool
-	zoneID, typeName            string
+	value                      time.Time
+	date, clock, offset, zoned bool
+	zoneID, typeName           string
 }
 
 // patternTemporalOf is a temporal value's pattern view; ok is false for a

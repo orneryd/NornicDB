@@ -150,6 +150,8 @@
   other: "El patrón `{{.Pattern}}` no coincide con la entrada `{{.Input}}`. Verifique que el patrón sea válido para construir `{{.Type}}`."
 - id: cyphercore.temporal_pattern_requires_string
   other: "Un patrón solo se puede usar con una entrada `STRING`."
+- id: cyphercore.all_reduce_invalid_syntax
+  other: "Sintaxis no válida para la función `allReduce`. La función allReduce debe tener la firma allReduce(accumulator :: VARIABLE = initial :: ANY, variable :: VARIABLE IN list :: LIST<ANY> | reducer :: ANY, predicate :: BOOLEAN) :: BOOLEAN"
 - id: cyphercore.list_operand_type_mismatch
   other: "Tipo no coincidente: se esperaba List<T> pero era {{.Type}}"
 - id: cyphercore.list_parameter_type_mismatch

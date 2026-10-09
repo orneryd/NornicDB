@@ -22,10 +22,11 @@ var functionArityOverrides = map[string]functionArity{
 }
 
 // functionSyntaxForms are catalog entries written with their own syntax, not
-// a list of arguments: reduce(acc = init, x IN list | expression), the list
+// a list of arguments: reduce(acc = init, x IN list | expression) and
+// allReduce(acc = init, x IN list | expression, predicate), the list
 // predicates any / all / none / single (x IN list WHERE …) and exists.
 var functionSyntaxForms = map[string]bool{
-	"reduce": true, "all": true, "any": true, "none": true, "single": true, "exists": true,
+	"reduce": true, "allreduce": true, "all": true, "any": true, "none": true, "single": true, "exists": true,
 }
 
 // functionArities are the argument counts of the built-in functions, keyed by

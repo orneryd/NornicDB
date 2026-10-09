@@ -305,6 +305,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.aggregate_mixes_number_and_duration", Constructor: "CypherCoreAggregateMixesNumberAndDuration", Fields: []string{"Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.aggregate_number_only", Constructor: "CypherCoreAggregateNumberOnly", Fields: []string{"Function", "Received"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.aggregate_number_or_duration_only", Constructor: "CypherCoreAggregateNumberOrDurationOnly", Fields: []string{"Function"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.all_reduce_invalid_syntax", Constructor: "CypherCoreAllReduceInvalidSyntax", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.apoc_path_config_not_map", Constructor: "CypherCoreApocPathConfigNotMap", Fields: []string{"Received"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.apoc_path_config_number", Constructor: "CypherCoreApocPathConfigNumber", Fields: []string{"Key", "Received"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.apoc_path_config_string", Constructor: "CypherCoreApocPathConfigString", Fields: []string{"Key", "Received"}, PluralForms: []string{"other"}},

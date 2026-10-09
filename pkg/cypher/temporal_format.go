@@ -92,8 +92,8 @@ func formatTemporalISO(value interface{}) string {
 // (A) or nanoseconds (N). The largest unit of each group (months, days,
 // time) in the pattern takes the group's whole amount and smaller ones what
 // remains (y M of 14 months prints 1 2; M alone prints 14; s A of 6.007
-// seconds prints 6 7). Other characters
-// print as they are, and 'quoted' text as written ('' is a quote).
+// seconds prints 6 7). Other characters print as they are, and quoted text
+// as written, two quotes making one.
 func formatDurationPattern(duration *CypherDuration, pattern string) (string, error) {
 	months, days, seconds, nanos := durationGroups(duration)
 	seconds += nanos / 1_000_000_000

@@ -72,6 +72,7 @@ const (
 	MessageCypherCoreDurationPatternUnbalancedEscapes    MessageID = "cyphercore.duration_pattern_unbalanced_escapes"
 	MessageCypherCoreTemporalPatternMismatch             MessageID = "cyphercore.temporal_pattern_mismatch"
 	MessageCypherCoreTemporalPatternRequiresString       MessageID = "cyphercore.temporal_pattern_requires_string"
+	MessageCypherCoreAllReduceInvalidSyntax              MessageID = "cyphercore.all_reduce_invalid_syntax"
 	MessageCypherCoreListCoercionToBoolean               MessageID = "cyphercore.list_coercion_to_boolean"
 	MessageCypherCoreListIndexTypeMismatch               MessageID = "cyphercore.list_index_type_mismatch"
 	MessageCypherCoreMapKeyTypeMismatch                  MessageID = "cyphercore.map_key_type_mismatch"
@@ -389,6 +390,12 @@ func CypherCoreDurationPatternUnbalancedEscapes() Message {
 // constructor whose pattern doesn't read its input as the type it builds.
 func CypherCoreTemporalPatternMismatch(pattern, input, typeName string) Message {
 	return cypherCoreMessage(MessageCypherCoreTemporalPatternMismatch, "Pattern, `"+pattern+"`, does not match input, `"+input+"`. Verify that the pattern is valid for constructing `"+typeName+"`.", map[string]any{"Pattern": pattern, "Input": input, "Type": typeName})
+}
+
+// CypherCoreAllReduceInvalidSyntax is Neo4j's message for an allReduce call
+// without allReduce's form.
+func CypherCoreAllReduceInvalidSyntax() Message {
+	return cypherCoreMessage(MessageCypherCoreAllReduceInvalidSyntax, "Invalid syntax for the `allReduce` function. The function allReduce must have the signature allReduce(accumulator :: VARIABLE = initial :: ANY, variable :: VARIABLE IN list :: LIST<ANY> | reducer :: ANY, predicate :: BOOLEAN) :: BOOLEAN", nil)
 }
 
 // CypherCoreTemporalPatternRequiresString is Neo4j's message for a temporal

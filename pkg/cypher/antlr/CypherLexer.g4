@@ -218,6 +218,10 @@ INTEGER : DecimalInteger;
 // DIGIT - hex, octal, or single digit (for array indices, etc)
 DIGIT : HexInteger | OctalInteger | [0-9];
 
+// allReduce (Cypher 25), placed last among the keywords so the earlier
+// token numbers stay as they were.
+ALLREDUCE: 'ALLREDUCE';
+
 // ID must come after numbers so they aren't matched as IDs
 ID: Letter LetterOrDigit*;
 

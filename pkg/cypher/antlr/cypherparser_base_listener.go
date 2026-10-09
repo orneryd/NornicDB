@@ -759,6 +759,12 @@ func (s *BaseCypherParserListener) EnterReduceExpression(ctx *ReduceExpressionCo
 // ExitReduceExpression is called when production reduceExpression is exited.
 func (s *BaseCypherParserListener) ExitReduceExpression(ctx *ReduceExpressionContext) {}
 
+// EnterAllReduceExpression is called when production allReduceExpression is entered.
+func (s *BaseCypherParserListener) EnterAllReduceExpression(ctx *AllReduceExpressionContext) {}
+
+// ExitAllReduceExpression is called when production allReduceExpression is exited.
+func (s *BaseCypherParserListener) ExitAllReduceExpression(ctx *AllReduceExpressionContext) {}
+
 // EnterParameter is called when production parameter is entered.
 func (s *BaseCypherParserListener) EnterParameter(ctx *ParameterContext) {}
 

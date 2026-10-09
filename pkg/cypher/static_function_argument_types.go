@@ -2,6 +2,8 @@ package cypher
 
 import (
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Compile-time function argument types.
@@ -295,6 +297,13 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		open := skipSpaces(text, next)
 		if open >= len(text) || text[open] != '(' {
 			index = next
+			continue
+		}
+		if strings.EqualFold(name, "allReduce") {
+			if err := checkAllReduceForm(text, open, check); err != nil {
+				return err
+			}
+			index = open + 1
 			continue
 		}
 		arguments, typed := lookupStaticFunctionArguments(name)
@@ -643,4 +652,23 @@ func uniformListElementType(list string) string {
 		elementType = typeName
 	}
 	return elementType
+}
+
+// checkAllReduceForm is Neo4j's compile-time check of an allReduce call
+// whose parentheses open at open: the call must have allReduce's form, a
+// list of a known type must be a list, and a predicate of a known type a
+// boolean.
+func checkAllReduceForm(text string, open int, check func(staticArgumentType, string) error) error {
+	closing := findMatchingDelimiter(text, open, '(', ')')
+	if closing < 0 {
+		return nil
+	}
+	form, ok := parseReduceForm("allreduce", text[open+1:closing])
+	if !ok {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherCoreAllReduceInvalidSyntax())
+	}
+	if err := check(staticArgumentType{expected: "List<T>", options: []string{"List<T>"}}, form.list); err != nil {
+		return err
+	}
+	return check(staticArgumentType{expected: "Boolean", options: []string{"Boolean"}}, form.predicate)
 }

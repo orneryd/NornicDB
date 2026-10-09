@@ -519,10 +519,10 @@ func readFixedDigits(text string, pos, width int) (int, int, bool) {
 // resolvedPattern is what a pattern read: a date, a time of day, and a zone
 // or offset, each when the fields resolve to one.
 type resolvedPattern struct {
-	date                  time.Time
-	hour, minute, second  int
-	nano                  int
-	hasDate, hasTime      bool
+	date                 time.Time
+	hour, minute, second int
+	nano                 int
+	hasDate, hasTime     bool
 }
 
 // resolve combines the fields read into a date and a time of day, as Java's

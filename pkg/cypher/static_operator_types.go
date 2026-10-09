@@ -74,8 +74,8 @@ var staticFunctionResultTypes = map[string]string{
 	"lower": "String", "trim": "String", "ltrim": "String", "rtrim": "String",
 	"btrim": "String", "replace": "String", "substring": "String", "left": "String",
 	"right": "String", "type": "String", "elementid": "String",
-	"toboolean": "Boolean",
-	"keys":      "List<String>", "labels": "List<String>", "split": "List<String>",
+	"toboolean": "Boolean", "allreduce": "Boolean", "property_exists": "Boolean",
+	"keys": "List<String>", "labels": "List<String>", "split": "List<String>",
 	"date": "Date", "datetime": "DateTime", "localdatetime": "LocalDateTime",
 	"time": "Time", "localtime": "LocalTime", "duration": "Duration",
 	"point": "Point", "properties": "Map",
@@ -105,9 +105,8 @@ var staticFunctionResultTypes = map[string]string{
 func staticFunctionResultType(function, arguments string) string {
 	name := lowerASCII(function)
 	if name == "reduce" {
-		accumulator, _, _ := strings.Cut(arguments, ",")
-		if _, initial, assigned := strings.Cut(accumulator, "="); assigned {
-			return staticLiteralTypeName(strings.TrimSpace(initial))
+		if form, ok := parseReduceForm(name, arguments); ok {
+			return staticLiteralTypeName(form.initial)
 		}
 		return ""
 	}
@@ -873,7 +872,7 @@ func staticLiteralTypeNameOr(expression, fallback string) string {
 
 func isQuantifierOrReduceFunction(name string) bool {
 	switch lowerASCII(name) {
-	case "all", "any", "none", "single", "reduce", "exists":
+	case "all", "any", "none", "single", "reduce", "allreduce", "exists":
 		return true
 	}
 	return false

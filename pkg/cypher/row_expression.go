@@ -280,8 +280,8 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			}
 			value, handled, err := e.evaluateShortestPathValue(search, function, argument, nodes)
 			return value, handled, err
-		case "reduce":
-			return e.evaluateRowReduce(argument, values)
+		case "reduce", "allreduce":
+			return e.evaluateRowReduce(function, argument, values)
 		case "coalesce":
 			// Undefined operands behave as null, matching the shared/fn-level
 			// coalesce: only the first non-null, resolved operand wins. EXISTS

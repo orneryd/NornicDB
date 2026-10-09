@@ -8,6 +8,7 @@ import (
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Cypher 25 functions (Neo4j 2025.11 to 2026.05): the coll.* and string.*
@@ -30,6 +31,7 @@ func init() {
 	cypherfn.Register("string.join", fnStringJoin)
 	cypherfn.Register("string.regexreplace", fnStringRegexReplace)
 	cypherfn.Register("cardinality", fnCardinality)
+	cypherfn.Register("property_exists", fnPropertyExists)
 }
 
 // listArguments evaluates a function's arguments and returns its first as a
@@ -360,4 +362,32 @@ func fnCardinality(ctx cypherfn.Context, args []string) (interface{}, error) {
 		return int64(len(object)), nil
 	}
 	return nil, &cypherfn.TypeMismatchError{Function: "cardinality", Expected: "Map, Path or List<T>", Value: value}
+}
+
+// fnPropertyExists is property_exists(element, key), Cypher 25's
+// PROPERTY_EXISTS(n, key), whose bare key canonicalizeFunctionAliases writes
+// as a string: whether a node or relationship has a (non-null) property of
+// that key. A null element gives null; anything else is a type mismatch.
+func fnPropertyExists(ctx cypherfn.Context, args []string) (interface{}, error) {
+	if len(args) != 2 {
+		return nil, argumentCountError("property_exists", "2", len(args))
+	}
+	values, err := evalArgs(ctx, args)
+	if err != nil || values[0] == nil || values[1] == nil {
+		return nil, err
+	}
+	key, isString := values[1].(string)
+	if !isString {
+		return nil, &cypherfn.TypeMismatchError{Function: "property_exists", Expected: "String", Value: values[1]}
+	}
+	var properties map[string]interface{}
+	switch element := values[0].(type) {
+	case *storage.Node:
+		properties = element.Properties
+	case *storage.Edge:
+		properties = element.Properties
+	default:
+		return nil, &cypherfn.TypeMismatchError{Function: "property_exists", Expected: "Node or Relationship", Value: values[0]}
+	}
+	return properties[key] != nil, nil
 }

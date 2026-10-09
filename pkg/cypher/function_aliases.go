@@ -26,10 +26,12 @@ var cypherFunctionAliases = map[string]string{
 }
 
 // canonicalizeFunctionAliases returns query with each call of a GQL function
-// alias written as the function it names, and the rewrite that maps the
-// result back, or query and nil when it calls none. A name is a call when '('
-// follows it, and an alias only on its own: not a property (n.ln(), which
-// isn't a call), a namespace part (x.ln) or a parameter ($ln).
+// alias written as the function it names, and the property key name of each
+// PROPERTY_EXISTS(n, key) written as a string (PROPERTY_EXISTS(n, 'key')),
+// so every evaluator and check reads a plain function call; and the rewrite
+// that maps the result back, or query and nil when it has none. A name is a
+// call when '(' follows it, and an alias only on its own: not a property
+// (n.ln(), which isn't a call), a namespace part (x.ln) or a parameter ($ln).
 func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 	if !mayCallFunctionAlias(query) {
 		return query, nil
@@ -59,8 +61,17 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 		for end < len(query) && isIdentByte(query[end]) {
 			end++
 		}
-		canonical, alias := cypherFunctionAliases[strings.ToLower(query[index:end])]
-		if next := skipSpaces(query, end); !alias || next >= len(query) || query[next] != '(' {
+		next := skipSpaces(query, end)
+		if next >= len(query) || query[next] != '(' {
+			index = end
+			continue
+		}
+		name := strings.ToLower(query[index:end])
+		start, stop, replacement := index, end, cypherFunctionAliases[name]
+		if name == "property_exists" {
+			start, stop, replacement = propertyExistsKeyName(query, next)
+		}
+		if replacement == "" {
 			index = end
 			continue
 		}
@@ -68,12 +79,12 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 			rewrite = &queryRewrite{original: query}
 			out.Grow(len(query) + 16)
 		}
-		out.WriteString(query[last:index])
+		out.WriteString(query[last:start])
 		canonStart := out.Len()
-		out.WriteString(canonical)
-		rewrite.edits = append(rewrite.edits, queryTextEdit{origStart: index, origEnd: end, canonStart: canonStart, canonEnd: out.Len()})
-		last = end
-		index = end
+		out.WriteString(replacement)
+		rewrite.edits = append(rewrite.edits, queryTextEdit{origStart: start, origEnd: stop, canonStart: canonStart, canonEnd: out.Len()})
+		last = stop
+		index = stop
 	}
 	if rewrite == nil {
 		return query, nil
@@ -83,8 +94,25 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 	return rewrite.canonical, rewrite
 }
 
+// propertyExistsKeyName finds the key of PROPERTY_EXISTS(variable, key)
+// whose parentheses open at open: its span and the key as a string literal,
+// or an empty replacement when the call doesn't have that form.
+func propertyExistsKeyName(query string, open int) (start, end int, literal string) {
+	_, after, ok := scanIdentifierToken(query, skipSpaces(query, open+1))
+	comma := skipSpaces(query, after)
+	if !ok || comma >= len(query) || query[comma] != ',' {
+		return 0, 0, ""
+	}
+	start = skipSpaces(query, comma+1)
+	key, end, ok := scanIdentifierToken(query, start)
+	if closing := skipSpaces(query, end); !ok || closing >= len(query) || query[closing] != ')' {
+		return 0, 0, ""
+	}
+	return start, end, "'" + strings.ReplaceAll(strings.ReplaceAll(key, `\`, `\\`), `'`, `\'`) + "'"
+}
+
 // mayCallFunctionAlias is canonicalizeFunctionAliases's quick check: every
-// alias but ln and ceiling has an underscore.
+// alias but ln and ceiling has an underscore, as has property_exists.
 func mayCallFunctionAlias(query string) bool {
 	return strings.IndexByte(query, '_') >= 0 || containsFold(query, "ln") || containsFold(query, "ceiling")
 }

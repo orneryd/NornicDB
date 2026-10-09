@@ -373,6 +373,9 @@ type CypherParserListener interface {
 	// EnterReduceExpression is called when entering the reduceExpression production.
 	EnterReduceExpression(c *ReduceExpressionContext)
 
+	// EnterAllReduceExpression is called when entering the allReduceExpression production.
+	EnterAllReduceExpression(c *AllReduceExpressionContext)
+
 	// EnterParameter is called when entering the parameter production.
 	EnterParameter(c *ParameterContext)
 
@@ -780,6 +783,9 @@ type CypherParserListener interface {
 
 	// ExitReduceExpression is called when exiting the reduceExpression production.
 	ExitReduceExpression(c *ReduceExpressionContext)
+
+	// ExitAllReduceExpression is called when exiting the allReduceExpression production.
+	ExitAllReduceExpression(c *AllReduceExpressionContext)
 
 	// ExitParameter is called when exiting the parameter production.
 	ExitParameter(c *ParameterContext)

@@ -238,34 +238,25 @@ func validateReturnAggregationSemantics(body string) error {
 
 func quantifiedExpressionBindings(expression string) map[string]struct{} {
 	bindings := make(map[string]struct{})
-	// reduce(accumulator = initial, variable IN list | expression)
-	for from := 0; from < len(expression); {
-		index := keywordIndexFrom(expression, "reduce", from, defaultKeywordScanOpts())
-		if index < 0 {
-			break
-		}
-		from = index + len("reduce")
-		open := skipSpaces(expression, from)
-		if open >= len(expression) || expression[open] != '(' {
-			continue
-		}
-		close := findMatchingParen(expression, open)
-		if close < 0 {
-			continue
-		}
-		parts := splitTopLevelComma(expression[open+1 : close])
-		if len(parts) < 2 {
-			continue
-		}
-		if equals := strings.IndexByte(parts[0], '='); equals > 0 {
-			if accumulator := simpleSemanticIdentifier(parts[0][:equals]); accumulator != "" {
-				bindings[accumulator] = struct{}{}
+	// reduce(accumulator = initial, variable IN list | expression) and allReduce
+	for _, function := range []string{"reduce", "allReduce"} {
+		for from := 0; from < len(expression); {
+			index := keywordIndexFrom(expression, function, from, defaultKeywordScanOpts())
+			if index < 0 {
+				break
 			}
-		}
-		rest := strings.Join(parts[1:], ",")
-		if inIndex := findKeywordIndexInContext(rest, "IN"); inIndex > 0 {
-			if variable := simpleSemanticIdentifier(rest[:inIndex]); variable != "" {
-				bindings[variable] = struct{}{}
+			from = index + len(function)
+			open := skipSpaces(expression, from)
+			if open >= len(expression) || expression[open] != '(' {
+				continue
+			}
+			close := findMatchingParen(expression, open)
+			if close < 0 {
+				continue
+			}
+			if form, ok := parseReduceForm(function, expression[open+1:close]); ok {
+				bindings[form.accumulator] = struct{}{}
+				bindings[form.variable] = struct{}{}
 			}
 		}
 	}
