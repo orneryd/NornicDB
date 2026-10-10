@@ -240,8 +240,6 @@
   other: "Invalid input for 'vector.similarity.{{.Function}}()': Argument {{.Argument}} is not a valid vector for this similarity function."
 - id: cyphercore.vector_similarity_dimensions
   other: "Invalid input for 'vector.similarity.{{.Function}}()': The supplied vectors do not have the same number of dimensions."
-- id: cyphercore.function_argument_out_of_range
-  other: "Function argument to '{{.Function}}()' is out of range"
 - id: cyphercore.function_list_argument_empty
   other: "The argument `{{.Argument}}` in the `{{.Function}}()` function must not be empty."
 - id: cyphercore.temporal_call_signature
