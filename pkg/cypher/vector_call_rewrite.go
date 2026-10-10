@@ -75,10 +75,10 @@ func (r *labelExpressionRewriter) vectorCall(wordStart, wordEnd, end int) error 
 	return nil
 }
 
-// isBareName reports whether text is a plain name (letters, digits, _), not
-// a literal or an expression.
+// isBareName reports whether text is a plain name (an identifier, as the
+// lexer reads one), not a literal or an expression.
 func isBareName(text string) bool {
-	if text == "" || !isASCIILetter(text[0]) && text[0] != '_' {
+	if text == "" || !isIdentStartByte(text[0]) {
 		return false
 	}
 	for i := 0; i < len(text); i++ {
