@@ -255,11 +255,8 @@ func (e *StorageExecutor) mergeMapReads(text string, variables ...string) bool {
 		return false
 	}
 	for _, pair := range e.splitPropertyPairs(properties[1 : len(properties)-1]) {
-		separator := findTopLevelMapKeyValueSeparator(pair)
-		if separator <= 0 {
-			continue
-		}
-		for _, variable := range expressionFreeVariables(pair[separator+1:]) {
+		value := pair[findTopLevelMapKeyValueSeparator(pair)+1:]
+		for _, variable := range expressionFreeVariables(value) {
 			for _, name := range variables {
 				if name != "" && variable == name {
 					return true
