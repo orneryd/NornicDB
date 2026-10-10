@@ -44,6 +44,8 @@
   other: no se encontraron propiedades en la definición del índice de texto completo
 - id: cypherschema.empty_statement
   other: sentencia vacía
+- id: cypherschema.constraint_entity_mismatch
+  other: "'{{.Requirement}}' no admite patrones de tipo {{.Pattern}}"
 - id: cypherschema.invalid_pattern
   other: "patrón {{.Pattern}} no válido"
 - id: cypherschema.unsupported_predicate

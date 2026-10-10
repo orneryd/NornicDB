@@ -30,6 +30,7 @@ const (
 	MessageCypherSchemaFulltextPropertiesRequired         MessageID = "cypherschema.fulltext_properties_required"
 	MessageCypherSchemaEmptyStatement                     MessageID = "cypherschema.empty_statement"
 	MessageCypherSchemaInvalidPattern                     MessageID = "cypherschema.invalid_pattern"
+	MessageCypherSchemaConstraintEntityMismatch           MessageID = "cypherschema.constraint_entity_mismatch"
 	MessageCypherSchemaUnsupportedPredicate               MessageID = "cypherschema.unsupported_predicate"
 	MessageCypherSchemaUnsupportedCreateConstraintShape   MessageID = "cypherschema.unsupported_create_constraint_shape"
 	MessageCypherSchemaPositiveMaxCountRequired           MessageID = "cypherschema.positive_max_count_required"
@@ -141,6 +142,12 @@ func CypherSchemaFulltextPropertiesRequired() Message {
 
 func CypherSchemaEmptyStatement() Message {
 	return cypherSchemaMessage(MessageCypherSchemaEmptyStatement, "empty statement", nil)
+}
+
+// CypherSchemaConstraintEntityMismatch is a constraint requirement naming
+// another entity than its pattern ('IS NODE KEY' on a relationship).
+func CypherSchemaConstraintEntityMismatch(requirement, pattern string) Message {
+	return cypherSchemaMessage(MessageCypherSchemaConstraintEntityMismatch, "'"+requirement+"' does not allow "+pattern+" patterns", map[string]any{"Requirement": requirement, "Pattern": pattern})
 }
 
 func CypherSchemaInvalidPattern(pattern string) Message {
