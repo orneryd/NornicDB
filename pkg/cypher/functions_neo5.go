@@ -651,8 +651,9 @@ func fnListConversion(name string, convert func(interface{}) interface{}) cypher
 			return nil, err
 		}
 		items, isList := cypherListValue(values[0])
-		if vector, isVector := values[0].(CypherVector); isVector {
-			// A vector's coordinates convert as a list's items would.
+		if vector, isVector := values[0].(CypherVector); isVector && (name == "toIntegerList" || name == "toFloatList") {
+			// A vector's coordinates convert as a list's items would; Neo4j
+			// takes a vector in toIntegerList and toFloatList only.
 			items, isList = vector.coordinates(), true
 		}
 		if !isList {

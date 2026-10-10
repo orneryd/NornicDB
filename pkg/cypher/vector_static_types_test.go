@@ -57,6 +57,16 @@ func TestVectorAndUUIDStaticTypes(t *testing.T) {
 		"RETURN uuid.mostSignificantBits('x')":           "Type mismatch: expected UUID but was String",
 		"RETURN [x IN " + v + " | x]":                    "Type mismatch: expected List<T> but was Vector",
 		"RETURN any(x IN " + v + " WHERE x > 1)":         "Type mismatch: expected List<T> but was Vector",
+		"RETURN toStringList(" + v + ")":                 "Type mismatch: expected List<T> but was Vector",
+		"RETURN toBooleanList(" + v + ")":                "Type mismatch: expected List<T> but was Vector",
+		"RETURN last(" + v + ")":                         "Type mismatch: expected List<T> but was Vector",
+		"RETURN tail(" + v + ")":                         "Type mismatch: expected List<T> but was Vector",
+		"RETURN isEmpty(" + v + ")":                      "Type mismatch: expected Map, Node, Relationship, String or List<T> but was Vector",
+		"RETURN length(" + v + ")":                       "Type mismatch: expected Path but was Vector",
+		"RETURN keys(" + v + ")":                         "Type mismatch: expected Map, Node or Relationship but was Vector",
+		"RETURN isNaN(" + v + ")":                        "Type mismatch: expected Float or Integer but was Vector",
+		"RETURN sum(" + v + ")":                          "Type mismatch: expected Float, Integer or Duration but was Vector",
+		"UNWIND [" + v + "] AS v RETURN v[0]":            "Type mismatch: expected List<T> but was Vector",
 		"RETURN [x IN " + u + " | x]":                    "Type mismatch: expected List<T> but was UUID",
 	} {
 		_, err := exec.Execute(ctx, "CYPHER 25 "+query, nil)
@@ -77,6 +87,10 @@ func TestVectorAndUUIDStaticTypes(t *testing.T) {
 		"RETURN uuid.mostSignificantBits(" + u + ") + 'x'":         "1x",
 		"RETURN size(" + v + ") + 'x'":                             "2x",
 		"RETURN vector_distance(" + v + ", " + v + ", COSINE) + 1": 1.0,
+		"RETURN toIntegerList(" + v + ")":                          []interface{}{int64(1), int64(2)},
+		"RETURN toFloatList(" + v + ")":                            []interface{}{1.0, 2.0},
+		"UNWIND [" + v + "] AS v RETURN toIntegerList(v)":          []interface{}{int64(1), int64(2)},
+		"RETURN count(" + v + ")":                                  int64(1),
 	} {
 		result, err := exec.Execute(ctx, "CYPHER 25 "+query, nil)
 		require.NoError(t, err, query)
