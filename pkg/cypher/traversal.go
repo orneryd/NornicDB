@@ -184,23 +184,15 @@ func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern 
 		pattern = pattern[:len(pattern)-1]
 	}
 
-	// Extract [r:TYPE {props}] part
+	// Extract [r:TYPE {props}] part, read outside backticks: a quoted type
+	// may hold any character, a * or : included (#879, #907).
 	if strings.HasPrefix(pattern, "[") && strings.HasSuffix(pattern, "]") {
-		inner := pattern[1 : len(pattern)-1]
+		declaration := relationshipDeclarationOf(pattern[1 : len(pattern)-1])
 
-		// Check for variable length: [*], [*2], [*1..3], [*2..], [*..5]. A
-		// * in a backticked type name is part of the name (#879).
-		if varLengthStart := indexOutsideQuotes(inner, '*'); varLengthStart >= 0 {
+		// Variable length: [*], [*2], [*1..3], [*2..], [*..5].
+		if declaration.hasLength {
 			result.VariableLength = true
-			varLengthEnd := varLengthStart + 1
-			for varLengthEnd < len(inner) {
-				ch := inner[varLengthEnd]
-				if (ch < '0' || ch > '9') && ch != '.' {
-					break
-				}
-				varLengthEnd++
-			}
-			spec := inner[varLengthStart+1 : varLengthEnd]
+			spec := declaration.length
 			hasRange := strings.Contains(spec, "..")
 			switch {
 			case spec == "":
@@ -223,32 +215,15 @@ func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern 
 				result.MinHops, _ = strconv.Atoi(spec)
 				result.MaxHops = result.MinHops
 			}
-			inner = strings.TrimSpace(inner[:varLengthStart] + inner[varLengthEnd:])
 		}
 
 		// Property maps are valid with or without a relationship type, e.g.
-		// [r {name: 'value'}] and [r:TYPE {name: 'value'}]. Remove the map
-		// before interpreting the remaining declaration as variable/type text.
-		if propsIdx := indexByteOutsideBackticks(inner, '{'); propsIdx >= 0 {
-			result.Properties = e.parseProperties(ctx, inner[propsIdx:])
-			inner = strings.TrimSpace(inner[:propsIdx])
+		// [r {name: 'value'}] and [r:TYPE {name: 'value'}].
+		if declaration.properties != "" {
+			result.Properties = e.parseProperties(ctx, declaration.properties)
 		}
-
-		// Parse variable and types: r:TYPE|OTHER
-		if colonIdx := strings.Index(inner, ":"); colonIdx >= 0 {
-			result.Variable = strings.TrimSpace(inner[:colonIdx])
-			typesPart := inner[colonIdx+1:]
-
-			// Split by | for multiple types
-			for _, t := range strings.Split(typesPart, "|") {
-				t = strings.TrimSpace(t)
-				if t != "" {
-					result.Types = append(result.Types, t)
-				}
-			}
-		} else if strings.TrimSpace(inner) != "" {
-			result.Variable = strings.TrimSpace(inner)
-		}
+		result.Variable = declaration.variable
+		result.Types = declaration.types
 	}
 
 	return result
