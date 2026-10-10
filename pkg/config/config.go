@@ -448,8 +448,8 @@ type ServerConfig struct {
 	// Env: NORNICDB_BOLT_SERVER_ANNOUNCEMENT
 	BoltServerAnnouncement string
 	// BoltMaxConnections caps concurrent Bolt connections across every
-	// transport (default 100); 0 removes the cap. A connection past it is
-	// closed straight away, and the rejection is logged.
+	// transport (default 0: uncapped). A positive value caps, and a
+	// connection past it is closed straight away and logged.
 	// Env: NORNICDB_BOLT_MAX_CONNECTIONS, YAML: server.bolt_max_connections
 	BoltMaxConnections int
 	// BoltTLSEnabled for encrypted connections
@@ -1946,7 +1946,7 @@ func LoadDefaults() *Config {
 	config.Server.BoltPort = 7687
 	config.Server.BoltAddress = "0.0.0.0"
 	config.Server.BoltServerAnnouncement = ""
-	config.Server.BoltMaxConnections = 100
+	config.Server.BoltMaxConnections = 0 // uncapped by default; a positive value caps
 	config.Server.BoltTLSEnabled = false
 	config.Server.BoltTLSRequire = false
 	config.Server.BoltTLSClientAuthMode = "none"
