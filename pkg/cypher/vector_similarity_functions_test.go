@@ -2,8 +2,11 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -49,6 +52,26 @@ func TestVectorSimilarityFunctionsMatchNeo4j(t *testing.T) {
 	_, err = exec.Execute(ctx, "WITH {a: 1} AS m RETURN vector.similarity.cosine(m.a, [1]) AS s", nil)
 	requireStatusCode(t, err, "Neo.ClientError.Statement.TypeError")
 
+	// What the compile-time checks keep a statement from reaching.
+	failed := errors.New("evaluation failed")
+	call := cypherfn.Context{Eval: func(expr string) (interface{}, error) {
+		if expr == "fail" {
+			return nil, failed
+		}
+		return []interface{}{1.0, 2.0}, nil
+	}}
+	cosine := fnVectorSimilarity("cosine", vector.Neo4jCosineVectorValid[float64], vector.Neo4jCosineSimilarity[float64])
+	_, err = cosine(call, []string{"a"})
+	require.Error(t, err, "one argument")
+	_, err = cosine(call, []string{"fail", "b"})
+	require.ErrorIs(t, err, failed)
+	// Stored coordinates of other Go widths read as numbers.
+	coordinates, err := similarityVectorArgument("cosine", "a", []interface{}{float32(1.5), 2, int32(3)}, vector.Neo4jCosineVectorValid[float64])
+	require.NoError(t, err)
+	require.Equal(t, []float64{1.5, 2, 3}, coordinates)
+	_, err = similarityVectorArgument("cosine", "a", []interface{}{true}, vector.Neo4jCosineVectorValid[float64])
+	require.ErrorContains(t, err, "Argument a is not a valid vector")
+
 	// The fast paths and the index procedure score as the function does.
 	for _, statement := range []string{
 		"CREATE VECTOR INDEX simIdx FOR (n:Sim) ON (n.e) OPTIONS {indexConfig: {`vector.dimensions`: 3, `vector.similarity_function`: 'cosine'}}",
@@ -64,6 +87,19 @@ func TestVectorSimilarityFunctionsMatchNeo4j(t *testing.T) {
 	result, err = exec.Execute(ctx, "MATCH (n:Sim) RETURN n.t AS t, vector.similarity.cosine(n.e, $q) AS s ORDER BY s ASC LIMIT 3", map[string]interface{}{"q": []float64{0.9, 0.2, 0.1}})
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{want[2], want[1], want[0]}, result.Rows)
+	// A relationship whose vector isn't valid for the index's similarity (a
+	// zero vector, cosine) is no hit.
+	for _, statement := range []string{
+		"CREATE VECTOR INDEX simRelIdx FOR ()-[r:SIMREL]-() ON (r.e) OPTIONS {indexConfig: {`vector.dimensions`: 2, `vector.similarity_function`: 'cosine'}}",
+		"CREATE (:SimEnd)-[:SIMREL {k: 'zero', e: [0.0, 0.0]}]->(:SimEnd), (:SimEnd)-[:SIMREL {k: 'one', e: [1.0, 0.0]}]->(:SimEnd)",
+	} {
+		_, err := exec.Execute(ctx, statement, nil)
+		require.NoError(t, err)
+	}
+	result, err = exec.Execute(ctx, "CALL db.index.vector.queryRelationships('simRelIdx', 5, [1.0, 0.0]) YIELD relationship, score RETURN relationship.k AS k, score", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"one", 1.0}}, result.Rows)
+
 	result, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('simIdx', 3, [0.9, 0.2, 0.1]) YIELD node, score RETURN node.t AS t, score ORDER BY score DESC", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 3)
