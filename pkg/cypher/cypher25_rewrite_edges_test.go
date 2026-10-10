@@ -201,11 +201,42 @@ func TestCypher25BatchTwoSweepCases(t *testing.T) {
 	result, err = exec.Execute(ctx, "CYPHER 25 { RETURN 1 AS x UNION RETURN 1 AS x } UNION ALL RETURN 1 AS x", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}, {int64(1)}}, result.Rows)
+	// After RETURN ALL or WITH ALL, DISTINCT is a variable (Neo4j 2026.09).
+	for query, want := range map[string][][]interface{}{
+		"WITH 1 AS distinct RETURN ALL distinct AS v":                                   {{int64(1)}},
+		"WITH 1 AS distinct RETURN ALL distinct, 2 AS w":                                {{int64(1), int64(2)}},
+		"WITH 1 AS distinct RETURN ALL distinct + 1 AS v":                               {{int64(2)}},
+		"WITH 1 AS distinct WITH ALL distinct RETURN distinct":                          {{int64(1)}},
+		"WITH 1 AS distinct WITH ALL distinct UNWIND [2] AS y RETURN y + distinct AS v": {{int64(3)}},
+		"WITH 1 AS distinct RETURN ALL distinct ORDER BY distinct":                      {{int64(1)}},
+	} {
+		result, err = exec.Execute(ctx, "CYPHER 25 "+query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, want, result.Rows, query)
+	}
+	result, err = exec.Execute(ctx, "CYPHER 25 WITH 1 AS distinct RETURN ALL distinct", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"distinct"}, result.Columns)
+	// A UNION ALL inside a UNION is a UNION, at any depth and on either
+	// side; one that is mixed with a UNION is still Neo4j's error.
+	for _, query := range []string{
+		"{ { RETURN 1 AS x UNION ALL RETURN 1 AS x } UNION ALL RETURN 1 AS x } UNION RETURN 2 AS x",
+		"{ RETURN 1 AS x UNION ALL RETURN 1 AS x } UNION { RETURN 2 AS x UNION ALL RETURN 2 AS x }",
+	} {
+		result, err = exec.Execute(ctx, "CYPHER 25 "+query, nil)
+		require.NoError(t, err, query)
+		require.ElementsMatch(t, [][]interface{}{{int64(1)}, {int64(2)}}, result.Rows, query)
+	}
+	_, err = exec.Execute(ctx, "CYPHER 25 { RETURN 1 AS x UNION ALL RETURN 1 AS x UNION RETURN 1 AS x } UNION RETURN 2 AS x", nil)
+	require.ErrorContains(t, err, "UNION and UNION ALL cannot be combined")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 
 	for query, message := range map[string]string{
-		"UNWIND ['a'] AS g RETURN ALL DISTINCT g AS v":  "Invalid input 'g'",
-		"RETURN ALL DISTINCT 1 AS x":                    "Invalid input '1'",
-		"UNWIND [1] AS x RETURN count(*) AS c GROUP BY": "Invalid input '': expected an expression",
+		"UNWIND ['a'] AS g RETURN ALL DISTINCT g AS v":    "Invalid input 'g'",
+		"RETURN ALL DISTINCT 1 AS x":                      "Invalid input '1'",
+		"WITH 1 AS g WITH ALL DISTINCT g RETURN 1":        "Invalid input 'g'",
+		"WITH 1 AS distinct RETURN ALL distinct 'x' AS v": "Invalid input ''x''",
+		"UNWIND [1] AS x RETURN count(*) AS c GROUP BY":   "Invalid input '': expected an expression",
 	} {
 		_, err := exec.Execute(ctx, "CYPHER 25 "+query, nil)
 		require.ErrorContains(t, err, message, query)

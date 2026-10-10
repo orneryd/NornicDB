@@ -162,6 +162,15 @@ func groupByEdit(query string, clause projectionWord, groupStart, keysStart, key
 	}
 	var keys []string
 	keysText := strings.TrimSpace(query[keysStart:keysEnd])
+	if keysText == "" {
+		// GROUP BY with no keys: Neo4j's "Invalid input", at what follows.
+		token := ""
+		if rest := strings.Fields(query[keysEnd:]); len(rest) > 0 {
+			token = rest[0]
+		}
+		return labelRewriteEdit{}, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherCoreInvalidInputExpectedExpression(token))
+	}
 	if keysText != "()" {
 		for _, key := range splitTopLevelComma(keysText) {
 			// A key that names a projected item is that item's expression.

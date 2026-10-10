@@ -17,8 +17,9 @@ import (
 //     branch runs, as UNWIND [CASE WHEN c1 THEN 1 … END] AS b CALL (*) {
 //     FILTER b = 1 q1 UNION ALL FILTER b = 2 q2 … } RETURN columns;
 //   - { q } as a query part: the braces group q's UNIONs. They are dropped
-//     where that changes nothing, and a UNION inside a UNION ALL becomes
-//     CALL (*) { q } RETURN columns.
+//     where that changes nothing; a UNION inside a UNION ALL becomes
+//     CALL (*) { q } RETURN columns, and a UNION ALL inside a UNION becomes
+//     a UNION (the outer UNION removes the duplicates either way).
 //
 // The same holds inside a subquery body (CALL, EXISTS, COUNT, COLLECT). The
 // rewrite's edits are kept (queryRewrite), so columns and messages show the
@@ -49,7 +50,7 @@ func desugarQueryStructure(query string, columns statementColumner) (string, *qu
 		return query, nil, nil
 	}
 	r := &structureRewriter{query: query, columns: columns}
-	if err := r.region(0, len(query)); err != nil {
+	if err := r.region(0, len(query), false); err != nil {
 		return query, nil, err
 	}
 	if len(r.edits) == 0 {
@@ -116,8 +117,10 @@ func topLevelWords(q string, start, end int) []topLevelWord {
 	return words
 }
 
-// region rewrites q[start:end], a statement or a subquery body.
-func (r *structureRewriter) region(start, end int) error {
+// region rewrites q[start:end], a statement or a subquery body. distinct is
+// true when q[start:end] is a braced part whose braces are dropped inside a
+// UNION: its UNION ALLs may become UNIONs.
+func (r *structureRewriter) region(start, end int, distinct bool) error {
 	words := topLevelWords(r.query, start, end)
 	var nexts []topLevelWord
 	for index, word := range words {
@@ -137,13 +140,14 @@ func (r *structureRewriter) region(start, end int) error {
 	}
 	segmentStart := start
 	for _, next := range nexts {
-		if err := r.segment(segmentStart, next.start); err != nil {
+		if err := r.segment(segmentStart, next.start, false); err != nil {
 			return err
 		}
 		r.edit(next.start, next.end, "}")
 		segmentStart = next.end
 	}
-	return r.segment(segmentStart, end)
+	// The parts before a NEXT run in CALLs; the last stays at this level.
+	return r.segment(segmentStart, end, distinct)
 }
 
 // startsQueryPart reports whether a query part (a clause or a brace) starts
@@ -172,22 +176,25 @@ func skipBackSpaces(q string, end int) int {
 }
 
 // segment rewrites a query part between NEXTs: a conditional or a union.
-func (r *structureRewriter) segment(start, end int) error {
+func (r *structureRewriter) segment(start, end int, distinct bool) error {
 	at := skipASCIISpaces(r.query, start, end)
 	if matchKeywordAt(r.query[:end], at, "WHEN") {
 		return r.conditional(at, end)
 	}
-	return r.unionParts(at, end)
+	return r.unionParts(at, end, distinct)
 }
 
 // unionParts rewrites q[start:end], parts joined by UNION [ALL]: a braced
 // part loses its braces, or, when it holds a UNION inside a UNION ALL,
-// becomes CALL (*) { … } RETURN columns.
-func (r *structureRewriter) unionParts(start, end int) error {
+// becomes CALL (*) { … } RETURN columns. distinct is true when q[start:end]
+// is itself a braced part inside a UNION: its UNION ALLs become UNIONs, which
+// gives the same rows, unless it mixes the two (Neo4j's error).
+func (r *structureRewriter) unionParts(start, end int, distinct bool) error {
 	words := topLevelWords(r.query, start, end)
 	type part struct{ start, end int }
 	var parts []part
-	outerAll, partStart := false, start
+	var alls []topLevelWord
+	partStart := start
 	for index, word := range words {
 		if word.upper != "UNION" {
 			continue
@@ -195,18 +202,29 @@ func (r *structureRewriter) unionParts(start, end int) error {
 		parts = append(parts, part{partStart, word.start})
 		partStart = word.end
 		if index+1 < len(words) && words[index+1].upper == "ALL" && skipASCIISpaces(r.query, word.end, end) == words[index+1].start {
-			outerAll, partStart = true, words[index+1].end
+			alls = append(alls, words[index+1])
+			partStart = words[index+1].end
 		}
 	}
 	parts = append(parts, part{partStart, end})
+	outerAll := len(alls) > 0
+	if distinct && len(alls) == len(parts)-1 {
+		for _, all := range alls {
+			r.edit(all.start, all.end, "")
+		}
+		outerAll = false
+	}
 	for _, p := range parts {
 		open := skipASCIISpaces(r.query, p.start, p.end)
 		close := skipBackSpaces(r.query, p.end) - 1
 		if open < p.end && r.query[open] == '{' && findMatchingDelimiter(r.query[:p.end], open, '{', '}') == close {
-			if err := r.region(open+1, close); err != nil {
+			wrap := outerAll && r.hasDistinctUnion(open+1, close)
+			// Dropped braces put the part's UNIONs in this union; braces
+			// around a single query hold no UNION to change.
+			if err := r.region(open+1, close, !wrap && !outerAll && len(parts) > 1); err != nil {
 				return err
 			}
-			if outerAll && r.hasDistinctUnion(open+1, close) {
+			if wrap {
 				r.edit(open, open+1, "CALL (*) {")
 				r.edit(close+1, close+1, returnColumnsText(r.columns.StatementColumns(r.query[open+1:close])))
 			} else {
@@ -249,7 +267,7 @@ func (r *structureRewriter) subqueries(start, end int) error {
 			if close < 0 {
 				return nil
 			}
-			if err := r.region(i+1, close); err != nil {
+			if err := r.region(i+1, close, false); err != nil {
 				return err
 			}
 			i = close
@@ -303,7 +321,7 @@ func (r *structureRewriter) conditional(start, end int) error {
 		} else {
 			r.edit(branches[index-1].bodyEnd, branch.bodyStart, " UNION ALL "+guard)
 		}
-		if err := r.unionParts(branch.bodyStart, branch.bodyEnd); err != nil {
+		if err := r.unionParts(branch.bodyStart, branch.bodyEnd, false); err != nil {
 			return err
 		}
 	}

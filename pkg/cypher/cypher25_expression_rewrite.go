@@ -57,14 +57,20 @@ func desugarCypher25Expressions(query string) (string, []*queryRewrite, error) {
 	return query, rewrites, nil
 }
 
-// projectionAllEdits drops the ALL of RETURN ALL and WITH ALL.
+// projectionAllEdits drops the ALL of RETURN ALL and WITH ALL; a DISTINCT
+// after it is a variable, so an expression right after that DISTINCT is
+// Neo4j's "Invalid input" (RETURN ALL DISTINCT g).
 func projectionAllEdits(query string) ([]labelRewriteEdit, error) {
 	if !containsFold(query, "ALL") {
 		return nil, nil
 	}
 	var edits []labelRewriteEdit
+	var err error
 	forEachQueryWord(query, func(start, end int) {
 		word := query[start:end]
+		if err != nil {
+			return
+		}
 		if !strings.EqualFold(word, "RETURN") && !strings.EqualFold(word, "WITH") {
 			return
 		}
@@ -86,9 +92,31 @@ func projectionAllEdits(query string) ([]labelRewriteEdit, error) {
 				}
 			}
 		}
+		// After ALL, DISTINCT is a name (RETURN ALL distinct AS v), as in
+		// Neo4j: it stays one, quoted.
+		if matchKeywordAt(query, next, "DISTINCT") {
+			distinctEnd := next + len("DISTINCT")
+			if after := skipASCIISpaces(query, distinctEnd, len(query)); after > distinctEnd && after < len(query) && startsOperand(query[after]) &&
+				startsProjectedExpression(query, after) && !startsWithClauseKeyword(query[after:]) && !matchKeywordAt(query, after, "GROUP") {
+				token := strings.Fields(query[after:])[0]
+				if _, identifierEnd, identifier := scanIdentifierToken(query, after); identifier {
+					token = query[after:identifierEnd]
+				}
+				err = localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherCoreInvalidInput(token))
+				return
+			}
+			edits = append(edits, labelRewriteEdit{start: all, end: distinctEnd, text: "`" + query[next:distinctEnd] + "`"})
+			return
+		}
 		edits = append(edits, labelRewriteEdit{start: all, end: next, text: ""})
 	})
-	return edits, nil
+	return edits, err
+}
+
+// startsOperand reports whether an operand (a name, a number, a string or a
+// parameter) starts with c.
+func startsOperand(c byte) bool {
+	return isIdentStartByte(c) || isDigitByte(c) || c == '\'' || c == '"' || c == '`' || c == '$'
 }
 
 // startsProjectedExpression reports whether an expression, rather than a
