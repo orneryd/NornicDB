@@ -25,26 +25,38 @@ type matchSemanticScope map[string]matchBindingKind
 // validateMatchSemanticScopes applies entity-type rules before physical query
 // routing. MATCH variables may be reused only when their binding kind remains
 // stable; a node name cannot already denote a relationship, path, or scalar.
-// A statement that passes is cached by its text, unless a Fabric APPLY binds
-// variables for it: then the result depends on the bound record.
-func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
+// A statement that passes is cached by its text and language version,
+// unless a Fabric APPLY binds variables for it: then the result depends on
+// the bound record. cypher25 holds a Cypher 25 statement to Neo4j 2026.09's
+// compile-time type rules (staticTypeScope.cypher25).
+func (e *StorageExecutor) validateMatchSemanticScopes(cypher string, cypher25 bool) error {
 	cacheable := len(e.fabricRecordBindings) == 0
-	if cacheable && e.matchSemanticValidationCache.contains(cypher) {
+	key := semanticCacheKey(cypher, cypher25)
+	if cacheable && e.matchSemanticValidationCache.contains(key) {
 		return nil
 	}
-	if err := e.validateMatchSemanticScopesUncached(cypher); err != nil {
+	if err := e.validateMatchSemanticScopesUncached(cypher, cypher25); err != nil {
 		return err
 	}
 	if cacheable {
-		e.matchSemanticValidationCache.add(cypher)
+		e.matchSemanticValidationCache.add(key)
 	}
 	return nil
 }
 
-func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) error {
+// semanticCacheKey is a validation cache's key for a statement: its text,
+// marked for a Cypher 25 statement, whose checks differ.
+func semanticCacheKey(cypher string, cypher25 bool) string {
+	if cypher25 {
+		return "cypher25:" + cypher
+	}
+	return cypher
+}
+
+func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cypher25 bool) error {
 	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
 		for _, branch := range branches {
-			if err := e.validateMatchSemanticScopes(branch); err != nil {
+			if err := e.validateMatchSemanticScopes(branch, cypher25); err != nil {
 				return err
 			}
 		}
@@ -95,7 +107,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 		}
 		switch clause.kind {
 		case pipelineClauseLet, pipelineClauseFilter:
-			if err := e.validateSharedClause(scope, valueTypes, clause); err != nil {
+			if err := e.validateSharedClause(scope, valueTypes, clause, cypher25); err != nil {
 				return err
 			}
 			if clause.kind == pipelineClauseLet {
@@ -170,14 +182,14 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 					valueTypes[name] = typeName
 				}
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
 			if err := e.validateMatchClauseBindings(scope, clause.text); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		case pipelineClauseWith:
@@ -220,7 +232,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 					}
 				}
 			}
-			input := staticTypeScope{kinds: scope, values: valueTypes, complete: true}
+			input := staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}
 			if err := validateStaticFunctionVariables(projection, input); err != nil {
 				return err
 			}
@@ -229,7 +241,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 			}
 			scope = projectMatchSemanticScope(scope, clause.text)
 			valueTypes = projectStaticValueTypes(input, clause.text)
-			projected := staticTypeScope{kinds: scope, values: valueTypes, complete: true}
+			projected := staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}
 			if err := forEachProjectedTailExpression(projection, rest, func(expression string) error {
 				return validateStaticFunctionVariables(expression, projected)
 			}); err != nil {
@@ -242,7 +254,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 			if err := undefinedExpressionVariable(scope, unwindSourceExpression(clause.text)); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 			if alias := unwindBindingName(clause.text); alias != "" {
@@ -267,23 +279,23 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 			if err := validateReturnSemanticScope(scope, clause.text); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		case pipelineClauseDelete:
 			if err := deleteTargetTypeError(clause.text, scope); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		case pipelineClauseCreate, pipelineClauseMerge:
 			addMatchPatternBindingKinds(scope, clause.text)
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		default:
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		}
@@ -817,7 +829,7 @@ func projectionAliasScope(input staticTypeScope, clause string) staticTypeScope 
 	for name, typeName := range projectedValues {
 		values[name] = typeName
 	}
-	return staticTypeScope{kinds: kinds, values: values, complete: input.complete}
+	return staticTypeScope{kinds: kinds, values: values, complete: input.complete, cypher25: input.cypher25}
 }
 
 // projectionItemTermError is Neo4j's SyntaxError for a projection item that

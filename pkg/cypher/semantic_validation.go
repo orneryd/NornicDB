@@ -14,10 +14,12 @@ import (
 // differ).
 func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher string) error {
 	names := quotedVariableNamesFor(ctx, cypher)
+	cypher25 := cypherVersionFromContext(ctx) == "25"
 	cacheKey := cypher
 	if names != nil {
 		cacheKey = names.original
 	}
+	cacheKey = semanticCacheKey(cacheKey, cypher25)
 	// A text cached under its own key passed every check here, the lexical
 	// one included, so a repeated query skips them all (#823). A rewritten
 	// text cached under its original still gets its own lexical check.
@@ -31,7 +33,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if cached {
 		return nil
 	}
-	if err := e.validateCallSubqueryScopes(cypher); err != nil {
+	if err := e.validateCallSubqueryScopes(cypher, cypher25); err != nil {
 		return err
 	}
 	if err := validateStaticQuantifierTypes(cypher); err != nil {
@@ -139,7 +141,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := e.validateMergeSemanticScopes(cypher); err != nil {
 		return err
 	}
-	if err := e.validateMatchSemanticScopes(cypher); err != nil {
+	if err := e.validateMatchSemanticScopes(cypher, cypher25); err != nil {
 		return err
 	}
 	if err := e.validateSetSemanticScopes(cypher); err != nil {
@@ -203,7 +205,7 @@ func (e *StorageExecutor) validateDuplicateReturnColumnName(cypher string, names
 // leading WITH vars. An undefined variable in a subquery update clause is
 // therefore rejected before any route runs the subquery. CALL (*) and a body
 // starting with WITH * import the whole outer scope and are not checked here.
-func (e *StorageExecutor) validateCallSubqueryScopes(cypher string) error {
+func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 bool) error {
 	if !containsFold(cypher, "CALL") {
 		return nil
 	}
@@ -294,14 +296,14 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string) error {
 		// A body that imports nothing (CALL () { … }) sees no outer
 		// variable: it is checked as a statement of its own.
 		if scoped && imports == "" {
-			if err := e.validateMatchSemanticScopes(body); err != nil {
+			if err := e.validateMatchSemanticScopes(body, cypher25); err != nil {
 				return err
 			}
 		}
 		if err := e.validateSetSemanticScopes(body); err != nil {
 			return err
 		}
-		if err := e.validateCallSubqueryScopes(body); err != nil {
+		if err := e.validateCallSubqueryScopes(body, cypher25); err != nil {
 			return err
 		}
 	}

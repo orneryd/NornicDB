@@ -420,6 +420,10 @@ type staticTypeScope struct {
 	// other variable reads an undefined one (Neo4j: "Variable `x` not
 	// defined").
 	complete bool
+	// cypher25 is set for a Cypher 25 statement, which the checks hold to
+	// Neo4j 2026.09's compile-time rules ('a' + true is a string there); a
+	// Cypher 5 statement keeps Neo4j 5.26's (#907).
+	cypher25 bool
 }
 
 // bound reports whether variable is bound in scope.

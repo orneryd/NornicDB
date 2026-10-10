@@ -336,7 +336,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		ctx = withQueryParams(ctx, mergedParams)
 		mode, modeQuery := parseExecutionMode(cypher)
 		if mode != ModeNormal {
-			if err := e.validateSyntax(modeQuery); err != nil {
+			if err := e.validateSyntax(modeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
 				return nil, err
 			}
 			if err := e.validateSemanticScopes(ctx, modeQuery); err != nil {
@@ -516,7 +516,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 
 	// Validate basic syntax
-	if err := e.validateSyntax(cypher); err != nil {
+	if err := e.validateSyntax(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 		// Plan 04-03 Site 2 (parse-error chokepoint): emit op_type="parse_error"
 		// per D-04b sixth enum value. No duration observation — parse cost is
 		// sub-microsecond and not meaningful to bucket. The queries_total

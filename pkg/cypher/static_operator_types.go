@@ -52,6 +52,17 @@ func (operand staticOperand) list() bool { return strings.HasPrefix(operand.kind
 
 func (operand staticOperand) duration() bool { return operand.kind == "Duration" }
 
+// joinsStringStatically reports whether a Cypher 25 string + operand is the
+// string joined with the operand's text: a string, number, boolean, point,
+// duration or temporal value (a list is list concatenation instead).
+func (operand staticOperand) joinsStringStatically() bool {
+	switch operand.kind {
+	case "String", "Integer", "Float", "Boolean", "Point", "Duration":
+		return true
+	}
+	return operand.temporal()
+}
+
 func (operand staticOperand) temporal() bool {
 	switch operand.kind {
 	case "Date", "Time", "LocalTime", "LocalDateTime", "DateTime":
@@ -170,10 +181,15 @@ func requireBooleanOperand(operand staticOperand) error {
 }
 
 // checkOperator applies Neo4j's operand rules for left op right and returns
-// the result type.
-func checkOperator(op byte, left, right staticOperand) (staticOperand, error) {
+// the result type. cypher25 applies Neo4j 2026.09's rules for a Cypher 25
+// statement: a string joins any value but a map or a graph entity ('a' +
+// true, date('2020-01-02') + 's').
+func checkOperator(op byte, left, right staticOperand, cypher25 bool) (staticOperand, error) {
 	switch op {
 	case '+':
+		if cypher25 && (left.kind == "String" && right.joinsStringStatically() || right.kind == "String" && left.joinsStringStatically()) {
+			return knownOperand("String"), nil
+		}
 		switch {
 		case left.kind == "Vector":
 			// A vector (Cypher 25) joins a string or a list, as Neo4j
@@ -431,7 +447,7 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		if err != nil {
 			return staticOperand{}, err
 		}
-		return checkOperator(operator, leftType, rightType)
+		return checkOperator(operator, leftType, rightType, checker.scope.cypher25)
 	}
 	if expression[0] == '-' && len(expression) > 1 {
 		operand, err := checker.check(expression[1:])
@@ -1150,7 +1166,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, sco
 // statement only when a parameter next to an arithmetic operator has a value
 // that operator could reject: numbers never are, and neither are strings or
 // lists next to +, so parameterized arithmetic on hot paths costs one scan.
-func (e *StorageExecutor) validateStaticOperatorParameters(cypher string, params map[string]interface{}) error {
+func (e *StorageExecutor) validateStaticOperatorParameters(cypher string, params map[string]interface{}, cypher25 bool) error {
 	if len(params) == 0 || !parameterMayMismatchOperator(cypher, params) {
 		return nil
 	}
@@ -1159,7 +1175,7 @@ func (e *StorageExecutor) validateStaticOperatorParameters(cypher string, params
 		return nil
 	}
 	for _, clause := range clauses {
-		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{}, nil, params); err != nil {
+		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{cypher25: cypher25}, nil, params); err != nil {
 			return err
 		}
 	}

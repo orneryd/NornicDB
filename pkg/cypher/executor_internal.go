@@ -80,7 +80,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 
 	// Basic syntax validation to preserve existing error behavior.
-	if err := e.validateSyntax(cypher); err != nil {
+	if err := e.validateSyntax(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return nil, err
 	}
 	if err := e.validateDuplicateReturnColumnName(cypher, quotedVariableNamesFor(ctx, cypher)); err != nil {
@@ -108,7 +108,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 }
 
 func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context, cypher string, params map[string]interface{}) error {
-	if err := e.validateStaticOperatorParameters(cypher, params); err != nil {
+	if err := e.validateStaticOperatorParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
 	if err := validateStaticPropertyAccessParameters(cypher, params); err != nil {

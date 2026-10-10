@@ -365,7 +365,8 @@ func splitReturnExpressions(clause string) []string {
 // validateSyntax performs syntax validation.
 // When NORNICDB_PARSER=antlr, uses ANTLR for strict OpenCypher grammar validation.
 // When NORNICDB_PARSER=nornic (default), uses fast inline validation.
-func (e *StorageExecutor) validateSyntax(cypher string) error {
+// cypher25 is the statement's language version (its scope checks differ).
+func (e *StorageExecutor) validateSyntax(cypher string, cypher25 bool) error {
 	// A text the Nornic validator accepted passed every check below (it is
 	// marked valid only then), so a repeated query skips them all (#823).
 	if !config.IsANTLRParser() && e.hasCachedValidSyntax(cypher) {
@@ -384,14 +385,14 @@ func (e *StorageExecutor) validateSyntax(cypher string) error {
 		return err
 	}
 	if config.IsANTLRParser() {
-		return e.validateSyntaxANTLR(cypher)
+		return e.validateSyntaxANTLR(cypher, cypher25)
 	}
 	return e.validateSyntaxNornic(cypher)
 }
 
 // validateSyntaxANTLR uses ANTLR for strict OpenCypher grammar validation.
 // Provides detailed error messages with line/column information.
-func (e *StorageExecutor) validateSyntaxANTLR(cypher string) error {
+func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) error {
 	if isNornicExtensionStatement(cypher) {
 		return e.validateSyntaxNornic(cypher)
 	}
@@ -402,7 +403,7 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string) error {
 	if err := e.validateSyntaxNornic(cypher); err != nil {
 		return err
 	}
-	if err := e.validateMatchSemanticScopes(cypher); err != nil {
+	if err := e.validateMatchSemanticScopes(cypher, cypher25); err != nil {
 		return err
 	}
 	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", parserError.Error())

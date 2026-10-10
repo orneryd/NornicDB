@@ -614,7 +614,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 			}
 		}
 		clause := pipelineClause{kind: pipelineClauseWith, text: "WITH * WHERE " + where}
-		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{values: types}, nil, getParamsFromContext(ctx)); err != nil {
+		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{values: types, cypher25: cypherVersionFromContext(ctx) == "25"}, nil, getParamsFromContext(ctx)); err != nil {
 			return nil, nornicerrors.MarkCompileTime(err)
 		}
 		clauses.WriteString("WITH * WHERE " + where + " ")
