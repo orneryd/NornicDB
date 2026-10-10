@@ -372,9 +372,10 @@ func indexIdentifierFold(text, identifier string) int {
 }
 
 // deletedEntityReadText is the part of clause that reads values, for
-// validateDeletedEntityReads: a SET's assigned values (its targets are
-// writes, and Neo4j lets SET write to a deleted entity), nothing for a
-// DELETE or REMOVE (their targets), the whole clause otherwise.
+// validateDeletedEntityReads: a SET's assigned values, dynamic keys and
+// dynamic label expressions (its targets are writes, and Neo4j lets SET
+// write to a deleted entity), nothing for a DELETE or REMOVE (their
+// targets), the whole clause otherwise.
 func deletedEntityReadText(clause pipelineClause) string {
 	switch clause.kind {
 	case pipelineClauseDelete, pipelineClauseRemove:
@@ -386,9 +387,22 @@ func deletedEntityReadText(clause pipelineClause) string {
 		}
 		var values strings.Builder
 		for _, assignment := range splitSetAssignments(body) {
-			if _, _, operator, right := splitSetAssignment(assignment); operator == "=" || operator == "+=" {
+			_, property, operator, right := splitSetAssignment(assignment)
+			switch operator {
+			case "[]=":
+				// The key expression of x[key] = v is read too.
+				values.WriteString(property)
+				values.WriteByte('\n')
+				fallthrough
+			case "=", "+=":
 				values.WriteString(right)
 				values.WriteByte('\n')
+			case ":":
+				// A dynamic label's expression ($(e)) reads e.
+				if strings.Contains(right, "$(") {
+					values.WriteString(right)
+					values.WriteByte('\n')
+				}
 			}
 		}
 		return values.String()

@@ -528,6 +528,13 @@ func extractNodeVariables(matchClause string) []string {
 				continue
 			}
 		}
+		if dynamicLabelStartsAt(matchClause, i) {
+			// $(e): a dynamic label's expression, not a node.
+			if end := findMatchingDelimiter(matchClause, i+strings.IndexByte(matchClause[i:], '('), '(', ')'); end >= 0 {
+				i = end
+				continue
+			}
+		}
 		if matchClause[i] != '(' {
 			continue
 		}
@@ -543,7 +550,7 @@ func extractNodeVariables(matchClause string) []string {
 			for next < len(matchClause) && isWhitespace(matchClause[next]) {
 				next++
 			}
-			if next < len(matchClause) && matchClause[next] != ':' && matchClause[next] != ')' && matchClause[next] != '{' {
+			if next < len(matchClause) && matchClause[next] != ':' && matchClause[next] != ')' && matchClause[next] != '{' && matchClause[next] != '$' {
 				continue
 			}
 		}

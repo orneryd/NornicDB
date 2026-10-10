@@ -55,10 +55,19 @@ const (
 	MessageCypherCoreInvalidInputExpectedIdentifier      MessageID = "cyphercore.invalid_input_expected_identifier"
 	MessageCypherCoreListOperandTypeMismatch             MessageID = "cyphercore.list_operand_type_mismatch"
 	MessageCypherCoreListParameterTypeMismatch           MessageID = "cyphercore.list_parameter_type_mismatch"
+	MessageCypherCoreParameterTypeMismatch               MessageID = "cyphercore.parameter_type_mismatch"
 	MessageCypherCoreListCoercionToBoolean               MessageID = "cyphercore.list_coercion_to_boolean"
 	MessageCypherCoreListIndexTypeMismatch               MessageID = "cyphercore.list_index_type_mismatch"
 	MessageCypherCoreMapKeyTypeMismatch                  MessageID = "cyphercore.map_key_type_mismatch"
 	MessageCypherCoreEntityPropertyKeyTypeMismatch       MessageID = "cyphercore.entity_property_key_type_mismatch"
+	MessageCypherCoreTokenNameInvalid                    MessageID = "cyphercore.token_name_invalid"
+	MessageCypherCoreTokenNameNull                       MessageID = "cyphercore.token_name_null"
+	MessageCypherCoreDynamicLabelValueInvalid            MessageID = "cyphercore.dynamic_label_value_invalid"
+	MessageCypherCoreDynamicLabelTypeMismatch            MessageID = "cyphercore.dynamic_label_type_mismatch"
+	MessageCypherCoreLabelTargetTypeMismatch             MessageID = "cyphercore.label_target_type_mismatch"
+	MessageCypherCoreDynamicTokenPositionInvalid         MessageID = "cyphercore.dynamic_token_position_invalid"
+	MessageCypherCoreDynamicAnyInWritePattern            MessageID = "cyphercore.dynamic_any_in_write_pattern"
+	MessageCypherCoreDynamicRelationshipTypeCount        MessageID = "cyphercore.dynamic_relationship_type_count"
 	MessageCypherCoreRegexPatternTypeMismatch            MessageID = "cyphercore.regex_pattern_type_mismatch"
 	MessageCypherCoreDurationArithmeticOverflow          MessageID = "cyphercore.duration_arithmetic_overflow"
 	MessageCypherCoreFunctionArgumentCount               MessageID = "cyphercore.function_argument_count"
@@ -317,10 +326,17 @@ func CypherCoreInvalidInputExpectedExpression(token string) Message {
 }
 
 // CypherCoreInvalidInputExpectedIdentifier is Neo4j's message for a token
-// (or the end of the statement, '') where a name must come, as after the
+// (or the end of the statement, ”) where a name must come, as after the
 // dot of a property access (RETURN n.).
 func CypherCoreInvalidInputExpectedIdentifier(token string) Message {
 	return cypherCoreMessage(MessageCypherCoreInvalidInputExpectedIdentifier, "Invalid input '"+token+"': expected an identifier", map[string]any{"Token": token})
+}
+
+// CypherCoreParameterTypeMismatch is Neo4j's message for a parameter whose
+// value has a type its position doesn't take ("Type mismatch for parameter
+// 'p': expected Map, Node or Relationship but was Integer").
+func CypherCoreParameterTypeMismatch(parameter, expected, typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreParameterTypeMismatch, "Type mismatch for parameter '"+parameter+"': expected "+expected+" but was "+typeName, map[string]any{"Parameter": parameter, "Expected": expected, "Type": typeName})
 }
 
 func CypherCoreListOperandTypeMismatch(typeName string) Message {
@@ -360,6 +376,56 @@ func CypherCoreMapKeyTypeMismatch(typeName string) Message {
 
 func CypherCoreEntityPropertyKeyTypeMismatch(typeName string) Message {
 	return cypherCoreMessage(MessageCypherCoreEntityPropertyKeyTypeMismatch, "Type mismatch: node or relationship property key must be given as String, but was "+typeName, map[string]any{"Type": typeName})
+}
+
+// CypherCoreTokenNameInvalid is the TokenNameError of a label, relationship
+// type or property key name that is empty or holds a null byte (name).
+func CypherCoreTokenNameInvalid(name string) Message {
+	return cypherCoreMessage(MessageCypherCoreTokenNameInvalid, "'"+name+"' is not a valid token name. Token names cannot be empty or contain any null-bytes.", map[string]any{"Name": name})
+}
+
+// CypherCoreTokenNameNull is the error of a null label, relationship type or
+// property key name.
+func CypherCoreTokenNameNull() Message {
+	return cypherCoreMessage(MessageCypherCoreTokenNameNull, "Null is not a valid token name. Token names cannot be empty or contain any null-bytes.", nil)
+}
+
+// CypherCoreDynamicLabelValueInvalid is the TypeError of a dynamic label
+// ($(expr)) whose value is neither a string nor a list of strings.
+func CypherCoreDynamicLabelValueInvalid() Message {
+	return cypherCoreMessage(MessageCypherCoreDynamicLabelValueInvalid, "Expected node label to be a string or list of strings.", nil)
+}
+
+// CypherCoreDynamicLabelTypeMismatch is the compile-time error of a dynamic
+// label ($(expr)) whose static type (typeName) is neither STRING nor
+// LIST<STRING>.
+func CypherCoreDynamicLabelTypeMismatch(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreDynamicLabelTypeMismatch, "Type mismatch: expected String or List<String> but was "+typeName, map[string]any{"Type": typeName})
+}
+
+// CypherCoreDynamicTokenPositionInvalid is the SyntaxError of a dynamic
+// label or type ($(e)) outside a pattern or a SET or REMOVE item: a label
+// test in an expression (WHERE n:$(e)).
+func CypherCoreDynamicTokenPositionInvalid() Message {
+	return cypherCoreMessage(MessageCypherCoreDynamicTokenPositionInvalid, "Dynamic Label and Types are only allowed in MATCH, CREATE, MERGE, SET and REMOVE clauses.", nil)
+}
+
+// CypherCoreDynamicAnyInWritePattern is the SyntaxError of $any() in a
+// CREATE or MERGE pattern: a written entity gets every label it names.
+func CypherCoreDynamicAnyInWritePattern() Message {
+	return cypherCoreMessage(MessageCypherCoreDynamicAnyInWritePattern, "Dynamic labels using `$any()` are not allowed in CREATE or MERGE.", nil)
+}
+
+// CypherCoreDynamicRelationshipTypeCount is the error of a CREATE or MERGE
+// relationship whose dynamic type ($(e)) names count types, not one.
+func CypherCoreDynamicRelationshipTypeCount(count int) Message {
+	return cypherCoreMessage(MessageCypherCoreDynamicRelationshipTypeCount, "Exactly one relationship type must be specified, but "+strconv.Itoa(count)+" were found.", map[string]any{"Count": count})
+}
+
+// CypherCoreLabelTargetTypeMismatch is the error of a SET or REMOVE label
+// item whose target (typeName) isn't a node.
+func CypherCoreLabelTargetTypeMismatch(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreLabelTargetTypeMismatch, "Type mismatch: expected Node but was "+typeName, map[string]any{"Type": typeName})
 }
 
 func CypherCoreFunctionArgumentCount(function string, want string, got int) Message {

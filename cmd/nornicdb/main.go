@@ -866,7 +866,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	boltConfig.Host = resolvedAddress
 	boltConfig.Port = boltPort
 	boltConfig.LogQueries = logQueries
-	boltConfig.ServerAnnouncement = cfg.Server.BoltServerAnnouncement
+	applyBoltListenerConfig(boltConfig, cfg)
 	// `logger` is the same *slog.Logger reference Provider.Logger() returns
 	// (built BEFORE observability.New per D-08's two-phase bootstrap), so
 	// records emitted by the Bolt server flow through the production
@@ -904,32 +904,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 			return newCommandError(cmd, localization.NornicDBCLIBoltTLSLoadFailed(err), err)
 		}
 		boltConfig.TLSConfig = tlsCfg
-	}
-	boltConfig.RequireTLS = cfg.Server.BoltTLSRequire
-	if cfg.Server.BoltSniffTimeout > 0 {
-		boltConfig.BoltSniffTimeout = cfg.Server.BoltSniffTimeout
-	}
-	if cfg.Server.BoltAuthTimeout > 0 {
-		boltConfig.BoltAuthTimeout = cfg.Server.BoltAuthTimeout
-	}
-	if cfg.Server.BoltStatementTimeout > 0 {
-		boltConfig.BoltStatementTimeout = cfg.Server.BoltStatementTimeout
-	}
-	boltConfig.WebSocketEnabled = cfg.Server.BoltWebSocketEnabled
-	if cfg.Server.BoltWebSocketAllowedOrigins != "" {
-		boltConfig.WebSocketAllowedOrigins = cfg.Server.BoltWebSocketAllowedOrigins
-	}
-	if cfg.Server.BoltWebSocketMaxMessageSize > 0 {
-		boltConfig.WebSocketMaxMessageSize = cfg.Server.BoltWebSocketMaxMessageSize
-	}
-	if cfg.Server.BoltWebSocketWriteBufferSize > 0 {
-		boltConfig.WebSocketWriteBufferSize = cfg.Server.BoltWebSocketWriteBufferSize
-	}
-	if cfg.Server.BoltWebSocketPingInterval > 0 {
-		boltConfig.WebSocketPingInterval = cfg.Server.BoltWebSocketPingInterval
-	}
-	if cfg.Server.BoltWebSocketPongTimeout > 0 {
-		boltConfig.WebSocketPongTimeout = cfg.Server.BoltWebSocketPongTimeout
 	}
 	// Discovery body is derived from auth.OAuthConfig at startup. The
 	// Bolt server pre-encodes the response and refreshes the Date header
@@ -1373,6 +1347,40 @@ func resolveBindAddress(cmd *cobra.Command, cfg *config.Config, cliAddress strin
 		return "127.0.0.1"
 	}
 	return strings.TrimSpace(resolvedAddress)
+}
+
+// applyBoltListenerConfig copies the Bolt listener settings (connection
+// limit, announcement, TLS requirement, timeouts, WebSocket transport) from
+// the server configuration; unset durations and sizes keep the Bolt defaults.
+func applyBoltListenerConfig(boltConfig *bolt.Config, cfg *config.Config) {
+	boltConfig.MaxConnections = cfg.Server.BoltMaxConnections
+	boltConfig.ServerAnnouncement = cfg.Server.BoltServerAnnouncement
+	boltConfig.RequireTLS = cfg.Server.BoltTLSRequire
+	if cfg.Server.BoltSniffTimeout > 0 {
+		boltConfig.BoltSniffTimeout = cfg.Server.BoltSniffTimeout
+	}
+	if cfg.Server.BoltAuthTimeout > 0 {
+		boltConfig.BoltAuthTimeout = cfg.Server.BoltAuthTimeout
+	}
+	if cfg.Server.BoltStatementTimeout > 0 {
+		boltConfig.BoltStatementTimeout = cfg.Server.BoltStatementTimeout
+	}
+	boltConfig.WebSocketEnabled = cfg.Server.BoltWebSocketEnabled
+	if cfg.Server.BoltWebSocketAllowedOrigins != "" {
+		boltConfig.WebSocketAllowedOrigins = cfg.Server.BoltWebSocketAllowedOrigins
+	}
+	if cfg.Server.BoltWebSocketMaxMessageSize > 0 {
+		boltConfig.WebSocketMaxMessageSize = cfg.Server.BoltWebSocketMaxMessageSize
+	}
+	if cfg.Server.BoltWebSocketWriteBufferSize > 0 {
+		boltConfig.WebSocketWriteBufferSize = cfg.Server.BoltWebSocketWriteBufferSize
+	}
+	if cfg.Server.BoltWebSocketPingInterval > 0 {
+		boltConfig.WebSocketPingInterval = cfg.Server.BoltWebSocketPingInterval
+	}
+	if cfg.Server.BoltWebSocketPongTimeout > 0 {
+		boltConfig.WebSocketPongTimeout = cfg.Server.BoltWebSocketPongTimeout
+	}
 }
 
 func applyHTTPTransportConfig(serverConfig *server.Config, cfg *config.Config, cliPort int, cliPortChanged bool) {

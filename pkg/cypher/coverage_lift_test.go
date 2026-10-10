@@ -515,9 +515,9 @@ func TestCoverageLiftApplySetToNodeMapAndDynamicLabels(t *testing.T) {
 	_, _ = exec.applySetToNodeWithContext(ctx, node, "n", "n = $payload.replacement", nil, nil)
 	assert.Equal(t, map[string]interface{}{"name": "Grace", "active": true}, node.Properties)
 
+	// A dynamic label may be any non-empty string, as in Neo4j.
 	_, _ = exec.applySetToNodeWithContext(ctx, node, "n", "n:$($labels), n:Reviewer, n:Reviewer, ignored = true, n", nil, nil)
-	assert.ElementsMatch(t, []string{"Base", "Engineer", "MATCH", "Analyst", "Reviewer"}, node.Labels)
-	assert.NotContains(t, node.Labels, "bad-label")
+	assert.ElementsMatch(t, []string{"Base", "Engineer", "MATCH", "bad-label", "Analyst", "Reviewer"}, node.Labels)
 
 	_, _ = exec.applySetToNodeWithContext(ctx, node, "n", "n += $props", nil, nil)
 	assert.Equal(t, "Ada", node.Properties["name"])

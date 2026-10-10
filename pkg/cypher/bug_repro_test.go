@@ -77,7 +77,7 @@ func TestBug1_ChainedSetLabelAndMapPreservesPropertiesAndLabels(t *testing.T) {
 			name: "dynamic_label_then_map",
 			query: `
 				MERGE (n:M {uuid: $d.uuid})
-				SET n:$(d.labels)
+				SET n:$($d.labels)
 				SET n = $d
 				RETURN properties(n) AS p, labels(n) AS labels
 			`,

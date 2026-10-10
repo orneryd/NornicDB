@@ -49,6 +49,13 @@ type labelExpressionRewriter struct {
 	query     string
 	edits     []labelRewriteEdit
 	generated int
+	// params are the statement's parameters: a dynamic label or type whose
+	// value is a literal or a parameter is resolved to names here
+	// (resolveConstant).
+	params map[string]interface{}
+	// writeItems is set while a SET or REMOVE clause is read: its item
+	// heads may name dynamic labels (n:$(e)), nothing else may.
+	writeItems bool
 }
 
 // labelPatternMode is how a pattern's label expressions are read.
@@ -70,11 +77,11 @@ func (m labelPatternMode) clause() string {
 // desugarLabelExpressions returns query with its label expressions
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when nothing changes.
-func desugarLabelExpressions(query string) (string, *queryRewrite, error) {
+func desugarLabelExpressions(query string, params map[string]interface{}) (string, *queryRewrite, error) {
 	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) && indexASCIIFold(query, "shortestpath") < 0 {
 		return query, nil, nil
 	}
-	r := &labelExpressionRewriter{query: query}
+	r := &labelExpressionRewriter{query: query, params: params}
 	if err := r.statement(0, len(query)); err != nil {
 		return query, nil, err
 	}
@@ -144,6 +151,10 @@ func mayUseLabelExpressions(query string) bool {
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '|', '&', '!', '%':
 			return true
+		case '$':
+			if dynamicLabelStartsAt(query, i) {
+				return true // $(e), $all(e), $any(e)
+			}
 		case '(':
 			if i > 0 && query[i-1] == ':' {
 				return true // :(R) and :(A|B) groups
@@ -392,7 +403,10 @@ func (r *labelExpressionRewriter) statement(start, end int) error {
 		case "ON":
 			// ON CREATE SET / ON MATCH SET: the SET clause follows.
 		default:
-			if err := r.expression(clause.bodyStart, clause.end); err != nil {
+			r.writeItems = clause.keyword == "SET" || clause.keyword == "REMOVE"
+			err := r.expression(clause.bodyStart, clause.end)
+			r.writeItems = false
+			if err != nil {
 				return err
 			}
 		}
@@ -539,6 +553,25 @@ func (r *labelExpressionRewriter) element(open, close int, relationship, quantif
 	if chain.colons && chain.symbols {
 		return labelExpressionSyntaxError(localization.CypherMatchingLabelExpressionMixedColon(chain.expr.String()))
 	}
+	if chain.dynamic {
+		resolved, constant, err := r.resolveDynamicChain(chain, mode)
+		if err != nil {
+			return err
+		}
+		if !constant {
+			// Its value depends on the row: in MATCH a predicate reads it
+			// (labelExpression.predicate); CREATE and MERGE resolve it per
+			// row (resolveRowDynamicTokens).
+			if mode != labelPatternMatch {
+				return nil
+			}
+			variable = r.elementVariable(open, variable)
+			r.edit(chainStart, chainEnd, labelChainText(chain.expr.requiredLabels()))
+			*predicates = append(*predicates, chain.expr.predicate(variable))
+			return nil
+		}
+		chain.expr, chain.symbols = resolved, true
+	}
 	if !chain.symbols && !viaIS {
 		return nil // :A:B, read as it always was
 	}
@@ -609,6 +642,36 @@ func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd
 		return labelExpressionSyntaxError(localization.CypherMatchingRelationshipTypeColonConjunction())
 	}
 	variableLength := rest < close && q[rest] == '*'
+	if chain.dynamic {
+		resolved, constant, err := r.resolveDynamicChain(chain, mode)
+		if err != nil {
+			return err
+		}
+		if !constant {
+			// Its value depends on the row: in MATCH a predicate reads it,
+			// on each relationship of a variable-length or quantified one;
+			// CREATE and MERGE resolve it per row (resolveRowDynamicTokens).
+			if mode != labelPatternMatch {
+				return nil
+			}
+			variable = r.elementVariable(open, variable)
+			r.edit(chainStart, chainEnd, "")
+			if variableLength || quantified {
+				each := r.variable()
+				*predicates = append(*predicates, "all("+each+" IN "+variable+" WHERE "+chain.expr.predicate(each)+")")
+				return nil
+			}
+			*predicates = append(*predicates, chain.expr.predicate(variable))
+			return nil
+		}
+		if resolved.kind == labelExpressionAnd && len(resolved.operands) == 0 {
+			// $([]) or $all([]): no type to match, so every relationship
+			// (in CREATE or MERGE, its validation asks for one).
+			r.edit(chainStart, chainEnd, "")
+			return nil
+		}
+		chain.expr, chain.symbols = resolved, true
+	}
 	alternatives, plain := chain.expr.alternatives()
 	if chain.barColons {
 		hasProperties := strings.IndexByte(q[rest:close], '{') >= 0
@@ -650,6 +713,65 @@ func (r *labelExpressionRewriter) relationshipElement(open, chainStart, chainEnd
 	}
 	*predicates = append(*predicates, variable+":"+chain.expr.String())
 	return nil
+}
+
+// resolveDynamicChain resolves the dynamic terms of a pattern's label or
+// type chain whose values are known before the rows exist (resolveConstant):
+// a literal or a parameter. constant is false when a term's value depends on
+// the rows; the chain is then read when the rows are. $any() is only for
+// MATCH.
+func (r *labelExpressionRewriter) resolveDynamicChain(chain labelChain, mode labelPatternMode) (*labelExpression, bool, error) {
+	if chain.dynamicAny && mode != labelPatternMatch {
+		return nil, false, labelExpressionSyntaxError(localization.CypherCoreDynamicAnyInWritePattern())
+	}
+	return chain.expr.resolveDynamic(r.resolveConstant)
+}
+
+// resolveConstant reads a dynamic term's expression when its value is known
+// before the rows exist: a literal (whose wrong type or name is a
+// SyntaxError, staticDynamicTokenError) or a supplied parameter.
+func (r *labelExpressionRewriter) resolveConstant(expression string) (interface{}, bool, error) {
+	expression = strings.TrimSpace(expression)
+	if err := staticDynamicTokenError(expression, staticTypeScope{}, dynamicTokenLabel); err != nil {
+		return nil, false, err
+	}
+	if strings.HasPrefix(expression, "$") {
+		if name := simpleSemanticIdentifier(expression[1:]); name != "" {
+			value, bound := r.params[name]
+			return value, bound, nil
+		}
+		return nil, false, nil
+	}
+	if value, literal := parseLiteralValueForPipeline(expression); literal {
+		return value, true, nil
+	}
+	return nil, false, nil
+}
+
+// writeItemHead reports whether the variable that starts at query[wordStart]
+// begins an item of the SET or REMOVE clause being read: the clause keyword
+// or a comma comes before it. Only there may a label test be dynamic.
+func (r *labelExpressionRewriter) writeItemHead(wordStart int) bool {
+	if !r.writeItems {
+		return false
+	}
+	q := r.query
+	i := wordStart - 1
+	for i >= 0 && isASCIISpace(q[i]) {
+		i--
+	}
+	if i < 0 {
+		return false
+	}
+	if q[i] == ',' {
+		return true
+	}
+	end := i + 1
+	for i >= 0 && isIdentByte(q[i]) {
+		i--
+	}
+	word := q[i+1 : end]
+	return strings.EqualFold(word, "SET") || strings.EqualFold(word, "REMOVE")
 }
 
 // elementVariable is the variable of the element that opens at query[open]:
@@ -761,17 +883,31 @@ func (r *labelExpressionRewriter) labelTest(wordEnd, end int) error {
 		// n:A|B:C (written without spaces: a list comprehension's
 		// x:A | x:B is a test and a projection).
 		chainEnd, depth := wordEnd+1, 0
-		for ; chainEnd < end && !isASCIISpace(q[chainEnd]) && strings.IndexByte(",]}=<>+-*/^", q[chainEnd]) < 0; chainEnd++ {
-			if q[chainEnd] == '(' {
+	scan:
+		for ; chainEnd < end; chainEnd++ {
+			c := q[chainEnd]
+			if depth == 0 && (isASCIISpace(c) || strings.IndexByte(",]}=<>+-*/^", c) >= 0) {
+				break
+			}
+			switch c {
+			case '\'', '"', '`':
+				chainEnd = skipCypherQuotedText(q, chainEnd, c) - 1
+			case '(':
 				depth++
-			} else if q[chainEnd] == ')' {
+			case ')':
 				if depth == 0 {
-					break
+					break scan
 				}
 				depth--
 			}
 		}
-		if chain, ok := scanLabelChain(q[wordEnd+1:chainEnd], false); ok && chain.end == chainEnd-wordEnd-1 && chain.colons && chain.symbols {
+		chain, ok := scanLabelChain(q[wordEnd+1:chainEnd], false)
+		wordStart := labelTestWordStart(q, wordEnd)
+		inChain := wordStart > 0 && q[wordStart-1] == ':' // a label of a chain (n:A:$(e)), read with its variable
+		if ok && chain.dynamic && !inChain && !r.writeItemHead(wordStart) {
+			return labelExpressionSyntaxError(localization.CypherCoreDynamicTokenPositionInvalid())
+		}
+		if ok && chain.end == chainEnd-wordEnd-1 && chain.colons && chain.symbols {
 			return labelExpressionSyntaxError(localization.CypherMatchingLabelExpressionMixedColon(chain.expr.String()))
 		}
 		return nil
@@ -786,6 +922,23 @@ func (r *labelExpressionRewriter) labelTest(wordEnd, end int) error {
 		return labelExpressionSyntaxError(localization.CypherMatchingIsNotOperandInvalid(operand))
 	}
 	textStart := skipASCIISpaces(q, is+2, end)
+	if dynamicLabelStartsAt(q[:end], textStart) {
+		// A dynamic label: x IS $(e) is x:$(e), at a SET or REMOVE item's
+		// head only; IS takes one label, so a colon after it is an error as
+		// for a static chain.
+		if !r.writeItemHead(labelTestWordStart(q, wordEnd)) {
+			return labelExpressionSyntaxError(localization.CypherCoreDynamicTokenPositionInvalid())
+		}
+		closing := findMatchingDelimiter(q[:end], strings.IndexByte(q[textStart:end], '(')+textStart, '(', ')')
+		if closing < 0 {
+			return nil
+		}
+		if after := skipASCIISpaces(q, closing+1, end); after < end && q[after] == ':' {
+			return labelExpressionSyntaxError(localization.CypherMatchingLabelExpressionMixedIs(q[textStart : closing+1]))
+		}
+		r.edit(wordEnd, textStart, ":")
+		return nil
+	}
 	chain, ok := scanLabelChain(q[textStart:end], false)
 	if !ok {
 		return nil
@@ -1124,4 +1277,18 @@ func trimRightIndex(q string, start, end int) int {
 		end--
 	}
 	return end
+}
+
+func isASCIILetter(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// labelTestWordStart is where the variable of a label test that ends at
+// query[wordEnd] starts.
+func labelTestWordStart(q string, wordEnd int) int {
+	start := wordEnd
+	for start > 0 && isIdentByte(q[start-1]) {
+		start--
+	}
+	return start
 }

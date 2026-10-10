@@ -292,6 +292,7 @@ removeSt
 removeItem
     : symbol nodeLabels
     | propertyExpression
+    | dynamicPropertyExpression
     ;
 
 foreachSt
@@ -328,12 +329,18 @@ setSt
 
 setItem
     : propertyExpression ASSIGN expression
+    | dynamicPropertyExpression ASSIGN expression
     | symbol (ASSIGN | ADD_ASSIGN) expression
     | symbol nodeLabels
     ;
 
+// A dynamic property key (Neo4j 5.26): n[expr], (n).p[expr].
+dynamicPropertyExpression
+    : propertyExpression LBRACK expression RBRACK
+    ;
+
 nodeLabels
-    : ((COLON | IS) (labelExpression | DOLLAR LPAREN expression RPAREN))+
+    : ((COLON | IS) labelExpression)+
     ;
 
 labelExpression
@@ -345,7 +352,13 @@ labelConjunction
     ;
 
 labelNegation
-    : BANG* (name | MOD | LPAREN labelExpression RPAREN)
+    : BANG* (name | MOD | LPAREN labelExpression RPAREN | dynamicLabel)
+    ;
+
+// A dynamic label or relationship type (Neo4j 5.26): $(expr), $all(expr),
+// $any(expr).
+dynamicLabel
+    : DOLLAR (ALL | ANY)? LPAREN expression RPAREN
     ;
 
 createSt

@@ -134,6 +134,8 @@
   other: "[!! Invalid input '{{.Token}}': expected an expression !!]"
 - id: cyphercore.invalid_input_expected_identifier
   other: "[!! Invalid input '{{.Token}}': expected an identifier !!]"
+- id: cyphercore.parameter_type_mismatch
+  other: "[!! Type mismatch for parameter '{{.Parameter}}': expected {{.Expected}} but was {{.Type}} !!]"
 - id: cyphercore.list_operand_type_mismatch
   other: "[!! Type mismatch: expected List<T> but was {{.Type}} !!]"
 - id: cyphercore.list_parameter_type_mismatch
@@ -150,6 +152,22 @@
   other: "[!! Type mismatch: map key must be given as String, but was {{.Type}} !!]"
 - id: cyphercore.entity_property_key_type_mismatch
   other: "[!! Type mismatch: node or relationship property key must be given as String, but was {{.Type}} !!]"
+- id: cyphercore.token_name_invalid
+  other: "[!! '{{.Name}}' is not a valid token name. Token names cannot be empty or contain any null-bytes. !!]"
+- id: cyphercore.token_name_null
+  other: "[!! Null is not a valid token name. Token names cannot be empty or contain any null-bytes. !!]"
+- id: cyphercore.dynamic_label_value_invalid
+  other: "[!! Expected node label to be a string or list of strings. !!]"
+- id: cyphercore.dynamic_label_type_mismatch
+  other: "[!! Type mismatch: expected String or List<String> but was {{.Type}} !!]"
+- id: cyphercore.label_target_type_mismatch
+  other: "[!! Type mismatch: expected Node but was {{.Type}} !!]"
+- id: cyphercore.dynamic_token_position_invalid
+  other: "[!! Dynamic Label and Types are only allowed in MATCH, CREATE, MERGE, SET and REMOVE clauses. !!]"
+- id: cyphercore.dynamic_any_in_write_pattern
+  other: "[!! Dynamic labels using `$any()` are not allowed in CREATE or MERGE. !!]"
+- id: cyphercore.dynamic_relationship_type_count
+  other: "[!! Exactly one relationship type must be specified, but {{.Count}} were found. !!]"
 - id: cyphercore.function_argument_count
   other: "[!! {{.Function}}() expects {{.Expected}} argument(s), got {{.Got}} !!]"
 - id: cyphercore.trim_character_length

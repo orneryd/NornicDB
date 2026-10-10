@@ -13,6 +13,8 @@ import "strings"
 //	n:%          n has at least one label
 //	n:(A|B)&!C   grouping
 //	n IS A|B     the same, GQL's spelling
+//	n:$(e)       the labels e names at run time (Neo4j 5.26): all of them,
+//	             as $all(e); $any(e) for any of them (dynamic_tokens.go)
 //
 // ! binds tighter than &, & tighter than |. A relationship's type is tested
 // as its one label: r:A|B is true when its type is A or B. The legacy colon
@@ -26,13 +28,19 @@ const (
 	labelExpressionNot
 	labelExpressionAnd
 	labelExpressionOr
+	// labelExpressionDynamic is $(e), $all(e) or $any(e): expression is e,
+	// and any is set for $any. It is resolved to names before it is matched
+	// (resolveDynamic).
+	labelExpressionDynamic
 )
 
 // labelExpression is a parsed label expression.
 type labelExpression struct {
-	kind     labelExpressionKind
-	name     string
-	operands []*labelExpression
+	kind       labelExpressionKind
+	name       string
+	operands   []*labelExpression
+	expression string
+	any        bool
 }
 
 // labelExpressionOfNames is the conjunction of names, the legacy :A:B form.
@@ -68,6 +76,8 @@ func (x *labelExpression) matches(labels []string) bool {
 			}
 		}
 		return true
+	case labelExpressionDynamic:
+		return false // resolved before matching (resolveDynamic)
 	default: // labelExpressionOr
 		for _, operand := range x.operands {
 			if operand.matches(labels) {
@@ -95,6 +105,9 @@ func (x *labelExpression) requiredLabels() []string {
 		}
 		return out
 	case labelExpressionOr:
+		if len(x.operands) == 0 {
+			return nil
+		}
 		out := x.operands[0].requiredLabels()
 		for _, operand := range x.operands[1:] {
 			other := operand.requiredLabels()
@@ -143,6 +156,9 @@ func (x *labelExpression) alternatives() ([]string, bool) {
 	case labelExpressionName:
 		return []string{x.name}, true
 	case labelExpressionOr:
+		if len(x.operands) == 0 {
+			return nil, false // $any([]): matches nothing
+		}
 		var out []string
 		for _, operand := range x.operands {
 			names, ok := operand.alternatives()
@@ -172,25 +188,47 @@ func (x *labelExpression) render(b *strings.Builder) {
 		b.WriteString(labelExpressionNameText(x.name))
 	case labelExpressionAny:
 		b.WriteByte('%')
+	case labelExpressionDynamic:
+		b.WriteByte('$')
+		if x.any {
+			b.WriteString("any")
+		}
+		b.WriteByte('(')
+		b.WriteString(x.expression)
+		b.WriteByte(')')
+	case labelExpressionAnd, labelExpressionOr:
+		if len(x.operands) == 0 {
+			// The empty conjunction is true, the empty disjunction false
+			// ($all([]), $any([])): % or not, and % and not.
+			if x.kind == labelExpressionAnd {
+				b.WriteString("(%|!%)")
+			} else {
+				b.WriteString("(%&!%)")
+			}
+			return
+		}
+		x.renderOperands(b)
 	case labelExpressionNot:
 		b.WriteByte('!')
 		x.operands[0].renderOperand(b, labelExpressionNot)
-	default:
-		separator := byte('&')
-		if x.kind == labelExpressionOr {
-			separator = '|'
+	}
+}
+
+func (x *labelExpression) renderOperands(b *strings.Builder) {
+	separator := byte('&')
+	if x.kind == labelExpressionOr {
+		separator = '|'
+	}
+	for i, operand := range x.operands {
+		if i > 0 {
+			b.WriteByte(separator)
 		}
-		for i, operand := range x.operands {
-			if i > 0 {
-				b.WriteByte(separator)
-			}
-			operand.renderOperand(b, x.kind)
-		}
+		operand.renderOperand(b, x.kind)
 	}
 }
 
 func (x *labelExpression) renderOperand(b *strings.Builder, parent labelExpressionKind) {
-	if (x.kind == labelExpressionAnd || x.kind == labelExpressionOr) && x.kind != parent {
+	if (x.kind == labelExpressionAnd || x.kind == labelExpressionOr) && x.kind != parent && len(x.operands) > 0 {
 		b.WriteByte('(')
 		x.render(b)
 		b.WriteByte(')')
@@ -254,6 +292,8 @@ type labelChain struct {
 	symbols bool
 	// barColons: the legacy relationship type alternative |: (R|:S).
 	barColons bool
+	// dynamic: a $(e), $all(e) or $any(e) term (dynamicAny: $any).
+	dynamic, dynamicAny bool
 }
 
 // scanLabelChain parses the label chain at the start of text. With
@@ -264,7 +304,8 @@ func scanLabelChain(text string, relationship bool) (labelChain, bool) {
 	if !ok {
 		return labelChain{}, false
 	}
-	return labelChain{expr: expr, end: p.pos, colons: p.usedColons, symbols: p.usedSymbols, barColons: p.usedBarColons}, true
+	return labelChain{expr: expr, end: p.pos, colons: p.usedColons, symbols: p.usedSymbols, barColons: p.usedBarColons,
+		dynamic: p.usedDynamic, dynamicAny: p.usedDynamicAny}, true
 }
 
 type labelExpressionParser struct {
@@ -276,6 +317,8 @@ type labelExpressionParser struct {
 	relationship bool
 
 	usedColons, usedSymbols, usedBarColons bool
+	// usedDynamic: a $(e), $all(e) or $any(e) term; usedDynamicAny: $any.
+	usedDynamic, usedDynamicAny bool
 }
 
 func (p *labelExpressionParser) skipSpaces() int {
@@ -402,6 +445,25 @@ func (p *labelExpressionParser) parseUnary() (*labelExpression, bool) {
 		p.pos = at + 1
 		p.usedSymbols = true
 		return &labelExpression{kind: labelExpressionAny}, true
+	case '$':
+		// A dynamic label: $(e), $all(e), $any(e).
+		open, any := at+1, false
+		for _, function := range [...]string{"all", "any"} {
+			if at+1+len(function) < len(p.text) && strings.EqualFold(p.text[at+1:at+1+len(function)], function) && p.text[at+1+len(function)] == '(' {
+				open, any = at+1+len(function), function == "any"
+			}
+		}
+		if open >= len(p.text) || p.text[open] != '(' {
+			return nil, false
+		}
+		closing := findMatchingDelimiter(p.text, open, '(', ')')
+		if closing < 0 {
+			return nil, false
+		}
+		p.pos = closing + 1
+		p.usedDynamic = true
+		p.usedDynamicAny = p.usedDynamicAny || any
+		return &labelExpression{kind: labelExpressionDynamic, expression: strings.TrimSpace(p.text[open+1 : closing]), any: any}, true
 	case '(':
 		saved := p.pos
 		p.pos = at + 1
@@ -474,4 +536,82 @@ func labelExpressionBarAt(s string, start, at int) bool {
 		}
 	}
 	return false
+}
+
+// predicate renders the expression as a boolean expression over variable,
+// for a MATCH pattern whose dynamic terms depend on the row: a name is the
+// label test variable:Name, a dynamic term the dynamicLabelTestFunction call
+// that reads its value per row.
+func (x *labelExpression) predicate(variable string) string {
+	switch x.kind {
+	case labelExpressionName:
+		return variable + ":" + labelExpressionNameText(x.name)
+	case labelExpressionAny:
+		return variable + ":%"
+	case labelExpressionDynamic:
+		any := "false"
+		if x.any {
+			any = "true"
+		}
+		return dynamicLabelTestFunction + "(" + variable + ", (" + x.expression + "), " + any + ")"
+	case labelExpressionNot:
+		return "NOT (" + x.operands[0].predicate(variable) + ")"
+	}
+	if len(x.operands) == 0 {
+		if x.kind == labelExpressionAnd {
+			return "true"
+		}
+		return "false"
+	}
+	separator := " AND "
+	if x.kind == labelExpressionOr {
+		separator = " OR "
+	}
+	parts := make([]string, len(x.operands))
+	for i, operand := range x.operands {
+		parts[i] = operand.predicate(variable)
+	}
+	return "(" + strings.Join(parts, separator) + ")"
+}
+
+// resolveDynamic replaces the expression's dynamic terms with the names their
+// values give (resolve; dynamicLabelNames): $(e) and $all(e) by the
+// conjunction of the names, $any(e) by their disjunction. constant is false,
+// with no expression, when resolve can't read some term before the rows
+// exist (its value depends on them).
+func (x *labelExpression) resolveDynamic(resolve func(expression string) (value interface{}, constant bool, err error)) (resolved *labelExpression, constant bool, err error) {
+	switch x.kind {
+	case labelExpressionDynamic:
+		value, constant, err := resolve(x.expression)
+		if err != nil || !constant {
+			return nil, false, err
+		}
+		names, err := dynamicLabelNames(value)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(names) == 1 {
+			return &labelExpression{kind: labelExpressionName, name: names[0]}, true, nil
+		}
+		kind := labelExpressionAnd
+		if x.any {
+			kind = labelExpressionOr
+		}
+		operands := make([]*labelExpression, 0, len(names))
+		for _, name := range names {
+			operands = append(operands, &labelExpression{kind: labelExpressionName, name: name})
+		}
+		return &labelExpression{kind: kind, operands: operands}, true, nil
+	case labelExpressionNot, labelExpressionAnd, labelExpressionOr:
+		operands := make([]*labelExpression, 0, len(x.operands))
+		for _, operand := range x.operands {
+			resolvedOperand, constant, err := operand.resolveDynamic(resolve)
+			if err != nil || !constant {
+				return nil, false, err
+			}
+			operands = append(operands, resolvedOperand)
+		}
+		return &labelExpression{kind: x.kind, operands: operands}, true, nil
+	}
+	return x, true, nil
 }

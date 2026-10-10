@@ -790,7 +790,7 @@ func extractLabelsFromQuery(cypher string) []string {
 			continue
 		}
 		first := cypher[start]
-		if labelExpressionWidensMatch(first) {
+		if labelExpressionWidensMatch(first) || dynamicLabelStartsAt(cypher, start) {
 			return nil
 		}
 		if first < 'A' || first > 'Z' {
@@ -828,7 +828,7 @@ func extractLabelsFromQuery(cypher string) []string {
 				break
 			}
 			first := cypher[j]
-			if labelExpressionWidensMatch(first) {
+			if labelExpressionWidensMatch(first) || dynamicLabelStartsAt(cypher, j) {
 				return nil
 			}
 			if first < 'A' || first > 'Z' {
@@ -1224,4 +1224,23 @@ func (e *StorageExecutor) promoteNodeLookupCacheTo(dst *StorageExecutor) {
 // %, or a group).
 func labelExpressionWidensMatch(c byte) bool {
 	return c == '!' || c == '%' || c == '('
+}
+
+// dynamicLabelStartsAt reports whether a dynamic label or type ($(e),
+// $all(e), $any(e)) starts at s[i]: its names are known only at run time,
+// so a query with one depends on every write, as an unlabelled one does.
+// A parameter ({k:$v}) is not one.
+func dynamicLabelStartsAt(s string, i int) bool {
+	if i+1 >= len(s) || s[i] != '$' {
+		return false
+	}
+	if s[i+1] == '(' {
+		return true
+	}
+	for _, function := range [...]string{"all(", "any("} {
+		if i+1+len(function) <= len(s) && strings.EqualFold(s[i+1:i+1+len(function)], function) {
+			return true
+		}
+	}
+	return false
 }

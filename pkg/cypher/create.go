@@ -171,10 +171,16 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 			// The relationship is parsed and validated before its endpoints
 			// are created, so a rejected pattern writes nothing.
 			// Parse relationship type and properties
-			relType, relProps := e.parseRelationshipTypeAndProps(ctx, relStr)
+			relType, relProps, err := e.parseRelationshipTypeAndProps(ctx, relStr)
+			if err != nil {
+				return nil, err
+			}
 
 			// Extract relationship variable if present (e.g., "r:TYPE" -> "r").
 			relVar := ""
+			if rest, _, ok := splitPatternParameterMap(relStr); ok {
+				relStr = rest
+			}
 			if colonIdx := strings.Index(relStr, ":"); colonIdx > 0 {
 				relVar = strings.TrimSpace(relStr[:colonIdx])
 			} else if !strings.Contains(relStr, "{") {
@@ -399,14 +405,13 @@ func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOu
 func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern string, nodes map[string]*storage.Node, relationships map[string]*storage.Edge) (nodePatternInfo, error) {
 	var parameterProperties map[string]interface{}
 	if head, props := splitNodePatternProperties(pattern); props == "" {
-		if parameterAt := indexByteOutsideBackticks(head, '$'); parameterAt >= 0 {
-			value, resolved := resolveDirectParamRef(ctx, strings.TrimSpace(head[parameterAt:]))
-			properties, isMap := toStringAnyMap(value)
-			if !resolved || !isMap {
-				return nodePatternInfo{}, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidPropertyValue", "CREATE properties must be a map")
+		if rest, parameter, ok := splitPatternParameterMap(head); ok {
+			properties, err := createParameterProperties(ctx, parameter)
+			if err != nil {
+				return nodePatternInfo{}, err
 			}
-			parameterProperties = cloneNodePropertiesMap(properties)
-			pattern = "(" + strings.TrimSpace(head[:parameterAt]) + ")"
+			parameterProperties = properties
+			pattern = "(" + strings.TrimSpace(rest) + ")"
 		}
 	}
 	if err := e.validateCreatePatternPropertyMap(ctx, pattern); err != nil {
@@ -650,6 +655,15 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 			}
 		}
 
+		if c == '$' && dynamicLabelStartsAt(pattern, i) {
+			// $(e): a dynamic label's or type's expression, not a node.
+			if end := findMatchingDelimiter(pattern, i+strings.IndexByte(pattern[i:], '('), '(', ')'); end >= 0 {
+				current.WriteString(pattern[i : end+1])
+				i = end
+				continue
+			}
+		}
+
 		// Normal parsing outside string literals
 		switch c {
 		case '{':
@@ -758,6 +772,16 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 				continue
 			}
 		}
+		if c == '$' && dynamicLabelStartsAt(pattern, i) {
+			// $(e): a dynamic label's or type's expression, not a node.
+			if end := findMatchingDelimiter(pattern, i+strings.IndexByte(pattern[i:], '('), '(', ')'); end >= 0 {
+				if depth > 0 {
+					current.WriteString(pattern[i : end+1])
+				}
+				i = end
+				continue
+			}
+		}
 		switch c {
 		case '{':
 			if depth > 0 {
@@ -812,10 +836,19 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 
 // parseRelationshipTypeAndProps parses "r:TYPE {props}" or ":TYPE {props}". A pattern with no type ("r", ":") yields an empty type.
 // Returns the type and properties map
-func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, relStr string) (string, map[string]interface{}) {
+func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, relStr string) (string, map[string]interface{}, error) {
 	relStr = strings.TrimSpace(relStr)
 	relType := ""
 	var relProps map[string]interface{}
+
+	// A property map given as a parameter ([r:R $props]).
+	if rest, parameter, ok := splitPatternParameterMap(relStr); ok {
+		properties, err := createParameterProperties(ctx, parameter)
+		if err != nil {
+			return "", nil, err
+		}
+		relProps, relStr = properties, strings.TrimSpace(rest)
+	}
 
 	// Find properties block if present
 	propsStart := strings.Index(relStr, "{")
@@ -840,7 +873,39 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 		relProps = make(map[string]interface{})
 	}
 
-	return relType, relProps
+	return relType, relProps, nil
+}
+
+// splitPatternParameterMap splits a node's or a relationship's inside at a
+// trailing $name, its property map given as a parameter ((n:L $props),
+// [r:R $props], ($props)): rest is the text before it. The $ starts the
+// inside or follows whitespace; after a name's character it is part of the
+// name, as in Neo4j.
+func splitPatternParameterMap(text string) (rest, parameter string, ok bool) {
+	trimmed := strings.TrimRight(text, " \t\r\n")
+	start := len(trimmed)
+	for start > 0 && isIdentByte(trimmed[start-1]) {
+		start--
+	}
+	dollar := start - 1
+	if start == len(trimmed) || dollar < 0 || trimmed[dollar] != '$' || dollar > 0 && !isASCIIWhitespace(trimmed[dollar-1]) {
+		return text, "", false
+	}
+	return trimmed[:dollar], trimmed[dollar:], true
+}
+
+// createParameterProperties is the property map a CREATE pattern's $name
+// gives: a copy of the parameter's map, or Neo4j's SyntaxError ("Type
+// mismatch for parameter 'p': expected Map, Node or Relationship but was
+// Integer") when it isn't a map.
+func createParameterProperties(ctx context.Context, parameter string) (map[string]interface{}, error) {
+	value, _ := resolveDirectParamRef(ctx, parameter)
+	properties, isMap := toStringAnyMap(value)
+	if !isMap {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
+			localization.CypherCoreParameterTypeMismatch(parameter[1:], "Map, Node or Relationship", staticParameterOperand(value).display))
+	}
+	return cloneNodePropertiesMap(properties), nil
 }
 
 // findAllKeywordPositions finds all positions of a keyword in the query

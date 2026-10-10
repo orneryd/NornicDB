@@ -2474,16 +2474,16 @@ func TestCreateHelpers_ParsersAndValidators(t *testing.T) {
 	assert.Contains(t, nodes[0], "(a:A")
 	assert.Contains(t, nodes[1], "(b:B")
 
-	relType, relProps := exec.parseRelationshipTypeAndProps(ctx, "r:KNOWS {since: 2021, note: 'x'}")
+	relType, relProps, _ := exec.parseRelationshipTypeAndProps(ctx, "r:KNOWS {since: 2021, note: 'x'}")
 	assert.Equal(t, "KNOWS", relType)
 	assert.Equal(t, int64(2021), relProps["since"])
 	assert.Equal(t, "x", relProps["note"])
 
-	relType, relProps = exec.parseRelationshipTypeAndProps(ctx, "r")
+	relType, relProps, _ = exec.parseRelationshipTypeAndProps(ctx, "r")
 	assert.Equal(t, "", relType)
 	assert.Empty(t, relProps)
 
-	relType, relProps = exec.parseRelationshipTypeAndProps(ctx, ":")
+	relType, relProps, _ = exec.parseRelationshipTypeAndProps(ctx, ":")
 	assert.Equal(t, "", relType)
 	assert.Empty(t, relProps)
 

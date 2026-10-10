@@ -242,6 +242,11 @@ func scanParameterReferences(query string, visit func(dollar, start, end int)) {
 		for end < len(query) && isIdentByte(query[end]) {
 			end++
 		}
+		if dynamicLabelStartsAt(query, next) {
+			// $all(e), $any(e): a dynamic label, not a parameter.
+			i = end
+			continue
+		}
 		visit(next, start, end)
 		i = end
 	}
@@ -351,7 +356,8 @@ func statementMissingParameters(cypher string, bound func(name string) bool) []s
 				name = cypher[start:end]
 				index = end - 1
 			}
-			if name == "" {
+			if name == "" || dynamicLabelStartsAt(cypher, start-1) {
+				// $(e), $all(e), $any(e): a dynamic label, not a parameter.
 				continue
 			}
 			if bound(name) {

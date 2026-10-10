@@ -10,6 +10,7 @@ const (
 	EventBoltServerListening                    EventID = "bolt.server.listening"
 	EventBoltConnectionHandlerPanic             EventID = "bolt.connection.handler_panic"
 	EventBoltUnencryptedConnectionRejected      EventID = "bolt.connection.unencrypted_rejected"
+	EventBoltConnectionLimitReached             EventID = "bolt.connection.limit_reached"
 	EventBoltTransportSniffFailed               EventID = "bolt.transport.sniff_failed"
 	EventBoltHandshakeFailed                    EventID = "bolt.handshake.failed"
 	EventBoltMessageHandlingError               EventID = "bolt.message.handling_error"
@@ -33,6 +34,7 @@ const (
 	MessageBoltLogServerListening                    MessageID = "bolt.log.server_listening"
 	MessageBoltLogConnectionHandlerPanic             MessageID = "bolt.log.connection_handler_panic"
 	MessageBoltLogUnencryptedConnectionRejected      MessageID = "bolt.log.unencrypted_connection_rejected"
+	MessageBoltLogConnectionLimitReached             MessageID = "bolt.log.connection_limit_reached"
 	MessageBoltLogTransportSniffFailed               MessageID = "bolt.log.transport_sniff_failed"
 	MessageBoltLogHandshakeFailed                    MessageID = "bolt.log.handshake_failed"
 	MessageBoltLogMessageHandlingError               MessageID = "bolt.log.message_handling_error"
@@ -67,6 +69,11 @@ func BoltLogConnectionHandlerPanic() Message {
 // BoltLogUnencryptedConnectionRejected describes a connection rejected because TLS is required.
 func BoltLogUnencryptedConnectionRejected() Message {
 	return Message{ID: MessageBoltLogUnencryptedConnectionRejected, Fallback: "rejecting unencrypted connection"}
+}
+
+// BoltLogConnectionLimitReached describes connections closed at the Bolt connection limit.
+func BoltLogConnectionLimitReached() Message {
+	return Message{ID: MessageBoltLogConnectionLimitReached, Fallback: "rejecting connections: Bolt connection limit reached"}
 }
 
 // BoltLogTransportSniffFailed describes a transport detection failure.
@@ -182,6 +189,13 @@ func BoltConnectionHandlerPanicEvent(recovered any) LogEvent {
 // BoltUnencryptedConnectionRejectedEvent describes a connection rejected because TLS is required.
 func BoltUnencryptedConnectionRejectedEvent(remote string) LogEvent {
 	return boltEvent(EventBoltUnencryptedConnectionRejected, BoltLogUnencryptedConnectionRejected(), slog.String("remote", remote))
+}
+
+// BoltConnectionLimitReachedEvent describes connections closed because
+// maxConnections were open; rejected counts them since the last report.
+func BoltConnectionLimitReachedEvent(remote string, maxConnections int, rejected int64) LogEvent {
+	return boltEvent(EventBoltConnectionLimitReached, BoltLogConnectionLimitReached(), slog.String("remote", remote),
+		slog.Int("max_connections", maxConnections), slog.Int64("rejected", rejected))
 }
 
 // BoltTransportSniffFailedEvent describes a transport detection failure.

@@ -7,6 +7,9 @@
 - id: bolt.log.unencrypted_connection_rejected
   description: Pseudo-locale Bolt unencrypted connection rejection log.
   other: "[!! rejecting unencrypted connection !!]"
+- id: bolt.log.connection_limit_reached
+  description: Pseudo-locale Bolt connection limit rejection log.
+  other: "[!! rejecting connections: Bolt connection limit reached !!]"
 - id: bolt.log.transport_sniff_failed
   description: Pseudo-locale Bolt transport detection failure log.
   other: "[!! transport sniff failed !!]"

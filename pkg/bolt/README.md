@@ -618,12 +618,14 @@ This changes only the announced Bolt server string. Leave it unset unless you ne
 
 ### Performance Issues
 
+The `nornicdb` server takes the connection limit from
+`NORNICDB_BOLT_MAX_CONNECTIONS` or `server.bolt_max_connections` (default 0:
+uncapped; a positive value caps). An embedding Go program sets it on the
+config (the library default is 100):
+
 ```go
-// Increase connection pool size
-config := &bolt.Config{
-    Port:           7687,
-    MaxConnections: 500,  // Increase from 100
-}
+config := bolt.DefaultConfig()
+config.MaxConnections = 0 // No cap
 ```
 
 ### Memory Issues

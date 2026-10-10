@@ -434,7 +434,9 @@ func ExtractParameters(query string) []string {
 			end++
 		}
 
-		params = append(params, query[start:end])
+		if !dynamicLabelStartsAt(query, dollarIdx) { // $all(e), $any(e) aren't parameters
+			params = append(params, query[start:end])
+		}
 		i = end
 	}
 	return params

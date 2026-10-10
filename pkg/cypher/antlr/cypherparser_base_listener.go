@@ -374,6 +374,14 @@ func (s *BaseCypherParserListener) EnterSetItem(ctx *SetItemContext) {}
 // ExitSetItem is called when production setItem is exited.
 func (s *BaseCypherParserListener) ExitSetItem(ctx *SetItemContext) {}
 
+// EnterDynamicPropertyExpression is called when production dynamicPropertyExpression is entered.
+func (s *BaseCypherParserListener) EnterDynamicPropertyExpression(ctx *DynamicPropertyExpressionContext) {
+}
+
+// ExitDynamicPropertyExpression is called when production dynamicPropertyExpression is exited.
+func (s *BaseCypherParserListener) ExitDynamicPropertyExpression(ctx *DynamicPropertyExpressionContext) {
+}
+
 // EnterNodeLabels is called when production nodeLabels is entered.
 func (s *BaseCypherParserListener) EnterNodeLabels(ctx *NodeLabelsContext) {}
 
@@ -397,6 +405,12 @@ func (s *BaseCypherParserListener) EnterLabelNegation(ctx *LabelNegationContext)
 
 // ExitLabelNegation is called when production labelNegation is exited.
 func (s *BaseCypherParserListener) ExitLabelNegation(ctx *LabelNegationContext) {}
+
+// EnterDynamicLabel is called when production dynamicLabel is entered.
+func (s *BaseCypherParserListener) EnterDynamicLabel(ctx *DynamicLabelContext) {}
+
+// ExitDynamicLabel is called when production dynamicLabel is exited.
+func (s *BaseCypherParserListener) ExitDynamicLabel(ctx *DynamicLabelContext) {}
 
 // EnterCreateSt is called when production createSt is entered.
 func (s *BaseCypherParserListener) EnterCreateSt(ctx *CreateStContext) {}

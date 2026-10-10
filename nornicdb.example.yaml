@@ -60,6 +60,12 @@ server:
   # Env: NORNICDB_BOLT_SERVER_ANNOUNCEMENT
   bolt_server_announcement: ""
 
+  # Maximum concurrent Bolt connections, across every transport. Connections
+  # past a positive cap are closed and logged. 0 (the default) leaves it
+  # uncapped.
+  # Env: NORNICDB_BOLT_MAX_CONNECTIONS
+  bolt_max_connections: 0
+
   # Optional fallback timeout for a Bolt RUN when the client does not send
   # tx_timeout metadata. Zero or empty keeps the historical unlimited behavior.
   # Env: NORNICDB_BOLT_STATEMENT_TIMEOUT
