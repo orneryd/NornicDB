@@ -64,10 +64,6 @@
   other: "[!! db.temporal.asOf requires 6 parameters plus optional systemTime and systemSequence !!]"
 - id: cypherspecializedcalls.temporal_lookup_failed
   other: "[!! temporal lookup failed for label {{.Label}}: {{.Cause}} !!]"
-- id: cypherspecializedcalls.temporal_invalid_syntax
-  other: "[!! invalid {{.Procedure}} syntax !!]"
-- id: cypherspecializedcalls.temporal_closing_parenthesis
-  other: "[!! missing closing parenthesis in {{.Procedure}} !!]"
 - id: cypherspecializedcalls.argument_required
   other: "[!! {{.Argument}} is required !!]"
 - id: cypherspecializedcalls.argument_empty

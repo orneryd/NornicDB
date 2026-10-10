@@ -39,36 +39,46 @@ func TestTemporalAssertNoOverlap(t *testing.T) {
 	require.Equal(t, true, result.Rows[0][0])
 }
 
-func TestTemporalProcedures_HelperBranches(t *testing.T) {
+// The procedures take evaluated arguments: a parameter, an expression and
+// Unix seconds are read like literals; a name that isn't a string is the
+// signature's type mismatch, and a missing argument an argument count error.
+func TestTemporalProcedures_Arguments(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	engine := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(engine)
 	ctx := context.Background()
 
-	// parseTemporalCallArgs malformed syntax branches.
-	_, err := parseTemporalCallArgs(ctx, "CALL db.temporal.assertNoOverlap('x'", "DB.TEMPORAL.ASSERTNOOVERLAP")
-	require.Error(t, err)
-
-	// coerceStringArg fallback (non-string gets fmt.Sprint conversion).
-	res, err := exec.Execute(ctx, "CALL db.temporal.assertNoOverlap(123,456,789,1011,12,1700000000,null)", nil)
-	require.NoError(t, err)
-	require.Len(t, res.Rows, 1)
-	require.Equal(t, true, res.Rows[0][0])
-
-	// asOf with numeric datetime (int64 parsing branch).
-	_, err = engine.CreateNode(&storage.Node{
+	_, err := engine.CreateNode(&storage.Node{
 		ID:     "num-time",
-		Labels: []string{"123"},
+		Labels: []string{"Fv"},
 		Properties: map[string]interface{}{
-			"456":  int64(12),
-			"789":  int64(1699999999),
-			"1011": nil,
+			"k":    int64(12),
+			"from": int64(1699999999),
+			"to":   nil,
 		},
 	})
 	require.NoError(t, err)
-	asOfRes, err := exec.Execute(ctx, "CALL db.temporal.asOf(123,456,12,789,1011,1700000000) YIELD node", nil)
+	for _, query := range []string{
+		"CALL db.temporal.asOf('Fv', 'k', 12, 'from', 'to', 1700000000) YIELD node RETURN node",
+		"CALL db.temporal.asOf($label, 'k', 6 * 2, 'from', 'to', $at) YIELD node RETURN node",
+		"WITH 'Fv' AS label CALL db.temporal.asOf(label, 'k', 12, 'from', 'to', datetime('2023-11-14T22:13:20Z')) YIELD node RETURN node",
+	} {
+		result, err := exec.Execute(ctx, query, map[string]interface{}{"label": "Fv", "at": int64(1700000000)})
+		require.NoError(t, err, query)
+		require.Len(t, result.Rows, 1, query)
+	}
+	result, err := exec.Execute(ctx, "CALL db.temporal.assertNoOverlap('Fv', 'k', 'from', 'to', 12, 1600000000, 1600000001) YIELD ok RETURN ok", nil)
 	require.NoError(t, err)
-	require.Len(t, asOfRes.Rows, 1)
+	require.Equal(t, [][]interface{}{{true}}, result.Rows)
+	_, err = exec.Execute(ctx, "CALL db.temporal.assertNoOverlap('Fv', 'k', 'from', 'to', 12, 1700000000, null) YIELD ok RETURN ok", nil)
+	require.Error(t, err)
+
+	_, err = exec.Execute(ctx, "CALL db.temporal.asOf(123, 'k', 12, 'from', 'to', 1700000000) YIELD node RETURN node", nil)
+	require.Error(t, err)
+	_, err = exec.Execute(ctx, "CALL db.temporal.asOf('Fv', 'k', 12, 'from', 'to') YIELD node RETURN node", nil)
+	require.Error(t, err)
+	_, err = exec.Execute(ctx, "CALL db.temporal.assertNoOverlap('Fv', 'k', 'from', 'to', 12, 1600000000) YIELD ok RETURN ok", nil)
+	require.Error(t, err)
 }
 
 func TestTemporalAsOf(t *testing.T) {
@@ -243,7 +253,6 @@ func TestTemporalProcedures_RequiredStringArgsBranches(t *testing.T) {
 
 	_, err := exec.Execute(ctx, "CALL db.temporal.assertNoOverlap(null,'fact_key','valid_from','valid_to','k1','2024-01-01T00:00:00Z',null)", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "label is required")
 
 	_, err = exec.Execute(ctx, "CALL db.temporal.assertNoOverlap('','fact_key','valid_from','valid_to','k1','2024-01-01T00:00:00Z',null)", nil)
 	require.Error(t, err)
@@ -277,37 +286,23 @@ func TestTemporalProcedures_StrictArgValidationAdditionalBranches(t *testing.T) 
 	exec := NewStorageExecutor(engine)
 	ctx := context.Background()
 
-	// Invalid call name/syntax branches.
-	_, err := exec.callDbTemporalAssertNoOverlap(ctx, "CALL db.temporal.wrong()")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid db.temporal.assertnooverlap syntax")
-	_, err = exec.callDbTemporalAsOf(ctx, "CALL db.temporal.other()")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid db.temporal.asof syntax")
-
 	// assertNoOverlap: required string args beyond label.
-	_, err = exec.Execute(ctx, "CALL db.temporal.assertNoOverlap('FactVersion',null,'valid_from','valid_to','k1','2024-01-01T00:00:00Z',null)", nil)
+	_, err := exec.Execute(ctx, "CALL db.temporal.assertNoOverlap('FactVersion',null,'valid_from','valid_to','k1','2024-01-01T00:00:00Z',null)", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "keyProp is required")
 
 	_, err = exec.Execute(ctx, "CALL db.temporal.assertNoOverlap('FactVersion','fact_key',null,'valid_to','k1','2024-01-01T00:00:00Z',null)", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "validFromProp is required")
 
 	_, err = exec.Execute(ctx, "CALL db.temporal.assertNoOverlap('FactVersion','fact_key','valid_from',null,'k1','2024-01-01T00:00:00Z',null)", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "validToProp is required")
 
 	// asOf: required string args for key/from/to props.
 	_, err = exec.Execute(ctx, "CALL db.temporal.asOf('FactVersion',null,'k1','valid_from','valid_to','2024-01-01T00:00:00Z') YIELD node", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "keyProp is required")
 
 	_, err = exec.Execute(ctx, "CALL db.temporal.asOf('FactVersion','fact_key','k1',null,'valid_to','2024-01-01T00:00:00Z') YIELD node", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "validFromProp is required")
 
 	_, err = exec.Execute(ctx, "CALL db.temporal.asOf('FactVersion','fact_key','k1','valid_from',null,'2024-01-01T00:00:00Z') YIELD node", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "validToProp is required")
 }

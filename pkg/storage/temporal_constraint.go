@@ -13,7 +13,14 @@ type temporalInterval struct {
 	nodeID NodeID
 }
 
-func coerceTemporalTime(value interface{}) (time.Time, bool) {
+// CoerceTemporalTime reads a point in time from a temporal property or
+// argument, in UTC: a time.Time, a Cypher temporal value (anything with
+// TemporalTime(), so datetime(), date() and localdatetime() values alike), an
+// ISO 8601 string (RFC 3339, or a date or local date-time read as UTC), or
+// Unix seconds. It is the one reading used by the TEMPORAL NO OVERLAP
+// constraint and the db.temporal procedures, so a value the constraint
+// accepts is one the procedures read the same way.
+func CoerceTemporalTime(value interface{}) (time.Time, bool) {
 	switch v := value.(type) {
 	case time.Time:
 		return v.UTC(), true
@@ -64,13 +71,22 @@ func parseTemporalString(raw string) (time.Time, bool) {
 }
 
 func intervalsOverlap(a temporalInterval, b temporalInterval) bool {
-	if a.start.IsZero() || b.start.IsZero() {
+	return TemporalIntervalsOverlap(a.start, a.end, a.hasEnd, b.start, b.end, b.hasEnd)
+}
+
+// TemporalIntervalsOverlap reports whether the half-open validity intervals
+// [aStart, aEnd) and [bStart, bEnd) overlap; an interval without an end is
+// open-ended. An interval with a zero start overlaps nothing. The TEMPORAL
+// NO OVERLAP constraint and db.temporal.assertNoOverlap both decide overlap
+// with it.
+func TemporalIntervalsOverlap(aStart, aEnd time.Time, aHasEnd bool, bStart, bEnd time.Time, bHasEnd bool) bool {
+	if aStart.IsZero() || bStart.IsZero() {
 		return false
 	}
-	if b.hasEnd && !a.start.Before(b.end) {
+	if bHasEnd && !aStart.Before(bEnd) {
 		return false
 	}
-	if a.hasEnd && !b.start.Before(a.end) {
+	if aHasEnd && !bStart.Before(aEnd) {
 		return false
 	}
 	return true

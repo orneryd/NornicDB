@@ -913,8 +913,6 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cypherspecializedcalls.string_query_embedder_required", Constructor: "CypherSpecializedCallsStringQueryEmbedderRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherspecializedcalls.temporal_asof_argument_count", Constructor: "CypherSpecializedCallsTemporalAsOfArgumentCount", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherspecializedcalls.temporal_assert_argument_count", Constructor: "CypherSpecializedCallsTemporalAssertArgumentCount", Fields: []string{}, PluralForms: []string{"other"}},
-	{ID: "cypherspecializedcalls.temporal_closing_parenthesis", Constructor: "CypherSpecializedCallsTemporalClosingParenthesis", Fields: []string{"Procedure"}, PluralForms: []string{"other"}},
-	{ID: "cypherspecializedcalls.temporal_invalid_syntax", Constructor: "CypherSpecializedCallsTemporalInvalidSyntax", Fields: []string{"Procedure"}, PluralForms: []string{"other"}},
 	{ID: "cypherspecializedcalls.temporal_lookup_failed", Constructor: "CypherSpecializedCallsTemporalLookupFailed", Fields: []string{"Cause", "Label"}, PluralForms: []string{"other"}},
 	{ID: "cypherspecializedcalls.temporal_overlap", Constructor: "CypherSpecializedCallsTemporalOverlap", Fields: []string{"Property", "Value"}, PluralForms: []string{"other"}},
 	{ID: "cypherspecializedcalls.temporal_read_nodes_failed", Constructor: "CypherSpecializedCallsTemporalReadNodesFailed", Fields: []string{"Cause", "Label"}, PluralForms: []string{"other"}},
