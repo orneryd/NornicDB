@@ -151,21 +151,6 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 	if isCaseExpression(expr) {
 		return e.evaluateRowCaseExpression(expr, values)
 	}
-	// A CASE nested inside a compound expression (acc + CASE … END): the row
-	// comparison chain would misread the `>` inside WHEN conditions as a
-	// top-level comparison. Delegate the whole expression to the shared
-	// evaluator, whose operator scans are CASE-aware. When the shared
-	// evaluator does not recognize the shape, fall through to the row
-	// branches (reduce over a CASE reduction and friends).
-	if containsCASEKeyword(expr) {
-		value, err := e.evaluateRowFallback(expr, values)
-		if err != nil {
-			return nil, false, err
-		}
-		if text, ok := value.(string); !ok || text != expr || isWholeCypherQuotedString(expr) {
-			return value, true, nil
-		}
-	}
 	if value, matched, resolved, err := e.evaluateRowMapProjection(expr, values); matched {
 		return value, resolved, err
 	}

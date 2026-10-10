@@ -249,12 +249,19 @@ type caseBlockSpan struct {
 }
 
 // caseBlockSpans returns the text spans of the outermost CASE … END blocks in
-// expr, outside quoted literals. Nested CASE blocks are contained in their
-// outer span. It returns nil (no allocation) when there are no CASE blocks.
-// A keyword preceded by a dot is a property access, not a CASE keyword.
+// expr, outside quoted literals, for the evaluators that evaluate each block
+// for the row before the rest of the expression. Nested CASE blocks are
+// contained in their outer span. A CASE inside a scope that binds names (a
+// list or pattern comprehension, reduce / all / any / none / single / filter,
+// a subquery's { … }) is not returned: it reads the scope's variables, so it is
+// evaluated with the scope, not for the row. It returns nil (no allocation)
+// when there are no such blocks. A keyword preceded by a dot is a property
+// access, not a CASE keyword.
 func caseBlockSpans(expr string) []caseBlockSpan {
 	var spans []caseBlockSpan
 	stack := make([]int, 0, 2)
+	var delimiters []bool // open ( [ {: true when it opens a scope
+	scopes := 0
 	quote := byte(0)
 	for i := 0; i < len(expr); i++ {
 		ch := expr[i]
@@ -264,8 +271,27 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 			}
 			continue
 		}
-		if ch == '\'' || ch == '"' || ch == '`' {
+		switch ch {
+		case '\'', '"', '`':
 			quote = ch
+			continue
+		case '(', '[', '{':
+			scope := caseVariableScopeOpensAt(expr, i)
+			delimiters = append(delimiters, scope)
+			if scope {
+				scopes++
+			}
+			continue
+		case ')', ']', '}':
+			if n := len(delimiters); n > 0 {
+				if delimiters[n-1] {
+					scopes--
+				}
+				delimiters = delimiters[:n-1]
+			}
+			continue
+		}
+		if scopes > 0 {
 			continue
 		}
 		if i == 0 || expr[i-1] != '.' {
@@ -283,6 +309,40 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 		}
 	}
 	return spans
+}
+
+// caseVariableScopeOpensAt reports whether the delimiter at expr[open] opens a
+// scope that binds names: [x IN …] or [(a)-->(b) | …], the arguments of
+// reduce / all / any / none / single / filter, or the { … } of an EXISTS,
+// COUNT, COLLECT or CALL subquery.
+func caseVariableScopeOpensAt(expr string, open int) bool {
+	switch expr[open] {
+	case '[':
+		next := skipSpaces(expr, open+1)
+		if next < len(expr) && expr[next] == '(' {
+			return true
+		}
+		_, end, ok := scanIdentifierToken(expr, next)
+		return ok && matchKeywordAt(expr, skipSpaces(expr, end), "IN")
+	case '(', '{':
+		end := open
+		for end > 0 && isASCIISpace(expr[end-1]) {
+			end--
+		}
+		start := end
+		for start > 0 && isIdentByte(expr[start-1]) {
+			start--
+		}
+		if start == end || start > 0 && expr[start-1] == '.' {
+			return false
+		}
+		name := lowerASCII(expr[start:end])
+		if expr[open] == '{' {
+			return name == "exists" || name == "count" || name == "collect" || name == "call"
+		}
+		return name == "reduce" || name == "filter" || isQuantifierFunction(name)
+	}
+	return false
 }
 
 // evaluateCaseExpression evaluates a CASE expression and returns the result.
