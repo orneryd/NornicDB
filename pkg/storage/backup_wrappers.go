@@ -18,26 +18,6 @@ func (n *NamespacedEngine) Restore(path string) error {
 	return restoreEngine(n.inner, path)
 }
 
-// Backup flushes acknowledged async writes before opening the native backup.
-func (e *AsyncEngine) Backup(path string) error {
-	if e == nil || e.engine == nil {
-		return ErrStorageClosed
-	}
-	return e.FlushBeforeSnapshot(func() error {
-		return backupEngine(e.engine, path)
-	})
-}
-
-// Restore flushes pending writes before loading the native backup.
-func (e *AsyncEngine) Restore(path string) error {
-	if e == nil || e.engine == nil {
-		return ErrStorageClosed
-	}
-	return e.FlushBeforeSnapshot(func() error {
-		return restoreEngine(e.engine, path)
-	})
-}
-
 // Backup holds the WAL mutation barrier while Badger creates its consistent
 // streaming snapshot.
 func (w *WALEngine) Backup(path string) error {

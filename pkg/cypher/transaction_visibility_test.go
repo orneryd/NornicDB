@@ -201,21 +201,14 @@ func TestExplicitTransactionRejectsMixedSchemaAndData(t *testing.T) {
 	}
 }
 
-func TestExplicitTransactionSeesAcknowledgedAsyncWrite(t *testing.T) {
+func TestExplicitTransactionSeesAcknowledgedWrite(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	async := storage.NewAsyncEngine(base, &storage.AsyncEngineConfig{
-		FlushInterval:    time.Hour,
-		MaxNodeCacheSize: 1000,
-		MaxEdgeCacheSize: 1000,
-	})
-	t.Cleanup(func() { require.NoError(t, async.Close()) })
-	executor := NewStorageExecutor(storage.NewNamespacedEngine(async, "visibility"))
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "visibility"))
 
 	created, err := executor.Execute(context.Background(),
 		"CREATE (:Account {accountID: 'acknowledged'})", nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, created.Stats.NodesCreated)
-	require.True(t, async.HasPendingWrites(), "the reproduction requires an unflushed acknowledged write")
 
 	_, err = executor.handleBegin()
 	require.NoError(t, err)
@@ -233,13 +226,7 @@ func TestExplicitTransactionSeesAcknowledgedAsyncWrite(t *testing.T) {
 
 func TestExplicitTransactionCreatesDependentWritesFromAcknowledgedState(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	async := storage.NewAsyncEngine(base, &storage.AsyncEngineConfig{
-		FlushInterval:    time.Hour,
-		MaxNodeCacheSize: 1000,
-		MaxEdgeCacheSize: 1000,
-	})
-	t.Cleanup(func() { require.NoError(t, async.Close()) })
-	executor := NewStorageExecutor(storage.NewNamespacedEngine(async, "dependent"))
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "dependent"))
 
 	_, err := executor.Execute(context.Background(),
 		"CREATE (:Account {accountID: 'source'})", nil)
@@ -265,13 +252,7 @@ func TestExplicitTransactionCreatesDependentWritesFromAcknowledgedState(t *testi
 
 func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	async := storage.NewAsyncEngine(base, &storage.AsyncEngineConfig{
-		FlushInterval:    time.Hour,
-		MaxNodeCacheSize: 1000,
-		MaxEdgeCacheSize: 1000,
-	})
-	t.Cleanup(func() { require.NoError(t, async.Close()) })
-	store := storage.NewNamespacedEngine(async, "concurrent_begin")
+	store := storage.NewNamespacedEngine(base, "concurrent_begin")
 	first := NewStorageExecutor(store)
 	second := NewStorageExecutor(store)
 
@@ -287,12 +268,12 @@ func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t
 		}
 	})
 
-	_, err = async.CreateNode(&storage.Node{
+	_, err = store.CreateNode(&storage.Node{
 		ID:     "concurrent_begin:pending",
 		Labels: []string{"Pending"},
 	})
 	require.NoError(t, err)
-	require.True(t, async.HasPendingWrites(), "the reproduction requires a pending acknowledged write")
+	// Writes commit synchronously; nothing stays pending to block a BEGIN.
 
 	beginDone := make(chan error, 1)
 	go func() {
@@ -326,13 +307,7 @@ func TestOpenExplicitTransactionDoesNotBlockAnotherBeginAfterAcknowledgedWrite(t
 
 func TestCountReadDoesNotStallWhileAnotherTransactionBegins(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	async := storage.NewAsyncEngine(base, &storage.AsyncEngineConfig{
-		FlushInterval:    time.Hour,
-		MaxNodeCacheSize: 1000,
-		MaxEdgeCacheSize: 1000,
-	})
-	t.Cleanup(func() { require.NoError(t, async.Close()) })
-	store := storage.NewNamespacedEngine(async, "concurrent_count")
+	store := storage.NewNamespacedEngine(base, "concurrent_count")
 	first := NewStorageExecutor(store)
 	second := NewStorageExecutor(store)
 
@@ -347,7 +322,7 @@ func TestCountReadDoesNotStallWhileAnotherTransactionBegins(t *testing.T) {
 		}
 	})
 
-	_, err = async.CreateNode(&storage.Node{
+	_, err = store.CreateNode(&storage.Node{
 		ID:     "concurrent_count:pending",
 		Labels: []string{"Pending"},
 	})
@@ -361,7 +336,7 @@ func TestCountReadDoesNotStallWhileAnotherTransactionBegins(t *testing.T) {
 
 	countDone := make(chan error, 1)
 	go func() {
-		_, countErr := async.NodeCount()
+		_, countErr := store.NodeCount()
 		countDone <- countErr
 	}()
 

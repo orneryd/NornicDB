@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -424,43 +423,6 @@ func TestStreamEdgesByType_StopsOnVisitorErrorAndContext(t *testing.T) {
 	cancel()
 	require.ErrorIs(t, StreamEdgesByType(ctx, e, "REL", func(*Edge) error { return nil }), context.Canceled)
 	require.ErrorIs(t, StreamEdgesByType(ctx, e, "REL", nil), ErrInvalidData)
-}
-
-func TestStreamEdgesByType_AsyncEngineMergesPendingWrites(t *testing.T) {
-	inner := NewMemoryEngine()
-	t.Cleanup(func() { _ = inner.Close() })
-	ae := NewAsyncEngine(inner, &AsyncEngineConfig{FlushInterval: time.Hour})
-	t.Cleanup(func() { _ = ae.Close() })
-
-	for _, id := range []NodeID{"a:x", "a:y"} {
-		_, err := ae.CreateNode(&Node{ID: id, Labels: []string{"A"}, Properties: map[string]any{}})
-		require.NoError(t, err)
-	}
-	require.NoError(t, ae.CreateEdge(relEdge("a:flushed", "a:x", "a:y", "REL", map[string]any{"k": "old"})))
-	require.NoError(t, ae.CreateEdge(relEdge("a:gone", "a:x", "a:y", "REL", nil)))
-	require.NoError(t, ae.Flush())
-
-	// Unflushed: a create, an update and a delete.
-	require.NoError(t, ae.CreateEdge(relEdge("a:pending", "a:y", "a:x", "REL", nil)))
-	require.NoError(t, ae.CreateEdge(relEdge("a:other", "a:y", "a:x", "OTHER", nil)))
-	require.NoError(t, ae.UpdateEdge(relEdge("a:flushed", "a:x", "a:y", "REL", map[string]any{"k": "new"})))
-	require.NoError(t, ae.DeleteEdge("a:gone"))
-
-	seen := map[EdgeID]*Edge{}
-	require.NoError(t, StreamEdgesByType(context.Background(), ae, "REL", func(edge *Edge) error {
-		_, dup := seen[edge.ID]
-		require.False(t, dup, "edge %s visited twice", edge.ID)
-		seen[edge.ID] = edge
-		return nil
-	}))
-	require.Len(t, seen, 2)
-	require.Contains(t, seen, EdgeID("a:pending"), "pending (unflushed) edge must be streamed")
-	require.NotContains(t, seen, EdgeID("a:gone"), "pending delete must hide the flushed edge")
-	require.Equal(t, "new", seen["a:flushed"].Properties["k"], "pending update must shadow the flushed edge")
-
-	// The same through a namespaced view over the async engine.
-	require.Equal(t, []string{"flushed", "pending"}, collectEdgeIDs(t, NewNamespacedEngine(ae, "a"), "REL"))
-	require.Empty(t, collectEdgeIDs(t, NewNamespacedEngine(ae, "b"), "REL"))
 }
 
 func TestStreamEdgesByType_TransactionMergesPendingWrites(t *testing.T) {

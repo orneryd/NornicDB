@@ -213,7 +213,7 @@ func TestOptionalOrderCountAfterBulkEdges(t *testing.T) {
 func TestOptionalOrderCountThroughAsyncStorage(t *testing.T) {
 	base, err := storage.NewBadgerEngineInMemory()
 	require.NoError(t, err)
-	async := storage.NewAsyncEngine(base, nil)
+	async := base
 	t.Cleanup(func() { require.NoError(t, async.Close()) })
 	store := storage.NewNamespacedEngine(async, "nornic")
 	for _, node := range []*storage.Node{
@@ -225,7 +225,6 @@ func TestOptionalOrderCountThroughAsyncStorage(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "line1", Type: "ORDERS", StartNode: "o1", EndNode: "p1"}))
-	async.Flush()
 	exec := NewStorageExecutor(&forwardingNamespacedEngine{Engine: store})
 	result, err := exec.Execute(context.Background(), `MATCH (p:Product)
 		OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)

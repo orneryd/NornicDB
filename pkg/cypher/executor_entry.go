@@ -668,10 +668,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return result, err
 	}
 
-	// System commands (CREATE/DROP DATABASE, SHOW DATABASES, etc.) must not use the async engine
-	// or implicit transactions: they operate on dbManager/metadata, not graph storage.
-	// Routing them through executeWithoutTransaction directly ensures correct handling and
-	// avoids the write path (tryAsyncCreateNodeBatch / executeWithImplicitTransaction).
+	// System commands (CREATE/DROP DATABASE, SHOW DATABASES, etc.) must not use
+	// implicit transactions: they operate on dbManager/metadata, not graph
+	// storage. Routing them through executeWithoutTransaction directly ensures
+	// correct handling and avoids the write path.
 	if isSystemCommandNoGraph(cypher) || isOrdinarySchemaDDL(cypher) {
 		result, err := e.executeWithoutTransaction(ctx, cypher, upperQuery)
 		if err != nil {
@@ -693,9 +693,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		})
 	}
 
-	// Auto-commit single query - use async path for performance
-	// This uses AsyncEngine's write-behind cache instead of synchronous disk I/O
-	// For strict ACID, users should use explicit BEGIN/COMMIT transactions
+	// Auto-commit single query through the implicit-transaction write path.
 	ctx = withExpressionFailureSlot(ctx)
 	result, err = e.executeImplicitAsync(ctx, cypher, upperQuery)
 	if result != nil && err == nil {

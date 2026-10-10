@@ -91,18 +91,6 @@ func (n *NamespacedEngine) GraphMutationVersionInNamespace(string) (uint64, bool
 	return n.GraphMutationVersion()
 }
 
-// GraphMutationVersion includes buffered and persisted graph mutations.
-func (ae *AsyncEngine) GraphMutationVersion() (uint64, bool) {
-	return ae.GraphMutationVersionInNamespace("")
-}
-
-// GraphMutationVersionInNamespace includes this database's buffered and
-// persisted graph mutations.
-func (ae *AsyncEngine) GraphMutationVersionInNamespace(namespace string) (uint64, bool) {
-	inner, ok := graphMutationVersion(ae.engine, namespace)
-	return inner + ae.graphMutationVersions.read(namespace), ok
-}
-
 // GraphMutationVersion forwards revision reporting through the WAL wrapper.
 func (w *WALEngine) GraphMutationVersion() (uint64, bool) {
 	return graphMutationVersion(w.engine, "")

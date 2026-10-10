@@ -261,39 +261,6 @@ func (n *NamespacedEngine) MatchEdgesBetween(startID, endID NodeID, edgeType str
 	return edges, nil
 }
 
-// MatchEdgesBetween matches the edges with the writes not yet flushed: a
-// queued deletion hides an edge, and a queued create or update replaces it.
-func (ae *AsyncEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
-	ae.mu.RLock()
-	deleted := make(map[EdgeID]struct{}, len(ae.deleteEdges))
-	for id := range ae.deleteEdges {
-		deleted[id] = struct{}{}
-	}
-	overridden := make(map[EdgeID]struct{}, len(ae.edgeCache))
-	var cached []*Edge
-	for id, edge := range ae.edgeCache {
-		overridden[id] = struct{}{}
-		if _, gone := deleted[id]; !gone && edge != nil && edge.StartNode == startID && edge.EndNode == endID && edge.Type == edgeType {
-			cached = append(cached, edge)
-		}
-	}
-	ae.mu.RUnlock()
-	matched := filterEdgesBetween(cached, startID, endID, edgeType, properties, match)
-	stored, err := MatchEdgesBetween(ae.engine, startID, endID, edgeType, properties, func(edge *Edge) bool {
-		if _, gone := deleted[edge.ID]; gone {
-			return false
-		}
-		if _, replaced := overridden[edge.ID]; replaced {
-			return false
-		}
-		return match(edge)
-	})
-	if err != nil {
-		return matched, nil
-	}
-	return append(matched, stored...), nil
-}
-
 // MatchEdgesBetween delegates to the underlying engine.
 func (w *WALEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
 	return MatchEdgesBetween(w.engine, startID, endID, edgeType, properties, match)

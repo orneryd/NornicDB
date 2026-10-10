@@ -14,11 +14,10 @@ import (
 // never rewrites the node record, and the persisted embedding reads back.
 func TestWALEngine_UpdateNodeEmbeddingSidecar(t *testing.T) {
 	base := NewMemoryEngine()
-	async := NewAsyncEngine(base, DefaultAsyncEngineConfig())
 	dir := t.TempDir()
 	wal, err := NewWAL(dir, nil)
 	require.NoError(t, err)
-	engine := NewWALEngine(async, wal)
+	engine := NewWALEngine(base, wal)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
 	wasEnabled := config.WithWALEnabled()
@@ -34,10 +33,6 @@ func TestWALEngine_UpdateNodeEmbeddingSidecar(t *testing.T) {
 	}
 	_, err = engine.CreateNode(node)
 	require.NoError(t, err)
-	// The sidecar write passes through the async staging layer; flush first so
-	// the node exists in the underlying engine (the worker re-queues after a
-	// flush for nodes that were still staged).
-	require.NoError(t, async.Flush())
 
 	err = engine.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, engine, node.ID, [][]float32{{0.1, 0.2, 0.3}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now))
 	require.NoError(t, err)

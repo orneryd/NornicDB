@@ -316,58 +316,6 @@ func (n *NamespacedEngine) StreamEdgesByType(ctx context.Context, edgeType strin
 	})
 }
 
-// StreamEdgesByType merges unflushed edge writes with the engine's type stream.
-func (ae *AsyncEngine) StreamEdgesByType(ctx context.Context, edgeType string, visit func(*Edge) error) error {
-	return ae.StreamEdgesByTypeInScope(ctx, "", edgeType, visit)
-}
-
-// StreamEdgesByTypeInScope is StreamEdgesByType within one database
-// (ScopedEdgeTypeStreamer). Pending creates/updates of edgeType are visited
-// first; engine edges that have a pending write or a pending delete are
-// skipped, matching AsyncEngine.GetEdgesByType.
-func (ae *AsyncEngine) StreamEdgesByTypeInScope(ctx context.Context, scope, edgeType string, visit func(*Edge) error) error {
-	if visit == nil {
-		return ErrInvalidData
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	ae.mu.RLock()
-	overridden := make(map[EdgeID]struct{}, len(ae.edgeCache)+len(ae.deleteEdges))
-	for id := range ae.deleteEdges {
-		overridden[id] = struct{}{}
-	}
-	var cached []*Edge
-	for id, edge := range ae.edgeCache {
-		overridden[id] = struct{}{}
-		if edge == nil || ae.deleteEdges[id] || !edgeIDInScope(id, scope) {
-			continue
-		}
-		if edgeType == "" || edge.Type == edgeType {
-			cached = append(cached, edge)
-		}
-	}
-	ae.mu.RUnlock()
-
-	for _, edge := range cached {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := visit(edge); err != nil {
-			return err
-		}
-	}
-	return streamEdgesByTypeInScope(ctx, ae.engine, scope, edgeType, func(edge *Edge) error {
-		if edge == nil {
-			return nil
-		}
-		if _, shadowed := overridden[edge.ID]; shadowed {
-			return nil
-		}
-		return visit(edge)
-	})
-}
-
 // StreamEdgesByType streams deduplicated edges of edgeType from the readable
 // constituents, one constituent at a time.
 func (c *CompositeEngine) StreamEdgesByType(ctx context.Context, edgeType string, visit func(*Edge) error) error {
@@ -408,7 +356,6 @@ func (c *CompositeEngine) StreamEdgesByType(ctx context.Context, edgeType string
 var (
 	_ ScopedEdgeTypeStreamer = (*BadgerEngine)(nil)
 	_ ScopedEdgeTypeStreamer = (*WALEngine)(nil)
-	_ ScopedEdgeTypeStreamer = (*AsyncEngine)(nil)
 	_ ScopedEdgeTypeStreamer = (*TracedEngine)(nil)
 	_ EdgeTypeStreamer       = (*NamespacedEngine)(nil)
 	_ EdgeTypeStreamer       = (*CompositeEngine)(nil)

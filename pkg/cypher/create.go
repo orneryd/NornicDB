@@ -387,7 +387,7 @@ func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOu
 
 // prepareCreateNodePattern parses and validates one CREATE node pattern. It is
 // shared by every CREATE route (createFromPattern and the auto-commit bulk fast
-// path tryAsyncCreateNodeBatch) so they reject the same patterns: malformed
+// path executeWithImplicitTransaction) so they reject the same patterns: malformed
 // property maps, an empty label after ':', invalid or reserved labels, invalid
 // property keys and values. Property values that reference variables created
 // earlier in the statement (b {name: a.name}) are resolved against nodes and

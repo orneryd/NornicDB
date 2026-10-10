@@ -77,26 +77,25 @@ func (r *pseudoRand) next() float64 {
 }
 
 // buildDemoExecutor wires the same storage chain as the running server
-// (Badger → Async → Namespaced) and returns a configured executor.
+// (Badger -> WAL -> Namespaced) and returns a configured executor.
 // Uses a temp dir so each call starts cold.
-func buildDemoExecutor(tb testing.TB) (*StorageExecutor, *storage.AsyncEngine) {
-	exec, async, _ := buildDemoExecutorNS(tb)
-	return exec, async
+func buildDemoExecutor(tb testing.TB) (*StorageExecutor, *storage.NamespacedEngine) {
+	exec, ns, _ := buildDemoExecutorNS(tb)
+	return exec, ns
 }
 
 // buildDemoExecutorNS is the variant the large-scale traversal bench uses
 // so it can push direct BulkCreate writes through the namespaced engine
 // without paying cypher parse + plan cost on every seeded node.
-func buildDemoExecutorNS(tb testing.TB) (*StorageExecutor, *storage.AsyncEngine, *storage.NamespacedEngine) {
+func buildDemoExecutorNS(tb testing.TB) (*StorageExecutor, *storage.NamespacedEngine, *storage.NamespacedEngine) {
 	tb.Helper()
 	dir := tb.TempDir()
 	badger, err := storage.NewBadgerEngine(dir)
 	require.NoError(tb, err)
-	async := storage.NewAsyncEngine(badger, nil)
-	tb.Cleanup(func() { _ = async.Close() })
-	ns := storage.NewNamespacedEngine(async, "d3_demo")
+	tb.Cleanup(func() { _ = badger.Close() })
+	ns := storage.NewNamespacedEngine(badger, "d3_demo")
 	exec := NewStorageExecutor(ns)
-	return exec, async, ns
+	return exec, ns, ns
 }
 
 // seedDemoGalaxy seeds the same layout the TS demo seeds. Returns the
@@ -245,10 +244,9 @@ func TestDemoShortestPath_E2E(t *testing.T) {
 // run shortestPath in a loop. This isolates the per-request cost the user
 // is hunting (~100ms post-warmup).
 func BenchmarkDemoShortestPath_Warm(b *testing.B) {
-	exec, async := buildDemoExecutor(b)
+	exec, _ := buildDemoExecutor(b)
 	shape := defaultDemoShape()
 	seedDemoGalaxy(b, exec, &shape)
-	require.NoError(b, async.Flush()) // ensure async cache is empty before measuring
 
 	// Warm the hot path so plan/result caches are primed (mirrors what
 	// the demo browser does after its first traversal).
@@ -279,10 +277,9 @@ func BenchmarkDemoShortestPath_Warm(b *testing.B) {
 // look identical to _Warm. If it doesn't, we know the cache is masking
 // the symptom.
 func BenchmarkDemoShortestPath_FixedEndpoints(b *testing.B) {
-	exec, async := buildDemoExecutor(b)
+	exec, _ := buildDemoExecutor(b)
 	shape := defaultDemoShape()
 	seedDemoGalaxy(b, exec, &shape)
-	require.NoError(b, async.Flush())
 
 	for i := 0; i < 3; i++ {
 		runShortestPath(b, exec, shape.startStarID, shape.endStarID)
@@ -319,10 +316,9 @@ func TestDemoShortestPath_LatencyDistribution(t *testing.T) {
 	if !*demoBenchEnable {
 		t.Skip("set -demobench to run the demo latency distribution test")
 	}
-	exec, async := buildDemoExecutor(t)
+	exec, _ := buildDemoExecutor(t)
 	shape := defaultDemoShape()
 	seedDemoGalaxy(t, exec, &shape)
-	require.NoError(t, async.Flush())
 
 	const samples = 100
 	for i := 0; i < 5; i++ {
@@ -391,10 +387,9 @@ func TestDemoShortestPath_LatencyOverTime(t *testing.T) {
 	if !*demoBenchEnable {
 		t.Skip("set -demobench to run the demo latency-over-time test")
 	}
-	exec, async := buildDemoExecutor(t)
+	exec, _ := buildDemoExecutor(t)
 	shape := defaultDemoShape()
 	seedDemoGalaxy(t, exec, &shape)
-	require.NoError(t, async.Flush())
 
 	const total = 500
 	const chunk = 100

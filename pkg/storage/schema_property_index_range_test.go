@@ -3,32 +3,26 @@ package storage
 import (
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-// newRangeIndexEngine returns an async engine whose Item(v) index holds the
-// flushed values, with the pending values still unflushed.
+// newRangeIndexEngine returns a schema manager over an engine whose Item(v)
+// index holds every written value; writes apply synchronously.
 func newRangeIndexEngine(t *testing.T, flushed, pending []interface{}) *SchemaManager {
 	t.Helper()
 	badger, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = badger.Close() })
-	config := DefaultAsyncEngineConfig()
-	config.FlushInterval = time.Hour
-	async := NewAsyncEngine(badger, config)
-	t.Cleanup(func() { _ = async.Close() })
-	schema := async.GetSchemaForNamespace("nornic")
+	schema := badger.GetSchemaForNamespace("nornic")
 	require.NoError(t, schema.AddPropertyIndex("item_v", "Item", []string{"v"}))
 	create := func(prefix string, values []interface{}) {
 		for i, v := range values {
-			_, err := async.CreateNode(&Node{ID: NodeID(fmt.Sprintf("nornic:%s-%d", prefix, i)), Labels: []string{"Item"}, Properties: map[string]any{"v": v}})
+			_, err := badger.CreateNode(&Node{ID: NodeID(fmt.Sprintf("nornic:%s-%d", prefix, i)), Labels: []string{"Item"}, Properties: map[string]any{"v": v}})
 			require.NoError(t, err)
 		}
 	}
 	create("f", flushed)
-	require.NoError(t, async.Flush())
 	create("p", pending)
 	return schema
 }

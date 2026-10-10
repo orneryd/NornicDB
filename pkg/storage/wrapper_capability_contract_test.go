@@ -5,14 +5,13 @@ import (
 	"fmt"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
 // TestWrapperCapabilityParity_ProjectedReadsAcrossStack verifies GetNodeProjected
 // returns the same projected shape through every layer of the production stack,
-// including the async overlay for staged writes.
+// Writes apply synchronously, so reads at every layer observe them.
 func TestWrapperCapabilityParity_ProjectedReadsAcrossStack(t *testing.T) {
 	badger, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
@@ -20,10 +19,7 @@ func TestWrapperCapabilityParity_ProjectedReadsAcrossStack(t *testing.T) {
 	walBacking, err := NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
 	wal := NewWALEngine(badger, walBacking)
-	async := NewAsyncEngine(wal, &AsyncEngineConfig{FlushInterval: time.Hour})
-	// Closing the async engine closes the WAL file under it (#924).
-	t.Cleanup(func() { _ = async.Close() })
-	namespaced := NewNamespacedEngine(async, "ns")
+	namespaced := NewNamespacedEngine(wal, "ns")
 
 	_, err = namespaced.CreateNode(&Node{
 		ID:         "n1",
@@ -31,7 +27,6 @@ func TestWrapperCapabilityParity_ProjectedReadsAcrossStack(t *testing.T) {
 		Properties: map[string]any{"a": int64(1), "b": "two", "c": 3.5},
 	})
 	require.NoError(t, err)
-	require.NoError(t, async.Flush())
 
 	projected, err := namespaced.GetNodeProjected("n1", []string{"a", "c"})
 	require.NoError(t, err)
@@ -40,12 +35,12 @@ func TestWrapperCapabilityParity_ProjectedReadsAcrossStack(t *testing.T) {
 	require.Equal(t, []string{"Doc"}, projected.Labels)
 	require.Equal(t, map[string]any{"a": int64(1), "c": 3.5}, projected.Properties)
 
-	// Same read through the async layer uses the prefixed ID.
-	asyncProjected, err := async.GetNodeProjected("ns:n1", []string{"b"})
+	// Same read through the WAL layer uses the prefixed ID.
+	walProjected, err := wal.GetNodeProjected("ns:n1", []string{"b"})
 	require.NoError(t, err)
-	require.Equal(t, map[string]any{"b": "two"}, asyncProjected.Properties)
+	require.Equal(t, map[string]any{"b": "two"}, walProjected.Properties)
 
-	walProjected, err := wal.GetNodeProjected("ns:n1", []string{"a"})
+	walProjected, err = wal.GetNodeProjected("ns:n1", []string{"a"})
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"a": int64(1)}, walProjected.Properties)
 
@@ -53,8 +48,8 @@ func TestWrapperCapabilityParity_ProjectedReadsAcrossStack(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"c": 3.5}, badgerProjected.Properties)
 
-	// Overlay parity: a staged async update is visible through the namespaced
-	// projected read before flush, and a staged delete reports ErrNotFound.
+	// Parity: an update is visible through the namespaced projected read
+	// immediately, and a delete reports ErrNotFound.
 	latest, err := namespaced.GetNode("n1")
 	require.NoError(t, err)
 	latest.Properties["d"] = int64(4)
@@ -67,7 +62,7 @@ func TestWrapperCapabilityParity_ProjectedReadsAcrossStack(t *testing.T) {
 	_, err = namespaced.CreateNode(&Node{ID: "n2", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 	require.NoError(t, namespaced.DeleteNode("n2"))
-	_, err = async.GetNodeProjected("ns:n2", nil)
+	_, err = wal.GetNodeProjected("ns:n2", nil)
 	require.ErrorIs(t, err, ErrNotFound)
 }
 

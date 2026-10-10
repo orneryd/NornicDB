@@ -173,7 +173,6 @@ type DatabaseMetricsSource interface {
 	EmbedQueueStats() interface{}
 
 	// Storage engine
-	GetAsyncEngine() AsyncEngineStats
 	GetWAL() WALStats
 	GetSchemaManager() SchemaManagerStats
 
@@ -185,11 +184,6 @@ type DatabaseMetricsSource interface {
 
 	// Encryption
 	EncryptionStats() map[string]interface{}
-}
-
-// AsyncEngineStats is the interface for async storage metrics.
-type AsyncEngineStats interface {
-	Stats() (pendingWrites, totalFlushes int64)
 }
 
 // WALStats is the interface for WAL metrics.

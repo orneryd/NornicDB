@@ -307,38 +307,30 @@ func TestLifecycleWrappers_DelegateLifecycleControls(t *testing.T) {
 	controller := &txLifecycleControllerStub{enabled: true}
 	base.SetLifecycleController(controller)
 
-	async := NewAsyncEngine(base, &AsyncEngineConfig{FlushInterval: time.Hour})
-	t.Cleanup(func() { _ = async.Close() })
 	wal := NewWALEngine(base, nil)
 	namespaced := NewNamespacedEngine(base, "tenant_a")
 
-	async.RegisterSnapshotReader(SnapshotReaderInfo{ReaderID: "async", Namespace: "override"})
 	wal.RegisterSnapshotReader(SnapshotReaderInfo{ReaderID: "wal"})
 	namespaced.RegisterSnapshotReader(SnapshotReaderInfo{ReaderID: "ns"})
 
-	require.Equal(t, true, async.LifecycleStatus()["enabled"])
 	require.Equal(t, true, wal.LifecycleStatus()["enabled"])
 	require.Equal(t, "tenant_a", namespaced.LifecycleStatus()["namespace"])
 
-	require.NoError(t, async.TriggerPruneNow(context.Background()))
 	require.NoError(t, wal.TriggerPruneNow(context.Background()))
 	require.NoError(t, namespaced.TriggerPruneNow(context.Background()))
 
-	async.PauseLifecycle()
 	wal.PauseLifecycle()
 	namespaced.PauseLifecycle()
-	async.ResumeLifecycle()
 	wal.ResumeLifecycle()
 	namespaced.ResumeLifecycle()
 
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
-	require.Equal(t, 3, controller.registerCount)
-	require.Len(t, controller.registeredInfo, 3)
-	require.Equal(t, "override", controller.registeredInfo[0].Namespace)
-	require.Equal(t, "", controller.registeredInfo[1].Namespace)
-	require.Equal(t, "tenant_a", controller.registeredInfo[2].Namespace)
-	require.Equal(t, 3, controller.pruneCount)
-	require.Equal(t, 3, controller.pauseCount)
-	require.Equal(t, 3, controller.resumeCount)
+	require.Equal(t, 2, controller.registerCount)
+	require.Len(t, controller.registeredInfo, 2)
+	require.Equal(t, "", controller.registeredInfo[0].Namespace)
+	require.Equal(t, "tenant_a", controller.registeredInfo[1].Namespace)
+	require.Equal(t, 2, controller.pruneCount)
+	require.Equal(t, 2, controller.pauseCount)
+	require.Equal(t, 2, controller.resumeCount)
 }

@@ -1229,10 +1229,9 @@ func (e *StorageExecutor) removeNodeFromSearch(nodeID string) {
 
 // Flush persists all pending writes to storage.
 // This implements FlushableExecutor for Bolt-level deferred commits.
+// Writes are committed synchronously by their transactions; there is no
+// buffered write cache to flush.
 func (e *StorageExecutor) Flush() error {
-	if asyncEngine, ok := e.storage.(*storage.AsyncEngine); ok {
-		return asyncEngine.Flush()
-	}
 	return nil
 }
 
@@ -1586,9 +1585,8 @@ type TransactionCapableEngine interface {
 }
 
 type implicitTxEngines struct {
-	txEngine    TransactionCapableEngine
-	asyncEngine *storage.AsyncEngine
-	namespace   string
+	txEngine  TransactionCapableEngine
+	namespace string
 }
 
 func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
@@ -1602,11 +1600,6 @@ func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
 		if out.namespace == "" {
 			if ns, ok := engine.(interface{ Namespace() string }); ok {
 				out.namespace = ns.Namespace()
-			}
-		}
-		if out.asyncEngine == nil {
-			if ae, ok := engine.(*storage.AsyncEngine); ok {
-				out.asyncEngine = ae
 			}
 		}
 		if out.txEngine == nil {
@@ -1626,174 +1619,6 @@ func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
 	return out
 }
 
-func (e *StorageExecutor) tryAsyncCreateNodeBatch(ctx context.Context, cypher string) (*ExecuteResult, error, bool) {
-	upper := upperASCII(strings.TrimSpace(cypher))
-	if !strings.HasPrefix(upper, "CREATE") {
-		return nil, nil, false
-	}
-	// System commands and schema commands must not be handled here — route to executeSchemaCommand instead
-	if startsWithKeywords(cypher, "CREATE", "DATABASE") ||
-		isCreateOrReplaceDatabaseQuery(cypher) ||
-		startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE") ||
-		startsWithKeywords(cypher, "CREATE", "ALIAS") ||
-		startsWithKeywords(cypher, "CREATE", "CONSTRAINT") ||
-		startsWithKeywords(cypher, "CREATE", "INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "FULLTEXT") ||
-		startsWithKeywords(cypher, "CREATE", "VECTOR") ||
-		startsWithKeywords(cypher, "CREATE", "TEXT") ||
-		startsWithKeywords(cypher, "CREATE", "POINT") ||
-		startsWithKeywords(cypher, "CREATE", "RANGE") {
-		return nil, nil, false
-	}
-	for _, keyword := range []string{
-		"MATCH",
-		"MERGE",
-		"SET",
-		"DELETE",
-		"DETACH",
-		"REMOVE",
-		"WITH",
-		"CALL",
-		"UNWIND",
-		"FOREACH",
-		"LOAD",
-		"OPTIONAL",
-	} {
-		if containsKeywordOutsideStrings(cypher, keyword) {
-			return nil, nil, false
-		}
-	}
-
-	returnIdx := findKeywordIndex(cypher, "RETURN")
-	createPart := cypher
-	if returnIdx > 0 {
-		createPart = strings.TrimSpace(cypher[:returnIdx])
-	}
-
-	// Substitute parameters before parsing so (n:Label $props) becomes (n:Label { ... })
-	// and the label is not mis-parsed as "Label $props".
-	if params := getParamsFromContext(ctx); params != nil {
-		createPart = e.substituteParams(createPart, params)
-	}
-
-	createClauses := SplitByCreate(createPart)
-	if len(createClauses) == 0 {
-		return nil, nil, false
-	}
-
-	var nodePatterns []string
-	for _, clause := range createClauses {
-		clause = strings.TrimSpace(clause)
-		if clause == "" {
-			continue
-		}
-		patterns := e.splitCreatePatterns(clause)
-		for _, pat := range patterns {
-			pat = strings.TrimSpace(pat)
-			if pat == "" {
-				continue
-			}
-			if patternHasRelationship(pat) {
-				return nil, nil, false
-			}
-			nodePatterns = append(nodePatterns, pat)
-		}
-	}
-
-	if len(nodePatterns) == 0 {
-		return nil, nil, false
-	}
-
-	result := &ExecuteResult{
-		Columns: []string{},
-		Rows:    [][]interface{}{},
-		Stats:   &QueryStats{},
-	}
-
-	createdNodes := make(map[string]*storage.Node)
-	nodes := make([]*storage.Node, 0, len(nodePatterns))
-	for _, nodePatternStr := range nodePatterns {
-		nodePattern, err := e.prepareCreateNodePattern(ctx, nodePatternStr, createdNodes, nil)
-		if err != nil {
-			return nil, err, true
-		}
-
-		node := &storage.Node{
-			ID:         storage.NodeID(e.generateID()),
-			Labels:     nodePattern.labels,
-			Properties: nodePattern.properties,
-		}
-		nodes = append(nodes, node)
-		if nodePattern.variable != "" {
-			createdNodes[nodePattern.variable] = node
-		}
-	}
-
-	labels := make([]string, 0, len(nodes))
-	for _, node := range nodes {
-		labels = append(labels, node.Labels...)
-	}
-	if e.writesAreChecked(labels, nil) {
-		return nil, nil, false
-	}
-
-	if err := e.projectCreateReturn(ctx, &createOutcome{
-		cypher:    cypher,
-		returnIdx: returnIdx,
-		nodes:     createdNodes,
-		result:    result,
-	}); err != nil {
-		return nil, err, true
-	}
-
-	if err := e.applyCreatePlan(ctx, &createPlan{nodes: nodes}, result); err != nil {
-		return nil, err, true
-	}
-
-	return result, nil, true
-}
-
-func (e *StorageExecutor) isEventualAsyncEligible(info *QueryInfo, cypher string) bool {
-	if info == nil || !info.IsWriteQuery {
-		return false
-	}
-	if info.HasSchema || info.IsSchemaQuery || isSystemCommandNoGraph(cypher) || isCreateProcedureCommand(cypher) {
-		return false
-	}
-	if info.FirstClause != ClauseCreate || !info.HasCreate {
-		return false
-	}
-	if info.HasMatch || info.HasOptionalMatch || info.HasMerge || info.HasDelete || info.HasDetachDelete ||
-		info.HasSet || info.HasRemove || info.HasWith || info.HasUnwind || info.HasCall ||
-		info.HasForeach || info.HasLoadCSV || info.HasUnion {
-		return false
-	}
-	return true
-}
-
-// writesAreChecked reports whether a constraint, property type, contract or
-// relationship policy applies to writing nodes with these labels or
-// relationships of these types. A CREATE that writes such an entity runs in
-// an implicit transaction, checked and committed as one statement, instead of
-// on the async write routes (tryAsyncCreateNodeBatch, the eventual CREATE
-// route): a violation fails the statement and nothing it wrote is kept, as in
-// Neo4j (#700). Other CREATEs keep the async routes.
-func (e *StorageExecutor) writesAreChecked(labels []string, relTypes []string) bool {
-	schema := e.storage.GetSchema()
-	if !schema.HasWriteRules() {
-		return false
-	}
-	if schema.NodeWriteChecked(labels) {
-		return true
-	}
-	for _, relType := range relTypes {
-		if schema.EdgeWriteChecked(relType) {
-			return true
-		}
-	}
-	return false
-}
-
 // executeImplicitAsync executes a single query using implicit transactions for writes.
 // For write operations, wraps execution in an implicit transaction that can be
 // rolled back on error, preventing partial data corruption from failed queries.
@@ -1808,19 +1633,6 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	if needsTransaction {
 		if hasCallInTransactions(cypher) {
 			return e.executeWithoutTransaction(ctx, cypher, upperQuery)
-		}
-		engines := e.resolveImplicitTxEngines()
-		// The async CREATE routes handle a single query; a top-level UNION
-		// whose first branch is a CREATE goes to the UNION executor in the
-		// implicit transaction below (#781).
-		if _, union := topLevelUnion(cypher, upperQuery); engines.asyncEngine != nil && !union {
-			if result, err, handled := e.tryAsyncCreateNodeBatch(ctx, cypher); handled {
-				return result, err
-			}
-			if e.isEventualAsyncEligible(info, cypher) && !e.writesAreChecked(info.Labels, info.RelationshipTypes) &&
-				!(strings.Contains(cypher, "$(") && e.storage.GetSchema().HasWriteRules()) {
-				return e.executeWithoutTransaction(ctx, cypher, upperQuery)
-			}
 		}
 		return e.executeWithImplicitTransaction(ctx, cypher, upperQuery)
 	}
@@ -1861,7 +1673,6 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		}
 	}
 	txEngine := engines.txEngine
-	asyncEngine := engines.asyncEngine
 
 	// If no transaction support, fall back to direct execution (legacy mode)
 	// This is less safe but maintains backward compatibility
@@ -1869,17 +1680,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		if inlineEmbeddingEnabled {
 			return nil, localizedError(localization.CypherCoreEmbeddingTransactionStorageRequired(), nil)
 		}
-		result, err := execute(ctx, e)
-		if err != nil {
-			return result, err
-		}
-		// Flush if needed
-		if !e.deferFlush {
-			if asyncEngine != nil {
-				asyncEngine.Flush()
-			}
-		}
-		return result, nil
+		return execute(ctx, e)
 	}
 
 	// Start implicit transaction
@@ -1890,7 +1691,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 			}
 		}
 	}
-	tx, err := beginTransactionSnapshot(asyncEngine, txEngine)
+	tx, err := beginTransactionSnapshot(txEngine)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreImplicitTransactionStartFailed(err), err)
 	}
@@ -2046,11 +1847,6 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// speedup. Tx isolation is preserved because each in-flight tx had
 	// its own clone; only post-commit entries graduate to the parent.
 	txExec.promoteNodeLookupCacheTo(e)
-
-	// Flush if needed for durability
-	if !e.deferFlush && asyncEngine != nil {
-		asyncEngine.Flush()
-	}
 
 	return result, nil
 }

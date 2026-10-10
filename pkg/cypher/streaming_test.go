@@ -41,9 +41,7 @@ func TestLabeledPropertyProjectionLimitReturnsRows(t *testing.T) {
 				})
 				require.NoError(t, err)
 			}
-			if async, ok := inner.(*storage.AsyncEngine); ok {
-				require.NoError(t, async.Flush())
-			}
+			// Writes commit synchronously on the server stack; no flush needed.
 			for _, query := range []string{
 				"MATCH (n:Label) RETURN n.id LIMIT 2",
 				"MATCH (n:Label) RETURN n.id AS id LIMIT 2",

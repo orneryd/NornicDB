@@ -812,10 +812,9 @@ func TestBoltIntegration_G2GVersionNodesFallbackRowShape_ServerStack(t *testing.
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	requireNoError(t, err)
 	walStore := storage.NewWALEngine(baseStore, wal)
-	asyncStore := storage.NewAsyncEngine(walStore, nil)
+	asyncStore := walStore
 	store := storage.NewNamespacedEngine(asyncStore, "test")
 	t.Cleanup(func() {
-		asyncStore.Flush()
 		requireNoError(t, wal.Close())
 		requireNoError(t, asyncStore.Close())
 		requireNoError(t, baseStore.Close())
@@ -1141,7 +1140,7 @@ func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
 	// Create storage chain matching production: base -> async -> namespaced.
 	// AsyncEngine requires fully-qualified IDs; NamespacedEngine provides that for Cypher-generated IDs.
 	baseStore := storage.NewMemoryEngine()
-	asyncBase := storage.NewAsyncEngine(baseStore, nil)
+	asyncBase := baseStore
 	store := storage.NewNamespacedEngine(asyncBase, "test")
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &cypherQueryExecutor{executor: cypherExec}
@@ -1213,7 +1212,7 @@ func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
 // KEEP THIS TEST - this shows performance with realistic data volume (100 actors, 150 movies)
 func TestBoltBenchmarkCreateDeleteRelationship_LargeDataset(t *testing.T) {
 	baseStore := storage.NewMemoryEngine()
-	asyncBase := storage.NewAsyncEngine(baseStore, nil)
+	asyncBase := baseStore
 	store := storage.NewNamespacedEngine(asyncBase, "test")
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &cypherQueryExecutor{executor: cypherExec}
@@ -1283,7 +1282,7 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 	}
 	defer badgerEngine.Close()
 
-	asyncBase := storage.NewAsyncEngine(badgerEngine, nil)
+	asyncBase := badgerEngine
 	store := storage.NewNamespacedEngine(asyncBase, "test")
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &cypherQueryExecutor{executor: cypherExec}
@@ -1383,7 +1382,7 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 // KEEP THIS TEST - ensures JS driver compatibility
 func TestBoltResponseMetadata(t *testing.T) {
 	baseStore := storage.NewMemoryEngine()
-	asyncBase := storage.NewAsyncEngine(baseStore, nil)
+	asyncBase := baseStore
 	store := storage.NewNamespacedEngine(asyncBase, "test")
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &cypherQueryExecutor{executor: cypherExec}
@@ -1426,7 +1425,7 @@ func TestBoltResponseMetadata(t *testing.T) {
 // KEEP THIS TEST - helps identify bottlenecks in protocol handling
 func TestBoltLatencyBreakdown(t *testing.T) {
 	baseStore := storage.NewMemoryEngine()
-	asyncBase := storage.NewAsyncEngine(baseStore, nil)
+	asyncBase := baseStore
 	store := storage.NewNamespacedEngine(asyncBase, "test")
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &cypherQueryExecutor{executor: cypherExec}

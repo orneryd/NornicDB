@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/heimdall"
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/vectorspace"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,7 +33,7 @@ func (testInferenceManager) Chat(ctx context.Context, req heimdall.ChatRequest) 
 func TestStorageExecutor_ConfigSettersAndFlush(t *testing.T) {
 	inner := newTestMemoryEngine(t)
 	defer inner.Close()
-	async := storage.NewAsyncEngine(inner, nil)
+	async := inner
 	defer async.Close()
 
 	exec := NewStorageExecutor(async)

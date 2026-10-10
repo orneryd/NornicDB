@@ -75,7 +75,7 @@ func ensureLargeScaleFixture(tb testing.TB) *largeScaleFixture {
 	tb.Logf("seeding %d nodes across %d sectors...", largeScaleNodes, largeScaleSectors)
 	t0 := time.Now()
 
-	exec, async, ns := buildDemoExecutorNS(tb)
+	exec, _, ns := buildDemoExecutorNS(tb)
 
 	// Indexes OFF during bulk insert — AddPropertyIndex is deferred until
 	// after the data has landed in storage and we've verified the counts.
@@ -112,7 +112,7 @@ func ensureLargeScaleFixture(tb testing.TB) *largeScaleFixture {
 
 	tb.Logf("nodes built in %s; bulk-inserting (index OFF)...", time.Since(t0))
 	t1 := time.Now()
-	if err := bulkCreateNodesInChunks(async, nodes, 5000); err != nil {
+	if err := bulkCreateNodesInChunks(ns, nodes, 5000); err != nil {
 		tb.Fatalf("BulkCreateNodes: %v", err)
 	}
 	tb.Logf("nodes inserted in %s; building edges...", time.Since(t1))
@@ -179,16 +179,10 @@ func ensureLargeScaleFixture(tb testing.TB) *largeScaleFixture {
 
 	tb.Logf("%d edges built in %s; bulk-inserting...", len(edges), time.Since(t2))
 	t3 := time.Now()
-	if err := bulkCreateEdgesInChunks(async, edges, 10000); err != nil {
+	if err := bulkCreateEdgesInChunks(ns, edges, 10000); err != nil {
 		tb.Fatalf("BulkCreateEdges: %v", err)
 	}
-	tb.Logf("edges inserted in %s; flushing...", time.Since(t3))
-
-	t4 := time.Now()
-	if err := async.Flush(); err != nil {
-		tb.Fatalf("flush: %v", err)
-	}
-	tb.Logf("flush complete in %s", time.Since(t4))
+	tb.Logf("edges inserted (committed synchronously) in %s", time.Since(t3))
 
 	// Verify storage has everything before we build the index. Cheap
 	// sanity check that catches a partial-flush regression before the

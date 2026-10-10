@@ -639,7 +639,6 @@ func (l *lifecycleMetricsSourceStub) Stats() interface{}                      { 
 func (l *lifecycleMetricsSourceStub) NodeCount() (int64, error)               { return 0, nil }
 func (l *lifecycleMetricsSourceStub) EdgeCount() (int64, error)               { return 0, nil }
 func (l *lifecycleMetricsSourceStub) EmbedQueueStats() interface{}            { return nil }
-func (l *lifecycleMetricsSourceStub) GetAsyncEngine() AsyncEngineStats        { return nil }
 func (l *lifecycleMetricsSourceStub) GetWAL() WALStats                        { return nil }
 func (l *lifecycleMetricsSourceStub) GetSchemaManager() SchemaManagerStats    { return nil }
 func (l *lifecycleMetricsSourceStub) GetQueryCache() QueryCacheStats          { return nil }

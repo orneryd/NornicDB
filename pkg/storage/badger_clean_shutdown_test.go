@@ -4,7 +4,6 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -81,16 +80,15 @@ func TestMaintenanceMarkerHonorsCancellationAtStorageBoundary(t *testing.T) {
 	require.ErrorIs(t, engine.MarkCleanShutdown(markCtx), context.Canceled)
 }
 
-func TestCleanShutdownMarkerTraversesAsyncWALStorageStack(t *testing.T) {
+func TestCleanShutdownMarkerTraversesWALStorageStack(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "db")
 	badgerEngine, err := NewBadgerEngine(directory)
 	require.NoError(t, err)
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(directory, "wal"), SyncMode: "immediate"})
 	require.NoError(t, err)
-	stack := NewAsyncEngine(NewWALEngine(badgerEngine, wal), &AsyncEngineConfig{FlushInterval: time.Hour})
+	stack := NewWALEngine(badgerEngine, wal)
 	_, err = stack.CreateNode(&Node{ID: "nornic:pending", Labels: []string{"Document"}})
 	require.NoError(t, err)
-	require.NoError(t, stack.Flush())
 	require.NoError(t, stack.MarkCleanShutdown(context.Background()))
 	require.NoError(t, stack.Close())
 

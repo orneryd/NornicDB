@@ -13,7 +13,7 @@ func newRegression191Executor(t *testing.T, async bool) *StorageExecutor {
 	baseStore := newTestMemoryEngine(t)
 	var engine storage.Engine = baseStore
 	if async {
-		engine = storage.NewAsyncEngine(baseStore, nil)
+		engine = baseStore
 	}
 	return NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
 }

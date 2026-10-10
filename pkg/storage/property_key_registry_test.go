@@ -2,7 +2,6 @@ package storage
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -18,20 +17,19 @@ func TestPropertyKeyRegistryAcrossStack(t *testing.T) {
 	walBacking, err := NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
 	wal := NewWALEngine(badger, walBacking)
-	async := NewAsyncEngine(wal, &AsyncEngineConfig{FlushInterval: time.Hour})
-	t.Cleanup(func() { _ = async.Close() })
-	namespaced := NewNamespacedEngine(async, "ns")
-	other := NewNamespacedEngine(async, "other")
+	namespaced := NewNamespacedEngine(wal, "ns")
+	other := NewNamespacedEngine(wal, "other")
 
 	require.False(t, namespaced.PropertyKeyKnown("a"))
 	_, err = namespaced.CreateNode(&Node{ID: "n1", Properties: map[string]any{"a": int64(1), "z": nil}})
 	require.NoError(t, err)
-	// Buffered in the async layer, not yet encoded.
+	// Writes apply synchronously, so the name is known immediately. The direct
+	// path registers nil-valued property names too (the async overlay used to
+	// filter them before they reached the engine).
 	require.True(t, namespaced.PropertyKeyKnown("a"))
-	require.False(t, namespaced.PropertyKeyKnown("z"))
+	require.True(t, namespaced.PropertyKeyKnown("z"))
 	require.False(t, other.PropertyKeyKnown("a"))
 	require.True(t, wal.PropertyKeyKnownInNamespace("ns", "a"))
-	require.NoError(t, async.Flush())
 	require.True(t, badger.PropertyKeyKnownInNamespace("ns", "a"))
 
 	node, err := namespaced.GetNode("n1")
@@ -50,7 +48,6 @@ func TestPropertyKeyRegistryAcrossStack(t *testing.T) {
 	for _, name := range []string{"b", "c", "d", "e", "f"} {
 		require.True(t, namespaced.PropertyKeyKnown(name), name)
 	}
-	require.NoError(t, async.Flush())
 
 	// A transaction's writes make their names known as they are taken, and a
 	// rollback keeps them, as Neo4j's tokens survive it.

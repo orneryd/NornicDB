@@ -78,7 +78,7 @@ func skipDiskIOTestOnWindows(t *testing.T) {
 func TestExecuteImplicitAsync_CreateNode(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -116,7 +116,7 @@ func TestExecuteImplicitAsync_CreateNode(t *testing.T) {
 
 func TestExecuteImplicitAsync_CreateReturnCount(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	executor := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewAsyncEngine(base, nil), "test"))
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "test"))
 	for _, query := range []string{
 		"CREATE (w:SB {t: 1}) RETURN count(w) AS c",
 		"CREATE (w:SB {t: 1}) RETURN count(*) AS c",
@@ -127,10 +127,10 @@ func TestExecuteImplicitAsync_CreateReturnCount(t *testing.T) {
 	}
 }
 
-func TestExecuteImplicitAsync_CreateNodeWithDatetimeFunction_UsesAsyncPath(t *testing.T) {
+func TestExecuteImplicitAsync_CreateNodeWithDatetimeFunction_SingleRoute(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -145,8 +145,7 @@ func TestExecuteImplicitAsync_CreateNodeWithDatetimeFunction_UsesAsyncPath(t *te
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, "prompt-id", result.Rows[0][0])
 	require.NotNil(t, result.Metadata)
-	require.Nil(t, result.Metadata["receipt"], "async simple create should not have a durable receipt")
-	require.NotNil(t, result.Metadata["optimistic"], "async simple create should expose optimistic metadata")
+	require.NotNil(t, result.Metadata["optimistic"], "the transactional route also publishes optimistic mutation metadata")
 
 	countResult, err := executor.Execute(ctx, "MATCH (p:SystemPrompt {promptId: 'prompt-id'}) RETURN count(p)", nil)
 	require.NoError(t, err)
@@ -159,7 +158,7 @@ func TestExecuteImplicitAsync_CreateNodeWithDatetimeFunction_UsesAsyncPath(t *te
 func TestExecuteImplicitAsync_CreateRelationship(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -198,10 +197,10 @@ func TestExecuteImplicitAsync_CreateRelationship(t *testing.T) {
 	}
 }
 
-func TestExecuteImplicitAsync_CreateOnlyRelationship_UsesAsyncPath(t *testing.T) {
+func TestExecuteImplicitAsync_CreateOnlyRelationship_SingleRoute(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -213,8 +212,7 @@ func TestExecuteImplicitAsync_CreateOnlyRelationship_UsesAsyncPath(t *testing.T)
 	require.Equal(t, "Alice", result.Rows[0][1])
 	require.Equal(t, "Bob", result.Rows[0][2])
 	require.NotNil(t, result.Metadata)
-	require.Nil(t, result.Metadata["receipt"], "async create-only relationship should not have a durable receipt")
-	require.NotNil(t, result.Metadata["optimistic"], "async create-only relationship should expose optimistic metadata")
+	require.NotNil(t, result.Metadata["optimistic"], "the transactional route also publishes optimistic mutation metadata")
 
 	countResult, err := executor.Execute(ctx, "MATCH ()-[r:KNOWS]->() RETURN count(r)", nil)
 	require.NoError(t, err)
@@ -222,10 +220,10 @@ func TestExecuteImplicitAsync_CreateOnlyRelationship_UsesAsyncPath(t *testing.T)
 	require.Equal(t, int64(1), countResult.Rows[0][0])
 }
 
-func TestExecuteImplicitAsync_MultipleCreateChain_UsesAsyncPath(t *testing.T) {
+func TestExecuteImplicitAsync_MultipleCreateChain_SingleRoute(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -233,8 +231,7 @@ func TestExecuteImplicitAsync_MultipleCreateChain_UsesAsyncPath(t *testing.T) {
 	result, err := executor.Execute(ctx, "CREATE (a:Person {name: 'Alice'}) CREATE (b:Person {name: 'Bob'}) CREATE (a)-[:KNOWS]->(b)", nil)
 	require.NoError(t, err)
 	require.NotNil(t, result.Metadata)
-	require.Nil(t, result.Metadata["receipt"], "create-only chains should stay on the async path")
-	require.NotNil(t, result.Metadata["optimistic"], "create-only chains should expose optimistic metadata")
+	require.NotNil(t, result.Metadata["optimistic"], "create chains publish optimistic mutation metadata")
 
 	nodeCount, err := executor.Execute(ctx, "MATCH (n:Person) RETURN count(n)", nil)
 	require.NoError(t, err)
@@ -256,7 +253,7 @@ func TestExecuteImplicitAsync_CreateSet_RemainsTransactional(t *testing.T) {
 	require.NoError(t, err)
 
 	walEngine := storage.NewWALEngine(badgerEngine, wal)
-	asyncBase := storage.NewAsyncEngine(walEngine, nil)
+	asyncBase := walEngine
 	defer asyncBase.Close()
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
@@ -275,7 +272,7 @@ func TestExecuteImplicitAsync_CreateSet_RemainsTransactional(t *testing.T) {
 func TestExecuteImplicitAsync_AggregationEmptyDB(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -304,7 +301,7 @@ func TestExecuteImplicitAsync_AggregationEmptyDB(t *testing.T) {
 func TestExecuteImplicitAsync_RelationshipCountEmptyDB(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -333,7 +330,7 @@ func TestExecuteImplicitAsync_RelationshipCountEmptyDB(t *testing.T) {
 func TestExecuteImplicitAsync_BulkCreateAndCount(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -386,7 +383,7 @@ func TestExecuteImplicitAsync_BulkCreateAndCount(t *testing.T) {
 func TestExecuteImplicitAsync_DeleteNode(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -420,7 +417,7 @@ func TestExecuteImplicitAsync_DeleteNode(t *testing.T) {
 func TestExecuteImplicitAsync_CreateDeleteRelationship(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -474,7 +471,7 @@ func TestExecuteImplicitAsync_CreateDeleteRelationship(t *testing.T) {
 func TestExecuteImplicitAsync_MatchCreateDeleteSingleQuery(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -510,7 +507,7 @@ func TestExecuteImplicitAsync_MatchCreateDeleteSingleQuery(t *testing.T) {
 func TestBenchmarkMatchCreateDelete(t *testing.T) {
 	baseEngine := newTestMemoryEngine(t)
 
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -561,55 +558,6 @@ func TestBenchmarkMatchCreateDelete(t *testing.T) {
 	assertMinOpsPerSec(t, "MATCH...CREATE...DELETE (MemoryEngine)", opsPerSec, 1000)
 }
 
-// TestBenchmarkMatchCreateDelete_WithFlush simulates the Bolt path where we flush after each query
-// KEEP THIS TEST - it shows the impact of flushing on performance
-func TestBenchmarkMatchCreateDelete_WithFlush(t *testing.T) {
-	baseEngine := newTestMemoryEngine(t)
-
-	asyncEngine := storage.NewAsyncEngine(baseEngine, nil)
-	engine := storage.NewNamespacedEngine(asyncEngine, "test")
-	executor := NewStorageExecutor(engine)
-	ctx := context.Background()
-
-	// Create nodes
-	executor.Execute(ctx, "CREATE (a:Actor {name: 'Keanu'})", nil)
-	executor.Execute(ctx, "CREATE (m:Movie {title: 'Matrix'})", nil)
-	asyncEngine.Flush() // Flush setup
-
-	iterations := 100
-	t.Logf("Running %d iterations WITH FLUSH after each (simulating Bolt)", iterations)
-
-	start := time.Now()
-	for i := 0; i < iterations; i++ {
-		_, err := executor.Execute(ctx, `
-			MATCH (a:Actor), (m:Movie)
-			WITH a, m LIMIT 1
-			CREATE (a)-[r:TEMP_REL]->(m)
-			DELETE r
-		`, nil)
-		if err != nil {
-			t.Fatalf("Iteration %d failed: %v", i, err)
-		}
-		// Simulate Bolt's handlePull flush
-		asyncEngine.Flush()
-	}
-	elapsed := time.Since(start)
-
-	opsPerSec := float64(iterations) / elapsed.Seconds()
-	avgMs := elapsed.Seconds() * 1000 / float64(iterations)
-	t.Logf("Completed %d iterations in %v", iterations, elapsed)
-	t.Logf("Performance WITH FLUSH: %.2f ops/sec, %.3f ms/op", opsPerSec, avgMs)
-
-	// Verify correctness
-	countAfter, err := executor.Execute(ctx, "MATCH ()-[r:TEMP_REL]->() RETURN count(r) as c", nil)
-	if err != nil {
-		t.Fatalf("COUNT after failed: %v", err)
-	}
-	if countAfter.Rows[0][0].(int64) != 0 {
-		t.Errorf("Expected 0 relationships, got %v", countAfter.Rows[0][0])
-	}
-}
-
 // TestBenchmarkMatchCreateDelete_WithBadger tests with BadgerDB for realistic disk I/O
 // KEEP THIS TEST - it shows the impact of disk I/O on performance
 func TestBenchmarkMatchCreateDelete_WithBadger(t *testing.T) {
@@ -620,13 +568,10 @@ func TestBenchmarkMatchCreateDelete_WithBadger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}
-	// AsyncEngine.Close() will close the underlying BadgerEngine.
+	defer badgerEngine.Close()
 
-	asyncEngine := storage.NewAsyncEngine(badgerEngine, nil)
-	defer asyncEngine.Close()
-
-	// Match production order: Badger -> Async -> Namespaced (IDs must be prefixed for Badger).
-	engine := storage.NewNamespacedEngine(asyncEngine, "test")
+	// Match production order: Badger -> Namespaced (IDs must be prefixed for Badger).
+	engine := storage.NewNamespacedEngine(badgerEngine, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
 
@@ -635,10 +580,9 @@ func TestBenchmarkMatchCreateDelete_WithBadger(t *testing.T) {
 	require.NoError(t, err)
 	_, err = executor.Execute(ctx, "CREATE (m:Movie {title: 'Matrix'})", nil)
 	require.NoError(t, err)
-	require.NoError(t, asyncEngine.Flush())
 
 	iterations := 100
-	t.Logf("Running %d iterations of MATCH...CREATE...DELETE (BadgerEngine, no flush)", iterations)
+	t.Logf("Running %d iterations of MATCH...CREATE...DELETE (BadgerEngine)", iterations)
 
 	start := time.Now()
 	for i := 0; i < iterations; i++ {
@@ -663,64 +607,6 @@ func TestBenchmarkMatchCreateDelete_WithBadger(t *testing.T) {
 	if countAfter.Rows[0][0].(int64) != 0 {
 		t.Errorf("Expected 0 relationships, got %v", countAfter.Rows[0][0])
 	}
-}
-
-// TestBenchmarkMatchCreateDelete_WithBadgerAndFlush - realistic Bolt simulation
-// KEEP THIS TEST - this is the closest to actual Bolt benchmark conditions
-func TestBenchmarkMatchCreateDelete_WithBadgerAndFlush(t *testing.T) {
-	skipDiskIOTestOnWindows(t)
-	tmpDir := t.TempDir()
-
-	badgerEngine, err := storage.NewBadgerEngine(tmpDir)
-	if err != nil {
-		t.Fatalf("Failed to create BadgerEngine: %v", err)
-	}
-	// AsyncEngine.Close() will close the underlying BadgerEngine.
-
-	asyncEngine := storage.NewAsyncEngine(badgerEngine, nil)
-	defer asyncEngine.Close()
-
-	// Match production order: Badger -> Async -> Namespaced (IDs must be prefixed for Badger).
-	engine := storage.NewNamespacedEngine(asyncEngine, "test")
-	executor := NewStorageExecutor(engine)
-	ctx := context.Background()
-
-	// Create nodes
-	_, err = executor.Execute(ctx, "CREATE (a:Actor {name: 'Keanu'})", nil)
-	require.NoError(t, err)
-	_, err = executor.Execute(ctx, "CREATE (m:Movie {title: 'Matrix'})", nil)
-	require.NoError(t, err)
-	require.NoError(t, asyncEngine.Flush())
-
-	iterations := 100
-	t.Logf("Running %d iterations (BadgerEngine + Flush = Bolt simulation)", iterations)
-
-	start := time.Now()
-	for i := 0; i < iterations; i++ {
-		_, err = executor.Execute(ctx, `
-			MATCH (a:Actor), (m:Movie)
-			WITH a, m LIMIT 1
-			CREATE (a)-[r:TEMP_REL]->(m)
-			DELETE r
-		`, nil)
-		if err != nil {
-			t.Fatalf("Iteration %d failed: %v", i, err)
-		}
-		asyncEngine.Flush() // Simulate Bolt PULL flush
-	}
-	elapsed := time.Since(start)
-
-	opsPerSec := float64(iterations) / elapsed.Seconds()
-	avgMs := elapsed.Seconds() * 1000 / float64(iterations)
-	t.Logf("Completed %d iterations in %v", iterations, elapsed)
-	t.Logf("Performance (Badger+Flush): %.2f ops/sec, %.3f ms/op", opsPerSec, avgMs)
-
-	countAfter, _ := executor.Execute(ctx, "MATCH ()-[r:TEMP_REL]->() RETURN count(r) as c", nil)
-	if countAfter.Rows[0][0].(int64) != 0 {
-		t.Errorf("Expected 0 relationships, got %v", countAfter.Rows[0][0])
-	}
-
-	assertMinOpsPerSec(t, "MATCH...CREATE...DELETE (Badger+Flush)", opsPerSec, 500)
 }
 
 // TestBenchmarkMatchCreateDelete_LargeDataset_Direct tests with 100 actors + 150 movies
@@ -806,45 +692,6 @@ func TestBenchmarkMatchCreateDelete_LargeDataset_Direct(t *testing.T) {
 	assertMinOpsPerSec(t, "Large dataset direct executor", opsPerSec, 15000)
 }
 
-// TestBenchmarkMatchCreateDelete_LargeDataset_WithFlush tests flush impact
-func TestBenchmarkMatchCreateDelete_LargeDataset_WithFlush(t *testing.T) {
-	baseEngine := newTestMemoryEngine(t)
-
-	asyncEngine := storage.NewAsyncEngine(baseEngine, nil)
-	engine := storage.NewNamespacedEngine(asyncEngine, "test")
-	executor := NewStorageExecutor(engine)
-	ctx := context.Background()
-
-	// Create 100 actors + 150 movies
-	for i := 0; i < 100; i++ {
-		executor.Execute(ctx, fmt.Sprintf("CREATE (a:Actor {name: 'Actor_%d'})", i), nil)
-	}
-	for i := 0; i < 150; i++ {
-		executor.Execute(ctx, fmt.Sprintf("CREATE (m:Movie {title: 'Movie_%d'})", i), nil)
-	}
-	asyncEngine.Flush()
-
-	iterations := 100
-	t.Logf("Running %d iterations WITH FLUSH (Memory, large dataset)", iterations)
-
-	start := time.Now()
-	for i := 0; i < iterations; i++ {
-		_, err := executor.Execute(ctx, `
-			MATCH (a:Actor), (m:Movie)
-			WITH a, m LIMIT 1
-			CREATE (a)-[r:TEMP_REL]->(m)
-			DELETE r
-		`, nil)
-		if err != nil {
-			t.Fatalf("Iteration %d failed: %v", i, err)
-		}
-	}
-	elapsed := time.Since(start)
-
-	opsPerSec := float64(iterations) / elapsed.Seconds()
-	t.Logf("With flush (large dataset): %.2f ops/sec, %.3f ms/op", opsPerSec, elapsed.Seconds()*1000/float64(iterations))
-}
-
 // TestBenchmarkMatchCreateDelete_Badger_LargeDataset tests BadgerDB with large dataset
 func TestBenchmarkMatchCreateDelete_Badger_LargeDataset(t *testing.T) {
 	skipDiskIOTestOnWindows(t)
@@ -855,7 +702,7 @@ func TestBenchmarkMatchCreateDelete_Badger_LargeDataset(t *testing.T) {
 	}
 	defer badgerEngine.Close()
 
-	asyncBase := storage.NewAsyncEngine(badgerEngine, nil)
+	asyncBase := badgerEngine
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 	executor := NewStorageExecutor(engine)
 	ctx := context.Background()
@@ -867,7 +714,6 @@ func TestBenchmarkMatchCreateDelete_Badger_LargeDataset(t *testing.T) {
 	for i := 0; i < 150; i++ {
 		executor.Execute(ctx, fmt.Sprintf("CREATE (m:Movie {title: 'Movie_%d'})", i), nil)
 	}
-	asyncBase.Flush()
 
 	iterations := 100
 	t.Logf("Running %d iterations (BadgerDB, 100 actors + 150 movies)", iterations)
@@ -883,7 +729,6 @@ func TestBenchmarkMatchCreateDelete_Badger_LargeDataset(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Iteration %d failed: %v", i, err)
 		}
-		asyncBase.Flush()
 	}
 	elapsed := time.Since(start)
 
@@ -899,7 +744,7 @@ func TestBenchmarkMatchCreateDelete_Summary(t *testing.T) {
 	t.Log("  MemoryEngine (no flush): ~35,000 ops/sec")
 	t.Log("  MemoryEngine + Flush:    ~44,000 ops/sec")
 	t.Log("  BadgerEngine (no flush): ~35,000 ops/sec")
-	t.Log("  BadgerEngine + Flush:    ~34,000 ops/sec")
+	t.Log("4. Memory and Badger engines now share the single transactional route")
 	t.Log("")
 	t.Log("Bolt Protocol (optimized):")
 	t.Log("  Go Bolt client:          ~3,000 ops/sec  ← NornicDB is FAST!")
@@ -914,7 +759,7 @@ func TestBenchmarkMatchCreateDelete_Summary(t *testing.T) {
 	t.Log("2. Reusable message buffer - reduces allocations")
 	t.Log("3. Stack-allocated send buffer - no heap for small messages")
 	t.Log("4. Neo4j-style deferred commits - batch writes until PULL")
-	t.Log("5. Bulk operations in AsyncEngine.Flush()")
+	t.Log("5. Every write commits through one transactional route")
 	t.Log("6. GetFirstNodeByLabel - O(1) lookup for MATCH...LIMIT 1 patterns")
 	t.Log("7. Strip WITH clause from MATCH part - fixes pattern parsing")
 	t.Log("")

@@ -54,7 +54,7 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 
 	// Wire up storage event callbacks to event broker
 	// This enables GraphQL subscriptions to receive real-time updates
-	// Get the underlying storage engine and unwrap layers (NamespacedEngine, WALEngine, AsyncEngine)
+	// Get the underlying storage engine and unwrap layers (NamespacedEngine, WALEngine)
 	// to reach the BadgerEngine that implements StorageEventNotifier
 	// Note: Events from all namespaces will be published. Namespace filtering
 	// can be added later if needed by checking node/edge ID prefixes.
@@ -69,11 +69,6 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 		// Unwrap WALEngine if present
 		if walEngine, ok := underlyingEngine.(storage.EngineUnwrapper); ok {
 			underlyingEngine = walEngine.GetInnerEngine()
-		}
-
-		// Unwrap AsyncEngine if present
-		if asyncEngine, ok := underlyingEngine.(storage.EngineUnwrapper); ok {
-			underlyingEngine = asyncEngine.GetInnerEngine()
 		}
 
 		if notifier, ok := underlyingEngine.(storage.StorageEventNotifier); ok {

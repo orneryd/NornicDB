@@ -245,7 +245,7 @@ func normalizeSetRouteRows(rows [][]interface{}) [][]interface{} {
 func newSetRouteServerStackExecutor(t *testing.T) *StorageExecutor {
 	t.Helper()
 	dir := t.TempDir()
-	// In-memory Badger keeps the full production chain (Badger -> WAL -> Async
+	// In-memory Badger keeps the full production chain (Badger -> WAL
 	// -> Namespaced) while skipping per-case on-disk database opens, which
 	// dominated the suite runtime (profiled: ~30% CPU in badger.Open plus
 	// fsync wall-clock per build).
@@ -253,13 +253,12 @@ func newSetRouteServerStackExecutor(t *testing.T) *StorageExecutor {
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(dir+"/wal", &storage.WALConfig{SyncMode: "none"})
 	require.NoError(t, err)
-	async := storage.NewAsyncEngine(storage.NewWALEngine(badger, wal), nil)
+	engine := storage.NewWALEngine(badger, wal)
 	t.Cleanup(func() {
-		_ = async.Close()
 		_ = wal.Close()
 		_ = badger.Close()
 	})
-	return NewStorageExecutor(storage.NewNamespacedEngine(async, "test"))
+	return NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
 }
 
 // The UNWIND ... MERGE batch fast paths write SET values with the same

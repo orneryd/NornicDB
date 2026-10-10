@@ -84,11 +84,10 @@ func newPathReturnServerStackExecutor(t *testing.T) *StorageExecutor {
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(dir+"/wal", nil)
 	require.NoError(t, err)
-	async := storage.NewAsyncEngine(storage.NewWALEngine(badger, wal), nil)
+	engine := storage.NewWALEngine(badger, wal)
 	t.Cleanup(func() {
-		_ = async.Close()
 		_ = wal.Close()
 		_ = badger.Close()
 	})
-	return NewStorageExecutor(storage.NewNamespacedEngine(async, "test"))
+	return NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
 }

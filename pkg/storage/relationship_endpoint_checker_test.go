@@ -8,8 +8,8 @@ import (
 )
 
 // Every layer of the server's storage stack answers whether a relationship's
-// end node is visible the way GetNode would, including staged async writes,
-// and declines to answer while decay filtering can hide a node.
+// end node is visible the way GetNode would, and declines to answer while
+// decay filtering can hide a node. Writes apply synchronously.
 func TestRelationshipEndpointVisibleAcrossStack(t *testing.T) {
 	badger, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
@@ -17,16 +17,12 @@ func TestRelationshipEndpointVisibleAcrossStack(t *testing.T) {
 	walBacking, err := NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
 	wal := NewWALEngine(badger, walBacking)
-	async := NewAsyncEngine(wal, &AsyncEngineConfig{FlushInterval: time.Hour})
-	// Closing the async engine closes the WAL file under it (#924).
-	t.Cleanup(func() { _ = async.Close() })
-	namespaced := NewNamespacedEngine(async, "ns")
+	namespaced := NewNamespacedEngine(wal, "ns")
 
 	_, err = namespaced.CreateNode(&Node{ID: "flushed", Labels: []string{"Doc"}})
 	require.NoError(t, err)
 	_, err = namespaced.CreateNode(&Node{ID: "deleted", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	require.NoError(t, async.Flush())
 	require.NoError(t, namespaced.DeleteNode("deleted"))
 	_, err = namespaced.CreateNode(&Node{ID: "staged", Labels: []string{"Doc"}})
 	require.NoError(t, err)
@@ -41,7 +37,7 @@ func TestRelationshipEndpointVisibleAcrossStack(t *testing.T) {
 	check(namespaced, "staged", true)
 	check(namespaced, "deleted", false)
 	check(namespaced, "missing", false)
-	check(async, "ns:staged", true)
+	check(wal, "ns:staged", true)
 	check(wal, "ns:flushed", true)
 	badger.nodeCacheMu.Lock()
 	clear(badger.nodeCache)
@@ -72,10 +68,6 @@ func TestRelationshipEndpointVisibleAcrossStack(t *testing.T) {
 	_, answered = plain.RelationshipEndpointVisible("flushed")
 	require.False(t, answered)
 	_, answered = NewWALEngine(nonCheckingEngine{Engine: badger}, walBacking).RelationshipEndpointVisible("ns:flushed")
-	require.False(t, answered)
-	plainAsync := NewAsyncEngine(nonCheckingEngine{Engine: badger}, &AsyncEngineConfig{FlushInterval: time.Hour})
-	defer plainAsync.Close()
-	_, answered = plainAsync.RelationshipEndpointVisible("ns:flushed")
 	require.False(t, answered)
 
 	// A closed engine doesn't answer.

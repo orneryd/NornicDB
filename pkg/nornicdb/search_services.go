@@ -638,7 +638,12 @@ func (db *DB) startSearchIndexBuild(entry *dbSearchService, ctx context.Context)
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	entry.buildOnce.Do(func() {
+	// Run the build on its own goroutine: the Once body takes db.mu.RLock
+	// through startBackgroundTask, and callers may hold db.mu.Lock while a
+	// storage write event fires (e.g. RecordConsent). Running the Once
+	// synchronously here would deadlock those callers against the in-flight
+	// build (db.mu → once.mu → db.mu).
+	go entry.buildOnce.Do(func() {
 		if !db.startBackgroundTask(func() {
 			_ = db.runInitialSearchIndexBuild(entry, ctx)
 		}) {

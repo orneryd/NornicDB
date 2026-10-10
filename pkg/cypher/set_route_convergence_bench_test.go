@@ -24,13 +24,12 @@ func BenchmarkSetCreateRoutes(b *testing.B) {
 		require.NoError(b, err)
 		wal, err := storage.NewWAL(dir+"/wal", nil)
 		require.NoError(b, err)
-		async := storage.NewAsyncEngine(storage.NewWALEngine(badger, wal), nil)
+		engine := storage.NewWALEngine(badger, wal)
 		b.Cleanup(func() {
-			_ = async.Close()
 			_ = wal.Close()
 			_ = badger.Close()
 		})
-		return NewStorageExecutor(storage.NewNamespacedEngine(async, "test"))
+		return NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
 	}
 	for _, bc := range []struct {
 		name  string

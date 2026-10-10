@@ -118,22 +118,6 @@ func TestStorageClientNodeNamespaceValidation(t *testing.T) {
 	}
 }
 
-func TestStorageClientAsyncFlushAggregateError(t *testing.T) {
-	inner := newErrorEngine()
-	inner.failNodeIDs["fail"] = true
-	engine := NewAsyncEngine(inner, &AsyncEngineConfig{FlushInterval: time.Hour})
-	t.Cleanup(func() { _ = engine.Close() })
-
-	_, err := engine.CreateNode(&Node{ID: "fail", Labels: []string{"Test"}})
-	require.NoError(t, err)
-	err = engine.Flush()
-	localizedErr := requireStorageClientLocalizedError(t, err, localization.MessageStorageClientAsyncFlushIncompleteDetailed, "flush incomplete: 1 nodes failed, 0 edges failed, 0 deletes failed (simulated node update failure)")
-	require.Equal(t, 1, localizedErr.Message.Data["NodesFailed"])
-	require.Equal(t, 0, localizedErr.Message.Data["EdgesFailed"])
-	require.Equal(t, 0, localizedErr.Message.Data["DeletesFailed"])
-	require.Equal(t, "simulated node update failure", localizedErr.Message.Data["Details"])
-}
-
 func TestStorageClientBackupAndDeletePrefixErrorsPreserveCauses(t *testing.T) {
 	t.Run("backup create file", func(t *testing.T) {
 		engine, err := NewBadgerEngineInMemory()

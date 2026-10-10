@@ -304,24 +304,6 @@ func TestBadgerEngine_MVCCLatestVisibleFallsBackToVersionRecords(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestAsyncEngine_GetNodeLatestEffectiveUsesPendingState(t *testing.T) {
-	base := createMVCCBadgerEngine(t)
-	async := NewAsyncEngine(base, &AsyncEngineConfig{FlushInterval: time.Hour})
-	defer async.Close()
-
-	nodeID := NodeID(prefixTestID("async-mvcc-node"))
-	_, err := async.CreateNode(&Node{ID: nodeID, Labels: []string{"Person"}, Properties: map[string]any{"name": "pending"}})
-	require.NoError(t, err)
-
-	node, err := async.GetNodeLatestEffective(nodeID)
-	require.NoError(t, err)
-	require.Equal(t, "pending", node.Properties["name"])
-
-	require.NoError(t, async.DeleteNode(nodeID))
-	_, err = async.GetNodeLatestEffective(nodeID)
-	require.ErrorIs(t, err, ErrNotFound)
-}
-
 func TestBadgerEngine_RebuildAndPruneMVCC(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
 	nodeID := NodeID(prefixTestID("mvcc-maint-node"))
@@ -1247,21 +1229,17 @@ func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.
 	t.Cleanup(func() { _ = baseInner.Close() })
 	base := &nonMVCCEngine{Engine: baseInner}
 
-	async := NewAsyncEngine(base, &AsyncEngineConfig{FlushInterval: time.Hour})
-	defer async.Close()
-	wal := NewWALEngine(base, nil)
+	walLog, err := NewWAL(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = walLog.Close() })
+	wal := NewWALEngine(base, walLog)
 	namespaced := NewNamespacedEngine(base, "test")
 
 	nodeID := NodeID("nornic:mvcc-fallback-node")
-	_, err := async.CreateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"title": "latest"}})
+	_, err = wal.CreateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"title": "latest"}})
 	require.NoError(t, err)
-	require.NoError(t, async.Flush())
 	_, err = namespaced.CreateNode(&Node{ID: NodeID("mvcc-fallback-node-ns"), Labels: []string{"Doc"}, Properties: map[string]any{"title": "latest-ns"}})
 	require.NoError(t, err)
-
-	asyncNode, err := async.GetNodeLatestVisible(nodeID)
-	require.NoError(t, err)
-	require.Equal(t, "latest", asyncNode.Properties["title"])
 
 	walNode, err := wal.GetNodeLatestVisible(nodeID)
 	require.NoError(t, err)
@@ -1272,13 +1250,9 @@ func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.
 	require.Equal(t, "latest-ns", nsNode.Properties["title"])
 
 	version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
-	_, err = async.GetNodeVisibleAt(nodeID, version)
-	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = wal.GetNodeVisibleAt(nodeID, version)
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = namespaced.GetNodeVisibleAt(NodeID("mvcc-fallback-node-ns"), version)
-	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = async.GetNodesByLabelVisibleAt("Doc", version)
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = wal.GetNodesByLabelVisibleAt("Doc", version)
 	require.ErrorIs(t, err, ErrNotImplemented)
@@ -1286,13 +1260,8 @@ func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.
 	require.ErrorIs(t, err, ErrNotImplemented)
 
 	edgeID := EdgeID("nornic:mvcc-fallback-edge")
-	require.NoError(t, async.CreateEdge(&Edge{ID: edgeID, StartNode: nodeID, EndNode: nodeID, Type: "SELF"}))
-	require.NoError(t, async.Flush())
+	require.NoError(t, wal.CreateEdge(&Edge{ID: edgeID, StartNode: nodeID, EndNode: nodeID, Type: "SELF"}))
 	require.NoError(t, namespaced.CreateEdge(&Edge{ID: EdgeID("mvcc-fallback-edge-ns"), StartNode: NodeID("mvcc-fallback-node-ns"), EndNode: NodeID("mvcc-fallback-node-ns"), Type: "SELF"}))
-
-	asyncEdge, err := async.GetEdgeLatestVisible(edgeID)
-	require.NoError(t, err)
-	require.Equal(t, edgeID, asyncEdge.ID)
 
 	walEdge, err := wal.GetEdgeLatestVisible(edgeID)
 	require.NoError(t, err)
@@ -1302,19 +1271,13 @@ func TestMVCCWrappers_FallbackLatestButRejectSnapshotWhenUnsupported(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, EdgeID("mvcc-fallback-edge-ns"), nsEdge.ID)
 
-	_, err = async.GetEdgeVisibleAt(edgeID, version)
-	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = wal.GetEdgeVisibleAt(edgeID, version)
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = namespaced.GetEdgeVisibleAt(EdgeID("mvcc-fallback-edge-ns"), version)
 	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = async.GetEdgesByTypeVisibleAt("SELF", version)
-	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = wal.GetEdgesByTypeVisibleAt("SELF", version)
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = namespaced.GetEdgesByTypeVisibleAt("SELF", version)
-	require.ErrorIs(t, err, ErrNotImplemented)
-	_, err = async.GetEdgesBetweenVisibleAt(nodeID, nodeID, version)
 	require.ErrorIs(t, err, ErrNotImplemented)
 	_, err = wal.GetEdgesBetweenVisibleAt(nodeID, nodeID, version)
 	require.ErrorIs(t, err, ErrNotImplemented)
