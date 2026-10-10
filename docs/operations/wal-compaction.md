@@ -43,7 +43,7 @@ export NORNICDB_WAL_AUTO_COMPACTION_ENABLED=true
 
 - WAL changes are checked at the configured interval (default: 5 minutes)
 - Idle intervals do not create snapshots, scan nodes, or append checkpoints
-- WAL truncated after each successful snapshot
+- WAL truncated after each successful snapshot (unless retention is configured; see Retention Settings)
 - Failures logged but don't crash the database
 - Automatic retry on next interval
 - Old snapshots saved to the snapshot directory as `snapshot-<timestamp>.json`
@@ -93,6 +93,12 @@ export NORNICDB_WAL_LEDGER_RETENTION_DEFAULTS=true
 
 These settings retain sealed WAL segments **after snapshots**. Auto-compaction remains
 enabled by default to preserve existing behavior; retention is **opt-in**.
+
+With either setting, each compaction seals the active WAL into a segment instead of
+dropping the entries the snapshot covers. Retention then removes only covered segments past
+their age (or beyond the newest N), so `db.txlog.entries` and replication can read entries
+for the retention period. Recovery still replays only the entries after the latest snapshot.
+Without retention, compaction drops covered entries as before.
 
 ### 5. Txlog Query Procedures
 
