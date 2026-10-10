@@ -1,0 +1,2014 @@
+[
+ {
+  "source": "TestANTLRExpressionEvaluator:835",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvWhereAndOr {age: 21, name: 'Alice', city: 'NYC', active: true})",
+   "MATCH (n:EvWhereAndOr) WHERE n.age = 21 AND n.city = 'NYC' OR n.name = 'Bob' RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:836",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvWhereXor {age: 21, name: 'Alice', city: 'NYC', active: true})",
+   "MATCH (n:EvWhereXor) WHERE n.age = 21 XOR n.city = 'LA' RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:837",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvWhereNot {age: 21, name: 'Alice', city: 'NYC', active: true})",
+   "MATCH (n:EvWhereNot) WHERE NOT n.city = 'LA' RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:838",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvWhereIsNull {age: 21, name: 'Alice', city: 'NYC', active: true})",
+   "MATCH (n:EvWhereIsNull) WHERE n.email IS NULL RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:839",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvWhereIsNotNull {age: 21, name: 'Alice', city: 'NYC', active: true})",
+   "MATCH (n:EvWhereIsNotNull) WHERE n.name IS NOT NULL RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:840",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvWhereContains {age: 21, name: 'Alice', city: 'NYC', active: true})",
+   "MATCH (n:EvWhereContains) WHERE n.name CONTAINS 'lic' RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:841",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvWhereStarts {age: 21, name: 'Alice', city: 'NYC', active: true})",
+   "MATCH (n:EvWhereStarts) WHERE n.name STARTS WITH 'Al' RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:842",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvWhereEnds {age: 21, name: 'Alice', city: 'NYC', active: true})",
+   "MATCH (n:EvWhereEnds) WHERE n.name ENDS WITH 'ce' RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:843",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH ['neo4j', 'go'] AS tags WHERE 'go' IN tags RETURN count(*) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:844",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvWhereParen {age: 21, name: 'Alice', city: 'NYC', active: true})",
+   "MATCH (n:EvWhereParen) WHERE (n.age = 21 AND n.city = 'NYC') RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:845",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvWhereParams {age: 21, name: 'Alice', city: 'NYC', active: true})",
+   "MATCH (n:EvWhereParams) WHERE n.age >= $age AND n.city = $city RETURN count(n) AS c"
+  ],
+  "params": {
+   "age": 21,
+   "city": "NYC"
+  },
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:846",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH true AS flag WHERE flag RETURN count(*) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:847",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 + 2 * 3 = 7 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:848",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 10 % 3 = 1 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:849",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN -5 < 0 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:850",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 < 2 < 3 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:851",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvWhereFalse {age: 21, name: 'Alice', city: 'NYC', active: true})",
+   "MATCH (n:EvWhereFalse) WHERE n.city = 'LA' RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator:864",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvWhereNone {age: 21})",
+   "MATCH (n:EvWhereNone) RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:947",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN {name: 'Alice', age: 21} AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[{\"age\": 21, \"name\": \"Alice\"}]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:948",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN [1, 2, 3] AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[1, 2, 3]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:951",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toString(42) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"42\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:952",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toInteger('42') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[42]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:953",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toFloat('4.5') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[4.5]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:954",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toBoolean('true') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:955",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN size({a: 1, b: 2}) AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:956",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN reverse([1, 2, 3]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[3, 2, 1]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:957",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN range(3, 1, -1) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[3, 2, 1]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:958",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN replace('abcabc', 'a', 'z') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"zbczbc\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:959",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN substring('abcdef', 2, 3) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"cde\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:960",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN left('abcdef', 2) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"ab\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:961",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN right('abcdef', 2) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"ef\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:962",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN split('a,b,c', ',') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[\"a\", \"b\", \"c\"]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:963",
+  "reference": "APOC (the reference Neo4j has no APOC plugin)",
+  "statements": [
+   "RETURN apoc.coll.sum([1, 2, 3]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[6.0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:964",
+  "reference": "APOC (the reference Neo4j has no APOC plugin)",
+  "statements": [
+   "RETURN apoc.coll.avg([1, 2, 3]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[2.0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:965",
+  "reference": "APOC (the reference Neo4j has no APOC plugin)",
+  "statements": [
+   "RETURN apoc.coll.min([3, 2, 4]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[2]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:966",
+  "reference": "APOC (the reference Neo4j has no APOC plugin)",
+  "statements": [
+   "RETURN apoc.coll.max([3, 2, 4]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[4]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:967",
+  "reference": "APOC (the reference Neo4j has no APOC plugin)",
+  "statements": [
+   "RETURN apoc.coll.reverse([1, 2]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[2, 1]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:968",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvTypeA)-[:EV_KNOWS_TYPE]->(:EvTypeB)",
+   "MATCH (:EvTypeA)-[r]->(:EvTypeB) RETURN type(r) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"EV_KNOWS_TYPE\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:969",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvIdNode)",
+   "MATCH (n:EvIdNode) MATCH (m:EvIdNode) WHERE id(m) = id(n) RETURN id(n) IS NOT NULL AS present, count(*) AS c"
+  ],
+  "expected": "{\"cols\": [\"present\", \"c\"], \"rows\": [[true, 1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:970",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvLabelsPerson)",
+   "MATCH (n:EvLabelsPerson) RETURN labels(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[\"EvLabelsPerson\"]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:971",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvKeys {name: 'Alice', age: 1})",
+   "MATCH (n:EvKeys) UNWIND keys(n) AS k RETURN k AS k ORDER BY k"
+  ],
+  "expected": "{\"cols\": [\"k\"], \"rows\": [[\"age\"], [\"name\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:972",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvProps {name: 'Alice'})",
+   "MATCH (n:EvProps) RETURN properties(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[{\"name\": \"Alice\"}]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:973",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 'value' IS NOT NULL AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:991",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN timestamp() IS NOT NULL AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:994",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN date() IS NOT NULL AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:997",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN datetime() IS NOT NULL AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:1000",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN unknown.func(1) AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:1004",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toInteger('9') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[9]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:1007",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toBoolean(0) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:1010",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN size({a: 1}) AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:1013",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH 'x' AS v WHERE v RETURN count(*) AS c"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:1013",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH '' AS v WHERE v RETURN count(*) AS c"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:1016",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2 = 2.0 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:1016",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN '2' = 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:1019",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 'b' > 'a' AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:1019",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 < 2.0 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:1028",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1.5 + 0.5 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[2.0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinsAndHelpers:1031",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2.0 + 0.5 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[2.5]]}"
+ },
+ {
+  "source": "TestANTLRExtractionHelpers:1046",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH {name: {first: 'Ann'}} AS n RETURN n.name.first AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"Ann\"]]}"
+ },
+ {
+  "source": "TestANTLRExtractionHelpers:1051",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvNodePat:EvNodePatEmployee {id: 7, active: true})",
+   "CREATE (:EvNodePat {id: 7, active: true})",
+   "MATCH (n:EvNodePat:EvNodePatEmployee {id: $id, active: true}) RETURN count(n) AS c"
+  ],
+  "params": {
+   "id": 7
+  },
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExtractionHelpers:1059",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvRelInA)-[:EV_KNOWS_IN {since: 2020}]->(:EvRelInB)",
+   "MATCH (b:EvRelInB)<-[r:EV_KNOWS_IN {since: 2020}]-(a) RETURN type(r) AS t, r.since AS s, labels(a) AS la, labels(b) AS lb"
+  ],
+  "expected": "{\"cols\": [\"t\", \"s\", \"la\", \"lb\"], \"rows\": [[\"EV_KNOWS_IN\", 2020, [\"EvRelInA\"], [\"EvRelInB\"]]]}"
+ },
+ {
+  "source": "TestANTLRExtractionHelpers:1059",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvRelInC)-[:EV_KNOWS_IN2 {since: 2020}]->(:EvRelInD)",
+   "MATCH (c:EvRelInC)<-[r:EV_KNOWS_IN2]-() RETURN count(r) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[0]]}"
+ },
+ {
+  "source": "TestANTLRExtractionHelpers:1067",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "UNWIND [1, 1, 2] AS n RETURN COUNT(DISTINCT n) AS total"
+  ],
+  "expected": "{\"cols\": [\"total\"], \"rows\": [[2]]}"
+ },
+ {
+  "source": "TestANTLRExtractionHelpers:1072",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "UNWIND [1, null, 2] AS x RETURN COUNT(*) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[3]]}"
+ },
+ {
+  "source": "TestANTLRExtractionHelpers:1077",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvCollect {name: 'a'}), (:EvCollect {name: 'b'}), (:EvCollect)",
+   "MATCH (n:EvCollect) WITH n ORDER BY n.name RETURN COLLECT(n.name) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[\"a\", \"b\"]]]}"
+ },
+ {
+  "source": "TestANTLRExtractionHelpers:1082",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvDbLabels)",
+   "CALL db.labels() YIELD label WHERE label = 'EvDbLabels' RETURN label AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"EvDbLabels\"]]}"
+ },
+ {
+  "source": "TestANTLRExtractionHelpers:1087",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "SHOW FUNCTIONS YIELD name WHERE name = 'toUpper' RETURN name AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"toUpper\"]]}"
+ },
+ {
+  "source": "TestANTLRExtractionHelpers:1092",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvOrder {name: 'a', age: 2}), (:EvOrder {name: 'b', age: 3}), (:EvOrder {name: 'b', age: 1}), (:EvOrder {name: 'a', age: 1})",
+   "MATCH (n:EvOrder) RETURN n.name AS name, n.age AS age ORDER BY n.name DESC, n.age ASC"
+  ],
+  "expected": "{\"cols\": [\"name\", \"age\"], \"rows\": [[\"b\", 1], [\"b\", 3], [\"a\", 1], [\"a\", 2]]}"
+ },
+ {
+  "source": "TestANTLRExtractionHelpers:1097",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "UNWIND [1, 2, 3] AS x WITH {k: 1} AS n, {name: 'M'} AS m, x RETURN n AS n, m.name AS mn, count(x) AS c"
+  ],
+  "expected": "{\"cols\": [\"n\", \"mn\", \"c\"], \"rows\": [[{\"k\": 1}, \"M\", 3]]}"
+ },
+ {
+  "source": "TestANTLRAggregationHelpers:1117",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvAggGroup {grp: 'a', score: 1, name: 'alice'}), (:EvAggGroup {grp: 'a', score: 2, name: 'bob'}), (:EvAggGroup {grp: 'b', score: 3, name: 'carol'})",
+   "MATCH (n:EvAggGroup) RETURN n.grp AS g, count(n) AS c ORDER BY g"
+  ],
+  "expected": "{\"cols\": [\"g\", \"c\"], \"rows\": [[\"a\", 2], [\"b\", 1]]}"
+ },
+ {
+  "source": "TestANTLRAggregationHelpers:1122",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvAggCountAll {grp: 'a', score: 1, name: 'alice'}), (:EvAggCountAll {grp: 'a', score: 2, name: 'bob'}), (:EvAggCountAll {grp: 'b', score: 3, name: 'carol'})",
+   "MATCH (n:EvAggCountAll) RETURN n.grp AS g, count(*) AS v ORDER BY g"
+  ],
+  "expected": "{\"cols\": [\"g\", \"v\"], \"rows\": [[\"a\", 2], [\"b\", 1]]}"
+ },
+ {
+  "source": "TestANTLRAggregationHelpers:1126",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvAggCount {grp: 'a', score: 1, name: 'alice'}), (:EvAggCount {grp: 'a', score: 2, name: 'bob'}), (:EvAggCount {grp: 'b', score: 3, name: 'carol'})",
+   "MATCH (n:EvAggCount) RETURN n.grp AS g, count(n.score) AS v ORDER BY g"
+  ],
+  "expected": "{\"cols\": [\"g\", \"v\"], \"rows\": [[\"a\", 2], [\"b\", 1]]}"
+ },
+ {
+  "source": "TestANTLRAggregationHelpers:1129",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvAggSum {grp: 'a', score: 1, name: 'alice'}), (:EvAggSum {grp: 'a', score: 2, name: 'bob'}), (:EvAggSum {grp: 'b', score: 3, name: 'carol'})",
+   "MATCH (n:EvAggSum) RETURN n.grp AS g, sum(n.score) AS v ORDER BY g"
+  ],
+  "expected": "{\"cols\": [\"g\", \"v\"], \"rows\": [[\"a\", 3], [\"b\", 3]]}"
+ },
+ {
+  "source": "TestANTLRAggregationHelpers:1132",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvAggAvg {grp: 'a', score: 1, name: 'alice'}), (:EvAggAvg {grp: 'a', score: 2, name: 'bob'}), (:EvAggAvg {grp: 'b', score: 3, name: 'carol'})",
+   "MATCH (n:EvAggAvg) RETURN n.grp AS g, avg(n.score) AS v ORDER BY g"
+  ],
+  "expected": "{\"cols\": [\"g\", \"v\"], \"rows\": [[\"a\", 1.5], [\"b\", 3.0]]}"
+ },
+ {
+  "source": "TestANTLRAggregationHelpers:1135",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvAggMin {grp: 'a', score: 1, name: 'alice'}), (:EvAggMin {grp: 'a', score: 2, name: 'bob'}), (:EvAggMin {grp: 'b', score: 3, name: 'carol'})",
+   "MATCH (n:EvAggMin) RETURN n.grp AS g, min(n.score) AS v ORDER BY g"
+  ],
+  "expected": "{\"cols\": [\"g\", \"v\"], \"rows\": [[\"a\", 1], [\"b\", 3]]}"
+ },
+ {
+  "source": "TestANTLRAggregationHelpers:1138",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvAggMax {grp: 'a', score: 1, name: 'alice'}), (:EvAggMax {grp: 'a', score: 2, name: 'bob'}), (:EvAggMax {grp: 'b', score: 3, name: 'carol'})",
+   "MATCH (n:EvAggMax) RETURN n.grp AS g, max(n.score) AS v ORDER BY g"
+  ],
+  "expected": "{\"cols\": [\"g\", \"v\"], \"rows\": [[\"a\", 2], [\"b\", 3]]}"
+ },
+ {
+  "source": "TestANTLRAggregationHelpers:1141",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvAggCollect {grp: 'a', score: 1, name: 'alice'}), (:EvAggCollect {grp: 'a', score: 2, name: 'bob'}), (:EvAggCollect {grp: 'b', score: 3, name: 'carol'})",
+   "MATCH (n:EvAggCollect) WITH n ORDER BY n.name RETURN n.grp AS g, collect(n.name) AS v ORDER BY g"
+  ],
+  "expected": "{\"cols\": [\"g\", \"v\"], \"rows\": [[\"a\", [\"alice\", \"bob\"]], [\"b\", [\"carol\"]]]}"
+ },
+ {
+  "source": "TestANTLRAggregationHelpers:1144",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "MATCH (n:EvAggEmpty) RETURN avg(n.score) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[null]]}"
+ },
+ {
+  "source": "TestANTLRAggregationHelpers:1155",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 < 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRAggregationHelpers:1155",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 'x' = 'x' AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRAggregationHelpers:1155",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toFloat(4) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[4.0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1240",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN head([1, 2]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1241",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN tail([1, 2]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[2]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1242",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN last([1, 2]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[2]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1243",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN coalesce(null, 'x') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"x\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1244",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN abs(-3) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[3]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1245",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN ceil(4.1) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[5.0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1246",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN floor(4.9) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[4.0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1247",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN round(4.5) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[5.0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1248",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN trim(' hi ') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"hi\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1249",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN ltrim(' hi ') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"hi \"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1250",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN rtrim(' hi ') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\" hi\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1251",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toUpper('neo') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"NEO\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1252",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toLower('NEO') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"neo\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1253",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN null IS NOT NULL AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1272",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toInteger(5.0) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[5]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1272",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toInteger('bad') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[null]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1275",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toBoolean('true') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1275",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toBoolean(1.0) AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1275",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toBoolean('false') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1278",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN size([1, 2]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[2]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1278",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN size('abc') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[3]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1278",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN size(null) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[null]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1281",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH 1 AS v WHERE v RETURN count(*) AS c"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1281",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH 1.0 AS v WHERE v RETURN count(*) AS c"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1281",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH null AS v WHERE v RETURN count(*) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1284",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN true = true AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1284",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN false = true AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1297",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE INDEX ev_show_idx IF NOT EXISTS FOR (n:EvShowIdx) ON (n.p)",
+   "SHOW INDEXES YIELD name WHERE name = 'ev_show_idx' RETURN name AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"ev_show_idx\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1298",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE CONSTRAINT ev_show_con IF NOT EXISTS FOR (n:EvShowCon) REQUIRE n.p IS UNIQUE",
+   "SHOW CONSTRAINTS YIELD name WHERE name = 'ev_show_con' RETURN name AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"ev_show_con\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1299",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "SHOW PROCEDURES YIELD name WHERE name = 'db.labels' RETURN name AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"db.labels\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1300",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "SHOW FUNCTIONS YIELD name WHERE name = 'abs' RETURN name AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"abs\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1301",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "SHOW DATABASE YIELD name RETURN count(name) > 0 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1338",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 OR 2 AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1345",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH 1 AS n RETURN COUNT(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1346",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH 1 AS n RETURN SUM(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1347",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH 1 AS n RETURN AVG(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[1.0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1348",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH 1 AS n RETURN MIN(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1349",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH 1 AS n RETURN MAX(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1350",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH 1 AS n RETURN COLLECT(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[1]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1365",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH 'alice' AS n RETURN n.name AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1387",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH {name: 'Alice', email: null, score: 7, meta: {city: 'NYC'}} AS n RETURN n.email IS NULL AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1390",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH {name: 'Alice', email: null, score: 7, meta: {city: 'NYC'}} AS n RETURN n.name STARTS WITH 'Al' AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1393",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH {name: 'Alice', email: null, score: 7, meta: {city: 'NYC'}} AS n RETURN n.name ENDS WITH 'ce' AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1396",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH {name: 'Alice', email: null, score: 7, meta: {city: 'NYC'}} AS n RETURN n.name CONTAINS 'lic' AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1399",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH ['go', 'db'] AS tags RETURN 'go' IN tags AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1402",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH {name: 'Alice', email: null, score: 7, meta: {city: 'NYC'}} AS n RETURN n.meta.city AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"NYC\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1408",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH {name: 'Alice', email: null, score: 7, meta: {city: 'NYC'}} AS n RETURN n.email IS NOT NULL AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1411",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH {name: 'Alice', email: null, score: 7, meta: {city: 'NYC'}} AS n RETURN n.name STARTS WITH 1 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[null]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1411",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvStartsNonString {name: 'Alice'})",
+   "MATCH (n:EvStartsNonString) WHERE n.name STARTS WITH 1 RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1420",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN $age AS v"
+  ],
+  "params": {
+   "age": 42
+  },
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[42]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1423",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN $missing AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.ParameterMissing"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1426",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH {name: 'Alice', email: null, score: 7, meta: {city: 'NYC'}} AS n RETURN n IS NOT NULL AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1429",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH 'from-vars' AS v RETURN v AS r"
+  ],
+  "expected": "{\"cols\": [\"r\"], \"rows\": [[\"from-vars\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1432",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN missing AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1435",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN (1 + 2) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[3]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1438",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN COUNT(*) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1442",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN false AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1445",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN null AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[null]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1448",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 3.5 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[3.5]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1451",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 'c' AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"c\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1454",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN [] AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1457",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN {a: 1} AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[{\"a\": 1}]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1463",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toString(3) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"3\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AtomicAndLiteralInternals:1466",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH {name: 'Alice', email: null, score: 7, meta: {city: 'NYC'}} AS n RETURN COUNT(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1513",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 = 1 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1516",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 <> 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1519",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 < 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1522",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2 > 1 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1525",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2 <= 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1528",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2 >= 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1532",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2 ^ 3 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[8.0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1535",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN -3 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[-3]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1545",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 'x' = 'x' AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1545",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN false = false AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1545",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN true = false AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1548",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toInteger(4.0) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[4]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1548",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toBoolean(true) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NilAndOperatorEdges:1548",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toBoolean(0.0) AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ExtractionEdgeCases:1557",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "UNWIND [1, 1, 2] AS n RETURN toString(n) AS k, count(*) AS c ORDER BY k"
+  ],
+  "expected": "{\"cols\": [\"k\", \"c\"], \"rows\": [[\"1\", 2], [\"2\", 1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ExtractionEdgeCases:1578",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "UNWIND [1, 2, 3] AS x RETURN count(*) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[3]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ConversionAndExtractionCompleteness:1635",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2.0 = 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ConversionAndExtractionCompleteness:1638",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2.0 = '2' AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ConversionAndExtractionCompleteness:1641",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toFloat(4) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[4.0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ConversionAndExtractionCompleteness:1651",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "UNWIND [3, 1, 2] AS n RETURN SUM(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[6]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ConversionAndExtractionCompleteness:1652",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "UNWIND [3, 1, 2] AS n RETURN AVG(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[2.0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ConversionAndExtractionCompleteness:1653",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "UNWIND [3, 1, 2] AS n RETURN MIN(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ConversionAndExtractionCompleteness:1654",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "UNWIND [3, 1, 2] AS n RETURN MAX(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[3]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ConversionAndExtractionCompleteness:1655",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "UNWIND [3, 1, 2] AS n RETURN COLLECT(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[3, 1, 2]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ConversionAndExtractionCompleteness:1697",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH {name: 'Alice'} AS n, 5 AS m, 1 AS x, 'Al' AS prefix, 'go' AS item, ['go', 'db'] AS tags RETURN n.name AS a, toString(m) AS b, (x) AS c, n.name STARTS WITH prefix AS d, item IN tags AS e"
+  ],
+  "expected": "{\"cols\": [\"a\", \"b\", \"c\", \"d\", \"e\"], \"rows\": [[\"Alice\", \"5\", 1, true, true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1711",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN head([]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[null]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1712",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN tail([1]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1713",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN last([]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[null]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1714",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN reverse('not-a-list') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"tsil-a-ton\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1715",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN range(1, 3, 0) AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.ArgumentError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1716",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN coalesce(null, null) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[null]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1717",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN substring('abcdef', -2) AS v"
+  ],
+  "expected": "ERR Neo.DatabaseError.Statement.ExecutionFailed"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1718",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN substring('abcdef', 20) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1719",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN substring('abcdef', 2, 99) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"cdef\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1720",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN left('abcdef', 99) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"abcdef\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1721",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN right('abcdef', 99) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"abcdef\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1722",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN keys('not-a-map') AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1723",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN properties('not-a-map') AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinEdgeCases:1733",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvRelIdA)-[:EV_REL_ID]->(:EvRelIdB)",
+   "MATCH (:EvRelIdA)-[r:EV_REL_ID]->(:EvRelIdB) MATCH ()-[r2:EV_REL_ID]->() WHERE id(r2) = id(r) RETURN id(r) IS NOT NULL AS present, count(*) AS c"
+  ],
+  "expected": "{\"cols\": [\"present\", \"c\"], \"rows\": [[true, 1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AdditionalExtractionAndEvaluateBranches:1741",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 AND 2 AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AdditionalExtractionAndEvaluateBranches:1744",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 < 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AdditionalExtractionAndEvaluateBranches:1748",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvProjDefaultAlias1 {name: 'Ann'})",
+   "MATCH (n:EvProjDefaultAlias1) RETURN n.name"
+  ],
+  "expected": "{\"cols\": [\"n.name\"], \"rows\": [[\"Ann\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_AdditionalExtractionAndEvaluateBranches:1764",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvLabelsFn)",
+   "MATCH (n:EvLabelsFn) RETURN labels(n) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[\"EvLabelsFn\"]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ArithmeticAndConversionEdges:1773",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 5 - 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[3]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ArithmeticAndConversionEdges:1776",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 8 / 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[4]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ArithmeticAndConversionEdges:1779",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 8 / 0 AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.ArithmeticError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ArithmeticAndConversionEdges:1782",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 8 % 0 AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.ArithmeticError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ArithmeticAndConversionEdges:1785",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 42 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[42]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ArithmeticAndConversionEdges:1789",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2 = 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ArithmeticAndConversionEdges:1789",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2.0 = 2.0 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ArithmeticAndConversionEdges:1789",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2 = '2' AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ArithmeticAndConversionEdges:1792",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 'a' <= 'a' AND 'a' >= 'a' AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ArithmeticAndConversionEdges:1792",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN true > false AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ArithmeticAndConversionEdges:1795",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toFloat('3.25') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[3.25]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_OrBranches:2038",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvOrAllFalse {age: 10, city: 'LA'})",
+   "MATCH (n:EvOrAllFalse) WHERE n.age > 100 OR n.city = 'NYC' RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_OrBranches:2048",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvOrSecondTrue {age: 10, city: 'NYC'})",
+   "MATCH (n:EvOrSecondTrue) WHERE n.age > 100 OR n.city = 'NYC' RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_XorChained:2065",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH true AS a, false AS b, true AS c RETURN a XOR b XOR c AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_XorChained:2065",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH true AS a, false AS b, true AS c WHERE a XOR b XOR c RETURN count(*) AS cnt"
+  ],
+  "expected": "{\"cols\": [\"cnt\"], \"rows\": [[0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ComparisonOperators:2082",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 <= 1 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ComparisonOperators:2083",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 <= 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ComparisonOperators:2084",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2 <= 1 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ComparisonOperators:2085",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2 >= 1 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ComparisonOperators:2086",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 >= 1 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ComparisonOperators:2087",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 >= 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ComparisonOperators:2088",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 <> 2 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_ComparisonOperators:2089",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 1 <> 1 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_StringPredicateFalsePaths:2112",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvStartsFalse {name: 'Bob'})",
+   "MATCH (n:EvStartsFalse) WHERE n.name STARTS WITH 'Al' RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_StringPredicateFalsePaths:2113",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvEndsFalse {name: 'Alice'})",
+   "MATCH (n:EvEndsFalse) WHERE n.name ENDS WITH 'ob' RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_StringPredicateFalsePaths:2114",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvContainsFalse {name: 'Alice'})",
+   "MATCH (n:EvContainsFalse) WHERE n.name CONTAINS 'xyz' RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_StringPredicateFalsePaths:2115",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvInFalse {city: 'Chicago'})",
+   "MATCH (n:EvInFalse) WHERE n.city IN ['NYC', 'LA', 'SF'] RETURN count(n) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NumericHelperEdges:2135",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toInteger(99) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[99]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NumericHelperEdges:2138",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toInteger(true) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[1]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NumericHelperEdges:2143",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toBoolean(0) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NumericHelperEdges:2146",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toBoolean(0.0) AS v"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NumericHelperEdges:2149",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toBoolean('FALSE') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[false]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NumericHelperEdges:2154",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toFloat('3.14') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[3.14]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NumericHelperEdges:2157",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toFloat('abc') AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[null]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NumericHelperEdges:2160",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toFloat(7) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[7.0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NumericHelperEdges:2163",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN toFloat(null) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[null]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NumericHelperEdges:2168",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 'abc' = 'abc' AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NumericHelperEdges:2171",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 'a' < 'b' AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NumericHelperEdges:2176",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH [] AS v WHERE v RETURN count(*) AS c"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_NumericHelperEdges:2179",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH {a: 1} AS v WHERE v RETURN count(*) AS c"
+  ],
+  "expected": "ERR Neo.ClientError.Statement.SyntaxError"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_PowerExpression:2192",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN 2 ^ 3 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[8.0]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinFunctionEdges:2206",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN range(1, 5) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[1, 2, 3, 4, 5]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinFunctionEdges:2214",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN substring('abcdef', 3) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[\"def\"]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinFunctionEdges:2221",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN head([]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[null]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinFunctionEdges:2227",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN last([]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[null]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinFunctionEdges:2234",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN tail([]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[[]]]}"
+ },
+ {
+  "source": "TestANTLRExpressionEvaluator_BuiltinFunctionEdges:2240",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "RETURN coalesce(null, null) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[null]]}"
+ },
+ {
+  "source": "TestANTLRExtractProjectionItem_NonAggregation:2251",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvProjAlias {name: 'Ann'})",
+   "MATCH (n:EvProjAlias) RETURN n.name AS personName"
+  ],
+  "expected": "{\"cols\": [\"personName\"], \"rows\": [[\"Ann\"]]}"
+ },
+ {
+  "source": "TestANTLRExtractProjectionItem_NoExplicitAlias:2262",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvProjDefaultAlias2 {name: 'Ann'})",
+   "MATCH (n:EvProjDefaultAlias2) RETURN n.name"
+  ],
+  "expected": "{\"cols\": [\"n.name\"], \"rows\": [[\"Ann\"]]}"
+ },
+ {
+  "source": "TestANTLRExtractProcedureName_NestedNamespace:2273",
+  "reference": "APOC (the reference Neo4j has no APOC plugin)",
+  "statements": [
+   "RETURN apoc.coll.sum([1, 2, 3]) AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[6.0]]}"
+ },
+ {
+  "source": "TestANTLRExtractRelationshipPattern_ForwardWithProps:2289",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvRelFwdA)-[:EV_LIKES {weight: 0.5}]->(:EvRelFwdB)",
+   "MATCH (a:EvRelFwdA)-[r:EV_LIKES {weight: 0.5}]->(b) RETURN type(r) AS t, r.weight AS w, labels(b) AS lb"
+  ],
+  "expected": "{\"cols\": [\"t\", \"w\", \"lb\"], \"rows\": [[\"EV_LIKES\", 0.5, [\"EvRelFwdB\"]]]}"
+ },
+ {
+  "source": "TestANTLRExtractRelationshipPattern_ForwardWithProps:2290",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvRelFwdC)-[:EV_LIKES2 {weight: 0.5}]->(:EvRelFwdD)",
+   "MATCH (d:EvRelFwdD)-[r:EV_LIKES2]->() RETURN count(r) AS c"
+  ],
+  "expected": "{\"cols\": [\"c\"], \"rows\": [[0]]}"
+ },
+ {
+  "source": "TestANTLRExtractRelationshipPattern_Undirected:2304",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvUndA)-[:EV_KNOWS_U]->(:EvUndB)",
+   "MATCH (b:EvUndB)-[r:EV_KNOWS_U]-(a) RETURN type(r) AS t, labels(a) AS la"
+  ],
+  "expected": "{\"cols\": [\"t\", \"la\"], \"rows\": [[\"EV_KNOWS_U\", [\"EvUndA\"]]]}"
+ },
+ {
+  "source": "TestANTLRExtractNodePattern_VariableOnly:2319",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "CREATE (:EvNodeVarOnly {p: 1})",
+   "MATCH (n) WHERE n:EvNodeVarOnly RETURN count(n) AS c, labels(n) AS l, properties(n) AS p"
+  ],
+  "expected": "{\"cols\": [\"c\", \"l\", \"p\"], \"rows\": [[1, [\"EvNodeVarOnly\"], {\"p\": 1}]]}"
+ },
+ {
+  "source": "TestANTLRCollectVariablesFromTree_Nested:2336",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "UNWIND [1, 2, 3] AS a WITH a, a * 10 AS b RETURN count(a) AS ca, sum(b) AS sb"
+  ],
+  "expected": "{\"cols\": [\"ca\", \"sb\"], \"rows\": [[3, 60]]}"
+ },
+ {
+  "source": "TestANTLRCollectVariablesFromTree_StringExpression:2344",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "WITH {name: 'Alice'} AS n, 'Al' AS prefix RETURN n.name STARTS WITH prefix AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ }
+]
