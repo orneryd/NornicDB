@@ -1573,7 +1573,7 @@ func TestLoadFromFile_BoltListenerSettings(t *testing.T) {
 	clearEnvVars(t)
 
 	defaults := LoadDefaults()
-	require.Equal(t, 100, defaults.Server.BoltMaxConnections)
+	require.Equal(t, 0, defaults.Server.BoltMaxConnections, "uncapped by default")
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

@@ -41,12 +41,12 @@ func TestApplyBoltListenerConfig(t *testing.T) {
 	require.Equal(t, 20*time.Second, boltConfig.WebSocketPongTimeout)
 }
 
-// The defaults keep the Bolt server's: 100 connections, and no statement
-// timeout unless one is set.
+// The defaults keep the Bolt server uncapped, with no statement timeout
+// unless one is set.
 func TestApplyBoltListenerConfigDefaults(t *testing.T) {
 	boltConfig := bolt.DefaultConfig()
 	applyBoltListenerConfig(boltConfig, appconfig.LoadDefaults())
-	require.Equal(t, bolt.DefaultConfig().MaxConnections, boltConfig.MaxConnections)
+	require.Zero(t, boltConfig.MaxConnections, "uncapped by default")
 	require.Zero(t, boltConfig.BoltStatementTimeout)
 
 	unset := &appconfig.Config{}

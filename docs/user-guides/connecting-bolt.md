@@ -201,7 +201,7 @@ For cross-origin browser clients (e.g. a UI on `https://app.example.com` connect
 
 | Setting                                    | Default  | Effect                                                                    |
 | ------------------------------------------ | -------- | ------------------------------------------------------------------------- |
-| `NORNICDB_BOLT_MAX_CONNECTIONS`            | `100`    | Concurrent Bolt connections, every transport; `0` removes the cap.        |
+| `NORNICDB_BOLT_MAX_CONNECTIONS`            | `0`      | Concurrent Bolt connections, every transport; `0` removes the cap.        |
 | `NORNICDB_BOLT_TLS_ENABLED`                | `false`  | Enables `bolt+s://` and `wss://`.                                         |
 | `NORNICDB_BOLT_TLS_CERT` / `_KEY`          | (unset)  | Cert and key paths; rotation re-reads every 5 s (atomic rename).          |
 | `NORNICDB_BOLT_TLS_REQUIRE`                | `false`  | Reject every plaintext connection (raw and ws).                           |
