@@ -32,7 +32,9 @@ type neo4jExpressionBehaviour struct {
 // package evaluator was tested for (testdata/neo4j_expression_behaviours.json;
 // "source" names the removed test). Each expected result was recorded on
 // Neo4j 5.26.30 in a rolled-back transaction, or for the APOC functions
-// (no APOC on the reference server) is APOC's documented result.
+// (no APOC on the reference server) is APOC's documented result. The
+// executor has a database manager, as a server's does, so the database
+// commands (SHOW DATABASES) run.
 func TestNeo4jExpressionBehaviours(t *testing.T) {
 	raw, err := os.ReadFile("testdata/neo4j_expression_behaviours.json")
 	require.NoError(t, err)
@@ -41,6 +43,9 @@ func TestNeo4jExpressionBehaviours(t *testing.T) {
 	require.NotEmpty(t, cases)
 	for _, tc := range cases {
 		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "neo4j_expression_behaviours"))
+		databases := newMockDatabaseManager()
+		require.NoError(t, databases.CreateDatabase("neo4j_expression_behaviours"))
+		exec.SetDatabaseManager(databases)
 		params := make(map[string]interface{}, len(tc.Params))
 		for name, value := range tc.Params {
 			// JSON numbers are floats; a whole one is an integer parameter.

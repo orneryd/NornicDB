@@ -945,6 +945,14 @@
   "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
  },
  {
+  "source": "TestANTLRExpressionEvaluator_DirectHelpers:1302",
+  "reference": "Neo4j 5.26.30",
+  "statements": [
+   "SHOW DATABASES YIELD name RETURN count(name) > 0 AS v"
+  ],
+  "expected": "{\"cols\": [\"v\"], \"rows\": [[true]]}"
+ },
+ {
   "source": "TestANTLRExpressionEvaluator_DirectHelpers:1338",
   "reference": "Neo4j 5.26.30",
   "statements": [
