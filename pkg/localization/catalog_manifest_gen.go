@@ -398,6 +398,8 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.typed_time_parse_failed", Constructor: "CypherCoreTypedTimeParseFailed", Fields: []string{"Value"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.unterminated_string_literal", Constructor: "CypherCoreUnterminatedStringLiteral", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.variable_declared_in_outer_scope", Constructor: "CypherCoreVariableDeclaredInOuterScope", Fields: []string{"Variable"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.vector_similarity_dimensions", Constructor: "CypherCoreVectorSimilarityDimensions", Fields: []string{"Function"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.vector_similarity_invalid_vector", Constructor: "CypherCoreVectorSimilarityInvalidVector", Fields: []string{"Argument", "Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.yield_pagination_invalid", Constructor: "CypherCoreYieldPaginationInvalid", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.yield_where_misplaced", Constructor: "CypherCoreYieldWhereMisplaced", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.build_graph_failed", Constructor: "CypherGraphProceduresBuildGraphFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
