@@ -873,9 +873,11 @@ func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName s
 		if err != nil || node == nil {
 			continue
 		}
+		// The index's score is on Neo4j's scale; the node's own vector gives
+		// the exact value vector.similarity.* returns for it.
 		score := hit.Score
-		if strings.EqualFold(similarityFunc, "cosine") {
-			score = clampCosineFastPathScore(score)
+		if exact, ok := scoreNodeVectorForFastPath(node, targetProperty, similarityFunc, queryVector); ok {
+			score = exact
 		}
 		out = append(out, vectorNodeScore{node: node, score: score})
 	}
@@ -1149,28 +1151,22 @@ func scoreNodeVectorForFastPath(node *storage.Node, property string, similarity 
 	return bestScore, true
 }
 
+// scoreVectorForFastPath is embedding's score against queryVector, as
+// vector.similarity.cosine / .euclidean compute it (Neo4j's scale, #907) or
+// the dot product for NornicDB's dot similarity; ok is false for a vector of
+// another length or one that isn't valid for the similarity.
 func scoreVectorForFastPath(queryVector []float32, embedding []float32, similarity string) (float64, bool) {
 	if len(embedding) == 0 || len(embedding) != len(queryVector) {
 		return 0, false
 	}
 	switch lowerASCII(strings.TrimSpace(similarity)) {
 	case "euclidean":
-		return vector.EuclideanSimilarity(queryVector, embedding), true
+		return vector.Neo4jEuclideanSimilarity(queryVector, embedding)
 	case "dot":
 		return vector.DotProduct(queryVector, embedding), true
 	default:
-		return clampCosineFastPathScore(vector.CosineSimilarity(queryVector, embedding)), true
+		return vector.Neo4jCosineSimilarity(queryVector, embedding)
 	}
-}
-
-func clampCosineFastPathScore(score float64) float64 {
-	if score > 1.0 {
-		return 1.0
-	}
-	if score < -1.0 {
-		return -1.0
-	}
-	return score
 }
 
 func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, indexName string, limit int, queryExpr string, orderDesc bool) ([]vectorEdgeScore, bool) {
@@ -1215,18 +1211,9 @@ func (e *StorageExecutor) fetchCosineRelationshipScores(ctx context.Context, ind
 		if targetProperty == "" {
 			continue
 		}
-		embedding := toFloat32Slice(edge.Properties[targetProperty])
-		if len(embedding) == 0 || len(embedding) != len(vec) {
+		score, ok := scoreVectorForFastPath(vec, toFloat32Slice(edge.Properties[targetProperty]), similarityFunc)
+		if !ok {
 			continue
-		}
-		score := 0.0
-		switch similarityFunc {
-		case "euclidean":
-			score = vector.EuclideanSimilarity(vec, embedding)
-		case "dot":
-			score = vector.DotProduct(vec, embedding)
-		default:
-			score = clampCosineFastPathScore(vector.CosineSimilarity(vec, embedding))
 		}
 		out = append(out, vectorEdgeScore{edge: edge, score: score})
 	}

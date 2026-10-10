@@ -188,6 +188,10 @@
   other: "valor de {{.Type}} no válido: {{.Value}}"
 - id: cyphercore.function_argument_invalid
   other: "Entrada no válida para la función '{{.Function}}()': se esperaba {{.Expected}}, se obtuvo: {{.Value}}"
+- id: cyphercore.vector_similarity_invalid_vector
+  other: "Entrada no válida para 'vector.similarity.{{.Function}}()': el argumento {{.Argument}} no es un vector válido para esta función de similitud."
+- id: cyphercore.vector_similarity_dimensions
+  other: "Entrada no válida para 'vector.similarity.{{.Function}}()': los vectores proporcionados no tienen el mismo número de dimensiones."
 - id: cyphercore.temporal_call_signature
   other: "Firma de llamada no válida para {{.Type}}Function: la entrada proporcionada fue [{{.Provided}}]"
 - id: cyphercore.temporal_procedure_call_signature

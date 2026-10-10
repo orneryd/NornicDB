@@ -105,6 +105,8 @@ const (
 	MessageCypherCoreApocPathConfigString                MessageID = "cyphercore.apoc_path_config_string"
 	MessageCypherCoreApocPathLimit                       MessageID = "cyphercore.apoc_path_limit"
 	MessageCypherCoreFunctionArgumentInvalid             MessageID = "cyphercore.function_argument_invalid"
+	MessageCypherCoreVectorSimilarityInvalidVector       MessageID = "cyphercore.vector_similarity_invalid_vector"
+	MessageCypherCoreVectorSimilarityDimensions          MessageID = "cyphercore.vector_similarity_dimensions"
 )
 
 func cypherCoreMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -437,6 +439,21 @@ func CypherCoreTemporalMapInvalid(typeName string, value string) Message {
 // Neo4j's rendering of the argument: Long(1), Double(2.500000e+00), ….
 func CypherCoreFunctionArgumentInvalid(function, expected, value string) Message {
 	return cypherCoreMessage(MessageCypherCoreFunctionArgumentInvalid, "Invalid input for function '"+function+"()': Expected "+expected+", got: "+value, map[string]any{"Function": function, "Expected": expected, "Value": value})
+}
+
+// CypherCoreVectorSimilarityInvalidVector is Neo4j's ArgumentError for a
+// vector.similarity.cosine / .euclidean argument that isn't a valid vector
+// for the function (empty, a coordinate that isn't a finite number, or for
+// cosine a zero vector). Function is cosine or euclidean, Argument a or b.
+func CypherCoreVectorSimilarityInvalidVector(function, argument string) Message {
+	return cypherCoreMessage(MessageCypherCoreVectorSimilarityInvalidVector, "Invalid input for 'vector.similarity."+function+"()': Argument "+argument+" is not a valid vector for this similarity function.", map[string]any{"Function": function, "Argument": argument})
+}
+
+// CypherCoreVectorSimilarityDimensions is Neo4j's ArgumentError for
+// vector.similarity.cosine / .euclidean given vectors of different
+// dimensions. Function is cosine or euclidean.
+func CypherCoreVectorSimilarityDimensions(function string) Message {
+	return cypherCoreMessage(MessageCypherCoreVectorSimilarityDimensions, "Invalid input for 'vector.similarity."+function+"()': The supplied vectors do not have the same number of dimensions.", map[string]any{"Function": function})
 }
 
 func CypherCoreTemporalCallSignature(typeName string, provided string) Message {

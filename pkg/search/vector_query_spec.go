@@ -83,6 +83,11 @@ type RelationshipVectorQueryHit struct {
 //
 // For performance, cosine-similarity queries are executed against the in-memory
 // vector index (unified pipeline) rather than scanning storage.
+//
+// Scores are on Neo4j's scale for its vector indexes (#907): cosine
+// max((1 + cos) / 2, 0) and euclidean 1 / (1 + d²), both in [0, 1]
+// (vector.Neo4jCosineSimilarity, vector.Neo4jEuclideanSimilarity); dot, a
+// NornicDB similarity, is the dot product.
 func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec) ([]VectorQueryHit, error) {
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
@@ -115,7 +120,11 @@ func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32
 
 	// Fast path: cosine queries can use the indexed vector pipeline.
 	if strings.EqualFold(similarity, "cosine") {
-		return s.vectorQueryNodesIndexed(ctx, queryEmbedding, spec, vectorName)
+		hits, err := s.vectorQueryNodesIndexed(ctx, queryEmbedding, spec, vectorName)
+		for i := range hits {
+			hits[i].Score = neo4jCosineScore(hits[i].Score)
+		}
+		return hits, err
 	}
 
 	// Exact (index-backed) path for dot/euclidean: compute per-node scores from in-memory vectors
@@ -182,12 +191,9 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 			return nil, ctx.Err()
 		default:
 		}
-		var score float64
-		switch similarity {
-		case "cosine":
-			score = clampCosine(vector.CosineSimilarity(queryEmbedding, cand.vec))
-		default:
-			score = cypherVectorSimilarity(similarity, queryEmbedding, cand.vec)
+		score := cypherVectorSimilarity(similarity, queryEmbedding, cand.vec)
+		if math.IsInf(score, -1) {
+			continue
 		}
 		scored = append(scored, scoredEdge{id: cand.id, score: score})
 	}
@@ -599,15 +605,31 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 	return out, nil
 }
 
+// cypherVectorSimilarity is a candidate's score for a Cypher vector query, on
+// Neo4j's scale (see VectorQueryNodes); a vector that isn't valid for the
+// similarity (a zero vector for cosine) scores -Inf, no hit.
 func cypherVectorSimilarity(similarity string, query []float32, candidate []float32) float64 {
+	var score float64
+	var ok bool
 	switch similarity {
 	case "euclidean":
-		return vector.EuclideanSimilarity(query, candidate)
+		score, ok = vector.Neo4jEuclideanSimilarity(query, candidate)
 	case "dot":
 		return float64(vector.DotProduct(query, candidate))
 	default:
-		return vector.CosineSimilarity(query, candidate)
+		score, ok = vector.Neo4jCosineSimilarity(query, candidate)
 	}
+	if !ok {
+		return math.Inf(-1)
+	}
+	return score
+}
+
+// neo4jCosineScore maps a cosine in [-1, 1] from the vector index to Neo4j's
+// cosine score, max((1 + cos) / 2, 0), in float32 as Neo4j's index scores
+// are.
+func neo4jCosineScore(cosine float64) float64 {
+	return float64(float32(math.Max((1+cosine)/2, 0)))
 }
 
 func resolveCypherCandidateEmbeddings(node *storage.Node, propertyKey string, vectorName string) [][]float32 {

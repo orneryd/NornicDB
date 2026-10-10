@@ -201,7 +201,9 @@ func TestIndexEdge_ReplacesExistingRelationshipVectors(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	require.Equal(t, "r1", hits[0].ID)
-	require.Less(t, hits[0].Score, 0.1)
+	// The replaced vector is orthogonal to the query: Neo4j's cosine score
+	// 0.5 (the old one would score 1).
+	require.Equal(t, 0.5, hits[0].Score)
 }
 
 func BenchmarkRelationshipVectorQueryIndexedVsStorageScan(b *testing.B) {

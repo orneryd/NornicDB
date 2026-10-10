@@ -188,6 +188,10 @@
   other: "[!! invalid {{.Type}} value: {{.Value}} !!]"
 - id: cyphercore.function_argument_invalid
   other: "[!! Invalid input for function '{{.Function}}()': Expected {{.Expected}}, got: {{.Value}} !!]"
+- id: cyphercore.vector_similarity_invalid_vector
+  other: "[!! Invalid input for 'vector.similarity.{{.Function}}()': Argument {{.Argument}} is not a valid vector for this similarity function. !!]"
+- id: cyphercore.vector_similarity_dimensions
+  other: "[!! Invalid input for 'vector.similarity.{{.Function}}()': The supplied vectors do not have the same number of dimensions. !!]"
 - id: cyphercore.temporal_call_signature
   other: "[!! Invalid call signature for {{.Type}}Function: Provided input was [{{.Provided}}] !!]"
 - id: cyphercore.temporal_procedure_call_signature
