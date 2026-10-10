@@ -89,22 +89,13 @@ func isStandaloneExistsSubquery(expr string) bool {
 }
 
 // evaluateExistsSubqueryValue evaluates a standalone EXISTS { ... } expression
-// against the entities bound in the current row. It shares the WHERE
-// predicate's correlated evaluation (evaluateRowExistsPredicate), so an EXISTS
-// value and an EXISTS filter always agree.
+// against the current row: the value scope of ctx (a quantifier's or
+// comprehension's variable, the row's scalars) and the entities bound in the
+// row, which shadow it. It shares the WHERE predicate's correlated evaluation
+// (evaluateRowExistsPredicate), so an EXISTS value and an EXISTS filter
+// always agree.
 func (e *StorageExecutor) evaluateExistsSubqueryValue(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
-	values := make(map[string]interface{}, len(nodes)+len(rels))
-	for name, node := range nodes {
-		if node != nil {
-			values[name] = node
-		}
-	}
-	for name, relationship := range rels {
-		if relationship != nil {
-			values[name] = relationship
-		}
-	}
-	matched, _ := e.evaluateRowExistsPredicate(ctx, expr, values)
+	matched, _ := e.evaluateRowExistsPredicate(ctx, expr, entityRow(ctx, nodes, rels))
 	return matched
 }
 
@@ -407,8 +398,8 @@ func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, exp
 		trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
 	}
 	if chainEnd, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain && chainEnd == len(trimmed) {
-		nodes, rels := entityScopesFromValues(values)
-		return e.evaluateExistsSubqueryValue(ctx, "EXISTS { "+trimmed+" }", nodes, rels), true, true
+		matched, _ := e.evaluateRowExistsPredicate(ctx, "EXISTS { "+trimmed+" }", values)
+		return matched, true, true
 	}
 	logicalValue, logical, logicalOK, err := evaluateLogicalExpression(trimmed, func(operand string) (interface{}, bool, error) {
 		operandValue, resolved := e.evaluateRowExpressionWithContext(ctx, operand, values)

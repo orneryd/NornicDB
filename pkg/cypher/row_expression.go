@@ -221,7 +221,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		return result, true, nil
 	}
 
-	if value, matched, ok, err := e.evaluateRowQuantifier(expr, values); matched {
+	if value, matched, ok, err := e.evaluateRowQuantifier(expr, values, e.evaluateRowValue); matched {
 		return value, ok, err
 	}
 
@@ -281,7 +281,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			value, handled, err := e.evaluateShortestPathValue(search, function, argument, nodes)
 			return value, handled, err
 		case "reduce", "allreduce":
-			return e.evaluateRowReduce(function, argument, values)
+			return e.evaluateRowReduce(function, argument, values, e.evaluateRowValue)
 		case "coalesce":
 			// Undefined operands behave as null, matching the shared/fn-level
 			// coalesce: only the first non-null, resolved operand wins. EXISTS
@@ -1374,7 +1374,15 @@ func isBinaryRowSubtraction(left string) bool {
 	return !strings.ContainsRune("+-*/%(<>=,", rune(last))
 }
 
-func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]interface{}) (interface{}, bool, bool, error) {
+// rowValueEvaluator evaluates an expression over a row: the row evaluator
+// (evaluateRowValue), or, for a scope whose expressions hold subqueries, the
+// context evaluator (rowSubqueryValue).
+type rowValueEvaluator func(expr string, values map[string]interface{}) (interface{}, bool, error)
+
+// evaluateRowQuantifier is all / any / none / single(x IN list WHERE p) for a
+// row, each predicate evaluated by evaluate with x bound; matched is false for
+// any other expression.
+func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]interface{}, evaluate rowValueEvaluator) (interface{}, bool, bool, error) {
 	function, inner, isFunction := parseFunctionCallWS(expr)
 	function = lowerASCII(function)
 	if !isFunction || !isQuantifierFunction(function) {
@@ -1384,7 +1392,7 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 	if !parsed {
 		return nil, true, false, nil
 	}
-	listValue, ok, err := e.evaluateRowValue(listExpression, values)
+	listValue, ok, err := evaluate(listExpression, values)
 	if err != nil {
 		return nil, true, false, err
 	}
@@ -1402,12 +1410,14 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 			scope[name] = value
 		}
 		scope[variable] = item
-		result, evaluated, err := e.evaluateRowValue(predicate, scope)
+		result, evaluated, err := evaluate(predicate, scope)
 		if err != nil {
 			return nil, true, false, err
 		}
 		if !evaluated {
-			result = nil
+			// A predicate that can't be evaluated is not null: the whole
+			// quantifier is unresolved.
+			return nil, true, false, nil
 		}
 		if _, isBool := result.(bool); !isBool && result != nil {
 			return nil, true, false, nil
@@ -2097,7 +2107,7 @@ func (e *StorageExecutor) rowExistsSubqueryMatches(ctx context.Context, exists s
 	// which sees every row value; the path matcher sees only entities. So
 	// does a shortestPath or selected pattern (ANY SHORTEST) or a MATCH
 	// REPEATABLE ELEMENTS, which only the pipeline's MATCH step runs.
-	if subqueryReadsScalarRowValue(subquery, values) || indexASCIIFold(subquery, "shortestpath") >= 0 ||
+	if subqueryReadsScalarRowValue(subquery, values) || subqueryPropertyMapReadsRowValue(subquery, values) || indexASCIIFold(subquery, "shortestpath") >= 0 ||
 		indexASCIIFold(subquery, repeatableElementsFunction) >= 0 {
 		return e.existsFromRows(ctx, subquery+" RETURN 1 AS __exists", values), true
 	}

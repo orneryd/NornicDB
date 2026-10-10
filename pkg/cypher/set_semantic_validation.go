@@ -248,9 +248,7 @@ func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindi
 // It is the one reference scanner for the static SET and CREATE checks.
 func expressionFreeVariables(expression string) []string {
 	expression = maskTypePredicateTypes(maskPathFunctionCalls(expression))
-	locals := make(map[string]struct{})
-	collectListComprehensionBindings(expression, locals)
-	collectFunctionExpressionBindings(expression, locals)
+	locals := expressionLocalBindings(expression)
 	var names []string
 	delimiters := make([]byte, 0, 8)
 	for index := 0; index < len(expression); {
@@ -422,6 +420,19 @@ func expressionFreeVariables(expression string) []string {
 		}
 	}
 	return names
+}
+
+// expressionLocalBindings returns the variables an expression binds itself,
+// at any depth: list comprehension iterators and the variables of reduce /
+// all / any / none / single / filter. It is the one owner of an expression's
+// local names for the reference scanners (expressionFreeVariables,
+// semanticFreeReferences) and the static checks, so a scope nested in another
+// ([w IN l | any(v IN [w] WHERE v > 0)]) is local wherever it is read.
+func expressionLocalBindings(expression string) map[string]struct{} {
+	locals := make(map[string]struct{})
+	collectListComprehensionBindings(expression, locals)
+	collectFunctionExpressionBindings(expression, locals)
+	return locals
 }
 
 func collectFunctionExpressionBindings(expression string, bindings map[string]struct{}) {

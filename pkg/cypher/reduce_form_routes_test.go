@@ -59,10 +59,10 @@ func TestReduceFormRoutes(t *testing.T) {
 
 	// Guards for forms the statement checks reject first.
 	require.Nil(t, exec.evaluateExpressionWithContextFull(ctx, "reduce(a, x IN [1] | x)", nil, nil, nil, nil, nil, 0))
-	_, resolved, err := exec.evaluateRowReduce("reduce", "a, x IN [1] | x", map[string]interface{}{})
+	_, resolved, err := exec.evaluateRowReduce("reduce", "a, x IN [1] | x", map[string]interface{}{}, exec.evaluateRowValue)
 	require.NoError(t, err)
 	require.False(t, resolved)
-	_, resolved, err = exec.evaluateRowReduce("reduce", "a = 0, x IN [1] | a + $missing.p", map[string]interface{}{})
+	_, resolved, err = exec.evaluateRowReduce("reduce", "a = 0, x IN [1] | a + $missing.p", map[string]interface{}{}, exec.evaluateRowValue)
 	require.False(t, resolved, "a step the row evaluator can't resolve")
 	_ = err
 }

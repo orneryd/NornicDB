@@ -853,9 +853,7 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 			return nil
 		}
 		if locals == nil {
-			locals = make(map[string]struct{})
-			collectListComprehensionBindings(text, locals)
-			collectFunctionExpressionBindings(text, locals)
+			locals = expressionLocalBindings(text)
 		}
 		if _, shadowed := locals[variable]; shadowed {
 			return nil

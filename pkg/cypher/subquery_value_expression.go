@@ -22,13 +22,57 @@ import (
 // evaluated directly by the evaluators.
 
 // subqueryExpression is one EXISTS / COUNT / COLLECT { body } occurrence, or
-// a list comprehension whose filter or projection contains one (kind
-// COMPREHENSION, body the text between the brackets): its subqueries may use
-// the comprehension variable, so it is evaluated element by element.
+// a scope that binds a variable and holds one: a list comprehension (kind
+// COMPREHENSION, body the text between the brackets), a quantifier (kind
+// QUANTIFIER, body the whole all / any / none / single call) or a reduce /
+// allReduce (kind REDUCE, body the whole call). A scope's subqueries
+// may read its variable, so the scope is evaluated element by element.
 type subqueryExpression struct {
-	kind       string // EXISTS, COUNT, COLLECT or COMPREHENSION
+	kind       string // EXISTS, COUNT, COLLECT, COMPREHENSION, QUANTIFIER or REDUCE
 	start, end int    // expression text [start, end)
 	body       string
+}
+
+// scope reports whether s is a scope holding subqueries rather than a
+// subquery expression.
+func (s subqueryExpression) scope() bool {
+	return s.kind == "COMPREHENSION" || s.kind == "QUANTIFIER" || s.kind == "REDUCE"
+}
+
+// variableScopeCallAt returns the all / any / none / single or reduce call at
+// expr[i:] when its arguments hold a subquery expression, and false for any
+// other text.
+func variableScopeCallAt(expr string, i int) (subqueryExpression, bool) {
+	if i > 0 && (isIdentByte(expr[i-1]) || expr[i-1] == '.' || expr[i-1] == '$') {
+		return subqueryExpression{}, false
+	}
+	nameEnd := i
+	for nameEnd < len(expr) && isIdentByte(expr[nameEnd]) {
+		nameEnd++
+	}
+	name := lowerASCII(expr[i:nameEnd])
+	if !isReduceFormFunction(name) && !isQuantifierFunction(name) {
+		return subqueryExpression{}, false
+	}
+	open := skipSpaces(expr, nameEnd)
+	if open >= len(expr) || expr[open] != '(' {
+		return subqueryExpression{}, false
+	}
+	closing := findMatchingParen(expr, open)
+	if closing < 0 {
+		return subqueryExpression{}, false
+	}
+	inner := expr[open+1 : closing]
+	if !mayContainSubqueryExpression(inner) || len(findSubqueryExpressions(inner)) == 0 {
+		return subqueryExpression{}, false
+	}
+	if isReduceFormFunction(name) {
+		return subqueryExpression{kind: "REDUCE", start: i, end: closing + 1, body: expr[i : closing+1]}, true
+	}
+	if _, _, _, parsed := parseQuantifierArguments(inner); !parsed {
+		return subqueryExpression{}, false
+	}
+	return subqueryExpression{kind: "QUANTIFIER", start: i, end: closing + 1, body: expr[i : closing+1]}, true
 }
 
 var subqueryExpressionKeywords = [...]string{"EXISTS", "COUNT", "COLLECT"}
@@ -74,6 +118,13 @@ func findSubqueryExpressions(expr string) []subqueryExpression {
 				}
 			}
 		}
+		if c := expr[i] | 0x20; c == 'a' || c == 'n' || c == 's' || c == 'r' {
+			if scope, ok := variableScopeCallAt(expr, i); ok {
+				found = append(found, scope)
+				i = scope.end
+				continue
+			}
+		}
 		matched := false
 		for _, keyword := range subqueryExpressionKeywords {
 			if !matchKeywordAt(expr, i, keyword) {
@@ -111,7 +162,7 @@ func nestedSubqueryExpressions(expr string) []subqueryExpression {
 		return nil
 	}
 	found := findSubqueryExpressions(expr)
-	if len(found) == 0 || (len(found) == 1 && found[0].kind != "COMPREHENSION" && found[0].start == 0 && found[0].end == len(expr)) {
+	if len(found) == 0 || (len(found) == 1 && !found[0].scope() && found[0].start == 0 && found[0].end == len(expr)) {
 		return nil
 	}
 	return found
@@ -125,7 +176,7 @@ func standaloneSubqueryExpression(expr string) (subqueryExpression, bool) {
 		return subqueryExpression{}, false
 	}
 	found := findSubqueryExpressions(expr)
-	if len(found) != 1 || found[0].kind == "COMPREHENSION" || found[0].start != 0 || found[0].end != len(expr) {
+	if len(found) != 1 || found[0].scope() || found[0].start != 0 || found[0].end != len(expr) {
 		return subqueryExpression{}, false
 	}
 	return found[0], true
@@ -311,6 +362,21 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		value, ok := e.evaluateRowComprehensionWithSubqueries(ctx, body, values)
 		return value, ok, nil
 	}
+	if kind == "QUANTIFIER" || kind == "REDUCE" {
+		// The row evaluators run the scope; its expressions, which hold the
+		// subqueries, run on the context evaluator with the scope's variable
+		// bound.
+		evaluate := func(expression string, scope map[string]interface{}) (interface{}, bool, error) {
+			value, ok := e.evaluateRowExpressionWithContext(ctx, expression, scope)
+			return value, ok, nil
+		}
+		if kind == "REDUCE" {
+			function, arguments, _ := parseFunctionCallWS(body)
+			return e.evaluateRowReduce(function, arguments, values, evaluate)
+		}
+		value, _, ok, err := e.evaluateRowQuantifier(body, values, evaluate)
+		return value, ok, err
+	}
 	if kind == "EXISTS" {
 		value, ok := e.evaluateRowExistsPredicate(ctx, "EXISTS {"+body+"}", values)
 		return value, ok, nil
@@ -485,10 +551,48 @@ func subqueryReadsScalarRowValue(body string, values map[string]interface{}) boo
 	return false
 }
 
-// entityRow is the row of an expression evaluated over node and relationship
-// bindings.
-func entityRow(nodes map[string]*storage.Node, rels map[string]*storage.Edge) pipelineRow {
-	values := make(pipelineRow, len(nodes)+len(rels))
+// subqueryPropertyMapReadsRowValue reports whether a pattern property map in
+// body (a map inside a node or relationship pattern, not a CALL { } body)
+// reads a value of the row ((n {id: r.prop}), (n {id: r.ids[0]})): the path
+// matcher matches literal and parameter maps only, so such a body runs as a
+// correlated pipeline, which evaluates the map with the row.
+func subqueryPropertyMapReadsRowValue(body string, values map[string]interface{}) bool {
+	depth := 0
+	for index := 0; index < len(body); index++ {
+		switch c := body[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(body, index, c) - 1
+		case '(', '[':
+			depth++
+		case ')', ']':
+			depth--
+		case '{':
+			if depth <= 0 {
+				continue
+			}
+			close := findMatchingDelimiter(body, index, '{', '}')
+			if close < 0 {
+				return false
+			}
+			properties := body[index+1 : close]
+			for name := range values {
+				if containsIdentifierWord(properties, name) {
+					return true
+				}
+			}
+			index = close
+		}
+	}
+	return false
+}
+
+// entityRow is the row an expression evaluated over node and relationship
+// bindings sees, as its subqueries see it: the value scope of ctx (the row's
+// other values, a comprehension's or quantifier's variable) with the nodes
+// and relationships, which shadow it. Every subquery the node and
+// relationship evaluator runs reads its row from here.
+func entityRow(ctx context.Context, nodes map[string]*storage.Node, rels map[string]*storage.Edge) pipelineRow {
+	values := pipelineRow(valueBindingsLayer(ctx, len(nodes)+len(rels)))
 	for name, node := range nodes {
 		if node != nil {
 			values[name] = node

@@ -1,17 +1,19 @@
 package cypher
 
-// evaluateRowReduce evaluates reduce and allReduce (parseReduceForm) in the
-// row evaluator; resolved is false when a part can't be evaluated here.
-func (e *StorageExecutor) evaluateRowReduce(function, argument string, values map[string]interface{}) (interface{}, bool, error) {
+// evaluateRowReduce evaluates reduce and allReduce (parseReduceForm) for a
+// row, every part evaluated by evaluate (the row evaluator, or the context
+// evaluator for a reduce whose expressions hold subqueries); resolved is false
+// when a part can't be evaluated.
+func (e *StorageExecutor) evaluateRowReduce(function, argument string, values map[string]interface{}, evaluate rowValueEvaluator) (interface{}, bool, error) {
 	form, ok := parseReduceForm(function, argument)
 	if !ok {
 		return nil, false, nil
 	}
-	accumulator, resolved, err := e.evaluateRowValue(form.initial, values)
+	accumulator, resolved, err := evaluate(form.initial, values)
 	if err != nil || !resolved {
 		return nil, false, err
 	}
-	listValue, resolved, err := e.evaluateRowValue(form.list, values)
+	listValue, resolved, err := evaluate(form.list, values)
 	if err != nil || !resolved {
 		return nil, false, err
 	}
@@ -22,17 +24,17 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 	for name, value := range values {
 		scope[name] = value
 	}
-	evaluate := func(expression string) func(accumulator, item interface{}) (interface{}, error) {
+	step := func(expression string) func(accumulator, item interface{}) (interface{}, error) {
 		return func(accumulator, item interface{}) (interface{}, error) {
 			scope[form.accumulator], scope[form.variable] = accumulator, item
-			value, resolved, err := e.evaluateRowValue(expression, scope)
+			value, resolved, err := evaluate(expression, scope)
 			if err == nil && !resolved {
 				err = errRowArgumentUnresolved
 			}
 			return value, err
 		}
 	}
-	result, err := runReduceForm(form, accumulator, coerceToUnwindItems(listValue), evaluate(form.step), evaluate(form.predicate))
+	result, err := runReduceForm(form, accumulator, coerceToUnwindItems(listValue), step(form.step), step(form.predicate))
 	if err == errRowArgumentUnresolved {
 		return nil, false, nil
 	}

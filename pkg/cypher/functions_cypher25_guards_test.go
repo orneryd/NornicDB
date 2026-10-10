@@ -214,8 +214,8 @@ func TestReduceFormAndPatternHelpers(t *testing.T) {
 	_, offset := time.Date(2020, 1, 1, 0, 0, 0, 0, location).Zone()
 	require.Equal(t, -19_800, offset)
 
-	require.Empty(t, quantifiedExpressionBindings("reduce + 1"))
-	require.Empty(t, quantifiedExpressionBindings("reduce(s = 0"))
+	require.Empty(t, expressionLocalBindings("reduce + 1"))
+	require.Empty(t, expressionLocalBindings("reduce(s = 0"))
 	require.NoError(t, checkReduceForm("allReduce", "allReduce(a", 9, nil))
 	rewritten, rewrite := canonicalizeFunctionAliases("WITH 1 AS ln RETURN ln, PROPERTY_EXISTS(n.s, s), property_exists(n s), property_exists(n, s t)")
 	require.Nil(t, rewrite)
