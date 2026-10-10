@@ -230,8 +230,10 @@ orderSt
     : ORDER BY orderItem (COMMA orderItem)*
     ;
 
+// Reads may follow writes without a WITH (CREATE … MATCH … RETURN), as in
+// Neo4j 5 and 25.
 singlePartQ
-    : readingStatement* (returnSt | updatingStatement+ embeddingSt? returnSt?)?
+    : readingStatement* (returnSt | updatingStatement (readingStatement | updatingStatement)* embeddingSt? returnSt?)?
     | callSubquery orderSt?
     ;
 
