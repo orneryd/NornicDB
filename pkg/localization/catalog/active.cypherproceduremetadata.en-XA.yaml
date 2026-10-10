@@ -60,11 +60,11 @@
   other: "[!! Hybrid retrieval + rerank procedure !!]"
 - id: cypherproceduremetadata.db_schema_nodeproperties
   other: "[!! Returns node properties by label !!]"
+- id: cypherproceduremetadata.db_schema_nodetypeproperties
+  other: "[!! Show the derived property schema of the nodes in tabular form. !!]"
 - id: cypherproceduremetadata.db_schema_relproperties
   other: "[!! Returns relationship properties by type !!]"
-- id: cypherproceduremetadata.db_schema_node_type_properties
-  other: "[!! Show the derived property schema of the nodes in tabular form. !!]"
-- id: cypherproceduremetadata.db_schema_rel_type_properties
+- id: cypherproceduremetadata.db_schema_reltypeproperties
   other: "[!! Show the derived property schema of the relationships in tabular form. !!]"
 - id: cypherproceduremetadata.db_schema_visualization
   other: "[!! Visualizes the schema of the data based on available statistics. A new node is returned for each label. The properties represented on the node include: `name` (label name), `indexes` (list of indexes), and `constraints` (list of constraints). A relationship of a given type is returned for all possible combinations of start and end nodes. The properties represented on the relationship include: `name` (type name). Note that this may include additional relationships that do not exist in the data from independently observed start and end label sets.  !!]"

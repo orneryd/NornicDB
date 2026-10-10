@@ -34,10 +34,10 @@ const (
 	MessageCypherProcedureMetadataDbRetrieve                                    MessageID = "cypherproceduremetadata.db_retrieve"
 	MessageCypherProcedureMetadataDbRretrieve                                   MessageID = "cypherproceduremetadata.db_rretrieve"
 	MessageCypherProcedureMetadataDbSchemaNodeProperties                        MessageID = "cypherproceduremetadata.db_schema_nodeproperties"
+	MessageCypherProcedureMetadataDbSchemaNodeTypeProperties                    MessageID = "cypherproceduremetadata.db_schema_nodetypeproperties"
 	MessageCypherProcedureMetadataDbSchemaRelProperties                         MessageID = "cypherproceduremetadata.db_schema_relproperties"
+	MessageCypherProcedureMetadataDbSchemaRelTypeProperties                     MessageID = "cypherproceduremetadata.db_schema_reltypeproperties"
 	MessageCypherProcedureMetadataDbSchemaVisualization                         MessageID = "cypherproceduremetadata.db_schema_visualization"
-	MessageCypherProcedureMetadataDbSchemaNodeTypeProperties                    MessageID = "cypherproceduremetadata.db_schema_node_type_properties"
-	MessageCypherProcedureMetadataDbSchemaRelTypeProperties                     MessageID = "cypherproceduremetadata.db_schema_rel_type_properties"
 	MessageCypherProcedureMetadataDbStatsClear                                  MessageID = "cypherproceduremetadata.db_stats_clear"
 	MessageCypherProcedureMetadataDbStatsCollect                                MessageID = "cypherproceduremetadata.db_stats_collect"
 	MessageCypherProcedureMetadataDbStatsRetrieve                               MessageID = "cypherproceduremetadata.db_stats_retrieve"
@@ -233,14 +233,14 @@ func CypherProcedureMetadataDbSchemaNodeProperties() Message {
 	return Message{ID: MessageCypherProcedureMetadataDbSchemaNodeProperties, Fallback: "Returns node properties by label"}
 }
 
-// CypherProcedureMetadataDbSchemaRelProperties describes db.schema.relProperties in procedure listings.
-func CypherProcedureMetadataDbSchemaRelProperties() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbSchemaRelProperties, Fallback: "Returns relationship properties by type"}
-}
-
 // CypherProcedureMetadataDbSchemaNodeTypeProperties describes db.schema.nodeTypeProperties in procedure listings.
 func CypherProcedureMetadataDbSchemaNodeTypeProperties() Message {
 	return Message{ID: MessageCypherProcedureMetadataDbSchemaNodeTypeProperties, Fallback: "Show the derived property schema of the nodes in tabular form."}
+}
+
+// CypherProcedureMetadataDbSchemaRelProperties describes db.schema.relProperties in procedure listings.
+func CypherProcedureMetadataDbSchemaRelProperties() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbSchemaRelProperties, Fallback: "Returns relationship properties by type"}
 }
 
 // CypherProcedureMetadataDbSchemaRelTypeProperties describes db.schema.relTypeProperties in procedure listings.
@@ -475,10 +475,10 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"db.retrieve":                                      CypherProcedureMetadataDbRetrieve,
 	"db.rretrieve":                                     CypherProcedureMetadataDbRretrieve,
 	"db.schema.nodeProperties":                         CypherProcedureMetadataDbSchemaNodeProperties,
-	"db.schema.relProperties":                          CypherProcedureMetadataDbSchemaRelProperties,
-	"db.schema.visualization":                          CypherProcedureMetadataDbSchemaVisualization,
 	"db.schema.nodeTypeProperties":                     CypherProcedureMetadataDbSchemaNodeTypeProperties,
+	"db.schema.relProperties":                          CypherProcedureMetadataDbSchemaRelProperties,
 	"db.schema.relTypeProperties":                      CypherProcedureMetadataDbSchemaRelTypeProperties,
+	"db.schema.visualization":                          CypherProcedureMetadataDbSchemaVisualization,
 	"db.stats.clear":                                   CypherProcedureMetadataDbStatsClear,
 	"db.stats.collect":                                 CypherProcedureMetadataDbStatsCollect,
 	"db.stats.retrieve":                                CypherProcedureMetadataDbStatsRetrieve,
