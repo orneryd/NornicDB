@@ -36,3 +36,27 @@ func TestNumericLiteralAfterColon(t *testing.T) {
 	_, err = exec.Execute(ctx, "CALL db.retrieve({query: 'source', limit: 10, minSimilarity:0.01}) YIELD node RETURN node", nil)
 	require.NoError(t, err)
 }
+
+// The check reads literals as Neo4j 5.26.30 does: text in comments isn't
+// one, a float too large is "floating point number is too large" (also
+// after a colon), and a literal followed by # is invalid input.
+func TestNumericLiteralCheckBoundaries(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "numeric_literal_boundaries"))
+	ctx := context.Background()
+	for _, query := range []string{
+		"RETURN 1 AS v // 00 and 0.01x",
+		"RETURN 1 AS v // 00\n",
+		"RETURN /* 00 */ 1 AS v",
+		"RETURN 1 AS v /* 1e999 */",
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows, query)
+	}
+	for _, query := range []string{"RETURN 0x1F# AS v", "RETURN 1.5# AS v", "RETURN 1e999 AS v", "RETURN {a:1e999} AS v"} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+		code, _ := nornicerrors.Neo4jStatus(err)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, query)
+	}
+}
