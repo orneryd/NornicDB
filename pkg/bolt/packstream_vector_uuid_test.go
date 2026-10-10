@@ -16,7 +16,12 @@ func TestPackStreamVectorAndUUIDPlaceholders(t *testing.T) {
 	} {
 		placeholder, ok := cypher.UnsupportedTypePlaceholder(value)
 		require.True(t, ok)
-		require.Equal(t, encodePackStreamMapIntoWithUTC(nil, placeholder, false), encodePackStreamValueIntoWithUTC(nil, value, false))
-		require.Equal(t, encodePackStreamMapIntoWithUTC(nil, placeholder, true), encodePackStreamValue(value))
+		// A map's keys go out in Go's map order, so the bytes are compared
+		// decoded.
+		for _, encoded := range [][]byte{encodePackStreamValueIntoWithUTC(nil, value, false), encodePackStreamValue(value)} {
+			decoded, _, err := decodePackStreamMap(encoded, 0)
+			require.NoError(t, err)
+			require.Equal(t, placeholder, decoded)
+		}
 	}
 }
