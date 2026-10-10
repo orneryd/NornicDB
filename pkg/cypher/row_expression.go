@@ -586,7 +586,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			value = rowIdentityPayload(value)
 		}
 		return value
-	}, compareCypherPredicateValue)
+	}, compareCypherPredicateValue, rowIsCypher25(values))
 	if comparison {
 		if operandErr != nil {
 			return nil, false, operandErr
@@ -1216,7 +1216,7 @@ func (e *StorageExecutor) evaluateRowCaseExpression(expr string, values map[stri
 			// compares (promoteConstantNumbers, compareCypherPredicateValue):
 			// [1, 2] matches [1, 2.0], and an unknown (null) result such as
 			// [1, null] against [1, null] doesn't match.
-			left, right := promoteConstantNumbers("=", parsed.testExpression, clause.value, testValue, whenValue)
+			left, right := promoteConstantNumbers("=", parsed.testExpression, clause.value, testValue, whenValue, rowIsCypher25(values))
 			if matched, _ := compareCypherPredicateValue(left, right, "=").(bool); matched {
 				return e.evaluateRowValue(clause.result, values)
 			}
@@ -1923,7 +1923,7 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 			value = rowIdentityPayload(value)
 		}
 		return value
-	}, compareCypherPredicateValue)
+	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25")
 	if comparison {
 		matched, known := comparisonResult.(bool)
 		return resolved && known && matched

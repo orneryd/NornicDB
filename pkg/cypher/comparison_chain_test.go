@@ -62,7 +62,7 @@ func TestComparisonChainsSupportArbitraryLength(t *testing.T) {
 
 	result, ok := evaluateComparisonChain("a < b = c <> d <= e", resolve, func(left, right interface{}, operator string) interface{} {
 		return compareWithOperator(left, right, operator)
-	})
+	}, false)
 	if !ok || result != true {
 		t.Fatalf("expected an arbitrary-length comparison chain to match, got %#v, %v", result, ok)
 	}

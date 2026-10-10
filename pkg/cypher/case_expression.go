@@ -301,7 +301,7 @@ func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr strin
 		for _, clause := range ce.whenClauses {
 			whenValue := e.evaluateExpressionWithContextFull(ctx, clause.value, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			// CASE x WHEN y compares as x = y does (promoteConstantNumbers).
-			if compareValues(promoteConstantNumbers("=", ce.testExpression, clause.value, testValue, whenValue)) {
+			if compareValues(promoteConstantNumbers("=", ce.testExpression, clause.value, testValue, whenValue, cypherVersionFromContext(ctx) == "25")) {
 				return e.evaluateExpressionWithContextFull(ctx, clause.result, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			}
 		}
@@ -359,7 +359,7 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 			return truth.value()
 		}
 	}
-	if result, ok := evaluateComparisonChain(condition, resolveComparisonOperand, compareCypherPredicateValue); ok {
+	if result, ok := evaluateComparisonChain(condition, resolveComparisonOperand, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25"); ok {
 		return result
 	}
 

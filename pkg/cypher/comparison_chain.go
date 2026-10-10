@@ -45,11 +45,13 @@ func (scan *comparisonChainScan) operand(expression string, index int) string {
 // evaluateComparisonChain evaluates every adjacent pair in a Cypher
 // comparison. Each operand is resolved once and then reused as the left side
 // of the next pair, so the implementation supports arbitrary chain length
-// without duplicating expression work.
+// without duplicating expression work. cypher25 is the statement's version,
+// which decides how constant numbers compare (promoteConstantNumbers).
 func evaluateComparisonChain(
 	expression string,
 	resolve func(string) interface{},
 	compare func(interface{}, interface{}, string) interface{},
+	cypher25 bool,
 ) (interface{}, bool) {
 	scan, ok := scanComparisonChain(expression)
 	if !ok {
@@ -81,7 +83,7 @@ func evaluateComparisonChain(
 			if operator == "!=" {
 				operator = "<>"
 			}
-			leftValue, rightValue := promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), left, right)
+			leftValue, rightValue := promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), left, right, cypher25)
 			comparison := compare(leftValue, rightValue, operator)
 			if comparison == nil {
 				hasNull = true

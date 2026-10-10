@@ -594,7 +594,7 @@ func (e *StorageExecutor) compileBindingComparisonTruth(clause string) (bindingW
 			if !ok {
 				return truthUnknown
 			}
-			if constantNumbers {
+			if constantNumbers && foldsConstantNumbers(op, rowIsCypher25(params)) {
 				leftValue, rightValue = promoteIntegerToFloat(leftValue, rightValue)
 			}
 			matched, known := handler.evaluate(leftValue, rightValue).(bool)
