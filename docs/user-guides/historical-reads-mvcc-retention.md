@@ -80,6 +80,8 @@ RETURN node
 
 That answers the business-time question: which row was valid at the requested `asOf` instant.
 
+The arguments are ordinary expressions (literals, parameters, variables). `asOf` and the stored validity properties may be `datetime()`, `date()` or `localdatetime()` values, ISO 8601 strings, or Unix seconds; they are read the same way the `TEMPORAL NO OVERLAP` constraint reads them, with a date or local date-time taken as UTC.
+
 You can also pin the query to a historical MVCC snapshot by supplying `systemTime` and, optionally, `systemSequence`:
 
 ```cypher
