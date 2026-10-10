@@ -1408,7 +1408,7 @@ func queryMayNeedCanonicalRewrite(query string) bool {
 	for i := 0; i < len(query); i++ {
 		switch c := query[i]; {
 		case c == ')' || c == ']' || c == '}' || c == '\'' || c == '"' || c == '`':
-			if gluedAliasKeywordAt(query, i+1) {
+			if gluedAliasKeywordAt(query, i+1) || c == '`' && aliasKeywordEndsAt(query, i) {
 				return true
 			}
 		case c == ' ':
@@ -1434,6 +1434,12 @@ func gluedAliasKeywordAt(query string, at int) bool {
 		return false
 	}
 	return at+2 == len(query) || isASCIISpace(query[at+2]) || query[at+2] == '`'
+}
+
+// aliasKeywordEndsAt reports whether the keyword AS ends right before the
+// backtick at query[at]: RETURN 1 AS`n` names the column n.
+func aliasKeywordEndsAt(query string, at int) bool {
+	return at >= 2 && equalFoldASCII(query[at-2:at], "AS") && (at == 2 || !isIdentByte(query[at-3]))
 }
 
 // canonicalizeQueryText returns the canonical form of query (see above) and
@@ -1483,6 +1489,12 @@ func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 	for index := 0; index < len(query); {
 		c := query[index]
 		if c == '\'' || c == '"' || c == '`' {
+			if c == '`' && index >= verbatimEnd && aliasKeywordEndsAt(query, index) {
+				replace(index, index, " ")
+				if memoized != nil {
+					return memoized.canonical, memoized
+				}
+			}
 			index = skipCypherQuotedText(query, index, c)
 			if index >= verbatimEnd && gluedAliasKeywordAt(query, index) {
 				replace(index, index, " ")

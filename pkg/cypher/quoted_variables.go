@@ -811,7 +811,9 @@ func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parse
 	}
 	for i, item := range items {
 		if item.alias != strings.TrimSpace(item.expr) {
-			result.Columns[i] = normalizeProjectionColumnName(item.alias)
+			// parseItems gives the alias's value already: unquoting it again
+			// would trim ` m` to m and read ```a``` as a.
+			result.Columns[i] = item.alias
 			continue
 		}
 		if name, isName := isOneSymbolicName(item.expr); isName {
