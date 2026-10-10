@@ -58,6 +58,19 @@ func TestAliasGluedToClosingBracket(t *testing.T) {
 	require.False(t, aliasKeywordEndsAt("HAS`", 3))
 	require.False(t, aliasKeywordEndsAt("S`", 1))
 	require.True(t, queryMayNeedCanonicalRewrite("RETURN 1 AS`n`"))
+	// Each spacing is memoized like the other canonical rewrites: the
+	// second read of a statement returns the first's rewrite.
+	for query, want := range map[string]string{
+		"RETURN 1 AS`n`":     "RETURN 1 AS `n`",
+		"RETURN 'a'AS s":     "RETURN 'a' AS s",
+		"RETURN [1][0]AS w ": "RETURN [1][0] AS w ",
+	} {
+		first, rewrite := canonicalizeQueryText(query)
+		require.Equal(t, want, first, query)
+		second, memoized := canonicalizeQueryText(query)
+		require.Equal(t, want, second, query)
+		require.Same(t, rewrite, memoized, query)
+	}
 	require.True(t, queryMayNeedCanonicalRewrite("RETURN [1][0]AS w"))
 	require.False(t, queryMayNeedCanonicalRewrite("RETURN [1][0] AS w ORDER BY (w)ASC"))
 }
