@@ -66,10 +66,10 @@ func init() {
 	cypherfn.Register("rtrim", fnTrimFunction("rtrim", false, true))
 	cypherfn.Register("trim", fnTrim)
 	cypherfn.Register("normalize", fnNormalize)
-	cypherfn.Register("tointegerlist", fnListConversion("toIntegerList", convertToIntegerOrNull))
-	cypherfn.Register("tofloatlist", fnListConversion("toFloatList", convertToFloatOrNull))
-	cypherfn.Register("tostringlist", fnListConversion("toStringList", convertToStringOrNull))
-	cypherfn.Register("tobooleanlist", fnListConversion("toBooleanList", convertToBooleanOrNull))
+	cypherfn.Register("tointegerlist", fnListConversion("toIntegerList", sameInEveryVersion(convertToIntegerOrNull)))
+	cypherfn.Register("tofloatlist", fnListConversion("toFloatList", sameInEveryVersion(convertToFloatOrNull)))
+	cypherfn.Register("tostringlist", fnListConversion("toStringList", convertToStringInVersion))
+	cypherfn.Register("tobooleanlist", fnListConversion("toBooleanList", sameInEveryVersion(convertToBooleanOrNull)))
 	cypherfn.Register("valuetype", fnValueType)
 	cypherfn.Register("nullif", fnNullIf)
 	cypherfn.Register("tail", fnTail)
@@ -77,9 +77,10 @@ func init() {
 		cypherfn.Register(name, fnStringOperation(name))
 	}
 	for _, name := range []string{"tointeger", "toint", "tofloat", "toboolean", "tostring"} {
-		convert := map[string]func(interface{}) interface{}{
-			"tointeger": convertToIntegerOrNull, "toint": convertToIntegerOrNull,
-			"tofloat": convertToFloatOrNull, "toboolean": convertToBooleanOrNull, "tostring": convertToStringOrNull,
+		convert := map[string]versionedConversion{
+			"tointeger": sameInEveryVersion(convertToIntegerOrNull), "toint": sameInEveryVersion(convertToIntegerOrNull),
+			"tofloat": sameInEveryVersion(convertToFloatOrNull), "toboolean": sameInEveryVersion(convertToBooleanOrNull),
+			"tostring": convertToStringInVersion,
 		}[name]
 		cypherfn.Register(name, fnScalarConversion(name, convert, false))
 		if name != "toint" {
@@ -276,7 +277,17 @@ func fnStringOperation(name string) cypherfn.Func {
 	}
 }
 
-func fnScalarConversion(name string, convert func(interface{}) interface{}, orNull bool) cypherfn.Func {
+// versionedConversion is a conversion function's value of value in a
+// statement of the version (cypher25): toString differs in Cypher 25
+// (convertToStringInVersion); the others are the same in every version.
+type versionedConversion func(value interface{}, cypher25 bool) interface{}
+
+// sameInEveryVersion is a conversion that doesn't depend on the version.
+func sameInEveryVersion(convert func(interface{}) interface{}) versionedConversion {
+	return func(value interface{}, _ bool) interface{} { return convert(value) }
+}
+
+func fnScalarConversion(name string, convert versionedConversion, orNull bool) cypherfn.Func {
 	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, argumentCountError(name, "1", len(args))
@@ -285,11 +296,11 @@ func fnScalarConversion(name string, convert func(interface{}) interface{}, orNu
 		if err != nil || value == nil {
 			return nil, err
 		}
-		if !orNull && !validConversionArgument(name, value) {
+		if !orNull && !validConversionArgument(name, value, ctx.Cypher25) {
 			return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentValue",
 				fmt.Sprintf("Invalid input for function '%s()': Expected %s, got: %s", conversionFunctionNames[name], conversionFunctionInputs[name], neo4jValueRepr(value)))
 		}
-		return convert(value), nil
+		return convert(value, ctx.Cypher25), nil
 	}
 }
 
@@ -650,7 +661,7 @@ func fnNormalize(ctx cypherfn.Context, args []string) (interface{}, error) {
 
 // fnListConversion converts every item of a list with convert: an item it
 // can't convert becomes null.
-func fnListConversion(name string, convert func(interface{}) interface{}) cypherfn.Func {
+func fnListConversion(name string, convert versionedConversion) cypherfn.Func {
 	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, argumentCountError(name, "1", len(args))
@@ -670,7 +681,7 @@ func fnListConversion(name string, convert func(interface{}) interface{}) cypher
 		}
 		converted := make([]interface{}, len(items))
 		for i, item := range items {
-			converted[i] = convert(item)
+			converted[i] = convert(item, ctx.Cypher25)
 		}
 		return converted, nil
 	}

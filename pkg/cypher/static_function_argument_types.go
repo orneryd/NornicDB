@@ -28,16 +28,33 @@ type staticArgumentType struct {
 	// unlisted are types accepted although the error doesn't name them
 	// (staticUnlistedArgumentTypes).
 	unlisted []string
-	// cypher5Only is set where Neo4j 2026.09 doesn't check the position
-	// when it compiles a Cypher 25 statement (staticCypher5OnlyFunctions):
-	// the evaluator's TypeError covers it there.
-	cypher5Only bool
+	// cypher25 is the check a Cypher 25 statement makes at the position
+	// instead, where Neo4j 2026.09 checks it otherwise than 5.26
+	// (staticCypher25Arguments); nil where both check it alike.
+	cypher25 *staticArgumentType
 }
 
-// staticCypher5OnlyFunctions are the functions whose arguments only Neo4j
-// 5.26 checks at compile time: Neo4j 2026.09 leaves reverse(1) to run time
-// (TypeError), with the same catalog signature.
-var staticCypher5OnlyFunctions = map[string]bool{"reverse": true}
+// inVersion is the check a statement of the version (cypher25) makes at the
+// argument's position.
+func (argument staticArgumentType) inVersion(cypher25 bool) staticArgumentType {
+	if cypher25 && argument.cypher25 != nil {
+		return *argument.cypher25
+	}
+	return argument
+}
+
+// staticCypher25Arguments are the positions Neo4j 2026.09 checks otherwise
+// than 5.26 when it compiles a Cypher 25 statement, as the types it accepts
+// there; "" leaves the position unchecked. reverse(1) is left to run time
+// (TypeError), with the same catalog signature, and toString also takes a
+// map, a graph entity and a list whose elements aren't known to share one
+// type (List<Any>: [1, 'a'], [null], []), but not a list known to hold one
+// type ([1] is a List<Integer>), which it writes as text at run time
+// (cypher25ValueText).
+var staticCypher25Arguments = map[string][]string{
+	"reverse":  {""},
+	"tostring": {"Boolean, Float, Integer, Point, String, UUID, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, Vector, List<Any>, Map, Node, Relationship or Path"},
+}
 
 // staticListAcceptingFunctions accept a list argument at compile time
 // although their "Type mismatch" error doesn't list one.
@@ -147,10 +164,12 @@ func buildStaticFunctionArguments() (map[string][]staticArgumentType, int) {
 			checked = true
 		}
 		if checked {
-			if staticCypher5OnlyFunctions[name] {
-				for index := range arguments {
-					arguments[index].cypher5Only = true
+			for index, accepted := range staticCypher25Arguments[name] {
+				cypher25 := staticArgumentType{}
+				if accepted != "" {
+					cypher25 = staticArgumentType{expected: accepted, options: staticTypeChoices(accepted)}
 				}
+				arguments[index].cypher25 = &cypher25
 			}
 			built[name] = arguments
 			longest = max(longest, len(name))
@@ -410,9 +429,7 @@ func trimFromArguments(inner string) (arguments []string, fromForm bool) {
 // Variables are checked clause by clause (validateStaticFunctionVariables).
 func validateStaticFunctionArguments(cypher string, cypher25 bool) error {
 	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string) error {
-		if argument.cypher5Only && cypher25 {
-			return nil
-		}
+		argument = argument.inVersion(cypher25)
 		typeName := staticLiteralTypeName(expression)
 		if typeName == "" {
 			typeName = staticValueCallType(expression)
@@ -522,9 +539,7 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 			built := scopeOf()
 			scope = &built
 		}
-		if argument.cypher5Only && scope.cypher25 {
-			return nil
-		}
+		argument = argument.inVersion(scope.cypher25)
 		typeName := scope.staticExpressionType(expression)
 		if typeName == "" || argument.accepts(typeName) {
 			return nil
