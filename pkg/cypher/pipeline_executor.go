@@ -1859,6 +1859,9 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 		}
 		return e.pipelineApplyShortestPathMatch(ctx, rows, shortest, true)
 	}
+	if err := validateBoundPatternNodes(rows, strings.TrimSpace(clause[len("OPTIONAL MATCH"):])); err != nil {
+		return nil, err
+	}
 	optionalClause := splitOptionalMatchClauses(strings.TrimSpace(clause[len("OPTIONAL MATCH"):]))
 	if len(optionalClause) != 1 {
 		return nil, localizedError(localization.CypherCoreOptionalMatchRequired(), nil)
@@ -1947,6 +1950,9 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 	body := pipelineClauseBody(clause, "MATCH")
 	if stripped, repeatable := stripRepeatableElements(body); repeatable {
 		ctx, body, clause = withRepeatableElements(ctx), stripped, "MATCH "+stripped
+	}
+	if err := validateBoundPatternNodes(rows, body); err != nil {
+		return nil, true, err
 	}
 	if shortest, ok, err := e.parseShortestPathMatch(ctx, body); ok || err != nil {
 		if err != nil {

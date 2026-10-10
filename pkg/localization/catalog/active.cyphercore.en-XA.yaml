@@ -178,6 +178,8 @@
   other: "[!! procedure output {{.Variable}} shadows an existing variable !!]"
 - id: cyphercore.variable_declared_in_outer_scope
   other: "[!! Variable `{{.Variable}}` already declared in outer scope !!]"
+- id: cyphercore.pattern_node_value_type
+  other: "[!! Expected `{{.Variable}}` to be a Node, got: {{.Type}} !!]"
 - id: cyphercore.expression_unevaluable
   other: "[!! could not evaluate expression: {{.Expression}} !!]"
 - id: cyphercore.standalone_call_modifiers

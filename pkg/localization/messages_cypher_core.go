@@ -84,6 +84,7 @@ const (
 	MessageCypherCoreNormalizeFormInvalid                MessageID = "cyphercore.normalize_form_invalid"
 	MessageCypherCoreProcedureOutputShadowsVariable      MessageID = "cyphercore.procedure_output_shadows_variable"
 	MessageCypherCoreVariableDeclaredInOuterScope        MessageID = "cyphercore.variable_declared_in_outer_scope"
+	MessageCypherCorePatternNodeValueType                MessageID = "cyphercore.pattern_node_value_type"
 	MessageCypherCoreExpressionUnevaluable               MessageID = "cyphercore.expression_unevaluable"
 	MessageCypherCoreStandaloneCallModifiers             MessageID = "cyphercore.standalone_call_modifiers"
 	MessageCypherCoreYieldWhereMisplaced                 MessageID = "cyphercore.yield_where_misplaced"
@@ -457,6 +458,13 @@ func CypherCoreProcedureOutputShadowsVariable(variable string) Message {
 // declares, or returns, a name the enclosing query already binds.
 func CypherCoreVariableDeclaredInOuterScope(variable string) Message {
 	return cypherCoreMessage(MessageCypherCoreVariableDeclaredInOuterScope, "Variable `"+variable+"` already declared in outer scope", map[string]any{"Variable": variable})
+}
+
+// CypherCorePatternNodeValueType is the run-time error for a pattern's node
+// variable bound to a value that is not a node (WITH x.node AS m MATCH (m)
+// where m is a string).
+func CypherCorePatternNodeValueType(variable, typeName string) Message {
+	return cypherCoreMessage(MessageCypherCorePatternNodeValueType, "Expected `"+variable+"` to be a Node, got: "+typeName, map[string]any{"Variable": variable, "Type": typeName})
 }
 
 func CypherCoreExpressionUnevaluable(expression string) Message {
