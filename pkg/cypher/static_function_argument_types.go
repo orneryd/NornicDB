@@ -451,11 +451,8 @@ func validateStaticFunctionParameters(cypher string, params map[string]interface
 		if !ok || next != len(expression) {
 			return nil
 		}
-		value, bound := params[name]
-		if !bound {
-			return nil
-		}
-		operand := staticParameterOperand(value)
+		// A missing parameter (nil) has no static type.
+		operand := staticParameterOperand(params[name])
 		if !operand.known() || operand.kind == "Float" || argument.accepts(operand.kind) {
 			return nil
 		}
