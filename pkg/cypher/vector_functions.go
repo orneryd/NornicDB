@@ -331,9 +331,13 @@ func fnUUID(ctx cypherfn.Context, args []string) (interface{}, error) {
 // fnUUIDHalf is uuid.mostSignificantBits (most) or
 // uuid.leastSignificantBits.
 func fnUUIDHalf(most bool) cypherfn.Func {
+	name := "uuid.leastSignificantBits"
+	if most {
+		name = "uuid.mostSignificantBits"
+	}
 	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 1 {
-			return nil, argumentCountError("uuid.mostSignificantBits", "1", len(args))
+			return nil, argumentCountError(name, "1", len(args))
 		}
 		values, err := evalArgs(ctx, args)
 		if err != nil || values[0] == nil {
@@ -341,7 +345,7 @@ func fnUUIDHalf(most bool) cypherfn.Func {
 		}
 		u, ok := values[0].(CypherUUID)
 		if !ok {
-			return nil, &cypherfn.TypeMismatchError{Function: "uuid.mostSignificantBits", Expected: "UUID", Value: values[0]}
+			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "UUID", Value: values[0]}
 		}
 		if most {
 			return u.MostSignificantBits(), nil
