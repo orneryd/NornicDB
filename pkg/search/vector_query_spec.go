@@ -181,16 +181,15 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	}
 
 	type scoredEdge struct {
-		id    string
-		vec   []float32
-		score float64
+		candidate int
+		score     float64
 	}
 	// Every candidate is ranked with one cheap pass; only the returned hits
 	// get Neo4j's exact score, which costs two strictly ordered float32
 	// passes (cypherVectorRanker).
 	rankOf := cypherVectorRanker(similarity, queryEmbedding)
 	scored := make([]scoredEdge, 0, len(candidates))
-	for _, cand := range candidates {
+	for index, cand := range candidates {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -200,7 +199,7 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 		if math.IsInf(rank, -1) {
 			continue
 		}
-		scored = append(scored, scoredEdge{id: cand.id, vec: cand.vec, score: rank})
+		scored = append(scored, scoredEdge{candidate: index, score: rank})
 	}
 
 	sort.Slice(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
@@ -209,12 +208,12 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	}
 	scoreOf := cypherVectorScorer(similarity, queryEmbedding)
 	for i := range scored {
-		scored[i].score = scoreOf(scored[i].vec)
+		scored[i].score = scoreOf(candidates[scored[i].candidate].vec)
 	}
-	sort.SliceStable(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
+	sort.Slice(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
 	out := make([]RelationshipVectorQueryHit, 0, len(scored))
 	for _, r := range scored {
-		out = append(out, RelationshipVectorQueryHit{ID: r.id, Score: r.score})
+		out = append(out, RelationshipVectorQueryHit{ID: candidates[r.candidate].id, Score: r.score})
 	}
 	return out, nil
 }
@@ -653,7 +652,7 @@ func cypherVectorRanker(similarity string, query []float32) func(candidate []flo
 	if similarity == "euclidean" || similarity == "dot" {
 		return cypherVectorScorer(similarity, query)
 	}
-	if _, valid := vector.NewNeo4jCosineQuery(query); !valid {
+	if !vector.Neo4jCosineVectorValid(query) {
 		return func([]float32) float64 { return math.Inf(-1) }
 	}
 	return func(candidate []float32) float64 {
