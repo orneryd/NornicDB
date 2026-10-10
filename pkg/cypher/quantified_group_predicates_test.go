@@ -51,3 +51,27 @@ func TestQuantifiedGroupPredicates(t *testing.T) {
 		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, query)
 	}
 }
+
+// quantifiedGroups finds groups inside another parenthesis, reads their
+// elements' inline predicates (kept in place by the ANTLR path) and skips
+// quoted text; an unbalanced pattern has no more groups.
+func TestQuantifiedGroupsSpans(t *testing.T) {
+	pattern := "p = shortestPath((s)((x {name: 'a)'})-[r:R WHERE r.k IN $ks]-(y WHERE size(kinds) = 0))+(t))"
+	groups := quantifiedGroups(pattern)
+	require.Len(t, groups, 1)
+	require.Equal(t, []string{"r.k IN $ks", "size(kinds) = 0"}, groups[0].predicateTexts(pattern))
+	require.ElementsMatch(t, []string{"x", "y"}, groups[0].nodes)
+	require.Equal(t, []string{"r"}, groups[0].relationships)
+	masked := maskQuantifiedGroupPredicates(pattern)
+	require.NotContains(t, masked, "$ks")
+	require.NotContains(t, masked, "kinds")
+	require.Contains(t, masked, "'a)'")
+
+	require.Empty(t, quantifiedGroups("(s)((x)-[r]-(y)"))
+	require.Empty(t, elementPredicateSpans("(x)-[r WHERE", 0, len("(x)-[r WHERE")))
+	require.Equal(t, "(s)((x)-[r]-(y))+(t)", maskQuantifiedGroupPredicates("(s)((x)-[r]-(y))+(t)"))
+	// A parenthesised path without a quantifier is not a group.
+	require.Empty(t, quantifiedGroups("((x)-[r WHERE r.k = 1]-(y))"))
+	// Quoted text between elements is skipped whole.
+	require.Equal(t, [][2]int{{9, 22}}, elementPredicateSpans("'(z)' (y WHERE y.k = 1)", 0, len("'(z)' (y WHERE y.k = 1)")))
+}
