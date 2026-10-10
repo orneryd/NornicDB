@@ -40,6 +40,9 @@ type CypherParserListener interface {
 	// EnterShowCommand is called when entering the showCommand production.
 	EnterShowCommand(c *ShowCommandContext)
 
+	// EnterShowConstraintKind is called when entering the showConstraintKind production.
+	EnterShowConstraintKind(c *ShowConstraintKindContext)
+
 	// EnterShowTail is called when entering the showTail production.
 	EnterShowTail(c *ShowTailContext)
 
@@ -447,6 +450,9 @@ type CypherParserListener interface {
 
 	// ExitShowCommand is called when exiting the showCommand production.
 	ExitShowCommand(c *ShowCommandContext)
+
+	// ExitShowConstraintKind is called when exiting the showConstraintKind production.
+	ExitShowConstraintKind(c *ShowConstraintKindContext)
 
 	// ExitShowTail is called when exiting the showTail production.
 	ExitShowTail(c *ShowTailContext)

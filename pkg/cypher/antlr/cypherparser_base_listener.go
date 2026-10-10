@@ -86,6 +86,12 @@ func (s *BaseCypherParserListener) EnterShowCommand(ctx *ShowCommandContext) {}
 // ExitShowCommand is called when production showCommand is exited.
 func (s *BaseCypherParserListener) ExitShowCommand(ctx *ShowCommandContext) {}
 
+// EnterShowConstraintKind is called when production showConstraintKind is entered.
+func (s *BaseCypherParserListener) EnterShowConstraintKind(ctx *ShowConstraintKindContext) {}
+
+// ExitShowConstraintKind is called when production showConstraintKind is exited.
+func (s *BaseCypherParserListener) ExitShowConstraintKind(ctx *ShowConstraintKindContext) {}
+
 // EnterShowTail is called when production showTail is entered.
 func (s *BaseCypherParserListener) EnterShowTail(ctx *ShowTailContext) {}
 

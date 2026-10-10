@@ -870,6 +870,14 @@ func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher strin
 	if !hasPrefixFold(cypher, "SHOW") && !hasPrefixFold(cypher, "TERMINATE") {
 		return nil, false, nil
 	}
+	// SHOW [kind] CONSTRAINTS (showConstraintKindOf).
+	if _, isConstraints, err := showConstraintKindOf(cypher, cypherVersionFromContext(ctx) == "25"); isConstraints {
+		if err != nil {
+			return nil, true, err
+		}
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowConstraints)
+		return result, true, err
+	}
 	switch {
 	case startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEXES"),
 		startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEX"),
@@ -889,10 +897,6 @@ func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher strin
 		startsWithKeywords(cypher, "SHOW", "PROMOTION PROFILES"),
 		startsWithKeywords(cypher, "SHOW", "PROMOTION POLICIES"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeKnowledgePolicyDDL)
-		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "CONSTRAINTS"),
-		startsWithKeywords(cypher, "SHOW", "CONSTRAINT"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowConstraints)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "PROCEDURES"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowProcedures)

@@ -92,13 +92,20 @@ queryPrefix
 // SHOW commands
 showCommand
         : SHOW ((ALL | FULLTEXT | RANGE_INDEX | TEXT | POINT | VECTOR | LOOKUP)? (INDEXES | INDEX)
-            | CONSTRAINTS | CONSTRAINT CONTRACTS? | PROCEDURES | FUNCTIONS | COMPOSITE? (DATABASE | DATABASES)
+            | showConstraintKind? (CONSTRAINTS | CONSTRAINT) | CONSTRAINT CONTRACTS | PROCEDURES | FUNCTIONS | COMPOSITE? (DATABASE | DATABASES)
             | ALIASES (FOR (DATABASE qualifiedName | DATABASES))? | USERS | CURRENT USER | ALL
             | (TRANSACTION | TRANSACTIONS) (expression (COMMA expression)*)?
             | (SETTING | SETTINGS) (expression (COMMA expression)*)?
             | (DEFAULT | HOME) DATABASE
             | ROLES | PRIVILEGES | USER name PRIVILEGES | SERVERS)
             showTail?
+    ;
+
+// The kind SHOW … CONSTRAINTS lists. PROPERTY UNIQUE[NESS] is Cypher 25's;
+// the executor rejects it in a Cypher 5 statement (showConstraintKindOf).
+showConstraintKind
+    : ALL
+    | (NODE | RELATIONSHIP | REL)? (UNIQUE | UNIQUENESS | KEY | PROPERTY? (EXIST | EXISTENCE | UNIQUE | UNIQUENESS) | PROPERTY TYPE)
     ;
 
 // SHOW … WHERE …, or SHOW … YIELD … [WHERE …] [ORDER BY …] [SKIP …] [LIMIT …]
@@ -470,7 +477,7 @@ expressionType
     ;
 
 expressionTypePart
-    : (ID | ANY | NODE | RELATIONSHIP | POINT | NULL_W | VECTOR) (ID | WITH)* (LT expressionType GT)? (LPAREN numLit RPAREN)? (NOT NULL_W)?
+    : (ID | ANY | NODE | RELATIONSHIP | POINT | NULL_W | VECTOR | PROPERTY) (ID | WITH)* (LT expressionType GT)? (LPAREN numLit RPAREN)? (NOT NULL_W)?
     ;
 
 propertyOrLabelExpression
@@ -763,6 +770,12 @@ symbol
     | OPTIONS
     | NODE
     | RELATIONSHIP
+    | REL
+    | UNIQUENESS
+    | EXIST
+    | EXISTENCE
+    | PROPERTY
+    | TYPE
     | TEMPORAL
     | NO
     | OVERLAP

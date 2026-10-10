@@ -223,7 +223,12 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 	}, showIndexesDefaultColumns), nil
 }
 
-// executeShowConstraints handles SHOW CONSTRAINTS command
+// executeShowConstraints handles SHOW [kind] CONSTRAINTS: every constraint
+// of the kind (showConstraintKindOf; all of them when there is none). A
+// Cypher 25 statement lists them as Neo4j 2026.09 does: uniqueness types
+// named NODE_PROPERTY_UNIQUENESS / RELATIONSHIP_PROPERTY_UNIQUENESS, the
+// enforcedLabel (a default column) and classification columns, and options
+// without an indexProvider; a Cypher 5 statement as Neo4j 5.26 does.
 func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	if isCompositeRoot(e.storage) {
 		return nil, localizedError(localization.CypherResidualCompositeShowTargetRequired("SHOW CONSTRAINTS"), nil)
@@ -231,12 +236,66 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 	if isShowConstraintContractsCommand(cypher) {
 		return e.executeShowConstraintContracts(ctx)
 	}
+	cypher25 := cypherVersionFromContext(ctx) == "25"
+	kind, _, err := showConstraintKindOf(cypher, cypher25)
+	if err != nil {
+		return nil, err
+	}
 	schema := e.storage.GetSchema()
 	rows := [][]interface{}{}
+	// row is one listing row in the version's column order (columns below);
+	// id is the constraint's place among all constraints, whatever the kind.
+	row := func(id int, name string, constraintType storage.ConstraintType, entityType storage.ConstraintEntityType, label string, properties []string,
+		ownedIndex, propertyType, createStatement interface{}, extensions ...interface{}) []interface{} {
+		typeName := showConstraintType(constraintType, entityType)
+		options := showConstraintOptions(constraintType)
+		if cypher25 {
+			typeName = showConstraintTypeCypher25(typeName)
+			if indexOptions, ok := options.(map[string]interface{}); ok {
+				options = map[string]interface{}{"indexConfig": indexOptions["indexConfig"]}
+			}
+		}
+		values := []interface{}{int64(id), name, typeName, string(entityType), []string{label}, properties}
+		if cypher25 {
+			values = append(values, nil, "undesignated")
+		}
+		values = append(values, ownedIndex, propertyType, options, createStatement)
+		return append(values, extensions...)
+	}
 
 	if schema != nil {
+		// Constraints and property type constraints, in name order: a
+		// constraint's id is its place there, the same in every listing
+		// and whatever the kind (the schema's maps have no order).
+		type listed struct {
+			name       string
+			constraint *storage.Constraint
+			typed      *storage.PropertyTypeConstraint
+		}
 		constraints := schema.GetAllConstraints()
-		for i, constraint := range constraints {
+		typed := schema.GetAllPropertyTypeConstraints()
+		all := make([]listed, 0, len(constraints)+len(typed))
+		for index := range constraints {
+			all = append(all, listed{name: constraints[index].Name, constraint: &constraints[index]})
+		}
+		for index := range typed {
+			all = append(all, listed{name: typed[index].Name, typed: &typed[index]})
+		}
+		sort.SliceStable(all, func(i, j int) bool { return all[i].name < all[j].name })
+		for index, entry := range all {
+			if constraint := entry.typed; constraint != nil {
+				if kind.lists(storage.ConstraintPropertyType, constraint.EffectiveEntityType()) {
+					rows = append(rows, row(index+1, constraint.Name, storage.ConstraintPropertyType, constraint.EffectiveEntityType(), constraint.Label,
+						[]string{constraint.Property}, nil, string(constraint.ExpectedType),
+						showPropertyTypeCreateStatement(constraint.Name, constraint.EffectiveEntityType(), constraint.Label, constraint.Property, string(constraint.ExpectedType)),
+						nil, nil, nil, nil, nil))
+				}
+				continue
+			}
+			constraint := entry.constraint
+			if !kind.lists(constraint.Type, constraint.EffectiveEntityType()) {
+				continue
+			}
 			var ownedIndex interface{}
 			if constraint.OwnedIndex != "" {
 				ownedIndex = constraint.OwnedIndex
@@ -254,49 +313,34 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 				targetLabel = constraint.TargetLabel
 				policyMode = constraint.PolicyMode
 			}
-			rows = append(rows, []interface{}{
-				int64(i + 1),
-				constraint.Name,
-				showConstraintType(constraint.Type, constraint.EffectiveEntityType()),
-				string(constraint.EffectiveEntityType()),
-				[]string{constraint.Label},
-				constraint.Properties,
-				ownedIndex,
-				nil,
-				showConstraintOptions(constraint.Type),
-				showConstraintCreateStatement(constraint),
-				direction,
-				maxCount,
-				sourceLabel,
-				targetLabel,
-				policyMode,
-			})
-		}
-
-		offset := len(rows)
-		for i, constraint := range schema.GetAllPropertyTypeConstraints() {
-			rows = append(rows, []interface{}{
-				int64(offset + i + 1),
-				constraint.Name,
-				showConstraintType(storage.ConstraintPropertyType, constraint.EffectiveEntityType()),
-				string(constraint.EffectiveEntityType()),
-				[]string{constraint.Label},
-				[]string{constraint.Property},
-				nil,
-				string(constraint.ExpectedType),
-				nil, // options
-				showPropertyTypeCreateStatement(constraint.Name, constraint.EffectiveEntityType(), constraint.Label, constraint.Property, string(constraint.ExpectedType)),
-				nil, nil, nil, nil, nil,
-			})
+			rows = append(rows, row(index+1, constraint.Name, constraint.Type, constraint.EffectiveEntityType(), constraint.Label, constraint.Properties,
+				ownedIndex, nil, showConstraintCreateStatement(*constraint), direction, maxCount, sourceLabel, targetLabel, policyMode))
 		}
 	}
 
 	// Neo4j's full set, then NornicDB's cardinality / policy constraint
 	// columns, which only YIELD * or YIELD <column> show.
-	return withShowDefaultColumns(&ExecuteResult{
-		Columns: append(append([]string(nil), showConstraintsDefaultColumns...), "options", "createStatement", "direction", "maxCount", "sourceLabel", "targetLabel", "policyMode"),
-		Rows:    rows,
-	}, showConstraintsDefaultColumns), nil
+	defaults := showConstraintsDefaultColumns
+	columns := append([]string(nil), showConstraintsDefaultColumns[:6]...)
+	if cypher25 {
+		defaults = showConstraintsCypher25DefaultColumns
+		columns = append(columns, "enforcedLabel", "classification")
+	}
+	columns = append(columns, "ownedIndex", "propertyType", "options", "createStatement", "direction", "maxCount", "sourceLabel", "targetLabel", "policyMode")
+	return withShowDefaultColumns(&ExecuteResult{Columns: columns, Rows: rows}, defaults), nil
+}
+
+// showConstraintTypeCypher25 is a constraint type as Neo4j 2026.09 names it
+// in a Cypher 25 statement: uniqueness constraints are property uniqueness
+// constraints; the other names are 5.26's.
+func showConstraintTypeCypher25(typeName string) string {
+	switch typeName {
+	case "UNIQUENESS":
+		return "NODE_PROPERTY_UNIQUENESS"
+	case "RELATIONSHIP_UNIQUENESS":
+		return "RELATIONSHIP_PROPERTY_UNIQUENESS"
+	}
+	return typeName
 }
 
 // showStringList reads a string list from a schema listing value.
@@ -397,6 +441,9 @@ var (
 	showDatabasesDefaultColumns   = []string{"name", "type", "aliases", "access", "address", "role", "writer", "requestedStatus", "currentStatus", "statusMessage", "default", "home", "constituents"}
 	showIndexesDefaultColumns     = []string{"id", "name", "state", "populationPercent", "type", "entityType", "labelsOrTypes", "properties", "indexProvider", "owningConstraint", "lastRead", "readCount"}
 	showConstraintsDefaultColumns = []string{"id", "name", "type", "entityType", "labelsOrTypes", "properties", "ownedIndex", "propertyType"}
+	// showConstraintsCypher25DefaultColumns are a Cypher 25 statement's
+	// default columns (Neo4j 2026.09), with enforcedLabel.
+	showConstraintsCypher25DefaultColumns = []string{"id", "name", "type", "entityType", "labelsOrTypes", "properties", "enforcedLabel", "ownedIndex", "propertyType"}
 )
 
 // showDefaultColumns returns the default columns of a SHOW listing, which the
