@@ -331,6 +331,7 @@ func maskTypePredicateTypes(expression string) string {
 		if start < 0 {
 			continue
 		}
+		vector := false
 		for position < len(masked) {
 			next := skipSpaces(expression, position)
 			if next >= len(masked) {
@@ -341,10 +342,19 @@ func maskTypePredicateTypes(expression string) string {
 				position = next + 1
 				continue
 			}
+			if masked[next] == '(' && vector {
+				// VECTOR(3), VECTOR<INT8>(3): the dimension is part of the
+				// type, not a call.
+				if close := strings.IndexByte(expression[next:], ')'); close >= 0 {
+					position = next + close + 1
+					continue
+				}
+			}
 			word, end, ok := scanIdentifierToken(expression, next)
 			if !ok || !typeGrammarWords[upperASCII(word)] {
 				break
 			}
+			vector = strings.EqualFold(word, "VECTOR") || vector && !strings.EqualFold(word, "NOT")
 			position = end
 		}
 		for blank := start; blank < position; blank++ {
