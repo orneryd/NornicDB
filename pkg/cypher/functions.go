@@ -102,14 +102,14 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		// row evaluator's (evaluateRowMapProjection), whatever evaluates it:
 		// SET n = o {.s} among others (#907).
 		if _, _, projection := rowMapProjectionSplit(expr); projection {
-			value, _ := e.evaluateRowExpressionWithContext(ctx, expr, entityRow(nodes, rels))
+			value, _ := e.evaluateRowExpressionWithContext(ctx, expr, entityRow(ctx, nodes, rels))
 			return value
 		}
 	}
 	if plan := planRowSubqueries(expr); plan != nil {
 		// Subquery expressions nested in a larger expression are evaluated
 		// for this row and the rest runs on the row evaluator.
-		rewritten, extended := e.materializeRowSubqueries(ctx, plan, entityRow(nodes, rels))
+		rewritten, extended := e.materializeRowSubqueries(ctx, plan, entityRow(ctx, nodes, rels))
 		value, _ := e.evaluateRowExpressionWithContext(ctx, rewritten, extended)
 		return value
 	}
@@ -120,7 +120,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		return e.evaluateExistsSubqueryValue(ctx, expr, nodes, rels)
 	}
 	if subquery, ok := standaloneSubqueryExpression(expr); ok {
-		value, _ := e.evaluateRowSubqueryValue(ctx, subquery.kind, subquery.body, entityRow(nodes, rels))
+		value, _ := e.evaluateRowSubqueryValue(ctx, subquery.kind, subquery.body, entityRow(ctx, nodes, rels))
 		return value
 	}
 	// Direct $param resolution preserves declared types end-to-end.

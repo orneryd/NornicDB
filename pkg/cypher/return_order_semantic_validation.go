@@ -215,7 +215,7 @@ func validateReturnAggregationSemantics(body string) error {
 		}
 		// The comprehension / quantifier variables come from the whole
 		// expression: removing the aggregate calls can remove their list.
-		localBindings := quantifiedExpressionBindings(expression)
+		localBindings := expressionLocalBindings(expression)
 		for _, reference := range semanticFreeReferences(removeAggregateCalls(expression)) {
 			if _, local := localBindings[strings.SplitN(reference, ".", 2)[0]]; local {
 				continue
@@ -234,81 +234,6 @@ func validateReturnAggregationSemantics(body string) error {
 		}
 	}
 	return nil
-}
-
-func quantifiedExpressionBindings(expression string) map[string]struct{} {
-	bindings := make(map[string]struct{})
-	// reduce(accumulator = initial, variable IN list | expression)
-	for from := 0; from < len(expression); {
-		index := keywordIndexFrom(expression, "reduce", from, defaultKeywordScanOpts())
-		if index < 0 {
-			break
-		}
-		from = index + len("reduce")
-		open := skipSpaces(expression, from)
-		if open >= len(expression) || expression[open] != '(' {
-			continue
-		}
-		close := findMatchingParen(expression, open)
-		if close < 0 {
-			continue
-		}
-		parts := splitTopLevelComma(expression[open+1 : close])
-		if len(parts) < 2 {
-			continue
-		}
-		if equals := strings.IndexByte(parts[0], '='); equals > 0 {
-			if accumulator := simpleSemanticIdentifier(parts[0][:equals]); accumulator != "" {
-				bindings[accumulator] = struct{}{}
-			}
-		}
-		rest := strings.Join(parts[1:], ",")
-		if inIndex := findKeywordIndexInContext(rest, "IN"); inIndex > 0 {
-			if variable := simpleSemanticIdentifier(rest[:inIndex]); variable != "" {
-				bindings[variable] = struct{}{}
-			}
-		}
-	}
-	for _, function := range []string{"all", "any", "none", "single", "filter"} {
-		for from := 0; from < len(expression); {
-			index := keywordIndexFrom(expression, function, from, defaultKeywordScanOpts())
-			if index < 0 {
-				break
-			}
-			from = index + len(function)
-			open := skipSpaces(expression, from)
-			if open >= len(expression) || expression[open] != '(' {
-				continue
-			}
-			close := findMatchingParen(expression, open)
-			if close < 0 {
-				continue
-			}
-			inner := expression[open+1 : close]
-			inIndex := findKeywordIndexInContext(inner, "IN")
-			if inIndex <= 0 {
-				continue
-			}
-			if variable := simpleSemanticIdentifier(strings.TrimSpace(inner[:inIndex])); variable != "" {
-				bindings[variable] = struct{}{}
-			}
-		}
-	}
-	for index := 0; index < len(expression); index++ {
-		if expression[index] != '[' {
-			continue
-		}
-		close := findMatchingBracket(expression, index)
-		if close < 0 {
-			continue
-		}
-		variable, _, _, _, comprehension := parseListComprehension(expression[index+1 : close])
-		if comprehension {
-			bindings[normalizeProjectionColumnName(variable)] = struct{}{}
-		}
-		index = close
-	}
-	return bindings
 }
 
 func aggregateContains(expression string, predicate func(string) bool) bool {
@@ -456,7 +381,7 @@ func semanticExpressionReferences(expression string) []string {
 // variables; a map projection's keys aren't variables). The base of a map
 // projection (n in n {.k}) is a reference.
 func semanticFreeReferences(expression string) []string {
-	locals := quantifiedExpressionBindings(expression)
+	locals := expressionLocalBindings(expression)
 	references := semanticExpressionReferences(maskSemanticBraceBodies(expression))
 	free := references[:0]
 	for _, reference := range references {
