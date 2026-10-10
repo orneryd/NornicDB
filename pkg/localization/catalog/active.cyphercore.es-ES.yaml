@@ -188,6 +188,12 @@
   other: "No se puede asignar {{.Field}} a una fecha {{.Form}}."
 - id: cyphercore.temporal_field_required
   other: "se debe especificar {{.Field}}"
+- id: cyphercore.temporal_field_not_supported
+  other: "No admitido: {{.Field}}"
+- id: cyphercore.temporal_fields_conflict
+  other: "{{.Field}} no se puede seleccionar junto con {{.Other}}."
+- id: cyphercore.temporal_epoch_invalid
+  other: "No se puede construir una fecha y hora a partir de: {{.Value}}"
 - id: cyphercore.temporal_field_requires_field
   other: "{{.Field}} no se puede especificar sin {{.Required}}"
 - id: cyphercore.temporal_field_out_of_range

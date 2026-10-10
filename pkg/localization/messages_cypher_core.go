@@ -89,6 +89,9 @@ const (
 	MessageCypherCoreYieldWhereMisplaced                 MessageID = "cyphercore.yield_where_misplaced"
 	MessageCypherCoreTemporalDateFormConflict            MessageID = "cyphercore.temporal_date_form_conflict"
 	MessageCypherCoreTemporalFieldRequired               MessageID = "cyphercore.temporal_field_required"
+	MessageCypherCoreTemporalFieldNotSupported           MessageID = "cyphercore.temporal_field_not_supported"
+	MessageCypherCoreTemporalFieldsConflict              MessageID = "cyphercore.temporal_fields_conflict"
+	MessageCypherCoreTemporalEpochInvalid                MessageID = "cyphercore.temporal_epoch_invalid"
 	MessageCypherCoreTemporalFieldRequiresField          MessageID = "cyphercore.temporal_field_requires_field"
 	MessageCypherCoreTemporalFieldOutOfRange             MessageID = "cyphercore.temporal_field_out_of_range"
 	MessageCypherCoreTemporalFieldInvalidValue           MessageID = "cyphercore.temporal_field_invalid_value"
@@ -477,6 +480,24 @@ func CypherCoreTemporalDateFormConflict(field string, form string) Message {
 
 func CypherCoreTemporalFieldRequired(field string) Message {
 	return cypherCoreMessage(MessageCypherCoreTemporalFieldRequired, field+" must be specified", map[string]any{"Field": field})
+}
+
+// CypherCoreTemporalFieldNotSupported is a temporal constructor's map field
+// the type has no use for (epochSeconds in date()).
+func CypherCoreTemporalFieldNotSupported(field string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalFieldNotSupported, "Not supported: "+field, map[string]any{"Field": field})
+}
+
+// CypherCoreTemporalFieldsConflict is two map fields that each give the base
+// value (epochSeconds and epochMillis, epochSeconds and datetime).
+func CypherCoreTemporalFieldsConflict(field, other string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalFieldsConflict, field+" cannot be selected together with "+other+".", map[string]any{"Field": field, "Other": other})
+}
+
+// CypherCoreTemporalEpochInvalid is an epochSeconds or epochMillis that
+// isn't an integer.
+func CypherCoreTemporalEpochInvalid(value string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalEpochInvalid, "Cannot construct date time from: "+value, map[string]any{"Value": value})
 }
 
 func CypherCoreTemporalFieldRequiresField(field string, required string) Message {
