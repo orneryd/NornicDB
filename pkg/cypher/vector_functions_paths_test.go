@@ -104,10 +104,10 @@ func TestVectorAndUUIDFunctionPaths(t *testing.T) {
 
 	// The rewrite leaves a namespaced name and an unclosed call alone, and
 	// takes only a bare name as a coordinate type.
-	rewritten, _, err := desugarLabelExpressions("RETURN vector([1], 1, INTEGER) AS a, gds.vector(1) AS b", nil)
+	rewritten, _, err := desugarLabelExpressions("RETURN vector([1], 1, INTEGER) AS a, gds.vector(1) AS b", nil, false)
 	require.NoError(t, err)
 	require.Contains(t, rewritten, " gds.vector(1) AS b", "a namespaced vector is another function")
-	rewritten, _, _ = desugarLabelExpressions("RETURN vector([1], 1, INTEGER", nil)
+	rewritten, _, _ = desugarLabelExpressions("RETURN vector([1], 1, INTEGER", nil, false)
 	require.NotContains(t, rewritten, vectorFunction, "an unclosed call is left to the parser")
 	require.False(t, isBareName("INT-8"))
 }
