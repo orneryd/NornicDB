@@ -23,14 +23,6 @@ func toFloat64(v interface{}) (float64, bool) {
 
 // toFloat64Slice is a package-level alias to convert.ToFloat64Slice for internal use.
 func toFloat64Slice(v interface{}) ([]float64, bool) {
-	if vector, ok := v.(CypherVector); ok {
-		// A VECTOR's coordinates, as vector.similarity.* reads them.
-		out := make([]float64, vector.Dimension())
-		for i := range out {
-			out[i] = vector.floatAt(i)
-		}
-		return out, true
-	}
 	return convert.ToFloat64Slice(v)
 }
 
