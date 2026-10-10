@@ -46,6 +46,34 @@ func TestCypher25FunctionArgumentErrors(t *testing.T) {
 		require.Error(t, err, tc.query)
 		requireStatusCode(t, err, tc.code)
 	}
+	// A parameter's type is checked when the statement compiles, as Neo4j
+	// 2026.09 does, in Cypher 5 and 25; a Float parameter, a list's elements
+	// and a row value only when the function runs (TypeError).
+	for _, tc := range []struct {
+		query   string
+		params  map[string]interface{}
+		code    string
+		message string
+	}{
+		{"CYPHER 25 RETURN coll.sort($l) AS v", map[string]interface{}{"l": int64(1)}, "Neo.ClientError.Statement.SyntaxError", "Type mismatch for parameter 'l': expected List<T> but was Integer"},
+		{"CYPHER 25 RETURN coll.sort($l) AS v", map[string]interface{}{"l": true}, "Neo.ClientError.Statement.SyntaxError", "Type mismatch for parameter 'l': expected List<T> but was Boolean"},
+		{"CYPHER 25 RETURN coll.sort($l) AS v", map[string]interface{}{"l": map[string]interface{}{"a": int64(1)}}, "Neo.ClientError.Statement.SyntaxError", "Type mismatch for parameter 'l': expected List<T> but was Map, Node or Relationship"},
+		{"CYPHER 25 RETURN coll.insert([1], $i, 1) AS v", map[string]interface{}{"i": "x"}, "Neo.ClientError.Statement.SyntaxError", "Type mismatch for parameter 'i': expected Integer but was String"},
+		{"RETURN toUpper( $s ) AS v", map[string]interface{}{"s": int64(1)}, "Neo.ClientError.Statement.SyntaxError", "Type mismatch for parameter 's': expected String but was Integer"},
+		{"CYPHER 25 RETURN coll.insert([1], $i, 1) AS v", map[string]interface{}{"i": 1.5}, "Neo.ClientError.Statement.TypeError", "coll.insert"},
+		{"CYPHER 25 UNWIND [1, [2]] AS x RETURN coll.sort(x) AS v", nil, "Neo.ClientError.Statement.TypeError", "coll.sort"},
+	} {
+		_, err := exec.Execute(ctx, tc.query, tc.params)
+		require.ErrorContains(t, err, tc.message, tc.query)
+		requireStatusCode(t, err, tc.code)
+	}
+	result, err := exec.Execute(ctx, "CYPHER 25 RETURN coll.sort($l) AS v, toUpper($s) AS u", map[string]interface{}{"l": []interface{}{int64(2), int64(1)}, "s": "a"})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{int64(1), int64(2)}, "A"}}, result.Rows)
+	require.False(t, parameterMayBeFunctionArgument("RETURN $value AS value"))
+	require.False(t, parameterMayBeFunctionArgument("RETURN 1"))
+	require.True(t, parameterMayBeFunctionArgument("RETURN f(1, $p)"))
+
 	value := func(query string, params map[string]interface{}) interface{} {
 		result, err := exec.Execute(ctx, "CYPHER 25 "+query, params)
 		require.NoError(t, err, query)
@@ -61,7 +89,7 @@ func TestCypher25FunctionArgumentErrors(t *testing.T) {
 		require.Equal(t, want, value(query, nil), query)
 	}
 	require.Nil(t, value("RETURN allReduce(a = 0, x IN [1] | a + x, $p) AS v", map[string]interface{}{"p": nil}))
-	_, err := exec.Execute(ctx, "CYPHER 25 RETURN string.regexReplace('a1', '(?<d>\\\\d)', '<${e}>') AS v", nil)
+	_, err = exec.Execute(ctx, "CYPHER 25 RETURN string.regexReplace('a1', '(?<d>\\\\d)', '<${e}>') AS v", nil)
 	require.ErrorContains(t, err, "No group with name {e}")
 }
 

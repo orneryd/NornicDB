@@ -115,6 +115,9 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 	if err := validateStaticPropertyAccessParameters(cypher, params); err != nil {
 		return err
 	}
+	if err := validateStaticFunctionParameters(cypher, params); err != nil {
+		return err
+	}
 	if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {
 		return err
 	}

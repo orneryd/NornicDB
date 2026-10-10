@@ -429,6 +429,61 @@ func validateStaticFunctionArguments(cypher string) error {
 	})
 }
 
+// validateStaticFunctionParameters rejects a function called with a
+// parameter whose value's type no signature accepts there, as Neo4j does when
+// it compiles a statement with its parameters: coll.sort($l) for l = 1 is
+// "Type mismatch for parameter 'l': expected List<T> but was Integer", in
+// Cypher 5 and 25 alike. As in Neo4j, a Float parameter and a list's
+// elements are checked only at run time, where a value of the wrong type is
+// the function's TypeError. It scans the statement only when a parameter
+// follows an opening parenthesis or a comma, so parameterized statements on
+// hot paths cost one byte scan.
+func validateStaticFunctionParameters(cypher string, params map[string]interface{}) error {
+	if len(params) == 0 || !parameterMayBeFunctionArgument(cypher) {
+		return nil
+	}
+	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string) error {
+		expression = strings.TrimSpace(expression)
+		if len(expression) < 2 || expression[0] != '$' {
+			return nil
+		}
+		name, next, ok := scanIdentifierToken(expression, 1)
+		if !ok || next != len(expression) {
+			return nil
+		}
+		value, bound := params[name]
+		if !bound {
+			return nil
+		}
+		operand := staticParameterOperand(value)
+		if !operand.known() || operand.kind == "Float" || argument.accepts(operand.kind) {
+			return nil
+		}
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
+			localization.CypherCoreParameterTypeMismatch(name, argument.expected, operand.display))
+	})
+}
+
+// parameterMayBeFunctionArgument is validateStaticFunctionParameters' quick
+// check: a $ right after "(" or ",", spaces aside.
+func parameterMayBeFunctionArgument(cypher string) bool {
+	for index := strings.IndexByte(cypher, '$'); index >= 0; {
+		before := index
+		for before > 0 && isASCIISpace(cypher[before-1]) {
+			before--
+		}
+		if before > 0 && (cypher[before-1] == '(' || cypher[before-1] == ',') {
+			return true
+		}
+		next := strings.IndexByte(cypher[index+1:], '$')
+		if next < 0 {
+			return false
+		}
+		index += 1 + next
+	}
+	return false
+}
+
 // staticTypeScope is what a clause knows about its variables' static types:
 // the binding kinds of pattern variables (a node, a relationship, a list of
 // relationships, a path) and the literal types of variables bound by WITH …
