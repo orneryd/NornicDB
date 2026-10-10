@@ -49,6 +49,18 @@ func TestRepeatedRelationshipVariable(t *testing.T) {
 		require.NoError(t, err, query)
 		require.Equal(t, want, result.Rows, query)
 	}
+	// Over a self-loop: no rows under DIFFERENT RELATIONSHIPS, the loop under
+	// REPEATABLE ELEMENTS (Neo4j 2026.09).
+	_, err := exec.Execute(ctx, "CREATE (a:Loop)-[:R]->(a)", nil)
+	require.NoError(t, err)
+	for query, want := range map[string]int64{
+		"MATCH DIFFERENT RELATIONSHIPS (a:Loop)-[r]->()-[r]->(a) RETURN count(*) AS c": 0,
+		"MATCH REPEATABLE ELEMENTS (a:Loop)-[r]->()-[r]->(a) RETURN count(*) AS c":     1,
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+	}
 	result, err := exec.Execute(ctx, "MATCH DIFFERENT RELATIONSHIPS (a:SP)-[r]->(b), (c)-[r]->(d) RETURN *", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "b", "c", "d", "r"}, result.Columns)
