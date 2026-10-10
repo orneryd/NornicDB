@@ -38,3 +38,24 @@ func TestUnfixedVectorDimensionsFollowFirstVector(t *testing.T) {
 		Properties: map[string]interface{}{"embedding": []interface{}{1.0, 0.5}}}))
 	require.Equal(t, 2, svc.vectorIndex.GetDimensions())
 }
+
+// The dimension readers give 0 for a missing entity or one without a vector,
+// and an empty service without a vector index gets one of the first
+// embedding's dimension (when the dimension isn't fixed).
+func TestVectorDimensionReadersAndFirstIndex(t *testing.T) {
+	require.Equal(t, 0, firstVectorDimensions(nil))
+	require.Equal(t, 0, firstEdgeVectorDimensions(nil))
+	require.Equal(t, 0, firstEdgeVectorDimensions(&storage.Edge{Properties: map[string]interface{}{"name": "x"}}))
+	require.Equal(t, 3, firstEdgeVectorDimensions(&storage.Edge{Properties: map[string]interface{}{"v": []float32{1, 2, 3}}}))
+
+	service := NewService(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic"))
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	service.mu.Lock()
+	service.vectorIndex = nil
+	service.mu.Unlock()
+	service.maybeAutoSetVectorDimensions(4)
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	require.NotNil(t, service.vectorIndex)
+	require.Equal(t, 4, service.vectorIndex.GetDimensions())
+}
