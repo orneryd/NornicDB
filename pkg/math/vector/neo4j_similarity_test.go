@@ -51,6 +51,21 @@ func TestNeo4jSimilarityScores(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, 0.9433961510658264, got)
 
+	// A query prepared once scores as the function does.
+	query, ok := NewNeo4jCosineQuery([]float64{0.9, 0.2, 0.1})
+	require.True(t, ok)
+	got, ok = query.Similarity([]float32{1, 0, 0})
+	require.True(t, ok)
+	require.Equal(t, 0.9852474927902222, got)
+	_, ok = query.Similarity([]float32{1, 0})
+	require.False(t, ok, "another length")
+	_, ok = query.Similarity([]float32{0, 0, 0})
+	require.False(t, ok, "a zero candidate")
+	_, ok = NewNeo4jCosineQuery([]float32{0, 0})
+	require.False(t, ok, "a zero query")
+	_, ok = NewNeo4jCosineQuery([]float32{})
+	require.False(t, ok, "an empty query")
+
 	nan, inf := gomath.NaN(), gomath.Inf(1)
 	for _, c := range [][2][]float64{
 		{{}, {}}, {{1}, {1, 2}}, {{0, 0}, {1, 0}}, {{1, 0}, {0, 0}}, {{nan, 1}, {1, 1}}, {{1, 1}, {inf, 1}},

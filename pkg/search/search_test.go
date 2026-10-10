@@ -2464,9 +2464,13 @@ func TestVectorQueryHelpers_ConversionsAndResolution(t *testing.T) {
 	assert.Contains(t, embs, []float32{0, 1, 0})
 
 	query := []float32{1, 0, 0}
-	assert.InDelta(t, 1.0, cypherVectorSimilarity("dot", query, []float32{1, 0, 0}), 1e-9)
-	assert.InDelta(t, 1.0, cypherVectorSimilarity("cosine", query, []float32{1, 0, 0}), 1e-9)
-	assert.Less(t, cypherVectorSimilarity("euclidean", query, []float32{0, 1, 0}), 1.0)
+	assert.InDelta(t, 1.0, cypherVectorScorer("dot", query)([]float32{1, 0, 0}), 1e-9)
+	assert.InDelta(t, 1.0, cypherVectorScorer("cosine", query)([]float32{1, 0, 0}), 1e-9)
+	assert.Less(t, cypherVectorScorer("euclidean", query)([]float32{0, 1, 0}), 1.0)
+	// A vector that isn't valid for the similarity is no hit.
+	assert.True(t, math.IsInf(cypherVectorScorer("euclidean", query)([]float32{float32(math.Inf(1)), 0, 0}), -1))
+	assert.True(t, math.IsInf(cypherVectorScorer("cosine", query)([]float32{0, 0, 0}), -1))
+	assert.True(t, math.IsInf(cypherVectorScorer("cosine", []float32{0, 0, 0})([]float32{1, 0, 0}), -1))
 }
 
 func TestVectorQueryNodes_MissingIndexFallsThroughToManagedNamedEmbeddings(t *testing.T) {

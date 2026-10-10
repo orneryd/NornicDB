@@ -184,6 +184,7 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 		id    string
 		score float64
 	}
+	scoreOf := cypherVectorScorer(similarity, queryEmbedding)
 	scored := make([]scoredEdge, 0, len(candidates))
 	for _, cand := range candidates {
 		select {
@@ -191,7 +192,7 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 			return nil, ctx.Err()
 		default:
 		}
-		score := cypherVectorSimilarity(similarity, queryEmbedding, cand.vec)
+		score := scoreOf(cand.vec)
 		if math.IsInf(score, -1) {
 			continue
 		}
@@ -514,6 +515,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 	if dims := s.VectorIndexDimensions(); dims > 0 && len(queryEmbedding) != dims {
 		return nil, nil
 	}
+	scoreOf := cypherVectorScorer(similarity, queryEmbedding)
 
 	type scoredNode struct {
 		id    string
@@ -550,7 +552,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 		if named := s.nodeNamedVector[nodeID]; named != nil {
 			if vecID, ok := named[vectorName]; ok {
 				if v, ok := s.getVectorForCypher(vecID); ok {
-					bestScore = cypherVectorSimilarity(similarity, queryEmbedding, v)
+					bestScore = scoreOf(v)
 				}
 			}
 			// If there is no explicit Cypher property/index mapping (property key is empty),
@@ -558,7 +560,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 			if math.IsInf(bestScore, -1) && spec.Property == "" {
 				for _, vecID := range named {
 					if v, ok := s.getVectorForCypher(vecID); ok {
-						score := cypherVectorSimilarity(similarity, queryEmbedding, v)
+						score := scoreOf(v)
 						if score > bestScore {
 							bestScore = score
 						}
@@ -571,7 +573,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 			if props := s.nodePropVector[nodeID]; props != nil {
 				if vecID, ok := props[spec.Property]; ok {
 					if v, ok := s.getVectorForCypher(vecID); ok {
-						bestScore = cypherVectorSimilarity(similarity, queryEmbedding, v)
+						bestScore = scoreOf(v)
 					}
 				}
 			}
@@ -580,7 +582,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 		if math.IsInf(bestScore, -1) {
 			for _, vecID := range s.nodeChunkVectors[nodeID] {
 				if v, ok := s.getVectorForCypher(vecID); ok {
-					score := cypherVectorSimilarity(similarity, queryEmbedding, v)
+					score := scoreOf(v)
 					if score > bestScore {
 						bestScore = score
 					}
@@ -605,24 +607,31 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 	return out, nil
 }
 
-// cypherVectorSimilarity is a candidate's score for a Cypher vector query, on
-// Neo4j's scale (see VectorQueryNodes); a vector that isn't valid for the
-// similarity (a zero vector for cosine) scores -Inf, no hit.
-func cypherVectorSimilarity(similarity string, query []float32, candidate []float32) float64 {
-	var score float64
-	var ok bool
+// cypherVectorScorer scores candidates against query for a Cypher vector
+// query, on Neo4j's scale (see VectorQueryNodes): the query is prepared once.
+// A candidate whose vector isn't valid for the similarity (a zero vector for
+// cosine) scores -Inf, no hit.
+func cypherVectorScorer(similarity string, query []float32) func(candidate []float32) float64 {
 	switch similarity {
 	case "euclidean":
-		score, ok = vector.Neo4jEuclideanSimilarity(query, candidate)
+		return func(candidate []float32) float64 {
+			if score, ok := vector.Neo4jEuclideanSimilarity(query, candidate); ok {
+				return score
+			}
+			return math.Inf(-1)
+		}
 	case "dot":
-		return float64(vector.DotProduct(query, candidate))
-	default:
-		score, ok = vector.Neo4jCosineSimilarity(query, candidate)
+		return func(candidate []float32) float64 { return float64(vector.DotProduct(query, candidate)) }
 	}
-	if !ok {
+	prepared, valid := vector.NewNeo4jCosineQuery(query)
+	return func(candidate []float32) float64 {
+		if valid {
+			if score, ok := prepared.Similarity(candidate); ok {
+				return score
+			}
+		}
 		return math.Inf(-1)
 	}
-	return score
 }
 
 // neo4jCosineScore maps a cosine in [-1, 1] from the vector index to Neo4j's
