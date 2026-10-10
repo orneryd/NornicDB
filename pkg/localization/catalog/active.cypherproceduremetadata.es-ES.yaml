@@ -62,6 +62,10 @@
   other: "Devuelve las propiedades de nodo por etiqueta"
 - id: cypherproceduremetadata.db_schema_relproperties
   other: "Devuelve las propiedades de relación por tipo"
+- id: cypherproceduremetadata.db_schema_node_type_properties
+  other: "Muestra en forma de tabla el esquema de propiedades derivado de los nodos."
+- id: cypherproceduremetadata.db_schema_rel_type_properties
+  other: "Muestra en forma de tabla el esquema de propiedades derivado de las relaciones."
 - id: cypherproceduremetadata.db_schema_visualization
   other: "Visualiza el esquema"
 - id: cypherproceduremetadata.db_stats_clear

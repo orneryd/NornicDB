@@ -36,6 +36,8 @@ const (
 	MessageCypherProcedureMetadataDbSchemaNodeProperties                        MessageID = "cypherproceduremetadata.db_schema_nodeproperties"
 	MessageCypherProcedureMetadataDbSchemaRelProperties                         MessageID = "cypherproceduremetadata.db_schema_relproperties"
 	MessageCypherProcedureMetadataDbSchemaVisualization                         MessageID = "cypherproceduremetadata.db_schema_visualization"
+	MessageCypherProcedureMetadataDbSchemaNodeTypeProperties                    MessageID = "cypherproceduremetadata.db_schema_node_type_properties"
+	MessageCypherProcedureMetadataDbSchemaRelTypeProperties                     MessageID = "cypherproceduremetadata.db_schema_rel_type_properties"
 	MessageCypherProcedureMetadataDbStatsClear                                  MessageID = "cypherproceduremetadata.db_stats_clear"
 	MessageCypherProcedureMetadataDbStatsCollect                                MessageID = "cypherproceduremetadata.db_stats_collect"
 	MessageCypherProcedureMetadataDbStatsRetrieve                               MessageID = "cypherproceduremetadata.db_stats_retrieve"
@@ -234,6 +236,16 @@ func CypherProcedureMetadataDbSchemaNodeProperties() Message {
 // CypherProcedureMetadataDbSchemaRelProperties describes db.schema.relProperties in procedure listings.
 func CypherProcedureMetadataDbSchemaRelProperties() Message {
 	return Message{ID: MessageCypherProcedureMetadataDbSchemaRelProperties, Fallback: "Returns relationship properties by type"}
+}
+
+// CypherProcedureMetadataDbSchemaNodeTypeProperties describes db.schema.nodeTypeProperties in procedure listings.
+func CypherProcedureMetadataDbSchemaNodeTypeProperties() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbSchemaNodeTypeProperties, Fallback: "Show the derived property schema of the nodes in tabular form."}
+}
+
+// CypherProcedureMetadataDbSchemaRelTypeProperties describes db.schema.relTypeProperties in procedure listings.
+func CypherProcedureMetadataDbSchemaRelTypeProperties() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbSchemaRelTypeProperties, Fallback: "Show the derived property schema of the relationships in tabular form."}
 }
 
 // CypherProcedureMetadataDbSchemaVisualization describes db.schema.visualization in procedure listings.
@@ -465,6 +477,8 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"db.schema.nodeProperties":                         CypherProcedureMetadataDbSchemaNodeProperties,
 	"db.schema.relProperties":                          CypherProcedureMetadataDbSchemaRelProperties,
 	"db.schema.visualization":                          CypherProcedureMetadataDbSchemaVisualization,
+	"db.schema.nodeTypeProperties":                     CypherProcedureMetadataDbSchemaNodeTypeProperties,
+	"db.schema.relTypeProperties":                      CypherProcedureMetadataDbSchemaRelTypeProperties,
 	"db.stats.clear":                                   CypherProcedureMetadataDbStatsClear,
 	"db.stats.collect":                                 CypherProcedureMetadataDbStatsCollect,
 	"db.stats.retrieve":                                CypherProcedureMetadataDbStatsRetrieve,
