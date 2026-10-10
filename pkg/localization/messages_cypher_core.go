@@ -107,6 +107,8 @@ const (
 	MessageCypherCoreFunctionArgumentInvalid             MessageID = "cyphercore.function_argument_invalid"
 	MessageCypherCoreVectorSimilarityInvalidVector       MessageID = "cyphercore.vector_similarity_invalid_vector"
 	MessageCypherCoreVectorSimilarityDimensions          MessageID = "cyphercore.vector_similarity_dimensions"
+	MessageCypherCoreFunctionArgumentOutOfRange          MessageID = "cyphercore.function_argument_out_of_range"
+	MessageCypherCoreFunctionListArgumentEmpty           MessageID = "cyphercore.function_list_argument_empty"
 )
 
 func cypherCoreMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -454,6 +456,20 @@ func CypherCoreVectorSimilarityInvalidVector(function, argument string) Message 
 // dimensions. Function is cosine or euclidean.
 func CypherCoreVectorSimilarityDimensions(function string) Message {
 	return cypherCoreMessage(MessageCypherCoreVectorSimilarityDimensions, "Invalid input for 'vector.similarity."+function+"()': The supplied vectors do not have the same number of dimensions.", map[string]any{"Function": function})
+}
+
+// CypherCoreFunctionArgumentOutOfRange is Neo4j's ArgumentError for an
+// index or depth outside what the function takes (coll.insert, coll.remove,
+// coll.flatten). Function is the untranslated function name.
+func CypherCoreFunctionArgumentOutOfRange(function string) Message {
+	return cypherCoreMessage(MessageCypherCoreFunctionArgumentOutOfRange, "Function argument to '"+function+"()' is out of range", map[string]any{"Function": function})
+}
+
+// CypherCoreFunctionListArgumentEmpty is Neo4j's ArgumentError for an empty
+// list where the function needs an element (coll.remove). Function and
+// Argument are untranslated names.
+func CypherCoreFunctionListArgumentEmpty(function, argument string) Message {
+	return cypherCoreMessage(MessageCypherCoreFunctionListArgumentEmpty, "The argument `"+argument+"` in the `"+function+"()` function must not be empty.", map[string]any{"Function": function, "Argument": argument})
 }
 
 func CypherCoreTemporalCallSignature(typeName string, provided string) Message {

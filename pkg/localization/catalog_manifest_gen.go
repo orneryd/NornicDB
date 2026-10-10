@@ -342,6 +342,8 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.fulltext_unexpected_token", Constructor: "CypherCoreFulltextUnexpectedToken", Fields: []string{"Token"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.function_argument_count", Constructor: "CypherCoreFunctionArgumentCount", Fields: []string{"Expected", "Function", "Got"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.function_argument_invalid", Constructor: "CypherCoreFunctionArgumentInvalid", Fields: []string{"Expected", "Function", "Value"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.function_argument_out_of_range", Constructor: "CypherCoreFunctionArgumentOutOfRange", Fields: []string{"Function"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.function_list_argument_empty", Constructor: "CypherCoreFunctionListArgumentEmpty", Fields: []string{"Argument", "Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.implicit_transaction_commit_failed", Constructor: "CypherCoreImplicitTransactionCommitFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.implicit_transaction_configure_failed", Constructor: "CypherCoreImplicitTransactionConfigureFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.implicit_transaction_pin_failed", Constructor: "CypherCoreImplicitTransactionPinFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
