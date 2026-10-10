@@ -468,7 +468,10 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		if err != nil {
 			return staticOperand{}, err
 		}
-		if operand.known() && !operand.numeric() && !operand.temporal() && !operand.duration() && operand.kind != "Null" {
+		// Neo4j 5.26 also takes a temporal value or a duration (+date(…) is
+		// the date); Neo4j 2026.09, which runs Cypher 25, only a number.
+		temporal := (operand.temporal() || operand.duration()) && !checker.scope.cypher25
+		if operand.known() && !operand.numeric() && !temporal && operand.kind != "Null" {
 			return staticOperand{}, operandMismatch(operand, "Float or Integer")
 		}
 		if !operand.known() || operand.kind == "Null" {
@@ -661,14 +664,15 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 			return staticOperand{}, localizedStatusError(syntaxError, detail, localization.CypherCoreEntityPropertyKeyTypeMismatch(key.display))
 		}
 	case key.kind == "String":
-		// A temporal value or duration takes a string key at compile time;
-		// reading a field it doesn't have is a runtime error.
-		if !receiver.temporal() && !receiver.duration() {
+		// In Neo4j 5.26 a temporal value or duration takes a string key at
+		// compile time (reading a field it doesn't have is a runtime error);
+		// Neo4j 2026.09, which runs Cypher 25, takes none.
+		if !receiver.temporal() && !receiver.duration() || checker.scope.cypher25 {
 			return staticOperand{}, operandMismatch(receiver, "Map, Node or Relationship")
 		}
 	case key.kind == "Integer":
 		return staticOperand{}, operandMismatch(receiver, "List<T>")
-	case !keyKnown && !receiver.temporal() && !receiver.duration():
+	case !keyKnown && (!receiver.temporal() && !receiver.duration() || checker.scope.cypher25):
 		return staticOperand{}, operandMismatch(receiver, "List<T>, Map, Node or Relationship")
 	}
 	return staticOperand{}, nil

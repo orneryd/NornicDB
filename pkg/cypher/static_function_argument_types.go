@@ -28,7 +28,16 @@ type staticArgumentType struct {
 	// unlisted are types accepted although the error doesn't name them
 	// (staticUnlistedArgumentTypes).
 	unlisted []string
+	// cypher5Only is set where Neo4j 2026.09 doesn't check the position
+	// when it compiles a Cypher 25 statement (staticCypher5OnlyFunctions):
+	// the evaluator's TypeError covers it there.
+	cypher5Only bool
 }
+
+// staticCypher5OnlyFunctions are the functions whose arguments only Neo4j
+// 5.26 checks at compile time: Neo4j 2026.09 leaves reverse(1) to run time
+// (TypeError), with the same catalog signature.
+var staticCypher5OnlyFunctions = map[string]bool{"reverse": true}
 
 // staticListAcceptingFunctions accept a list argument at compile time
 // although their "Type mismatch" error doesn't list one.
@@ -138,6 +147,11 @@ func buildStaticFunctionArguments() (map[string][]staticArgumentType, int) {
 			checked = true
 		}
 		if checked {
+			if staticCypher5OnlyFunctions[name] {
+				for index := range arguments {
+					arguments[index].cypher5Only = true
+				}
+			}
 			built[name] = arguments
 			longest = max(longest, len(name))
 		}
@@ -394,8 +408,11 @@ func trimFromArguments(inner string) (arguments []string, fromForm bool) {
 // keys([1]), length(1 + 1), …) anywhere in the statement: projections, WHERE,
 // CASE, ORDER BY, SET values, pattern properties and subquery bodies.
 // Variables are checked clause by clause (validateStaticFunctionVariables).
-func validateStaticFunctionArguments(cypher string) error {
+func validateStaticFunctionArguments(cypher string, cypher25 bool) error {
 	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string) error {
+		if argument.cypher5Only && cypher25 {
+			return nil
+		}
 		typeName := staticLiteralTypeName(expression)
 		if typeName == "" {
 			typeName = staticValueCallType(expression)
@@ -504,6 +521,9 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 		if scope == nil {
 			built := scopeOf()
 			scope = &built
+		}
+		if argument.cypher5Only && scope.cypher25 {
+			return nil
 		}
 		typeName := scope.staticExpressionType(expression)
 		if typeName == "" || argument.accepts(typeName) {

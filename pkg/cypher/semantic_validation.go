@@ -39,7 +39,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := validateStaticQuantifierTypes(cypher); err != nil {
 		return err
 	}
-	if err := validateStaticFunctionArguments(cypher); err != nil {
+	if err := validateStaticFunctionArguments(cypher, cypher25); err != nil {
 		return err
 	}
 	if err := e.validateStaticPaginationExpressions(cypher); err != nil {
