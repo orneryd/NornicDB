@@ -48,6 +48,10 @@
   other: "no se pudo crear el índice de texto completo de relaciones: {{.Cause}}"
 - id: cypherprocedures.fulltext_drop_invalid_syntax
   other: "sintaxis de db.index.fulltext.drop no válida{{if .Parentheses}}: faltan los paréntesis{{end}}"
+- id: cypherprocedures.argument_null
+  other: "{{.Procedure}}: el argumento {{.Argument}} es nulo"
+- id: cypherprocedures.argument_type
+  other: "{{.Procedure}}: el argumento {{.Argument}} debe ser {{.Expected}}, no {{.Actual}}"
 - id: cypherprocedures.vector_drop_invalid_syntax
   other: "sintaxis de db.index.vector.drop no válida{{if .Parentheses}}: faltan los paréntesis{{end}}"
 - id: cypherprocedures.set_node_vector_invalid_syntax

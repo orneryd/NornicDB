@@ -768,6 +768,8 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cypherproceduremetadata.tx_setmetadata", Constructor: "CypherProcedureMetadataTxSetMetaData", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.already_exists", Constructor: "CypherProceduresAlreadyExists", Fields: []string{"Procedure"}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.argument_count", Constructor: "CypherProceduresArgumentCount", Fields: []string{"Actual", "Expected", "Procedure"}, PluralForms: []string{"other"}},
+	{ID: "cypherprocedures.argument_null", Constructor: "CypherProceduresArgumentNull", Fields: []string{"Argument", "Procedure"}, PluralForms: []string{"other"}},
+	{ID: "cypherprocedures.argument_type", Constructor: "CypherProceduresArgumentType", Fields: []string{"Actual", "Argument", "Expected", "Procedure"}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.body_required", Constructor: "CypherProceduresBodyRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.catalog_read_failed", Constructor: "CypherProceduresCatalogReadFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.catalog_record_decode_failed", Constructor: "CypherProceduresCatalogRecordDecodeFailed", Fields: []string{"Node"}, PluralForms: []string{"other"}},

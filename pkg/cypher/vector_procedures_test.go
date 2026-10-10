@@ -1835,14 +1835,18 @@ func TestCallDbIndexFulltextDrop(t *testing.T) {
 		assert.Equal(t, "my_special_index", result.Rows[0][0])
 	})
 
-	t.Run("invalid_drop_syntax_errors", func(t *testing.T) {
-		_, err := exec.callDbIndexFulltextDrop("CALL db.index.fulltext.nope('x')")
+	t.Run("invalid_drop_arguments_error", func(t *testing.T) {
+		// null is the procedure's failure; a parameter that isn't a
+		// string is a TypeError.
+		_, err := exec.Execute(context.Background(), "CALL db.index.fulltext.drop(null)", nil)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid db.index.fulltext.drop syntax")
+		code, _ := nornicerrors.Neo4jStatus(err)
+		assert.Equal(t, "Neo.ClientError.Procedure.ProcedureCallFailed", code)
 
-		_, err = exec.callDbIndexFulltextDrop("CALL db.index.fulltext.drop 'x'")
+		_, err = exec.Execute(context.Background(), "CALL db.index.fulltext.drop($name)", map[string]interface{}{"name": int64(1)})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "missing parentheses")
+		code, _ = nornicerrors.Neo4jStatus(err)
+		assert.Equal(t, "Neo.ClientError.Statement.TypeError", code)
 	})
 }
 

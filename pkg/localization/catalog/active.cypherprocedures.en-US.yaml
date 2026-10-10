@@ -48,6 +48,10 @@
   other: "failed to create relationship fulltext index: {{.Cause}}"
 - id: cypherprocedures.fulltext_drop_invalid_syntax
   other: "invalid db.index.fulltext.drop syntax{{if .Parentheses}}: missing parentheses{{end}}"
+- id: cypherprocedures.argument_null
+  other: "{{.Procedure}}: argument {{.Argument}} is null"
+- id: cypherprocedures.argument_type
+  other: "{{.Procedure}}: argument {{.Argument}} must be {{.Expected}}, not {{.Actual}}"
 - id: cypherprocedures.vector_drop_invalid_syntax
   other: "invalid db.index.vector.drop syntax{{if .Parentheses}}: missing parentheses{{end}}"
 - id: cypherprocedures.set_node_vector_invalid_syntax

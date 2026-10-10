@@ -28,6 +28,8 @@ const (
 	MessageCypherProceduresFulltextCreateRelationshipArguments   MessageID = "cypherprocedures.fulltext_create_relationship_arguments_required"
 	MessageCypherProceduresCreateRelationshipFulltextIndexFailed MessageID = "cypherprocedures.create_relationship_fulltext_index_failed"
 	MessageCypherProceduresFulltextDropInvalidSyntax             MessageID = "cypherprocedures.fulltext_drop_invalid_syntax"
+	MessageCypherProceduresArgumentNull                          MessageID = "cypherprocedures.argument_null"
+	MessageCypherProceduresArgumentType                          MessageID = "cypherprocedures.argument_type"
 	MessageCypherProceduresVectorDropInvalidSyntax               MessageID = "cypherprocedures.vector_drop_invalid_syntax"
 	MessageCypherProceduresSetNodeVectorInvalidSyntax            MessageID = "cypherprocedures.set_node_vector_invalid_syntax"
 	MessageCypherProceduresSetNodeVectorParenthesesRequired      MessageID = "cypherprocedures.set_node_vector_parentheses_required"
@@ -292,4 +294,16 @@ func CypherProceduresReadContainsWrite() Message {
 }
 func CypherProceduresArgumentCount(procedure string, expected, actual int) Message {
 	return cypherProceduresMessage(MessageCypherProceduresArgumentCount, fmt.Sprintf("procedure %s requires %d arguments, got %d", procedure, expected, actual), map[string]any{"Procedure": procedure, "Expected": expected, "Actual": actual})
+}
+
+// CypherProceduresArgumentNull is a procedure called with null for an
+// argument it needs.
+func CypherProceduresArgumentNull(procedure, argument string) Message {
+	return cypherProceduresMessage(MessageCypherProceduresArgumentNull, procedure+": argument "+argument+" is null", map[string]any{"Procedure": procedure, "Argument": argument})
+}
+
+// CypherProceduresArgumentType is a procedure argument value of another
+// type than the procedure takes.
+func CypherProceduresArgumentType(procedure, argument, expected, actual string) Message {
+	return cypherProceduresMessage(MessageCypherProceduresArgumentType, procedure+": argument "+argument+" must be "+expected+", not "+actual, map[string]any{"Procedure": procedure, "Argument": argument, "Expected": expected, "Actual": actual})
 }

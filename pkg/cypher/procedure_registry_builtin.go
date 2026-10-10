@@ -81,23 +81,23 @@ func ensureBuiltInProceduresRegistered() {
 
 		registerProcedure(fulltextQueryProcedureSpec("db.index.fulltext.queryNodes", "node", "NODE"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextQueryNodes(cypher)
+				return e.callDbIndexFulltextQueryNodes(args)
 			})
 		registerProcedure(fulltextQueryProcedureSpec("db.index.fulltext.queryRelationships", "relationship", "RELATIONSHIP"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextQueryRelationships(cypher)
+				return e.callDbIndexFulltextQueryRelationships(args)
 			})
 		registerBuiltInProcedure("db.index.fulltext.createNodeIndex", "db.index.fulltext.createNodeIndex(indexName :: STRING, labels :: LIST<STRING>, properties :: LIST<STRING>)", localization.CypherProcedureMetadata("db.index.fulltext.createNodeIndex"), ProcedureModeWrite, 3, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextCreateNodeIndex(ctx, cypher)
+				return e.callDbIndexFulltextCreateNodeIndex(ctx, args)
 			})
 		registerBuiltInProcedure("db.index.fulltext.createRelationshipIndex", "db.index.fulltext.createRelationshipIndex(indexName :: STRING, relationshipTypes :: LIST<STRING>, properties :: LIST<STRING>)", localization.CypherProcedureMetadata("db.index.fulltext.createRelationshipIndex"), ProcedureModeWrite, 3, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextCreateRelationshipIndex(ctx, cypher)
+				return e.callDbIndexFulltextCreateRelationshipIndex(ctx, args)
 			})
 		registerBuiltInProcedure("db.index.fulltext.drop", "db.index.fulltext.drop(indexName :: STRING)", localization.CypherProcedureMetadata("db.index.fulltext.drop"), ProcedureModeWrite, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextDrop(cypher)
+				return e.callDbIndexFulltextDrop(args)
 			})
 		registerProcedure(fulltextAnalyzerProcedureSpec(),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
@@ -126,7 +126,7 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("db.index.vector.drop", "db.index.vector.drop(indexName :: STRING)", localization.CypherProcedureMetadata("db.index.vector.drop"), ProcedureModeWrite, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexVectorDrop(cypher)
+				return e.callDbIndexVectorDrop(args)
 			})
 
 		registerProcedure(vectorSetterProcedureSpec("db.create.setNodeVectorProperty", "node", "NODE"),

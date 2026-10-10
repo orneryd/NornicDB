@@ -955,22 +955,22 @@ func TestCypherHelpers_CallCompatRelationshipQueries(t *testing.T) {
 	require.NoError(t, err)
 
 	// Fulltext relationship query: empty query branch.
-	res, err := exec.callDbIndexFulltextQueryRelationships("CALL db.index.fulltext.queryRelationships('default','')")
+	res, err := exec.Execute(context.Background(), "CALL db.index.fulltext.queryRelationships('default','')", nil)
 	require.NoError(t, err)
 	require.Empty(t, res.Rows)
 
 	// Fulltext relationship query: match path.
-	res, err = exec.callDbIndexFulltextQueryRelationships("CALL db.index.fulltext.queryRelationships('default','searchable')")
+	res, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryRelationships('default','searchable')", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 
 	// Neo4j compatibility: optional options map (skip/limit).
-	res, err = exec.callDbIndexFulltextQueryRelationships("CALL db.index.fulltext.queryRelationships('default','searchable', {skip: 0, limit: 1})")
+	res, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryRelationships('default','searchable', {skip: 0, limit: 1})", nil)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 
 	// Third arg must be a map.
-	_, err = exec.callDbIndexFulltextQueryRelationships("CALL db.index.fulltext.queryRelationships('default','searchable', 1)")
+	_, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryRelationships('default','searchable', 1)", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "MAP")
 
@@ -2137,7 +2137,7 @@ func TestCypherHelpers_VectorAndFulltextRelationshipQueryBranches(t *testing.T) 
 	ctx := context.Background()
 
 	// Fulltext relationships: empty query and match query branches.
-	res, err := exec.callDbIndexFulltextQueryRelationships("CALL db.index.fulltext.queryRelationships('default', '')")
+	res, err := exec.Execute(context.Background(), "CALL db.index.fulltext.queryRelationships('default', '')", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"relationship", "score"}, res.Columns)
 
@@ -2156,7 +2156,7 @@ func TestCypherHelpers_VectorAndFulltextRelationshipQueryBranches(t *testing.T) 
 		},
 	})
 	require.NoError(t, err)
-	res, err = exec.callDbIndexFulltextQueryRelationships("CALL db.index.fulltext.queryRelationships('default', 'hello')")
+	res, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryRelationships('default', 'hello')", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 

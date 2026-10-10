@@ -310,25 +310,19 @@ func TestCallDbIndexFulltextQueryNodes_DirectBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Empty query branch returns empty result without error.
-	res, err := exec.callDbIndexFulltextQueryNodes("CALL db.index.fulltext.queryNodes('default', '')")
+	res, err := exec.Execute(context.Background(), "CALL db.index.fulltext.queryNodes('default', '')", nil)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Empty(t, res.Rows)
 
 	// Query with only negated terms yields no include terms.
-	res, err = exec.callDbIndexFulltextQueryNodes("CALL db.index.fulltext.queryNodes('default', '-alpha NOT beta')")
-	require.NoError(t, err)
-	require.NotNil(t, res)
-	assert.Empty(t, res.Rows)
-
-	// Malformed call extraction path.
-	res, err = exec.callDbIndexFulltextQueryNodes("CALL db.index.fulltext.queryNodes")
+	res, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryNodes('default', '-alpha NOT beta')", nil)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	assert.Empty(t, res.Rows)
 
 	// Non-built-in missing index should error (Neo4j compatibility path).
-	_, err = exec.callDbIndexFulltextQueryNodes("CALL db.index.fulltext.queryNodes('missing_idx', 'alpha')")
+	_, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryNodes('missing_idx', 'alpha')", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "there is no such fulltext schema index")
 
@@ -356,7 +350,7 @@ func TestCallDbIndexFulltextQueryNodes_DirectBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Must-have/exclude branches: only n2 should remain.
-	res, err = exec.callDbIndexFulltextQueryNodes("CALL db.index.fulltext.queryNodes('idx_ft', '+must alpha NOT beta')")
+	res, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryNodes('idx_ft', '+must alpha NOT beta')", nil)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Len(t, res.Rows, 1)
@@ -367,13 +361,13 @@ func TestCallDbIndexFulltextQueryNodes_DirectBranches(t *testing.T) {
 	assert.True(t, scoreOK)
 
 	// Neo4j compatibility: 3rd options MAP arg supports skip/limit windowing.
-	res, err = exec.callDbIndexFulltextQueryNodes("CALL db.index.fulltext.queryNodes('idx_ft', 'alpha', {skip: 1, limit: 1})")
+	res, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryNodes('idx_ft', 'alpha', {skip: 1, limit: 1})", nil)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Len(t, res.Rows, 1)
 
 	// Non-map third argument should fail like Neo4j signature enforcement.
-	_, err = exec.callDbIndexFulltextQueryNodes("CALL db.index.fulltext.queryNodes('idx_ft', 'alpha', 5)")
+	_, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryNodes('idx_ft', 'alpha', 5)", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "MAP")
 }

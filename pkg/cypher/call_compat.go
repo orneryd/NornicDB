@@ -199,17 +199,15 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 //     tokenized BM25-like matching used by queryNodes.
 //
 // Returns one row per matching edge with columns [relationship, score].
-func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"relationship", "score"},
 		Rows:    [][]interface{}{},
 	}
-	opts, err := e.extractFulltextQueryOptions(cypher)
+	indexName, query, opts, err := fulltextQueryArguments("db.index.fulltext.queryRelationships", args)
 	if err != nil {
 		return nil, err
 	}
-
-	indexName, query := e.extractFulltextParams(cypher)
 	if query == "" {
 		return result, nil
 	}
@@ -818,35 +816,23 @@ func (e *StorageExecutor) callDbIndexVectorCreateRelationshipIndex(ctx context.C
 
 // callDbIndexFulltextCreateNodeIndex creates a fulltext index on nodes - Neo4j db.index.fulltext.createNodeIndex()
 // Syntax: CALL db.index.fulltext.createNodeIndex(indexName, labels, properties, config)
-func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, "CREATENODEINDEX")
-	if idx < 0 {
-		return nil, localizedError(localization.CypherProceduresFulltextCreateNodeInvalidSyntax(false), nil)
+func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "db.index.fulltext.createNodeIndex"
+	indexName, err := requiredProcedureString(procedure, args, 0, "indexName")
+	if err != nil {
+		return nil, err
 	}
-
-	argsStart := strings.Index(cypher[idx:], "(")
-	argsEnd := strings.LastIndex(cypher[idx:], ")")
-	if argsStart < 0 || argsEnd < 0 {
-		return nil, localizedError(localization.CypherProceduresFulltextCreateNodeInvalidSyntax(true), nil)
+	labels, err := requiredProcedureStringList(procedure, args, 1, "labels")
+	if err != nil {
+		return nil, err
 	}
-
-	argsStr := cypher[idx+argsStart+1 : idx+argsEnd]
-	parts := e.splitArgsRespectingArrays(argsStr)
-	if len(parts) < 3 {
-		return nil, localizedError(localization.CypherProceduresFulltextCreateNodeArgumentsRequired(), nil)
+	properties, err := requiredProcedureStringList(procedure, args, 2, "properties")
+	if err != nil {
+		return nil, err
 	}
-
-	indexName := strings.Trim(strings.TrimSpace(parts[0]), "'\"")
-	labelsStr := strings.TrimSpace(parts[1])
-	propsStr := strings.TrimSpace(parts[2])
-
-	// Parse labels array: ['Label1', 'Label2'] or 'Label'
-	labels := e.parseStringArray(labelsStr)
-	properties := e.parseStringArray(propsStr)
 
 	// Create fulltext index using schema manager
-	err := e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
 		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", labels, properties, storage.ConstraintEntityNode); err != nil {
 			return err
 		}
@@ -864,35 +850,23 @@ func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context
 
 // callDbIndexFulltextCreateRelationshipIndex creates a fulltext index on relationships - Neo4j db.index.fulltext.createRelationshipIndex()
 // Syntax: CALL db.index.fulltext.createRelationshipIndex(indexName, relationshipTypes, properties, config)
-func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, "CREATERELATIONSHIPINDEX")
-	if idx < 0 {
-		return nil, localizedError(localization.CypherProceduresFulltextCreateRelationshipInvalid(false), nil)
+func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "db.index.fulltext.createRelationshipIndex"
+	indexName, err := requiredProcedureString(procedure, args, 0, "indexName")
+	if err != nil {
+		return nil, err
 	}
-
-	argsStart := strings.Index(cypher[idx:], "(")
-	argsEnd := strings.LastIndex(cypher[idx:], ")")
-	if argsStart < 0 || argsEnd < 0 {
-		return nil, localizedError(localization.CypherProceduresFulltextCreateRelationshipInvalid(true), nil)
+	relTypes, err := requiredProcedureStringList(procedure, args, 1, "relationshipTypes")
+	if err != nil {
+		return nil, err
 	}
-
-	argsStr := cypher[idx+argsStart+1 : idx+argsEnd]
-	parts := e.splitArgsRespectingArrays(argsStr)
-	if len(parts) < 3 {
-		return nil, localizedError(localization.CypherProceduresFulltextCreateRelationshipArguments(), nil)
+	properties, err := requiredProcedureStringList(procedure, args, 2, "properties")
+	if err != nil {
+		return nil, err
 	}
-
-	indexName := strings.Trim(strings.TrimSpace(parts[0]), "'\"")
-	relTypesStr := strings.TrimSpace(parts[1])
-	propsStr := strings.TrimSpace(parts[2])
-
-	// Parse arrays
-	relTypes := e.parseStringArray(relTypesStr)
-	properties := e.parseStringArray(propsStr)
 
 	// Create fulltext index using schema manager
-	err := e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
 		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", relTypes, properties, storage.ConstraintEntityRelationship); err != nil {
 			return err
 		}
@@ -910,19 +884,11 @@ func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context
 
 // callDbIndexFulltextDrop drops a fulltext index - Neo4j db.index.fulltext.drop()
 // Syntax: CALL db.index.fulltext.drop(indexName)
-func (e *StorageExecutor) callDbIndexFulltextDrop(cypher string) (*ExecuteResult, error) {
-	idx := findKeywordIndex(cypher, "DROP")
-	if idx < 0 {
-		return nil, localizedError(localization.CypherProceduresFulltextDropInvalidSyntax(false), nil)
+func (e *StorageExecutor) callDbIndexFulltextDrop(args []interface{}) (*ExecuteResult, error) {
+	indexName, err := requiredProcedureString("db.index.fulltext.drop", args, 0, "indexName")
+	if err != nil {
+		return nil, err
 	}
-
-	argsStart := strings.Index(cypher[idx:], "(")
-	argsEnd := strings.LastIndex(cypher[idx:], ")")
-	if argsStart < 0 || argsEnd < 0 {
-		return nil, localizedError(localization.CypherProceduresFulltextDropInvalidSyntax(true), nil)
-	}
-
-	indexName := strings.Trim(strings.TrimSpace(cypher[idx+argsStart+1:idx+argsEnd]), "'\"")
 
 	if err := e.dropIndexOfKind(indexName, "fulltext", func(schema *storage.SchemaManager) bool {
 		_, ok := schema.GetFulltextIndex(indexName)
@@ -938,19 +904,11 @@ func (e *StorageExecutor) callDbIndexFulltextDrop(cypher string) (*ExecuteResult
 
 // callDbIndexVectorDrop drops a vector index - Neo4j db.index.vector.drop()
 // Syntax: CALL db.index.vector.drop(indexName)
-func (e *StorageExecutor) callDbIndexVectorDrop(cypher string) (*ExecuteResult, error) {
-	idx := findKeywordIndex(cypher, "DROP")
-	if idx < 0 {
-		return nil, localizedError(localization.CypherProceduresVectorDropInvalidSyntax(false), nil)
+func (e *StorageExecutor) callDbIndexVectorDrop(args []interface{}) (*ExecuteResult, error) {
+	indexName, err := requiredProcedureString("db.index.vector.drop", args, 0, "indexName")
+	if err != nil {
+		return nil, err
 	}
-
-	argsStart := strings.Index(cypher[idx:], "(")
-	argsEnd := strings.LastIndex(cypher[idx:], ")")
-	if argsStart < 0 || argsEnd < 0 {
-		return nil, localizedError(localization.CypherProceduresVectorDropInvalidSyntax(true), nil)
-	}
-
-	indexName := strings.Trim(strings.TrimSpace(cypher[idx+argsStart+1:idx+argsEnd]), "'\"")
 
 	if err := e.dropIndexOfKind(indexName, "vector", func(schema *storage.SchemaManager) bool {
 		_, ok := schema.GetVectorIndex(indexName)

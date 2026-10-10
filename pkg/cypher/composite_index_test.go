@@ -134,31 +134,31 @@ func TestLegacyIndexProcedureCompatibilityBranches(t *testing.T) {
 	}
 
 	// fulltext create (node + relationship) success
-	_, err = exec.callDbIndexFulltextCreateNodeIndex(ctx, "CALL db.index.fulltext.createNodeIndex('ft_node',['Doc'],['title','body'])")
+	_, err = exec.Execute(ctx, "CALL db.index.fulltext.createNodeIndex('ft_node',['Doc'],['title','body'])", nil)
 	if err != nil {
 		t.Fatalf("expected node fulltext index creation success: %v", err)
 	}
-	_, err = exec.callDbIndexFulltextCreateRelationshipIndex(ctx, "CALL db.index.fulltext.createRelationshipIndex('ft_rel',['KNOWS'],['note'])")
+	_, err = exec.Execute(ctx, "CALL db.index.fulltext.createRelationshipIndex('ft_rel',['KNOWS'],['note'])", nil)
 	if err != nil {
 		t.Fatalf("expected relationship fulltext index creation success: %v", err)
 	}
 
 	// fulltext missing parenthesis/args branches
-	_, err = exec.callDbIndexFulltextCreateNodeIndex(ctx, "CALL db.index.fulltext.createNodeIndex 'ft'")
+	_, err = exec.Execute(ctx, "CALL db.index.fulltext.createNodeIndex 'ft'", nil)
 	if err == nil {
 		t.Fatal("expected missing parentheses error for fulltext node index")
 	}
-	_, err = exec.callDbIndexFulltextCreateRelationshipIndex(ctx, "CALL db.index.fulltext.createRelationshipIndex('ft_rel')")
+	_, err = exec.Execute(ctx, "CALL db.index.fulltext.createRelationshipIndex('ft_rel')", nil)
 	if err == nil {
 		t.Fatal("expected too-few-args error for fulltext relationship index")
 	}
 
 	// vector drop branches
-	_, err = exec.callDbIndexVectorDrop("CALL db.index.vector.drop('rel_vec_idx')")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.drop('rel_vec_idx')", nil)
 	if err != nil {
 		t.Fatalf("expected vector drop success: %v", err)
 	}
-	_, err = exec.callDbIndexVectorDrop("CALL db.index.vector.drop 'rel_vec_idx'")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.drop 'rel_vec_idx'", nil)
 	if err == nil {
 		t.Fatal("expected missing parentheses error for vector drop")
 	}
@@ -289,11 +289,11 @@ func TestLegacyIndexProcedureErrorBranches_Additional(t *testing.T) {
 	}
 
 	// Fulltext create node/relationship: invalid keyword.
-	_, err = exec.callDbIndexFulltextCreateNodeIndex(ctx, "CALL db.index.fulltext.nope('x')")
+	_, err = exec.Execute(ctx, "CALL db.index.fulltext.nope('x')", nil)
 	if err == nil {
 		t.Fatal("expected invalid fulltext node index syntax error")
 	}
-	_, err = exec.callDbIndexFulltextCreateRelationshipIndex(ctx, "CALL db.index.fulltext.nope('x')")
+	_, err = exec.Execute(ctx, "CALL db.index.fulltext.nope('x')", nil)
 	if err == nil {
 		t.Fatal("expected invalid fulltext relationship index syntax error")
 	}
