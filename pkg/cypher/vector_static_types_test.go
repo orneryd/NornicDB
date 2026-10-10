@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -81,7 +82,15 @@ func TestVectorAndUUIDStaticTypes(t *testing.T) {
 		require.NoError(t, err, query)
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
 	}
-	result, err := exec.Execute(ctx, "CYPHER 25 RETURN "+u+" + [1] AS a, [1] + "+u+" AS b, "+v+" + [1] AS c", nil)
+	// Type predicates on vectors, with both parsers: a dimension or a
+	// coordinate type after VECTOR is part of the type, not a call.
+	result, err := exec.Execute(ctx, "CYPHER 25 WITH "+v+" AS v RETURN v IS :: VECTOR<FLOAT>(2) AS a, v IS :: VECTOR<INTEGER32>(2) AS b, "+
+		"v IS :: VECTOR<INTEGER>(3) AS c, v IS :: VECTOR<INTEGER> AS d, v IS :: VECTOR(2) AS e, v IS :: ANY AS f, "+
+		"v IS :: VECTOR AS g, v IS TYPED VECTOR<INTEGER>(2) NOT NULL AS h, v IS NOT :: VECTOR(2) | STRING AS i", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{false, false, false, true, true, true, true, true, false}}, result.Rows)
+	require.Equal(t, "x IS "+strings.Repeat(" ", 24)+" AND f(1)", maskTypePredicateTypes("x IS :: VECTOR<INT8>(3) | INT AND f(1)"))
+	result, err = exec.Execute(ctx, "CYPHER 25 RETURN "+u+" + [1] AS a, [1] + "+u+" AS b, "+v+" + [1] AS c", nil)
 	require.NoError(t, err)
 	id, vector := uuidFromHalves(1, 2), CypherVector{Type: VectorInteger64, Ints: []int64{1, 2}}
 	require.Equal(t, []interface{}{id, int64(1)}, result.Rows[0][0])

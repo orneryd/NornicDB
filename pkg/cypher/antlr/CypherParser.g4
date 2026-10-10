@@ -467,7 +467,7 @@ expressionType
     ;
 
 expressionTypePart
-    : (ID | ANY | NODE | RELATIONSHIP | POINT | NULL_W) (ID | WITH)* (LT expressionType GT)? (NOT NULL_W)?
+    : (ID | ANY | NODE | RELATIONSHIP | POINT | NULL_W | VECTOR) (ID | WITH)* (LT expressionType GT)? (LPAREN numLit RPAREN)? (NOT NULL_W)?
     ;
 
 propertyOrLabelExpression

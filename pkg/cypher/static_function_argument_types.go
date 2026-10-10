@@ -241,6 +241,8 @@ func staticArgumentMismatch(argument staticArgumentType, typeName string) error 
 // argument is not part of it, and trim([LEADING | TRAILING | BOTH]
 // [characters] FROM source) checks its characters and source (trimFromArguments).
 func forEachStaticFunctionArgument(text string, check func(argument staticArgumentType, expression string) error) error {
+	// A type after :: or TYPED is no call (x IS :: VECTOR(3)).
+	text = maskTypePredicateTypes(text)
 	for index := 0; index < len(text); {
 		switch text[index] {
 		case '\'', '"':
