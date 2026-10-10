@@ -2471,6 +2471,9 @@ func TestVectorQueryHelpers_ConversionsAndResolution(t *testing.T) {
 	assert.True(t, math.IsInf(cypherVectorScorer("euclidean", query)([]float32{float32(math.Inf(1)), 0, 0}), -1))
 	assert.True(t, math.IsInf(cypherVectorScorer("cosine", query)([]float32{0, 0, 0}), -1))
 	assert.True(t, math.IsInf(cypherVectorScorer("cosine", []float32{0, 0, 0})([]float32{1, 0, 0}), -1))
+	assert.True(t, math.IsInf(cypherVectorRanker("cosine", []float32{0, 0, 0})([]float32{1, 0, 0}), -1))
+	assert.True(t, math.IsInf(cypherVectorRanker("cosine", query)([]float32{0, 0, 0}), -1))
+	assert.Equal(t, 1.0, cypherVectorRanker("dot", query)([]float32{1, 0, 0}))
 }
 
 func TestVectorQueryNodes_MissingIndexFallsThroughToManagedNamedEmbeddings(t *testing.T) {
