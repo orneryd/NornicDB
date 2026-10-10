@@ -337,6 +337,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.embedding_transaction_storage_required", Constructor: "CypherCoreEmbeddingTransactionStorageRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.empty_query", Constructor: "CypherCoreEmptyQuery", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.entity_property_key_type_mismatch", Constructor: "CypherCoreEntityPropertyKeyTypeMismatch", Fields: []string{"Type"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.entity_referenced_in_same_clause", Constructor: "CypherCoreEntityReferencedInSameClause", Fields: []string{"Clause", "Kind", "Variable"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.execution_plan_build_failed", Constructor: "CypherCoreExecutionPlanBuildFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.expression_unevaluable", Constructor: "CypherCoreExpressionUnevaluable", Fields: []string{"Expression"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.fulltext_bad_boost", Constructor: "CypherCoreFulltextBadBoost", Fields: []string{"Boost"}, PluralForms: []string{"other"}},

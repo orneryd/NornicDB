@@ -136,6 +136,8 @@
   other: "Entrada no válida '{{.Token}}': se esperaba un identificador"
 - id: cyphercore.parameter_type_mismatch
   other: "Tipo no coincidente para el parámetro '{{.Parameter}}': se esperaba {{.Expected}} pero era {{.Type}}"
+- id: cyphercore.entity_referenced_in_same_clause
+  other: "La variable {{.Kind}} '{{.Variable}}' hace referencia a un {{.Kind}} creado en la misma cláusula {{.Clause}}, lo que no está permitido. Haga referencia solo a variables creadas en cláusulas anteriores."
 - id: cyphercore.conditional_column_names
   other: "Todas las consultas condicionales deben tener los mismos nombres de columnas de retorno. Use `AS` para que las columnas tengan el mismo nombre."
 - id: cyphercore.conditional_column_count

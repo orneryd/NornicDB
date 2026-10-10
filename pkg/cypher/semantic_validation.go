@@ -135,10 +135,10 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 			}
 		}
 	}
-	if err := e.validateCreateSemanticScopes(cypher); err != nil {
+	if err := e.validateCreateSemanticScopes(cypher, cypher25); err != nil {
 		return err
 	}
-	if err := e.validateMergeSemanticScopes(cypher); err != nil {
+	if err := e.validateMergeSemanticScopes(cypher, cypher25); err != nil {
 		return err
 	}
 	if err := e.validateMatchSemanticScopes(cypher, cypher25); err != nil {

@@ -53,6 +53,7 @@ const (
 	MessageCypherCoreInvalidInput                        MessageID = "cyphercore.invalid_input"
 	MessageCypherCoreInvalidInputExpectedExpression      MessageID = "cyphercore.invalid_input_expected_expression"
 	MessageCypherCoreInvalidInputExpectedIdentifier      MessageID = "cyphercore.invalid_input_expected_identifier"
+	MessageCypherCoreEntityReferencedInSameClause         MessageID = "cyphercore.entity_referenced_in_same_clause"
 	MessageCypherCoreConditionalColumnNames              MessageID = "cyphercore.conditional_column_names"
 	MessageCypherCoreInterpolationWrongType              MessageID = "cyphercore.interpolation_wrong_type"
 	MessageCypherCoreMapComprehensionKeyNotString        MessageID = "cyphercore.map_comprehension_key_not_string"
@@ -789,4 +790,11 @@ func CypherCoreVectorMetricInvalid(expected string) Message {
 // that doesn't name a UUID.
 func CypherCoreUUIDInvalidText() Message {
 	return cypherCoreMessage(MessageCypherCoreUUIDInvalidText, "The argument `input` in the `uuid()` function must be a valid uuid string.", nil)
+}
+
+// CypherCoreEntityReferencedInSameClause is Neo4j's message for a property
+// value that reads a node or relationship (kind) the same CREATE or MERGE
+// clause creates. Clause is the untranslated clause keyword.
+func CypherCoreEntityReferencedInSameClause(kind, variable, clause string) Message {
+	return cypherCoreMessage(MessageCypherCoreEntityReferencedInSameClause, "The "+kind+" variable '"+variable+"' is referencing a "+kind+" that is created in the same "+clause+" clause which is not allowed. Please only reference variables created in earlier clauses.", map[string]any{"Kind": kind, "Variable": variable, "Clause": clause})
 }

@@ -136,6 +136,8 @@
   other: "[!! Invalid input '{{.Token}}': expected an identifier !!]"
 - id: cyphercore.parameter_type_mismatch
   other: "[!! Type mismatch for parameter '{{.Parameter}}': expected {{.Expected}} but was {{.Type}} !!]"
+- id: cyphercore.entity_referenced_in_same_clause
+  other: "[!! The {{.Kind}} variable '{{.Variable}}' is referencing a {{.Kind}} that is created in the same {{.Clause}} clause which is not allowed. Please only reference variables created in earlier clauses. !!]"
 - id: cyphercore.conditional_column_names
   other: "[!! All conditional queries must have the same return column names. Use `AS` to ensure columns have the same name. !!]"
 - id: cyphercore.conditional_column_count
