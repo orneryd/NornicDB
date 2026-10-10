@@ -2,7 +2,10 @@ package cypher
 
 import "strings"
 
-func (e *StorageExecutor) evaluateRowReduce(argument string, values map[string]interface{}) (interface{}, bool, error) {
+// evaluateRowReduce is reduce(acc = init, x IN list | expression) for a row,
+// argument the text between the parentheses and every part evaluated by
+// evaluate.
+func (e *StorageExecutor) evaluateRowReduce(argument string, values map[string]interface{}, evaluate rowValueEvaluator) (interface{}, bool, error) {
 	parts := splitTopLevelComma(argument)
 	if len(parts) != 2 {
 		return nil, false, nil
@@ -19,7 +22,7 @@ func (e *StorageExecutor) evaluateRowReduce(argument string, values map[string]i
 	if !isValidIdentifier(accumulatorName) {
 		return nil, false, nil
 	}
-	accumulator, resolved, err := e.evaluateRowValue(strings.TrimSpace(assignment[equals+1:]), values)
+	accumulator, resolved, err := evaluate(strings.TrimSpace(assignment[equals+1:]), values)
 	if err != nil {
 		return nil, false, err
 	}
@@ -41,7 +44,7 @@ func (e *StorageExecutor) evaluateRowReduce(argument string, values map[string]i
 	if pipeIndex <= 0 {
 		return nil, false, nil
 	}
-	listValue, resolved, err := e.evaluateRowValue(strings.TrimSpace(remainder[:pipeIndex]), values)
+	listValue, resolved, err := evaluate(strings.TrimSpace(remainder[:pipeIndex]), values)
 	if err != nil {
 		return nil, false, err
 	}
@@ -61,7 +64,7 @@ func (e *StorageExecutor) evaluateRowReduce(argument string, values map[string]i
 		scope[accumulatorName] = accumulator
 		scope[variableName] = item
 		var err error
-		accumulator, resolved, err = e.evaluateRowValue(reduction, scope)
+		accumulator, resolved, err = evaluate(reduction, scope)
 		if err != nil {
 			return nil, false, err
 		}
