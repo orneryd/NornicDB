@@ -768,21 +768,50 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 					return nil, err
 				}
 			}
-			endCandidates := []*storage.Node{endNode}
-			if endNode == nil {
+			// A map that reads the pattern's own variables (b {k: a.k},
+			// [r {w: a.w}]) is read once they are bound: per start candidate
+			// when matching, after each endpoint when creating (Neo4j 5.26).
+			endReadsStart := startNode == nil && endNode == nil && e.mergeMapReads(parsedPattern.endContent, parsedPattern.startVariable)
+			relReadsEndpoints := startNode == nil && endNode == nil &&
+				e.mergeMapReads(parsedPattern.relProps, parsedPattern.startVariable, parsedPattern.endVariable)
+			findEndCandidates := func() ([]*storage.Node, error) {
+				if endNode != nil {
+					return []*storage.Node{endNode}, nil
+				}
 				if err := prepareMergeKeys(ctx, store, endPattern.labels, endPattern.properties); err != nil {
 					return nil, err
 				}
-				endCandidates, err = e.findMergeNodes(store, endPattern.labels, endPattern.properties)
-				if err != nil {
+				return e.findMergeNodes(store, endPattern.labels, endPattern.properties)
+			}
+			var endCandidates []*storage.Node
+			if !endReadsStart {
+				if endCandidates, err = findEndCandidates(); err != nil {
 					return nil, err
 				}
 			}
 		search:
 			for _, candidateStart := range startCandidates {
+				if candidateStart == nil {
+					continue
+				}
+				if endReadsStart || relReadsEndpoints {
+					nodeContext[parsedPattern.startVariable] = candidateStart
+				}
+				if endReadsStart {
+					endPattern = e.parseMergeEndpointPattern(ctx, parsedPattern.endContent, nodeContext, relContext)
+					if endCandidates, err = findEndCandidates(); err != nil {
+						return nil, err
+					}
+				}
 				for _, candidateEnd := range endCandidates {
-					if candidateStart == nil || candidateEnd == nil {
+					if candidateEnd == nil {
 						continue
+					}
+					if relReadsEndpoints {
+						if parsedPattern.endVariable != "" {
+							nodeContext[parsedPattern.endVariable] = candidateEnd
+						}
+						parsedPattern.properties = e.parseMergeProperties(ctx, parsedPattern.relProps, nodeContext, relContext)
 					}
 					// Distinct endpoint variables may bind the same node: an
 					// existing self-loop whose endpoints satisfy both node
@@ -815,6 +844,11 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 					}
 				}
 			}
+			if existingEdge == nil && (endReadsStart || relReadsEndpoints) {
+				// No match: the pattern's variables aren't bound yet.
+				delete(nodeContext, parsedPattern.startVariable)
+				delete(nodeContext, parsedPattern.endVariable)
+			}
 			if existingEdge == nil {
 				// Create the whole pattern fresh.
 				if startNode == nil {
@@ -829,6 +863,9 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 					}
 				}
 				if endNode == nil {
+					if endReadsStart {
+						endPattern = e.parseMergeEndpointPattern(ctx, parsedPattern.endContent, nodeContext, relContext)
+					}
 					endNode, err = e.createMergeRelationshipEndpointNode(store, endPattern)
 					if err != nil {
 						return nil, err
@@ -839,7 +876,11 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 						nodeContext[parsedPattern.endVariable] = endNode
 					}
 				}
+				if relReadsEndpoints {
+					parsedPattern.properties = e.parseMergeProperties(ctx, parsedPattern.relProps, nodeContext, relContext)
+				}
 			}
+			parsedPattern.endNodePattern = endPattern
 		}
 	}
 

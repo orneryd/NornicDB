@@ -100,6 +100,11 @@ type mergeRelationshipPattern struct {
 	relType          string
 	properties       map[string]interface{}
 	direction        mergeRelationshipDirection
+	// endContent and relProps are the end node's and the relationship's
+	// text: a map that reads the pattern's own variables is read again once
+	// they are bound (executeMergeRelationshipWithContext).
+	endContent string
+	relProps   string
 }
 
 // mergeRelationshipShape is a relationship MERGE pattern's text split into
@@ -181,6 +186,8 @@ func (e *StorageExecutor) parseMergeRelationshipPattern(
 		relVariable:      shape.relVariable,
 		relType:          shape.relType,
 		properties:       make(map[string]interface{}),
+		endContent:       shape.endContent,
+		relProps:         shape.relProps,
 	}
 	parsed.startVariable = parsed.startNodePattern.variable
 	parsed.endVariable = parsed.endNodePattern.variable
@@ -229,4 +236,36 @@ func findParsedMergeRelationships(
 		combined = append(combined, edge)
 	}
 	return combined, nil
+}
+
+// mergeMapReads reports whether the property map in text (a node pattern's
+// content "b:L {k: v}", or a relationship's "{k: v}") has a value that reads
+// one of variables: a MERGE pattern's own node or relationship, which the
+// value can read only once it is bound.
+func (e *StorageExecutor) mergeMapReads(text string, variables ...string) bool {
+	if text == "" || strings.IndexByte(text, '{') < 0 {
+		return false
+	}
+	properties := text
+	if !strings.HasPrefix(strings.TrimSpace(text), "{") {
+		_, properties = splitNodePatternProperties("(" + text + ")")
+	}
+	properties = strings.TrimSpace(properties)
+	if len(properties) < 2 || properties[0] != '{' {
+		return false
+	}
+	for _, pair := range e.splitPropertyPairs(properties[1 : len(properties)-1]) {
+		separator := findTopLevelMapKeyValueSeparator(pair)
+		if separator <= 0 {
+			continue
+		}
+		for _, variable := range expressionFreeVariables(pair[separator+1:]) {
+			for _, name := range variables {
+				if name != "" && variable == name {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
