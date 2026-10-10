@@ -25,11 +25,19 @@ type staticArgumentType struct {
 	// acceptsLists is set where Neo4j accepts a list without naming it in
 	// the error (toInteger); the evaluator then rejects it at run time.
 	acceptsLists bool
+	// unlisted are types accepted although the error doesn't name them
+	// (staticUnlistedArgumentTypes).
+	unlisted []string
 }
 
 // staticListAcceptingFunctions accept a list argument at compile time
 // although their "Type mismatch" error doesn't list one.
 var staticListAcceptingFunctions = map[string]bool{"tointeger": true}
+
+// staticUnlistedArgumentTypes are the Cypher 25 types (VECTOR, UUID) a
+// function accepts that its Neo4j 5.26 "Type mismatch" error, the one this
+// check writes, doesn't name: toString takes both, size a vector.
+var staticUnlistedArgumentTypes = map[string][]string{"tostring": {"Vector", "UUID"}, "size": {"Vector"}}
 
 // staticCatalogTypeNames are the catalog's argument types
 // (cypherFunctionCatalog) as Neo4j names them in a compile-time "Type
@@ -49,6 +57,8 @@ var staticCatalogTypeNames = map[string][]string{
 	"LIST<ANY>":             {"List<T>"},
 	"LIST<STRING>":          {"List<String>"},
 	"LIST<INTEGER | FLOAT>": {"List<Float>", "List<Integer>", "List<Number>"},
+	"VECTOR":                {"Vector"},
+	"UUID":                  {"UUID"},
 }
 
 // staticTypeNameOrder is the order Neo4j lists types in a "Type mismatch"
@@ -56,7 +66,7 @@ var staticCatalogTypeNames = map[string][]string{
 // String or List<T>", "Float, Integer or Duration".
 var staticTypeNameOrder = []string{
 	"Boolean", "Float", "Integer", "Number", "Map", "Node", "Relationship", "Path", "Point", "String",
-	"Duration", "Date", "Time", "LocalTime", "LocalDateTime", "DateTime",
+	"Duration", "Date", "Time", "LocalTime", "LocalDateTime", "DateTime", "Vector", "UUID",
 	"List<Float>", "List<Integer>", "List<Number>", "List<String>", "List<T>",
 }
 
@@ -121,7 +131,7 @@ func buildStaticFunctionArguments() (map[string][]staticArgumentType, int) {
 					ordered = append(ordered, typeName)
 				}
 			}
-			arguments[index] = staticArgumentType{expected: joinTypeNames(ordered), options: ordered, acceptsLists: staticListAcceptingFunctions[name]}
+			arguments[index] = staticArgumentType{expected: joinTypeNames(ordered), options: ordered, acceptsLists: staticListAcceptingFunctions[name], unlisted: staticUnlistedArgumentTypes[name]}
 			checked = true
 		}
 		if checked {
@@ -197,7 +207,7 @@ func (argument staticArgumentType) accepts(typeName string) bool {
 		return false
 	}
 	isList := strings.HasPrefix(typeName, "List<")
-	if isList && argument.acceptsLists {
+	if isList && argument.acceptsLists || containsString(argument.unlisted, typeName) {
 		return true
 	}
 	for _, option := range argument.options {
@@ -379,7 +389,11 @@ func trimFromArguments(inner string) (arguments []string, fromForm bool) {
 // Variables are checked clause by clause (validateStaticFunctionVariables).
 func validateStaticFunctionArguments(cypher string) error {
 	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string) error {
-		if typeName := staticLiteralTypeName(expression); !argument.accepts(typeName) {
+		typeName := staticLiteralTypeName(expression)
+		if typeName == "" {
+			typeName = staticValueCallType(expression)
+		}
+		if !argument.accepts(typeName) {
 			return staticArgumentMismatch(argument, typeName)
 		}
 		return nil

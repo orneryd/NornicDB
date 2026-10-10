@@ -304,7 +304,16 @@ func staticListOperand(cypher string, start int, params map[string]interface{}) 
 		case strings.EqualFold(word, "true"), strings.EqualFold(word, "false"):
 			return end, "Boolean", ""
 		case c != '-' && c != '.' && (c < '0' || c > '9'):
-			// A variable, property or function: its type is known per row.
+			// A call returning a vector or UUID ([x IN vector(…) | x],
+			// 1 IN uuid()) is Neo4j's type mismatch; a variable, a property
+			// or any other function is known per row.
+			if open := queryGapEnd(cypher, end); open < len(cypher) && cypher[open] == '(' {
+				if close := findMatchingParen(cypher, open); close > open {
+					if result := staticValueCallType(cypher[start : close+1]); result != "" {
+						return close + 1, result, ""
+					}
+				}
+			}
 			return end, "", ""
 		}
 		value, literal := parseLiteralValueFromComputedRow(word)
