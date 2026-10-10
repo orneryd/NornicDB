@@ -187,7 +187,7 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	// Every candidate is ranked with one cheap pass; only the returned hits
 	// get Neo4j's exact score, which costs two strictly ordered float32
 	// passes (cypherVectorRanker).
-	rankOf := cypherVectorRanker(similarity, queryEmbedding)
+	prepared := newCypherVectorQuery(similarity, queryEmbedding)
 	scored := make([]scoredEdge, 0, len(candidates))
 	for index, cand := range candidates {
 		select {
@@ -195,7 +195,7 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 			return nil, ctx.Err()
 		default:
 		}
-		rank := rankOf(cand.vec)
+		rank := prepared.rank(cand.vec)
 		if math.IsInf(rank, -1) {
 			continue
 		}
@@ -206,11 +206,14 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	if len(scored) > spec.Limit {
 		scored = scored[:spec.Limit]
 	}
-	scoreOf := cypherVectorScorer(similarity, queryEmbedding)
+	// The hits' exact scores, kept in descending order (an insertion sort:
+	// the ranking left them in order but for near-ties).
 	for i := range scored {
-		scored[i].score = scoreOf(candidates[scored[i].candidate].vec)
+		scored[i].score = prepared.score(candidates[scored[i].candidate].vec)
+		for j := i; j > 0 && scored[j].score > scored[j-1].score; j-- {
+			scored[j], scored[j-1] = scored[j-1], scored[j]
+		}
 	}
-	sort.Slice(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
 	out := make([]RelationshipVectorQueryHit, 0, len(scored))
 	for _, r := range scored {
 		out = append(out, RelationshipVectorQueryHit{ID: candidates[r.candidate].id, Score: r.score})
@@ -523,7 +526,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 	if dims := s.VectorIndexDimensions(); dims > 0 && len(queryEmbedding) != dims {
 		return nil, nil
 	}
-	scoreOf := cypherVectorScorer(similarity, queryEmbedding)
+	prepared := newCypherVectorQuery(similarity, queryEmbedding)
 
 	type scoredNode struct {
 		id    string
@@ -560,7 +563,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 		if named := s.nodeNamedVector[nodeID]; named != nil {
 			if vecID, ok := named[vectorName]; ok {
 				if v, ok := s.getVectorForCypher(vecID); ok {
-					bestScore = scoreOf(v)
+					bestScore = prepared.score(v)
 				}
 			}
 			// If there is no explicit Cypher property/index mapping (property key is empty),
@@ -568,7 +571,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 			if math.IsInf(bestScore, -1) && spec.Property == "" {
 				for _, vecID := range named {
 					if v, ok := s.getVectorForCypher(vecID); ok {
-						score := scoreOf(v)
+						score := prepared.score(v)
 						if score > bestScore {
 							bestScore = score
 						}
@@ -581,7 +584,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 			if props := s.nodePropVector[nodeID]; props != nil {
 				if vecID, ok := props[spec.Property]; ok {
 					if v, ok := s.getVectorForCypher(vecID); ok {
-						bestScore = scoreOf(v)
+						bestScore = prepared.score(v)
 					}
 				}
 			}
@@ -590,7 +593,7 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 		if math.IsInf(bestScore, -1) {
 			for _, vecID := range s.nodeChunkVectors[nodeID] {
 				if v, ok := s.getVectorForCypher(vecID); ok {
-					score := scoreOf(v)
+					score := prepared.score(v)
 					if score > bestScore {
 						bestScore = score
 					}
@@ -615,57 +618,64 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 	return out, nil
 }
 
-// cypherVectorScorer scores candidates against query for a Cypher vector
-// query, on Neo4j's scale (see VectorQueryNodes): the query is prepared once.
-// A candidate whose vector isn't valid for the similarity (a zero vector for
-// cosine) scores -Inf, no hit.
-func cypherVectorScorer(similarity string, query []float32) func(candidate []float32) float64 {
-	switch similarity {
-	case "euclidean":
-		return func(candidate []float32) float64 {
-			if score, ok := vector.Neo4jEuclideanSimilarity(query, candidate); ok {
-				return score
-			}
-			return math.Inf(-1)
-		}
-	case "dot":
-		return func(candidate []float32) float64 { return float64(vector.DotProduct(query, candidate)) }
-	}
-	prepared, valid := vector.NewNeo4jCosineQuery(query)
-	return func(candidate []float32) float64 {
-		if valid {
-			if score, ok := prepared.Similarity(candidate); ok {
-				return score
-			}
-		}
-		return math.Inf(-1)
-	}
+// cypherVectorQuery is a Cypher vector query's query vector, prepared once
+// for its similarity: cosine needs it L2-normalized (vector.Neo4jCosineQuery).
+// valid is false for a query that isn't a valid vector for the similarity
+// (a zero vector for cosine): it has no hits.
+type cypherVectorQuery struct {
+	similarity string
+	query      []float32
+	cosine     vector.Neo4jCosineQuery
+	valid      bool
 }
 
-// cypherVectorRanker ranks candidates against query in the order of
-// cypherVectorScorer's scores, cheaply: for cosine, the dot product over the
-// candidate's L2 norm in one float64 pass (the query's norm is the same for
-// every candidate); an invalid candidate ranks -Inf. Ties and near-ties may
-// order otherwise than the exact float32 scores, which are recomputed for
-// the hits returned.
-func cypherVectorRanker(similarity string, query []float32) func(candidate []float32) float64 {
-	if similarity == "euclidean" || similarity == "dot" {
-		return cypherVectorScorer(similarity, query)
+func newCypherVectorQuery(similarity string, query []float32) cypherVectorQuery {
+	prepared := cypherVectorQuery{similarity: similarity, query: query, valid: true}
+	if similarity != "euclidean" && similarity != "dot" {
+		prepared.cosine, prepared.valid = vector.NewNeo4jCosineQuery(query)
 	}
-	if !vector.Neo4jCosineVectorValid(query) {
-		return func([]float32) float64 { return math.Inf(-1) }
+	return prepared
+}
+
+// score is candidate's score on Neo4j's scale (see VectorQueryNodes); a
+// candidate that isn't a valid vector for the similarity scores -Inf, no hit.
+func (q cypherVectorQuery) score(candidate []float32) float64 {
+	var score float64
+	ok := q.valid
+	switch {
+	case !ok:
+	case q.similarity == "euclidean":
+		score, ok = vector.Neo4jEuclideanSimilarity(q.query, candidate)
+	case q.similarity == "dot":
+		return float64(vector.DotProduct(q.query, candidate))
+	default:
+		score, ok = q.cosine.Similarity(candidate)
 	}
-	return func(candidate []float32) float64 {
-		var dot, norm float64
-		for i, y := range candidate {
-			dot += float64(query[i]) * float64(y)
-			norm += float64(y) * float64(y)
-		}
-		if !(norm > 0) || math.IsInf(norm, 0) {
-			return math.Inf(-1)
-		}
-		return dot / math.Sqrt(norm)
+	if !ok {
+		return math.Inf(-1)
 	}
+	return score
+}
+
+// rank orders candidates as score does, cheaply: for cosine, the dot
+// product over the candidate's L2 norm in one float64 pass (the query's norm
+// is the same for every candidate), where the exact score takes two strictly
+// ordered float32 passes; an invalid candidate ranks -Inf. Near-ties may
+// order otherwise than the exact scores, which are recomputed for the hits
+// returned.
+func (q cypherVectorQuery) rank(candidate []float32) float64 {
+	if !q.valid || q.similarity == "euclidean" || q.similarity == "dot" {
+		return q.score(candidate)
+	}
+	var dot, norm float64
+	for i, y := range candidate {
+		dot += float64(q.query[i]) * float64(y)
+		norm += float64(y) * float64(y)
+	}
+	if !(norm > 0) || math.IsInf(norm, 0) {
+		return math.Inf(-1)
+	}
+	return dot / math.Sqrt(norm)
 }
 
 // neo4jCosineScore maps a cosine in [-1, 1] from the vector index to Neo4j's
