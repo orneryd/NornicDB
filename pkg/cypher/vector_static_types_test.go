@@ -125,7 +125,7 @@ func TestVectorAndUUIDStaticTypes(t *testing.T) {
 	require.Equal(t, []interface{}{vector, int64(1)}, result.Rows[0][2])
 	require.Error(t, runtimeArithmeticTypeError('+', vector, int64(1)))
 	require.NoError(t, runtimeArithmeticTypeError('+', &vector, "x"))
-	require.True(t, isRuntimeVector(&vector))
+	require.True(t, joinsString(&vector))
 	text, ok := concatOperandText(&vector)
 	require.True(t, ok)
 	require.Equal(t, "vector([1, 2], 2, INTEGER64)", text)
