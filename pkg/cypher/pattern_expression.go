@@ -95,18 +95,7 @@ func isStandaloneExistsSubquery(expr string) bool {
 // (evaluateRowExistsPredicate), so an EXISTS value and an EXISTS filter
 // always agree.
 func (e *StorageExecutor) evaluateExistsSubqueryValue(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
-	values := valueBindingsLayer(ctx, len(nodes)+len(rels))
-	for name, node := range nodes {
-		if node != nil {
-			values[name] = node
-		}
-	}
-	for name, relationship := range rels {
-		if relationship != nil {
-			values[name] = relationship
-		}
-	}
-	matched, _ := e.evaluateRowExistsPredicate(ctx, expr, values)
+	matched, _ := e.evaluateRowExistsPredicate(ctx, expr, entityRow(ctx, nodes, rels))
 	return matched
 }
 
@@ -409,8 +398,8 @@ func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, exp
 		trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
 	}
 	if chainEnd, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain && chainEnd == len(trimmed) {
-		nodes, rels := entityScopesFromValues(values)
-		return e.evaluateExistsSubqueryValue(ctx, "EXISTS { "+trimmed+" }", nodes, rels), true, true
+		matched, _ := e.evaluateRowExistsPredicate(ctx, "EXISTS { "+trimmed+" }", values)
+		return matched, true, true
 	}
 	logicalValue, logical, logicalOK, err := evaluateLogicalExpression(trimmed, func(operand string) (interface{}, bool, error) {
 		operandValue, resolved := e.evaluateRowExpressionWithContext(ctx, operand, values)
