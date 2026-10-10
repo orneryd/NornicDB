@@ -578,10 +578,13 @@ func subqueryPropertyMapReadsRowValue(body string, values map[string]interface{}
 	return false
 }
 
-// entityRow is the row of an expression evaluated over node and relationship
-// bindings.
-func entityRow(nodes map[string]*storage.Node, rels map[string]*storage.Edge) pipelineRow {
-	values := make(pipelineRow, len(nodes)+len(rels))
+// entityRow is the row an expression evaluated over node and relationship
+// bindings sees, as its subqueries see it: the value scope of ctx (the row's
+// other values, a comprehension's or quantifier's variable) with the nodes
+// and relationships, which shadow it. Every subquery the node and
+// relationship evaluator runs reads its row from here.
+func entityRow(ctx context.Context, nodes map[string]*storage.Node, rels map[string]*storage.Edge) pipelineRow {
+	values := pipelineRow(valueBindingsLayer(ctx, len(nodes)+len(rels)))
 	for name, node := range nodes {
 		if node != nil {
 			values[name] = node
