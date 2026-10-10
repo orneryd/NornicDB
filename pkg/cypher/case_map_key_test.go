@@ -8,9 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A name that is a CASE keyword (case, end) used as a map key, property,
-// label or parameter inside a CASE doesn't open or close it. Recorded on
-// Neo4j 5.26.30.
+// A name that is a CASE keyword (case, when, then, else, end) used as a map
+// key, property, label or parameter inside a CASE doesn't open, split or close
+// it. Recorded on Neo4j 5.26.30.
 func TestCaseKeywordNamesInsideCase(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "case_map_key"))
 	ctx := context.Background()
@@ -30,5 +30,16 @@ func TestCaseKeywordNamesInsideCase(t *testing.T) {
 		result, err := exec.Execute(ctx, query, map[string]interface{}{"end": int64(1)})
 		require.NoError(t, err, query)
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+	}
+	for _, keyword := range []string{"case", "when", "then", "else", "end"} {
+		for _, query := range []string{
+			"WITH {" + keyword + ": 3} AS m RETURN CASE WHEN m." + keyword + " = 3 THEN m." + keyword + " ELSE 0 END AS v",
+			"WITH {" + keyword + ": 3} AS m RETURN CASE m." + keyword + " WHEN 3 THEN m." + keyword + " ELSE 0 END AS v",
+			"RETURN CASE WHEN true THEN {" + keyword + ": 3}." + keyword + " ELSE {" + keyword + ": 0} END AS v",
+		} {
+			result, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err, query)
+			require.Equal(t, [][]interface{}{{int64(3)}}, result.Rows, query)
+		}
 	}
 }

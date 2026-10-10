@@ -205,7 +205,7 @@ func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
 			caseDepth++
 		} else if caseDepth > 0 && caseKeywordAt(expression, index, "END") {
 			caseDepth--
-		} else if caseDepth == 0 && strings.EqualFold(word, keyword) {
+		} else if caseDepth == 0 && strings.EqualFold(word, keyword) && caseKeywordAt(expression, index, keyword) {
 			return index
 		}
 		index = end
@@ -214,10 +214,11 @@ func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
 }
 
 // caseKeywordAt reports whether s[i:] is the CASE grammar keyword keyword
-// (CASE, END) as a keyword, not a name that is the same word: a property
-// (n.end), a label or type (n:End), a parameter ($end) or a map key
-// ({end: 1}, followed by one colon; END :: INTEGER is a type predicate on a
-// CASE). Every scanner that pairs CASE with END reads keywords through it.
+// (CASE, WHEN, THEN, ELSE, END) as a keyword, not a name that is the same
+// word: a property (n.end, m.when), a label or type (n:End), a parameter
+// ($end) or a map key ({end: 1}, followed by one colon; END :: INTEGER is a
+// type predicate on a CASE). Every scanner of the CASE grammar reads its
+// keywords through it.
 func caseKeywordAt(s string, i int, keyword string) bool {
 	if !matchKeywordAt(s, i, keyword) {
 		return false
@@ -238,30 +239,6 @@ func caseKeywordAt(s string, i int, keyword string) bool {
 func isCaseWordStart(expression string, index int) bool {
 	return (index == 0 || !isIdentByte(expression[index-1])) &&
 		isIdentStartByte(expression[index])
-}
-
-// parseWhenClause parses a single WHEN ... THEN ... clause.
-func parseWhenClause(section string, isSimple bool) (caseWhenClause, error) {
-	// Find THEN keyword
-	thenIdx := indexCaseInsensitive(section, "THEN")
-	if thenIdx == -1 {
-		return caseWhenClause{}, localizedError(localization.CypherCoreCaseThenRequired(section), nil)
-	}
-
-	conditionPart := strings.TrimSpace(section[:thenIdx])
-	resultPart := strings.TrimSpace(section[thenIdx+4:])
-
-	clause := caseWhenClause{
-		result: resultPart,
-	}
-
-	if isSimple {
-		clause.value = conditionPart
-	} else {
-		clause.condition = conditionPart
-	}
-
-	return clause, nil
 }
 
 // caseBlockSpan is the [start, end) text range of one CASE … END expression.

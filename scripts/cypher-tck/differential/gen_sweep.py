@@ -6,7 +6,8 @@ testing/cypher/tck/testdata/differential/sweep.json.gz)
 Builds Cypher statements for every operator and clause family: each operand
 type against each operator, unary operators and predicates, literals, every
 function in Neo4j 5.26's catalogue with valid and invalid arguments,
-aggregates, keywords as variable names, undefined variables, projection
+aggregates, keywords as variable names, map keys, properties and labels,
+undefined variables, projection
 shapes, comprehensions, patterns, writes, subqueries and clause semantics.
 Expressions are placed in several positions (RETURN, WITH, WHERE, CASE, a
 comprehension, UNWIND, ORDER BY, a statement with no prefix).
@@ -191,6 +192,21 @@ for keyword in sorted(set(KEYWORDS)):
     for case in (keyword.lower(), keyword):
         for shape in SHAPES:
             add("names", "shape", shape.format(k=case))
+
+# 6b. Names: every keyword as a map key, a property and a label, inside the
+# expressions that scan for keywords (CASE in both forms, WHERE, a
+# comprehension).
+KEY_SHAPES = ["WITH {{{k}: 3}} AS m RETURN m.{k} AS v", "RETURN {{{k}: 1}}.{k} AS v",
+              "WITH {{{k}: 3}} AS m RETURN CASE WHEN m.{k} = 3 THEN m.{k} ELSE 0 END AS v",
+              "WITH {{{k}: 3}} AS m RETURN CASE m.{k} WHEN 3 THEN m.{k} ELSE 0 END AS v",
+              "RETURN CASE WHEN true THEN {{{k}: 1}} ELSE {{{k}: 2}} END AS v",
+              "WITH {{{k}: 3}} AS m WITH m WHERE m.{k} = 3 AND m.{k} > 1 RETURN m.{k} AS v",
+              "WITH {{{k}: 3}} AS m RETURN [x IN [1, 2] WHERE x < m.{k} | {{{k}: x}}] AS v",
+              "MATCH (n:Q {{id: 1}}) RETURN CASE WHEN n:{k} THEN 1 ELSE 0 END AS v"]
+for keyword in sorted(set(KEYWORDS)):
+    for case in (keyword.lower(), keyword):
+        for shape in KEY_SHAPES:
+            add("key-names", "shape", shape.format(k=case))
 
 # 7. Undefined variables in every position.
 for e in ["zz", "zz.a", "zz + 1", "zz IN [1]", "[zz]", "count(zz)", "zz{.a}", "size(zz)", "CASE zz WHEN 1 THEN 1 END",
