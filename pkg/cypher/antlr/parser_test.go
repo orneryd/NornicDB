@@ -504,6 +504,8 @@ func TestANTLRParserAdvancedQueries(t *testing.T) {
 		{"drop index", "DROP INDEX person_name IF EXISTS"},
 		{"create fulltext index", "CREATE FULLTEXT INDEX doc_search IF NOT EXISTS FOR (n:Doc) ON EACH [n.title, n.content]"},
 		{"create vector index", "CREATE VECTOR INDEX doc_embedding IF NOT EXISTS FOR (n:Doc) ON (n.embedding) OPTIONS {indexConfig: {dimensions: 3}}"},
+		{"create vector index on a bare property", "CREATE VECTOR INDEX doc_embedding IF NOT EXISTS FOR (n:Doc) ON n.embedding OPTIONS {indexConfig: {dimensions: 3}}"},
+		{"create relationship vector index on a bare property", "CREATE VECTOR INDEX likes_emb FOR ()-[r:LIKES]-() ON r.emb OPTIONS {indexConfig: {`vector.dimensions`: 3}}"},
 		{"create constraint node key", "CREATE CONSTRAINT user_key IF NOT EXISTS FOR (u:User) REQUIRE (u.username, u.domain) IS NODE KEY"},
 		{"create constraint options backticks", "CREATE CONSTRAINT `uq order id` IF NOT EXISTS FOR (`n`:`Order`) REQUIRE `n`.`id` IS UNIQUE OPTIONS {indexProvider: 'range-1.0'}"},
 		{"drop constraint", "DROP CONSTRAINT person_id IF EXISTS"},
