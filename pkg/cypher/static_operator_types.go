@@ -749,13 +749,15 @@ func staticMapProjectionReceiver(expression string) (receiver string, projected 
 
 // staticProjectable reports whether a value of a static type, or of one of
 // its choices ("Map, Node or Relationship"), can be map-projected: a map,
-// node, relationship, null, temporal value or duration.
-func staticProjectable(typeName string) bool {
+// node, relationship or null, and in a Cypher 5 statement a temporal value
+// or duration too (Neo4j 5.26: date(…){.year}); Neo4j 2026.09 rejects
+// those in a Cypher 25 statement.
+func staticProjectable(typeName string, cypher25 bool) bool {
 	for _, choice := range staticTypeChoices(typeName) {
 		operand := knownOperand(strings.TrimSpace(choice))
 		switch {
 		case operand.kind == "Map", operand.kind == "Node", operand.kind == "Relationship", operand.kind == "Null",
-			operand.temporal(), operand.duration():
+			!cypher25 && (operand.temporal() || operand.duration()):
 			return true
 		}
 	}
@@ -840,9 +842,9 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		return knownOperand("Map"), nil
 	}
 	if variable, items, projection := staticMapProjectionSplit(expression); projection {
-		// A temporal value or duration projects its fields; reading one it
-		// doesn't have is a runtime error, as for d.field.
-		if receiver := knownOperand(checker.scope.typeOf(variable)); receiver.kind != "" && !staticProjectable(receiver.kind) {
+		// In Cypher 5 a temporal value or duration projects its fields;
+		// reading one it doesn't have is a runtime error, as for d.field.
+		if receiver := knownOperand(checker.scope.typeOf(variable)); receiver.kind != "" && !staticProjectable(receiver.kind, checker.scope.cypher25) {
 			return staticOperand{}, operandMismatch(receiver, "Map, Node or Relationship")
 		}
 		for _, item := range splitTopLevelComma(items) {
