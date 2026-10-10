@@ -229,7 +229,7 @@ skipArrayIndexing:
 
 	// Note: count(), sum(), avg(), etc. are aggregation functions and should NOT be
 	// evaluated here. They must be handled by executeAggregation() in match.go or
-	// executeMatchWithRelationships() in traversal.go. If we reach here with count(),
+	// executeMatchWithRelationshipsWithPathSeeded() in traversal.go. If we reach here with count(),
 	// it means the query wasn't properly detected as an aggregation query - that's a bug
 	// in the query router, not something we should handle here.
 

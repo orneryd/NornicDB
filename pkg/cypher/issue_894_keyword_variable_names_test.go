@@ -319,13 +319,13 @@ func TestIssue894TraversalPathAggregateDistinct(t *testing.T) {
 		sort.Slice(rows, func(i, j int) bool { return fmt.Sprint(rows[i]) < fmt.Sprint(rows[j]) })
 		return rows
 	}
-	result, err := exec.executeMatchWithRelationships(ctx, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "collect(DISTINCT b.k)", alias: "v"}})
+	result, err := exec.executeMatchWithRelationshipsWithPathSeeded(ctx, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "collect(DISTINCT b.k)", alias: "v"}}, nil, nil, "", -1)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{[]interface{}{"x", "y"}}}, sorted(result.Rows))
-	result, err = exec.executeMatchWithRelationships(ctx, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "a.id", alias: "a"}, {expr: "collect(DISTINCT b.k)", alias: "v"}})
+	result, err = exec.executeMatchWithRelationshipsWithPathSeeded(ctx, "(a:P)-[:R]->(b:P)", "", []returnItem{{expr: "a.id", alias: "a"}, {expr: "collect(DISTINCT b.k)", alias: "v"}}, nil, nil, "", -1)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1), []interface{}{"x"}}, {int64(4), []interface{}{"y"}}}, sorted(result.Rows))
-	result, err = exec.executeMatchWithRelationships(ctx, "(a:P)-[:R]->(distinct:P)", "", []returnItem{{expr: "collect(distinct.k)", alias: "v"}})
+	result, err = exec.executeMatchWithRelationshipsWithPathSeeded(ctx, "(a:P)-[:R]->(distinct:P)", "", []returnItem{{expr: "collect(distinct.k)", alias: "v"}}, nil, nil, "", -1)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{[]interface{}{"x", "x", "y"}}}, sorted(result.Rows))
 }

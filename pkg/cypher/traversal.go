@@ -251,17 +251,7 @@ func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern 
 	return result
 }
 
-// executeMatchWithRelationships handles MATCH queries with relationship patterns
-func (e *StorageExecutor) executeMatchWithRelationships(ctx context.Context, pattern string, whereClause string, returnItems []returnItem) (*ExecuteResult, error) {
-	return e.executeMatchWithRelationshipsWithPath(ctx, pattern, whereClause, returnItems, nil, "", -1)
-}
-
-// executeMatchWithRelationshipsWithPath handles MATCH queries with relationship patterns and optional path variable
-func (e *StorageExecutor) executeMatchWithRelationshipsWithPath(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, pathVariable string, earlyLimit int) (*ExecuteResult, error) {
-	return e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, pathVariable, earlyLimit)
-}
-
-// executeMatchWithRelationshipsWithPathSeeded is executeMatchWithRelationshipsWithPath
+// executeMatchWithRelationshipsWithPathSeeded is the single traversal entry
 // with an additional endSeedNodes parameter. When a pipeline row already binds
 // the pattern's end-node variable (but not its start-node variable), the
 // caller passes that node here so the traversal starts from the known
@@ -900,7 +890,7 @@ func (e *StorageExecutor) tryExecuteTraversalStartSeedOrderLimit(ctx context.Con
 		return nil, false, nil
 	}
 
-	result, err := e.executeMatchWithRelationshipsWithPath(ctx, pattern, whereClause, returnItems, seedNodes, pathVariable, -1)
+	result, err := e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, pathVariable, -1)
 	if err != nil {
 		return nil, true, err
 	}

@@ -1007,7 +1007,7 @@ func TestCountFunction(t *testing.T) {
 	ctx := context.Background()
 
 	// count(*) in expression context should NOT be evaluated here
-	// Aggregation functions must be handled by executeAggregation(ctx, ) or executeMatchWithRelationships()
+	// Aggregation functions must be handled by executeAggregation(ctx, ) or executeMatchWithRelationshipsWithPathSeeded()
 	result := e.evaluateExpressionWithContext(ctx, "count(*)", nil, nil)
 	if result != nil {
 		t.Errorf("count(*) in expression context should return nil, got %v", result)
