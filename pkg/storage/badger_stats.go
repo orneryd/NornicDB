@@ -159,6 +159,15 @@ func (b *BadgerEngine) Close() error {
 	b.stopEdgeBetweenIndexBackfill()
 	b.stopLabelIndexBackfill()
 	b.stopDeleteCleanup()
+
+	// Drain acknowledged write-behind commits before tearing down Badger so
+	// a shutdown never loses writes that were acknowledged to clients.
+	if b.writeBehind != nil {
+		if err := b.FlushWriteBehind(); err != nil && b.log != nil {
+			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", err)
+		}
+		b.writeBehind.Close()
+	}
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
 	// be parked behind a barrier this goroutine is about to hold. The call

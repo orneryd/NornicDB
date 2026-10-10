@@ -1416,6 +1416,10 @@ func resolveDurabilityOptions(dataDir string, config *Config) (storage.BadgerOpt
 		if config.Database.AsyncFlushInterval > 0 {
 			walConfig.BatchSyncInterval = config.Database.AsyncFlushInterval
 		}
+		// The same bounded-loss window lets appends skip their per-record
+		// userspace flush (write(2)) entirely; the background sync drains
+		// and fsyncs the buffer on its tick.
+		walConfig.DeferAppendFlush = true
 	}
 	if walConfig.SyncMode != "batch" {
 		walConfig.BatchSyncInterval = 0

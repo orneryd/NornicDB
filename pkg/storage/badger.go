@@ -181,7 +181,11 @@ type BadgerEngine struct {
 	// for in-memory engines (see badger_delete_cleanup.go).
 	deleteCleanup *deleteCleanup
 	inMemory      bool   // True if running in memory-only mode (testing)
-	dataDir      string // Captured from BadgerOptions.DataDir; used by migration logging.
+	dataDir       string // Captured from BadgerOptions.DataDir; used by migration logging.
+
+	// writeBehind buffers implicit autocommit commits for background replay
+	// (see badger_write_behind.go). Nil when disabled.
+	writeBehind *WriteBehindBuffer
 
 	// migrationDidRun is set by RunOnStartMigrations when at least one
 	// migration arm rewrote bodies. The engine open path uses it to
@@ -206,7 +210,7 @@ type BadgerEngine struct {
 	adjCacheGen        cacheGeneration
 	labelFirstCacheGen cacheGeneration
 	cacheHits          int64
-	cacheMisses int64
+	cacheMisses        int64
 
 	// Current primary-key body cache for MVCC GetNodeVisibleAt reads. Entries
 	// are tagged with Badger's item version so a snapshot read can only reuse a
@@ -548,6 +552,20 @@ type BadgerOptions struct {
 	// SyncWrites forces fsync after each write.
 	// Slower but more durable.
 	SyncWrites bool
+
+	// WriteBehind buffers implicit autocommit transaction commits in the
+	// engine's rotating commit buffer and replays them into Badger in
+	// background batches. Explicit transactions and snapshot opens drain the
+	// buffer first. Off by default.
+	WriteBehind bool
+
+	// WriteBehindInterval rotates the active buffer generation this often.
+	// Defaults to 50ms when WriteBehind is set and this is <= 0.
+	WriteBehindInterval time.Duration
+
+	// WriteBehindMaxOps rotates the active generation once it holds this
+	// many buffered operations (0 = interval-only rotation).
+	WriteBehindMaxOps int
 
 	// BadgerInternalLogger is the logger handed to BadgerDB itself for its
 	// own internal logging (compaction, value-log GC, etc.). If nil, BadgerDB's
@@ -1003,6 +1021,17 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 
 	if !opts.InMemory {
 		engine.startDeleteCleanup()
+	}
+
+	if opts.WriteBehind {
+		interval := opts.WriteBehindInterval
+		if interval <= 0 {
+			interval = 50 * time.Millisecond
+		}
+		engine.writeBehind = NewWriteBehindBuffer(interval, opts.WriteBehindMaxOps, engine.replayWriteBehind)
+		engine.writeBehind.SetWarn(func(msg string) {
+			engine.log.Warn(msg, "subsystem", "storage")
+		})
 	}
 	return engine, nil
 }

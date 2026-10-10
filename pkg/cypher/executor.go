@@ -2016,10 +2016,10 @@ func (e *StorageExecutor) getStorage(ctx context.Context) storage.Engine {
 func (e *StorageExecutor) resolveWALAndDatabase() (*storage.WAL, string) {
 	engine := e.storage
 	var dbName string
-	visited := make(map[storage.Engine]bool)
-
-	for engine != nil && !visited[engine] {
-		visited[engine] = true
+	// Wrapper chains are short (a handful of decorators); a depth cap makes
+	// the cycle guard unnecessary and keeps this hot path allocation-free.
+	const maxDepth = 16
+	for depth := 0; engine != nil && depth < maxDepth; depth++ {
 		if ns, ok := engine.(interface{ Namespace() string }); ok && dbName == "" {
 			dbName = ns.Namespace()
 		}

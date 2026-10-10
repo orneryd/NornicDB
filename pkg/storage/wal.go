@@ -222,6 +222,17 @@ type WALConfig struct {
 	// "none": no fsync (fastest, data loss on crash)
 	SyncMode string
 
+	// DeferAppendFlush skips the per-append userspace flush in non-immediate
+	// modes: records accumulate in the bufio writer and reach the kernel
+	// only when the background Sync (batchSyncLoop tick) or Close drains
+	// them. Per-op appends stop paying a write(2) syscall each; in exchange
+	// up to BatchSyncInterval of records are lost on process crash (power
+	// loss behavior is unchanged: batch mode never fsyncs per record).
+	// Intended for engines that already accept a bounded loss window per
+	// commit (write-behind buffering), where per-append flush syscalls
+	// otherwise dominate ingest CPU.
+	DeferAppendFlush bool
+
 	// BatchSyncInterval for "batch" sync mode
 	BatchSyncInterval time.Duration
 
@@ -583,10 +594,14 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 		return seq, nil
 	}
 
-	// For non-immediate modes, still flush the userspace buffer so the WAL is readable
-	// (and crash-recovery can find entries) even when we aren't fsync'ing.
-	if err := w.writer.Flush(); err != nil {
-		return 0, fmt.Errorf("wal: flush failed: %w", err)
+	// For non-immediate modes, flush the userspace buffer so the WAL is
+	// readable (and crash-recovery can find entries) even when we aren't
+	// fsync'ing. DeferAppendFlush skips this per-append write(2); the
+	// background Sync drains the buffer on its tick instead.
+	if !w.config.DeferAppendFlush {
+		if err := w.writer.Flush(); err != nil {
+			return 0, fmt.Errorf("wal: flush failed: %w", err)
+		}
 	}
 
 	if err := w.maybeRotateLocked(seq); err != nil {

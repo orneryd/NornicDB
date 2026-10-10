@@ -1,13 +1,17 @@
 package cypher
 
 // BenchmarkZZAsyncStrip compares identical write workloads across storage
-// stacks now that every write takes the single transactional route.
-// EXPERIMENT (async-strip, uncommitted): measurement-only helper, delete
-// with the experiment.
+// stacks. The wal_writebehind stack enables BadgerEngine's rotating
+// write-behind commit buffer (the proper-layer async), so the two WAL
+// stacks measure buffered vs synchronous commit throughput on the same
+// transactional route.
 
 import (
 	"context"
+	"os"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -15,18 +19,44 @@ import (
 func BenchmarkZZAsyncStrip(b *testing.B) {
 	ctx := context.Background()
 
-	buildStack := func(b *testing.B) *StorageExecutor {
+	buildStack := func(b *testing.B, writeBehind bool) *StorageExecutor {
 		dir := b.TempDir()
-		badger, err := storage.NewBadgerEngine(dir)
+		interval := 50 * time.Millisecond
+		if v := os.Getenv("ZZWB_INTERVAL"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil {
+				interval = d
+			}
+		}
+		maxOps := 200000
+		if v := os.Getenv("ZZWB_MAXOPS"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				maxOps = n
+			}
+		}
+		badger, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+			DataDir:             dir,
+			WriteBehind:         writeBehind,
+			WriteBehindInterval: interval,
+			WriteBehindMaxOps:   maxOps,
+		})
 		if err != nil {
 			b.Fatal(err)
 		}
-		wal, err := storage.NewWAL(dir+"/wal", nil)
+		// Write-behind already accepts losing the unflushed generation on
+		// crash, so the WAL mirrors it: appends stop paying a write(2)
+		// syscall per marker and the background sync drains them instead.
+		walCfg := storage.DefaultWALConfig()
+		walCfg.BatchSyncInterval = 50 * time.Millisecond
+		walCfg.DeferAppendFlush = writeBehind
+		wal, err := storage.NewWAL(dir+"/wal", walCfg)
 		if err != nil {
 			b.Fatal(err)
 		}
 		engine := storage.NewWALEngine(badger, wal)
 		b.Cleanup(func() {
+			if err := badger.FlushWriteBehind(); err != nil {
+				b.Logf("flush on cleanup: %v", err)
+			}
 			_ = wal.Close()
 			_ = badger.Close()
 		})
@@ -37,7 +67,8 @@ func BenchmarkZZAsyncStrip(b *testing.B) {
 		name string
 		exec *StorageExecutor
 	}{
-		{"wal", buildStack(b)},
+		{"wal", buildStack(b, false)},
+		{"wal_writebehind", buildStack(b, true)},
 	}
 	mem, _ := newTestExecutor(b)
 	stacks = append(stacks, struct {

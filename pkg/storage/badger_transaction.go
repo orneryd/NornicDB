@@ -180,6 +180,11 @@ type BadgerTransaction struct {
 	// the session-end flush without weakening the durability contract users
 	// actually rely on (explicit tx commit and session close).
 	implicit bool
+	// bufferedStagingTransferred marks a commit that handed its staged maps
+	// and operations to the write-behind buffer (commitBufferedLocked);
+	// closeLocked then drops them instead of allocating fresh maps the
+	// dead transaction will never use.
+	bufferedStagingTransferred bool
 
 	// Transaction metadata (for logging/debugging)
 	Metadata           map[string]interface{}
@@ -356,11 +361,22 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 		tx.mergeKeyRelease = nil
 	}
 	tx.clearSnapshotCachesLocked()
-	tx.pendingWrites = make(map[string][]byte)
-	tx.pendingDeletes = make(map[string]bool)
-	tx.pendingLabelCountDeltas = make(map[namespaceLabel]int64)
-	tx.pendingEdgeTypeCountDeltas = make(map[namespaceEdgeType]int64)
-	tx.pendingEdgeTypeLabelCountDeltas = make(map[edgeTypeLabelDelta]int64)
+	if tx.bufferedStagingTransferred {
+		// The write-behind buffer owns the staged state; the transaction is
+		// dead after close, so leaving the fields nil saves six fresh-map
+		// allocations per buffered autocommit.
+		tx.pendingWrites = nil
+		tx.pendingDeletes = nil
+		tx.pendingLabelCountDeltas = nil
+		tx.pendingEdgeTypeCountDeltas = nil
+		tx.pendingEdgeTypeLabelCountDeltas = nil
+	} else {
+		tx.pendingWrites = make(map[string][]byte)
+		tx.pendingDeletes = make(map[string]bool)
+		tx.pendingLabelCountDeltas = make(map[namespaceLabel]int64)
+		tx.pendingEdgeTypeCountDeltas = make(map[namespaceEdgeType]int64)
+		tx.pendingEdgeTypeLabelCountDeltas = make(map[edgeTypeLabelDelta]int64)
+	}
 	tx.Status = status
 	tx.closedErr = closedErr
 	tx.releaseSnapshotReaderLocked()
@@ -2554,6 +2570,18 @@ func (tx *BadgerTransaction) Commit() error {
 	if err := tx.materializeDeferredEdgesLocked(); err != nil {
 		return tx.abortCommitLocked(err)
 	}
+
+	// Write-behind buffering: an implicit autocommit commit with no schema,
+	// knowledge-policy or temporal writes is acknowledged after every
+	// validation phase above and replayed into Badger by the background
+	// flusher. Everything that must fail the statement synchronously has
+	// already run by this point. (Commit holds tx.mu, so read the
+	// knowledge-policy flag directly instead of HasKnowledgePolicyChanges.)
+	if tx.engine.writeBehindEnabled() && tx.implicit && tx.schemaRuntime == nil &&
+		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 {
+		return tx.commitBufferedLocked()
+	}
+
 	physicalOperations := tx.physicalOperationsLocked()
 	hasWrites := len(physicalOperations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0
 	var version MVCCVersion
