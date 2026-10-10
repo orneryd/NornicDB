@@ -32,9 +32,6 @@ func (r *labelExpressionRewriter) vectorCall(wordStart, wordEnd, end int) error 
 	if word != "vector" && word != "vector_distance" && word != "vector_norm" {
 		return nil
 	}
-	if wordStart > 0 && q[wordStart-1] == '.' {
-		return nil // vector.similarity.cosine and other namespaced names
-	}
 	open := skipASCIISpaces(q, wordEnd, end)
 	if open >= end || q[open] != '(' {
 		return nil
