@@ -338,7 +338,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 			for _, argument := range parts[1:] {
 				position, valid, _ := e.evaluateRowValue(argument, values)
 				if numeric, ok := toInt(position); valid && ok && numeric < 0 {
-					recordExpressionFailure(ctx, newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidSubstringIndex", "Cannot handle negative start index nor negative length"))
+					recordExpressionFailure(ctx, stringOperationOutOfRange(cypherVersionFromContext(ctx) == "25", "substring"))
 					break
 				}
 			}

@@ -254,7 +254,7 @@ func fnStringOperation(name string) cypherfn.Func {
 			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "Integer", Value: values[1]}
 		}
 		if position < 0 {
-			return nil, newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgumentValue", "Cannot handle negative start index nor negative length")
+			return nil, stringOperationOutOfRange(ctx.Cypher25, name)
 		}
 		switch name {
 		case "left":
@@ -270,7 +270,7 @@ func fnStringOperation(name string) cypherfn.Func {
 			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "Integer", Value: values[2]}
 		}
 		if length < 0 {
-			return nil, newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgumentValue", "Cannot handle negative start index nor negative length")
+			return nil, stringOperationOutOfRange(ctx.Cypher25, name)
 		}
 		return cyphertext.Substring(text, position, length), nil
 	}
@@ -917,4 +917,16 @@ func (t valueType) render(notNull bool) string {
 		return name + " NOT NULL"
 	}
 	return name
+}
+
+// stringOperationOutOfRange is the error for a negative start or length of
+// substring(), left() or right(): Neo4j 5.26's ExecutionFailed for a Cypher
+// 5 statement, Neo4j 2026.09's ArgumentError ("out of range") for a Cypher
+// 25 one.
+func stringOperationOutOfRange(cypher25 bool, function string) error {
+	if cypher25 {
+		return localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentValue",
+			localization.CypherCoreFunctionArgumentOutOfRange(function))
+	}
+	return newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgumentValue", "Cannot handle negative start index nor negative length")
 }

@@ -112,3 +112,28 @@ func TestListAccessFunctionsAtRunTime(t *testing.T) {
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
 	}
 }
+
+// A negative start or length of substring(), left() or right() is Neo4j
+// 2026.09's ArgumentError in a Cypher 25 statement and Neo4j 5.26's
+// ExecutionFailed in a Cypher 5 one, in either evaluator.
+func TestCypher25StringOperationOutOfRange(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "cypher25_string_range"))
+	ctx := context.Background()
+	for _, expression := range []string{"left('Ab c', -3)", "right('Ab c', -3)", "substring('Ab c', -3)", "substring('Ab c', 1, -1)"} {
+		for _, query := range []string{
+			"RETURN " + expression + " AS v",
+			"WITH 'Ab c' AS s RETURN " + expression + " AS v",
+			"MATCH (n) WITH count(n) AS c RETURN " + expression + " AS v",
+		} {
+			_, err := exec.Execute(ctx, "CYPHER 25 "+query, nil)
+			require.Error(t, err, query)
+			requireStatusCode(t, err, "Neo.ClientError.Statement.ArgumentError")
+			_, err = exec.Execute(ctx, query, nil)
+			require.Error(t, err, query)
+			requireStatusCode(t, err, "Neo.DatabaseError.Statement.ExecutionFailed")
+		}
+	}
+	result, err := exec.Execute(ctx, "CYPHER 25 UNWIND [1] AS i WITH i RETURN left('Ab c', i) AS v", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"A"}}, result.Rows)
+}

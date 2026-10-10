@@ -208,8 +208,9 @@ skipArrayIndexing:
 			Eval: func(argExpr string) (interface{}, error) {
 				return e.evaluateExpressionWithContextFull(ctx, argExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), nil
 			},
-			Now:    time.Now,
-			Graphs: e,
+			Now:      time.Now,
+			Graphs:   e,
+			Cypher25: cypherVersionFromContext(ctx) == "25",
 		}
 
 		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {
@@ -696,46 +697,6 @@ skipArrayIndexing:
 				result[i] = p
 			}
 			return result
-		}
-		return nil
-	}
-
-	// substring(string, start, [length])
-	if matchFuncStartAndSuffix(expr, "substring") {
-		inner := extractFuncArgs(expr, "substring")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			start, _ := strconv.Atoi(strings.TrimSpace(args[1]))
-			if len(args) >= 3 {
-				length, _ := strconv.Atoi(strings.TrimSpace(args[2]))
-				return cyphertext.Substring(str, start, length)
-			}
-			return cyphertext.From(str, start)
-		}
-		return nil
-	}
-
-	// left(string, n) - return first n characters
-	if matchFuncStartAndSuffix(expr, "left") {
-		inner := extractFuncArgs(expr, "left")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			n, _ := strconv.Atoi(strings.TrimSpace(args[1]))
-			return cyphertext.Left(str, n)
-		}
-		return nil
-	}
-
-	// right(string, n) - return last n characters
-	if matchFuncStartAndSuffix(expr, "right") {
-		inner := extractFuncArgs(expr, "right")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			n, _ := strconv.Atoi(strings.TrimSpace(args[1]))
-			return cyphertext.Right(str, n)
 		}
 		return nil
 	}
