@@ -142,6 +142,12 @@
   other: "Se esperaba un valor de cadena para `string.join`, pero se obtuvo: {{.Value}}; considere convertirlo en cadena con toString()."
 - id: cyphercore.replace_limit_negative
   other: "El límite debe ser mayor o igual que 0."
+- id: cyphercore.format_template_value_count
+  other: "format(): la plantilla toma {{.Expected}} valores pero se dieron {{.Given}}"
+- id: cyphercore.format_template_value_type
+  other: "format(): {{.Verb}} no puede imprimir {{.Value}}"
+- id: cyphercore.format_template_verb_invalid
+  other: "format(): {{.Verb}} no es un verbo de plantilla"
 - id: cyphercore.temporal_pattern_invalid_character
   other: "Se usa un carácter no válido en el patrón. Verifique que `{{.Type}}` admite todos los caracteres."
 - id: cyphercore.duration_pattern_unbalanced_escapes

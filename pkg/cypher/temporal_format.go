@@ -32,7 +32,7 @@ func fnFormat(ctx cypherfn.Context, args []string) (interface{}, error) {
 		return nil, err
 	}
 	if template, isString := values[0].(string); isString {
-		return fmt.Sprintf(template, values[1:]...), nil
+		return formatPrintf(template, values[1:])
 	}
 	if len(values) > 2 {
 		return nil, functionParameterCountError("format", true)
@@ -254,4 +254,96 @@ func constructTemporalWithPattern(kind string, input, pattern interface{}) (inte
 	}
 	return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
 		localization.CypherCoreTemporalPatternMismatch(patternText, text, typeName))
+}
+
+// formatPrintf is NornicDB's printf extension, format(template, values…):
+// each verb of the template prints the next value. %s, %q and %v take any
+// value, written as Cypher writes it ('a', 1, true, [1, 2]); %d, %b, %o, %c
+// and %U an integer; %x and %X an integer or a string; %e, %E, %f, %F, %g and
+// %G a number; %t a boolean. Flags, width and precision are Go's; %% is a %.
+// A null value gives null. A verb without its value, a value without its
+// verb, a value its verb can't print and any other verb (%*d, %[1]d, %z) are
+// errors, never text in the result.
+func formatPrintf(template string, values []interface{}) (interface{}, error) {
+	for _, value := range values {
+		if value == nil {
+			return nil, nil
+		}
+	}
+	arguments := make([]interface{}, 0, len(values))
+	verbs := 0
+	for i := 0; i < len(template); i++ {
+		if template[i] != '%' {
+			continue
+		}
+		start := i
+		i++
+		for i < len(template) && strings.IndexByte("+-# 0", template[i]) >= 0 {
+			i++
+		}
+		for i < len(template) && (isDigitByte(template[i]) || template[i] == '.') {
+			i++
+		}
+		if i >= len(template) {
+			return nil, formatTemplateVerbInvalid(template[start:])
+		}
+		verb := template[i]
+		if verb == '%' && i == start+1 {
+			continue
+		}
+		if verbs >= len(values) {
+			verbs++
+			continue
+		}
+		argument, err := formatPrintfArgument(template[start:i+1], verb, values[verbs])
+		if err != nil {
+			return nil, err
+		}
+		arguments = append(arguments, argument)
+		verbs++
+	}
+	if verbs != len(values) {
+		return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentValue",
+			localization.CypherCoreFormatTemplateValueCount(verbs, len(values)))
+	}
+	return fmt.Sprintf(template, arguments...), nil
+}
+
+// formatPrintfArgument is value as verb prints it, or the error for a value
+// verb can't print.
+func formatPrintfArgument(spec string, verb byte, value interface{}) (interface{}, error) {
+	switch verb {
+	case 's', 'q', 'v':
+		switch typed := value.(type) {
+		case string:
+			return typed, nil
+		case []interface{}, map[string]interface{}:
+			return valueToCypherLiteral(typed), nil
+		}
+		return formatCypherValueString(value), nil
+	case 'd', 'b', 'o', 'c', 'U', 'x', 'X':
+		if integer, isInteger := cypherIntegerValue(value); isInteger {
+			return integer, nil
+		}
+		if text, isString := value.(string); isString && (verb == 'x' || verb == 'X') {
+			return text, nil
+		}
+	case 'e', 'E', 'f', 'F', 'g', 'G':
+		if number, isNumber := toFloat64(value); isNumber && isRuntimeNumber(value) {
+			return number, nil
+		}
+	case 't':
+		if boolean, isBool := value.(bool); isBool {
+			return boolean, nil
+		}
+	default:
+		return nil, formatTemplateVerbInvalid(spec)
+	}
+	return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+		localization.CypherCoreFormatTemplateValueType(spec, neo4jValueRepr(value)))
+}
+
+func formatTemplateVerbInvalid(spec string) error {
+	return localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentValue",
+		localization.CypherCoreFormatTemplateVerbInvalid(spec))
 }

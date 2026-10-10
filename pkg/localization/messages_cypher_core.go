@@ -68,6 +68,9 @@ const (
 	MessageCypherCoreFunctionArgumentOutOfRange          MessageID = "cyphercore.function_argument_out_of_range"
 	MessageCypherCoreStringJoinElementType               MessageID = "cyphercore.string_join_element_type"
 	MessageCypherCoreReplaceLimitNegative                MessageID = "cyphercore.replace_limit_negative"
+	MessageCypherCoreFormatTemplateValueCount            MessageID = "cyphercore.format_template_value_count"
+	MessageCypherCoreFormatTemplateValueType             MessageID = "cyphercore.format_template_value_type"
+	MessageCypherCoreFormatTemplateVerbInvalid           MessageID = "cyphercore.format_template_verb_invalid"
 	MessageCypherCoreTemporalPatternInvalidCharacter     MessageID = "cyphercore.temporal_pattern_invalid_character"
 	MessageCypherCoreDurationPatternUnbalancedEscapes    MessageID = "cyphercore.duration_pattern_unbalanced_escapes"
 	MessageCypherCoreTemporalPatternMismatch             MessageID = "cyphercore.temporal_pattern_mismatch"
@@ -378,6 +381,25 @@ func CypherCoreStringJoinElementType(value string) Message {
 // replace() limit.
 func CypherCoreReplaceLimitNegative() Message {
 	return cypherCoreMessage(MessageCypherCoreReplaceLimitNegative, "The limit needs to be greater than or equal to 0.", nil)
+}
+
+// CypherCoreFormatTemplateValueCount is the error for NornicDB's printf
+// format(template, values…) when the template's verbs and the values don't
+// pair up.
+func CypherCoreFormatTemplateValueCount(expected, given int) Message {
+	return cypherCoreMessage(MessageCypherCoreFormatTemplateValueCount, "format(): the template takes "+strconv.Itoa(expected)+" values but "+strconv.Itoa(given)+" were given", map[string]any{"Expected": expected, "Given": given})
+}
+
+// CypherCoreFormatTemplateValueType is the error for a printf format() value
+// its verb can't print (%d of a string). Verb is the verb with its %.
+func CypherCoreFormatTemplateValueType(verb, value string) Message {
+	return cypherCoreMessage(MessageCypherCoreFormatTemplateValueType, "format(): "+verb+" can't print "+value, map[string]any{"Verb": verb, "Value": value})
+}
+
+// CypherCoreFormatTemplateVerbInvalid is the error for a printf format()
+// template verb NornicDB doesn't take (%z, %*d, %[1]d).
+func CypherCoreFormatTemplateVerbInvalid(verb string) Message {
+	return cypherCoreMessage(MessageCypherCoreFormatTemplateVerbInvalid, "format(): "+verb+" is not a template verb", map[string]any{"Verb": verb})
 }
 
 // CypherCoreTemporalPatternInvalidCharacter is Neo4j's message for a format()
