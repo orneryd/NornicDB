@@ -8,15 +8,17 @@ import (
 
 // A relationship variable named twice in one MATCH (#907).
 //
-// Neo4j reads MATCH (a)-[r]->(b), (c)-[r]->(d) as one relationship bound
-// to both places. Under the default match mode (DIFFERENT RELATIONSHIPS) no
-// relationship appears twice in a MATCH, so the clause matches nothing (an
-// OPTIONAL MATCH binds null); it is not an error. The statement rewrite
-// (desugarLabelExpressions) gives every later place a variable of its own
-// and adds r = <that variable> to the clause's WHERE, so every route reads
-// the clause as Neo4j does: relationship uniqueness leaves it no rows.
-// Places of different kinds (a relationship and a variable-length list) are
-// Neo4j's type mismatch.
+// Without a match mode written, MATCH (a)-[r]->()-[r]->(a) is the openCypher
+// TCK's SyntaxError (RelationshipUniquenessViolation, Match3 [29]); the TCK
+// wins over Neo4j 5.26 and 2026.09, which return no rows. With a match mode
+// written (Cypher 25 / GQL) the variable is one relationship bound to both
+// places, as in Neo4j: under DIFFERENT RELATIONSHIPS no relationship appears
+// twice in a MATCH, so the clause matches nothing (an OPTIONAL MATCH binds
+// null); under REPEATABLE ELEMENTS the places join on it. The statement
+// rewrite (desugarLabelExpressions) gives every later place a variable of
+// its own and adds r = <that variable> to the clause's WHERE, so every route
+// reads the clause that way. Places of different kinds (a relationship and a
+// variable-length list) are Neo4j's type mismatch, with or without a mode.
 
 // relationshipPlace is a relationship element of a MATCH pattern: its
 // variable's text query[start:end], and whether it binds a list
@@ -29,8 +31,9 @@ type relationshipPlace struct {
 // repeatedRelationshipVariables renames the later places of each
 // relationship variable the MATCH pattern query[start:end] names more than
 // once and returns the predicates that tie them to the first. A variable
-// named both as a relationship and as a list is Neo4j's type mismatch.
-func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int) ([]string, error) {
+// named both as a relationship and as a list is Neo4j's type mismatch; any
+// other repeat is the TCK's SyntaxError unless modeWritten (see above).
+func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, modeWritten bool) ([]string, error) {
 	q := r.query
 	places := make(map[string][]relationshipPlace)
 	var order []string
@@ -77,6 +80,9 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int) 
 				types := map[bool]string{false: "Relationship", true: "List<Relationship>"}
 				return nil, labelExpressionSyntaxError(localization.CypherMatchingVariableTypeConflict(name, types[named[0].list], types[place.list]))
 			}
+		}
+		if !modeWritten {
+			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "RelationshipUniquenessViolation", localization.CypherMatchingRelationshipVariableRepeated(name))
 		}
 		for _, place := range named[1:] {
 			variable := r.variable()

@@ -231,6 +231,9 @@ type pathPrefixRewrite struct {
 	acyclic []string
 	// repeatable marks MATCH REPEATABLE ELEMENTS.
 	repeatable bool
+	// modeWritten marks a match mode written in the clause (DIFFERENT
+	// RELATIONSHIPS or REPEATABLE ELEMENTS).
+	modeWritten bool
 	// pathWheres are the WHEREs of plain parenthesised paths, rewritten:
 	// filters of the clause.
 	pathWheres []string
@@ -241,9 +244,8 @@ type pathPrefixRewrite struct {
 func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrite, error) {
 	rewrite := pathPrefixRewrite{patternStart: start, patternEnd: end}
 	q := r.query
-	explicitMode := false
 	if modeEnd, repeatable, ok := matchModeAt(q, start, end); ok {
-		explicitMode = true
+		rewrite.modeWritten = true
 		r.edit(skipASCIISpaces(q, start, end), modeEnd, "")
 		start = modeEnd
 		rewrite.repeatable = repeatable
@@ -266,7 +268,7 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 				variable, at = name, skipASCIISpaces(q, eq+1, part[1])
 			}
 		}
-		if explicitMode {
+		if rewrite.modeWritten {
 			if word, _, ok := scanSymbolicName(q[:part[1]], at); ok && (strings.EqualFold(word, "shortestPath") || strings.EqualFold(word, "allShortestPaths")) {
 				return rewrite, labelExpressionSyntaxError(localization.CypherMatchingPathSelectorWithShortestPathFunction())
 			}
