@@ -2343,18 +2343,19 @@ func TestLoadFromEnv_AsyncWriteDefaults(t *testing.T) {
 
 	cfg := LoadFromEnv()
 
-	// Async write defaults
-	if !cfg.Database.AsyncWritesEnabled {
-		t.Error("expected AsyncWritesEnabled to be true by default")
+	// Async write defaults: durable writes are the default; the adaptive
+	// write-behind buffer is opt-in via NORNICDB_ASYNC_WRITES_ENABLED.
+	if cfg.Database.AsyncWritesEnabled {
+		t.Error("expected AsyncWritesEnabled to be false by default (durable writes)")
 	}
-	if cfg.Database.AsyncFlushInterval != 50*time.Millisecond {
-		t.Errorf("expected AsyncFlushInterval 50ms, got %v", cfg.Database.AsyncFlushInterval)
+	if cfg.Database.AsyncFlushInterval != 0 {
+		t.Errorf("expected AsyncFlushInterval auto (0), got %v", cfg.Database.AsyncFlushInterval)
 	}
-	if cfg.Database.AsyncMaxNodeCacheSize != 50000 {
-		t.Errorf("expected AsyncMaxNodeCacheSize 50000, got %d", cfg.Database.AsyncMaxNodeCacheSize)
+	if cfg.Database.AsyncMaxNodeCacheSize != 0 {
+		t.Errorf("expected AsyncMaxNodeCacheSize auto (0), got %d", cfg.Database.AsyncMaxNodeCacheSize)
 	}
-	if cfg.Database.AsyncMaxEdgeCacheSize != 100000 {
-		t.Errorf("expected AsyncMaxEdgeCacheSize 100000, got %d", cfg.Database.AsyncMaxEdgeCacheSize)
+	if cfg.Database.AsyncMaxEdgeCacheSize != 0 {
+		t.Errorf("expected AsyncMaxEdgeCacheSize auto (0), got %d", cfg.Database.AsyncMaxEdgeCacheSize)
 	}
 	if cfg.Database.BadgerNodeCacheMaxEntries != 10000 {
 		t.Errorf("expected BadgerNodeCacheMaxEntries 10000, got %d", cfg.Database.BadgerNodeCacheMaxEntries)
@@ -2505,17 +2506,17 @@ func TestLoadFromEnv_AsyncWriteSettings(t *testing.T) {
 func TestLoadDefaults_AsyncWriteValues(t *testing.T) {
 	cfg := LoadDefaults()
 
-	if !cfg.Database.AsyncWritesEnabled {
-		t.Error("expected AsyncWritesEnabled to be true in defaults")
+	if cfg.Database.AsyncWritesEnabled {
+		t.Error("expected AsyncWritesEnabled to be false in defaults (durable writes)")
 	}
-	if cfg.Database.AsyncFlushInterval != 50*time.Millisecond {
-		t.Errorf("expected AsyncFlushInterval 50ms in defaults, got %v", cfg.Database.AsyncFlushInterval)
+	if cfg.Database.AsyncFlushInterval != 0 {
+		t.Errorf("expected AsyncFlushInterval auto (0) in defaults, got %v", cfg.Database.AsyncFlushInterval)
 	}
-	if cfg.Database.AsyncMaxNodeCacheSize != 50000 {
-		t.Errorf("expected AsyncMaxNodeCacheSize 50000 in defaults, got %d", cfg.Database.AsyncMaxNodeCacheSize)
+	if cfg.Database.AsyncMaxNodeCacheSize != 0 {
+		t.Errorf("expected AsyncMaxNodeCacheSize auto (0) in defaults, got %d", cfg.Database.AsyncMaxNodeCacheSize)
 	}
-	if cfg.Database.AsyncMaxEdgeCacheSize != 100000 {
-		t.Errorf("expected AsyncMaxEdgeCacheSize 100000 in defaults, got %d", cfg.Database.AsyncMaxEdgeCacheSize)
+	if cfg.Database.AsyncMaxEdgeCacheSize != 0 {
+		t.Errorf("expected AsyncMaxEdgeCacheSize auto (0) in defaults, got %d", cfg.Database.AsyncMaxEdgeCacheSize)
 	}
 	if cfg.Database.BadgerNodeCacheMaxEntries != 10000 {
 		t.Errorf("expected BadgerNodeCacheMaxEntries 10000 in defaults, got %d", cfg.Database.BadgerNodeCacheMaxEntries)

@@ -45,7 +45,6 @@ package config
 
 import (
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -53,6 +52,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -353,28 +354,40 @@ type DatabaseConfig struct {
 	EncryptionRotationInterval time.Duration
 
 	// === Async Write Settings ===
-	// These control the async write-behind cache for better throughput.
+	// These control the rotating write-behind commit buffer for higher
+	// write throughput.
 
-	// AsyncWritesEnabled enables async writes for faster performance.
-	// Writes return immediately after caching; flushed to disk in background.
-	// Env: NORNICDB_ASYNC_WRITES_ENABLED (default: true)
+	// AsyncWritesEnabled enables the auto-scaling write-behind commit
+	// buffer. Committed statements are acknowledged in memory and replayed
+	// into Badger by a background flusher whose rotation delay and buffer
+	// size adapt to measured drain latency and throughput. Disabled by
+	// default: durable writes are the default, and enabling this trades a
+	// bounded window (up to one flush interval of unflushed commits, lost
+	// only on crash) for throughput. StrictDurability disables it even when
+	// true. See docs/performance/write-behind-adaptive-buffer.md.
+	// Env: NORNICDB_ASYNC_WRITES_ENABLED (default: false)
 	AsyncWritesEnabled bool
 
-	// AsyncFlushInterval controls how often pending writes are flushed.
-	// Smaller = more consistent, larger = better throughput.
-	// Env: NORNICDB_ASYNC_FLUSH_INTERVAL (default: 50ms)
+	// AsyncFlushInterval is the initial rotation delay for the adaptive
+	// write-behind buffer. 0 = auto (default): the runtime adapts the delay
+	// to the measured drain latency, clamped to 5ms-1s. A positive value
+	// fixes the initial delay; it still adapts afterward.
+	// Env: NORNICDB_ASYNC_FLUSH_INTERVAL ("auto" = 0)
 	AsyncFlushInterval time.Duration
 
-	// AsyncMaxNodeCacheSize is the max nodes to buffer before forcing a flush.
-	// Prevents unbounded memory growth during bulk inserts.
-	// Set to 0 for unlimited (not recommended for bulk operations).
-	// Env: NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE (default: 50000)
+	// AsyncMaxNodeCacheSize is a legacy fixed cap on buffered nodes.
+	// 0 = auto (default): the adaptive write-behind buffer self-sizes from
+	// measured throughput and drain latency, so a fixed cap is unnecessary.
+	// A positive value sets a manual cap. Kept for compatibility and
+	// diagnostics.
+	// Env: NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE ("auto" = 0)
 	AsyncMaxNodeCacheSize int
 
-	// AsyncMaxEdgeCacheSize is the max edges to buffer before forcing a flush.
-	// Prevents unbounded memory growth during bulk inserts.
-	// Set to 0 for unlimited (not recommended for bulk operations).
-	// Env: NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE (default: 100000)
+	// AsyncMaxEdgeCacheSize is a legacy fixed cap on buffered edges.
+	// 0 = auto (default): the adaptive write-behind buffer self-sizes.
+	// A positive value sets a manual cap. Kept for compatibility and
+	// diagnostics.
+	// Env: NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE ("auto" = 0)
 	AsyncMaxEdgeCacheSize int
 
 	// === Badger In-Process Cache Settings ===
@@ -1920,10 +1933,10 @@ func LoadDefaults() *Config {
 	config.Database.EncryptionAuditSignKey = ""
 	config.Database.EncryptionRotationEnabled = true
 	config.Database.EncryptionRotationInterval = 90 * 24 * time.Hour
-	config.Database.AsyncWritesEnabled = true
-	config.Database.AsyncFlushInterval = 50 * time.Millisecond
-	config.Database.AsyncMaxNodeCacheSize = 50000  // ~35MB assuming 700 bytes/node
-	config.Database.AsyncMaxEdgeCacheSize = 100000 // ~50MB assuming 500 bytes/edge
+	config.Database.AsyncWritesEnabled = false // durable writes by default; enable for the adaptive write-behind buffer
+	config.Database.AsyncFlushInterval = 0     // auto: initial 50ms, then adapts to measured drain latency
+	config.Database.AsyncMaxNodeCacheSize = 0  // auto: the adaptive buffer self-sizes
+	config.Database.AsyncMaxEdgeCacheSize = 0  // auto: the adaptive buffer self-sizes
 	config.Database.BadgerNodeCacheMaxEntries = 10000
 	config.Database.BadgerEdgeTypeCacheMaxTypes = 50
 	// Head-only MVCC by default: no historical body duplication into the
@@ -2238,8 +2251,12 @@ func applyEnvVars(config *Config) error {
 	if v, ok := envutil.LookupBoolLoose("NORNICDB_ASYNC_WRITES_ENABLED"); ok {
 		config.Database.AsyncWritesEnabled = v
 	}
-	if v := getEnvDuration("NORNICDB_ASYNC_FLUSH_INTERVAL", 0); v > 0 {
-		config.Database.AsyncFlushInterval = v
+	if raw := getEnv("NORNICDB_ASYNC_FLUSH_INTERVAL", ""); raw != "" {
+		if strings.TrimSpace(raw) == "auto" {
+			config.Database.AsyncFlushInterval = 0
+		} else if v := getEnvDuration("NORNICDB_ASYNC_FLUSH_INTERVAL", 0); v > 0 {
+			config.Database.AsyncFlushInterval = v
+		}
 	}
 	if v := getEnvInt("NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE", -1); v >= 0 {
 		config.Database.AsyncMaxNodeCacheSize = v
@@ -3412,7 +3429,9 @@ func LoadFromFile(configPath string) (*Config, error) {
 		asyncFlushInterval = strings.TrimSpace(yamlCfg.Database.AsyncWrites.FlushInterval)
 	}
 	if asyncFlushInterval != "" {
-		if d, err := time.ParseDuration(asyncFlushInterval); err == nil {
+		if asyncFlushInterval == "auto" {
+			config.Database.AsyncFlushInterval = 0
+		} else if d, err := time.ParseDuration(asyncFlushInterval); err == nil {
 			config.Database.AsyncFlushInterval = d
 		}
 	}

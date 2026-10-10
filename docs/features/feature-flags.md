@@ -17,8 +17,8 @@ Complete reference for all feature flags in NornicDB. Feature flags allow you to
 | | Auto-Recover on Corruption | ✅ Enabled | `NORNICDB_AUTO_RECOVER_ON_CORRUPTION` |
 | **Performance** | | | |
 | | Embedding Cache | ✅ Enabled (10K) | `NORNICDB_EMBEDDING_CACHE_SIZE` |
-| | Async Writes | ✅ Enabled | `NORNICDB_ASYNC_WRITES_ENABLED` |
-| | Async Flush Interval | 50ms | `NORNICDB_ASYNC_FLUSH_INTERVAL` |
+| | Async Writes (adaptive write-behind) | ❌ Disabled (durable default) | `NORNICDB_ASYNC_WRITES_ENABLED` |
+| | Async Flush Interval | auto | `NORNICDB_ASYNC_FLUSH_INTERVAL` |
 | | Per-Node Config Auto-Integration | ✅ Enabled | `NORNICDB_PER_NODE_CONFIG_AUTO_INTEGRATION_ENABLED` |
 | **Experimental** | | | |
 | | Kalman Filtering | ❌ Disabled | `NORNICDB_KALMAN_ENABLED` |
@@ -453,24 +453,26 @@ nornicdb serve --embedding-cache 0
 
 ---
 
-### Async Writes (Write-Behind Caching)
+### Async Writes (Adaptive Write-Behind Buffer)
 
-**Purpose**: Dramatically improve write performance by returning immediately and flushing to disk in the background. Trades strong consistency for eventual consistency.
+**Purpose**: Dramatically improve write throughput by acknowledging committed statements in memory and replaying them into Badger with a background flusher. The rotation delay and buffer size **auto-scale to the measured drain latency and throughput**, and persistent size/timing mismatches are reported in the logs. Durable writes are the default; enabling this trades a bounded window (up to one flush interval of unflushed commits, lost only on crash) for throughput. `StrictDurability` disables it even when enabled.
 
-**Environment Variables**: 
-- `NORNICDB_ASYNC_WRITES_ENABLED` - Enable/disable async writes
-- `NORNICDB_ASYNC_FLUSH_INTERVAL` - How often to flush (default: 50ms)
+See [Write-Behind Adaptive Buffer](../performance/write-behind-adaptive-buffer.md) for the full guide and measured throughput.
 
-**Default**: ✅ Enabled (50ms flush interval)
+**Environment Variables**:
+- `NORNICDB_ASYNC_WRITES_ENABLED` - Enable/disable the adaptive write-behind buffer (default: false)
+- `NORNICDB_ASYNC_FLUSH_INTERVAL` - Initial flush interval; the runtime adapts it to measured drain latency (default: 50ms)
+
+**Default**: ❌ Disabled (durable writes)
 
 ```bash
-# Disable for strong consistency (writes block until persisted)
+# Durable default (writes block until persisted)
 export NORNICDB_ASYNC_WRITES_ENABLED=false
 
-# Enable with default 50ms flush interval
+# Enable auto-scaling write-behind (initial 50ms flush interval)
 export NORNICDB_ASYNC_WRITES_ENABLED=true
 
-# Adjust flush interval (lower = more consistent, higher = better throughput)
+# Start from a different initial interval; the runtime adapts from there
 export NORNICDB_ASYNC_FLUSH_INTERVAL=100ms
 ```
 

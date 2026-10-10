@@ -1405,6 +1405,18 @@ func resolveBadgerOptions(dataDir string, config *Config) storage.BadgerOptions 
 func resolveDurabilityOptions(dataDir string, config *Config) (storage.BadgerOptions, *storage.WALConfig) {
 	badgerOptions := resolveBadgerOptions(dataDir, config)
 
+	// Durable writes are the default: the write-behind buffer stays off
+	// unless the user opts into async writes AND relaxes strict durability.
+	// AsyncWritesEnabled turns on the rotating commit buffer with AUTO
+	// sizing (WriteBehindMaxOps 0): its rotation delay and generation size
+	// adapt to measured drain latency and throughput at runtime.
+	if config.Database.AsyncWritesEnabled && !config.Database.StrictDurability {
+		badgerOptions.WriteBehind = true
+		if config.Database.AsyncFlushInterval > 0 {
+			badgerOptions.WriteBehindInterval = config.Database.AsyncFlushInterval
+		}
+	}
+
 	walConfig := storage.DefaultWALConfig()
 	walConfig.Dir = filepath.Join(dataDir, "wal")
 	walConfig.SyncMode = strings.ToLower(strings.TrimSpace(config.Database.WALSyncMode))

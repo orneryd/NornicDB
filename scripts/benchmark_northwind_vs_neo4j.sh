@@ -78,6 +78,15 @@
 #                           without affecting query results. Set GRAPH_ONLY=0 to
 #                           include search index build + decay scoring cost in the
 #                           comparison.
+#   NORNIC_ASYNC_WRITES=1   (default 1) Enable the adaptive write-behind commit
+#                           buffer for the NornicDB run
+#                           (NORNICDB_ASYNC_WRITES_ENABLED=true): committed
+#                           statements are acknowledged in memory and replayed
+#                           by a background flusher whose rotation delay and
+#                           buffer size auto-scale to the measured drain latency
+#                           and throughput. Durable synchronous commits are the
+#                           product default; set NORNIC_ASYNC_WRITES=0 to benchmark
+#                           the durable baseline instead.
 
 set -euo pipefail
 
@@ -441,6 +450,15 @@ run_nornic() {
     # decay scoring costs ~29% of seed wall time when enabled (11.7s -> 8.3s
     # for the default seed size) via per-entity AccessMeta reads + scoring.
     nornic_extra_env=(NORNICDB_MEMORY_DECAY_ENABLED=false)
+  fi
+  # The benchmark measures the auto-scaling write-behind path: committed
+  # statements are acknowledged in memory and replayed by a background
+  # flusher whose rotation delay and buffer size adapt to measured drain
+  # latency and throughput (docs/performance/write-behind-adaptive-buffer.md).
+  # Durable synchronous commits are the product default; NORNIC_ASYNC_WRITES=0
+  # benchmarks that baseline instead.
+  if [[ "${NORNIC_ASYNC_WRITES:-1}" != "0" ]]; then
+    nornic_extra_env+=(NORNICDB_ASYNC_WRITES_ENABLED=true)
   fi
 
   log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT}) graph_only=${GRAPH_ONLY} parser=${mode}"
