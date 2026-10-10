@@ -40,3 +40,26 @@ func TestVectorAndUUIDOrderAndSize(t *testing.T) {
 		require.Equal(t, want, result.Rows, query)
 	}
 }
+
+// vector.similarity.* take VECTOR values as they take lists, with Neo4j
+// 2026.09's scores and errors. (For some VECTOR arguments Neo4j's score
+// differs from the list form's in the last float32 bit; tracked in #907.)
+func TestVectorSimilarityOfVectorValues(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "vector_similarity_values"))
+	ctx := context.Background()
+	for query, want := range map[string]float64{
+		"RETURN vector.similarity.cosine(vector([0.1, 0.7, 0.3], 3, FLOAT), [0.2, 0.5, 0.9]) AS s":                    0.897216796875,
+		"RETURN vector.similarity.euclidean(vector([1, 2, 3], 3, INTEGER8), vector([3.5, 0.25, 1.0], 3, FLOAT)) AS s": 0.06986899673938751,
+	} {
+		result, err := exec.Execute(ctx, "CYPHER 25 "+query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+	}
+	for _, query := range []string{
+		"RETURN vector.similarity.cosine(vector([0, 0], 2, INTEGER), [1.0, 0.0]) AS s",
+		"RETURN vector.similarity.cosine(vector([1, 0], 2, INTEGER), [1.0, 0.0, 0.0]) AS s",
+	} {
+		_, err := exec.Execute(ctx, "CYPHER 25 "+query, nil)
+		requireStatusCode(t, err, "Neo.ClientError.Statement.ArgumentError")
+	}
+}

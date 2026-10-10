@@ -10,7 +10,8 @@ import (
 // vector.similarity.cosine(a, b) and vector.similarity.euclidean(a, b), as
 // Neo4j 5.26 and 2026.09 compute them (#907): a score in [0, 1], bit for bit
 // (vector.Neo4jCosineSimilarity, vector.Neo4jEuclideanSimilarity). Null in,
-// null out. An argument that isn't a list is a TypeError; a list that isn't a
+// null out. An argument may be a VECTOR value or a list; one that is neither
+// is a TypeError; a list that isn't a
 // valid vector for the function (empty, a coordinate that isn't a finite
 // number, a zero vector for cosine) and vectors of different dimensions are
 // Neo4j's ArgumentErrors.
@@ -48,10 +49,21 @@ func fnVectorSimilarity(function string, valid func([]float64) bool, similarity 
 	}
 }
 
-// similarityVectorArgument reads a vector.similarity argument: a list of
-// numbers that is a valid vector for the function. A list holding anything
-// else isn't a valid vector; a value that isn't a list is a TypeError.
+// similarityVectorArgument reads a vector.similarity argument: a VECTOR, or
+// a list of numbers, that is a valid vector for the function. A list holding
+// anything else isn't a valid vector; a value that is neither is a
+// TypeError.
 func similarityVectorArgument(function, argument string, value interface{}, valid func([]float64) bool) ([]float64, error) {
+	if typed, isVector := value.(CypherVector); isVector {
+		coordinates := make([]float64, typed.Dimension())
+		for i := range coordinates {
+			coordinates[i] = typed.floatAt(i)
+		}
+		if !valid(coordinates) {
+			return nil, invalidSimilarityVector(function, argument)
+		}
+		return coordinates, nil
+	}
 	items, isList := cypherListValue(value)
 	if !isList {
 		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
