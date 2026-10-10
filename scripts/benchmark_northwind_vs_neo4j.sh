@@ -192,16 +192,21 @@ cleanup() {
   if [[ -n "${NORNIC_PID:-}" ]] && kill -0 "${NORNIC_PID}" 2>/dev/null; then
     log "cleanup: killing NornicDB (pid ${NORNIC_PID})"
     kill -KILL "${NORNIC_PID}" 2>/dev/null || true
+    # Reap the job so bash doesn't report "Killed: 9" at exit.
+    wait "${NORNIC_PID}" 2>/dev/null || true
   fi
   if [[ -n "${POWER_PID:-}" ]]; then
     sudo kill -KILL "${POWER_PID}" 2>/dev/null || true
+    wait "${POWER_PID}" 2>/dev/null || true
   fi
   if [[ -n "${VMSTAT_PID:-}" ]]; then
     kill -KILL "${VMSTAT_PID}" 2>/dev/null || true
+    wait "${VMSTAT_PID}" 2>/dev/null || true
   fi
   if [[ -n "${NEO4J_PID:-}" ]] && kill -0 "${NEO4J_PID}" 2>/dev/null; then
     log "cleanup: killing Neo4j (pid ${NEO4J_PID})"
     kill -KILL "${NEO4J_PID}" 2>/dev/null || true
+    wait "${NEO4J_PID}" 2>/dev/null || true
   fi
   for container in northwind-falkor northwind-memgraph; do
     if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' | grep -qx "${container}"; then
