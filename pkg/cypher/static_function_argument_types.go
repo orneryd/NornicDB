@@ -448,7 +448,10 @@ func validateStaticFunctionArguments(cypher string, cypher25 bool) error {
 type staticTypeScope struct {
 	kinds  matchSemanticScope
 	values map[string]string
-	params map[string]interface{}
+	// members are the member types of the variables a WITH bound to a map
+	// literal in a Cypher 25 statement (projectStaticValueMembers).
+	members map[string]map[string]staticOperand
+	params  map[string]interface{}
 	// complete is set when kinds holds every variable the clause can read
 	// (validateMatchSemanticScopes' walk), so an expression naming any
 	// other variable reads an undefined one (Neo4j: "Variable `x` not
@@ -490,8 +493,42 @@ func (scope staticTypeScope) typeOf(variable string) string {
 	return scope.values[variable]
 }
 
+// staticMemberAccessBase is the variable a member read starts from
+// (m.a, m['a'], m.a.b), whose member types a Cypher 25 statement knows
+// (staticTypeScope.members).
+func staticMemberAccessBase(expression string) (string, bool) {
+	expression = strings.TrimSpace(expression)
+	base, end, ok := scanIdentifierToken(expression, 0)
+	if !ok || end == len(expression) {
+		return "", false
+	}
+	for index := end; index < len(expression); {
+		switch expression[index] {
+		case '.':
+			_, next, ok := scanIdentifierToken(expression, index+1)
+			if !ok {
+				return "", false
+			}
+			index = next
+		case '[':
+			closing := findMatchingDelimiter(expression, index, '[', ']')
+			if closing < 0 {
+				return "", false
+			}
+			if _, literal := decodeCypherQuotedString(strings.TrimSpace(expression[index+1 : closing])); !literal {
+				return "", false
+			}
+			index = closing + 1
+		default:
+			return "", false
+		}
+	}
+	return base, true
+}
+
 // staticExpressionType is the static type of expression in scope: a
-// literal's type or a variable's.
+// literal's type or a variable's, or in a Cypher 25 statement a known
+// member's (m.a for m bound to {a: 2}).
 func (scope staticTypeScope) staticExpressionType(expression string) string {
 	if len(scope.params) > 0 && strings.HasPrefix(strings.TrimSpace(expression), "$") {
 		return propertyAccessExpressionType(expression, scope.values, scope.params)
@@ -501,6 +538,12 @@ func (scope staticTypeScope) staticExpressionType(expression string) string {
 	}
 	if variable := simpleSemanticIdentifier(expression); variable != "" {
 		return scope.typeOf(variable)
+	}
+	if _, member := staticMemberAccessBase(expression); member && scope.cypher25 {
+		if operand, err := (staticOperatorChecker{scope: scope}).check(expression); err == nil {
+			return operand.kind
+		}
+		return ""
 	}
 	if mayContainArithmetic(expression) {
 		operand, err := (staticOperatorChecker{scope: scope}).check(expression)
@@ -532,7 +575,9 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 	var scope *staticTypeScope
 	return forEachStaticFunctionArgument(text, func(argument staticArgumentType, expression string) error {
 		variable := simpleSemanticIdentifier(expression)
-		if variable == "" && !mayContainArithmetic(expression) {
+		if base, member := staticMemberAccessBase(expression); member {
+			variable = base // its members' types (Cypher 25)
+		} else if variable == "" && !mayContainArithmetic(expression) {
 			return nil
 		}
 		if scope == nil {
@@ -610,6 +655,45 @@ func projectStaticValueTypes(scope staticTypeScope, clause string) map[string]st
 		}
 	}
 	return values
+}
+
+// projectStaticValueMembers is, for a Cypher 25 statement, the member types
+// of each WITH alias whose value is a map literal, or an alias, nested map
+// or other expression the operator check types as one ({a: 2} AS m, m AS k):
+// Neo4j 2026.09 types m.a and m['a'] from them. WITH * keeps every one.
+func projectStaticValueMembers(scope staticTypeScope, clause string) map[string]map[string]staticOperand {
+	if !scope.cypher25 {
+		return nil
+	}
+	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+	if len(scope.members) == 0 && strings.IndexByte(body, '{') < 0 {
+		return nil
+	}
+	var members map[string]map[string]staticOperand
+	for _, raw := range splitTopLevelComma(body) {
+		expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
+		if expression == "*" {
+			for variable, known := range scope.members {
+				if members == nil {
+					members = make(map[string]map[string]staticOperand)
+				}
+				members[variable] = known
+			}
+			continue
+		}
+		// Unaliased, a column is named by its text (WITH m); only a name
+		// binds a variable.
+		if simpleSemanticIdentifier(alias) == "" {
+			continue
+		}
+		if operand, err := (staticOperatorChecker{scope: scope}).check(expression); err == nil && operand.members != nil {
+			if members == nil {
+				members = make(map[string]map[string]staticOperand)
+			}
+			members[alias] = operand.members
+		}
+	}
+	return members
 }
 
 // unwindStaticValueType is the element type of an UNWIND over a list literal

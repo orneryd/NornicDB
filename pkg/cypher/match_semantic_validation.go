@@ -78,6 +78,10 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 	// valueTypes holds the static types of variables bound to a literal by
 	// WITH … AS or UNWIND, for the function argument checks.
 	var valueTypes map[string]string
+	// valueMembers holds the member types of variables a WITH bound to a
+	// map literal, in a Cypher 25 statement (projectStaticValueMembers);
+	// every other binding of a name drops its entry.
+	var valueMembers map[string]map[string]staticOperand
 	returnSeen := false
 	for _, clause := range clauses {
 		if returnSeen {
@@ -126,6 +130,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 					}
 					scope[projection.alias] = kind
 					delete(valueTypes, projection.alias)
+					delete(valueMembers, projection.alias)
 				}
 			}
 		case pipelineClauseCallSubquery:
@@ -180,16 +185,17 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 						valueTypes = make(map[string]string)
 					}
 					valueTypes[name] = typeName
+					delete(valueMembers, name)
 				}
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
 			if err := e.validateMatchClauseBindings(scope, clause.text); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		case pipelineClauseWith:
@@ -232,7 +238,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 					}
 				}
 			}
-			input := staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}
+			input := staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}
 			if err := validateStaticFunctionVariables(projection, input); err != nil {
 				return err
 			}
@@ -241,7 +247,8 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 			}
 			scope = projectMatchSemanticScope(scope, clause.text)
 			valueTypes = projectStaticValueTypes(input, clause.text)
-			projected := staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}
+			valueMembers = projectStaticValueMembers(input, clause.text)
+			projected := staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}
 			if err := forEachProjectedTailExpression(projection, rest, func(expression string) error {
 				return validateStaticFunctionVariables(expression, projected)
 			}); err != nil {
@@ -254,7 +261,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 			if err := undefinedExpressionVariable(scope, unwindSourceExpression(clause.text)); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 			if alias := unwindBindingName(clause.text); alias != "" {
@@ -268,6 +275,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 				}
 				scope[alias] = unwindMatchSemanticKind(clause.text, scope)
 				delete(valueTypes, alias)
+				delete(valueMembers, alias)
 				if typeName := unwindStaticValueType(clause.text); typeName != "" {
 					if valueTypes == nil {
 						valueTypes = make(map[string]string)
@@ -279,23 +287,23 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 			if err := validateReturnSemanticScope(scope, clause.text); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		case pipelineClauseDelete:
 			if err := deleteTargetTypeError(clause.text, scope); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		case pipelineClauseCreate, pipelineClauseMerge:
 			addMatchPatternBindingKinds(scope, clause.text)
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		default:
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true, cypher25: cypher25}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		}
@@ -814,6 +822,7 @@ func projectionAliasScope(input staticTypeScope, clause string) staticTypeScope 
 	}
 	projected := projectMatchSemanticScope(input.kinds, "WITH "+body)
 	projectedValues := projectStaticValueTypes(input, "WITH "+body)
+	projectedMembers := projectStaticValueMembers(input, "WITH "+body)
 	kinds := make(matchSemanticScope, len(input.kinds)+len(projected))
 	for name, kind := range input.kinds {
 		kinds[name] = kind
@@ -829,7 +838,19 @@ func projectionAliasScope(input staticTypeScope, clause string) staticTypeScope 
 	for name, typeName := range projectedValues {
 		values[name] = typeName
 	}
-	return staticTypeScope{kinds: kinds, values: values, complete: input.complete, cypher25: input.cypher25}
+	var members map[string]map[string]staticOperand
+	if len(input.members)+len(projectedMembers) > 0 {
+		members = make(map[string]map[string]staticOperand, len(input.members)+len(projectedMembers))
+		for name, known := range input.members {
+			if _, rebound := projected[name]; !rebound {
+				members[name] = known
+			}
+		}
+		for name, known := range projectedMembers {
+			members[name] = known
+		}
+	}
+	return staticTypeScope{kinds: kinds, values: values, members: members, complete: input.complete, cypher25: input.cypher25}
 }
 
 // projectionItemTermError is Neo4j's SyntaxError for a projection item that

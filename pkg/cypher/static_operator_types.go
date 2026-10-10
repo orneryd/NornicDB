@@ -36,6 +36,17 @@ type staticOperand struct {
 	display    string
 	parameter  string
 	nonBoolean bool
+	// members are the static types of a map literal's entries by key, in a
+	// Cypher 25 statement (Neo4j 2026.09 types {a: 2}.a as an Integer;
+	// Neo4j 5.26 doesn't): staticMapMember reads them.
+	members map[string]staticOperand
+}
+
+// staticMapMember is the operand a map with known members gives for key
+// (m.key, m['key']), and whether it has one.
+func (operand staticOperand) staticMapMember(key string) (staticOperand, bool) {
+	member, found := operand.members[key]
+	return member, found
 }
 
 func knownOperand(kind string) staticOperand {
@@ -614,6 +625,9 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		if receiver.known() && receiver.kind != "Null" && rejectsPropertyAccess(receiver.kind) {
 			return staticOperand{}, operandMismatch(receiver, "Map, Node, Relationship, Point, Duration, Date, Time, LocalTime, LocalDateTime or DateTime")
 		}
+		if member, found := receiver.staticMapMember(symbolicNameValue(strings.TrimSpace(inner))); found {
+			return member, nil
+		}
 		return staticOperand{}, nil
 	}
 	if from, to, slice := staticSliceBounds(inner); slice {
@@ -658,6 +672,13 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 	case receiver.kind == "Map":
 		if keyKnown && key.kind != "String" {
 			return staticOperand{}, localizedStatusError(syntaxError, detail, localization.CypherCoreMapKeyTypeMismatch(key.display))
+		}
+		// A string literal key reads a known member (m['a']); a key from
+		// a variable is read at run time, as in Neo4j 2026.09.
+		if text, literal := decodeCypherQuotedString(strings.TrimSpace(inner)); literal {
+			if member, found := receiver.staticMapMember(text); found {
+				return member, nil
+			}
 		}
 	case receiver.kind == "Node" || receiver.kind == "Relationship":
 		if keyKnown && key.kind != "String" {
@@ -832,14 +853,22 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		return knownOperand(staticLiteralTypeNameOr(expression, "List<T>")), nil
 	}
 	if expression[0] == '{' && findMatchingDelimiter(expression, 0, '{', '}') == len(expression)-1 {
+		mapOperand := knownOperand("Map")
 		for _, pair := range splitTopLevelComma(expression[1 : len(expression)-1]) {
 			if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
-				if _, err := checker.check(pair[separator+1:]); err != nil {
+				value, err := checker.check(pair[separator+1:])
+				if err != nil {
 					return staticOperand{}, err
+				}
+				if checker.scope.cypher25 && value.known() {
+					if mapOperand.members == nil {
+						mapOperand.members = make(map[string]staticOperand)
+					}
+					mapOperand.members[normalizePropertyKey(pair[:separator])] = value
 				}
 			}
 		}
-		return knownOperand("Map"), nil
+		return mapOperand, nil
 	}
 	if variable, items, projection := staticMapProjectionSplit(expression); projection {
 		// In Cypher 5 a temporal value or duration projects its fields;
@@ -875,7 +904,11 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 	}
 	if variable := simpleSemanticIdentifier(expression); variable != "" {
 		if typeName := checker.scope.typeOf(variable); typeName != "" {
-			return knownOperand(typeName), nil
+			operand := knownOperand(typeName)
+			if typeName == "Map" {
+				operand.members = checker.scope.members[variable]
+			}
+			return operand, nil
 		}
 		if checker.scope.complete && !checker.scope.bound(variable) && !isLiteralKeyword(variable) {
 			return staticOperand{}, createUndefinedVariableError(variable)
