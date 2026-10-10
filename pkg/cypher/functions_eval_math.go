@@ -353,24 +353,6 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// Null Check Functions
 	// ========================================
 
-	// isEmpty(list/map/string) - check if empty
-	if matchFuncStartAndSuffix(expr, "isempty") {
-		inner := extractFuncArgs(expr, "isempty")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		switch v := val.(type) {
-		case nil:
-			// isEmpty(null) is null, as in Neo4j.
-			return nil
-		case string:
-			return len(v) == 0
-		case []interface{}:
-			return len(v) == 0
-		case map[string]interface{}:
-			return len(v) == 0
-		}
-		return false
-	}
-
 	// ========================================
 	// String Functions (additional)
 	// ========================================

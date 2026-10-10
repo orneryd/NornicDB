@@ -72,6 +72,9 @@ func init() {
 	cypherfn.Register("valuetype", fnValueType)
 	cypherfn.Register("nullif", fnNullIf)
 	cypherfn.Register("tail", fnTail)
+	cypherfn.Register("abs", fnAbs)
+	cypherfn.Register("sign", fnSign)
+	cypherfn.Register("isempty", fnIsEmpty)
 	for _, name := range []string{"substring", "left", "right", "replace", "split"} {
 		cypherfn.Register(name, fnStringOperation(name))
 	}
@@ -182,6 +185,76 @@ func fnRound(ctx cypherfn.Context, args []string) (interface{}, error) {
 	return rounded / factor, nil
 }
 
+// numberArgument is a function's one numeric argument: null is (nil,
+// false, nil), and any other non-number Neo4j's TypeError.
+func numberArgument(ctx cypherfn.Context, args []string, function string) (interface{}, bool, error) {
+	if len(args) != 1 {
+		return nil, false, argumentCountError(function, "1", len(args))
+	}
+	value, err := ctx.Eval(args[0])
+	if err != nil || value == nil {
+		return nil, false, err
+	}
+	if !isRuntimeNumber(value) {
+		return nil, false, &cypherfn.TypeMismatchError{Function: function, Expected: "Float or Integer", Value: value}
+	}
+	return value, true, nil
+}
+
+// fnAbs is abs(number): an integer's or float's absolute value, of its type.
+func fnAbs(ctx cypherfn.Context, args []string) (interface{}, error) {
+	value, ok, err := numberArgument(ctx, args, "abs")
+	if !ok {
+		return nil, err
+	}
+	if integer, isInteger := cypherIntegerValue(value); isInteger {
+		if integer < 0 {
+			return -integer, nil
+		}
+		return integer, nil
+	}
+	number, _ := cypherFloatValue(value)
+	return math.Abs(number), nil
+}
+
+// fnSign is sign(number): -1, 0 or 1, an integer.
+func fnSign(ctx cypherfn.Context, args []string) (interface{}, error) {
+	value, ok, err := numberArgument(ctx, args, "sign")
+	if !ok {
+		return nil, err
+	}
+	number, _ := toFloat64(value)
+	switch {
+	case number < 0:
+		return int64(-1), nil
+	case number > 0:
+		return int64(1), nil
+	}
+	return int64(0), nil
+}
+
+// fnIsEmpty is isEmpty(list, map or string): null for null, and Neo4j's
+// TypeError for any other value (a number, a node).
+func fnIsEmpty(ctx cypherfn.Context, args []string) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, argumentCountError("isEmpty", "1", len(args))
+	}
+	value, err := ctx.Eval(args[0])
+	if err != nil || value == nil {
+		return nil, err
+	}
+	if text, isString := value.(string); isString {
+		return len(text) == 0, nil
+	}
+	if entries, isMap := value.(map[string]interface{}); isMap && cypherValueKindOf(value) == valueKindMap {
+		return len(entries) == 0, nil
+	}
+	if items, isList := cypherListValue(value); isList {
+		return len(items) == 0, nil
+	}
+	return nil, &cypherfn.TypeMismatchError{Function: "isEmpty", Expected: "List, Map, or String", Value: value}
+}
+
 func fnTail(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, argumentCountError("tail", "1", len(args))
@@ -190,10 +263,9 @@ func fnTail(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || value == nil {
 		return nil, err
 	}
-	items, list := cypherListValue(value)
-	if !list {
-		return nil, &cypherfn.TypeMismatchError{Function: "tail", Expected: "List<T>", Value: value}
-	}
+	// A value that isn't a list has no tail: Neo4j gives [] (tail(n.age)); a
+	// node or other non-list literal is the static check's SyntaxError.
+	items, _ := cypherListValue(value)
 	if len(items) < 2 {
 		return []interface{}{}, nil
 	}

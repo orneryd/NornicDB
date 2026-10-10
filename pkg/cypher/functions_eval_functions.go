@@ -1189,25 +1189,6 @@ skipArrayIndexing:
 	// Math Functions
 	// ========================================
 
-	// abs(number)
-	if matchFuncStartAndSuffix(expr, "abs") {
-		inner := extractFuncArgs(expr, "abs")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		switch v := val.(type) {
-		case int64:
-			if v < 0 {
-				return -v
-			}
-			return v
-		case float64:
-			if v < 0 {
-				return -v
-			}
-			return v
-		}
-		return nil
-	}
-
 	// ceil(number)
 	if matchFuncStartAndSuffix(expr, "ceil") {
 		inner := extractFuncArgs(expr, "ceil")
@@ -1234,21 +1215,6 @@ skipArrayIndexing:
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return int64(f + 0.5)
-		}
-		return nil
-	}
-
-	// sign(number)
-	if matchFuncStartAndSuffix(expr, "sign") {
-		inner := extractFuncArgs(expr, "sign")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if f, ok := toFloat64(val); ok {
-			if f > 0 {
-				return int64(1)
-			} else if f < 0 {
-				return int64(-1)
-			}
-			return int64(0)
 		}
 		return nil
 	}
