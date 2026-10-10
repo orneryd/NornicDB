@@ -73,12 +73,15 @@ func hasQuantifiedGroup(pattern string) bool {
 // well formed or not: a + * or { after a ')'. It never answers false for
 // one.
 func mayUseQuantifiedGroup(text string) bool {
-	for i := 0; i < len(text); i++ {
-		if text[i] == ')' {
-			if next := skipASCIISpaces(text, i+1, len(text)); next < len(text) && strings.IndexByte("+*{", text[next]) >= 0 {
-				return true
-			}
+	for i := strings.IndexByte(text, ')'); i >= 0; {
+		if next := skipASCIISpaces(text, i+1, len(text)); next < len(text) && strings.IndexByte("+*{", text[next]) >= 0 {
+			return true
 		}
+		following := strings.IndexByte(text[i+1:], ')')
+		if following < 0 {
+			return false
+		}
+		i += following + 1
 	}
 	return false
 }

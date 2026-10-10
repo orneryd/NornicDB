@@ -177,6 +177,11 @@ func TestPathSelectorRewrite(t *testing.T) {
 	require.True(t, mayUsePathPatternPrefix("MATCH (b), p = any (a) RETURN a"))
 	require.False(t, mayUsePathPatternPrefix("MATCH (n) WHERE any(x IN n.l WHERE x > 1) RETURN all"))
 	require.False(t, mayUsePathPatternPrefix("RETURN company, allowed, anything"))
+	for _, query := range []string{"MATCH WALK (a) RETURN a", "MATCH TRAIL (a)", "MATCH ACYCLIC (a)", "MATCH DIFFERENT RELATIONSHIPS (a)",
+		"MATCH REPEATABLE ELEMENTS (a)", "MATCH SHORTEST 2 (a)", "RETURN shortestPath((a)--(b))", "RETURN `allShortestPaths`((a)--(b))"} {
+		require.True(t, mayUsePathPatternPrefix(query), query)
+	}
+	require.False(t, mayUsePathPatternPrefix("RETURN 'walk', \"trail\", trailing, walks, shorter, 'shortest' AS x"))
 
 	for _, text := range []string{"SHORTEST (a)", "SHORTEST PATHS (a)", "ANY SHORTEST x", "ANY", "ALL PATHS"} {
 		_, ok, err := scanPathPatternPrefix(text, 0, len(text))
