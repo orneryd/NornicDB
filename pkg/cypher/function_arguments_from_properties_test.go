@@ -1,0 +1,375 @@
+package cypher
+
+import (
+	"context"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
+)
+
+// A function argument read from a property has the type of the value stored
+// there, known only when the statement runs: a value of the wrong type is
+// Neo4j's TypeError (toUpper(n.i) for an integer gave "5", other functions
+// a SyntaxError). Where Neo4j knows the argument's type when it compiles the
+// statement it is the "Type mismatch" SyntaxError, in both versions: a
+// property is never a node, relationship or map (labels(n.i), point(n.i)),
+// and a parameter, a variable unwound from one, or a function's result has
+// its own type. Recorded on Neo4j 5.26.30 (2026.09 agrees) with
+// n = (:Zs {i: 5, f: 1.5, s: 'x', b: true, l: ['a'], d: date('2020-01-01')}).
+func TestFunctionArgumentsFromProperties(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "function_arguments_from_properties"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:Zs {i: 5, f: 1.5, s: 'x', b: true, l: ['a'], d: date('2020-01-01'), nf: -1.5})", nil)
+	require.NoError(t, err)
+	const typeError, syntaxError = "Neo.ClientError.Statement.TypeError", "Neo.ClientError.Statement.SyntaxError"
+	const procedureCallFailed = "Neo.ClientError.Procedure.ProcedureCallFailed"
+	for _, tc := range []struct{ expression, code string }{
+		{"abs(n.s)", typeError},
+		{"abs(n.b)", typeError},
+		{"abs(n.l)", typeError},
+		{"abs(n.d)", typeError},
+		{"ceil(n.s)", typeError},
+		{"ceil(n.b)", typeError},
+		{"ceil(n.l)", typeError},
+		{"ceil(n.d)", typeError},
+		{"floor(n.s)", typeError},
+		{"floor(n.b)", typeError},
+		{"floor(n.l)", typeError},
+		{"floor(n.d)", typeError},
+		{"round(n.s)", typeError},
+		{"round(n.b)", typeError},
+		{"round(n.l)", typeError},
+		{"round(n.d)", typeError},
+		{"sign(n.s)", typeError},
+		{"sign(n.b)", typeError},
+		{"sign(n.l)", typeError},
+		{"sign(n.d)", typeError},
+		{"sqrt(n.s)", typeError},
+		{"sqrt(n.b)", typeError},
+		{"sqrt(n.l)", typeError},
+		{"sqrt(n.d)", typeError},
+		{"exp(n.s)", typeError},
+		{"exp(n.b)", typeError},
+		{"exp(n.l)", typeError},
+		{"exp(n.d)", typeError},
+		{"log(n.s)", typeError},
+		{"log(n.b)", typeError},
+		{"log(n.l)", typeError},
+		{"log(n.d)", typeError},
+		{"log10(n.s)", typeError},
+		{"log10(n.b)", typeError},
+		{"log10(n.l)", typeError},
+		{"log10(n.d)", typeError},
+		{"sin(n.s)", typeError},
+		{"sin(n.b)", typeError},
+		{"sin(n.l)", typeError},
+		{"sin(n.d)", typeError},
+		{"cos(n.s)", typeError},
+		{"cos(n.b)", typeError},
+		{"cos(n.l)", typeError},
+		{"cos(n.d)", typeError},
+		{"tan(n.s)", typeError},
+		{"tan(n.b)", typeError},
+		{"tan(n.l)", typeError},
+		{"tan(n.d)", typeError},
+		{"asin(n.s)", typeError},
+		{"asin(n.b)", typeError},
+		{"asin(n.l)", typeError},
+		{"asin(n.d)", typeError},
+		{"acos(n.s)", typeError},
+		{"acos(n.b)", typeError},
+		{"acos(n.l)", typeError},
+		{"acos(n.d)", typeError},
+		{"atan(n.s)", typeError},
+		{"atan(n.b)", typeError},
+		{"atan(n.l)", typeError},
+		{"atan(n.d)", typeError},
+		{"atan2(n.s, 1)", typeError},
+		{"atan2(n.b, 1)", typeError},
+		{"atan2(n.l, 1)", typeError},
+		{"atan2(n.d, 1)", typeError},
+		{"degrees(n.s)", typeError},
+		{"degrees(n.b)", typeError},
+		{"degrees(n.l)", typeError},
+		{"degrees(n.d)", typeError},
+		{"radians(n.s)", typeError},
+		{"radians(n.b)", typeError},
+		{"radians(n.l)", typeError},
+		{"radians(n.d)", typeError},
+		{"cot(n.s)", typeError},
+		{"cot(n.b)", typeError},
+		{"cot(n.l)", typeError},
+		{"cot(n.d)", typeError},
+		{"haversin(n.s)", typeError},
+		{"haversin(n.b)", typeError},
+		{"haversin(n.l)", typeError},
+		{"haversin(n.d)", typeError},
+		{"size(n.i)", typeError},
+		{"size(n.f)", typeError},
+		{"size(n.b)", typeError},
+		{"size(n.d)", typeError},
+		{"keys(n.i)", syntaxError},
+		{"keys(n.f)", syntaxError},
+		{"keys(n.s)", syntaxError},
+		{"keys(n.b)", syntaxError},
+		{"keys(n.l)", syntaxError},
+		{"keys(n.d)", syntaxError},
+		{"labels(n.i)", syntaxError},
+		{"labels(n.f)", syntaxError},
+		{"labels(n.s)", syntaxError},
+		{"labels(n.b)", syntaxError},
+		{"labels(n.l)", syntaxError},
+		{"labels(n.d)", syntaxError},
+		{"type(n.i)", syntaxError},
+		{"type(n.f)", syntaxError},
+		{"type(n.s)", syntaxError},
+		{"type(n.b)", syntaxError},
+		{"type(n.l)", syntaxError},
+		{"type(n.d)", syntaxError},
+		{"nodes(n.i)", syntaxError},
+		{"nodes(n.f)", syntaxError},
+		{"nodes(n.s)", syntaxError},
+		{"nodes(n.b)", syntaxError},
+		{"nodes(n.l)", syntaxError},
+		{"nodes(n.d)", syntaxError},
+		{"relationships(n.i)", syntaxError},
+		{"relationships(n.f)", syntaxError},
+		{"relationships(n.s)", syntaxError},
+		{"relationships(n.b)", syntaxError},
+		{"relationships(n.l)", syntaxError},
+		{"relationships(n.d)", syntaxError},
+		{"length(n.i)", syntaxError},
+		{"length(n.f)", syntaxError},
+		{"length(n.s)", syntaxError},
+		{"length(n.b)", syntaxError},
+		{"length(n.l)", syntaxError},
+		{"length(n.d)", syntaxError},
+		{"range(n.s, 3)", typeError},
+		{"range(n.b, 3)", typeError},
+		{"range(n.l, 3)", typeError},
+		{"range(n.d, 3)", typeError},
+		{"range(1, n.s)", typeError},
+		{"range(1, n.b)", typeError},
+		{"range(1, n.l)", typeError},
+		{"range(1, n.d)", typeError},
+		{"toInteger(n.l)", typeError},
+		{"toInteger(n.d)", typeError},
+		{"toFloat(n.b)", typeError},
+		{"toFloat(n.l)", typeError},
+		{"toFloat(n.d)", typeError},
+		{"toBoolean(n.f)", typeError},
+		{"toBoolean(n.l)", typeError},
+		{"toBoolean(n.d)", typeError},
+		{"toString(n.l)", typeError},
+		{"toIntegerList(n.i)", typeError},
+		{"toIntegerList(n.f)", typeError},
+		{"toIntegerList(n.s)", typeError},
+		{"toIntegerList(n.b)", typeError},
+		{"toIntegerList(n.d)", typeError},
+		{"toStringList(n.i)", typeError},
+		{"toStringList(n.f)", typeError},
+		{"toStringList(n.s)", typeError},
+		{"toStringList(n.b)", typeError},
+		{"toStringList(n.d)", typeError},
+		{"date(n.i)", procedureCallFailed},
+		{"date(n.f)", procedureCallFailed},
+		{"date(n.s)", syntaxError},
+		{"date(n.b)", procedureCallFailed},
+		{"date(n.l)", procedureCallFailed},
+		{"duration(n.i)", procedureCallFailed},
+		{"duration(n.f)", procedureCallFailed},
+		{"duration(n.s)", syntaxError},
+		{"duration(n.b)", procedureCallFailed},
+		{"duration(n.l)", procedureCallFailed},
+		{"duration(n.d)", procedureCallFailed},
+		{"point(n.i)", syntaxError},
+		{"point(n.f)", syntaxError},
+		{"point(n.s)", syntaxError},
+		{"point(n.b)", syntaxError},
+		{"point(n.l)", syntaxError},
+		{"point(n.d)", syntaxError},
+		{"properties(n.i)", syntaxError},
+		{"properties(n.f)", syntaxError},
+		{"properties(n.s)", syntaxError},
+		{"properties(n.b)", syntaxError},
+		{"properties(n.l)", syntaxError},
+		{"properties(n.d)", syntaxError},
+		{"startNode(n.i)", syntaxError},
+		{"startNode(n.f)", syntaxError},
+		{"startNode(n.s)", syntaxError},
+		{"startNode(n.b)", syntaxError},
+		{"startNode(n.l)", syntaxError},
+		{"startNode(n.d)", syntaxError},
+		{"elementId(n.i)", syntaxError},
+		{"elementId(n.f)", syntaxError},
+		{"elementId(n.s)", syntaxError},
+		{"elementId(n.b)", syntaxError},
+		{"elementId(n.l)", syntaxError},
+		{"elementId(n.d)", syntaxError},
+		{"id(n.i)", syntaxError},
+		{"id(n.f)", syntaxError},
+		{"id(n.s)", syntaxError},
+		{"id(n.b)", syntaxError},
+		{"id(n.l)", syntaxError},
+		{"id(n.d)", syntaxError},
+		{"isEmpty(n.i)", typeError},
+		{"isEmpty(n.f)", typeError},
+		{"isEmpty(n.b)", typeError},
+		{"isEmpty(n.d)", typeError},
+		{"toUpper(n.i)", typeError},
+		{"toUpper(n.f)", typeError},
+		{"toUpper(n.b)", typeError},
+		{"toUpper(n.l)", typeError},
+		{"toUpper(n.d)", typeError},
+		{"toLower(n.i)", typeError},
+		{"toLower(n.f)", typeError},
+		{"toLower(n.b)", typeError},
+		{"toLower(n.l)", typeError},
+		{"toLower(n.d)", typeError},
+		{"trim(n.i)", typeError},
+		{"trim(n.f)", typeError},
+		{"trim(n.b)", typeError},
+		{"trim(n.l)", typeError},
+		{"trim(n.d)", typeError},
+		{"ltrim(n.i)", typeError},
+		{"ltrim(n.f)", typeError},
+		{"ltrim(n.b)", typeError},
+		{"ltrim(n.l)", typeError},
+		{"ltrim(n.d)", typeError},
+		{"rtrim(n.i)", typeError},
+		{"rtrim(n.f)", typeError},
+		{"rtrim(n.b)", typeError},
+		{"rtrim(n.l)", typeError},
+		{"rtrim(n.d)", typeError},
+		{"btrim(n.i)", typeError},
+		{"btrim(n.f)", typeError},
+		{"btrim(n.b)", typeError},
+		{"btrim(n.l)", typeError},
+		{"btrim(n.d)", typeError},
+		{"replace(n.i, 'a', 'b')", typeError},
+		{"replace(n.f, 'a', 'b')", typeError},
+		{"replace(n.b, 'a', 'b')", typeError},
+		{"replace(n.l, 'a', 'b')", typeError},
+		{"replace(n.d, 'a', 'b')", typeError},
+		{"replace('a', n.i, 'b')", typeError},
+		{"replace('a', n.f, 'b')", typeError},
+		{"replace('a', n.b, 'b')", typeError},
+		{"replace('a', n.l, 'b')", typeError},
+		{"replace('a', n.d, 'b')", typeError},
+		{"replace('a', 'a', n.i)", typeError},
+		{"replace('a', 'a', n.f)", typeError},
+		{"replace('a', 'a', n.b)", typeError},
+		{"replace('a', 'a', n.l)", typeError},
+		{"replace('a', 'a', n.d)", typeError},
+		{"split(n.i, ',')", typeError},
+		{"split(n.f, ',')", typeError},
+		{"split(n.b, ',')", typeError},
+		{"split(n.l, ',')", typeError},
+		{"split(n.d, ',')", typeError},
+		{"split('a', n.i)", typeError},
+		{"split('a', n.f)", typeError},
+		{"split('a', n.b)", typeError},
+		{"split('a', n.d)", typeError},
+		{"substring(n.i, 0, 1)", typeError},
+		{"substring(n.f, 0, 1)", typeError},
+		{"substring(n.b, 0, 1)", typeError},
+		{"substring(n.l, 0, 1)", typeError},
+		{"substring(n.d, 0, 1)", typeError},
+		{"left(n.i, 1)", typeError},
+		{"left(n.f, 1)", typeError},
+		{"left(n.b, 1)", typeError},
+		{"left(n.l, 1)", typeError},
+		{"left(n.d, 1)", typeError},
+		{"right(n.i, 1)", typeError},
+		{"right(n.f, 1)", typeError},
+		{"right(n.b, 1)", typeError},
+		{"right(n.l, 1)", typeError},
+		{"right(n.d, 1)", typeError},
+		{"normalize(n.i)", typeError},
+		{"normalize(n.f)", typeError},
+		{"normalize(n.b)", typeError},
+		{"normalize(n.l)", typeError},
+		{"normalize(n.d)", typeError},
+		{"lpad(n.i, 3, ' ')", syntaxError},
+		{"lpad(n.f, 3, ' ')", syntaxError},
+		{"lpad(n.b, 3, ' ')", syntaxError},
+		{"lpad(n.l, 3, ' ')", syntaxError},
+		{"lpad(n.d, 3, ' ')", syntaxError},
+		{"rpad(n.i, 3, ' ')", syntaxError},
+		{"rpad(n.f, 3, ' ')", syntaxError},
+		{"rpad(n.b, 3, ' ')", syntaxError},
+		{"rpad(n.l, 3, ' ')", syntaxError},
+		{"rpad(n.d, 3, ' ')", syntaxError},
+		{"char_length(n.i)", typeError},
+		{"char_length(n.f)", typeError},
+		{"char_length(n.b)", typeError},
+		{"char_length(n.l)", typeError},
+		{"char_length(n.d)", typeError},
+	} {
+		_, err := exec.Execute(ctx, "MATCH (n:Zs) RETURN "+tc.expression+" AS v", nil)
+		require.Error(t, err, tc.expression)
+		requireStatusCode(t, err, tc.code)
+	}
+	for expression, want := range map[string]interface{}{
+		"tail(n.i)":        []interface{}{},
+		"tail(n.s)":        []interface{}{},
+		"range(n.f, 3)":    []interface{}{int64(1), int64(2), int64(3)},
+		"range(1, n.f)":    []interface{}{int64(1)},
+		"range(n.nf, 1)":   []interface{}{int64(-1), int64(0), int64(1)},
+		"range(1, 6, n.f)": []interface{}{int64(1), int64(2), int64(3), int64(4), int64(5), int64(6)},
+		"abs(n.nf)":        1.5,
+		"abs(n.i)":         int64(5),
+		"sign(n.nf)":       int64(-1),
+		"sign(n.f)":        int64(1),
+		"isEmpty(n.s)":     false,
+		"isEmpty(n.l)":     false,
+		"toUpper(n.s)":     "X",
+	} {
+		result, err := exec.Execute(ctx, "MATCH (n:Zs) RETURN "+expression+" AS v", nil)
+		require.NoError(t, err, expression)
+		require.Equal(t, [][]interface{}{{want}}, result.Rows, expression)
+	}
+	for query, code := range map[string]string{
+		"WITH {a: 1} AS m RETURN size(properties(m)) AS s": syntaxError,
+		"CYPHER 25 RETURN uuid(1) AS u":                    syntaxError,
+		"RETURN format(1, 'yyyy') AS v":                    syntaxError,
+		"RETURN format(date('2020-01-01'), 1) AS v":        syntaxError,
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+		requireStatusCode(t, err, code)
+	}
+	// NornicDB's printf form of format() takes any values.
+	result, err := exec.Execute(ctx, "RETURN format('%d-%s', 1, 'a') AS v", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"1-a"}}, result.Rows)
+	for _, tc := range []struct {
+		query string
+		param interface{}
+	}{
+		{"UNWIND [$p] AS x RETURN radians(x) AS v", "xy"},
+		{"UNWIND [$p] AS x RETURN char_length(x) AS v", int64(1)},
+	} {
+		_, err := exec.Execute(ctx, tc.query, map[string]interface{}{"p": tc.param})
+		require.Error(t, err, tc.query)
+		requireStatusCode(t, err, syntaxError)
+	}
+	// A variable the statement binds again isn't taken for the UNWIND's.
+	result, err = exec.Execute(ctx, "UNWIND [$p] AS x WITH 1.5 AS y UNWIND [y] AS x RETURN radians(x) AS v", map[string]interface{}{"p": "xy"})
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 1)
+}
+
+func TestUnwindParameterBindings(t *testing.T) {
+	require.Equal(t, map[string]string{"x": "p"}, unwindParameterBindings("UNWIND [$p] AS x RETURN x"))
+	for _, cypher := range []string{
+		"UNWIND $p",                                 // no AS
+		"UNWIND $p AS x RETURN x",                   // not a list
+		"UNWIND [1] AS x RETURN x",                  // not a parameter
+		"UNWIND [$p, $q] AS x RETURN x",             // two parameters
+		"UNWIND [$p] AS x UNWIND [1] AS x RETURN x", // bound twice
+	} {
+		require.Nil(t, unwindParameterBindings(cypher), cypher)
+	}
+}

@@ -280,8 +280,8 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			}
 			value, handled, err := e.evaluateShortestPathValue(search, function, argument, nodes)
 			return value, handled, err
-		case "reduce":
-			return e.evaluateRowReduce(argument, values)
+		case "reduce", "allreduce":
+			return e.evaluateRowReduce(function, argument, values)
 		case "coalesce":
 			// Undefined operands behave as null, matching the shared/fn-level
 			// coalesce: only the first non-null, resolved operand wins. EXISTS
@@ -328,54 +328,6 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 				}
 			}
 			return nil, false, nil
-		case "abs":
-			value, resolved, err := e.evaluateRowValue(argument, values)
-			if err != nil {
-				return nil, false, err
-			}
-			if !resolved {
-				return nil, false, nil
-			}
-			if value == nil {
-				return nil, true, nil
-			}
-			switch number := value.(type) {
-			case int64:
-				if number < 0 {
-					return -number, true, nil
-				}
-				return number, true, nil
-			case float64:
-				if number < 0 {
-					return -number, true, nil
-				}
-				return number, true, nil
-			default:
-				return nil, false, nil
-			}
-		case "sign":
-			value, resolved, err := e.evaluateRowValue(argument, values)
-			if err != nil {
-				return nil, false, err
-			}
-			if !resolved {
-				return nil, false, nil
-			}
-			if value == nil {
-				return nil, true, nil
-			}
-			number, numeric := toFloat64(value)
-			if !numeric {
-				return nil, false, nil
-			}
-			switch {
-			case number < 0:
-				return int64(-1), true, nil
-			case number > 0:
-				return int64(1), true, nil
-			default:
-				return int64(0), true, nil
-			}
 		case "range":
 			parts := e.splitFunctionArgs(argument)
 			arguments := make([]interface{}, len(parts))

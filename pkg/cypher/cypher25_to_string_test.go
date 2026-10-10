@@ -36,7 +36,9 @@ func TestCypher25ToStringWritesValues(t *testing.T) {
 		{"RETURN toString([[0.1]]) AS v", nil, syntaxError, syntaxError},
 		{"WITH {a: 1} AS m RETURN toString(m) AS v", nil, "{a: 1}", syntaxError},
 		{"MATCH (n) WITH count(n) AS c WITH c, {a: [1, 'x']} AS m RETURN toString(m) AS v", nil, "{a: [1, x]}", syntaxError},
-		{"RETURN toString($p) AS v", map[string]interface{}{"p": []interface{}{int64(1), "a"}}, "[1, a]", typeError},
+		// Neo4j 5.26 types a parameter argument when it compiles the
+		// statement: a list for toString is the SyntaxError.
+		{"RETURN toString($p) AS v", map[string]interface{}{"p": []interface{}{int64(1), "a"}}, "[1, a]", syntaxError},
 		{"RETURN toStringOrNull([1]) AS v", nil, "[1]", nil},
 		{"RETURN toStringOrNull({a: 1}) AS v", nil, "{a: 1}", nil},
 		{"RETURN toStringList([1, null, 'a', [2], {a: 1}]) AS v", nil,

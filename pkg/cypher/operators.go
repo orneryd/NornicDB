@@ -555,8 +555,38 @@ func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr strin
 		}
 		return value, true
 	}
+	// Operators split by precedence tier, loosest first (+ -, then * / %,
+	// then ^), each at its last top-level operator so they associate to the
+	// left: a / b - c / d is (a / b) - (c / d), 10 - 3 - 2 is 5. A sign
+	// that follows an operator or opens the expression is unary.
+	if leftExpr, rightExpr, operator, ok := splitRowArithmeticTier(expr, "+-"); ok && binaryOperands(leftExpr, rightExpr) {
+		left, right := operands(leftExpr, rightExpr)
+		if operator == '+' {
+			return result('+', left, right, e.add(left, right))
+		}
+		return result('-', left, right, e.subtract(left, right))
+	}
+	if leftExpr, rightExpr, operator, ok := splitRowArithmeticTier(expr, "*/%"); ok && binaryOperands(leftExpr, rightExpr) {
+		left, right := operands(leftExpr, rightExpr)
+		switch operator {
+		case '*':
+			return result('*', left, right, e.multiply(left, right))
+		case '/':
+			if value, folded := foldedDivisionByZero(leftExpr, rightExpr, left, right); folded {
+				return value, true
+			}
+			if divisionByZero('/', left, right) {
+				recordExpressionFailure(ctx, divisionByZeroError())
+			}
+			return result('/', left, right, e.divide(left, right))
+		}
+		if divisionByZero('%', left, right) {
+			recordExpressionFailure(ctx, divisionByZeroError())
+		}
+		return result('%', left, right, e.modulo(left, right))
+	}
 	// Cypher exponentiation always yields a floating-point value.
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "^", true, false); ok && binaryOperands(leftExpr, rightExpr) {
+	if leftExpr, rightExpr, _, ok := splitRowArithmeticTier(expr, "^"); ok && binaryOperands(leftExpr, rightExpr) {
 		leftValue, rightValue := operands(leftExpr, rightExpr)
 		left, leftOK := toFloat64(leftValue)
 		right, rightOK := toFloat64(rightValue)
@@ -565,56 +595,6 @@ func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr strin
 		}
 		return result('^', leftValue, rightValue, nil)
 	}
-	// Handle + operator (date + duration, lists, strings, numbers).
-	// Try with spaces first, then without
-	for _, plus := range []string{" + ", "+"} {
-		if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, plus, true, false); ok && binaryOperands(leftExpr, rightExpr) {
-			left, right := operands(leftExpr, rightExpr)
-			return result('+', left, right, e.add(left, right))
-		}
-	}
-
-	// Handle * operator
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "*", true, false); ok && binaryOperands(leftExpr, rightExpr) {
-		left, right := operands(leftExpr, rightExpr)
-		return result('*', left, right, e.multiply(left, right))
-	}
-
-	// Handle / operator
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "/", true, false); ok && binaryOperands(leftExpr, rightExpr) {
-		left, right := operands(leftExpr, rightExpr)
-		if value, folded := foldedDivisionByZero(leftExpr, rightExpr, left, right); folded {
-			return value, true
-		}
-		if divisionByZero('/', left, right) {
-			recordExpressionFailure(ctx, divisionByZeroError())
-		}
-		return result('/', left, right, e.divide(left, right))
-	}
-
-	// Handle % operator
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "%", true, false); ok && binaryOperands(leftExpr, rightExpr) {
-		left, right := operands(leftExpr, rightExpr)
-		if divisionByZero('%', left, right) {
-			recordExpressionFailure(ctx, divisionByZeroError())
-		}
-		return result('%', left, right, e.modulo(left, right))
-	}
-
-	// Handle - operator (binary subtraction, not unary minus)
-	// Try with spaces first, then without (but be careful with unary minus)
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " - ", true, false); ok && binaryOperands(leftExpr, rightExpr) {
-		left, right := operands(leftExpr, rightExpr)
-		return result('-', left, right, e.subtract(left, right))
-	}
-	// For - without spaces, only split if both sides would be valid expressions
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, "-", true, false); ok && binaryOperands(leftExpr, rightExpr) {
-		left, right := operands(leftExpr, rightExpr)
-		if left != nil && right != nil {
-			return result('-', left, right, e.subtract(left, right))
-		}
-	}
-
 	return nil, false
 }
 

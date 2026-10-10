@@ -193,7 +193,6 @@ func TestUnwindRangeSharedPipelineSemantics(t *testing.T) {
 func TestUnwindRangeSharedPipelineErrors(t *testing.T) {
 	for _, query := range []string{
 		"UNWIND range(1, 2, 0) AS x RETURN x",
-		"UNWIND range($start, 2) AS x RETURN x",
 		"UNWIND [1, 0] AS step UNWIND range(1, 2, step) AS x RETURN x",
 		"UNWIND range(1, 2) AS x WITH range(x, 3, 0) AS xs RETURN xs",
 		"UNWIND range(1, 2) AS x WITH x WHERE x < 0 RETURN range(1, 2, 0)",

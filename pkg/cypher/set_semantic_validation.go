@@ -426,7 +426,7 @@ func expressionFreeVariables(expression string) []string {
 
 func collectFunctionExpressionBindings(expression string, bindings map[string]struct{}) {
 	lower := lowerASCII(expression)
-	for _, functionName := range []string{"reduce", "all", "any", "none", "single", "filter"} {
+	for _, functionName := range []string{"reduce", "allreduce", "all", "any", "none", "single", "filter"} {
 		searchFrom := 0
 		for searchFrom < len(expression) {
 			relative := strings.Index(lower[searchFrom:], functionName)
@@ -435,6 +435,10 @@ func collectFunctionExpressionBindings(expression string, bindings map[string]st
 			}
 			nameStart := searchFrom + relative
 			open := nameStart + len(functionName)
+			if nameStart > 0 && isIdentByte(expression[nameStart-1]) {
+				searchFrom = open
+				continue
+			}
 			for open < len(expression) && isWhitespace(expression[open]) {
 				open++
 			}
@@ -447,13 +451,10 @@ func collectFunctionExpressionBindings(expression string, bindings map[string]st
 				break
 			}
 			inner := strings.TrimSpace(expression[open+1 : close])
-			if functionName == "reduce" {
-				parts := splitTopLevelComma(inner)
-				if len(parts) == 2 {
-					if accumulator, _, ok := scanIdentifierToken(strings.TrimSpace(parts[0]), 0); ok {
-						bindings[accumulator] = struct{}{}
-					}
-					collectLeadingIteratorBinding(parts[1], bindings)
+			if isReduceFormFunction(functionName) {
+				if form, ok := parseReduceForm(functionName, inner); ok {
+					bindings[form.accumulator] = struct{}{}
+					bindings[form.variable] = struct{}{}
 				}
 			} else {
 				collectLeadingIteratorBinding(inner, bindings)

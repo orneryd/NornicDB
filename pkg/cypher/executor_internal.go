@@ -27,6 +27,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		cypher, _ = canonicalizeQueryText(cypher)
 	}
 	cypher, _ = canonicalizeNumericLiterals(cypher)
+	cypher, _ = canonicalizeFunctionAliases(cypher)
 	cypher, _, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
@@ -112,6 +113,9 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 		return err
 	}
 	if err := validateStaticPropertyAccessParameters(cypher, params); err != nil {
+		return err
+	}
+	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
 	if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {

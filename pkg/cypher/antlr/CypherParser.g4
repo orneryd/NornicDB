@@ -544,6 +544,7 @@ atom
     | mapProjection
     | caseExpression
     | reduceExpression
+    | allReduceExpression
     | countAll
     | countSubquery
     | collectSubquery
@@ -641,6 +642,11 @@ reduceExpression
     : REDUCE LPAREN symbol ASSIGN expression COMMA symbol IN expression STICK expression RPAREN
     ;
 
+// allReduce(accumulator = initial, variable IN list | reducer, predicate) (Cypher 25)
+allReduceExpression
+    : ALLREDUCE LPAREN symbol ASSIGN expression COMMA symbol IN expression STICK expression COMMA expression RPAREN
+    ;
+
 parameter
     : DOLLAR (name | numLit | DIGIT_NAME)
     ;
@@ -713,6 +719,7 @@ symbol
     | LET
     | EXTRACT
     | REDUCE
+    | ALLREDUCE
     | FOREACH
     | ANY
     | NONE

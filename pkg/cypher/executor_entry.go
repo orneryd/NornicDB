@@ -179,6 +179,12 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		cypher = grouped
 		defer func() { result, retErr = numericRewrite.restore(result, retErr) }()
 	}
+	// GQL function aliases (collect_list, ln, …) call the function they
+	// name; columns and messages keep the client's text.
+	if aliased, aliasRewrite := canonicalizeFunctionAliases(cypher); aliasRewrite != nil {
+		cypher = aliased
+		defer func() { result, retErr = aliasRewrite.restore(result, retErr) }()
+	}
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
 	ctx = withCypherVersion(ctx, cypher)

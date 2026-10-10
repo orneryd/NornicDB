@@ -353,24 +353,6 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// Null Check Functions
 	// ========================================
 
-	// isEmpty(list/map/string) - check if empty
-	if matchFuncStartAndSuffix(expr, "isempty") {
-		inner := extractFuncArgs(expr, "isempty")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		switch v := val.(type) {
-		case nil:
-			// isEmpty(null) is null, as in Neo4j.
-			return nil
-		case string:
-			return len(v) == 0
-		case []interface{}:
-			return len(v) == 0
-		case map[string]interface{}:
-			return len(v) == 0
-		}
-		return false
-	}
-
 	// ========================================
 	// String Functions (additional)
 	// ========================================
@@ -421,59 +403,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// Reduce Function
 	// ========================================
 
-	// reduce(acc = initial, x IN list | expr) - reduce a list
-	if matchFuncStartAndSuffix(expr, "reduce") {
-		inner := extractFuncArgs(expr, "reduce")
-
-		// Parse: acc = initial, x IN list | expr
-		eqIdx := strings.Index(inner, "=")
-		commaIdx := strings.Index(inner, ",")
-		inIdx := strings.Index(upperASCII(inner), " IN ")
-		pipeIdx := strings.Index(inner, "|")
-
-		if eqIdx > 0 && commaIdx > eqIdx && inIdx > commaIdx && pipeIdx > inIdx {
-			accName := strings.TrimSpace(inner[:eqIdx])
-			initialExpr := strings.TrimSpace(inner[eqIdx+1 : commaIdx])
-			varName := strings.TrimSpace(inner[commaIdx+1 : inIdx])
-			listExpr := strings.TrimSpace(inner[inIdx+4 : pipeIdx])
-			reduceExpr := strings.TrimSpace(inner[pipeIdx+1:])
-
-			// Get initial value
-			acc := e.evaluateExpressionWithContextFull(ctx, initialExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-
-			// Get list
-			list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-
-			var items []interface{}
-			switch v := list.(type) {
-			case []interface{}:
-				items = v
-			default:
-				items = []interface{}{list}
-			}
-
-			// Apply reduce with acc and item bound as variables (bindEvaluationValue):
-			// nodes / relationships as entities, anything else in the value scope.
-			// Text replacement is incorrect for identifiers and nested expressions.
-			tempNodes := make(map[string]*storage.Node, len(nodes)+2)
-			for k, v := range nodes {
-				tempNodes[k] = v
-			}
-			tempRels := make(map[string]*storage.Edge, len(rels)+2)
-			for k, v := range rels {
-				tempRels[k] = v
-			}
-			values := valueBindingsLayer(ctx, 2)
-			itemCtx := withValueBindings(ctx, values)
-			for _, item := range items {
-				bindEvaluationValue(accName, acc, tempNodes, tempRels, values)
-				bindEvaluationValue(varName, item, tempNodes, tempRels, values)
-				acc = e.evaluateExpressionWithContextFull(itemCtx, reduceExpr, tempNodes, tempRels, paths, allPathEdges, allPathNodes, pathLength)
-			}
-
-			return acc
+	// reduce(acc = initial, x IN list | step) and allReduce(…, predicate)
+	if matchFuncStartAndSuffix(expr, "reduce") || matchFuncStartAndSuffix(expr, "allreduce") {
+		if function, inner, isCall := parseFunctionCallWS(expr); isCall && isReduceFormFunction(function) {
+			return e.evaluateReduceForm(ctx, function, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
-		return nil
 	}
 
 	// ========================================
@@ -1381,4 +1315,48 @@ func relationshipMapProjection(projection string, item interface{}) (interface{}
 		return string(edge.ID), true
 	}
 	return nil, false
+}
+
+// evaluateReduceForm evaluates reduce and allReduce (parseReduceForm) in the
+// expression evaluator: a list that isn't one is a one-item list, and an
+// error is recorded on ctx, giving null.
+func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inner string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+	form, ok := parseReduceForm(function, inner)
+	if !ok {
+		return nil
+	}
+	acc := e.evaluateExpressionWithContextFull(ctx, form.initial, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	list := e.evaluateExpressionWithContextFull(ctx, form.list, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	if list == nil {
+		return nil
+	}
+	items, isList := list.([]interface{})
+	if !isList {
+		items = []interface{}{list}
+	}
+	// The accumulator and item are bound as variables (bindEvaluationValue):
+	// nodes / relationships as entities, anything else in the value scope.
+	tempNodes := make(map[string]*storage.Node, len(nodes)+2)
+	for k, v := range nodes {
+		tempNodes[k] = v
+	}
+	tempRels := make(map[string]*storage.Edge, len(rels)+2)
+	for k, v := range rels {
+		tempRels[k] = v
+	}
+	values := valueBindingsLayer(ctx, 2)
+	itemCtx := withValueBindings(ctx, values)
+	evaluate := func(expression string) func(accumulator, item interface{}) (interface{}, error) {
+		return func(accumulator, item interface{}) (interface{}, error) {
+			bindEvaluationValue(form.accumulator, accumulator, tempNodes, tempRels, values)
+			bindEvaluationValue(form.variable, item, tempNodes, tempRels, values)
+			return e.evaluateExpressionWithContextFull(itemCtx, expression, tempNodes, tempRels, paths, allPathEdges, allPathNodes, pathLength), nil
+		}
+	}
+	result, err := runReduceForm(form, acc, items, evaluate(form.step), evaluate(form.predicate))
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil
+	}
+	return result
 }

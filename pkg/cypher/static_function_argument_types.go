@@ -2,6 +2,8 @@ package cypher
 
 import (
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // Compile-time function argument types.
@@ -113,69 +115,141 @@ var staticArgumentOverrides = map[string][]string{
 // function catalog's signatures: a position accepts what any signature
 // accepts there, and isn't checked when some signature takes a type Neo4j
 // doesn't check. Checked against Neo4j 5.26 with a literal of a wrong type at
-// every position of every function. Positions past the end aren't checked.
-var staticFunctionArguments, maxStaticFunctionNameLength = buildStaticFunctionArguments()
+// every position of every function. Positions past the end aren't checked,
+// nor is a function with a NornicDB extension form, whose entry doesn't list
+// its arguments (format(template, values…)): its evaluator rejects what
+// neither form takes.
+var staticFunctionArguments, staticFunctionArgumentsByCount, maxStaticFunctionNameLength = buildStaticFunctionArguments()
 
-func buildStaticFunctionArguments() (map[string][]staticArgumentType, int) {
-	positions := make(map[string][][]string)
-	unchecked := make(map[string]map[int]bool)
+// buildStaticFunctionArguments builds staticFunctionArguments, and for an
+// overloaded function whose signatures take different types at a position
+// for different argument counts (uuid(name :: STRING), uuid(mostSigBits ::
+// INTEGER, leastSigBits :: INTEGER)), the types for each argument count from
+// the signatures that take that many: Neo4j picks the overload by argument
+// count first, so uuid(1) is a type mismatch (expected String).
+func buildStaticFunctionArguments() (map[string][]staticArgumentType, map[string]map[int][]staticArgumentType, int) {
+	signatures := make(map[string][][]ProcedureParam)
+	extensions := make(map[string]bool)
 	for _, function := range cypherFunctionCatalog {
 		name := lowerASCII(function.name)
+		if function.arguments == nil {
+			extensions[name] = true
+		}
 		if function.arguments == nil || functionSyntaxForms[name] {
 			continue
 		}
-		for index, argument := range function.arguments {
-			for len(positions[name]) <= index {
-				positions[name] = append(positions[name], nil)
+		signatures[name] = append(signatures[name], function.arguments)
+	}
+	built := make(map[string][]staticArgumentType, len(signatures))
+	byCount := make(map[string]map[int][]staticArgumentType)
+	longest := 0
+	for name, all := range signatures {
+		if extensions[name] {
+			continue
+		}
+		arguments, checked := staticArgumentTypesOf(name, all)
+		if !checked {
+			continue
+		}
+		attachCypher25Arguments(name, arguments)
+		built[name] = arguments
+		longest = max(longest, len(name))
+		maximum := 0
+		for _, signature := range all {
+			maximum = max(maximum, len(signature))
+		}
+		for count := 0; count <= maximum; count++ {
+			var taking [][]ProcedureParam
+			for _, signature := range all {
+				if signatureRequiredArguments(signature) <= count && count <= len(signature) {
+					taking = append(taking, signature)
+				}
+			}
+			if len(taking) == 0 || len(taking) == len(all) {
+				continue
+			}
+			if counted, ok := staticArgumentTypesOf(name, taking); ok {
+				attachCypher25Arguments(name, counted)
+				if byCount[name] == nil {
+					byCount[name] = make(map[int][]staticArgumentType)
+				}
+				byCount[name][count] = counted
+			}
+		}
+	}
+	return built, byCount, longest
+}
+
+// attachCypher25Arguments gives each argument position of name the type
+// Neo4j 2026.09 checks under Cypher 25, where it differs
+// (staticCypher25Arguments; "" is unchecked).
+func attachCypher25Arguments(name string, arguments []staticArgumentType) {
+	for index, accepted := range staticCypher25Arguments[name] {
+		if index >= len(arguments) {
+			break
+		}
+		cypher25 := staticArgumentType{}
+		if accepted != "" {
+			cypher25 = staticArgumentType{expected: accepted, options: staticTypeChoices(accepted)}
+		}
+		arguments[index].cypher25 = &cypher25
+	}
+}
+
+// signatureRequiredArguments is how many of a signature's arguments have no
+// default (functionArities' rule).
+func signatureRequiredArguments(signature []ProcedureParam) int {
+	required := 0
+	for _, argument := range signature {
+		if argument.Default == "" && !argument.Optional {
+			required++
+		}
+	}
+	return required
+}
+
+// staticArgumentTypesOf is the static check of each argument position of
+// name over signatures: a position accepts what any of them accepts there,
+// and isn't checked when one takes a type Neo4j doesn't check. checked is
+// false when no position is.
+func staticArgumentTypesOf(name string, signatures [][]ProcedureParam) ([]staticArgumentType, bool) {
+	var typed [][]string
+	unchecked := make(map[int]bool)
+	for _, signature := range signatures {
+		for index, argument := range signature {
+			for len(typed) <= index {
+				typed = append(typed, nil)
 			}
 			options, known := staticCatalogTypeOptions(argument.Type)
 			if !known {
-				if unchecked[name] == nil {
-					unchecked[name] = make(map[int]bool)
-				}
-				unchecked[name][index] = true
+				unchecked[index] = true
 				continue
 			}
 			for _, option := range options {
-				if !containsString(positions[name][index], option) {
-					positions[name][index] = append(positions[name][index], option)
+				if !containsString(typed[index], option) {
+					typed[index] = append(typed[index], option)
 				}
 			}
 		}
 	}
-	built := make(map[string][]staticArgumentType, len(positions))
-	longest := 0
-	for name, typed := range positions {
-		arguments := make([]staticArgumentType, len(typed))
-		checked := false
-		for index, options := range typed {
-			if override, ok := staticArgumentOverrides[name]; ok && index < len(override) {
-				options = staticTypeChoices(override[index])
-			} else if unchecked[name][index] {
-				continue
-			}
-			ordered := make([]string, 0, len(options))
-			for _, typeName := range staticTypeNameOrder {
-				if containsString(options, typeName) {
-					ordered = append(ordered, typeName)
-				}
-			}
-			arguments[index] = staticArgumentType{expected: joinTypeNames(ordered), options: ordered, acceptsLists: staticListAcceptingFunctions[name], unlisted: staticUnlistedArgumentTypes[name]}
-			checked = true
+	arguments := make([]staticArgumentType, len(typed))
+	checked := false
+	for index, options := range typed {
+		if override, ok := staticArgumentOverrides[name]; ok && index < len(override) {
+			options = staticTypeChoices(override[index])
+		} else if unchecked[index] {
+			continue
 		}
-		if checked {
-			for index, accepted := range staticCypher25Arguments[name] {
-				cypher25 := staticArgumentType{}
-				if accepted != "" {
-					cypher25 = staticArgumentType{expected: accepted, options: staticTypeChoices(accepted)}
-				}
-				arguments[index].cypher25 = &cypher25
+		ordered := make([]string, 0, len(options))
+		for _, typeName := range staticTypeNameOrder {
+			if containsString(options, typeName) {
+				ordered = append(ordered, typeName)
 			}
-			built[name] = arguments
-			longest = max(longest, len(name))
 		}
+		arguments[index] = staticArgumentType{expected: joinTypeNames(ordered), options: ordered, acceptsLists: staticListAcceptingFunctions[name], unlisted: staticUnlistedArgumentTypes[name]}
+		checked = true
 	}
-	return built, longest
+	return arguments, checked
 }
 
 // staticCatalogTypeOptions names a catalog type ("INTEGER | FLOAT", "LIST<ANY>")
@@ -210,15 +284,27 @@ func joinTypeNames(names []string) string {
 // case-insensitively without allocating: every identifier followed by "(" in
 // a statement (MATCH (, CASE (, …) passes through it.
 func lookupStaticFunctionArguments(name string) ([]staticArgumentType, bool) {
-	var buffer [64]byte
-	if len(name) > maxStaticFunctionNameLength || len(name) > len(buffer) {
+	if len(name) > maxStaticFunctionNameLength {
 		return nil, false
+	}
+	return lookupLowerASCII(staticFunctionArguments, name)
+}
+
+// lookupLowerASCII looks name up in a map keyed by lower-cased names
+// without allocating: the key is lowered into a stack buffer, which the
+// compiler doesn't copy for a map index. A name longer than 64 bytes is
+// not found.
+func lookupLowerASCII[V any](table map[string]V, name string) (V, bool) {
+	var buffer [64]byte
+	if len(name) > len(buffer) {
+		var zero V
+		return zero, false
 	}
 	for i := 0; i < len(name); i++ {
 		buffer[i] = asciiLowerByte(name[i])
 	}
-	arguments, ok := staticFunctionArguments[string(buffer[:len(name)])]
-	return arguments, ok
+	value, ok := table[string(buffer[:len(name)])]
+	return value, ok
 }
 
 // accepts reports whether an argument of static type typeName fits. Neo4j
@@ -320,6 +406,13 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			index = next
 			continue
 		}
+		if isReduceFormFunction(name) {
+			if err := checkReduceForm(name, text, open, check); err != nil {
+				return err
+			}
+			index = open + 1
+			continue
+		}
 		arguments, typed := lookupStaticFunctionArguments(name)
 		arity, counted := lookupFunctionArity(name)
 		if !typed && !counted {
@@ -356,6 +449,13 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 				return err
 			}
 		}
+		byCount, _ := lookupLowerASCII(staticFunctionArgumentsByCount, name)
+		if overload, found := byCount[len(expressions)]; found {
+			arguments = overload
+		}
+		if strings.EqualFold(name, "format") {
+			arguments, typed = staticFormatArguments(expressions), true
+		}
 		if len(expressions) > 0 {
 			if err := checkStaticLiteralArguments(name, expressions); err != nil {
 				return err
@@ -365,6 +465,9 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			for position, expression := range expressions {
 				if position >= len(arguments) {
 					break
+				}
+				if len(arguments[position].options) == 0 {
+					continue // a position no type is checked at
 				}
 				if err := check(arguments[position], expression); err != nil {
 					return err
@@ -439,6 +542,136 @@ func validateStaticFunctionArguments(cypher string, cypher25 bool) error {
 		}
 		return nil
 	})
+}
+
+// staticFormatTemporalTypes are the types format()'s value takes in Neo4j.
+const staticFormatTemporalTypes = "Duration, Date, Time, LocalTime, LocalDateTime or DateTime"
+
+// staticFormatArguments is the static check of format(value [, pattern]):
+// the value is a temporal value or duration, or a string (NornicDB's printf
+// form, format(template, values…)), and when the value is known to be
+// temporal the pattern is a string (format(1, 'yyyy') and
+// format(date(…), 1) are Neo4j's compile-time type mismatch). The printf
+// form's values aren't checked.
+func staticFormatArguments(expressions []string) []staticArgumentType {
+	value := staticTypeChoices(staticFormatTemporalTypes + " or String")
+	arguments := []staticArgumentType{{expected: staticFormatTemporalTypes, options: value}}
+	if len(expressions) == 2 {
+		first := strings.TrimSpace(expressions[0])
+		typeName := staticLiteralTypeName(first)
+		if function, inner, call := parseFunctionCallWS(first); call && typeName == "" {
+			typeName = staticFunctionResultType(function, inner)
+		}
+		if typeName != "" && containsString(staticTypeChoices(staticFormatTemporalTypes), typeName) {
+			arguments = append(arguments, staticArgumentType{expected: "String", options: []string{"String"}})
+		}
+	}
+	return arguments
+}
+
+// validateStaticFunctionParameters rejects a function called with a
+// parameter whose value's type no signature accepts there, as Neo4j does when
+// it compiles a statement with its parameters: coll.sort($l) for l = 1 is
+// "Type mismatch for parameter 'l': expected List<T> but was Integer", in
+// Cypher 5 and 25 alike. As in Neo4j, a Float parameter and a list's
+// elements are checked only at run time, where a value of the wrong type is
+// the function's TypeError. It scans the statement only when a parameter
+// follows an opening parenthesis or a comma, so parameterized statements on
+// hot paths cost one byte scan.
+func validateStaticFunctionParameters(cypher string, params map[string]interface{}, cypher25 bool) error {
+	if len(params) == 0 || !parameterMayBeFunctionArgument(cypher) {
+		return nil
+	}
+	var unwound map[string]string
+	if strings.IndexByte(cypher, '[') >= 0 {
+		unwound = unwindParameterBindings(cypher)
+	}
+	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string) error {
+		// A Cypher 25 statement's arguments are checked as Neo4j 2026.09
+		// checks them (toString takes any value there).
+		argument = argument.inVersion(cypher25)
+		expression = strings.TrimSpace(expression)
+		if parameter, bound := unwound[expression]; bound {
+			// UNWIND [$s] AS x binds x to $s's value, typed as Neo4j
+			// types it: radians(x) for s = 'xy' is a type mismatch.
+			operand := staticParameterOperand(params[parameter])
+			if !operand.known() || operand.kind == "Float" || argument.accepts(operand.kind) {
+				return nil
+			}
+			return typeNameMismatchError(argument.expected, operand.display)
+		}
+		if len(expression) < 2 || expression[0] != '$' {
+			return nil
+		}
+		name, next, ok := scanIdentifierToken(expression, 1)
+		if !ok || next != len(expression) {
+			return nil
+		}
+		// A missing parameter (nil) has no static type.
+		operand := staticParameterOperand(params[name])
+		if !operand.known() || operand.kind == "Float" || argument.accepts(operand.kind) {
+			return nil
+		}
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
+			localization.CypherCoreParameterTypeMismatch(name, argument.expected, operand.display))
+	})
+}
+
+// unwindParameterBindings maps each variable an UNWIND of a one-parameter
+// list binds (UNWIND [$s] AS x) to the parameter's name, when the statement
+// binds that name nowhere else (no second AS x), so a later binding can't be
+// taken for it.
+func unwindParameterBindings(cypher string) map[string]string {
+	var bindings map[string]string
+	for start := 0; ; {
+		index := findKeywordIndexInContext(cypher[start:], "UNWIND")
+		if index < 0 {
+			return bindings
+		}
+		body := cypher[start+index+len("UNWIND"):]
+		start += index + len("UNWIND")
+		as := findKeywordIndexInContext(body, "AS")
+		if as < 0 {
+			continue
+		}
+		source := strings.TrimSpace(body[:as])
+		alias, _, ok := scanIdentifierToken(strings.TrimSpace(body[as+len("AS"):]), 0)
+		if !ok || len(source) < 4 || source[0] != '[' || source[len(source)-1] != ']' {
+			continue
+		}
+		parameter := strings.TrimSpace(source[1 : len(source)-1])
+		name, next, isParameter := scanIdentifierToken(parameter, 1)
+		if !isParameter || parameter[0] != '$' || next != len(parameter) {
+			continue
+		}
+		if strings.Count(cypher, "AS "+alias) != 1 {
+			continue
+		}
+		if bindings == nil {
+			bindings = make(map[string]string)
+		}
+		bindings[alias] = name
+	}
+}
+
+// parameterMayBeFunctionArgument is validateStaticFunctionParameters' quick
+// check: a $ right after "(" or ",", spaces aside.
+func parameterMayBeFunctionArgument(cypher string) bool {
+	for index := strings.IndexByte(cypher, '$'); index >= 0; {
+		before := index
+		for before > 0 && isASCIISpace(cypher[before-1]) {
+			before--
+		}
+		if before > 0 && (cypher[before-1] == '(' || cypher[before-1] == ',' || cypher[before-1] == '[') {
+			return true
+		}
+		next := strings.IndexByte(cypher[index+1:], '$')
+		if next < 0 {
+			return false
+		}
+		index += 1 + next
+	}
+	return false
 }
 
 // staticTypeScope is what a clause knows about its variables' static types:
@@ -575,10 +808,30 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 	var scope *staticTypeScope
 	return forEachStaticFunctionArgument(text, func(argument staticArgumentType, expression string) error {
 		variable := simpleSemanticIdentifier(expression)
-		if base, member := staticMemberAccessBase(expression); member {
-			variable = base // its members' types (Cypher 25)
-		} else if variable == "" && !mayContainArithmetic(expression) {
+		base, property := entityPropertyRead(expression)
+		// A call's result type, when it doesn't depend on its arguments
+		// (size(properties(m)) is size of a Map, Neo4j's compile-time type
+		// mismatch); the call's own arguments are checked as calls of
+		// their own.
+		function, inner, call := parseFunctionCallWS(strings.TrimSpace(expression))
+		result := ""
+		if call {
+			result = staticFunctionResultType(function, inner)
+		}
+		switch {
+		case property:
+			variable = base
+		case result != "":
+			if !argument.accepts(result) {
+				return staticArgumentMismatch(argument, result)
+			}
 			return nil
+		default:
+			if memberBase, member := staticMemberAccessBase(expression); member {
+				variable = memberBase // its members' types (Cypher 25)
+			} else if variable == "" && !mayContainArithmetic(expression) {
+				return nil
+			}
 		}
 		if scope == nil {
 			built := scopeOf()
@@ -586,6 +839,16 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 		}
 		argument = argument.inVersion(scope.cypher25)
 		typeName := scope.staticExpressionType(expression)
+		if property {
+			// A node's or relationship's property is a property value,
+			// never an entity or a map (labels(n.x), id(n.x), point(n.x)
+			// are Neo4j's compile-time SyntaxError); another base's member
+			// has the type the scope knows for it (a Cypher 25 map's), or
+			// none.
+			if kind := scope.typeOf(base); kind == "Node" || kind == "Relationship" {
+				typeName = staticPropertyValueType
+			}
+		}
 		if typeName == "" || argument.accepts(typeName) {
 			return nil
 		}
@@ -599,6 +862,21 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 		}
 		return staticArgumentMismatch(argument, typeName)
 	})
+}
+
+// staticPropertyValueType is the static type of a node's or relationship's
+// property, as Neo4j names it in a type mismatch: any value a property can
+// hold.
+const staticPropertyValueType = "Boolean, Float, Integer, Number, Point, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime or List<T>"
+
+// entityPropertyRead reports whether expression reads one property of a
+// variable (n.x), and the variable.
+func entityPropertyRead(expression string) (string, bool) {
+	base, chain, ok := rowPropertyChainShape(strings.TrimSpace(expression))
+	if !ok || strings.IndexByte(chain, '.') >= 0 {
+		return "", false
+	}
+	return base, true
 }
 
 // projectStaticValueTypes returns the literal types a WITH clause binds: an
@@ -757,3 +1035,35 @@ func uniformListElementType(list string) string {
 	}
 	return elementType
 }
+
+// checkReduceForm is Neo4j's compile-time check of a reduce or allReduce
+// call whose parentheses open at open: the call must have the function's
+// form (parseReduceForm), a list of a known type must be a list, and an
+// allReduce predicate of a known type a boolean.
+func checkReduceForm(function, text string, open int, check func(staticArgumentType, string) error) error {
+	closing := findMatchingDelimiter(text, open, '(', ')')
+	if closing < 0 {
+		return nil
+	}
+	form, ok := parseReduceForm(function, text[open+1:closing])
+	if !ok {
+		entry := reduceFormEntries[lowerASCII(function)]
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherCoreReduceFormInvalidSyntax(entry.name, entry.signature))
+	}
+	if err := check(staticArgumentType{expected: "List<T>", options: []string{"List<T>"}}, form.list); err != nil || !form.all {
+		return err
+	}
+	return check(staticArgumentType{expected: "Boolean", options: []string{"Boolean"}}, form.predicate)
+}
+
+// reduceFormEntries are the catalog entries of reduce and allReduce, by
+// lower-case name, whose signatures their form errors quote.
+var reduceFormEntries = func() map[string]cypherFunctionSpec {
+	entries := make(map[string]cypherFunctionSpec, 2)
+	for _, entry := range cypherFunctionCatalog {
+		if isReduceFormFunction(entry.name) {
+			entries[lowerASCII(entry.name)] = entry
+		}
+	}
+	return entries
+}()

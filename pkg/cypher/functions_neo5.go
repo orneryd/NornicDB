@@ -52,7 +52,6 @@ func init() {
 		cypherfn.Register(name, fnMathUnary(name, operation))
 	}
 	cypherfn.Register("ceil", fnMathUnary("ceil", math.Ceil))
-	cypherfn.Register("ceiling", fnMathUnary("ceiling", math.Ceil))
 	cypherfn.Register("floor", fnMathUnary("floor", math.Floor))
 	cypherfn.Register("atan2", fnMathBinary("atan2", math.Atan2))
 	cypherfn.Register("power", fnMathBinary("power", math.Pow))
@@ -73,6 +72,9 @@ func init() {
 	cypherfn.Register("valuetype", fnValueType)
 	cypherfn.Register("nullif", fnNullIf)
 	cypherfn.Register("tail", fnTail)
+	for name, fn := range singleValueFunctions {
+		cypherfn.Register(name, singleValueFunction(name, fn))
+	}
 	for _, name := range []string{"substring", "left", "right", "replace", "split"} {
 		cypherfn.Register(name, fnStringOperation(name))
 	}
@@ -184,6 +186,95 @@ func fnRound(ctx cypherfn.Context, args []string) (interface{}, error) {
 	return rounded / factor, nil
 }
 
+// singleValueFunctions are the one-argument functions computed from their
+// argument's value alone (abs, sign, isEmpty). The registry and the row
+// evaluator both call them, so each has one implementation; the row
+// evaluator passes the value it already has instead of an evaluation
+// callback.
+var singleValueFunctions = map[string]func(interface{}) (interface{}, error){
+	"abs":     absValue,
+	"sign":    signValue,
+	"isempty": isEmptyValue,
+}
+
+// singleValueFunction registers fn as a one-argument registry function
+// that evaluates its argument and calls fn with the value.
+func singleValueFunction(function string, fn func(interface{}) (interface{}, error)) cypherfn.Func {
+	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+		if len(args) != 1 {
+			return nil, argumentCountError(function, "1", len(args))
+		}
+		value, err := ctx.Eval(args[0])
+		if err != nil {
+			return nil, err
+		}
+		return fn(value)
+	}
+}
+
+// numberValue is a numeric function's argument: null is (nil, false, nil),
+// and any other non-number Neo4j's TypeError.
+func numberValue(value interface{}, function string) (interface{}, bool, error) {
+	if value == nil {
+		return nil, false, nil
+	}
+	if !isRuntimeNumber(value) {
+		return nil, false, &cypherfn.TypeMismatchError{Function: function, Expected: "Float or Integer", Value: value}
+	}
+	return value, true, nil
+}
+
+// absValue is abs(number): an integer's or float's absolute value, of its
+// type.
+func absValue(value interface{}) (interface{}, error) {
+	value, ok, err := numberValue(value, "abs")
+	if !ok {
+		return nil, err
+	}
+	if integer, isInteger := cypherIntegerValue(value); isInteger {
+		if integer < 0 {
+			return -integer, nil
+		}
+		return integer, nil
+	}
+	number, _ := cypherFloatValue(value)
+	return math.Abs(number), nil
+}
+
+// signValue is sign(number): -1, 0 or 1, an integer.
+func signValue(value interface{}) (interface{}, error) {
+	value, ok, err := numberValue(value, "sign")
+	if !ok {
+		return nil, err
+	}
+	number, _ := toFloat64(value)
+	switch {
+	case number < 0:
+		return int64(-1), nil
+	case number > 0:
+		return int64(1), nil
+	}
+	return int64(0), nil
+}
+
+// isEmptyValue is isEmpty(list, map or string): null for null, and Neo4j's
+// TypeError for any other value (a number, a node).
+func isEmptyValue(value interface{}) (interface{}, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if text, isString := value.(string); isString {
+		return len(text) == 0, nil
+	}
+	if entries, isMap := value.(map[string]interface{}); isMap && cypherValueKindOf(value) == valueKindMap {
+		return len(entries) == 0, nil
+	}
+	if items, isList := cypherListValue(value); isList {
+		return len(items) == 0, nil
+	}
+	return nil, &cypherfn.TypeMismatchError{Function: "isEmpty", Expected: "List, Map, or String", Value: value}
+}
+
 func fnTail(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, argumentCountError("tail", "1", len(args))
@@ -192,10 +283,9 @@ func fnTail(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || value == nil {
 		return nil, err
 	}
-	items, list := cypherListValue(value)
-	if !list {
-		return nil, &cypherfn.TypeMismatchError{Function: "tail", Expected: "List<T>", Value: value}
-	}
+	// A value that isn't a list has no tail: Neo4j gives [] (tail(n.age)); a
+	// node or other non-list literal is the static check's SyntaxError.
+	items, _ := cypherListValue(value)
 	if len(items) < 2 {
 		return []interface{}{}, nil
 	}
@@ -208,7 +298,8 @@ func fnStringOperation(name string) cypherfn.Func {
 		if name == "substring" {
 			maximum = 3
 		} else if name == "replace" {
-			minimum, maximum = 3, 3
+			// replace(text, search, replacement[, limit]) (Neo4j 2025.06).
+			minimum, maximum = 3, 4
 		}
 		if len(args) < minimum || len(args) > maximum {
 			return nil, argumentCountError(name, strconv.Itoa(minimum), len(args))
@@ -241,7 +332,13 @@ func fnStringOperation(name string) cypherfn.Func {
 				if err != nil {
 					return nil, err
 				}
-				return strings.ReplaceAll(text, separator, replacement), nil
+				limit := -1
+				if len(values) == 4 {
+					if limit, err = replaceLimit(args[3], values[3]); err != nil {
+						return nil, err
+					}
+				}
+				return strings.Replace(text, separator, replacement, limit), nil
 			}
 			parts := strings.Split(text, separator)
 			result := make([]interface{}, len(parts))
@@ -315,6 +412,24 @@ func evalArgs(ctx cypherfn.Context, args []string) ([]interface{}, error) {
 		values[i] = value
 	}
 	return values, nil
+}
+
+// replaceLimit is replace()'s limit, the most occurrences it replaces. A
+// negative literal is Neo4j's compile-time SyntaxError; a negative value known
+// only at run time is out of range (ArgumentError).
+func replaceLimit(argument string, value interface{}) (int, error) {
+	limit, ok := cypherIntegerValue(value)
+	if !ok {
+		return 0, &cypherfn.TypeMismatchError{Function: "replace", Expected: "Integer", Value: value}
+	}
+	if limit >= 0 {
+		return int(limit), nil
+	}
+	if _, err := strconv.ParseInt(strings.TrimSpace(argument), 10, 64); err == nil {
+		return 0, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
+			localization.CypherCoreReplaceLimitNegative())
+	}
+	return 0, functionArgumentOutOfRange("replace")
 }
 
 // argumentCountError is the error of a function called with the wrong number
