@@ -23,6 +23,8 @@ func TestNeo4jSimilarityScores(t *testing.T) {
 		{[]float64{-1, 0.1, 0}, q, 0.027890443801879883},
 		{[]float64{1, 0}, []float64{-1, 0}, 0},
 		{[]float64{1e40, 1}, []float64{1, 2}, 0.7236068248748779},
+		// The float32 dot product rounds below -1: max((1 + p) / 2, 0) is 0.
+		{[]float64{0.6, -1, -1, -0.7, 0.4}, []float64{-0.6, 1, 1, 0.7, -0.4}, 0},
 	} {
 		got, ok := Neo4jCosineSimilarity(c.a, c.b)
 		require.True(t, ok, "%v %v", c.a, c.b)
