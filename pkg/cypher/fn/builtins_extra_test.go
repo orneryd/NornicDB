@@ -226,6 +226,18 @@ func TestEvalSize_StringSlice(t *testing.T) {
 	assert.Equal(t, int64(3), v)
 }
 
+type sizedValue struct{}
+
+func (sizedValue) CypherSize() int64 { return 4 }
+
+// A value with its own size (a VECTOR: its dimension).
+func TestEvalSize_Sized(t *testing.T) {
+	ctx := makeCtxWithEval(sizedValue{})
+	v, _, err := EvaluateFunction("size", []string{"x"}, ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), v)
+}
+
 func TestEvalSize_NoArgs(t *testing.T) {
 	ctx := makeCtx(nil, nil)
 	v, _, err := EvaluateFunction("size", []string{}, ctx)
