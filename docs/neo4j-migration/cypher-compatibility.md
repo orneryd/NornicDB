@@ -6,7 +6,7 @@
 **Purpose**: Inventory of implemented Cypher features and native extensions
 
 The original inventory below predates Cypher 25 acceptance testing and is not
-proof of current Neo4j parity. The [Cypher 25 audit and catch-up plan](../../openspec/changes/cypher25-current-release-conformance/README.md)
+proof of current Neo4j parity. The [Cypher 25 audit and catch-up plan](https://github.com/orneryd/NornicDB/blob/main/openspec/changes/cypher25-current-release-conformance/README.md)
 records explicit version rejection, missing features and executable evidence.
 It plans additive support with query prefixes overriding
 `NORNICDB_CYPHER_VERSION=5|25`, without persisted database-language migration

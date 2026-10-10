@@ -2,7 +2,7 @@
 
 **End-to-end architecture of NornicDB's knowledge-policy scoring stage, from a read-path entry point through the compiled binding lookup, decay/promotion math, and suppression decision — right up to the hand-off to the Visibility Layer.**
 
-This document diagrams the code as it exists in the repository. Every stage in the flowchart maps to a specific file and function in `pkg/knowledgepolicy/` and `pkg/storage/badger_decay_filter.go`. See the [Legend](#legend--source-references) below for line-level references.
+This document diagrams the code as it exists in the repository. Every stage in the flowchart maps to a specific file and function in `pkg/knowledgepolicy/` and `pkg/storage/badger_decay_filter.go`. See the [Legend](#legend-source-references) below for line-level references.
 
 For the user-facing policy DDL and semantics, see [Knowledge-Layer Policies](../user-guides/knowledge-layer-policies.md). For what happens **after** an entity is marked suppressed, see [Visibility Suppression and Deindex](../user-guides/visibility-suppression-deindex.md).
 

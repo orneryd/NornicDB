@@ -3,7 +3,7 @@
 Status: **Superseded, 2026-09-08.**
 
 This live-managed SDL design has been replaced by the
-[generated GraphQL schema plan](generated-graphql-schema-plan.md). The active
+[generated GraphQL schema plan](../generated-graphql-schema-plan.md). The active
 plan generates a deterministic SDL artifact with `nornicdb-admin`, loads it
 only at server startup, and requires an operator-controlled restart to activate
 changes. The material below is retained as historical design context only.
