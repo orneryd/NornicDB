@@ -150,6 +150,16 @@ func isRuntimeNumber(v interface{}) bool {
 	return false
 }
 
+// isRuntimeVector reports whether v is a VECTOR value (Cypher 25), which
+// joins a string as its text.
+func isRuntimeVector(v interface{}) bool {
+	switch v.(type) {
+	case CypherVector, *CypherVector:
+		return true
+	}
+	return false
+}
+
 func isRuntimeDuration(v interface{}) bool {
 	switch v.(type) {
 	case CypherDuration, *CypherDuration:
@@ -204,7 +214,8 @@ func runtimeArithmeticTypeError(op byte, left, right interface{}) error {
 			(leftString && (rightString || rightNumber)) || (rightString && leftNumber) ||
 			isRuntimeList(left) || isRuntimeList(right) ||
 			(isRuntimeDuration(left) && (isRuntimeDuration(right) || isRuntimeTemporal(right))) ||
-			(isRuntimeTemporal(left) && isRuntimeDuration(right))
+			(isRuntimeTemporal(left) && isRuntimeDuration(right)) ||
+			(leftString && isRuntimeVector(right)) || (rightString && isRuntimeVector(left))
 	case '-':
 		valid = (leftNumber && rightNumber) ||
 			((isRuntimeDuration(left) || isRuntimeTemporal(left)) && isRuntimeDuration(right))

@@ -224,33 +224,37 @@ func fnVectorDistance(ctx cypherfn.Context, args []string) (interface{}, error) 
 	if a.Dimension() != b.Dimension() {
 		return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentValue", localization.CypherCoreVectorDistanceDimensions())
 	}
-	var sum, dot, normA, normB float64
+	// Neo4j computes every metric in float32: each coordinate as a float32,
+	// each step rounded to float32 (explicit conversions keep the compiler
+	// from fusing them), whatever the vectors' coordinate types.
+	var sum, dot, normA, normB float32
 	for i := 0; i < a.Dimension(); i++ {
-		x, y := a.floatAt(i), b.floatAt(i)
+		x, y := float32(a.floatAt(i)), float32(b.floatAt(i))
 		switch metric {
 		case "EUCLIDEAN", "EUCLIDEAN_SQUARED":
-			sum += (x - y) * (x - y)
+			d := x - y
+			sum += float32(d * d)
 		case "MANHATTAN":
-			sum += math.Abs(x - y)
+			sum += float32(math.Abs(float64(x - y)))
 		case "HAMMING":
 			if x != y {
 				sum++
 			}
 		default: // COSINE, DOT
-			dot += x * y
-			normA += x * x
-			normB += y * y
+			dot += float32(x * y)
+			normA += float32(x * x)
+			normB += float32(y * y)
 		}
 	}
 	switch metric {
 	case "EUCLIDEAN":
-		return math.Sqrt(sum), nil
+		return float64(float32(math.Sqrt(float64(sum)))), nil
 	case "COSINE":
-		return 1 - dot/(math.Sqrt(normA)*math.Sqrt(normB)), nil
+		return float64(1 - dot/float32(math.Sqrt(float64(float32(normA*normB))))), nil
 	case "DOT":
-		return -dot, nil
+		return float64(-dot), nil
 	}
-	return sum, nil
+	return float64(sum), nil
 }
 
 // fnVectorNorm is vector_norm(vector, metric): EUCLIDEAN or MANHATTAN.
@@ -267,18 +271,20 @@ func fnVectorNorm(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	var sum float64
+	// In float32, as vector_distance (see there).
+	var sum float32
 	for i := 0; i < vector.Dimension(); i++ {
+		x := float32(vector.floatAt(i))
 		if metric == "MANHATTAN" {
-			sum += math.Abs(vector.floatAt(i))
+			sum += float32(math.Abs(float64(x)))
 		} else {
-			sum += vector.floatAt(i) * vector.floatAt(i)
+			sum += float32(x * x)
 		}
 	}
 	if metric == "MANHATTAN" {
-		return sum, nil
+		return float64(sum), nil
 	}
-	return math.Sqrt(sum), nil
+	return float64(float32(math.Sqrt(float64(sum)))), nil
 }
 
 // fnUUID is uuid() (a random version 7 UUID), uuid(text) or

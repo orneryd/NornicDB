@@ -90,6 +90,11 @@ var staticFunctionResultTypes = map[string]string{
 	"time.truncate": "Time", "time.realtime": "Time", "time.statement": "Time", "time.transaction": "Time",
 	"localtime.truncate": "LocalTime", "localtime.realtime": "LocalTime", "localtime.statement": "LocalTime",
 	"localtime.transaction": "LocalTime",
+	// VECTOR and UUID (Cypher 25, #907), under their internal names too
+	// (vector_call_rewrite.go).
+	"vector": "Vector", "__nornic_vector": "Vector", "vector_distance": "Float", "__nornic_vector_distance": "Float",
+	"vector_norm": "Float", "__nornic_vector_norm": "Float", "vector_dimension_count": "Integer",
+	"uuid": "UUID", "uuid.mostsignificantbits": "Integer", "uuid.leastsignificantbits": "Integer",
 }
 
 // staticFunctionResultType is the result type of a call to function with
@@ -107,6 +112,28 @@ func staticFunctionResultType(function, arguments string) string {
 		return ""
 	}
 	return staticFunctionResultTypes[name]
+}
+
+// staticValueCallType is the static type of expression when it is one whole
+// call to a function returning a VECTOR or a UUID (toBoolean(vector(…)),
+// [x IN uuid() | x]). These Cypher 25 types are checked as Neo4j 2026.09
+// does; other function results stay unchecked in argument and list
+// positions.
+func staticValueCallType(expression string) string {
+	expression = strings.TrimSpace(expression)
+	name, end, ok := scanIdentifierToken(expression, 0)
+	if !ok {
+		return ""
+	}
+	open := queryGapEnd(expression, end)
+	if open >= len(expression) || expression[open] != '(' || findMatchingParen(expression, open) != len(expression)-1 {
+		return ""
+	}
+	switch result := staticFunctionResultType(name, expression[open+1:len(expression)-1]); result {
+	case "Vector", "UUID":
+		return result
+	}
+	return ""
 }
 
 // staticOperatorChecker infers expression types for the operator checks, from
@@ -148,6 +175,24 @@ func checkOperator(op byte, left, right staticOperand) (staticOperand, error) {
 	switch op {
 	case '+':
 		switch {
+		case left.kind == "Vector":
+			// A vector (Cypher 25) joins a string or a list, as Neo4j
+			// 2026.09 types it.
+			switch {
+			case right.kind == "String":
+				return knownOperand("String"), nil
+			case right.list():
+				return knownOperand("List<T>"), nil
+			case right.known() && right.kind != "Null":
+				return staticOperand{}, operandMismatch(right, "String or List<T>")
+			}
+			return staticOperand{}, nil
+		case left.kind == "String" && right.kind == "Vector":
+			return knownOperand("String"), nil
+		case left.kind == "String" && right.kind == "UUID":
+			// UUID is a Cypher 25 type: Neo4j 2026.09's list of what a
+			// string joins.
+			return staticOperand{}, operandMismatch(right, "Boolean, Float, Integer, Point, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, Vector or List<T>")
 		case left.temporal():
 			if right.list() {
 				return knownOperand("List<T>"), nil
