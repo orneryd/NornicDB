@@ -99,7 +99,7 @@ Last Updated: November 25, 2025
 | `pi()`     | π constant   | `RETURN pi()`       |
 | `e()`      | e constant   | `RETURN e()`        |
 
-### 📋 List Functions (9 functions)
+### 📋 List Functions (17 functions)
 
 | Function                  | What It Does           | Example                        |
 | ------------------------- | ---------------------- | ------------------------------ |
@@ -112,6 +112,24 @@ Last Updated: November 25, 2025
 | `coalesce(v1, v2, ...)`   | First non-null value   | `RETURN coalesce(null, 5, 10)` |
 | `reduce(...)`             | Reduce list to value   | See examples below             |
 | `isEmpty(x)`              | Check if empty         | `RETURN isEmpty([])`           |
+
+The `coll.*` functions of Cypher 25 (Neo4j 2026.09; NornicDB has them in
+Cypher 5 statements too). They order values as `ORDER BY` does (null after
+everything) and tell them apart as `DISTINCT` does (1 and 1.0 are one value).
+A null list, index or depth gives null.
+
+| Function                         | What It Does                                         | Example                                   |
+| -------------------------------- | ---------------------------------------------------- | ----------------------------------------- |
+| `coll.distinct(list)`            | Duplicates removed, first kept                       | `RETURN coll.distinct([1, 1.0, 2])` → `[1, 2]` |
+| `coll.flatten(list [, depth])`   | Nested lists spliced in, `depth` levels (default 1)  | `RETURN coll.flatten([1, [2, [3]]], 2)` → `[1, 2, 3]` |
+| `coll.indexOf(list, value)`      | Index of the first equal item, or -1                 | `RETURN coll.indexOf([1, 2], 2)` → `1`    |
+| `coll.insert(list, index, value)`| `value` inserted before `list[index]` (0 to size)    | `RETURN coll.insert([1, 3], 1, 2)`        |
+| `coll.remove(list, index)`       | `list` without `list[index]`                         | `RETURN coll.remove([1, 2, 3], 0)`        |
+| `coll.max(list)` / `coll.min(list)` | Greatest / least item in `ORDER BY` order         | `RETURN coll.max([3, 1, 2])` → `3`        |
+| `coll.sort(list)`                | Sorted in `ORDER BY` order                           | `RETURN coll.sort([3, 'a', 1])` → `['a', 1, 3]` |
+
+An index or depth out of range, and `coll.remove` on an empty list, are
+ArgumentErrors, as in Neo4j.
 
 ### 🎯 Vector Functions (2 functions)
 
