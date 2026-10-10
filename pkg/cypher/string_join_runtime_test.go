@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -39,4 +40,25 @@ func TestStringJoinsValuesAtRunTime(t *testing.T) {
 	// An unclosed VECTOR<…> in a type predicate is a SyntaxError.
 	_, err = exec.Execute(ctx, "CYPHER 25 RETURN 1 IS :: VECTOR<INTEGER AS v", nil)
 	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+}
+
+// TYPED is the type predicate's keyword only after IS [NOT]; elsewhere it is
+// a name (Neo4j 5.26 and 2026.09).
+func TestTypedIsANameOutsideTypePredicates(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "typed_name"))
+	ctx := context.Background()
+	for query, want := range map[string]interface{}{
+		"WITH 1 AS typed RETURN count(typed) AS v":                  int64(1),
+		"WITH 1 AS TYPED RETURN count(TYPED) AS v":                  int64(1),
+		"WITH 1 AS typed RETURN typed IS TYPED INTEGER AS v":        true,
+		"WITH 1 AS typed RETURN typed IS NOT TYPED STRING AS v":     true,
+		"WITH 'a' AS typed RETURN toUpper(typed) IS :: STRING AS v": true,
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+	}
+	require.Equal(t, "count(typed)", maskTypePredicateTypes("count(typed)"))
+	require.Equal(t, "x IS ", maskTypePredicateTypes("x IS TYPED INTEGER")[:5])
+	require.Equal(t, "", strings.TrimSpace(maskTypePredicateTypes("x IS TYPED INTEGER")[5:]))
 }

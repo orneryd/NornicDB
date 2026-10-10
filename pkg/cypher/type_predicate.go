@@ -312,6 +312,24 @@ var typeGrammarWords = map[string]bool{
 	"INT32": true, "INT64": true, "FLOAT32": true, "FLOAT64": true,
 }
 
+// typedFollowsIs reports whether the TYPED at index is the type predicate's
+// keyword (x IS TYPED T, x IS NOT TYPED T), not a name (count(typed)).
+func typedFollowsIs(expression string, index int) bool {
+	end := index
+	for end > 0 && isASCIISpace(expression[end-1]) {
+		end--
+	}
+	start := end
+	for start > 0 && isIdentByte(expression[start-1]) {
+		start--
+	}
+	word := expression[start:end]
+	if equalFoldASCII(word, "NOT") {
+		word = wordBefore(expression, start)
+	}
+	return equalFoldASCII(word, "IS")
+}
+
 // maskTypePredicateTypes blanks the type after each `::` and `TYPED` in an
 // expression, so scanners that look for variables (expressionFreeVariables)
 // do not read type names (INTEGER, LIST<STRING>) as variables (#838).
@@ -329,7 +347,8 @@ func maskTypePredicateTypes(expression string) string {
 		case masked[index] == ':' && index+1 < len(masked) && masked[index+1] == ':':
 			start, position = index, index+2
 		case index+5 <= len(masked) && strings.EqualFold(string(masked[index:index+5]), "TYPED") &&
-			(index == 0 || !isIdentByte(masked[index-1])) && (index+5 == len(masked) || !isIdentByte(masked[index+5])):
+			(index == 0 || !isIdentByte(masked[index-1])) && (index+5 == len(masked) || !isIdentByte(masked[index+5])) &&
+			typedFollowsIs(expression, index):
 			start, position = index, index+5
 		}
 		if start < 0 {
