@@ -282,13 +282,19 @@ const sizeArgumentTypes = "String or List<T>"
 // evalToLower is toLower(string): a non-string is a type mismatch, as in
 // Neo4j (toLower(5) is not '5').
 func evalToLower(ctx Context, args []string) (interface{}, error) {
-	return evalStringCase(ctx, args, "toLower", cases.Lower(language.Und).String)
+	return evalStringCase(ctx, args, "toLower", lowerCaseText)
 }
 
 // evalToUpper is toUpper(string), as evalToLower.
 func evalToUpper(ctx Context, args []string) (interface{}, error) {
-	return evalStringCase(ctx, args, "toUpper", cases.Upper(language.Und).String)
+	return evalStringCase(ctx, args, "toUpper", upperCaseText)
 }
+
+// lowerCaseText and upperCaseText are toLower's and toUpper's Unicode case
+// mappings, as plain functions so passing one doesn't allocate a bound
+// method value per call.
+func lowerCaseText(text string) string { return cases.Lower(language.Und).String(text) }
+func upperCaseText(text string) string { return cases.Upper(language.Und).String(text) }
 
 func evalStringCase(ctx Context, args []string, function string, convert func(string) string) (interface{}, error) {
 	if len(args) != 1 {

@@ -103,14 +103,14 @@ var staticFunctionResultTypes = map[string]string{
 // its accumulator's when init is a literal (reduce(a = 0, …) is an Integer,
 // as Neo4j types it).
 func staticFunctionResultType(function, arguments string) string {
-	name := lowerASCII(function)
-	if name == "reduce" {
-		if form, ok := parseReduceForm(name, arguments); ok {
+	if strings.EqualFold(function, "reduce") {
+		if form, ok := parseReduceForm("reduce", arguments); ok {
 			return staticLiteralTypeName(form.initial)
 		}
 		return ""
 	}
-	return staticFunctionResultTypes[name]
+	result, _ := lookupLowerASCII(staticFunctionResultTypes, function)
+	return result
 }
 
 // staticValueCallType is the static type of expression when it is one whole

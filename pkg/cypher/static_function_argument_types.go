@@ -240,15 +240,27 @@ func joinTypeNames(names []string) string {
 // case-insensitively without allocating: every identifier followed by "(" in
 // a statement (MATCH (, CASE (, …) passes through it.
 func lookupStaticFunctionArguments(name string) ([]staticArgumentType, bool) {
-	var buffer [64]byte
-	if len(name) > maxStaticFunctionNameLength || len(name) > len(buffer) {
+	if len(name) > maxStaticFunctionNameLength {
 		return nil, false
+	}
+	return lookupLowerASCII(staticFunctionArguments, name)
+}
+
+// lookupLowerASCII looks name up in a map keyed by lower-cased names
+// without allocating: the key is lowered into a stack buffer, which the
+// compiler doesn't copy for a map index. A name longer than 64 bytes is
+// not found.
+func lookupLowerASCII[V any](table map[string]V, name string) (V, bool) {
+	var buffer [64]byte
+	if len(name) > len(buffer) {
+		var zero V
+		return zero, false
 	}
 	for i := 0; i < len(name); i++ {
 		buffer[i] = asciiLowerByte(name[i])
 	}
-	arguments, ok := staticFunctionArguments[string(buffer[:len(name)])]
-	return arguments, ok
+	value, ok := table[string(buffer[:len(name)])]
+	return value, ok
 }
 
 // accepts reports whether an argument of static type typeName fits. Neo4j
@@ -393,7 +405,8 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 				return err
 			}
 		}
-		if overload, found := staticFunctionArgumentsByCount[lowerASCII(name)][len(expressions)]; found {
+		byCount, _ := lookupLowerASCII(staticFunctionArgumentsByCount, name)
+		if overload, found := byCount[len(expressions)]; found {
 			arguments = overload
 		}
 		if strings.EqualFold(name, "format") {

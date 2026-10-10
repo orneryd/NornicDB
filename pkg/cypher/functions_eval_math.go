@@ -404,7 +404,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// ========================================
 
 	// reduce(acc = initial, x IN list | step) and allReduce(…, predicate)
-	if matchFuncStartAndSuffix(expr, "reduce") || matchFuncStartAndSuffix(expr, "allReduce") {
+	if matchFuncStartAndSuffix(expr, "reduce") || matchFuncStartAndSuffix(expr, "allreduce") {
 		if function, inner, isCall := parseFunctionCallWS(expr); isCall && isReduceFormFunction(function) {
 			return e.evaluateReduceForm(ctx, function, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}

@@ -72,9 +72,9 @@ func init() {
 	cypherfn.Register("valuetype", fnValueType)
 	cypherfn.Register("nullif", fnNullIf)
 	cypherfn.Register("tail", fnTail)
-	cypherfn.Register("abs", fnAbs)
-	cypherfn.Register("sign", fnSign)
-	cypherfn.Register("isempty", fnIsEmpty)
+	for name, fn := range singleValueFunctions {
+		cypherfn.Register(name, singleValueFunction(name, fn))
+	}
 	for _, name := range []string{"substring", "left", "right", "replace", "split"} {
 		cypherfn.Register(name, fnStringOperation(name))
 	}
@@ -185,15 +185,37 @@ func fnRound(ctx cypherfn.Context, args []string) (interface{}, error) {
 	return rounded / factor, nil
 }
 
-// numberArgument is a function's one numeric argument: null is (nil,
-// false, nil), and any other non-number Neo4j's TypeError.
-func numberArgument(ctx cypherfn.Context, args []string, function string) (interface{}, bool, error) {
-	if len(args) != 1 {
-		return nil, false, argumentCountError(function, "1", len(args))
+// singleValueFunctions are the one-argument functions computed from their
+// argument's value alone (abs, sign, isEmpty). The registry and the row
+// evaluator both call them, so each has one implementation; the row
+// evaluator passes the value it already has instead of an evaluation
+// callback.
+var singleValueFunctions = map[string]func(interface{}) (interface{}, error){
+	"abs":     absValue,
+	"sign":    signValue,
+	"isempty": isEmptyValue,
+}
+
+// singleValueFunction registers fn as a one-argument registry function
+// that evaluates its argument and calls fn with the value.
+func singleValueFunction(function string, fn func(interface{}) (interface{}, error)) cypherfn.Func {
+	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+		if len(args) != 1 {
+			return nil, argumentCountError(function, "1", len(args))
+		}
+		value, err := ctx.Eval(args[0])
+		if err != nil {
+			return nil, err
+		}
+		return fn(value)
 	}
-	value, err := ctx.Eval(args[0])
-	if err != nil || value == nil {
-		return nil, false, err
+}
+
+// numberValue is a numeric function's argument: null is (nil, false, nil),
+// and any other non-number Neo4j's TypeError.
+func numberValue(value interface{}, function string) (interface{}, bool, error) {
+	if value == nil {
+		return nil, false, nil
 	}
 	if !isRuntimeNumber(value) {
 		return nil, false, &cypherfn.TypeMismatchError{Function: function, Expected: "Float or Integer", Value: value}
@@ -201,9 +223,10 @@ func numberArgument(ctx cypherfn.Context, args []string, function string) (inter
 	return value, true, nil
 }
 
-// fnAbs is abs(number): an integer's or float's absolute value, of its type.
-func fnAbs(ctx cypherfn.Context, args []string) (interface{}, error) {
-	value, ok, err := numberArgument(ctx, args, "abs")
+// absValue is abs(number): an integer's or float's absolute value, of its
+// type.
+func absValue(value interface{}) (interface{}, error) {
+	value, ok, err := numberValue(value, "abs")
 	if !ok {
 		return nil, err
 	}
@@ -217,9 +240,9 @@ func fnAbs(ctx cypherfn.Context, args []string) (interface{}, error) {
 	return math.Abs(number), nil
 }
 
-// fnSign is sign(number): -1, 0 or 1, an integer.
-func fnSign(ctx cypherfn.Context, args []string) (interface{}, error) {
-	value, ok, err := numberArgument(ctx, args, "sign")
+// signValue is sign(number): -1, 0 or 1, an integer.
+func signValue(value interface{}) (interface{}, error) {
+	value, ok, err := numberValue(value, "sign")
 	if !ok {
 		return nil, err
 	}
@@ -233,15 +256,11 @@ func fnSign(ctx cypherfn.Context, args []string) (interface{}, error) {
 	return int64(0), nil
 }
 
-// fnIsEmpty is isEmpty(list, map or string): null for null, and Neo4j's
+// isEmptyValue is isEmpty(list, map or string): null for null, and Neo4j's
 // TypeError for any other value (a number, a node).
-func fnIsEmpty(ctx cypherfn.Context, args []string) (interface{}, error) {
-	if len(args) != 1 {
-		return nil, argumentCountError("isEmpty", "1", len(args))
-	}
-	value, err := ctx.Eval(args[0])
-	if err != nil || value == nil {
-		return nil, err
+func isEmptyValue(value interface{}) (interface{}, error) {
+	if value == nil {
+		return nil, nil
 	}
 	if text, isString := value.(string); isString {
 		return len(text) == 0, nil
