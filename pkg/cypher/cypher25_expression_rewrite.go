@@ -40,9 +40,12 @@ const mapFromPairsFunction = "__nornic_map_from_pairs"
 
 // desugarCypher25Expressions rewrites the forms above in turn and returns
 // the result with each pass's rewrite, in order (restore them in reverse).
-func desugarCypher25Expressions(query string) (string, []*queryRewrite, error) {
+// cypher25 is the statement's version, which decides where RETURN ALL
+// begins (projectionAllEdits).
+func desugarCypher25Expressions(query string, cypher25 bool) (string, []*queryRewrite, error) {
 	var rewrites []*queryRewrite
-	for _, pass := range []func(string) ([]labelRewriteEdit, error){interpolationEdits, mapComprehensionEdits, projectionAllEdits, groupByEdits} {
+	projectionAll := func(query string) ([]labelRewriteEdit, error) { return projectionAllEdits(query, cypher25) }
+	for _, pass := range []func(string) ([]labelRewriteEdit, error){interpolationEdits, mapComprehensionEdits, projectionAll, groupByEdits} {
 		edits, err := pass(query)
 		if err != nil {
 			return query, nil, err
@@ -59,8 +62,12 @@ func desugarCypher25Expressions(query string) (string, []*queryRewrite, error) {
 
 // projectionAllEdits drops the ALL of RETURN ALL and WITH ALL; a DISTINCT
 // after it is a variable, so an expression right after that DISTINCT is
-// Neo4j's "Invalid input" (RETURN ALL DISTINCT g).
-func projectionAllEdits(query string) ([]labelRewriteEdit, error) {
+// Neo4j's "Invalid input" (RETURN ALL DISTINCT g). In a Cypher 25 statement
+// a sign or a list right after ALL, spaced or not, starts the projected
+// expression (RETURN all + 1 is RETURN ALL +1, all[0] is ALL [0]), as in
+// Neo4j 2026.09; a Cypher 5 statement reads them as the variable all
+// (Neo4j 5.26).
+func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error) {
 	if !containsFold(query, "ALL") {
 		return nil, nil
 	}
@@ -82,7 +89,11 @@ func projectionAllEdits(query string) ([]labelRewriteEdit, error) {
 			return
 		}
 		next := skipASCIISpaces(query, all+3, len(query))
-		if next == all+3 || next >= len(query) || !startsProjectedExpression(query, next) {
+		if next >= len(query) {
+			return
+		}
+		signOrList := cypher25 && strings.IndexByte("+-[", query[next]) >= 0
+		if !signOrList && (next == all+3 || !startsProjectedExpression(query, next)) {
 			return
 		}
 		if query[next] == '(' {

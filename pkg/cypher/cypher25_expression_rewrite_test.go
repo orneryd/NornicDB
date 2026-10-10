@@ -97,3 +97,35 @@ func TestCypher25ExpressionsMatchNeo4j(t *testing.T) {
 	_, err := exec.Execute(ctx, `CYPHER 25 RETURN s"{[1, 2]}" AS v`, nil)
 	require.ErrorContains(t, err, "Wrong type. Expected BOOLEAN, STRING, UUID, INTEGER, FLOAT, TEMPORAL, DURATION or VECTOR, got LIST<INTEGER NOT NULL> NOT NULL")
 }
+
+// A sign or a list right after RETURN ALL / WITH ALL, spaced or not, starts
+// the projected expression in a Cypher 25 statement (Neo4j 2026.09); a
+// Cypher 5 statement reads all + 1 as the variable all (Neo4j 5.26).
+func TestCypher25ProjectionAllBeforeSignOrList(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "cypher25_projection_all"))
+	ctx := context.Background()
+	for _, tc := range []struct {
+		query             string
+		cypher25, cypher5 interface{}
+	}{
+		{"WITH 1 AS all RETURN all + 1 AS v", int64(1), int64(2)},
+		{"WITH 1 AS all RETURN all+1 AS v", int64(1), int64(2)},
+		{"WITH 1 AS all RETURN all - 1 AS v", int64(-1), int64(0)},
+		{"WITH 2 AS all RETURN all - all AS v", int64(-2), int64(0)},
+		{"WITH [5] AS all RETURN all [0] AS v", []interface{}{int64(0)}, int64(5)},
+		{"WITH [5] AS all RETURN all[0] AS v", []interface{}{int64(0)}, int64(5)},
+		{"WITH [5] AS all WITH all[0] AS v RETURN v", []interface{}{int64(0)}, int64(5)},
+		{"WITH 1 AS all RETURN all * 2 AS v", int64(2), int64(2)},
+		{"WITH 1 AS all RETURN all AS v", int64(1), int64(1)},
+		{"WITH 2 AS all RETURN DISTINCT all - 1 AS v", int64(1), int64(1)},
+	} {
+		for prefix, want := range map[string]interface{}{"CYPHER 25 ": tc.cypher25, "": tc.cypher5} {
+			result, err := exec.Execute(ctx, prefix+tc.query, nil)
+			require.NoError(t, err, prefix+tc.query)
+			require.Equal(t, [][]interface{}{{want}}, result.Rows, prefix+tc.query)
+		}
+	}
+	result, err := exec.Execute(ctx, "CYPHER 25 WITH 1 AS all RETURN all + 1", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"+ 1"}, result.Columns)
+}

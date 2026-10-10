@@ -90,7 +90,7 @@ func TestCypher25ExpressionRewriteEdges(t *testing.T) {
 		`RETURN s"a{ s'x{' }" AS v`,
 		`RETURN s"abc`,
 	} {
-		_, _, err := desugarCypher25Expressions(query)
+		_, _, err := desugarCypher25Expressions(query, false)
 		require.Error(t, err, query)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
@@ -102,7 +102,7 @@ func TestCypher25ExpressionRewriteEdges(t *testing.T) {
 		"RETURN {k: v IN {a: 1} | : 1} AS m",
 		"RETURN 1 /* s'x */ AS v",
 	} {
-		rewritten, _, err := desugarCypher25Expressions(query)
+		rewritten, _, err := desugarCypher25Expressions(query, false)
 		require.NoError(t, err, query)
 		require.NotContains(t, rewritten, mapFromPairsFunction, query)
 	}
@@ -243,7 +243,7 @@ func TestCypher25BatchTwoSweepCases(t *testing.T) {
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
 	// Map comprehensions build their map without APOC, with Neo4j's answers.
-	rewritten, _, err := desugarCypher25Expressions("RETURN {k: v IN {a: 1} | k: v} AS r")
+	rewritten, _, err := desugarCypher25Expressions("RETURN {k: v IN {a: 1} | k: v} AS r", false)
 	require.NoError(t, err)
 	require.NotContains(t, strings.ToLower(rewritten), "apoc")
 	for query, want := range map[string]interface{}{

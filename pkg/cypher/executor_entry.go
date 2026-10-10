@@ -198,7 +198,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	cypher = strings.TrimSpace(cypher)
 	// Cypher 25 expression forms (RETURN ALL, s"…{x}…", map comprehensions)
 	// become the expressions they stand for, once, here (#907).
-	expanded, expressionRewrites, err := desugarCypher25Expressions(cypher)
+	expanded, expressionRewrites, err := desugarCypher25Expressions(cypher, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
