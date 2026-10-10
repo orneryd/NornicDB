@@ -457,30 +457,143 @@ func copyPipelineRow(row pipelineRow) pipelineRow {
 	return copied
 }
 
+// quantifiedGroupSpan is one quantified group of a pattern,
+// pattern[open:close+1]: its predicates (its own WHERE and each element's
+// inline WHERE, [r WHERE …] / (n WHERE …), each as the [start, end) of its
+// WHERE keyword through its body) and the node and relationship variables
+// it binds, each to one value per iteration.
+type quantifiedGroupSpan struct {
+	open, close          int
+	predicates           [][2]int
+	nodes, relationships []string
+}
+
+// quantifiedGroups lists pattern's quantified groups in order, including
+// those inside another parenthesis (shortestPath((a)((x)-[r]-(y))+(b)), the
+// form SHORTEST k is read as).
+func quantifiedGroups(pattern string) []quantifiedGroupSpan {
+	var groups []quantifiedGroupSpan
+	for index := 0; index < len(pattern); index++ {
+		switch c := pattern[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(pattern, index, c) - 1
+			continue
+		case '[', '{':
+			closeBy := map[byte]byte{'[': ']', '{': '}'}[c]
+			if close := findMatchingDelimiter(pattern, index, rune(c), rune(closeBy)); close > index {
+				index = close
+			}
+			continue
+		case '(':
+		default:
+			continue
+		}
+		open, close := index, findMatchingParen(pattern, index)
+		if close < 0 {
+			return groups
+		}
+		if !parenthesisedPathAt(pattern, open, close) {
+			continue
+		}
+		if _, quantified := relationshipQuantifierAt(pattern, skipASCIISpaces(pattern, close+1, len(pattern)), len(pattern)); !quantified {
+			continue
+		}
+		group := quantifiedGroupSpan{open: open, close: close}
+		elementsEnd := close
+		if where := topLevelKeywordIndex(pattern[open+1:close], "WHERE"); where >= 0 {
+			elementsEnd = open + 1 + where
+			group.predicates = append(group.predicates, [2]int{elementsEnd, close})
+		}
+		group.predicates = append(group.predicates, elementPredicateSpans(pattern, open+1, elementsEnd)...)
+		structure := []byte(pattern[open+1 : elementsEnd])
+		for _, span := range group.predicates {
+			for index := max(span[0], open+1); index < min(span[1], elementsEnd); index++ {
+				structure[index-open-1] = ' '
+			}
+		}
+		group.nodes = extractNodeVariables(string(structure))
+		group.relationships = extractRelationshipVariables(string(structure))
+		groups = append(groups, group)
+		index = close
+	}
+	return groups
+}
+
+// elementPredicateSpans lists the inline WHERE of each node and relationship
+// element in pattern[from:to] ((n WHERE …), [r WHERE …]) as the [start, end)
+// of its WHERE keyword through its body.
+func elementPredicateSpans(pattern string, from, to int) [][2]int {
+	var spans [][2]int
+	for index := from; index < to; index++ {
+		switch c := pattern[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(pattern, index, c) - 1
+		case '(', '[':
+			closeBy := map[byte]byte{'(': ')', '[': ']'}[c]
+			close := findMatchingDelimiter(pattern, index, rune(c), rune(closeBy))
+			if close < 0 || close > to {
+				return spans
+			}
+			if where := topLevelKeywordIndex(pattern[index+1:close], "WHERE"); where >= 0 {
+				spans = append(spans, [2]int{index + 1 + where, close})
+			}
+			index = close
+		}
+	}
+	return spans
+}
+
+// predicateTexts are the bodies of the group's predicates in pattern.
+func (group quantifiedGroupSpan) predicateTexts(pattern string) []string {
+	texts := make([]string, 0, len(group.predicates))
+	for _, span := range group.predicates {
+		if body := strings.TrimSpace(pattern[span[0]+len("WHERE") : span[1]]); body != "" {
+			texts = append(texts, body)
+		}
+	}
+	return texts
+}
+
+// maskQuantifiedGroupPredicates blanks each quantified group's predicates
+// (its own WHERE and its elements' inline WHERE) so the pattern's
+// structure is scanned without them: in
+// ((a)-[r]-(b) WHERE size(kinds) = 0)+ neither (kinds) nor a $param map is
+// a pattern element, and r there is one relationship, not the list the
+// group binds outside it.
+func maskQuantifiedGroupPredicates(pattern string) string {
+	var masked []byte
+	for _, group := range quantifiedGroups(pattern) {
+		for _, span := range group.predicates {
+			if masked == nil {
+				masked = []byte(pattern)
+			}
+			for index := span[0]; index < span[1]; index++ {
+				masked[index] = ' '
+			}
+		}
+	}
+	if masked == nil {
+		return pattern
+	}
+	return string(masked)
+}
+
 // quantifiedGroupVariables returns the node and relationship variables
 // inside pattern's quantified groups: each binds a list of its values.
 func quantifiedGroupVariables(pattern string) (map[string]struct{}, map[string]struct{}) {
 	var nodes, relationships map[string]struct{}
-	for from := 0; ; {
-		open, close, _, ok := nextQuantifiedGroup(pattern, from)
-		if !ok {
-			return nodes, relationships
-		}
+	for _, group := range quantifiedGroups(pattern) {
 		if nodes == nil {
 			nodes, relationships = map[string]struct{}{}, map[string]struct{}{}
 		}
-		inner := pattern[open+1 : close]
-		if where := topLevelKeywordIndex(inner, "WHERE"); where >= 0 {
-			inner = inner[:where]
-		}
-		for _, variable := range extractNodeVariables(inner) {
+		for _, variable := range group.nodes {
 			nodes[variable] = struct{}{}
 		}
-		for _, variable := range extractRelationshipVariables(inner) {
+		for _, variable := range group.relationships {
 			relationships[variable] = struct{}{}
 		}
-		from = close + 1
 	}
+	return nodes, relationships
 }
 
 // quantifiedGroupAt reports whether a quantifier follows the parenthesised
