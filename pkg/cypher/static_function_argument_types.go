@@ -36,8 +36,11 @@ var staticListAcceptingFunctions = map[string]bool{"tointeger": true}
 
 // staticUnlistedArgumentTypes are the Cypher 25 types (VECTOR, UUID) a
 // function accepts that its Neo4j 5.26 "Type mismatch" error, the one this
-// check writes, doesn't name: toString takes both, size a vector.
-var staticUnlistedArgumentTypes = map[string][]string{"tostring": {"Vector", "UUID"}, "size": {"Vector"}}
+// check writes, doesn't name: toString takes both; size, toIntegerList and
+// toFloatList a vector (not toStringList or toBooleanList).
+var staticUnlistedArgumentTypes = map[string][]string{
+	"tostring": {"Vector", "UUID"}, "size": {"Vector"}, "tointegerlist": {"Vector"}, "tofloatlist": {"Vector"},
+}
 
 // staticCatalogTypeNames are the catalog's argument types
 // (cypherFunctionCatalog) as Neo4j names them in a compile-time "Type
