@@ -25,9 +25,11 @@ type cypherTypeMember struct {
 	element *cypherTypeSpec
 	notNull bool
 	// vectorType and vectorDimension narrow a VECTOR member
-	// (VECTOR<INTEGER32>(3)); nil and 0 take any.
+	// (VECTOR<INTEGER32>(3)); nil takes any. A dimension no vector has
+	// (VECTOR(0), VECTOR(-1)) is a valid type that matches nothing, as in
+	// Neo4j 2026.09.
 	vectorType      *VectorCoordinateType
-	vectorDimension int
+	vectorDimension *int64
 }
 
 // typePredicateOperators are the spellings of a type predicate, longest
@@ -205,11 +207,11 @@ func parseVectorTypeMember(rest string) (cypherTypeMember, bool) {
 		rest = strings.TrimSpace(rest[close+1:])
 	}
 	if strings.HasPrefix(rest, "(") && strings.HasSuffix(rest, ")") {
-		dimension, err := strconv.Atoi(strings.TrimSpace(rest[1 : len(rest)-1]))
-		if err != nil || dimension < 1 || dimension > vectorDimensionLimit {
+		dimension, err := strconv.ParseInt(strings.TrimSpace(rest[1:len(rest)-1]), 10, 64)
+		if err != nil {
 			return member, false
 		}
-		member.vectorDimension = dimension
+		member.vectorDimension = &dimension
 		rest = ""
 	}
 	return member, rest == ""
@@ -249,7 +251,7 @@ func (member cypherTypeMember) matches(value interface{}) bool {
 	case "VECTOR":
 		vector, err := vectorArgument(value)
 		return err == nil && (member.vectorType == nil || *member.vectorType == vector.Type) &&
-			(member.vectorDimension == 0 || member.vectorDimension == vector.Dimension())
+			(member.vectorDimension == nil || *member.vectorDimension == int64(vector.Dimension()))
 	case "LIST":
 		items, isList := cypherListValue(value)
 		if !isList || cypherValueKindOf(value) != valueKindList {

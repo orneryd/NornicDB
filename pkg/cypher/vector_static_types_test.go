@@ -103,6 +103,19 @@ func TestVectorAndUUIDStaticTypes(t *testing.T) {
 		"v IS :: VECTOR AS g, v IS TYPED VECTOR<INTEGER>(2) NOT NULL AS h, v IS NOT :: VECTOR(2) | STRING AS i", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{false, false, false, true, true, true, true, true, false}}, result.Rows)
+	// A dimension no vector has is a type that matches nothing (Neo4j 2026.09).
+	result, err = exec.Execute(ctx, "CYPHER 25 WITH "+v+" AS v RETURN 1 IS :: VECTOR(0) AS a, 1 IS :: VECTOR(5000) AS b, v IS :: VECTOR(-1) AS c, "+
+		"v IS NOT :: VECTOR(0) AS d, 1 IS :: VECTOR<INT8>(2) NOT NULL AS e", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{false, false, false, true, false}}, result.Rows)
+	for _, query := range []string{
+		"RETURN 1 IS :: VECTOR<BOOLEAN> AS x", "RETURN 1 IS :: VECTOR<INT8(2) AS x", "RETURN 1 IS :: VECTOR(x) AS x",
+		"RETURN 1 IS :: VECTOR<INT8>(2) FOO AS x",
+	} {
+		_, err := exec.Execute(ctx, "CYPHER 25 "+query, nil)
+		require.Error(t, err, query)
+		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	}
 	require.Equal(t, "x IS "+strings.Repeat(" ", 24)+" AND f(1)", maskTypePredicateTypes("x IS :: VECTOR<INT8>(3) | INT AND f(1)"))
 	result, err = exec.Execute(ctx, "CYPHER 25 RETURN "+u+" + [1] AS a, [1] + "+u+" AS b, "+v+" + [1] AS c", nil)
 	require.NoError(t, err)
