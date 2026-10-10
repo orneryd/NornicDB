@@ -209,42 +209,7 @@ func validateMergeRelationshipShape(pattern string) error {
 		)
 	}
 
-	declaration := strings.TrimSpace(pattern[open+1 : close])
-	if properties := strings.Index(declaration, "{"); properties >= 0 {
-		declaration = strings.TrimSpace(declaration[:properties])
-	}
-	if strings.Contains(declaration, "*") {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"CreatingVarLength",
-			"variable-length relationships cannot be merged",
-		)
-	}
-	colon := strings.Index(declaration, ":")
-	if colon < 0 {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"NoSingleRelationshipType",
-			"MERGE relationships require exactly one relationship type",
-		)
-	}
-	typeDeclaration := strings.TrimSpace(declaration[colon+1:])
-	if hasDynamicToken(typeDeclaration) {
-		// $(e): the number of types it names is checked per row
-		// (resolveRowDynamicTokens).
-		return nil
-	}
-	if strings.Contains(typeDeclaration, "|") {
-		return singleRelationshipTypeError("MERGE")
-	}
-	if typeDeclaration == "" || strings.Contains(typeDeclaration, ":") {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"NoSingleRelationshipType",
-			"MERGE relationships require exactly one relationship type",
-		)
-	}
-	return nil
+	return validateSingleRelationshipDeclaration("MERGE", "merged", pattern[open+1:close])
 }
 
 func mergeClausePattern(clause string) string {

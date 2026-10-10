@@ -218,40 +218,42 @@ func validateCreateRelationshipShape(pattern string) error {
 		)
 	}
 
-	content := strings.TrimSpace(pattern[open+1 : close])
-	declaration := content
-	if props := strings.Index(declaration, "{"); props >= 0 {
-		declaration = strings.TrimSpace(declaration[:props])
-	}
-	if strings.Contains(declaration, "*") {
+	return validateSingleRelationshipDeclaration("CREATE", "created", pattern[open+1:close])
+}
+
+// validateSingleRelationshipDeclaration applies CREATE's and MERGE's rules to
+// a relationship's inside (relationshipDeclarationOf), read outside
+// backticks: no variable length (verb is the clause's action, "created" or
+// "merged"), and exactly one type, unless the type is dynamic ($(e), whose
+// types are counted per row by resolveRowDynamicTokens). Alternatives
+// ([:R|S]) are Neo4j's NoSingleRelationshipType error naming the clause.
+func validateSingleRelationshipDeclaration(clause, verb, content string) error {
+	declaration := relationshipDeclarationOf(content)
+	if declaration.hasLength {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"CreatingVarLength",
-			"variable-length relationships cannot be created",
+			"variable-length relationships cannot be "+verb,
 		)
 	}
-	colon := strings.Index(declaration, ":")
-	if colon < 0 {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"NoSingleRelationshipType",
-			"CREATE relationships require exactly one relationship type",
-		)
-	}
-	typeDeclaration := strings.TrimSpace(declaration[colon+1:])
-	if hasDynamicToken(typeDeclaration) {
-		// $(e): the number of types it names is checked per row
-		// (resolveRowDynamicTokens).
+	if declaration.hasColon && hasDynamicToken(declaration.typeText) {
 		return nil
 	}
-	if strings.Contains(typeDeclaration, "|") {
-		return singleRelationshipTypeError("CREATE")
+	if declaration.hasColon && indexByteOutsideBackticks(declaration.typeText, '|') >= 0 {
+		return singleRelationshipTypeError(clause)
 	}
-	if typeDeclaration == "" || strings.Contains(typeDeclaration, ":") {
+	if declaration.invalidType != "" {
+		return &classifiedCypherError{
+			cause:  localizedError(localization.CypherMutationsInvalidRelationshipType(declaration.invalidType), nil),
+			code:   "Neo.ClientError.Statement.SyntaxError",
+			detail: "InvalidRelationshipType",
+		}
+	}
+	if len(declaration.types) != 1 {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"NoSingleRelationshipType",
-			"CREATE relationships require exactly one relationship type",
+			clause+" relationships require exactly one relationship type",
 		)
 	}
 	return nil

@@ -176,25 +176,15 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 				return nil, err
 			}
 
-			// Extract relationship variable if present (e.g., "r:TYPE" -> "r").
-			relVar := ""
+			// The relationship variable ("r:TYPE" -> "r").
 			if rest, _, ok := splitPatternParameterMap(relStr); ok {
 				relStr = rest
 			}
-			if colonIdx := strings.Index(relStr, ":"); colonIdx > 0 {
-				relVar = strings.TrimSpace(relStr[:colonIdx])
-			} else if !strings.Contains(relStr, "{") {
-				// No colon and no props - entire string might be variable
-				relVar = strings.TrimSpace(relStr)
-			}
+			relVar := relationshipDeclarationOf(relStr).variable
 
 			// CREATE needs exactly one relationship type.
 			if relType == "" {
 				return nil, localizedError(localization.CypherMergeRelationshipTypeRequired(), nil)
-			}
-			// SECURITY: Validate relationship type
-			if !isValidIdentifier(relType) {
-				return nil, localizedError(localization.CypherMutationsInvalidRelationshipType(relType), nil)
 			}
 
 			// Property keys follow the map-key rule (a symbolic name, or a
@@ -834,8 +824,11 @@ func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 	return patterns
 }
 
-// parseRelationshipTypeAndProps parses "r:TYPE {props}" or ":TYPE {props}". A pattern with no type ("r", ":") yields an empty type.
-// Returns the type and properties map
+// parseRelationshipTypeAndProps parses "r:TYPE {props}", ":`A TYPE` {props}"
+// or "r:TYPE $props" into the type (unquoted) and the properties map. A
+// pattern with no type ("r", ":") yields an empty type. The type's shape
+// (one type, a quoted or identifier name) is checked before, by
+// validateSingleRelationshipDeclaration.
 func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, relStr string) (string, map[string]interface{}, error) {
 	relStr = strings.TrimSpace(relStr)
 	relType := ""
@@ -850,24 +843,17 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 		relProps, relStr = properties, strings.TrimSpace(rest)
 	}
 
-	// Find properties block if present
-	propsStart := strings.Index(relStr, "{")
-	if propsStart >= 0 {
-		// Find matching }
-		propsEnd := findMatchingDelimiter(relStr, propsStart, '{', '}')
-		if propsEnd > propsStart {
-			relProps = e.parseProperties(ctx, relStr[propsStart:propsEnd+1])
+	// The type and property map, read outside backticks: a quoted type
+	// may hold any character (relationshipDeclarationOf). No colon ("r")
+	// or nothing after it (":") leaves the type empty; the CREATE core
+	// rejects a relationship without exactly one type.
+	declaration := relationshipDeclarationOf(relStr)
+	if declaration.properties != "" {
+		if propsEnd := findMatchingDelimiter(declaration.properties, 0, '{', '}'); propsEnd > 0 {
+			relProps = e.parseProperties(ctx, declaration.properties[:propsEnd+1])
 		}
-		relStr = strings.TrimSpace(relStr[:propsStart])
 	}
-
-	// Parse type: "r:TYPE" or ":TYPE" - if no colon, it's just a variable (use default type)
-	if colonIdx := strings.Index(relStr, ":"); colonIdx >= 0 {
-		// Has colon - everything after is the type
-		relType = strings.TrimSpace(relStr[colonIdx+1:])
-	}
-	// No colon ("r") or nothing after it (":") leaves the type empty; the
-	// CREATE core rejects a relationship without exactly one type.
+	relType = declaration.singleType()
 
 	if relProps == nil {
 		relProps = make(map[string]interface{})
@@ -962,42 +948,20 @@ func isInsideQuotes(s string, pos int) bool {
 	return inSingleQuote || inDoubleQuote
 }
 
+// parseCreateRelationshipContent splits a relationship's inside ("r:TYPE
+// {k: v}") into its variable, its one type (backtick-quoted ones unquoted,
+// relationshipDeclarationOf) and its property map text. A property map
+// followed by other text is an error.
 func parseCreateRelationshipContent(content string) (relVar string, relType string, relPropsStr string, err error) {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return "", "", "", nil
-	}
-
-	head := content
-	if braceStart := indexByteOutsideBackticks(content, '{'); braceStart >= 0 {
-		braceEnd := strings.LastIndex(content, "}")
-		if braceEnd < braceStart {
+	declaration := relationshipDeclarationOf(content)
+	if declaration.properties != "" {
+		braceEnd := strings.LastIndex(declaration.properties, "}")
+		if braceEnd < 0 || strings.TrimSpace(declaration.properties[braceEnd+1:]) != "" {
 			return "", "", "", localizedError(localization.CypherMutationsRelationshipPropertiesInvalid(), nil)
 		}
-		relPropsStr = strings.TrimSpace(content[braceStart : braceEnd+1])
-		if strings.TrimSpace(content[braceEnd+1:]) != "" {
-			return "", "", "", localizedError(localization.CypherMutationsRelationshipPropertiesInvalid(), nil)
-		}
-		head = strings.TrimSpace(content[:braceStart])
+		relPropsStr = declaration.properties
 	}
-
-	if head == "" {
-		return "", "", relPropsStr, nil
-	}
-
-	if strings.HasPrefix(head, ":") {
-		relType = strings.TrimSpace(head[1:])
-		return relVar, relType, relPropsStr, nil
-	}
-
-	if colon := strings.Index(head, ":"); colon >= 0 {
-		relVar = strings.TrimSpace(head[:colon])
-		relType = strings.TrimSpace(head[colon+1:])
-		return relVar, relType, relPropsStr, nil
-	}
-
-	relVar = strings.TrimSpace(head)
-	return relVar, "", relPropsStr, nil
+	return declaration.variable, declaration.singleType(), relPropsStr, nil
 }
 
 // isSimpleVariable checks if content is just a variable name (alphanumeric + underscore)
