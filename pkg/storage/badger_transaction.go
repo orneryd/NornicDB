@@ -2068,6 +2068,10 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		if node == nil {
 			return nil
 		}
+		// Eagerly cache scanned labels within the byte/node bound. This is
+		// load-bearing for snapshot isolation: later label reads in this
+		// transaction must see the scan-time labels, not labels committed
+		// afterwards (TestTxReads_LabelCacheBoundPreservesSnapshotLabels).
 		if len(tx.snapshotNodeLabels) < maxSnapshotPrefixNodeCacheNodes {
 			tx.cacheCommittedNodeLabelsLocked(node)
 		}
