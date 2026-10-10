@@ -59,6 +59,11 @@ type labelExpressionRewriter struct {
 	// named holds the variables given to anonymous elements, by the index of
 	// their opening bracket, so an element is named once.
 	named map[int]string
+	// cypher25 is set for a Cypher 25 statement, where a dynamic label or
+	// type may also be tested in an expression (WHERE n:$(e), RETURN
+	// r:$any(l)), as Neo4j 2026.09 allows: the test becomes the label
+	// predicate a MATCH pattern's row-dependent term becomes.
+	cypher25 bool
 }
 
 // labelPatternMode is how a pattern's label expressions are read.
@@ -80,14 +85,14 @@ func (m labelPatternMode) clause() string {
 // desugarLabelExpressions returns query with its label expressions
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when nothing changes.
-func desugarLabelExpressions(query string, params map[string]interface{}) (string, *queryRewrite, error) {
+func desugarLabelExpressions(query string, params map[string]interface{}, cypher25 bool) (string, *queryRewrite, error) {
 	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) &&
 		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
 		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) &&
 		!mayUseParenthesisedPath(query) && !mayUseVectorCall(query) {
 		return query, nil, nil
 	}
-	r := &labelExpressionRewriter{query: query, params: params}
+	r := &labelExpressionRewriter{query: query, params: params, cypher25: cypher25}
 	if err := r.statement(0, len(query)); err != nil {
 		return query, nil, err
 	}
@@ -1033,7 +1038,12 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 		wordStart := labelTestWordStart(q, wordEnd)
 		inChain := wordStart > 0 && q[wordStart-1] == ':' // a label of a chain (n:A:$(e)), read with its variable
 		if ok && chain.dynamic && !inChain && !r.writeItemHead(wordStart) {
-			return labelExpressionSyntaxError(localization.CypherCoreDynamicTokenPositionInvalid())
+			if !r.cypher25 || chain.end != chainEnd-wordEnd-1 {
+				return labelExpressionSyntaxError(localization.CypherCoreDynamicTokenPositionInvalid())
+			}
+			// A Cypher 25 label test with a dynamic term: its predicate.
+			r.edit(wordStart, chainEnd, "("+chain.expr.predicate(q[wordStart:wordEnd])+")")
+			return nil
 		}
 		if ok && chain.end == chainEnd-wordEnd-1 && chain.colons && chain.symbols {
 			return labelExpressionSyntaxError(localization.CypherMatchingLabelExpressionMixedColon(chain.expr.String()))
@@ -1057,10 +1067,20 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 		// A dynamic label: x IS $(e) is x:$(e), at a SET or REMOVE item's
 		// head only; IS takes one label, so a colon after it is an error as
 		// for a static chain.
+		closing := findMatchingDelimiter(q[:end], strings.IndexByte(q[textStart:end], '(')+textStart, '(', ')')
 		if !r.writeItemHead(labelTestWordStart(q, wordEnd)) {
+			if !r.cypher25 || closing < 0 {
+				return labelExpressionSyntaxError(localization.CypherCoreDynamicTokenPositionInvalid())
+			}
+			// A Cypher 25 x IS $(e) test in an expression: x:$(e)'s
+			// predicate.
+			if chain, ok := scanLabelChain(q[textStart:closing+1], false); ok && chain.dynamic && chain.end == closing+1-textStart {
+				variableStart := labelTestWordStart(q, wordEnd)
+				r.edit(variableStart, closing+1, "("+chain.expr.predicate(q[variableStart:wordEnd])+")")
+				return nil
+			}
 			return labelExpressionSyntaxError(localization.CypherCoreDynamicTokenPositionInvalid())
 		}
-		closing := findMatchingDelimiter(q[:end], strings.IndexByte(q[textStart:end], '(')+textStart, '(', ')')
 		if closing < 0 {
 			return nil
 		}
