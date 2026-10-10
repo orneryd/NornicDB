@@ -89,30 +89,32 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int) 
 
 // mayRepeatRelationshipVariable reports whether query may name a
 // relationship variable twice: two relationship brackets that start with the
-// same name. It never answers false for one.
+// same name. It never answers false for one. It runs for every statement, so
+// it jumps from [ to [ and reads brackets in string literals too (an extra
+// yes only costs the full rewrite, which reads quotes).
 func mayRepeatRelationshipVariable(query string) bool {
-	var seen [16]string
+	var seen [8]string
 	count := 0
-	for i := 0; i < len(query); i++ {
-		switch c := query[i]; c {
-		case '\'', '"', '`':
-			i = skipCypherQuotedText(query, i, c) - 1
-		case '[':
-			name, _, ok := relationshipVariableAt(query, i)
-			if !ok || !relationshipBracketAt(query, 0, i) {
-				continue
-			}
-			if count == len(seen) {
-				return true
-			}
-			for _, earlier := range seen[:count] {
-				if earlier == name {
+	for i := strings.IndexByte(query, '['); i >= 0; {
+		if relationshipBracketAt(query, 0, i) {
+			if name, _, ok := relationshipVariableAt(query, i); ok {
+				if count == len(seen) {
 					return true
 				}
+				for _, earlier := range seen[:count] {
+					if earlier == name {
+						return true
+					}
+				}
+				seen[count] = name
+				count++
 			}
-			seen[count] = name
-			count++
 		}
+		next := strings.IndexByte(query[i+1:], '[')
+		if next < 0 {
+			return false
+		}
+		i += next + 1
 	}
 	return false
 }

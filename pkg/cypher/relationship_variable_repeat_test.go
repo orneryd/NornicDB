@@ -14,22 +14,22 @@ func TestRepeatedRelationshipVariable(t *testing.T) {
 	exec, ctx := newPathSelectorExecutor(t)
 	l := func(values ...interface{}) []interface{} { return values }
 	for query, want := range map[string][][]interface{}{
-		"MATCH (a:SP)-[r]->(b)-[r]->(c) RETURN count(*) AS c":                                                       {l(int64(0))},
-		"MATCH (a:SP)-[r]->(b)<-[r]-(c) RETURN count(*) AS c":                                                       {l(int64(0))},
-		"MATCH (a:SP)-[r]->(b), (c)-[r]->(d) RETURN count(*) AS c":                                                  {l(int64(0))},
-		"MATCH (a:SP)-[r]->(b), (a)-[r]->(b) RETURN count(*) AS c":                                                  {l(int64(0))},
-		"MATCH (a:SP)-[r]-(b), (b)-[r]-(a) RETURN count(*) AS c":                                                    {l(int64(0))},
-		"MATCH (a:SP)-[r*1..2]->(b), (c)-[r*1..2]->(d) RETURN count(*) AS c":                                        {l(int64(0))},
-		"MATCH (a:SP)-[r]->+(b), (c)-[r]->+(d) RETURN count(*) AS c":                                                {l(int64(0))},
-		"MATCH (a:SP)-[r]->(b) MATCH (c)-[r]->(d) RETURN count(*) AS c":                                             {l(int64(6))},
-		"OPTIONAL MATCH (a:SP {id: 1})-[r]->(b), (c)-[r]->(d) RETURN count(*) AS c, count(a) AS ca":                 {l(int64(1), int64(0))},
-		"MATCH (x:SP {id: 1}) OPTIONAL MATCH (x)-[r]->(b), (c)-[r]->(d) RETURN x.id AS x, r IS NULL AS n":           {l(int64(1), true)},
-		"MATCH p = (a:SP)-[r]->(b), q = (c)-[r]->(d) RETURN count(*) AS c":                                          {l(int64(0))},
-		"MATCH (a:SP)-[r:T]->(b), ()-[r:T WHERE r.w IS NULL]->() RETURN count(*) AS c":                              {l(int64(0))},
-		"MATCH (a:SP {id: 1})-[r]->(b) WHERE EXISTS { MATCH (c)-[r]->(d), (e)-[r]->(f) } RETURN count(*) AS c":      {l(int64(0))},
-		"MATCH (a:SP)-[r]->(b), (c)-[r]->(d) WHERE a.id = 99 OR a.id = 1 RETURN count(*) AS c":                      {l(int64(0))},
-		"MATCH (a:SP)-[IS T]->(b), (c)-[IS T]->(d) RETURN count(*) AS c":                                            {l(int64(30))},
-		"MATCH (a:SP {id: 1})-[r]->(b), (c:SP {id: 2})-[s]->(d) RETURN count(*) AS c":                               {l(int64(2))},
+		"MATCH (a:SP)-[r]->(b)-[r]->(c) RETURN count(*) AS c":                                                  {l(int64(0))},
+		"MATCH (a:SP)-[r]->(b)<-[r]-(c) RETURN count(*) AS c":                                                  {l(int64(0))},
+		"MATCH (a:SP)-[r]->(b), (c)-[r]->(d) RETURN count(*) AS c":                                             {l(int64(0))},
+		"MATCH (a:SP)-[r]->(b), (a)-[r]->(b) RETURN count(*) AS c":                                             {l(int64(0))},
+		"MATCH (a:SP)-[r]-(b), (b)-[r]-(a) RETURN count(*) AS c":                                               {l(int64(0))},
+		"MATCH (a:SP)-[r*1..2]->(b), (c)-[r*1..2]->(d) RETURN count(*) AS c":                                   {l(int64(0))},
+		"MATCH (a:SP)-[r]->+(b), (c)-[r]->+(d) RETURN count(*) AS c":                                           {l(int64(0))},
+		"MATCH (a:SP)-[r]->(b) MATCH (c)-[r]->(d) RETURN count(*) AS c":                                        {l(int64(6))},
+		"OPTIONAL MATCH (a:SP {id: 1})-[r]->(b), (c)-[r]->(d) RETURN count(*) AS c, count(a) AS ca":            {l(int64(1), int64(0))},
+		"MATCH (x:SP {id: 1}) OPTIONAL MATCH (x)-[r]->(b), (c)-[r]->(d) RETURN x.id AS x, r IS NULL AS n":      {l(int64(1), true)},
+		"MATCH p = (a:SP)-[r]->(b), q = (c)-[r]->(d) RETURN count(*) AS c":                                     {l(int64(0))},
+		"MATCH (a:SP)-[r:T]->(b), ()-[r:T WHERE r.w IS NULL]->() RETURN count(*) AS c":                         {l(int64(0))},
+		"MATCH (a:SP {id: 1})-[r]->(b) WHERE EXISTS { MATCH (c)-[r]->(d), (e)-[r]->(f) } RETURN count(*) AS c": {l(int64(0))},
+		"MATCH (a:SP)-[r]->(b), (c)-[r]->(d) WHERE a.id = 99 OR a.id = 1 RETURN count(*) AS c":                 {l(int64(0))},
+		"MATCH (a:SP)-[IS T]->(b), (c)-[IS T]->(d) RETURN count(*) AS c":                                       {l(int64(30))},
+		"MATCH (a:SP {id: 1})-[r]->(b), (c:SP {id: 2})-[s]->(d) RETURN count(*) AS c":                          {l(int64(2))},
 	} {
 		result, err := exec.Execute(ctx, query, nil)
 		require.NoError(t, err, query)
@@ -49,7 +49,10 @@ func TestRepeatedRelationshipVariable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "MATCH (a)-[r]->(b), (c)-[__nornic_lx0 {k: [1]}]->(d) WHERE r = __nornic_lx0 RETURN r", rewritten)
 	require.True(t, mayRepeatRelationshipVariable("MATCH ()-[r]->(), ()- [r]->() RETURN r"))
-	require.False(t, mayRepeatRelationshipVariable("MATCH ()-[r]->(), ()-[s]->() RETURN [r, 'x-[r]']"))
+	require.False(t, mayRepeatRelationshipVariable("MATCH ()-[r]->(), ()-[s]->() RETURN [r, 'x']"))
+	rewritten, _, err = desugarLabelExpressions("MATCH ()-[r]->() RETURN 'x-[r]' AS s")
+	require.NoError(t, err)
+	require.Equal(t, "MATCH ()-[r]->() RETURN 'x-[r]' AS s", rewritten, "a bracket in a string is a quick-check yes the rewrite reads as text")
 	require.False(t, mayRepeatRelationshipVariable("MATCH ()-[:T]->(), ()-[IS T]->() RETURN 1"))
 	many := "MATCH "
 	for i := 0; i < 17; i++ {
