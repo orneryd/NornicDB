@@ -150,8 +150,10 @@ constraintBlock
     : LBRACE ((constraintRequirement | expression) (SEMI? (constraintRequirement | expression))* SEMI?)? RBRACE
     ;
 
+// A property type constraint's type is any value type a type predicate
+// takes (LIST<STRING NOT NULL>, INTEGER | FLOAT, ZONED DATETIME).
 propertyTypeName
-    : name (name)?
+    : expressionType
     ;
 
 regularQuery
