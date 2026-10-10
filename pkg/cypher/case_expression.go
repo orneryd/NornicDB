@@ -64,9 +64,9 @@ func leadingCaseExpressionEnd(expr string) int {
 			continue
 		}
 		switch {
-		case strings.EqualFold(word, "case"):
+		case strings.EqualFold(word, "case") && caseKeywordAt(expr, index, "CASE"):
 			depth++
-		case strings.EqualFold(word, "end") && depth > 0:
+		case strings.EqualFold(word, "end") && depth > 0 && caseKeywordAt(expr, index, "END"):
 			depth--
 			if depth == 0 {
 				return next
@@ -201,9 +201,9 @@ func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
 			end++
 		}
 		word := expression[index:end]
-		if strings.EqualFold(word, "CASE") {
+		if caseKeywordAt(expression, index, "CASE") {
 			caseDepth++
-		} else if strings.EqualFold(word, "END") && caseDepth > 0 {
+		} else if caseDepth > 0 && caseKeywordAt(expression, index, "END") {
 			caseDepth--
 		} else if caseDepth == 0 && strings.EqualFold(word, keyword) {
 			return index
@@ -211,6 +211,28 @@ func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
 		index = end
 	}
 	return -1
+}
+
+// caseKeywordAt reports whether s[i:] is the CASE grammar keyword keyword
+// (CASE, END) as a keyword, not a name that is the same word: a property
+// (n.end), a label or type (n:End), a parameter ($end) or a map key
+// ({end: 1}, followed by one colon; END :: INTEGER is a type predicate on a
+// CASE). Every scanner that pairs CASE with END reads keywords through it.
+func caseKeywordAt(s string, i int, keyword string) bool {
+	if !matchKeywordAt(s, i, keyword) {
+		return false
+	}
+	if i > 0 {
+		switch s[i-1] {
+		case '.', ':', '$':
+			return false
+		}
+	}
+	next := i + len(keyword)
+	for next < len(s) && isASCIISpace(s[next]) {
+		next++
+	}
+	return next >= len(s) || s[next] != ':' || (next+1 < len(s) && s[next+1] == ':')
 }
 
 func isCaseWordStart(expression string, index int) bool {
@@ -268,12 +290,12 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 			quote = ch
 			continue
 		}
-		if i == 0 || expr[i-1] != '.' {
-			if (ch == 'C' || ch == 'c') && matchKeywordAt(expr, i, "CASE") {
+		{
+			if (ch == 'C' || ch == 'c') && caseKeywordAt(expr, i, "CASE") {
 				stack = append(stack, i)
 				continue
 			}
-			if (ch == 'E' || ch == 'e') && matchKeywordAt(expr, i, "END") && len(stack) > 0 {
+			if (ch == 'E' || ch == 'e') && caseKeywordAt(expr, i, "END") && len(stack) > 0 {
 				start := stack[len(stack)-1]
 				stack = stack[:len(stack)-1]
 				if len(stack) == 0 {
@@ -463,13 +485,13 @@ func findTopLevelKeyword(s, keyword string) int {
 		case 'C', 'c':
 			// CASE … END nests like parentheses: the AND / OR / comparison
 			// of a WHEN condition is not a top-level operator (#699).
-			if (i == 0 || s[i-1] != '.') && matchKeywordAt(s, i, "CASE") {
+			if caseKeywordAt(s, i, "CASE") {
 				depth++
 				i += len("CASE") - 1
 				continue
 			}
 		case 'E', 'e':
-			if depth > 0 && (i == 0 || s[i-1] != '.') && matchKeywordAt(s, i, "END") {
+			if depth > 0 && caseKeywordAt(s, i, "END") {
 				depth--
 				i += len("END") - 1
 				continue

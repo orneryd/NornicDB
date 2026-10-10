@@ -33,7 +33,7 @@ func containsCASEKeyword(expr string) bool {
 			quote = ch
 			continue
 		}
-		if matchKeywordAt(expr, i, "CASE") {
+		if caseKeywordAt(expr, i, "CASE") {
 			return true
 		}
 	}

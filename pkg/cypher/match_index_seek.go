@@ -1535,13 +1535,13 @@ func splitTopLevelAndConjuncts(clause string) []string {
 			}
 			continue
 		case 'C', 'c':
-			if (i == 0 || clause[i-1] != '.') && matchKeywordAt(clause, i, "CASE") {
+			if caseKeywordAt(clause, i, "CASE") {
 				caseDepth++
 				i += len("CASE") - 1
 				continue
 			}
 		case 'E', 'e':
-			if caseDepth > 0 && (i == 0 || clause[i-1] != '.') && matchKeywordAt(clause, i, "END") {
+			if caseDepth > 0 && caseKeywordAt(clause, i, "END") {
 				caseDepth--
 				i += len("END") - 1
 				continue

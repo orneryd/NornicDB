@@ -240,10 +240,10 @@ func enclosingCaseBlockEnd(expr string, at int) int {
 			if nest != 0 || (i > 0 && expr[i-1] == '.') {
 				continue
 			}
-			if c|0x20 == 'c' && matchKeywordAt(expr, i, "CASE") {
+			if c|0x20 == 'c' && caseKeywordAt(expr, i, "CASE") {
 				depth++
 				i += len("CASE") - 1
-			} else if depth > 0 && c|0x20 == 'e' && matchKeywordAt(expr, i, "END") {
+			} else if depth > 0 && c|0x20 == 'e' && caseKeywordAt(expr, i, "END") {
 				depth--
 				i += len("END") - 1
 				if depth == 0 && i >= at {
