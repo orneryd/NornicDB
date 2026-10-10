@@ -87,6 +87,7 @@ const (
 	MessageCypherCoreDurationArithmeticOverflow          MessageID = "cyphercore.duration_arithmetic_overflow"
 	MessageCypherCoreFunctionArgumentCount               MessageID = "cyphercore.function_argument_count"
 	MessageCypherCoreTrimCharacterLength                 MessageID = "cyphercore.trim_character_length"
+	MessageCypherCoreTrimSpecificationUnknown            MessageID = "cyphercore.trim_specification_unknown"
 	MessageCypherCoreNormalizeFormInvalid                MessageID = "cyphercore.normalize_form_invalid"
 	MessageCypherCoreProcedureOutputShadowsVariable      MessageID = "cyphercore.procedure_output_shadows_variable"
 	MessageCypherCoreVariableDeclaredInOuterScope        MessageID = "cyphercore.variable_declared_in_outer_scope"
@@ -479,6 +480,10 @@ func CypherCoreFunctionArgumentCount(function string, want string, got int) Mess
 
 func CypherCoreTrimCharacterLength() Message {
 	return cypherCoreMessage(MessageCypherCoreTrimCharacterLength, "The argument `trimCharacterString` in the `trim()` function must be of length 1.", nil)
+}
+
+func CypherCoreTrimSpecificationUnknown() Message {
+	return cypherCoreMessage(MessageCypherCoreTrimSpecificationUnknown, "Unknown trim specification. Valid values are: LEADING, TRAILING, BOTH.", nil)
 }
 
 func CypherCoreNormalizeFormInvalid(form string) Message {

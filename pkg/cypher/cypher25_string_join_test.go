@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -136,4 +137,48 @@ func TestCypher25StringOperationOutOfRange(t *testing.T) {
 	result, err := exec.Execute(ctx, "CYPHER 25 UNWIND [1] AS i WITH i RETURN left('Ab c', i) AS v", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"A"}}, result.Rows)
+}
+
+// trim's specification argument (trim(specification, original) and
+// trim(specification, character, original)) is matched in any case in a
+// Cypher 25 statement, where a null one is null and other text Neo4j
+// 2026.09's ArgumentError; a Cypher 5 statement keeps Neo4j 5.26's exact
+// match, both ends for other text, and a TypeError for null.
+func TestCypher25TrimSpecification(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "cypher25_trim"))
+	ctx := context.Background()
+	for _, tc := range []struct {
+		expression string
+		cypher25   interface{}
+		cypher5    interface{}
+	}{
+		{"trim('leading', ' x ')", "x ", "x"},
+		{"trim('Trailing', ' x ')", " x", "x"},
+		{"trim('BOTH', ' x ')", "x", "x"},
+		{"trim('LEADING', 'a', 'aba')", "ba", "ba"},
+		{"trim('zz', 'ab')", "Neo.ClientError.Statement.ArgumentError", "ab"},
+		{"trim(' both ', ' x ')", "Neo.ClientError.Statement.ArgumentError", "x"},
+		{"trim(s, s)", "Neo.ClientError.Statement.ArgumentError", "ab"},
+		{"trim(null, s)", nil, "Neo.ClientError.Statement.TypeError"},
+		{"trim(null, 'a', 'aba')", nil, "Neo.ClientError.Statement.TypeError"},
+		{"trim(null, 'ab', 'aba')", nil, "Neo.ClientError.Statement.TypeError"},
+		{"trim('zz', 'ab', 'aba')", "Neo.ClientError.Statement.ArgumentError", "Neo.ClientError.Statement.ArgumentError"},
+		{"trim('zz', null)", nil, nil},
+	} {
+		for version, want := range map[string]interface{}{"CYPHER 25 ": tc.cypher25, "": tc.cypher5} {
+			for _, query := range []string{
+				version + "WITH 'ab' AS s RETURN " + tc.expression + " AS v",
+				version + "MATCH (n) WITH count(n) AS c WITH c, 'ab' AS s RETURN " + tc.expression + " AS v",
+			} {
+				result, err := exec.Execute(ctx, query, nil)
+				if code, isCode := want.(string); isCode && strings.HasPrefix(code, "Neo.") {
+					require.Error(t, err, query)
+					requireStatusCode(t, err, code)
+					continue
+				}
+				require.NoError(t, err, query)
+				require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+			}
+		}
+	}
 }

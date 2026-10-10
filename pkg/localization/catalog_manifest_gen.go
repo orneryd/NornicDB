@@ -408,6 +408,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.token_name_invalid", Constructor: "CypherCoreTokenNameInvalid", Fields: []string{"Name"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.token_name_null", Constructor: "CypherCoreTokenNameNull", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.trim_character_length", Constructor: "CypherCoreTrimCharacterLength", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.trim_specification_unknown", Constructor: "CypherCoreTrimSpecificationUnknown", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.typed_assignment_failed", Constructor: "CypherCoreTypedAssignmentFailed", Fields: []string{"DestinationType", "ValueType"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.typed_decode_row_failed", Constructor: "CypherCoreTypedDecodeRowFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.typed_destination_pointer_required", Constructor: "CypherCoreTypedDestinationPointerRequired", Fields: []string{}, PluralForms: []string{"other"}},

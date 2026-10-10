@@ -503,19 +503,20 @@ func fnTrimFunction(name string, leading, trailing bool) cypherfn.Func {
 // character is a one-character string.
 // trimSpecificationForm is trim(specification, original) and
 // trim(specification, character, original), the forms Neo4j's FROM syntax
-// stands for, which Neo4j also accepts as written. The specification is
-// matched exactly: 'LEADING' trims the start, 'TRAILING' the end, and any
-// other string, 'leading' included, both ends. A null original or
-// character is null; otherwise a specification that isn't a string is a
-// TypeError and a character that isn't one character long an ArgumentError,
-// as in Neo4j.
+// stands for, which Neo4j also accepts as written. A null original or
+// character is null, and a character that isn't one character long an
+// ArgumentError. In Cypher 5 (Neo4j 5.26) the specification is matched
+// exactly: 'LEADING' trims the start, 'TRAILING' the end, and any other
+// string, 'leading' included, both ends; a null specification is a
+// TypeError. In Cypher 25 (Neo4j 2026.09) it is matched in any case, a null
+// specification is null and any other text an ArgumentError.
 func trimSpecificationForm(ctx cypherfn.Context, args []string) (interface{}, error) {
 	values, err := evalArgs(ctx, args)
 	if err != nil {
 		return nil, err
 	}
 	original := values[len(values)-1]
-	if original == nil || len(values) == 3 && values[1] == nil {
+	if original == nil || len(values) == 3 && values[1] == nil || ctx.Cypher25 && values[0] == nil {
 		return nil, nil
 	}
 	specification, isString := values[0].(string)
@@ -538,6 +539,14 @@ func trimSpecificationForm(ctx cypherfn.Context, args []string) (interface{}, er
 				localization.CypherCoreTrimCharacterLength())
 		}
 		cutset = character
+	}
+	if ctx.Cypher25 {
+		switch specification = strings.ToUpper(specification); specification {
+		case "LEADING", "TRAILING", "BOTH":
+		default:
+			return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
+				localization.CypherCoreTrimSpecificationUnknown())
+		}
 	}
 	return trimCharacters(text, cutset, specification != "TRAILING", specification != "LEADING"), nil
 }

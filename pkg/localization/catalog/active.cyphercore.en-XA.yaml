@@ -184,6 +184,8 @@
   other: "[!! {{.Function}}() expects {{.Expected}} argument(s), got {{.Got}} !!]"
 - id: cyphercore.trim_character_length
   other: "[!! The argument `trimCharacterString` in the `trim()` function must be of length 1. !!]"
+- id: cyphercore.trim_specification_unknown
+  other: "[!! Unknown trim specification. Valid values are: LEADING, TRAILING, BOTH. !!]"
 - id: cyphercore.normalize_form_invalid
   other: "[!! normalize() normal form must be one of NFC, NFD, NFKC or NFKD, got: {{.Form}} !!]"
 - id: cyphercore.procedure_output_shadows_variable

@@ -118,6 +118,10 @@ func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]int
 			ctx = context.WithValue(ctx, temporalStatementTimeKey{}, instant)
 		}
 	}
+	// And the statement's Cypher version, which the row carries.
+	if rowIsCypher25(values) {
+		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
+	}
 	value := e.evaluateExpressionFromValuesContext(ctx, expr, values)
 	return value, getExpressionFailure(ctx)
 }
