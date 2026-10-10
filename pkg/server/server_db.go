@@ -985,7 +985,7 @@ func decodeTransactionRequest(body io.Reader, req *TransactionRequest) error {
 	}
 	for i := range req.Statements {
 		for key, value := range req.Statements[i].Parameters {
-			req.Statements[i].Parameters[key] = cypherParameterNumbers(value)
+			req.Statements[i].Parameters[key] = cypher.JSONNumbers(value)
 		}
 	}
 	return nil
@@ -996,36 +996,6 @@ func decodeTransactionRequest(body io.Reader, req *TransactionRequest) error {
 // reads its statements through here.
 func (s *Server) readTransactionRequest(r *http.Request, req *TransactionRequest) error {
 	return decodeTransactionRequest(http.MaxBytesReader(nil, r.Body, s.config.MaxRequestSize), req)
-}
-
-// cypherParameterNumbers converts the json.Number values of a decoded
-// parameter value: integers (no '.', 'e' or 'E') that fit int64 become int64,
-// everything else float64. Lists and maps are converted in place.
-func cypherParameterNumbers(value interface{}) interface{} {
-	switch v := value.(type) {
-	case json.Number:
-		if !strings.ContainsAny(string(v), ".eE") {
-			if i, err := v.Int64(); err == nil {
-				return i
-			}
-		}
-		if f, err := v.Float64(); err == nil {
-			return f
-		}
-		return string(v)
-	case []interface{}:
-		for i, item := range v {
-			v[i] = cypherParameterNumbers(item)
-		}
-		return v
-	case map[string]interface{}:
-		for key, item := range v {
-			v[key] = cypherParameterNumbers(item)
-		}
-		return v
-	default:
-		return value
-	}
 }
 
 // TransactionResponse follows Neo4j HTTP API format exactly.
