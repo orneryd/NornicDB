@@ -94,9 +94,11 @@ func TestVectorProcedures_NodeAndRelationshipManualVectorParityE2E(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, nodeHits.Rows, 2)
 	require.Equal(t, "n1", nodeHits.Rows[0][0])
-	require.InEpsilon(t, 0.9938837346736189, nodeHits.Rows[0][1].(float64), 1e-6)
+	// Neo4j's cosine scores, max((1 + cos) / 2, 0): vector.similarity.cosine
+	// gives 0.996941864490509 and 0.5552157759666443 for these vectors.
+	require.InEpsilon(t, 0.996941864490509, nodeHits.Rows[0][1].(float64), 1e-6)
 	require.Equal(t, "n2", nodeHits.Rows[1][0])
-	require.InEpsilon(t, 0.11043152607484655, nodeHits.Rows[1][1].(float64), 1e-6)
+	require.InEpsilon(t, 0.5552157759666443, nodeHits.Rows[1][1].(float64), 1e-6)
 
 	_, err = exec.Execute(ctx, "CALL db.index.vector.createRelationshipIndex('rzz_idx','RZZ_REL','emb',4,'cosine')", nil)
 	require.NoError(t, err)
@@ -128,9 +130,9 @@ func TestVectorProcedures_NodeAndRelationshipManualVectorParityE2E(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, relHits.Rows, 2)
 	require.Equal(t, "z1", relHits.Rows[0][0])
-	require.InEpsilon(t, 0.9938837346736189, relHits.Rows[0][1].(float64), 1e-6)
+	require.InEpsilon(t, 0.996941864490509, relHits.Rows[0][1].(float64), 1e-6)
 	require.Equal(t, "z2", relHits.Rows[1][0])
-	require.InEpsilon(t, 0.11043152607484655, relHits.Rows[1][1].(float64), 1e-6)
+	require.InEpsilon(t, 0.5552157759666443, relHits.Rows[1][1].(float64), 1e-6)
 }
 
 func requireVectorEqual(t *testing.T, expected []float64, actual interface{}) {

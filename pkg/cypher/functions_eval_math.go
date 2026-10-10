@@ -7,7 +7,6 @@ import (
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 
-	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -604,41 +603,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// Vector Functions
 	// ========================================
 
-	// vector.similarity.cosine(v1, v2)
-	if matchFuncStartAndSuffix(expr, "vector.similarity.cosine") {
-		inner := extractFuncArgs(expr, "vector.similarity.cosine")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			v1 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			v2 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-
-			vec1, ok1 := toFloat64Slice(v1)
-			vec2, ok2 := toFloat64Slice(v2)
-
-			if ok1 && ok2 && len(vec1) == len(vec2) {
-				return vector.CosineSimilarityFloat64(vec1, vec2)
-			}
-		}
-		return nil
-	}
-
-	// vector.similarity.euclidean(v1, v2)
-	if matchFuncStartAndSuffix(expr, "vector.similarity.euclidean") {
-		inner := extractFuncArgs(expr, "vector.similarity.euclidean")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			v1 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			v2 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-
-			vec1, ok1 := toFloat64Slice(v1)
-			vec2, ok2 := toFloat64Slice(v2)
-
-			if ok1 && ok2 && len(vec1) == len(vec2) {
-				return vector.EuclideanSimilarityFloat64(vec1, vec2)
-			}
-		}
-		return nil
-	}
+	// vector.similarity.cosine and vector.similarity.euclidean are
+	// registered functions (vector_similarity_functions.go).
 
 	// ========================================
 	// Point/Spatial Functions (basic support)

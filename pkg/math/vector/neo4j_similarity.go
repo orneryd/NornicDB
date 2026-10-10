@@ -69,6 +69,26 @@ func Neo4jCosineSimilarity[T float32 | float64](a, b []T) (float64, bool) {
 	return float64(score), true
 }
 
+// Neo4jEuclideanVectorValid reports whether v is a valid vector for
+// Neo4j's EUCLIDEAN similarity: not empty, every coordinate finite as a
+// float32.
+func Neo4jEuclideanVectorValid[T float32 | float64](v []T) bool {
+	for _, x := range v {
+		if !finite32(float32(x)) {
+			return false
+		}
+	}
+	return len(v) > 0
+}
+
+// Neo4jCosineVectorValid reports whether v is a valid vector for Neo4j's
+// COSINE similarity: not empty, finite coordinates, a positive and finite L2
+// norm.
+func Neo4jCosineVectorValid[T float32 | float64](v []T) bool {
+	_, ok := neo4jCosineScale(v)
+	return ok && len(v) > 0
+}
+
 // neo4jCosineScale is 1 / ‖v‖, the L2 norm summed in float64; ok is false
 // for a non-finite coordinate or a norm that isn't positive and finite.
 func neo4jCosineScale[T float32 | float64](v []T) (float64, bool) {

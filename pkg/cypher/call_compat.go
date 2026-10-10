@@ -11,7 +11,6 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -676,15 +675,10 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 			continue
 		}
 
-		// Calculate similarity
-		var score float64
-		switch similarityFunc {
-		case "euclidean":
-			score = vector.EuclideanSimilarity(queryVector, edgeEmbedding)
-		case "dot":
-			score = vector.DotProduct(queryVector, edgeEmbedding)
-		default: // cosine
-			score = vector.CosineSimilarity(queryVector, edgeEmbedding)
+		// Neo4j's score for the index's similarity (#907).
+		score, ok := scoreVectorForFastPath(queryVector, edgeEmbedding, similarityFunc)
+		if !ok {
+			continue
 		}
 
 		scoredEdges = append(scoredEdges, scoredEdge{edge: edge, score: score})

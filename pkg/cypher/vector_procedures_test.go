@@ -1522,12 +1522,12 @@ func TestCallDbIndexVectorQueryRelationships(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, []string{"relationship", "score"}, result.Columns)
-		// Should return results but with low scores (orthogonal vectors have cosine similarity near 0)
+		// Orthogonal vectors: Neo4j's cosine score is 0.5, the middle of its
+		// [0, 1] scale.
 		if len(result.Rows) > 0 {
-			// Results should have low scores for orthogonal vectors
 			for _, row := range result.Rows {
 				score := row[1].(float64)
-				assert.Less(t, score, 0.3, "Orthogonal vectors should have low cosine similarity (< 0.3)")
+				assert.Equal(t, 0.5, score, "orthogonal vectors score 0.5")
 			}
 		} else {
 			// Or the implementation might filter out very low scores

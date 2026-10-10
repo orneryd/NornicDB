@@ -117,8 +117,18 @@ Last Updated: November 25, 2025
 
 | Function                              | What It Does       | Example                                             |
 | ------------------------------------- | ------------------ | --------------------------------------------------- |
-| `vector.similarity.cosine(v1, v2)`    | Cosine similarity  | `RETURN vector.similarity.cosine([1,2,3], [2,3,4])` |
-| `vector.similarity.euclidean(v1, v2)` | Euclidean distance | `RETURN vector.similarity.euclidean([0,0], [3,4])`  |
+| `vector.similarity.cosine(v1, v2)`    | Cosine similarity, in [0, 1]  | `RETURN vector.similarity.cosine([1,2,3], [2,3,4])` |
+| `vector.similarity.euclidean(v1, v2)` | Euclidean similarity, in [0, 1] | `RETURN vector.similarity.euclidean([0,0], [3,4])`  |
+
+Both return Neo4j's scores, bit for bit: cosine is `max((1 + cos) / 2, 0)`
+(1 for the same direction, 0.5 for orthogonal vectors, 0 for opposite ones)
+and euclidean is `1 / (1 + d²)` (1 for equal vectors), computed in float32.
+`db.index.vector.queryNodes` and `queryRelationships` score on the same
+scale for COSINE and EUCLIDEAN indexes (a `dot` index, a NornicDB
+similarity, scores the dot product). Null in, null out; an argument that
+isn't a list is a TypeError; an empty list, a list holding a non-number or
+a non-finite number, a zero vector (cosine) or vectors of different
+dimensions are an ArgumentError, as in Neo4j.
 
 ### 📈 Kalman Filter Functions (10 functions)
 

@@ -50,7 +50,7 @@ LIMIT $limit`
 	res, err := exec.Execute(ctx, query, map[string]interface{}{
 		"groups": []string{"g"},
 		"q":      []float64{1.0, 0.0, 0.0},
-		"min":    0.2,
+		"min":    0.6, // Neo4j's cosine score: e3, orthogonal, is 0.5
 		"limit":  5,
 	})
 	require.NoError(t, err)

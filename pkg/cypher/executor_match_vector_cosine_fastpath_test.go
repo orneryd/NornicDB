@@ -756,7 +756,8 @@ func TestTryFastPathMatchVectorCosine_HandlesAscendingOrder(t *testing.T) {
 	require.True(t, handled)
 	require.NotNil(t, result)
 	require.Len(t, result.Rows, 2)
-	require.EqualValues(t, -1.0, result.Rows[0][0])
+	// Neo4j's cosine scores: opposite vectors 0, the same direction 1.
+	require.EqualValues(t, 0.0, result.Rows[0][0])
 	require.EqualValues(t, 1.0, result.Rows[1][0])
 }
 
@@ -780,9 +781,9 @@ func TestMatchVectorCosineFastPath_AscendingOrderWithParamVector(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 2)
 	require.Equal(t, "c", res.Rows[0][0])
-	require.EqualValues(t, -1.0, res.Rows[0][1])
+	require.EqualValues(t, 0.0, res.Rows[0][1], "opposite: Neo4j's cosine score 0")
 	require.Equal(t, "b", res.Rows[1][0])
-	require.EqualValues(t, 0.0, res.Rows[1][1])
+	require.EqualValues(t, 0.5, res.Rows[1][1], "orthogonal: Neo4j's cosine score 0.5")
 	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
 }
 
@@ -812,7 +813,7 @@ ORDER BY score DESC
 LIMIT $k`
 	_, err = exec.Execute(ctx, query+" /* warmup */", map[string]interface{}{
 		"q":   []float64{1.0, 0.0, 0.0},
-		"min": 0.2,
+		"min": 0.6, // Neo4j's cosine score: c3, orthogonal, is 0.5
 		"k":   5,
 	})
 	require.NoError(t, err)
@@ -821,7 +822,7 @@ LIMIT $k`
 	counting.streamNodesCalls = 0
 	res, err := exec.Execute(ctx, query, map[string]interface{}{
 		"q":   []float64{1.0, 0.0, 0.0},
-		"min": 0.2,
+		"min": 0.6, // Neo4j's cosine score: c3, orthogonal, is 0.5
 		"k":   5,
 	})
 	require.NoError(t, err)
