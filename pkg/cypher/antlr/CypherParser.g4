@@ -134,11 +134,11 @@ schemaCommand
     | CREATE LOOKUP INDEX name? (IF NOT EXISTS)? FOR (nodePattern | relationshipsChainPattern) ON EACH functionInvocation
     | DROP CONSTRAINT name? (IF EXISTS)?
     | CREATE CONSTRAINT name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? REQUIRE constraintRequirement (OPTIONS mapLit)?
-    | CREATE CONSTRAINT name? (IF NOT EXISTS)? ON? nodePattern? ASSERT (expression | parenExpressionChain) IS (UNIQUE | NOT NULL_W | (NODE | RELATIONSHIP) KEY | COLON COLON propertyTypeName | TYPED propertyTypeName) (OPTIONS mapLit)?
+    | CREATE CONSTRAINT name? (IF NOT EXISTS)? ON? nodePattern? ASSERT (expression | parenExpressionChain) IS ((NODE | RELATIONSHIP | REL)? (UNIQUE | KEY) | NOT NULL_W | COLON COLON propertyTypeName | TYPED propertyTypeName) (OPTIONS mapLit)?
     ;
 
 constraintRequirement
-    : (expression | parenExpressionChain) IS (UNIQUE | NOT NULL_W | (NODE | RELATIONSHIP) KEY | COLON COLON propertyTypeName | TYPED propertyTypeName | TEMPORAL (NO OVERLAP)?)
+    : (expression | parenExpressionChain) IS ((NODE | RELATIONSHIP | REL)? (UNIQUE | KEY) | NOT NULL_W | COLON COLON propertyTypeName | TYPED propertyTypeName | TEMPORAL (NO OVERLAP)?)
     | expression IN listLit
     | MAX COUNT integerLit
     | ALLOWED
@@ -760,6 +760,7 @@ symbol
     | OPTIONS
     | NODE
     | RELATIONSHIP
+    | REL
     | TEMPORAL
     | NO
     | OVERLAP
