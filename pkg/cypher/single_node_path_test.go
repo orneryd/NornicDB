@@ -39,7 +39,7 @@ func TestSingleAnonymousNodePath(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"p"}, result.Columns)
 
-	rewritten, _, err := desugarLabelExpressions("MATCH p = (:L {k: 1})-[:R]->() RETURN p")
+	rewritten, _, err := desugarLabelExpressions("MATCH p = (:L {k: 1})-[:R]->() RETURN p", nil)
 	require.NoError(t, err)
 	require.Equal(t, "MATCH p = (:L {k: 1})-[:R]->() RETURN p", rewritten, "a longer path is left as written")
 	require.False(t, mayAssignAnonymousNodePath("MATCH (n) WHERE n.k = (1) RETURN n"))
