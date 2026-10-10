@@ -89,11 +89,13 @@ func isStandaloneExistsSubquery(expr string) bool {
 }
 
 // evaluateExistsSubqueryValue evaluates a standalone EXISTS { ... } expression
-// against the entities bound in the current row. It shares the WHERE
-// predicate's correlated evaluation (evaluateRowExistsPredicate), so an EXISTS
-// value and an EXISTS filter always agree.
+// against the current row: the value scope of ctx (a quantifier's or
+// comprehension's variable, the row's scalars) and the entities bound in the
+// row, which shadow it. It shares the WHERE predicate's correlated evaluation
+// (evaluateRowExistsPredicate), so an EXISTS value and an EXISTS filter
+// always agree.
 func (e *StorageExecutor) evaluateExistsSubqueryValue(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
-	values := make(map[string]interface{}, len(nodes)+len(rels))
+	values := valueBindingsLayer(ctx, len(nodes)+len(rels))
 	for name, node := range nodes {
 		if node != nil {
 			values[name] = node
