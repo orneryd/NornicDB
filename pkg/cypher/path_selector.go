@@ -168,32 +168,52 @@ func (prefix pathPatternPrefix) finish(q string, at, end int) (pathPatternPrefix
 
 // mayUsePathPatternPrefix reports whether query may hold a selector, a path
 // mode or a match mode: one of their words, or ANY or ALL after =, a comma or
-// MATCH. It never answers false for one.
+// MATCH. A word holding SHORTEST (shortestPath, allShortestPaths) counts too.
+// It never answers false for one. One pass over the words outside string
+// literals (a backquoted name still counts): it runs for every statement.
 func mayUsePathPatternPrefix(query string) bool {
-	for _, word := range []string{"shortest", "acyclic", "walk", "trail", "different", "repeatable"} {
-		if indexASCIIFold(query, word) >= 0 {
-			return true
-		}
-	}
-	for _, word := range []string{"any", "all"} {
-		for from := 0; from < len(query); {
-			index := indexASCIIFold(query[from:], word)
-			if index < 0 {
-				break
+	for i := 0; i < len(query); i++ {
+		switch c := query[i]; {
+		case c == '\'' || c == '"':
+			i = skipCypherQuotedText(query, i, c) - 1
+		case isIdentByte(c):
+			end := i + 1
+			for end < len(query) && isIdentByte(query[end]) {
+				end++
 			}
-			index += from
-			from = index + len(word)
-			if index > 0 && isIdentByte(query[index-1]) || from < len(query) && isIdentByte(query[from]) {
-				continue
-			}
-			before := trimRightIndex(query, 0, index)
-			if before > 0 && (query[before-1] == '=' || query[before-1] == ',') ||
-				before >= len("MATCH") && equalFoldASCII(query[before-len("MATCH"):before], "MATCH") {
+			if pathPatternPrefixWord(query, i, end) {
 				return true
 			}
+			i = end - 1
 		}
 	}
 	return false
+}
+
+// pathPatternPrefixWord reports whether the word query[start:end] may begin
+// a selector, a path mode or a match mode (see mayUsePathPatternPrefix).
+func pathPatternPrefixWord(query string, start, end int) bool {
+	word := query[start:end]
+	switch len(word) {
+	case 3:
+		if !equalFoldASCII(word, "any") && !equalFoldASCII(word, "all") {
+			return false
+		}
+		before := trimRightIndex(query, 0, start)
+		return before > 0 && (query[before-1] == '=' || query[before-1] == ',') ||
+			before >= len("MATCH") && equalFoldASCII(query[before-len("MATCH"):before], "MATCH")
+	case 4:
+		return equalFoldASCII(word, "walk")
+	case 5:
+		return equalFoldASCII(word, "trail")
+	case 7:
+		return equalFoldASCII(word, "acyclic")
+	case 9:
+		return equalFoldASCII(word, "different")
+	case 10:
+		return equalFoldASCII(word, "repeatable")
+	}
+	return len(word) >= len("shortest") && indexASCIIFold(word, "shortest") >= 0
 }
 
 // pathPrefixRewrite is what patternWithWhere adds for the selectors and
