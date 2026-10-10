@@ -515,6 +515,26 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 
 // extractNodeVariables extracts node variable names from a MATCH pattern,
 // plain or backtick-quoted (`n n`, as written).
+// functionCallParenAt reports whether the '(' at text[open] opens a function
+// call's arguments (size(kinds), n.f(x)) rather than a node pattern: it
+// directly follows a name that isn't a clause keyword (MATCH(n), WHERE(...)
+// open patterns and expressions).
+func functionCallParenAt(text string, open int) bool {
+	end := open
+	start := end
+	for start > 0 && isIdentByte(text[start-1]) {
+		start--
+	}
+	if start == end {
+		return false
+	}
+	switch upperASCII(text[start:end]) {
+	case "MATCH", "CREATE", "MERGE", "WHERE", "AND", "OR", "XOR", "NOT", "WITH", "RETURN", "UNWIND", "IN", "DELETE", "SET", "REMOVE", "FOREACH", "YIELD":
+		return false
+	}
+	return true
+}
+
 func extractNodeVariables(matchClause string) []string {
 	var vars []string
 	for i := 0; i < len(matchClause); i++ {
@@ -535,7 +555,7 @@ func extractNodeVariables(matchClause string) []string {
 				continue
 			}
 		}
-		if matchClause[i] != '(' {
+		if matchClause[i] != '(' || functionCallParenAt(matchClause, i) {
 			continue
 		}
 		j := i + 1
