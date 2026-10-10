@@ -28,11 +28,9 @@ import (
 // (datetime(), date(), localdatetime()), an ISO string, Unix seconds, a
 // parameter or an expression, read as the TEMPORAL NO OVERLAP constraint
 // reads it.
+//
+// The registry checks the argument count (7 to 9) before the call.
 func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	if len(args) < 7 || len(args) > 9 {
-		return nil, localizedError(localization.CypherSpecializedCallsTemporalAssertArgumentCount(), nil)
-	}
-
 	label, err := coerceStringArg(args[0], "label")
 	if err != nil {
 		return nil, err
@@ -102,11 +100,9 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 // read as the TEMPORAL NO OVERLAP constraint reads them
 // (storage.CoerceTemporalTime), so datetime(), date() and localdatetime()
 // values match as ISO strings do.
+//
+// The registry checks the argument count (6 to 8) before the call.
 func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	if len(args) < 6 || len(args) > 8 {
-		return nil, localizedError(localization.CypherSpecializedCallsTemporalAsOfArgumentCount(), nil)
-	}
-
 	label, err := coerceStringArg(args[0], "label")
 	if err != nil {
 		return nil, err

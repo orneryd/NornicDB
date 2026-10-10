@@ -79,6 +79,28 @@ func TestTemporalProcedures_Arguments(t *testing.T) {
 	require.Error(t, err)
 	_, err = exec.Execute(ctx, "CALL db.temporal.assertNoOverlap('Fv', 'k', 'from', 'to', 12, 1600000000) YIELD ok RETURN ok", nil)
 	require.Error(t, err)
+
+	// A node with another key value isn't compared.
+	result, err = exec.Execute(ctx, "CALL db.temporal.assertNoOverlap('Fv', 'k', 'from', 'to', 13, 1700000000, null) YIELD ok RETURN ok", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{true}}, result.Rows)
+	// An empty name, a systemTime that isn't a time and a systemSequence that
+	// isn't a non-negative integer are each the procedure's error.
+	for _, query := range []string{
+		"CALL db.temporal.assertNoOverlap('Fv', '', 'from', 'to', 12, 1, 2) YIELD ok RETURN ok",
+		"CALL db.temporal.assertNoOverlap('Fv', 'k', '', 'to', 12, 1, 2) YIELD ok RETURN ok",
+		"CALL db.temporal.assertNoOverlap('Fv', 'k', 'from', '', 12, 1, 2) YIELD ok RETURN ok",
+		"CALL db.temporal.assertNoOverlap('Fv', 'k', 'from', 'to', 12, 1, 2, 'not a time') YIELD ok RETURN ok",
+		"CALL db.temporal.asOf('Fv', '', 12, 'from', 'to', 1700000000) YIELD node RETURN node",
+		"CALL db.temporal.asOf('Fv', 'k', 12, '', 'to', 1700000000) YIELD node RETURN node",
+		"CALL db.temporal.asOf('Fv', 'k', 12, 'from', '', 1700000000) YIELD node RETURN node",
+		"CALL db.temporal.asOf('Fv', 'k', 12, 'from', 'to', 1700000000, 'not a time') YIELD node RETURN node",
+		"CALL db.temporal.asOf('Fv', 'k', 12, 'from', 'to', 1700000000, 1700000001, -1) YIELD node RETURN node",
+		"CALL db.temporal.asOf('Fv', 'k', 12, 'from', 'to', 1700000000, 1700000001, 'x') YIELD node RETURN node",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+	}
 }
 
 func TestTemporalAsOf(t *testing.T) {
