@@ -130,7 +130,7 @@ schemaCommand
     : DROP INDEX name? (IF EXISTS)?
     | CREATE (RANGE_INDEX | TEXT | POINT)? INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? (parenExpressionChain | symbol DOT name)? (OPTIONS mapLit)?
     | CREATE FULLTEXT INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? EACH? LBRACK expressionChain RBRACK (OPTIONS mapLit)?
-    | CREATE VECTOR INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? parenExpressionChain? (OPTIONS mapLit)?
+    | CREATE VECTOR INDEX name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? ON? (parenExpressionChain | symbol DOT name)? (OPTIONS mapLit)?
     | CREATE LOOKUP INDEX name? (IF NOT EXISTS)? FOR (nodePattern | relationshipsChainPattern) ON EACH functionInvocation
     | DROP CONSTRAINT name? (IF EXISTS)?
     | CREATE CONSTRAINT name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? REQUIRE constraintRequirement (OPTIONS mapLit)?
