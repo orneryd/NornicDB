@@ -338,10 +338,14 @@ nav:
       - Plans & RFCs:
           - BM25 Snowball Stemmer Plugin RFC: plans/bm25-snowball-stemmer-plugin-rfc.md
           - Neo4j-Compatible Streaming Driver Plan: plans/neo4j-compatible-streaming-driver-and-server-plan.md
-          - GPU HNSW Construction Plan: plans/gpu-hnsw-construction-plan.md
           - Native Package Distribution Plan: plans/native-package-distribution-plan.md
           - OKF Admin Import/Export Plan: plans/okf-admin-import-export-plan.md
           - UI Enhancements: plans/ui-enhancements.md
+          - Archived Plans:
+              - Archive Index: plans/archive/README.md
+              - GPU HNSW Construction: plans/archive/gpu-hnsw-construction-plan.md
+              - Production Message Localization: plans/archive/localization-consolidation-plan.md
+              - Operator-Declared GraphQL Schema: plans/archive/operator-declared-graphql-schema-plan.md
       - Research:
           - Persistence Semantics — Paper: research/papers/persistence-semantics-nornicdb/paper.md
           - Persistence Semantics — Eval Plan: research/papers/persistence-semantics-nornicdb/eval-plan.md
