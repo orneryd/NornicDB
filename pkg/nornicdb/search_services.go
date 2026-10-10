@@ -296,6 +296,10 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 		}
 	}
 	svc := search.NewServiceWithDimensionsAndBM25EngineAndOptions(storageEngine, dims, bm25Engine, &resolvedOptions)
+	if db.config != nil && db.config.Memory.EmbeddingEnabled {
+		// Embeddings have the configured dimension: the index keeps it.
+		svc.FixVectorDimensions()
+	}
 	if configuredEmbedder, embedErr := db.getOrCreateEmbedderForDB(dbName); embedErr != nil {
 		log.Printf("⚠️  Could not resolve embedding space for database %s: %v", dbName, embedErr)
 	} else if provider, ok := configuredEmbedder.(embed.EmbeddingSpaceProvider); ok {

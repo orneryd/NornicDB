@@ -337,9 +337,13 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		chunkQuery := func(_ context.Context, text string) ([]string, error) {
 			return e.embedder.ChunkText(text, 512, 50)
 		}
+		// failClosed disables every fallback: an embedding failure or a
+		// failed hybrid search is the procedure's error, never an empty or
+		// text-only result that reads as "nothing matched".
 		errorPolicy := search.ChunkedSearchErrorPolicy{
 			Transport:           "cypher",
 			FatalEmbeddingError: func(error) bool { return failClosed },
+			FatalSearchError:    func(error) bool { return failClosed },
 		}
 		if continuationRequested {
 			page, continuationErr := ensureSearchService(embedding).SearchTextContinuation(

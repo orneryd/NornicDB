@@ -847,6 +847,9 @@ type Service struct {
 	// for vector mutations.
 	bm25Enabled   atomic.Bool
 	vectorEnabled atomic.Bool
+	// vectorDimensionsFixed keeps the vector index at the dimension the
+	// service was created with (FixVectorDimensions).
+	vectorDimensionsFixed atomic.Bool
 
 	// Lazy-warming state. When warmingLazy=true, the boot orchestrator skips
 	// the eager build for this database; the FIRST read path (Search,
@@ -2495,6 +2498,19 @@ func (s *Service) getVectorForCypher(vecID string) ([]float32, bool) {
 	return nil, false
 }
 
+// FixVectorDimensions keeps the vector index at the dimension the service was
+// created with: the configured embedding dimension, which every managed
+// embedding has. The first node indexed then can't change it
+// (maybeAutoSetVectorDimensions), so an ordinary numeric list property
+// (page_starts = [0, 30]) indexed before any embedding can't make the index
+// 2-dimensional and reject every embedding after it; a property list is a
+// vector only when its length is that dimension. Without it, the first
+// vector-shaped value sets the dimension of an empty index (a database with
+// no embedder storing its own vectors).
+func (s *Service) FixVectorDimensions() {
+	s.vectorDimensionsFixed.Store(true)
+}
+
 func firstVectorDimensions(node *storage.Node) int {
 	if node == nil {
 		return 0
@@ -2538,7 +2554,7 @@ func firstEdgeVectorDimensions(edge *storage.Edge) int {
 }
 
 func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
-	if s == nil || dimensions <= 0 {
+	if s == nil || dimensions <= 0 || s.vectorDimensionsFixed.Load() {
 		return
 	}
 
