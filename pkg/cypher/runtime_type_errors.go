@@ -150,14 +150,18 @@ func isRuntimeNumber(v interface{}) bool {
 	return false
 }
 
-// isRuntimeVector reports whether v is a VECTOR value (Cypher 25), which
-// joins a string as its text.
-func isRuntimeVector(v interface{}) bool {
+// joinsString reports whether a string + v at run time is the string joined
+// with v's text, as in Neo4j 5.26 and 2026.09: a number, a boolean, a point,
+// a temporal value, a duration or a VECTOR does ('a' + true is 'atrue'); a
+// map, a node, a relationship or a path doesn't (TypeError), and a list
+// makes the operation list concatenation. Neo4j rejects the same operands
+// when their types are known as the statement compiles (static checks).
+func joinsString(v interface{}) bool {
 	switch v.(type) {
-	case CypherVector, *CypherVector:
+	case bool, CypherVector, *CypherVector, CypherPoint, *CypherPoint:
 		return true
 	}
-	return false
+	return isRuntimeNumber(v) || isRuntimeTemporal(v) || isRuntimeDuration(v)
 }
 
 func isRuntimeDuration(v interface{}) bool {
@@ -215,7 +219,7 @@ func runtimeArithmeticTypeError(op byte, left, right interface{}) error {
 			isRuntimeList(left) || isRuntimeList(right) ||
 			(isRuntimeDuration(left) && (isRuntimeDuration(right) || isRuntimeTemporal(right))) ||
 			(isRuntimeTemporal(left) && isRuntimeDuration(right)) ||
-			(leftString && isRuntimeVector(right)) || (rightString && isRuntimeVector(left))
+			(leftString && joinsString(right)) || (rightString && joinsString(left))
 	case '-':
 		valid = (leftNumber && rightNumber) ||
 			((isRuntimeDuration(left) || isRuntimeTemporal(left)) && isRuntimeDuration(right))

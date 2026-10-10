@@ -745,24 +745,19 @@ func (e *StorageExecutor) add(left, right interface{}) interface{} {
 	return value
 }
 
-// concatOperandText is the text a value contributes to string + value:
-// strings as they are, numbers and vectors (Cypher 25, as Neo4j 2026.09
-// joins them) as toString() formats them. Other values are not concatenated.
+// concatOperandText is the text a value contributes to string + value: a
+// string as it is, and every value that joins a string at run time
+// (joinsString: numbers, booleans, points, temporal values, durations,
+// VECTORs) as toString() writes it. Other values are not concatenated.
 func concatOperandText(value interface{}) (string, bool) {
-	switch v := value.(type) {
-	case string:
-		return v, true
-	case bool:
+	if text, isString := value.(string); isString {
+		return text, true
+	}
+	if !joinsString(value) {
 		return "", false
-	case CypherVector:
-		return v.String(), true
-	case *CypherVector:
-		return v.String(), true
 	}
-	if _, isNumber := toFloat64(value); isNumber {
-		return formatCypherValueString(value), true
-	}
-	return "", false
+	text, ok := convertToStringOrNull(value).(string)
+	return text, ok
 }
 
 // multiply performs numeric multiplication.
