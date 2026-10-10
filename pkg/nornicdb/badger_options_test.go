@@ -46,7 +46,7 @@ func TestResolveDurabilityOptions(t *testing.T) {
 			name:            "defaults",
 			configure:       func(*config.Config) {},
 			wantWALMode:     "batch",
-			wantWALInterval: 50 * time.Millisecond, // async timing drives WAL batch sync
+			wantWALInterval: 100 * time.Millisecond, // config default WALSyncInterval
 		},
 		{
 			name: "explicit none",

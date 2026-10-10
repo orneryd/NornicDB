@@ -1189,30 +1189,60 @@ func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte, delete
 		if _, deleted := tx.deletedEdges[edgeID]; deleted {
 			continue
 		}
+		// With write-behind active, an earlier transaction's acknowledged
+		// delete is also invisible to badgerTx: the record and adjacency
+		// entries live on until the flusher lands the generation. Skipping
+		// them here keeps later batches from deleting (and counting) the
+		// same relationship twice when a wipe spans multiple statements.
+		if tx.engine.writeBehind != nil && tx.engine.writeBehind.EdgeDeleted(edgeID) {
+			continue
+		}
 
 		// Get edge to delete its indexes
 		edgeKey := edgeKey(edgeID)
-		item, err := tx.badgerTx.Get(edgeKey)
-		if err == badger.ErrKeyNotFound {
-			continue
-		}
-		if err != nil {
-			return 0, nil, err
-		}
+		var edge *Edge
+		if tx.engine.writeBehind != nil {
+			// Read-committed: the transaction's pinned Badger snapshot
+			// predates flusher commits that landed after this transaction
+			// began, so badgerTx would still see records a concurrent
+			// replay already tombstoned (and the flusher's deletion would
+			// otherwise be applied twice). Resolve the newest state: the
+			// buffer overlay first, then the engine's latest view.
+			if buffered, ok := tx.engine.writeBehind.LookupEdge(edgeID); ok {
+				edge = copyEdge(buffered)
+			} else {
+				latest, err := tx.engine.GetEdge(edgeID)
+				if errors.Is(err, ErrNotFound) {
+					continue
+				}
+				if err != nil {
+					return 0, nil, err
+				}
+				edge = latest
+			}
+		} else {
+			item, err := tx.badgerTx.Get(edgeKey)
+			if err == badger.ErrKeyNotFound {
+				continue
+			}
+			if err != nil {
+				return 0, nil, err
+			}
 
-		var edgeBytes []byte
-		if err := item.Value(func(val []byte) error {
-			edgeBytes = append([]byte{}, val...)
-			return nil
-		}); err != nil {
-			return 0, nil, err
-		}
+			var edgeBytes []byte
+			if err := item.Value(func(val []byte) error {
+				edgeBytes = append([]byte{}, val...)
+				return nil
+			}); err != nil {
+				return 0, nil, err
+			}
 
-		edge, err := tx.engine.decodeEdgeBodyByID(edgeBytes, edgeID)
-		if err != nil {
-			return 0, nil, err
+			edge, err = tx.engine.decodeEdgeBodyByID(edgeBytes, edgeID)
+			if err != nil {
+				return 0, nil, err
+			}
+			edge.ID = edgeID
 		}
-		edge.ID = edgeID
 
 		// The committed body is archived at commit (materializeMVCCCommit).
 
@@ -2010,7 +2040,10 @@ func (tx *BadgerTransaction) GetEdgesByType(edgeType string) ([]*Edge, error) {
 
 	var committed []*Edge
 	var err error
-	if tx.readTS.IsZero() {
+	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
+		// Write-behind reads are read-committed: the flusher may land a
+		// buffered commit after the pinned snapshot, so read the latest
+		// (overlaid) view instead.
 		committed, err = tx.engine.GetEdgesByType(edgeType)
 	} else {
 		committed, err = tx.engine.getEdgesByTypeVisibleAtSnapshotWithView(edgeType, tx.readTS, tx.withSnapshotViewLocked)
@@ -2073,6 +2106,35 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	if hasPending {
 		seen = make(map[NodeID]struct{}, len(tx.pendingNodes))
 	}
+
+	// Write-behind reads are read-committed: the flusher may land a
+	// buffered commit after the pinned snapshot, so the engine's latest
+	// (overlaid) stream is used and no extra overlay merge runs here.
+	engineOverlaid := tx.readTS.IsZero() || (tx.engine != nil && tx.engine.writeBehind != nil)
+	var overlay []*Node
+	var overlayTouched map[NodeID]bool
+	if !engineOverlaid && tx.engine != nil && tx.engine.writeBehind != nil {
+		overlay, overlayTouched = tx.engine.writeBehind.LabelOverlay(label)
+	}
+	emitOverlay := func() error {
+		if engineOverlaid {
+			return nil // the engine stream already merged the overlay
+		}
+		scope := tx.labelScanScopeLocked()
+		nowNanos := DecayScoringTime()
+		for _, n := range overlay {
+			if !nodeIDInScope(n.ID, scope) || tx.engine.filterNodeByDecay(n, nowNanos) {
+				continue
+			}
+			if err := invokeVisit(projectCachedNodeForRead(n, properties)); err != nil {
+				if err == ErrIterationStopped {
+					return nil
+				}
+				return err
+			}
+		}
+		return nil
+	}
 	// A whole node the stream hands out is also the one a later write of
 	// the node takes as its old version (snapshotLabelNodeByID), so the
 	// caller gets a copy it may change (#965). A projected node is only
@@ -2086,6 +2148,9 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	emitCommitted := func(node *Node) error {
 		if node == nil {
 			return nil
+		}
+		if len(overlayTouched) > 0 && overlayTouched[node.ID] {
+			return nil // the write-behind overlay shadows this committed row
 		}
 		// Eagerly cache scanned labels within the byte/node bound. This is
 		// load-bearing for snapshot isolation: later label reads in this
@@ -2123,6 +2188,9 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 				return err
 			}
 		}
+		if err := emitOverlay(); err != nil {
+			return err
+		}
 		return tx.streamPendingLabelNodesLocked(label, seen, properties, invokeVisit)
 	}
 
@@ -2143,9 +2211,9 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		completed = append(completed, node)
 		return emitCommitted(node)
 	}
-	if tx.snapshotTx != nil {
+	if tx.snapshotTx != nil && tx.engine.writeBehind == nil {
 		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfter(tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, properties, afterNodeID, streamVisit)
-	} else if tx.readTS.IsZero() {
+	} else if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		err = tx.engine.StreamNodesByLabelProjectedInScope(tx.labelScanScopeLocked(), label, properties, streamVisit)
 	} else {
 		err = tx.engine.streamNodesByLabelVisibleAtSnapshotWithView(
@@ -2180,6 +2248,9 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		}
 		tx.snapshotProjectedLabelNodes[cacheKey] = completed
 		tx.clearSnapshotLabelPrefixLocked(cacheKey)
+	}
+	if err := emitOverlay(); err != nil {
+		return err
 	}
 	return tx.streamPendingLabelNodesLocked(label, seen, properties, invokeVisit)
 }
@@ -2242,7 +2313,12 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 	}
 
 	var err error
-	if tx.snapshotTx != nil {
+	if tx.engine != nil && tx.engine.writeBehind != nil {
+		// Write-behind reads are read-committed: the engine's latest
+		// (overlaid) stream includes flushes that landed after the pinned
+		// snapshot, with early termination for LIMIT pushdown.
+		err = tx.engine.StreamNodesWithOptions(ctx, opts, emitCommitted)
+	} else if tx.snapshotTx != nil {
 		err = tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
 			return tx.engine.streamNodesWithOptionsInTxn(ctx, txn, opts, emitCommitted)
 		})
@@ -2923,6 +2999,18 @@ func (tx *BadgerTransaction) OperationCount() int {
 }
 
 func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error) {
+	// Write-behind overlay: buffered-but-unflushed writes are committed and
+	// visible to every later transaction, ahead of any snapshot read.
+	if tx.engine != nil {
+		if wb := tx.engine.writeBehind; wb != nil {
+			if wb.NodeDeleted(nodeID) {
+				return nil, ErrNotFound
+			}
+			if node, ok := wb.LookupNode(nodeID); ok {
+				return copyNode(node), nil
+			}
+		}
+	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
 		return copyNode(node), nil
 	}
@@ -2946,6 +3034,16 @@ func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error
 		// The head exists but isn't visible at the reader's snapshot.
 		// Treat as a hard miss — falling back to a primary-key read
 		// would expose a peer's post-begin commit and break SI.
+		if tx.engine.writeBehind != nil {
+			// Write-behind: the write was committed at buffer-append, and
+			// its MVCC head only appears when the flusher lands it, so a
+			// snapshot pinned before the flush can miss a committed node.
+			// The overlay covers still-buffered writes; a fresh
+			// latest-committed read covers the flush window.
+			if fresh, freshErr := tx.engine.GetNode(nodeID); freshErr == nil {
+				return fresh, nil
+			}
+		}
 		return nil, ErrNotFound
 	}
 	if err == ErrNotFound {
@@ -2960,6 +3058,14 @@ func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error
 		}
 		if fallbackErr != ErrNotFound {
 			return nil, fallbackErr
+		}
+		if tx.engine.writeBehind != nil {
+			// The pinned snapshot may predate the flush of a node
+			// committed through the buffer (head and record both
+			// absent at pin time). A fresh read resolves it.
+			if fresh, freshErr := tx.engine.GetNode(nodeID); freshErr == nil {
+				return fresh, nil
+			}
 		}
 	}
 	return node, err
@@ -3001,6 +3107,18 @@ func (tx *BadgerTransaction) getNodeFromBadgerSnapshotLocked(nodeID NodeID) (*No
 }
 
 func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error) {
+	// Write-behind overlay: buffered-but-unflushed writes are committed and
+	// visible to every later transaction, ahead of any snapshot read.
+	if tx.engine != nil {
+		if wb := tx.engine.writeBehind; wb != nil {
+			if wb.EdgeDeleted(edgeID) {
+				return nil, ErrNotFound
+			}
+			if edge, ok := wb.LookupEdge(edgeID); ok {
+				return copyEdge(edge), nil
+			}
+		}
+	}
 	if tx.readTS.IsZero() {
 		key := edgeKey(edgeID)
 		item, err := tx.badgerTx.Get(key)
@@ -3024,7 +3142,23 @@ func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error
 		// SI: edge head exists but isn't visible at our snapshot.
 		// Surface as ErrNotFound so callers can't observe peer
 		// commits that landed after our begin.
+		if tx.engine.writeBehind != nil {
+			// Write-behind: the edge was committed at buffer-append; its
+			// head appears only when the flusher lands it, so a snapshot
+			// pinned before the flush can miss a committed edge. A fresh
+			// latest-committed read covers the flush window.
+			if fresh, freshErr := tx.engine.GetEdge(edgeID); freshErr == nil {
+				return fresh, nil
+			}
+		}
 		return nil, ErrNotFound
+	}
+	if err == ErrNotFound && tx.engine.writeBehind != nil {
+		// The pinned snapshot may predate the flush of an edge committed
+		// through the buffer (head and record both absent at pin time).
+		if fresh, freshErr := tx.engine.GetEdge(edgeID); freshErr == nil {
+			return fresh, nil
+		}
 	}
 	return edge, err
 }
@@ -3054,6 +3188,18 @@ func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error
 // Read paths (GetEdge) are intentionally untouched — snapshot isolation
 // still hides peer commits from reads.
 func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Edge, error) {
+	// Write-behind overlay: a buffered edge is live at latest-committed
+	// state, so a writer sees it exactly like a peer's post-begin commit.
+	if tx.engine != nil {
+		if wb := tx.engine.writeBehind; wb != nil {
+			if wb.EdgeDeleted(edgeID) {
+				return nil, ErrNotFound
+			}
+			if _, ok := wb.LookupEdge(edgeID); ok {
+				return nil, localizedError(localization.StorageTransactionEdgeChanged(string(edgeID)), ErrConflict)
+			}
+		}
+	}
 	if tx.readTS.IsZero() {
 		return tx.getCommittedEdgeLocked(edgeID)
 	}
@@ -3082,7 +3228,10 @@ func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Ed
 }
 
 func (tx *BadgerTransaction) getNodesByLabelLocked(label string) ([]*Node, error) {
-	if tx.readTS.IsZero() {
+	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
+		// Write-behind reads are read-committed: the flusher may land a
+		// buffered commit after the pinned snapshot, so read the latest
+		// (overlaid) view instead.
 		return tx.engine.GetNodesByLabelInScope(tx.labelScanScopeLocked(), label)
 	}
 	return tx.engine.getNodesByLabelVisibleAtSnapshotWithView(tx.labelScanScopeLocked(), label, tx.readTS, tx.withSnapshotViewLocked)
@@ -3221,14 +3370,13 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 // distinguish commits by seq, so allocateMVCCVersion forces strictly
 // increasing commit timestamps and this check falls back to
 // timestamp ordering only for the equal-MaxUint64 case.
+// snapshotIsolationConflict reports whether headVersion is logically newer
+// than the transaction's snapshot. Timestamps order commits: the
+// write-behind flusher backdates its heads to the buffered ACK time, so a
+// head the flusher lands after this transaction began can still be older
+// than the snapshot — not a conflict.
 func (tx *BadgerTransaction) snapshotIsolationConflict(headVersion MVCCVersion) bool {
-	if headVersion.CommitSequence != tx.readTS.CommitSequence {
-		return headVersion.CommitSequence > tx.readTS.CommitSequence
-	}
-	if headVersion.CommitSequence == maxMVCCCommitSequence {
-		return headVersion.CommitTimestamp.After(tx.readTS.CommitTimestamp)
-	}
-	return false
+	return headVersion.Compare(tx.readTS) > 0
 }
 
 func (tx *BadgerTransaction) checkNodeCreateConflict(nodeID NodeID) error {

@@ -132,14 +132,32 @@ func (b *BadgerEngine) StreamEdgesByTypeInScope(ctx context.Context, scope, edge
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+
+	// Write-behind overlay: acknowledged-but-unflushed edges replace or
+	// shadow committed rows for their IDs and are visited after the scan.
+	// An empty edgeType streams every edge, so it uses the whole-buffer
+	// edge overlay.
+	var overlay []*Edge
+	var touched map[EdgeID]bool
+	if b.writeBehind != nil {
+		if edgeType != "" {
+			overlay, touched = b.writeBehind.TypeOverlay(edgeType)
+		} else {
+			overlay, touched = b.writeBehind.AllEdgesOverlay()
+		}
+	}
+
 	nowNanos := DecayScoringTime()
 	emit := func(edge *Edge) error {
 		if edge == nil || b.filterEdgeByDecay(edge, nowNanos) {
 			return nil
 		}
+		if len(touched) > 0 && touched[edge.ID] {
+			return nil // the overlay shadows committed rows for this ID
+		}
 		return visit(edge)
 	}
-	return b.withView(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		if edgeType == "" {
 			return b.streamAllEdgesInScopeTxn(ctx, txn, scope, emit)
 		}
@@ -173,6 +191,21 @@ func (b *BadgerEngine) StreamEdgesByTypeInScope(ctx context.Context, scope, edge
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	for _, e := range overlay {
+		if !edgeIDInScope(e.ID, scope) || b.filterEdgeByDecay(e, nowNanos) {
+			continue
+		}
+		if err := visit(copyEdge(e)); err != nil {
+			if err == ErrIterationStopped {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // readEdgeInTxn decodes one edge record; a missing record is (nil, nil).

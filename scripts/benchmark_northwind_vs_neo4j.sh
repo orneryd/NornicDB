@@ -103,7 +103,10 @@ PRODUCTS="${PRODUCTS:-48000}"
 ORDERS="${ORDERS:-48000}"
 ORDER_LINES_MIN="${ORDER_LINES_MIN:-1}"
 ORDER_LINES_MAX="${ORDER_LINES_MAX:-6}"
-BATCH_SIZE="${BATCH_SIZE:-500}"
+# Batch sweep at 48K products/48K orders (2026-10-10, M2 Max, write-behind on):
+#   500: 7.43s  1000: 8.03s  2000: 7.41s (best)  4000: 8.55s  8000: 9.63s  12000: 11.43s
+# Larger batches contend on the server write pipeline; 2000 is the sweet spot.
+BATCH_SIZE="${BATCH_SIZE:-2000}"
 SEED_PARALLEL="${SEED_PARALLEL:-4}"
 SEED="${SEED:-42}"
 NORNIC_DATA_DIR="${NORNIC_DATA_DIR:-${REPO_ROOT}/bench-data/nornic}"

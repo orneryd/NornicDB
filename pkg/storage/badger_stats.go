@@ -650,9 +650,49 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
-	return b.withView(func(txn *badger.Txn) error {
-		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, fn)
+	// Write-behind overlay: acknowledged-but-unflushed nodes shadow
+	// committed rows for their IDs and are visited after the scan.
+	var overlay []*Node
+	var touched map[NodeID]bool
+	if b.writeBehind != nil {
+		overlay, touched = b.writeBehind.AllNodesOverlay()
+	}
+	inScope := func(id NodeID) bool {
+		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
+	}
+	nowNanos := DecayScoringTime()
+	// streamNodesWithOptionsInTxn already applies the projection, decay and
+	// strip filters; this wrapper only shadows rows the overlay replaces.
+	emit := func(node *Node) error {
+		if node == nil {
+			return nil
+		}
+		if len(touched) > 0 && touched[node.ID] {
+			return nil // the write-behind overlay shadows this committed row
+		}
+		return fn(node)
+	}
+	err := b.withView(func(txn *badger.Txn) error {
+		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, emit)
 	})
+	if err != nil {
+		return err
+	}
+	for _, node := range overlay {
+		if !inScope(node.ID) {
+			continue
+		}
+		if opts.ApplyDecayFilter && b.filterNodeByDecay(node, nowNanos) {
+			continue
+		}
+		if err := fn(copyNode(node)); err != nil {
+			if err == ErrIterationStopped {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // streamNodesWithOptionsInTxn is StreamNodesWithOptions over one read
@@ -780,9 +820,27 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	// Write-behind overlay: acknowledged-but-unflushed edges shadow
+	// committed rows for their IDs and are visited after the scan.
+	var overlay []*Edge
+	var touched map[EdgeID]bool
+	if b.writeBehind != nil {
+		overlay, touched = b.writeBehind.AllEdgesOverlay()
+	}
 	nowNanos := DecayScoringTime()
-
-	return b.withView(func(txn *badger.Txn) error {
+	emit := func(edge *Edge) error {
+		if edge == nil {
+			return nil
+		}
+		if len(touched) > 0 && touched[edge.ID] {
+			return nil // the write-behind overlay shadows this committed row
+		}
+		if b.filterEdgeByDecay(edge, nowNanos) {
+			return nil
+		}
+		return fn(edge)
+	}
+	err := b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixEdge}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -810,10 +868,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 			if err != nil {
 				continue // Skip invalid edges
 			}
-			if b.filterEdgeByDecay(edge, nowNanos) {
-				continue
-			}
-			if err := fn(edge); err != nil {
+			if err := emit(edge); err != nil {
 				if err == ErrIterationStopped {
 					return nil // Normal stop
 				}
@@ -822,6 +877,21 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	for _, edge := range overlay {
+		if b.filterEdgeByDecay(edge, nowNanos) {
+			continue
+		}
+		if err := fn(copyEdge(edge)); err != nil {
+			if err == ErrIterationStopped {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // StreamNodeChunks implements StreamingEngine.StreamNodeChunks for batch processing.

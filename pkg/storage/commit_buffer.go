@@ -44,6 +44,13 @@ type bufferedCommit struct {
 	writes    map[string][]byte
 	deletes   map[string]bool
 
+	// version is the MVCC version allocated at ACK time. The DB-local
+	// sequence counter orders the commit's history exactly where it
+	// happened: a transaction that began after the ACK sees this
+	// version, so flushes landing later never look "newer" than reads
+	// pinned after the commit.
+	version MVCCVersion
+
 	counterNodeMax, counterEdgeMax uint64
 	hasCounters                    bool
 
@@ -143,6 +150,27 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 			}
 		case OpDeleteNode:
 			b.deletes[string(op.NodeID)] = true
+			// DETACH DELETE tombstones the node's relationships too. Fold
+			// them into the generation's delete set so the overlay hides
+			// the committed rows immediately and later buffered batches
+			// that still see them through the adjacency index do not
+			// delete (and count) them a second time.
+			for _, edgeID := range op.DeletedEdgeIDs {
+				if edgeID != "" {
+					b.deletes[string(edgeID)] = true
+				}
+			}
+			if op.OldNode != nil {
+				// Mark the deleted node's labels as touched so scan overlays
+				// drop the committed row too, not just the buffered one.
+				for _, label := range op.OldNode.Labels {
+					key := labelSeenKey{label: label, id: op.NodeID}
+					if _, seen := b.labelSeen[key]; !seen {
+						b.labelSeen[key] = struct{}{}
+						b.nodesByLabel[label] = append(b.nodesByLabel[label], op.NodeID)
+					}
+				}
+			}
 		case OpCreateEdge, OpUpdateEdge:
 			if op.Edge != nil && op.Edge.ID != "" {
 				b.edges[op.Edge.ID] = op.Edge
@@ -154,6 +182,13 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 			}
 		case OpDeleteEdge:
 			b.deletes[string(op.EdgeID)] = true
+			if op.OldEdge != nil && op.OldEdge.Type != "" {
+				key := typeSeenKey{edgeType: op.OldEdge.Type, id: op.EdgeID}
+				if _, seen := b.typeSeen[key]; !seen {
+					b.typeSeen[key] = struct{}{}
+					b.edgesByType[op.OldEdge.Type] = append(b.edgesByType[op.OldEdge.Type], op.EdgeID)
+				}
+			}
 		}
 	}
 }
@@ -336,7 +371,7 @@ const defaultWriteBehindMinDelay = 5 * time.Millisecond
 
 // defaultWriteBehindMaxDelay caps the adaptive flush delay: the durability
 // loss window and unflushed memory stay bounded even if drains slow down.
-const defaultWriteBehindMaxDelay = time.Second
+const defaultWriteBehindMaxDelay = 30 * time.Second
 
 // NewWriteBehindBuffer builds a buffer whose rotation delay and generation
 // size adapt to measured drain latency and throughput: after every
@@ -706,6 +741,333 @@ func (w *WriteBehindBuffer) LabelNodes(label string) []*Node {
 		out = append(out, w.draining[i].labelNodes(label)...)
 	}
 	return out
+}
+
+// LabelOverlay returns the buffered state for label as (nodes, touched):
+// nodes holds the newest buffered version of every ID the buffer wrote for
+// the label (IDs the buffer deleted are excluded), newest generation first;
+// touched holds every ID the buffer created, updated or deleted for the
+// label. Callers merge over committed rows: drop committed rows whose ID is
+// in touched and append the returned nodes. The returned node pointers are
+// buffer-owned; callers must copy before handing them out.
+func (w *WriteBehindBuffer) LabelOverlay(label string) ([]*Node, map[NodeID]bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	touched := make(map[NodeID]bool)
+	seen := make(map[NodeID]bool)
+	var out []*Node
+	collect := func(buf *CommitBuffer) {
+		ids := buf.nodesByLabel[label]
+		for i := len(ids) - 1; i >= 0; i-- {
+			id := ids[i]
+			touched[id] = true
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			if buf.deletes[string(id)] {
+				continue
+			}
+			if n, ok := buf.nodes[id]; ok {
+				out = append(out, n)
+			}
+		}
+	}
+	collect(w.active)
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		if w.draining[i].IsApplied() {
+			continue
+		}
+		collect(w.draining[i])
+	}
+	return out, touched
+}
+
+// TypeOverlay is LabelOverlay for buffered edges of edgeType.
+func (w *WriteBehindBuffer) TypeOverlay(edgeType string) ([]*Edge, map[EdgeID]bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	touched := make(map[EdgeID]bool)
+	seen := make(map[EdgeID]bool)
+	var out []*Edge
+	collect := func(buf *CommitBuffer) {
+		ids := buf.edgesByType[edgeType]
+		for i := len(ids) - 1; i >= 0; i-- {
+			id := ids[i]
+			touched[id] = true
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			if buf.deletes[string(id)] {
+				continue
+			}
+			if e, ok := buf.edges[id]; ok {
+				out = append(out, e)
+			}
+		}
+		// Tombstones hide committed rows: a DETACH DELETE folds its
+		// relationships' IDs into the delete set without a type, so
+		// every buffered delete must shadow the committed row regardless
+		// of type (the ID spaces of nodes and edges never collide).
+		for key := range buf.deletes {
+			touched[EdgeID(key)] = true
+		}
+	}
+	collect(w.active)
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		if w.draining[i].IsApplied() {
+			continue
+		}
+		collect(w.draining[i])
+	}
+	return out, touched
+}
+
+// LookupNode resolves the newest buffered version of id, if the buffer has
+// one. The returned pointer is buffer-owned; callers must copy it.
+func (w *WriteBehindBuffer) LookupNode(id NodeID) (*Node, bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if n, ok := w.active.nodes[id]; ok {
+		return n, true
+	}
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		buf := w.draining[i]
+		if buf.IsApplied() {
+			continue
+		}
+		if n, ok := buf.nodes[id]; ok {
+			return n, true
+		}
+	}
+	return nil, false
+}
+
+// NodeDeleted reports whether the buffer's newest state for id is a delete.
+func (w *WriteBehindBuffer) NodeDeleted(id NodeID) bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.active.deletes[string(id)] {
+		return true
+	}
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		buf := w.draining[i]
+		if buf.IsApplied() {
+			continue
+		}
+		if buf.deletes[string(id)] {
+			return true
+		}
+	}
+	return false
+}
+
+// LookupEdge resolves the newest buffered version of id, if the buffer has
+// one. The returned pointer is buffer-owned; callers must copy it.
+func (w *WriteBehindBuffer) LookupEdge(id EdgeID) (*Edge, bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if e, ok := w.active.edges[id]; ok {
+		return e, true
+	}
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		buf := w.draining[i]
+		if buf.IsApplied() {
+			continue
+		}
+		if e, ok := buf.edges[id]; ok {
+			return e, true
+		}
+	}
+	return nil, false
+}
+
+// EdgeDeleted reports whether the buffer's newest state for id is a delete.
+func (w *WriteBehindBuffer) EdgeDeleted(id EdgeID) bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.active.deletes[string(id)] {
+		return true
+	}
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		buf := w.draining[i]
+		if buf.IsApplied() {
+			continue
+		}
+		if buf.deletes[string(id)] {
+			return true
+		}
+	}
+	return false
+}
+
+// AllNodesOverlay returns the buffered node state as (nodes, touched):
+// nodes holds the newest buffered version of every node ID the buffer wrote
+// (deleted IDs excluded), newest generation first; touched holds every node
+// ID the buffer created, updated or deleted. Callers merge over committed
+// rows: drop committed rows whose ID is in touched and append the returned
+// nodes. The returned pointers are buffer-owned; callers must copy them.
+func (w *WriteBehindBuffer) AllNodesOverlay() ([]*Node, map[NodeID]bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	touched := make(map[NodeID]bool)
+	seen := make(map[NodeID]bool)
+	var out []*Node
+	collect := func(buf *CommitBuffer) {
+		for id := range buf.nodes {
+			touched[id] = true
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			if buf.deletes[string(id)] {
+				continue
+			}
+			out = append(out, buf.nodes[id])
+		}
+		for key := range buf.deletes {
+			touched[NodeID(key)] = true
+		}
+	}
+	collect(w.active)
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		if w.draining[i].IsApplied() {
+			continue
+		}
+		collect(w.draining[i])
+	}
+	return out, touched
+}
+
+// AllEdgesOverlay is AllNodesOverlay for buffered edges.
+func (w *WriteBehindBuffer) AllEdgesOverlay() ([]*Edge, map[EdgeID]bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	touched := make(map[EdgeID]bool)
+	seen := make(map[EdgeID]bool)
+	var out []*Edge
+	collect := func(buf *CommitBuffer) {
+		for id := range buf.edges {
+			touched[id] = true
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			if buf.deletes[string(id)] {
+				continue
+			}
+			out = append(out, buf.edges[id])
+		}
+		for key := range buf.deletes {
+			touched[EdgeID(key)] = true
+		}
+	}
+	collect(w.active)
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		if w.draining[i].IsApplied() {
+			continue
+		}
+		collect(w.draining[i])
+	}
+	return out, touched
+}
+
+// LabelCountDelta sums the derived label-count deltas of every buffered
+// commit that has not been replayed yet, across all namespaces. The replay
+// applies the same deltas to the persisted counters when it lands the
+// generation, so reads see committed counts + this delta.
+func (w *WriteBehindBuffer) LabelCountDelta(label string) int64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	var total int64
+	sum := func(buf *CommitBuffer) {
+		for _, c := range buf.commits {
+			for key, delta := range c.labelDeltas {
+				if key.label == label {
+					total += delta
+				}
+			}
+		}
+	}
+	sum(w.active)
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		if w.draining[i].IsApplied() {
+			continue
+		}
+		sum(w.draining[i])
+	}
+	return total
+}
+
+// LabelCountDeltaInNamespace is LabelCountDelta restricted to namespace.
+func (w *WriteBehindBuffer) LabelCountDeltaInNamespace(namespace, label string) int64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	var total int64
+	sum := func(buf *CommitBuffer) {
+		for _, c := range buf.commits {
+			if delta, ok := c.labelDeltas[namespaceLabel{namespace: namespace, label: label}]; ok {
+				total += delta
+			}
+		}
+	}
+	sum(w.active)
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		if w.draining[i].IsApplied() {
+			continue
+		}
+		sum(w.draining[i])
+	}
+	return total
+}
+
+// EdgeTypeCountDelta sums the derived edge-type count deltas of every
+// buffered commit that has not been replayed yet, across all namespaces.
+func (w *WriteBehindBuffer) EdgeTypeCountDelta(edgeType string) int64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	var total int64
+	sum := func(buf *CommitBuffer) {
+		for _, c := range buf.commits {
+			for key, delta := range c.edgeTypeDeltas {
+				if key.edgeType == edgeType {
+					total += delta
+				}
+			}
+		}
+	}
+	sum(w.active)
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		if w.draining[i].IsApplied() {
+			continue
+		}
+		sum(w.draining[i])
+	}
+	return total
+}
+
+// EdgeTypeCountDeltaInNamespace is EdgeTypeCountDelta restricted to
+// namespace.
+func (w *WriteBehindBuffer) EdgeTypeCountDeltaInNamespace(namespace, edgeType string) int64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	var total int64
+	sum := func(buf *CommitBuffer) {
+		for _, c := range buf.commits {
+			if delta, ok := c.edgeTypeDeltas[namespaceEdgeType{namespace: namespace, edgeType: edgeType}]; ok {
+				total += delta
+			}
+		}
+	}
+	sum(w.active)
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		if w.draining[i].IsApplied() {
+			continue
+		}
+		sum(w.draining[i])
+	}
+	return total
 }
 
 // TypeEdges returns buffered edges of edgeType, newest generation first,

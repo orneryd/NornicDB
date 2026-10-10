@@ -48,7 +48,7 @@ With `StrictDurability` enabled the buffer stays off even when
 After every successful flush the buffer measures two things:
 
 1. **Drain latency** — how long the generation took to land in Badger. The
-   rotation delay moves toward this value (EWMA), clamped to 5ms–1s.
+   rotation delay moves toward this value (EWMA), clamped to 5ms–30s.
 2. **Drain throughput** — operations per second. The generation size threshold
    becomes `throughput × delay`, clamped to `[1,000 ops, max ops]`.
 
@@ -68,7 +68,7 @@ locks) dominate.
 
   ```
   write-behind sizing: fixed max 50000 ops binds at ~120000 ops per flush interval (50ms); effective flush delay ~20.8ms — a smaller max increases flush frequency and per-flush overhead
-  write-behind flush delay pinned at 1s: measured drain latency 1.8s exceeds the bound; the flusher cannot keep up with the write rate
+  write-behind flush delay pinned at 30s: measured drain latency 45s exceeds the bound; the flusher cannot keep up with the write rate
   ```
 
 ## Measured throughput

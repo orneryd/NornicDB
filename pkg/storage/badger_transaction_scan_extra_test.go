@@ -89,8 +89,13 @@ func TestBadgerTransaction_SnapshotIsolationConflict_MaxSequenceFallback(t *test
 	require.True(t, tx.snapshotIsolationConflict(MVCCVersion{CommitTimestamp: time.Unix(201, 0).UTC(), CommitSequence: maxMVCCCommitSequence}))
 	require.False(t, tx.snapshotIsolationConflict(MVCCVersion{CommitTimestamp: time.Unix(199, 0).UTC(), CommitSequence: maxMVCCCommitSequence}))
 
-	// Different sequence uses sequence ordering.
+	// Different sequence uses timestamp ordering first: a head with a
+	// later sequence but an earlier timestamp is logically older (the
+	// write-behind flusher backdates heads to the buffered ACK time).
 	tx.readTS = MVCCVersion{CommitTimestamp: time.Unix(500, 0).UTC(), CommitSequence: 10}
-	require.True(t, tx.snapshotIsolationConflict(MVCCVersion{CommitTimestamp: time.Unix(100, 0).UTC(), CommitSequence: 11}))
-	require.False(t, tx.snapshotIsolationConflict(MVCCVersion{CommitTimestamp: time.Unix(600, 0).UTC(), CommitSequence: 10}))
+	require.False(t, tx.snapshotIsolationConflict(MVCCVersion{CommitTimestamp: time.Unix(100, 0).UTC(), CommitSequence: 11}), "backdated head is older than the snapshot")
+	require.True(t, tx.snapshotIsolationConflict(MVCCVersion{CommitTimestamp: time.Unix(600, 0).UTC(), CommitSequence: 9}))
+	// Equal timestamps fall back to sequence ordering.
+	require.True(t, tx.snapshotIsolationConflict(MVCCVersion{CommitTimestamp: time.Unix(500, 0).UTC(), CommitSequence: 11}))
+	require.False(t, tx.snapshotIsolationConflict(MVCCVersion{CommitTimestamp: time.Unix(500, 0).UTC(), CommitSequence: 10}))
 }

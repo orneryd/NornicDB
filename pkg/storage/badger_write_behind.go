@@ -45,6 +45,16 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 		writes:    tx.pendingWrites,
 		deletes:   tx.pendingDeletes,
 	}
+	// Allocate the commit's MVCC version NOW, at ACK time: the DB-local
+	// sequence counter pins the commit's place in history, so the flusher
+	// materializes heads that are already ordered against every later
+	// transaction's snapshot — no backdating or flush-time ordering games.
+	if version, err := tx.engine.allocateMVCCVersion(tx.badgerTx, tx.namespace, time.Now()); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	} else {
+		c.version = version
+	}
 	c.counterNodeMax, c.counterEdgeMax = tx.engine.idDict.flushTxnCounters(tx.badgerTx)
 	c.hasCounters = true
 	c.propKeyDrain = tx.engine.propKeyDict.flushTxnCounters(tx.badgerTx)
@@ -76,6 +86,32 @@ func cloneInt64Map[K comparable](m map[K]int64) map[K]int64 {
 		out[k] = v
 	}
 	return out
+}
+
+// persistReplayTxnCounters makes one generation's property-key tokens
+// durable through the generation's commit writer: through the large commit
+// once it has turned large (the flusher holds the commit gate exclusively
+// and must not re-enter it), and through ordinary commits otherwise,
+// mirroring the sync commit path's finish.
+func (b *BadgerEngine) persistReplayTxnCounters(cw *commitWriter, drain propKeyTxnDrain) error {
+	if drain.empty() {
+		return nil
+	}
+	var to batchTarget = b.db
+	if cw.large != nil {
+		to = cw.large
+	}
+	w := &batchWriter{to: to}
+	defer w.discard()
+	err := drain.writeTo(w)
+	if err == nil {
+		err = w.flush()
+	}
+	if err != nil {
+		return err
+	}
+	b.propKeyDict.markPersisted(drain)
+	return nil
 }
 
 // replayWriteBehind replays one drained generation into Badger: a single
@@ -118,13 +154,17 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 	}
 
 	for _, c := range commits {
-		if _, ok := versions[c.namespace]; !ok {
-			v, err := b.allocateMVCCVersion(txn, c.namespace, time.Now())
+		// The commit's MVCC version was allocated at ACK time; the flusher
+		// only materializes it, so head order matches commit order.
+		v := c.version
+		if v.IsZero() {
+			var err error
+			v, err = b.allocateMVCCVersion(txn, c.namespace, time.Now())
 			if err != nil {
 				return abort(err)
 			}
-			versions[c.namespace] = v
 		}
+		versions[c.namespace] = v
 		if c.hasCounters {
 			anyCounters = true
 			if c.counterNodeMax > maxNode {
@@ -135,8 +175,12 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 			}
 		}
 		// Property-key tokens persist out-of-transaction, exactly as the
-		// normal commit path does (they never enter the user txn).
-		if err := b.propKeyDict.persistTxnCounters(b.db, c.propKeyDrain); err != nil {
+		// normal commit path does (they never enter the user txn). When
+		// the generation has turned into a large commit the flusher holds
+		// the commit gate exclusively, so the token batches must ride the
+		// large commit: a db-targeted writer would re-enter the gate's
+		// RLock and deadlock against this goroutine's own Lock.
+		if err := b.persistReplayTxnCounters(cw, c.propKeyDrain); err != nil {
 			return abort(err)
 		}
 		if err := b.materializeMVCCCommit(w, versions[c.namespace], c.ops); err != nil {
@@ -239,6 +283,11 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 			}
 		}
 	}
+	// Close the double-count window before releasing the count locks: the
+	// derived-count fast paths hold these same locks, so they observe
+	// either the persisted deltas AND the applied flag, or neither —
+	// never the persisted deltas while the buffer still sums them.
+	buf.markApplied()
 	if holdEdge {
 		b.edgeTypeCountWriteMu.Unlock()
 	}

@@ -234,6 +234,9 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 		}
 	}
 
+	if b.writeBehind != nil {
+		nodes = b.mergeWriteBehindNodes(nodes, label, scope, nil)
+	}
 	return nodes, nil
 }
 
@@ -259,10 +262,18 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 		return err
 	}
 
+	// Write-behind overlay: acknowledged-but-unflushed writes replace or
+	// shadow committed rows for their IDs and are visited after the scan.
+	var overlay []*Node
+	var touched map[NodeID]bool
+	if b.writeBehind != nil {
+		overlay, touched = b.writeBehind.LabelOverlay(label)
+	}
+
 	include := propertyProjectionSet(properties)
 	nowNanos := DecayScoringTime()
 	covers := b.labelCoversScope(scope, label)
-	return b.withView(func(txn *badger.Txn) error {
+	err := b.withView(func(txn *badger.Txn) error {
 		decodeValue := func(nodeID NodeID, value []byte) (*Node, error) {
 			if properties == nil {
 				return b.decodeNodeWithEmbeddings(txn, value, nodeID)
@@ -281,6 +292,9 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 		emit := func(node *Node) error {
 			if node == nil || b.filterNodeByDecay(node, nowNanos) {
 				return nil
+			}
+			if len(touched) > 0 && touched[node.ID] {
+				return nil // the overlay shadows committed rows for this ID
 			}
 			return visit(node)
 		}
@@ -383,6 +397,46 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	for _, n := range overlay {
+		if !nodeIDInScope(n.ID, scope) || b.filterNodeByDecay(n, nowNanos) {
+			continue
+		}
+		if err := visit(projectCachedNodeForRead(n, properties)); err != nil {
+			if err == ErrIterationStopped {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// mergeWriteBehindNodes folds the write-behind overlay for label over
+// committed rows: rows whose IDs the buffer touched are dropped and the
+// buffered versions (copied, or projected for the caller) take their place.
+func (b *BadgerEngine) mergeWriteBehindNodes(nodes []*Node, label, scope string, projected []string) []*Node {
+	overlay, touched := b.writeBehind.LabelOverlay(label)
+	if len(touched) == 0 {
+		return nodes
+	}
+	nowNanos := DecayScoringTime()
+	out := nodes[:0]
+	for _, n := range nodes {
+		if touched[n.ID] {
+			continue
+		}
+		out = append(out, n)
+	}
+	for _, n := range overlay {
+		if !nodeIDInScope(n.ID, scope) || b.filterNodeByDecay(n, nowNanos) {
+			continue
+		}
+		out = append(out, projectCachedNodeForRead(n, projected))
+	}
+	return out
 }
 
 func projectCachedNodeForRead(node *Node, properties []string) *Node {
@@ -414,6 +468,11 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 	defer b.observeStorageOp(start, b.opDurScan)
 	var nodes []*Node
 	var loaded []*Node
+	var overlay []*Node
+	var touched map[NodeID]bool
+	if b.writeBehind != nil {
+		overlay, touched = b.writeBehind.AllNodesOverlay()
+	}
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
 	err := b.withView(func(txn *badger.Txn) error {
@@ -428,6 +487,9 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 				continue
 			}
 			nodeID := NodeID(key[1:])
+			if len(touched) > 0 && touched[nodeID] {
+				continue // the write-behind overlay shadows committed rows
+			}
 
 			b.nodeCacheMu.RLock()
 			if cached, ok := b.nodeCache[nodeID]; ok {
@@ -469,6 +531,12 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 			b.cacheFillNode(gen, node)
 		}
 	}
+	for _, node := range overlay {
+		if b.filterNodeByDecay(node, nowNanos) {
+			continue
+		}
+		nodes = append(nodes, copyNode(node))
+	}
 	return nodes, err
 }
 
@@ -477,6 +545,11 @@ func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)
 	var edges []*Edge
+	var overlay []*Edge
+	var touched map[EdgeID]bool
+	if b.writeBehind != nil {
+		overlay, touched = b.writeBehind.AllEdgesOverlay()
+	}
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixEdge}
@@ -488,6 +561,9 @@ func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
 			var edgeID EdgeID
 			if len(key) > 1 {
 				edgeID = EdgeID(key[1:])
+			}
+			if len(touched) > 0 && touched[edgeID] {
+				continue // the write-behind overlay shadows committed rows
 			}
 			var edge *Edge
 			if err := it.Item().Value(func(val []byte) error {
@@ -508,6 +584,15 @@ func (b *BadgerEngine) AllEdges() ([]*Edge, error) {
 		return nil
 	})
 
+	if err != nil {
+		return nil, err
+	}
+	for _, edge := range overlay {
+		if b.filterEdgeByDecay(edge, nowNanos) {
+			continue
+		}
+		edges = append(edges, copyEdge(edge))
+	}
 	return edges, err
 }
 
@@ -520,13 +605,17 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 		return b.AllEdges() // No type filter = all edges
 	}
 
-	// Check cache first
-	b.edgeTypeCacheMu.RLock()
-	if cached, ok := b.edgeTypeCache[edgeType]; ok {
+	// With write-behind active, buffered edges are not in the whole-type
+	// cache, so a cached result would miss them; bypass it.
+	if b.writeBehind == nil {
+		// Check cache first
+		b.edgeTypeCacheMu.RLock()
+		if cached, ok := b.edgeTypeCache[edgeType]; ok {
+			b.edgeTypeCacheMu.RUnlock()
+			return cached, nil
+		}
 		b.edgeTypeCacheMu.RUnlock()
-		return cached, nil
 	}
-	b.edgeTypeCacheMu.RUnlock()
 
 	var edges []*Edge
 	nowNanos := DecayScoringTime()
@@ -590,8 +679,38 @@ func (b *BadgerEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 		return nil, err
 	}
 
+	if b.writeBehind != nil {
+		edges = b.mergeWriteBehindEdges(edges, edgeType)
+		return edges, nil
+	}
+
 	b.edgeTypeCacheFill(gen, edgeType, edges)
 	return edges, nil
+}
+
+// mergeWriteBehindEdges folds the write-behind overlay for edgeType over
+// committed rows: rows whose IDs the buffer touched are dropped and the
+// buffered versions (copied for the caller) take their place.
+func (b *BadgerEngine) mergeWriteBehindEdges(edges []*Edge, edgeType string) []*Edge {
+	overlay, touched := b.writeBehind.TypeOverlay(edgeType)
+	if len(touched) == 0 {
+		return edges
+	}
+	nowNanos := DecayScoringTime()
+	out := edges[:0]
+	for _, e := range edges {
+		if touched[e.ID] {
+			continue
+		}
+		out = append(out, e)
+	}
+	for _, e := range overlay {
+		if b.filterEdgeByDecay(e, nowNanos) {
+			continue
+		}
+		out = append(out, copyEdge(e))
+	}
+	return out
 }
 
 // edgeTypeCacheFill caches the edges of edgeType a read captured gen before
