@@ -376,6 +376,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.optional_match_required", Constructor: "CypherCoreOptionalMatchRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.parameter_type_mismatch", Constructor: "CypherCoreParameterTypeMismatch", Fields: []string{"Expected", "Parameter", "Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.parse_failed", Constructor: "CypherCoreParseFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.pattern_node_value_type", Constructor: "CypherCorePatternNodeValueType", Fields: []string{"Type", "Variable"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.percentile_not_number", Constructor: "CypherCorePercentileNotNumber", Fields: []string{"Value"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.percentile_out_of_range", Constructor: "CypherCorePercentileOutOfRange", Fields: []string{"Value"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.point_coordinates_missing", Constructor: "CypherCorePointCoordinatesMissing", Fields: []string{}, PluralForms: []string{"other"}},
