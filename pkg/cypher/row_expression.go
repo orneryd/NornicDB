@@ -402,52 +402,14 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			if !resolved {
 				return nil, false, nil
 			}
-			// null in, null out (size(null), head(null), ...).
-			if value == nil {
-				return nil, true, nil
-			}
-			if text, isString := value.(string); isString {
-				switch lowerASCII(function) {
-				case "size":
-					return evaluateCypherSize(value)
-				case "reverse":
-					runes := []rune(text)
-					for left, right := 0, len(runes)-1; left < right; left, right = left+1, right-1 {
-						runes[left], runes[right] = runes[right], runes[left]
-					}
-					return string(runes), true, nil
-				default:
-					return nil, false, nil
-				}
-			}
-			valueType := reflect.TypeOf(value)
-			if valueType == nil || (valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array) {
-				if strings.EqualFold(function, "size") {
-					return evaluateCypherSize(value)
-				}
-				return nil, false, nil
-			}
-			items := toAnySlice(value)
-			switch lowerASCII(function) {
-			case "head":
-				if len(items) == 0 {
-					return nil, true, nil
-				}
-				return items[0], true, nil
-			case "last":
-				if len(items) == 0 {
-					return nil, true, nil
-				}
-				return items[len(items)-1], true, nil
-			case "reverse":
-				reversed := make([]interface{}, len(items))
-				for index := range items {
-					reversed[len(items)-1-index] = items[index]
-				}
-				return reversed, true, nil
-			default:
+			if strings.EqualFold(function, "size") {
 				return evaluateCypherSize(value)
 			}
+			result, err := evaluateListAccessFunction(lowerASCII(function), value)
+			if err != nil {
+				return nil, false, err
+			}
+			return result, true, nil
 		case "nodes", "relationships":
 			value, resolved, err := e.evaluateRowValue(argument, values)
 			if err != nil {

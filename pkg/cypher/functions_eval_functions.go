@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -309,20 +311,24 @@ skipArrayIndexing:
 	if matchFuncStartAndSuffix(expr, "head") {
 		inner := extractFuncArgs(expr, "head")
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if list, ok := innerVal.([]interface{}); ok && len(list) > 0 {
-			return list[0]
+		result, err := evaluateListAccessFunction("head", innerVal)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil
 		}
-		return nil
+		return result
 	}
 
 	// last(list) - return last element
 	if matchFuncStartAndSuffix(expr, "last") {
 		inner := extractFuncArgs(expr, "last")
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if list, ok := innerVal.([]interface{}); ok && len(list) > 0 {
-			return list[len(list)-1]
+		result, err := evaluateListAccessFunction("last", innerVal)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil
 		}
-		return nil
+		return result
 	}
 
 	// tail(list) - return list without first element
@@ -339,21 +345,12 @@ skipArrayIndexing:
 	if matchFuncStartAndSuffix(expr, "reverse") {
 		inner := extractFuncArgs(expr, "reverse")
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if list, ok := innerVal.([]interface{}); ok {
-			result := make([]interface{}, len(list))
-			for i, v := range list {
-				result[len(list)-1-i] = v
-			}
-			return result
+		result, err := evaluateListAccessFunction("reverse", innerVal)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil
 		}
-		if str, ok := innerVal.(string); ok {
-			runes := []rune(str)
-			for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
-				runes[i], runes[j] = runes[j], runes[i]
-			}
-			return string(runes)
-		}
-		return nil
+		return result
 	}
 
 	// range(start, end) or range(start, end, step)
@@ -1668,4 +1665,50 @@ func randomCypherFloat() float64 {
 	var bytes [8]byte
 	_, _ = rand.Read(bytes[:])
 	return float64(bytes[0]^bytes[1]^bytes[2]^bytes[3]) / 256.0
+}
+
+// evaluateListAccessFunction is head(), last() or reverse() of value, as
+// Neo4j computes them in both evaluators: null gives null; head and last take
+// a list (its first or last item, null for an empty list); reverse takes a
+// string or a list. Any other value is the function's TypeError (Neo4j 5.26
+// and 2026.09; head('ab') too).
+func evaluateListAccessFunction(function string, value interface{}) (interface{}, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if text, isString := value.(string); isString && function == "reverse" {
+		runes := []rune(text)
+		for left, right := 0, len(runes)-1; left < right; left, right = left+1, right-1 {
+			runes[left], runes[right] = runes[right], runes[left]
+		}
+		return string(runes), nil
+	}
+	if _, isString := value.(string); !isString {
+		if valueType := reflect.TypeOf(value); valueType.Kind() == reflect.Slice || valueType.Kind() == reflect.Array {
+			items := toAnySlice(value)
+			switch function {
+			case "head":
+				if len(items) == 0 {
+					return nil, nil
+				}
+				return items[0], nil
+			case "last":
+				if len(items) == 0 {
+					return nil, nil
+				}
+				return items[len(items)-1], nil
+			}
+			reversed := make([]interface{}, len(items))
+			for index := range items {
+				reversed[len(items)-1-index] = items[index]
+			}
+			return reversed, nil
+		}
+	}
+	expected := "a list"
+	if function == "reverse" {
+		expected = "a string or a list"
+	}
+	return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+		localization.CypherCoreFunctionArgumentInvalid(function, expected, neo4jValueRepr(value)))
 }
