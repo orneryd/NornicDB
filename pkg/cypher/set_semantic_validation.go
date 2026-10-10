@@ -435,7 +435,7 @@ func collectFunctionExpressionBindings(expression string, bindings map[string]st
 			}
 			nameStart := searchFrom + relative
 			open := nameStart + len(functionName)
-			if nameStart > 0 && isIdentifierPart(expression[nameStart-1]) {
+			if nameStart > 0 && isIdentByte(expression[nameStart-1]) {
 				searchFrom = open
 				continue
 			}

@@ -79,7 +79,7 @@ func compileTemporalPattern(pattern string) (items []patternItem, ok bool) {
 	for index := 0; index < len(pattern); {
 		c := pattern[index]
 		switch {
-		case isASCIILetter(c):
+		case isPatternLetter(c):
 			end := index + 1
 			for end < len(pattern) && pattern[end] == c {
 				end++
@@ -87,7 +87,7 @@ func compileTemporalPattern(pattern string) (items []patternItem, ok bool) {
 			count := end - index
 			index = end
 			if c == 'p' {
-				if end >= len(pattern) || !isASCIILetter(pattern[end]) {
+				if end >= len(pattern) || !isPatternLetter(pattern[end]) {
 					return nil, false
 				}
 				pad = count
@@ -677,4 +677,10 @@ func formatPatternOffset(letter byte, count, seconds int) string {
 		text += separator + padDigits(strconv.Itoa(seconds%60), 2)
 	}
 	return text
+}
+
+// isPatternLetter reports whether c is a pattern letter of a temporal format
+// (yyyy, MM, …): an ASCII letter. Every other character is literal text.
+func isPatternLetter(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
