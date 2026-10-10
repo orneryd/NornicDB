@@ -15,6 +15,7 @@ func TestParenthesisedPaths(t *testing.T) {
 	for query, want := range map[string][][]interface{}{
 		"MATCH p = ((a:SP {id: 1})-->(b)) RETURN count(p) AS c":                                        {l(int64(2))},
 		"MATCH ((a:SP {id: 1})-->(b)) RETURN count(*) AS c":                                            {l(int64(2))},
+		"MATCH ((a:SP {id: 1})-->(b) WHERE ')(' <> '') RETURN count(*) AS c":                           {l(int64(2))},
 		"MATCH ((a:SP {id: 1})-->(b) WHERE b.id > 2) RETURN b.id AS b":                                 {l(int64(3))},
 		"MATCH p = ((a:SP {id: 1})-->(b) WHERE b.id > 2) RETURN length(p) AS l":                        {l(int64(1))},
 		"MATCH ((a:SP {id: 1})-->(b)), ((c:SP {id: 2})-->(d)) RETURN count(*) AS c":                    {l(int64(2))},
@@ -49,4 +50,7 @@ func TestParenthesisedPaths(t *testing.T) {
 	text = "((a)-->(b)"
 	require.NoError(t, (&labelExpressionRewriter{query: text}).plainParenthesisedPath(0, len(text), &rewrite))
 	require.Empty(t, rewrite.pathWheres)
+	text = "')(' ((a)-->(b))"
+	require.ErrorContains(t, (&labelExpressionRewriter{query: text}).plainParenthesisedPath(0, len(text), &rewrite),
+		"Juxtaposition", "a quote's parenthesis is text")
 }
