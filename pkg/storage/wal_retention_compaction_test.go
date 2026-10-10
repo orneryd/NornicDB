@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -103,6 +104,24 @@ func TestAutoCompactionHonoursWALRetention(t *testing.T) {
 		manifest, err := loadWALManifest(wal.config.Dir)
 		require.NoError(t, err)
 		require.Len(t, manifest.Segments, 1)
+	})
+
+	t.Run("nothing sealed yet keeps nothing to remove", func(t *testing.T) {
+		_, wal := newRetentionWALEngine(t, t.TempDir(), time.Hour, 0)
+		require.NoError(t, wal.TruncateAfterSnapshot(1))
+		manifest, err := loadWALManifest(wal.config.Dir)
+		require.NoError(t, err)
+		require.Empty(t, manifest.Segments)
+	})
+
+	t.Run("a segment that can't be sealed fails the truncation", func(t *testing.T) {
+		root := t.TempDir()
+		walEngine, wal := newRetentionWALEngine(t, root, time.Hour, 0)
+		createWALNodes(t, walEngine, 1, 1)
+		// A file where the segments directory goes.
+		require.NoError(t, os.RemoveAll(walSegmentsDir(wal.config.Dir)))
+		require.NoError(t, os.WriteFile(walSegmentsDir(wal.config.Dir), []byte("x"), 0o644))
+		require.ErrorContains(t, wal.TruncateAfterSnapshot(wal.sequence.Load()), "failed to seal segment before retention")
 	})
 
 	t.Run("without retention covered entries are dropped", func(t *testing.T) {
