@@ -21,7 +21,15 @@ const (
 	MessageSearchExactScoringFailed        MessageID = "search.exact_scoring_failed"
 	MessageSearchGPUEmbeddingUnavailable   MessageID = "search.gpu_embedding_index_unavailable"
 	MessageSearchDimensionsPositive        MessageID = "search.dimensions_must_be_positive"
+	MessageSearchGroupByRankedMode         MessageID = "search.group_by_ranked_mode"
 )
+
+// SearchGroupByRankedMode identifies group_by requested in ranked
+// continuation mode, which pages ranked hits as they are discovered and so
+// can't group them: grouping needs the whole ranked phase first.
+func SearchGroupByRankedMode() Message {
+	return Message{ID: MessageSearchGroupByRankedMode, Fallback: "group_by requires continuation mode ranked_then_id or id; ranked mode pages hits as they are found and does not group them"}
+}
 
 // AutoEmbedNotEnabled identifies an unavailable automatic embedding queue.
 func AutoEmbedNotEnabled() Message {

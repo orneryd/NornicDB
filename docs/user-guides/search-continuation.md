@@ -30,7 +30,12 @@ or a requested result ceiling.
 `ranked_limit` fixes the ranked prefix in `ranked_then_id`. `group_by` names a
 flat property containing a nonempty UTF-8 string. Grouping happens before
 pagination: one logical asset consumes one page slot, while its ordered
-`passages` collection retains matching child nodes.
+`passages` collection retains matching child nodes. Grouping applies to
+`ranked_then_id` and `id`, which build their population before the first page;
+`ranked` mode pages hits as they are discovered, so `group_by` with `ranked`
+(or with no `mode`, which is `ranked`) is an error. For grouped ranked results,
+use `ranked_then_id`: its ranked groups come first, and a client that wants
+only those stops at the first row whose `phase` is `catalog`.
 
 `ranked_pool_exhausted` is conservative. It is `true` for `id` mode or when all
 participating retrieval branches establish exhaustion without truncating their

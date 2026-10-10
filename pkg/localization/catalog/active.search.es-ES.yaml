@@ -13,6 +13,8 @@
 - id: search.node_not_found
   description: Error al buscar un nodo para similitud vectorial. ID no se traduce.
   other: "No se encontró el nodo '{{.ID}}'"
+- id: search.group_by_ranked_mode
+  other: "group_by requiere el modo de continuación ranked_then_id o id; el modo ranked pagina los resultados a medida que los encuentra y no los agrupa"
 - id: search.query_embedding_required
   description: Error de validación de consulta vectorial cuando falta el embedding.
   other: se requiere el embedding de la consulta

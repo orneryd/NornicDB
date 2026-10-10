@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -199,6 +200,13 @@ func (s *Service) SearchTextContinuation(
 	}
 	if request.Mode == "" {
 		request.Mode = SearchContinuationRanked
+	}
+	// Grouping needs the whole ranked phase before the first page (a later
+	// discovery can replace a group's best passage), which the complete
+	// modes build; ranked mode pages hits as they are found, so a group_by
+	// there is refused, not ignored.
+	if request.GroupBy != "" && request.Mode == SearchContinuationRanked {
+		return nil, localizedError(localization.SearchGroupByRankedMode(), nil)
 	}
 	if request.Mode == SearchContinuationID {
 		if opts == nil {

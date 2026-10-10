@@ -1561,6 +1561,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "search.gpu_embedding_index_unavailable", Constructor: "SearchGPUEmbeddingUnavailable", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "search.gpu_kmeans_clustered_index_required", Constructor: "SearchGPUKMeansClusteredIndexRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "search.gpu_not_enabled", Constructor: "SearchGPUNotEnabled", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "search.group_by_ranked_mode", Constructor: "SearchGroupByRankedMode", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "search.hnsw_gpu_build_dimension_invalid", Constructor: "SearchHNSWGPUBuildDimensionInvalid", Fields: []string{"Dimensions"}, PluralForms: []string{"other"}},
 	{ID: "search.hnsw_index_creation_failed", Constructor: "SearchHNSWIndexCreationFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "search.index_building", Constructor: "SearchIndexBuilding", Fields: []string{}, PluralForms: []string{"other"}},

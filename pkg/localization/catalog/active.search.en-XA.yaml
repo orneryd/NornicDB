@@ -13,6 +13,8 @@
 - id: search.node_not_found
   description: Pseudo-locale vector-similarity node lookup.
   other: "[!! Node '{{.ID}}' not found !!]"
+- id: search.group_by_ranked_mode
+  other: "[!! group_by requires continuation mode ranked_then_id or id; ranked mode pages hits as they are found and does not group them !!]"
 - id: search.query_embedding_required
   description: Expanded pseudo-locale vector-query embedding validation.
   other: "[!! query embedding required !!]"

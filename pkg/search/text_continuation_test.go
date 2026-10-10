@@ -1310,6 +1310,22 @@ func TestSearchTextContinuationIDModeGroupingIsIndependentOfScanOrder(t *testing
 	require.Equal(t, []string{"frame-x", "frame-y", "frame-z"}, passageIDs(page.Results[1].Passages))
 }
 
+// group_by is refused in ranked mode (named or by default), which pages hits as
+// they are found and can't group them; it isn't silently ignored.
+func TestSearchTextContinuationRankedModeRejectsGroupBy(t *testing.T) {
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	service := NewService(engine)
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	for _, mode := range []SearchContinuationMode{SearchContinuationRanked, ""} {
+		_, err := service.SearchTextContinuation(
+			context.Background(), "q", DefaultSearchOptions(),
+			SearchContinuationRequest{Owner: "alice", Database: "nornic", Mode: mode, GroupBy: "asset_id", N: 1},
+			nil, nil, nil, ChunkedSearchErrorPolicy{},
+		)
+		require.ErrorContains(t, err, "group_by requires continuation mode ranked_then_id or id", "mode %q", mode)
+	}
+}
+
 func TestSearchTextContinuationIDModeRejectsInvalidGroupKeys(t *testing.T) {
 	testCases := []struct {
 		name       string
