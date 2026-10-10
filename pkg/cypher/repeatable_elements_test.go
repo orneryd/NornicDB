@@ -72,7 +72,7 @@ func TestRepeatableElements(t *testing.T) {
 	_, err := exec.Execute(ctx, "RETURN __nornic_repeatable_elements() AS x", nil)
 	require.ErrorContains(t, err, "a path selector or match mode can only be used in a MATCH pattern")
 
-	rewritten, _, err := desugarLabelExpressions("MATCH REPEATABLE ELEMENTS p = ANY 2 (a)-->{1,3}(b:A|B) WHERE a.x = 1 RETURN p")
+	rewritten, _, err := desugarLabelExpressions("MATCH REPEATABLE ELEMENTS p = ANY 2 (a)-->{1,3}(b:A|B) WHERE a.x = 1 RETURN p", nil)
 	require.NoError(t, err)
 	require.Equal(t, "MATCH  p = shortestPath((a)-[*1..3]->(b)) WHERE __nornic_repeatable_elements() AND __nornic_path_selector('ANY', 2, false, '', b:A|B) AND a.x = 1 RETURN p", rewritten)
 }

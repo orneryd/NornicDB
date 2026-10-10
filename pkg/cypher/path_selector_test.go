@@ -168,7 +168,7 @@ func TestPathSelectorRewrite(t *testing.T) {
 		"MATCH DIFFERENT RELATIONSHIPS (a)-->(b) RETURN a":                                    "MATCH  (a)-->(b) RETURN a",
 		"MATCH (n) WHERE all(x IN [1] WHERE x = 1) RETURN n":                                  "MATCH (n) WHERE all(x IN [1] WHERE x = 1) RETURN n",
 	} {
-		rewritten, _, err := desugarLabelExpressions(query)
+		rewritten, _, err := desugarLabelExpressions(query, nil)
 		require.NoError(t, err, query)
 		require.Equal(t, want, rewritten, query)
 	}
