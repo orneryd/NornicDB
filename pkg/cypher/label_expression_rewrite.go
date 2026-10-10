@@ -440,7 +440,7 @@ func (r *labelExpressionRewriter) patternWithWhere(start, end, whereStart, where
 	if err != nil {
 		return err
 	}
-	repeated, err := r.repeatedRelationshipVariables(prefixes.patternStart, prefixes.patternEnd)
+	repeated, err := r.repeatedRelationshipVariables(prefixes.patternStart, prefixes.patternEnd, prefixes.modeWritten)
 	if err != nil {
 		return err
 	}

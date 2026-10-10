@@ -97,6 +97,12 @@ MATCH REPEATABLE ELEMENTS p = (a {name: 'A'})-->{1,4}(a) RETURN p   -- walks bac
 
 NornicDB reads path modes and match modes in Cypher 5 statements as well.
 
+A relationship variable named twice in one `MATCH` (`(a)-[r]->()-[r]->(a)`)
+is a SyntaxError when no match mode is written, as the openCypher TCK
+requires. With a match mode written it is one relationship bound to both
+places, as in Neo4j: no rows under `DIFFERENT RELATIONSHIPS`, a join under
+`REPEATABLE ELEMENTS`.
+
 ### Quantified Path Patterns
 
 A parenthesised path followed by a quantifier (`+`, `*`, `{n}`, `{m,n}`)

@@ -502,6 +502,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphermatching.relationship_type_colon_conjunction", Constructor: "CypherMatchingRelationshipTypeColonConjunction", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.relationship_type_colon_disjunction", Constructor: "CypherMatchingRelationshipTypeColonDisjunction", Fields: []string{"Expression"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.relationship_type_expression_in_write_pattern", Constructor: "CypherMatchingRelationshipTypeExpressionInWritePattern", Fields: []string{"Clause"}, PluralForms: []string{"other"}},
+	{ID: "cyphermatching.relationship_variable_repeated", Constructor: "CypherMatchingRelationshipVariableRepeated", Fields: []string{"Variable"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.repeatable_elements_path_mode", Constructor: "CypherMatchingRepeatableElementsPathMode", Fields: []string{"Mode"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.repeatable_elements_unbounded", Constructor: "CypherMatchingRepeatableElementsUnbounded", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.return_after_with_required", Constructor: "CypherMatchingReturnAfterWithRequired", Fields: []string{}, PluralForms: []string{"other"}},
