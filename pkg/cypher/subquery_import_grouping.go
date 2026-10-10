@@ -13,12 +13,21 @@ type cypherVersionKey struct{}
 
 // withCypherVersion records the language version of the statement that
 // starts here. A nested statement (a subquery body run on its own, with no
-// CYPHER prefix) keeps its parent's version.
+// CYPHER prefix) keeps its parent's version. Cypher 5, the default, isn't
+// recorded: a nested statement under a Cypher 5 one reads 5 either way, and
+// the common statement costs no allocation.
 func withCypherVersion(ctx context.Context, query string) context.Context {
 	if _, ok := ctx.Value(cypherVersionKey{}).(string); ok {
 		return ctx
 	}
-	return context.WithValue(ctx, cypherVersionKey{}, cypherGrammarVersion(query))
+	switch version := cypherGrammarVersion(query); version {
+	case "5":
+		return ctx
+	case "25":
+		return context.WithValue(ctx, cypherVersionKey{}, "25")
+	default:
+		return context.WithValue(ctx, cypherVersionKey{}, version)
+	}
 }
 
 // cypherVersionFromContext is the statement's language version, "5" by

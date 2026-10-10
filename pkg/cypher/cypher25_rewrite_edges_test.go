@@ -255,6 +255,8 @@ func TestCypher25BatchTwoHelperEdges(t *testing.T) {
 	require.Equal(t, "25", cypherVersionFromContext(outer))
 	require.Equal(t, outer, withCypherVersion(outer, "RETURN 1"))
 	require.Equal(t, "5", cypherVersionFromContext(withCypherVersion(ctx, "RETURN 1")))
+	require.Equal(t, ctx, withCypherVersion(ctx, "CYPHER 5 RETURN 1"))
+	require.Equal(t, "4", cypherVersionFromContext(withCypherVersion(ctx, "CYPHER 4 RETURN 1")))
 
 	// type(x) / id(x) of relationship items, where SET evaluates them.
 	_, err = exec.Execute(ctx, "CREATE (:Hr)-[:HrR]->(:Hr)", nil)
