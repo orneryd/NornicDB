@@ -60,6 +60,7 @@ const (
 	MessageCypherMatchingPathSelectorCountType                    MessageID = "cyphermatching.path_selector_count_type"
 	MessageCypherMatchingPatternMarkerOutsideMatch                MessageID = "cyphermatching.pattern_marker_outside_match"
 	MessageCypherMatchingVariableTypeConflict                     MessageID = "cyphermatching.variable_type_conflict"
+	MessageCypherMatchingRelationshipVariableRepeated             MessageID = "cyphermatching.relationship_variable_repeated"
 	MessageCypherMatchingRepeatableElementsUnbounded              MessageID = "cyphermatching.repeatable_elements_unbounded"
 	MessageCypherMatchingRepeatableElementsPathMode               MessageID = "cyphermatching.repeatable_elements_path_mode"
 	MessageCypherMatchingQuantifiedPathZeroLimit                  MessageID = "cyphermatching.quantified_path_zero_limit"
@@ -365,6 +366,13 @@ func CypherMatchingPatternMarkerOutsideMatch() Message {
 // type this place binds.
 func CypherMatchingVariableTypeConflict(variable, defined, expected string) Message {
 	return cypherMatchingMessage(MessageCypherMatchingVariableTypeConflict, "Type mismatch: "+variable+" defined with conflicting type "+defined+" (expected "+expected+")", map[string]any{"Variable": variable, "Defined": defined, "Expected": expected})
+}
+
+// CypherMatchingRelationshipVariableRepeated is the openCypher TCK's
+// SyntaxError (RelationshipUniquenessViolation) for a relationship variable
+// a MATCH pattern names twice without a match mode written.
+func CypherMatchingRelationshipVariableRepeated(variable string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingRelationshipVariableRepeated, "relationship variable "+variable+" is used more than once in the same pattern", map[string]any{"Variable": variable})
 }
 
 // CypherMatchingRepeatableElementsUnbounded is Neo4j's SyntaxError for a

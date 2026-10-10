@@ -160,6 +160,9 @@
 - id: cyphermatching.variable_type_conflict
   description: "Expanded pseudo-locale variable type conflict."
   other: "[!! Type mismatch: {{.Variable}} defined with conflicting type {{.Defined}} (expected {{.Expected}}) !!]"
+- id: cyphermatching.relationship_variable_repeated
+  description: "Expanded pseudo-locale relationship variable repeated."
+  other: "[!! relationship variable {{.Variable}} is used more than once in the same pattern !!]"
 - id: cyphermatching.repeatable_elements_unbounded
   description: "Expanded pseudo-locale repeatable elements unbounded."
   other: "[!! The quantified path pattern may yield an infinite number of rows under match mode 'REPEATABLE ELEMENTS'. Add an upper bound to the quantified path pattern. !!]"

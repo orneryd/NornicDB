@@ -160,6 +160,9 @@
 - id: cyphermatching.variable_type_conflict
   description: "Una variable se vincula con dos tipos en un patrón. Variable es el nombre de la variable; Defined y Expected son nombres de tipos de Cypher; ninguno se traduce."
   other: "Tipos incompatibles: {{.Variable}} está definida con el tipo {{.Defined}} (se esperaba {{.Expected}})"
+- id: cyphermatching.relationship_variable_repeated
+  description: "Un patrón de MATCH nombra dos veces una variable de relación sin modo de coincidencia. Variable es el nombre de la variable, sin traducir."
+  other: "la variable de relación {{.Variable}} se usa más de una vez en el mismo patrón"
 - id: cyphermatching.repeatable_elements_unbounded
   description: "Un cuantificador sin límite superior en MATCH REPEATABLE ELEMENTS. REPEATABLE ELEMENTS no se traduce."
   other: "El patrón de camino cuantificado puede producir un número infinito de filas con el modo de coincidencia 'REPEATABLE ELEMENTS'. Añada un límite superior al patrón de camino cuantificado."
