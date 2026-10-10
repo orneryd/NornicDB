@@ -2,9 +2,11 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -126,6 +128,21 @@ func TestCollFunctionsMatchNeo4j(t *testing.T) {
 		require.ErrorContains(t, err, want, query)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.TypeError")
 	}
+
+	// What the compile-time checks keep a statement from reaching.
+	failed := errors.New("evaluation failed")
+	call := cypherfn.Context{Eval: func(expr string) (interface{}, error) {
+		if expr == "fail" {
+			return nil, failed
+		}
+		return []interface{}{int64(1)}, nil
+	}}
+	_, err = fnCollSort(call, nil)
+	require.ErrorContains(t, err, "coll.sort")
+	_, err = fnCollFlatten(call, []string{"l", "1", "2"})
+	require.Error(t, err)
+	_, err = fnCollDistinct(call, []string{"fail"})
+	require.ErrorIs(t, err, failed)
 
 	result, err = exec.Execute(ctx, "SHOW FUNCTIONS YIELD name WHERE name STARTS WITH 'coll.' RETURN collect(name) AS fns", nil)
 	require.NoError(t, err)
