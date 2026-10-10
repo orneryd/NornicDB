@@ -149,7 +149,9 @@ func staticCatalogTypeOptions(catalogType string) (options []string, known bool)
 	if names, ok := staticCatalogTypeNames[catalogType]; ok {
 		return names, true
 	}
-	for _, part := range strings.Split(catalogType, " | ") {
+	// VECTOR | LIST<INTEGER | FLOAT> is two parts: the bar inside <…> is the
+	// list element's.
+	for _, part := range splitTopLevelTypeUnion(catalogType) {
 		names, ok := staticCatalogTypeNames[strings.TrimSpace(part)]
 		if !ok {
 			return nil, false

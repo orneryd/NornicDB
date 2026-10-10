@@ -22,7 +22,7 @@ func TestStaticFunctionArgumentsFromCatalog(t *testing.T) {
 	require.Equal(t, []string{"Float, Integer or Duration"}, expected("sum"))
 	require.Equal(t, []string{"Map, Node, Relationship, String or List<T>"}, expected("isEmpty"))
 	require.Equal(t, []string{"String", "", "Map, Node or Relationship"}, expected("date.truncate"), "a temporal input isn't checked at compile time")
-	require.Equal(t, []string{"List<Float>, List<Integer> or List<Number>", "List<Float>, List<Integer> or List<Number>"}, expected("vector.similarity.cosine"))
+	require.Equal(t, []string{"Vector, List<Float>, List<Integer> or List<Number>", "Vector, List<Float>, List<Integer> or List<Number>"}, expected("vector.similarity.cosine"))
 	require.Equal(t, []string{"String", "String or List<String>"}, expected("split"))
 	require.Equal(t, []string{"String", "String", "String"}, expected("TRIM"))
 	require.Equal(t, []string{"Boolean, Float, Integer, Point, String, Duration, Date, Time, LocalTime, LocalDateTime or DateTime"}, expected("toString"))
@@ -65,7 +65,7 @@ func TestStaticFunctionArgumentTypesThroughExecute(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 	for query, message := range map[string]string{
-		"RETURN vector.similarity.cosine('zz', [1.0]) AS v":     "Type mismatch: expected List<Float>, List<Integer> or List<Number> but was String",
+		"RETURN vector.similarity.cosine('zz', [1.0]) AS v":     "Type mismatch: expected Vector, List<Float>, List<Integer> or List<Number> but was String",
 		"RETURN date.truncate(1, date('2020-01-02')) AS v":      "Type mismatch: expected String but was Integer",
 		"RETURN date.truncate('day', date('2020-01-02'), 'zz')": "Type mismatch: expected Map, Node or Relationship but was String",
 		"RETURN datetime.fromepoch('zz', 1) AS v":               "Type mismatch: expected Float or Integer but was String",

@@ -105,8 +105,8 @@ func TestPointFieldsAndComparisons(t *testing.T) {
 	inside, _ = pointWithinBBox(CypherPoint{SRID: 9157, X: 1, Y: 1, Z: 5}, CypherPoint{SRID: 9157}, CypherPoint{SRID: 9157, X: 2, Y: 2, Z: 2})
 	require.False(t, inside, "z is outside")
 
-	require.Equal(t, 11, cypherSortRank(&CypherDuration{}))
-	require.Equal(t, 15, cypherSortRank(math.NaN()))
+	require.Equal(t, 12, cypherSortRank(&CypherDuration{}))
+	require.Equal(t, 17, cypherSortRank(math.NaN()))
 	require.Equal(t, []float64{1, 2}, CypherPoint{SRID: 7203, X: 1, Y: 2}.Coordinates())
 }
 
