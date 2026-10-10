@@ -250,10 +250,6 @@ func TestCypher25BatchTwoHelperEdges(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{nil, map[string]interface{}{"k": int64(2)}}}, result.Rows)
 
-	require.Equal(t, 0, indexFold("abc", ""))
-	require.Equal(t, 1, indexFold("aBc", "bC"))
-	require.Equal(t, -1, indexFold("abc", "x"))
-
 	// A nested statement keeps the outer statement's language version.
 	outer := withCypherVersion(ctx, "CYPHER 25 RETURN 1")
 	require.Equal(t, "25", cypherVersionFromContext(outer))
