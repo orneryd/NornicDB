@@ -338,7 +338,7 @@ func precededByTypeAnnotation(text string, index int) bool {
 		return true
 	}
 	start := end
-	for start > 0 && isIdentifierPart(text[start-1]) {
+	for start > 0 && isIdentByte(text[start-1]) {
 		start--
 	}
 	word := text[start:end]
