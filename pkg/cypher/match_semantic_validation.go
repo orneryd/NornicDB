@@ -984,19 +984,10 @@ func projectedExpressionSemanticKind(expression string, input matchSemanticScope
 	if function, arguments, call := parseFunctionCallWS(expression); typeName == "" && call {
 		typeName = staticFunctionResultType(function, arguments)
 	}
-	switch typeName {
-	case "":
+	// A bare variable is resolved by the caller; a literal, arithmetic or a
+	// call with a static result type is never a node or relationship.
+	if typeName == "" {
 		return matchBindingUnknown
-	case "Node":
-		return matchBindingNode
-	case "Relationship":
-		return matchBindingRelationship
-	case "List<Node>":
-		return matchBindingNodeList
-	case "List<Relationship>":
-		return matchBindingRelationshipList
-	case "Path":
-		return matchBindingPath
 	}
 	return matchBindingValue
 }
