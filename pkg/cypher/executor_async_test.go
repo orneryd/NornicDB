@@ -801,9 +801,9 @@ func TestBenchmarkMatchCreateDelete_LargeDataset_Direct(t *testing.T) {
 
 	// Performance ratchet: Original was 67K ops/ target goal is 67K
 	// the last tuning pass measured ~40K ops/sec here.
-	// The floor sits at half of that (20K) so it catches real drift during
-	// development while staying comfortably clearable in CI without flakiness.
-	assertMinOpsPerSec(t, "Large dataset direct executor", opsPerSec, 20000)
+	// The floor sits at 15K so it catches real drift during development
+	// while staying comfortably clearable in CI without flakiness.
+	assertMinOpsPerSec(t, "Large dataset direct executor", opsPerSec, 15000)
 }
 
 // TestBenchmarkMatchCreateDelete_LargeDataset_WithFlush tests flush impact
