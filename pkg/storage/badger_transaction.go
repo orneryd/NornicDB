@@ -4148,12 +4148,12 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, c Constrain
 		}
 	}
 
-	start, ok := coerceTemporalTime(edge.Properties[startProp])
+	start, ok := CoerceTemporalTime(edge.Properties[startProp])
 	if !ok {
 		message := localization.StorageValidationTemporalStartInvalid(startProp)
 		return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties, message, nil)
 	}
-	end, hasEnd := coerceTemporalTime(edge.Properties[endProp])
+	end, hasEnd := CoerceTemporalTime(edge.Properties[endProp])
 	newInterval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
 
 	// Check against pending edges in this transaction
@@ -4168,11 +4168,11 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, c Constrain
 		if !edgeTemporalCompositeKeyMatch(otherEdge, keyProps, keyVals) {
 			continue
 		}
-		otherStart, ok := coerceTemporalTime(otherEdge.Properties[startProp])
+		otherStart, ok := CoerceTemporalTime(otherEdge.Properties[startProp])
 		if !ok {
 			continue
 		}
-		otherEnd, otherHasEnd := coerceTemporalTime(otherEdge.Properties[endProp])
+		otherEnd, otherHasEnd := CoerceTemporalTime(otherEdge.Properties[endProp])
 		if intervalsOverlap(newInterval, temporalInterval{start: otherStart, end: otherEnd, hasEnd: otherHasEnd}) {
 			message := localization.StorageValidationTemporalEdgeOverlap(string(id), keyVals)
 			return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties, message, nil)
@@ -4194,11 +4194,11 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, c Constrain
 		if !edgeTemporalCompositeKeyMatch(existingEdge, keyProps, keyVals) {
 			continue
 		}
-		existingStart, ok := coerceTemporalTime(existingEdge.Properties[startProp])
+		existingStart, ok := CoerceTemporalTime(existingEdge.Properties[startProp])
 		if !ok {
 			continue
 		}
-		existingEnd, existingHasEnd := coerceTemporalTime(existingEdge.Properties[endProp])
+		existingEnd, existingHasEnd := CoerceTemporalTime(existingEdge.Properties[endProp])
 		if intervalsOverlap(newInterval, temporalInterval{start: existingStart, end: existingEnd, hasEnd: existingHasEnd}) {
 			message := localization.StorageValidationTemporalEdgeOverlap(string(existingEdge.ID), keyVals)
 			return newLocalizedConstraintViolation(ConstraintTemporal, edge.Type, c.Properties, message, nil)

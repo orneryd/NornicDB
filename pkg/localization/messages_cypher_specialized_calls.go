@@ -39,8 +39,6 @@ const (
 	MessageCypherSpecializedCallsTemporalOverlap                 MessageID = "cypherspecializedcalls.temporal_overlap"
 	MessageCypherSpecializedCallsTemporalAsOfArgumentCount       MessageID = "cypherspecializedcalls.temporal_asof_argument_count"
 	MessageCypherSpecializedCallsTemporalLookupFailed            MessageID = "cypherspecializedcalls.temporal_lookup_failed"
-	MessageCypherSpecializedCallsTemporalInvalidSyntax           MessageID = "cypherspecializedcalls.temporal_invalid_syntax"
-	MessageCypherSpecializedCallsTemporalClosingParenthesis      MessageID = "cypherspecializedcalls.temporal_closing_parenthesis"
 	MessageCypherSpecializedCallsArgumentRequired                MessageID = "cypherspecializedcalls.argument_required"
 	MessageCypherSpecializedCallsArgumentEmpty                   MessageID = "cypherspecializedcalls.argument_empty"
 	MessageCypherSpecializedCallsUnsignedNonNegative             MessageID = "cypherspecializedcalls.unsigned_non_negative"
@@ -194,14 +192,6 @@ func CypherSpecializedCallsTemporalAsOfArgumentCount() Message {
 func CypherSpecializedCallsTemporalLookupFailed(label string, cause error) Message {
 	quotedLabel := strconv.Quote(label)
 	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTemporalLookupFailed, "temporal lookup failed for label "+quotedLabel+": "+cause.Error(), map[string]any{"Label": quotedLabel, "Cause": cause.Error()})
-}
-
-func CypherSpecializedCallsTemporalInvalidSyntax(procedure string) Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTemporalInvalidSyntax, "invalid "+procedure+" syntax", map[string]any{"Procedure": procedure})
-}
-
-func CypherSpecializedCallsTemporalClosingParenthesis(procedure string) Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTemporalClosingParenthesis, "missing closing parenthesis in "+procedure, map[string]any{"Procedure": procedure})
 }
 
 func CypherSpecializedCallsArgumentRequired(argument string) Message {

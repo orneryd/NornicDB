@@ -130,10 +130,10 @@ func (s temporalKeySpec) groupString(keyValue interface{}) string {
 // interval reads the validity window from props; ok is false when the start
 // property is missing or not a temporal value.
 func (s temporalKeySpec) interval(props map[string]interface{}) (temporalInterval, bool) {
-	start, ok := coerceTemporalTime(props[s.startProp])
+	start, ok := CoerceTemporalTime(props[s.startProp])
 	if !ok {
 		return temporalInterval{}, false
 	}
-	end, hasEnd := coerceTemporalTime(props[s.endProp])
+	end, hasEnd := CoerceTemporalTime(props[s.endProp])
 	return temporalInterval{start: start, end: end, hasEnd: hasEnd}, true
 }

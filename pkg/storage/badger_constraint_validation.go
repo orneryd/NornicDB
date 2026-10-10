@@ -743,7 +743,7 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 		}
 	}
 
-	start, ok := coerceTemporalTime(edge.Properties[startProp])
+	start, ok := CoerceTemporalTime(edge.Properties[startProp])
 	if !ok {
 		return &ConstraintViolationError{
 			Type:       ConstraintTemporal,
@@ -752,7 +752,7 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 			Message:    fmt.Sprintf("TEMPORAL start property %s must be a datetime", startProp),
 		}
 	}
-	end, hasEnd := coerceTemporalTime(edge.Properties[endProp])
+	end, hasEnd := CoerceTemporalTime(edge.Properties[endProp])
 
 	newInterval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
 
@@ -802,11 +802,11 @@ func (b *BadgerEngine) checkEdgeTemporalInTxn(txn *badger.Txn, edge *Edge, c Con
 			continue
 		}
 
-		existingStart, ok := coerceTemporalTime(existingEdge.Properties[startProp])
+		existingStart, ok := CoerceTemporalTime(existingEdge.Properties[startProp])
 		if !ok {
 			continue
 		}
-		existingEnd, existingHasEnd := coerceTemporalTime(existingEdge.Properties[endProp])
+		existingEnd, existingHasEnd := CoerceTemporalTime(existingEdge.Properties[endProp])
 
 		existingInterval := temporalInterval{start: existingStart, end: existingEnd, hasEnd: existingHasEnd}
 

@@ -352,13 +352,13 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbTxlogByTxID(ctx, args)
 			})
-		registerBuiltInProcedure("db.temporal.assertNoOverlap", "db.temporal.assertNoOverlap(args :: MAP) :: (ok :: BOOLEAN)", localization.CypherProcedureMetadata("db.temporal.assertNoOverlap"), ProcedureModeRead, 0, -1, false,
+		registerBuiltInProcedure("db.temporal.assertNoOverlap", "db.temporal.assertNoOverlap(label :: STRING, keyProp :: STRING, validFromProp :: STRING, validToProp :: STRING, keyValue :: ANY, newValidFrom :: ANY, newValidTo :: ANY, systemTime = null :: ANY, systemSequence = null :: INTEGER) :: (ok :: BOOLEAN)", localization.CypherProcedureMetadata("db.temporal.assertNoOverlap"), ProcedureModeRead, 7, 9, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbTemporalAssertNoOverlap(ctx, cypher)
+				return e.callDbTemporalAssertNoOverlap(ctx, args)
 			})
-		registerBuiltInProcedure("db.temporal.asOf", "db.temporal.asOf(args :: MAP) :: (node :: NODE)", localization.CypherProcedureMetadata("db.temporal.asOf"), ProcedureModeRead, 0, -1, false,
+		registerBuiltInProcedure("db.temporal.asOf", "db.temporal.asOf(label :: STRING, keyProp :: STRING, keyValue :: ANY, validFromProp :: STRING, validToProp :: STRING, asOf :: ANY, systemTime = null :: ANY, systemSequence = null :: INTEGER) :: (node :: NODE)", localization.CypherProcedureMetadata("db.temporal.asOf"), ProcedureModeRead, 6, 8, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbTemporalAsOf(ctx, cypher)
+				return e.callDbTemporalAsOf(ctx, args)
 			})
 
 		registerBuiltInProcedureLiteral("apoc.path.subgraphNodes", "apoc.path.subgraphNodes(startNode :: ANY, config :: MAP) :: (node :: NODE)", "Returns the nodes reachable from the start node(s) under the config's filters", ProcedureModeRead, 1, 2, false,

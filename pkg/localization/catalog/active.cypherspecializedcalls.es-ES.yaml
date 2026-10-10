@@ -64,10 +64,6 @@
   other: "db.temporal.asOf requiere 6 parámetros más systemTime y systemSequence opcionales"
 - id: cypherspecializedcalls.temporal_lookup_failed
   other: "la búsqueda temporal falló para la etiqueta {{.Label}}: {{.Cause}}"
-- id: cypherspecializedcalls.temporal_invalid_syntax
-  other: "sintaxis de {{.Procedure}} no válida"
-- id: cypherspecializedcalls.temporal_closing_parenthesis
-  other: "falta el paréntesis de cierre en {{.Procedure}}"
 - id: cypherspecializedcalls.argument_required
   other: "{{.Argument}} es obligatorio"
 - id: cypherspecializedcalls.argument_empty

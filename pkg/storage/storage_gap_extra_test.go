@@ -158,7 +158,7 @@ func TestTemporalHelpers(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				got, ok := coerceTemporalTime(tt.value)
+				got, ok := CoerceTemporalTime(tt.value)
 				assert.Equal(t, tt.ok, ok)
 				if tt.ok {
 					assert.True(t, got.Equal(tt.want.UTC()), "got=%s want=%s", got, tt.want.UTC())
