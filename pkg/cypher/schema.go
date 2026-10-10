@@ -215,6 +215,12 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 	if onPosition >= 0 && (forPosition < 0 || onPosition < forPosition) {
 		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE CONSTRAINT"), nil)
 	}
+	// Every spelling of a uniqueness or key requirement becomes the one the
+	// shapes below read (canonicalConstraintRequirement).
+	cypher, err := e.canonicalConstraintRequirement(cypher)
+	if err != nil {
+		return nil, err
+	}
 	if parsed, err := e.parseCreateConstraintForRequireDDL(cypher); err == nil {
 		if kind, properties, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(parsed.requireExpr); ok && kind == "unique" {
 			seen := make(map[string]struct{}, len(properties))

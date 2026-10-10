@@ -200,6 +200,7 @@ NFKD       : 'NFKD';
 KEY        : 'KEY';
 NODE       : 'NODE';
 RELATIONSHIP: 'RELATIONSHIP';
+REL        : 'REL';
 TEMPORAL   : 'TEMPORAL';
 NO         : 'NO';
 OVERLAP    : 'OVERLAP';

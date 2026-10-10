@@ -861,6 +861,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cypherschema.backfill_index_failed", Constructor: "CypherSchemaBackfillIndexFailed", Fields: []string{"Cause", "Label"}, PluralForms: []string{"other"}},
 	{ID: "cypherschema.backfill_property_index_failed", Constructor: "CypherSchemaBackfillPropertyIndexFailed", Fields: []string{"Cause", "Label", "Property"}, PluralForms: []string{"other"}},
 	{ID: "cypherschema.composite_ddl_not_allowed", Constructor: "CypherSchemaCompositeDDLNotAllowed", Fields: []string{"Code"}, PluralForms: []string{"other"}},
+	{ID: "cypherschema.constraint_entity_mismatch", Constructor: "CypherSchemaConstraintEntityMismatch", Fields: []string{"Pattern", "Requirement"}, PluralForms: []string{"other"}},
 	{ID: "cypherschema.constraint_properties_required", Constructor: "CypherSchemaConstraintPropertiesRequired", Fields: []string{"Kind"}, PluralForms: []string{"other"}},
 	{ID: "cypherschema.contract_entry_required", Constructor: "CypherSchemaContractEntryRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherschema.create_range_index_failed", Constructor: "CypherSchemaCreateRangeIndexFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
