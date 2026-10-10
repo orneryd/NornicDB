@@ -539,49 +539,18 @@ func (e *StorageExecutor) parseArrayValue(ctx context.Context, arrayStr string) 
 //	splitArrayElements("1, 2, 3")            // ["1", "2", "3"]
 //	splitArrayElements("'a,b', 'c'")         // ["'a,b'", "'c'"]
 //	splitArrayElements("[1, 2], [3, 4]")     // ["[1, 2]", "[3, 4]"]
+//	splitArrayElements("f(1, 2), 3")         // ["f(1, 2)", "3"]
 func (e *StorageExecutor) splitArrayElements(inner string) []string {
-	var elements []string
-	var current strings.Builder
-	depth := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i, c := range inner {
-		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				escaped := false
-				if isBackslashEscaped(inner, i) {
-					escaped = true
-				}
-				if !escaped {
-					inQuote = false
-				}
-			}
-			current.WriteRune(c)
-		case (c == '[' || c == '{') && !inQuote:
-			depth++
-			current.WriteRune(c)
-		case (c == ']' || c == '}') && !inQuote:
-			depth--
-			current.WriteRune(c)
-		case c == ',' && !inQuote && depth == 0:
-			if s := strings.TrimSpace(current.String()); s != "" {
-				elements = append(elements, s)
-			}
-			current.Reset()
-		default:
-			current.WriteRune(c)
+	// The statement's own top-level comma split (quotes, parentheses,
+	// brackets and braces nest): [substring('abc', 1, 1)] is one element
+	// (#907). An empty element is dropped.
+	parts := splitTopLevelComma(inner)
+	elements := parts[:0]
+	for _, part := range parts {
+		if part != "" {
+			elements = append(elements, part)
 		}
 	}
-
-	if s := strings.TrimSpace(current.String()); s != "" {
-		elements = append(elements, s)
-	}
-
 	return elements
 }
 
