@@ -4850,6 +4850,55 @@ func TestNew_SearchRerankProviderBranches(t *testing.T) {
 	})
 }
 
+// The rerank truncation setting reaches Voyage's request from db.rerank: the
+// provider may shorten an over-long query by default, and doesn't with
+// NORNICDB_SEARCH_RERANK_TRUNCATION=false (#907, I27).
+func TestVoyageRerankTruncationSetting(t *testing.T) {
+	for _, disable := range []bool{false, true} {
+		var truncation *bool
+		voyageAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				Truncation *bool `json:"truncation"`
+			}
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			truncation = body.Truncation
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"index": 0, "relevance_score": 0.9}}}))
+		}))
+		t.Cleanup(voyageAPI.Close)
+		db, err := nornicdb.Open(t.TempDir(), nornicdb.DefaultConfig())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+		t.Setenv("NORNICDB_SEARCH_RERANK_ENABLED", "true")
+		t.Setenv("NORNICDB_SEARCH_RERANK_PROVIDER", "voyage")
+		t.Setenv("NORNICDB_SEARCH_RERANK_API_URL", voyageAPI.URL)
+		t.Setenv("NORNICDB_SEARCH_RERANK_API_KEY", "test-voyage-key")
+		t.Setenv("NORNICDB_SEARCH_RERANK_TRUNCATION", fmt.Sprint(!disable))
+		processConfig := nornicConfig.LoadFromEnv()
+		cfg := DefaultConfig()
+		cfg.EmbeddingEnabled = false
+		cfg.MCPEnabled = false
+		cfg.ProcessConfig = processConfig
+		cfg.Features = &processConfig.Features
+		s, err := New(db, nil, cfg)
+		require.NoError(t, err)
+		t.Cleanup(func() { stopTestServer(t, s) })
+		_, err = db.ExecuteCypher(context.Background(), "CALL db.rerank({query: 'q', candidates: [{id: 'a', content: 'alpha'}]}) YIELD id RETURN id", nil)
+		require.NoError(t, err)
+		require.NotNil(t, truncation, "disable=%v", disable)
+		require.Equal(t, !disable, *truncation)
+
+		// Another database's search service gets its reranker from the
+		// per-database resolver, with the same setting.
+		truncation = nil
+		svc, err := db.GetOrCreateSearchService("rerank_other", nil)
+		require.NoError(t, err)
+		_, err = svc.RerankCandidates(context.Background(), "q", []search.RerankCandidate{{ID: "a", Content: "alpha"}}, nil)
+		require.NoError(t, err)
+		require.NotNil(t, truncation, "per-database, disable=%v", disable)
+		require.Equal(t, !disable, *truncation)
+	}
+}
+
 func TestUIAndStringHelpers_AdditionalBranches(t *testing.T) {
 	require.Equal(t, "value", getString(map[string]interface{}{"k": "value"}, "k"))
 	require.Equal(t, "", getString(map[string]interface{}{"k": 42}, "k"))

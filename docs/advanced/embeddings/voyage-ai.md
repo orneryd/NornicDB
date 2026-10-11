@@ -139,6 +139,14 @@ and CJK content get the same amount of text); set
 limit. Ranked continuation expansions reuse scores already obtained for the
 same query and only send newly discovered candidates to Voyage.
 
+Voyage limits a rerank query to 8,000 tokens and a query plus one document to
+32,000 (for `rerank-2.5` and `rerank-3`). By default NornicDB asks Voyage to
+shorten anything longer, and the rerank succeeds on the shortened text. Set
+`NORNICDB_SEARCH_RERANK_TRUNCATION=false` (YAML `search_rerank.truncation:
+false`) to have such a rerank fail instead: `db.rerank` returns the provider's
+error and search reports a failed rerank stage, so every ranking you get is for
+the whole query and documents. Query embeddings already work this way.
+
 Per-database override example:
 
 ```cypher

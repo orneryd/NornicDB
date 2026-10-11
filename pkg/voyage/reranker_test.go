@@ -45,6 +45,28 @@ func TestRerankerRequestsNativeEndpoint(t *testing.T) {
 	require.Equal(t, []string{"b", "a"}, []string{results[0].ID, results[1].ID})
 }
 
+// DisableTruncation sends truncation: false, so the provider fails an
+// over-long query or pair instead of shortening it (#907, I27).
+func TestRerankerDisableTruncation(t *testing.T) {
+	var truncation *bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Truncation *bool `json:"truncation"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		truncation = body.Truncation
+		http.Error(w, `{"detail":"Request to model 'rerank-2.5' failed. The query has 8577 tokens, the max allowed is 8000."}`, http.StatusBadRequest)
+	}))
+	t.Cleanup(server.Close)
+	reranker, err := NewReranker(&RerankerConfig{Enabled: true, APIURL: server.URL, APIKey: "test-key", Timeout: time.Second, DisableTruncation: true})
+	require.NoError(t, err)
+	results, err := reranker.Rerank(context.Background(), "a long query", []Candidate{{ID: "a", Content: "alpha", Score: 0.4}})
+	require.Error(t, err)
+	require.Nil(t, results)
+	require.NotNil(t, truncation)
+	require.False(t, *truncation)
+}
+
 // A failed request is an error, so the caller can fall back and say so.
 func TestRerankerReportsProviderFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

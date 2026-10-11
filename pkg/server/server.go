@@ -1284,6 +1284,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				APIKey:  apiKey,
 				Model:   model,
 				Timeout: 30 * time.Second,
+				// The provider-wide setting, as for every database.
+				DisableTruncation: featuresConfig.SearchRerankDisableTruncation,
 			})
 			if err != nil {
 				return nil
@@ -1525,6 +1527,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					APIKey:  apiKey,
 					Model:   model,
 					Timeout: 30 * time.Second,
+					// Voyage shortens an over-long query or pair unless this is false.
+					DisableTruncation: featuresConfig.SearchRerankDisableTruncation,
 				})
 				if err != nil {
 					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerSearchRerankerModelUnavailableEvent(err))

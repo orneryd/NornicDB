@@ -37,6 +37,10 @@ type RerankerConfig struct {
 	TopK     int
 	Timeout  time.Duration
 	MinScore float64
+	// DisableTruncation sends truncation: false, so a query or a
+	// query-document pair over the model's token limit fails the rerank
+	// instead of being shortened by the provider (NORNICDB_SEARCH_RERANK_TRUNCATION=false).
+	DisableTruncation bool
 }
 
 // DefaultRerankerConfig returns Voyage reranker defaults. APIKey must be
@@ -113,7 +117,7 @@ func (r *Reranker) Rerank(ctx context.Context, query string, candidates []Candid
 		documents[i] = candidate.Content
 	}
 	resp, err := r.client.Rerank(ctx, query, documents, RerankOptions{
-		Model: r.config.Model, TopK: topK, ReturnDocuments: false, Truncation: true,
+		Model: r.config.Model, TopK: topK, ReturnDocuments: false, Truncation: !r.config.DisableTruncation,
 	})
 	if err != nil {
 		return nil, err

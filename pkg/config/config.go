@@ -999,6 +999,12 @@ type FeatureFlagsConfig struct {
 	// SearchRerankAPIKey for authenticated providers (e.g. OpenAI, Cohere).
 	// Environment: NORNICDB_SEARCH_RERANK_API_KEY
 	SearchRerankAPIKey string
+	// SearchRerankDisableTruncation makes a Voyage rerank whose query or
+	// query-document pair is over the model's token limit fail, instead of
+	// letting the provider shorten it (the default), so a ranking is always
+	// for the whole query and documents.
+	// Environment: NORNICDB_SEARCH_RERANK_TRUNCATION=false (default: true)
+	SearchRerankDisableTruncation bool
 	// RerankCtxType sets the llama.cpp context type for rerank model.
 	// 0=default, 1=MTP.
 	// Env: NORNICDB_RERANK_CTX_TYPE
@@ -1732,6 +1738,9 @@ type YAMLConfig struct {
 		APIURL   string `yaml:"api_url"`
 		APIKey   string `yaml:"api_key"`
 		LazyMode *int   `yaml:"lazy_mode"`
+
+		// Truncation: NORNICDB_SEARCH_RERANK_TRUNCATION (Voyage).
+		Truncation *bool `yaml:"truncation"`
 	} `yaml:"search_rerank"`
 
 	// Feature flags (subset supported in YAML).
@@ -2133,6 +2142,7 @@ func LoadDefaults() *Config {
 	config.Features.SearchRerankModel = "bge-reranker-v2-m3"
 	config.Features.SearchRerankAPIURL = ""
 	config.Features.SearchRerankAPIKey = ""
+	config.Features.SearchRerankDisableTruncation = false
 	config.Features.RerankLazyMode = 1
 	config.Features.HeimdallMaxContextTokens = 8192
 	config.Features.HeimdallMaxSystemTokens = 6000
@@ -3037,6 +3047,7 @@ func applyEnvVars(config *Config) error {
 	if v := getEnv("NORNICDB_SEARCH_RERANK_API_KEY", ""); v != "" {
 		config.Features.SearchRerankAPIKey = v
 	}
+	config.Features.SearchRerankDisableTruncation = !getEnvBool("NORNICDB_SEARCH_RERANK_TRUNCATION", !config.Features.SearchRerankDisableTruncation)
 	// Rerank llama.cpp context features
 	if v := getEnvInt("NORNICDB_RERANK_CTX_TYPE", 0); v != 0 {
 		config.Features.RerankCtxType = v
@@ -3870,6 +3881,9 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 	if yamlCfg.SearchRerank.APIKey != "" {
 		config.Features.SearchRerankAPIKey = yamlCfg.SearchRerank.APIKey
+	}
+	if yamlCfg.SearchRerank.Truncation != nil {
+		config.Features.SearchRerankDisableTruncation = !*yamlCfg.SearchRerank.Truncation
 	}
 	if yamlCfg.SearchRerank.LazyMode != nil && *yamlCfg.SearchRerank.LazyMode >= 0 && *yamlCfg.SearchRerank.LazyMode <= 2 {
 		config.Features.RerankLazyMode = *yamlCfg.SearchRerank.LazyMode
