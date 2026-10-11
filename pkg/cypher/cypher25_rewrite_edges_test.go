@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -289,12 +290,22 @@ func TestCypher25BatchTwoHelperEdges(t *testing.T) {
 	require.Equal(t, ctx, withCypherVersion(ctx, "CYPHER 5 RETURN 1"))
 	require.Equal(t, "4", cypherVersionFromContext(withCypherVersion(ctx, "CYPHER 4 RETURN 1")))
 
-	// type(x) / id(x) of relationship items, where SET evaluates them.
+	// type(x) / id(x) of relationship items, where SET evaluates them (with
+	// the row evaluator RETURN uses, #1050).
 	_, err = exec.Execute(ctx, "CREATE (:Hr)-[:HrR]->(:Hr)", nil)
 	require.NoError(t, err)
-	result, err = exec.Execute(ctx, "MATCH ()-[r:HrR]->() SET r.t = [x IN [r] | type(x)], r.i = [x IN [r] | id(x)], r.m = [x IN [{_edgeId: 'e', type: 'M'}] | id(x)] RETURN r.t AS t, size(r.i) AS i, r.m AS m", nil)
+	result, err = exec.Execute(ctx, "MATCH ()-[r:HrR]->() SET r.t = [x IN [r] | type(x)], r.i = [x IN [r] | id(x)] RETURN r.t AS t, size(r.i) AS i", nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{[]interface{}{"HrR"}, int64(1), []interface{}{"e"}}}, result.Rows)
-	_, err = exec.Execute(ctx, "MATCH ()-[r:HrR]->() SET r.u = [x IN [{a: 1}] | type(x)] RETURN r.u AS u", nil)
-	require.Error(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{"HrR"}, int64(1)}}, result.Rows)
+	// id() / type() of a map is a TypeError on Neo4j 5.26.30. Here id() of a
+	// map is null and storing the list is the TypeError; the run-time
+	// argument type of entity functions is tracked in #1055.
+	for _, query := range []string{
+		"MATCH ()-[r:HrR]->() SET r.m = [x IN [{_edgeId: 'e', type: 'M'}] | id(x)] RETURN r.m AS m",
+		"MATCH ()-[r:HrR]->() SET r.u = [x IN [{a: 1}] | type(x)] RETURN r.u AS u",
+	} {
+		_, err = exec.Execute(ctx, query, nil)
+		code, _ := nornicerrors.Neo4jStatus(err)
+		require.Equal(t, "Neo.ClientError.Statement.TypeError", code, query)
+	}
 }

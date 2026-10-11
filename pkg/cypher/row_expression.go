@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -480,12 +481,17 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 				}
 				return relationship.Type, true, nil
 			default:
-				if object, isMap := toStringAnyMap(value); isMap {
-					if relationshipType, exists := object["type"].(string); exists {
-						return relationshipType, true, nil
-					}
+				object, isMap := toStringAnyMap(value)
+				if !isMap {
+					return nil, false, nil
 				}
-				return nil, false, nil
+				// A relationship projected as a map carries its type; any
+				// other map is the TypeError Neo4j raises at run time.
+				if relationshipType, exists := object["type"].(string); exists {
+					return relationshipType, true, nil
+				}
+				return nil, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+					localization.CypherCoreFunctionArgumentInvalid("type", "a Relationship", neo4jValueRepr(value)))
 			}
 		}
 	}
