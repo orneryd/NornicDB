@@ -118,8 +118,28 @@ func TestPipeline_CreateStopsAfterCancellation(t *testing.T) {
 	store := &cancelOnFirstCreateEngine{Engine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "cancel_pipeline_create"), cancel: cancel}
 	exec := NewStorageExecutor(store)
 	_, err := exec.Execute(ctx, "UNWIND [1, 2, 3] AS x CREATE (n:CancelCreate {v: x})", nil)
+	// UNWIND + CREATE rows plan into one atomic batch (BulkCreateNodes): a
+	// cancellation that lands while the batch applies cannot roll it back —
+	// all three rows are already staged — but the statement still reports
+	// the cancellation so the client knows the outcome is uncertain.
 	require.ErrorIs(t, err, context.Canceled)
-	require.Equal(t, 1, store.creates)
+	require.Equal(t, 3, store.creates)
+	result, err := exec.Execute(context.Background(), "MATCH (n:CancelCreate) RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(3)}}, result.Rows)
+}
+
+// TestPipeline_CreateCancelledBeforeApplyWritesNothing pins the pre-apply
+// cancellation check: the batch is planned row by row, so a canceled
+// context stops planning before any row is written.
+func TestPipeline_CreateCancelledBeforeApplyWritesNothing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already canceled before Execute
+	store := &cancelOnFirstCreateEngine{Engine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "cancel_pipeline_create"), cancel: func() {}}
+	exec := NewStorageExecutor(store)
+	_, err := exec.Execute(ctx, "UNWIND [1, 2, 3] AS x CREATE (n:CancelCreate {v: x})", nil)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, 0, store.creates)
 }
 
 // TestUnwind_MutationBoundExecutionHostileValues pins the UNWIND mutation

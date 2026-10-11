@@ -125,9 +125,11 @@ func parserOp(parser, mode string) func(q string) error {
 		e := &StorageExecutor{}
 		return func(q string) error {
 			c := e.ensureSyntaxValidationCache()
-			c.mu.Lock()
-			clear(c.cache)
-			c.mu.Unlock()
+			for i := range c.shards {
+				c.shards[i].mu.Lock()
+				clear(c.shards[i].cache)
+				c.shards[i].mu.Unlock()
+			}
 			return e.validateSyntaxNornic(q)
 		}
 	case "nornic/parse":

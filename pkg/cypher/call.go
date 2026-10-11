@@ -707,8 +707,8 @@ type callTailProjectionPlan struct {
 // Parsed CALL-tail plans, cached by tail text: a nil plan (a tail the plan
 // doesn't cover) is cached too.
 var (
-	callTailProjectionPlans        = newBoundedCache[string, *callTailProjectionPlan](1024)
-	callTailRelationshipMatchPlans = newBoundedCache[string, *callTailRelationshipMatchPlan](1024)
+	callTailProjectionPlans        = newBoundedCache[string, *callTailProjectionPlan](1024, boundedCacheStringShardIndex)
+	callTailRelationshipMatchPlans = newBoundedCache[string, *callTailRelationshipMatchPlan](1024, boundedCacheStringShardIndex)
 )
 
 // callTailRelationshipMatchPlan is a CALL tail MATCH (a)-[r:T {key: y.p}]->(b)

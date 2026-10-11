@@ -7,30 +7,37 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestBoundedCacheKeepsCachingWhenFull pins the overflow policy: a full cache
-// is cleared and keeps caching new keys, instead of refusing them.
+// TestBoundedCacheKeepsCachingWhenFull pins the overflow policy: entries are
+// stored in 64 independently locked shards, every inserted key is immediately
+// readable, and the total entry count never exceeds the cache limit.
 func TestBoundedCacheKeepsCachingWhenFull(t *testing.T) {
-	cache := newBoundedCache[string, int](4)
+	cache := newBoundedCache[string, int](boundedCacheShardCount, boundedCacheStringShardIndex)
 	for i := 0; i < 4; i++ {
 		cache.put(strconv.Itoa(i), i)
 	}
 	value, ok := cache.get("3")
-	require.True(t, ok)
+	require.True(t, ok, "the most recently inserted key is cached")
 	require.Equal(t, 3, value)
 
-	cache.put("new", 42)
-	value, ok = cache.get("new")
-	require.True(t, ok, "a key added to a full cache is cached")
-	require.Equal(t, 42, value)
-	_, ok = cache.get("0")
-	require.False(t, ok, "the full cache was cleared")
+	total := func() int {
+		n := 0
+		for i := range cache.shards {
+			cache.shards[i].mu.RLock()
+			n += len(cache.shards[i].m)
+			cache.shards[i].mu.RUnlock()
+		}
+		return n
+	}
 
-	// Past the limit, every new text is still cached.
-	for i := 0; i < 20; i++ {
+	// Filling well past the limit never grows past it, and every key added
+	// to a full cache is still cached (its shard is cleared, then it is
+	// inserted).
+	for i := 0; i < 1000; i++ {
 		key := "k" + strconv.Itoa(i)
 		cache.put(key, i)
 		_, ok := cache.get(key)
-		require.True(t, ok, key)
+		require.True(t, ok, "a key added to a full cache is cached")
+		require.LessOrEqual(t, total(), boundedCacheShardCount)
 	}
 }
 
@@ -42,9 +49,12 @@ func TestQueryTextCachesStayBounded(t *testing.T) {
 		_, err := GetCachedRegex("^pattern-" + strconv.Itoa(i) + "$")
 		require.NoError(t, err)
 	}
-	regexCache.mu.RLock()
-	size := len(regexCache.m)
-	regexCache.mu.RUnlock()
+	size := 0
+	for i := range regexCache.shards {
+		regexCache.shards[i].mu.RLock()
+		size += len(regexCache.shards[i].m)
+		regexCache.shards[i].mu.RUnlock()
+	}
 	require.LessOrEqual(t, size, regexCache.limit)
 
 	// A pattern seen after the cache cleared is compiled and cached again.

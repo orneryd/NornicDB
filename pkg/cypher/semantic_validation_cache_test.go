@@ -22,14 +22,18 @@ func TestSemanticValidationCachesOnlySuccessfulQueries(t *testing.T) {
 	require.False(t, exec.semanticValidationCache.contains(invalidQuery))
 }
 
-// Literal-heavy statements never repeat a text, so they skip the shared
-// cache instead of contending on it (PR #1043 write-path profile).
-func TestSemanticValidationCacheSkipsLiteralStatements(t *testing.T) {
+// Literal-bearing statements cache like any other text: repeated statements
+// (explicit transactions, batch tooling, the match-create-delete gate) must
+// hit, and the sharded caches removed the contention that once motivated
+// skipping them.
+func TestSemanticValidationCacheCachesLiteralStatements(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "semantic_cache"))
 	literalQuery := "RETURN 1 AS value"
 
 	_, err := exec.Execute(context.Background(), literalQuery, nil)
 	require.NoError(t, err)
-	require.False(t, exec.semanticValidationCache.contains(literalQuery),
-		"literal-bearing statements must not pollute the semantic cache")
+	require.True(t, exec.semanticValidationCache.contains(literalQuery),
+		"accepted literal-bearing statements are cached")
+	_, err = exec.Execute(context.Background(), literalQuery, nil)
+	require.NoError(t, err)
 }

@@ -848,9 +848,9 @@ func hasValidStartKeyword(cypher string) bool {
 func (e *StorageExecutor) ensureSyntaxValidationCache() *syntaxValidationCache {
 	e.syntaxValidationOnce.Do(func() {
 		if e.syntaxValidationCache == nil {
-			e.syntaxValidationCache = &syntaxValidationCache{
-				cache: make(map[string]struct{}, 1024),
-				max:   4096,
+			e.syntaxValidationCache = &syntaxValidationCache{max: 4096}
+			for i := range e.syntaxValidationCache.shards {
+				e.syntaxValidationCache.shards[i].cache = make(map[string]struct{}, 4096/boundedCacheShardCount/4+1)
 			}
 		}
 	})
@@ -861,32 +861,29 @@ func (e *StorageExecutor) hasCachedValidSyntax(cypher string) bool {
 	if cypher == "" {
 		return false
 	}
-	// Literal-heavy statements never repeat a text, so the cache cannot hit
-	// and only contends (see statementLikelyHasLiterals).
-	if statementLikelyHasLiterals(cypher) {
-		return false
-	}
 	c := e.ensureSyntaxValidationCache()
-	c.mu.RLock()
-	_, ok := c.cache[cypher]
-	c.mu.RUnlock()
+	sh := &c.shards[boundedCacheStringShardIndex(cypher)]
+	sh.mu.RLock()
+	_, ok := sh.cache[cypher]
+	sh.mu.RUnlock()
 	return ok
 }
 
 func (e *StorageExecutor) markCachedValidSyntax(cypher string) {
-	if cypher == "" || statementLikelyHasLiterals(cypher) {
+	if cypher == "" {
 		return
 	}
 	c := e.ensureSyntaxValidationCache()
-	c.mu.Lock()
-	if len(c.cache) >= c.max {
-		for k := range c.cache {
-			delete(c.cache, k)
+	sh := &c.shards[boundedCacheStringShardIndex(cypher)]
+	sh.mu.Lock()
+	if len(sh.cache) >= c.max/boundedCacheShardCount {
+		for k := range sh.cache {
+			delete(sh.cache, k)
 			break
 		}
 	}
-	c.cache[cypher] = struct{}{}
-	c.mu.Unlock()
+	sh.cache[cypher] = struct{}{}
+	sh.mu.Unlock()
 }
 
 // unresolvedReturnItemError is the error of a RETURN item the row evaluator

@@ -25,13 +25,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -2940,7 +2941,8 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 	for _, clause := range clauses {
 		rowCtx := withValueBindings(ctx, newRow)
 		pattern := pipelineClauseBody(clause.text, "CREATE")
-		if hasDynamicToken(pattern) {
+		dynamic := hasDynamicToken(pattern)
+		if dynamic {
 			// Labels and types whose values depend on the row.
 			resolved, err := e.resolveRowDynamicTokens(rowCtx, pattern, nodes, edges)
 			if err != nil {
@@ -2948,12 +2950,34 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 			}
 			pattern = resolved
 		}
-		paths, err := e.planCreatePatterns(rowCtx, pattern, nodes, edges, plan)
-		if err != nil {
-			if failure := getExpressionFailure(rowCtx); failure != nil {
-				return nil, failure
+		var paths map[string]PathResult
+		planned := false
+		if !dynamic {
+			// Parse-once template: the clause's pattern structure is fixed
+			// per statement; only the property expressions are per-row. The
+			// template is parsed from the clause text, so a clause with
+			// row-dependent dynamic labels or types keeps the general route,
+			// which plans the resolved pattern instead.
+			if template := e.pipelineCreateTemplateFor(clause.text); template != nil && template.usable {
+				var err error
+				paths, planned, err = template.plan(ctx, e, newRow, nodes, edges, plan)
+				if err != nil {
+					if failure := getExpressionFailure(rowCtx); failure != nil {
+						return nil, failure
+					}
+					return nil, localizedError(localization.CypherInvariantsPipelineCreateFailed(err), err)
+				}
 			}
-			return nil, localizedError(localization.CypherInvariantsPipelineCreateFailed(err), err)
+		}
+		if !planned {
+			var err error
+			paths, err = e.planCreatePatterns(rowCtx, pattern, nodes, edges, plan)
+			if err != nil {
+				if failure := getExpressionFailure(rowCtx); failure != nil {
+					return nil, failure
+				}
+				return nil, localizedError(localization.CypherInvariantsPipelineCreateFailed(err), err)
+			}
 		}
 		for name, node := range nodes {
 			newRow[name] = node

@@ -147,9 +147,9 @@ func orTruth(left, right bindingWhereTruth) bindingWhereTruth {
 
 // Compiled binding WHERE predicates, cached by clause text (boundedCache).
 var (
-	compiledBindingWhereCache               = newBoundedCache[string, bindingWherePredicate](4096)
-	compiledSupportedBindingWhereCache      = newBoundedCache[string, bindingWherePredicate](4096)
-	compiledSupportedBindingWhereTruthCache = newBoundedCache[string, bindingWhereTruth](4096)
+	compiledBindingWhereCache               = newBoundedCache[string, bindingWherePredicate](4096, boundedCacheStringShardIndex)
+	compiledSupportedBindingWhereCache      = newBoundedCache[string, bindingWherePredicate](4096, boundedCacheStringShardIndex)
+	compiledSupportedBindingWhereTruthCache = newBoundedCache[string, bindingWhereTruth](4096, boundedCacheStringShardIndex)
 )
 
 type bindingFilterPredicate struct {

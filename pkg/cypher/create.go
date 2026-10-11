@@ -108,6 +108,12 @@ func (e *StorageExecutor) pipelineCreateSource(ctx context.Context, source pipel
 	if err := e.applyCreatePlan(ctx, plan, created); err != nil {
 		return nil, nil, true, localizedError(localization.CypherInvariantsPipelineCreateFailed(err), err)
 	}
+	// The batch is one atomic apply: a cancellation that lands while it
+	// writes cannot roll it back, but the statement still reports the
+	// cancellation so the client knows the outcome is uncertain.
+	if err := ctx.Err(); err != nil {
+		return nil, nil, true, err
+	}
 	return out, created, true, nil
 }
 

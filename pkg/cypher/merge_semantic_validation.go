@@ -11,22 +11,32 @@ import (
 )
 
 type semanticValidationCache struct {
+	shards [boundedCacheShardCount]semanticValidationCacheShard
+	max    int
+}
+
+type semanticValidationCacheShard struct {
 	mu      sync.RWMutex
 	entries map[string]struct{}
-	max     int
 }
 
 func newSemanticValidationCache(max int) *semanticValidationCache {
-	return &semanticValidationCache{entries: make(map[string]struct{}, max), max: max}
+	c := &semanticValidationCache{max: max}
+	shardLimit := max / boundedCacheShardCount
+	for i := range c.shards {
+		c.shards[i].entries = make(map[string]struct{}, shardLimit/4+1)
+	}
+	return c
 }
 
 func (cache *semanticValidationCache) contains(query string) bool {
 	if cache == nil {
 		return false
 	}
-	cache.mu.RLock()
-	_, exists := cache.entries[query]
-	cache.mu.RUnlock()
+	sh := &cache.shards[boundedCacheStringShardIndex(query)]
+	sh.mu.RLock()
+	_, exists := sh.entries[query]
+	sh.mu.RUnlock()
 	return exists
 }
 
@@ -34,12 +44,13 @@ func (cache *semanticValidationCache) add(query string) {
 	if cache == nil || cache.max <= 0 {
 		return
 	}
-	cache.mu.Lock()
-	if len(cache.entries) >= cache.max {
-		clear(cache.entries)
+	sh := &cache.shards[boundedCacheStringShardIndex(query)]
+	sh.mu.Lock()
+	if len(sh.entries) >= cache.max/boundedCacheShardCount {
+		clear(sh.entries)
 	}
-	cache.entries[query] = struct{}{}
-	cache.mu.Unlock()
+	sh.entries[query] = struct{}{}
+	sh.mu.Unlock()
 }
 
 // validateMergeSemanticScopes applies the MERGE binding and pattern-value
@@ -50,9 +61,7 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string) error {
 	if findKeywordIndexInContext(cypher, "MERGE") < 0 {
 		return nil
 	}
-	// Literal-heavy statements never repeat a text; skip the shared cache so
-	// they only pay the scan, not the lock (see statementLikelyHasLiterals).
-	if !statementLikelyHasLiterals(cypher) && e.mergeSemanticValidationCache.contains(cypher) {
+	if e.mergeSemanticValidationCache.contains(cypher) {
 		return nil
 	}
 	clauses, ok := splitPipelineClauses(cypher)
@@ -83,9 +92,7 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string) error {
 			}
 		}
 	}
-	if !statementLikelyHasLiterals(cypher) {
-		e.mergeSemanticValidationCache.add(cypher)
-	}
+	e.mergeSemanticValidationCache.add(cypher)
 	return nil
 }
 

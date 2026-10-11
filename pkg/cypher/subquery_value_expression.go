@@ -212,7 +212,7 @@ func (c *integerComparison) holds(value int64) bool {
 // rowSubqueryPlans caches row subquery plans by expression text: an
 // expression is planned once, not once per row. A nil plan (no subquery in a
 // larger expression) is cached too.
-var rowSubqueryPlans = newBoundedCache[string, *rowSubqueryPlan](1024)
+var rowSubqueryPlans = newBoundedCache[string, *rowSubqueryPlan](1024, boundedCacheStringShardIndex)
 
 // planRowSubqueries returns expr's plan when it holds subquery expressions
 // inside a larger expression (nestedSubqueryExpressions), and nil otherwise.
@@ -580,7 +580,7 @@ type boundDegreeShape struct {
 
 // boundDegreeShapes caches parsed COUNT bodies; a body is parsed once, not
 // once per row.
-var boundDegreeShapes = newBoundedCache[string, boundDegreeShape](1024)
+var boundDegreeShapes = newBoundedCache[string, boundDegreeShape](1024, boundedCacheStringShardIndex)
 
 // parseBoundDegreeShape parses body as a boundDegreePattern (cached).
 func parseBoundDegreeShape(body string) boundDegreeShape {

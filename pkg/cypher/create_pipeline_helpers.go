@@ -131,7 +131,7 @@ type createPatternSplit struct {
 	relationships []string
 }
 
-var createPatternSplits = newBoundedCache[string, createPatternSplit](4096)
+var createPatternSplits = newBoundedCache[string, createPatternSplit](4096, boundedCacheStringShardIndex)
 
 func (e *StorageExecutor) createPatternSplitFor(pattern string) createPatternSplit {
 	if split, cached := createPatternSplits.get(pattern); cached {
@@ -159,7 +159,7 @@ type createRelationshipSyntax struct {
 	err                                     error
 }
 
-var createRelationshipSyntaxPlans = newBoundedCache[string, createRelationshipSyntax](4096)
+var createRelationshipSyntaxPlans = newBoundedCache[string, createRelationshipSyntax](4096, boundedCacheStringShardIndex)
 
 func getNodeProp(n *storage.Node, prop string) interface{} {
 	if n == nil || n.Properties == nil {

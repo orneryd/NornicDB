@@ -20,7 +20,7 @@ type pipelineRowWithParse struct {
 	supported bool
 }
 
-var pipelineRowWithPlans = newBoundedCache[string, pipelineRowWithParse](4096)
+var pipelineRowWithPlans = newBoundedCache[string, pipelineRowWithParse](4096, boundedCacheStringShardIndex)
 
 func parsePipelineRowWith(clause string) (pipelineRowWith, bool) {
 	if parsed, cached := pipelineRowWithPlans.get(clause); cached {
@@ -232,7 +232,7 @@ type pipelineNodeMatchSourcePlan struct {
 	earlyLimitSafe bool
 }
 
-var pipelineNodeMatchSourcePlans = newBoundedCache[string, pipelineNodeMatchSourcePlan](4096)
+var pipelineNodeMatchSourcePlans = newBoundedCache[string, pipelineNodeMatchSourcePlan](4096, boundedCacheStringShardIndex)
 
 func (e *StorageExecutor) compilePipelineNodeMatchSource(clause string) pipelineNodeMatchSourcePlan {
 	plan := pipelineNodeMatchSourcePlan{earlyLimitSafe: true}
@@ -586,7 +586,7 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 }
 
 // projectionExpressionCache holds projectionExpressions results by clause.
-var projectionExpressionCache = newBoundedCache[string, []string](4096)
+var projectionExpressionCache = newBoundedCache[string, []string](4096, boundedCacheStringShardIndex)
 
 // projectionExpressions returns the projected expressions of a projection
 // clause given as text with its keyword: the items of RETURN or WITH, after

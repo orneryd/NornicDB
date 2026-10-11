@@ -20,7 +20,7 @@ var (
 	// archive. Only zones found in the archive are stored, so it holds at most
 	// the archive's zone count, which is below its limit: in practice it never
 	// clears.
-	temporalLocationCache = newBoundedCache[string, *time.Location](4096)
+	temporalLocationCache = newBoundedCache[string, *time.Location](4096, boundedCacheStringShardIndex)
 )
 
 // loadTemporalLocationAt resolves a named zone using Neo4j's Java-time

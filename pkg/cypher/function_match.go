@@ -28,7 +28,7 @@ func (m *funcMatcher) String() string {
 
 // funcMatcherCache caches function-name matchers by lower-cased name
 // (boundedCache).
-var funcMatcherCache = newBoundedCache[string, *funcMatcher](1024)
+var funcMatcherCache = newBoundedCache[string, *funcMatcher](1024, boundedCacheStringShardIndex)
 
 func getFuncMatcher(funcName string) *funcMatcher {
 	key := lowerASCII(strings.TrimSpace(funcName))

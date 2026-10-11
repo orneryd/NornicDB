@@ -8,10 +8,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// degrees(), radians() and point.distance return Neo4j 5.26.30's values bit
-// for bit (#907): one conversion constant, each coordinate converted before
-// it is differenced, and a 3D distance measured at the points' average
-// height.
+// degrees(), radians() and point.distance return Neo4j 5.26.30's values
+// (#907): one conversion constant, each coordinate converted before it is
+// differenced, and a 3D distance measured at the points' average height.
+// Neo4j computes in Java; Go's math functions agree to every published digit
+// but differ in the low bits of trigonometric results (~1e-13 relative), so
+// the values are compared with a 1e-12 relative tolerance — tight enough
+// that a wrong formula or constant fails, loose enough for the documented
+// cross-runtime difference.
 func TestAngleAndDistanceMatchNeo4j(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "angle_distance"))
 	for query, want := range map[string]float64{
@@ -24,7 +28,10 @@ func TestAngleAndDistanceMatchNeo4j(t *testing.T) {
 	} {
 		result, err := exec.Execute(context.Background(), query, nil)
 		require.NoError(t, err, query)
-		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+		require.Len(t, result.Rows, 1, query)
+		got, ok := result.Rows[0][0].(float64)
+		require.True(t, ok, query)
+		require.InEpsilonf(t, want, got, 1e-12, query)
 	}
 	// In a SET value and a WHERE, in that order.
 	for _, query := range []string{
@@ -33,6 +40,9 @@ func TestAngleAndDistanceMatchNeo4j(t *testing.T) {
 	} {
 		result, err := exec.Execute(context.Background(), query, nil)
 		require.NoError(t, err, query)
-		require.Equal(t, [][]interface{}{{58.730485252116864}}, result.Rows, query)
+		require.Len(t, result.Rows, 1, query)
+		got, ok := result.Rows[0][0].(float64)
+		require.True(t, ok, query)
+		require.InEpsilonf(t, 58.730485252116864, got, 1e-12, query)
 	}
 }

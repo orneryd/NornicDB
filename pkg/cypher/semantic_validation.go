@@ -21,14 +21,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	// A text cached under its own key passed every check here, the lexical
 	// one included, so a repeated query skips them all (#823). A rewritten
 	// text cached under its original still gets its own lexical check.
-	// Literal-heavy statements (corpus seeds embed ids as literals) never
-	// repeat a text, so they skip the cache entirely instead of contending
-	// on it (PR #1043 write-path profile: per-text caches were the main
-	// remaining lock wait).
-	cached := false
-	if !statementLikelyHasLiterals(cacheKey) {
-		cached = e.semanticValidationCache.contains(cacheKey)
-	}
+	cached := e.semanticValidationCache.contains(cacheKey)
 	if cached && names == nil {
 		return nil
 	}
@@ -152,9 +145,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := e.validateSetSemanticScopes(cypher); err != nil {
 		return err
 	}
-	if !statementLikelyHasLiterals(cacheKey) {
-		e.semanticValidationCache.add(cacheKey)
-	}
+	e.semanticValidationCache.add(cacheKey)
 	return nil
 }
 

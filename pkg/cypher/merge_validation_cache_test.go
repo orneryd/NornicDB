@@ -17,11 +17,14 @@ func TestMergeSemanticValidationCachesAcceptedStatement(t *testing.T) {
 	require.NoError(t, exec.validateMergeSemanticScopes(query))
 }
 
-// Literal-bearing MERGE statements skip the shared cache (they never repeat
-// a text), per the PR #1043 write-path cache-contention fix.
-func TestMergeSemanticValidationSkipsLiteralStatements(t *testing.T) {
+// Literal-bearing MERGE statements cache like any other text: repeated
+// statements (explicit transactions, batch tooling, the match-create-delete
+// gate) must hit, and sharding removed the contention that once motivated
+// skipping them.
+func TestMergeSemanticValidationCachesLiteralStatements(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	query := "MERGE (n:Cached {id: 1}) RETURN n"
 	require.NoError(t, exec.validateMergeSemanticScopes(query))
-	require.False(t, exec.mergeSemanticValidationCache.contains(query))
+	require.True(t, exec.mergeSemanticValidationCache.contains(query))
+	require.NoError(t, exec.validateMergeSemanticScopes(query))
 }

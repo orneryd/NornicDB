@@ -79,7 +79,7 @@ type pipelineNodeMatchTemplate struct {
 	properties   []pipelinePropertyExpression
 }
 
-var pipelineNodeMatchTemplates = newBoundedCache[string, *pipelineNodeMatchTemplate](512)
+var pipelineNodeMatchTemplates = newBoundedCache[string, *pipelineNodeMatchTemplate](512, boundedCacheStringShardIndex)
 
 // pipelineNodeMatchTemplateFor parses a MATCH clause's single node pattern
 // once per clause text.
@@ -148,7 +148,7 @@ type pipelineMergeTemplate struct {
 	properties []pipelinePropertyExpression
 }
 
-var pipelineMergeTemplates = newBoundedCache[string, *pipelineMergeTemplate](512)
+var pipelineMergeTemplates = newBoundedCache[string, *pipelineMergeTemplate](512, boundedCacheStringShardIndex)
 
 // pipelineMergeTemplateFor parses a MERGE clause once per clause text. The
 // template covers `MERGE (a)-[r:T {…}]->(b)` without ON CREATE / ON MATCH SET.

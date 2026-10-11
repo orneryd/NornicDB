@@ -300,7 +300,7 @@ func (part *rowPredicatePart) complete() bool {
 
 // rowPredicatePlans caches plans by predicate text; a nil plan (a predicate
 // with nothing to plan) is cached too.
-var rowPredicatePlans = newBoundedCache[string, *rowPredicatePlan](1024)
+var rowPredicatePlans = newBoundedCache[string, *rowPredicatePlan](1024, boundedCacheStringShardIndex)
 
 // planRowPredicate returns the plan of a predicate that has at least one
 // comparison or null test of simple operands, combined with AND / OR, and nil

@@ -501,9 +501,13 @@ type upperQueryCache struct {
 }
 
 type syntaxValidationCache struct {
+	shards [boundedCacheShardCount]syntaxValidationCacheShard
+	max    int
+}
+
+type syntaxValidationCacheShard struct {
 	mu    sync.RWMutex
 	cache map[string]struct{}
-	max   int
 }
 
 func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExecutor {

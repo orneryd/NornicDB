@@ -21,7 +21,7 @@ import (
 // Used for dynamic patterns like Cypher's =~ regex comparison operator. The
 // patterns come from queries and parameters, so the cache is bounded
 // (boundedCache): 1024 compiled patterns, cleared and refilled when full.
-var regexCache = newBoundedCache[string, *regexp.Regexp](1024)
+var regexCache = newBoundedCache[string, *regexp.Regexp](1024, boundedCacheStringShardIndex)
 
 // GetCachedRegex returns a compiled regex for the pattern, using cache if available.
 // This avoids re-compiling the same pattern on every =~ comparison.
