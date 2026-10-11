@@ -133,6 +133,104 @@ func (a textAnalyzer) Analyze(text string) []string {
 	return out
 }
 
+// locatedTerm is one BM25 term of a text with the [start, end) bytes of the
+// text it was read from.
+type locatedTerm struct {
+	term       string
+	start, end int
+}
+
+// locatingAnalyzer is an Analyzer that can also say where in a text each
+// of its terms was read, for a hit's term matches (#1060).
+type locatingAnalyzer interface {
+	locate(text string) []locatedTerm
+}
+
+// locate returns the terms Analyze returns for text, in order, each with
+// the bytes of text it was read from (TestLocateReadsAnalyzeTerms). Analyze
+// normalizes the whole text before splitting it; locate normalizes it
+// segment by segment (norm.Iter, the same NFKC result) so each word keeps
+// the source bytes of the segments it came from. A word read from a
+// segment that NFKC splits ("½" is "1⁄2") gets that whole segment.
+func (a textAnalyzer) locate(text string) []locatedTerm {
+	var words []locatedTerm
+	var word strings.Builder
+	start, end := -1, 0
+	flush := func() {
+		if start >= 0 {
+			words = append(words, locatedTerm{term: word.String(), start: start, end: end})
+		}
+		word.Reset()
+		start = -1
+	}
+	fold := cases.Fold()
+	var iter norm.Iter
+	iter.InitString(norm.NFKC, text)
+	pending := 0 // words[pending:] may still end at -1
+	for !iter.Done() {
+		segmentStart := iter.Pos()
+		segment := fold.String(string(iter.Next()))
+		segmentEnd := iter.Pos()
+		// The iterator can return part of a segment's output before it
+		// moves past the segment ("½"): those words end where it next moves.
+		sourceEnd := segmentEnd
+		if segmentEnd == segmentStart {
+			sourceEnd = -1
+		}
+		for _, r := range segment {
+			if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) {
+				flush()
+				continue
+			}
+			if start < 0 {
+				start = segmentStart
+			}
+			word.WriteRune(r)
+			end = sourceEnd
+		}
+		if segmentEnd > segmentStart {
+			if start >= 0 && end < 0 {
+				end = segmentEnd
+			}
+			for index := pending; index < len(words); index++ {
+				if words[index].end < 0 {
+					words[index].end = segmentEnd
+				}
+			}
+			pending = len(words)
+		}
+	}
+	flush()
+	if len(words) == 0 {
+		return nil
+	}
+	if a.stemTokens != nil {
+		tokens := make([]string, len(words))
+		for index := range words {
+			tokens[index] = words[index].term
+		}
+		stemmed := a.stemTokens(tokens)
+		if len(stemmed) != len(words) {
+			return nil
+		}
+		for index := range words {
+			words[index].term = stemmed[index]
+		}
+		return words
+	}
+	if a.stem == nil {
+		return words
+	}
+	out := words[:0]
+	for _, located := range words {
+		located.term = a.stem(located.term)
+		if located.term != "" {
+			out = append(out, located)
+		}
+	}
+	return out
+}
+
 func analyzerFingerprint(analyzer Analyzer) AnalyzerFingerprint {
 	return normalizeAnalyzer(analyzer).Fingerprint()
 }

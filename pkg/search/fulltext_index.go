@@ -491,6 +491,17 @@ func (f *FulltextIndex) SearchAllowed(query string, limit int, allowed func(docI
 	return output
 }
 
+// TermIDF is the BM25 IDF of an analyzed term, the weight a match on it
+// gets: higher for a rarer term, 0 for one no document holds.
+func (f *FulltextIndex) TermIDF(term string) float64 {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	if len(f.invertedIndex[term]) == 0 {
+		return 0
+	}
+	return f.calculateIDF(term)
+}
+
 // calculateIDF calculates the Inverse Document Frequency for a term.
 // Uses the BM25 IDF formula: log((N - df + 0.5) / (df + 0.5) + 1)
 // where N = total docs, df = docs containing term

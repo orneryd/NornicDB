@@ -117,6 +117,44 @@ that matches nothing returns no rows; to learn its coverage anyway, continue it
 when `results` is empty. With `NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error`, such
 a query fails instead (`search query has N chunks; at most M are searched`).
 
+### What matched: `matches`
+
+Every `db.retrieve` / `db.rretrieve` row has a `matches` column, a list of maps
+saying what made the hit match and where it lies in the node's string
+properties. A continued search's `page.results` (and their `passages`) carry
+the same `matches`, as do HTTP and gRPC search hits.
+
+- **`kind: 'chunk'`**: one of the node's embedding chunks matched the query
+  vector, with its `chunk` index and `score` (similarity to the query). A vector
+  hit lists its best chunk, then up to two more that reach the search's minimum
+  similarity, best first. A chunk that runs across two properties is one match
+  per property.
+- **`kind: 'term'`**: one occurrence of a query term in a property the keyword
+  index reads, with the `term` as the analyzer reads it (case-folded, NFKC). A
+  keyword hit lists up to 32 occurrences: those of its rarest query terms first
+  (by the keyword index's IDF, so a common word such as "the" doesn't crowd out
+  the words that made the hit), each term's in the index's property order.
+- **`property`, `start`, `end`**: the occurrence is `[start, end)` of that
+  property's value, in Unicode code points as `substring()` counts them. They
+  are null for a chunk whose place is unknown (see below).
+
+```cypher
+CALL db.retrieve({query: 'when is a late fee charged?', limit: 5})
+YIELD node, matches
+RETURN node.id,
+       [m IN matches WHERE m.property IS NOT NULL |
+        substring(node[m.property], m.start, m.end - m.start)] AS passages
+```
+
+Each chunk's place is recorded when the node is embedded: NornicDB finds the
+chunk in the text it built from the node (labels and the included properties)
+and maps it to the properties. A provider that chunks on its side (Voyage's
+contextualized auto-chunking returns verbatim chunks) is matched exactly; a
+chunker that trims or collapses whitespace is matched with whitespace ignored.
+An embedding made before this release is placed from the chunk texts it kept
+(provider chunkers keep them), so it needs no re-embedding; one without kept
+chunk texts reports its chunks with null places until it is embedded again.
+
 A text query passed to `db.index.vector.queryNodes` / `queryRelationships` is
 embedded whole or not at all, since its rows (`node`, `score`) have no place to
 report a partial query. It fails when it has more chunks than

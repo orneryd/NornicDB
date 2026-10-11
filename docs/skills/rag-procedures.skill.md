@@ -39,7 +39,7 @@ CALL db.retrieve({
   rerankMinScore: 0.0,
   embedding:      $queryVector                 -- optional pre-computed; alias: queryEmbedding / query_embedding
 })
-YIELD node, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered, fallback_reason
+YIELD node, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_triggered, fallback_reason, matches
 RETURN node.id, node.title, score, search_method
 ORDER BY score DESC
 ```
@@ -57,6 +57,7 @@ Behavior:
 - `fallback_triggered: true` means one strategy returned nothing and the engine fell back.
 - `fallback_reason` explains why the requested search path changed using a stable code such as `query_embedding_failed`, `query_embedding_unavailable`, `no_embedder`, `no_hybrid_results`, or `hybrid_search_failed`. Provider error text is logged, not returned to callers. An empty, missing or wrong-dimension vector from the provider is a failed embedding (`query_embedding_failed`), never cached; an embedding failure is reported over benign reasons, and only chunks searched with their embedding count in `query_chunks_searched`.
 - `search_method` names `+rerank` only when the reranker ordered the results. When a requested rerank didn't (`rerank_failed`: the provider failed; `rerank_scores_flat`: it scored every candidate nearly the same; `rerank_no_candidates`: no candidate had content to score), the results keep their fused order and `fallback_triggered` is `true`. A failed rerank isn't cached.
+- `matches` lists what made each hit match and where: `{kind: 'chunk', chunk, score}` for its best matching embedding chunks (up to 3) and `{kind: 'term', term}` for query term occurrences (up to 32, rarest terms first), each with `property`, `start`, `end`, its `[start, end)` in code points of that property, so `substring(node[m.property], m.start, m.end - m.start)` is the passage. Places are null for a chunk of an older embedding that kept no chunk texts. `page.results` carry `matches` too.
 - A query longer than `NORNICDB_SEARCH_QUERY_MAX_CHUNKS` chunks of 512 characters (32 by default) is searched by its first chunks, with `fallback_reason: query_chunks_dropped` (unless an earlier fallback holds it) and, whatever the reason, `query_chunks_searched` / `query_chunks_total` as `db.retrieve` / `db.rretrieve` columns and in the metadata; `NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error` makes it fail instead. A search with no hits returns no rows; a continued search (`n`) returns its `page` with the chunk counts even then. A text query to `db.index.vector.queryNodes` / `queryRelationships` is embedded whole or fails (over the limit, or when a chunk's embedding fails).
 
 ### Durable continuation

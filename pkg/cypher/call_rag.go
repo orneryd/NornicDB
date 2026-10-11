@@ -372,7 +372,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total"},
+		Columns: []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"},
 		Rows:    make([][]interface{}, 0, len(response.Results)),
 	}
 	// Of a query split into chunks, how many were searched; 0 and 0 for a
@@ -396,6 +396,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			string(response.FallbackReason),
 			chunksSearched,
 			chunksTotal,
+			search.SearchMatchValues(r.Matches),
 		})
 	}
 
@@ -411,6 +412,7 @@ func executeSearchContinuationPage(page *search.SearchContinuationPage) *Execute
 			"score": result.Score, "rrf_score": result.RRFScore,
 			"vector_rank": int64(result.VectorRank), "bm25_rank": int64(result.BM25Rank),
 			"group_key": result.GroupKey, "phase": result.Phase,
+			"matches": search.SearchMatchValues(result.Matches),
 		}
 		for key, value := range continuationResultMetadata(result) {
 			mapped[key] = value
@@ -423,7 +425,8 @@ func executeSearchContinuationPage(page *search.SearchContinuationPage) *Execute
 					"node":  &storage.Node{ID: storage.NodeID(passage.ID), Labels: passage.Labels, Properties: passage.Properties},
 					"score": passage.Score, "rrf_score": passage.RRFScore,
 					"vector_rank": int64(passage.VectorRank), "bm25_rank": int64(passage.BM25Rank),
-					"phase": passage.Phase,
+					"phase":   passage.Phase,
+					"matches": search.SearchMatchValues(passage.Matches),
 				}
 				for key, value := range continuationResultMetadata(passage) {
 					passages[passageIndex].(map[string]interface{})[key] = value

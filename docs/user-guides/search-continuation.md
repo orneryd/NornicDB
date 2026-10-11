@@ -153,7 +153,9 @@ CALL db.retrieve({qid: $qid, n: 10}) YIELD page RETURN page
 Ordinary `db.retrieve` calls without continuation options retain their existing
 `node`, `score`, `rrf_score`, `vector_rank`, `bm25_rank`, `search_method`, and
 `fallback_triggered` columns, plus `fallback_reason` when the requested search
-path changed. Bolt's standard numeric qid remains local to a
+path changed, and `matches`. Each of a page's `results` (and their `passages`)
+has the same `matches`: what made the hit match and where it lies in its
+properties (see the Cypher RAG procedures guide). Bolt's standard numeric qid remains local to a
 connection and transaction; it is not the opaque durable qid. A continuation
 START also publishes the opaque token as additive `durable_qid` metadata on
 Bolt's `RUN` `SUCCESS` message when more results exist.

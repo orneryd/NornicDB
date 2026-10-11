@@ -551,3 +551,20 @@ func TestService_SearchText_ChunksLongQueryAndFusesAcrossChunks(t *testing.T) {
 	}
 	require.LessOrEqual(t, maxQTokens, 512, "expected no search call on query chunks > 512 tokens")
 }
+
+// A hit's matches cross gRPC as SearchMatch messages (#1060).
+func TestGRPCSearchHitCarriesMatches(t *testing.T) {
+	hit := grpcSearchHit(search.SearchResult{ID: "doc", NodeID: "doc", Matches: []search.SearchMatch{
+		{Kind: search.SearchMatchChunk, Chunk: 2, Score: 0.5, Property: "text", Start: 3, End: 9},
+		{Kind: search.SearchMatchTerm, Chunk: -1, Term: "rent", Property: "text", Start: 0, End: 4},
+	}})
+	require.Len(t, hit.Matches, 2)
+	require.Equal(t, "chunk", hit.Matches[0].Kind)
+	require.Equal(t, int32(2), hit.Matches[0].Chunk)
+	require.Equal(t, float32(0.5), hit.Matches[0].Score)
+	require.Equal(t, "text", hit.Matches[0].Property)
+	require.Equal(t, int32(3), hit.Matches[0].Start)
+	require.Equal(t, int32(9), hit.Matches[0].End)
+	require.Equal(t, "rent", hit.Matches[1].Term)
+	require.Nil(t, grpcSearchHit(search.SearchResult{ID: "bare"}).Matches)
+}

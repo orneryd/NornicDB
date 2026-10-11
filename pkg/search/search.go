@@ -110,6 +110,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -244,6 +245,7 @@ type SearchResult struct {
 	GroupKey       string          `json:"group_key,omitempty"`
 	Phase          string          `json:"phase,omitempty"`
 	Passages       []SearchPassage `json:"passages,omitempty"`
+	Matches        []SearchMatch   `json:"matches,omitempty"`
 	Type           string          `json:"type"`
 	Labels         []string        `json:"labels"`
 	Title          string          `json:"title,omitempty"`
@@ -713,7 +715,7 @@ func estimateSearchResponseBytes(response *SearchResponse) int64 {
 		for _, passage := range result.Passages {
 			size += resultBytes(passage)
 		}
-		return size
+		return size + searchMatchesBytes(result.Matches)
 	}
 	for _, result := range response.Results {
 		bytes += resultBytes(result)
@@ -769,6 +771,10 @@ type Service struct {
 	fulltextRef  atomic.Pointer[bm25IndexRef]
 	bm25Analyzer Analyzer
 	bm25Engine   string
+	// embedTextOptions is how the embedding worker builds a node's embedding
+	// text, to place the chunks of an embedding that didn't record their
+	// places (#1060); nil is the worker's default.
+	embedTextOptions *embeddingutil.EmbedTextOptions
 	// fulltextProperties is an ordered allowlist. Empty preserves all-property indexing.
 	fulltextProperties []string
 	reranker           Reranker
@@ -4684,7 +4690,7 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	}
 
 	// Step 7: Convert to SearchResult and enrich with node data
-	results := s.enrichResults(ctx, fusedResults, opts, seenOrphans)
+	results := s.enrichResults(ctx, fusedResults, opts, seenOrphans, hitMatchQuery{text: query, embedding: embedding, hybrid: true})
 	fusionMs := int(time.Since(fusionStart).Milliseconds())
 	totalMs := int(time.Since(totalStart).Milliseconds())
 
@@ -6983,7 +6989,7 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 			searchMethod, len(results), time.Since(searchStart))
 	}
 
-	searchResults := s.enrichIndexResults(ctx, results, opts, seenOrphans)
+	searchResults := s.enrichIndexResults(ctx, results, opts, seenOrphans, hitMatchQuery{embedding: embedding})
 	// Vector-only: set vector_rank from position (1-based), bm25_rank = 0
 	for i := range searchResults {
 		searchResults[i].VectorRank = i + 1
@@ -7045,7 +7051,7 @@ func (s *Service) fullTextSearchOnly(ctx context.Context, query string, opts *Se
 	}
 	bm25Ms := int(time.Since(bm25Start).Milliseconds())
 
-	searchResults := s.enrichIndexResults(ctx, results, opts, seenOrphans)
+	searchResults := s.enrichIndexResults(ctx, results, opts, seenOrphans, hitMatchQuery{text: query})
 	// Full-text only: set bm25_rank from position (1-based), vector_rank = 0
 	for i := range searchResults {
 		searchResults[i].VectorRank = 0
@@ -7127,53 +7133,55 @@ func (s *Service) extractSearchableText(node *storage.Node) string {
 		return ""
 	}
 	properties := s.FulltextProperties()
-	if len(properties) > 0 {
-		parts := make([]string, 0, len(properties))
-		for _, property := range properties {
-			if value, ok := node.Properties[property]; ok {
-				if text := propertyToString(value); text != "" {
-					parts = append(parts, text)
-				}
-			}
-		}
-		return strings.Join(parts, " ")
-	}
-
 	var parts []string
-
-	// 1. Add labels first (important for type-based search)
-	for _, label := range node.Labels {
-		parts = append(parts, label)
+	if len(properties) == 0 {
+		// Labels first (important for type-based search).
+		parts = append(parts, node.Labels...)
 	}
+	visitSearchableFields(node, properties, func(key string, value any, named bool) bool {
+		if text := propertyToString(value); text != "" {
+			if named {
+				// Include property name to enable searches like "genre:action".
+				parts = append(parts, key)
+			}
+			parts = append(parts, text)
+		}
+		return true
+	})
+	return strings.Join(parts, " ")
+}
 
-	// 2. Add priority searchable properties first (better ranking for these)
-	for _, prop := range SearchableProperties {
-		if val, ok := node.Properties[prop]; ok {
-			if str := propertyToString(val); str != "" {
-				parts = append(parts, str)
+// visitSearchableFields calls visit with each property the BM25 index reads
+// for node, in the order it reads them, until visit returns false: the
+// configured fulltext properties when there are any; otherwise the priority
+// SearchableProperties, then every other property in key order (so a node's
+// text is the same every time), whose key is indexed too (named).
+func visitSearchableFields(node *storage.Node, fulltextProperties []string, visit func(key string, value any, named bool) bool) {
+	if len(fulltextProperties) > 0 {
+		for _, property := range fulltextProperties {
+			if value, ok := node.Properties[property]; ok && !visit(property, value, false) {
+				return
 			}
 		}
+		return
 	}
-
-	// 3. Add ALL other properties (for comprehensive search), in key order so a
-	// node's text is the same every time it is extracted.
+	for _, property := range SearchableProperties {
+		if value, ok := node.Properties[property]; ok && !visit(property, value, false) {
+			return
+		}
+	}
 	keys := make([]string, 0, len(node.Properties))
 	for key := range node.Properties {
-		// Skip if already added as priority property
 		if _, ok := searchablePropertiesSet[key]; !ok {
 			keys = append(keys, key)
 		}
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		// Add property name and value for searchability
-		if str := propertyToString(node.Properties[key]); str != "" {
-			// Include property name to enable searches like "genre:action"
-			parts = append(parts, key, str)
+		if !visit(key, node.Properties[key], true) {
+			return
 		}
 	}
-
-	return strings.Join(parts, " ")
 }
 
 // SetFulltextProperties limits BM25 indexing to the ordered property values.
@@ -7549,111 +7557,43 @@ func (s *Service) filterByType(ctx context.Context, results []indexResult, types
 }
 
 // enrichResults converts RRF results to SearchResult with full node data.
-func (s *Service) enrichResults(ctx context.Context, rrfResults []rrfResult, opts *SearchOptions, seenOrphans map[string]bool) []SearchResult {
+func (s *Service) enrichResults(ctx context.Context, rrfResults []rrfResult, opts *SearchOptions, seenOrphans map[string]bool, query hitMatchQuery) []SearchResult {
 	resultLimit := boundedResultLimit(len(rrfResults), opts.Limit)
 	if resultLimit == 0 {
 		return nil
 	}
-	projection := newResultPropertyProjection(opts.IncludeProperties, opts.ExcludeProperties)
-	if !s.supportsBatchNodesWithoutEmbeddings() {
-		return s.enrichResultsIndividually(ctx, rrfResults[:resultLimit], seenOrphans, projection)
-	}
-
 	ids := make([]storage.NodeID, resultLimit)
 	for index := 0; index < resultLimit; index++ {
 		ids[index] = storage.NodeID(rrfResults[index].ID)
 	}
-	nodes, err := s.batchGetNodesWithoutEmbeddings(ids)
-	if err != nil {
+	nodes, ok := s.hitNodes(ctx, ids, seenOrphans)
+	if !ok {
 		return nil
 	}
-
+	projection := newResultPropertyProjection(opts.IncludeProperties, opts.ExcludeProperties)
 	results := make([]SearchResult, 0, resultLimit)
-	for index := 0; index < resultLimit; index++ {
-		rrf := rrfResults[index]
-		node := nodes[storage.NodeID(rrf.ID)]
+	found := make([]*storage.Node, 0, resultLimit)
+	for index, node := range nodes {
 		if node == nil {
-			_ = s.handleOrphanedEmbedding(ctx, rrf.ID, storage.ErrNotFound, seenOrphans)
 			continue
 		}
-
-		result := SearchResult{
-			ID:         rrf.ID,
-			NodeID:     node.ID,
-			Labels:     node.Labels,
-			Properties: projection.apply(node.Properties),
-			Score:      rrf.RRFScore,
-			Similarity: rrf.OriginalScore,
-			RRFScore:   rrf.RRFScore,
-			VectorRank: rrf.VectorRank,
-			BM25Rank:   rrf.BM25Rank,
-		}
-
-		// Extract common fields
-		if t, ok := node.Properties["type"].(string); ok {
-			result.Type = t
-		}
-		if title, ok := node.Properties["title"].(string); ok {
-			result.Title = title
-		}
-		if desc, ok := node.Properties["description"].(string); ok {
-			result.Description = desc
-		}
-		if content, ok := node.Properties["content"].(string); ok {
-			result.ContentPreview = truncate(content, 200)
-		} else if text, ok := node.Properties["text"].(string); ok {
-			result.ContentPreview = truncate(text, 200)
-		}
-
+		rrf := rrfResults[index]
+		result := searchResultFromNode(rrf.ID, node, projection)
+		result.Score = rrf.RRFScore
+		result.Similarity = rrf.OriginalScore
+		result.RRFScore = rrf.RRFScore
+		result.VectorRank = rrf.VectorRank
+		result.BM25Rank = rrf.BM25Rank
 		results = append(results, result)
+		found = append(found, node)
 	}
-
-	return results
-}
-
-func (s *Service) enrichResultsIndividually(ctx context.Context, rrfResults []rrfResult, seenOrphans map[string]bool, projection resultPropertyProjection) []SearchResult {
-	results := make([]SearchResult, 0, len(rrfResults))
-	for _, rrf := range rrfResults {
-		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(rrf.ID))
-		if err != nil {
-			if s.handleOrphanedEmbedding(ctx, rrf.ID, err, seenOrphans) {
-				continue
-			}
-			continue
-		}
-		result := SearchResult{
-			ID:         rrf.ID,
-			NodeID:     node.ID,
-			Labels:     node.Labels,
-			Properties: projection.apply(node.Properties),
-			Score:      rrf.RRFScore,
-			Similarity: rrf.OriginalScore,
-			RRFScore:   rrf.RRFScore,
-			VectorRank: rrf.VectorRank,
-			BM25Rank:   rrf.BM25Rank,
-		}
-		if t, ok := node.Properties["type"].(string); ok {
-			result.Type = t
-		}
-		if title, ok := node.Properties["title"].(string); ok {
-			result.Title = title
-		}
-		if desc, ok := node.Properties["description"].(string); ok {
-			result.Description = desc
-		}
-		if content, ok := node.Properties["content"].(string); ok {
-			result.ContentPreview = truncate(content, 200)
-		} else if text, ok := node.Properties["text"].(string); ok {
-			result.ContentPreview = truncate(text, 200)
-		}
-		results = append(results, result)
-	}
+	s.attachSearchMatches(ctx, results, found, query, opts)
 	return results
 }
 
 // enrichIndexResults converts raw index results to SearchResult.
 // Maps chunk IDs (e.g., "node-id-chunk-0") back to the original node ID.
-func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexResult, opts *SearchOptions, seenOrphans map[string]bool) []SearchResult {
+func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexResult, opts *SearchOptions, seenOrphans map[string]bool, query hitMatchQuery) []SearchResult {
 	resultLimit := boundedResultLimit(len(indexResults), opts.Limit)
 	if resultLimit == 0 {
 		return nil
@@ -7696,90 +7636,78 @@ func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexRe
 		ids = append(ids, storage.NodeID(nodeIDStr))
 		scores = append(scores, ir.Score)
 	}
-	if !s.supportsBatchNodesWithoutEmbeddings() {
-		return s.enrichIndexResultsIndividually(ctx, ids, scores, seenOrphans, projection)
-	}
-
-	nodes, err := s.batchGetNodesWithoutEmbeddings(ids)
-	if err != nil {
+	nodes, ok := s.hitNodes(ctx, ids, seenOrphans)
+	if !ok {
 		return nil
 	}
-
 	results := make([]SearchResult, 0, len(ids))
-	for index, id := range ids {
-		nodeIDStr := string(id)
-		node := nodes[id]
+	found := make([]*storage.Node, 0, len(ids))
+	for index, node := range nodes {
 		if node == nil {
-			_ = s.handleOrphanedEmbedding(ctx, nodeIDStr, storage.ErrNotFound, seenOrphans)
 			continue
 		}
-		result := SearchResult{
-			ID:         nodeIDStr, // Use original node ID, not chunk ID
-			NodeID:     node.ID,
-			Labels:     node.Labels,
-			Properties: projection.apply(node.Properties),
-			Score:      scores[index],
-			Similarity: scores[index],
-		}
-
-		// Extract common fields
-		if t, ok := node.Properties["type"].(string); ok {
-			result.Type = t
-		}
-		if title, ok := node.Properties["title"].(string); ok {
-			result.Title = title
-		}
-		if desc, ok := node.Properties["description"].(string); ok {
-			result.Description = desc
-		}
-		if content, ok := node.Properties["content"].(string); ok {
-			result.ContentPreview = truncate(content, 200)
-		} else if text, ok := node.Properties["text"].(string); ok {
-			result.ContentPreview = truncate(text, 200)
-		}
-
+		result := searchResultFromNode(string(ids[index]), node, projection) // the node ID, not a chunk ID
+		result.Score = scores[index]
+		result.Similarity = scores[index]
 		results = append(results, result)
+		found = append(found, node)
 	}
-
+	s.attachSearchMatches(ctx, results, found, query, opts)
 	return results
 }
 
-func (s *Service) enrichIndexResultsIndividually(ctx context.Context, ids []storage.NodeID, scores []float64, seenOrphans map[string]bool, projection resultPropertyProjection) []SearchResult {
-	results := make([]SearchResult, 0, len(ids))
+// hitNodes reads the nodes of the hits ids, without their embeddings. A
+// node that is gone is nil, and handled as an orphaned embedding; false
+// when the batch read fails.
+func (s *Service) hitNodes(ctx context.Context, ids []storage.NodeID, seenOrphans map[string]bool) ([]*storage.Node, bool) {
+	nodes := make([]*storage.Node, len(ids))
+	if s.supportsBatchNodesWithoutEmbeddings() {
+		batch, err := s.batchGetNodesWithoutEmbeddings(ids)
+		if err != nil {
+			return nil, false
+		}
+		for index, id := range ids {
+			if nodes[index] = batch[id]; nodes[index] == nil {
+				_ = s.handleOrphanedEmbedding(ctx, string(id), storage.ErrNotFound, seenOrphans)
+			}
+		}
+		return nodes, true
+	}
 	for index, id := range ids {
-		nodeIDStr := string(id)
 		node, err := s.getNodeWithoutEmbeddings(id)
 		if err != nil {
-			if s.handleOrphanedEmbedding(ctx, nodeIDStr, err, seenOrphans) {
-				continue
-			}
+			_ = s.handleOrphanedEmbedding(ctx, string(id), err, seenOrphans)
 			continue
 		}
-		result := SearchResult{
-			ID:         nodeIDStr,
-			NodeID:     node.ID,
-			Labels:     node.Labels,
-			Properties: projection.apply(node.Properties),
-			Score:      scores[index],
-			Similarity: scores[index],
-		}
-		if t, ok := node.Properties["type"].(string); ok {
-			result.Type = t
-		}
-		if title, ok := node.Properties["title"].(string); ok {
-			result.Title = title
-		}
-		if desc, ok := node.Properties["description"].(string); ok {
-			result.Description = desc
-		}
-		if content, ok := node.Properties["content"].(string); ok {
-			result.ContentPreview = truncate(content, 200)
-		} else if text, ok := node.Properties["text"].(string); ok {
-			result.ContentPreview = truncate(text, 200)
-		}
-		results = append(results, result)
+		nodes[index] = node
 	}
-	return results
+	return nodes, true
+}
+
+// searchResultFromNode is the result of a hit on node: its identity,
+// labels, projected properties, and the display fields read from them.
+func searchResultFromNode(id string, node *storage.Node, projection resultPropertyProjection) SearchResult {
+	result := SearchResult{
+		ID:         id,
+		NodeID:     node.ID,
+		Labels:     node.Labels,
+		Properties: projection.apply(node.Properties),
+	}
+	if t, ok := node.Properties["type"].(string); ok {
+		result.Type = t
+	}
+	if title, ok := node.Properties["title"].(string); ok {
+		result.Title = title
+	}
+	if desc, ok := node.Properties["description"].(string); ok {
+		result.Description = desc
+	}
+	if content, ok := node.Properties["content"].(string); ok {
+		result.ContentPreview = truncate(content, 200)
+	} else if text, ok := node.Properties["text"].(string); ok {
+		result.ContentPreview = truncate(text, 200)
+	}
+	return result
 }
 
 func boundedResultLimit(total, limit int) int {

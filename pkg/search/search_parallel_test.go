@@ -226,7 +226,7 @@ func sequentialHybridReference(
 		return sequentialHybridReferenceResult{}, err
 	}
 	fusedResults := svc.fuseRRF(vectorResults, bm25Results, opts)
-	results := svc.enrichResults(ctx, fusedResults, opts, seenOrphans)
+	results := svc.enrichResults(ctx, fusedResults, opts, seenOrphans, hitMatchQuery{text: query, embedding: embedding, hybrid: true})
 	return sequentialHybridReferenceResult{
 		results:          results,
 		vectorCandidates: len(vectorResults),

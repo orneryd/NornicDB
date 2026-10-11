@@ -336,11 +336,11 @@ func ensureBuiltInProceduresRegistered() {
 		// paged request (mode, n / limit or a continuation qid), one row
 		// with the page map in page (executeSearchContinuationPage); the signature
 		// declares both so YIELD page holds after MATCH / WITH too (#946).
-		registerBuiltInProcedure("db.retrieve", "db.retrieve(request :: MAP) :: (node :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, query_chunks_searched :: INTEGER, query_chunks_total :: INTEGER, page :: MAP)", localization.CypherProcedureMetadata("db.retrieve"), ProcedureModeRead, 1, 1, false,
+		registerBuiltInProcedure("db.retrieve", "db.retrieve(request :: MAP) :: (node :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, query_chunks_searched :: INTEGER, query_chunks_total :: INTEGER, matches :: LIST<MAP>, page :: MAP)", localization.CypherProcedureMetadata("db.retrieve"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRetrieve(ctx, args)
 			})
-		registerBuiltInProcedure("db.rretrieve", "db.rretrieve(request :: MAP) :: (node :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, query_chunks_searched :: INTEGER, query_chunks_total :: INTEGER, page :: MAP)", localization.CypherProcedureMetadata("db.rretrieve"), ProcedureModeRead, 1, 1, false,
+		registerBuiltInProcedure("db.rretrieve", "db.rretrieve(request :: MAP) :: (node :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, query_chunks_searched :: INTEGER, query_chunks_total :: INTEGER, matches :: LIST<MAP>, page :: MAP)", localization.CypherProcedureMetadata("db.rretrieve"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRRetrieve(ctx, args)
 			})

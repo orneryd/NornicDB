@@ -362,7 +362,7 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 }
 
 func compactContinuationResultBytes(result SearchResult) int64 {
-	return int64(unsafe.Sizeof(result)) + int64(len(result.ID)+len(result.NodeID)+len(result.GroupKey)+len(result.Phase))
+	return int64(unsafe.Sizeof(result)) + int64(len(result.ID)+len(result.NodeID)+len(result.GroupKey)+len(result.Phase)) + searchMatchesBytes(result.Matches)
 }
 
 func compactContinuationResult(result SearchResult) SearchResult {

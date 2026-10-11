@@ -12,6 +12,7 @@ import (
 
 	featureflags "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embed"
+	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
@@ -314,6 +315,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	}
 	svc.SetContinuationRegistry(continuations)
 	svc.SetDefaultMinSimilarity(minSim)
+	svc.SetEmbedTextOptions(embeddingutil.EmbedTextOptionsFromConfig(db.config))
 	if db.config != nil {
 		svc.SetFulltextProperties(db.config.Memory.SearchBM25Properties)
 		svc.SetFulltextLabels(db.config.Memory.SearchBM25Labels)

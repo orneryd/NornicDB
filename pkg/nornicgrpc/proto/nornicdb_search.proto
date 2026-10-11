@@ -90,6 +90,23 @@ message SearchHit {
   // of the number of passages. Child passages use the same SearchHit shape as
   // top-level hits so per-hit metadata survives grouped serialization.
   repeated SearchHit passages = 10;
+  // What made the hit match and where: matched chunks first, best first,
+  // then query term occurrences.
+  repeated SearchMatch matches = 11;
+}
+
+// What made a hit match (#1060): one of its embedding chunks (kind "chunk",
+// with chunk and score) or one occurrence of a query term (kind "term", with
+// term). [start, end) counts Unicode code points of the property's value;
+// property is empty for a chunk whose place in the properties is unknown.
+message SearchMatch {
+  string kind = 1;
+  int32 chunk = 2;
+  float score = 3;
+  string term = 4;
+  string property = 5;
+  int32 start = 6;
+  int32 end = 7;
 }
 
 message SearchTextResponse {

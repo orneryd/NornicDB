@@ -572,6 +572,22 @@ func (f *FulltextIndexV2) updateAvgDocLengthLocked() {
 	f.avgDocLength = float64(f.totalDocLength) / float64(f.docCount)
 }
 
+// TermIDF is the BM25 IDF of an analyzed term, the weight a match on it
+// gets: higher for a rarer term, 0 for one no live document holds.
+func (f *FulltextIndexV2) TermIDF(term string) float64 {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	st, ok := f.termIndex[term]
+	if !ok {
+		return 0
+	}
+	df := st.liveDocumentFrequency()
+	if df == 0 {
+		return 0
+	}
+	return f.calculateIDFLocked(df)
+}
+
 func (f *FulltextIndexV2) calculateIDFLocked(df int) float64 {
 	if df <= 0 || f.docCount <= 0 {
 		return 0

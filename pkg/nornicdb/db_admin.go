@@ -880,6 +880,7 @@ type SearchResult struct {
 	GroupKey string          `json:"group_key,omitempty"`
 	Phase    string          `json:"phase,omitempty"`
 	Passages []*SearchResult `json:"passages,omitempty"`
+	Matches  []any           `json:"matches,omitempty"` // what matched and where (search.SearchMatch.Value)
 	Score    float64         `json:"score"`
 
 	// RRF metadata (vector_rank/bm25_rank always emitted so clients see original
@@ -916,6 +917,9 @@ func mapSingleSearchResult(r search.SearchResult) *SearchResult {
 	}
 	result.GroupKey = r.GroupKey
 	result.Phase = r.Phase
+	if len(r.Matches) > 0 {
+		result.Matches = search.SearchMatchValues(r.Matches)
+	}
 	if len(r.Passages) > 0 {
 		result.Passages = make([]*SearchResult, len(r.Passages))
 		for index := range r.Passages {

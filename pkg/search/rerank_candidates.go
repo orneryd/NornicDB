@@ -61,7 +61,7 @@ func (s *Service) rerankCandidateContent(node *storage.Node, result rrfResult, q
 	}
 	var body string
 	if chunkIndex, ok := matchingChunkIndex(string(node.ID), result.MatchID); ok {
-		if chunks := managedChunkTexts(node); chunkIndex < len(chunks) && chunks[chunkIndex] != "" {
+		if chunks := managedChunkTexts(s.hitEmbedMeta(node)); chunkIndex < len(chunks) && chunks[chunkIndex] != "" {
 			body = expandedChunkWindow(chunks, chunkIndex, query, remaining)
 		}
 	}
@@ -199,13 +199,10 @@ func matchingChunkIndex(nodeID, matchID string) (int, bool) {
 	return 0, false
 }
 
-// managedChunkTexts returns the chunk texts stored on the node by the embedding
-// worker, in chunk order, or nil when the node has none.
-func managedChunkTexts(node *storage.Node) []string {
-	if node == nil || node.EmbedMeta == nil {
-		return nil
-	}
-	switch chunks := node.EmbedMeta["chunk_texts"].(type) {
+// managedChunkTexts returns the chunk texts the embedding worker kept in a
+// node's embedding metadata, in chunk order, or nil when it kept none.
+func managedChunkTexts(meta map[string]any) []string {
+	switch chunks := meta["chunk_texts"].(type) {
 	case []string:
 		return chunks
 	case []any:

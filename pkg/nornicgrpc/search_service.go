@@ -298,7 +298,22 @@ func grpcSearchHit(r search.SearchResult) *gen.SearchHit {
 		Score: float32(r.Score), RrfScore: float32(r.RRFScore),
 		VectorRank: int32(r.VectorRank), Bm25Rank: int32(r.BM25Rank),
 		Phase: r.Phase, GroupKey: r.GroupKey, Passages: grpcSearchPassages(r.Passages),
+		Matches: grpcSearchMatches(r.Matches),
 	}
+}
+
+func grpcSearchMatches(matches []search.SearchMatch) []*gen.SearchMatch {
+	if len(matches) == 0 {
+		return nil
+	}
+	out := make([]*gen.SearchMatch, len(matches))
+	for index, match := range matches {
+		out[index] = &gen.SearchMatch{
+			Kind: match.Kind, Chunk: int32(match.Chunk), Score: float32(match.Score), Term: match.Term,
+			Property: match.Property, Start: int32(match.Start), End: int32(match.End),
+		}
+	}
+	return out
 }
 
 func grpcSearchPassages(passages []search.SearchPassage) []*gen.SearchHit {

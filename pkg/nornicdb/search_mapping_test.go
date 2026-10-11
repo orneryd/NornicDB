@@ -20,6 +20,7 @@ func TestMapSearchResponse(t *testing.T) {
 				RRFScore:   0.7,
 				VectorRank: 1,
 				BM25Rank:   2,
+				Matches:    []search.SearchMatch{{Kind: search.SearchMatchTerm, Chunk: -1, Term: "hello", Property: "title", Start: 0, End: 5}},
 			},
 		},
 	}
@@ -33,4 +34,5 @@ func TestMapSearchResponse(t *testing.T) {
 	require.Equal(t, 0.7, got[0].RRFScore)
 	require.Equal(t, 1, got[0].VectorRank)
 	require.Equal(t, 2, got[0].BM25Rank)
+	require.Equal(t, []any{map[string]any{"kind": "term", "term": "hello", "property": "title", "start": int64(0), "end": int64(5)}}, got[0].Matches)
 }

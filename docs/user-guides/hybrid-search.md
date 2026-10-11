@@ -143,7 +143,11 @@ Results include RRF metadata so you can see how each ranking strategy contribute
       "vector_rank": 2,
       "bm25_rank": 1,
       "labels": ["Document"],
-      "properties": { "title": "Introduction to ML Algorithms", "...": "..." }
+      "properties": { "title": "Introduction to ML Algorithms", "...": "..." },
+      "matches": [
+        { "kind": "chunk", "chunk": 0, "score": 0.83, "property": "title", "start": 0, "end": 29 },
+        { "kind": "term", "term": "algorithms", "property": "title", "start": 19, "end": 29 }
+      ]
     }
   ]
 }

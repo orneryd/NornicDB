@@ -1181,7 +1181,7 @@ func TestSearchEnrichResultsBranches(t *testing.T) {
 	}
 
 	seenOrphans := map[string]bool{}
-	out := svc.enrichResults(context.Background(), input, &SearchOptions{Limit: 3}, seenOrphans)
+	out := svc.enrichResults(context.Background(), input, &SearchOptions{Limit: 3}, seenOrphans, hitMatchQuery{})
 	require.Len(t, out, 2)
 
 	require.Equal(t, "e1", out[0].ID)
@@ -1196,7 +1196,7 @@ func TestSearchEnrichResultsBranches(t *testing.T) {
 	require.True(t, seenOrphans["missing"])
 
 	// limit branch: only the first input item should be considered.
-	limited := svc.enrichResults(context.Background(), input, &SearchOptions{Limit: 1}, map[string]bool{})
+	limited := svc.enrichResults(context.Background(), input, &SearchOptions{Limit: 1}, map[string]bool{}, hitMatchQuery{})
 	require.Len(t, limited, 1)
 	require.Equal(t, "e1", limited[0].ID)
 }
