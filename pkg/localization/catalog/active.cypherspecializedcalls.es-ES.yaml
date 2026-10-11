@@ -52,22 +52,14 @@
   other: "las opciones del procedimiento deben ser un MAP"
 - id: cypherspecializedcalls.fulltext_option_invalid
   other: "opción de texto completo options.{{.Option}} no válida: {{.Value}}"
-- id: cypherspecializedcalls.temporal_assert_argument_count
-  other: "db.temporal.assertNoOverlap requiere 7 parámetros más systemTime y systemSequence opcionales"
 - id: cypherspecializedcalls.datetime_required
   other: "{{.Argument}} debe ser una fecha y hora válida"
 - id: cypherspecializedcalls.temporal_read_nodes_failed
   other: "no se pudieron leer los nodos de la etiqueta {{.Label}}: {{.Cause}}"
 - id: cypherspecializedcalls.temporal_overlap
   other: "se detectó un solapamiento temporal para {{.Property}}={{.Value}}"
-- id: cypherspecializedcalls.temporal_asof_argument_count
-  other: "db.temporal.asOf requiere 6 parámetros más systemTime y systemSequence opcionales"
 - id: cypherspecializedcalls.temporal_lookup_failed
   other: "la búsqueda temporal falló para la etiqueta {{.Label}}: {{.Cause}}"
-- id: cypherspecializedcalls.temporal_invalid_syntax
-  other: "sintaxis de {{.Procedure}} no válida"
-- id: cypherspecializedcalls.temporal_closing_parenthesis
-  other: "falta el paréntesis de cierre en {{.Procedure}}"
 - id: cypherspecializedcalls.argument_required
   other: "{{.Argument}} es obligatorio"
 - id: cypherspecializedcalls.argument_empty

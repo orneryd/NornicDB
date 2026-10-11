@@ -628,7 +628,7 @@ func parseStreamingOptions(data []byte) (streamingOptions, error) {
 		return options, nil
 	}
 
-	size, offset, err := streamingMapHeader(data)
+	size, offset, err := packStreamMapHeader(data)
 	if err != nil {
 		return options, err
 	}
@@ -711,9 +711,13 @@ func streamingOptionKey(data []byte, offset int) ([]byte, int, error) {
 	return data[offset : offset+length], offset + length - start, nil
 }
 
-func streamingMapHeader(data []byte) (size, offset int, err error) {
+// packStreamMapHeader reads the header of the PackStream map at data[0]:
+// TINY_MAP, MAP_8, MAP_16 or MAP_32. It returns the entry count and the
+// header's length; a size larger than the rest of data is an error. It is
+// the one map header reader (message fields, streaming options, values).
+func packStreamMapHeader(data []byte) (size, offset int, err error) {
 	if len(data) == 0 {
-		return 0, 0, fmt.Errorf("missing streaming options")
+		return 0, 0, fmt.Errorf("missing map")
 	}
 
 	switch marker := data[0]; {
@@ -735,7 +739,7 @@ func streamingMapHeader(data []byte) (size, offset int, err error) {
 		}
 		size64 := uint64(data[1])<<24 | uint64(data[2])<<16 | uint64(data[3])<<8 | uint64(data[4])
 		if size64 > uint64(len(data)) {
-			return 0, 0, fmt.Errorf("streaming options map exceeds message size")
+			return 0, 0, fmt.Errorf("map size exceeds message size")
 		}
 		return int(size64), 5, nil
 	default:

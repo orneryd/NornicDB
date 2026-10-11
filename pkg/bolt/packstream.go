@@ -44,6 +44,45 @@ func encodePackStreamList(items []any) []byte {
 	return encodePackStreamListInto(nil, items)
 }
 
+// appendPackStreamListHeader appends the PackStream header of a list of size
+// items: TINY_LIST, LIST_8, LIST_16 or LIST_32. Every list the server sends
+// is headed by it, so no list is cut to a 16-bit size.
+func appendPackStreamListHeader(dst []byte, size int) []byte {
+	return appendPackStreamSizedHeader(dst, size, 0x90, 0xD4)
+}
+
+// appendPackStreamMapHeader appends the PackStream header of a map of size
+// entries: TINY_MAP, MAP_8, MAP_16 or MAP_32.
+func appendPackStreamMapHeader(dst []byte, size int) []byte {
+	return appendPackStreamSizedHeader(dst, size, 0xA0, 0xD8)
+}
+
+// appendPackStreamSizedHeader appends a list or map header: tiny+size below
+// 16, then sized8 (the 8-bit marker), sized8+1 and sized8+2 for 8-, 16- and
+// 32-bit sizes.
+func appendPackStreamSizedHeader(dst []byte, size int, tiny, sized8 byte) []byte {
+	switch {
+	case size < 16:
+		return append(dst, tiny+byte(size))
+	case size < 1<<8:
+		return append(dst, sized8, byte(size))
+	case size < 1<<16:
+		return append(dst, sized8+1, byte(size>>8), byte(size))
+	default:
+		return append(dst, sized8+2, byte(size>>24), byte(size>>16), byte(size>>8), byte(size))
+	}
+}
+
+// encodePackStreamStringListInto appends a list of strings (labels, a
+// LIST<STRING> property).
+func encodePackStreamStringListInto(dst []byte, items []string) []byte {
+	dst = appendPackStreamListHeader(dst, len(items))
+	for _, item := range items {
+		dst = encodePackStreamStringInto(dst, item)
+	}
+	return dst
+}
+
 func encodePackStreamStringInto(dst []byte, s string) []byte {
 	length := len(s)
 
@@ -146,13 +185,7 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 			return append(dst, 0xA0)
 		}
 		size := len(val)
-		if size < 16 {
-			dst = append(dst, byte(0xA0+size))
-		} else if size < 256 {
-			dst = append(dst, 0xD8, byte(size))
-		} else {
-			dst = append(dst, 0xD9, byte(size>>8), byte(size))
-		}
+		dst = appendPackStreamMapHeader(dst, size)
 		for k, v := range val {
 			dst = encodePackStreamStringInto(dst, k)
 			dst = encodePackStreamStringInto(dst, v)
@@ -171,13 +204,7 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 			return append(dst, 0x90)
 		}
 		size := len(val)
-		if size < 16 {
-			dst = append(dst, byte(0x90+size))
-		} else if size < 256 {
-			dst = append(dst, 0xD4, byte(size))
-		} else {
-			dst = append(dst, 0xD5, byte(size>>8), byte(size))
-		}
+		dst = appendPackStreamListHeader(dst, size)
 		for i := range val {
 			dst = encodeStorageNodeIntoWithUTC(dst, &val[i], useUTCDateTimeStructs)
 		}
@@ -187,13 +214,7 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 			return append(dst, 0x90)
 		}
 		size := len(val)
-		if size < 16 {
-			dst = append(dst, byte(0x90+size))
-		} else if size < 256 {
-			dst = append(dst, 0xD4, byte(size))
-		} else {
-			dst = append(dst, 0xD5, byte(size>>8), byte(size))
-		}
+		dst = appendPackStreamListHeader(dst, size)
 		for _, n := range val {
 			dst = encodePackStreamValueIntoWithUTC(dst, n, useUTCDateTimeStructs)
 		}
@@ -217,13 +238,7 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 			return append(dst, 0x90)
 		}
 		size := len(val)
-		if size < 16 {
-			dst = append(dst, byte(0x90+size))
-		} else if size < 256 {
-			dst = append(dst, 0xD4, byte(size))
-		} else {
-			dst = append(dst, 0xD5, byte(size>>8), byte(size))
-		}
+		dst = appendPackStreamListHeader(dst, size)
 		for i := range val {
 			dst = encodeStorageEdgeIntoWithUTC(dst, &val[i], useUTCDateTimeStructs)
 		}
@@ -233,13 +248,7 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 			return append(dst, 0x90)
 		}
 		size := len(val)
-		if size < 16 {
-			dst = append(dst, byte(0x90+size))
-		} else if size < 256 {
-			dst = append(dst, 0xD4, byte(size))
-		} else {
-			dst = append(dst, 0xD5, byte(size>>8), byte(size))
-		}
+		dst = appendPackStreamListHeader(dst, size)
 		for _, e := range val {
 			dst = encodePackStreamValueIntoWithUTC(dst, e, useUTCDateTimeStructs)
 		}
@@ -250,31 +259,36 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 			return append(dst, 0x90)
 		}
 		size := len(val)
-		if size < 16 {
-			dst = append(dst, byte(0x90+size))
-		} else if size < 256 {
-			dst = append(dst, 0xD4, byte(size))
-		} else {
-			dst = append(dst, 0xD5, byte(size>>8), byte(size))
-		}
+		dst = appendPackStreamListHeader(dst, size)
 		for _, s := range val {
 			dst = encodePackStreamStringInto(dst, s)
 		}
 		return dst
 	case []any:
 		return encodePackStreamListIntoWithUTC(dst, val, useUTCDateTimeStructs)
+	case []bool:
+		// A stored LIST<BOOLEAN> property decodes as []bool.
+		dst = appendPackStreamListHeader(dst, len(val))
+		for _, b := range val {
+			if b {
+				dst = append(dst, 0xC3)
+			} else {
+				dst = append(dst, 0xC2)
+			}
+		}
+		return dst
+	case []int32:
+		dst = appendPackStreamListHeader(dst, len(val))
+		for _, n := range val {
+			dst = encodePackStreamIntInto(dst, int64(n))
+		}
+		return dst
 	case []int:
 		if len(val) == 0 {
 			return append(dst, 0x90)
 		}
 		size := len(val)
-		if size < 16 {
-			dst = append(dst, byte(0x90+size))
-		} else if size < 256 {
-			dst = append(dst, 0xD4, byte(size))
-		} else {
-			dst = append(dst, 0xD5, byte(size>>8), byte(size))
-		}
+		dst = appendPackStreamListHeader(dst, size)
 		for _, n := range val {
 			dst = encodePackStreamIntInto(dst, int64(n))
 		}
@@ -284,13 +298,7 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 			return append(dst, 0x90)
 		}
 		size := len(val)
-		if size < 16 {
-			dst = append(dst, byte(0x90+size))
-		} else if size < 256 {
-			dst = append(dst, 0xD4, byte(size))
-		} else {
-			dst = append(dst, 0xD5, byte(size>>8), byte(size))
-		}
+		dst = appendPackStreamListHeader(dst, size)
 		for _, n := range val {
 			dst = encodePackStreamIntInto(dst, n)
 		}
@@ -300,13 +308,7 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 			return append(dst, 0x90)
 		}
 		size := len(val)
-		if size < 16 {
-			dst = append(dst, byte(0x90+size))
-		} else if size < 256 {
-			dst = append(dst, 0xD4, byte(size))
-		} else {
-			dst = append(dst, 0xD5, byte(size>>8), byte(size))
-		}
+		dst = appendPackStreamListHeader(dst, size)
 		for _, n := range val {
 			dst = append(dst, 0xC1)
 			dst = append(dst, packstreamZero8[:]...)
@@ -318,13 +320,7 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 			return append(dst, 0x90)
 		}
 		size := len(val)
-		if size < 16 {
-			dst = append(dst, byte(0x90+size))
-		} else if size < 256 {
-			dst = append(dst, 0xD4, byte(size))
-		} else {
-			dst = append(dst, 0xD5, byte(size>>8), byte(size))
-		}
+		dst = appendPackStreamListHeader(dst, size)
 		for _, n := range val {
 			dst = append(dst, 0xC1)
 			dst = append(dst, packstreamZero8[:]...)
@@ -336,13 +332,7 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 			return append(dst, 0x90)
 		}
 		size := len(val)
-		if size < 16 {
-			dst = append(dst, byte(0x90+size))
-		} else if size < 256 {
-			dst = append(dst, 0xD4, byte(size))
-		} else {
-			dst = append(dst, 0xD5, byte(size>>8), byte(size))
-		}
+		dst = appendPackStreamListHeader(dst, size)
 		for _, m := range val {
 			dst = encodePackStreamMapIntoWithUTC(dst, m, useUTCDateTimeStructs)
 		}
@@ -671,24 +661,7 @@ func encodeNodeIntoWithUTC(dst []byte, nodeId any, labels any, props map[string]
 	// Field 2: Labels (list of strings)
 	switch l := labels.(type) {
 	case []string:
-		if len(l) == 0 {
-			dst = append(dst, 0x90)
-		} else if len(l) < 16 {
-			dst = append(dst, byte(0x90+len(l)))
-			for _, s := range l {
-				dst = encodePackStreamStringInto(dst, s)
-			}
-		} else if len(l) < 256 {
-			dst = append(dst, 0xD4, byte(len(l)))
-			for _, s := range l {
-				dst = encodePackStreamStringInto(dst, s)
-			}
-		} else {
-			dst = append(dst, 0xD5, byte(len(l)>>8), byte(len(l)))
-			for _, s := range l {
-				dst = encodePackStreamStringInto(dst, s)
-			}
-		}
+		dst = encodePackStreamStringListInto(dst, l)
 	case []any:
 		dst = encodePackStreamListIntoWithUTC(dst, l, useUTCDateTimeStructs)
 	default:
@@ -709,13 +682,7 @@ func encodeNodeIntoWithUTC(dst []byte, nodeId any, labels any, props map[string]
 		return dst
 	}
 
-	if propCount < 16 {
-		dst = append(dst, byte(0xA0+propCount))
-	} else if propCount < 256 {
-		dst = append(dst, 0xD8, byte(propCount))
-	} else {
-		dst = append(dst, 0xD9, byte(propCount>>8), byte(propCount))
-	}
+	dst = appendPackStreamMapHeader(dst, propCount)
 
 	for k, v := range props {
 		if k == "_nodeId" || k == "labels" {
@@ -741,24 +708,7 @@ func encodeStorageNodeIntoWithUTC(dst []byte, node *storage.Node, useUTCDateTime
 
 	// Field 2: Labels (list of strings)
 	labels := node.Labels
-	if len(labels) == 0 {
-		dst = append(dst, 0x90)
-	} else if len(labels) < 16 {
-		dst = append(dst, byte(0x90+len(labels)))
-		for _, s := range labels {
-			dst = encodePackStreamStringInto(dst, s)
-		}
-	} else if len(labels) < 256 {
-		dst = append(dst, 0xD4, byte(len(labels)))
-		for _, s := range labels {
-			dst = encodePackStreamStringInto(dst, s)
-		}
-	} else {
-		dst = append(dst, 0xD5, byte(len(labels)>>8), byte(len(labels)))
-		for _, s := range labels {
-			dst = encodePackStreamStringInto(dst, s)
-		}
-	}
+	dst = encodePackStreamStringListInto(dst, labels)
 
 	// Field 3: Properties (map)
 	props := node.Properties
@@ -767,13 +717,7 @@ func encodeStorageNodeIntoWithUTC(dst []byte, node *storage.Node, useUTCDateTime
 	}
 
 	propCount := len(props)
-	if propCount < 16 {
-		dst = append(dst, byte(0xA0+propCount))
-	} else if propCount < 256 {
-		dst = append(dst, 0xD8, byte(propCount))
-	} else {
-		dst = append(dst, 0xD9, byte(propCount>>8), byte(propCount))
-	}
+	dst = appendPackStreamMapHeader(dst, propCount)
 	for k, v := range props {
 		dst = encodePackStreamStringInto(dst, k)
 		dst = encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
@@ -805,13 +749,7 @@ func encodeStorageEdgeIntoWithUTC(dst []byte, edge *storage.Edge, useUTCDateTime
 	}
 
 	propCount := len(props)
-	if propCount < 16 {
-		dst = append(dst, byte(0xA0+propCount))
-	} else if propCount < 256 {
-		dst = append(dst, 0xD8, byte(propCount))
-	} else {
-		dst = append(dst, 0xD9, byte(propCount>>8), byte(propCount))
-	}
+	dst = appendPackStreamMapHeader(dst, propCount)
 	for k, v := range props {
 		dst = encodePackStreamStringInto(dst, k)
 		dst = encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
@@ -865,13 +803,7 @@ func encodeRecordListInto(dst []byte, items []any, useUTCDateTimeStructs, bolt5 
 		return append(dst, 0x90)
 	}
 	size := len(items)
-	if size < 16 {
-		dst = append(dst, byte(0x90+size))
-	} else if size < 256 {
-		dst = append(dst, 0xD4, byte(size))
-	} else {
-		dst = append(dst, 0xD5, byte(size>>8), byte(size))
-	}
+	dst = appendPackStreamListHeader(dst, size)
 	for _, item := range items {
 		dst = encodeRecordValueInto(dst, item, useUTCDateTimeStructs, bolt5, dbName, resolvers...)
 	}
@@ -930,13 +862,7 @@ func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool,
 			return append(dst, 0x90)
 		}
 		size := len(val)
-		if size < 16 {
-			dst = append(dst, byte(0x90+size))
-		} else if size < 256 {
-			dst = append(dst, 0xD4, byte(size))
-		} else {
-			dst = append(dst, 0xD5, byte(size>>8), byte(size))
-		}
+		dst = appendPackStreamListHeader(dst, size)
 		for _, m := range val {
 			dst = encodeRecordValueInto(dst, m, useUTCDateTimeStructs, true, dbName, resolvers...)
 		}
@@ -982,13 +908,7 @@ func encodeRecordMapInto(dst []byte, m map[string]any, useUTCDateTimeStructs, bo
 	if skipPathResult {
 		size--
 	}
-	if size < 16 {
-		dst = append(dst, byte(0xA0+size))
-	} else if size < 256 {
-		dst = append(dst, 0xD8, byte(size))
-	} else {
-		dst = append(dst, 0xD9, byte(size>>8), byte(size))
-	}
+	dst = appendPackStreamMapHeader(dst, size)
 
 	for k, v := range m {
 		if k == "_pathResult" {
@@ -1101,13 +1021,7 @@ func encodeUnboundRelationshipListV5Into(dst []byte, rels []unboundRelationship,
 		return append(dst, 0x90)
 	}
 	size := len(rels)
-	if size < 16 {
-		dst = append(dst, byte(0x90+size))
-	} else if size < 256 {
-		dst = append(dst, 0xD4, byte(size))
-	} else {
-		dst = append(dst, 0xD5, byte(size>>8), byte(size))
-	}
+	dst = appendPackStreamListHeader(dst, size)
 	for i := range rels {
 		dst = encodeUnboundRelationshipV5Into(dst, &rels[i], recordEntityDatabase(dbName, "", rels[i].id, resolvers))
 	}
@@ -1516,30 +1430,12 @@ func decodePackStreamMap(data []byte, offset int) (map[string]any, int, error) {
 		return nil, 0, fmt.Errorf("offset out of bounds")
 	}
 
-	marker := data[offset]
 	startOffset := offset
-	offset++
-
-	var size int
-
-	// Tiny map (0xA0-0xAF)
-	if marker >= 0xA0 && marker <= 0xAF {
-		size = int(marker - 0xA0)
-	} else if marker == 0xD8 { // MAP8
-		if offset >= len(data) {
-			return nil, 0, fmt.Errorf("incomplete MAP8")
-		}
-		size = int(data[offset])
-		offset++
-	} else if marker == 0xD9 { // MAP16
-		if offset+1 >= len(data) {
-			return nil, 0, fmt.Errorf("incomplete MAP16")
-		}
-		size = int(data[offset])<<8 | int(data[offset+1])
-		offset += 2
-	} else {
-		return nil, 0, fmt.Errorf("not a map marker: 0x%02X", marker)
+	size, header, err := packStreamMapHeader(data[offset:])
+	if err != nil {
+		return nil, 0, err
 	}
+	offset += header
 
 	result := make(map[string]any)
 

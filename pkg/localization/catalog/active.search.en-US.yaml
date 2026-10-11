@@ -13,6 +13,8 @@
 - id: search.node_not_found
   description: HTTP vector-similarity lookup error. ID is a node identifier.
   other: "Node '{{.ID}}' not found"
+- id: search.group_by_ranked_mode
+  other: "group_by requires continuation mode ranked_then_id or id; ranked mode pages hits as they are found and does not group them"
 - id: search.query_embedding_required
   description: Core vector-query validation error when no query embedding is supplied.
   other: query embedding required

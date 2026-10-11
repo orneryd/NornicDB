@@ -707,3 +707,27 @@ func TestCallRagHelpers_MessageAndCandidateParsingBranches(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "candidate id is required")
 }
+
+// With failClosed a failed hybrid search is the procedure's error: here the
+// query embedding's dimension isn't the index's, which the vector search
+// rejects. Without failClosed the same search falls back to text.
+func TestCallDbRetrieveFailClosedReportsFailedSearch(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "alpha document"},
+		ChunkEmbeddings: [][]float32{{1, 0, 0, 0}}})
+	require.NoError(t, err)
+	exec := NewStorageExecutor(store)
+	exec.SetEmbedder(&stubVectorEmbedder{vec: []float32{1, 0, 0}})
+	svc := search.NewServiceWithDimensions(store, 4)
+	svc.FixVectorDimensions()
+	require.NoError(t, svc.BuildIndexes(ctx))
+	exec.SetSearchService(svc)
+
+	_, err = exec.Execute(ctx, "CALL db.retrieve({query: 'alpha', failClosed: true})", nil)
+	require.Error(t, err)
+
+	result, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha'}) YIELD node, fallback_triggered RETURN node.content AS content, fallback_triggered", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"alpha document", true}}, result.Rows)
+}

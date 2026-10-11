@@ -23,15 +23,14 @@ import (
 //
 // This returns ok=true if no overlaps are detected, otherwise returns an error.
 // newValidTo can be null to indicate an open-ended interval.
-func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	args, err := parseTemporalCallArgs(ctx, cypher, "DB.TEMPORAL.ASSERTNOOVERLAP")
-	if err != nil {
-		return nil, err
-	}
-	if len(args) < 7 || len(args) > 9 {
-		return nil, localizedError(localization.CypherSpecializedCallsTemporalAssertArgumentCount(), nil)
-	}
-
+//
+// args are the call's evaluated arguments, so a bound is any temporal value
+// (datetime(), date(), localdatetime()), an ISO string, Unix seconds, a
+// parameter or an expression, read as the TEMPORAL NO OVERLAP constraint
+// reads it.
+//
+// The registry checks the argument count (7 to 9) before the call.
+func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	label, err := coerceStringArg(args[0], "label")
 	if err != nil {
 		return nil, err
@@ -50,7 +49,7 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, cyp
 	}
 
 	keyValue := args[4]
-	newStart, ok := coerceDateTime(args[5])
+	newStart, ok := storage.CoerceTemporalTime(args[5])
 	if !ok {
 		return nil, localizedError(localization.CypherSpecializedCallsDateTimeRequired("newValidFrom"), nil)
 	}
@@ -73,13 +72,13 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, cyp
 			continue
 		}
 
-		existingStart, ok := coerceDateTime(node.Properties[validFromProp])
+		existingStart, ok := storage.CoerceTemporalTime(node.Properties[validFromProp])
 		if !ok {
 			continue
 		}
 		existingEnd, existingHasEnd := coerceDateTimeOptional(node.Properties[validToProp])
 
-		if intervalsOverlap(newStart, newEnd, newHasEnd, existingStart, existingEnd, existingHasEnd) {
+		if storage.TemporalIntervalsOverlap(newStart, newEnd, newHasEnd, existingStart, existingEnd, existingHasEnd) {
 			return nil, localizedError(localization.CypherSpecializedCallsTemporalOverlap(keyProp, keyValue), nil)
 		}
 	}
@@ -96,15 +95,14 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, cyp
 //	CALL db.temporal.asOf(label, keyProp, keyValue, validFromProp, validToProp, asOf [, systemTime [, systemSequence]]) YIELD node
 //
 // Returns the most recent node whose [valid_from, valid_to) covers asOf.
-func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	args, err := parseTemporalCallArgs(ctx, cypher, "DB.TEMPORAL.ASOF")
-	if err != nil {
-		return nil, err
-	}
-	if len(args) < 6 || len(args) > 8 {
-		return nil, localizedError(localization.CypherSpecializedCallsTemporalAsOfArgumentCount(), nil)
-	}
-
+//
+// args are the call's evaluated arguments: asOf and the stored bounds are
+// read as the TEMPORAL NO OVERLAP constraint reads them
+// (storage.CoerceTemporalTime), so datetime(), date() and localdatetime()
+// values match as ISO strings do.
+//
+// The registry checks the argument count (6 to 8) before the call.
+func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	label, err := coerceStringArg(args[0], "label")
 	if err != nil {
 		return nil, err
@@ -122,7 +120,7 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, cypher string)
 	if err != nil {
 		return nil, err
 	}
-	asOf, ok := coerceDateTime(args[5])
+	asOf, ok := storage.CoerceTemporalTime(args[5])
 	if !ok {
 		return nil, localizedError(localization.CypherSpecializedCallsDateTimeRequired("asOf"), nil)
 	}
@@ -159,7 +157,7 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, cypher string)
 			continue
 		}
 
-		start, ok := coerceDateTime(node.Properties[validFromProp])
+		start, ok := storage.CoerceTemporalTime(node.Properties[validFromProp])
 		if !ok {
 			continue
 		}
@@ -191,59 +189,6 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, cypher string)
 	}, nil
 }
 
-func parseTemporalCallArgs(ctx context.Context, cypher, callName string) ([]interface{}, error) {
-	upper := upperASCII(cypher)
-	needle := upperASCII(callName) + "("
-	start := strings.Index(upper, needle)
-	if start == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsTemporalInvalidSyntax(lowerASCII(callName)), nil)
-	}
-	start += len(needle)
-	endRel := strings.Index(cypher[start:], ")")
-	if endRel == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsTemporalClosingParenthesis(lowerASCII(callName)), nil)
-	}
-	rawArgs := strings.TrimSpace(cypher[start : start+endRel])
-	parts := splitTopLevelComma(rawArgs)
-
-	args := make([]interface{}, 0, len(parts))
-	for _, part := range parts {
-		value := resolveTemporalArg(ctx, strings.TrimSpace(part))
-		args = append(args, value)
-	}
-	return args, nil
-}
-
-func resolveTemporalArg(ctx context.Context, raw string) interface{} {
-	if raw == "" {
-		return nil
-	}
-	upper := upperASCII(raw)
-	if upper == "NULL" {
-		return nil
-	}
-	if strings.HasPrefix(raw, "$") {
-		if params := getParamsFromContext(ctx); params != nil {
-			name := strings.TrimPrefix(raw, "$")
-			if val, ok := params[name]; ok {
-				return val
-			}
-		}
-		return nil
-	}
-	if (strings.HasPrefix(raw, "'") && strings.HasSuffix(raw, "'")) ||
-		(strings.HasPrefix(raw, "\"") && strings.HasSuffix(raw, "\"")) {
-		return strings.Trim(raw, "\"'")
-	}
-	if i, err := strconv.ParseInt(raw, 10, 64); err == nil {
-		return i
-	}
-	if f, err := strconv.ParseFloat(raw, 64); err == nil {
-		return f
-	}
-	return raw
-}
-
 func coerceStringArg(val interface{}, name string) (string, error) {
 	if val == nil {
 		return "", localizedError(localization.CypherSpecializedCallsArgumentRequired(name), nil)
@@ -263,14 +208,14 @@ func coerceDateTimeOptional(val interface{}) (time.Time, bool) {
 	if val == nil {
 		return time.Time{}, false
 	}
-	return coerceDateTime(val)
+	return storage.CoerceTemporalTime(val)
 }
 
 func coerceOptionalMVCCVersion(args []interface{}) (storage.MVCCVersion, bool, error) {
 	if len(args) == 0 {
 		return storage.MVCCVersion{}, false, nil
 	}
-	commitTime, ok := coerceDateTime(args[0])
+	commitTime, ok := storage.CoerceTemporalTime(args[0])
 	if !ok {
 		return storage.MVCCVersion{}, false, localizedError(localization.CypherSpecializedCallsDateTimeRequired("systemTime"), nil)
 	}
@@ -321,45 +266,6 @@ func temporalNodesByLabel(engine storage.Engine, label string, version storage.M
 		return provider.GetNodesByLabelVisibleAt(label, version)
 	}
 	return nil, storage.ErrNotImplemented
-}
-
-func coerceDateTime(val interface{}) (time.Time, bool) {
-	switch v := val.(type) {
-	case time.Time:
-		return v, true
-	case string:
-		t := parseDateTime(v)
-		if t.IsZero() {
-			return time.Time{}, false
-		}
-		return t, true
-	case int64:
-		return time.Unix(v, 0).UTC(), true
-	case float64:
-		return time.Unix(int64(v), 0).UTC(), true
-	default:
-		if s, ok := val.(fmt.Stringer); ok {
-			t := parseDateTime(s.String())
-			if t.IsZero() {
-				return time.Time{}, false
-			}
-			return t, true
-		}
-		return time.Time{}, false
-	}
-}
-
-func intervalsOverlap(aStart, aEnd time.Time, aHasEnd bool, bStart, bEnd time.Time, bHasEnd bool) bool {
-	if aStart.IsZero() || bStart.IsZero() {
-		return false
-	}
-	if bHasEnd && !aStart.Before(bEnd) {
-		return false
-	}
-	if aHasEnd && !bStart.Before(aEnd) {
-		return false
-	}
-	return true
 }
 
 func valuesEqual(a, b interface{}) bool {

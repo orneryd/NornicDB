@@ -52,22 +52,14 @@
   other: "[!! procedure options must be a MAP !!]"
 - id: cypherspecializedcalls.fulltext_option_invalid
   other: "[!! invalid fulltext options.{{.Option}}: {{.Value}} !!]"
-- id: cypherspecializedcalls.temporal_assert_argument_count
-  other: "[!! db.temporal.assertNoOverlap requires 7 parameters plus optional systemTime and systemSequence !!]"
 - id: cypherspecializedcalls.datetime_required
   other: "[!! {{.Argument}} must be a valid datetime !!]"
 - id: cypherspecializedcalls.temporal_read_nodes_failed
   other: "[!! failed to read nodes for label {{.Label}}: {{.Cause}} !!]"
 - id: cypherspecializedcalls.temporal_overlap
   other: "[!! temporal overlap detected for {{.Property}}={{.Value}} !!]"
-- id: cypherspecializedcalls.temporal_asof_argument_count
-  other: "[!! db.temporal.asOf requires 6 parameters plus optional systemTime and systemSequence !!]"
 - id: cypherspecializedcalls.temporal_lookup_failed
   other: "[!! temporal lookup failed for label {{.Label}}: {{.Cause}} !!]"
-- id: cypherspecializedcalls.temporal_invalid_syntax
-  other: "[!! invalid {{.Procedure}} syntax !!]"
-- id: cypherspecializedcalls.temporal_closing_parenthesis
-  other: "[!! missing closing parenthesis in {{.Procedure}} !!]"
 - id: cypherspecializedcalls.argument_required
   other: "[!! {{.Argument}} is required !!]"
 - id: cypherspecializedcalls.argument_empty

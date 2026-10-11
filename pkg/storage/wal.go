@@ -1271,6 +1271,13 @@ func PruneOldSnapshotFiles(dir string, cfg *WALConfig) error {
 //   - Recovery will replay full WAL (safe, just slower)
 //   - Retry truncation on next snapshot
 //
+// With WAL retention configured (RetentionMaxAge or RetentionMaxSegments,
+// e.g. NORNICDB_WAL_RETENTION_MAX_AGE), entries are not dropped here: the
+// active WAL is sealed into a segment and retention removes only the sealed
+// segments the snapshot covers that are past their age or count. The
+// entries stay readable (db.txlog.entries, replication, audit) for the
+// retention period; recovery replays only entries after the snapshot.
+//
 // Example:
 //
 //	snapshot, _ := wal.CreateSnapshot(engine)
@@ -1283,6 +1290,13 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
+	if w.retainsSegments() {
+		if err := w.rotateSegmentLocked(w.sequence.Load()); err != nil {
+			return fmt.Errorf("wal: failed to seal segment before retention: %w", err)
+		}
+		return w.applyRetentionLocked(snapshotSeq)
+	}
 
 	// Flush pending writes before truncation
 	if err := w.syncLocked(); err != nil {
@@ -1430,6 +1444,13 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 	w.bytes.Store(bytesWritten)
 
 	return nil
+}
+
+// retainsSegments reports whether WAL retention is configured: sealed
+// segments are then kept for their age or count after a snapshot instead of
+// being dropped by TruncateAfterSnapshot.
+func (w *WAL) retainsSegments() bool {
+	return w.config.RetentionMaxAge > 0 || w.config.RetentionMaxSegments > 0
 }
 
 // ApplyRetention deletes sealed segments that are safe to drop after a snapshot.

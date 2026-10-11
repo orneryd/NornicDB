@@ -33,14 +33,10 @@ const (
 	MessageCypherSpecializedCallsFulltextArgumentCount           MessageID = "cypherspecializedcalls.fulltext_argument_count"
 	MessageCypherSpecializedCallsProcedureOptionsMapRequired     MessageID = "cypherspecializedcalls.procedure_options_map_required"
 	MessageCypherSpecializedCallsFulltextOptionInvalid           MessageID = "cypherspecializedcalls.fulltext_option_invalid"
-	MessageCypherSpecializedCallsTemporalAssertArgumentCount     MessageID = "cypherspecializedcalls.temporal_assert_argument_count"
 	MessageCypherSpecializedCallsDateTimeRequired                MessageID = "cypherspecializedcalls.datetime_required"
 	MessageCypherSpecializedCallsTemporalReadNodesFailed         MessageID = "cypherspecializedcalls.temporal_read_nodes_failed"
 	MessageCypherSpecializedCallsTemporalOverlap                 MessageID = "cypherspecializedcalls.temporal_overlap"
-	MessageCypherSpecializedCallsTemporalAsOfArgumentCount       MessageID = "cypherspecializedcalls.temporal_asof_argument_count"
 	MessageCypherSpecializedCallsTemporalLookupFailed            MessageID = "cypherspecializedcalls.temporal_lookup_failed"
-	MessageCypherSpecializedCallsTemporalInvalidSyntax           MessageID = "cypherspecializedcalls.temporal_invalid_syntax"
-	MessageCypherSpecializedCallsTemporalClosingParenthesis      MessageID = "cypherspecializedcalls.temporal_closing_parenthesis"
 	MessageCypherSpecializedCallsArgumentRequired                MessageID = "cypherspecializedcalls.argument_required"
 	MessageCypherSpecializedCallsArgumentEmpty                   MessageID = "cypherspecializedcalls.argument_empty"
 	MessageCypherSpecializedCallsUnsignedNonNegative             MessageID = "cypherspecializedcalls.unsigned_non_negative"
@@ -169,10 +165,6 @@ func CypherSpecializedCallsFulltextOptionInvalid(option string, value any) Messa
 	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsFulltextOptionInvalid, "invalid fulltext options."+option+": "+valueText, map[string]any{"Option": option, "Value": valueText})
 }
 
-func CypherSpecializedCallsTemporalAssertArgumentCount() Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTemporalAssertArgumentCount, "db.temporal.assertNoOverlap requires 7 parameters plus optional systemTime and systemSequence", nil)
-}
-
 func CypherSpecializedCallsDateTimeRequired(argument string) Message {
 	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsDateTimeRequired, argument+" must be a valid datetime", map[string]any{"Argument": argument})
 }
@@ -187,21 +179,9 @@ func CypherSpecializedCallsTemporalOverlap(property string, value any) Message {
 	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTemporalOverlap, "temporal overlap detected for "+property+"="+valueText, map[string]any{"Property": property, "Value": valueText})
 }
 
-func CypherSpecializedCallsTemporalAsOfArgumentCount() Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTemporalAsOfArgumentCount, "db.temporal.asOf requires 6 parameters plus optional systemTime and systemSequence", nil)
-}
-
 func CypherSpecializedCallsTemporalLookupFailed(label string, cause error) Message {
 	quotedLabel := strconv.Quote(label)
 	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTemporalLookupFailed, "temporal lookup failed for label "+quotedLabel+": "+cause.Error(), map[string]any{"Label": quotedLabel, "Cause": cause.Error()})
-}
-
-func CypherSpecializedCallsTemporalInvalidSyntax(procedure string) Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTemporalInvalidSyntax, "invalid "+procedure+" syntax", map[string]any{"Procedure": procedure})
-}
-
-func CypherSpecializedCallsTemporalClosingParenthesis(procedure string) Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsTemporalClosingParenthesis, "missing closing parenthesis in "+procedure, map[string]any{"Procedure": procedure})
 }
 
 func CypherSpecializedCallsArgumentRequired(argument string) Message {
