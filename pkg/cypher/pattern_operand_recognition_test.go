@@ -84,3 +84,52 @@ func TestMatchWhereXorPrecedence(t *testing.T) {
 		require.Equal(t, want, result.Rows, query)
 	}
 }
+
+// XOR in a compiled WHERE, through both compilers: the graph-independent
+// one (two bound values) and the executor's (an operand that is a
+// relationship pattern). Null XOR anything is null, which filters the row.
+func TestCompiledBindingWhereXor(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "compiled_xor")
+	exec := NewStorageExecutor(store)
+	_, err := exec.Execute(ctx, "CREATE (:XA {age: 30})-[:XR]->(:XB {age: 40})", nil)
+	require.NoError(t, err)
+	as, err := store.GetNodesByLabel("XA")
+	require.NoError(t, err)
+	bs, err := store.GetNodesByLabel("XB")
+	require.NoError(t, err)
+	require.Len(t, as, 1)
+	require.Len(t, bs, 1)
+	bind := binding{"a": as[0], "b": bs[0]}
+
+	for clause, want := range map[string]bool{
+		"a.age = 30 XOR b.age = 30": true,
+		"a.age = 30 XOR b.age = 40": false,
+		"a.age = 31 XOR b.age = 41": false,
+		"a.age = 30 XOR b.none = 1": false,
+	} {
+		truth, ok := exec.getCompiledBindingWhereTruthIfSupported(ctx, clause)
+		require.True(t, ok, clause)
+		require.Equal(t, want, truth(bind, nil) == truthTrue, clause)
+	}
+	truth, ok := exec.getCompiledBindingWhereTruthIfSupported(ctx, "a.age = 30 XOR b.none = 1")
+	require.True(t, ok)
+	require.Equal(t, truthUnknown, truth(bind, nil))
+	for clause, want := range map[string]bool{
+		"a.age = 30 XOR (a)-[:XR]->(b)": false,
+		"a.age = 31 XOR (a)-[:XR]->(b)": true,
+		"a.age = 31 XOR (b)-[:XR]->(a)": false,
+	} {
+		predicate, ok := exec.tryCompileExecutorBindingWhere(ctx, clause)
+		require.True(t, ok, clause)
+		require.Equal(t, want, predicate(bind, nil), clause)
+	}
+}
+
+func TestStartsWithRelationshipFragment(t *testing.T) {
+	for text, want := range map[string]bool{
+		"": false, "->()": true, ">(b)": true, "<--(a)": true, "-[r]->(b)": true, "--(b)": true, "-1": false, "a.x": false,
+	} {
+		require.Equal(t, want, startsWithRelationshipFragment(text), text)
+	}
+}
