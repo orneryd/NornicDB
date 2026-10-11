@@ -316,6 +316,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	svc.SetDefaultMinSimilarity(minSim)
 	if db.config != nil {
 		svc.SetFulltextProperties(db.config.Memory.SearchBM25Properties)
+		svc.SetFulltextLabels(db.config.Memory.SearchBM25Labels)
 	}
 	// Per-DB master switches: pull from the resolver and seed the service.
 	// Defaults (true, true) when no resolver is wired reproduce today's behaviour.

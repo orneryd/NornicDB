@@ -649,6 +649,11 @@ type MemoryConfig struct {
 	// Empty preserves the default behavior of indexing labels and all properties.
 	// Env: NORNICDB_SEARCH_BM25_PROPERTIES (comma-separated)
 	SearchBM25Properties []string
+	// SearchBM25Labels limits BM25 indexing to nodes carrying at least one of
+	// the listed labels, as NORNICDB_EMBEDDING_LABELS_INCLUDE does for
+	// embeddings. Empty preserves the default behavior of indexing every node.
+	// Env: NORNICDB_SEARCH_BM25_LABELS (comma-separated)
+	SearchBM25Labels []string
 	// SearchBM25Stemmer is the global default BM25 stemmer plugin ID.
 	// "none" preserves the default language-neutral analyzer.
 	// Env: NORNICDB_SEARCH_BM25_STEMMER (default: none)
@@ -1616,6 +1621,7 @@ type YAMLConfig struct {
 		BM25Enabled    *bool    `yaml:"bm25_enabled"`
 		BM25Warming    string   `yaml:"bm25_warming"`
 		BM25Properties []string `yaml:"bm25_properties"`
+		BM25Labels     []string `yaml:"bm25_labels"`
 		BM25Stemmer    string   `yaml:"bm25_stemmer"`
 		VectorEnabled  *bool    `yaml:"vector_enabled"`
 		VectorWarming  string   `yaml:"vector_warming"`
@@ -2593,6 +2599,9 @@ func applyEnvVars(config *Config) error {
 	if v := getEnvStringSlice("NORNICDB_SEARCH_BM25_PROPERTIES", nil); len(v) > 0 {
 		config.Memory.SearchBM25Properties = v
 	}
+	if v := getEnvStringSlice("NORNICDB_SEARCH_BM25_LABELS", nil); len(v) > 0 {
+		config.Memory.SearchBM25Labels = v
+	}
 	if v := strings.TrimSpace(strings.ToLower(getEnv("NORNICDB_SEARCH_BM25_STEMMER", ""))); v != "" {
 		config.Memory.SearchBM25Stemmer = v
 	}
@@ -3537,6 +3546,9 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 	if len(yamlCfg.Search.BM25Properties) > 0 {
 		config.Memory.SearchBM25Properties = append([]string(nil), yamlCfg.Search.BM25Properties...)
+	}
+	if len(yamlCfg.Search.BM25Labels) > 0 {
+		config.Memory.SearchBM25Labels = append([]string(nil), yamlCfg.Search.BM25Labels...)
 	}
 	if v := strings.TrimSpace(strings.ToLower(yamlCfg.Search.BM25Stemmer)); v != "" {
 		config.Memory.SearchBM25Stemmer = v

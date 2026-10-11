@@ -96,11 +96,17 @@ func (s *Service) composeBM25BuildSettings() string {
 		properties = strings.Join(configured, ",")
 	}
 	analyzer := analyzerFingerprint(s.bm25Analyzer).BuildSettings()
-	return fmt.Sprintf("schema=%s;format=%s;%s;props=%s",
+	settings := fmt.Sprintf("schema=%s;format=%s;%s;props=%s",
 		bm25SettingsSchemaVersion,
 		s.currentBM25FormatVersion(),
 		analyzer,
 		properties)
+	// The label allowlist joins the fingerprint only when set, so existing
+	// indexes built without one stay valid.
+	if labels := s.FulltextLabels(); len(labels) > 0 {
+		settings += ";labels=" + strings.Join(labels, ",")
+	}
+	return settings
 }
 
 func (s *Service) composeVectorBuildSettings() string {

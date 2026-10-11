@@ -113,6 +113,24 @@ func TestLoadFromFile_BM25Properties(t *testing.T) {
 	require.Equal(t, []string{"title", "text"}, cfg.Memory.SearchBM25Properties)
 }
 
+func TestLoadFromEnv_BM25Labels(t *testing.T) {
+	t.Setenv("NORNICDB_SEARCH_BM25_LABELS", " Searchable, ,Source ")
+
+	cfg := LoadFromEnv()
+
+	require.Equal(t, []string{"Searchable", "Source"}, cfg.Memory.SearchBM25Labels)
+}
+
+func TestLoadFromFile_BM25Labels(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nornicdb.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("search:\n  bm25_labels: [Searchable, Source]\n"), 0o600))
+
+	cfg, err := LoadFromFile(path)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"Searchable", "Source"}, cfg.Memory.SearchBM25Labels)
+}
+
 // ============================================================================
 // FeatureFlagsConfig Heimdall getters
 // ============================================================================
