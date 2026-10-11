@@ -87,6 +87,11 @@
 #                           and throughput. Durable synchronous commits are the
 #                           product default; set NORNIC_ASYNC_WRITES=0 to benchmark
 #                           the durable baseline instead.
+#   NORTHWIND_GOGC=400      (default 400) GC percent for the NornicDB server
+#                           process. Write-path profiles show ~9-12% of CPU in GC
+#                           mark work; 400 measures +19-38% on batched writes at
+#                           the cost of heap (PR #1043 experiment C). Set
+#                           NORTHWIND_GOGC=off for the Go default (100).
 
 set -euo pipefail
 
@@ -467,6 +472,12 @@ run_nornic() {
   # benchmarks that baseline instead.
   if [[ "${NORNIC_ASYNC_WRITES:-1}" != "0" ]]; then
     nornic_extra_env+=(NORNICDB_ASYNC_WRITES_ENABLED=true)
+  fi
+  # GC tuning: write-path profiles show ~9-12% of CPU in GC mark work and a
+  # GOGC bump measures +19-38% on batched writes (PR #1043 experiment C).
+  # NORTHWIND_GOGC=off restores the Go default.
+  if [[ "${NORTHWIND_GOGC:-400}" != "off" ]]; then
+    nornic_extra_env+=(GOGC="${NORTHWIND_GOGC:-400}")
   fi
 
   log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT}) graph_only=${GRAPH_ONLY} parser=${mode}"
