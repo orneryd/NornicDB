@@ -45,6 +45,28 @@ func TestManagerRendersCatalogAndPluralForms(t *testing.T) {
 	require.Equal(t, "3 elementos procesados", many)
 }
 
+// English other than American English, and any other tag without a catalog,
+// resolves to a real catalog, never to the en-XA pseudo-locale, which is
+// chosen only when asked for exactly (#907 I31).
+func TestManagerPseudoLocaleOnlyWhenAskedFor(t *testing.T) {
+	for _, preference := range []string{"en-GB", "en-AU", "en-IE", "en", "en-Latn-GB", "fr-FR"} {
+		manager, err := NewManager([]language.Tag{language.MustParse(preference)}, nil)
+		require.NoError(t, err)
+		require.Equal(t, language.AmericanEnglish, manager.DefaultTag(), preference)
+		text, tag, err := manager.Render(WithPreferences(context.Background(), language.MustParse(preference)), InvalidRequestBody())
+		require.NoError(t, err)
+		require.Equal(t, language.AmericanEnglish, tag, preference)
+		require.Equal(t, "invalid request body", text, preference)
+	}
+	manager, err := NewManager([]language.Tag{language.MustParse("en-XA")}, nil)
+	require.NoError(t, err)
+	require.Equal(t, language.MustParse("en-XA"), manager.DefaultTag())
+	match := manager.Match(language.MustParse("en-XA"))
+	require.True(t, match.Exact)
+	require.Equal(t, language.MustParse("es-ES"), manager.Match(language.MustParse("es-MX")).Tag)
+	require.Equal(t, language.AmericanEnglish, manager.Match(language.MustParse("en-XB")).Tag, "a pseudo-locale without a catalog")
+}
+
 func TestManagerContextOverrideAndFallback(t *testing.T) {
 	manager, err := NewManager([]language.Tag{language.EuropeanSpanish}, nil)
 	require.NoError(t, err)

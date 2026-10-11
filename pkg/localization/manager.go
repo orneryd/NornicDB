@@ -30,6 +30,7 @@ type Match struct {
 type Manager struct {
 	bundle         *i18n.Bundle
 	matcher        language.Matcher
+	matchable      []language.Tag
 	supported      []language.Tag
 	defaultTag     language.Tag
 	logger         *slog.Logger
@@ -70,9 +71,18 @@ func NewManager(defaultPreferences []language.Tag, logger *slog.Logger) (*Manage
 		return nil, fmt.Errorf("source localization catalog %s is missing", SourceLanguage)
 	}
 
+	// A pseudo-locale is chosen only when asked for exactly, never as the
+	// nearest match of another tag, such as en-GB for en-XA.
+	matchable := make([]language.Tag, 0, len(supported))
+	for _, tag := range supported {
+		if !isPseudoLocale(tag) {
+			matchable = append(matchable, tag)
+		}
+	}
 	manager := &Manager{
 		bundle:    bundle,
-		matcher:   language.NewMatcher(supported),
+		matcher:   language.NewMatcher(matchable),
+		matchable: matchable,
 		supported: append([]language.Tag(nil), supported...),
 		logger:    logger,
 	}
@@ -120,14 +130,31 @@ func (m *Manager) Match(preferred ...language.Tag) Match {
 	if len(filtered) == 0 {
 		filtered = []language.Tag{language.AmericanEnglish}
 	}
-	_, index, confidence := m.matcher.Match(filtered...)
 	requested := filtered[0]
+	if isPseudoLocale(requested) {
+		for _, tag := range m.supported {
+			if tag.String() == requested.String() {
+				return Match{Requested: requested, Tag: tag, Confidence: language.Exact, Exact: true}
+			}
+		}
+	}
+	_, index, confidence := m.matcher.Match(filtered...)
 	return Match{
 		Requested:  requested,
-		Tag:        m.supported[index],
+		Tag:        m.matchable[index],
 		Confidence: confidence,
-		Exact:      confidence == language.Exact && requested.String() == m.supported[index].String(),
+		Exact:      confidence == language.Exact && requested.String() == m.matchable[index].String(),
 	}
+}
+
+// isPseudoLocale reports whether tag is a pseudo-locale, in the private-use
+// regions XA (accented) and XB (bidirectional) kept for testing.
+func isPseudoLocale(tag language.Tag) bool {
+	region, confidence := tag.Region()
+	if confidence != language.Exact {
+		return false
+	}
+	return region.String() == "XA" || region.String() == "XB"
 }
 
 // Resolve selects a language and emits a bounded warning when no exact pack exists.
