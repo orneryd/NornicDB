@@ -39,6 +39,11 @@ func validateStaticMapKeys(query string) error {
 		if precedingSubqueryExpressionKeyword(query, index) {
 			continue
 		}
+		// A {m,n} after a parenthesised path quantifies it
+		// ((a)-[r]-(b)){1,6}; it is not a map.
+		if quantifiedGroupQuantifierAt(query, index) {
+			continue
+		}
 		close := findMatchingDelimiter(query, index, '{', '}')
 		if close < 0 {
 			continue

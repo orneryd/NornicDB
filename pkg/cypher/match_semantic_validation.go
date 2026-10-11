@@ -478,6 +478,8 @@ func (e *StorageExecutor) validateMatchClauseBindings(scope matchSemanticScope, 
 		whereClause = strings.TrimSpace(pattern[where+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:where])
 	}
+	// A quantified group's WHERE is an expression, not pattern structure.
+	pattern = maskQuantifiedGroupPredicates(pattern)
 	if mergePatternUsesParameterPredicate(pattern) {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
@@ -782,10 +784,61 @@ func (e *StorageExecutor) validateStaticClauseTypes(clause pipelineClause, scope
 		}); err != nil {
 			return err
 		}
-	} else if err := validateStaticFunctionVariables(clause.text, scope); err != nil {
-		return err
+	} else {
+		text := clause.text
+		if clause.kind == pipelineClauseMatch || clause.kind == pipelineClauseOptionalMatch {
+			var err error
+			if text, err = validateQuantifiedGroupPredicateTypes(clause.text, scope); err != nil {
+				return err
+			}
+		}
+		if err := validateStaticFunctionVariables(text, scope); err != nil {
+			return err
+		}
 	}
 	return e.validateStaticOperatorTypes(clause, scope, projectedScope, nil)
+}
+
+// validateQuantifiedGroupPredicateTypes checks each quantified group's
+// predicates (its own WHERE and its elements' inline WHERE) in a MATCH
+// clause where the group's variables are one node or
+// relationship each (an iteration's), not the lists the group binds after
+// it: type(r) in ((a)-[r]-(b) WHERE type(r) = 'T')+ takes a relationship.
+// It returns the clause with those predicates blanked for the clause-wide
+// checks.
+func validateQuantifiedGroupPredicateTypes(clause string, scope staticTypeScope) (string, error) {
+	groups := quantifiedGroups(clause)
+	if len(groups) == 0 {
+		return clause, nil
+	}
+	for _, group := range groups {
+		predicates := group.predicateTexts(clause)
+		if len(predicates) == 0 {
+			continue
+		}
+		kinds := make(matchSemanticScope, len(scope.kinds)+len(group.nodes)+len(group.relationships))
+		for name, kind := range scope.kinds {
+			kinds[name] = kind
+		}
+		for _, variable := range group.nodes {
+			kinds[variable] = matchBindingNode
+		}
+		for _, variable := range group.relationships {
+			kinds[variable] = matchBindingRelationship
+		}
+		iteration := staticTypeScope{kinds: kinds, values: scope.values, complete: scope.complete}
+		for _, predicate := range predicates {
+			if err := validateStaticFunctionVariables(predicate, iteration); err != nil {
+				return "", err
+			}
+			// Neo4j types the operators of a group predicate but doesn't
+			// require a boolean result (WHERE r.kind + 1 matches nothing).
+			if _, err := (&staticOperatorChecker{scope: iteration}).check(predicate); err != nil {
+				return "", err
+			}
+		}
+	}
+	return maskQuantifiedGroupPredicates(clause), nil
 }
 
 // projectionAliasScope is the scope of the WHERE / ORDER BY after a RETURN or
