@@ -369,11 +369,11 @@ func parseUnwindMultiMatchCreatePlan(restQuery, unwindVar string) (unwindMultiMa
 		}
 		body := strings.TrimSpace(restQuery[b.pos:end])
 		if b.kind == 0 {
-			m, ok := parseSimpleMatchClause(body, unwindVar)
+			matches, ok := parseSimpleMatchClauseList(body, unwindVar)
 			if !ok {
 				return unwindMultiMatchCreatePlan{}, false
 			}
-			plan.matches = append(plan.matches, m)
+			plan.matches = append(plan.matches, matches...)
 		} else {
 			// CREATE — could be node or edge.
 			node, edge, kind, ok := parseSimpleCreateClause(body, unwindVar)
@@ -434,6 +434,43 @@ func parseSimpleMatchClause(clause, unwindVar string) (matchClauseSpec, bool) {
 		rowField, _ := simpleUnwindFieldRef(right, unwindVar)
 		return matchClauseSpec{variable: varName, label: label, rowField: rowField, lookupExpr: right, bindingVar: unwindVar, byID: true}, true
 	}
+	return parseSimpleMatchPattern(body, unwindVar)
+}
+
+// parseSimpleMatchClauseList parses `MATCH p1, p2, ...`: one or more
+// comma-separated property-equality patterns in one MATCH clause (the Pokec
+// wiring shape `MATCH (n:L {id: p[0]}), (m:L {id: p[1]})`). A WHERE clause
+// only covers the single-pattern elementId form, which is delegated to
+// parseSimpleMatchClause.
+func parseSimpleMatchClauseList(clause, unwindVar string) ([]matchClauseSpec, bool) {
+	body := strings.TrimSpace(strings.TrimPrefix(clause, "MATCH"))
+	body = strings.TrimPrefix(body, "match")
+	body = strings.TrimSpace(body)
+	if whereIdx := findKeywordIndexInContext(body, "WHERE"); whereIdx >= 0 {
+		m, ok := parseSimpleMatchClause(clause, unwindVar)
+		if !ok {
+			return nil, false
+		}
+		return []matchClauseSpec{m}, true
+	}
+	patterns := splitTopLevelComma(body)
+	if len(patterns) == 0 {
+		return nil, false
+	}
+	matches := make([]matchClauseSpec, 0, len(patterns))
+	for _, pattern := range patterns {
+		m, ok := parseSimpleMatchPattern(strings.TrimSpace(pattern), unwindVar)
+		if !ok {
+			return nil, false
+		}
+		matches = append(matches, m)
+	}
+	return matches, true
+}
+
+// parseSimpleMatchPattern parses one `(var:Label {prop: expr})` pattern,
+// the property-equality half of parseSimpleMatchClause.
+func parseSimpleMatchPattern(body, unwindVar string) (matchClauseSpec, bool) {
 	if !strings.HasPrefix(body, "(") {
 		return matchClauseSpec{}, false
 	}

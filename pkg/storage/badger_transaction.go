@@ -100,9 +100,11 @@ type BadgerTransaction struct {
 
 	// Track operations for constraint validation
 	pendingNodes map[NodeID]*Node
-	// pendingIndex lists pendingNodes by label and indexed property value,
-	// for property-index lookups made inside the transaction. Nil until the
-	// first such lookup (badger_transaction_pending_index.go).
+	// nodeHeadCache memoizes commit-time endpoint head lookups within one
+	// validation pass: bulk edge commits repeat endpoints per edge and the
+	// engine read is a Badger point read each time. Nil until the first
+	// cached lookup; discarded with the transaction.
+	nodeHeadCache       map[NodeID]MVCCHead
 	pendingIndex        *pendingNodeIndex
 	pendingEdges        map[EdgeID]*Edge
 	deferredEdgeWrites  map[EdgeID]struct{}
@@ -3522,7 +3524,7 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(edge *Edge) error {
 				continue
 			}
 		}
-		head, err := tx.engine.GetNodeCurrentHead(nodeID)
+		head, err := tx.endpointHead(nodeID)
 		if err == ErrNotFound {
 			if _, nodeErr := tx.engine.GetNode(nodeID); nodeErr == nil {
 				continue
@@ -3547,6 +3549,25 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(edge *Edge) error {
 		}
 	}
 	return nil
+}
+
+// endpointHead returns the committed MVCC head of nodeID, memoized per
+// transaction: edge-batch validation reads each endpoint once per distinct
+// node instead of twice per edge. The cache is only read within a single
+// commit validation pass, which is point-in-time by construction, so the
+// memoized value is exactly as fresh as the first read.
+func (tx *BadgerTransaction) endpointHead(nodeID NodeID) (MVCCHead, error) {
+	if head, ok := tx.nodeHeadCache[nodeID]; ok {
+		return head, nil
+	}
+	head, err := tx.engine.GetNodeCurrentHead(nodeID)
+	if err == nil {
+		if tx.nodeHeadCache == nil {
+			tx.nodeHeadCache = make(map[NodeID]MVCCHead, 64)
+		}
+		tx.nodeHeadCache[nodeID] = head
+	}
+	return head, err
 }
 
 func (tx *BadgerTransaction) checkNodeAdjacencyConflict(nodeID NodeID) error {
