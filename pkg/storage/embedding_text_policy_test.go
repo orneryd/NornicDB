@@ -228,3 +228,14 @@ func TestTransactionStaleCopyDoesNotRestoreInvalidatedEmbeddings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]float32{{0.5, 0.6}}, got.ChunkEmbeddings)
 }
+
+// carriesDroppedEmbeddings: the dropped vectors, or no vectors with their
+// metadata, are a stale copy; other vectors are the caller's, and no
+// embedding state at all carries nothing back.
+func TestCarriesDroppedEmbeddings(t *testing.T) {
+	dropped := &Node{ChunkEmbeddings: [][]float32{{0.1, 0.2}}, EmbedMeta: map[string]any{"has_embedding": true}}
+	require.True(t, carriesDroppedEmbeddings(&Node{ChunkEmbeddings: [][]float32{{0.1, 0.2}}}, dropped))
+	require.True(t, carriesDroppedEmbeddings(&Node{EmbedMeta: map[string]any{"has_embedding": true}}, dropped))
+	require.False(t, carriesDroppedEmbeddings(&Node{ChunkEmbeddings: [][]float32{{0.5, 0.6}}}, dropped))
+	require.False(t, carriesDroppedEmbeddings(&Node{}, dropped))
+}
