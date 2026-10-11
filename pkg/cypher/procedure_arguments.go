@@ -46,6 +46,18 @@ func requiredProcedureString(procedure string, args []interface{}, index int, ar
 	return text, nil
 }
 
+// requiredProcedureInteger reads an INTEGER argument the procedure needs.
+func requiredProcedureInteger(procedure string, args []interface{}, index int, argument string) (int64, error) {
+	value := procedureArgument(args, index)
+	if value == nil {
+		return 0, procedureArgumentNullError(procedure, argument)
+	}
+	if !isIntegerProcedureValue(value) {
+		return 0, procedureArgumentTypeError(procedure, argument, "INTEGER", value)
+	}
+	return toInt64(value), nil
+}
+
 // requiredProcedureStringList reads a LIST<STRING> argument the procedure
 // needs; a single STRING is NornicDB's kept one-element form
 // (createNodeIndex('i', 'Label', 'name')).

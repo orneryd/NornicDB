@@ -160,7 +160,7 @@ func analyzeStretchClause(clause pipelineClause, reads, writes *stretchTokens) {
 	case pipelineClauseCall:
 		// A procedure the registry knows to be read-only only reads.
 		reads.everything = true
-		if procedure, found := globalProcedureRegistry.Get(extractProcedureName(text)); !found || procedure.Spec.Mode == ProcedureModeWrite {
+		if procedure, found := globalProcedureRegistry.Get(extractProcedureName(text)); !found || procedure.Spec.writes() {
 			writes.everything = true
 		}
 	default:

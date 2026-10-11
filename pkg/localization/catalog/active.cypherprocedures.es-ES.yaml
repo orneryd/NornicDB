@@ -20,18 +20,8 @@
   other: "no se proporcionó un vector de consulta ni texto de búsqueda (es posible que el parámetro tenga un tipo no compatible; se esperaba []float32, []float64, []interface{} o string)"
 - id: cypherprocedures.query_input_required
   other: "no se proporcionó un vector de consulta ni texto de búsqueda"
-- id: cypherprocedures.vector_create_node_invalid_syntax
-  other: "{{if .Parentheses}}sintaxis no válida: faltan los paréntesis{{else}}sintaxis de db.index.vector.createNodeIndex no válida{{end}}"
-- id: cypherprocedures.vector_create_node_arguments_required
-  other: "db.index.vector.createNodeIndex requiere al menos 4 argumentos: indexName, label, property, dimension"
 - id: cypherprocedures.create_vector_index_failed
   other: "no se pudo crear el índice vectorial: {{.Cause}}"
-- id: cypherprocedures.vector_create_relationship_invalid_syntax
-  other: "sintaxis de db.index.vector.createRelationshipIndex no válida{{if .Parentheses}}: faltan los paréntesis{{end}}"
-- id: cypherprocedures.vector_create_relationship_arguments_required
-  other: "db.index.vector.createRelationshipIndex requiere al menos 4 argumentos: indexName, relationshipType, property, dimension"
-- id: cypherprocedures.invalid_dimension
-  other: "dimensión no válida: {{.Cause}}"
 - id: cypherprocedures.create_relationship_vector_index_failed
   other: "no se pudo crear el índice vectorial de relaciones: {{.Cause}}"
 - id: cypherprocedures.fulltext_create_node_invalid_syntax

@@ -15,7 +15,7 @@ func pipelineProcedureCallsAreClauses(cypher string) bool {
 	ensureBuiltInProceduresRegistered()
 	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
 		procedure, found := globalProcedureRegistry.Get(extractProcedureName(cypher[position:]))
-		if found && procedure.Spec.Mode != ProcedureModeRead && procedure.Spec.Mode != ProcedureModeWrite && procedure.Spec.Mode != ProcedureModeDBMS && !(procedure.User && procedure.Spec.Mode == "") {
+		if found && procedure.Spec.Mode != ProcedureModeRead && !procedure.Spec.writes() && procedure.Spec.Mode != ProcedureModeDBMS && !(procedure.User && procedure.Spec.Mode == "") {
 			return false
 		}
 	}

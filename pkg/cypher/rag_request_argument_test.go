@@ -75,9 +75,9 @@ func TestRagProcedureRequestReader(t *testing.T) {
 // countingReranker records how many candidates reach the provider.
 type countingReranker struct{ received int }
 
-func (r *countingReranker) Name() string                          { return "counting" }
-func (r *countingReranker) Enabled() bool                         { return true }
-func (r *countingReranker) IsAvailable(ctx context.Context) bool  { return true }
+func (r *countingReranker) Name() string                         { return "counting" }
+func (r *countingReranker) Enabled() bool                        { return true }
+func (r *countingReranker) IsAvailable(ctx context.Context) bool { return true }
 func (r *countingReranker) Rerank(ctx context.Context, query string, candidates []search.RerankCandidate) ([]search.RerankResult, error) {
 	r.received = len(candidates)
 	results := make([]search.RerankResult, len(candidates))

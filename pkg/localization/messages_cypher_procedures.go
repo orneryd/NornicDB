@@ -14,12 +14,7 @@ const (
 	MessageCypherProceduresUnsupportedParameters                 MessageID = "cypherprocedures.unsupported_parameters"
 	MessageCypherProceduresQueryInputPossiblyUnsupported         MessageID = "cypherprocedures.query_input_possibly_unsupported"
 	MessageCypherProceduresQueryInputRequired                    MessageID = "cypherprocedures.query_input_required"
-	MessageCypherProceduresVectorCreateNodeInvalidSyntax         MessageID = "cypherprocedures.vector_create_node_invalid_syntax"
-	MessageCypherProceduresVectorCreateNodeArgumentsRequired     MessageID = "cypherprocedures.vector_create_node_arguments_required"
 	MessageCypherProceduresCreateVectorIndexFailed               MessageID = "cypherprocedures.create_vector_index_failed"
-	MessageCypherProceduresVectorCreateRelationshipInvalidSyntax MessageID = "cypherprocedures.vector_create_relationship_invalid_syntax"
-	MessageCypherProceduresVectorCreateRelationshipArguments     MessageID = "cypherprocedures.vector_create_relationship_arguments_required"
-	MessageCypherProceduresInvalidDimension                      MessageID = "cypherprocedures.invalid_dimension"
 	MessageCypherProceduresCreateRelationshipVectorIndexFailed   MessageID = "cypherprocedures.create_relationship_vector_index_failed"
 	MessageCypherProceduresFulltextCreateNodeInvalidSyntax       MessageID = "cypherprocedures.fulltext_create_node_invalid_syntax"
 	MessageCypherProceduresFulltextCreateNodeArgumentsRequired   MessageID = "cypherprocedures.fulltext_create_node_arguments_required"
@@ -111,31 +106,8 @@ func CypherProceduresQueryInputPossiblyUnsupported() Message {
 func CypherProceduresQueryInputRequired() Message {
 	return cypherProceduresMessage(MessageCypherProceduresQueryInputRequired, "no query vector or search text provided", nil)
 }
-func CypherProceduresVectorCreateNodeInvalidSyntax(parentheses bool) Message {
-	fallback := "invalid db.index.vector.createNodeIndex syntax"
-	if parentheses {
-		fallback = "invalid syntax: missing parentheses"
-	}
-	return cypherProceduresMessage(MessageCypherProceduresVectorCreateNodeInvalidSyntax, fallback, map[string]any{"Parentheses": parentheses})
-}
-func CypherProceduresVectorCreateNodeArgumentsRequired() Message {
-	return cypherProceduresMessage(MessageCypherProceduresVectorCreateNodeArgumentsRequired, "db.index.vector.createNodeIndex requires at least 4 arguments: indexName, label, property, dimension", nil)
-}
 func CypherProceduresCreateVectorIndexFailed(cause error) Message {
 	return cypherProceduresCause(MessageCypherProceduresCreateVectorIndexFailed, "failed to create vector index: ", cause)
-}
-func CypherProceduresVectorCreateRelationshipInvalidSyntax(parentheses bool) Message {
-	fallback := "invalid db.index.vector.createRelationshipIndex syntax"
-	if parentheses {
-		fallback += ": missing parentheses"
-	}
-	return cypherProceduresMessage(MessageCypherProceduresVectorCreateRelationshipInvalidSyntax, fallback, map[string]any{"Parentheses": parentheses})
-}
-func CypherProceduresVectorCreateRelationshipArguments() Message {
-	return cypherProceduresMessage(MessageCypherProceduresVectorCreateRelationshipArguments, "db.index.vector.createRelationshipIndex requires at least 4 arguments: indexName, relationshipType, property, dimension", nil)
-}
-func CypherProceduresInvalidDimension(cause error) Message {
-	return cypherProceduresCause(MessageCypherProceduresInvalidDimension, "invalid dimension: ", cause)
 }
 func CypherProceduresCreateRelationshipVectorIndexFailed(cause error) Message {
 	return cypherProceduresCause(MessageCypherProceduresCreateRelationshipVectorIndexFailed, "failed to create relationship vector index: ", cause)

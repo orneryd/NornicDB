@@ -582,4 +582,3 @@ func extractTextContent(node *storage.Node, properties []string) string {
 
 	return strings.TrimSpace(content.String())
 }
-
