@@ -10,13 +10,12 @@ import (
 
 func TestCreateParameterDoesNotInjectAsyncBatchClauses(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "parameter_injection"))
-	ctx := withParams(context.Background(), map[string]interface{}{
+	ctx := context.Background()
+
+	result, err := executor.Execute(ctx, "CREATE (:PT {r: $r})", map[string]interface{}{
 		"r": "CREATE (m:Injected {secret: 1})",
 	})
-
-	result, err, handled := executor.tryAsyncCreateNodeBatch(ctx, "CREATE (:PT {r: $r})")
 	require.NoError(t, err)
-	require.True(t, handled)
 	require.Equal(t, 1, result.Stats.NodesCreated)
 
 	nodes, err := executor.getStorage(ctx).GetNodesByLabel("PT")

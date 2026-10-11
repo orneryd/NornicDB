@@ -1,9 +1,7 @@
 package storage
 
 import (
-	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,82 +14,59 @@ func TestRealtimeCountTracking(t *testing.T) {
 	badger := createRealtimeTestBadgerEngine(t)
 	defer badger.Close()
 
-	// Wrap with AsyncEngine (like production)
-	asyncConfig := &AsyncEngineConfig{
-		FlushInterval: 50 * time.Millisecond, // Same as production default
-	}
+	// Writes apply synchronously through the namespaced engine.
 	namespaced := NewNamespacedEngine(badger, "test")
-	async := NewAsyncEngine(namespaced, asyncConfig)
-	defer async.Close()
 
 	t.Run("initial_count_is_zero", func(t *testing.T) {
-		count, err := async.NodeCount()
+		count, err := namespaced.NodeCount()
 		require.NoError(t, err)
 		assert.Equal(t, int64(0), count, "Initial count should be 0")
 		t.Logf("Initial count: %d", count)
 	})
 
 	t.Run("count_updates_immediately_after_create", func(t *testing.T) {
-		// Create a node (goes to cache, not yet flushed)
 		node := &Node{
 			ID:         "test-node-1",
 			Labels:     []string{"TestNode"},
 			Properties: map[string]interface{}{"name": "test1"},
 		}
-		_, err := async.CreateNode(node)
+		_, err := namespaced.CreateNode(node)
 		require.NoError(t, err)
 
-		// Check count IMMEDIATELY (before flush)
-		count, err := async.NodeCount()
+		count, err := namespaced.NodeCount()
 		require.NoError(t, err)
-		t.Logf("Count immediately after CreateNode (before flush): %d", count)
-		assert.Equal(t, int64(1), count, "Count should be 1 immediately after create (pendingCreates=1)")
+		t.Logf("Count immediately after CreateNode: %d", count)
+		assert.Equal(t, int64(1), count, "Count should be 1 immediately after create")
 	})
 
-	t.Run("count_stays_correct_after_flush", func(t *testing.T) {
-		// Wait for flush to happen
-		time.Sleep(100 * time.Millisecond)
-
-		// Force a flush to ensure data is written
-		async.Flush()
-
-		// Check count after flush
-		count, err := async.NodeCount()
+	t.Run("count_matches_badger_after_commit", func(t *testing.T) {
+		count, err := namespaced.NodeCount()
 		require.NoError(t, err)
-		t.Logf("Count after flush: %d", count)
-		assert.Equal(t, int64(1), count, "Count should still be 1 after flush (engineCount=1, pendingCreates=0)")
+		t.Logf("Count after commit: %d", count)
+		assert.Equal(t, int64(1), count, "Count should still be 1")
 
 		// Also check underlying BadgerEngine directly
 		badgerCount, err := badger.NodeCount()
 		require.NoError(t, err)
-		t.Logf("BadgerEngine count after flush: %d", badgerCount)
-		assert.Equal(t, int64(1), badgerCount, "BadgerEngine should show 1 node after flush")
+		t.Logf("BadgerEngine count after commit: %d", badgerCount)
+		assert.Equal(t, int64(1), badgerCount, "BadgerEngine should show 1 node")
 	})
 
 	t.Run("count_updates_for_multiple_creates", func(t *testing.T) {
-		// Create more nodes
 		for i := 2; i <= 5; i++ {
 			node := &Node{
 				ID:         NodeID("test-node-" + string(rune('0'+i))),
 				Labels:     []string{"TestNode"},
 				Properties: map[string]interface{}{"name": "test"},
 			}
-			_, err := async.CreateNode(node)
+			_, err := namespaced.CreateNode(node)
 			require.NoError(t, err)
 		}
 
-		// Check count immediately (mix of flushed and pending)
-		count, err := async.NodeCount()
+		count, err := namespaced.NodeCount()
 		require.NoError(t, err)
-		t.Logf("Count after creating 4 more nodes (before flush): %d", count)
-		assert.Equal(t, int64(5), count, "Count should be 5 (1 flushed + 4 pending)")
-
-		// Flush and check again
-		async.Flush()
-		count, err = async.NodeCount()
-		require.NoError(t, err)
-		t.Logf("Count after flush: %d", count)
-		assert.Equal(t, int64(5), count, "Count should be 5 after flush")
+		t.Logf("Count after creating 4 more nodes: %d", count)
+		assert.Equal(t, int64(5), count, "Count should be 5")
 	})
 }
 
@@ -101,17 +76,12 @@ func TestRealtimeCountWithCypher(t *testing.T) {
 	badger := createRealtimeTestBadgerEngine(t)
 	defer badger.Close()
 
-	asyncConfig := &AsyncEngineConfig{
-		FlushInterval: 50 * time.Millisecond,
-	}
 	namespaced := NewNamespacedEngine(badger, "test")
-	async := NewAsyncEngine(namespaced, asyncConfig)
-	defer async.Close()
 
 	// Simulate what Cypher executor does
 	t.Run("cypher_create_flow", func(t *testing.T) {
 		// Initial count
-		initialCount, _ := async.NodeCount()
+		initialCount, _ := namespaced.NodeCount()
 		t.Logf("Initial count: %d", initialCount)
 
 		// Cypher CREATE (n:Person {name: 'Alice'})
@@ -120,22 +90,13 @@ func TestRealtimeCountWithCypher(t *testing.T) {
 			Labels:     []string{"Person"},
 			Properties: map[string]interface{}{"name": "Alice"},
 		}
-		_, err := async.CreateNode(node)
+		_, err := namespaced.CreateNode(node)
 		require.NoError(t, err)
 
 		// Stats endpoint called immediately
-		count, _ := async.NodeCount()
-		t.Logf("Count after CREATE (before flush): %d", count)
+		count, _ := namespaced.NodeCount()
+		t.Logf("Count after CREATE: %d", count)
 		assert.Equal(t, initialCount+1, count, "Count should increment immediately")
-
-		// Wait for async flush
-		time.Sleep(100 * time.Millisecond)
-		async.Flush()
-
-		// Stats endpoint called after flush
-		count, _ = async.NodeCount()
-		t.Logf("Count after flush: %d", count)
-		assert.Equal(t, initialCount+1, count, "Count should still be correct after flush")
 	})
 }
 
@@ -144,12 +105,7 @@ func TestCountAfterDeleteAndRecreate(t *testing.T) {
 	badger := createRealtimeTestBadgerEngine(t)
 	defer badger.Close()
 
-	asyncConfig := &AsyncEngineConfig{
-		FlushInterval: 50 * time.Millisecond,
-	}
 	namespaced := NewNamespacedEngine(badger, "test")
-	async := NewAsyncEngine(namespaced, asyncConfig)
-	defer async.Close()
 
 	t.Run("delete_then_create_same_id", func(t *testing.T) {
 		// Create a node
@@ -157,36 +113,31 @@ func TestCountAfterDeleteAndRecreate(t *testing.T) {
 			ID:     "node-1",
 			Labels: []string{"Test"},
 		}
-		async.CreateNode(node)
-		async.Flush()
+		_, err := namespaced.CreateNode(node)
+		require.NoError(t, err)
 
-		count, _ := async.NodeCount()
-		t.Logf("After create + flush: count=%d", count)
+		count, _ := namespaced.NodeCount()
+		t.Logf("After create: count=%d", count)
 		assert.Equal(t, int64(1), count)
 
 		// Delete the node
-		async.DeleteNode("node-1")
+		require.NoError(t, namespaced.DeleteNode("node-1"))
 
-		count, _ = async.NodeCount()
-		t.Logf("After delete (before flush): count=%d", count)
-		assert.Equal(t, int64(0), count, "Count should be 0 (pending delete)")
+		count, _ = namespaced.NodeCount()
+		t.Logf("After delete: count=%d", count)
+		assert.Equal(t, int64(0), count, "Count should be 0 after delete")
 
-		// Create with SAME ID before flush
+		// Create with SAME ID
 		node2 := &Node{
 			ID:     "node-1", // Same ID!
 			Labels: []string{"Test2"},
 		}
-		async.CreateNode(node2)
+		_, err = namespaced.CreateNode(node2)
+		require.NoError(t, err)
 
-		count, _ = async.NodeCount()
-		t.Logf("After recreate same ID (before flush): count=%d", count)
-		// This should be 1 - the delete was cancelled by the create
-		assert.Equal(t, int64(1), count, "Count should be 1 (delete cancelled)")
-
-		async.Flush()
-		count, _ = async.NodeCount()
-		t.Logf("After flush: count=%d", count)
-		assert.Equal(t, int64(1), count)
+		count, _ = namespaced.NodeCount()
+		t.Logf("After recreate same ID: count=%d", count)
+		assert.Equal(t, int64(1), count, "Count should be 1")
 	})
 
 	t.Run("delete_then_create_different_id", func(t *testing.T) {
@@ -194,121 +145,59 @@ func TestCountAfterDeleteAndRecreate(t *testing.T) {
 		badger2 := createRealtimeTestBadgerEngine(t)
 		defer badger2.Close()
 		namespaced2 := NewNamespacedEngine(badger2, "test")
-		async2 := NewAsyncEngine(namespaced2, asyncConfig)
-		defer async2.Close()
 
 		// Create node-A
-		async2.CreateNode(&Node{ID: "node-A", Labels: []string{"Test"}})
-		async2.Flush()
+		_, err := namespaced2.CreateNode(&Node{ID: "node-A", Labels: []string{"Test"}})
+		require.NoError(t, err)
 
-		count, _ := async2.NodeCount()
+		count, _ := namespaced2.NodeCount()
 		assert.Equal(t, int64(1), count)
 
 		// Delete node-A
-		async2.DeleteNode("node-A")
+		require.NoError(t, namespaced2.DeleteNode("node-A"))
 
 		// Create node-B (different ID)
-		async2.CreateNode(&Node{ID: "node-B", Labels: []string{"Test"}})
+		_, err = namespaced2.CreateNode(&Node{ID: "node-B", Labels: []string{"Test"}})
+		require.NoError(t, err)
 
-		count, _ = async2.NodeCount()
-		t.Logf("After delete A + create B (before flush): count=%d", count)
-		// Should be 1: engineCount=1, pendingCreates=1, pendingDeletes=1
-		// 1 + 1 - 1 = 1
-		assert.Equal(t, int64(1), count)
-
-		async2.Flush()
-		count, _ = async2.NodeCount()
-		t.Logf("After flush: count=%d", count)
+		count, _ = namespaced2.NodeCount()
+		t.Logf("After delete A + create B: count=%d", count)
 		assert.Equal(t, int64(1), count)
 	})
 }
 
-// TestCountDuringFlushRace tests counting during the flush window
-func TestCountDuringFlushRace(t *testing.T) {
-	badger := createRealtimeTestBadgerEngine(t)
-	defer badger.Close()
-
-	// Very fast flush interval to trigger race conditions
-	asyncConfig := &AsyncEngineConfig{
-		FlushInterval: 5 * time.Millisecond,
-	}
-	namespaced := NewNamespacedEngine(badger, "test")
-	async := NewAsyncEngine(namespaced, asyncConfig)
-	defer async.Close()
-
-	// Create many nodes while flushes are happening
-	numNodes := 100
-	for i := 0; i < numNodes; i++ {
-		node := &Node{
-			ID:     NodeID(fmt.Sprintf("race-node-%d", i)),
-			Labels: []string{"RaceTest"},
-		}
-		async.CreateNode(node)
-
-		// Check count periodically
-		if i%10 == 0 {
-			count, _ := async.NodeCount()
-			t.Logf("After %d creates: count=%d", i+1, count)
-		}
-	}
-
-	// Wait for all flushes
-	time.Sleep(100 * time.Millisecond)
-	async.Flush()
-
-	finalCount, _ := async.NodeCount()
-	t.Logf("Final count: %d (expected %d)", finalCount, numNodes)
-	assert.Equal(t, int64(numNodes), finalCount, "Final count should match number of nodes created")
-
-	// Verify BadgerEngine matches
-	badgerCount, _ := badger.NodeCount()
-	assert.Equal(t, int64(numNodes), badgerCount, "BadgerEngine count should match")
-}
-
-// TestCountAfterFlushAndRecreate tests creating a node with same ID after it was flushed
+// TestCountAfterFlushAndRecreate tests creating a node with same ID after it was committed
 func TestCountAfterFlushAndRecreate(t *testing.T) {
 	badger := createRealtimeTestBadgerEngine(t)
 	defer badger.Close()
 
-	asyncConfig := &AsyncEngineConfig{
-		FlushInterval: 50 * time.Millisecond,
-	}
 	namespaced := NewNamespacedEngine(badger, "test")
-	async := NewAsyncEngine(namespaced, asyncConfig)
-	defer async.Close()
 
-	t.Run("create_flush_create_same_id", func(t *testing.T) {
+	t.Run("create_create_same_id", func(t *testing.T) {
 		// Create a node
 		node := &Node{
 			ID:     "node-1",
 			Labels: []string{"Test"},
 		}
-		async.CreateNode(node)
-		async.Flush()
+		_, err := namespaced.CreateNode(node)
+		require.NoError(t, err)
 
-		count, _ := async.NodeCount()
-		t.Logf("After first create + flush: count=%d", count)
+		count, _ := namespaced.NodeCount()
+		t.Logf("After first create: count=%d", count)
 		assert.Equal(t, int64(1), count)
 
-		// Create SAME node again (this is what happens when re-importing)
+		// Create SAME node again - the direct path rejects the duplicate key
+		// instead of silently rewriting it.
 		node2 := &Node{
 			ID:     "node-1", // Same ID!
 			Labels: []string{"Test2"},
 		}
-		async.CreateNode(node2)
+		_, err = namespaced.CreateNode(node2)
+		require.ErrorContains(t, err, "already exists")
 
-		// Note: Before flush, AsyncEngine may temporarily over-count because it
-		// can't efficiently check if the node exists in the underlying engine.
-		// This is a known limitation. The count is corrected after flush when
-		// BadgerEngine scans actual nodes.
-		countBeforeFlush, _ := async.NodeCount()
-		t.Logf("After recreate same ID (before flush): count=%d (may be temporarily inflated)", countBeforeFlush)
-
-		async.Flush()
-		count, _ = async.NodeCount()
-		t.Logf("After second flush: count=%d", count)
-		// After flush, the count MUST be correct (1, not 2)
-		assert.Equal(t, int64(1), count, "Count should be 1 after flush (update, not create)")
+		count, _ = namespaced.NodeCount()
+		t.Logf("After recreate same ID: count=%d", count)
+		assert.Equal(t, int64(1), count, "Count stays 1")
 	})
 }
 

@@ -279,7 +279,7 @@ func TestTransactionStatementHandlers_WithWALAsyncEngine(t *testing.T) {
 	defer wal.Close()
 
 	walEngine := storage.NewWALEngine(badger, wal)
-	asyncEngine := storage.NewAsyncEngine(walEngine, nil)
+	asyncEngine := walEngine
 	defer asyncEngine.Close()
 
 	store := storage.NewNamespacedEngine(asyncEngine, "test")

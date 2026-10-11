@@ -171,6 +171,13 @@ func (p *pendingNodeIndex) sameEntries(prev, node *Node) bool {
 	return true
 }
 
+// empty reports whether the index holds no node entries. The byLabel map is
+// the one listing every indexed node, so emptiness there means the value and
+// property maps are empty too (remove cleans them together).
+func (p *pendingNodeIndex) empty() bool {
+	return p == nil || len(p.byLabel) == 0
+}
+
 // track indexes property by value for label's pending nodes from now on,
 // including the nodes already pending. cached looks a pending node up.
 func (p *pendingNodeIndex) track(label, property string, cached func(NodeID) *Node) {

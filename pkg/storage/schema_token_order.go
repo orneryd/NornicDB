@@ -33,6 +33,34 @@ func appendTokenNames(names []string, positions map[string]int, added []string) 
 // Allocations are retained when their last entity is deleted.
 // Example: schema.RegisterTokens([]string{"Person"}, []string{"KNOWS"}).
 func (sm *SchemaManager) RegisterTokens(labels, relationships []string) error {
+	// Fast path: token registration is per-node hot-path work, and the
+	// common case is that every name is already known. Checking under a
+	// SHARED lock keeps concurrent readers (constraint validation, unique-
+	// value tracking) from serializing behind the write lock, which only
+	// the first sight of a name ever needs.
+	sm.mu.RLock()
+	allKnown := len(sm.tokenOrder.labelPositions) > 0 && len(sm.tokenOrder.relationshipPositions) > 0
+	if allKnown {
+		for _, name := range labels {
+			if _, ok := sm.tokenOrder.labelPositions[name]; !ok {
+				allKnown = false
+				break
+			}
+		}
+	}
+	if allKnown {
+		for _, name := range relationships {
+			if _, ok := sm.tokenOrder.relationshipPositions[name]; !ok {
+				allKnown = false
+				break
+			}
+		}
+	}
+	sm.mu.RUnlock()
+	if allKnown {
+		return nil
+	}
+
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	if sm.tokenOrder.labelPositions == nil {

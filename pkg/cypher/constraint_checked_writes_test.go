@@ -2,11 +2,9 @@ package cypher
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -190,40 +188,6 @@ func TestExplicitTransactionMergeUpdateViolationsFailTheStatement(t *testing.T) 
 		require.NoError(t, err, statement)
 		require.Equal(t, [][]interface{}{{int64(1)}, {int64(3)}}, result.Rows, statement)
 	}
-}
-
-// TestWritesAreCheckedByLabelOrRelationshipType: a CREATE is routed to the
-// checked write path when any of its labels or relationship types has a
-// write rule.
-func TestWritesAreCheckedByLabelOrRelationshipType(t *testing.T) {
-	exec := newAsyncStackTestExecutor(t)
-	ctx := context.Background()
-	require.False(t, exec.writesAreChecked([]string{"P"}, []string{"RK"}), "no write rules")
-	_, err := exec.Execute(ctx, "CREATE CONSTRAINT rK FOR ()-[r:RK]-() REQUIRE r.k IS UNIQUE", nil)
-	require.NoError(t, err)
-	require.True(t, exec.writesAreChecked([]string{"P"}, []string{"OTHER", "RK"}))
-	require.False(t, exec.writesAreChecked([]string{"P"}, []string{"OTHER"}))
-	_, err = exec.Execute(ctx, "CREATE CONSTRAINT uP FOR (n:P) REQUIRE n.id IS UNIQUE", nil)
-	require.NoError(t, err)
-	require.True(t, exec.writesAreChecked([]string{"P"}, nil))
-}
-
-// pauseFailingEngine is an engine whose write cache can't be flushed before a
-// schema change.
-type pauseFailingEngine struct{ storage.Engine }
-
-func (pauseFailingEngine) PauseWritesForSchemaChange() (func(), error) {
-	return func() {}, errors.New("flush failed")
-}
-
-// TestSchemaCommandFailsWhenTheWriteCacheCannotBeFlushed: a schema command
-// that can't flush the cached writes first reports it, and its resume
-// function is still safe to call.
-func TestSchemaCommandFailsWhenTheWriteCacheCannotBeFlushed(t *testing.T) {
-	resume, err := pauseAsyncWritesForSchemaDDL(pauseFailingEngine{storage.NewMemoryEngine()})
-	require.ErrorContains(t, err, "flush failed")
-	require.NotNil(t, resume)
-	resume()
 }
 
 // TestBareTransactionCommand: the words a client statement can't be on its

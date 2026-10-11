@@ -78,6 +78,15 @@
 #                           without affecting query results. Set GRAPH_ONLY=0 to
 #                           include search index build + decay scoring cost in the
 #                           comparison.
+#   NORNIC_ASYNC_WRITES=1   (default 1) Enable the adaptive write-behind commit
+#                           buffer for the NornicDB run
+#                           (NORNICDB_ASYNC_WRITES_ENABLED=true): committed
+#                           statements are acknowledged in memory and replayed
+#                           by a background flusher whose rotation delay and
+#                           buffer size auto-scale to the measured drain latency
+#                           and throughput. Durable synchronous commits are the
+#                           product default; set NORNIC_ASYNC_WRITES=0 to benchmark
+#                           the durable baseline instead.
 
 set -euo pipefail
 
@@ -94,7 +103,10 @@ PRODUCTS="${PRODUCTS:-48000}"
 ORDERS="${ORDERS:-48000}"
 ORDER_LINES_MIN="${ORDER_LINES_MIN:-1}"
 ORDER_LINES_MAX="${ORDER_LINES_MAX:-6}"
-BATCH_SIZE="${BATCH_SIZE:-500}"
+# Batch sweep at 48K products/48K orders (2026-10-10, M2 Max, write-behind on):
+#   500: 7.43s  1000: 8.03s  2000: 7.41s (best)  4000: 8.55s  8000: 9.63s  12000: 11.43s
+# Larger batches contend on the server write pipeline; 2000 is the sweet spot.
+BATCH_SIZE="${BATCH_SIZE:-2000}"
 SEED_PARALLEL="${SEED_PARALLEL:-4}"
 SEED="${SEED:-42}"
 NORNIC_DATA_DIR="${NORNIC_DATA_DIR:-${REPO_ROOT}/bench-data/nornic}"
@@ -183,16 +195,21 @@ cleanup() {
   if [[ -n "${NORNIC_PID:-}" ]] && kill -0 "${NORNIC_PID}" 2>/dev/null; then
     log "cleanup: killing NornicDB (pid ${NORNIC_PID})"
     kill -KILL "${NORNIC_PID}" 2>/dev/null || true
+    # Reap the job so bash doesn't report "Killed: 9" at exit.
+    wait "${NORNIC_PID}" 2>/dev/null || true
   fi
   if [[ -n "${POWER_PID:-}" ]]; then
     sudo kill -KILL "${POWER_PID}" 2>/dev/null || true
+    wait "${POWER_PID}" 2>/dev/null || true
   fi
   if [[ -n "${VMSTAT_PID:-}" ]]; then
     kill -KILL "${VMSTAT_PID}" 2>/dev/null || true
+    wait "${VMSTAT_PID}" 2>/dev/null || true
   fi
   if [[ -n "${NEO4J_PID:-}" ]] && kill -0 "${NEO4J_PID}" 2>/dev/null; then
     log "cleanup: killing Neo4j (pid ${NEO4J_PID})"
     kill -KILL "${NEO4J_PID}" 2>/dev/null || true
+    wait "${NEO4J_PID}" 2>/dev/null || true
   fi
   for container in northwind-falkor northwind-memgraph; do
     if command -v docker >/dev/null 2>&1 && docker ps -a --format '{{.Names}}' | grep -qx "${container}"; then
@@ -441,6 +458,15 @@ run_nornic() {
     # decay scoring costs ~29% of seed wall time when enabled (11.7s -> 8.3s
     # for the default seed size) via per-entity AccessMeta reads + scoring.
     nornic_extra_env=(NORNICDB_MEMORY_DECAY_ENABLED=false)
+  fi
+  # The benchmark measures the auto-scaling write-behind path: committed
+  # statements are acknowledged in memory and replayed by a background
+  # flusher whose rotation delay and buffer size adapt to measured drain
+  # latency and throughput (docs/performance/write-behind-adaptive-buffer.md).
+  # Durable synchronous commits are the product default; NORNIC_ASYNC_WRITES=0
+  # benchmarks that baseline instead.
+  if [[ "${NORNIC_ASYNC_WRITES:-1}" != "0" ]]; then
+    nornic_extra_env+=(NORNICDB_ASYNC_WRITES_ENABLED=true)
   fi
 
   log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT}) graph_only=${GRAPH_ONLY} parser=${mode}"

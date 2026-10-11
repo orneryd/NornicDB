@@ -5,7 +5,6 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -33,29 +32,17 @@ func TestProjectedLabelWrappers_PropagateBackingScanError(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	readErr := errors.New("projected label scan failed")
 	failing := failingProjectedLabelEngine{Engine: backing, err: readErr}
-	config := DefaultAsyncEngineConfig()
-	config.FlushInterval = time.Hour
-	async := NewAsyncEngine(failing, config)
-	t.Cleanup(func() { require.NoError(t, async.Close()) })
-	_, err := async.CreateNode(&Node{ID: NodeID(prefixTestID("pending-projected-error")), Labels: []string{"Evidence"}})
-	require.NoError(t, err)
-	require.ErrorIs(t, async.StreamNodesByLabelProjected("Evidence", nil, func(*Node) error { return nil }), readErr)
 
 	composite := NewCompositeEngine(map[string]Engine{"failed": failing}, nil, map[string]string{"failed": "read"})
 	require.ErrorIs(t, composite.StreamNodesByLabelProjected("Evidence", nil, func(*Node) error { return nil }), readErr)
 }
 
-func TestAsyncEngine_GetNodesByLabelPropagatesBackingError(t *testing.T) {
+func TestWALEngine_GetNodesByLabelPropagatesBackingError(t *testing.T) {
 	backing := NewMemoryEngine()
 	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	readErr := errors.New("label scan failed")
-	config := DefaultAsyncEngineConfig()
-	config.FlushInterval = time.Hour
-	async := NewAsyncEngine(failingLabelScanEngine{Engine: backing, err: readErr}, config)
-	t.Cleanup(func() { require.NoError(t, async.Close()) })
-	_, err := async.CreateNode(&Node{ID: NodeID(prefixTestID("pending-error")), Labels: []string{"Evidence"}})
-	require.NoError(t, err)
-	nodes, err := async.GetNodesByLabel("Evidence")
+	wal := NewWALEngine(failingLabelScanEngine{Engine: backing, err: readErr}, nil)
+	nodes, err := wal.GetNodesByLabel("Evidence")
 	require.ErrorIs(t, err, readErr)
 	require.Nil(t, nodes)
 }
@@ -195,49 +182,6 @@ func TestNamespacedEngine_StreamNodesByLabelProjected(t *testing.T) {
 	require.NotContains(t, nodes[0].Properties, "embedding")
 }
 
-func TestNamespacedAsync_StreamNodesByLabelProjectedPendingWrites(t *testing.T) {
-	engine := createTestBadgerEngine(t)
-	stored := NewNamespacedEngine(engine, "tenant")
-	for _, id := range []NodeID{"updated", "deleted"} {
-		_, err := stored.CreateNode(&Node{ID: id, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "old"}})
-		require.NoError(t, err)
-	}
-	config := DefaultAsyncEngineConfig()
-	config.FlushInterval = time.Hour
-	async := NewAsyncEngine(engine, config)
-	t.Cleanup(func() { require.NoError(t, async.Close()) })
-	tenant := NewNamespacedEngine(async, "tenant")
-
-	_, err := tenant.CreateNode(&Node{ID: "pending", Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "new", "unused": "hidden"}})
-	require.NoError(t, err)
-	updated, err := tenant.GetNode("updated")
-	require.NoError(t, err)
-	updated.Properties["asset_id"] = "changed"
-	require.NoError(t, tenant.UpdateNode(updated))
-	require.NoError(t, tenant.DeleteNode("deleted"))
-	var seen []*Node
-	err = tenant.StreamNodesByLabelProjected("Evidence", []string{"asset_id"}, func(node *Node) error {
-		seen = append(seen, node)
-		return nil
-	})
-	require.NoError(t, err)
-	require.Len(t, seen, 2)
-	values := make(map[NodeID]map[string]any)
-	for _, node := range seen {
-		values[node.ID] = node.Properties
-	}
-	require.Equal(t, map[string]any{"asset_id": "new"}, values["pending"])
-	require.Equal(t, map[string]any{"asset_id": "changed"}, values["updated"])
-
-	called := 0
-	err = tenant.StreamNodesByLabelProjected("Evidence", nil, func(*Node) error {
-		called++
-		return ErrIterationStopped
-	})
-	require.ErrorIs(t, err, ErrIterationStopped)
-	require.Equal(t, 1, called)
-}
-
 func TestNamespacedWAL_StreamNodesByLabelProjected(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 	wal, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
@@ -261,72 +205,12 @@ func TestNamespacedWAL_StreamNodesByLabelProjected(t *testing.T) {
 	require.ErrorIs(t, err, ErrIterationStopped)
 }
 
-func TestNamespacedAsyncWAL_StreamNodesByLabelProjected(t *testing.T) {
-	badger := createTestBadgerEngine(t)
-	wal, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, wal.Close()) })
-	wrapped := NewWALEngine(badger, wal)
-	committed := NewNamespacedEngine(wrapped, "tenant")
-	for _, id := range []NodeID{"updated", "deleted", "untouched", "relabeled"} {
-		_, err := committed.CreateNode(&Node{ID: id, Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "old", "unused": "hidden"}})
-		require.NoError(t, err)
-	}
-	config := DefaultAsyncEngineConfig()
-	config.FlushInterval = time.Hour
-	async := NewAsyncEngine(wrapped, config)
-	t.Cleanup(func() { require.NoError(t, async.Close()) })
-	tenant := NewNamespacedEngine(async, "tenant")
-	_, err = tenant.CreateNode(&Node{ID: "pending", Labels: []string{"Evidence"}, Properties: map[string]any{"asset_id": "new", "unused": "hidden"}})
-	require.NoError(t, err)
-	updated, err := tenant.GetNode("updated")
-	require.NoError(t, err)
-	updated.Properties["asset_id"] = "changed"
-	require.NoError(t, tenant.UpdateNode(updated))
-	require.NoError(t, tenant.DeleteNode("deleted"))
-	relabeled, err := tenant.GetNode("relabeled")
-	require.NoError(t, err)
-	relabeled.Labels = []string{"Archived"}
-	require.NoError(t, tenant.UpdateNode(relabeled))
-	seen := make(map[NodeID]map[string]any)
-	err = tenant.StreamNodesByLabelProjected("Evidence", []string{"asset_id"}, func(node *Node) error {
-		seen[node.ID] = node.Properties
-		return nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, map[NodeID]map[string]any{
-		"pending":   {"asset_id": "new"},
-		"updated":   {"asset_id": "changed"},
-		"untouched": {"asset_id": "old"},
-	}, seen)
-	seen = make(map[NodeID]map[string]any)
-	err = tenant.StreamNodesByLabelProjected("Archived", []string{"asset_id"}, func(node *Node) error {
-		seen[node.ID] = node.Properties
-		return nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, map[NodeID]map[string]any{"relabeled": {"asset_id": "old"}}, seen)
-}
-
 func TestProjectedLabelWrappers_UnsupportedBackendReturnsError(t *testing.T) {
 	backing := NewMemoryEngine()
 	t.Cleanup(func() { require.NoError(t, backing.Close()) })
 	unsupported := struct{ Engine }{backing}
-	config := DefaultAsyncEngineConfig()
-	config.FlushInterval = time.Hour
-	async := NewAsyncEngine(unsupported, config)
-	t.Cleanup(func() { require.NoError(t, async.Close()) })
-	_, err := async.CreateNode(&Node{ID: NodeID(prefixTestID("pending")), Labels: []string{"Evidence"}})
-	require.NoError(t, err)
 
 	visited := false
-	err = async.StreamNodesByLabelProjected("Evidence", nil, func(*Node) error {
-		visited = true
-		return nil
-	})
-	require.ErrorIs(t, err, ErrNotImplemented)
-	require.False(t, visited)
-
 	wal, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, wal.Close()) })

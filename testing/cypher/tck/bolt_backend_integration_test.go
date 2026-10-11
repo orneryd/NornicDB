@@ -38,7 +38,7 @@ func TestGh775_TypedNodeIndexRouting(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = engine.Close() })
-			driver, shutdown := startConformanceServerWithEngine(t, storage.NewAsyncEngine(engine, nil))
+			driver, shutdown := startConformanceServerWithEngine(t, engine)
 			defer shutdown()
 			backend, err := NewBoltBackend(BoltBackendConfig{Driver: driver, DatabaseName: "nornic", Mode: mode})
 			if err != nil {

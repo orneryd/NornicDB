@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -308,43 +307,6 @@ func TestStartupUpgradeFailsOnAFailedV2ToV3IndexRebuild(t *testing.T) {
 	options.AllowStorageUpgrade = true
 	_, err = NewBadgerEngineWithOptions(options)
 	require.ErrorContains(t, err, "migration v2→v3 failed")
-}
-
-// The async engine's endpoint-label counts overlay pending writes by exact
-// label: a pending update of a stored relationship replaces its counts.
-func TestAsyncEngineEndpointLabelCountsAreCaseSensitive(t *testing.T) {
-	base := NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
-	_, err := base.CreateNode(&Node{ID: "test:a", Labels: []string{"Person"}})
-	require.NoError(t, err)
-	_, err = base.CreateNode(&Node{ID: "test:b", Labels: []string{"Thing"}})
-	require.NoError(t, err)
-	require.NoError(t, base.CreateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
-
-	ae := NewAsyncEngine(base, &AsyncEngineConfig{FlushInterval: time.Hour})
-	t.Cleanup(func() { _ = ae.Close() })
-	require.NoError(t, ae.UpdateEdge(&Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: map[string]interface{}{"w": 1}}))
-	require.NoError(t, ae.CreateEdge(&Edge{ID: "test:f", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
-
-	for _, tc := range []struct {
-		start bool
-		label string
-		typ   string
-		want  int64
-	}{
-		{true, "Person", "R", 2}, {true, "person", "R", 0},
-		{false, "Thing", "R", 2}, {false, "thing", "R", 0},
-	} {
-		count := func() (int64, error) {
-			if tc.start {
-				return ae.EdgeCountByStartLabel(tc.label, tc.typ)
-			}
-			return ae.EdgeCountByEndLabel(tc.label, tc.typ)
-		}
-		got, err := count()
-		require.NoError(t, err)
-		require.Equal(t, tc.want, got, "%+v", tc)
-	}
 }
 
 // Relabelling a node in a transaction that also created a relationship from

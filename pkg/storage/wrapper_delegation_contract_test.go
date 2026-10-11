@@ -541,19 +541,11 @@ func newWrapperDelegationStack(t *testing.T, name string, spy *delegationSpyEngi
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = walLog.Close() })
 		return NewWALEngine(spy, walLog)
-	case "async":
-		return NewAsyncEngine(spy, &AsyncEngineConfig{FlushInterval: time.Hour})
-	case "wal+async":
+	case "namespaced+wal":
 		walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = walLog.Close() })
-		return NewAsyncEngine(NewWALEngine(spy, walLog), &AsyncEngineConfig{FlushInterval: time.Hour})
-	case "namespaced+wal+async":
-		walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = walLog.Close() })
-		inner := NewAsyncEngine(NewWALEngine(spy, walLog), &AsyncEngineConfig{FlushInterval: time.Hour})
-		t.Cleanup(func() { _ = inner.Close() })
+		inner := NewWALEngine(spy, walLog)
 		return NewNamespacedEngine(inner, "tenant")
 	default:
 		t.Fatalf("unknown stack %q", name)
@@ -582,7 +574,7 @@ func assertNoNotImplemented(t *testing.T, stack, method string, err error) {
 }
 
 func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
-	for _, stack := range []string{"badger", "wal", "async", "wal+async", "namespaced+wal+async"} {
+	for _, stack := range []string{"badger", "wal", "namespaced+wal"} {
 		t.Run(stack, func(t *testing.T) {
 			spy := newDelegationSpyEngine(t)
 			engine := newWrapperDelegationStack(t, stack, spy)
@@ -668,7 +660,7 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 				require.Equal(t, 2, outDegree, "%s.GetOutDegree must count both seeded edges", stack)
 			}
 			schema := engine.GetSchema()
-			if stack == "namespaced+wal+async" {
+			if stack == "namespaced+wal" {
 				// NamespacedEngine scopes the schema per namespace (Neo4j
 				// per-database semantics) via GetSchemaForNamespace.
 				require.NotNil(t, schema, "%s.GetSchema must return a schema manager", stack)
@@ -678,7 +670,7 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 			_, err = engine.BatchGetNodes([]NodeID{id("n1"), id("n2")})
 			check("BatchGetNodes", err)
 			_, err = engine.NodeCount()
-			if stack == "namespaced+wal+async" {
+			if stack == "namespaced+wal" {
 				// NamespacedEngine scopes NodeCount through the prefix-count
 				// capability instead of a full inner count.
 				assertNoNotImplemented(t, stack, "NodeCount", err)
@@ -687,7 +679,7 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 				check("NodeCount", err)
 			}
 			_, err = engine.EdgeCount()
-			if stack == "namespaced+wal+async" {
+			if stack == "namespaced+wal" {
 				assertNoNotImplemented(t, stack, "EdgeCount", err)
 				require.GreaterOrEqual(t, spy.count("EdgeCountByPrefix"), 1, "%s.EdgeCount must delegate through the prefix-count capability", stack)
 			} else {
@@ -740,7 +732,7 @@ func TestWrapperDelegationContract_EngineMethodsAlwaysDelegate(t *testing.T) {
 }
 
 func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T) {
-	for _, stack := range []string{"badger", "wal", "async", "wal+async", "namespaced+wal+async"} {
+	for _, stack := range []string{"badger", "wal", "namespaced+wal"} {
 		t.Run(stack, func(t *testing.T) {
 			spy := newDelegationSpyEngine(t)
 			engine := newWrapperDelegationStack(t, stack, spy)
@@ -748,7 +740,7 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 			id := func(s string) NodeID { return NodeID("test:" + s) }
 			eid := func(s string) EdgeID { return EdgeID("test:" + s) }
 			namespace := "test"
-			if stack == "namespaced+wal+async" {
+			if stack == "namespaced+wal" {
 				namespace = "tenant"
 			}
 
@@ -907,12 +899,12 @@ func TestWrapperDelegationContract_CapabilityMethodsAlwaysDelegate(t *testing.T)
 }
 
 func TestWrapperDelegationContract_CloseIsHandled(t *testing.T) {
-	for _, stack := range []string{"badger", "wal", "async", "wal+async", "namespaced+wal+async"} {
+	for _, stack := range []string{"badger", "wal", "namespaced+wal"} {
 		t.Run(stack, func(t *testing.T) {
 			spy := newDelegationSpyEngine(t)
 			engine := newWrapperDelegationStack(t, stack, spy)
 			assertNoNotImplemented(t, stack, "Close", engine.Close())
-			if stack == "namespaced+wal+async" {
+			if stack == "namespaced+wal" {
 				// NamespacedEngine deliberately does not close its inner engine:
 				// it is shared across namespaces and the DatabaseManager owns it.
 				return

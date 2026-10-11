@@ -22,35 +22,33 @@ func sortedIDs(nodes []*Node) []string {
 	return ids
 }
 
-// serverStack is the server's storage stack: Badger -> WAL -> Async.
-func serverStack(t *testing.T) (*BadgerEngine, *AsyncEngine) {
+// serverStack is the server's storage stack: Badger -> WAL.
+func serverStack(t *testing.T) (*BadgerEngine, *WALEngine) {
 	t.Helper()
 	dir := t.TempDir()
 	badger, err := NewBadgerEngine(dir)
 	require.NoError(t, err)
 	wal, err := NewWAL(dir+"/wal", nil)
 	require.NoError(t, err)
-	async := NewAsyncEngine(NewWALEngine(badger, wal), nil)
+	engine := NewWALEngine(badger, wal)
 	t.Cleanup(func() {
-		_ = async.Close()
 		_ = wal.Close()
 		_ = badger.Close()
 	})
-	return badger, async
+	return badger, engine
 }
 
 func TestScopedLabelReadsReturnOneDatabase(t *testing.T) {
-	_, async := serverStack(t)
-	a := NewNamespacedEngine(async, "a")
-	b := NewNamespacedEngine(async, "b")
+	_, engine := serverStack(t)
+	a := NewNamespacedEngine(engine, "a")
+	b := NewNamespacedEngine(engine, "b")
 	for i := 0; i < 3; i++ {
 		_, err := a.CreateNode(&Node{ID: NodeID(fmt.Sprintf("p%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(i)}})
 		require.NoError(t, err)
 		_, err = b.CreateNode(&Node{ID: NodeID(fmt.Sprintf("p%d", i)), Labels: []string{"Person"}, Properties: map[string]any{"age": int64(10 + i)}})
 		require.NoError(t, err)
 	}
-	require.NoError(t, async.Flush())
-	// Unflushed writes in both databases: a new node in each, and b's p0
+	// Writes apply synchronously: a new node in each database, and b's p0
 	// deleted.
 	_, err := a.CreateNode(&Node{ID: "p9", Labels: []string{"Person"}})
 	require.NoError(t, err)
@@ -59,16 +57,16 @@ func TestScopedLabelReadsReturnOneDatabase(t *testing.T) {
 	require.NoError(t, b.DeleteNode("p0"))
 
 	want := []string{"a:p0", "a:p1", "a:p2", "a:p9"}
-	nodes, err := async.GetNodesByLabelInScope("a:", "Person")
+	nodes, err := engine.GetNodesByLabelInScope("a:", "Person")
 	require.NoError(t, err)
-	require.Equal(t, want, sortedIDs(nodes), "async")
+	require.Equal(t, want, sortedIDs(nodes), "wal")
 	var streamed []*Node
-	require.NoError(t, async.StreamNodesByLabelProjectedInScope("a:", "Person", []string{"age"}, func(node *Node) error {
+	require.NoError(t, engine.StreamNodesByLabelProjectedInScope("a:", "Person", []string{"age"}, func(node *Node) error {
 		streamed = append(streamed, node)
 		return nil
 	}))
 	require.Equal(t, want, sortedIDs(streamed))
-	first, err := async.GetFirstNodeByLabelInScope("b:", "Person")
+	first, err := engine.GetFirstNodeByLabelInScope("b:", "Person")
 	require.NoError(t, err)
 	require.Contains(t, []NodeID{"b:p1", "b:p2", "b:p9"}, first.ID)
 
@@ -81,7 +79,7 @@ func TestScopedLabelReadsReturnOneDatabase(t *testing.T) {
 	require.Contains(t, []NodeID{"p0", "p1", "p2", "p9"}, first.ID)
 
 	// The unscoped reads still return every database.
-	nodes, err = async.GetNodesByLabel("Person")
+	nodes, err = engine.GetNodesByLabel("Person")
 	require.NoError(t, err)
 	require.Len(t, nodes, 7)
 }

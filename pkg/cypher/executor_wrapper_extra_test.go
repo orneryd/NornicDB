@@ -372,52 +372,6 @@ func TestExecuteSetTrailingUnwind_ErrorAndProjectionBranches(t *testing.T) {
 	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 }
 
-func TestTryAsyncCreateNodeBatch_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	// Non-CREATE queries are not handled.
-	_, err, handled := exec.tryAsyncCreateNodeBatch(ctx, "MATCH (n) RETURN n")
-	require.NoError(t, err)
-	assert.False(t, handled)
-
-	// Schema/system CREATE queries must be routed elsewhere.
-	_, err, handled = exec.tryAsyncCreateNodeBatch(ctx, "CREATE CONSTRAINT c IF NOT EXISTS FOR (n:Person) REQUIRE n.id IS UNIQUE")
-	require.NoError(t, err)
-	assert.False(t, handled)
-
-	// Relationship patterns are not handled by node batch fast-path.
-	_, err, handled = exec.tryAsyncCreateNodeBatch(ctx, "CREATE (a)-[:R]->(b) RETURN a")
-	require.NoError(t, err)
-	assert.False(t, handled)
-
-	// Valid simple node create is handled and returns deterministic projection.
-	res, err, handled := exec.tryAsyncCreateNodeBatch(ctx, "CREATE (n:Person {name:'alice'}), (m:Person {name:'bob'}) RETURN n.name AS n, m.name AS m")
-	require.NoError(t, err)
-	require.True(t, handled)
-	require.NotNil(t, res)
-	require.Len(t, res.Rows, 1)
-	require.Equal(t, []string{"n", "m"}, res.Columns)
-	assert.Equal(t, "alice", res.Rows[0][0])
-	assert.Equal(t, "bob", res.Rows[0][1])
-	require.NotNil(t, res.Stats)
-	assert.Equal(t, 2, res.Stats.NodesCreated)
-	require.NotNil(t, res.Metadata)
-	optimisticRaw, ok := res.Metadata["optimistic"]
-	require.True(t, ok)
-	optimistic, ok := optimisticRaw.(*optimisticMutationMeta)
-	require.True(t, ok)
-	require.Len(t, optimistic.CreatedNodeIDs, 2)
-
-	// Invalid identifiers should return handled errors (strict parsing).
-	_, err, handled = exec.tryAsyncCreateNodeBatch(ctx, "CREATE (n:123bad {name:'x'}) RETURN n")
-	require.True(t, handled)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid label name")
-}
-
 func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")

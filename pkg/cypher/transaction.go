@@ -146,12 +146,10 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 	}
 
 	// Establish the acknowledged-write visibility boundary before opening the
-	// underlying snapshot. Explicit transactions previously unwrapped the async
-	// engine directly, so recently acknowledged writes remained only in its
-	// cache and were invisible until the background flush fired.
-	engines := e.resolveImplicitTxEngines()
+	// underlying snapshot. Writes are committed synchronously by their
+	// statements, so a snapshot opened here observes every acknowledged write.
 
-	// Unwrap engine wrappers (Async/WAL/Namespaced) recursively.
+	// Unwrap engine wrappers (WAL/Namespaced) recursively.
 	engine := e.storage
 	namespaceHint := ""
 	visited := map[storage.Engine]bool{}
@@ -177,11 +175,7 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 			fabricTx = fabric.NewFabricTransaction(fmt.Sprintf("fabtx-%d", time.Now().UnixNano()))
 			return nil
 		}
-		if engines.asyncEngine != nil {
-			if err := engines.asyncEngine.FlushBeforeSnapshot(openSnapshot); err != nil {
-				return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
-			}
-		} else if err := openSnapshot(); err != nil {
+		if err := openSnapshot(); err != nil {
 			return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 		}
 		e.txContext = &TransactionContext{
@@ -209,7 +203,14 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 			}
 		}
 	}
-	tx, err := beginTransactionSnapshot(engines.asyncEngine, txEngine)
+	// With write-behind buffering, drain acknowledged autocommit writes so
+	// the explicit snapshot observes every acknowledged statement.
+	if drainer, ok := engine.(interface{ FlushWriteBehind() error }); ok {
+		if err := drainer.FlushWriteBehind(); err != nil {
+			return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
+		}
+	}
+	tx, err := beginTransactionSnapshot(txEngine)
 	if err != nil {
 		return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 	}

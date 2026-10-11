@@ -16,7 +16,6 @@ package storage
 import (
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -43,30 +42,14 @@ func mutationEquivalenceStacks(t *testing.T) map[string]func(*testing.T) Engine 
 			t.Cleanup(func() { _ = walLog.Close(); _ = engine.Close() })
 			return NewWALEngine(engine, walLog)
 		},
-		"async": func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
-			require.NoError(t, err)
-			async := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: time.Hour})
-			t.Cleanup(func() { _ = async.Close(); _ = engine.Close() })
-			return async
-		},
-		"wal+async": func(t *testing.T) Engine {
+		"namespaced+wal": func(t *testing.T) Engine {
 			engine, err := NewBadgerEngineInMemory()
 			require.NoError(t, err)
 			walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
 			require.NoError(t, err)
-			async := NewAsyncEngine(NewWALEngine(engine, walLog), &AsyncEngineConfig{FlushInterval: time.Hour})
-			t.Cleanup(func() { _ = async.Close(); _ = walLog.Close(); _ = engine.Close() })
-			return async
-		},
-		"namespaced+wal+async": func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
-			require.NoError(t, err)
-			walLog, err := NewWAL(t.TempDir(), &WALConfig{SyncMode: "none"})
-			require.NoError(t, err)
-			async := NewAsyncEngine(NewWALEngine(engine, walLog), &AsyncEngineConfig{FlushInterval: time.Hour})
-			t.Cleanup(func() { _ = async.Close(); _ = walLog.Close(); _ = engine.Close() })
-			return NewNamespacedEngine(async, "tenant")
+			wal := NewWALEngine(engine, walLog)
+			t.Cleanup(func() { _ = walLog.Close(); _ = engine.Close() })
+			return NewNamespacedEngine(wal, "tenant")
 		},
 	}
 }

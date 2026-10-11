@@ -37,28 +37,21 @@ func (e *asyncErrQueryEngine) NodeCountByLabelInNamespace(namespace, label strin
 	return 0, e.err
 }
 
-func TestAsyncEngine_LowBranchHelpers(t *testing.T) {
+func TestWALEngine_LowBranchHelpers(t *testing.T) {
 	base := NewMemoryEngine()
 	errEng := &asyncErrQueryEngine{MemoryEngine: base, err: ErrStorageClosed}
-	ae := NewAsyncEngine(errEng, &AsyncEngineConfig{FlushInterval: time.Hour, TargetFlushSize: 1000})
-	defer func() { _ = ae.Close() }()
+	wal := NewWALEngine(errEng, nil)
 
-	require.Nil(t, ae.GetEdgeBetween("test:a", "test:b", "R"))
-	require.Equal(t, 0, ae.GetInDegree("test:a"))
-	require.Equal(t, 0, ae.GetOutDegree("test:a"))
+	require.Nil(t, wal.GetEdgeBetween("test:a", "test:b", "R"))
+	require.Equal(t, 0, wal.GetInDegree("test:a"))
+	require.Equal(t, 0, wal.GetOutDegree("test:a"))
 
-	count, err := ae.NodeCountByLabel("User")
+	count, err := wal.NodeCountByLabel("User")
 	require.ErrorIs(t, err, ErrStorageClosed)
 	require.Equal(t, int64(0), count)
-	count, err = ae.NodeCountByLabelInNamespace("test", "User")
+	count, err = wal.NodeCountByLabelInNamespace("test", "User")
 	require.ErrorIs(t, err, ErrStorageClosed)
 	require.Equal(t, int64(0), count)
-
-	require.False(t, (FlushResult{}).isStorageClosedOnly())
-	require.True(t, (FlushResult{NodesFailed: 1, FirstNodeError: ErrStorageClosed.Error()}).isStorageClosedOnly())
-	require.True(t, (FlushResult{EdgesFailed: 1, FirstEdgeError: "wrap: " + ErrStorageClosed.Error()}).isStorageClosedOnly())
-	require.True(t, (FlushResult{DeletesFailed: 1, FirstDeleteError: "x " + ErrStorageClosed.Error()}).isStorageClosedOnly())
-	require.False(t, (FlushResult{NodesFailed: 1, FirstNodeError: "other error"}).isStorageClosedOnly())
 }
 
 func TestBadgerQueries_EdgeFromTxn_ErrorBranches(t *testing.T) {

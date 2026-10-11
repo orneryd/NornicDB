@@ -283,7 +283,10 @@ func snapshotEdgeBytes(edge *Edge) (int, bool) {
 }
 
 func (tx *BadgerTransaction) getAllCommittedNodesLocked() ([]*Node, error) {
-	if tx.readTS.IsZero() {
+	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
+		// Write-behind reads are read-committed: the flusher may land a
+		// buffered commit after the pinned snapshot, so read the latest
+		// (overlaid) view instead.
 		return tx.engine.AllNodes()
 	}
 	return tx.engine.getNodesByLabelVisibleAtWithView("", "", tx.readTS, tx.withSnapshotViewLocked)
@@ -532,7 +535,12 @@ func (tx *BadgerTransaction) snapshotHeadConflict(key []byte, version MVCCVersio
 	if tx.snapshotIsolationConflict(version) {
 		return true, nil
 	}
-	if tx.snapshotTx == nil || key == nil {
+	// The physical-version guard exists for peers that committed after the
+	// pinned snapshot. Under write-behind the flusher is the only writer
+	// landing heads mid-transaction and its heads are backdated to ACK
+	// time, so the MVCC comparison above is authoritative and the
+	// physical-version check would report false conflicts.
+	if tx.snapshotTx == nil || key == nil || tx.engine.writeBehind != nil {
 		return false, nil
 	}
 	var changed bool
@@ -548,7 +556,7 @@ func (tx *BadgerTransaction) snapshotHeadConflictInView(view *badger.Txn, key []
 	if tx.snapshotIsolationConflict(version) {
 		return true, nil
 	}
-	if tx.snapshotTx == nil || key == nil {
+	if tx.snapshotTx == nil || key == nil || tx.engine.writeBehind != nil {
 		return false, nil
 	}
 	item, err := view.Get(key)
@@ -565,5 +573,5 @@ func (tx *BadgerTransaction) snapshotHeadVersionConflict(version MVCCVersion, ph
 	if tx.snapshotIsolationConflict(version) {
 		return true
 	}
-	return tx.snapshotTx != nil && physicalVersion > tx.snapshotTx.ReadTs()
+	return tx.snapshotTx != nil && tx.engine.writeBehind == nil && physicalVersion > tx.snapshotTx.ReadTs()
 }

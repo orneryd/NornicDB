@@ -28,7 +28,7 @@ func TestCypher_CountAfterDeleteRecreate(t *testing.T) {
 	defer wal.Close()
 
 	walEngine := storage.NewWALEngine(badger, wal)
-	asyncEngine := storage.NewAsyncEngine(walEngine, nil)
+	asyncEngine := walEngine
 	defer asyncEngine.Close()
 
 	// Create Cypher executor
@@ -98,7 +98,7 @@ func TestCypher_CountVsMatchCount(t *testing.T) {
 	defer wal.Close()
 
 	walEngine := storage.NewWALEngine(badger, wal)
-	asyncEngine := storage.NewAsyncEngine(walEngine, nil)
+	asyncEngine := walEngine
 	defer asyncEngine.Close()
 
 	store := storage.NewNamespacedEngine(asyncEngine, "test")

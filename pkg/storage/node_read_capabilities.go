@@ -1,9 +1,6 @@
 package storage
 
 var (
-	_ NodeWithoutEmbeddingsReader          = (*AsyncEngine)(nil)
-	_ BatchNodeWithoutEmbeddingsReader     = (*AsyncEngine)(nil)
-	_ BatchNodeWithoutEmbeddingsCapability = (*AsyncEngine)(nil)
 	_ NodeWithoutEmbeddingsReader          = (*WALEngine)(nil)
 	_ BatchNodeWithoutEmbeddingsReader     = (*WALEngine)(nil)
 	_ BatchNodeWithoutEmbeddingsCapability = (*WALEngine)(nil)

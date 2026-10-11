@@ -42,23 +42,12 @@ func (t *TracedEngine) getCtx() context.Context {
 // through the tracing decorator via the canonical EngineUnwrapper accessor.
 func (t *TracedEngine) GetInnerEngine() Engine { return t.Engine }
 
-// depositLink records the current span context on the inner AsyncEngine (if
-// present) so the flush span can link back to the originating request (TRC-23).
-func (t *TracedEngine) depositLink() {
-	ctx := t.getCtx()
-	sc := trace.SpanContextFromContext(ctx)
-	if ae, ok := t.Engine.(*AsyncEngine); ok && sc.IsValid() {
-		ae.AddSpanLink(sc)
-	}
-}
-
 func (t *TracedEngine) CreateNode(node *Node) (NodeID, error) {
 	_, span := otel.Tracer("nornicdb/storage").Start(t.getCtx(), "nornicdb.storage.CreateNode",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(attribute.String("kind", "node")),
 	)
 	defer span.End()
-	t.depositLink()
 	return t.Engine.CreateNode(node)
 }
 
@@ -77,7 +66,6 @@ func (t *TracedEngine) UpdateNode(node *Node) error {
 		trace.WithAttributes(attribute.String("kind", "node")),
 	)
 	defer span.End()
-	t.depositLink()
 	return t.Engine.UpdateNode(node)
 }
 
@@ -87,7 +75,6 @@ func (t *TracedEngine) DeleteNode(id NodeID) error {
 		trace.WithAttributes(attribute.String("kind", "node")),
 	)
 	defer span.End()
-	t.depositLink()
 	return t.Engine.DeleteNode(id)
 }
 
@@ -97,7 +84,6 @@ func (t *TracedEngine) CreateEdge(edge *Edge) error {
 		trace.WithAttributes(attribute.String("kind", "edge")),
 	)
 	defer span.End()
-	t.depositLink()
 	return t.Engine.CreateEdge(edge)
 }
 
@@ -116,7 +102,6 @@ func (t *TracedEngine) UpdateEdge(edge *Edge) error {
 		trace.WithAttributes(attribute.String("kind", "edge")),
 	)
 	defer span.End()
-	t.depositLink()
 	return t.Engine.UpdateEdge(edge)
 }
 
@@ -126,7 +111,6 @@ func (t *TracedEngine) DeleteEdge(id EdgeID) error {
 		trace.WithAttributes(attribute.String("kind", "edge")),
 	)
 	defer span.End()
-	t.depositLink()
 	return t.Engine.DeleteEdge(id)
 }
 
@@ -193,7 +177,6 @@ func (t *TracedEngine) BulkCreateNodes(nodes []*Node) error {
 		),
 	)
 	defer span.End()
-	t.depositLink()
 	return t.Engine.BulkCreateNodes(nodes)
 }
 
@@ -206,7 +189,6 @@ func (t *TracedEngine) BulkCreateEdges(edges []*Edge) error {
 		),
 	)
 	defer span.End()
-	t.depositLink()
 	return t.Engine.BulkCreateEdges(edges)
 }
 

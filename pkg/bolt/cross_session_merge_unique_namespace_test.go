@@ -181,7 +181,7 @@ func TestBoltDatabaseManagerExecuteWriteUniqueMerge_ProductionWrapperStackWithLo
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
 	walStore := storage.NewWALEngine(badger, wal)
-	base := storage.NewAsyncEngine(walStore, nil)
+	base := walStore
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -299,7 +299,7 @@ func TestBoltDatabaseManagerMergeExistingNodeAfterLateSchemaBootstrap(t *testing
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
-	base := storage.NewAsyncEngine(storage.NewWALEngine(badger, wal), nil)
+	base := storage.NewWALEngine(badger, wal)
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {

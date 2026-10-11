@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -42,12 +41,6 @@ func TestStreamNodesOptionsParityAcrossStacks(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = wal.Close() })
 			return NewWALEngine(engine, wal)
-		}},
-		{name: "async", prefix: "db:", count: 3, build: func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = engine.Close() })
-			return NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: time.Hour})
 		}},
 		{name: "namespaced", prefix: "n-", count: 3, build: func(t *testing.T) Engine {
 			engine, err := NewBadgerEngineInMemory()
@@ -97,10 +90,6 @@ func TestStreamNodesOptionsParityAcrossStacks(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
-			if async, ok := engine.(*AsyncEngine); ok {
-				require.NoError(t, async.Flush())
-			}
-
 			collect := func(fn func(context.Context, func(*Node) error) error) []NodeID {
 				var ids []NodeID
 				require.NoError(t, fn(ctx, func(node *Node) error {

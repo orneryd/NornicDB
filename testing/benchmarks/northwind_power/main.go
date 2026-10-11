@@ -30,6 +30,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -597,7 +598,11 @@ type seedStats struct {
 	approxPayloadBytes int64
 }
 
-const maxGraphWipeBatchSize = 500
+// maxGraphWipeBatchSize bounds the wipe's DETACH DELETE batches. Each wipe
+// statement re-reads the live population, so larger batches amortise that
+// cost: 2000 (the seed batch sweet spot) cuts the reseed wipe's population
+// scans ~4× versus 500 at 97K nodes.
+const maxGraphWipeBatchSize = 2000
 
 // seedNorthwind wipes the target database and creates a randomised
 // Northwind-shaped graph. Property values vary in length (names, descriptions,
@@ -677,19 +682,55 @@ func graphWipeBatchSize(seedBatchSize int) int {
 func wipeGraph(ctx context.Context, session neo4j.SessionWithContext, seedBatchSize int) (int64, error) {
 	batchSize := graphWipeBatchSize(seedBatchSize)
 	return wipeGraphBatches(ctx, batchSize, func(ctx context.Context, limit int) (int64, error) {
-		result, err := session.Run(ctx,
-			`MATCH (n) WITH n LIMIT $limit DETACH DELETE n`,
-			map[string]any{"limit": limit},
-		)
-		if err != nil {
-			return 0, err
-		}
-		summary, err := result.Consume(ctx)
-		if err != nil {
-			return 0, err
-		}
-		return int64(summary.Counters().NodesDeleted()), nil
+		var deleted int64
+		err := runWithTransientRetry(ctx, func() error {
+			result, err := session.Run(ctx,
+				`MATCH (n) WITH n LIMIT $limit DETACH DELETE n`,
+				map[string]any{"limit": limit},
+			)
+			if err != nil {
+				return err
+			}
+			summary, err := result.Consume(ctx)
+			if err != nil {
+				return err
+			}
+			deleted = int64(summary.Counters().NodesDeleted())
+			return nil
+		})
+		return deleted, err
 	})
+}
+
+// isTransientConflict reports whether err is a retryable transient
+// conflict. With write-behind enabled the background flusher lands
+// commits asynchronously, so a statement can read a node and find a newer
+// head at commit time; Neo4j drivers retry these automatically and the
+// seeder mirrors that behavior.
+func isTransientConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "TransientError") || strings.Contains(msg, "conflict detected")
+}
+
+// runWithTransientRetry re-runs op with bounded backoff while it fails
+// with a transient conflict.
+func runWithTransientRetry(ctx context.Context, op func() error) error {
+	var err error
+	for attempt := 1; attempt <= 5; attempt++ {
+		err = op()
+		if err == nil || !isTransientConflict(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(time.Duration(attempt) * 200 * time.Millisecond):
+		}
+	}
+	return err
 }
 
 func wipeGraphBatches(ctx context.Context, batchSize int, deleteBatch func(context.Context, int) (int64, error)) (int64, error) {
@@ -719,7 +760,11 @@ func batchWrite(ctx context.Context, session neo4j.SessionWithContext, rows []ma
 		if end > total {
 			end = total
 		}
-		if _, err := session.Run(ctx, cypher, map[string]any{"rows": rows[start:end]}); err != nil {
+		err := runWithTransientRetry(ctx, func() error {
+			_, err := session.Run(ctx, cypher, map[string]any{"rows": rows[start:end]})
+			return err
+		})
+		if err != nil {
 			return fmt.Errorf("batch %d..%d: %w", start, end, err)
 		}
 		if total > batchSize*5 && (end == total || (end/batchSize)%10 == 0) {
@@ -803,7 +848,11 @@ func batchWriteParallel(ctx context.Context, driver neo4j.DriverWithContext, dat
 					return
 				}
 				c := chunks[i]
-				if _, err := session.Run(ctx, cypher, map[string]any{"rows": rows[c.start:c.end]}); err != nil {
+				err := runWithTransientRetry(ctx, func() error {
+					_, err := session.Run(ctx, cypher, map[string]any{"rows": rows[c.start:c.end]})
+					return err
+				})
+				if err != nil {
 					setErr(fmt.Errorf("batch %d..%d: %w", c.start, c.end, err))
 					return
 				}

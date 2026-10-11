@@ -36,19 +36,17 @@ func TestResolveBadgerOptionsStorageMode(t *testing.T) {
 
 func TestResolveDurabilityOptions(t *testing.T) {
 	tests := []struct {
-		name              string
-		configure         func(*config.Config)
-		wantWALMode       string
-		wantWALInterval   time.Duration
-		wantBadgerSync    bool
-		wantAsyncInterval time.Duration
+		name            string
+		configure       func(*config.Config)
+		wantWALMode     string
+		wantWALInterval time.Duration
+		wantBadgerSync  bool
 	}{
 		{
-			name:              "defaults",
-			configure:         func(*config.Config) {},
-			wantWALMode:       "batch",
-			wantWALInterval:   100 * time.Millisecond,
-			wantAsyncInterval: 50 * time.Millisecond,
+			name:            "defaults",
+			configure:       func(*config.Config) {},
+			wantWALMode:     "batch",
+			wantWALInterval: 100 * time.Millisecond, // config default WALSyncInterval
 		},
 		{
 			name: "explicit none",
@@ -56,9 +54,17 @@ func TestResolveDurabilityOptions(t *testing.T) {
 				cfg.Database.WALSyncMode = "none"
 				cfg.Database.WALSyncInterval = 250 * time.Millisecond
 			},
-			wantWALMode:       "none",
-			wantWALInterval:   0,
-			wantAsyncInterval: 50 * time.Millisecond,
+			wantWALMode:     "none",
+			wantWALInterval: 0,
+		},
+		{
+			name: "async disabled uses WAL interval",
+			configure: func(cfg *config.Config) {
+				cfg.Database.AsyncWritesEnabled = false
+				cfg.Database.WALSyncInterval = 250 * time.Millisecond
+			},
+			wantWALMode:     "batch",
+			wantWALInterval: 250 * time.Millisecond,
 		},
 		{
 			name: "strict overrides",
@@ -66,12 +72,10 @@ func TestResolveDurabilityOptions(t *testing.T) {
 				cfg.Database.StrictDurability = true
 				cfg.Database.WALSyncMode = "batch"
 				cfg.Database.WALSyncInterval = time.Second
-				cfg.Database.AsyncFlushInterval = 200 * time.Millisecond
 			},
-			wantWALMode:       "immediate",
-			wantWALInterval:   0,
-			wantBadgerSync:    true,
-			wantAsyncInterval: 10 * time.Millisecond,
+			wantWALMode:     "immediate",
+			wantWALInterval: 0,
+			wantBadgerSync:  true,
 		},
 	}
 
@@ -80,19 +84,16 @@ func TestResolveDurabilityOptions(t *testing.T) {
 			cfg := config.LoadDefaults()
 			test.configure(cfg)
 
-			badgerOptions, walConfig, asyncConfig := resolveDurabilityOptions("/data", cfg)
+			badgerOptions, walConfig := resolveDurabilityOptions("/data", cfg)
 			require.Equal(t, test.wantBadgerSync, badgerOptions.SyncWrites)
 			require.Equal(t, test.wantWALMode, walConfig.SyncMode)
 			require.Equal(t, test.wantWALInterval, walConfig.BatchSyncInterval)
 			require.Equal(t, cfg.Database.WALSnapshotInterval, walConfig.SnapshotInterval)
-			require.Equal(t, test.wantAsyncInterval, asyncConfig.FlushInterval)
-			require.Equal(t, cfg.Database.AsyncMaxNodeCacheSize, asyncConfig.MaxNodeCacheSize)
-			require.Equal(t, cfg.Database.AsyncMaxEdgeCacheSize, asyncConfig.MaxEdgeCacheSize)
 		})
 	}
 }
 
-func TestOpenStrictDurabilityDisablesAsyncWriteBehind(t *testing.T) {
+func TestOpenStrictDurabilityUsesWALStack(t *testing.T) {
 	cfg := config.LoadDefaults()
 	cfg.Database.StrictDurability = true
 	cfg.Database.AsyncWritesEnabled = true
@@ -102,6 +103,6 @@ func TestOpenStrictDurabilityDisablesAsyncWriteBehind(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
-	_, isAsync := db.baseStorage.(*storage.AsyncEngine)
-	require.False(t, isAsync, "strict durability must not acknowledge writes before WAL persistence")
+	_, isWAL := db.baseStorage.(*storage.WALEngine)
+	require.True(t, isWAL, "base storage is %T", db.baseStorage)
 }

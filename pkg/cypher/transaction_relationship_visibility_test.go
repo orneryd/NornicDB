@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -55,13 +54,7 @@ func TestRelationshipsCreatedWithTheirEndpointsAreVisibleInEveryTransactionMode(
 
 func TestAcknowledgedRelationshipCreateIsVisibleToFollowingTransactions(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	async := storage.NewAsyncEngine(base, &storage.AsyncEngineConfig{
-		FlushInterval:    time.Hour,
-		MaxNodeCacheSize: 1000,
-		MaxEdgeCacheSize: 1000,
-	})
-	t.Cleanup(func() { require.NoError(t, async.Close()) })
-	executor := NewStorageExecutor(storage.NewNamespacedEngine(async, "relationship_snapshot_visibility"))
+	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "relationship_snapshot_visibility"))
 	ctx := context.Background()
 
 	created, err := executor.Execute(ctx,

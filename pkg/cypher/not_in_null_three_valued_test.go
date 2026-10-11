@@ -97,7 +97,7 @@ func TestNotInNullUsesThreeValuedLogic(t *testing.T) {
 }
 
 // newThreeValuedServerStackExecutor builds the server's storage stack
-// (Badger -> WAL -> Async -> Namespaced), whose auto-commit reads take the
+// (Badger -> WAL -> Namespaced), whose auto-commit reads take the
 // label-scan / compiled-predicate fast paths.
 func newThreeValuedServerStackExecutor(t *testing.T) *StorageExecutor {
 	t.Helper()
@@ -106,11 +106,10 @@ func newThreeValuedServerStackExecutor(t *testing.T) *StorageExecutor {
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(dir+"/wal", nil)
 	require.NoError(t, err)
-	async := storage.NewAsyncEngine(storage.NewWALEngine(badger, wal), nil)
+	engine := storage.NewWALEngine(badger, wal)
 	t.Cleanup(func() {
-		_ = async.Close()
 		_ = wal.Close()
 		_ = badger.Close()
 	})
-	return NewStorageExecutor(storage.NewNamespacedEngine(async, "test"))
+	return NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
 }

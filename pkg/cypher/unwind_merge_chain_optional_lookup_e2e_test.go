@@ -27,9 +27,8 @@ func newTestServerLikeNamespacedStore(t *testing.T) storage.Engine {
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
 	walStore := storage.NewWALEngine(baseStore, wal)
-	asyncStore := storage.NewAsyncEngine(walStore, nil)
+	asyncStore := walStore
 	t.Cleanup(func() {
-		asyncStore.Flush()
 		require.NoError(t, wal.Close())
 		require.NoError(t, asyncStore.Close())
 	})

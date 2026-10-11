@@ -10,16 +10,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newAsyncStackTestExecutor builds the server's storage stack
-// (Badger -> WAL -> Async -> Namespaced), so auto-commit node-only CREATE
-// statements take the async node-batch fast path (tryAsyncCreateNodeBatch).
+// newAsyncStackTestExecutor keeps its historical name to avoid call-site
+// churn; it now builds the server's storage stack
+// (Badger -> WAL -> Namespaced). Every auto-commit write commits through the
+// single transactional route.
 func newAsyncStackTestExecutor(t *testing.T) *StorageExecutor {
 	t.Helper()
 	return newAsyncStackExecutor(t)
 }
 
-// newAsyncStackExecutor is the server's storage stack (Badger, WAL, async
-// engine, namespace) for a test or a benchmark.
+// newAsyncStackExecutor is the server's storage stack (Badger, WAL,
+// namespace) for a test or a benchmark.
 func newAsyncStackExecutor(t testing.TB) *StorageExecutor {
 	t.Helper()
 	dir := t.TempDir()
@@ -27,17 +28,16 @@ func newAsyncStackExecutor(t testing.TB) *StorageExecutor {
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(dir+"/wal", nil)
 	require.NoError(t, err)
-	async := storage.NewAsyncEngine(storage.NewWALEngine(badger, wal), nil)
+	engine := storage.NewWALEngine(badger, wal)
 	t.Cleanup(func() {
-		_ = async.Close()
 		_ = wal.Close()
 		_ = badger.Close()
 	})
-	return NewStorageExecutor(storage.NewNamespacedEngine(async, "test"))
+	return NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
 }
 
 func TestGh713AsyncCreateReturnPlanning(t *testing.T) {
-	for _, route := range []string{"direct batch", "async autocommit", "async explicit transaction"} {
+	for _, route := range []string{"autocommit", "explicit transaction"} {
 		for _, test := range []struct {
 			name       string
 			projection string
@@ -54,32 +54,22 @@ func TestGh713AsyncCreateReturnPlanning(t *testing.T) {
 			{"aggregation control", "collect(n.x) AS values, count(*) AS total", []string{"values", "total"}, [][]interface{}{{[]interface{}{int64(1)}, int64(1)}}},
 		} {
 			t.Run(route+"/"+test.name, func(t *testing.T) {
-				exec, ctx := newUnitExecutor(t)
-				if route != "direct batch" {
-					exec = newAsyncStackTestExecutor(t)
-				}
-				if route == "async explicit transaction" {
+				_, ctx := newUnitExecutor(t)
+				exec := newAsyncStackTestExecutor(t)
+				if route == "explicit transaction" {
 					_, err := exec.Execute(ctx, "BEGIN", nil)
 					require.NoError(t, err)
 				}
 				params := map[string]interface{}{"p": int64(7), "skip": int64(1), "whole": float64(7), "payload": map[string]interface{}{"value": int64(2)}}
 				query := "CREATE (n:Value {x: 1}) RETURN " + test.projection
-				var result *ExecuteResult
-				var err error
-				if route == "direct batch" {
-					var handled bool
-					result, err, handled = exec.tryAsyncCreateNodeBatch(context.WithValue(ctx, paramsKey, params), query)
-					require.True(t, handled)
-				} else {
-					result, err = exec.Execute(ctx, query, params)
-				}
+				result, err := exec.Execute(ctx, query, params)
 				require.NoError(t, err)
 				require.Equal(t, test.columns, result.Columns)
 				require.Len(t, result.Rows, len(test.rows))
 				if len(test.rows) > 0 {
 					require.Equal(t, test.rows, result.Rows)
 				}
-				if route == "async explicit transaction" {
+				if route == "explicit transaction" {
 					_, err := exec.Execute(ctx, "COMMIT", nil)
 					require.NoError(t, err)
 				}
@@ -92,28 +82,19 @@ func TestGh713AsyncCreateReturnPlanning(t *testing.T) {
 }
 
 func TestGh713AsyncCreateReturnFailureDoesNotPublish(t *testing.T) {
-	for _, route := range []string{"direct batch", "async autocommit", "async explicit transaction"} {
+	for _, route := range []string{"autocommit", "explicit transaction"} {
 		t.Run(route, func(t *testing.T) {
-			exec, ctx := newUnitExecutor(t)
-			if route != "direct batch" {
-				exec = newAsyncStackTestExecutor(t)
-			}
-			if route == "async explicit transaction" {
+			_, ctx := newUnitExecutor(t)
+			exec := newAsyncStackTestExecutor(t)
+			if route == "explicit transaction" {
 				_, err := exec.Execute(ctx, "BEGIN", nil)
 				require.NoError(t, err)
 			}
 			query := "CREATE (n:Value {x: 1}) RETURN n.x / 0 AS value"
-			var err error
-			if route == "direct batch" {
-				var handled bool
-				_, err, handled = exec.tryAsyncCreateNodeBatch(withExpressionFailures(ctx), query)
-				require.True(t, handled)
-			} else {
-				_, err = exec.Execute(ctx, query, nil)
-			}
+			_, err := exec.Execute(ctx, query, nil)
 			require.Error(t, err)
 			require.Contains(t, statusText(err), "Neo.ClientError.Statement.ArithmeticError")
-			if route == "async explicit transaction" {
+			if route == "explicit transaction" {
 				_, err = exec.Execute(ctx, "ROLLBACK", nil)
 				require.NoError(t, err)
 			}
@@ -133,7 +114,7 @@ func TestCreateReturnEvaluatesEveryItem(t *testing.T) {
 			exec, _ := newTestExecutor(t)
 			return exec
 		},
-		"async stack": newAsyncStackTestExecutor,
+		"server stack": newAsyncStackTestExecutor,
 	}
 	for stack, build := range stacks {
 		for _, mode := range []string{"auto-commit", "explicit transaction"} {

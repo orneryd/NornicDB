@@ -42,82 +42,66 @@ type EmbeddingCountProvider interface {
 var (
 	_ NodeProjectionReader          = (*BadgerEngine)(nil)
 	_ NodeProjectionReader          = (*WALEngine)(nil)
-	_ NodeProjectionReader          = (*AsyncEngine)(nil)
 	_ NodeProjectionReader          = (*NamespacedEngine)(nil)
 	_ NodeProjectionReader          = (*MemoryEngine)(nil)
 	_ RelationshipEndpointChecker   = (*BadgerEngine)(nil)
 	_ RelationshipEndpointChecker   = (*WALEngine)(nil)
-	_ RelationshipEndpointChecker   = (*AsyncEngine)(nil)
 	_ RelationshipEndpointChecker   = (*NamespacedEngine)(nil)
 	_ RelationshipEndpointChecker   = (*MemoryEngine)(nil)
 	_ EdgeHeaderReader              = (*BadgerEngine)(nil)
 	_ EdgeHeaderReader              = (*WALEngine)(nil)
-	_ EdgeHeaderReader              = (*AsyncEngine)(nil)
 	_ EdgeHeaderReader              = (*NamespacedEngine)(nil)
 	_ EdgeHeaderReader              = (*MemoryEngine)(nil)
 	_ NodeIterator                  = (*BadgerEngine)(nil)
 	_ NodeIterator                  = (*WALEngine)(nil)
-	_ NodeIterator                  = (*AsyncEngine)(nil)
 	_ NodeIterator                  = (*NamespacedEngine)(nil)
 	_ NodeIterator                  = (*MemoryEngine)(nil)
 	_ EmbeddingCountProvider        = (*BadgerEngine)(nil)
 	_ EmbeddingCountProvider        = (*WALEngine)(nil)
-	_ EmbeddingCountProvider        = (*AsyncEngine)(nil)
 	_ EmbeddingCountProvider        = (*NamespacedEngine)(nil)
 	_ EmbeddingCountProvider        = (*MemoryEngine)(nil)
 	_ EmbeddingSidecarUpdater       = (*BadgerEngine)(nil)
 	_ EmbeddingSidecarUpdater       = (*WALEngine)(nil)
-	_ EmbeddingSidecarUpdater       = (*AsyncEngine)(nil)
 	_ EmbeddingSidecarUpdater       = (*NamespacedEngine)(nil)
 	_ EmbeddingSidecarUpdater       = (*MemoryEngine)(nil)
 	_ EmbeddingFailureStreamer      = (*BadgerEngine)(nil)
 	_ EmbeddingFailureStreamer      = (*WALEngine)(nil)
-	_ EmbeddingFailureStreamer      = (*AsyncEngine)(nil)
 	_ EmbeddingFailureStreamer      = (*NamespacedEngine)(nil)
 	_ EmbeddingFailureStreamer      = (*MemoryEngine)(nil)
 	_ NamespaceLister               = (*BadgerEngine)(nil)
 	_ NamespaceLister               = (*WALEngine)(nil)
-	_ NamespaceLister               = (*AsyncEngine)(nil)
 	_ NamespaceLister               = (*NamespacedEngine)(nil)
 	_ NamespaceLister               = (*MemoryEngine)(nil)
 	_ NamespaceSchemaProvider       = (*BadgerEngine)(nil)
 	_ NamespaceSchemaProvider       = (*WALEngine)(nil)
-	_ NamespaceSchemaProvider       = (*AsyncEngine)(nil)
 	_ NamespaceSchemaProvider       = (*NamespacedEngine)(nil)
 	_ NamespaceSchemaProvider       = (*MemoryEngine)(nil)
 	_ PrefixStatsEngine             = (*BadgerEngine)(nil)
 	_ PrefixStatsEngine             = (*WALEngine)(nil)
-	_ PrefixStatsEngine             = (*AsyncEngine)(nil)
 	_ PrefixStatsEngine             = (*NamespacedEngine)(nil)
 	_ PrefixStatsEngine             = (*MemoryEngine)(nil)
 	_ PropertyKeyRegistry           = (*BadgerEngine)(nil)
 	_ PropertyKeyRegistry           = (*WALEngine)(nil)
-	_ PropertyKeyRegistry           = (*AsyncEngine)(nil)
 	_ PropertyKeyRegistry           = (*MemoryEngine)(nil)
 	_ PropertyKeyLookup             = (*NamespacedEngine)(nil)
 	_ NamespaceLabelStatsProvider   = (*BadgerEngine)(nil)
 	_ NamespaceLabelStatsProvider   = (*WALEngine)(nil)
-	_ NamespaceLabelStatsProvider   = (*AsyncEngine)(nil)
 	_ NamespaceLabelStatsProvider   = (*NamespacedEngine)(nil)
 	_ NamespaceLabelStatsProvider   = (*MemoryEngine)(nil)
 	_ StartupMaintenanceStateEngine = (*BadgerEngine)(nil)
 	_ StartupMaintenanceStateEngine = (*WALEngine)(nil)
-	_ StartupMaintenanceStateEngine = (*AsyncEngine)(nil)
 	_ StartupMaintenanceStateEngine = (*NamespacedEngine)(nil)
 	_ StartupMaintenanceStateEngine = (*MemoryEngine)(nil)
 	_ MVCCMaintenanceEngine         = (*BadgerEngine)(nil)
 	_ MVCCMaintenanceEngine         = (*WALEngine)(nil)
-	_ MVCCMaintenanceEngine         = (*AsyncEngine)(nil)
 	_ MVCCMaintenanceEngine         = (*NamespacedEngine)(nil)
 	_ MVCCMaintenanceEngine         = (*MemoryEngine)(nil)
 	_ TemporalMaintenanceEngine     = (*BadgerEngine)(nil)
 	_ TemporalMaintenanceEngine     = (*WALEngine)(nil)
-	_ TemporalMaintenanceEngine     = (*AsyncEngine)(nil)
 	_ TemporalMaintenanceEngine     = (*NamespacedEngine)(nil)
 	_ TemporalMaintenanceEngine     = (*MemoryEngine)(nil)
 	_ StorageEventNotifier          = (*BadgerEngine)(nil)
 	_ StorageEventNotifier          = (*WALEngine)(nil)
-	_ StorageEventNotifier          = (*AsyncEngine)(nil)
 	_ StorageEventNotifier          = (*NamespacedEngine)(nil)
 	_ StorageEventNotifier          = (*MemoryEngine)(nil)
 	_ NodeProjectionReader          = (*CompositeEngine)(nil)
@@ -138,7 +122,6 @@ var (
 	_ GraphMutationVersionProvider  = (*CompositeEngine)(nil)
 	_ LabelNodeIDLookupEngine       = (*CompositeEngine)(nil)
 	_ MVCCLatestEffectiveEngine     = (*WALEngine)(nil)
-	_ MVCCLatestEffectiveEngine     = (*AsyncEngine)(nil)
 	_ MVCCLatestEffectiveEngine     = (*NamespacedEngine)(nil)
 	_ MVCCLatestEffectiveEngine     = (*CompositeEngine)(nil)
 )
@@ -150,51 +133,15 @@ var (
 var (
 	_ Engine          = (*BadgerEngine)(nil)
 	_ Engine          = (*WALEngine)(nil)
-	_ Engine          = (*AsyncEngine)(nil)
 	_ Engine          = (*NamespacedEngine)(nil)
 	_ Engine          = (*MemoryEngine)(nil)
 	_ Engine          = (*CompositeEngine)(nil)
 	_ Engine          = (*RemoteEngine)(nil)
 	_ EngineUnwrapper = (*WALEngine)(nil)
-	_ EngineUnwrapper = (*AsyncEngine)(nil)
 	_ EngineUnwrapper = (*NamespacedEngine)(nil)
 	_ EngineUnwrapper = (*CompositeEngine)(nil)
 	_ EngineUnwrapper = (*TracedEngine)(nil)
 )
-
-// GetNodeProjected returns a node with only the requested properties, honoring
-// the async overlay: staged writes are projected from cache, deleted nodes
-// report ErrNotFound, and everything else reads the underlying engine.
-func (ae *AsyncEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
-	ae.mu.RLock()
-	if ae.deleteNodes[id] {
-		ae.mu.RUnlock()
-		return nil, ErrNotFound
-	}
-	if node, ok := ae.nodeCache[id]; ok && node != nil {
-		ae.mu.RUnlock()
-		return projectCachedNodeForRead(node, properties), nil
-	}
-	ae.mu.RUnlock()
-	return getNodeProjectedThrough(ae.engine, id, properties)
-}
-
-// RelationshipEndpointVisible honors the async overlay as GetNode does: a
-// staged delete hides the node, a staged write shows it, and everything else
-// asks the underlying engine.
-func (ae *AsyncEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
-	ae.mu.RLock()
-	deleted := ae.deleteNodes[id]
-	_, staged := ae.nodeCache[id]
-	ae.mu.RUnlock()
-	if deleted || staged {
-		return staged && !deleted, true
-	}
-	if checker, ok := ae.engine.(RelationshipEndpointChecker); ok {
-		return checker.RelationshipEndpointVisible(id)
-	}
-	return false, false
-}
 
 // RelationshipEndpointVisible forwards to the underlying engine; WAL adds no
 // overlay.
@@ -203,54 +150,6 @@ func (w *WALEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bo
 		return checker.RelationshipEndpointVisible(id)
 	}
 	return false, false
-}
-
-// OutgoingEdgeHeaders lists the engine's relationship headers merged with the
-// async overlay as GetOutgoingEdges does: staged relationships are included
-// and staged deletes hidden.
-func (ae *AsyncEngine) OutgoingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
-	return ae.edgeHeaders(nodeID, true)
-}
-
-// IncomingEdgeHeaders is the incoming-side OutgoingEdgeHeaders.
-func (ae *AsyncEngine) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error) {
-	return ae.edgeHeaders(nodeID, false)
-}
-
-func (ae *AsyncEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool, error) {
-	reader, ok := ae.engine.(EdgeHeaderReader)
-	if !ok {
-		return nil, false, nil
-	}
-	var engineEdges []*Edge
-	var answered bool
-	var err error
-	if outgoing {
-		engineEdges, answered, err = reader.OutgoingEdgeHeaders(nodeID)
-	} else {
-		engineEdges, answered, err = reader.IncomingEdgeHeaders(nodeID)
-	}
-	if !answered || err != nil {
-		return nil, answered, err
-	}
-	ae.mu.RLock()
-	byNode := ae.cacheEdgesByEnd
-	if outgoing {
-		byNode = ae.cacheEdgesByStart
-	}
-	var cached []*Edge
-	for id := range byNode[nodeID] {
-		if ae.deleteEdges[id] {
-			continue
-		}
-		edge, ok := ae.edgeCache[id]
-		if !ok || edge == nil || (outgoing && edge.StartNode != nodeID) || (!outgoing && edge.EndNode != nodeID) {
-			continue
-		}
-		cached = append(cached, edge)
-	}
-	ae.mu.RUnlock()
-	return mergeAsyncEdges(ae, cached, engineEdges, nodeID, outgoing), true, nil
 }
 
 // OutgoingEdgeHeaders forwards to the underlying engine; WAL adds no overlay.

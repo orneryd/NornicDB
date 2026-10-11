@@ -267,7 +267,16 @@ func (b *BadgerEngine) NodeCountByLabelInNamespace(namespace, label string) (int
 		count, err = b.readLabelCountInTxn(txn, namespace, label)
 		return err
 	})
-	return count, err
+	if err != nil {
+		return 0, err
+	}
+	// Buffered-but-unflushed writes are committed: their derived-count
+	// deltas make the counter read-your-writes until the flusher lands
+	// the same deltas on the persisted counter.
+	if b.writeBehind != nil {
+		count += b.writeBehind.LabelCountDeltaInNamespace(namespace, label)
+	}
+	return count, nil
 }
 
 func (b *BadgerEngine) NodeCountByLabel(label string) (int64, error) {
@@ -303,7 +312,16 @@ func (b *BadgerEngine) NodeCountByLabel(label string) (int64, error) {
 		}
 		return nil
 	})
-	return total, err
+	if err != nil {
+		return 0, err
+	}
+	// Buffered-but-unflushed writes are committed: their derived-count
+	// deltas make the counter read-your-writes until the flusher lands
+	// the same deltas on the persisted counter.
+	if b.writeBehind != nil {
+		total += b.writeBehind.LabelCountDelta(label)
+	}
+	return total, nil
 }
 
 func (b *BadgerEngine) labelCountReady() (bool, error) {

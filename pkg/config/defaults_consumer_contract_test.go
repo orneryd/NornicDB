@@ -13,7 +13,7 @@ import "testing"
 func TestDefaults_ConsumerContract(t *testing.T) {
 	c := LoadDefaults()
 
-	if got, want := c.Database.AsyncWritesEnabled, true; got != want {
+	if got, want := c.Database.AsyncWritesEnabled, false; got != want {
 		t.Errorf(
 			"Database.AsyncWritesEnabled default changed: got %v want %v "+
 				"(consumer contract — see consumer-pinned-error-contract-plan.md §2.6)",

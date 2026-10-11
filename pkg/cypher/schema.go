@@ -154,50 +154,14 @@ func (e *StorageExecutor) countSchemaChanges(ctx context.Context, cypher string,
 	return result, nil
 }
 
-// pauseAsyncWritesForSchemaDDL flushes every async write cache in the engine
-// stack and holds its writes (AsyncEngine.PauseWritesForSchemaChange) until
-// the returned function is called: a schema command checks the stored data
-// against its new rule and registers the rule with no write cached in
-// between, so no cached write is flushed under a rule it was never checked
-// against (#700). The returned function is always safe to call.
-func pauseAsyncWritesForSchemaDDL(engine storage.Engine) (func(), error) {
-	var resumes []func()
-	resume := func() {
-		for i := len(resumes) - 1; i >= 0; i-- {
-			resumes[i]()
-		}
-	}
-	visited := make(map[storage.Engine]bool)
-	for engine != nil && !visited[engine] {
-		visited[engine] = true
-
-		if async, ok := engine.(interface {
-			PauseWritesForSchemaChange() (func(), error)
-		}); ok {
-			resumeAsync, err := async.PauseWritesForSchemaChange()
-			resumes = append(resumes, resumeAsync)
-			if err != nil {
-				return resume, localizedError(localization.CypherSchemaFlushPendingWritesFailed(err), err)
-			}
-		} else if async, ok := engine.(interface {
-			HasPendingWrites() bool
-			Flush() error
-		}); ok {
-			if async.HasPendingWrites() {
-				if err := async.Flush(); err != nil {
-					return resume, localizedError(localization.CypherSchemaFlushPendingWritesFailed(err), err)
-				}
-			}
-		}
-
-		switch wrapper := engine.(type) {
-		case storage.EngineUnwrapper:
-			engine = wrapper.GetInnerEngine()
-		default:
-			engine = nil
-		}
-	}
-	return resume, nil
+// pauseAsyncWritesForSchemaDDL previously flushed and held every async write
+// cache in the engine stack while a schema command validated stored data
+// (#700). Writes now commit synchronously through their transactions, so
+// there is no cached write to hold: a schema command observes every
+// acknowledged write without a pause. The returned function is always safe to
+// call.
+func pauseAsyncWritesForSchemaDDL(_ storage.Engine) (func(), error) {
+	return func() {}, nil
 }
 
 // executeCreateConstraint handles CREATE CONSTRAINT commands.

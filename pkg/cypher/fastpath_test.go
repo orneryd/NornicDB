@@ -208,7 +208,7 @@ func TestFastPath_CreateDeleteRel_HelperBranches(t *testing.T) {
 // BenchmarkFastPath_WithLimit benchmarks the WITH LIMIT pattern.
 func BenchmarkFastPath_WithLimit(b *testing.B) {
 	baseEngine := newTestMemoryEngine(b)
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	defer asyncBase.Close()
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 
@@ -243,7 +243,7 @@ func BenchmarkFastPath_WithLimit(b *testing.B) {
 // BenchmarkFastPath_LDBC benchmarks the LDBC property pattern.
 func BenchmarkFastPath_LDBC(b *testing.B) {
 	baseEngine := newTestMemoryEngine(b)
-	asyncBase := storage.NewAsyncEngine(baseEngine, nil)
+	asyncBase := baseEngine
 	defer asyncBase.Close()
 	engine := storage.NewNamespacedEngine(asyncBase, "test")
 

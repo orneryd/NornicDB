@@ -294,5 +294,14 @@ func (b *BadgerEngine) GetSchemaForNamespace(namespace string) *SchemaManager {
 		})
 		b.schemas[namespace] = sm
 	}
+	// Write-behind: attach the commit buffer as this schema's pending-write
+	// source so property-index seeks (and ordered / not-null scans) merge
+	// acknowledged-but-unflushed nodes. Without it, MATCH (n:User {id: $x})
+	// against a fresh index misses users whose commits are still buffered
+	// and the following CREATE silently produces nothing (Pokec batched
+	// load). Attachment is idempotent and re-tracks pairs on index changes.
+	if b.writeBehind != nil {
+		sm.attachPendingWrites(b.writeBehind, namespace)
+	}
 	return sm
 }

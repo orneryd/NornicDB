@@ -56,13 +56,19 @@ func (tx *BadgerTransaction) StreamEdgesByType(ctx context.Context, edgeType str
 
 	scope := tx.labelScanScopeLocked()
 	var err error
-	if tx.readTS.IsZero() {
+	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
+		// Write-behind reads are read-committed: the engine's latest
+		// (overlaid) stream includes flushes that landed after the pinned
+		// snapshot.
 		err = tx.engine.StreamEdgesByTypeInScope(ctx, scope, edgeType, emitCommitted)
 	} else {
 		err = tx.engine.streamEdgesByTypeVisibleAtSnapshotWithView(ctx, scope, edgeType, tx.readTS, tx.withSnapshotViewLocked, emitCommitted)
 	}
-	if err != nil || !hasPending {
+	if err != nil {
 		return err
+	}
+	if !hasPending {
+		return nil
 	}
 
 	// Edges this transaction created (not in the committed stream). Collect

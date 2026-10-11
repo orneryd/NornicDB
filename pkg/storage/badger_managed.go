@@ -5,11 +5,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"io"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"

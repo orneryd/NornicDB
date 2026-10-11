@@ -1505,31 +1505,26 @@ func TestNoContentNodeDoesNotCauseInfiniteLoop(t *testing.T) {
 	})
 }
 
-// TestAsyncEngineCacheIntegration tests that embeddings in AsyncEngine cache
-// are correctly recognized by FindNodeNeedingEmbedding - this was the root cause
-// of the "n1 keeps getting found" bug
-func TestAsyncEngineCacheIntegration(t *testing.T) {
-	t.Run("cached_embedding_not_refound", func(t *testing.T) {
+// TestEmbedQueueCommittedEmbeddingNotRefound verifies that an embedding that
+// is already persisted is not found again by FindNodeNeedingEmbedding - this
+// was the root cause of the "n1 keeps getting found" bug. With synchronous
+// commits, the persisted embedding itself prevents re-processing.
+func TestEmbedQueueCommittedEmbeddingNotRefound(t *testing.T) {
+	t.Run("persisted_embedding_not_refound", func(t *testing.T) {
 		// Create underlying engine
 		baseUnderlying := storage.NewMemoryEngine()
 		baseUnderlying.SetEmbeddingsEnabled(true)
 
-		underlying := storage.NewNamespacedEngine(baseUnderlying, "test")
-
-		// Wrap with AsyncEngine (like production setup)
-		asyncConfig := storage.DefaultAsyncEngineConfig()
-		asyncConfig.FlushInterval = 10 * time.Second // Long flush interval
-		asyncEngine := storage.NewAsyncEngine(underlying, asyncConfig)
-		defer asyncEngine.Close()
+		engine := storage.NewNamespacedEngine(baseUnderlying, "test")
 
 		embedder := newMockEmbedder()
 
 		// Create a node
-		_, err := asyncEngine.CreateNode(&storage.Node{
-			ID:     storage.NodeID("async-test"),
+		_, err := engine.CreateNode(&storage.Node{
+			ID:     storage.NodeID("embed-committed"),
 			Labels: []string{"Memory"},
 			Properties: map[string]any{
-				"content": "Test content for async cache",
+				"content": "Test content for committed embedding",
 			},
 		})
 		require.NoError(t, err)
@@ -1543,7 +1538,7 @@ func TestAsyncEngineCacheIntegration(t *testing.T) {
 			ChunkOverlap: 50,
 		}
 
-		worker := NewEmbedWorker(embedder, asyncEngine, config)
+		worker := NewEmbedWorker(embedder, engine, config)
 
 		// Wait for processing
 		worker.Trigger()
@@ -1560,8 +1555,8 @@ func TestAsyncEngineCacheIntegration(t *testing.T) {
 		stats := worker.Stats()
 		require.Equal(t, 1, stats.Processed, "Should have processed 1 node")
 
-		// WITHOUT flushing, trigger again - should NOT find the node again
-		// because the embedding is in AsyncEngine's cache
+		// Trigger again - should NOT find the node again because the
+		// embedding is already persisted.
 		initialEmbedCount := embedder.GetEmbedCount()
 
 		for i := 0; i < 3; i++ {
@@ -1574,9 +1569,7 @@ func TestAsyncEngineCacheIntegration(t *testing.T) {
 		// Embedder should NOT have been called again
 		finalEmbedCount := embedder.GetEmbedCount()
 		assert.Equal(t, initialEmbedCount, finalEmbedCount,
-			"Embedder should not be called again - embedding is in async cache")
-
-		t.Log("✓ AsyncEngine cache correctly prevents re-processing")
+			"Embedder should not be called again - embedding is persisted")
 	})
 }
 

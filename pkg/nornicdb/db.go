@@ -45,8 +45,8 @@ import (
 	"github.com/google/uuid"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
-	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/embed"
+	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/encryption"
 	"github.com/orneryd/nornicdb/pkg/inference"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -621,7 +621,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	if dataDir != "" {
 		// Configure BadgerDB based on memory mode
 		// HighPerformance uses ~1GB RAM, LowMemory uses ~50MB
-		badgerOpts, walConfig, asyncConfig := resolveDurabilityOptions(dataDir, config)
+		badgerOpts, walConfig := resolveDurabilityOptions(dataDir, config)
 		providerMode := strings.TrimSpace(strings.ToLower(config.Database.EncryptionProvider))
 		if providerMode == "" {
 			providerMode = "password"
@@ -871,19 +871,17 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			fmt.Printf("🛑 WAL auto-compaction disabled (manual snapshots required)\n")
 		}
 
-		// Optionally wrap with AsyncEngine for faster writes (eventual consistency)
+		// Writes flow straight to the WAL+Badger stack. When async writes are
+		// enabled, the async timing knob (AsyncFlushInterval) drives the WAL
+		// batch-sync interval at the durability layer instead of a
+		// write-behind cache above it.
 		var baseStorage storage.Engine
+		baseStorage = walEngine
 		if config.Database.AsyncWritesEnabled && !config.Database.StrictDurability {
-			baseStorage = storage.NewAsyncEngine(walEngine, asyncConfig)
-			if config.Database.AsyncMaxNodeCacheSize > 0 || config.Database.AsyncMaxEdgeCacheSize > 0 {
-				fmt.Printf("📂 Using persistent storage at %s (WAL + async writes, flush: %v, node cache: %d, edge cache: %d)\n",
-					dataDir, config.Database.AsyncFlushInterval, config.Database.AsyncMaxNodeCacheSize, config.Database.AsyncMaxEdgeCacheSize)
-			} else {
-				fmt.Printf("📂 Using persistent storage at %s (WAL + async writes, flush: %v)\n", dataDir, config.Database.AsyncFlushInterval)
-			}
+			fmt.Printf("📂 Using persistent storage at %s (WAL batch sync: %v, async timing: %v, node cache: %d, edge cache: %d)\n",
+				dataDir, walConfig.BatchSyncInterval, config.Database.AsyncFlushInterval, config.Database.AsyncMaxNodeCacheSize, config.Database.AsyncMaxEdgeCacheSize)
 		} else {
-			baseStorage = walEngine
-			fmt.Printf("📂 Using persistent storage at %s (WAL enabled, batch sync)\n", dataDir)
+			fmt.Printf("📂 Using persistent storage at %s (WAL enabled, batch sync: %v)\n", dataDir, walConfig.BatchSyncInterval)
 		}
 
 		// Track the underlying storage chain so Close() can release Badger directory locks.
@@ -1184,23 +1182,14 @@ func Open(dataDir string, config *Config) (*DB, error) {
 
 	// Wire up storage event callbacks to keep search indexes synchronized
 	// Storage is the single source of truth - it notifies when changes happen
-	// The storage chain can be: AsyncEngine -> WALEngine -> BadgerEngine
+	// The storage chain is: WALEngine -> BadgerEngine
 	var underlyingEngine storage.Engine = db.storage
-	var asyncNotifier storage.StorageEventNotifier
 
 	// Unwrap NamespacedEngine first so we can:
 	//  1) Reach the underlying engine that emits events (BadgerEngine)
 	//  2) Receive events with fully-qualified node IDs (<db>:<id>)
 	if namespacedEngine, ok := underlyingEngine.(*storage.NamespacedEngine); ok {
 		underlyingEngine = namespacedEngine.GetInnerEngine()
-	}
-
-	// Unwrap AsyncEngine if present
-	if asyncEngine, ok := underlyingEngine.(*storage.AsyncEngine); ok {
-		// Keep a reference to also receive cache-only delete notifications (pending creates).
-		// These deletes never hit the inner engine, so only the async layer can emit them.
-		asyncNotifier = asyncEngine
-		underlyingEngine = asyncEngine.GetInnerEngine()
 	}
 
 	// Unwrap WALEngine if present
@@ -1229,15 +1218,6 @@ func Open(dataDir string, config *Config) (*DB, error) {
 			db.indexNodeFromEvent(nodeCopy)
 		})
 		notifier.OnNodeDeleted(func(nodeID storage.NodeID) {
-			db.removeNodeFromEvent(nodeID)
-		})
-	}
-
-	// Also register for async-cache delete notifications if the async layer exists.
-	// This handles the case where a node is created and then deleted while still
-	// buffered in AsyncEngine (so the inner engine never emits a delete event).
-	if asyncNotifier != nil {
-		asyncNotifier.OnNodeDeleted(func(nodeID storage.NodeID) {
 			db.removeNodeFromEvent(nodeID)
 		})
 	}
@@ -1422,13 +1402,37 @@ func resolveBadgerOptions(dataDir string, config *Config) storage.BadgerOptions 
 	}
 }
 
-func resolveDurabilityOptions(dataDir string, config *Config) (storage.BadgerOptions, *storage.WALConfig, *storage.AsyncEngineConfig) {
+func resolveDurabilityOptions(dataDir string, config *Config) (storage.BadgerOptions, *storage.WALConfig) {
 	badgerOptions := resolveBadgerOptions(dataDir, config)
+
+	// Durable writes are the default: the write-behind buffer stays off
+	// unless the user opts into async writes AND relaxes strict durability.
+	// AsyncWritesEnabled turns on the rotating commit buffer with AUTO
+	// sizing (WriteBehindMaxOps 0): its rotation delay and generation size
+	// adapt to measured drain latency and throughput at runtime.
+	if config.Database.AsyncWritesEnabled && !config.Database.StrictDurability {
+		badgerOptions.WriteBehind = true
+		if config.Database.AsyncFlushInterval > 0 {
+			badgerOptions.WriteBehindInterval = config.Database.AsyncFlushInterval
+		}
+	}
 
 	walConfig := storage.DefaultWALConfig()
 	walConfig.Dir = filepath.Join(dataDir, "wal")
 	walConfig.SyncMode = strings.ToLower(strings.TrimSpace(config.Database.WALSyncMode))
 	walConfig.BatchSyncInterval = config.Database.WALSyncInterval
+	if config.Database.AsyncWritesEnabled && !config.Database.StrictDurability && walConfig.SyncMode == "batch" {
+		// The async timing knob drives the WAL batch-sync interval at the
+		// durability layer — the proper async boundary — instead of a
+		// write-behind cache above it.
+		if config.Database.AsyncFlushInterval > 0 {
+			walConfig.BatchSyncInterval = config.Database.AsyncFlushInterval
+		}
+		// The same bounded-loss window lets appends skip their per-record
+		// userspace flush (write(2)) entirely; the background sync drains
+		// and fsyncs the buffer on its tick.
+		walConfig.DeferAppendFlush = true
+	}
 	if walConfig.SyncMode != "batch" {
 		walConfig.BatchSyncInterval = 0
 	}
@@ -1448,20 +1452,13 @@ func resolveDurabilityOptions(dataDir string, config *Config) (storage.BadgerOpt
 	walConfig.SnapshotRetentionMaxAge = config.Database.WALSnapshotRetentionMaxAge
 	walConfig.SlogLogger = config.Logger
 
-	asyncConfig := &storage.AsyncEngineConfig{
-		FlushInterval:    config.Database.AsyncFlushInterval,
-		MaxNodeCacheSize: config.Database.AsyncMaxNodeCacheSize,
-		MaxEdgeCacheSize: config.Database.AsyncMaxEdgeCacheSize,
-		Logger:           config.Logger,
-	}
 	if config.Database.StrictDurability {
 		badgerOptions.SyncWrites = true
 		walConfig.SyncMode = "immediate"
 		walConfig.BatchSyncInterval = 0
-		asyncConfig.FlushInterval = 10 * time.Millisecond
 	}
 
-	return badgerOptions, walConfig, asyncConfig
+	return badgerOptions, walConfig
 }
 
 func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error) {
@@ -2145,7 +2142,7 @@ func (db *DB) ClearAllEmbeddings() (int, error) {
 	}
 
 	// Unwrap storage layers to find the BadgerEngine
-	// The storage chain can be: AsyncEngine -> WALEngine -> BadgerEngine
+	// The storage chain is: WALEngine -> BadgerEngine
 	engine := db.storage
 	idPrefix := ""
 
@@ -2153,11 +2150,6 @@ func (db *DB) ClearAllEmbeddings() (int, error) {
 	if namespacedEngine, ok := engine.(*storage.NamespacedEngine); ok {
 		idPrefix = namespacedEngine.Namespace() + ":"
 		engine = namespacedEngine.GetInnerEngine()
-	}
-
-	// Unwrap AsyncEngine if present
-	if asyncEngine, ok := engine.(*storage.AsyncEngine); ok {
-		engine = asyncEngine.GetInnerEngine()
 	}
 
 	// Unwrap WALEngine if present

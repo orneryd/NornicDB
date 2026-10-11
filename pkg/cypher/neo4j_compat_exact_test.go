@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -242,25 +241,20 @@ func TestNeo4jCompatExactQueriesWithEmbeddings(t *testing.T) {
 // 5. Verifies the exact stats queries return correct counts
 //
 // This test verifies the fix for the bug where embeddings weren't persisting
-// through the AsyncEngine flush to BadgerDB.
-func TestNeo4jCompatE2EWithAsyncStorageAndEmbeddings(t *testing.T) {
+// through the synchronous commit to BadgerDB.
+func TestNeo4jCompatE2EWithServerStorageAndEmbeddings(t *testing.T) {
 	skipDiskIOTestOnWindows(t)
 	// Create temp directory for BadgerDB
 	tmpDir, err := os.MkdirTemp("", "neo4j-compat-e2e-*")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	// Create BadgerEngine -> AsyncEngine -> NamespacedEngine stack (matches production order)
+	// Create BadgerEngine -> NamespacedEngine stack (matches production order)
 	badger, err := storage.NewBadgerEngine(filepath.Join(tmpDir, "data"))
 	require.NoError(t, err)
 	defer badger.Close()
 
-	config := storage.DefaultAsyncEngineConfig()
-	config.FlushInterval = 100 * time.Millisecond
-	asyncBase := storage.NewAsyncEngine(badger, config)
-	defer asyncBase.Close()
-
-	store := storage.NewNamespacedEngine(asyncBase, "test")
+	store := storage.NewNamespacedEngine(badger, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -364,10 +358,6 @@ func TestNeo4jCompatE2EWithAsyncStorageAndEmbeddings(t *testing.T) {
 		require.NoError(t, err, "Chunk query %d failed", i)
 	}
 
-	// Flush to BadgerDB
-	err = asyncBase.Flush()
-	require.NoError(t, err)
-
 	// ==========================================================================
 	// Step 3: Verify chunks were created with relationships
 	// ==========================================================================
@@ -400,7 +390,6 @@ func TestNeo4jCompatE2EWithAsyncStorageAndEmbeddings(t *testing.T) {
 	// - 6 Chunks with embeddings (chunk1a, chunk1b, chunk2a, chunk2b, chunk3a, chunk3b)
 	// Total embeddings expected: 3 + 6 = 9
 	// ==========================================================================
-	filesWithEmbeddings := []string{"file1", "file2", "file3"}
 	chunksWithEmbeddings := []string{"chunk1a", "chunk1b", "chunk2a", "chunk2b", "chunk3a", "chunk3b"}
 
 	// Set embeddings on files
@@ -443,14 +432,6 @@ func TestNeo4jCompatE2EWithAsyncStorageAndEmbeddings(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Flush embedding updates
-	err = asyncBase.Flush()
-	require.NoError(t, err)
-
-	t.Logf("Set embeddings: %d files, %d chunks", len(filesWithEmbeddings), len(chunksWithEmbeddings))
-
-	// ==========================================================================
-	// Step 5: Run EXACT stats query and verify counts
 	// Expected:
 	// - totalFiles: 10
 	// - totalChunks: 10 (5 files × 2 chunks each)
@@ -554,9 +535,6 @@ func TestNeo4jCompatE2EWithAsyncStorageAndEmbeddings(t *testing.T) {
 	// Step 6: Verify embeddings persisted to BadgerDB
 	// ==========================================================================
 	t.Run("verify embeddings persisted in BadgerDB", func(t *testing.T) {
-		err = asyncBase.Flush()
-		require.NoError(t, err)
-
 		var filesWithEmbed, chunksWithEmbed int
 		badger.IterateNodes(func(n *storage.Node) bool {
 			if len(n.ChunkEmbeddings) > 0 && len(n.ChunkEmbeddings[0]) > 0 {

@@ -1337,6 +1337,15 @@ func (sm *SchemaManager) uniqueMergeKey(label, property string, value interface{
 	return uniqueConstraintLockKey{}, false
 }
 
+// HasUniqueValueTracking reports whether any unique constraint exists whose
+// values are tracked in the unique-value cache. When false, callers can skip
+// per-value RegisterUniqueValue/UnregisterUniqueValue work entirely.
+func (sm *SchemaManager) HasUniqueValueTracking() bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return len(sm.uniqueConstraints) > 0
+}
+
 // RegisterUniqueValue registers a value for a unique constraint.
 func (sm *SchemaManager) RegisterUniqueValue(label, property string, value interface{}, nodeID NodeID) {
 	sm.mu.RLock()

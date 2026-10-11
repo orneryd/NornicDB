@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -394,51 +393,6 @@ func TestCompositeEngine_StreamingFallbackAndErrors(t *testing.T) {
 		engine1.allNodesErr = errors.New("chunk nodes failed")
 		err = composite.StreamNodeChunks(context.Background(), 1, func(nodes []*Node) error { return nil })
 		require.ErrorContains(t, err, "error querying constituent 'db1'")
-	})
-}
-
-func TestCompositeEngine_FlushAsyncEngine(t *testing.T) {
-	composite := NewCompositeEngine(map[string]Engine{}, map[string]string{}, map[string]string{})
-
-	t.Run("no-op for non async engine", func(t *testing.T) {
-		engine := NewMemoryEngine()
-		defer engine.Close()
-		composite.flushAsyncEngine(engine)
-	})
-
-	t.Run("flushes direct async engine", func(t *testing.T) {
-		engine := NewMemoryEngine()
-		defer engine.Close()
-		async := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: time.Hour})
-		defer async.Close()
-
-		_, err := async.CreateNode(&Node{ID: NodeID(prefixTestID("flush-async")), Labels: []string{"Doc"}})
-		require.NoError(t, err)
-		require.True(t, async.HasPendingWrites())
-
-		composite.flushAsyncEngine(async)
-
-		assert.False(t, async.HasPendingWrites())
-		_, err = engine.GetNode(NodeID(prefixTestID("flush-async")))
-		require.NoError(t, err)
-	})
-
-	t.Run("flushes async engine wrapped by namespaced engine", func(t *testing.T) {
-		engine := NewMemoryEngine()
-		defer engine.Close()
-		async := NewAsyncEngine(engine, &AsyncEngineConfig{FlushInterval: time.Hour})
-		defer async.Close()
-		namespaced := NewNamespacedEngine(async, "tenant_a")
-
-		_, err := namespaced.CreateNode(&Node{ID: "flush-ns", Labels: []string{"Doc"}})
-		require.NoError(t, err)
-		require.True(t, async.HasPendingWrites())
-
-		composite.flushAsyncEngine(namespaced)
-
-		assert.False(t, async.HasPendingWrites())
-		_, err = engine.GetNode("tenant_a:flush-ns")
-		require.NoError(t, err)
 	})
 }
 

@@ -115,7 +115,16 @@ func (b *BadgerEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (i
 		count, err = b.readEdgeTypeCountInTxn(txn, namespace, edgeType)
 		return err
 	})
-	return count, err
+	if err != nil {
+		return 0, err
+	}
+	// Buffered-but-unflushed writes are committed: their derived-count
+	// deltas make the counter read-your-writes until the flusher lands
+	// the same deltas on the persisted counter.
+	if b.writeBehind != nil {
+		count += b.writeBehind.EdgeTypeCountDeltaInNamespace(namespace, edgeType)
+	}
+	return count, nil
 }
 
 // EdgeCountByType returns the total count of edges of the given type across
@@ -154,7 +163,13 @@ func (b *BadgerEngine) EdgeCountByType(edgeType string) (int64, error) {
 		}
 		return nil
 	})
-	return total, err
+	if err != nil {
+		return 0, err
+	}
+	if b.writeBehind != nil {
+		total += b.writeBehind.EdgeTypeCountDelta(edgeType)
+	}
+	return total, nil
 }
 
 func (b *BadgerEngine) edgeTypeCountReady() (bool, error) {

@@ -3,11 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"log"
 	"os"
 	"sort"
 	"time"
+
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -25,18 +26,15 @@ type stats struct {
 
 func main() {
 	var (
-		dataDir       = flag.String("data-dir", "./data/test-direct", "data directory for Badger")
-		iterations    = flag.Int("iterations", 100, "number of operations per test")
-		batchSize     = flag.Int("batch-size", 10, "batch size for BulkCreateNodes test")
-		mode          = flag.String("mode", "badger", "engine mode: badger or async")
-		namespace     = flag.String("namespace", "nornic", "database namespace for namespaced engine")
-		clean         = flag.Bool("clean", false, "remove data directory before running")
-		syncWrites    = flag.Bool("sync-writes", false, "enable badger sync writes (fsync on each write)")
-		asyncInterval = flag.Duration("async-flush-interval", 50*time.Millisecond, "async flush interval")
-		asyncTarget   = flag.Int("async-target-flush-size", 1000, "async target flush size")
-		asyncMin      = flag.Duration("async-min-flush-interval", 10*time.Millisecond, "async min flush interval")
-		asyncMax      = flag.Duration("async-max-flush-interval", 200*time.Millisecond, "async max flush interval")
-		asyncAdaptive = flag.Bool("async-adaptive", true, "enable adaptive async flush timing")
+		dataDir     = flag.String("data-dir", "./data/test-direct", "data directory for Badger")
+		iterations  = flag.Int("iterations", 100, "number of operations per test")
+		batchSize   = flag.Int("batch-size", 10, "batch size for BulkCreateNodes test")
+		mode        = flag.String("mode", "badger", "engine mode: badger or wal")
+		namespace   = flag.String("namespace", "nornic", "database namespace for namespaced engine")
+		clean       = flag.Bool("clean", false, "remove data directory before running")
+		syncWrites  = flag.Bool("sync-writes", false, "enable badger sync writes (fsync on each write)")
+		walSyncMode = flag.String("wal-sync-mode", "batch", "WAL sync mode: batch, immediate, none")
+		walSyncInt  = flag.Duration("wal-sync-interval", 50*time.Millisecond, "WAL batch sync interval")
 	)
 	flag.Parse()
 
@@ -57,17 +55,16 @@ func main() {
 		log.Fatalf("failed to create badger engine: %v", err)
 	}
 
-	var asyncEngine *storage.AsyncEngine
 	var engine storage.Engine
-	if *mode == "async" {
-		asyncEngine = storage.NewAsyncEngine(base, &storage.AsyncEngineConfig{
-			FlushInterval:    *asyncInterval,
-			AdaptiveFlush:    *asyncAdaptive,
-			MinFlushInterval: *asyncMin,
-			MaxFlushInterval: *asyncMax,
-			TargetFlushSize:  *asyncTarget,
+	if *mode == "wal" {
+		wal, err := storage.NewWAL(*dataDir+"/wal", &storage.WALConfig{
+			SyncMode:          *walSyncMode,
+			BatchSyncInterval: *walSyncInt,
 		})
-		engine = storage.NewNamespacedEngine(asyncEngine, *namespace)
+		if err != nil {
+			log.Fatalf("failed to create WAL: %v", err)
+		}
+		engine = storage.NewNamespacedEngine(storage.NewWALEngine(base, wal), *namespace)
 	} else {
 		engine = storage.NewNamespacedEngine(base, *namespace)
 	}
@@ -95,22 +92,8 @@ func main() {
 		return testRelationshipCreate(engine, *iterations)
 	})
 
-	if asyncEngine != nil {
-		start := time.Now()
-		if err := asyncEngine.Flush(); err != nil {
-			fmt.Printf("Async flush error: %v\n", err)
-		}
-		fmt.Printf("Async flush duration: %s\n", time.Since(start))
-	}
-
-	if asyncEngine != nil {
-		if err := asyncEngine.Close(); err != nil {
-			log.Printf("async close error: %v", err)
-		}
-	} else {
-		if err := base.Close(); err != nil {
-			log.Printf("badger close error: %v", err)
-		}
+	if err := base.Close(); err != nil {
+		log.Printf("badger close error: %v", err)
 	}
 }
 

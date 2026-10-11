@@ -141,25 +141,27 @@ func TestLabelIndex_MultiLabelSurvivesReopen(t *testing.T) {
 // pending writes hit Badger. Pin that the flushed data carries label
 // index entries — otherwise the underlying BadgerEngine would have
 // the node body but no label-index row.
-func TestLabelIndex_AsyncEngineFlushesLabelEntriesBeforeClose(t *testing.T) {
+// Writes apply synchronously, so every create carries its label-index
+// entries into Badger immediately. Close() then persists everything; pin
+// that the flushed data carries label index entries — otherwise the
+// underlying BadgerEngine would have the node body but no label-index row.
+func TestLabelIndex_BadgerPersistsLabelEntriesAcrossReopen(t *testing.T) {
 	dir := t.TempDir()
 
 	inner, err := NewBadgerEngine(dir)
 	require.NoError(t, err)
-	async := NewAsyncEngine(inner, DefaultAsyncEngineConfig())
+	store := NewNamespacedEngine(inner, "test")
 
 	for i := 0; i < 50; i++ {
-		_, err := async.CreateNode(&Node{
+		_, err := store.CreateNode(&Node{
 			ID:     NodeID(fmt.Sprintf("test:async-%03d", i)),
 			Labels: []string{"AsyncOnly"},
 		})
 		require.NoError(t, err)
 	}
-	// Close async, which flushes + closes the inner BadgerEngine.
-	require.NoError(t, async.Close())
+	require.NoError(t, inner.Close())
 
-	// Reopen JUST the BadgerEngine — no async layer. If AsyncEngine
-	// failed to flush label-index writes, this is where the bug surfaces.
+	// Reopen JUST the BadgerEngine.
 	engine, err := NewBadgerEngine(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
@@ -167,7 +169,7 @@ func TestLabelIndex_AsyncEngineFlushesLabelEntriesBeforeClose(t *testing.T) {
 	got, err := engine.GetNodesByLabel("AsyncOnly")
 	require.NoError(t, err)
 	assert.Len(t, got, 50,
-		"AsyncEngine flush must persist label-index entries; reopened BadgerEngine sees %d/50 nodes by label",
+		"writes must persist label-index entries; reopened BadgerEngine sees %d/50 nodes by label",
 		len(got))
 }
 

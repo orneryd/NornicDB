@@ -205,6 +205,16 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 
 // GetNode retrieves a node by ID.
 func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
+	// Write-behind overlay: acknowledged buffered writes are visible before
+	// the background flush lands them in Badger.
+	if b.writeBehind != nil {
+		if n, found, deleted := b.writeBehind.GetNode(id); found {
+			if deleted {
+				return nil, ErrNotFound
+			}
+			return CopyNode(n), nil
+		}
+	}
 	return b.getNodeByID(id,
 		func(txn *badger.Txn, val []byte) (*Node, error) {
 			return b.decodeNodeWithEmbeddings(txn, val, id)

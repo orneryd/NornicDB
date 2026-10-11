@@ -3,7 +3,6 @@ package storage
 import (
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
@@ -94,8 +93,8 @@ func TestEdgeHeadersFromAdjacencyEntries(t *testing.T) {
 }
 
 // Every layer of the server's stack lists headers the way it lists full
-// relationships: the async overlay adds staged relationships and hides
-// staged deletes, and the namespaced engine applies its prefix.
+// relationships: writes apply synchronously and the namespaced engine
+// applies its prefix.
 func TestEdgeHeadersAcrossStack(t *testing.T) {
 	badger, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
@@ -103,17 +102,13 @@ func TestEdgeHeadersAcrossStack(t *testing.T) {
 	walBacking, err := NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
 	wal := NewWALEngine(badger, walBacking)
-	async := NewAsyncEngine(wal, &AsyncEngineConfig{FlushInterval: time.Hour})
-	// Closing the async engine closes the WAL file under it (#924).
-	t.Cleanup(func() { _ = async.Close() })
-	namespaced := NewNamespacedEngine(async, "ns")
+	namespaced := NewNamespacedEngine(wal, "ns")
 	for _, id := range []NodeID{"a", "b", "c"} {
 		_, err := namespaced.CreateNode(&Node{ID: id, Labels: []string{"N"}})
 		require.NoError(t, err)
 	}
 	require.NoError(t, namespaced.CreateEdge(&Edge{ID: "flushed", StartNode: "a", EndNode: "b", Type: "K"}))
 	require.NoError(t, namespaced.CreateEdge(&Edge{ID: "dropped", StartNode: "a", EndNode: "c", Type: "K"}))
-	require.NoError(t, async.Flush())
 	require.NoError(t, namespaced.DeleteEdge("dropped"))
 	require.NoError(t, namespaced.CreateEdge(&Edge{ID: "staged", StartNode: "a", EndNode: "c", Type: "L"}))
 
@@ -128,7 +123,7 @@ func TestEdgeHeadersAcrossStack(t *testing.T) {
 	walOut, answered, err := wal.OutgoingEdgeHeaders("ns:a")
 	require.NoError(t, err)
 	require.True(t, answered)
-	require.Equal(t, []string{"ns:dropped:K:ns:a->ns:c", "ns:flushed:K:ns:a->ns:b"}, headerSummary(walOut))
+	require.Equal(t, []string{"ns:flushed:K:ns:a->ns:b", "ns:staged:L:ns:a->ns:c"}, headerSummary(walOut))
 	_, answered, err = wal.IncomingEdgeHeaders("ns:b")
 	require.NoError(t, err)
 	require.True(t, answered)
@@ -146,11 +141,6 @@ func TestEdgeHeadersAcrossStack(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, answered)
 	}
-	plainAsync := NewAsyncEngine(plain, &AsyncEngineConfig{FlushInterval: time.Hour})
-	defer plainAsync.Close()
-	_, answered, err = plainAsync.OutgoingEdgeHeaders("ns:a")
-	require.NoError(t, err)
-	require.False(t, answered)
 
 	// Decay below makes every layer decline.
 	badger.SetDecayEnabled(true)
@@ -247,30 +237,6 @@ func TestAdjacencyValueHelpers(t *testing.T) {
 		require.Error(t, eng.setAdjacencyValuesInTxn(txn, &Edge{ID: "test:e", StartNode: "test:unknown", EndNode: "test:b", Type: "K2"}, nil))
 		return nil
 	}))
-}
-
-// The async overlay skips cached relationships that a staged delete hides or
-// a staged update moved to another start node.
-func TestAsyncEdgeHeadersSkipMovedAndDeletedStagedEdges(t *testing.T) {
-	badger, err := NewBadgerEngineInMemory()
-	require.NoError(t, err)
-	defer badger.Close()
-	async := NewAsyncEngine(badger, &AsyncEngineConfig{FlushInterval: time.Hour})
-	defer async.Close()
-	for _, id := range []NodeID{"ns:a", "ns:b", "ns:c"} {
-		_, err := async.CreateNode(&Node{ID: id, Labels: []string{"N"}})
-		require.NoError(t, err)
-	}
-	require.NoError(t, async.CreateEdge(&Edge{ID: "ns:moved", StartNode: "ns:a", EndNode: "ns:c", Type: "K"}))
-	require.NoError(t, async.CreateEdge(&Edge{ID: "ns:kept", StartNode: "ns:a", EndNode: "ns:b", Type: "K"}))
-	async.mu.Lock()
-	async.edgeCache["ns:moved"] = &Edge{ID: "ns:moved", StartNode: "ns:b", EndNode: "ns:c", Type: "K"}
-	async.deleteEdges["ns:kept"] = true
-	async.mu.Unlock()
-	out, answered, err := async.OutgoingEdgeHeaders("ns:a")
-	require.NoError(t, err)
-	require.True(t, answered)
-	require.Empty(t, headerSummary(out))
 }
 
 // A header listed from an adjacency entry equals the relationship's record

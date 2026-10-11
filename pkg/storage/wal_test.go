@@ -3374,16 +3374,11 @@ func TestFullStorageChain_Streaming(t *testing.T) {
 
 	walEngine := NewWALEngine(badgerEngine, wal)
 
-	asyncEngine := NewAsyncEngine(walEngine, &AsyncEngineConfig{
-		FlushInterval: 1 * time.Hour, // Don't auto-flush
-	})
-	defer asyncEngine.Close()
-
 	ctx := context.Background()
 
 	// Create 100 nodes through the full chain
 	for i := 0; i < 100; i++ {
-		_, err := asyncEngine.CreateNode(&Node{
+		_, err := walEngine.CreateNode(&Node{
 			ID:     NodeID(prefixTestID(fmt.Sprintf("chain-node-%d", i))),
 			Labels: []string{"ChainTest"},
 		})
@@ -3392,7 +3387,7 @@ func TestFullStorageChain_Streaming(t *testing.T) {
 
 	t.Run("StreamThroughFullChain", func(t *testing.T) {
 		var count int
-		err := asyncEngine.StreamNodes(ctx, func(node *Node) error {
+		err := walEngine.StreamNodes(ctx, func(node *Node) error {
 			count++
 			return nil
 		})
@@ -3402,7 +3397,7 @@ func TestFullStorageChain_Streaming(t *testing.T) {
 
 	t.Run("EarlyTerminationThroughFullChain", func(t *testing.T) {
 		var count int
-		err := asyncEngine.StreamNodes(ctx, func(node *Node) error {
+		err := walEngine.StreamNodes(ctx, func(node *Node) error {
 			count++
 			if count >= 25 {
 				return ErrIterationStopped
@@ -3413,16 +3408,14 @@ func TestFullStorageChain_Streaming(t *testing.T) {
 		assert.Equal(t, 25, count, "Should stop after 25 nodes")
 	})
 
-	t.Run("StreamAfterFlush", func(t *testing.T) {
-		require.NoError(t, asyncEngine.Flush())
-
+	t.Run("StreamAllCommitted", func(t *testing.T) {
 		var count int
-		err := asyncEngine.StreamNodes(ctx, func(node *Node) error {
+		err := walEngine.StreamNodes(ctx, func(node *Node) error {
 			count++
 			return nil
 		})
 		require.NoError(t, err)
-		assert.Equal(t, 100, count, "Should stream all 100 nodes after flush")
+		assert.Equal(t, 100, count, "Should stream all 100 nodes")
 	})
 }
 
