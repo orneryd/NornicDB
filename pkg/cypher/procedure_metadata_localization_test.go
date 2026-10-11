@@ -235,7 +235,13 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 	ensureBuiltInProceduresRegistered()
 	coreCount := 0
 	apocCount := 0
+	customCount := 0 // apoc.custom.* (#1066), counted apart
 	for _, spec := range globalProcedureRegistry.ListBuiltIns() {
+		if strings.HasPrefix(spec.Name, "apoc.custom.") {
+			customCount++
+			require.Empty(t, spec.DescriptionMessage.ID, "APOC metadata must remain literal: %s", spec.Name)
+			continue
+		}
 		if len(spec.Name) >= len("apoc.") && spec.Name[:len("apoc.")] == "apoc." {
 			apocCount++
 			require.Empty(t, spec.DescriptionMessage.ID, "APOC metadata must remain literal: %s", spec.Name)
@@ -246,7 +252,8 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 		require.Equal(t, spec.Description, spec.DescriptionMessage.Fallback, "English fallback changed: %s", spec.Name)
 	}
 	require.Equal(t, 71, coreCount)
-	require.Equal(t, 35, apocCount) // apoc.path.subgraphAll and expandConfig (#907); apoc.custom.* (#1066)
+	require.Equal(t, 30, apocCount) // apoc.path.subgraphAll and expandConfig (#907)
+	require.Equal(t, 5, customCount)
 }
 
 func TestShowProceduresPreservesUserDefinedLiteralMetadata(t *testing.T) {
