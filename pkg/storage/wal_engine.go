@@ -42,7 +42,7 @@ type WALEngine struct {
 	engine Engine
 	// keyRegistry is engine's PropertyKeyRegistry, nil when it keeps none.
 	keyRegistry PropertyKeyRegistry
-	wal    *WAL
+	wal         *WAL
 	// mutationMu serializes auto-compaction snapshots against in-flight mutating
 	// operations to avoid WAL/engine state skew during snapshot truncation.
 	mutationMu sync.RWMutex
@@ -288,6 +288,13 @@ func NewWALEngine(engine Engine, wal *WAL) *WALEngine {
 		wal:    wal,
 	}
 	w.keyRegistry, _ = engine.(PropertyKeyRegistry)
+	// Give write-behind enabled engines the WAL so buffered commits can be
+	// logged durably before their ACK (OpBufferedCommit replay on crash).
+	if wal != nil {
+		if setter, ok := engine.(interface{ SetBufferedCommitWAL(*WAL) }); ok {
+			setter.SetBufferedCommitWAL(wal)
+		}
+	}
 	// Existing WAL state predates this process's compaction cadence. Treat it
 	// as the baseline so an idle restart does not rewrite the entire database;
 	// the first subsequent mutation advances the sequence and triggers a snapshot.
@@ -435,6 +442,17 @@ func (w *WALEngine) createSnapshotAndCompact() error {
 	// when snapshots happen multiple times within the same second.
 	timestamp := time.Now().Format("20060102-150405.000000000")
 	snapshotPath := filepath.Join(w.snapshotDir, fmt.Sprintf("snapshot-%s.json", timestamp))
+
+	// Flush any acknowledged write-behind commits into Badger before the
+	// snapshot and WAL truncation. A snapshot must never truncate
+	// OpBufferedCommit entries while their data still lives only in the
+	// in-memory buffer: the snapshot reads committed Badger state, and the
+	// truncation would otherwise delete the only durable copy.
+	if flusher, ok := w.engine.(interface{ FlushWriteBehind() error }); ok {
+		if err := flusher.FlushWriteBehind(); err != nil {
+			return fmt.Errorf("failed to flush write-behind before snapshot: %w", err)
+		}
+	}
 
 	if err := SaveStreamingSnapshot(context.Background(), w.engine, snapshotPath, SnapshotOptions{Sequence: snapshotSequence}); err != nil {
 		return fmt.Errorf("failed to save snapshot: %w", err)

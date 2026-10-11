@@ -403,12 +403,29 @@ func (drain propKeyTxnDrain) writeTo(w *batchWriter) error {
 	return nil
 }
 
-// markPersisted records the drained tokens as durable.
+// markPersisted records the drained tokens as durable. It also hydrates the
+// in-memory forward/reverse maps and the per-namespace nextID counter: the
+// normal allocation path already populated them before this runs (so the
+// writes below are idempotent there), but crash recovery replays durable
+// tokens into a fresh dictionary whose in-memory maps are otherwise empty.
 func (d *propertyKeyDictionary) markPersisted(drain propKeyTxnDrain) {
 	d.mu.Lock()
 	for _, entry := range drain.pending {
 		d.ensureNamespace(entry.namespace)
 		d.persisted[entry.namespace][entry.name] = true
+		if _, ok := d.forward[entry.namespace][entry.name]; !ok {
+			d.forward[entry.namespace][entry.name] = entry.id
+		}
+		d.reverse[entry.namespace][entry.id] = entry.name
+		if cur := d.nextID[entry.namespace].Load(); entry.id > cur {
+			d.nextID[entry.namespace].Store(entry.id)
+		}
+	}
+	for namespace, max := range drain.counters {
+		d.ensureNamespace(namespace)
+		if cur := d.nextID[namespace].Load(); max > cur {
+			d.nextID[namespace].Store(max)
+		}
 	}
 	d.mu.Unlock()
 }

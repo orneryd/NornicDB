@@ -858,6 +858,19 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// Wrap storage with WAL for durability
 		walEngine := storage.NewWALEngine(badgerEngine, wal)
 
+		// Replay write-behind commits that were acknowledged into the WAL
+		// but never reached Badger before a crash lost the in-memory
+		// buffer. Runs before any traffic; a no-op when write-behind is
+		// disabled or nothing is pending.
+		if badgerOpts.WriteBehind {
+			if recovered, recErr := storage.RecoverBufferedCommits(badgerEngine, wal); recErr != nil {
+				badgerEngine.Close()
+				return nil, fmt.Errorf("failed to replay buffered commits from WAL: %w", recErr)
+			} else if recovered > 0 {
+				fmt.Printf("♻️  Recovered %d acknowledged write-behind commits from the WAL\n", recovered)
+			}
+		}
+
 		// Enable auto-compaction to prevent unbounded WAL growth
 		// This creates periodic snapshots and truncates the WAL
 		if config.Database.WALAutoCompactionEnabled {

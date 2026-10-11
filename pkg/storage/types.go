@@ -683,8 +683,8 @@ type TemporalMaintenanceEngine interface {
 // Versions are ordered first by committed timestamp, then by a monotonic
 // sequence allocated at commit time to break same-timestamp ties.
 type MVCCVersion struct {
-	CommitTimestamp time.Time
-	CommitSequence  uint64
+	CommitTimestamp time.Time `json:"commit_timestamp"`
+	CommitSequence  uint64    `json:"commit_sequence"`
 }
 
 // IsZero reports whether the version is uninitialized.

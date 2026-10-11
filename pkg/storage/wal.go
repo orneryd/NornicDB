@@ -61,6 +61,15 @@ const (
 	OpTxBegin  OperationType = "tx_begin"  // Marks transaction start
 	OpTxCommit OperationType = "tx_commit" // Marks successful transaction completion
 	OpTxAbort  OperationType = "tx_abort"  // Marks explicit transaction rollback
+
+	// OpBufferedCommit records the full payload of an acknowledged
+	// write-behind commit. It is appended to the WAL before the ACK so a
+	// process crash that loses the in-memory buffer can be recovered by
+	// replaying these entries into Badger at open (see
+	// RecoverBufferedCommits). The entry is written to the kernel page
+	// cache before the ACK (write(2)), so it survives kill -9; power-loss
+	// durability still requires the durable synchronous commit path.
+	OpBufferedCommit OperationType = "buffered_commit"
 )
 
 // Common WAL errors
@@ -209,6 +218,56 @@ type WALTxData struct {
 	Metadata map[string]string `json:"metadata,omitempty"` // Optional transaction metadata
 	Reason   string            `json:"reason,omitempty"`   // For abort: why was it aborted
 	OpCount  int               `json:"op_count,omitempty"` // For commit: number of operations
+}
+
+// WALPropKeyEntry is one staged property-key dictionary token of a buffered
+// commit. Replay must persist these before materializing the commit, or the
+// tokenized node/edge bodies reference property-key IDs the fresh engine's
+// dictionary does not know.
+type WALPropKeyEntry struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	ID        uint64 `json:"id"`
+}
+
+// WALBufferedCommitData is the durable payload of one acknowledged
+// write-behind commit. It carries everything applyBufferedCommits needs to
+// replay the commit into Badger after a crash loses the in-memory buffer.
+//
+// The count deltas are deliberately not serialized: they are rebuilt from
+// committed entities after replay (crash recovery is rare, so the full
+// rebuild is acceptable).
+type WALBufferedCommitData struct {
+	TxID        string            `json:"tx_id"`
+	Namespace   string            `json:"namespace,omitempty"`
+	Ops         []Operation       `json:"ops"`
+	Writes      map[string][]byte `json:"writes,omitempty"`
+	Deletes     []string          `json:"deletes,omitempty"`
+	Version     MVCCVersion       `json:"version"`
+	NodeMax     uint64            `json:"node_max,omitempty"`
+	EdgeMax     uint64            `json:"edge_max,omitempty"`
+	HasCounters bool              `json:"has_counters,omitempty"`
+
+	// PropKeys / PropKeyCounters are the property-key dictionary tokens the
+	// commit staged; replay persists them before materializing the bodies.
+	PropKeys        []WALPropKeyEntry `json:"prop_keys,omitempty"`
+	PropKeyCounters map[string]uint64 `json:"prop_key_counters,omitempty"`
+}
+
+// propKeyDrain reconstructs the staged property-key dictionary drain the
+// buffered commit carried at ACK time.
+func (d *WALBufferedCommitData) propKeyDrain() propKeyTxnDrain {
+	var out propKeyTxnDrain
+	if len(d.PropKeys) > 0 {
+		out.pending = make([]propKeyPersistEntry, 0, len(d.PropKeys))
+		for _, entry := range d.PropKeys {
+			out.pending = append(out.pending, propKeyPersistEntry{namespace: entry.Namespace, name: entry.Name, id: entry.ID})
+		}
+	}
+	if len(d.PropKeyCounters) > 0 {
+		out.counters = d.PropKeyCounters
+	}
+	return out
 }
 
 // WALConfig configures WAL behavior.
@@ -633,6 +692,118 @@ func (w *WAL) AppendTxAbort(database, txID, reason string) (uint64, error) {
 		TxID:   txID,
 		Reason: reason,
 	}, database)
+}
+
+// AppendBufferedCommit writes the full payload of an acknowledged
+// write-behind commit to the WAL and pushes it to the kernel page cache
+// (write(2)) before returning, so the ACK never outruns the record that
+// survives kill -9. It deliberately skips fsync: power-loss durability
+// remains the durable synchronous path's contract.
+func (w *WAL) AppendBufferedCommit(c *bufferedCommit) error {
+	if w == nil || c == nil {
+		return nil
+	}
+	data := WALBufferedCommitData{
+		TxID:        c.txID,
+		Namespace:   c.namespace,
+		Ops:         c.ops,
+		Writes:      c.writes,
+		Version:     c.version,
+		NodeMax:     c.counterNodeMax,
+		EdgeMax:     c.counterEdgeMax,
+		HasCounters: c.hasCounters,
+	}
+	if len(c.deletes) > 0 {
+		data.Deletes = make([]string, 0, len(c.deletes))
+		for key := range c.deletes {
+			data.Deletes = append(data.Deletes, key)
+		}
+	}
+	if !c.propKeyDrain.empty() {
+		if len(c.propKeyDrain.pending) > 0 {
+			data.PropKeys = make([]WALPropKeyEntry, 0, len(c.propKeyDrain.pending))
+			for _, entry := range c.propKeyDrain.pending {
+				data.PropKeys = append(data.PropKeys, WALPropKeyEntry{Namespace: entry.namespace, Name: entry.name, ID: entry.id})
+			}
+		}
+		data.PropKeyCounters = c.propKeyDrain.counters
+	}
+	if _, err := w.appendWithDatabaseForcedFlush(OpBufferedCommit, &data, c.namespace); err != nil {
+		return fmt.Errorf("wal: failed to log buffered commit %q: %w", c.txID, err)
+	}
+	return nil
+}
+
+// appendWithDatabaseForcedFlush is AppendWithDatabaseReturningSeq with one
+// difference: it flushes the userspace buffer to the kernel after the write,
+// regardless of DeferAppendFlush, so a crash cannot lose the record from the
+// userspace buffer before the ACK.
+func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, database string) (uint64, error) {
+	if !config.IsWALEnabled() {
+		return 0, nil
+	}
+	if w.closed.Load() {
+		return 0, ErrWALClosed
+	}
+	if op != OpBufferedCommit {
+		return w.AppendWithDatabaseReturningSeq(op, data, database)
+	}
+
+	dataBuf := walJSONBufPool.Get().(*bytes.Buffer)
+	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
+	defer walJSONBufPool.Put(dataBuf)
+	defer walJSONBufPool.Put(entryBuf)
+
+	dataBytes, err := marshalJSONCompact(dataBuf, data)
+	if err != nil {
+		return 0, fmt.Errorf("wal: failed to marshal data: %w", err)
+	}
+
+	seq := w.sequence.Add(1)
+	entry := WALEntry{
+		Sequence:  seq,
+		Timestamp: time.Now(),
+		Operation: op,
+		Data:      dataBytes,
+		Checksum:  crc32Checksum(dataBytes),
+		Database:  database,
+	}
+
+	w.mu.Lock()
+	entryBytes, err := marshalJSONCompact(entryBuf, &entry)
+	if err != nil {
+		w.mu.Unlock()
+		return 0, fmt.Errorf("wal: failed to serialize entry: %w", err)
+	}
+	alignedRecordLen, err := writeAtomicRecordV2Bufio(w.writer, entryBytes)
+	if err != nil {
+		w.mu.Unlock()
+		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
+	}
+	w.entries.Add(1)
+	w.bytes.Add(alignedRecordLen)
+	w.totalWrites.Add(1)
+	w.lastEntryTime.Store(time.Now().UnixNano())
+	if w.segmentEntries == 0 {
+		w.segmentFirstSeq = seq
+		w.segmentCreatedAt = entry.Timestamp
+	}
+	w.segmentEntries++
+	w.segmentBytes += alignedRecordLen
+
+	// Forced write(2): the record must be in the kernel page cache before
+	// the caller acknowledges, even when DeferAppendFlush is set.
+	if flushErr := w.writer.Flush(); flushErr != nil {
+		w.mu.Unlock()
+		return 0, fmt.Errorf("wal: flush failed: %w", flushErr)
+	}
+
+	if rotateErr := w.maybeRotateLocked(seq); rotateErr != nil {
+		w.mu.Unlock()
+		return 0, rotateErr
+	}
+	w.mu.Unlock()
+	return seq, nil
 }
 
 // Sync flushes all buffered writes to disk.
@@ -2110,6 +2281,41 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 			ids[i] = EdgeID(id)
 		}
 		return namespacedEngine.BulkDeleteEdges(ids)
+
+	case OpBufferedCommit:
+		// A write-behind commit's full payload. Replay it through the same
+		// commit application path the flusher uses, so MVCC heads, ID
+		// counters, indexes and caches all land identically. Only
+		// BadgerEngine destinations support this; anything else skips.
+		var data WALBufferedCommitData
+		if err := json.Unmarshal(entry.Data, &data); err != nil {
+			return fmt.Errorf("wal: failed to unmarshal buffered commit: %w", err)
+		}
+		b, ok := baseEngine.(*BadgerEngine)
+		if !ok || b == nil {
+			return fmt.Errorf("wal: buffered commit replay requires a BadgerEngine destination, got %T", baseEngine)
+		}
+		if len(data.Ops) == 0 && len(data.Writes) == 0 && len(data.Deletes) == 0 {
+			return nil
+		}
+		c := bufferedCommit{
+			namespace:      data.Namespace,
+			txID:           data.TxID,
+			ops:            data.Ops,
+			writes:         data.Writes,
+			version:        data.Version,
+			counterNodeMax: data.NodeMax,
+			counterEdgeMax: data.EdgeMax,
+			hasCounters:    data.HasCounters,
+			propKeyDrain:   data.propKeyDrain(),
+		}
+		if len(data.Deletes) > 0 {
+			c.deletes = make(map[string]bool, len(data.Deletes))
+			for _, key := range data.Deletes {
+				c.deletes[key] = true
+			}
+		}
+		return b.applyBufferedCommits([]bufferedCommit{c})
 
 	case OpCheckpoint:
 		// Checkpoints are markers, no action needed

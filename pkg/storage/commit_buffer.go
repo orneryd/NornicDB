@@ -42,6 +42,7 @@ type bufferedMutation struct {
 // writes/deletes, namespace, and staged ID-counter high-water marks.
 type bufferedCommit struct {
 	namespace string
+	txID      string // transaction ID, used for the WAL buffered-commit payload and flush marker
 	ops       []Operation
 	writes    map[string][]byte
 	deletes   map[string]bool

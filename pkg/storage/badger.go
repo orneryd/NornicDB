@@ -46,6 +46,7 @@ const (
 	prefixMVCCOutgoingAdj  = byte(0x23) // mvcc_outgoing:nodeNum:edgeNum:version -> adjacency membership tombstone/live
 	prefixMVCCIncomingAdj  = byte(0x24) // mvcc_incoming:nodeNum:edgeNum:version -> adjacency membership tombstone/live
 	prefixMVCCPruneFloor   = byte(0x25) // pruned historical floor:kind:numID -> MVCCVersion
+	prefixBufferedFlush    = byte(0x13) // buffered_flush:txID -> []byte{} (write-behind commit reached Badger)
 )
 
 // prefixMVCCMeta subkeys reserved by storage metadata records.
@@ -195,6 +196,13 @@ type BadgerEngine struct {
 	// writeBehind buffers implicit autocommit commits for background replay
 	// (see badger_write_behind.go). Nil when disabled.
 	writeBehind *WriteBehindBuffer
+
+	// bufferedCommitWAL, when set, receives the full payload of every
+	// acknowledged write-behind commit before the ACK (see
+	// commitBufferedLocked). The WALEngine installs it at construction.
+	// Writes are guarded by the WAL's own mutex; the pointer is set once
+	// before the engine serves traffic.
+	bufferedCommitWAL *WAL
 
 	// migrationDidRun is set by RunOnStartMigrations when at least one
 	// migration arm rewrote bodies. The engine open path uses it to

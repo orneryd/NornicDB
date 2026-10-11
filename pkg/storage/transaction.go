@@ -73,22 +73,24 @@ const (
 
 // Operation represents a single operation within a transaction.
 // Used by BadgerTransaction to track operations for constraint validation.
+// It is also JSON-serialized into the WAL buffered-commit payload, so every
+// field carries a tag.
 type Operation struct {
-	Type      OperationType
-	Timestamp time.Time
+	Type      OperationType `json:"type"`
+	Timestamp time.Time     `json:"timestamp,omitempty"`
 
 	// For node operations
-	NodeID  NodeID
-	Node    *Node // New state (for create/update) or nil
-	OldNode *Node // Old state (for update/delete rollback)
+	NodeID  NodeID `json:"node_id,omitempty"`
+	Node    *Node  `json:"node,omitempty"`     // New state (for create/update) or nil
+	OldNode *Node  `json:"old_node,omitempty"` // Old state (for update/delete rollback)
 	// For delete operations that cascade (e.g., DeleteNode deletes edges).
-	EdgesDeleted   int64
-	DeletedEdgeIDs []EdgeID
+	EdgesDeleted   int64    `json:"edges_deleted,omitempty"`
+	DeletedEdgeIDs []EdgeID `json:"deleted_edge_ids,omitempty"`
 
 	// For edge operations
-	EdgeID  EdgeID
-	Edge    *Edge // New state (for create/update) or nil
-	OldEdge *Edge // Old state (for update/delete rollback)
+	EdgeID  EdgeID `json:"edge_id,omitempty"`
+	Edge    *Edge  `json:"edge,omitempty"`     // New state (for create/update) or nil
+	OldEdge *Edge  `json:"old_edge,omitempty"` // Old state (for update/delete rollback)
 
 	// FreshID is set on OpCreateNode / OpCreateEdge when the caller asserted
 	// the ID is newly minted and cannot collide with any prior tombstoned
@@ -97,7 +99,7 @@ type Operation struct {
 	// load-existing-floor round-trip. Safe default is false — the commit
 	// loop falls back to the read-before-write path, preserving snapshot
 	// semantics for recreated user-supplied IDs.
-	FreshID bool
+	FreshID bool `json:"fresh_id,omitempty"`
 }
 
 // Transaction is the public closure-facing transaction type used by DB.Update and DB.View.

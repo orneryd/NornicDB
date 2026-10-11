@@ -17,6 +17,46 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
+// SetBufferedCommitWAL installs the WAL that receives the durable payload of
+// every acknowledged write-behind commit. It is called once, at construction,
+// by NewWALEngine before the engine serves traffic.
+func (b *BadgerEngine) SetBufferedCommitWAL(w *WAL) {
+	b.bufferedCommitWAL = w
+}
+
+// bufferedFlushKey is the Badger key that marks one write-behind commit as
+// having reached Badger. It is written inside the same transaction that
+// applies the generation's data, so the marker is durable exactly when the
+// data is — replay at open skips any commit whose marker exists.
+func bufferedFlushKey(txID string) []byte {
+	key := make([]byte, 0, 1+len(txID))
+	key = append(key, prefixBufferedFlush)
+	key = append(key, txID...)
+	return key
+}
+
+// bufferedFlushMarkerExists reports whether a buffered commit's data has
+// already been applied to Badger (marker present).
+func (b *BadgerEngine) bufferedFlushMarkerExists(txID string) (bool, error) {
+	if txID == "" {
+		return false, nil
+	}
+	key := bufferedFlushKey(txID)
+	exists := false
+	err := b.withView(func(txn *badger.Txn) error {
+		_, err := txn.Get(key)
+		if err == badger.ErrKeyNotFound {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		exists = true
+		return nil
+	})
+	return exists, err
+}
+
 // commitBufferedLocked captures the transaction's validated, materialized
 // commit state into the engine's write-behind buffer and closes the
 // transaction as committed without writing to Badger. The caller has already
@@ -41,6 +81,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	// the backing arrays are exclusively consumed by the buffer from here.
 	c := bufferedCommit{
 		namespace: tx.namespace,
+		txID:      tx.ID,
 		ops:       physicalOps,
 		writes:    tx.pendingWrites,
 		deletes:   tx.pendingDeletes,
@@ -66,6 +107,23 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	c.labelDeltas = tx.pendingLabelCountDeltas
 	c.edgeTypeDeltas = tx.pendingEdgeTypeCountDeltas
 	c.edgeTypeLabelDeltas = tx.pendingEdgeTypeLabelCountDeltas
+
+	// Durability boundary: write the commit's full payload to the WAL and
+	// push it to the kernel page cache BEFORE acknowledging. If the process
+	// is killed before the background flusher lands the generation, the WAL
+	// still holds every acknowledged write and RecoverBufferedCommits
+	// replays it at the next open. write(2), not fsync: this closes the
+	// kill -9 loss window without reintroducing the per-commit fsync the
+	// buffer exists to avoid; power-loss durability remains the durable
+	// synchronous path's contract.
+	if tx.engine.bufferedCommitWAL != nil {
+		if err := tx.engine.bufferedCommitWAL.AppendBufferedCommit(&c); err != nil {
+			// The ACK must never outrun the durable record: failing to log
+			// the payload fails the commit.
+			tx.closeLocked(TxStatusRolledBack, true, nil)
+			return err
+		}
+	}
 
 	tx.releaseSnapshotReaderLocked()
 	tx.bufferedStagingTransferred = true
@@ -101,12 +159,28 @@ func (b *BadgerEngine) persistReplayTxnCounters(cw *commitWriter, drain propKeyT
 	return nil
 }
 
-// replayWriteBehind replays one drained generation into Badger: a single
-// Badger transaction applies every buffered statement's physical operations
-// and raw KV writes, then the commit tail runs (MVCC sequence persistence,
-// ID counters, derived counts, caches, callbacks).
+// replayWriteBehind replays one drained generation into Badger. It marks
+// the generation applied on success so the buffer retires it.
 func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 	commits := buf.Commits()
+	if len(commits) == 0 {
+		return nil
+	}
+	if err := b.applyBufferedCommits(commits); err != nil {
+		return err
+	}
+	buf.markApplied()
+	return nil
+}
+
+// applyBufferedCommits replays buffered commits into Badger: a single Badger
+// transaction applies every buffered statement's physical operations and raw
+// KV writes, then the commit tail runs (MVCC sequence persistence, ID
+// counters, derived counts, caches, callbacks). Before the transaction
+// commits it also writes each commit's flush marker key, so the marker is
+// durable exactly when the data is — recovery at open skips any commit whose
+// marker exists.
+func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
 	if len(commits) == 0 {
 		return nil
 	}
@@ -186,6 +260,15 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 			key := []byte(keyStr)
 			val := value
 			if err := w.write(func(t *badger.Txn) error { return t.Set(key, val) }); err != nil {
+				return abort(err)
+			}
+		}
+		// Flush marker rides the same transaction as the data: its presence
+		// in Badger means the commit's writes are committed, so recovery
+		// replay can treat marker-present as already-applied.
+		if c.txID != "" {
+			markerKey := bufferedFlushKey(c.txID)
+			if err := w.write(func(t *badger.Txn) error { return t.Set(markerKey, nil) }); err != nil {
 				return abort(err)
 			}
 		}
@@ -274,7 +357,6 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 	// derived-count fast paths hold these same locks, so they observe
 	// either the persisted deltas AND the applied flag, or neither —
 	// never the persisted deltas while the buffer still sums them.
-	buf.markApplied()
 	if holdEdge {
 		b.edgeTypeCountWriteMu.Unlock()
 	}
