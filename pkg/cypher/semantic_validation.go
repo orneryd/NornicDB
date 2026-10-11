@@ -39,7 +39,12 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 		return err
 	}
 	if cached {
-		return nil
+		// A canonical hit shared the compile verdict with a sibling that
+		// differs only in literal values, but SKIP / LIMIT bounds are
+		// value-dependent: LIMIT 2-3 and LIMIT 5-1 share one canonical form,
+		// yet only the latter is a non-negative integer. Re-evaluate them on
+		// this text before returning (monster retest part 3).
+		return e.validateStaticPaginationExpressions(cypher)
 	}
 	if err := e.validateCallSubqueryScopes(cypher); err != nil {
 		return err

@@ -157,3 +157,34 @@ func TestCanonicalCacheDoesNotMaskHexOverflow(t *testing.T) {
 	assertIntegerOverflow("RETURN 0x8000000000000000 AS literal")
 	assertIntegerOverflow("RETURN -0x8000000000000001 AS literal")
 }
+
+// TestCanonicalCacheDoesNotMaskInvalidPagination pins monster's retest part 3:
+// SKIP / LIMIT bounds are value-dependent, so a valid sibling's canonical
+// verdict must not suppress the rejection of a negative or non-integer bound
+// that shares the same canonical form.
+func TestCanonicalCacheDoesNotMaskInvalidPagination(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "pagination"))
+	ctx := context.Background()
+
+	// Warm the canonical form with a valid bound, then probe an invalid one
+	// that normalizes to the same form.
+	warm := []string{
+		"UNWIND range(1, 10) AS x RETURN x LIMIT 5-1",
+		"UNWIND range(1, 10) AS x RETURN x SKIP 5-1",
+		"UNWIND range(1, 10) AS x RETURN x LIMIT toInteger('3')",
+	}
+	probes := []string{
+		"UNWIND range(1, 10) AS x RETURN x LIMIT 2-3",
+		"UNWIND range(1, 10) AS x RETURN x SKIP 2-3",
+		"UNWIND range(1, 10) AS x RETURN x LIMIT toInteger('x')",
+	}
+	for _, q := range warm {
+		res, err := exec.Execute(ctx, q, nil)
+		require.NoError(t, err, "warm-up %q", q)
+		require.NotEmpty(t, res.Rows, "warm-up %q must return rows", q)
+	}
+	for _, q := range probes {
+		_, err := exec.Execute(ctx, q, nil)
+		require.Error(t, err, "probe %q must fail after the warm-up", q)
+	}
+}

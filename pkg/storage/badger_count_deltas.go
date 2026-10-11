@@ -164,80 +164,137 @@ func (b *BadgerEngine) hasAnyCountDeltasInDB(kind byte) (bool, error) {
 	return found, err
 }
 
-// foldCountDeltasInTxn collapses the persisted deltas of one namespace/name
-// pair into the base key. The caller must hold the owning count mutex
-// (labelCountWriteMu or edgeTypeCountWriteMu) so folds and rebuilds never
-// rewrite the base key concurrently. An underflowing sum is an error, as the
-// read-modify-write adjuster used to report it.
-func (b *BadgerEngine) foldCountDeltasInTxn(txn *badger.Txn, kind byte, baseKey func(string, string) []byte, namespace, name string) error {
-	sum, _, err := sumCountDeltasInTxn(txn, kind, namespace, name)
-	if err != nil {
-		return err
+// countDeltaFoldChunk bounds how many delta keys one fold transaction may
+// touch, so a large backlog (a single-statement corpus replay leaves one
+// delta key per commit, hundreds of thousands for one label or type) never
+// overflows one Badger batch (ErrTxnTooBig).
+const countDeltaFoldChunk = 10000
+
+// countDeltaKeyParts splits a delta key of one kind into its namespace and
+// name. ok is false for a malformed key.
+func countDeltaKeyParts(key []byte) (namespace, name string, ok bool) {
+	if len(key) < 3 {
+		return "", "", false
 	}
-	if sum == 0 {
-		return nil
+	sep := bytesIndexByte(key[2:], 0)
+	if sep < 0 {
+		return "", "", false
 	}
-	base, err := readDerivedCountInTxn(txn, baseKey(namespace, name))
-	if err != nil {
-		return err
+	nameSep := bytesIndexByte(key[2+sep+1:], 0)
+	if nameSep < 0 {
+		return "", "", false
 	}
-	next := base + sum
-	if next < 0 {
-		return fmt.Errorf("derived count underflow for %s:%s", namespace, name)
-	}
-	prefix := countDeltaPrefixFor(kind, namespace, name)
-	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-	for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-		key := it.Item().KeyCopy(nil)
-		if err := txn.Delete(key); err != nil {
-			it.Close()
-			return err
-		}
-	}
-	it.Close()
-	if next == 0 {
-		return txn.Delete(baseKey(namespace, name))
-	}
-	return txn.Set(baseKey(namespace, name), encodeDerivedCount(next))
+	return string(key[2 : 2+sep]), string(key[2+sep+1 : 2+sep+1+nameSep]), true
 }
 
-// foldAllCountDeltasInTxn collapses every persisted delta of one kind. It is
-// used at engine open so no delta survives a restart.
-func (b *BadgerEngine) foldAllCountDeltasInTxn(txn *badger.Txn, kind byte, baseKey func(string, string) []byte) error {
-	type pair struct {
-		namespace string
-		name      string
-	}
-	var pairs []pair
-	prefix := countDeltaAllPrefix(kind)
-	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-	for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-		key := it.Item().KeyCopy(nil)
-		sep := bytesIndexByte(key[2:], 0)
-		if sep < 0 {
-			continue
+// foldCountDeltaKeys folds one bounded set of delta keys into their base keys
+// in a single transaction run through run. Each chunk is atomic: it sums and
+// deletes exactly the keys it was handed and adds the chunk sums to the base
+// keys, so a crash between chunks leaves the remaining deltas to fold at the
+// next open (or the next read past the fold threshold). Keys are collected
+// up front, so a delta appended by a concurrent commit after collection is
+// never deleted without being summed.
+func (b *BadgerEngine) foldCountDeltaKeys(run func(func(*badger.Txn) error) error, baseKey func(string, string) []byte, keys [][]byte) error {
+	sums := make(map[namespaceLabel]int64)
+	return run(func(txn *badger.Txn) error {
+		for _, key := range keys {
+			ns, name, ok := countDeltaKeyParts(key)
+			if !ok {
+				continue
+			}
+			item, err := txn.Get(key)
+			if err == badger.ErrKeyNotFound {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			var delta int64
+			if err := item.Value(func(val []byte) error {
+				var decodeErr error
+				delta, decodeErr = decodeCountDelta(val)
+				return decodeErr
+			}); err != nil {
+				return err
+			}
+			sums[namespaceLabel{namespace: ns, label: name}] += delta
+			if err := txn.Delete(key); err != nil {
+				return err
+			}
 		}
-		nameSep := bytesIndexByte(key[2+sep+1:], 0)
-		if nameSep < 0 {
-			continue
+		for p, sum := range sums {
+			if sum == 0 {
+				continue
+			}
+			base, err := readDerivedCountInTxn(txn, baseKey(p.namespace, p.label))
+			if err != nil {
+				return err
+			}
+			next := base + sum
+			if next < 0 {
+				return fmt.Errorf("derived count underflow for %s:%s", p.namespace, p.label)
+			}
+			if next == 0 {
+				if err := txn.Delete(baseKey(p.namespace, p.label)); err != nil {
+					return err
+				}
+			} else if err := txn.Set(baseKey(p.namespace, p.label), encodeDerivedCount(next)); err != nil {
+				return err
+			}
 		}
-		pairs = append(pairs, pair{
-			namespace: string(key[2 : 2+sep]),
-			name:      string(key[2+sep+1 : 2+sep+1+nameSep]),
-		})
-	}
-	it.Close()
-	seen := make(map[pair]struct{}, len(pairs))
-	for _, p := range pairs {
-		if _, ok := seen[p]; ok {
-			continue
+		return nil
+	})
+}
+
+// foldCountDeltaKeysChunked folds keys in bounded transactions.
+func (b *BadgerEngine) foldCountDeltaKeysChunked(run func(func(*badger.Txn) error) error, baseKey func(string, string) []byte, keys [][]byte) error {
+	for start := 0; start < len(keys); start += countDeltaFoldChunk {
+		end := start + countDeltaFoldChunk
+		if end > len(keys) {
+			end = len(keys)
 		}
-		seen[p] = struct{}{}
-		if err := b.foldCountDeltasInTxn(txn, kind, baseKey, p.namespace, p.name); err != nil {
+		if err := b.foldCountDeltaKeys(run, baseKey, keys[start:end]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// foldCountDeltasOn collapses the persisted deltas of one namespace/name pair
+// (or every delta of one kind when namespace is empty) in bounded
+// transactions. view and run supply the read and write transaction runners so
+// the same kernel serves engine paths (b.withView / b.withUpdate) and the
+// post-close raw-handle path.
+func (b *BadgerEngine) foldCountDeltasOn(view func(func(*badger.Txn) error) error, run func(func(*badger.Txn) error) error, kind byte, baseKey func(string, string) []byte, namespace, name string) error {
+	var keys [][]byte
+	if err := view(func(txn *badger.Txn) error {
+		var prefix []byte
+		if namespace == "" {
+			prefix = countDeltaAllPrefix(kind)
+		} else {
+			prefix = countDeltaPrefixFor(kind, namespace, name)
+		}
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		defer it.Close()
+		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+			keys = append(keys, it.Item().KeyCopy(nil))
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return b.foldCountDeltaKeysChunked(run, baseKey, keys)
+}
+
+// foldCountDeltasChunked collapses the persisted deltas of one
+// namespace/name pair in bounded transactions. It replaces the single-
+// transaction fold for reads past the fold threshold, where a single pair
+// may hold hundreds of thousands of deltas.
+func (b *BadgerEngine) foldCountDeltasChunked(kind byte, baseKey func(string, string) []byte, namespace, name string) error {
+	return b.foldCountDeltasOn(b.withView, b.withUpdate, kind, baseKey, namespace, name)
 }
 
 // readDerivedCountInTxn reads one persisted base count (0 when absent).

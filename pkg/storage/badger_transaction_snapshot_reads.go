@@ -500,6 +500,27 @@ func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection)
 	if tx.readTS.IsZero() || tx.snapshotDeregister == nil || tx.engine.decayEnabled && !tx.engine.revealAll.Load() {
 		return nil, false, nil
 	}
+	if tx.engine.writeBehind != nil {
+		// Read-committed: buffered edges are invisible to the pinned snapshot,
+		// so answer from the engine's overlaid header read instead
+		// (PR #1043 read-overlay parity).
+		var committed []*Edge
+		var err error
+		if direction == Outgoing {
+			committed, _, err = tx.engine.OutgoingEdgeHeaders(nodeID)
+		} else {
+			committed, _, err = tx.engine.IncomingEdgeHeaders(nodeID)
+		}
+		if err != nil {
+			return nil, true, err
+		}
+		return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
+			if direction == Outgoing {
+				return edge.StartNode == nodeID
+			}
+			return edge.EndNode == nodeID
+		}), true, nil
+	}
 	committed, err := tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, true)
 	if err != nil {
 		return nil, true, err

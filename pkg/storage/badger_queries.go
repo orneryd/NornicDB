@@ -1211,6 +1211,41 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 	if b.decayEnabled && !b.revealAll.Load() {
 		return nil, false, nil
 	}
+	if b.writeBehind != nil {
+		// Fold the write-behind overlay into the header list so a node's
+		// unnamed-relationship expansion sees acknowledged-but-unflushed edges
+		// (PR #1043 read-overlay parity; monster retest part 1).
+		live, suppressed, nodeDeleted := b.writeBehind.EdgeAdjacencyOverlay(nodeID, outgoing)
+		if nodeDeleted {
+			return nil, true, nil
+		}
+		committed, answered, err := b.edgeHeadersCommitted(nodeID, outgoing)
+		if err != nil || !answered {
+			return committed, answered, err
+		}
+		if len(suppressed) > 0 {
+			filtered := committed[:0]
+			for _, e := range committed {
+				if _, dead := suppressed[e.ID]; dead {
+					continue
+				}
+				filtered = append(filtered, e)
+			}
+			committed = filtered
+		}
+		for _, e := range live {
+			copyEdge := *e
+			committed = append(committed, &copyEdge)
+		}
+		return committed, true, nil
+	}
+	return b.edgeHeadersCommitted(nodeID, outgoing)
+}
+
+func (b *BadgerEngine) edgeHeadersCommitted(nodeID NodeID, outgoing bool) ([]*Edge, bool, error) {
+	if nodeID == "" {
+		return nil, true, ErrInvalidID
+	}
 	nodeNum, ok := b.idDict.lookupNodeNumID(nodeID)
 	if !ok {
 		return nil, true, nil

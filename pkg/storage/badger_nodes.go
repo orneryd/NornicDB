@@ -230,6 +230,18 @@ func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered
 	if id == "" || b.decayEnabled && !b.revealAll.Load() || b.ensureOpen() != nil {
 		return false, false
 	}
+	// Write-behind overlay: a buffered-but-unflushed node is committed and
+	// therefore a visible traversal endpoint; a buffered delete hides it
+	// (PR #1043 read-overlay parity — anonymous-endpoint traversal must see
+	// buffered nodes, monster retest part 1).
+	if b.writeBehind != nil {
+		if b.writeBehind.NodeDeleted(id) {
+			return false, true
+		}
+		if _, ok := b.writeBehind.LookupNode(id); ok {
+			return true, true
+		}
+	}
 	b.nodeCacheMu.RLock()
 	_, cached := b.nodeCache[id]
 	b.nodeCacheMu.RUnlock()

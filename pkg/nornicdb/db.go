@@ -883,6 +883,17 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		} else {
 			fmt.Printf("📂 Using persistent storage at %s (WAL enabled, batch sync: %v)\n", dataDir, walConfig.BatchSyncInterval)
 		}
+		// One greppable line that says exactly which commit path writes take:
+		// the write-behind buffer ACKs in memory and replays in the
+		// background, durable sync commits go straight to Badger. This is the
+		// line to check when a benchmark run isn't showing the write-behind
+		// speedup — if it says OFF, the async-writes option never reached the
+		// engine (PR #1043 retest part 3 diagnosis).
+		if badgerOpts.WriteBehind {
+			fmt.Printf("⚡ Write-behind buffer: ON (auto-sizing, flush interval %v)\n", badgerOpts.WriteBehindInterval)
+		} else {
+			fmt.Printf("⚡ Write-behind buffer: OFF (durable synchronous commits)\n")
+		}
 
 		// Track the underlying storage chain so Close() can release Badger directory locks.
 		db.baseStorage = baseStorage

@@ -2777,7 +2777,11 @@ func (tx *BadgerTransaction) Commit() error {
 			)
 		}
 	}
-	tx.releaseEdgeTypeCountLockLocked()
+	// Do NOT release edgeTypeCountWriteMu here: the positional (label, type)
+	// counters are still read-modify-write (they were not converted to blind
+	// delta keys in PR #1043 item #2) and are applied below under the lock.
+	// Releasing first let concurrent commits run the positional update without
+	// the lock, causing Badger conflicts, a rebuild storm, and ~2x counts.
 
 	// Persist the namespace's MVCC sequence and the staged ID
 	// accumulated deltas only after the entity and index writes commit,
@@ -3231,15 +3235,18 @@ func (tx *BadgerTransaction) getCommittedEdgeLocked(edgeID EdgeID) (*Edge, error
 // Read paths (GetEdge) are intentionally untouched — snapshot isolation
 // still hides peer commits from reads.
 func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Edge, error) {
-	// Write-behind overlay: a buffered edge is live at latest-committed
-	// state, so a writer sees it exactly like a peer's post-begin commit.
+	// Write-behind overlay: a buffered-but-unflushed edge is committed and
+	// read-committed-visible, exactly as getCommittedEdgeLocked reports it.
+	// Updating it is therefore not a write-write conflict — it is the same
+	// latest-committed state the update read from (monster retest part 1,
+	// "SET on a buffered relationship fails with a conflict").
 	if tx.engine != nil {
 		if wb := tx.engine.writeBehind; wb != nil {
 			if wb.EdgeDeleted(edgeID) {
 				return nil, ErrNotFound
 			}
-			if _, ok := wb.LookupEdge(edgeID); ok {
-				return nil, localizedError(localization.StorageTransactionEdgeChanged(string(edgeID)), ErrConflict)
+			if edge, ok := wb.LookupEdge(edgeID); ok {
+				return copyEdge(edge), nil
 			}
 		}
 	}

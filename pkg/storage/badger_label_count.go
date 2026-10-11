@@ -347,9 +347,7 @@ func (b *BadgerEngine) countLabelIndexEntriesInNamespace(namespace, label string
 func (b *BadgerEngine) foldLabelCountDeltas(namespace, label string) error {
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
-	return b.withUpdate(func(txn *badger.Txn) error {
-		return b.foldCountDeltasInTxn(txn, countDeltaKindLabel, labelCountKey, namespace, label)
-	})
+	return b.foldCountDeltasChunked(countDeltaKindLabel, labelCountKey, namespace, label)
 }
 
 // foldAllLabelCountDeltas collapses every persisted label-count delta at
@@ -363,9 +361,7 @@ func (b *BadgerEngine) foldAllLabelCountDeltas() error {
 	}
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
-	return b.withUpdate(func(txn *badger.Txn) error {
-		return b.foldAllCountDeltasInTxn(txn, countDeltaKindLabel, labelCountKey)
-	})
+	return b.foldCountDeltasOn(b.withView, b.withUpdate, countDeltaKindLabel, labelCountKey, "", "")
 }
 
 func (b *BadgerEngine) NodeCountByLabel(label string) (int64, error) {

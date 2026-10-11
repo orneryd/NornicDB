@@ -62,6 +62,9 @@
 #   SKIP_LADYBUG=1          skip the embedded LadybugDB run (no library download).
 #
 # CLI flags (for testing a single engine without running the rest of the sweep):
+#   --nornic-only           run only the NornicDB phase (single "nornic" parser
+#                           mode unless NORNIC_PARSER_MODES says otherwise);
+#                           useful for iterating on seed/ingest performance
 #   --falkor-only           run only the FalkorDB phase
 #   --memgraph-only         run only the Memgraph phase
 #   --ladybug-only          run only the embedded LadybugDB phase
@@ -155,6 +158,7 @@ SKIP_LADYBUG="${SKIP_LADYBUG:-0}"
 ONLY_ENGINE=""
 for arg in "$@"; do
   case "${arg}" in
+    --nornic-only)   ONLY_ENGINE="nornic" ;;
     --falkor-only)   ONLY_ENGINE="falkor" ;;
     --memgraph-only) ONLY_ENGINE="memgraph" ;;
     --ladybug-only)  ONLY_ENGINE="ladybug" ;;
@@ -163,12 +167,20 @@ for arg in "$@"; do
   esac
 done
 if [[ -n "${ONLY_ENGINE}" ]]; then
-  NORNIC_PARSER_MODES=""
+  # NornicDB is the only engine whose "phase" is a parser-mode loop; the
+  # docker/ladybug phases clear it so nothing NornicDB-related runs. For a
+  # --nornic-only iteration run, keep a single fast mode unless the caller
+  # explicitly asked for more.
+  case "${ONLY_ENGINE}" in
+    nornic) NORNIC_PARSER_MODES="${NORNIC_PARSER_MODES:-nornic}" ;;
+    *)      NORNIC_PARSER_MODES="" ;;
+  esac
   SKIP_NEO4J=1
   SKIP_FALKOR=1
   SKIP_MEMGRAPH=1
   SKIP_LADYBUG=1
   case "${ONLY_ENGINE}" in
+    nornic)   ;;
     falkor)   SKIP_FALKOR=0 ;;
     memgraph) SKIP_MEMGRAPH=0 ;;
     ladybug)  SKIP_LADYBUG=0 ;;
