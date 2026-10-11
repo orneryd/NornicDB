@@ -402,6 +402,89 @@ func TestWriteBehind_DetachDeleteAfterFlushStillDeletesOnce(t *testing.T) {
 	require.Zero(t, count)
 }
 
+// TestWriteBehind_PropertyIndexSeesBufferedNodes reproduces the Pokec
+// batched-load loss: a property-index seek must find nodes whose commits are
+// acknowledged but not yet flushed, or MATCH (n:User {id: $x}) CREATE …
+// silently produces nothing. The buffer attaches to the schema as its
+// pending-write source.
+func TestWriteBehind_PropertyIndexSeesBufferedNodes(t *testing.T) {
+	engine := newWriteBehindTestEngine(t, time.Hour)
+	schema := engine.GetSchemaForNamespace("test")
+	require.NoError(t, schema.AddPropertyIndex("user_id_idx", "User", []string{"id"}))
+
+	bufferedCreate(t, engine, &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(1)}})
+
+	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(1)),
+		"index lookup must see buffered nodes before the flush")
+	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(2)))
+
+	// After the flush the committed index takes over.
+	require.NoError(t, engine.FlushWriteBehind())
+	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(1)))
+
+	// A buffered rewrite supersedes the committed entry and moves the value.
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetImplicit(true))
+	require.NoError(t, tx.SetNamespace("test"))
+	require.NoError(t, tx.UpdateNode(&Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(2)}}))
+	require.NoError(t, tx.Commit())
+	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(1)),
+		"buffered rewrite must supersede the committed index entry")
+	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(2)))
+
+	// A buffered delete removes the entry before the flush lands.
+	tx, err = engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetImplicit(true))
+	require.NoError(t, tx.SetNamespace("test"))
+	require.NoError(t, tx.DeleteNode("test:u1"))
+	require.NoError(t, tx.Commit())
+	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(2)),
+		"buffered delete must hide the node from index seeks")
+	require.NoError(t, engine.FlushWriteBehind())
+	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(2)))
+}
+
+// TestWriteBehind_PropertyIndexAcrossGenerations keeps the pending index
+// correct when generations land while a later generation still holds a
+// newer version of the same node.
+func TestWriteBehind_PropertyIndexAcrossGenerations(t *testing.T) {
+	engine := newWriteBehindTestEngine(t, time.Hour)
+	schema := engine.GetSchemaForNamespace("test")
+	require.NoError(t, schema.AddPropertyIndex("user_id_idx", "User", []string{"id"}))
+
+	bufferedCreate(t, engine, &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(1)}})
+	require.NoError(t, engine.FlushWriteBehind())
+	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(1)))
+
+	// Rewrite the node and re-create it after a delete in later buffered
+	// generations; the index must always reflect the newest state.
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetImplicit(true))
+	require.NoError(t, tx.SetNamespace("test"))
+	require.NoError(t, tx.UpdateNode(&Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(7)}}))
+	require.NoError(t, tx.Commit())
+	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(7)))
+	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(1)))
+
+	tx, err = engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetImplicit(true))
+	require.NoError(t, tx.SetNamespace("test"))
+	require.NoError(t, tx.DeleteNode("test:u1"))
+	require.NoError(t, tx.Commit())
+	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(7)))
+
+	bufferedCreate(t, engine, &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(9)}})
+	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(9)))
+
+	require.NoError(t, engine.FlushWriteBehind())
+	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(9)))
+	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(7)))
+}
+
 func TestWriteBehind_DisabledCommitIsSynchronous(t *testing.T) {
 	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()})
 	require.NoError(t, err)

@@ -93,6 +93,11 @@ type CommitBuffer struct {
 
 	applied  atomic.Bool
 	draining atomic.Bool // claims the single flusher slot for this generation
+
+	// retired guards the buffer's pending-node index retirement: a
+	// generation that reached the applied state retires its nodes from the
+	// index exactly once, whichever drain path reaches it first.
+	retired atomic.Bool
 }
 
 type labelSeenKey struct {
@@ -346,6 +351,13 @@ type WriteBehindBuffer struct {
 	warn      func(string)
 	warnState int // 0 balanced/unset, 1 cap binds, 2 cap never binds, 3 delay pinned
 
+	// pendingIndex is the buffer's pending-node index, built lazily the
+	// first time an attached schema tracks (label, property) pairs: schema
+	// property-index lookups merge it in (pendingWriteSource), so buffered
+	// but unflushed nodes answer index seeks exactly like committed ones.
+	// Guarded by mu.
+	pendingIndex *pendingNodeIndex
+
 	flushCh chan struct{}
 	done    chan struct{}
 	closeMu sync.Mutex
@@ -485,6 +497,20 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 	w.opCount += len(c.ops) + len(c.writes) + len(c.deletes)
 	if w.opCount < 1 {
 		w.opCount = 1
+	}
+	// Keep the pending-node index in step with the overlay once an
+	// attached schema has asked for value indexing: buffered nodes answer
+	// property-index seeks until their generation applies, and the schema's
+	// committed index takes over from the replay's own maintenance.
+	if w.pendingIndex != nil {
+		for _, op := range c.ops {
+			switch op.Type {
+			case OpCreateNode, OpUpdateNode:
+				w.pendingIndex.replace(op.OldNode, op.Node)
+			case OpDeleteNode:
+				w.pendingIndex.remove(op.OldNode)
+			}
+		}
 	}
 	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
 	w.mu.Unlock()
@@ -632,12 +658,131 @@ func (w *WriteBehindBuffer) setLastErr(err error) {
 	w.errMu.Unlock()
 }
 
+// removeDrained drops the applied generation from the draining queue and
+// retires its nodes from the pending-node index exactly once: the committed
+// schema index covers them from the replay onward.
 func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	w.mu.Lock()
+	// The generation's writes are committed: the schema's committed index
+	// now covers its nodes, so retire them from the pending index exactly
+	// once. A later generation may already have replaced a node's entries;
+	// the repair re-adds the newest still-pending version.
+	if w.pendingIndex != nil && buf.retired.CompareAndSwap(false, true) {
+		for _, c := range buf.commits {
+			for _, op := range c.ops {
+				switch op.Type {
+				case OpCreateNode, OpUpdateNode:
+					w.pendingIndex.remove(op.Node)
+					if node, ok := w.nodeLocked(op.Node.ID); ok {
+						w.pendingIndex.add(node)
+					}
+				case OpDeleteNode:
+					w.pendingIndex.remove(op.OldNode)
+					if node, ok := w.nodeLocked(op.NodeID); ok {
+						w.pendingIndex.add(node)
+					}
+				}
+			}
+		}
+	}
 	if len(w.draining) > 0 && w.draining[0] == buf {
 		w.draining = w.draining[1:]
 	}
 	w.mu.Unlock()
+}
+
+// nodeLocked resolves the newest buffered version of id across the active
+// and unapplied generations. Caller holds w.mu.
+func (w *WriteBehindBuffer) nodeLocked(id NodeID) (*Node, bool) {
+	if node, ok := w.active.nodes[id]; ok {
+		return node, true
+	}
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		buf := w.draining[i]
+		if buf.IsApplied() {
+			continue
+		}
+		if node, ok := buf.nodes[id]; ok {
+			return node, true
+		}
+	}
+	return nil, false
+}
+
+// pendingWriteSource: schemas attach the buffer so property-index (and
+// ordered / not-null) lookups merge acknowledged-but-unflushed nodes exactly
+// as the old AsyncEngine's pending writes did (#719). The Pokec batched
+// load exposed the gap: MATCH (n:User {id: $x}) seeks the User(id) index
+// while the user writes still sit in the buffer, matches nothing, and the
+// CREATE silently produces no relationship.
+
+// lockPendingWrites holds the pending nodes still until unlockPendingWrites,
+// so a lookup combines the committed index with a stable buffer view.
+func (w *WriteBehindBuffer) lockPendingWrites() pendingWriteView {
+	w.mu.RLock()
+	return pendingWriteView{index: w.pendingIndex, owner: w}
+}
+
+// unlockPendingWrites releases the lock pendingWrites took.
+func (w *WriteBehindBuffer) unlockPendingWrites() {
+	w.mu.RUnlock()
+}
+
+// trackPendingValues indexes these (label, property) pairs of buffered
+// nodes by value from now on, including the nodes already buffered.
+func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
+	if len(pairs) == 0 {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.pendingIndex == nil {
+		w.pendingIndex = newPendingNodeIndex()
+		// List every buffered node that has not reached the store yet;
+		// applied generations are already in the committed index.
+		for _, buf := range w.draining {
+			if buf.IsApplied() {
+				continue
+			}
+			for _, node := range buf.nodes {
+				w.pendingIndex.add(node)
+			}
+		}
+		for _, node := range w.active.nodes {
+			w.pendingIndex.add(node)
+		}
+	}
+	for _, pair := range pairs {
+		w.pendingIndex.track(pair.label, pair.property, func(id NodeID) *Node {
+			node, _ := w.nodeLocked(id)
+			return node
+		})
+	}
+}
+
+// nodeSupersededLocked reports whether a committed index entry for id is
+// stale: the buffer created, rewrote or deleted the node. The caller holds
+// the pending-write lock (w.mu), so no locking here.
+func (w *WriteBehindBuffer) nodeSupersededLocked(id NodeID) bool {
+	if _, ok := w.active.nodes[id]; ok {
+		return true
+	}
+	if w.active.deletes[string(id)] {
+		return true
+	}
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		buf := w.draining[i]
+		if buf.IsApplied() {
+			continue
+		}
+		if _, ok := buf.nodes[id]; ok {
+			return true
+		}
+		if buf.deletes[string(id)] {
+			return true
+		}
+	}
+	return false
 }
 
 // Flush rotates the active generation and drains every generation

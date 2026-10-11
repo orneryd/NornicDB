@@ -106,6 +106,21 @@ func (b *BadgerEngine) maintainCompositeIndexesOnNodeUpdated(node, oldNode *Node
 	}
 }
 
+// maintainPropertyIndexesOnNodeDeletedWithNode removes index entries for a
+// deleted node using the caller's pre-delete snapshot. The replay path uses
+// it because a buffered node never entered the engine node cache, so the
+// cache-based variant would leave its committed index entries dangling.
+func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithNode(nodeID NodeID, old *Node) {
+	if old == nil || len(old.Labels) == 0 {
+		return
+	}
+	sm := b.schemaForNodeID(nodeID)
+	if sm == nil {
+		return
+	}
+	b.maintainCompositeIndexesOnNodeDeleted(nodeID, old, sm)
+}
+
 // maintainPropertyIndexesOnNodeDeletedWithLabels removes index entries for
 // every equality index the deleted node touched. The caller provides the
 // labels (via cacheOnNodeDeletedWithLabels) because the node itself is
