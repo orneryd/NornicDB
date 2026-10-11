@@ -2,10 +2,12 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,4 +52,58 @@ func TestSearchContinuationPageReportsQueryChunks(t *testing.T) {
 	require.Equal(t, int64(5), row["query_chunks_total"])
 	page = executeSearchContinuationPage(&search.SearchContinuationPage{ExpiresAt: time.Now()})
 	require.NotContains(t, page.Rows[0][0].(map[string]interface{}), "query_chunks_total")
+}
+
+type failingQueryChunkReranker struct{}
+
+func (failingQueryChunkReranker) Name() string                     { return "failing" }
+func (failingQueryChunkReranker) Enabled() bool                    { return true }
+func (failingQueryChunkReranker) IsAvailable(context.Context) bool { return true }
+func (failingQueryChunkReranker) Rerank(context.Context, string, []search.RerankCandidate) ([]search.RerankResult, error) {
+	return nil, errors.New("rerank unavailable")
+}
+
+// db.retrieve and db.rretrieve rows report how many of a long query's chunks
+// were searched, whatever the fallback reason: here a failed rerank holds
+// fallback_reason, and the counts still show that chunks were dropped
+// (#907).
+func TestRetrieveRowsReportQueryChunks(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	exec.SetEmbedder(&chunkCountingEmbedder{chunks: []string{"alpha", "beta", "gamma", "delta"}})
+	_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
+	require.NoError(t, err)
+	service := search.NewServiceWithDimensions(store, 2)
+	require.NoError(t, service.BuildIndexes(ctx))
+	service.SetReranker(failingQueryChunkReranker{})
+	exec.SetSearchService(service)
+	t.Setenv(search.EnvSearchQueryMaxChunks, "2")
+	t.Setenv(search.EnvSearchQueryChunkOverflow, "")
+
+	column := func(result *ExecuteResult, name string) interface{} {
+		for index, candidate := range result.Columns {
+			if candidate == name {
+				return result.Rows[0][index]
+			}
+		}
+		t.Fatalf("no column %s in %v", name, result.Columns)
+		return nil
+	}
+	result, err := exec.Execute(ctx, "CALL db.rretrieve({query: 'alpha beta gamma delta', limit: 5})", nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Rows)
+	require.Equal(t, int64(2), column(result, "query_chunks_searched"))
+	require.Equal(t, int64(4), column(result, "query_chunks_total"))
+	require.Equal(t, string(search.SearchFallbackRerankFailed), column(result, "fallback_reason"))
+
+	yielded, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha beta gamma delta', limit: 5}) YIELD node, query_chunks_searched, query_chunks_total RETURN query_chunks_searched, query_chunks_total", nil)
+	require.NoError(t, err)
+	require.Equal(t, []interface{}{int64(2), int64(4)}, yielded.Rows[0])
+
+	// A query searched whole reports 0 and 0.
+	exec.SetEmbedder(&chunkCountingEmbedder{chunks: []string{"alpha"}})
+	result, err = exec.Execute(ctx, "CALL db.retrieve({query: 'alpha', limit: 5})", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), column(result, "query_chunks_total"))
 }

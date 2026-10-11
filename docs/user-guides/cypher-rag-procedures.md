@@ -103,9 +103,10 @@ A long query is split into chunks of 512 characters, and each chunk is
 embedded and searched. At most `NORNICDB_SEARCH_QUERY_MAX_CHUNKS` chunks are
 searched (32 by default). When a query has more, the results are for its first
 chunks: `fallback_triggered` is `true` and `fallback_reason` is
-`query_chunks_dropped`, unless an earlier fallback is reported. The search
-metadata and a continued search's `page` report `query_chunks_searched` and
-`query_chunks_total`. With `NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error`, such a
+`query_chunks_dropped`, unless an earlier fallback is reported. Whatever the
+fallback reason, every `db.retrieve` / `db.rretrieve` row reports
+`query_chunks_searched` and `query_chunks_total` (0 and 0 for a query searched
+whole), as do the search metadata and a continued search's `page`. With `NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error`, such a
 query fails instead (`search query has N chunks; at most M are searched`), and
 so does a text query passed to `db.index.vector.queryNodes` /
 `queryRelationships`.

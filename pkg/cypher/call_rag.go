@@ -369,9 +369,12 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason"},
+		Columns: []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total"},
 		Rows:    make([][]interface{}, 0, len(response.Results)),
 	}
+	// Of a query split into chunks, how many were searched; 0 and 0 for a
+	// query searched whole. Reported whatever the fallback reason (#907).
+	chunksSearched, chunksTotal := int64(response.QueryChunksSearched), int64(response.QueryChunksTotal)
 
 	for _, r := range response.Results {
 		node := &storage.Node{
@@ -388,6 +391,8 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			response.SearchMethod,
 			response.FallbackTriggered,
 			string(response.FallbackReason),
+			chunksSearched,
+			chunksTotal,
 		})
 	}
 
