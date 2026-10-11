@@ -24,16 +24,22 @@ func TestProcedureArgumentErrorsAndCalls(t *testing.T) {
 		"import.json url":         func() error { _, err := exec.callApocImportJson(ctx, nil); return err },
 		"export.json.all file":    func() error { _, err := exec.callApocExportJsonAll(ctx, []interface{}{int64(1)}); return err },
 		"export.json.query query": func() error { _, err := exec.callApocExportJsonQuery(ctx, nil); return err },
-		"export.json.query file":  func() error { _, err := exec.callApocExportJsonQuery(ctx, []interface{}{"RETURN 1", int64(1)}); return err },
-		"export.csv.all file":     func() error { _, err := exec.callApocExportCsvAll(ctx, []interface{}{int64(1)}); return err },
-		"export.csv.query query":  func() error { _, err := exec.callApocExportCsvQuery(ctx, nil); return err },
-		"export.csv.query file":   func() error { _, err := exec.callApocExportCsvQuery(ctx, []interface{}{"RETURN 1", int64(1)}); return err },
-		"graph.project rels":      func() error { _, err := exec.callGdsGraphProject([]interface{}{"g", "*", int64(1)}); return err },
-		"graph.drop name":         func() error { _, err := exec.callGdsGraphDrop(nil); return err },
-		"fastRP.stream name":      func() error { _, err := exec.callGdsFastRPStream(nil); return err },
-		"fastRP.stream config":    func() error { _, err := exec.callGdsFastRPStream([]interface{}{"g", int64(1)}); return err },
-		"fastRP.stats name":       func() error { _, err := exec.callGdsFastRPStats(nil); return err },
-		"fastRP.stats config":     func() error { _, err := exec.callGdsFastRPStats([]interface{}{"g", int64(1)}); return err },
+		"export.json.query file": func() error {
+			_, err := exec.callApocExportJsonQuery(ctx, []interface{}{"RETURN 1", int64(1)})
+			return err
+		},
+		"export.csv.all file":    func() error { _, err := exec.callApocExportCsvAll(ctx, []interface{}{int64(1)}); return err },
+		"export.csv.query query": func() error { _, err := exec.callApocExportCsvQuery(ctx, nil); return err },
+		"export.csv.query file": func() error {
+			_, err := exec.callApocExportCsvQuery(ctx, []interface{}{"RETURN 1", int64(1)})
+			return err
+		},
+		"graph.project rels":   func() error { _, err := exec.callGdsGraphProject([]interface{}{"g", "*", int64(1)}); return err },
+		"graph.drop name":      func() error { _, err := exec.callGdsGraphDrop(nil); return err },
+		"fastRP.stream name":   func() error { _, err := exec.callGdsFastRPStream(nil); return err },
+		"fastRP.stream config": func() error { _, err := exec.callGdsFastRPStream([]interface{}{"g", int64(1)}); return err },
+		"fastRP.stats name":    func() error { _, err := exec.callGdsFastRPStats(nil); return err },
+		"fastRP.stats config":  func() error { _, err := exec.callGdsFastRPStats([]interface{}{"g", int64(1)}); return err },
 	} {
 		require.Error(t, call(), name)
 	}
@@ -54,6 +60,8 @@ func TestProcedureArgumentErrorsAndCalls(t *testing.T) {
 	_, err = exec.Execute(ctx, "CALL apoc.export.csv.all('', {})", nil)
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "CALL apoc.export.csv.query('MATCH (n:Person) RETURN n.name AS name', '', {})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CALL apoc.export.json.query('MATCH (n:Person) RETURN n.name AS name', '', {})", nil)
 	require.NoError(t, err)
 
 	// Whole-graph algorithms over every node: an empty list or ''.
