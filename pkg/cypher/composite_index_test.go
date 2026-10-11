@@ -123,7 +123,7 @@ func TestLegacyIndexProcedureCompatibilityBranches(t *testing.T) {
 
 	// invalid dimension branch
 	_, err = exec.Execute(ctx, "CALL db.index.vector.createRelationshipIndex('bad','KNOWS','embedding','x')", nil)
-	if err == nil || !strings.Contains(err.Error(), "requires INTEGER") {
+	if err == nil || !strings.Contains(err.Error(), "Type mismatch: expected Integer but was String") {
 		t.Fatalf("expected invalid dimension error, got: %v", err)
 	}
 
