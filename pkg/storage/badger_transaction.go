@@ -109,6 +109,12 @@ type BadgerTransaction struct {
 	cancelledEdgeWrites map[EdgeID]struct{}
 	deletedNodes        map[NodeID]struct{}
 	deletedEdges        map[EdgeID]struct{}
+	// droppedEmbeddings holds, per node, the managed embeddings an update in
+	// this transaction invalidated (reconcileManagedEmbeddingsLocked), so a
+	// later update in the same transaction that carries them back from a copy
+	// read before the invalidation doesn't store them again. Nil until the
+	// first invalidation.
+	droppedEmbeddings map[NodeID]*Node
 	// connectedDeletes are nodes a non-DETACH DELETE deleted while
 	// relationships still connected them (DeleteConnectedNode), with their
 	// state before: deleted for scans and lookups by label, still the
@@ -906,6 +912,13 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 // written.
 func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Node) (*Node, error) {
 	if len(oldNode.ChunkEmbeddings) == 0 && oldNode.EmbedMeta == nil {
+		// Embeddings this transaction already invalidated, carried back by a
+		// copy of the node read before (REMOVE n:Embedded, n.text SET n.x =
+		// 1 writes the row's node twice), stay invalidated.
+		if dropped, invalidated := tx.droppedEmbeddings[node.ID]; invalidated && carriesDroppedEmbeddings(node, dropped) {
+			node.ChunkEmbeddings = nil
+			node.EmbedMeta = nil
+		}
 		return node, nil
 	}
 	if len(node.ChunkEmbeddings) > 0 && !sameChunkEmbeddings(node.ChunkEmbeddings, oldNode.ChunkEmbeddings) {
@@ -930,6 +943,10 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 		body.EmbedMeta = nil
 		return &body, nil
 	}
+	if tx.droppedEmbeddings == nil {
+		tx.droppedEmbeddings = make(map[NodeID]*Node)
+	}
+	tx.droppedEmbeddings[node.ID] = &Node{ChunkEmbeddings: oldNode.ChunkEmbeddings, EmbedMeta: oldNode.EmbedMeta}
 	node.ChunkEmbeddings = nil
 	node.EmbedMeta = nil
 	if err := tx.scanCommittedKeysWithPrefixLocked(embeddingPrefix(node.ID), func(key []byte) error {
@@ -939,6 +956,16 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 		return nil, err
 	}
 	return node, nil
+}
+
+// carriesDroppedEmbeddings reports whether node carries the embeddings an
+// earlier update invalidated: their vectors (or none, with their metadata),
+// rather than new vectors its caller set.
+func carriesDroppedEmbeddings(node, dropped *Node) bool {
+	if len(node.ChunkEmbeddings) == 0 {
+		return node.EmbedMeta != nil
+	}
+	return sameChunkEmbeddings(node.ChunkEmbeddings, dropped.ChunkEmbeddings)
 }
 
 func (tx *BadgerTransaction) pendingCreateNodeOperationIndexLocked(nodeID NodeID) int {
