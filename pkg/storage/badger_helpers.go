@@ -1148,13 +1148,9 @@ func (b *BadgerEngine) decodeNodeWithEmbeddings(txn *badger.Txn, data []byte, no
 // is ignored, leaving the node embedding-free so the worker re-embeds the
 // new content.
 func (b *BadgerEngine) loadNodeEmbeddings(txn *badger.Txn, node *Node, nodeID NodeID) (*Node, error) {
-	if sidecarMeta, fresh, err := b.loadEmbeddingSidecar(txn, node, nodeID); err != nil {
+	if sidecarMeta, fresh, err := b.freshEmbeddingSidecarMeta(txn, node, nodeID); err != nil {
 		return nil, err
 	} else if fresh {
-		delete(sidecarMeta, embeddingContentUpdatedAtKey) // internal only
-		if len(sidecarMeta) == 0 {
-			sidecarMeta = nil // empty metadata reads as no embedding state
-		}
 		node.EmbedMeta = sidecarMeta
 		node.EmbeddingsStoredSeparately = false
 		if err := b.loadEmbeddingChunks(txn, node, nodeID, chunkCountFromMeta(sidecarMeta)); err != nil {

@@ -566,6 +566,14 @@ type BatchNodeWithoutEmbeddingsReader interface {
 	BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]*Node, error)
 }
 
+// NodeEmbeddingMetaReader is an optional extension interface for reading a
+// node's embedding metadata (EmbedMeta: chunk count, model, kept chunk texts,
+// chunk places) without its vectors, which an embedding-free read may leave
+// out (Badger keeps it in the embedding sidecar).
+type NodeEmbeddingMetaReader interface {
+	GetNodeEmbeddingMeta(id NodeID) (map[string]any, error)
+}
+
 // BatchNodeWithoutEmbeddingsCapability lets wrappers expose whether their
 // current inner engine can satisfy batched light node reads without falling
 // back to one call per ID.

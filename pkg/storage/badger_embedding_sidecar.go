@@ -271,6 +271,65 @@ func sameStoredValue(a, b any) bool {
 // (nil, false, nil) when no sidecar exists or the sidecar is stale (the body
 // changed after the embedding was generated). Sidecar state takes precedence
 // over body-inline embedding state when present and fresh.
+// freshEmbeddingSidecarMeta is the embedding metadata node reads as: the
+// sidecar record when it is fresh for node's body, without the internal
+// content stamp; nil when the record holds nothing else.
+func (b *BadgerEngine) freshEmbeddingSidecarMeta(txn *badger.Txn, node *Node, nodeID NodeID) (map[string]any, bool, error) {
+	meta, fresh, err := b.loadEmbeddingSidecar(txn, node, nodeID)
+	if err != nil || !fresh {
+		return nil, false, err
+	}
+	delete(meta, embeddingContentUpdatedAtKey) // internal only
+	if len(meta) == 0 {
+		meta = nil // empty metadata reads as no embedding state
+	}
+	return meta, true, nil
+}
+
+// GetNodeEmbeddingMeta returns a node's embedding metadata without its
+// vectors, as GetNode reads it: the fresh sidecar record, else the body's
+// own. An embedding-free read (GetNodeWithoutEmbeddings) leaves the sidecar
+// out; a search hit's chunk places and kept chunk texts are read here.
+func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
+	if id == "" {
+		return nil, ErrInvalidID
+	}
+	if err := b.ensureOpen(); err != nil {
+		return nil, err
+	}
+	var meta map[string]any
+	err := b.withView(func(txn *badger.Txn) error {
+		item, err := txn.Get(nodeKey(id))
+		if err == badger.ErrKeyNotFound {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		return item.Value(func(val []byte) error {
+			namespace, _, _ := ParseDatabasePrefix(string(id))
+			node, err := b.decodeNode(namespace, val)
+			if err != nil {
+				return err
+			}
+			sidecarMeta, fresh, err := b.freshEmbeddingSidecarMeta(txn, node, id)
+			if err != nil {
+				return err
+			}
+			if fresh {
+				meta = sidecarMeta
+			} else {
+				meta = node.EmbedMeta
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return meta, nil
+}
+
 func (b *BadgerEngine) loadEmbeddingSidecar(txn *badger.Txn, node *Node, nodeID NodeID) (map[string]any, bool, error) {
 	item, err := txn.Get(embeddingMetaKey(nodeID))
 	if err == badger.ErrKeyNotFound {
