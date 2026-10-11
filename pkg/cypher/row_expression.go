@@ -16,30 +16,6 @@ import (
 // row. Unlike the graph-only evaluator, a row may also contain scalar, map,
 // and list bindings introduced by WITH or UNWIND.
 
-// containsCASEKeyword reports whether expr contains the CASE keyword outside
-// quoted literals. The row evaluator delegates compound CASE-containing
-// expressions to the shared evaluator, whose operator scanner is CASE-aware.
-func containsCASEKeyword(expr string) bool {
-	quote := byte(0)
-	for i := 0; i+4 <= len(expr); i++ {
-		ch := expr[i]
-		if quote != 0 {
-			if ch == quote && !isBackslashEscaped(expr, i) {
-				quote = 0
-			}
-			continue
-		}
-		if ch == '\'' || ch == '"' {
-			quote = ch
-			continue
-		}
-		if matchKeywordAt(expr, i, "CASE") {
-			return true
-		}
-	}
-	return false
-}
-
 // rowArithmeticResult is the row evaluator's result of left op right, given
 // the value helper's result: the value, null for a null operand, the
 // statement error (INTEGER division by zero, INTEGER overflow, an operand

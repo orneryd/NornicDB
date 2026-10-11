@@ -61,3 +61,20 @@ func TestCaseBlockSpansSkipScopes(t *testing.T) {
 		require.Len(t, caseBlockSpans(expr), want, expr)
 	}
 }
+
+// The shared evaluator evaluates a CASE inside a compound expression first
+// and substitutes its value, so the WHEN condition's > isn't read as a
+// top-level comparison.
+func TestSharedEvaluatorSubstitutesCaseInCompoundExpression(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	ctx := context.Background()
+	n := &storage.Node{ID: "n1", Properties: map[string]interface{}{"x": int64(5)}}
+	nodes := map[string]*storage.Node{"n": n}
+	for expr, want := range map[string]interface{}{
+		"1 + CASE WHEN n.x > 3 THEN 10 ELSE 20 END":                    int64(11),
+		"CASE WHEN n.x > 9 THEN 1 ELSE 2 END * 3":                      int64(6),
+		"CASE WHEN n.x > 3 THEN 'a' END + CASE WHEN true THEN 'b' END": "ab",
+	} {
+		require.Equal(t, want, exec.evaluateExpressionWithContext(ctx, expr, nodes, nil), expr)
+	}
+}
