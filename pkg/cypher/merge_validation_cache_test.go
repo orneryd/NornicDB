@@ -17,14 +17,16 @@ func TestMergeSemanticValidationCachesAcceptedStatement(t *testing.T) {
 	require.NoError(t, exec.validateMergeSemanticScopes(query))
 }
 
-// Literal-bearing MERGE statements cache like any other text: repeated
-// statements (explicit transactions, batch tooling, the match-create-delete
-// gate) must hit, and sharding removed the contention that once motivated
-// skipping them.
+// Literal-bearing MERGE statements cache under their canonical form:
+// repeated statements (explicit transactions, batch tooling, the
+// match-create-delete gate) and their literal variants hit, and sharding
+// removed the contention that once motivated skipping them.
 func TestMergeSemanticValidationCachesLiteralStatements(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	query := "MERGE (n:Cached {id: 1}) RETURN n"
 	require.NoError(t, exec.validateMergeSemanticScopes(query))
-	require.True(t, exec.mergeSemanticValidationCache.contains(query))
-	require.NoError(t, exec.validateMergeSemanticScopes(query))
+	canonical, changed := normalizeLiteralText(query)
+	require.True(t, changed)
+	require.True(t, exec.mergeSemanticValidationCache.contains(canonical))
+	require.NoError(t, exec.validateMergeSemanticScopes("MERGE (n:Cached {id: 2}) RETURN n"))
 }

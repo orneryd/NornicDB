@@ -21,8 +21,18 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	// A text cached under its own key passed every check here, the lexical
 	// one included, so a repeated query skips them all (#823). A rewritten
 	// text cached under its original still gets its own lexical check.
+	// Literal-bearing texts share one compile verdict through the canonical
+	// form (PR #1043 #6), looked up only when the exact text misses: a
+	// canonical hit still runs the lexical check on its own text, then
+	// returns.
 	cached := e.semanticValidationCache.contains(cacheKey)
-	if cached && names == nil {
+	var canonical string
+	var normalized bool
+	if !cached {
+		canonical, normalized = normalizeLiteralText(cacheKey)
+		cached = normalized && e.semanticValidationCache.contains(canonical)
+	}
+	if cached && names == nil && !normalized {
 		return nil
 	}
 	if err := validateExpressionLexicalTokens(cypher); err != nil {
@@ -145,7 +155,12 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := e.validateSetSemanticScopes(cypher); err != nil {
 		return err
 	}
-	e.semanticValidationCache.add(cacheKey)
+	if normalized {
+		e.semanticValidationCache.add(canonical)
+		e.semanticValidationCache.add(cacheKey)
+	} else {
+		e.semanticValidationCache.add(cacheKey)
+	}
 	return nil
 }
 

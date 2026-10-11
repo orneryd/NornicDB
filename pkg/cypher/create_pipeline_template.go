@@ -268,30 +268,34 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 			rollback()
 			return nil, false, nodeTemplate.labelErr
 		}
-		props, ok := e.evaluatePipelineProperties(ctx, nodeTemplate.properties, row)
-		if !ok {
-			rollback()
-			return nil, false, nil
-		}
-		// CREATE drops null properties, exactly as prepareCreateNodePattern
-		// deletes them from the parsed map.
-		for key, value := range props {
-			if value == nil {
-				delete(props, key)
-			}
-		}
-		if !createTemplatePropsRowOK(nodeTemplate.properties, props) {
-			rollback()
-			return nil, false, nil
-		}
-		if err := validatePropertyValues(props); err != nil {
-			rollback()
-			return nil, false, err
-		}
-		for key, value := range props {
-			if _, bad := value.(invalidPropertyValue); bad {
+		var props map[string]interface{}
+		if len(nodeTemplate.properties) > 0 {
+			var ok bool
+			props, ok = e.evaluatePipelineProperties(ctx, nodeTemplate.properties, row)
+			if !ok {
 				rollback()
-				return nil, false, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
+				return nil, false, nil
+			}
+			// CREATE drops null properties, exactly as prepareCreateNodePattern
+			// deletes them from the parsed map.
+			for key, value := range props {
+				if value == nil {
+					delete(props, key)
+				}
+			}
+			if !createTemplatePropsRowOK(nodeTemplate.properties, props) {
+				rollback()
+				return nil, false, nil
+			}
+			if err := validatePropertyValues(props); err != nil {
+				rollback()
+				return nil, false, err
+			}
+			for key, value := range props {
+				if _, bad := value.(invalidPropertyValue); bad {
+					rollback()
+					return nil, false, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
+				}
 			}
 		}
 		node := &storage.Node{
@@ -314,24 +318,28 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 			rollback()
 			return nil, false, nil
 		}
-		props, ok := e.evaluatePipelineProperties(ctx, edgeTemplate.properties, row)
-		if !ok {
-			rollback()
-			return nil, false, nil
-		}
-		// CREATE drops null properties on relationships too.
-		for key, value := range props {
-			if value == nil {
-				delete(props, key)
+		var props map[string]interface{}
+		if len(edgeTemplate.properties) > 0 {
+			var ok bool
+			props, ok = e.evaluatePipelineProperties(ctx, edgeTemplate.properties, row)
+			if !ok {
+				rollback()
+				return nil, false, nil
 			}
-		}
-		if !createTemplatePropsRowOK(edgeTemplate.properties, props) {
-			rollback()
-			return nil, false, nil
-		}
-		if err := validatePropertyValues(props); err != nil {
-			rollback()
-			return nil, false, err
+			// CREATE drops null properties on relationships too.
+			for key, value := range props {
+				if value == nil {
+					delete(props, key)
+				}
+			}
+			if !createTemplatePropsRowOK(edgeTemplate.properties, props) {
+				rollback()
+				return nil, false, nil
+			}
+			if err := validatePropertyValues(props); err != nil {
+				rollback()
+				return nil, false, err
+			}
 		}
 		startNode, endNode := source, target
 		if edgeTemplate.isReverse {

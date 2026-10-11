@@ -866,6 +866,19 @@ func (e *StorageExecutor) hasCachedValidSyntax(cypher string) bool {
 	sh.mu.RLock()
 	_, ok := sh.cache[cypher]
 	sh.mu.RUnlock()
+	if ok {
+		return true
+	}
+	// Parser acceptance is structural: literal values never change it, so
+	// statements that differ only in literals share one cached verdict
+	// through the canonical form (PR #1043 #6). The canonical form is only
+	// computed on an exact-text miss.
+	if canonical, normalized := normalizeLiteralText(cypher); normalized {
+		csh := &c.shards[boundedCacheStringShardIndex(canonical)]
+		csh.mu.RLock()
+		_, ok = csh.cache[canonical]
+		csh.mu.RUnlock()
+	}
 	return ok
 }
 
@@ -874,16 +887,22 @@ func (e *StorageExecutor) markCachedValidSyntax(cypher string) {
 		return
 	}
 	c := e.ensureSyntaxValidationCache()
-	sh := &c.shards[boundedCacheStringShardIndex(cypher)]
-	sh.mu.Lock()
-	if len(sh.cache) >= c.max/boundedCacheShardCount {
-		for k := range sh.cache {
-			delete(sh.cache, k)
-			break
+	add := func(key string) {
+		sh := &c.shards[boundedCacheStringShardIndex(key)]
+		sh.mu.Lock()
+		if len(sh.cache) >= c.max/boundedCacheShardCount {
+			for k := range sh.cache {
+				delete(sh.cache, k)
+				break
+			}
 		}
+		sh.cache[key] = struct{}{}
+		sh.mu.Unlock()
 	}
-	sh.cache[cypher] = struct{}{}
-	sh.mu.Unlock()
+	add(cypher)
+	if canonical, normalized := normalizeLiteralText(cypher); normalized {
+		add(canonical)
+	}
 }
 
 // unresolvedReturnItemError is the error of a RETURN item the row evaluator

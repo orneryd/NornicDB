@@ -61,7 +61,18 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string) error {
 	if findKeywordIndexInContext(cypher, "MERGE") < 0 {
 		return nil
 	}
-	if e.mergeSemanticValidationCache.contains(cypher) {
+	// Literal-bearing MERGE statements share one compile verdict through the
+	// canonical form (PR #1043 #6), looked up only when the exact text
+	// misses; failures are never cached, so a bad statement still reports
+	// its own error.
+	cached := e.mergeSemanticValidationCache.contains(cypher)
+	var canonical string
+	var normalized bool
+	if !cached {
+		canonical, normalized = normalizeLiteralText(cypher)
+		cached = normalized && e.mergeSemanticValidationCache.contains(canonical)
+	}
+	if cached {
 		return nil
 	}
 	clauses, ok := splitPipelineClauses(cypher)
@@ -92,7 +103,12 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string) error {
 			}
 		}
 	}
-	e.mergeSemanticValidationCache.add(cypher)
+	if normalized {
+		e.mergeSemanticValidationCache.add(canonical)
+		e.mergeSemanticValidationCache.add(cypher)
+	} else {
+		e.mergeSemanticValidationCache.add(cypher)
+	}
 	return nil
 }
 

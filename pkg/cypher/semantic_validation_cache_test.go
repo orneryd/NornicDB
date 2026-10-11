@@ -22,18 +22,20 @@ func TestSemanticValidationCachesOnlySuccessfulQueries(t *testing.T) {
 	require.False(t, exec.semanticValidationCache.contains(invalidQuery))
 }
 
-// Literal-bearing statements cache like any other text: repeated statements
-// (explicit transactions, batch tooling, the match-create-delete gate) must
-// hit, and the sharded caches removed the contention that once motivated
-// skipping them.
+// Literal-bearing statements cache under their canonical form: repeated
+// statements (explicit transactions, batch tooling, the match-create-delete
+// gate) and their literal variants hit, and the sharded caches removed the
+// contention that once motivated skipping them.
 func TestSemanticValidationCacheCachesLiteralStatements(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "semantic_cache"))
 	literalQuery := "RETURN 1 AS value"
 
 	_, err := exec.Execute(context.Background(), literalQuery, nil)
 	require.NoError(t, err)
-	require.True(t, exec.semanticValidationCache.contains(literalQuery),
+	canonical, changed := normalizeLiteralText(literalQuery)
+	require.True(t, changed)
+	require.True(t, exec.semanticValidationCache.contains(canonical),
 		"accepted literal-bearing statements are cached")
-	_, err = exec.Execute(context.Background(), literalQuery, nil)
+	_, err = exec.Execute(context.Background(), "RETURN 2 AS value", nil)
 	require.NoError(t, err)
 }

@@ -2492,10 +2492,16 @@ type boltQueryExecutorAdapter struct {
 }
 
 func (a *boltQueryExecutorAdapter) Execute(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
-	// Convert params from map[string]any to map[string]interface{}
-	paramsMap := make(map[string]interface{}, len(params))
-	for k, v := range params {
-		paramsMap[k] = v
+	// Convert params from map[string]any to map[string]interface{} only when
+	// there are any: the conversion is a per-request allocation on the hot
+	// autocommit path, and most RUNs carry no parameters (PR #1043 server-path
+	// profile).
+	var paramsMap map[string]interface{}
+	if len(params) > 0 {
+		paramsMap = make(map[string]interface{}, len(params))
+		for k, v := range params {
+			paramsMap[k] = v
+		}
 	}
 
 	// Execute query
