@@ -264,17 +264,10 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		matches.TraversalLimit = earlyLimit
 	}
 
-	// Fast path: MATCH ()-[r(:TYPE|...)?]->() RETURN count(r|*) [AS ...]
-	//
-	// This pattern appears in real workloads (and Northwind benchmarks). Routing it
-	// through full traversal materializes all edges/paths, which is unnecessary for
-	// pure counts and can be orders of magnitude slower.
-	if whereClause == "" && pathVariable == "" && !matches.IsChained && len(returnItems) == 1 &&
-		matches.StartNode.variable == "" && len(matches.StartNode.labels) == 0 && len(matches.StartNode.properties) == 0 &&
-		matches.EndNode.variable == "" && len(matches.EndNode.labels) == 0 && len(matches.EndNode.properties) == 0 &&
-		matches.Relationship.MinHops == 1 && matches.Relationship.MaxHops == 1 &&
-		len(matches.Relationship.Properties) == 0 {
-		if count, ok, err := e.tryFastRelationshipCount(matches, returnItems[0]); ok {
+	// A plain relationship count is answered from the counters when they can
+	// (relationshipCountFromStore decides), instead of materializing paths.
+	if whereClause == "" && pathVariable == "" && len(returnItems) == 1 {
+		if count, ok, err := e.relationshipCountFromStore(ctx, matches, returnItems[0]); ok {
 			if err != nil {
 				return nil, err
 			}
@@ -903,141 +896,6 @@ func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Conte
 		}
 	}
 	return filtered, true, nil
-}
-
-func (e *StorageExecutor) tryFastRelationshipCount(matches *TraversalMatch, item returnItem) (count int64, ok bool, err error) {
-	upper := upperASCII(strings.TrimSpace(item.expr))
-	if !strings.HasPrefix(upper, "COUNT(") || !strings.HasSuffix(upper, ")") {
-		return 0, false, nil
-	}
-
-	arg := strings.TrimSpace(item.expr[len("COUNT(") : len(item.expr)-1])
-	argUpper := upperASCII(strings.TrimSpace(arg))
-
-	// Only handle COUNT(*) or COUNT(<relationship var>).
-	if argUpper != "*" && !strings.EqualFold(strings.TrimSpace(arg), matches.Relationship.Variable) {
-		return 0, false, nil
-	}
-
-	// A repeated endpoint variable requires self-loops only; the counters can't
-	// express that filter, so the general path handles it.
-	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
-		return 0, false, nil
-	}
-
-	// Inline endpoint property maps are value-level filters the counters can't
-	// express (e.g. MATCH ({id:'x'})-[r:T]->() RETURN count(r)); the general
-	// path handles them.
-	if len(matches.StartNode.properties) > 0 || len(matches.EndNode.properties) > 0 {
-		return 0, false, nil
-	}
-
-	// One-labeled-endpoint shapes: answered from the positional (label, type)
-	// counters, matching Neo4j's RelationshipCountFromCountStore planning rule
-	// (at most one endpoint labeled, no other predicates).
-	if len(matches.StartNode.labels) > 0 || len(matches.EndNode.labels) > 0 {
-		if len(matches.StartNode.labels) > 1 || len(matches.EndNode.labels) > 1 ||
-			len(matches.StartNode.properties) > 0 || len(matches.EndNode.properties) > 0 ||
-			matches.Relationship.Direction == "both" || len(matches.Relationship.Types) == 0 {
-			return 0, false, nil
-		}
-		var label string
-		startTier := false
-		switch {
-		case matches.Relationship.Direction == "outgoing" && len(matches.StartNode.labels) == 1:
-			label, startTier = matches.StartNode.labels[0], true
-		case matches.Relationship.Direction == "outgoing" && len(matches.EndNode.labels) == 1:
-			label = matches.EndNode.labels[0]
-		case matches.Relationship.Direction == "incoming" && len(matches.StartNode.labels) == 1:
-			label = matches.StartNode.labels[0]
-		case matches.Relationship.Direction == "incoming" && len(matches.EndNode.labels) == 1:
-			label, startTier = matches.EndNode.labels[0], true
-		default:
-			return 0, false, nil
-		}
-		var total int64
-		for _, t := range matches.Relationship.Types {
-			var n int64
-			var err error
-			if startTier {
-				n, err = e.storage.EdgeCountByStartLabel(label, t)
-			} else {
-				n, err = e.storage.EdgeCountByEndLabel(label, t)
-			}
-			if err != nil {
-				return 0, true, err
-			}
-			total += n
-		}
-		return total, true, nil
-	}
-
-	if matches.Relationship.Direction == "both" {
-		return e.countUndirectedRelationshipMatches(matches.Relationship.Types)
-	}
-
-	// No type filter: use storage.EdgeCount() (O(1) for most engines).
-	if len(matches.Relationship.Types) == 0 {
-		n, err := e.storage.EdgeCount()
-		return n, true, err
-	}
-
-	// Type filter(s): every engine maintains a per-type counter (issue #638),
-	// so typed counts are answered by O(1) point reads — no engine falls back
-	// to edge materialization.
-	var total int64
-	for _, t := range matches.Relationship.Types {
-		n, err := e.storage.EdgeCountByType(t)
-		if err != nil {
-			return 0, true, err
-		}
-		total += n
-	}
-	return total, true, nil
-}
-
-// countUndirectedRelationshipMatches returns Cypher pattern cardinality rather
-// than physical edge cardinality. A non-loop relationship matches once from
-// each endpoint, while a self-loop has only one distinct orientation.
-func (e *StorageExecutor) countUndirectedRelationshipMatches(types []string) (int64, bool, error) {
-	var candidates []*storage.Edge
-	if len(types) == 0 {
-		edges, err := e.storage.AllEdges()
-		if err != nil {
-			return 0, true, err
-		}
-		candidates = edges
-	} else {
-		seen := make(map[storage.EdgeID]struct{})
-		for _, relationshipType := range types {
-			edges, err := e.storage.GetEdgesByType(relationshipType)
-			if err != nil {
-				return 0, true, err
-			}
-			for _, edge := range edges {
-				if edge == nil {
-					continue
-				}
-				if _, exists := seen[edge.ID]; exists {
-					continue
-				}
-				seen[edge.ID] = struct{}{}
-				candidates = append(candidates, edge)
-			}
-		}
-	}
-
-	var count int64
-	for _, edge := range candidates {
-		if edge == nil {
-			continue
-		}
-		count++
-		if edge.StartNode != edge.EndNode {
-			count++
-		}
-	}
-	return count, true, nil
 }
 
 // isLengthPathExpr checks if an expression is length(path) for some path variable

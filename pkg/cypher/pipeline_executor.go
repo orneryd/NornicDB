@@ -1117,9 +1117,8 @@ func pipelineDecline(ctx context.Context, wrote bool, clause string) (*ExecuteRe
 //	MATCH ()-[r:T]->() RETURN count(r)
 //
 // costs O(store size) instead of an O(1) counter read, even though the
-// traversal-layer fast path exists. It delegates to tryFastRelationshipCount,
-// the single implementation of the typed/untyped count semantics, so no
-// second count algorithm exists in the codebase.
+// traversal-layer fast path exists. It delegates to relationshipCountFromStore,
+// the single owner of counts answered from the counters (count_store.go).
 func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx context.Context, clauses []pipelineClause, params map[string]interface{}) (*ExecuteResult, bool, error) {
 	if len(clauses) != 2 || clauses[0].kind != pipelineClauseMatch || clauses[1].kind != pipelineClauseReturn {
 		return nil, false, nil
@@ -1132,19 +1131,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 		return nil, false, nil
 	}
 	matches := e.parseTraversalPattern(ctx, matchBody)
-	if matches == nil || matches.IsChained {
-		return nil, false, nil
-	}
-	if matches.Relationship.MinHops != 1 || matches.Relationship.MaxHops != 1 {
-		return nil, false, nil
-	}
-	// Endpoint shapes the O(1) counters can answer: anonymous endpoints
-	// (per-type tier) or at most one endpoint with a single label
-	// (positional (label, type) tier, like Neo4j's count store).
-	// tryFastRelationshipCount declines anything else (properties, both
-	// labeled, direction both), and the general path handles it.
-	if len(matches.StartNode.labels) > 1 || len(matches.EndNode.labels) > 1 ||
-		len(matches.Relationship.Properties) > 0 {
+	if matches == nil {
 		return nil, false, nil
 	}
 	items := e.parseReturnItems(strings.TrimSpace(clauses[1].text[len("RETURN"):]))
@@ -1155,16 +1142,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 	if len(items) != 1 {
 		return nil, false, nil
 	}
-	// Counters can't reflect decay filtering or temporal viewports; those
-	// stores keep the materializing general path (same guard as the node
-	// label-count fast path).
-	if storageHasDecayFiltering(e.getStorage(ctx)) {
-		return nil, false, nil
-	}
-	if viewport, ok := TemporalViewportFromContext(ctx); ok && viewport.Enabled() {
-		return nil, false, nil
-	}
-	count, ok, err := e.tryFastRelationshipCount(matches, items[0])
+	count, ok, err := e.relationshipCountFromStore(ctx, matches, items[0])
 	if err != nil {
 		return nil, true, err
 	}
@@ -1208,24 +1186,12 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	hint := e.pipelineMatchHint(clauses[1:])
 	boundedSimpleProjection := whereClause == "" && hint.earlyLimit > 0 && pipelineSimpleNodeProjections(items, nodePattern.variable)
 	countColumn, filteredCount := pipelineSingleNodeCountProjection(items, nodePattern.variable)
-	if whereClause == "" && len(items) == 1 && len(nodePattern.properties) == 0 && isAggregateFuncName(items[0].expr, "count") {
-		inner := strings.TrimSpace(extractFuncInner(items[0].expr))
-		if inner == "*" || inner == nodePattern.variable {
-			store := e.getStorage(ctx)
-			var count int64
-			var err error
-			if len(nodePattern.labels) == 1 && !storageHasDecayFiltering(store) {
-				if viewport, ok := TemporalViewportFromContext(ctx); !ok || !viewport.Enabled() {
-					if counter, ok := store.(interface{ NodeCountByLabel(string) (int64, error) }); ok {
-						count, err = counter.NodeCountByLabel(nodePattern.labels[0])
-						if err != nil {
-							return nil, true, localizedError(localization.CypherMatchingStorageFailed(err), err)
-						}
-						column := items[0].column()
-						return &ExecuteResult{Columns: []string{column}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{}}, true, nil
-					}
-				}
+	if whereClause == "" && len(items) == 1 {
+		if count, ok, err := e.nodeCountFromStore(ctx, nodePattern, items[0]); ok {
+			if err != nil {
+				return nil, true, localizedError(localization.CypherMatchingStorageFailed(err), err)
 			}
+			return &ExecuteResult{Columns: []string{items[0].column()}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{}}, true, nil
 		}
 	}
 
@@ -1284,15 +1250,10 @@ func pipelineNodeRow(ctx context.Context, variable string, node *storage.Node) p
 }
 
 func pipelineSingleNodeCountProjection(items []returnItem, variable string) (string, bool) {
-	if len(items) != 1 || variable == "" || !isAggregateFuncName(items[0].expr, "count") {
+	if len(items) != 1 || variable == "" || !countsRows(items[0], variable) {
 		return "", false
 	}
-	inner := strings.TrimSpace(extractFuncInner(items[0].expr))
-	if inner != "*" && inner != variable {
-		return "", false
-	}
-	column := items[0].column()
-	return column, true
+	return items[0].column(), true
 }
 
 // tryStreamPipelineFilteredNodeCount is the fused physical form of the

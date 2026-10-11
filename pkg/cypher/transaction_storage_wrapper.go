@@ -859,8 +859,15 @@ func (w *transactionStorageWrapper) Close() error {
 	return nil
 }
 
+// NodeCount is the transaction-visible number of nodes, as the derived
+// counters below are: the committed count while the transaction has staged
+// no node change, otherwise a count of the nodes it sees (#1076).
 func (w *transactionStorageWrapper) NodeCount() (int64, error) {
-	return w.underlying.NodeCount()
+	if w.countersDescribeTransaction() && !w.tx.HasPendingNodeMutations() {
+		return w.underlying.NodeCount()
+	}
+	nodes, err := w.AllNodes()
+	return int64(len(nodes)), err
 }
 
 // The derived counters (node label counts; relationship type and positional
@@ -903,8 +910,14 @@ func (w *transactionStorageWrapper) nodeCountByLabelScan(label string) (int64, e
 	return int64(len(nodes)), nil
 }
 
+// EdgeCount is the transaction-visible number of relationships, as
+// NodeCount is (#1076).
 func (w *transactionStorageWrapper) EdgeCount() (int64, error) {
-	return w.underlying.EdgeCount()
+	if w.countersDescribeTransaction() && !w.tx.HasPendingEdgeMutations() {
+		return w.underlying.EdgeCount()
+	}
+	edges, err := w.AllEdges()
+	return int64(len(edges)), err
 }
 
 // EdgeCountByType is the transaction-visible count of relationships of
