@@ -151,15 +151,9 @@ func subqueryExpressionEnd(expr string, i int) int {
 	if open := skipSpaces(expr, end); end == i || open >= len(expr) || expr[open] != '{' {
 		return -1
 	}
-	for _, keyword := range subqueryExpressionKeywords {
-		if !matchKeywordAt(expr, i, keyword) {
-			continue
-		}
-		open := skipSpaces(expr, i+len(keyword))
-		if open < len(expr) && expr[open] == '{' {
-			if closing := findMatchingDelimiter(expr, open, '{', '}'); closing > open {
-				return closing + 1
-			}
+	if _, open, ok := subqueryExpressionKeywordAt(expr, i); ok {
+		if closing := findMatchingDelimiter(expr, open, '{', '}'); closing > open {
+			return closing + 1
 		}
 	}
 	return -1
