@@ -234,9 +234,13 @@ func isStaticallyTypedProcedureArgument(text string) bool {
 	return false
 }
 
+// coerceProcedureArgument checks and converts one argument against its
+// parameter's type. null is a value of every type, as in Neo4j: the call
+// goes ahead and the procedure decides what null means (its own failure is
+// ProcedureCallFailed).
 func coerceProcedureArgument(parameter ProcedureParam, value interface{}) (interface{}, bool) {
 	if value == nil {
-		return nil, parameter.Optional || strings.EqualFold(parameter.Type, "ANY") || parameter.Type == ""
+		return nil, true
 	}
 
 	switch upperASCII(strings.TrimSpace(parameter.Type)) {
