@@ -209,7 +209,16 @@ func TestDBQueryEmbeddingBranchHelpers(t *testing.T) {
 	for i := range manyChunks {
 		manyChunks[i] = "chunk"
 	}
+	// Chunking returns every chunk; embedding keeps the first
+	// NORNICDB_SEARCH_QUERY_MAX_CHUNKS (32 by default).
 	gotChunks, err := db.chunkQueryWithEmbedder(context.Background(), &coverageQueryEmbedder{chunks: manyChunks}, "query")
+	require.NoError(t, err)
+	require.Len(t, gotChunks, 40)
+	manyBatch := make([][]float32, 32)
+	for i := range manyBatch {
+		manyBatch[i] = []float32{1, 0, 0}
+	}
+	gotChunks, _, err = db.embedQueryChunksWithEmbedder(context.Background(), &coverageQueryEmbedder{chunks: manyChunks, batch: manyBatch}, "query")
 	require.NoError(t, err)
 	require.Len(t, gotChunks, 32)
 
