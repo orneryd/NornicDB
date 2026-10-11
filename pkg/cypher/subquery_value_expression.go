@@ -74,34 +74,39 @@ func findSubqueryExpressions(expr string) []subqueryExpression {
 				}
 			}
 		}
-		matched := false
-		for _, keyword := range subqueryExpressionKeywords {
-			if !matchKeywordAt(expr, i, keyword) {
-				continue
-			}
-			open := skipSpaces(expr, i+len(keyword))
-			if open >= len(expr) || expr[open] != '{' {
-				continue
-			}
-			closing := findMatchingDelimiter(expr, open, '{', '}')
-			if closing < 0 {
-				return found
-			}
-			found = append(found, subqueryExpression{
-				kind:  keyword,
-				start: i,
-				end:   closing + 1,
-				body:  strings.TrimSpace(expr[open+1 : closing]),
-			})
-			i = closing + 1
-			matched = true
-			break
-		}
-		if !matched {
+		keyword, open, isSubquery := subqueryExpressionKeywordAt(expr, i)
+		if !isSubquery {
 			i++
+			continue
 		}
+		closing := findMatchingDelimiter(expr, open, '{', '}')
+		if closing < 0 {
+			return found
+		}
+		found = append(found, subqueryExpression{
+			kind:  keyword,
+			start: i,
+			end:   closing + 1,
+			body:  strings.TrimSpace(expr[open+1 : closing]),
+		})
+		i = closing + 1
 	}
 	return found
+}
+
+// subqueryExpressionKeywordAt reports whether an EXISTS / COUNT / COLLECT
+// subquery expression starts at expr[i]: the keyword, then its body's '{'
+// (at open). It is the one reader of where a subquery expression starts.
+func subqueryExpressionKeywordAt(expr string, i int) (keyword string, open int, ok bool) {
+	for _, keyword := range subqueryExpressionKeywords {
+		if !matchKeywordAt(expr, i, keyword) {
+			continue
+		}
+		if open := skipSpaces(expr, i+len(keyword)); open < len(expr) && expr[open] == '{' {
+			return keyword, open, true
+		}
+	}
+	return "", 0, false
 }
 
 // nestedSubqueryExpressions returns the subquery expressions of expr when
