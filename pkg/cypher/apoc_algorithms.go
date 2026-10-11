@@ -267,11 +267,22 @@ func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, relT
 
 // callApocAlgoPageRank computes PageRank.
 func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	label, err := algorithmLabelArgument("apoc.algo.pageRank", args)
+	const procedure = "apoc.algo.pageRank"
+	nodes, err := e.algorithmNodes(procedure, args)
 	if err != nil {
 		return nil, err
 	}
-	scores := e.computePageRank(label, 0.85, 20)
+	// APOC's config map: iterations (default 20) and dampingFactor (0.85).
+	iterations, damping := 20, 0.85
+	if config, isMap := procedureArgument(args, 1).(map[string]interface{}); isMap {
+		if n, ok := fastRPConfigInt(config["iterations"]); ok && n > 0 {
+			iterations = n
+		}
+		if d, ok := toFloat64(config["dampingFactor"]); ok && d > 0 && d < 1 {
+			damping = d
+		}
+	}
+	scores := e.computePageRank(nodes, damping, iterations)
 	rows := make([][]interface{}, 0, len(scores))
 	for nodeID, score := range scores {
 		node, err := e.storage.GetNode(nodeID)
@@ -283,13 +294,7 @@ func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []inter
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) computePageRank(label string, damping float64, iterations int) map[storage.NodeID]float64 {
-	var nodes []*storage.Node
-	if label != "" {
-		nodes, _ = e.storage.GetNodesByLabel(label)
-	} else {
-		nodes = e.storage.GetAllNodes()
-	}
+func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64, iterations int) map[storage.NodeID]float64 {
 	if len(nodes) == 0 {
 		return map[storage.NodeID]float64{}
 	}
@@ -326,11 +331,11 @@ func (e *StorageExecutor) computePageRank(label string, damping float64, iterati
 
 // callApocAlgoBetweenness computes betweenness centrality.
 func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	label, err := algorithmLabelArgument("apoc.algo.betweenness", args)
+	nodes, err := e.algorithmNodes("apoc.algo.betweenness", args)
 	if err != nil {
 		return nil, err
 	}
-	scores := e.computeBetweenness(label)
+	scores := e.computeBetweenness(nodes)
 	rows := make([][]interface{}, 0, len(scores))
 	for nodeID, score := range scores {
 		node, err := e.storage.GetNode(nodeID)
@@ -342,13 +347,7 @@ func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []in
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) computeBetweenness(label string) map[storage.NodeID]float64 {
-	var nodes []*storage.Node
-	if label != "" {
-		nodes, _ = e.storage.GetNodesByLabel(label)
-	} else {
-		nodes = e.storage.GetAllNodes()
-	}
+func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.NodeID]float64 {
 	scores := make(map[storage.NodeID]float64)
 	for _, node := range nodes {
 		scores[node.ID] = 0
@@ -410,11 +409,11 @@ func (e *StorageExecutor) computeBetweenness(label string) map[storage.NodeID]fl
 
 // callApocAlgoCloseness computes closeness centrality.
 func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	label, err := algorithmLabelArgument("apoc.algo.closeness", args)
+	nodes, err := e.algorithmNodes("apoc.algo.closeness", args)
 	if err != nil {
 		return nil, err
 	}
-	scores := e.computeCloseness(label)
+	scores := e.computeCloseness(nodes)
 	rows := make([][]interface{}, 0, len(scores))
 	for nodeID, score := range scores {
 		node, err := e.storage.GetNode(nodeID)
@@ -426,13 +425,7 @@ func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, args []inte
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) computeCloseness(label string) map[storage.NodeID]float64 {
-	var nodes []*storage.Node
-	if label != "" {
-		nodes, _ = e.storage.GetNodesByLabel(label)
-	} else {
-		nodes = e.storage.GetAllNodes()
-	}
+func (e *StorageExecutor) computeCloseness(nodes []*storage.Node) map[storage.NodeID]float64 {
 	scores := make(map[storage.NodeID]float64)
 	n := len(nodes)
 	for _, source := range nodes {
@@ -634,23 +627,45 @@ func pathAlgorithmArguments(procedure string, args []interface{}) (start, end st
 	return start, end, relType, nil
 }
 
-// algorithmLabelArgument reads the label a whole-graph algorithm runs over:
-// its first argument, a STRING or a list of one; none, null, '' or an empty
-// list is every node.
-func algorithmLabelArgument(procedure string, args []interface{}) (string, error) {
+// algorithmNodes reads the nodes a whole-graph algorithm runs over from its
+// first argument: a LIST<NODE> (APOC's form: MATCH (n:L) WITH collect(n) AS
+// nodes CALL apoc.algo.pageRank(nodes)), a label (a STRING, or a list of
+// one), or none, null, '' or an empty list for every node.
+func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) ([]*storage.Node, error) {
 	value := procedureArgument(args, 0)
-	if items, isList := cypherListValue(value); isList && len(items) <= 1 {
+	typeError := func() error {
+		return procedureArgumentTypeError(procedure, "nodes", "LIST<NODE> or STRING", procedureArgument(args, 0))
+	}
+	if items, isList := cypherListValue(value); isList {
 		if len(items) == 0 {
-			return "", nil
+			return e.storage.GetAllNodes(), nil
+		}
+		if _, isNode := items[0].(*storage.Node); isNode {
+			nodes := make([]*storage.Node, 0, len(items))
+			for _, item := range items {
+				node, isNode := item.(*storage.Node)
+				if !isNode || node == nil {
+					return nil, typeError()
+				}
+				nodes = append(nodes, node)
+			}
+			return nodes, nil
+		}
+		if len(items) != 1 {
+			return nil, typeError()
 		}
 		value = items[0]
 	}
 	switch label := value.(type) {
 	case nil:
-		return "", nil
+		return e.storage.GetAllNodes(), nil
 	case string:
-		return label, nil
+		if label == "" {
+			return e.storage.GetAllNodes(), nil
+		}
+		nodes, _ := e.storage.GetNodesByLabel(label)
+		return nodes, nil
 	default:
-		return "", procedureArgumentTypeError(procedure, "label", "STRING", procedureArgument(args, 0))
+		return nil, typeError()
 	}
 }
