@@ -59,33 +59,19 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	c.hasCounters = true
 	c.propKeyDrain = tx.engine.propKeyDict.flushTxnCounters(tx.badgerTx)
 	// Capture the derived-count deltas the sync path applies after commit;
-	// replay merges and applies them under the count locks.
-	if len(tx.pendingLabelCountDeltas) > 0 {
-		c.labelDeltas = cloneInt64Map(tx.pendingLabelCountDeltas)
-	}
-	if len(tx.pendingEdgeTypeCountDeltas) > 0 {
-		c.edgeTypeDeltas = cloneInt64Map(tx.pendingEdgeTypeCountDeltas)
-	}
-	if len(tx.pendingEdgeTypeLabelCountDeltas) > 0 {
-		c.edgeTypeLabelDeltas = cloneInt64Map(tx.pendingEdgeTypeLabelCountDeltas)
-	}
+	// replay merges and applies them under the count locks. Ownership
+	// transfer, not copies: closeLocked nils these exact maps on the
+	// buffered path (bufferedStagingTransferred), so the transaction can
+	// never mutate them after the ACK, and the replay only reads them.
+	c.labelDeltas = tx.pendingLabelCountDeltas
+	c.edgeTypeDeltas = tx.pendingEdgeTypeCountDeltas
+	c.edgeTypeLabelDeltas = tx.pendingEdgeTypeLabelCountDeltas
 
 	tx.releaseSnapshotReaderLocked()
 	tx.bufferedStagingTransferred = true
 	tx.engine.writeBehind.AppendCommit(c)
 	tx.closeLocked(TxStatusCommitted, true, nil)
 	return nil
-}
-
-func cloneInt64Map[K comparable](m map[K]int64) map[K]int64 {
-	if len(m) == 0 {
-		return nil
-	}
-	out := make(map[K]int64, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
 }
 
 // persistReplayTxnCounters makes one generation's property-key tokens

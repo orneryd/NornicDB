@@ -13,6 +13,7 @@ package storage
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -357,6 +358,10 @@ type WriteBehindBuffer struct {
 	// but unflushed nodes answer index seeks exactly like committed ones.
 	// Guarded by mu.
 	pendingIndex *pendingNodeIndex
+	// trackedPairs is the set of (label, property) pairs an attached
+	// schema indexes by value; the pending index rebuilds from it when it
+	// has been released empty. Guarded by mu.
+	trackedPairs []pendingPropertyKey
 
 	flushCh chan struct{}
 	done    chan struct{}
@@ -502,6 +507,17 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 	// attached schema has asked for value indexing: buffered nodes answer
 	// property-index seeks until their generation applies, and the schema's
 	// committed index takes over from the replay's own maintenance.
+	if len(w.trackedPairs) > 0 && w.pendingIndex == nil {
+		// The index was released once empty (memory decay after a burst);
+		// rebuild it from the tracked pairs before indexing this commit.
+		w.pendingIndex = newPendingNodeIndex()
+		for _, pair := range w.trackedPairs {
+			w.pendingIndex.track(pair.label, pair.property, func(id NodeID) *Node {
+				node, _ := w.nodeLocked(id)
+				return node
+			})
+		}
+	}
 	if w.pendingIndex != nil {
 		for _, op := range c.ops {
 			switch op.Type {
@@ -688,6 +704,12 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 	if len(w.draining) > 0 && w.draining[0] == buf {
 		w.draining = w.draining[1:]
 	}
+	// A burst fills the pending index with map buckets Go never shrinks;
+	// drop it entirely once every generation has retired, so an idle
+	// buffer returns its memory and the next lookup rebuilds it lazily.
+	if w.pendingIndex != nil && w.pendingIndex.empty() {
+		w.pendingIndex = nil
+	}
 	w.mu.Unlock()
 }
 
@@ -757,6 +779,9 @@ func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
 			node, _ := w.nodeLocked(id)
 			return node
 		})
+		if !slices.Contains(w.trackedPairs, pair) {
+			w.trackedPairs = append(w.trackedPairs, pair)
+		}
 	}
 }
 
