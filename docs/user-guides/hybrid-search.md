@@ -163,7 +163,9 @@ Results include RRF metadata so you can see how each ranking strategy contribute
 
 Property projection changes only the returned `properties` map. It does not
 change matching or ranking. Use `NORNICDB_SEARCH_BM25_PROPERTIES` to control
-which stored properties enter BM25 and rerank text.
+which stored properties enter BM25 and rerank text, and
+`NORNICDB_SEARCH_BM25_LABELS` to keyword-index only nodes carrying one of the
+listed labels.
 
 RRF tuning constants (`k`, vector/BM25 weights) are applied internally by the search service and are not exposed as HTTP request fields. For programmatic control over fusion weights or k, use the embedded Go API or the MCP `discover` tool. Internal RRF defaults are `k = 60` with adaptive vector/BM25 weights driven by query length (see the table above).
 

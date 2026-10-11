@@ -756,6 +756,9 @@ type Service struct {
 	bm25Engine   string
 	// fulltextProperties is an ordered allowlist. Empty preserves all-property indexing.
 	fulltextProperties []string
+	// fulltextLabels lists the labels whose nodes are BM25-indexed (any one
+	// suffices). Empty indexes every node.
+	fulltextLabels []string
 	reranker           Reranker
 	mu                 sync.RWMutex
 	// indexMu serializes index mutation operations (IndexNode/RemoveNode/BuildIndexes batches)
@@ -7050,6 +7053,9 @@ func (s *Service) extractSearchableText(node *storage.Node) string {
 	// The storage engine (AsyncEngine) makes copies during iteration to
 	// prevent concurrent modification issues.
 
+	if !s.fulltextLabelAllowed(node) {
+		return ""
+	}
 	properties := s.FulltextProperties()
 	if len(properties) > 0 {
 		parts := make([]string, 0, len(properties))
@@ -7120,6 +7126,57 @@ func (s *Service) SetFulltextProperties(properties []string) {
 	s.mu.Lock()
 	s.fulltextProperties = normalized
 	s.mu.Unlock()
+}
+
+// SetFulltextLabels limits BM25 indexing to nodes carrying at least one of
+// the labels (NORNICDB_SEARCH_BM25_LABELS); any other node is indexed with no
+// text, so it is never a keyword hit, as a node with none of the listed
+// properties already is. An empty list indexes every node. Configure this
+// before building indexes; a change invalidates persisted BM25 data.
+func (s *Service) SetFulltextLabels(labels []string) {
+	seen := make(map[string]struct{}, len(labels))
+	normalized := make([]string, 0, len(labels))
+	for _, label := range labels {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			continue
+		}
+		if _, exists := seen[label]; exists {
+			continue
+		}
+		seen[label] = struct{}{}
+		normalized = append(normalized, label)
+	}
+	s.mu.Lock()
+	s.fulltextLabels = normalized
+	s.mu.Unlock()
+}
+
+// FulltextLabels returns the configured BM25 label allowlist.
+func (s *Service) FulltextLabels() []string {
+	s.mu.RLock()
+	labels := append([]string(nil), s.fulltextLabels...)
+	s.mu.RUnlock()
+	return labels
+}
+
+// fulltextLabelAllowed reports whether node is BM25-indexed under the label
+// allowlist: always when it is empty, otherwise when node carries one of the
+// labels.
+func (s *Service) fulltextLabelAllowed(node *storage.Node) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.fulltextLabels) == 0 {
+		return true
+	}
+	for _, label := range node.Labels {
+		for _, allowed := range s.fulltextLabels {
+			if label == allowed {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // FulltextProperties returns the configured ordered BM25 property allowlist.
