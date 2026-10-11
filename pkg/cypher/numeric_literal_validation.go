@@ -42,7 +42,7 @@ func validateNumericLiterals(cypher string) error {
 			}
 		}
 
-		if !numericLiteralStartsAt(cypher, index) || index > 0 && cypher[index-1] == ':' {
+		if !numericLiteralStartsAt(cypher, index) {
 			index++
 			continue
 		}
