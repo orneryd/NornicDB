@@ -1038,6 +1038,9 @@ type TransactionResponse struct {
 	Notifications []ServerNotification `json:"notifications,omitempty"` // Server notifications
 	Receipt       interface{}          `json:"receipt,omitempty"`       // Mutation receipt (tx_id, wal_seq_start, wal_seq_end, hash)
 	Optimistic    interface{}          `json:"optimistic,omitempty"`    // Optimistic mutation metadata (e.g., created IDs)
+	// Eventual marks a commit acknowledged through the write-behind buffer
+	// (not yet durable). Internal to status selection; not serialized.
+	Eventual bool `json:"-"`
 }
 
 // TransactionInfo holds transaction state.
@@ -1566,10 +1569,12 @@ func shouldUseAcceptedStatusForMutation(resp *TransactionResponse) bool {
 	if resp == nil {
 		return false
 	}
-	// Only report eventual consistency when the request completed without a
-	// durable receipt and instead exposed optimistic metadata. This reflects the
-	// actual async write-behind path rather than the global config toggle.
-	return resp.Receipt == nil && resp.Optimistic != nil
+	// 202 Accepted follows the actual commit path, not a statement
+	// classifier: every eligible write is acknowledged through the
+	// write-behind buffer when it is enabled, and the executor marks that
+	// commit as eventual. Receipts are attached on both paths, so they
+	// cannot distinguish the two; the marker does.
+	return resp.Eventual
 }
 
 // executeTxStatements runs a request's statements in an explicit
@@ -1973,8 +1978,8 @@ func (s *Server) commitRequestTransaction(ctx context.Context, session *txsessio
 	}
 }
 
-// applyResultMetadata copies a result's receipt and optimistic metadata to
-// the response.
+// applyResultMetadata copies a result's receipt, optimistic and eventual
+// metadata to the response.
 func applyResultMetadata(response *TransactionResponse, metadata map[string]interface{}) {
 	if metadata == nil {
 		return
@@ -1984,6 +1989,9 @@ func applyResultMetadata(response *TransactionResponse, metadata map[string]inte
 	}
 	if optimistic, ok := metadata["optimistic"]; ok && optimistic != nil {
 		response.Optimistic = optimistic
+	}
+	if eventual, ok := metadata["eventual"].(bool); ok && eventual {
+		response.Eventual = true
 	}
 }
 

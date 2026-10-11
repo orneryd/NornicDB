@@ -2989,7 +2989,8 @@ func TestRequestAndStatusHelperBranches(t *testing.T) {
 	assert.False(t, shouldUseAcceptedStatusForMutation(nil))
 	assert.False(t, shouldUseAcceptedStatusForMutation(&TransactionResponse{}))
 	assert.False(t, shouldUseAcceptedStatusForMutation(&TransactionResponse{Receipt: map[string]any{"bookmark": "x"}, Optimistic: map[string]any{"queued": true}}))
-	assert.True(t, shouldUseAcceptedStatusForMutation(&TransactionResponse{Optimistic: map[string]any{"queued": true}}))
+	assert.False(t, shouldUseAcceptedStatusForMutation(&TransactionResponse{Optimistic: map[string]any{"queued": true}}))
+	assert.True(t, shouldUseAcceptedStatusForMutation(&TransactionResponse{Eventual: true}))
 
 	assert.Equal(t, "sub:user-sub", transactionOwnerKey(nil, &auth.JWTClaims{Sub: " user-sub ", Username: "ignored"}))
 	assert.Equal(t, "user:alice", transactionOwnerKey(nil, &auth.JWTClaims{Username: " alice ", Email: "ignored@example.com"}))

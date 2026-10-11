@@ -307,9 +307,9 @@ func TestTxReads_LabelCacheBoundPreservesSnapshotLabels(t *testing.T) {
 	t.Cleanup(func() { _ = engine.Close() })
 	writer, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	for index := 0; index < maxSnapshotPrefixNodeCacheNodes+2; index++ {
+	for index := 0; index < maxSnapshotNodeLabelCacheNodes+2; index++ {
 		_, err = writer.CreateNode(&Node{
-			ID: NodeID(fmt.Sprintf("test:bounded-%03d", index)), Labels: []string{"Person"},
+			ID: NodeID(fmt.Sprintf("test:bounded-%05d", index)), Labels: []string{"Person"},
 		})
 		require.NoError(t, err)
 	}
@@ -328,9 +328,9 @@ func TestTxReads_LabelCacheBoundPreservesSnapshotLabels(t *testing.T) {
 			}
 			return nil
 		}))
-		require.Equal(t, maxSnapshotPrefixNodeCacheNodes+2, visited)
-		require.Len(t, reader.snapshotNodeLabels, maxSnapshotPrefixNodeCacheNodes)
-		require.Equal(t, maxSnapshotPrefixNodeCacheNodes*len("Person"), reader.snapshotNodeLabelBytes)
+		require.Equal(t, maxSnapshotNodeLabelCacheNodes+2, visited)
+		require.Len(t, reader.snapshotNodeLabels, maxSnapshotNodeLabelCacheNodes)
+		require.Equal(t, maxSnapshotNodeLabelCacheNodes*len("Person"), reader.snapshotNodeLabelBytes)
 	}
 	require.NotEmpty(t, uncached)
 	node, err := engine.GetNode(uncached)

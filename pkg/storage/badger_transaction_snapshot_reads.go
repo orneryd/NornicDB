@@ -15,6 +15,14 @@ const (
 	maxSnapshotPrefixNodeCacheBytes = 256 << 10
 	maxSnapshotEdgeCacheEntries     = 128
 	maxSnapshotEdgeCacheBytes       = 256 << 10
+	// Committed-label cache (snapshotNodeLabels) gets its own budget: a
+	// UNWIND batch resolves thousands of distinct endpoints and edge-batch
+	// validation reads each endpoint's labels once; seeding that cache from
+	// the MATCH's own body reads (getCommittedNodeLocked) removes the second
+	// read only when the cache can hold the batch. Labels are a few tens of
+	// bytes, so 8K entries / 1 MiB is cheap per transaction.
+	maxSnapshotNodeLabelCacheNodes = 8192
+	maxSnapshotNodeLabelCacheBytes = 1 << 20
 )
 
 func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key string, nodes []*Node, indexNodesByID bool) {
@@ -83,20 +91,20 @@ func (tx *BadgerTransaction) cacheCommittedNodeLabelsLocked(node *Node) []string
 	if labels, cached := tx.snapshotNodeLabels[node.ID]; cached {
 		return labels
 	}
-	available := maxSnapshotPrefixNodeCacheBytes - tx.snapshotNodeLabelBytes
+	available := maxSnapshotNodeLabelCacheBytes - tx.snapshotNodeLabelBytes
 	for _, label := range node.Labels {
 		if len(label) > available {
 			return node.Labels
 		}
 		available -= len(label)
 	}
-	if len(tx.snapshotNodeLabels) < maxSnapshotPrefixNodeCacheNodes {
+	if len(tx.snapshotNodeLabels) < maxSnapshotNodeLabelCacheNodes {
 		if tx.snapshotNodeLabels == nil {
 			tx.snapshotNodeLabels = make(map[NodeID][]string)
 		}
 		labels := append([]string(nil), node.Labels...)
 		tx.snapshotNodeLabels[node.ID] = labels
-		tx.snapshotNodeLabelBytes = maxSnapshotPrefixNodeCacheBytes - available
+		tx.snapshotNodeLabelBytes = maxSnapshotNodeLabelCacheBytes - available
 		return labels
 	}
 	return node.Labels

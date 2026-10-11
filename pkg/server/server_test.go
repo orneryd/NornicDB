@@ -2670,7 +2670,7 @@ func TestHandleImplicitTransaction_AsyncWriteAccepted(t *testing.T) {
 	require.NotEmpty(t, createdIDs)
 }
 
-func TestHandleImplicitTransaction_AsyncEnabledSyncFallbackReturnsOK(t *testing.T) {
+func TestHandleImplicitTransaction_AsyncEnabledBuffersSetWriteReturnsAccepted(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbCfg := nornicdb.DefaultConfig()
 	dbCfg.Memory.DecayEnabled = false
@@ -2702,13 +2702,16 @@ func TestHandleImplicitTransaction_AsyncEnabledSyncFallbackReturnsOK(t *testing.
 	rec := httptest.NewRecorder()
 	srv.handleImplicitTransaction(rec, req, "nornic")
 
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Empty(t, rec.Header().Get("X-NornicDB-Consistency"))
+	// Every eligible write is acknowledged through the buffer when async
+	// writes are enabled (the routing-layer eligibility of the removed
+	// AsyncEngine is gone), so this mutation is accepted, not completed.
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	require.Equal(t, "eventual", rec.Header().Get("X-NornicDB-Consistency"))
 
 	var payload map[string]interface{}
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&payload))
 	_, hasReceipt := payload["receipt"]
-	require.True(t, hasReceipt, "sync fallback should expose durable receipt metadata")
+	require.True(t, hasReceipt, "accepted writes expose the same receipt metadata as sync")
 }
 
 func TestHandleImplicitTransaction_NoAuth_SkipsRBACWriteCheck(t *testing.T) {

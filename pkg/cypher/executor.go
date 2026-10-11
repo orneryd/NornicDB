@@ -1829,7 +1829,11 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		running.committed.Store(true)
 	}
 
-	// Attach receipt metadata if WAL markers were recorded.
+	// Attach receipt metadata if WAL markers were recorded. Receipts are
+	// attached exactly as on the durable path: the write-behind ACK carries
+	// the same information (its commit markers are appended before the ACK
+	// per the buffer design). The eventual marker below is how the HTTP
+	// layer tells an acknowledged buffered commit from a durable one.
 	if wal != nil && walSeqStart > 0 {
 		opCount := tx.OperationCount()
 		if commitSeq, walErr := wal.AppendTxCommit(dbName, txID, opCount); walErr == nil {
@@ -1840,6 +1844,16 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 				result.Metadata["receipt"] = receipt
 			}
 		}
+	}
+
+	// Mark commits that were acknowledged through the write-behind buffer.
+	// Every eligible write buffers when the engine has it enabled; this
+	// marker is what makes the server answer 202 Accepted instead of 200.
+	if tx.AcknowledgedBuffered() {
+		if result.Metadata == nil {
+			result.Metadata = make(map[string]interface{})
+		}
+		result.Metadata["eventual"] = true
 	}
 
 	// Promote the tx-scoped MERGE lookup cache into the parent so

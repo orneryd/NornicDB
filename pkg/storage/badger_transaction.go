@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -49,6 +50,11 @@ type BadgerTransaction struct {
 	beginSnapshot map[string]MVCCVersion
 	// CommitVersion is assigned once for a successful commit that mutates storage.
 	CommitVersion MVCCVersion
+
+	// bufferedAck is set when Commit acknowledged through the write-behind
+	// buffer instead of a durable Badger commit (commitBufferedLocked). The
+	// executor uses it to suppress durable receipt metadata on the ACK path.
+	bufferedAck atomic.Bool
 
 	// namespace pins this transaction to a single database namespace. It is
 	// set lazily on the first prefixed write (or eagerly via SetNamespace by
@@ -2158,7 +2164,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		// load-bearing for snapshot isolation: later label reads in this
 		// transaction must see the scan-time labels, not labels committed
 		// afterwards (TestTxReads_LabelCacheBoundPreservesSnapshotLabels).
-		if len(tx.snapshotNodeLabels) < maxSnapshotPrefixNodeCacheNodes {
+		if len(tx.snapshotNodeLabels) < maxSnapshotNodeLabelCacheNodes {
 			tx.cacheCommittedNodeLabelsLocked(node)
 		}
 		if !hasPending {
@@ -3070,7 +3076,26 @@ func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error
 			}
 		}
 	}
+	// Seed the transaction label cache from the body this read already
+	// paid for: edge-batch validation (visibleNodeLabelsLocked) reads each
+	// endpoint's labels from the MVCC head, and a property-index MATCH has
+	// just loaded the full body in the same transaction (#1043 write-path
+	// measurement 4: that second read was ~15% of friendship-phase server
+	// CPU). The cache is byte/node bounded (cacheCommittedNodeLabelsLocked)
+	// and committed-only, so pending/deleted nodes keep their precedence.
+	if node != nil && err == nil && len(node.Labels) > 0 {
+		tx.cacheCommittedNodeLabelsLocked(node)
+	}
 	return node, err
+}
+
+// AcknowledgedBuffered reports whether the commit was acknowledged through
+// the write-behind buffer rather than made durable. The executor's implicit
+// path reads it after Commit to decide whether durable receipt metadata
+// applies; the WAL begin/commit markers still run, only the receipt is
+// suppressed on the eventual-consistency ACK.
+func (tx *BadgerTransaction) AcknowledgedBuffered() bool {
+	return tx.bufferedAck.Load()
 }
 
 // getNodeFromBadgerSnapshotLocked reads the primary nodeKey via the pinned

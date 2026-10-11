@@ -70,6 +70,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	tx.releaseSnapshotReaderLocked()
 	tx.bufferedStagingTransferred = true
 	tx.engine.writeBehind.AppendCommit(c)
+	tx.bufferedAck.Store(true)
 	tx.closeLocked(TxStatusCommitted, true, nil)
 	return nil
 }
