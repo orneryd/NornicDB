@@ -90,6 +90,11 @@ When fallback changes the requested search path, `fallback_reason` contains a
 stable code such as `query_embedding_failed`, `query_embedding_unavailable`,
 `no_embedder`, `no_hybrid_results`, or `hybrid_search_failed`. Provider error
 details are written to the warning log and are not exposed in query results.
+A provider answer that isn't one non-empty vector per input, of the embedder's
+dimension, is a failed embedding (`query_embedding_failed`) and is never
+cached. A failed or unavailable embedding is reported over a later, benign
+reason, and a chunk that wasn't searched with its embedding doesn't count in
+`query_chunks_searched`.
 
 `search_method` ends in `+rerank` only when the reranker ordered the results.
 When a requested rerank didn't, the results keep their fused order,
