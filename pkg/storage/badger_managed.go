@@ -56,6 +56,10 @@ type managedBadgerDB struct {
 	// a large commit holds it exclusively from its first batch until it has
 	// published or rolled back, so no other commit lands between its batches.
 	commitGate sync.RWMutex
+	// publishDiscard is the discard-publish seam: nil means m.DB.SetDiscardTs.
+	// Tests replace it to assert that published discard timestamps are
+	// strictly increasing; the production value is always SetDiscardTs.
+	publishDiscard func(ts uint64)
 }
 
 // largeCommitIntentKey marks a large commit in progress. It is written, at
@@ -200,10 +204,25 @@ func (m *managedBadgerDB) commitShared(txn *badger.Txn) (uint64, error) {
 // more, and lets Badger forget conflict state of commits every open
 // transaction already observed. Called on every commit, as Badger's own
 // oracle did.
+//
+// The accept (advanceDiscard) and the publish (SetDiscardTs) run under one
+// critical section: two concurrent commits can otherwise accept 2333 and
+// 2330 in that order and publish them in the reverse order (the second
+// goroutine is preempted between accept and publish), which feeds Badger a
+// decreasing discard timestamp and trips its
+// cleanupCommittedTransactions assert (fatal). Badger's setDiscardTs only
+// takes Badger's oracle lock, which never calls back into our mutex, so the
+// two-level lock order is acyclic.
 func (m *managedBadgerDB) advanceDiscardTs() {
-	if ts, ok := m.oracle.advanceDiscard(); ok {
-		m.DB.SetDiscardTs(ts)
+	m.oracle.mu.Lock()
+	if ts, ok := m.oracle.advanceDiscardLocked(); ok {
+		if m.publishDiscard != nil {
+			m.publishDiscard(ts)
+		} else {
+			m.DB.SetDiscardTs(ts)
+		}
 	}
+	m.oracle.mu.Unlock()
 }
 
 // DropPrefix drops every key under prefixes. Badger blocks writes while it
@@ -732,11 +751,10 @@ func (o *commitOracle) waitPublished(ts uint64) error {
 	return nil
 }
 
-// advanceDiscard returns a new discard timestamp when the oldest open read
-// (or, with none open, the published timestamp) has moved forward.
-func (o *commitOracle) advanceDiscard() (uint64, bool) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
+// advanceDiscardLocked is advanceDiscard for a caller already holding o.mu.
+// It returns a new discard timestamp when the oldest open read (or, with
+// none open, the published timestamp) has moved forward.
+func (o *commitOracle) advanceDiscardLocked() (uint64, bool) {
 	ts := o.published.Load()
 	for r := range o.readers {
 		if r < ts {
@@ -748,6 +766,16 @@ func (o *commitOracle) advanceDiscard() (uint64, bool) {
 	}
 	o.discardTs = ts
 	return ts, true
+}
+
+// advanceDiscard returns a new discard timestamp when the oldest open read
+// (or, with none open, the published timestamp) has moved forward. Prefer
+// advanceDiscardTs, which publishes under the same critical section; this
+// form exists for callers that only inspect the oracle.
+func (o *commitOracle) advanceDiscard() (uint64, bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.advanceDiscardLocked()
 }
 
 // fail stops all further commits after a large commit could be neither

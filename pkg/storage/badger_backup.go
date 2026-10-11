@@ -313,13 +313,24 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	if err := b.deleteNamespaceKeyFamilies(prefixBytes, namespace, wholeNamespace, nodeNums, edgeNums); err != nil {
 		return 0, 0, err
 	}
-	b.idDict.mu.Lock()
-	for id, num := range b.idDict.nodeForward {
-		if strings.HasPrefix(string(id), prefix) {
-			delete(b.idDict.nodeForward, id)
-			delete(b.idDict.nodeReverse, num)
+	// Node dict entries are sharded now: collect the victim IDs shard by
+	// shard, then remove each pair with the sharded helper (the drop is
+	// exclusive, so the two passes race with nothing).
+	var nodeVictims []NodeID
+	for i := range b.idDict.nodes {
+		sh := &b.idDict.nodes[i]
+		sh.mu.RLock()
+		for id := range sh.forward {
+			if strings.HasPrefix(string(id), prefix) {
+				nodeVictims = append(nodeVictims, id)
+			}
 		}
+		sh.mu.RUnlock()
 	}
+	for _, id := range nodeVictims {
+		b.idDict.nodePairRemoveByID(id)
+	}
+	b.idDict.mu.Lock()
 	for id, num := range b.idDict.edgeForward {
 		if strings.HasPrefix(string(id), prefix) {
 			delete(b.idDict.edgeForward, id)
