@@ -42,11 +42,11 @@ func TestNotOfParenthesisedChainStartingWithNot(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:Q {id: 1})-[:R]->(:Q {id: 2})-[:R]->(:Q {id: 3})", nil)
 	require.NoError(t, err)
 	for query, want := range map[string][][]interface{}{
-		"RETURN NOT (NOT false OR true) AS v":                         {{false}},
-		"RETURN NOT (NOT true AND false) AS v":                        {{true}},
-		"RETURN NOT (NOT true) AS v":                                  {{true}},
-		"RETURN NOT (NOT null OR false) AS v":                         {{nil}},
-		"WITH true AS t, false AS f RETURN NOT (NOT f OR t) AS v":     {{false}},
+		"RETURN NOT (NOT false OR true) AS v":                                            {{false}},
+		"RETURN NOT (NOT true AND false) AS v":                                           {{true}},
+		"RETURN NOT (NOT true) AS v":                                                     {{true}},
+		"RETURN NOT (NOT null OR false) AS v":                                            {{nil}},
+		"WITH true AS t, false AS f RETURN NOT (NOT f OR t) AS v":                        {{false}},
 		"MATCH (a:Q)-[r:R]->(b:Q) WHERE NOT (NOT (a)<--() OR (a)-->()) RETURN a.id AS x": {},
 		"MATCH (a:Q)-[r:R]->(b:Q) WHERE NOT ((a)-->() OR NOT (a)<--()) RETURN a.id AS x": {},
 		"MATCH (a:Q)-[r:R]->(b:Q) WHERE NOT (NOT (a)<--()) RETURN a.id AS x":             {{int64(2)}},
@@ -69,10 +69,11 @@ func TestMatchWhereXorPrecedence(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:Q {id: 1})-[:R]->(:Q {id: 2})-[:R]->(:Q {id: 3})", nil)
 	require.NoError(t, err)
 	for query, want := range map[string][][]interface{}{
-		"MATCH (a:Q)-[r:R]->(b:Q) WHERE a.id = 1 XOR true RETURN a.id AS x":              {{int64(2)}},
-		"MATCH (a:Q)-[r:R]->(b:Q) WHERE false OR (a.id = 1 XOR true) RETURN a.id AS x":    {{int64(2)}},
-		"MATCH (a:Q)-[r:R]->(b:Q) WHERE a.id = 1 XOR b.id = 3 OR false RETURN a.id AS x": {},
-		"MATCH (a:Q)-[r:R]->(b:Q) WHERE a.id = 1 XOR null RETURN a.id AS x":              {},
+		"MATCH (a:Q)-[r:R]->(b:Q) WHERE a.id = 1 XOR true RETURN a.id AS x":                         {{int64(2)}},
+		"MATCH (a:Q)-[r:R]->(b:Q) WHERE false OR (a.id = 1 XOR true) RETURN a.id AS x":              {{int64(2)}},
+		"MATCH (a:Q)-[r:R]->(b:Q) WHERE a.id = 1 XOR b.id = 3 OR false RETURN a.id AS x ORDER BY x": {{int64(1)}, {int64(2)}},
+		"MATCH (a:Q)-[r:R]->(b:Q) WHERE a.id = 1 XOR b.id = 2 OR false RETURN a.id AS x":            {},
+		"MATCH (a:Q)-[r:R]->(b:Q) WHERE a.id = 1 XOR null RETURN a.id AS x":                         {},
 	} {
 		result, err := exec.Execute(ctx, query, nil)
 		require.NoError(t, err, query)
