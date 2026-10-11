@@ -49,15 +49,35 @@ func TestApocCustomProcedures(t *testing.T) {
 	run(t, "CALL apoc.custom.dropProcedure('reach')", nil)
 	_, err = exec.Execute(ctx, "CALL custom.reach(1) YIELD n RETURN n", nil)
 	require.Error(t, err)
+	// The list shows custom procedures only, and skips records it can't read.
+	run(t, "CREATE PROCEDURE plain.one() MODE READ AS RETURN 1 AS n", nil)
+	run(t, "CREATE (:_ProcedureCatalog {record: 'not base64 ***'})", nil)
 	require.Empty(t, run(t, "CALL apoc.custom.list() YIELD name RETURN name", nil))
 
+	// Not inside an explicit transaction, as CREATE / DROP PROCEDURE.
+	for _, query := range []string{"CALL apoc.custom.installProcedure('p() :: (n :: INTEGER)', 'RETURN 1 AS n')", "CALL apoc.custom.dropProcedure('p')"} {
+		_, err := exec.Execute(WithTransactionControl(ctx), "BEGIN", nil)
+		require.NoError(t, err)
+		_, err = exec.Execute(ctx, query, nil)
+		require.ErrorContains(t, err, "transaction", query)
+		_, err = exec.Execute(WithTransactionControl(ctx), "ROLLBACK", nil)
+		require.NoError(t, err)
+	}
+
 	for query, message := range map[string]string{
-		"CALL apoc.custom.installProcedure('not a signature', 'RETURN 1 AS n')":                        "invalid custom procedure signature",
-		"CALL apoc.custom.installProcedure('p(a = 1 :: INTEGER, b :: INTEGER)', 'RETURN 1 AS n')":      "invalid custom procedure signature",
-		"CALL apoc.custom.installProcedure('p() :: (n :: INTEGER)', '')":                               "body",
-		"CALL apoc.custom.installProcedure('p() :: (n :: INTEGER)', 'CREATE (:X) RETURN 1 AS n')":      "write",
-		"CALL apoc.custom.installProcedure('p() :: (n :: INTEGER)', 'RETURN 1 AS n', 'neo4j', 'oops')": "invalid procedure mode",
-		"UNWIND [1] AS s CALL apoc.custom.installProcedure(s, 'RETURN 1 AS n')":                        "signature must be STRING",
+		"CALL apoc.custom.installProcedure('not a signature', 'RETURN 1 AS n')":                                           "invalid custom procedure signature",
+		"CALL apoc.custom.installProcedure('p(a = 1 :: INTEGER, b :: INTEGER)', 'RETURN 1 AS n')":                         "invalid custom procedure signature",
+		"CALL apoc.custom.installProcedure('p() :: (n :: INTEGER)', '')":                                                  "body",
+		"CALL apoc.custom.installProcedure('p() :: (n :: INTEGER)', 'CREATE (:X) RETURN 1 AS n')":                         "write",
+		"CALL apoc.custom.installProcedure('p() :: (n :: INTEGER)', 'RETURN 1 AS n', 'neo4j', 'oops')":                    "invalid procedure mode",
+		"UNWIND [1] AS s CALL apoc.custom.installProcedure(s, 'RETURN 1 AS n')":                                           "signature must be STRING",
+		"UNWIND [1] AS s CALL apoc.custom.installProcedure('p() :: (n :: INTEGER)', s)":                                   "statement must be STRING",
+		"UNWIND [1] AS s CALL apoc.custom.installProcedure('p() :: (n :: INTEGER)', 'RETURN 1 AS n', s)":                  "databaseName must be STRING",
+		"UNWIND [1] AS s CALL apoc.custom.installProcedure('p() :: (n :: INTEGER)', 'RETURN 1 AS n', 'neo4j', s)":         "mode must be STRING",
+		"UNWIND [1] AS s CALL apoc.custom.installProcedure('p() :: (n :: INTEGER)', 'RETURN 1 AS n', 'neo4j', 'read', s)": "description must be STRING",
+		"UNWIND [1] AS s CALL apoc.custom.dropProcedure(s)":                                                               "name must be STRING",
+		"UNWIND [1] AS s CALL apoc.custom.dropProcedure('p', s)":                                                          "databaseName must be STRING",
+		"CALL apoc.custom.dropProcedure('never_installed')":                                                               "never_installed",
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.ErrorContains(t, err, message, query)
@@ -75,7 +95,10 @@ func TestParseCustomSignature(t *testing.T) {
 	parsed, ok = parseCustomSignature("count()")
 	require.True(t, ok)
 	require.Equal(t, "custom.count() :: VOID", parsed.text())
-	for _, bad := range []string{"", "(a :: INTEGER)", "p(a :: INTEGER, a :: INTEGER)", "p(1a :: INTEGER)", "p() :: n", "p() :: (n)", "p( :: (n :: INTEGER)", "p() junk"} {
+	parsed, ok = parseCustomSignature("p(a :: INTEGER, ) :: (n :: INTEGER)")
+	require.True(t, ok)
+	require.Equal(t, []string{"a"}, parsed.args)
+	for _, bad := range []string{"", "bad-name()", "custom.my..walk()", "(a :: INTEGER)", "p(a :: INTEGER, a :: INTEGER)", "p(1a :: INTEGER)", "p() :: n", "p() :: (n)", "p( :: (n :: INTEGER)", "p() junk"} {
 		_, ok := parseCustomSignature(bad)
 		require.False(t, ok, bad)
 	}
