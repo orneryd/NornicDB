@@ -104,16 +104,6 @@ func TestCypherHelpers_DecodeMapAndAssignValue(t *testing.T) {
 }
 
 func TestCypherHelpers_ExtractorsAndEnsureLabel(t *testing.T) {
-	assert.Equal(t, "g_cov", extractStringArg("CALL gds.graph.project('g_cov', ['A'], ['R'])", "gds.graph.project"))
-	assert.Equal(t, "A", extractStringArg("CALL gds.graph.project(g_cov, ['A'], ['R'])", "gds.graph.project"))
-	assert.Equal(t, "", extractStringArg("RETURN 1", "gds.graph.project"))
-	assert.Equal(t, "", extractStringArg("CALL gds.graph.project('unterminated)", "gds.graph.project"))
-
-	assert.Equal(t, "myGraph", extractGraphNameFromReturn("RETURN gds.graph.project('myGraph', ['A'], ['R'])"))
-	assert.Equal(t, "", extractGraphNameFromReturn("RETURN 1"))
-	assert.Equal(t, 0.75, extractFloatArg("{dampingFactor: 0.75, iterations: 20}", "dampingFactor"))
-	assert.Equal(t, 0.0, extractFloatArg("{iterations: 20}", "dampingFactor"))
-
 	labels := ensureLabel([]string{"A"}, "B")
 	assert.ElementsMatch(t, []string{"A", "B"}, labels)
 	labels2 := ensureLabel([]string{"A", "B"}, "B")

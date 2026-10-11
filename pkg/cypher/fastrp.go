@@ -33,7 +33,7 @@ import (
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	mathrand "math/rand"
 	"runtime"
-	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -98,53 +98,25 @@ func (e *StorageExecutor) callGdsVersion() (*ExecuteResult, error) {
 // Graph Projection Management
 // ============================================================================
 
-// callGdsGraphProject implements CALL gds.graph.project(...)
-// Supports multiple syntax variants from Neo4j GDS
-func (e *StorageExecutor) callGdsGraphProject(cypher string) (*ExecuteResult, error) {
-	upper := upperASCII(cypher)
-
-	// Extract graph name from the call
-	graphName := extractStringArg(cypher, "gds.graph.project")
-	if graphName == "" {
-		// Try extracting from RETURN gds.graph.project(...) syntax
-		graphName = extractGraphNameFromReturn(cypher)
+// callGdsGraphProject implements CALL gds.graph.project(graphName,
+// nodeProjection, relationshipProjection) from the call's evaluated
+// arguments. A projection is '*' (everything), a label or type name, a list
+// of them, or a map whose keys name them (an entry's label / type overrides
+// its key). A name text may also list several, separated by ':' or '|'
+// ('Person:User', 'KNOWS|REFERENCES'): NornicDB's kept form.
+func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResult, error) {
+	const procedure = "gds.graph.project"
+	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
+	if err != nil {
+		return nil, err
 	}
-	if graphName == "" {
-		return nil, localizedError(localization.CypherGraphProceduresGraphNameRequired("gds.graph.project"), nil)
+	nodeLabels, err := graphProjectionNames(procedure, args, 1, "nodeProjection", "label")
+	if err != nil {
+		return nil, err
 	}
-
-	// Determine node labels and relationship types
-	nodeLabels := []string{}
-	relTypes := []string{}
-
-	// Parse node label filter (simplified)
-	if strings.Contains(upper, ":PERSON") {
-		nodeLabels = append(nodeLabels, "Person")
-	}
-	if strings.Contains(upper, ":USER") {
-		nodeLabels = append(nodeLabels, "User")
-	}
-	if strings.Contains(upper, ":MEMORY") {
-		nodeLabels = append(nodeLabels, "Memory")
-	}
-
-	// Parse relationship types
-	if strings.Contains(upper, ":KNOWS") {
-		relTypes = append(relTypes, "KNOWS")
-	}
-	if strings.Contains(upper, ":RELATES_TO") {
-		relTypes = append(relTypes, "RELATES_TO")
-	}
-	if strings.Contains(upper, ":REFERENCES") {
-		relTypes = append(relTypes, "REFERENCES")
-	}
-
-	// Default: project all labels and types
-	if len(nodeLabels) == 0 {
-		nodeLabels = []string{"*"}
-	}
-	if len(relTypes) == 0 {
-		relTypes = []string{"*"}
+	relTypes, err := graphProjectionNames(procedure, args, 2, "relationshipProjection", "type")
+	if err != nil {
+		return nil, err
 	}
 
 	// Build the projection from storage
@@ -164,6 +136,56 @@ func (e *StorageExecutor) callGdsGraphProject(cypher string) (*ExecuteResult, er
 			{graphName, projection.NodeCount, projection.RelationshipCount, int64(10)},
 		},
 	}, nil
+}
+
+// graphProjectionNames reads a node or relationship projection argument:
+// the label or type names it selects, ["*"] for every one.
+func graphProjectionNames(procedure string, args []interface{}, index int, argument, nameKey string) ([]string, error) {
+	var names []string
+	add := func(text string) {
+		for _, name := range strings.FieldsFunc(text, func(r rune) bool { return r == ':' || r == '|' }) {
+			if name = strings.TrimSpace(name); name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	value := procedureArgument(args, index)
+	switch projection := value.(type) {
+	case nil:
+	case string:
+		add(projection)
+	case map[string]interface{}:
+		keys := make([]string, 0, len(projection))
+		for key := range projection {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if entry, isMap := projection[key].(map[string]interface{}); isMap {
+				if name, isString := entry[nameKey].(string); isString {
+					add(name)
+					continue
+				}
+			}
+			add(key)
+		}
+	default:
+		items, isList := cypherListValue(value)
+		if !isList {
+			return nil, procedureArgumentTypeError(procedure, argument, "STRING, LIST<STRING> or MAP", value)
+		}
+		for _, item := range items {
+			name, isString := item.(string)
+			if !isString {
+				return nil, procedureArgumentTypeError(procedure, argument, "STRING, LIST<STRING> or MAP", value)
+			}
+			add(name)
+		}
+	}
+	if len(names) == 0 {
+		return []string{"*"}, nil
+	}
+	return names, nil
 }
 
 // buildGraphProjection creates an in-memory graph projection from storage
@@ -321,10 +343,10 @@ func (e *StorageExecutor) callGdsGraphList() (*ExecuteResult, error) {
 }
 
 // callGdsGraphDrop implements CALL gds.graph.drop(graphName)
-func (e *StorageExecutor) callGdsGraphDrop(cypher string) (*ExecuteResult, error) {
-	graphName := extractStringArg(cypher, "gds.graph.drop")
-	if graphName == "" {
-		return nil, localizedError(localization.CypherGraphProceduresGraphNameRequired("gds.graph.drop"), nil)
+func (e *StorageExecutor) callGdsGraphDrop(args []interface{}) (*ExecuteResult, error) {
+	graphName, err := requiredProcedureString("gds.graph.drop", args, 0, "graphName")
+	if err != nil {
+		return nil, err
 	}
 
 	projectionsMu.Lock()
@@ -362,11 +384,15 @@ type FastRPConfig struct {
 }
 
 // callGdsFastRPStream implements CALL gds.fastRP.stream(graphName, config)
-func (e *StorageExecutor) callGdsFastRPStream(cypher string) (*ExecuteResult, error) {
-	// Parse graph name
-	graphName := extractStringArg(cypher, "gds.fastrp.stream")
-	if graphName == "" {
-		return nil, localizedError(localization.CypherGraphProceduresGraphNameRequired("gds.fastRP.stream"), nil)
+func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResult, error) {
+	const procedure = "gds.fastRP.stream"
+	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
+	if err != nil {
+		return nil, err
+	}
+	options, err := optionalProcedureMap(procedure, args, 1, "config")
+	if err != nil {
+		return nil, err
 	}
 
 	// Get projection
@@ -379,7 +405,7 @@ func (e *StorageExecutor) callGdsFastRPStream(cypher string) (*ExecuteResult, er
 	}
 
 	// Parse config
-	config := parseFastRPConfig(cypher)
+	config := fastRPConfigFromMap(options)
 
 	// Generate embeddings
 	embeddings := generateFastRPEmbeddings(projection, config)
@@ -397,11 +423,15 @@ func (e *StorageExecutor) callGdsFastRPStream(cypher string) (*ExecuteResult, er
 }
 
 // callGdsFastRPStats implements CALL gds.fastRP.stats(graphName, config)
-func (e *StorageExecutor) callGdsFastRPStats(cypher string) (*ExecuteResult, error) {
-	// Parse graph name
-	graphName := extractStringArg(cypher, "gds.fastrp.stats")
-	if graphName == "" {
-		return nil, localizedError(localization.CypherGraphProceduresGraphNameRequired("gds.fastRP.stats"), nil)
+func (e *StorageExecutor) callGdsFastRPStats(args []interface{}) (*ExecuteResult, error) {
+	const procedure = "gds.fastRP.stats"
+	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
+	if err != nil {
+		return nil, err
+	}
+	options, err := optionalProcedureMap(procedure, args, 1, "config")
+	if err != nil {
+		return nil, err
 	}
 
 	// Get projection
@@ -414,7 +444,7 @@ func (e *StorageExecutor) callGdsFastRPStats(cypher string) (*ExecuteResult, err
 	}
 
 	// Parse config
-	config := parseFastRPConfig(cypher)
+	config := fastRPConfigFromMap(options)
 
 	return &ExecuteResult{
 		Columns: []string{"nodeCount", "embeddingDimension", "computeMillis"},
@@ -425,7 +455,11 @@ func (e *StorageExecutor) callGdsFastRPStats(cypher string) (*ExecuteResult, err
 }
 
 // parseFastRPConfig extracts FastRP configuration from Cypher
-func parseFastRPConfig(cypher string) FastRPConfig {
+// fastRPConfigFromMap reads gds.fastRP's config map: embeddingDimension
+// (capped at maxFastRPEmbeddingDimension), randomSeed, propertyRatio and
+// relationshipWeightProperty; absent or non-positive values keep the
+// defaults.
+func fastRPConfigFromMap(options map[string]interface{}) FastRPConfig {
 	config := FastRPConfig{
 		EmbeddingDimension:    64,                            // Default
 		IterationWeights:      []float64{0.0, 1.0, 1.0, 1.0}, // Default: 3 iterations
@@ -435,30 +469,34 @@ func parseFastRPConfig(cypher string) FastRPConfig {
 		RandomSeed:            42,
 	}
 
-	// Parse embeddingDimension
-	if dim := extractIntArg(cypher, "embeddingDimension"); dim > 0 {
+	if dim, ok := fastRPConfigInt(options["embeddingDimension"]); ok && dim > 0 {
 		if dim > maxFastRPEmbeddingDimension {
 			dim = maxFastRPEmbeddingDimension
 		}
 		config.EmbeddingDimension = dim
 	}
-
-	// Parse randomSeed
-	if seed := extractIntArg(cypher, "randomSeed"); seed > 0 {
+	if seed, ok := fastRPConfigInt(options["randomSeed"]); ok && seed > 0 {
 		config.RandomSeed = int64(seed)
 	}
-
-	// Parse propertyRatio
-	if strings.Contains(cypher, "propertyRatio") {
-		config.PropertyRatio = extractFloatArg(cypher, "propertyRatio")
+	if ratio, ok := toFloat64(options["propertyRatio"]); ok {
+		config.PropertyRatio = ratio
 	}
-
-	// Parse relationshipWeightProperty
-	if strings.Contains(cypher, "relationshipWeightProperty") {
-		config.RelationshipWeightProperty = extractStringConfigArg(cypher, "relationshipWeightProperty")
+	if property, ok := options["relationshipWeightProperty"].(string); ok {
+		config.RelationshipWeightProperty = property
 	}
-
 	return config
+}
+
+// fastRPConfigInt reads an integer config value (an INTEGER, or a FLOAT
+// with no fraction).
+func fastRPConfigInt(value interface{}) (int, bool) {
+	if isIntegerProcedureValue(value) {
+		return int(toInt64(value)), true
+	}
+	if number, ok := toFloat64(value); ok && number == float64(int(number)) {
+		return int(number), true
+	}
+	return 0, false
 }
 
 // generateFastRPEmbeddings implements the FastRP algorithm with memory-efficient processing
@@ -666,153 +704,6 @@ func normalizeEmbeddings(embeddings [][]float64, dim int) {
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-// extractStringArg extracts the first string argument from a procedure call
-func extractStringArg(cypher string, procName string) string {
-	lower := lowerASCII(cypher)
-	idx := strings.Index(lower, lowerASCII(procName))
-	if idx == -1 {
-		return ""
-	}
-
-	// Find opening paren
-	parenStart := strings.Index(cypher[idx:], "(")
-	if parenStart == -1 {
-		return ""
-	}
-	start := idx + parenStart + 1
-
-	// Find first string argument (in quotes)
-	quoteStart := strings.Index(cypher[start:], "'")
-	if quoteStart == -1 {
-		return ""
-	}
-	quoteStart += start + 1
-
-	quoteEnd := strings.Index(cypher[quoteStart:], "'")
-	if quoteEnd == -1 {
-		return ""
-	}
-
-	return cypher[quoteStart : quoteStart+quoteEnd]
-}
-
-// extractGraphNameFromReturn extracts graph name from RETURN gds.graph.project(...) syntax
-func extractGraphNameFromReturn(cypher string) string {
-	lower := lowerASCII(cypher)
-	idx := strings.Index(lower, "gds.graph.project")
-	if idx == -1 {
-		return ""
-	}
-
-	// Find the opening paren
-	parenStart := strings.Index(cypher[idx:], "(")
-	if parenStart == -1 {
-		return ""
-	}
-
-	// Look for first string in quotes
-	start := idx + parenStart
-	for i := start; i < len(cypher)-1; i++ {
-		if cypher[i] == '\'' {
-			end := strings.Index(cypher[i+1:], "'")
-			if end != -1 {
-				return cypher[i+1 : i+1+end]
-			}
-		}
-	}
-
-	return ""
-}
-
-// extractIntArg extracts an integer config value
-func extractIntArg(cypher string, key string) int {
-	lower := lowerASCII(cypher)
-	keyLower := lowerASCII(key)
-	idx := strings.Index(lower, keyLower)
-	if idx == -1 {
-		return 0
-	}
-
-	// Find the colon after the key
-	colonIdx := strings.Index(cypher[idx:], ":")
-	if colonIdx == -1 {
-		return 0
-	}
-	start := idx + colonIdx + 1
-
-	// Skip whitespace
-	for start < len(cypher) && (cypher[start] == ' ' || cypher[start] == '\t') {
-		start++
-	}
-
-	// Extract number
-	end := start
-	for end < len(cypher) && (cypher[end] >= '0' && cypher[end] <= '9') {
-		end++
-	}
-
-	if end > start {
-		val, _ := strconv.Atoi(cypher[start:end])
-		return val
-	}
-	return 0
-}
-
-// extractFloatArg extracts a float config value
-func extractFloatArg(cypher string, key string) float64 {
-	lower := lowerASCII(cypher)
-	keyLower := lowerASCII(key)
-	idx := strings.Index(lower, keyLower)
-	if idx == -1 {
-		return 0
-	}
-
-	colonIdx := strings.Index(cypher[idx:], ":")
-	if colonIdx == -1 {
-		return 0
-	}
-	start := idx + colonIdx + 1
-
-	for start < len(cypher) && (cypher[start] == ' ' || cypher[start] == '\t') {
-		start++
-	}
-
-	end := start
-	for end < len(cypher) && ((cypher[end] >= '0' && cypher[end] <= '9') || cypher[end] == '.') {
-		end++
-	}
-
-	if end > start {
-		val, _ := strconv.ParseFloat(cypher[start:end], 64)
-		return val
-	}
-	return 0
-}
-
-// extractStringConfigArg extracts a string config value
-func extractStringConfigArg(cypher string, key string) string {
-	lower := lowerASCII(cypher)
-	keyLower := lowerASCII(key)
-	idx := strings.Index(lower, keyLower)
-	if idx == -1 {
-		return ""
-	}
-
-	// Find quote after key
-	quoteStart := strings.Index(cypher[idx:], "'")
-	if quoteStart == -1 {
-		return ""
-	}
-	start := idx + quoteStart + 1
-
-	quoteEnd := strings.Index(cypher[start:], "'")
-	if quoteEnd == -1 {
-		return ""
-	}
-
-	return cypher[start : start+quoteEnd]
-}
 
 // Ensure rand is imported for generating random bytes if needed
 var _ = rand.Reader
