@@ -255,33 +255,33 @@ func TestDB_EmbedQueryWithEmbedder_EdgeBranches(t *testing.T) {
 		require.Nil(t, vec)
 	})
 
-	t.Run("batch empty without error returns nil", func(t *testing.T) {
+	// A batch that isn't one non-empty vector per chunk is a failed
+	// embedding, not a partial result.
+	t.Run("batch with no vectors fails", func(t *testing.T) {
 		db := &DB{}
 		emb := &scriptedBatchEmbedder{
 			batchVecs: nil,
 			batchErr:  nil,
 		}
 		vec, err := db.embedQueryWithEmbedder(context.Background(), emb, loadLargeDocQuery(t))
-		require.NoError(t, err)
+		require.ErrorContains(t, err, "returned 0 vectors")
 		require.Nil(t, vec)
 	})
 
-	t.Run("batch returns first valid chunk for single-vector compatibility", func(t *testing.T) {
+	t.Run("batch with an empty vector fails", func(t *testing.T) {
 		db := &DB{}
 		emb := &scriptedBatchEmbedder{
 			batchVecs: [][]float32{
 				{1, 0, 0},
-				{},     // empty skipped
-				{1, 0}, // dimension mismatch skipped
+				{},
+				{1, 0},
 				{0, 1, 0},
 			},
 		}
 		vec, err := db.embedQueryWithEmbedder(context.Background(), emb, loadLargeDocQuery(t))
-		require.NoError(t, err)
-		require.Len(t, vec, 3)
-		require.InDelta(t, 1.0, vec[0], 0.0001)
-		require.InDelta(t, 0.0, vec[1], 0.0001)
-		require.InDelta(t, 0.0, vec[2], 0.0001)
+		var unusable *embed.UnusableEmbeddingError
+		require.ErrorAs(t, err, &unusable)
+		require.Nil(t, vec)
 	})
 }
 

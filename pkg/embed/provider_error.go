@@ -36,3 +36,47 @@ func IsRetryableError(err error) bool {
 	}
 	return true
 }
+
+// UnusableEmbeddingError reports a provider answer that isn't one usable
+// vector per input: a vector missing (Got < Want inputs), empty, or of
+// another dimension than the embedder's. It is a failed embedding, never a
+// result to search with or cache. It isn't
+// retryable, so the embed worker splits a batch down to the input the
+// provider can't embed instead of retrying the whole batch; a search asks
+// again on its next call, since nothing is cached.
+type UnusableEmbeddingError struct {
+	Input      int // the input's index; -1 when vectors are missing
+	Dimensions int // the vector's length
+	Want       int // the expected count (Input -1) or dimension
+}
+
+func (e *UnusableEmbeddingError) Error() string {
+	switch {
+	case e.Input < 0:
+		return fmt.Sprintf("embedding provider returned %d vectors for %d inputs", e.Dimensions, e.Want)
+	case e.Dimensions == 0:
+		return fmt.Sprintf("embedding provider returned an empty vector for input %d", e.Input)
+	}
+	return fmt.Sprintf("embedding provider returned %d dimensions for input %d; the embedder has %d", e.Dimensions, e.Input, e.Want)
+}
+
+// Retryable is false: retrying the same batch would get the same answer for
+// the input; the embed worker isolates it instead.
+func (e *UnusableEmbeddingError) Retryable() bool { return false }
+
+// CheckEmbeddings returns an *UnusableEmbeddingError unless vectors holds
+// count non-empty vectors, each of dimensions values when dimensions > 0.
+func CheckEmbeddings(vectors [][]float32, count, dimensions int) error {
+	if len(vectors) != count {
+		return &UnusableEmbeddingError{Input: -1, Dimensions: len(vectors), Want: count}
+	}
+	for index, vector := range vectors {
+		if len(vector) == 0 {
+			return &UnusableEmbeddingError{Input: index}
+		}
+		if dimensions > 0 && len(vector) != dimensions {
+			return &UnusableEmbeddingError{Input: index, Dimensions: len(vector), Want: dimensions}
+		}
+	}
+	return nil
+}

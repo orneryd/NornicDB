@@ -317,11 +317,14 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 					}
 					return nil, embedErr
 				}
-				if !usableEmbedding(embedding) {
+				// An empty, non-finite or wrong-dimension vector is a failed
+				// embedding (query_embedding_failed), not a missing one.
+				if dimensions := queryEmbedderDimensions(e.embedder); !usableEmbedding(embedding) || dimensions > 0 && len(embedding) != dimensions {
+					unusable := localizedError(localization.CypherCoreEmbeddingNoOutput(), nil)
 					if failClosed {
-						return nil, failClosedEmbeddingUnavailable(localizedError(localization.CypherCoreEmbeddingNoOutput(), nil))
+						return nil, failClosedEmbeddingUnavailable(unusable)
 					}
-					return nil, nil
+					return nil, unusable
 				}
 				return embedding, nil
 			}
@@ -592,6 +595,15 @@ func strictNumericEmbedding(raw interface{}) ([]float32, error) {
 	default:
 		return nil, errRetrieveEmbeddingNotAVector
 	}
+}
+
+// queryEmbedderDimensions is the embedder's vector dimension when it reports
+// one, 0 (unchecked) otherwise.
+func queryEmbedderDimensions(embedder QueryEmbedder) int {
+	if sized, ok := embedder.(interface{ Dimensions() int }); ok {
+		return sized.Dimensions()
+	}
+	return 0
 }
 
 func usableEmbedding(values []float32) bool {

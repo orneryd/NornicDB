@@ -79,7 +79,7 @@ func TestDB_Coverage_QueryChunkEmbeddingEdgeBranches(t *testing.T) {
 		chunks: []string{"c1"},
 		embed:  []float32{},
 	}, "query")
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "empty vector", "an empty vector is a failed embedding")
 	require.Equal(t, []string{"c1"}, chunks)
 	require.Nil(t, embs)
 

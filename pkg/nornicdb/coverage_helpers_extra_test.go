@@ -185,14 +185,20 @@ func TestDBQueryEmbeddingBranchHelpers(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []float32{1, 2, 3}, vec)
 
+	// A provider answer that isn't one non-empty vector per chunk is a failed
+	// embedding.
 	emb = &coverageQueryEmbedder{chunks: []string{"a", "b", "c"}, batch: [][]float32{{1, 0, 0}, {}, {0, 1, 0}, {1, 2}}}
-	vec, err = db.embedQueryWithEmbedder(context.Background(), emb, "many")
-	require.NoError(t, err)
-	require.Equal(t, []float32{1, 0, 0}, vec)
+	_, err = db.embedQueryWithEmbedder(context.Background(), emb, "many")
+	var unusable *embed.UnusableEmbeddingError
+	require.ErrorAs(t, err, &unusable)
+	emb = &coverageQueryEmbedder{chunks: []string{"a", "b", "c"}, batch: [][]float32{{1, 0, 0}, {}, {0, 1, 0}}}
+	_, _, err = db.embedQueryChunksWithEmbedder(context.Background(), emb, "many")
+	require.ErrorContains(t, err, "empty vector for input 1")
+	emb = &coverageQueryEmbedder{chunks: []string{"a", "b", "c"}, batch: [][]float32{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}}
 	chunks, embs, err := db.embedQueryChunksWithEmbedder(context.Background(), emb, "many")
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "b", "c"}, chunks)
-	require.Equal(t, [][]float32{{1, 0, 0}, {}, {0, 1, 0}, {1, 2}}, embs)
+	require.Equal(t, [][]float32{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}, embs)
 
 	batchErr := errors.New("batch failed")
 	emb = &coverageQueryEmbedder{chunks: []string{"a", "b"}, batchErr: batchErr}
@@ -202,7 +208,7 @@ func TestDBQueryEmbeddingBranchHelpers(t *testing.T) {
 
 	emb = &coverageQueryEmbedder{chunks: []string{"a", "b"}, batch: [][]float32{{}, {}}}
 	vec, err = db.embedQueryWithEmbedder(context.Background(), emb, "many")
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "empty vector for input 0")
 	require.Nil(t, vec)
 
 	manyChunks := make([]string, 40)

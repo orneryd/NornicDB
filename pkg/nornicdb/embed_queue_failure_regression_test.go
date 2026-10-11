@@ -397,3 +397,13 @@ func TestPendingDocumentsShareProviderBatch(t *testing.T) {
 		require.Len(t, node.ChunkEmbeddings, 1)
 	}
 }
+
+// An unusable provider answer (an empty, missing or wrong-dimension vector)
+// is a classified, permanent failure: the worker splits the batch down to
+// the input instead of retrying the whole batch.
+func TestUnusableEmbeddingIsIsolatedNotRetried(t *testing.T) {
+	retryable, classified := embeddingErrorRetryability(&embed.UnusableEmbeddingError{Input: 1})
+	require.True(t, classified)
+	require.False(t, retryable)
+	require.False(t, isRetryableEmbeddingError(fmt.Errorf("wrapped: %w", &embed.UnusableEmbeddingError{Input: 0, Dimensions: 2, Want: 3})))
+}

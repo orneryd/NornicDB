@@ -75,7 +75,7 @@ func (m *typedMockEmbedder) EmbedBatchWithInputType(ctx context.Context, texts [
 	}
 	results := make([][]float32, len(texts))
 	for i, text := range texts {
-		results[i] = []float32{base, float32(len(text))}
+		results[i] = []float32{base, float32(len(text)), 0} // Dimensions() is 3
 	}
 	return results, nil
 }

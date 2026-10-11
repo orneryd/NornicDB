@@ -2226,7 +2226,10 @@ func (db *DB) embedQueryChunksWithEmbedder(ctx context.Context, emb embed.Embedd
 		} else {
 			vec, err = emb.Embed(ctx, chunks[0])
 		}
-		if err != nil || len(vec) == 0 {
+		if err != nil {
+			return chunks, nil, err
+		}
+		if err := embed.CheckEmbeddings([][]float32{vec}, 1, 0); err != nil {
 			return chunks, nil, err
 		}
 		return chunks, [][]float32{vec}, nil
@@ -2237,13 +2240,15 @@ func (db *DB) embedQueryChunksWithEmbedder(ctx context.Context, emb embed.Embedd
 	} else {
 		embs, err = emb.EmbedBatch(ctx, chunks)
 	}
-	if len(embs) == 0 {
-		if err != nil {
-			return chunks, nil, err
-		}
-		return chunks, nil, nil
+	if err != nil {
+		return chunks, nil, err
 	}
-	return chunks, embs, err
+	// One non-empty vector per chunk, or the query's embedding failed; the
+	// dimension is checked per database (validateQueryEmbeddingDimensions).
+	if err := embed.CheckEmbeddings(embs, len(chunks), 0); err != nil {
+		return chunks, nil, err
+	}
+	return chunks, embs, nil
 }
 
 // embedQueryWithEmbedder returns a single query embedding for compatibility-only callers.

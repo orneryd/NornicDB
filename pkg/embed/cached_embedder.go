@@ -128,9 +128,13 @@ func (c *CachedEmbedder) Embed(ctx context.Context, text string) ([]float32, err
 
 	atomic.AddUint64(&c.misses, 1)
 
-	// Cache miss - generate embedding
+	// Cache miss - generate embedding. An unusable answer is a failed
+	// embedding and isn't cached, so the next call asks the provider again.
 	embedding, err := c.base.Embed(ctx, text)
 	if err != nil {
+		return nil, err
+	}
+	if err := CheckEmbeddings([][]float32{embedding}, 1, c.base.Dimensions()); err != nil {
 		return nil, err
 	}
 
@@ -221,6 +225,9 @@ func (c *CachedEmbedder) embedBatchWithKeyFunc(ctx context.Context, texts []stri
 	if len(missTexts) > 0 {
 		embeddings, err := embedMisses(missTexts)
 		if err != nil {
+			return nil, err
+		}
+		if err := CheckEmbeddings(embeddings, len(missTexts), c.base.Dimensions()); err != nil {
 			return nil, err
 		}
 

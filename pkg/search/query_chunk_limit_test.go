@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -102,4 +103,39 @@ func TestRequireAllQueryChunks(t *testing.T) {
 	t.Setenv(EnvSearchQueryChunkOverflow, "truncate")
 	require.NoError(t, RequireAllQueryChunks([]string{"a", "b"}))
 	require.ErrorContains(t, RequireAllQueryChunks([]string{"a", "b", "c"}), "search query has 3 chunks; at most 2 are searched")
+}
+
+// A chunk whose embedding failed or was unusable isn't counted as searched,
+// and its reason is reported over a benign one another chunk's search gave
+// (rerank_scores_flat), so a caller can tell the query wasn't wholly searched
+// by meaning.
+func TestChunkedSearchReportsUnusableChunkEmbeddings(t *testing.T) {
+	ctx := context.Background()
+	chunkQuery := func(context.Context, string) ([]string, error) { return []string{"a", "b", "c"}, nil }
+	searchQuery := func(_ context.Context, query string, embedding []float32, _ *SearchOptions) (*SearchResponse, error) {
+		return &SearchResponse{Results: []SearchResult{{ID: query, Score: 1}}, FallbackReason: SearchFallbackRerankScoresFlat, FallbackTriggered: true}, nil
+	}
+	for name, chunkB := range map[string]struct {
+		vector []float32
+		err    error
+		reason SearchFallbackReason
+	}{
+		"failed":   {err: errors.New("provider down"), reason: SearchFallbackQueryEmbeddingFailed},
+		"unusable": {reason: SearchFallbackQueryEmbeddingUnavailable},
+	} {
+		embedQuery := func(_ context.Context, chunk string) ([]float32, error) {
+			if chunk == "b" {
+				return chunkB.vector, chunkB.err
+			}
+			return []float32{1, 0}, nil
+		}
+		response, err := SearchTextChunks(ctx, "a b c", &SearchOptions{Limit: 5}, chunkQuery, embedQuery, searchQuery)
+		require.NoError(t, err, name)
+		require.Equal(t, 2, response.QueryChunksSearched, name)
+		require.Equal(t, 3, response.QueryChunksTotal, name)
+		require.Equal(t, chunkB.reason, response.FallbackReason, name)
+		require.True(t, response.FallbackTriggered, name)
+	}
+	require.True(t, isQueryEmbeddingFallback(SearchFallbackNoEmbedder))
+	require.False(t, isQueryEmbeddingFallback(SearchFallbackRerankScoresFlat))
 }

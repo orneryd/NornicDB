@@ -87,13 +87,13 @@ func SearchTextChunksWithErrorPolicy(
 	if err != nil {
 		return nil, err
 	}
-	response, err := searchQueryChunks(ctx, query, chunks, opts, embedQuery, searchQuery, errorPolicy)
+	response, searched, err := searchQueryChunks(ctx, query, chunks, opts, embedQuery, searchQuery, errorPolicy)
 	if total <= 1 || response == nil {
 		return response, err
 	}
 	// The callback may return a cached response shared with other callers.
 	annotated := *response
-	annotated.QueryChunksSearched = len(chunks)
+	annotated.QueryChunksSearched = searched
 	annotated.QueryChunksTotal = total
 	if len(chunks) < total && annotated.FallbackReason == SearchFallbackNone {
 		annotated.FallbackTriggered = true
@@ -103,7 +103,9 @@ func SearchTextChunksWithErrorPolicy(
 }
 
 // searchQueryChunks searches the kept chunks of query: one chunk as the query
-// itself, several independently, fused with an outer RRF pass.
+// itself, several independently, fused with an outer RRF pass. searched is
+// how many chunks were searched with their embedding: a chunk whose
+// embedding failed or is unusable isn't one.
 func searchQueryChunks(
 	ctx context.Context,
 	query string,
@@ -112,36 +114,63 @@ func searchQueryChunks(
 	embedQuery EmbedQueryFunc,
 	searchQuery SearchQueryFunc,
 	errorPolicy ChunkedSearchErrorPolicy,
-) (*SearchResponse, error) {
+) (*SearchResponse, int, error) {
 	if len(chunks) <= 1 {
-		embedding, err := embedQuery(ctx, query)
-		if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
-			return nil, err
-		}
-		fallbackReason := SearchFallbackNone
-		if err != nil {
-			fallbackReason = SearchFallbackQueryEmbeddingFailed
-			logQueryEmbeddingFallback(ctx, errorPolicy.Transport, err)
-		} else if len(embedding) == 0 {
-			fallbackReason = SearchFallbackQueryEmbeddingUnavailable
-		}
-		if err == nil && len(embedding) > 0 {
-			response, searchErr := searchQuery(ctx, query, embedding, opts)
-			if searchErr != nil && isFatalChunkedSearchError(errorPolicy.FatalSearchError, searchErr) {
-				return nil, searchErr
-			}
-			if searchErr == nil && response != nil {
-				return response, nil
-			}
-			fallbackReason = SearchFallbackNoHybridResults
-			if searchErr != nil {
-				fallbackReason = SearchFallbackHybridSearchFailed
-			}
-		}
-		response, searchErr := searchQuery(ctx, query, nil, opts)
-		return withSearchFallback(response, fallbackReason), searchErr
+		response, err := searchSingleQueryChunk(ctx, query, opts, embedQuery, searchQuery, errorPolicy)
+		return response, len(chunks), err
 	}
+	return searchSeveralQueryChunks(ctx, query, chunks, opts, embedQuery, searchQuery, errorPolicy)
+}
 
+// searchSingleQueryChunk searches a query of one chunk as the query itself.
+func searchSingleQueryChunk(
+	ctx context.Context,
+	query string,
+	opts *SearchOptions,
+	embedQuery EmbedQueryFunc,
+	searchQuery SearchQueryFunc,
+	errorPolicy ChunkedSearchErrorPolicy,
+) (*SearchResponse, error) {
+	embedding, err := embedQuery(ctx, query)
+	if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
+		return nil, err
+	}
+	fallbackReason := SearchFallbackNone
+	if err != nil {
+		fallbackReason = SearchFallbackQueryEmbeddingFailed
+		logQueryEmbeddingFallback(ctx, errorPolicy.Transport, err)
+	} else if len(embedding) == 0 {
+		fallbackReason = SearchFallbackQueryEmbeddingUnavailable
+	}
+	if err == nil && len(embedding) > 0 {
+		response, searchErr := searchQuery(ctx, query, embedding, opts)
+		if searchErr != nil && isFatalChunkedSearchError(errorPolicy.FatalSearchError, searchErr) {
+			return nil, searchErr
+		}
+		if searchErr == nil && response != nil {
+			return response, nil
+		}
+		fallbackReason = SearchFallbackNoHybridResults
+		if searchErr != nil {
+			fallbackReason = SearchFallbackHybridSearchFailed
+		}
+	}
+	response, searchErr := searchQuery(ctx, query, nil, opts)
+	return withSearchFallback(response, fallbackReason), searchErr
+}
+
+// searchSeveralQueryChunks searches each chunk with its embedding and fuses
+// the results with an outer RRF pass; searched counts the chunks searched.
+func searchSeveralQueryChunks(
+	ctx context.Context,
+	query string,
+	chunks []string,
+	opts *SearchOptions,
+	embedQuery EmbedQueryFunc,
+	searchQuery SearchQueryFunc,
+	errorPolicy ChunkedSearchErrorPolicy,
+) (*SearchResponse, int, error) {
+	searched := 0
 	type fusedResult struct {
 		best  *SearchResult
 		score float64
@@ -165,7 +194,7 @@ func searchQueryChunks(
 	for _, chunk := range chunks {
 		embedding, err := embedQuery(ctx, chunk)
 		if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {
-			return nil, err
+			return nil, 0, err
 		}
 		if err != nil || len(embedding) == 0 {
 			// Unavailable preparation does not participate in the selected search;
@@ -175,14 +204,16 @@ func searchQueryChunks(
 				if embeddingErr == nil {
 					embeddingErr = err
 				}
-			} else if fallbackReason == SearchFallbackNone {
+			} else if !isQueryEmbeddingFallback(fallbackReason) {
+				// Reported over an earlier, benign reason: the chunk wasn't
+				// searched by meaning.
 				fallbackReason = SearchFallbackQueryEmbeddingUnavailable
 			}
 			continue
 		}
 		response, err := searchQuery(ctx, chunk, embedding, &chunkOpts)
 		if err != nil && isFatalChunkedSearchError(errorPolicy.FatalSearchError, err) {
-			return nil, err
+			return nil, 0, err
 		}
 		if err != nil || response == nil {
 			if fallbackReason == SearchFallbackNone {
@@ -193,6 +224,7 @@ func searchQueryChunks(
 			}
 			continue
 		}
+		searched++
 		if response.FallbackReason != SearchFallbackNone && fallbackReason == SearchFallbackNone {
 			fallbackReason = response.FallbackReason
 		}
@@ -240,7 +272,7 @@ func searchQueryChunks(
 				Results:                []SearchResult{},
 				SearchMethod:           "chunked_rrf_hybrid",
 				FallbackTriggered:      false,
-			}, nil
+			}, searched, nil
 		}
 		response, err := searchQuery(ctx, query, nil, opts)
 		if response != nil {
@@ -250,7 +282,7 @@ func searchQueryChunks(
 			copy.RetrievalExhausted = exhausted && response.RetrievalExhausted && !copy.CandidateBudgetReached
 			response = &copy
 		}
-		return withSearchFallback(response, fallbackReason), err
+		return withSearchFallback(response, fallbackReason), searched, err
 	}
 
 	slices.SortFunc(fused, func(left, right fusedResult) int {
@@ -287,7 +319,7 @@ func searchQueryChunks(
 		result.BM25Rank = 0
 		response.Results = append(response.Results, result)
 	}
-	return response, nil
+	return response, searched, nil
 }
 
 func withSearchFallback(response *SearchResponse, reason SearchFallbackReason) *SearchResponse {
@@ -353,4 +385,15 @@ func searchResultID(result SearchResult) string {
 
 func isFatalChunkedSearchError(predicate func(error) bool, err error) bool {
 	return predicate != nil && predicate(err)
+}
+
+// isQueryEmbeddingFallback reports whether reason says the query wasn't
+// searched by meaning: its embedding failed or was unavailable, or there is
+// no embedder. Such a reason is kept over a later, benign one.
+func isQueryEmbeddingFallback(reason SearchFallbackReason) bool {
+	switch reason {
+	case SearchFallbackQueryEmbeddingFailed, SearchFallbackQueryEmbeddingUnavailable, SearchFallbackNoEmbedder:
+		return true
+	}
+	return false
 }
