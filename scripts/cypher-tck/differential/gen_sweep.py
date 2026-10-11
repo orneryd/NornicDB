@@ -324,7 +324,6 @@ for q in [f"UNWIND {VALUES} AS x RETURN x ORDER BY x", f"UNWIND {VALUES} AS x RE
           "UNWIND [1, 1.0] AS x RETURN DISTINCT x", "UNWIND [[1, 2], [1, 2.0]] AS x RETURN DISTINCT x", "UNWIND [{a: 1}, {a: 1.0}] AS x RETURN DISTINCT x"]:
     add("clause", "q", q)
 
-
 # 15. Procedure arguments: a built-in procedure reads its evaluated
 # arguments (#907), so a value bound by WITH or UNWIND, a computed value,
 # null and a value of another type reach it as they would from a literal.
@@ -366,6 +365,7 @@ for name, args in FAILING_CREATES:
         for value in ["null", "1.5", "[1, 2]", "{a: 1}"]:
             changed = args[:i] + ["v"] + args[i + 1:]
             add("procedure-arguments", "create-bad-value", f"WITH {value} AS v " + procedure_call(name, changed, None))
+
 
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:
