@@ -1526,12 +1526,12 @@ func TestCypherHelpers_ApocLouvainBasic(t *testing.T) {
 	require.NoError(t, err)
 
 	// Basic call with explicit label filter.
-	res, err := exec.callApocAlgoLouvain(context.Background(), "CALL apoc.algo.louvain(['Node']) YIELD node, community")
+	res, err := exec.callApocAlgoLouvain(context.Background(), []interface{}{[]interface{}{"Node"}})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"node", "community"}, res.Columns)
 
 	// weightProperty parsing branch.
-	res, err = exec.callApocAlgoLouvain(context.Background(), "CALL apoc.algo.louvain(['Node'], {weightProperty: 'weight'}) YIELD node, community")
+	res, err = exec.callApocAlgoLouvain(context.Background(), []interface{}{[]interface{}{"Node"}, map[string]interface{}{"weightProperty": "weight"}})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"node", "community"}, res.Columns)
 }

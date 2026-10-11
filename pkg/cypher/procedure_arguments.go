@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Procedure argument readers. A built-in procedure's handler receives the
@@ -56,6 +57,35 @@ func requiredProcedureInteger(procedure string, args []interface{}, index int, a
 		return 0, procedureArgumentTypeError(procedure, argument, "INTEGER", value)
 	}
 	return toInt64(value), nil
+}
+
+// optionalProcedureString reads an optional STRING argument: none or null
+// is fallback.
+func optionalProcedureString(procedure string, args []interface{}, index int, argument, fallback string) (string, error) {
+	value := procedureArgument(args, index)
+	if value == nil {
+		return fallback, nil
+	}
+	text, isString := value.(string)
+	if !isString {
+		return "", procedureArgumentTypeError(procedure, argument, "STRING", value)
+	}
+	return text, nil
+}
+
+// requiredProcedureNodeID reads a NODE argument the procedure needs; a STRING
+// is NornicDB's kept form of a node given by its id.
+func requiredProcedureNodeID(procedure string, args []interface{}, index int, argument string) (storage.NodeID, error) {
+	switch value := procedureArgument(args, index).(type) {
+	case nil:
+		return "", procedureArgumentNullError(procedure, argument)
+	case *storage.Node:
+		return value.ID, nil
+	case string:
+		return storage.NodeID(value), nil
+	default:
+		return "", procedureArgumentTypeError(procedure, argument, "NODE", value)
+	}
 }
 
 // requiredProcedureStringList reads a LIST<STRING> argument the procedure
