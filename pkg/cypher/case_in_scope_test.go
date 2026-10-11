@@ -49,6 +49,14 @@ func TestCaseBlockSpansSkipScopes(t *testing.T) {
 		"coalesce(CASE WHEN a THEN 1 END, 2) = CASE WHEN b THEN 2 END": 2,
 		"{k: CASE WHEN a THEN 1 END}.k = 1":                            1,
 		"([x IN l | x])[0] = CASE WHEN a THEN 1 END":                   1,
+		"COUNT { MATCH (n) WHERE CASE WHEN n.x THEN true END } > 0":    0,
+		"COLLECT { MATCH (n) RETURN CASE WHEN n.x THEN 1 END }":        0,
+		"CALL { RETURN CASE WHEN a THEN 1 END }":                       0,
+		"filter(x IN l WHERE CASE WHEN x THEN true END)":               0,
+		"reduce (s = 0, x IN l | s + CASE WHEN x THEN 1 END)":          0,
+		"(CASE WHEN a THEN 1 END) = 1":                                 1,
+		"CASE WHEN a THEN 1 END) = 1":                                  1,
+		"[CASE WHEN a THEN 1 END] = [1]":                               1,
 	} {
 		require.Len(t, caseBlockSpans(expr), want, expr)
 	}
