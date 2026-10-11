@@ -517,41 +517,6 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 	})
 }
 
-// projectUnwoundValues returns which of the variables a WITH clause binds
-// carry a type that came from UNWIND: an alias of such a variable, or the
-// variable itself under WITH *.
-func projectUnwoundValues(unwound map[string]struct{}, clause string) map[string]struct{} {
-	if len(unwound) == 0 {
-		return nil
-	}
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
-	var projected map[string]struct{}
-	keep := func(name string) {
-		if projected == nil {
-			projected = make(map[string]struct{})
-		}
-		projected[name] = struct{}{}
-	}
-	for _, raw := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
-		if expression == "*" {
-			for name := range unwound {
-				keep(name)
-			}
-			continue
-		}
-		variable := simpleSemanticIdentifier(expression)
-		if _, fromUnwind := unwound[variable]; !fromUnwind || variable == "" {
-			continue
-		}
-		if alias == "" {
-			alias = variable
-		}
-		keep(alias)
-	}
-	return projected
-}
-
 // projectStaticValueTypes returns the literal types a WITH clause binds: an
 // alias of an expression with a static type keeps that type; WITH * keeps
 // every one.

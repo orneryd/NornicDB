@@ -66,10 +66,10 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 	// valueTypes holds the static types of variables bound to a literal by
 	// WITH … AS or UNWIND, for the function argument checks.
 	var valueTypes map[string]string
+	returnSeen := false
 	// unwound names the typed variables whose type came from UNWIND, which
 	// Neo4j checks against a procedure's parameters only when the call runs.
 	var unwound map[string]struct{}
-	returnSeen := false
 	for _, clause := range clauses {
 		if returnSeen {
 			// RETURN is the terminal clause: a clause after it is never a
@@ -234,8 +234,8 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 				return err
 			}
 			scope = projectMatchSemanticScope(scope, clause.text)
-			valueTypes = projectStaticValueTypes(input, clause.text)
 			unwound = projectUnwoundValues(unwound, clause.text)
+			valueTypes = projectStaticValueTypes(input, clause.text)
 			projected := staticTypeScope{kinds: scope, values: valueTypes, complete: true}
 			if err := forEachProjectedTailExpression(projection, rest, func(expression string) error {
 				return validateStaticFunctionVariables(expression, projected)
@@ -262,8 +262,8 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 					}
 				}
 				scope[alias] = unwindMatchSemanticKind(clause.text, scope)
-				delete(valueTypes, alias)
 				delete(unwound, alias)
+				delete(valueTypes, alias)
 				if typeName := unwindStaticValueType(clause.text); typeName != "" {
 					if valueTypes == nil {
 						valueTypes = make(map[string]string)
