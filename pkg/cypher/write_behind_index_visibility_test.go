@@ -103,3 +103,44 @@ func TestWriteBehind_IndexedMatchReusesBufferedIndexAfterFlush(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), res.Rows[0][0], fmt.Sprintf("rows: %v", res.Rows))
 }
+
+// TestWriteBehind_MergeAndDetachDeleteOverBufferedEdges reproduces the rest of
+// monster's part-1 matrix at the Cypher level: MERGE must not duplicate a
+// buffered relationship, and DETACH DELETE must leave no orphan edges while
+// everything is still buffered.
+func TestWriteBehind_MergeAndDetachDeleteOverBufferedEdges(t *testing.T) {
+	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+		DataDir:             t.TempDir(),
+		WriteBehind:         true,
+		WriteBehindInterval: time.Hour,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(engine, "nornic"))
+	ctx := context.Background()
+
+	_, err = exec.Execute(ctx, "CREATE (:User {id: 1}), (:User {id: 2})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "MATCH (n:User {id: 1}), (m:User {id: 2}) MERGE (n)-[r:Friend]->(m)", nil)
+	require.NoError(t, err)
+
+	// MERGE again while the first edge is still buffered: no duplicate.
+	_, err = exec.Execute(ctx, "MATCH (n:User {id: 1}), (m:User {id: 2}) MERGE (n)-[r:Friend]->(m)", nil)
+	require.NoError(t, err)
+	res, err := exec.Execute(ctx, "MATCH (:User {id: 1})-[r:Friend]->(:User {id: 2}) RETURN count(r) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), res.Rows[0][0], "MERGE must not duplicate a buffered relationship")
+
+	// DETACH DELETE one endpoint while both node and edge writes are buffered.
+	_, err = exec.Execute(ctx, "MATCH (n:User {id: 1}) DETACH DELETE n", nil)
+	require.NoError(t, err)
+	res, err = exec.Execute(ctx, "MATCH ()-[r:Friend]->() RETURN count(r) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), res.Rows[0][0], "DETACH DELETE must remove buffered relationships")
+
+	require.NoError(t, engine.FlushWriteBehind())
+	res, err = exec.Execute(ctx, "MATCH ()-[r:Friend]->() RETURN count(r) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), res.Rows[0][0], "no orphan may reappear after the flush")
+}

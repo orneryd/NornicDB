@@ -14,6 +14,7 @@ package storage
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -82,6 +83,23 @@ type CommitBuffer struct {
 	nodesByLabel map[string][]NodeID
 	edgesByType  map[string][]EdgeID
 
+	// Adjacency overlay indexes: live buffered edges by endpoint node, and
+	// the generation's deleted edge IDs so committed adjacency scans can
+	// suppress rows the buffer hides (PR #1043 read-overlay parity).
+	outgoingByNode map[NodeID][]EdgeID
+	incomingByNode map[NodeID][]EdgeID
+	adjSeen        map[edgeAdjSeenKey]struct{}
+	deletedEdgeIDs map[EdgeID]struct{}
+
+	// deletedNodeIDs mirrors deletedEdgeIDs so prefix-scoped node counters
+	// can fold the buffered delete set into scan fallbacks.
+	deletedNodeIDs map[NodeID]struct{}
+
+	// edgeCreateCount / edgeDeleteCount feed the buffered total edge-count
+	// delta (creates minus deletes) the engine's EdgeCount readers overlay.
+	edgeCreateCount int
+	edgeDeleteCount int
+
 	// labelSeen / typeSeen make overlay index inserts O(1): without them,
 	// every op would scan the label's/type's accumulated ID slice for
 	// duplicates (O(n²) per generation, string compares on hot paths).
@@ -113,14 +131,25 @@ type typeSeenKey struct {
 
 func newCommitBuffer() *CommitBuffer {
 	return &CommitBuffer{
-		nodes:        make(map[NodeID]*Node),
-		edges:        make(map[EdgeID]*Edge),
-		deletes:      make(map[string]bool),
-		nodesByLabel: make(map[string][]NodeID),
-		edgesByType:  make(map[string][]EdgeID),
-		labelSeen:    make(map[labelSeenKey]struct{}),
-		typeSeen:     make(map[typeSeenKey]struct{}),
+		nodes:          make(map[NodeID]*Node),
+		edges:          make(map[EdgeID]*Edge),
+		deletes:        make(map[string]bool),
+		nodesByLabel:   make(map[string][]NodeID),
+		edgesByType:    make(map[string][]EdgeID),
+		labelSeen:      make(map[labelSeenKey]struct{}),
+		typeSeen:       make(map[typeSeenKey]struct{}),
+		outgoingByNode: make(map[NodeID][]EdgeID),
+		incomingByNode: make(map[NodeID][]EdgeID),
+		adjSeen:        make(map[edgeAdjSeenKey]struct{}),
+		deletedEdgeIDs: make(map[EdgeID]struct{}),
+		deletedNodeIDs: make(map[NodeID]struct{}),
 	}
+}
+
+// edgeAdjSeenKey deduplicates the adjacency index entries of one generation.
+type edgeAdjSeenKey struct {
+	node NodeID
+	id   EdgeID
 }
 
 // Mutations returns the generation's replay log in append order.
@@ -156,6 +185,7 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 			}
 		case OpDeleteNode:
 			b.deletes[string(op.NodeID)] = true
+			b.deletedNodeIDs[op.NodeID] = struct{}{}
 			// DETACH DELETE tombstones the node's relationships too. Fold
 			// them into the generation's delete set so the overlay hides
 			// the committed rows immediately and later buffered batches
@@ -164,6 +194,8 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 			for _, edgeID := range op.DeletedEdgeIDs {
 				if edgeID != "" {
 					b.deletes[string(edgeID)] = true
+					b.deletedEdgeIDs[edgeID] = struct{}{}
+					b.edgeDeleteCount++
 				}
 			}
 			if op.OldNode != nil {
@@ -185,9 +217,15 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 					b.typeSeen[key] = struct{}{}
 					b.edgesByType[op.Edge.Type] = append(b.edgesByType[op.Edge.Type], op.Edge.ID)
 				}
+				b.indexEdgeAdjacency(op.Edge)
+				if op.Type == OpCreateEdge {
+					b.edgeCreateCount++
+				}
 			}
 		case OpDeleteEdge:
 			b.deletes[string(op.EdgeID)] = true
+			b.deletedEdgeIDs[op.EdgeID] = struct{}{}
+			b.edgeDeleteCount++
 			if op.OldEdge != nil && op.OldEdge.Type != "" {
 				key := typeSeenKey{edgeType: op.OldEdge.Type, id: op.EdgeID}
 				if _, seen := b.typeSeen[key]; !seen {
@@ -240,6 +278,27 @@ func (b *CommitBuffer) addEdge(e *Edge) {
 	b.edges[e.ID] = &copyEdge
 	b.order = append(b.order, bufferedMutation{kind: bufferedOpEdge, id: string(e.ID), edge: &copyEdge})
 	b.edgesByType[e.Type] = append(b.edgesByType[e.Type], e.ID)
+	b.indexEdgeAdjacency(&copyEdge)
+	b.edgeCreateCount++
+}
+
+// indexEdgeAdjacency records a live buffered edge in the generation's
+// adjacency overlay index, once per edge and endpoint.
+func (b *CommitBuffer) indexEdgeAdjacency(e *Edge) {
+	if e.StartNode != "" {
+		key := edgeAdjSeenKey{node: e.StartNode, id: e.ID}
+		if _, seen := b.adjSeen[key]; !seen {
+			b.adjSeen[key] = struct{}{}
+			b.outgoingByNode[e.StartNode] = append(b.outgoingByNode[e.StartNode], e.ID)
+		}
+	}
+	if e.EndNode != "" {
+		key := edgeAdjSeenKey{node: e.EndNode, id: e.ID}
+		if _, seen := b.adjSeen[key]; !seen {
+			b.adjSeen[key] = struct{}{}
+			b.incomingByNode[e.EndNode] = append(b.incomingByNode[e.EndNode], e.ID)
+		}
+	}
 }
 
 func (b *CommitBuffer) addDelete(key string) {
@@ -1254,6 +1313,234 @@ func (w *WriteBehindBuffer) TypeEdges(edgeType string) []*Edge {
 		out = append(out, w.draining[i].typeEdges(edgeType)...)
 	}
 	return out
+}
+
+// liveBuffers returns the active generation and every draining generation
+// that has not been applied, newest first. The caller must hold w.mu.
+func (w *WriteBehindBuffer) liveBuffers() []*CommitBuffer {
+	buffers := make([]*CommitBuffer, 0, len(w.draining)+1)
+	buffers = append(buffers, w.active)
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		if !w.draining[i].IsApplied() {
+			buffers = append(buffers, w.draining[i])
+		}
+	}
+	return buffers
+}
+
+// NodeDeletedOverlay reports whether a buffered delete hides nodeID from
+// committed reads (PR #1043 read-overlay parity).
+func (w *WriteBehindBuffer) NodeDeletedOverlay(nodeID NodeID) bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	for _, buf := range w.liveBuffers() {
+		if buf.deletes[string(nodeID)] {
+			return true
+		}
+		if _, ok := buf.nodes[nodeID]; ok {
+			return false
+		}
+	}
+	return false
+}
+
+// EdgeAdjacencyOverlay returns the buffered live edges adjacent to nodeID
+// (outgoing or incoming) plus every buffered-deleted edge ID, which committed
+// adjacency scans must suppress. nodeDeleted reports that a buffered delete
+// hides the node itself, which hides all of its committed adjacency too.
+// The returned edge pointers are buffer-owned; callers must copy them.
+func (w *WriteBehindBuffer) EdgeAdjacencyOverlay(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	buffers := w.liveBuffers()
+	suppressed = make(map[EdgeID]struct{})
+	for _, buf := range buffers {
+		for id := range buf.deletedEdgeIDs {
+			suppressed[id] = struct{}{}
+		}
+	}
+	// Newest-first resolution of the node's own state: the first generation
+	// that mentions the node decides.
+	for _, buf := range buffers {
+		if buf.deletes[string(nodeID)] {
+			return nil, suppressed, true
+		}
+		if _, ok := buf.nodes[nodeID]; ok {
+			break
+		}
+	}
+	seen := make(map[EdgeID]struct{})
+	for _, buf := range buffers {
+		var ids []EdgeID
+		if outgoing {
+			ids = buf.outgoingByNode[nodeID]
+		} else {
+			ids = buf.incomingByNode[nodeID]
+		}
+		for _, id := range ids {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			if _, dead := suppressed[id]; dead {
+				continue
+			}
+			if e, ok := buf.edges[id]; ok && e != nil {
+				live = append(live, e)
+			}
+		}
+	}
+	return live, suppressed, false
+}
+
+// EdgesBetweenOverlay returns the buffered live edges from source to target
+// and the deleted-edge set committed between-index results must suppress.
+// sourceDeleted / targetDeleted report buffered deletes of the endpoints,
+// which hide all committed between results for them.
+func (w *WriteBehindBuffer) EdgesBetweenOverlay(source, target NodeID) (live []*Edge, suppressed map[EdgeID]struct{}, sourceDeleted, targetDeleted bool) {
+	live, suppressed, _ = w.EdgeAdjacencyOverlay(source, true)
+	filtered := live[:0]
+	for _, e := range live {
+		if e.EndNode == target {
+			filtered = append(filtered, e)
+		}
+	}
+	sourceDeleted = w.NodeDeletedOverlay(source)
+	targetDeleted = w.NodeDeletedOverlay(target)
+	return filtered, suppressed, sourceDeleted, targetDeleted
+}
+
+// EdgeCountDelta is the buffered total edge-count delta: creates minus
+// deletes across every generation that has not been replayed yet.
+func (w *WriteBehindBuffer) EdgeCountDelta() int64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	var delta int64
+	for _, buf := range w.liveBuffers() {
+		delta += int64(buf.edgeCreateCount - buf.edgeDeleteCount)
+	}
+	return delta
+}
+
+// EdgeTypeLabelCountDeltaInNamespace sums the buffered positional
+// (label, type) count deltas of one tier (start or end label) in one
+// namespace, for reads answered from the positional counters.
+func (w *WriteBehindBuffer) EdgeTypeLabelCountDeltaInNamespace(sub byte, namespace, label, edgeType string) int64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	var total int64
+	sum := func(buf *CommitBuffer) {
+		for _, c := range buf.commits {
+			if c.edgeTypeLabelDeltas == nil {
+				continue
+			}
+			for key, delta := range c.edgeTypeLabelDeltas {
+				if key.sub == sub && key.namespace == namespace && key.label == label && key.edgeType == edgeType {
+					total += delta
+				}
+			}
+		}
+	}
+	for _, buf := range w.liveBuffers() {
+		sum(buf)
+	}
+	return total
+}
+
+// EdgeTypeLabelCountDelta is EdgeTypeLabelCountDeltaInNamespace across every
+// namespace.
+func (w *WriteBehindBuffer) EdgeTypeLabelCountDelta(sub byte, label, edgeType string) int64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	var total int64
+	sum := func(buf *CommitBuffer) {
+		for _, c := range buf.commits {
+			if c.edgeTypeLabelDeltas == nil {
+				continue
+			}
+			for key, delta := range c.edgeTypeLabelDeltas {
+				if key.sub == sub && key.label == label && key.edgeType == edgeType {
+					total += delta
+				}
+			}
+		}
+	}
+	for _, buf := range w.liveBuffers() {
+		sum(buf)
+	}
+	return total
+}
+
+// EdgeCountDeltaForPrefix is the buffered total edge-count delta restricted to
+// edges whose ID starts with prefix: live buffered edge IDs minus buffered
+// deleted edge IDs. prefix may be empty for the whole graph.
+func (w *WriteBehindBuffer) EdgeCountDeltaForPrefix(prefix string) int64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	live := make(map[EdgeID]struct{})
+	dead := make(map[EdgeID]struct{})
+	for _, buf := range w.liveBuffers() {
+		for id := range buf.edges {
+			live[id] = struct{}{}
+		}
+		for id := range buf.deletedEdgeIDs {
+			dead[id] = struct{}{}
+		}
+	}
+	var delta int64
+	for id := range live {
+		if _, isDead := dead[id]; isDead {
+			continue
+		}
+		if prefix == "" || strings.HasPrefix(string(id), prefix) {
+			delta++
+		}
+	}
+	for id := range dead {
+		if _, isLive := live[id]; isLive {
+			continue
+		}
+		if prefix == "" || strings.HasPrefix(string(id), prefix) {
+			delta--
+		}
+	}
+	return delta
+}
+
+// NodeCountDeltaForPrefix is the buffered total node-count delta restricted to
+// nodes whose ID starts with prefix: live buffered node IDs minus buffered
+// deleted node IDs. prefix may be empty for the whole graph.
+func (w *WriteBehindBuffer) NodeCountDeltaForPrefix(prefix string) int64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	live := make(map[NodeID]struct{})
+	dead := make(map[NodeID]struct{})
+	for _, buf := range w.liveBuffers() {
+		for id := range buf.nodes {
+			live[id] = struct{}{}
+		}
+		for id := range buf.deletedNodeIDs {
+			dead[id] = struct{}{}
+		}
+	}
+	var delta int64
+	for id := range live {
+		if _, isDead := dead[id]; isDead {
+			continue
+		}
+		if prefix == "" || strings.HasPrefix(string(id), prefix) {
+			delta++
+		}
+	}
+	for id := range dead {
+		if _, isLive := live[id]; isLive {
+			continue
+		}
+		if prefix == "" || strings.HasPrefix(string(id), prefix) {
+			delta--
+		}
+	}
+	return delta
 }
 
 // PendingOps reports how many mutations are buffered but not yet applied.

@@ -81,7 +81,14 @@ func (b *BadgerEngine) NodeCount() (int64, error) {
 		return 0, err
 	}
 
-	return b.nodeCount.Load(), nil
+	count := b.nodeCount.Load()
+	// The atomic counter advances when the flusher lands a generation, not
+	// at ACK: fold in the buffered delta so the count is read-your-writes
+	// (PR #1043 read-overlay parity).
+	if b.writeBehind != nil {
+		count += b.writeBehind.NodeCountDeltaForPrefix("")
+	}
+	return count, nil
 }
 
 // countByPrefix counts records whose ID key starts with the given ID prefix.
@@ -125,7 +132,19 @@ func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[stri
 // This is an optional fast-path used by NamespacedEngine to provide accurate
 // per-database counts without decoding values.
 func (b *BadgerEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	return b.countByPrefix(prefix, prefixNode, b.namespaceNodeCounts)
+	if err := b.ensureOpen(); err != nil {
+		return 0, err
+	}
+	count, err := b.countByPrefix(prefix, prefixNode, b.namespaceNodeCounts)
+	if err != nil {
+		return 0, err
+	}
+	// Namespace counts advance at flush, not at ACK: fold in the buffered
+	// delta (PR #1043 read-overlay parity).
+	if b.writeBehind != nil {
+		count += b.writeBehind.NodeCountDeltaForPrefix(prefix)
+	}
+	return count, nil
 }
 
 // EdgeCount returns the total number of valid, decodable edges.
@@ -135,13 +154,32 @@ func (b *BadgerEngine) EdgeCount() (int64, error) {
 		return 0, err
 	}
 
-	return b.edgeCount.Load(), nil
+	count := b.edgeCount.Load()
+	// The atomic counter advances when the flusher lands a generation, not
+	// at ACK: fold in the buffered delta so the count is read-your-writes
+	// (PR #1043 read-overlay parity).
+	if b.writeBehind != nil {
+		count += b.writeBehind.EdgeCountDelta()
+	}
+	return count, nil
 }
 
 // EdgeCountByPrefix counts edges whose EdgeID begins with the provided prefix.
 // The prefix refers to the EdgeID string prefix (e.g., database namespace "nornic:").
 func (b *BadgerEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	return b.countByPrefix(prefix, prefixEdge, b.namespaceEdgeCounts)
+	if err := b.ensureOpen(); err != nil {
+		return 0, err
+	}
+	count, err := b.countByPrefix(prefix, prefixEdge, b.namespaceEdgeCounts)
+	if err != nil {
+		return 0, err
+	}
+	// Namespace counts advance at flush, not at ACK: fold in the buffered
+	// delta (PR #1043 read-overlay parity).
+	if b.writeBehind != nil {
+		count += b.writeBehind.EdgeCountDeltaForPrefix(prefix)
+	}
+	return count, nil
 }
 
 // GetSchema returns the schema manager.

@@ -18,16 +18,25 @@
       connected-delete resolution, `validateAllConstraints` and SI-conflict
       checks all run synchronously before the buffered ACK. (Overlay-aware
       reads for validation still gap — see read-overlay parity below.)
-- [ ] Read-overlay parity matrix test: every read method ×
-      {buffered create, update, delete} × {active, draining}. Only `GetNode`
-      is overlaid today; label scans, edge reads, counts and streams still
-      see committed state only (merge/set-through-buffer caveat).
+- [x] Read-overlay parity for committed reads (monster retest part 1):
+      adjacency (`GetOutgoingEdges`/`GetIncomingEdges`/`GetAdjacentEdges` and
+      the transaction-level readers), between-index (`GetEdgesBetween`,
+      `GetEdgeBetween`, `MatchEdgesBetween` — MERGE identity reads), DETACH
+      DELETE enumeration over buffered incident edges, and every counter
+      (`EdgeCount`, `NodeCount`, prefix-scoped namespace counts, per-type and
+      positional label/type counts) now fold the buffered generation in.
+      Tests: `pkg/storage/write_behind_adjacency_overlay_test.go` (50 users /
+      40 :Friend pre-flush == post-flush matrix, MERGE no-dup, DETACH DELETE
+      no-orphans) and `pkg/cypher/write_behind_index_visibility_test.go`
+      (`TestWriteBehind_MergeAndDetachDeleteOverBufferedEdges`).
 - [ ] WAL replay idempotency for buffered ops (crash before flush currently
-      loses the unflushed generation).
+      loses the unflushed generation — monster retest part 5).
 - [ ] Ingest matrix re-run (`ZZAsyncStrip` bench, Northwind-style seed):
       report before/after; target recovering the 5× on node-only CREATE with
       no regression on other shapes.
-- [ ] Full suites + `-race` + benchmark ratchet.
+- [ ] Full suites + `-race` + benchmark ratchet. (Green without `-race` on
+      this branch: `pkg/storage`, `pkg/cypher`, `pkg/bolt`, `pkg/server`,
+      `make cypher-conformance`, and the 15k ops/s benchmark gate.)
 
 ## Write-path optimizations (PR #1043 measurement series, monster comments 1-7)
 

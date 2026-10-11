@@ -1185,6 +1185,21 @@ func (tx *BadgerTransaction) deleteEdgesWithPrefixBuffered(prefix []byte, delete
 		return 0, nil, err
 	}
 
+	// Buffered live edges of the deleted node are invisible to badgerTx and
+	// the committed adjacency index: enumerate them from the write-behind
+	// overlay so DETACH DELETE also removes relationships that exist only in
+	// the buffer (PR #1043 read-overlay parity).
+	if tx.engine.writeBehind != nil {
+		liveOut, _, _ := tx.engine.writeBehind.EdgeAdjacencyOverlay(deletedNodeID, true)
+		for _, e := range liveOut {
+			edgeIDs = append(edgeIDs, e.ID)
+		}
+		liveIn, _, _ := tx.engine.writeBehind.EdgeAdjacencyOverlay(deletedNodeID, false)
+		for _, e := range liveIn {
+			edgeIDs = append(edgeIDs, e.ID)
+		}
+	}
+
 	var deletedCount int64
 	var deletedIDs []EdgeID
 	for _, edgeID := range edgeIDs {
@@ -2025,7 +2040,10 @@ func (tx *BadgerTransaction) AllEdges() ([]*Edge, error) {
 	}
 	var committed []*Edge
 	var err error
-	if tx.readTS.IsZero() {
+	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
+		// Write-behind reads are read-committed: the flusher may land a
+		// buffered commit after the pinned snapshot, and buffered edges are
+		// invisible to the pinned view. Read the latest overlaid view.
 		committed, err = tx.engine.AllEdges()
 	} else {
 		committed, err = tx.engine.getEdgesByTypeVisibleAtSnapshotWithView("", tx.readTS, tx.withSnapshotViewLocked)

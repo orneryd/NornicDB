@@ -806,7 +806,16 @@ func (b *BadgerEngine) EdgeCountByStartLabelInNamespace(namespace, label, edgeTy
 		count, err = b.readEdgeTypeLabelCountInTxn(txn, prefixMVCCMetaEdgeTypeStartLabelCount, namespace, label, edgeType)
 		return err
 	})
-	return count, err
+	if err != nil {
+		return 0, err
+	}
+	// Buffered-but-unflushed writes are committed: their positional deltas
+	// make the counter read-your-writes until the flusher lands them
+	// (PR #1043 read-overlay parity).
+	if b.writeBehind != nil {
+		count += b.writeBehind.EdgeTypeLabelCountDeltaInNamespace(prefixMVCCMetaEdgeTypeStartLabelCount, namespace, label, edgeType)
+	}
+	return count, nil
 }
 
 // EdgeCountByEndLabelInNamespace returns the count of edges of the given type
@@ -823,7 +832,16 @@ func (b *BadgerEngine) EdgeCountByEndLabelInNamespace(namespace, label, edgeType
 		count, err = b.readEdgeTypeLabelCountInTxn(txn, prefixMVCCMetaEdgeTypeEndLabelCount, namespace, label, edgeType)
 		return err
 	})
-	return count, err
+	if err != nil {
+		return 0, err
+	}
+	// Buffered-but-unflushed writes are committed: their positional deltas
+	// make the counter read-your-writes until the flusher lands them
+	// (PR #1043 read-overlay parity).
+	if b.writeBehind != nil {
+		count += b.writeBehind.EdgeTypeLabelCountDeltaInNamespace(prefixMVCCMetaEdgeTypeEndLabelCount, namespace, label, edgeType)
+	}
+	return count, nil
 }
 
 // sumEdgeTypeLabelCountAcrossNamespaces sums one positional tier across every
@@ -873,7 +891,16 @@ func (b *BadgerEngine) sumEdgeTypeLabelCountAcrossNamespaces(sub byte, label, ed
 		}
 		return nil
 	})
-	return total, err
+	if err != nil {
+		return 0, err
+	}
+	// Buffered-but-unflushed writes are committed: their positional deltas
+	// make the counter read-your-writes until the flusher lands them
+	// (PR #1043 read-overlay parity).
+	if b.writeBehind != nil {
+		total += b.writeBehind.EdgeTypeLabelCountDelta(sub, label, edgeType)
+	}
+	return total, nil
 }
 
 // EdgeCountByStartLabel returns the count of edges of the given type whose

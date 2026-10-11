@@ -73,12 +73,45 @@ func projectEdgeProperties(edge *Edge, properties []string) *Edge {
 	return projected
 }
 
-// MatchEdgesBetween reads the typed edge-between set index, matches each
-// candidate from the edge cache or, on a miss, from its decoded header and
+// MatchEdgesBetween matches the engine's edges between two nodes. Under
+// write-behind it overlays the buffer the same way GetEdgesBetween does: a
+// buffered endpoint delete hides committed rows, a buffered edge delete
+// hides that row, and buffered live edges of the type are appended
+// (PR #1043 read-overlay parity — MERGE identity reads).
+func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+	if b.writeBehind == nil {
+		return b.committedMatchEdgesBetween(startID, endID, edgeType, properties, match)
+	}
+	live, suppressed, sourceDeleted, targetDeleted := b.writeBehind.EdgesBetweenOverlay(startID, endID)
+	if sourceDeleted || targetDeleted {
+		return nil, nil
+	}
+	matched, err := b.committedMatchEdgesBetween(startID, endID, edgeType, properties, func(edge *Edge) bool {
+		if _, dead := suppressed[edge.ID]; dead {
+			return false
+		}
+		return match(edge)
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range live {
+		if e == nil || e.Type != edgeType {
+			continue
+		}
+		if match(projectEdgeProperties(e, properties)) {
+			matched = append(matched, copyEdge(e))
+		}
+	}
+	return matched, nil
+}
+
+// committedMatchEdgesBetween reads the typed edge-between set index, matches
+// each candidate from the edge cache or, on a miss, from its decoded header and
 // only the requested properties, and returns the accepted ones whole. A pair with no set-index entry at all may
 // predate the index: its legacy outgoing index is read as GetEdgesBetween
 // reads it.
-func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
 	if startID == "" || endID == "" {
 		return nil, ErrInvalidID
 	}

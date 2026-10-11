@@ -360,7 +360,11 @@ func (cache *snapshotAdjacencyCache) clear() {
 // which degraded linearly with the total edge count on large graphs. Pending
 // transaction writes are merged by the caller.
 func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, direction EdgeDirection) ([]*Edge, error) {
-	if tx.readTS.IsZero() {
+	// Write-behind reads are read-committed: the flusher may land a buffered
+	// commit after the pinned snapshot, and buffered-but-unflushed edges are
+	// invisible to the pinned view. Read the latest overlaid engine view
+	// instead (PR #1043 read-overlay parity).
+	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		switch direction {
 		case Outgoing:
 			return tx.engine.GetOutgoingEdges(nodeID)

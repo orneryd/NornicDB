@@ -92,6 +92,10 @@
 #                           mark work; 400 measures +19-38% on batched writes at
 #                           the cost of heap (PR #1043 experiment C). Set
 #                           NORTHWIND_GOGC=off for the Go default (100).
+#   NORTHWIND_GOMEMLIMIT    (default: 80% of the container cgroup memory limit)
+#                           memory limit paired with the raised GOGC; =off for
+#                           unbounded. Unbounded GOGC=400 killed every
+#                           containerized battery run (PR #1043 retest part 3).
 
 set -euo pipefail
 
@@ -476,8 +480,36 @@ run_nornic() {
   # GC tuning: write-path profiles show ~9-12% of CPU in GC mark work and a
   # GOGC bump measures +19-38% on batched writes (PR #1043 experiment C).
   # NORTHWIND_GOGC=off restores the Go default.
+  # A raised GOGC is always paired with a GOMEMLIMIT bound: unbounded, a
+  # Pokec-sized load under GOGC=400 grows to ~5x the live heap and was killed
+  # or thrashed in every containerized battery run (PR #1043 retest part 3).
+  # The bound defaults to 80% of the container's cgroup memory limit; set
+  # NORTHWIND_GOMEMLIMIT to override, or =off to leave it unbounded.
   if [[ "${NORTHWIND_GOGC:-400}" != "off" ]]; then
     nornic_extra_env+=(GOGC="${NORTHWIND_GOGC:-400}")
+    bound="${NORTHWIND_GOMEMLIMIT:-}"
+    if [[ "${bound}" == "off" ]]; then
+      : # explicitly unbounded
+    elif [[ -z "${bound}" ]]; then
+      cgroup_limit=""
+      for candidate in /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes; do
+        if [[ -r "${candidate}" ]]; then
+          read -r candidate_value <"${candidate}" || candidate_value=""
+          if [[ "${candidate_value}" =~ ^[0-9]+$ ]] && (( candidate_value > 0 && candidate_value < 100000000000000 )); then
+            cgroup_limit="${candidate_value}"
+            break
+          fi
+        fi
+      done
+      if [[ -n "${cgroup_limit}" ]]; then
+        # 80% of the container limit, matching the validated
+        # GOGC=400+GOMEMLIMIT=8GiB / 10GiB-container battery configuration.
+        bound=$(( cgroup_limit * 80 / 100 ))
+      fi
+    fi
+    if [[ -n "${bound}" ]]; then
+      nornic_extra_env+=(GOMEMLIMIT="${bound}")
+    fi
   fi
 
   log "starting NornicDB (bolt=${NORNIC_BOLT_PORT} http=${NORNIC_HTTP_PORT}) graph_only=${GRAPH_ONLY} parser=${mode}"
