@@ -395,9 +395,57 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 	}
 }
 
+// temporalEpochBase reads a temporal constructor map's epochSeconds or
+// epochMillis as Neo4j does: in datetime() it is the base instant (UTC, then
+// in the map's timezone) that the map's other fields override, like a
+// datetime key (datetime({epochSeconds: 1700000000, year: 2020}) is
+// 2020-11-14T22:13:20Z); fields is returned with the epoch key replaced by
+// that datetime. An epoch key in another constructor is a TypeError ("Not
+// supported: epochSeconds"); an epoch that isn't an integer, both keys, or
+// one with a datetime, date or time key is an ArgumentError. A map without
+// either key is returned unchanged.
+func temporalEpochBase(kind string, fields map[string]interface{}) (map[string]interface{}, error) {
+	seconds, hasSeconds := fields["epochSeconds"]
+	millis, hasMillis := fields["epochMillis"]
+	if !hasSeconds && !hasMillis {
+		return fields, nil
+	}
+	key, value := "epochSeconds", seconds
+	if !hasSeconds {
+		key, value = "epochMillis", millis
+	}
+	if kind != "datetime" {
+		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgument", localization.CypherCoreTemporalFieldNotSupported(key))
+	}
+	if hasSeconds && hasMillis {
+		return nil, temporalArgumentError(localization.CypherCoreTemporalFieldsConflict("epochMillis", "epochSeconds"))
+	}
+	for _, base := range []string{"datetime", "date", "time"} {
+		if _, exists := fields[base]; exists {
+			return nil, temporalArgumentError(localization.CypherCoreTemporalFieldsConflict(key, base))
+		}
+	}
+	epoch, isInteger := cypherIntegerValue(value)
+	if !isInteger {
+		return nil, temporalArgumentError(localization.CypherCoreTemporalEpochInvalid(neo4jProvidedValue(value)))
+	}
+	instant := time.Unix(epoch, 0).UTC()
+	if key == "epochMillis" {
+		instant = time.UnixMilli(epoch).UTC()
+	}
+	based := cloneTemporalFields(fields)
+	delete(based, key)
+	based["datetime"] = CypherDateTime{Time: instant}
+	return based, nil
+}
+
 func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}, bool) {
 	if kind == "duration" {
 		return buildDurationFromFields(fields), true
+	}
+	fields, err := temporalEpochBase(kind, fields)
+	if err != nil {
+		return nil, true
 	}
 	// A map Neo4j rejects builds no value (temporalConstructorError reports
 	// why); nothing rolls over into the next month, day or hour.
@@ -886,6 +934,10 @@ func temporalConstructorError(function string, input interface{}) error {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
 			localization.CypherCoreTemporalTextUnparseable(typeName, strconv.Quote(value)))
 	case map[string]interface{}:
+		value, err := temporalEpochBase(lowerASCII(function), value)
+		if err != nil {
+			return err
+		}
 		if err := temporalFieldsError(lowerASCII(function), value); err != nil {
 			return err
 		}
