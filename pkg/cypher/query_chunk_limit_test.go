@@ -148,3 +148,41 @@ func TestRetrieveRowsReportQueryChunks(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), column(result, "query_chunks_total"))
 }
+
+type sizedVectorEmbedder struct {
+	vector []float32
+	dims   int
+}
+
+func (e sizedVectorEmbedder) Embed(context.Context, string) ([]float32, error) { return e.vector, nil }
+func (e sizedVectorEmbedder) ChunkText(text string, _, _ int) ([]string, error) {
+	return []string{text}, nil
+}
+func (e sizedVectorEmbedder) Dimensions() int { return e.dims }
+
+// db.retrieve takes an empty or wrong-dimension query vector as a failed
+// embedding: the search falls back with query_embedding_failed, or the call
+// fails under failClosed, instead of searching without a vector.
+func TestRetrieveUnusableQueryEmbeddingFails(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	_, err := store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Document"}, Properties: map[string]interface{}{"content": "alpha"}, ChunkEmbeddings: [][]float32{{1, 0}}})
+	require.NoError(t, err)
+	service := search.NewServiceWithDimensions(store, 2)
+	require.NoError(t, service.BuildIndexes(ctx))
+	for name, embedder := range map[string]sizedVectorEmbedder{
+		"empty":           {vector: []float32{}, dims: 2},
+		"other dimension": {vector: []float32{1, 0, 0}, dims: 2},
+	} {
+		exec := NewStorageExecutor(store)
+		exec.SetEmbedder(embedder)
+		exec.SetSearchService(service)
+		result, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha', limit: 5}) YIELD fallback_reason RETURN fallback_reason", nil)
+		require.NoError(t, err, name)
+		require.NotEmpty(t, result.Rows, name)
+		require.Equal(t, string(search.SearchFallbackQueryEmbeddingFailed), result.Rows[0][0], name)
+		_, err = exec.Execute(ctx, "CALL db.retrieve({query: 'alpha', limit: 5, failClosed: true}) YIELD node RETURN node", nil)
+		require.Error(t, err, name)
+	}
+	require.Zero(t, queryEmbedderDimensions(&chunkCountingEmbedder{}))
+}

@@ -139,3 +139,53 @@ func TestChunkedSearchReportsUnusableChunkEmbeddings(t *testing.T) {
 	require.True(t, isQueryEmbeddingFallback(SearchFallbackNoEmbedder))
 	require.False(t, isQueryEmbeddingFallback(SearchFallbackRerankScoresFlat))
 }
+
+// A query of one chunk is searched as itself: a failed, empty or failing
+// search falls back with its reason; an adapter's fatal error is returned
+// on both paths.
+func TestChunkedSearchSingleChunkAndFatalErrors(t *testing.T) {
+	ctx := context.Background()
+	one := func(context.Context, string) ([]string, error) { return []string{"q"}, nil }
+	ok := func(_ context.Context, query string, embedding []float32, _ *SearchOptions) (*SearchResponse, error) {
+		if len(embedding) == 0 {
+			return &SearchResponse{Results: []SearchResult{{ID: "bm25"}}}, nil
+		}
+		return &SearchResponse{Results: []SearchResult{{ID: "vector"}}}, nil
+	}
+	failing := func(_ context.Context, _ string, embedding []float32, _ *SearchOptions) (*SearchResponse, error) {
+		if len(embedding) > 0 {
+			return nil, errors.New("hybrid down")
+		}
+		return &SearchResponse{Results: []SearchResult{{ID: "bm25"}}}, nil
+	}
+	vector := func(context.Context, string) ([]float32, error) { return []float32{1}, nil }
+	for name, check := range map[string]struct {
+		embed  EmbedQueryFunc
+		search SearchQueryFunc
+		reason SearchFallbackReason
+	}{
+		"searched":         {vector, ok, SearchFallbackNone},
+		"embedding failed": {func(context.Context, string) ([]float32, error) { return nil, errors.New("down") }, ok, SearchFallbackQueryEmbeddingFailed},
+		"no vector":        {func(context.Context, string) ([]float32, error) { return nil, nil }, ok, SearchFallbackQueryEmbeddingUnavailable},
+		"search failed":    {vector, failing, SearchFallbackHybridSearchFailed},
+	} {
+		response, err := SearchTextChunks(ctx, "q", &SearchOptions{Limit: 5}, one, check.embed, check.search)
+		require.NoError(t, err, name)
+		require.Equal(t, check.reason, response.FallbackReason, name)
+		require.Zero(t, response.QueryChunksTotal, name)
+	}
+	fatal := errors.New("fatal")
+	policy := ChunkedSearchErrorPolicy{
+		FatalEmbeddingError: func(err error) bool { return errors.Is(err, fatal) },
+		FatalSearchError:    func(err error) bool { return errors.Is(err, fatal) },
+	}
+	fatalEmbed := func(context.Context, string) ([]float32, error) { return nil, fatal }
+	fatalSearch := func(context.Context, string, []float32, *SearchOptions) (*SearchResponse, error) { return nil, fatal }
+	many := func(context.Context, string) ([]string, error) { return []string{"a", "b"}, nil }
+	for _, chunks := range []ChunkQueryFunc{one, many} {
+		_, err := SearchTextChunksWithErrorPolicy(ctx, "q", &SearchOptions{Limit: 5}, chunks, fatalEmbed, ok, policy)
+		require.ErrorIs(t, err, fatal)
+		_, err = SearchTextChunksWithErrorPolicy(ctx, "q", &SearchOptions{Limit: 5}, chunks, vector, fatalSearch, policy)
+		require.ErrorIs(t, err, fatal)
+	}
+}
