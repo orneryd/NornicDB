@@ -502,35 +502,35 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedureLiteral("apoc.load.json", "apoc.load.json(urlOrKeyOrBinary :: STRING, path :: STRING = '', config :: MAP = {}) :: (value :: MAP)", "Loads JSON", ProcedureModeRead, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocLoadJson(ctx, cypher)
+				return e.callApocLoadJson(ctx, args)
 			})
 		registerBuiltInProcedureLiteral("apoc.load.jsonArray", "apoc.load.jsonArray(urlOrKeyOrBinary :: STRING, path :: STRING = '', config :: MAP = {}) :: (value :: MAP)", "Loads JSON array", ProcedureModeRead, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocLoadJsonArray(ctx, cypher)
+				return e.callApocLoadJsonArray(ctx, args)
 			})
 		registerBuiltInProcedureLiteral("apoc.load.csv", "apoc.load.csv(urlOrBinary :: STRING, config :: MAP = {}, nullValues :: LIST<STRING> = []) :: (lineNo :: INTEGER, list :: LIST<STRING>, map :: MAP)", "Loads CSV", ProcedureModeRead, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocLoadCsv(ctx, cypher)
+				return e.callApocLoadCsv(ctx, args)
 			})
 		registerBuiltInProcedureLiteral("apoc.export.json.all", "apoc.export.json.all(file :: STRING, config :: MAP = {}) :: (file :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Exports graph to JSON", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocExportJsonAll(ctx, cypher)
+				return e.callApocExportJsonAll(ctx, args)
 			})
 		registerBuiltInProcedureLiteral("apoc.export.json.query", "apoc.export.json.query(query :: STRING, file :: STRING, config :: MAP = {}) :: (file :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Exports query result to JSON", ProcedureModeRead, 2, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocExportJsonQuery(ctx, cypher)
+				return e.callApocExportJsonQuery(ctx, args)
 			})
 		registerBuiltInProcedureLiteral("apoc.export.csv.all", "apoc.export.csv.all(file :: STRING, config :: MAP = {}) :: (file :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Exports graph to CSV", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocExportCsvAll(ctx, cypher)
+				return e.callApocExportCsvAll(ctx, args)
 			})
 		registerBuiltInProcedureLiteral("apoc.export.csv.query", "apoc.export.csv.query(query :: STRING, file :: STRING, config :: MAP = {}) :: (file :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Exports query result to CSV", ProcedureModeRead, 2, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocExportCsvQuery(ctx, cypher)
+				return e.callApocExportCsvQuery(ctx, args)
 			})
 		registerBuiltInProcedureLiteral("apoc.import.json", "apoc.import.json(url :: STRING, config :: MAP = {}) :: (file :: STRING, source :: STRING, format :: STRING, nodes :: INTEGER, relationships :: INTEGER, properties :: INTEGER, time :: INTEGER, rows :: INTEGER, batchSize :: INTEGER, batches :: INTEGER, done :: BOOLEAN, data :: STRING)", "Imports JSON", ProcedureModeWrite, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callApocImportJson(ctx, cypher)
+				return e.callApocImportJson(ctx, args)
 			})
 	})
 }
