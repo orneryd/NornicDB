@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -69,4 +70,47 @@ func TestRagProcedureRequestReader(t *testing.T) {
 	_, err = ragProcedureRequest("db.retrieve", []interface{}{int64(123)})
 	code, _ := nornicerrors.Neo4jStatus(err)
 	require.Equal(t, "Neo.ClientError.Statement.TypeError", code)
+}
+
+// countingReranker records how many candidates reach the provider.
+type countingReranker struct{ received int }
+
+func (r *countingReranker) Name() string                          { return "counting" }
+func (r *countingReranker) Enabled() bool                         { return true }
+func (r *countingReranker) IsAvailable(ctx context.Context) bool  { return true }
+func (r *countingReranker) Rerank(ctx context.Context, query string, candidates []search.RerankCandidate) ([]search.RerankResult, error) {
+	r.received = len(candidates)
+	results := make([]search.RerankResult, len(candidates))
+	for i, candidate := range candidates {
+		results[i] = search.RerankResult{ID: candidate.ID, Content: candidate.Content, OriginalRank: i + 1, NewRank: i + 1, FinalScore: 1}
+	}
+	return results, nil
+}
+
+// A computed value inside the request map is its value: rerankTopK:
+// size($c) - 2 sends one of three candidates to the provider (Personal
+// Documents I24).
+func TestRagProcedureRequestComputedOption(t *testing.T) {
+	ctx := context.Background()
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(engine)
+	reranker := &countingReranker{}
+	service := search.NewService(engine)
+	service.SetReranker(reranker)
+	exec.SetSearchService(service)
+	candidates := []interface{}{
+		map[string]interface{}{"id": "a", "content": "x"},
+		map[string]interface{}{"id": "b", "content": "y"},
+		map[string]interface{}{"id": "c", "content": "z"},
+	}
+	for _, query := range []string{
+		"CALL db.rerank({query: 'q', candidates: $c, rerankTopK: size($c) - 2}) YIELD id RETURN id",
+		"WITH $c AS c CALL db.rerank({query: 'q', candidates: c, rerankTopK: size(c) - 2}) YIELD id RETURN id",
+	} {
+		reranker.received = 0
+		result, err := exec.Execute(ctx, query, map[string]interface{}{"c": candidates})
+		require.NoError(t, err, query)
+		require.Equal(t, 1, reranker.received, query)
+		require.Len(t, result.Rows, 1, query)
+	}
 }
