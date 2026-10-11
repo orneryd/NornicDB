@@ -196,13 +196,13 @@ func scanComparisonChain(expression string) (comparisonChainScan, bool) {
 		case 'C', 'c':
 			// CASE … END nests like parentheses: the comparisons of its WHEN
 			// conditions are not the chain's (#699).
-			if (index == 0 || expression[index-1] != '.') && matchKeywordAt(expression, index, "CASE") {
+			if caseKeywordAt(expression, index, "CASE") {
 				caseDepth++
 				index += len("CASE") - 1
 				continue
 			}
 		case 'E', 'e':
-			if caseDepth > 0 && (index == 0 || expression[index-1] != '.') && matchKeywordAt(expression, index, "END") {
+			if caseDepth > 0 && caseKeywordAt(expression, index, "END") {
 				caseDepth--
 				index += len("END") - 1
 				continue
