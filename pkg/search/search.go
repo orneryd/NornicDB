@@ -756,11 +756,11 @@ type Service struct {
 	bm25Engine   string
 	// fulltextProperties is an ordered allowlist. Empty preserves all-property indexing.
 	fulltextProperties []string
+	reranker           Reranker
+	mu                 sync.RWMutex
 	// fulltextLabels lists the labels whose nodes are BM25-indexed (any one
 	// suffices). Empty indexes every node.
 	fulltextLabels []string
-	reranker           Reranker
-	mu                 sync.RWMutex
 	// indexMu serializes index mutation operations (IndexNode/RemoveNode/BuildIndexes batches)
 	// without blocking read paths that use s.mu for lightweight config/state reads.
 	indexMu        sync.RWMutex
