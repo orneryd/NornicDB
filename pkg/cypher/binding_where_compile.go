@@ -139,6 +139,13 @@ func andTruth(left, right bindingWhereTruth) bindingWhereTruth {
 	}
 }
 
+// xorTruth is left XOR right in three-valued logic: null when either is.
+func xorTruth(left, right bindingWhereTruth) bindingWhereTruth {
+	return func(b binding, params map[string]interface{}) cypherTruth {
+		return left(b, params).xor(right(b, params))
+	}
+}
+
 func orTruth(left, right bindingWhereTruth) bindingWhereTruth {
 	return func(b binding, params map[string]interface{}) cypherTruth {
 		return truthOrLazy(left(b, params), func() cypherTruth { return right(b, params) })
@@ -273,6 +280,14 @@ func (e *StorageExecutor) tryCompileExecutorBindingWhereTruth(ctx context.Contex
 			return nil, false
 		}
 		return orTruth(left, right), true
+	}
+	if xorIdx := findTopLevelKeyword(clause, " XOR "); xorIdx > 0 {
+		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, clause[:xorIdx])
+		right, rightOK := e.compileExecutorBindingWhereBranch(ctx, clause[xorIdx+5:])
+		if !leftOK || !rightOK {
+			return nil, false
+		}
+		return xorTruth(left, right), true
 	}
 	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
 		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, clause[:andIdx])
@@ -449,6 +464,15 @@ func (e *StorageExecutor) tryCompileBindingWhereTruth(ctx context.Context, where
 			return nil, false
 		}
 		return orTruth(left, right), true
+	}
+	// XOR binds between OR and AND: a = 1 XOR true is (a = 1) XOR true.
+	if xorIdx := findTopLevelKeyword(clause, " XOR "); xorIdx > 0 {
+		left, okLeft := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[:xorIdx])
+		right, okRight := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[xorIdx+5:])
+		if !okLeft || !okRight {
+			return nil, false
+		}
+		return xorTruth(left, right), true
 	}
 	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
 		left, okLeft := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[:andIdx])

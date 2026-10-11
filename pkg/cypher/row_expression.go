@@ -1823,7 +1823,7 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 			}
 		}
 	}
-	if mayContainArithmetic(expression) && strictLogical && !looksLikeRowRelationshipPattern(expression) {
+	if mayContainArithmetic(expression) && strictLogical && !containsRelationshipPattern(expression) {
 		value, evaluated, err := e.evaluateRowValue(expression, values)
 		if err != nil {
 			recordExpressionFailure(ctx, err)
@@ -1886,7 +1886,7 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
 		return e.evaluateRowPredicateMode(ctx, rewritten, extended)
 	}
-	if looksLikeRowRelationshipPattern(expression) {
+	if isRelationshipPatternOperand(expression) {
 		if value, resolved := e.rowPredicateOperand(ctx, expression, values); resolved {
 			return predicateValueIsTrue(ctx, value, expression)
 		}
@@ -2018,7 +2018,7 @@ func (e *StorageExecutor) rowPredicateValue(ctx context.Context, operand string,
 // the statement's: it is recorded on ctx, and the operand is unresolved, so
 // the predicate doesn't hold.
 func (e *StorageExecutor) rowPredicateOperand(ctx context.Context, expr string, values map[string]interface{}) (interface{}, bool) {
-	if looksLikeRowRelationshipPattern(expr) {
+	if isRelationshipPatternOperand(expr) {
 		if nodes, _ := withWhereValueContext(values); len(nodes) > 0 {
 			if matched, recognized := e.evaluateBoundRelationshipPattern(ctx, expr, nodes); recognized {
 				return matched, true
@@ -2068,9 +2068,36 @@ func rowIdentityPayload(value interface{}) interface{} {
 	return text
 }
 
-func looksLikeRowRelationshipPattern(expression string) bool {
-	return strings.Contains(expression, "-[") || strings.Contains(expression, "]-") ||
-		strings.Contains(expression, "--") || strings.Contains(expression, "<-") || strings.Contains(expression, "->")
+// isRelationshipPatternOperand reports whether expression is one whole
+// relationship pattern ((a)-[:R]->(b), (a)<--()), read by
+// relationshipChainEnd. A parenthesised expression whose operands are
+// patterns, (NOT (a)<--() OR (a)-->()), is not one: it is evaluated as the
+// predicate it is (#907).
+func isRelationshipPatternOperand(expression string) bool {
+	expression = strings.TrimSpace(expression)
+	end, chain := relationshipChainEnd(expression, 0, len(expression))
+	return chain && end == len(expression)
+}
+
+// containsRelationshipPattern reports whether a relationship pattern
+// (relationshipChainEnd) starts anywhere in expression outside a string
+// literal.
+func containsRelationshipPattern(expression string) bool {
+	for i := 0; i < len(expression); i++ {
+		switch c := expression[i]; c {
+		case '\'', '"', '`':
+			j := i + 1
+			for j < len(expression) && (expression[j] != c || isBackslashEscaped(expression, j)) {
+				j++
+			}
+			i = j
+		case '(':
+			if _, chain := relationshipChainEnd(expression, i, len(expression)); chain {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (e *StorageExecutor) evaluateRowMembershipValue(left, right string, values map[string]interface{}) (interface{}, bool, error) {

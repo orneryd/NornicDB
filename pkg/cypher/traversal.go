@@ -2674,7 +2674,7 @@ func (e *StorageExecutor) pathSubqueryMatches(ctx context.Context, outer PathCon
 		pattern = strings.TrimSpace(pattern[:whereIdx])
 	}
 
-	if looksLikeRowRelationshipPattern(pattern) {
+	if containsRelationshipPattern(pattern) {
 		matches := e.parseTraversalPattern(ctx, pattern)
 		if matches == nil {
 			return false
