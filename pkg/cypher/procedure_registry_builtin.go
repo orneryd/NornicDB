@@ -66,6 +66,14 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbPing()
 			})
+		registerProcedure(schemaTypePropertiesProcedureSpec("db.schema.nodeTypeProperties", true),
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callDbSchemaTypeProperties(ctx, true)
+			})
+		registerProcedure(schemaTypePropertiesProcedureSpec("db.schema.relTypeProperties", false),
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callDbSchemaTypeProperties(ctx, false)
+			})
 		registerProcedure(schemaVisualizationProcedureSpec(),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbSchemaVisualizationWithContext(ctx)

@@ -52,6 +52,10 @@ func loadPinnedTemporalLocation(zoneID string) (*time.Location, bool) {
 	})
 	file := temporalZoneFiles[zoneID]
 	if file == nil {
+		// UTC+01:00 and the like are zones of their own (prefixedOffsetZone).
+		if id, offset, length, ok := prefixedOffsetZone(zoneID); ok && length == len(zoneID) && id == zoneID {
+			return time.FixedZone(zoneID, offset), true
+		}
 		return nil, false
 	}
 	reader, err := file.Open()
@@ -85,4 +89,28 @@ func normalizeTemporalNamedZone(value time.Time) time.Time {
 		return value
 	}
 	return time.Date(value.Year(), value.Month(), value.Day(), value.Hour(), value.Minute(), value.Second(), value.Nanosecond(), location)
+}
+
+// prefixedOffsetZone reads, at the start of text, a zone that is UTC, GMT or
+// UT followed by an offset written +hh:mm or +hh:mm:ss (GMT-05:30), which
+// Neo4j takes as a zone of its own: the zone's ID (just the prefix for a
+// zero offset: UTC+00:00 is UTC), its offset and the text's length.
+func prefixedOffsetZone(text string) (zoneID string, offset, length int, ok bool) {
+	for _, prefix := range []string{"UTC", "GMT", "UT"} {
+		if !strings.HasPrefix(text, prefix) || len(text) < len(prefix)+6 || text[len(prefix)] != '+' && text[len(prefix)] != '-' {
+			continue
+		}
+		end := len(prefix) + 6
+		if len(text) >= end+3 && text[end] == ':' && isDigitByte(text[end+1]) && isDigitByte(text[end+2]) {
+			end += 3
+		}
+		if offset, ok = parseTemporalOffset(text[len(prefix):end]); !ok || offset < -64_800 || offset > 64_800 {
+			return "", 0, 0, false
+		}
+		if offset == 0 {
+			return prefix, 0, end, true
+		}
+		return prefix + offsetID(offset, true), offset, end, true
+	}
+	return "", 0, 0, false
 }

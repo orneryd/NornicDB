@@ -944,25 +944,38 @@ func withQueryParams(ctx context.Context, params map[string]interface{}) context
 }
 
 // parameterRowValues returns the context's parameters as row values,
-// keyed "$name" (parameterRowValue of each). Each parameter map attached
-// with withQueryParams is converted once; the result is shared and must
-// not be modified.
+// keyed "$name" (parameterRowValue of each), with a Cypher 25 statement's
+// mark (cypher25RowKey): every row that gets the parameters gets the
+// statement's language version with them. Each parameter map attached with
+// withQueryParams is converted once; the result is shared and must not be
+// modified.
 func parameterRowValues(ctx context.Context) map[string]interface{} {
 	params := getParamsFromContext(ctx)
+	cypher25 := cypherVersionFromContext(ctx) == "25"
 	if len(params) == 0 {
+		if cypher25 {
+			return cypher25RowValues
+		}
 		return nil
 	}
 	if cache, ok := ctx.Value(paramRowsKey).(*queryParamsContext); ok && sameParameterMap(cache.params, params) {
-		cache.once.Do(func() { cache.rows = parameterRowsOf(params) })
+		cache.once.Do(func() { cache.rows = parameterRowsOf(params, cypher25) })
 		return cache.rows
 	}
-	return parameterRowsOf(params)
+	return parameterRowsOf(params, cypher25)
 }
 
-func parameterRowsOf(params map[string]interface{}) map[string]interface{} {
-	rows := make(map[string]interface{}, len(params))
+// cypher25RowValues are the row values of a Cypher 25 statement without
+// parameters (shared; never modified).
+var cypher25RowValues = map[string]interface{}{cypher25RowKey: true}
+
+func parameterRowsOf(params map[string]interface{}, cypher25 bool) map[string]interface{} {
+	rows := make(map[string]interface{}, len(params)+1)
 	for name, value := range params {
 		rows["$"+name] = parameterRowValue(value)
+	}
+	if cypher25 {
+		rows[cypher25RowKey] = true
 	}
 	return rows
 }
@@ -972,9 +985,22 @@ func sameParameterMap(a, b map[string]interface{}) bool {
 	return reflect.ValueOf(a).UnsafePointer() == reflect.ValueOf(b).UnsafePointer()
 }
 
-// bindParameterRow adds the context's parameters to row as "$name" values.
+// bindParameterRow adds the context's parameters to row as "$name" values
+// (with a Cypher 25 statement's mark, parameterRowValues).
 func bindParameterRow(ctx context.Context, row pipelineRow) {
 	for name, value := range parameterRowValues(ctx) {
 		row[name] = value
 	}
+}
+
+// cypher25RowKey marks the rows of a Cypher 25 statement. Like a parameter
+// it is a "$" key: projections carry it across WITH and UNWIND and none
+// returns it, so the row evaluator, which has no context, reads the
+// statement's language version from the row (rowIsCypher25).
+const cypher25RowKey = "$__nornic_cypher25"
+
+// rowIsCypher25 reports whether values are a Cypher 25 statement's row.
+func rowIsCypher25(values map[string]interface{}) bool {
+	marked, _ := values[cypher25RowKey].(bool)
+	return marked
 }

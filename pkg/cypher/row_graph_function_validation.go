@@ -266,6 +266,7 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 		args = splitTopLevelComma(argument)
 	}
 	value, _, err := cypherfn.EvaluateFunction(function, args, cypherfn.Context{
+		Cypher25: rowIsCypher25(values),
 		Eval: func(expression string) (interface{}, error) {
 			value, resolved, err := e.evaluateRowValue(expression, values)
 			if err != nil {

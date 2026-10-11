@@ -513,8 +513,12 @@ func undefinedVariableError(expression string) (err error, undefined bool) {
 
 // transactionIDFilter reads the transaction ids after SHOW / TERMINATE
 // TRANSACTION[S]: a string, a list of strings, or a parameter holding
-// either. ok is false when there is no id expression.
-func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command string) ([]string, bool, error) {
+// either. ok is false when there is no id expression. In a Cypher 25
+// statement a null id, alone or in the list, is an id no transaction has
+// (Neo4j 2026.09: SHOW lists nothing for it, TERMINATE reports it not
+// found); ids holds it as nil. A Cypher 5 statement keeps Neo4j 5.26's
+// TypeError.
+func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command string) ([]interface{}, bool, error) {
 	rest := strings.TrimSpace(head)
 	if startsWithKeywordFold(rest, command) {
 		rest = strings.TrimSpace(rest[len(command):])
@@ -543,8 +547,12 @@ func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command
 	}
 	// Neo4j 5.26: a string or a list of strings; an empty list is no filter;
 	// anything else, null included, is a TypeError naming the value.
-	if id, isString := value.(string); isString {
-		return []string{id}, true, nil
+	cypher25 := cypherVersionFromContext(ctx) == "25"
+	if id, isString := value.(string); isString || value == nil && cypher25 {
+		if isString {
+			return []interface{}{id}, true, nil
+		}
+		return []interface{}{nil}, true, nil
 	}
 	items, isList := cypherListValue(value)
 	if !isList {
@@ -554,8 +562,12 @@ func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command
 	if len(items) == 0 {
 		return nil, false, nil
 	}
-	ids := make([]string, 0, len(items))
+	ids := make([]interface{}, 0, len(items))
 	for _, item := range items {
+		if item == nil && cypher25 {
+			ids = append(ids, nil)
+			continue
+		}
 		id, isString := item.(string)
 		if !isString {
 			return nil, true, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
@@ -574,15 +586,20 @@ func (e *StorageExecutor) parameterRow(ctx context.Context) pipelineRow {
 	return row
 }
 
-// executeShowTransactions lists the running transactions.
+// executeShowTransactions lists the running transactions. A Cypher 25
+// statement also has Neo4j 2026.09's currentQueryProgress column (null:
+// NornicDB has no running update counters).
 func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	ids, filtered, err := e.transactionIDFilter(ctx, cypher, "SHOW")
 	if err != nil {
 		return nil, err
 	}
+	cypher25 := cypherVersionFromContext(ctx) == "25"
 	wanted := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
-		wanted[id] = struct{}{}
+		if text, isString := id.(string); isString {
+			wanted[text] = struct{}{}
+		}
 	}
 	now := time.Now()
 	transactions := runningTransactions.snapshot()
@@ -649,9 +666,20 @@ func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher st
 				row[i] = currentQueryElapsed
 			}
 		}
+		if cypher25 {
+			// currentQueryProgress: the running query's update counters.
+			// NornicDB doesn't count a query's updates before it ends, so
+			// the value is unknown (null), never invented zeros.
+			row = append(row, nil)
+		}
 		rows = append(rows, row)
 	}
-	return withShowDefaultColumns(&ExecuteResult{Columns: append([]string(nil), showTransactionsColumns...), Rows: rows}, showTransactionsDefaultColumns), nil
+	columns := append([]string(nil), showTransactionsColumns...)
+	if cypher25 {
+		// Neo4j 2026.09 adds currentQueryProgress last for Cypher 25.
+		columns = append(columns, "currentQueryProgress")
+	}
+	return withShowDefaultColumns(&ExecuteResult{Columns: columns, Rows: rows}, showTransactionsDefaultColumns), nil
 }
 
 // executeTerminateTransactions terminates the named transactions: one row
@@ -667,7 +695,11 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 			localization.CypherAdminTerminateTransactionsIDRequired())
 	}
 	for index, id := range ids {
-		normalized, err := terminateTransactionID(id)
+		text, isString := id.(string)
+		if !isString {
+			continue // a Cypher 25 null id
+		}
+		normalized, err := terminateTransactionID(text)
 		if err != nil {
 			return nil, err
 		}
@@ -675,7 +707,12 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 	}
 	rows := make([][]interface{}, 0, len(ids))
 	for _, id := range ids {
-		tx, found := runningTransactions.terminate(id)
+		text, isString := id.(string)
+		if !isString {
+			rows = append(rows, []interface{}{nil, nil, "Transaction not found."})
+			continue
+		}
+		tx, found := runningTransactions.terminate(text)
 		if !found {
 			rows = append(rows, []interface{}{id, nil, "Transaction not found."})
 			continue

@@ -132,12 +132,13 @@ func TestShowSchemaYieldWhereReturn(t *testing.T) {
 	}
 	_, err := executor.Execute(ctx, "SHOW INDEXES YIELD nonexistent RETURN nonexistent", nil)
 	require.Error(t, err)
-	// Neo4j's SHOW grammar: RETURN needs YIELD, WITH isn't allowed, YIELD's
-	// WHERE comes after its ORDER BY / SKIP / LIMIT, which take literals.
+	// Neo4j's SHOW grammar: RETURN (and, since Cypher 25, any clause:
+	// TestShowCompositionMatchesNeo4j) needs YIELD, YIELD's WHERE comes after
+	// its ORDER BY / SKIP / LIMIT, which take literals.
 	for _, statement := range []string{
 		"SHOW INDEXES RETURN count(*) AS total",
 		"SHOW INDEXES WHERE name = 'alpha' RETURN name",
-		"SHOW INDEXES YIELD name WITH name RETURN name",
+		"SHOW INDEXES WITH name RETURN name",
 		"SHOW INDEXES YIELD name WHERE name = 'alpha' ORDER BY name",
 		"SHOW INDEXES YIELD name LIMIT 1 + 1 RETURN name",
 	} {

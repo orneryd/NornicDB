@@ -397,29 +397,24 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 }
 
 // checkBindingFunctionPropertyAccesses checks any / all / none / single
-// (x IN list WHERE predicate) and reduce(acc = init, x IN list | expression),
-// whose variables shadow the scope.
+// (x IN list WHERE predicate) and the reduce forms (parseReduceForm), whose
+// variables shadow the scope.
 func checkBindingFunctionPropertyAccesses(function, arguments string, types map[string]string, params map[string]interface{}) error {
-	if strings.EqualFold(function, "reduce") {
-		parts := splitTopLevelComma(arguments)
-		if len(parts) != 2 {
-			return nil
-		}
-		accumulator, initial, found := strings.Cut(parts[0], "=")
-		if !found {
-			return nil
-		}
-		if err := checkExpressionPropertyAccesses(initial, types, params); err != nil {
-			return err
-		}
-		variable, list, _, projection, ok := parseListComprehension(parts[1])
+	if isReduceFormFunction(function) {
+		form, ok := parseReduceForm(function, arguments)
 		if !ok {
 			return nil
 		}
-		if err := checkExpressionPropertyAccesses(list, types, params); err != nil {
+		for _, outer := range []string{form.initial, form.list} {
+			if err := checkExpressionPropertyAccesses(outer, types, params); err != nil {
+				return err
+			}
+		}
+		inner := shadowPropertyAccessTypes(types, form.variable, form.accumulator)
+		if err := checkExpressionPropertyAccesses(form.step, inner, params); err != nil {
 			return err
 		}
-		return checkExpressionPropertyAccesses(projection, shadowPropertyAccessTypes(types, variable, strings.TrimSpace(accumulator)), params)
+		return checkExpressionPropertyAccesses(form.predicate, inner, params)
 	}
 	variable, list, predicate, _, ok := parseListComprehension(arguments)
 	if !ok {

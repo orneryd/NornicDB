@@ -1743,11 +1743,23 @@ func (r *queryRewrite) originalText(text string) string {
 	if text == "" || r.verbatimColumns && strings.Contains(r.original, text) {
 		return text
 	}
+	// The last whole-token occurrence: a column c is not the c inside
+	// percentileCont, which a rewrite may have written.
 	start := strings.LastIndex(r.canonical, text)
+	for start >= 0 && !wholeTokenAt(r.canonical, start, start+len(text)) {
+		start = strings.LastIndex(r.canonical[:start], text)
+	}
 	if start < 0 || !r.touches(start, start+len(text)) {
 		return text
 	}
 	return r.original[r.originalOffset(start, true):r.originalOffset(start+len(text), false)]
+}
+
+// wholeTokenAt reports whether text[start:end] doesn't continue a name on
+// either side: the bytes around it aren't both name characters.
+func wholeTokenAt(text string, start, end int) bool {
+	return (start == 0 || !isIdentByte(text[start-1]) || !isIdentByte(text[start])) &&
+		(end == len(text) || !isIdentByte(text[end]) || !isIdentByte(text[end-1]))
 }
 
 // restoreMessage puts the client's text back into a message: the canonical

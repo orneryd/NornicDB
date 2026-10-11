@@ -93,15 +93,8 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		return padRowString(text, length, padding, name == "lpad"), true, true, nil
 	case "format":
-		arguments, ok := args()
-		if !ok || len(arguments) == 0 {
-			return nil, true, false, nil
-		}
-		template, templateOK := arguments[0].(string)
-		if !templateOK {
-			return nil, true, false, nil
-		}
-		return fmt.Sprintf(template, arguments[1:]...), true, true, nil
+		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
+		return value, true, resolved, err
 	case "apoc.create.uuid":
 		return e.generateUUID(), true, true, nil
 	case "apoc.text.join":

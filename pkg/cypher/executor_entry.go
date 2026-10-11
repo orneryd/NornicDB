@@ -179,8 +179,15 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		cypher = grouped
 		defer func() { result, retErr = numericRewrite.restore(result, retErr) }()
 	}
+	// GQL function aliases (collect_list, ln, …) call the function they
+	// name; columns and messages keep the client's text.
+	if aliased, aliasRewrite := canonicalizeFunctionAliases(cypher); aliasRewrite != nil {
+		cypher = aliased
+		defer func() { result, retErr = aliasRewrite.restore(result, retErr) }()
+	}
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
+	ctx = withCypherVersion(ctx, cypher)
 	if err := validateCypherPreamble(cypher); err != nil {
 		return nil, err
 	}
@@ -195,6 +202,31 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// UNION branch) runs it and returns no rows.
 	cypher, _ = stripCypherPreamble(cypher)
 	cypher = strings.TrimSpace(cypher)
+	// Cypher 25 expression forms (RETURN ALL, s"…{x}…", map comprehensions)
+	// become the expressions they stand for, once, here (#907).
+	expanded, expressionRewrites, err := desugarCypher25Expressions(cypher, cypherVersionFromContext(ctx) == "25")
+	if err != nil {
+		return nil, err
+	}
+	cypher = expanded
+	if len(expressionRewrites) > 0 {
+		// One defer, not one per pass: a defer in a loop would make every
+		// statement pay for heap-allocated defers. Restored last pass first.
+		defer func() {
+			for index := len(expressionRewrites) - 1; index >= 0; index-- {
+				result, retErr = expressionRewrites[index].restore(withoutGeneratedColumns(result), retErr)
+			}
+		}()
+	}
+	// Cypher 25 composition (NEXT, WHEN, braced query parts) becomes the
+	// CALL subqueries and UNIONs it stands for, once, here; columns and
+	// errors are mapped back (#907).
+	if composed, structureRewrite, err := desugarQueryStructure(cypher, e); err != nil {
+		return nil, err
+	} else if structureRewrite != nil {
+		cypher = composed
+		defer func() { result, retErr = structureRewrite.restore(withoutGeneratedColumns(result), retErr) }()
+	}
 	if err := e.validateStatementFraming(cypher); err != nil {
 		return nil, err
 	}
@@ -284,7 +316,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Label expressions in patterns become the label forms and WHERE
 	// predicates every route reads, once, here; the result's columns and
 	// errors are mapped back (#860).
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params)
+	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +342,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		ctx = withQueryParams(ctx, mergedParams)
 		mode, modeQuery := parseExecutionMode(cypher)
 		if mode != ModeNormal {
-			if err := e.validateSyntax(modeQuery); err != nil {
+			if err := e.validateSyntax(modeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
 				return nil, err
 			}
 			if err := e.validateSemanticScopes(ctx, modeQuery); err != nil {
@@ -490,7 +522,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 
 	// Validate basic syntax
-	if err := e.validateSyntax(cypher); err != nil {
+	if err := e.validateSyntax(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 		// Plan 04-03 Site 2 (parse-error chokepoint): emit op_type="parse_error"
 		// per D-04b sixth enum value. No duration observation — parse cost is
 		// sub-microsecond and not meaningful to bucket. The queries_total
@@ -623,10 +655,15 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// result behind. The search index is updated after the graph (a node's
 	// vector is indexed after its embedding is saved), so a search procedure
 	// that ran in between would otherwise keep its result until the TTL
-	// (#945).
+	// (#945). The key carries a language version other than the default 5:
+	// the same text can mean different things in Cypher 5 and Cypher 25
+	// (#907); a Cypher 5 key pays for no version text.
 	resultCacheKey := ""
 	if info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) {
 		resultCacheKey = resultCacheEntryKey(cypher, params)
+		if version := cypherVersionFromContext(ctx); version != "5" {
+			resultCacheKey += ":cypher:" + version
+		}
 		if provider, ok := e.storage.(storage.GraphMutationVersionProvider); ok {
 			if version, supported := provider.GraphMutationVersion(); supported {
 				resultCacheKey += ":graph:" + strconv.FormatUint(version, 10)

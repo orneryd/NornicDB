@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -206,8 +208,9 @@ skipArrayIndexing:
 			Eval: func(argExpr string) (interface{}, error) {
 				return e.evaluateExpressionWithContextFull(ctx, argExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), nil
 			},
-			Now:    time.Now,
-			Graphs: e,
+			Now:      time.Now,
+			Graphs:   e,
+			Cypher25: cypherVersionFromContext(ctx) == "25",
 		}
 
 		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {
@@ -309,20 +312,24 @@ skipArrayIndexing:
 	if matchFuncStartAndSuffix(expr, "head") {
 		inner := extractFuncArgs(expr, "head")
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if list, ok := innerVal.([]interface{}); ok && len(list) > 0 {
-			return list[0]
+		result, err := evaluateListAccessFunction("head", innerVal)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil
 		}
-		return nil
+		return result
 	}
 
 	// last(list) - return last element
 	if matchFuncStartAndSuffix(expr, "last") {
 		inner := extractFuncArgs(expr, "last")
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if list, ok := innerVal.([]interface{}); ok && len(list) > 0 {
-			return list[len(list)-1]
+		result, err := evaluateListAccessFunction("last", innerVal)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil
 		}
-		return nil
+		return result
 	}
 
 	// tail(list) - return list without first element
@@ -339,21 +346,12 @@ skipArrayIndexing:
 	if matchFuncStartAndSuffix(expr, "reverse") {
 		inner := extractFuncArgs(expr, "reverse")
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if list, ok := innerVal.([]interface{}); ok {
-			result := make([]interface{}, len(list))
-			for i, v := range list {
-				result[len(list)-1-i] = v
-			}
-			return result
+		result, err := evaluateListAccessFunction("reverse", innerVal)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil
 		}
-		if str, ok := innerVal.(string); ok {
-			runes := []rune(str)
-			for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
-				runes[i], runes[j] = runes[j], runes[i]
-			}
-			return string(runes)
-		}
-		return nil
+		return result
 	}
 
 	// range(start, end) or range(start, end, step)
@@ -703,46 +701,6 @@ skipArrayIndexing:
 		return nil
 	}
 
-	// substring(string, start, [length])
-	if matchFuncStartAndSuffix(expr, "substring") {
-		inner := extractFuncArgs(expr, "substring")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			start, _ := strconv.Atoi(strings.TrimSpace(args[1]))
-			if len(args) >= 3 {
-				length, _ := strconv.Atoi(strings.TrimSpace(args[2]))
-				return cyphertext.Substring(str, start, length)
-			}
-			return cyphertext.From(str, start)
-		}
-		return nil
-	}
-
-	// left(string, n) - return first n characters
-	if matchFuncStartAndSuffix(expr, "left") {
-		inner := extractFuncArgs(expr, "left")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			n, _ := strconv.Atoi(strings.TrimSpace(args[1]))
-			return cyphertext.Left(str, n)
-		}
-		return nil
-	}
-
-	// right(string, n) - return last n characters
-	if matchFuncStartAndSuffix(expr, "right") {
-		inner := extractFuncArgs(expr, "right")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			n, _ := strconv.Atoi(strings.TrimSpace(args[1]))
-			return cyphertext.Right(str, n)
-		}
-		return nil
-	}
-
 	// lpad(string, length, padString) - left-pad string to specified length
 	if matchFuncStartAndSuffix(expr, "lpad") {
 		inner := extractFuncArgs(expr, "lpad")
@@ -799,29 +757,6 @@ skipArrayIndexing:
 				padding += padStr
 			}
 			return str + padding[:padLen]
-		}
-		return nil
-	}
-
-	// format(template, ...args) - string formatting (printf-style)
-	if matchFuncStartAndSuffix(expr, "format") {
-		inner := extractFuncArgs(expr, "format")
-		args := e.splitFunctionArgs(inner)
-		if len(args) >= 1 {
-			template := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			// Remove quotes from template
-			template = strings.Trim(template, "'\"")
-
-			// Evaluate remaining arguments
-			formatArgs := make([]interface{}, 0, len(args)-1)
-			for i := 1; i < len(args); i++ {
-				val := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[i]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				formatArgs = append(formatArgs, val)
-			}
-
-			// Simple format string replacement
-			// Supports %s (string), %d (integer), %f (float), %v (any)
-			return fmt.Sprintf(template, formatArgs...)
 		}
 		return nil
 	}
@@ -1212,25 +1147,6 @@ skipArrayIndexing:
 	// Math Functions
 	// ========================================
 
-	// abs(number)
-	if matchFuncStartAndSuffix(expr, "abs") {
-		inner := extractFuncArgs(expr, "abs")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		switch v := val.(type) {
-		case int64:
-			if v < 0 {
-				return -v
-			}
-			return v
-		case float64:
-			if v < 0 {
-				return -v
-			}
-			return v
-		}
-		return nil
-	}
-
 	// ceil(number)
 	if matchFuncStartAndSuffix(expr, "ceil") {
 		inner := extractFuncArgs(expr, "ceil")
@@ -1257,21 +1173,6 @@ skipArrayIndexing:
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return int64(f + 0.5)
-		}
-		return nil
-	}
-
-	// sign(number)
-	if matchFuncStartAndSuffix(expr, "sign") {
-		inner := extractFuncArgs(expr, "sign")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if f, ok := toFloat64(val); ok {
-			if f > 0 {
-				return int64(1)
-			} else if f < 0 {
-				return int64(-1)
-			}
-			return int64(0)
 		}
 		return nil
 	}
@@ -1668,4 +1569,50 @@ func randomCypherFloat() float64 {
 	var bytes [8]byte
 	_, _ = rand.Read(bytes[:])
 	return float64(bytes[0]^bytes[1]^bytes[2]^bytes[3]) / 256.0
+}
+
+// evaluateListAccessFunction is head(), last() or reverse() of value, as
+// Neo4j computes them in both evaluators: null gives null; head and last take
+// a list (its first or last item, null for an empty list); reverse takes a
+// string or a list. Any other value is the function's TypeError (Neo4j 5.26
+// and 2026.09; head('ab') too).
+func evaluateListAccessFunction(function string, value interface{}) (interface{}, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if text, isString := value.(string); isString && function == "reverse" {
+		runes := []rune(text)
+		for left, right := 0, len(runes)-1; left < right; left, right = left+1, right-1 {
+			runes[left], runes[right] = runes[right], runes[left]
+		}
+		return string(runes), nil
+	}
+	if _, isString := value.(string); !isString {
+		if valueType := reflect.TypeOf(value); valueType.Kind() == reflect.Slice || valueType.Kind() == reflect.Array {
+			items := toAnySlice(value)
+			switch function {
+			case "head":
+				if len(items) == 0 {
+					return nil, nil
+				}
+				return items[0], nil
+			case "last":
+				if len(items) == 0 {
+					return nil, nil
+				}
+				return items[len(items)-1], nil
+			}
+			reversed := make([]interface{}, len(items))
+			for index := range items {
+				reversed[len(items)-1-index] = items[index]
+			}
+			return reversed, nil
+		}
+	}
+	expected := "a list"
+	if function == "reverse" {
+		expected = "a string or a list"
+	}
+	return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+		localization.CypherCoreFunctionArgumentInvalid(function, expected, neo4jValueRepr(value)))
 }

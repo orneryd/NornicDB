@@ -34,7 +34,7 @@ type CypherDateTime struct {
 	ZoneID string
 }
 
-func (v CypherDate) String() string          { return v.Time.Format("2006-01-02") }
+func (v CypherDate) String() string          { return formatISODate(v.Time) }
 func (v CypherLocalTime) String() string     { return formatTemporalClock(v.Time, false, "", false) }
 func (v CypherTime) String() string          { return formatTemporalClock(v.Time, true, "", false) }
 func (v CypherLocalDateTime) String() string { return formatTemporalDateTime(v.Time, false, "", false) }
@@ -327,6 +327,12 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 	switch kind {
 	case "date", "localtime", "time", "localdatetime", "datetime", "duration":
 		argument = strings.TrimSpace(argument)
+		if _, patterned := temporalPatternTypeNames[kind]; patterned && !clockFunction && strings.IndexByte(argument, ',') >= 0 {
+			if arguments := e.splitFunctionArgs(argument); len(arguments) == 2 {
+				value, err := constructTemporalWithPattern(kind, ctxEval(strings.TrimSpace(arguments[0])), ctxEval(strings.TrimSpace(arguments[1])))
+				return value, true, err
+			}
+		}
 		if clockFunction && argument != "" {
 			zoneID, valid := ctxEval(argument).(string)
 			if !valid {
@@ -672,6 +678,13 @@ func temporalLocation(fields map[string]interface{}, zoned bool) (*time.Location
 	if offset, ok := parseTemporalOffset(zoneID); ok {
 		return time.FixedZone(zoneID, offset), "", true
 	}
+	if id, offset, length, ok := prefixedOffsetZone(zoneID); ok && length == len(zoneID) {
+		if offset == 0 {
+			location, _ := loadTemporalLocation(id)
+			return location, id, true
+		}
+		return time.FixedZone(id, offset), id, true
+	}
 	location, err := time.LoadLocation(zoneID)
 	if err != nil {
 		return nil, "", false
@@ -828,8 +841,17 @@ func formatTemporalClock(value time.Time, zoned bool, zoneID string, alwaysSecon
 
 // formatTemporalDateTime writes a date-time; alwaysSeconds as in
 // formatTemporalClock.
+// formatISODate writes a date as ISO 8601 does: a year past 9999 has a +
+// (+12021-01-01), a year before 1 a - (-0044-03-15).
+func formatISODate(value time.Time) string {
+	if value.Year() > 9999 {
+		return "+" + value.Format("2006-01-02")
+	}
+	return value.Format("2006-01-02")
+}
+
 func formatTemporalDateTime(value time.Time, zoned bool, zoneID string, alwaysSeconds bool) string {
-	result := value.Format("2006-01-02T") + formatTemporalClock(value, zoned, "", alwaysSeconds)
+	result := formatISODate(value) + "T" + formatTemporalClock(value, zoned, "", alwaysSeconds)
 	if zoneID != "" {
 		result += "[" + zoneID + "]"
 	}

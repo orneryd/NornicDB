@@ -68,7 +68,9 @@ func collIndex(function string, value interface{}) (index int64, null bool, err 
 	return index, false, nil
 }
 
-func collOutOfRange(function string) error {
+// functionArgumentOutOfRange is Neo4j's ArgumentError for an index, depth
+// or limit outside what the function takes (coll.insert, replace, …).
+func functionArgumentOutOfRange(function string) error {
 	return localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentValue",
 		localization.CypherCoreFunctionArgumentOutOfRange(function))
 }
@@ -108,7 +110,7 @@ func fnCollFlatten(ctx cypherfn.Context, args []string) (interface{}, error) {
 			return nil, err
 		}
 		if depth < 0 {
-			return nil, collOutOfRange("coll.flatten")
+			return nil, functionArgumentOutOfRange("coll.flatten")
 		}
 	}
 	return collFlatten(make([]interface{}, 0, len(list)), list, depth), nil
@@ -153,7 +155,7 @@ func fnCollInsert(ctx cypherfn.Context, args []string) (interface{}, error) {
 		return nil, err
 	}
 	if index < 0 || index > int64(len(list)) {
-		return nil, collOutOfRange("coll.insert")
+		return nil, functionArgumentOutOfRange("coll.insert")
 	}
 	out := make([]interface{}, 0, len(list)+1)
 	out = append(out, list[:index]...)
@@ -178,7 +180,7 @@ func fnCollRemove(ctx cypherfn.Context, args []string) (interface{}, error) {
 			localization.CypherCoreFunctionListArgumentEmpty("coll.remove", "list"))
 	}
 	if index < 0 || index >= int64(len(list)) {
-		return nil, collOutOfRange("coll.remove")
+		return nil, functionArgumentOutOfRange("coll.remove")
 	}
 	out := make([]interface{}, 0, len(list)-1)
 	out = append(out, list[:index]...)

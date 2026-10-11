@@ -45,11 +45,12 @@ func (cache *semanticValidationCache) add(query string) {
 // contract before routing. Keeping this validation ahead of every physical
 // executor prevents optimized and general MERGE paths from accepting different
 // syntax or producing effects before a semantic failure.
-func (e *StorageExecutor) validateMergeSemanticScopes(cypher string) error {
+func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bool) error {
 	if findKeywordIndexInContext(cypher, "MERGE") < 0 {
 		return nil
 	}
-	if e.mergeSemanticValidationCache.contains(cypher) {
+	key := semanticCacheKey(cypher, cypher25)
+	if e.mergeSemanticValidationCache.contains(key) {
 		return nil
 	}
 	clauses, ok := splitPipelineClauses(cypher)
@@ -75,12 +76,12 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string) error {
 				scope.bind(alias)
 			}
 		case pipelineClauseMerge:
-			if err := e.validateMergeClause(scope, clause.text); err != nil {
+			if err := e.validateMergeClause(scope, clause.text, cypher25); err != nil {
 				return err
 			}
 		}
 	}
-	e.mergeSemanticValidationCache.add(cypher)
+	e.mergeSemanticValidationCache.add(key)
 	return nil
 }
 
@@ -103,7 +104,10 @@ func addMergePatternBindings(scope *semanticBindingScope, clause string) {
 	}
 }
 
-func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, clause string) error {
+// cypher25 adds Neo4j 2026.09's rule for a Cypher 25 statement: a property
+// value may not read a node or relationship the same MERGE creates
+// (MERGE (a {x: 1})-[:T]->(b {x: a.x})).
+func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, clause string, cypher25 bool) error {
 	// Neo4j rejects EXISTS / COUNT / COLLECT { … } anywhere in a MERGE clause:
 	// its pattern, property maps and ON CREATE / ON MATCH SET actions.
 	if mayContainSubqueryExpression(clause) && len(findSubqueryExpressions(clause)) > 0 {
@@ -137,6 +141,11 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 	for _, variable := range relationshipVariables {
 		if scope.contains(variable) {
 			return mergeVariableAlreadyBoundError(variable)
+		}
+	}
+	if cypher25 {
+		if err := e.validateCreateSamePatternReferences(scope, pattern, relationshipVariables, make(map[string]string), "MERGE"); err != nil {
+			return err
 		}
 	}
 	if relationshipPattern {

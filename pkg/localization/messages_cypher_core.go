@@ -53,6 +53,12 @@ const (
 	MessageCypherCoreInvalidInput                        MessageID = "cyphercore.invalid_input"
 	MessageCypherCoreInvalidInputExpectedExpression      MessageID = "cyphercore.invalid_input_expected_expression"
 	MessageCypherCoreInvalidInputExpectedIdentifier      MessageID = "cyphercore.invalid_input_expected_identifier"
+	MessageCypherCoreEntityReferencedInSameClause         MessageID = "cyphercore.entity_referenced_in_same_clause"
+	MessageCypherCoreConditionalColumnNames              MessageID = "cyphercore.conditional_column_names"
+	MessageCypherCoreInterpolationWrongType              MessageID = "cyphercore.interpolation_wrong_type"
+	MessageCypherCoreMapComprehensionKeyNotString        MessageID = "cyphercore.map_comprehension_key_not_string"
+	MessageCypherCoreGroupByImplicitGroupingKey          MessageID = "cyphercore.group_by_implicit_grouping_key"
+	MessageCypherCoreConditionalColumnCount              MessageID = "cyphercore.conditional_column_count"
 	MessageCypherCoreListOperandTypeMismatch             MessageID = "cyphercore.list_operand_type_mismatch"
 	MessageCypherCoreVectorDimensionRange                MessageID = "cyphercore.vector_dimension_range"
 	MessageCypherCoreVectorDimensionMismatch             MessageID = "cyphercore.vector_dimension_mismatch"
@@ -65,6 +71,24 @@ const (
 	MessageCypherCoreUUIDInvalidText                     MessageID = "cyphercore.uuid_invalid_text"
 	MessageCypherCoreListParameterTypeMismatch           MessageID = "cyphercore.list_parameter_type_mismatch"
 	MessageCypherCoreParameterTypeMismatch               MessageID = "cyphercore.parameter_type_mismatch"
+	MessageCypherCoreFunctionArgumentOutOfRange          MessageID = "cyphercore.function_argument_out_of_range"
+	MessageCypherCoreStringJoinElementType               MessageID = "cyphercore.string_join_element_type"
+	MessageCypherCoreReplaceLimitNegative                MessageID = "cyphercore.replace_limit_negative"
+	MessageCypherCoreFormatTemplateValueCount            MessageID = "cyphercore.format_template_value_count"
+	MessageCypherCoreFormatTemplateValueType             MessageID = "cyphercore.format_template_value_type"
+	MessageCypherCoreFormatTemplateVerbInvalid           MessageID = "cyphercore.format_template_verb_invalid"
+	MessageCypherCoreTemporalPatternInvalidCharacter     MessageID = "cyphercore.temporal_pattern_invalid_character"
+	MessageCypherCoreDurationPatternUnbalancedEscapes    MessageID = "cyphercore.duration_pattern_unbalanced_escapes"
+	MessageCypherCoreTemporalPatternMismatch             MessageID = "cyphercore.temporal_pattern_mismatch"
+	MessageCypherCoreTemporalPatternRequiresString       MessageID = "cyphercore.temporal_pattern_requires_string"
+	MessageCypherCoreReduceFormInvalidSyntax             MessageID = "cyphercore.reduce_form_invalid_syntax"
+	MessageCypherCorePredicateNotBoolean                 MessageID = "cyphercore.predicate_not_boolean"
+	MessageCypherCoreRegexReplacementIllegalGroupReference    MessageID = "cyphercore.regex_replacement_illegal_group_reference"
+	MessageCypherCoreRegexReplacementGroupIndexMissing        MessageID = "cyphercore.regex_replacement_group_index_missing"
+	MessageCypherCoreRegexReplacementEscapeMissing            MessageID = "cyphercore.regex_replacement_escape_missing"
+	MessageCypherCoreRegexReplacementNamedGroupUnterminated   MessageID = "cyphercore.regex_replacement_named_group_unterminated"
+	MessageCypherCoreRegexReplacementNoGroup                  MessageID = "cyphercore.regex_replacement_no_group"
+	MessageCypherCoreRegexReplacementNoNamedGroup             MessageID = "cyphercore.regex_replacement_no_named_group"
 	MessageCypherCoreListCoercionToBoolean               MessageID = "cyphercore.list_coercion_to_boolean"
 	MessageCypherCoreListIndexTypeMismatch               MessageID = "cyphercore.list_index_type_mismatch"
 	MessageCypherCoreMapKeyTypeMismatch                  MessageID = "cyphercore.map_key_type_mismatch"
@@ -81,9 +105,11 @@ const (
 	MessageCypherCoreDurationArithmeticOverflow          MessageID = "cyphercore.duration_arithmetic_overflow"
 	MessageCypherCoreFunctionArgumentCount               MessageID = "cyphercore.function_argument_count"
 	MessageCypherCoreTrimCharacterLength                 MessageID = "cyphercore.trim_character_length"
+	MessageCypherCoreTrimSpecificationUnknown            MessageID = "cyphercore.trim_specification_unknown"
 	MessageCypherCoreNormalizeFormInvalid                MessageID = "cyphercore.normalize_form_invalid"
 	MessageCypherCoreProcedureOutputShadowsVariable      MessageID = "cyphercore.procedure_output_shadows_variable"
 	MessageCypherCoreVariableDeclaredInOuterScope        MessageID = "cyphercore.variable_declared_in_outer_scope"
+	MessageCypherCorePatternNodeValueType                MessageID = "cyphercore.pattern_node_value_type"
 	MessageCypherCoreExpressionUnevaluable               MessageID = "cyphercore.expression_unevaluable"
 	MessageCypherCoreStandaloneCallModifiers             MessageID = "cyphercore.standalone_call_modifiers"
 	MessageCypherCoreYieldWhereMisplaced                 MessageID = "cyphercore.yield_where_misplaced"
@@ -125,7 +151,6 @@ const (
 	MessageCypherCoreFunctionArgumentInvalid             MessageID = "cyphercore.function_argument_invalid"
 	MessageCypherCoreVectorSimilarityInvalidVector       MessageID = "cyphercore.vector_similarity_invalid_vector"
 	MessageCypherCoreVectorSimilarityDimensions          MessageID = "cyphercore.vector_similarity_dimensions"
-	MessageCypherCoreFunctionArgumentOutOfRange          MessageID = "cyphercore.function_argument_out_of_range"
 	MessageCypherCoreFunctionListArgumentEmpty           MessageID = "cyphercore.function_list_argument_empty"
 )
 
@@ -330,6 +355,36 @@ func CypherCoreInvalidInput(token string) Message {
 	return cypherCoreMessage(MessageCypherCoreInvalidInput, "Invalid input '"+token+"'", map[string]any{"Token": token})
 }
 
+// CypherCoreConditionalColumnNames is Neo4j's message for WHEN branches
+// whose columns have different names.
+func CypherCoreConditionalColumnNames() Message {
+	return cypherCoreMessage(MessageCypherCoreConditionalColumnNames, "All conditional queries must have the same return column names. Use `AS` to ensure columns have the same name.", nil)
+}
+
+// CypherCoreMapComprehensionKeyNotString is the TypeError for a map
+// comprehension key that isn't a string.
+func CypherCoreMapComprehensionKeyNotString(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreMapComprehensionKeyNotString, "Expected a STRING map key, got "+typeName, map[string]any{"Type": typeName})
+}
+
+// CypherCoreInterpolationWrongType is Neo4j's message for an interpolated
+// value of a type a string can't hold.
+func CypherCoreInterpolationWrongType(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreInterpolationWrongType, "Wrong type. Expected BOOLEAN, STRING, UUID, INTEGER, FLOAT, TEMPORAL, DURATION or VECTOR, got "+typeName, map[string]any{"Type": typeName})
+}
+
+// CypherCoreGroupByImplicitGroupingKey is Neo4j's message for a projected
+// item GROUP BY's keys don't cover; illegal lists the variables it reads.
+func CypherCoreGroupByImplicitGroupingKey(illegal string) Message {
+	return cypherCoreMessage(MessageCypherCoreGroupByImplicitGroupingKey, "Aggregation column contains implicit grouping expressions. For example, in 'RETURN n.a, n.a + n.b + count(*)' the aggregation expression 'n.a + n.b + count(*)' includes the implicit grouping key 'n.b'. It may be possible to rewrite the query by extracting these grouping/aggregation expressions into a preceding WITH clause. Illegal expression(s): "+illegal, map[string]any{"Illegal": illegal})
+}
+
+// CypherCoreConditionalColumnCount is Neo4j's message for WHEN branches that
+// return different numbers of columns.
+func CypherCoreConditionalColumnCount() Message {
+	return cypherCoreMessage(MessageCypherCoreConditionalColumnCount, "All conditional queries must return the same number of columns.", nil)
+}
+
 func CypherCoreInvalidInputExpectedExpression(token string) Message {
 	return cypherCoreMessage(MessageCypherCoreInvalidInputExpectedExpression, "Invalid input '"+token+"': expected an expression", map[string]any{"Token": token})
 }
@@ -346,6 +401,115 @@ func CypherCoreInvalidInputExpectedIdentifier(token string) Message {
 // 'p': expected Map, Node or Relationship but was Integer").
 func CypherCoreParameterTypeMismatch(parameter, expected, typeName string) Message {
 	return cypherCoreMessage(MessageCypherCoreParameterTypeMismatch, "Type mismatch for parameter '"+parameter+"': expected "+expected+" but was "+typeName, map[string]any{"Parameter": parameter, "Expected": expected, "Type": typeName})
+}
+
+// CypherCoreFunctionArgumentOutOfRange is Neo4j's message for an index or
+// count outside what a function takes (coll.insert, coll.remove, replace).
+func CypherCoreFunctionArgumentOutOfRange(function string) Message {
+	return cypherCoreMessage(MessageCypherCoreFunctionArgumentOutOfRange, "Function argument to '"+function+"()' is out of range", map[string]any{"Function": function})
+}
+
+// CypherCoreStringJoinElementType is Neo4j's message for a list item
+// string.join can't join.
+func CypherCoreStringJoinElementType(value string) Message {
+	return cypherCoreMessage(MessageCypherCoreStringJoinElementType, "Expected a string value for `string.join`, but got: "+value+"; consider converting it to a string with toString().", map[string]any{"Value": value})
+}
+
+// CypherCoreReplaceLimitNegative is Neo4j's message for a negative literal
+// replace() limit.
+func CypherCoreReplaceLimitNegative() Message {
+	return cypherCoreMessage(MessageCypherCoreReplaceLimitNegative, "The limit needs to be greater than or equal to 0.", nil)
+}
+
+// CypherCoreFormatTemplateValueCount is the error for NornicDB's printf
+// format(template, values…) when the template's verbs and the values don't
+// pair up.
+func CypherCoreFormatTemplateValueCount(expected, given int) Message {
+	return cypherCoreMessage(MessageCypherCoreFormatTemplateValueCount, "format(): the template takes "+strconv.Itoa(expected)+" values but "+strconv.Itoa(given)+" were given", map[string]any{"Expected": expected, "Given": given})
+}
+
+// CypherCoreFormatTemplateValueType is the error for a printf format() value
+// its verb can't print (%d of a string). Verb is the verb with its %.
+func CypherCoreFormatTemplateValueType(verb, value string) Message {
+	return cypherCoreMessage(MessageCypherCoreFormatTemplateValueType, "format(): "+verb+" can't print "+value, map[string]any{"Verb": verb, "Value": value})
+}
+
+// CypherCoreFormatTemplateVerbInvalid is the error for a printf format()
+// template verb NornicDB doesn't take (%z, %*d, %[1]d).
+func CypherCoreFormatTemplateVerbInvalid(verb string) Message {
+	return cypherCoreMessage(MessageCypherCoreFormatTemplateVerbInvalid, "format(): "+verb+" is not a template verb", map[string]any{"Verb": verb})
+}
+
+// CypherCoreTemporalPatternInvalidCharacter is Neo4j's message for a format()
+// pattern that isn't valid or names a field the value doesn't have.
+func CypherCoreTemporalPatternInvalidCharacter(typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalPatternInvalidCharacter, "An invalid character is used in the pattern. Verify that all characters are supported by `"+typeName+"`.", map[string]any{"Type": typeName})
+}
+
+// CypherCoreDurationPatternUnbalancedEscapes is Neo4j's message for a
+// format() duration pattern with an unterminated quote.
+func CypherCoreDurationPatternUnbalancedEscapes() Message {
+	return cypherCoreMessage(MessageCypherCoreDurationPatternUnbalancedEscapes, "Pattern parsing failed. Make sure that an even number of escapes are used in the pattern.", nil)
+}
+
+// CypherCoreTemporalPatternMismatch is Neo4j's message for a temporal
+// constructor whose pattern doesn't read its input as the type it builds.
+func CypherCoreTemporalPatternMismatch(pattern, input, typeName string) Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalPatternMismatch, "Pattern, `"+pattern+"`, does not match input, `"+input+"`. Verify that the pattern is valid for constructing `"+typeName+"`.", map[string]any{"Pattern": pattern, "Input": input, "Type": typeName})
+}
+
+// CypherCoreRegexReplacementIllegalGroupReference is Java's message for a regex replacement it rejects
+// (string.regexReplace).
+func CypherCoreRegexReplacementIllegalGroupReference() Message {
+	return cypherCoreMessage(MessageCypherCoreRegexReplacementIllegalGroupReference, "Illegal group reference", nil)
+}
+
+// CypherCoreRegexReplacementGroupIndexMissing is Java's message for a regex replacement it rejects
+// (string.regexReplace).
+func CypherCoreRegexReplacementGroupIndexMissing() Message {
+	return cypherCoreMessage(MessageCypherCoreRegexReplacementGroupIndexMissing, "Illegal group reference: group index is missing", nil)
+}
+
+// CypherCoreRegexReplacementEscapeMissing is Java's message for a regex replacement it rejects
+// (string.regexReplace).
+func CypherCoreRegexReplacementEscapeMissing() Message {
+	return cypherCoreMessage(MessageCypherCoreRegexReplacementEscapeMissing, "character to be escaped is missing", nil)
+}
+
+// CypherCoreRegexReplacementNamedGroupUnterminated is Java's message for a regex replacement it rejects
+// (string.regexReplace).
+func CypherCoreRegexReplacementNamedGroupUnterminated() Message {
+	return cypherCoreMessage(MessageCypherCoreRegexReplacementNamedGroupUnterminated, "named capturing group is missing trailing '}'", nil)
+}
+
+// CypherCoreRegexReplacementNoGroup is Java's message for a regex replacement it rejects
+// (string.regexReplace).
+func CypherCoreRegexReplacementNoGroup(group int) Message {
+	return cypherCoreMessage(MessageCypherCoreRegexReplacementNoGroup, "No group "+strconv.Itoa(group), map[string]any{"Group": group})
+}
+
+// CypherCoreRegexReplacementNoNamedGroup is Java's message for a regex replacement it rejects
+// (string.regexReplace).
+func CypherCoreRegexReplacementNoNamedGroup(name string) Message {
+	return cypherCoreMessage(MessageCypherCoreRegexReplacementNoNamedGroup, "No group with name {"+name+"}", map[string]any{"Name": name})
+}
+
+// CypherCoreReduceFormInvalidSyntax is Neo4j's message for an allReduce (or
+// reduce) call without the function's form.
+func CypherCoreReduceFormInvalidSyntax(function, signature string) Message {
+	return cypherCoreMessage(MessageCypherCoreReduceFormInvalidSyntax, "Invalid syntax for the `"+function+"` function. The function "+function+" must have the signature "+signature, map[string]any{"Function": function, "Signature": signature})
+}
+
+// CypherCorePredicateNotBoolean is Neo4j's message for a predicate whose value
+// isn't a boolean or null.
+func CypherCorePredicateNotBoolean(value string) Message {
+	return cypherCoreMessage(MessageCypherCorePredicateNotBoolean, "Don't know how to treat that as a predicate: "+value, map[string]any{"Value": value})
+}
+
+// CypherCoreTemporalPatternRequiresString is Neo4j's message for a temporal
+// constructor given a pattern and an input that isn't a string.
+func CypherCoreTemporalPatternRequiresString() Message {
+	return cypherCoreMessage(MessageCypherCoreTemporalPatternRequiresString, "A pattern can only be used in conjunction with a `STRING` input.", nil)
 }
 
 func CypherCoreListOperandTypeMismatch(typeName string) Message {
@@ -445,6 +609,10 @@ func CypherCoreTrimCharacterLength() Message {
 	return cypherCoreMessage(MessageCypherCoreTrimCharacterLength, "The argument `trimCharacterString` in the `trim()` function must be of length 1.", nil)
 }
 
+func CypherCoreTrimSpecificationUnknown() Message {
+	return cypherCoreMessage(MessageCypherCoreTrimSpecificationUnknown, "Unknown trim specification. Valid values are: LEADING, TRAILING, BOTH.", nil)
+}
+
 func CypherCoreNormalizeFormInvalid(form string) Message {
 	return cypherCoreMessage(MessageCypherCoreNormalizeFormInvalid, "normalize() normal form must be one of NFC, NFD, NFKC or NFKD, got: "+form, map[string]any{"Form": form})
 }
@@ -457,6 +625,13 @@ func CypherCoreProcedureOutputShadowsVariable(variable string) Message {
 // declares, or returns, a name the enclosing query already binds.
 func CypherCoreVariableDeclaredInOuterScope(variable string) Message {
 	return cypherCoreMessage(MessageCypherCoreVariableDeclaredInOuterScope, "Variable `"+variable+"` already declared in outer scope", map[string]any{"Variable": variable})
+}
+
+// CypherCorePatternNodeValueType is the run-time error for a pattern's node
+// variable bound to a value that is not a node (WITH x.node AS m MATCH (m)
+// where m is a string).
+func CypherCorePatternNodeValueType(variable, typeName string) Message {
+	return cypherCoreMessage(MessageCypherCorePatternNodeValueType, "Expected `"+variable+"` to be a Node, got: "+typeName, map[string]any{"Variable": variable, "Type": typeName})
 }
 
 func CypherCoreExpressionUnevaluable(expression string) Message {
@@ -531,13 +706,6 @@ func CypherCoreVectorSimilarityInvalidVector(function, argument string) Message 
 // dimensions. Function is cosine or euclidean.
 func CypherCoreVectorSimilarityDimensions(function string) Message {
 	return cypherCoreMessage(MessageCypherCoreVectorSimilarityDimensions, "Invalid input for 'vector.similarity."+function+"()': The supplied vectors do not have the same number of dimensions.", map[string]any{"Function": function})
-}
-
-// CypherCoreFunctionArgumentOutOfRange is Neo4j's ArgumentError for an
-// index or depth outside what the function takes (coll.insert, coll.remove,
-// coll.flatten). Function is the untranslated function name.
-func CypherCoreFunctionArgumentOutOfRange(function string) Message {
-	return cypherCoreMessage(MessageCypherCoreFunctionArgumentOutOfRange, "Function argument to '"+function+"()' is out of range", map[string]any{"Function": function})
 }
 
 // CypherCoreFunctionListArgumentEmpty is Neo4j's ArgumentError for an empty
@@ -754,4 +922,11 @@ func CypherCoreVectorMetricInvalid(expected string) Message {
 // that doesn't name a UUID.
 func CypherCoreUUIDInvalidText() Message {
 	return cypherCoreMessage(MessageCypherCoreUUIDInvalidText, "The argument `input` in the `uuid()` function must be a valid uuid string.", nil)
+}
+
+// CypherCoreEntityReferencedInSameClause is Neo4j's message for a property
+// value that reads a node or relationship (kind) the same CREATE or MERGE
+// clause creates. Clause is the untranslated clause keyword.
+func CypherCoreEntityReferencedInSameClause(kind, variable, clause string) Message {
+	return cypherCoreMessage(MessageCypherCoreEntityReferencedInSameClause, "The "+kind+" variable '"+variable+"' is referencing a "+kind+" that is created in the same "+clause+" clause which is not allowed. Please only reference variables created in earlier clauses.", map[string]any{"Kind": kind, "Variable": variable, "Clause": clause})
 }

@@ -136,6 +136,54 @@
   other: "[!! Invalid input '{{.Token}}': expected an identifier !!]"
 - id: cyphercore.parameter_type_mismatch
   other: "[!! Type mismatch for parameter '{{.Parameter}}': expected {{.Expected}} but was {{.Type}} !!]"
+- id: cyphercore.entity_referenced_in_same_clause
+  other: "[!! The {{.Kind}} variable '{{.Variable}}' is referencing a {{.Kind}} that is created in the same {{.Clause}} clause which is not allowed. Please only reference variables created in earlier clauses. !!]"
+- id: cyphercore.conditional_column_names
+  other: "[!! All conditional queries must have the same return column names. Use `AS` to ensure columns have the same name. !!]"
+- id: cyphercore.conditional_column_count
+  other: "[!! All conditional queries must return the same number of columns. !!]"
+- id: cyphercore.interpolation_wrong_type
+  other: "[!! Wrong type. Expected BOOLEAN, STRING, UUID, INTEGER, FLOAT, TEMPORAL, DURATION or VECTOR, got {{.Type}} !!]"
+- id: cyphercore.map_comprehension_key_not_string
+  other: "[!! Expected a STRING map key, got {{.Type}} !!]"
+- id: cyphercore.group_by_implicit_grouping_key
+  other: "[!! Aggregation column contains implicit grouping expressions. For example, in 'RETURN n.a, n.a + n.b + count(*)' the aggregation expression 'n.a + n.b + count(*)' includes the implicit grouping key 'n.b'. It may be possible to rewrite the query by extracting these grouping/aggregation expressions into a preceding WITH clause. Illegal expression(s): {{.Illegal}} !!]"
+- id: cyphercore.function_argument_out_of_range
+  other: "[!! Function argument to '{{.Function}}()' is out of range !!]"
+- id: cyphercore.string_join_element_type
+  other: "[!! Expected a string value for `string.join`, but got: {{.Value}}; consider converting it to a string with toString(). !!]"
+- id: cyphercore.replace_limit_negative
+  other: "[!! The limit needs to be greater than or equal to 0. !!]"
+- id: cyphercore.format_template_value_count
+  other: "[!! format(): the template takes {{.Expected}} values but {{.Given}} were given !!]"
+- id: cyphercore.format_template_value_type
+  other: "[!! format(): {{.Verb}} can't print {{.Value}} !!]"
+- id: cyphercore.format_template_verb_invalid
+  other: "[!! format(): {{.Verb}} is not a template verb !!]"
+- id: cyphercore.temporal_pattern_invalid_character
+  other: "[!! An invalid character is used in the pattern. Verify that all characters are supported by `{{.Type}}`. !!]"
+- id: cyphercore.duration_pattern_unbalanced_escapes
+  other: "[!! Pattern parsing failed. Make sure that an even number of escapes are used in the pattern. !!]"
+- id: cyphercore.temporal_pattern_mismatch
+  other: "[!! Pattern, `{{.Pattern}}`, does not match input, `{{.Input}}`. Verify that the pattern is valid for constructing `{{.Type}}`. !!]"
+- id: cyphercore.temporal_pattern_requires_string
+  other: "[!! A pattern can only be used in conjunction with a `STRING` input. !!]"
+- id: cyphercore.reduce_form_invalid_syntax
+  other: "[!! Invalid syntax for the `{{.Function}}` function. The function {{.Function}} must have the signature {{.Signature}} !!]"
+- id: cyphercore.predicate_not_boolean
+  other: "[!! Don't know how to treat that as a predicate: {{.Value}} !!]"
+- id: cyphercore.regex_replacement_illegal_group_reference
+  other: "[!! Illegal group reference !!]"
+- id: cyphercore.regex_replacement_group_index_missing
+  other: "[!! Illegal group reference: group index is missing !!]"
+- id: cyphercore.regex_replacement_escape_missing
+  other: "[!! character to be escaped is missing !!]"
+- id: cyphercore.regex_replacement_named_group_unterminated
+  other: "[!! named capturing group is missing trailing '}' !!]"
+- id: cyphercore.regex_replacement_no_group
+  other: "[!! No group {{.Group}} !!]"
+- id: cyphercore.regex_replacement_no_named_group
+  other: '[!! No group with name {{"{"}}{{.Name}}{{"}"}} !!]'
 - id: cyphercore.list_operand_type_mismatch
   other: "[!! Type mismatch: expected List<T> but was {{.Type}} !!]"
 - id: cyphercore.list_parameter_type_mismatch
@@ -172,12 +220,16 @@
   other: "[!! {{.Function}}() expects {{.Expected}} argument(s), got {{.Got}} !!]"
 - id: cyphercore.trim_character_length
   other: "[!! The argument `trimCharacterString` in the `trim()` function must be of length 1. !!]"
+- id: cyphercore.trim_specification_unknown
+  other: "[!! Unknown trim specification. Valid values are: LEADING, TRAILING, BOTH. !!]"
 - id: cyphercore.normalize_form_invalid
   other: "[!! normalize() normal form must be one of NFC, NFD, NFKC or NFKD, got: {{.Form}} !!]"
 - id: cyphercore.procedure_output_shadows_variable
   other: "[!! procedure output {{.Variable}} shadows an existing variable !!]"
 - id: cyphercore.variable_declared_in_outer_scope
   other: "[!! Variable `{{.Variable}}` already declared in outer scope !!]"
+- id: cyphercore.pattern_node_value_type
+  other: "[!! Expected `{{.Variable}}` to be a Node, got: {{.Type}} !!]"
 - id: cyphercore.expression_unevaluable
   other: "[!! could not evaluate expression: {{.Expression}} !!]"
 - id: cyphercore.standalone_call_modifiers
@@ -210,8 +262,6 @@
   other: "[!! Invalid input for 'vector.similarity.{{.Function}}()': Argument {{.Argument}} is not a valid vector for this similarity function. !!]"
 - id: cyphercore.vector_similarity_dimensions
   other: "[!! Invalid input for 'vector.similarity.{{.Function}}()': The supplied vectors do not have the same number of dimensions. !!]"
-- id: cyphercore.function_argument_out_of_range
-  other: "[!! Function argument to '{{.Function}}()' is out of range !!]"
 - id: cyphercore.function_list_argument_empty
   other: "[!! The argument `{{.Argument}}` in the `{{.Function}}()` function must not be empty. !!]"
 - id: cyphercore.temporal_call_signature

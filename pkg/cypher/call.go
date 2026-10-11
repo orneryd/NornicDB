@@ -180,12 +180,9 @@ func scopeYieldToCallClause(afterYield string) string {
 
 func findYieldOuterBoundary(afterYield string) int {
 	scopeEnd := len(afterYield)
-	// Keep this list conservative and clause-oriented; ORDER/RETURN/WHERE/LIMIT/SKIP
-	// are intentionally excluded here because they are valid within the YIELD scope.
-	for _, kw := range []string{
-		"WITH", "MATCH", "OPTIONAL", "UNWIND", "CALL",
-		"CREATE", "MERGE", "SET", "DELETE", "DETACH", "REMOVE", "FOREACH", "LOAD",
-	} {
+	// The clause keywords; ORDER/RETURN/WHERE/LIMIT/SKIP are excluded because
+	// they are valid within the YIELD scope.
+	for _, kw := range callTailPlanClauseKeywords {
 		if idx := topLevelKeywordIndex(afterYield, kw); idx != -1 && idx < scopeEnd {
 			scopeEnd = idx
 		}
@@ -1137,11 +1134,14 @@ func resolveIntLiteralOrParam(ctx context.Context, raw string) (int, bool) {
 	return n, true
 }
 
-// callTailPlanClauseKeywords start the clauses a compiled CALL-tail
-// projection plan can't hold between its WITH and RETURN.
+// callTailPlanClauseKeywords start the clauses that can follow a CALL's (or
+// a SHOW command's) YIELD, ending its YIELD items and segments; a compiled
+// CALL-tail projection plan can't hold them between its WITH and RETURN.
 var callTailPlanClauseKeywords = []string{
 	"MATCH", "OPTIONAL", "UNWIND", "CALL", "WITH", "CREATE", "MERGE",
 	"SET", "DELETE", "DETACH", "REMOVE", "FOREACH", "LOAD", "UNION",
+	// Cypher 25's clauses (#907).
+	"FILTER", "LET", "FOR", "FINISH", "INSERT",
 }
 
 // parseCallTailProjectionPlan returns the tail's projection plan, parsed once

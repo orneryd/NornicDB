@@ -152,8 +152,9 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 		return err
 	}
 	// Every item check needs a label item or a dynamic key (: or [), or a
-	// target that isn't an entity: other clauses cost one scan.
-	if !strings.ContainsAny(clause.text, ":[") && !mentionsNonEntity(clause.text, scope) {
+	// target that isn't an entity: other clauses cost one scan. A Cypher 25
+	// statement's items are also checked for an entity assigned whole.
+	if !scope.cypher25 && !strings.ContainsAny(clause.text, ":[") && !mentionsNonEntity(clause.text, scope) {
 		return nil
 	}
 	switch clause.kind {
@@ -236,6 +237,15 @@ func mentionsNonEntity(text string, scope staticTypeScope) bool {
 func staticSetItemsTokenError(assignments []string, scope staticTypeScope) error {
 	for _, assignment := range assignments {
 		target, property, operator, right := splitSetAssignment(assignment)
+		if scope.cypher25 && property == "" && (operator == "=" || operator == "+=") {
+			// Cypher 25 (Neo4j 2026.09) removed SET x = e and SET x += e for
+			// a node or relationship e: the right side is a map there
+			// (properties(e)).
+			switch typeName := scope.staticExpressionType(right); typeName {
+			case "Node", "Relationship":
+				return typeNameMismatchError("Map", typeName)
+			}
+		}
 		if operator != ":" && operator != "" {
 			// A property write (x.p = v, x[k] = v, x = m, x += m) needs a node
 			// or a relationship.

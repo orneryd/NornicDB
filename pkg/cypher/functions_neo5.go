@@ -52,7 +52,6 @@ func init() {
 		cypherfn.Register(name, fnMathUnary(name, operation))
 	}
 	cypherfn.Register("ceil", fnMathUnary("ceil", math.Ceil))
-	cypherfn.Register("ceiling", fnMathUnary("ceiling", math.Ceil))
 	cypherfn.Register("floor", fnMathUnary("floor", math.Floor))
 	cypherfn.Register("atan2", fnMathBinary("atan2", math.Atan2))
 	cypherfn.Register("power", fnMathBinary("power", math.Pow))
@@ -66,20 +65,24 @@ func init() {
 	cypherfn.Register("rtrim", fnTrimFunction("rtrim", false, true))
 	cypherfn.Register("trim", fnTrim)
 	cypherfn.Register("normalize", fnNormalize)
-	cypherfn.Register("tointegerlist", fnListConversion("toIntegerList", convertToIntegerOrNull))
-	cypherfn.Register("tofloatlist", fnListConversion("toFloatList", convertToFloatOrNull))
-	cypherfn.Register("tostringlist", fnListConversion("toStringList", convertToStringOrNull))
-	cypherfn.Register("tobooleanlist", fnListConversion("toBooleanList", convertToBooleanOrNull))
+	cypherfn.Register("tointegerlist", fnListConversion("toIntegerList", sameInEveryVersion(convertToIntegerOrNull)))
+	cypherfn.Register("tofloatlist", fnListConversion("toFloatList", sameInEveryVersion(convertToFloatOrNull)))
+	cypherfn.Register("tostringlist", fnListConversion("toStringList", convertToStringInVersion))
+	cypherfn.Register("tobooleanlist", fnListConversion("toBooleanList", sameInEveryVersion(convertToBooleanOrNull)))
 	cypherfn.Register("valuetype", fnValueType)
 	cypherfn.Register("nullif", fnNullIf)
 	cypherfn.Register("tail", fnTail)
+	for name, fn := range singleValueFunctions {
+		cypherfn.Register(name, singleValueFunction(name, fn))
+	}
 	for _, name := range []string{"substring", "left", "right", "replace", "split"} {
 		cypherfn.Register(name, fnStringOperation(name))
 	}
 	for _, name := range []string{"tointeger", "toint", "tofloat", "toboolean", "tostring"} {
-		convert := map[string]func(interface{}) interface{}{
-			"tointeger": convertToIntegerOrNull, "toint": convertToIntegerOrNull,
-			"tofloat": convertToFloatOrNull, "toboolean": convertToBooleanOrNull, "tostring": convertToStringOrNull,
+		convert := map[string]versionedConversion{
+			"tointeger": sameInEveryVersion(convertToIntegerOrNull), "toint": sameInEveryVersion(convertToIntegerOrNull),
+			"tofloat": sameInEveryVersion(convertToFloatOrNull), "toboolean": sameInEveryVersion(convertToBooleanOrNull),
+			"tostring": convertToStringInVersion,
 		}[name]
 		cypherfn.Register(name, fnScalarConversion(name, convert, false))
 		if name != "toint" {
@@ -183,6 +186,95 @@ func fnRound(ctx cypherfn.Context, args []string) (interface{}, error) {
 	return rounded / factor, nil
 }
 
+// singleValueFunctions are the one-argument functions computed from their
+// argument's value alone (abs, sign, isEmpty). The registry and the row
+// evaluator both call them, so each has one implementation; the row
+// evaluator passes the value it already has instead of an evaluation
+// callback.
+var singleValueFunctions = map[string]func(interface{}) (interface{}, error){
+	"abs":     absValue,
+	"sign":    signValue,
+	"isempty": isEmptyValue,
+}
+
+// singleValueFunction registers fn as a one-argument registry function
+// that evaluates its argument and calls fn with the value.
+func singleValueFunction(function string, fn func(interface{}) (interface{}, error)) cypherfn.Func {
+	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+		if len(args) != 1 {
+			return nil, argumentCountError(function, "1", len(args))
+		}
+		value, err := ctx.Eval(args[0])
+		if err != nil {
+			return nil, err
+		}
+		return fn(value)
+	}
+}
+
+// numberValue is a numeric function's argument: null is (nil, false, nil),
+// and any other non-number Neo4j's TypeError.
+func numberValue(value interface{}, function string) (interface{}, bool, error) {
+	if value == nil {
+		return nil, false, nil
+	}
+	if !isRuntimeNumber(value) {
+		return nil, false, &cypherfn.TypeMismatchError{Function: function, Expected: "Float or Integer", Value: value}
+	}
+	return value, true, nil
+}
+
+// absValue is abs(number): an integer's or float's absolute value, of its
+// type.
+func absValue(value interface{}) (interface{}, error) {
+	value, ok, err := numberValue(value, "abs")
+	if !ok {
+		return nil, err
+	}
+	if integer, isInteger := cypherIntegerValue(value); isInteger {
+		if integer < 0 {
+			return -integer, nil
+		}
+		return integer, nil
+	}
+	number, _ := cypherFloatValue(value)
+	return math.Abs(number), nil
+}
+
+// signValue is sign(number): -1, 0 or 1, an integer.
+func signValue(value interface{}) (interface{}, error) {
+	value, ok, err := numberValue(value, "sign")
+	if !ok {
+		return nil, err
+	}
+	number, _ := toFloat64(value)
+	switch {
+	case number < 0:
+		return int64(-1), nil
+	case number > 0:
+		return int64(1), nil
+	}
+	return int64(0), nil
+}
+
+// isEmptyValue is isEmpty(list, map or string): null for null, and Neo4j's
+// TypeError for any other value (a number, a node).
+func isEmptyValue(value interface{}) (interface{}, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if text, isString := value.(string); isString {
+		return len(text) == 0, nil
+	}
+	if entries, isMap := value.(map[string]interface{}); isMap && cypherValueKindOf(value) == valueKindMap {
+		return len(entries) == 0, nil
+	}
+	if items, isList := cypherListValue(value); isList {
+		return len(items) == 0, nil
+	}
+	return nil, &cypherfn.TypeMismatchError{Function: "isEmpty", Expected: "List, Map, or String", Value: value}
+}
+
 func fnTail(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, argumentCountError("tail", "1", len(args))
@@ -191,10 +283,9 @@ func fnTail(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || value == nil {
 		return nil, err
 	}
-	items, list := cypherListValue(value)
-	if !list {
-		return nil, &cypherfn.TypeMismatchError{Function: "tail", Expected: "List<T>", Value: value}
-	}
+	// A value that isn't a list has no tail: Neo4j gives [] (tail(n.age)); a
+	// node or other non-list literal is the static check's SyntaxError.
+	items, _ := cypherListValue(value)
 	if len(items) < 2 {
 		return []interface{}{}, nil
 	}
@@ -207,7 +298,8 @@ func fnStringOperation(name string) cypherfn.Func {
 		if name == "substring" {
 			maximum = 3
 		} else if name == "replace" {
-			minimum, maximum = 3, 3
+			// replace(text, search, replacement[, limit]) (Neo4j 2025.06).
+			minimum, maximum = 3, 4
 		}
 		if len(args) < minimum || len(args) > maximum {
 			return nil, argumentCountError(name, strconv.Itoa(minimum), len(args))
@@ -240,7 +332,13 @@ func fnStringOperation(name string) cypherfn.Func {
 				if err != nil {
 					return nil, err
 				}
-				return strings.ReplaceAll(text, separator, replacement), nil
+				limit := -1
+				if len(values) == 4 {
+					if limit, err = replaceLimit(args[3], values[3]); err != nil {
+						return nil, err
+					}
+				}
+				return strings.Replace(text, separator, replacement, limit), nil
 			}
 			parts := strings.Split(text, separator)
 			result := make([]interface{}, len(parts))
@@ -254,7 +352,7 @@ func fnStringOperation(name string) cypherfn.Func {
 			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "Integer", Value: values[1]}
 		}
 		if position < 0 {
-			return nil, newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgumentValue", "Cannot handle negative start index nor negative length")
+			return nil, stringOperationOutOfRange(ctx.Cypher25, name)
 		}
 		switch name {
 		case "left":
@@ -270,13 +368,23 @@ func fnStringOperation(name string) cypherfn.Func {
 			return nil, &cypherfn.TypeMismatchError{Function: name, Expected: "Integer", Value: values[2]}
 		}
 		if length < 0 {
-			return nil, newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgumentValue", "Cannot handle negative start index nor negative length")
+			return nil, stringOperationOutOfRange(ctx.Cypher25, name)
 		}
 		return cyphertext.Substring(text, position, length), nil
 	}
 }
 
-func fnScalarConversion(name string, convert func(interface{}) interface{}, orNull bool) cypherfn.Func {
+// versionedConversion is a conversion function's value of value in a
+// statement of the version (cypher25): toString differs in Cypher 25
+// (convertToStringInVersion); the others are the same in every version.
+type versionedConversion func(value interface{}, cypher25 bool) interface{}
+
+// sameInEveryVersion is a conversion that doesn't depend on the version.
+func sameInEveryVersion(convert func(interface{}) interface{}) versionedConversion {
+	return func(value interface{}, _ bool) interface{} { return convert(value) }
+}
+
+func fnScalarConversion(name string, convert versionedConversion, orNull bool) cypherfn.Func {
 	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, argumentCountError(name, "1", len(args))
@@ -285,11 +393,11 @@ func fnScalarConversion(name string, convert func(interface{}) interface{}, orNu
 		if err != nil || value == nil {
 			return nil, err
 		}
-		if !orNull && !validConversionArgument(name, value) {
+		if !orNull && !validConversionArgument(name, value, ctx.Cypher25) {
 			return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentValue",
 				fmt.Sprintf("Invalid input for function '%s()': Expected %s, got: %s", conversionFunctionNames[name], conversionFunctionInputs[name], neo4jValueRepr(value)))
 		}
-		return convert(value), nil
+		return convert(value, ctx.Cypher25), nil
 	}
 }
 
@@ -304,6 +412,24 @@ func evalArgs(ctx cypherfn.Context, args []string) ([]interface{}, error) {
 		values[i] = value
 	}
 	return values, nil
+}
+
+// replaceLimit is replace()'s limit, the most occurrences it replaces. A
+// negative literal is Neo4j's compile-time SyntaxError; a negative value known
+// only at run time is out of range (ArgumentError).
+func replaceLimit(argument string, value interface{}) (int, error) {
+	limit, ok := cypherIntegerValue(value)
+	if !ok {
+		return 0, &cypherfn.TypeMismatchError{Function: "replace", Expected: "Integer", Value: value}
+	}
+	if limit >= 0 {
+		return int(limit), nil
+	}
+	if _, err := strconv.ParseInt(strings.TrimSpace(argument), 10, 64); err == nil {
+		return 0, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgument",
+			localization.CypherCoreReplaceLimitNegative())
+	}
+	return 0, functionArgumentOutOfRange("replace")
 }
 
 // argumentCountError is the error of a function called with the wrong number
@@ -503,19 +629,20 @@ func fnTrimFunction(name string, leading, trailing bool) cypherfn.Func {
 // character is a one-character string.
 // trimSpecificationForm is trim(specification, original) and
 // trim(specification, character, original), the forms Neo4j's FROM syntax
-// stands for, which Neo4j also accepts as written. The specification is
-// matched exactly: 'LEADING' trims the start, 'TRAILING' the end, and any
-// other string, 'leading' included, both ends. A null original or
-// character is null; otherwise a specification that isn't a string is a
-// TypeError and a character that isn't one character long an ArgumentError,
-// as in Neo4j.
+// stands for, which Neo4j also accepts as written. A null original or
+// character is null, and a character that isn't one character long an
+// ArgumentError. In Cypher 5 (Neo4j 5.26) the specification is matched
+// exactly: 'LEADING' trims the start, 'TRAILING' the end, and any other
+// string, 'leading' included, both ends; a null specification is a
+// TypeError. In Cypher 25 (Neo4j 2026.09) it is matched in any case, a null
+// specification is null and any other text an ArgumentError.
 func trimSpecificationForm(ctx cypherfn.Context, args []string) (interface{}, error) {
 	values, err := evalArgs(ctx, args)
 	if err != nil {
 		return nil, err
 	}
 	original := values[len(values)-1]
-	if original == nil || len(values) == 3 && values[1] == nil {
+	if original == nil || len(values) == 3 && values[1] == nil || ctx.Cypher25 && values[0] == nil {
 		return nil, nil
 	}
 	specification, isString := values[0].(string)
@@ -538,6 +665,14 @@ func trimSpecificationForm(ctx cypherfn.Context, args []string) (interface{}, er
 				localization.CypherCoreTrimCharacterLength())
 		}
 		cutset = character
+	}
+	if ctx.Cypher25 {
+		switch specification = strings.ToUpper(specification); specification {
+		case "LEADING", "TRAILING", "BOTH":
+		default:
+			return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
+				localization.CypherCoreTrimSpecificationUnknown())
+		}
 	}
 	return trimCharacters(text, cutset, specification != "TRAILING", specification != "LEADING"), nil
 }
@@ -641,7 +776,7 @@ func fnNormalize(ctx cypherfn.Context, args []string) (interface{}, error) {
 
 // fnListConversion converts every item of a list with convert: an item it
 // can't convert becomes null.
-func fnListConversion(name string, convert func(interface{}) interface{}) cypherfn.Func {
+func fnListConversion(name string, convert versionedConversion) cypherfn.Func {
 	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, argumentCountError(name, "1", len(args))
@@ -661,7 +796,7 @@ func fnListConversion(name string, convert func(interface{}) interface{}) cypher
 		}
 		converted := make([]interface{}, len(items))
 		for i, item := range items {
-			converted[i] = convert(item)
+			converted[i] = convert(item, ctx.Cypher25)
 		}
 		return converted, nil
 	}
@@ -917,4 +1052,16 @@ func (t valueType) render(notNull bool) string {
 		return name + " NOT NULL"
 	}
 	return name
+}
+
+// stringOperationOutOfRange is the error for a negative start or length of
+// substring(), left() or right(): Neo4j 5.26's ExecutionFailed for a Cypher
+// 5 statement, Neo4j 2026.09's ArgumentError ("out of range") for a Cypher
+// 25 one.
+func stringOperationOutOfRange(cypher25 bool, function string) error {
+	if cypher25 {
+		return localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentValue",
+			localization.CypherCoreFunctionArgumentOutOfRange(function))
+	}
+	return newSemanticError("Neo.DatabaseError.Statement.ExecutionFailed", "InvalidArgumentValue", "Cannot handle negative start index nor negative length")
 }

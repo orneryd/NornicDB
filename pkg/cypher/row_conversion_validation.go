@@ -89,7 +89,7 @@ func (e *StorageExecutor) validateRowConversionArguments(expression string, row 
 		if err != nil {
 			return err
 		}
-		if !evaluated || value == nil || validConversionArgument(name, value) {
+		if !evaluated || value == nil || validConversionArgument(name, value, rowIsCypher25(row)) {
 			return nil
 		}
 		return newSemanticError(
@@ -116,7 +116,7 @@ var conversionFunctionInputs = map[string]string{
 	"tostring":  "a String, Float, Integer, Boolean, Temporal or Duration",
 }
 
-func validConversionArgument(function string, value interface{}) bool {
+func validConversionArgument(function string, value interface{}, cypher25 bool) bool {
 	switch function {
 	case "toboolean":
 		switch value.(type) {
@@ -126,6 +126,12 @@ func validConversionArgument(function string, value interface{}) bool {
 		_, integer := cypherIntegerValue(value)
 		return integer
 	case "tostring":
+		// A Cypher 25 statement writes lists, maps and graph entities too
+		// (cypher25ValueText).
+		if cypher25 {
+			_, ok := cypher25ValueText(value)
+			return ok
+		}
 		switch value.(type) {
 		case string, bool,
 			int, int8, int16, int32, int64,

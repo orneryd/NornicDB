@@ -373,6 +373,13 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 				pattern := resolved[index]
 				if value, bound := current[pattern.variable]; bound {
 					node, typed := value.(*storage.Node)
+					if !typed {
+						if err := boundPatternNodeValueError(pattern.variable, value); err != nil {
+							recordExpressionFailure(ctx, err)
+							valid = false
+							return false
+						}
+					}
 					if !typed || node == nil || !pipelineNodeMatchesPattern(node, pattern) {
 						return true
 					}

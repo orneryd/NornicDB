@@ -52,15 +52,15 @@ func TestPropertiesRejectsStaticallyIncompatibleArguments(t *testing.T) {
 		"properties('text')":        "Type mismatch: expected Map, Node or Relationship but was String",
 		"properties([true, false])": "Type mismatch: expected Map, Node or Relationship but was List<Boolean>",
 	} {
-		err := validateStaticFunctionArguments("RETURN " + expression)
+		err := validateStaticFunctionArguments("RETURN " + expression, false)
 		require.Error(t, err)
 		var semanticError *SemanticError
 		require.ErrorAs(t, err, &semanticError)
 		require.Equal(t, "InvalidArgumentType", semanticError.Detail)
 		require.Contains(t, err.Error(), message)
 	}
-	require.NoError(t, validateStaticFunctionArguments("RETURN properties({name: 'Popeye'})"))
-	require.NoError(t, validateStaticFunctionArguments("RETURN properties(null)"))
+	require.NoError(t, validateStaticFunctionArguments("RETURN properties({name: 'Popeye'})", false))
+	require.NoError(t, validateStaticFunctionArguments("RETURN properties(null)", false))
 }
 
 // A graph function's literal argument is type-checked wherever it appears in
@@ -85,7 +85,7 @@ func TestStaticGraphFunctionArgumentsCheckedEverywhere(t *testing.T) {
 		"UNWIND [1] AS i CALL { WITH i RETURN type('x') AS t } RETURN t":       "expected Relationship but was String",
 	}
 	for statement, message := range rejected {
-		err := validateStaticFunctionArguments(statement)
+		err := validateStaticFunctionArguments(statement, false)
 		require.Error(t, err, statement)
 		require.Contains(t, err.Error(), "Type mismatch: "+message, statement)
 	}
@@ -97,7 +97,7 @@ func TestStaticGraphFunctionArgumentsCheckedEverywhere(t *testing.T) {
 		"RETURN apoc.labels(1), `labels`(n)",
 		"RETURN [x IN [1] | labels(x)]",
 	} {
-		require.NoError(t, validateStaticFunctionArguments(statement), statement)
+		require.NoError(t, validateStaticFunctionArguments(statement, false), statement)
 	}
 }
 

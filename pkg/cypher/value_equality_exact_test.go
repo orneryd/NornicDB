@@ -56,8 +56,14 @@ func TestPromoteConstantNumbers(t *testing.T) {
 		{"unsigned against a float", "<", "1", "2.0", uint64(1), 2.0, uint64(1), 2.0},
 		{"float against unsigned", "<", "2.0", "1", 2.0, uint64(1), 2.0, uint64(1)},
 	} {
-		left, right := promoteConstantNumbers(tc.operator, tc.left, tc.right, tc.leftValue, tc.rightValue)
+		left, right := promoteConstantNumbers(tc.operator, tc.left, tc.right, tc.leftValue, tc.rightValue, false)
 		require.Equal(t, tc.wantLeft, left, tc.name)
 		require.Equal(t, tc.wantRight, right, tc.name)
+	}
+	// Cypher 25 folds <> too (Neo4j 2026.09).
+	for _, operator := range []string{"<>", "!="} {
+		left, right := promoteConstantNumbers(operator, big, float, int64(9007199254740993), 9007199254740992.0, true)
+		require.Equal(t, 9007199254740993.0, left, operator)
+		require.Equal(t, 9007199254740992.0, right, operator)
 	}
 }

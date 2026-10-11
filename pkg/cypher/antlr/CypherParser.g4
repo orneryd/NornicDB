@@ -92,7 +92,7 @@ queryPrefix
 // SHOW commands
 showCommand
         : SHOW ((ALL | FULLTEXT | RANGE_INDEX | TEXT | POINT | VECTOR | LOOKUP)? (INDEXES | INDEX)
-            | CONSTRAINTS | CONSTRAINT CONTRACTS? | PROCEDURES | FUNCTIONS | COMPOSITE? (DATABASE | DATABASES)
+            | showConstraintKind? (CONSTRAINTS | CONSTRAINT) | CONSTRAINT CONTRACTS | PROCEDURES | FUNCTIONS | COMPOSITE? (DATABASE | DATABASES)
             | ALIASES (FOR (DATABASE qualifiedName | DATABASES))? | USERS | CURRENT USER | ALL
             | (TRANSACTION | TRANSACTIONS) (expression (COMMA expression)*)?
             | (SETTING | SETTINGS) (expression (COMMA expression)*)?
@@ -101,15 +101,23 @@ showCommand
             showTail?
     ;
 
-// SHOW … WHERE …, or SHOW … YIELD … [WHERE …] [ORDER BY …] [SKIP …] [LIMIT …] [RETURN …].
+// The kind SHOW … CONSTRAINTS lists. PROPERTY UNIQUE[NESS] is Cypher 25's;
+// the executor rejects it in a Cypher 5 statement (showConstraintKindOf).
+showConstraintKind
+    : ALL
+    | (NODE | RELATIONSHIP | REL)? (UNIQUE | UNIQUENESS | KEY | PROPERTY? (EXIST | EXISTENCE | UNIQUE | UNIQUENESS) | PROPERTY TYPE)
+    ;
+
+// SHOW … WHERE …, or SHOW … YIELD … [WHERE …] [ORDER BY …] [SKIP …] [LIMIT …]
+// then RETURN …, or (Cypher 25 composition) any query over the yielded columns.
 showTail
     : where
-    | YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? returnSt?
+    | YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? regularQuery?
     ;
 
 // TERMINATE TRANSACTION[S] id[, id …] [YIELD …]
 terminateCommand
-    : TERMINATE (TRANSACTION | TRANSACTIONS) expression (COMMA expression)* (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? returnSt?)?
+    : TERMINATE (TRANSACTION | TRANSACTIONS) expression (COMMA expression)* (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? regularQuery?)?
     ;
 
 administrationCommand
@@ -134,11 +142,11 @@ schemaCommand
     | CREATE LOOKUP INDEX name? (IF NOT EXISTS)? FOR (nodePattern | relationshipsChainPattern) ON EACH functionInvocation
     | DROP CONSTRAINT name? (IF EXISTS)?
     | CREATE CONSTRAINT name? (IF NOT EXISTS)? (FOR (nodePattern | relationshipsChainPattern))? REQUIRE constraintRequirement (OPTIONS mapLit)?
-    | CREATE CONSTRAINT name? (IF NOT EXISTS)? ON? nodePattern? ASSERT (expression | parenExpressionChain) IS (UNIQUE | NOT NULL_W | (NODE | RELATIONSHIP) KEY | COLON COLON propertyTypeName | TYPED propertyTypeName) (OPTIONS mapLit)?
+    | CREATE CONSTRAINT name? (IF NOT EXISTS)? ON? nodePattern? ASSERT (expression | parenExpressionChain) IS ((NODE | RELATIONSHIP | REL)? (UNIQUE | KEY) | NOT NULL_W | COLON COLON propertyTypeName | TYPED propertyTypeName) (OPTIONS mapLit)?
     ;
 
 constraintRequirement
-    : (expression | parenExpressionChain) IS (UNIQUE | NOT NULL_W | (NODE | RELATIONSHIP) KEY | COLON COLON propertyTypeName | TYPED propertyTypeName | TEMPORAL (NO OVERLAP)?)
+    : (expression | parenExpressionChain) IS ((NODE | RELATIONSHIP | REL)? (UNIQUE | KEY) | NOT NULL_W | COLON COLON propertyTypeName | TYPED propertyTypeName | TEMPORAL (NO OVERLAP)?)
     | expression IN listLit
     | MAX COUNT integerLit
     | ALLOWED
@@ -150,8 +158,10 @@ constraintBlock
     : LBRACE ((constraintRequirement | expression) (SEMI? (constraintRequirement | expression))* SEMI?)? RBRACE
     ;
 
+// A property type constraint's type is any value type a type predicate
+// takes (LIST<STRING NOT NULL>, INTEGER | FLOAT, ZONED DATETIME).
 propertyTypeName
-    : name (name)?
+    : expressionType
     ;
 
 regularQuery
@@ -229,8 +239,10 @@ orderSt
     : ORDER BY orderItem (COMMA orderItem)*
     ;
 
+// Reads may follow writes without a WITH (CREATE … MATCH … RETURN), as in
+// Neo4j 5 and 25.
 singlePartQ
-    : readingStatement* (returnSt | updatingStatement+ embeddingSt? returnSt?)?
+    : readingStatement* (returnSt | updatingStatement (readingStatement | updatingStatement)* embeddingSt? returnSt?)?
     | callSubquery orderSt?
     ;
 
@@ -467,7 +479,7 @@ expressionType
     ;
 
 expressionTypePart
-    : (ID | ANY | NODE | RELATIONSHIP | POINT | NULL_W | VECTOR) (ID | WITH)* (LT expressionType GT)? (LPAREN numLit RPAREN)? (NOT NULL_W)?
+    : (ID | ANY | NODE | RELATIONSHIP | POINT | NULL_W | VECTOR | PROPERTY) (ID | WITH)* (LT expressionType GT)? (LPAREN numLit RPAREN)? (NOT NULL_W)?
     ;
 
 propertyOrLabelExpression
@@ -534,6 +546,7 @@ atom
     | mapProjection
     | caseExpression
     | reduceExpression
+    | allReduceExpression
     | countAll
     | countSubquery
     | collectSubquery
@@ -631,6 +644,11 @@ reduceExpression
     : REDUCE LPAREN symbol ASSIGN expression COMMA symbol IN expression STICK expression RPAREN
     ;
 
+// allReduce(accumulator = initial, variable IN list | reducer, predicate) (Cypher 25)
+allReduceExpression
+    : ALLREDUCE LPAREN symbol ASSIGN expression COMMA symbol IN expression STICK expression COMMA expression RPAREN
+    ;
+
 parameter
     : DOLLAR (name | numLit | DIGIT_NAME)
     ;
@@ -703,6 +721,7 @@ symbol
     | LET
     | EXTRACT
     | REDUCE
+    | ALLREDUCE
     | FOREACH
     | ANY
     | NONE
@@ -760,6 +779,12 @@ symbol
     | OPTIONS
     | NODE
     | RELATIONSHIP
+    | REL
+    | UNIQUENESS
+    | EXIST
+    | EXISTENCE
+    | PROPERTY
+    | TYPE
     | TEMPORAL
     | NO
     | OVERLAP

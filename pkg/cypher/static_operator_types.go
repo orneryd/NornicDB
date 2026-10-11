@@ -36,6 +36,17 @@ type staticOperand struct {
 	display    string
 	parameter  string
 	nonBoolean bool
+	// members are the static types of a map literal's entries by key, in a
+	// Cypher 25 statement (Neo4j 2026.09 types {a: 2}.a as an Integer;
+	// Neo4j 5.26 doesn't): staticMapMember reads them.
+	members map[string]staticOperand
+}
+
+// staticMapMember is the operand a map with known members gives for key
+// (m.key, m['key']), and whether it has one.
+func (operand staticOperand) staticMapMember(key string) (staticOperand, bool) {
+	member, found := operand.members[key]
+	return member, found
 }
 
 func knownOperand(kind string) staticOperand {
@@ -51,6 +62,17 @@ func (operand staticOperand) numeric() bool {
 func (operand staticOperand) list() bool { return strings.HasPrefix(operand.kind, "List<") }
 
 func (operand staticOperand) duration() bool { return operand.kind == "Duration" }
+
+// joinsStringStatically reports whether a Cypher 25 string + operand is the
+// string joined with the operand's text: a string, number, boolean, point,
+// duration or temporal value (a list is list concatenation instead).
+func (operand staticOperand) joinsStringStatically() bool {
+	switch operand.kind {
+	case "String", "Integer", "Float", "Boolean", "Point", "Duration":
+		return true
+	}
+	return operand.temporal()
+}
 
 func (operand staticOperand) temporal() bool {
 	switch operand.kind {
@@ -74,8 +96,8 @@ var staticFunctionResultTypes = map[string]string{
 	"lower": "String", "trim": "String", "ltrim": "String", "rtrim": "String",
 	"btrim": "String", "replace": "String", "substring": "String", "left": "String",
 	"right": "String", "type": "String", "elementid": "String",
-	"toboolean": "Boolean",
-	"keys":      "List<String>", "labels": "List<String>", "split": "List<String>",
+	"toboolean": "Boolean", "allreduce": "Boolean", "property_exists": "Boolean",
+	"keys": "List<String>", "labels": "List<String>", "split": "List<String>",
 	"date": "Date", "datetime": "DateTime", "localdatetime": "LocalDateTime",
 	"time": "Time", "localtime": "LocalTime", "duration": "Duration",
 	"point": "Point", "properties": "Map",
@@ -103,15 +125,14 @@ var staticFunctionResultTypes = map[string]string{
 // its accumulator's when init is a literal (reduce(a = 0, …) is an Integer,
 // as Neo4j types it).
 func staticFunctionResultType(function, arguments string) string {
-	name := lowerASCII(function)
-	if name == "reduce" {
-		accumulator, _, _ := strings.Cut(arguments, ",")
-		if _, initial, assigned := strings.Cut(accumulator, "="); assigned {
-			return staticLiteralTypeName(strings.TrimSpace(initial))
+	if strings.EqualFold(function, "reduce") {
+		if form, ok := parseReduceForm("reduce", arguments); ok {
+			return staticLiteralTypeName(form.initial)
 		}
 		return ""
 	}
-	return staticFunctionResultTypes[name]
+	result, _ := lookupLowerASCII(staticFunctionResultTypes, function)
+	return result
 }
 
 // staticValueCallType is the static type of expression when it is one whole
@@ -170,10 +191,15 @@ func requireBooleanOperand(operand staticOperand) error {
 }
 
 // checkOperator applies Neo4j's operand rules for left op right and returns
-// the result type.
-func checkOperator(op byte, left, right staticOperand) (staticOperand, error) {
+// the result type. cypher25 applies Neo4j 2026.09's rules for a Cypher 25
+// statement: a string joins any value but a map or a graph entity ('a' +
+// true, date('2020-01-02') + 's').
+func checkOperator(op byte, left, right staticOperand, cypher25 bool) (staticOperand, error) {
 	switch op {
 	case '+':
+		if cypher25 && (left.kind == "String" && right.joinsStringStatically() || right.kind == "String" && left.joinsStringStatically()) {
+			return knownOperand("String"), nil
+		}
 		switch {
 		case left.kind == "Vector":
 			// A vector (Cypher 25) joins a string or a list, as Neo4j
@@ -431,7 +457,7 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		if err != nil {
 			return staticOperand{}, err
 		}
-		return checkOperator(operator, leftType, rightType)
+		return checkOperator(operator, leftType, rightType, checker.scope.cypher25)
 	}
 	if expression[0] == '-' && len(expression) > 1 {
 		operand, err := checker.check(expression[1:])
@@ -452,7 +478,10 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		if err != nil {
 			return staticOperand{}, err
 		}
-		if operand.known() && !operand.numeric() && !operand.temporal() && !operand.duration() && operand.kind != "Null" {
+		// Neo4j 5.26 also takes a temporal value or a duration (+date(…) is
+		// the date); Neo4j 2026.09, which runs Cypher 25, only a number.
+		temporal := (operand.temporal() || operand.duration()) && !checker.scope.cypher25
+		if operand.known() && !operand.numeric() && !temporal && operand.kind != "Null" {
 			return staticOperand{}, operandMismatch(operand, "Float or Integer")
 		}
 		if !operand.known() || operand.kind == "Null" {
@@ -595,6 +624,9 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		if receiver.known() && receiver.kind != "Null" && rejectsPropertyAccess(receiver.kind) {
 			return staticOperand{}, operandMismatch(receiver, "Map, Node, Relationship, Point, Duration, Date, Time, LocalTime, LocalDateTime or DateTime")
 		}
+		if member, found := receiver.staticMapMember(symbolicNameValue(strings.TrimSpace(inner))); found {
+			return member, nil
+		}
 		return staticOperand{}, nil
 	}
 	if from, to, slice := staticSliceBounds(inner); slice {
@@ -640,19 +672,27 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		if keyKnown && key.kind != "String" {
 			return staticOperand{}, localizedStatusError(syntaxError, detail, localization.CypherCoreMapKeyTypeMismatch(key.display))
 		}
+		// A string literal key reads a known member (m['a']); a key from
+		// a variable is read at run time, as in Neo4j 2026.09.
+		if text, literal := decodeCypherQuotedString(strings.TrimSpace(inner)); literal {
+			if member, found := receiver.staticMapMember(text); found {
+				return member, nil
+			}
+		}
 	case receiver.kind == "Node" || receiver.kind == "Relationship":
 		if keyKnown && key.kind != "String" {
 			return staticOperand{}, localizedStatusError(syntaxError, detail, localization.CypherCoreEntityPropertyKeyTypeMismatch(key.display))
 		}
 	case key.kind == "String":
-		// A temporal value or duration takes a string key at compile time;
-		// reading a field it doesn't have is a runtime error.
-		if !receiver.temporal() && !receiver.duration() {
+		// In Neo4j 5.26 a temporal value or duration takes a string key at
+		// compile time (reading a field it doesn't have is a runtime error);
+		// Neo4j 2026.09, which runs Cypher 25, takes none.
+		if !receiver.temporal() && !receiver.duration() || checker.scope.cypher25 {
 			return staticOperand{}, operandMismatch(receiver, "Map, Node or Relationship")
 		}
 	case key.kind == "Integer":
 		return staticOperand{}, operandMismatch(receiver, "List<T>")
-	case !keyKnown && !receiver.temporal() && !receiver.duration():
+	case !keyKnown && (!receiver.temporal() && !receiver.duration() || checker.scope.cypher25):
 		return staticOperand{}, operandMismatch(receiver, "List<T>, Map, Node or Relationship")
 	}
 	return staticOperand{}, nil
@@ -729,13 +769,15 @@ func staticMapProjectionReceiver(expression string) (receiver string, projected 
 
 // staticProjectable reports whether a value of a static type, or of one of
 // its choices ("Map, Node or Relationship"), can be map-projected: a map,
-// node, relationship, null, temporal value or duration.
-func staticProjectable(typeName string) bool {
+// node, relationship or null, and in a Cypher 5 statement a temporal value
+// or duration too (Neo4j 5.26: date(…){.year}); Neo4j 2026.09 rejects
+// those in a Cypher 25 statement.
+func staticProjectable(typeName string, cypher25 bool) bool {
 	for _, choice := range staticTypeChoices(typeName) {
 		operand := knownOperand(strings.TrimSpace(choice))
 		switch {
 		case operand.kind == "Map", operand.kind == "Node", operand.kind == "Relationship", operand.kind == "Null",
-			operand.temporal(), operand.duration():
+			!cypher25 && (operand.temporal() || operand.duration()):
 			return true
 		}
 	}
@@ -810,19 +852,27 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		return knownOperand(staticLiteralTypeNameOr(expression, "List<T>")), nil
 	}
 	if expression[0] == '{' && findMatchingDelimiter(expression, 0, '{', '}') == len(expression)-1 {
+		mapOperand := knownOperand("Map")
 		for _, pair := range splitTopLevelComma(expression[1 : len(expression)-1]) {
 			if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
-				if _, err := checker.check(pair[separator+1:]); err != nil {
+				value, err := checker.check(pair[separator+1:])
+				if err != nil {
 					return staticOperand{}, err
+				}
+				if checker.scope.cypher25 && value.known() {
+					if mapOperand.members == nil {
+						mapOperand.members = make(map[string]staticOperand)
+					}
+					mapOperand.members[normalizePropertyKey(pair[:separator])] = value
 				}
 			}
 		}
-		return knownOperand("Map"), nil
+		return mapOperand, nil
 	}
 	if variable, items, projection := staticMapProjectionSplit(expression); projection {
-		// A temporal value or duration projects its fields; reading one it
-		// doesn't have is a runtime error, as for d.field.
-		if receiver := knownOperand(checker.scope.typeOf(variable)); receiver.kind != "" && !staticProjectable(receiver.kind) {
+		// In Cypher 5 a temporal value or duration projects its fields;
+		// reading one it doesn't have is a runtime error, as for d.field.
+		if receiver := knownOperand(checker.scope.typeOf(variable)); receiver.kind != "" && !staticProjectable(receiver.kind, checker.scope.cypher25) {
 			return staticOperand{}, operandMismatch(receiver, "Map, Node or Relationship")
 		}
 		for _, item := range splitTopLevelComma(items) {
@@ -853,7 +903,11 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 	}
 	if variable := simpleSemanticIdentifier(expression); variable != "" {
 		if typeName := checker.scope.typeOf(variable); typeName != "" {
-			return knownOperand(typeName), nil
+			operand := knownOperand(typeName)
+			if typeName == "Map" {
+				operand.members = checker.scope.members[variable]
+			}
+			return operand, nil
 		}
 		if checker.scope.complete && !checker.scope.bound(variable) && !isLiteralKeyword(variable) {
 			return staticOperand{}, createUndefinedVariableError(variable)
@@ -873,7 +927,7 @@ func staticLiteralTypeNameOr(expression, fallback string) string {
 
 func isQuantifierOrReduceFunction(name string) bool {
 	switch lowerASCII(name) {
-	case "all", "any", "none", "single", "reduce", "exists":
+	case "all", "any", "none", "single", "reduce", "allreduce", "exists":
 		return true
 	}
 	return false
@@ -1150,7 +1204,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, sco
 // statement only when a parameter next to an arithmetic operator has a value
 // that operator could reject: numbers never are, and neither are strings or
 // lists next to +, so parameterized arithmetic on hot paths costs one scan.
-func (e *StorageExecutor) validateStaticOperatorParameters(cypher string, params map[string]interface{}) error {
+func (e *StorageExecutor) validateStaticOperatorParameters(cypher string, params map[string]interface{}, cypher25 bool) error {
 	if len(params) == 0 || !parameterMayMismatchOperator(cypher, params) {
 		return nil
 	}
@@ -1159,7 +1213,7 @@ func (e *StorageExecutor) validateStaticOperatorParameters(cypher string, params
 		return nil
 	}
 	for _, clause := range clauses {
-		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{}, nil, params); err != nil {
+		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{cypher25: cypher25}, nil, params); err != nil {
 			return err
 		}
 	}

@@ -25,26 +25,38 @@ type matchSemanticScope map[string]matchBindingKind
 // validateMatchSemanticScopes applies entity-type rules before physical query
 // routing. MATCH variables may be reused only when their binding kind remains
 // stable; a node name cannot already denote a relationship, path, or scalar.
-// A statement that passes is cached by its text, unless a Fabric APPLY binds
-// variables for it: then the result depends on the bound record.
-func (e *StorageExecutor) validateMatchSemanticScopes(cypher string) error {
+// A statement that passes is cached by its text and language version,
+// unless a Fabric APPLY binds variables for it: then the result depends on
+// the bound record. cypher25 holds a Cypher 25 statement to Neo4j 2026.09's
+// compile-time type rules (staticTypeScope.cypher25).
+func (e *StorageExecutor) validateMatchSemanticScopes(cypher string, cypher25 bool) error {
 	cacheable := len(e.fabricRecordBindings) == 0
-	if cacheable && e.matchSemanticValidationCache.contains(cypher) {
+	key := semanticCacheKey(cypher, cypher25)
+	if cacheable && e.matchSemanticValidationCache.contains(key) {
 		return nil
 	}
-	if err := e.validateMatchSemanticScopesUncached(cypher); err != nil {
+	if err := e.validateMatchSemanticScopesUncached(cypher, cypher25); err != nil {
 		return err
 	}
 	if cacheable {
-		e.matchSemanticValidationCache.add(cypher)
+		e.matchSemanticValidationCache.add(key)
 	}
 	return nil
 }
 
-func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) error {
+// semanticCacheKey is a validation cache's key for a statement: its text,
+// marked for a Cypher 25 statement, whose checks differ.
+func semanticCacheKey(cypher string, cypher25 bool) string {
+	if cypher25 {
+		return "cypher25:" + cypher
+	}
+	return cypher
+}
+
+func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cypher25 bool) error {
 	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
 		for _, branch := range branches {
-			if err := e.validateMatchSemanticScopes(branch); err != nil {
+			if err := e.validateMatchSemanticScopes(branch, cypher25); err != nil {
 				return err
 			}
 		}
@@ -66,6 +78,10 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 	// valueTypes holds the static types of variables bound to a literal by
 	// WITH … AS or UNWIND, for the function argument checks.
 	var valueTypes map[string]string
+	// valueMembers holds the member types of variables a WITH bound to a
+	// map literal, in a Cypher 25 statement (projectStaticValueMembers);
+	// every other binding of a name drops its entry.
+	var valueMembers map[string]map[string]staticOperand
 	returnSeen := false
 	for _, clause := range clauses {
 		if returnSeen {
@@ -95,7 +111,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 		}
 		switch clause.kind {
 		case pipelineClauseLet, pipelineClauseFilter:
-			if err := e.validateSharedClause(scope, valueTypes, clause); err != nil {
+			if err := e.validateSharedClause(scope, valueTypes, clause, cypher25); err != nil {
 				return err
 			}
 			if clause.kind == pipelineClauseLet {
@@ -108,12 +124,13 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
 							fmt.Sprintf("variable %s is already declared", projection.alias))
 					}
-					kind := matchBindingValue
+					kind := projectedExpressionSemanticKind(projection.expression, scope)
 					if bound, exists := scope[simpleSemanticIdentifier(projection.expression)]; exists {
 						kind = bound
 					}
 					scope[projection.alias] = kind
 					delete(valueTypes, projection.alias)
+					delete(valueMembers, projection.alias)
 				}
 			}
 		case pipelineClauseCallSubquery:
@@ -168,16 +185,17 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 						valueTypes = make(map[string]string)
 					}
 					valueTypes[name] = typeName
+					delete(valueMembers, name)
 				}
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
 			if err := e.validateMatchClauseBindings(scope, clause.text); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		case pipelineClauseWith:
@@ -220,7 +238,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 					}
 				}
 			}
-			input := staticTypeScope{kinds: scope, values: valueTypes, complete: true}
+			input := staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}
 			if err := validateStaticFunctionVariables(projection, input); err != nil {
 				return err
 			}
@@ -229,7 +247,8 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 			}
 			scope = projectMatchSemanticScope(scope, clause.text)
 			valueTypes = projectStaticValueTypes(input, clause.text)
-			projected := staticTypeScope{kinds: scope, values: valueTypes, complete: true}
+			valueMembers = projectStaticValueMembers(input, clause.text)
+			projected := staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}
 			if err := forEachProjectedTailExpression(projection, rest, func(expression string) error {
 				return validateStaticFunctionVariables(expression, projected)
 			}); err != nil {
@@ -242,7 +261,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 			if err := undefinedExpressionVariable(scope, unwindSourceExpression(clause.text)); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 			if alias := unwindBindingName(clause.text); alias != "" {
@@ -256,6 +275,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 				}
 				scope[alias] = unwindMatchSemanticKind(clause.text, scope)
 				delete(valueTypes, alias)
+				delete(valueMembers, alias)
 				if typeName := unwindStaticValueType(clause.text); typeName != "" {
 					if valueTypes == nil {
 						valueTypes = make(map[string]string)
@@ -267,23 +287,23 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 			if err := validateReturnSemanticScope(scope, clause.text); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		case pipelineClauseDelete:
 			if err := deleteTargetTypeError(clause.text, scope); err != nil {
 				return err
 			}
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		case pipelineClauseCreate, pipelineClauseMerge:
 			addMatchPatternBindingKinds(scope, clause.text)
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		default:
-			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, complete: true}); err != nil {
+			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
 				return err
 			}
 		}
@@ -802,6 +822,7 @@ func projectionAliasScope(input staticTypeScope, clause string) staticTypeScope 
 	}
 	projected := projectMatchSemanticScope(input.kinds, "WITH "+body)
 	projectedValues := projectStaticValueTypes(input, "WITH "+body)
+	projectedMembers := projectStaticValueMembers(input, "WITH "+body)
 	kinds := make(matchSemanticScope, len(input.kinds)+len(projected))
 	for name, kind := range input.kinds {
 		kinds[name] = kind
@@ -817,7 +838,19 @@ func projectionAliasScope(input staticTypeScope, clause string) staticTypeScope 
 	for name, typeName := range projectedValues {
 		values[name] = typeName
 	}
-	return staticTypeScope{kinds: kinds, values: values, complete: input.complete}
+	var members map[string]map[string]staticOperand
+	if len(input.members)+len(projectedMembers) > 0 {
+		members = make(map[string]map[string]staticOperand, len(input.members)+len(projectedMembers))
+		for name, known := range input.members {
+			if _, rebound := projected[name]; !rebound {
+				members[name] = known
+			}
+		}
+		for name, known := range projectedMembers {
+			members[name] = known
+		}
+	}
+	return staticTypeScope{kinds: kinds, values: values, members: members, complete: input.complete, cypher25: input.cypher25}
 }
 
 // projectionItemTermError is Neo4j's SyntaxError for a projection item that
@@ -928,9 +961,11 @@ func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSem
 			}
 		} else if inferred, ok := coalesceSemanticKind(expression, input); ok {
 			kind = inferred
-		} else if relationshipListLiteral(expression, input) {
-			kind = matchBindingRelationshipList
-		} else if aggregateName, aggregateExpression, _, aggregate := parsePipelineAggregate(expression); aggregate && aggregateName == "collect" {
+		} else if listKind, entities := entityListLiteralKind(expression, input); entities {
+			kind = listKind
+		} else if aggregateName, aggregateExpression, _, aggregate := parsePipelineAggregate(expression); !aggregate {
+			kind = projectedExpressionSemanticKind(expression, input)
+		} else if aggregateName == "collect" {
 			if source := simpleSemanticIdentifier(aggregateExpression); source != "" {
 				switch input[source] {
 				case matchBindingNode:
@@ -951,6 +986,45 @@ func unwindSourceExpression(clause string) string {
 	return expression
 }
 
+// projectedExpressionSemanticKind is the binding kind of a projected
+// expression that isn't a bare variable, as Neo4j types it before the
+// statement runs: a value (never a node or relationship) when its type is
+// known (a literal, arithmetic over known types, a node's or relationship's
+// property, a call with a known result type); the entity an element of a node
+// or relationship list is; and unknown otherwise (a map's member x.node, an
+// element of a list of unknown elements), which Neo4j accepts in a pattern
+// and checks when the row runs.
+func projectedExpressionSemanticKind(expression string, input matchSemanticScope) matchBindingKind {
+	expression = strings.TrimSpace(expression)
+	if name, end, ok := scanIdentifierToken(expression, 0); ok && end < len(expression) && expression[end] == '[' &&
+		findMatchingDelimiter(expression, end, '[', ']') == len(expression)-1 && !strings.Contains(expression[end:], "..") {
+		switch input[name] {
+		case matchBindingNodeList:
+			return matchBindingNode
+		case matchBindingRelationshipList:
+			return matchBindingRelationship
+		}
+		return matchBindingUnknown
+	}
+	if variable, _, property := parseVarPropertyRef(expression); property && simpleSemanticIdentifier(variable) == variable {
+		switch input[variable] {
+		case matchBindingNode, matchBindingRelationship:
+			return matchBindingValue
+		}
+		return matchBindingUnknown
+	}
+	typeName := (staticTypeScope{kinds: input}).staticExpressionType(expression)
+	if function, arguments, call := parseFunctionCallWS(expression); typeName == "" && call {
+		typeName = staticFunctionResultType(function, arguments)
+	}
+	// A bare variable is resolved by the caller; a literal, arithmetic or a
+	// call with a static result type is never a node or relationship.
+	if typeName == "" {
+		return matchBindingUnknown
+	}
+	return matchBindingValue
+}
+
 func unwindMatchSemanticKind(clause string, scope matchSemanticScope) matchBindingKind {
 	body := unwindSourceExpression(clause)
 	if source := simpleSemanticIdentifier(body); source != "" {
@@ -963,7 +1037,13 @@ func unwindMatchSemanticKind(clause string, scope matchSemanticScope) matchBindi
 			return matchBindingUnknown
 		}
 	}
-	if strings.HasPrefix(strings.TrimSpace(body), "[") || matchFuncStartAndSuffix(body, "range") {
+	switch listKind, _ := entityListLiteralKind(body, scope); listKind {
+	case matchBindingNodeList:
+		return matchBindingNode
+	case matchBindingRelationshipList:
+		return matchBindingRelationship
+	}
+	if typeName := staticLiteralTypeName(body); (typeName != "" && typeName != "List<T>") || matchFuncStartAndSuffix(body, "range") {
 		return matchBindingValue
 	}
 	return matchBindingUnknown
@@ -1010,22 +1090,31 @@ func variableLengthRelationshipVariableSet(pattern string) map[string]struct{} {
 	return result
 }
 
-func relationshipListLiteral(expression string, scope matchSemanticScope) bool {
+// entityListLiteralKind is the kind of a list literal of node variables
+// ([a, b] is a List<Node>) or of relationship variables; ok is false for any
+// other expression.
+func entityListLiteralKind(expression string, scope matchSemanticScope) (matchBindingKind, bool) {
 	expression = strings.TrimSpace(expression)
 	if len(expression) < 2 || expression[0] != '[' || expression[len(expression)-1] != ']' {
-		return false
+		return matchBindingUnknown, false
 	}
 	items := splitTopLevelComma(expression[1 : len(expression)-1])
 	if len(items) == 0 {
-		return false
+		return matchBindingUnknown, false
 	}
+	element := matchBindingUnknown
 	for _, item := range items {
 		name := simpleSemanticIdentifier(item)
-		if name == "" || scope[name] != matchBindingRelationship {
-			return false
+		kind := scope[name]
+		if name == "" || (kind != matchBindingNode && kind != matchBindingRelationship) || (element != matchBindingUnknown && kind != element) {
+			return matchBindingUnknown, false
 		}
+		element = kind
 	}
-	return true
+	if element == matchBindingNode {
+		return matchBindingNodeList, true
+	}
+	return matchBindingRelationshipList, true
 }
 
 func invalidRelationshipPattern(pattern string) bool {

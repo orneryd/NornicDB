@@ -59,6 +59,11 @@ type labelExpressionRewriter struct {
 	// named holds the variables given to anonymous elements, by the index of
 	// their opening bracket, so an element is named once.
 	named map[int]string
+	// cypher25 is set for a Cypher 25 statement, where a dynamic label or
+	// type may also be tested in an expression (WHERE n:$(e), RETURN
+	// r:$any(l)), as Neo4j 2026.09 allows: the test becomes the label
+	// predicate a MATCH pattern's row-dependent term becomes.
+	cypher25 bool
 }
 
 // labelPatternMode is how a pattern's label expressions are read.
@@ -80,26 +85,34 @@ func (m labelPatternMode) clause() string {
 // desugarLabelExpressions returns query with its label expressions
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when nothing changes.
-func desugarLabelExpressions(query string, params map[string]interface{}) (string, *queryRewrite, error) {
+func desugarLabelExpressions(query string, params map[string]interface{}, cypher25 bool) (string, *queryRewrite, error) {
 	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) &&
 		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
 		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) &&
 		!mayUseParenthesisedPath(query) && !mayUseVectorCall(query) {
 		return query, nil, nil
 	}
-	r := &labelExpressionRewriter{query: query, params: params}
+	r := &labelExpressionRewriter{query: query, params: params, cypher25: cypher25}
 	if err := r.statement(0, len(query)); err != nil {
 		return query, nil, err
 	}
 	if len(r.edits) == 0 {
 		return query, nil, nil
 	}
-	sort.SliceStable(r.edits, func(i, j int) bool { return r.edits[i].start < r.edits[j].start })
-	rewrite := &queryRewrite{original: query, edits: make([]queryTextEdit, 0, len(r.edits)), verbatimColumns: true}
+	rewritten, rewrite := applyLabelRewriteEdits(query, r.edits, true)
+	return rewritten, rewrite, nil
+}
+
+// applyLabelRewriteEdits applies non-overlapping edits to query and returns
+// the result with the rewrite that maps it back (verbatimColumns: a column
+// whose text the client wrote is kept as is).
+func applyLabelRewriteEdits(query string, edits []labelRewriteEdit, verbatimColumns bool) (string, *queryRewrite) {
+	sort.SliceStable(edits, func(i, j int) bool { return edits[i].start < edits[j].start })
+	rewrite := &queryRewrite{original: query, edits: make([]queryTextEdit, 0, len(edits)), verbatimColumns: verbatimColumns}
 	var out strings.Builder
-	out.Grow(len(query) + 32*len(r.edits))
+	out.Grow(len(query) + 32*len(edits))
 	last := 0
-	for _, edit := range r.edits {
+	for _, edit := range edits {
 		out.WriteString(query[last:edit.start])
 		canonStart := out.Len()
 		out.WriteString(edit.text)
@@ -108,7 +121,7 @@ func desugarLabelExpressions(query string, params map[string]interface{}) (strin
 	}
 	out.WriteString(query[last:])
 	rewrite.canonical = out.String()
-	return rewrite.canonical, rewrite, nil
+	return rewrite.canonical, rewrite
 }
 
 // mayUsePatternPredicate reports whether query may hold a pattern element's
@@ -984,7 +997,7 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 			if err := r.vectorCall(i, j, end); err != nil {
 				return err
 			}
-			if err := r.labelTest(j, end); err != nil {
+			if err := r.labelTest(i, j, end); err != nil {
 				return err
 			}
 			i = j - 1
@@ -993,10 +1006,11 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 	return nil
 }
 
-// labelTest checks the word that ends at query[wordEnd]: a variable followed by
-// a colon test (mixing colons with symbols is rejected) or by IS and a label
-// expression (rewritten to a colon test).
-func (r *labelExpressionRewriter) labelTest(wordEnd, end int) error {
+// labelTest checks the word at query[wordStart:wordEnd]: a variable followed
+// by a colon test (mixing colons with symbols is rejected), by IS and a label
+// expression (rewritten to a colon test), or by Cypher 25's IS [NOT] LABELED
+// and one (rewritten to the colon test, or NOT it).
+func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 	q := r.query
 	if wordEnd < end && q[wordEnd] == ':' && (wordEnd+1 >= end || q[wordEnd+1] != ':') {
 		// n:A|B:C (written without spaces: a list comprehension's
@@ -1024,7 +1038,12 @@ func (r *labelExpressionRewriter) labelTest(wordEnd, end int) error {
 		wordStart := labelTestWordStart(q, wordEnd)
 		inChain := wordStart > 0 && q[wordStart-1] == ':' // a label of a chain (n:A:$(e)), read with its variable
 		if ok && chain.dynamic && !inChain && !r.writeItemHead(wordStart) {
-			return labelExpressionSyntaxError(localization.CypherCoreDynamicTokenPositionInvalid())
+			if !r.cypher25 || chain.end != chainEnd-wordEnd-1 {
+				return labelExpressionSyntaxError(localization.CypherCoreDynamicTokenPositionInvalid())
+			}
+			// A Cypher 25 label test with a dynamic term: its predicate.
+			r.edit(wordStart, chainEnd, "("+chain.expr.predicate(q[wordStart:wordEnd])+")")
+			return nil
 		}
 		if ok && chain.end == chainEnd-wordEnd-1 && chain.colons && chain.symbols {
 			return labelExpressionSyntaxError(localization.CypherMatchingLabelExpressionMixedColon(chain.expr.String()))
@@ -1033,6 +1052,9 @@ func (r *labelExpressionRewriter) labelTest(wordEnd, end int) error {
 	}
 	is := skipASCIISpaces(q, wordEnd, end)
 	if is == wordEnd || is+2 >= end || !strings.EqualFold(q[is:is+2], "IS") || isIdentByte(q[is+2]) || !isLabelIsKeyword(q[:end], is+2) {
+		return nil
+	}
+	if handled := r.isLabeledTest(wordStart, wordEnd, is+2, end); handled {
 		return nil
 	}
 	if not := skipASCIISpaces(q, is+2, end); not+3 <= end && strings.EqualFold(q[not:not+3], "NOT") && (not+3 == end || !isIdentByte(q[not+3])) {
@@ -1045,10 +1067,20 @@ func (r *labelExpressionRewriter) labelTest(wordEnd, end int) error {
 		// A dynamic label: x IS $(e) is x:$(e), at a SET or REMOVE item's
 		// head only; IS takes one label, so a colon after it is an error as
 		// for a static chain.
+		closing := findMatchingDelimiter(q[:end], strings.IndexByte(q[textStart:end], '(')+textStart, '(', ')')
 		if !r.writeItemHead(labelTestWordStart(q, wordEnd)) {
+			if !r.cypher25 || closing < 0 {
+				return labelExpressionSyntaxError(localization.CypherCoreDynamicTokenPositionInvalid())
+			}
+			// A Cypher 25 x IS $(e) test in an expression: x:$(e)'s
+			// predicate.
+			if chain, ok := scanLabelChain(q[textStart:closing+1], false); ok && chain.dynamic && chain.end == closing+1-textStart {
+				variableStart := labelTestWordStart(q, wordEnd)
+				r.edit(variableStart, closing+1, "("+chain.expr.predicate(q[variableStart:wordEnd])+")")
+				return nil
+			}
 			return labelExpressionSyntaxError(localization.CypherCoreDynamicTokenPositionInvalid())
 		}
-		closing := findMatchingDelimiter(q[:end], strings.IndexByte(q[textStart:end], '(')+textStart, '(', ')')
 		if closing < 0 {
 			return nil
 		}
@@ -1067,6 +1099,31 @@ func (r *labelExpressionRewriter) labelTest(wordEnd, end int) error {
 	}
 	r.edit(wordEnd, textStart, ":")
 	return nil
+}
+
+// isLabeledTest rewrites x IS [NOT] LABELED <label expression>, whose IS
+// ends at query[afterIs], to (x:<expression>) or (NOT x:<expression>);
+// handled is false when LABELED doesn't follow.
+func (r *labelExpressionRewriter) isLabeledTest(wordStart, wordEnd, afterIs, end int) bool {
+	q := r.query
+	at, negated := skipASCIISpaces(q, afterIs, end), false
+	if matchKeywordAt(q[:end], at, "NOT") {
+		at, negated = skipASCIISpaces(q, at+3, end), true
+	}
+	if !matchKeywordAt(q[:end], at, "LABELED") {
+		return false
+	}
+	textStart := skipASCIISpaces(q, at+len("LABELED"), end)
+	chain, ok := scanLabelChain(q[textStart:end], false)
+	if !ok || chain.colons {
+		return true
+	}
+	test := q[wordStart:wordEnd] + ":" + chain.expr.String()
+	if negated {
+		test = "NOT " + test
+	}
+	r.edit(wordStart, textStart+chain.end, "("+test+")")
+	return true
 }
 
 // opensSubquery reports whether the { at query[brace] opens a subquery body:

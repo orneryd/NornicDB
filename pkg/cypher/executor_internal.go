@@ -27,7 +27,8 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		cypher, _ = canonicalizeQueryText(cypher)
 	}
 	cypher, _ = canonicalizeNumericLiterals(cypher)
-	cypher, _, err := desugarLabelExpressions(cypher, params)
+	cypher, _ = canonicalizeFunctionAliases(cypher)
+	cypher, _, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +81,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 
 	// Basic syntax validation to preserve existing error behavior.
-	if err := e.validateSyntax(cypher); err != nil {
+	if err := e.validateSyntax(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return nil, err
 	}
 	if err := e.validateDuplicateReturnColumnName(cypher, quotedVariableNamesFor(ctx, cypher)); err != nil {
@@ -108,10 +109,13 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 }
 
 func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context, cypher string, params map[string]interface{}) error {
-	if err := e.validateStaticOperatorParameters(cypher, params); err != nil {
+	if err := e.validateStaticOperatorParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
 	if err := validateStaticPropertyAccessParameters(cypher, params); err != nil {
+		return err
+	}
+	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
 	if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {

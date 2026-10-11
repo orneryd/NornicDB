@@ -67,6 +67,9 @@
 - id: cypherschema.empty_statement
   description: Empty DDL parser input.
   other: empty statement
+- id: cypherschema.constraint_entity_mismatch
+  description: A constraint requirement names another entity than its pattern. Requirement is untranslated Cypher syntax; Pattern is node or relationship.
+  other: "'{{.Requirement}}' does not allow {{.Pattern}} patterns"
 - id: cypherschema.invalid_pattern
   description: Invalid DDL pattern. Pattern is untranslated Cypher syntax.
   other: "invalid {{.Pattern}} pattern"

@@ -74,7 +74,7 @@ func TestUnparseableExpressionsAreSyntaxErrors(t *testing.T) {
 					if tc.want == nil {
 						require.Error(t, err)
 						assert.Contains(t, err.Error(), tc.wantErr)
-						assert.Contains(t, err.Error(), "SyntaxError")
+						requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 					} else {
 						require.NoError(t, err)
 						assert.Equal(t, tc.want, res.Rows)

@@ -159,6 +159,16 @@
     es: "Devuelve las propiedades de relación por tipo",
   }
 - {
+    name: db.schema.nodeTypeProperties,
+    en: "Show the derived property schema of the nodes in tabular form.",
+    es: "Muestra en forma de tabla el esquema de propiedades derivado de los nodos.",
+  }
+- {
+    name: db.schema.relTypeProperties,
+    en: "Show the derived property schema of the relationships in tabular form.",
+    es: "Muestra en forma de tabla el esquema de propiedades derivado de las relaciones.",
+  }
+- {
     name: db.schema.visualization,
     en: "Visualizes the schema of the data based on available statistics. A new node is returned for each label. The properties represented on the node include: `name` (label name), `indexes` (list of indexes), and `constraints` (list of constraints). A relationship of a given type is returned for all possible combinations of start and end nodes. The properties represented on the relationship include: `name` (type name). Note that this may include additional relationships that do not exist in the data from independently observed start and end label sets. ",
     es: "Visualiza el esquema",

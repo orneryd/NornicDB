@@ -40,6 +40,9 @@ type CypherParserListener interface {
 	// EnterShowCommand is called when entering the showCommand production.
 	EnterShowCommand(c *ShowCommandContext)
 
+	// EnterShowConstraintKind is called when entering the showConstraintKind production.
+	EnterShowConstraintKind(c *ShowConstraintKindContext)
+
 	// EnterShowTail is called when entering the showTail production.
 	EnterShowTail(c *ShowTailContext)
 
@@ -373,6 +376,9 @@ type CypherParserListener interface {
 	// EnterReduceExpression is called when entering the reduceExpression production.
 	EnterReduceExpression(c *ReduceExpressionContext)
 
+	// EnterAllReduceExpression is called when entering the allReduceExpression production.
+	EnterAllReduceExpression(c *AllReduceExpressionContext)
+
 	// EnterParameter is called when entering the parameter production.
 	EnterParameter(c *ParameterContext)
 
@@ -447,6 +453,9 @@ type CypherParserListener interface {
 
 	// ExitShowCommand is called when exiting the showCommand production.
 	ExitShowCommand(c *ShowCommandContext)
+
+	// ExitShowConstraintKind is called when exiting the showConstraintKind production.
+	ExitShowConstraintKind(c *ShowConstraintKindContext)
 
 	// ExitShowTail is called when exiting the showTail production.
 	ExitShowTail(c *ShowTailContext)
@@ -780,6 +789,9 @@ type CypherParserListener interface {
 
 	// ExitReduceExpression is called when exiting the reduceExpression production.
 	ExitReduceExpression(c *ReduceExpressionContext)
+
+	// ExitAllReduceExpression is called when exiting the allReduceExpression production.
+	ExitAllReduceExpression(c *AllReduceExpressionContext)
 
 	// ExitParameter is called when exiting the parameter production.
 	ExitParameter(c *ParameterContext)
