@@ -144,6 +144,26 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 			}
 		}
 	}
+	// Pure UNWIND + CREATE: every row creates independent new entities —
+	// the stretch reads nothing but the unwind binding — so all rows are
+	// planned into one createPlan and written with one BulkCreateNodes /
+	// one BulkCreateEdges instead of one statement per row (#1043
+	// write-path measurement 6: +27–39% at 16 writers). Any clause that
+	// could read what another row writes (MERGE, SET, MATCH, aggregation
+	// via WITH) keeps the row-by-row route.
+	if strings.HasPrefix(upperRest, "CREATE") &&
+		findKeywordIndexInContext(plan.remainder, "MERGE") < 0 &&
+		findKeywordIndexInContext(plan.remainder, "SET") < 0 &&
+		findKeywordIndexInContext(plan.remainder, "DELETE") < 0 &&
+		findKeywordIndexInContext(plan.remainder, "REMOVE") < 0 &&
+		findKeywordIndexInContext(plan.remainder, "FOREACH") < 0 &&
+		findKeywordIndexInContext(plan.remainder, "MATCH") < 0 &&
+		findKeywordIndexInContext(plan.remainder, "WITH") < 0 &&
+		findKeywordIndexInContext(plan.remainder, "CALL") < 0 &&
+		findKeywordIndexInContext(plan.remainder, "LOAD CSV") < 0 {
+		ctx = context.WithValue(ctx, pipelineIndependentCreateBatchKey{}, true)
+		return e.executeUnwindRowsPipeline(ctx, plan.variable, plan.items, plan.remainder)
+	}
 	return nil, false, nil
 }
 

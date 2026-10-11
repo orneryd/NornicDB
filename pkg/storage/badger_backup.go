@@ -313,9 +313,9 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	if err := b.deleteNamespaceKeyFamilies(prefixBytes, namespace, wholeNamespace, nodeNums, edgeNums); err != nil {
 		return 0, 0, err
 	}
-	// Node dict entries are sharded now: collect the victim IDs shard by
-	// shard, then remove each pair with the sharded helper (the drop is
-	// exclusive, so the two passes race with nothing).
+	// Node and edge dict entries are sharded: collect the victim IDs shard
+	// by shard, then remove each pair with the sharded helpers (the drop is
+	// exclusive, so the passes race with nothing).
 	var nodeVictims []NodeID
 	for i := range b.idDict.nodes {
 		sh := &b.idDict.nodes[i]
@@ -330,14 +330,20 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	for _, id := range nodeVictims {
 		b.idDict.nodePairRemoveByID(id)
 	}
-	b.idDict.mu.Lock()
-	for id, num := range b.idDict.edgeForward {
-		if strings.HasPrefix(string(id), prefix) {
-			delete(b.idDict.edgeForward, id)
-			delete(b.idDict.edgeReverse, num)
+	var edgeVictims []EdgeID
+	for i := range b.idDict.edges {
+		sh := &b.idDict.edges[i]
+		sh.mu.RLock()
+		for id := range sh.forward {
+			if strings.HasPrefix(string(id), prefix) {
+				edgeVictims = append(edgeVictims, id)
+			}
 		}
+		sh.mu.RUnlock()
 	}
-	b.idDict.mu.Unlock()
+	for _, id := range edgeVictims {
+		b.idDict.edgePairRemoveByID(id)
+	}
 	if wholeNamespace {
 		if err := b.dropNamespaceSchema(namespace); err != nil {
 			return 0, 0, err

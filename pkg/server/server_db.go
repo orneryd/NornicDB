@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"

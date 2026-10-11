@@ -2,9 +2,10 @@ package cypher
 
 import (
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 	"sync"
+
+	math "github.com/orneryd/nornicdb/pkg/math/libm"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -49,7 +50,9 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string) error {
 	if findKeywordIndexInContext(cypher, "MERGE") < 0 {
 		return nil
 	}
-	if e.mergeSemanticValidationCache.contains(cypher) {
+	// Literal-heavy statements never repeat a text; skip the shared cache so
+	// they only pay the scan, not the lock (see statementLikelyHasLiterals).
+	if !statementLikelyHasLiterals(cypher) && e.mergeSemanticValidationCache.contains(cypher) {
 		return nil
 	}
 	clauses, ok := splitPipelineClauses(cypher)
@@ -80,7 +83,9 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string) error {
 			}
 		}
 	}
-	e.mergeSemanticValidationCache.add(cypher)
+	if !statementLikelyHasLiterals(cypher) {
+		e.mergeSemanticValidationCache.add(cypher)
+	}
 	return nil
 }
 

@@ -797,6 +797,14 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 }
 
 func cachedKeywordIndexFromDefault(s, keyword string, from int) int {
+	// Corpus-style statements embed their ids as literals, so every text
+	// is new and a cache keyed by text can never hit — it only contends on
+	// the shared bounded cache (88% of lock wait in the PR #1043 write-path
+	// profile). Skip the cache for such statements; the scan is cheap and
+	// the cache stays for parameterized queries, which repeat.
+	if statementLikelyHasLiterals(s) {
+		return keywordIndexFromDefault(s, keyword, from)
+	}
 	key := keywordIndexCacheKey{s: s, keyword: keyword, from: from}
 	if idx, ok := defaultKeywordIndexCache.get(key); ok {
 		return idx
@@ -804,6 +812,27 @@ func cachedKeywordIndexFromDefault(s, keyword string, from int) int {
 	idx := keywordIndexFromDefault(s, keyword, from)
 	defaultKeywordIndexCache.put(key, idx)
 	return idx
+}
+
+// statementLikelyHasLiterals reports whether s carries a string or numeric
+// literal outside backticks. Identifiers cannot contain these characters,
+// so the check only skips caching (never correctness); it errs on the side
+// of true for digit-bearing identifiers like n1, which just means that
+// statement rescans instead of caching.
+func statementLikelyHasLiterals(s string) bool {
+	inBacktick := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '`':
+			inBacktick = !inBacktick
+		case !inBacktick && (c == '\'' || c == '"'):
+			return true
+		case !inBacktick && c >= '0' && c <= '9':
+			return true
+		}
+	}
+	return false
 }
 
 func keywordIndexFromDefault(s, keyword string, from int) int {

@@ -861,6 +861,11 @@ func (e *StorageExecutor) hasCachedValidSyntax(cypher string) bool {
 	if cypher == "" {
 		return false
 	}
+	// Literal-heavy statements never repeat a text, so the cache cannot hit
+	// and only contends (see statementLikelyHasLiterals).
+	if statementLikelyHasLiterals(cypher) {
+		return false
+	}
 	c := e.ensureSyntaxValidationCache()
 	c.mu.RLock()
 	_, ok := c.cache[cypher]
@@ -869,7 +874,7 @@ func (e *StorageExecutor) hasCachedValidSyntax(cypher string) bool {
 }
 
 func (e *StorageExecutor) markCachedValidSyntax(cypher string) {
-	if cypher == "" {
+	if cypher == "" || statementLikelyHasLiterals(cypher) {
 		return
 	}
 	c := e.ensureSyntaxValidationCache()

@@ -112,15 +112,39 @@ func nodeReverseShard(num uint64) int {
 	return int(num % nodeDictShards)
 }
 
+// edgeDictShard is one slice of the edge ID dictionary, sharded the same
+// way as nodes: every created relationship writes its forward/reverse pair
+// through this dictionary, so the single shared lock serialized bulk edge
+// creation under concurrency.
+type edgeDictShard struct {
+	mu      sync.RWMutex
+	forward map[EdgeID]uint64
+	reverse map[uint64]EdgeID
+}
+
+// edgeForwardShard picks the shard of an edge's forward entry.
+func edgeForwardShard(id EdgeID) int {
+	var h uint32 = 2166136261
+	for i := 0; i < len(id); i++ {
+		h ^= uint32(id[i])
+		h *= 16777619
+	}
+	return int(h % nodeDictShards)
+}
+
+// edgeReverseShard picks the shard of an edge's reverse entry.
+func edgeReverseShard(num uint64) int {
+	return int(num % nodeDictShards)
+}
+
 type idDictionary struct {
-	// nodeForward / nodeReverse are sharded into nodes[]: each shard has
-	// its own RWMutex, so concurrent creates of distinct nodes no longer
-	// serialize on one dictionary-wide lock. Edge maps stay under mu
-	// (they share it with freelistTTL).
-	mu          sync.RWMutex
-	nodes       [nodeDictShards]nodeDictShard
-	edgeForward map[EdgeID]uint64
-	edgeReverse map[uint64]EdgeID
+	// nodeForward / nodeReverse and edgeForward / edgeReverse are sharded
+	// into nodes[] / edges[]: each shard has its own RWMutex, so
+	// concurrent creates of distinct entities no longer serialize on one
+	// dictionary-wide lock. mu guards freelistTTL only.
+	mu    sync.RWMutex
+	nodes [nodeDictShards]nodeDictShard
+	edges [nodeDictShards]edgeDictShard
 
 	// Counters for next available numID; also persisted so we don't
 	// reuse IDs across restarts.
@@ -172,14 +196,16 @@ type txnCounterState struct {
 
 func newIDDictionary() *idDictionary {
 	d := &idDictionary{
-		edgeForward: make(map[EdgeID]uint64),
-		edgeReverse: make(map[uint64]EdgeID),
 		freelistTTL: defaultIDFreelistTTL,
 		txnCounters: make(map[*badger.Txn]*txnCounterState),
 	}
 	for i := range d.nodes {
 		d.nodes[i].forward = make(map[NodeID]uint64)
 		d.nodes[i].reverse = make(map[uint64]NodeID)
+	}
+	for i := range d.edges {
+		d.edges[i].forward = make(map[EdgeID]uint64)
+		d.edges[i].reverse = make(map[uint64]EdgeID)
 	}
 	return d
 }
@@ -509,8 +535,8 @@ func (d *idDictionary) loadFromBadger(db badgerViewer) error {
 					it.Close()
 					return err
 				}
-				d.edgeForward[id] = num
-				d.edgeReverse[num] = id
+				d.edges[edgeForwardShard(id)].forward[id] = num
+				d.edges[edgeReverseShard(num)].reverse[num] = id
 				if num > maxEdgeNum {
 					maxEdgeNum = num
 				}
@@ -691,6 +717,87 @@ func (d *idDictionary) nodePairRemoveByNum(num uint64) (NodeID, bool) {
 	return id, true
 }
 
+// edgeForwardLookup returns the numeric ID for an edge string ID.
+func (d *idDictionary) edgeForwardLookup(id EdgeID) (uint64, bool) {
+	sh := &d.edges[edgeForwardShard(id)]
+	sh.mu.RLock()
+	num, ok := sh.forward[id]
+	sh.mu.RUnlock()
+	return num, ok
+}
+
+// edgeReverseLookup returns the string edge ID for a numeric ID.
+func (d *idDictionary) edgeReverseLookup(num uint64) (EdgeID, bool) {
+	sh := &d.edges[edgeReverseShard(num)]
+	sh.mu.RLock()
+	id, ok := sh.reverse[num]
+	sh.mu.RUnlock()
+	return id, ok
+}
+
+// edgePairStore installs forward[id] = num and reverse[num] = id, forward
+// first so a reverse reader never sees a num before its forward entry.
+// When another goroutine already stored a num for id it returns that num
+// with ok=false (the caller adopts it).
+func (d *idDictionary) edgePairStore(id EdgeID, num uint64) (uint64, bool) {
+	fshard := &d.edges[edgeForwardShard(id)]
+	fshard.mu.Lock()
+	if existing, already := fshard.forward[id]; already {
+		fshard.mu.Unlock()
+		return existing, false
+	}
+	fshard.forward[id] = num
+	fshard.mu.Unlock()
+	rshard := &d.edges[edgeReverseShard(num)]
+	rshard.mu.Lock()
+	rshard.reverse[num] = id
+	rshard.mu.Unlock()
+	return num, true
+}
+
+// edgePairRemoveByID removes forward[id] and the matching reverse entry.
+func (d *idDictionary) edgePairRemoveByID(id EdgeID) (uint64, bool) {
+	fshard := &d.edges[edgeForwardShard(id)]
+	fshard.mu.Lock()
+	num, ok := fshard.forward[id]
+	if ok {
+		delete(fshard.forward, id)
+	}
+	fshard.mu.Unlock()
+	if !ok {
+		return 0, false
+	}
+	rshard := &d.edges[edgeReverseShard(num)]
+	rshard.mu.Lock()
+	if rshard.reverse[num] == id {
+		delete(rshard.reverse, num)
+	}
+	rshard.mu.Unlock()
+	return num, true
+}
+
+// edgePairRemoveByNum removes reverse[num] and the matching forward entry;
+// the forward delete is value-guarded against a reissued num.
+func (d *idDictionary) edgePairRemoveByNum(num uint64) (EdgeID, bool) {
+	rshard := &d.edges[edgeReverseShard(num)]
+	rshard.mu.Lock()
+	id, ok := rshard.reverse[num]
+	if ok {
+		delete(rshard.reverse, num)
+	}
+	rshard.mu.Unlock()
+	if !ok {
+		return "", false
+	}
+	fshard := &d.edges[edgeForwardShard(id)]
+	fshard.mu.Lock()
+	if fshard.forward[id] == num {
+		delete(fshard.forward, id)
+	}
+	fshard.mu.Unlock()
+	return id, true
+}
+
 // resolveOrAllocateNodeNumIDInTxn returns the 8-byte numeric ID for the
 // given node string ID, allocating a fresh one (and persisting it) on
 // first sight. Must be called inside an update txn.
@@ -763,13 +870,10 @@ func (d *idDictionary) lookupNodeIDByNum(num uint64) (NodeID, bool) {
 // resolveOrAllocateEdgeNumIDInTxn is the edge analogue of
 // resolveOrAllocateNodeNumIDInTxn.
 func (d *idDictionary) resolveOrAllocateEdgeNumIDInTxn(txn kvWriter, id EdgeID) (uint64, error) {
-	d.mu.RLock()
-	if num, ok := d.edgeForward[id]; ok {
-		d.mu.RUnlock()
+	if num, ok := d.edgeForwardLookup(id); ok {
 		return num, nil
 	}
-	ttl := d.freelistTTL
-	d.mu.RUnlock()
+	ttl := d.currentFreelistTTL()
 	if ttl <= 0 {
 		ttl = defaultIDFreelistTTL
 	}
@@ -797,14 +901,9 @@ func (d *idDictionary) resolveOrAllocateEdgeNumIDInTxn(txn kvWriter, id EdgeID) 
 		d.recordTxnCounterUse(kvWriterTxn(txn), freelistKindEdge, num)
 	}
 
-	d.mu.Lock()
-	if existing, already := d.edgeForward[id]; already {
-		d.mu.Unlock()
-		return existing, nil
+	if adopted, stored := d.edgePairStore(id, num); !stored {
+		return adopted, nil
 	}
-	d.edgeForward[id] = num
-	d.edgeReverse[num] = id
-	d.mu.Unlock()
 	return num, nil
 }
 
@@ -844,10 +943,7 @@ func (b *BadgerEngine) IDDictFreelistPending() (nodes, edges int64) {
 // lookupEdgeIDByNum returns the string edge ID for a numeric ID, or
 // ("", false) if not present.
 func (d *idDictionary) lookupEdgeIDByNum(num uint64) (EdgeID, bool) {
-	d.mu.RLock()
-	id, ok := d.edgeReverse[num]
-	d.mu.RUnlock()
-	return id, ok
+	return d.edgeReverseLookup(num)
 }
 
 // deleteNodeEntryInTxn removes the forward and reverse dict entries for
@@ -887,13 +983,7 @@ func (d *idDictionary) forgetNodeCache(id NodeID) {
 
 // forgetEdgeCache is the edge analogue of forgetNodeCache.
 func (d *idDictionary) forgetEdgeCache(id EdgeID) {
-	d.mu.Lock()
-	num, ok := d.edgeForward[id]
-	if ok {
-		delete(d.edgeForward, id)
-		delete(d.edgeReverse, num)
-	}
-	d.mu.Unlock()
+	d.edgePairRemoveByID(id)
 }
 
 // deleteNodeEntryByNumInTxn removes both dict keys for a node addressed
@@ -916,13 +1006,7 @@ func (d *idDictionary) deleteNodeEntryByNumInTxn(txn *badger.Txn, num uint64) er
 
 // deleteEdgeEntryByNumInTxn is the edge analogue.
 func (d *idDictionary) deleteEdgeEntryByNumInTxn(txn *badger.Txn, num uint64) error {
-	d.mu.Lock()
-	id, ok := d.edgeReverse[num]
-	if ok {
-		delete(d.edgeForward, id)
-		delete(d.edgeReverse, num)
-	}
-	d.mu.Unlock()
+	id, ok := d.edgePairRemoveByNum(num)
 	var numBytes [8]byte
 	binary.BigEndian.PutUint64(numBytes[:], num)
 	if err := txn.Delete(append([]byte{prefixIDDictEdgeReverse}, numBytes[:]...)); err != nil {
@@ -938,15 +1022,10 @@ func (d *idDictionary) deleteEdgeEntryByNumInTxn(txn *badger.Txn, num uint64) er
 
 // deleteEdgeEntryInTxn is the edge analogue of deleteNodeEntryInTxn.
 func (d *idDictionary) deleteEdgeEntryInTxn(txn *badger.Txn, id EdgeID) error {
-	d.mu.Lock()
-	num, ok := d.edgeForward[id]
+	num, ok := d.edgePairRemoveByID(id)
 	if !ok {
-		d.mu.Unlock()
 		return nil
 	}
-	delete(d.edgeForward, id)
-	delete(d.edgeReverse, num)
-	d.mu.Unlock()
 	if err := txn.Delete(edgeIDForwardKey(id)); err != nil {
 		return err
 	}
@@ -965,10 +1044,7 @@ func (d *idDictionary) lookupNodeNumID(id NodeID) (uint64, bool) {
 
 // lookupEdgeNumID is the edge analogue of lookupNodeNumID.
 func (d *idDictionary) lookupEdgeNumID(id EdgeID) (uint64, bool) {
-	d.mu.RLock()
-	num, ok := d.edgeForward[id]
-	d.mu.RUnlock()
-	return num, ok
+	return d.edgeForwardLookup(id)
 }
 
 // encodeNumID writes a numeric ID as 8 big-endian bytes (for key
@@ -990,8 +1066,13 @@ func (d *idDictionary) replaceWith(fresh *idDictionary) {
 		sh.forward, sh.reverse = fresh.nodes[i].forward, fresh.nodes[i].reverse
 		sh.mu.Unlock()
 	}
+	for i := range d.edges {
+		sh := &d.edges[i]
+		sh.mu.Lock()
+		sh.forward, sh.reverse = fresh.edges[i].forward, fresh.edges[i].reverse
+		sh.mu.Unlock()
+	}
 	d.mu.Lock()
-	d.edgeForward, d.edgeReverse = fresh.edgeForward, fresh.edgeReverse
 	d.nextNode.Store(fresh.nextNode.Load())
 	d.nextEdge.Store(fresh.nextEdge.Load())
 	d.nodeFreelistPending.Store(fresh.nodeFreelistPending.Load())
