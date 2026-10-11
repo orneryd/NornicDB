@@ -16,30 +16,6 @@ import (
 // row. Unlike the graph-only evaluator, a row may also contain scalar, map,
 // and list bindings introduced by WITH or UNWIND.
 
-// containsCASEKeyword reports whether expr contains the CASE keyword outside
-// quoted literals. The row evaluator delegates compound CASE-containing
-// expressions to the shared evaluator, whose operator scanner is CASE-aware.
-func containsCASEKeyword(expr string) bool {
-	quote := byte(0)
-	for i := 0; i+4 <= len(expr); i++ {
-		ch := expr[i]
-		if quote != 0 {
-			if ch == quote && !isBackslashEscaped(expr, i) {
-				quote = 0
-			}
-			continue
-		}
-		if ch == '\'' || ch == '"' {
-			quote = ch
-			continue
-		}
-		if matchKeywordAt(expr, i, "CASE") {
-			return true
-		}
-	}
-	return false
-}
-
 // rowArithmeticResult is the row evaluator's result of left op right, given
 // the value helper's result: the value, null for a null operand, the
 // statement error (INTEGER division by zero, INTEGER overflow, an operand
@@ -150,21 +126,6 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 	}
 	if isCaseExpression(expr) {
 		return e.evaluateRowCaseExpression(expr, values)
-	}
-	// A CASE nested inside a compound expression (acc + CASE … END): the row
-	// comparison chain would misread the `>` inside WHEN conditions as a
-	// top-level comparison. Delegate the whole expression to the shared
-	// evaluator, whose operator scans are CASE-aware. When the shared
-	// evaluator does not recognize the shape, fall through to the row
-	// branches (reduce over a CASE reduction and friends).
-	if containsCASEKeyword(expr) {
-		value, err := e.evaluateRowFallback(expr, values)
-		if err != nil {
-			return nil, false, err
-		}
-		if text, ok := value.(string); !ok || text != expr || isWholeCypherQuotedString(expr) {
-			return value, true, nil
-		}
 	}
 	if value, matched, resolved, err := e.evaluateRowMapProjection(expr, values); matched {
 		return value, resolved, err
