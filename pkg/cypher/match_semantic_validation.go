@@ -124,7 +124,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
 							fmt.Sprintf("variable %s is already declared", projection.alias))
 					}
-					kind := matchBindingValue
+					kind := projectedExpressionSemanticKind(projection.expression, scope)
 					if bound, exists := scope[simpleSemanticIdentifier(projection.expression)]; exists {
 						kind = bound
 					}
@@ -961,9 +961,11 @@ func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSem
 			}
 		} else if inferred, ok := coalesceSemanticKind(expression, input); ok {
 			kind = inferred
-		} else if relationshipListLiteral(expression, input) {
-			kind = matchBindingRelationshipList
-		} else if aggregateName, aggregateExpression, _, aggregate := parsePipelineAggregate(expression); aggregate && aggregateName == "collect" {
+		} else if listKind, entities := entityListLiteralKind(expression, input); entities {
+			kind = listKind
+		} else if aggregateName, aggregateExpression, _, aggregate := parsePipelineAggregate(expression); !aggregate {
+			kind = projectedExpressionSemanticKind(expression, input)
+		} else if aggregateName == "collect" {
 			if source := simpleSemanticIdentifier(aggregateExpression); source != "" {
 				switch input[source] {
 				case matchBindingNode:
@@ -984,6 +986,45 @@ func unwindSourceExpression(clause string) string {
 	return expression
 }
 
+// projectedExpressionSemanticKind is the binding kind of a projected
+// expression that isn't a bare variable, as Neo4j types it before the
+// statement runs: a value (never a node or relationship) when its type is
+// known (a literal, arithmetic over known types, a node's or relationship's
+// property, a call with a known result type); the entity an element of a node
+// or relationship list is; and unknown otherwise (a map's member x.node, an
+// element of a list of unknown elements), which Neo4j accepts in a pattern
+// and checks when the row runs.
+func projectedExpressionSemanticKind(expression string, input matchSemanticScope) matchBindingKind {
+	expression = strings.TrimSpace(expression)
+	if name, end, ok := scanIdentifierToken(expression, 0); ok && end < len(expression) && expression[end] == '[' &&
+		findMatchingDelimiter(expression, end, '[', ']') == len(expression)-1 && !strings.Contains(expression[end:], "..") {
+		switch input[name] {
+		case matchBindingNodeList:
+			return matchBindingNode
+		case matchBindingRelationshipList:
+			return matchBindingRelationship
+		}
+		return matchBindingUnknown
+	}
+	if variable, _, property := parseVarPropertyRef(expression); property && simpleSemanticIdentifier(variable) == variable {
+		switch input[variable] {
+		case matchBindingNode, matchBindingRelationship:
+			return matchBindingValue
+		}
+		return matchBindingUnknown
+	}
+	typeName := (staticTypeScope{kinds: input}).staticExpressionType(expression)
+	if function, arguments, call := parseFunctionCallWS(expression); typeName == "" && call {
+		typeName = staticFunctionResultType(function, arguments)
+	}
+	// A bare variable is resolved by the caller; a literal, arithmetic or a
+	// call with a static result type is never a node or relationship.
+	if typeName == "" {
+		return matchBindingUnknown
+	}
+	return matchBindingValue
+}
+
 func unwindMatchSemanticKind(clause string, scope matchSemanticScope) matchBindingKind {
 	body := unwindSourceExpression(clause)
 	if source := simpleSemanticIdentifier(body); source != "" {
@@ -996,7 +1037,13 @@ func unwindMatchSemanticKind(clause string, scope matchSemanticScope) matchBindi
 			return matchBindingUnknown
 		}
 	}
-	if strings.HasPrefix(strings.TrimSpace(body), "[") || matchFuncStartAndSuffix(body, "range") {
+	switch listKind, _ := entityListLiteralKind(body, scope); listKind {
+	case matchBindingNodeList:
+		return matchBindingNode
+	case matchBindingRelationshipList:
+		return matchBindingRelationship
+	}
+	if typeName := staticLiteralTypeName(body); (typeName != "" && typeName != "List<T>") || matchFuncStartAndSuffix(body, "range") {
 		return matchBindingValue
 	}
 	return matchBindingUnknown
@@ -1043,22 +1090,31 @@ func variableLengthRelationshipVariableSet(pattern string) map[string]struct{} {
 	return result
 }
 
-func relationshipListLiteral(expression string, scope matchSemanticScope) bool {
+// entityListLiteralKind is the kind of a list literal of node variables
+// ([a, b] is a List<Node>) or of relationship variables; ok is false for any
+// other expression.
+func entityListLiteralKind(expression string, scope matchSemanticScope) (matchBindingKind, bool) {
 	expression = strings.TrimSpace(expression)
 	if len(expression) < 2 || expression[0] != '[' || expression[len(expression)-1] != ']' {
-		return false
+		return matchBindingUnknown, false
 	}
 	items := splitTopLevelComma(expression[1 : len(expression)-1])
 	if len(items) == 0 {
-		return false
+		return matchBindingUnknown, false
 	}
+	element := matchBindingUnknown
 	for _, item := range items {
 		name := simpleSemanticIdentifier(item)
-		if name == "" || scope[name] != matchBindingRelationship {
-			return false
+		kind := scope[name]
+		if name == "" || (kind != matchBindingNode && kind != matchBindingRelationship) || (element != matchBindingUnknown && kind != element) {
+			return matchBindingUnknown, false
 		}
+		element = kind
 	}
-	return true
+	if element == matchBindingNode {
+		return matchBindingNodeList, true
+	}
+	return matchBindingRelationshipList, true
 }
 
 func invalidRelationshipPattern(pattern string) bool {
