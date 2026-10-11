@@ -968,11 +968,8 @@ func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(nodeID NodeID, outgoing b
 			if !ok {
 				continue
 			}
-			if _, deleted := tx.deletedEdges[edgeID]; deleted {
-				continue
-			}
-			if _, pending := tx.pendingEdges[edgeID]; pending {
-				continue // count the pending version below instead
+			if tx.committedEdgeSupersededLocked(edgeID) {
+				continue // a rewritten edge is counted as pending below
 			}
 			edge, err := tx.getCommittedEdgeLocked(edgeID)
 			if err != nil {
