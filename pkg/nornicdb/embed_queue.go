@@ -916,10 +916,12 @@ func (ew *EmbedWorker) processNextResolvedBatch() bool {
 			}
 			continue
 		}
+		sources := make([]embeddingutil.EmbedText, len(group.nodes))
 		texts := make([]string, len(group.nodes))
 		properties := make([]map[string]any, len(group.nodes))
 		for index, node := range group.nodes {
-			texts[index] = embeddingutil.BuildText(node.Properties, node.Labels, opts)
+			sources[index] = embeddingutil.BuildEmbedText(node.Properties, node.Labels, opts)
+			texts[index] = sources[index].Text
 			properties[index] = node.Properties
 		}
 		var results []*embed.DocumentChunkResult
@@ -953,7 +955,7 @@ func (ew *EmbedWorker) processNextResolvedBatch() bool {
 				ew.releaseNodeClaim(node.ID)
 				continue
 			}
-			ew.persistEmbeddedNode(node, results[index].Embeddings, documentResultMeta(results[index]), group.provider)
+			ew.persistEmbeddedNode(node, sources[index], results[index].Chunks, results[index].Embeddings, documentResultMeta(results[index]), group.provider)
 			ew.releaseNodeClaim(node.ID)
 		}
 	}
@@ -1019,12 +1021,14 @@ func (ew *EmbedWorker) processClaimedNode(node *storage.Node, provider embed.Emb
 	}
 	// Build text for embedding (labels and properties per config include/exclude)
 	opts := embeddingutil.EmbedTextOptionsFromFields(ew.config.PropertiesInclude, ew.config.PropertiesExclude, ew.config.IncludeLabels)
-	text := embeddingutil.BuildText(node.Properties, node.Labels, opts)
+	source := embeddingutil.BuildEmbedText(node.Properties, node.Labels, opts)
+	text := source.Text
 
 	// Embed documents through the provider-managed document path when available.
 	// Voyage contextualized mode uses this to return provider-generated chunks;
 	// other providers fall back to deterministic local chunking + micro-batches.
 	propertyEmbedder, usesProperties := provider.(embed.DocumentPropertyChunkEmbedder)
+	var chunks []string
 	var embeddings [][]float32
 	var providerMeta map[string]any
 	var err error
@@ -1033,11 +1037,12 @@ func (ew *EmbedWorker) processClaimedNode(node *storage.Node, provider embed.Emb
 		result, err = propertyEmbedder.EmbedDocumentPropertyChunks(ew.ctx, text, node.Properties, ew.config.ChunkSize, ew.config.ChunkOverlap)
 		ew.waitAfterProviderRequest()
 		if result != nil {
+			chunks = result.Chunks
 			embeddings = result.Embeddings
 			providerMeta = documentResultMeta(result)
 		}
 	} else {
-		_, embeddings, providerMeta, err = ew.embedDocumentWith(provider, text, node.ID)
+		chunks, embeddings, providerMeta, err = ew.embedDocumentWith(provider, text, node.ID)
 	}
 	if err != nil {
 		ew.failed.Add(1)
@@ -1052,7 +1057,7 @@ func (ew *EmbedWorker) processClaimedNode(node *storage.Node, provider embed.Emb
 	}
 	ew.clearProviderFailure(provider)
 
-	return ew.persistEmbeddedNode(node, embeddings, providerMeta, provider)
+	return ew.persistEmbeddedNode(node, source, chunks, embeddings, providerMeta, provider)
 }
 
 // processNextDocumentBatch embeds a batch of nodes with batcher, the batch
@@ -1087,9 +1092,11 @@ func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher
 	}
 
 	opts := embeddingutil.EmbedTextOptionsFromFields(ew.config.PropertiesInclude, ew.config.PropertiesExclude, ew.config.IncludeLabels)
+	sources := make([]embeddingutil.EmbedText, len(nodes))
 	texts := make([]string, len(nodes))
 	for i, node := range nodes {
-		texts[i] = embeddingutil.BuildText(node.Properties, node.Labels, opts)
+		sources[i] = embeddingutil.BuildEmbedText(node.Properties, node.Labels, opts)
+		texts[i] = sources[i].Text
 	}
 	results, resultErrors := ew.embedDocumentBatchIsolated(batcher, texts)
 	ew.recordProviderBatchOutcome(provider, resultErrors)
@@ -1112,7 +1119,7 @@ func (ew *EmbedWorker) processNextDocumentBatch(provider embed.Embedder, batcher
 			ew.releaseNodeClaim(node.ID)
 			continue
 		}
-		ew.persistEmbeddedNode(node, result.Embeddings, documentResultMeta(result), provider)
+		ew.persistEmbeddedNode(node, sources[i], result.Chunks, result.Embeddings, documentResultMeta(result), provider)
 		ew.releaseNodeClaim(node.ID)
 	}
 	ew.signalTrigger()
@@ -1199,7 +1206,10 @@ func documentResultMeta(result *embed.DocumentChunkResult) map[string]any {
 	return meta
 }
 
-func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, embeddings [][]float32, providerMeta map[string]any, provider embed.Embedder) bool {
+// persistEmbeddedNode writes node's embedding: its chunk vectors, and
+// metadata including where each chunk (cut from source) lies in node's
+// string properties (#1060).
+func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, source embeddingutil.EmbedText, chunks []string, embeddings [][]float32, providerMeta map[string]any, provider embed.Embedder) bool {
 	if len(embeddings) == 0 || embeddings[0] == nil || len(embeddings[0]) == 0 {
 		fmt.Printf("⚠️  Failed to generate embedding for node %s: empty embedding\n", node.ID)
 		ew.failed.Add(1)
@@ -1216,6 +1226,7 @@ func (ew *EmbedWorker) persistEmbeddedNode(node *storage.Node, embeddings [][]fl
 	for key, value := range providerMeta {
 		node.EmbedMeta[key] = value
 	}
+	embeddingutil.RecordChunkSpans(node, source, chunks)
 
 	// The worker writes ONLY the embedding key space (chunk vectors plus the
 	// metadata record): no node-record transaction, no MVCC version, no

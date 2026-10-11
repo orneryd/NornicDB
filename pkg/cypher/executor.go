@@ -1896,7 +1896,8 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 		if node == nil {
 			continue
 		}
-		text := embeddingutil.BuildText(node.Properties, node.Labels, e.inlineEmbeddingTextOptions)
+		source := embeddingutil.BuildEmbedText(node.Properties, node.Labels, e.inlineEmbeddingTextOptions)
+		text := source.Text
 		chunks, err := e.embedder.ChunkText(text, e.inlineEmbeddingChunkSize, e.inlineEmbeddingChunkOverlap)
 		if err != nil {
 			return localizedError(localization.CypherCoreEmbeddingChunkFailed(id, err), err)
@@ -1934,6 +1935,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 			}
 		}
 		embeddingutil.ApplyManagedEmbedding(node, embeddings, model, dimensions, time.Now())
+		embeddingutil.RecordChunkSpans(node, source, chunks)
 		if err := store.UpdateNode(node); err != nil {
 			return err
 		}

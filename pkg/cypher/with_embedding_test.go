@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -52,6 +53,13 @@ func TestWithEmbedding_CreateMutation(t *testing.T) {
 	require.Equal(t, true, nodes[0].EmbedMeta["has_embedding"])
 	require.Equal(t, "test-inline", nodes[0].EmbedMeta["embedding_model"])
 	require.Equal(t, 3, nodes[0].EmbedMeta["embedding_dimensions"])
+	// Where each chunk lies in the node's string properties (#1060).
+	spans, ok := embeddingutil.StoredChunkSpans(nodes[0].EmbedMeta)
+	require.True(t, ok)
+	require.NotEmpty(t, spans)
+	for _, span := range spans {
+		require.Contains(t, []string{"content", "id"}, span.Property)
+	}
 }
 
 func TestWithEmbedding_MultiCreateMutation(t *testing.T) {
