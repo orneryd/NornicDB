@@ -1354,9 +1354,14 @@ func setPropertyMapValue(value interface{}, operator string) (map[string]interfa
 	return props, nil
 }
 
-// evaluateSetExpressionWithContext evaluates SET clause expressions with context.
+// evaluateSetExpressionWithContext evaluates a SET (or MERGE ON CREATE / ON
+// MATCH SET) value over the clause's nodes and relationships and the value
+// scope of ctx, with the row evaluator RETURN and WITH use: a value written
+// is the value the same expression projects ([1 > 2] is [false], n.l[0] + 1
+// reads the list).
 func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
-	return e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
+	value, _ := e.evaluateRowExpressionWithContext(ctx, expr, entityRow(ctx, nodes, rels))
+	return value
 }
 
 // mergeBindingRow is the row a MERGE's RETURN reads: the values bound in
