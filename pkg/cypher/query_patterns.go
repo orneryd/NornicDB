@@ -513,8 +513,6 @@ func isReturnEdgePropertyAggNameShape(query string, relVar string, propName stri
 	return true
 }
 
-// extractNodeVariables extracts node variable names from a MATCH pattern,
-// plain or backtick-quoted (`n n`, as written).
 // functionCallParenAt reports whether the '(' at text[open] opens a function
 // call's arguments (size(kinds), n.f(x)) rather than a node pattern: it
 // directly follows a name that isn't a clause keyword (MATCH(n), WHERE(...)
@@ -535,6 +533,10 @@ func functionCallParenAt(text string, open int) bool {
 	return true
 }
 
+// extractNodeVariables extracts node variable names from a MATCH pattern,
+// plain or backtick-quoted (`n n`, as written). A parenthesis that opens a
+// function call's arguments or an expression starting with a subquery
+// (EXISTS { … } AND …) is not a node.
 func extractNodeVariables(matchClause string) []string {
 	var vars []string
 	for i := 0; i < len(matchClause); i++ {
@@ -561,6 +563,9 @@ func extractNodeVariables(matchClause string) []string {
 		j := i + 1
 		for j < len(matchClause) && isWhitespace(matchClause[j]) {
 			j++
+		}
+		if _, _, subquery := subqueryExpressionKeywordAt(matchClause, j); subquery {
+			continue
 		}
 		name, next, ok := scanSymbolicName(matchClause, j)
 		if !ok {
