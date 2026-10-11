@@ -3087,15 +3087,34 @@ func (tx *BadgerTransaction) committedConstraintNodesLocked(label string) ([]*No
 	}
 	kept := nodes[:0]
 	for _, node := range nodes {
-		if _, deleted := tx.deletedNodes[node.ID]; deleted {
-			continue
+		if !tx.committedNodeSupersededLocked(node.ID) {
+			kept = append(kept, node)
 		}
-		if _, rewritten := tx.pendingNodes[node.ID]; rewritten {
-			continue
-		}
-		kept = append(kept, node)
 	}
 	return kept, nil
+}
+
+// committedNodeSupersededLocked reports whether the transaction no longer sees
+// a committed node as stored: it deletes the node, or rewrites it (its pending
+// version is what the transaction sees, and is checked as pending).
+// Constraint checks against committed data skip such nodes, so a value a
+// node gives up in the transaction is free for another (#907).
+func (tx *BadgerTransaction) committedNodeSupersededLocked(id NodeID) bool {
+	if _, deleted := tx.deletedNodes[id]; deleted {
+		return true
+	}
+	_, rewritten := tx.pendingNodes[id]
+	return rewritten
+}
+
+// committedEdgeSupersededLocked is committedNodeSupersededLocked for a
+// relationship.
+func (tx *BadgerTransaction) committedEdgeSupersededLocked(id EdgeID) bool {
+	if _, deleted := tx.deletedEdges[id]; deleted {
+		return true
+	}
+	_, rewritten := tx.pendingEdges[id]
+	return rewritten
 }
 
 // nodeExists checks if a node exists (pending or storage).
@@ -3528,10 +3547,8 @@ func (tx *BadgerTransaction) checkUniqueConstraint(node *Node, c Constraint) err
 
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
 	if existingNode, found, cacheComplete, constrained := schema.lookupUniqueConstraintValueForValidation(c.Label, prop, value); constrained && cacheComplete {
-		if found && existingNode != node.ID {
-			if _, deleted := tx.deletedNodes[existingNode]; !deleted {
-				return uniqueConstraintViolation(c.Label, prop, value, existingNode)
-			}
+		if found && existingNode != node.ID && !tx.committedNodeSupersededLocked(existingNode) {
+			return uniqueConstraintViolation(c.Label, prop, value, existingNode)
 		}
 		return nil
 	}
@@ -4111,7 +4128,7 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, c Constraint, names
 	}
 	nsPrefix := namespace + ":"
 	for _, existingEdge := range existingEdges {
-		if existingEdge.ID == edge.ID {
+		if existingEdge.ID == edge.ID || tx.committedEdgeSupersededLocked(existingEdge.ID) {
 			continue
 		}
 		// Filter to same namespace to avoid cross-database false positives
@@ -4185,7 +4202,7 @@ func (tx *BadgerTransaction) checkEdgeTemporalConstraint(edge *Edge, c Constrain
 		return err
 	}
 	for _, existingEdge := range existingEdges {
-		if existingEdge.ID == edge.ID {
+		if existingEdge.ID == edge.ID || tx.committedEdgeSupersededLocked(existingEdge.ID) {
 			continue
 		}
 		if namespace != "" && !strings.HasPrefix(string(existingEdge.ID), nsPrefix) {
@@ -4260,12 +4277,8 @@ func (tx *BadgerTransaction) checkEdgeCardinality(edge *Edge, c Constraint, name
 		if namespace != "" && !strings.HasPrefix(string(existingEdge.ID), nsPrefix) {
 			continue
 		}
-		// Skip edges that are deleted in this transaction.
-		if _, deleted := tx.deletedEdges[existingEdge.ID]; deleted {
-			continue
-		}
-		// Skip edges already counted as pending (they may have been updated).
-		if _, isPending := tx.pendingEdges[existingEdge.ID]; isPending {
+		// Edges deleted here don't count; rewritten ones are counted as pending.
+		if tx.committedEdgeSupersededLocked(existingEdge.ID) {
 			continue
 		}
 		count++
