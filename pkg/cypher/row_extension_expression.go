@@ -150,18 +150,11 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		return string(encoded), true, err == nil, nil
 	case "apoc.convert.fromjsonmap", "apoc.convert.fromjsonlist":
 		value, ok := one()
-		text, textOK := value.(string)
-		if !ok || !textOK {
+		if !ok {
 			return nil, true, false, nil
 		}
-		if name == "apoc.convert.fromjsonmap" {
-			var result map[string]interface{}
-			err := json.Unmarshal([]byte(text), &result)
-			return result, true, err == nil, nil
-		}
-		var result []interface{}
-		err := json.Unmarshal([]byte(text), &result)
-		return result, true, err == nil, nil
+		result, decoded := apocConvertFromJSON(name == "apoc.convert.fromjsonmap", value)
+		return result, true, decoded, nil
 	case "apoc.meta.type":
 		value, ok := one()
 		return apocValueTypeName(value), true, ok, nil

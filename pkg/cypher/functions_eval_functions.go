@@ -1568,36 +1568,17 @@ skipArrayIndexing:
 		return string(jsonBytes)
 	}
 
-	// apoc.convert.fromJsonMap(json) - Parse JSON string to map
-	if isFunctionCall(expr, "apoc.convert.fromjsonmap") {
-		inner := strings.TrimSpace(extractFuncArgs(expr, "apoc.convert.fromjsonmap"))
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		jsonStr, ok := val.(string)
-		if !ok {
-			return nil
+	// apoc.convert.fromJsonMap / fromJsonList(json) (apocConvertFromJSON)
+	for _, function := range [...]string{"apoc.convert.fromjsonmap", "apoc.convert.fromjsonlist"} {
+		if isFunctionCall(expr, function) {
+			inner := strings.TrimSpace(extractFuncArgs(expr, function))
+			value := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			result, ok := apocConvertFromJSON(function == "apoc.convert.fromjsonmap", value)
+			if !ok {
+				return nil
+			}
+			return result
 		}
-		jsonStr = strings.Trim(jsonStr, "'\"")
-		var result map[string]interface{}
-		if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
-			return nil
-		}
-		return result
-	}
-
-	// apoc.convert.fromJsonList(json) - Parse JSON string to list
-	if isFunctionCall(expr, "apoc.convert.fromjsonlist") {
-		inner := strings.TrimSpace(extractFuncArgs(expr, "apoc.convert.fromjsonlist"))
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		jsonStr, ok := val.(string)
-		if !ok {
-			return nil
-		}
-		jsonStr = strings.Trim(jsonStr, "'\"")
-		var result []interface{}
-		if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
-			return nil
-		}
-		return result
 	}
 
 	// apoc.meta.type(value) - Get the Cypher type name of a value
