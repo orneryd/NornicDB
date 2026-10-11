@@ -655,11 +655,15 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// result behind. The search index is updated after the graph (a node's
 	// vector is indexed after its embedding is saved), so a search procedure
 	// that ran in between would otherwise keep its result until the TTL
-	// (#945). The key carries the language version: the same text can mean
-	// different things in Cypher 5 and Cypher 25 (#907).
+	// (#945). The key carries a language version other than the default 5:
+	// the same text can mean different things in Cypher 5 and Cypher 25
+	// (#907); a Cypher 5 key pays for no version text.
 	resultCacheKey := ""
 	if info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) {
-		resultCacheKey = resultCacheEntryKey(cypher, params) + ":cypher:" + cypherVersionFromContext(ctx)
+		resultCacheKey = resultCacheEntryKey(cypher, params)
+		if version := cypherVersionFromContext(ctx); version != "5" {
+			resultCacheKey += ":cypher:" + version
+		}
 		if provider, ok := e.storage.(storage.GraphMutationVersionProvider); ok {
 			if version, supported := provider.GraphMutationVersion(); supported {
 				resultCacheKey += ":graph:" + strconv.FormatUint(version, 10)

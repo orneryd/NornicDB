@@ -63,16 +63,24 @@ func findAggregateSpans(expr string) []aggregateSpan {
 			i = j + 1
 			continue
 		}
-		if end := subqueryExpressionEnd(expr, i); end > i {
-			i = end
-			continue
-		}
-		// A qualified function whose terminal component happens to have an
-		// aggregate name (for example apoc.coll.sum()) is not a Cypher
+		// Only a letter at a word start can begin an aggregate or a subquery
+		// expression. A qualified function whose terminal component happens to
+		// have an aggregate name (for example apoc.coll.sum()) is not a Cypher
 		// aggregate. It is evaluated once per row by the same expression path.
 		folded := asciiUpper(c)
-		if folded < 'A' || folded > 'Z' || prefixMask&(uint32(1)<<(folded-'A')) == 0 ||
-			i > 0 && (isIdentByte(expr[i-1]) || expr[i-1] == '.') {
+		if folded < 'A' || folded > 'Z' || i > 0 && (isIdentByte(expr[i-1]) || expr[i-1] == '.') {
+			i++
+			continue
+		}
+		// EXISTS / COUNT / COLLECT { … } is skipped whole: its aggregates
+		// are the subquery's own.
+		if folded == 'E' || folded == 'C' {
+			if end := subqueryExpressionEnd(expr, i); end > i {
+				i = end
+				continue
+			}
+		}
+		if prefixMask&(uint32(1)<<(folded-'A')) == 0 {
 			i++
 			continue
 		}
@@ -134,6 +142,15 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 // subqueryExpressionEnd is the index after the EXISTS / COUNT / COLLECT
 // { … } subquery that starts at expr[i], or -1.
 func subqueryExpressionEnd(expr string, i int) int {
+	// A subquery's keyword is followed by '{': any other word ends here,
+	// before the keyword comparisons.
+	end := i
+	for end < len(expr) && isIdentByte(expr[end]) {
+		end++
+	}
+	if open := skipSpaces(expr, end); end == i || open >= len(expr) || expr[open] != '{' {
+		return -1
+	}
 	for _, keyword := range subqueryExpressionKeywords {
 		if !matchKeywordAt(expr, i, keyword) {
 			continue
