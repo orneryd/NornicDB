@@ -246,7 +246,7 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 		require.Equal(t, spec.Description, spec.DescriptionMessage.Fallback, "English fallback changed: %s", spec.Name)
 	}
 	require.Equal(t, 71, coreCount)
-	require.Equal(t, 30, apocCount) // apoc.path.subgraphAll and expandConfig (#907)
+	require.Equal(t, 35, apocCount) // apoc.path.subgraphAll and expandConfig (#907); apoc.custom.* (#1066)
 }
 
 func TestShowProceduresPreservesUserDefinedLiteralMetadata(t *testing.T) {

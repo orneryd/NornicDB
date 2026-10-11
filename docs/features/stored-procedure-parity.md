@@ -54,6 +54,38 @@ DROP PROCEDURE nornic.touchUser
 - Procedure modes are authorization contracts for Bolt callers: `WRITE` requires the `write` entitlement, `SCHEMA` requires `schema`, and `ADMIN` or `DBMS` requires `admin`. `READ` requires `read`.
 - Dynamic statements run by procedures inherit the invoking caller's effective entitlements. A query supplied through a parameter cannot bypass the caller's write, schema, or admin permissions.
 
+## APOC Custom Procedures (`apoc.custom`)
+
+The APOC form of the same feature is portable to Neo4j with APOC. A statement
+installed under a name is called as `custom.<name>`:
+
+```cypher
+CALL apoc.custom.installProcedure(
+  'reach(start :: INTEGER, depth = 1 :: INTEGER) :: (n :: INTEGER)',
+  'MATCH (s:Step {n: $start})-[:NEXT*1..10]->(t) WHERE t.n - s.n <= $depth RETURN t.n AS n',
+  'neo4j', 'read', 'steps reachable from a start');
+
+CALL custom.reach(1) YIELD n RETURN n;      // depth defaults to 1
+CALL custom.reach($start, 3) YIELD n RETURN n;
+```
+
+- `apoc.custom.installProcedure(signature, statement, databaseName = 'neo4j', mode = 'read', description = '')`
+  (APOC 5) and `apoc.custom.declareProcedure(signature, statement, mode = 'read', description = '')`
+  (APOC 4) install it, replacing a procedure of the same name. The procedure
+  is stored in the current database's procedure catalog, like `CREATE
+  PROCEDURE`, and is available again after a restart; `databaseName` is
+  accepted for compatibility.
+- The signature declares the arguments (`name :: TYPE`, optionally with a
+  default, `name = value :: TYPE`; optional arguments come last) and the
+  output columns (`:: (column :: TYPE, …)`, or `:: VOID`). The statement reads
+  the arguments as parameters (`$start`) and returns the output columns.
+- `mode` is `read`, `write`, `schema` or `dbms`; a `read` procedure can't
+  contain writes.
+- `apoc.custom.dropProcedure(name, databaseName = 'neo4j')` removes it;
+  `apoc.custom.list()` and `apoc.custom.show()` list the installed procedures
+  (type, name, description, mode, statement, inputs, outputs, forceSingle).
+- Custom functions (`apoc.custom.installFunction`) are not provided.
+
 ## Startup Precompile and Persistence
 
 - User-defined procedures are persisted in the database metadata graph under catalog label `_ProcedureCatalog`.

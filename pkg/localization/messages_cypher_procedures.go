@@ -66,6 +66,8 @@ const (
 	MessageCypherProceduresInvalidMode                           MessageID = "cypherprocedures.invalid_mode"
 	MessageCypherProceduresReadContainsWrite                     MessageID = "cypherprocedures.read_contains_write"
 	MessageCypherProceduresArgumentCount                         MessageID = "cypherprocedures.argument_count"
+	MessageCypherProceduresCustomSignatureInvalid                MessageID = "cypherprocedures.custom_signature_invalid"
+	MessageCypherProceduresCustomArgumentType                    MessageID = "cypherprocedures.custom_argument_type"
 )
 
 func cypherProceduresMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -286,6 +288,18 @@ func CypherProceduresDuplicateArgument(argument string) Message {
 }
 func CypherProceduresInvalidMode(mode string) Message {
 	return cypherProceduresMessage(MessageCypherProceduresInvalidMode, "invalid procedure mode: "+mode, map[string]any{"Mode": mode})
+}
+
+// CypherProceduresCustomSignatureInvalid identifies an apoc.custom signature
+// that isn't name(arguments) :: (outputs).
+func CypherProceduresCustomSignatureInvalid(signature string) Message {
+	return cypherProceduresMessage(MessageCypherProceduresCustomSignatureInvalid, "invalid custom procedure signature: "+signature, map[string]any{"Signature": signature})
+}
+
+// CypherProceduresCustomArgumentType identifies an apoc.custom argument of
+// the wrong type.
+func CypherProceduresCustomArgumentType(procedure, argument, expected string) Message {
+	return cypherProceduresMessage(MessageCypherProceduresCustomArgumentType, procedure+" argument "+argument+" must be "+expected, map[string]any{"Procedure": procedure, "Argument": argument, "Expected": expected})
 }
 func CypherProceduresReadContainsWrite() Message {
 	return cypherProceduresMessage(MessageCypherProceduresReadContainsWrite, "READ procedure body contains write operations", nil)

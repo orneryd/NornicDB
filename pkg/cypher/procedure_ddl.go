@@ -35,6 +35,12 @@ type persistedProcedureRecord struct {
 	MinArgs     int      `msgpack:"min"`
 	MaxArgs     int      `msgpack:"max"`
 	UpdatedAt   int64    `msgpack:"updated_at"`
+	// ArgTypes, ArgDefaults and Outputs come from a declared signature
+	// (apoc.custom): each argument's type and default literal ("" when
+	// required), and the output columns. Empty for CREATE PROCEDURE.
+	ArgTypes    []string          `msgpack:"arg_types,omitempty"`
+	ArgDefaults []string          `msgpack:"arg_defaults,omitempty"`
+	Outputs     []ProcedureColumn `msgpack:"outputs,omitempty"`
 }
 
 // isCreateProcedureCommand reports whether cypher is CREATE [OR REPLACE]
@@ -83,7 +89,7 @@ func (e *StorageExecutor) executeCreateProcedure(ctx context.Context, cypher str
 		return nil, localizedError(localization.CypherProceduresBodyRequired(), nil)
 	}
 
-	spec, handler, record, err := e.compilePersistedProcedure(persistedProcedureRecord{
+	if err := e.installPersistedProcedure(ctx, persistedProcedureRecord{
 		Name:      name,
 		ArgNames:  argNames,
 		Mode:      mode,
@@ -92,21 +98,35 @@ func (e *StorageExecutor) executeCreateProcedure(ctx context.Context, cypher str
 		MinArgs:   len(argNames),
 		MaxArgs:   len(argNames),
 		UpdatedAt: time.Now().UTC().Unix(),
-	})
-	if err != nil {
+	}, replace); err != nil {
 		return nil, err
+	}
+	return &ExecuteResult{
+		Columns: []string{"name", "mode", "status"},
+		Rows:    [][]interface{}{{name, mode, "created"}},
+	}, nil
+}
+
+// installPersistedProcedure compiles record, writes it to the procedure
+// catalog (over an existing one of the same name only when replace is set)
+// and registers it. CREATE PROCEDURE and apoc.custom share it.
+func (e *StorageExecutor) installPersistedProcedure(ctx context.Context, record persistedProcedureRecord, replace bool) error {
+	name := record.Name
+	spec, handler, record, err := e.compilePersistedProcedure(record)
+	if err != nil {
+		return err
 	}
 
 	nodeID := procedureCatalogNodeID(name)
 	store := e.getStorage(ctx)
 	existing, getErr := store.GetNode(nodeID)
 	if getErr == nil && existing != nil && !replace {
-		return nil, localizedError(localization.CypherProceduresAlreadyExists(name), nil)
+		return localizedError(localization.CypherProceduresAlreadyExists(name), nil)
 	}
 
 	blob, err := msgpack.Marshal(record)
 	if err != nil {
-		return nil, localizedError(localization.CypherProceduresEncodeRecordFailed(err), err)
+		return localizedError(localization.CypherProceduresEncodeRecordFailed(err), err)
 	}
 	props := map[string]interface{}{
 		"name":      record.Name,
@@ -119,7 +139,7 @@ func (e *StorageExecutor) executeCreateProcedure(ctx context.Context, cypher str
 		existing.Labels = ensureLabel(existing.Labels, procedureCatalogLabel)
 		existing.Properties = props
 		if err := store.UpdateNode(existing); err != nil {
-			return nil, localizedError(localization.CypherProceduresUpdateCatalogFailed(err), err)
+			return localizedError(localization.CypherProceduresUpdateCatalogFailed(err), err)
 		}
 	} else {
 		node := &storage.Node{
@@ -128,17 +148,10 @@ func (e *StorageExecutor) executeCreateProcedure(ctx context.Context, cypher str
 			Properties: props,
 		}
 		if _, err := store.CreateNode(node); err != nil {
-			return nil, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
+			return localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
 		}
 	}
-
-	if err := RegisterUserProcedure(spec, handler); err != nil {
-		return nil, err
-	}
-	return &ExecuteResult{
-		Columns: []string{"name", "mode", "status"},
-		Rows:    [][]interface{}{{name, mode, "created"}},
-	}, nil
+	return RegisterUserProcedure(spec, handler)
 }
 
 func (e *StorageExecutor) executeDropProcedure(ctx context.Context, cypher string) (*ExecuteResult, error) {
@@ -150,20 +163,28 @@ func (e *StorageExecutor) executeDropProcedure(ctx context.Context, cypher strin
 		return nil, localizedError(localization.CypherProceduresDropInvalidSyntax(), nil)
 	}
 	name := strings.TrimSpace(m[1])
-	store := e.getStorage(ctx)
-	if err := store.DeleteNode(procedureCatalogNodeID(name)); err != nil {
-		return nil, localizedError(localization.CypherProceduresDropFailed(name, err), err)
+	if err := e.dropPersistedProcedure(ctx, name); err != nil {
+		return nil, err
 	}
-	// Keep implementation simple and deterministic: refresh user registry from persisted catalog.
-	ClearUserProcedures()
-	if err := e.loadPersistedProcedures(); err != nil {
-		return nil, localizedError(localization.CypherProceduresRegistryReloadFailed(err), nerrors.ErrProcedureRegistryReloadFailed)
-	}
-
 	return &ExecuteResult{
 		Columns: []string{"name", "status"},
 		Rows:    [][]interface{}{{name, "dropped"}},
 	}, nil
+}
+
+// dropPersistedProcedure removes name from the procedure catalog and reloads
+// the user procedures from it.
+func (e *StorageExecutor) dropPersistedProcedure(ctx context.Context, name string) error {
+	store := e.getStorage(ctx)
+	if err := store.DeleteNode(procedureCatalogNodeID(name)); err != nil {
+		return localizedError(localization.CypherProceduresDropFailed(name, err), err)
+	}
+	// Keep implementation simple and deterministic: refresh user registry from persisted catalog.
+	ClearUserProcedures()
+	if err := e.loadPersistedProcedures(); err != nil {
+		return localizedError(localization.CypherProceduresRegistryReloadFailed(err), nerrors.ErrProcedureRegistryReloadFailed)
+	}
+	return nil
 }
 
 func parseProcedureArgNames(raw string) ([]string, error) {
@@ -208,26 +229,43 @@ func (e *StorageExecutor) compilePersistedProcedure(record persistedProcedureRec
 	}
 
 	argNames := append([]string{}, record.ArgNames...)
+	minArgs := len(argNames)
+	if len(record.ArgDefaults) == len(argNames) {
+		minArgs = record.MinArgs
+	}
 	spec := ProcedureSpec{
 		Name:        record.Name,
 		Signature:   record.Signature,
 		Description: record.Description,
 		Mode:        mode,
-		MinArgs:     len(argNames),
+		MinArgs:     minArgs,
 		MaxArgs:     len(argNames),
 		Params:      make([]ProcedureParam, 0, len(argNames)),
+		Returns:     append([]ProcedureColumn(nil), record.Outputs...),
 	}
-	for _, arg := range argNames {
-		spec.Params = append(spec.Params, ProcedureParam{Name: arg, Type: "ANY"})
+	for i, arg := range argNames {
+		param := ProcedureParam{Name: arg, Type: "ANY", Optional: i >= minArgs}
+		if i < len(record.ArgTypes) {
+			param.Type = record.ArgTypes[i]
+		}
+		if i < len(record.ArgDefaults) {
+			param.Default = record.ArgDefaults[i]
+		}
+		spec.Params = append(spec.Params, param)
 	}
 
 	handler := func(ctx context.Context, exec *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-		if len(args) != len(argNames) {
+		if len(args) < minArgs || len(args) > len(argNames) {
 			return nil, localizedError(localization.CypherProceduresArgumentCount(record.Name, len(argNames), len(args)), nil)
 		}
 		params := make(map[string]interface{}, len(argNames))
 		for i, arg := range argNames {
-			params[arg] = args[i]
+			if i < len(args) {
+				params[arg] = args[i]
+				continue
+			}
+			// An omitted optional argument takes its declared default.
+			params[arg], _ = parseLiteralValueFromComputedRow(record.ArgDefaults[i])
 		}
 		return exec.Execute(ctx, record.Body, params)
 	}

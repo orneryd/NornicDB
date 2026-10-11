@@ -781,6 +781,8 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cypherprocedures.create_relationship_fulltext_index_failed", Constructor: "CypherProceduresCreateRelationshipFulltextIndexFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.create_relationship_vector_index_failed", Constructor: "CypherProceduresCreateRelationshipVectorIndexFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.create_vector_index_failed", Constructor: "CypherProceduresCreateVectorIndexFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
+	{ID: "cypherprocedures.custom_argument_type", Constructor: "CypherProceduresCustomArgumentType", Fields: []string{"Argument", "Expected", "Procedure"}, PluralForms: []string{"other"}},
+	{ID: "cypherprocedures.custom_signature_invalid", Constructor: "CypherProceduresCustomSignatureInvalid", Fields: []string{"Signature"}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.drop_failed", Constructor: "CypherProceduresDropFailed", Fields: []string{"Cause", "Procedure"}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.drop_in_transaction", Constructor: "CypherProceduresDropInTransaction", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.drop_invalid_syntax", Constructor: "CypherProceduresDropInvalidSyntax", Fields: []string{}, PluralForms: []string{"other"}},

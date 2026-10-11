@@ -120,6 +120,10 @@
   other: "argumento de procedimiento duplicado: {{.Argument}}"
 - id: cypherprocedures.invalid_mode
   other: "modo de procedimiento no válido: {{.Mode}}"
+- id: cypherprocedures.custom_signature_invalid
+  other: "firma de procedimiento personalizado no válida: {{.Signature}}"
+- id: cypherprocedures.custom_argument_type
+  other: "el argumento {{.Argument}} de {{.Procedure}} debe ser {{.Expected}}"
 - id: cypherprocedures.read_contains_write
   other: "el cuerpo del procedimiento READ contiene operaciones de escritura"
 - id: cypherprocedures.argument_count

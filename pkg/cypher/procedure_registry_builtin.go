@@ -381,6 +381,24 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPathSpanningTree(ctx, args)
 			})
+		registerBuiltInProcedureLiteral("apoc.custom.installProcedure", "apoc.custom.installProcedure(signature :: STRING, statement :: STRING, databaseName :: STRING = 'neo4j', mode :: STRING = 'read', description :: STRING = '')", "Installs a statement as the procedure custom.<name>", ProcedureModeWrite, 2, 5, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callApocCustomInstall(ctx, "apoc.custom.installProcedure", args, true)
+			})
+		registerBuiltInProcedureLiteral("apoc.custom.declareProcedure", "apoc.custom.declareProcedure(signature :: STRING, statement :: STRING, mode :: STRING = 'read', description :: STRING = '')", "Installs a statement as the procedure custom.<name> (APOC 4 form)", ProcedureModeWrite, 2, 4, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callApocCustomInstall(ctx, "apoc.custom.declareProcedure", args, false)
+			})
+		registerBuiltInProcedureLiteral("apoc.custom.dropProcedure", "apoc.custom.dropProcedure(name :: STRING, databaseName :: STRING = 'neo4j')", "Drops the custom procedure custom.<name>", ProcedureModeWrite, 1, 2, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callApocCustomDrop(ctx, args)
+			})
+		for _, name := range []string{"apoc.custom.list", "apoc.custom.show"} {
+			registerBuiltInProcedureLiteral(name, name+"() :: (type :: STRING, name :: STRING, description :: STRING, mode :: STRING, statement :: STRING, inputs :: LIST<ANY>, outputs :: LIST<ANY>, forceSingle :: BOOLEAN)", "Lists the custom procedures", ProcedureModeRead, 0, 1, false,
+				func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+					return e.callApocCustomList(ctx)
+				})
+		}
 		registerBuiltInProcedureLiteral("apoc.cypher.run", "apoc.cypher.run(statement :: STRING, params :: MAP) :: (value :: MAP)", "Runs dynamic Cypher", ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCypherRun(ctx, cypher)

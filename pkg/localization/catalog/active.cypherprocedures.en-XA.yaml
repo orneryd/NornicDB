@@ -120,6 +120,10 @@
   other: "[!! duplicate procedure argument: {{.Argument}} !!]"
 - id: cypherprocedures.invalid_mode
   other: "[!! invalid procedure mode: {{.Mode}} !!]"
+- id: cypherprocedures.custom_signature_invalid
+  other: "[!! invalid custom procedure signature: {{.Signature}} !!]"
+- id: cypherprocedures.custom_argument_type
+  other: "[!! {{.Procedure}} argument {{.Argument}} must be {{.Expected}} !!]"
 - id: cypherprocedures.read_contains_write
   other: "[!! READ procedure body contains write operations !!]"
 - id: cypherprocedures.argument_count
