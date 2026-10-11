@@ -7,6 +7,7 @@ const (
 	MessageSearchServiceUnavailable        MessageID = "search.service_unavailable"
 	MessageQueryChunkingFailed             MessageID = "search.query_chunking_failed"
 	MessageSearchQueryChunksExceeded       MessageID = "search.query_chunks_exceeded"
+	MessageSearchQueryChunkDimensions      MessageID = "search.query_chunk_dimensions"
 	MessageNodeHasNoEmbedding              MessageID = "search.node_has_no_embedding"
 	MessageSearchNodeNotFound              MessageID = "search.node_not_found"
 	MessageSearchQueryEmbeddingRequired    MessageID = "search.query_embedding_required"
@@ -51,6 +52,12 @@ func QueryChunkingFailed() Message {
 // searched, when NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error.
 func SearchQueryChunksExceeded(chunks, max int) Message {
 	return Message{ID: MessageSearchQueryChunksExceeded, Fallback: "search query has " + strconv.Itoa(chunks) + " chunks; at most " + strconv.Itoa(max) + " are searched (NORNICDB_SEARCH_QUERY_MAX_CHUNKS)", Data: map[string]any{"Chunks": chunks, "Max": max}}
+}
+
+// SearchQueryChunkDimensions identifies a query chunk whose embedding has
+// another dimension than the query's first chunk's.
+func SearchQueryChunkDimensions(chunk, got, want int) Message {
+	return Message{ID: MessageSearchQueryChunkDimensions, Fallback: "the embedding of query chunk " + strconv.Itoa(chunk) + " has " + strconv.Itoa(got) + " dimensions; the first chunk's has " + strconv.Itoa(want), Data: map[string]any{"Chunk": chunk, "Got": got, "Want": want}}
 }
 
 // NodeHasNoEmbedding identifies a vector-similarity target without an embedding.

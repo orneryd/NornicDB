@@ -324,9 +324,11 @@ func (r *SearchResponse) ResultMetadata() map[string]any {
 		"fallback_triggered": r.FallbackTriggered,
 		"fallback_reason":    string(r.FallbackReason),
 	}
+	// Integers as Cypher's (int64): a continued db.retrieve copies them into
+	// its page row.
 	if r.QueryChunksTotal > 0 {
-		metadata["query_chunks_searched"] = r.QueryChunksSearched
-		metadata["query_chunks_total"] = r.QueryChunksTotal
+		metadata["query_chunks_searched"] = int64(r.QueryChunksSearched)
+		metadata["query_chunks_total"] = int64(r.QueryChunksTotal)
 	}
 	return metadata
 }

@@ -10,6 +10,9 @@
 - id: search.query_chunks_exceeded
   description: Pseudo-locale query with too many chunks.
   other: "[!! search query has {{.Chunks}} chunks; at most {{.Max}} are searched (NORNICDB_SEARCH_QUERY_MAX_CHUNKS) !!]"
+- id: search.query_chunk_dimensions
+  description: "Pseudo-locale query chunk embedding dimension mismatch."
+  other: "[!! the embedding of query chunk {{.Chunk}} has {{.Got}} dimensions; the first chunk's has {{.Want}} !!]"
 - id: search.node_has_no_embedding
   description: Expanded pseudo-locale missing node embedding response.
   other: "[!! Node has no embedding !!]"

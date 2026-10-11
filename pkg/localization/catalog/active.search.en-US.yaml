@@ -10,6 +10,9 @@
 - id: search.query_chunks_exceeded
   description: A search query with more chunks than are searched, with the overflow setting at error.
   other: "search query has {{.Chunks}} chunks; at most {{.Max}} are searched (NORNICDB_SEARCH_QUERY_MAX_CHUNKS)"
+- id: search.query_chunk_dimensions
+  description: "A query chunk whose embedding has another dimension than the first chunk's."
+  other: "the embedding of query chunk {{.Chunk}} has {{.Got}} dimensions; the first chunk's has {{.Want}}"
 - id: search.node_has_no_embedding
   description: HTTP validation response when a vector-similarity target has no embedding.
   other: Node has no embedding

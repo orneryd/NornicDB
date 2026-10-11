@@ -58,8 +58,8 @@ func TestSearchTextChunksReportsQueryChunks(t *testing.T) {
 	require.True(t, response.FallbackTriggered)
 	require.Equal(t, SearchFallbackQueryChunksDropped, response.FallbackReason)
 	metadata := response.ResultMetadata()
-	require.Equal(t, 3, metadata["query_chunks_searched"])
-	require.Equal(t, 5, metadata["query_chunks_total"])
+	require.Equal(t, int64(3), metadata["query_chunks_searched"])
+	require.Equal(t, int64(5), metadata["query_chunks_total"])
 
 	// Every chunk searched: the counts, and no fallback.
 	searched = nil
@@ -93,4 +93,13 @@ func TestSearchTextChunksReportsQueryChunks(t *testing.T) {
 	_, err = SearchTextChunks(ctx, "long query", nil, five, embed, searchQuery)
 	require.ErrorContains(t, err, "at most 3 are searched")
 	require.Empty(t, searched)
+}
+
+// RequireAllQueryChunks fails over the cap whatever the overflow setting
+// says, for callers that can't report dropped chunks.
+func TestRequireAllQueryChunks(t *testing.T) {
+	t.Setenv(EnvSearchQueryMaxChunks, "2")
+	t.Setenv(EnvSearchQueryChunkOverflow, "truncate")
+	require.NoError(t, RequireAllQueryChunks([]string{"a", "b"}))
+	require.ErrorContains(t, RequireAllQueryChunks([]string{"a", "b", "c"}), "search query has 3 chunks; at most 2 are searched")
 }

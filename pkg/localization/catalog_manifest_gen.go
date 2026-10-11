@@ -1612,6 +1612,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "search.node_has_no_embedding", Constructor: "NodeHasNoEmbedding", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "search.node_not_found", Constructor: "SearchNodeNotFound", Fields: []string{"ID"}, PluralForms: []string{"other"}},
 	{ID: "search.pq_codebook_training_failed", Constructor: "SearchPQCodebookTrainingFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
+	{ID: "search.query_chunk_dimensions", Constructor: "SearchQueryChunkDimensions", Fields: []string{"Chunk", "Got", "Want"}, PluralForms: []string{"other"}},
 	{ID: "search.query_chunk_failed", Constructor: "QueryChunkFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "search.query_chunking_failed", Constructor: "QueryChunkingFailed", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "search.query_chunks_exceeded", Constructor: "SearchQueryChunksExceeded", Fields: []string{"Chunks", "Max"}, PluralForms: []string{"other"}},

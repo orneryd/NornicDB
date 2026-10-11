@@ -2523,7 +2523,11 @@ func TestEmbedQueryChunkedAndVectorQueryNodeBranches(t *testing.T) {
 			nil,
 		},
 	}
-	emb, err = embedQueryChunked(ctx, multiEmbedder, multiChunkText)
+	// One failed chunk fails the query: the rows can't say it was embedded
+	// in part.
+	_, err = embedQueryChunked(ctx, multiEmbedder, multiChunkText)
+	require.ErrorContains(t, err, "embed failed")
+	emb, err = embedQueryChunked(ctx, &sequenceEmbedder{embs: [][]float32{{1, 0}, {0, 1}, {1, 1}}}, multiChunkText)
 	require.NoError(t, err)
 	require.Len(t, emb, 2)
 	norm := math.Sqrt(float64(emb[0]*emb[0] + emb[1]*emb[1]))

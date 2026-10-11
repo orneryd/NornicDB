@@ -23,25 +23,66 @@ func (e *chunkCountingEmbedder) Embed(context.Context, string) ([]float32, error
 
 func (e *chunkCountingEmbedder) ChunkText(string, int, int) ([]string, error) { return e.chunks, nil }
 
-// A vector procedure's text query embeds at most
-// NORNICDB_SEARCH_QUERY_MAX_CHUNKS chunks, or fails over them with
-// NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error: its rows can't report dropped
-// chunks (#907).
+// A vector procedure's text query over NORNICDB_SEARCH_QUERY_MAX_CHUNKS
+// chunks fails, whatever NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW says: its rows
+// (node, score) can't report dropped chunks (#907). Within the
+// cap every chunk is embedded.
 func TestEmbedQueryChunkedHonoursChunkLimit(t *testing.T) {
 	ctx := context.Background()
 	embedder := &chunkCountingEmbedder{chunks: []string{"a", "b", "c", "d"}}
 	t.Setenv(search.EnvSearchQueryMaxChunks, "2")
-	t.Setenv(search.EnvSearchQueryChunkOverflow, "")
+	for _, overflow := range []string{"", "truncate", "error"} {
+		embedder.calls = 0
+		t.Setenv(search.EnvSearchQueryChunkOverflow, overflow)
+		_, err := embedQueryChunked(ctx, embedder, "long query")
+		require.ErrorContains(t, err, "search query has 4 chunks; at most 2 are searched", overflow)
+		require.Zero(t, embedder.calls, overflow)
+	}
+
+	embedder.calls = 0
+	t.Setenv(search.EnvSearchQueryMaxChunks, "4")
 	vector, err := embedQueryChunked(ctx, embedder, "long query")
 	require.NoError(t, err)
 	require.NotEmpty(t, vector)
-	require.Equal(t, 2, embedder.calls)
+	require.Equal(t, 4, embedder.calls)
 
-	embedder.calls = 0
-	t.Setenv(search.EnvSearchQueryChunkOverflow, "error")
-	_, err = embedQueryChunked(ctx, embedder, "long query")
+	// Through the procedure.
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	exec.SetEmbedder(embedder)
+	_, err = store.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Document"}, ChunkEmbeddings: [][]float32{{1, 0}}})
+	require.NoError(t, err)
+	t.Setenv(search.EnvSearchQueryMaxChunks, "2")
+	_, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('idx', 5, 'long query') YIELD node RETURN node", nil)
 	require.ErrorContains(t, err, "at most 2 are searched")
-	require.Zero(t, embedder.calls)
+}
+
+// A continued db.retrieve answers with one page row even when nothing
+// matched, and that row reports how many of a long query's chunks were
+// searched: a caller can tell "nothing matched" from "the searched part
+// matched nothing" (#907).
+func TestRetrieveContinuationReportsQueryChunksWithoutHits(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	exec.SetEmbedder(&chunkCountingEmbedder{chunks: []string{"alpha", "beta", "gamma", "delta"}})
+	service := search.NewServiceWithDimensions(store, 2)
+	require.NoError(t, service.BuildIndexes(ctx))
+	exec.SetSearchService(service)
+	t.Setenv(search.EnvSearchQueryMaxChunks, "2")
+	t.Setenv(search.EnvSearchQueryChunkOverflow, "")
+
+	plain, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha beta gamma delta', limit: 5})", nil)
+	require.NoError(t, err)
+	require.Empty(t, plain.Rows)
+
+	continued, err := exec.Execute(ctx, "CALL db.retrieve({query: 'alpha beta gamma delta', limit: 5, n: 5}) YIELD page RETURN page", nil)
+	require.NoError(t, err)
+	require.Len(t, continued.Rows, 1)
+	page := continued.Rows[0][0].(map[string]interface{})
+	require.Empty(t, page["results"])
+	require.Equal(t, int64(2), page["query_chunks_searched"])
+	require.Equal(t, int64(4), page["query_chunks_total"])
 }
 
 // A continued db.retrieve page reports a long query's chunk counts.

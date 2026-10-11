@@ -10,6 +10,9 @@
 - id: search.query_chunks_exceeded
   description: Consulta de búsqueda con más fragmentos de los que se buscan, con el desbordamiento configurado como error.
   other: "la consulta de búsqueda tiene {{.Chunks}} fragmentos; se buscan como máximo {{.Max}} (NORNICDB_SEARCH_QUERY_MAX_CHUNKS)"
+- id: search.query_chunk_dimensions
+  description: "Fragmento de consulta cuyo embedding tiene otra dimensión que el del primer fragmento."
+  other: "el embedding del fragmento de consulta {{.Chunk}} tiene {{.Got}} dimensiones; el del primer fragmento tiene {{.Want}}"
 - id: search.node_has_no_embedding
   description: Respuesta HTTP cuando un nodo no tiene embedding.
   other: El nodo no tiene embedding

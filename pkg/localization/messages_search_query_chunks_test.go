@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The catalogs render a query with too many chunks as its fallback text does
+// The catalogs render the query-chunk messages as their fallback texts do
 // (#907).
 func TestSearchQueryChunksExceededRendering(t *testing.T) {
 	paths := []string{"catalog/active.search.en-US.yaml", "catalog/active.search.es-ES.yaml", "catalog/active.search.en-XA.yaml"}
@@ -20,14 +20,21 @@ func TestSearchQueryChunksExceededRendering(t *testing.T) {
 		_, err := bundle.LoadMessageFileFS(catalogFS, path)
 		require.NoError(t, err)
 	}
-	message := SearchQueryChunksExceeded(45, 32)
-	for locale, want := range map[string]string{
-		"en-US": message.Fallback,
-		"es-ES": "la consulta de búsqueda tiene 45 fragmentos; se buscan como máximo 32 (NORNICDB_SEARCH_QUERY_MAX_CHUNKS)",
-		"en-XA": "[!! " + message.Fallback + " !!]",
+	for _, check := range []struct {
+		message Message
+		spanish string
+	}{
+		{SearchQueryChunksExceeded(45, 32), "la consulta de búsqueda tiene 45 fragmentos; se buscan como máximo 32 (NORNICDB_SEARCH_QUERY_MAX_CHUNKS)"},
+		{SearchQueryChunkDimensions(2, 3, 2), "el embedding del fragmento de consulta 2 tiene 3 dimensiones; el del primer fragmento tiene 2"},
 	} {
-		got, err := i18n.NewLocalizer(bundle, locale).Localize(&i18n.LocalizeConfig{MessageID: string(message.ID), TemplateData: message.Data})
-		require.NoError(t, err)
-		require.Equal(t, want, got, locale)
+		for locale, want := range map[string]string{
+			"en-US": check.message.Fallback,
+			"es-ES": check.spanish,
+			"en-XA": "[!! " + check.message.Fallback + " !!]",
+		} {
+			got, err := i18n.NewLocalizer(bundle, locale).Localize(&i18n.LocalizeConfig{MessageID: string(check.message.ID), TemplateData: check.message.Data})
+			require.NoError(t, err)
+			require.Equal(t, want, got, locale)
+		}
 	}
 }

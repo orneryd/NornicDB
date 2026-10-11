@@ -38,7 +38,17 @@ func LimitQueryChunks(chunks []string) ([]string, error) {
 		return chunks, nil
 	}
 	if strings.EqualFold(strings.TrimSpace(envutil.Get(EnvSearchQueryChunkOverflow, "")), "error") {
-		return nil, localizedError(localization.SearchQueryChunksExceeded(len(chunks), limit), nil)
+		return nil, RequireAllQueryChunks(chunks)
 	}
 	return chunks[:limit], nil
+}
+
+// RequireAllQueryChunks fails a query with more chunks than are searched,
+// whatever NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW says: for a caller whose
+// results have no place to report dropped chunks.
+func RequireAllQueryChunks(chunks []string) error {
+	if limit := QueryMaxChunks(); len(chunks) > limit {
+		return localizedError(localization.SearchQueryChunksExceeded(len(chunks), limit), nil)
+	}
+	return nil
 }

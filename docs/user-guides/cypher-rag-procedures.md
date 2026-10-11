@@ -106,10 +106,18 @@ chunks: `fallback_triggered` is `true` and `fallback_reason` is
 `query_chunks_dropped`, unless an earlier fallback is reported. Whatever the
 fallback reason, every `db.retrieve` / `db.rretrieve` row reports
 `query_chunks_searched` and `query_chunks_total` (0 and 0 for a query searched
-whole), as do the search metadata and a continued search's `page`. With `NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error`, such a
-query fails instead (`search query has N chunks; at most M are searched`), and
-so does a text query passed to `db.index.vector.queryNodes` /
-`queryRelationships`.
+whole), as do the search metadata and a continued search's `page`. A search
+that matches nothing returns no rows; to learn its coverage anyway, continue it
+(`n`): a continued search always returns one `page`, with its chunk counts even
+when `results` is empty. With `NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error`, such
+a query fails instead (`search query has N chunks; at most M are searched`).
+
+A text query passed to `db.index.vector.queryNodes` / `queryRelationships` is
+embedded whole or not at all, since its rows (`node`, `score`) have no place to
+report a partial query. It fails when it has more chunks than
+`NORNICDB_SEARCH_QUERY_MAX_CHUNKS`, whatever the overflow setting, and when the
+embedding of any chunk fails, is empty or has another dimension than the first
+chunk's.
 
 ```cypher
 CALL db.retrieve({query: 'zero-trust architecture', limit: 20}) YIELD node, score
