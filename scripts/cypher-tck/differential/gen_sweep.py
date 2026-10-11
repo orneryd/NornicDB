@@ -325,6 +325,30 @@ for q in [f"UNWIND {VALUES} AS x RETURN x ORDER BY x", f"UNWIND {VALUES} AS x RE
     add("clause", "q", q)
 
 
+# 14. Predicate operands: AND / OR / XOR / NOT over pattern predicates,
+# EXISTS / COUNT subqueries and plain conditions. An operand is a pattern
+# only when it is one whole relationship chain (#907): a parenthesized
+# conjunction of subqueries that contains "-[" is not one.
+PREDICATE_ATOMS = ["(a)-[:R]->(b)", "(a)-->()", "(b)-[:R]->(:Q)", "NOT (a)<--()",
+                   "EXISTS { MATCH (a)-[:R]->(x) }", "NOT EXISTS { MATCH (b)-[:R]->(y) }",
+                   "COUNT { (a)--() } > 1", "a.id = 1", "false", "true", "(b.id > 1)"]
+PREDICATE_POSITIONS = {
+    "match": "MATCH (a:Q)-[r:R]->(b:Q) WHERE {e} RETURN a.id AS x, b.id AS y ORDER BY x, y",
+    "optional": "MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]->(b:Q) WHERE {e} RETURN a.id AS x, b.id AS y ORDER BY x, y",
+    "with": "MATCH (a:Q)-[r:R]->(b:Q) WITH a, b WHERE {e} RETURN a.id AS x ORDER BY x",
+}
+for left, right in itertools.product(PREDICATE_ATOMS, PREDICATE_ATOMS):
+    for op in ["AND", "OR", "XOR"]:
+        for e in [f"{left} {op} {right}", f"false OR ({left} {op} {right})", f"NOT ({left} {op} {right})"]:
+            for position, template in PREDICATE_POSITIONS.items():
+                add("predicate-operands", position, template.replace("{e}", e))
+# The same chains over plain boolean operands, as a projected value.
+BOOLEAN_ATOMS = ["true", "false", "null", "NOT true", "NOT null", "a.id = 1", "(b.id > 1)"]
+for left, right in itertools.product(BOOLEAN_ATOMS, BOOLEAN_ATOMS):
+    for op in ["AND", "OR", "XOR"]:
+        for e in [f"NOT ({left} {op} {right})", f"NOT (NOT {left} {op} {right})", f"NOT ({left} {op} NOT {right})"]:
+            add("predicate-operands", "return", f"MATCH (a:Q)-[r:R]->(b:Q) RETURN {e} AS v ORDER BY a.id")
+
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:
     json.dump({"setup": SETUP, "cases": cases}, out, separators=(",", ":"))

@@ -1389,11 +1389,12 @@ func (e *StorageExecutor) evaluateBoundRelationshipPattern(ctx context.Context, 
 
 // parseBoundRelationshipPattern parses clause as a relationship pattern
 // predicate ((a)-[:R]->(b)). Only a text that is one whole relationship chain
-// (relationshipChainEnd) is a pattern: a parenthesised expression whose
-// subqueries hold patterns, (NOT EXISTS { (h)-[:C]->(x) } AND …), is not one.
+// (isRelationshipPatternOperand) is a pattern: a parenthesised expression
+// whose subqueries hold patterns, (NOT EXISTS { (h)-[:C]->(x) } AND …), is
+// not one.
 func (e *StorageExecutor) parseBoundRelationshipPattern(ctx context.Context, clause string) (*TraversalMatch, bool) {
 	pattern := strings.TrimSpace(clause)
-	if end, chain := relationshipChainEnd(pattern, 0, len(pattern)); !chain || end != len(pattern) {
+	if !isRelationshipPatternOperand(pattern) {
 		return nil, false
 	}
 

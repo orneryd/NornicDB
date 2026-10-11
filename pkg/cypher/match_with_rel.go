@@ -157,10 +157,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Contex
 	// shared recognition heuristics would otherwise misread "--" as
 	// arithmetic operators and a lone ">()" arrow fragment as a comparison,
 	// evaluating the fragment to null instead of round-tripping it.
-	if looksLikeRowRelationshipPattern(expr) && !strings.ContainsAny(expr, "'\"") {
-		return expr
-	}
-	if len(expr) > 0 && (expr[0] == '>' || expr[0] == '<') {
+	if containsRelationshipPattern(expr) || startsWithRelationshipFragment(expr) {
 		return expr
 	}
 
@@ -274,3 +271,16 @@ func (e *StorageExecutor) evaluateMapLiteralFromValues(expr string, values map[s
 // executeMatchWithClause handles MATCH ... WHERE ... WITH ... RETURN queries
 // This processes computed values (like CASE WHEN) in the WITH clause
 // and handles aggregation with implicit GROUP BY
+
+// startsWithRelationshipFragment reports whether expr starts with the tail
+// of a relationship pattern a split left behind (->(), -[r]->(b), >(), <--):
+// a fragment, not an expression. A leading minus sign (-1) is not one.
+func startsWithRelationshipFragment(expr string) bool {
+	if expr == "" {
+		return false
+	}
+	if expr[0] == '>' || expr[0] == '<' {
+		return true
+	}
+	return strings.HasPrefix(expr, "-[") || strings.HasPrefix(expr, "--") || strings.HasPrefix(expr, "->")
+}
