@@ -21,12 +21,19 @@ const UpdateRuns = 3
 // Entry is one known difference: a statement (or a statement's graph state)
 // that differs from Neo4j through one route, and the issue that tracks it.
 // An Unstable entry sometimes matches and sometimes doesn't (rows tied under
-// an ORDER BY, say); checks skip it.
+// an ORDER BY, say); checks skip it. An Intended entry is a difference kept on
+// purpose (an extension, or a decision not to follow Neo4j); its Issue is
+// where that was decided, not a defect to fix.
+//
+// A run's Issue is its corpus's (SweepIssue for the sweep). An entry filed
+// under another issue by hand, or marked Intended, keeps both through
+// Update while the statement still differs.
 type Entry struct {
 	ID       string `json:"id"`
 	Route    string `json:"route"`
 	Issue    int    `json:"issue"`
 	Unstable bool   `json:"unstable,omitempty"`
+	Intended bool   `json:"intended,omitempty"`
 }
 
 // Ratchet is the known differences, by route and id.
@@ -107,6 +114,7 @@ func (ratchet Ratchet) Check(route string, results []Result) Report {
 // the other routes' entries. A statement that differs in every run is listed;
 // one that differs in some runs only is listed as unstable.
 func (ratchet Ratchet) Update(path, route string, runs [][]Result) error {
+	previous := ratchet[route]
 	ratchet[route] = map[string]Entry{}
 	matched := map[string]int{}
 	issues := map[string]int{}
@@ -119,13 +127,17 @@ func (ratchet Ratchet) Update(path, route string, runs [][]Result) error {
 		}
 	}
 	for id := range issues {
+		entry := Entry{ID: id, Route: route, Issue: issues[id]}
+		if known, listed := previous[id]; listed {
+			entry.Issue, entry.Intended = known.Issue, known.Intended
+		}
 		switch matches := matched[id]; {
 		case matches == len(runs):
-		case matches == 0:
-			ratchet[route][id] = Entry{ID: id, Route: route, Issue: issues[id]}
-		default:
-			ratchet[route][id] = Entry{ID: id, Route: route, Issue: issues[id], Unstable: true}
+			continue
+		case matches != 0:
+			entry.Unstable = true
 		}
+		ratchet[route][id] = entry
 	}
 	var entries []Entry
 	for _, byID := range ratchet {

@@ -197,6 +197,21 @@ func TestRatchetCheckAndUpdate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "{\"id\":\"y\",\"route\":\"r\",\"issue\":5}\n{\"id\":\"z\",\"route\":\"r\",\"issue\":5}\n", string(content))
 
+	// An entry filed under another issue and marked intended keeps both
+	// while it still differs, even when it turns unstable; one that now
+	// matches goes.
+	require.NoError(t, os.WriteFile(path, []byte("{\"id\":\"b\",\"route\":\"r\",\"issue\":994,\"intended\":true}\n{\"id\":\"g\",\"route\":\"r\",\"issue\":998,\"intended\":true}\n{\"id\":\"h\",\"route\":\"r\",\"issue\":999,\"intended\":true}\n"), 0o644))
+	ratchet, err = LoadRatchet(path)
+	require.NoError(t, err)
+	require.NoError(t, ratchet.Update(path, "r", [][]Result{
+		{{ID: "b", Issue: 907}, {ID: "g", Issue: 907}, {ID: "h", Issue: 907, Match: true}},
+		{{ID: "b", Issue: 907}, {ID: "g", Issue: 907, Match: true}, {ID: "h", Issue: 907, Match: true}},
+	}))
+	content, err = os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "{\"id\":\"b\",\"route\":\"r\",\"issue\":994,\"intended\":true}\n"+
+		"{\"id\":\"g\",\"route\":\"r\",\"issue\":998,\"unstable\":true,\"intended\":true}\n", string(content))
+
 	require.NoError(t, os.WriteFile(path, []byte("not json\n"), 0o644))
 	_, err = LoadRatchet(path)
 	require.ErrorContains(t, err, "not a ratchet entry")
