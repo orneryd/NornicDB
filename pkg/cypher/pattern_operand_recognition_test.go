@@ -124,6 +124,12 @@ func TestCompiledBindingWhereXor(t *testing.T) {
 		require.True(t, ok, clause)
 		require.Equal(t, want, predicate(bind, nil), clause)
 	}
+	// An XOR whose operand neither compiler supports isn't compiled; the
+	// generic evaluator answers it.
+	_, ok = exec.getCompiledBindingWhereTruthIfSupported(ctx, "a.age = 30 XOR (")
+	require.False(t, ok)
+	_, ok = exec.tryCompileExecutorBindingWhere(ctx, "a.age = 30 XOR (")
+	require.False(t, ok)
 }
 
 func TestStartsWithRelationshipFragment(t *testing.T) {
