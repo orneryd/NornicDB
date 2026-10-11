@@ -282,6 +282,10 @@ const (
 	SearchFallbackRerankFailed       SearchFallbackReason = "rerank_failed"
 	SearchFallbackRerankScoresFlat   SearchFallbackReason = "rerank_scores_flat"
 	SearchFallbackRerankNoCandidates SearchFallbackReason = "rerank_no_candidates"
+	// A long query had more chunks than are searched
+	// (NORNICDB_SEARCH_QUERY_MAX_CHUNKS): the results are for its first
+	// QueryChunksSearched chunks.
+	SearchFallbackQueryChunksDropped SearchFallbackReason = "query_chunks_dropped"
 )
 
 // SearchResponse is the response from a search operation.
@@ -304,6 +308,10 @@ type SearchResponse struct {
 	FallbackReason         SearchFallbackReason `json:"fallback_reason,omitempty"`
 	Message                string               `json:"message,omitempty"`
 	Metrics                *SearchMetrics       `json:"metrics,omitempty"`
+	// QueryChunksSearched / QueryChunksTotal: of a query split into several
+	// chunks, how many were searched of how many. Zero for a one-chunk query.
+	QueryChunksSearched int `json:"query_chunks_searched,omitempty"`
+	QueryChunksTotal    int `json:"query_chunks_total,omitempty"`
 }
 
 // ResultMetadata returns protocol-neutral search selection metadata.
@@ -311,11 +319,16 @@ func (r *SearchResponse) ResultMetadata() map[string]any {
 	if r == nil {
 		return nil
 	}
-	return map[string]any{
+	metadata := map[string]any{
 		"search_method":      r.SearchMethod,
 		"fallback_triggered": r.FallbackTriggered,
 		"fallback_reason":    string(r.FallbackReason),
 	}
+	if r.QueryChunksTotal > 0 {
+		metadata["query_chunks_searched"] = r.QueryChunksSearched
+		metadata["query_chunks_total"] = r.QueryChunksTotal
+	}
+	return metadata
 }
 
 // ResponseHeaders exposes the sanitized fallback reason to HTTP callers whose

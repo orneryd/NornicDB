@@ -99,6 +99,17 @@ every candidate nearly the same) or `rerank_no_candidates` (no candidate had
 content to score). `db.rerank`, which has no fallback to report, fails with
 `rerank failed (<reranker>)` instead.
 
+A long query is split into chunks of 512 characters, and each chunk is
+embedded and searched. At most `NORNICDB_SEARCH_QUERY_MAX_CHUNKS` chunks are
+searched (32 by default). When a query has more, the results are for its first
+chunks: `fallback_triggered` is `true` and `fallback_reason` is
+`query_chunks_dropped`, unless an earlier fallback is reported. The search
+metadata and a continued search's `page` report `query_chunks_searched` and
+`query_chunks_total`. With `NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error`, such a
+query fails instead (`search query has N chunks; at most M are searched`), and
+so does a text query passed to `db.index.vector.queryNodes` /
+`queryRelationships`.
+
 ```cypher
 CALL db.retrieve({query: 'zero-trust architecture', limit: 20}) YIELD node, score
 WITH collect({id: node.id, content: coalesce(node.content, toString(node)), score: score}) AS candidates

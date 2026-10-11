@@ -2212,6 +2212,9 @@ func (db *DB) embedQueryChunksWithEmbedder(ctx context.Context, emb embed.Embedd
 	if err != nil {
 		return nil, nil, err
 	}
+	if chunks, err = search.LimitQueryChunks(chunks); err != nil {
+		return nil, nil, err
+	}
 	if len(chunks) == 0 {
 		return nil, nil, nil
 	}
@@ -2337,16 +2340,11 @@ func (db *DB) chunkQueryWithEmbedder(ctx context.Context, emb embed.Embedder, qu
 	const (
 		queryChunkSize    = 512
 		queryChunkOverlap = 50
-		maxQueryChunks    = 32
 	)
-	chunks, err := emb.ChunkText(query, queryChunkSize, queryChunkOverlap)
-	if err != nil {
-		return nil, err
-	}
-	if len(chunks) > maxQueryChunks {
-		chunks = chunks[:maxQueryChunks]
-	}
-	return chunks, nil
+	// Every chunk: the search that uses them keeps the first
+	// NORNICDB_SEARCH_QUERY_MAX_CHUNKS and reports how many it searched
+	// (search.LimitQueryChunks).
+	return emb.ChunkText(query, queryChunkSize, queryChunkOverlap)
 }
 
 // EmbedQuery generates an embedding for a search query.

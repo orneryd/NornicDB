@@ -554,7 +554,7 @@ paths:
               description: Stable sanitized reason the selected search path differed from the requested hybrid path; omitted when no fallback occurred.
               schema:
                 type: string
-                enum: [query_embedding_failed, query_embedding_unavailable, no_embedder, no_hybrid_results, hybrid_search_failed]
+                enum: [query_embedding_failed, query_embedding_unavailable, no_embedder, no_hybrid_results, hybrid_search_failed, query_chunks_dropped]
           content:
             application/json:
               schema:
@@ -1482,7 +1482,7 @@ components:
         fallback_reason:
           type: string
           description: Stable sanitized reason the selected search path differed from the requested hybrid path.
-          enum: [query_embedding_failed, query_embedding_unavailable, no_embedder, no_hybrid_results, hybrid_search_failed]
+          enum: [query_embedding_failed, query_embedding_unavailable, no_embedder, no_hybrid_results, hybrid_search_failed, query_chunks_dropped]
         mode:
           type: string
           enum: [ranked, ranked_then_id, id]

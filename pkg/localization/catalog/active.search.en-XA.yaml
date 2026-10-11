@@ -7,6 +7,9 @@
 - id: search.query_chunking_failed
   description: Expanded pseudo-locale query chunking response.
   other: "[!! failed to chunk query !!]"
+- id: search.query_chunks_exceeded
+  description: Pseudo-locale query with too many chunks.
+  other: "[!! search query has {{.Chunks}} chunks; at most {{.Max}} are searched (NORNICDB_SEARCH_QUERY_MAX_CHUNKS) !!]"
 - id: search.node_has_no_embedding
   description: Expanded pseudo-locale missing node embedding response.
   other: "[!! Node has no embedding !!]"

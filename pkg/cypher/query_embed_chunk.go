@@ -5,6 +5,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
+	"github.com/orneryd/nornicdb/pkg/search"
 )
 
 // embedQueryChunked embeds a potentially long string query safely by chunking it
@@ -24,15 +25,17 @@ func embedQueryChunked(ctx context.Context, embedder QueryEmbedder, text string)
 	const (
 		queryChunkSize    = 512
 		queryChunkOverlap = 50
-		maxQueryChunks    = 32
 	)
 
 	chunks, err := embedder.ChunkText(text, queryChunkSize, queryChunkOverlap)
 	if err != nil {
 		return nil, err
 	}
-	if len(chunks) > maxQueryChunks {
-		chunks = chunks[:maxQueryChunks]
+	// The first NORNICDB_SEARCH_QUERY_MAX_CHUNKS chunks, or an error with
+	// NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error: these rows have no place to
+	// report dropped chunks.
+	if chunks, err = search.LimitQueryChunks(chunks); err != nil {
+		return nil, err
 	}
 	if len(chunks) <= 1 {
 		return embedder.Embed(ctx, text)

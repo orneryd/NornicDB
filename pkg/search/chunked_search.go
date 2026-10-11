@@ -14,7 +14,6 @@ import (
 )
 
 const (
-	maxTextQueryChunks     = 32
 	outerRRFK              = 60.0
 	minChunkCandidateLimit = 10
 	maxChunkCandidateLimit = 100
@@ -83,9 +82,37 @@ func SearchTextChunksWithErrorPolicy(
 			return nil, err
 		}
 	}
-	if len(chunks) > maxTextQueryChunks {
-		chunks = chunks[:maxTextQueryChunks]
+	total := len(chunks)
+	chunks, err := LimitQueryChunks(chunks)
+	if err != nil {
+		return nil, err
 	}
+	response, err := searchQueryChunks(ctx, query, chunks, opts, embedQuery, searchQuery, errorPolicy)
+	if total <= 1 || response == nil {
+		return response, err
+	}
+	// The callback may return a cached response shared with other callers.
+	annotated := *response
+	annotated.QueryChunksSearched = len(chunks)
+	annotated.QueryChunksTotal = total
+	if len(chunks) < total && annotated.FallbackReason == SearchFallbackNone {
+		annotated.FallbackTriggered = true
+		annotated.FallbackReason = SearchFallbackQueryChunksDropped
+	}
+	return &annotated, err
+}
+
+// searchQueryChunks searches the kept chunks of query: one chunk as the query
+// itself, several independently, fused with an outer RRF pass.
+func searchQueryChunks(
+	ctx context.Context,
+	query string,
+	chunks []string,
+	opts *SearchOptions,
+	embedQuery EmbedQueryFunc,
+	searchQuery SearchQueryFunc,
+	errorPolicy ChunkedSearchErrorPolicy,
+) (*SearchResponse, error) {
 	if len(chunks) <= 1 {
 		embedding, err := embedQuery(ctx, query)
 		if err != nil && isFatalChunkedSearchError(errorPolicy.FatalEmbeddingError, err) {

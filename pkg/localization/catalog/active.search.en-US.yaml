@@ -7,6 +7,9 @@
 - id: search.query_chunking_failed
   description: HTTP response when a search query cannot be divided into chunks.
   other: failed to chunk query
+- id: search.query_chunks_exceeded
+  description: A search query with more chunks than are searched, with the overflow setting at error.
+  other: "search query has {{.Chunks}} chunks; at most {{.Max}} are searched (NORNICDB_SEARCH_QUERY_MAX_CHUNKS)"
 - id: search.node_has_no_embedding
   description: HTTP validation response when a vector-similarity target has no embedding.
   other: Node has no embedding

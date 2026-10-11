@@ -433,20 +433,25 @@ func executeSearchContinuationPage(page *search.SearchContinuationPage) *Execute
 	if page.EligibleCount != nil {
 		eligibleCount = int64(*page.EligibleCount)
 	}
+	pageMap := map[string]interface{}{
+		"results": results, "qid": page.QID, "has_more": page.HasMore,
+		"position": int64(page.Position), "returned": int64(page.Returned),
+		"discovered": int64(page.Discovered), "total": total,
+		"expires_at": page.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		"released":   page.Released, "search_method": page.SearchMethod,
+		"fallback_triggered": page.FallbackTriggered,
+		"fallback_reason":    string(page.FallbackReason),
+		"mode":               string(page.Mode), "ranked_count": int64(page.RankedCount),
+		"eligible_count": eligibleCount, "ranked_pool_exhausted": page.RankedPoolExhausted,
+		"collection_exhausted": page.CollectionExhausted, "completion": page.Completion,
+	}
+	if page.QueryChunksTotal > 0 {
+		pageMap["query_chunks_searched"] = int64(page.QueryChunksSearched)
+		pageMap["query_chunks_total"] = int64(page.QueryChunksTotal)
+	}
 	result := &ExecuteResult{
 		Columns: []string{"page"},
-		Rows: [][]interface{}{{map[string]interface{}{
-			"results": results, "qid": page.QID, "has_more": page.HasMore,
-			"position": int64(page.Position), "returned": int64(page.Returned),
-			"discovered": int64(page.Discovered), "total": total,
-			"expires_at": page.ExpiresAt.UTC().Format(time.RFC3339Nano),
-			"released":   page.Released, "search_method": page.SearchMethod,
-			"fallback_triggered": page.FallbackTriggered,
-			"fallback_reason":    string(page.FallbackReason),
-			"mode":               string(page.Mode), "ranked_count": int64(page.RankedCount),
-			"eligible_count": eligibleCount, "ranked_pool_exhausted": page.RankedPoolExhausted,
-			"collection_exhausted": page.CollectionExhausted, "completion": page.Completion,
-		}}},
+		Rows:    [][]interface{}{{pageMap}},
 	}
 	metadata := continuationResultMetadata(page.SearchResponse())
 	for key, value := range metadata {

@@ -6,6 +6,7 @@ const (
 	MessageAutoEmbedDisabled               MessageID = "search.auto_embed_not_enabled"
 	MessageSearchServiceUnavailable        MessageID = "search.service_unavailable"
 	MessageQueryChunkingFailed             MessageID = "search.query_chunking_failed"
+	MessageSearchQueryChunksExceeded       MessageID = "search.query_chunks_exceeded"
 	MessageNodeHasNoEmbedding              MessageID = "search.node_has_no_embedding"
 	MessageSearchNodeNotFound              MessageID = "search.node_not_found"
 	MessageSearchQueryEmbeddingRequired    MessageID = "search.query_embedding_required"
@@ -44,6 +45,12 @@ func SearchServiceUnavailable() Message {
 // QueryChunkingFailed identifies a query that could not be chunked.
 func QueryChunkingFailed() Message {
 	return Message{ID: MessageQueryChunkingFailed, Fallback: "failed to chunk query"}
+}
+
+// SearchQueryChunksExceeded identifies a query with more chunks than are
+// searched, when NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error.
+func SearchQueryChunksExceeded(chunks, max int) Message {
+	return Message{ID: MessageSearchQueryChunksExceeded, Fallback: "search query has " + strconv.Itoa(chunks) + " chunks; at most " + strconv.Itoa(max) + " are searched (NORNICDB_SEARCH_QUERY_MAX_CHUNKS)", Data: map[string]any{"Chunks": chunks, "Max": max}}
 }
 
 // NodeHasNoEmbedding identifies a vector-similarity target without an embedding.

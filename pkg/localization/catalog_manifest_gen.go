@@ -1614,6 +1614,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "search.pq_codebook_training_failed", Constructor: "SearchPQCodebookTrainingFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "search.query_chunk_failed", Constructor: "QueryChunkFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "search.query_chunking_failed", Constructor: "QueryChunkingFailed", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "search.query_chunks_exceeded", Constructor: "SearchQueryChunksExceeded", Fields: []string{"Chunks", "Max"}, PluralForms: []string{"other"}},
 	{ID: "search.query_embedding_required", Constructor: "SearchQueryEmbeddingRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "search.query_required", Constructor: "QueryRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "search.rerank_api_status", Constructor: "SearchRerankAPIStatus", Fields: []string{"Status"}, PluralForms: []string{"other"}},

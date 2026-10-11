@@ -71,6 +71,9 @@ type SearchContinuationPage struct {
 	RankedPoolExhausted bool
 	CollectionExhausted bool
 	Completion          string
+	// QueryChunksSearched / QueryChunksTotal are SearchResponse's.
+	QueryChunksSearched int
+	QueryChunksTotal    int
 }
 
 type continuationRegistry interface {
@@ -585,6 +588,9 @@ func searchPageFromResultStream(page *resultstream.Page) (*SearchContinuationPag
 	}
 	if page.Metadata != nil {
 		out.response, _ = page.Metadata["response"].(*SearchResponse)
+		if out.response != nil {
+			out.QueryChunksSearched, out.QueryChunksTotal = out.response.QueryChunksSearched, out.response.QueryChunksTotal
+		}
 		out.SearchMethod, _ = page.Metadata["search_method"].(string)
 		out.FallbackTriggered, _ = page.Metadata["fallback_triggered"].(bool)
 		if reason, ok := page.Metadata["fallback_reason"].(SearchFallbackReason); ok {

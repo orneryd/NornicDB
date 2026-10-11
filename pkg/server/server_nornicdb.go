@@ -657,7 +657,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	results := nornicdb.MapSearchResponse(searchResponse)
 	if continuationPage != nil {
 		setSearchFallbackReasonHeader(w, continuationPage.FallbackReason)
-		s.writeJSON(w, http.StatusOK, map[string]any{
+		body := map[string]any{
 			"results":               results,
 			"qid":                   continuationPage.QID,
 			"has_more":              continuationPage.HasMore,
@@ -675,7 +675,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			"ranked_pool_exhausted": continuationPage.RankedPoolExhausted,
 			"collection_exhausted":  continuationPage.CollectionExhausted,
 			"completion":            continuationPage.Completion,
-		})
+		}
+		addQueryChunkCounts(body, continuationPage.QueryChunksSearched, continuationPage.QueryChunksTotal)
+		s.writeJSON(w, http.StatusOK, body)
 		return
 	}
 	setSearchFallbackReasonHeader(w, searchResponse.FallbackReason)
@@ -760,6 +762,15 @@ func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, page *search
 		}
 	}
 	s.writeJSON(w, http.StatusOK, body)
+}
+
+// addQueryChunkCounts adds how many chunks of a long query were searched,
+// of how many, as search.SearchResponse.ResultMetadata does.
+func addQueryChunkCounts(body map[string]any, searched, total int) {
+	if total > 0 {
+		body["query_chunks_searched"] = searched
+		body["query_chunks_total"] = total
+	}
 }
 
 func setSearchFallbackReasonHeader(w http.ResponseWriter, reason search.SearchFallbackReason) {
