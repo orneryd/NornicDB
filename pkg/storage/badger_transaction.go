@@ -93,12 +93,10 @@ type BadgerTransaction struct {
 	// commitW is the commit writer while Commit writes (see commitWriter).
 	commitW *commitWriter
 	// commitReleaseWrite releases the write barrier Commit holds until it
-	// returns. commitCountsHeld, commitLabelCounts and commitEdgeTypeCounts
-	// record the count locks it holds while publishing
-	// (acquireCommitPublicationLocked).
+	// returns. commitCountsHeld and commitEdgeTypeCounts record the count
+	// locks it holds while publishing (acquireCommitPublicationLocked).
 	commitReleaseWrite   func()
 	commitCountsHeld     bool
-	commitLabelCounts    bool
 	commitEdgeTypeCounts bool
 
 	// Parent engine for constraint validation
@@ -2761,9 +2759,9 @@ func (tx *BadgerTransaction) Commit() error {
 			)
 		}
 	}
-	tx.releaseLabelCountLockLocked()
+	tx.releaseEdgeTypeCountLockLocked()
 
-	// Edge-type counts are derived metadata too (issue #638). Apply the
+	// Persist the namespace's MVCC sequence and the staged ID
 	// accumulated deltas only after the entity and index writes commit,
 	// serialized under edgeTypeCountWriteMu so typed-count readers never
 	// observe the publication gap. A metadata failure must not turn a

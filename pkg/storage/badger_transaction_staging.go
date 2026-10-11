@@ -164,13 +164,12 @@ func kvHas(w kvWriter, key []byte) (bool, error) {
 	return err == nil, err
 }
 
-// acquireCommitPublicationLocked takes the count locks a commit holds from
-// the moment its writes can reach Badger until they are published:
-// labelCountWriteMu / edgeTypeCountWriteMu when the commit changes those
-// derived counts. The count keys are not in badgerTx, so this does not
-// create optimistic conflicts; holding the locks through the follow-up delta
-// writes preserves mutation order and keeps count readers from observing the
-// committed entities without their derived counts.
+// acquireCommitPublicationLocked takes the count locks a commit needs from
+// the moment its writes can reach Badger until they are published. Scalar
+// label and edge-type count changes append unique delta keys (blind writes,
+// never conflicting), so they need no lock; the positional (label, type)
+// tier still read-modify-writes its absolute keys and keeps the
+// edgeTypeCountWriteMu across the follow-up transaction.
 //
 // The engine's write barrier is taken earlier, at the start of Commit
 // (commitReleaseWrite). An ordinary commit takes the count locks just before
@@ -182,20 +181,9 @@ func (tx *BadgerTransaction) acquireCommitPublicationLocked() {
 		return
 	}
 	tx.commitCountsHeld = true
-	if len(tx.pendingLabelCountDeltas) > 0 {
-		tx.engine.labelCountWriteMu.Lock()
-		tx.commitLabelCounts = true
-	}
-	if len(tx.pendingEdgeTypeCountDeltas) > 0 || len(tx.pendingEdgeTypeLabelCountDeltas) > 0 {
+	if len(tx.pendingEdgeTypeLabelCountDeltas) > 0 {
 		tx.engine.edgeTypeCountWriteMu.Lock()
 		tx.commitEdgeTypeCounts = true
-	}
-}
-
-func (tx *BadgerTransaction) releaseLabelCountLockLocked() {
-	if tx.commitLabelCounts {
-		tx.commitLabelCounts = false
-		tx.engine.labelCountWriteMu.Unlock()
 	}
 }
 
@@ -236,7 +224,6 @@ func (tx *BadgerTransaction) abortCommitLocked(err error) error {
 		}
 		tx.commitW = nil
 	}
-	tx.releaseLabelCountLockLocked()
 	tx.releaseEdgeTypeCountLockLocked()
 	tx.closeLocked(TxStatusRolledBack, true, nil)
 	return err

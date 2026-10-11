@@ -3,6 +3,7 @@ package storage
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
@@ -53,52 +54,34 @@ type namespaceEdgeType struct {
 	edgeType  string
 }
 
-// readEdgeTypeCountInTxn reads one persisted edge-type count (0 when absent).
-func (b *BadgerEngine) readEdgeTypeCountInTxn(txn *badger.Txn, namespace, edgeType string) (int64, error) {
-	item, err := txn.Get(edgeTypeCountKey(namespace, edgeType))
-	if err == badger.ErrKeyNotFound {
-		return 0, nil
-	}
+// readEdgeTypeCountInTxn reads one persisted edge-type count as base plus
+// the committed deltas visible in txn.
+func (b *BadgerEngine) readEdgeTypeCountInTxn(txn *badger.Txn, namespace, edgeType string) (int64, int, error) {
+	base, err := readDerivedCountInTxn(txn, edgeTypeCountKey(namespace, edgeType))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	var count int64
-	if err := item.Value(func(val []byte) error {
-		decoded, decodeErr := decodeDerivedCount(val)
-		if decodeErr != nil {
-			return decodeErr
-		}
-		count = decoded
-		return nil
-	}); err != nil {
-		return 0, err
+	deltaSum, seen, err := sumCountDeltasInTxn(txn, countDeltaKindEdgeType, namespace, edgeType)
+	if err != nil {
+		return 0, seen, err
 	}
-	return count, nil
+	if base+deltaSum < 0 {
+		return 0, seen, fmt.Errorf("edge-type count underflow for %s:%s", namespace, edgeType)
+	}
+	return base + deltaSum, seen, nil
 }
 
-// adjustEdgeTypeCountInTxn applies a signed delta to one persisted edge-type
-// count inside the caller's transaction, so the counter commit is atomic with
-// the edge write that justifies it.
+// adjustEdgeTypeCountInTxn appends a signed edge-type-count delta as its own
+// unique key inside the caller's transaction, atomic with the edge write that
+// justifies it. Blind appends never conflict, so no count mutex is needed on
+// the commit path.
 func (b *BadgerEngine) adjustEdgeTypeCountInTxn(txn *badger.Txn, namespace, edgeType string, delta int64) error {
 	if delta == 0 || namespace == "" || edgeType == "" {
 		return nil
 	}
-	count, err := b.readEdgeTypeCountInTxn(txn, namespace, edgeType)
-	if err != nil {
-		return err
-	}
-	next := count + delta
-	if next < 0 {
-		return fmt.Errorf("edge-type count underflow for %s:%s", namespace, edgeType)
-	}
-	key := edgeTypeCountKey(namespace, edgeType)
-	if next == 0 {
-		if err := txn.Delete(key); err != nil && err != badger.ErrKeyNotFound {
-			return err
-		}
-		return nil
-	}
-	return txn.Set(key, encodeDerivedCount(next))
+	suffix := b.countDeltaSeq.Add(1)
+	key := countDeltaKey(countDeltaKindEdgeType, namespace, edgeType, suffix)
+	return txn.Set(key, encodeCountDelta(delta))
 }
 
 // EdgeCountByTypeInNamespace returns the persisted count of edges of the given
@@ -107,14 +90,19 @@ func (b *BadgerEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (i
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
-	b.edgeTypeCountWriteMu.RLock()
-	defer b.edgeTypeCountWriteMu.RUnlock()
-	var count int64
-	err := b.withView(func(txn *badger.Txn) error {
-		var err error
-		count, err = b.readEdgeTypeCountInTxn(txn, namespace, edgeType)
-		return err
-	})
+	count, seen, err := b.readEdgeCountByTypeInNamespace(namespace, edgeType)
+	if errors.Is(err, errMalformedDerivedCount) {
+		// A malformed persisted base count is repaired from the edge-type
+		// index and the read retries once, as the pre-delta path repaired it
+		// (PR #1043 item #2).
+		b.edgeTypeCountWriteMu.Lock()
+		repairErr := b.repairEdgeTypeCountLocked(namespace, edgeType)
+		b.edgeTypeCountWriteMu.Unlock()
+		if repairErr != nil {
+			return 0, repairErr
+		}
+		count, seen, err = b.readEdgeCountByTypeInNamespace(namespace, edgeType)
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -124,7 +112,76 @@ func (b *BadgerEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (i
 	if b.writeBehind != nil {
 		count += b.writeBehind.EdgeTypeCountDeltaInNamespace(namespace, edgeType)
 	}
+	if seen >= countDeltaFoldThreshold {
+		_ = b.foldEdgeTypeCountDeltas(namespace, edgeType)
+	}
 	return count, nil
+}
+
+func (b *BadgerEngine) readEdgeCountByTypeInNamespace(namespace, edgeType string) (int64, int, error) {
+	var count int64
+	var seen int
+	err := b.withView(func(txn *badger.Txn) error {
+		var err error
+		count, seen, err = b.readEdgeTypeCountInTxn(txn, namespace, edgeType)
+		return err
+	})
+	return count, seen, err
+}
+
+// repairEdgeTypeCountLocked recomputes one namespace/type count from the
+// edge-type index after dropping the pair's persisted base and deltas. The
+// caller must hold edgeTypeCountWriteMu.
+func (b *BadgerEngine) repairEdgeTypeCountLocked(namespace, edgeType string) error {
+	return b.withUpdate(func(txn *badger.Txn) error {
+		prefix := countDeltaPrefixFor(countDeltaKindEdgeType, namespace, edgeType)
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+			if err := txn.Delete(it.Item().KeyCopy(nil)); err != nil {
+				it.Close()
+				return err
+			}
+		}
+		it.Close()
+		count, err := b.countEdgeTypeIndexEntriesInNamespace(namespace, edgeType)
+		if err != nil {
+			return err
+		}
+		key := edgeTypeCountKey(namespace, edgeType)
+		if count == 0 {
+			return txn.Delete(key)
+		}
+		return txn.Set(key, encodeDerivedCount(count))
+	})
+}
+
+// countEdgeTypeIndexEntriesInNamespace counts the edge-type-index entries of
+// one type whose edge lives in one namespace.
+func (b *BadgerEngine) countEdgeTypeIndexEntriesInNamespace(namespace, edgeType string) (int64, error) {
+	var count int64
+	err := b.db.View(func(txn *badger.Txn) error {
+		prefix := edgeTypeIndexPrefix(edgeType)
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		defer it.Close()
+		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+			key := it.Item().KeyCopy(nil)
+			num, ok := extractEdgeNumIDFromEdgeTypeKey(key)
+			if !ok {
+				continue
+			}
+			id, ok := b.idDict.lookupEdgeIDByNum(num)
+			if !ok {
+				continue
+			}
+			ns, _, ok := ParseDatabasePrefix(string(id))
+			if !ok || ns != namespace {
+				continue
+			}
+			count++
+		}
+		return nil
+	})
+	return count, err
 }
 
 // EdgeCountByType returns the total count of edges of the given type across
@@ -134,8 +191,6 @@ func (b *BadgerEngine) EdgeCountByType(edgeType string) (int64, error) {
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
-	b.edgeTypeCountWriteMu.RLock()
-	defer b.edgeTypeCountWriteMu.RUnlock()
 	needle := []byte(edgeType)
 	var total int64
 	err := b.withView(func(txn *badger.Txn) error {
@@ -161,6 +216,12 @@ func (b *BadgerEngine) EdgeCountByType(edgeType string) (int64, error) {
 				return err
 			}
 		}
+		// Unfolded per-type deltas are part of the count too.
+		delta, deltaErr := sumCountDeltasByNameInTxn(txn, countDeltaKindEdgeType, edgeType)
+		if deltaErr != nil {
+			return deltaErr
+		}
+		total += delta
 		return nil
 	})
 	if err != nil {
@@ -441,6 +502,11 @@ func (b *BadgerEngine) ensureEdgeTypeCounts() error {
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	// Fold any deltas a crash left behind first, so the persisted form is
+	// base keys again before verification compares them.
+	if err := b.foldAllEdgeTypeCountDeltas(); err != nil {
+		return err
+	}
 	ready, err := b.edgeTypeCountReady()
 	if err != nil {
 		return err
@@ -462,6 +528,59 @@ func (b *BadgerEngine) ensureEdgeTypeCounts() error {
 		return nil
 	}
 	return b.rebuildEdgeTypeCountsSnapshot(actual)
+}
+
+// foldEdgeTypeCountDeltas collapses the persisted deltas of one edge type
+// into its base count. It is triggered by reads past the fold threshold and
+// by engine open; the returned error is discarded on the read-triggered path
+// (the read already returned a correct sum).
+func (b *BadgerEngine) foldEdgeTypeCountDeltas(namespace, edgeType string) error {
+	b.edgeTypeCountWriteMu.Lock()
+	defer b.edgeTypeCountWriteMu.Unlock()
+	return b.withUpdate(func(txn *badger.Txn) error {
+		return b.foldCountDeltasInTxn(txn, countDeltaKindEdgeType, edgeTypeCountKey, namespace, edgeType)
+	})
+}
+
+// foldAllEdgeTypeCountDeltas collapses every persisted edge-type-count delta
+// at engine open, before any new write can reuse a suffix. When nothing is
+// pending it does not open an update transaction, so a clean reopen does no
+// open-time write.
+func (b *BadgerEngine) foldAllEdgeTypeCountDeltas() error {
+	any, err := b.hasAnyCountDeltasInDB(countDeltaKindEdgeType)
+	if err != nil || !any {
+		return err
+	}
+	b.edgeTypeCountWriteMu.Lock()
+	defer b.edgeTypeCountWriteMu.Unlock()
+	return b.withUpdate(func(txn *badger.Txn) error {
+		return b.foldAllCountDeltasInTxn(txn, countDeltaKindEdgeType, edgeTypeCountKey)
+	})
+}
+
+// foldRemainingCountDeltasOnClose folds any deltas a graceful close leaves
+// behind so a clean reopen performs no open-time write. It runs after Close
+// has drained every writer, so the count mutexes are uncontended, and it
+// writes through the raw database handle because the engine is already
+// marked closed.
+func (b *BadgerEngine) foldRemainingCountDeltasOnClose(db *managedBadgerDB) {
+	if db == nil {
+		return
+	}
+	b.labelCountWriteMu.Lock()
+	if err := db.Update(func(txn *badger.Txn) error {
+		return b.foldAllCountDeltasInTxn(txn, countDeltaKindLabel, labelCountKey)
+	}); err != nil && b.log != nil {
+		b.log.Warn("failed to fold label-count deltas at close", "error", err)
+	}
+	b.labelCountWriteMu.Unlock()
+	b.edgeTypeCountWriteMu.Lock()
+	if err := db.Update(func(txn *badger.Txn) error {
+		return b.foldAllCountDeltasInTxn(txn, countDeltaKindEdgeType, edgeTypeCountKey)
+	}); err != nil && b.log != nil {
+		b.log.Warn("failed to fold edge-type-count deltas at close", "error", err)
+	}
+	b.edgeTypeCountWriteMu.Unlock()
 }
 
 // decrementEdgeTypeCounts applies a batch of negative deltas (DeleteByPrefix).

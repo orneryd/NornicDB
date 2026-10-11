@@ -306,6 +306,8 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		dropPrefixes = append(dropPrefixes, edgeTypeCountNamespacePrefix(namespace))
 		dropPrefixes = append(dropPrefixes, edgeTypeLabelCountNamespacePrefix(prefixMVCCMetaEdgeTypeStartLabelCount, namespace))
 		dropPrefixes = append(dropPrefixes, edgeTypeLabelCountNamespacePrefix(prefixMVCCMetaEdgeTypeEndLabelCount, namespace))
+		dropPrefixes = append(dropPrefixes, countDeltaNamespacePrefix(countDeltaKindLabel, namespace))
+		dropPrefixes = append(dropPrefixes, countDeltaNamespacePrefix(countDeltaKindEdgeType, namespace))
 	}
 	if err := b.db.DropPrefix(dropPrefixes...); err != nil {
 		return 0, 0, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)

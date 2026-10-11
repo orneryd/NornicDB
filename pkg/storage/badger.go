@@ -95,6 +95,15 @@ const (
 	// count as:
 	//   [prefixMVCCMeta, prefixMVCCMetaEdgeTypeCount, namespace bytes..., 0x00, type] -> uint64 count
 	prefixMVCCMetaEdgeTypeCount = byte(0x0A)
+	// prefixMVCCMetaLabelCountDelta stores committed per-label count deltas as:
+	//   [prefixMVCCMeta, prefixMVCCMetaLabelCountDelta, namespace..., 0x00, label, 0x00, unique8] -> int64
+	// These are the append-only change log of prefixMVCCMetaLabelCount (see
+	// badger_count_deltas.go), not positional pair counts: sub-IDs 0x0F/0x10
+	// are the first free MVCC-meta sub-keys.
+	prefixMVCCMetaLabelCountDelta = byte(0x0F)
+	// prefixMVCCMetaEdgeTypeCountDelta stores committed per-type count deltas:
+	//   [prefixMVCCMeta, prefixMVCCMetaEdgeTypeCountDelta, namespace..., 0x00, type, 0x00, unique8] -> int64
+	prefixMVCCMetaEdgeTypeCountDelta = byte(0x10)
 	// prefixMVCCMetaEdgeTypeStartLabelCount / ...EndLabelCount store the
 	// positional namespace-scoped (label, relationship-type) counts Neo4j
 	// answers one-labeled-endpoint shapes from its counts store, e.g.
@@ -350,17 +359,21 @@ type BadgerEngine struct {
 	revealAll     atomic.Bool
 	revealQueryMu sync.RWMutex
 
-	// labelCountWriteMu orders node commits with their derived namespace-label
-	// count updates and keeps count readers from observing the publication gap.
-	// User transactions accumulate deltas locally; the shared count keys never
-	// participate in their optimistic conflict sets.
+	// labelCountWriteMu orders folds/rebuilds of the derived label counts
+	// against each other and keeps backup's count snapshot exclusive. Commit
+	// paths do not take it: every commit appends a unique delta key instead
+	// of a read-modify-write on the shared base key (PR #1043 item #2).
 	labelCountWriteMu sync.RWMutex
 
 	// edgeTypeCountWriteMu is the edge-type analogue of labelCountWriteMu:
-	// it orders edge commits with their derived per-type count updates
-	// (issue #638) and keeps typed-count readers from observing the
-	// publication gap.
+	// it orders folds/rebuilds of the derived per-type counts (issue #638).
+	// Commit paths append unique delta keys instead of taking it.
 	edgeTypeCountWriteMu sync.RWMutex
+
+	// countDeltaSeq numbers derived-count delta keys uniquely within this
+	// engine lifetime. Folding at open removes every persisted delta before
+	// new writes, so suffix reuse across restarts cannot collide.
+	countDeltaSeq atomic.Uint64
 
 	// embeddingsEnabled gates the pending-embed index write on node creates.
 	// When false, new nodes skip the pendingEmbed marker since no embed worker

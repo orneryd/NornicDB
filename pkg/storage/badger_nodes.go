@@ -60,7 +60,6 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
-	b.labelCountWriteMu.Lock()
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
@@ -118,7 +117,6 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		// Create-only path: primary key IS the current head body.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
 	})
-	b.labelCountWriteMu.Unlock()
 	if err != nil {
 		releaseUniqueLocks()
 		return "", err
@@ -356,7 +354,6 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
-	b.labelCountWriteMu.Lock()
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
@@ -544,7 +541,6 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		// into mvccNodeVersionKey(oldHead.Version) happened above.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
 	})
-	b.labelCountWriteMu.Unlock()
 	if err == nil && persistSeparateEmbeddings {
 		err = b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist)
 	}
@@ -649,7 +645,6 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	var deletedEdges []*Edge
 	var deletedNode *Node
 
-	b.labelCountWriteMu.Lock()
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, allocErr := b.allocateMVCCVersion(txn, namespaceForNodeID(id), time.Now())
 		if allocErr != nil {
@@ -728,7 +723,6 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		}
 		return nil
 	})
-	b.labelCountWriteMu.Unlock()
 
 	// Invalidate cache on successful delete
 	if err == nil {

@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -158,48 +159,32 @@ func labelSet(labels []string) map[string]struct{} {
 	return set
 }
 
-func (b *BadgerEngine) readLabelCountInTxn(txn *badger.Txn, namespace, label string) (int64, error) {
-	item, err := txn.Get(labelCountKey(namespace, label))
-	if err == badger.ErrKeyNotFound {
-		return 0, nil
-	}
+func (b *BadgerEngine) readLabelCountInTxn(txn *badger.Txn, namespace, label string) (int64, int, error) {
+	base, err := readDerivedCountInTxn(txn, labelCountKey(namespace, label))
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	var count int64
-	if err := item.Value(func(val []byte) error {
-		decoded, decodeErr := decodeDerivedCount(val)
-		if decodeErr != nil {
-			return decodeErr
-		}
-		count = decoded
-		return nil
-	}); err != nil {
-		return 0, err
+	deltaSum, seen, err := sumCountDeltasInTxn(txn, countDeltaKindLabel, namespace, label)
+	if err != nil {
+		return 0, seen, err
 	}
-	return count, nil
+	if base+deltaSum < 0 {
+		return 0, seen, fmt.Errorf("label count underflow for %s:%s", namespace, label)
+	}
+	return base + deltaSum, seen, nil
 }
 
+// adjustLabelCountInTxn appends a signed label-count delta as its own unique
+// key inside the caller's transaction, atomic with the node write that
+// justifies it. Blind appends never conflict, so no count mutex is needed on
+// the commit path.
 func (b *BadgerEngine) adjustLabelCountInTxn(txn *badger.Txn, namespace, label string, delta int64) error {
 	if delta == 0 || namespace == "" || label == "" {
 		return nil
 	}
-	count, err := b.readLabelCountInTxn(txn, namespace, label)
-	if err != nil {
-		return err
-	}
-	next := count + delta
-	if next < 0 {
-		return fmt.Errorf("label count underflow for %s:%s", namespace, label)
-	}
-	key := labelCountKey(namespace, label)
-	if next == 0 {
-		if err := txn.Delete(key); err != nil && err != badger.ErrKeyNotFound {
-			return err
-		}
-		return nil
-	}
-	return txn.Set(key, encodeDerivedCount(next))
+	suffix := b.countDeltaSeq.Add(1)
+	key := countDeltaKey(countDeltaKindLabel, namespace, label, suffix)
+	return txn.Set(key, encodeCountDelta(delta))
 }
 
 func (b *BadgerEngine) adjustNodeLabelCountsInTxn(txn *badger.Txn, namespace string, oldLabels, newLabels []string) error {
@@ -231,8 +216,9 @@ func nodeLabelCountDeltas(oldLabels, newLabels []string) map[string]int64 {
 }
 
 // applyLabelCountDeltasLocked persists transaction-local derived count deltas.
-// The caller must hold labelCountWriteMu across both the user-data commit and
-// this metadata update so count changes retain the same order as node changes.
+// The scalar tier appends unique delta keys (blind writes), so no count mutex
+// is required: concurrent commits to the same label cannot lose updates, and
+// folds only rewrite keys present in their own snapshot.
 func (b *BadgerEngine) applyLabelCountDeltasLocked(deltas map[namespaceLabel]int64) error {
 	if len(deltas) == 0 {
 		return nil
@@ -259,14 +245,19 @@ func (b *BadgerEngine) NodeCountByLabelInNamespace(namespace, label string) (int
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
-	b.labelCountWriteMu.RLock()
-	defer b.labelCountWriteMu.RUnlock()
-	var count int64
-	err := b.withView(func(txn *badger.Txn) error {
-		var err error
-		count, err = b.readLabelCountInTxn(txn, namespace, label)
-		return err
-	})
+	count, seen, err := b.readNodeCountByLabelInNamespace(namespace, label)
+	if errors.Is(err, errMalformedDerivedCount) {
+		// A malformed persisted base count is repaired from the label index
+		// and the read retries once, as the pre-delta read-modify-write path
+		// repaired it (PR #1043 item #2).
+		b.labelCountWriteMu.Lock()
+		repairErr := b.repairLabelCountLocked(namespace, label)
+		b.labelCountWriteMu.Unlock()
+		if repairErr != nil {
+			return 0, repairErr
+		}
+		count, seen, err = b.readNodeCountByLabelInNamespace(namespace, label)
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -276,15 +267,111 @@ func (b *BadgerEngine) NodeCountByLabelInNamespace(namespace, label string) (int
 	if b.writeBehind != nil {
 		count += b.writeBehind.LabelCountDeltaInNamespace(namespace, label)
 	}
+	if seen >= countDeltaFoldThreshold {
+		_ = b.foldLabelCountDeltas(namespace, label)
+	}
 	return count, nil
+}
+
+func (b *BadgerEngine) readNodeCountByLabelInNamespace(namespace, label string) (int64, int, error) {
+	var count int64
+	var seen int
+	err := b.withView(func(txn *badger.Txn) error {
+		var err error
+		count, seen, err = b.readLabelCountInTxn(txn, namespace, label)
+		return err
+	})
+	return count, seen, err
+}
+
+// repairLabelCountLocked recomputes one namespace/label count from the label
+// index after dropping the pair's persisted base and deltas. The caller must
+// hold labelCountWriteMu.
+func (b *BadgerEngine) repairLabelCountLocked(namespace, label string) error {
+	return b.withUpdate(func(txn *badger.Txn) error {
+		prefix := countDeltaPrefixFor(countDeltaKindLabel, namespace, label)
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+			if err := txn.Delete(it.Item().KeyCopy(nil)); err != nil {
+				it.Close()
+				return err
+			}
+		}
+		it.Close()
+		count, err := b.countLabelIndexEntriesInNamespace(namespace, label)
+		if err != nil {
+			return err
+		}
+		key := labelCountKey(namespace, label)
+		if count == 0 {
+			return txn.Delete(key)
+		}
+		return txn.Set(key, encodeDerivedCount(count))
+	})
+}
+
+// countLabelIndexEntriesInNamespace counts the label-index entries of one
+// label whose node lives in one namespace.
+func (b *BadgerEngine) countLabelIndexEntriesInNamespace(namespace, label string) (int64, error) {
+	var count int64
+	err := b.db.View(func(txn *badger.Txn) error {
+		prefix := labelIndexPrefix(label)
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		defer it.Close()
+		labelLen := len(label)
+		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+			key := it.Item().KeyCopy(nil)
+			num, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
+			if !ok {
+				continue
+			}
+			id, ok := b.idDict.lookupNodeIDByNum(num)
+			if !ok {
+				continue
+			}
+			ns, _, ok := ParseDatabasePrefix(string(id))
+			if !ok || ns != namespace {
+				continue
+			}
+			count++
+		}
+		return nil
+	})
+	return count, err
+}
+
+// foldLabelCountDeltas collapses the persisted deltas of one label into its
+// base count. It is triggered by reads past the fold threshold and by engine
+// open; the returned error is discarded on the read-triggered path (the read
+// already returned a correct sum).
+func (b *BadgerEngine) foldLabelCountDeltas(namespace, label string) error {
+	b.labelCountWriteMu.Lock()
+	defer b.labelCountWriteMu.Unlock()
+	return b.withUpdate(func(txn *badger.Txn) error {
+		return b.foldCountDeltasInTxn(txn, countDeltaKindLabel, labelCountKey, namespace, label)
+	})
+}
+
+// foldAllLabelCountDeltas collapses every persisted label-count delta at
+// engine open, before any new write can reuse a suffix. When nothing is
+// pending it does not open an update transaction, so a clean reopen does no
+// open-time write.
+func (b *BadgerEngine) foldAllLabelCountDeltas() error {
+	any, err := b.hasAnyCountDeltasInDB(countDeltaKindLabel)
+	if err != nil || !any {
+		return err
+	}
+	b.labelCountWriteMu.Lock()
+	defer b.labelCountWriteMu.Unlock()
+	return b.withUpdate(func(txn *badger.Txn) error {
+		return b.foldAllCountDeltasInTxn(txn, countDeltaKindLabel, labelCountKey)
+	})
 }
 
 func (b *BadgerEngine) NodeCountByLabel(label string) (int64, error) {
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
-	b.labelCountWriteMu.RLock()
-	defer b.labelCountWriteMu.RUnlock()
 	needle := []byte(label)
 	var total int64
 	err := b.withView(func(txn *badger.Txn) error {
@@ -310,6 +397,12 @@ func (b *BadgerEngine) NodeCountByLabel(label string) (int64, error) {
 				return err
 			}
 		}
+		// Unfolded per-label deltas are part of the count too.
+		delta, deltaErr := sumCountDeltasByNameInTxn(txn, countDeltaKindLabel, label)
+		if deltaErr != nil {
+			return deltaErr
+		}
+		total += delta
 		return nil
 	})
 	if err != nil {
@@ -441,6 +534,11 @@ func (b *BadgerEngine) rebuildLabelCounts(counts map[string]int64) error {
 
 func (b *BadgerEngine) ensureLabelCounts() error {
 	if err := b.ensureOpen(); err != nil {
+		return err
+	}
+	// Fold any deltas a crash left behind first, so the persisted form is
+	// base keys again before verification compares them.
+	if err := b.foldAllLabelCountDeltas(); err != nil {
 		return err
 	}
 	ready, err := b.labelCountReady()

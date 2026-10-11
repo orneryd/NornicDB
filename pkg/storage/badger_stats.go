@@ -207,6 +207,10 @@ func (b *BadgerEngine) Close() error {
 	b.txnWG.Wait()
 	b.notifyWG.Wait()
 
+	// Fold any derived-count deltas the last commits left behind so a clean
+	// reopen has no open-time write to perform (PR #1043 item #2).
+	b.foldRemainingCountDeltasOnClose(db)
+
 	b.mu.Lock()
 	b.releaseClosedStateLocked()
 	b.mu.Unlock()
