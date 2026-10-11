@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -126,6 +127,17 @@ func TestCountFromStoreSeesTransactionWrites(t *testing.T) {
 	_, err := exec.Execute(WithTransactionControl(ctx), "BEGIN", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = exec.Execute(WithTransactionControl(ctx), "ROLLBACK", nil) })
+	// Before the transaction writes, the committed totals.
+	_, err = exec.Execute(ctx, "MATCH (n:User) RETURN count(n)", nil)
+	require.NoError(t, err)
+	committed := exec.txContext.storageWrapper
+	require.NotNil(t, committed)
+	nodesBefore, err := committed.NodeCount()
+	require.NoError(t, err)
+	require.Equal(t, int64(6), nodesBefore)
+	edgesBefore, err := committed.EdgeCount()
+	require.NoError(t, err)
+	require.Equal(t, int64(9), edgesBefore)
 	_, err = exec.Execute(ctx, "MATCH (a:User {id: 1}), (x:Other {id: 4}) CREATE (a)-[:Friend]->(x), (x)-[:Friend]->(a), (:User {id: 7})-[:Friend]->(:Other {id: 8})", nil)
 	require.NoError(t, err)
 	for query, want := range map[string]int64{
@@ -147,4 +159,60 @@ func TestCountFromStoreSeesTransactionWrites(t *testing.T) {
 	edges, err := wrapper.EdgeCount()
 	require.NoError(t, err)
 	require.Equal(t, int64(12), edges)
+}
+
+type failingCountEngine struct {
+	storage.Engine
+	nilEdges bool
+}
+
+var errCountStore = errors.New("counter unavailable")
+
+func (f failingCountEngine) EdgeCountByStartLabel(string, string) (int64, error) {
+	return 0, errCountStore
+}
+
+func (f failingCountEngine) EdgeCountByEndLabel(string, string) (int64, error) {
+	return 0, errCountStore
+}
+
+func (f failingCountEngine) NodeCountByLabel(string) (int64, error) { return 0, errCountStore }
+
+func (f failingCountEngine) AllEdges() ([]*storage.Edge, error) {
+	if f.nilEdges {
+		return []*storage.Edge{nil}, nil
+	}
+	return nil, errCountStore
+}
+func (f failingCountEngine) GetEdgesByType(string) ([]*storage.Edge, error) {
+	if f.nilEdges {
+		return []*storage.Edge{nil}, nil
+	}
+	return nil, errCountStore
+}
+
+// A counter or scan that fails is the statement's error; nil entries and a
+// type listed twice are counted once (#1076).
+func TestCountFromStoreErrorsAndDuplicates(t *testing.T) {
+	ctx := context.Background()
+	exec, store := countStoreGraph(t)
+	result, err := exec.Execute(ctx, "MATCH ()-[r:Friend|Friend]-() RETURN count(r)", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(13)}}, result.Rows)
+
+	failing := NewStorageExecutor(failingCountEngine{Engine: store})
+	for _, pattern := range []string{"(:User)-[r:Friend]->()", "()-[r:Friend]->(:User)", "()-[r]-()", "()-[r:Friend]-()"} {
+		_, ok, err := failing.relationshipCountFromStore(ctx, failing.parseTraversalPattern(ctx, pattern), returnItem{expr: "count(r)"})
+		require.True(t, ok, pattern)
+		require.ErrorIs(t, err, errCountStore, pattern)
+	}
+	_, err = failing.Execute(ctx, "MATCH (n:User) RETURN count(n)", nil)
+	require.ErrorIs(t, err, errCountStore)
+	nils := NewStorageExecutor(failingCountEngine{Engine: store, nilEdges: true})
+	for _, pattern := range []string{"()-[r]-()", "()-[r:Friend]-()"} {
+		count, ok, err := nils.relationshipCountFromStore(ctx, nils.parseTraversalPattern(ctx, pattern), returnItem{expr: "count(r)"})
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Zero(t, count, pattern)
+	}
 }
