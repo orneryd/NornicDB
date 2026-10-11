@@ -174,3 +174,57 @@ func TestTransactionUpdateKeepsInlineEmbeddings(t *testing.T) {
 	require.Equal(t, [][]float32{{3, 4}}, got.ChunkEmbeddings)
 	require.Nil(t, copyNodeForCaller(nil))
 }
+
+// TestTransactionStaleCopyDoesNotRestoreInvalidatedEmbeddings: a statement
+// that writes one node twice from the same row copy (REMOVE n:Embedded,
+// n.text SET n.revision = 3) invalidates the managed embeddings on the
+// first write; the second write carries the copy's old embeddings back and
+// must not store them again. Vectors the caller sets after the invalidation
+// are still written as given. Reported by the Personal Documents
+// integration (I26).
+func TestTransactionStaleCopyDoesNotRestoreInvalidatedEmbeddings(t *testing.T) {
+	b := newSidecarTestBadger(t)
+	b.SetEmbeddingsEnabled(true)
+	b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	embedded := func(id string) *Node {
+		node := sidecarTestNode(t, b, id, map[string]any{"text": "boiler invoice " + id, "revision": int64(1)}, now)
+		require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, node.ID, [][]float32{{0.1, 0.2}}, map[string]any{"has_embedding": true, "chunk_count": 1}, now)))
+		got, err := b.GetNode(node.ID)
+		require.NoError(t, err)
+		require.Len(t, got.ChunkEmbeddings, 1)
+		return node
+	}
+	twoWrites := func(id NodeID, second func(*Node)) {
+		tx, err := b.BeginTransaction()
+		require.NoError(t, err)
+		require.NoError(t, tx.SetNamespace("test"))
+		row, err := tx.GetNode(id)
+		require.NoError(t, err)
+		require.Len(t, row.ChunkEmbeddings, 1, "the row copy carries the embeddings it was read with")
+		delete(row.Properties, "text")
+		require.NoError(t, tx.UpdateNode(CopyNode(row)))
+		second(row)
+		require.NoError(t, tx.UpdateNode(row))
+		require.NoError(t, tx.Commit())
+	}
+
+	stale := embedded("stale")
+	twoWrites(stale.ID, func(row *Node) { row.Properties["revision"] = int64(2) })
+	got, err := b.GetNode(stale.ID)
+	require.NoError(t, err)
+	require.Empty(t, got.ChunkEmbeddings)
+	require.Nil(t, got.EmbedMeta)
+	require.Equal(t, int64(2), got.Properties["revision"])
+	b.invalidateCachesAfterRestore()
+	got, err = b.GetNode(stale.ID)
+	require.NoError(t, err)
+	require.Empty(t, got.ChunkEmbeddings, "nor after a restart")
+
+	fresh := embedded("fresh")
+	twoWrites(fresh.ID, func(row *Node) { row.ChunkEmbeddings = [][]float32{{0.5, 0.6}} })
+	got, err = b.GetNode(fresh.ID)
+	require.NoError(t, err)
+	require.Equal(t, [][]float32{{0.5, 0.6}}, got.ChunkEmbeddings)
+}
