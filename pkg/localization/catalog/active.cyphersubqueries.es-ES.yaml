@@ -124,21 +124,6 @@
 - id: cyphersubqueries.query_required
   description: La solicitud de recuperación no tiene texto de consulta.
   other: se requiere query
-- id: cyphersubqueries.rag_syntax_invalid
-  description: Sintaxis de procedimiento RAG no válida. Procedure no se traduce.
-  other: "sintaxis de {{.Procedure}} no válida"
-- id: cyphersubqueries.rag_request_argument_required
-  description: Al procedimiento RAG le falta un argumento. Procedure no se traduce.
-  other: "{{.Procedure}} requiere un argumento de solicitud"
-- id: cyphersubqueries.rag_parenthesis_unmatched
-  description: El procedimiento RAG tiene sintaxis sin cerrar. Procedure no se traduce.
-  other: "paréntesis sin pareja en {{.Procedure}}"
-- id: cyphersubqueries.rag_parameter_must_be_map
-  description: El parámetro RAG tiene un tipo incorrecto. Procedure y Parameter no se traducen.
-  other: "el parámetro {{.Parameter}} de {{.Procedure}} debe ser un mapa"
-- id: cyphersubqueries.rag_request_must_be_map_literal
-  description: El argumento RAG tiene una forma incorrecta. Procedure no se traduce.
-  other: "la solicitud de {{.Procedure}} debe ser un literal de mapa"
 - id: cyphersubqueries.rag_candidate_id_required
   description: A un candidato de db.rerank le falta id.
   other: se requiere el id del candidato de db.rerank

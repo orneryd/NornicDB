@@ -19,7 +19,9 @@ func TestComputeWCCUnionByRank(t *testing.T) {
 		CREATE (h:W {id: 0}), (h)-[:R]->(a), (h)-[:R]->(b), (h)-[:R]->(c), (h)-[:R]->(d), (h)-[:R]->(e), (:W {id: 9})`, nil)
 	require.NoError(t, err)
 	for i := 0; i < 32; i++ {
-		components := exec.computeWCC("W")
+		nodes, err := exec.algorithmNodes("apoc.algo.wcc", []interface{}{"W"})
+		require.NoError(t, err)
+		components := exec.computeWCC(nodes)
 		require.Len(t, components, 7)
 		ids := map[int]int{}
 		for _, id := range components {

@@ -104,16 +104,6 @@ func TestCypherHelpers_DecodeMapAndAssignValue(t *testing.T) {
 }
 
 func TestCypherHelpers_ExtractorsAndEnsureLabel(t *testing.T) {
-	assert.Equal(t, "g_cov", extractStringArg("CALL gds.graph.project('g_cov', ['A'], ['R'])", "gds.graph.project"))
-	assert.Equal(t, "A", extractStringArg("CALL gds.graph.project(g_cov, ['A'], ['R'])", "gds.graph.project"))
-	assert.Equal(t, "", extractStringArg("RETURN 1", "gds.graph.project"))
-	assert.Equal(t, "", extractStringArg("CALL gds.graph.project('unterminated)", "gds.graph.project"))
-
-	assert.Equal(t, "myGraph", extractGraphNameFromReturn("RETURN gds.graph.project('myGraph', ['A'], ['R'])"))
-	assert.Equal(t, "", extractGraphNameFromReturn("RETURN 1"))
-	assert.Equal(t, 0.75, extractFloatArg("{dampingFactor: 0.75, iterations: 20}", "dampingFactor"))
-	assert.Equal(t, 0.0, extractFloatArg("{iterations: 20}", "dampingFactor"))
-
 	labels := ensureLabel([]string{"A"}, "B")
 	assert.ElementsMatch(t, []string{"A", "B"}, labels)
 	labels2 := ensureLabel([]string{"A", "B"}, "B")
@@ -955,22 +945,22 @@ func TestCypherHelpers_CallCompatRelationshipQueries(t *testing.T) {
 	require.NoError(t, err)
 
 	// Fulltext relationship query: empty query branch.
-	res, err := exec.callDbIndexFulltextQueryRelationships("CALL db.index.fulltext.queryRelationships('default','')")
+	res, err := exec.Execute(context.Background(), "CALL db.index.fulltext.queryRelationships('default','')", nil)
 	require.NoError(t, err)
 	require.Empty(t, res.Rows)
 
 	// Fulltext relationship query: match path.
-	res, err = exec.callDbIndexFulltextQueryRelationships("CALL db.index.fulltext.queryRelationships('default','searchable')")
+	res, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryRelationships('default','searchable')", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 
 	// Neo4j compatibility: optional options map (skip/limit).
-	res, err = exec.callDbIndexFulltextQueryRelationships("CALL db.index.fulltext.queryRelationships('default','searchable', {skip: 0, limit: 1})")
+	res, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryRelationships('default','searchable', {skip: 0, limit: 1})", nil)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 
 	// Third arg must be a map.
-	_, err = exec.callDbIndexFulltextQueryRelationships("CALL db.index.fulltext.queryRelationships('default','searchable', 1)")
+	_, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryRelationships('default','searchable', 1)", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "MAP")
 
@@ -1311,74 +1301,29 @@ func TestCypherHelpers_ExtractPolygonPoints_AllBranches(t *testing.T) {
 	assert.Nil(t, none)
 }
 
-func TestCypherHelpers_ParseRagProcedureRequest(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(base, "test"))
-	ctx := context.Background()
-
-	req, err := exec.parseRagProcedureRequest(ctx, "CALL db.retrieve({query:'alpha', limit: 5})", "DB.RETRIEVE")
-	require.NoError(t, err)
-	assert.Equal(t, "alpha", req["query"])
-
-	req, err = exec.parseRagProcedureRequest(ctx, "CALL db.retrieve('alpha')", "DB.RETRIEVE")
-	require.NoError(t, err)
-	assert.Equal(t, "alpha", req["query"])
-
-	req, err = exec.parseRagProcedureRequest(ctx, "CALL db.retrieve()", "DB.RETRIEVE")
-	require.NoError(t, err)
-	assert.Empty(t, req)
-
-	ctxWithParams := context.WithValue(ctx, paramsKey, map[string]interface{}{
-		"r": map[string]interface{}{"query": "beta", "limit": int64(2)},
-	})
-	req, err = exec.parseRagProcedureRequest(ctxWithParams, "CALL db.retrieve($r)", "DB.RETRIEVE")
-	require.NoError(t, err)
-	assert.Equal(t, "beta", req["query"])
-
-	_, err = exec.parseRagProcedureRequest(ctx, "CALL db.retrieve($missing)", "DB.RETRIEVE")
-	require.Error(t, err)
-	_, err = exec.parseRagProcedureRequest(ctx, "CALL db.retrieve(123)", "DB.RETRIEVE")
-	require.Error(t, err)
-	_, err = exec.parseRagProcedureRequest(ctx, "CALL db.retrieve(", "DB.RETRIEVE")
-	require.Error(t, err)
-	_, err = exec.parseRagProcedureRequest(ctx, "CALL other.proc({})", "DB.RETRIEVE")
-	require.Error(t, err)
-}
-
 func TestCypherHelpers_CallDbIndexVectorEmbed_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(base, "test"))
 	ctx := context.Background()
 
-	_, err := exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.embed('x')")
-	require.Error(t, err)
+	_, err := exec.callDbIndexVectorEmbed(ctx, []interface{}{"x"})
+	require.ErrorContains(t, err, "no embedder configured")
 
 	exec.SetEmbedder(&mockQueryEmbedder{embedding: []float32{1, 0, 0}})
 
-	_, err = exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.bad('x')")
-	require.Error(t, err)
-	_, err = exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.embed")
-	require.Error(t, err)
-	_, err = exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.embed(")
-	require.Error(t, err)
-	_, err = exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.embed('   ')")
-	require.Error(t, err)
-	_, err = exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.embed(123)")
-	require.Error(t, err)
-	_, err = exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.embed($q)")
-	require.Error(t, err)
+	_, err = exec.callDbIndexVectorEmbed(ctx, []interface{}{"   "})
+	require.ErrorContains(t, err, "requires non-empty text")
+	_, err = exec.callDbIndexVectorEmbed(ctx, []interface{}{int64(123)})
+	require.ErrorContains(t, err, "must be STRING")
+	_, err = exec.callDbIndexVectorEmbed(ctx, []interface{}{nil})
+	require.ErrorContains(t, err, "is null")
 
-	ctxWithBadParam := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": 123})
-	_, err = exec.callDbIndexVectorEmbed(ctxWithBadParam, "CALL db.index.vector.embed($q)")
-	require.Error(t, err)
-
-	ctxWithParam := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": "hello"})
-	res, err := exec.callDbIndexVectorEmbed(ctxWithParam, "CALL db.index.vector.embed($q)")
+	res, err := exec.Execute(ctx, "CALL db.index.vector.embed($q) YIELD embedding RETURN embedding", map[string]interface{}{"q": "hello"})
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.Len(t, res.Rows[0], 1)
 
-	res, err = exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.embed('hello')")
+	res, err = exec.Execute(ctx, "CALL db.index.vector.embed('hello')", nil)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 }
@@ -1571,12 +1516,12 @@ func TestCypherHelpers_ApocLouvainBasic(t *testing.T) {
 	require.NoError(t, err)
 
 	// Basic call with explicit label filter.
-	res, err := exec.callApocAlgoLouvain(context.Background(), "CALL apoc.algo.louvain(['Node']) YIELD node, community")
+	res, err := exec.callApocAlgoLouvain(context.Background(), []interface{}{[]interface{}{"Node"}})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"node", "community"}, res.Columns)
 
 	// weightProperty parsing branch.
-	res, err = exec.callApocAlgoLouvain(context.Background(), "CALL apoc.algo.louvain(['Node'], {weightProperty: 'weight'}) YIELD node, community")
+	res, err = exec.callApocAlgoLouvain(context.Background(), []interface{}{[]interface{}{"Node"}, map[string]interface{}{"weightProperty": "weight"}})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"node", "community"}, res.Columns)
 }
@@ -2137,7 +2082,7 @@ func TestCypherHelpers_VectorAndFulltextRelationshipQueryBranches(t *testing.T) 
 	ctx := context.Background()
 
 	// Fulltext relationships: empty query and match query branches.
-	res, err := exec.callDbIndexFulltextQueryRelationships("CALL db.index.fulltext.queryRelationships('default', '')")
+	res, err := exec.Execute(context.Background(), "CALL db.index.fulltext.queryRelationships('default', '')", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"relationship", "score"}, res.Columns)
 
@@ -2156,7 +2101,7 @@ func TestCypherHelpers_VectorAndFulltextRelationshipQueryBranches(t *testing.T) 
 		},
 	})
 	require.NoError(t, err)
-	res, err = exec.callDbIndexFulltextQueryRelationships("CALL db.index.fulltext.queryRelationships('default', 'hello')")
+	res, err = exec.Execute(context.Background(), "CALL db.index.fulltext.queryRelationships('default', 'hello')", nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, res.Rows)
 

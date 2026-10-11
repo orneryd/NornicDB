@@ -67,6 +67,9 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 	// WITH … AS or UNWIND, for the function argument checks.
 	var valueTypes map[string]string
 	returnSeen := false
+	// unwound names the typed variables whose type came from UNWIND, which
+	// Neo4j checks against a procedure's parameters only when the call runs.
+	var unwound map[string]struct{}
 	for _, clause := range clauses {
 		if returnSeen {
 			// RETURN is the terminal clause: a clause after it is never a
@@ -148,6 +151,9 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 			// CALL proc() YIELD x: a yielded name must be new (Neo4j:
 			// VariableAlreadyBound). YIELD * names nothing statically, so
 			// the rest of the statement isn't checked.
+			if err := staticProcedureArgumentTypeError(clause.text, staticTypeScope{kinds: scope, values: valueTypes, complete: true}, unwound); err != nil {
+				return err
+			}
 			yield := parseYieldClause(clause.text)
 			if yield == nil || yield.yieldAll {
 				return nil
@@ -228,6 +234,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 				return err
 			}
 			scope = projectMatchSemanticScope(scope, clause.text)
+			unwound = projectUnwoundValues(unwound, clause.text)
 			valueTypes = projectStaticValueTypes(input, clause.text)
 			projected := staticTypeScope{kinds: scope, values: valueTypes, complete: true}
 			if err := forEachProjectedTailExpression(projection, rest, func(expression string) error {
@@ -255,12 +262,17 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string) err
 					}
 				}
 				scope[alias] = unwindMatchSemanticKind(clause.text, scope)
+				delete(unwound, alias)
 				delete(valueTypes, alias)
 				if typeName := unwindStaticValueType(clause.text); typeName != "" {
 					if valueTypes == nil {
 						valueTypes = make(map[string]string)
 					}
 					valueTypes[alias] = typeName
+					if unwound == nil {
+						unwound = make(map[string]struct{})
+					}
+					unwound[alias] = struct{}{}
 				}
 			}
 		case pipelineClauseReturn:

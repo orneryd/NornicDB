@@ -272,58 +272,17 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 	return result, nil
 }
 
-// callDbIndexVectorEmbed implements db.index.vector.embed
+// callDbIndexVectorEmbed implements db.index.vector.embed: the embedding of
+// the call's evaluated STRING argument.
 // Syntax: CALL db.index.vector.embed('query text') YIELD embedding
-func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	if e.embedder == nil {
 		return nil, localizedError(localization.CypherSpecializedCallsEmbedderNotConfigured(), nil)
 	}
-
-	upper := upperASCII(cypher)
-	procIdx := strings.Index(upper, "DB.INDEX.VECTOR.EMBED")
-	if procIdx == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedInvalidSyntax(), nil)
+	text, err := requiredProcedureString("db.index.vector.embed", args, 0, "text")
+	if err != nil {
+		return nil, err
 	}
-	parenStart := strings.Index(cypher[procIdx:], "(")
-	if parenStart == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedArgumentRequired(), nil)
-	}
-	parenStart += procIdx
-	parenEnd := e.findMatchingParen(cypher, parenStart)
-	if parenEnd == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedUnmatchedParenthesis(), nil)
-	}
-
-	arg := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
-	if arg == "" {
-		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedTextRequired(), nil)
-	}
-
-	var text string
-	if strings.HasPrefix(arg, "$") {
-		name := strings.TrimPrefix(arg, "$")
-		params := getParamsFromContext(ctx)
-		if params == nil {
-			return nil, localizedError(localization.CypherSpecializedCallsParameterNotProvided(name), nil)
-		}
-		value, ok := params[name]
-		if !ok {
-			return nil, localizedError(localization.CypherSpecializedCallsParameterNotProvided(name), nil)
-		}
-		s, ok := value.(string)
-		if !ok {
-			return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedParameterString(name), nil)
-		}
-		text = s
-	} else {
-		value := e.parseValue(ctx, arg)
-		s, ok := value.(string)
-		if !ok {
-			return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedStringRequired(), nil)
-		}
-		text = s
-	}
-
 	if strings.TrimSpace(text) == "" {
 		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedTextRequired(), nil)
 	}

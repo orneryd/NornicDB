@@ -15,24 +15,24 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) callDbRetrieve(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	req, err := e.parseRagProcedureRequest(ctx, cypher, "DB.RETRIEVE")
+func (e *StorageExecutor) callDbRetrieve(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	req, err := ragProcedureRequest("db.retrieve", args)
 	if err != nil {
 		return nil, err
 	}
 	return e.runSearchRequest(ctx, req, false, false)
 }
 
-func (e *StorageExecutor) callDbRRetrieve(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	req, err := e.parseRagProcedureRequest(ctx, cypher, "DB.RRETRIEVE")
+func (e *StorageExecutor) callDbRRetrieve(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	req, err := ragProcedureRequest("db.rretrieve", args)
 	if err != nil {
 		return nil, err
 	}
 	return e.runSearchRequest(ctx, req, false, true)
 }
 
-func (e *StorageExecutor) callDbRerank(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	req, err := e.parseRagProcedureRequest(ctx, cypher, "DB.RERANK")
+func (e *StorageExecutor) callDbRerank(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	req, err := ragProcedureRequest("db.rerank", args)
 	if err != nil {
 		return nil, err
 	}
@@ -82,8 +82,8 @@ func (e *StorageExecutor) callDbRerank(ctx context.Context, cypher string) (*Exe
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbInfer(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	req, err := e.parseRagProcedureRequest(ctx, cypher, "DB.INFER")
+func (e *StorageExecutor) callDbInfer(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	req, err := ragProcedureRequest("db.infer", args)
 	if err != nil {
 		return nil, err
 	}
@@ -708,43 +708,19 @@ func applyAdaptiveCandidateOptions(opts *search.SearchOptions, req map[string]in
 	}
 }
 
-func (e *StorageExecutor) parseRagProcedureRequest(ctx context.Context, cypher, procName string) (map[string]interface{}, error) {
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, procName)
-	if idx == -1 {
-		return nil, localizedError(localization.CypherSubqueriesRAGSyntaxInvalid(lowerASCII(procName)), nil)
+// ragProcedureRequest is the request of db.retrieve, db.rretrieve,
+// db.rerank or db.infer: the call's one evaluated argument, so a map
+// literal, a parameter, a variable bound earlier in the statement or any
+// expression gives the same request. A STRING is NornicDB's kept short form
+// of {query: text}; null is the procedure's own failure.
+func ragProcedureRequest(procedure string, args []interface{}) (map[string]interface{}, error) {
+	switch value := procedureArgument(args, 0).(type) {
+	case nil:
+		return nil, procedureArgumentNullError(procedure, "request")
+	case string:
+		return map[string]interface{}{"query": value}, nil
 	}
-	parenStart := strings.Index(cypher[idx:], "(")
-	if parenStart == -1 {
-		return nil, localizedError(localization.CypherSubqueriesRAGRequestArgumentRequired(lowerASCII(procName)), nil)
-	}
-	parenStart += idx
-	parenEnd := e.findMatchingParen(cypher, parenStart)
-	if parenEnd == -1 {
-		return nil, localizedError(localization.CypherSubqueriesRAGParenthesisUnmatched(lowerASCII(procName)), nil)
-	}
-	rawArg := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
-	if rawArg == "" {
-		return map[string]interface{}{}, nil
-	}
-
-	if strings.HasPrefix(rawArg, "{") && strings.HasSuffix(rawArg, "}") {
-		return e.parseMapLiteral(ctx, rawArg), nil
-	}
-	if strings.HasPrefix(rawArg, "$") {
-		name := strings.TrimPrefix(rawArg, "$")
-		if params := getParamsFromContext(ctx); params != nil {
-			if req, ok := params[name].(map[string]interface{}); ok {
-				return req, nil
-			}
-		}
-		return nil, localizedError(localization.CypherSubqueriesRAGParameterMustBeMap(lowerASCII(procName), rawArg), nil)
-	}
-	if (strings.HasPrefix(rawArg, "'") && strings.HasSuffix(rawArg, "'")) ||
-		(strings.HasPrefix(rawArg, "\"") && strings.HasSuffix(rawArg, "\"")) {
-		return map[string]interface{}{"query": strings.Trim(rawArg, "\"'")}, nil
-	}
-	return nil, localizedError(localization.CypherSubqueriesRAGRequestMustBeMapLiteral(lowerASCII(procName)), nil)
+	return optionalProcedureMap(procedure, args, 0, "request")
 }
 
 func toChatMessages(v interface{}) []heimdall.ChatMessage {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -199,17 +198,15 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 //     tokenized BM25-like matching used by queryNodes.
 //
 // Returns one row per matching edge with columns [relationship, score].
-func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"relationship", "score"},
 		Rows:    [][]interface{}{},
 	}
-	opts, err := e.extractFulltextQueryOptions(cypher)
+	indexName, query, opts, err := fulltextQueryArguments("db.index.fulltext.queryRelationships", args)
 	if err != nil {
 		return nil, err
 	}
-
-	indexName, query := e.extractFulltextParams(cypher)
 	if query == "" {
 		return result, nil
 	}
@@ -705,148 +702,107 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 	return result, nil
 }
 
-// callDbIndexVectorCreateNodeIndex creates a vector index on nodes - Neo4j db.index.vector.createNodeIndex()
-// Syntax: CALL db.index.vector.createNodeIndex(indexName, label, property, dimension, similarityFunction)
-func (e *StorageExecutor) callDbIndexVectorCreateNodeIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	if !strings.EqualFold(extractProcedureName(cypher), "db.index.vector.createNodeIndex") {
-		return nil, localizedError(localization.CypherProceduresVectorCreateNodeInvalidSyntax(false), nil)
+// vectorIndexProcedure names a vector index creation procedure and its
+// arguments: Neo4j's db.index.vector.createNodeIndex and NornicDB's kept
+// db.index.vector.createRelationshipIndex.
+type vectorIndexProcedure struct {
+	name, token, property, dimension, similarity string
+}
+
+var (
+	vectorNodeIndexProcedure         = vectorIndexProcedure{"db.index.vector.createNodeIndex", "label", "propertyKey", "vectorDimension", "vectorSimilarityFunction"}
+	vectorRelationshipIndexProcedure = vectorIndexProcedure{"db.index.vector.createRelationshipIndex", "relationshipType", "property", "dimension", "similarityFunction"}
+)
+
+// callDbIndexVectorCreateIndex creates a vector index on nodes or
+// relationships from the call's evaluated arguments: (indexName, label or
+// relationship type, property, dimension[, similarityFunction]). The
+// similarity function defaults to cosine; only a node index registers a
+// vector search space. The relationship procedure keeps NornicDB's row
+// describing the created index.
+func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args []interface{}, entity storage.ConstraintEntityType) (*ExecuteResult, error) {
+	procedure := vectorNodeIndexProcedure
+	if entity == storage.ConstraintEntityRelationship {
+		procedure = vectorRelationshipIndexProcedure
 	}
-	if !strings.Contains(cypher, "(") || !strings.Contains(cypher, ")") {
-		return nil, localizedError(localization.CypherProceduresVectorCreateNodeInvalidSyntax(true), nil)
-	}
-	arguments, err := extractProcedureInvocationArguments(ctx, vectorCreateNodeProcedureSpec(), cypher)
+	indexName, err := requiredProcedureString(procedure.name, args, 0, "indexName")
 	if err != nil {
 		return nil, err
 	}
-	return e.callDbIndexVectorCreateNodeIndexArguments(ctx, arguments)
-}
-
-func (e *StorageExecutor) callDbIndexVectorCreateNodeIndexArguments(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
-	if len(arguments) < 4 || len(arguments) > 5 {
-		return nil, localizedError(localization.CypherProceduresVectorCreateNodeArgumentsRequired(), nil)
+	token, err := requiredProcedureString(procedure.name, args, 1, procedure.token)
+	if err != nil {
+		return nil, err
 	}
-	indexName, validName := arguments[0].(string)
-	label, validLabel := arguments[1].(string)
-	property, validProperty := arguments[2].(string)
-	dimension := toInt64(arguments[3])
-	validDimension := isIntegerProcedureValue(arguments[3])
+	property, err := requiredProcedureString(procedure.name, args, 2, procedure.property)
+	if err != nil {
+		return nil, err
+	}
+	dimension, err := requiredProcedureInteger(procedure.name, args, 3, procedure.dimension)
+	if err != nil {
+		return nil, err
+	}
 	similarity := "cosine"
-	validSimilarity := true
-	if len(arguments) == 5 {
-		similarity, validSimilarity = arguments[4].(string)
-	}
-	if !validName || !validLabel || !validProperty || !validDimension || !validSimilarity {
-		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "vector index creation requires STRING names, an INTEGER dimension, and a STRING similarity function")
+	if len(args) > 4 {
+		if similarity, err = requiredProcedureString(procedure.name, args, 4, procedure.similarity); err != nil {
+			return nil, err
+		}
 	}
 	similarity = strings.ToLower(similarity)
 	if dimension <= 0 || (similarity != "cosine" && similarity != "euclidean" && similarity != "dot") {
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "vector index creation requires a positive dimension and a supported similarity function")
 	}
-	err := e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{label}, []string{property}, storage.ConstraintEntityNode); err != nil {
+	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{token}, []string{property}, entity); err != nil {
 			return err
 		}
-		if err := schema.AddVectorIndexForEntity(indexName, label, property, int(dimension), similarity, storage.ConstraintEntityNode); err != nil {
+		if err := schema.AddVectorIndexForEntity(indexName, token, property, int(dimension), similarity, entity); err != nil {
 			return err
 		}
-		e.afterSchemaCommit(ctx, func() {
-			e.registerVectorSpace(indexName, label, property, int(dimension), similarity)
-		})
+		if entity == storage.ConstraintEntityNode {
+			e.afterSchemaCommit(ctx, func() {
+				e.registerVectorSpace(indexName, token, property, int(dimension), similarity)
+			})
+		}
 		return nil
 	})
 	if err != nil {
+		failure := localization.CypherProceduresCreateVectorIndexFailed(err)
+		if entity == storage.ConstraintEntityRelationship {
+			failure = localization.CypherProceduresCreateRelationshipVectorIndexFailed(err)
+		}
 		return nil, &classifiedCypherError{
-			cause: localizedError(localization.CypherProceduresCreateVectorIndexFailed(err), err),
+			cause: localizedError(failure, err),
 			code:  "Neo.ClientError.Procedure.ProcedureCallFailed", detail: "ProcedureCallFailed",
 		}
+	}
+	if entity == storage.ConstraintEntityRelationship {
+		return &ExecuteResult{
+			Columns: []string{"name", "relationshipType", "property", "dimension", "similarityFunction"},
+			Rows:    [][]interface{}{{indexName, token, property, int(dimension), similarity}},
+		}, nil
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
 
-// callDbIndexVectorCreateRelationshipIndex creates a vector index on relationships - Neo4j db.index.vector.createRelationshipIndex()
-// Syntax: CALL db.index.vector.createRelationshipIndex(indexName, relationshipType, property, dimension, similarityFunction)
-func (e *StorageExecutor) callDbIndexVectorCreateRelationshipIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, "CREATERELATIONSHIPINDEX")
-	if idx < 0 {
-		return nil, localizedError(localization.CypherProceduresVectorCreateRelationshipInvalidSyntax(false), nil)
-	}
-
-	// Parse arguments similar to createNodeIndex
-	argsStart := strings.Index(cypher[idx:], "(")
-	argsEnd := strings.LastIndex(cypher[idx:], ")")
-	if argsStart < 0 || argsEnd < 0 {
-		return nil, localizedError(localization.CypherProceduresVectorCreateRelationshipInvalidSyntax(true), nil)
-	}
-
-	argsStr := cypher[idx+argsStart+1 : idx+argsEnd]
-	parts := e.splitArgsSimple(argsStr)
-	if len(parts) < 4 {
-		return nil, localizedError(localization.CypherProceduresVectorCreateRelationshipArguments(), nil)
-	}
-
-	indexName := strings.Trim(strings.TrimSpace(parts[0]), "'\"")
-	relType := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
-	property := strings.Trim(strings.TrimSpace(parts[2]), "'\"")
-	dimension, err := strconv.Atoi(strings.TrimSpace(parts[3]))
-	if err != nil {
-		return nil, localizedError(localization.CypherProceduresInvalidDimension(err), err)
-	}
-
-	similarity := "cosine"
-	if len(parts) > 4 {
-		similarity = strings.Trim(strings.TrimSpace(parts[4]), "'\"")
-	}
-
-	// Create vector index on relationships using schema manager
-	// Use relationship type as "label" for index naming
-	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
-		if _, err := admitSchemaIndexCreation(schema, "", indexName, "VECTOR", []string{relType}, []string{property}, storage.ConstraintEntityRelationship); err != nil {
-			return err
-		}
-		return schema.AddVectorIndexForEntity(indexName, relType, property, dimension, similarity, storage.ConstraintEntityRelationship)
-	})
-	if err != nil {
-		return nil, localizedError(localization.CypherProceduresCreateRelationshipVectorIndexFailed(err), err)
-	}
-
-	return &ExecuteResult{
-		Columns: []string{"name", "relationshipType", "property", "dimension", "similarityFunction"},
-		Rows:    [][]interface{}{{indexName, relType, property, dimension, similarity}},
-	}, nil
-}
-
 // callDbIndexFulltextCreateNodeIndex creates a fulltext index on nodes - Neo4j db.index.fulltext.createNodeIndex()
 // Syntax: CALL db.index.fulltext.createNodeIndex(indexName, labels, properties, config)
-func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, "CREATENODEINDEX")
-	if idx < 0 {
-		return nil, localizedError(localization.CypherProceduresFulltextCreateNodeInvalidSyntax(false), nil)
+func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "db.index.fulltext.createNodeIndex"
+	indexName, err := requiredProcedureString(procedure, args, 0, "indexName")
+	if err != nil {
+		return nil, err
 	}
-
-	argsStart := strings.Index(cypher[idx:], "(")
-	argsEnd := strings.LastIndex(cypher[idx:], ")")
-	if argsStart < 0 || argsEnd < 0 {
-		return nil, localizedError(localization.CypherProceduresFulltextCreateNodeInvalidSyntax(true), nil)
+	labels, err := requiredProcedureStringList(procedure, args, 1, "labels")
+	if err != nil {
+		return nil, err
 	}
-
-	argsStr := cypher[idx+argsStart+1 : idx+argsEnd]
-	parts := e.splitArgsRespectingArrays(argsStr)
-	if len(parts) < 3 {
-		return nil, localizedError(localization.CypherProceduresFulltextCreateNodeArgumentsRequired(), nil)
+	properties, err := requiredProcedureStringList(procedure, args, 2, "properties")
+	if err != nil {
+		return nil, err
 	}
-
-	indexName := strings.Trim(strings.TrimSpace(parts[0]), "'\"")
-	labelsStr := strings.TrimSpace(parts[1])
-	propsStr := strings.TrimSpace(parts[2])
-
-	// Parse labels array: ['Label1', 'Label2'] or 'Label'
-	labels := e.parseStringArray(labelsStr)
-	properties := e.parseStringArray(propsStr)
 
 	// Create fulltext index using schema manager
-	err := e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
 		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", labels, properties, storage.ConstraintEntityNode); err != nil {
 			return err
 		}
@@ -864,35 +820,23 @@ func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context
 
 // callDbIndexFulltextCreateRelationshipIndex creates a fulltext index on relationships - Neo4j db.index.fulltext.createRelationshipIndex()
 // Syntax: CALL db.index.fulltext.createRelationshipIndex(indexName, relationshipTypes, properties, config)
-func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, "CREATERELATIONSHIPINDEX")
-	if idx < 0 {
-		return nil, localizedError(localization.CypherProceduresFulltextCreateRelationshipInvalid(false), nil)
+func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "db.index.fulltext.createRelationshipIndex"
+	indexName, err := requiredProcedureString(procedure, args, 0, "indexName")
+	if err != nil {
+		return nil, err
 	}
-
-	argsStart := strings.Index(cypher[idx:], "(")
-	argsEnd := strings.LastIndex(cypher[idx:], ")")
-	if argsStart < 0 || argsEnd < 0 {
-		return nil, localizedError(localization.CypherProceduresFulltextCreateRelationshipInvalid(true), nil)
+	relTypes, err := requiredProcedureStringList(procedure, args, 1, "relationshipTypes")
+	if err != nil {
+		return nil, err
 	}
-
-	argsStr := cypher[idx+argsStart+1 : idx+argsEnd]
-	parts := e.splitArgsRespectingArrays(argsStr)
-	if len(parts) < 3 {
-		return nil, localizedError(localization.CypherProceduresFulltextCreateRelationshipArguments(), nil)
+	properties, err := requiredProcedureStringList(procedure, args, 2, "properties")
+	if err != nil {
+		return nil, err
 	}
-
-	indexName := strings.Trim(strings.TrimSpace(parts[0]), "'\"")
-	relTypesStr := strings.TrimSpace(parts[1])
-	propsStr := strings.TrimSpace(parts[2])
-
-	// Parse arrays
-	relTypes := e.parseStringArray(relTypesStr)
-	properties := e.parseStringArray(propsStr)
 
 	// Create fulltext index using schema manager
-	err := e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
+	err = e.mutateSchema(ctx, func(schema *storage.SchemaManager) error {
 		if _, err := admitSchemaIndexCreation(schema, "", indexName, "FULLTEXT", relTypes, properties, storage.ConstraintEntityRelationship); err != nil {
 			return err
 		}
@@ -910,19 +854,11 @@ func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context
 
 // callDbIndexFulltextDrop drops a fulltext index - Neo4j db.index.fulltext.drop()
 // Syntax: CALL db.index.fulltext.drop(indexName)
-func (e *StorageExecutor) callDbIndexFulltextDrop(cypher string) (*ExecuteResult, error) {
-	idx := findKeywordIndex(cypher, "DROP")
-	if idx < 0 {
-		return nil, localizedError(localization.CypherProceduresFulltextDropInvalidSyntax(false), nil)
+func (e *StorageExecutor) callDbIndexFulltextDrop(args []interface{}) (*ExecuteResult, error) {
+	indexName, err := requiredProcedureString("db.index.fulltext.drop", args, 0, "indexName")
+	if err != nil {
+		return nil, err
 	}
-
-	argsStart := strings.Index(cypher[idx:], "(")
-	argsEnd := strings.LastIndex(cypher[idx:], ")")
-	if argsStart < 0 || argsEnd < 0 {
-		return nil, localizedError(localization.CypherProceduresFulltextDropInvalidSyntax(true), nil)
-	}
-
-	indexName := strings.Trim(strings.TrimSpace(cypher[idx+argsStart+1:idx+argsEnd]), "'\"")
 
 	if err := e.dropIndexOfKind(indexName, "fulltext", func(schema *storage.SchemaManager) bool {
 		_, ok := schema.GetFulltextIndex(indexName)
@@ -938,19 +874,11 @@ func (e *StorageExecutor) callDbIndexFulltextDrop(cypher string) (*ExecuteResult
 
 // callDbIndexVectorDrop drops a vector index - Neo4j db.index.vector.drop()
 // Syntax: CALL db.index.vector.drop(indexName)
-func (e *StorageExecutor) callDbIndexVectorDrop(cypher string) (*ExecuteResult, error) {
-	idx := findKeywordIndex(cypher, "DROP")
-	if idx < 0 {
-		return nil, localizedError(localization.CypherProceduresVectorDropInvalidSyntax(false), nil)
+func (e *StorageExecutor) callDbIndexVectorDrop(args []interface{}) (*ExecuteResult, error) {
+	indexName, err := requiredProcedureString("db.index.vector.drop", args, 0, "indexName")
+	if err != nil {
+		return nil, err
 	}
-
-	argsStart := strings.Index(cypher[idx:], "(")
-	argsEnd := strings.LastIndex(cypher[idx:], ")")
-	if argsStart < 0 || argsEnd < 0 {
-		return nil, localizedError(localization.CypherProceduresVectorDropInvalidSyntax(true), nil)
-	}
-
-	indexName := strings.Trim(strings.TrimSpace(cypher[idx+argsStart+1:idx+argsEnd]), "'\"")
 
 	if err := e.dropIndexOfKind(indexName, "vector", func(schema *storage.SchemaManager) bool {
 		_, ok := schema.GetVectorIndex(indexName)
@@ -980,36 +908,6 @@ func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storag
 		}
 		return e.dropIndexByName(name, false)
 	})
-}
-
-// splitArgsSimple splits comma-separated arguments, respecting quoted strings
-func (e *StorageExecutor) splitArgsSimple(args string) []string {
-	var result []string
-	var current strings.Builder
-	inQuote := false
-	quoteChar := byte(0)
-
-	for i := 0; i < len(args); i++ {
-		c := args[i]
-		if (c == '\'' || c == '"') && !isBackslashEscaped(args, i) {
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-			current.WriteByte(c)
-		} else if c == ',' && !inQuote {
-			result = append(result, current.String())
-			current.Reset()
-		} else {
-			current.WriteByte(c)
-		}
-	}
-	if current.Len() > 0 {
-		result = append(result, current.String())
-	}
-	return result
 }
 
 // splitArgsRespectingArrays splits arguments, keeping array brackets together

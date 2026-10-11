@@ -124,21 +124,6 @@
 - id: cyphersubqueries.query_required
   description: Expanded pseudo-locale missing query.
   other: "[!! query is required !!]"
-- id: cyphersubqueries.rag_syntax_invalid
-  description: Expanded pseudo-locale invalid RAG syntax.
-  other: "[!! invalid {{.Procedure}} syntax !!]"
-- id: cyphersubqueries.rag_request_argument_required
-  description: Expanded pseudo-locale missing RAG request argument.
-  other: "[!! {{.Procedure}} requires a request argument !!]"
-- id: cyphersubqueries.rag_parenthesis_unmatched
-  description: Expanded pseudo-locale unmatched RAG parenthesis.
-  other: "[!! unmatched parenthesis in {{.Procedure}} !!]"
-- id: cyphersubqueries.rag_parameter_must_be_map
-  description: Expanded pseudo-locale invalid RAG parameter type.
-  other: "[!! {{.Procedure}} parameter {{.Parameter}} must be a map !!]"
-- id: cyphersubqueries.rag_request_must_be_map_literal
-  description: Expanded pseudo-locale invalid RAG request form.
-  other: "[!! {{.Procedure}} request must be a map literal !!]"
 - id: cyphersubqueries.rag_candidate_id_required
   description: Expanded pseudo-locale missing rerank candidate id.
   other: "[!! db.rerank candidate id is required !!]"

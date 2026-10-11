@@ -593,14 +593,14 @@ func TestApocDynamicRunAndRunMany_Direct(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = exec.callApocCypherRun(ctx, "CALL apoc.cypher.bogus('RETURN 1', {})")
-	require.Error(t, err)
-	_, err = exec.callApocCypherRun(ctx, "CALL apoc.cypher.run")
-	require.Error(t, err)
-	_, err = exec.callApocCypherRun(ctx, "CALL apoc.cypher.run('RETURN 1', {}")
-	require.Error(t, err)
+	_, err = exec.callApocCypherRun(ctx, "apoc.cypher.run", nil)
+	require.ErrorContains(t, err, "argument statement is null")
+	_, err = exec.callApocCypherRun(ctx, "apoc.cypher.run", []interface{}{int64(1)})
+	require.ErrorContains(t, err, "must be STRING")
+	_, err = exec.callApocCypherRun(ctx, "apoc.cypher.run", []interface{}{"RETURN 1", "x"})
+	require.ErrorContains(t, err, "must be MAP")
 
-	res, err := exec.callApocCypherRun(ctx, "CALL apoc.cypher.run('MATCH (n:Dyn) RETURN count(n) AS c', {})")
+	res, err := exec.callApocCypherRun(ctx, "apoc.cypher.run", []interface{}{"MATCH (n:Dyn) RETURN count(n) AS c", map[string]interface{}{}})
 	require.NoError(t, err)
 	require.Equal(t, []string{"value"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -609,14 +609,10 @@ func TestApocDynamicRunAndRunMany_Direct(t *testing.T) {
 	_, hasC := valueMap["c"]
 	require.True(t, hasC)
 
-	_, err = exec.callApocCypherRunMany(ctx, "CALL apoc.cypher.bogusMany('RETURN 1', {})")
-	require.Error(t, err)
-	_, err = exec.callApocCypherRunMany(ctx, "CALL apoc.cypher.runMany")
-	require.Error(t, err)
-	_, err = exec.callApocCypherRunMany(ctx, "CALL apoc.cypher.runMany('RETURN 1', {}")
-	require.Error(t, err)
+	_, err = exec.callApocCypherRunMany(ctx, nil)
+	require.ErrorContains(t, err, "argument statements is null")
 
-	res, err = exec.callApocCypherRunMany(ctx, "CALL apoc.cypher.runMany('RETURN 1 AS n; INVALID CYPHER; RETURN 2 AS n', {})")
+	res, err = exec.callApocCypherRunMany(ctx, []interface{}{"RETURN 1 AS n; INVALID CYPHER; RETURN 2 AS n", map[string]interface{}{}})
 	require.NoError(t, err)
 	require.Equal(t, []string{"row", "result"}, res.Columns)
 	require.NotEmpty(t, res.Rows)
@@ -631,7 +627,7 @@ func TestApocDynamicRunAndRunMany_Direct(t *testing.T) {
 	require.True(t, hasErr)
 
 	// Stats accumulation branch: runMany with CREATE should increment NodesCreated.
-	createRes, err := exec.callApocCypherRunMany(ctx, "CALL apoc.cypher.runMany('CREATE (:Dyn {name:\"x\"}); CREATE (:Dyn {name:\"y\"})', {})")
+	createRes, err := exec.callApocCypherRunMany(ctx, []interface{}{`CREATE (:Dyn {name:"x"}); CREATE (:Dyn {name:"y"})`})
 	require.NoError(t, err)
 	require.NotNil(t, createRes.Stats)
 	assert.GreaterOrEqual(t, createRes.Stats.NodesCreated, 2)
@@ -643,30 +639,24 @@ func TestApocPeriodicIterateAndCommit_Direct(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	_, err := exec.callApocPeriodicIterate(ctx, "CALL apoc.periodic.nope('RETURN 1','RETURN 1',{})")
-	require.Error(t, err)
-	_, err = exec.callApocPeriodicIterate(ctx, "CALL apoc.periodic.iterate")
-	require.Error(t, err)
-	_, err = exec.callApocPeriodicIterate(ctx, "CALL apoc.periodic.iterate('RETURN 1','RETURN 1',{}")
-	require.Error(t, err)
+	_, err := exec.callApocPeriodicIterate(ctx, "apoc.periodic.iterate", []interface{}{"RETURN 1"})
+	require.ErrorContains(t, err, "argument action is null")
+	_, err = exec.callApocPeriodicIterate(ctx, "apoc.periodic.iterate", []interface{}{"RETURN 1", "RETURN 1", int64(2)})
+	require.ErrorContains(t, err, "must be MAP")
 
-	res, err := exec.callApocPeriodicIterate(ctx, "CALL apoc.periodic.iterate('UNWIND [1,2,3] AS i RETURN i','CREATE (:Iter {v: i})',{batchSize:2})")
+	res, err := exec.callApocPeriodicIterate(ctx, "apoc.periodic.iterate", []interface{}{"UNWIND [1,2,3] AS i RETURN i", "CREATE (:Iter {v: i})", map[string]interface{}{"batchSize": int64(2)}})
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, int64(3), res.Rows[0][1]) // total
 
-	res, err = exec.callApocPeriodicIterate(ctx, "CALL apoc.periodic.rock_n_roll('UNWIND [4,5] AS i RETURN i','CREATE (:Iter {v: i})',{batchSize:1})")
+	res, err = exec.Execute(ctx, "WITH {batchSize: 1} AS config CALL apoc.periodic.rock_n_roll('UNWIND [4,5] AS i RETURN i', 'CREATE (:Iter {v: i})', config) YIELD total RETURN total", nil)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
 
-	_, err = exec.callApocPeriodicCommit(ctx, "CALL apoc.periodic.nope('MATCH (n) RETURN n', {})")
-	require.Error(t, err)
-	_, err = exec.callApocPeriodicCommit(ctx, "CALL apoc.periodic.commit")
-	require.Error(t, err)
-	_, err = exec.callApocPeriodicCommit(ctx, "CALL apoc.periodic.commit('MATCH (n) RETURN n', {}")
-	require.Error(t, err)
+	_, err = exec.callApocPeriodicCommit(ctx, []interface{}{nil})
+	require.ErrorContains(t, err, "argument statement is null")
 
-	res, err = exec.callApocPeriodicCommit(ctx, "CALL apoc.periodic.commit('MATCH (n:Nothing) RETURN n', {limit: 10})")
+	res, err = exec.callApocPeriodicCommit(ctx, []interface{}{"MATCH (n:Nothing) RETURN n", map[string]interface{}{"limit": int64(10)}})
 	require.NoError(t, err)
 	require.Equal(t, []string{"updates", "executions", "runtime", "batches"}, res.Columns)
 	require.Len(t, res.Rows, 1)
@@ -2568,11 +2558,10 @@ func TestEmbedQueryChunkedAndVectorQueryNodeBranches(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported type")
 }
 
-func TestVectorParsingAndEmbedProcedureBranches(t *testing.T) {
+func TestVectorParsingProcedureBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
-	ctx := context.Background()
 
 	_, _, _, err := exec.parseVectorQueryParams("CALL db.labels()")
 	require.Error(t, err)
@@ -2606,42 +2595,6 @@ func TestVectorParsingAndEmbedProcedureBranches(t *testing.T) {
 	assert.Equal(t, "[1,2]", strings.TrimSpace(parts[1]))
 
 	assert.Equal(t, []float32{1.5, -2}, parseInlineVector("[1.5, -2, nope]"))
-
-	_, err = exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.embed('x')")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no embedder configured")
-
-	exec.embedder = &sequenceEmbedder{embs: [][]float32{{1, 2}}}
-
-	_, err = exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.embed")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires one argument")
-
-	_, err = exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.embed(")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unmatched parenthesis")
-
-	_, err = exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.embed(123)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires STRING text")
-
-	_, err = exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.embed('   ')")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires non-empty text")
-
-	_, err = exec.callDbIndexVectorEmbed(ctx, "CALL db.index.vector.embed($q)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parameter $q not provided")
-
-	ctxParams := context.WithValue(ctx, paramsKey, map[string]interface{}{"q": 1})
-	_, err = exec.callDbIndexVectorEmbed(ctxParams, "CALL db.index.vector.embed($q)")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must be STRING")
-
-	res, err := exec.callDbIndexVectorEmbed(context.WithValue(ctx, paramsKey, map[string]interface{}{"q": "hello"}), "CALL db.index.vector.embed($q)")
-	require.NoError(t, err)
-	require.Len(t, res.Rows, 1)
-	require.Len(t, res.Rows[0], 1)
 }
 
 func TestCollectSubqueryBranches(t *testing.T) {

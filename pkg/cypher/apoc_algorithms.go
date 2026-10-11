@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -52,8 +51,13 @@ func (e *StorageExecutor) getNodeEdges(nodeID storage.NodeID) []*storage.Edge {
 }
 
 // callApocAlgoDijkstra implements Dijkstra's shortest path.
-func (e *StorageExecutor) callApocAlgoDijkstra(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	startID, endID, relType, weightProp, err := e.parsePathAlgoParams(cypher, "APOC.ALGO.DIJKSTRA")
+func (e *StorageExecutor) callApocAlgoDijkstra(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "apoc.algo.dijkstra"
+	startID, endID, relType, err := pathAlgorithmArguments(procedure, args)
+	if err != nil {
+		return nil, err
+	}
+	weightProp, err := optionalProcedureString(procedure, args, 3, "weightPropertyName", "")
 	if err != nil {
 		return nil, err
 	}
@@ -111,12 +115,25 @@ func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, relType, weigh
 }
 
 // callApocAlgoAStar implements A* pathfinding.
-func (e *StorageExecutor) callApocAlgoAStar(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	startID, endID, relType, weightProp, err := e.parsePathAlgoParams(cypher, "APOC.ALGO.ASTAR")
+func (e *StorageExecutor) callApocAlgoAStar(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "apoc.algo.aStar"
+	startID, endID, relType, err := pathAlgorithmArguments(procedure, args)
 	if err != nil {
 		return nil, err
 	}
-	path, weight := e.astar(startID, endID, relType, weightProp, "lat", "lon")
+	weightProp, err := optionalProcedureString(procedure, args, 3, "weightPropertyName", "")
+	if err != nil {
+		return nil, err
+	}
+	latProp, err := optionalProcedureString(procedure, args, 4, "latPropertyName", "lat")
+	if err != nil {
+		return nil, err
+	}
+	lonProp, err := optionalProcedureString(procedure, args, 5, "lonPropertyName", "lon")
+	if err != nil {
+		return nil, err
+	}
+	path, weight := e.astar(startID, endID, relType, weightProp, latProp, lonProp)
 	if path == nil {
 		return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{}}, nil
 	}
@@ -203,8 +220,8 @@ func (e *StorageExecutor) astar(startID, endID storage.NodeID, relType, weightPr
 }
 
 // callApocAlgoAllSimplePaths finds all simple paths.
-func (e *StorageExecutor) callApocAlgoAllSimplePaths(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	startID, endID, relType, _, err := e.parsePathAlgoParams(cypher, "APOC.ALGO.ALLSIMPLEPATHS")
+func (e *StorageExecutor) callApocAlgoAllSimplePaths(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	startID, endID, relType, err := pathAlgorithmArguments("apoc.algo.allSimplePaths", args)
 	if err != nil {
 		return nil, err
 	}
@@ -249,9 +266,23 @@ func (e *StorageExecutor) findAllSimplePaths(startID, endID storage.NodeID, relT
 }
 
 // callApocAlgoPageRank computes PageRank.
-func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	label := e.extractLabelFromAlgoCall(cypher, "PAGERANK")
-	scores := e.computePageRank(label, 0.85, 20)
+func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "apoc.algo.pageRank"
+	nodes, err := e.algorithmNodes(procedure, args)
+	if err != nil {
+		return nil, err
+	}
+	// APOC's config map: iterations (default 20) and dampingFactor (0.85).
+	iterations, damping := 20, 0.85
+	if config, isMap := procedureArgument(args, 1).(map[string]interface{}); isMap {
+		if n, ok := fastRPConfigInt(config["iterations"]); ok && n > 0 {
+			iterations = n
+		}
+		if d, ok := toFloat64(config["dampingFactor"]); ok && d > 0 && d < 1 {
+			damping = d
+		}
+	}
+	scores := e.computePageRank(nodes, damping, iterations)
 	rows := make([][]interface{}, 0, len(scores))
 	for nodeID, score := range scores {
 		node, err := e.storage.GetNode(nodeID)
@@ -263,13 +294,7 @@ func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, cypher strin
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) computePageRank(label string, damping float64, iterations int) map[storage.NodeID]float64 {
-	var nodes []*storage.Node
-	if label != "" {
-		nodes, _ = e.storage.GetNodesByLabel(label)
-	} else {
-		nodes = e.storage.GetAllNodes()
-	}
+func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64, iterations int) map[storage.NodeID]float64 {
 	if len(nodes) == 0 {
 		return map[storage.NodeID]float64{}
 	}
@@ -305,9 +330,12 @@ func (e *StorageExecutor) computePageRank(label string, damping float64, iterati
 }
 
 // callApocAlgoBetweenness computes betweenness centrality.
-func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	label := e.extractLabelFromAlgoCall(cypher, "BETWEENNESS")
-	scores := e.computeBetweenness(label)
+func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	nodes, err := e.algorithmNodes("apoc.algo.betweenness", args)
+	if err != nil {
+		return nil, err
+	}
+	scores := e.computeBetweenness(nodes)
 	rows := make([][]interface{}, 0, len(scores))
 	for nodeID, score := range scores {
 		node, err := e.storage.GetNode(nodeID)
@@ -319,13 +347,7 @@ func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, cypher st
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) computeBetweenness(label string) map[storage.NodeID]float64 {
-	var nodes []*storage.Node
-	if label != "" {
-		nodes, _ = e.storage.GetNodesByLabel(label)
-	} else {
-		nodes = e.storage.GetAllNodes()
-	}
+func (e *StorageExecutor) computeBetweenness(nodes []*storage.Node) map[storage.NodeID]float64 {
 	scores := make(map[storage.NodeID]float64)
 	for _, node := range nodes {
 		scores[node.ID] = 0
@@ -386,9 +408,12 @@ func (e *StorageExecutor) computeBetweenness(label string) map[storage.NodeID]fl
 }
 
 // callApocAlgoCloseness computes closeness centrality.
-func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	label := e.extractLabelFromAlgoCall(cypher, "CLOSENESS")
-	scores := e.computeCloseness(label)
+func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	nodes, err := e.algorithmNodes("apoc.algo.closeness", args)
+	if err != nil {
+		return nil, err
+	}
+	scores := e.computeCloseness(nodes)
 	rows := make([][]interface{}, 0, len(scores))
 	for nodeID, score := range scores {
 		node, err := e.storage.GetNode(nodeID)
@@ -400,13 +425,7 @@ func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, cypher stri
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
-func (e *StorageExecutor) computeCloseness(label string) map[storage.NodeID]float64 {
-	var nodes []*storage.Node
-	if label != "" {
-		nodes, _ = e.storage.GetNodesByLabel(label)
-	} else {
-		nodes = e.storage.GetAllNodes()
-	}
+func (e *StorageExecutor) computeCloseness(nodes []*storage.Node) map[storage.NodeID]float64 {
 	scores := make(map[storage.NodeID]float64)
 	n := len(nodes)
 	for _, source := range nodes {
@@ -592,51 +611,61 @@ func parseNeighborArguments(args []interface{}) (storage.NodeID, string, int, er
 	return start.ID, filter, maxHops, nil
 }
 
-// Helper functions
-func (e *StorageExecutor) parsePathAlgoParams(cypher, algoName string) (storage.NodeID, storage.NodeID, string, string, error) {
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, algoName)
-	if idx < 0 {
-		return "", "", "", "", fmt.Errorf("could not find %s", algoName)
+// pathAlgorithmArguments reads the arguments every path algorithm starts
+// with: (startNode, endNode[, relationship type]). A node may also be given
+// by its id, NornicDB's kept form.
+func pathAlgorithmArguments(procedure string, args []interface{}) (start, end storage.NodeID, relType string, err error) {
+	if start, err = requiredProcedureNodeID(procedure, args, 0, "startNode"); err != nil {
+		return "", "", "", err
 	}
-	remainder := cypher[idx:]
-	openParen := strings.Index(remainder, "(")
-	closeParen := strings.LastIndex(remainder, ")")
-	if openParen < 0 || closeParen < 0 {
-		return "", "", "", "", fmt.Errorf("invalid syntax for %s", algoName)
+	if end, err = requiredProcedureNodeID(procedure, args, 1, "endNode"); err != nil {
+		return "", "", "", err
 	}
-	args := remainder[openParen+1 : closeParen]
-	parts := strings.Split(args, ",")
-	if len(parts) < 2 {
-		return "", "", "", "", fmt.Errorf("%s requires at least 2 arguments", algoName)
+	if relType, err = optionalProcedureString(procedure, args, 2, "relTypesAndDirections", ""); err != nil {
+		return "", "", "", err
 	}
-	startID := storage.NodeID(strings.Trim(strings.TrimSpace(parts[0]), "'\""))
-	endID := storage.NodeID(strings.Trim(strings.TrimSpace(parts[1]), "'\""))
-	relType := ""
-	if len(parts) > 2 {
-		relType = strings.Trim(strings.TrimSpace(parts[2]), "'\"")
-	}
-	weightProp := ""
-	if len(parts) > 3 {
-		weightProp = strings.Trim(strings.TrimSpace(parts[3]), "'\"")
-	}
-	return startID, endID, relType, weightProp, nil
+	return start, end, relType, nil
 }
 
-func (e *StorageExecutor) extractLabelFromAlgoCall(cypher, algoName string) string {
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, algoName)
-	if idx < 0 {
-		return ""
+// algorithmNodes reads the nodes a whole-graph algorithm runs over from its
+// first argument: a LIST<NODE> (APOC's form: MATCH (n:L) WITH collect(n) AS
+// nodes CALL apoc.algo.pageRank(nodes)), a label (a STRING, or a list of
+// one), or none, null, '' or an empty list for every node.
+func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) ([]*storage.Node, error) {
+	value := procedureArgument(args, 0)
+	typeError := func() error {
+		return procedureArgumentTypeError(procedure, "nodes", "LIST<NODE> or STRING", procedureArgument(args, 0))
 	}
-	remainder := cypher[idx:]
-	openParen := strings.Index(remainder, "(")
-	closeParen := strings.Index(remainder, ")")
-	if openParen > 0 && closeParen > openParen {
-		args := strings.TrimSpace(remainder[openParen+1 : closeParen])
-		if args != "" && args != "''" && args != "[]" {
-			return strings.Trim(args, "'\"[]")
+	if items, isList := cypherListValue(value); isList {
+		if len(items) == 0 {
+			return e.storage.GetAllNodes(), nil
 		}
+		if _, isNode := items[0].(*storage.Node); isNode {
+			nodes := make([]*storage.Node, 0, len(items))
+			for _, item := range items {
+				node, isNode := item.(*storage.Node)
+				if !isNode || node == nil {
+					return nil, typeError()
+				}
+				nodes = append(nodes, node)
+			}
+			return nodes, nil
+		}
+		if len(items) != 1 {
+			return nil, typeError()
+		}
+		value = items[0]
 	}
-	return ""
+	switch label := value.(type) {
+	case nil:
+		return e.storage.GetAllNodes(), nil
+	case string:
+		if label == "" {
+			return e.storage.GetAllNodes(), nil
+		}
+		nodes, _ := e.storage.GetNodesByLabel(label)
+		return nodes, nil
+	default:
+		return nil, typeError()
+	}
 }

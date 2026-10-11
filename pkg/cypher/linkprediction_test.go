@@ -8,127 +8,51 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// TestParseLinkPredictionConfig tests configuration parsing
-func TestParseLinkPredictionConfig(t *testing.T) {
-	executor := &StorageExecutor{
-		storage: newTestMemoryEngine(t),
-	}
-
-	tests := []struct {
+// TestLinkPredictionConfigFromArguments: the configuration map is the
+// call's evaluated MAP argument, alone or after a graph name; sourceNode is
+// a node, its id or an INTEGER id.
+func TestLinkPredictionConfigFromArguments(t *testing.T) {
+	node := &storage.Node{ID: "node-123"}
+	for _, tc := range []struct {
 		name     string
-		cypher   string
-		wantErr  bool
+		args     []interface{}
 		wantNode string
 		wantTopK int
+		wantErr  bool
 	}{
-		{
-			name:     "basic config",
-			cypher:   `CALL gds.linkPrediction.adamicAdar.stream({sourceNode: 'node-123', topK: 10})`,
-			wantErr:  false,
-			wantNode: "node-123",
-			wantTopK: 10,
-		},
-		{
-			name:     "without braces",
-			cypher:   `CALL gds.linkPrediction.adamicAdar.stream(sourceNode: 'node-456', topK: 5)`,
-			wantErr:  false,
-			wantNode: "node-456",
-			wantTopK: 5,
-		},
-		{
-			name:     "default topK",
-			cypher:   `CALL gds.linkPrediction.adamicAdar.stream({sourceNode: 'node-789'})`,
-			wantErr:  false,
-			wantNode: "node-789",
-			wantTopK: 10, // default
-		},
-		{
-			name:    "missing sourceNode",
-			cypher:  `CALL gds.linkPrediction.adamicAdar.stream({topK: 10})`,
-			wantErr: true,
-		},
-		{
-			name:    "invalid syntax",
-			cypher:  `CALL gds.linkPrediction.adamicAdar.stream(`,
-			wantErr: true,
-		},
-		{
-			name:     "id function with nodeVars",
-			cypher:   `CALL gds.linkPrediction.adamicAdar.stream({sourceNode: id(n), topK: 10})`,
-			wantErr:  false,
-			wantNode: "node-123",
-			wantTopK: 10,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var nodeVars map[string]*storage.Node
-			// For the id function test, provide nodeVars
-			if tt.name == "id function with nodeVars" {
-				nodeVars = map[string]*storage.Node{
-					"n": {
-						ID:         "node-123",
-						Labels:     []string{"Person"},
-						Properties: map[string]interface{}{"name": "Alice"},
-					},
+		{"map alone", []interface{}{map[string]interface{}{"sourceNode": "node-123", "topK": int64(10)}}, "node-123", 10, false},
+		{"after a graph name", []interface{}{"g", map[string]interface{}{"sourceNode": "node-456", "topK": int64(5)}}, "node-456", 5, false},
+		{"default topK", []interface{}{map[string]interface{}{"sourceNode": "node-789"}}, "node-789", 10, false},
+		{"a node", []interface{}{map[string]interface{}{"sourceNode": node, "topK": 3.0}}, "node-123", 3, false},
+		{"an integer id", []interface{}{map[string]interface{}{"sourceNode": int64(42)}}, "42", 10, false},
+		{"missing sourceNode", []interface{}{map[string]interface{}{"topK": int64(10)}}, "", 0, true},
+		{"no config", nil, "", 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config, err := linkPredictionConfigFromArguments(tc.args)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected an error")
 				}
-			}
-			ctx := context.Background()
-
-			config, err := executor.parseLinkPredictionConfig(ctx, tt.cypher, nodeVars)
-
-			if (err != nil) != tt.wantErr {
-				t.Errorf("parseLinkPredictionConfig(ctx, ) error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-
-			if err == nil {
-				if string(config.SourceNode) != tt.wantNode {
-					t.Errorf("SourceNode = %v, want %v", config.SourceNode, tt.wantNode)
-				}
-				if config.TopK != tt.wantTopK {
-					t.Errorf("TopK = %v, want %v", config.TopK, tt.wantTopK)
-				}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if string(config.SourceNode) != tc.wantNode || config.TopK != tc.wantTopK {
+				t.Fatalf("got source %q topK %d, want %q %d", config.SourceNode, config.TopK, tc.wantNode, tc.wantTopK)
 			}
 		})
 	}
-}
 
-func TestParseLinkPredictionConfig_AdditionalBranches(t *testing.T) {
-	executor := &StorageExecutor{storage: newTestMemoryEngine(t)}
-
-	ctx := context.Background()
-
-	// id(var) with missing variable in provided context should error clearly.
-	_, err := executor.parseLinkPredictionConfig(ctx,
-		`CALL gds.linkPrediction.adamicAdar.stream({sourceNode: id(missing), topK: 10})`,
-		map[string]*storage.Node{"n": {ID: "node-1"}},
-	)
-	if err == nil {
-		t.Fatal("expected error for unresolved id(variable), got nil")
-	}
-
-	// id(var) with nil nodeVars falls back to literal variable name.
-	cfg, err := executor.parseLinkPredictionConfig(ctx,
-		`CALL gds.linkPrediction.adamicAdar.stream({sourceNode: id(seed), topK: bad, algorithm: 'jaccard', topologyWeight: 0.7, semanticWeight: 0.3, minThreshold: 0.2})`,
-		nil,
-	)
+	config, err := linkPredictionConfigFromArguments([]interface{}{map[string]interface{}{
+		"sourceNode": "seed", "topK": "bad", "algorithm": "jaccard", "topologyWeight": 0.7, "semanticWeight": 0.3, "minThreshold": 0.2,
+	}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if string(cfg.SourceNode) != "seed" {
-		t.Fatalf("SourceNode = %v, want seed", cfg.SourceNode)
-	}
-	// invalid topK keeps default.
-	if cfg.TopK != 10 {
-		t.Fatalf("TopK = %d, want default 10", cfg.TopK)
-	}
-	if cfg.Algorithm != "jaccard" {
-		t.Fatalf("Algorithm = %s, want jaccard", cfg.Algorithm)
-	}
-	if cfg.TopologyWeight != 0.7 || cfg.SemanticWeight != 0.3 || cfg.MinThreshold != 0.2 {
-		t.Fatalf("weights/threshold parsed incorrectly: %+v", cfg)
+	if config.TopK != 10 || config.Algorithm != "jaccard" || config.TopologyWeight != 0.7 || config.SemanticWeight != 0.3 || config.MinThreshold != 0.2 {
+		t.Fatalf("config read incorrectly: %+v", config)
 	}
 }
 
@@ -145,7 +69,7 @@ func TestGdsLinkPredictionAdamicAdar(t *testing.T) {
 
 	ctx := context.Background()
 
-	cypher := `CALL gds.linkPrediction.adamicAdar.stream({sourceNode: 'alice', topK: 5})`
+	cypher := []interface{}{map[string]interface{}{"sourceNode": "alice", "topK": int64(5)}}
 	result, err := executor.callGdsLinkPredictionAdamicAdar(ctx, cypher)
 
 	if err != nil {
@@ -199,7 +123,7 @@ func TestGdsLinkPredictionCommonNeighbors(t *testing.T) {
 
 	ctx := context.Background()
 
-	cypher := `CALL gds.linkPrediction.commonNeighbors.stream({sourceNode: 'alice', topK: 5})`
+	cypher := []interface{}{map[string]interface{}{"sourceNode": "alice", "topK": int64(5)}}
 	result, err := executor.callGdsLinkPredictionCommonNeighbors(ctx, cypher)
 
 	if err != nil {
@@ -223,7 +147,7 @@ func TestGdsLinkPredictionResourceAllocation(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	cypher := `CALL gds.linkPrediction.resourceAllocation.stream({sourceNode: 'alice', topK: 5})`
+	cypher := []interface{}{map[string]interface{}{"sourceNode": "alice", "topK": int64(5)}}
 	result, err := executor.callGdsLinkPredictionResourceAllocation(ctx, cypher)
 
 	if err != nil {
@@ -247,7 +171,7 @@ func TestGdsLinkPredictionPreferentialAttachment(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	cypher := `CALL gds.linkPrediction.preferentialAttachment.stream({sourceNode: 'alice', topK: 5})`
+	cypher := []interface{}{map[string]interface{}{"sourceNode": "alice", "topK": int64(5)}}
 	result, err := executor.callGdsLinkPredictionPreferentialAttachment(ctx, cypher)
 
 	if err != nil {
@@ -271,7 +195,7 @@ func TestGdsLinkPredictionJaccard(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	cypher := `CALL gds.linkPrediction.jaccard.stream({sourceNode: 'alice', topK: 5})`
+	cypher := []interface{}{map[string]interface{}{"sourceNode": "alice", "topK": int64(5)}}
 	result, err := executor.callGdsLinkPredictionJaccard(ctx, cypher)
 
 	if err != nil {
@@ -304,13 +228,9 @@ func TestGdsLinkPredictionPredict(t *testing.T) {
 		storage: engine,
 	}
 
-	cypher := `CALL gds.linkPrediction.predict.stream({
-		sourceNode: 'alice',
-		topK: 5,
-		algorithm: 'adamic_adar',
-		topologyWeight: 0.6,
-		semanticWeight: 0.4
-	})`
+	cypher := []interface{}{map[string]interface{}{
+		"sourceNode": "alice", "topK": int64(5), "algorithm": "adamic_adar", "topologyWeight": 0.6, "semanticWeight": 0.4,
+	}}
 
 	ctx := context.Background()
 	result, err := executor.callGdsLinkPredictionPredict(ctx, cypher)

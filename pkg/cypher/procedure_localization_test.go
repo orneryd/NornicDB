@@ -3,11 +3,11 @@ package cypher
 import (
 	"context"
 	"errors"
-	"strconv"
 	"testing"
 
 	nerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,9 +25,10 @@ func requireCypherProceduresLocalizedError(t *testing.T, err error, messageID lo
 func TestCompatibilityProcedureErrorsHaveTypedIdentity(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
-	t.Run("syntax", func(t *testing.T) {
-		_, err := exec.callDbIndexVectorCreateNodeIndex(context.Background(), "CALL db.index.vector.createNodeIndex")
-		requireCypherProceduresLocalizedError(t, err, localization.MessageCypherProceduresVectorCreateNodeInvalidSyntax, "invalid syntax: missing parentheses")
+	t.Run("null argument", func(t *testing.T) {
+		_, err := exec.callDbIndexVectorCreateIndex(context.Background(), []interface{}{"idx", nil, "embedding", int64(3)}, storage.ConstraintEntityNode)
+		localizedErr := requireCypherProceduresLocalizedError(t, err, localization.MessageCypherProceduresArgumentNull, "db.index.vector.createNodeIndex: argument label is null")
+		require.Equal(t, "label", localizedErr.Message.Data["Argument"])
 	})
 
 	t.Run("named argument", func(t *testing.T) {
@@ -37,11 +38,12 @@ func TestCompatibilityProcedureErrorsHaveTypedIdentity(t *testing.T) {
 		require.Equal(t, "embedding", localizedErr.Message.Data["Parameter"])
 	})
 
-	t.Run("wrapped cause", func(t *testing.T) {
-		_, err := exec.callDbIndexVectorCreateRelationshipIndex(context.Background(), "CALL db.index.vector.createRelationshipIndex('idx', 'REL', 'embedding', nope)")
-		localizedErr := requireCypherProceduresLocalizedError(t, err, localization.MessageCypherProceduresInvalidDimension, "invalid dimension: strconv.Atoi: parsing \"nope\": invalid syntax")
-		require.ErrorIs(t, err, strconv.ErrSyntax)
-		require.Equal(t, "strconv.Atoi: parsing \"nope\": invalid syntax", localizedErr.Message.Data["Cause"])
+	t.Run("argument type", func(t *testing.T) {
+		_, err := exec.callDbIndexVectorCreateIndex(context.Background(), []interface{}{"idx", "REL", "embedding", "nope"}, storage.ConstraintEntityRelationship)
+		localizedErr := requireCypherProceduresLocalizedError(t, err, localization.MessageCypherProceduresArgumentType, "db.index.vector.createRelationshipIndex: argument dimension must be INTEGER, not STRING")
+		require.Equal(t, "dimension", localizedErr.Message.Data["Argument"])
+		code, _ := nerrors.Neo4jStatus(err)
+		require.Equal(t, "Neo.ClientError.Statement.TypeError", code)
 	})
 }
 

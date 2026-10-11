@@ -21,7 +21,7 @@ func (e *StorageExecutor) callDbAwaitIndex(cypher string) (*ExecuteResult, error
 
 // callDbAwaitIndexes waits for all indexes to come online - Neo4j db.awaitIndexes()
 // Syntax: CALL db.awaitIndexes(timeOutSeconds)
-func (e *StorageExecutor) callDbAwaitIndexes(cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbAwaitIndexes() (*ExecuteResult, error) {
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
 

@@ -124,21 +124,6 @@
 - id: cyphersubqueries.query_required
   description: Retrieval request lacks query text. Request field name is untranslated.
   other: query is required
-- id: cyphersubqueries.rag_syntax_invalid
-  description: Invalid RAG procedure syntax. Procedure is an untranslated machine name.
-  other: "invalid {{.Procedure}} syntax"
-- id: cyphersubqueries.rag_request_argument_required
-  description: RAG procedure lacks a request argument. Procedure is an untranslated machine name.
-  other: "{{.Procedure}} requires a request argument"
-- id: cyphersubqueries.rag_parenthesis_unmatched
-  description: RAG procedure has unmatched syntax. Procedure is an untranslated machine name.
-  other: "unmatched parenthesis in {{.Procedure}}"
-- id: cyphersubqueries.rag_parameter_must_be_map
-  description: RAG request parameter has the wrong type. Procedure and Parameter are untranslated machine values.
-  other: "{{.Procedure}} parameter {{.Parameter}} must be a map"
-- id: cyphersubqueries.rag_request_must_be_map_literal
-  description: RAG request argument has the wrong form. Procedure is an untranslated machine name.
-  other: "{{.Procedure}} request must be a map literal"
 - id: cyphersubqueries.rag_candidate_id_required
   description: db.rerank candidate lacks an id. Procedure and field name are untranslated.
   other: db.rerank candidate id is required

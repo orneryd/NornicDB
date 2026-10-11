@@ -658,14 +658,14 @@ func TestCallDbIndexVectorEmbed(t *testing.T) {
 	assert.Equal(t, []float32{0.1, 0.2, 0.3, 0.4}, embedding)
 }
 
-func TestCallDbRetrieveWrappers_ParseErrors(t *testing.T) {
+func TestCallDbRetrieveWrappers_NullRequest(t *testing.T) {
 	ctx := context.Background()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 
-	_, err := exec.callDbRetrieve(ctx, "CALL db.retrieve(")
+	_, err := exec.callDbRetrieve(ctx, []interface{}{nil})
 	require.Error(t, err)
 
-	_, err = exec.callDbRRetrieve(ctx, "CALL db.rretrieve(")
+	_, err = exec.callDbRRetrieve(ctx, nil)
 	require.Error(t, err)
 }
 

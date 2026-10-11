@@ -324,6 +324,48 @@ for q in [f"UNWIND {VALUES} AS x RETURN x ORDER BY x", f"UNWIND {VALUES} AS x RE
           "UNWIND [1, 1.0] AS x RETURN DISTINCT x", "UNWIND [[1, 2], [1, 2.0]] AS x RETURN DISTINCT x", "UNWIND [{a: 1}, {a: 1.0}] AS x RETURN DISTINCT x"]:
     add("clause", "q", q)
 
+# 15. Procedure arguments: a built-in procedure reads its evaluated
+# arguments (#907), so a value bound by WITH or UNWIND, a computed value,
+# null and a value of another type reach it as they would from a literal.
+# Only procedures Neo4j 5.26 has (no APOC / GDS on the reference; NornicDB
+# keeps db.index.fulltext.createNodeIndex / drop, which Neo4j removed), and none
+# that leaves an index behind: names refer to missing indexes, and the
+# index-creating calls fail on a null or mistyped argument.
+PROCEDURE_CALLS = [
+    ("db.index.fulltext.queryNodes", ["'missing_ft'", "'x'"], "node"),
+    ("db.index.fulltext.queryRelationships", ["'missing_ft'", "'x'"], "relationship"),
+    ("db.index.vector.queryNodes", ["'missing_vec'", "2", "[1.0, 2.0]"], "node"),
+    ("db.index.vector.queryRelationships", ["'missing_vec'", "2", "[1.0, 2.0]"], "relationship"),
+    ("db.awaitIndex", ["'missing_idx'", "1"], None),
+    ("db.resampleIndex", ["'missing_idx'"], None),
+]
+FAILING_CREATES = [
+    ("db.index.vector.createNodeIndex", ["'sweep_vec'", "'Q'", "'emb'", "3", "'cosine'"]),
+]
+ARGUMENT_REPLACEMENTS = ["null", "1.5", "'x'", "[1, 2]", "{a: 1}", "true"]
+
+
+def procedure_call(name, args, yielded):
+    tail = f" YIELD {yielded} RETURN {yielded}" if yielded else ""
+    return f"CALL {name}({', '.join(args)}){tail}"
+
+
+for name, args, yielded in PROCEDURE_CALLS:
+    add("procedure-arguments", "literal", procedure_call(name, args, yielded))
+    bound = ", ".join(f"{a} AS a{i}" for i, a in enumerate(args))
+    names = [f"a{i}" for i in range(len(args))]
+    add("procedure-arguments", "with", f"WITH {bound} " + procedure_call(name, names, yielded))
+    add("procedure-arguments", "unwind", f"UNWIND [{args[0]}] AS a0 " + procedure_call(name, ["a0"] + args[1:], yielded))
+    for i in range(len(args)):
+        for value in ARGUMENT_REPLACEMENTS:
+            changed = args[:i] + [f"v"] + args[i + 1:]
+            add("procedure-arguments", "with-value", f"WITH {value} AS v " + procedure_call(name, changed, yielded))
+for name, args in FAILING_CREATES:
+    for i in range(len(args)):
+        for value in ["null", "1.5", "[1, 2]", "{a: 1}"]:
+            changed = args[:i] + ["v"] + args[i + 1:]
+            add("procedure-arguments", "create-bad-value", f"WITH {value} AS v " + procedure_call(name, changed, None))
+
 
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:

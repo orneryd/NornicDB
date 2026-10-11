@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -56,18 +55,15 @@ func requireFulltextIndex(indexName string, declared bool) error {
 	return localizedError(localization.CypherSpecializedCallsFulltextIndexNotFound(indexName), nil)
 }
 
-func (e *StorageExecutor) callDbIndexFulltextQueryNodes(cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"node", "score"},
 		Rows:    [][]interface{}{},
 	}
-	opts, err := e.extractFulltextQueryOptions(cypher)
+	indexName, query, opts, err := fulltextQueryArguments("db.index.fulltext.queryNodes", args)
 	if err != nil {
 		return nil, err
 	}
-
-	// Extract query string and index name
-	indexName, query := e.extractFulltextParams(cypher)
 	if query == "" {
 		return result, nil
 	}
@@ -285,60 +281,6 @@ func buildFulltextDocFromProperties(properties map[string]interface{}, content s
 	}
 }
 
-// extractFulltextParams extracts index name and query from a fulltext CALL statement
-func (e *StorageExecutor) extractFulltextParams(cypher string) (indexName, query string) {
-	indexName = "default"
-
-	// Find the procedure call
-	upper := upperASCII(cypher)
-	callIdx := strings.Index(upper, "DB.INDEX.FULLTEXT.QUERYNODES")
-	if callIdx == -1 {
-		callIdx = strings.Index(upper, "DB.INDEX.FULLTEXT.QUERYRELATIONSHIPS")
-		if callIdx == -1 {
-			return "", ""
-		}
-	}
-
-	// Find the opening parenthesis
-	rest := cypher[callIdx:]
-	parenIdx := strings.Index(rest, "(")
-	if parenIdx == -1 {
-		return "", ""
-	}
-
-	// Find matching closing parenthesis
-	parenContent := rest[parenIdx+1:]
-	depth := 1
-	endIdx := -1
-	for i, c := range parenContent {
-		if c == '(' {
-			depth++
-		} else if c == ')' {
-			depth--
-			if depth == 0 {
-				endIdx = i
-				break
-			}
-		}
-	}
-	if endIdx == -1 {
-		return "", ""
-	}
-
-	params := parenContent[:endIdx]
-	parts := splitParamsCarefully(params)
-
-	if len(parts) >= 1 {
-		indexName = decodeCypherStringLiteral(strings.TrimSpace(parts[0]))
-	}
-
-	if len(parts) >= 2 {
-		query = decodeCypherStringLiteral(strings.TrimSpace(parts[1]))
-	}
-
-	return indexName, query
-}
-
 // decodeCypherStringLiteral strips surrounding single or double quotes from a
 // Cypher string literal and undoes the standard backslash-escape encoding
 // (`\\` -> `\`, `\'` -> `'`, `\"` -> `"`, `\n`, `\t`, `\r`). This is what
@@ -390,76 +332,39 @@ type fulltextQueryOptions struct {
 	limit int
 }
 
-func (e *StorageExecutor) extractFulltextQueryOptions(cypher string) (fulltextQueryOptions, error) {
+// fulltextQueryArguments reads db.index.fulltext.queryNodes /
+// queryRelationships(indexName, queryString, options = {}): the index name
+// and query are STRINGs the procedure needs, and options' skip and limit are
+// non-negative whole numbers.
+func fulltextQueryArguments(procedure string, args []interface{}) (string, string, fulltextQueryOptions, error) {
 	opts := fulltextQueryOptions{skip: 0, limit: -1}
-
-	upper := upperASCII(cypher)
-	callIdx := strings.Index(upper, "DB.INDEX.FULLTEXT.QUERYNODES")
-	if callIdx == -1 {
-		callIdx = strings.Index(upper, "DB.INDEX.FULLTEXT.QUERYRELATIONSHIPS")
-		if callIdx == -1 {
-			return opts, nil
-		}
+	indexName, err := requiredProcedureString(procedure, args, 0, "indexName")
+	if err != nil {
+		return "", "", opts, err
 	}
-
-	rest := cypher[callIdx:]
-	parenIdx := strings.Index(rest, "(")
-	if parenIdx == -1 {
-		return opts, nil
+	query, err := requiredProcedureString(procedure, args, 1, "queryString")
+	if err != nil {
+		return "", "", opts, err
 	}
-
-	parenContent := rest[parenIdx+1:]
-	depth := 1
-	endIdx := -1
-	for i, c := range parenContent {
-		if c == '(' {
-			depth++
-		} else if c == ')' {
-			depth--
-			if depth == 0 {
-				endIdx = i
-				break
-			}
-		}
+	options, err := optionalProcedureMap(procedure, args, 2, "options")
+	if err != nil {
+		return "", "", opts, err
 	}
-	if endIdx == -1 {
-		return opts, nil
-	}
-
-	params := parenContent[:endIdx]
-	parts := splitParamsCarefully(params)
-	if len(parts) < 3 {
-		return opts, nil
-	}
-	if len(parts) > 3 {
-		return opts, localizedError(localization.CypherSpecializedCallsFulltextArgumentCount(), nil)
-	}
-
-	raw := strings.TrimSpace(parts[2])
-	if raw == "" {
-		return opts, nil
-	}
-	if !strings.HasPrefix(raw, "{") || !strings.HasSuffix(raw, "}") {
-		return opts, localizedError(localization.CypherSpecializedCallsProcedureOptionsMapRequired(), nil)
-	}
-
-	parsed := e.parseMapLiteral(context.Background(), raw)
-	if v, ok := parsed["skip"]; ok {
+	if v, ok := options["skip"]; ok {
 		i, convOK := fulltextOptionToInt(v)
 		if !convOK || i < 0 {
-			return opts, localizedError(localization.CypherSpecializedCallsFulltextOptionInvalid("skip", v), nil)
+			return "", "", opts, localizedError(localization.CypherSpecializedCallsFulltextOptionInvalid("skip", v), nil)
 		}
 		opts.skip = i
 	}
-	if v, ok := parsed["limit"]; ok {
+	if v, ok := options["limit"]; ok {
 		i, convOK := fulltextOptionToInt(v)
 		if !convOK || i < 0 {
-			return opts, localizedError(localization.CypherSpecializedCallsFulltextOptionInvalid("limit", v), nil)
+			return "", "", opts, localizedError(localization.CypherSpecializedCallsFulltextOptionInvalid("limit", v), nil)
 		}
 		opts.limit = i
 	}
-
-	return opts, nil
+	return indexName, query, opts, nil
 }
 
 func fulltextOptionToInt(v interface{}) (int, bool) {
@@ -676,10 +581,4 @@ func extractTextContent(node *storage.Node, properties []string) string {
 	}
 
 	return strings.TrimSpace(content.String())
-}
-
-// extractFulltextQuery extracts the search query from a fulltext CALL statement (legacy)
-func (e *StorageExecutor) extractFulltextQuery(cypher string) string {
-	_, query := e.extractFulltextParams(cypher)
-	return query
 }

@@ -3,7 +3,6 @@ package cypher
 
 import (
 	"context"
-	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -20,30 +19,23 @@ import (
 // 1. Local optimization: Each node is moved to the community that yields the best modularity gain
 // 2. Network aggregation: Communities are aggregated into super-nodes
 // These phases repeat until no further improvement is possible.
-func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Parse optional label filter
-	label := e.extractLabelFromAlgoCall(cypher, "LOUVAIN")
-
-	// Parse config
+func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	nodes, err := e.algorithmNodes("apoc.algo.louvain", args)
+	if err != nil {
+		return nil, err
+	}
+	// A config map argument may name the relationship weight property.
 	weightProp := ""
-	if strings.Contains(cypher, "weightProperty") {
-		// Extract weight property name (simplified parsing)
-		if idx := strings.Index(cypher, "weightProperty"); idx > 0 {
-			remainder := cypher[idx:]
-			if colonIdx := strings.Index(remainder, ":"); colonIdx > 0 {
-				afterColon := remainder[colonIdx+1:]
-				afterColon = strings.TrimSpace(afterColon)
-				// Find the end of the property name
-				endIdx := strings.IndexAny(afterColon, ",}")
-				if endIdx > 0 {
-					weightProp = strings.Trim(strings.TrimSpace(afterColon[:endIdx]), "'\"")
-				}
+	for _, argument := range args {
+		if config, isMap := argument.(map[string]interface{}); isMap {
+			if name, isString := config["weightProperty"].(string); isString {
+				weightProp = name
 			}
 		}
 	}
 
 	// Run Louvain algorithm
-	communities := e.computeLouvain(label, weightProp)
+	communities := e.computeLouvain(nodes, weightProp)
 
 	// Build result
 	rows := make([][]interface{}, 0, len(communities))
@@ -62,14 +54,7 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, cypher string
 }
 
 // computeLouvain implements the Louvain community detection algorithm.
-func (e *StorageExecutor) computeLouvain(label, weightProp string) map[storage.NodeID]int {
-	// Get all nodes
-	var nodes []*storage.Node
-	if label != "" {
-		nodes, _ = e.storage.GetNodesByLabel(label)
-	} else {
-		nodes = e.storage.GetAllNodes()
-	}
+func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp string) map[storage.NodeID]int {
 
 	if len(nodes) == 0 {
 		return map[storage.NodeID]int{}
@@ -222,10 +207,13 @@ func (e *StorageExecutor) computeLouvain(label, weightProp string) map[storage.N
 //
 // Label propagation is a simpler community detection algorithm where each node
 // adopts the label that most of its neighbors have.
-func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	label := e.extractLabelFromAlgoCall(cypher, "LABELPROPAGATION")
+func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	nodes, err := e.algorithmNodes("apoc.algo.labelPropagation", args)
+	if err != nil {
+		return nil, err
+	}
 
-	communities := e.computeLabelPropagation(label)
+	communities := e.computeLabelPropagation(nodes)
 
 	rows := make([][]interface{}, 0, len(communities))
 	for nodeID, communityID := range communities {
@@ -242,13 +230,7 @@ func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, cyph
 	}, nil
 }
 
-func (e *StorageExecutor) computeLabelPropagation(label string) map[storage.NodeID]int {
-	var nodes []*storage.Node
-	if label != "" {
-		nodes, _ = e.storage.GetNodesByLabel(label)
-	} else {
-		nodes = e.storage.GetAllNodes()
-	}
+func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[storage.NodeID]int {
 
 	if len(nodes) == 0 {
 		return map[storage.NodeID]int{}
@@ -329,10 +311,13 @@ func (e *StorageExecutor) computeLabelPropagation(label string) map[storage.Node
 
 // callApocAlgoWCC implements Weakly Connected Components detection.
 // Syntax: CALL apoc.algo.wcc(['Label']) YIELD node, componentId
-func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	label := e.extractLabelFromAlgoCall(cypher, "WCC")
+func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	nodes, err := e.algorithmNodes("apoc.algo.wcc", args)
+	if err != nil {
+		return nil, err
+	}
 
-	components := e.computeWCC(label)
+	components := e.computeWCC(nodes)
 
 	rows := make([][]interface{}, 0, len(components))
 	for nodeID, componentID := range components {
@@ -349,13 +334,7 @@ func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, cypher string) (*
 	}, nil
 }
 
-func (e *StorageExecutor) computeWCC(label string) map[storage.NodeID]int {
-	var nodes []*storage.Node
-	if label != "" {
-		nodes, _ = e.storage.GetNodesByLabel(label)
-	} else {
-		nodes = e.storage.GetAllNodes()
-	}
+func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]int {
 
 	if len(nodes) == 0 {
 		return map[storage.NodeID]int{}

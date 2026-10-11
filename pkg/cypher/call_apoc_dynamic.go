@@ -12,37 +12,18 @@ import (
 
 // callApocCypherRun executes a dynamic Cypher query string.
 // CALL apoc.cypher.run(statement, params) YIELD value
-// This allows executing Cypher queries stored in strings or variables.
-func (e *StorageExecutor) callApocCypherRun(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Parse the CALL statement to extract the inner query and parameters
-	// Format: CALL apoc.cypher.run('MATCH (n) RETURN n', {})
-
-	upper := upperASCII(cypher)
-	callIdx := strings.Index(upper, "APOC.CYPHER.RUN")
-	if callIdx == -1 {
-		return nil, fmt.Errorf("invalid apoc.cypher.run call")
-	}
-
-	// Find the opening parenthesis after the procedure name
-	parenStart := strings.Index(cypher[callIdx:], "(")
-	if parenStart == -1 {
-		return nil, fmt.Errorf("apoc.cypher.run requires parameters")
-	}
-	parenStart += callIdx
-
-	// Find matching closing parenthesis
-	parenEnd := e.findMatchingParen(cypher, parenStart)
-	if parenEnd == -1 {
-		return nil, fmt.Errorf("unmatched parenthesis in apoc.cypher.run")
-	}
-
-	// Extract arguments
-	argsStr := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
-
-	// Parse the first argument (the query string)
-	innerQuery, params, err := e.parseApocCypherRunArgs(ctx, argsStr)
+// The statement and its parameters are the call's evaluated arguments, so
+// either may be bound earlier in the statement (WITH 'RETURN 1' AS q CALL
+// apoc.cypher.run(q, {})). procedure is the name it was called by
+// (apoc.cypher.run or its alias apoc.cypher.doitall).
+func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure string, args []interface{}) (*ExecuteResult, error) {
+	innerQuery, err := requiredProcedureString(procedure, args, 0, "statement")
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse apoc.cypher.run arguments: %w", err)
+		return nil, err
+	}
+	params, err := optionalProcedureMap(procedure, args, 1, "params")
+	if err != nil {
+		return nil, err
 	}
 
 	// Execute the inner query
@@ -75,33 +56,16 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, cypher string) 
 
 // callApocCypherRunMany executes multiple Cypher statements separated by semicolons.
 // CALL apoc.cypher.runMany(statements, params) YIELD row, result
-func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := upperASCII(cypher)
-	callIdx := strings.Index(upper, "APOC.CYPHER.RUNMANY")
-	if callIdx == -1 {
-		return nil, fmt.Errorf("invalid apoc.cypher.runMany call")
-	}
-
-	// Find the opening parenthesis
-	parenStart := strings.Index(cypher[callIdx:], "(")
-	if parenStart == -1 {
-		return nil, fmt.Errorf("apoc.cypher.runMany requires parameters")
-	}
-	parenStart += callIdx
-
-	// Find matching closing parenthesis
-	parenEnd := e.findMatchingParen(cypher, parenStart)
-	if parenEnd == -1 {
-		return nil, fmt.Errorf("unmatched parenthesis in apoc.cypher.runMany")
-	}
-
-	// Extract arguments
-	argsStr := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
-
-	// Parse the first argument (the multi-statement string)
-	statements, params, err := e.parseApocCypherRunArgs(ctx, argsStr)
+// The statements and parameters are the call's evaluated arguments.
+func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "apoc.cypher.runMany"
+	statements, err := requiredProcedureString(procedure, args, 0, "statements")
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse apoc.cypher.runMany arguments: %w", err)
+		return nil, err
+	}
+	params, err := optionalProcedureMap(procedure, args, 1, "params")
+	if err != nil {
+		return nil, err
 	}
 
 	// Split by semicolons (respecting quotes)
