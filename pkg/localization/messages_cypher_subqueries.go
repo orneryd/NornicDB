@@ -48,11 +48,6 @@ const (
 	MessageCypherSubqueriesInferMessagesEmpty                MessageID = "cyphersubqueries.infer_messages_empty"
 	MessageCypherSubqueriesInferPromptOrMessagesRequired     MessageID = "cyphersubqueries.infer_prompt_or_messages_required"
 	MessageCypherSubqueriesQueryRequired                     MessageID = "cyphersubqueries.query_required"
-	MessageCypherSubqueriesRAGSyntaxInvalid                  MessageID = "cyphersubqueries.rag_syntax_invalid"
-	MessageCypherSubqueriesRAGRequestArgumentRequired        MessageID = "cyphersubqueries.rag_request_argument_required"
-	MessageCypherSubqueriesRAGParenthesisUnmatched           MessageID = "cyphersubqueries.rag_parenthesis_unmatched"
-	MessageCypherSubqueriesRAGParameterMustBeMap             MessageID = "cyphersubqueries.rag_parameter_must_be_map"
-	MessageCypherSubqueriesRAGRequestMustBeMapLiteral        MessageID = "cyphersubqueries.rag_request_must_be_map_literal"
 	MessageCypherSubqueriesRAGCandidateIDRequired            MessageID = "cyphersubqueries.rag_candidate_id_required"
 	MessageCypherSubqueriesRAGFailClosedInvalid              MessageID = "cyphersubqueries.rag_fail_closed_invalid"
 	MessageCypherSubqueriesRAGFailClosedEmbeddingUnavailable MessageID = "cyphersubqueries.rag_fail_closed_embedding_unavailable"
@@ -236,26 +231,6 @@ func CypherSubqueriesInferPromptOrMessagesRequired() Message {
 
 func CypherSubqueriesQueryRequired() Message {
 	return cypherSubqueriesMessage(MessageCypherSubqueriesQueryRequired, "query is required", nil)
-}
-
-func CypherSubqueriesRAGSyntaxInvalid(procedure string) Message {
-	return cypherSubqueriesMessage(MessageCypherSubqueriesRAGSyntaxInvalid, "invalid "+procedure+" syntax", map[string]any{"Procedure": procedure})
-}
-
-func CypherSubqueriesRAGRequestArgumentRequired(procedure string) Message {
-	return cypherSubqueriesMessage(MessageCypherSubqueriesRAGRequestArgumentRequired, procedure+" requires a request argument", map[string]any{"Procedure": procedure})
-}
-
-func CypherSubqueriesRAGParenthesisUnmatched(procedure string) Message {
-	return cypherSubqueriesMessage(MessageCypherSubqueriesRAGParenthesisUnmatched, "unmatched parenthesis in "+procedure, map[string]any{"Procedure": procedure})
-}
-
-func CypherSubqueriesRAGParameterMustBeMap(procedure, parameter string) Message {
-	return cypherSubqueriesMessage(MessageCypherSubqueriesRAGParameterMustBeMap, procedure+" parameter "+parameter+" must be a map", map[string]any{"Procedure": procedure, "Parameter": parameter})
-}
-
-func CypherSubqueriesRAGRequestMustBeMapLiteral(procedure string) Message {
-	return cypherSubqueriesMessage(MessageCypherSubqueriesRAGRequestMustBeMapLiteral, procedure+" request must be a map literal", map[string]any{"Procedure": procedure})
 }
 
 func CypherSubqueriesRAGCandidateIDRequired() Message {

@@ -1311,40 +1311,6 @@ func TestCypherHelpers_ExtractPolygonPoints_AllBranches(t *testing.T) {
 	assert.Nil(t, none)
 }
 
-func TestCypherHelpers_ParseRagProcedureRequest(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(base, "test"))
-	ctx := context.Background()
-
-	req, err := exec.parseRagProcedureRequest(ctx, "CALL db.retrieve({query:'alpha', limit: 5})", "DB.RETRIEVE")
-	require.NoError(t, err)
-	assert.Equal(t, "alpha", req["query"])
-
-	req, err = exec.parseRagProcedureRequest(ctx, "CALL db.retrieve('alpha')", "DB.RETRIEVE")
-	require.NoError(t, err)
-	assert.Equal(t, "alpha", req["query"])
-
-	req, err = exec.parseRagProcedureRequest(ctx, "CALL db.retrieve()", "DB.RETRIEVE")
-	require.NoError(t, err)
-	assert.Empty(t, req)
-
-	ctxWithParams := context.WithValue(ctx, paramsKey, map[string]interface{}{
-		"r": map[string]interface{}{"query": "beta", "limit": int64(2)},
-	})
-	req, err = exec.parseRagProcedureRequest(ctxWithParams, "CALL db.retrieve($r)", "DB.RETRIEVE")
-	require.NoError(t, err)
-	assert.Equal(t, "beta", req["query"])
-
-	_, err = exec.parseRagProcedureRequest(ctx, "CALL db.retrieve($missing)", "DB.RETRIEVE")
-	require.Error(t, err)
-	_, err = exec.parseRagProcedureRequest(ctx, "CALL db.retrieve(123)", "DB.RETRIEVE")
-	require.Error(t, err)
-	_, err = exec.parseRagProcedureRequest(ctx, "CALL db.retrieve(", "DB.RETRIEVE")
-	require.Error(t, err)
-	_, err = exec.parseRagProcedureRequest(ctx, "CALL other.proc({})", "DB.RETRIEVE")
-	require.Error(t, err)
-}
-
 func TestCypherHelpers_CallDbIndexVectorEmbed_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(base, "test"))

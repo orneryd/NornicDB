@@ -329,19 +329,19 @@ func ensureBuiltInProceduresRegistered() {
 		// declares both so YIELD page holds after MATCH / WITH too (#946).
 		registerBuiltInProcedure("db.retrieve", "db.retrieve(request :: MAP) :: (node :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, page :: MAP)", localization.CypherProcedureMetadata("db.retrieve"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbRetrieve(ctx, cypher)
+				return e.callDbRetrieve(ctx, args)
 			})
 		registerBuiltInProcedure("db.rretrieve", "db.rretrieve(request :: MAP) :: (node :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, page :: MAP)", localization.CypherProcedureMetadata("db.rretrieve"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbRRetrieve(ctx, cypher)
+				return e.callDbRRetrieve(ctx, args)
 			})
 		registerBuiltInProcedure("db.rerank", "db.rerank(request :: MAP) :: (id :: STRING, content :: STRING, original_rank :: INTEGER, new_rank :: INTEGER, bi_score :: FLOAT, cross_score :: FLOAT, final_score :: FLOAT)", localization.CypherProcedureMetadata("db.rerank"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbRerank(ctx, cypher)
+				return e.callDbRerank(ctx, args)
 			})
 		registerBuiltInProcedure("db.infer", "db.infer(request :: MAP) :: (text :: STRING, structured :: ANY, model :: STRING, usage :: MAP, latencyMs :: INTEGER, finishReason :: STRING)", localization.CypherProcedureMetadata("db.infer"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbInfer(ctx, cypher)
+				return e.callDbInfer(ctx, args)
 			})
 
 		registerBuiltInProcedure("db.txlog.entries", "db.txlog.entries(fromSeq = null :: INTEGER, toSeq = null :: INTEGER) :: (txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER, timestamp :: STRING, payload :: STRING)", localization.CypherProcedureMetadata("db.txlog.entries"), ProcedureModeDBMS, 0, 2, true,
