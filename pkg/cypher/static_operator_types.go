@@ -116,7 +116,7 @@ var staticFunctionResultTypes = map[string]string{
 	// (vector_call_rewrite.go).
 	"vector": "Vector", "__nornic_vector": "Vector", "vector_distance": "Float", "__nornic_vector_distance": "Float",
 	"vector_norm": "Float", "__nornic_vector_norm": "Float", "vector_dimension_count": "Integer",
-	"uuid": "UUID", "uuid.mostsignificantbits": "Integer", "uuid.leastsignificantbits": "Integer", "uuid.v5": "UUID",
+	"uuid": "UUID", "uuid.mostsignificantbits": "Integer", "uuid.leastsignificantbits": "Integer",
 }
 
 // staticFunctionResultType is the result type of a call to function with
