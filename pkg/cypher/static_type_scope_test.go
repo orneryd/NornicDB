@@ -89,3 +89,24 @@ func TestListAndElementTypes(t *testing.T) {
 	require.Equal(t, matchBindingUnknown, knownOperand("Map, Node or Relationship").bindingKind())
 	require.Equal(t, matchBindingValue, typedOperand(staticPropertyValueType).bindingKind())
 }
+
+// An operator inside a CASE that is only part of an expression doesn't type
+// the whole expression: [{a: 1}] + CASE WHEN x OR y = z THEN [] … END is a
+// list, so the variable UNWIND binds from it is its element. Each
+// statement's outcome is Neo4j 5.26.30's.
+func TestCaseInsideAnExpressionDoesNotTypeIt(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "caseoperand"))
+	ctx := context.Background()
+	for statement, want := range map[string][][]interface{}{
+		"WITH [{a: 1}] + CASE WHEN 1 = 1 THEN [] ELSE [{a: 2}] END AS l UNWIND l AS x RETURN x.a AS v":  {{int64(1)}},
+		"WITH [1] + CASE WHEN 1 = 1 OR false THEN [] ELSE [2] END AS l UNWIND l AS x RETURN x + 1 AS v": {{int64(2)}},
+		"WITH 2 AS i RETURN CASE WHEN i > 1 THEN 'a' ELSE 'b' END + 'x' AS v":                           {{"ax"}},
+		"OPTIONAL MATCH (o:Nope) WITH [{node: 1, matched: true}] + CASE WHEN o IS NULL OR o.id = 1 THEN [] ELSE [{node: o, matched: false}] END AS entries UNWIND entries AS entry RETURN entry.node AS n, max(CASE WHEN entry.matched THEN 1 ELSE 0 END) = 1 AS m": {{int64(1), true}},
+	} {
+		result, err := exec.Execute(ctx, statement, nil)
+		require.NoError(t, err, statement)
+		require.Equal(t, want, result.Rows, statement)
+	}
+	require.Equal(t, "[1] + CASE"+strings.Repeat(" ", len(" WHEN a OR b THEN [] "))+"END", maskCaseBlocks("[1] + CASE WHEN a OR b THEN [] END"))
+	require.Equal(t, "n.case = 'CASE x END'", maskCaseBlocks("n.case = 'CASE x END'"))
+}

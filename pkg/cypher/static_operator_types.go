@@ -379,8 +379,11 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		}
 		return staticOperand{}, nil
 	}
+	// The expression's own operators are found outside its CASE blocks
+	// ([x] + CASE WHEN a OR b = c THEN [] END is a list, not a Boolean).
+	scan := maskCaseBlocks(expression)
 	for _, keyword := range []string{"OR", "XOR", "AND"} {
-		if index := topLevelKeywordIndex(expression, keyword); index > 0 {
+		if index := topLevelKeywordIndex(scan, keyword); index > 0 {
 			for _, side := range [2]string{expression[:index], expression[index+len(keyword):]} {
 				operand, err := checker.check(side)
 				if err != nil {
@@ -407,7 +410,7 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 	// A type or normalization predicate (x IS :: LIST<INTEGER>, x IS NOT
 	// TYPED STRING, x IS NFC NORMALIZED) is a Boolean; its type text isn't
 	// an expression.
-	if index := topLevelKeywordIndex(expression, "IS"); index > 0 {
+	if index := topLevelKeywordIndex(scan, "IS"); index > 0 {
 		rest := strings.TrimSpace(expression[index+len("IS"):])
 		if !startsWithKeywordFold(rest, "NULL") && !startsWithKeywordFold(strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(rest), "NOT")), "NULL") {
 			if _, err := checker.check(expression[:index]); err != nil {
@@ -417,7 +420,7 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		}
 	}
 	for _, keyword := range staticComparisonKeywords {
-		if index := topLevelKeywordIndex(expression, keyword); index > 0 {
+		if index := topLevelKeywordIndex(scan, keyword); index > 0 {
 			if _, err := checker.check(expression[:index]); err != nil {
 				return staticOperand{}, err
 			}
@@ -432,7 +435,7 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		}
 	}
 	for _, operator := range staticComparisonOperators {
-		if left, right, found := splitByOperatorWithOptions(expression, operator, false, true); found && left != "" && right != "" {
+		if left, right, found := splitAtOperator(expression, operator, findTopLevelOperator(scan, operator, false, true)); found && left != "" && right != "" {
 			for _, side := range [2]string{left, right} {
 				operand, err := checker.check(side)
 				if err != nil {
@@ -549,6 +552,45 @@ func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOp
 		return staticOperand{}, nil
 	}
 	return result, nil
+}
+
+// maskCaseBlocks blanks, keeping byte offsets, the inside of every CASE … END
+// block in expression (its CASE and END stay), so an operator inside one isn't
+// taken for one of the expression's own. Quoted text and a property named
+// case (n.case) are not blocks.
+func maskCaseBlocks(expression string) string {
+	if !mayContainCaseKeyword(expression) {
+		return expression
+	}
+	var masked []byte
+	for index := 0; index < len(expression); index++ {
+		switch character := expression[index]; character {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(expression, index, character) - 1
+			continue
+		case 'C', 'c':
+		default:
+			continue
+		}
+		if !matchKeywordAt(expression, index, "CASE") || (index > 0 && (isIdentByte(expression[index-1]) || expression[index-1] == '.')) {
+			continue
+		}
+		end := leadingCaseExpressionEnd(expression[index:])
+		if end <= len("CASE END") {
+			continue
+		}
+		if masked == nil {
+			masked = []byte(expression)
+		}
+		for position := index + len("CASE"); position < index+end-len("END"); position++ {
+			masked[position] = ' '
+		}
+		index += end - 1
+	}
+	if masked == nil {
+		return expression
+	}
+	return string(masked)
 }
 
 // staticPostfixSplit splits the trailing subscript or property access off an
