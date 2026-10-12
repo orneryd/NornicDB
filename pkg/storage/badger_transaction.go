@@ -3851,14 +3851,11 @@ func (tx *BadgerTransaction) checkUniqueConstraint(node *Node, c Constraint) err
 		return err
 	}
 
-	for id, n := range tx.pendingNodes {
-		if id == node.ID {
-			continue
-		}
-		if hasLabel(n.Labels, c.Label) && compareValues(n.Properties[prop], value) {
-			message := localization.StorageValidationNodeUniqueInTransaction(prop, value)
-			return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{prop}, message, nil)
-		}
+	if err := tx.forEachPendingCandidateLocked(node.ID, c.Label, prop, value, func(*Node) error {
+		message := localization.StorageValidationNodeUniqueInTransaction(prop, value)
+		return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{prop}, message, nil)
+	}); err != nil {
+		return err
 	}
 
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
@@ -3935,6 +3932,44 @@ func runCommitTailHook() {
 	}
 }
 
+// forEachPendingCandidateLocked calls visit for the transaction's other
+// pending nodes with label whose property equals value: the candidates a
+// UNIQUE, NODE KEY or TEMPORAL check has to compare against. It reads them
+// from the transaction's pending-node index (built on first use, kept current
+// on every pending write), so checking each node of an n-node transaction
+// visits only the nodes sharing its key instead of every pending node; the
+// pass over all pending nodes made a large bulk write O(n^2), once while the
+// statement wrote and again at commit. Values the index cannot key (no
+// indexValueKey) fall back to that pass. Index keys are never stricter than
+// compareValues (they are looser for lists, e.g. [1] and [1.0] share a key),
+// so candidates are also checked with compareValues: the result is exactly
+// what the full pass found.
+// Caller holds tx.mu; visit must not write to the transaction.
+func (tx *BadgerTransaction) forEachPendingCandidateLocked(self NodeID, label, property string, value interface{}, visit func(*Node) error) error {
+	if valueKey, ok := indexValueKey(value); ok {
+		for _, id := range tx.pendingValueMatchesLocked(label, property, valueKey) {
+			if id == self {
+				continue
+			}
+			if n := tx.pendingNodes[id]; n != nil && compareValues(n.Properties[property], value) {
+				if err := visit(n); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	for id, n := range tx.pendingNodes {
+		if id == self || !hasLabel(n.Labels, label) || !compareValues(n.Properties[property], value) {
+			continue
+		}
+		if err := visit(n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // scanForUniqueViolation performs a full database scan to check for UNIQUE violations
 // within a single namespace (database).
 func (tx *BadgerTransaction) scanForUniqueViolation(namespace, label, property string, value interface{}, excludeNodeID NodeID) error {
@@ -3988,26 +4023,16 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 	// All pending nodes share the transaction's pinned namespace by
 	// invariant; the namespace-prefix filter that used to live here is
 	// redundant.
-	for id, n := range tx.pendingNodes {
-		if id == node.ID {
-			continue
-		}
-		if !hasLabel(n.Labels, c.Label) {
-			continue
-		}
-
-		match := true
-		for i, prop := range c.Properties {
-			if !compareValues(n.Properties[prop], values[i]) {
-				match = false
-				break
+	if err := tx.forEachPendingCandidateLocked(node.ID, c.Label, c.Properties[0], values[0], func(n *Node) error {
+		for i := 1; i < len(c.Properties); i++ {
+			if !compareValues(n.Properties[c.Properties[i]], values[i]) {
+				return nil
 			}
 		}
-
-		if match {
-			message := localization.StorageValidationNodeKeyInTransaction(c.Properties, values)
-			return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
-		}
+		message := localization.StorageValidationNodeKeyInTransaction(c.Properties, values)
+		return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
+	}); err != nil {
+		return err
 	}
 
 	// Full-scan check: scan all existing nodes with this label (namespace-scoped).
@@ -4121,13 +4146,8 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 	// All pending nodes share the transaction's pinned namespace by
 	// invariant; only the committed-data scan still needs the prefix filter
 	// because the label index spans namespaces.
-	for id, other := range tx.pendingNodes {
-		if id == node.ID || !hasLabel(other.Labels, c.Label) {
-			continue
-		}
-		if err := collides(other); err != nil {
-			return err
-		}
+	if err := tx.forEachPendingCandidateLocked(node.ID, c.Label, spec.keyProps[0], node.Properties[spec.keyProps[0]], collides); err != nil {
+		return err
 	}
 
 	// Check overlaps against committed storage using the label index scan.
