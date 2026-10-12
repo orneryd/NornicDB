@@ -4702,7 +4702,7 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 
 	// Step 4: Fuse with RRF
 	fusionStart := time.Now()
-	fusedResults := s.fuseRRF(vectorResults, bm25Results, opts)
+	fusedResults, rrfDropped := s.fuseRRFCounting(vectorResults, bm25Results, opts)
 	retrievalExhausted := vectorStats.exhausted && bm25Result.stats.exhausted && len(fusedResults) <= opts.Limit
 	candidateBudgetReached := false
 
@@ -4753,6 +4753,13 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	// per AllowedSearchStages.
 	s.observeSearchStage(ctx, "hybrid", "fuse", time.Since(fusionStart))
 
+	// A short page that MinRRFScore cut says so, unless the rerank already
+	// reports a reason.
+	fallback := rerankFallback
+	if fallback == SearchFallbackNone && rrfDropped > 0 && len(results) < opts.Limit {
+		fallback = SearchFallbackMinRRFScore
+	}
+
 	return &SearchResponse{
 		Status:                 "success",
 		Query:                  query,
@@ -4762,8 +4769,8 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 		TotalCandidates:        len(fusedResults),
 		Returned:               len(results),
 		SearchMethod:           searchMethod,
-		FallbackTriggered:      rerankFallback != SearchFallbackNone,
-		FallbackReason:         rerankFallback,
+		FallbackTriggered:      fallback != SearchFallbackNone,
+		FallbackReason:         fallback,
 		Message:                message,
 		Metrics: &SearchMetrics{
 			VectorSearchTimeMs:     vectorMs,
@@ -6508,6 +6515,19 @@ func (s *Service) filterCandidatesByType(ctx context.Context, candidates []Searc
 // "Reciprocal Rank Fusion outperforms the best known automatic evaluation
 // measures in combining results from multiple text retrieval systems."
 func (s *Service) fuseRRF(vectorResults, bm25Results []indexResult, opts *SearchOptions) []rrfResult {
+	results, _ := s.fuseRRFCounting(vectorResults, bm25Results, opts)
+	return results
+}
+
+// SearchFallbackMinRRFScore: fused results scoring below MinRRFScore were
+// dropped and fewer than the limit remain. A result found by one ranking only
+// scores weight / (RRFK + rank), so with the defaults that ranking's results
+// past rank 40 score under 0.01 (#1092); MinRRFScore 0 keeps them.
+const SearchFallbackMinRRFScore SearchFallbackReason = "min_rrf_score"
+
+// fuseRRFCounting is fuseRRF, also returning how many fused results
+// MinRRFScore dropped.
+func (s *Service) fuseRRFCounting(vectorResults, bm25Results []indexResult, opts *SearchOptions) ([]rrfResult, int) {
 	k := opts.RRFK
 	if k == 0 {
 		k = 60 // Default
@@ -6570,8 +6590,10 @@ func (s *Service) fuseRRF(vectorResults, bm25Results []indexResult, opts *Search
 	}
 
 	results := make([]rrfResult, 0, len(accumulated))
+	dropped := 0
 	for index := range accumulated {
 		if accumulated[index].result.RRFScore < opts.MinRRFScore {
+			dropped++
 			continue
 		}
 		results = append(results, accumulated[index].result)
@@ -6582,7 +6604,7 @@ func (s *Service) fuseRRF(vectorResults, bm25Results []indexResult, opts *Search
 		return results[i].RRFScore > results[j].RRFScore
 	})
 
-	return results
+	return results, dropped
 }
 
 // applyMMR applies Maximal Marginal Relevance diversification to search results.

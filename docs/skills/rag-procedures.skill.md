@@ -51,7 +51,7 @@ Behavior:
 - Vector and BM25 results use equal weights by default. Set `vectorWeight` and `bm25Weight` for an explicit policy.
 - `candidateTarget` controls each retrieval branch independently of the final `limit`; when omitted it is derived as `max(limit * 2, 20)` up to the configured maximum.
 - `filters` (aliases: `propertyFilters`, `property_filters`) uses OR within each property and AND across properties. Scalar and array-valued node properties are supported.
-- `minRRFScore: 0` retains single-branch results at deeper ranks; the default is `0.01`.
+- `minRRFScore: 0` retains single-branch results at deeper ranks; the default is `0.01`, which keeps a result found by one ranking only up to rank 40 (`1/(60+40)`). A page that the threshold leaves shorter than `limit` reports `fallback_triggered: true` and `fallback_reason: min_rrf_score`.
 - `fallbackEnabled: false` returns the empty hybrid result instead of switching to vector-only and then BM25-only retrieval.
 - `search_method` reports the winning path: `rrf_hybrid`, `rrf_hybrid+rerank`, `vector_only`, or `bm25_only`.
 - `fallback_triggered: true` means one strategy returned nothing and the engine fell back.

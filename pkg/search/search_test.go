@@ -788,7 +788,10 @@ func TestSearch_FallbackPolicyCanKeepEmptyHybridResult(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, strictResponse.Results)
 	require.Equal(t, "rrf_hybrid", strictResponse.SearchMethod)
-	require.False(t, strictResponse.FallbackTriggered)
+	// The hybrid search kept its path; MinRRFScore 1 emptied the page, and
+	// the page says so (#1092).
+	require.True(t, strictResponse.FallbackTriggered)
+	require.Equal(t, SearchFallbackMinRRFScore, strictResponse.FallbackReason)
 
 	legacyOptions := DefaultSearchOptions()
 	legacyOptions.MinRRFScore = 1

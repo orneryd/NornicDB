@@ -170,6 +170,9 @@ page then reports `query_chunks_searched` and `query_chunks_total`). This keeps
 provider credentials and response bodies out of caller-visible metadata while
 the corresponding warning log retains the operational error.
 
+`fallback_reason` is also `min_rrf_score` when fused results under
+`minRRFScore` were dropped and fewer than the limit remain.
+
 ## Security, consistency, and lifetime
 
 Durable continuation is disabled by default. Operators enable it by setting

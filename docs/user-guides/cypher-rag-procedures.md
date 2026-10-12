@@ -81,6 +81,12 @@ YIELD node, score, rrf_score, vector_rank, bm25_rank, search_method, fallback_tr
 RETURN node, score, rrf_score
 ```
 
+`minRRFScore` (default `0.01`) drops fused results below it. A result found by
+one ranking only scores `1/(60 + rank)`, so the default keeps that ranking's
+first 40. When the threshold leaves fewer results than `limit`,
+`fallback_triggered` is `true` and `fallback_reason` is `min_rrf_score`; set
+`minRRFScore: 0` to keep the deeper results.
+
 Filter values use OR semantics within one property and AND semantics across
 properties. Scalar and array-valued node properties are supported. Every policy
 key also accepts snake_case, for example `candidate_target`, `rrf_k`,
