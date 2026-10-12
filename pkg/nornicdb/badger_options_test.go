@@ -93,6 +93,57 @@ func TestResolveDurabilityOptions(t *testing.T) {
 	}
 }
 
+func TestResolveDurabilityOptions_WriteBehindMaxOps(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  func(*config.Config)
+		wantOps int
+	}{
+		{
+			name:    "auto default (no cap configured)",
+			config:  func(cfg *config.Config) {},
+			wantOps: 0, // 0 = engine researched default cap
+		},
+		{
+			name: "primary cap wired",
+			config: func(cfg *config.Config) {
+				cfg.Database.AsyncMaxOps = 120000
+			},
+			wantOps: 120000,
+		},
+		{
+			name: "legacy node+edge caps fall back to sum",
+			config: func(cfg *config.Config) {
+				cfg.Database.AsyncMaxNodeCacheSize = 50000
+				cfg.Database.AsyncMaxEdgeCacheSize = 100000
+			},
+			wantOps: 150000,
+		},
+		{
+			name: "primary cap wins over legacy",
+			config: func(cfg *config.Config) {
+				cfg.Database.AsyncMaxOps = 30000
+				cfg.Database.AsyncMaxNodeCacheSize = 50000
+				cfg.Database.AsyncMaxEdgeCacheSize = 100000
+			},
+			wantOps: 30000,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.LoadDefaults()
+			cfg.Database.AsyncWritesEnabled = true
+			cfg.Database.StrictDurability = false
+			tt.config(cfg)
+
+			badgerOptions, _ := resolveDurabilityOptions("/data", cfg)
+			require.True(t, badgerOptions.WriteBehind)
+			require.Equal(t, tt.wantOps, badgerOptions.WriteBehindMaxOps)
+		})
+	}
+}
+
 func TestOpenStrictDurabilityUsesWALStack(t *testing.T) {
 	cfg := config.LoadDefaults()
 	cfg.Database.StrictDurability = true

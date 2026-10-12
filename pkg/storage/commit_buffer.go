@@ -438,9 +438,14 @@ type WriteBehindBuffer struct {
 const minAdaptiveOps = 1000
 
 // defaultWriteBehindMaxOps caps auto-sized generations when no manual max is
-// configured (maxOps sentinel 0): ~2M mutations is comfortably above one
-// interval of work at any measured drain rate and bounds unflushed memory.
-const defaultWriteBehindMaxOps = 2 << 20
+// configured (maxOps sentinel 0). 100,000 buffered operations is the
+// researched default: at ~0.5-2KB per buffered write that is ~50-200MB of
+// unflushed memory, in the same band as InnoDB's 16MB redo-log buffer,
+// RocksDB's 64MB write buffer and MongoDB's 100ms journal group-commit
+// window. It bounds memory on oversized hardware while leaving the adaptive
+// target (throughput x delay) 100x headroom above minAdaptiveOps (1,000), so
+// a manual cap is only needed to tune for unusual hardware.
+const defaultWriteBehindMaxOps = 100_000
 
 // defaultWriteBehindMinDelay floors the adaptive flush delay: rotating
 // faster than this buys nothing and multiplies per-flush fixed costs.
@@ -448,7 +453,11 @@ const defaultWriteBehindMinDelay = 5 * time.Millisecond
 
 // defaultWriteBehindMaxDelay caps the adaptive flush delay: the durability
 // loss window and unflushed memory stay bounded even if drains slow down.
-const defaultWriteBehindMaxDelay = 30 * time.Second
+// 1s matches the flush cadence of Redis AOF (appendfsync everysec), MySQL
+// InnoDB (innodb_flush_log_at_timeout=1s) and the documented 5ms-1s clamp;
+// it is far below Cassandra's 10s periodic commit-log sync, keeping the loss
+// window conservative.
+const defaultWriteBehindMaxDelay = 1 * time.Second
 
 // NewWriteBehindBuffer builds a buffer whose rotation delay and generation
 // size adapt to measured drain latency and throughput: after every

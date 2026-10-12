@@ -153,6 +153,24 @@ func TestWriteBehindBuffer_AdaptiveTargetClampedByMaxOps(t *testing.T) {
 	require.LessOrEqual(t, buf.TargetSize(), 500)
 }
 
+func TestWriteBehindBuffer_AutoDefaultsUseResearchedCaps(t *testing.T) {
+	apply := func(buf *CommitBuffer) error { return nil }
+	buf := NewWriteBehindBuffer(50*time.Millisecond, 0, apply)
+	defer buf.Close()
+
+	// The sentinel 0 must select the researched default cap (not 2M and not
+	// unbounded), so oversized hardware cannot balloon the buffer.
+	buf.mu.RLock()
+	effectiveMax := buf.effectiveMaxLocked()
+	buf.mu.RUnlock()
+	require.Equal(t, defaultWriteBehindMaxOps, effectiveMax)
+	require.Equal(t, 100_000, defaultWriteBehindMaxOps)
+
+	// The adaptive delay clamp must match the documented 5ms-1s band.
+	require.Equal(t, 5*time.Millisecond, defaultWriteBehindMinDelay)
+	require.Equal(t, 1*time.Second, defaultWriteBehindMaxDelay)
+}
+
 func TestWriteBehindBuffer_DelayPinnedWarning(t *testing.T) {
 	apply := func(buf *CommitBuffer) error {
 		time.Sleep(10 * time.Millisecond)

@@ -545,20 +545,23 @@ Current behavior:
 # === Async Write Settings ===
 # These control the async write-behind cache for better throughput
 database:
-  async_writes_enabled: true # Enable async writes (default: true)
-  async_flush_interval: 50ms # How often to flush pending writes
-  async_max_node_cache_size: 50000 # Max nodes to buffer before forcing flush
-  async_max_edge_cache_size: 100000 # Max edges to buffer before forcing flush
+  async_writes_enabled: false # Durable writes are the default; opt in
+  async_flush_interval: auto  # Initial rotation delay; runtime adapts 5ms-1s
+  async_max_ops: 0            # Generation-size cap (0 = researched 100k default)
+  # Deprecated legacy caps (fall back to their sum when async_max_ops is unset):
+  # async_max_node_cache_size: 0
+  # async_max_edge_cache_size: 0
 ```
 
 ### Environment Variables
 
-| Variable                             | Default  | Description                       |
-| ------------------------------------ | -------- | --------------------------------- |
-| `NORNICDB_ASYNC_WRITES_ENABLED`      | `true`   | Enable/disable async writes       |
-| `NORNICDB_ASYNC_FLUSH_INTERVAL`      | `50ms`   | Control flush frequency           |
-| `NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE` | `50000`  | Limit memory usage for node cache |
-| `NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE` | `100000` | Limit memory usage for edge cache |
+| Variable                             | Default  | Description                                        |
+| ------------------------------------ | -------- | -------------------------------------------------- |
+| `NORNICDB_ASYNC_WRITES_ENABLED`      | `false`  | Enable/disable async writes (durable by default)   |
+| `NORNICDB_ASYNC_FLUSH_INTERVAL`      | `auto`   | Initial rotation delay; adapts to 5ms-1s           |
+| `NORNICDB_ASYNC_MAX_OPS`             | `100000` | Max buffered ops before a forced rotation (0=auto) |
+| `NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE` | `0`      | Deprecated legacy cap on buffered nodes            |
+| `NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE` | `0`      | Deprecated legacy cap on buffered edges            |
 
 ### Performance Tuning
 
@@ -568,8 +571,7 @@ database:
 database:
   async_writes_enabled: true
   async_flush_interval: 200ms # Larger = better throughput
-  async_max_node_cache_size: 100000 # Increase for bulk inserts
-  async_max_edge_cache_size: 200000
+  async_max_ops: 200000        # Raise for bulk inserts
 ```
 
 **For Lower Staleness Window (still eventual consistency):**
@@ -578,8 +580,7 @@ database:
 database:
   async_writes_enabled: true
   async_flush_interval: 10ms # Smaller = more consistent
-  async_max_node_cache_size: 1000 # Smaller = less memory risk
-  async_max_edge_cache_size: 2000
+  async_max_ops: 5000        # Smaller = less memory risk
 ```
 
 **For Maximum Durability:**
@@ -1183,11 +1184,11 @@ NornicDB validates configuration on startup and will:
 
 ### Async Write Settings
 
-| Setting                            | Impact                               | Recommendation            |
-| ---------------------------------- | ------------------------------------ | ------------------------- |
-| `async_writes_enabled: true`       | 3-10x write throughput improvement   | Enable for most workloads |
-| `async_flush_interval: 50ms`       | Balance of consistency vs throughput | Default works well        |
-| `async_max_node_cache_size: 50000` | Memory usage vs bulk performance     | Adjust based on RAM       |
+| Setting                       | Impact                               | Recommendation                  |
+| ----------------------------- | ------------------------------------ | ------------------------------- |
+| `async_writes_enabled: true`  | 3-10x write throughput improvement   | Enable for most workloads       |
+| `async_flush_interval: 50ms`  | Balance of consistency vs throughput | Default works well              |
+| `async_max_ops: 100000`       | Memory usage vs bulk performance     | Raise only with ample RAM       |
 
 ### Search Similarity
 
@@ -1203,7 +1204,7 @@ NornicDB validates configuration on startup and will:
 
 **High memory usage:**
 
-- Reduce `async_max_node_cache_size` and `async_max_edge_cache_size`
+- Reduce `async_max_ops` (the buffered generation-size cap)
 - Monitor during bulk operations
 - Consider disabling async writes for memory-constrained environments
 
@@ -1242,8 +1243,7 @@ curl http://localhost:7474/metrics | grep search
 database:
   async_writes_enabled: true
   async_flush_interval: 10ms # Fast feedback
-  async_max_node_cache_size: 1000
-  async_max_edge_cache_size: 2000
+  async_max_ops: 5000
 
 search:
   min_similarity: 0.3 # More results for testing
@@ -1255,8 +1255,7 @@ search:
 database:
   async_writes_enabled: true
   async_flush_interval: 100ms # Better throughput
-  async_max_node_cache_size: 100000
-  async_max_edge_cache_size: 200000
+  async_max_ops: 200000
 
 search:
   min_similarity: 0.7 # Higher precision
@@ -1267,9 +1266,8 @@ search:
 ```yaml
 database:
   async_writes_enabled: false # Disable to save memory
-  # or small cache sizes:
-  # async_max_node_cache_size: 500
-  # async_max_edge_cache_size: 1000
+  # or small caps:
+  # async_max_ops: 2000
 
 search:
   min_similarity: 0.8 # Reduce result processing

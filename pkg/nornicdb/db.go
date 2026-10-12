@@ -1433,12 +1433,21 @@ func resolveDurabilityOptions(dataDir string, config *Config) (storage.BadgerOpt
 	// unless the user opts into async writes AND relaxes strict durability.
 	// AsyncWritesEnabled turns on the rotating commit buffer with AUTO
 	// sizing (WriteBehindMaxOps 0): its rotation delay and generation size
-	// adapt to measured drain latency and throughput at runtime.
+	// adapt to measured drain latency and throughput at runtime, bounded by
+	// the engine's researched default cap. A positive AsyncMaxOps (or the
+	// deprecated node/edge cache knobs) overrides that cap.
 	if config.Database.AsyncWritesEnabled && !config.Database.StrictDurability {
 		badgerOptions.WriteBehind = true
 		if config.Database.AsyncFlushInterval > 0 {
 			badgerOptions.WriteBehindInterval = config.Database.AsyncFlushInterval
 		}
+		maxOps := config.Database.AsyncMaxOps
+		if maxOps <= 0 {
+			// Deprecated legacy knobs still bind when the primary cap is
+			// unset, so existing configs keep their documented effect.
+			maxOps = config.Database.AsyncMaxNodeCacheSize + config.Database.AsyncMaxEdgeCacheSize
+		}
+		badgerOptions.WriteBehindMaxOps = maxOps
 	}
 
 	walConfig := storage.DefaultWALConfig()

@@ -48,7 +48,7 @@ With `StrictDurability` enabled the buffer stays off even when
 After every successful flush the buffer measures two things:
 
 1. **Drain latency** — how long the generation took to land in Badger. The
-   rotation delay moves toward this value (EWMA), clamped to 5ms–30s.
+   rotation delay moves toward this value (EWMA), clamped to 5ms–1s.
 2. **Drain throughput** — operations per second. The generation size threshold
    becomes `throughput × delay`, clamped to `[1,000 ops, max ops]`.
 
@@ -57,10 +57,22 @@ backlog stays at one interval of work: bounded memory, bounded loss window, and
 no generation is so small that per-flush fixed costs (Badger commit, count
 locks) dominate.
 
+The 1s ceiling on the delay follows the industry flush cadence: Redis AOF
+`appendfsync everysec`, MySQL InnoDB `innodb_flush_log_at_timeout=1s` and
+MongoDB's 100ms journal group-commit all flush around the 100ms–1s band. The
+default maximum generation size is **100,000 ops** (~50–200MB of unflushed
+memory, in the same band as InnoDB's 16MB redo-log buffer and RocksDB's 64MB
+write buffer), so oversized hardware can not balloon the buffer.
+
 ### Manual caps and warnings
 
-- `NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE` / `..._EDGE_...` remain the legacy
-  knobs; the buffer's size cap is auto by default (internal 2M-op default).
+- `NORNICDB_ASYNC_MAX_OPS` (YAML `async_max_ops`) is the primary cap on the
+  buffered generation size. The default (`auto` = 0) selects the researched
+  100,000-op cap; a positive value overrides it for unusually fast or slow
+  storage.
+- `NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE` / `..._EDGE_...` are deprecated legacy
+  knobs; when `async_max_ops` is unset and either is set, their sum is used as
+  the cap.
 - When a fixed initial interval is set (`async_flush_interval: 50ms`) it is a
   starting point, not a straitjacket — the runtime still adapts.
 - If the size or timing configuration persistently mismatches the measured
@@ -68,7 +80,7 @@ locks) dominate.
 
   ```
   write-behind sizing: fixed max 50000 ops binds at ~120000 ops per flush interval (50ms); effective flush delay ~20.8ms — a smaller max increases flush frequency and per-flush overhead
-  write-behind flush delay pinned at 30s: measured drain latency 45s exceeds the bound; the flusher cannot keep up with the write rate
+  write-behind flush delay pinned at 1s: measured drain latency 45s exceeds the bound; the flusher cannot keep up with the write rate
   ```
 
 ## Measured throughput

@@ -590,7 +590,9 @@ type BadgerOptions struct {
 	WriteBehindInterval time.Duration
 
 	// WriteBehindMaxOps rotates the active generation once it holds this
-	// many buffered operations (0 = interval-only rotation).
+	// many buffered operations. 0 selects auto sizing against the engine's
+	// default cap (defaultWriteBehindMaxOps); a positive value is a manual
+	// cap for operators with unusual hardware.
 	WriteBehindMaxOps int
 
 	// BadgerInternalLogger is the logger handed to BadgerDB itself for its

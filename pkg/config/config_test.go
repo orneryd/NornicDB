@@ -1010,6 +1010,7 @@ func TestValidateDurabilitySettings(t *testing.T) {
 	}{
 		{"unknown WAL mode", func(cfg *Config) { cfg.Database.WALSyncMode = "sometimes" }},
 		{"nonpositive batch interval", func(cfg *Config) { cfg.Database.WALSyncInterval = 0 }},
+		{"negative async max ops", func(cfg *Config) { cfg.Database.AsyncMaxOps = -1 }},
 		{"negative node cache", func(cfg *Config) { cfg.Database.AsyncMaxNodeCacheSize = -1 }},
 		{"negative edge cache", func(cfg *Config) { cfg.Database.AsyncMaxEdgeCacheSize = -1 }},
 	}
@@ -1096,6 +1097,48 @@ database:
 	_, err = LoadFromFile(path)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "invalid async_max_edge_cache_size")
+}
+
+func TestLoadFromFile_AsyncMaxOps(t *testing.T) {
+	clearEnvVars(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+
+	// Flat shape.
+	require.NoError(t, os.WriteFile(path, []byte(`
+database:
+  async_max_ops: 789
+`), 0o600))
+	cfg, err := LoadFromFile(path)
+	require.NoError(t, err)
+	require.Equal(t, 789, cfg.Database.AsyncMaxOps)
+
+	// Nested legacy shape.
+	require.NoError(t, os.WriteFile(path, []byte(`
+database:
+  async_writes:
+    enabled: true
+    max_ops: 999
+`), 0o600))
+	cfg, err = LoadFromFile(path)
+	require.NoError(t, err)
+	require.Equal(t, 999, cfg.Database.AsyncMaxOps)
+
+	// Env overrides YAML.
+	t.Setenv("NORNICDB_ASYNC_MAX_OPS", "120000")
+	cfg, err = LoadFromFile(path)
+	require.NoError(t, err)
+	require.Equal(t, 120000, cfg.Database.AsyncMaxOps)
+
+	// Negative values are rejected.
+	require.NoError(t, os.WriteFile(path, []byte(`
+database:
+  async_max_ops: -1
+`), 0o600))
+	_, err = LoadFromFile(path)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid async_max_ops")
 }
 
 func TestLoadFromFile_AsyncWriteSettingsRejectsNegativeNestedCacheSizes(t *testing.T) {
@@ -2310,6 +2353,7 @@ func clearEnvVars(t *testing.T) {
 		// Async write settings
 		"NORNICDB_ASYNC_WRITES_ENABLED",
 		"NORNICDB_ASYNC_FLUSH_INTERVAL",
+		"NORNICDB_ASYNC_MAX_OPS",
 		"NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE",
 		"NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE",
 		"NORNICDB_BADGER_NODE_CACHE_MAX_ENTRIES",
@@ -2350,6 +2394,9 @@ func TestLoadFromEnv_AsyncWriteDefaults(t *testing.T) {
 	}
 	if cfg.Database.AsyncFlushInterval != 0 {
 		t.Errorf("expected AsyncFlushInterval auto (0), got %v", cfg.Database.AsyncFlushInterval)
+	}
+	if cfg.Database.AsyncMaxOps != 0 {
+		t.Errorf("expected AsyncMaxOps auto (0), got %d", cfg.Database.AsyncMaxOps)
 	}
 	if cfg.Database.AsyncMaxNodeCacheSize != 0 {
 		t.Errorf("expected AsyncMaxNodeCacheSize auto (0), got %d", cfg.Database.AsyncMaxNodeCacheSize)
@@ -2413,6 +2460,17 @@ func TestLoadFromEnv_AsyncWriteSettings(t *testing.T) {
 			validate: func(t *testing.T, cfg *Config) {
 				if cfg.Database.AsyncFlushInterval != 2*time.Second {
 					t.Errorf("expected AsyncFlushInterval 2s, got %v", cfg.Database.AsyncFlushInterval)
+				}
+			},
+		},
+		{
+			name: "custom max ops",
+			envVars: map[string]string{
+				"NORNICDB_ASYNC_MAX_OPS": "120000",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.Database.AsyncMaxOps != 120000 {
+					t.Errorf("expected AsyncMaxOps 120000, got %d", cfg.Database.AsyncMaxOps)
 				}
 			},
 		},
@@ -2511,6 +2569,9 @@ func TestLoadDefaults_AsyncWriteValues(t *testing.T) {
 	}
 	if cfg.Database.AsyncFlushInterval != 0 {
 		t.Errorf("expected AsyncFlushInterval auto (0) in defaults, got %v", cfg.Database.AsyncFlushInterval)
+	}
+	if cfg.Database.AsyncMaxOps != 0 {
+		t.Errorf("expected AsyncMaxOps auto (0) in defaults, got %d", cfg.Database.AsyncMaxOps)
 	}
 	if cfg.Database.AsyncMaxNodeCacheSize != 0 {
 		t.Errorf("expected AsyncMaxNodeCacheSize auto (0) in defaults, got %d", cfg.Database.AsyncMaxNodeCacheSize)

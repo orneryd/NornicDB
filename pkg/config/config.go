@@ -375,18 +375,23 @@ type DatabaseConfig struct {
 	// Env: NORNICDB_ASYNC_FLUSH_INTERVAL ("auto" = 0)
 	AsyncFlushInterval time.Duration
 
-	// AsyncMaxNodeCacheSize is a legacy fixed cap on buffered nodes.
-	// 0 = auto (default): the adaptive write-behind buffer self-sizes from
-	// measured throughput and drain latency, so a fixed cap is unnecessary.
-	// A positive value sets a manual cap. Kept for compatibility and
-	// diagnostics.
+	// AsyncMaxOps caps the write-behind buffer's generation size in buffered
+	// operations. 0 = auto (default): the engine uses its researched default
+	// cap (100,000 ops, ~50-200MB of unflushed memory), which bounds memory
+	// on oversized hardware without disabling the adaptive sizing. A positive
+	// value overrides it for operators with unusually fast or slow storage.
+	// Env: NORNICDB_ASYNC_MAX_OPS ("auto" = 0)
+	AsyncMaxOps int
+
+	// AsyncMaxNodeCacheSize is a deprecated legacy cap on buffered nodes.
+	// Prefer AsyncMaxOps. When AsyncMaxOps is unset and either legacy cap is
+	// set, their sum is used as the generation cap. Kept for compatibility.
 	// Env: NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE ("auto" = 0)
 	AsyncMaxNodeCacheSize int
 
-	// AsyncMaxEdgeCacheSize is a legacy fixed cap on buffered edges.
-	// 0 = auto (default): the adaptive write-behind buffer self-sizes.
-	// A positive value sets a manual cap. Kept for compatibility and
-	// diagnostics.
+	// AsyncMaxEdgeCacheSize is a deprecated legacy cap on buffered edges.
+	// Prefer AsyncMaxOps. When AsyncMaxOps is unset and either legacy cap is
+	// set, their sum is used as the generation cap. Kept for compatibility.
 	// Env: NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE ("auto" = 0)
 	AsyncMaxEdgeCacheSize int
 
@@ -1373,6 +1378,9 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("invalid WAL sync mode: %s", c.Database.WALSyncMode)
 	}
+	if c.Database.AsyncMaxOps < 0 {
+		return fmt.Errorf("invalid async max ops: %d", c.Database.AsyncMaxOps)
+	}
 	if c.Database.AsyncMaxNodeCacheSize < 0 {
 		return fmt.Errorf("invalid async max node cache size: %d", c.Database.AsyncMaxNodeCacheSize)
 	}
@@ -1567,11 +1575,13 @@ type YAMLConfig struct {
 		EncryptionRotationInterval        string `yaml:"encryption_rotation_interval"`
 		AsyncWritesEnabled                *bool  `yaml:"async_writes_enabled"`
 		AsyncFlushInterval                string `yaml:"async_flush_interval"`
+		AsyncMaxOps                       *int   `yaml:"async_max_ops"`
 		AsyncMaxNodeCacheSize             *int   `yaml:"async_max_node_cache_size"`
 		AsyncMaxEdgeCacheSize             *int   `yaml:"async_max_edge_cache_size"`
 		AsyncWrites                       struct {
 			Enabled          *bool  `yaml:"enabled"`
 			FlushInterval    string `yaml:"flush_interval"`
+			MaxOps           *int   `yaml:"max_ops"`
 			MaxNodeCacheSize *int   `yaml:"max_node_cache_size"`
 			MaxEdgeCacheSize *int   `yaml:"max_edge_cache_size"`
 		} `yaml:"async_writes"`
@@ -1935,8 +1945,9 @@ func LoadDefaults() *Config {
 	config.Database.EncryptionRotationInterval = 90 * 24 * time.Hour
 	config.Database.AsyncWritesEnabled = false // durable writes by default; enable for the adaptive write-behind buffer
 	config.Database.AsyncFlushInterval = 0     // auto: initial 50ms, then adapts to measured drain latency
-	config.Database.AsyncMaxNodeCacheSize = 0  // auto: the adaptive buffer self-sizes
-	config.Database.AsyncMaxEdgeCacheSize = 0  // auto: the adaptive buffer self-sizes
+	config.Database.AsyncMaxOps = 0            // auto: the engine's researched default cap (100k ops)
+	config.Database.AsyncMaxNodeCacheSize = 0  // deprecated legacy cap (auto)
+	config.Database.AsyncMaxEdgeCacheSize = 0  // deprecated legacy cap (auto)
 	config.Database.BadgerNodeCacheMaxEntries = 10000
 	config.Database.BadgerEdgeTypeCacheMaxTypes = 50
 	// Head-only MVCC by default: no historical body duplication into the
@@ -2257,6 +2268,9 @@ func applyEnvVars(config *Config) error {
 		} else if v := getEnvDuration("NORNICDB_ASYNC_FLUSH_INTERVAL", 0); v > 0 {
 			config.Database.AsyncFlushInterval = v
 		}
+	}
+	if v := getEnvInt("NORNICDB_ASYNC_MAX_OPS", -1); v >= 0 {
+		config.Database.AsyncMaxOps = v
 	}
 	if v := getEnvInt("NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE", -1); v >= 0 {
 		config.Database.AsyncMaxNodeCacheSize = v
@@ -3434,6 +3448,17 @@ func LoadFromFile(configPath string) (*Config, error) {
 		} else if d, err := time.ParseDuration(asyncFlushInterval); err == nil {
 			config.Database.AsyncFlushInterval = d
 		}
+	}
+	if yamlCfg.Database.AsyncMaxOps != nil {
+		if *yamlCfg.Database.AsyncMaxOps < 0 {
+			return nil, fmt.Errorf("invalid async_max_ops: %d", *yamlCfg.Database.AsyncMaxOps)
+		}
+		config.Database.AsyncMaxOps = *yamlCfg.Database.AsyncMaxOps
+	} else if yamlCfg.Database.AsyncWrites.MaxOps != nil {
+		if *yamlCfg.Database.AsyncWrites.MaxOps < 0 {
+			return nil, fmt.Errorf("invalid async_writes.max_ops: %d", *yamlCfg.Database.AsyncWrites.MaxOps)
+		}
+		config.Database.AsyncMaxOps = *yamlCfg.Database.AsyncWrites.MaxOps
 	}
 	if yamlCfg.Database.AsyncMaxNodeCacheSize != nil {
 		if *yamlCfg.Database.AsyncMaxNodeCacheSize < 0 {
