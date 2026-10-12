@@ -94,3 +94,7 @@
 - id: cypherknowledgepolicy.reason_no_decay
   description: Expanded pseudo-locale neutral decay reason.
   other: "[!! no decay !!]"
+- id: cypherknowledgepolicy.visibility_entity_required
+  other: "[!! {{.Procedure}} needs a node or a relationship !!]"
+- id: cypherknowledgepolicy.visibility_unsupported
+  other: "[!! {{.Procedure}} is not supported by this storage engine !!]"

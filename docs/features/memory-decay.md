@@ -182,6 +182,31 @@ Nodes and edges whose decay score drops below the visibility threshold are autom
 - Are excluded from MATCH queries (unless `reveal()` is used)
 - Retain their data and can be restored
 
+### Suppressing on demand
+
+`db.visibility.suppress(entity)` hides a specific node or relationship, and
+`db.visibility.unsuppress(entity)` shows it again. Use them when an earlier
+reading is replaced, or a user excludes a link. They work whether or not decay
+is enabled. A suppressed entity:
+
+- isn't matched, traversed or counted;
+- is no keyword or vector search hit;
+- keeps its data, and is visible under `reveal()`.
+
+A relationship's endpoints stay visible.
+
+```cypher
+MATCH (n:Reading {id: $old}) CALL db.visibility.suppress(n);
+// unsuppress needs reveal() to find the hidden entity
+MATCH (n:Reading) WHERE reveal(n).id = $old CALL db.visibility.unsuppress(n);
+```
+
+Inside an explicit transaction the change takes effect when the transaction
+commits, and not at all if it rolls back. Deleting an entity clears its
+suppression, so an entity created again with the same ID is visible. No label
+or property hides data: a reserved label would change the meaning of ordinary
+Cypher.
+
 ### Deindex Cleanup
 
 A background job periodically removes suppressed entities from secondary indexes (BM25, vector) to reclaim space. Primary data remains intact.

@@ -109,10 +109,13 @@ func (b *BadgerEngine) filterEntityByDecay(
 // It only decides visibility. Access recording is deferred until a query
 // actually materializes the entity into the final result set.
 func (b *BadgerEngine) filterNodeByDecay(node *Node, nowNanos int64) bool {
-	if !b.decayEnabled || node == nil {
+	if node == nil || b.revealAll.Load() {
 		return false
 	}
-	if b.revealAll.Load() {
+	if b.manuallySuppressed(manualSuppressionNode, string(node.ID)) {
+		return true
+	}
+	if !b.decayEnabled {
 		return false
 	}
 	return b.filterEntityByDecay(
@@ -132,10 +135,13 @@ func (b *BadgerEngine) filterNodeByDecay(node *Node, nowNanos int64) bool {
 
 // filterEdgeByDecay returns true if the edge should be suppressed from results.
 func (b *BadgerEngine) filterEdgeByDecay(edge *Edge, nowNanos int64) bool {
-	if !b.decayEnabled || edge == nil {
+	if edge == nil || b.revealAll.Load() {
 		return false
 	}
-	if b.revealAll.Load() {
+	if b.manuallySuppressed(manualSuppressionEdge, string(edge.ID)) {
+		return true
+	}
+	if !b.decayEnabled {
 		return false
 	}
 	return b.filterEntityByDecay(

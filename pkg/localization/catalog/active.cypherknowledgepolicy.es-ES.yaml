@@ -94,3 +94,7 @@
 - id: cypherknowledgepolicy.reason_no_decay
   description: Motivo del resultado neutro de decaimiento.
   other: sin decaimiento
+- id: cypherknowledgepolicy.visibility_entity_required
+  other: "{{.Procedure}} necesita un nodo o una relación"
+- id: cypherknowledgepolicy.visibility_unsupported
+  other: "{{.Procedure}} no es compatible con este motor de almacenamiento"

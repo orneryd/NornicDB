@@ -53,6 +53,8 @@ const (
 	MessageCypherProcedureMetadataDbTemporalAssertNoOverlap                     MessageID = "cypherproceduremetadata.db_temporal_assertnooverlap"
 	MessageCypherProcedureMetadataDbTxlogByTxId                                 MessageID = "cypherproceduremetadata.db_txlog_bytxid"
 	MessageCypherProcedureMetadataDbTxlogEntries                                MessageID = "cypherproceduremetadata.db_txlog_entries"
+	MessageCypherProcedureMetadataDbVisibilitySuppress                          MessageID = "cypherproceduremetadata.db_visibility_suppress"
+	MessageCypherProcedureMetadataDbVisibilityUnsuppress                        MessageID = "cypherproceduremetadata.db_visibility_unsuppress"
 	MessageCypherProcedureMetadataDbmsClientConfig                              MessageID = "cypherproceduremetadata.dbms_clientconfig"
 	MessageCypherProcedureMetadataDbmsComponents                                MessageID = "cypherproceduremetadata.dbms_components"
 	MessageCypherProcedureMetadataDbmsFunctions                                 MessageID = "cypherproceduremetadata.dbms_functions"
@@ -333,6 +335,16 @@ func CypherProcedureMetadataDbTxlogEntries() Message {
 	return Message{ID: MessageCypherProcedureMetadataDbTxlogEntries, Fallback: "Returns transaction log entries"}
 }
 
+// CypherProcedureMetadataDbVisibilitySuppress describes db.visibility.suppress in procedure listings.
+func CypherProcedureMetadataDbVisibilitySuppress() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbVisibilitySuppress, Fallback: "Hides a node or relationship from queries and search until unsuppressed"}
+}
+
+// CypherProcedureMetadataDbVisibilityUnsuppress describes db.visibility.unsuppress in procedure listings.
+func CypherProcedureMetadataDbVisibilityUnsuppress() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbVisibilityUnsuppress, Fallback: "Shows a node or relationship hidden by db.visibility.suppress again"}
+}
+
 // CypherProcedureMetadataDbmsClientConfig describes dbms.clientConfig in procedure listings.
 func CypherProcedureMetadataDbmsClientConfig() Message {
 	return Message{ID: MessageCypherProcedureMetadataDbmsClientConfig, Fallback: "Returns client config"}
@@ -524,6 +536,8 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"db.temporal.assertNoOverlap":                      CypherProcedureMetadataDbTemporalAssertNoOverlap,
 	"db.txlog.byTxId":                                  CypherProcedureMetadataDbTxlogByTxId,
 	"db.txlog.entries":                                 CypherProcedureMetadataDbTxlogEntries,
+	"db.visibility.suppress":                           CypherProcedureMetadataDbVisibilitySuppress,
+	"db.visibility.unsuppress":                         CypherProcedureMetadataDbVisibilityUnsuppress,
 	"dbms.clientConfig":                                CypherProcedureMetadataDbmsClientConfig,
 	"dbms.components":                                  CypherProcedureMetadataDbmsComponents,
 	"dbms.functions":                                   CypherProcedureMetadataDbmsFunctions,

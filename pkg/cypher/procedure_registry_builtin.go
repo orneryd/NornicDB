@@ -344,6 +344,14 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRRetrieve(ctx, args)
 			})
+		registerBuiltInProcedure("db.visibility.suppress", "db.visibility.suppress(entity :: ANY)", localization.CypherProcedureMetadata("db.visibility.suppress"), ProcedureModeWrite, 1, 1, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callDbVisibilitySuppress(ctx, "db.visibility.suppress", args, true)
+			})
+		registerBuiltInProcedure("db.visibility.unsuppress", "db.visibility.unsuppress(entity :: ANY)", localization.CypherProcedureMetadata("db.visibility.unsuppress"), ProcedureModeWrite, 1, 1, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callDbVisibilitySuppress(ctx, "db.visibility.unsuppress", args, false)
+			})
 		registerBuiltInProcedure("db.rerank", "db.rerank(request :: MAP) :: (id :: STRING, content :: STRING, original_rank :: INTEGER, new_rank :: INTEGER, bi_score :: FLOAT, cross_score :: FLOAT, final_score :: FLOAT)", localization.CypherProcedureMetadata("db.rerank"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRerank(ctx, args)

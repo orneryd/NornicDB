@@ -35,7 +35,21 @@ const (
 	MessageCypherKnowledgePolicyReasonDecayDisabled        MessageID = "cypherknowledgepolicy.reason_decay_disabled"
 	MessageCypherKnowledgePolicyReasonNoDecayProfile       MessageID = "cypherknowledgepolicy.reason_no_decay_profile"
 	MessageCypherKnowledgePolicyReasonNoDecay              MessageID = "cypherknowledgepolicy.reason_no_decay"
+	MessageCypherKnowledgePolicyVisibilityEntityRequired   MessageID = "cypherknowledgepolicy.visibility_entity_required"
+	MessageCypherKnowledgePolicyVisibilityUnsupported      MessageID = "cypherknowledgepolicy.visibility_unsupported"
 )
+
+// CypherKnowledgePolicyVisibilityEntityRequired identifies a
+// db.visibility procedure called without a node or relationship.
+func CypherKnowledgePolicyVisibilityEntityRequired(procedure string) Message {
+	return Message{ID: MessageCypherKnowledgePolicyVisibilityEntityRequired, Fallback: procedure + " needs a node or a relationship", Data: map[string]any{"Procedure": procedure}}
+}
+
+// CypherKnowledgePolicyVisibilityUnsupported identifies a storage engine
+// without on-demand suppression.
+func CypherKnowledgePolicyVisibilityUnsupported(procedure string) Message {
+	return Message{ID: MessageCypherKnowledgePolicyVisibilityUnsupported, Fallback: procedure + " is not supported by this storage engine", Data: map[string]any{"Procedure": procedure}}
+}
 
 // CypherKnowledgePolicyExpectedAfter identifies a missing parser term after Cypher syntax.
 func CypherKnowledgePolicyExpectedAfter(expected, after string) Message {

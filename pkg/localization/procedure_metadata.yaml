@@ -249,6 +249,16 @@
     es: "Devuelve las entradas del registro de transacciones",
   }
 - {
+    name: db.visibility.suppress,
+    en: "Hides a node or relationship from queries and search until unsuppressed",
+    es: "Oculta un nodo o una relación de las consultas y la búsqueda hasta que se vuelva a mostrar",
+  }
+- {
+    name: db.visibility.unsuppress,
+    en: "Shows a node or relationship hidden by db.visibility.suppress again",
+    es: "Vuelve a mostrar un nodo o una relación ocultos por db.visibility.suppress",
+  }
+- {
     name: dbms.clientConfig,
     en: "Returns client config",
     es: "Devuelve la configuración del cliente",

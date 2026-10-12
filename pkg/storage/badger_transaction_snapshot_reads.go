@@ -442,7 +442,7 @@ func (tx *BadgerTransaction) readSnapshotAdjacentEdgesLocked(nodeID NodeID, dire
 		}
 		for _, edgeID := range edgeIDs {
 			var edge *Edge
-			decayStable := !tx.engine.decayEnabled || tx.engine.revealAll.Load()
+			decayStable := !tx.engine.visibilityFiltered()
 			if cachedEdge, ok := tx.snapshotEdgeByID[edgeID]; ok && decayStable {
 				edge = copyEdge(cachedEdge)
 			} else if header := tx.snapshotHeaderLocked(snapshot, headers, edgeID); header != nil {
@@ -497,7 +497,7 @@ func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection)
 	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
 		return nil, true, err
 	}
-	if tx.readTS.IsZero() || tx.snapshotDeregister == nil || tx.engine.decayEnabled && !tx.engine.revealAll.Load() {
+	if tx.readTS.IsZero() || tx.snapshotDeregister == nil || tx.engine.visibilityFiltered() {
 		return nil, false, nil
 	}
 	if tx.engine.writeBehind != nil {

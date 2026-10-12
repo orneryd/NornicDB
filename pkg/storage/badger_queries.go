@@ -1217,7 +1217,7 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 	if nodeID == "" {
 		return nil, true, ErrInvalidID
 	}
-	if b.decayEnabled && !b.revealAll.Load() {
+	if b.visibilityFiltered() {
 		return nil, false, nil
 	}
 	if b.writeBehind != nil {

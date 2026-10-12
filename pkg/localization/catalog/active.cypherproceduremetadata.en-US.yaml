@@ -98,6 +98,10 @@
   other: "Returns WAL entries for a transaction id"
 - id: cypherproceduremetadata.db_txlog_entries
   other: "Returns transaction log entries"
+- id: cypherproceduremetadata.db_visibility_suppress
+  other: "Hides a node or relationship from queries and search until unsuppressed"
+- id: cypherproceduremetadata.db_visibility_unsuppress
+  other: "Shows a node or relationship hidden by db.visibility.suppress again"
 - id: cypherproceduremetadata.dbms_clientconfig
   other: "Returns client config"
 - id: cypherproceduremetadata.dbms_components

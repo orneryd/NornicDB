@@ -370,6 +370,12 @@ type BadgerEngine struct {
 	revealAll     atomic.Bool
 	revealQueryMu sync.RWMutex
 
+	// The entities suppressed on demand (badger_manual_suppression.go), as
+	// kind+ID, and their count, which reads check before taking the lock.
+	manualSuppressionMu    sync.RWMutex
+	manualSuppressed       map[string]struct{}
+	manualSuppressionCount atomic.Int64
+
 	// labelCountWriteMu orders folds/rebuilds of the derived label counts
 	// against each other and keeps backup's count snapshot exclusive. Commit
 	// paths do not take it: every commit appends a unique delta key instead
@@ -531,6 +537,7 @@ func (b *BadgerEngine) notifyNodeUpdated(node *Node) {
 
 // notifyNodeDeleted calls the registered callbacks.
 func (b *BadgerEngine) notifyNodeDeleted(nodeID NodeID) {
+	b.forgetManualSuppression(manualSuppressionNode, string(nodeID))
 	b.graphMutationVersions.changed(namespaceForNodeID(nodeID))
 	b.deleteCleanup.recordDelete()
 	b.dispatchNodeDeleted(nodeID)
@@ -572,6 +579,7 @@ func (b *BadgerEngine) notifyEdgeUpdated(edge *Edge) {
 
 // notifyEdgeDeleted calls the registered callbacks.
 func (b *BadgerEngine) notifyEdgeDeleted(edgeID EdgeID) {
+	b.forgetManualSuppression(manualSuppressionEdge, string(edgeID))
 	b.graphMutationVersions.changed(namespaceForEdgeID(edgeID))
 	b.deleteCleanup.recordDelete()
 	b.callbackMu.RLock()
@@ -979,6 +987,10 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	if err := engine.propKeyDict.loadFromBadger(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to load property key dictionary: %w", err)
+	}
+	if err := engine.loadManualSuppressions(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to load manual suppressions: %w", err)
 	}
 
 	// Initialize cached counts by scanning existing data (one-time cost)

@@ -238,7 +238,7 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 // key exists, without reading or decoding the record. It doesn't answer while
 // decay filtering can hide a node at read time, or when the lookup fails.
 func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
-	if id == "" || b.decayEnabled && !b.revealAll.Load() || b.ensureOpen() != nil {
+	if id == "" || b.visibilityFiltered() || b.ensureOpen() != nil {
 		return false, false
 	}
 	// Write-behind overlay: a buffered-but-unflushed node is committed and

@@ -1944,7 +1944,7 @@ func (tx *BadgerTransaction) RelationshipEndpointVisible(id NodeID) (visible, an
 	if _, cached := tx.snapshotPrefixNodeByID[id]; cached {
 		return true, true
 	}
-	if tx.readTS.IsZero() || tx.engine.decayEnabled && !tx.engine.revealAll.Load() {
+	if tx.readTS.IsZero() || tx.engine.visibilityFiltered() {
 		return false, false
 	}
 	var head MVCCHead
@@ -2278,7 +2278,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	}
 	if err != nil {
 		if err == ErrIterationStopped && tx.snapshotTx != nil {
-			cacheEndpointNodes := properties == nil && (!tx.engine.decayEnabled || tx.engine.revealAll.Load())
+			cacheEndpointNodes := properties == nil && !tx.engine.visibilityFiltered()
 			tx.storeSnapshotLabelPrefixLocked(tx.snapshotTx, cacheKey, completed, cacheEndpointNodes)
 		}
 		return err
@@ -2289,7 +2289,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		}
 		tx.snapshotLabelNodes[cacheKey] = completed
 		tx.clearSnapshotLabelPrefixLocked(cacheKey)
-		if !tx.engine.decayEnabled || tx.engine.revealAll.Load() {
+		if !tx.engine.visibilityFiltered() {
 			if tx.snapshotLabelNodeByID == nil {
 				tx.snapshotLabelNodeByID = make(map[NodeID]*Node, len(completed))
 			}

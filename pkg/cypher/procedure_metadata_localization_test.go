@@ -249,6 +249,9 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 			require.Empty(t, spec.DescriptionMessage.ID, "APOC metadata must remain literal: %s", spec.Name)
 			continue
 		}
+		if strings.HasPrefix(spec.Name, "db.visibility.") {
+			continue // TestVisibilityProcedureMetadata (#1064)
+		}
 		coreCount++
 		if spec.Name == "db.retrieveRelationships" || spec.Name == "db.retrieveGraph" {
 			coreCount-- // relationship search's procedures, counted apart (#1065)

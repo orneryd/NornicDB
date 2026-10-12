@@ -98,6 +98,10 @@
   other: "Devuelve las entradas WAL de un identificador de transacción"
 - id: cypherproceduremetadata.db_txlog_entries
   other: "Devuelve las entradas del registro de transacciones"
+- id: cypherproceduremetadata.db_visibility_suppress
+  other: "Oculta un nodo o una relación de las consultas y la búsqueda hasta que se vuelva a mostrar"
+- id: cypherproceduremetadata.db_visibility_unsuppress
+  other: "Vuelve a mostrar un nodo o una relación ocultos por db.visibility.suppress"
 - id: cypherproceduremetadata.dbms_clientconfig
   other: "Devuelve la configuración del cliente"
 - id: cypherproceduremetadata.dbms_components

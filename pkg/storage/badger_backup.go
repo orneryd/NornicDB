@@ -135,6 +135,9 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	}
 	b.idDict.replaceWith(ids)
 	b.propKeyDict.replaceWith(keys)
+	if err := b.loadManualSuppressions(loader); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
 	b.mvccByNamespaceMu.Lock()
 	b.mvccByNamespace = make(map[string]*namespaceMVCCState)
 	b.mvccByNamespaceMu.Unlock()

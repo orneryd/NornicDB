@@ -99,6 +99,9 @@ func storageHasDecayFiltering(engine storage.Engine) bool {
 		if decay, ok := engine.(interface{ IsDecayEnabled() bool }); ok && decay.IsDecayEnabled() {
 			return true
 		}
+		if manual, ok := engine.(interface{ HasManualSuppressions() bool }); ok && manual.HasManualSuppressions() {
+			return true
+		}
 		switch wrapper := engine.(type) {
 		case storage.EngineUnwrapper:
 			engine = wrapper.GetInnerEngine()
