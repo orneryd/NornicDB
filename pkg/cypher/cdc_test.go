@@ -245,11 +245,10 @@ func TestChangeDataCaptureClientTransactionMetadata(t *testing.T) {
 	require.Error(t, err)
 }
 
-// A void procedure called first leaves its row as it is, as in Neo4j: CALL
-// tx.setMetaData(…) before MATCH … SET runs the update, returns its row and
-// gives the transaction its metadata; any other void procedure
-// (db.awaitIndexes) lets the clauses after it run too.
-func TestVoidProcedureBeforeAClauseKeepsTheRow(t *testing.T) {
+// CALL tx.setMetaData(…) before MATCH … SET gives the transaction its
+// metadata, so the change event carries it (the
+// void procedure keeping its row is the fix this PR stacks on).
+func TestChangeDataCaptureSetMetaDataBeforeAClause(t *testing.T) {
 	exec, _ := newCDCExecutor(t, storage.ChangeCaptureFull)
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:Context {id: 'ctx', name: 'a'})", nil)
