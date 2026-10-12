@@ -245,6 +245,35 @@ func TestChangeDataCaptureClientTransactionMetadata(t *testing.T) {
 	require.Error(t, err)
 }
 
+// A void procedure called first leaves its row as it is, as in Neo4j: CALL
+// tx.setMetaData(…) before MATCH … SET runs the update, returns its row and
+// gives the transaction its metadata; any other void procedure
+// (db.awaitIndexes) lets the clauses after it run too.
+func TestVoidProcedureBeforeAClauseKeepsTheRow(t *testing.T) {
+	exec, _ := newCDCExecutor(t, storage.ChangeCaptureFull)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:Context {id: 'ctx', name: 'a'})", nil)
+	require.NoError(t, err)
+	from := cdcID(t, exec, "db.cdc.current")
+	// In order: the read after the update sees it.
+	for _, step := range []struct {
+		query string
+		want  [][]interface{}
+	}{
+		{"CALL tx.setMetaData({writer: 'w'}) MATCH (c:Context {id: 'ctx'}) SET c.name = 'c' RETURN c.name", [][]interface{}{{"c"}}},
+		{"CALL db.awaitIndexes() MATCH (c:Context {id: 'ctx'}) RETURN c.name AS name", [][]interface{}{{"c"}}},
+		{"CALL db.awaitIndexes() RETURN 1 AS one", [][]interface{}{{int64(1)}}},
+	} {
+		result, err := exec.Execute(ctx, step.query, nil)
+		require.NoError(t, err, step.query)
+		require.Equal(t, step.want, result.Rows, step.query)
+	}
+	rows := cdcRows(t, exec, from)
+	require.Len(t, rows, 1)
+	require.Equal(t, map[string]interface{}{"writer": "w"}, rows[0]["metadata"].(map[string]interface{})["txMetadata"])
+	require.Equal(t, map[string]interface{}{"id": "ctx", "name": "c"}, stateOf(rows[0], "after")["properties"])
+}
+
 // Selectors filter as Neo4j's do: OR across the list, AND within one.
 func TestChangeDataCaptureSelectors(t *testing.T) {
 	exec, _ := newCDCExecutor(t, storage.ChangeCaptureFull)
