@@ -214,6 +214,21 @@
     es: "Comprueba las restricciones de solapamiento temporal",
   }
 - {
+    name: db.cdc.current,
+    en: "Returns the change identifier just after the last committed change",
+    es: "Devuelve el identificador de cambio justo después del último cambio confirmado",
+  }
+- {
+    name: db.cdc.earliest,
+    en: "Returns the change identifier just before the earliest retained change",
+    es: "Devuelve el identificador de cambio justo antes del cambio retenido más antiguo",
+  }
+- {
+    name: db.cdc.query,
+    en: "Returns the committed changes after a change identifier, optionally filtered by selectors",
+    es: "Devuelve los cambios confirmados después de un identificador de cambio, opcionalmente filtrados por selectores",
+  }
+- {
     name: db.txlog.byTxId,
     en: "Returns WAL entries for a transaction id",
     es: "Devuelve las entradas WAL de un identificador de transacción",

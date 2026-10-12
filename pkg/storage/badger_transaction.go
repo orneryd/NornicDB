@@ -33,6 +33,10 @@ import (
 type BadgerTransaction struct {
 	mu sync.Mutex
 
+	// changeCapture holds the database's change log while a capturing
+	// commit runs (change_capture.go, #937).
+	changeCapture *txChangeCapture
+
 	// Transaction identity
 	ID        string
 	StartTime time.Time
@@ -2704,8 +2708,11 @@ func (tx *BadgerTransaction) Commit() error {
 	// flusher. Everything that must fail the statement synchronously has
 	// already run by this point. (Commit holds tx.mu, so read the
 	// knowledge-policy flag directly instead of HasKnowledgePolicyChanges.)
+	// A database that captures changes commits through Badger: its change
+	// events are written in the same commit as the data (#937).
 	if tx.engine.writeBehindEnabled() && tx.implicit && tx.schemaRuntime == nil &&
-		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 {
+		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 &&
+		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff) {
 		return tx.commitBufferedLocked()
 	}
 
@@ -2717,6 +2724,13 @@ func (tx *BadgerTransaction) Commit() error {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
 			return localizedError(localization.StorageTransactionCommitNamespaceMissing(), nil)
 		}
+		// A capturing database's commits take its change log in turn, from
+		// here until the commit ends (#937).
+		if err := tx.beginChangeCaptureLocked(); err != nil {
+			tx.closeLocked(TxStatusRolledBack, true, nil)
+			return err
+		}
+		defer tx.endChangeCaptureLocked(false)
 		version, err = tx.engine.allocateMVCCVersion(tx.badgerTx, tx.namespace, time.Now())
 		if err != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
@@ -2745,6 +2759,9 @@ func (tx *BadgerTransaction) Commit() error {
 	if hasWrites {
 		if err := tx.engine.materializeMVCCCommit(&cw.batchWriter, version, physicalOperations); err != nil {
 			return tx.abortCommitLocked(fmt.Errorf("materializing mvcc commit state: %w", err))
+		}
+		if err := tx.writeChangeEventsLocked(&cw.batchWriter, physicalOperations, version.CommitTimestamp); err != nil {
+			return tx.abortCommitLocked(fmt.Errorf("writing change events: %w", err))
 		}
 	}
 	if err := tx.flushBufferedWrites(&cw.batchWriter); err != nil {
@@ -2791,6 +2808,8 @@ func (tx *BadgerTransaction) Commit() error {
 	tx.commitW = nil
 	knowledgePolicyChanged = tx.publishKnowledgePolicySchemaLocked()
 	runCommitTailHook()
+
+	tx.endChangeCaptureLocked(true)
 
 	// Scalar label and edge-type count deltas were written atomically with
 	// the entity commit above (writeScalarCountDeltasInCommitLocked); a

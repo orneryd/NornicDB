@@ -101,3 +101,15 @@
   other: "Could not parse id (expected format: <databasename>-transaction-<id>)"
 - id: cypheradmin.transaction_id_database_name_length
   other: "The provided database name must have a length between 3 and 63 characters."
+- id: cypheradmin.database_option_unknown
+  description: A database option name Neo4j doesn't define. Option is untranslated.
+  other: "Could not create database with specified options: unknown option '{{.Option}}'"
+- id: cypheradmin.database_option_unsupported
+  description: A Neo4j database option NornicDB doesn't implement. Option is untranslated.
+  other: "the database option '{{.Option}}' is not supported by NornicDB"
+- id: cypheradmin.database_option_value
+  description: A database option value outside the option's values. Option, Value and Allowed are untranslated.
+  other: "invalid value '{{.Value}}' for database option '{{.Option}}': expected one of {{.Allowed}}"
+- id: cypheradmin.database_options_unavailable
+  description: The database manager has no database options. Command is untranslated Cypher syntax.
+  other: "database options are not available - {{.Command}} requires a database manager with options"

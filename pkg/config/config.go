@@ -278,6 +278,12 @@ type DatabaseConfig struct {
 	// Environment: NORNICDB_WAL_RETENTION_MAX_AGE
 	WALRetentionMaxAge time.Duration
 
+	// ChangeRetention is how long change data capture events are kept (#937):
+	// those of a transaction committed longer ago are deleted. 0 is Neo4j's
+	// default transaction log retention, 2 days.
+	// Environment: NORNICDB_CDC_RETENTION
+	ChangeRetention time.Duration
+
 	// WALRetentionLedgerDefaults enables ledger-grade retention defaults when no explicit
 	// retention settings are supplied. This is opt-in and defaults to false.
 	// When true, defaults to 24 segments and 7 days if no explicit retention is set.
@@ -1548,6 +1554,7 @@ type YAMLConfig struct {
 		WALSnapshotIntervalMillis         int64  `yaml:"wal_snapshot_interval"`
 		WALRetentionMaxSegments           int    `yaml:"wal_retention_max_segments"`
 		WALRetentionMaxAge                string `yaml:"wal_retention_max_age"`
+		ChangeRetention                   string `yaml:"cdc_retention"`
 		WALRetentionLedgerDefaults        bool   `yaml:"wal_ledger_retention_defaults"`
 		WALSnapshotRetentionMaxCount      int    `yaml:"wal_snapshot_retention_max_count"`
 		WALSnapshotRetentionMaxAge        string `yaml:"wal_snapshot_retention_max_age"`
@@ -2257,6 +2264,9 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnvDuration("NORNICDB_WAL_RETENTION_MAX_AGE", 0); v > 0 {
 		config.Database.WALRetentionMaxAge = v
+	}
+	if v := getEnvDuration("NORNICDB_CDC_RETENTION", 0); v > 0 {
+		config.Database.ChangeRetention = v
 	}
 	if v, ok := envutil.LookupBoolLoose("NORNICDB_WAL_LEDGER_RETENTION_DEFAULTS"); ok {
 		config.Database.WALRetentionLedgerDefaults = v
@@ -3329,6 +3339,11 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if yamlCfg.Database.WALRetentionMaxAge != "" {
 		if d, err := time.ParseDuration(yamlCfg.Database.WALRetentionMaxAge); err == nil {
 			config.Database.WALRetentionMaxAge = d
+		}
+	}
+	if yamlCfg.Database.ChangeRetention != "" {
+		if d, err := time.ParseDuration(yamlCfg.Database.ChangeRetention); err == nil {
+			config.Database.ChangeRetention = d
 		}
 	}
 	if yamlCfg.Database.WALRetentionLedgerDefaults {

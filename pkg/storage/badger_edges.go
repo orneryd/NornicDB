@@ -15,6 +15,13 @@ import (
 
 // CreateEdge creates a new edge between two nodes.
 func (b *BadgerEngine) CreateEdge(edge *Edge) error {
+	if edge != nil {
+		if handled, err := b.inCaptureTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
+			return tx.CreateEdge(edge)
+		}); handled {
+			return err
+		}
+	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
 	release, barrierErr := b.beginWrite()
@@ -233,6 +240,13 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 
 // UpdateEdge updates an existing edge.
 func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
+	if edge != nil {
+		if handled, err := b.inCaptureTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
+			return tx.UpdateEdge(edge)
+		}); handled {
+			return err
+		}
+	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
 	release, barrierErr := b.beginWrite()
@@ -447,6 +461,11 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 
 // DeleteEdge removes an edge.
 func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
+	if handled, err := b.inCaptureTransaction(string(id), func(tx *BadgerTransaction) error {
+		return tx.DeleteEdge(id)
+	}); handled {
+		return err
+	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
 	release, barrierErr := b.beginWrite()
@@ -705,6 +724,18 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 // transaction of any size (#703). IDs that do not exist, or repeat within
 // the call, are skipped.
 func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
+	if len(ids) > 0 {
+		if handled, err := b.inCaptureTransaction(string(ids[0]), func(tx *BadgerTransaction) error {
+			for _, id := range ids {
+				if err := tx.DeleteNode(id); err != nil && !errors.Is(err, ErrNotFound) {
+					return err
+				}
+			}
+			return nil
+		}); handled {
+			return err
+		}
+	}
 	if len(ids) == 0 {
 		return nil
 	}
@@ -726,6 +757,18 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 // BulkDeleteEdges deletes relationships as one transaction of any size
 // (#703). IDs that do not exist, or repeat within the call, are skipped.
 func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
+	if len(ids) > 0 {
+		if handled, err := b.inCaptureTransaction(string(ids[0]), func(tx *BadgerTransaction) error {
+			for _, id := range ids {
+				if err := tx.DeleteEdge(id); err != nil && !errors.Is(err, ErrNotFound) {
+					return err
+				}
+			}
+			return nil
+		}); handled {
+			return err
+		}
+	}
 	if len(ids) == 0 {
 		return nil
 	}

@@ -45,7 +45,43 @@ const (
 	MessageCypherSpecializedCallsTxlogReadEntriesFailed          MessageID = "cypherspecializedcalls.txlog_read_entries_failed"
 	MessageCypherSpecializedCallsTxlogIDEmpty                    MessageID = "cypherspecializedcalls.txlog_id_empty"
 	MessageCypherSpecializedCallsTxlogFindEntriesFailed          MessageID = "cypherspecializedcalls.txlog_find_entries_failed"
+	MessageCypherSpecializedCallsCDCDisabled                     MessageID = "cypherspecializedcalls.cdc_disabled"
+	MessageCypherSpecializedCallsCDCInvalidIdentifier            MessageID = "cypherspecializedcalls.cdc_invalid_identifier"
+	MessageCypherSpecializedCallsCDCExpiredIdentifier            MessageID = "cypherspecializedcalls.cdc_expired_identifier"
+	MessageCypherSpecializedCallsCDCFutureIdentifier             MessageID = "cypherspecializedcalls.cdc_future_identifier"
+	MessageCypherSpecializedCallsCDCScanFailed                   MessageID = "cypherspecializedcalls.cdc_scan_failed"
+	MessageCypherSpecializedCallsCDCSelectorInvalid              MessageID = "cypherspecializedcalls.cdc_selector_invalid"
 )
+
+// CypherSpecializedCallsCDCDisabled identifies a db.cdc procedure on a database without change capture (#937).
+func CypherSpecializedCallsCDCDisabled(database string) Message {
+	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsCDCDisabled, "Change Data Capture is not currently enabled for database '"+database+"'.", map[string]any{"Database": database})
+}
+
+// CypherSpecializedCallsCDCInvalidIdentifier identifies a change identifier that isn't one of this database's.
+func CypherSpecializedCallsCDCInvalidIdentifier(id string) Message {
+	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsCDCInvalidIdentifier, "Invalid change identifier '"+id+"'.", map[string]any{"ID": id})
+}
+
+// CypherSpecializedCallsCDCExpiredIdentifier identifies a change identifier older than the earliest retained change.
+func CypherSpecializedCallsCDCExpiredIdentifier(id string) Message {
+	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsCDCExpiredIdentifier, "Invalid change identifier '"+id+"': it is older than the earliest retained change (db.cdc.earliest()).", map[string]any{"ID": id})
+}
+
+// CypherSpecializedCallsCDCFutureIdentifier identifies a change identifier past the last committed change.
+func CypherSpecializedCallsCDCFutureIdentifier(id string) Message {
+	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsCDCFutureIdentifier, "Change identifier '"+id+"' points to a future transaction that has not yet happened on this database instance.", map[string]any{"ID": id})
+}
+
+// CypherSpecializedCallsCDCScanFailed identifies a failure to read the change events.
+func CypherSpecializedCallsCDCScanFailed(cause error) Message {
+	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsCDCScanFailed, "Unable to read the Change Data Capture data for this database: "+cause.Error(), map[string]any{"Cause": cause.Error()})
+}
+
+// CypherSpecializedCallsCDCSelectorInvalid identifies a db.cdc.query selector it can't apply.
+func CypherSpecializedCallsCDCSelectorInvalid(reason string) Message {
+	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsCDCSelectorInvalid, "Invalid change selector: "+reason, map[string]any{"Reason": reason})
+}
 
 func cypherSpecializedCallsMessage(id MessageID, fallback string, data map[string]any) Message {
 	return Message{ID: id, Fallback: fallback, Data: data}

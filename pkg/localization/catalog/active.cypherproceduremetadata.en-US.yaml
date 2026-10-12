@@ -2,6 +2,12 @@
   other: "Wait for an index to come online (for example: CALL db.awaitIndex(\"MyIndex\", 300))."
 - id: cypherproceduremetadata.db_awaitindexes
   other: "Wait for all indexes to come online (for example: CALL db.awaitIndexes(300))."
+- id: cypherproceduremetadata.db_cdc_current
+  other: "Returns the change identifier just after the last committed change"
+- id: cypherproceduremetadata.db_cdc_earliest
+  other: "Returns the change identifier just before the earliest retained change"
+- id: cypherproceduremetadata.db_cdc_query
+  other: "Returns the committed changes after a change identifier, optionally filtered by selectors"
 - id: cypherproceduremetadata.db_clearquerycaches
   other: "Clears all query caches."
 - id: cypherproceduremetadata.db_constraints

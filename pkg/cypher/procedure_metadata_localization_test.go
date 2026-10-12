@@ -233,7 +233,9 @@ func TestShowProceduresLocalizesBuiltInMetadata(t *testing.T) {
 
 func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 	ensureBuiltInProceduresRegistered()
-	coreCount := 0
+	// db.cdc.current, earliest and query (#937) are counted by
+	// TestChangeDataCaptureProcedureDescriptors.
+	coreCount := -3
 	apocCount := 0
 	customCount := 0 // apoc.custom.* (#1066), counted apart
 	for _, spec := range globalProcedureRegistry.ListBuiltIns() {
@@ -254,6 +256,22 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 	require.Equal(t, 73, coreCount) // db.schema.nodeTypeProperties and relTypeProperties (#907)
 	require.Equal(t, 30, apocCount) // apoc.path.subgraphAll and expandConfig (#907)
 	require.Equal(t, 5, customCount)
+}
+
+// The Change Data Capture procedures carry descriptors with their English
+// text (#937).
+func TestChangeDataCaptureProcedureDescriptors(t *testing.T) {
+	ensureBuiltInProceduresRegistered()
+	found := 0
+	for _, spec := range globalProcedureRegistry.ListBuiltIns() {
+		if !strings.HasPrefix(spec.Name, "db.cdc.") {
+			continue
+		}
+		found++
+		require.NotEmpty(t, spec.DescriptionMessage.ID, spec.Name)
+		require.Equal(t, spec.Description, spec.DescriptionMessage.Fallback, spec.Name)
+	}
+	require.Equal(t, 3, found)
 }
 
 func TestShowProceduresPreservesUserDefinedLiteralMetadata(t *testing.T) {

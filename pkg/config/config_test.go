@@ -376,6 +376,7 @@ func TestLoadFromEnv_ComprehensiveAdditionalEnvCoverage(t *testing.T) {
 	t.Setenv("NORNICDB_WAL_SNAPSHOT_INTERVAL", "1020000")
 	t.Setenv("NORNICDB_WAL_RETENTION_MAX_SEGMENTS", "12")
 	t.Setenv("NORNICDB_WAL_RETENTION_MAX_AGE", "36h")
+	t.Setenv("NORNICDB_CDC_RETENTION", "6h")
 	t.Setenv("NORNICDB_WAL_LEDGER_RETENTION_DEFAULTS", "true")
 	t.Setenv("NORNICDB_WAL_SNAPSHOT_RETENTION_MAX_COUNT", "5")
 	t.Setenv("NORNICDB_WAL_SNAPSHOT_RETENTION_MAX_AGE", "24h")
@@ -515,6 +516,9 @@ func TestLoadFromEnv_ComprehensiveAdditionalEnvCoverage(t *testing.T) {
 	}
 	if cfg.Database.WALAutoCompactionEnabled || cfg.Database.WALSnapshotInterval != 17*time.Minute || cfg.Database.WALRetentionMaxSegments != 12 || cfg.Database.WALRetentionMaxAge != 36*time.Hour {
 		t.Fatalf("unexpected wal retention config: %+v", cfg.Database)
+	}
+	if cfg.Database.ChangeRetention != 6*time.Hour {
+		t.Fatalf("ChangeRetention = %v, want 6h", cfg.Database.ChangeRetention)
 	}
 	if !cfg.Database.WALRetentionLedgerDefaults || cfg.Database.WALSnapshotRetentionMaxCount != 5 || cfg.Database.WALSnapshotRetentionMaxAge != 24*time.Hour {
 		t.Fatalf("unexpected wal snapshot config: %+v", cfg.Database)
@@ -1199,6 +1203,7 @@ database:
   wal_snapshot_interval: 1380000
   wal_retention_max_segments: 10
   wal_retention_max_age: "48h"
+  cdc_retention: "72h"
   wal_ledger_retention_defaults: true
   wal_snapshot_retention_max_count: 8
   wal_snapshot_retention_max_age: "72h"
@@ -1360,6 +1365,7 @@ plugins:
 	require.Equal(t, 23*time.Minute, cfg.Database.WALSnapshotInterval)
 	require.Equal(t, 10, cfg.Database.WALRetentionMaxSegments)
 	require.Equal(t, 48*time.Hour, cfg.Database.WALRetentionMaxAge)
+	require.Equal(t, 72*time.Hour, cfg.Database.ChangeRetention)
 	require.True(t, cfg.Database.WALRetentionLedgerDefaults)
 	require.Equal(t, 8, cfg.Database.WALSnapshotRetentionMaxCount)
 	require.Equal(t, 72*time.Hour, cfg.Database.WALSnapshotRetentionMaxAge)

@@ -2,6 +2,12 @@
   other: "Espera a que un índice esté en línea"
 - id: cypherproceduremetadata.db_awaitindexes
   other: "Espera a que todos los índices estén en línea"
+- id: cypherproceduremetadata.db_cdc_current
+  other: "Devuelve el identificador de cambio justo después del último cambio confirmado"
+- id: cypherproceduremetadata.db_cdc_earliest
+  other: "Devuelve el identificador de cambio justo antes del cambio retenido más antiguo"
+- id: cypherproceduremetadata.db_cdc_query
+  other: "Devuelve los cambios confirmados después de un identificador de cambio, opcionalmente filtrados por selectores"
 - id: cypherproceduremetadata.db_clearquerycaches
   other: "Borra las cachés de consultas"
 - id: cypherproceduremetadata.db_constraints

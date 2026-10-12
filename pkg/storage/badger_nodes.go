@@ -18,6 +18,17 @@ import (
 // REQUIRES: node.ID must be prefixed with namespace (e.g., "nornic:node-123").
 // This enforces that all nodes are namespaced at the storage layer.
 func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
+	if node != nil {
+		if handled, err := b.inCaptureTransaction(string(node.ID), func(tx *BadgerTransaction) error {
+			_, err := tx.CreateNode(node)
+			return err
+		}); handled {
+			if err != nil {
+				return "", err
+			}
+			return node.ID, nil
+		}
+	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
 	release, barrierErr := b.beginWrite()
@@ -324,6 +335,13 @@ func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
 
 // UpdateNode updates an existing node or creates it if it doesn't exist (upsert).
 func (b *BadgerEngine) UpdateNode(node *Node) error {
+	if node != nil {
+		if handled, err := b.inCaptureTransaction(string(node.ID), func(tx *BadgerTransaction) error {
+			return upsertNodeInTransaction(tx, node)
+		}); handled {
+			return err
+		}
+	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
 	release, barrierErr := b.beginWrite()
@@ -636,6 +654,11 @@ func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings 
 
 // DeleteNode removes a node and all its edges.
 func (b *BadgerEngine) DeleteNode(id NodeID) error {
+	if handled, err := b.inCaptureTransaction(string(id), func(tx *BadgerTransaction) error {
+		return tx.DeleteNode(id)
+	}); handled {
+		return err
+	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
 	release, barrierErr := b.beginWrite()

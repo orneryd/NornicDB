@@ -41,7 +41,31 @@ const (
 	MessageCypherAdminTerminateTransactionsIDRequired   MessageID = "cypheradmin.terminate_transactions_id_required"
 	MessageCypherAdminTransactionIDUnparseable          MessageID = "cypheradmin.transaction_id_unparseable"
 	MessageCypherAdminTransactionIDDatabaseNameLength   MessageID = "cypheradmin.transaction_id_database_name_length"
+	MessageCypherAdminDatabaseOptionUnknown             MessageID = "cypheradmin.database_option_unknown"
+	MessageCypherAdminDatabaseOptionUnsupported         MessageID = "cypheradmin.database_option_unsupported"
+	MessageCypherAdminDatabaseOptionValue               MessageID = "cypheradmin.database_option_value"
+	MessageCypherAdminDatabaseOptionsUnavailable        MessageID = "cypheradmin.database_options_unavailable"
 )
+
+// CypherAdminDatabaseOptionUnknown identifies a database option name Neo4j doesn't define.
+func CypherAdminDatabaseOptionUnknown(option string) Message {
+	return Message{ID: MessageCypherAdminDatabaseOptionUnknown, Fallback: "Could not create database with specified options: unknown option '" + option + "'", Data: map[string]any{"Option": option}}
+}
+
+// CypherAdminDatabaseOptionUnsupported identifies a Neo4j database option NornicDB doesn't implement.
+func CypherAdminDatabaseOptionUnsupported(option string) Message {
+	return Message{ID: MessageCypherAdminDatabaseOptionUnsupported, Fallback: "the database option '" + option + "' is not supported by NornicDB", Data: map[string]any{"Option": option}}
+}
+
+// CypherAdminDatabaseOptionValue identifies a database option value outside the option's values.
+func CypherAdminDatabaseOptionValue(option, value, allowed string) Message {
+	return Message{ID: MessageCypherAdminDatabaseOptionValue, Fallback: "invalid value '" + value + "' for database option '" + option + "': expected one of " + allowed, Data: map[string]any{"Option": option, "Value": value, "Allowed": allowed}}
+}
+
+// CypherAdminDatabaseOptionsUnavailable identifies a database manager without database options.
+func CypherAdminDatabaseOptionsUnavailable(command string) Message {
+	return Message{ID: MessageCypherAdminDatabaseOptionsUnavailable, Fallback: "database options are not available - " + command + " requires a database manager with options", Data: map[string]any{"Command": command}}
+}
 
 // CypherAdminDatabaseManagerUnavailable identifies an admin command that requires multi-database support.
 func CypherAdminDatabaseManagerUnavailable(command string) Message {

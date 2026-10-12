@@ -170,6 +170,8 @@ type BadgerEngine struct {
 	db     *managedBadgerDB
 	mu     sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
 	closed bool
+	// changes is the change data capture state (change_capture.go, #937).
+	changes changeCapture
 	// notifyWG tracks the asynchronous node-deleted notification goroutines
 	// BulkDeleteNodes dispatches. Close sets closed under mu and then waits
 	// on it before releasing engine state, so notifications never run

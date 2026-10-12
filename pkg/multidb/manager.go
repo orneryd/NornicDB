@@ -82,6 +82,9 @@ type DatabaseInfo struct {
 	Aliases      []string         `json:"aliases,omitempty"`      // Database aliases (Neo4j-compatible)
 	Limits       *Limits          `json:"limits,omitempty"`       // Resource limits
 	Constituents []ConstituentRef `json:"constituents,omitempty"` // Constituent databases (for composite type)
+	// Options are the database's options (CREATE DATABASE … OPTIONS, ALTER
+	// DATABASE … SET OPTION), by Neo4j's option name.
+	Options map[string]string `json:"options,omitempty"`
 
 	// Size tracking (incremental, not recalculated)
 	totalSize       int64        // Total storage size in bytes
@@ -177,6 +180,9 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 	// Load existing databases from system namespace
 	if err := m.loadMetadata(); err != nil {
 		return nil, fmt.Errorf("failed to load database metadata: %w", err)
+	}
+	for name, info := range m.databases {
+		m.applyChangeCapture(name, info.Options)
 	}
 
 	// If the underlying engine is read-only (e.g. HA standby), do not attempt
@@ -414,6 +420,7 @@ func (m *DatabaseManager) DropDatabase(name string) error {
 
 	// Remove from metadata
 	delete(m.databases, name)
+	m.applyChangeCapture(name, nil)
 	delete(m.engines, name) // Clear cached engine
 
 	if err := m.persistMetadata(); err != nil {

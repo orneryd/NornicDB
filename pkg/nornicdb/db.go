@@ -968,6 +968,10 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		}
 		fmt.Printf("📦 Wrapped in-memory storage with namespace '%s' (all operations are namespaced)\n", defaultDBName)
 	}
+	// How long change data capture events are kept (#937).
+	if capture, ok := storage.ChangeCaptureOf(db.baseStorage); ok {
+		capture.SetChangeRetention(config.Database.ChangeRetention)
+	}
 
 	// Initialize Cypher executor
 	db.cypherExecutor = cypher.NewStorageExecutor(db.storage)

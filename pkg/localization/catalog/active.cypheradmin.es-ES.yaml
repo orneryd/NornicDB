@@ -101,3 +101,15 @@
   other: "No se pudo analizar el id (formato esperado: <databasename>-transaction-<id>)"
 - id: cypheradmin.transaction_id_database_name_length
   other: "El nombre de base de datos proporcionado debe tener una longitud de entre 3 y 63 caracteres."
+- id: cypheradmin.database_option_unknown
+  description: Opción de base de datos que Neo4j no define. Option no se traduce.
+  other: "No se pudo crear la base de datos con las opciones indicadas: opción desconocida '{{.Option}}'"
+- id: cypheradmin.database_option_unsupported
+  description: Opción de base de datos de Neo4j que NornicDB no implementa. Option no se traduce.
+  other: "NornicDB no admite la opción de base de datos '{{.Option}}'"
+- id: cypheradmin.database_option_value
+  description: Valor de opción de base de datos fuera de sus valores. Option, Value y Allowed no se traducen.
+  other: "valor '{{.Value}}' no válido para la opción de base de datos '{{.Option}}': se esperaba uno de {{.Allowed}}"
+- id: cypheradmin.database_options_unavailable
+  description: El gestor de bases de datos no tiene opciones. Command no se traduce.
+  other: "las opciones de base de datos no están disponibles: {{.Command}} requiere un gestor de bases de datos con opciones"

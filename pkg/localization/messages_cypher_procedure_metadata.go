@@ -5,6 +5,9 @@ package localization
 const (
 	MessageCypherProcedureMetadataDbAwaitIndex                                  MessageID = "cypherproceduremetadata.db_awaitindex"
 	MessageCypherProcedureMetadataDbAwaitIndexes                                MessageID = "cypherproceduremetadata.db_awaitindexes"
+	MessageCypherProcedureMetadataDbCdcCurrent                                  MessageID = "cypherproceduremetadata.db_cdc_current"
+	MessageCypherProcedureMetadataDbCdcEarliest                                 MessageID = "cypherproceduremetadata.db_cdc_earliest"
+	MessageCypherProcedureMetadataDbCdcQuery                                    MessageID = "cypherproceduremetadata.db_cdc_query"
 	MessageCypherProcedureMetadataDbClearQueryCaches                            MessageID = "cypherproceduremetadata.db_clearquerycaches"
 	MessageCypherProcedureMetadataDbConstraints                                 MessageID = "cypherproceduremetadata.db_constraints"
 	MessageCypherProcedureMetadataDbCreateSetNodeVectorProperty                 MessageID = "cypherproceduremetadata.db_create_setnodevectorproperty"
@@ -86,6 +89,21 @@ func CypherProcedureMetadataDbAwaitIndex() Message {
 // CypherProcedureMetadataDbAwaitIndexes describes db.awaitIndexes in procedure listings.
 func CypherProcedureMetadataDbAwaitIndexes() Message {
 	return Message{ID: MessageCypherProcedureMetadataDbAwaitIndexes, Fallback: "Wait for all indexes to come online (for example: CALL db.awaitIndexes(300))."}
+}
+
+// CypherProcedureMetadataDbCdcCurrent describes db.cdc.current in procedure listings.
+func CypherProcedureMetadataDbCdcCurrent() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbCdcCurrent, Fallback: "Returns the change identifier just after the last committed change"}
+}
+
+// CypherProcedureMetadataDbCdcEarliest describes db.cdc.earliest in procedure listings.
+func CypherProcedureMetadataDbCdcEarliest() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbCdcEarliest, Fallback: "Returns the change identifier just before the earliest retained change"}
+}
+
+// CypherProcedureMetadataDbCdcQuery describes db.cdc.query in procedure listings.
+func CypherProcedureMetadataDbCdcQuery() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbCdcQuery, Fallback: "Returns the committed changes after a change identifier, optionally filtered by selectors"}
 }
 
 // CypherProcedureMetadataDbClearQueryCaches describes db.clearQueryCaches in procedure listings.
@@ -446,6 +464,9 @@ func CypherProcedureMetadataTxSetMetaData() Message {
 var cypherProcedureMetadata = map[string]func() Message{
 	"db.awaitIndex":                                    CypherProcedureMetadataDbAwaitIndex,
 	"db.awaitIndexes":                                  CypherProcedureMetadataDbAwaitIndexes,
+	"db.cdc.current":                                   CypherProcedureMetadataDbCdcCurrent,
+	"db.cdc.earliest":                                  CypherProcedureMetadataDbCdcEarliest,
+	"db.cdc.query":                                     CypherProcedureMetadataDbCdcQuery,
 	"db.clearQueryCaches":                              CypherProcedureMetadataDbClearQueryCaches,
 	"db.constraints":                                   CypherProcedureMetadataDbConstraints,
 	"db.create.setNodeVectorProperty":                  CypherProcedureMetadataDbCreateSetNodeVectorProperty,

@@ -423,15 +423,20 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) erro
 	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", parserError.Error())
 }
 
-// isNornicExtensionStatement reports whether cypher is a NornicDB-only
-// statement, outside Neo4j's Cypher and so outside the ANTLR grammar, which
-// the Nornic validator checks instead under NORNICDB_PARSER=antlr (#957):
-// knowledge-policy DDL, procedure DDL (CREATE [OR REPLACE] PROCEDURE, DROP
-// PROCEDURE) and database limits (ALTER DATABASE … SET LIMIT, SHOW LIMITS).
+// isNornicExtensionStatement reports whether cypher is a statement outside
+// the ANTLR grammar, which the Nornic validator checks instead under
+// NORNICDB_PARSER=antlr (#957): NornicDB's own knowledge-policy DDL,
+// procedure DDL (CREATE [OR REPLACE] PROCEDURE, DROP PROCEDURE) and database
+// limits (ALTER DATABASE … SET LIMIT, SHOW LIMITS), and the database options
+// the grammar doesn't model yet (CREATE DATABASE … OPTIONS, ALTER DATABASE …
+// SET / REMOVE OPTION, #937).
 func isNornicExtensionStatement(cypher string) bool {
 	return isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
 		startsWithKeywords(cypher, "SHOW", "LIMITS") ||
-		(startsWithKeywords(cypher, "ALTER", "DATABASE") && findKeywordIndex(cypher, "SET LIMIT") >= 0)
+		(startsWithKeywords(cypher, "ALTER", "DATABASE") && (findKeywordIndex(cypher, "SET LIMIT") >= 0 ||
+			findKeywordIndex(cypher, "SET OPTION") >= 0 || findKeywordIndex(cypher, "REMOVE OPTION") >= 0)) ||
+		((startsWithKeywords(cypher, "CREATE", "DATABASE") || startsWithKeywords(cypher, "CREATE", "OR")) &&
+			findKeywordIndex(cypher, "DATABASE") >= 0 && findKeywordIndex(cypher, "OPTIONS") >= 0)
 }
 
 // validateSyntaxNornic performs fast inline syntax validation.

@@ -1073,7 +1073,7 @@ func showDatabaseRow(manager DatabaseManagerInterface, name, databaseType, statu
 		nil, nil, // store, lastCommittedTxn
 		int64(0), // replicationLag
 		[]string{},
-		map[string]interface{}{}, // options
+		databaseOptionsValue(manager, name),
 	}
 }
 
@@ -1151,6 +1151,15 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	if startPos >= len(cypher) {
 		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("CREATE DATABASE"), nil)
 	}
+	// OPTIONS { … } ends the statement (#937); the options are validated
+	// before anything is created.
+	cypher, options, err := e.splitDatabaseOptions(ctx, cypher, startPos)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := e.dbManager.(DatabaseOptionsManager); len(options) > 0 && !ok {
+		return nil, localizedError(localization.CypherAdminDatabaseOptionsUnavailable("CREATE DATABASE"), nil)
+	}
 
 	// Find end of database name (whitespace, end of string, or "IF NOT EXISTS")
 	// Check for "IF NOT EXISTS" first (with flexible whitespace)
@@ -1221,6 +1230,9 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)
 	}
 	e.logEvent(slog.LevelInfo, localization.CypherCreateDatabaseSucceededEvent())
+	if err := e.applyDatabaseOptions(dbName, options); err != nil {
+		return nil, err
+	}
 
 	return &ExecuteResult{
 		Columns: []string{"name"},
@@ -1746,6 +1758,9 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 		}
 	} else {
 		return nil, localizedError(localization.CypherAdminKeywordExpected("ALTER DATABASE", "DATABASE"), nil)
+	}
+	if result, handled, err := e.alterDatabaseOption(ctx, cypher, startPos); handled {
+		return result, err
 	}
 
 	// Find "SET LIMIT" keyword

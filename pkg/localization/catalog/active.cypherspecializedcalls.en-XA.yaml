@@ -76,3 +76,15 @@
   other: "[!! toSeq must be 0 or greater !!]"
 - id: cypherspecializedcalls.txlog_argument_type
   other: "[!! {{.Argument}} must be {{.Type}}, but was {{.Received}} !!]"
+- id: cypherspecializedcalls.cdc_disabled
+  other: "[!! Change Data Capture is not currently enabled for database '{{.Database}}'. !!]"
+- id: cypherspecializedcalls.cdc_invalid_identifier
+  other: "[!! Invalid change identifier '{{.ID}}'. !!]"
+- id: cypherspecializedcalls.cdc_expired_identifier
+  other: "[!! Invalid change identifier '{{.ID}}': it is older than the earliest retained change (db.cdc.earliest()). !!]"
+- id: cypherspecializedcalls.cdc_future_identifier
+  other: "[!! Change identifier '{{.ID}}' points to a future transaction that has not yet happened on this database instance. !!]"
+- id: cypherspecializedcalls.cdc_scan_failed
+  other: "[!! Unable to read the Change Data Capture data for this database: {{.Cause}} !!]"
+- id: cypherspecializedcalls.cdc_selector_invalid
+  other: "[!! Invalid change selector: {{.Reason}} !!]"
