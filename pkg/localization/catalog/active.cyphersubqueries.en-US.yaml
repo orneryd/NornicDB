@@ -130,6 +130,9 @@
 - id: cyphersubqueries.rag_fail_closed_invalid
   description: db.retrieve failClosed received an invalid field. Procedure, flag, and Field are untranslated machine names.
   other: "db.retrieve failClosed has an invalid {{.Field}} value"
+- id: cyphersubqueries.rag_where_invalid
+  description: A retrieval procedure received a where option that is not a STRING. Procedure is an untranslated machine name; STRING and node are Cypher terms.
+  other: "{{.Procedure}} where must be a STRING: a predicate on node"
 - id: cyphersubqueries.rag_fail_closed_embedding_unavailable
   description: db.retrieve failClosed could not obtain a usable query embedding. Cause is untranslated diagnostic text.
   other: "db.retrieve failClosed requires a usable query embedding: {{.Cause}}"

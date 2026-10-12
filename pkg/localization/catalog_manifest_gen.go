@@ -1000,6 +1000,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphersubqueries.rag_candidates_required", Constructor: "CypherSubqueriesRAGCandidatesRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphersubqueries.rag_fail_closed_embedding_unavailable", Constructor: "CypherSubqueriesRAGFailClosedEmbeddingUnavailable", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphersubqueries.rag_fail_closed_invalid", Constructor: "CypherSubqueriesRAGFailClosedInvalid", Fields: []string{"Field"}, PluralForms: []string{"other"}},
+	{ID: "cyphersubqueries.rag_where_invalid", Constructor: "CypherSubqueriesRAGWhereInvalid", Fields: []string{"Procedure"}, PluralForms: []string{"other"}},
 	{ID: "cyphersubqueries.seed_row_missing_variable", Constructor: "CypherSubqueriesSeedRowMissingVariable", Fields: []string{"Variable"}, PluralForms: []string{"other"}},
 	{ID: "cyphersubqueries.static_union_branch_failed", Constructor: "CypherSubqueriesStaticUnionBranchFailed", Fields: []string{"Branch", "Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphersubqueries.transaction_batch_failed", Constructor: "CypherSubqueriesTransactionBatchFailed", Fields: []string{"Batch", "Cause", "Variable"}, PluralForms: []string{"other"}},

@@ -207,7 +207,7 @@ func sequentialHybridReference(
 		bm25Results, _, err = svc.adaptiveBM25Search(ctx, svc.fulltext(), query, opts, func(results []indexResult) []indexResult {
 			results = svc.filterDecayedCandidates(results)
 			if len(opts.Types) > 0 || len(opts.Filters) > 0 {
-				results = svc.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
+				results = svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: opts.Types, Filters: opts.Filters}, seenOrphans)
 			}
 			return results
 		})
@@ -218,7 +218,7 @@ func sequentialHybridReference(
 	vectorResults, _, err := svc.adaptiveVectorSearch(ctx, pipeline, embedding, opts, lexicalEntryIDsFromResults(bm25Results), func(results []indexResult) []indexResult {
 		results = svc.filterDecayedCandidates(results)
 		if len(opts.Types) > 0 || len(opts.Filters) > 0 {
-			results = svc.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
+			results = svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: opts.Types, Filters: opts.Filters}, seenOrphans)
 		}
 		return results
 	})

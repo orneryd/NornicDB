@@ -86,6 +86,33 @@ properties. Scalar and array-valued node properties are supported. Every policy
 key also accepts snake_case, for example `candidate_target`, `rrf_k`,
 `min_rrf_score`, `property_filters`, and `fallback_enabled`.
 
+### Filtering with a predicate: `where`
+
+`filters` tests property values for equality. `where` takes any Cypher
+predicate on the candidate, bound as `node`, with the statement's parameters.
+It is checked on every candidate before `limit`, together with `types` and
+`filters`, so `limit` counts only results that pass:
+
+```cypher
+// A missing property, or a negation (current <> false is null, not true,
+// when current is missing):
+CALL db.retrieve({query: $q, where: 'node.current IS NULL OR node.current <> false'})
+
+// A pattern from the candidate through the graph:
+CALL db.retrieve({
+  query: $q,
+  where: 'EXISTS { (node)<-[:HAS_SOURCE]-(v:Version)<-[:HAS_VERSION]-(:Document)-[:MEMBER_OF]->(c:Collection)
+          WHERE c.id IN $collections AND NOT c.archived AND v.current_source_id = node.id }'
+})
+
+// Vector search filtered before the top-k cut: supply the embedding.
+CALL db.retrieve({query: $q, embedding: $vector, limit: 10, where: "node.state = 'current'"})
+```
+
+A search with `where` isn't served from the result cache, because what it
+admits can depend on more than the request. Later pages of a paged retrieval
+(`qid`) check it too. A `where` that isn't a string is an error.
+
 When fallback changes the requested search path, `fallback_reason` contains a
 stable code such as `query_embedding_failed`, `query_embedding_unavailable`,
 `no_embedder`, `no_hybrid_results`, or `hybrid_search_failed`. Provider error

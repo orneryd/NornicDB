@@ -38,7 +38,7 @@ func BenchmarkTypeOnlyCandidateFilterFromMetadata(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		copy(scratch, results)
-		got := service.filterByTypeAndProperties(context.Background(), scratch, []string{"Document"}, nil, nil)
+		got := service.filterByTypeAndProperties(context.Background(), scratch, &SearchOptions{Types: []string{"Document"}}, nil)
 		if len(got) != 500 {
 			b.Fatalf("got %d matches", len(got))
 		}
@@ -95,10 +95,8 @@ func TestCandidateFiltersUseEmbeddingFreeBatchReads(t *testing.T) {
 	got := service.filterByTypeAndProperties(
 		context.Background(),
 		[]indexResult{{ID: "doc-a"}, {ID: "doc-b"}},
-		[]string{"Document"},
-		map[string][]string{"state": {"ready"}},
-		map[string]bool{},
-	)
+		&SearchOptions{Types: []string{"Document"}, Filters: map[string][]string{"state": {"ready"}}},
+		map[string]bool{})
 
 	require.Equal(t, []indexResult{{ID: "doc-a"}}, got)
 	require.Equal(t, 1, spy.lightBatchReads)
@@ -138,10 +136,8 @@ func TestTypeOnlyCandidateFilterUsesInMemoryMetadata(t *testing.T) {
 	got := service.filterByTypeAndProperties(
 		context.Background(),
 		[]indexResult{{ID: "label-match"}, {ID: "property-match"}, {ID: "miss"}},
-		[]string{"document"},
-		nil,
-		map[string]bool{},
-	)
+		&SearchOptions{Types: []string{"document"}},
+		map[string]bool{})
 
 	require.Equal(t, []indexResult{{ID: "label-match"}, {ID: "property-match"}}, got)
 	require.Zero(t, spy.lightBatchReads, "type-only filtering must not read document properties")

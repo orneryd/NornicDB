@@ -403,6 +403,13 @@ type SearchOptions struct {
 	// doesn't read them (#1060): no hit's chunks are scored, no text scanned.
 	SkipMatches bool
 
+	// Where admits a candidate node, as a Cypher WHERE on it does: a missing
+	// property, a negation or a pattern from the node; nil admits every node. It
+	// is applied with Types and Filters to the candidates, before the top-K cut.
+	// A search with a Where isn't cached: what it admits can depend on more than
+	// the options.
+	Where func(*storage.Node) bool
+
 	// MMR (Maximal Marginal Relevance) diversification
 	// When enabled, results are re-ranked to balance relevance with diversity
 	MMREnabled bool    // Enable MMR diversification (default: false)
@@ -4458,8 +4465,12 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 
 	// Cache key for result cache (same query+options => same key; used for Get and Put).
 	cacheKey := s.cacheNamespace + "\x00" + strconv.FormatUint(s.IndexRevision(), 10) + "\x00" + searchCacheKey(query, embedding, opts)
-	if s.resultCache != nil {
-		if cached := s.resultCache.Get(cacheKey); cached != nil {
+	resultCache := s.resultCache
+	if opts.Where != nil {
+		resultCache = nil
+	}
+	if resultCache != nil {
+		if cached := resultCache.Get(cacheKey); cached != nil {
 			s.maybeLogSearchTiming(query, cached, time.Since(start), true)
 			return cached, nil
 		}
@@ -4469,8 +4480,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	if len(embedding) == 0 {
 		if !opts.fallbackEnabled() {
 			response := &SearchResponse{Status: "success", Query: query, SearchMethod: "rrf_hybrid", RetrievalExhausted: true}
-			if s.resultCache != nil {
-				s.resultCache.Put(cacheKey, response)
+			if resultCache != nil {
+				resultCache.Put(cacheKey, response)
 			}
 			s.maybeLogSearchTiming(query, response, time.Since(start), false)
 			return response, nil
@@ -4478,8 +4489,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		mode = "bm25" // Plan 04-05-05: closed AllowedSearchModes
 		resp, err := s.fullTextSearchOnly(ctx, query, opts)
 		resp = withSearchFallback(resp, SearchFallbackNoEmbedder)
-		if err == nil && s.resultCache != nil {
-			s.resultCache.Put(cacheKey, resp)
+		if err == nil && resultCache != nil {
+			resultCache.Put(cacheKey, resp)
 		}
 		s.maybeLogSearchTiming(query, resp, time.Since(start), false)
 		return resp, err
@@ -4491,8 +4502,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	if strings.TrimSpace(query) == "" {
 		mode = "vector" // Plan 04-05-05: closed AllowedSearchModes
 		resp, err := s.vectorSearchOnly(ctx, embedding, opts)
-		if err == nil && s.resultCache != nil {
-			s.resultCache.Put(cacheKey, resp)
+		if err == nil && resultCache != nil {
+			resultCache.Put(cacheKey, resp)
 		}
 		s.maybeLogSearchTiming(query, resp, time.Since(start), false)
 		return resp, err
@@ -4501,8 +4512,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	// Try RRF hybrid search
 	response, err := s.rrfHybridSearch(ctx, query, embedding, opts)
 	if err == nil && len(response.Results) > 0 {
-		if s.resultCache != nil && response.FallbackReason != SearchFallbackRerankFailed {
-			s.resultCache.Put(cacheKey, response)
+		if resultCache != nil && response.FallbackReason != SearchFallbackRerankFailed {
+			resultCache.Put(cacheKey, response)
 		}
 		s.maybeLogSearchTiming(query, response, time.Since(start), false)
 		return response, nil
@@ -4511,8 +4522,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		if response == nil {
 			response = &SearchResponse{Status: "success", Query: query, SearchMethod: "rrf_hybrid"}
 		}
-		if err == nil && s.resultCache != nil {
-			s.resultCache.Put(cacheKey, response)
+		if err == nil && resultCache != nil {
+			resultCache.Put(cacheKey, response)
 		}
 		s.maybeLogSearchTiming(query, response, time.Since(start), false)
 		return response, err
@@ -4532,8 +4543,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 			response.FallbackReason = SearchFallbackHybridSearchFailed
 		}
 		response.Message = "RRF search returned no results, fell back to vector search"
-		if s.resultCache != nil {
-			s.resultCache.Put(cacheKey, response)
+		if resultCache != nil {
+			resultCache.Put(cacheKey, response)
 		}
 		s.maybeLogSearchTiming(query, response, time.Since(start), false)
 		return response, nil
@@ -4552,8 +4563,8 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		resp = withSearchFallback(resp, reason)
 		resp.RetrievalExhausted = resp.RetrievalExhausted && !hybridIncomplete && !vectorIncomplete
 	}
-	if err == nil && s.resultCache != nil {
-		s.resultCache.Put(cacheKey, resp)
+	if err == nil && resultCache != nil {
+		resultCache.Put(cacheKey, resp)
 	}
 	s.maybeLogSearchTiming(query, resp, time.Since(start), false)
 	return resp, err
@@ -4587,8 +4598,8 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 		bm25Start := time.Now()
 		results, stats, err := s.adaptiveBM25Search(ctx, fulltextIndex, query, opts, func(results []indexResult) []indexResult {
 			results = s.filterDecayedCandidates(results)
-			if len(opts.Types) > 0 || len(opts.Filters) > 0 {
-				results = s.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, bm25SeenOrphans)
+			if opts.filtersCandidates() {
+				results = s.filterByTypeAndProperties(ctx, results, opts, bm25SeenOrphans)
 			}
 			return results
 		})
@@ -4627,8 +4638,8 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	if pipelineErr == nil {
 		vectorResults, vectorStats, pipelineErr = s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, lexicalEntryIDsFromResults(bm25Result.results), func(results []indexResult) []indexResult {
 			results = s.filterDecayedCandidates(results)
-			if len(opts.Types) > 0 || len(opts.Filters) > 0 {
-				results = s.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
+			if opts.filtersCandidates() {
+				results = s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 			}
 			return results
 		})
@@ -4777,8 +4788,8 @@ func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float3
 
 	seenOrphans := make(map[string]bool)
 	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, nil, func(results []indexResult) []indexResult {
-		if len(opts.Types) > 0 || len(opts.Filters) > 0 {
-			results = s.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
+		if opts.filtersCandidates() {
+			results = s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 		}
 		return results
 	})
@@ -6962,8 +6973,8 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 	}
 	seenOrphans := make(map[string]bool)
 	results, vectorStats, searchErr := s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, nil, func(results []indexResult) []indexResult {
-		if len(opts.Types) > 0 || len(opts.Filters) > 0 {
-			results = s.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
+		if opts.filtersCandidates() {
+			results = s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 		}
 		return results
 	})
@@ -7054,8 +7065,8 @@ func (s *Service) fullTextSearchOnly(ctx context.Context, query string, opts *Se
 	bm25Start := time.Now()
 	seenOrphans := make(map[string]bool)
 	results, bm25Stats, err := s.adaptiveBM25Search(ctx, ft, query, opts, func(results []indexResult) []indexResult {
-		if len(opts.Types) > 0 || len(opts.Filters) > 0 {
-			results = s.filterByTypeAndProperties(ctx, results, opts.Types, opts.Filters, seenOrphans)
+		if opts.filtersCandidates() {
+			results = s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 		}
 		return results
 	})
@@ -7407,6 +7418,18 @@ func nodeMatchesFilters(node *storage.Node, filters map[string][]string) bool {
 	return true
 }
 
+// filtersCandidates reports whether opts narrows the candidates: by type,
+// property filters or Where.
+func (opts *SearchOptions) filtersCandidates() bool {
+	return len(opts.Types) > 0 || len(opts.Filters) > 0 || opts.Where != nil
+}
+
+// admitsNode is the property test every search path applies to a candidate
+// before the top-K cut: the property filters, then Where.
+func (opts *SearchOptions) admitsNode(node *storage.Node) bool {
+	return nodeMatchesFilters(node, opts.Filters) && (opts.Where == nil || opts.Where(node))
+}
+
 // propValueMatchesAny returns true if any of wantVals matches propVal.
 // For slice properties (any concrete slice type) every element is tested via
 // fmt.Sprint; for scalar properties the fmt.Sprint representation is compared
@@ -7434,9 +7457,9 @@ func propValueMatchesAny(propVal any, wantVals []string) bool {
 	return false
 }
 
-// filterByProperties filters results to only include nodes matching all property filters.
-func (s *Service) filterByProperties(ctx context.Context, results []indexResult, filters map[string][]string, seenOrphans map[string]bool) []indexResult {
-	if len(filters) == 0 {
+// filterByProperties filters results to the nodes opts admits (admitsNode).
+func (s *Service) filterByProperties(ctx context.Context, results []indexResult, opts *SearchOptions, seenOrphans map[string]bool) []indexResult {
+	if len(opts.Filters) == 0 && opts.Where == nil {
 		return results
 	}
 	var filtered []indexResult
@@ -7448,7 +7471,7 @@ func (s *Service) filterByProperties(ctx context.Context, results []indexResult,
 			}
 			continue
 		}
-		if nodeMatchesFilters(node, filters) {
+		if opts.admitsNode(node) {
 			filtered = append(filtered, r)
 		}
 	}
@@ -7461,20 +7484,22 @@ func (s *Service) filterByProperties(ctx context.Context, results []indexResult,
 func (s *Service) filterByTypeAndProperties(
 	ctx context.Context,
 	results []indexResult,
-	types []string,
-	filters map[string][]string,
+	opts *SearchOptions,
 	seenOrphans map[string]bool,
 ) []indexResult {
-	if len(types) == 0 && len(filters) == 0 {
+	if !opts.filtersCandidates() {
 		return results
 	}
+	types := opts.Types
+	// properties is whether the nodes' properties are tested too.
+	properties := len(opts.Filters) > 0 || opts.Where != nil
 
 	typesResolved := false
 	if len(types) > 0 {
 		if indexedResults, complete := s.filterByIndexedType(results, types); complete {
 			results = indexedResults
 			typesResolved = true
-			if len(results) == 0 || len(filters) == 0 {
+			if len(results) == 0 || !properties {
 				return results
 			}
 		}
@@ -7503,8 +7528,8 @@ func (s *Service) filterByTypeAndProperties(
 		if len(types) > 0 && !typesResolved {
 			results = s.filterByType(ctx, results, types, seenOrphans)
 		}
-		if len(filters) > 0 {
-			results = s.filterByProperties(ctx, results, filters, seenOrphans)
+		if properties {
+			results = s.filterByProperties(ctx, results, opts, seenOrphans)
 		}
 		return results
 	}
@@ -7520,7 +7545,7 @@ func (s *Service) filterByTypeAndProperties(
 			continue
 		}
 
-		if len(filters) > 0 && !nodeMatchesFilters(node, filters) {
+		if !opts.admitsNode(node) {
 			continue
 		}
 

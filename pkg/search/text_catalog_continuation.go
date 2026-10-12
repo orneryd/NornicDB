@@ -113,7 +113,8 @@ func (s *Service) newIDContinuationStream(ctx context.Context, options SearchOpt
 }
 
 func (s *Service) streamCompleteContinuationNodes(ctx context.Context, options *SearchOptions, request SearchContinuationRequest, visit storage.NodeVisitor) error {
-	if request.AuthorizeNode == nil {
+	// A Where may read any property, so it gets whole nodes.
+	if request.AuthorizeNode == nil && options.Where == nil {
 		if reader, ok := s.engine.(storage.ProjectedPrefixNodeReader); ok {
 			return reader.StreamNodesByPrefixProjected(ctx, "", s.completeContinuationProjectionProperties(options, request), visit)
 		}
@@ -443,7 +444,7 @@ func (s *Service) continuationNodeEligible(node *storage.Node, options *SearchOp
 			return false, nil
 		}
 	}
-	if !nodeMatchesFilters(node, options.Filters) {
+	if !options.admitsNode(node) {
 		return false, nil
 	}
 	return s.shouldIndexNode(node)

@@ -130,6 +130,9 @@
 - id: cyphersubqueries.rag_fail_closed_invalid
   description: Expanded pseudo-locale invalid fail-closed retrieve field.
   other: "[!! db.retrieve failClosed has an invalid {{.Field}} value !!]"
+- id: cyphersubqueries.rag_where_invalid
+  description: Expanded pseudo-locale invalid retrieval where option.
+  other: "[!! {{.Procedure}} where must be a STRING: a predicate on node !!]"
 - id: cyphersubqueries.rag_fail_closed_embedding_unavailable
   description: Expanded pseudo-locale missing fail-closed retrieve embedding.
   other: "[!! db.retrieve failClosed requires a usable query embedding: {{.Cause}} !!]"

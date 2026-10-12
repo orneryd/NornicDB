@@ -211,6 +211,20 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	if types := toStringSlice(firstPresent(req, "types", "labels")); len(types) > 0 {
 		opts.Types = types
 	}
+	// where: a Cypher predicate on each candidate, bound as node, with the
+	// statement's parameters: a missing property, a negation or a pattern
+	// from the node. It is checked before the
+	// limit; later continuation pages check it too, so it keeps the
+	// statement's values but not its cancellation.
+	if raw, present := req["where"]; present && raw != nil {
+		where, isText := raw.(string)
+		if !isText {
+			return nil, localizedError(localization.CypherSubqueriesRAGWhereInvalid("db.retrieve"), nil)
+		}
+		if strings.TrimSpace(where) != "" {
+			opts.Where = e.compileNodeWhereFilter(context.WithoutCancel(ctx), "node", where)
+		}
+	}
 	if minSim, ok := ragToFloat64(firstPresent(req, "minSimilarity", "min_similarity")); ok && (!failClosed || isFinite(minSim)) {
 		opts.MinSimilarity = &minSim
 	} else if failClosed {
