@@ -635,6 +635,10 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// The index is cleared and refilled below: until that finishes no
+	// constraint's index may be trusted to be complete.
+	b.temporalIndexReady.Store(false)
+	b.resetTemporalIndexCompleteness()
 	if err := b.clearBadgerPrefix(ctx, prefixTemporalIndex); err != nil {
 		return err
 	}
@@ -642,14 +646,38 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 		return err
 	}
 	asOf := time.Now().UTC()
-	return StreamNodesWithFallback(ctx, b, 1000, func(node *Node) error {
+	if err := StreamNodesWithFallback(ctx, b, 1000, func(node *Node) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		return b.withUpdate(func(txn *badger.Txn) error {
 			return b.rebuildTemporalNodeInTxn(txn, node, asOf)
 		})
-	})
+	}); err != nil {
+		return err
+	}
+	// Every node of every temporal constraint is indexed now; the per-schema
+	// runtime marks are superseded.
+	b.resetTemporalIndexCompleteness()
+	b.temporalIndexReady.Store(true)
+	return nil
+}
+
+// resetTemporalIndexCompleteness drops the runtime completeness marks of
+// every loaded schema.
+func (b *BadgerEngine) resetTemporalIndexCompleteness() {
+	b.schemasMu.RLock()
+	schemas := make([]*SchemaManager, 0, len(b.schemas))
+	for _, sm := range b.schemas {
+		schemas = append(schemas, sm)
+	}
+	b.schemasMu.RUnlock()
+	for _, sm := range schemas {
+		sm.mu.Lock()
+		sm.temporalIndexCompleteKeys = nil
+		sm.temporalIndexIncompleteKeys = nil
+		sm.mu.Unlock()
+	}
 }
 
 type temporalPruneCandidate struct {

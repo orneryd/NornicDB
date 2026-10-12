@@ -105,13 +105,32 @@ func (s temporalKeySpec) indexKeyProp() string {
 	return strings.Join(s.keyProps, temporalKeyPropSeparator)
 }
 
-// keyHash hashes a key value for temporal index keys. Single keys hash the raw
-// value exactly as before composite keys existed.
+// keyHash hashes a key value for temporal index keys.
+//
+// Numeric key values are hashed in their numeric form, so keys that keyEqual
+// treats as equal (int64 1 and float64 1.0, compared with compareValues) share
+// a history: a type-sensitive hash put them in different histories and the
+// overlap check through the index missed overlaps between them. The index is
+// derived state, rebuilt from the stored nodes on every start
+// (RebuildTemporalIndexes), so entries written with the old hash are replaced.
 func (s temporalKeySpec) keyHash(keyValue interface{}) string {
 	if values, ok := keyValue.([]interface{}); ok && s.composite() {
-		return constraintCompositeKey(values)
+		normalized := make([]interface{}, len(values))
+		for i, v := range values {
+			normalized[i] = temporalKeyHashValue(v)
+		}
+		return constraintCompositeKey(normalized)
 	}
-	return constraintValueKey(keyValue)
+	return constraintValueKey(temporalKeyHashValue(keyValue))
+}
+
+// temporalKeyHashValue is the form of one key value that keyHash hashes:
+// numbers as float64 (numericConstraintValue), everything else unchanged.
+func temporalKeyHashValue(v interface{}) interface{} {
+	if numeric, ok := numericConstraintValue(v); ok {
+		return numeric
+	}
+	return v
 }
 
 // groupString renders a key value as a map key for creation-time validation.

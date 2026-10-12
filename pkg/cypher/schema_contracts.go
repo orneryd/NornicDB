@@ -210,7 +210,18 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 		return nil, true, err
 	}
 	schema := e.storage.GetSchema()
+	newTemporal := make([]storage.Constraint, 0)
+	for _, constraint := range compiledConstraints {
+		if constraint.Type == storage.ConstraintTemporal && !schema.HasConstraintNamed(constraint.Name) {
+			newTemporal = append(newTemporal, constraint)
+		}
+	}
 	if err := schema.AddConstraintContractBundle(contract, compiledConstraints, compiledTypes, ifNotExists); err != nil {
+		return nil, true, err
+	}
+	// See addSchemaConstraint: new temporal entries are authoritative on an
+	// empty label (#1126).
+	if err := storage.MarkNewTemporalConstraintsForEngine(e.storage, schema, newTemporal); err != nil {
 		return nil, true, err
 	}
 	// Like a standalone UNIQUE constraint, a contract's IS UNIQUE entries need

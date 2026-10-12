@@ -400,6 +400,7 @@ func temporalOverlapViolation(c Constraint, spec temporalKeySpec, existing *Node
 // for an interval overlapping [start, end) under the same grouping key. It is
 // the fallback when no temporal history index entries exist for the key.
 func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namespace string, c Constraint, keyValue interface{}, start time.Time, end time.Time, hasEnd bool, excludeNodeID NodeID) error {
+	runTemporalConstraintScanHook()
 	spec, ok := splitTemporalKeySpec(c.Properties)
 	if !ok {
 		return nil
@@ -481,6 +482,11 @@ func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace st
 	}
 	it.Close()
 	if !hasIndexedEntries {
+		// With a complete index, a key without history has no stored node to
+		// overlap; only an incomplete one needs the label scan (#1126).
+		if b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint) {
+			return nil
+		}
 		return b.legacyScanForTemporalOverlapInTxn(txn, namespace, constraint, keyValue, start, end, hasEnd, excludeNodeID)
 	}
 

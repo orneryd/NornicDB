@@ -217,6 +217,13 @@ type BadgerEngine struct {
 	schemasMu sync.RWMutex
 	schemas   map[string]*SchemaManager // namespace -> schema
 
+	// temporalIndexReady is set once RebuildTemporalIndexes has rebuilt the
+	// temporal history index from every stored node (and cleared while a
+	// rebuild runs): every temporal constraint known by then is indexed
+	// completely, and every write since maintains it. See
+	// temporal_index_completeness.go.
+	temporalIndexReady atomic.Bool
+
 	// Hot node cache for frequently accessed nodes
 	// Dramatically speeds up repeated MATCH lookups
 	nodeCache   map[NodeID]*Node

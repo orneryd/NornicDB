@@ -4150,7 +4150,31 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 		return err
 	}
 
+	// Committed nodes: while the constraint's history index is complete, only
+	// the nodes in the history of this node's key can overlap it (#1126);
+	// otherwise scan the label. Both read the latest committed state and skip
+	// the nodes this transaction rewrites or deletes, whose pending versions
+	// were checked above.
+	if tx.engine.temporalIndexAuthoritative(tx.engine.GetSchemaForNamespace(tx.namespace), c) {
+		history, ok, err := tx.engine.temporalKeyHistoryNodesLatest(tx.commitCtx, tx.namespace, c, node)
+		if err != nil {
+			return err
+		}
+		if ok {
+			for _, other := range history {
+				if other.ID == node.ID || tx.committedNodeSupersededLocked(other.ID) || !strings.HasPrefix(string(other.ID), nsPrefix) {
+					continue
+				}
+				if err := collides(other); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}
+
 	// Check overlaps against committed storage using the label index scan.
+	runTemporalConstraintScanHook()
 	visibleNodes, err := tx.committedConstraintNodesLocked(c.Label)
 	if err != nil {
 		return err

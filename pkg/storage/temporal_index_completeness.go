@@ -1,0 +1,175 @@
+package storage
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"sync/atomic"
+
+	"github.com/dgraph-io/badger/v4"
+)
+
+// A temporal constraint's history index (prefixTemporalIndex) is complete
+// when it has an entry for every stored node the constraint covers. Every
+// write path maintains it (transaction commits through
+// bufferTemporalIndexWrites, the engine's direct node writes through
+// applyTemporalIndexesForNodeChangeInTxn, bulk writes through transactions),
+// and RebuildTemporalIndexes rebuilds it from the stored nodes on start. The
+// one gap is a constraint created over nodes that already exist: they have no
+// entries until the next rebuild.
+//
+// While the index is complete, NO OVERLAP validation reads the history of
+// the written node's own key instead of scanning every node of the label
+// (#1126): with no entries for a key, no stored node has that key. While it
+// is not, validation keeps the label scan.
+
+// temporalConstraintScanHook lets storage tests assert that NO OVERLAP
+// validation with a complete history index does not fall back to scanning
+// the label (the transaction's committed scan and the engine's legacy scan).
+var temporalConstraintScanHook atomic.Pointer[func()]
+
+func runTemporalConstraintScanHook() {
+	if hook := temporalConstraintScanHook.Load(); hook != nil {
+		(*hook)()
+	}
+}
+
+func setTemporalConstraintScanHook(hook func()) func() {
+	previous := temporalConstraintScanHook.Swap(&hook)
+	return func() { temporalConstraintScanHook.Store(previous) }
+}
+
+// temporalIndexCompletenessKey identifies a temporal constraint by what its
+// index entries are keyed on (label and properties), not by name.
+func temporalIndexCompletenessKey(c Constraint) string {
+	return c.Label + "\x00" + strings.Join(c.Properties, "\x00")
+}
+
+// temporalIndexAuthoritative reports whether c's history index covers every
+// stored node c applies to: c was created on an empty label (complete from
+// the start), or the engine's index was rebuilt and c was not created since
+// over existing nodes.
+func (b *BadgerEngine) temporalIndexAuthoritative(sm *SchemaManager, c Constraint) bool {
+	if b == nil || sm == nil {
+		return false
+	}
+	key := temporalIndexCompletenessKey(c)
+	sm.mu.RLock()
+	_, complete := sm.temporalIndexCompleteKeys[key]
+	_, incomplete := sm.temporalIndexIncompleteKeys[key]
+	sm.mu.RUnlock()
+	return complete || (b.temporalIndexReady.Load() && !incomplete)
+}
+
+// forgetTemporalIndexCompleteLocked drops c's runtime completeness marks: a
+// constraint that is (re)registered or dropped starts over.
+func (sm *SchemaManager) forgetTemporalIndexCompleteLocked(c Constraint) {
+	if c.Type != ConstraintTemporal {
+		return
+	}
+	key := temporalIndexCompletenessKey(c)
+	delete(sm.temporalIndexCompleteKeys, key)
+	delete(sm.temporalIndexIncompleteKeys, key)
+}
+
+func (sm *SchemaManager) markTemporalIndexCreated(c Constraint, complete bool) {
+	key := temporalIndexCompletenessKey(c)
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	target := &sm.temporalIndexIncompleteKeys
+	if complete {
+		target = &sm.temporalIndexCompleteKeys
+	}
+	if *target == nil {
+		*target = make(map[string]struct{})
+	}
+	(*target)[key] = struct{}{}
+}
+
+// HasConstraintNamed reports whether a constraint named name is registered.
+func (sm *SchemaManager) HasConstraintNamed(name string) bool {
+	if sm == nil {
+		return false
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	_, ok := sm.constraints[name]
+	return ok
+}
+
+// MarkNewTemporalConstraintsForEngine records, for the temporal node
+// constraints among constraints that DDL just created, whether their history
+// index is complete: yes when their label has no stored nodes (the usual
+// schema-first load: there is nothing to index and every later write
+// maintains it), no when it has nodes, which were written before the
+// constraint and have no entries until the next RebuildTemporalIndexes.
+func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, constraints []Constraint) error {
+	if engine == nil || schema == nil {
+		return nil
+	}
+	for _, c := range constraints {
+		if c.Type != ConstraintTemporal || c.EntityType == ConstraintEntityRelationship {
+			continue
+		}
+		empty, err := labelHasNoNodes(engine, c.Label)
+		if err != nil {
+			return err
+		}
+		schema.markTemporalIndexCreated(c, empty)
+	}
+	return nil
+}
+
+var errStopLabelProbe = errors.New("label has nodes")
+
+func labelHasNoNodes(engine Engine, label string) (bool, error) {
+	err := streamNodesByLabelForValidation(engine, label, nil, func(node *Node) error {
+		if node == nil {
+			return nil
+		}
+		return errStopLabelProbe
+	})
+	if errors.Is(err, errStopLabelProbe) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// temporalKeyHistoryNodesLatest returns the stored nodes in the history of
+// node's key under c, read at the latest committed state (the state the label
+// scan reads). Nodes whose entry outlived them (a rebuild racing a delete)
+// are skipped. ok is false when node has no complete key or start.
+func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namespace string, c Constraint, node *Node) (nodes []*Node, ok bool, err error) {
+	target, _, ok := temporalTargetForNode(namespace, node, c)
+	if !ok {
+		return nil, false, nil
+	}
+	prefix := temporalHistoryPrefix(target.desc)
+	err = b.withView(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		defer it.Close()
+		for it.Rewind(); it.Valid(); it.Next() {
+			if ctx != nil {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
+			id := extractNodeIDFromTemporalHistoryKey(it.Item().KeyCopy(nil), len(prefix))
+			if id == "" {
+				continue
+			}
+			stored, err := b.loadNodeForTemporalTxn(txn, id, false)
+			if err != nil {
+				return err
+			}
+			if stored != nil {
+				nodes = append(nodes, stored)
+			}
+		}
+		return nil
+	})
+	return nodes, true, err
+}

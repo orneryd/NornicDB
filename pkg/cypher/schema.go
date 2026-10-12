@@ -2149,8 +2149,17 @@ func (e *StorageExecutor) parseIndexProperties(propertiesStr string) []string {
 func (e *StorageExecutor) addSchemaConstraint(constraint storage.Constraint, ifNotExists bool) error {
 	schema := e.storage.GetSchema()
 	_, existed := schema.ConstraintPropertyIndex(constraint.Name)
+	registered := schema.HasConstraintNamed(constraint.Name)
 	if err := schema.AddConstraint(constraint, ifNotExists); err != nil {
 		return err
+	}
+	// A new temporal constraint's history index is authoritative when its
+	// label is empty; over existing nodes it isn't until the next rebuild
+	// (#1126). IF NOT EXISTS on an existing constraint changes nothing.
+	if !registered && constraint.Type == storage.ConstraintTemporal {
+		if err := storage.MarkNewTemporalConstraintsForEngine(e.storage, schema, []storage.Constraint{constraint}); err != nil {
+			return err
+		}
 	}
 	index, owned := schema.ConstraintPropertyIndex(constraint.Name)
 	if existed || !owned {

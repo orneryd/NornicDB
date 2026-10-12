@@ -77,6 +77,7 @@ func (sm *SchemaManager) dropConstraintLocked(name string) (func(), error) {
 		var droppedPropertyIndex *PropertyIndex
 
 		delete(sm.constraints, name)
+		sm.forgetTemporalIndexCompleteLocked(c)
 
 		if constraintPropertyIndexKey(c) != "" {
 			if idx, ok := sm.arity1PropertyIndexLocked(c.Label, c.Properties[0]); ok && idx.OwningConstraint == name {

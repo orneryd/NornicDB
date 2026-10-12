@@ -79,6 +79,13 @@ type SchemaManager struct {
 	mu         sync.RWMutex
 	tokenOrder schemaTokenOrder
 
+	// Temporal constraints (by temporalIndexCompletenessKey) created at
+	// runtime: on an empty label their history index is complete from the
+	// start; over existing nodes it is incomplete until the next rebuild. See
+	// temporal_index_completeness.go.
+	temporalIndexCompleteKeys   map[string]struct{}
+	temporalIndexIncompleteKeys map[string]struct{}
+
 	// Active commit-time locks for exact UNIQUE constraint values. Entries are
 	// reference-counted across holders and waiters, then removed when unused, so
 	// same-value transactions serialize without false contention between
@@ -311,6 +318,7 @@ func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
 	}
 
 	sm.constraints[c.Name] = c
+	sm.forgetTemporalIndexCompleteLocked(c)
 
 	if c.OwnedIndex != "" {
 		if _, exists := sm.rangeIndexes[c.OwnedIndex]; !exists {
