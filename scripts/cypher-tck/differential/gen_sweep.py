@@ -520,6 +520,17 @@ for left, right in itertools.product(BOOLEAN_ATOMS, BOOLEAN_ATOMS):
         for e in [f"NOT ({left} {op} {right})", f"NOT (NOT {left} {op} {right})", f"NOT ({left} {op} NOT {right})"]:
             add("predicate-operands", "return", f"MATCH (a:Q)-[r:R]->(b:Q) RETURN {e} AS v ORDER BY a.id")
 
+# 13. UNWIND of an expression as written, not wrapped in a list: a property,
+# a property list joined with another list, a slice, a function's list, a
+# missing property, a map member, a variable.
+UNWIND_SOURCES = ["n.l", "n.l + n.l", "n.l + [4]", "[0] + n.l", "(n.l + n.l)", "n.l + l", "l + n.l",
+                  "n.l[0..2] + n.l", "n.l[1..]", "coalesce(n.l, []) + [9]", "reverse(n.l + [4])",
+                  "n.missing", "n.l + n.missing", "n.s", "o.l", "m.a", "m.a + 1", "n.`l`", "n.`l` + [5]",
+                  "l", "l + l", "[x IN n.l | x * 2] + n.l", "CASE WHEN true THEN n.l ELSE [] END + [7]"]
+for e in UNWIND_SOURCES:
+    add("unwind-source", "unwind", PREFIX + f" UNWIND {e} AS v RETURN v")
+    add("unwind-source", "unwind-count", PREFIX + f" UNWIND {e} AS v RETURN count(v) AS c")
+
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:
     json.dump({"setup": SETUP, "cases": cases}, out, separators=(",", ":"))

@@ -4751,10 +4751,9 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 	if val, ok := row[expr]; ok {
 		return coerceToUnwindItems(val), true
 	}
-	// Property access (a.b).
-	if dot := strings.Index(expr, "."); dot > 0 {
-		base := strings.TrimSpace(expr[:dot])
-		field := strings.TrimSpace(expr[dot+1:])
+	// Property access (a.b): the whole expression only, not one that starts
+	// with it (UNWIND n.p + n.q is a list concatenation).
+	if base, field, property := parseVarPropertyRef(expr); property {
 		if baseVal, ok := row[base]; ok {
 			if asMap, ok := toStringAnyMap(baseVal); ok {
 				if v, ok := asMap[field]; ok {
