@@ -26,6 +26,15 @@ func (e *danglingTraversalEngine) GetOutgoingEdges(nodeID storage.NodeID) ([]*st
 	return e.MemoryEngine.GetOutgoingEdges(nodeID)
 }
 
+// OutgoingEdgeHeaders mirrors GetOutgoingEdges so the traversal's header fast
+// path (relationshipsNeedOnlyHeaders) sees the same forced adjacency.
+func (e *danglingTraversalEngine) OutgoingEdgeHeaders(nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
+	if edges, ok := e.forcedOutgoing[nodeID]; ok {
+		return edges, true, nil
+	}
+	return e.MemoryEngine.OutgoingEdgeHeaders(nodeID)
+}
+
 func (e *danglingTraversalEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
 	if err, ok := e.missingNodeIDs[id]; ok {
 		return nil, err

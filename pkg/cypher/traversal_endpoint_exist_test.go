@@ -13,6 +13,7 @@ import (
 type countingEndpointEngine struct {
 	*storage.NamespacedEngine
 	reads, checks int
+	projected     int
 	hidden        storage.NodeID
 }
 
@@ -23,6 +24,7 @@ func (e *countingEndpointEngine) GetNode(id storage.NodeID) (*storage.Node, erro
 
 func (e *countingEndpointEngine) GetNodeProjected(id storage.NodeID, properties []string) (*storage.Node, error) {
 	e.reads++
+	e.projected++
 	return e.NamespacedEngine.GetNodeProjected(id, properties)
 }
 
@@ -57,13 +59,63 @@ func TestTraversalEndpointsNeedOnlyLabels(t *testing.T) {
 	require.True(t, traversalEndpointsNeedOnlyLabels(end("", []string{"P"}, nil)))
 	require.False(t, traversalEndpointsNeedOnlyLabels(end("", nil, nil))) // no labels → exist-only
 	require.False(t, traversalEndpointsNeedOnlyLabels(end("", []string{"P"}, map[string]interface{}{"k": 1})))
-	require.False(t, traversalEndpointsNeedOnlyLabels(end("b", []string{"P"}, nil))) // named endpoint is returned
+	// A named endpoint is labels-only only when the planner proved its
+	// properties are never read.
+	require.False(t, traversalEndpointsNeedOnlyLabels(end("b", []string{"P"}, nil)))
+	namedUnused := end("b", []string{"P"}, nil)
+	namedUnused.UnusedPropertyVariables = map[string]bool{"b": true}
+	require.True(t, traversalEndpointsNeedOnlyLabels(namedUnused))
+	namedRead := end("b", []string{"P"}, nil)
+	namedRead.UnusedPropertyVariables = map[string]bool{} // b's properties are read
+	require.False(t, traversalEndpointsNeedOnlyLabels(namedRead))
 	path := end("", []string{"P"}, nil)
 	path.PathVariable = "p"
 	require.False(t, traversalEndpointsNeedOnlyLabels(path))
 	chained := end("", []string{"P"}, nil)
 	chained.IsChained = true
 	require.False(t, traversalEndpointsNeedOnlyLabels(chained))
+}
+
+// A count over a named labelled endpoint whose properties the planner proved
+// unread loads the endpoint by ID + labels (a projected read), not a full
+// node, and returns the same rows (#1110 step 1).
+func TestNamedLabelledEndpointCountReadsOnlyLabels(t *testing.T) {
+	ctx := context.Background()
+	store := &countingEndpointEngine{NamespacedEngine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")}
+	exec := NewStorageExecutor(store)
+	_, err := exec.Execute(ctx, `
+		CREATE (a:P {id: 1}),
+		       (b:Q {id: 2, text: 'y'}),
+		       (c:Q {id: 3, text: 'z'})
+		CREATE (a)-[:K]->(b), (a)-[:K]->(c)
+	`, nil)
+	require.NoError(t, err)
+
+	store.reads, store.projected = 0, 0
+	result, err := exec.Execute(ctx, "MATCH (a:P)-[:K]->(l:Q) WHERE a.id >= 1 RETURN count(l) AS c", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
+	require.Greater(t, store.projected, 0, "named labelled endpoints must use the projected labels-only read")
+	require.Equal(t, store.reads, store.projected, "no full node read for a count-only named endpoint")
+}
+
+// A named labelled endpoint whose property is read still loads the full node.
+func TestNamedLabelledEndpointPropertyReadStillLoadsFullNode(t *testing.T) {
+	ctx := context.Background()
+	store := &countingEndpointEngine{NamespacedEngine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")}
+	exec := NewStorageExecutor(store)
+	_, err := exec.Execute(ctx, `
+		CREATE (a:P {id: 1}),
+		       (b:Q {id: 2, text: 'y'})
+		CREATE (a)-[:K]->(b)
+	`, nil)
+	require.NoError(t, err)
+
+	store.reads, store.projected = 0, 0
+	result, err := exec.Execute(ctx, "MATCH (a:P)-[:K]->(l:Q) RETURN l.text AS t", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"y"}}, result.Rows)
+	require.Zero(t, store.projected, "a property read must not use the labels-only read")
 }
 
 // A count over a labelled anonymous endpoint reads only the endpoint's labels

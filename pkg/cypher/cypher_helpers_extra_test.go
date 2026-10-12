@@ -718,14 +718,14 @@ func TestCypherHelpers_TraversalAndShortestPathHelpers(t *testing.T) {
 	require.NoError(t, err)
 
 	// Invalid pattern branch for executeMatchWithRelationshipsWithPathSeeded.
-	_, err = exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), "this is not a pattern", "", []returnItem{{expr: "a", alias: "a"}}, nil, nil, "", -1)
+	_, err = exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), "this is not a pattern", "", []returnItem{{expr: "a", alias: "a"}}, nil, nil, "", nil, -1)
 	require.Error(t, err)
 
 	// Valid traversal branch.
 	r, err := exec.executeMatchWithRelationshipsWithPathSeeded(context.Background(), "(a:A)-[r:KNOWS]->(b:B)", "", []returnItem{
 		{expr: "a.name", alias: "aName"},
 		{expr: "b.name", alias: "bName"},
-	}, nil, nil, "", -1)
+	}, nil, nil, "", nil, -1)
 	require.NoError(t, err)
 	require.NotEmpty(t, r.Rows)
 

@@ -92,12 +92,19 @@ func traversalEndpointsNeedOnlyExist(match *TraversalMatch) bool {
 
 // traversalEndpointsNeedOnlyLabels reports whether the nodes a traversal
 // reaches need only their labels checked: a labelled endpoint with no inline
-// property map, no path variable exposing the node, and (as a safe subset) an
-// anonymous endpoint variable, so the node is never returned to the user. The
-// traversal then reads ID + labels without decoding properties (#1110).
+// property map, no path variable exposing the node, and either an anonymous
+// endpoint variable or a named one whose properties no later clause reads
+// (match.UnusedPropertyVariables). The traversal then reads ID + labels
+// without decoding properties (#1110).
 func traversalEndpointsNeedOnlyLabels(match *TraversalMatch) bool {
-	return !match.IsChained && match.PathVariable == "" && match.EndNode.variable == "" &&
-		len(match.EndNode.labels) > 0 && len(match.EndNode.properties) == 0
+	if match.IsChained || match.PathVariable != "" ||
+		len(match.EndNode.labels) == 0 || len(match.EndNode.properties) > 0 {
+		return false
+	}
+	if match.EndNode.variable == "" {
+		return true
+	}
+	return match.UnusedPropertyVariables[match.EndNode.variable]
 }
 
 // traversalRelationshipsNeedOnlyHeaders reports whether a traversal needs
@@ -251,7 +258,7 @@ func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern 
 // endpoint and walks backwards, instead of expanding the pattern over every
 // relationship in the store and joining the bound value afterward. seedNodes
 // (start-side) takes priority when both are supplied.
-func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, endSeedNodes []*storage.Node, pathVariable string, earlyLimit int) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, seedNodes []*storage.Node, endSeedNodes []*storage.Node, pathVariable string, readTail []string, earlyLimit int) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -271,6 +278,15 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	// Store the path variable for path functions (relationships(path), nodes(path), length(path))
 	if pathVariable != "" {
 		matches.PathVariable = pathVariable
+	}
+	// Record which pattern node variables' properties no later clause reads,
+	// so a named labelled endpoint can load by ID + labels only (#1110). The
+	// pipeline supplies the read-only clauses after this MATCH (readTail);
+	// direct callers supply the RETURN items themselves.
+	if readTail != nil {
+		matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(matches, whereClause, readTail)
+	} else {
+		matches.UnusedPropertyVariables = e.traversalUnusedPropertyVariables(matches, returnItems, whereClause)
 	}
 	if earlyLimit == 0 {
 		return result, nil
@@ -876,7 +892,7 @@ func (e *StorageExecutor) tryExecuteTraversalStartSeedOrderLimit(ctx context.Con
 		return nil, false, nil
 	}
 
-	result, err := e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, pathVariable, -1)
+	result, err := e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, pathVariable, nil, -1)
 	if err != nil {
 		return nil, true, err
 	}
@@ -1073,6 +1089,12 @@ type TraversalMatch struct {
 	IsChained         bool               // True if this is a multi-segment pattern
 	PathVariable      string             // Variable name for path assignment (e.g., "path" in "path = (a)-[r]-(b)")
 	TraversalLimit    int                // Early traversal cap for LIMIT-only shapes (0 = disabled)
+	// UnusedPropertyVariables lists pattern node variables whose properties no
+	// later clause (RETURN, WHERE) reads, so the traversal may load a named
+	// labelled endpoint by ID + labels alone. nil means "not analysed": every
+	// variable is treated as property-read (the safe fallback). Computed by
+	// the planner in executeMatchWithRelationshipsWithPathSeeded.
+	UnusedPropertyVariables map[string]bool
 }
 
 // TraversalSegment represents one segment in a chained pattern
@@ -1686,6 +1708,11 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 		StartNode:    firstSeg.FromNode,
 		EndNode:      firstSeg.ToNode,
 		Relationship: firstSeg.Relationship,
+		// A path variable exposes the chain's nodes and relationships, and the
+		// planner's per-variable read analysis applies to every segment's
+		// endpoint, so propagate both into each segment's traversal flags.
+		PathVariable:            match.PathVariable,
+		UnusedPropertyVariables: match.UnusedPropertyVariables,
 	}
 	// Get initial paths from first segment
 	var currentPaths []PathResult
@@ -1721,9 +1748,11 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 
 			// Create a match for this segment starting from the last node
 			segMatch := &TraversalMatch{
-				StartNode:    seg.FromNode,
-				EndNode:      seg.ToNode,
-				Relationship: seg.Relationship,
+				StartNode:               seg.FromNode,
+				EndNode:                 seg.ToNode,
+				Relationship:            seg.Relationship,
+				PathVariable:            match.PathVariable,
+				UnusedPropertyVariables: match.UnusedPropertyVariables,
 			}
 
 			// Traverse from the last node
@@ -1860,6 +1889,12 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 	}
 
 	ctx := e.newTraversalContext(traversalCtx, startNode, &match.Relationship)
+	// Single-segment traversals (including each segment of a chain) share the
+	// planner's endpoint/relationship read analysis so the header and
+	// labels-only fast paths apply to chained patterns too (#1110).
+	ctx.endpointsNeedOnlyExist = traversalEndpointsNeedOnlyExist(match)
+	ctx.endpointsNeedOnlyLabels = traversalEndpointsNeedOnlyLabels(match)
+	ctx.relationshipsNeedOnlyHeaders = traversalRelationshipsNeedOnlyHeaders(match)
 	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
 }
 

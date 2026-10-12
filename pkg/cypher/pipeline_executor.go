@@ -2129,7 +2129,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 					startSeedNodes = seeds
 				}
 			}
-			result, err = e.executeMatchWithRelationshipsWithPathSeeded(ctx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.earlyLimit)
+			result, err = e.executeMatchWithRelationshipsWithPathSeeded(ctx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.readTail, rowHint.earlyLimit)
 			if err != nil {
 				return nil, true, err
 			}
