@@ -7,6 +7,11 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// splitPatternComprehension splits a pattern comprehension
+// [p = (a)-->(b) WHERE … | projection] into its pattern (with WHERE) and its
+// projection. A pattern comprehension starts with a node pattern, or a path
+// variable and = before one; a list comprehension [x IN list WHERE … | …]
+// starts with its variable, so an IN in the WHERE doesn't make one (#1109).
 func splitPatternComprehension(expr string) (string, string, bool) {
 	expr = strings.TrimSpace(expr)
 	if len(expr) < 3 || expr[0] != '[' || expr[len(expr)-1] != ']' {
@@ -62,6 +67,26 @@ func splitPatternComprehension(expr string) (string, string, bool) {
 		}
 	}
 	return "", "", false
+}
+
+// evaluateRowPatternComprehensionAtom evaluates an expression that is one
+// pattern comprehension where it stands, as evaluateRowSubqueryAtom does a
+// subquery: inside a comparison, a list, a CASE or a function argument, with
+// the row's variables and the statement's context (#1109). matched is false
+// for any other expression, or when the row carries no statement context.
+func (e *StorageExecutor) evaluateRowPatternComprehensionAtom(expr string, values map[string]interface{}) (interface{}, bool) {
+	if len(expr) < 3 || expr[0] != '[' || !patternComprehensionHead(expr[1:]) {
+		return nil, false
+	}
+	pattern, projection, comprehension := splitPatternComprehension(expr)
+	if !comprehension {
+		return nil, false
+	}
+	ctx := rowStatementContext(values)
+	if ctx == nil {
+		return nil, false
+	}
+	return e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, values), true
 }
 
 // patternComprehensionHead reports whether pattern is the head of a pattern
@@ -303,15 +328,6 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	if trimmed := strings.TrimSpace(expr); isStandaloneExistsSubquery(trimmed) {
 		matched, _ := e.evaluateRowExistsPredicate(ctx, trimmed, values)
 		return matched, true
-	}
-	// Pattern comprehensions can be nested in scalar functions. Resolve the
-	// graph-producing argument here, at the shared context-aware expression
-	// boundary, before the allocation-conscious scalar evaluator takes over.
-	if function, argument, ok := parseFunctionCallWS(strings.TrimSpace(expr)); ok && strings.EqualFold(function, "size") {
-		if pattern, projection, comprehension := splitPatternComprehension(argument); comprehension {
-			items := e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, values)
-			return int64(len(items)), true
-		}
 	}
 	// The row evaluator's error is the statement's: it is recorded, and the
 	// expression is unresolved.

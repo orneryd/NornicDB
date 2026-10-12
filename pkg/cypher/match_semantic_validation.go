@@ -735,6 +735,9 @@ func (e *StorageExecutor) validateWherePatternExpressionScope(scope matchSemanti
 			)
 		}
 	}
+	// A pattern comprehension binds its own variables (#1109); only a
+	// pattern expression may not.
+	expression = maskPatternComprehensions(expression)
 	if !containsRelationshipPattern(expression) {
 		return nil
 	}
@@ -748,6 +751,47 @@ func (e *StorageExecutor) validateWherePatternExpressionScope(scope matchSemanti
 		return createUndefinedVariableError(variable)
 	}
 	return nil
+}
+
+// maskPatternComprehensions blanks, keeping byte offsets, the inside of every
+// pattern comprehension in expression ([(a)-->(b) WHERE … | b.x]), whose
+// pattern binds variables of its own. Quoted text and relationship brackets
+// (-[r]->) are not comprehensions.
+func maskPatternComprehensions(expression string) string {
+	if strings.IndexByte(expression, '[') < 0 {
+		return expression
+	}
+	var masked []byte
+	for index := 0; index < len(expression); index++ {
+		switch character := expression[index]; character {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(expression, index, character) - 1
+			continue
+		case '[':
+		default:
+			continue
+		}
+		if index > 0 && expression[index-1] == '-' {
+			continue
+		}
+		close := findMatchingBracket(expression, index)
+		if close < 0 {
+			return expression
+		}
+		if _, _, comprehension := splitPatternComprehension(expression[index : close+1]); comprehension {
+			if masked == nil {
+				masked = []byte(expression)
+			}
+			for position := index + 1; position < close; position++ {
+				masked[position] = ' '
+			}
+			index = close
+		}
+	}
+	if masked == nil {
+		return expression
+	}
+	return string(masked)
 }
 
 func maskSubqueryBodies(expression string) string {

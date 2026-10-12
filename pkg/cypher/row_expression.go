@@ -125,6 +125,9 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 	if value, matched, err := e.evaluateRowSubqueryAtom(expr, values); matched {
 		return value, err == nil, err
 	}
+	if value, matched := e.evaluateRowPatternComprehensionAtom(expr, values); matched {
+		return value, true, nil
+	}
 	if variable, labels, labelPredicate := parseWithWhereLabelTest(expr); labelPredicate {
 		return entityHasAllLabelsOrTypes(values[variable], labels), true, nil
 	}

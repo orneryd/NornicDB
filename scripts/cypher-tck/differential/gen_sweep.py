@@ -497,6 +497,22 @@ for name, args in FAILING_CREATES:
 
 
 # 14. Predicate operands: AND / OR / XOR / NOT over pattern predicates,
+# 12c. Pattern comprehensions (#1109): the WHERE takes any predicate, IN and
+# NOT IN included, and the projection any expression, a list comprehension
+# with its own IN included; each comprehension is a value in every position.
+COMPREHENSION_PATTERNS = ["(n)-[:R]->(b)", "(b)<-[:R]-(n)", "(n)-[:R*1..2]->(b)", "(n)-->(b:Q)", "q = (n)-[:R]->(b)"]
+COMPREHENSION_WHERES = ["", " WHERE b.id IN [2, 3]", " WHERE NOT b.id IN [2]", " WHERE b.id IN l",
+                        " WHERE b.s IN ['b', 'x']", " WHERE b.id IN [x IN l WHERE x > 1]", " WHERE b.id = 2 OR b.id IN [3]",
+                        " WHERE b:Q AND b.id IN [2, 3]", " WHERE b.s STARTS WITH 'b'", " WHERE any(x IN [2] WHERE x = b.id)",
+                        " WHERE b.missing IS NULL AND 2 IN [b.id]"]
+COMPREHENSION_PROJECTIONS = ["b.id", "[x IN [b.id] WHERE x IN [2, 3] | x * 10]", "b.id IN [2]"]
+for pattern in COMPREHENSION_PATTERNS:
+    for where in COMPREHENSION_WHERES:
+        for projection in COMPREHENSION_PROJECTIONS + (["length(q)"] if pattern.startswith("q =") else []):
+            e = f"[{pattern}{where} | {projection}]"
+            place("pattern-comprehension", e, ["return", "with", "unwind"])
+            place("pattern-comprehension", f"size({e}) > 0", ["where", "case"])
+
 # EXISTS / COUNT subqueries and plain conditions. An operand is a pattern
 # only when it is one whole relationship chain (#907): a parenthesized
 # conjunction of subqueries that contains "-[" is not one.
