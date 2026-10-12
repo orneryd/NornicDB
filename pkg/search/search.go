@@ -5878,6 +5878,11 @@ func (s *Service) resolveVectorExactScorer(policy exactScorerPolicy, vi *VectorI
 	}
 }
 
+// hnswBeforeInstallHook, set by tests only, runs after an initial HNSW build
+// and before the graph is installed: where a vector stored during the build
+// used to be lost (Personal Documents I41).
+var hnswBeforeInstallHook func()
+
 // getOrCreateHNSWIndex returns the HNSW index, creating it if needed.
 func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HNSWIndex, error) {
 	if ctx == nil {
@@ -5904,6 +5909,30 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 
 	var built *HNSWIndex
 	var buildStats hnswBuildStats
+
+	// A vector stored or removed while the graph is built from its snapshot
+	// would miss it: no index is installed yet to take the change. As during
+	// a rebuild, such changes go to hnswRebuildOverlay from before the
+	// snapshot, and are replayed once the graph is installed (Personal
+	// Documents I41).
+	racesTracked := false
+	if !s.hnswRebuildInFlight.Load() {
+		s.hnswRebuildOverlay.Reset()
+		racesTracked = s.hnswRebuildInFlight.CompareAndSwap(false, true)
+	}
+	installed := false
+	defer func() {
+		if !racesTracked {
+			return
+		}
+		if installed {
+			go s.replayHNSWBuildRaces(built)
+			return
+		}
+		s.hnswRebuildOverlay.Reset()
+		s.hnswRebuildInFlight.Store(false)
+	}()
+
 	if vfs != nil && vfs.Count() > 0 {
 		total := vfs.Count()
 		s.logPrintf("[HNSW] 🔨 Building from file store: %d vectors (chunk size 10k)", total)
@@ -5944,6 +5973,9 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 		return nil, localizedError(localization.SearchVectorIndexNil(), nil)
 	}
 
+	if hnswBeforeInstallHook != nil {
+		hnswBeforeInstallHook()
+	}
 	// Install unless someone else won the race.
 	s.hnswMu.Lock()
 	if s.hnswIndex != nil {
@@ -5963,9 +5995,33 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 
 	s.hnswIndex = built
 	s.hnswMu.Unlock()
+	installed = true
 
 	s.ensureHNSWMaintenance()
 	return built, nil
+}
+
+// replayHNSWBuildRaces applies to built, once installed, the vector changes
+// that raced its initial build (getOrCreateHNSWIndex), then stops recording
+// them. It holds indexMu, as a rebuild's swap does, so no change lands
+// between the replay and the end of recording; changes made after the
+// install reached built directly, and replaying the latest state of each
+// vector again is idempotent. It runs on its own goroutine because the
+// build runs under pipelineMu, and indexMu is taken before pipelineMu
+// elsewhere.
+func (s *Service) replayHNSWBuildRaces(built *HNSWIndex) {
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	s.hnswMu.RLock()
+	current := s.hnswIndex == built
+	s.hnswMu.RUnlock()
+	if current {
+		if err := applyHNSWMutationSnapshot(built, s.hnswRebuildOverlay.snapshot()); err != nil {
+			s.logPrintf("⚠️ HNSW: replaying the vectors stored during the build failed: %v", err)
+		}
+	}
+	s.hnswRebuildOverlay.Reset()
+	s.hnswRebuildInFlight.Store(false)
 }
 
 func (s *Service) ensureHNSWMaintenance() {
