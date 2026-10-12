@@ -13,6 +13,26 @@ type PermissionRequirements struct {
 	Write  bool
 	Schema bool
 	Admin  bool
+	// BoostedProcedures name the procedures the query calls when they alone
+	// make the query need administrator rights: a role holding EXECUTE
+	// BOOSTED PROCEDURE for every one of them may run the query without
+	// them.
+	BoostedProcedures []string
+}
+
+// AdminGrantedBy reports whether a role's procedure grants satisfy the
+// query's administrator requirement: it needs admin only for the procedures
+// it calls, and allowsBoosted grants every one of them boosted.
+func (r PermissionRequirements) AdminGrantedBy(allowsBoosted func(procedure string) bool) bool {
+	if !r.Admin || len(r.BoostedProcedures) == 0 || allowsBoosted == nil {
+		return false
+	}
+	for _, procedure := range r.BoostedProcedures {
+		if !allowsBoosted(procedure) {
+			return false
+		}
+	}
+	return true
 }
 
 // QueryPermissionRequirements returns the permissions required by a query and
@@ -33,6 +53,9 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 	// Every procedure the query calls counts, not just the first: a later
 	// CALL (chained after YIELD, or inside a subquery) needs its own mode's
 	// permission too.
+	// An administration command needs admin whatever it calls; otherwise
+	// the admin procedures the query calls are listed for procedure grants.
+	adminCommand := requirements.Admin
 	for _, procedure := range registeredProceduresForCalls(query) {
 		switch procedure.Mode {
 		case ProcedureModeWrite:
@@ -40,6 +63,9 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 		case ProcedureModeSchema:
 			requirements.Schema = true
 		case ProcedureModeDBMS, ProcedureModeAdmin:
+			if !adminCommand {
+				requirements.BoostedProcedures = append(requirements.BoostedProcedures, procedure.Name)
+			}
 			requirements.Admin = true
 		}
 	}
@@ -141,6 +167,10 @@ func isSchemaPermissionQuery(query string) bool {
 
 func isAdminPermissionQuery(query string) bool {
 	commandOffset := firstExecutableCypherOffset(query)
+	// GRANT, REVOKE, DENY and SHOW … PRIVILEGES administer privileges.
+	if commandOffset >= 0 && commandOffset < len(query) && isPrivilegeAdministrationCommand(query[commandOffset:]) {
+		return true
+	}
 	// CREATE OR REPLACE DATABASE: the pair scan below misses the OR REPLACE
 	// between CREATE and DATABASE.
 	if isCreateOrReplaceDatabaseQuery(query) {
@@ -468,6 +498,21 @@ func (e *PermissionDeniedError) Error() string {
 	}
 }
 
+// procedureGrantCheckerKey carries the principal's boosted procedure grants
+// (WithProcedureGrantChecker).
+type procedureGrantCheckerKey struct{}
+
+// WithProcedureGrantChecker attaches allowsBoosted, which reports whether the
+// principal's roles hold EXECUTE BOOSTED PROCEDURE for a procedure: a query
+// that needs administrator rights only for the procedure it calls is then
+// authorized without them (AuthorizeQuery).
+func WithProcedureGrantChecker(ctx context.Context, allowsBoosted func(procedure string) bool) context.Context {
+	if allowsBoosted == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, procedureGrantCheckerKey{}, allowsBoosted)
+}
+
 // AuthorizeQuery enforces requirements when an entitlement checker is present.
 // Top-level and nested execution boundaries both call it so dynamically
 // supplied procedure statements cannot bypass transport authorization.
@@ -484,6 +529,12 @@ func AuthorizeQuery(ctx context.Context, query string) error {
 		}
 	}
 	requirements := QueryPermissionRequirements(query)
+	if requirements.Admin && !hasPermission("admin") {
+		allowsBoosted, _ := ctx.Value(procedureGrantCheckerKey{}).(func(string) bool)
+		if requirements.AdminGrantedBy(allowsBoosted) {
+			requirements.Admin = false
+		}
+	}
 	for _, permission := range []struct {
 		name     string
 		required bool

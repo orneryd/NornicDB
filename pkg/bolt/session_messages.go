@@ -125,7 +125,7 @@ func (s *Session) handleRun(data []byte) error {
 		if isSchema && !s.authResult.HasPermission(string(auth.PermSchema)) {
 			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.SchemaPermissionRequired())
 		}
-		if isAdmin && !s.authResult.HasPermission(string(auth.PermAdmin)) {
+		if isAdmin && !s.authResult.HasPermission(string(auth.PermAdmin)) && !requirements.AdminGrantedBy(s.server.procedureGrants(s.authResult.Roles)) {
 			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.AdminPermissionRequired())
 		}
 		if isWrite && !s.authResult.HasPermission(string(auth.PermWrite)) {
@@ -1826,6 +1826,7 @@ func (s *Session) withSessionIdentity(ctx context.Context) context.Context {
 		ctx = cypher.WithPermissionChecker(ctx, func(permission string) bool {
 			return s.authResult.HasPermission(permission)
 		})
+		ctx = cypher.WithProcedureGrantChecker(ctx, s.server.procedureGrants(s.authResult.Roles))
 	}
 	return ctx
 }

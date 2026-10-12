@@ -762,10 +762,12 @@ type Server struct {
 
 	// Per-database access control (Neo4j-aligned). When auth disabled, Full is used.
 	// When auth enabled, allowlistStore (if set) provides allowlist-based mode per principal.
-	databaseAccessMode    auth.DatabaseAccessMode
-	allowlistStore        *auth.AllowlistStore        // loaded from system DB when auth enabled
-	roleStore             *auth.RoleStore             // user-defined roles when auth enabled
-	privilegesStore       *auth.PrivilegesStore       // per-DB read/write (Phase 4) when auth enabled
+	databaseAccessMode auth.DatabaseAccessMode
+	allowlistStore     *auth.AllowlistStore  // loaded from system DB when auth enabled
+	roleStore          *auth.RoleStore       // user-defined roles when auth enabled
+	privilegesStore    *auth.PrivilegesStore // per-DB read/write (Phase 4) when auth enabled
+	// procedurePrivileges holds EXECUTE [BOOSTED] PROCEDURE grants.
+	procedurePrivileges   *auth.ProcedurePrivilegeStore
 	roleEntitlementsStore *auth.RoleEntitlementsStore // per-role global entitlements when auth enabled
 	dbConfigStore         *dbconfig.Store             // per-DB config overrides (embedding, search, etc.)
 	processConfig         *nornicConfig.Config
@@ -1718,6 +1720,12 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACPrivilegesLoadFailedEvent(loadErr))
 		} else {
 			s.privilegesStore = privilegesStore
+		}
+		procedurePrivileges := auth.NewProcedurePrivilegeStore(systemStorage)
+		if loadErr := procedurePrivileges.Load(ctx); loadErr != nil {
+			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACPrivilegesLoadFailedEvent(loadErr))
+		} else {
+			s.procedurePrivileges = procedurePrivileges
 		}
 		roleEntitlementsStore := auth.NewRoleEntitlementsStore(systemStorage)
 		if loadErr := roleEntitlementsStore.Load(ctx); loadErr != nil {

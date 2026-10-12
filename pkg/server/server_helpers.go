@@ -346,6 +346,16 @@ func hasPermission(s *Server, roles []string, required auth.Permission) bool {
 	return false
 }
 
+// ProcedureGrantChecker reports, for a principal's roles, whether they hold
+// EXECUTE BOOSTED PROCEDURE for a procedure; nil when no grants are loaded.
+func (s *Server) ProcedureGrantChecker(roles []string) func(procedure string) bool {
+	if s == nil || s.procedurePrivileges == nil || len(roles) == 0 {
+		return nil
+	}
+	store := s.procedurePrivileges
+	return func(procedure string) bool { return store.AllowsBoosted(roles, procedure) }
+}
+
 func isMutationQuery(query string) bool {
 	requirements := cypher.QueryPermissionRequirements(query)
 	return requirements.Write || requirements.Schema
@@ -364,7 +374,7 @@ func (s *Server) missingQueryPermission(claims *auth.JWTClaims, dbName, query st
 	if requirements.Schema && !hasPermission(s, roles, auth.PermSchema) {
 		return auth.PermSchema
 	}
-	if requirements.Admin && !hasPermission(s, roles, auth.PermAdmin) {
+	if requirements.Admin && !hasPermission(s, roles, auth.PermAdmin) && !requirements.AdminGrantedBy(s.ProcedureGrantChecker(roles)) {
 		return auth.PermAdmin
 	}
 	target, _ := s.graphAccess(nil, dbName)

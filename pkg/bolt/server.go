@@ -240,6 +240,7 @@ type Server struct {
 	databaseAccessModeResolver func(roles []string) auth.DatabaseAccessMode
 	// Resolver for per-DB read/write (Phase 4). When set, used for mutation write check.
 	resolvedAccessResolver    func(roles []string, dbName string) auth.ResolvedAccess
+	procedureGrantResolver    func(roles []string) func(procedure string) bool
 	databaseConnectionResolve func(databaseName string) (string, error)
 	databaseConnectionAdmit   func(databaseName string) error
 	databaseConnectionRelease func(databaseName string)
@@ -961,6 +962,29 @@ func (s *Server) SetResolvedAccessResolver(resolver func(roles []string, dbName 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.resolvedAccessResolver = resolver
+}
+
+// SetProcedureGrantResolver sets how a session's roles resolve to their
+// EXECUTE BOOSTED PROCEDURE grants, so a role granted a procedure that needs
+// administrator rights may run it (the HTTP server's ProcedureGrantChecker).
+func (s *Server) SetProcedureGrantResolver(resolver func(roles []string) func(procedure string) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.procedureGrantResolver = resolver
+}
+
+// procedureGrants is the session roles' boosted procedure grant check, or nil.
+func (s *Server) procedureGrants(roles []string) func(procedure string) bool {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	resolver := s.procedureGrantResolver
+	s.mu.RUnlock()
+	if resolver == nil {
+		return nil
+	}
+	return resolver(roles)
 }
 
 // SetDatabaseConnectionAdmission configures canonical per-database connection admission.

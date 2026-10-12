@@ -925,6 +925,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 	boltServer.SetDatabaseAccessModeResolver(httpServer.GetDatabaseAccessModeForRoles)
 	// Wire per-DB read/write for mutation checks (Phase 4)
 	boltServer.SetResolvedAccessResolver(httpServer.GetResolvedAccessForRoles)
+	// EXECUTE BOOSTED PROCEDURE grants, as the HTTP server applies them.
+	boltServer.SetProcedureGrantResolver(httpServer.ProcedureGrantChecker)
 
 	// Phase 1 OBS-07/OBS-08: lifecycle.Run is the canonical supervisor.
 	// The previous channel-based pattern (signal.Notify + sequential

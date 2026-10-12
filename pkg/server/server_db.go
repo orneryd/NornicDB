@@ -1694,6 +1694,9 @@ func (s *Server) runRequestStatements(
 ) (failed bool) {
 	ctx = cypher.WithAuthToken(ctx, authToken)
 	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(nil, claims))
+	if claims != nil {
+		ctx = cypher.WithProcedureGrantChecker(ctx, s.ProcedureGrantChecker(claims.Roles))
+	}
 	mode := s.getDatabaseAccessMode(claims)
 	// A name is checked like the request's database (graphAccess: a
 	// composite constituent needs its composite and its database), and
