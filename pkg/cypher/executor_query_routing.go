@@ -22,7 +22,8 @@ func isSystemCommandNoGraph(cypher string) bool {
 		startsWithKeywords(cypher, "DROP", "DATABASE") ||
 		startsWithKeywords(cypher, "DROP", "ALIAS") ||
 		startsWithKeywords(cypher, "SHOW", "DATABASES") ||
-		startsWithKeywords(cypher, "ALTER", "DATABASE")
+		startsWithKeywords(cypher, "ALTER", "DATABASE") ||
+		isPrivilegeAdministrationCommand(cypher)
 }
 
 func isShowConstraintContractsCommand(cypher string) bool {
@@ -174,6 +175,12 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	}
 
 	switch {
+	case isProcedurePrivilegeCommand(cypher):
+		return e.executeProcedurePrivilegeCommand(ctx, cypher)
+	case startsWithKeywordFold(strings.TrimSpace(cypher), "GRANT"), startsWithKeywordFold(strings.TrimSpace(cypher), "REVOKE"),
+		startsWithKeywordFold(strings.TrimSpace(cypher), "DENY"):
+		// Only procedure execution privileges are supported.
+		return nil, unsupportedAdministrationCommandError(cypher)
 	case isCreateProcedureCommand(cypher):
 		return e.executeCreateProcedure(ctx, cypher)
 	case startsWithKeywords(cypher, "CREATE", "DECAY PROFILE"),
@@ -435,6 +442,7 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) erro
 // SET / REMOVE OPTION, #937).
 func isNornicExtensionStatement(cypher string) bool {
 	return isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
+		isPrivilegeAdministrationCommand(cypher) ||
 		startsWithKeywords(cypher, "SHOW", "LIMITS") ||
 		(startsWithKeywords(cypher, "ALTER", "DATABASE") && (findKeywordIndex(cypher, "SET LIMIT") >= 0 ||
 			findKeywordIndex(cypher, "SET OPTION") >= 0 || findKeywordIndex(cypher, "REMOVE OPTION") >= 0)) ||
@@ -806,7 +814,7 @@ func hasValidStartKeyword(cypher string) bool {
 			return true
 		}
 	}
-	return false
+	return isPrivilegeCommandShaped(cypher)
 }
 
 // ensureSyntaxValidationCache lazily installs the syntax-validation cache
@@ -984,6 +992,9 @@ func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher strin
 	case startsWithKeywords(cypher, "TERMINATE", "TRANSACTIONS"),
 		startsWithKeywords(cypher, "TERMINATE", "TRANSACTION"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeTerminateTransactions)
+		return result, true, err
+	case isShowPrivilegesCommand(cypher):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowPrivileges)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "ROLES"),
 		startsWithKeywords(cypher, "SHOW", "ROLE"),

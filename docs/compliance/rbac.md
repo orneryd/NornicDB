@@ -196,6 +196,29 @@ curl -X PUT http://localhost:7474/auth/access/privileges \
   ]'
 ```
 
+### Procedure Privileges
+
+A procedure that needs administrator rights (the change-feed procedure `db.cdc.query`, for example) can be granted to a role with Neo4j's statement, so that a non-admin login can run it without other administrator rights:
+
+```cypher
+// On the system database, as an administrator
+GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO cdc_reader
+REVOKE EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS FROM cdc_reader
+SHOW PRIVILEGES
+SHOW ROLE cdc_reader PRIVILEGES
+```
+
+- A procedure is named exactly or with a glob: `*` stands for any characters, dots included, and `?` for one. Several names and several roles can be listed, separated by commas.
+- `BOOSTED` lets the role run the matching procedures even when they need administrator rights. A plain `EXECUTE PROCEDURE` grant is recorded and listed, but adds nothing to what the role may already run.
+- The grant doesn't widen database access. The role still needs the global `read` entitlement and read access to each database the procedure reads; give it read access only on that database to keep it to one.
+- The role must exist (built-in, or created with `POST /auth/roles`). Only administrators may run `GRANT`, `REVOKE` and `SHOW … PRIVILEGES`.
+- `SHOW PRIVILEGES` lists the procedure privileges in Neo4j's columns (`access`, `action`, `resource`, `graph`, `segment`, `role`, `immutable`) and takes `YIELD` and `WHERE`. Other privilege statements (`GRANT ROLE`, `DENY`, graph privileges) aren't supported.
+
+A change-feed reader, set up once:
+
+1. Create the role (`POST /auth/roles`), give it the `read` entitlement (`PUT /auth/role-entitlements`) and read access on its database only (`PUT /auth/access/privileges`), and assign it to the worker login.
+2. Run `GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO cdc_reader` on the system database as an administrator.
+
 ### How Access Is Resolved
 
 When a user queries a database, NornicDB resolves access in this order:

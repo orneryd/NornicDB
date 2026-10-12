@@ -112,10 +112,12 @@ func TestUnsupportedAdministrationCommands(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 	for query, code := range map[string]string{
-		"SHOW ROLES":                 "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
-		"SHOW PRIVILEGES":            "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
-		"SHOW USER neo4j PRIVILEGES": "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
-		"SHOW SERVERS":               "Neo.ClientError.Statement.NotSystemDatabaseError",
+		"SHOW ROLES":                    "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
+		"GRANT ROLE reader TO bob":      "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
+		"DENY TRAVERSE ON GRAPH * TO r": "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
+		"GRANT ADMIN TO user":           "Neo.ClientError.Statement.SyntaxError",
+		"SHOW USER neo4j PRIVILEGES":    "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
+		"SHOW SERVERS":                  "Neo.ClientError.Statement.NotSystemDatabaseError",
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
