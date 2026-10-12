@@ -1531,7 +1531,10 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 		return e.traverseChainedGraph(ctx, match, nil)
 	}
 
-	startNodes, _, err := e.collectPipelineInitialNodeCandidates(ctx, match.StartNode, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
+	startNodes, seeded, err := e.relationshipTypeSeedNodes(ctx, match)
+	if !seeded && err == nil {
+		startNodes, _, err = e.collectPipelineInitialNodeCandidates(ctx, match.StartNode, "", pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
+	}
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil
@@ -1558,6 +1561,54 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 	}
 
 	return e.traverseGraphSequential(ctx, match, startNodes, viewport, checker)
+}
+
+// relationshipTypeSeedNodes is the start nodes of a one-hop match whose start
+// node has no label or property and whose relationship has types, such as
+// ()-[r:T {id: $id}]->(): the endpoints the direction starts from, of the
+// relationships of those types, read from the type index (Personal
+// Documents I42). A label-less scan would read and decode every node, for a
+// relationship among a few. seeded is false for any other match, which
+// collectPipelineInitialNodeCandidates seeds. The traversal still checks the
+// whole pattern from each start node.
+func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *TraversalMatch) (nodes []*storage.Node, seeded bool, err error) {
+	relationship := match.Relationship
+	if len(match.StartNode.labels) > 0 || len(match.StartNode.properties) > 0 || len(relationship.Types) == 0 ||
+		relationship.VariableLength || relationship.MinHops != 1 || relationship.MaxHops != 1 {
+		return nil, false, nil
+	}
+	store := e.getStorage(ctx)
+	seen := make(map[storage.NodeID]bool)
+	add := func(id storage.NodeID) {
+		if seen[id] {
+			return
+		}
+		seen[id] = true
+		if node, getErr := store.GetNode(id); getErr == nil && node != nil {
+			nodes = append(nodes, node)
+		}
+	}
+	for _, relationshipType := range relationship.Types {
+		edges, err := store.GetEdgesByType(relationshipType)
+		if err != nil {
+			return nil, true, err
+		}
+		for _, edge := range edges {
+			if edge == nil {
+				continue
+			}
+			switch relationship.Direction {
+			case "outgoing":
+				add(edge.StartNode)
+			case "incoming":
+				add(edge.EndNode)
+			default:
+				add(edge.StartNode)
+				add(edge.EndNode)
+			}
+		}
+	}
+	return nodes, true, nil
 }
 
 func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
