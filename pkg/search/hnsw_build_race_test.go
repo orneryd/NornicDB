@@ -40,3 +40,24 @@ func TestHNSWInitialBuildKeepsChangesThatRaceIt(t *testing.T) {
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "after", ChunkEmbeddings: [][]float32{{0, 0, 1}}}))
 	require.Equal(t, 2, index.Size())
 }
+
+// A build that fails stops recording the changes that race it, so a later
+// build or rebuild can record its own.
+func TestHNSWFailedInitialBuildStopsRecording(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
+	engine := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = engine.Close() })
+	svc := NewServiceWithDimensions(engine, 3)
+	for _, id := range []storage.NodeID{"a", "b", "c"} {
+		require.NoError(t, svc.IndexNode(&storage.Node{ID: id, ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := svc.getOrCreateHNSWIndex(ctx, 3)
+	require.Error(t, err)
+	require.False(t, svc.hnswRebuildInFlight.Load())
+	index, err := svc.getOrCreateHNSWIndex(context.Background(), 3)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return !svc.hnswRebuildInFlight.Load() }, 5*time.Second, time.Millisecond)
+	require.Equal(t, 3, index.Size())
+}
