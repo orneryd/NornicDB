@@ -1,41 +1,44 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
-// A quantifier or reduce whose arguments hold a subquery is one scope unit;
-// other calls and text are not.
-func TestVariableScopeCallAt(t *testing.T) {
-	for expr, want := range map[string]string{
-		"all(v IN l WHERE EXISTS { MATCH (n) WHERE n.id = v })":   "QUANTIFIER",
-		"SINGLE (v IN l WHERE COUNT { MATCH (n {id: v}) } = 1)":   "QUANTIFIER",
-		"reduce(s = 0, v IN l | s + COUNT { MATCH (n {id: v}) })": "REDUCE",
-		"all(v IN l WHERE v > 1)":                                 "",
-		"all(v IN l)":                                             "",
-		"any(v IN [{count: 1}] WHERE v.count = 1)":                "",
-		"any(v IN l WHERE EXISTS { MATCH (n) }":                   "",
-		"anything(v IN l WHERE EXISTS { MATCH (n) })":             "",
-		"none":       "",
-		"single + 1": "",
+// boundChainCount's traversal matches literal and parameter property maps
+// only; a map value that reads a variable, bound in the row or not, is left
+// to the kernel or the pipeline (#1055).
+func TestPatternMapsAreConstant(t *testing.T) {
+	for pattern, want := range map[string]bool{
+		"(n)-[:R]->(m)":                  true,
+		"(n {id: 1})-[:R {k: $k}]->(m)":  true,
+		"(n {s: 'a {b} c', l: [1, 2]})":  true,
+		"(n)-[:R]->(m {id: o.id})":       false,
+		"(n {id: i + 1})-->()":           false,
+		"(n {id: r.ids[0]})":             false,
+		"()-[x {id: prop}]->()":          false,
+		"(n {id: 1}) WHERE n.s = '(r {'": true,
+		"(n {id: r.prop":                 false,
 	} {
-		scope, ok := variableScopeCallAt(expr, 0)
-		require.Equal(t, want != "", ok, expr)
-		require.Equal(t, want, scope.kind, expr)
-	}
-	for _, expr := range []string{"n.all(v IN l WHERE EXISTS { MATCH (n) })", "$all(v IN l WHERE EXISTS { MATCH (n) })", "xall(v IN l WHERE EXISTS { MATCH (n) })"} {
-		_, ok := variableScopeCallAt(expr, 2)
-		require.False(t, ok, expr)
+		require.Equal(t, want, patternMapsAreConstant(pattern), pattern)
 	}
 }
 
-func TestSubqueryPropertyMapReadsRowValue(t *testing.T) {
-	values := map[string]interface{}{"r": map[string]interface{}{"prop": 1}}
-	require.True(t, subqueryPropertyMapReadsRowValue("(n {id: r.prop})", values))
-	require.True(t, subqueryPropertyMapReadsRowValue("()-[x {id: r.prop}]->()", values))
-	require.False(t, subqueryPropertyMapReadsRowValue("(n {id: 1}) WHERE n.s = '(r {'", values))
-	require.False(t, subqueryPropertyMapReadsRowValue("(n {id: $r})-->(m {k: 1})", map[string]interface{}{"x": 1}))
-	require.False(t, subqueryPropertyMapReadsRowValue("(n {id: r.prop", values))
+// boundChainCount compares a traversal with the row's nodes and
+// relationships: a chain variable the row binds to anything else is left to
+// the kernel or the pipeline.
+func TestChainVariablesBindEntities(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "chainvars"))
+	ctx := context.Background()
+	matches := exec.parseTraversalPattern(ctx, "(n)-[r:R]->(m)")
+	require.NotNil(t, matches)
+	node, edge := &storage.Node{ID: "n1"}, &storage.Edge{ID: "e1"}
+	require.True(t, chainVariablesBindEntities(matches, map[string]interface{}{"n": node}))
+	require.True(t, chainVariablesBindEntities(matches, map[string]interface{}{"n": node, "r": edge, "m": node}))
+	require.False(t, chainVariablesBindEntities(matches, map[string]interface{}{"n": node, "r": "ab"}))
+	require.False(t, chainVariablesBindEntities(matches, map[string]interface{}{"n": node, "m": int64(1)}))
+	require.False(t, chainVariablesBindEntities(matches, map[string]interface{}{"n": node, "r": node}))
 }

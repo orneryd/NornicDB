@@ -225,6 +225,24 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 			}
 		}
 		return -1
+	case '}':
+		// EXISTS / COUNT / COLLECT { … }: the receiver starts at its keyword.
+		if open := matchingRowDelimiterStart(expression, end, '{', '}'); open > 0 {
+			word := open - 1
+			for word >= 0 && isASCIIWhitespace(expression[word]) {
+				word--
+			}
+			for word >= 0 && isRowReceiverIdentifierByte(expression[word]) {
+				word--
+			}
+			if _, keywordOpen, ok := subqueryExpressionKeywordAt(expression, word+1); ok && keywordOpen == open {
+				return word + 1
+			}
+		}
+		for start > 0 && isRowReceiverIdentifierByte(expression[start-1]) {
+			start--
+		}
+		return start
 	default:
 		for start > 0 && isRowReceiverIdentifierByte(expression[start-1]) {
 			start--

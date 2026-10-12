@@ -90,10 +90,6 @@ func TestKeywordPositionHelpersWithNonASCIIText(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "k748h"))
 	ctx := context.Background()
 
-	require.Equal(t, "MATCH (n)-[:R]->(m:İ {x: 'ıı'})",
-		exec.extractSubquery("n.a = 'ıı' AND EXISTS { MATCH (n)-[:R]->(m:İ {x: 'ıı'}) }", "EXISTS"))
-	require.Equal(t, "", exec.extractSubquery("n.a = 'ıı'", "EXISTS"))
-
 	node := &storage.Node{ID: "k748h:n", Labels: []string{"P"}, Properties: map[string]any{"name": "ıstanbul", "tag": "İİ-x"}}
 	require.True(t, exec.evaluateStringOp(ctx, node, "n", "n.name STARTS WITH 'ıs'", "STARTS WITH"))
 	require.True(t, exec.evaluateStringOp(ctx, node, "n", "n.tag CONTAINS 'İ-'", "CONTAINS"))

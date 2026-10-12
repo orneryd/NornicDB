@@ -122,6 +122,9 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 	if value, ok := parseLiteralValueFromComputedRow(expr); ok {
 		return value, true, nil
 	}
+	if value, matched, err := e.evaluateRowSubqueryAtom(expr, values); matched {
+		return value, err == nil, err
+	}
 	if variable, labels, labelPredicate := parseWithWhereLabelTest(expr); labelPredicate {
 		return entityHasAllLabelsOrTypes(values[variable], labels), true, nil
 	}
@@ -189,7 +192,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 
 	if function, argument, ok := parseFunctionCallWS(expr); ok {
 		var argumentErr error
-		temporalContext, _ := values[temporalRowContextKey].(context.Context)
+		temporalContext, _ := values[rowStatementContextKey].(context.Context)
 		if temporalContext == nil {
 			temporalContext = context.Background()
 		}
@@ -236,7 +239,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 					nodes[name] = node
 				}
 			}
-			search, _ := values[temporalRowContextKey].(context.Context)
+			search, _ := values[rowStatementContextKey].(context.Context)
 			if search == nil {
 				search = context.Background()
 			}
@@ -250,7 +253,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			// subqueries are non-null booleans and end coalesce immediately.
 			for _, expression := range splitTopLevelComma(argument) {
 				trimmed := strings.TrimSpace(expression)
-				if matched, recognized := e.evaluateRowExistsPredicate(context.Background(), trimmed, values); recognized {
+				if matched, recognized := e.evaluateRowExistsPredicate(rowStatementContextOrBackground(values), trimmed, values); recognized {
 					return matched, true, nil
 				}
 				value, resolved, err := e.evaluateRowValue(trimmed, values)
@@ -1160,7 +1163,7 @@ func (e *StorageExecutor) evaluateRowCaseExpression(expr string, values map[stri
 				}
 				matched = truth == truthTrue
 			} else {
-				matched = e.evaluateRowPredicate(context.Background(), clause.condition, values)
+				matched = e.evaluateRowPredicate(rowStatementContextOrBackground(values), clause.condition, values)
 			}
 			if matched {
 				return e.evaluateRowValue(clause.result, values)
@@ -1210,7 +1213,7 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 		if predicate != "" && containsRelationshipPattern(predicate) {
 			// A pattern predicate reads the graph: the row predicate
 			// evaluator tests it as WHERE does (#907).
-			ctx := withExpressionFailureSlot(context.Background())
+			ctx := withExpressionFailureSlot(rowStatementContextOrBackground(scope))
 			holds := e.evaluateRowPredicateText(ctx, predicate, scope)
 			if failure := getExpressionFailure(ctx); failure != nil {
 				return nil, true, false, failure
@@ -1640,14 +1643,9 @@ func (e *StorageExecutor) evaluateRowPredicateWithCASEBound(ctx context.Context,
 		var value interface{}
 		var ok bool
 		var err error
-		if mayContainSubqueryExpression(block) {
-			// A subquery in the block (THEN EXISTS { … }) runs for the row,
-			// correlated with its values and the statement's context, as in a
-			// projection.
-			value, ok = e.evaluateRowExpressionWithContext(ctx, block, pipelineRow(values))
-		} else {
-			value, ok, err = e.evaluateRowCaseExpression(block, values)
-		}
+		// A subquery in the block (THEN EXISTS { … }) runs where it stands,
+		// with the statement context the predicate's row carries (#1055).
+		value, ok, err = e.evaluateRowCaseExpression(block, rowValuesWithStatementContext(ctx, block, values))
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return false
@@ -1699,20 +1697,42 @@ func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expressi
 }
 
 // rowValuesWithStatementContext returns a row predicate's values with the
-// statement context bound (temporalRowContextKey) when the predicate reads the
+// statement context bound (rowStatementContextKey) when the predicate reads the
 // statement's clock, as evaluateRowExpressionWithContext binds it for a
 // projection: every clock call of one statement then reads one instant
 // (#872). values itself is not modified.
 func rowValuesWithStatementContext(ctx context.Context, expression string, values map[string]interface{}) map[string]interface{} {
-	if _, bound := values[temporalRowContextKey]; bound || !containsStatementClockCall(expression) {
+	if _, bound := values[rowStatementContextKey]; bound || !rowPredicateNeedsStatementContext(expression) {
 		return values
 	}
 	extended := make(map[string]interface{}, len(values)+1)
 	for key, value := range values {
 		extended[key] = value
 	}
-	extended[temporalRowContextKey] = ctx
+	extended[rowStatementContextKey] = ctx
 	return extended
+}
+
+// rowPredicateStatementContextNeeds caches rowPredicateNeedsStatementContext
+// by predicate text: it is decided once, not once per row.
+var rowPredicateStatementContextNeeds = newBoundedCache[string, bool](1024, boundedCacheStringShardIndex)
+
+// rowPredicateNeedsStatementContext reports a predicate whose row values need
+// the statement context (needsRowStatementContext), except a whole [NOT]
+// EXISTS { … } predicate, which the predicate evaluator runs with its context
+// directly (evaluateRowExistsPredicate): binding it would copy every row.
+func rowPredicateNeedsStatementContext(expression string) bool {
+	if needs, cached := rowPredicateStatementContextNeeds.get(expression); cached {
+		return needs
+	}
+	needs := needsRowStatementContext(expression)
+	if needs && !containsStatementClockCall(expression) {
+		if _, whole := wholeExistsPredicate(expression); whole {
+			needs = false
+		}
+	}
+	rowPredicateStatementContextNeeds.put(expression, needs)
+	return needs
 }
 
 // evaluateRowPredicateParts is evaluateRowPredicate for a predicate whose CASE
@@ -1764,11 +1784,10 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 		}
 	}
 	// Subquery expressions inside a larger predicate ([EXISTS { … }] = [true],
-	// COUNT { … } + 1 > 1, …) are evaluated for the row first, unless AND / OR
-	// / XOR split the predicate: then each side evaluates its own.
-	subqueries := planRowSubqueries(expression)
-	if subqueries != nil && !subqueries.logical {
-		plan := subqueries
+	// COUNT { … } + 1 > 1, …) are evaluated where they stand by the row
+	// evaluator (#1055), unless AND / OR / XOR split the predicate: then each
+	// side evaluates its own.
+	if plan := planRowSubqueries(expression); plan != nil && !plan.logical && !plan.wholeExists {
 		if plan.integerComparison != nil {
 			// COUNT { … } <op> <integer>: compare the count directly; a null
 			// or non-integer value takes the general comparison.
@@ -1776,10 +1795,10 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 			if count, ok := value.(int64); ok {
 				return plan.integerComparison.holds(count)
 			}
-			return e.evaluateRowPredicateMode(ctx, plan.rewritten, plan.extendRow(pipelineRow(values), []interface{}{value}))
 		}
-		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
-		return e.evaluateRowPredicateMode(ctx, rewritten, extended)
+		if holds, evaluated := e.rowPredicateWithSubqueries(ctx, expression, values); evaluated {
+			return holds
+		}
 	}
 	if variable, labels, ok := parseWithWhereLabelTest(expression); ok {
 		return entityHasAllLabelsOrTypesPredicate(values[variable], labels)
@@ -1790,6 +1809,22 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 		return e.evaluateRowPredicatePlan(ctx, plan, values)
 	}
 	return e.evaluateRowPredicateText(ctx, expression, values)
+}
+
+// rowPredicateWithSubqueries evaluates a predicate holding subquery
+// expressions with the row evaluator, which evaluates each subquery where it
+// stands; evaluated is false when the row evaluator doesn't handle the
+// predicate. An error is recorded on ctx and the predicate doesn't hold.
+func (e *StorageExecutor) rowPredicateWithSubqueries(ctx context.Context, expression string, values map[string]interface{}) (bool, bool) {
+	value, evaluated, err := e.evaluateRowValue(expression, rowValuesWithStatementContext(ctx, expression, values))
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false, true
+	}
+	if !evaluated {
+		return false, false
+	}
+	return predicateValueIsTrue(ctx, value, expression), true
 }
 
 // evaluateRowPredicateText is evaluateRowPredicate without the predicate plan:
@@ -1812,9 +1847,10 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 		}
 		return ok && predicateValueIsTrue(ctx, value, expression)
 	}
-	if plan := planRowSubqueries(expression); plan != nil {
-		rewritten, extended := e.materializeRowSubqueries(ctx, plan, pipelineRow(values))
-		return e.evaluateRowPredicateMode(ctx, rewritten, extended)
+	if plan := planRowSubqueries(expression); plan != nil && !plan.wholeExists {
+		if holds, evaluated := e.rowPredicateWithSubqueries(ctx, expression, values); evaluated {
+			return holds
+		}
 	}
 	if isRelationshipPatternOperand(expression) {
 		if value, resolved := e.rowPredicateOperand(ctx, expression, values); resolved {

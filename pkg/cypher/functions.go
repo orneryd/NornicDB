@@ -106,22 +106,15 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 			return value
 		}
 	}
-	if plan := planRowSubqueries(expr); plan != nil {
-		// Subquery expressions nested in a larger expression are evaluated
-		// for this row and the rest runs on the row evaluator.
-		rewritten, extended := e.materializeRowSubqueries(ctx, plan, entityRow(ctx, nodes, rels))
-		value, _ := e.evaluateRowExpressionWithContext(ctx, rewritten, extended)
+	if mayContainSubqueryExpression(expr) && len(findSubqueryExpressions(expr)) > 0 {
+		// A subquery expression, alone or in a larger expression, is
+		// evaluated by the row evaluator where it stands, with this row's
+		// entities, paths and values (#1055).
+		value, _ := e.evaluateRowExpressionWithContext(ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths))
 		return value
 	}
 	if pattern, projection, ok := splitPatternComprehension(expr); ok {
 		return e.evaluatePatternComprehension(ctx, pattern, projection, nodes, rels)
-	}
-	if isStandaloneExistsSubquery(expr) {
-		return e.evaluateExistsSubqueryValue(ctx, expr, nodes, rels)
-	}
-	if subquery, ok := standaloneSubqueryExpression(expr); ok {
-		value, _ := e.evaluateRowSubqueryValue(ctx, subquery.kind, subquery.body, entityRow(ctx, nodes, rels))
-		return value
 	}
 	// Direct $param resolution preserves declared types end-to-end.
 	// substituteParams's type-preserving short-circuit leaves "$name" as

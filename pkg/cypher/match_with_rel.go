@@ -113,7 +113,7 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}) (interface{}, error) {
 	ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{})
 	// Keep the statement's clock for the functions that read it (decay, #866).
-	if statement, ok := values[temporalRowContextKey].(context.Context); ok {
+	if statement, ok := values[rowStatementContextKey].(context.Context); ok {
 		if instant, ok := statement.Value(temporalStatementTimeKey{}).(time.Time); ok {
 			ctx = context.WithValue(ctx, temporalStatementTimeKey{}, instant)
 		}

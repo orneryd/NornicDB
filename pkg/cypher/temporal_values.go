@@ -168,12 +168,39 @@ func decodeCypherDateTime(decoder *msgpack.Decoder, value reflect.Value, length 
 
 type temporalStatementTimeKey struct{}
 
-const temporalRowContextKey = "\x00temporal_context"
+// rowStatementContextKey binds the statement's context in a row for the row
+// evaluator, which takes no context: its clock calls read the statement's
+// instant from it, and its subquery expressions run with it (#1055).
+const rowStatementContextKey = "\x00statement_context"
+
+// needsRowStatementContext reports an expression whose row evaluation reads
+// the statement context: a clock call, a subquery expression, or a
+// relationship pattern, which reads the graph of the statement's transaction.
+func needsRowStatementContext(expression string) bool {
+	return containsStatementClockCall(expression) || mayContainSubqueryExpression(expression) ||
+		containsRelationshipPattern(expression)
+}
+
+// rowStatementContextOrBackground is the statement context a row carries, or
+// the background context for a row without one: a subquery run from it keeps
+// the statement's transaction, parameters and Cypher version (#1055).
+func rowStatementContextOrBackground(values map[string]interface{}) context.Context {
+	if ctx := rowStatementContext(values); ctx != nil {
+		return ctx
+	}
+	return context.Background()
+}
+
+// rowStatementContext is the statement context a row carries, or nil.
+func rowStatementContext(values map[string]interface{}) context.Context {
+	ctx, _ := values[rowStatementContextKey].(context.Context)
+	return ctx
+}
 
 // containsStatementClockCall reports a call that reads the statement's clock:
 // a temporal constructor, or a decay function (decayScore, decay), which
 // scores at the statement's time (#866). A row expression with one carries
-// the statement context (temporalRowContextKey).
+// the statement context (rowStatementContextKey).
 func containsStatementClockCall(expression string) bool {
 	for index := 0; index < len(expression); index++ {
 		if expression[index] != '(' {

@@ -98,6 +98,11 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 		if clause.kind == pipelineClauseReturn {
 			returnSeen = true
 		}
+		if clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseOptionalMatch {
+			if err := e.validateSubqueryPatternBindings(scope, clause.text); err != nil {
+				return err
+			}
+		}
 		if clause.kind == pipelineClauseWith {
 			// The projection reads the incoming variables; WITH … WHERE
 			// reads the projected ones.
@@ -199,6 +204,10 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 			}
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
 			if err := e.validateMatchClauseBindings(scope, clause.text); err != nil {
+				return err
+			}
+			// The clause's WHERE subqueries see its own bindings.
+			if err := e.validateSubqueryPatternBindings(scope, clause.text); err != nil {
 				return err
 			}
 			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
@@ -741,6 +750,73 @@ func maskSubqueryBodies(expression string) string {
 		index = close
 	}
 	return string(masked)
+}
+
+// validateSubqueryPatternBindings checks the MATCH patterns of every EXISTS /
+// COUNT / COLLECT subquery in text against scope, the variables the subquery
+// sees: a pattern can't use an outer variable as another kind (COUNT {
+// (n)-[s]->() } with s a string is Neo4j's "s defined with conflicting
+// type", #1055). Variables a pattern binds stay inside the subquery.
+func (e *StorageExecutor) validateSubqueryPatternBindings(scope matchSemanticScope, text string) error {
+	if !mayContainSubqueryExpression(text) {
+		return nil
+	}
+	for _, subquery := range findSubqueryExpressions(text) {
+		body := strings.TrimSpace(subquery.body)
+		if strings.HasPrefix(body, "(") {
+			body = "MATCH " + body
+		}
+		clauses, ok := splitPipelineClausesAllowingProcedureCalls(body)
+		if !ok {
+			continue
+		}
+		for _, clause := range clauses {
+			if clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseOptionalMatch {
+				continue
+			}
+			pattern := strings.TrimSpace(clause.text)
+			for _, keyword := range []string{"OPTIONAL MATCH", "MATCH"} {
+				if startsWithKeywordFold(pattern, keyword) {
+					pattern = strings.TrimSpace(pattern[len(keyword):])
+					break
+				}
+			}
+			if where := topLevelKeywordIndex(pattern, "WHERE"); where >= 0 {
+				pattern = pattern[:where]
+			}
+			pattern = maskQuantifiedGroupPredicates(pattern)
+			for _, variable := range extractNodeVariables(pattern) {
+				if err := outerPatternVariableConflict(scope, variable, matchBindingNode); err != nil {
+					return err
+				}
+			}
+			for _, variable := range extractRelationshipVariables(pattern) {
+				if err := outerPatternVariableConflict(scope, variable, matchBindingRelationship); err != nil {
+					return err
+				}
+			}
+			if err := e.validateSubqueryPatternBindings(scope, clause.text); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// outerPatternVariableConflict reports a subquery pattern's node or
+// relationship variable that the outer scope binds to another kind: a node
+// variable bound to a relationship, a list, a path or a value, or a
+// relationship variable bound to a node, a path or a value (a variable-length
+// relationship's list is a relationship here).
+func outerPatternVariableConflict(scope matchSemanticScope, variable string, kind matchBindingKind) error {
+	outer, bound := scope[normalizeProjectionColumnName(strings.TrimSpace(variable))]
+	if !bound || outer == matchBindingUnknown || outer == kind {
+		return nil
+	}
+	if kind == matchBindingRelationship && outer == matchBindingRelationshipList {
+		return nil
+	}
+	return bindMatchSemanticKind(matchSemanticScope{variable: outer}, variable, kind)
 }
 
 func bindMatchSemanticKind(scope matchSemanticScope, variable string, kind matchBindingKind) error {

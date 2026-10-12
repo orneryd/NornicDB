@@ -15,64 +15,15 @@ import (
 // A subquery expression (EXISTS { … }, COUNT { … }, COLLECT { … }) is a value
 // like any other: it may appear inside list and map literals, arithmetic,
 // comparisons, CASE, list-comprehension filters and function arguments, and
-// as a SET / CREATE / MERGE property value. The expression evaluators replace
-// each nested subquery expression with a row variable holding its value for
-// the current row (materializeRowSubqueries), then evaluate the rest of the
-// expression normally. A subquery expression that is the whole expression is
-// evaluated directly by the evaluators.
+// as a SET / CREATE / MERGE property value. The row evaluator evaluates
+// each one where it stands (evaluateRowSubqueryAtom), with the variables
+// bound at that point and the statement context the row carries (#1055).
 
-// subqueryExpression is one EXISTS / COUNT / COLLECT { body } occurrence, or
-// a scope that binds a variable and holds one: a list comprehension (kind
-// COMPREHENSION, body the text between the brackets), a quantifier (kind
-// QUANTIFIER, body the whole all / any / none / single call) or a reduce /
-// allReduce (kind REDUCE, body the whole call). A scope's subqueries
-// may read its variable, so the scope is evaluated element by element.
+// subqueryExpression is one EXISTS / COUNT / COLLECT { body } occurrence.
 type subqueryExpression struct {
-	kind       string // EXISTS, COUNT, COLLECT, COMPREHENSION, QUANTIFIER or REDUCE
+	kind       string // EXISTS, COUNT or COLLECT
 	start, end int    // expression text [start, end)
 	body       string
-}
-
-// scope reports whether s is a scope holding subqueries rather than a
-// subquery expression.
-func (s subqueryExpression) scope() bool {
-	return s.kind == "COMPREHENSION" || s.kind == "QUANTIFIER" || s.kind == "REDUCE"
-}
-
-// variableScopeCallAt returns the all / any / none / single or reduce call at
-// expr[i:] when its arguments hold a subquery expression, and false for any
-// other text.
-func variableScopeCallAt(expr string, i int) (subqueryExpression, bool) {
-	if i > 0 && (isIdentByte(expr[i-1]) || expr[i-1] == '.' || expr[i-1] == '$') {
-		return subqueryExpression{}, false
-	}
-	nameEnd := i
-	for nameEnd < len(expr) && isIdentByte(expr[nameEnd]) {
-		nameEnd++
-	}
-	name := lowerASCII(expr[i:nameEnd])
-	if !isReduceFormFunction(name) && !isQuantifierFunction(name) {
-		return subqueryExpression{}, false
-	}
-	open := skipSpaces(expr, nameEnd)
-	if open >= len(expr) || expr[open] != '(' {
-		return subqueryExpression{}, false
-	}
-	closing := findMatchingParen(expr, open)
-	if closing < 0 {
-		return subqueryExpression{}, false
-	}
-	inner := expr[open+1 : closing]
-	if !mayContainSubqueryExpression(inner) || len(findSubqueryExpressions(inner)) == 0 {
-		return subqueryExpression{}, false
-	}
-	if isReduceFormFunction(name) {
-		return subqueryExpression{kind: "REDUCE", start: i, end: closing + 1, body: expr[i : closing+1]}, true
-	}
-	if _, _, _, parsed := parseQuantifierArguments(inner); !parsed {
-		return subqueryExpression{}, false
-	}
-	return subqueryExpression{kind: "QUANTIFIER", start: i, end: closing + 1, body: expr[i : closing+1]}, true
 }
 
 var subqueryExpressionKeywords = [...]string{"EXISTS", "COUNT", "COLLECT"}
@@ -107,23 +58,6 @@ func findSubqueryExpressions(expr string) []subqueryExpression {
 				continue
 			}
 			return found
-		}
-		if expr[i] == '[' {
-			if closing := findMatchingDelimiter(expr, i, '[', ']'); closing > i {
-				inner := expr[i+1 : closing]
-				if _, _, _, _, comprehension := parseListComprehension(inner); comprehension && mayContainSubqueryExpression(inner) {
-					found = append(found, subqueryExpression{kind: "COMPREHENSION", start: i, end: closing + 1, body: inner})
-					i = closing + 1
-					continue
-				}
-			}
-		}
-		if c := expr[i] | 0x20; c == 'a' || c == 'n' || c == 's' || c == 'r' {
-			if scope, ok := variableScopeCallAt(expr, i); ok {
-				found = append(found, scope)
-				i = scope.end
-				continue
-			}
 		}
 		keyword, open, isSubquery := subqueryExpressionKeywordAt(expr, i)
 		if !isSubquery {
@@ -167,7 +101,7 @@ func nestedSubqueryExpressions(expr string) []subqueryExpression {
 		return nil
 	}
 	found := findSubqueryExpressions(expr)
-	if len(found) == 0 || (len(found) == 1 && !found[0].scope() && found[0].start == 0 && found[0].end == len(expr)) {
+	if len(found) == 0 || (len(found) == 1 && found[0].start == 0 && found[0].end == len(expr)) {
 		return nil
 	}
 	return found
@@ -181,7 +115,7 @@ func standaloneSubqueryExpression(expr string) (subqueryExpression, bool) {
 		return subqueryExpression{}, false
 	}
 	found := findSubqueryExpressions(expr)
-	if len(found) != 1 || found[0].scope() || found[0].start != 0 || found[0].end != len(expr) {
+	if len(found) != 1 || found[0].start != 0 || found[0].end != len(expr) {
 		return subqueryExpression{}, false
 	}
 	return found[0], true
@@ -200,24 +134,20 @@ func wholeExistsPredicate(predicate string) (negated bool, ok bool) {
 	return false, isStandaloneExistsSubquery(predicate)
 }
 
-// isWholeCollectItem reports whether a projection item is exactly one
-// COLLECT { … } subquery, rather than an expression containing one.
-func isWholeCollectItem(expr string) bool {
-	collect, ok := standaloneSubqueryExpression(expr)
-	return ok && collect.kind == "COLLECT"
-}
-
-// rowSubqueryPlan is an expression whose subquery expressions are replaced by
-// the row variables that hold their values (__subquery_value_N): the
-// subqueries, their variable names and the rewritten expression. logical is
-// true when the rewritten expression has a top-level AND / OR / XOR, which a
-// predicate splits before evaluating the subqueries, so each side's subquery
-// only runs when its value is needed.
+// rowSubqueryPlan is the shape of a predicate holding subquery expressions,
+// read once per predicate text: the subqueries, and the predicate with each
+// one masked by a name (__subquery_value_N), on which logical and
+// integerComparison are read. logical is true when the predicate has a
+// top-level AND / OR / XOR, which splits it before its subqueries run, so each
+// side's subquery only runs when its value is needed.
 type rowSubqueryPlan struct {
 	found     []subqueryExpression
 	names     []string
 	rewritten string
 	logical   bool
+	// wholeExists is set for a predicate that is exactly NOT EXISTS { … },
+	// which the predicate evaluator tests directly (evaluateRowExistsPredicate).
+	wholeExists bool
 	// integerComparison is set when the rewritten predicate is exactly
 	// __subquery_value_0 <op> <integer literal> (COUNT { … } > 1): the
 	// comparison is parsed once and applied to an integer value directly.
@@ -298,36 +228,13 @@ func planRowSubqueries(expr string) *rowSubqueryPlan {
 				break
 			}
 		}
+		_, plan.wholeExists = wholeExistsPredicate(expr)
 		if !plan.logical && len(found) == 1 && strings.HasPrefix(plan.rewritten, plan.names[0]) {
 			plan.integerComparison, _ = parseIntegerComparison(plan.rewritten[len(plan.names[0]):])
 		}
 	}
 	rowSubqueryPlans.put(expr, plan)
 	return plan
-}
-
-// materializeRowSubqueries evaluates each subquery expression of plan for the
-// row and returns the rewritten expression with the row extended by their
-// values.
-func (e *StorageExecutor) materializeRowSubqueries(ctx context.Context, plan *rowSubqueryPlan, values pipelineRow) (string, pipelineRow) {
-	subqueryValues := make([]interface{}, len(plan.found))
-	for index, subquery := range plan.found {
-		subqueryValues[index], _ = e.evaluateRowSubqueryValue(ctx, subquery.kind, subquery.body, values)
-	}
-	return plan.rewritten, plan.extendRow(values, subqueryValues)
-}
-
-// extendRow returns a copy of values with each subquery's value bound to its
-// variable.
-func (plan *rowSubqueryPlan) extendRow(values pipelineRow, subqueryValues []interface{}) pipelineRow {
-	extended := make(pipelineRow, len(values)+len(plan.found))
-	for name, value := range values {
-		extended[name] = value
-	}
-	for index, value := range subqueryValues {
-		extended[plan.names[index]] = value
-	}
-	return extended
 }
 
 // correlatedSubqueryExecutor returns an executor whose pipeline sees the row's
@@ -340,9 +247,46 @@ func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values
 		correlated.fabricRecordBindings[name] = value
 	}
 	for name, value := range values {
+		if strings.HasPrefix(name, "\x00") {
+			continue // the evaluator's own keys (rowStatementContextKey) aren't variables
+		}
 		correlated.fabricRecordBindings[name] = value
 	}
 	return correlated
+}
+
+// evaluateRowSubqueryAtom evaluates an expression that is one EXISTS / COUNT /
+// COLLECT { … } subquery for the row evaluator, with the row's variables, in
+// the statement context the row carries (rowStatementContextKey). Nested in
+// a larger expression, the subquery is reached by the row evaluator's own
+// recursion, so it sees the variables bound at that point (a quantifier's, a
+// comprehension's, reduce's). matched is false for any other expression and
+// when the row carries no statement context.
+func (e *StorageExecutor) evaluateRowSubqueryAtom(expr string, values map[string]interface{}) (interface{}, bool, error) {
+	if expr == "" {
+		return nil, false, nil
+	}
+	switch expr[0] {
+	case 'E', 'e', 'C', 'c':
+	default:
+		return nil, false, nil
+	}
+	kind, open, ok := subqueryExpressionKeywordAt(expr, 0)
+	if !ok || findMatchingDelimiter(expr, open, '{', '}') != len(expr)-1 {
+		return nil, false, nil
+	}
+	ctx := rowStatementContext(values)
+	if ctx == nil {
+		return nil, false, nil
+	}
+	value, resolved, err := e.rowSubqueryValue(ctx, kind, strings.TrimSpace(expr[open+1:len(expr)-1]), values)
+	if err != nil {
+		return nil, true, err
+	}
+	if !resolved {
+		return nil, false, nil
+	}
+	return value, true, nil
 }
 
 // evaluateRowSubqueryValue evaluates EXISTS / COUNT / COLLECT { body } for a
@@ -363,25 +307,6 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // COLLECT subqueries: the body runs as a pipeline, so its WHERE, ORDER BY,
 // SKIP / LIMIT and RETURN all apply.
 func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
-	if kind == "COMPREHENSION" {
-		value, ok := e.evaluateRowComprehensionWithSubqueries(ctx, body, values)
-		return value, ok, nil
-	}
-	if kind == "QUANTIFIER" || kind == "REDUCE" {
-		// The row evaluators run the scope; its expressions, which hold the
-		// subqueries, run on the context evaluator with the scope's variable
-		// bound.
-		evaluate := func(expression string, scope map[string]interface{}) (interface{}, bool, error) {
-			value, ok := e.evaluateRowExpressionWithContext(ctx, expression, scope)
-			return value, ok, nil
-		}
-		if kind == "REDUCE" {
-			function, arguments, _ := parseFunctionCallWS(body)
-			return e.evaluateRowReduce(function, arguments, values, evaluate)
-		}
-		value, _, ok, err := e.evaluateRowQuantifier(body, values, evaluate)
-		return value, ok, err
-	}
 	// EXISTS is whether the body has a row and COUNT how many: one
 	// evaluation, so a body gives EXISTS and COUNT the same rows.
 	if kind == "EXISTS" || kind == "COUNT" {
@@ -392,7 +317,11 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 			return rowCountValue(kind, count), true, nil
 		}
 		if nodes, rels, ok := boundPatternCountBindings(body, values); ok {
-			return rowCountValue(kind, int64(len(e.evaluateBoundPatternRows(ctx, body, nodes, rels)))), true, nil
+			// A pattern the kernel can't match goes to the pipeline below:
+			// its failure isn't a count of 0.
+			if rows, matched := e.boundPatternRows(ctx, body, nodes, rels, values); matched {
+				return rowCountValue(kind, int64(len(rows))), true, nil
+			}
 		}
 	}
 	if cypherVersionFromContext(ctx) != "25" {
@@ -520,42 +449,6 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 	return e.executeInternal(ctx, prefix.String()+query, params)
 }
 
-// evaluateRowComprehensionWithSubqueries evaluates [x IN list WHERE p | f]
-// whose filter or projection contains subquery expressions: each element
-// binds x, so a subquery may use it (EXISTS { MATCH (i)-->(o) WHERE o.id = x }).
-func (e *StorageExecutor) evaluateRowComprehensionWithSubqueries(ctx context.Context, inner string, values map[string]interface{}) (interface{}, bool) {
-	variable, listExpression, predicate, projection, comprehension := parseListComprehension(inner)
-	if !comprehension {
-		return nil, false
-	}
-	listValue, ok := e.evaluateRowExpressionWithContext(ctx, listExpression, pipelineRow(values))
-	if !ok {
-		return nil, false
-	}
-	if listValue == nil {
-		return nil, true
-	}
-	items := toAnySlice(listValue)
-	out := make([]interface{}, 0, len(items))
-	for _, item := range items {
-		scope := make(pipelineRow, len(values)+1)
-		for name, value := range values {
-			scope[name] = value
-		}
-		scope[variable] = item
-		if strings.TrimSpace(predicate) != "" && !e.evaluateRowPredicate(ctx, predicate, scope) {
-			continue
-		}
-		if strings.TrimSpace(projection) == "" {
-			out = append(out, item)
-			continue
-		}
-		value, _ := e.evaluateRowExpressionWithContext(ctx, projection, scope)
-		out = append(out, value)
-	}
-	return out, true
-}
-
 // boundChainCount counts the rows of a body that is one relationship chain,
 // with an optional WHERE, starting at a node bound in values: it traverses
 // from that node and keeps the paths that agree with the row's other nodes
@@ -582,13 +475,12 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	// A match mode or path selector (REPEATABLE ELEMENTS, ANY SHORTEST)
 	// precedes the pattern; only the pipeline's MATCH runs those.
 	if !strings.HasPrefix(pattern, "(") || len(splitTopLevelComma(pattern)) != 1 || !containsRelationshipPattern(pattern) ||
-		extractPathAssignmentVariable(pattern) != "" || subqueryReadsScalarRowValue(body, values) ||
-		subqueryPropertyMapReadsRowValue(pattern, values) || indexASCIIFold(body, "shortestpath") >= 0 ||
-		indexASCIIFold(body, repeatableElementsFunction) >= 0 {
+		extractPathAssignmentVariable(pattern) != "" || !patternMapsAreConstant(pattern) ||
+		indexASCIIFold(body, "shortestpath") >= 0 || indexASCIIFold(body, repeatableElementsFunction) >= 0 {
 		return 0, false
 	}
 	matches := e.parseTraversalPattern(ctx, pattern)
-	if matches == nil {
+	if matches == nil || !chainVariablesBindEntities(matches, values) {
 		return 0, false
 	}
 	seed, _ := values[matches.StartNode.variable].(*storage.Node)
@@ -647,31 +539,30 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	return count, true
 }
 
-// subqueryReadsScalarRowValue reports whether a subquery body names a row
-// value that isn't a node or relationship.
-func subqueryReadsScalarRowValue(body string, values map[string]interface{}) bool {
-	for name, value := range values {
-		switch value.(type) {
-		case *storage.Node, *storage.Edge:
-			continue
-		}
-		if !strings.HasPrefix(name, "$") && containsIdentifierWord(body, name) {
-			return true
-		}
+// patternMapsAreConstant reports whether every property map in a node or
+// relationship pattern of pattern holds only literals and parameters
+// ((n {id: 1}), ()-[:R {k: $k}]->()): boundChainCount's traversal matches
+// those maps only. A map value that reads a variable ((n {id: r.prop}),
+// (n {id: i + 1})) goes to the kernel or the pipeline, which evaluate it.
+func patternMapsAreConstant(pattern string) bool {
+	if constant, cached := patternMapsConstant.get(pattern); cached {
+		return constant
 	}
-	return false
+	constant := patternMapsAreConstantText(pattern)
+	patternMapsConstant.put(pattern, constant)
+	return constant
 }
 
-// subqueryPropertyMapReadsRowValue reports whether a pattern property map in
-// body (a map inside a node or relationship pattern) reads a value of the
-// row ((n {id: r.prop}), (n {id: r.ids[0]})): boundChainCount's traversal
-// matches literal and parameter maps only.
-func subqueryPropertyMapReadsRowValue(body string, values map[string]interface{}) bool {
+// patternMapsConstant caches patternMapsAreConstant by pattern text: a
+// pattern is read once, not once per row.
+var patternMapsConstant = newBoundedCache[string, bool](1024, boundedCacheStringShardIndex)
+
+func patternMapsAreConstantText(pattern string) bool {
 	depth := 0
-	for index := 0; index < len(body); index++ {
-		switch c := body[index]; c {
+	for index := 0; index < len(pattern); index++ {
+		switch c := pattern[index]; c {
 		case '\'', '"', '`':
-			index = skipCypherQuotedText(body, index, c) - 1
+			index = skipCypherQuotedText(pattern, index, c) - 1
 		case '(', '[':
 			depth++
 		case ')', ']':
@@ -680,20 +571,85 @@ func subqueryPropertyMapReadsRowValue(body string, values map[string]interface{}
 			if depth <= 0 {
 				continue
 			}
-			close := findMatchingDelimiter(body, index, '{', '}')
+			close := findMatchingDelimiter(pattern, index, '{', '}')
 			if close < 0 {
 				return false
 			}
-			properties := body[index+1 : close]
-			for name := range values {
-				if containsIdentifierWord(properties, name) {
-					return true
+			for _, pair := range splitTopLevelComma(pattern[index+1 : close]) {
+				separator := findTopLevelMapKeyValueSeparator(pair)
+				if separator <= 0 || !isConstantMapValue(pair[separator+1:]) {
+					return false
 				}
 			}
 			index = close
 		}
 	}
-	return false
+	return true
+}
+
+// isConstantMapValue reports a property map value that is a literal or a
+// parameter.
+func isConstantMapValue(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) > 1 && value[0] == '$' && isValidIdentifier(value[1:]) {
+		return true
+	}
+	if inner, list := stripEnclosingRowDelimiter(value, '[', ']'); list {
+		if strings.TrimSpace(inner) == "" {
+			return true
+		}
+		for _, item := range splitTopLevelComma(inner) {
+			if !isConstantMapValue(item) {
+				return false
+			}
+		}
+		return true
+	}
+	_, literal := parseLiteralValueFromComputedRow(value)
+	return literal
+}
+
+// chainVariablesBindEntities reports whether every node and relationship
+// variable of a parsed chain that the row binds holds an entity of that kind:
+// boundChainCount compares the traversal with the row's nodes and
+// relationships only.
+func chainVariablesBindEntities(matches *TraversalMatch, values map[string]interface{}) bool {
+	node := func(info nodePatternInfo) bool {
+		if info.variable == "" {
+			return true
+		}
+		value, bound := values[info.variable]
+		if !bound {
+			return true
+		}
+		_, isNode := value.(*storage.Node)
+		return isNode
+	}
+	relationship := func(pattern RelationshipPattern) bool {
+		if pattern.Variable == "" {
+			return true
+		}
+		value, bound := values[pattern.Variable]
+		if !bound {
+			return true
+		}
+		_, isEdge := value.(*storage.Edge)
+		return isEdge
+	}
+	if !node(matches.StartNode) || !node(matches.EndNode) || !relationship(matches.Relationship) {
+		return false
+	}
+	for _, info := range matches.IntermediateNodes {
+		if !node(info) {
+			return false
+		}
+	}
+	for _, segment := range matches.Segments {
+		if !node(segment.FromNode) || !node(segment.ToNode) || !relationship(segment.Relationship) {
+			return false
+		}
+	}
+	return true
 }
 
 // entityRow is the row an expression evaluated over node and relationship
@@ -711,6 +667,18 @@ func entityRow(ctx context.Context, nodes map[string]*storage.Node, rels map[str
 	for name, relationship := range rels {
 		if relationship != nil {
 			values[name] = relationship
+		}
+	}
+	return values
+}
+
+// entityRowWithPaths is entityRow with the path variables bound too, as a
+// path is in a pipeline row.
+func (e *StorageExecutor) entityRowWithPaths(ctx context.Context, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult) pipelineRow {
+	values := entityRow(ctx, nodes, rels)
+	for name, path := range paths {
+		if path != nil {
+			values[name] = e.pathContextRowValue(path)
 		}
 	}
 	return values
@@ -786,17 +754,19 @@ func containsIdentifierWord(text, name string) bool {
 // boundDegreePattern is a COUNT body that is one directed hop from a bound
 // node to an anonymous, unlabelled node with no properties and no WHERE:
 // [MATCH] (v)-[:T|U]->(), (v)<-[:T]-(), ()-[:T]->(v), with the arrows in
-// either spelling (-->, -[r]->). Its count is the node's degree.
-var boundDegreePattern = regexp.MustCompile(`^(?i:MATCH\s+)?(?:\(\s*([A-Za-z_]\w*)\s*\)\s*(<?)-(?:\[\s*(?:[A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*\)|\(\s*\)\s*(<?)-(?:\[\s*(?:[A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*([A-Za-z_]\w*)\s*\))\s*$`)
+// either spelling (-->, -[r]->). Its count is the node's degree, unless the
+// relationship variable is bound in the row (boundDegreeCount).
+var boundDegreePattern = regexp.MustCompile(`^(?i:MATCH\s+)?(?:\(\s*([A-Za-z_]\w*)\s*\)\s*(<?)-(?:\[\s*([A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*\)|\(\s*\)\s*(<?)-(?:\[\s*([A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*([A-Za-z_]\w*)\s*\))\s*$`)
 
 // boundDegreeShape is a parsed boundDegreePattern body: the bound variable,
 // the hop's direction from it and its relationship types. ok is false for any
 // other body.
 type boundDegreeShape struct {
-	variable string
-	outgoing bool
-	types    []string
-	ok       bool
+	variable     string
+	relationship string // the hop's relationship variable, or ""
+	outgoing     bool
+	types        []string
+	ok           bool
 }
 
 // boundDegreeShapes caches parsed COUNT bodies; a body is parsed once, not
@@ -822,14 +792,14 @@ func parseBoundDegreeShapeText(body string) boundDegreeShape {
 	if match == nil {
 		return boundDegreeShape{}
 	}
-	variable, types := match[1], match[3]
-	outgoing := match[2] == "" && match[4] == ">"
-	incoming := match[2] == "<" && match[4] == ""
+	variable, relationship, types := match[1], match[3], match[4]
+	outgoing := match[2] == "" && match[5] == ">"
+	incoming := match[2] == "<" && match[5] == ""
 	if variable == "" {
 		// ()-[:T]->(v) is an incoming hop of v.
-		variable, types = match[8], match[6]
-		outgoing = match[5] == "<" && match[7] == ""
-		incoming = match[5] == "" && match[7] == ">"
+		variable, relationship, types = match[10], match[7], match[8]
+		outgoing = match[6] == "<" && match[9] == ""
+		incoming = match[6] == "" && match[9] == ">"
 	}
 	if outgoing == incoming {
 		return boundDegreeShape{}
@@ -840,7 +810,7 @@ func parseBoundDegreeShapeText(body string) boundDegreeShape {
 			relTypes = append(relTypes, relType)
 		}
 	}
-	return boundDegreeShape{variable: variable, outgoing: outgoing, types: relTypes, ok: true}
+	return boundDegreeShape{variable: variable, relationship: relationship, outgoing: outgoing, types: relTypes, ok: true}
 }
 
 // boundDegreeCount counts COUNT { (v)-[:T]->() } for a node bound in values
@@ -855,6 +825,13 @@ func (e *StorageExecutor) boundDegreeCount(ctx context.Context, body string, val
 	node, ok := values[shape.variable].(*storage.Node)
 	if !ok || node == nil {
 		return 0, false
+	}
+	if shape.relationship != "" {
+		// A relationship variable bound in the row restricts the hop to
+		// that relationship: not a degree (#1055).
+		if _, bound := values[shape.relationship]; bound {
+			return 0, false
+		}
 	}
 	return e.nodeDegreeCount(ctx, node, shape), true
 }

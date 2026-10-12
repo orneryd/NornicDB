@@ -65,14 +65,10 @@ func TestSubqueryValueEvaluatorBranches(t *testing.T) {
 	_, err = exec.Execute(ctx, "RETURN COUNT { UNWIND [0] AS z RETURN 1 / z AS x } AS c", nil)
 	require.Error(t, err)
 
-	// Comprehensions whose list is null, unresolved, or not a comprehension.
-	value, ok := exec.evaluateRowComprehensionWithSubqueries(ctx, "x IN null WHERE EXISTS { MATCH (n:SV) } | x", map[string]interface{}{})
-	require.True(t, ok)
-	require.Nil(t, value)
-	_, ok = exec.evaluateRowComprehensionWithSubqueries(ctx, "x IN nosuch.value WHERE EXISTS { MATCH (n:SV) } | x", map[string]interface{}{})
-	require.False(t, ok)
-	_, ok = exec.evaluateRowComprehensionWithSubqueries(ctx, "not a comprehension", map[string]interface{}{})
-	require.False(t, ok)
+	// A comprehension over null holding a subquery is null.
+	nullList, err := exec.Execute(ctx, "RETURN [x IN null WHERE EXISTS { MATCH (n:SV) } | x] AS v", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{nil}}, nullList.Rows)
 
 	// NOT EXISTS over a body that reads a scalar row value.
 	result, err := exec.Execute(ctx, "WITH 5 AS k MATCH (n:SV) WHERE NOT EXISTS { MATCH (n)-->(o) WHERE o.v = k } RETURN count(n) AS c", nil)

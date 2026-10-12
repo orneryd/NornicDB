@@ -59,19 +59,6 @@ func splitPatternComprehension(expr string) (string, string, bool) {
 	return "", "", false
 }
 
-func standaloneCountSubquery(expr string) (string, bool) {
-	expr = strings.TrimSpace(expr)
-	if !hasSubqueryPattern(expr, countSubqueryRe) {
-		return "", false
-	}
-	open := strings.Index(expr, "{")
-	close := strings.LastIndex(expr, "}")
-	if open < 0 || close <= open || strings.TrimSpace(expr[close+1:]) != "" {
-		return "", false
-	}
-	return strings.TrimSpace(expr[open+1 : close]), true
-}
-
 // isStandaloneExistsSubquery reports whether expr is exactly one
 // EXISTS { ... } subquery expression, with nothing before EXISTS and nothing
 // after its closing brace. Such an expression is a boolean value wherever an
@@ -99,14 +86,26 @@ func (e *StorageExecutor) evaluateExistsSubqueryValue(ctx context.Context, expr 
 	return matched
 }
 
-func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) []traversalOptRow {
+// evaluateBoundPatternRows matches pattern (with its WHERE) from the bound
+// nodes and relationships; the row's other values are in scope for the
+// WHERE, as a pattern comprehension's or a subquery's outer variables are
+// (#1055).
+func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) []traversalOptRow {
+	rows, _ := e.boundPatternRows(ctx, pattern, nodes, rels, values)
+	return rows
+}
+
+// boundPatternRows is evaluateBoundPatternRows reporting whether the kernel
+// matched the pattern: ok is false for a pattern it doesn't take or an error,
+// which isn't "no rows" (#1055).
+func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
 	pattern = strings.TrimSpace(pattern)
 	if strings.HasPrefix(upperASCII(pattern), "MATCH ") {
 		pattern = strings.TrimSpace(pattern[len("MATCH "):])
 	}
 	clauses := splitOptionalMatchClauses(pattern)
 	if len(clauses) != 1 {
-		return nil
+		return nil, false
 	}
 	seed := traversalOptRow{
 		nodes: make(map[string]*storage.Node, len(nodes)),
@@ -118,10 +117,20 @@ func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern 
 	for name, relationship := range rels {
 		seed.rels[name] = relationship
 	}
+	for name, value := range values {
+		switch value.(type) {
+		case *storage.Node, *storage.Edge:
+			continue
+		}
+		if seed.values == nil {
+			seed.values = make(map[string]interface{}, len(values))
+		}
+		seed.values[name] = value
+	}
 
 	expanded, err := e.applyTraversalOptionalClause(ctx, []traversalOptRow{seed}, clauses[0])
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	matches := expanded[:0]
 	for _, row := range expanded {
@@ -129,7 +138,7 @@ func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern 
 			matches = append(matches, row)
 		}
 	}
-	return matches
+	return matches, true
 }
 
 func (e *StorageExecutor) evaluatePatternComprehension(ctx context.Context, pattern, projection string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) []interface{} {
@@ -159,7 +168,7 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 			rels[variable] = entity
 		}
 	}
-	rows := e.evaluateBoundPatternRows(ctx, pattern, nodes, rels)
+	rows := e.evaluateBoundPatternRows(ctx, pattern, nodes, rels, outer)
 	values := make([]interface{}, 0, len(rows))
 	for _, row := range rows {
 		scope := make(pipelineRow, len(outer)+len(row.nodes)+len(row.rels)+len(row.values))
@@ -242,8 +251,8 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	for name, value := range parameterRowValues(ctx) {
 		bind(name, value)
 	}
-	if containsStatementClockCall(expr) {
-		bind(temporalRowContextKey, ctx)
+	if needsRowStatementContext(expr) {
+		bind(rowStatementContextKey, ctx)
 	}
 	if extended != nil {
 		values = extended
@@ -252,10 +261,6 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	// without the graph-expression checks below, which can't match it.
 	if value, bound := evaluateBoundRowValue(expr, values); bound {
 		return value, true
-	}
-	if plan := planRowSubqueries(strings.TrimSpace(expr)); plan != nil {
-		rewritten, extended := e.materializeRowSubqueries(ctx, plan, values)
-		return e.evaluateRowExpressionWithContext(ctx, rewritten, extended)
 	}
 	if subquery, ok := standaloneSubqueryExpression(expr); ok {
 		return e.evaluateRowSubqueryValue(ctx, subquery.kind, subquery.body, values)

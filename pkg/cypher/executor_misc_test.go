@@ -2602,46 +2602,6 @@ func TestVectorParsingProcedureBranches(t *testing.T) {
 	assert.Equal(t, []float32{1.5, -2}, parseInlineVector("[1.5, -2, nope]"))
 }
 
-func TestCollectSubqueryBranches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	p := &storage.Node{ID: "p1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}}
-	f1 := &storage.Node{ID: "f1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob"}}
-	f2 := &storage.Node{ID: "f2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "carl"}}
-	_, err := store.CreateNode(p)
-	require.NoError(t, err)
-	_, err = store.CreateNode(f1)
-	require.NoError(t, err)
-	_, err = store.CreateNode(f2)
-	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e1", StartNode: p.ID, EndNode: f1.ID, Type: "KNOWS"}))
-	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e2", StartNode: p.ID, EndNode: f2.ID, Type: "KNOWS"}))
-
-	_, err = exec.evaluateCollectSubquery(ctx, p, "p", "COLLECT bad")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid COLLECT subquery syntax")
-
-	_, err = exec.evaluateCollectSubquery(ctx, p, "p", "COLLECT { MATCH (p)-[:KNOWS]->(f) }")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must have a RETURN clause")
-
-	collected, err := exec.evaluateCollectSubquery(ctx, p, "p", "COLLECT { MATCH (p)-[:KNOWS]->(f) RETURN f.name }")
-	require.NoError(t, err)
-	require.Len(t, collected, 2)
-
-	collected, err = exec.evaluateCollectSubquery(ctx, p, "p", "COLLECT { MATCH (p)-[:KNOWS]->(f) WHERE f.name <> 'none' RETURN f.name }")
-	require.NoError(t, err)
-	require.Len(t, collected, 2)
-
-	// subquery execution error branch
-	_, err = exec.evaluateCollectSubquery(ctx, p, "p", "COLLECT { MATCH (p)-[:KNOWS]->(f) RETURN }")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "execution failed")
-}
-
 func TestExecuteMatchCreateBlock_AdditionalBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")

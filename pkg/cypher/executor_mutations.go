@@ -820,61 +820,6 @@ func (e *StorageExecutor) idCounter() int64 {
 	return atomic.LoadInt64(&idCounter)
 }
 
-// extractSubquery extracts the MATCH pattern from EXISTS { MATCH ... } or NOT EXISTS { MATCH ... }
-func (e *StorageExecutor) extractSubquery(whereClause, prefix string) string {
-	upperClause := upperASCII(whereClause)
-	prefixUpper := upperASCII(prefix)
-
-	// Find the prefix position
-	prefixIdx := strings.Index(upperClause, prefixUpper)
-	if prefixIdx < 0 {
-		return ""
-	}
-
-	// Find the opening brace
-	rest := whereClause[prefixIdx+len(prefix):]
-	braceStart := strings.Index(rest, "{")
-	if braceStart < 0 {
-		return ""
-	}
-
-	// Find matching closing brace
-	depth := 0
-	for i := braceStart; i < len(rest); i++ {
-		if rest[i] == '{' {
-			depth++
-		} else if rest[i] == '}' {
-			depth--
-			if depth == 0 {
-				return strings.TrimSpace(rest[braceStart+1 : i])
-			}
-		}
-	}
-
-	return ""
-}
-
-// evaluateCollectSubquery evaluates a COLLECT { … } projection item for one
-// node bound to variable, through the shared subquery evaluator
-// (rowSubqueryValue), so the body's ORDER BY and SKIP / LIMIT apply.
-func (e *StorageExecutor) evaluateCollectSubquery(ctx context.Context, node *storage.Node, variable, subquery string) ([]interface{}, error) {
-	collect, ok := standaloneSubqueryExpression(subquery)
-	if !ok || collect.kind != "COLLECT" {
-		return nil, localizedError(localization.CypherResidualCollectSubquerySyntaxInvalid(), nil)
-	}
-	if topLevelKeywordIndex(collect.body, "RETURN") < 0 {
-		return nil, localizedError(localization.CypherResidualCollectSubqueryReturnRequired(), nil)
-	}
-	// A COLLECT body is always evaluated (rowSubqueryValue); only its error
-	// can stop it.
-	value, _, err := e.rowSubqueryValue(ctx, collect.kind, collect.body, map[string]interface{}{variable: node})
-	if err != nil {
-		return nil, localizedError(localization.CypherResidualCollectSubqueryExecutionFailed(err), err)
-	}
-	collected, _ := value.([]interface{})
-	return collected, nil
-}
-
 // evaluateRelationshipPatternInWhere evaluates a WHERE clause relationship pattern
 // like "(n)-[:SUPERSEDED_BY]->()" and returns true if the node has a matching edge.
 // Used when NOT (n)-[:TYPE]->() is evaluated after stripping outer parens to "n)-[:TYPE]->()".
