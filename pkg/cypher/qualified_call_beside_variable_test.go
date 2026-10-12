@@ -39,4 +39,6 @@ func TestQualifiedCallBesideVariable(t *testing.T) {
 	require.False(t, isQualifiedFunctionCall("text.locate(a).end"), "a property of the call")
 	require.False(t, isQualifiedFunctionCall("text.locate"))
 	require.False(t, isQualifiedFunctionCall("f(a) + g.h(b)"))
+	require.False(t, isQualifiedFunctionCall("a.(b)"), "a dot without a name after it")
+	require.False(t, isQualifiedFunctionCall("(a).b(c)"), "not a name first")
 }
