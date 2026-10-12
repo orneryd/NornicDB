@@ -485,6 +485,42 @@ func TestWriteBehind_PropertyIndexAcrossGenerations(t *testing.T) {
 	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(7)))
 }
 
+// TestWriteBehind_PropertyIndexKeepsUnchangedValueOnBufferedUpdate is the
+// #1043 follow-up: a buffered update that keeps a flushed node's indexed
+// value (MATCH (n:User {id: 1}) SET n.v = …) must leave the node findable by
+// that value. The committed entry is superseded by the buffered version, so
+// the pending index has to list it, or the next MATCH by id finds nothing
+// and its SET silently does nothing.
+func TestWriteBehind_PropertyIndexKeepsUnchangedValueOnBufferedUpdate(t *testing.T) {
+	engine := newWriteBehindTestEngine(t, time.Hour)
+	schema := engine.GetSchemaForNamespace("test")
+	require.NoError(t, schema.AddPropertyIndex("user_id_idx", "User", []string{"id"}))
+
+	bufferedCreate(t, engine, &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(1), "v": int64(0)}})
+	require.NoError(t, engine.FlushWriteBehind())
+
+	update := func(v int64) {
+		tx, err := engine.BeginTransaction()
+		require.NoError(t, err)
+		require.NoError(t, tx.SetImplicit(true))
+		require.NoError(t, tx.SetNamespace("test"))
+		require.NoError(t, tx.UpdateNode(&Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(1), "v": v}}))
+		require.NoError(t, tx.Commit())
+	}
+	update(1)
+	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(1)),
+		"a buffered update that keeps the indexed value must stay findable by it")
+	update(2)
+	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(1)),
+		"a second buffered update of the same node must stay findable too")
+
+	require.NoError(t, engine.FlushWriteBehind())
+	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(1)))
+	node, err := engine.GetNode("test:u1")
+	require.NoError(t, err)
+	require.Equal(t, int64(2), node.Properties["v"], "the last buffered update must be the one applied")
+}
+
 func TestWriteBehind_DisabledCommitIsSynchronous(t *testing.T) {
 	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()})
 	require.NoError(t, err)

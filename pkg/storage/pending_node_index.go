@@ -142,15 +142,31 @@ func (p *pendingNodeIndex) remove(node *Node) {
 	}
 }
 
-// replace moves node's entries from the cached object prev to node. A
-// write-back that keeps the labels and tracked values (an embedding update)
-// leaves the entries as they are.
+// replace moves node's entries from prev to node. A write-back that keeps
+// the labels and tracked values (an embedding update) leaves the entries as
+// they are, but only when prev's entries are actually listed: the
+// write-behind buffer hands in the committed version as prev for a node it
+// doesn't hold yet, and that version was never added here. Skipping the add
+// for it would leave the node superseded in the committed index and absent
+// from this one, so index lookups miss it until the flush (#1043).
 func (p *pendingNodeIndex) replace(prev, node *Node) {
-	if prev != nil && node != nil && prev.ID == node.ID && p.sameEntries(prev, node) {
+	if prev != nil && node != nil && prev.ID == node.ID && p.listed(prev) && p.sameEntries(prev, node) {
 		return
 	}
 	p.remove(prev)
 	p.add(node)
+}
+
+// listed reports whether add's label entries for node are present. add lists
+// a node under every label together with its tracked values, so the label
+// entries stand for all of them.
+func (p *pendingNodeIndex) listed(node *Node) bool {
+	for _, label := range node.Labels {
+		if !p.byLabel[label][node.ID] {
+			return false
+		}
+	}
+	return true
 }
 
 // sameEntries reports whether two versions of a node have the same labels
