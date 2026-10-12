@@ -28,8 +28,9 @@ const textLocateTolerance = 3
 //   - markdown emphasis (* and _) and link markup ([label](target)) around
 //     words are skipped, in the text and the quote;
 //   - a reply's > markers at a line start are skipped, in both;
-//   - in the quote, a JSON escape \n, \r or \t is whitespace, and a copied
-//     leading line label ("12: ") is dropped.
+//   - a JSON escape \n, \r or \t is whitespace, in the text and the quote
+//     (a JSON file's body is one line whose breaks are escapes);
+//   - in the quote, a copied leading line label ("12: ") is dropped.
 //
 // options: line, the 1-based line the quote was cited on (the occurrence
 // starting on it wins, else the nearest within tolerance lines, else none);
@@ -163,8 +164,9 @@ func unescapeQuote(quote string) string {
 }
 
 // looseReduce folds text for loose matching (fnTextLocate's rules): one
-// space per whitespace run, lower case, plain quotes and dashes, without
-// markdown emphasis, link markup or a line's leading > markers.
+// space per whitespace run (JSON escapes \n, \r and \t included), lower
+// case, plain quotes and dashes, without markdown emphasis, link markup or a
+// line's leading > markers.
 func looseReduce(text string) looseText {
 	out := looseText{runes: make([]rune, 0, len(text)), offsets: make([]int, 0, len(text))}
 	runes := []rune(text)
@@ -198,6 +200,10 @@ func looseReduce(text string) looseText {
 			continue
 		case unicode.IsSpace(r):
 			space(i)
+			continue
+		case r == '\\' && i+1 < len(runes) && (runes[i+1] == 'n' || runes[i+1] == 'r' || runes[i+1] == 't'):
+			space(i)
+			i++
 			continue
 		case r == '*' || r == '_':
 			continue

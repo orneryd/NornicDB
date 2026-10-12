@@ -53,6 +53,25 @@ func TestTextLocate(t *testing.T) {
 	require.Equal(t, 6, lineOf(text, locate("rent is due", map[string]interface{}{"from": int64(30)})))
 	require.Nil(t, locate("rent is due", map[string]interface{}{"to": int64(20)}))
 
+	// A JSON file's body is one line whose breaks are two-character escapes;
+	// they match whitespace in the quote, real or escaped, and the span
+	// covers them (Personal Documents R5).
+	jsonText := `{\n  "body": "UK most of\nthe time.\n\nTara Brazil\n\nAdministrator director. I do not"\n}`
+	jsonRunes := []rune(jsonText)
+	for quote, want := range map[string]string{
+		"most of the time":             `most of\nthe time`,
+		"most of\nthe time":            `most of\nthe time`,
+		"Tara Brazil\n\nAdministrator": `Tara Brazil\n\nAdministrator`,
+		`director.\nI do not`:          `director. I do not`,
+		"the time. Tara Brazil":        `the time.\n\nTara Brazil`,
+	} {
+		result, err := exec.Execute(ctx, "RETURN text.locate($text, $quote, {line: 1}) AS span", map[string]interface{}{"text": jsonText, "quote": quote})
+		require.NoError(t, err, quote)
+		found, isSpan := result.Rows[0][0].(map[string]interface{})
+		require.True(t, isSpan, quote)
+		require.Equal(t, want, string(jsonRunes[found["start"].(int64):found["end"].(int64)]), quote)
+	}
+
 	require.Nil(t, locate("not in the text", nil))
 	require.Nil(t, locate("   ", nil))
 	result, err := exec.Execute(ctx, "RETURN text.locate(null, 'x') AS a, text.locate('x', null) AS b, text.locate('ab', 'b', null) AS c", nil)

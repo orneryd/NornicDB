@@ -178,8 +178,7 @@ Real-time signal filtering and prediction for time series data. Perfect for smoo
 
 ### 🔎 Text Location (1 function, a NornicDB extension)
 
-`text.locate(text, quote, options)` returns `{start, end}`, the span of a quote's best occurrence in `text` in code points (`substring(text, start, end - start)` is the passage), or null. The match is loose, as a reader copies a quote: letters match without case; any whitespace run matches any run; typographic and plain quotation marks, apostrophes and dashes match; markdown emphasis (`*`, `_`), link markup (`[label](target)`) and a reply's leading `>` markers are skipped; in the quote, JSON escapes `
-`, ``, `	` are whitespace and a copied line label (`12: `) is dropped.
+`text.locate(text, quote, options)` returns `{start, end}`, the span of a quote's best occurrence in `text` in code points (`substring(text, start, end - start)` is the passage), or null. The match is loose, as a reader copies a quote: letters match without case; any whitespace run matches any run; typographic and plain quotation marks, apostrophes and dashes match; markdown emphasis (`*`, `_`), link markup (`[label](target)`) and a reply's leading `>` markers are skipped; JSON escapes `\n`, `\r` and `\t` are whitespace, in the text and the quote (a JSON file's body is one line whose breaks are escapes); in the quote, a copied line label (`12: `) is dropped.
 
 | Option | Meaning |
 | --- | --- |
