@@ -52,16 +52,13 @@ Last Updated: November 25, 2025
 | `normalize(s)`             | Unicode normalization  | `RETURN normalize(s)`             |
 | `btrim(s, chars)`          | Trim specific chars    | `RETURN btrim("!!hi!!", "!")`     |
 
-The `string.*` namespace (Cypher 25 functions, also accepted under Cypher 5;
-`string.caseFold` and `string.asciiDigits` are NornicDB extensions):
+The `string.*` namespace (Cypher 25 functions, also accepted under Cypher 5):
 
 | Function                            | What It Does                                   | Example                                        |
 | ----------------------------------- | ---------------------------------------------- | ---------------------------------------------- |
 | `string.indexOf(s, value)`          | Character index of `value` in `s`, or -1       | `RETURN string.indexOf("hello", "l")`          |
 | `string.join(list, delimiter)`      | Join a list of strings                         | `RETURN string.join(["a", "b"], "-")`          |
 | `string.regexReplace(s, re, repl)`  | Replace every match of a regular expression    | `RETURN string.regexReplace("a  b", "\s+", " ")` |
-| `string.caseFold(s)`                | Unicode full case folding (beyond `toLower`)   | `RETURN string.caseFold("Straße")` → `strasse` |
-| `string.asciiDigits(s)`             | Decimal digits of any script as ASCII digits   | `RETURN string.asciiDigits("٢٠٢٦")` → `2026`   |
 
 ### 🔢 Type Conversion Functions (4 functions)
 
@@ -266,12 +263,14 @@ RETURN count(user) AS cleanedCount
 ### Example 2b: Identity Match Keys
 
 Compare names and identifiers whatever their width, case, spacing or script of
-digits: NFKC, full case folding, whitespace runs as one space, decimal digits
-as ASCII, and `-./` dropped from a key of digits only.
+digits, in plain Cypher: NFKC, lower case (with the letters lower case leaves
+apart, such as `ß`, folded too), whitespace runs as one space, decimal digits as
+ASCII through a map the caller passes, and `-./` dropped from a key of digits only.
 
 ```cypher
-WITH trim(string.regexReplace(
-       string.asciiDigits(string.caseFold(normalize($raw, NFKC))), '\s+', ' ')) AS k
+// $digits maps each non-ASCII decimal digit to its ASCII digit, e.g. {`٢`: '2', `３`: '3', …}
+WITH replace(replace(toLower(normalize($raw, NFKC)), 'ß', 'ss'), 'ς', 'σ') AS folded
+WITH trim(string.regexReplace(reduce(out = '', c IN split(folded, '') | out + coalesce($digits[c], c)), '\s+', ' ')) AS k
 RETURN CASE WHEN k =~ '[0-9./-]+' THEN string.regexReplace(k, '[-./]', '') ELSE k END AS key
 // "  MÜLLER   Straße 1" → "müller strasse 1";  "١٢٣-٤٥٦/٧٨" → "12345678"
 ```
