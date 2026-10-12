@@ -43,14 +43,15 @@ const customersCreateCypher = `UNWIND $rows AS row
  CREATE (:Customer {customerID: row.customerID, companyName: row.companyName, contactName: row.contactName,
                     country: row.country, city: row.city, address: row.address})`
 
-// Seeding strategy: do NOT use `UNWIND $rows MATCH ... CREATE` — that
-// pattern falls back to a label scan per row on NornicDB's planner and
-// seeding takes ~5ms per row (minutes at 50k scale). Instead, write
-// nodes in two steps:
-//  1. Bulk CREATE each node type with its foreign-key ids as properties
-//     (no MATCH in the UNWIND — fast, ~20µs per node).
-//  2. Wire edges in a single "cross-join" MATCH a, b WHERE a.fk = b.pk
-//     CREATE (a)-[:REL]->(b) pass, once per relationship type.
+// Seeding strategy: chunked `UNWIND $rows MATCH ... CREATE` with the PK/FK
+// indexes declared above. The per-row MATCH is an index point lookup (not a
+// label scan), so a row costs one seek per FK, not a full population walk.
+// A "bulk CREATE nodes, then cross-join wire edges" alternative was measured
+// and rejected: the cross-join either degenerates to a cartesian product or
+// turns each relationship type into one 48k-edge statement that thrashes the
+// write pipeline — both ~2-3× slower end to end. Keep the writes chunked so
+// the write-behind flusher and Badger's commit queue stay fed with
+// pipeline-sized batches.
 const productsCreateCypher = `UNWIND $rows AS row
  MATCH (c:Category {categoryID: row.categoryID})
  MATCH (s:Supplier {supplierID: row.supplierID})

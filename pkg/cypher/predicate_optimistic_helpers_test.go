@@ -1,11 +1,28 @@
 package cypher
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+// BenchmarkOptimisticMetadataLargeBatch pins the O(1) dedup in the optimistic
+// metadata helpers. The previous linear scan over the accumulating ID slice
+// made a statement creating N relationships quadratic (N²/2 string compares);
+// at 48k edges that was ~1.15 billion comparisons and dominated the seed.
+func BenchmarkOptimisticMetadataLargeBatch(b *testing.B) {
+	const n = 50_000
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		res := &ExecuteResult{}
+		for j := 0; j < n; j++ {
+			addOptimisticRelationshipID(res, storage.EdgeID(fmt.Sprintf("e-%d", j)))
+		}
+	}
+}
 
 func TestPredicateHelpers_Branches(t *testing.T) {
 	node := &storage.Node{
