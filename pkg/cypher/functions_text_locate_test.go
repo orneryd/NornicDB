@@ -75,6 +75,15 @@ func TestTextLocate(t *testing.T) {
 	require.Nil(t, locate("   ", nil))
 	require.Nil(t, locate("12: ", nil))
 
+	// Without case, İ is i, as by its lower-case mapping; ı, ſ, the
+	// Kelvin sign and ß keep Go's folding, which already agrees.
+	turkish := "line one\nline two\nİstanbul I ı ſ K Straße"
+	require.Equal(t, "İstanbul", substringOf(turkish, locateIn(turkish, "istanbul", nil)))
+	require.Equal(t, "İstanbul", substringOf(turkish, locateIn(turkish, "ISTANBUL", nil)))
+	require.Equal(t, span(18, 19), locateIn(turkish, "I", map[string]interface{}{"line": int64(3)}), "İ, the first at the line's start")
+	require.Equal(t, span(18, 19), locateIn(turkish, "i", map[string]interface{}{"line": int64(3)}))
+	require.Equal(t, "ſ", substringOf(turkish, locateIn(turkish, "s K", nil))[:len("ſ")])
+
 	// Markdown only around a word, never inside one.
 	columns := "Database columns file_name and filename."
 	require.Equal(t, span(31, 39), locateIn(columns, "filename", map[string]interface{}{"line": int64(1)}))

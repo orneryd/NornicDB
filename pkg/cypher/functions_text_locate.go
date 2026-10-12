@@ -102,11 +102,14 @@ const (
 	textLocateMarkupClose = `(?:\*{1,2}|_{1,2}|\]\([^)\s]*\))?`
 )
 
-// textLocateMarks are the typographic and plain forms of the same mark.
+// textLocateMarks are the forms of a character that match it: typographic
+// and plain marks, and the letters equal to i without case.
 var textLocateMarks = map[rune]string{}
 
 func init() {
-	for _, group := range []string{`'‘’`, `"“”`, `-‐‑–—`} {
+	// İ (U+0130) is i without case, by its simple lower-case mapping; Go's case
+	// folding leaves it alone.
+	for _, group := range []string{`'‘’`, `"“”`, `-‐‑–—`, `iIİ`} {
 		class := "[" + regexp.QuoteMeta(group) + "]"
 		for _, mark := range group {
 			textLocateMarks[mark] = class
