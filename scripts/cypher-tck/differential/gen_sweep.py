@@ -358,6 +358,75 @@ for sq in SUBQUERY_BOOLS:
         add("subquery-scope", "qpp", f"MATCH (s:Q {{id: 1}}) ((x)-[e:R WHERE {b}]->(y))+ (t) RETURN t.id AS v ORDER BY v")
         add("subquery-scope", "qpp", f"MATCH (s:Q {{id: 1}}) ((x)-[e:R]->(y) WHERE e.w = 2 OR {b})+ (t) RETURN t.id AS v ORDER BY v")
 
+# 12c. Subquery bodies that start from the row's own variables (#1055): the
+# bound node, relationship and path fast paths against the pipeline. Bodies
+# read a bound relationship, a row value in a property map or WHERE, a path,
+# and use shortestPath, CALL and UNION; each is wrapped like 12b's.
+BOUND_BODIES = ["EXISTS {{ (n)-[:R]->() }}", "COUNT {{ (n)-->() }}", "COUNT {{ (n)-[s]->() }}",
+                "COUNT {{ (n)-[r]->() }}", "COUNT {{ (n)-[r:R]->() }}", "EXISTS {{ (n)-[r]->(o) }}",
+                "COUNT {{ (n)<-[:R]-() }}", "COUNT {{ (n)--() }}", "COUNT {{ (o)-[:R]->() }}",
+                "EXISTS {{ (n)-[:R]->(:Q {{id: o.id}}) }}", "EXISTS {{ (n)-[:R]->(:Q {{id: i + 1}}) }}",
+                "EXISTS {{ MATCH (n)-[:R]->(x) WHERE x.id = i + 1 }}", "EXISTS {{ MATCH (n)-[:R]->(x) WHERE x.id = m.a + 1 }}",
+                "COUNT {{ (n)-[:R]->()-[:R]->() }}", "EXISTS {{ MATCH (n)-[:R]->(x) WHERE x.id IN l }}",
+                "EXISTS {{ MATCH q = (n)-[:R]->() WHERE length(q) = 1 }}", "EXISTS {{ MATCH (n)-[:R]->(x) WHERE length(p) = 1 }}",
+                "EXISTS {{ MATCH (x)-[e:R]->(y) WHERE e = r }}", "EXISTS {{ MATCH sp = shortestPath((n)-[*]->(o)) }}",
+                "COUNT {{ MATCH sp = shortestPath((n)-[*]->(x:Q)) WHERE x <> n }}",
+                "EXISTS {{ CALL (n) {{ MATCH (n)-->(x) RETURN x }} RETURN x }}",
+                "COUNT {{ MATCH (n)-->(x) RETURN x UNION MATCH (n)<--(x) RETURN x }}",
+                "COLLECT {{ MATCH (n)-[e]->(x) RETURN type(e) }}"]
+for wrap in ["{b}", "NOT {b}", "CASE WHEN {b} THEN 1 ELSE 0 END", "[{b}]", "coalesce({b}, false)",
+             "any(v IN [1, 5] WHERE {b})", "[v IN [1, 5] | {b}]"]:
+    for body in BOUND_BODIES:
+        b = body.format()
+        if wrap not in ("{b}", "[{b}]") and not b.startswith("EXISTS"):
+            b = "(" + b + ") > 0" if b.startswith("COUNT") else "size(" + b + ") > 0"
+        positions = ["return", "with", "orderby"]
+        if wrap in ("{b}", "NOT {b}") and b.startswith("EXISTS"):
+            positions.append("where")
+        place("subquery-scope", wrap.format(b=b), positions)
+# A pattern comprehension as the enclosing construct: its subquery reads the
+# comprehension's own variables.
+for wrap in ["[(n)-[:R]->(x) WHERE {b} | x.id]", "size([(n)-[:R]->(x) WHERE {b} | x])", "[(n)-[:R]->(x) | {b}]",
+             "[(n)-[e:R]->(x) WHERE {b} | e.w]"]:
+    for sq in SUBQUERY_BOOLS:
+        for reader in ["x.id", "x.id + i"]:
+            place("subquery-scope", wrap.format(b=sq.format(x=reader)), ["return", "with"])
+# Relationship and path readers, outside any scope.
+for wrap in ["{b}", "NOT {b}", "CASE WHEN {b} THEN 1 ELSE 0 END", "[{b}]"]:
+    for sq in SUBQUERY_BOOLS:
+        for reader in ["r.w", "length(p)", "size(nodes(p))"]:
+            positions = ["return", "with"] + (["where"] if wrap in ("{b}", "NOT {b}") else [])
+            place("subquery-scope", wrap.format(b=sq.format(x=reader)), positions)
+
+# 12d. Projected expressions used where a type is needed (#1055): each
+# expression projected by WITH, a second WITH, UNWIND of it or of a list of it,
+# or a CALL subquery's RETURN, then used as a node or relationship in a
+# pattern, a property owner, a function argument or an operand.
+SRC = "MATCH p = (n:Q {id: 1})-[r:R]->(o:Q)"
+PROJECTED = ["n", "r", "p", "n.id", "r.w", "1", "'x'", "null", "[n, o]", "[r]", "[n, 1]", "collect(n)", "collect(r)",
+             "collect(n.id)", "count(n)", "coalesce(n, o)", "coalesce(n, null)", "coalesce(1, 2)",
+             "CASE WHEN true THEN n ELSE o END", "CASE WHEN true THEN 1 ELSE 2 END", "{node: n}.node", "n{.id}",
+             "[x IN [n] | x]", "[n, o][0]", "[n, o][0..1]", "nodes(p)", "nodes(p)[0]", "startNode(r)", "n = o",
+             "EXISTS { (n)-->() }"]
+SHAPES = {"with": SRC + " WITH {e} AS v {u}",
+          "with-chain": SRC + " WITH {e} AS v WITH v {u}",
+          "unwind-item": SRC + " UNWIND [{e}] AS v {u}",
+          "unwind-list": SRC + " WITH [{e}] AS l UNWIND l AS v {u}",
+          "call-return": SRC + " CALL (n, r, p, o) {{ RETURN {e} AS v }} {u}"}
+USES = ["MATCH (v) RETURN count(*) AS c", "MATCH (v)-[:R]->(x) RETURN count(x) AS c",
+        "OPTIONAL MATCH (v)-->(x) RETURN count(x) AS c", "MATCH ()-[v]->() RETURN count(*) AS c",
+        "RETURN v.id AS x", "RETURN labels(v) AS x", "RETURN type(v) AS x", "RETURN length(v) AS x",
+        "RETURN toUpper(v) AS x", "RETURN v + 1 AS x", "RETURN 1 IN v AS x", "RETURN v[0] AS x",
+        "WITH v WHERE v RETURN 1 AS x"]
+for e in PROJECTED:
+    for shape, template in SHAPES.items():
+        if shape.startswith("unwind") and e.startswith(("collect", "count")):
+            continue
+        for use in USES:
+            add("projection-types", shape, template.replace("{e}", e).replace("{u}", use).replace("{{", "{").replace("}}", "}"))
+for use in USES:
+    add("projection-types", "yield", "CALL db.labels() YIELD label AS v " + use)
+
 # 13. Clause semantics: ordering, DISTINCT, grouping, nulls, SKIP/LIMIT.
 VALUES = "[1, 1.0, '1', null, true, [1], {a: 1}, 2, -1, 'a', 'B', [], [null], date('2020-01-01'), duration('P1D'), 0.0 / 0.0]"
 for q in [f"UNWIND {VALUES} AS x RETURN x ORDER BY x", f"UNWIND {VALUES} AS x RETURN x ORDER BY x DESC",

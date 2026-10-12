@@ -14,6 +14,11 @@ import (
 // from UpdateRuns runs instead of checking one run against them.
 const UpdateRatchetEnv = "NORNICDB_DIFFERENTIAL_UPDATE_RATCHET"
 
+// ReportEnv names a file a check appends every differing statement to, one
+// JSON object per line with its route and both outcomes, for reading a run's
+// differences in full; the test output lists only the first maxReported.
+const ReportEnv = "NORNICDB_DIFFERENTIAL_REPORT"
+
 // UpdateRuns is how many times an update runs a route: a statement that
 // matches Neo4j in some runs and not in others is listed as unstable.
 const UpdateRuns = 3
@@ -195,6 +200,11 @@ func Assert(t testing.TB, path, route string, run func() ([]Result, int, error))
 	if err != nil {
 		t.Fatalf("%s: %v", route, err)
 	}
+	if path := os.Getenv(ReportEnv); path != "" {
+		if err := appendReport(path, route, results); err != nil {
+			t.Fatalf("write differential report: %v", err)
+		}
+	}
 	report := ratchet.Check(route, results)
 	t.Logf("DIFFERENTIAL_RATCHET route=%s compared=%d known=%d unstable=%d regressed=%d now_match=%d stale=%d reset_retries=%d",
 		route, report.Compared, report.Known, report.Unstable, len(report.Regressed), len(report.NowMatches), len(report.Stale), resetRetries)
@@ -229,4 +239,27 @@ func mustJSON(value any) string {
 		return string(encoded[:600]) + "…"
 	}
 	return string(encoded)
+}
+
+// appendReport appends the results that differ from Neo4j to the file at
+// path, one JSON object per line with the route (ReportEnv).
+func appendReport(path, route string, results []Result) error {
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	encoder := json.NewEncoder(file)
+	for _, result := range results {
+		if result.Match {
+			continue
+		}
+		if err := encoder.Encode(struct {
+			Route string `json:"route"`
+			Result
+		}{route, result}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
