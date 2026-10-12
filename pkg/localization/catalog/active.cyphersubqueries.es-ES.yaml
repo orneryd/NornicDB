@@ -130,7 +130,7 @@
 - id: cyphersubqueries.rag_fail_closed_invalid
   description: db.retrieve failClosed recibió un campo inválido.
   other: "db.retrieve failClosed tiene un valor {{.Field}} inválido"
-- id: cyphersubqueries.rag_where_invalid
+- id: cyphersubqueries.where_filter_invalid
   description: Un procedimiento de recuperación recibió una opción where que no es un STRING.
   other: "where de {{.Procedure}} debe ser un STRING: un predicado sobre node"
 - id: cyphersubqueries.rag_fail_closed_embedding_unavailable

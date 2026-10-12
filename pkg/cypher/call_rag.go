@@ -219,7 +219,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	if raw, present := req["where"]; present && raw != nil {
 		where, isText := raw.(string)
 		if !isText {
-			return nil, localizedError(localization.CypherSubqueriesRAGWhereInvalid("db.retrieve"), nil)
+			return nil, localizedError(localization.CypherSubqueriesWhereFilterInvalid("db.retrieve"), nil)
 		}
 		if strings.TrimSpace(where) != "" {
 			opts.Where = e.compileNodeWhereFilter(context.WithoutCancel(ctx), "node", where)

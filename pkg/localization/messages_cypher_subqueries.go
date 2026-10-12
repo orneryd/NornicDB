@@ -50,7 +50,7 @@ const (
 	MessageCypherSubqueriesQueryRequired                     MessageID = "cyphersubqueries.query_required"
 	MessageCypherSubqueriesRAGCandidateIDRequired            MessageID = "cyphersubqueries.rag_candidate_id_required"
 	MessageCypherSubqueriesRAGFailClosedInvalid              MessageID = "cyphersubqueries.rag_fail_closed_invalid"
-	MessageCypherSubqueriesRAGWhereInvalid                   MessageID = "cyphersubqueries.rag_where_invalid"
+	MessageCypherSubqueriesWhereFilterInvalid                MessageID = "cyphersubqueries.where_filter_invalid"
 	MessageCypherSubqueriesRAGFailClosedEmbeddingUnavailable MessageID = "cyphersubqueries.rag_fail_closed_embedding_unavailable"
 )
 
@@ -242,10 +242,10 @@ func CypherSubqueriesRAGFailClosedInvalid(field string) Message {
 	return cypherSubqueriesMessage(MessageCypherSubqueriesRAGFailClosedInvalid, "db.retrieve failClosed has an invalid "+field+" value", map[string]any{"Field": field})
 }
 
-// CypherSubqueriesRAGWhereInvalid identifies a retrieval where option that
+// CypherSubqueriesWhereFilterInvalid identifies a retrieval where option that
 // isn't a predicate's text.
-func CypherSubqueriesRAGWhereInvalid(procedure string) Message {
-	return cypherSubqueriesMessage(MessageCypherSubqueriesRAGWhereInvalid, procedure+" where must be a STRING: a predicate on node", map[string]any{"Procedure": procedure})
+func CypherSubqueriesWhereFilterInvalid(procedure string) Message {
+	return cypherSubqueriesMessage(MessageCypherSubqueriesWhereFilterInvalid, procedure+" where must be a STRING: a predicate on node", map[string]any{"Procedure": procedure})
 }
 
 func CypherSubqueriesRAGFailClosedEmbeddingUnavailable(cause error) Message {
