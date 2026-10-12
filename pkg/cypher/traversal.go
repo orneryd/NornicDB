@@ -67,6 +67,11 @@ type TraversalContext struct {
 	// endpointsNeedOnlyExist is set when nothing in the statement reads the
 	// nodes the traversal reaches (traversalEndpointsNeedOnlyExist).
 	endpointsNeedOnlyExist bool
+	// endpointsNeedOnlyLabels is set when the nodes the traversal reaches
+	// need only their labels checked: a labelled, property-less endpoint
+	// with no path variable exposing it (traversalEndpointsNeedOnlyLabels).
+	// The traversal then reads ID + labels without decoding properties.
+	endpointsNeedOnlyLabels bool
 	// relationshipsNeedOnlyHeaders is set when nothing in the statement reads
 	// the relationships' properties (traversalRelationshipsNeedOnlyHeaders).
 	relationshipsNeedOnlyHeaders bool
@@ -83,6 +88,16 @@ type TraversalContext struct {
 func traversalEndpointsNeedOnlyExist(match *TraversalMatch) bool {
 	return !match.IsChained && match.PathVariable == "" && match.EndNode.variable == "" &&
 		len(match.EndNode.labels) == 0 && len(match.EndNode.properties) == 0
+}
+
+// traversalEndpointsNeedOnlyLabels reports whether the nodes a traversal
+// reaches need only their labels checked: a labelled endpoint with no inline
+// property map, no path variable exposing the node, and (as a safe subset) an
+// anonymous endpoint variable, so the node is never returned to the user. The
+// traversal then reads ID + labels without decoding properties (#1110).
+func traversalEndpointsNeedOnlyLabels(match *TraversalMatch) bool {
+	return !match.IsChained && match.PathVariable == "" && match.EndNode.variable == "" &&
+		len(match.EndNode.labels) > 0 && len(match.EndNode.properties) == 0
 }
 
 // traversalRelationshipsNeedOnlyHeaders reports whether a traversal needs
@@ -1561,6 +1576,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			cancelCtx:                    ctx,
 			repeatable:                   repeatableElements(ctx),
 			endpointsNeedOnlyExist:       traversalEndpointsNeedOnlyExist(match),
+			endpointsNeedOnlyLabels:      traversalEndpointsNeedOnlyLabels(match),
 			relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 		}
 
@@ -1630,6 +1646,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					cancelCtx:                    ctx,
 					repeatable:                   repeatableElements(ctx),
 					endpointsNeedOnlyExist:       traversalEndpointsNeedOnlyExist(match),
+					endpointsNeedOnlyLabels:      traversalEndpointsNeedOnlyLabels(match),
 					relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
 				}
 
@@ -1880,6 +1897,14 @@ func (e *StorageExecutor) newTraversalContext(traversalCtx context.Context, star
 // edge semantics.
 func (e *StorageExecutor) loadTraversalEndpointNode(ctx *TraversalContext, nextNodeID storage.NodeID) (*storage.Node, bool) {
 	nextNode := ctx.nodeCache[nextNodeID]
+	if nextNode == nil && ctx.endpointsNeedOnlyLabels && !ctx.temporalViewport.Enabled() {
+		if reader, ok := e.storage.(storage.ProjectedNodeReader); ok {
+			if labelsOnly, err := reader.GetNodeProjected(nextNodeID, []string{}); err == nil && labelsOnly != nil {
+				nextNode = labelsOnly
+				ctx.nodeCache[nextNodeID] = nextNode
+			}
+		}
+	}
 	if nextNode == nil && ctx.endpointsNeedOnlyExist && !ctx.temporalViewport.Enabled() {
 		if checker, ok := e.storage.(storage.RelationshipEndpointChecker); ok {
 			if visible, answered := checker.RelationshipEndpointVisible(nextNodeID); answered {

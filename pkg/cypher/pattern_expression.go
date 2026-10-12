@@ -49,14 +49,36 @@ func splitPatternComprehension(expr string) (string, string, bool) {
 			if parenDepth == 0 && bracketDepth == 1 && braceDepth == 0 {
 				pattern := strings.TrimSpace(expr[1:i])
 				projection := strings.TrimSpace(expr[i+1 : len(expr)-1])
-				if !strings.Contains(upperASCII(pattern), " IN ") &&
-					strings.Contains(pattern, "(") && strings.Contains(pattern, ")") && projection != "" {
+				// Classify on the leading token, not on the presence of " IN ".
+				// A pattern comprehension begins (after an optional "p = " path
+				// assignment) with a node pattern "("; a list comprehension
+				// begins with an identifier followed by IN. Rejecting any
+				// pattern containing " IN " wrongly breaks pattern
+				// comprehensions whose WHERE uses IN (#1109).
+				if patternComprehensionHead(pattern) && projection != "" {
 					return pattern, projection, true
 				}
 			}
 		}
 	}
 	return "", "", false
+}
+
+// patternComprehensionHead reports whether pattern is the head of a pattern
+// comprehension: a node pattern "(", optionally prefixed by a path-variable
+// assignment ("p = "). A list comprehension head is an identifier followed by
+// IN, which this rejects.
+func patternComprehensionHead(pattern string) bool {
+	head := strings.TrimSpace(pattern)
+	if strings.HasPrefix(head, "(") {
+		return true
+	}
+	if eq := strings.Index(head, "="); eq > 0 {
+		if isValidIdentifier(strings.TrimSpace(head[:eq])) {
+			return strings.HasPrefix(strings.TrimSpace(head[eq+1:]), "(")
+		}
+	}
+	return false
 }
 
 // isStandaloneExistsSubquery reports whether expr is exactly one

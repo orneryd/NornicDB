@@ -108,6 +108,97 @@ func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version
 	return node, nil
 }
 
+// getNodeProjectedVisibleAtWithView is getNodeVisibleAtWithView for a
+// projected read: it decodes only the requested user properties (none when
+// properties is an empty non-nil slice) and never hydrates embedding vectors
+// or touches the body cache, so a traversal that needs only a node's labels
+// pays no property-decode or copy cost (#1110).
+func (b *BadgerEngine) getNodeProjectedVisibleAtWithView(id NodeID, version MVCCVersion, properties []string, view func(func(*badger.Txn) error) error) (*Node, error) {
+	deregister, err := b.beginMVCCSnapshotRead(version)
+	if err != nil {
+		return nil, err
+	}
+	defer deregister()
+	var node *Node
+	err = view(func(txn *badger.Txn) error {
+		var loadErr error
+		node, loadErr = b.getNodeProjectedVisibleAtInTxn(txn, id, version, properties)
+		return loadErr
+	})
+	return node, err
+}
+
+// getNodeProjectedVisibleAtInTxn is getNodeVisibleAtInTxn for a projected
+// read. The visibility resolution (MVCC head) is identical; only the body
+// decode and embedding hydration are skipped.
+func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, properties []string) (*Node, error) {
+	include := propertyProjectionSet(properties)
+	head, err := b.loadNodeMVCCHeadInTxn(txn, id)
+	if err != nil {
+		return nil, err
+	}
+	if version.Compare(head.FloorVersion) < 0 {
+		return nil, ErrNotVisibleAtSnapshot
+	}
+
+	if version.Compare(head.Version) >= 0 && !head.Tombstoned {
+		item, getErr := txn.Get(nodeKey(id))
+		if getErr == nil {
+			var node *Node
+			if err := item.Value(func(val []byte) error {
+				namespace := namespaceForNodeID(id)
+				decoded, decodeErr := b.decodeNodeProjected(namespace, val, include)
+				if decodeErr != nil {
+					return decodeErr
+				}
+				if decoded == nil {
+					return ErrNotFound
+				}
+				node = decoded
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+			if b.filterNodeByDecay(node, DecayScoringTime()) {
+				return nil, ErrNotFound
+			}
+			return node, nil
+		}
+		if getErr != badger.ErrKeyNotFound {
+			return nil, getErr
+		}
+	}
+	if head.Tombstoned && version.Compare(head.Version) >= 0 {
+		return nil, ErrNotFound
+	}
+
+	var record mvccNodeRecord
+	switch {
+	case version.Compare(head.Version) >= 0:
+		record, err = b.loadNodeMVCCRecordExactInTxn(txn, id, head.Version)
+	case version.Compare(head.FloorVersion) == 0:
+		record, err = b.loadNodeMVCCRecordExactInTxn(txn, id, head.FloorVersion)
+	default:
+		record, _, err = b.loadNodeMVCCRecordAtOrBeforeInTxn(txn, id, version)
+	}
+	if err != nil {
+		if err == ErrNotFound && version.Compare(head.Version) >= 0 {
+			record, _, err = b.loadNodeMVCCRecordAtOrBeforeInTxn(txn, id, head.Version)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if record.Tombstoned || record.Node == nil {
+		return nil, ErrNotFound
+	}
+	node := copyNodeProjectedWithoutEmbeddings(record.Node, properties)
+	if b.filterNodeByDecay(node, DecayScoringTime()) {
+		return nil, ErrNotFound
+	}
+	return node, nil
+}
+
 func (b *BadgerEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
 	return b.getNodesByLabelVisibleAtWithView("", label, version, b.withView)
 }

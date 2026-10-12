@@ -1917,6 +1917,120 @@ func (tx *BadgerTransaction) GetNode(nodeID NodeID) (*Node, error) {
 	return tx.getCommittedNodeLocked(nodeID)
 }
 
+// GetNodeProjected implements ProjectedNodeReader inside the transaction: it
+// decodes only the requested user properties (none when properties is an empty
+// non-nil slice) while preserving ID, labels, timestamps and embedding
+// metadata, and without hydrating stored embedding vectors. A nil properties
+// slice means "full node". Visibility is the transaction's own: pending
+// writes, deletes, connected deletes and the MVCC snapshot all apply exactly
+// as in GetNode.
+func (tx *BadgerTransaction) GetNodeProjected(nodeID NodeID, properties []string) (*Node, error) {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+		return nil, err
+	}
+	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
+		return nil, err
+	}
+
+	// A node deleted while relationships still connect it is still their
+	// endpoint (DeleteConnectedNode).
+	if node, connected := tx.connectedDeletes[nodeID]; connected {
+		return copyNodeProjectedWithoutEmbeddings(node, properties), nil
+	}
+	// Check deleted
+	if _, deleted := tx.deletedNodes[nodeID]; deleted {
+		return nil, ErrNotFound
+	}
+	// Check pending
+	if node, exists := tx.pendingNodes[nodeID]; exists {
+		return copyNodeProjectedWithoutEmbeddings(node, properties), nil
+	}
+
+	return tx.getCommittedNodeProjectedLocked(nodeID, properties)
+}
+
+// getCommittedNodeProjectedLocked is getCommittedNodeLocked for a projected
+// read: the same write-behind overlay, snapshot caches and MVCC resolution,
+// but decoding only the requested properties and never hydrating embeddings.
+func (tx *BadgerTransaction) getCommittedNodeProjectedLocked(nodeID NodeID, properties []string) (*Node, error) {
+	if tx.engine != nil {
+		if wb := tx.engine.writeBehind; wb != nil {
+			if wb.NodeDeleted(nodeID) {
+				return nil, ErrNotFound
+			}
+			if node, ok := wb.LookupNode(nodeID); ok {
+				return copyNodeProjectedWithoutEmbeddings(node, properties), nil
+			}
+		}
+	}
+	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
+		return copyNodeProjectedWithoutEmbeddings(node, properties), nil
+	}
+	if node, ok := tx.snapshotLabelNodeByID[nodeID]; ok {
+		sidecar := false
+		_ = tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
+			sidecar = tx.nodeHasEmbeddingSidecar(txn, nodeID)
+			return nil
+		})
+		if !sidecar {
+			return copyNodeProjectedWithoutEmbeddings(node, properties), nil
+		}
+	}
+	if tx.readTS.IsZero() {
+		return tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, propertyProjectionSet(properties))
+	}
+	node, err := tx.engine.getNodeProjectedVisibleAtWithView(nodeID, tx.readTS, properties, tx.withSnapshotViewLocked)
+	if err == ErrNotVisibleAtSnapshot {
+		if tx.engine.writeBehind != nil {
+			if fresh, freshErr := tx.engine.GetNodeProjected(nodeID, properties); freshErr == nil {
+				return fresh, nil
+			}
+		}
+		return nil, ErrNotFound
+	}
+	if err == ErrNotFound {
+		fallbackNode, fallbackErr := tx.getNodeFromBadgerSnapshotProjectedLocked(nodeID, propertyProjectionSet(properties))
+		if fallbackErr == nil {
+			return fallbackNode, nil
+		}
+		if fallbackErr != ErrNotFound {
+			return nil, fallbackErr
+		}
+		if tx.engine.writeBehind != nil {
+			if fresh, freshErr := tx.engine.GetNodeProjected(nodeID, properties); freshErr == nil {
+				return fresh, nil
+			}
+		}
+	}
+	return node, err
+}
+
+// getNodeFromBadgerSnapshotProjectedLocked reads and decodes a node from the
+// transaction's pinned snapshot, projecting to the requested properties.
+func (tx *BadgerTransaction) getNodeFromBadgerSnapshotProjectedLocked(nodeID NodeID, include map[string]struct{}) (*Node, error) {
+	key := nodeKey(nodeID)
+	var nodeBytes []byte
+	err := tx.withSnapshotViewLocked(func(rtxn *badger.Txn) error {
+		item, err := rtxn.Get(key)
+		if err != nil {
+			return err
+		}
+		return item.Value(func(val []byte) error {
+			nodeBytes = append([]byte{}, val...)
+			return nil
+		})
+	})
+	if err == badger.ErrKeyNotFound {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading node: %w", err)
+	}
+	return tx.engine.decodeNodeProjected(namespaceForNodeID(nodeID), nodeBytes, include)
+}
+
 // RelationshipEndpointVisible implements RelationshipEndpointChecker with the
 // same answer GetNode gives inside this transaction. The transaction's own
 // delete or write decides first. A committed node is decided from its MVCC

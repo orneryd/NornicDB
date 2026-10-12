@@ -21,6 +21,11 @@ func (e *countingEndpointEngine) GetNode(id storage.NodeID) (*storage.Node, erro
 	return e.NamespacedEngine.GetNode(id)
 }
 
+func (e *countingEndpointEngine) GetNodeProjected(id storage.NodeID, properties []string) (*storage.Node, error) {
+	e.reads++
+	return e.NamespacedEngine.GetNodeProjected(id, properties)
+}
+
 func (e *countingEndpointEngine) RelationshipEndpointVisible(id storage.NodeID) (bool, bool) {
 	e.checks++
 	if id == e.hidden {
@@ -43,6 +48,43 @@ func TestTraversalEndpointsNeedOnlyExist(t *testing.T) {
 	chained := end("", nil, nil)
 	chained.IsChained = true
 	require.False(t, traversalEndpointsNeedOnlyExist(chained))
+}
+
+func TestTraversalEndpointsNeedOnlyLabels(t *testing.T) {
+	end := func(variable string, labels []string, properties map[string]interface{}) *TraversalMatch {
+		return &TraversalMatch{EndNode: nodePatternInfo{variable: variable, labels: labels, properties: properties}}
+	}
+	require.True(t, traversalEndpointsNeedOnlyLabels(end("", []string{"P"}, nil)))
+	require.False(t, traversalEndpointsNeedOnlyLabels(end("", nil, nil))) // no labels → exist-only
+	require.False(t, traversalEndpointsNeedOnlyLabels(end("", []string{"P"}, map[string]interface{}{"k": 1})))
+	require.False(t, traversalEndpointsNeedOnlyLabels(end("b", []string{"P"}, nil))) // named endpoint is returned
+	path := end("", []string{"P"}, nil)
+	path.PathVariable = "p"
+	require.False(t, traversalEndpointsNeedOnlyLabels(path))
+	chained := end("", []string{"P"}, nil)
+	chained.IsChained = true
+	require.False(t, traversalEndpointsNeedOnlyLabels(chained))
+}
+
+// A count over a labelled anonymous endpoint reads only the endpoint's labels
+// (a projected read), not the whole node, and returns the same rows.
+func TestLabelledEndpointCountReadsOnlyLabels(t *testing.T) {
+	ctx := context.Background()
+	store := &countingEndpointEngine{NamespacedEngine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")}
+	exec := NewStorageExecutor(store)
+	_, err := exec.Execute(ctx, `
+		CREATE (a:P {id: 1, text: 'x'}),
+		       (b:P {id: 2, text: 'y'}),
+		       (c:Q {id: 3, text: 'z'})
+		CREATE (a)-[:K]->(b), (a)-[:K]->(c)
+	`, nil)
+	require.NoError(t, err)
+
+	store.reads, store.checks = 0, 0
+	result, err := exec.Execute(ctx, "MATCH (p:P)-[:K]->(:Q) RETURN p.id AS id, count(*) AS d ORDER BY id", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(1), int64(1)}}, result.Rows)
+	require.Equal(t, 2, store.reads, "one labels-only read for the anonymous labelled endpoint")
 }
 
 // A degree count over anonymous end nodes asks storage whether each end node

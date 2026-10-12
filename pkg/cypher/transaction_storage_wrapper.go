@@ -286,6 +286,21 @@ func (w *transactionStorageWrapper) GetNode(id storage.NodeID) (*storage.Node, e
 	return w.toUserNode(node), nil
 }
 
+// GetNodeProjected implements storage.ProjectedNodeReader in the wrapper's
+// namespace, decoding only the requested properties (see
+// BadgerTransaction.GetNodeProjected). Traversals use it with an empty
+// property list to read an endpoint's labels without its properties (#1110).
+func (w *transactionStorageWrapper) GetNodeProjected(id storage.NodeID, properties []string) (*storage.Node, error) {
+	node, err := w.tx.GetNodeProjected(w.prefixNodeID(id), properties)
+	if err != nil {
+		return nil, err
+	}
+	if w.namespace == "" {
+		return node, nil
+	}
+	return w.toUserNode(node), nil
+}
+
 // RelationshipEndpointVisible answers for the transaction, in its namespace.
 func (w *transactionStorageWrapper) RelationshipEndpointVisible(id storage.NodeID) (visible, answered bool) {
 	return w.tx.RelationshipEndpointVisible(w.prefixNodeID(id))
@@ -790,9 +805,14 @@ func (w *transactionStorageWrapper) toUserNode(node *storage.Node) *storage.Node
 	if node == nil {
 		return nil
 	}
-	out := storage.CopyNode(node)
-	out.ID = w.unprefixNodeID(out.ID)
-	return out
+	// The storage layer already returned a private copy (copyNode / a freshly
+	// decoded node), so the Properties map and Labels slice are owned by this
+	// caller. A shallow struct copy that rewrites the ID prefix is enough; the
+	// previous storage.CopyNode deep-copied every property a second time just
+	// to change the ID (#1110).
+	out := *node
+	out.ID = w.unprefixNodeID(node.ID)
+	return &out
 }
 
 func (w *transactionStorageWrapper) toUserEdge(edge *storage.Edge) *storage.Edge {
