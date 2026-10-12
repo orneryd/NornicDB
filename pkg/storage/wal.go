@@ -131,6 +131,10 @@ const (
 	// v2: corruption-proof format with trailer canary and 8-byte alignment
 	walFormatVersion uint8 = 2
 
+	// walFormatVersionV3 stores the entry Data field as raw bytes instead of
+	// base64 JSON. v1/v2 payloads remain readable; new writes use v3.
+	walFormatVersionV3 uint8 = 3
+
 	// walTrailer is written after every record to detect incomplete writes.
 	// If a crash occurs mid-write, the trailer will be missing or corrupted.
 	// This pattern (0xDEADBEEFFEEDFACE) is:
@@ -618,14 +622,14 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	entryBytes, err := marshalJSONCompact(entryBuf, &entry)
+	entryBytes, err := encodeWALEntryV3(entryBuf, &entry)
 	if err != nil {
 		return 0, fmt.Errorf("wal: failed to serialize entry: %w", err)
 	}
 
 	// Write atomically: full record in one Write when using bufio so the last record
 	// is never split across a buffer flush (avoids partial-write on recovery after close).
-	alignedRecordLen, err := writeAtomicRecordV2Bufio(w.writer, entryBytes)
+	alignedRecordLen, err := writeAtomicRecordBufio(w.writer, entryBytes, walFormatVersionV3)
 	if err != nil {
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
 	}
@@ -774,12 +778,12 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 	}
 
 	w.mu.Lock()
-	entryBytes, err := marshalJSONCompact(entryBuf, &entry)
+	entryBytes, err := encodeWALEntryV3(entryBuf, &entry)
 	if err != nil {
 		w.mu.Unlock()
 		return 0, fmt.Errorf("wal: failed to serialize entry: %w", err)
 	}
-	alignedRecordLen, err := writeAtomicRecordV2Bufio(w.writer, entryBytes)
+	alignedRecordLen, err := writeAtomicRecordBufio(w.writer, entryBytes, walFormatVersionV3)
 	if err != nil {
 		w.mu.Unlock()
 		return 0, fmt.Errorf("wal: failed to write entry: %w", err)
@@ -1202,8 +1206,8 @@ func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALInt
 		}
 
 		// Decode entry for sequence tracking
-		var entry WALEntry
-		if err := json.Unmarshal(payload, &entry); err != nil {
+		entry, err := decodeWALEntry(payload, version)
+		if err != nil {
 			report.CorruptedEntries++
 			continue
 		}
@@ -1549,20 +1553,20 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 	tmpWriter := bufio.NewWriterSize(tmpFile, 64*1024)
 	var bytesWritten int64
 
-	// Write kept entries using atomic format (v2: with trailer canary and 8-byte alignment)
+	// Write kept entries using the current atomic format (v3 raw-Data payload)
 	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
 	defer walJSONBufPool.Put(entryBuf)
 
 	for _, entry := range keptEntries {
 		// Serialize entry
-		entryBytes, err := marshalJSONCompact(entryBuf, &entry)
+		entryBytes, err := encodeWALEntryV3(entryBuf, &entry)
 		if err != nil {
 			tmpFile.Close()
 			os.Remove(tmpPath)
 			w.reopenWAL()
 			return fmt.Errorf("wal: failed to serialize entry seq %d: %w", entry.Sequence, err)
 		}
-		alignedRecordLen, err := writeAtomicRecordV2Bufio(tmpWriter, entryBytes)
+		alignedRecordLen, err := writeAtomicRecordBufio(tmpWriter, entryBytes, walFormatVersionV3)
 		if err != nil {
 			tmpFile.Close()
 			os.Remove(tmpPath)
@@ -1827,9 +1831,9 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 
 		// Read version (for future compatibility)
 		version := headerBuf[4]
-		if version > walFormatVersion {
+		if version > walFormatVersionV3 {
 			return fmt.Errorf("%w: unsupported WAL version %d (max supported: %d)",
-				ErrWALCorrupted, version, walFormatVersion)
+				ErrWALCorrupted, version, walFormatVersionV3)
 		}
 
 		// Read payload length
@@ -1869,7 +1873,8 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 		if storedCRC != computedCRC {
 			// CRC mismatch - but check if it's an embedding we can skip
 			var entry WALEntry
-			if err := json.Unmarshal(payload, &entry); err == nil {
+			if decoded, derr := decodeWALEntry(payload, version); derr == nil {
+				entry = decoded
 				if entry.Operation == OpUpdateEmbedding {
 					skippedEmbeddings++
 					continue
@@ -1920,8 +1925,8 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 		}
 
 		// Decode entry
-		var entry WALEntry
-		if err := json.Unmarshal(payload, &entry); err != nil {
+		entry, err := decodeWALEntry(payload, version)
+		if err != nil {
 			return fmt.Errorf("%w: failed to decode entry after seq %d: %v",
 				ErrWALCorrupted, lastGoodSeq, err)
 		}
@@ -2098,8 +2103,8 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 			}
 		}
 
-		var entry WALEntry
-		if err := json.Unmarshal(payload, &entry); err != nil {
+		entry, err := decodeWALEntry(payload, version)
+		if err != nil {
 			continue // Skip malformed entries
 		}
 

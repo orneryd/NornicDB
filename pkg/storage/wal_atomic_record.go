@@ -12,13 +12,13 @@ func alignUp(n int64) int64 {
 	return (n + walAlignment - 1) &^ (walAlignment - 1)
 }
 
-// buildAtomicRecordV2 builds a single WAL record in the v2 atomic format:
+// buildAtomicRecord builds a single WAL record in the atomic format:
 //
 //	[magic:4][version:1][length:4][payload:N][crc:4][trailer:8][padding:0-7]
 //
 // The record is 8-byte aligned to prevent torn headers and to make padding skips deterministic.
 // The returned int64 is the aligned record length (for accounting/stats).
-func buildAtomicRecordV2(payload []byte) ([]byte, int64) {
+func buildAtomicRecord(payload []byte, version uint8) ([]byte, int64) {
 	entryCRC := crc32Checksum(payload)
 
 	headerSize := int64(4 + 1 + 4)          // magic + version + length
@@ -31,7 +31,7 @@ func buildAtomicRecordV2(payload []byte) ([]byte, int64) {
 
 	binary.LittleEndian.PutUint32(record[offset:], walMagic)
 	offset += 4
-	record[offset] = walFormatVersion
+	record[offset] = version
 	offset++
 	binary.LittleEndian.PutUint32(record[offset:], uint32(len(payload)))
 	offset += 4
@@ -45,13 +45,19 @@ func buildAtomicRecordV2(payload []byte) ([]byte, int64) {
 	return record, alignedRecordLen
 }
 
-// writeAtomicRecordV2 writes a single WAL record in the v2 atomic format directly to w:
+// buildAtomicRecordV2 builds a v2 record (JSON payload with base64 Data).
+// Retained for tests and legacy-compat callers.
+func buildAtomicRecordV2(payload []byte) ([]byte, int64) {
+	return buildAtomicRecord(payload, walFormatVersion)
+}
+
+// writeAtomicRecord writes a single WAL record in the atomic format directly to w:
 //
 //	[magic:4][version:1][length:4][payload:N][crc:4][trailer:8][padding:0-7]
 //
 // This avoids allocating a full record buffer on the hot append path.
 // The returned int64 is the aligned record length (for accounting/stats).
-func writeAtomicRecordV2(w io.Writer, payload []byte) (int64, error) {
+func writeAtomicRecord(w io.Writer, payload []byte, version uint8) (int64, error) {
 	entryCRC := crc32Checksum(payload)
 
 	headerSize := int64(4 + 1 + 4)          // magic + version + length
@@ -61,7 +67,7 @@ func writeAtomicRecordV2(w io.Writer, payload []byte) (int64, error) {
 
 	var header [9]byte
 	binary.LittleEndian.PutUint32(header[0:], walMagic)
-	header[4] = walFormatVersion
+	header[4] = version
 	binary.LittleEndian.PutUint32(header[5:], uint32(len(payload)))
 
 	if _, err := w.Write(header[:]); err != nil {
@@ -94,11 +100,17 @@ func writeAtomicRecordV2(w io.Writer, payload []byte) (int64, error) {
 	return alignedRecordLen, nil
 }
 
-// writeAtomicRecordV2Bufio writes a single WAL record to w, using a single Write
+// writeAtomicRecordV2 writes a v2 record directly to w. Retained for tests and
+// legacy-compat callers.
+func writeAtomicRecordV2(w io.Writer, payload []byte) (int64, error) {
+	return writeAtomicRecord(w, payload, walFormatVersion)
+}
+
+// writeAtomicRecordBufio writes a single WAL record to w, using a single Write
 // when w is a *bufio.Writer so that a record is never split across buffer flushes.
 // This prevents recovery from seeing a partial last record after a clean close.
-func writeAtomicRecordV2Bufio(w io.Writer, payload []byte) (int64, error) {
-	record, alignedRecordLen := buildAtomicRecordV2(payload)
+func writeAtomicRecordBufio(w io.Writer, payload []byte, version uint8) (int64, error) {
+	record, alignedRecordLen := buildAtomicRecord(payload, version)
 	if bw, ok := w.(*bufio.Writer); ok {
 		if bw.Available() < len(record) {
 			if err := bw.Flush(); err != nil {
@@ -114,4 +126,10 @@ func writeAtomicRecordV2Bufio(w io.Writer, payload []byte) (int64, error) {
 		return 0, io.ErrShortWrite
 	}
 	return alignedRecordLen, nil
+}
+
+// writeAtomicRecordV2Bufio writes a v2 record to w. Retained for tests and
+// legacy-compat callers.
+func writeAtomicRecordV2Bufio(w io.Writer, payload []byte) (int64, error) {
+	return writeAtomicRecordBufio(w, payload, walFormatVersion)
 }

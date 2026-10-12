@@ -114,7 +114,7 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 		}
 
 		version := header[4]
-		if version > walFormatVersion {
+		if version > walFormatVersionV3 {
 			return offset, lastGoodSeq, "unsupported_version", false, nil
 		}
 
@@ -184,8 +184,8 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 		}
 
 		// Decode entry to track last-good sequence (best-effort).
-		var entry WALEntry
-		if err := json.Unmarshal(payload, &entry); err != nil {
+		entry, err := decodeWALEntry(payload, version)
+		if err != nil {
 			return offset, lastGoodSeq, "invalid_json", false, nil
 		}
 		// Verify inner data checksum (defense-in-depth).

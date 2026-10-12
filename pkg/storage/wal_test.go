@@ -567,7 +567,7 @@ func TestWALTailRepairHelpers(t *testing.T) {
 			},
 			{
 				name:   "unsupported version",
-				record: func() []byte { b := append([]byte(nil), validSecond...); b[4] = walFormatVersion + 1; return b }(),
+				record: func() []byte { b := append([]byte(nil), validSecond...); b[4] = walFormatVersionV3 + 1; return b }(),
 				reason: "unsupported_version",
 			},
 			{

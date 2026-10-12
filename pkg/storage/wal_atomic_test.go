@@ -64,8 +64,8 @@ func TestAtomicWALWriteFormat(t *testing.T) {
 	}
 
 	// Verify version
-	if data[4] != walFormatVersion {
-		t.Errorf("Expected version %d, got %d", walFormatVersion, data[4])
+	if data[4] != walFormatVersionV3 {
+		t.Errorf("Expected version %d, got %d", walFormatVersionV3, data[4])
 	}
 
 	// Verify we can read back the entry

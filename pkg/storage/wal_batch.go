@@ -164,13 +164,14 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 			Checksum:  pending.Checksum,
 		}
 
-		// Serialize entry into reusable buffer (reduces allocs vs json.Marshal).
-		entryBytes, err := marshalJSONCompact(entryBuf, &entry)
+		// Serialize entry into the v3 raw-Data payload (reduces allocs vs
+		// json.Marshal and avoids the base64 tax on Data).
+		entryBytes, err := encodeWALEntryV3(entryBuf, &entry)
 		if err != nil {
 			return 0, 0, fmt.Errorf("wal batch: failed to serialize entry seq %d: %w", seq, err)
 		}
 
-		alignedRecordLen, err := writeAtomicRecordV2(b.wal.writer, entryBytes)
+		alignedRecordLen, err := writeAtomicRecord(b.wal.writer, entryBytes, walFormatVersionV3)
 		if err != nil {
 			return 0, 0, fmt.Errorf("wal batch: failed to write entry seq %d: %w", seq, err)
 		}
