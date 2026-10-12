@@ -33,6 +33,12 @@ import (
 type BadgerTransaction struct {
 	mu sync.Mutex
 
+	// commitCtx is the caller's context while CommitContext runs: commit-time
+	// constraint validation polls it, so a terminated or abandoned statement
+	// stops before anything is written instead of validating to the end
+	// (#1115). Nil for Commit.
+	commitCtx context.Context
+
 	// changeCapture holds the database's change log while a capturing
 	// commit runs (change_capture.go, #937).
 	changeCapture *txChangeCapture
@@ -2596,6 +2602,40 @@ func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []*Edge, includeP
 
 // Commit applies all changes atomically with full constraint validation.
 // Explicit transactions get strict ACID durability with immediate fsync.
+// CommitContext is Commit, cancellable by ctx while the transaction is
+// validated: if ctx is cancelled (TERMINATE TRANSACTIONS, a disconnected
+// client) before the writes are applied, the commit fails with ctx's error
+// and nothing is stored. Once the writes are being applied the commit runs to
+// completion, so a commit is never partially applied.
+func (tx *BadgerTransaction) CommitContext(ctx context.Context) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	tx.mu.Lock()
+	tx.commitCtx = ctx
+	tx.mu.Unlock()
+	defer func() {
+		tx.mu.Lock()
+		tx.commitCtx = nil
+		tx.mu.Unlock()
+	}()
+	return tx.Commit()
+}
+
+// commitCancelledLocked reports the commit context's error once it is done.
+func (tx *BadgerTransaction) commitCancelledLocked() error {
+	if tx.commitCtx == nil {
+		return nil
+	}
+	return tx.commitCtx.Err()
+}
+
+// commitCancelPollEvery is how many nodes commit-time validation checks
+// between polls of the commit context.
+const commitCancelPollEvery = 256
+
 func (tx *BadgerTransaction) Commit() error {
 	tx.mu.Lock()
 	var knowledgePolicyChanged func()
@@ -3906,7 +3946,12 @@ func (tx *BadgerTransaction) scanForUniqueViolation(namespace, label, property s
 	if err != nil {
 		return err
 	}
-	for _, existingNode := range nodes {
+	for i, existingNode := range nodes {
+		if i%commitCancelPollEvery == 0 {
+			if err := tx.commitCancelledLocked(); err != nil {
+				return err
+			}
+		}
 		if existingNode == nil || existingNode.ID == excludeNodeID {
 			continue
 		}
@@ -3983,7 +4028,12 @@ func (tx *BadgerTransaction) scanForNodeKeyViolation(namespace, label string, pr
 	if err != nil {
 		return err
 	}
-	for _, existingNode := range nodes {
+	for i, existingNode := range nodes {
+		if i%commitCancelPollEvery == 0 {
+			if err := tx.commitCancelledLocked(); err != nil {
+				return err
+			}
+		}
 		if existingNode == nil || existingNode.ID == excludeNodeID {
 			continue
 		}
@@ -4258,7 +4308,14 @@ func (tx *BadgerTransaction) refreshSnapshotLocked() error {
 }
 
 func (tx *BadgerTransaction) validateAllConstraints() error {
+	checked := 0
 	for _, node := range tx.pendingNodes {
+		if checked%commitCancelPollEvery == 0 {
+			if err := tx.commitCancelledLocked(); err != nil {
+				return err
+			}
+		}
+		checked++
 		if err := tx.validateNodeConstraints(node); err != nil {
 			return err
 		}
