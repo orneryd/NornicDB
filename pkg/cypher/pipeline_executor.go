@@ -572,7 +572,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 		return newPipelineDispatchOutcome(result, handled, err)
 	}
 	if params != nil {
-		cypher = e.substituteParams(cypher, params)
+		cypher = e.substituteParamsExcept(cypher, params, isLongStringParam)
 		clauses, ok = canExecuteAsPipeline(cypher)
 		if !ok {
 			return newPipelineDispatchOutcome(nil, false, nil)

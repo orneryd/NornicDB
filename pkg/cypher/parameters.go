@@ -173,6 +173,25 @@ func mapsEqualShallow(a, b map[string]interface{}) bool {
 // Values are properly escaped to prevent injection attacks.
 // String values have single quotes escaped by doubling them.
 func (e *StorageExecutor) substituteParams(cypher string, params map[string]interface{}) string {
+	return e.substituteParamsExcept(cypher, params, nil)
+}
+
+// pipelineInlineStringLimit is the length from which a string parameter stays
+// a $name reference in a pipeline statement, read from the row's parameter
+// binding (bindParameterRow), instead of a literal that every row's
+// expression evaluation rescans (#1094).
+const pipelineInlineStringLimit = 1024
+
+// isLongStringParam reports a string parameter of pipelineInlineStringLimit
+// bytes or more.
+func isLongStringParam(value interface{}) bool {
+	text, ok := value.(string)
+	return ok && len(text) >= pipelineInlineStringLimit
+}
+
+// substituteParamsExcept is substituteParams leaving as $name references the
+// parameters keep reports, as it leaves list and map values.
+func (e *StorageExecutor) substituteParamsExcept(cypher string, params map[string]interface{}, keep func(interface{}) bool) string {
 	if len(params) == 0 {
 		return cypher
 	}
@@ -184,7 +203,7 @@ func (e *StorageExecutor) substituteParams(cypher string, params map[string]inte
 			return "", false
 		}
 		value, exists := params[name]
-		if !exists || isCompositeParamValue(value) {
+		if !exists || isCompositeParamValue(value) || (keep != nil && keep(value)) {
 			return "", false
 		}
 		switch number := value.(type) {
