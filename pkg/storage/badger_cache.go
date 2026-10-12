@@ -456,15 +456,30 @@ func (b *BadgerEngine) cacheDeleteNode(id NodeID) {
 	b.cacheDeleteNodeBody(id)
 }
 
-func (b *BadgerEngine) cacheOnNodeCreated(node *Node) {
+// cacheStoreWrittenNode caches node as a write just committed it, except a
+// node still waiting for its managed embedding: the embed worker may store
+// the embedding before this runs (a large transaction's commit fires its
+// cache updates one by one after it is visible), and caching the written copy
+// over it would hide the embedding from every read until the entry is
+// evicted. Such a node's entry is dropped instead, and the next read loads
+// it from storage.
+func (b *BadgerEngine) cacheStoreWrittenNode(node *Node) {
+	if node != nil && b.shouldIndexPendingEmbed(node) {
+		b.cacheDeleteNode(node.ID)
+		return
+	}
 	b.cacheStoreNode(node)
+}
+
+func (b *BadgerEngine) cacheOnNodeCreated(node *Node) {
+	b.cacheStoreWrittenNode(node)
 	b.nodeCount.Add(1)
 	b.addNamespaceNodeCount(node.ID, 1)
 	b.maintainPropertyIndexesOnNodeCreated(node)
 }
 
 func (b *BadgerEngine) cacheOnNodeUpdated(node *Node) {
-	b.cacheStoreNode(node)
+	b.cacheStoreWrittenNode(node)
 	// Updates are handled by cacheOnNodeUpdatedWithOldNode which has the
 	// old-property context needed to remove stale index entries. The
 	// `oldNode == nil` path is legitimately "we don't know the diff" —
@@ -474,7 +489,7 @@ func (b *BadgerEngine) cacheOnNodeUpdated(node *Node) {
 }
 
 func (b *BadgerEngine) cacheOnNodeUpdatedWithOldNode(node *Node, oldNode *Node) {
-	b.cacheStoreNode(node)
+	b.cacheStoreWrittenNode(node)
 	if oldNode != nil {
 		b.labelCacheInvalidateForRemovedLabels(oldNode.Labels, node.Labels, node.ID)
 	}
