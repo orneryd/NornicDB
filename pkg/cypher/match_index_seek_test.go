@@ -29,7 +29,7 @@ func (e *allNodesForbiddenEngine) GetNodesByLabel(label string) ([]*storage.Node
 }
 
 func TestGh810_NullPropertyMapCannotDeleteUnrelatedNodes(t *testing.T) {
-	for _, schema := range []string{"", "CREATE INDEX ix FOR (n:PDRecord) ON (n.id)", "CREATE CONSTRAINT uq FOR (n:PDRecord) REQUIRE n.id IS UNIQUE"} {
+	for _, schema := range []string{"", "CREATE INDEX ix FOR (n:Record) ON (n.id)", "CREATE CONSTRAINT uq FOR (n:Record) REQUIRE n.id IS UNIQUE"} {
 		for _, explicit := range []bool{false, true} {
 			t.Run(fmt.Sprintf("schema=%s/explicit=%v", schema, explicit), func(t *testing.T) {
 				exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "gh810"))
@@ -38,16 +38,16 @@ func TestGh810_NullPropertyMapCannotDeleteUnrelatedNodes(t *testing.T) {
 					_, err := exec.Execute(ctx, schema, nil)
 					require.NoError(t, err)
 				}
-				_, err := exec.Execute(ctx, "CREATE (a:PDRecord {id:'r1',kind:'a'})-[:R]->(b:PDRecord {id:'r2',kind:'b'}), (:PDRecord {id:'r3',kind:'a'}), (:PDRecord {kind:'noid'})", nil)
+				_, err := exec.Execute(ctx, "CREATE (a:Record {id:'r1',kind:'a'})-[:R]->(b:Record {id:'r2',kind:'b'}), (:Record {id:'r3',kind:'a'}), (:Record {kind:'noid'})", nil)
 				require.NoError(t, err)
 				if explicit {
 					_, err = exec.Execute(ctx, "BEGIN", nil)
 					require.NoError(t, err)
 					t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
 				}
-				_, err = exec.Execute(ctx, "MATCH (n:PDRecord {id: $id}) DETACH DELETE n", map[string]interface{}{"id": nil})
+				_, err = exec.Execute(ctx, "MATCH (n:Record {id: $id}) DETACH DELETE n", map[string]interface{}{"id": nil})
 				require.NoError(t, err)
-				remaining, err := exec.Execute(ctx, "MATCH (n:PDRecord) RETURN count(n)", nil)
+				remaining, err := exec.Execute(ctx, "MATCH (n:Record) RETURN count(n)", nil)
 				require.NoError(t, err)
 				require.Equal(t, [][]interface{}{{int64(4)}}, remaining.Rows)
 				edges, err := exec.Execute(ctx, "MATCH ()-[r:R]->() RETURN count(r)", nil)
@@ -66,25 +66,25 @@ func TestGh810_NullPropertyMapPredicates(t *testing.T) {
 		rows        [][]interface{}
 		wantError   string
 	}{
-		{"parameter null", "MATCH (n:PDRecord {id:$id}) RETURN n.id", nullID, nil, ""},
-		{"literal null", "MATCH (n:PDRecord {id:null}) RETURN n.id", nil, nil, ""},
-		{"null count", "MATCH (n:PDRecord {id:$id}) RETURN count(n)", nullID, [][]interface{}{{int64(0)}}, ""},
+		{"parameter null", "MATCH (n:Record {id:$id}) RETURN n.id", nullID, nil, ""},
+		{"literal null", "MATCH (n:Record {id:null}) RETURN n.id", nil, nil, ""},
+		{"null count", "MATCH (n:Record {id:$id}) RETURN count(n)", nullID, [][]interface{}{{int64(0)}}, ""},
 		{"unlabelled null", "MATCH (n {id:$id}) RETURN n.id", nullID, nil, ""},
-		{"compound null id", "MATCH (n:PDRecord {id:$id,kind:$kind}) RETURN n.id", map[string]interface{}{"id": nil, "kind": "a"}, nil, ""},
-		{"compound null kind", "MATCH (n:PDRecord {id:$id,kind:$kind}) RETURN n.id", map[string]interface{}{"id": "r1", "kind": nil}, nil, ""},
-		{"relationship source null", "MATCH (a:PDRecord {id:$id})-[:R]->(b) RETURN b.id", nullID, nil, ""},
-		{"relationship target null", "MATCH (a)-[:R]->(b:PDRecord {id:$id}) RETURN a.id", nullID, nil, ""},
-		{"where null control", "MATCH (n:PDRecord) WHERE n.id=$id RETURN n.id", nullID, nil, ""},
-		{"optional null", "OPTIONAL MATCH (n:PDRecord {id:$id}) RETURN n.id", nullID, [][]interface{}{{nil}}, ""},
-		{"absent id", "MATCH (n:PDRecord {id:$id}) RETURN n.id", map[string]interface{}{"id": "absent"}, nil, ""},
-		{"present id", "MATCH (n:PDRecord {id:$id}) RETURN n.id", map[string]interface{}{"id": "r1"}, [][]interface{}{{"r1"}}, ""},
-		{"missing parameter", "MATCH (n:PDRecord {id:$id}) DETACH DELETE n", nil, nil, "parameter"},
-		{"null set", "MATCH (n:PDRecord {id:$id}) SET n.touched=true RETURN count(n)", nullID, [][]interface{}{{int64(0)}}, ""},
-		{"null delete count", "MATCH (n:PDRecord {id:$id}) DETACH DELETE n RETURN count(*)", nullID, [][]interface{}{{int64(0)}}, ""},
+		{"compound null id", "MATCH (n:Record {id:$id,kind:$kind}) RETURN n.id", map[string]interface{}{"id": nil, "kind": "a"}, nil, ""},
+		{"compound null kind", "MATCH (n:Record {id:$id,kind:$kind}) RETURN n.id", map[string]interface{}{"id": "r1", "kind": nil}, nil, ""},
+		{"relationship source null", "MATCH (a:Record {id:$id})-[:R]->(b) RETURN b.id", nullID, nil, ""},
+		{"relationship target null", "MATCH (a)-[:R]->(b:Record {id:$id}) RETURN a.id", nullID, nil, ""},
+		{"where null control", "MATCH (n:Record) WHERE n.id=$id RETURN n.id", nullID, nil, ""},
+		{"optional null", "OPTIONAL MATCH (n:Record {id:$id}) RETURN n.id", nullID, [][]interface{}{{nil}}, ""},
+		{"absent id", "MATCH (n:Record {id:$id}) RETURN n.id", map[string]interface{}{"id": "absent"}, nil, ""},
+		{"present id", "MATCH (n:Record {id:$id}) RETURN n.id", map[string]interface{}{"id": "r1"}, [][]interface{}{{"r1"}}, ""},
+		{"missing parameter", "MATCH (n:Record {id:$id}) DETACH DELETE n", nil, nil, "parameter"},
+		{"null set", "MATCH (n:Record {id:$id}) SET n.touched=true RETURN count(n)", nullID, [][]interface{}{{int64(0)}}, ""},
+		{"null delete count", "MATCH (n:Record {id:$id}) DETACH DELETE n RETURN count(*)", nullID, [][]interface{}{{int64(0)}}, ""},
 		{"unlabelled null delete", "MATCH (n {id:$id}) DETACH DELETE n RETURN count(*)", nullID, [][]interface{}{{int64(0)}}, ""},
-		{"null merge", "MERGE (n:PDRecord {id:$id}) RETURN n.id", nullID, nil, "null property"},
+		{"null merge", "MERGE (n:Record {id:$id}) RETURN n.id", nullID, nil, "null property"},
 	} {
-		for _, schema := range []string{"", "CREATE INDEX ix FOR (n:PDRecord) ON (n.id)", "CREATE CONSTRAINT uq FOR (n:PDRecord) REQUIRE n.id IS UNIQUE"} {
+		for _, schema := range []string{"", "CREATE INDEX ix FOR (n:Record) ON (n.id)", "CREATE CONSTRAINT uq FOR (n:Record) REQUIRE n.id IS UNIQUE"} {
 			for _, explicit := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/schema=%s/explicit=%v", testCase.name, schema, explicit), func(t *testing.T) {
 					exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "gh810"))
@@ -93,9 +93,9 @@ func TestGh810_NullPropertyMapPredicates(t *testing.T) {
 						_, err := exec.Execute(ctx, schema, nil)
 						require.NoError(t, err)
 					}
-					_, err := exec.Execute(ctx, "CREATE (a:PDRecord {id:'r1',kind:'a'})-[:R]->(b:PDRecord {id:'r2',kind:'b'}), (:PDRecord {id:'r3',kind:'a'}), (:PDRecord {id:null,kind:'noid'})", nil)
+					_, err := exec.Execute(ctx, "CREATE (a:Record {id:'r1',kind:'a'})-[:R]->(b:Record {id:'r2',kind:'b'}), (:Record {id:'r3',kind:'a'}), (:Record {id:null,kind:'noid'})", nil)
 					require.NoError(t, err)
-					before, err := exec.Execute(ctx, "MATCH (n:PDRecord) RETURN properties(n) AS props ORDER BY n.kind,n.id", nil)
+					before, err := exec.Execute(ctx, "MATCH (n:Record) RETURN properties(n) AS props ORDER BY n.kind,n.id", nil)
 					require.NoError(t, err)
 					require.Len(t, before.Rows, 4)
 					require.Equal(t, map[string]interface{}{"kind": "noid"}, before.Rows[3][0])
@@ -120,7 +120,7 @@ func TestGh810_NullPropertyMapPredicates(t *testing.T) {
 							require.Equal(t, testCase.rows, result.Rows)
 						}
 					}
-					after, err := exec.Execute(ctx, "MATCH (n:PDRecord) RETURN properties(n) AS props ORDER BY n.kind,n.id", nil)
+					after, err := exec.Execute(ctx, "MATCH (n:Record) RETURN properties(n) AS props ORDER BY n.kind,n.id", nil)
 					require.NoError(t, err)
 					require.Equal(t, before.Rows, after.Rows)
 					edges, err := exec.Execute(ctx, "MATCH ()-[r:R]->() RETURN count(r)", nil)
@@ -138,7 +138,7 @@ func TestGh809_IndexedTransactionReadYourWrites(t *testing.T) {
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "gh809"))
 			ctx := context.Background()
 			if indexedProperty != "" {
-				_, err := exec.Execute(ctx, fmt.Sprintf("CREATE INDEX ix FOR (n:PDRecord) ON (n.%s)", indexedProperty), nil)
+				_, err := exec.Execute(ctx, fmt.Sprintf("CREATE INDEX ix FOR (n:Record) ON (n.%s)", indexedProperty), nil)
 				require.NoError(t, err)
 			}
 			rows := make([]interface{}, 0, 48)
@@ -156,7 +156,7 @@ func TestGh809_IndexedTransactionReadYourWrites(t *testing.T) {
 			_, err := exec.Execute(ctx, "BEGIN", nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
-			written, err := exec.Execute(ctx, "UNWIND $rows AS row CREATE (n:PDRecord) SET n = row.properties RETURN n.id AS id", map[string]interface{}{"rows": rows})
+			written, err := exec.Execute(ctx, "UNWIND $rows AS row CREATE (n:Record) SET n = row.properties RETURN n.id AS id", map[string]interface{}{"rows": rows})
 			require.NoError(t, err)
 			require.Len(t, written.Rows, 48)
 			params := map[string]interface{}{"ids": ids, "kinds": []interface{}{"version", "origin", "unused"}}
@@ -165,14 +165,14 @@ func TestGh809_IndexedTransactionReadYourWrites(t *testing.T) {
 				query string
 				count int
 			}{
-				{"projected conjunction", "MATCH (n:PDRecord) WHERE n.document_id IN $ids AND n.kind IN $kinds RETURN n.id AS id,n.kind AS kind,n.revision AS revision,n.body AS body,n.created_at AS created_at,n.updated_at AS updated_at", 32},
-				{"document parameter list", "MATCH (n:PDRecord) WHERE n.document_id IN $ids RETURN n.id AS id", 48},
-				{"document equality", "MATCH (n:PDRecord) WHERE n.document_id = 'doc-3' RETURN n.id AS id", 3},
-				{"document literal list", "MATCH (n:PDRecord) WHERE n.document_id IN ['doc-1','doc-2'] RETURN n.id AS id", 6},
-				{"kind literal list", "MATCH (n:PDRecord) WHERE n.kind IN ['version','origin'] RETURN n.id AS id", 32},
-				{"pattern property", "MATCH (n:PDRecord {document_id: 'doc-3'}) RETURN n.id AS id", 3},
-				{"ordered not null", "MATCH (n:PDRecord) WHERE n.document_id IS NOT NULL RETURN n.id AS id ORDER BY n.document_id,n.id LIMIT 5", 5},
-				{"unfiltered scan", "MATCH (n:PDRecord) RETURN n.id AS id", 48},
+				{"projected conjunction", "MATCH (n:Record) WHERE n.document_id IN $ids AND n.kind IN $kinds RETURN n.id AS id,n.kind AS kind,n.revision AS revision,n.body AS body,n.created_at AS created_at,n.updated_at AS updated_at", 32},
+				{"document parameter list", "MATCH (n:Record) WHERE n.document_id IN $ids RETURN n.id AS id", 48},
+				{"document equality", "MATCH (n:Record) WHERE n.document_id = 'doc-3' RETURN n.id AS id", 3},
+				{"document literal list", "MATCH (n:Record) WHERE n.document_id IN ['doc-1','doc-2'] RETURN n.id AS id", 6},
+				{"kind literal list", "MATCH (n:Record) WHERE n.kind IN ['version','origin'] RETURN n.id AS id", 32},
+				{"pattern property", "MATCH (n:Record {document_id: 'doc-3'}) RETURN n.id AS id", 3},
+				{"ordered not null", "MATCH (n:Record) WHERE n.document_id IS NOT NULL RETURN n.id AS id ORDER BY n.document_id,n.id LIMIT 5", 5},
+				{"unfiltered scan", "MATCH (n:Record) RETURN n.id AS id", 48},
 			} {
 				t.Run(selector.name, func(t *testing.T) {
 					result, err := exec.Execute(ctx, selector.query, params)
@@ -180,12 +180,12 @@ func TestGh809_IndexedTransactionReadYourWrites(t *testing.T) {
 					require.Len(t, result.Rows, selector.count)
 				})
 			}
-			count, err := exec.Execute(ctx, "MATCH (n:PDRecord) WHERE n.document_id IN $ids AND n.kind IN $kinds RETURN count(n)", params)
+			count, err := exec.Execute(ctx, "MATCH (n:Record) WHERE n.document_id IN $ids AND n.kind IN $kinds RETURN count(n)", params)
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{int64(32)}}, count.Rows)
 			_, err = exec.Execute(ctx, "COMMIT", nil)
 			require.NoError(t, err)
-			committed, err := exec.Execute(ctx, "MATCH (n:PDRecord) WHERE n.document_id IN $ids AND n.kind IN $kinds RETURN n.id", params)
+			committed, err := exec.Execute(ctx, "MATCH (n:Record) WHERE n.document_id IN $ids AND n.kind IN $kinds RETURN n.id", params)
 			require.NoError(t, err)
 			require.Len(t, committed.Rows, 32)
 		})

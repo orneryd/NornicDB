@@ -383,7 +383,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		return value, ok, err
 	}
 	// EXISTS is whether the body has a row and COUNT how many: one
-	// evaluation, so a body gives EXISTS and COUNT the same rows (I32).
+	// evaluation, so a body gives EXISTS and COUNT the same rows.
 	if kind == "EXISTS" || kind == "COUNT" {
 		if count, ok := e.boundDegreeCount(ctx, body, values); ok {
 			return rowCountValue(kind, count), true, nil

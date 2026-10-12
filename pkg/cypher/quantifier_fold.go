@@ -6,7 +6,7 @@ import "strings"
 // single, "variable IN list WHERE predicate", for every evaluator.
 func parseQuantifierArguments(inner string) (variable, listExpression, predicate string, ok bool) {
 	// IN and WHERE at the top level: a list comprehension or subquery in
-	// the list expression has its own (Personal Documents I39).
+	// the list expression has its own.
 	inIndex := topLevelKeywordIndex(inner, "IN")
 	if inIndex <= 0 {
 		return "", "", "", false

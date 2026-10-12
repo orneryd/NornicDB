@@ -16,12 +16,12 @@ func TestIssue907MatchProductDependentInlineProperties(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
-	_, err := exec.Execute(ctx, `CREATE (:PDDocument {id: 'issue-d'}),
-(:PDVersion {id: 'issue-v', document_id: 'issue-d', original_id: 'issue-o'}),
-(:PDOriginal {id: 'issue-o', content_hash: 'original-bytes'})`, nil)
+	_, err := exec.Execute(ctx, `CREATE (:Document {id: 'issue-d'}),
+(:Version {id: 'issue-v', document_id: 'issue-d', original_id: 'issue-o'}),
+(:Original {id: 'issue-o', content_hash: 'original-bytes'})`, nil)
 	require.NoError(t, err)
 	params := map[string]interface{}{"document_id": "issue-d", "version_id": "issue-v"}
-	pattern := `MATCH (d:PDDocument {id: $document_id}), (v:PDVersion {id: $version_id}), (o:PDOriginal {id: v.original_id})`
+	pattern := `MATCH (d:Document {id: $document_id}), (v:Version {id: $version_id}), (o:Original {id: v.original_id})`
 	for _, test := range []struct {
 		name  string
 		where string
@@ -43,13 +43,13 @@ func TestIssue907MatchProductDependentInlineProperties(t *testing.T) {
 	}
 	failureCtx := withExpressionFailureSlot(withQueryParams(ctx, params))
 	_, handled, err := exec.pipelineApplyNodeJoinProduct(failureCtx, []pipelineRow{{}}, []string{
-		"(d:PDDocument {id: $document_id})", "(v:PDVersion {id: $version_id})", "(o:PDOriginal {id: v.original_id})",
+		"(d:Document {id: $document_id})", "(v:Version {id: $version_id})", "(o:Original {id: v.original_id})",
 	}, "v.document_id = d.id")
 	require.NoError(t, err)
 	require.False(t, handled)
 	require.Nil(t, getExpressionFailure(failureCtx))
 	joined, handled, err := exec.pipelineApplyNodeJoinProduct(failureCtx, []pipelineRow{{"lookup": map[string]interface{}{"original_id": "issue-o"}}}, []string{
-		"(d:PDDocument {id: $document_id})", "(v:PDVersion {id: $version_id})", "(o:PDOriginal {id: lookup.original_id})",
+		"(d:Document {id: $document_id})", "(v:Version {id: $version_id})", "(o:Original {id: lookup.original_id})",
 	}, "v.document_id = d.id")
 	require.NoError(t, err)
 	require.True(t, handled)

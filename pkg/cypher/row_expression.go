@@ -1619,7 +1619,7 @@ func (e *StorageExecutor) evaluateRowPredicateWithCASEBound(ctx context.Context,
 		if mayContainSubqueryExpression(block) {
 			// A subquery in the block (THEN EXISTS { … }) runs for the row,
 			// correlated with its values and the statement's context, as in a
-			// projection (Personal Documents I43).
+			// projection.
 			value, ok = e.evaluateRowExpressionWithContext(ctx, block, pipelineRow(values))
 		} else {
 			value, ok, err = e.evaluateRowCaseExpression(block, values)

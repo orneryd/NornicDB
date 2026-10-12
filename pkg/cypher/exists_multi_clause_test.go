@@ -12,30 +12,30 @@ import (
 // of several clauses (two MATCH, WITH, OPTIONAL MATCH, UNWIND) or a comma
 // list of patterns has a row exactly when COUNT { } > 0. EXISTS ran such a
 // body without a RETURN, so it never had a row, and a lone pattern list on a
-// path matcher that read only its first pattern (Personal Documents I32).
+// path matcher that read only its first pattern.
 // Results are Neo4j 5.26.30's.
 func TestExistsMultiClauseBodies(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
-	_, err := exec.Execute(ctx, `CREATE (:PDDocument {id: 'd1', current_version_id: 'v2'}), (:PDDocument {id: 'd2', current_version_id: 'v1'}),
-		(a:PDGraphNode {id: 'a', document_id: 'd1'}), (b:PDGraphNode {id: 'b', document_id: 'd9'}), (e:PDGraphNode {id: 'e', document_id: 'd2'}),
-		(c:PDCorrection {id: 'c', status: 'active', scope: ['all']}), (c2:PDCorrection {id: 'c2', status: 'retired', scope: ['v1']}),
+	_, err := exec.Execute(ctx, `CREATE (:Document {id: 'd1', current_version_id: 'v2'}), (:Document {id: 'd2', current_version_id: 'v1'}),
+		(a:GraphNode {id: 'a', document_id: 'd1'}), (b:GraphNode {id: 'b', document_id: 'd9'}), (e:GraphNode {id: 'e', document_id: 'd2'}),
+		(c:Correction {id: 'c', status: 'active', scope: ['all']}), (c2:Correction {id: 'c2', status: 'retired', scope: ['v1']}),
 		(c)-[:CORRECTS]->(a), (c)-[:CORRECTS]->(b), (c2)-[:CORRECTS]->(e)`, nil)
 	require.NoError(t, err)
 	for _, tc := range []struct {
 		body string
-		want []string // the PDGraphNode ids for which EXISTS holds
+		want []string // the GraphNode ids for which EXISTS holds
 	}{
-		{"MATCH (c:PDCorrection {status: 'active'})-[:CORRECTS]->(a) MATCH (d:PDDocument {id: a.document_id})", []string{"a"}},
-		{"MATCH (c:PDCorrection {status: 'active'})-[:CORRECTS]->(a) MATCH (d:PDDocument {id: a.document_id}) WHERE c.scope = ['all'] OR d.current_version_id IN c.scope", []string{"a"}},
-		{"MATCH (c:PDCorrection {status: 'active'})-[:CORRECTS]->(a), (d:PDDocument {id: a.document_id})", []string{"a"}},
-		{"MATCH (c:PDCorrection)-[:CORRECTS]->(a) MATCH (d:PDDocument) WHERE d.id = a.document_id", []string{"a", "e"}},
-		{"MATCH (c:PDCorrection)-[:CORRECTS]->(a) WITH c, a WHERE c.status = 'active' MATCH (d:PDDocument {id: a.document_id})", []string{"a"}},
-		{"MATCH (c:PDCorrection)-[:CORRECTS]->(a) OPTIONAL MATCH (d:PDDocument {id: a.document_id}) WITH c, d WHERE d IS NOT NULL", []string{"a", "e"}},
-		{"UNWIND [1, 2] AS i MATCH (d:PDDocument {id: a.document_id})", []string{"a", "e"}},
-		{"MATCH (x:PDGraphNode) MATCH (y:PDDocument {id: x.document_id})", []string{"a", "b", "e"}},
-		{"MATCH (c:PDCorrection {status: 'active'})-[:CORRECTS]->(a)", []string{"a", "b"}},
+		{"MATCH (c:Correction {status: 'active'})-[:CORRECTS]->(a) MATCH (d:Document {id: a.document_id})", []string{"a"}},
+		{"MATCH (c:Correction {status: 'active'})-[:CORRECTS]->(a) MATCH (d:Document {id: a.document_id}) WHERE c.scope = ['all'] OR d.current_version_id IN c.scope", []string{"a"}},
+		{"MATCH (c:Correction {status: 'active'})-[:CORRECTS]->(a), (d:Document {id: a.document_id})", []string{"a"}},
+		{"MATCH (c:Correction)-[:CORRECTS]->(a) MATCH (d:Document) WHERE d.id = a.document_id", []string{"a", "e"}},
+		{"MATCH (c:Correction)-[:CORRECTS]->(a) WITH c, a WHERE c.status = 'active' MATCH (d:Document {id: a.document_id})", []string{"a"}},
+		{"MATCH (c:Correction)-[:CORRECTS]->(a) OPTIONAL MATCH (d:Document {id: a.document_id}) WITH c, d WHERE d IS NOT NULL", []string{"a", "e"}},
+		{"UNWIND [1, 2] AS i MATCH (d:Document {id: a.document_id})", []string{"a", "e"}},
+		{"MATCH (x:GraphNode) MATCH (y:Document {id: x.document_id})", []string{"a", "b", "e"}},
+		{"MATCH (c:Correction {status: 'active'})-[:CORRECTS]->(a)", []string{"a", "b"}},
 	} {
 		ids := func(query string) []string {
 			result, err := exec.Execute(ctx, query, nil)
@@ -48,9 +48,9 @@ func TestExistsMultiClauseBodies(t *testing.T) {
 			}
 			return out
 		}
-		require.Equal(t, tc.want, ids("MATCH (a:PDGraphNode) WHERE EXISTS { "+tc.body+" } RETURN a.id ORDER BY a.id"), tc.body)
-		require.Equal(t, tc.want, ids("MATCH (a:PDGraphNode) RETURN a.id, EXISTS { "+tc.body+" } AS x ORDER BY a.id"), tc.body)
-		require.Equal(t, tc.want, ids("MATCH (a:PDGraphNode) WITH a, COUNT { "+tc.body+" } AS n WHERE n > 0 RETURN a.id ORDER BY a.id"), tc.body)
+		require.Equal(t, tc.want, ids("MATCH (a:GraphNode) WHERE EXISTS { "+tc.body+" } RETURN a.id ORDER BY a.id"), tc.body)
+		require.Equal(t, tc.want, ids("MATCH (a:GraphNode) RETURN a.id, EXISTS { "+tc.body+" } AS x ORDER BY a.id"), tc.body)
+		require.Equal(t, tc.want, ids("MATCH (a:GraphNode) WITH a, COUNT { "+tc.body+" } AS n WHERE n > 0 RETURN a.id ORDER BY a.id"), tc.body)
 	}
 	// An empty body isn't an EXISTS subquery.
 	_, recognized := exec.rowExistsSubqueryMatches(ctx, "EXISTS { }", nil)

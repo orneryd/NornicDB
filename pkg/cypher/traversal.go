@@ -1424,11 +1424,10 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 // relationshipTypeSeedNodes is the start nodes of a one-hop match whose start
 // node has no label or property and whose relationship has types, such as
 // ()-[r:T {id: $id}]->(): the endpoints the direction starts from, of the
-// relationships of those types, read from the type index (Personal
-// Documents I42). A label-less scan would read and decode every node, for a
-// relationship among a few. seeded is false for any other match, which
-// collectPipelineInitialNodeCandidates seeds. The traversal still checks the
-// whole pattern from each start node.
+// relationships of those types, read from the type index. A label-less scan
+// would read and decode every node, for a relationship among a few. seeded is
+// false for any other match, which collectPipelineInitialNodeCandidates seeds.
+// The traversal still checks the whole pattern from each start node.
 func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *TraversalMatch) (nodes []*storage.Node, seeded bool, err error) {
 	relationship := match.Relationship
 	if len(match.StartNode.labels) > 0 || len(match.StartNode.properties) > 0 || len(relationship.Types) == 0 ||

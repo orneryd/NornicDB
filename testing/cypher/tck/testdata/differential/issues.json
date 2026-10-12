@@ -763,23 +763,23 @@
    },
    {
     "id": "0777807a1926",
-    "query": "MERGE (:PDG {id: 's1'})"
+    "query": "MERGE (:NDG {id: 's1'})"
    },
    {
     "id": "92276eb16cd7",
-    "query": "MERGE (:PDG {id: 't1'})"
+    "query": "MERGE (:NDG {id: 't1'})"
    },
    {
     "id": "c35decd57f8f",
-    "query": "MATCH (a:PDG), (x:PDG) WHERE a.id IN ['s1', 't1'] RETURN count(DISTINCT a.id) AS n"
+    "query": "MATCH (a:NDG), (x:NDG) WHERE a.id IN ['s1', 't1'] RETURN count(DISTINCT a.id) AS n"
    },
    {
     "id": "a7efa62a0831",
-    "query": "MATCH (s:PDG {id: 's1'}) MATCH (t:PDG {id: 't1'}) CREATE (s)-[:RDG]->(t) CREATE (t)-[:RDG]->(s)"
+    "query": "MATCH (s:NDG {id: 's1'}) MATCH (t:NDG {id: 't1'}) CREATE (s)-[:RDG]->(t) CREATE (t)-[:RDG]->(s)"
    },
    {
     "id": "97ca0120a0ea",
-    "query": "MATCH (a:PDG)-[r:RDG]-(b:PDG) WHERE a.id IN ['s1', 't1'] AND b.id IN ['s1', 't1'] RETURN size(collect(DISTINCT r)) AS n"
+    "query": "MATCH (a:NDG)-[r:RDG]-(b:NDG) WHERE a.id IN ['s1', 't1'] AND b.id IN ['s1', 't1'] RETURN size(collect(DISTINCT r)) AS n"
    }
   ]
  },
@@ -833,19 +833,19 @@
   "statements": [
    {
     "id": "590ba28f990b",
-    "query": "MERGE (:PDG {id: 's1'})"
+    "query": "MERGE (:NDG {id: 's1'})"
    },
    {
     "id": "7666bc096117",
-    "query": "MERGE (:PDG {id: 't1'})"
+    "query": "MERGE (:NDG {id: 't1'})"
    },
    {
     "id": "516c1d5e6c82",
-    "query": "MATCH (s:PDG {id: 's1'}) MATCH (t:PDG {id: 't1'}) CREATE (s)-[:RDG]->(t) CREATE (t)-[:RDG]->(s)"
+    "query": "MATCH (s:NDG {id: 's1'}) MATCH (t:NDG {id: 't1'}) CREATE (s)-[:RDG]->(t) CREATE (t)-[:RDG]->(s)"
    },
    {
     "id": "7ff27ebe5e6e",
-    "query": "MATCH (a:PDG)-[r:RDG]->(b:PDG), (x:PDG) WHERE a.id IN ['s1', 't1'] RETURN count(r) AS n"
+    "query": "MATCH (a:NDG)-[r:RDG]->(b:NDG), (x:NDG) WHERE a.id IN ['s1', 't1'] RETURN count(r) AS n"
    }
   ]
  },
@@ -7717,15 +7717,15 @@
   "statements": [
    {
     "id": "5598e4084e7b",
-    "query": "MATCH (n:PDRecord) WHERE n.document_id IN $ids AND n.kind IN $kinds RETURN n.id AS id,n.kind AS kind,n.revision AS revision, n.body AS body,n.created_at AS created_at,n.updated_at AS updated_at"
+    "query": "MATCH (n:Record) WHERE n.document_id IN $ids AND n.kind IN $kinds RETURN n.id AS id,n.kind AS kind,n.revision AS revision, n.body AS body,n.created_at AS created_at,n.updated_at AS updated_at"
    },
    {
     "id": "6294aca2ea88",
-    "query": "CREATE INDEX reproduction_document_id IF NOT EXISTS FOR (n:PDRecord) ON (n.document_id)"
+    "query": "CREATE INDEX reproduction_document_id IF NOT EXISTS FOR (n:Record) ON (n.document_id)"
    },
    {
     "id": "1409751e5ae2",
-    "query": "UNWIND $rows AS row CREATE (n:PDRecord) SET n=row.properties RETURN n.id AS id"
+    "query": "UNWIND $rows AS row CREATE (n:Record) SET n=row.properties RETURN n.id AS id"
    }
   ]
  },
@@ -7735,7 +7735,7 @@
   "statements": [
    {
     "id": "b3671f02aae0",
-    "query": "MATCH (n:PDRecord {id:$id}) RETURN n.id AS id,n.kind AS kind,n.revision AS revision, n.body AS body,n.created_at AS created_at,n.updated_at AS updated_at"
+    "query": "MATCH (n:Record {id:$id}) RETURN n.id AS id,n.kind AS kind,n.revision AS revision, n.body AS body,n.created_at AS created_at,n.updated_at AS updated_at"
    }
   ]
  },
@@ -7745,39 +7745,39 @@
   "statements": [
    {
     "id": "48f10682f400",
-    "query": "CREATE CONSTRAINT pd_record_id IF NOT EXISTS FOR (n:PDRecord) REQUIRE n.id IS UNIQUE"
+    "query": "CREATE CONSTRAINT record_id IF NOT EXISTS FOR (n:Record) REQUIRE n.id IS UNIQUE"
    },
    {
     "id": "bd1f28de7e55",
-    "query": "CREATE INDEX pd_record_lookup IF NOT EXISTS FOR (n:PDRecord) ON (n.id)"
+    "query": "CREATE INDEX record_lookup IF NOT EXISTS FOR (n:Record) ON (n.id)"
    },
    {
     "id": "14c17b88c68a",
-    "query": "CREATE INDEX pd_history_event_lookup IF NOT EXISTS FOR (n:PDHistoryEvent) ON (n.id)"
+    "query": "CREATE INDEX history_event_lookup IF NOT EXISTS FOR (n:HistoryEvent) ON (n.id)"
    },
    {
     "id": "22e7d95829e1",
-    "query": "CREATE INDEX pd_record_text_hash IF NOT EXISTS FOR (n:PDRecord) ON (n.text_sha256)"
+    "query": "CREATE INDEX record_text_hash IF NOT EXISTS FOR (n:Record) ON (n.text_sha256)"
    },
    {
     "id": "d79cd4f3f2bf",
-    "query": "CREATE INDEX pd_record_source_hash IF NOT EXISTS FOR (n:PDRecord) ON (n.source_hash)"
+    "query": "CREATE INDEX record_source_hash IF NOT EXISTS FOR (n:Record) ON (n.source_hash)"
    },
    {
     "id": "24ed784059d8",
-    "query": "CREATE INDEX pd_record_origin_id IF NOT EXISTS FOR (n:PDRecord) ON (n.origin_id)"
+    "query": "CREATE INDEX record_origin_id IF NOT EXISTS FOR (n:Record) ON (n.origin_id)"
    },
    {
     "id": "d256a138b908",
-    "query": "CREATE VECTOR INDEX pd_record_embedding FOR (n:PDRecord) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`:2048, `vector.similarity_function`:'cosine'}}"
+    "query": "CREATE VECTOR INDEX record_embedding FOR (n:Record) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`:2048, `vector.similarity_function`:'cosine'}}"
    },
    {
     "id": "276f38e37f0d",
-    "query": "UNWIND $ids AS identifier MATCH (n:PDRecord) WHERE n.id=identifier RETURN n.id AS id,n.kind AS kind,n.revision AS revision,n.body AS body, n.created_at AS created_at,n.updated_at AS updated_at"
+    "query": "UNWIND $ids AS identifier MATCH (n:Record) WHERE n.id=identifier RETURN n.id AS id,n.kind AS kind,n.revision AS revision,n.body AS body, n.created_at AS created_at,n.updated_at AS updated_at"
    },
    {
     "id": "c97c1b9dca73",
-    "query": "UNWIND $ids AS identifier MATCH (n:PDRecord {id:identifier}) RETURN n.id AS id,n.kind AS kind,n.revision AS revision,n.body AS body, n.created_at AS created_at,n.updated_at AS updated_at"
+    "query": "UNWIND $ids AS identifier MATCH (n:Record {id:identifier}) RETURN n.id AS id,n.kind AS kind,n.revision AS revision,n.body AS body, n.created_at AS created_at,n.updated_at AS updated_at"
    }
   ]
  },
@@ -8451,7 +8451,7 @@
   "statements": [
    {
     "id": "69cd1c5b937c",
-    "query": "MATCH (n:PDRecord {id:$id}) RETURN n.id AS id,n.kind AS kind,n.revision AS revision,n.body AS body, n.created_at AS created_at,n.updated_at AS updated_at"
+    "query": "MATCH (n:Record {id:$id}) RETURN n.id AS id,n.kind AS kind,n.revision AS revision,n.body AS body, n.created_at AS created_at,n.updated_at AS updated_at"
    }
   ]
  },

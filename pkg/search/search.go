@@ -5880,7 +5880,7 @@ func (s *Service) resolveVectorExactScorer(policy exactScorerPolicy, vi *VectorI
 
 // hnswBeforeInstallHook, set by tests only, runs after an initial HNSW build
 // and before the graph is installed: where a vector stored during the build
-// used to be lost (Personal Documents I41).
+// used to be lost.
 var hnswBeforeInstallHook func()
 
 // getOrCreateHNSWIndex returns the HNSW index, creating it if needed.
@@ -5913,8 +5913,7 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 	// A vector stored or removed while the graph is built from its snapshot
 	// would miss it: no index is installed yet to take the change. As during
 	// a rebuild, such changes go to hnswRebuildOverlay from before the
-	// snapshot, and are replayed once the graph is installed (Personal
-	// Documents I41).
+	// snapshot, and are replayed once the graph is installed.
 	racesTracked := false
 	if !s.hnswRebuildInFlight.Load() {
 		s.hnswRebuildOverlay.Reset()

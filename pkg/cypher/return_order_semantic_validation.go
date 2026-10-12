@@ -329,7 +329,7 @@ func semanticExpressionReferences(expression string) []string {
 		}
 		if end, call := qualifiedFunctionNameEnd(expression, cursor); call {
 			// apoc.coll.sort(…): a namespaced function's name, not a
-			// variable and its property (Personal Documents I47).
+			// variable and its property.
 			index = end
 			continue
 		}

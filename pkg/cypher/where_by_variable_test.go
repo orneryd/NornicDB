@@ -159,13 +159,13 @@ func TestCommaMatchAnonymousNodes(t *testing.T) {
 func TestCommaMatchPropertyMapReadsEarlierPattern(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
-	_, err := exec.Execute(ctx, "CREATE (:PDDocument {id:'issue-d'}) CREATE (:PDVersion {id:'issue-v', document_id:'issue-d', original_id:'issue-o'}) CREATE (:PDOriginal {id:'issue-o', content_hash:'original-bytes'})", nil)
+	_, err := exec.Execute(ctx, "CREATE (:Document {id:'issue-d'}) CREATE (:Version {id:'issue-v', document_id:'issue-d', original_id:'issue-o'}) CREATE (:Original {id:'issue-o', content_hash:'original-bytes'})", nil)
 	require.NoError(t, err)
 	params := map[string]any{"document_id": "issue-d", "version_id": "issue-v", "review_id": "issue-r"}
 	for _, query := range []string{
-		"MATCH (d:PDDocument {id: $document_id}), (v:PDVersion {id: $version_id}), (o:PDOriginal {id: v.original_id}) WHERE v.document_id = d.id RETURN o.content_hash AS h",
-		"MATCH (v:PDVersion {id: $version_id}), (o:PDOriginal {id: v.original_id}) RETURN o.content_hash AS h",
-		"MATCH (d:PDDocument {id: $document_id}), (v:PDVersion {id: $version_id}), (o:PDOriginal {id: v.original_id}) WHERE v.document_id = d.id MERGE (r:PDReview {id: $review_id}) SET r.reviewed_original_hash = o.content_hash MERGE (r)-[:REVIEWED_DOCUMENT]->(d) RETURN r.reviewed_original_hash AS h",
+		"MATCH (d:Document {id: $document_id}), (v:Version {id: $version_id}), (o:Original {id: v.original_id}) WHERE v.document_id = d.id RETURN o.content_hash AS h",
+		"MATCH (v:Version {id: $version_id}), (o:Original {id: v.original_id}) RETURN o.content_hash AS h",
+		"MATCH (d:Document {id: $document_id}), (v:Version {id: $version_id}), (o:Original {id: v.original_id}) WHERE v.document_id = d.id MERGE (r:Review {id: $review_id}) SET r.reviewed_original_hash = o.content_hash MERGE (r)-[:REVIEWED_DOCUMENT]->(d) RETURN r.reviewed_original_hash AS h",
 	} {
 		result, err := exec.Execute(ctx, query, params)
 		require.NoError(t, err, query)

@@ -417,24 +417,24 @@ func TestFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 
 func TestGh810_NullPropertyMapsMatchPinnedNeo4j(t *testing.T) {
 	var cases []differentialCase
-	for _, schema := range []string{"", "CREATE INDEX ix FOR (n:PDRecord) ON (n.id)", "CREATE CONSTRAINT uq FOR (n:PDRecord) REQUIRE n.id IS UNIQUE"} {
-		setup := []string{"CREATE (a:PDRecord {id:'r1',kind:'a'})-[:R]->(b:PDRecord {id:'r2',kind:'b'}), (:PDRecord {id:'r3',kind:'a'}), (:PDRecord {kind:'noid'})"}
+	for _, schema := range []string{"", "CREATE INDEX ix FOR (n:Record) ON (n.id)", "CREATE CONSTRAINT uq FOR (n:Record) REQUIRE n.id IS UNIQUE"} {
+		setup := []string{"CREATE (a:Record {id:'r1',kind:'a'})-[:R]->(b:Record {id:'r2',kind:'b'}), (:Record {id:'r3',kind:'a'}), (:Record {kind:'noid'})"}
 		if schema != "" {
 			setup = append(setup, schema)
 		}
 		for _, query := range []string{
-			"MATCH (n:PDRecord {id:$id}) RETURN n.id",
-			"MATCH (n:PDRecord {id:null}) RETURN n.id",
-			"MATCH (n:PDRecord {id:$id}) RETURN count(n)",
+			"MATCH (n:Record {id:$id}) RETURN n.id",
+			"MATCH (n:Record {id:null}) RETURN n.id",
+			"MATCH (n:Record {id:$id}) RETURN count(n)",
 			"MATCH (n {id:$id}) RETURN n.id",
-			"MATCH (n:PDRecord {id:$id,kind:$kind}) RETURN n.id",
-			"MATCH (a:PDRecord {id:$id})-[:R]->(b) RETURN b.id",
-			"MATCH (a)-[:R]->(b:PDRecord {id:$id}) RETURN a.id",
-			"OPTIONAL MATCH (n:PDRecord {id:$id}) RETURN n.id",
-			"MATCH (n:PDRecord {id:$id}) SET n.touched=true RETURN count(n)",
-			"MATCH (n:PDRecord {id:$id}) DETACH DELETE n",
+			"MATCH (n:Record {id:$id,kind:$kind}) RETURN n.id",
+			"MATCH (a:Record {id:$id})-[:R]->(b) RETURN b.id",
+			"MATCH (a)-[:R]->(b:Record {id:$id}) RETURN a.id",
+			"OPTIONAL MATCH (n:Record {id:$id}) RETURN n.id",
+			"MATCH (n:Record {id:$id}) SET n.touched=true RETURN count(n)",
+			"MATCH (n:Record {id:$id}) DETACH DELETE n",
 			"MATCH (n {id:$id}) DETACH DELETE n RETURN count(*)",
-			"MERGE (n:PDRecord {id:$id}) RETURN n.id",
+			"MERGE (n:Record {id:$id}) RETURN n.id",
 		} {
 			cases = append(cases, differentialCase{
 				Name:  "GH810/schema=" + schema + "/" + query,

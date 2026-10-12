@@ -768,9 +768,9 @@ func TestGh810_HTTPNullPropertyMaps(t *testing.T) {
 				require.Empty(t, result.Errors)
 				return result
 			}
-			for _, schema := range []string{"", "CREATE INDEX gh810_ix FOR (n:PDRecord) ON (n.id)", "CREATE CONSTRAINT gh810_uq FOR (n:PDRecord) REQUIRE n.id IS UNIQUE"} {
+			for _, schema := range []string{"", "CREATE INDEX gh810_ix FOR (n:Record) ON (n.id)", "CREATE CONSTRAINT gh810_uq FOR (n:Record) REQUIRE n.id IS UNIQUE"} {
 				t.Run("schema="+schema, func(t *testing.T) {
-					for _, query := range []string{"MATCH (n:PDRecord) DETACH DELETE n", "DROP CONSTRAINT gh810_uq IF EXISTS", "DROP INDEX gh810_ix IF EXISTS", "CREATE (a:PDRecord {id:'r1',kind:'a'})-[:R]->(b:PDRecord {id:'r2',kind:'b'}), (:PDRecord {id:'r3',kind:'a'}), (:PDRecord {kind:'noid'})"} {
+					for _, query := range []string{"MATCH (n:Record) DETACH DELETE n", "DROP CONSTRAINT gh810_uq IF EXISTS", "DROP INDEX gh810_ix IF EXISTS", "CREATE (a:Record {id:'r1',kind:'a'})-[:R]->(b:Record {id:'r2',kind:'b'}), (:Record {id:'r3',kind:'a'}), (:Record {kind:'noid'})"} {
 						post(backend.endpoint+"/commit", map[string]interface{}{"statement": query})
 					}
 					if schema != "" {
@@ -783,11 +783,11 @@ func TestGh810_HTTPNullPropertyMaps(t *testing.T) {
 					require.NotEmpty(t, opened.Commit)
 					endpoint := strings.TrimSuffix(opened.Commit, "/commit")
 					for _, query := range []string{
-						"MATCH (n:PDRecord {id:$id}) RETURN n.id",
-						"MATCH (n:PDRecord {id:null}) RETURN n.id",
-						"MATCH (a:PDRecord {id:$id})-[:R]->(b) RETURN b.id",
-						"MATCH (n:PDRecord {id:$id}) SET n.touched=true RETURN count(n)",
-						"MATCH (n:PDRecord {id:$id}) DETACH DELETE n",
+						"MATCH (n:Record {id:$id}) RETURN n.id",
+						"MATCH (n:Record {id:null}) RETURN n.id",
+						"MATCH (a:Record {id:$id})-[:R]->(b) RETURN b.id",
+						"MATCH (n:Record {id:$id}) SET n.touched=true RETURN count(n)",
+						"MATCH (n:Record {id:$id}) DETACH DELETE n",
 						"MATCH (n {id:$id}) DETACH DELETE n RETURN count(*)",
 					} {
 						result := post(endpoint, map[string]interface{}{"statement": query, "parameters": map[string]interface{}{"id": nil}})
@@ -812,7 +812,7 @@ func TestGh810_HTTPNullPropertyMaps(t *testing.T) {
 						t.Logf("ISSUE810_RESULT %s", evidence)
 					}
 					post(opened.Commit)
-					stored := post(backend.endpoint+"/commit", map[string]interface{}{"statement": "MATCH (n:PDRecord) RETURN n.id,n.kind,n.touched ORDER BY n.kind,n.id"})
+					stored := post(backend.endpoint+"/commit", map[string]interface{}{"statement": "MATCH (n:Record) RETURN n.id,n.kind,n.touched ORDER BY n.kind,n.id"})
 					require.Len(t, stored.Results[0].Data, 4)
 					for _, row := range stored.Results[0].Data {
 						require.Nil(t, row.Row[2])

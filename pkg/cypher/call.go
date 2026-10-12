@@ -1406,9 +1406,9 @@ func isIdentifierReferenced(query, identifier string) bool {
 // findKeywordIndexInContext returns the index of keyword's first occurrence
 // at the top level of s, or -1: topLevelKeywordIndex, the one scanner. A
 // keyword inside parentheses, a list or braces (a function call's or list
-// comprehension's WHERE, a subquery body) isn't the clause's (Personal
-// Documents I36); nor is one in a string, a quoted name or a comment, the
-// WITH of STARTS WITH / ENDS WITH, or a clause keyword used as a name.
+// comprehension's WHERE, a subquery body) isn't the clause's; nor is one in a
+// string, a quoted name or a comment, the WITH of STARTS WITH / ENDS WITH, or
+// a clause keyword used as a name.
 func findKeywordIndexInContext(s, keyword string) int {
 	return topLevelKeywordIndex(s, keyword)
 }

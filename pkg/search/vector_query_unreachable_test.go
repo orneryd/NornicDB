@@ -67,7 +67,7 @@ func TestVectorQueryNodesReturnsWhenApproximateSearchReachesFewerThanK(t *testin
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprintf("src%d", i)
 		embedding := sparseWordEmbedding(fmt.Sprintf("text: source document %d word%d", i, i), dimensions)
-		require.NoError(t, service.IndexNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"PDSearchSource"}, ChunkEmbeddings: [][]float32{embedding}}))
+		require.NoError(t, service.IndexNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"SearchSource"}, ChunkEmbeddings: [][]float32{embedding}}))
 		require.NoError(t, index.Add(id, embedding))
 	}
 	service.pipelineMu.Lock()
@@ -77,7 +77,7 @@ func TestVectorQueryNodesReturnsWhenApproximateSearchReachesFewerThanK(t *testin
 	query := sparseWordEmbedding("text: source document 0 word0", dimensions)
 	for _, k := range []int{10, 25, 45, 50, 100} {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		hits, err := service.vectorQueryNodesIndexedWithOptions(ctx, query, VectorQuerySpec{Label: "PDSearchSource", Similarity: "cosine", Limit: k}, "default", nil)
+		hits, err := service.vectorQueryNodesIndexedWithOptions(ctx, query, VectorQuerySpec{Label: "SearchSource", Similarity: "cosine", Limit: k}, "default", nil)
 		cancel()
 		require.NoError(t, err, "k=%d", k)
 		require.Len(t, hits, min(k, 50), "k=%d", k)

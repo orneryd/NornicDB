@@ -28,7 +28,7 @@ func TestGh514_StatementsEndingInsideAClauseAreSyntaxErrors(t *testing.T) {
 	for _, setup := range []string{
 		"CREATE (:K {id: 1})-[:R]->(:K {id: 2})",
 		"CREATE (:BFn {uid: 'a'})",
-		"CREATE (:PDRecord {id: 'x'})",
+		"CREATE (:Record {id: 'x'})",
 		"CREATE (:P {id: 1, name: 'a'})",
 	} {
 		_, err := exec.Execute(ctx, setup, nil)
@@ -41,7 +41,7 @@ func TestGh514_StatementsEndingInsideAClauseAreSyntaxErrors(t *testing.T) {
 		"MATCH (n) WITH n",
 		"CREATE (n:Z) WITH n",
 		"MATCH (m:BFn) OPTIONAL MATCH (n)-[:CALLS]->(m {uid: 'b'})",
-		"MATCH (n:PDRecord {id: identifier})",
+		"MATCH (n:Record {id: identifier})",
 		"OPTIONAL MATCH",
 		"WITH n, count(m) AS c",
 		"create.go",

@@ -37,7 +37,7 @@ func existsBenchExecutor(b *testing.B) *StorageExecutor {
 }
 
 // EXISTS over a correlated pattern, in WHERE and RETURN, the shapes that ran
-// on the path matcher before EXISTS shared COUNT's evaluator (I32).
+// on the path matcher before EXISTS shared COUNT's evaluator.
 func BenchmarkExistsSubquery(b *testing.B) {
 	exec := existsBenchExecutor(b)
 	ctx := context.Background()

@@ -10,7 +10,7 @@ import (
 )
 
 // A vector stored, or one removed, while the HNSW index is first built from
-// its snapshot reaches the installed graph (Personal Documents I41): the
+// its snapshot reaches the installed graph: the
 // build records such changes and replays them once the graph is installed,
 // as a rebuild does.
 func TestHNSWInitialBuildKeepsChangesThatRaceIt(t *testing.T) {

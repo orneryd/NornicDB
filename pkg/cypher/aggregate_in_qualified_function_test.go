@@ -9,7 +9,7 @@ import (
 )
 
 // An aggregate may be the argument of a namespaced function, as of any other
-// function (Personal Documents I47): the function's name is neither a
+// function: the function's name is neither a
 // variable nor, by its last segment, an aggregate. An aggregate expression
 // that reads a variable it doesn't group by, and an aggregate inside an
 // aggregate, are still errors.

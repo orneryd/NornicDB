@@ -180,8 +180,7 @@ func TestTransactionUpdateKeepsInlineEmbeddings(t *testing.T) {
 // n.text SET n.revision = 3) invalidates the managed embeddings on the
 // first write; the second write carries the copy's old embeddings back and
 // must not store them again. Vectors the caller sets after the invalidation
-// are still written as given. Reported by the Personal Documents
-// integration (I26).
+// are still written as given.
 func TestTransactionStaleCopyDoesNotRestoreInvalidatedEmbeddings(t *testing.T) {
 	b := newSidecarTestBadger(t)
 	b.SetEmbeddingsEnabled(true)

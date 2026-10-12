@@ -11,7 +11,7 @@ import (
 // A uniqueness constraint is checked against the transaction's final state:
 // a value an entity gives up in the transaction, by being deleted or by
 // changing it, is free for another entity in the same transaction. Recorded
-// on Neo4j 5.26.30. Reported by the Personal Documents integration (I25).
+// on Neo4j 5.26.30.
 func TestUniquenessIsCheckedAgainstTheTransactionsFinalState(t *testing.T) {
 	ctx := context.Background()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))

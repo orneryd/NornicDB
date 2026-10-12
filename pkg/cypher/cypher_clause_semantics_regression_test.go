@@ -42,9 +42,9 @@ func seedDistinctAggregationChain(t *testing.T, exec *StorageExecutor, ctx conte
 func seedDisconnectedRelationshipGraph(t *testing.T, exec *StorageExecutor, ctx context.Context) {
 	t.Helper()
 	executeClauseQueries(t, exec, ctx,
-		`CREATE (:PDG {id: 's1'})`,
-		`CREATE (:PDG {id: 't1'})`,
-		`MATCH (s:PDG {id: 's1'}), (t:PDG {id: 't1'}) CREATE (s)-[:RDG]->(t) CREATE (t)-[:RDG]->(s)`,
+		`CREATE (:NDG {id: 's1'})`,
+		`CREATE (:NDG {id: 't1'})`,
+		`MATCH (s:NDG {id: 's1'}), (t:NDG {id: 't1'}) CREATE (s)-[:RDG]->(t) CREATE (t)-[:RDG]->(s)`,
 	)
 }
 
@@ -67,11 +67,11 @@ func TestDistinctAggregatesUseValueIdentity(t *testing.T) {
 	t.Run("scalar over node cross product", func(t *testing.T) {
 		exec, ctx := newClauseSemanticsExecutor(t)
 		executeClauseQueries(t, exec, ctx,
-			`CREATE (:PDG {id: 's1'})`,
-			`CREATE (:PDG {id: 't1'})`,
+			`CREATE (:NDG {id: 's1'})`,
+			`CREATE (:NDG {id: 't1'})`,
 		)
 
-		result, err := exec.Execute(ctx, `MATCH (a:PDG), (x:PDG) WHERE a.id IN ['s1', 't1'] RETURN count(DISTINCT a.id) AS n`, nil)
+		result, err := exec.Execute(ctx, `MATCH (a:NDG), (x:NDG) WHERE a.id IN ['s1', 't1'] RETURN count(DISTINCT a.id) AS n`, nil)
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows)
 	})
@@ -81,7 +81,7 @@ func TestDistinctAggregatesUseValueIdentity(t *testing.T) {
 		seedDisconnectedRelationshipGraph(t, exec, ctx)
 
 		result, err := exec.Execute(ctx, `
-			MATCH (a:PDG)-[r:RDG]-(b:PDG)
+			MATCH (a:NDG)-[r:RDG]-(b:NDG)
 			WHERE a.id IN ['s1', 't1'] AND b.id IN ['s1', 't1']
 			RETURN collect(DISTINCT r) AS relationships
 		`, nil)
@@ -215,7 +215,7 @@ func TestMixedRelationshipAndNodePatternsCrossProduct(t *testing.T) {
 	seedDisconnectedRelationshipGraph(t, exec, ctx)
 
 	result, err := exec.Execute(ctx, `
-		MATCH (a:PDG)-[r:RDG]->(b:PDG), (x:PDG)
+		MATCH (a:NDG)-[r:RDG]->(b:NDG), (x:NDG)
 		WHERE a.id IN ['s1', 't1']
 		RETURN count(r) AS n
 	`, nil)
@@ -223,7 +223,7 @@ func TestMixedRelationshipAndNodePatternsCrossProduct(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(4)}}, result.Rows)
 
 	distinctResult, err := exec.Execute(ctx, `
-		MATCH (a:PDG)-[r:RDG]->(b:PDG), (x:PDG)
+		MATCH (a:NDG)-[r:RDG]->(b:NDG), (x:NDG)
 		WHERE a.id IN ['s1', 't1']
 		RETURN count(DISTINCT r) AS n
 	`, nil)
@@ -231,7 +231,7 @@ func TestMixedRelationshipAndNodePatternsCrossProduct(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(2)}}, distinctResult.Rows)
 
 	filteredResult, err := exec.Execute(ctx, `
-		MATCH (a:PDG)-[r:RDG]->(b:PDG), (x:PDG)
+		MATCH (a:NDG)-[r:RDG]->(b:NDG), (x:NDG)
 		WHERE a.id = x.id
 		RETURN count(r) AS n
 	`, nil)
@@ -313,7 +313,7 @@ func TestNestedAggregateExpression(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			result, err := exec.Execute(ctx, `
-				MATCH (a:PDG)-[r:RDG]-(b:PDG)
+				MATCH (a:NDG)-[r:RDG]-(b:NDG)
 				WHERE a.id IN ['s1', 't1'] AND b.id IN ['s1', 't1']
 				RETURN `+test.expr+` AS n
 			`, nil)

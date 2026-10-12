@@ -10,7 +10,7 @@ import (
 
 // An operator inside a CASE … END is the CASE's, not the expression's: the
 // row evaluator splits =~, IN, NOT IN, STARTS WITH, ENDS WITH and CONTAINS
-// outside CASE blocks, in values and in predicates (Personal Documents I40).
+// outside CASE blocks, in values and in predicates.
 func TestOperatorInsideCaseIsTheCases(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "case_split"))
 	ctx := context.Background()

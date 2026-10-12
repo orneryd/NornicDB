@@ -358,7 +358,7 @@ func (r *labelExpressionRewriter) variable() string {
 // conjunction (:A:B) with label expression syntax (|, &, !, %, IS; a
 // relationship type's legacy | is not), across the clause's patterns, not
 // only within one chain; another clause, a CALL body or a RETURN is a scope
-// of its own (I32 family, #907).
+// of its own (#907).
 type labelSyntaxScope struct {
 	colonChain string // the first colon chain, as Neo4j suggests rewriting it
 	symbols    bool
