@@ -26,6 +26,16 @@ func TestApocConvertToJSONKeepsHTMLCharacters(t *testing.T) {
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
 	}
 	require.Equal(t, `["a<b&c>"]`, exec.evaluateExpressionWithContext(ctx, "apoc.convert.toJson(['a<b&c>'])", nil, nil))
+
+	// U+2028 and U+2029 as themselves, controls escaped, an escaped
+	// backslash before the text u2028 left alone.
+	result, err := exec.Execute(ctx, "RETURN apoc.convert.toJson($value) AS v", map[string]interface{}{
+		"value": []interface{}{"n", "\u2028 \u0001 é \u2029", `back\u2028slash`},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "[\"n\",\"\u2028 \\u0001 é \u2029\",\"back\\\\u2028slash\"]", result.Rows[0][0])
+	require.Equal(t, `"\\u2029"`, unescapeLineSeparators(`"\\u2029"`))
+	require.Equal(t, `x\`, unescapeLineSeparators(`x\`))
 	_, ok := apocConvertToJSON(func() {})
 	require.False(t, ok, "a value JSON can't hold")
 }

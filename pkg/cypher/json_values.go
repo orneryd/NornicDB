@@ -7,9 +7,11 @@ import (
 )
 
 // apocConvertToJSON is apoc.convert.toJson(value): value as JSON text, as
-// APOC (Jackson) writes it, with <, > and & as themselves rather than the
-// \u escapes encoding/json writes for HTML by default. ok is false for a value
-// JSON can't hold.
+// APOC (Jackson) writes it: <, > and & as themselves rather than the \u
+// escapes encoding/json writes for HTML by default,
+// and U+2028 and U+2029 as themselves too, which encoding/json always
+// escapes as JavaScript line terminators. Control characters stay
+// escaped. ok is false for a value JSON can't hold.
 func apocConvertToJSON(value interface{}) (string, bool) {
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
@@ -17,7 +19,32 @@ func apocConvertToJSON(value interface{}) (string, bool) {
 	if err := encoder.Encode(value); err != nil {
 		return "", false
 	}
-	return strings.TrimSuffix(buffer.String(), "\n"), true
+	return unescapeLineSeparators(strings.TrimSuffix(buffer.String(), "\n")), true
+}
+
+// unescapeLineSeparators writes encoding/json's \u2028 and \u2029 escapes
+// as the characters. An escape is read pairwise, so an escaped backslash
+// followed by the text u2028 stays as it is.
+func unescapeLineSeparators(encoded string) string {
+	if !strings.Contains(encoded, `\u202`) {
+		return encoded
+	}
+	var out strings.Builder
+	out.Grow(len(encoded))
+	for index := 0; index < len(encoded); index++ {
+		if encoded[index] != '\\' || index+1 >= len(encoded) {
+			out.WriteByte(encoded[index])
+			continue
+		}
+		if rest := encoded[index:]; strings.HasPrefix(rest, `\u2028`) || strings.HasPrefix(rest, `\u2029`) {
+			out.WriteRune(rune(0x2028 + int(rest[5]-'8')))
+			index += 5
+			continue
+		}
+		out.WriteString(encoded[index : index+2])
+		index++
+	}
+	return out.String()
 }
 
 // JSONNumbers converts the json.Number values of a value decoded with
