@@ -157,6 +157,57 @@ func TestChangeDataCaptureDiff(t *testing.T) {
 	require.ElementsMatch(t, []interface{}{"Doc", "Read"}, eventOf(rows[0])["labels"])
 }
 
+// Events carry the entity's key-constraint values as Neo4j's do: a node's per
+// label from its NODE KEY constraints, a relationship's as a list from its
+// RELATIONSHIP KEY constraints, and each endpoint's; from the whole state, so
+// a DIFF update that doesn't change the key has it too, and a key selector
+// finds that update. A node without a key constraint has none.
+func TestChangeDataCaptureKeys(t *testing.T) {
+	exec, _ := newCDCExecutor(t, storage.ChangeCaptureDiff)
+	ctx := context.Background()
+	for _, statement := range []string{
+		"CREATE CONSTRAINT k_ctx FOR (n:Context) REQUIRE (n.id) IS NODE KEY",
+		"CREATE CONSTRAINT k_link FOR ()-[r:LINK]-() REQUIRE (r.k) IS RELATIONSHIP KEY",
+	} {
+		_, err := exec.Execute(ctx, statement, nil)
+		require.NoError(t, err, statement)
+	}
+	from := cdcID(t, exec, "db.cdc.current")
+	for _, statement := range []string{
+		"CREATE (:Context {id: 'ctx', name: 'a'}), (:Plain {name: 'p'})",
+		"MATCH (c:Context {id: 'ctx'}) SET c.name = 'b'",
+		"MATCH (c:Context {id: 'ctx'}), (p:Plain) CREATE (c)-[:LINK {k: 7, note: 'x'}]->(p)",
+		"MATCH (c:Context {id: 'ctx'}) DETACH DELETE c",
+	} {
+		_, err := exec.Execute(ctx, statement, nil)
+		require.NoError(t, err, statement)
+	}
+	rows := cdcRows(t, exec, from)
+	require.Len(t, rows, 6)
+	contextKeys := map[string]interface{}{"Context": []interface{}{map[string]interface{}{"id": "ctx"}}}
+	var operations []string
+	for _, row := range rows {
+		event := eventOf(row)
+		operations = append(operations, event["eventType"].(string)+event["operation"].(string))
+		if event["eventType"] == "r" {
+			require.Equal(t, []interface{}{map[string]interface{}{"k": int64(7)}}, event["keys"])
+			require.Equal(t, contextKeys, event["start"].(map[string]interface{})["keys"])
+			require.Equal(t, map[string]interface{}{}, event["end"].(map[string]interface{})["keys"])
+			continue
+		}
+		if labels := event["labels"].([]interface{}); labels[0] == "Plain" {
+			require.Equal(t, map[string]interface{}{}, event["keys"])
+			continue
+		}
+		require.Equal(t, contextKeys, event["keys"], event["operation"])
+	}
+	require.Equal(t, []string{"nc", "nc", "nu", "rc", "rd", "nd"}, operations)
+
+	updates := cdcRows(t, exec, from, map[string]interface{}{"select": "n", "key": map[string]interface{}{"id": "ctx"}, "operation": "u"})
+	require.Len(t, updates, 1)
+	require.Equal(t, map[string]interface{}{"name": "b"}, stateOf(updates[0], "after")["properties"])
+}
+
 // Selectors filter as Neo4j's do: OR across the list, AND within one.
 func TestChangeDataCaptureSelectors(t *testing.T) {
 	exec, _ := newCDCExecutor(t, storage.ChangeCaptureFull)

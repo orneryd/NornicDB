@@ -246,23 +246,46 @@ func changeEventValue(database string, event *storage.ChangeEvent) map[string]in
 		return map[string]interface{}{
 			"elementId": storage.NodeElementID(database, storage.NodeID(event.ID)),
 			"eventType": "n", "operation": string(event.Operation),
-			"labels": nonNilStrings(event.Labels), "keys": map[string]interface{}{},
+			"labels": nonNilStrings(event.Labels), "keys": nodeKeysValue(event.Keys),
 			"state": state,
 		}
 	}
-	endpoint := func(id string, labels []string) map[string]interface{} {
+	endpoint := func(id string, labels []string, keys map[string][]map[string]any) map[string]interface{} {
 		return map[string]interface{}{
 			"elementId": storage.NodeElementID(database, storage.NodeID(id)),
-			"keys":      map[string]interface{}{}, "labels": nonNilStrings(labels),
+			"keys":      nodeKeysValue(keys), "labels": nonNilStrings(labels),
 		}
 	}
 	return map[string]interface{}{
 		"elementId": storage.RelationshipElementID(database, storage.EdgeID(event.ID)),
 		"eventType": "r", "operation": string(event.Operation), "type": event.Type,
-		"keys":  []interface{}{},
-		"start": endpoint(event.Start, event.StartLabels), "end": endpoint(event.End, event.EndLabels),
+		"keys":  keyMapsValue(event.EdgeKeys),
+		"start": endpoint(event.Start, event.StartLabels, event.StartKeys), "end": endpoint(event.End, event.EndLabels, event.EndKeys),
 		"state": state,
 	}
+}
+
+// nodeKeysValue is a node's key values per label as a Cypher map of lists
+// of maps; an empty map when it has none.
+func nodeKeysValue(keys map[string][]map[string]any) map[string]interface{} {
+	value := make(map[string]interface{}, len(keys))
+	for label, maps := range keys {
+		value[label] = keyMapsValue(maps)
+	}
+	return value
+}
+
+// keyMapsValue is a list of key-value maps as Cypher values.
+func keyMapsValue(maps []map[string]any) []interface{} {
+	value := make([]interface{}, len(maps))
+	for index, keys := range maps {
+		converted := make(map[string]interface{}, len(keys))
+		for name, key := range keys {
+			converted[name] = cdcValue(key)
+		}
+		value[index] = converted
+	}
+	return value
 }
 
 func changeStateValue(state *storage.ChangeState, node bool) interface{} {
@@ -570,9 +593,20 @@ func changedAll(event *storage.ChangeEvent, keys []string) bool {
 	return true
 }
 
-// keyMatches reports whether the entity's properties, after the change or
-// before a delete, hold every key value.
+// keyMatches reports whether one of the entity's key-constraint value maps
+// (ChangeEvent.Keys), or else its properties after the change or before a
+// delete, hold every key value. The key maps answer for a DIFF update,
+// whose state carries only the changed properties.
 func keyMatches(event *storage.ChangeEvent, key map[string]interface{}) bool {
+	keyMaps := append([]map[string]any(nil), event.EdgeKeys...)
+	for _, maps := range event.Keys {
+		keyMaps = append(keyMaps, maps...)
+	}
+	for _, keys := range keyMaps {
+		if holdsValues(keys, key) {
+			return true
+		}
+	}
 	state := event.After
 	if state == nil {
 		state = event.Before
@@ -580,8 +614,13 @@ func keyMatches(event *storage.ChangeEvent, key map[string]interface{}) bool {
 	if state == nil {
 		return false
 	}
-	for name, want := range key {
-		if got, ok := state.Properties[name]; !ok || !reflect.DeepEqual(cdcValue(got), want) {
+	return holdsValues(state.Properties, key)
+}
+
+// holdsValues reports whether properties hold every one of values.
+func holdsValues(properties map[string]any, values map[string]interface{}) bool {
+	for name, want := range values {
+		if got, ok := properties[name]; !ok || !reflect.DeepEqual(cdcValue(got), want) {
 			return false
 		}
 	}

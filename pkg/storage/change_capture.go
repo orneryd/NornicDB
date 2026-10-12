@@ -96,6 +96,16 @@ type ChangeEvent struct {
 	EndLabels   []string     `msgpack:"bl,omitempty"`
 	Before      *ChangeState `msgpack:"bf,omitempty"`
 	After       *ChangeState `msgpack:"af,omitempty"`
+	// Keys are the entity's key-constraint property values, as Neo4j's
+	// events carry them: a node's per label (one map per NODE KEY
+	// constraint it satisfies), a relationship's as a list (RELATIONSHIP
+	// KEY), and each endpoint's per label. Taken from the entity's whole
+	// state (after the change, or before a delete), so a DIFF update
+	// carries them too.
+	Keys      map[string][]map[string]any `msgpack:"k,omitempty"`
+	EdgeKeys  []map[string]any            `msgpack:"ek,omitempty"`
+	StartKeys map[string][]map[string]any `msgpack:"ak,omitempty"`
+	EndKeys   map[string][]map[string]any `msgpack:"bk,omitempty"`
 }
 
 // ChangeCaptureEngine is implemented by engines that capture changes; the
@@ -330,6 +340,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 		return w.write(func(txn *badger.Txn) error { return txn.Set(key, value) })
 	}
 	labels := newChangeEndpointLabels(b, states)
+	keys := changeKeys{schema: b.GetSchemaForNamespace(tx.namespace)}
 	seenNodes := make(map[NodeID]bool)
 	seenEdges := make(map[EdgeID]bool)
 	edgeEvent := func(id EdgeID, before, after *Edge) error {
@@ -341,6 +352,13 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 		if !ok {
 			return nil
 		}
+		current := after
+		if current == nil {
+			current = before
+		}
+		event.EdgeKeys = keys.ofEdge(current)
+		event.StartKeys = keys.ofNode(labels.node(current.StartNode))
+		event.EndKeys = keys.ofNode(labels.node(current.EndNode))
 		return write(event)
 	}
 	for _, op := range operations {
@@ -379,6 +397,11 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 			}
 			seenNodes[id] = true
 			if event, ok := nodeChangeEvent(base, states.committedNodes[id], states.finalNodes[id]); ok {
+				whole := states.finalNodes[id]
+				if whole == nil {
+					whole = states.committedNodes[id]
+				}
+				event.Keys = keys.ofNode(whole)
 				if err := write(event); err != nil {
 					return err
 				}
@@ -469,31 +492,106 @@ func edgeChangeEvent(base ChangeEvent, before, after *Edge, labels *changeEndpoi
 type changeEndpointLabels struct {
 	engine *BadgerEngine
 	states commitStates
-	read   map[NodeID][]string
+	read   map[NodeID]*Node
 }
 
 func newChangeEndpointLabels(engine *BadgerEngine, states commitStates) *changeEndpointLabels {
-	return &changeEndpointLabels{engine: engine, states: states, read: make(map[NodeID][]string)}
+	return &changeEndpointLabels{engine: engine, states: states, read: make(map[NodeID]*Node)}
 }
 
 func (l *changeEndpointLabels) of(id NodeID) []string {
+	if node := l.node(id); node != nil {
+		return copyStrings(node.Labels)
+	}
+	return nil
+}
+
+// node is the endpoint's state: at the end of the transaction when the
+// transaction touched it (before its delete when it deleted it), else as
+// stored; nil when there is none.
+func (l *changeEndpointLabels) node(id NodeID) *Node {
 	if node, touched := l.states.finalNodes[id]; touched {
 		if node == nil {
 			node = l.states.committedNodes[id]
 		}
 		if node != nil {
-			return copyStrings(node.Labels)
+			return node
 		}
 	}
-	if labels, ok := l.read[id]; ok {
-		return labels
+	if node, ok := l.read[id]; ok {
+		return node
 	}
-	var labels []string
-	if node, err := l.engine.GetNodeWithoutEmbeddings(id); err == nil && node != nil {
-		labels = copyStrings(node.Labels)
+	node, err := l.engine.GetNodeWithoutEmbeddings(id)
+	if err != nil {
+		node = nil
 	}
-	l.read[id] = labels
-	return labels
+	l.read[id] = node
+	return node
+}
+
+// changeKeys reads an entity's key-constraint property values from its
+// database's schema (ChangeEvent.Keys).
+type changeKeys struct {
+	schema *SchemaManager
+}
+
+// ofNode is a node's key values per label: for each NODE KEY constraint on
+// one of its labels, in constraint-name order, the constrained properties'
+// values. Nil when it has none.
+func (k changeKeys) ofNode(node *Node) map[string][]map[string]any {
+	if node == nil || k.schema == nil {
+		return nil
+	}
+	var keys map[string][]map[string]any
+	for _, constraint := range k.schema.GetConstraintsForLabels(node.Labels) {
+		if constraint.Type != ConstraintNodeKey || constraint.EffectiveEntityType() != ConstraintEntityNode {
+			continue
+		}
+		if values := keyValues(constraint.Properties, node.Properties); values != nil {
+			if keys == nil {
+				keys = make(map[string][]map[string]any)
+			}
+			keys[constraint.Label] = append(keys[constraint.Label], values)
+		}
+	}
+	return keys
+}
+
+// ofEdge is a relationship's key values: for each RELATIONSHIP KEY
+// constraint on its type, in constraint-name order, the constrained
+// properties' values. Nil when it has none.
+func (k changeKeys) ofEdge(edge *Edge) []map[string]any {
+	if edge == nil || k.schema == nil {
+		return nil
+	}
+	constraints := k.schema.GetAllConstraints()
+	sort.Slice(constraints, func(i, j int) bool { return constraints[i].Name < constraints[j].Name })
+	var keys []map[string]any
+	for _, constraint := range constraints {
+		if constraint.Type != ConstraintRelationshipKey || constraint.Label != edge.Type {
+			continue
+		}
+		if values := keyValues(constraint.Properties, edge.Properties); values != nil {
+			keys = append(keys, values)
+		}
+	}
+	return keys
+}
+
+// keyValues is the named properties' values, or nil when one is missing.
+func keyValues(names []string, properties map[string]any) map[string]any {
+	if len(names) == 0 {
+		return nil
+	}
+	values := make(map[string]any, len(names))
+	for _, name := range names {
+		value, ok := properties[name]
+		if !ok || value == nil {
+			return nil
+		}
+		values[name] = value
+	}
+	return values
 }
 
 // changedProperties returns the keys whose value differs between before and
