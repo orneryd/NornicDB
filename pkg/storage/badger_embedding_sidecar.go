@@ -267,10 +267,6 @@ func sameStoredValue(a, b any) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-// loadEmbeddingSidecar returns the sidecar metadata for nodeID, or
-// (nil, false, nil) when no sidecar exists or the sidecar is stale (the body
-// changed after the embedding was generated). Sidecar state takes precedence
-// over body-inline embedding state when present and fresh.
 // freshEmbeddingSidecarMeta is the embedding metadata node reads as: the
 // sidecar record when it is fresh for node's body, without the internal
 // content stamp; nil when the record holds nothing else.
@@ -347,6 +343,10 @@ func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 	return meta, nil
 }
 
+// loadEmbeddingSidecar returns the sidecar metadata for nodeID, or
+// (nil, false, nil) when no sidecar exists or the sidecar is stale (the body
+// changed after the embedding was generated). Sidecar state takes precedence
+// over body-inline embedding state when present and fresh.
 func (b *BadgerEngine) loadEmbeddingSidecar(txn *badger.Txn, node *Node, nodeID NodeID) (map[string]any, bool, error) {
 	item, err := txn.Get(embeddingMetaKey(nodeID))
 	if err == badger.ErrKeyNotFound {
