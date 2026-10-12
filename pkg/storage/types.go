@@ -950,6 +950,9 @@ type EdgeDeleteCallback func(edgeID EdgeID)
 // between storage and external services (search indexes, embeddings, caches, etc.).
 //
 // Events are fired AFTER the storage operation succeeds, ensuring consistency.
+// Each On* call adds a listener: every registered callback is invoked, so
+// one subscriber (the GraphQL subscriptions) doesn't replace another (the
+// search indexes).
 //
 // Example:
 //

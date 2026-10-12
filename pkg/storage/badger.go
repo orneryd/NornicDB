@@ -351,13 +351,14 @@ type BadgerEngine struct {
 	storageVersion int
 
 	// Event callbacks for external coordination (search indexes, caches, etc.)
-	// These are fired AFTER storage operations succeed
-	onNodeCreated         NodeEventCallback
-	onNodeUpdated         NodeEventCallback
-	onNodeDeleted         NodeDeleteCallback
-	onEdgeCreated         EdgeEventCallback
-	onEdgeUpdated         EdgeEventCallback
-	onEdgeDeleted         EdgeDeleteCallback
+	// These are fired AFTER storage operations succeed, every registered one
+	// in registration order
+	onNodeCreated         []NodeEventCallback
+	onNodeUpdated         []NodeEventCallback
+	onNodeDeleted         []NodeDeleteCallback
+	onEdgeCreated         []EdgeEventCallback
+	onEdgeUpdated         []EdgeEventCallback
+	onEdgeDeleted         []EdgeDeleteCallback
 	callbackMu            sync.RWMutex
 	graphMutationVersions graphMutationVersions
 
@@ -436,79 +437,97 @@ func (b *BadgerEngine) DB() *badger.DB {
 	return b.db.DB
 }
 
-// OnNodeCreated sets a callback to be invoked when nodes are created.
+// OnNodeCreated adds a callback to be invoked when nodes are created.
 // Implements StorageEventNotifier interface.
 func (b *BadgerEngine) OnNodeCreated(callback NodeEventCallback) {
+	if callback == nil {
+		return
+	}
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
-	b.onNodeCreated = callback
+	b.onNodeCreated = append(b.onNodeCreated, callback)
 }
 
-// OnNodeUpdated sets a callback to be invoked when nodes are updated.
+// OnNodeUpdated adds a callback to be invoked when nodes are updated.
 // Implements StorageEventNotifier interface.
 func (b *BadgerEngine) OnNodeUpdated(callback NodeEventCallback) {
+	if callback == nil {
+		return
+	}
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
-	b.onNodeUpdated = callback
+	b.onNodeUpdated = append(b.onNodeUpdated, callback)
 }
 
-// OnNodeDeleted sets a callback to be invoked when nodes are deleted.
+// OnNodeDeleted adds a callback to be invoked when nodes are deleted.
 // Implements StorageEventNotifier interface.
 func (b *BadgerEngine) OnNodeDeleted(callback NodeDeleteCallback) {
+	if callback == nil {
+		return
+	}
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
-	b.onNodeDeleted = callback
+	b.onNodeDeleted = append(b.onNodeDeleted, callback)
 }
 
-// OnEdgeCreated sets a callback to be invoked when edges are created.
+// OnEdgeCreated adds a callback to be invoked when edges are created.
 // Implements StorageEventNotifier interface.
 func (b *BadgerEngine) OnEdgeCreated(callback EdgeEventCallback) {
+	if callback == nil {
+		return
+	}
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
-	b.onEdgeCreated = callback
+	b.onEdgeCreated = append(b.onEdgeCreated, callback)
 }
 
-// OnEdgeUpdated sets a callback to be invoked when edges are updated.
+// OnEdgeUpdated adds a callback to be invoked when edges are updated.
 // Implements StorageEventNotifier interface.
 func (b *BadgerEngine) OnEdgeUpdated(callback EdgeEventCallback) {
+	if callback == nil {
+		return
+	}
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
-	b.onEdgeUpdated = callback
+	b.onEdgeUpdated = append(b.onEdgeUpdated, callback)
 }
 
-// OnEdgeDeleted sets a callback to be invoked when edges are deleted.
+// OnEdgeDeleted adds a callback to be invoked when edges are deleted.
 // Implements StorageEventNotifier interface.
 func (b *BadgerEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
+	if callback == nil {
+		return
+	}
 	b.callbackMu.Lock()
 	defer b.callbackMu.Unlock()
-	b.onEdgeDeleted = callback
+	b.onEdgeDeleted = append(b.onEdgeDeleted, callback)
 }
 
-// notifyNodeCreated calls the registered callback if set.
+// notifyNodeCreated calls the registered callbacks.
 func (b *BadgerEngine) notifyNodeCreated(node *Node) {
 	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
 	b.callbackMu.RLock()
-	callback := b.onNodeCreated
+	callbacks := b.onNodeCreated
 	b.callbackMu.RUnlock()
 
-	if callback != nil {
+	for _, callback := range callbacks {
 		callback(node)
 	}
 }
 
-// notifyNodeUpdated calls the registered callback if set.
+// notifyNodeUpdated calls the registered callbacks.
 func (b *BadgerEngine) notifyNodeUpdated(node *Node) {
 	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
 	b.callbackMu.RLock()
-	callback := b.onNodeUpdated
+	callbacks := b.onNodeUpdated
 	b.callbackMu.RUnlock()
 
-	if callback != nil {
+	for _, callback := range callbacks {
 		callback(node)
 	}
 }
 
-// notifyNodeDeleted calls the registered callback if set.
+// notifyNodeDeleted calls the registered callbacks.
 func (b *BadgerEngine) notifyNodeDeleted(nodeID NodeID) {
 	b.graphMutationVersions.changed(namespaceForNodeID(nodeID))
 	b.deleteCleanup.recordDelete()
@@ -517,47 +536,47 @@ func (b *BadgerEngine) notifyNodeDeleted(nodeID NodeID) {
 
 func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID) {
 	b.callbackMu.RLock()
-	callback := b.onNodeDeleted
+	callbacks := b.onNodeDeleted
 	b.callbackMu.RUnlock()
 
-	if callback != nil {
+	for _, callback := range callbacks {
 		callback(nodeID)
 	}
 }
 
-// notifyEdgeCreated calls the registered callback if set.
+// notifyEdgeCreated calls the registered callbacks.
 func (b *BadgerEngine) notifyEdgeCreated(edge *Edge) {
 	b.graphMutationVersions.changed(namespaceForEdgeID(edge.ID))
 	b.callbackMu.RLock()
-	callback := b.onEdgeCreated
+	callbacks := b.onEdgeCreated
 	b.callbackMu.RUnlock()
 
-	if callback != nil {
+	for _, callback := range callbacks {
 		callback(edge)
 	}
 }
 
-// notifyEdgeUpdated calls the registered callback if set.
+// notifyEdgeUpdated calls the registered callbacks.
 func (b *BadgerEngine) notifyEdgeUpdated(edge *Edge) {
 	b.graphMutationVersions.changed(namespaceForEdgeID(edge.ID))
 	b.callbackMu.RLock()
-	callback := b.onEdgeUpdated
+	callbacks := b.onEdgeUpdated
 	b.callbackMu.RUnlock()
 
-	if callback != nil {
+	for _, callback := range callbacks {
 		callback(edge)
 	}
 }
 
-// notifyEdgeDeleted calls the registered callback if set.
+// notifyEdgeDeleted calls the registered callbacks.
 func (b *BadgerEngine) notifyEdgeDeleted(edgeID EdgeID) {
 	b.graphMutationVersions.changed(namespaceForEdgeID(edgeID))
 	b.deleteCleanup.recordDelete()
 	b.callbackMu.RLock()
-	callback := b.onEdgeDeleted
+	callbacks := b.onEdgeDeleted
 	b.callbackMu.RUnlock()
 
-	if callback != nil {
+	for _, callback := range callbacks {
 		callback(edgeID)
 	}
 }
