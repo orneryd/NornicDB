@@ -1,9 +1,9 @@
 package cypher
 
 import (
-	"sort"
+	"regexp"
 	"strings"
-	"unicode"
+	"unicode/utf8"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
@@ -21,22 +21,20 @@ const textLocateTolerance = 3
 // fnTextLocate is text.locate(text, quote, options = {}): the span
 // {start, end} of the quote's best occurrence in text, in code points
 // ([start, end), as substring takes them), or null when it doesn't occur.
-// The match is loose, as a quote copied by a reader is:
-//   - letters match without case, and any run of whitespace matches any run;
-//   - typographic and plain quotation marks, apostrophes and dashes match
-//     each other;
-//   - markdown emphasis (* and _) and link markup ([label](target)) around
-//     words are skipped, in the text and the quote;
-//   - a reply's > markers at a line start are skipped, in both;
-//   - a JSON escape \n, \r or \t is whitespace, in the text and the quote
-//     (a JSON file's body is one line whose breaks are escapes);
-//   - in the quote, a copied leading line label ("12: ") is dropped.
+// The quote's words match in order, as a reader copies a quote
+// (textLocatePattern): without case; with any run of whitespace, JSON escapes
+// (\n, \r, \t) or a reply's > markers after a line break between them;
+// typographic and plain quotation marks, apostrophes and dashes alike; and
+// markdown emphasis (* ** _ __) or link markup ([ … ](target)) allowed around
+// each word, never inside one. The span is the text's own: markup around its
+// first and last words is in it. A copied leading line label ("12: ") and
+// JSON escapes in the quote are dropped.
 //
 // options: line, the 1-based line the quote was cited on (the occurrence
-// starting on it wins, else the nearest within tolerance lines, else none);
-// tolerance (3); from and to, the code-point range the occurrence must lie
-// in. Without line, the first occurrence in the range wins. Null text or
-// quote is null.
+// starting on it wins, else the nearest within tolerance lines, the lower
+// line first; a line that isn't one of the text's is null); tolerance (3);
+// from and to, the code-point range the occurrence must lie in. Without line,
+// the first occurrence in the range wins. Null text or quote is null.
 func fnTextLocate(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(args) < 2 || len(args) > 3 {
 		return nil, argumentCountError("text.locate", "2 or 3", len(args))
@@ -53,7 +51,7 @@ func fnTextLocate(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if !isText {
 		return nil, &cypherfn.TypeMismatchError{Function: "text.locate", Expected: "String", Value: values[1]}
 	}
-	options := textLocateOptions{line: -1, tolerance: textLocateTolerance, from: 0, to: -1}
+	options := textLocateOptions{tolerance: textLocateTolerance, from: 0, to: -1}
 	if len(values) == 3 && values[2] != nil {
 		fields, isMap := values[2].(map[string]interface{})
 		if !isMap {
@@ -68,6 +66,9 @@ func fnTextLocate(ctx cypherfn.Context, args []string) (interface{}, error) {
 				return nil, &cypherfn.TypeMismatchError{Function: "text.locate", Expected: "Integer", Value: value}
 			}
 			*target = int(toInt64(value))
+			if name == "line" {
+				options.hasLine = true
+			}
 		}
 	}
 	start, end, found := locateQuote(text, quote, options)
@@ -78,171 +79,141 @@ func fnTextLocate(ctx cypherfn.Context, args []string) (interface{}, error) {
 }
 
 type textLocateOptions struct {
+	hasLine                   bool
 	line, tolerance, from, to int
 }
 
-// looseText is a text reduced for loose matching: its folded runes, each
-// with the code-point offset of the rune it came from.
-type looseText struct {
-	runes   []rune
-	offsets []int
+var (
+	// textLocateLineLabel is a copied "n: " label at the quote's start.
+	textLocateLineLabel = regexp.MustCompile(`^\s*[0-9]+:\s`)
+	// textLocateEscapedBreak is a JSON string's escaped line break or tab,
+	// as two characters: a JSON message file's body is one line whose breaks
+	// are these.
+	textLocateEscapedBreak = regexp.MustCompile(`\\[nrt]`)
+)
+
+const (
+	// textLocateGap is what may stand between two quoted words: whitespace,
+	// an escaped break, or a reply's > markers after a line break.
+	textLocateGap = `(?:[\s\v\x{1c}-\x{1f}\x{85}\x{a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}]|\\[nrt]|\n[ \t]*>[> \t]*)+`
+	// textLocateMarkupOpen and textLocateMarkupClose are markdown a reader
+	// leaves out around a word: emphasis, and a link's brackets and target.
+	textLocateMarkupOpen  = `(?:\*{1,2}|_{1,2}|\[)?`
+	textLocateMarkupClose = `(?:\*{1,2}|_{1,2}|\]\([^)\s]*\))?`
+)
+
+// textLocateMarks are the typographic and plain forms of the same mark.
+var textLocateMarks = map[rune]string{}
+
+func init() {
+	for _, group := range []string{`'‘’`, `"“”`, `-‐‑–—`} {
+		class := "[" + regexp.QuoteMeta(group) + "]"
+		for _, mark := range group {
+			textLocateMarks[mark] = class
+		}
+	}
 }
 
-// locateQuote finds quote's best occurrence in text (fnTextLocate).
-func locateQuote(text, quote string, options textLocateOptions) (start, end int, found bool) {
-	needle := looseReduce(unescapeQuote(quote)).runes
-	for len(needle) > 0 && needle[0] == ' ' {
-		needle = needle[1:]
+// textLocatePattern is the quote's words as one case-insensitive pattern
+// (fnTextLocate's rules), or nil when the quote has no word.
+func textLocatePattern(quote string) *regexp.Regexp {
+	quote = textLocateLineLabel.ReplaceAllString(quote, "")
+	words := strings.Fields(textLocateEscapedBreak.ReplaceAllString(quote, " "))
+	if len(words) == 0 {
+		return nil
 	}
-	for len(needle) > 0 && needle[len(needle)-1] == ' ' {
-		needle = needle[:len(needle)-1]
-	}
-	if len(needle) == 0 {
-		return 0, 0, false
-	}
-	haystack := looseReduce(text)
-	var lineStarts []int // code-point offsets where lines start, for line numbers
-	if options.line >= 0 {
-		lineStarts = append(lineStarts, 0)
-		offset := 0
-		for _, r := range text {
-			offset++
-			if r == '\n' {
-				lineStarts = append(lineStarts, offset)
+	parts := make([]string, len(words))
+	for index, word := range words {
+		var core strings.Builder
+		for _, r := range word {
+			if class, mark := textLocateMarks[r]; mark {
+				core.WriteString(class)
+			} else {
+				core.WriteString(regexp.QuoteMeta(string(r)))
 			}
 		}
+		parts[index] = textLocateMarkupOpen + core.String() + textLocateMarkupClose
 	}
-	bestDistance := -1
-	for i := 0; i+len(needle) <= len(haystack.runes); i++ {
-		if !runesEqualAt(haystack.runes, i, needle) {
-			continue
+	return regexp.MustCompile(`(?i)` + strings.Join(parts, textLocateGap))
+}
+
+// locateQuote finds quote's best occurrence in text (fnTextLocate). It works
+// on byte offsets and converts only the result to code points; each search
+// starts at a candidate line (or from) and stops at the first match.
+func locateQuote(text, quote string, options textLocateOptions) (start, end int, found bool) {
+	pattern := textLocatePattern(quote)
+	if pattern == nil {
+		return 0, 0, false
+	}
+	low, high := codePointByteOffset(text, options.from), len(text)
+	if options.to >= 0 {
+		high = codePointByteOffset(text, options.to)
+	}
+	if low > high {
+		return 0, 0, false
+	}
+	at := func(from int) (int, int, bool) {
+		match := pattern.FindStringIndex(text[from:high])
+		if match == nil {
+			return 0, 0, false
 		}
-		s, e := haystack.offsets[i], haystack.offsets[i+len(needle)-1]+1
-		if s < options.from || options.to >= 0 && e > options.to {
-			continue
+		return from + match[0], from + match[1], true
+	}
+	toCodePoints := func(s, e int) (int, int, bool) {
+		first := utf8.RuneCountInString(text[:s])
+		return first, first + utf8.RuneCountInString(text[s:e]), true
+	}
+	if !options.hasLine {
+		if s, e, ok := at(low); ok {
+			return toCodePoints(s, e)
 		}
-		if options.line < 0 {
-			return s, e, true
+		return 0, 0, false
+	}
+	lineStarts := []int{0}
+	for index := strings.IndexByte(text, '\n'); index >= 0; {
+		lineStarts = append(lineStarts, index+1)
+		next := strings.IndexByte(text[index+1:], '\n')
+		if next < 0 {
+			break
 		}
-		line := sort.Search(len(lineStarts), func(k int) bool { return lineStarts[k] > s }) // 1-based
-		distance := line - options.line
-		if distance < 0 {
-			distance = -distance
-		}
-		if distance <= options.tolerance && (bestDistance < 0 || distance < bestDistance) {
-			start, end, bestDistance = s, e, distance
+		index += next + 1
+	}
+	lines := len(lineStarts)
+	if options.line < 1 || options.line > lines {
+		return 0, 0, false
+	}
+	for distance := 0; distance <= options.tolerance; distance++ {
+		for _, number := range []int{options.line - distance, options.line + distance} {
+			if number < 1 || number > lines || distance == 0 && number != options.line {
+				continue
+			}
+			from := max(lineStarts[number-1], low)
+			if from > high {
+				continue
+			}
+			s, e, ok := at(from)
+			if ok && (number == lines || s < lineStarts[number]) {
+				return toCodePoints(s, e)
+			}
 			if distance == 0 {
 				break
 			}
 		}
 	}
-	return start, end, bestDistance >= 0
+	return 0, 0, false
 }
 
-func runesEqualAt(runes []rune, at int, needle []rune) bool {
-	for k, r := range needle {
-		if runes[at+k] != r {
-			return false
+// codePointByteOffset is the byte offset of text's code point at index,
+// clamped to the text.
+func codePointByteOffset(text string, index int) int {
+	if index <= 0 {
+		return 0
+	}
+	for offset := range text {
+		if index == 0 {
+			return offset
 		}
+		index--
 	}
-	return true
-}
-
-// unescapeQuote turns a quote's JSON escapes \n, \r and \t into spaces and
-// drops a copied leading line label ("12: ").
-func unescapeQuote(quote string) string {
-	quote = strings.NewReplacer(`\n`, " ", `\r`, " ", `\t`, " ").Replace(quote)
-	trimmed := strings.TrimLeft(quote, " \t")
-	digits := 0
-	for digits < len(trimmed) && trimmed[digits] >= '0' && trimmed[digits] <= '9' {
-		digits++
-	}
-	if digits > 0 && digits+1 < len(trimmed) && trimmed[digits] == ':' && (trimmed[digits+1] == ' ' || trimmed[digits+1] == '\t') {
-		return trimmed[digits+2:]
-	}
-	return quote
-}
-
-// looseReduce folds text for loose matching (fnTextLocate's rules): one
-// space per whitespace run (JSON escapes \n, \r and \t included), lower
-// case, plain quotes and dashes, without markdown emphasis, link markup or a
-// line's leading > markers.
-func looseReduce(text string) looseText {
-	out := looseText{runes: make([]rune, 0, len(text)), offsets: make([]int, 0, len(text))}
-	runes := []rune(text)
-	space := func(at int) {
-		if n := len(out.runes); n > 0 && out.runes[n-1] != ' ' {
-			out.runes = append(out.runes, ' ')
-			out.offsets = append(out.offsets, at)
-		}
-	}
-	lineStart := true
-	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-		if lineStart {
-			// A reply's > markers (and the spaces among them) at a line start.
-			j := i
-			for j < len(runes) && (runes[j] == ' ' || runes[j] == '\t' || runes[j] == '>') {
-				j++
-			}
-			if j > i && strings.ContainsRune(string(runes[i:j]), '>') {
-				space(i)
-				i = j - 1
-				lineStart = false
-				continue
-			}
-			lineStart = false
-		}
-		switch {
-		case r == '\n':
-			space(i)
-			lineStart = true
-			continue
-		case unicode.IsSpace(r):
-			space(i)
-			continue
-		case r == '\\' && i+1 < len(runes) && (runes[i+1] == 'n' || runes[i+1] == 'r' || runes[i+1] == 't'):
-			space(i)
-			i++
-			continue
-		case r == '*' || r == '_':
-			continue
-		case r == '[':
-			continue
-		case r == ']':
-			// ](target): the rest of a markdown link.
-			if i+1 < len(runes) && runes[i+1] == '(' {
-				if close := indexRune(runes, i+2, ')'); close >= 0 {
-					i = close
-				}
-			}
-			continue
-		}
-		out.runes = append(out.runes, looseRune(r))
-		out.offsets = append(out.offsets, i)
-	}
-	return out
-}
-
-func indexRune(runes []rune, from int, target rune) int {
-	for i := from; i < len(runes); i++ {
-		if runes[i] == target {
-			return i
-		}
-	}
-	return -1
-}
-
-// looseRune is r lower-cased, with typographic quotation marks, apostrophes
-// and dashes as their plain forms.
-func looseRune(r rune) rune {
-	switch r {
-	case '‘', '’', '‚', '‛', '′', '`':
-		return '\''
-	case '“', '”', '„', '‟', '″', '«', '»':
-		return '"'
-	case '‐', '‑', '‒', '–', '—', '―', '−':
-		return '-'
-	}
-	return unicode.ToLower(r)
+	return len(text)
 }

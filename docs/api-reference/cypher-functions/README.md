@@ -189,11 +189,11 @@ Real-time signal filtering and prediction for time series data. Perfect for smoo
 
 ### 🔎 Text Location (1 function, a NornicDB extension)
 
-`text.locate(text, quote, options)` returns `{start, end}`, the span of a quote's best occurrence in `text` in code points (`substring(text, start, end - start)` is the passage), or null. The match is loose, as a reader copies a quote: letters match without case; any whitespace run matches any run; typographic and plain quotation marks, apostrophes and dashes match; markdown emphasis (`*`, `_`), link markup (`[label](target)`) and a reply's leading `>` markers are skipped; JSON escapes `\n`, `\r` and `\t` are whitespace, in the text and the quote (a JSON file's body is one line whose breaks are escapes); in the quote, a copied line label (`12: `) is dropped.
+`text.locate(text, quote, options)` returns `{start, end}`, the span of a quote's best occurrence in `text` in code points (`substring(text, start, end - start)` is the passage), or null. The quote's words match in order, as a reader copies a quote: without case; with any run of whitespace, JSON escapes (`\n`, `\r`, `\t`, as a JSON file's one-line body has them) or a reply's `>` markers after a line break between them (a `>` in the quote matches one literally); typographic and plain quotation marks (`'`, `"`), apostrophes and dashes alike; markdown emphasis (`*`, `**`, `_`, `__`) and link markup (`[label](target)`) allowed around a word, never inside one, so `filename` doesn't match `file_name`. The span is the text's own, markup around its first and last words included. In the quote, a copied line label (`12: `) and JSON escapes are dropped.
 
 | Option | Meaning |
 | --- | --- |
-| `line` | The 1-based line the quote was cited on: the occurrence starting on it wins, else the nearest within `tolerance` lines, else null. Without it, the first occurrence wins. |
+| `line` | The 1-based line the quote was cited on: the occurrence starting on it wins, else the nearest within `tolerance` lines (the lower line first on a tie), else null. A line that isn't one of the text's is null. Without it, the first occurrence wins. |
 | `tolerance` | Lines around `line` an occurrence may start on (default 3). |
 | `from`, `to` | The code-point range the occurrence must lie in. |
 
@@ -201,6 +201,8 @@ Real-time signal filtering and prediction for time series data. Perfect for smoo
 MATCH (s:Source {id: $id})
 RETURN text.locate(s.text, $quote, {line: $line, from: $partStart, to: $partEnd}) AS span
 ```
+
+To place many quotes in one long text passed as a parameter, bind it once (`WITH $text AS t UNWIND $citations AS c RETURN text.locate(t, c.quote, {line: c.line})`): a string parameter used directly in the per-row expression is re-read on every row.
 
 ### ⏰ Date/Time Functions (4 functions)
 
