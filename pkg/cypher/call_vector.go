@@ -192,8 +192,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 			managed = errors.Is(err, stop)
 		}
 		if !managed {
-			return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "ProcedureCallFailed",
-				fmt.Sprintf("There is no such vector schema index: %s", indexName))
+			return nil, noSuchVectorIndexError(indexName)
 		}
 	}
 	if wantDims <= 0 && len(queryVector) > 0 {
@@ -272,58 +271,17 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 	return result, nil
 }
 
-// callDbIndexVectorEmbed implements db.index.vector.embed
+// callDbIndexVectorEmbed implements db.index.vector.embed: the embedding of
+// the call's evaluated STRING argument.
 // Syntax: CALL db.index.vector.embed('query text') YIELD embedding
-func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	if e.embedder == nil {
 		return nil, localizedError(localization.CypherSpecializedCallsEmbedderNotConfigured(), nil)
 	}
-
-	upper := upperASCII(cypher)
-	procIdx := strings.Index(upper, "DB.INDEX.VECTOR.EMBED")
-	if procIdx == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedInvalidSyntax(), nil)
+	text, err := requiredProcedureString("db.index.vector.embed", args, 0, "text")
+	if err != nil {
+		return nil, err
 	}
-	parenStart := strings.Index(cypher[procIdx:], "(")
-	if parenStart == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedArgumentRequired(), nil)
-	}
-	parenStart += procIdx
-	parenEnd := e.findMatchingParen(cypher, parenStart)
-	if parenEnd == -1 {
-		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedUnmatchedParenthesis(), nil)
-	}
-
-	arg := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
-	if arg == "" {
-		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedTextRequired(), nil)
-	}
-
-	var text string
-	if strings.HasPrefix(arg, "$") {
-		name := strings.TrimPrefix(arg, "$")
-		params := getParamsFromContext(ctx)
-		if params == nil {
-			return nil, localizedError(localization.CypherSpecializedCallsParameterNotProvided(name), nil)
-		}
-		value, ok := params[name]
-		if !ok {
-			return nil, localizedError(localization.CypherSpecializedCallsParameterNotProvided(name), nil)
-		}
-		s, ok := value.(string)
-		if !ok {
-			return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedParameterString(name), nil)
-		}
-		text = s
-	} else {
-		value := e.parseValue(ctx, arg)
-		s, ok := value.(string)
-		if !ok {
-			return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedStringRequired(), nil)
-		}
-		text = s
-	}
-
 	if strings.TrimSpace(text) == "" {
 		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedTextRequired(), nil)
 	}
@@ -339,6 +297,13 @@ func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, cypher str
 	}, nil
 }
 
+// noSuchVectorIndexError is the failure of a vector query naming no vector
+// index, as Neo4j's ProcedureCallFailed.
+func noSuchVectorIndexError(indexName string) error {
+	return newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "ProcedureCallFailed",
+		fmt.Sprintf("There is no such vector schema index: %s", indexName))
+}
+
 // vectorQueryInput represents either a vector or a string query for vector search
 type vectorQueryInput struct {
 	vector      []float32 // Pre-computed vector (from client)
@@ -352,11 +317,21 @@ func (e *StorageExecutor) callVectorQueryArguments(ctx context.Context, args []i
 	if len(args) != 3 {
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentCount", "vector queries require three arguments")
 	}
-	indexName, validName := args[0].(string)
-	k, validCount := toInt(args[1])
-	if !validName || !validCount {
-		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", "vector queries require a string index name and integer result count")
+	procedure := "db.index.vector.queryNodes"
+	if relationships {
+		procedure = "db.index.vector.queryRelationships"
 	}
+	// A null name or count fails the call (ProcedureCallFailed), as in
+	// Neo4j; a value of another type is a TypeError.
+	indexName, err := requiredProcedureString(procedure, args, 0, "indexName")
+	if err != nil {
+		return nil, err
+	}
+	count, err := requiredProcedureInteger(procedure, args, 1, "numberOfNearestNeighbours")
+	if err != nil {
+		return nil, err
+	}
+	k := int(count)
 	input := &vectorQueryInput{value: args[2], hasValue: true}
 	if text, ok := args[2].(string); ok {
 		input = &vectorQueryInput{stringQuery: text}

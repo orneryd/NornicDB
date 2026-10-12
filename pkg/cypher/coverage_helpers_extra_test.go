@@ -152,10 +152,6 @@ func TestCypherCoverage_ExecutorAccessorsAndFulltextExtraction(t *testing.T) {
 	exec.SetCacheMetrics(nil)
 	exec.cache = nil
 	exec.SetCacheMetrics(nil)
-
-	require.Equal(t, "graph database", exec.extractFulltextQuery("CALL db.index.fulltext.queryNodes('nodes', 'graph database') YIELD node RETURN node"))
-	require.Equal(t, "edge search", exec.extractFulltextQuery("CALL db.index.fulltext.queryRelationships(\"rels\", \"edge search\")"))
-	require.Empty(t, exec.extractFulltextQuery("CALL db.labels()"))
 }
 
 func TestCypherCoverage_WhereAndComparableHelpers(t *testing.T) {

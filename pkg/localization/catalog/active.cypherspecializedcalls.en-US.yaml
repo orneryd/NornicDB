@@ -24,18 +24,8 @@
   other: "vector query failed"
 - id: cypherspecializedcalls.embedder_not_configured
   other: "no embedder configured"
-- id: cypherspecializedcalls.vector_embed_invalid_syntax
-  other: "invalid db.index.vector.embed syntax"
-- id: cypherspecializedcalls.vector_embed_argument_required
-  other: "db.index.vector.embed requires one argument"
-- id: cypherspecializedcalls.vector_embed_unmatched_parenthesis
-  other: "unmatched parenthesis in db.index.vector.embed"
 - id: cypherspecializedcalls.vector_embed_text_required
   other: "db.index.vector.embed requires non-empty text"
-- id: cypherspecializedcalls.vector_embed_parameter_string
-  other: "db.index.vector.embed parameter ${{.Parameter}} must be STRING"
-- id: cypherspecializedcalls.vector_embed_string_required
-  other: "db.index.vector.embed requires STRING text"
 - id: cypherspecializedcalls.vector_embed_failed
   other: "failed to embed query: {{.Cause}}"
 - id: cypherspecializedcalls.vector_procedure_not_found

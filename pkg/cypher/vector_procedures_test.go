@@ -1486,12 +1486,9 @@ func TestCallDbIndexVectorQueryRelationships(t *testing.T) {
 	})
 
 	t.Run("no_index_scenario", func(t *testing.T) {
-		// Query with non-existent index - should return empty result
-		result, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('nonexistent_idx', 5, [0.1, 0.2]) YIELD relationship, score", nil)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		assert.Equal(t, []string{"relationship", "score"}, result.Columns)
-		assert.Empty(t, result.Rows, "Should return empty when index does not exist")
+		// No such index: Neo4j's ProcedureCallFailed, as for queryNodes.
+		_, err := exec.Execute(ctx, "CALL db.index.vector.queryRelationships('nonexistent_idx', 5, [0.1, 0.2]) YIELD relationship, score", nil)
+		require.ErrorContains(t, err, "There is no such vector schema index: nonexistent_idx")
 	})
 
 	t.Run("no_matching_relationships", func(t *testing.T) {
@@ -1835,14 +1832,18 @@ func TestCallDbIndexFulltextDrop(t *testing.T) {
 		assert.Equal(t, "my_special_index", result.Rows[0][0])
 	})
 
-	t.Run("invalid_drop_syntax_errors", func(t *testing.T) {
-		_, err := exec.callDbIndexFulltextDrop("CALL db.index.fulltext.nope('x')")
+	t.Run("invalid_drop_arguments_error", func(t *testing.T) {
+		// null is the procedure's failure; a parameter that isn't a
+		// string is a TypeError.
+		_, err := exec.Execute(context.Background(), "CALL db.index.fulltext.drop(null)", nil)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid db.index.fulltext.drop syntax")
+		code, _ := nornicerrors.Neo4jStatus(err)
+		assert.Equal(t, "Neo.ClientError.Procedure.ProcedureCallFailed", code)
 
-		_, err = exec.callDbIndexFulltextDrop("CALL db.index.fulltext.drop 'x'")
+		_, err = exec.Execute(context.Background(), "CALL db.index.fulltext.drop($name)", map[string]interface{}{"name": int64(1)})
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "missing parentheses")
+		code, _ = nornicerrors.Neo4jStatus(err)
+		assert.Equal(t, "Neo.ClientError.Statement.TypeError", code)
 	})
 }
 

@@ -83,6 +83,9 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 	// every other binding of a name drops its entry.
 	var valueMembers map[string]map[string]staticOperand
 	returnSeen := false
+	// unwound names the typed variables whose type came from UNWIND, which
+	// Neo4j checks against a procedure's parameters only when the call runs.
+	var unwound map[string]struct{}
 	for _, clause := range clauses {
 		if returnSeen {
 			// RETURN is the terminal clause: a clause after it is never a
@@ -165,6 +168,9 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 			// CALL proc() YIELD x: a yielded name must be new (Neo4j:
 			// VariableAlreadyBound). YIELD * names nothing statically, so
 			// the rest of the statement isn't checked.
+			if err := staticProcedureArgumentTypeError(clause.text, staticTypeScope{kinds: scope, values: valueTypes, complete: true}, unwound); err != nil {
+				return err
+			}
 			yield := parseYieldClause(clause.text)
 			if yield == nil || yield.yieldAll {
 				return nil
@@ -246,6 +252,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 				return err
 			}
 			scope = projectMatchSemanticScope(scope, clause.text)
+			unwound = projectUnwoundValues(unwound, clause.text)
 			valueTypes = projectStaticValueTypes(input, clause.text)
 			valueMembers = projectStaticValueMembers(input, clause.text)
 			projected := staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}
@@ -274,6 +281,7 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 					}
 				}
 				scope[alias] = unwindMatchSemanticKind(clause.text, scope)
+				delete(unwound, alias)
 				delete(valueTypes, alias)
 				delete(valueMembers, alias)
 				if typeName := unwindStaticValueType(clause.text); typeName != "" {
@@ -281,6 +289,10 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 						valueTypes = make(map[string]string)
 					}
 					valueTypes[alias] = typeName
+					if unwound == nil {
+						unwound = make(map[string]struct{})
+					}
+					unwound[alias] = struct{}{}
 				}
 			}
 		case pipelineClauseReturn:

@@ -540,18 +540,16 @@ func TestDbStatsStorageErrorsAndLegacyHelpers(t *testing.T) {
 		require.ErrorIs(t, err, failure)
 	}
 	exec := NewStorageExecutor(store)
-	for _, helper := range []func() (*ExecuteResult, error){
-		exec.callDbStatsClear,
-		func() (*ExecuteResult, error) {
-			return exec.callDbStatsCollect("CALL db.stats.collect('QUERIES', {durationSeconds: 1})")
-		},
-		exec.callDbStatsStatus,
-		func() (*ExecuteResult, error) { return exec.callDbStatsRetrieve("CALL db.stats.retrieve('QUERIES')") },
-		exec.callDbStatsStop,
-		exec.callDbStatsRetrieveAllAnTheStats,
+	for _, call := range []string{
+		"CALL db.stats.clear('QUERIES')",
+		"CALL db.stats.collect('QUERIES', {durationSeconds: 1})",
+		"CALL db.stats.status()",
+		"CALL db.stats.retrieve('QUERIES')",
+		"CALL db.stats.stop('QUERIES')",
+		"CALL db.stats.retrieveAllAnTheStats()",
 	} {
-		_, err := helper()
-		require.NoError(t, err)
+		_, err := exec.Execute(context.Background(), call, nil)
+		require.NoError(t, err, call)
 	}
 	_, err := exec.callQueryStatistics(context.Background(), "collect", []interface{}{"GRAPH COUNTS"})
 	require.ErrorContains(t, err, "does not have to be explicitly collected")

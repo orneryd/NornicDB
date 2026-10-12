@@ -24,18 +24,8 @@
   other: "la consulta vectorial falló"
 - id: cypherspecializedcalls.embedder_not_configured
   other: "no hay ningún generador de embeddings configurado"
-- id: cypherspecializedcalls.vector_embed_invalid_syntax
-  other: "sintaxis de db.index.vector.embed no válida"
-- id: cypherspecializedcalls.vector_embed_argument_required
-  other: "db.index.vector.embed requiere un argumento"
-- id: cypherspecializedcalls.vector_embed_unmatched_parenthesis
-  other: "paréntesis sin pareja en db.index.vector.embed"
 - id: cypherspecializedcalls.vector_embed_text_required
   other: "db.index.vector.embed requiere texto no vacío"
-- id: cypherspecializedcalls.vector_embed_parameter_string
-  other: "el parámetro ${{.Parameter}} de db.index.vector.embed debe ser STRING"
-- id: cypherspecializedcalls.vector_embed_string_required
-  other: "db.index.vector.embed requiere texto STRING"
 - id: cypherspecializedcalls.vector_embed_failed
   other: "no se pudo generar el embedding de la consulta: {{.Cause}}"
 - id: cypherspecializedcalls.vector_procedure_not_found

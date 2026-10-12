@@ -1254,35 +1254,47 @@ func TestCallGdsGraphProject_AdditionalBranches(t *testing.T) {
 	_, err = exec.Execute(ctx, "MATCH (m:Memory {name:'m'}), (p:Person {name:'p'}) CREATE (m)-[:REFERENCES]->(p)", nil)
 	require.NoError(t, err)
 
-	// Error branch: missing graph name.
-	_, err = exec.callGdsGraphProject("CALL gds.graph.project()")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "graph name required")
+	// Missing graph name: the procedure's failure.
+	_, err = exec.callGdsGraphProject(nil)
+	require.ErrorContains(t, err, "argument graphName is null")
 
-	// RETURN syntax extraction branch.
-	res, err := exec.callGdsGraphProject("RETURN gds.graph.project('g_return', ['Person'], ['KNOWS'])")
+	// A name text listing several labels / types (NornicDB's kept form).
+	res, err := exec.callGdsGraphProject([]interface{}{"g_parse", "Person:User:Memory", "KNOWS|RELATES_TO|REFERENCES"})
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
-	assert.Equal(t, "g_return", res.Rows[0][0])
+	assert.Equal(t, []any{"g_parse", 3, 3, int64(10)}, res.Rows[0])
 
-	// Explicit label/type parsing branches.
-	res, err = exec.callGdsGraphProject("CALL gds.graph.project('g_parse', 'Person:User:Memory', 'KNOWS|RELATES_TO|REFERENCES')")
+	// Lists, maps (an entry's label / type overrides its key) and '*'.
+	res, err = exec.callGdsGraphProject([]interface{}{"g_list", []interface{}{"Person", "User"}, map[string]interface{}{"K": map[string]interface{}{"type": "KNOWS"}}})
 	require.NoError(t, err)
-	require.Len(t, res.Rows, 1)
-	assert.Equal(t, "g_parse", res.Rows[0][0])
-	assert.GreaterOrEqual(t, res.Rows[0][1].(int), 1)
-	assert.GreaterOrEqual(t, res.Rows[0][2].(int), 1)
+	assert.Equal(t, []any{"g_list", 2, 1, int64(10)}, res.Rows[0])
+	res, err = exec.callGdsGraphProject([]interface{}{"g_default", "*", "*"})
+	require.NoError(t, err)
+	assert.Equal(t, []any{"g_default", 3, 3, int64(10)}, res.Rows[0])
+	_, err = exec.callGdsGraphProject([]interface{}{"g_bad", int64(1), "*"})
+	require.ErrorContains(t, err, "argument nodeProjection must be")
+	_, err = exec.callGdsGraphProject([]interface{}{"g_bad", []interface{}{"Person", int64(1)}, "*"})
+	require.ErrorContains(t, err, "argument nodeProjection must be")
 
-	// Default '*' label/type branch.
-	res, err = exec.callGdsGraphProject("CALL gds.graph.project('g_default', '*', '*')")
+	// Projections bound earlier in the statement.
+	res, err = exec.Execute(ctx, "WITH ['Person', 'User'] AS labels, 'KNOWS' AS type CALL gds.graph.project('g_bound', labels, type) YIELD graphName, nodeCount, relationshipCount RETURN graphName, nodeCount, relationshipCount", nil)
 	require.NoError(t, err)
-	require.Len(t, res.Rows, 1)
-	assert.Equal(t, "g_default", res.Rows[0][0])
+	assert.Equal(t, [][]interface{}{{"g_bound", 2, 1}}, res.Rows)
 }
 
-func TestExtractStringConfigArg_Branches(t *testing.T) {
-	assert.Equal(t, "euclidean", extractStringConfigArg("{similarityMetric: 'euclidean'}", "similarityMetric"))
-	assert.Equal(t, "", extractStringConfigArg("{alpha: 1}", "similarityMetric"))
-	assert.Equal(t, "", extractStringConfigArg("{similarityMetric: euclidean}", "similarityMetric"))
-	assert.Equal(t, "", extractStringConfigArg("{similarityMetric: 'euclidean}", "similarityMetric"))
+func TestFastRPConfigFromMap(t *testing.T) {
+	defaults := fastRPConfigFromMap(nil)
+	assert.Equal(t, 64, defaults.EmbeddingDimension)
+	assert.Equal(t, int64(42), defaults.RandomSeed)
+	config := fastRPConfigFromMap(map[string]interface{}{
+		"embeddingDimension": int64(maxFastRPEmbeddingDimension + 10), "randomSeed": 7.0,
+		"propertyRatio": 0.5, "relationshipWeightProperty": "weight",
+	})
+	assert.Equal(t, maxFastRPEmbeddingDimension, config.EmbeddingDimension)
+	assert.Equal(t, int64(7), config.RandomSeed)
+	assert.Equal(t, 0.5, config.PropertyRatio)
+	assert.Equal(t, "weight", config.RelationshipWeightProperty)
+	config = fastRPConfigFromMap(map[string]interface{}{"embeddingDimension": 1.5, "randomSeed": int64(-1)})
+	assert.Equal(t, 64, config.EmbeddingDimension)
+	assert.Equal(t, int64(42), config.RandomSeed)
 }

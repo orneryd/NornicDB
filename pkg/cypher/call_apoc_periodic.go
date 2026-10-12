@@ -13,35 +13,18 @@ import (
 // callApocPeriodicIterate performs batch processing with periodic commits.
 // CALL apoc.periodic.iterate(cypherIterate, cypherAction, {batchSize:1000, parallel:false})
 // This is used for large-scale data processing to avoid memory issues.
-func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := upperASCII(cypher)
-	callIdx := strings.Index(upper, "APOC.PERIODIC.ITERATE")
-	if callIdx == -1 {
-		// Try rock_n_roll alias
-		callIdx = strings.Index(upper, "APOC.PERIODIC.ROCK_N_ROLL")
-		if callIdx == -1 {
-			return nil, fmt.Errorf("invalid apoc.periodic.iterate call")
-		}
-	}
-
-	// Find the opening parenthesis
-	parenStart := strings.Index(cypher[callIdx:], "(")
-	if parenStart == -1 {
-		return nil, fmt.Errorf("apoc.periodic.iterate requires parameters")
-	}
-	parenStart += callIdx
-
-	// Find matching closing parenthesis
-	parenEnd := e.findMatchingParen(cypher, parenStart)
-	if parenEnd == -1 {
-		return nil, fmt.Errorf("unmatched parenthesis in apoc.periodic.iterate")
-	}
-
-	// Parse arguments: (iterateQuery, actionQuery, config)
-	argsStr := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
-	iterateQuery, actionQuery, config, err := e.parseApocPeriodicIterateArgs(ctx, argsStr)
+func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure string, args []interface{}) (*ExecuteResult, error) {
+	iterateQuery, err := requiredProcedureString(procedure, args, 0, "iterate")
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse apoc.periodic.iterate arguments: %w", err)
+		return nil, err
+	}
+	actionQuery, err := requiredProcedureString(procedure, args, 1, "action")
+	if err != nil {
+		return nil, err
+	}
+	config, err := optionalProcedureMap(procedure, args, 2, "config")
+	if err != nil {
+		return nil, err
 	}
 
 	// Extract config options
@@ -140,31 +123,15 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, cypher st
 // callApocPeriodicCommit performs a query with periodic commits.
 // CALL apoc.periodic.commit(statement, params) YIELD updates, executions, runtime, batches
 // This commits every N operations to avoid large transactions.
-func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	upper := upperASCII(cypher)
-	callIdx := strings.Index(upper, "APOC.PERIODIC.COMMIT")
-	if callIdx == -1 {
-		return nil, fmt.Errorf("invalid apoc.periodic.commit call")
-	}
-
-	// Find the opening parenthesis
-	parenStart := strings.Index(cypher[callIdx:], "(")
-	if parenStart == -1 {
-		return nil, fmt.Errorf("apoc.periodic.commit requires parameters")
-	}
-	parenStart += callIdx
-
-	// Find matching closing parenthesis
-	parenEnd := e.findMatchingParen(cypher, parenStart)
-	if parenEnd == -1 {
-		return nil, fmt.Errorf("unmatched parenthesis in apoc.periodic.commit")
-	}
-
-	// Parse arguments
-	argsStr := strings.TrimSpace(cypher[parenStart+1 : parenEnd])
-	statement, params, err := e.parseApocCypherRunArgs(ctx, argsStr)
+func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "apoc.periodic.commit"
+	statement, err := requiredProcedureString(procedure, args, 0, "statement")
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse apoc.periodic.commit arguments: %w", err)
+		return nil, err
+	}
+	params, err := optionalProcedureMap(procedure, args, 1, "params")
+	if err != nil {
+		return nil, err
 	}
 
 	// Extract limit from params if present

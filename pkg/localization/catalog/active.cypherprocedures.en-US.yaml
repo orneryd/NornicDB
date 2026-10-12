@@ -20,18 +20,8 @@
   other: "no query vector or search text provided (parameter may have unsupported type - expected []float32, []float64, []interface{}, or string)"
 - id: cypherprocedures.query_input_required
   other: "no query vector or search text provided"
-- id: cypherprocedures.vector_create_node_invalid_syntax
-  other: "{{if .Parentheses}}invalid syntax: missing parentheses{{else}}invalid db.index.vector.createNodeIndex syntax{{end}}"
-- id: cypherprocedures.vector_create_node_arguments_required
-  other: "db.index.vector.createNodeIndex requires at least 4 arguments: indexName, label, property, dimension"
 - id: cypherprocedures.create_vector_index_failed
   other: "failed to create vector index: {{.Cause}}"
-- id: cypherprocedures.vector_create_relationship_invalid_syntax
-  other: "invalid db.index.vector.createRelationshipIndex syntax{{if .Parentheses}}: missing parentheses{{end}}"
-- id: cypherprocedures.vector_create_relationship_arguments_required
-  other: "db.index.vector.createRelationshipIndex requires at least 4 arguments: indexName, relationshipType, property, dimension"
-- id: cypherprocedures.invalid_dimension
-  other: "invalid dimension: {{.Cause}}"
 - id: cypherprocedures.create_relationship_vector_index_failed
   other: "failed to create relationship vector index: {{.Cause}}"
 - id: cypherprocedures.fulltext_create_node_invalid_syntax
@@ -48,6 +38,10 @@
   other: "failed to create relationship fulltext index: {{.Cause}}"
 - id: cypherprocedures.fulltext_drop_invalid_syntax
   other: "invalid db.index.fulltext.drop syntax{{if .Parentheses}}: missing parentheses{{end}}"
+- id: cypherprocedures.argument_null
+  other: "{{.Procedure}}: argument {{.Argument}} is null"
+- id: cypherprocedures.argument_type
+  other: "{{.Procedure}}: argument {{.Argument}} must be {{.Expected}}, not {{.Actual}}"
 - id: cypherprocedures.vector_drop_invalid_syntax
   other: "invalid db.index.vector.drop syntax{{if .Parentheses}}: missing parentheses{{end}}"
 - id: cypherprocedures.set_node_vector_invalid_syntax

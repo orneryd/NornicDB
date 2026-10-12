@@ -1,23 +1,13 @@
 package localization
 
-import "strconv"
-
 const (
-	MessageCypherGraphProceduresGraphNameRequired             MessageID = "cyphergraphprocedures.graph_name_required"
 	MessageCypherGraphProceduresStreamNodesFailed             MessageID = "cyphergraphprocedures.stream_nodes_failed"
 	MessageCypherGraphProceduresStreamEdgesFailed             MessageID = "cyphergraphprocedures.stream_edges_failed"
 	MessageCypherGraphProceduresGraphDoesNotExist             MessageID = "cyphergraphprocedures.graph_does_not_exist"
 	MessageCypherGraphProceduresGraphDoesNotExistProjectFirst MessageID = "cyphergraphprocedures.graph_does_not_exist_project_first"
 	MessageCypherGraphProceduresBuildGraphFailed              MessageID = "cyphergraphprocedures.build_graph_failed"
-	MessageCypherGraphProceduresInvalidProcedureCallSyntax    MessageID = "cyphergraphprocedures.invalid_procedure_call_syntax"
-	MessageCypherGraphProceduresVariableNotFound              MessageID = "cyphergraphprocedures.variable_not_found"
 	MessageCypherGraphProceduresSourceNodeRequired            MessageID = "cyphergraphprocedures.source_node_required"
 )
-
-// CypherGraphProceduresGraphNameRequired identifies a missing GDS graph name.
-func CypherGraphProceduresGraphNameRequired(procedure string) Message {
-	return Message{ID: MessageCypherGraphProceduresGraphNameRequired, Fallback: "graph name required for " + procedure, Data: map[string]any{"Procedure": procedure}}
-}
 
 // CypherGraphProceduresStreamNodesFailed identifies a wrapped projection node-stream failure.
 func CypherGraphProceduresStreamNodesFailed(cause error) Message {
@@ -42,16 +32,6 @@ func CypherGraphProceduresGraphDoesNotExistProjectFirst(graph string) Message {
 // CypherGraphProceduresBuildGraphFailed identifies a wrapped link-prediction graph build failure.
 func CypherGraphProceduresBuildGraphFailed(cause error) Message {
 	return Message{ID: MessageCypherGraphProceduresBuildGraphFailed, Fallback: "failed to build graph: " + cause.Error(), Data: map[string]any{"Cause": cause.Error()}}
-}
-
-// CypherGraphProceduresInvalidProcedureCallSyntax identifies malformed link-prediction call syntax.
-func CypherGraphProceduresInvalidProcedureCallSyntax() Message {
-	return Message{ID: MessageCypherGraphProceduresInvalidProcedureCallSyntax, Fallback: "invalid procedure call syntax"}
-}
-
-// CypherGraphProceduresVariableNotFound identifies an unresolved id(variable) expression.
-func CypherGraphProceduresVariableNotFound(variable string) Message {
-	return Message{ID: MessageCypherGraphProceduresVariableNotFound, Fallback: "variable " + strconv.Quote(variable) + " not found in query context (id(" + variable + ") cannot be resolved)", Data: map[string]any{"Variable": variable, "QuotedVariable": strconv.Quote(variable)}}
 }
 
 // CypherGraphProceduresSourceNodeRequired identifies a missing link-prediction sourceNode parameter.

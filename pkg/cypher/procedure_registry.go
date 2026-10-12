@@ -71,6 +71,12 @@ type ProcedureSpec struct {
 	MaxArgs            int
 }
 
+// writes reports whether a call of the procedure changes the database: its
+// data (WRITE) or its schema (SCHEMA).
+func (s ProcedureSpec) writes() bool {
+	return s.Mode == ProcedureModeWrite || s.Mode == ProcedureModeSchema
+}
+
 // ProcedureMetadataRenderer renders localized procedure metadata for a request context.
 type ProcedureMetadataRenderer interface {
 	Render(context.Context, localization.Message) (string, language.Tag, error)

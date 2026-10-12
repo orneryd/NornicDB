@@ -212,6 +212,126 @@ func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{},
 	return coerced, nil
 }
 
+// staticProcedureArgumentTypeError is Neo4j's compile-time error for a
+// procedure argument whose static type its parameter can't take: a literal, a
+// variable bound to one by WITH, or a pattern variable (CALL
+// db.resampleIndex(1.5), WITH 1.5 AS v CALL db.resampleIndex(v), MATCH (n)
+// CALL db.resampleIndex(n)). Neo4j types a value bound by UNWIND only when the
+// call runs, so those are left to the call. Only the parameter types the call
+// itself checks (coerceProcedureArgument) are checked here: a NODE, MAP or
+// LIST parameter also takes NornicDB's other forms (a node id, a label, a
+// request's short form).
+func staticProcedureArgumentTypeError(clause string, scope staticTypeScope, unwound map[string]struct{}) error {
+	procedure, found := globalProcedureRegistry.Get(extractProcedureName(clause))
+	if !found {
+		return nil
+	}
+	texts := explicitProcedureArgumentTexts(clause)
+	if len(texts) == 0 {
+		return nil
+	}
+	if len(unwound) > 0 && len(scope.values) > 0 {
+		values := make(map[string]string, len(scope.values))
+		for name, typeName := range scope.values {
+			if _, fromUnwind := unwound[name]; !fromUnwind {
+				values[name] = typeName
+			}
+		}
+		scope.values = values
+	}
+	for index, text := range texts {
+		if index >= len(procedure.Spec.Params) {
+			break
+		}
+		typeName := scope.staticExpressionType(text)
+		if typeName == "" {
+			continue
+		}
+		if expected, accepted := procedureParameterAcceptsStaticType(procedure.Spec.Params[index].Type, typeName); !accepted {
+			return typeNameMismatchError(expected, procedureArgumentTypeName(typeName))
+		}
+	}
+	return nil
+}
+
+// projectUnwoundValues returns which of the variables a WITH clause binds
+// carry a type that came from UNWIND: an alias of such a variable, or the
+// variable itself under WITH *.
+func projectUnwoundValues(unwound map[string]struct{}, clause string) map[string]struct{} {
+	if len(unwound) == 0 {
+		return nil
+	}
+	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+	var projected map[string]struct{}
+	keep := func(name string) {
+		if projected == nil {
+			projected = make(map[string]struct{})
+		}
+		projected[name] = struct{}{}
+	}
+	for _, raw := range splitTopLevelComma(body) {
+		expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
+		if expression == "*" {
+			for name := range unwound {
+				keep(name)
+			}
+			continue
+		}
+		variable := simpleSemanticIdentifier(expression)
+		if _, fromUnwind := unwound[variable]; !fromUnwind || variable == "" {
+			continue
+		}
+		if alias == "" {
+			alias = variable
+		}
+		keep(alias)
+	}
+	return projected
+}
+
+// procedureParameterAcceptsStaticType reports whether a parameter of
+// parameterType takes an argument of static type typeName (any one of its
+// choices, for a type such as "Float, Integer or Number"), and the type
+// Neo4j's error names as expected. An INTEGER is a FLOAT argument, as when the
+// call runs.
+func procedureParameterAcceptsStaticType(parameterType, typeName string) (string, bool) {
+	var expected string
+	var accepted []string
+	switch upperASCII(strings.TrimSpace(parameterType)) {
+	case "STRING":
+		expected, accepted = "String", []string{"String"}
+	case "BOOLEAN", "BOOL":
+		expected, accepted = "Boolean", []string{"Boolean"}
+	case "INTEGER":
+		expected, accepted = "Integer", []string{"Integer", "Number"}
+	case "FLOAT":
+		expected, accepted = "Float", []string{"Float", "Integer", "Number"}
+	case "NUMBER":
+		expected, accepted = "Number", []string{"Number", "Float", "Integer"}
+	default:
+		return "", true
+	}
+	for _, choice := range staticTypeChoices(typeName) {
+		if choice == "Any" || containsString(accepted, choice) {
+			return expected, true
+		}
+	}
+	return expected, false
+}
+
+// procedureArgumentTypeName is how Neo4j names an argument's static type in a
+// procedure call's type mismatch: a list of numbers or booleans is a List<T>,
+// while a List<String> or a list of maps keeps its element type.
+func procedureArgumentTypeName(typeName string) string {
+	if typeName == "List<Float>, List<Integer> or List<Number>" {
+		return "List<T>"
+	}
+	for _, element := range []string{"Integer", "Float", "Boolean", "Number"} {
+		typeName = strings.ReplaceAll(typeName, "List<"+element+">", "List<T>")
+	}
+	return typeName
+}
+
 func isStaticallyTypedProcedureArgument(text string) bool {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -234,9 +354,13 @@ func isStaticallyTypedProcedureArgument(text string) bool {
 	return false
 }
 
+// coerceProcedureArgument checks and converts one argument against its
+// parameter's type. null is a value of every type, as in Neo4j: the call
+// goes ahead and the procedure decides what null means (its own failure is
+// ProcedureCallFailed).
 func coerceProcedureArgument(parameter ProcedureParam, value interface{}) (interface{}, bool) {
 	if value == nil {
-		return nil, parameter.Optional || strings.EqualFold(parameter.Type, "ANY") || parameter.Type == ""
+		return nil, true
 	}
 
 	switch upperASCII(strings.TrimSpace(parameter.Type)) {

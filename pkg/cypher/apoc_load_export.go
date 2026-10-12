@@ -262,15 +262,14 @@ func (e *StorageExecutor) newAPOCRemoteRequest(ctx context.Context, rawURL strin
 
 // callApocLoadJson loads JSON data from a URL or file path.
 // Syntax: CALL apoc.load.json(urlOrFile) YIELD value
-func (e *StorageExecutor) callApocLoadJson(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Parse the URL/file argument
-	urlOrFile := e.extractApocLoadArg(cypher, "JSON")
-	if urlOrFile == "" {
-		return nil, fmt.Errorf("apoc.load.json requires a URL or file path")
+func (e *StorageExecutor) callApocLoadJson(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	// The URL or file path is the call's evaluated first argument.
+	urlOrFile, err := requiredProcedureString("apoc.load.json", args, 0, "urlOrKeyOrBinary")
+	if err != nil {
+		return nil, err
 	}
 
 	var data interface{}
-	var err error
 
 	// Check if it's a URL or file path
 	if isHTTPSource(urlOrFile) {
@@ -353,36 +352,25 @@ func (e *StorageExecutor) loadJsonFromFile(path string) (interface{}, error) {
 
 // callApocLoadCsv loads CSV data from a URL or file path.
 // Syntax: CALL apoc.load.csv(urlOrFile, {sep: ',', header: true}) YIELD lineNo, list, map
-func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	urlOrFile := e.extractApocLoadArg(cypher, "CSV")
-	if urlOrFile == "" {
-		return nil, fmt.Errorf("apoc.load.csv requires a URL or file path")
+func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "apoc.load.csv"
+	urlOrFile, err := requiredProcedureString(procedure, args, 0, "urlOrBinary")
+	if err != nil {
+		return nil, err
 	}
-
-	// Parse options
+	// Options from the config map: header (default true) and sep (its
+	// first character, default ',').
+	config, err := optionalProcedureMap(procedure, args, 1, "config")
+	if err != nil {
+		return nil, err
+	}
 	hasHeader := true
-	separator := ','
-
-	// Check for header option
-	if strings.Contains(upperASCII(cypher), "HEADER:") {
-		if strings.Contains(upperASCII(cypher), "HEADER: FALSE") ||
-			strings.Contains(upperASCII(cypher), "HEADER:FALSE") {
-			hasHeader = false
-		}
+	if header, ok := config["header"].(bool); ok {
+		hasHeader = header
 	}
-
-	// Check for separator option
-	if idx := strings.Index(cypher, "sep:"); idx > 0 {
-		remainder := cypher[idx+4:]
-		remainder = strings.TrimSpace(remainder)
-		if len(remainder) > 0 {
-			sepChar := remainder[0]
-			if sepChar == '\'' || sepChar == '"' {
-				if len(remainder) > 2 {
-					separator = rune(remainder[1])
-				}
-			}
-		}
+	separator := ','
+	if sep, ok := config["sep"].(string); ok && sep != "" {
+		separator = []rune(sep)[0]
 	}
 
 	var reader *csv.Reader
@@ -475,8 +463,12 @@ func (e *StorageExecutor) callApocLoadCsv(ctx context.Context, cypher string) (*
 
 // callApocExportJson exports graph data to JSON.
 // Syntax: CALL apoc.export.json.all(file, config) YIELD file, nodes, relationships
-func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	filePath := e.extractApocExportArg(cypher, "JSON")
+func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	// No file (or '') returns the export instead of writing it.
+	filePath, err := optionalProcedureString("apoc.export.json.all", args, 0, "file", "")
+	if err != nil {
+		return nil, err
+	}
 	resolvedPath := ""
 	if filePath != "" {
 		var err error
@@ -523,10 +515,16 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, cypher stri
 
 // callApocExportJsonQuery exports query results to JSON.
 // Syntax: CALL apoc.export.json.query(query, file, config)
-func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Extract the query to execute
-	query := e.extractApocExportQuery(cypher)
-	filePath := e.extractApocExportArg(cypher, "JSON")
+func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "apoc.export.json.query"
+	query, err := requiredProcedureString(procedure, args, 0, "query")
+	if err != nil {
+		return nil, err
+	}
+	filePath, err := optionalProcedureString(procedure, args, 1, "file", "")
+	if err != nil {
+		return nil, err
+	}
 	resolvedPath := ""
 	if filePath != "" {
 		var err error
@@ -534,10 +532,6 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, cypher st
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	if query == "" {
-		return nil, fmt.Errorf("apoc.export.json.query requires a query")
 	}
 
 	// Execute the query
@@ -580,8 +574,12 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, cypher st
 
 // callApocExportCsvAll exports all data to CSV.
 // Syntax: CALL apoc.export.csv.all(file, config) YIELD file, nodes, relationships
-func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	filePath := e.extractApocExportArg(cypher, "CSV")
+func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	// No file (or '') returns the export instead of writing it.
+	filePath, err := optionalProcedureString("apoc.export.csv.all", args, 0, "file", "")
+	if err != nil {
+		return nil, err
+	}
 	resolvedPath := ""
 	if filePath != "" {
 		var err error
@@ -645,9 +643,16 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, cypher strin
 
 // callApocExportCsvQuery exports query results to CSV.
 // Syntax: CALL apoc.export.csv.query(query, file, config)
-func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	query := e.extractApocExportQuery(cypher)
-	filePath := e.extractApocExportArg(cypher, "CSV")
+func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	const procedure = "apoc.export.csv.query"
+	query, err := requiredProcedureString(procedure, args, 0, "query")
+	if err != nil {
+		return nil, err
+	}
+	filePath, err := optionalProcedureString(procedure, args, 1, "file", "")
+	if err != nil {
+		return nil, err
+	}
 	resolvedPath := ""
 	if filePath != "" {
 		var err error
@@ -655,10 +660,6 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, cypher str
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	if query == "" {
-		return nil, fmt.Errorf("apoc.export.csv.query requires a query")
 	}
 
 	// Execute the query
@@ -715,107 +716,6 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, cypher str
 // Helper functions
 // =============================================================================
 
-func (e *StorageExecutor) extractApocLoadArg(cypher, loadType string) string {
-	upper := upperASCII(cypher)
-	marker := "APOC.LOAD." + loadType
-	idx := strings.Index(upper, marker)
-	if idx < 0 {
-		return ""
-	}
-
-	remainder := cypher[idx+len(marker):]
-	openParen := strings.Index(remainder, "(")
-	if openParen < 0 {
-		return ""
-	}
-
-	// Find the first argument (URL or file path)
-	afterParen := remainder[openParen+1:]
-	// Handle quoted strings
-	afterParen = strings.TrimSpace(afterParen)
-
-	var endIdx int
-	if len(afterParen) > 0 && (afterParen[0] == '\'' || afterParen[0] == '"') {
-		quote := afterParen[0]
-		closeQuote := strings.Index(afterParen[1:], string(quote))
-		if closeQuote > 0 {
-			return afterParen[1 : closeQuote+1]
-		}
-	}
-
-	// Unquoted - find comma or close paren
-	endIdx = strings.IndexAny(afterParen, ",)")
-	if endIdx > 0 {
-		return strings.TrimSpace(afterParen[:endIdx])
-	}
-
-	return ""
-}
-
-func (e *StorageExecutor) extractApocExportArg(cypher, exportType string) string {
-	// Similar to load but for export procedures
-	upper := upperASCII(cypher)
-	markers := []string{"APOC.EXPORT." + exportType + ".ALL", "APOC.EXPORT." + exportType + ".QUERY"}
-
-	for _, marker := range markers {
-		idx := strings.Index(upper, marker)
-		if idx >= 0 {
-			remainder := cypher[idx+len(marker):]
-			openParen := strings.Index(remainder, "(")
-			if openParen >= 0 {
-				afterParen := strings.TrimSpace(remainder[openParen+1:])
-
-				// For query export, second arg is file
-				if strings.HasSuffix(marker, ".QUERY") {
-					// Skip first arg (query)
-					commaIdx := strings.Index(afterParen, ",")
-					if commaIdx > 0 {
-						afterParen = strings.TrimSpace(afterParen[commaIdx+1:])
-					}
-				}
-
-				// Extract file path
-				if len(afterParen) > 0 && (afterParen[0] == '\'' || afterParen[0] == '"') {
-					quote := afterParen[0]
-					closeQuote := strings.Index(afterParen[1:], string(quote))
-					if closeQuote > 0 {
-						return afterParen[1 : closeQuote+1]
-					}
-				}
-			}
-		}
-	}
-
-	return ""
-}
-
-func (e *StorageExecutor) extractApocExportQuery(cypher string) string {
-	upper := upperASCII(cypher)
-	idx := strings.Index(upper, ".QUERY")
-	if idx < 0 {
-		return ""
-	}
-
-	remainder := cypher[idx+6:] // After ".QUERY"
-	openParen := strings.Index(remainder, "(")
-	if openParen < 0 {
-		return ""
-	}
-
-	afterParen := strings.TrimSpace(remainder[openParen+1:])
-
-	// First argument is the query
-	if len(afterParen) > 0 && (afterParen[0] == '\'' || afterParen[0] == '"') {
-		quote := afterParen[0]
-		closeQuote := strings.Index(afterParen[1:], string(quote))
-		if closeQuote > 0 {
-			return afterParen[1 : closeQuote+1]
-		}
-	}
-
-	return ""
-}
-
 func (e *StorageExecutor) nodesToExportFormat(nodes []*storage.Node) []map[string]interface{} {
 	result := make([]map[string]interface{}, len(nodes))
 	for i, node := range nodes {
@@ -859,14 +759,13 @@ func (e *StorageExecutor) countProperties(nodes []*storage.Node, edges []*storag
 
 // callApocLoadJsonArray loads a JSON array from a specific path.
 // Syntax: CALL apoc.load.jsonArray(urlOrFile, path) YIELD value
-func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	urlOrFile := e.extractApocLoadArg(cypher, "JSONARRAY")
-	if urlOrFile == "" {
-		return nil, fmt.Errorf("apoc.load.jsonArray requires a URL or file path")
+func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	urlOrFile, err := requiredProcedureString("apoc.load.jsonArray", args, 0, "urlOrKeyOrBinary")
+	if err != nil {
+		return nil, err
 	}
 
 	var data interface{}
-	var err error
 
 	if isHTTPSource(urlOrFile) {
 		data, err = e.loadJsonFromURL(urlOrFile)
@@ -896,22 +795,12 @@ func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, cypher stri
 }
 
 // =============================================================================
-// apoc.load.csvParams - Load CSV with params
-// =============================================================================
-
-// callApocLoadCsvParams loads CSV with configurable parameters.
-func (e *StorageExecutor) callApocLoadCsvParams(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	// Delegates to callApocLoadCsv with param parsing
-	return e.callApocLoadCsv(ctx, cypher)
-}
-
-// =============================================================================
 // apoc.import.json - Import JSON directly into graph
 // =============================================================================
 
 // callApocImportJson imports JSON graph data directly.
 // Syntax: CALL apoc.import.json(urlOrFile) YIELD nodes, relationships
-func (e *StorageExecutor) callApocImportJson(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	store := e.getStorage(ctx)
 	prefixIDs := true
 	dbName := GetUseDatabaseFromContext(ctx)
@@ -941,25 +830,9 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, cypher string)
 		}
 		return storage.EdgeID(storage.EnsureDatabasePrefix(dbName, id))
 	}
-	urlOrFile := e.extractApocLoadArg(cypher, "JSON")
-	if urlOrFile == "" {
-		// Try IMPORT marker
-		upper := upperASCII(cypher)
-		idx := strings.Index(upper, "APOC.IMPORT.JSON")
-		if idx >= 0 {
-			remainder := cypher[idx+16:]
-			openParen := strings.Index(remainder, "(")
-			if openParen >= 0 {
-				afterParen := strings.TrimSpace(remainder[openParen+1:])
-				if len(afterParen) > 0 && (afterParen[0] == '\'' || afterParen[0] == '"') {
-					quote := afterParen[0]
-					closeQuote := strings.Index(afterParen[1:], string(quote))
-					if closeQuote > 0 {
-						urlOrFile = afterParen[1 : closeQuote+1]
-					}
-				}
-			}
-		}
+	urlOrFile, err := requiredProcedureString("apoc.import.json", args, 0, "url")
+	if err != nil {
+		return nil, err
 	}
 
 	if urlOrFile == "" {
@@ -967,7 +840,6 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, cypher string)
 	}
 
 	var data interface{}
-	var err error
 
 	if isHTTPSource(urlOrFile) {
 		data, err = e.loadJsonFromURL(urlOrFile)

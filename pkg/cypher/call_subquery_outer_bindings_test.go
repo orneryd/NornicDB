@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -70,9 +71,22 @@ func TestCanonicalTypedProcedureArgumentBoundaries(t *testing.T) {
 	arguments, err := exec.extractBoundProcedureInvocationArguments(withQueryParams(context.Background(), map[string]interface{}{"value": int64(7)}), spec, "CALL typed")
 	require.NoError(t, err)
 	require.Equal(t, []interface{}{int64(7)}, arguments)
-	for _, arguments := range [][]interface{}{nil, {true, int64(1), []float32{1}}, {"index", true, []float32{1}}} {
+	_, err = exec.callVectorQueryArguments(context.Background(), nil, false)
+	requireSyntaxErrorStatus(t, err, "no vector arguments")
+	// A value of another type reaching the procedure is a TypeError; the
+	// statement's static check refuses it first, as Neo4j does (Type
+	// mismatch, a SyntaxError).
+	for _, arguments := range [][]interface{}{{true, int64(1), []float32{1}}, {"index", true, []float32{1}}} {
 		_, err := exec.callVectorQueryArguments(context.Background(), arguments, false)
-		requireSyntaxErrorStatus(t, err, "invalid typed vector arguments")
+		code, _ := nornicerrors.Neo4jStatus(err)
+		require.Equal(t, "Neo.ClientError.Statement.TypeError", code)
+	}
+	for _, query := range []string{
+		"WITH true AS v CALL db.index.vector.queryNodes(v, 2, [1.0, 2.0]) YIELD node RETURN node",
+		"WITH true AS v CALL db.index.vector.queryNodes('i', v, [1.0, 2.0]) YIELD node RETURN node",
+	} {
+		_, err := exec.Execute(context.Background(), query, nil)
+		requireSyntaxErrorStatus(t, err, query)
 	}
 	for _, relationships := range []bool{false, true} {
 		_, err := exec.callVectorQueryArguments(context.Background(), []interface{}{"index", int64(1), "text"}, relationships)

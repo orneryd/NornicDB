@@ -64,7 +64,6 @@ package cypher
 import (
 	"context"
 	"strconv"
-	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/linkpredict"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -159,8 +158,8 @@ import (
 //   - O(n * avg_degree²) where n = number of nodes
 //   - Fast for sparse graphs
 //   - Memory: ~O(nodes + edges)
-func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(ctx, cypher, nil)
+func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	config, err := linkPredictionConfigFromArguments(args)
 	if err != nil {
 		return nil, err
 	}
@@ -266,8 +265,8 @@ func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(ctx context.Context, c
 //   - O(n * avg_degree) where n = number of nodes
 //   - Fastest link prediction algorithm
 //   - Memory: ~O(nodes + edges)
-func (e *StorageExecutor) callGdsLinkPredictionCommonNeighbors(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(ctx, cypher, nil)
+func (e *StorageExecutor) callGdsLinkPredictionCommonNeighbors(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	config, err := linkPredictionConfigFromArguments(args)
 	if err != nil {
 		return nil, err
 	}
@@ -283,8 +282,8 @@ func (e *StorageExecutor) callGdsLinkPredictionCommonNeighbors(ctx context.Conte
 }
 
 // callGdsLinkPredictionResourceAllocation implements gds.linkPrediction.resourceAllocation.stream
-func (e *StorageExecutor) callGdsLinkPredictionResourceAllocation(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(ctx, cypher, nil)
+func (e *StorageExecutor) callGdsLinkPredictionResourceAllocation(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	config, err := linkPredictionConfigFromArguments(args)
 	if err != nil {
 		return nil, err
 	}
@@ -300,8 +299,8 @@ func (e *StorageExecutor) callGdsLinkPredictionResourceAllocation(ctx context.Co
 }
 
 // callGdsLinkPredictionPreferentialAttachment implements gds.linkPrediction.preferentialAttachment.stream
-func (e *StorageExecutor) callGdsLinkPredictionPreferentialAttachment(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(ctx, cypher, nil)
+func (e *StorageExecutor) callGdsLinkPredictionPreferentialAttachment(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	config, err := linkPredictionConfigFromArguments(args)
 	if err != nil {
 		return nil, err
 	}
@@ -317,8 +316,8 @@ func (e *StorageExecutor) callGdsLinkPredictionPreferentialAttachment(ctx contex
 }
 
 // callGdsLinkPredictionJaccard implements gds.linkPrediction.jaccard.stream (not standard GDS but useful)
-func (e *StorageExecutor) callGdsLinkPredictionJaccard(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(ctx, cypher, nil)
+func (e *StorageExecutor) callGdsLinkPredictionJaccard(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	config, err := linkPredictionConfigFromArguments(args)
 	if err != nil {
 		return nil, err
 	}
@@ -337,8 +336,8 @@ func (e *StorageExecutor) callGdsLinkPredictionJaccard(ctx context.Context, cyph
 //
 // This is a NornicDB extension that combines topological and semantic signals,
 // but follows Neo4j GDS naming conventions for compatibility.
-func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	config, err := e.parseLinkPredictionConfig(ctx, cypher, nil)
+func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	config, err := linkPredictionConfigFromArguments(args)
 	if err != nil {
 		return nil, err
 	}
@@ -390,152 +389,68 @@ type linkPredictionConfig struct {
 	MinThreshold   float64
 }
 
-// parseLinkPredictionConfig extracts configuration from procedure call
-//
-// Supports multiple formats:
-//   - Map syntax: {sourceNode: 123, topK: 10}
-//   - Named params: sourceNode: 123, topK: 10
-//   - Positional: (123, 10)
-//
-// If nodeVars is provided, expressions like id(n) will be evaluated using the bound variables.
-// If nodeVars is nil, id(n) will be treated as a literal string (backward compatibility).
-func (e *StorageExecutor) parseLinkPredictionConfig(ctx context.Context, cypher string, nodeVars map[string]*storage.Node) (*linkPredictionConfig, error) {
+// linkPredictionConfigFromArguments reads a link prediction procedure's
+// configuration from the call's evaluated arguments: its MAP argument (the
+// only one, stream({sourceNode: id(n), topK: 5}), or after the graph name,
+// stream('g', {...})) with sourceNode (a node, its id, or an INTEGER id;
+// required), topK, algorithm, topologyWeight, semanticWeight and
+// minThreshold.
+func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfig, error) {
 	config := &linkPredictionConfig{
-		TopK:           10,            // Default
-		Algorithm:      "adamic_adar", // Default
+		TopK:           10,
+		Algorithm:      "adamic_adar",
 		TopologyWeight: 0.5,
 		SemanticWeight: 0.5,
 		MinThreshold:   0.0,
 	}
-
-	// Extract parameter block (everything between first ( and matching ))
-	paramStart := strings.Index(cypher, "(")
-	paramEnd := strings.LastIndex(cypher, ")")
-
-	if paramStart == -1 || paramEnd == -1 || paramEnd <= paramStart {
-		return nil, localizedError(localization.CypherGraphProceduresInvalidProcedureCallSyntax(), nil)
-	}
-
-	params := strings.TrimSpace(cypher[paramStart+1 : paramEnd])
-
-	// Handle map syntax: {key: value, ...}
-	if strings.HasPrefix(params, "{") && strings.HasSuffix(params, "}") {
-		params = strings.TrimSpace(params[1 : len(params)-1])
-	}
-
-	// Parse key-value pairs
-	pairs := strings.Split(params, ",")
-	for _, pair := range pairs {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
+	var options map[string]interface{}
+	for _, argument := range args {
+		if entries, isMap := argument.(map[string]interface{}); isMap {
+			options = entries
+			break
 		}
-
-		// Split on colon
-		parts := strings.SplitN(pair, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		// Remove quotes from key
-		key = strings.Trim(key, "'\"")
-
-		// Remove quotes from value
-		value = strings.Trim(value, "'\"")
-
+	}
+	for key, value := range options {
 		switch lowerASCII(key) {
 		case "sourcenode":
-			// Could be id(n) or numeric
-			if strings.Contains(value, "id(") {
-				// Try to evaluate id(n) expression if nodeVars is provided
-				if nodeVars != nil {
-					evaluated := e.evaluateExpressionWithContext(ctx, value, nodeVars, make(map[string]*storage.Edge))
-					if evaluated != nil {
-						// Convert evaluated result to string (node ID)
-						if nodeID, ok := evaluated.(string); ok && nodeID != "" {
-							config.SourceNode = storage.NodeID(nodeID)
-							continue
-						}
-					}
-					// If evaluation returned nil, the variable wasn't found in nodeVars
-					// Extract variable name for better error message
-					if varName, ok := parseIDFunctionVariable(value); ok {
-						return nil, localizedError(localization.CypherGraphProceduresVariableNotFound(varName), nil)
-					}
+			switch source := value.(type) {
+			case *storage.Node:
+				if source != nil {
+					config.SourceNode = source.ID
 				}
-				// Fallback: Extract node variable from id(...) call
-				// This handles cases where nodeVars is nil (backward compatibility)
-				if varName, ok := parseIDFunctionVariable(value); ok {
-					// If nodeVars is available, try to look up the variable
-					if nodeVars != nil {
-						if node, ok := nodeVars[varName]; ok {
-							config.SourceNode = node.ID
-							continue
-						}
-					}
-					// Otherwise, treat as literal (will likely fail validation)
-					// This maintains backward compatibility but may not work correctly
-					value = varName
+			case string:
+				config.SourceNode = storage.NodeID(source)
+			default:
+				if isIntegerProcedureValue(value) {
+					config.SourceNode = storage.NodeID(strconv.FormatInt(toInt64(value), 10))
 				}
 			}
-			config.SourceNode = storage.NodeID(value)
-
 		case "topk":
-			if v, err := strconv.Atoi(value); err == nil {
-				config.TopK = v
+			if topK, ok := fastRPConfigInt(value); ok {
+				config.TopK = topK
 			}
-
 		case "algorithm":
-			config.Algorithm = value
-
+			if algorithm, ok := value.(string); ok {
+				config.Algorithm = algorithm
+			}
 		case "topologyweight":
-			if v, err := strconv.ParseFloat(value, 64); err == nil {
-				config.TopologyWeight = v
+			if weight, ok := toFloat64(value); ok {
+				config.TopologyWeight = weight
 			}
-
 		case "semanticweight":
-			if v, err := strconv.ParseFloat(value, 64); err == nil {
-				config.SemanticWeight = v
+			if weight, ok := toFloat64(value); ok {
+				config.SemanticWeight = weight
 			}
-
 		case "minthreshold":
-			if v, err := strconv.ParseFloat(value, 64); err == nil {
-				config.MinThreshold = v
+			if threshold, ok := toFloat64(value); ok {
+				config.MinThreshold = threshold
 			}
 		}
 	}
-
 	if config.SourceNode == "" {
 		return nil, localizedError(localization.CypherGraphProceduresSourceNodeRequired(), nil)
 	}
-
 	return config, nil
-}
-
-func parseIDFunctionVariable(expr string) (string, bool) {
-	s := strings.TrimSpace(expr)
-	if len(s) < 2 || !strings.EqualFold(s[:2], "id") {
-		return "", false
-	}
-	open := 2
-	for open < len(s) && s[open] == ' ' {
-		open++
-	}
-	if open >= len(s) || s[open] != '(' {
-		return "", false
-	}
-	inside, rest, ok := extractParenSection(s[open:])
-	if !ok || strings.TrimSpace(rest) != "" {
-		return "", false
-	}
-	name, trailing, ok := parseIdentifierToken(strings.TrimSpace(inside))
-	if !ok || strings.TrimSpace(trailing) != "" {
-		return "", false
-	}
-	return name, true
 }
 
 // formatLinkPredictionResults formats topology predictions as Neo4j-compatible result

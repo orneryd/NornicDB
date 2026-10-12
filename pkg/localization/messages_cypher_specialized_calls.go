@@ -19,12 +19,7 @@ const (
 	MessageCypherSpecializedCallsQueryInputRequired              MessageID = "cypherspecializedcalls.query_input_required"
 	MessageCypherSpecializedCallsVectorQueryFailed               MessageID = "cypherspecializedcalls.vector_query_failed"
 	MessageCypherSpecializedCallsEmbedderNotConfigured           MessageID = "cypherspecializedcalls.embedder_not_configured"
-	MessageCypherSpecializedCallsVectorEmbedInvalidSyntax        MessageID = "cypherspecializedcalls.vector_embed_invalid_syntax"
-	MessageCypherSpecializedCallsVectorEmbedArgumentRequired     MessageID = "cypherspecializedcalls.vector_embed_argument_required"
-	MessageCypherSpecializedCallsVectorEmbedUnmatchedParenthesis MessageID = "cypherspecializedcalls.vector_embed_unmatched_parenthesis"
 	MessageCypherSpecializedCallsVectorEmbedTextRequired         MessageID = "cypherspecializedcalls.vector_embed_text_required"
-	MessageCypherSpecializedCallsVectorEmbedParameterString      MessageID = "cypherspecializedcalls.vector_embed_parameter_string"
-	MessageCypherSpecializedCallsVectorEmbedStringRequired       MessageID = "cypherspecializedcalls.vector_embed_string_required"
 	MessageCypherSpecializedCallsVectorEmbedFailed               MessageID = "cypherspecializedcalls.vector_embed_failed"
 	MessageCypherSpecializedCallsVectorProcedureNotFound         MessageID = "cypherspecializedcalls.vector_procedure_not_found"
 	MessageCypherSpecializedCallsVectorParametersMissing         MessageID = "cypherspecializedcalls.vector_parameters_missing"
@@ -108,28 +103,8 @@ func CypherSpecializedCallsEmbedderNotConfigured() Message {
 	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsEmbedderNotConfigured, "no embedder configured", nil)
 }
 
-func CypherSpecializedCallsVectorEmbedInvalidSyntax() Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsVectorEmbedInvalidSyntax, "invalid db.index.vector.embed syntax", nil)
-}
-
-func CypherSpecializedCallsVectorEmbedArgumentRequired() Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsVectorEmbedArgumentRequired, "db.index.vector.embed requires one argument", nil)
-}
-
-func CypherSpecializedCallsVectorEmbedUnmatchedParenthesis() Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsVectorEmbedUnmatchedParenthesis, "unmatched parenthesis in db.index.vector.embed", nil)
-}
-
 func CypherSpecializedCallsVectorEmbedTextRequired() Message {
 	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsVectorEmbedTextRequired, "db.index.vector.embed requires non-empty text", nil)
-}
-
-func CypherSpecializedCallsVectorEmbedParameterString(parameter string) Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsVectorEmbedParameterString, "db.index.vector.embed parameter $"+parameter+" must be STRING", map[string]any{"Parameter": parameter})
-}
-
-func CypherSpecializedCallsVectorEmbedStringRequired() Message {
-	return cypherSpecializedCallsMessage(MessageCypherSpecializedCallsVectorEmbedStringRequired, "db.index.vector.embed requires STRING text", nil)
 }
 
 func CypherSpecializedCallsVectorEmbedFailed(cause error) Message {

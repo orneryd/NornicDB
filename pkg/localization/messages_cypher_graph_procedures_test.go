@@ -15,18 +15,15 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		message Message
 		text    string
 	}{
-		{CypherGraphProceduresGraphNameRequired("gds.graph.project"), "graph name required for gds.graph.project"},
 		{CypherGraphProceduresStreamNodesFailed(cause), "failed to stream nodes: forced graph failure"},
 		{CypherGraphProceduresStreamEdgesFailed(cause), "failed to stream edges: forced graph failure"},
 		{CypherGraphProceduresGraphDoesNotExist("missing"), "graph 'missing' does not exist"},
 		{CypherGraphProceduresGraphDoesNotExistProjectFirst("missing"), "graph 'missing' does not exist. Create it with gds.graph.project first"},
 		{CypherGraphProceduresBuildGraphFailed(cause), "failed to build graph: forced graph failure"},
-		{CypherGraphProceduresInvalidProcedureCallSyntax(), "invalid procedure call syntax"},
-		{CypherGraphProceduresVariableNotFound("person"), `variable "person" not found in query context (id(person) cannot be resolved)`},
 		{CypherGraphProceduresSourceNodeRequired(), "sourceNode parameter required"},
 	}
 
-	require.Len(t, testCases, 9)
+	require.Len(t, testCases, 6)
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {
