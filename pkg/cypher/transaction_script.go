@@ -82,15 +82,14 @@ func stripBeginTransactionPrefix(query string) (string, bool) {
 
 func splitTransactionScriptTailAction(script string) (string, string, bool) {
 	trimmed := strings.TrimSpace(script)
-	upper := upperASCII(trimmed)
-	if strings.HasSuffix(upper, "COMMIT") {
+	if keywordsBefore(trimmed, len(trimmed), "COMMIT") >= 0 {
 		body := strings.TrimSpace(trimmed[:len(trimmed)-len("COMMIT")])
 		if body == "" {
 			return "", "", false
 		}
 		return body, "COMMIT", true
 	}
-	if strings.HasSuffix(upper, "ROLLBACK") {
+	if keywordsBefore(trimmed, len(trimmed), "ROLLBACK") >= 0 {
 		body := strings.TrimSpace(trimmed[:len(trimmed)-len("ROLLBACK")])
 		if body == "" {
 			return "", "", false

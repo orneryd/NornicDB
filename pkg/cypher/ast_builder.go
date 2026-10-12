@@ -373,13 +373,10 @@ func (b *ASTBuilder) splitIntoClauses(cypher string) []clauseInfo {
 			// Skip CREATE and SET if they're part of "ON CREATE SET" or "ON MATCH SET"
 			// These are MERGE clause modifiers, not standalone clauses
 			if kw.keyword == "CREATE" || kw.keyword == "SET" {
-				// Check if preceded by "ON " (with some flexibility for spacing)
-				if absolutePos >= 3 {
-					before := strings.TrimRight(upper[:absolutePos], " \t\n")
-					if strings.HasSuffix(before, "ON") || strings.HasSuffix(before, "ON CREATE") || strings.HasSuffix(before, "ON MATCH") {
-						pos = absolutePos + len(kw.keyword)
-						continue
-					}
+				// Check if preceded by the keyword ON, not a name ending in on
+				if keywordsBefore(upper, absolutePos, "ON") >= 0 || keywordsBefore(upper, absolutePos, "ON", "CREATE") >= 0 || keywordsBefore(upper, absolutePos, "ON", "MATCH") >= 0 {
+					pos = absolutePos + len(kw.keyword)
+					continue
 				}
 			}
 

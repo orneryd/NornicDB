@@ -146,8 +146,7 @@ func hasStandaloneWithClause(cypher string) bool {
 			return false
 		}
 		absIdx := searchStart + idx
-		preceding := upperASCII(strings.TrimSpace(cypher[:absIdx]))
-		if !strings.HasSuffix(preceding, "STARTS") && !strings.HasSuffix(preceding, "ENDS") {
+		if keywordsBefore(cypher, absIdx, "STARTS") < 0 && keywordsBefore(cypher, absIdx, "ENDS") < 0 {
 			return true
 		}
 		searchStart = absIdx + len("WITH")

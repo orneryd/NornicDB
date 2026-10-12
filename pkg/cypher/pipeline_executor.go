@@ -330,17 +330,12 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 				continue
 			}
 			if k.kind == pipelineClauseMatch {
-				if precededByOptionalKeyword(cypher, p) {
-					continue
-				}
-				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
-				if strings.HasSuffix(preceding, "ON") {
+				if precededByOptionalKeyword(cypher, p) || keywordsBefore(cypher, p, "ON") >= 0 {
 					continue
 				}
 			}
 			if k.kind == pipelineClauseSet {
-				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
-				if strings.HasSuffix(preceding, "ON CREATE") || strings.HasSuffix(preceding, "ON MATCH") {
+				if keywordsBefore(cypher, p, "ON", "CREATE") >= 0 || keywordsBefore(cypher, p, "ON", "MATCH") >= 0 {
 					continue
 				}
 			}
@@ -350,11 +345,8 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 					continue
 				}
 			}
-			if k.name == "DELETE" {
-				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
-				if strings.HasSuffix(preceding, "DETACH") {
-					continue
-				}
+			if k.name == "DELETE" && keywordsBefore(cypher, p, "DETACH") >= 0 {
+				continue
 			}
 			// FOR is only an iteration clause in the shared grammar. In
 			// schema and alias DDL it is a specifier (CREATE INDEX … FOR
@@ -364,11 +356,8 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 					continue
 				}
 			}
-			if k.kind == pipelineClauseCreate {
-				preceding := strings.TrimSpace(upperASCII(cypher[:p]))
-				if strings.HasSuffix(preceding, "ON") {
-					continue
-				}
+			if k.kind == pipelineClauseCreate && keywordsBefore(cypher, p, "ON") >= 0 {
+				continue
 			}
 			boundaries = append(boundaries, pipelineBoundary{pos: p, kind: k.kind, name: k.name})
 		}
@@ -5077,9 +5066,27 @@ func parseFloatFast(s string) (float64, bool) {
 // cypher follows the keyword OPTIONAL (OPTIONAL MATCH, OPTIONAL CALL), not a
 // variable named optional. It doesn't allocate.
 func precededByOptionalKeyword(cypher string, position int) bool {
-	end := len(strings.TrimRight(cypher[:position], " \t\n\r"))
-	return end >= len("OPTIONAL") && equalFoldASCII(cypher[end-len("OPTIONAL"):end], "OPTIONAL") &&
-		!clauseKeywordUsedAsName(cypher, end-len("OPTIONAL"), end, "OPTIONAL")
+	start := keywordsBefore(cypher, position, "OPTIONAL")
+	return start >= 0 && !clauseKeywordUsedAsName(cypher, start, start+len("OPTIONAL"), "OPTIONAL")
+}
+
+// keywordsBefore returns the index of words' first word when the words, in
+// order, end s before position as whole words (case-insensitive; whitespace
+// before position and between them is skipped), or -1: MERGE's ON before
+// CREATE, MATCH or SET, OPTIONAL before MATCH, DETACH before DELETE. A name
+// ending in a word (reason, season, friends, autocommit) doesn't end with
+// it. It doesn't allocate.
+func keywordsBefore(s string, position int, words ...string) int {
+	end := position
+	for w := len(words) - 1; w >= 0; w-- {
+		end = len(strings.TrimRight(s[:end], " \t\n\r"))
+		start := end - len(words[w])
+		if start < 0 || !equalFoldASCII(s[start:end], words[w]) || start > 0 && isIdentByte(s[start-1]) {
+			return -1
+		}
+		end = start
+	}
+	return end
 }
 
 // setSourceTypeError rejects SET x = <source> and SET x += <source>
