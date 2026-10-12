@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -1098,7 +1097,7 @@ skipArrayIndexing:
 	// duration() - create duration from ISO 8601 string (P1Y2M3DT4H5M6S)
 	// Returns a CypherDuration struct that can be used in arithmetic
 	if isFunctionCall(expr, "duration") {
-		inner := strings.TrimSpace(expr[9 : len(expr)-1])
+		inner := extractFuncArgs(expr, "duration")
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
@@ -1208,7 +1207,7 @@ skipArrayIndexing:
 
 	// apoc.text.join(list, separator) - Join list elements with separator
 	if isFunctionCall(expr, "apoc.text.join") {
-		inner := strings.TrimSpace(expr[15 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.text.join")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1234,56 +1233,56 @@ skipArrayIndexing:
 
 	// apoc.coll.flatten(list) - Flatten nested lists into a single list
 	if isFunctionCall(expr, "apoc.coll.flatten") {
-		inner := strings.TrimSpace(expr[19 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.flatten")
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return flattenList(listVal)
 	}
 
 	// apoc.coll.toSet(list) - Remove duplicates from list
 	if isFunctionCall(expr, "apoc.coll.toset") {
-		inner := strings.TrimSpace(expr[16 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.toset")
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return toSet(listVal)
 	}
 
 	// apoc.coll.sum(list) - Sum numeric values in list
 	if isFunctionCall(expr, "apoc.coll.sum") {
-		inner := strings.TrimSpace(expr[14 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.sum")
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollSum(listVal)
 	}
 
 	// apoc.coll.avg(list) - Average of numeric values in list
 	if isFunctionCall(expr, "apoc.coll.avg") {
-		inner := strings.TrimSpace(expr[14 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.avg")
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollAvg(listVal)
 	}
 
 	// apoc.coll.min(list) - Minimum value in list
 	if isFunctionCall(expr, "apoc.coll.min") {
-		inner := strings.TrimSpace(expr[14 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.min")
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollMin(listVal)
 	}
 
 	// apoc.coll.max(list) - Maximum value in list
 	if isFunctionCall(expr, "apoc.coll.max") {
-		inner := strings.TrimSpace(expr[14 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.max")
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollMax(listVal)
 	}
 
 	// apoc.coll.sort(list) - Sort list in ascending order
 	if isFunctionCall(expr, "apoc.coll.sort") {
-		inner := strings.TrimSpace(expr[15 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.sort")
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollSort(listVal)
 	}
 
 	// apoc.coll.sortNodes(nodes, property) - Sort nodes by property
 	if isFunctionCall(expr, "apoc.coll.sortnodes") {
-		inner := strings.TrimSpace(expr[20 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.sortnodes")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1295,14 +1294,14 @@ skipArrayIndexing:
 
 	// apoc.coll.reverse(list) - Reverse a list
 	if isFunctionCall(expr, "apoc.coll.reverse") {
-		inner := strings.TrimSpace(expr[18 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.reverse")
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollReverse(listVal)
 	}
 
 	// apoc.coll.union(list1, list2) - Union of two lists (removes duplicates)
 	if isFunctionCall(expr, "apoc.coll.union") {
-		inner := strings.TrimSpace(expr[16 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.union")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1314,7 +1313,7 @@ skipArrayIndexing:
 
 	// apoc.coll.unionAll(list1, list2) - Union of two lists (keeps duplicates)
 	if isFunctionCall(expr, "apoc.coll.unionall") {
-		inner := strings.TrimSpace(expr[19 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.unionall")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1326,7 +1325,7 @@ skipArrayIndexing:
 
 	// apoc.coll.intersection(list1, list2) - Intersection of two lists
 	if isFunctionCall(expr, "apoc.coll.intersection") {
-		inner := strings.TrimSpace(expr[23 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.intersection")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1338,7 +1337,7 @@ skipArrayIndexing:
 
 	// apoc.coll.subtract(list1, list2) - Elements in list1 but not in list2
 	if isFunctionCall(expr, "apoc.coll.subtract") {
-		inner := strings.TrimSpace(expr[20 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.subtract")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1350,7 +1349,7 @@ skipArrayIndexing:
 
 	// apoc.coll.contains(list, value) - Check if list contains value
 	if isFunctionCall(expr, "apoc.coll.contains") {
-		inner := strings.TrimSpace(expr[20 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.contains")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1362,7 +1361,7 @@ skipArrayIndexing:
 
 	// apoc.coll.containsAll(list1, list2) - Check if list1 contains all elements of list2
 	if isFunctionCall(expr, "apoc.coll.containsall") {
-		inner := strings.TrimSpace(expr[22 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.containsall")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1374,7 +1373,7 @@ skipArrayIndexing:
 
 	// apoc.coll.containsAny(list1, list2) - Check if list1 contains any element of list2
 	if isFunctionCall(expr, "apoc.coll.containsany") {
-		inner := strings.TrimSpace(expr[22 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.containsany")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1386,7 +1385,7 @@ skipArrayIndexing:
 
 	// apoc.coll.indexOf(list, value) - Find index of value in list (-1 if not found)
 	if isFunctionCall(expr, "apoc.coll.indexof") {
-		inner := strings.TrimSpace(expr[18 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.indexof")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1398,7 +1397,7 @@ skipArrayIndexing:
 
 	// apoc.coll.split(list, value) - Split list at occurrences of value
 	if isFunctionCall(expr, "apoc.coll.split") {
-		inner := strings.TrimSpace(expr[16 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.split")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1410,7 +1409,7 @@ skipArrayIndexing:
 
 	// apoc.coll.partition(list, size) - Partition list into sublists of given size
 	if isFunctionCall(expr, "apoc.coll.partition") {
-		inner := strings.TrimSpace(expr[20 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.partition")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1422,14 +1421,14 @@ skipArrayIndexing:
 
 	// apoc.coll.pairs(list) - Create pairs from consecutive elements [[a,b], [b,c], ...]
 	if isFunctionCall(expr, "apoc.coll.pairs") {
-		inner := strings.TrimSpace(expr[16 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.pairs")
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollPairs(listVal)
 	}
 
 	// apoc.coll.zip(list1, list2) - Zip two lists into pairs [[a1,b1], [a2,b2], ...]
 	if isFunctionCall(expr, "apoc.coll.zip") {
-		inner := strings.TrimSpace(expr[14 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.zip")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1441,14 +1440,14 @@ skipArrayIndexing:
 
 	// apoc.coll.frequencies(list) - Count frequency of each element
 	if isFunctionCall(expr, "apoc.coll.frequencies") {
-		inner := strings.TrimSpace(expr[22 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.frequencies")
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollFrequencies(listVal)
 	}
 
 	// apoc.coll.occurrences(list, value) - Count occurrences of value in list
 	if isFunctionCall(expr, "apoc.coll.occurrences") {
-		inner := strings.TrimSpace(expr[22 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.coll.occurrences")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1460,57 +1459,38 @@ skipArrayIndexing:
 
 	// apoc.convert.toJson(value) - Convert value to JSON string
 	if isFunctionCall(expr, "apoc.convert.tojson") {
-		inner := strings.TrimSpace(expr[20 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.convert.tojson")
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		jsonBytes, err := json.Marshal(val)
-		if err != nil {
-			return nil
-		}
-		return string(jsonBytes)
-	}
-
-	// apoc.convert.fromJsonMap(json) - Parse JSON string to map
-	if isFunctionCall(expr, "apoc.convert.fromjsonmap") {
-		inner := strings.TrimSpace(extractFuncArgs(expr, "apoc.convert.fromjsonmap"))
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		jsonStr, ok := val.(string)
+		text, ok := apocConvertToJSON(val)
 		if !ok {
 			return nil
 		}
-		jsonStr = strings.Trim(jsonStr, "'\"")
-		var result map[string]interface{}
-		if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
-			return nil
-		}
-		return result
+		return text
 	}
 
-	// apoc.convert.fromJsonList(json) - Parse JSON string to list
-	if isFunctionCall(expr, "apoc.convert.fromjsonlist") {
-		inner := strings.TrimSpace(extractFuncArgs(expr, "apoc.convert.fromjsonlist"))
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		jsonStr, ok := val.(string)
-		if !ok {
-			return nil
+	// apoc.convert.fromJsonMap / fromJsonList(json) (apocConvertFromJSON)
+	for _, function := range [...]string{"apoc.convert.fromjsonmap", "apoc.convert.fromjsonlist"} {
+		if isFunctionCall(expr, function) {
+			inner := strings.TrimSpace(extractFuncArgs(expr, function))
+			value := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			result, ok := apocConvertFromJSON(function == "apoc.convert.fromjsonmap", value)
+			if !ok {
+				return nil
+			}
+			return result
 		}
-		jsonStr = strings.Trim(jsonStr, "'\"")
-		var result []interface{}
-		if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
-			return nil
-		}
-		return result
 	}
 
 	// apoc.meta.type(value) - Get the Cypher type name of a value
 	if isFunctionCall(expr, "apoc.meta.type") {
-		inner := strings.TrimSpace(expr[15 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.meta.type")
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocValueTypeName(val)
 	}
 
 	// apoc.meta.isType(value, typeName) - Check if value is of given type
 	if isFunctionCall(expr, "apoc.meta.istype") {
-		inner := strings.TrimSpace(expr[17 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.meta.istype")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			val := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1528,7 +1508,7 @@ skipArrayIndexing:
 
 	// apoc.map.merge(map1, map2) - Merge two maps (map2 values override map1)
 	if isFunctionCall(expr, "apoc.map.merge") {
-		inner := strings.TrimSpace(expr[15 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.map.merge")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			map1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1540,14 +1520,14 @@ skipArrayIndexing:
 
 	// apoc.map.fromPairs(list) - Create map from list of [key, value] pairs
 	if isFunctionCall(expr, "apoc.map.frompairs") {
-		inner := strings.TrimSpace(expr[19 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.map.frompairs")
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return fromPairs(listVal)
 	}
 
 	// apoc.map.fromLists(keys, values) - Create map from parallel lists
 	if isFunctionCall(expr, "apoc.map.fromlists") {
-		inner := strings.TrimSpace(expr[19 : len(expr)-1])
+		inner := extractFuncArgs(expr, "apoc.map.fromlists")
 		args := e.splitFunctionArgs(inner)
 		if len(args) >= 2 {
 			keys := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)

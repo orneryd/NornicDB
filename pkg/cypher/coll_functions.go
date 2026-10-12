@@ -214,10 +214,14 @@ func fnCollSort(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || null {
 		return nil, err
 	}
-	out := append([]interface{}(nil), list...)
+	return sortedCypherValues(list), nil
+}
+
+// sortedCypherValues returns a copy of list in ORDER BY order, equal items
+// kept in their order: coll.sort and apoc.coll.sort.
+func sortedCypherValues(list []interface{}) []interface{} {
+	out := make([]interface{}, len(list))
+	copy(out, list)
 	sort.SliceStable(out, func(i, j int) bool { return compareValuesForSort(out[i], out[j]) < 0 })
-	if out == nil {
-		out = []interface{}{}
-	}
-	return out, nil
+	return out
 }

@@ -166,6 +166,7 @@ dimensions are an ArgumentError, as in Neo4j.
 | `vector_norm(v, metric)` | Distance to the origin by `EUCLIDEAN` or `MANHATTAN` | `RETURN vector_norm(vector([3, 4], 2, INTEGER), EUCLIDEAN)` |
 | `uuid()` / `uuid(text)` / `uuid(msb, lsb)` | A UUID | `RETURN toString(uuid(1, 2))` |
 | `uuid.mostSignificantBits(u)` / `uuid.leastSignificantBits(u)` | Its halves as integers | `RETURN uuid.mostSignificantBits(uuid())` |
+| `uuid.v5(namespace, name)` | The version 5 (name-based) UUID of `name` in `namespace` (a UUID or its text): the same arguments always give the same UUID, so `MERGE` can deduplicate on it. A NornicDB extension. | `RETURN toString(uuid.v5('6ba7b810-9dad-11d1-80b4-00c04fd430c8', 'python.org'))` |
 
 ### 📈 Kalman Filter Functions (10 functions)
 

@@ -298,19 +298,9 @@ func apocCollMax(val interface{}) interface{} {
 func apocCollSort(val interface{}) []interface{} {
 	switch v := val.(type) {
 	case []interface{}:
-		result := make([]interface{}, len(v))
-		copy(result, v)
-		// Sort by converting to float64 for comparison
-		for i := 0; i < len(result)-1; i++ {
-			for j := i + 1; j < len(result); j++ {
-				fj, _ := toFloat64(result[j])
-				fi, _ := toFloat64(result[i])
-				if fj < fi {
-					result[i], result[j] = result[j], result[i]
-				}
-			}
-		}
-		return result
+		// In Cypher's order, as coll.sort and ORDER BY sort (strings too;
+		// null last).
+		return sortedCypherValues(v)
 	}
 	return nil
 }
