@@ -128,6 +128,14 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	tx.releaseSnapshotReaderLocked()
 	tx.bufferedStagingTransferred = true
 	tx.engine.writeBehind.AppendCommit(c)
+	// The write is committed and visible to every later read the moment it is
+	// buffered, so the query-result cache's revision token must advance NOW,
+	// not at flush. The sync path advances it per-op through the notify*
+	// callbacks in its commit tail; the buffered path defers those callbacks
+	// to the flusher, so without this a cached read that shares no label with
+	// the write (e.g. a whole-type relationship count) stays stale until the
+	// generation flushes (PR #1043 retest @39f0f03f, issue A).
+	tx.engine.graphMutationVersions.changed(tx.namespace)
 	tx.bufferedAck.Store(true)
 	tx.closeLocked(TxStatusCommitted, true, nil)
 	return nil

@@ -49,9 +49,24 @@ func TestWriteBehind_MemoryComesDownAfterBurst(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(60 * time.Second)
-	for engine.writeBehind.PendingOps() > 0 && time.Now().Before(deadline) {
+	drained := false
+	for time.Now().Before(deadline) {
+		if engine.writeBehind.PendingOps() == 0 {
+			// PendingOps hits zero the instant the last generation is
+			// marked applied, a hair before the flusher removes it from the
+			// draining slice. Wait for the removal too so the assertions
+			// below see a fully settled buffer.
+			engine.writeBehind.mu.RLock()
+			remaining := len(engine.writeBehind.draining)
+			engine.writeBehind.mu.RUnlock()
+			if remaining == 0 {
+				drained = true
+				break
+			}
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	require.True(t, drained, "buffer must drain after the burst")
 	require.Zero(t, engine.writeBehind.PendingOps(), "buffer must drain after the burst")
 
 	// The active generation rotates on the flush cadence, so what the burst

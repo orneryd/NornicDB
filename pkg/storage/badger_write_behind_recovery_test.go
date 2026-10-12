@@ -37,6 +37,7 @@ func crashClose(t *testing.T, engine *BadgerEngine, wal *WAL) {
 	engine.stopEdgeBetweenIndexBackfill()
 	engine.stopLabelIndexBackfill()
 	engine.stopDeleteCleanup()
+	engine.stopCountDeltaFoldWorker()
 	if engine.writeBehind != nil {
 		engine.writeBehind.Close() // stops the background flusher, no drain
 	}

@@ -184,7 +184,11 @@ func (b *BadgerEngine) adjustLabelCountInTxn(txn *badger.Txn, namespace, label s
 	}
 	suffix := b.countDeltaSeq.Add(1)
 	key := countDeltaKey(countDeltaKindLabel, namespace, label, suffix)
-	return txn.Set(key, encodeCountDelta(delta))
+	if err := txn.Set(key, encodeCountDelta(delta)); err != nil {
+		return err
+	}
+	b.recordCountDeltaAppend()
+	return nil
 }
 
 func (b *BadgerEngine) adjustNodeLabelCountsInTxn(txn *badger.Txn, namespace string, oldLabels, newLabels []string) error {
@@ -245,7 +249,7 @@ func (b *BadgerEngine) NodeCountByLabelInNamespace(namespace, label string) (int
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
-	count, seen, err := b.readNodeCountByLabelInNamespace(namespace, label)
+	count, _, err := b.readNodeCountByLabelInNamespace(namespace, label)
 	if errors.Is(err, errMalformedDerivedCount) {
 		// A malformed persisted base count is repaired from the label index
 		// and the read retries once, as the pre-delta read-modify-write path
@@ -256,7 +260,7 @@ func (b *BadgerEngine) NodeCountByLabelInNamespace(namespace, label string) (int
 		if repairErr != nil {
 			return 0, repairErr
 		}
-		count, seen, err = b.readNodeCountByLabelInNamespace(namespace, label)
+		count, _, err = b.readNodeCountByLabelInNamespace(namespace, label)
 	}
 	if err != nil {
 		return 0, err
@@ -267,9 +271,9 @@ func (b *BadgerEngine) NodeCountByLabelInNamespace(namespace, label string) (int
 	if b.writeBehind != nil {
 		count += b.writeBehind.LabelCountDeltaInNamespace(namespace, label)
 	}
-	if seen >= countDeltaFoldThreshold {
-		_ = b.foldLabelCountDeltas(namespace, label)
-	}
+	// Folding is off the read path: the background fold worker keeps the
+	// backlog bounded from the append side (PR #1043 issue B), so a read
+	// never pays a synchronous fold and its multi-second stall.
 	return count, nil
 }
 

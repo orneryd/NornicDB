@@ -383,6 +383,11 @@ type BadgerEngine struct {
 	// new writes, so suffix reuse across restarts cannot collide.
 	countDeltaSeq atomic.Uint64
 
+	// countDeltaPending counts appended delta keys since the last background
+	// fold trigger; countFold folds them off the read path (PR #1043 issue B).
+	countDeltaPending atomic.Int64
+	countFold         *countDeltaFoldWorker
+
 	// embeddingsEnabled gates the pending-embed index write on node creates.
 	// When false, new nodes skip the pendingEmbed marker since no embed worker
 	// will consume it — saves one Badger Set per user node on hot-path writes.
@@ -1042,6 +1047,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 
 	if !opts.InMemory {
 		engine.startDeleteCleanup()
+		engine.startCountDeltaFoldWorker()
 	}
 
 	if opts.WriteBehind {

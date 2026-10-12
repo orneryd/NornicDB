@@ -197,6 +197,7 @@ func (b *BadgerEngine) Close() error {
 	b.stopEdgeBetweenIndexBackfill()
 	b.stopLabelIndexBackfill()
 	b.stopDeleteCleanup()
+	b.stopCountDeltaFoldWorker()
 
 	// Drain acknowledged write-behind commits before tearing down Badger so
 	// a shutdown never loses writes that were acknowledged to clients.

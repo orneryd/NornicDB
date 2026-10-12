@@ -194,6 +194,33 @@ func (tx *BadgerTransaction) releaseEdgeTypeCountLockLocked() {
 	}
 }
 
+// writeScalarCountDeltasInCommitLocked writes the commit's scalar label and
+// edge-type count deltas into the commit writer, atomic with the entity and
+// index writes. The scalar tiers append unique delta keys (blind writes, never
+// conflicting), so they need no count lock and never join the user
+// transaction's conflict set. Writing them here instead of in separate
+// follow-up transactions removes a second pass through Badger's commit queue
+// per statement (PR #1043 retest @39f0f03f, issue C) and closes the
+// publication gap where committed entities were briefly visible without their
+// deltas.
+func (tx *BadgerTransaction) writeScalarCountDeltasInCommitLocked(w *batchWriter) error {
+	for key, delta := range tx.pendingLabelCountDeltas {
+		if err := w.write(func(t *badger.Txn) error {
+			return tx.engine.adjustLabelCountInTxn(t, key.namespace, key.label, delta)
+		}); err != nil {
+			return err
+		}
+	}
+	for key, delta := range tx.pendingEdgeTypeCountDeltas {
+		if err := w.write(func(t *badger.Txn) error {
+			return tx.engine.adjustEdgeTypeCountInTxn(t, key.namespace, key.edgeType, delta)
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (tx *BadgerTransaction) releaseWriteBarrierLocked() {
 	if tx.commitReleaseWrite != nil {
 		release := tx.commitReleaseWrite

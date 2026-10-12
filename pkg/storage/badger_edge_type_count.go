@@ -81,7 +81,11 @@ func (b *BadgerEngine) adjustEdgeTypeCountInTxn(txn *badger.Txn, namespace, edge
 	}
 	suffix := b.countDeltaSeq.Add(1)
 	key := countDeltaKey(countDeltaKindEdgeType, namespace, edgeType, suffix)
-	return txn.Set(key, encodeCountDelta(delta))
+	if err := txn.Set(key, encodeCountDelta(delta)); err != nil {
+		return err
+	}
+	b.recordCountDeltaAppend()
+	return nil
 }
 
 // EdgeCountByTypeInNamespace returns the persisted count of edges of the given
@@ -90,7 +94,7 @@ func (b *BadgerEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (i
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
-	count, seen, err := b.readEdgeCountByTypeInNamespace(namespace, edgeType)
+	count, _, err := b.readEdgeCountByTypeInNamespace(namespace, edgeType)
 	if errors.Is(err, errMalformedDerivedCount) {
 		// A malformed persisted base count is repaired from the edge-type
 		// index and the read retries once, as the pre-delta path repaired it
@@ -101,7 +105,7 @@ func (b *BadgerEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (i
 		if repairErr != nil {
 			return 0, repairErr
 		}
-		count, seen, err = b.readEdgeCountByTypeInNamespace(namespace, edgeType)
+		count, _, err = b.readEdgeCountByTypeInNamespace(namespace, edgeType)
 	}
 	if err != nil {
 		return 0, err
@@ -112,9 +116,8 @@ func (b *BadgerEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (i
 	if b.writeBehind != nil {
 		count += b.writeBehind.EdgeTypeCountDeltaInNamespace(namespace, edgeType)
 	}
-	if seen >= countDeltaFoldThreshold {
-		_ = b.foldEdgeTypeCountDeltas(namespace, edgeType)
-	}
+	// Folding is off the read path (PR #1043 issue B): the background fold
+	// worker bounds the backlog from the append side.
 	return count, nil
 }
 

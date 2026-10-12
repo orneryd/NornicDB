@@ -2727,6 +2727,15 @@ func (tx *BadgerTransaction) Commit() error {
 		return tx.abortCommitLocked(fmt.Errorf("refreshing temporal current pointers: %w", err))
 	}
 
+	// Scalar count deltas ride the commit's own transaction (blind unique
+	// keys, no conflict risk) so each statement passes through Badger's
+	// commit queue once instead of once for data and once per count tier
+	// (PR #1043 retest @39f0f03f, issue C). The positional (label, type)
+	// tier stays a read-modify-write after finish below, under its lock.
+	if err := tx.writeScalarCountDeltasInCommitLocked(&cw.batchWriter); err != nil {
+		return tx.abortCommitLocked(fmt.Errorf("staging scalar count deltas in commit: %w", err))
+	}
+
 	// Stage the monotonic ID-counter high-water marks for out-of-txn
 	// persistence (persistCounters, below, in a fresh transaction). Writing
 	// these metadata keys inside tx.badgerTx would put concurrent commits on
@@ -2754,58 +2763,21 @@ func (tx *BadgerTransaction) Commit() error {
 	knowledgePolicyChanged = tx.publishKnowledgePolicySchemaLocked()
 	runCommitTailHook()
 
-	// Label counts are derived metadata, not part of the user transaction's
-	// conflict set. Apply the accumulated deltas only after the entity and
-	// index writes commit, serializing the short read-modify-write transaction
-	// with non-transactional node mutations. A metadata failure must not turn a
-	// successful user commit into an apparent rollback. Rebuild from committed
-	// node bodies immediately if a malformed or unavailable count blocks the
-	// delta; startup verification remains the final recovery boundary.
-	if err := tx.engine.applyLabelCountDeltasLocked(tx.pendingLabelCountDeltas); err != nil {
-		if repairErr := tx.engine.rebuildAuthoritativeLabelCountsLocked(); repairErr != nil {
-			tx.engine.log.Error("failed to repair derived label counts after transaction commit",
-				"subsystem", "transaction",
-				"transaction_id", tx.ID,
-				slog.Any("update_error", err),
-				slog.Any("repair_error", repairErr),
-			)
-		} else {
-			tx.engine.log.Warn("repaired derived label counts after delta update failed",
-				"subsystem", "transaction",
-				"transaction_id", tx.ID,
-				slog.Any("error", err),
-			)
-		}
-	}
-	// Do NOT release edgeTypeCountWriteMu here: the positional (label, type)
-	// counters are still read-modify-write (they were not converted to blind
-	// delta keys in PR #1043 item #2) and are applied below under the lock.
-	// Releasing first let concurrent commits run the positional update without
-	// the lock, causing Badger conflicts, a rebuild storm, and ~2x counts.
+	// Scalar label and edge-type count deltas were written atomically with
+	// the entity commit above (writeScalarCountDeltasInCommitLocked); a
+	// conflict there already aborted the whole commit, so there is no
+	// separate follow-up transaction for them. The positional (label, type)
+	// tier is still a read-modify-write on shared absolute keys, applied
+	// below under edgeTypeCountWriteMu: release first lets concurrent
+	// commits run the positional update without the lock, causing Badger
+	// conflicts, a rebuild storm, and ~2x counts (PR #1043 item #2).
 
-	// Persist the namespace's MVCC sequence and the staged ID
-	// accumulated deltas only after the entity and index writes commit,
-	// serialized under edgeTypeCountWriteMu so typed-count readers never
-	// observe the publication gap. A metadata failure must not turn a
+	// Persist the positional counters only after the entity and index writes
+	// commit, serialized under edgeTypeCountWriteMu so typed-count readers
+	// never observe the publication gap. A metadata failure must not turn a
 	// successful user commit into an apparent rollback — rebuild from the
 	// committed edge-type index immediately; startup verification remains
 	// the final recovery boundary.
-	if err := tx.engine.applyEdgeTypeCountDeltasLocked(tx.pendingEdgeTypeCountDeltas); err != nil {
-		if repairErr := tx.engine.rebuildAuthoritativeEdgeTypeCountsLocked(); repairErr != nil {
-			tx.engine.log.Error("failed to repair derived edge-type counts after transaction commit",
-				"subsystem", "transaction",
-				"transaction_id", tx.ID,
-				slog.Any("update_error", err),
-				slog.Any("repair_error", repairErr),
-			)
-		} else {
-			tx.engine.log.Warn("repaired derived edge-type counts after delta update failed",
-				"subsystem", "transaction",
-				"transaction_id", tx.ID,
-				slog.Any("error", err),
-			)
-		}
-	}
 	if err := tx.engine.applyEdgeTypeLabelCountDeltasLocked(tx.pendingEdgeTypeLabelCountDeltas); err != nil {
 		if repairErr := tx.engine.rebuildAuthoritativeEdgeTypeCountsLocked(); repairErr != nil {
 			tx.engine.log.Error("failed to repair derived (label, type) counts after transaction commit",

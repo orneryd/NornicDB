@@ -12,6 +12,8 @@ import (
 // TestCountDeltaFoldLargeBacklogChunked pins the chunked fold (monster retest
 // part 2): a single pair with far more deltas than one Badger batch can hold
 // must fold without ErrTxnTooBig, and the deltas must be gone afterwards.
+// Folding is off the read path (PR #1043 issue B): a count read sums the
+// deltas in place and the background fold worker collapses them later.
 func TestCountDeltaFoldLargeBacklogChunked(t *testing.T) {
 	engine, err := NewBadgerEngine(t.TempDir())
 	require.NoError(t, err)
@@ -27,12 +29,16 @@ func TestCountDeltaFoldLargeBacklogChunked(t *testing.T) {
 		return nil
 	}))
 
-	// The read sums the deltas, then triggers the chunked fold.
+	// The read sums the deltas in place and returns the correct count
+	// without paying a synchronous fold.
 	count, err := engine.NodeCountByLabelInNamespace("ns1", "BigFold")
 	require.NoError(t, err)
 	require.Equal(t, int64(deltas), count)
 
-	// The read-triggered fold must have collapsed every delta into the base.
+	// The background fold path must collapse every delta into the base
+	// without ErrTxnTooBig, exactly as the read-triggered fold used to.
+	engine.foldCountDeltasInBackground()
+
 	var remaining int
 	require.NoError(t, engine.db.View(func(txn *badger.Txn) error {
 		prefix := countDeltaPrefixFor(countDeltaKindLabel, "ns1", "BigFold")
@@ -43,7 +49,12 @@ func TestCountDeltaFoldLargeBacklogChunked(t *testing.T) {
 		}
 		return nil
 	}))
-	require.Zero(t, remaining, "read-triggered fold must consume the whole backlog")
+	require.Zero(t, remaining, "background fold must consume the whole backlog")
+
+	// The folded base answers the same count.
+	count, err = engine.NodeCountByLabelInNamespace("ns1", "BigFold")
+	require.NoError(t, err)
+	require.Equal(t, int64(deltas), count)
 }
 
 // TestCountDeltaLargeBacklogReopen pins the open/close fold (monster retest
