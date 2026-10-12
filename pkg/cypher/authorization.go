@@ -30,7 +30,10 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 			keywords["MERGE"] || keywords["REMOVE"]
 	}
 
-	if procedure, found := RegisteredProcedureForCall(query); found {
+	// Every procedure the query calls counts, not just the first: a later
+	// CALL (chained after YIELD, or inside a subquery) needs its own mode's
+	// permission too.
+	for _, procedure := range registeredProceduresForCalls(query) {
 		switch procedure.Mode {
 		case ProcedureModeWrite:
 			requirements.Write = true
@@ -41,6 +44,81 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 		}
 	}
 	return requirements
+}
+
+// registeredProceduresForCalls returns the registered procedures named by
+// every CALL clause of query, wherever it stands (after another CALL's
+// YIELD, in a CALL { } / EXISTS { } / COUNT { } subquery, ...). CALL inside
+// string literals and comments is not a clause. Backticked name parts are
+// unquoted, as the executor resolves them.
+func registeredProceduresForCalls(query string) []ProcedureSpec {
+	ensureBuiltInProceduresRegistered()
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens = false
+	opts.SkipBrackets = false
+	opts.SkipBraces = false
+	var procedures []ProcedureSpec
+	for from := 0; from < len(query); {
+		at := keywordIndexFrom(query, "CALL", from, opts)
+		if at < 0 {
+			break
+		}
+		from = at + len("CALL")
+		name, ok := procedureNameAt(query, from)
+		if !ok {
+			continue // CALL { ... } or CALL (vars) { ... }: its body is scanned on
+		}
+		if procedure, found := globalProcedureRegistry.Get(name); found {
+			procedures = append(procedures, procedure.Spec)
+		}
+	}
+	return procedures
+}
+
+// procedureNameAt parses the dotted procedure name after a CALL keyword
+// ending at offset: segments of identifier characters or backticked text,
+// separated by dots, with whitespace allowed around them.
+func procedureNameAt(query string, offset int) (string, bool) {
+	i := offset
+	skipSpace := func() {
+		for i < len(query) && isASCIISpace(query[i]) {
+			i++
+		}
+	}
+	var parts []string
+	for {
+		skipSpace()
+		if i >= len(query) {
+			break
+		}
+		if query[i] == '`' {
+			end := strings.IndexByte(query[i+1:], '`')
+			if end < 0 {
+				return "", false
+			}
+			parts = append(parts, query[i+1:i+1+end])
+			i += end + 2
+		} else {
+			start := i
+			for i < len(query) && (query[i] == '_' || query[i] == '$' || query[i] >= '0' && query[i] <= '9' || query[i] >= 'a' && query[i] <= 'z' || query[i] >= 'A' && query[i] <= 'Z') {
+				i++
+			}
+			if i == start {
+				break
+			}
+			parts = append(parts, query[start:i])
+		}
+		skipSpace()
+		if i < len(query) && query[i] == '.' {
+			i++
+			continue
+		}
+		break
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
+	return strings.Join(parts, "."), true
 }
 
 func isSchemaPermissionQuery(query string) bool {
