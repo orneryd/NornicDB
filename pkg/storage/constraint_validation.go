@@ -63,6 +63,36 @@ func RefreshUniqueConstraintValuesForEngine(engine Engine, schema *SchemaManager
 		uniqueConstraints = append(uniqueConstraints, uc)
 	}
 	schema.mu.RUnlock()
+	return refreshUniqueConstraintValues(engine, schema, uniqueConstraints)
+}
+
+// RefreshUniqueConstraintValuesForConstraintsForEngine rebuilds the value
+// caches of just the given single-property UNIQUE constraints (other
+// constraint types are ignored) and marks them complete, so writes validate
+// through the cache instead of the label-scan fallback. Used after a
+// constraint contract with IS UNIQUE entries is admitted: refreshing only the
+// contract's own constraints keeps a schema of many contracts from rescanning
+// every constrained label on each DDL.
+func RefreshUniqueConstraintValuesForConstraintsForEngine(engine Engine, schema *SchemaManager, constraints []Constraint) error {
+	if engine == nil || schema == nil {
+		return nil
+	}
+
+	schema.mu.RLock()
+	uniqueConstraints := make([]*UniqueConstraint, 0, len(constraints))
+	for _, c := range constraints {
+		if c.Type != ConstraintUnique || c.EntityType == ConstraintEntityRelationship || len(c.Properties) != 1 {
+			continue
+		}
+		if uc, ok := schema.uniqueConstraints[fmt.Sprintf("%s:%s", c.Label, c.Properties[0])]; ok {
+			uniqueConstraints = append(uniqueConstraints, uc)
+		}
+	}
+	schema.mu.RUnlock()
+	return refreshUniqueConstraintValues(engine, schema, uniqueConstraints)
+}
+
+func refreshUniqueConstraintValues(engine Engine, schema *SchemaManager, uniqueConstraints []*UniqueConstraint) error {
 	if len(uniqueConstraints) == 0 {
 		return nil
 	}

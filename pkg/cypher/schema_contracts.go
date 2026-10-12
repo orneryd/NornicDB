@@ -209,7 +209,14 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	if err := storage.ValidateConstraintContractOnCreationForEngine(e.storage, contract); err != nil {
 		return nil, true, err
 	}
-	if err := e.storage.GetSchema().AddConstraintContractBundle(contract, compiledConstraints, compiledTypes, ifNotExists); err != nil {
+	schema := e.storage.GetSchema()
+	if err := schema.AddConstraintContractBundle(contract, compiledConstraints, compiledTypes, ifNotExists); err != nil {
+		return nil, true, err
+	}
+	// Like a standalone UNIQUE constraint, a contract's IS UNIQUE entries need
+	// their value cache built and marked complete; without it every write to
+	// the label falls back to scanning all of its nodes (#1120).
+	if err := storage.RefreshUniqueConstraintValuesForConstraintsForEngine(e.storage, schema, compiledConstraints); err != nil {
 		return nil, true, err
 	}
 
