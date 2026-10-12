@@ -1557,6 +1557,12 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 			}
 		}
 		if strings.TrimSpace(tailCypher) != "" {
+			if yield == nil && len(proc.Spec.Returns) == 0 {
+				// A void procedure leaves the row it was called for as it
+				// is: the clauses after it run once, as after any other
+				// leading clause.
+				result = &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{{}}}
+			}
 			return e.executeCallTail(ctx, result, tailCypher)
 		}
 		return result, nil
