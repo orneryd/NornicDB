@@ -109,28 +109,13 @@ func validateReturnOrderBySemanticScope(clause string) error {
 	return nil
 }
 
+// semanticAggregateCalls is the text of expression's aggregate calls
+// (findAggregateSpans).
 func semanticAggregateCalls(expression string) []string {
-	calls := make([]string, 0, 1)
-	for index := 0; index < len(expression); {
-		name, next, ok := scanIdentifierToken(expression, index)
-		if !ok {
-			index++
-			continue
-		}
-		cursor := next
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
-			cursor++
-		}
-		if cursor >= len(expression) || expression[cursor] != '(' || !isAggregateFunctionName(name) {
-			index = next
-			continue
-		}
-		close := findMatchingParen(expression, cursor)
-		if close < 0 {
-			return calls
-		}
-		calls = append(calls, strings.TrimSpace(expression[index:close+1]))
-		index = close + 1
+	spans := findAggregateSpans(expression)
+	calls := make([]string, 0, len(spans))
+	for _, span := range spans {
+		calls = append(calls, strings.TrimSpace(expression[span.start:span.end]))
 	}
 	return calls
 }
@@ -236,29 +221,17 @@ func validateReturnAggregationSemantics(body string) error {
 	return nil
 }
 
+// aggregateContains reports whether predicate holds for the arguments of one
+// of expression's aggregate calls (findAggregateSpans: a qualified function
+// such as apoc.coll.sum is not an aggregate, and a subquery's aggregates are
+// its own).
 func aggregateContains(expression string, predicate func(string) bool) bool {
-	for index := 0; index < len(expression); {
-		name, next, ok := scanIdentifierToken(expression, index)
-		if !ok {
-			index++
-			continue
-		}
-		cursor := next
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
-			cursor++
-		}
-		if cursor >= len(expression) || expression[cursor] != '(' || !isAggregateFunctionName(name) {
-			index = next
-			continue
-		}
-		close := findMatchingParen(expression, cursor)
-		if close < 0 {
-			return false
-		}
-		if predicate(expression[cursor+1 : close]) {
+	for _, span := range findAggregateSpans(expression) {
+		call := expression[span.start:span.end]
+		open := strings.IndexByte(call, '(')
+		if predicate(call[open+1 : len(call)-1]) {
 			return true
 		}
-		index = close + 1
 	}
 	return false
 }
@@ -354,6 +327,12 @@ func semanticExpressionReferences(expression string) []string {
 		if cursor < len(expression) && expression[cursor] == ':' {
 			continue
 		}
+		if end, call := qualifiedFunctionNameEnd(expression, cursor); call {
+			// apoc.coll.sort(…): a namespaced function's name, not a
+			// variable and its property (Personal Documents I47).
+			index = end
+			continue
+		}
 		normalized := normalizeProjectionColumnName(name)
 		propertyAccess := cursor < len(expression) && expression[cursor] == '.'
 		// A keyword-named variable (where.id, #894) is still a variable when
@@ -371,6 +350,29 @@ func semanticExpressionReferences(expression string) []string {
 		references = append(references, normalized)
 	}
 	return references
+}
+
+// qualifiedFunctionNameEnd reports whether the name before at continues as
+// a namespace path (.name …) that a call's '(' follows, and where the path
+// ends.
+func qualifiedFunctionNameEnd(expression string, at int) (int, bool) {
+	cursor := at
+	segments := 0
+	for cursor < len(expression) && expression[cursor] == '.' {
+		_, end, ok := scanSymbolicName(expression, cursor+1)
+		if !ok {
+			return at, false
+		}
+		segments++
+		cursor = end
+		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
+			cursor++
+		}
+	}
+	if segments == 0 || cursor >= len(expression) || expression[cursor] != '(' {
+		return at, false
+	}
+	return cursor, true
 }
 
 // semanticFreeReferences returns the variables and variable.property
@@ -451,39 +453,14 @@ func isSemanticLiteralWord(value string) bool {
 	}
 }
 
+// removeAggregateCalls blanks expression's aggregate calls
+// (findAggregateSpans), leaving what the projection reads outside them.
 func removeAggregateCalls(expression string) string {
 	result := []byte(expression)
-	for index := 0; index < len(expression); {
-		name, next, ok := scanIdentifierToken(expression, index)
-		if !ok {
-			index++
-			continue
-		}
-		cursor := next
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
-			cursor++
-		}
-		if cursor >= len(expression) || expression[cursor] != '(' || !isAggregateFunctionName(name) {
-			index = next
-			continue
-		}
-		close := findMatchingParen(expression, cursor)
-		if close < 0 {
-			return expression
-		}
-		for blank := index; blank <= close; blank++ {
+	for _, span := range findAggregateSpans(expression) {
+		for blank := span.start; blank < span.end; blank++ {
 			result[blank] = ' '
 		}
-		index = close + 1
 	}
 	return string(result)
-}
-
-func isAggregateFunctionName(name string) bool {
-	switch upperASCII(normalizeProjectionColumnName(name)) {
-	case "COUNT", "SUM", "AVG", "MIN", "MAX", "COLLECT", "STDEV", "STDEVP", "PERCENTILECONT", "PERCENTILEDISC":
-		return true
-	default:
-		return false
-	}
 }
