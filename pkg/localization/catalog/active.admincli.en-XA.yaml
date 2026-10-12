@@ -68,6 +68,20 @@
   other: "[!! database import incremental is not implemented yet !!]"
 - id: admincli.database_info_not_implemented
   other: "[!! database info is not implemented yet !!]"
+- id: admincli.check_ids_short
+  other: "[!! Find stored nodes and relationships without an ID-dictionary entry (lost to a rolled-back transaction) !!]"
+- id: admincli.flag.repair
+  other: "[!! Restore the numeric ID of each one found where the index keys identify it !!]"
+- id: admincli.check_ids_summary
+  other: "[!! {{.Nodes}} nodes and {{.Relationships}} relationships have no ID-dictionary entry !!]"
+- id: admincli.check_ids_mismatched_summary
+  other: "[!! {{.Nodes}} nodes and {{.Relationships}} relationships have an ID-dictionary entry their index keys don't use !!]"
+- id: admincli.check_ids_node
+  other: "[!! node {{.ID}} !!]"
+- id: admincli.check_ids_relationship
+  other: "[!! relationship {{.ID}} !!]"
+- id: admincli.repair_ids_summary
+  other: "[!! restored {{.RestoredNodes}} nodes and {{.RestoredRelationships}} relationships; {{.UnresolvedNodes}} nodes and {{.UnresolvedRelationships}} relationships could not be identified and are unchanged !!]"
 - id: admincli.server_status_not_implemented
   other: "[!! server status is not implemented yet !!]"
 - id: admincli.to_path_required

@@ -12,6 +12,11 @@ type CatalogManifestEntry struct {
 
 // CatalogManifest is the generated source-catalog API manifest.
 var CatalogManifest = [...]CatalogManifestEntry{
+	{ID: "admincli.check_ids_mismatched_summary", Constructor: "AdminCLICheckIDsMismatchedSummary", Fields: []string{"Nodes", "Relationships"}, PluralForms: []string{"other"}},
+	{ID: "admincli.check_ids_node", Constructor: "AdminCLICheckIDsNode", Fields: []string{"ID"}, PluralForms: []string{"other"}},
+	{ID: "admincli.check_ids_relationship", Constructor: "AdminCLICheckIDsRelationship", Fields: []string{"ID"}, PluralForms: []string{"other"}},
+	{ID: "admincli.check_ids_short", Constructor: "AdminCLICheckIDsShort", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "admincli.check_ids_summary", Constructor: "AdminCLICheckIDsSummary", Fields: []string{"Nodes", "Relationships"}, PluralForms: []string{"other"}},
 	{ID: "admincli.completion.command_long", Constructor: "AdminCLICompletionCommandLong", Fields: []string{"Command"}, PluralForms: []string{"other"}},
 	{ID: "admincli.completion.command_short", Constructor: "AdminCLICompletionCommandShort", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.database_info_not_implemented", Constructor: "AdminCLIDatabaseInfoNotImplemented", Fields: []string{}, PluralForms: []string{"other"}},
@@ -34,6 +39,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "admincli.flag.normalize_types", Constructor: "AdminCLINormalizeTypesFlag", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.flag.quote", Constructor: "AdminCLIQuoteFlag", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.flag.relationships", Constructor: "AdminCLIRelationshipsFlag", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "admincli.flag.repair", Constructor: "AdminCLIRepairFlag", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.flag.report_file", Constructor: "AdminCLIReportFileFlag", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.flag.schema", Constructor: "AdminCLISchemaFlag", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.flag.skip_bad_relationships", Constructor: "AdminCLISkipBadRelationshipsFlag", Fields: []string{}, PluralForms: []string{"other"}},
@@ -58,6 +64,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "admincli.incremental_import_short", Constructor: "AdminCLIIncrementalImportShort", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.incremental_not_implemented", Constructor: "AdminCLIIncrementalNotImplemented", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.neo4j_csv_export_short", Constructor: "AdminCLINeo4jCSVExportShort", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "admincli.repair_ids_summary", Constructor: "AdminCLIRepairIDsSummary", Fields: []string{"RestoredNodes", "RestoredRelationships", "UnresolvedNodes", "UnresolvedRelationships"}, PluralForms: []string{"other"}},
 	{ID: "admincli.root_short", Constructor: "AdminCLIRootShort", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.server_short", Constructor: "AdminCLIServerShort", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "admincli.server_status_not_implemented", Constructor: "AdminCLIServerStatusNotImplemented", Fields: []string{}, PluralForms: []string{"other"}},

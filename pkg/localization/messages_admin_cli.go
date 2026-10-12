@@ -41,6 +41,13 @@ const (
 	MessageAdminCLIToPathFlag                  MessageID = "admincli.flag.to_path"
 	MessageAdminCLIIncrementalNotImplemented   MessageID = "admincli.incremental_not_implemented"
 	MessageAdminCLIDatabaseInfoNotImplemented  MessageID = "admincli.database_info_not_implemented"
+	MessageAdminCLICheckIDsShort               MessageID = "admincli.check_ids_short"
+	MessageAdminCLIRepairFlag                  MessageID = "admincli.flag.repair"
+	MessageAdminCLICheckIDsSummary             MessageID = "admincli.check_ids_summary"
+	MessageAdminCLICheckIDsMismatchedSummary   MessageID = "admincli.check_ids_mismatched_summary"
+	MessageAdminCLICheckIDsNode                MessageID = "admincli.check_ids_node"
+	MessageAdminCLICheckIDsRelationship        MessageID = "admincli.check_ids_relationship"
+	MessageAdminCLIRepairIDsSummary            MessageID = "admincli.repair_ids_summary"
 	MessageAdminCLIServerStatusNotImplemented  MessageID = "admincli.server_status_not_implemented"
 	MessageAdminCLIToPathRequired              MessageID = "admincli.to_path_required"
 	MessageAdminCLIExactArgs                   MessageID = "admincli.exact_args"
@@ -219,4 +226,40 @@ func AdminCLICompletionCommandShort() Message {
 }
 func AdminCLICompletionCommandLong(command string) Message {
 	return Message{ID: MessageAdminCLICompletionCommandLong, Fallback: "Generate the autocompletion script for " + command + " for the specified shell.\nSee each sub-command's help for details on how to use the generated script.\n", Data: map[string]any{"Command": command}}
+}
+
+// AdminCLICheckIDsShort describes the ID-dictionary check command.
+func AdminCLICheckIDsShort() Message {
+	return Message{ID: MessageAdminCLICheckIDsShort, Fallback: "Find stored nodes and relationships without an ID-dictionary entry (lost to a rolled-back transaction)"}
+}
+
+// AdminCLIRepairFlag describes the check command's repair flag.
+func AdminCLIRepairFlag() Message {
+	return Message{ID: MessageAdminCLIRepairFlag, Fallback: "Restore the numeric ID of each one found where the index keys identify it"}
+}
+
+// AdminCLICheckIDsSummary reports how many entities have no ID-dictionary entry.
+func AdminCLICheckIDsSummary(nodes, relationships int) Message {
+	return Message{ID: MessageAdminCLICheckIDsSummary, Fallback: strconv.Itoa(nodes) + " nodes and " + strconv.Itoa(relationships) + " relationships have no ID-dictionary entry", Data: map[string]any{"Nodes": nodes, "Relationships": relationships}}
+}
+
+// AdminCLICheckIDsMismatchedSummary reports how many entities have an
+// ID-dictionary entry none of their index keys use.
+func AdminCLICheckIDsMismatchedSummary(nodes, relationships int) Message {
+	return Message{ID: MessageAdminCLICheckIDsMismatchedSummary, Fallback: strconv.Itoa(nodes) + " nodes and " + strconv.Itoa(relationships) + " relationships have an ID-dictionary entry their index keys don't use", Data: map[string]any{"Nodes": nodes, "Relationships": relationships}}
+}
+
+// AdminCLICheckIDsNode names a node without an ID-dictionary entry.
+func AdminCLICheckIDsNode(id string) Message {
+	return Message{ID: MessageAdminCLICheckIDsNode, Fallback: "node " + id, Data: map[string]any{"ID": id}}
+}
+
+// AdminCLICheckIDsRelationship names a relationship without an ID-dictionary entry.
+func AdminCLICheckIDsRelationship(id string) Message {
+	return Message{ID: MessageAdminCLICheckIDsRelationship, Fallback: "relationship " + id, Data: map[string]any{"ID": id}}
+}
+
+// AdminCLIRepairIDsSummary reports what a repair restored and left unchanged.
+func AdminCLIRepairIDsSummary(restoredNodes, restoredRelationships, unresolvedNodes, unresolvedRelationships int) Message {
+	return Message{ID: MessageAdminCLIRepairIDsSummary, Fallback: "restored " + strconv.Itoa(restoredNodes) + " nodes and " + strconv.Itoa(restoredRelationships) + " relationships; " + strconv.Itoa(unresolvedNodes) + " nodes and " + strconv.Itoa(unresolvedRelationships) + " relationships could not be identified and are unchanged", Data: map[string]any{"RestoredNodes": restoredNodes, "RestoredRelationships": restoredRelationships, "UnresolvedNodes": unresolvedNodes, "UnresolvedRelationships": unresolvedRelationships}}
 }

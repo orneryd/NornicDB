@@ -135,6 +135,33 @@ nornicdb-admin database import full restored --from-path=./neo4j-export --data-d
 
 If import fails, remove or reset the target database directory before retrying. The importer writes in chunks, so partial data can remain after a failed run.
 
+## Check The ID Dictionary
+
+Before #907's I29 fix, a node or relationship created with a fixed ID (a
+`MERGE`d relationship's ID is derived from its endpoints and properties) in a
+rolled-back transaction, then created again and committed, lost its
+ID-dictionary entry at the next restart. Its record is still found by ID,
+but it is not traversed, a node is not found by its label, and counts can
+leave it out. A restart that rebuilt the MVCC heads may since have given
+such an entity a new number while its label and adjacency keys keep the old
+one; it then has an entry, but one its index keys don't use, and is listed
+apart. Stop the server, then list them (read-only):
+
+```bash
+nornicdb-admin database check-ids --data-dir=./data
+```
+
+`--repair` restores the original numeric ID of each one the index keys
+identify unambiguously (replacing a mismatched entry, and moving its MVCC
+head), so the existing index keys are valid again, and recounts the labels
+and relationship types. An unlabelled node, or two lost
+relationships with the same endpoints and type, can't be identified; they are
+listed and left unchanged. Back up the data directory first.
+
+```bash
+nornicdb-admin database check-ids --repair --data-dir=./data
+```
+
 ## Related Documentation
 
 - [CLI Commands](cli-commands.md)

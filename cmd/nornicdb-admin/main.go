@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -149,6 +150,16 @@ func newRootCmdWithManager(manager *localization.Manager) *cobra.Command {
 	exportCmd.AddCommand(exportNeo4jCSVCmd)
 	databaseCmd.AddCommand(importCmd)
 	databaseCmd.AddCommand(exportCmd)
+	checkIDsCmd := &cobra.Command{
+		Use:   "check-ids",
+		Short: text(localization.AdminCLICheckIDsShort()),
+		Args:  localizedNoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCheckIDs(*dataDir, cmd, text)
+		},
+	}
+	checkIDsCmd.Flags().Bool("repair", false, text(localization.AdminCLIRepairFlag()))
+	databaseCmd.AddCommand(checkIDsCmd)
 	databaseCmd.AddCommand(&cobra.Command{Use: "info <db-name>", Args: localizedExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return newLocalizedCommandError(localization.AdminCLIDatabaseInfoNotImplemented())
 	}})
@@ -357,6 +368,50 @@ func runExportNeo4jCSV(dbName string, dataDir string, cmd *cobra.Command) error 
 		VectorDelimiter: firstRune(vectorDelimiter, ';'),
 		Quote:           firstRune(quote, '"'),
 	})
+}
+
+// runCheckIDs lists the stored nodes and relationships without an
+// ID-dictionary entry and, with --repair, restores those the index keys
+// identify (#907, I29).
+func runCheckIDs(dataDir string, cmd *cobra.Command, text func(localization.Message) string) error {
+	repair, _ := cmd.Flags().GetBool("repair")
+	engine, err := storage.NewBadgerEngine(dataDir)
+	if err != nil {
+		return err
+	}
+	defer engine.Close()
+	report, err := engine.CheckIDDictionary()
+	if repair && err == nil {
+		report, err = engine.RepairIDDictionary()
+	}
+	if err != nil {
+		return err
+	}
+	printIDDictionaryReport(cmd.OutOrStdout(), text, report, repair)
+	return nil
+}
+
+// printIDDictionaryReport writes check-ids' report: each entity without an
+// ID-dictionary entry, each whose entry its index keys don't use, and with
+// repair what it restored.
+func printIDDictionaryReport(out io.Writer, text func(localization.Message) string, report *storage.IDDictionaryReport, repair bool) {
+	fmt.Fprintln(out, text(localization.AdminCLICheckIDsSummary(len(report.Nodes), len(report.Edges))))
+	for _, id := range report.Nodes {
+		fmt.Fprintln(out, "  "+text(localization.AdminCLICheckIDsNode(string(id))))
+	}
+	for _, id := range report.Edges {
+		fmt.Fprintln(out, "  "+text(localization.AdminCLICheckIDsRelationship(string(id))))
+	}
+	fmt.Fprintln(out, text(localization.AdminCLICheckIDsMismatchedSummary(len(report.MismatchedNodes), len(report.MismatchedEdges))))
+	for _, id := range report.MismatchedNodes {
+		fmt.Fprintln(out, "  "+text(localization.AdminCLICheckIDsNode(string(id))))
+	}
+	for _, id := range report.MismatchedEdges {
+		fmt.Fprintln(out, "  "+text(localization.AdminCLICheckIDsRelationship(string(id))))
+	}
+	if repair {
+		fmt.Fprintln(out, text(localization.AdminCLIRepairIDsSummary(len(report.RestoredNodes), len(report.RestoredEdges), len(report.UnresolvedNodes), len(report.UnresolvedEdges))))
+	}
 }
 
 func firstRune(value string, fallback rune) rune {

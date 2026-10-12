@@ -68,6 +68,20 @@
   other: la importación incremental de bases de datos aún no está implementada
 - id: admincli.database_info_not_implemented
   other: la información de la base de datos aún no está implementada
+- id: admincli.check_ids_short
+  other: Busca nodos y relaciones almacenados sin entrada en el diccionario de IDs (perdidos por una transacción revertida)
+- id: admincli.flag.repair
+  other: Restaura el ID numérico de cada uno encontrado cuando las claves de índice lo identifican
+- id: admincli.check_ids_summary
+  other: "{{.Nodes}} nodos y {{.Relationships}} relaciones no tienen entrada en el diccionario de IDs"
+- id: admincli.check_ids_mismatched_summary
+  other: "{{.Nodes}} nodos y {{.Relationships}} relaciones tienen en el diccionario de IDs una entrada que sus claves de índice no usan"
+- id: admincli.check_ids_node
+  other: "nodo {{.ID}}"
+- id: admincli.check_ids_relationship
+  other: "relación {{.ID}}"
+- id: admincli.repair_ids_summary
+  other: "se restauraron {{.RestoredNodes}} nodos y {{.RestoredRelationships}} relaciones; {{.UnresolvedNodes}} nodos y {{.UnresolvedRelationships}} relaciones no se pudieron identificar y no se modificaron"
 - id: admincli.server_status_not_implemented
   other: el estado del servidor aún no está implementado
 - id: admincli.to_path_required

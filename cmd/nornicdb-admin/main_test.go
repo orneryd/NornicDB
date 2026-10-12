@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/adminimport"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/language"
 )
@@ -214,3 +217,58 @@ type wrapped struct {
 
 func (w *wrapped) Error() string { return "wrapped: " + w.err.Error() }
 func (w *wrapped) Unwrap() error { return w.err }
+
+// database check-ids lists the stored entities without an ID-dictionary
+// entry; --repair adds what it restored (#907, I29).
+func TestCheckIDsCommand(t *testing.T) {
+	dir := t.TempDir()
+	engine, err := storage.NewBadgerEngine(dir)
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{ID: "nornic:a", Labels: []string{"Doc"}})
+	require.NoError(t, err)
+	require.NoError(t, engine.Close())
+
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--data-dir", dir, "database", "check-ids"}, "0 nodes and 0 relationships have no ID-dictionary entry\n0 nodes and 0 relationships have an ID-dictionary entry their index keys don't use\n"},
+		{[]string{"--data-dir", dir, "database", "check-ids", "--repair"}, "0 nodes and 0 relationships have no ID-dictionary entry\n0 nodes and 0 relationships have an ID-dictionary entry their index keys don't use\nrestored 0 nodes and 0 relationships; 0 nodes and 0 relationships could not be identified and are unchanged\n"},
+	} {
+		command := newRootCmd()
+		output := new(bytes.Buffer)
+		command.SetOut(output)
+		command.SetArgs(tc.args)
+		require.NoError(t, command.Execute())
+		require.Equal(t, tc.want, output.String())
+	}
+}
+
+func TestPrintIDDictionaryReport(t *testing.T) {
+	out := new(bytes.Buffer)
+	text := func(message localization.Message) string { return message.Fallback }
+	printIDDictionaryReport(out, text, &storage.IDDictionaryReport{
+		Nodes: []storage.NodeID{"nornic:n"}, Edges: []storage.EdgeID{"nornic:e"},
+		MismatchedNodes: []storage.NodeID{"nornic:m"}, MismatchedEdges: []storage.EdgeID{"nornic:f"},
+		RestoredNodes: []storage.NodeID{"nornic:m"}, RestoredEdges: []storage.EdgeID{"nornic:e", "nornic:f"}, UnresolvedNodes: []storage.NodeID{"nornic:n"},
+	}, true)
+	require.Equal(t, strings.Join([]string{
+		"1 nodes and 1 relationships have no ID-dictionary entry",
+		"  node nornic:n",
+		"  relationship nornic:e",
+		"1 nodes and 1 relationships have an ID-dictionary entry their index keys don't use",
+		"  node nornic:m",
+		"  relationship nornic:f",
+		"restored 1 nodes and 2 relationships; 1 nodes and 0 relationships could not be identified and are unchanged",
+		"",
+	}, "\n"), out.String())
+
+	// A data directory that can't be opened is the command's error.
+	file := filepath.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0o600))
+	command := newRootCmd()
+	command.SetOut(new(bytes.Buffer))
+	command.SetErr(new(bytes.Buffer))
+	command.SetArgs([]string{"--data-dir", file, "database", "check-ids"})
+	require.Error(t, command.Execute())
+}

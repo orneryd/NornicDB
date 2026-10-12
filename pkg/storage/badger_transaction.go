@@ -2772,6 +2772,7 @@ func (tx *BadgerTransaction) Commit() error {
 	// persisted outside it for the same reason (commitWriter.finish).
 	// Materialization can allocate numIDs, so this follows it.
 	idCounterNodeMax, idCounterEdgeMax := tx.engine.idDict.flushTxnCounters(tx.badgerTx)
+	committingTxn := tx.badgerTx
 
 	// From here to the end of the tail the derived counts this commit
 	// changes stay locked; see acquireCommitPublicationLocked. A large
@@ -2786,6 +2787,7 @@ func (tx *BadgerTransaction) Commit() error {
 		}
 		return tx.abortCommitLocked(err)
 	}
+	tx.engine.idDict.markTxnCommitted(committingTxn)
 	tx.commitW = nil
 	knowledgePolicyChanged = tx.publishKnowledgePolicySchemaLocked()
 	runCommitTailHook()

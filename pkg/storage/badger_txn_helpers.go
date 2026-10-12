@@ -123,9 +123,11 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) err
 			return fail(err)
 		}
 		nodeMax, edgeMax = b.idDict.flushTxnCounters(cw.txn)
+		committing := cw.txn
 		if err := cw.finish(); err != nil {
 			return fail(err)
 		}
+		b.idDict.markTxnCommitted(committing)
 		return nil
 	})
 	if err == nil {
