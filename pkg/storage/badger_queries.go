@@ -272,7 +272,12 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 
 	include := propertyProjectionSet(properties)
 	nowNanos := DecayScoringTime()
-	covers := b.labelCoversScope(scope, label)
+	// covers is computed lazily (see streamNodesByLabelFromPhysicalSnapshotAfter):
+	// the one-pass decision only matters after labelScanPointLookups lookups,
+	// and an eager decision pays two Badger count reads on every small or
+	// LIMIT-stopped scan.
+	var covers bool
+	coversDecided := false
 	err := b.withView(func(txn *badger.Txn) error {
 		decodeValue := func(nodeID NodeID, value []byte) (*Node, error) {
 			if properties == nil {
@@ -339,6 +344,10 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 				continue
 			}
 
+			if !coversDecided && lookups >= labelScanPointLookups {
+				covers = b.labelCoversScope(scope, label)
+				coversDecided = true
+			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
 				if len(pending) < labelScanMaxBuffered {
 					pending = append(pending, pendingNode{id: nodeID})

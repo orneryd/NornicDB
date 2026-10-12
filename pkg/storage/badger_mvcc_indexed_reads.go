@@ -246,7 +246,14 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 	}
 	include := propertyProjectionSet(properties)
 	nowNanos := DecayScoringTime()
-	covers := b.labelCoversScope(scope, label)
+	// covers is computed lazily: the label-vs-node count reads that decide
+	// the one-pass switch only matter once a scan has actually walked
+	// labelScanPointLookups candidates. Computing it eagerly paid two Badger
+	// count reads on every small or LIMIT-stopped scan (PR #1043 write-path
+	// measurement: labelCoversScope was ~29% of the match-create-delete
+	// benchmark).
+	var covers bool
+	coversDecided := false
 	return view(func(txn *badger.Txn) error {
 		// readItem reads one node from its stored record; item.Version keys
 		// the decoded-body cache.
@@ -323,6 +330,10 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
 			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) || (b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey)) {
 				continue
+			}
+			if !coversDecided && lookups >= labelScanPointLookups {
+				covers = b.labelCoversScope(scope, label)
+				coversDecided = true
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
 				if len(pending) < labelScanMaxBuffered {
