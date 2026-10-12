@@ -397,3 +397,37 @@ func TestRelationshipSearchEmbedsReportedCopy(t *testing.T) {
 	svc.WakeRelationshipEmbedding() // no pending work: a no-op
 	NewServiceWithDimensions(engine, 3).WakeRelationshipEmbedding()
 }
+
+// A relationship hit carries matches as a node hit does: the query terms in
+// its properties, with their offsets, and the best chunks of a vector hit;
+// SkipMatches leaves them out.
+func TestRelationshipSearchMatches(t *testing.T) {
+	ctx := context.Background()
+	engine := relationshipTestEngine(t)
+	embed := &countingEmbed{}
+	svc := startRelationshipService(t, engine, embed.embed, nil)
+	waitRelationshipVectors(t, svc, 2)
+
+	opts := DefaultSearchOptions()
+	opts.Relationships = true
+	response, err := svc.SearchRelationships(ctx, "river", nil, opts)
+	require.NoError(t, err)
+	require.Len(t, response.Results, 1)
+	require.Equal(t, []SearchMatch{{Kind: SearchMatchTerm, Chunk: -1, Term: "river", Property: "reason", Start: 26, End: 31}}, response.Results[0].Matches)
+
+	response, err = svc.SearchRelationships(ctx, "", wordVector("span"), opts)
+	require.NoError(t, err)
+	require.Equal(t, storage.EdgeID("r1"), response.Results[0].Relationship.ID)
+	matches := response.Results[0].Matches
+	require.Len(t, matches, 1)
+	require.Equal(t, SearchMatchChunk, matches[0].Kind)
+	require.Equal(t, 0, matches[0].Chunk)
+	require.Greater(t, matches[0].Score, 0.5)
+	require.Empty(t, matches[0].Property)
+
+	skipped := *opts
+	skipped.SkipMatches = true
+	response, err = svc.SearchRelationships(ctx, "river", wordVector("river"), &skipped)
+	require.NoError(t, err)
+	require.Empty(t, response.Results[0].Matches)
+}

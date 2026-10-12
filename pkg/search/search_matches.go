@@ -109,18 +109,7 @@ func (s *Service) attachSearchMatches(ctx context.Context, results []SearchResul
 	var fulltextProperties []string
 	if query.text != "" {
 		fulltextProperties = s.FulltextProperties()
-		idf, _ := s.fulltext().(termIDFReader)
-		terms = make(map[string]*queryTerm)
-		for _, term := range analyzer.Analyze(query.text) {
-			if _, seen := terms[term]; seen {
-				continue
-			}
-			weighted := &queryTerm{term: term, index: len(terms)}
-			if idf != nil {
-				weighted.idf = idf.TermIDF(term)
-			}
-			terms[term] = weighted
-		}
+		terms = matchQueryTerms(analyzer, query.text, s.fulltext())
 	}
 	for index := range results {
 		if nodes[index] == nil {
@@ -301,6 +290,45 @@ func (s *Service) SetEmbedTextOptions(opts *embeddingutil.EmbedTextOptions) {
 // termIDFReader is a BM25 index that can weigh a query term.
 type termIDFReader interface {
 	TermIDF(term string) float64
+}
+
+// matchQueryTerms are query's distinct terms, each with its IDF in index (a
+// rarer term weighs more) and its position among them.
+func matchQueryTerms(analyzer Analyzer, query string, index bm25Index) map[string]*queryTerm {
+	idf, _ := index.(termIDFReader)
+	terms := make(map[string]*queryTerm)
+	for _, term := range analyzer.Analyze(query) {
+		if _, seen := terms[term]; seen {
+			continue
+		}
+		weighted := &queryTerm{term: term, index: len(terms)}
+		if idf != nil {
+			weighted.idf = idf.TermIDF(term)
+		}
+		terms[term] = weighted
+	}
+	return terms
+}
+
+// relationshipChunkMatches are a relationship vector hit's best chunks, as
+// for a node (attachChunkMatches): the best one, then those at least
+// minSimilarity, up to maxChunkMatchesPerHit. scores holds each chunk's
+// similarity to the query; a relationship's chunk places in its properties
+// aren't recorded, so a match has no property or offsets.
+func relationshipChunkMatches(scores []float64, minSimilarity float64) []SearchMatch {
+	order := make([]int, len(scores))
+	for index := range order {
+		order[index] = index
+	}
+	slices.SortStableFunc(order, func(a, b int) int { return cmp.Compare(scores[b], scores[a]) })
+	matches := make([]SearchMatch, 0, min(len(order), maxChunkMatchesPerHit))
+	for _, chunk := range order {
+		if len(matches) >= maxChunkMatchesPerHit || (len(matches) > 0 && scores[chunk] < minSimilarity) {
+			break
+		}
+		matches = append(matches, SearchMatch{Kind: SearchMatchChunk, Chunk: chunk, Score: scores[chunk]})
+	}
+	return matches
 }
 
 // termMatches returns the occurrences of the query terms in node's string

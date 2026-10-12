@@ -456,26 +456,42 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		score float64
 	}
 	var vectorHits []scored
+	// chunkScores are each vector hit's chunk similarities, for its matches.
+	var chunkScores map[string][]float64
 	if len(embedding) > 0 {
 		normalizedQuery := normalizeVectorCopy(embedding)
 		for id, entry := range rs.entries {
 			best, found := -2.0, false
+			var scores []float64
 			for _, vector := range entry.Vectors {
 				if len(vector) != len(normalizedQuery) {
+					scores = append(scores, -2)
 					continue
 				}
 				var dot float64
 				for index, value := range vector {
 					dot += float64(value) * float64(normalizedQuery[index])
 				}
+				scores = append(scores, dot)
 				if dot > best {
 					best, found = dot, true
 				}
 			}
 			if found {
 				vectorHits = append(vectorHits, scored{id: id, score: best})
+				if !opts.SkipMatches {
+					if chunkScores == nil {
+						chunkScores = make(map[string][]float64)
+					}
+					chunkScores[id] = scores
+				}
 			}
 		}
+	}
+	var terms map[string]*queryTerm
+	analyzer := normalizeAnalyzer(s.bm25Analyzer)
+	if query != "" && !opts.SkipMatches {
+		terms = matchQueryTerms(analyzer, query, rs.fulltext)
 	}
 	rs.mu.RUnlock()
 
@@ -560,6 +576,14 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 			result.ContentPreview = truncate(content, 200)
 		} else if text, ok := edge.Properties["text"].(string); ok {
 			result.ContentPreview = truncate(text, 200)
+		}
+		// Matches, as a node hit's: the best chunks of a vector hit, then
+		// the query terms in the properties the keyword index reads.
+		if c.vectorRank > 0 {
+			result.Matches = relationshipChunkMatches(chunkScores[c.id], minSimilarity)
+		}
+		if c.bm25Rank > 0 && len(terms) > 0 {
+			result.Matches = append(result.Matches, termMatches(&storage.Node{Properties: edge.Properties}, s.FulltextProperties(), analyzer, terms)...)
 		}
 		results = append(results, result)
 	}

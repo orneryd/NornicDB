@@ -63,6 +63,17 @@ func TestCallDbRetrieveGraph(t *testing.T) {
 		}
 		require.Equal(t, "graph_bm25", row[9])
 		require.Greater(t, row[8].(int), 0)
+		// Each hit's matches: the query term where it occurs.
+		matches := row[12].([]any)
+		require.NotEmpty(t, matches, row[0])
+		match := matches[0].(map[string]any)
+		require.Equal(t, "term", match["kind"])
+		require.Equal(t, "zephyrine", match["term"])
+		require.Equal(t, int64(0), match["start"])
+		require.Equal(t, int64(9), match["end"])
+		if row[0] == "relationship" {
+			require.Equal(t, "reason", match["property"])
+		}
 	}
 	require.Equal(t, map[string]int{"node": 1, "relationship": 1}, kinds("CALL db.retrieveGraph({query: 'zephyrine', types: ['Note']})"))
 	require.Equal(t, map[string]int{"node": 2}, kinds("CALL db.retrieveGraph({query: 'zephyrine', relationshipTypes: ['OTHER']})"))
@@ -80,6 +91,14 @@ func TestCallDbRetrieveGraph(t *testing.T) {
 	require.Equal(t, "graph_bm25", pageMap["search_method"])
 	first := pageMap["results"].([]interface{})[0].(map[string]interface{})
 	require.Contains(t, []interface{}{"node", "relationship"}, first["kind"])
+	for _, hit := range pageMap["results"].([]interface{}) {
+		require.NotEmpty(t, hit.(map[string]interface{})["matches"])
+	}
+	unmatched, err := exec.Execute(ctx, "CALL db.retrieveGraph({query: 'zephyrine', matches: false})", nil)
+	require.NoError(t, err)
+	for _, row := range unmatched.Rows {
+		require.Empty(t, row[12])
+	}
 	capped, err := exec.Execute(ctx, "CALL db.retrieveGraph({query: 'zephyrine', maxResults: 1})", nil)
 	require.NoError(t, err)
 	require.Len(t, capped.Rows[0][0].(map[string]interface{})["results"], 1)

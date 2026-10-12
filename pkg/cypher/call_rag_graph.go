@@ -43,8 +43,8 @@ func (e *StorageExecutor) graphSearchEntity(result *search.SearchResult) (kind s
 	return "relationship", nil, result.Relationship, endpoint(result.Relationship.StartNode), endpoint(result.Relationship.EndNode)
 }
 
-// graphSearchResult is a graph search's rows (db.retrieveGraph's columns).
-// matches is null until matched passages cover relationships.
+// graphSearchResult is a graph search's rows (db.retrieveGraph's columns),
+// each hit with its matches.
 func (e *StorageExecutor) graphSearchResult(response *search.SearchResponse) *ExecuteResult {
 	result := &ExecuteResult{
 		Columns: []string{"kind", "node", "relationship", "start", "end", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "matches"},
@@ -56,7 +56,7 @@ func (e *StorageExecutor) graphSearchResult(response *search.SearchResponse) *Ex
 		result.Rows = append(result.Rows, []interface{}{
 			kind, node, relationship, start, end,
 			r.Score, r.RRFScore, r.VectorRank, r.BM25Rank,
-			response.SearchMethod, response.FallbackTriggered, string(response.FallbackReason), nil,
+			response.SearchMethod, response.FallbackTriggered, string(response.FallbackReason), search.SearchMatchValues(r.Matches),
 		})
 	}
 	return result
@@ -74,7 +74,7 @@ func (e *StorageExecutor) graphSearchPage(response *search.SearchResponse) *Exec
 		results = append(results, map[string]interface{}{
 			"kind": kind, "node": node, "relationship": relationship, "start": start, "end": end,
 			"score": r.Score, "rrf_score": r.RRFScore,
-			"vector_rank": int64(r.VectorRank), "bm25_rank": int64(r.BM25Rank), "matches": nil,
+			"vector_rank": int64(r.VectorRank), "bm25_rank": int64(r.BM25Rank), "matches": search.SearchMatchValues(r.Matches),
 		})
 	}
 	page := map[string]interface{}{
