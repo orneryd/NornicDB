@@ -2,15 +2,6 @@ package cypher
 
 import "strings"
 
-func containsRelExistencePattern(s string) bool {
-	if strings.Contains(s, "-[") && strings.Contains(s, "]-") {
-		// Covers "]->", "]-(", and the undirected bracketed "-[r]-" form.
-		return true
-	}
-	return strings.Contains(s, ")--(") || strings.Contains(s, ")-->(") ||
-		strings.Contains(s, ")<--(") || strings.Contains(s, ")<-->(")
-}
-
 func bareRelDirection(pattern, variable string) (incoming, outgoing, ok bool) {
 	if strings.Contains(pattern, "-[") {
 		return false, false, false

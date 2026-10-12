@@ -222,10 +222,12 @@ func (names *quotedVariableNames) parameterName(name string) string {
 }
 
 // isPlainVariableName reports whether name can be written without quotes
-// as a variable: an identifier that isn't a Cypher keyword.
+// as a variable: an identifier that isn't a Cypher keyword, and without a
+// '$', which only Cypher 5 reads inside a name (Cypher 25 starts a
+// parameter there).
 func isPlainVariableName(name string) bool {
 	_, end, ok := scanIdentifierToken(name, 0)
-	return ok && end == len(name) && isUnquotedName(name) && !isCypherKeyword(name)
+	return ok && end == len(name) && isUnquotedName(name) && !isCypherKeyword(name) && strings.IndexByte(name, '$') < 0
 }
 
 // internalVariableIdentifier is the plain identifier a quoted variable is

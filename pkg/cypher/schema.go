@@ -179,6 +179,12 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 	if onPosition >= 0 && (forPosition < 0 || onPosition < forPosition) {
 		return nil, localizedError(localization.CypherSchemaInvalidSyntax("CREATE CONSTRAINT"), nil)
 	}
+	// Every spelling of a uniqueness or key requirement becomes the one the
+	// shapes below read (canonicalConstraintRequirement).
+	cypher, err := e.canonicalConstraintRequirement(cypher)
+	if err != nil {
+		return nil, err
+	}
 	if parsed, err := e.parseCreateConstraintForRequireDDL(cypher); err == nil {
 		if kind, properties, ok := e.parseRelationshipKeyOrCompositeUniquePredicate(parsed.requireExpr); ok && kind == "unique" {
 			seen := make(map[string]struct{}, len(properties))
@@ -524,37 +530,47 @@ func (e *StorageExecutor) executeDropIndex(ctx context.Context, cypher string) (
 		return nil, localizedError(localization.CypherSchemaCompositeDDLNotAllowed(), nil)
 	}
 
-	trimmed := strings.TrimSpace(cypher)
-	upper := upperASCII(trimmed)
-
-	// Strip "DROP INDEX" prefix.
-	rest := strings.TrimSpace(trimmed[len("DROP INDEX"):])
+	rest := strings.TrimSpace(strings.TrimSpace(cypher)[len("DROP INDEX"):])
 	if rest == "" {
 		return nil, localizedError(localization.CypherSchemaNameRequired("DROP INDEX", "index"), nil)
 	}
-
-	ifExists := false
-	upperRest := upperASCII(rest)
-	// Check for trailing IF EXISTS.
-	if idx := strings.Index(upperRest, "IF EXISTS"); idx >= 0 {
-		ifExists = true
-		rest = strings.TrimSpace(rest[:idx])
-	}
-	_ = upper // suppress unused
-
-	// Extract index name (may be backtick-quoted).
-	name := strings.TrimSpace(rest)
-	if len(name) >= 2 && name[0] == '`' && name[len(name)-1] == '`' {
-		name = strings.ReplaceAll(name[1:len(name)-1], "``", "`")
-	}
-	if name == "" {
-		return nil, localizedError(localization.CypherSchemaNameRequired("DROP INDEX", "index"), nil)
+	name, ifExists, ok := parseDropSchemaName(rest)
+	if !ok {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherSchemaInvalidSyntax("DROP INDEX"))
 	}
 
 	if err := e.dropIndexByName(name, ifExists); err != nil {
 		return nil, err
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
+}
+
+// parseDropSchemaName reads the rest of DROP INDEX / DROP CONSTRAINT: one
+// name, plain or backtick-quoted, with IF EXISTS after it (Neo4j's form) or
+// before it. Anything else is no such statement: Neo4j's SyntaxError for
+// DROP INDEX name -> text (#528), where the text was read as part of the
+// name.
+func parseDropSchemaName(rest string) (name string, ifExists, ok bool) {
+	at := 0
+	if matchKeywordAt(rest, at, "IF") {
+		if next := skipASCIISpaces(rest, at+len("IF"), len(rest)); matchKeywordAt(rest, next, "EXISTS") {
+			ifExists, at = true, skipASCIISpaces(rest, next+len("EXISTS"), len(rest))
+		}
+	}
+	written, end, scanned := scanSymbolicName(rest, at)
+	if !scanned {
+		return "", false, false
+	}
+	at = skipASCIISpaces(rest, end, len(rest))
+	if !ifExists && matchKeywordAt(rest, at, "IF") {
+		if next := skipASCIISpaces(rest, at+len("IF"), len(rest)); matchKeywordAt(rest, next, "EXISTS") {
+			ifExists, at = true, skipASCIISpaces(rest, next+len("EXISTS"), len(rest))
+		}
+	}
+	if at != len(rest) {
+		return "", false, false
+	}
+	return symbolicNameValue(written), ifExists, true
 }
 
 // dropIndexByName removes the named index from the schema and tears down the
@@ -618,27 +634,9 @@ func (e *StorageExecutor) executeDropConstraint(ctx context.Context, cypher stri
 		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
 	}
 
-	ifExists := false
-	upperRest := upperASCII(rest)
-	if strings.HasPrefix(upperRest, "IF EXISTS") {
-		ifExists = true
-		rest = strings.TrimSpace(rest[len("IF EXISTS"):])
-		upperRest = upperASCII(rest)
-	}
-	if strings.HasSuffix(upperRest, " IF EXISTS") {
-		ifExists = true
-		rest = strings.TrimSpace(rest[:len(rest)-len(" IF EXISTS")])
-	}
-
-	if rest == "" {
-		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
-	}
-	if !strings.HasPrefix(strings.TrimSpace(rest), "`") && len(strings.Fields(rest)) > 1 {
-		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
-	}
-	name := normalizeIdentifierToken(rest)
-	if name == "" {
-		return nil, localizedError(localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"), nil)
+	name, ifExists, ok := parseDropSchemaName(rest)
+	if !ok {
+		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherSchemaInvalidSyntax("DROP CONSTRAINT"))
 	}
 
 	if err := e.storage.GetSchema().DropConstraint(name); err != nil {

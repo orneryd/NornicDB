@@ -1,75 +1,47 @@
 package cypher
 
-import "strings"
-
-func (e *StorageExecutor) evaluateRowReduce(argument string, values map[string]interface{}) (interface{}, bool, error) {
-	parts := splitTopLevelComma(argument)
-	if len(parts) != 2 {
+// evaluateRowReduce evaluates reduce and allReduce (parseReduceForm) for a
+// row, every part evaluated by evaluate (the row evaluator, or the context
+// evaluator for a reduce whose expressions hold subqueries); resolved is false
+// when a part can't be evaluated.
+func (e *StorageExecutor) evaluateRowReduce(function, argument string, values map[string]interface{}, evaluate rowValueEvaluator) (interface{}, bool, error) {
+	form, ok := parseReduceForm(function, argument)
+	if !ok {
 		return nil, false, nil
 	}
-	assignment := strings.TrimSpace(parts[0])
-	equals := findTopLevelMapKeyValueSeparator(assignment)
-	if equals <= 0 {
-		equals = strings.IndexByte(assignment, '=')
-	}
-	if equals <= 0 {
-		return nil, false, nil
-	}
-	accumulatorName := strings.TrimSpace(assignment[:equals])
-	if !isValidIdentifier(accumulatorName) {
-		return nil, false, nil
-	}
-	accumulator, resolved, err := e.evaluateRowValue(strings.TrimSpace(assignment[equals+1:]), values)
-	if err != nil {
+	accumulator, resolved, err := evaluate(form.initial, values)
+	if err != nil || !resolved {
 		return nil, false, err
 	}
-	if !resolved {
-		return nil, false, nil
-	}
-
-	iteration := strings.TrimSpace(parts[1])
-	inIndex := topLevelKeywordIndex(iteration, "IN")
-	if inIndex <= 0 {
-		return nil, false, nil
-	}
-	variableName := strings.TrimSpace(iteration[:inIndex])
-	if !isValidIdentifier(variableName) {
-		return nil, false, nil
-	}
-	remainder := strings.TrimSpace(iteration[inIndex+len("IN"):])
-	pipeIndex := rowTopLevelPipeIndex(remainder)
-	if pipeIndex <= 0 {
-		return nil, false, nil
-	}
-	listValue, resolved, err := e.evaluateRowValue(strings.TrimSpace(remainder[:pipeIndex]), values)
-	if err != nil {
+	listValue, resolved, err := evaluate(form.list, values)
+	if err != nil || !resolved {
 		return nil, false, err
-	}
-	if !resolved {
-		return nil, false, nil
 	}
 	if listValue == nil {
 		return nil, true, nil
 	}
-	items := coerceToUnwindItems(listValue)
-	reduction := strings.TrimSpace(remainder[pipeIndex+1:])
 	scope := make(map[string]interface{}, len(values)+2)
 	for name, value := range values {
 		scope[name] = value
 	}
-	for _, item := range items {
-		scope[accumulatorName] = accumulator
-		scope[variableName] = item
-		var err error
-		accumulator, resolved, err = e.evaluateRowValue(reduction, scope)
-		if err != nil {
-			return nil, false, err
-		}
-		if !resolved {
-			return nil, false, nil
+	step := func(expression string) func(accumulator, item interface{}) (interface{}, error) {
+		return func(accumulator, item interface{}) (interface{}, error) {
+			scope[form.accumulator], scope[form.variable] = accumulator, item
+			value, resolved, err := evaluate(expression, scope)
+			if err == nil && !resolved {
+				err = errRowArgumentUnresolved
+			}
+			return value, err
 		}
 	}
-	return accumulator, true, nil
+	result, err := runReduceForm(form, accumulator, coerceToUnwindItems(listValue), step(form.step), step(form.predicate))
+	if err == errRowArgumentUnresolved {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return result, true, nil
 }
 
 func rowTopLevelPipeIndex(expression string) int {

@@ -2152,8 +2152,9 @@ func TestFunctionAdditionalMathNilAndFallbackBranches(t *testing.T) {
 	if got := e.evaluateExpressionWithContext(ctx, "isNaN('x')", nodes, rels); got != nil {
 		t.Fatalf("isNaN('x') = %#v, want nil", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "isEmpty(123)", nodes, rels); got != false {
-		t.Fatalf("isEmpty(123) = %#v, want false", got)
+	// isEmpty of a number is Neo4j's TypeError, null in this evaluator.
+	if got := e.evaluateExpressionWithContext(ctx, "isEmpty(123)", nodes, rels); got != nil {
+		t.Fatalf("isEmpty(123) = %#v, want nil", got)
 	}
 	if got := e.evaluateExpressionWithContext(ctx, "isEmpty(NULL)", nodes, rels); got != nil {
 		t.Fatalf("isEmpty(NULL) = %#v, want nil (Neo4j)", got)
@@ -2694,8 +2695,10 @@ func TestFunctionFullMath_AdditionalInvalidInputBranches(t *testing.T) {
 	if got := e.evaluateExpressionWithContext(ctx, "filter(x IN 'bad' WHERE x > 0)", nodes, nil); !reflect.DeepEqual(got, []interface{}{}) {
 		t.Fatalf("filter invalid input should return empty list, got %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "extract(x IN 'bad' | x)", nodes, nil); !reflect.DeepEqual(got, []interface{}{}) {
-		t.Fatalf("extract invalid input should return empty list, got %#v", got)
+	// extract is the list comprehension [x IN list | x], which reads a value
+	// that isn't a list as a list of that one value, as UNWIND does.
+	if got := e.evaluateExpressionWithContext(ctx, "extract(x IN 'bad' | x)", nodes, nil); !reflect.DeepEqual(got, []interface{}{"bad"}) {
+		t.Fatalf("extract of a single value should return it as a list, got %#v", got)
 	}
 }
 

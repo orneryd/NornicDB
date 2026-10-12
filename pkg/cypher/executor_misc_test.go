@@ -1434,9 +1434,10 @@ func TestSubstituteParamsEdgeCases(t *testing.T) {
 			params: map[string]interface{}{"name": "test"},
 		},
 		{
-			name:   "adjacent parameters",
+			// $ goes on a name, as in Neo4j: $a$b is the parameter a$b.
+			name:   "dollar inside a parameter name",
 			query:  "Values: $a$b",
-			params: map[string]interface{}{"a": "x", "b": "y"},
+			params: map[string]interface{}{"a$b": "x"},
 		},
 		{
 			name:   "underscore in param name",

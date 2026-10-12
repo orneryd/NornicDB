@@ -50,10 +50,15 @@ var cypherClauseStarts = [...]string{
 	"MATCH", "CREATE", "MERGE", "DELETE", "DETACH", "CALL", "RETURN", "WITH",
 	"UNWIND", "OPTIONAL", "DROP", "SHOW", "FOREACH", "LOAD", "EXPLAIN",
 	"PROFILE", "ALTER", "USE", "BEGIN", "COMMIT", "ROLLBACK", "TERMINATE",
-	"UNION", "CYPHER", "FINISH", "LET", "FILTER", "FOR",
+	"UNION", "CYPHER", "FINISH", "LET", "FILTER", "FOR", "WHEN",
 }
 
+// startsWithClauseKeyword reports whether a clause keyword, or a brace that
+// opens a query part ({ RETURN 1 } UNION …), starts s.
 func startsWithClauseKeyword(s string) bool {
+	if strings.HasPrefix(s, "{") {
+		return true
+	}
 	for _, keyword := range cypherClauseStarts {
 		if matchKeywordAt(s, 0, keyword) {
 			return true

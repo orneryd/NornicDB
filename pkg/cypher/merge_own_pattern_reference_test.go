@@ -55,12 +55,14 @@ func TestMergeMapReadsOwnPattern(t *testing.T) {
 	}
 }
 
-// A store error while finding a relationship MERGE's end nodes, read once
-// or per start node, is the statement's error.
+// A store error while a MERGE's match reads a label is the statement's
+// error.
 func TestMergeMapReadsOwnPatternStoreError(t *testing.T) {
+	// The match reads the failing label where its pattern starts; a pattern
+	// whose traversal never reaches it (no relationship from a) needn't.
 	for _, statement := range []string{
-		"MERGE (a:MgS {x: 1})-[:MgT]->(b:MgE {y: a.x}) RETURN b.y AS v",
-		"MERGE (a:MgS {x: 1})-[:MgT]->(b:MgE) RETURN b AS v",
+		"MERGE (b:MgE {y: 1})-[:MgT]->(a:MgS {x: b.y}) RETURN a.x AS v",
+		"MERGE (b:MgE)-[:MgT]->(a:MgS {x: 1}) RETURN b AS v",
 	} {
 		store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "merge_own_pattern_error")
 		_, err := NewStorageExecutor(store).Execute(context.Background(), "CREATE (:MgS {x: 1})", nil)

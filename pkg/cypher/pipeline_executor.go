@@ -1191,8 +1191,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	}
 	// A path assignment (p = (n:L)) is the general route's, which binds the
 	// path: read as a node, its variable would be "p = (n".
-	if strings.Contains(matchBody, "-[") || strings.Contains(matchBody, "]-") || len(e.splitNodePatterns(matchBody)) != 1 ||
-		extractPathAssignmentVariable(matchBody) != "" {
+	if !e.isSingleNodePattern(matchBody) || extractPathAssignmentVariable(matchBody) != "" {
 		return nil, false, nil
 	}
 	nodePattern := e.parseNodePattern(ctx, matchBody)
@@ -1860,6 +1859,9 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 		}
 		return e.pipelineApplyShortestPathMatch(ctx, rows, shortest, true)
 	}
+	if err := validateBoundPatternNodes(rows, strings.TrimSpace(clause[len("OPTIONAL MATCH"):])); err != nil {
+		return nil, err
+	}
 	optionalClause := splitOptionalMatchClauses(strings.TrimSpace(clause[len("OPTIONAL MATCH"):]))
 	if len(optionalClause) != 1 {
 		return nil, localizedError(localization.CypherCoreOptionalMatchRequired(), nil)
@@ -1949,6 +1951,9 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 	if stripped, repeatable := stripRepeatableElements(body); repeatable {
 		ctx, body, clause = withRepeatableElements(ctx), stripped, "MATCH "+stripped
 	}
+	if err := validateBoundPatternNodes(rows, body); err != nil {
+		return nil, true, err
+	}
 	if shortest, ok, err := e.parseShortestPathMatch(ctx, body); ok || err != nil {
 		if err != nil {
 			return nil, true, err
@@ -1971,7 +1976,7 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 	if len(parts) > 1 && extractPathAssignmentVariable(parts[len(parts)-1]) != "" {
 		nodePrefix := true
 		for _, part := range parts[:len(parts)-1] {
-			if !strings.HasPrefix(strings.TrimSpace(part), "(") || containsRelExistencePattern(part) {
+			if !strings.HasPrefix(strings.TrimSpace(part), "(") || containsRelationshipPattern(part) {
 				nodePrefix = false
 				break
 			}
@@ -2001,7 +2006,7 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 		return expanded, true, nil
 	}
 	if len(parts) > 1 || len(parts) == 1 && strings.HasPrefix(strings.TrimSpace(parts[0]), "(") &&
-		!containsRelExistencePattern(parts[0]) && e.parseNodePattern(ctx, parts[0]).variable == "" {
+		!containsRelationshipPattern(parts[0]) && e.parseNodePattern(ctx, parts[0]).variable == "" {
 		where := ""
 		if patternEnd < len(body) {
 			where = strings.TrimSpace(body[patternEnd+len("WHERE"):])
@@ -2104,7 +2109,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:whereIndex])
 	}
-	if !containsRelExistencePattern(pattern) {
+	if !containsRelationshipPattern(pattern) {
 		return nil, false, nil
 	}
 	// A mixed comma-separated MATCH is a product of independent pattern
@@ -2310,7 +2315,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:whereIndex])
 	}
-	if strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") || len(e.splitNodePatterns(pattern)) != 1 {
+	if !e.isSingleNodePattern(pattern) {
 		return nil, false, nil
 	}
 	pathVariable := extractPathAssignmentVariable(pattern)
@@ -2673,7 +2678,7 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 	// executeChainedMatch runs one pattern part. A MATCH of several parts
 	// ((a)-->(x), (b)-->(x)) needs its relationships distinct across the
 	// parts, which the MATCH executor below enforces.
-	if len(splitTopLevelComma(pattern)) != 1 || !containsRelExistencePattern(pattern) {
+	if len(splitTopLevelComma(pattern)) != 1 || !containsRelationshipPattern(pattern) {
 		return nil, false
 	}
 	out := make([]pipelineRow, 0, len(rows))
@@ -3055,10 +3060,16 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		mergePattern := clauseBody
 		if isMerge {
 			mergePattern = clausePattern
-			if multiRelationship {
+			// A whole-path MERGE: the pattern's matches with the row's
+			// bindings, every one a row, or the whole pattern created,
+			// reusing the bound nodes, as in Neo4j. Every relationship
+			// pattern with an endpoint the row doesn't bind takes it (#509:
+			// two matching paths are two rows); one with both endpoints
+			// bound keeps the relationship route below.
+			mergeWholePath := func() error {
 				produced, pathStats, created, err := e.pipelineMergePath(ctx, row, mergePattern, nodeContext, relContext)
 				if err != nil {
-					return nil, nil, err
+					return err
 				}
 				addQueryStats(stats, pathStats)
 				actions := onMatchSet
@@ -3066,11 +3077,17 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					actions = onCreateSet
 				}
 				if err := e.applyMergeActions(ctx, produced, actions, stats); err != nil {
-					return nil, nil, err
+					return err
 				}
 				// It may have written between any pair of nodes.
 				identities.reset()
 				out = append(out, produced...)
+				return nil
+			}
+			if multiRelationship {
+				if err := mergeWholePath(); err != nil {
+					return nil, nil, err
+				}
 				continue
 			}
 			if open, _ := firstRelationshipBracket(mergePattern); open >= 0 {
@@ -3083,6 +3100,12 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					if missingRelationshipEndpoint(row, variable) {
 						return nil, nil, relationshipEndpointMissingError(variable)
 					}
+				}
+				if nodeContext[relationshipPattern.startVariable] == nil || nodeContext[relationshipPattern.endVariable] == nil {
+					if err := mergeWholePath(); err != nil {
+						return nil, nil, err
+					}
+					continue
 				}
 			} else if nodePathVariable = extractPathAssignmentVariable(mergePattern); nodePathVariable != "" {
 				mergePattern = strings.TrimSpace(mergePattern[strings.Index(mergePattern, "=")+1:])

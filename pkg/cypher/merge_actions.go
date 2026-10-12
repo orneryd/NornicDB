@@ -250,22 +250,40 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 			}
 		}
 	}
-	matched, err := e.pipelineMatchRows(ctx, row, "MATCH "+pattern)
+	// The match is the statement rewrite's MATCH: a property map reading
+	// the pattern's own variables (b {k: a.k}) is a WHERE predicate there.
+	match, _, err := desugarLabelExpressions("MATCH "+pattern, nil, cypherVersionFromContext(ctx) == "25")
+	if err != nil {
+		return nil, nil, false, err
+	}
+	matched, err := e.pipelineMatchRows(ctx, row, match)
 	if err != nil {
 		return nil, nil, false, err
 	}
 	if len(matched) > 0 {
 		return matched, nil, false, nil
 	}
+	// The created path: a map entry reading the pattern's own variables
+	// (the match's WHERE, the only predicates a MERGE pattern can have) is
+	// set once its elements exist, as Neo4j's MERGE evaluates it; CREATE
+	// itself can't read an element it creates.
+	createPattern, assignments := pattern, ""
+	if where := topLevelKeywordIndex(match, "WHERE"); where >= 0 {
+		createPattern = strings.TrimSpace(match[len("MATCH"):where])
+		assignments = strings.Join(splitTopLevelAndConjuncts(match[where+len("WHERE"):]), ", ")
+	}
 	// One row: the create reports not-ok only with an error.
-	createdRows, result, _, err := e.pipelineApplyCreateClauses(ctx, []pipelineRow{row}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE " + directedMergePath(pattern)}})
+	createdRows, result, _, err := e.pipelineApplyCreateClauses(ctx, []pipelineRow{row}, []pipelineClause{{kind: pipelineClauseCreate, text: "CREATE " + directedMergePath(createPattern)}})
+	if err == nil && assignments != "" {
+		err = e.applyMergeActions(ctx, createdRows, "SET "+assignments, result.Stats)
+	}
 	if err != nil {
 		if !mergeCreateConflict(err) {
 			return nil, nil, false, err
 		}
 		// A concurrent MERGE created part of the path first: match again,
 		// as the node and relationship MERGE routes recover (mergeCreateConflict).
-		recovered, matchErr := e.pipelineMatchRows(ctx, row, "MATCH "+pattern)
+		recovered, matchErr := e.pipelineMatchRows(ctx, row, match)
 		if matchErr != nil || len(recovered) == 0 {
 			return nil, nil, false, err
 		}

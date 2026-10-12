@@ -44,6 +44,8 @@
   other: "[!! no properties found in fulltext index definition !!]"
 - id: cypherschema.empty_statement
   other: "[!! empty statement !!]"
+- id: cypherschema.constraint_entity_mismatch
+  other: "[!! '{{.Requirement}}' does not allow {{.Pattern}} patterns !!]"
 - id: cypherschema.invalid_pattern
   other: "[!! invalid {{.Pattern}} pattern !!]"
 - id: cypherschema.unsupported_predicate

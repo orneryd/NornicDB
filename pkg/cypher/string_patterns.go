@@ -414,6 +414,10 @@ func ExtractParameters(query string) []string {
 			break
 		}
 		dollarIdx += i
+		if !isParameterStart(query, dollarIdx) {
+			i = dollarIdx + 1
+			continue
+		}
 
 		// Check if there's a valid identifier after $
 		start := dollarIdx + 1

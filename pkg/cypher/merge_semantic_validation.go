@@ -57,20 +57,25 @@ func (cache *semanticValidationCache) add(query string) {
 // contract before routing. Keeping this validation ahead of every physical
 // executor prevents optimized and general MERGE paths from accepting different
 // syntax or producing effects before a semantic failure.
-func (e *StorageExecutor) validateMergeSemanticScopes(cypher string) error {
+func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bool) error {
 	if findKeywordIndexInContext(cypher, "MERGE") < 0 {
 		return nil
 	}
 	// Literal-bearing MERGE statements share one compile verdict through the
 	// canonical form (PR #1043 #6), looked up only when the exact text
 	// misses; failures are never cached, so a bad statement still reports
-	// its own error.
-	cached := e.mergeSemanticValidationCache.contains(cypher)
-	var canonical string
+	// its own error. Both keys carry the language version (semanticCacheKey).
+	key := semanticCacheKey(cypher, cypher25)
+	cached := e.mergeSemanticValidationCache.contains(key)
+	var canonicalKey string
 	var normalized bool
 	if !cached {
+		var canonical string
 		canonical, normalized = normalizeLiteralText(cypher)
-		cached = normalized && e.mergeSemanticValidationCache.contains(canonical)
+		if normalized {
+			canonicalKey = semanticCacheKey(canonical, cypher25)
+			cached = e.mergeSemanticValidationCache.contains(canonicalKey)
+		}
 	}
 	if cached {
 		return nil
@@ -98,17 +103,15 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string) error {
 				scope.bind(alias)
 			}
 		case pipelineClauseMerge:
-			if err := e.validateMergeClause(scope, clause.text); err != nil {
+			if err := e.validateMergeClause(scope, clause.text, cypher25); err != nil {
 				return err
 			}
 		}
 	}
 	if normalized {
-		e.mergeSemanticValidationCache.add(canonical)
-		e.mergeSemanticValidationCache.add(cypher)
-	} else {
-		e.mergeSemanticValidationCache.add(cypher)
+		e.mergeSemanticValidationCache.add(canonicalKey)
 	}
+	e.mergeSemanticValidationCache.add(key)
 	return nil
 }
 
@@ -131,7 +134,10 @@ func addMergePatternBindings(scope *semanticBindingScope, clause string) {
 	}
 }
 
-func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, clause string) error {
+// cypher25 adds Neo4j 2026.09's rule for a Cypher 25 statement: a property
+// value may not read a node or relationship the same MERGE creates
+// (MERGE (a {x: 1})-[:T]->(b {x: a.x})).
+func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, clause string, cypher25 bool) error {
 	// Neo4j rejects EXISTS / COUNT / COLLECT { … } anywhere in a MERGE clause:
 	// its pattern, property maps and ON CREATE / ON MATCH SET actions.
 	if mayContainSubqueryExpression(clause) && len(findSubqueryExpressions(clause)) > 0 {
@@ -165,6 +171,11 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 	for _, variable := range relationshipVariables {
 		if scope.contains(variable) {
 			return mergeVariableAlreadyBoundError(variable)
+		}
+	}
+	if cypher25 {
+		if err := e.validateCreateSamePatternReferences(scope, pattern, relationshipVariables, make(map[string]string), "MERGE"); err != nil {
+			return err
 		}
 	}
 	if relationshipPattern {
@@ -286,7 +297,8 @@ func mergePatternUsesParameterPredicate(pattern string) bool {
 				}
 				continue
 			}
-			if depth == 0 {
+			// A $ inside a name (n:L$M) is no parameter.
+			if depth == 0 && isParameterStart(pattern, index) {
 				return true
 			}
 		}

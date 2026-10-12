@@ -567,11 +567,6 @@ func TestCypherHelpers_FindNodeByProperties_AndRangeIndex(t *testing.T) {
 	_, err = eng.CreateNode(&storage.Node{ID: "p2", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "bob", "age": int64(40)}})
 	require.NoError(t, err)
 
-	n := exec.findNodeByProperties(map[string]interface{}{"name": "alice"})
-	require.NotNil(t, n)
-	assert.Equal(t, storage.NodeID("p1"), n.ID)
-	assert.Nil(t, exec.findNodeByProperties(map[string]interface{}{"name": "nobody"}))
-
 	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX idx_age IF NOT EXISTS FOR (n:Person) ON (n.age)")
 	require.NoError(t, err)
 	_, err = exec.executeCreateRangeIndex(ctx, "CREATE RANGE INDEX IF NOT EXISTS FOR (n:Person) ON (n.age)")

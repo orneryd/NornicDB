@@ -179,8 +179,19 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		cypher = grouped
 		defer func() { result, retErr = numericRewrite.restore(result, retErr) }()
 	}
+	// GQL function aliases (collect_list, ln, …) call the function they
+	// name; columns and messages keep the client's text.
+	if !rewriteFree(rewriteFreeFunctionAliases, false, cypher) {
+		if aliased, aliasRewrite := canonicalizeFunctionAliases(cypher); aliasRewrite != nil {
+			cypher = aliased
+			defer func() { result, retErr = aliasRewrite.restore(result, retErr) }()
+		} else {
+			markRewriteFree(rewriteFreeFunctionAliases, false, cypher)
+		}
+	}
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
+	ctx = withCypherVersion(ctx, cypher)
 	if err := validateCypherPreamble(cypher); err != nil {
 		return nil, err
 	}
@@ -195,6 +206,49 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// UNION branch) runs it and returns no rows.
 	cypher, _ = stripCypherPreamble(cypher)
 	cypher = strings.TrimSpace(cypher)
+	// Cypher 25 expression forms (RETURN ALL, s"…{x}…", map comprehensions)
+	// become the expressions they stand for, once, here (#907).
+	cypher25 := cypherVersionFromContext(ctx) == "25"
+	// In Cypher 25 a '$' after a name starts a parameter (L$props is
+	// L $props); Cypher 5 reads a$b as one name.
+	if cypher25 {
+		if separated, separateRewrite := separateCypher25Parameters(cypher); separateRewrite != nil {
+			cypher = separated
+			defer func() { result, retErr = separateRewrite.restore(result, retErr) }()
+		}
+	}
+	if !rewriteFree(rewriteFreeCypher25Expressions, cypher25, cypher) {
+		expanded, expressionRewrites, err := desugarCypher25Expressions(cypher, cypher25)
+		if err != nil {
+			return nil, err
+		}
+		if len(expressionRewrites) > 0 {
+			cypher = expanded
+			// One defer, not one per pass: a defer in a loop would make every
+			// statement pay for heap-allocated defers. Restored last pass first.
+			defer func() {
+				for index := len(expressionRewrites) - 1; index >= 0; index-- {
+					result, retErr = expressionRewrites[index].restore(withoutGeneratedColumns(result), retErr)
+				}
+			}()
+		} else {
+			markRewriteFree(rewriteFreeCypher25Expressions, cypher25, cypher)
+		}
+	}
+	// Cypher 25 composition (NEXT, WHEN, braced query parts) becomes the
+	// CALL subqueries and UNIONs it stands for, once, here; columns and
+	// errors are mapped back (#907).
+	if !rewriteFree(rewriteFreeQueryStructure, false, cypher) {
+		if composed, structureRewrite, err := desugarQueryStructure(cypher, e); err != nil {
+			return nil, err
+		} else if structureRewrite != nil {
+			cypher = composed
+			defer func() { result, retErr = structureRewrite.restore(withoutGeneratedColumns(result), retErr) }()
+		} else if !mayUseQueryStructure(cypher) {
+			// Only the quick check's verdict is the text's alone.
+			markRewriteFree(rewriteFreeQueryStructure, false, cypher)
+		}
+	}
 	if err := e.validateStatementFraming(cypher); err != nil {
 		return nil, err
 	}
@@ -284,7 +338,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Label expressions in patterns become the label forms and WHERE
 	// predicates every route reads, once, here; the result's columns and
 	// errors are mapped back (#860).
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params)
+	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +364,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		ctx = withQueryParams(ctx, mergedParams)
 		mode, modeQuery := parseExecutionMode(cypher)
 		if mode != ModeNormal {
-			if err := e.validateSyntax(modeQuery); err != nil {
+			if err := e.validateSyntax(modeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
 				return nil, err
 			}
 			if err := e.validateSemanticScopes(ctx, modeQuery); err != nil {
@@ -383,6 +437,24 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return result, nil
 	}
 
+	// EXPLAIN / PROFILE USE <graph> …: the graph is resolved as for the
+	// statement itself (Neo4j's DatabaseNotFound for a missing one, #744),
+	// and the plan is the target database's.
+	if mode, inner := parseExecutionMode(cypher); mode != ModeNormal {
+		if use, remaining, hasUse, err := parseUseClause(inner, false); hasUse || err != nil {
+			if err != nil {
+				return nil, err
+			}
+			if err := e.dynamicUseError(use); err != nil {
+				return nil, err
+			}
+			keyword := "EXPLAIN "
+			if mode == ModeProfile {
+				keyword = "PROFILE "
+			}
+			return e.executeOnDatabase(ctx, use.Name, keyword+remaining, params)
+		}
+	}
 	// Handle leading Cypher USE clause (openCypher multi-graph syntax).
 	if use, remaining, hasUse, err := parseUseClause(cypher, false); hasUse || err != nil {
 		if err != nil {
@@ -490,7 +562,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 
 	// Validate basic syntax
-	if err := e.validateSyntax(cypher); err != nil {
+	if err := e.validateSyntax(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 		// Plan 04-03 Site 2 (parse-error chokepoint): emit op_type="parse_error"
 		// per D-04b sixth enum value. No duration observation — parse cost is
 		// sub-microsecond and not meaningful to bucket. The queries_total
@@ -623,10 +695,15 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// result behind. The search index is updated after the graph (a node's
 	// vector is indexed after its embedding is saved), so a search procedure
 	// that ran in between would otherwise keep its result until the TTL
-	// (#945).
+	// (#945). The key carries a language version other than the default 5:
+	// the same text can mean different things in Cypher 5 and Cypher 25
+	// (#907); a Cypher 5 key pays for no version text.
 	resultCacheKey := ""
 	if info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) {
 		resultCacheKey = resultCacheEntryKey(cypher, params)
+		if version := cypherVersionFromContext(ctx); version != "5" {
+			resultCacheKey += ":cypher:" + version
+		}
 		if provider, ok := e.storage.(storage.GraphMutationVersionProvider); ok {
 			if version, supported := provider.GraphMutationVersion(); supported {
 				resultCacheKey += ":graph:" + strconv.FormatUint(version, 10)

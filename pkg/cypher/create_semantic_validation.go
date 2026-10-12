@@ -35,7 +35,7 @@ func (s *semanticBindingScope) contains(name string) bool {
 // any of the specialized CREATE executors. It intentionally consumes the same
 // top-level clause decomposition as the semantic pipeline so fast paths cannot
 // disagree about whether a name is new, bound, or undefined.
-func (e *StorageExecutor) validateCreateSemanticScopes(cypher string) error {
+func (e *StorageExecutor) validateCreateSemanticScopes(cypher string, cypher25 bool) error {
 	if findKeywordIndexInContext(cypher, "CREATE") < 0 || isCreateSchemaOrAdministrationCommand(cypher) {
 		return nil
 	}
@@ -72,7 +72,7 @@ func (e *StorageExecutor) validateCreateSemanticScopes(cypher string) error {
 				scope.bind(name)
 			}
 		case pipelineClauseCreate:
-			if err := e.validateCreateClauseBindings(scope, clause.text); err != nil {
+			if err := e.validateCreateClauseBindings(scope, clause.text, cypher25); err != nil {
 				return err
 			}
 		}
@@ -145,9 +145,13 @@ func unwindBindingName(clause string) string {
 	return ""
 }
 
-func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingScope, clause string) error {
+func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingScope, clause string, cypher25 bool) error {
 	body := strings.TrimSpace(clause[len("CREATE"):])
+	created := make(map[string]string)
 	for _, pattern := range e.splitCreatePatterns(body) {
+		if !cypher25 {
+			clear(created)
+		}
 		pattern = strings.TrimSpace(pattern)
 		if pattern == "" {
 			continue
@@ -165,7 +169,7 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 			}
 		}
 
-		if err := e.validateCreateSamePatternReferences(scope, pattern, relationshipVariables); err != nil {
+		if err := e.validateCreateSamePatternReferences(scope, pattern, relationshipVariables, created, "CREATE"); err != nil {
 			return err
 		}
 
@@ -353,11 +357,16 @@ func createRelationshipPropertyMapBodies(pattern string) []string {
 // validateCreateSamePatternReferences rejects a property value that reads a
 // node or relationship created by the same CREATE path pattern, including a
 // node's own map ((a {x: a.y})), as Neo4j does: the entity does not exist yet
-// when its pattern's properties are evaluated. A later comma-separated pattern
-// may read it, and names bound inside the expression (list comprehension
-// iterators, reduce / all / any / none / single) are not references.
-func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBindingScope, pattern string, relationshipVariables []string) error {
-	created := make(map[string]string)
+// when its pattern's properties are evaluated. In a Cypher 5 statement a
+// later comma-separated pattern may read it; names bound inside the
+// expression (list comprehension iterators, reduce / all / any / none /
+// single) are not references.
+//
+// created holds the clause's entities already read (and receives this
+// pattern's): a fresh map per pattern for a Cypher 5 statement, one map per
+// clause for a Cypher 25 statement, where a pattern may not read an entity an
+// earlier pattern of the same CREATE creates either (Neo4j 2026.09).
+func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBindingScope, pattern string, relationshipVariables []string, created map[string]string, clause string) error {
 	nodePatterns := e.splitNodePatterns(pattern)
 	for _, nodePattern := range nodePatterns {
 		if variable := createNodePatternVariable(nodePattern); variable != "" && !scope.contains(variable) {
@@ -384,7 +393,7 @@ func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBin
 			}
 			for _, variable := range expressionFreeVariables(pair[separator+1:]) {
 				if kind, ok := created[variable]; ok {
-					return createSamePatternReferenceError(variable, kind)
+					return createSamePatternReferenceError(variable, kind, clause)
 				}
 			}
 		}
@@ -392,12 +401,9 @@ func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBin
 	return nil
 }
 
-func createSamePatternReferenceError(variable, kind string) error {
-	return newSemanticError(
-		"Neo.ClientError.Statement.SyntaxError",
-		"VariableCreatedInSameClause",
-		fmt.Sprintf("The %s variable '%s' is referencing a %s that is created in the same CREATE clause which is not allowed. Please only reference variables created in earlier clauses.", kind, variable, kind),
-	)
+func createSamePatternReferenceError(variable, kind, clause string) error {
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableCreatedInSameClause",
+		localization.CypherCoreEntityReferencedInSameClause(kind, variable, clause))
 }
 
 func (e *StorageExecutor) validateCreatePropertyExpressions(scope *semanticBindingScope, properties string) error {

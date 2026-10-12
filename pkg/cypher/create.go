@@ -743,6 +743,13 @@ func (e *StorageExecutor) scanCreatePatterns(pattern string) []string {
 
 // splitNodePatterns splits a CREATE pattern into individual node patterns
 // (Used for simple node-only patterns and by other parts of the system)
+// isSingleNodePattern reports whether pattern is one node pattern: no
+// relationship pattern (containsRelationshipPattern, which skips strings
+// and reads bare and spaced arrows) and a single node.
+func (e *StorageExecutor) isSingleNodePattern(pattern string) bool {
+	return !containsRelationshipPattern(pattern) && len(e.splitNodePatterns(pattern)) == 1
+}
+
 func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
 	var patterns []string
 	var current strings.Builder
@@ -875,15 +882,15 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 // name, as in Neo4j.
 func splitPatternParameterMap(text string) (rest, parameter string, ok bool) {
 	trimmed := strings.TrimRight(text, " \t\r\n")
+	// The trailing token holds its own $s: $a$b is the parameter a$b.
 	start := len(trimmed)
 	for start > 0 && isIdentByte(trimmed[start-1]) {
 		start--
 	}
-	dollar := start - 1
-	if start == len(trimmed) || dollar < 0 || trimmed[dollar] != '$' || dollar > 0 && !isASCIIWhitespace(trimmed[dollar-1]) {
+	if start+1 >= len(trimmed) || trimmed[start] != '$' || start > 0 && !isASCIIWhitespace(trimmed[start-1]) {
 		return text, "", false
 	}
-	return trimmed[:dollar], trimmed[dollar:], true
+	return trimmed[:start], trimmed[start:], true
 }
 
 // createParameterProperties is the property map a CREATE pattern's $name

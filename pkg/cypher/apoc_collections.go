@@ -65,6 +65,7 @@ package cypher
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -93,15 +94,7 @@ func flattenList(val interface{}) []interface{} {
 	var result []interface{}
 	switch v := val.(type) {
 	case []interface{}:
-		for _, item := range v {
-			// Check if item is also a list
-			switch inner := item.(type) {
-			case []interface{}:
-				result = append(result, flattenList(inner)...)
-			default:
-				result = append(result, item)
-			}
-		}
+		return collFlatten(nil, v, math.MaxInt64)
 	case []string:
 		for _, s := range v {
 			result = append(result, s)

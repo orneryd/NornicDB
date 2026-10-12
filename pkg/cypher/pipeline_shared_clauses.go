@@ -125,8 +125,8 @@ func bindPipelineLet(scope *semanticBindingScope, clause string) error {
 	return nil
 }
 
-func (e *StorageExecutor) validateSharedClause(scope matchSemanticScope, values map[string]string, clause pipelineClause) error {
-	input := staticTypeScope{kinds: scope, values: values, complete: true}
+func (e *StorageExecutor) validateSharedClause(scope matchSemanticScope, values map[string]string, clause pipelineClause, cypher25 bool) error {
+	input := staticTypeScope{kinds: scope, values: values, complete: true, cypher25: cypher25}
 	if clause.kind == pipelineClauseFilter {
 		expression := pipelineFilterExpression(clause.text)
 		if expression == "" {

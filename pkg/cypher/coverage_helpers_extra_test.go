@@ -162,38 +162,6 @@ func TestCypherCoverage_WhereAndComparableHelpers(t *testing.T) {
 	require.True(t, isComparableInterfaceValue(nil))
 	require.True(t, isComparableInterfaceValue("x"))
 	require.False(t, isComparableInterfaceValue([]string{"x"}))
-
-	parsed, ok := parseWhereLiteral("'it''s\\\\ok'")
-	require.True(t, ok)
-	require.Equal(t, "it's\\ok", parsed)
-	parsed, ok = parseWhereLiteral("false")
-	require.True(t, ok)
-	require.Equal(t, false, parsed)
-	parsed, ok = parseWhereLiteral("3.14")
-	require.True(t, ok)
-	require.Equal(t, 3.14, parsed)
-	_, ok = parseWhereLiteral("not-literal")
-	require.False(t, ok)
-
-	exec := &StorageExecutor{}
-	require.True(t, exec.isLiteralIsNotNullExpr("'x' IS NOT NULL"))
-	require.False(t, exec.isLiteralIsNotNullExpr("null IS NOT NULL"))
-	require.False(t, exec.isLiteralIsNotNullExpr("n.name IS NOT NULL"))
-
-	items, ok := normalizeWhereList([]string{"a", "b"})
-	require.True(t, ok)
-	require.Equal(t, []interface{}{"a", "b"}, items)
-	items, ok = normalizeWhereList([]int{1, 2})
-	require.True(t, ok)
-	require.Equal(t, []interface{}{1, 2}, items)
-	items, ok = normalizeWhereList([]int64{3, 4})
-	require.True(t, ok)
-	require.Equal(t, []interface{}{int64(3), int64(4)}, items)
-	items, ok = normalizeWhereList([]float64{1.5, 2.5})
-	require.True(t, ok)
-	require.Equal(t, []interface{}{1.5, 2.5}, items)
-	_, ok = normalizeWhereList("nope")
-	require.False(t, ok)
 }
 
 func TestCypherCoverage_VisibleAtWrapperAndMergeHelpers(t *testing.T) {
@@ -288,20 +256,4 @@ func TestCypherCoverage_VisibleAtWrapperAndMergeHelpers(t *testing.T) {
 	require.True(t, mergeCreateConflict(storage.ErrAlreadyExists))
 	require.True(t, mergeCreateConflict(errors.New("node already exists")))
 	require.False(t, mergeCreateConflict(errors.New("other failure")))
-
-	cloned := cloneNodeForMergeMutation(&storage.Node{
-		ID:              "nornic:n2",
-		Labels:          []string{"Person"},
-		Properties:      map[string]interface{}{"name": "Grace"},
-		NamedEmbeddings: map[string][]float32{"v": {1, 2}},
-		ChunkEmbeddings: [][]float32{{3, 4}},
-		EmbedMeta:       map[string]any{"source": "test"},
-	})
-	require.Equal(t, storage.NodeID("nornic:n2"), cloned.ID)
-	cloned.Labels[0] = "Changed"
-	cloned.Properties["name"] = "Changed"
-	cloned.NamedEmbeddings["v"][0] = 99
-	cloned.ChunkEmbeddings[0][0] = 99
-	require.Equal(t, "Changed", cloned.Labels[0])
-	require.Nil(t, cloneNodeForMergeMutation(nil))
 }

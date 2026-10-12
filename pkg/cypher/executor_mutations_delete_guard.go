@@ -152,28 +152,19 @@ func deleteExpressionRootIdentifier(expression string) string {
 	if expression == "" {
 		return ""
 	}
-	if expression[0] == '`' {
-		if end := strings.Index(expression[1:], "`"); end >= 0 {
-			return expression[1 : end+1]
+	// The name is read by the one identifier rule (scanIdentifierToken):
+	// n$ and `a``b` are variables too.
+	name, end, ok := scanIdentifierToken(expression, 0)
+	if !ok || (end < len(expression) && expression[end] == '(') {
+		return ""
+	}
+	if expression[0] != '`' {
+		switch lowerASCII(name) {
+		case "null", "true", "false":
+			return ""
 		}
-		return ""
 	}
-	end := 0
-	for end < len(expression) {
-		character := expression[end]
-		if !(isIdentStartByte(character) || (end > 0 && character >= '0' && character <= '9')) {
-			break
-		}
-		end++
-	}
-	if end == 0 || (end < len(expression) && expression[end] == '(') {
-		return ""
-	}
-	switch lowerASCII(expression[:end]) {
-	case "null", "true", "false":
-		return ""
-	}
-	return expression[:end]
+	return name
 }
 
 func addPipelinePatternBindings(executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {

@@ -311,7 +311,9 @@ func isOperatorExpressionText(text string) bool {
 			return true
 		}
 	}
-	for _, token := range []string{"->", "<-", "-[", "]-", "--", "{."} {
+	// <-- and <-[ (covered by "--" and "-[") start an incoming arrow; a bare <-
+	// is a comparison with a negative operand.
+	for _, token := range []string{"->", "-[", "]-", "--", "{."} {
 		if containsOutsideStrings(text, token) {
 			return false
 		}

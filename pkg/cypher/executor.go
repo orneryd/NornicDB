@@ -506,8 +506,10 @@ type syntaxValidationCache struct {
 }
 
 type syntaxValidationCacheShard struct {
-	mu    sync.RWMutex
-	cache map[string]struct{}
+	mu sync.RWMutex
+	// cache holds, per statement text, which validators accepted it
+	// (syntaxValidNornic, syntaxValidANTLR).
+	cache map[string]uint8
 }
 
 func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExecutor {

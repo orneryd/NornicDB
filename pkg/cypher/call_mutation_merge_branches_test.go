@@ -27,8 +27,4 @@ func TestApplyRemoveAndMergeWhereContext_Branches(t *testing.T) {
 	_, hasDrop := nAfter.Properties["drop"]
 	require.False(t, hasDrop)
 	require.Equal(t, []string{"Person"}, nAfter.Labels)
-
-	require.True(t, exec.evaluateWhereForMergeContext(ctx, "", map[string]*storage.Node{"n": nAfter}, nil))
-	require.True(t, exec.evaluateWhereForMergeContext(ctx, "n.name = 'A'", map[string]*storage.Node{"n": nAfter}, nil))
-	require.False(t, exec.evaluateWhereForMergeContext(ctx, "n.name = 'B'", map[string]*storage.Node{"n": nAfter}, nil))
 }

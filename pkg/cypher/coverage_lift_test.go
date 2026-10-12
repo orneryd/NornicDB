@@ -209,34 +209,13 @@ func TestCoverageLiftMergeCreateSubqueryAndOrderingHelpers(t *testing.T) {
 
 	assert.True(t, mergeNodeHasLabels(node, []string{"Person", "Scientist"}))
 	assert.False(t, mergeNodeHasLabels(node, []string{"Person", "Missing"}))
-	assert.True(t, mergeNodeHasAnyLabel(node, []string{"Missing", "Scientist"}))
-	assert.False(t, mergeNodeHasAnyLabel(node, []string{"Missing"}))
 	assert.True(t, mergeNodeMatches(node, []string{"Person"}, map[string]interface{}{"Name": "Ada", "age": int64(37)}))
 	assert.False(t, mergeNodeMatches(node, []string{"Person"}, map[string]interface{}{"Name": "Grace"}))
 	assert.False(t, mergeNodeMatches(nil, []string{"Person"}, nil))
-	assert.True(t, mergeNodeMatchesAnyLabel(node, []string{"Missing", "Scientist"}, map[string]interface{}{"Name": "Ada"}))
-	assert.False(t, mergeNodeMatchesAnyLabel(node, []string{"Missing"}, map[string]interface{}{"Name": "Ada"}))
 	assert.True(t, mergeCreateConflict(storage.ErrAlreadyExists))
 	assert.True(t, mergeCreateConflict(errors.New("node already exists")))
 	assert.False(t, mergeCreateConflict(errors.New("different failure")))
-	assert.True(t, mergePropsContainUnresolvedParamLiteral(map[string]interface{}{"id": "$id"}))
-	assert.False(t, mergePropsContainUnresolvedParamLiteral(map[string]interface{}{"id": "literal", "count": 1}))
 	assert.Equal(t, mergeLookupCacheKey([]string{"A", "B"}, "id", 7), mergeLookupCacheKey([]string{"A", "B"}, "id", 7))
-
-	clone := cloneNodeForMergeMutation(node)
-	require.NotSame(t, node, clone)
-	assert.Equal(t, node.ID, clone.ID)
-	clone.Properties["Name"] = "Changed"
-	clone.Labels[0] = "ChangedLabel"
-	clone.NamedEmbeddings["bio"][0] = 99
-	clone.ChunkEmbeddings[0][0] = 88
-	clone.EmbedMeta["model"] = "changed"
-	assert.Equal(t, "Ada", node.Properties["Name"])
-	assert.Equal(t, "Person", node.Labels[0])
-	assert.Equal(t, float32(1), node.NamedEmbeddings["bio"][0])
-	assert.Equal(t, float32(4), node.ChunkEmbeddings[0][0])
-	assert.Equal(t, "unit", node.EmbedMeta["model"])
-	assert.Nil(t, cloneNodeForMergeMutation(nil))
 
 	for _, tc := range []struct {
 		content string

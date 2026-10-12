@@ -200,6 +200,12 @@ NFKD       : 'NFKD';
 KEY        : 'KEY';
 NODE       : 'NODE';
 RELATIONSHIP: 'RELATIONSHIP';
+REL        : 'REL';
+UNIQUENESS : 'UNIQUENESS';
+EXIST      : 'EXIST';
+EXISTENCE  : 'EXISTENCE';
+PROPERTY   : 'PROPERTY';
+TYPE       : 'TYPE';
 TEMPORAL   : 'TEMPORAL';
 NO         : 'NO';
 OVERLAP    : 'OVERLAP';
@@ -217,6 +223,10 @@ INTEGER : DecimalInteger;
 
 // DIGIT - hex, octal, or single digit (for array indices, etc)
 DIGIT : HexInteger | OctalInteger | [0-9];
+
+// allReduce (Cypher 25), placed last among the keywords so the earlier
+// token numbers stay as they were.
+ALLREDUCE: 'ALLREDUCE';
 
 // ID must come after numbers so they aren't matched as IDs
 ID: Letter LetterOrDigit*;
@@ -254,7 +264,9 @@ fragment OctalInteger: '0' [oO]? [0-7]+;
 // first (canonicalizeNumericLiterals).
 fragment DecimalInteger: '0' | [1-9] ('_'? [0-9])*;
 
-fragment LetterOrDigit: Letter | [0-9];
+// A name goes on with '$' after its first character (a$b, L$M), as in Neo4j;
+// $ at a name's start is DOLLAR, a parameter ($a$b is the parameter a$b).
+fragment LetterOrDigit: Letter | [0-9] | '$';
 
 Letter:
     [a-z_]

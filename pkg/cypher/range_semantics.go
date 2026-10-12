@@ -25,17 +25,17 @@ func newCypherRange(arguments []interface{}) (cypherRange, error) {
 	if len(arguments) != 2 && len(arguments) != 3 {
 		return cypherRange{}, invalidRangeArgumentType("range() requires two or three INTEGER arguments", nil)
 	}
-	start, ok := cypherIntegerValue(arguments[0])
+	start, ok := rangeBound(arguments[0])
 	if !ok {
 		return cypherRange{}, invalidRangeArgumentType("range() start must be an INTEGER", arguments[0])
 	}
-	end, ok := cypherIntegerValue(arguments[1])
+	end, ok := rangeBound(arguments[1])
 	if !ok {
 		return cypherRange{}, invalidRangeArgumentType("range() end must be an INTEGER", arguments[1])
 	}
 	step := int64(1)
 	if len(arguments) == 3 {
-		step, ok = cypherIntegerValue(arguments[2])
+		step, ok = rangeBound(arguments[2])
 		if !ok {
 			return cypherRange{}, invalidRangeArgumentType("range() step must be an INTEGER", arguments[2])
 		}
@@ -97,6 +97,21 @@ func cypherIntegerValue(value interface{}) (int64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// rangeBound is a range() start, end or step: an integer, or a float
+// truncated toward zero (range(n.f, 3) for n.f = 1.5 is [1, 2, 3], -1.5 is
+// -1), as Neo4j reads a float from a property; a float literal is the
+// static check's SyntaxError first. Anything else isn't a bound.
+func rangeBound(value interface{}) (int64, bool) {
+	if integer, ok := cypherIntegerValue(value); ok {
+		return integer, true
+	}
+	number, isFloat := cypherFloatValue(value)
+	if !isFloat || number != number || number >= 9.223372036854775807e18 || number <= -9.223372036854775808e18 {
+		return 0, false
+	}
+	return int64(number), true
 }
 
 func invalidRangeArgumentType(message string, value interface{}) error {

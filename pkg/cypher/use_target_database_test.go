@@ -94,6 +94,20 @@ func TestStatementTargetDatabase(t *testing.T) {
 	require.Error(t, err)
 	requireStatusCode(t, err, "Neo.ClientError.Database.DatabaseNotFound")
 	assert.Equal(t, "Graph not found: nosuch", err.Error())
+	// EXPLAIN and PROFILE resolve USE as the statement does (#744), and a
+	// statement that fails fails its PROFILE too.
+	for _, query := range []string{"EXPLAIN USE nosuch MATCH (n) RETURN n", "PROFILE USE nosuch MATCH (n) RETURN n"} {
+		_, err = exec.Execute(ctx, query, nil)
+		requireStatusCode(t, err, "Neo.ClientError.Database.DatabaseNotFound")
+	}
+	explained, err := exec.Execute(ctx, "EXPLAIN USE other MATCH (n:ByUse) RETURN n", nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"n"}, explained.Columns)
+	profiled, err := exec.Execute(ctx, "PROFILE USE other MATCH (n:ByUse) RETURN n.x AS x", nil)
+	require.NoError(t, err)
+	require.Len(t, profiled.Rows, 1)
+	_, err = exec.Execute(ctx, "PROFILE MATCH (n:Home) RETURN 1 / 0 AS x", nil)
+	require.Error(t, err)
 
 	// In an explicit transaction, only the transaction's database. (The
 	// transaction runs on a plain namespaced engine, which supports BEGIN.)

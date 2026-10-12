@@ -287,7 +287,7 @@ func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clau
 			continue
 		}
 		argument = strings.TrimSpace(argument)
-		if containsRelExistencePattern(argument) && strings.HasPrefix(argument, "(") {
+		if containsRelationshipPattern(argument) && strings.HasPrefix(argument, "(") {
 			return newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
 				"UnexpectedSyntax",

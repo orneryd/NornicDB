@@ -61,6 +61,9 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if unionAll, union := topLevelUnion(cypher, upperQuery); union {
 		return e.executeUnion(ctx, cypher, unionAll)
 	}
+	if result, handled, err := e.executeShowStatement(ctx, cypher); handled {
+		return result, err
+	}
 	if strings.Contains(upperQuery, "CALL") {
 		if firstTopLevelCallSubquery(cypher) >= 0 {
 			return e.executeRequiredPipeline(ctx, cypher)
@@ -231,69 +234,12 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeRequiredPipeline(ctx, cypher)
 	case findKeywordIndex(cypher, "LOAD CSV") == 0:
 		return e.executeLoadCSV(ctx, cypher)
-	case startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEX"),
-		startsWithKeywords(cypher, "SHOW", "RANGE INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "RANGE INDEX"),
-		startsWithKeywords(cypher, "SHOW", "VECTOR INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "VECTOR INDEX"),
-		startsWithKeywords(cypher, "SHOW", "LOOKUP INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "LOOKUP INDEX"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
-	case startsWithKeywords(cypher, "SHOW", "INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "INDEX"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
-	case startsWithKeywords(cypher, "SHOW", "DECAY PROFILES"),
-		startsWithKeywords(cypher, "SHOW", "PROMOTION PROFILES"),
-		startsWithKeywords(cypher, "SHOW", "PROMOTION POLICIES"):
-		return e.executeShowWithTail(ctx, cypher, e.executeKnowledgePolicyDDL)
-	case startsWithKeywords(cypher, "SHOW", "CONSTRAINTS"),
-		startsWithKeywords(cypher, "SHOW", "CONSTRAINT"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowConstraints)
-	case startsWithKeywords(cypher, "SHOW", "PROCEDURES"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowProcedures)
-	case findKeywordIndex(cypher, "SHOW FUNCTIONS") == 0:
-		return e.executeShowWithTail(ctx, cypher, e.executeShowFunctions)
-	case startsWithKeywords(cypher, "SHOW", "COMPOSITE DATABASES"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowCompositeDatabases)
-	case startsWithKeywords(cypher, "SHOW", "CONSTITUENTS"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowConstituents)
-	case startsWithKeywords(cypher, "SHOW", "DEFAULT DATABASE"),
-		startsWithKeywords(cypher, "SHOW", "HOME DATABASE"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowDefaultDatabase)
-	case startsWithKeywords(cypher, "SHOW", "USERS"),
-		startsWithKeywords(cypher, "SHOW", "CURRENT USER"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowUsers)
-	case startsWithKeywords(cypher, "SHOW", "TRANSACTIONS"),
-		startsWithKeywords(cypher, "SHOW", "TRANSACTION"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowTransactions)
-	case startsWithKeywords(cypher, "TERMINATE", "TRANSACTIONS"),
-		startsWithKeywords(cypher, "TERMINATE", "TRANSACTION"):
-		return e.executeShowWithTail(ctx, cypher, e.executeTerminateTransactions)
-	case startsWithKeywords(cypher, "SHOW", "ROLES"),
-		startsWithKeywords(cypher, "SHOW", "ROLE"),
-		startsWithKeywords(cypher, "SHOW", "PRIVILEGES"),
-		startsWithKeywords(cypher, "SHOW", "USER"),
-		startsWithKeywords(cypher, "SHOW", "SERVERS"),
-		startsWithKeywords(cypher, "SHOW", "SERVER"):
-		return nil, unsupportedAdministrationCommandError(cypher)
-	case startsWithKeywords(cypher, "SHOW", "DATABASES"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowDatabases)
-	case startsWithKeywords(cypher, "SHOW", "DATABASE"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowDatabase)
-	case startsWithKeywords(cypher, "SHOW", "ALIASES"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowAliases)
-	case startsWithKeywords(cypher, "SHOW", "SETTINGS"),
-		startsWithKeywords(cypher, "SHOW", "SETTING"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowSettings)
 	case startsWithKeywords(cypher, "ALTER", "COMPOSITE DATABASE"):
 		return e.executeAlterCompositeDatabase(ctx, cypher)
 	case startsWithKeywords(cypher, "ALTER", "DECAY PROFILE"),
 		startsWithKeywords(cypher, "ALTER", "PROMOTION PROFILE"),
 		startsWithKeywords(cypher, "ALTER", "PROMOTION POLICY"):
 		return e.executeKnowledgePolicyDDL(ctx, cypher)
-	case startsWithKeywords(cypher, "SHOW", "LIMITS"):
-		return e.executeShowWithTail(ctx, cypher, e.executeShowLimits)
 	default:
 		// Terminal chokepoint of the converged router: a statement that passed
 		// syntax validation but matches no handler is rejected here — never a
@@ -419,10 +365,14 @@ func splitReturnExpressions(clause string) []string {
 // validateSyntax performs syntax validation.
 // When NORNICDB_PARSER=antlr, uses ANTLR for strict OpenCypher grammar validation.
 // When NORNICDB_PARSER=nornic (default), uses fast inline validation.
-func (e *StorageExecutor) validateSyntax(cypher string) error {
-	// A text the Nornic validator accepted passed every check below (it is
-	// marked valid only then), so a repeated query skips them all (#823).
-	if !config.IsANTLRParser() && e.hasCachedValidSyntax(cypher) {
+// cypher25 is the statement's language version (its scope checks differ).
+func (e *StorageExecutor) validateSyntax(cypher string, cypher25 bool) error {
+	// A text the selected validator accepted passed every check below (it
+	// is marked valid only then), so a repeated query skips them all (#823):
+	// under NORNICDB_PARSER=antlr too, where every repeat was parsed again
+	// (#911).
+	validator := activeSyntaxValidator()
+	if e.hasCachedValidSyntax(cypher, validator) {
 		return nil
 	}
 	if err := validateUnicodeOperators(cypher); err != nil {
@@ -437,26 +387,37 @@ func (e *StorageExecutor) validateSyntax(cypher string) error {
 	if err := validateNumericLiterals(cypher); err != nil {
 		return err
 	}
+	if err := validateArrowOperators(cypher); err != nil {
+		return err
+	}
+	if err := validatePlaceholderOperands(cypher); err != nil {
+		return err
+	}
 	if config.IsANTLRParser() {
-		return e.validateSyntaxANTLR(cypher)
+		return e.validateSyntaxANTLR(cypher, cypher25)
 	}
 	return e.validateSyntaxNornic(cypher)
 }
 
 // validateSyntaxANTLR uses ANTLR for strict OpenCypher grammar validation.
 // Provides detailed error messages with line/column information.
-func (e *StorageExecutor) validateSyntaxANTLR(cypher string) error {
+func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) error {
 	if isNornicExtensionStatement(cypher) {
-		return e.validateSyntaxNornic(cypher)
+		if err := e.validateSyntaxNornic(cypher); err != nil {
+			return err
+		}
+		e.markCachedValidSyntax(cypher, syntaxValidANTLR)
+		return nil
 	}
 	parserError := antlr.Validate(cypher)
 	if parserError == nil {
+		e.markCachedValidSyntax(cypher, syntaxValidANTLR)
 		return nil
 	}
 	if err := e.validateSyntaxNornic(cypher); err != nil {
 		return err
 	}
-	if err := e.validateMatchSemanticScopes(cypher); err != nil {
+	if err := e.validateMatchSemanticScopes(cypher, cypher25); err != nil {
 		return err
 	}
 	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", parserError.Error())
@@ -475,7 +436,7 @@ func isNornicExtensionStatement(cypher string) bool {
 
 // validateSyntaxNornic performs fast inline syntax validation.
 func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
-	if e.hasCachedValidSyntax(cypher) {
+	if e.hasCachedValidSyntax(cypher, syntaxValidNornic) {
 		return nil
 	}
 	if containsNotInOperator(cypher) {
@@ -539,7 +500,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 			// A dot other than a range's (1..2) starts a property key (n.k,
 			// n.`k`), a map projection's all-properties (.*) or a number's
 			// digits: RETURN n. is Neo4j's "expected an identifier".
-			if next := skipSpaces(cypher, i+1); next == len(cypher) || !isIdentByte(cypher[next]) && cypher[next] != '`' && cypher[next] != '*' {
+			if next := skipSpaces(cypher, i+1); next == len(cypher) || (!isIdentByte(cypher[next]) || cypher[next] == '$') && cypher[next] != '`' && cypher[next] != '*' {
 				token := ""
 				if next < len(cypher) {
 					token = cypher[next : next+1]
@@ -599,7 +560,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		}
 	}
 
-	e.markCachedValidSyntax(cypher)
+	e.markCachedValidSyntax(cypher, syntaxValidNornic)
 	return nil
 }
 
@@ -850,23 +811,39 @@ func (e *StorageExecutor) ensureSyntaxValidationCache() *syntaxValidationCache {
 		if e.syntaxValidationCache == nil {
 			e.syntaxValidationCache = &syntaxValidationCache{max: 4096}
 			for i := range e.syntaxValidationCache.shards {
-				e.syntaxValidationCache.shards[i].cache = make(map[string]struct{}, 4096/boundedCacheShardCount/4+1)
+				e.syntaxValidationCache.shards[i].cache = make(map[string]uint8, 4096/boundedCacheShardCount/4+1)
 			}
 		}
 	})
 	return e.syntaxValidationCache
 }
 
-func (e *StorageExecutor) hasCachedValidSyntax(cypher string) bool {
+// The validators a statement text is cached as valid for: each marks only
+// its own acceptance, so the Nornic validator, which also runs when the
+// ANTLR parse fails, never marks a text the ANTLR grammar rejected.
+const (
+	syntaxValidNornic uint8 = 1 << iota
+	syntaxValidANTLR
+)
+
+// activeSyntaxValidator is the validator the configured parser selects.
+func activeSyntaxValidator() uint8 {
+	if config.IsANTLRParser() {
+		return syntaxValidANTLR
+	}
+	return syntaxValidNornic
+}
+
+func (e *StorageExecutor) hasCachedValidSyntax(cypher string, validator uint8) bool {
 	if cypher == "" {
 		return false
 	}
 	c := e.ensureSyntaxValidationCache()
 	sh := &c.shards[boundedCacheStringShardIndex(cypher)]
 	sh.mu.RLock()
-	_, ok := sh.cache[cypher]
+	accepted := sh.cache[cypher]
 	sh.mu.RUnlock()
-	if ok {
+	if accepted&validator != 0 {
 		return true
 	}
 	// Parser acceptance is structural: literal values never change it, so
@@ -876,13 +853,13 @@ func (e *StorageExecutor) hasCachedValidSyntax(cypher string) bool {
 	if canonical, normalized := normalizeLiteralText(cypher); normalized {
 		csh := &c.shards[boundedCacheStringShardIndex(canonical)]
 		csh.mu.RLock()
-		_, ok = csh.cache[canonical]
+		accepted = csh.cache[canonical]
 		csh.mu.RUnlock()
 	}
-	return ok
+	return accepted&validator != 0
 }
 
-func (e *StorageExecutor) markCachedValidSyntax(cypher string) {
+func (e *StorageExecutor) markCachedValidSyntax(cypher string, validator uint8) {
 	if cypher == "" {
 		return
 	}
@@ -890,13 +867,13 @@ func (e *StorageExecutor) markCachedValidSyntax(cypher string) {
 	add := func(key string) {
 		sh := &c.shards[boundedCacheStringShardIndex(key)]
 		sh.mu.Lock()
-		if len(sh.cache) >= c.max/boundedCacheShardCount {
+		if _, cached := sh.cache[key]; !cached && len(sh.cache) >= c.max/boundedCacheShardCount {
 			for k := range sh.cache {
 				delete(sh.cache, k)
 				break
 			}
 		}
-		sh.cache[key] = struct{}{}
+		sh.cache[key] |= validator
 		sh.mu.Unlock()
 	}
 	add(cypher)
@@ -931,4 +908,98 @@ func unsupportedOptionalMatchShapeError(cypher string) error {
 		code:   "Neo.ClientError.Statement.SyntaxError",
 		detail: "UnexpectedSyntax",
 	}
+}
+
+// executeShowStatement runs a SHOW (or TERMINATE TRANSACTIONS) command,
+// handled false when cypher is none. It runs before the routes that send a
+// statement to the clause pipeline by the clauses it contains: since Cypher 25
+// a SHOW command's YIELD may be followed by any clause (CALL { … }, DELETE,
+// SET, …), and the command still runs as a SHOW (#907).
+func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher string) (*ExecuteResult, bool, error) {
+	// Every statement passes here: one prefix test spares the others the
+	// command checks below.
+	if !hasPrefixFold(cypher, "SHOW") && !hasPrefixFold(cypher, "TERMINATE") {
+		return nil, false, nil
+	}
+	// SHOW [kind] CONSTRAINTS (showConstraintKindOf).
+	if _, isConstraints, err := showConstraintKindOf(cypher, cypherVersionFromContext(ctx) == "25"); isConstraints {
+		if err != nil {
+			return nil, true, err
+		}
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowConstraints)
+		return result, true, err
+	}
+	switch {
+	case startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEXES"),
+		startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEX"),
+		startsWithKeywords(cypher, "SHOW", "RANGE INDEXES"),
+		startsWithKeywords(cypher, "SHOW", "RANGE INDEX"),
+		startsWithKeywords(cypher, "SHOW", "VECTOR INDEXES"),
+		startsWithKeywords(cypher, "SHOW", "VECTOR INDEX"),
+		startsWithKeywords(cypher, "SHOW", "LOOKUP INDEXES"),
+		startsWithKeywords(cypher, "SHOW", "LOOKUP INDEX"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
+		return result, true, err
+	case startsWithKeywords(cypher, "SHOW", "INDEXES"),
+		startsWithKeywords(cypher, "SHOW", "INDEX"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
+		return result, true, err
+	case startsWithKeywords(cypher, "SHOW", "DECAY PROFILES"),
+		startsWithKeywords(cypher, "SHOW", "PROMOTION PROFILES"),
+		startsWithKeywords(cypher, "SHOW", "PROMOTION POLICIES"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeKnowledgePolicyDDL)
+		return result, true, err
+	case startsWithKeywords(cypher, "SHOW", "PROCEDURES"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowProcedures)
+		return result, true, err
+	case findKeywordIndex(cypher, "SHOW FUNCTIONS") == 0:
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowFunctions)
+		return result, true, err
+	case startsWithKeywords(cypher, "SHOW", "COMPOSITE DATABASES"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowCompositeDatabases)
+		return result, true, err
+	case startsWithKeywords(cypher, "SHOW", "CONSTITUENTS"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowConstituents)
+		return result, true, err
+	case startsWithKeywords(cypher, "SHOW", "DEFAULT DATABASE"),
+		startsWithKeywords(cypher, "SHOW", "HOME DATABASE"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowDefaultDatabase)
+		return result, true, err
+	case startsWithKeywords(cypher, "SHOW", "USERS"),
+		startsWithKeywords(cypher, "SHOW", "CURRENT USER"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowUsers)
+		return result, true, err
+	case startsWithKeywords(cypher, "SHOW", "TRANSACTIONS"),
+		startsWithKeywords(cypher, "SHOW", "TRANSACTION"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowTransactions)
+		return result, true, err
+	case startsWithKeywords(cypher, "TERMINATE", "TRANSACTIONS"),
+		startsWithKeywords(cypher, "TERMINATE", "TRANSACTION"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeTerminateTransactions)
+		return result, true, err
+	case startsWithKeywords(cypher, "SHOW", "ROLES"),
+		startsWithKeywords(cypher, "SHOW", "ROLE"),
+		startsWithKeywords(cypher, "SHOW", "PRIVILEGES"),
+		startsWithKeywords(cypher, "SHOW", "USER"),
+		startsWithKeywords(cypher, "SHOW", "SERVERS"),
+		startsWithKeywords(cypher, "SHOW", "SERVER"):
+		return nil, true, unsupportedAdministrationCommandError(cypher)
+	case startsWithKeywords(cypher, "SHOW", "DATABASES"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowDatabases)
+		return result, true, err
+	case startsWithKeywords(cypher, "SHOW", "DATABASE"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowDatabase)
+		return result, true, err
+	case startsWithKeywords(cypher, "SHOW", "ALIASES"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowAliases)
+		return result, true, err
+	case startsWithKeywords(cypher, "SHOW", "SETTINGS"),
+		startsWithKeywords(cypher, "SHOW", "SETTING"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowSettings)
+		return result, true, err
+	case startsWithKeywords(cypher, "SHOW", "LIMITS"):
+		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowLimits)
+		return result, true, err
+	}
+	return nil, false, nil
 }

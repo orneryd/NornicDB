@@ -23,7 +23,8 @@ func TestTemporalFunctionCallErrors(t *testing.T) {
 		"RETURN date.truncate('day', duration('P1D')) AS v":                               "Neo.ClientError.Procedure.ProcedureCallFailed",
 		"RETURN localtime.truncate('day', null) AS v":                                     "Neo.ClientError.Procedure.ProcedureCallFailed",
 		"RETURN date.truncate(null, date('2020-01-02')) AS v":                             "Neo.ClientError.Procedure.ProcedureCallFailed",
-		"MATCH (f:TruncFields) RETURN date.truncate('day', date('2020-01-02'), f.m) AS v": "Neo.ClientError.Procedure.ProcedureCallFailed",
+		// A property is never a map: Neo4j 5.26 rejects it as it compiles.
+		"MATCH (f:TruncFields) RETURN date.truncate('day', date('2020-01-02'), f.m) AS v": "Neo.ClientError.Statement.SyntaxError",
 		"RETURN date.truncate('zz', date('2020-01-02')) AS v":                             "Neo.DatabaseError.Statement.ExecutionFailed",
 		"RETURN date.truncate('day', time('03:04:05Z')) AS v":                             "Neo.ClientError.Statement.TypeError",
 		"RETURN time.truncate('day', date('2020-01-02')) AS v":                            "Neo.ClientError.Statement.TypeError",

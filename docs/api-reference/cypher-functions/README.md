@@ -32,7 +32,7 @@ Last Updated: November 25, 2025
 | `relationships(path)` | Get rels in path            | `RETURN relationships(path)`      |
 | `exists(n.prop)`      | Check if property exists    | `WHERE exists(n.email)`           |
 
-### 📝 String Functions (15 functions)
+### 📝 String Functions (20 functions)
 
 | Function                   | What It Does           | Example                           |
 | -------------------------- | ---------------------- | --------------------------------- |
@@ -51,6 +51,17 @@ Last Updated: November 25, 2025
 | `char_length(s)`           | Character count        | `RETURN char_length("hi")`        |
 | `normalize(s)`             | Unicode normalization  | `RETURN normalize(s)`             |
 | `btrim(s, chars)`          | Trim specific chars    | `RETURN btrim("!!hi!!", "!")`     |
+
+The `string.*` namespace (Cypher 25 functions, also accepted under Cypher 5;
+`string.caseFold` and `string.asciiDigits` are NornicDB extensions):
+
+| Function                            | What It Does                                   | Example                                        |
+| ----------------------------------- | ---------------------------------------------- | ---------------------------------------------- |
+| `string.indexOf(s, value)`          | Character index of `value` in `s`, or -1       | `RETURN string.indexOf("hello", "l")`          |
+| `string.join(list, delimiter)`      | Join a list of strings                         | `RETURN string.join(["a", "b"], "-")`          |
+| `string.regexReplace(s, re, repl)`  | Replace every match of a regular expression    | `RETURN string.regexReplace("a  b", "\s+", " ")` |
+| `string.caseFold(s)`                | Unicode full case folding (beyond `toLower`)   | `RETURN string.caseFold("Straße")` → `strasse` |
+| `string.asciiDigits(s)`             | Decimal digits of any script as ASCII digits   | `RETURN string.asciiDigits("٢٠٢٦")` → `2026`   |
 
 ### 🔢 Type Conversion Functions (4 functions)
 
@@ -235,6 +246,19 @@ SET user.email = toLower(trim(user.email)),
     user.name = trim(user.name)
 WHERE user.email CONTAINS " " OR user.email <> toLower(user.email)
 RETURN count(user) AS cleanedCount
+```
+
+### Example 2b: Identity Match Keys
+
+Compare names and identifiers whatever their width, case, spacing or script of
+digits: NFKC, full case folding, whitespace runs as one space, decimal digits
+as ASCII, and `-./` dropped from a key of digits only.
+
+```cypher
+WITH trim(string.regexReplace(
+       string.asciiDigits(string.caseFold(normalize($raw, NFKC))), '\s+', ' ')) AS k
+RETURN CASE WHEN k =~ '[0-9./-]+' THEN string.regexReplace(k, '[-./]', '') ELSE k END AS key
+// "  MÜLLER   Straße 1" → "müller strasse 1";  "١٢٣-٤٥٦/٧٨" → "12345678"
 ```
 
 ### Example 3: Calculate Distances

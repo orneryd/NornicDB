@@ -26,8 +26,6 @@ func TestMergeContextHelpers_MoreBranches(t *testing.T) {
 
 	node := &storage.Node{ID: "n1", Properties: map[string]interface{}{"name": "alice"}}
 	rel := &storage.Edge{ID: "e1", Type: "REL", StartNode: "n1", EndNode: "n1", Properties: map[string]interface{}{"w": int64(1)}}
-	nodeCtx := map[string]*storage.Node{"n": node}
-	relCtx := map[string]*storage.Edge{"r": rel}
 	input := []pipelineRow{{"n": node, "r": rel, "s": int64(7)}}
 	_, err := exec.Execute(ctx, "WITH RETURN 1", nil)
 	require.Error(t, err)
@@ -42,19 +40,21 @@ func TestMergeContextHelpers_MoreBranches(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
-	require.True(t, exec.evaluateWhereForMergeContext(ctx, "true", nodeCtx, relCtx))
-	require.True(t, exec.evaluateWhereForMergeContext(ctx, "n.name = 'alice'", nodeCtx, relCtx))
-	require.False(t, exec.evaluateWhereForMergeContext(ctx, "n.name = 'bob'", nodeCtx, relCtx))
-
 }
 
-func TestMergeWhereRejectsNonBooleanProperty(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	ctx := withExpressionFailureSlot(context.Background())
-	nodeCtx := map[string]*storage.Node{
-		"n": {Properties: map[string]interface{}{"name": "alice"}},
+// A WHERE whose value isn't a boolean is Neo4j 5.26.30's TypeError, before a
+// MATCH, a WITH, or a MERGE that follows (#1041: on the executor path).
+func TestWhereRejectsNonBooleanValue(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "where_non_boolean"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:WB {name: 'alice'})", nil)
+	require.NoError(t, err)
+	for _, query := range []string{
+		"MATCH (n:WB) WHERE n.name RETURN n.name AS v",
+		"MATCH (n:WB) WITH n WHERE n.name RETURN n.name AS v",
+		"MATCH (n:WB) WHERE n.name MERGE (m:WM {k: 1}) RETURN m.k AS v",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		requireStatusCode(t, err, "Neo.ClientError.Statement.TypeError")
 	}
-
-	require.False(t, exec.evaluateWhereForMergeContext(ctx, "n.name", nodeCtx, nil))
-	require.ErrorContains(t, getExpressionFailure(ctx), "Type mismatch: expected Boolean but was String")
 }

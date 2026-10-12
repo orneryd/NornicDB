@@ -215,7 +215,7 @@ func TestContainsRelExistencePattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, containsRelExistencePattern(tt.pattern))
+			assert.Equal(t, tt.want, containsRelationshipPattern(tt.pattern))
 		})
 	}
 }

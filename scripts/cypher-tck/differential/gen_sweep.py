@@ -314,6 +314,50 @@ for q in ["CALL { RETURN 1 AS x } RETURN x", "UNWIND [1, 2] AS i CALL (i) { RETU
           "UNWIND [1, 2] AS i OPTIONAL CALL (i) { WITH i WHERE i > 1 RETURN i AS j } RETURN i, j ORDER BY i"]:
     add("subquery", "q", q, mode="tx" if "CREATE" in q else "auto")
 
+# 12b. Subquery expressions in every enclosing construct (#1055): each kind of
+# subquery reads a scope variable (quantifier, comprehension, reduce), an outer
+# scalar, an entity's property, a map member or a list element, wrapped in the
+# expressions and clause positions that evaluate it.
+SUBQUERY_BOOLS = ["EXISTS {{ MATCH (a:Q) WHERE a.id = {x} }}", "EXISTS {{ (a:Q {{id: {x}}}) }}",
+                  "EXISTS {{ MATCH (a:Q {{id: {x}}})-[:R]->() }}", "EXISTS {{ MATCH (a:Q)-[:R]->(b) WHERE b.id = {x} }}",
+                  "COUNT {{ MATCH (a:Q) WHERE a.id = {x} }} > 0",
+                  "size(COLLECT {{ MATCH (a:Q) WHERE a.id = {x} RETURN a.id }}) > 0"]
+SUBQUERY_VALUES = ["COUNT {{ MATCH (a:Q) WHERE a.id >= {x} }}",
+                   "COLLECT {{ MATCH (a:Q) WHERE a.id >= {x} RETURN a.id ORDER BY a.id }}"]
+SCOPED = ["any(v IN [1, 5] WHERE {b})", "all(v IN [1, 2] WHERE {b})", "all(v IN [1, 5] WHERE {b})",
+          "none(v IN [5, 6] WHERE {b})", "single(v IN [1, 5] WHERE {b})", "[v IN [1, 2, 5] WHERE {b} | v]",
+          "[v IN [1, 5] | {b}]", "reduce(s = 0, v IN [1, 2, 5] | s + CASE WHEN {b} THEN 1 ELSE 0 END)",
+          "[w IN [1, 5] | any(v IN [w] WHERE {b})]", "any(v IN [1, 5] WHERE v > 1 OR {b})"]
+SCOPED_VALUES = ["[v IN [1, 3] | {q}]", "reduce(s = 0, v IN [1, 3] | s + size([{q}]))"]
+UNSCOPED = ["{b}", "NOT {b}", "{b} OR false", "false OR {b}", "true AND {b}", "{b} XOR false",
+            "CASE WHEN {b} THEN 1 ELSE 0 END", "CASE {b} WHEN true THEN 'y' ELSE 'n' END", "coalesce({b}, false)",
+            "[{b}]", "{{k: {b}}}", "toString({b})", "(i = 1 OR {b}) AND ({b} OR i = 2)"]
+for construct, readers in [(SCOPED, ["v", "v + 0"]), (UNSCOPED, ["i", "n.id", "o.id", "m.a", "l[0]", "size(l)"])]:
+    for wrap in construct:
+        for sq in SUBQUERY_BOOLS:
+            for reader in readers:
+                e = wrap.format(b=sq.format(x=reader))
+                positions = ["return", "with", "orderby"]
+                if wrap.startswith(("any", "all", "none", "single", "NOT", "{b}", "false", "true", "(", "coalesce")) or wrap == "{b}":
+                    positions.append("where")
+                place("subquery-scope", e, positions)
+for wrap in SCOPED_VALUES:
+    for sq in SUBQUERY_VALUES:
+        place("subquery-scope", wrap.format(q=sq.format(x="v")), ["return", "with"])
+for sq in SUBQUERY_VALUES:
+    for reader in ["i", "n.id", "o.id", "m.a", "l[0]"]:
+        place("subquery-scope", sq.format(x=reader), ["return", "with", "orderby"])
+        place("subquery-scope", sq.format(x=reader) + " = " + sq.format(x=reader), ["return", "where"])
+# SET, and a quantified path's element WHERE reading the element's own variables.
+for sq in SUBQUERY_BOOLS + [s + " = " + s for s in SUBQUERY_VALUES]:
+    add("subquery-scope", "set", f"MATCH (n:Q {{id: 1}}) SET n.x = {sq.format(x='n.id')} RETURN n.x AS v", mode="tx")
+    add("subquery-scope", "set", f"MATCH (n:Q {{id: 1}}) SET n.x = [v IN [1, 5] | {sq.format(x='v')}] RETURN n.x AS v", mode="tx")
+for sq in SUBQUERY_BOOLS:
+    for reader in ["x.id", "y.id", "e.w + 1"]:
+        b = sq.format(x=reader)
+        add("subquery-scope", "qpp", f"MATCH (s:Q {{id: 1}}) ((x)-[e:R WHERE {b}]->(y))+ (t) RETURN t.id AS v ORDER BY v")
+        add("subquery-scope", "qpp", f"MATCH (s:Q {{id: 1}}) ((x)-[e:R]->(y) WHERE e.w = 2 OR {b})+ (t) RETURN t.id AS v ORDER BY v")
+
 # 13. Clause semantics: ordering, DISTINCT, grouping, nulls, SKIP/LIMIT.
 VALUES = "[1, 1.0, '1', null, true, [1], {a: 1}, 2, -1, 'a', 'B', [], [null], date('2020-01-01'), duration('P1D'), 0.0 / 0.0]"
 for q in [f"UNWIND {VALUES} AS x RETURN x ORDER BY x", f"UNWIND {VALUES} AS x RETURN x ORDER BY x DESC",
@@ -340,6 +384,30 @@ for q in [f"UNWIND {VALUES} AS x RETURN x ORDER BY x", f"UNWIND {VALUES} AS x RE
           "UNWIND [1, 1.0] AS x RETURN DISTINCT x", "UNWIND [[1, 2], [1, 2.0]] AS x RETURN DISTINCT x", "UNWIND [{a: 1}, {a: 1.0}] AS x RETURN DISTINCT x"]:
     add("clause", "q", q)
 
+
+# 14. Predicate operands: AND / OR / XOR / NOT over pattern predicates,
+# EXISTS / COUNT subqueries and plain conditions. An operand is a pattern
+# only when it is one whole relationship chain (#907): a parenthesized
+# conjunction of subqueries that contains "-[" is not one.
+PREDICATE_ATOMS = ["(a)-[:R]->(b)", "(a)-->()", "(b)-[:R]->(:Q)", "NOT (a)<--()",
+                   "EXISTS { MATCH (a)-[:R]->(x) }", "NOT EXISTS { MATCH (b)-[:R]->(y) }",
+                   "COUNT { (a)--() } > 1", "a.id = 1", "false", "true", "(b.id > 1)"]
+PREDICATE_POSITIONS = {
+    "match": "MATCH (a:Q)-[r:R]->(b:Q) WHERE {e} RETURN a.id AS x, b.id AS y ORDER BY x, y",
+    "optional": "MATCH (a:Q) OPTIONAL MATCH (a)-[r:R]->(b:Q) WHERE {e} RETURN a.id AS x, b.id AS y ORDER BY x, y",
+    "with": "MATCH (a:Q)-[r:R]->(b:Q) WITH a, b WHERE {e} RETURN a.id AS x ORDER BY x",
+}
+for left, right in itertools.product(PREDICATE_ATOMS, PREDICATE_ATOMS):
+    for op in ["AND", "OR", "XOR"]:
+        for e in [f"{left} {op} {right}", f"false OR ({left} {op} {right})", f"NOT ({left} {op} {right})"]:
+            for position, template in PREDICATE_POSITIONS.items():
+                add("predicate-operands", position, template.replace("{e}", e))
+# The same chains over plain boolean operands, as a projected value.
+BOOLEAN_ATOMS = ["true", "false", "null", "NOT true", "NOT null", "a.id = 1", "(b.id > 1)"]
+for left, right in itertools.product(BOOLEAN_ATOMS, BOOLEAN_ATOMS):
+    for op in ["AND", "OR", "XOR"]:
+        for e in [f"NOT ({left} {op} {right})", f"NOT (NOT {left} {op} {right})", f"NOT ({left} {op} NOT {right})"]:
+            add("predicate-operands", "return", f"MATCH (a:Q)-[r:R]->(b:Q) RETURN {e} AS v ORDER BY a.id")
 
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:

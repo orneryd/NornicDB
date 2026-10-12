@@ -47,9 +47,11 @@ type aggregateSpan struct {
 // aggregate function name at a word boundary, outside quoted strings,
 // followed by a balanced parenthesized argument list. Scanning resumes after
 // each span, so aggregates nested inside another aggregate's arguments are
-// not reported separately.
+// not reported separately. An EXISTS / COUNT / COLLECT { … } subquery's body
+// is skipped: its aggregates are the subquery's own (#907).
 func findAggregateSpans(expr string) []aggregateSpan {
-	const prefixMask uint32 = 1<<('A'-'A') | 1<<('C'-'A') | 1<<('M'-'A') | 1<<('P'-'A') | 1<<('S'-'A')
+	// The first letters of the aggregates, and E (EXISTS { … }).
+	const prefixMask uint32 = 1<<('A'-'A') | 1<<('C'-'A') | 1<<('E'-'A') | 1<<('M'-'A') | 1<<('P'-'A') | 1<<('S'-'A')
 	var spans []aggregateSpan
 	i := 0
 	for i < len(expr) {
@@ -62,8 +64,9 @@ func findAggregateSpans(expr string) []aggregateSpan {
 			i = j + 1
 			continue
 		}
-		// A qualified function whose terminal component happens to have an
-		// aggregate name (for example apoc.coll.sum()) is not a Cypher
+		// Only a letter at a word start can begin an aggregate or a subquery
+		// expression. A qualified function whose terminal component happens to
+		// have an aggregate name (for example apoc.coll.sum()) is not a Cypher
 		// aggregate. It is evaluated once per row by the same expression path.
 		folded := asciiUpper(c)
 		if folded < 'A' || folded > 'Z' || prefixMask&(uint32(1)<<(folded-'A')) == 0 ||
@@ -96,9 +99,19 @@ func findAggregateSpans(expr string) []aggregateSpan {
 			matched = true
 			break
 		}
-		if !matched {
-			i++
+		if matched {
+			continue
 		}
+		// EXISTS / COUNT / COLLECT { … } is skipped whole: its aggregates
+		// are the subquery's own. An aggregate call is read first: count(…)
+		// is not a subquery, and is then read once.
+		if folded == 'E' || folded == 'C' {
+			if end := subqueryExpressionEnd(expr, i); end > i {
+				i = end
+				continue
+			}
+		}
+		i++
 	}
 	return spans
 }
@@ -124,4 +137,24 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 		return nil, failure
 	}
 	return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "could not parse aggregate projection")
+}
+
+// subqueryExpressionEnd is the index after the EXISTS / COUNT / COLLECT
+// { … } subquery that starts at expr[i], or -1.
+func subqueryExpressionEnd(expr string, i int) int {
+	// A subquery's keyword is followed by '{': any other word ends here,
+	// before the keyword comparisons.
+	end := i
+	for end < len(expr) && isIdentByte(expr[end]) {
+		end++
+	}
+	if open := skipSpaces(expr, end); end == i || open >= len(expr) || expr[open] != '{' {
+		return -1
+	}
+	if _, open, ok := subqueryExpressionKeywordAt(expr, i); ok {
+		if closing := findMatchingDelimiter(expr, open, '{', '}'); closing > open {
+			return closing + 1
+		}
+	}
+	return -1
 }

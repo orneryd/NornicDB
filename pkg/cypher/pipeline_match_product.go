@@ -19,7 +19,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 	nodeVariables := make([]string, 0, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "(") && !containsRelExistencePattern(part) {
+		if strings.HasPrefix(part, "(") && !containsRelationshipPattern(part) {
 			if variable := e.parseNodePattern(ctx, part).variable; variable != "" {
 				nodeVariables = append(nodeVariables, variable)
 			}
@@ -57,7 +57,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 			return nil, true, err
 		}
 		part = strings.TrimSpace(part)
-		if containsRelExistencePattern(part) {
+		if containsRelationshipPattern(part) {
 			path := extractPathAssignmentVariable(part)
 			if path == "" {
 				path = newBinding()

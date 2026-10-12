@@ -24,13 +24,13 @@ var functionLookupStatements = []struct{ name, query string }{
 func BenchmarkFunctionLookupStaticCheck(b *testing.B) {
 	for _, statement := range functionLookupStatements {
 		b.Run(statement.name, func(b *testing.B) {
-			if err := validateStaticFunctionArguments(statement.query); err != nil {
+			if err := validateStaticFunctionArguments(statement.query, false); err != nil {
 				b.Fatal(err)
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if err := validateStaticFunctionArguments(statement.query); err != nil {
+				if err := validateStaticFunctionArguments(statement.query, false); err != nil {
 					b.Fatal(err)
 				}
 			}

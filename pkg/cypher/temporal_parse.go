@@ -356,7 +356,18 @@ func parseFixedDecimal(text string, start, width int) (int, bool) {
 	return value, true
 }
 
+// parseCypherDurationText reads an ISO 8601 duration (P1Y2M3DT4H5M6.5S,
+// P2W, the alternative form P0001-02-03T04:05:06), which a leading - negates
+// (-P1D is P-1D) and a leading + leaves as it is.
 func parseCypherDurationText(text string) (*CypherDuration, bool) {
+	if len(text) > 2 && (text[0] == '-' || text[0] == '+') && text[1] == 'P' {
+		duration, ok := parseCypherDurationText(text[1:])
+		if ok && text[0] == '-' {
+			duration = &CypherDuration{Years: -duration.Years, Months: -duration.Months, Days: -duration.Days,
+				Hours: -duration.Hours, Minutes: -duration.Minutes, Seconds: -duration.Seconds, Nanos: -duration.Nanos}
+		}
+		return duration, ok
+	}
 	if len(text) < 2 || text[0] != 'P' {
 		return nil, false
 	}

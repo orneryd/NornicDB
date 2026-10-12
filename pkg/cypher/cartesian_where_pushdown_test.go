@@ -108,7 +108,7 @@ func TestGh713CartesianPartitionEquivalence(t *testing.T) {
 		t.Run(clause, func(t *testing.T) {
 			plan := returnProjectionPlanFor(clause)
 			var rows []pipelineRow
-			for _, combination := range exec.buildCartesianProduct(patterns) {
+			for _, combination := range cartesianCombinations(patterns) {
 				values := make(pipelineRow, len(combination))
 				for variable, node := range combination {
 					if node != nil {
@@ -677,7 +677,7 @@ func TestCartesianWherePushdown_SingleNodeComparisons(t *testing.T) {
 	require.Equal(t, storage.NodeID("a-2"), filtered[0].nodes[0].ID)
 	require.Len(t, filtered[1].nodes, 1)
 	require.Equal(t, storage.NodeID("b-1"), filtered[1].nodes[0].ID)
-	require.Len(t, exec.buildCartesianProduct(filtered), 1)
+	require.Len(t, cartesianCombinations(filtered), 1)
 
 	for _, clause := range []string{"a.age >= b.age", "size(a.age) > 1", "a.age >= $minimum"} {
 		if _, ok := parseCartesianSingleNodeComparisonTerm(clause); ok {
@@ -813,4 +813,28 @@ func TestBuildCombinationsUsingWhereJoin_ThreeVarEqualityChain(t *testing.T) {
 			row["t"].Properties["joinKey"] == row["a"].Properties["joinKey"]
 		require.True(t, ok)
 	}
+}
+
+// cartesianCombinations is every combination of one node per pattern, the
+// naive product the partitioned aggregation is checked against.
+func cartesianCombinations(patterns []struct {
+	variable string
+	nodes    []*storage.Node
+}) []map[string]*storage.Node {
+	combinations := []map[string]*storage.Node{{}}
+	for _, pattern := range patterns {
+		var next []map[string]*storage.Node
+		for _, combination := range combinations {
+			for _, node := range pattern.nodes {
+				extended := make(map[string]*storage.Node, len(combination)+1)
+				for variable, bound := range combination {
+					extended[variable] = bound
+				}
+				extended[pattern.variable] = node
+				next = append(next, extended)
+			}
+		}
+		combinations = next
+	}
+	return combinations
 }

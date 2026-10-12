@@ -149,7 +149,8 @@ func TestExecuteInvalidSyntax(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := exec.Execute(context.Background(), tt.query, nil)
 			assert.Error(t, err, "Expected syntax error for invalid query")
-			assert.Contains(t, err.Error(), "syntax error", "Error should be a syntax error")
+			// Neo4j's status code is the contract; the wording varies by check.
+			requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 		})
 	}
 }

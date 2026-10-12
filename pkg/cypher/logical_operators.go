@@ -65,7 +65,9 @@ func evaluateLogicalExpression(expr string, eval logicalOperandEvaluator) (value
 	if !negated {
 		return nil, false, false, nil
 	}
-	if inner, doubled := logicalNotOperand(operand); doubled {
+	// NOT (NOT x) is x only when the inner NOT covers its whole operand:
+	// NOT (NOT a OR b) negates the OR, whose left operand is NOT a.
+	if inner, doubled := logicalNotOperand(operand); doubled && !hasTopLevelLogicalOperator(logicalOperandKey(operand)) {
 		value, ok, err = eval(inner)
 		return value, true, ok, err
 	}
@@ -78,6 +80,18 @@ func evaluateLogicalExpression(expr string, eval logicalOperandEvaluator) (value
 		return nil, true, true, err
 	}
 	return truth.not().value(), true, true, nil
+}
+
+// hasTopLevelLogicalOperator reports whether expr is an OR, XOR or AND
+// chain at its top level.
+func hasTopLevelLogicalOperator(expr string) bool {
+	var buffer [8]string
+	for _, operator := range [...]string{" OR ", " XOR ", " AND "} {
+		if len(appendLogicalOperands(buffer[:0], expr, operator)) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // mayBeLogicalExpression reports, without allocating, whether expr may be

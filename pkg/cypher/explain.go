@@ -82,13 +82,14 @@ type ExecutionPlan struct {
 // parseExecutionMode extracts EXPLAIN or PROFILE prefix from a query
 func parseExecutionMode(query string) (ExecutionMode, string) {
 	trimmed := strings.TrimSpace(query)
-	upper := upperASCII(trimmed)
-
-	if strings.HasPrefix(upper, "EXPLAIN ") {
-		return ModeExplain, strings.TrimSpace(trimmed[8:])
-	}
-	if strings.HasPrefix(upper, "PROFILE ") {
-		return ModeProfile, strings.TrimSpace(trimmed[8:])
+	// Only the prefix is compared: the statement isn't copied to upper case.
+	if len(trimmed) >= 8 && trimmed[7] == ' ' {
+		if strings.EqualFold(trimmed[:7], "EXPLAIN") {
+			return ModeExplain, strings.TrimSpace(trimmed[8:])
+		}
+		if strings.EqualFold(trimmed[:7], "PROFILE") {
+			return ModeProfile, strings.TrimSpace(trimmed[8:])
+		}
 	}
 	return ModeNormal, trimmed
 }
@@ -128,9 +129,10 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	result, execErr := e.Execute(ctx, query, nil)
 	totalTime := time.Since(startTime)
 
-	// Even if execution fails, we return what we have
+	// A statement that fails fails its PROFILE too, as in Neo4j: the error
+	// is the statement's, not a plan row describing it.
 	if execErr != nil {
-		plan.Root.Description += fmt.Sprintf(" (ERROR: %s)", execErr.Error())
+		return nil, execErr
 	}
 
 	// Update plan with actual statistics
@@ -305,7 +307,7 @@ func (e *StorageExecutor) analyzeMatchClause(query string) *PlanOperator {
 	}
 
 	// Check for relationship pattern
-	if strings.Contains(query, "->") || strings.Contains(query, "<-") || strings.Contains(query, "]-[") {
+	if containsRelationshipPattern(query) {
 		return &PlanOperator{
 			OperatorType:  "Expand",
 			Description:   "Expand relationships",

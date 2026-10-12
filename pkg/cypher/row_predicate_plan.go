@@ -652,7 +652,7 @@ func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, par
 				}
 			}
 			leftValue, rightValue := left.materialize(), right.materialize()
-			if part.constantNumbers {
+			if part.constantNumbers && foldsConstantNumbers(string(part.operator), cypherVersionFromContext(ctx) == "25") {
 				leftValue, rightValue = promoteIntegerToFloat(leftValue, rightValue)
 			}
 			matched, known := part.operator.evaluate(leftValue, rightValue).(bool)
@@ -666,7 +666,7 @@ func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, par
 		if left == nil || right == nil {
 			return false
 		}
-		if part.constantNumbers {
+		if part.constantNumbers && foldsConstantNumbers(string(part.operator), cypherVersionFromContext(ctx) == "25") {
 			left, right = promoteIntegerToFloat(left, right)
 		}
 		matched, known := part.operator.evaluate(left, right).(bool)

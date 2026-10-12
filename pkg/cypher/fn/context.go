@@ -24,6 +24,11 @@ type Context struct {
 	// Graphs lists the graphs of the composite database the query runs on.
 	// Nil means not a composite database.
 	Graphs GraphCatalog
+
+	// Cypher25 is set while a Cypher 25 statement runs: a function whose
+	// results or errors Neo4j 2026.09 changed follows Neo4j 2026.09 then, and
+	// Neo4j 5.26 for a Cypher 5 statement (#907).
+	Cypher25 bool
 }
 
 // GraphCatalog lists the graphs of the composite database a query runs on:

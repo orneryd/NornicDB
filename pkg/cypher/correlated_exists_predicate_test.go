@@ -32,14 +32,16 @@ func TestCorrelatedExistsPredicatesApplyInnerFilter(t *testing.T) {
 		require.NoError(t, store.CreateEdge(edge))
 	}
 
-	require.False(t, exec.pathSubqueryMatches(ctx, PathContext{nodes: map[string]*storage.Node{"fn": fn1, "w": w1}}, `
+	exists := func(row map[string]interface{}) bool {
+		matched, recognized := exec.rowExistsSubqueryMatches(ctx, `EXISTS {
 		MATCH (fn)-[:RUNS_IN]->(o:Workload)
 		WHERE o.id <> w.id
-	`))
-	require.True(t, exec.pathSubqueryMatches(ctx, PathContext{nodes: map[string]*storage.Node{"fn": fn2, "w": w2}}, `
-		MATCH (fn)-[:RUNS_IN]->(o:Workload)
-		WHERE o.id <> w.id
-	`))
+	}`, row)
+		require.True(t, recognized)
+		return matched
+	}
+	require.False(t, exists(map[string]interface{}{"fn": fn1, "w": w1}))
+	require.True(t, exists(map[string]interface{}{"fn": fn2, "w": w2}))
 
 	assertUIDs := func(t *testing.T, query string, expected ...string) {
 		t.Helper()

@@ -631,7 +631,7 @@ func (c *cypherFabricExecutor) ExecuteQuery(ctx context.Context, dbName string, 
 
 func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, query string, params, recordBindings map[string]interface{}) ([]string, [][]interface{}, bool, error) {
 	clauses, supported := canExecuteAsPipeline(query)
-	if !supported || containsRelExistencePattern(query) {
+	if !supported || containsRelationshipPattern(query) {
 		return nil, nil, false, nil
 	}
 	for _, clause := range clauses {

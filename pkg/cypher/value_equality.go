@@ -126,32 +126,43 @@ func compareCypherNumbersExactly(left, right interface{}) (comparison int, ok bo
 
 // promoteConstantNumbers applies Neo4j's plan-time folding to a comparison
 // whose operands, leftExpr and rightExpr, are both constant numeric
-// expressions (constantNumericComparison): for =, < and > an integer
-// compared with a float is compared as a float, so 9007199254740993 =
-// 9007199254740992.0 is true and 9007199254740993 > 9007199254740992.0 is
-// false. <>, <= and >= of the same literals, and every comparison of values
-// from variables, parameters, properties or functions, compare exactly
+// expressions (constantNumericComparison): for an operator that folds
+// (foldsConstantNumbers) an integer compared with a float is compared as a
+// float, so 9007199254740993 = 9007199254740992.0 is true and
+// 9007199254740993 > 9007199254740992.0 is false. <= and >= of the same
+// literals, <> in Cypher 5, and every comparison of values from variables,
+// parameters, properties or functions, compare exactly
 // (compareCypherNumbersExactly, #893). Other values are returned unchanged.
-func promoteConstantNumbers(operator, leftExpr, rightExpr string, left, right interface{}) (interface{}, interface{}) {
+func promoteConstantNumbers(operator, leftExpr, rightExpr string, left, right interface{}, cypher25 bool) (interface{}, interface{}) {
 	// The value types are checked first: the text is read only for an
 	// integer compared with a float.
 	_, leftIsFloat := cypherFloatValue(left)
 	_, rightIsFloat := cypherFloatValue(right)
-	if leftIsFloat == rightIsFloat || !constantNumericComparison(operator, leftExpr, rightExpr) {
+	if leftIsFloat == rightIsFloat || !foldsConstantNumbers(operator, cypher25) || !constantNumericComparison(operator, leftExpr, rightExpr) {
 		return left, right
 	}
 	return promoteIntegerToFloat(left, right)
 }
 
-// constantNumericComparison reports whether a comparison is one Neo4j folds
-// with float promotion (promoteConstantNumbers): =, < or > of two constant
-// numeric expressions. Plans decide this once, not per row.
+// constantNumericComparison reports whether a comparison is =, <, > or <>
+// of two constant numeric expressions, which Neo4j may fold with float
+// promotion (promoteConstantNumbers, foldsConstantNumbers). Plans decide
+// this once, not per row.
 func constantNumericComparison(operator, leftExpr, rightExpr string) bool {
 	switch operator {
-	case "=", "<", ">":
+	case "=", "<", ">", "<>", "!=":
 		return isConstantNumericExpression(leftExpr) && isConstantNumericExpression(rightExpr)
 	}
 	return false
+}
+
+// foldsConstantNumbers reports whether a constant numeric comparison with
+// operator compares an integer with a float as floats: =, < and > do in
+// both versions, <> only in Cypher 25 (Neo4j 2026.09 folds it, so
+// 9007199254740993 <> 9007199254740992.0 is false there; Neo4j 5.26
+// compares it exactly).
+func foldsConstantNumbers(operator string, cypher25 bool) bool {
+	return cypher25 || operator != "<>" && operator != "!="
 }
 
 // promoteIntegerToFloat returns an integer compared with a float as a float,

@@ -1255,8 +1255,12 @@ func (e *StorageExecutor) parseSimpleIndexedEquality(ctx context.Context, variab
 		return "", nil, false
 	}
 
-	// Only simple predicates are index-eligible.
-	for _, kw := range []string{"AND", "OR", "NOT", " IN ", " IS ", "<>", "!=", ">=", "<=", ">", "<"} {
+	// Only simple predicates are index-eligible: a = 1 XOR true is not an
+	// equality with (1 XOR true).
+	if hasTopLevelLogicalOperator(clause) {
+		return "", nil, false
+	}
+	for _, kw := range []string{"NOT", " IN ", " IS ", "<>", "!=", ">=", "<=", ">", "<"} {
 		if topLevelKeywordIndex(clause, kw) >= 0 {
 			return "", nil, false
 		}

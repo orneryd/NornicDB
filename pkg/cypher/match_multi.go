@@ -140,7 +140,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 	var newRelBindings []relationshipBinding
 	// Bracketed (-[r]->) and bare (-->, <--, --) relationships both make a
 	// traversal; only a lone node pattern is matched as a node.
-	isRelationshipPattern := strings.Contains(pattern, "-[") || strings.Contains(pattern, "]-") || containsRelExistencePattern(pattern)
+	isRelationshipPattern := containsRelationshipPattern(pattern)
 	var matches *TraversalMatch
 	if isRelationshipPattern {
 		matches = e.parseTraversalPattern(ctx, pattern)
@@ -1387,10 +1387,14 @@ func (e *StorageExecutor) evaluateBoundRelationshipPattern(ctx context.Context, 
 	return e.evaluateParsedBoundRelationshipPattern(ctx, match, nodes), true
 }
 
+// parseBoundRelationshipPattern parses clause as a relationship pattern
+// predicate ((a)-[:R]->(b)). Only a text that is one whole relationship chain
+// (isRelationshipPatternOperand) is a pattern: a parenthesised expression
+// whose subqueries hold patterns, (NOT EXISTS { (h)-[:C]->(x) } AND …), is
+// not one.
 func (e *StorageExecutor) parseBoundRelationshipPattern(ctx context.Context, clause string) (*TraversalMatch, bool) {
 	pattern := strings.TrimSpace(clause)
-	if !strings.HasPrefix(pattern, "(") || !strings.HasSuffix(pattern, ")") ||
-		(!strings.Contains(pattern, "-[") && !strings.Contains(pattern, "]-") && !strings.Contains(pattern, "--")) {
+	if !isRelationshipPatternOperand(pattern) {
 		return nil, false
 	}
 

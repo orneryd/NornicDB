@@ -29,32 +29,11 @@ func mergeNodeHasLabels(node *storage.Node, labels []string) bool {
 	return true
 }
 
-func mergeNodeHasAnyLabel(node *storage.Node, labels []string) bool {
-	for _, label := range labels {
-		for _, nodeLabel := range node.Labels {
-			if nodeLabel == label {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 func mergeNodeMatches(node *storage.Node, labels []string, props map[string]interface{}) bool {
 	if node == nil {
 		return false
 	}
 	if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
-		return false
-	}
-	return nodePropertiesMatch(node, props)
-}
-
-func mergeNodeMatchesAnyLabel(node *storage.Node, labels []string, props map[string]interface{}) bool {
-	if node == nil {
-		return false
-	}
-	if len(labels) > 0 && !mergeNodeHasAnyLabel(node, labels) {
 		return false
 	}
 	return nodePropertiesMatch(node, props)
@@ -67,19 +46,6 @@ func mergeCreateConflict(err error) bool {
 	return strings.Contains(lowerASCII(err.Error()), "already exists")
 }
 
-func mergePropsContainUnresolvedParamLiteral(props map[string]interface{}) bool {
-	for _, val := range props {
-		s, ok := val.(string)
-		if !ok {
-			continue
-		}
-		if strings.HasPrefix(strings.TrimSpace(s), "$") {
-			return true
-		}
-	}
-	return false
-}
-
 func mergeLookupCacheKey(labels []string, prop string, val interface{}) string {
 	return unwindMergeKey(unwindMergeLabelsKey(labels), map[string]interface{}{prop: val})
 }
@@ -90,38 +56,6 @@ func cloneNodePropertiesMap(in map[string]interface{}) map[string]interface{} {
 		out[k] = v
 	}
 	return out
-}
-
-func cloneNodeForMergeMutation(in *storage.Node) *storage.Node {
-	if in == nil {
-		return nil
-	}
-	out := *in
-	if in.Labels != nil {
-		out.Labels = append([]string(nil), in.Labels...)
-	}
-	if in.Properties != nil {
-		out.Properties = cloneNodePropertiesMap(in.Properties)
-	}
-	if in.NamedEmbeddings != nil {
-		out.NamedEmbeddings = make(map[string][]float32, len(in.NamedEmbeddings))
-		for k, v := range in.NamedEmbeddings {
-			out.NamedEmbeddings[k] = append([]float32(nil), v...)
-		}
-	}
-	if in.ChunkEmbeddings != nil {
-		out.ChunkEmbeddings = make([][]float32, len(in.ChunkEmbeddings))
-		for i, v := range in.ChunkEmbeddings {
-			out.ChunkEmbeddings[i] = append([]float32(nil), v...)
-		}
-	}
-	if in.EmbedMeta != nil {
-		out.EmbedMeta = make(map[string]any, len(in.EmbedMeta))
-		for k, v := range in.EmbedMeta {
-			out.EmbedMeta[k] = v
-		}
-	}
-	return &out
 }
 
 func (e *StorageExecutor) evictMergeNodeCacheEntries(labels []string, props map[string]interface{}, nodeID storage.NodeID) {
@@ -395,15 +329,6 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 	return nil, nil
 }
 
-// findMergeNodes returns every node that satisfies a MERGE node pattern.
-// MERGE is a row-producing clause: when an unbound pattern has multiple
-// existing matches, every match must continue through the remaining clauses.
-// Callers that only need existence may continue to use findMergeNode.
-func (e *StorageExecutor) findMergeNodes(store storage.Engine, labels []string, props map[string]interface{}) ([]*storage.Node, error) {
-	matches, _, err := e.findMergeNodesScanned(store, labels, props)
-	return matches, err
-}
-
 // findMergeNodesScanned is findMergeNodes, also reporting whether it read
 // the pattern's whole label (or every node, without a label). Only such an
 // answer is complete: a node any other lookup (the MERGE cache, a schema
@@ -493,95 +418,6 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(store storage.Engine, lab
 		e.markMergeSchemaLookupUsed()
 	}
 	return best, found
-}
-
-func (e *StorageExecutor) findMergeNodeAnyLabel(store storage.Engine, labels []string, props map[string]interface{}) (*storage.Node, error) {
-	if len(labels) == 0 || len(props) == 0 {
-		return nil, nil
-	}
-
-	schema := store.GetSchema()
-	if schema != nil {
-		for _, label := range labels {
-			for _, prop := range mergePropertyNamesSorted(props) {
-				val := props[prop]
-				nodeID, valueFound, constraintExists := schema.LookupUniqueConstraintValue(label, prop, val)
-				if !constraintExists {
-					continue
-				}
-				e.markMergeSchemaLookupUsed()
-				if !valueFound {
-					continue
-				}
-				for _, n := range e.loadMergeCandidateNodes(store, []storage.NodeID{nodeID}) {
-					if mergeNodeMatchesAnyLabel(n, labels, props) {
-						return n, nil
-					}
-				}
-			}
-		}
-
-		bestIDs := []storage.NodeID(nil)
-		bestCount := -1
-		for _, label := range labels {
-			for _, prop := range mergePropertyNamesSorted(props) {
-				val := props[prop]
-				if _, ok := schema.GetPropertyIndex(label, prop); !ok {
-					continue
-				}
-				e.markMergeSchemaLookupUsed()
-				ids := propertyIndexLookup(store, schema, label, prop, val)
-				count := len(ids)
-				if bestCount == -1 || count < bestCount {
-					bestIDs = ids
-					bestCount = count
-					if count <= 1 {
-						break
-					}
-				}
-			}
-			if bestCount == 1 {
-				break
-			}
-		}
-		for _, n := range e.loadMergeCandidateNodes(store, bestIDs) {
-			if mergeNodeMatchesAnyLabel(n, labels, props) {
-				return n, nil
-			}
-		}
-	}
-	e.markMergeScanFallbackUsed()
-
-	seen := make(map[storage.NodeID]struct{})
-	for _, label := range labels {
-		nodes, err := store.GetNodesByLabel(label)
-		if err != nil {
-			return nil, err
-		}
-		for _, node := range nodes {
-			if _, ok := seen[node.ID]; ok {
-				continue
-			}
-			seen[node.ID] = struct{}{}
-			if mergeNodeMatchesAnyLabel(node, labels, props) {
-				return node, nil
-			}
-		}
-	}
-
-	return nil, nil
-}
-
-func (e *StorageExecutor) evaluateWhereForMergeContext(ctx context.Context, whereClause string, nodeCtx map[string]*storage.Node, relCtx map[string]*storage.Edge) bool {
-	whereClause = strings.TrimSpace(whereClause)
-	if whereClause == "" {
-		return true
-	}
-
-	if v, ok := e.evaluateExpressionWithContext(ctx, whereClause, nodeCtx, relCtx).(bool); ok {
-		return v
-	}
-	return e.evaluateWhereForContext(ctx, whereClause, nodeCtx)
 }
 
 // parseMergePattern parses a MERGE pattern like "(n:Label {prop: value})"

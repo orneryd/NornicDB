@@ -95,7 +95,7 @@ func TestNeo4j5FunctionImplementations(t *testing.T) {
 		"isNaN":         fnIsNaN,
 		"char_length":   fnCharLength,
 		"upper":         fnStringCase(func(s string) string { return s }, "upper"),
-		"toIntegerList": fnListConversion("toIntegerList", convertToIntegerOrNull),
+		"toIntegerList": fnListConversion("toIntegerList", sameInEveryVersion(convertToIntegerOrNull)),
 		"valueType":     fnValueType,
 	}
 	for name, function := range oneArgument {

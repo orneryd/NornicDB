@@ -1116,9 +1116,9 @@ func TestSetRejectsEmptyCommaSegmentsBeforeWrites(t *testing.T) {
 func TestMergeValidationTracksBindingsAcrossClauseComposition(t *testing.T) {
 	exec, _ := newConvergenceExecutor(t)
 
-	require.NoError(t, exec.validateMergeSemanticScopes("MATCH (source), (target) MERGE (source)-[relationship:LINK]->(target)"))
-	require.NoError(t, exec.validateMergeSemanticScopes("MERGE (node:Item {value: $value})"))
-	require.NoError(t, exec.validateMergeSemanticScopes("RETURN 1"))
+	require.NoError(t, exec.validateMergeSemanticScopes("MATCH (source), (target) MERGE (source)-[relationship:LINK]->(target)", false))
+	require.NoError(t, exec.validateMergeSemanticScopes("MERGE (node:Item {value: $value})", false))
+	require.NoError(t, exec.validateMergeSemanticScopes("RETURN 1", false))
 
 	tests := []struct {
 		name  string
@@ -1133,7 +1133,7 @@ func TestMergeValidationTracksBindingsAcrossClauseComposition(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := exec.validateMergeSemanticScopes(test.query)
+			err := exec.validateMergeSemanticScopes(test.query, false)
 			require.Error(t, err)
 			var semanticError *SemanticError
 			require.ErrorAs(t, err, &semanticError)
@@ -1153,7 +1153,7 @@ func TestMergeActionsRejectUndefinedVariablesBeforeExecution(t *testing.T) {
 		require.True(t, ok)
 		require.Len(t, clauses, 1)
 		require.Equal(t, query, clauses[0].text)
-		require.Error(t, exec.validateMergeSemanticScopes(query))
+		require.Error(t, exec.validateMergeSemanticScopes(query, false))
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err)
 		var semanticError *SemanticError

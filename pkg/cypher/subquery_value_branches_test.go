@@ -38,7 +38,7 @@ func TestSubqueryValueHelperBranches(t *testing.T) {
 
 	// entityRow and entityBindings keep only non-nil nodes and relationships.
 	edge := &storage.Edge{ID: "r1"}
-	row := entityRow(map[string]*storage.Node{"a": nil}, map[string]*storage.Edge{"r": edge, "s": nil})
+	row := entityRow(context.Background(), map[string]*storage.Node{"a": nil}, map[string]*storage.Edge{"r": edge, "s": nil})
 	require.Equal(t, pipelineRow{"r": edge}, row)
 	nodes, rels := entityBindings(map[string]interface{}{"r": edge, "s": (*storage.Edge)(nil), "x": 1})
 	require.Empty(t, nodes)

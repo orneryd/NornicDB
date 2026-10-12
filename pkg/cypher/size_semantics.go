@@ -75,12 +75,18 @@ func isStorableScalar(value interface{}) bool {
 	return false
 }
 
-// typeMismatchFromFunctionError converts a registry TypeMismatchError into
-// the statement error; other errors are returned unchanged.
+// typeMismatchFromFunctionError converts a registry TypeMismatchError, a
+// function argument of the wrong type found while the statement runs (a
+// property value: toUpper(n.age)), into Neo4j's run-time TypeError ("Invalid
+// input for function 'toUpper()': Expected a String, got: Long(5)"). An
+// argument whose type is known when the statement compiles (a literal, a
+// variable bound to one) is the static check's "Type mismatch" SyntaxError
+// first (staticFunctionArguments). Other errors are returned unchanged.
 func typeMismatchFromFunctionError(err error) error {
 	var mismatch *cypherfn.TypeMismatchError
 	if errors.As(err, &mismatch) {
-		return typeMismatchError(mismatch.Expected, mismatch.Value)
+		return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+			localization.CypherCoreFunctionArgumentInvalid(mismatch.Function, "a "+mismatch.Expected, neo4jValueRepr(mismatch.Value)))
 	}
 	return err
 }

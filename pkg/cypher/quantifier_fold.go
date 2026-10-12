@@ -5,18 +5,20 @@ import "strings"
 // parseQuantifierArguments splits the arguments of all / any / none /
 // single, "variable IN list WHERE predicate", for every evaluator.
 func parseQuantifierArguments(inner string) (variable, listExpression, predicate string, ok bool) {
-	inIndex := strings.Index(lowerASCII(inner), " in ")
+	// IN and WHERE at the top level: a list comprehension or subquery in
+	// the list expression has its own (Personal Documents I39).
+	inIndex := topLevelKeywordIndex(inner, "IN")
 	if inIndex <= 0 {
 		return "", "", "", false
 	}
-	rest := inner[inIndex+len(" in "):]
-	whereIndex := strings.Index(lowerASCII(rest), " where ")
+	rest := inner[inIndex+len("IN"):]
+	whereIndex := topLevelKeywordIndex(rest, "WHERE")
 	if whereIndex < 0 {
 		return "", "", "", false
 	}
 	variable = strings.TrimSpace(inner[:inIndex])
 	listExpression = strings.TrimSpace(rest[:whereIndex])
-	predicate = strings.TrimSpace(rest[whereIndex+len(" where "):])
+	predicate = strings.TrimSpace(rest[whereIndex+len("WHERE"):])
 	if !isValidIdentifier(variable) || listExpression == "" || predicate == "" {
 		return "", "", "", false
 	}

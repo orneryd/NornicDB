@@ -1,7 +1,6 @@
 package fn
 
 import (
-	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -280,18 +279,24 @@ type Sized interface {
 // sizeArgumentTypes is size()'s accepted argument types as Neo4j names them.
 const sizeArgumentTypes = "String or List<T>"
 
+// evalToLower is toLower(string): a non-string is a type mismatch, as in
+// Neo4j (toLower(5) is not '5').
 func evalToLower(ctx Context, args []string) (interface{}, error) {
-	if len(args) != 1 {
-		return nil, nil
-	}
-	v, err := ctx.Eval(args[0])
-	if err != nil || v == nil {
-		return nil, err
-	}
-	return cases.Lower(language.Und).String(fmt.Sprintf("%v", v)), nil
+	return evalStringCase(ctx, args, "toLower", lowerCaseText)
 }
 
+// evalToUpper is toUpper(string), as evalToLower.
 func evalToUpper(ctx Context, args []string) (interface{}, error) {
+	return evalStringCase(ctx, args, "toUpper", upperCaseText)
+}
+
+// lowerCaseText and upperCaseText are toLower's and toUpper's Unicode case
+// mappings, as plain functions so passing one doesn't allocate a bound
+// method value per call.
+func lowerCaseText(text string) string { return cases.Lower(language.Und).String(text) }
+func upperCaseText(text string) string { return cases.Upper(language.Und).String(text) }
+
+func evalStringCase(ctx Context, args []string, function string, convert func(string) string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, nil
 	}
@@ -299,7 +304,11 @@ func evalToUpper(ctx Context, args []string) (interface{}, error) {
 	if err != nil || v == nil {
 		return nil, err
 	}
-	return cases.Upper(language.Und).String(fmt.Sprintf("%v", v)), nil
+	text, isString := v.(string)
+	if !isString {
+		return nil, &TypeMismatchError{Function: function, Expected: "String", Value: v}
+	}
+	return convert(text), nil
 }
 
 func evalCoalesce(ctx Context, args []string) (interface{}, error) {

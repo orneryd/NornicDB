@@ -571,8 +571,7 @@ func parseSimpleCreateClause(clause, unwindVar string) (createNodeSpec, createEd
 	body = strings.TrimSpace(body)
 
 	// Edge form: (a)-[:TYPE]->(b)  or  (a)-[:TYPE {...}]->(b)
-	if strings.Contains(body, "-[") && (strings.Contains(body, "]->") || strings.Contains(body, "]<-") ||
-		strings.Contains(body, "]-(")) {
+	if isRelationshipPatternOperand(body) {
 		edge, ok := parseSimpleCreateEdge(body, unwindVar)
 		if !ok {
 			return createNodeSpec{}, createEdgeSpec{}, 0, false

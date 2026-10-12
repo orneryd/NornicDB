@@ -420,15 +420,53 @@ const (
 	// Neo4j temporal property type constraints.
 	PropertyTypeZonedDateTime PropertyType = "ZONED DATETIME"
 	PropertyTypeLocalDateTime PropertyType = "LOCAL DATETIME"
+	PropertyTypeLocalTime     PropertyType = "LOCAL TIME"
+	PropertyTypeZonedTime     PropertyType = "ZONED TIME"
+	PropertyTypeDuration      PropertyType = "DURATION"
+	PropertyTypePoint         PropertyType = "POINT"
 )
 
-// ValidatePropertyType checks if a value matches the expected type.
+// PropertyTypeUnionSeparator separates the member types of a union property
+// type ("STRING | INTEGER", Neo4j's normalized spelling): a value satisfies
+// the union when it satisfies any member.
+const PropertyTypeUnionSeparator = " | "
+
+// typedPropertyKinds is the TypedPropertyValue kind each typed scalar
+// property type requires.
+var typedPropertyKinds = map[PropertyType]string{
+	PropertyTypeLocalTime: "local-time",
+	PropertyTypeZonedTime: "time",
+	PropertyTypeDuration:  "duration",
+	PropertyTypePoint:     "point",
+}
+
+// ValidatePropertyType checks if a value matches the expected type: one
+// property type, LIST<T NOT NULL>, or a union of them (any member).
 // Handles JSON/MessagePack serialization quirks where integers become float64.
 func ValidatePropertyType(value interface{}, expectedType PropertyType) error {
 	if value == nil {
 		return nil // NULL is valid for any type
 	}
+	if members := strings.Split(string(expectedType), PropertyTypeUnionSeparator); len(members) > 1 {
+		for _, member := range members {
+			if validateSinglePropertyType(value, PropertyType(member)) == nil {
+				return nil
+			}
+		}
+		return localizedError(localization.StorageValidationExpectedType(string(expectedType), fmt.Sprintf("%T", value)), nil)
+	}
+	return validateSinglePropertyType(value, expectedType)
+}
 
+// validateSinglePropertyType checks a non-null value against one property
+// type (not a union).
+func validateSinglePropertyType(value interface{}, expectedType PropertyType) error {
+	if kind, typed := typedPropertyKinds[expectedType]; typed {
+		if propertyValueKind(value) == kind {
+			return nil
+		}
+		return localizedError(localization.StorageValidationExpectedType(string(expectedType), fmt.Sprintf("%T", value)), nil)
+	}
 	switch expectedType {
 	case PropertyTypeString:
 		if _, ok := value.(string); !ok {

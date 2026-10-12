@@ -8,80 +8,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// normalizeBareRelationshipPatterns gives relationships without square
-// brackets the same parser input as their explicit empty-bracket form. Cypher
-// permits all three forms: --, -->, and <--.
-func normalizeBareRelationshipPatterns(query string) string {
-	var output strings.Builder
-	output.Grow(len(query))
-	quote := byte(0)
-	for index := 0; index < len(query); index++ {
-		character := query[index]
-		if quote != 0 {
-			output.WriteByte(character)
-			if character == '\\' && quote != '`' && index+1 < len(query) {
-				index++
-				output.WriteByte(query[index])
-				continue
-			}
-			if character == quote {
-				quote = 0
-			}
-			continue
-		}
-		if character == '\'' || character == '"' || character == '`' {
-			quote = character
-			output.WriteByte(character)
-			continue
-		}
-		if character != ')' {
-			output.WriteByte(character)
-			continue
-		}
-
-		cursor := index + 1
-		for cursor < len(query) && isWhitespace(query[cursor]) {
-			cursor++
-		}
-		connectorStart := cursor
-		if cursor < len(query) && query[cursor] == '<' {
-			cursor++
-		}
-		if cursor+1 >= len(query) || query[cursor] != '-' || query[cursor+1] != '-' {
-			output.WriteByte(character)
-			continue
-		}
-		cursor += 2
-		if cursor < len(query) && query[cursor] == '>' {
-			cursor++
-		}
-		for cursor < len(query) && isWhitespace(query[cursor]) {
-			cursor++
-		}
-		if cursor >= len(query) || query[cursor] != '(' {
-			output.WriteByte(character)
-			continue
-		}
-
-		output.WriteByte(')')
-		connector := strings.ReplaceAll(query[connectorStart:cursor], " ", "")
-		connector = strings.ReplaceAll(connector, "\t", "")
-		connector = strings.ReplaceAll(connector, "\n", "")
-		switch connector {
-		case "--":
-			output.WriteString("-[]-")
-		case "-->":
-			output.WriteString("-[]->")
-		case "<--":
-			output.WriteString("<-[]-")
-		default:
-			output.WriteString(query[index+1 : cursor])
-		}
-		index = cursor - 1
-	}
-	return output.String()
-}
-
 type mergeRelationshipDirection uint8
 
 const (
@@ -236,33 +162,4 @@ func findParsedMergeRelationships(
 		combined = append(combined, edge)
 	}
 	return combined, nil
-}
-
-// mergeMapReads reports whether the property map in text (a node pattern's
-// content "b:L {k: v}", or a relationship's "{k: v}") has a value that reads
-// one of variables: a MERGE pattern's own node or relationship, which the
-// value can read only once it is bound.
-func (e *StorageExecutor) mergeMapReads(text string, variables ...string) bool {
-	if text == "" || strings.IndexByte(text, '{') < 0 {
-		return false
-	}
-	properties := text
-	if !strings.HasPrefix(strings.TrimSpace(text), "{") {
-		_, properties = splitNodePatternProperties("(" + text + ")")
-	}
-	properties = strings.TrimSpace(properties)
-	if len(properties) < 2 || properties[0] != '{' {
-		return false
-	}
-	for _, pair := range e.splitPropertyPairs(properties[1 : len(properties)-1]) {
-		value := pair[findTopLevelMapKeyValueSeparator(pair)+1:]
-		for _, variable := range expressionFreeVariables(value) {
-			for _, name := range variables {
-				if name != "" && variable == name {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }

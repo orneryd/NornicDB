@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -132,11 +133,71 @@ func validateRemoveClauseScope(scope *semanticBindingScope, clause string) error
 func validateDeleteClauseScope(scope *semanticBindingScope, clause string) error {
 	targets, _, _ := deleteClauseTargets(clause)
 	for _, expression := range targets {
+		if word, ok := trailingWordAfterOperand(expression); ok {
+			// One expression per target: DETACH DELETE n COMMIT is Neo4j
+			// 5.26.30's "Invalid input 'COMMIT'"; the root variable was
+			// deleted and the rest ignored (#741).
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				localization.CypherCoreInvalidInput(word))
+		}
 		if root := deleteExpressionRootIdentifier(expression); root != "" && !scope.contains(root) {
 			return deleteUndefinedVariableError(expression)
 		}
 	}
 	return nil
+}
+
+// trailingWordAfterOperand returns the word that follows a complete operand
+// at the top level of expression with no operator between (n COMMIT,
+// a.b c), which no expression has; operator keywords (AND, IN, IS, …) are
+// not such words.
+func trailingWordAfterOperand(expression string) (string, bool) {
+	depth := 0
+	operandEnded := false
+	for i := 0; i < len(expression); {
+		c := expression[i]
+		switch {
+		case c == '\'' || c == '"' || c == '`':
+			i = skipCypherQuotedText(expression, i, c)
+			operandEnded = depth == 0
+			continue
+		case c == '(' || c == '[' || c == '{':
+			depth++
+			operandEnded = false
+		case c == ')' || c == ']' || c == '}':
+			depth--
+			operandEnded = depth == 0
+		case isASCIIWhitespace(c):
+		case depth == 0 && isIdentStartByte(c):
+			word, end, _ := scanIdentifierToken(expression, i)
+			if operandEnded && !isExpressionOperatorWord(word) {
+				return word, true
+			}
+			operandEnded = !isExpressionOperatorWord(word)
+			i = end
+			continue
+		case depth == 0 && c == '.':
+			// a property name follows: part of the operand
+			operandEnded = false
+		case depth == 0 && isDigitByte(c):
+			operandEnded = true
+		default:
+			operandEnded = false
+		}
+		i++
+	}
+	return "", false
+}
+
+// isExpressionOperatorWord reports whether word is an operator or CASE
+// keyword that may follow an operand.
+func isExpressionOperatorWord(word string) bool {
+	switch upperASCII(word) {
+	case "AND", "OR", "XOR", "NOT", "IN", "IS", "CONTAINS", "STARTS", "ENDS", "WITH", "NULL", "AS",
+		"CASE", "WHEN", "THEN", "ELSE", "END":
+		return true
+	}
+	return false
 }
 
 // deleteClauseTargets splits a [DETACH] DELETE clause into its target
@@ -248,9 +309,7 @@ func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindi
 // It is the one reference scanner for the static SET and CREATE checks.
 func expressionFreeVariables(expression string) []string {
 	expression = maskTypePredicateTypes(maskPathFunctionCalls(expression))
-	locals := make(map[string]struct{})
-	collectListComprehensionBindings(expression, locals)
-	collectFunctionExpressionBindings(expression, locals)
+	locals := expressionLocalBindings(expression)
 	var names []string
 	delimiters := make([]byte, 0, 8)
 	for index := 0; index < len(expression); {
@@ -424,9 +483,22 @@ func expressionFreeVariables(expression string) []string {
 	return names
 }
 
+// expressionLocalBindings returns the variables an expression binds itself,
+// at any depth: list comprehension iterators and the variables of reduce /
+// all / any / none / single / filter. It is the one owner of an expression's
+// local names for the reference scanners (expressionFreeVariables,
+// semanticFreeReferences) and the static checks, so a scope nested in another
+// ([w IN l | any(v IN [w] WHERE v > 0)]) is local wherever it is read.
+func expressionLocalBindings(expression string) map[string]struct{} {
+	locals := make(map[string]struct{})
+	collectListComprehensionBindings(expression, locals)
+	collectFunctionExpressionBindings(expression, locals)
+	return locals
+}
+
 func collectFunctionExpressionBindings(expression string, bindings map[string]struct{}) {
 	lower := lowerASCII(expression)
-	for _, functionName := range []string{"reduce", "all", "any", "none", "single", "filter"} {
+	for _, functionName := range []string{"reduce", "allreduce", "all", "any", "none", "single", "filter"} {
 		searchFrom := 0
 		for searchFrom < len(expression) {
 			relative := strings.Index(lower[searchFrom:], functionName)
@@ -435,6 +507,10 @@ func collectFunctionExpressionBindings(expression string, bindings map[string]st
 			}
 			nameStart := searchFrom + relative
 			open := nameStart + len(functionName)
+			if nameStart > 0 && isIdentByte(expression[nameStart-1]) {
+				searchFrom = open
+				continue
+			}
 			for open < len(expression) && isWhitespace(expression[open]) {
 				open++
 			}
@@ -447,13 +523,10 @@ func collectFunctionExpressionBindings(expression string, bindings map[string]st
 				break
 			}
 			inner := strings.TrimSpace(expression[open+1 : close])
-			if functionName == "reduce" {
-				parts := splitTopLevelComma(inner)
-				if len(parts) == 2 {
-					if accumulator, _, ok := scanIdentifierToken(strings.TrimSpace(parts[0]), 0); ok {
-						bindings[accumulator] = struct{}{}
-					}
-					collectLeadingIteratorBinding(parts[1], bindings)
+			if isReduceFormFunction(functionName) {
+				if form, ok := parseReduceForm(functionName, inner); ok {
+					bindings[form.accumulator] = struct{}{}
+					bindings[form.variable] = struct{}{}
 				}
 			} else {
 				collectLeadingIteratorBinding(inner, bindings)

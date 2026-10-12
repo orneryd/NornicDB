@@ -1607,10 +1607,8 @@ func (e *StorageExecutor) parseScoreComparisonPredicate(ctx context.Context, whe
 	if clause == "" {
 		return "", 0, false
 	}
-	for _, kw := range []string{" AND ", " OR ", " NOT "} {
-		if topLevelKeywordIndex(clause, kw) >= 0 {
-			return "", 0, false
-		}
+	if hasTopLevelLogicalOperator(clause) || topLevelKeywordIndex(clause, " NOT ") >= 0 {
+		return "", 0, false
 	}
 
 	op := ""

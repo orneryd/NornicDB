@@ -3,6 +3,7 @@ package cypher
 import (
 	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"strings"
 )
 
 // evaluateRowMathFunction evaluates scalar math functions for the converged
@@ -10,6 +11,20 @@ import (
 // lets the caller distinguish a non-math function from an invalid argument.
 func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, values map[string]interface{}) (interface{}, bool, bool, error) {
 	name := lowerASCII(function)
+	// A call with a comma in its argument may have several arguments: the
+	// registry reports the count.
+	if fn, single := singleValueFunctions[name]; single && strings.IndexByte(argument, ',') < 0 {
+		// The argument's value goes straight to the one implementation.
+		value, resolved, err := e.evaluateRowValue(argument, values)
+		if err != nil || !resolved {
+			return nil, true, resolved, err
+		}
+		result, err := fn(value)
+		if err != nil {
+			return nil, true, false, functionEvaluationError(err)
+		}
+		return result, true, true, nil
+	}
 	if !isSharedMathFunction(name) {
 		return nil, false, false, nil
 	}
@@ -20,7 +35,7 @@ func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, val
 func isSharedMathFunction(name string) bool {
 	switch name {
 	case "pi", "e", "round", "sin", "cos", "tan", "cot", "asin", "acos", "atan", "atan2",
-		"exp", "log", "log10", "sqrt", "ceil", "ceiling", "floor", "degrees", "radians", "haversin",
+		"exp", "log", "log10", "sqrt", "ceil", "floor", "degrees", "radians", "haversin",
 		"sinh", "cosh", "tanh", "coth", "power":
 		return true
 	default:

@@ -45,11 +45,13 @@ func (scan *comparisonChainScan) operand(expression string, index int) string {
 // evaluateComparisonChain evaluates every adjacent pair in a Cypher
 // comparison. Each operand is resolved once and then reused as the left side
 // of the next pair, so the implementation supports arbitrary chain length
-// without duplicating expression work.
+// without duplicating expression work. cypher25 is the statement's version,
+// which decides how constant numbers compare (promoteConstantNumbers).
 func evaluateComparisonChain(
 	expression string,
 	resolve func(string) interface{},
 	compare func(interface{}, interface{}, string) interface{},
+	cypher25 bool,
 ) (interface{}, bool) {
 	scan, ok := scanComparisonChain(expression)
 	if !ok {
@@ -81,7 +83,7 @@ func evaluateComparisonChain(
 			if operator == "!=" {
 				operator = "<>"
 			}
-			leftValue, rightValue := promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), left, right)
+			leftValue, rightValue := promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), left, right, cypher25)
 			comparison := compare(leftValue, rightValue, operator)
 			if comparison == nil {
 				hasNull = true
@@ -95,6 +97,14 @@ func evaluateComparisonChain(
 		return nil, true
 	}
 	return true, true
+}
+
+// incomingArrowAt reports whether expression[index] ('<') starts an
+// incoming relationship arrow: <-- or <-[. Any other < before a '-' is a
+// comparison with a negative operand (n.v <-1 is n.v < -1), as in Neo4j.
+func incomingArrowAt(expression string, index int) bool {
+	return index+2 < len(expression) && expression[index] == '<' && expression[index+1] == '-' &&
+		(expression[index+2] == '-' || expression[index+2] == '[')
 }
 
 func splitComparisonChain(expression string) ([]string, []string, bool) {
@@ -215,7 +225,7 @@ func scanComparisonChain(expression string) (comparisonChainScan, bool) {
 		operator := ""
 		switch current {
 		case '<':
-			if index+1 < len(expression) && expression[index+1] == '-' {
+			if incomingArrowAt(expression, index) {
 				continue
 			}
 			operator = "<"
@@ -278,7 +288,7 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 		operatorLength := 0
 		switch expression[index] {
 		case '<':
-			if index+1 < len(expression) && expression[index+1] == '-' {
+			if incomingArrowAt(expression, index) {
 				continue
 			}
 			if index > 0 && isIdentByte(expression[index-1]) && typeConstructorBefore(expression, index) {

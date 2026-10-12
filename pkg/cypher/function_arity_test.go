@@ -15,7 +15,7 @@ func TestFunctionArities(t *testing.T) {
 		"round":              {1, 3},
 		"substring":          {2, 3},
 		"normalize":          {1, 2},
-		"date":               {0, 1},
+		"date":               {0, 2}, // date(input, pattern) since Cypher 25
 		"date.truncate":      {1, 3},
 		"duration":           {1, 1},
 		"point.distance":     {2, 2},
@@ -31,7 +31,7 @@ func TestFunctionArities(t *testing.T) {
 		require.True(t, ok, name)
 		require.Equal(t, want, arity, name)
 	}
-	for _, name := range []string{"reduce", "any", "all", "none", "single", "exists", "decay", "cosh", "kalman.init", "shortestPath", "nosuch", "apoc.coll.sum", strings.Repeat("x", 80)} {
+	for _, name := range []string{"reduce", "allReduce", "any", "all", "none", "single", "exists", "decay", "cosh", "kalman.init", "shortestPath", "nosuch", "apoc.coll.sum", strings.Repeat("x", 80)} {
 		_, ok := lookupFunctionArity(name)
 		require.False(t, ok, name)
 	}
@@ -52,7 +52,7 @@ func TestFunctionArityThroughExecute(t *testing.T) {
 		"RETURN isEmpty('a', 1) AS v",
 		"RETURN point() AS v",
 		"RETURN point.distance(point({x: 1, y: 2})) AS v",
-		"RETURN date('2020-01-01', 1) AS v",
+		"RETURN date('2020-01-01', 'yyyy', 1) AS v",
 		"RETURN date.truncate('day', date('2020-01-02'), {}, 1) AS v",
 		"RETURN datetime.fromepoch(1) AS v",
 		"RETURN duration() AS v",

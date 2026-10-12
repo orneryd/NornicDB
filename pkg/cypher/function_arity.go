@@ -12,17 +12,21 @@ type functionArity struct {
 // from its signatures: coalesce takes any number of arguments, trim also takes
 // the forms its FROM syntax stands for, trim(specification, input) and
 // trim(specification, characters, input), and timestamp takes an ignored one.
+// format takes a value and a pattern, or, as NornicDB's printf extension, a
+// template and any number of values.
 var functionArityOverrides = map[string]functionArity{
 	"coalesce":  {minimum: 1, maximum: -1},
+	"format":    {minimum: 1, maximum: -1},
 	"trim":      {minimum: 1, maximum: 3},
 	"timestamp": {minimum: 0, maximum: 1},
 }
 
 // functionSyntaxForms are catalog entries written with their own syntax, not
-// a list of arguments: reduce(acc = init, x IN list | expression), the list
+// a list of arguments: reduce(acc = init, x IN list | expression) and
+// allReduce(acc = init, x IN list | expression, predicate), the list
 // predicates any / all / none / single (x IN list WHERE …) and exists.
 var functionSyntaxForms = map[string]bool{
-	"reduce": true, "all": true, "any": true, "none": true, "single": true, "exists": true,
+	"reduce": true, "allreduce": true, "all": true, "any": true, "none": true, "single": true, "exists": true,
 }
 
 // functionArities are the argument counts of the built-in functions, keyed by

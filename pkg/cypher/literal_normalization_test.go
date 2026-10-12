@@ -132,7 +132,7 @@ func TestSyntaxCacheCanonicalLiteralSharing(t *testing.T) {
 	require.NoError(t, err)
 	canonical, changed := normalizeLiteralText("CREATE (n:Node {id: 2})")
 	require.True(t, changed)
-	require.True(t, exec.hasCachedValidSyntax("CREATE (n:Node {id: 2})"),
+	require.True(t, exec.hasCachedValidSyntax("CREATE (n:Node {id: 2})", activeSyntaxValidator()),
 		"a literal variant of an accepted statement hits the syntax cache")
 	_ = canonical
 }

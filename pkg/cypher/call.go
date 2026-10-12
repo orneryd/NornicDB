@@ -180,12 +180,9 @@ func scopeYieldToCallClause(afterYield string) string {
 
 func findYieldOuterBoundary(afterYield string) int {
 	scopeEnd := len(afterYield)
-	// Keep this list conservative and clause-oriented; ORDER/RETURN/WHERE/LIMIT/SKIP
-	// are intentionally excluded here because they are valid within the YIELD scope.
-	for _, kw := range []string{
-		"WITH", "MATCH", "OPTIONAL", "UNWIND", "CALL",
-		"CREATE", "MERGE", "SET", "DELETE", "DETACH", "REMOVE", "FOREACH", "LOAD",
-	} {
+	// The clause keywords; ORDER/RETURN/WHERE/LIMIT/SKIP are excluded because
+	// they are valid within the YIELD scope.
+	for _, kw := range callTailPlanClauseKeywords {
 		if idx := topLevelKeywordIndex(afterYield, kw); idx != -1 && idx < scopeEnd {
 			scopeEnd = idx
 		}
@@ -1137,11 +1134,14 @@ func resolveIntLiteralOrParam(ctx context.Context, raw string) (int, bool) {
 	return n, true
 }
 
-// callTailPlanClauseKeywords start the clauses a compiled CALL-tail
-// projection plan can't hold between its WITH and RETURN.
+// callTailPlanClauseKeywords start the clauses that can follow a CALL's (or
+// a SHOW command's) YIELD, ending its YIELD items and segments; a compiled
+// CALL-tail projection plan can't hold them between its WITH and RETURN.
 var callTailPlanClauseKeywords = []string{
 	"MATCH", "OPTIONAL", "UNWIND", "CALL", "WITH", "CREATE", "MERGE",
 	"SET", "DELETE", "DETACH", "REMOVE", "FOREACH", "LOAD", "UNION",
+	// Cypher 25's clauses (#907).
+	"FILTER", "LET", "FOR", "FINISH", "INSERT",
 }
 
 // parseCallTailProjectionPlan returns the tail's projection plan, parsed once
@@ -1403,56 +1403,14 @@ func isIdentifierReferenced(query, identifier string) bool {
 	return false
 }
 
-// findKeywordIndexInContext finds a keyword in context, avoiding matches inside quotes
+// findKeywordIndexInContext returns the index of keyword's first occurrence
+// at the top level of s, or -1: topLevelKeywordIndex, the one scanner. A
+// keyword inside parentheses, a list or braces (a function call's or list
+// comprehension's WHERE, a subquery body) isn't the clause's (Personal
+// Documents I36); nor is one in a string, a quoted name or a comment, the
+// WITH of STARTS WITH / ENDS WITH, or a clause keyword used as a name.
 func findKeywordIndexInContext(s, keyword string) int {
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i := 0; i <= len(s)-len(keyword); i++ {
-		c := rune(s[i])
-
-		// Track quote state
-		if c == '\'' || c == '"' {
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-			continue
-		}
-
-		if inQuote {
-			continue
-		}
-
-		// Check for keyword match with word boundary
-		if hasPrefixFoldASCII(s[i:], keyword) {
-			// Check left boundary (must be start or non-alphanumeric)
-			if i > 0 {
-				prev := s[i-1]
-				if isIdentByte(prev) {
-					continue
-				}
-			}
-			// Check right boundary
-			end := i + len(keyword)
-			if end < len(s) {
-				next := s[end]
-				if isIdentByte(next) {
-					continue
-				}
-			}
-			if isWithKeyword(keyword) && isOperatorWith(s, i) {
-				continue
-			}
-			if clauseKeywordUsedAsName(s, i, end, keyword) {
-				continue
-			}
-			return i
-		}
-	}
-	return -1
+	return topLevelKeywordIndex(s, keyword)
 }
 
 // applyYieldFilter applies a procedure call's YIELD to the procedure's rows.

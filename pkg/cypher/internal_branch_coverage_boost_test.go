@@ -317,19 +317,6 @@ func TestMergeAndMutationHelpers_Branches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	prop, lit, ok := exec.extractIndexedEqualityFromWhereTerm("n", "n.id = 'x'")
-	require.True(t, ok)
-	require.Equal(t, "id", prop)
-	require.Equal(t, "x", lit)
-
-	prop, lit, ok = exec.extractIndexedEqualityFromWhereTerm("n", "n.id = '7' AND 'x' IS NOT NULL")
-	require.True(t, ok)
-	require.Equal(t, "id", prop)
-	require.Equal(t, "7", lit)
-
-	_, _, ok = exec.extractIndexedEqualityFromWhereTerm("n", "n.id = 1 AND n.age > 2")
-	require.False(t, ok)
-
 	edge := &storage.Edge{ID: "r1", Type: "REL", StartNode: "a", EndNode: "b"}
 	nodeCtx := map[string]*storage.Node{
 		"n": {ID: "a", Properties: map[string]interface{}{"name": "Alice"}},

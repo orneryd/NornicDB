@@ -26,7 +26,7 @@ func TestCheckOperatorBranches(t *testing.T) {
 		{op: '%', left: known("Boolean"), right: known("Integer"), fails: true},
 		{op: '^', left: known("Boolean"), right: known("Integer"), fails: true},
 	} {
-		got, err := checkOperator(tc.op, tc.left, tc.right)
+		got, err := checkOperator(tc.op, tc.left, tc.right, false)
 		if tc.fails {
 			require.Error(t, err, "%c %+v %+v", tc.op, tc.left, tc.right)
 			continue

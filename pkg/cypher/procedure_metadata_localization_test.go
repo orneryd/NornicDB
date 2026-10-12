@@ -245,7 +245,7 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 		require.NotEmpty(t, spec.DescriptionMessage.ID, "core metadata requires a descriptor: %s", spec.Name)
 		require.Equal(t, spec.Description, spec.DescriptionMessage.Fallback, "English fallback changed: %s", spec.Name)
 	}
-	require.Equal(t, 71, coreCount)
+	require.Equal(t, 73, coreCount) // db.schema.nodeTypeProperties and relTypeProperties (#907)
 	require.Equal(t, 30, apocCount) // apoc.path.subgraphAll and expandConfig (#907)
 }
 

@@ -182,7 +182,7 @@ func TestDynamicTokenBranches(t *testing.T) {
 	require.False(t, constant)
 	require.Nil(t, value2)
 	require.False(t, r.writeItemHead(0))
-	got, _, err := desugarLabelExpressions("MATCH (n) SET n IS $(x RETURN n", nil)
+	got, _, err := desugarLabelExpressions("MATCH (n) SET n IS $(x RETURN n", nil, false)
 	require.NoError(t, err)
 	require.Equal(t, "MATCH (n) SET n IS $(x RETURN n", got)
 	var references []string

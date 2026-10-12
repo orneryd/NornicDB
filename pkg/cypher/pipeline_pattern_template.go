@@ -94,7 +94,7 @@ func (e *StorageExecutor) pipelineNodeMatchTemplateFor(clause string) *pipelineN
 		pattern = strings.TrimSpace(pattern[:whereIndex])
 	}
 	template.pattern = pattern
-	if !strings.Contains(pattern, "-[") && !strings.Contains(pattern, "]-") && len(e.splitNodePatterns(pattern)) == 1 {
+	if e.isSingleNodePattern(pattern) {
 		// A path assignment (p = (n)) takes the general route.
 		template.pathVariable = extractPathAssignmentVariable(pattern)
 		head, props := splitNodePatternProperties(pattern)
