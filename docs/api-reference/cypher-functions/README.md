@@ -176,6 +176,22 @@ Real-time signal filtering and prediction for time series data. Perfect for smoo
 | `kalman.adaptive.init(config?)`         | Create auto-switching filter  | `kalman.adaptive.init()`              |
 | `kalman.adaptive.process(val, state)`   | Filter with auto mode-switch  | Returns `{value, mode, state}`        |
 
+### 🔎 Text Location (1 function, a NornicDB extension)
+
+`text.locate(text, quote, options)` returns `{start, end}`, the span of a quote's best occurrence in `text` in code points (`substring(text, start, end - start)` is the passage), or null. The match is loose, as a reader copies a quote: letters match without case; any whitespace run matches any run; typographic and plain quotation marks, apostrophes and dashes match; markdown emphasis (`*`, `_`), link markup (`[label](target)`) and a reply's leading `>` markers are skipped; in the quote, JSON escapes `
+`, ``, `	` are whitespace and a copied line label (`12: `) is dropped.
+
+| Option | Meaning |
+| --- | --- |
+| `line` | The 1-based line the quote was cited on: the occurrence starting on it wins, else the nearest within `tolerance` lines, else null. Without it, the first occurrence wins. |
+| `tolerance` | Lines around `line` an occurrence may start on (default 3). |
+| `from`, `to` | The code-point range the occurrence must lie in. |
+
+```cypher
+MATCH (s:Source {id: $id})
+RETURN text.locate(s.text, $quote, {line: $line, from: $partStart, to: $partEnd}) AS span
+```
+
 ### ⏰ Date/Time Functions (4 functions)
 
 | Function      | What It Does                | Example              |
