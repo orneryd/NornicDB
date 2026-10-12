@@ -35,6 +35,75 @@ func (e *StorageExecutor) indexSeekConstant(ctx context.Context, expr string) (v
 	return normalizePropValue(value), true
 }
 
+// idEqualityLookup reads a WHERE that is one id(<variable>) = <value> or
+// elementId(<variable>) = <value> comparison: the variable, and the storage
+// ID the value names (an element ID's payload; elementKind is "4" for nodes,
+// "5" for relationships). empty is true when the value is null, not a string
+// or blank, which matches nothing; ok is false for any other WHERE.
+func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, elementKind string) (variable, lookupID string, empty, ok bool) {
+	clause := strings.TrimSpace(whereClause)
+	if clause == "" {
+		return "", "", false, false
+	}
+
+	upper := upperASCII(clause)
+	if strings.Contains(upper, " AND ") || strings.Contains(upper, " OR ") || strings.Contains(upper, " IN ") {
+		return "", "", false, false
+	}
+
+	eqIdx := strings.Index(clause, "=")
+	if eqIdx <= 0 {
+		return "", "", false, false
+	}
+	// Ignore >=, <=, !=, <>
+	if prev := clause[eqIdx-1]; prev == '!' || prev == '<' || prev == '>' {
+		return "", "", false, false
+	}
+	if eqIdx+1 < len(clause) && clause[eqIdx+1] == '=' {
+		return "", "", false, false
+	}
+
+	left := strings.TrimSpace(clause[:eqIdx])
+	right := strings.TrimSpace(clause[eqIdx+1:])
+	if left == "" || right == "" {
+		return "", "", false, false
+	}
+
+	kind := ""
+	lowerLeft := lowerASCII(left)
+	switch {
+	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
+		kind = "id"
+		variable = strings.TrimSpace(left[3 : len(left)-1])
+	case strings.HasPrefix(lowerLeft, "elementid(") && strings.HasSuffix(left, ")"):
+		kind = "elementId"
+		variable = strings.TrimSpace(left[10 : len(left)-1])
+	default:
+		return "", "", false, false
+	}
+	if variable == "" {
+		return "", "", false, false
+	}
+
+	rawVal, constant := e.indexSeekConstant(ctx, right)
+	if !constant {
+		return "", "", false, false
+	}
+	idValue, isString := rawVal.(string)
+	if !isString || strings.TrimSpace(idValue) == "" {
+		return variable, "", true, true
+	}
+	lookupID = strings.TrimSpace(idValue)
+	// A canonical element ID ("<kind>:<db>:<id>") names its ID payload; an
+	// id() lookup that passes an element ID is read the same way.
+	if kind == "elementId" || strings.HasPrefix(lookupID, elementKind+":") {
+		if parts := strings.SplitN(lookupID, ":", 3); len(parts) == 3 && parts[0] == elementKind {
+			lookupID = parts[2]
+		}
+	}
+	return variable, lookupID, false, true
+}
+
 // tryCollectNodesFromIDEquality attempts to satisfy:
 //
 //	MATCH (n[:Label]) WHERE id(n) = <id>
@@ -42,81 +111,12 @@ func (e *StorageExecutor) indexSeekConstant(ctx context.Context, expr string) (v
 //
 // via a direct node lookup instead of scanning all nodes.
 func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
-	clause := strings.TrimSpace(whereClause)
-	if clause == "" {
+	varName, lookupID, empty, ok := e.idEqualityLookup(ctx, whereClause, "4")
+	if !ok || varName != nodePattern.variable {
 		return nil, false, nil
 	}
-
-	upper := upperASCII(clause)
-	if strings.Contains(upper, " AND ") || strings.Contains(upper, " OR ") || strings.Contains(upper, " IN ") {
-		return nil, false, nil
-	}
-
-	eqIdx := strings.Index(clause, "=")
-	if eqIdx <= 0 {
-		return nil, false, nil
-	}
-	// Ignore >=, <=, !=, <>
-	if eqIdx > 0 {
-		prev := clause[eqIdx-1]
-		if prev == '!' || prev == '<' || prev == '>' {
-			return nil, false, nil
-		}
-	}
-	if eqIdx+1 < len(clause) {
-		next := clause[eqIdx+1]
-		if next == '=' {
-			return nil, false, nil
-		}
-	}
-
-	left := strings.TrimSpace(clause[:eqIdx])
-	right := strings.TrimSpace(clause[eqIdx+1:])
-	if left == "" || right == "" {
-		return nil, false, nil
-	}
-
-	kind := ""
-	varName := ""
-	lowerLeft := lowerASCII(left)
-	switch {
-	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
-		kind = "id"
-		varName = strings.TrimSpace(left[3 : len(left)-1])
-	case strings.HasPrefix(lowerLeft, "elementid(") && strings.HasSuffix(left, ")"):
-		kind = "elementId"
-		varName = strings.TrimSpace(left[10 : len(left)-1])
-	default:
-		return nil, false, nil
-	}
-
-	if varName == "" || varName != nodePattern.variable {
-		return nil, false, nil
-	}
-
-	rawVal, constant := e.indexSeekConstant(ctx, right)
-	if !constant {
-		return nil, false, nil
-	}
-	idValue, ok := rawVal.(string)
-	if !ok || strings.TrimSpace(idValue) == "" {
+	if empty {
 		return []*storage.Node{}, true, nil
-	}
-	idValue = strings.TrimSpace(idValue)
-
-	lookupID := idValue
-	if kind == "elementId" {
-		// Accept canonical element IDs ("4:<db>:<id>") by extracting the ID payload.
-		parts := strings.SplitN(idValue, ":", 3)
-		if len(parts) == 3 && parts[0] == "4" {
-			lookupID = parts[2]
-		}
-	}
-	// Be permissive for id(n) lookups that accidentally pass an elementId() value.
-	if strings.HasPrefix(lookupID, "4:") {
-		if parts := strings.SplitN(lookupID, ":", 3); len(parts) == 3 {
-			lookupID = parts[2]
-		}
 	}
 
 	node, err := e.storage.GetNode(storage.NodeID(lookupID))

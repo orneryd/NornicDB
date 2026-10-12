@@ -2119,6 +2119,16 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 				// properties on that endpoint, so this row matches nothing.
 				continue
 			}
+			if startSeedNodes == nil && endSeedNodes == nil {
+				// A relationship pinned by id / elementId starts from its
+				// endpoints, not from every node.
+				if seeds, none, pinned := e.relationshipIDSeedNodes(ctx, materializedPattern, physicalWhere); pinned {
+					if none {
+						continue
+					}
+					startSeedNodes = seeds
+				}
+			}
 			result, err = e.executeMatchWithRelationshipsWithPathSeeded(ctx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.earlyLimit)
 			if err != nil {
 				return nil, true, err
