@@ -509,6 +509,15 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		return result, err
 	}
 	if result, err := e.parseTransactionStatement(cypher); result != nil || err != nil {
+		if err == nil && e.txContext != nil && e.txContext.active {
+			// BEGIN: the client's transaction metadata (WithTransactionMetadata).
+			if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
+				if metadataErr := applyTransactionMetadata(ctx, tx); metadataErr != nil {
+					_, _ = e.handleRollback()
+					return nil, metadataErr
+				}
+			}
+		}
 		if err == nil && e.txContext != nil && e.txContext.active && e.txContext.running == nil {
 			e.txContext.running = runningTransactions.begin(ctx, e.currentDatabaseName())
 		}

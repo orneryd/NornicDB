@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,6 +207,42 @@ func TestChangeDataCaptureKeys(t *testing.T) {
 	updates := cdcRows(t, exec, from, map[string]interface{}{"select": "n", "key": map[string]interface{}{"id": "ctx"}, "operation": "u"})
 	require.Len(t, updates, 1)
 	require.Equal(t, map[string]interface{}{"name": "b"}, stateOf(updates[0], "after")["properties"])
+}
+
+// A client's transaction metadata (WithTransactionMetadata, from Bolt's
+// tx_metadata) is the transaction's metadata, for an explicit transaction
+// from BEGIN and for an auto-commit statement, and a txMetadata selector
+// finds it. Metadata too large for a transaction
+// fails the BEGIN and leaves no transaction open.
+func TestChangeDataCaptureClientTransactionMetadata(t *testing.T) {
+	exec, _ := newCDCExecutor(t, storage.ChangeCaptureFull)
+	ctx := context.Background()
+	from := cdcID(t, exec, "db.cdc.current")
+	_, err := exec.Execute(WithTransactionMetadata(ctx, map[string]any{"writer": "explicit"}), "BEGIN", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "CREATE (:Doc {id: 1})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(ctx, "COMMIT", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(WithTransactionMetadata(ctx, map[string]any{"writer": "auto"}), "CREATE (:Doc {id: 2})", nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(WithTransactionMetadata(ctx, nil), "CREATE (:Doc {id: 3})", nil)
+	require.NoError(t, err)
+
+	rows := cdcRows(t, exec, from)
+	require.Len(t, rows, 3)
+	for index, want := range []map[string]interface{}{{"writer": "explicit"}, {"writer": "auto"}, {}} {
+		require.Equal(t, want, rows[index]["metadata"].(map[string]interface{})["txMetadata"], index)
+	}
+	require.Len(t, cdcRows(t, exec, from, map[string]interface{}{"select": "e", "txMetadata": map[string]interface{}{"writer": "auto"}}), 1)
+
+	large := map[string]any{"blob": strings.Repeat("x", 4096)}
+	_, err = exec.Execute(WithTransactionMetadata(ctx, large), "BEGIN", nil)
+	require.Error(t, err)
+	_, err = exec.Execute(ctx, "COMMIT", nil)
+	require.Error(t, err, "no transaction is open")
+	_, err = exec.Execute(WithTransactionMetadata(ctx, large), "CREATE (:Doc {id: 4})", nil)
+	require.Error(t, err)
 }
 
 // Selectors filter as Neo4j's do: OR across the list, AND within one.

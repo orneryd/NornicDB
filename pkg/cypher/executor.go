@@ -1707,6 +1707,10 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 			return nil, localizedError(localization.CypherCoreImplicitTransactionPinFailed(err), err)
 		}
 	}
+	if err := applyTransactionMetadata(ctx, tx); err != nil {
+		_ = tx.Rollback()
+		return nil, err
+	}
 
 	// Defer constraint validation to commit for implicit transactions.
 	// This avoids duplicate per-operation checks and improves write throughput.

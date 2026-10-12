@@ -251,6 +251,10 @@ func (s *Session) handleRun(data []byte) error {
 		defer func() { _ = s.txLifecycle.finishRun() }()
 	}
 	parentCtx = extractTraceparent(parentCtx, metadata)
+	if !s.inTransaction {
+		// An auto-commit RUN's tx_metadata is its transaction's metadata.
+		parentCtx = cypher.WithTransactionMetadata(parentCtx, boltTxMetadata(metadata))
+	}
 	var ctx context.Context
 	var runCancel context.CancelFunc
 	if runTimeout > 0 {
@@ -940,6 +944,12 @@ func (s *Session) handlePull(data []byte) error {
 	return s.flushIfPending()
 }
 
+// boltTxMetadata is the tx_metadata map of a BEGIN or RUN message, or nil.
+func boltTxMetadata(metadata map[string]any) map[string]any {
+	txMetadata, _ := metadata["tx_metadata"].(map[string]any)
+	return txMetadata
+}
+
 func databaseFromMetadata(metadata map[string]any) (string, bool) {
 	if len(metadata) == 0 {
 		return "", false
@@ -1172,6 +1182,8 @@ func (s *Session) handleBegin(data []byte) error {
 		}
 	}
 	txParent = extractTraceparent(txParent, metadata)
+	// BEGIN's tx_metadata is the transaction's metadata.
+	txParent = cypher.WithTransactionMetadata(txParent, boltTxMetadata(metadata))
 	// The transaction is the session's: SHOW TRANSACTIONS lists it with the
 	// session's connection and user from BEGIN on.
 	txParent = s.withSessionIdentity(txParent)
