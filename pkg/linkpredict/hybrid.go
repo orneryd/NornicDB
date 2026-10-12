@@ -268,7 +268,9 @@ func (h *HybridScorer) Predict(ctx context.Context, graph Graph, source storage.
 	}
 
 	// Sort by hybrid score
-	sort.Slice(hybridPreds, func(i, j int) bool { return hybridPreds[i].Score > hybridPreds[j].Score })
+	sort.Slice(hybridPreds, func(i, j int) bool {
+		return rankedBefore(hybridPreds[i].Score, hybridPreds[j].Score, hybridPreds[i].TargetID, hybridPreds[j].TargetID)
+	})
 
 	// Return top K
 	if topK > 0 && len(hybridPreds) > topK {
@@ -356,9 +358,10 @@ func (h *HybridScorer) ensembleTopology(graph Graph, source storage.NodeID, k in
 		})
 	}
 
-	// Sort by score descending and return
-	sort.Slice(predictions, func(i, j int) bool { return predictions[i].Score > predictions[j].Score })
-	if len(predictions) > k {
+	// Sort by score descending and return; k <= 0 is every prediction, as
+	// for a single algorithm.
+	sortPredictions(predictions)
+	if k > 0 && len(predictions) > k {
 		predictions = predictions[:k]
 	}
 

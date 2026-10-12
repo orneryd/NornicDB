@@ -635,10 +635,7 @@ func topKPredictions(scores map[storage.NodeID]float64, k int, algorithm string)
 		})
 	}
 
-	// Sort by score descending
-	sort.Slice(predictions, func(i, j int) bool {
-		return predictions[i].Score > predictions[j].Score
-	})
+	sortPredictions(predictions)
 
 	// Return top K
 	if k > 0 && len(predictions) > k {
@@ -646,6 +643,24 @@ func topKPredictions(scores map[storage.NodeID]float64, k int, algorithm string)
 	}
 
 	return predictions
+}
+
+// sortPredictions orders predictions by rankedBefore.
+func sortPredictions(predictions []Prediction) {
+	sort.Slice(predictions, func(i, j int) bool {
+		return rankedBefore(predictions[i].Score, predictions[j].Score, predictions[i].TargetID, predictions[j].TargetID)
+	})
+}
+
+// rankedBefore is the order of every prediction list: by score, highest
+// first, and equal scores by target node ID, so ties (common in small or
+// regular graphs) come in the same order on every run, not in map iteration
+// order, and a top-K cut keeps the same candidates.
+func rankedBefore(scoreA, scoreB float64, targetA, targetB storage.NodeID) bool {
+	if scoreA != scoreB {
+		return scoreA > scoreB
+	}
+	return targetA < targetB
 }
 
 // normalizeAlgorithmScore converts algorithm-specific scores to [0, 1] range.
