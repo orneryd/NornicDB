@@ -60,21 +60,14 @@ func findExact(text, chunk string, from, windowEnd int) (Span, bool) {
 // every whitespace rune removed from both, and maps the match back to the
 // text: from its first non-space rune to the end of its last.
 func findIgnoringWhitespace(text, chunk string, from, windowEnd int) (Span, bool) {
-	needle := withoutWhitespace(chunk)
-	if needle == "" {
-		return Span{}, false
-	}
+	needle := withoutWhitespace(chunk) // not empty: Align skips blank chunks
 	var squashed strings.Builder
 	positions := make([]int, 0, windowEnd-from)
 	for offset, r := range text[from:windowEnd] {
 		if unicode.IsSpace(r) {
 			continue
 		}
-		size := utf8.RuneLen(r)
-		if size < 0 {
-			size = 1
-		}
-		for range size {
+		for range utf8.RuneLen(r) { // as WriteRune writes it (U+FFFD for an invalid byte)
 			positions = append(positions, from+offset)
 		}
 		squashed.WriteRune(r)

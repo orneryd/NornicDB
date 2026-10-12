@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -74,4 +75,49 @@ func TestGetNodeEmbeddingMetaThroughStorageStack(t *testing.T) {
 	meta, err = badgerEngine.GetNodeEmbeddingMeta("nornic:doc")
 	require.NoError(t, err)
 	require.Empty(t, meta["chunk_texts"])
+}
+
+// The metadata read's failures: a closed engine, an unreadable node record or
+// sidecar record, a node deleted while its delete is pending, and an engine
+// without the read (the full node's metadata).
+func TestGetNodeEmbeddingMetaFailures(t *testing.T) {
+	engine, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&Node{ID: "nornic:a", Properties: map[string]any{"text": "x"}})
+	require.NoError(t, err)
+	_, err = engine.GetNodeEmbeddingMeta("")
+	require.ErrorIs(t, err, ErrInvalidID)
+	require.NoError(t, engine.db.Update(func(txn *badger.Txn) error {
+		if err := txn.Set(nodeKey("nornic:broken"), []byte{0xff, 0x00}); err != nil {
+			return err
+		}
+		return txn.Set(embeddingMetaKey("nornic:a"), []byte{0xff, 0x00})
+	}))
+	_, err = engine.GetNodeEmbeddingMeta("nornic:broken")
+	require.Error(t, err)
+	_, err = engine.GetNodeEmbeddingMeta("nornic:a")
+	require.Error(t, err)
+	require.NoError(t, engine.Close())
+	_, err = engine.GetNodeEmbeddingMeta("nornic:a")
+	require.Error(t, err)
+
+	inner, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	async := NewAsyncEngine(inner, &AsyncEngineConfig{FlushInterval: time.Hour})
+	t.Cleanup(func() { _ = async.Close() })
+	_, err = async.CreateNode(&Node{ID: "nornic:stored", Properties: map[string]any{"text": "y"}})
+	require.NoError(t, err)
+	require.NoError(t, async.Flush())
+	require.NoError(t, async.DeleteNode("nornic:stored"))
+	_, err = async.GetNodeEmbeddingMeta("nornic:stored")
+	require.ErrorIs(t, err, ErrNotFound)
+
+	memory := NewNamespacedEngine(NewMemoryEngine(), "nornic")
+	_, err = memory.CreateNode(&Node{ID: "m", Properties: map[string]any{"text": "z"}, EmbedMeta: map[string]any{"chunk_count": 1}})
+	require.NoError(t, err)
+	meta, err := memory.GetNodeEmbeddingMeta("m")
+	require.NoError(t, err)
+	require.Equal(t, 1, chunkCountFromMeta(meta))
+	_, err = memory.GetNodeEmbeddingMeta("missing")
+	require.Error(t, err)
 }

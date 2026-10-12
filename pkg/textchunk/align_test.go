@@ -20,5 +20,6 @@ func TestAlignFindsChunksInOrder(t *testing.T) {
 	require.Equal(t, []Span{{-1, -1}, {0, 5}}, Align(text, []string{"  ", "alpha"}))
 	require.Equal(t, []Span{{0, 7}, {8, 17}, {18, 23}}, Align("Straße 東京都 café", []string{"Straße", "東京都", "café"}))
 	require.Equal(t, []Span{{8, 17}}, Align("Straße 東京都 café", []string{"東 京\n都"}))
+	require.Equal(t, []Span{{2, 6}}, Align("a \xffb c", []string{"\xffb\nc"}))
 	require.False(t, Span{-1, -1}.Found())
 }
