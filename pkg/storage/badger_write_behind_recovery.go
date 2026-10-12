@@ -37,7 +37,11 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 			return nil
 		}
 		var data WALBufferedCommitData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		payload, err := decompressWALBufferedCommitPayload(entry.Data)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(payload, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal buffered commit %d: %w", entry.Sequence, err)
 		}
 		if data.TxID == "" {

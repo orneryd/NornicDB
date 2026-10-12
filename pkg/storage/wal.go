@@ -758,6 +758,10 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 	if err != nil {
 		return 0, fmt.Errorf("wal: failed to marshal data: %w", err)
 	}
+	// The buffered-commit payload is the dominant WAL cost (it carries every
+	// write for kill -9 recovery); losslessly compress it so the WAL stays
+	// proportional to the data instead of several times larger.
+	dataBytes = compressWALBufferedCommitPayload(dataBytes)
 
 	seq := w.sequence.Add(1)
 	entry := WALEntry{
@@ -2288,7 +2292,11 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		// counters, indexes and caches all land identically. Only
 		// BadgerEngine destinations support this; anything else skips.
 		var data WALBufferedCommitData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		payload, err := decompressWALBufferedCommitPayload(entry.Data)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(payload, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal buffered commit: %w", err)
 		}
 		b, ok := baseEngine.(*BadgerEngine)
