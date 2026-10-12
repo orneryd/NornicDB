@@ -86,6 +86,9 @@ type TraversalContext struct {
 // The traversal then asks storage whether each one is visible
 // (storage.RelationshipEndpointChecker) instead of reading it.
 func traversalEndpointsNeedOnlyExist(match *TraversalMatch) bool {
+	if match.IntermediateNode {
+		return false
+	}
 	return !match.IsChained && match.PathVariable == "" && match.EndNode.variable == "" &&
 		len(match.EndNode.labels) == 0 && len(match.EndNode.properties) == 0
 }
@@ -97,6 +100,9 @@ func traversalEndpointsNeedOnlyExist(match *TraversalMatch) bool {
 // (match.UnusedPropertyVariables). The traversal then reads ID + labels
 // without decoding properties (#1110).
 func traversalEndpointsNeedOnlyLabels(match *TraversalMatch) bool {
+	if match.IntermediateNode {
+		return false
+	}
 	if match.IsChained || match.PathVariable != "" ||
 		len(match.EndNode.labels) == 0 || len(match.EndNode.properties) > 0 {
 		return false
@@ -1095,6 +1101,12 @@ type TraversalMatch struct {
 	// variable is treated as property-read (the safe fallback). Computed by
 	// the planner in executeMatchWithRelationshipsWithPathSeeded.
 	UnusedPropertyVariables map[string]bool
+	// IntermediateNode marks a chained segment whose end node is an
+	// intermediate binding of the chain rather than the pattern's final
+	// endpoint. Its properties may be read by a later segment (a zero-length
+	// variable relationship binds the next segment's start to it), so the
+	// traversal must not load it labels-only or exist-only.
+	IntermediateNode bool
 }
 
 // TraversalSegment represents one segment in a chained pattern
@@ -1713,6 +1725,10 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 		// endpoint, so propagate both into each segment's traversal flags.
 		PathVariable:            match.PathVariable,
 		UnusedPropertyVariables: match.UnusedPropertyVariables,
+		// The first segment's end node is an intermediate binding: a later
+		// zero-length segment can bind it to a named variable whose
+		// properties are read, so it must load fully.
+		IntermediateNode: true,
 	}
 	// Get initial paths from first segment
 	var currentPaths []PathResult
@@ -1753,6 +1769,9 @@ func (e *StorageExecutor) traverseChainedGraph(ctx context.Context, match *Trave
 				Relationship:            seg.Relationship,
 				PathVariable:            match.PathVariable,
 				UnusedPropertyVariables: match.UnusedPropertyVariables,
+				// Only the final segment's end node is the pattern's endpoint;
+				// every earlier one is an intermediate binding.
+				IntermediateNode: segIdx < len(match.Segments)-1,
 			}
 
 			// Traverse from the last node
