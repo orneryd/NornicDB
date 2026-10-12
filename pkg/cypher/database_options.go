@@ -59,8 +59,12 @@ func (e *StorageExecutor) splitDatabaseOptions(ctx context.Context, cypher strin
 	if !strings.HasPrefix(clause, "{") || !strings.HasSuffix(clause, "}") {
 		return "", nil, localizedError(localization.CypherAdminKeywordExpected("CREATE DATABASE", "OPTIONS { ... }"), nil)
 	}
+	fields, isMap := e.evaluateExpressionWithContext(ctx, clause, nil, nil).(map[string]interface{})
+	if !isMap {
+		return "", nil, localizedError(localization.CypherAdminKeywordExpected("CREATE DATABASE", "OPTIONS { ... }"), nil)
+	}
 	options := make(map[string]string)
-	for key, raw := range e.parseMapLiteral(ctx, clause) {
+	for key, raw := range fields {
 		value, err := databaseOptionValue(key, raw)
 		if err != nil {
 			return "", nil, err
