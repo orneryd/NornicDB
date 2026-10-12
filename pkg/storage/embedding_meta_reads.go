@@ -1,36 +1,5 @@
 package storage
 
-import "errors"
-
-// GetNodeEmbeddingMeta reads a node's embedding metadata through the
-// wrapped engine. A deleted pending node is gone; a pending one answers with
-// the metadata it carries, else with the stored node's (nothing when it
-// isn't stored yet).
-func (ae *AsyncEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
-	ae.mu.RLock()
-	if ae.deleteNodes[id] {
-		ae.mu.RUnlock()
-		return nil, ErrNotFound
-	}
-	node, pending := ae.nodeCache[id]
-	var meta map[string]any
-	if pending && len(node.EmbedMeta) > 0 {
-		meta = make(map[string]any, len(node.EmbedMeta))
-		for key, value := range node.EmbedMeta {
-			meta[key] = value
-		}
-	}
-	ae.mu.RUnlock()
-	if meta != nil {
-		return meta, nil
-	}
-	meta, err := embeddingMetaOf(ae.engine, id)
-	if pending && errors.Is(err, ErrNotFound) {
-		return nil, nil
-	}
-	return meta, err
-}
-
 // GetNodeEmbeddingMeta delegates to the wrapped engine.
 func (w *WALEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 	return embeddingMetaOf(w.engine, id)

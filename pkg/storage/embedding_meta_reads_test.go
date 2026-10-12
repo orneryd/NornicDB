@@ -16,17 +16,15 @@ import (
 // outdated reads as no metadata.
 func TestGetNodeEmbeddingMetaThroughStorageStack(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "db")
-	badgerEngine, err := NewBadgerEngine(directory)
+	badgerEngine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: directory, WriteBehind: true, WriteBehindInterval: time.Hour})
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = badgerEngine.Close() })
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(directory, "wal"), SyncMode: "immediate"})
 	require.NoError(t, err)
-	async := NewAsyncEngine(NewWALEngine(badgerEngine, wal), &AsyncEngineConfig{FlushInterval: time.Hour})
-	t.Cleanup(func() { _ = async.Close() })
-	stack := NewNamespacedEngine(async, "nornic")
+	stack := NewNamespacedEngine(NewWALEngine(badgerEngine, wal), "nornic")
 
 	_, err = stack.CreateNode(&Node{ID: "doc", Labels: []string{"Doc"}, Properties: map[string]any{"text": "alpha beta"}})
 	require.NoError(t, err)
-	require.NoError(t, async.Flush())
 	stored, err := badgerEngine.GetNode("nornic:doc")
 	require.NoError(t, err)
 	stored.ChunkEmbeddings = [][]float32{{1, 0}}
@@ -51,20 +49,34 @@ func TestGetNodeEmbeddingMetaThroughStorageStack(t *testing.T) {
 	_, err = stack.GetNodeEmbeddingMeta("missing")
 	require.ErrorIs(t, err, ErrNotFound)
 
-	// Pending write-behind nodes: with metadata, without, and deleted.
-	_, err = stack.CreateNode(&Node{ID: "pending", Properties: map[string]any{"text": "x"}, EmbedMeta: map[string]any{"chunk_count": 2}})
-	require.NoError(t, err)
+	// Nodes buffered by write-behind, not yet flushed: with metadata,
+	// without, and a buffered delete of a stored node.
+	writeBehindCommit(t, badgerEngine, func(tx *BadgerTransaction) error {
+		_, err := tx.CreateNode(&Node{ID: "nornic:pending", Properties: map[string]any{"text": "x"}, EmbedMeta: map[string]any{"chunk_count": 2}})
+		return err
+	})
+	writeBehindCommit(t, badgerEngine, func(tx *BadgerTransaction) error {
+		_, err := tx.CreateNode(&Node{ID: "nornic:bare", Properties: map[string]any{"text": "y"}})
+		return err
+	})
+	require.Greater(t, badgerEngine.writeBehind.PendingOps(), 0, "the commits stay buffered")
 	meta, err := stack.GetNodeEmbeddingMeta("pending")
 	require.NoError(t, err)
 	require.Equal(t, 2, chunkCountFromMeta(meta))
-	_, err = stack.CreateNode(&Node{ID: "bare", Properties: map[string]any{"text": "y"}})
-	require.NoError(t, err)
 	meta, err = stack.GetNodeEmbeddingMeta("bare")
 	require.NoError(t, err)
 	require.Nil(t, meta)
-	require.NoError(t, stack.DeleteNode("bare"))
-	_, err = stack.GetNodeEmbeddingMeta("bare")
-	require.ErrorIs(t, err, ErrNotFound)
+	_, err = stack.CreateNode(&Node{ID: "gone", Properties: map[string]any{"text": "z"}, EmbedMeta: map[string]any{"chunk_count": 1}})
+	require.NoError(t, err)
+	writeBehindCommit(t, badgerEngine, func(tx *BadgerTransaction) error { return tx.DeleteNode("nornic:gone") })
+	_, err = stack.GetNodeEmbeddingMeta("gone")
+	require.ErrorIs(t, err, ErrNotFound, "a buffered delete")
+	require.NoError(t, badgerEngine.FlushWriteBehind())
+	_, err = stack.GetNodeEmbeddingMeta("gone")
+	require.ErrorIs(t, err, ErrNotFound, "the flushed delete")
+	meta, err = stack.GetNodeEmbeddingMeta("pending")
+	require.NoError(t, err)
+	require.Equal(t, 2, chunkCountFromMeta(meta), "the flushed node")
 
 	// A body change outdates the sidecar: the node reads as not embedded.
 	stored, err = badgerEngine.GetNode("nornic:doc")
@@ -78,8 +90,7 @@ func TestGetNodeEmbeddingMetaThroughStorageStack(t *testing.T) {
 }
 
 // The metadata read's failures: a closed engine, an unreadable node record or
-// sidecar record, a node deleted while its delete is pending, and an engine
-// without the read (the full node's metadata).
+// sidecar record, and an engine without the read (the full node's metadata).
 func TestGetNodeEmbeddingMetaFailures(t *testing.T) {
 	engine, err := NewBadgerEngineInMemory()
 	require.NoError(t, err)
@@ -100,17 +111,6 @@ func TestGetNodeEmbeddingMetaFailures(t *testing.T) {
 	require.NoError(t, engine.Close())
 	_, err = engine.GetNodeEmbeddingMeta("nornic:a")
 	require.Error(t, err)
-
-	inner, err := NewBadgerEngineInMemory()
-	require.NoError(t, err)
-	async := NewAsyncEngine(inner, &AsyncEngineConfig{FlushInterval: time.Hour})
-	t.Cleanup(func() { _ = async.Close() })
-	_, err = async.CreateNode(&Node{ID: "nornic:stored", Properties: map[string]any{"text": "y"}})
-	require.NoError(t, err)
-	require.NoError(t, async.Flush())
-	require.NoError(t, async.DeleteNode("nornic:stored"))
-	_, err = async.GetNodeEmbeddingMeta("nornic:stored")
-	require.ErrorIs(t, err, ErrNotFound)
 
 	memory := NewNamespacedEngine(NewMemoryEngine(), "nornic")
 	_, err = memory.CreateNode(&Node{ID: "m", Properties: map[string]any{"text": "z"}, EmbedMeta: map[string]any{"chunk_count": 1}})
@@ -135,4 +135,16 @@ func TestEmbeddingMetaOfFallsBackToTheNode(t *testing.T) {
 	require.Equal(t, 3, chunkCountFromMeta(meta))
 	_, err = embeddingMetaOf(engine, "nornic:missing")
 	require.Error(t, err)
+}
+
+// writeBehindCommit commits change in an implicit transaction, which
+// write-behind buffers.
+func writeBehindCommit(t *testing.T, engine *BadgerEngine, change func(*BadgerTransaction) error) {
+	t.Helper()
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetImplicit(true))
+	require.NoError(t, tx.SetNamespace("nornic"))
+	require.NoError(t, change(tx))
+	require.NoError(t, tx.Commit())
 }

@@ -289,10 +289,27 @@ func (b *BadgerEngine) freshEmbeddingSidecarMeta(txn *badger.Txn, node *Node, no
 // GetNodeEmbeddingMeta returns a node's embedding metadata without its
 // vectors, as GetNode reads it: the fresh sidecar record, else the body's
 // own. An embedding-free read (GetNodeWithoutEmbeddings) leaves the sidecar
-// out; a search hit's chunk places and kept chunk texts are read here.
+// out; a search hit's chunk places and kept chunk texts are read here. A
+// node buffered by write-behind answers with its buffered state, as GetNode
+// does; a buffered delete is gone.
 func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 	if id == "" {
 		return nil, ErrInvalidID
+	}
+	if b.writeBehind != nil {
+		if node, found, deleted := b.writeBehind.GetNode(id); found {
+			if deleted {
+				return nil, ErrNotFound
+			}
+			if len(node.EmbedMeta) == 0 {
+				return nil, nil
+			}
+			meta := make(map[string]any, len(node.EmbedMeta))
+			for key, value := range node.EmbedMeta {
+				meta[key] = value
+			}
+			return meta, nil
+		}
 	}
 	if err := b.ensureOpen(); err != nil {
 		return nil, err
