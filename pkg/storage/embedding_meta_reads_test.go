@@ -121,3 +121,18 @@ func TestGetNodeEmbeddingMetaFailures(t *testing.T) {
 	_, err = memory.GetNodeEmbeddingMeta("missing")
 	require.Error(t, err)
 }
+
+// plainEngine has only the Engine methods: no metadata-only read.
+type plainEngine struct{ Engine }
+
+// An engine without the metadata-only read answers with the full node's.
+func TestEmbeddingMetaOfFallsBackToTheNode(t *testing.T) {
+	engine := plainEngine{NewMemoryEngine()}
+	_, err := engine.CreateNode(&Node{ID: "nornic:p", Properties: map[string]any{"text": "z"}, EmbedMeta: map[string]any{"chunk_count": 3}})
+	require.NoError(t, err)
+	meta, err := embeddingMetaOf(engine, "nornic:p")
+	require.NoError(t, err)
+	require.Equal(t, 3, chunkCountFromMeta(meta))
+	_, err = embeddingMetaOf(engine, "nornic:missing")
+	require.Error(t, err)
+}

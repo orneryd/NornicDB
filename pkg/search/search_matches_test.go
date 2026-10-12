@@ -38,6 +38,7 @@ func TestLocateReadsAnalyzeTerms(t *testing.T) {
 		"Straße STRASSE straße", "İstanbul ıi", "ΣΊΣΥΦΟΣ σίσυφος", "ﬁne ﬂow", "½ ① ２０２６",
 		"café café CAFÉ", "東京都 2026年", "e-mail: a.b@c.de", "ǅemal ǈ", "x y\tz\nw", "🙂smile🙂",
 		"Ａ-Ｂ　ｃ", "à́b", "123abc456",
+		"A" + strings.Repeat("⃐", 25) + " b", // a segment longer than the fold buffer
 	}
 	random := rand.New(rand.NewSource(1060))
 	alphabet := []rune("aZ09 ßẞİıσςΣﬁ½①ＡＢ１２é́ -.,東京🙂 \tǅ̀")
