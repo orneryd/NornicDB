@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A node suppressed with db.visibility.suppress is no keyword hit, with decay
-// disabled, and is one again after db.visibility.unsuppress, which indexes it
+// A node suppressed with kp.suppress is no keyword hit, with decay
+// disabled, and is one again after kp.unsuppress, which indexes it
 // again (#1064).
 func TestVisibilitySuppressHidesFromSearch(t *testing.T) {
 	ctx := context.Background()
@@ -25,11 +25,11 @@ func TestVisibilitySuppressHidesFromSearch(t *testing.T) {
 	}
 	require.Eventually(t, func() bool { return hits() == 1 }, 5*time.Second, 20*time.Millisecond)
 
-	_, err = db.ExecuteCypher(ctx, "MATCH (n:Doc {name: 'zephyrine report'}) CALL db.visibility.suppress(n)", nil)
+	_, err = db.ExecuteCypher(ctx, "MATCH (n:Doc {name: 'zephyrine report'}) CALL kp.suppress(n)", nil)
 	require.NoError(t, err)
 	require.Equal(t, 0, hits())
 
-	_, err = db.ExecuteCypher(ctx, "MATCH (n:Doc) WHERE reveal(n).name = 'zephyrine report' CALL db.visibility.unsuppress(n)", nil)
+	_, err = db.ExecuteCypher(ctx, "MATCH (n:Doc) WHERE reveal(n).name = 'zephyrine report' CALL kp.unsuppress(n)", nil)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return hits() == 1 }, 5*time.Second, 20*time.Millisecond)
 }

@@ -57,7 +57,7 @@
   other: "{{.Cause}}"
 - id: cypherknowledgepolicy.resolve_target_required
   description: El procedimiento resolve requiere un selector de destino. Los identificadores no se traducen.
-  other: nornicdb.knowledgepolicy.resolve requiere entityId, labels o edgeType
+  other: kp.resolve requiere entityId, labels o edgeType
 - id: cypherknowledgepolicy.binding_table_unavailable
   description: Los enlaces compilados no están disponibles.
   other: la tabla de enlaces de directivas de conocimiento no está disponible

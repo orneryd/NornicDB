@@ -439,9 +439,9 @@ func TestCallNornicDbDecayInfo(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	result, err := e.Execute(ctx, "CALL nornicdb.decay.info()", nil)
+	result, err := e.Execute(ctx, "CALL kp.decayInfo()", nil)
 	if err != nil {
-		t.Fatalf("CALL nornicdb.decay.info() failed: %v", err)
+		t.Fatalf("CALL kp.decayInfo() failed: %v", err)
 	}
 
 	if len(result.Rows) != 1 {
@@ -468,9 +468,9 @@ func TestCallNornicDbKnowledgePolicyInfo(t *testing.T) {
 	e := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	result, err := e.Execute(ctx, "CALL nornicdb.knowledgepolicy.info()", nil)
+	result, err := e.Execute(ctx, "CALL kp.info()", nil)
 	if err != nil {
-		t.Fatalf("CALL nornicdb.knowledgepolicy.info() failed: %v", err)
+		t.Fatalf("CALL kp.info() failed: %v", err)
 	}
 
 	if len(result.Rows) != 1 {

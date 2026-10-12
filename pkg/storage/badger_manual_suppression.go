@@ -5,7 +5,7 @@ import (
 )
 
 // prefixMVCCMetaManualSuppression keys an entity suppressed on demand
-// (db.visibility.suppress, #1064): [prefixMVCCMeta, this, kind, id...], kind
+// (kp.suppress, #1064): [prefixMVCCMeta, this, kind, id...], kind
 // 'n' for a node and 'e' for a relationship. It is apart from the entity's
 // body, so no other write can clear or set it, and from decay, so it holds
 // whether or not decay is enabled.
@@ -169,7 +169,7 @@ func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
 }
 
 // ManualSuppressionEngine hides and shows nodes and relationships on demand
-// (db.visibility.suppress / unsuppress, #1064).
+// (kp.suppress / unsuppress, #1064).
 type ManualSuppressionEngine interface {
 	SetNodeManuallySuppressed(id NodeID, suppressed bool) error
 	SetEdgeManuallySuppressed(id EdgeID, suppressed bool) error

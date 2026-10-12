@@ -238,6 +238,7 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 	coreCount := -3
 	apocCount := 0
 	customCount := 0 // apoc.custom.* (#1066), counted apart
+	kpAliasCount := 0
 	for _, spec := range globalProcedureRegistry.ListBuiltIns() {
 		if strings.HasPrefix(spec.Name, "apoc.custom.") {
 			customCount++
@@ -249,8 +250,14 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 			require.Empty(t, spec.DescriptionMessage.ID, "APOC metadata must remain literal: %s", spec.Name)
 			continue
 		}
-		if strings.HasPrefix(spec.Name, "db.visibility.") {
+		if spec.Name == "kp.suppress" || spec.Name == "kp.unsuppress" {
 			continue // TestVisibilityProcedureMetadata (#1064)
+		}
+		if strings.HasPrefix(spec.DeprecatedBy, "kp.") {
+			kpAliasCount++ // the earlier nornicdb.* names of the kp.* procedures (#1078)
+			require.True(t, spec.IsDeprecated, spec.Name)
+			require.NotEmpty(t, spec.DescriptionMessage.ID, "core metadata requires a descriptor: %s", spec.Name)
+			continue
 		}
 		coreCount++
 		if spec.Name == "db.retrieveRelationships" || spec.Name == "db.retrieveGraph" {
@@ -262,6 +269,7 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 	require.Equal(t, 73, coreCount) // db.schema.nodeTypeProperties and relTypeProperties (#907)
 	require.Equal(t, 30, apocCount) // apoc.path.subgraphAll and expandConfig (#907)
 	require.Equal(t, 5, customCount)
+	require.Equal(t, 6, kpAliasCount)
 }
 
 // The Change Data Capture procedures carry descriptors with their English

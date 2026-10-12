@@ -152,7 +152,7 @@ Built-ins are registered in `pkg/cypher/procedure_registry_builtin.go`, includin
 - fulltext/vector (`db.index.fulltext.*`, `db.index.vector.*`, `db.create.set*VectorProperty`)
 - DBMS (`dbms.components`, `dbms.info`, `dbms.listConfig`, `dbms.clientConfig`, `dbms.listConnections`, `dbms.procedures`, `dbms.functions`)
 - index/stats/ops (`db.await*`, `db.resampleIndex`, `db.stats.*`, `db.clearQueryCaches`, `tx.setMetaData`)
-- NornicDB (`nornicdb.version`, `nornicdb.stats`, `nornicdb.decay.info`)
+- NornicDB (`nornicdb.version`, `nornicdb.stats`, `kp.decayInfo`)
 
 ## Plugin-based User Procedures
 

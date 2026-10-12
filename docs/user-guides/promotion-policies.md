@@ -144,7 +144,7 @@ What ON ACCESS *does*:
 What ON ACCESS does **not** do:
 
 - It does not trigger or "tick" decay. Decay runs on every read regardless of whether any `ON ACCESS` has fired.
-- It does not mutate `n.Properties`. The stored payload is unchanged; use `policy(n)` or `nornicdb.knowledgepolicy.resolve(...)` to inspect access metadata.
+- It does not mutate `n.Properties`. The stored payload is unchanged; use `policy(n)` or `kp.resolve(...)` to inspect access metadata.
 - It does not return values. The block has no `RETURN`; it only mutates.
 
 ## WITH KALMAN

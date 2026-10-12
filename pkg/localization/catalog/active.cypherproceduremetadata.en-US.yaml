@@ -98,10 +98,6 @@
   other: "Returns WAL entries for a transaction id"
 - id: cypherproceduremetadata.db_txlog_entries
   other: "Returns transaction log entries"
-- id: cypherproceduremetadata.db_visibility_suppress
-  other: "Hides a node or relationship from queries and search until unsuppressed"
-- id: cypherproceduremetadata.db_visibility_unsuppress
-  other: "Shows a node or relationship hidden by db.visibility.suppress again"
 - id: cypherproceduremetadata.dbms_clientconfig
   other: "Returns client config"
 - id: cypherproceduremetadata.dbms_components
@@ -140,18 +136,34 @@
   other: "Runs resource-allocation link prediction"
 - id: cypherproceduremetadata.gds_version
   other: "Returns GDS version"
-- id: cypherproceduremetadata.nornicdb_decay_info
+- id: cypherproceduremetadata.kp_decayinfo
   other: "Returns knowledge-layer scoring configuration"
-- id: cypherproceduremetadata.nornicdb_knowledgepolicy_deindexstatus
+- id: cypherproceduremetadata.kp_deindexstatus
   other: "Returns knowledge-layer deindex queue status"
-- id: cypherproceduremetadata.nornicdb_knowledgepolicy_info
+- id: cypherproceduremetadata.kp_info
   other: "Returns knowledge-layer profile and policy catalog counts"
-- id: cypherproceduremetadata.nornicdb_knowledgepolicy_policies
+- id: cypherproceduremetadata.kp_policies
   other: "Returns knowledge-layer promotion profiles and policies"
-- id: cypherproceduremetadata.nornicdb_knowledgepolicy_profiles
+- id: cypherproceduremetadata.kp_profiles
   other: "Returns knowledge-layer decay bundles and bindings"
-- id: cypherproceduremetadata.nornicdb_knowledgepolicy_resolve
+- id: cypherproceduremetadata.kp_resolve
   other: "Resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type"
+- id: cypherproceduremetadata.kp_suppress
+  other: "Hides a node or relationship from queries and search until kp.unsuppress shows it again"
+- id: cypherproceduremetadata.kp_unsuppress
+  other: "Shows a node or relationship hidden by kp.suppress again"
+- id: cypherproceduremetadata.nornicdb_decay_info
+  other: "Deprecated alias of kp.decayInfo: returns knowledge-layer scoring configuration"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_deindexstatus
+  other: "Deprecated alias of kp.deindexStatus: returns knowledge-layer deindex queue status"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_info
+  other: "Deprecated alias of kp.info: returns knowledge-layer profile and policy catalog counts"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_policies
+  other: "Deprecated alias of kp.policies: returns knowledge-layer promotion profiles and policies"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_profiles
+  other: "Deprecated alias of kp.profiles: returns knowledge-layer decay bundles and bindings"
+- id: cypherproceduremetadata.nornicdb_knowledgepolicy_resolve
+  other: "Deprecated alias of kp.resolve: resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type"
 - id: cypherproceduremetadata.nornicdb_stats
   other: "Returns NornicDB stats"
 - id: cypherproceduremetadata.nornicdb_version

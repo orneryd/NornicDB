@@ -8,13 +8,13 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// callDbVisibilitySuppress hides (suppressed) or shows a node or
-// relationship on demand: db.visibility.suppress(entity) /
-// db.visibility.unsuppress(entity) (#1064). A hidden entity is left out of
+// callKpSuppress hides (suppressed) or shows a node or
+// relationship on demand: kp.suppress(entity) /
+// kp.unsuppress(entity) (#1064). A hidden entity is left out of
 // MATCH, traversal and search, its data kept, and visible under reveal(),
 // whether or not decay is enabled. Inside an explicit transaction the change
 // is applied when the transaction commits, and not at all if it rolls back.
-func (e *StorageExecutor) callDbVisibilitySuppress(ctx context.Context, procedure string, args []interface{}, suppressed bool) (*ExecuteResult, error) {
+func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, args []interface{}, suppressed bool) (*ExecuteResult, error) {
 	var entity interface{}
 	if len(args) > 0 {
 		entity = args[0]

@@ -112,10 +112,10 @@ Important: `ON ACCESS` mutations write into access metadata, not the node or edg
 Run the same diagnostics the e2e tests use:
 
 ```cypher
-CALL nornicdb.knowledgepolicy.info();
-CALL nornicdb.knowledgepolicy.profiles();
-CALL nornicdb.knowledgepolicy.policies();
-CALL nornicdb.knowledgepolicy.resolve('', 'SessionRecord', '');
+CALL kp.info();
+CALL kp.profiles();
+CALL kp.policies();
+CALL kp.resolve('', 'SessionRecord', '');
 
 SHOW DECAY PROFILES;
 SHOW PROMOTION POLICIES;
@@ -313,7 +313,7 @@ For every new policy family, run a small manual script:
 ```cypher
 SHOW DECAY PROFILES;
 SHOW PROMOTION POLICIES;
-CALL nornicdb.knowledgepolicy.resolve('', 'MemoryEpisode', '');
+CALL kp.resolve('', 'MemoryEpisode', '');
 
 MATCH (n:MemoryEpisode)
 RETURN n.id, decayScore(n), decay(n), policy(n)
@@ -386,8 +386,8 @@ Likely causes:
 Check:
 
 ```cypher
-CALL nornicdb.knowledgepolicy.info();
-CALL nornicdb.knowledgepolicy.resolve('', 'YourLabel', '');
+CALL kp.info();
+CALL kp.resolve('', 'YourLabel', '');
 ```
 
 ### Promotion Never Fires

@@ -274,7 +274,7 @@ Those categories are conventions, not built-in engine classes. NornicDB provides
 - `CREATE/ALTER/DROP/SHOW PROMOTION PROFILE`
 - `CREATE/ALTER/DROP/SHOW PROMOTION POLICY`
 - `decayScore(entity)`, `decay(entity)`, `policy(entity)`, `reveal(entity)`
-- `CALL nornicdb.knowledgepolicy.info|profiles|policies|resolve|deindexStatus()`
+- `CALL kp.info|profiles|policies|resolve|deindexStatus()`
 
 ```cypher
 CREATE DECAY PROFILE working_memory OPTIONS {

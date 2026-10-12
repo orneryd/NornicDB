@@ -249,16 +249,6 @@
     es: "Devuelve las entradas del registro de transacciones",
   }
 - {
-    name: db.visibility.suppress,
-    en: "Hides a node or relationship from queries and search until unsuppressed",
-    es: "Oculta un nodo o una relación de las consultas y la búsqueda hasta que se vuelva a mostrar",
-  }
-- {
-    name: db.visibility.unsuppress,
-    en: "Shows a node or relationship hidden by db.visibility.suppress again",
-    es: "Vuelve a mostrar un nodo o una relación ocultos por db.visibility.suppress",
-  }
-- {
     name: dbms.clientConfig,
     en: "Returns client config",
     es: "Devuelve la configuración del cliente",
@@ -350,34 +340,74 @@
     es: "Devuelve la versión de GDS",
   }
 - {
-    name: nornicdb.decay.info,
+    name: kp.decayInfo,
     en: "Returns knowledge-layer scoring configuration",
     es: "Devuelve la configuración de puntuación de la capa de conocimiento",
   }
 - {
-    name: nornicdb.knowledgepolicy.deindexStatus,
+    name: kp.deindexStatus,
     en: "Returns knowledge-layer deindex queue status",
     es: "Devuelve el estado de la cola de desindexación de la capa de conocimiento",
   }
 - {
-    name: nornicdb.knowledgepolicy.info,
+    name: kp.info,
     en: "Returns knowledge-layer profile and policy catalog counts",
     es: "Devuelve los recuentos del catálogo de perfiles y políticas de la capa de conocimiento",
   }
 - {
-    name: nornicdb.knowledgepolicy.policies,
+    name: kp.policies,
     en: "Returns knowledge-layer promotion profiles and policies",
     es: "Devuelve los perfiles y las políticas de promoción de la capa de conocimiento",
   }
 - {
-    name: nornicdb.knowledgepolicy.profiles,
+    name: kp.profiles,
     en: "Returns knowledge-layer decay bundles and bindings",
     es: "Devuelve los paquetes y enlaces de decaimiento de la capa de conocimiento",
   }
 - {
-    name: nornicdb.knowledgepolicy.resolve,
+    name: kp.resolve,
     en: "Resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type",
     es: "Resuelve la política de puntuación efectiva de la capa de conocimiento para una entidad, un conjunto de etiquetas o un tipo de arista",
+  }
+- {
+    name: kp.suppress,
+    en: "Hides a node or relationship from queries and search until kp.unsuppress shows it again",
+    es: "Oculta un nodo o una relación de las consultas y la búsqueda hasta que kp.unsuppress lo vuelva a mostrar",
+  }
+- {
+    name: kp.unsuppress,
+    en: "Shows a node or relationship hidden by kp.suppress again",
+    es: "Vuelve a mostrar un nodo o una relación ocultos por kp.suppress",
+  }
+- {
+    name: nornicdb.decay.info,
+    en: "Deprecated alias of kp.decayInfo: returns knowledge-layer scoring configuration",
+    es: "Alias obsoleto de kp.decayInfo: devuelve la configuración de puntuación de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.deindexStatus,
+    en: "Deprecated alias of kp.deindexStatus: returns knowledge-layer deindex queue status",
+    es: "Alias obsoleto de kp.deindexStatus: devuelve el estado de la cola de desindexación de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.info,
+    en: "Deprecated alias of kp.info: returns knowledge-layer profile and policy catalog counts",
+    es: "Alias obsoleto de kp.info: devuelve los recuentos del catálogo de perfiles y políticas de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.policies,
+    en: "Deprecated alias of kp.policies: returns knowledge-layer promotion profiles and policies",
+    es: "Alias obsoleto de kp.policies: devuelve los perfiles y las políticas de promoción de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.profiles,
+    en: "Deprecated alias of kp.profiles: returns knowledge-layer decay bundles and bindings",
+    es: "Alias obsoleto de kp.profiles: devuelve los paquetes y enlaces de decaimiento de la capa de conocimiento",
+  }
+- {
+    name: nornicdb.knowledgepolicy.resolve,
+    en: "Deprecated alias of kp.resolve: resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type",
+    es: "Alias obsoleto de kp.resolve: resuelve la política de puntuación efectiva de la capa de conocimiento para una entidad, un conjunto de etiquetas o un tipo de arista",
   }
 - {
     name: nornicdb.stats,

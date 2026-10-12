@@ -145,7 +145,7 @@ Property floor `> entity threshold` keeps the property's value visible *on a non
 SHOW DECAY PROFILES
 
 -- 2. Confirm the resolver picks your binding for the labels you care about.
-CALL nornicdb.knowledgepolicy.resolve('', 'Document', '')
+CALL kp.resolve('', 'Document', '')
 
 -- 3. Score real entities and inspect the resolution chain.
 MATCH (n:Document {id: $id}) RETURN decay(n)
@@ -171,4 +171,4 @@ ALTER DECAY PROFILE doc_retention SET OPTIONS { halfLifeSeconds: 1209600 }
 
 ## Reasoning under disabled decay
 
-If `nornicdb.knowledgepolicy.info()` returns `enabled: false`, every `decayScore()` returns `1.0` and no suppression happens regardless of bindings. Don't `ALTER` parameters to compensate — enable decay (`NORNICDB_MEMORY_DECAY_ENABLED=true` or `memory.decay_enabled: true` in YAML) instead.
+If `kp.info()` returns `enabled: false`, every `decayScore()` returns `1.0` and no suppression happens regardless of bindings. Don't `ALTER` parameters to compensate — enable decay (`NORNICDB_MEMORY_DECAY_ENABLED=true` or `memory.decay_enabled: true` in YAML) instead.

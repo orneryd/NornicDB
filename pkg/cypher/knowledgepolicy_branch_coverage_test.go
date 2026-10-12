@@ -184,7 +184,7 @@ func TestKnowledgePolicyProcedure_Branches(t *testing.T) {
 	require.Equal(t, "deindex status requires BadgerDB storage backend", res.Rows[0][2])
 
 	_, err = exec.callNornicDbKnowledgePolicyResolve(nil)
-	require.EqualError(t, err, "nornicdb.knowledgepolicy.resolve requires entityId, labels, or edgeType")
+	require.EqualError(t, err, "kp.resolve requires entityId, labels, or edgeType")
 
 	_, err = exec.callNornicDbKnowledgePolicyResolve([]interface{}{123})
 	require.EqualError(t, err, "argument 1 must be a string")

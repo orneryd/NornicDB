@@ -184,8 +184,8 @@ Nodes and edges whose decay score drops below the visibility threshold are autom
 
 ### Suppressing on demand
 
-`db.visibility.suppress(entity)` hides a specific node or relationship, and
-`db.visibility.unsuppress(entity)` shows it again. Use them when an earlier
+`kp.suppress(entity)` hides a specific node or relationship, and
+`kp.unsuppress(entity)` shows it again. Use them when an earlier
 reading is replaced, or a user excludes a link. They work whether or not decay
 is enabled. A suppressed entity:
 
@@ -196,9 +196,9 @@ is enabled. A suppressed entity:
 A relationship's endpoints stay visible.
 
 ```cypher
-MATCH (n:Reading {id: $old}) CALL db.visibility.suppress(n);
+MATCH (n:Reading {id: $old}) CALL kp.suppress(n);
 // unsuppress needs reveal() to find the hidden entity
-MATCH (n:Reading) WHERE reveal(n).id = $old CALL db.visibility.unsuppress(n);
+MATCH (n:Reading) WHERE reveal(n).id = $old CALL kp.unsuppress(n);
 ```
 
 Inside an explicit transaction the change takes effect when the transaction
@@ -216,11 +216,11 @@ A background job periodically removes suppressed entities from secondary indexes
 The supported operational surface for knowledge-layer scoring is Cypher, not a dedicated admin HTTP API.
 
 ```cypher
-CALL nornicdb.knowledgepolicy.info();
-CALL nornicdb.knowledgepolicy.profiles();
-CALL nornicdb.knowledgepolicy.policies();
-CALL nornicdb.knowledgepolicy.resolve('nornic:episode-1', '', '');
-CALL nornicdb.knowledgepolicy.deindexStatus();
+CALL kp.info();
+CALL kp.profiles();
+CALL kp.policies();
+CALL kp.resolve('nornic:episode-1', '', '');
+CALL kp.deindexStatus();
 
 SHOW DECAY PROFILES;
 SHOW PROMOTION PROFILES;

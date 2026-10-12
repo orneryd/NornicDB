@@ -53,8 +53,6 @@ const (
 	MessageCypherProcedureMetadataDbTemporalAssertNoOverlap                     MessageID = "cypherproceduremetadata.db_temporal_assertnooverlap"
 	MessageCypherProcedureMetadataDbTxlogByTxId                                 MessageID = "cypherproceduremetadata.db_txlog_bytxid"
 	MessageCypherProcedureMetadataDbTxlogEntries                                MessageID = "cypherproceduremetadata.db_txlog_entries"
-	MessageCypherProcedureMetadataDbVisibilitySuppress                          MessageID = "cypherproceduremetadata.db_visibility_suppress"
-	MessageCypherProcedureMetadataDbVisibilityUnsuppress                        MessageID = "cypherproceduremetadata.db_visibility_unsuppress"
 	MessageCypherProcedureMetadataDbmsClientConfig                              MessageID = "cypherproceduremetadata.dbms_clientconfig"
 	MessageCypherProcedureMetadataDbmsComponents                                MessageID = "cypherproceduremetadata.dbms_components"
 	MessageCypherProcedureMetadataDbmsFunctions                                 MessageID = "cypherproceduremetadata.dbms_functions"
@@ -74,6 +72,14 @@ const (
 	MessageCypherProcedureMetadataGdsLinkPredictionPreferentialAttachmentStream MessageID = "cypherproceduremetadata.gds_linkprediction_preferentialattachment_stream"
 	MessageCypherProcedureMetadataGdsLinkPredictionResourceAllocationStream     MessageID = "cypherproceduremetadata.gds_linkprediction_resourceallocation_stream"
 	MessageCypherProcedureMetadataGdsVersion                                    MessageID = "cypherproceduremetadata.gds_version"
+	MessageCypherProcedureMetadataKpDecayInfo                                   MessageID = "cypherproceduremetadata.kp_decayinfo"
+	MessageCypherProcedureMetadataKpDeindexStatus                               MessageID = "cypherproceduremetadata.kp_deindexstatus"
+	MessageCypherProcedureMetadataKpInfo                                        MessageID = "cypherproceduremetadata.kp_info"
+	MessageCypherProcedureMetadataKpPolicies                                    MessageID = "cypherproceduremetadata.kp_policies"
+	MessageCypherProcedureMetadataKpProfiles                                    MessageID = "cypherproceduremetadata.kp_profiles"
+	MessageCypherProcedureMetadataKpResolve                                     MessageID = "cypherproceduremetadata.kp_resolve"
+	MessageCypherProcedureMetadataKpSuppress                                    MessageID = "cypherproceduremetadata.kp_suppress"
+	MessageCypherProcedureMetadataKpUnsuppress                                  MessageID = "cypherproceduremetadata.kp_unsuppress"
 	MessageCypherProcedureMetadataNornicdbDecayInfo                             MessageID = "cypherproceduremetadata.nornicdb_decay_info"
 	MessageCypherProcedureMetadataNornicdbKnowledgepolicyDeindexStatus          MessageID = "cypherproceduremetadata.nornicdb_knowledgepolicy_deindexstatus"
 	MessageCypherProcedureMetadataNornicdbKnowledgepolicyInfo                   MessageID = "cypherproceduremetadata.nornicdb_knowledgepolicy_info"
@@ -335,16 +341,6 @@ func CypherProcedureMetadataDbTxlogEntries() Message {
 	return Message{ID: MessageCypherProcedureMetadataDbTxlogEntries, Fallback: "Returns transaction log entries"}
 }
 
-// CypherProcedureMetadataDbVisibilitySuppress describes db.visibility.suppress in procedure listings.
-func CypherProcedureMetadataDbVisibilitySuppress() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbVisibilitySuppress, Fallback: "Hides a node or relationship from queries and search until unsuppressed"}
-}
-
-// CypherProcedureMetadataDbVisibilityUnsuppress describes db.visibility.unsuppress in procedure listings.
-func CypherProcedureMetadataDbVisibilityUnsuppress() Message {
-	return Message{ID: MessageCypherProcedureMetadataDbVisibilityUnsuppress, Fallback: "Shows a node or relationship hidden by db.visibility.suppress again"}
-}
-
 // CypherProcedureMetadataDbmsClientConfig describes dbms.clientConfig in procedure listings.
 func CypherProcedureMetadataDbmsClientConfig() Message {
 	return Message{ID: MessageCypherProcedureMetadataDbmsClientConfig, Fallback: "Returns client config"}
@@ -440,34 +436,74 @@ func CypherProcedureMetadataGdsVersion() Message {
 	return Message{ID: MessageCypherProcedureMetadataGdsVersion, Fallback: "Returns GDS version"}
 }
 
+// CypherProcedureMetadataKpDecayInfo describes kp.decayInfo in procedure listings.
+func CypherProcedureMetadataKpDecayInfo() Message {
+	return Message{ID: MessageCypherProcedureMetadataKpDecayInfo, Fallback: "Returns knowledge-layer scoring configuration"}
+}
+
+// CypherProcedureMetadataKpDeindexStatus describes kp.deindexStatus in procedure listings.
+func CypherProcedureMetadataKpDeindexStatus() Message {
+	return Message{ID: MessageCypherProcedureMetadataKpDeindexStatus, Fallback: "Returns knowledge-layer deindex queue status"}
+}
+
+// CypherProcedureMetadataKpInfo describes kp.info in procedure listings.
+func CypherProcedureMetadataKpInfo() Message {
+	return Message{ID: MessageCypherProcedureMetadataKpInfo, Fallback: "Returns knowledge-layer profile and policy catalog counts"}
+}
+
+// CypherProcedureMetadataKpPolicies describes kp.policies in procedure listings.
+func CypherProcedureMetadataKpPolicies() Message {
+	return Message{ID: MessageCypherProcedureMetadataKpPolicies, Fallback: "Returns knowledge-layer promotion profiles and policies"}
+}
+
+// CypherProcedureMetadataKpProfiles describes kp.profiles in procedure listings.
+func CypherProcedureMetadataKpProfiles() Message {
+	return Message{ID: MessageCypherProcedureMetadataKpProfiles, Fallback: "Returns knowledge-layer decay bundles and bindings"}
+}
+
+// CypherProcedureMetadataKpResolve describes kp.resolve in procedure listings.
+func CypherProcedureMetadataKpResolve() Message {
+	return Message{ID: MessageCypherProcedureMetadataKpResolve, Fallback: "Resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type"}
+}
+
+// CypherProcedureMetadataKpSuppress describes kp.suppress in procedure listings.
+func CypherProcedureMetadataKpSuppress() Message {
+	return Message{ID: MessageCypherProcedureMetadataKpSuppress, Fallback: "Hides a node or relationship from queries and search until kp.unsuppress shows it again"}
+}
+
+// CypherProcedureMetadataKpUnsuppress describes kp.unsuppress in procedure listings.
+func CypherProcedureMetadataKpUnsuppress() Message {
+	return Message{ID: MessageCypherProcedureMetadataKpUnsuppress, Fallback: "Shows a node or relationship hidden by kp.suppress again"}
+}
+
 // CypherProcedureMetadataNornicdbDecayInfo describes nornicdb.decay.info in procedure listings.
 func CypherProcedureMetadataNornicdbDecayInfo() Message {
-	return Message{ID: MessageCypherProcedureMetadataNornicdbDecayInfo, Fallback: "Returns knowledge-layer scoring configuration"}
+	return Message{ID: MessageCypherProcedureMetadataNornicdbDecayInfo, Fallback: "Deprecated alias of kp.decayInfo: returns knowledge-layer scoring configuration"}
 }
 
 // CypherProcedureMetadataNornicdbKnowledgepolicyDeindexStatus describes nornicdb.knowledgepolicy.deindexStatus in procedure listings.
 func CypherProcedureMetadataNornicdbKnowledgepolicyDeindexStatus() Message {
-	return Message{ID: MessageCypherProcedureMetadataNornicdbKnowledgepolicyDeindexStatus, Fallback: "Returns knowledge-layer deindex queue status"}
+	return Message{ID: MessageCypherProcedureMetadataNornicdbKnowledgepolicyDeindexStatus, Fallback: "Deprecated alias of kp.deindexStatus: returns knowledge-layer deindex queue status"}
 }
 
 // CypherProcedureMetadataNornicdbKnowledgepolicyInfo describes nornicdb.knowledgepolicy.info in procedure listings.
 func CypherProcedureMetadataNornicdbKnowledgepolicyInfo() Message {
-	return Message{ID: MessageCypherProcedureMetadataNornicdbKnowledgepolicyInfo, Fallback: "Returns knowledge-layer profile and policy catalog counts"}
+	return Message{ID: MessageCypherProcedureMetadataNornicdbKnowledgepolicyInfo, Fallback: "Deprecated alias of kp.info: returns knowledge-layer profile and policy catalog counts"}
 }
 
 // CypherProcedureMetadataNornicdbKnowledgepolicyPolicies describes nornicdb.knowledgepolicy.policies in procedure listings.
 func CypherProcedureMetadataNornicdbKnowledgepolicyPolicies() Message {
-	return Message{ID: MessageCypherProcedureMetadataNornicdbKnowledgepolicyPolicies, Fallback: "Returns knowledge-layer promotion profiles and policies"}
+	return Message{ID: MessageCypherProcedureMetadataNornicdbKnowledgepolicyPolicies, Fallback: "Deprecated alias of kp.policies: returns knowledge-layer promotion profiles and policies"}
 }
 
 // CypherProcedureMetadataNornicdbKnowledgepolicyProfiles describes nornicdb.knowledgepolicy.profiles in procedure listings.
 func CypherProcedureMetadataNornicdbKnowledgepolicyProfiles() Message {
-	return Message{ID: MessageCypherProcedureMetadataNornicdbKnowledgepolicyProfiles, Fallback: "Returns knowledge-layer decay bundles and bindings"}
+	return Message{ID: MessageCypherProcedureMetadataNornicdbKnowledgepolicyProfiles, Fallback: "Deprecated alias of kp.profiles: returns knowledge-layer decay bundles and bindings"}
 }
 
 // CypherProcedureMetadataNornicdbKnowledgepolicyResolve describes nornicdb.knowledgepolicy.resolve in procedure listings.
 func CypherProcedureMetadataNornicdbKnowledgepolicyResolve() Message {
-	return Message{ID: MessageCypherProcedureMetadataNornicdbKnowledgepolicyResolve, Fallback: "Resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type"}
+	return Message{ID: MessageCypherProcedureMetadataNornicdbKnowledgepolicyResolve, Fallback: "Deprecated alias of kp.resolve: resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type"}
 }
 
 // CypherProcedureMetadataNornicdbStats describes nornicdb.stats in procedure listings.
@@ -536,8 +572,6 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"db.temporal.assertNoOverlap":                      CypherProcedureMetadataDbTemporalAssertNoOverlap,
 	"db.txlog.byTxId":                                  CypherProcedureMetadataDbTxlogByTxId,
 	"db.txlog.entries":                                 CypherProcedureMetadataDbTxlogEntries,
-	"db.visibility.suppress":                           CypherProcedureMetadataDbVisibilitySuppress,
-	"db.visibility.unsuppress":                         CypherProcedureMetadataDbVisibilityUnsuppress,
 	"dbms.clientConfig":                                CypherProcedureMetadataDbmsClientConfig,
 	"dbms.components":                                  CypherProcedureMetadataDbmsComponents,
 	"dbms.functions":                                   CypherProcedureMetadataDbmsFunctions,
@@ -557,6 +591,14 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"gds.linkPrediction.preferentialAttachment.stream": CypherProcedureMetadataGdsLinkPredictionPreferentialAttachmentStream,
 	"gds.linkPrediction.resourceAllocation.stream":     CypherProcedureMetadataGdsLinkPredictionResourceAllocationStream,
 	"gds.version":                                      CypherProcedureMetadataGdsVersion,
+	"kp.decayInfo":                                     CypherProcedureMetadataKpDecayInfo,
+	"kp.deindexStatus":                                 CypherProcedureMetadataKpDeindexStatus,
+	"kp.info":                                          CypherProcedureMetadataKpInfo,
+	"kp.policies":                                      CypherProcedureMetadataKpPolicies,
+	"kp.profiles":                                      CypherProcedureMetadataKpProfiles,
+	"kp.resolve":                                       CypherProcedureMetadataKpResolve,
+	"kp.suppress":                                      CypherProcedureMetadataKpSuppress,
+	"kp.unsuppress":                                    CypherProcedureMetadataKpUnsuppress,
 	"nornicdb.decay.info":                              CypherProcedureMetadataNornicdbDecayInfo,
 	"nornicdb.knowledgepolicy.deindexStatus":           CypherProcedureMetadataNornicdbKnowledgepolicyDeindexStatus,
 	"nornicdb.knowledgepolicy.info":                    CypherProcedureMetadataNornicdbKnowledgepolicyInfo,

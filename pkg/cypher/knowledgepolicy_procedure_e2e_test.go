@@ -93,13 +93,13 @@ func TestE2E_KnowledgePolicyProcedureTransactionVisibility(t *testing.T) {
 						_, err := executor.Execute(ctx, statement, nil)
 						require.NoError(t, err, statement)
 					}
-					staged, err := executor.Execute(ctx, "CALL nornicdb.knowledgepolicy.info()", nil)
+					staged, err := executor.Execute(ctx, "CALL kp.info()", nil)
 					require.NoError(t, err)
-					visible, err := peer.Execute(ctx, "CALL nornicdb.knowledgepolicy.info()", nil)
+					visible, err := peer.Execute(ctx, "CALL kp.info()", nil)
 					require.NoError(t, err)
-					profiles, err := executor.Execute(ctx, "CALL nornicdb.knowledgepolicy.profiles()", nil)
+					profiles, err := executor.Execute(ctx, "CALL kp.profiles()", nil)
 					require.NoError(t, err)
-					policies, err := executor.Execute(ctx, "CALL nornicdb.knowledgepolicy.policies()", nil)
+					policies, err := executor.Execute(ctx, "CALL kp.policies()", nil)
 					require.NoError(t, err)
 					_, err = executor.Execute(ctx, map[bool]string{false: "ROLLBACK", true: "COMMIT"}[commit], nil)
 					require.NoError(t, err)
@@ -107,7 +107,7 @@ func TestE2E_KnowledgePolicyProcedureTransactionVisibility(t *testing.T) {
 					require.Equal(t, []interface{}{0, 0, 0, 0}, visible.Rows[0][2:6])
 					require.Len(t, profiles.Rows, 2)
 					require.Len(t, policies.Rows, 2)
-					stored, err := peer.Execute(ctx, "CALL nornicdb.knowledgepolicy.info()", nil)
+					stored, err := peer.Execute(ctx, "CALL kp.info()", nil)
 					require.NoError(t, err)
 					if commit {
 						require.Equal(t, staged.Rows[0][2:6], stored.Rows[0][2:6])
@@ -140,7 +140,7 @@ func TestE2E_NornicDbKnowledgePolicyInfoReflectsSchemaCounts(t *testing.T) {
 		require.NoError(t, err, stmt)
 	}
 
-	result, err := exec.Execute(ctx, "CALL nornicdb.knowledgepolicy.info()", nil)
+	result, err := exec.Execute(ctx, "CALL kp.info()", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	require.Equal(t, []string{"enabled", "system", "decayProfiles", "decayBindings", "promotionProfiles", "promotionPolicies", "configuredVia"}, result.Columns)
@@ -296,7 +296,7 @@ func TestE2E_CallNornicDbKnowledgePolicyProfilesAndPolicies(t *testing.T) {
 		require.NoError(t, err, stmt)
 	}
 
-	profiles, err := exec.Execute(ctx, "CALL nornicdb.knowledgepolicy.profiles()", nil)
+	profiles, err := exec.Execute(ctx, "CALL kp.profiles()", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"kind", "Name", "HalfLifeSeconds", "VisibilityThreshold", "ScoreFloor", "Function", "Scope", "DecayEnabled", "ScoreFrom", "ScoreFromProperty", "Enabled", "TargetLabels", "TargetEdgeType", "IsWildcard", "IsEdge", "ProfileRef", "NoDecay", "Order", "Apply"}, profiles.Columns)
 	require.Len(t, profiles.Rows, 2)
@@ -313,7 +313,7 @@ func TestE2E_CallNornicDbKnowledgePolicyProfilesAndPolicies(t *testing.T) {
 	assert.Equal(t, 0, rowsByName["binding_alpha"][17])
 	assert.Equal(t, "DECAY PROFILE 'profile_alpha'\nn.summary NO DECAY", rowsByName["binding_alpha"][18])
 
-	policies, err := exec.Execute(ctx, "CALL nornicdb.knowledgepolicy.policies()", nil)
+	policies, err := exec.Execute(ctx, "CALL kp.policies()", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"kind", "Name", "Scope", "Multiplier", "ScoreFloor", "ScoreCap", "Enabled", "TargetLabels", "TargetEdgeType", "IsWildcard", "IsEdge", "Apply"}, policies.Columns)
 	require.Len(t, policies.Rows, 2)
@@ -598,7 +598,7 @@ func TestE2E_AlterKnowledgePolicyDefinitions(t *testing.T) {
 		require.NoError(t, err, statement)
 	}
 
-	profiles, err := exec.Execute(ctx, "CALL nornicdb.knowledgepolicy.profiles()", nil)
+	profiles, err := exec.Execute(ctx, "CALL kp.profiles()", nil)
 	require.NoError(t, err)
 	var bindingRow []interface{}
 	for _, row := range profiles.Rows {
@@ -611,7 +611,7 @@ func TestE2E_AlterKnowledgePolicyDefinitions(t *testing.T) {
 	assert.Equal(t, "decay_b", bindingRow[15])
 	assert.Contains(t, bindingRow[18], "n.summary NO DECAY")
 
-	policyResult, err := exec.Execute(ctx, "CALL nornicdb.knowledgepolicy.policies()", nil)
+	policyResult, err := exec.Execute(ctx, "CALL kp.policies()", nil)
 	require.NoError(t, err)
 	var policyRow []interface{}
 	for _, row := range policyResult.Rows {
@@ -658,7 +658,7 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve(t *testing.T) {
 		},
 	}))
 
-	result, err := exec.Execute(ctx, fmt.Sprintf("CALL nornicdb.knowledgepolicy.resolve('%s', '', '')", nodeID), nil)
+	result, err := exec.Execute(ctx, fmt.Sprintf("CALL kp.resolve('%s', '', '')", nodeID), nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"TargetID", "TargetScope", "ResolvedDecayProfileID", "ResolvedScoreFrom", "ResolutionSourceChain", "AppliedDecayProfileNames", "AppliedPromotionPolicyName", "AppliedPromotionProfileName", "EffectiveRate", "EffectiveThreshold", "EffectiveMultiplier", "BaseScore", "FinalScore", "NoDecay", "SuppressionEligible", "Explanation"}, result.Columns)
 	require.Len(t, result.Rows, 1)
@@ -706,7 +706,7 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve_AcceptsNeo4jElementIDs(t *testin
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, resolveErr := exec.Execute(ctx, fmt.Sprintf("CALL nornicdb.knowledgepolicy.resolve('%s', '', '')", tt.entityID), nil)
+			result, resolveErr := exec.Execute(ctx, fmt.Sprintf("CALL kp.resolve('%s', '', '')", tt.entityID), nil)
 			require.NoError(t, resolveErr)
 			require.Len(t, result.Rows, 1)
 			assert.Equal(t, tt.wantID, result.Rows[0][0])
@@ -714,10 +714,10 @@ func TestE2E_CallNornicDbKnowledgePolicyResolve_AcceptsNeo4jElementIDs(t *testin
 		})
 	}
 
-	_, err = exec.Execute(ctx, "CALL nornicdb.knowledgepolicy.resolve('4:nornicdb:edge-1', '', '')", nil)
-	require.EqualError(t, err, "Failed to invoke procedure `nornicdb.knowledgepolicy.resolve`: Caused by: entity not found: 4:nornicdb:edge-1")
-	_, err = exec.Execute(ctx, "CALL nornicdb.knowledgepolicy.resolve('5:nornicdb:node-1', '', '')", nil)
-	require.EqualError(t, err, "Failed to invoke procedure `nornicdb.knowledgepolicy.resolve`: Caused by: entity not found: 5:nornicdb:node-1")
+	_, err = exec.Execute(ctx, "CALL kp.resolve('4:nornicdb:edge-1', '', '')", nil)
+	require.EqualError(t, err, "Failed to invoke procedure `kp.resolve`: Caused by: entity not found: 4:nornicdb:edge-1")
+	_, err = exec.Execute(ctx, "CALL kp.resolve('5:nornicdb:node-1', '', '')", nil)
+	require.EqualError(t, err, "Failed to invoke procedure `kp.resolve`: Caused by: entity not found: 5:nornicdb:node-1")
 }
 
 func TestE2E_CallNornicDbKnowledgePolicyDeindexStatus(t *testing.T) {
@@ -737,7 +737,7 @@ func TestE2E_CallNornicDbKnowledgePolicyDeindexStatus(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(be, "test"))
 	ctx := context.Background()
 
-	result, err := exec.Execute(ctx, "CALL nornicdb.knowledgepolicy.deindexStatus()", nil)
+	result, err := exec.Execute(ctx, "CALL kp.deindexStatus()", nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"pending_count", "supported", "message", "workItemId", "targetId", "targetScope", "enqueuedAt", "status"}, result.Columns)
 	require.Len(t, result.Rows, 1)

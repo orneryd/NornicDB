@@ -34,7 +34,7 @@ func TestCypherKnowledgePolicyDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherKnowledgePolicySchemaManagerUnavailable(), "schema manager unavailable"},
 		{CypherKnowledgePolicyUnsupportedCommandType("*cypher.unknown"), "unsupported knowledge policy command type *cypher.unknown"},
 		{CypherKnowledgePolicyOperationFailed("CREATE DECAY PROFILE", cause), "forced knowledge policy failure"},
-		{CypherKnowledgePolicyResolveTargetRequired(), "nornicdb.knowledgepolicy.resolve requires entityId, labels, or edgeType"},
+		{CypherKnowledgePolicyResolveTargetRequired(), "kp.resolve requires entityId, labels, or edgeType"},
 		{CypherKnowledgePolicyBindingTableUnavailable(), "knowledge policy binding table unavailable"},
 		{CypherKnowledgePolicyEntityNotFound("node-1"), "entity not found: node-1"},
 		{CypherKnowledgePolicyArgumentStringRequired(2), "argument 2 must be a string"},

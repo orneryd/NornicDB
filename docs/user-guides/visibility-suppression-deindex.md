@@ -75,7 +75,7 @@ ORDER BY decayScore(n)
 ### Inspecting Suppression with Cypher
 
 ```cypher
-CALL nornicdb.knowledgepolicy.resolve('node-123', '', '');
+CALL kp.resolve('node-123', '', '');
 ```
 
 This returns the full scoring resolution, including the effective threshold, final score, suppression eligibility, and explanation of why the entity was suppressed.
@@ -100,7 +100,7 @@ The deindex job runs every 24 hours by default. No configuration is required —
 Check deindex status with the supported Cypher procedure:
 
 ```cypher
-CALL nornicdb.knowledgepolicy.deindexStatus();
+CALL kp.deindexStatus();
 ```
 
 Example result columns:

@@ -57,7 +57,7 @@
   other: "{{.Cause}}"
 - id: cypherknowledgepolicy.resolve_target_required
   description: Knowledge-policy resolve procedure requires a target selector. Procedure and argument names are machine identifiers.
-  other: nornicdb.knowledgepolicy.resolve requires entityId, labels, or edgeType
+  other: kp.resolve requires entityId, labels, or edgeType
 - id: cypherknowledgepolicy.binding_table_unavailable
   description: Compiled knowledge-policy bindings are unavailable.
   other: knowledge policy binding table unavailable

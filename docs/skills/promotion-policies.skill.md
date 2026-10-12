@@ -67,7 +67,7 @@ What ON ACCESS actually does, precisely:
 
 - **Trigger:** every read or traversal of an entity that matches the policy's `FOR` clause fires the block. (A query that doesn't touch the entity does not.)
 - **Target of the writes:** access metadata — a per-entity store keyed by entity ID, separate from `n.Properties`. Reading `n.accessCount` inside `SET` expressions reads from this same metadata store. The node's stored properties are never mutated by `ON ACCESS`.
-- **Inspecting the writes:** `policy(n)` returns the access metadata; `nornicdb.knowledgepolicy.resolve(...)` includes effective values; a plain `MATCH (n) RETURN n` shows unchanged stored properties.
+- **Inspecting the writes:** `policy(n)` returns the access metadata; `kp.resolve(...)` includes effective values; a plain `MATCH (n) RETURN n` shows unchanged stored properties.
 - **Timing:** mutations are buffered by an access flusher and committed in batches. Reads immediately following an access may not yet observe the new counter.
 - **Read inside SET:** the right-hand side can read existing access metadata (`n.accessCount`, `n.lastAccessedAt`, ...), the entity's stored properties, and query parameters (`$x`) via the bind variable.
 - **One mutation per `SET`.** Use multiple `SET` lines instead of comma-separated assignments.
@@ -196,14 +196,14 @@ SHOW PROMOTION PROFILES
 SHOW PROMOTION POLICIES
 
 -- Combined catalog including profile vs policy rows
-CALL nornicdb.knowledgepolicy.policies()
+CALL kp.policies()
 
 -- Effective resolution for an entity. Reports the resolved decay binding,
 -- the targeted promotion policy, and the promotion profile NornicDB would
 -- pick for this entity if every WHEN matched. Note: resolve() runs as a
 -- dry-run with empty access metadata, so WHEN predicates that depend on
 -- access counts may not reflect the live decision.
-CALL nornicdb.knowledgepolicy.resolve('nornic:abc-123', '', '')
+CALL kp.resolve('nornic:abc-123', '', '')
 
 -- Inspect access metadata
 MATCH (n:Memory {id: $id}) RETURN policy(n)
@@ -243,7 +243,7 @@ for an unlabeled-node target; node and relationship targets remain supported.
 Native CREATE declarations are schema operations, not graph entity writes.
 
 Native profile/policy changes are transaction-local. SHOW statements and the
-`nornicdb.knowledgepolicy.info`, `.profiles`, and `.policies` procedures in the
+`kp.info`, `.profiles`, and `.policies` procedures in the
 same transaction see staged definitions; other transactions see committed
 definitions. These read procedures do not convert a data transaction into an
 ordinary schema-write transaction.
@@ -263,7 +263,7 @@ Drop the policy before the profile if both are going away — dropping a profile
 
 - **`ON ACCESS` mutations are eventually-consistent.** Buffered in an access flusher and committed in batches. A read taken immediately after an access may not yet observe the new counter. Don't rely on it being synchronous.
 - **A promotion policy is not required for decay to work.** Create promotion only to (a) update `lastAccessedAt` for `LAST_ACCESSED` decay, (b) track behavioral signals, or (c) conditionally apply a profile.
-- **`ON ACCESS` writes go to access metadata, never to `n.Properties`.** Inspect with `policy(n)` or `nornicdb.knowledgepolicy.resolve(...)`.
+- **`ON ACCESS` writes go to access metadata, never to `n.Properties`.** Inspect with `policy(n)` or `kp.resolve(...)`.
 - **`WITH KALMAN` only smooths a single SET expression.** Chain multiple Kalman blocks if you have multiple noisy fields.
 - **`multiplier: 0.0`** collapses the promoted score to the promotion `scoreFloor`. To "disable" a profile, `ALTER` it (e.g. set `multiplier: 1.0`) or drop the policy that references it.
 - **`scoreCap < scoreFloor` on a promotion profile** is a misconfiguration. Clamping order is floor-then-cap, so the cap wins and the floor becomes inert.

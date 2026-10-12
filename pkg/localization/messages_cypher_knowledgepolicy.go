@@ -40,7 +40,7 @@ const (
 )
 
 // CypherKnowledgePolicyVisibilityEntityRequired identifies a
-// db.visibility procedure called without a node or relationship.
+// kp.suppress or kp.unsuppress call without a node or relationship.
 func CypherKnowledgePolicyVisibilityEntityRequired(procedure string) Message {
 	return Message{ID: MessageCypherKnowledgePolicyVisibilityEntityRequired, Fallback: procedure + " needs a node or a relationship", Data: map[string]any{"Procedure": procedure}}
 }
@@ -153,7 +153,7 @@ func CypherKnowledgePolicyOperationFailed(operation string, cause error) Message
 
 // CypherKnowledgePolicyResolveTargetRequired identifies a resolve call without a target selector.
 func CypherKnowledgePolicyResolveTargetRequired() Message {
-	return Message{ID: MessageCypherKnowledgePolicyResolveTargetRequired, Fallback: "nornicdb.knowledgepolicy.resolve requires entityId, labels, or edgeType"}
+	return Message{ID: MessageCypherKnowledgePolicyResolveTargetRequired, Fallback: "kp.resolve requires entityId, labels, or edgeType"}
 }
 
 // CypherKnowledgePolicyBindingTableUnavailable identifies unavailable compiled policy bindings.

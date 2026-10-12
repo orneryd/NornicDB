@@ -2085,11 +2085,11 @@ class NornicDBClient {
     const [profilesResp, infoResp] = await Promise.all([
       this.executeCypherOnDatabase(
         dbName,
-        "CALL nornicdb.knowledgepolicy.profiles()",
+        "CALL kp.profiles()",
       ),
       this.executeCypherOnDatabase(
         dbName,
-        "CALL nornicdb.knowledgepolicy.info()",
+        "CALL kp.info()",
       ),
     ]);
     this.assertCypherSuccess(
@@ -2149,7 +2149,7 @@ class NornicDBClient {
     const dbName = await this.getResolvedDatabaseName(database);
     const resp = await this.executeCypherOnDatabase(
       dbName,
-      "CALL nornicdb.knowledgepolicy.policies()",
+      "CALL kp.policies()",
     );
     this.assertCypherSuccess(resp, "Failed to load knowledge policy policies");
 
@@ -2205,7 +2205,7 @@ class NornicDBClient {
     database?: string;
   }): Promise<ScoringResolution> {
     const dbName = await this.getResolvedDatabaseName(params.database);
-    const statement = `CALL nornicdb.knowledgepolicy.resolve('${escapeCypherStringLiteral(
+    const statement = `CALL kp.resolve('${escapeCypherStringLiteral(
       params.entityId ?? "",
     )}', '${escapeCypherStringLiteral((params.labels ?? []).join(","))}', '${escapeCypherStringLiteral(
       params.edgeType ?? "",
@@ -2239,7 +2239,7 @@ class NornicDBClient {
     const dbName = await this.getResolvedDatabaseName(database);
     const resp = await this.executeCypherOnDatabase(
       dbName,
-      "CALL nornicdb.knowledgepolicy.deindexStatus()",
+      "CALL kp.deindexStatus()",
     );
     this.assertCypherSuccess(resp, "Failed to load deindex status");
 

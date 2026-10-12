@@ -144,7 +144,7 @@ When multiple decay bindings could match:
 
 Promotion-policy resolution uses the same rules.
 
-When decay is globally disabled (`memory.decay_enabled: false`), every entity scores `1.0` regardless of bindings. Confirm with `CALL nornicdb.knowledgepolicy.info()`.
+When decay is globally disabled (`memory.decay_enabled: false`), every entity scores `1.0` regardless of bindings. Confirm with `CALL kp.info()`.
 
 ## Combining decay with access tracking
 
@@ -163,12 +163,14 @@ Without a promotion policy, decay still runs — `ON ACCESS` is a feature of pro
 
 The knowledge-layer system is operated and inspected through Cypher.
 
+The procedures live in the `kp.*` namespace: `kp.info`, `kp.profiles`, `kp.policies`, `kp.resolve`, `kp.deindexStatus`, `kp.decayInfo`, and `kp.suppress` / `kp.unsuppress`. The earlier names `nornicdb.knowledgepolicy.info`, `.profiles`, `.policies`, `.resolve`, `.deindexStatus` and `nornicdb.decay.info` still work as deprecated aliases of the same procedures; `SHOW PROCEDURES YIELD *` lists them with `isDeprecated` true and `deprecatedBy` naming the `kp.*` procedure. The read functions `reveal()`, `decay()`, `decayScore()` and `policy()` keep their names.
+
 ### Catalog and Status
 
 ```cypher
-CALL nornicdb.knowledgepolicy.info();
-CALL nornicdb.knowledgepolicy.profiles();
-CALL nornicdb.knowledgepolicy.policies();
+CALL kp.info();
+CALL kp.profiles();
+CALL kp.policies();
 
 SHOW DECAY PROFILES;
 SHOW PROMOTION PROFILES;
@@ -179,19 +181,19 @@ SHOW PROMOTION POLICIES;
 
 ```cypher
 -- Resolve by entity ID
-CALL nornicdb.knowledgepolicy.resolve('nornic:episode-1', '', '');
+CALL kp.resolve('nornic:episode-1', '', '');
 
 -- Resolve by label set
-CALL nornicdb.knowledgepolicy.resolve('', 'MemoryEpisode,SessionRecord', '');
+CALL kp.resolve('', 'MemoryEpisode,SessionRecord', '');
 
 -- Resolve by edge type
-CALL nornicdb.knowledgepolicy.resolve('', '', 'CO_ACCESSED');
+CALL kp.resolve('', '', 'CO_ACCESSED');
 ```
 
 ### Deindex Queue Status
 
 ```cypher
-CALL nornicdb.knowledgepolicy.deindexStatus();
+CALL kp.deindexStatus();
 ```
 
 These procedures are the supported diagnostics surface. The older `/admin/knowledge-policies/*` HTTP endpoints have been removed.
@@ -257,8 +259,8 @@ Immediately validate each step with:
 ```cypher
 SHOW DECAY PROFILES;
 SHOW PROMOTION POLICIES;
-CALL nornicdb.knowledgepolicy.info();
-CALL nornicdb.knowledgepolicy.resolve('', 'MemoryEpisode', '');
+CALL kp.info();
+CALL kp.resolve('', 'MemoryEpisode', '');
 ```
 
 ## Recommended Validation Loop
@@ -266,8 +268,8 @@ CALL nornicdb.knowledgepolicy.resolve('', 'MemoryEpisode', '');
 Use the same loop the codebase itself relies on in the Cypher e2e tests:
 
 1. Create bundles and bindings.
-2. Confirm the catalog row shapes with `SHOW ...` and `CALL nornicdb.knowledgepolicy.profiles()`.
-3. Confirm the resolved effective policy with `CALL nornicdb.knowledgepolicy.resolve(...)`.
+2. Confirm the catalog row shapes with `SHOW ...` and `CALL kp.profiles()`.
+3. Confirm the resolved effective policy with `CALL kp.resolve(...)`.
 4. Query live entities with `decayScore()`, `decay()`, and `policy()`.
 5. Only then add `ON ACCESS` mutations or Kalman-smoothed behavioral signals.
 

@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -10,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// db.visibility.suppress hides a node or relationship from MATCH, traversal
+// kp.suppress hides a node or relationship from MATCH, traversal
 // and counts, with decay disabled; reveal() still sees it; unsuppress shows
 // it again; inside an explicit transaction it takes effect on COMMIT and not
 // after ROLLBACK (#1064).
@@ -31,21 +30,21 @@ func TestDbVisibilitySuppress(t *testing.T) {
 	count := func(t *testing.T) int64 { return run(t, "MATCH (n:Doc) RETURN count(n)")[0][0].(int64) }
 	require.Equal(t, int64(3), count(t))
 
-	run(t, "MATCH (n:Doc {id: 'b'}) CALL db.visibility.suppress(n)")
+	run(t, "MATCH (n:Doc {id: 'b'}) CALL kp.suppress(n)")
 	require.Equal(t, int64(2), count(t), "a suppressed node isn't counted")
 	require.Empty(t, run(t, "MATCH (n:Doc {id: 'b'}) RETURN n.id"))
 	require.Empty(t, run(t, "MATCH (:Doc {id: 'a'})-[:CITES]->(b) RETURN b.id"), "nor traversed to")
 	require.Equal(t, [][]interface{}{{"b"}}, run(t, "MATCH (n:Doc {id: 'b'}) RETURN reveal(n).id"))
 
-	run(t, "MATCH (n:Doc {id: 'b'}) WHERE reveal(n) IS NOT NULL CALL db.visibility.unsuppress(n)")
+	run(t, "MATCH (n:Doc {id: 'b'}) WHERE reveal(n) IS NOT NULL CALL kp.unsuppress(n)")
 	require.Equal(t, int64(3), count(t))
 	require.Equal(t, [][]interface{}{{"b"}}, run(t, "MATCH (:Doc {id: 'a'})-[:CITES]->(b) RETURN b.id"))
 
 	// A relationship.
-	run(t, "MATCH ()-[r:CITES {id: 'link'}]->() CALL db.visibility.suppress(r)")
+	run(t, "MATCH ()-[r:CITES {id: 'link'}]->() CALL kp.suppress(r)")
 	require.Empty(t, run(t, "MATCH (:Doc {id: 'a'})-[r:CITES]->() RETURN r.id"))
 	require.Equal(t, int64(3), count(t), "its endpoints stay")
-	run(t, "MATCH ()-[r:CITES {id: 'link'}]->() WHERE reveal(r) IS NOT NULL CALL db.visibility.unsuppress(r)")
+	run(t, "MATCH ()-[r:CITES {id: 'link'}]->() WHERE reveal(r) IS NOT NULL CALL kp.unsuppress(r)")
 	require.Equal(t, [][]interface{}{{"link"}}, run(t, "MATCH (:Doc {id: 'a'})-[r:CITES]->() RETURN r.id"))
 
 	// Explicit transactions: applied on COMMIT, dropped on ROLLBACK.
@@ -53,7 +52,7 @@ func TestDbVisibilitySuppress(t *testing.T) {
 		t.Helper()
 		_, err := exec.Execute(WithTransactionControl(ctx), "BEGIN", nil)
 		require.NoError(t, err)
-		_, err = exec.Execute(ctx, "MATCH (n:Doc {id: 'c'}) CALL db.visibility.suppress(n)", nil)
+		_, err = exec.Execute(ctx, "MATCH (n:Doc {id: 'c'}) CALL kp.suppress(n)", nil)
 		require.NoError(t, err)
 		_, err = exec.Execute(WithTransactionControl(ctx), terminal, nil)
 		require.NoError(t, err)
@@ -63,7 +62,7 @@ func TestDbVisibilitySuppress(t *testing.T) {
 	inTx(t, "COMMIT")
 	require.Equal(t, int64(2), count(t))
 
-	for _, query := range []string{"CALL db.visibility.suppress(1)", "CALL db.visibility.unsuppress(null)"} {
+	for _, query := range []string{"CALL kp.suppress(1)", "CALL kp.unsuppress(null)"} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.ErrorContains(t, err, "needs a node or a relationship", query)
 	}
@@ -100,10 +99,10 @@ func TestDbVisibilitySuppressUpdatesSearch(t *testing.T) {
 	}
 	require.Equal(t, 1, hits(t))
 
-	_, err = exec.Execute(ctx, "MATCH (n:Doc) CALL db.visibility.suppress(n)", nil)
+	_, err = exec.Execute(ctx, "MATCH (n:Doc) CALL kp.suppress(n)", nil)
 	require.NoError(t, err)
 	require.Equal(t, 0, hits(t))
-	_, err = exec.Execute(ctx, "MATCH (n:Doc) WHERE reveal(n) IS NOT NULL CALL db.visibility.unsuppress(n)", nil)
+	_, err = exec.Execute(ctx, "MATCH (n:Doc) WHERE reveal(n) IS NOT NULL CALL kp.unsuppress(n)", nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, hits(t))
 }
@@ -113,7 +112,7 @@ func TestVisibilityProcedureMetadata(t *testing.T) {
 	ensureBuiltInProceduresRegistered()
 	count := 0
 	for _, spec := range globalProcedureRegistry.ListBuiltIns() {
-		if !strings.HasPrefix(spec.Name, "db.visibility.") {
+		if spec.Name != "kp.suppress" && spec.Name != "kp.unsuppress" {
 			continue
 		}
 		count++
@@ -134,20 +133,20 @@ func TestDbVisibilitySuppressErrors(t *testing.T) {
 	ctx := context.Background()
 	type unsuppressible struct{ storage.Engine }
 	plain := NewStorageExecutor(unsuppressible{Engine: newTestMemoryEngine(t)})
-	_, err := plain.callDbVisibilitySuppress(ctx, "db.visibility.suppress", []interface{}{&storage.Node{ID: "x"}}, true)
+	_, err := plain.callKpSuppress(ctx, "kp.suppress", []interface{}{&storage.Node{ID: "x"}}, true)
 	require.ErrorContains(t, err, "not supported by this storage engine")
 	// A namespace over such a store says the same.
 	namespaced := NewStorageExecutor(storage.NewNamespacedEngine(unsuppressible{Engine: newTestMemoryEngine(t)}, "test"))
-	_, err = namespaced.callDbVisibilitySuppress(ctx, "db.visibility.unsuppress", []interface{}{&storage.Edge{ID: "x"}}, false)
+	_, err = namespaced.callKpSuppress(ctx, "kp.unsuppress", []interface{}{&storage.Edge{ID: "x"}}, false)
 	require.ErrorContains(t, err, "not supported by this storage engine")
 
 	engine, err := storage.NewBadgerEngine(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
-	_, err = exec.callDbVisibilitySuppress(ctx, "db.visibility.suppress", []interface{}{&storage.Node{ID: "missing"}}, true)
+	_, err = exec.callKpSuppress(ctx, "kp.suppress", []interface{}{&storage.Node{ID: "missing"}}, true)
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	_, err = exec.callDbVisibilitySuppress(ctx, "db.visibility.suppress", []interface{}{&storage.Edge{ID: "missing"}}, true)
+	_, err = exec.callKpSuppress(ctx, "kp.suppress", []interface{}{&storage.Edge{ID: "missing"}}, true)
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
 	require.Nil(t, manualSuppressionEngine(&selfUnwrappingEngine{Engine: newTestMemoryEngine(t)}))

@@ -30,8 +30,8 @@ func TestVisibilityMessages(t *testing.T) {
 		return text
 	}
 	for _, message := range []Message{
-		CypherProcedureMetadataDbVisibilitySuppress(), CypherProcedureMetadataDbVisibilityUnsuppress(),
-		CypherKnowledgePolicyVisibilityEntityRequired("db.visibility.suppress"), CypherKnowledgePolicyVisibilityUnsupported("db.visibility.unsuppress"),
+		CypherProcedureMetadataKpSuppress(), CypherProcedureMetadataKpUnsuppress(),
+		CypherKnowledgePolicyVisibilityEntityRequired("kp.suppress"), CypherKnowledgePolicyVisibilityUnsupported("kp.unsuppress"),
 	} {
 		require.Equal(t, message.Fallback, render("en-US", message))
 		require.Equal(t, "[!! "+message.Fallback+" !!]", render("en-XA", message))

@@ -307,30 +307,43 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbStats()
 			})
-		registerBuiltInProcedure("nornicdb.decay.info", "nornicdb.decay.info() :: (enabled :: BOOLEAN, system :: STRING, configuredVia :: STRING)", localization.CypherProcedureMetadata("nornicdb.decay.info"), ProcedureModeRead, 0, 0, false,
+		registerBuiltInProcedure("kp.decayInfo", "kp.decayInfo() :: (enabled :: BOOLEAN, system :: STRING, configuredVia :: STRING)", localization.CypherProcedureMetadata("kp.decayInfo"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbDecayInfo()
 			})
-		registerBuiltInProcedure("nornicdb.knowledgepolicy.info", "nornicdb.knowledgepolicy.info() :: (enabled :: BOOLEAN, system :: STRING, decayProfiles :: INTEGER, decayBindings :: INTEGER, promotionProfiles :: INTEGER, promotionPolicies :: INTEGER, configuredVia :: STRING)", localization.CypherProcedureMetadata("nornicdb.knowledgepolicy.info"), ProcedureModeRead, 0, 0, false,
+		registerBuiltInProcedure("kp.info", "kp.info() :: (enabled :: BOOLEAN, system :: STRING, decayProfiles :: INTEGER, decayBindings :: INTEGER, promotionProfiles :: INTEGER, promotionPolicies :: INTEGER, configuredVia :: STRING)", localization.CypherProcedureMetadata("kp.info"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbKnowledgePolicyInfo()
 			})
-		registerBuiltInProcedure("nornicdb.knowledgepolicy.profiles", "nornicdb.knowledgepolicy.profiles() :: (kind :: STRING, Name :: STRING, HalfLifeSeconds :: INTEGER, VisibilityThreshold :: FLOAT, ScoreFloor :: FLOAT, Function :: STRING, Scope :: STRING, DecayEnabled :: BOOLEAN, ScoreFrom :: STRING, ScoreFromProperty :: STRING, Enabled :: BOOLEAN, TargetLabels :: LIST<STRING>, TargetEdgeType :: STRING, IsWildcard :: BOOLEAN, IsEdge :: BOOLEAN, ProfileRef :: STRING, NoDecay :: BOOLEAN, Order :: INTEGER)", localization.CypherProcedureMetadata("nornicdb.knowledgepolicy.profiles"), ProcedureModeRead, 0, 0, false,
+		registerBuiltInProcedure("kp.profiles", "kp.profiles() :: (kind :: STRING, Name :: STRING, HalfLifeSeconds :: INTEGER, VisibilityThreshold :: FLOAT, ScoreFloor :: FLOAT, Function :: STRING, Scope :: STRING, DecayEnabled :: BOOLEAN, ScoreFrom :: STRING, ScoreFromProperty :: STRING, Enabled :: BOOLEAN, TargetLabels :: LIST<STRING>, TargetEdgeType :: STRING, IsWildcard :: BOOLEAN, IsEdge :: BOOLEAN, ProfileRef :: STRING, NoDecay :: BOOLEAN, Order :: INTEGER)", localization.CypherProcedureMetadata("kp.profiles"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbKnowledgePolicyProfiles()
 			})
-		registerBuiltInProcedure("nornicdb.knowledgepolicy.policies", "nornicdb.knowledgepolicy.policies() :: (kind :: STRING, Name :: STRING, Scope :: STRING, Multiplier :: FLOAT, ScoreFloor :: FLOAT, ScoreCap :: FLOAT, Enabled :: BOOLEAN, TargetLabels :: LIST<STRING>, TargetEdgeType :: STRING, IsWildcard :: BOOLEAN, IsEdge :: BOOLEAN)", localization.CypherProcedureMetadata("nornicdb.knowledgepolicy.policies"), ProcedureModeRead, 0, 0, false,
+		registerBuiltInProcedure("kp.policies", "kp.policies() :: (kind :: STRING, Name :: STRING, Scope :: STRING, Multiplier :: FLOAT, ScoreFloor :: FLOAT, ScoreCap :: FLOAT, Enabled :: BOOLEAN, TargetLabels :: LIST<STRING>, TargetEdgeType :: STRING, IsWildcard :: BOOLEAN, IsEdge :: BOOLEAN)", localization.CypherProcedureMetadata("kp.policies"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbKnowledgePolicyPolicies()
 			})
-		registerBuiltInProcedure("nornicdb.knowledgepolicy.resolve", "nornicdb.knowledgepolicy.resolve(entityId :: STRING = '', labelsCsv :: STRING = '', edgeType :: STRING = '') :: (TargetID :: STRING, TargetScope :: STRING, ResolvedDecayProfileID :: STRING, ResolvedScoreFrom :: STRING, ResolutionSourceChain :: LIST<STRING>, AppliedDecayProfileNames :: LIST<STRING>, AppliedPromotionPolicyName :: STRING, AppliedPromotionProfileName :: STRING, EffectiveRate :: FLOAT, EffectiveThreshold :: FLOAT, EffectiveMultiplier :: FLOAT, BaseScore :: FLOAT, FinalScore :: FLOAT, NoDecay :: BOOLEAN, SuppressionEligible :: BOOLEAN, Explanation :: STRING)", localization.CypherProcedureMetadata("nornicdb.knowledgepolicy.resolve"), ProcedureModeRead, 0, 3, false,
+		registerBuiltInProcedure("kp.resolve", "kp.resolve(entityId :: STRING = '', labelsCsv :: STRING = '', edgeType :: STRING = '') :: (TargetID :: STRING, TargetScope :: STRING, ResolvedDecayProfileID :: STRING, ResolvedScoreFrom :: STRING, ResolutionSourceChain :: LIST<STRING>, AppliedDecayProfileNames :: LIST<STRING>, AppliedPromotionPolicyName :: STRING, AppliedPromotionProfileName :: STRING, EffectiveRate :: FLOAT, EffectiveThreshold :: FLOAT, EffectiveMultiplier :: FLOAT, BaseScore :: FLOAT, FinalScore :: FLOAT, NoDecay :: BOOLEAN, SuppressionEligible :: BOOLEAN, Explanation :: STRING)", localization.CypherProcedureMetadata("kp.resolve"), ProcedureModeRead, 0, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbKnowledgePolicyResolve(args)
 			})
-		registerBuiltInProcedure("nornicdb.knowledgepolicy.deindexStatus", "nornicdb.knowledgepolicy.deindexStatus() :: (pending_count :: INTEGER, supported :: BOOLEAN, message :: STRING, workItemId :: STRING, targetId :: STRING, targetScope :: STRING, enqueuedAt :: INTEGER, status :: STRING)", localization.CypherProcedureMetadata("nornicdb.knowledgepolicy.deindexStatus"), ProcedureModeRead, 0, 0, false,
+		registerBuiltInProcedure("kp.deindexStatus", "kp.deindexStatus() :: (pending_count :: INTEGER, supported :: BOOLEAN, message :: STRING, workItemId :: STRING, targetId :: STRING, targetScope :: STRING, enqueuedAt :: INTEGER, status :: STRING)", localization.CypherProcedureMetadata("kp.deindexStatus"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbKnowledgePolicyDeindexStatus()
 			})
+		// The knowledge-policy procedures are kp.*, a vendor namespace as apoc.*
+		// and gds.* are (#1078); their earlier nornicdb.* names stay as
+		// deprecated aliases of the same procedures.
+		for _, alias := range [][2]string{
+			{"nornicdb.decay.info", "kp.decayInfo"},
+			{"nornicdb.knowledgepolicy.info", "kp.info"},
+			{"nornicdb.knowledgepolicy.profiles", "kp.profiles"},
+			{"nornicdb.knowledgepolicy.policies", "kp.policies"},
+			{"nornicdb.knowledgepolicy.resolve", "kp.resolve"},
+			{"nornicdb.knowledgepolicy.deindexStatus", "kp.deindexStatus"},
+		} {
+			registerDeprecatedProcedureAlias(alias[0], alias[1])
+		}
 
 		// db.retrieve and db.rretrieve return one row per result, or, for a
 		// paged request (mode, n / limit or a continuation qid), one row
@@ -344,13 +357,13 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRRetrieve(ctx, args)
 			})
-		registerBuiltInProcedure("db.visibility.suppress", "db.visibility.suppress(entity :: ANY)", localization.CypherProcedureMetadata("db.visibility.suppress"), ProcedureModeWrite, 1, 1, false,
+		registerBuiltInProcedure("kp.suppress", "kp.suppress(entity :: ANY)", localization.CypherProcedureMetadata("kp.suppress"), ProcedureModeWrite, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbVisibilitySuppress(ctx, "db.visibility.suppress", args, true)
+				return e.callKpSuppress(ctx, "kp.suppress", args, true)
 			})
-		registerBuiltInProcedure("db.visibility.unsuppress", "db.visibility.unsuppress(entity :: ANY)", localization.CypherProcedureMetadata("db.visibility.unsuppress"), ProcedureModeWrite, 1, 1, false,
+		registerBuiltInProcedure("kp.unsuppress", "kp.unsuppress(entity :: ANY)", localization.CypherProcedureMetadata("kp.unsuppress"), ProcedureModeWrite, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbVisibilitySuppress(ctx, "db.visibility.unsuppress", args, false)
+				return e.callKpSuppress(ctx, "kp.unsuppress", args, false)
 			})
 		registerBuiltInProcedure("db.rerank", "db.rerank(request :: MAP) :: (id :: STRING, content :: STRING, original_rank :: INTEGER, new_rank :: INTEGER, bi_score :: FLOAT, cross_score :: FLOAT, final_score :: FLOAT)", localization.CypherProcedureMetadata("db.rerank"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
@@ -856,6 +869,25 @@ func registerBuiltInProcedure(name, signature string, description localization.M
 		MinArgs:            minArgs,
 		MaxArgs:            maxArgs,
 	}, handler)
+}
+
+// registerDeprecatedProcedureAlias registers alias as a deprecated name of the
+// built-in procedure name: the same handler, arguments and results, with
+// SHOW PROCEDURES reporting it deprecated by name.
+func registerDeprecatedProcedureAlias(alias, name string) {
+	procedure, ok := globalProcedureRegistry.Get(name)
+	if !ok {
+		panic("deprecated procedure alias " + alias + " of unregistered " + name)
+	}
+	description := localization.CypherProcedureMetadata(alias)
+	spec := procedure.Spec
+	spec.Name = alias
+	spec.Signature = alias + strings.TrimPrefix(spec.Signature, name)
+	spec.Description = description.Fallback
+	spec.DescriptionMessage = description
+	spec.IsDeprecated = true
+	spec.DeprecatedBy = name
+	_ = globalProcedureRegistry.RegisterBuiltIn(spec, procedure.Handler)
 }
 
 func registerBuiltInProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {

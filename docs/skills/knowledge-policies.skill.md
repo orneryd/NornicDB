@@ -1,6 +1,6 @@
 ---
 name: nornicdb-knowledge-policies
-description: Author and use NornicDB knowledge-layer policies (decay profiles, parameter bundles, promotion profiles, promotion policies) from Cypher. Use when writing CREATE/ALTER/DROP/SHOW DECAY PROFILE / PROMOTION PROFILE / PROMOTION POLICY, calling nornicdb.knowledgepolicy.* procedures, or reading entity scores via decayScore() / decay() / policy() / reveal() in NornicDB.
+description: Author and use NornicDB knowledge-layer policies (decay profiles, parameter bundles, promotion profiles, promotion policies) from Cypher. Use when writing CREATE/ALTER/DROP/SHOW DECAY PROFILE / PROMOTION PROFILE / PROMOTION POLICY, calling kp.* procedures, or reading entity scores via decayScore() / decay() / policy() / reveal() in NornicDB.
 ---
 
 # NornicDB Knowledge-Layer Policies (Cypher API)
@@ -86,7 +86,7 @@ When multiple decay bindings could match an entity:
 
 Promotion-policy resolution uses the same priority rules.
 
-When decay is globally disabled, every entity scores `1.0` regardless of bindings. Verify with `CALL nornicdb.knowledgepolicy.info()`.
+When decay is globally disabled, every entity scores `1.0` regardless of bindings. Verify with `CALL kp.info()`.
 
 ## DDL reference
 
@@ -108,7 +108,7 @@ CREATE DECAY PROFILE working_memory OPTIONS {
 }
 ```
 
-Effect of this statement: a row appears in `nornicdb.knowledgepolicy.profiles()` with `kind='bundle'`. No entity's score has changed.
+Effect of this statement: a row appears in `kp.profiles()` with `kind='bundle'`. No entity's score has changed.
 
 ### Decay binding — `CREATE DECAY PROFILE <name> FOR (...) APPLY { ... }`
 
@@ -130,7 +130,7 @@ APPLY {
 }
 ```
 
-Effect of this statement: decay is now active for every `:SessionRecord` node. Reads of that label go through the scorer using the resolved parameters. A row appears in `nornicdb.knowledgepolicy.profiles()` with `kind='binding'`.
+Effect of this statement: decay is now active for every `:SessionRecord` node. Reads of that label go through the scorer using the resolved parameters. A row appears in `kp.profiles()` with `kind='binding'`.
 
 ### Target shapes (`FOR` clause)
 
@@ -204,7 +204,7 @@ SHOW PROMOTION POLICIES
 
 ON ACCESS rules:
 
-- Each `SET` is a mutation against access metadata. Inspect the result with `policy(n)` or `nornicdb.knowledgepolicy.resolve(...)` — `n.Properties` is unchanged.
+- Each `SET` is a mutation against access metadata. Inspect the result with `policy(n)` or `kp.resolve(...)` — `n.Properties` is unchanged.
 - Mutations are eventually-consistent: a read immediately after access may see the previous values until the access flusher commits.
 - `WITH KALMAN` defaults when keys are omitted: `q=0.1`, `r=88.0`, `varianceScale=10.0`, `windowSize=32`. Setting `r` explicitly switches the filter from auto-R mode to manual mode.
 - `WHEN` predicates are evaluated against the freshly-flushed metadata; declaration order decides priority — first match wins.
@@ -254,15 +254,15 @@ SHOW  DECAY PROFILES
 ## Diagnostics & inspection
 
 ```cypher
-CALL nornicdb.knowledgepolicy.info()                       -- catalog counts + enabled flag
-CALL nornicdb.knowledgepolicy.profiles()                   -- bundles and bindings, one row each
-CALL nornicdb.knowledgepolicy.policies()                   -- promotion profiles and policies
-CALL nornicdb.knowledgepolicy.deindexStatus()              -- pending suppression cleanup work
+CALL kp.info()                       -- catalog counts + enabled flag
+CALL kp.profiles()                   -- bundles and bindings, one row each
+CALL kp.policies()                   -- promotion profiles and policies
+CALL kp.deindexStatus()              -- pending suppression cleanup work
 
 -- Resolve effective policy for an entity, label set, or edge type (any one is enough):
-CALL nornicdb.knowledgepolicy.resolve('nornic:abc-123', '', '')         -- by ID
-CALL nornicdb.knowledgepolicy.resolve('', 'MemoryEpisode,Session', '')  -- by labels (CSV)
-CALL nornicdb.knowledgepolicy.resolve('', '', 'CO_ACCESSED')            -- by edge type
+CALL kp.resolve('nornic:abc-123', '', '')         -- by ID
+CALL kp.resolve('', 'MemoryEpisode,Session', '')  -- by labels (CSV)
+CALL kp.resolve('', '', 'CO_ACCESSED')            -- by edge type
 ```
 
 `resolve(...)` returns columns:
@@ -292,10 +292,10 @@ MATCH (n:Document) RETURN reveal(n) AS node, decayScore(n) AS score
 ## Authoring workflow
 
 1. **Bundle first.** Create the parameter set (`OPTIONS { ... }`). Nothing scores differently yet — confirm with `SHOW DECAY PROFILES` (the bundle appears with `kind='bundle'`).
-2. **Binding next.** `CREATE DECAY PROFILE <bindingName> FOR (...) APPLY { DECAY PROFILE '<bundleName>' ... }`. Decay is now active for matched entities. Confirm with `CALL nornicdb.knowledgepolicy.resolve('', '<labels>', '')` — `ResolvedDecayProfileID` should be the bundle name; `EffectiveRate`, `EffectiveThreshold`, and `EffectiveMultiplier` should match what you intended. (For the floor value, read `floor` from `decay(n)` on a real entity — the `resolve()` projection does not include the floor directly.)
+2. **Binding next.** `CREATE DECAY PROFILE <bindingName> FOR (...) APPLY { DECAY PROFILE '<bundleName>' ... }`. Decay is now active for matched entities. Confirm with `CALL kp.resolve('', '<labels>', '')` — `ResolvedDecayProfileID` should be the bundle name; `EffectiveRate`, `EffectiveThreshold`, and `EffectiveMultiplier` should match what you intended. (For the floor value, read `floor` from `decay(n)` on a real entity — the `resolve()` projection does not include the floor directly.)
 3. **Promotion only when needed.** Create promotion profiles (`OPTIONS`) and a promotion policy (`FOR ... APPLY { ... }`). Even a policy with only `ON ACCESS` and no `WHEN` is useful — it lets a `LAST_ACCESSED` decay binding work correctly.
 4. **Tune with `ALTER`.** `ALTER DECAY PROFILE <bundleName> SET OPTIONS { ... }` propagates math changes to every referencing binding. Use `ALTER DECAY PROFILE <bindingName> FOR (...) APPLY { ... }` when the target or binding overrides change.
-5. **Validate again** after every change: `SHOW DECAY PROFILES`, `SHOW PROMOTION POLICIES`, `CALL nornicdb.knowledgepolicy.resolve(...)`, then `MATCH (n:Label) RETURN decay(n)` on a known entity.
+5. **Validate again** after every change: `SHOW DECAY PROFILES`, `SHOW PROMOTION POLICIES`, `CALL kp.resolve(...)`, then `MATCH (n:Label) RETURN decay(n)` on a known entity.
 
 ## Tuning knobs (what to reach for first)
 
@@ -316,7 +316,7 @@ MATCH (n:Document) RETURN reveal(n) AS node, decayScore(n) AS score
 - **Bindings need parameters.** A binding with neither a `DECAY PROFILE '<bundle>'` reference nor inline directives in `APPLY` will use defaults (`function='exponential'` is not implied; the resolver may not produce a usable curve). Reference a bundle, or set parameters explicitly.
 - **Property rules (`n.foo NO DECAY`) live in the binding's `APPLY` block** — they are not legal inside a bundle's `OPTIONS`.
 - **`ON ACCESS` belongs to promotion policies only.** It is not a feature of decay bindings. Decay does not need or use `ON ACCESS` to function.
-- **`ON ACCESS SET` writes to access metadata, not `n.Properties`.** Inspect with `policy(n)` or `nornicdb.knowledgepolicy.resolve(...)`. The node's stored properties are unchanged.
+- **`ON ACCESS SET` writes to access metadata, not `n.Properties`.** Inspect with `policy(n)` or `kp.resolve(...)`. The node's stored properties are unchanged.
 - **`multiplier < 1.0` is a valid promotion** — it dampens. Pair with inverted decay (`halfLifeSeconds: -...`) for a punish-frequent-access pattern.
 - **A wildcard binding (`FOR ()`)** catches every entity that no more-specific binding matches. Useful for global defaults; easy to forget. Inspect with `SHOW DECAY PROFILES` and look for a binding with `target='*'`.
 - **Negative half-lives bypass the threshold-age fast path.** Reads cost slightly more CPU. Reserve for label sets where consolidation is the actual model.
@@ -357,7 +357,7 @@ APPLY {
 SHOW DECAY PROFILES                                            -- bundle + binding rows
 SHOW PROMOTION PROFILES                                        -- promotion profile row
 SHOW PROMOTION POLICIES                                        -- promotion policy row
-CALL nornicdb.knowledgepolicy.resolve('', 'Memory', '')        -- effective config
+CALL kp.resolve('', 'Memory', '')        -- effective config
 MATCH (n:Memory) RETURN n.id, decay(n) LIMIT 5                 -- live scores
 ```
 

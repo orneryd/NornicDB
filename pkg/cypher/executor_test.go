@@ -1187,8 +1187,8 @@ func TestExecuteNornicDbProcedures(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, result.Rows)
 
-	// Test nornicdb.decay.info()
-	result, err = exec.Execute(ctx, "CALL nornicdb.decay.info()", nil)
+	// Test kp.decayInfo()
+	result, err = exec.Execute(ctx, "CALL kp.decayInfo()", nil)
 	require.NoError(t, err)
 	assert.NotEmpty(t, result.Rows)
 }
@@ -2049,7 +2049,7 @@ func TestExecuteAllProcedures(t *testing.T) {
 		"CALL dbms.functions()",
 		"CALL nornicdb.version()",
 		"CALL nornicdb.stats()",
-		"CALL nornicdb.decay.info()",
+		"CALL kp.decayInfo()",
 	}
 
 	for _, proc := range procedures {

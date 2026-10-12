@@ -57,7 +57,7 @@
   other: "{{.Cause}}"
 - id: cypherknowledgepolicy.resolve_target_required
   description: Expanded pseudo-locale missing resolve target.
-  other: "[!! nornicdb.knowledgepolicy.resolve requires entityId, labels, or edgeType !!]"
+  other: "[!! kp.resolve requires entityId, labels, or edgeType !!]"
 - id: cypherknowledgepolicy.binding_table_unavailable
   description: Expanded pseudo-locale unavailable binding table.
   other: "[!! knowledge policy binding table unavailable !!]"
