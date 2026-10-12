@@ -140,6 +140,47 @@ RETURN node, score
 If you use `db.index.vector.embed()`, pass the returned `embedding` array into
 `db.index.vector.queryNodes(..., embedding)` (or an inline array equivalent) for explicit pipeline control.
 
+## Relationship search
+
+With `NORNICDB_SEARCH_RELATIONSHIPS_ENABLED=true`, `db.retrieveRelationships`
+takes the same request map as `db.retrieve` and searches relationship
+properties instead of nodes. Rows have the columns
+`relationship`, `start`, `end` (null when not visible), `score`, `rrf_score`,
+`vector_rank`, `bm25_rank`, `search_method`, `fallback_triggered` and
+`fallback_reason`; `types` filters by relationship type. It can't be
+continued. See [Hybrid Search](hybrid-search.md#relationship-search).
+
+```cypher
+CALL db.retrieveRelationships({query: 'why these papers disagree', limit: 5})
+YIELD relationship, start, end, score
+RETURN type(relationship), relationship.reason, start.title, end.title, score
+```
+
+## Nodes and relationships in one ranking
+
+`db.retrieveGraph` takes the same request map as `db.retrieve` and ranks
+matching nodes and relationships together. The vector hits of both kinds
+are ranked by similarity; the keyword hits by interleaving the node and the
+relationship rankings, whose BM25 scores come from different indexes; the
+two are fused by reciprocal rank, and a requested rerank orders the fused
+pool in one call. `types` filters node labels, `relationshipTypes`
+relationship types. Rows have `kind` (`'node'` or `'relationship'`), `node`,
+`relationship`, `start`, `end`, the scores and search metadata of
+`db.retrieve`, and `matches`. Without relationship search it ranks nodes
+alone.
+
+```cypher
+CALL db.retrieveGraph({query: 'late payment terms', limit: 10})
+YIELD kind, node, relationship, start, end, score
+RETURN kind, coalesce(node.title, type(relationship)), score
+```
+
+With `n` or `maxResults` it returns one terminal page (`page.results`, each
+with `kind`, `node` or `relationship` with `start` / `end`, the scores and
+`matches`; `page.search_method`, `fallback_triggered`, `fallback_reason`),
+as `db.rretrieve`'s pages are read. It can't be continued: `qid`, `discard`,
+`mode`, `groupBy` and `rankedLimit` are errors.
+
 ## Durable search continuation
 
 ```cypher

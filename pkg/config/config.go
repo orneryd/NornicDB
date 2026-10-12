@@ -676,6 +676,10 @@ type MemoryConfig struct {
 	// "none" preserves the default language-neutral analyzer.
 	// Env: NORNICDB_SEARCH_BM25_STEMMER (default: none)
 	SearchBM25Stemmer string
+	// SearchRelationshipsEnabled indexes relationship properties for keyword
+	// and vector search, in indexes apart from the nodes' (#1065).
+	// Env: NORNICDB_SEARCH_RELATIONSHIPS_ENABLED (default: false)
+	SearchRelationshipsEnabled bool
 	// SearchVectorEnabled is the global default for whether vector search is
 	// enabled. When false, no ANN strategy (HNSW, IVF-HNSW, brute-force, GPU,
 	// Metal, Qdrant pass-through) is built or queryable for that database;
@@ -1654,6 +1658,9 @@ type YAMLConfig struct {
 		BM25Stemmer    string   `yaml:"bm25_stemmer"`
 		VectorEnabled  *bool    `yaml:"vector_enabled"`
 		VectorWarming  string   `yaml:"vector_warming"`
+
+		// RelationshipsEnabled indexes relationship properties (#1065).
+		RelationshipsEnabled *bool `yaml:"relationships_enabled"`
 	} `yaml:"search"`
 
 	// Memory/Decay configuration
@@ -2646,6 +2653,9 @@ func applyEnvVars(config *Config) error {
 	if v := strings.TrimSpace(strings.ToLower(getEnv("NORNICDB_SEARCH_BM25_STEMMER", ""))); v != "" {
 		config.Memory.SearchBM25Stemmer = v
 	}
+	if v := getEnv("NORNICDB_SEARCH_RELATIONSHIPS_ENABLED", ""); v != "" {
+		config.Memory.SearchRelationshipsEnabled = v == "true" || v == "1"
+	}
 	if v := getEnv("NORNICDB_SEARCH_VECTOR_ENABLED", ""); v != "" {
 		config.Memory.SearchVectorEnabled = v == "true" || v == "1"
 	}
@@ -3607,6 +3617,9 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 	if v := strings.TrimSpace(strings.ToLower(yamlCfg.Search.BM25Stemmer)); v != "" {
 		config.Memory.SearchBM25Stemmer = v
+	}
+	if yamlCfg.Search.RelationshipsEnabled != nil {
+		config.Memory.SearchRelationshipsEnabled = *yamlCfg.Search.RelationshipsEnabled
 	}
 	if yamlCfg.Search.VectorEnabled != nil {
 		config.Memory.SearchVectorEnabled = *yamlCfg.Search.VectorEnabled

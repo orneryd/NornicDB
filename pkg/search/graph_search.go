@@ -1,0 +1,252 @@
+package search
+
+import (
+	"context"
+	"sort"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+// graphCandidate is a node or a relationship in a graph search's fused pool.
+type graphCandidate struct {
+	result     SearchResult
+	vectorRank int
+	bm25Rank   int
+	rrf        float64
+}
+
+func (c *graphCandidate) key() string {
+	return graphResultKey(&c.result)
+}
+
+// graphResultKey tells a relationship result from a node result with the
+// same ID: node and relationship IDs are separate spaces.
+func graphResultKey(result *SearchResult) string {
+	if result.Relationship != nil {
+		return "\x00r" + result.ID
+	}
+	return result.ID
+}
+
+// searchGraph ranks nodes and relationships in one pool (SearchOptions.Graph).
+// Each kind is searched to a candidate depth with the request's options (Types
+// for node labels, RelationshipTypes for relationship types). The vector hits
+// of both kinds are ranked together by similarity, which one embedder makes
+// comparable; the keyword hits, whose BM25 scores come from two indexes with
+// different statistics, are ranked by interleaving the two rankings (the first
+// node hit, the first relationship hit, …). The two rankings are fused by
+// reciprocal rank, and a requested rerank orders the fused pool's top
+// candidates in one call.
+func (s *Service) searchGraph(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (*SearchResponse, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	depth := max(limit*5, 50)
+	kindOpts := *opts
+	kindOpts.Graph = false
+	kindOpts.Relationships = false
+	kindOpts.Limit = depth
+	kindOpts.RerankEnabled = false
+	kindOpts.MMREnabled = false
+	nodes, err := s.Search(ctx, query, embedding, &kindOpts)
+	if err != nil {
+		return nil, err
+	}
+	var relationships []SearchResult
+	if s.RelationshipSearchEnabled() {
+		relationshipOpts := kindOpts
+		relationshipOpts.Relationships = true
+		relationshipOpts.Types = opts.RelationshipTypes
+		response, err := s.Search(ctx, query, embedding, &relationshipOpts)
+		if err != nil {
+			return nil, err
+		}
+		relationships = response.Results
+	}
+
+	rrfK := opts.RRFK
+	if rrfK <= 0 {
+		rrfK = 60
+	}
+	vectorWeight, bm25Weight := opts.VectorWeight, opts.BM25Weight
+	if vectorWeight <= 0 {
+		vectorWeight = 1
+	}
+	if bm25Weight <= 0 {
+		bm25Weight = 1
+	}
+	pool := make([]*graphCandidate, 0, len(nodes.Results)+len(relationships))
+	for _, results := range [][]SearchResult{nodes.Results, relationships} {
+		for index := range results {
+			pool = append(pool, &graphCandidate{result: results[index]})
+		}
+	}
+
+	// Vector ranking: both kinds by similarity.
+	var vectorHits []*graphCandidate
+	for _, candidate := range pool {
+		if candidate.result.VectorRank > 0 {
+			vectorHits = append(vectorHits, candidate)
+		}
+	}
+	sort.SliceStable(vectorHits, func(i, j int) bool {
+		if vectorHits[i].result.Similarity != vectorHits[j].result.Similarity {
+			return vectorHits[i].result.Similarity > vectorHits[j].result.Similarity
+		}
+		return vectorHits[i].key() < vectorHits[j].key()
+	})
+	for rank, candidate := range vectorHits {
+		candidate.vectorRank = rank + 1
+		candidate.rrf += vectorWeight / (rrfK + float64(rank+1))
+	}
+
+	// Keyword ranking: each kind's own ranking, interleaved.
+	byKeyword := func(relationship bool) []*graphCandidate {
+		var hits []*graphCandidate
+		for _, candidate := range pool {
+			if candidate.result.BM25Rank > 0 && (candidate.result.Relationship != nil) == relationship {
+				hits = append(hits, candidate)
+			}
+		}
+		sort.SliceStable(hits, func(i, j int) bool { return hits[i].result.BM25Rank < hits[j].result.BM25Rank })
+		return hits
+	}
+	nodeHits, relationshipHits := byKeyword(false), byKeyword(true)
+	rank := 0
+	for i := 0; i < len(nodeHits) || i < len(relationshipHits); i++ {
+		for _, hits := range [][]*graphCandidate{nodeHits, relationshipHits} {
+			if i < len(hits) {
+				rank++
+				hits[i].bm25Rank = rank
+				hits[i].rrf += bm25Weight / (rrfK + float64(rank))
+			}
+		}
+	}
+
+	sort.SliceStable(pool, func(i, j int) bool {
+		if pool[i].rrf != pool[j].rrf {
+			return pool[i].rrf > pool[j].rrf
+		}
+		return pool[i].key() < pool[j].key()
+	})
+	if minRRF := opts.MinRRFScore; minRRF > 0 {
+		kept := pool[:0]
+		for _, candidate := range pool {
+			if candidate.rrf >= minRRF {
+				kept = append(kept, candidate)
+			}
+		}
+		pool = kept
+	}
+
+	method := "graph_rrf_hybrid"
+	switch {
+	case len(embedding) == 0:
+		method = "graph_bm25"
+	case len(nodeHits) == 0 && len(relationshipHits) == 0:
+		method = "graph_vector"
+	}
+	response := &SearchResponse{
+		Status:            "success",
+		Query:             query,
+		TotalCandidates:   len(pool),
+		SearchMethod:      method,
+		FallbackTriggered: nodes.FallbackTriggered,
+		FallbackReason:    nodes.FallbackReason,
+	}
+	reranked := false
+	if opts.RerankEnabled {
+		var reason SearchFallbackReason
+		pool, reason, reranked = s.rerankGraphPool(ctx, query, pool, opts)
+		if reason != SearchFallbackNone {
+			response.FallbackTriggered, response.FallbackReason = true, reason
+		}
+		if reranked {
+			response.SearchMethod += "+rerank"
+		}
+	}
+	results := make([]SearchResult, 0, min(limit, len(pool)))
+	for _, candidate := range pool {
+		if len(results) >= limit {
+			break
+		}
+		result := candidate.result
+		result.RRFScore, result.VectorRank, result.BM25Rank = candidate.rrf, candidate.vectorRank, candidate.bm25Rank
+		if !reranked {
+			result.Score = candidate.rrf
+		}
+		results = append(results, result)
+	}
+	response.Results = results
+	response.Returned = len(results)
+	return response, nil
+}
+
+// rerankGraphPool orders a graph search's fused candidates with the
+// configured reranker, the top RerankTopK of them in one call, each read as
+// its searchable text (a relationship's type and properties, as relationship
+// search indexes it). Below RerankMinScore a candidate is dropped. Without a
+// reranker it keeps the fused order, as node search does; on a failure, flat
+// scores or no candidate text it keeps it too, and reports why. reranked is
+// whether the reranker ordered the pool.
+func (s *Service) rerankGraphPool(ctx context.Context, query string, pool []*graphCandidate, opts *SearchOptions) (ordered []*graphCandidate, reason SearchFallbackReason, reranked bool) {
+	s.mu.RLock()
+	reranker := s.reranker
+	s.mu.RUnlock()
+	if reranker == nil || !reranker.Enabled() {
+		return pool, SearchFallbackNone, false
+	}
+	top := len(pool)
+	if opts.RerankTopK > 0 && top > opts.RerankTopK {
+		top = opts.RerankTopK
+	}
+	maxChars := effectiveRerankMaxChars(opts)
+	byKey := make(map[string]*graphCandidate, top)
+	candidates := make([]RerankCandidate, 0, top)
+	for _, candidate := range pool[:top] {
+		text := s.extractSearchableText(graphCandidateTextNode(&candidate.result))
+		if maxChars > 0 && len(text) > maxChars {
+			text = text[:maxChars]
+		}
+		if text == "" {
+			continue
+		}
+		key := candidate.key()
+		byKey[key] = candidate
+		candidates = append(candidates, RerankCandidate{ID: key, Content: text, Score: candidate.rrf})
+	}
+	if len(candidates) == 0 {
+		return pool, SearchFallbackRerankNoCandidates, false
+	}
+	ranked, err := reranker.Rerank(ctx, query, candidates)
+	if err != nil {
+		s.logPrintf("⚠️ Graph reranking failed (%s): %v; using fused order", reranker.Name(), err)
+		return pool, SearchFallbackRerankFailed, false
+	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].FinalScore > ranked[j].FinalScore })
+	if len(ranked) > 1 && ranked[0].FinalScore-ranked[len(ranked)-1].FinalScore < 0.05 {
+		return pool, SearchFallbackRerankScoresFlat, false
+	}
+	ordered = make([]*graphCandidate, 0, len(pool))
+	used := make(map[string]bool, len(ranked))
+	for _, result := range ranked {
+		candidate := byKey[result.ID]
+		if candidate == nil || used[result.ID] || result.FinalScore < opts.RerankMinScore {
+			continue
+		}
+		used[result.ID] = true
+		candidate.result.Score = result.FinalScore
+		ordered = append(ordered, candidate)
+	}
+	return ordered, SearchFallbackNone, true
+}
+
+// graphCandidateTextNode is the node whose searchable text a result is read
+// as: the node itself, or a relationship's type and properties.
+func graphCandidateTextNode(result *SearchResult) *storage.Node {
+	if relationship := result.Relationship; relationship != nil {
+		return &storage.Node{Labels: []string{relationship.Type}, Properties: relationship.Properties}
+	}
+	return &storage.Node{Labels: result.Labels, Properties: result.Properties}
+}

@@ -1246,6 +1246,13 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		})
 	}
 
+	// Relationship search (#1065) follows relationship writes too.
+	if notifier, ok := underlyingEngine.(storage.StorageEventNotifier); ok && db.config != nil && db.config.Memory.SearchRelationshipsEnabled {
+		notifier.OnEdgeCreated(func(edge *storage.Edge) { db.indexRelationshipFromEvent(edge) })
+		notifier.OnEdgeUpdated(func(edge *storage.Edge) { db.indexRelationshipFromEvent(edge) })
+		notifier.OnEdgeDeleted(func(edgeID storage.EdgeID) { db.removeRelationshipFromEvent(edgeID) })
+	}
+
 	// Enable k-means clustering if feature flag is set (applied lazily per database).
 	if nornicConfig.IsGPUClusteringEnabled() {
 		fmt.Println("🔬 K-means clustering enabled (per-database init)")
@@ -1557,6 +1564,9 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 	if embedder == nil {
 		return
 	}
+	// Relationships whose embedding failed for want of an embedder are
+	// embedded now, not after the retry delay (#1065).
+	defer db.wakeRelationshipEmbedding()
 
 	db.mu.Lock()
 

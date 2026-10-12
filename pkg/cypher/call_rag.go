@@ -204,6 +204,33 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	if limit, ok := toInt(req["limit"]); ok && limit > 0 {
 		opts.Limit = limit
 	}
+	// db.retrieveRelationships searches relationships instead of nodes (#1065).
+	if relationships, _ := req[relationshipSearchRequestKey].(bool); relationships {
+		if continuationRequested {
+			return nil, localizedError(localization.SearchRelationshipsContinuation(), nil)
+		}
+		opts.Relationships = true
+	}
+	// db.retrieveGraph ranks nodes and relationships together; n or
+	// maxResults ask for one terminal page.
+	graphPage := false
+	if graph, _ := req[graphSearchRequestKey].(bool); graph {
+		if qid != "" || discard || mode != "" || groupBy != "" || rankedLimitPresent {
+			return nil, localizedError(localization.SearchGraphContinuation(), nil)
+		}
+		opts.Graph = true
+		opts.RelationshipTypes = toStringSlice(firstPresent(req, "relationshipTypes", "relationship_types"))
+		if nPresent {
+			graphPage, opts.Limit = true, n
+		}
+		if maxResults, ok := toInt(firstPresent(req, "maxResults", "max_results")); ok && maxResults > 0 {
+			graphPage = true
+			if !nPresent || maxResults < opts.Limit {
+				opts.Limit = maxResults
+			}
+		}
+		continuationRequested = false
+	}
 	failClosed, err := applyRetrievalPolicyOptions(opts, req)
 	if err != nil {
 		return nil, err
@@ -369,6 +396,15 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	}
 	if err != nil {
 		return nil, err
+	}
+	if opts.Graph {
+		if graphPage {
+			return e.graphSearchPage(response), nil
+		}
+		return e.graphSearchResult(response), nil
+	}
+	if opts.Relationships {
+		return e.relationshipSearchResult(response), nil
 	}
 
 	result := &ExecuteResult{

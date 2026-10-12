@@ -260,6 +260,11 @@ type SearchResult struct {
 	RRFScore   float64 `json:"rrf_score,omitempty"`
 	VectorRank int     `json:"vector_rank"`
 	BM25Rank   int     `json:"bm25_rank"`
+
+	// Relationship is a relationship search's result: its ID (also in ID),
+	// type, endpoints and returned properties; NodeID and Labels are empty.
+	// A pointer, so a node result grows by one word (#1065).
+	Relationship *storage.Edge `json:"relationship,omitempty"`
 }
 
 // SearchPassage is one matching child retained within a grouped search result.
@@ -425,6 +430,15 @@ type SearchOptions struct {
 	// ExcludeProperties removes keys from each returned result's Properties
 	// map. Exclusion wins when a key appears in both lists.
 	ExcludeProperties []string
+
+	// Relationships searches relationships instead of nodes, when the
+	// database indexes them (#1065); Types then filters by relationship type.
+	Relationships bool
+
+	// Graph ranks nodes and relationships in one pool (searchGraph): Types
+	// filters the nodes by label, RelationshipTypes the relationships by type.
+	Graph             bool
+	RelationshipTypes []string
 }
 
 var defaultSearchOptionsTemplate = SearchOptions{
@@ -940,6 +954,10 @@ type Service struct {
 
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
+
+	// relationships holds relationship search's indexes when it is enabled
+	// (#1065); nil otherwise.
+	relationships atomic.Pointer[relationshipSearch]
 }
 
 type strategyMode int
@@ -3376,7 +3394,11 @@ func (s *Service) RemoveNode(nodeID storage.NodeID) error {
 // Relationship vector queries use this metadata to avoid scanning and decoding every
 // relationship from storage for each db.index.vector.queryRelationships call.
 func (s *Service) IndexEdge(edge *storage.Edge) error {
-	if s == nil || edge == nil || !s.vectorEnabled.Load() {
+	if s == nil || edge == nil {
+		return nil
+	}
+	s.IndexRelationship(edge)
+	if !s.vectorEnabled.Load() {
 		return nil
 	}
 	if !s.buildInProgress.Load() {
@@ -3468,6 +3490,7 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	if s == nil {
 		return nil
 	}
+	s.RemoveRelationship(edgeID)
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
@@ -4423,6 +4446,14 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	// caller's) and block until it completes. This makes lazy-warm uniform
 	// across every read entry point (HTTP, Bolt, GraphQL, gRPC, Cypher
 	// procedures) — none of them need to know about the lazy setting.
+	if opts != nil && opts.Graph {
+		mode = "graph"
+		return s.searchGraph(ctx, query, embedding, opts)
+	}
+	if opts != nil && opts.Relationships {
+		mode = "relationships"
+		return s.SearchRelationships(ctx, query, embedding, opts)
+	}
 	if err := s.EnsureWarm(ctx); err != nil {
 		return nil, err
 	}

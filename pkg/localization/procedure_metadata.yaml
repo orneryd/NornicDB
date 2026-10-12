@@ -144,6 +144,16 @@
     es: "Procedimiento de recuperación híbrida",
   }
 - {
+    name: db.retrieveGraph,
+    en: "Hybrid retrieval over nodes and relationships in one ranking",
+    es: "Recuperación híbrida sobre nodos y relaciones en una sola clasificación",
+  }
+- {
+    name: db.retrieveRelationships,
+    en: "Hybrid retrieval over relationship properties",
+    es: "Recuperación híbrida sobre las propiedades de las relaciones",
+  }
+- {
     name: db.rretrieve,
     en: "Hybrid retrieval + rerank procedure",
     es: "Procedimiento de recuperación híbrida y reordenación",

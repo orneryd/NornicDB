@@ -56,6 +56,10 @@
   other: "Vuelve a muestrear las estadísticas del índice"
 - id: cypherproceduremetadata.db_retrieve
   other: "Procedimiento de recuperación híbrida"
+- id: cypherproceduremetadata.db_retrievegraph
+  other: "Recuperación híbrida sobre nodos y relaciones en una sola clasificación"
+- id: cypherproceduremetadata.db_retrieverelationships
+  other: "Recuperación híbrida sobre las propiedades de las relaciones"
 - id: cypherproceduremetadata.db_rretrieve
   other: "Procedimiento de recuperación híbrida y reordenación"
 - id: cypherproceduremetadata.db_schema_nodeproperties

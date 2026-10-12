@@ -348,6 +348,17 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRerank(ctx, args)
 			})
+		// db.retrieveRelationships searches relationship properties, when the
+		// database indexes them (#1065).
+		registerBuiltInProcedure("db.retrieveRelationships", "db.retrieveRelationships(request :: MAP) :: (relationship :: RELATIONSHIP, start :: NODE, end :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING)", localization.CypherProcedureMetadata("db.retrieveRelationships"), ProcedureModeRead, 1, 1, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callDbRetrieveRelationships(ctx, args)
+			})
+		// db.retrieveGraph ranks nodes and relationships together.
+		registerBuiltInProcedure("db.retrieveGraph", "db.retrieveGraph(request :: MAP) :: (kind :: STRING, node :: NODE, relationship :: RELATIONSHIP, start :: NODE, end :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, matches :: LIST<MAP>)", localization.CypherProcedureMetadata("db.retrieveGraph"), ProcedureModeRead, 1, 1, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callDbRetrieveGraph(ctx, args)
+			})
 		registerBuiltInProcedure("db.infer", "db.infer(request :: MAP) :: (text :: STRING, structured :: ANY, model :: STRING, usage :: MAP, latencyMs :: INTEGER, finishReason :: STRING)", localization.CypherProcedureMetadata("db.infer"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbInfer(ctx, args)

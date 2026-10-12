@@ -32,6 +32,8 @@ const (
 	MessageCypherProcedureMetadataDbRerank                                      MessageID = "cypherproceduremetadata.db_rerank"
 	MessageCypherProcedureMetadataDbResampleIndex                               MessageID = "cypherproceduremetadata.db_resampleindex"
 	MessageCypherProcedureMetadataDbRetrieve                                    MessageID = "cypherproceduremetadata.db_retrieve"
+	MessageCypherProcedureMetadataDbRetrieveGraph                               MessageID = "cypherproceduremetadata.db_retrievegraph"
+	MessageCypherProcedureMetadataDbRetrieveRelationships                       MessageID = "cypherproceduremetadata.db_retrieverelationships"
 	MessageCypherProcedureMetadataDbRretrieve                                   MessageID = "cypherproceduremetadata.db_rretrieve"
 	MessageCypherProcedureMetadataDbSchemaNodeProperties                        MessageID = "cypherproceduremetadata.db_schema_nodeproperties"
 	MessageCypherProcedureMetadataDbSchemaNodeTypeProperties                    MessageID = "cypherproceduremetadata.db_schema_nodetypeproperties"
@@ -221,6 +223,16 @@ func CypherProcedureMetadataDbResampleIndex() Message {
 // CypherProcedureMetadataDbRetrieve describes db.retrieve in procedure listings.
 func CypherProcedureMetadataDbRetrieve() Message {
 	return Message{ID: MessageCypherProcedureMetadataDbRetrieve, Fallback: "Hybrid retrieval procedure"}
+}
+
+// CypherProcedureMetadataDbRetrieveGraph describes db.retrieveGraph in procedure listings.
+func CypherProcedureMetadataDbRetrieveGraph() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbRetrieveGraph, Fallback: "Hybrid retrieval over nodes and relationships in one ranking"}
+}
+
+// CypherProcedureMetadataDbRetrieveRelationships describes db.retrieveRelationships in procedure listings.
+func CypherProcedureMetadataDbRetrieveRelationships() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbRetrieveRelationships, Fallback: "Hybrid retrieval over relationship properties"}
 }
 
 // CypherProcedureMetadataDbRretrieve describes db.rretrieve in procedure listings.
@@ -473,6 +485,8 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"db.rerank":                                        CypherProcedureMetadataDbRerank,
 	"db.resampleIndex":                                 CypherProcedureMetadataDbResampleIndex,
 	"db.retrieve":                                      CypherProcedureMetadataDbRetrieve,
+	"db.retrieveGraph":                                 CypherProcedureMetadataDbRetrieveGraph,
+	"db.retrieveRelationships":                         CypherProcedureMetadataDbRetrieveRelationships,
 	"db.rretrieve":                                     CypherProcedureMetadataDbRretrieve,
 	"db.schema.nodeProperties":                         CypherProcedureMetadataDbSchemaNodeProperties,
 	"db.schema.nodeTypeProperties":                     CypherProcedureMetadataDbSchemaNodeTypeProperties,

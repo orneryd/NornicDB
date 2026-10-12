@@ -160,6 +160,7 @@ Results include RRF metadata so you can see how each ranking strategy contribute
 | `include_properties` | all     | Return only these node property keys                               |
 | `exclude_properties` | none    | Omit these keys; exclusion wins over `include_properties`          |
 | `database`           | default | Logical database name to search                                    |
+| `relationships`      | false   | Search relationships instead of nodes (see below)                  |
 
 Property projection changes only the returned `properties` map. It does not
 change matching or ranking. Use `NORNICDB_SEARCH_BM25_PROPERTIES` to control
@@ -258,6 +259,56 @@ The `bm25_enabled` and `vector_enabled` fields are present on every 200 response
 When BM25 is disabled but vector is enabled, the HNSW build falls back to **random insertion order** (no BM25 lexical seed). This regresses ANN recall slightly compared to the BM25-seeded build. Operators choosing this combination are doing so deliberately for memory or storage reasons; it's a documented tradeoff.
 
 See **[Per-Database Search Index Flags](../operations/configuration.md#per-database-search-index-control)** for yaml examples and the full configuration matrix.
+
+## Relationship Search
+
+Text stored on a relationship, such as why two documents are linked, can be
+searched by keyword and by meaning. Relationship search keeps indexes of its
+own, so node search is unchanged, and is off by default:
+
+```bash
+NORNICDB_SEARCH_RELATIONSHIPS_ENABLED=true   # or search.relationships_enabled: true
+```
+
+- **Keyword text**: a relationship's type and every property, or only the
+  `NORNICDB_SEARCH_BM25_PROPERTIES` values when that is set, as for nodes.
+- **Embedding text**: its properties as `NORNICDB_EMBEDDING_PROPERTIES_INCLUDE`
+  / `EXCLUDE` select them for nodes, after `type: <TYPE>` when
+  `NORNICDB_EMBEDDING_INCLUDE_LABELS` is on. Relationships are embedded in the
+  background with the database's embedder.
+- **Persistence**: the keyword index is built from storage when the database
+  opens. With `NORNICDB_PERSIST_SEARCH_INDEXES`, the vectors are kept beside
+  the BM25 index (`bm25.relationships`), so a restart embeds only
+  relationships that changed; without it, every relationship is embedded
+  again at startup.
+
+Search with `relationships: true` over HTTP, or with
+`db.retrieveRelationships` in Cypher. Results are ranked by keyword and vector
+similarity, fused by reciprocal rank as node results are; `labels` (HTTP) or
+`types` (Cypher) filters by relationship type. Each HTTP result has a
+`relationship` instead of a `node`:
+
+```bash
+curl -X POST http://localhost:7474/nornicdb/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "why these papers disagree", "relationships": true, "limit": 5}'
+```
+
+```json
+[{"relationship": {"id": "r1", "type": "CONTRADICTS", "startNode": "a", "endNode": "b",
+  "properties": {"reason": "..."}}, "score": 0.03, "vector_rank": 1, "bm25_rank": 2}]
+```
+
+```cypher
+CALL db.retrieveRelationships({query: 'why these papers disagree', limit: 5})
+YIELD relationship, start, end, score
+RETURN type(relationship), start.title, end.title, score
+```
+
+A relationship search returns one page: continuation fields (`n`, `qid`,
+`mode`, `group_by`, `ranked_limit`) are refused with 400. A relationship hidden
+from reads (decay, `db.visibility.suppress`) isn't returned. Without an
+embedder, relationship search is keyword-only.
 
 ## Related Guides
 

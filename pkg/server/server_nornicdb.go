@@ -367,6 +367,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		Mode              string              `json:"mode,omitempty"`
 		GroupBy           string              `json:"group_by,omitempty"`
 		RankedLimit       int                 `json:"ranked_limit,omitempty"`
+		// Relationships searches relationships instead of nodes (#1065).
+		Relationships bool `json:"relationships,omitempty"`
 	}
 
 	if err := s.readJSON(r, &req); err != nil {
@@ -441,7 +443,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	idStart := req.QID == "" && mode == search.SearchContinuationID
 	continuationResume := req.QID != ""
 	searchStatus := s.db.GetDatabaseSearchStatus(dbName)
-	if !continuationResume && !idStart && !searchStatus.BM25Enabled && !searchStatus.VectorEnabled {
+	if !req.Relationships && !continuationResume && !idStart && !searchStatus.BM25Enabled && !searchStatus.VectorEnabled {
 		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":          "search is disabled for this database",
 			"database":       dbName,
@@ -460,7 +462,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// the build and blocks until ready. That preserves correctness for
 	// the first lazy request: by the time we reach EmbeddingCount() and
 	// the embedding decision, the in-memory ANN substrate is populated.
-	if !continuationResume && !idStart && !searchStatus.Ready && !searchStatus.LazyTriggerNeeded {
+	if !req.Relationships && !continuationResume && !idStart && !searchStatus.Ready && !searchStatus.LazyTriggerNeeded {
 		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":          search.ErrSearchIndexBuilding.Error(),
 			"database":       dbName,
@@ -506,6 +508,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	continuationRequested := req.N != 0 || req.QID != "" || req.Discard || req.Mode != "" || req.GroupBy != "" || req.RankedLimit != 0
+	if req.Relationships {
+		if continuationRequested {
+			s.writeLocalizedError(w, r, http.StatusBadRequest, localization.SearchRelationshipsContinuation(), nil)
+			return
+		}
+		if !searchSvc.RelationshipSearchEnabled() {
+			s.writeLocalizedError(w, r, http.StatusBadRequest, localization.SearchRelationshipsDisabled(), nil)
+			return
+		}
+	}
 	continuationRequest := search.SearchContinuationRequest{
 		Owner:       owner,
 		Database:    dbName,
@@ -549,9 +561,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	opts.IncludeProperties = append([]string(nil), req.IncludeProperties...)
 	opts.ExcludeProperties = append([]string(nil), req.ExcludeProperties...)
 	opts.RerankEnabled = searchSvc.RerankerAvailable(ctx)
+	opts.Relationships = req.Relationships
 
 	var embedQuery search.EmbedQueryFunc
-	if searchSvc.EmbeddingCount() > 0 {
+	embeddings := searchSvc.EmbeddingCount()
+	if req.Relationships {
+		embeddings = searchSvc.RelationshipEmbeddingCount()
+	}
+	if embeddings > 0 {
 		embedQuery = func(parent context.Context, query string) ([]float32, error) {
 			embedCalls++
 			embedStart := time.Now()

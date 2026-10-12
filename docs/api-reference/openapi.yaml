@@ -546,6 +546,10 @@ paths:
                   type: integer
                   minimum: 1
                   description: Explicit ranked-prefix boundary for ranked_then_id mode
+                relationships:
+                  type: boolean
+                  default: false
+                  description: Search relationship properties instead of nodes, when NORNICDB_SEARCH_RELATIONSHIPS_ENABLED is on. Each result then has a `relationship` (id, type, startNode, endNode, properties) instead of a `node`, and `labels` filters by relationship type. Refused with 400 when relationship search is off or with a continuation field.
       responses:
         "200":
           description: Search results

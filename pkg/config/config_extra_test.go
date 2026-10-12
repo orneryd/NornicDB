@@ -250,3 +250,21 @@ func TestGetParserType_SetParserTypeFallbacks(t *testing.T) {
 	SetParserType("unexpected")
 	assert.Equal(t, ParserTypeNornic, GetParserType())
 }
+
+// Relationship search is off by default and turned on by env or YAML (#1065).
+func TestSearchRelationshipsEnabledConfig(t *testing.T) {
+	require.False(t, LoadFromEnv().Memory.SearchRelationshipsEnabled)
+	t.Setenv("NORNICDB_SEARCH_RELATIONSHIPS_ENABLED", "true")
+	require.True(t, LoadFromEnv().Memory.SearchRelationshipsEnabled)
+
+	path := filepath.Join(t.TempDir(), "nornicdb.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("search:\n  relationships_enabled: false\n"), 0o600))
+	t.Setenv("NORNICDB_SEARCH_RELATIONSHIPS_ENABLED", "")
+	cfg, err := LoadFromFile(path)
+	require.NoError(t, err)
+	require.False(t, cfg.Memory.SearchRelationshipsEnabled)
+	require.NoError(t, os.WriteFile(path, []byte("search:\n  relationships_enabled: true\n"), 0o600))
+	cfg, err = LoadFromFile(path)
+	require.NoError(t, err)
+	require.True(t, cfg.Memory.SearchRelationshipsEnabled)
+}

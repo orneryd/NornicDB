@@ -1,0 +1,6 @@
+- id: search.relationships_disabled
+  other: la búsqueda de relaciones no está habilitada para esta base de datos; establezca NORNICDB_SEARCH_RELATIONSHIPS_ENABLED=true
+- id: search.relationships_continuation
+  other: la búsqueda de relaciones devuelve una sola página y no se puede continuar
+- id: search.graph_continuation
+  other: "db.retrieveGraph devuelve una sola página: qid, discard, mode, groupBy y rankedLimit no se aplican"

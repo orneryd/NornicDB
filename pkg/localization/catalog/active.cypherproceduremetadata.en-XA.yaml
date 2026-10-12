@@ -56,6 +56,10 @@
   other: "[!! Schedule resampling of an index (for example: CALL db.resampleIndex(\"MyIndex\")). !!]"
 - id: cypherproceduremetadata.db_retrieve
   other: "[!! Hybrid retrieval procedure !!]"
+- id: cypherproceduremetadata.db_retrievegraph
+  other: "[!! Hybrid retrieval over nodes and relationships in one ranking !!]"
+- id: cypherproceduremetadata.db_retrieverelationships
+  other: "[!! Hybrid retrieval over relationship properties !!]"
 - id: cypherproceduremetadata.db_rretrieve
   other: "[!! Hybrid retrieval + rerank procedure !!]"
 - id: cypherproceduremetadata.db_schema_nodeproperties

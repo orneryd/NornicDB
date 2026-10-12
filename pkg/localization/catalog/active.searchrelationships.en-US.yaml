@@ -1,0 +1,9 @@
+- id: search.relationships_disabled
+  description: Search request for relationships on a database that does not index them. NORNICDB_SEARCH_RELATIONSHIPS_ENABLED is an environment variable and stays untranslated.
+  other: relationship search is not enabled for this database; set NORNICDB_SEARCH_RELATIONSHIPS_ENABLED=true
+- id: search.relationships_continuation
+  description: Relationship search request that asks for a continuation, which relationship search does not support.
+  other: relationship search returns a single page and can't be continued
+- id: search.graph_continuation
+  description: Graph search request (db.retrieveGraph) that asks for a stateful continuation, which it does not support. db.retrieveGraph, qid, discard, mode, groupBy and rankedLimit stay untranslated.
+  other: "db.retrieveGraph returns one page: qid, discard, mode, groupBy and rankedLimit don't apply"

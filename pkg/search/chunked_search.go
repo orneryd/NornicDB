@@ -243,7 +243,9 @@ func searchSeveralQueryChunks(
 			result := &response.Results[rank]
 			id := string(result.NodeID)
 			if id == "" {
-				id = result.ID
+				// A relationship, or a node known by ID only; a graph
+				// search's relationship doesn't merge with a node of its ID.
+				id = graphResultKey(result)
 			}
 			index, exists := fusedIndexes[id]
 			if !exists {

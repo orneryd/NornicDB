@@ -876,7 +876,9 @@ func (db *DB) DeleteEdge(ctx context.Context, id string) error {
 
 // SearchResult holds a search result with score.
 type SearchResult struct {
-	Node     *Node           `json:"node"`
+	// Node is the matching node; nil for a relationship search's result,
+	// which sets Relationship instead (#1065).
+	Node     *Node           `json:"node,omitempty"`
 	GroupKey string          `json:"group_key,omitempty"`
 	Phase    string          `json:"phase,omitempty"`
 	Passages []*SearchResult `json:"passages,omitempty"`
@@ -887,6 +889,18 @@ type SearchResult struct {
 	RRFScore   float64 `json:"rrf_score,omitempty"`
 	VectorRank int     `json:"vector_rank"`
 	BM25Rank   int     `json:"bm25_rank"`
+
+	Relationship *SearchRelationship `json:"relationship,omitempty"`
+}
+
+// SearchRelationship is a relationship search's matching relationship: its
+// ID, type, endpoints and properties (#1065).
+type SearchRelationship struct {
+	ID         string                 `json:"id"`
+	Type       string                 `json:"type"`
+	StartNode  string                 `json:"startNode"`
+	EndNode    string                 `json:"endNode"`
+	Properties map[string]interface{} `json:"properties"`
 }
 
 // MapSearchResponse converts search service responses into DB API result shapes.
@@ -903,6 +917,21 @@ func MapSearchResponse(response *search.SearchResponse) []*SearchResult {
 }
 
 func mapSingleSearchResult(r search.SearchResult) *SearchResult {
+	if rel := r.Relationship; rel != nil {
+		return &SearchResult{
+			Relationship: &SearchRelationship{
+				ID:         string(rel.ID),
+				Type:       rel.Type,
+				StartNode:  string(rel.StartNode),
+				EndNode:    string(rel.EndNode),
+				Properties: rel.Properties,
+			},
+			Score:      r.Score,
+			RRFScore:   r.RRFScore,
+			VectorRank: r.VectorRank,
+			BM25Rank:   r.BM25Rank,
+		}
+	}
 	result := &SearchResult{
 		Node: &Node{
 			ID:         r.ID,

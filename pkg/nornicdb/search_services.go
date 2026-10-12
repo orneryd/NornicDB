@@ -404,6 +404,9 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 		reranker = rr(dbName)
 	}
 	svc.SetReranker(reranker)
+	if db.config != nil && db.config.Memory.SearchRelationshipsEnabled {
+		svc.EnableRelationshipSearch(db.relationshipEmbedFunc(dbName))
+	}
 
 	entry := &dbSearchService{
 		dbName:    dbName,
@@ -420,6 +423,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	}
 	db.searchServices[dbName] = entry
 	db.searchServicesMu.Unlock()
+	svc.StartRelationshipIndex()
 
 	return svc, nil
 }
