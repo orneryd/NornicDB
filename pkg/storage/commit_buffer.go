@@ -57,6 +57,11 @@ type bufferedCommit struct {
 	counterNodeMax, counterEdgeMax uint64
 	hasCounters                    bool
 
+	// idEntries are the ID dictionary entries this commit wrote while they
+	// were pending; replay clears their mark once their keys are durable.
+	// Nil for commits recovered from the WAL, whose entries load as stored.
+	idEntries *txnCounterState
+
 	// propKeyDrain carries the property-key dictionary tokens staged by this
 	// commit; they persist out-of-transaction at replay, as the normal
 	// commit path does.

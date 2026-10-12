@@ -97,6 +97,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 		c.version = version
 	}
 	c.counterNodeMax, c.counterEdgeMax = tx.engine.idDict.flushTxnCounters(tx.badgerTx)
+	c.idEntries = tx.engine.idDict.takeTxnCommitting(tx.badgerTx)
 	c.hasCounters = true
 	c.propKeyDrain = tx.engine.propKeyDict.flushTxnCounters(tx.badgerTx)
 	// Capture the derived-count deltas the sync path applies after commit;
@@ -215,6 +216,8 @@ func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
 		// Leaking the gate here would park every later commit (shared and
 		// exclusive) forever. The open batch belongs to the writer and is
 		// discarded without committing.
+		// Entries the replay resolved stay pending (discardTxnCounters).
+		b.idDict.discardTxnCounters(cw.txn)
 		if abortErr := cw.abort(); abortErr != nil {
 			err = fmt.Errorf("%w (rolling back: %v)", err, abortErr)
 		}
@@ -304,7 +307,12 @@ func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
 		b.edgeTypeCountWriteMu.Lock()
 	}
 
+	// The replay resolves IDs too: entries it found pending are persisted
+	// by its commit, as the sync path's (markTxnCommitted).
+	b.idDict.flushTxnCounters(cw.txn)
+	committing := cw.txn
 	if err := cw.finish(); err != nil {
+		b.idDict.discardTxnCounters(committing)
 		if holdEdge {
 			b.edgeTypeCountWriteMu.Unlock()
 		}
@@ -312,6 +320,10 @@ func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
 			b.labelCountWriteMu.Unlock()
 		}
 		return abort(err)
+	}
+	b.idDict.markTxnCommitted(committing)
+	for _, c := range commits {
+		b.idDict.clearPending(c.idEntries)
 	}
 
 	// Commit tail: durability bookkeeping, derived counts, caches, callbacks.

@@ -1,0 +1,96 @@
+package storage
+
+import (
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+)
+
+// Write-behind commits write ID entries while they are pending; the flush
+// persists their keys and clears the marks, and leaves no transaction state
+// behind (each would hold its Badger transaction). The entities resolve
+// after a restart.
+func TestWriteBehindFlushClearsPendingIDEntries(t *testing.T) {
+	dir := t.TempDir()
+	open := func() *BadgerEngine {
+		engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour})
+		require.NoError(t, err)
+		return engine
+	}
+	engine := open()
+	pendingEntries := func() int {
+		count := 0
+		for i := range engine.idDict.nodes {
+			sh := &engine.idDict.nodes[i]
+			sh.mu.RLock()
+			count += len(sh.pending)
+			sh.mu.RUnlock()
+		}
+		for i := range engine.idDict.edges {
+			sh := &engine.idDict.edges[i]
+			sh.mu.RLock()
+			count += len(sh.pending)
+			sh.mu.RUnlock()
+		}
+		return count
+	}
+
+	for i := 0; i < 20; i++ {
+		bufferedCreate(t, engine, &Node{ID: NodeID(fmt.Sprintf("test:n%d", i)), Labels: []string{"L"}})
+	}
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.SetImplicit(true))
+	require.NoError(t, tx.SetNamespace("test"))
+	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:e", StartNode: "test:n0", EndNode: "test:n1", Type: "R"}))
+	require.NoError(t, tx.Commit())
+	require.Greater(t, engine.writeBehind.PendingOps(), 0, "the commits stay buffered")
+	require.Equal(t, 21, pendingEntries(), "buffered entries are pending until the flush")
+
+	require.NoError(t, engine.FlushWriteBehind())
+	require.Zero(t, pendingEntries())
+	engine.idDict.txnMu.Lock()
+	require.Empty(t, engine.idDict.txnCounters)
+	require.Empty(t, engine.idDict.txnCommitting)
+	engine.idDict.txnMu.Unlock()
+
+	require.NoError(t, engine.Close())
+	engine = open()
+	t.Cleanup(func() { _ = engine.Close() })
+	nodes, err := engine.GetNodesByLabel("L")
+	require.NoError(t, err)
+	require.Len(t, nodes, 20)
+	edges, err := engine.GetOutgoingEdges("test:n0")
+	require.NoError(t, err)
+	require.Len(t, edges, 1)
+}
+
+// clearPending clears only the entries whose last writer is still the
+// commit's: an entry written since keeps its mark for its own writer.
+func TestClearPendingKeepsEntriesWrittenSince(t *testing.T) {
+	engine := createTestBadgerEngine(t)
+	d := engine.idDict
+	newTxn := writeTxnFor(t, engine)
+	first := newTxn()
+	_, err := d.resolveOrAllocateNodeNumIDInTxn(first, "p:a")
+	require.NoError(t, err)
+	_, err = d.resolveOrAllocateNodeNumIDInTxn(first, "p:b")
+	require.NoError(t, err)
+	d.flushTxnCounters(first)
+	written := d.takeTxnCommitting(first)
+	first.Discard()
+
+	second := newTxn()
+	_, err = d.resolveOrAllocateNodeNumIDInTxn(second, "p:b")
+	require.NoError(t, err)
+	d.clearPending(written)
+	_, aPending := d.nodePendingWriter("p:a")
+	_, bPending := d.nodePendingWriter("p:b")
+	require.False(t, aPending)
+	require.True(t, bPending, "p:b's last writer is the second transaction")
+	d.clearPending(nil)
+	d.discardTxnCounters(second)
+	second.Discard()
+}

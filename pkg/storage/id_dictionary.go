@@ -315,23 +315,43 @@ func (d *idDictionary) txnWrote(txn *badger.Txn, writer *txnCounterState) bool {
 // markTxnCommitted clears the pending mark of the entries txn persisted.
 // Called once its commit succeeded; flushTxnCounters ran before it.
 func (d *idDictionary) markTxnCommitted(txn *badger.Txn) {
+	d.clearPending(d.takeTxnCommitting(txn))
+}
+
+// takeTxnCommitting detaches the pending entries txn's commit persists
+// (staged by flushTxnCounters), for a commit whose keys land later:
+// write-behind's flush persists them and then clears them (clearPending).
+// Nil when txn wrote none.
+func (d *idDictionary) takeTxnCommitting(txn *badger.Txn) *txnCounterState {
 	d.txnMu.Lock()
-	st, ok := d.txnCommitting[txn]
+	defer d.txnMu.Unlock()
+	st := d.txnCommitting[txn]
 	delete(d.txnCommitting, txn)
-	d.txnMu.Unlock()
-	if !ok {
+	return st
+}
+
+// clearPending clears the pending mark of the entries st wrote, once a
+// commit has persisted their keys. An entry another transaction wrote since
+// (rewritten, or deleted and allocated again) keeps the mark: its last
+// writer's commit clears it. Nil does nothing.
+func (d *idDictionary) clearPending(st *txnCounterState) {
+	if st == nil {
 		return
 	}
 	for _, id := range st.nodes {
 		sh := &d.nodes[nodeForwardShard(id)]
 		sh.mu.Lock()
-		delete(sh.pending, id)
+		if sh.pending[id] == st {
+			delete(sh.pending, id)
+		}
 		sh.mu.Unlock()
 	}
 	for _, id := range st.edges {
 		sh := &d.edges[edgeForwardShard(id)]
 		sh.mu.Lock()
-		delete(sh.pending, id)
+		if sh.pending[id] == st {
+			delete(sh.pending, id)
+		}
 		sh.mu.Unlock()
 	}
 }
