@@ -3537,6 +3537,10 @@ func (s *Service) HasRelationshipVectorEntries(relType, propertyKey string) bool
 	if s == nil || propertyKey == "" {
 		return false
 	}
+	// The node and relationship metadata is written under indexMu (index
+	// writes): lock order indexMu -> mu.
+	s.indexMu.RLock()
+	defer s.indexMu.RUnlock()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for edgeID, props := range s.edgePropVector {

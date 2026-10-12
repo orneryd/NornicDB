@@ -161,6 +161,9 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 		vec []float32
 	}
 	candidates := make([]edgeMeta, 0, util.SafePreallocProduct(spec.Limit, 2))
+	// The node and relationship metadata is written under indexMu (index
+	// writes): lock order indexMu -> mu.
+	s.indexMu.RLock()
 	s.mu.RLock()
 	for edgeID, props := range s.edgePropVector {
 		if spec.Type != "" && s.edgeTypes[edgeID] != spec.Type {
@@ -176,6 +179,7 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 		candidates = append(candidates, edgeMeta{id: edgeID, vec: vec})
 	}
 	s.mu.RUnlock()
+	s.indexMu.RUnlock()
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -409,6 +413,9 @@ func (s *Service) exactPropertyVectorNodeScores(ctx context.Context, normalizedQ
 		vecID  string
 	}
 	candidates := make([]candidate, 0, 64)
+	// The node and relationship metadata is written under indexMu (index
+	// writes): lock order indexMu -> mu.
+	s.indexMu.RLock()
 	s.mu.RLock()
 	for nodeID, props := range s.nodePropVector {
 		vecID, ok := props[property]
@@ -430,6 +437,7 @@ func (s *Service) exactPropertyVectorNodeScores(ctx context.Context, normalizedQ
 		candidates = append(candidates, candidate{nodeID: nodeID, vecID: vecID})
 	}
 	s.mu.RUnlock()
+	s.indexMu.RUnlock()
 
 	out := make([]vectorQueryScoredNode, 0, len(candidates))
 	for _, cand := range candidates {
@@ -456,6 +464,10 @@ type vectorQueryCandidateMeta struct {
 
 func (s *Service) snapshotVectorQueryCandidateMeta(candidateNodes map[string]struct{}) map[string]vectorQueryCandidateMeta {
 	meta := make(map[string]vectorQueryCandidateMeta, len(candidateNodes))
+	// The node and relationship metadata is written under indexMu (index
+	// writes): lock order indexMu -> mu.
+	s.indexMu.RLock()
+	defer s.indexMu.RUnlock()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for nodeID := range candidateNodes {
@@ -534,6 +546,10 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 	}
 	scored := make([]scoredNode, 0, util.SafePreallocProduct(spec.Limit, 2))
 
+	// The node and relationship metadata is written under indexMu (index
+	// writes): lock order indexMu -> mu.
+	s.indexMu.RLock()
+	defer s.indexMu.RUnlock()
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

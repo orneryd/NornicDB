@@ -259,11 +259,12 @@ func (s *Service) readChunkSpans(node *storage.Node) []embeddingutil.ChunkSpan {
 	opts := s.embedTextOptions
 	s.mu.RUnlock()
 	spans := chunkSpansFromMeta(node, s.hitEmbedMeta(node), opts)
-	s.mu.Lock()
+	// nodeChunkSpans is written under indexMu, as index writes do.
+	s.indexMu.Lock()
 	if _, known := s.nodeChunkSpans[string(node.ID)]; !known && s.IndexRevision() == revision {
 		s.nodeChunkSpans[string(node.ID)] = spans
 	}
-	s.mu.Unlock()
+	s.indexMu.Unlock()
 	return spans
 }
 
