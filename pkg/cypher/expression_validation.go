@@ -101,7 +101,7 @@ func staticListOperandTypeError(text string, scope staticTypeScope) error {
 		}
 		name := text[start:end]
 		typeName := scope.typeOf(name)
-		if typeName == "" || strings.HasPrefix(typeName, "List<") {
+		if typeName == "" || mayBeListType(typeName) {
 			return nil
 		}
 		if foreachDeclaration(text, in) || forIterationDeclaration(text, in) || localListBindingShadowsOperand(text, start, name) {
@@ -109,6 +109,17 @@ func staticListOperandTypeError(text string, scope staticTypeScope) error {
 		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreListOperandTypeMismatch(typeName))
 	})
+}
+
+// mayBeListType reports whether a static type is a list or names one among
+// its choices (a property value's type may be a List<T>).
+func mayBeListType(typeName string) bool {
+	for _, choice := range staticTypeChoices(typeName) {
+		if strings.HasPrefix(choice, "List<") {
+			return true
+		}
+	}
+	return false
 }
 
 // foreachDeclaration reports whether the IN at offset in is FOREACH's own

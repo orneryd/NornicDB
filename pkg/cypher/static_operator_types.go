@@ -36,6 +36,10 @@ type staticOperand struct {
 	display    string
 	parameter  string
 	nonBoolean bool
+	// nonEntity is set for a value known not to be a node, relationship,
+	// path or list of them whose type isn't otherwise known (a node's
+	// property, an aggregate): the match validator's value kind (#1055).
+	nonEntity bool
 	// members are the static types of a map literal's entries by key, in a
 	// Cypher 25 statement (Neo4j 2026.09 types {a: 2}.a as an Integer;
 	// Neo4j 5.26 doesn't): staticMapMember reads them.
@@ -903,7 +907,7 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 	}
 	if variable := simpleSemanticIdentifier(expression); variable != "" {
 		if typeName := checker.scope.typeOf(variable); typeName != "" {
-			operand := knownOperand(typeName)
+			operand := typedOperand(typeName)
 			if typeName == "Map" {
 				operand.members = checker.scope.members[variable]
 			}

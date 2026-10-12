@@ -865,7 +865,7 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 // staticPropertyValueType is the static type of a node's or relationship's
 // property, as Neo4j names it in a type mismatch: any value a property can
 // hold.
-const staticPropertyValueType = "Boolean, Float, Integer, Number, Point, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime or List<T>"
+const staticPropertyValueType = "Boolean, Float, Integer, Number, Point, String, Duration, Date, Time, LocalTime, LocalDateTime, DateTime, List<Boolean>, List<Float>, List<Integer>, List<Number>, List<Point>, List<String>, List<Duration>, List<Date>, List<Time>, List<LocalTime>, List<LocalDateTime> or List<DateTime>"
 
 // entityPropertyRead reports whether expression reads one property of a
 // variable (n.x), and the variable.
@@ -875,101 +875,6 @@ func entityPropertyRead(expression string) (string, bool) {
 		return "", false
 	}
 	return base, true
-}
-
-// projectStaticValueTypes returns the literal types a WITH clause binds: an
-// alias of an expression with a static type keeps that type; WITH * keeps
-// every one.
-func projectStaticValueTypes(scope staticTypeScope, clause string) map[string]string {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
-	// Only a literal (or an alias of a variable that already has a literal
-	// type) gives a projected value a static type.
-	if len(scope.values) == 0 && !strings.ContainsAny(body, "'\"[{0123456789(") && !containsFold(body, "true") && !containsFold(body, "false") {
-		return nil
-	}
-	var values map[string]string
-	for _, raw := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
-		if expression == "*" {
-			for variable, typeName := range scope.values {
-				if values == nil {
-					values = make(map[string]string)
-				}
-				values[variable] = typeName
-			}
-			continue
-		}
-		if alias == "" {
-			alias = simpleSemanticIdentifier(expression)
-		}
-		if alias == "" {
-			continue
-		}
-		if typeName := staticLiteralTypeName(expression); typeName != "" {
-			if values == nil {
-				values = make(map[string]string)
-			}
-			values[alias] = typeName
-			continue
-		}
-		if variable := simpleSemanticIdentifier(expression); variable != "" {
-			if typeName, found := scope.values[variable]; found {
-				if values == nil {
-					values = make(map[string]string)
-				}
-				values[alias] = typeName
-			}
-			continue
-		}
-		// A computed expression (a function call, arithmetic) keeps the type
-		// the operator check infers for it.
-		if operand, err := (staticOperatorChecker{scope: scope}).check(expression); err == nil && operand.known() {
-			if values == nil {
-				values = make(map[string]string)
-			}
-			values[alias] = operand.kind
-		}
-	}
-	return values
-}
-
-// projectStaticValueMembers is, for a Cypher 25 statement, the member types
-// of each WITH alias whose value is a map literal, or an alias, nested map
-// or other expression the operator check types as one ({a: 2} AS m, m AS k):
-// Neo4j 2026.09 types m.a and m['a'] from them. WITH * keeps every one.
-func projectStaticValueMembers(scope staticTypeScope, clause string) map[string]map[string]staticOperand {
-	if !scope.cypher25 {
-		return nil
-	}
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
-	if len(scope.members) == 0 && strings.IndexByte(body, '{') < 0 {
-		return nil
-	}
-	var members map[string]map[string]staticOperand
-	for _, raw := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
-		if expression == "*" {
-			for variable, known := range scope.members {
-				if members == nil {
-					members = make(map[string]map[string]staticOperand)
-				}
-				members[variable] = known
-			}
-			continue
-		}
-		// Unaliased, a column is named by its text (WITH m); only a name
-		// binds a variable.
-		if simpleSemanticIdentifier(alias) == "" {
-			continue
-		}
-		if operand, err := (staticOperatorChecker{scope: scope}).check(expression); err == nil && operand.members != nil {
-			if members == nil {
-				members = make(map[string]map[string]staticOperand)
-			}
-			members[alias] = operand.members
-		}
-	}
-	return members
 }
 
 // unwindStaticValueType is the element type of an UNWIND over a list literal

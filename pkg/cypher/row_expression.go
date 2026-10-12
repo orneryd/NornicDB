@@ -292,6 +292,11 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 					return int64(len(toAnySlice(relationships))), true, nil
 				}
 			}
+			switch cypherValueKindOf(value) {
+			case valueKindNode, valueKindRelationship:
+				return nil, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+					localization.CypherCoreFunctionArgumentInvalid("length", "a Path", neo4jValueRepr(value)))
+			}
 			return nil, false, nil
 		case "range":
 			parts := e.splitFunctionArgs(argument)
