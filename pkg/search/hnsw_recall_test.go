@@ -420,3 +420,21 @@ func BenchmarkHNSWRecall_ANNWithRerank(b *testing.B) {
 	avgRecall := totalRecall / float64(b.N)
 	b.ReportMetric(avgRecall, "recall@k")
 }
+
+// A beam that covers the whole index but is cut to the limit isn't
+// exhausted: the vectors past the cut weren't returned. The full set, or a
+// short one, is.
+func TestHNSWCandidateGenerationCutToTheLimitIsNotExhausted(t *testing.T) {
+	index := NewHNSWIndex(4, DefaultHNSWConfig())
+	for i := 0; i < 60; i++ {
+		require.NoError(t, index.Add(fmt.Sprintf("v%02d", i), vector.Normalize([]float32{1, float32(i) * 0.01, 0, 0})))
+	}
+	generator := NewHNSWCandidateGen(index)
+	query := []float32{1, 0, 0, 0}
+	for limit, wantExhausted := range map[int]bool{10: false, 59: false, 60: true, 100: true} {
+		candidates, exhausted, err := generator.searchCandidatesWithExhaustion(context.Background(), query, limit, -1)
+		require.NoError(t, err)
+		require.Len(t, candidates, min(limit, 60))
+		require.Equal(t, wantExhausted, exhausted, "limit %d", limit)
+	}
+}

@@ -263,7 +263,7 @@ func (h *HNSWCandidateGen) searchCandidatesWithLexicalEntries(ctx context.Contex
 
 	candidates := make([]Candidate, 0, min(candidateLimit, len(results)))
 	seenNodes := make(map[string]struct{}, min(candidateLimit, len(results)))
-	for _, r := range results {
+	for index, r := range results {
 		nodeID := normalizeVectorResultIDToNodeID(r.ID)
 		if _, seen := seenNodes[nodeID]; seen {
 			continue
@@ -274,6 +274,13 @@ func (h *HNSWCandidateGen) searchCandidatesWithLexicalEntries(ctx context.Contex
 			Score: float64(r.Score),
 		})
 		if len(candidates) == candidateLimit {
+			// The beam reached past the limit: the vectors cut here weren't
+			// returned, so the search isn't exhausted even when the beam
+			// covered the whole index. A filtered search widens past them
+			// rather than ending with the page short.
+			if index < len(results)-1 {
+				exhausted = false
+			}
 			break
 		}
 	}
