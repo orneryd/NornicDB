@@ -550,7 +550,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 	}
 
 	// =~ raises a type or pattern error, which the comparison chain can't.
-	if left, right, regex := splitByOperatorWithOptions(expr, "=~", false, true); regex {
+	if left, right, regex := splitByOperatorOutsideCase(expr, "=~", false, true); regex {
 		leftValue, leftOK, err := e.evaluateRowValue(left, values)
 		if err != nil {
 			return nil, false, err
@@ -635,14 +635,14 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		}
 	}
 
-	if left, right, ok := splitByOperatorWithOptions(expr, " NOT IN ", true, true); ok {
+	if left, right, ok := splitByOperatorOutsideCase(expr, " NOT IN ", true, true); ok {
 		value, evaluated, err := e.evaluateRowMembershipValue(left, right, values)
 		if err != nil || !evaluated || value == nil {
 			return value, evaluated, err
 		}
 		return !value.(bool), true, nil
 	}
-	if left, right, ok := splitByOperatorWithOptions(expr, " IN ", true, true); ok {
+	if left, right, ok := splitByOperatorOutsideCase(expr, " IN ", true, true); ok {
 		return e.evaluateRowMembershipValue(left, right, values)
 	}
 
@@ -654,7 +654,7 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		{operator: " ENDS WITH ", match: strings.HasSuffix},
 		{operator: " CONTAINS ", match: strings.Contains},
 	} {
-		left, right, matched := splitByOperatorWithOptions(expr, predicate.operator, true, true)
+		left, right, matched := splitByOperatorOutsideCase(expr, predicate.operator, true, true)
 		if !matched {
 			continue
 		}
@@ -1768,7 +1768,7 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	if mayContainArithmetic(expression) && !strictLogical {
 		checker := staticOperatorChecker{}
 		for _, operator := range []string{" AND ", " OR "} {
-			if left, right, found := splitByOperatorWithOptions(expression, operator, true, true); found {
+			if left, right, found := splitByOperatorOutsideCase(expression, operator, true, true); found {
 				for _, operand := range []string{left, right} {
 					if mayContainArithmetic(operand) {
 						continue
@@ -1852,16 +1852,16 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 			return predicateValueIsTrue(ctx, value, expression)
 		}
 	}
-	if left, right, ok := splitByOperatorWithOptions(expression, " STARTS WITH ", true, true); ok {
+	if left, right, ok := splitByOperatorOutsideCase(expression, " STARTS WITH ", true, true); ok {
 		return e.evaluateRowStringPredicate(ctx, left, right, values, strings.HasPrefix)
 	}
-	if left, right, ok := splitByOperatorWithOptions(expression, " ENDS WITH ", true, true); ok {
+	if left, right, ok := splitByOperatorOutsideCase(expression, " ENDS WITH ", true, true); ok {
 		return e.evaluateRowStringPredicate(ctx, left, right, values, strings.HasSuffix)
 	}
-	if left, right, ok := splitByOperatorWithOptions(expression, " CONTAINS ", true, true); ok {
+	if left, right, ok := splitByOperatorOutsideCase(expression, " CONTAINS ", true, true); ok {
 		return e.evaluateRowStringPredicate(ctx, left, right, values, strings.Contains)
 	}
-	if left, right, ok := splitByOperatorWithOptions(expression, "=~", false, true); ok {
+	if left, right, ok := splitByOperatorOutsideCase(expression, "=~", false, true); ok {
 		leftValue, leftOK := e.rowPredicateOperand(ctx, left, values)
 		rightValue, rightOK := e.rowPredicateOperand(ctx, right, values)
 		if !leftOK || !rightOK {
@@ -1874,14 +1874,14 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 		}
 		return matched == true
 	}
-	if left, right, ok := splitByOperatorWithOptions(expression, " NOT IN ", true, true); ok {
+	if left, right, ok := splitByOperatorOutsideCase(expression, " NOT IN ", true, true); ok {
 		// x NOT IN list holds only when the membership is known false; a null
 		// membership (null x, null list, or a null element without a match)
 		// drops the row.
 		membership, known := e.rowPredicateMembership(ctx, left, right, values)
 		return known && membership == false
 	}
-	if left, right, ok := splitByOperatorWithOptions(expression, " IN ", true, true); ok {
+	if left, right, ok := splitByOperatorOutsideCase(expression, " IN ", true, true); ok {
 		membership, known := e.rowPredicateMembership(ctx, left, right, values)
 		return known && membership == true
 	}
