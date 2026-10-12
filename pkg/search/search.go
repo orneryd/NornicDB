@@ -3126,6 +3126,10 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 						_ = s.gpuEmbeddingIndex.Add(chunkID, embedding) // Best effort
 					}
 
+					// A later chunk reaches the active graph too, as the
+					// main embedding does.
+					s.hnswUpdateLive(chunkID, embedding)
+
 					// Also add to cluster index if enabled
 					if s.clusterIndex != nil {
 						_ = s.clusterIndex.Add(chunkID, embedding) // Best effort

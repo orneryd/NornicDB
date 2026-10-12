@@ -760,7 +760,11 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 					if op.node == nil {
 						continue
 					}
-					if err := entry.svc.IndexNode(op.node); err != nil {
+					node := op.node
+					if !carriesChunkEmbedding(node) && entry.svc.VectorEnabled() {
+						node = db.storedNodeForSearch(entry.dbName, id, node)
+					}
+					if err := entry.svc.IndexNode(node); err != nil {
 						if db.shouldIgnoreSearchIndexingError(err) {
 							continue
 						}
@@ -776,6 +780,29 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 		}
 	})
 	entry.pendingFlushMu.Unlock()
+}
+
+// carriesChunkEmbedding reports whether node carries its managed embedding.
+func carriesChunkEmbedding(node *storage.Node) bool {
+	return len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0
+}
+
+// storedNodeForSearch is the stored state of a node whose queued copy came
+// without an embedding, or queued when the node can't be read. A write
+// event's copy can be older than the node's embedding: the embed worker
+// writes the embedding without a node event and queues its own copy, which a
+// bulk write's creation event, still being delivered, can replace. Indexing
+// that copy would drop the vector for good.
+func (db *DB) storedNodeForSearch(dbName, localID string, queued *storage.Node) *storage.Node {
+	engine, err := db.resolveDatabaseStorage(dbName)
+	if err != nil || engine == nil {
+		return queued
+	}
+	stored, err := engine.GetNode(storage.NodeID(localID))
+	if err != nil || stored == nil {
+		return queued
+	}
+	return stored
 }
 
 func (db *DB) ensureSearchIndexesBuilt(ctx context.Context, dbName string) error {
