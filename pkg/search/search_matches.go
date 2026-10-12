@@ -1,8 +1,9 @@
 package search
 
 import (
+	"cmp"
 	"context"
-	"sort"
+	"slices"
 	"unicode/utf8"
 	"unsafe"
 
@@ -99,23 +100,26 @@ type hitMatchQuery struct {
 // is results[i]'s): the chunks of vector hits that matched the query
 // vector best, and the query term occurrences of keyword hits.
 func (s *Service) attachSearchMatches(ctx context.Context, results []SearchResult, nodes []*storage.Node, query hitMatchQuery, opts *SearchOptions) {
-	if len(results) == 0 || (len(query.embedding) == 0 && query.text == "") {
+	if len(results) == 0 || opts.SkipMatches || (len(query.embedding) == 0 && query.text == "") {
 		return
 	}
 	var vectorHits []int
-	var terms map[string]float64
+	var terms map[string]*queryTerm
 	analyzer := normalizeAnalyzer(s.bm25Analyzer)
 	var fulltextProperties []string
 	if query.text != "" {
 		fulltextProperties = s.FulltextProperties()
 		idf, _ := s.fulltext().(termIDFReader)
-		terms = make(map[string]float64)
+		terms = make(map[string]*queryTerm)
 		for _, term := range analyzer.Analyze(query.text) {
-			if idf != nil {
-				terms[term] = idf.TermIDF(term)
-			} else {
-				terms[term] = 0
+			if _, seen := terms[term]; seen {
+				continue
 			}
+			weighted := &queryTerm{term: term, index: len(terms)}
+			if idf != nil {
+				weighted.idf = idf.TermIDF(term)
+			}
+			terms[term] = weighted
 		}
 	}
 	for index := range results {
@@ -140,6 +144,7 @@ func (s *Service) attachSearchMatches(ctx context.Context, results []SearchResul
 func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult, nodes []*storage.Node, hits []int, embedding []float32, minSimilarity float64) {
 	hitByNode := make(map[string]int, len(hits))
 	var candidates []Candidate
+	spansByHit := make(map[int][]embeddingutil.ChunkSpan, len(hits))
 	// Lock order indexMu -> mu, as index writes take them.
 	s.indexMu.RLock()
 	s.mu.RLock()
@@ -148,6 +153,9 @@ func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult
 		hitByNode[nodeID] = index
 		for _, vectorID := range s.nodeChunkVectors[nodeID] {
 			candidates = append(candidates, Candidate{ID: vectorID})
+		}
+		if spans, known := s.nodeChunkSpans[nodeID]; known {
+			spansByHit[index] = spans
 		}
 	}
 	vectors, fileStore := s.vectorIndex, s.vectorFileStore
@@ -177,7 +185,10 @@ func (s *Service) attachChunkMatches(ctx context.Context, results []SearchResult
 		chunkScores[index] = append(kept, candidate)
 	}
 	for index, kept := range chunkScores {
-		spans := s.chunkSpans(nodes[index])
+		spans, known := spansByHit[index]
+		if !known {
+			spans = s.readChunkSpans(nodes[index])
+		}
 		matches := make([]SearchMatch, 0, len(kept)+len(results[index].Matches))
 		for _, candidate := range kept {
 			chunk, _ := matchingChunkIndex(string(nodes[index].ID), candidate.ID)
@@ -207,23 +218,53 @@ func keptChunk(kept []ScoredCandidate, node *storage.Node, chunk int) bool {
 	return false
 }
 
-// chunkSpans is where node's chunks lie in its string properties: as the
-// embedding recorded them, or, for an embedding made before they were
-// recorded, found from the chunk texts it kept (a provider chunker's, such
-// as Voyage's contextualized chunks) in the node's embedding text.
-func (s *Service) chunkSpans(node *storage.Node) []embeddingutil.ChunkSpan {
-	meta := s.hitEmbedMeta(node)
+// chunkSpansFromMeta is where node's chunks lie in its string properties,
+// from its embedding metadata: as the embedding recorded them, or, for an
+// embedding made before they were recorded, found from the chunk texts it
+// kept (a provider chunker's, such as Voyage's contextualized chunks) in the
+// node's embedding text built with opts. Never nil: none is known to be none.
+func chunkSpansFromMeta(node *storage.Node, meta map[string]any, opts *embeddingutil.EmbedTextOptions) []embeddingutil.ChunkSpan {
 	if spans, ok := embeddingutil.StoredChunkSpans(meta); ok {
 		return spans
 	}
 	chunks := managedChunkTexts(meta)
 	if len(chunks) == 0 || len(chunks) != embeddingutil.ChunkCount(meta) {
-		return nil
+		return []embeddingutil.ChunkSpan{}
 	}
+	if spans := embeddingutil.BuildEmbedText(node.Properties, node.Labels, opts).ChunkSpans(chunks); spans != nil {
+		return spans
+	}
+	return []embeddingutil.ChunkSpan{}
+}
+
+// rememberChunkSpansLocked records node's chunk places as it is indexed,
+// from the embedding metadata it carries; a node indexed without it (a
+// write that didn't load the embedding) is read on demand instead.
+func (s *Service) rememberChunkSpansLocked(nodeID string, node *storage.Node) {
+	if nodeID == "" {
+		return
+	}
+	if len(node.EmbedMeta) == 0 {
+		delete(s.nodeChunkSpans, nodeID)
+		return
+	}
+	s.nodeChunkSpans[nodeID] = chunkSpansFromMeta(node, node.EmbedMeta, s.embedTextOptions)
+}
+
+// readChunkSpans reads a hit's chunk places from its stored embedding
+// metadata, and remembers them unless the index changed meanwhile.
+func (s *Service) readChunkSpans(node *storage.Node) []embeddingutil.ChunkSpan {
+	revision := s.IndexRevision()
 	s.mu.RLock()
 	opts := s.embedTextOptions
 	s.mu.RUnlock()
-	return embeddingutil.BuildEmbedText(node.Properties, node.Labels, opts).ChunkSpans(chunks)
+	spans := chunkSpansFromMeta(node, s.hitEmbedMeta(node), opts)
+	s.mu.Lock()
+	if _, known := s.nodeChunkSpans[string(node.ID)]; !known && s.IndexRevision() == revision {
+		s.nodeChunkSpans[string(node.ID)] = spans
+	}
+	s.mu.Unlock()
+	return spans
 }
 
 // hitEmbedMeta is a hit node's embedding metadata: its kept chunk texts and
@@ -266,31 +307,36 @@ type termIDFReader interface {
 // rarest terms' first (terms holds each term's IDF), so a common word
 // doesn't crowd out the words that made the hit, each term's in the index's
 // property order.
-func termMatches(node *storage.Node, fulltextProperties []string, analyzer Analyzer, terms map[string]float64) []SearchMatch {
+func termMatches(node *storage.Node, fulltextProperties []string, analyzer Analyzer, terms map[string]*queryTerm) []SearchMatch {
 	located, ok := analyzer.(locatingAnalyzer)
 	if !ok {
 		return nil
 	}
 	var matches []SearchMatch
+	counts := make([]int, len(terms)) // no term contributes more than the cap
+	var buffer []byte
 	visitSearchableFields(node, fulltextProperties, func(key string, value any, _ bool) bool {
 		text, isString := value.(string)
 		if !isString {
 			return true
 		}
-		for _, token := range located.locate(text) {
-			if _, matched := terms[token.term]; !matched {
-				continue
+		counted, runes := 0, 0 // code points in text[:counted]; occurrences come in order
+		buffer = located.locateIn(text, terms, buffer, func(term *queryTerm, start, end int) {
+			if counts[term.index] == maxTermMatchesPerHit {
+				return
 			}
-			start := utf8.RuneCountInString(text[:token.start])
+			counts[term.index]++
+			runes += utf8.RuneCountInString(text[counted:start])
+			counted = start
 			matches = append(matches, SearchMatch{
-				Kind: SearchMatchTerm, Chunk: -1, Term: token.term, Property: key,
-				Start: start, End: start + utf8.RuneCountInString(text[token.start:token.end]),
+				Kind: SearchMatchTerm, Chunk: -1, Term: term.term, Property: key,
+				Start: runes, End: runes + utf8.RuneCountInString(text[start:end]),
 			})
-		}
+		})
 		return true
 	})
-	sort.SliceStable(matches, func(i, j int) bool {
-		return terms[matches[i].Term] > terms[matches[j].Term]
+	slices.SortStableFunc(matches, func(a, b SearchMatch) int {
+		return cmp.Compare(terms[b.Term].idf, terms[a.Term].idf)
 	})
 	if len(matches) > maxTermMatchesPerHit {
 		matches = matches[:maxTermMatchesPerHit]

@@ -49,6 +49,11 @@ func TestRetrieveReturnsMatches(t *testing.T) {
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, procedure)
 	}
 
+	// matches: false skips them.
+	skipped, err := exec.Execute(ctx, "CALL db.retrieve({query: 'müller', limit: 5, matches: false}) YIELD matches RETURN matches", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{}}}, skipped.Rows)
+
 	result, err := exec.Execute(ctx, "CALL db.retrieve({query: 'müller', limit: 5, n: 1}) YIELD page "+
 		"RETURN [r IN page.results | [m IN r.matches | m.kind + ' ' + coalesce(toString(m.chunk), m.term) + ': ' + substring(r.node[m.property], m.start, m.end - m.start)]] AS passages", nil)
 	require.NoError(t, err)

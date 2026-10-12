@@ -399,6 +399,10 @@ type SearchOptions struct {
 	OverfetchGrowthFactor float64
 	MaxCandidateLimit     int
 
+	// SkipMatches leaves each result's Matches empty, for a caller that
+	// doesn't read them (#1060): no hit's chunks are scored, no text scanned.
+	SkipMatches bool
+
 	// MMR (Maximal Marginal Relevance) diversification
 	// When enabled, results are re-ranked to balance relevance with diversity
 	MMREnabled bool    // Enable MMR diversification (default: false)
@@ -545,6 +549,7 @@ func searchCacheKey(query string, embedding []float32, opts *SearchOptions) stri
 		strconv.Itoa(opts.RerankTopK),
 		strconv.Itoa(effectiveRerankMaxChars(opts)),
 		strconv.FormatBool(opts.MMREnabled),
+		strconv.FormatBool(opts.SkipMatches),
 		strconv.FormatFloat(opts.MMRLambda, 'g', -1, 64),
 		strconv.FormatFloat(opts.RerankMinScore, 'g', -1, 64),
 		strconv.FormatFloat(opts.RRFK, 'g', -1, 64),
@@ -801,6 +806,9 @@ type Service struct {
 	nodeChunkVectors map[string][]string          // nodeID -> vectorIDs (main + chunks)
 	edgeTypes        map[string]string            // edgeID -> relationship type
 	edgePropVector   map[string]map[string][]float32
+	// nodeChunkSpans is where each indexed node's chunks lie in its string
+	// properties (#1060); a node missing from it is read on demand.
+	nodeChunkSpans map[string][]embeddingutil.ChunkSpan
 
 	// HNSW index for approximate nearest neighbor search (optional, lazy-initialized)
 	hnswIndex           *HNSWIndex
@@ -1162,6 +1170,7 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 		nodeNamedVector:            make(map[string]map[string]string, 1024),
 		nodePropVector:             make(map[string]map[string]string, 1024),
 		nodeChunkVectors:           make(map[string][]string, 1024),
+		nodeChunkSpans:             make(map[string][]embeddingutil.ChunkSpan, 1024),
 		edgeTypes:                  make(map[string]string, 1024),
 		edgePropVector:             make(map[string]map[string][]float32, 1024),
 		clusterLexicalProfiles:     make(map[int]map[string]float64),
@@ -2665,6 +2674,7 @@ func (s *Service) ClearVectorIndex() {
 	clear(s.nodeNamedVector)
 	clear(s.nodePropVector)
 	clear(s.nodeChunkVectors)
+	clear(s.nodeChunkSpans)
 	clear(s.edgeTypes)
 	clear(s.edgePropVector)
 	s.mu.Unlock()
@@ -2920,6 +2930,7 @@ func (s *Service) shouldIndexNode(node *storage.Node) (bool, error) {
 func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	defer s.indexChanged()
 	nodeIDStr := string(node.ID)
+	defer s.rememberChunkSpansLocked(nodeIDStr, node) // after the node's old entries are removed
 	shouldIndex, err := s.shouldIndexNode(node)
 	if err != nil {
 		return err
@@ -3356,6 +3367,7 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 		}
 	}
 	delete(s.nodeChunkVectors, nodeIDStr)
+	delete(s.nodeChunkSpans, nodeIDStr)
 }
 
 // RemoveNode removes a node from all search indexes.
@@ -3782,6 +3794,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 					s.nodeNamedVector = named
 					s.nodePropVector = properties
 					s.nodeChunkVectors = chunks
+					clear(s.nodeChunkSpans) // read on demand: the snapshot doesn't hold them
 					s.mu.Unlock()
 					s.indexMu.Unlock()
 				} else if storageNodeCount == 0 {

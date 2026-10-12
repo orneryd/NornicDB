@@ -494,6 +494,10 @@ func applyRetrievalPolicyOptions(opts *search.SearchOptions, req map[string]inte
 		return false, err
 	}
 	applyAdaptiveCandidateOptions(opts, req)
+	// matches: false skips each hit's matches (#1060); they are on by default.
+	if value, ok := req["matches"].(bool); ok {
+		opts.SkipMatches = !value
+	}
 	if value, ok := ragToFloat64(firstPresent(req, "rrfK", "rrf_k")); ok && value > 0 && isFinite(value) {
 		opts.RRFK = value
 	}

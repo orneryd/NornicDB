@@ -146,6 +146,10 @@ RETURN node.id,
         substring(node[m.property], m.start, m.end - m.start)] AS passages
 ```
 
+`matches` is on by default. A caller that doesn't read it can pass
+`matches: false` in the request: the column is then an empty list, and no
+hit's chunks are scored or texts scanned.
+
 Each chunk's place is recorded when the node is embedded: NornicDB finds the
 chunk in the text it built from the node (labels and the included properties)
 and maps it to the properties. A provider that chunks on its side (Voyage's

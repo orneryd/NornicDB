@@ -63,6 +63,23 @@ func TestLocateReadsAnalyzeTerms(t *testing.T) {
 			if len(want) > 0 {
 				require.Equal(t, want, terms, "%s %q", name, text)
 			}
+			// locateIn is locate filtered to the query terms (every other term).
+			query := map[string]*queryTerm{}
+			var filtered, got []locatedTerm
+			for index, term := range located {
+				if _, seen := query[term.term]; !seen && index%2 == 0 {
+					query[term.term] = &queryTerm{term: term.term, index: len(query)}
+				}
+			}
+			for _, term := range located {
+				if _, ok := query[term.term]; ok {
+					filtered = append(filtered, term)
+				}
+			}
+			analyzer.locateIn(text, query, nil, func(term *queryTerm, start, end int) {
+				got = append(got, locatedTerm{term: term.term, start: start, end: end})
+			})
+			require.Equal(t, filtered, got, "%s %q", name, text)
 		}
 	}
 	located := DefaultTextAnalyzer().(textAnalyzer).locate("Notices go to MÜLLER, Straße 1")
@@ -195,10 +212,12 @@ func TestSearchMatchesReadBadgerSidecarMeta(t *testing.T) {
 	node.EmbedMeta["chunk_texts"] = []any{chunks[0], chunks[1]}
 	embeddingutil.RecordChunkSpans(node, embeddingutil.BuildEmbedText(properties, nil, &embeddingutil.EmbedTextOptions{}), chunks)
 	require.NoError(t, badgerEngine.UpdateNodeEmbeddingSidecar(node))
-	// Indexed from this copy: a full read would cache the node with its
-	// metadata, which the hit read would then copy.
+	// Indexed from a copy without the metadata, as a write that didn't load
+	// the embedding indexes it (and a full read would cache the node with its
+	// metadata, which the hit read would then copy).
 	indexed := storage.CopyNode(node)
 	indexed.ID = "doc"
+	indexed.EmbedMeta = nil
 	require.NoError(t, service.IndexNode(indexed))
 
 	response, err := service.Search(context.Background(), "", []float32{1, 0}, &SearchOptions{Limit: 5})
@@ -207,6 +226,20 @@ func TestSearchMatchesReadBadgerSidecarMeta(t *testing.T) {
 	matches := response.Results[0].Matches
 	require.Len(t, matches, 1)
 	require.Equal(t, SearchMatch{Kind: SearchMatchChunk, Chunk: 1, Score: matches[0].Score, Property: "text", Start: 12, End: 24}, matches[0])
+
+	// Re-embedded with other chunks and indexed again: the remembered places
+	// are dropped, and the new ones read.
+	node.EmbedMeta["chunk_texts"] = []any{"text: alpha beta. gamma ", "delta."}
+	embeddingutil.RecordChunkSpans(node, embeddingutil.BuildEmbedText(properties, nil, &embeddingutil.EmbedTextOptions{}), []string{"text: alpha beta. gamma ", "delta."})
+	require.NoError(t, badgerEngine.UpdateNodeEmbeddingSidecar(node))
+	require.NoError(t, service.IndexNode(indexed))
+	response, err = service.Search(context.Background(), "", []float32{1, 0}, &SearchOptions{Limit: 6})
+	require.NoError(t, err)
+	require.Equal(t, 18, response.Results[0].Matches[0].Start)
+	require.Equal(t, 24, response.Results[0].Matches[0].End)
+	node.EmbedMeta["chunk_texts"] = []any{chunks[0], chunks[1]}
+	embeddingutil.RecordChunkSpans(node, embeddingutil.BuildEmbedText(properties, nil, &embeddingutil.EmbedTextOptions{}), chunks)
+	require.NoError(t, badgerEngine.UpdateNodeEmbeddingSidecar(node))
 
 	light, err := service.getNodeWithoutEmbeddings("doc")
 	require.NoError(t, err)
