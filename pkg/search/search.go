@@ -2791,7 +2791,16 @@ func (s *Service) addVectorLocked(id string, vec []float32) error {
 		s.appendStrategyDelta(id, true)
 		s.trackIVFPQAdd(id, vec)
 	}
+	searchI58Trace("vec-add id=%s err=%v", id, err)
 	return err
+}
+
+// searchI58Trace writes a vector-index trace line when NORNICDB_TRACE_I58=1
+// (diagnostic build only).
+func searchI58Trace(format string, args ...any) {
+	if os.Getenv("NORNICDB_TRACE_I58") == "1" {
+		fmt.Fprintf(os.Stderr, "I58TRACE "+format+"\n", args...)
+	}
 }
 
 // hnswUpdateLive applies a best-effort live HNSW vector update.
@@ -2828,6 +2837,7 @@ func (s *Service) hnswRemoveLive(id string) {
 // removeVectorLocked removes a vector ID from the active stores.
 // Caller holds s.indexMu.
 func (s *Service) removeVectorLocked(id string) {
+	searchI58Trace("vec-remove id=%s", id)
 	if s.vectorIndex != nil {
 		s.vectorIndex.Remove(id)
 	}
@@ -2960,6 +2970,7 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	if err != nil {
 		return err
 	}
+	searchI58Trace("index id=%s shouldIndex=%v chunks=%d", nodeIDStr, shouldIndex, len(node.ChunkEmbeddings))
 	var fulltext nodeFulltext
 	if !skipFulltext {
 		fulltext.text = s.extractSearchableText(node)

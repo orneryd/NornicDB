@@ -21,6 +21,7 @@ func (db *DB) onNodeEmbedded(node *storage.Node) {
 	}
 	// Keep embed worker hot: index/inference can be expensive, so run asynchronously.
 	nodeCopy := storage.CopyNode(node)
+	i58Trace("embedded id=%s emb=%v", node.ID, carriesChunkEmbedding(node))
 	go func(n *storage.Node) {
 		db.indexNodeFromEvent(n)
 		db.runInferenceForEmbeddedNode(n)

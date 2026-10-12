@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -761,10 +762,13 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 						continue
 					}
 					node := op.node
+					queuedEmb := carriesChunkEmbedding(node)
 					if !carriesChunkEmbedding(node) && entry.svc.VectorEnabled() {
 						node = db.storedNodeForSearch(entry.dbName, id, node)
 					}
-					if err := entry.svc.IndexNode(node); err != nil {
+					indexErr := entry.svc.IndexNode(node)
+					i58Trace("flush db=%s id=%s queuedEmb=%v indexedEmb=%v err=%v", entry.dbName, id, queuedEmb, carriesChunkEmbedding(node), indexErr)
+					if err := indexErr; err != nil {
 						if db.shouldIgnoreSearchIndexingError(err) {
 							continue
 						}
@@ -780,6 +784,14 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 		}
 	})
 	entry.pendingFlushMu.Unlock()
+}
+
+// i58Trace writes a search-queue trace line when NORNICDB_TRACE_I58=1
+// (diagnostic build only).
+func i58Trace(format string, args ...any) {
+	if os.Getenv("NORNICDB_TRACE_I58") == "1" {
+		log.Printf("I58TRACE "+format, args...)
+	}
 }
 
 // carriesChunkEmbedding reports whether node carries its managed embedding.
@@ -960,6 +972,7 @@ func (db *DB) indexNodeFromEvent(node *storage.Node) {
 
 	entry.queueIndex(userNode)
 	progress := svc.GetBuildProgress()
+	i58Trace("queue db=%s id=%s emb=%v ready=%v building=%v", dbName, local, carriesChunkEmbedding(userNode), progress.Ready, progress.Building)
 	if db.shouldStartSearchBuildForWriteEvent(dbName, progress) {
 		ctx := db.buildCtx
 		if ctx == nil {
