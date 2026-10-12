@@ -2510,7 +2510,17 @@ func TestHandleSearch_LongChunkedBranches(t *testing.T) {
 		"labels":   []string{"Doc"},
 		"limit":    1000,
 	}
-	resp := makeRequest(t, server, http.MethodPost, "/nornicdb/search", body, "")
+	// The search may answer 503 search_not_ready while the HNSW warm-up the
+	// seeded vector started is still in flight; it answers 200 once ready.
+	var resp *httptest.ResponseRecorder
+	require.Eventually(t, func() bool {
+		resp = makeRequest(t, server, http.MethodPost, "/nornicdb/search", body, "")
+		if resp.Code == http.StatusServiceUnavailable {
+			require.Contains(t, resp.Body.String(), "search_not_ready", "only a search still building may answer 503")
+			return false
+		}
+		return true
+	}, 10*time.Second, 20*time.Millisecond)
 	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
 }
 
