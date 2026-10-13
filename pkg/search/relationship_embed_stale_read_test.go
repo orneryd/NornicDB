@@ -113,3 +113,31 @@ func TestRelationshipEmbeddingSupersededByALaterWrite(t *testing.T) {
 	require.False(t, changed)
 	require.False(t, failed)
 }
+
+// A pending copy that doesn't match its entry (the entry stands for a newer
+// version) gives way to the version storage holds.
+func TestRelationshipEmbedsStorageWhenTheCopyIsOlder(t *testing.T) {
+	engine := relationshipTestEngine(t)
+	var embedded []string
+	embed := func(_ context.Context, edge *storage.Edge) ([][]float32, error) {
+		embedded = append(embedded, edge.Properties["reason"].(string))
+		return [][]float32{{1, 0, 0}}, nil
+	}
+	svc := NewServiceWithDimensions(engine, 3)
+	t.Cleanup(func() { _ = svc.Close() })
+	svc.EnableRelationshipSearch(embed)
+	rs := svc.relationshipSearch()
+
+	stored, err := engine.GetEdge("r1")
+	require.NoError(t, err)
+	older := storage.CopyEdge(stored)
+	older.Properties["reason"] = "an older reason"
+	rs.mu.Lock()
+	rs.entries["r1"] = &relationshipEntry{Source: relationshipSource(stored)}
+	rs.pending["r1"] = older
+	rs.mu.Unlock()
+	changed, failed := svc.embedPendingRelationships(context.Background(), rs)
+	require.True(t, changed)
+	require.False(t, failed)
+	require.Equal(t, []string{"zephyrine bridge over the river"}, embedded)
+}
