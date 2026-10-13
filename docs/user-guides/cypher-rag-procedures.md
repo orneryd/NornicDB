@@ -241,7 +241,8 @@ two are fused by reciprocal rank, and a requested rerank orders the fused
 pool in one call. `types` filters node labels, `relationshipTypes`
 relationship types. Rows have `kind` (`'node'` or `'relationship'`), `node`,
 `relationship`, `start`, `end`, the scores and search metadata of
-`db.retrieve`, and `matches`. Without relationship search it ranks nodes
+`db.retrieve` (`query_chunks_searched` and `query_chunks_total` included),
+and `matches`. Without relationship search it ranks nodes
 alone.
 
 ```cypher
@@ -252,8 +253,10 @@ RETURN kind, coalesce(node.title, type(relationship)), score
 
 With `n` or `maxResults` it returns one terminal page (`page.results`, each
 with `kind`, `node` or `relationship` with `start` / `end`, the scores and
-`matches`; `page.search_method`, `fallback_triggered`, `fallback_reason`),
-as `db.rretrieve`'s pages are read. It can't be continued: `qid`, `discard`,
+`matches`; `page.search_method`, `fallback_triggered`, `fallback_reason`, and
+for a query split into chunks `query_chunks_searched` / `query_chunks_total`),
+as `db.rretrieve`'s pages are read, and `YIELD page` works after other
+clauses too. It can't be continued: `qid`, `discard`,
 `mode`, `groupBy` and `rankedLimit` are errors.
 
 ## Durable search continuation

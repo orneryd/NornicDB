@@ -375,8 +375,10 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRetrieveRelationships(ctx, args)
 			})
-		// db.retrieveGraph ranks nodes and relationships together.
-		registerBuiltInProcedure("db.retrieveGraph", "db.retrieveGraph(request :: MAP) :: (kind :: STRING, node :: NODE, relationship :: RELATIONSHIP, start :: NODE, end :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, matches :: LIST<MAP>)", localization.CypherProcedureMetadata("db.retrieveGraph"), ProcedureModeRead, 1, 1, false,
+		// db.retrieveGraph ranks nodes and relationships together: rows, or
+		// with n / maxResults one terminal page; the signature declares both,
+		// as db.rretrieve's does, so YIELD page holds after MATCH / WITH too.
+		registerBuiltInProcedure("db.retrieveGraph", "db.retrieveGraph(request :: MAP) :: (kind :: STRING, node :: NODE, relationship :: RELATIONSHIP, start :: NODE, end :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, query_chunks_searched :: INTEGER, query_chunks_total :: INTEGER, matches :: LIST<MAP>, page :: MAP)", localization.CypherProcedureMetadata("db.retrieveGraph"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRetrieveGraph(ctx, args)
 			})

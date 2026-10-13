@@ -46,7 +46,7 @@ func TestCallDbRetrieveGraph(t *testing.T) {
 		result, err = exec.Execute(ctx, "CALL db.retrieveGraph({query: 'zephyrine'})", nil)
 		return err == nil && len(result.Rows) == 3
 	}, 5*time.Second, 20*time.Millisecond)
-	require.Equal(t, []string{"kind", "node", "relationship", "start", "end", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "matches"}, result.Columns)
+	require.Equal(t, []string{"kind", "node", "relationship", "start", "end", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"}, result.Columns)
 	for _, row := range result.Rows {
 		switch row[0] {
 		case "node":
@@ -64,7 +64,7 @@ func TestCallDbRetrieveGraph(t *testing.T) {
 		require.Equal(t, "graph_bm25", row[9])
 		require.Greater(t, row[8].(int), 0)
 		// Each hit's matches: the query term where it occurs.
-		matches := row[12].([]any)
+		matches := row[14].([]any)
 		require.NotEmpty(t, matches, row[0])
 		match := matches[0].(map[string]any)
 		require.Equal(t, "term", match["kind"])
@@ -97,7 +97,7 @@ func TestCallDbRetrieveGraph(t *testing.T) {
 	unmatched, err := exec.Execute(ctx, "CALL db.retrieveGraph({query: 'zephyrine', matches: false})", nil)
 	require.NoError(t, err)
 	for _, row := range unmatched.Rows {
-		require.Empty(t, row[12])
+		require.Empty(t, row[14])
 	}
 	capped, err := exec.Execute(ctx, "CALL db.retrieveGraph({query: 'zephyrine', maxResults: 1})", nil)
 	require.NoError(t, err)

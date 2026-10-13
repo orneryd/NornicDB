@@ -44,19 +44,22 @@ func (e *StorageExecutor) graphSearchEntity(result *search.SearchResult) (kind s
 }
 
 // graphSearchResult is a graph search's rows (db.retrieveGraph's columns),
-// each hit with its matches.
+// each hit with its matches and, as db.retrieve's rows, how many chunks of a
+// query split into chunks were searched (0 and 0 for a query searched whole).
 func (e *StorageExecutor) graphSearchResult(response *search.SearchResponse) *ExecuteResult {
 	result := &ExecuteResult{
-		Columns: []string{"kind", "node", "relationship", "start", "end", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "matches"},
+		Columns: []string{"kind", "node", "relationship", "start", "end", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"},
 		Rows:    make([][]interface{}, 0, len(response.Results)),
 	}
+	chunksSearched, chunksTotal := int64(response.QueryChunksSearched), int64(response.QueryChunksTotal)
 	for index := range response.Results {
 		r := &response.Results[index]
 		kind, node, relationship, start, end := e.graphSearchEntity(r)
 		result.Rows = append(result.Rows, []interface{}{
 			kind, node, relationship, start, end,
 			r.Score, r.RRFScore, r.VectorRank, r.BM25Rank,
-			response.SearchMethod, response.FallbackTriggered, string(response.FallbackReason), search.SearchMatchValues(r.Matches),
+			response.SearchMethod, response.FallbackTriggered, string(response.FallbackReason),
+			chunksSearched, chunksTotal, search.SearchMatchValues(r.Matches),
 		})
 	}
 	return result
@@ -64,8 +67,9 @@ func (e *StorageExecutor) graphSearchResult(response *search.SearchResponse) *Ex
 
 // graphSearchPage is a graph search as one terminal page, the form
 // db.rretrieve's pages take: results carry kind, node or relationship with
-// start and end, scores and matches; the page carries the search method and
-// fallback. It has no qid: there is nothing to continue.
+// start and end, scores and matches; the page carries the search method,
+// fallback and, for a query split into chunks, how many were searched. It has
+// no qid: there is nothing to continue.
 func (e *StorageExecutor) graphSearchPage(response *search.SearchResponse) *ExecuteResult {
 	results := make([]interface{}, 0, len(response.Results))
 	for index := range response.Results {
@@ -82,6 +86,10 @@ func (e *StorageExecutor) graphSearchPage(response *search.SearchResponse) *Exec
 		"position": int64(len(results)), "returned": int64(len(results)), "discovered": int64(response.TotalCandidates),
 		"search_method": response.SearchMethod, "fallback_triggered": response.FallbackTriggered,
 		"fallback_reason": string(response.FallbackReason), "completion": search.SearchContinuationMaxResultsComplete,
+	}
+	if response.QueryChunksTotal > 0 {
+		page["query_chunks_searched"] = int64(response.QueryChunksSearched)
+		page["query_chunks_total"] = int64(response.QueryChunksTotal)
 	}
 	return &ExecuteResult{Columns: []string{"page"}, Rows: [][]interface{}{{page}}}
 }
