@@ -2,7 +2,7 @@
 
 ## Overview
 
-NornicDB now includes **Neo4j GDS-compatible topological link prediction** to complement its existing semantic inference engine. This document explains the integration, API usage, and how it fits into the broader architecture.
+NornicDB includes topological link prediction to complement its existing semantic inference engine, in two forms: **GDS's `gds.alpha.linkprediction.*` functions**, with the values GDS 2.13 gives, and **NornicDB's own `gds.linkPrediction.*.stream` procedures**, which are [NornicDB extensions](apoc-functions.md#nornicdb-extensions) (GDS has no such procedures). This document explains the integration, API usage, and how it fits into the broader architecture.
 
 ## What Was Added
 
@@ -17,9 +17,25 @@ Five canonical graph algorithms:
 
 Plus hybrid scoring that blends topology with semantic similarity.
 
-### 2. Neo4j GDS Procedure Compatibility (`pkg/cypher/linkprediction.go`)
+### 2. GDS's link-prediction functions (`pkg/cypher/gds_functions.go`)
 
-All algorithms accessible via Neo4j GDS Cypher procedures:
+The functions Neo4j GDS 2.13 has, scoring one pair of nodes, with GDS's arguments and values:
+
+```cypher
+MATCH (a:Person {name: 'Alice'}), (b:Person {name: 'Bob'})
+RETURN gds.alpha.linkprediction.adamicAdar(a, b) AS adamicAdar,
+       gds.alpha.linkprediction.commonNeighbors(a, b, {relationshipQuery: 'KNOWS'}) AS common,
+       gds.alpha.linkprediction.resourceAllocation(a, b, {direction: 'OUTGOING'}) AS resourceAllocation,
+       gds.alpha.linkprediction.preferentialAttachment(a, b) AS preferentialAttachment,
+       gds.alpha.linkprediction.totalNeighbors(a, b) AS total,
+       gds.alpha.linkprediction.sameCommunity(a, b, 'community') AS sameCommunity
+```
+
+As in GDS: neighbours are distinct other nodes, in both directions and over every relationship type unless the config's `relationshipQuery` (one type) or `direction` (`OUTGOING`, `INCOMING`) narrows them; a degree counts relationships. The scores aren't rescaled. `gds.util.asNode` / `asNodes`, `NaN`, `infinity`, `isFinite` and `isInfinite`, and `RETURN gds.version()`, are there as well.
+
+### 3. NornicDB's link-prediction procedures (`pkg/cypher/linkprediction.go`)
+
+NornicDB's own procedures, which rank the top-K candidates for one source node. They are NornicDB extensions: GDS has no `gds.linkPrediction.*.stream` procedures, and their scores are rescaled into 0–1, unlike the functions above.
 
 ```cypher
 CALL gds.linkPrediction.adamicAdar.stream(...)
@@ -30,7 +46,7 @@ CALL gds.linkPrediction.jaccard.stream(...)
 CALL gds.linkPrediction.predict.stream(...)  // Hybrid
 ```
 
-### 3. Integration with Existing Inference Engine
+### 4. Integration with Existing Inference Engine
 
 Works alongside `/pkg/inference/inference.go`:
 
@@ -42,7 +58,7 @@ Works alongside `/pkg/inference/inference.go`:
 │  (pkg/linkpredict)        │  (pkg/inference)           │
 │  • Structure-based        │  • Embedding similarity    │
 │  • Fast, deterministic    │  • Co-access patterns      │
-│  • Neo4j GDS compatible   │  • Temporal proximity      │
+│  • GDS's functions        │  • Temporal proximity      │
 │                           │  • Transitive inference    │
 ├────────────────────────────────────────────────────────┤
 │         Hybrid Scorer (pkg/linkpredict/hybrid.go)      │
@@ -52,7 +68,7 @@ Works alongside `/pkg/inference/inference.go`:
 
 ## API Usage
 
-### Via Cypher (Neo4j GDS Compatible)
+### Via Cypher (NornicDB procedures)
 
 ```cypher
 -- Basic topological prediction
@@ -232,9 +248,9 @@ Expected: Diana ranks high (2 common neighbors: Bob and Charlie)
 
 ## Neo4j Compatibility Statement
 
-✅ **API-Compatible**: Procedures follow Neo4j GDS naming and parameter conventions  
-✅ **Result Format**: Returns `{node1, node2, score}` tuples like Neo4j GDS  
-✅ **Drop-in Usage**: Existing Neo4j GDS queries work with minimal modification  
+✅ **GDS's functions**: `gds.alpha.linkprediction.*`, `gds.util.asNode` / `asNodes` / `NaN` / `infinity` / `isFinite` / `isInfinite` and `gds.version()` take GDS 2.13's arguments and give its values  
+⚠️ **NornicDB extensions**: the `gds.linkPrediction.*.stream` procedures aren't GDS's (GDS has none by those names); a query using them runs only on NornicDB  
+⚠️ **GDS procedures**: `gds.graph.project`, `gds.graph.list`, `gds.graph.drop` and `gds.fastRP.*` don't yet take GDS's parameters or return its columns (#1161)  
 
 ❌ **Not Implemented**: Graph projections (we use in-memory adjacency instead)  
 ❌ **Not Implemented**: Write mode (stream mode only, no graph mutation)  
@@ -306,7 +322,7 @@ CALL gds.linkPrediction.predict.stream({
 
 ## Summary
 
-- **What it does**: Adds topological link prediction with Neo4j GDS compatibility
+- **What it does**: Adds topological link prediction: GDS's link-prediction functions, and NornicDB's own top-K procedures
 - **How it integrates**: Complements existing semantic inference, accessible via Cypher
 - **Why it matters**: Provides structural signals Neo4j users expect, enables hybrid prediction
 - **Status**: Tested, documented, follows NornicDB conventions
