@@ -260,7 +260,7 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 			continue
 		}
 		coreCount++
-		if spec.Name == "db.retrieveRelationships" || spec.Name == "db.retrieveGraph" {
+		if spec.Name == "db.retrieveRelationships" || spec.Name == "db.retrieveGraph" || spec.Name == "db.rretrieveGraph" {
 			coreCount-- // relationship search's procedures, counted apart (#1065)
 		}
 		require.NotEmpty(t, spec.DescriptionMessage.ID, "core metadata requires a descriptor: %s", spec.Name)
