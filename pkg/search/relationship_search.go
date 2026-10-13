@@ -83,6 +83,9 @@ type relationshipSearch struct {
 	// write reported, read in place of the stored one when that isn't
 	// readable yet (a buffered commit can report a write before it reads).
 	pending map[string]*storage.Edge
+	// policy hashes the embedding policy (SetRelationshipEmbedPolicy) into
+	// every source; zero when none was set.
+	policy uint64
 	wake    chan struct{}
 	ready   chan struct{}
 	start   sync.Once
@@ -185,7 +188,7 @@ func (s *Service) IndexRelationship(edge *storage.Edge) {
 func (s *Service) indexRelationship(rs *relationshipSearch, edge *storage.Edge, persisted *relationshipEntry) {
 	id := string(edge.ID)
 	text := s.relationshipSearchableText(edge)
-	source := relationshipSource(edge)
+	source := rs.source(edge)
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	if text == "" {
@@ -239,6 +242,34 @@ func (s *Service) RemoveRelationship(id storage.EdgeID) {
 
 // relationshipSource hashes a relationship's type and properties, in key
 // order, to tell when its embedding text may have changed.
+// SetRelationshipEmbedPolicy records what selects a relationship's
+// embedding text (its property lists, whether its type is included), as
+// policy; a change of policy changes every relationship's source, so vectors
+// saved under the earlier one are embedded again. Set it before the
+// relationship index starts.
+func (s *Service) SetRelationshipEmbedPolicy(policy string) {
+	rs := s.relationshipSearch()
+	if rs == nil {
+		return
+	}
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte(policy))
+	rs.mu.Lock()
+	rs.policy = hash.Sum64()
+	rs.mu.Unlock()
+}
+
+// source is edge's source under the embedding policy.
+func (rs *relationshipSearch) source(edge *storage.Edge) uint64 {
+	rs.mu.RLock()
+	policy := rs.policy
+	rs.mu.RUnlock()
+	if policy == 0 {
+		return relationshipSource(edge)
+	}
+	return relationshipSource(edge) ^ policy
+}
+
 func relationshipSource(edge *storage.Edge) uint64 {
 	hash := fnv.New64a()
 	_, _ = hash.Write([]byte(edge.Type))
@@ -313,7 +344,7 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 		entry := rs.entries[id]
 		rs.mu.RUnlock()
 		edge := reported
-		if reported == nil || entry == nil || relationshipSource(reported) != entry.Source {
+		if reported == nil || entry == nil || rs.source(reported) != entry.Source {
 			stored, err := s.engine.GetEdge(storage.EdgeID(id))
 			if err != nil {
 				if reported == nil {
@@ -345,7 +376,7 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 		if len(normalized) == len(vectors) {
 			spans = embedding.Spans
 		}
-		source := relationshipSource(edge)
+		source := rs.source(edge)
 		rs.mu.Lock()
 		current := rs.entries[id]
 		if current != nil && current.Source == source {

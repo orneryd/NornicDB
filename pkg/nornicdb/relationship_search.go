@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
@@ -78,6 +79,21 @@ func relationshipChunkSpans(edge *storage.Edge, config *EmbedWorkerConfig, chunk
 		chunks = aligned
 	}
 	return source.ChunkSpans(chunks)
+}
+
+// relationshipEmbedPolicy is what selects a relationship's embedding text:
+// the node and relationship property lists and whether labels (its type)
+// are included. Saved relationship vectors are embedded again when it
+// changes (search.SetRelationshipEmbedPolicy).
+func relationshipEmbedPolicy(config *Config) string {
+	worker := config.EmbeddingWorker
+	return strings.Join([]string{
+		"include=" + strings.Join(worker.PropertiesInclude, ","),
+		"exclude=" + strings.Join(worker.PropertiesExclude, ","),
+		"relationship-include=" + strings.Join(worker.RelationshipPropertiesInclude, ","),
+		"relationship-exclude=" + strings.Join(worker.RelationshipPropertiesExclude, ","),
+		"labels=" + strconv.FormatBool(worker.IncludeLabels),
+	}, ";")
 }
 
 // relationshipEmbedTextOptions are the property lists for a relationship's

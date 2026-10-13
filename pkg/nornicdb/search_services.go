@@ -409,6 +409,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	svc.SetReranker(reranker)
 	if db.config != nil && db.config.Memory.SearchRelationshipsEnabled {
 		svc.EnableRelationshipSearch(db.relationshipEmbedFunc(dbName))
+		svc.SetRelationshipEmbedPolicy(relationshipEmbedPolicy(db.config))
 	}
 
 	entry := &dbSearchService{
