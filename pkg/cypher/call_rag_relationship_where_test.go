@@ -78,6 +78,7 @@ func TestRetrieveWhereFiltersRelationshipCandidates(t *testing.T) {
 	for _, where := range []string{
 		"CASE WHEN node IS NOT NULL THEN relationship IS NULL AND start IS NULL AND node.current ELSE start.id IN $ids AND relationship.n > 1000 END",
 		"(node IS NOT NULL AND node.current) OR (relationship IS NOT NULL AND start.id IN $ids AND end.id IN $ids)",
+		"CASE WHEN node IS NOT NULL THEN node.current ELSE start.id IN $ids AND end.id IN $ids END",
 	} {
 		result, err := exec.Execute(ctx, `CALL db.retrieveGraph({query: 'zephyrine', limit: 3, where: $w})
 			YIELD kind, node, relationship RETURN kind, coalesce(node.name, toString(relationship.n)) AS name`,
