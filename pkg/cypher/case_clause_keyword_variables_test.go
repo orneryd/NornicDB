@@ -90,3 +90,20 @@ func TestCaseAfterCaseIsReadByItsEnds(t *testing.T) {
 	require.False(t, caseKeywordAt("(CASE case WHEN 1 THEN case END)", 6, "CASE"))
 	require.True(t, caseKeywordAt("(CASE CASE WHEN a THEN 1 END WHEN 1 THEN 2 END)", 6, "CASE"))
 }
+
+// A clause inside a subquery within a CASE still starts there, so a scanner
+// of the whole text (the graph-access check) sees COLLECT { MATCH … }; and a
+// variable named case takes a label test (case IS Person) (#1162).
+func TestCaseKeywordRulesKeepTheirScope(t *testing.T) {
+	require.True(t, statementAccessesGraphText("RETURN CASE WHEN true THEN COLLECT { MATCH (n) RETURN n } ELSE [] END AS v"))
+	require.False(t, insideCaseBlock("RETURN CASE WHEN true THEN COLLECT { MATCH (n) RETURN n } ELSE [] END AS v", len("RETURN CASE WHEN true THEN COLLECT { ")))
+	require.True(t, insideCaseBlock("RETURN CASE match WHEN 1 THEN match END AS v", len("RETURN CASE ")))
+
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "case_label_test"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:Person)", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(ctx, "MATCH (n:Person) WITH n AS case RETURN case IS Person AS v", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{true}}, result.Rows)
+}

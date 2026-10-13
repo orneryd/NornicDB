@@ -228,12 +228,32 @@ func splitAtOperator(expr, op string, idx int) (string, string, bool) {
 }
 
 // insideCaseBlock reports whether s[at] is inside a CASE … END block that an
-// END closes, for the scanners that read a keyword there as a name (#1162).
-// A CASE without an END (the word case read as the keyword, as in WITH case
-// WHERE …) encloses nothing, so it can't swallow the clauses after it.
+// END closes, at the block's own level, for the scanners that read a keyword
+// there as a name (#1162). A CASE without an END (the word case read as the
+// keyword, as in WITH case WHERE …) encloses nothing, so it can't swallow the
+// clauses after it; and inside a bracket or a subquery's braces within the
+// block (THEN COLLECT { MATCH … }) a clause can start, so nothing there is
+// the block's.
 func insideCaseBlock(s string, at int) bool {
 	end := enclosingCaseBlockEnd(s, at)
-	return end >= 2 && caseKeywordAt(s, end-2, "END")
+	return end >= 2 && caseKeywordAt(s, end-2, "END") && bracketDepthAt(s, at) == 0
+}
+
+// bracketDepthAt is the number of brackets, parentheses and braces open at
+// s[at], outside quotes and backtick names.
+func bracketDepthAt(s string, at int) int {
+	depth := 0
+	for i := 0; i < at && i < len(s); i++ {
+		switch c := s[i]; c {
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(s, i, c) - 1
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+		}
+	}
+	return depth
 }
 
 // enclosingCaseBlockEnd returns the index of the last byte of the END that
