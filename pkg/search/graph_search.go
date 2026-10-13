@@ -230,9 +230,11 @@ func (s *Service) rerankGraphPool(ctx context.Context, query string, pool []*gra
 		return pool, SearchFallbackRerankFailed, false
 	}
 	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].FinalScore > ranked[j].FinalScore })
-	// Nearly identical scores (one candidate's included) keep the fused
-	// order, as the node rerank keeps the RRF order (rerank_scores_flat).
-	if len(ranked) > 0 && ranked[0].FinalScore-ranked[len(ranked)-1].FinalScore < 0.05 {
+	// Nearly identical scores keep the fused order, as the node rerank keeps
+	// the RRF order (rerank_scores_flat), and so does a single candidate's
+	// score; a single score left of several candidates is the reranker's
+	// filtering (its minimum score or top K), which is kept.
+	if rerankScoresFlat(len(ranked), len(candidates), func() float64 { return ranked[0].FinalScore - ranked[len(ranked)-1].FinalScore }) {
 		return pool, SearchFallbackRerankScoresFlat, false
 	}
 	ordered = make([]*graphCandidate, 0, len(pool))

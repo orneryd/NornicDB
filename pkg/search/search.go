@@ -6848,7 +6848,7 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 			}
 		}
 	}
-	if scoreMax-scoreMin < minScoreRange {
+	if rerankScoresFlat(len(reranked), len(candidates)+memoHits, func() float64 { return scoreMax - scoreMin }) {
 		s.logPrintf("ℹ️ Reranking produced nearly identical scores (range=%.4f); using RRF order and scores", scoreMax-scoreMin)
 		return results, SearchFallbackRerankScoresFlat
 	}

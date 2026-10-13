@@ -72,9 +72,23 @@ func (s *Service) rerankCandidateContent(node *storage.Node, result rrfResult, q
 		return body
 	}
 	if body == "" {
-		return header
+		return boundedPrefix(header, maxChars)
 	}
-	return header + "\n" + body
+	return boundedPrefix(header+"\n"+body, maxChars)
+}
+
+// rerankScoresFlat reports a rerank whose order isn't used: no score
+// returned, scores within 0.05 of each other, or the one score of a single
+// candidate. A single score left of several candidates is the reranker's
+// own filtering, not a flat ranking. spread is the scores' range.
+func rerankScoresFlat(scores, candidates int, spread func() float64) bool {
+	if scores == 0 {
+		return true
+	}
+	if scores == 1 && candidates > 1 {
+		return false
+	}
+	return spread() < 0.05
 }
 
 func rerankContextProperties() []string {
