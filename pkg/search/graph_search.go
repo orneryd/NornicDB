@@ -2,7 +2,10 @@ package search
 
 import (
 	"context"
+	"slices"
 	"sort"
+	"strconv"
+	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -252,34 +255,89 @@ func (s *Service) rerankGraphPool(ctx context.Context, query string, pool []*gra
 }
 
 // graphRerankContent is the text a reranker sees for a graph candidate, read
-// from storage as the node rerank reads it: a node's rerank content
-// (rerankCandidateContent), or a relationship's keyword text, which reads
-// relationship search's property list (RelationshipFulltextProperties), so
-// no property outside it reaches the reranker. A hit's
-// own properties may be projected or absent (a hit found by a query chunk's
-// vector), so they serve only when the entity can't be read.
+// from storage as the node rerank reads it, and centred on what matched so a
+// late passage of a long text isn't cut off (I67):
+//   - a node: rerankCandidateContent around its best chunk, or, without the
+//     chunk texts kept, a window around that chunk's span;
+//   - a relationship: a window around its best chunk's span (or its first
+//     term match) in a property on relationship search's list, otherwise its
+//     keyword text (RelationshipFulltextProperties); no property outside
+//     that list reaches the reranker.
+//
+// The budget counts characters, not bytes.
 func (s *Service) graphRerankContent(result *SearchResult, query string, maxChars int) string {
-	text := ""
+	match := graphBestMatch(result)
 	if relationship := result.Relationship; relationship != nil {
-		if edge, err := s.engine.GetEdge(relationship.ID); err == nil && edge != nil {
-			text = s.relationshipSearchableText(edge)
-		} else {
-			text = s.relationshipSearchableText(relationship)
+		edge := relationship
+		if stored, err := s.engine.GetEdge(relationship.ID); err == nil && stored != nil {
+			edge = stored
 		}
-	} else {
-		id := result.NodeID
-		if id == "" {
-			id = storage.NodeID(result.ID)
+		if match != nil && s.relationshipPropertyListed(match.Property) {
+			if passage := graphPassage(edge.Properties, match, maxChars); passage != "" {
+				return passage
+			}
 		}
-		if node, err := s.getNodeWithoutEmbeddings(id); err == nil && node != nil {
-			return s.rerankCandidateContent(node, rrfResult{ID: string(id)}, query, maxChars)
-		}
-		text = s.extractSearchableText(graphCandidateTextNode(result))
+		return boundedPrefix(s.relationshipSearchableText(edge), maxChars)
 	}
-	if maxChars > 0 && len(text) > maxChars {
-		text = text[:maxChars]
+	id := result.NodeID
+	if id == "" {
+		id = storage.NodeID(result.ID)
 	}
-	return text
+	if node, err := s.getNodeWithoutEmbeddings(id); err == nil && node != nil {
+		matched := rrfResult{ID: string(id)}
+		if match != nil && match.Kind == SearchMatchChunk {
+			if len(managedChunkTexts(s.hitEmbedMeta(node))) > match.Chunk {
+				matched.MatchID = string(id) + "-chunk-" + strconv.Itoa(match.Chunk)
+			} else if passage := graphPassage(node.Properties, match, maxChars); passage != "" {
+				return passage
+			}
+		}
+		return s.rerankCandidateContent(node, matched, query, maxChars)
+	}
+	return boundedPrefix(s.extractSearchableText(graphCandidateTextNode(result)), maxChars)
+}
+
+// graphBestMatch is a candidate's best chunk match, else its first term
+// match with a place, else nil; matches come best first.
+func graphBestMatch(result *SearchResult) *SearchMatch {
+	for index := range result.Matches {
+		if result.Matches[index].Kind == SearchMatchChunk {
+			return &result.Matches[index]
+		}
+	}
+	for index := range result.Matches {
+		if result.Matches[index].Property != "" {
+			return &result.Matches[index]
+		}
+	}
+	return nil
+}
+
+// graphPassage is the window of properties[match.Property] around the
+// match's span, within maxChars characters; "" when the match has no place
+// in a string property.
+func graphPassage(properties map[string]any, match *SearchMatch, maxChars int) string {
+	if match == nil || match.Property == "" || match.End <= match.Start {
+		return ""
+	}
+	value, ok := properties[match.Property].(string)
+	if !ok || match.Start >= utf8.RuneCountInString(value) {
+		return ""
+	}
+	return boundedWindow(value, byteOffsetAfterChars(value, 0, match.Start), maxChars)
+}
+
+// relationshipPropertyListed reports whether relationship search's keyword
+// list admits property (every property when the list is empty).
+func (s *Service) relationshipPropertyListed(property string) bool {
+	if property == "" {
+		return false
+	}
+	listed := s.RelationshipFulltextProperties()
+	if len(listed) == 0 {
+		return true
+	}
+	return slices.Contains(listed, property)
 }
 
 // graphCandidateTextNode is the node whose searchable text a result is read
