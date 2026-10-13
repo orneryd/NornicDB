@@ -25,6 +25,8 @@ func TestLabelTestOnAnExpression(t *testing.T) {
 		"MATCH ()-[r:R]->() RETURN endNode(r):!Doc AS v, startNode(r):Doc&Def AS w":                                                         {{true, false}},
 		"MATCH ()-[r:R]->() RETURN endNode(r):% AS v":                                                                                       {{true}},
 		"MATCH p = (:Doc)-[r:R]->() RETURN head(relationships(p)):% AS v, head([]):% AS w":                                                  {{true, nil}},
+		"MATCH ()-[r:R]->() RETURN endNode(r) : Def AS v, endNode(r)  :Def|Doc AS w":                                                        {{true, true}},
+		"MATCH ()-[r:R]->() RETURN endNode(r):`%` AS v, endNode(r):% AS w":                                                                  {{false, true}},
 		"RETURN head([]):Def AS v":                                                                                                          {{nil}},
 		"MATCH p = (:Doc)-[r:R]->() RETURN head(relationships(p)):R AS v, last(nodes(p)):Def|Doc AS w":                                      {{true, true}},
 		"MATCH (a:Doc {id: 'a'})-[r:R]-(t) WHERE endNode(r):Def RETURN t.id AS v":                                                           {{"d"}},
@@ -52,7 +54,9 @@ func TestLabelTestOnAnExpression(t *testing.T) {
 // element predicate (#1181).
 func TestExpressionLabelTestRewriterEdges(t *testing.T) {
 	require.True(t, mayTestExpressionLabels("RETURN f(x)::INTEGER, g(y):A"))
+	require.True(t, mayTestExpressionLabels("RETURN f(x) : A"))
 	require.False(t, mayTestExpressionLabels("RETURN f(x)::INTEGER"))
+	require.False(t, mayTestExpressionLabels("RETURN f(x) AS v"))
 
 	dynamic := &labelExpression{kind: labelExpressionDynamic, expression: "$names"}
 	require.Equal(t, dynamicLabelTestFunction+"((f(x)), ($names), false)", dynamic.entityPredicate("f(x)"))

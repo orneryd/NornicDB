@@ -133,18 +133,23 @@ func applyLabelRewriteEdits(query string, edits []labelRewriteEdit, verbatimColu
 }
 
 // mayTestExpressionLabels reports whether query may hold a colon label test
-// on a call or parenthesized expression, endNode(r):Def (#1181): a colon
-// right after a closing parenthesis, not the type cast ::.
+// on a call or parenthesized expression, endNode(r):Def or endNode(r) : Def
+// (#1181): a colon after a closing parenthesis and any whitespace, not the
+// type cast ::.
 func mayTestExpressionLabels(query string) bool {
-	for i := strings.Index(query, "):"); i >= 0; {
-		if i+2 >= len(query) || query[i+2] != ':' {
+	for i := strings.IndexByte(query, ')'); i >= 0; {
+		j := i + 1
+		for j < len(query) && isASCIISpace(query[j]) {
+			j++
+		}
+		if j < len(query) && query[j] == ':' && (j+1 >= len(query) || query[j+1] != ':') {
 			return true
 		}
-		next := strings.Index(query[i+2:], "):")
+		next := strings.IndexByte(query[i+1:], ')')
 		if next < 0 {
 			return false
 		}
-		i += 2 + next
+		i += 1 + next
 	}
 	return false
 }
@@ -1562,8 +1567,8 @@ func (r *labelExpressionRewriter) expressionLabelTest(subjectStart, open, close,
 	}
 	after := close + 1
 	chainStart := -1
-	if after < end && q[after] == ':' && (after+1 >= end || q[after+1] != ':') {
-		chainStart = after + 1
+	if colon := skipASCIISpaces(q, after, end); colon < end && q[colon] == ':' && (colon+1 >= end || q[colon+1] != ':') {
+		chainStart = skipASCIISpaces(q, colon+1, end)
 	} else if is := skipASCIISpaces(q, after, end); is > after && matchKeywordAt(q[:end], is, "IS") && isLabelIsKeyword(q[:end], is+2) {
 		label := skipASCIISpaces(q, is+2, end)
 		if matchKeywordAt(q[:end], label, "NOT") || matchKeywordAt(q[:end], label, "LABELED") {

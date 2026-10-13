@@ -378,7 +378,7 @@ func fnDynamicLabelTest(ctx cypherfn.Context, args []string) (interface{}, error
 		return nil, err
 	}
 	any, _ := values[2].(bool)
-	if len(names) == 1 && names[0] == labelWildcardName {
+	if mode, ok := values[2].(string); ok && mode == labelWildcardMode {
 		// The wildcard label % (entityPredicate): a node with any label,
 		// any relationship.
 		switch entity := values[0].(type) {

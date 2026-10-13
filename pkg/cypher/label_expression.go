@@ -584,7 +584,7 @@ func (x *labelExpression) entityPredicate(subject string) string {
 	case labelExpressionName:
 		return dynamicLabelTestFunction + "((" + subject + "), " + cypherStringLiteral(x.name) + ", false)"
 	case labelExpressionAny:
-		return dynamicLabelTestFunction + "((" + subject + "), " + cypherStringLiteral(labelWildcardName) + ", false)"
+		return dynamicLabelTestFunction + "((" + subject + "), [], " + cypherStringLiteral(labelWildcardMode) + ")"
 	case labelExpressionDynamic:
 		return x.predicate("(" + subject + ")")
 	case labelExpressionNot:
@@ -607,9 +607,11 @@ func (x *labelExpression) entityPredicate(subject string) string {
 	return "(" + strings.Join(parts, separator) + ")"
 }
 
-// labelWildcardName is the name entityPredicate gives the wildcard label %:
-// a node with any label, or any relationship.
-const labelWildcardName = "%"
+// labelWildcardMode is the mode entityPredicate gives the dynamic label test
+// for the wildcard label %: a node with any label, or any relationship. It
+// stands where the test's any flag does, so a label literally named % (`%`)
+// stays a name.
+const labelWildcardMode = "wildcard"
 
 // cypherStringLiteral quotes text as a Cypher string literal.
 func cypherStringLiteral(text string) string {
