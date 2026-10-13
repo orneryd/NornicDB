@@ -33,7 +33,7 @@ func validateKnownFunctions(expression string) error {
 			index = skipCalledName(expression, next)
 			continue
 		}
-		parts, cursor := dottedNameParts(expression, next)
+		parts, cursor := dottedNameParts(expression, next, false)
 		name += parts
 		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
 			cursor++
@@ -97,21 +97,29 @@ func skipCalledName(expression string, start int) int {
 	if !ok {
 		return start
 	}
-	_, end = dottedNameParts(expression, end)
+	_, end = dottedNameParts(expression, end, true)
 	return end
 }
 
 // dottedNameParts returns the dotted parts (.b.c) following a name that ends
-// at end, and where they end. Whitespace may stand around a dot, as in
-// Neo4j (date . truncate(…), USE graph . byName(…)).
-func dottedNameParts(expression string, end int) (string, int) {
+// at end, and where they end. Each name is read as the code that runs it
+// reads it: whitespace may stand around a dot only when spaced is set, for a
+// procedure or graph name (the USE parser accepts USE graph . byName(…));
+// the evaluators read a function name without it.
+func dottedNameParts(expression string, end int, spaced bool) (string, int) {
+	skip := func(index int) int {
+		if spaced {
+			return skipSpaces(expression, index)
+		}
+		return index
+	}
 	parts := ""
 	for {
-		dot := skipSpaces(expression, end)
+		dot := skip(end)
 		if dot >= len(expression) || expression[dot] != '.' {
 			return parts, end
 		}
-		part, partEnd, ok := scanIdentifierToken(expression, skipSpaces(expression, dot+1))
+		part, partEnd, ok := scanIdentifierToken(expression, skip(dot+1))
 		if !ok {
 			return parts, end
 		}

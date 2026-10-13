@@ -73,9 +73,9 @@ func TestUnknownFunctionFailsInEveryClause(t *testing.T) {
 				_, err := exec.Execute(ctx, query, nil)
 				require.NoError(t, err, query)
 			}
-			// A graph a USE names is no call, and a name's dots may be
-			// spaced (the check reads date . truncate as date.truncate).
-			for _, query := range []string{"USE graph.byName('x') RETURN 1", "USE graph . byName('x') RETURN 1", "RETURN date . truncate('day', date('2026-10-13')) AS d"} {
+			// A graph a USE names is no call, its dots spaced or not, as the
+			// USE parser reads it.
+			for _, query := range []string{"USE graph.byName('x') RETURN 1", "USE graph . byName('x') RETURN 1"} {
 				require.NoError(t, validateKnownFunctions(query), query)
 			}
 			// The statement's other semantic errors come first, as in Neo4j.
