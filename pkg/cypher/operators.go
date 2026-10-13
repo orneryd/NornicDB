@@ -122,6 +122,16 @@ func operatorMatchesAt(expr, op string, idx int, caseInsensitive bool) bool {
 	return true
 }
 
+// isSpacedKeywordOperator reports a logical keyword operator written with
+// its surrounding spaces (" AND ", " OR ", " XOR ").
+func isSpacedKeywordOperator(op string) bool {
+	switch strings.ToUpper(op) {
+	case " AND ", " OR ", " XOR ":
+		return true
+	}
+	return false
+}
+
 func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) int {
 	if len(op) == 0 || len(expr) < len(op) {
 		return -1
@@ -136,6 +146,7 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 	parenDepth := 0
 	bracketDepth := 0
 	braceDepth := 0
+	keyword := isSpacedKeywordOperator(op)
 
 	for i := 0; i <= len(expr)-len(op); i++ {
 		c := expr[i]
@@ -163,6 +174,11 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 					if i < len(expr)-1 && expr[i+1] == '~' {
 						continue
 					}
+				}
+				if keyword && caseOperandExpectedBefore(expr, i+1) {
+					// A word of the operator's name where an operand is
+					// expected is a variable (or > 1 AND or < 3).
+					continue
 				}
 				return i
 			}

@@ -383,7 +383,7 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 	// ([x] + CASE WHEN a OR b = c THEN [] END is a list, not a Boolean).
 	scan := maskCaseBlocks(expression)
 	for _, keyword := range []string{"OR", "XOR", "AND"} {
-		if index := topLevelKeywordIndex(scan, keyword); index > 0 {
+		if index := infixKeywordIndex(scan, keyword); index > 0 {
 			for _, side := range [2]string{expression[:index], expression[index+len(keyword):]} {
 				operand, err := checker.check(side)
 				if err != nil {
@@ -558,6 +558,25 @@ func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOp
 // block in expression (its CASE and END stay), so an operator inside one isn't
 // taken for one of the expression's own. Quoted text and a property named
 // case (n.case) are not blocks.
+// infixKeywordIndex is the first top-level occurrence of an infix keyword
+// (AND, OR, XOR) that follows a complete operand: a word of its name where
+// an operand is expected is a variable (or > 1 OR or < 3).
+func infixKeywordIndex(s, keyword string) int {
+	opts := defaultKeywordScanOpts()
+	opts.SkipBraces = true
+	for from := 0; from < len(s); {
+		index := keywordIndexFrom(s, keyword, from, opts)
+		if index < 0 {
+			return -1
+		}
+		if !caseOperandExpectedBefore(s, index) {
+			return index
+		}
+		from = index + len(keyword)
+	}
+	return -1
+}
+
 func maskCaseBlocks(expression string) string {
 	if !mayContainCaseKeyword(expression) {
 		return expression

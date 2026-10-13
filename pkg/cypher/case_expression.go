@@ -293,6 +293,17 @@ func caseOperandExpectedBefore(s string, i int) bool {
 		if s[j] == '>' && caseTypeParameterCloses(s, j) {
 			return false // LIST<INTEGER> completes a type, as in x IS :: LIST<INTEGER>
 		}
+		if s[j] == '%' {
+			// After a colon or a label expression symbol, % is the wildcard
+			// label (n:%), which completes an operand, not the modulo operator.
+			k := j - 1
+			for k >= 0 && isASCIISpace(s[k]) {
+				k--
+			}
+			if k >= 0 && strings.IndexByte(":|&!", s[k]) >= 0 {
+				return false
+			}
+		}
 		return strings.IndexByte("([{,=<>+-*/%^|", s[j]) >= 0
 	}
 	start := j
