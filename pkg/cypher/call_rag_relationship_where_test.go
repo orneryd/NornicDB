@@ -74,6 +74,12 @@ func TestRetrieveWhereFiltersRelationshipCandidates(t *testing.T) {
 		CALL (scope) { CALL db.retrieveRelationships({query: 'zephyrine', limit: 2, where: 'start.id IN scope'}) YIELD relationship RETURN relationship.n AS n }
 		RETURN n`, nil))
 
+	// A correlated Fabric record's bindings, as a node candidate has them.
+	exec.fabricRecordBindings = map[string]interface{}{"scope": []interface{}{"in1"}}
+	require.Equal(t, []int64{1001, 1002}, numbers(
+		"CALL db.retrieveRelationships({query: 'zephyrine', limit: 2, where: 'start.id IN scope'}) YIELD relationship RETURN relationship.n", nil))
+	exec.fabricRecordBindings = nil
+
 	// One predicate over both kinds in db.retrieveGraph.
 	for _, where := range []string{
 		"CASE WHEN node IS NOT NULL THEN relationship IS NULL AND start IS NULL AND node.current ELSE start.id IN $ids AND relationship.n > 1000 END",
