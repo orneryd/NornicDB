@@ -14,7 +14,7 @@ import (
 // GDS 2.13's names, arguments and values. NornicDB's own
 // gds.linkPrediction.*.stream procedures stay as extensions.
 func init() {
-	for name, score := range map[string]func(a, b gdsNeighborhood, degree func(storage.NodeID) int) float64{
+	for name, score := range map[string]func(a, b gdsNeighborhood, degrees map[storage.NodeID]int) float64{
 		"adamicadar":             gdsAdamicAdar,
 		"commonneighbors":        gdsCommonNeighbors,
 		"preferentialattachment": gdsPreferentialAttachment,
@@ -26,11 +26,35 @@ func init() {
 	cypherfn.Register("gds.alpha.linkprediction.samecommunity", fnGDSSameCommunity)
 	cypherfn.Register("gds.util.asnode", fnGDSAsNode)
 	cypherfn.Register("gds.util.asnodes", fnGDSAsNodes)
-	cypherfn.Register("gds.util.nan", func(cypherfn.Context, []string) (interface{}, error) { return math.NaN(), nil })
-	cypherfn.Register("gds.util.infinity", func(cypherfn.Context, []string) (interface{}, error) { return math.Inf(1), nil })
+	cypherfn.Register("gds.util.nan", gdsConstant("gds.util.NaN", math.NaN()))
+	cypherfn.Register("gds.util.infinity", gdsConstant("gds.util.infinity", math.Inf(1)))
 	cypherfn.Register("gds.util.isfinite", fnGDSIsFinite(true))
 	cypherfn.Register("gds.util.isinfinite", fnGDSIsFinite(false))
-	cypherfn.Register("gds.version", func(cypherfn.Context, []string) (interface{}, error) { return gdsVersion, nil })
+	cypherfn.Register("gds.version", gdsConstant("gds.version", gdsVersion))
+}
+
+// gdsConstant is a GDS function of no arguments that returns value.
+func gdsConstant(name string, value interface{}) cypherfn.Func {
+	return func(_ cypherfn.Context, args []string) (interface{}, error) {
+		if err := gdsArity(name, args, 0, 0); err != nil {
+			return nil, err
+		}
+		return value, nil
+	}
+}
+
+// gdsArity is Neo4j's parameter-count error for a GDS function called with
+// fewer than minimum or more than maximum arguments. An empty argument list
+// may arrive as one empty argument.
+func gdsArity(name string, args []string, minimum, maximum int) error {
+	count := len(args)
+	if count == 1 && strings.TrimSpace(args[0]) == "" {
+		count = 0
+	}
+	if count < minimum || count > maximum {
+		return &cypherfn.ParameterCountError{Function: name, TooMany: count > maximum}
+	}
+	return nil
 }
 
 // isGDSFunctionName reports whether a lower-cased name is one of GDS's
@@ -63,10 +87,10 @@ type gdsLinkConfig struct {
 	direction        string
 }
 
-func gdsLinkPrediction(name string, score func(a, b gdsNeighborhood, degree func(storage.NodeID) int) float64) cypherfn.Func {
+func gdsLinkPrediction(name string, score func(a, b gdsNeighborhood, degrees map[storage.NodeID]int) float64) cypherfn.Func {
 	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
-		if len(args) < 2 || len(args) > 3 {
-			return nil, fmt.Errorf("%s takes two nodes and an optional config map", name)
+		if err := gdsArity(name, args, 2, 3); err != nil {
+			return nil, err
 		}
 		values, err := evalArgs(ctx, args)
 		if err != nil {
@@ -80,11 +104,28 @@ func gdsLinkPrediction(name string, score func(a, b gdsNeighborhood, degree func
 		if err != nil {
 			return nil, err
 		}
-		degree := func(id storage.NodeID) int { return gdsNeighbors(ctx.Storage, id, config).degree }
-		left, right := gdsNeighbors(ctx.Storage, first.ID, config), gdsNeighbors(ctx.Storage, second.ID, config)
+		left, err := gdsNeighbors(ctx.Storage, first.ID, config)
+		if err != nil {
+			return nil, err
+		}
+		right, err := gdsNeighbors(ctx.Storage, second.ID, config)
+		if err != nil {
+			return nil, err
+		}
 		// A node and itself share no neighbours, as GDS scores them.
 		left.same = first.ID == second.ID
-		value := score(left, right, degree)
+		// The common neighbours' degrees, for Adamic-Adar and resource
+		// allocation; a failed read is the statement's error, not an empty
+		// neighbourhood.
+		degrees := map[storage.NodeID]int{}
+		for _, id := range gdsCommon(left, right) {
+			neighbors, err := gdsNeighbors(ctx.Storage, id, config)
+			if err != nil {
+				return nil, err
+			}
+			degrees[id] = neighbors.degree
+		}
+		value := score(left, right, degrees)
 		if value == 0 {
 			value = 0 // not -0, from 1/log(0)
 		}
@@ -135,11 +176,12 @@ func gdsLinkPredictionConfig(name string, values []interface{}) (gdsLinkConfig, 
 	return config, nil
 }
 
-// gdsNeighbors returns a node's neighbourhood under config.
-func gdsNeighbors(store storage.Engine, id storage.NodeID, config gdsLinkConfig) gdsNeighborhood {
+// gdsNeighbors returns a node's neighbourhood under config, or the error a
+// read of its relationships gives.
+func gdsNeighbors(store storage.Engine, id storage.NodeID, config gdsLinkConfig) (gdsNeighborhood, error) {
 	neighbors := gdsNeighborhood{nodes: map[storage.NodeID]struct{}{}}
 	if store == nil {
-		return neighbors
+		return neighbors, nil
 	}
 	add := func(edges []*storage.Edge, outgoing bool) {
 		for _, edge := range edges {
@@ -163,14 +205,20 @@ func gdsNeighbors(store storage.Engine, id storage.NodeID, config gdsLinkConfig)
 		}
 	}
 	if config.direction != "INCOMING" {
-		edges, _ := store.GetOutgoingEdges(id)
+		edges, err := store.GetOutgoingEdges(id)
+		if err != nil {
+			return neighbors, err
+		}
 		add(edges, true)
 	}
 	if config.direction == "BOTH" || config.direction == "INCOMING" {
-		edges, _ := store.GetIncomingEdges(id)
+		edges, err := store.GetIncomingEdges(id)
+		if err != nil {
+			return neighbors, err
+		}
 		add(edges, false)
 	}
-	return neighbors
+	return neighbors, nil
 }
 
 func gdsCommon(a, b gdsNeighborhood) []storage.NodeID {
@@ -186,11 +234,11 @@ func gdsCommon(a, b gdsNeighborhood) []storage.NodeID {
 	return common
 }
 
-func gdsCommonNeighbors(a, b gdsNeighborhood, _ func(storage.NodeID) int) float64 {
+func gdsCommonNeighbors(a, b gdsNeighborhood, _ map[storage.NodeID]int) float64 {
 	return float64(len(gdsCommon(a, b)))
 }
 
-func gdsTotalNeighbors(a, b gdsNeighborhood, _ func(storage.NodeID) int) float64 {
+func gdsTotalNeighbors(a, b gdsNeighborhood, _ map[storage.NodeID]int) float64 {
 	union := len(a.nodes)
 	for id := range b.nodes {
 		if _, counted := a.nodes[id]; !counted {
@@ -200,22 +248,22 @@ func gdsTotalNeighbors(a, b gdsNeighborhood, _ func(storage.NodeID) int) float64
 	return float64(union)
 }
 
-func gdsPreferentialAttachment(a, b gdsNeighborhood, _ func(storage.NodeID) int) float64 {
+func gdsPreferentialAttachment(a, b gdsNeighborhood, _ map[storage.NodeID]int) float64 {
 	return float64(a.degree * b.degree)
 }
 
-func gdsAdamicAdar(a, b gdsNeighborhood, degree func(storage.NodeID) int) float64 {
+func gdsAdamicAdar(a, b gdsNeighborhood, degrees map[storage.NodeID]int) float64 {
 	score := 0.0
 	for _, id := range gdsCommon(a, b) {
-		score += 1 / math.Log(float64(degree(id)))
+		score += 1 / math.Log(float64(degrees[id]))
 	}
 	return score
 }
 
-func gdsResourceAllocation(a, b gdsNeighborhood, degree func(storage.NodeID) int) float64 {
+func gdsResourceAllocation(a, b gdsNeighborhood, degrees map[storage.NodeID]int) float64 {
 	score := 0.0
 	for _, id := range gdsCommon(a, b) {
-		score += 1 / float64(degree(id))
+		score += 1 / float64(degrees[id])
 	}
 	return score
 }
@@ -225,8 +273,8 @@ func gdsResourceAllocation(a, b gdsNeighborhood, degree func(storage.NodeID) int
 // with the same value, else 0.0.
 func fnGDSSameCommunity(ctx cypherfn.Context, args []string) (interface{}, error) {
 	const name = "gds.alpha.linkprediction.sameCommunity"
-	if len(args) < 2 || len(args) > 3 {
-		return nil, fmt.Errorf("%s takes two nodes and an optional community property", name)
+	if err := gdsArity(name, args, 2, 3); err != nil {
+		return nil, err
 	}
 	values, err := evalArgs(ctx, args)
 	if err != nil {
@@ -255,8 +303,8 @@ func fnGDSSameCommunity(ctx cypherfn.Context, args []string) (interface{}, error
 // fnGDSAsNode is gds.util.asNode(nodeId): the node with that id, as the
 // gds.* procedures return it, or null.
 func fnGDSAsNode(ctx cypherfn.Context, args []string) (interface{}, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("gds.util.asNode takes one node id")
+	if err := gdsArity("gds.util.asNode", args, 1, 1); err != nil {
+		return nil, err
 	}
 	values, err := evalArgs(ctx, args)
 	if err != nil {
@@ -268,8 +316,8 @@ func fnGDSAsNode(ctx cypherfn.Context, args []string) (interface{}, error) {
 // fnGDSAsNodes is gds.util.asNodes(nodeIds): the nodes with those ids, in
 // order, without the ids no node has.
 func fnGDSAsNodes(ctx cypherfn.Context, args []string) (interface{}, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("gds.util.asNodes takes a list of node ids")
+	if err := gdsArity("gds.util.asNodes", args, 1, 1); err != nil {
+		return nil, err
 	}
 	values, err := evalArgs(ctx, args)
 	if err != nil || values[0] == nil {
@@ -303,9 +351,13 @@ func gdsNodeByID(store storage.Engine, value interface{}) interface{} {
 // finite number, isInfinite for anything else (±Infinity, NaN, null), as in
 // GDS.
 func fnGDSIsFinite(finite bool) cypherfn.Func {
+	name := "gds.util.isInfinite"
+	if finite {
+		name = "gds.util.isFinite"
+	}
 	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
-		if len(args) != 1 {
-			return nil, fmt.Errorf("gds.util.isFinite and gds.util.isInfinite take one number")
+		if err := gdsArity(name, args, 1, 1); err != nil {
+			return nil, err
 		}
 		values, err := evalArgs(ctx, args)
 		if err != nil {

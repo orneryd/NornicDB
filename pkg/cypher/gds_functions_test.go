@@ -131,21 +131,24 @@ func TestGDSFunctionArgumentErrors(t *testing.T) {
 		values []interface{}
 		err    string
 	}{
-		{"gds.alpha.linkprediction.commonNeighbors", []interface{}{node}, "takes two nodes"},
+		{"gds.alpha.linkprediction.commonNeighbors", []interface{}{node}, "Insufficient parameters"},
 		{"gds.alpha.linkprediction.commonNeighbors", []interface{}{node, errArgument}, "argument failed"},
 		{"gds.alpha.linkprediction.commonNeighbors", []interface{}{"x", node}, "expects a node as argument 1"},
 		{"gds.alpha.linkprediction.commonNeighbors", []interface{}{node, node, int64(1)}, "expects a config map"},
 		{"gds.alpha.linkprediction.commonNeighbors", []interface{}{node, node, map[string]interface{}{"relationshipQuery": int64(1)}}, "relationshipQuery must be"},
 		{"gds.alpha.linkprediction.commonNeighbors", []interface{}{node, node, map[string]interface{}{"direction": int64(1)}}, "direction must be"},
-		{"gds.alpha.linkprediction.sameCommunity", []interface{}{node}, "takes two nodes"},
+		{"gds.alpha.linkprediction.sameCommunity", []interface{}{node}, "Insufficient parameters"},
 		{"gds.alpha.linkprediction.sameCommunity", []interface{}{node, errArgument}, "argument failed"},
 		{"gds.alpha.linkprediction.sameCommunity", []interface{}{node, node, int64(1)}, "expects a property name"},
-		{"gds.util.asnode", nil, "takes one node id"},
+		{"gds.util.asnode", nil, "Insufficient parameters"},
 		{"gds.util.asnode", []interface{}{errArgument}, "argument failed"},
-		{"gds.util.asnodes", []interface{}{nil, nil}, "takes a list"},
+		{"gds.util.asnodes", []interface{}{nil, nil}, "Too many parameters"},
 		{"gds.util.asnodes", []interface{}{errArgument}, "argument failed"},
 		{"gds.util.asnodes", []interface{}{int64(1)}, "expects a list of node ids"},
-		{"gds.util.isfinite", nil, "take one number"},
+		{"gds.util.isfinite", nil, "Insufficient parameters"},
+		{"gds.version", []interface{}{int64(1)}, "Too many parameters"},
+		{"gds.util.nan", []interface{}{int64(1)}, "Too many parameters"},
+		{"gds.util.infinity", []interface{}{int64(1)}, "Too many parameters"},
 		{"gds.util.isfinite", []interface{}{errArgument}, "argument failed"},
 		{"gds.util.isinfinite", []interface{}{"x"}, "expected a number"},
 	} {
@@ -167,4 +170,77 @@ func TestGDSFunctionArgumentErrors(t *testing.T) {
 	value, err = call("gds.util.asnodes", nil)
 	require.NoError(t, err)
 	require.Nil(t, value)
+}
+
+// failingEdgeEngine fails the relationship reads a test switches on.
+type failingEdgeEngine struct {
+	storage.Engine
+	failOutgoing, failIncoming bool
+	// only limits the failures to one node's reads, when set.
+	only storage.NodeID
+}
+
+var errEdgeRead = errors.New("edge read failed")
+
+func (e *failingEdgeEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+	if e.failOutgoing && (e.only == "" || e.only == id) {
+		return nil, errEdgeRead
+	}
+	return e.Engine.GetOutgoingEdges(id)
+}
+
+func (e *failingEdgeEngine) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+	if e.failIncoming && (e.only == "" || e.only == id) {
+		return nil, errEdgeRead
+	}
+	return e.Engine.GetIncomingEdges(id)
+}
+
+// A failed relationship read, in either direction, is the statement's error,
+// not an empty neighbourhood.
+func TestGDSLinkPredictionReportsFailedReads(t *testing.T) {
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "gds_failed_reads")
+	for _, id := range []storage.NodeID{"a", "b", "c"} {
+		_, err := store.CreateNode(&storage.Node{ID: id})
+		require.NoError(t, err)
+	}
+	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "K"}))
+	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "bc", StartNode: "b", EndNode: "c", Type: "K"}))
+	a, err := store.GetNode("a")
+	require.NoError(t, err)
+	b, err := store.GetNode("b")
+	require.NoError(t, err)
+	engine := &failingEdgeEngine{Engine: store}
+	call := func(name string) (interface{}, error) {
+		values := []interface{}{a, b}
+		value, _, err := cypherfn.EvaluateFunction(name, []string{"0", "1"}, cypherfn.Context{Storage: engine, Eval: func(expression string) (interface{}, error) {
+			index, _ := strconv.Atoi(expression)
+			return values[index], nil
+		}})
+		return value, err
+	}
+	value, err := call("gds.alpha.linkprediction.adamicAdar")
+	require.NoError(t, err)
+	require.InDelta(t, 1/math.Log(2), value, 1e-12)
+	// Each direction, and each node read: the first, the second, a common
+	// neighbour (whose degree Adamic-Adar reads).
+	for _, failure := range []struct {
+		outgoing, incoming bool
+		only               storage.NodeID
+		name               string
+	}{
+		{true, false, "", "gds.alpha.linkprediction.commonNeighbors"},
+		{false, true, "", "gds.alpha.linkprediction.commonNeighbors"},
+		{true, false, "b", "gds.alpha.linkprediction.commonNeighbors"},
+		{false, true, "c", "gds.alpha.linkprediction.adamicAdar"},
+	} {
+		engine.failOutgoing, engine.failIncoming, engine.only = failure.outgoing, failure.incoming, failure.only
+		_, err := call(failure.name)
+		require.ErrorIs(t, err, errEdgeRead, "%+v", failure)
+	}
+
+	// An empty argument list may arrive as one empty argument.
+	value, _, err = cypherfn.EvaluateFunction("gds.version", []string{""}, cypherfn.Context{Eval: func(string) (interface{}, error) { return nil, nil }})
+	require.NoError(t, err)
+	require.Equal(t, gdsVersion, value)
 }
