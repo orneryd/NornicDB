@@ -256,6 +256,21 @@ with `kind`, `node` or `relationship` with `start` / `end`, the scores and
 as `db.rretrieve`'s pages are read. It can't be continued: `qid`, `discard`,
 `mode`, `groupBy` and `rankedLimit` are errors.
 
+In `db.retrieveGraph` and `db.retrieveRelationships`, `where` is checked on
+relationship candidates too, before `limit`: the candidate is bound as
+`relationship` and its endpoints as `start` and `end` (null when not visible),
+with the statement's parameters and the calling row's variables. One
+predicate serves both kinds: for a node candidate `relationship`, `start` and
+`end` are null, for a relationship candidate `node` is null.
+
+```cypher
+CALL db.retrieveGraph({query: $q, limit: 10, where: '
+  (node IS NOT NULL AND node.current <> false)
+  OR (relationship IS NOT NULL AND start.id IN $ids AND end.id IN $ids)'})
+YIELD kind, node, relationship
+RETURN kind, coalesce(node.title, type(relationship))
+```
+
 ## Durable search continuation
 
 ```cypher

@@ -240,7 +240,9 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	}
 	// where: a Cypher predicate on each candidate, bound as node, with the
 	// statement's parameters: a missing property, a negation or a pattern
-	// from the node. It is checked before the
+	// from the node. db.retrieveGraph and db.retrieveRelationships check it on
+	// relationship candidates too, bound as relationship with endpoints start
+	// and end. It is checked before the
 	// limit; later continuation pages check it too, so it keeps the
 	// statement's values but not its cancellation.
 	if raw, present := req["where"]; present && raw != nil {
@@ -254,6 +256,16 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 				return nil, err
 			}
 			opts.Where = e.compileNodeWhereFilter(context.WithoutCancel(ctx), "node", where)
+			if opts.Graph || opts.Relationships {
+				// One predicate serves both kinds: a node candidate reads
+				// relationship, start and end as null, a relationship
+				// candidate reads node as null.
+				whereCtx := context.WithoutCancel(ctx)
+				nodeScope := valueBindingsLayer(whereCtx, 3)
+				nodeScope["relationship"], nodeScope["start"], nodeScope["end"] = nil, nil, nil
+				opts.Where = e.compileNodeWhereFilter(withValueBindings(whereCtx, nodeScope), "node", where)
+				opts.RelationshipWhere = e.compileRelationshipWhereFilter(whereCtx, where)
+			}
 		}
 	}
 	if minSim, ok := ragToFloat64(firstPresent(req, "minSimilarity", "min_similarity")); ok && (!failClosed || isFinite(minSim)) {

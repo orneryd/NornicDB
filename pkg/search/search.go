@@ -415,6 +415,12 @@ type SearchOptions struct {
 	// the options.
 	Where func(*storage.Node) bool
 
+	// RelationshipWhere admits a candidate relationship of a relationship or
+	// graph search, given its start and end nodes (nil when not visible), as
+	// Where does a node; nil admits every relationship. It is applied with
+	// the relationship types, before the limit.
+	RelationshipWhere func(edge *storage.Edge, start, end *storage.Node) bool
+
 	// MMR (Maximal Marginal Relevance) diversification
 	// When enabled, results are re-ranked to balance relevance with diversity
 	MMREnabled bool    // Enable MMR diversification (default: false)

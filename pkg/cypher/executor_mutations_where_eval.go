@@ -60,6 +60,33 @@ func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node,
 	return e.evaluateRowPredicate(ctx, whereClause, values)
 }
 
+// compileRelationshipWhereFilter compiles a retrieval's where for relationship
+// candidates: the candidate bound as relationship, its endpoints as start and
+// end (null when not visible) and node as null, with the statement's
+// parameters and the calling row's variables, as evaluateWhere binds them for
+// a node candidate.
+func (e *StorageExecutor) compileRelationshipWhereFilter(ctx context.Context, whereClause string) func(*storage.Edge, *storage.Node, *storage.Node) bool {
+	return func(edge *storage.Edge, start, end *storage.Node) bool {
+		values := pipelineNodeRow(ctx, "node", nil)
+		for name, value := range e.fabricRecordBindings {
+			values[name] = value
+		}
+		for name, value := range valueBindingsFromContext(ctx) {
+			values[name] = value
+		}
+		values["node"] = nil
+		values["relationship"] = edge
+		values["start"], values["end"] = nil, nil
+		if start != nil {
+			values["start"] = start
+		}
+		if end != nil {
+			values["end"] = end
+		}
+		return e.evaluateRowPredicate(ctx, whereClause, values)
+	}
+}
+
 func hasPrefixFold(s, prefix string) bool {
 	if len(s) < len(prefix) {
 		return false

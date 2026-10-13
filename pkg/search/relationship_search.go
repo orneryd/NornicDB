@@ -428,6 +428,13 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		limit = 10
 	}
 	depth := max(limit*5, 50)
+	if opts.RelationshipWhere != nil {
+		// A filter can reject any number of the best candidates: rank every
+		// relationship, so the admitted ones aren't cut behind them.
+		rs.mu.RLock()
+		depth = max(depth, len(rs.entries))
+		rs.mu.RUnlock()
+	}
 	rrfK := opts.RRFK
 	if rrfK <= 0 {
 		rrfK = 60
@@ -548,6 +555,18 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		}
 		if len(types) > 0 && !types[edge.Type] {
 			continue
+		}
+		if opts.RelationshipWhere != nil {
+			var start, end *storage.Node
+			if node, err := s.engine.GetNode(edge.StartNode); err == nil {
+				start = node
+			}
+			if node, err := s.engine.GetNode(edge.EndNode); err == nil {
+				end = node
+			}
+			if !opts.RelationshipWhere(edge, start, end) {
+				continue
+			}
 		}
 		properties := projection.apply(edge.Properties)
 		result := SearchResult{
