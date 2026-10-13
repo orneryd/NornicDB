@@ -142,3 +142,13 @@ func TestLinkPredictionReadsRelationshipTypesAndTargetNodes(t *testing.T) {
 		require.Error(t, err, bad)
 	}
 }
+
+// TestLinkPredictionGraphFailure: a graph that can't be built fails the call.
+func TestLinkPredictionGraphFailure(t *testing.T) {
+	exec := &StorageExecutor{}
+	args := []interface{}{map[string]interface{}{"sourceNode": "a"}}
+	_, err := exec.callGdsLinkPredictionCommonNeighbors(context.Background(), args)
+	require.Error(t, err)
+	_, err = exec.callGdsLinkPredictionPredict(context.Background(), args)
+	require.Error(t, err)
+}
