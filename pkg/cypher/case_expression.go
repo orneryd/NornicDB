@@ -290,6 +290,9 @@ func caseOperandExpectedBefore(s string, i int) bool {
 		return true
 	}
 	if !isIdentByte(s[j]) {
+		if s[j] == '>' && caseTypeParameterCloses(s, j) {
+			return false // LIST<INTEGER> completes a type, as in x IS :: LIST<INTEGER>
+		}
 		return strings.IndexByte("([{,=<>+-*/%^|", s[j]) >= 0
 	}
 	start := j
@@ -324,6 +327,42 @@ func caseOperandExpectedBefore(s string, i int) bool {
 		// Prefix keywords stand where an operand is expected, as a variable
 		// does: the word is the keyword unless what follows ends an operand.
 		return !casePrefixWordIsVariable(s, j+1)
+	}
+	return false
+}
+
+// caseTypeParameterCloses reports whether the > at s[j] closes a type's
+// parameter (LIST<INTEGER>, ARRAY<STRING>, ANY<INTEGER | STRING>, nested
+// ones too), not the greater-than operator: its matching < follows a type
+// constructor word.
+func caseTypeParameterCloses(s string, j int) bool {
+	depth := 0
+	for k := j; k >= 0; k-- {
+		switch s[k] {
+		case '>':
+			depth++
+		case '<':
+			depth--
+			if depth == 0 {
+				end := k
+				for end > 0 && isASCIISpace(s[end-1]) {
+					end--
+				}
+				start := end
+				for start > 0 && isIdentByte(s[start-1]) {
+					start--
+				}
+				switch lowerASCII(s[start:end]) {
+				case "list", "array", "any":
+					return true
+				}
+				return false
+			}
+		case '(', ')', '[', ']', '{', '}', '"', '\'':
+			if depth == 1 {
+				return false // not inside one type's brackets
+			}
+		}
 	}
 	return false
 }
@@ -385,6 +424,7 @@ func casePreviousWordIsCase(s string, i int) bool {
 // complete operand: the end of the text, a property access, an infix or
 // closing symbol, or THEN, ELSE, END and the infix keywords.
 func caseOperandEndsAt(s string, i int) bool {
+	start := i
 	for i < len(s) && isASCIISpace(s[i]) {
 		i++
 	}
@@ -392,7 +432,7 @@ func caseOperandEndsAt(s string, i int) bool {
 		return true
 	}
 	if !isIdentStartByte(s[i]) {
-		return strings.IndexByte(".=<>*/%^,)]}", s[i]) >= 0
+		return strings.IndexByte(".=<>*/%^,)]}", s[i]) >= 0 || caseBinaryOperatorAt(s, i) || (s[i] == '[' && i == start)
 	}
 	switch caseWordAt(s, i) {
 	case "then", "else", "end", "as", "and", "or", "xor", "is", "in", "contains", "starts", "ends":
@@ -424,6 +464,7 @@ func caseVariableNamedCase(s string, i int) bool {
 // property access, an infix symbol or keyword, or the WHEN that ends the
 // test (a WHEN itself followed by an operand).
 func caseSimpleTestContinuesAt(s string, i int) bool {
+	start := i
 	for i < len(s) && isASCIISpace(s[i]) {
 		i++
 	}
@@ -431,7 +472,7 @@ func caseSimpleTestContinuesAt(s string, i int) bool {
 		return false
 	}
 	if !isIdentStartByte(s[i]) {
-		return strings.IndexByte(".=<>*/%^", s[i]) >= 0
+		return strings.IndexByte(".=<>*/%^", s[i]) >= 0 || caseBinaryOperatorAt(s, i) || (s[i] == '[' && i == start)
 	}
 	switch word := caseWordAt(s, i); word {
 	case "and", "or", "xor", "is", "in", "contains", "starts", "ends":
@@ -442,6 +483,14 @@ func caseSimpleTestContinuesAt(s string, i int) bool {
 		return !caseOperandEndsAt(s, i+len(word))
 	}
 	return false
+}
+
+// caseBinaryOperatorAt reports a + or - at s[i] followed by space: the
+// binary operator, which continues an operand (case + 1), not a sign that
+// starts one (CASE -1 WHEN …). A [ right against the word before it is a
+// subscript (when[0]); after a space it may open a list (CASE WHEN [1] …).
+func caseBinaryOperatorAt(s string, i int) bool {
+	return (s[i] == '+' || s[i] == '-') && i+1 < len(s) && isASCIISpace(s[i+1])
 }
 
 // caseWordAt is the lower-case identifier word starting at s[i].

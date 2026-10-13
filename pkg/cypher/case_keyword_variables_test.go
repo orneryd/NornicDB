@@ -56,6 +56,22 @@ func TestCaseReadsVariablesNamedLikeItsKeywords(t *testing.T) {
 		}
 		require.Equal(t, want, result.Rows, statement)
 	}
+	// Review follow-ups: a binary operator or a subscript after such a
+	// variable, and a type predicate's generic type before THEN / AND.
+	for statement, want := range map[string][][]interface{}{
+		"WITH 1 AS case RETURN CASE WHEN case + 1 = 2 THEN 1 END AS r":            {{int64(1)}},
+		"WITH [1] AS when RETURN CASE when[0] WHEN 1 THEN 'ok' END AS r":          {{"ok"}},
+		"RETURN CASE WHEN [1] IS :: LIST<INTEGER> THEN 1 END AS r":                {{int64(1)}},
+		"RETURN CASE WHEN [1] IS :: LIST<INTEGER> AND true THEN 1 END AS r":       {{int64(1)}},
+		"RETURN CASE WHEN [[1]] IS :: LIST<LIST<INTEGER>> THEN 1 ELSE 0 END AS r": {{int64(1)}},
+		"RETURN CASE WHEN [1, 2] = [1, 2] THEN 'list' END AS r":                   {{"list"}},
+		"RETURN CASE -1 WHEN -1 THEN 'negative' END AS r":                         {{"negative"}},
+		"WITH 3 AS x RETURN CASE WHEN x > 2 THEN 'big' END AS r":                  {{"big"}},
+	} {
+		result, err := exec.Execute(ctx, statement, nil)
+		require.NoError(t, err, statement)
+		require.Equal(t, want, result.Rows, statement)
+	}
 	// CASE expressions without such variables, nested ones included, read as before.
 	for statement, want := range map[string][][]interface{}{
 		"RETURN CASE WHEN true THEN CASE WHEN false THEN 1 ELSE 2 END END AS r":              {{int64(2)}},
