@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A string written with a doubled quote ('it''s') is a SyntaxError however
+// A string written with a doubled quote ('it”s') is a SyntaxError however
 // often a statement of the same shape with one string ran before: the
 // syntax cache shares a verdict only between statements whose literals
 // differ, and a doubled quote is two literals, not an escaped one (#907).
