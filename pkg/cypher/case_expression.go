@@ -217,8 +217,9 @@ func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
 // (CASE, WHEN, THEN, ELSE, END) as a keyword, not a name that is the same
 // word: a property (n.end, m.when), a label or type (n:End), a parameter
 // ($end) or a map key ({end: 1}, followed by one colon; END :: INTEGER is a
-// type predicate on a CASE). Every scanner of the CASE grammar reads its
-// keywords through it.
+// type predicate on a CASE), or a variable named end where an operand is
+// expected (ELSE end.id END; see caseOperandExpectedBefore). Every scanner of
+// the CASE grammar reads its keywords through it.
 func caseKeywordAt(s string, i int, keyword string) bool {
 	if !matchKeywordAt(s, i, keyword) {
 		return false
@@ -229,11 +230,44 @@ func caseKeywordAt(s string, i int, keyword string) bool {
 			return false
 		}
 	}
+	if keyword == "END" && caseOperandExpectedBefore(s, i) {
+		return false
+	}
 	next := i + len(keyword)
 	for next < len(s) && isASCIISpace(s[next]) {
 		next++
 	}
 	return next >= len(s) || s[next] != ':' || (next+1 < len(s) && s[next+1] == ':')
+}
+
+// caseOperandExpectedBefore reports whether an operand, not an operator or
+// END, is expected at s[i]: at the start, after an opening bracket, a comma or
+// an operator, or after a keyword that takes an operand (WHEN, THEN, ELSE, AND,
+// IN, AS, …). END always follows a complete operand, so a word end there is a
+// variable, as Neo4j reads ELSE end.id END and ELSE end END.id.
+func caseOperandExpectedBefore(s string, i int) bool {
+	j := i - 1
+	for j >= 0 && isASCIISpace(s[j]) {
+		j--
+	}
+	if j < 0 {
+		return true
+	}
+	if !isIdentByte(s[j]) {
+		return strings.IndexByte("([{,=<>+-*/%^|", s[j]) >= 0
+	}
+	start := j
+	for start > 0 && isIdentByte(s[start-1]) {
+		start--
+	}
+	if start > 0 && (s[start-1] == '.' || s[start-1] == '$') {
+		return false
+	}
+	switch lowerASCII(s[start : j+1]) {
+	case "case", "when", "then", "else", "and", "or", "xor", "not", "in", "contains", "with", "where", "return", "as", "distinct":
+		return true
+	}
+	return false
 }
 
 func isCaseWordStart(expression string, index int) bool {
