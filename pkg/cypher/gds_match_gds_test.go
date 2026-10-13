@@ -85,7 +85,8 @@ func TestGraphProjectAsGDS(t *testing.T) {
 	_, err = run("CREATE (x:P {name:'x'})-[:K {weight: 3.0}]->(y:P {name:'y'}), (x)-[:K {weight: 5.0}]->(y)")
 	require.NoError(t, err)
 	require.Equal(t, int64(5), count("CALL gds.graph.project('none', 'P', 'K')"))
-	for aggregation, want := range map[string]float64{"SUM": 8, "MIN": 3, "MAX": 5, "SINGLE": 3, "COUNT": 2} {
+	// SINGLE keeps one of the parallel relationships' values, as GDS does.
+	for aggregation, wants := range map[string][]float64{"SUM": {8}, "MIN": {3}, "MAX": {5}, "SINGLE": {3, 5}, "COUNT": {2}} {
 		name := "agg" + aggregation
 		property := "weight"
 		if aggregation == "COUNT" {
@@ -105,8 +106,10 @@ func TestGraphProjectAsGDS(t *testing.T) {
 				continue
 			}
 			if value, ok := relationship.Properties[key]; ok && projection.nodeIndex[relationship.Source] >= 0 {
-				if value == want {
-					found = true
+				for _, want := range wants {
+					if value == want {
+						found = true
+					}
 				}
 			}
 		}

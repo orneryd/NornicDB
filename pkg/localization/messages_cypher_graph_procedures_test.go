@@ -22,9 +22,31 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresBuildGraphFailed(cause), "failed to build graph: forced graph failure"},
 		{CypherGraphProceduresSourceNodeRequired(), "sourceNode parameter required"},
 		{CypherGraphProceduresConfigValueOutOfRange("propertyRatio", "2", "[0.00, 1.00]"), "Value for `propertyRatio` was `2`, but must be within the range [0.00, 1.00]."},
+		{CypherGraphProceduresGraphAlreadyExists("g"), "A graph with name 'g' already exists."},
+		{CypherGraphProceduresNodeLabelsNotFound("P, Q"), "Invalid node projection, one or more labels not found: 'P, Q'"},
+		{CypherGraphProceduresRelationshipTypesNotFound("K|L"), "Invalid relationship projection, one or more relationship types not found: 'K|L'"},
+		{CypherGraphProceduresNodePropertiesNotFound("nope"), "Node properties not found: 'nope'"},
+		{CypherGraphProceduresRelationshipPropertiesNotFound("nope"), "Relationship properties not found: 'nope' (if you meant to count parallel relationships, use `property:'*'`)."},
+		{CypherGraphProceduresUnsupportedOrientation("FOO"), "Orientation `FOO` is not supported. Must be one of: [NATURAL, REVERSE, UNDIRECTED]."},
+		{CypherGraphProceduresUnsupportedAggregation("FOO"), "Aggregation `FOO` is not supported. Must be one of: [DEFAULT, NONE, SINGLE, SUM, MIN, MAX, COUNT]."},
+		{CypherGraphProceduresInvalidProjection("node", "java.lang.Long"), "Cannot construct a node projection out of a java.lang.Long"},
+		{CypherGraphProceduresConfigUnexpectedKey("bogus"), "Unexpected configuration key: bogus"},
+		{CypherGraphProceduresConfigValueMissing("embeddingDimension"), "No value specified for the mandatory configuration parameter `embeddingDimension`"},
+		{CypherGraphProceduresConfigValueType("topK", "Integer", "String"), "The value of `topK` must be of type `Integer` but was `String`."},
+		{CypherGraphProceduresConfigValueNegative("nodeSelfInfluence"), "The value of `nodeSelfInfluence` may not be negative."},
+		{CypherGraphProceduresIterationWeightType("x", "String"), "Iteration weights must be numbers, but found `x` of type `String`"},
+		{CypherGraphProceduresIterationWeightsEmpty(), "The value of `iterationWeights` must not be empty if `nodeSelfInfluence` is zero."},
+		{CypherGraphProceduresFeaturePropertiesRequired(), "When `propertyRatio` is non-zero, `featureProperties` may not be empty."},
+		{CypherGraphProceduresFeaturePropertiesMissing("['age']", "['P']", "[]"), "The feature properties ['age'] are not present for all requested labels. Requested labels: ['P']. Properties available on all requested labels: []"},
+		{CypherGraphProceduresFeaturePropertyInvalid("2", "age"), "Node with ID `2` has invalid feature property value `NaN` for property `age`"},
+		{CypherGraphProceduresWeightPropertyNotFound("nope", "['K']", "['weight']"), "Relationship weight property `nope` not found in relationship types ['K']. Properties existing on all relationship types: ['weight']"},
+		{CypherGraphProceduresRelationshipPropertyMissing("weight", "1", "2"), "Missing relationship property `weight` on relationship between nodes with ids `1` and `2`."},
+		{CypherGraphProceduresNodeLabelsNotInGraph("['Nope']", "['P']"), "Could not find the specified `nodeLabels` of ['Nope']. Available labels are ['P']."},
+		{CypherGraphProceduresRelationshipTypesNotInGraph("['Nope']", "['K']"), "Could not find the specified `relationshipTypes` of ['Nope']. Available relationship types are ['K']."},
+		{CypherGraphProceduresSourceNodeNotFound("x"), "sourceNode `x` does not exist in the graph"},
 	}
 
-	require.Len(t, testCases, 7)
+	require.Len(t, testCases, 29)
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {

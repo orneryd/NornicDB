@@ -92,13 +92,6 @@ func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResul
 	if err != nil {
 		return nil, err
 	}
-	projectionsMu.RLock()
-	_, exists := graphProjections[graphName]
-	projectionsMu.RUnlock()
-	if exists {
-		return nil, localizedError(localization.CypherGraphProceduresGraphAlreadyExists(graphName), nil)
-	}
-
 	projection, err := e.buildGraphProjection(graphName, nodeSpecs, relSpecs)
 	if err != nil {
 		return nil, err

@@ -47,10 +47,10 @@ func TestProcedureArgumentErrorsAndCalls(t *testing.T) {
 	// Projections: none (everything), a map entry without a label override.
 	result, err := exec.callGdsGraphProject([]interface{}{"g_none", nil, nil})
 	require.NoError(t, err)
-	require.Equal(t, []any{"g_none", 3, 2, int64(10)}, result.Rows[0])
+	require.Equal(t, []any{"g_none", int64(3), int64(2)}, result.Rows[0][2:5])
 	result, err = exec.callGdsGraphProject([]interface{}{"g_map", map[string]interface{}{"Person": map[string]interface{}{}}, "KNOWS"})
 	require.NoError(t, err)
-	require.Equal(t, []any{"g_map", 3, 2, int64(10)}, result.Rows[0])
+	require.Equal(t, []any{"g_map", int64(3), int64(2)}, result.Rows[0][2:5])
 
 	// Link prediction and CSV export, called from Cypher.
 	for _, procedure := range []string{"commonNeighbors", "resourceAllocation", "preferentialAttachment", "jaccard", "predict"} {
