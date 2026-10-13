@@ -359,6 +359,8 @@ RETURN community, collect(node.name) AS members
 ORDER BY size(members) DESC
 ```
 
+Louvain works as GDS's `gds.louvain` does over an undirected graph. Each level moves nodes, in the given order, to the neighbouring community with the best modularity gain until no move helps, then merges each community into one node. Levels repeat until nothing moves, up to 10 levels of 10 passes each. A config map's `weightProperty` (`{weightProperty: 'w'}`) weights the relationships. Community IDs are numbered 0, 1, … by each community's first node in the given order, so the same call gives the same IDs. Given the nodes in the same order, the communities match GDS's.
+
 ### Label propagation
 
 ```cypher
