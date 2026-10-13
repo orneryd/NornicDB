@@ -199,7 +199,10 @@ func (s *Service) rerankGraphPool(ctx context.Context, query string, pool []*gra
 	s.mu.RLock()
 	reranker := s.reranker
 	s.mu.RUnlock()
-	if reranker == nil || !reranker.Enabled() {
+	// An empty pool has nothing to rerank, and no reason to report: a query
+	// chunk that matched nothing doesn't make the search's rerank fail, as
+	// in the node rerank (applyStage2Rerank).
+	if len(pool) == 0 || reranker == nil || !reranker.Enabled() {
 		return pool, SearchFallbackNone, false
 	}
 	top := len(pool)
@@ -210,10 +213,7 @@ func (s *Service) rerankGraphPool(ctx context.Context, query string, pool []*gra
 	byKey := make(map[string]*graphCandidate, top)
 	candidates := make([]RerankCandidate, 0, top)
 	for _, candidate := range pool[:top] {
-		text := s.extractSearchableText(graphCandidateTextNode(&candidate.result))
-		if maxChars > 0 && len(text) > maxChars {
-			text = text[:maxChars]
-		}
+		text := s.graphRerankContent(&candidate.result, query, maxChars)
 		if text == "" {
 			continue
 		}
@@ -230,7 +230,9 @@ func (s *Service) rerankGraphPool(ctx context.Context, query string, pool []*gra
 		return pool, SearchFallbackRerankFailed, false
 	}
 	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].FinalScore > ranked[j].FinalScore })
-	if len(ranked) > 1 && ranked[0].FinalScore-ranked[len(ranked)-1].FinalScore < 0.05 {
+	// Nearly identical scores (one candidate's included) keep the fused
+	// order, as the node rerank keeps the RRF order (rerank_scores_flat).
+	if len(ranked) > 0 && ranked[0].FinalScore-ranked[len(ranked)-1].FinalScore < 0.05 {
 		return pool, SearchFallbackRerankScoresFlat, false
 	}
 	ordered = make([]*graphCandidate, 0, len(pool))
@@ -245,6 +247,38 @@ func (s *Service) rerankGraphPool(ctx context.Context, query string, pool []*gra
 		ordered = append(ordered, candidate)
 	}
 	return ordered, SearchFallbackNone, true
+}
+
+// graphRerankContent is the text a reranker sees for a graph candidate, read
+// from storage as the node rerank reads it: a node's rerank content
+// (rerankCandidateContent), or a relationship's type and properties. A hit's
+// own properties may be projected or absent (a hit found by a query chunk's
+// vector), so they serve only when the entity can't be read.
+func (s *Service) graphRerankContent(result *SearchResult, query string, maxChars int) string {
+	if relationship := result.Relationship; relationship != nil {
+		text := ""
+		if edge, err := s.engine.GetEdge(relationship.ID); err == nil && edge != nil {
+			text = s.extractSearchableText(&storage.Node{Labels: []string{edge.Type}, Properties: edge.Properties})
+		} else {
+			text = s.extractSearchableText(graphCandidateTextNode(result))
+		}
+		if maxChars > 0 && len(text) > maxChars {
+			text = text[:maxChars]
+		}
+		return text
+	}
+	id := result.NodeID
+	if id == "" {
+		id = storage.NodeID(result.ID)
+	}
+	if node, err := s.getNodeWithoutEmbeddings(id); err == nil && node != nil {
+		return s.rerankCandidateContent(node, rrfResult{ID: string(id)}, query, maxChars)
+	}
+	text := s.extractSearchableText(graphCandidateTextNode(result))
+	if maxChars > 0 && len(text) > maxChars {
+		text = text[:maxChars]
+	}
+	return text
 }
 
 // graphCandidateTextNode is the node whose searchable text a result is read
