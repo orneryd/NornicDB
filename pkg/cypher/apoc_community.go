@@ -31,14 +31,7 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 	communities := e.computeLouvain(nodes, weightProp)
 
 	// Build result
-	rows := make([][]interface{}, 0, len(communities))
-	for nodeID, communityID := range communities {
-		node, err := e.storage.GetNode(nodeID)
-		if err != nil {
-			continue
-		}
-		rows = append(rows, []interface{}{node, communityID})
-	}
+	rows := algorithmRows(nodes, communities)
 
 	return &ExecuteResult{
 		Columns: []string{"node", "community"},
@@ -154,7 +147,9 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 
 				gain := ki_in - (sum_tot * nodeDegree / totalWeight)
 
-				if gain > bestGain {
+				// Equal gains go to the smaller community, so the moves
+				// don't depend on the order relationships are read (#1183).
+				if gain > bestGain || (gain == bestGain && gain > 0 && targetComm < bestComm) {
 					bestGain = gain
 					bestComm = targetComm
 				}
@@ -173,22 +168,8 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 		}
 	}
 
-	// Renumber communities to be consecutive starting from 0
-	communityMap := make(map[int]int)
-	nextID := 0
-	result := make(map[storage.NodeID]int)
-
-	for nodeID, comm := range community {
-		if newID, exists := communityMap[comm]; exists {
-			result[nodeID] = newID
-		} else {
-			communityMap[comm] = nextID
-			result[nodeID] = nextID
-			nextID++
-		}
-	}
-
-	return result
+	// Communities numbered by their first node in the given order (#1183).
+	return renumberInNodeOrder(nodes, community)
 }
 
 // =============================================================================
@@ -208,14 +189,7 @@ func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args
 
 	communities := e.computeLabelPropagation(nodes)
 
-	rows := make([][]interface{}, 0, len(communities))
-	for nodeID, communityID := range communities {
-		node, err := e.storage.GetNode(nodeID)
-		if err != nil {
-			continue
-		}
-		rows = append(rows, []interface{}{node, communityID})
-	}
+	rows := algorithmRows(nodes, communities)
 
 	return &ExecuteResult{
 		Columns: []string{"node", "community"},
@@ -280,22 +254,8 @@ func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[sto
 		}
 	}
 
-	// Renumber to consecutive IDs
-	labelMap := make(map[int]int)
-	nextID := 0
-	result := make(map[storage.NodeID]int)
-
-	for nodeID, lbl := range labels {
-		if newID, exists := labelMap[lbl]; exists {
-			result[nodeID] = newID
-		} else {
-			labelMap[lbl] = nextID
-			result[nodeID] = nextID
-			nextID++
-		}
-	}
-
-	return result
+	// Communities numbered by their first node in the given order (#1183).
+	return renumberInNodeOrder(nodes, labels)
 }
 
 // =============================================================================
@@ -312,14 +272,7 @@ func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{
 
 	components := e.computeWCC(nodes)
 
-	rows := make([][]interface{}, 0, len(components))
-	for nodeID, componentID := range components {
-		node, err := e.storage.GetNode(nodeID)
-		if err != nil {
-			continue
-		}
-		rows = append(rows, []interface{}{node, componentID})
-	}
+	rows := algorithmRows(nodes, components)
 
 	return &ExecuteResult{
 		Columns: []string{"node", "componentId"},

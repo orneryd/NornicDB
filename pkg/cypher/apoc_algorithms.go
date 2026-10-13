@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -282,10 +283,7 @@ func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []inter
 		damping = d
 	}
 	scores := e.computePageRank(nodes, damping, iterations)
-	rows := make([][]interface{}, 0, len(nodes))
-	for _, node := range nodes {
-		rows = append(rows, []interface{}{node, scores[node.ID]})
-	}
+	rows := algorithmRows(nodes, scores)
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
@@ -340,14 +338,7 @@ func (e *StorageExecutor) callApocAlgoBetweenness(ctx context.Context, args []in
 		return nil, err
 	}
 	scores := e.computeBetweenness(nodes)
-	rows := make([][]interface{}, 0, len(scores))
-	for nodeID, score := range scores {
-		node, err := e.storage.GetNode(nodeID)
-		if err != nil {
-			continue
-		}
-		rows = append(rows, []interface{}{node, score})
-	}
+	rows := algorithmRows(nodes, scores)
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
@@ -418,14 +409,7 @@ func (e *StorageExecutor) callApocAlgoCloseness(ctx context.Context, args []inte
 		return nil, err
 	}
 	scores := e.computeCloseness(nodes)
-	rows := make([][]interface{}, 0, len(scores))
-	for nodeID, score := range scores {
-		node, err := e.storage.GetNode(nodeID)
-		if err != nil {
-			continue
-		}
-		rows = append(rows, []interface{}{node, score})
-	}
+	rows := algorithmRows(nodes, scores)
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
@@ -631,10 +615,43 @@ func pathAlgorithmArguments(procedure string, args []interface{}) (start, end st
 	return start, end, relType, nil
 }
 
-// algorithmNodes reads the nodes a whole-graph algorithm runs over from its
-// first argument: a LIST<NODE> (APOC's form: MATCH (n:L) WITH collect(n) AS
-// nodes CALL apoc.algo.pageRank(nodes)), a label (a STRING, or a list of
-// one), or none, null, an empty string or an empty list for every node.
+// algorithmRows are a whole-graph algorithm's rows, {node, value}, one per
+// given node that has a value, in the given nodes' order (a node listed twice
+// once), so the same call on the same graph gives the same rows (#1183).
+func algorithmRows[T any](nodes []*storage.Node, values map[storage.NodeID]T) [][]interface{} {
+	rows := make([][]interface{}, 0, len(values))
+	seen := make(map[storage.NodeID]struct{}, len(values))
+	for _, node := range nodes {
+		value, ok := values[node.ID]
+		if _, listed := seen[node.ID]; !ok || listed {
+			continue
+		}
+		seen[node.ID] = struct{}{}
+		rows = append(rows, []interface{}{node, value})
+	}
+	return rows
+}
+
+// renumberInNodeOrder numbers communities 0, 1, … by their first node in the
+// given nodes' order, so community IDs don't depend on map order (#1183).
+func renumberInNodeOrder(nodes []*storage.Node, communities map[storage.NodeID]int) map[storage.NodeID]int {
+	numbers := make(map[int]int)
+	result := make(map[storage.NodeID]int, len(communities))
+	for _, node := range nodes {
+		community, ok := communities[node.ID]
+		if !ok {
+			continue
+		}
+		number, numbered := numbers[community]
+		if !numbered {
+			number = len(numbers)
+			numbers[community] = number
+		}
+		result[node.ID] = number
+	}
+	return result
+}
+
 // algorithmConfig is the config map an algorithm procedure reads from its
 // second argument, for pageRank and louvain alike (#1164). Any other second
 // argument (the documented relationship-type list, #1169) gives no config.
@@ -643,6 +660,10 @@ func algorithmConfig(args []interface{}) map[string]interface{} {
 	return config
 }
 
+// algorithmNodes reads the nodes a whole-graph algorithm runs over from its
+// first argument: a LIST<NODE> (APOC's form: MATCH (n:L) WITH collect(n) AS
+// nodes CALL apoc.algo.pageRank(nodes)), a label (a STRING, or a list of
+// one), or none, null, an empty string or an empty list for every node.
 func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) ([]*storage.Node, error) {
 	value := procedureArgument(args, 0)
 	typeError := func() error {
@@ -650,7 +671,7 @@ func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) (
 	}
 	if items, isList := cypherListValue(value); isList {
 		if len(items) == 0 {
-			return e.storage.GetAllNodes(), nil
+			return nodesInIDOrder(e.storage.GetAllNodes()), nil
 		}
 		if _, isNode := items[0].(*storage.Node); isNode {
 			nodes := make([]*storage.Node, 0, len(items))
@@ -670,14 +691,24 @@ func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) (
 	}
 	switch label := value.(type) {
 	case nil:
-		return e.storage.GetAllNodes(), nil
+		return nodesInIDOrder(e.storage.GetAllNodes()), nil
 	case string:
 		if label == "" {
-			return e.storage.GetAllNodes(), nil
+			return nodesInIDOrder(e.storage.GetAllNodes()), nil
 		}
 		nodes, _ := e.storage.GetNodesByLabel(label)
-		return nodes, nil
+		return nodesInIDOrder(nodes), nil
 	default:
 		return nil, typeError()
 	}
+}
+
+// nodesInIDOrder sorts the nodes an algorithm reads from storage by ID, so
+// the same graph gives the same order on every engine (#1183); a node list
+// the caller passes keeps its order. It sorts a copy: storage may share the
+// slice it returns.
+func nodesInIDOrder(nodes []*storage.Node) []*storage.Node {
+	sorted := append([]*storage.Node(nil), nodes...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	return sorted
 }

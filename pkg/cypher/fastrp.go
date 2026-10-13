@@ -245,6 +245,8 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeLabels, relTypes
 	if err != nil {
 		return nil, localizedError(localization.CypherGraphProceduresStreamNodesFailed(err), err)
 	}
+	// Node IDs in order, so the same graph gives the same rows (#1183).
+	sort.Strings(projection.NodeIDs)
 	projection.NodeCount = len(projection.NodeIDs)
 
 	// Hint GC after node processing
@@ -411,9 +413,13 @@ func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResul
 	embeddings := generateFastRPEmbeddings(projection, config)
 
 	// Build result
+	// Rows in the projection's node order, so the same call gives the same
+	// rows (#1183).
 	rows := make([][]any, 0, len(embeddings))
-	for nodeID, embedding := range embeddings {
-		rows = append(rows, []any{nodeID, embedding})
+	for _, nodeID := range projection.NodeIDs {
+		if embedding, ok := embeddings[nodeID]; ok {
+			rows = append(rows, []any{nodeID, embedding})
+		}
 	}
 
 	return &ExecuteResult{
