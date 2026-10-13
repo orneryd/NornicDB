@@ -242,28 +242,7 @@ func BuildGraphFromEngine(ctx context.Context, engine storage.Engine, undirected
 //   - Fast for sparse graphs (most real-world graphs)
 //   - Memory: O(candidates) for score tracking
 func CommonNeighbors(graph Graph, source storage.NodeID, topK int) []Prediction {
-	neighbors, exists := graph[source]
-	if !exists {
-		return nil
-	}
-
-	scores := make(map[storage.NodeID]float64)
-
-	// For each neighbor of source
-	for neighbor := range neighbors {
-		// For each neighbor of that neighbor
-		for candidate := range graph[neighbor] {
-			if candidate == source {
-				continue // Skip self
-			}
-			if _, isNeighbor := neighbors[candidate]; isNeighbor {
-				continue // Skip existing edges
-			}
-			scores[candidate]++
-		}
-	}
-
-	return topKPredictions(scores, topK, "common_neighbors")
+	return topKPredictions(TopologyScores("common_neighbors", graph, nil, source), topK, "common_neighbors")
 }
 
 // Jaccard computes link predictions using Jaccard coefficient.
@@ -375,51 +354,7 @@ func CommonNeighbors(graph Graph, source storage.NodeID, topK int) []Prediction 
 //   - Requires set intersection/union calculation
 //   - Memory: O(candidates) for tracking
 func Jaccard(graph Graph, source storage.NodeID, topK int) []Prediction {
-	neighbors, exists := graph[source]
-	if !exists {
-		return nil
-	}
-
-	scores := make(map[storage.NodeID]float64)
-
-	// Generate candidates from 2-hop neighborhood
-	candidates := make(map[storage.NodeID]struct{})
-	for neighbor := range neighbors {
-		for candidate := range graph[neighbor] {
-			if candidate == source {
-				continue
-			}
-			if _, isNeighbor := neighbors[candidate]; isNeighbor {
-				continue
-			}
-			candidates[candidate] = struct{}{}
-		}
-	}
-
-	// Compute Jaccard for each candidate
-	for candidate := range candidates {
-		candidateNeighbors := graph[candidate]
-
-		// Count intersection
-		intersection := 0
-		for n := range neighbors {
-			if _, exists := candidateNeighbors[n]; exists {
-				intersection++
-			}
-		}
-
-		if intersection == 0 {
-			continue
-		}
-
-		// Union = |A| + |B| - |A ∩ B|
-		union := len(neighbors) + len(candidateNeighbors) - intersection
-		if union > 0 {
-			scores[candidate] = float64(intersection) / float64(union)
-		}
-	}
-
-	return topKPredictions(scores, topK, "jaccard")
+	return topKPredictions(TopologyScores("jaccard", graph, nil, source), topK, "jaccard")
 }
 
 // AdamicAdar computes link predictions using Adamic-Adar index.
@@ -451,49 +386,7 @@ func Jaccard(graph Graph, source storage.NodeID, topK int) []Prediction {
 //
 // Reference: Adamic & Adar (2003), "Friends and neighbors on the Web"
 func AdamicAdar(graph Graph, source storage.NodeID, topK int) []Prediction {
-	neighbors, exists := graph[source]
-	if !exists {
-		return nil
-	}
-
-	scores := make(map[storage.NodeID]float64)
-
-	// Generate candidates from 2-hop neighborhood
-	candidates := make(map[storage.NodeID]struct{})
-	for neighbor := range neighbors {
-		for candidate := range graph[neighbor] {
-			if candidate == source {
-				continue
-			}
-			if _, isNeighbor := neighbors[candidate]; isNeighbor {
-				continue
-			}
-			candidates[candidate] = struct{}{}
-		}
-	}
-
-	// Compute Adamic-Adar score for each candidate
-	for candidate := range candidates {
-		sum := 0.0
-		candidateNeighbors := graph[candidate]
-
-		// For each common neighbor
-		for neighbor := range neighbors {
-			if _, exists := candidateNeighbors[neighbor]; exists {
-				degree := len(graph[neighbor])
-				if degree > 1 {
-					// Weight by 1/log(degree)
-					sum += 1.0 / math.Log(float64(degree))
-				}
-			}
-		}
-
-		if sum > 0 {
-			scores[candidate] = sum
-		}
-	}
-
-	return topKPredictions(scores, topK, "adamic_adar")
+	return topKPredictions(TopologyScores("adamic_adar", graph, nil, source), topK, "adamic_adar")
 }
 
 // PreferentialAttachment computes link predictions based on node degree product.
@@ -523,28 +416,7 @@ func AdamicAdar(graph Graph, source storage.NodeID, topK int) []Prediction {
 //
 // Reference: Barabási & Albert (1999), "Emergence of scaling in random networks"
 func PreferentialAttachment(graph Graph, source storage.NodeID, topK int) []Prediction {
-	neighbors, exists := graph[source]
-	if !exists {
-		return nil
-	}
-
-	sourceDegree := float64(len(neighbors))
-	scores := make(map[storage.NodeID]float64)
-
-	// Score all non-neighbors by degree product
-	for candidate, candidateNeighbors := range graph {
-		if candidate == source {
-			continue
-		}
-		if _, isNeighbor := neighbors[candidate]; isNeighbor {
-			continue
-		}
-
-		candidateDegree := float64(len(candidateNeighbors))
-		scores[candidate] = sourceDegree * candidateDegree
-	}
-
-	return topKPredictions(scores, topK, "preferential_attachment")
+	return topKPredictions(TopologyScores("preferential_attachment", graph, nil, source), topK, "preferential_attachment")
 }
 
 // ResourceAllocation computes link predictions using resource allocation index.
@@ -575,53 +447,15 @@ func PreferentialAttachment(graph Graph, source storage.NodeID, topK int) []Pred
 //
 // Reference: Zhou et al. (2009), "Predicting missing links via local information"
 func ResourceAllocation(graph Graph, source storage.NodeID, topK int) []Prediction {
-	neighbors, exists := graph[source]
-	if !exists {
-		return nil
-	}
-
-	scores := make(map[storage.NodeID]float64)
-
-	// Generate candidates from 2-hop neighborhood
-	candidates := make(map[storage.NodeID]struct{})
-	for neighbor := range neighbors {
-		for candidate := range graph[neighbor] {
-			if candidate == source {
-				continue
-			}
-			if _, isNeighbor := neighbors[candidate]; isNeighbor {
-				continue
-			}
-			candidates[candidate] = struct{}{}
-		}
-	}
-
-	// Compute resource allocation score
-	for candidate := range candidates {
-		sum := 0.0
-		candidateNeighbors := graph[candidate]
-
-		// For each common neighbor
-		for neighbor := range neighbors {
-			if _, exists := candidateNeighbors[neighbor]; exists {
-				degree := len(graph[neighbor])
-				if degree > 0 {
-					sum += 1.0 / float64(degree)
-				}
-			}
-		}
-
-		if sum > 0 {
-			scores[candidate] = sum
-		}
-	}
-
-	return topKPredictions(scores, topK, "resource_allocation")
+	return topKPredictions(TopologyScores("resource_allocation", graph, nil, source), topK, "resource_allocation")
 }
 
 // topKPredictions converts score map to sorted prediction list.
 // Scores are automatically normalized to [0, 1] range based on algorithm.
 func topKPredictions(scores map[storage.NodeID]float64, k int, algorithm string) []Prediction {
+	if scores == nil {
+		return nil // no such source
+	}
 	predictions := make([]Prediction, 0, len(scores))
 
 	for nodeID, score := range scores {

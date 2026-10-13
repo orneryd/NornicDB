@@ -159,7 +159,7 @@ import (
 //   - Fast for sparse graphs
 //   - Memory: ~O(nodes + edges)
 func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	return e.callGdsLinkPredictionTopology(args, linkpredict.AdamicAdar)
+	return e.callGdsLinkPredictionTopology(args, "adamic_adar")
 }
 
 // callGdsLinkPredictionCommonNeighbors implements gds.linkPrediction.commonNeighbors.stream
@@ -251,22 +251,22 @@ func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(ctx context.Context, a
 //   - Fastest link prediction algorithm
 //   - Memory: ~O(nodes + edges)
 func (e *StorageExecutor) callGdsLinkPredictionCommonNeighbors(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	return e.callGdsLinkPredictionTopology(args, linkpredict.CommonNeighbors)
+	return e.callGdsLinkPredictionTopology(args, "common_neighbors")
 }
 
 // callGdsLinkPredictionResourceAllocation implements gds.linkPrediction.resourceAllocation.stream
 func (e *StorageExecutor) callGdsLinkPredictionResourceAllocation(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	return e.callGdsLinkPredictionTopology(args, linkpredict.ResourceAllocation)
+	return e.callGdsLinkPredictionTopology(args, "resource_allocation")
 }
 
 // callGdsLinkPredictionPreferentialAttachment implements gds.linkPrediction.preferentialAttachment.stream
 func (e *StorageExecutor) callGdsLinkPredictionPreferentialAttachment(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	return e.callGdsLinkPredictionTopology(args, linkpredict.PreferentialAttachment)
+	return e.callGdsLinkPredictionTopology(args, "preferential_attachment")
 }
 
 // callGdsLinkPredictionJaccard implements gds.linkPrediction.jaccard.stream (not standard GDS but useful)
 func (e *StorageExecutor) callGdsLinkPredictionJaccard(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	return e.callGdsLinkPredictionTopology(args, linkpredict.Jaccard)
+	return e.callGdsLinkPredictionTopology(args, "jaccard")
 }
 
 // callGdsLinkPredictionPredict implements gds.linkPrediction.predict.stream (hybrid scoring)
@@ -279,7 +279,7 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 		return nil, err
 	}
 
-	graph, err := e.linkPredictionGraph(config)
+	graph, degree, err := e.linkPredictionGraph(config)
 	if err != nil {
 		return nil, err
 	}
@@ -296,6 +296,7 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 		MinThreshold:    config.MinThreshold,
 	}
 	scorer := linkpredict.NewHybridScorer(hybridConfig)
+	scorer.SetDegreeFunction(degree)
 
 	// The semantic score: the best cosine similarity between the nodes'
 	// embeddings, every chunk, each named embedding with its namesake
@@ -321,32 +322,97 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 }
 
 // callGdsLinkPredictionTopology runs a topology link prediction algorithm
-// over the graph the config selects and keeps the config's target nodes.
-func (e *StorageExecutor) callGdsLinkPredictionTopology(args []interface{}, algorithm func(linkpredict.Graph, storage.NodeID, int) []linkpredict.Prediction) (*ExecuteResult, error) {
+// over the graph the config selects and keeps the config's target nodes. The
+// scores are GDS's values (gds.alpha.linkprediction.*), not rescaled: a
+// degree counts relationships, a parallel one again and a self-loop once
+// (#1192).
+func (e *StorageExecutor) callGdsLinkPredictionTopology(args []interface{}, algorithm string) (*ExecuteResult, error) {
 	config, err := linkPredictionConfigFromArguments(args)
 	if err != nil {
 		return nil, err
 	}
-	graph, err := e.linkPredictionGraph(config)
+	graph, degree, err := e.linkPredictionGraph(config)
 	if err != nil {
 		return nil, err
 	}
-	predictions := algorithm(graph, config.SourceNode, config.candidateLimit())
+	scores := linkpredict.TopologyScores(algorithm, graph, degree, config.SourceNode)
+	predictions := linkpredict.RankedPredictions(scores, config.candidateLimit(), algorithm)
 	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.Prediction) storage.NodeID { return p.TargetID })
 	return e.formatLinkPredictionResults(predictions, config.SourceNode), nil
 }
 
-// linkPredictionGraph is the graph a link prediction reads: every node, and
-// the relationships of the config's relationshipTypes (every one without),
-// undirected.
-func (e *StorageExecutor) linkPredictionGraph(config *linkPredictionConfig) (linkpredict.Graph, error) {
-	build := linkpredict.DefaultBuildConfig()
-	build.RelationshipTypes = config.RelationshipTypes
-	graph, err := linkpredict.BuildGraphFromEngineOptimized(context.Background(), e.storage, build)
-	if err != nil {
-		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
+// linkPredictionGraph is the graph a link prediction reads (#1192): the
+// named projection's nodes and relationships (a snapshot, as projected), or
+// without a graph name every stored node and relationship; of the config's
+// relationshipTypes (every one without); undirected. The degree function
+// counts a node's relationships in that graph, a self-loop once. The
+// sourceNode must be in the graph.
+func (e *StorageExecutor) linkPredictionGraph(config *linkPredictionConfig) (linkpredict.Graph, linkpredict.DegreeFunc, error) {
+	var graph linkpredict.Graph
+	var degree linkpredict.DegreeFunc
+	if config.GraphName != "" {
+		projectionsMu.RLock()
+		projection, exists := graphProjections[config.GraphName]
+		projectionsMu.RUnlock()
+		if !exists {
+			return nil, nil, localizedError(localization.CypherGraphProceduresGraphDoesNotExist(config.GraphName), nil)
+		}
+		if missing := missingNames(config.RelationshipTypes, projection.Types); len(missing) > 0 {
+			return nil, nil, localizedError(localization.CypherGraphProceduresRelationshipTypesNotInGraph(gdsNameList(missing), gdsNameList(projection.Types)), nil)
+		}
+		graph = make(linkpredict.Graph, len(projection.NodeIDs))
+		for _, id := range projection.NodeIDs {
+			graph[storage.NodeID(id)] = make(linkpredict.NodeSet)
+		}
+		relationships := make(map[storage.NodeID]map[string]struct{})
+		touch := func(node storage.NodeID, relationship string) {
+			if relationships[node] == nil {
+				relationships[node] = make(map[string]struct{})
+			}
+			relationships[node][relationship] = struct{}{}
+		}
+		for _, relationship := range projection.Relationships {
+			if config.RelationshipTypes != nil && !containsString(config.RelationshipTypes, relationship.Type) {
+				continue
+			}
+			source, target := storage.NodeID(relationship.Source), storage.NodeID(relationship.Target)
+			if source != target {
+				graph[source][target] = struct{}{}
+				graph[target][source] = struct{}{}
+			}
+			// An UNDIRECTED relationship is held both ways, an aggregated
+			// one once: each counts once by its id.
+			touch(source, relationship.ID+"/"+relationship.Type)
+			touch(target, relationship.ID+"/"+relationship.Type)
+		}
+		degree = func(node storage.NodeID) int { return len(relationships[node]) }
+	} else {
+		build := linkpredict.DefaultBuildConfig()
+		build.RelationshipTypes = config.RelationshipTypes
+		built, err := linkpredict.BuildGraphFromEngineOptimized(context.Background(), e.storage, build)
+		if err != nil {
+			return nil, nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
+		}
+		graph = built
+		degrees := make(map[storage.NodeID]int)
+		degree = func(node storage.NodeID) int {
+			if count, ok := degrees[node]; ok {
+				return count
+			}
+			seen := make(map[storage.EdgeID]struct{})
+			for _, edge := range e.getNodeEdges(node) {
+				if config.RelationshipTypes == nil || containsString(config.RelationshipTypes, edge.Type) {
+					seen[edge.ID] = struct{}{}
+				}
+			}
+			degrees[node] = len(seen)
+			return len(seen)
+		}
 	}
-	return graph, nil
+	if _, ok := graph[config.SourceNode]; !ok {
+		return nil, nil, localizedError(localization.CypherGraphProceduresSourceNodeNotFound(string(config.SourceNode)), nil)
+	}
+	return graph, degree, nil
 }
 
 // candidateLimit is how many predictions the algorithm returns: topK, or
@@ -396,6 +462,7 @@ func nodeEmbeddingGroups(node *storage.Node) map[string][][]float32 {
 
 // linkPredictionConfig holds parsed configuration for link prediction procedures
 type linkPredictionConfig struct {
+	GraphName         string // "": the whole database
 	SourceNode        storage.NodeID
 	TopK              int
 	Algorithm         string
@@ -406,84 +473,84 @@ type linkPredictionConfig struct {
 	TargetNodes       map[storage.NodeID]bool // nil: every candidate
 }
 
+// linkPredictionConfigKeys are the configuration keys link prediction takes.
+var linkPredictionConfigKeys = []string{
+	"sourceNode", "targetNodes", "relationshipTypes", "topK", "algorithm", "topologyWeight", "semanticWeight", "minThreshold",
+}
+
 // linkPredictionConfigFromArguments reads a link prediction procedure's
-// configuration from the call's evaluated arguments: its MAP argument (the
-// only one, stream({sourceNode: id(n), topK: 5}), or after the graph name,
-// stream('g', {...})) with sourceNode (a node, its id, or an INTEGER id;
-// required), targetNodes (a list of them, or one), relationshipTypes (a
-// list of type names, or one; '*' for every type), topK, algorithm,
-// topologyWeight, semanticWeight and minThreshold (#1185).
+// arguments: an optional graph name (#1192) and the configuration map,
+// stream({sourceNode: id(n), topK: 5}) or stream('g', {...}), with
+// sourceNode (a node, its id, or an INTEGER id; required), targetNodes (a
+// list of them, or one), relationshipTypes (a list of type names, or one;
+// '*' for every type), topK (at least 1), algorithm, topologyWeight,
+// semanticWeight and minThreshold (#1185). Keys match whatever their case;
+// another key, or a value of the wrong type, is refused as GDS refuses it.
 func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfig, error) {
 	config := &linkPredictionConfig{
-		TopK:           10,
 		Algorithm:      "adamic_adar",
 		TopologyWeight: 0.5,
 		SemanticWeight: 0.5,
-		MinThreshold:   0.0,
 	}
 	var options map[string]interface{}
-	for _, argument := range args {
-		if entries, isMap := argument.(map[string]interface{}); isMap {
-			options = entries
-			break
+	for index, argument := range args {
+		switch value := argument.(type) {
+		case string:
+			if index == 0 {
+				config.GraphName = value
+			}
+		case map[string]interface{}:
+			if options == nil {
+				options = value
+			}
 		}
 	}
-	for key, value := range options {
-		switch lowerASCII(key) {
-		case "sourcenode":
-			if source, ok := linkPredictionNodeID(value); ok {
-				config.SourceNode = source
-			}
-		case "targetnodes":
-			targets, isList := cypherListValue(value)
-			if !isList {
-				targets = []interface{}{value}
-			}
-			config.TargetNodes = make(map[storage.NodeID]bool, len(targets))
-			for _, target := range targets {
-				id, ok := linkPredictionNodeID(target)
-				if !ok {
-					return nil, procedureArgumentTypeError("gds.linkPrediction", "targetNodes", "LIST<NODE>", value)
-				}
-				config.TargetNodes[id] = true
-			}
-		case "relationshiptypes":
-			types, isList := cypherListValue(value)
-			if !isList {
-				types = []interface{}{value}
-			}
-			for _, relType := range types {
-				name, isString := relType.(string)
-				if !isString {
-					return nil, procedureArgumentTypeError("gds.linkPrediction", "relationshipTypes", "LIST<STRING>", value)
-				}
-				if name == "*" {
-					config.RelationshipTypes = nil
-					break
-				}
-				config.RelationshipTypes = append(config.RelationshipTypes, name)
-			}
-		case "topk":
-			if topK, ok := fastRPConfigInt(value); ok {
-				config.TopK = topK
-			}
-		case "algorithm":
-			if algorithm, ok := value.(string); ok {
-				config.Algorithm = algorithm
-			}
-		case "topologyweight":
-			if weight, ok := toFloat64(value); ok {
-				config.TopologyWeight = weight
-			}
-		case "semanticweight":
-			if weight, ok := toFloat64(value); ok {
-				config.SemanticWeight = weight
-			}
-		case "minthreshold":
-			if threshold, ok := toFloat64(value); ok {
-				config.MinThreshold = threshold
-			}
+	c, err := newGDSConfig(options, linkPredictionConfigKeys...)
+	if err != nil {
+		return nil, err
+	}
+	if value := c.value("sourceNode"); value != nil {
+		source, ok := linkPredictionNodeID(value)
+		if !ok {
+			return nil, c.typeError("sourceNode", "Node")
 		}
+		config.SourceNode = source
+	}
+	if value := c.value("targetNodes"); value != nil {
+		targets, isList := cypherListValue(value)
+		if !isList {
+			targets = []interface{}{value}
+		}
+		config.TargetNodes = make(map[storage.NodeID]bool, len(targets))
+		for _, target := range targets {
+			id, ok := linkPredictionNodeID(target)
+			if !ok {
+				return nil, c.typeError("targetNodes", "List")
+			}
+			config.TargetNodes[id] = true
+		}
+	}
+	if config.RelationshipTypes, err = c.names("relationshipTypes"); err != nil {
+		return nil, err
+	}
+	topK, err := c.integer("topK", "Integer", 1, 1<<31-1, 10, false)
+	if err != nil {
+		return nil, err
+	}
+	config.TopK = int(topK)
+	if algorithm, ok, err := c.text("algorithm"); err != nil {
+		return nil, err
+	} else if ok {
+		config.Algorithm = algorithm
+	}
+	if config.TopologyWeight, err = c.number("topologyWeight", "Double", config.TopologyWeight); err != nil {
+		return nil, err
+	}
+	if config.SemanticWeight, err = c.number("semanticWeight", "Double", config.SemanticWeight); err != nil {
+		return nil, err
+	}
+	if config.MinThreshold, err = c.number("minThreshold", "Double", 0); err != nil {
+		return nil, err
 	}
 	if config.SourceNode == "" {
 		return nil, localizedError(localization.CypherGraphProceduresSourceNodeRequired(), nil)

@@ -29,7 +29,7 @@ func TestCypherGraphProcedureErrorsHaveTypedIdentityAndExactEnglish(t *testing.T
 	})
 
 	t.Run("graph must be projected first", func(t *testing.T) {
-		_, err := exec.callGdsFastRPStream([]interface{}{"missing"})
+		_, err := exec.callGdsFastRPStream([]interface{}{"missing", map[string]interface{}{"embeddingDimension": int64(4)}})
 		requireCypherGraphProceduresLocalizedError(t, err, localization.MessageCypherGraphProceduresGraphDoesNotExistProjectFirst, "graph 'missing' does not exist. Create it with gds.graph.project first")
 	})
 

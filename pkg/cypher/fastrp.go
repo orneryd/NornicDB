@@ -28,57 +28,24 @@
 package cypher
 
 import (
-	"context"
-	"crypto/rand"
+	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	mathrand "math/rand"
-	"runtime"
-	"sort"
 	"strconv"
-	"strings"
-	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // Memory constants for streaming thresholds
 const (
-	// maxNodesBeforeStreaming triggers streaming mode for large graphs
-	maxNodesBeforeStreaming = 10000
 	// streamChunkSize is the batch size for streaming operations
 	streamChunkSize = 1000
-	// embeddingChunkSize is batch size for embedding generation
-	embeddingChunkSize = 500
 	// maxFastRPEmbeddingDimension prevents pathological embedding requests from
 	// forcing oversized exact-length allocations.
 	maxFastRPEmbeddingDimension = 8192
-)
-
-// ============================================================================
-// In-Memory Graph Projections
-// ============================================================================
-
-// GraphProjection holds an in-memory graph projection for GDS algorithms
-type GraphProjection struct {
-	Name              string
-	NodeLabels        []string
-	RelationshipTypes []string
-	NodeCount         int
-	RelationshipCount int
-	NodeIDs           []string                                 // All node IDs in projection
-	NodeProperties    map[string]map[string]any                // nodeID -> properties
-	Adjacency         map[string][]string                      // nodeID -> neighbor IDs
-	EdgeProperties    map[string]map[string]map[string]float64 // source -> target -> numeric relationship properties
-	CreatedAt         time.Time
-}
-
-// Global graph projection store (thread-safe)
-var (
-	graphProjections = make(map[string]*GraphProjection)
-	projectionsMu    sync.RWMutex
 )
 
 // ============================================================================
@@ -95,436 +62,463 @@ func (e *StorageExecutor) callGdsVersion() (*ExecuteResult, error) {
 }
 
 // ============================================================================
-// Graph Projection Management
-// ============================================================================
-
-// callGdsGraphProject implements CALL gds.graph.project(graphName,
-// nodeProjection, relationshipProjection) from the call's evaluated
-// arguments. A projection is '*' (everything), a label or type name, a list
-// of them, or a map whose keys name them (an entry's label / type overrides
-// its key). A name text may also list several, separated by ':' or '|'
-// ('Person:User', 'KNOWS|REFERENCES'): NornicDB's kept form.
-func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResult, error) {
-	const procedure = "gds.graph.project"
-	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
-	if err != nil {
-		return nil, err
-	}
-	nodeLabels, err := graphProjectionNames(procedure, args, 1, "nodeProjection", "label")
-	if err != nil {
-		return nil, err
-	}
-	relTypes, err := graphProjectionNames(procedure, args, 2, "relationshipProjection", "type")
-	if err != nil {
-		return nil, err
-	}
-
-	// Build the projection from storage
-	projection, err := e.buildGraphProjection(graphName, nodeLabels, relTypes)
-	if err != nil {
-		return nil, err
-	}
-
-	// Store the projection
-	projectionsMu.Lock()
-	graphProjections[graphName] = projection
-	projectionsMu.Unlock()
-
-	return &ExecuteResult{
-		Columns: []string{"graphName", "nodeCount", "relationshipCount", "projectMillis"},
-		Rows: [][]any{
-			{graphName, projection.NodeCount, projection.RelationshipCount, int64(10)},
-		},
-	}, nil
-}
-
-// graphProjectionNames reads a node or relationship projection argument:
-// the label or type names it selects, ["*"] for every one.
-func graphProjectionNames(procedure string, args []interface{}, index int, argument, nameKey string) ([]string, error) {
-	var names []string
-	add := func(text string) {
-		for _, name := range strings.FieldsFunc(text, func(r rune) bool { return r == ':' || r == '|' }) {
-			if name = strings.TrimSpace(name); name != "" {
-				names = append(names, name)
-			}
-		}
-	}
-	value := procedureArgument(args, index)
-	switch projection := value.(type) {
-	case nil:
-	case string:
-		add(projection)
-	case map[string]interface{}:
-		keys := make([]string, 0, len(projection))
-		for key := range projection {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			if entry, isMap := projection[key].(map[string]interface{}); isMap {
-				if name, isString := entry[nameKey].(string); isString {
-					add(name)
-					continue
-				}
-			}
-			add(key)
-		}
-	default:
-		items, isList := cypherListValue(value)
-		if !isList {
-			return nil, procedureArgumentTypeError(procedure, argument, "STRING, LIST<STRING> or MAP", value)
-		}
-		for _, item := range items {
-			name, isString := item.(string)
-			if !isString {
-				return nil, procedureArgumentTypeError(procedure, argument, "STRING, LIST<STRING> or MAP", value)
-			}
-			add(name)
-		}
-	}
-	if len(names) == 0 {
-		return []string{"*"}, nil
-	}
-	return names, nil
-}
-
-// buildGraphProjection creates an in-memory graph projection from storage
-// Uses streaming to avoid loading all nodes/edges into memory at once
-func (e *StorageExecutor) buildGraphProjection(name string, nodeLabels, relTypes []string) (*GraphProjection, error) {
-	projection := &GraphProjection{
-		Name:              name,
-		NodeLabels:        nodeLabels,
-		RelationshipTypes: relTypes,
-		NodeIDs:           make([]string, 0, 1000), // Pre-allocate reasonable capacity
-		NodeProperties:    make(map[string]map[string]any),
-		Adjacency:         make(map[string][]string),
-		EdgeProperties:    make(map[string]map[string]map[string]float64),
-		CreatedAt:         time.Now(),
-	}
-
-	// Determine if we're matching all labels
-	matchAllLabels := len(nodeLabels) == 1 && nodeLabels[0] == "*"
-
-	// Track which nodes are in the projection
-	nodeSet := make(map[string]bool)
-
-	// Stream nodes instead of loading all at once
-	ctx := context.Background()
-	err := storage.StreamNodesWithFallback(ctx, e.storage, streamChunkSize, func(node *storage.Node) error {
-		// Check if node matches label filter
-		matchesLabel := matchAllLabels
-		if !matchesLabel {
-			for _, label := range node.Labels {
-				for _, wantLabel := range nodeLabels {
-					if label == wantLabel {
-						matchesLabel = true
-						break
-					}
-				}
-				if matchesLabel {
-					break
-				}
-			}
-		}
-
-		if matchesLabel {
-			nodeID := string(node.ID)
-			projection.NodeIDs = append(projection.NodeIDs, nodeID)
-			nodeSet[nodeID] = true
-
-			// Only copy essential properties to save memory
-			if len(node.Properties) > 0 {
-				projection.NodeProperties[nodeID] = make(map[string]any, len(node.Properties))
-				for k, v := range node.Properties {
-					projection.NodeProperties[nodeID][k] = v
-				}
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, localizedError(localization.CypherGraphProceduresStreamNodesFailed(err), err)
-	}
-	// Node IDs in order, so the same graph gives the same rows (#1183).
-	sort.Strings(projection.NodeIDs)
-	projection.NodeCount = len(projection.NodeIDs)
-
-	// Hint GC after node processing
-	runtime.GC()
-
-	// Stream edges instead of loading all at once
-	matchAllTypes := len(relTypes) == 1 && relTypes[0] == "*"
-	relCount := 0
-
-	err = storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(edge *storage.Edge) error {
-		startID := string(edge.StartNode)
-		endID := string(edge.EndNode)
-
-		// Only include edges where both nodes are in the projection
-		if !nodeSet[startID] || !nodeSet[endID] {
-			return nil
-		}
-
-		// Check relationship type filter
-		matchesType := matchAllTypes
-		if !matchesType {
-			for _, wantType := range relTypes {
-				if edge.Type == wantType {
-					matchesType = true
-					break
-				}
-			}
-		}
-		if !matchesType {
-			return nil
-		}
-
-		// Add to adjacency (undirected - both directions)
-		// Use lazy initialization for memory efficiency
-		if projection.Adjacency[startID] == nil {
-			projection.Adjacency[startID] = make([]string, 0, 4)
-		}
-		projection.Adjacency[startID] = append(projection.Adjacency[startID], endID)
-
-		if projection.Adjacency[endID] == nil {
-			projection.Adjacency[endID] = make([]string, 0, 4)
-		}
-		projection.Adjacency[endID] = append(projection.Adjacency[endID], startID)
-
-		// The relationship's numeric properties, which FastRP's
-		// relationshipWeightProperty names one of (#1185); a relationship
-		// without any stores nothing.
-		var numeric map[string]float64
-		for key, value := range edge.Properties {
-			if number, ok := toFloat64(value); ok {
-				if numeric == nil {
-					numeric = make(map[string]float64, len(edge.Properties))
-				}
-				numeric[key] = number
-			}
-		}
-		if numeric != nil {
-			for _, pair := range [2][2]string{{startID, endID}, {endID, startID}} {
-				if projection.EdgeProperties[pair[0]] == nil {
-					projection.EdgeProperties[pair[0]] = make(map[string]map[string]float64)
-				}
-				projection.EdgeProperties[pair[0]][pair[1]] = numeric
-			}
-		}
-
-		relCount++
-		return nil
-	})
-	if err != nil {
-		return nil, localizedError(localization.CypherGraphProceduresStreamEdgesFailed(err), err)
-	}
-	projection.RelationshipCount = relCount
-
-	return projection, nil
-}
-
-// callGdsGraphList implements CALL gds.graph.list()
-func (e *StorageExecutor) callGdsGraphList() (*ExecuteResult, error) {
-	projectionsMu.RLock()
-	defer projectionsMu.RUnlock()
-
-	rows := make([][]any, 0, len(graphProjections))
-	for name, proj := range graphProjections {
-		rows = append(rows, []any{
-			name,
-			proj.NodeCount,
-			proj.RelationshipCount,
-			proj.CreatedAt.Format(time.RFC3339),
-		})
-	}
-
-	return &ExecuteResult{
-		Columns: []string{"graphName", "nodeCount", "relationshipCount", "createdAt"},
-		Rows:    rows,
-	}, nil
-}
-
-// callGdsGraphDrop implements CALL gds.graph.drop(graphName)
-func (e *StorageExecutor) callGdsGraphDrop(args []interface{}) (*ExecuteResult, error) {
-	graphName, err := requiredProcedureString("gds.graph.drop", args, 0, "graphName")
-	if err != nil {
-		return nil, err
-	}
-
-	projectionsMu.Lock()
-	proj, exists := graphProjections[graphName]
-	if exists {
-		delete(graphProjections, graphName)
-	}
-	projectionsMu.Unlock()
-
-	if !exists {
-		return nil, localizedError(localization.CypherGraphProceduresGraphDoesNotExist(graphName), nil)
-	}
-
-	return &ExecuteResult{
-		Columns: []string{"graphName", "nodeCount", "relationshipCount"},
-		Rows: [][]any{
-			{graphName, proj.NodeCount, proj.RelationshipCount},
-		},
-	}, nil
-}
-
-// ============================================================================
 // FastRP Algorithm
 // ============================================================================
 
-// FastRPConfig holds configuration for FastRP
+// FastRPConfig holds configuration for FastRP, as GDS's gds.fastRP reads it
+// (#1191).
 type FastRPConfig struct {
 	EmbeddingDimension         int
 	IterationWeights           []float64
+	NormalizationStrength      float64
+	NodeSelfInfluence          float64
 	PropertyRatio              float64
 	FeatureProperties          []string
 	RelationshipWeightProperty string
 	RandomSeed                 int64
-	NormalizationStrength      float64
+	NodeLabels                 []string // nil: every projected label
+	RelationshipTypes          []string // nil: every projected type
+	// Configuration is the configuration as gds.fastRP.stats reports it.
+	Configuration map[string]interface{}
+}
+
+// fastRPConfigKeys are the configuration keys gds.fastRP.stream and stats
+// take.
+var fastRPConfigKeys = []string{
+	"embeddingDimension", "iterationWeights", "normalizationStrength", "nodeSelfInfluence", "propertyRatio",
+	"featureProperties", "relationshipWeightProperty", "randomSeed", "nodeLabels", "relationshipTypes",
+	"concurrency", "jobId", "logProgress", "sudo",
 }
 
 // callGdsFastRPStream implements CALL gds.fastRP.stream(graphName, config)
 func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResult, error) {
-	const procedure = "gds.fastRP.stream"
-	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
+	embeddings, _, err := e.runGdsFastRP("gds.fastRP.stream", args)
 	if err != nil {
 		return nil, err
 	}
-	options, err := optionalProcedureMap(procedure, args, 1, "config")
-	if err != nil {
-		return nil, err
-	}
-
-	// Get projection
-	projectionsMu.RLock()
-	projection, exists := graphProjections[graphName]
-	projectionsMu.RUnlock()
-
-	if !exists {
-		return nil, localizedError(localization.CypherGraphProceduresGraphDoesNotExistProjectFirst(graphName), nil)
-	}
-
-	// Parse config
-	config := fastRPConfigFromMap(options)
-	if err := config.validate(); err != nil {
-		return nil, err
-	}
-
-	// Generate embeddings
-	embeddings := generateFastRPEmbeddings(projection, config)
-
-	// Build result
-	// Rows in the projection's node order, so the same call gives the same
-	// rows (#1183).
 	rows := make([][]any, 0, len(embeddings))
-	for _, nodeID := range projection.NodeIDs {
-		if embedding, ok := embeddings[nodeID]; ok {
-			rows = append(rows, []any{nodeID, embedding})
-		}
+	for _, embedding := range embeddings {
+		rows = append(rows, []any{embedding.nodeID, embedding.vector})
 	}
+	return &ExecuteResult{Columns: []string{"nodeId", "embedding"}, Rows: rows}, nil
+}
 
+// callGdsFastRPStats implements CALL gds.fastRP.stats(graphName, config): it
+// runs FastRP and reports, as GDS does, the node count, the time taken and
+// the configuration (#1191).
+func (e *StorageExecutor) callGdsFastRPStats(args []interface{}) (*ExecuteResult, error) {
+	started := time.Now()
+	embeddings, config, err := e.runGdsFastRP("gds.fastRP.stats", args)
+	if err != nil {
+		return nil, err
+	}
 	return &ExecuteResult{
-		Columns: []string{"nodeId", "embedding"},
-		Rows:    rows,
+		Columns: []string{"nodeCount", "preProcessingMillis", "computeMillis", "configuration"},
+		Rows:    [][]any{{int64(len(embeddings)), int64(0), time.Since(started).Milliseconds(), config.Configuration}},
 	}, nil
 }
 
-// callGdsFastRPStats implements CALL gds.fastRP.stats(graphName, config)
-func (e *StorageExecutor) callGdsFastRPStats(args []interface{}) (*ExecuteResult, error) {
-	const procedure = "gds.fastRP.stats"
+// runGdsFastRP reads a gds.fastRP call's graph and configuration and computes
+// the embeddings.
+func (e *StorageExecutor) runGdsFastRP(procedure string, args []interface{}) ([]fastRPEmbedding, FastRPConfig, error) {
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
 	if err != nil {
-		return nil, err
+		return nil, FastRPConfig{}, err
 	}
 	options, err := optionalProcedureMap(procedure, args, 1, "config")
 	if err != nil {
-		return nil, err
+		return nil, FastRPConfig{}, err
 	}
-
-	// Get projection
+	config, err := fastRPConfiguration(options)
+	if err != nil {
+		return nil, FastRPConfig{}, err
+	}
 	projectionsMu.RLock()
 	projection, exists := graphProjections[graphName]
 	projectionsMu.RUnlock()
-
 	if !exists {
-		return nil, localizedError(localization.CypherGraphProceduresGraphDoesNotExist(graphName), nil)
+		return nil, FastRPConfig{}, localizedError(localization.CypherGraphProceduresGraphDoesNotExistProjectFirst(graphName), nil)
 	}
-
-	// Parse config
-	config := fastRPConfigFromMap(options)
-	if err := config.validate(); err != nil {
-		return nil, err
-	}
-
-	return &ExecuteResult{
-		Columns: []string{"nodeCount", "embeddingDimension", "computeMillis"},
-		Rows: [][]any{
-			{projection.NodeCount, config.EmbeddingDimension, int64(5)},
-		},
-	}, nil
+	embeddings, err := generateFastRPEmbeddings(projection, config)
+	return embeddings, config, err
 }
 
-// fastRPConfigFromMap reads gds.fastRP's config map: embeddingDimension
-// (capped at maxFastRPEmbeddingDimension), randomSeed, propertyRatio,
-// featureProperties, iterationWeights (one per iteration),
-// normalizationStrength and relationshipWeightProperty (#1185); absent or
-// non-positive values keep the defaults.
-func fastRPConfigFromMap(options map[string]interface{}) FastRPConfig {
-	config := FastRPConfig{
-		EmbeddingDimension:    64,                            // Default
-		IterationWeights:      []float64{0.0, 1.0, 1.0, 1.0}, // Default: 3 iterations
-		PropertyRatio:         0.0,                           // Default: no property features
-		FeatureProperties:     nil,
-		NormalizationStrength: 0.0,
-		RandomSeed:            42,
+// fastRPConfiguration reads gds.fastRP's configuration as GDS does (#1191):
+// embeddingDimension is mandatory, a key FastRP doesn't take and a value of
+// the wrong type or range are refused with GDS's messages. randomSeed
+// defaults to 42, so the same call gives the same embeddings (GDS picks a
+// random seed); embeddingDimension is at most maxFastRPEmbeddingDimension.
+func fastRPConfiguration(options map[string]interface{}) (FastRPConfig, error) {
+	config := FastRPConfig{IterationWeights: []float64{0.0, 1.0, 1.0}, RandomSeed: 42}
+	c, err := newGDSConfig(options, fastRPConfigKeys...)
+	if err != nil {
+		return config, err
 	}
-
-	if dim, ok := fastRPConfigInt(options["embeddingDimension"]); ok && dim > 0 {
-		if dim > maxFastRPEmbeddingDimension {
-			dim = maxFastRPEmbeddingDimension
+	dimension, err := c.integer("embeddingDimension", "Integer", 1, maxFastRPEmbeddingDimension, 0, true)
+	if err != nil {
+		return config, err
+	}
+	config.EmbeddingDimension = int(dimension)
+	if weights := c.value("iterationWeights"); weights != nil {
+		items, ok := cypherListValue(weights)
+		if !ok {
+			return config, c.typeError("iterationWeights", "List")
 		}
-		config.EmbeddingDimension = dim
+		config.IterationWeights = make([]float64, 0, len(items))
+		for _, item := range items {
+			number, isNumber := toFloat64(item)
+			if _, isText := item.(string); !isNumber || isText {
+				return config, localizedError(localization.CypherGraphProceduresIterationWeightType(fmt.Sprint(item), gdsJavaType(item)), nil)
+			}
+			config.IterationWeights = append(config.IterationWeights, number)
+		}
 	}
-	if seed, ok := fastRPConfigInt(options["randomSeed"]); ok && seed > 0 {
-		config.RandomSeed = int64(seed)
+	if config.NormalizationStrength, err = c.number("normalizationStrength", "Number", 0); err != nil {
+		return config, err
 	}
-	if ratio, ok := toFloat64(options["propertyRatio"]); ok {
-		config.PropertyRatio = ratio
+	if config.NodeSelfInfluence, err = c.number("nodeSelfInfluence", "Number", 0); err != nil {
+		return config, err
 	}
-	if property, ok := options["relationshipWeightProperty"].(string); ok {
+	if config.NodeSelfInfluence < 0 {
+		return config, localizedError(localization.CypherGraphProceduresConfigValueNegative("nodeSelfInfluence"), nil)
+	}
+	if config.PropertyRatio, err = c.number("propertyRatio", "Double", 0); err != nil {
+		return config, err
+	}
+	if features := c.value("featureProperties"); features != nil {
+		items, ok := cypherListValue(features)
+		if !ok {
+			return config, c.typeError("featureProperties", "List")
+		}
+		for _, item := range items {
+			name, isText := item.(string)
+			if !isText {
+				return config, c.typeError("featureProperties", "List")
+			}
+			config.FeatureProperties = append(config.FeatureProperties, name)
+		}
+	}
+	if property, ok, err := c.text("relationshipWeightProperty"); err != nil {
+		return config, err
+	} else if ok {
 		config.RelationshipWeightProperty = property
 	}
-	if properties, ok := cypherListValue(options["featureProperties"]); ok {
-		for _, property := range properties {
-			if name, isString := property.(string); isString {
-				config.FeatureProperties = append(config.FeatureProperties, name)
-			}
+	if c.value("randomSeed") != nil {
+		if !isIntegerProcedureValue(c.value("randomSeed")) {
+			return config, c.typeError("randomSeed", "Long")
 		}
-	} else if name, isString := options["featureProperties"].(string); isString {
-		config.FeatureProperties = []string{name}
+		config.RandomSeed = toInt64(c.value("randomSeed"))
 	}
-	if weights, ok := cypherListValue(options["iterationWeights"]); ok && len(weights) > 0 {
-		config.IterationWeights = make([]float64, 0, len(weights))
-		for _, weight := range weights {
-			if number, isNumber := toFloat64(weight); isNumber {
-				config.IterationWeights = append(config.IterationWeights, number)
-			}
-		}
+	if config.NodeLabels, err = c.names("nodeLabels"); err != nil {
+		return config, err
 	}
-	if strength, ok := toFloat64(options["normalizationStrength"]); ok {
-		config.NormalizationStrength = strength
+	if config.RelationshipTypes, err = c.names("relationshipTypes"); err != nil {
+		return config, err
 	}
-	return config
+	concurrency, err := c.integer("concurrency", "Integer", 1, 1<<31-1, 4, false)
+	if err != nil {
+		return config, err
+	}
+	logProgress, given, err := c.boolean("logProgress")
+	if err != nil {
+		return config, err
+	}
+	if !given {
+		logProgress = true
+	}
+	sudo, _, err := c.boolean("sudo")
+	if err != nil {
+		return config, err
+	}
+	if err := config.validate(); err != nil {
+		return config, err
+	}
+
+	jobID := c.value("jobId")
+	if jobID == nil {
+		jobID = uuid.New().String()
+	}
+	config.Configuration = map[string]interface{}{
+		"embeddingDimension":    int64(config.EmbeddingDimension),
+		"iterationWeights":      floatsToInterfaces(config.IterationWeights),
+		"normalizationStrength": config.NormalizationStrength,
+		"nodeSelfInfluence":     config.NodeSelfInfluence,
+		"propertyRatio":         config.PropertyRatio,
+		"featureProperties":     stringsToInterfaces(config.FeatureProperties),
+		"nodeLabels":            namesOrAll(config.NodeLabels),
+		"relationshipTypes":     namesOrAll(config.RelationshipTypes),
+		"randomSeed":            config.RandomSeed,
+		"concurrency":           concurrency,
+		"logProgress":           logProgress,
+		"sudo":                  sudo,
+		"jobId":                 jobID,
+	}
+	if config.RelationshipWeightProperty != "" {
+		config.Configuration["relationshipWeightProperty"] = config.RelationshipWeightProperty
+	}
+	return config, nil
 }
 
-// validate refuses a config GDS refuses: a propertyRatio outside [0, 1].
+// validate refuses a configuration GDS refuses as a whole.
 func (c FastRPConfig) validate() error {
 	if c.PropertyRatio < 0 || c.PropertyRatio > 1 {
 		return localizedError(localization.CypherGraphProceduresConfigValueOutOfRange("propertyRatio", strconv.FormatFloat(c.PropertyRatio, 'f', -1, 64), "[0.00, 1.00]"), nil)
 	}
+	if c.PropertyRatio > 0 && len(c.FeatureProperties) == 0 {
+		return localizedError(localization.CypherGraphProceduresFeaturePropertiesRequired(), nil)
+	}
+	if len(c.IterationWeights) == 0 && c.NodeSelfInfluence == 0 {
+		return localizedError(localization.CypherGraphProceduresIterationWeightsEmpty(), nil)
+	}
 	return nil
+}
+
+func floatsToInterfaces(values []float64) []interface{} {
+	out := make([]interface{}, len(values))
+	for i, value := range values {
+		out[i] = value
+	}
+	return out
+}
+
+func stringsToInterfaces(values []string) []interface{} {
+	out := make([]interface{}, len(values))
+	for i, value := range values {
+		out[i] = value
+	}
+	return out
+}
+
+// namesOrAll is a label or type filter as GDS reports it: ['*'] for none.
+func namesOrAll(names []string) []interface{} {
+	if names == nil {
+		return []interface{}{"*"}
+	}
+	return stringsToInterfaces(names)
+}
+
+// fastRPEmbedding is one node's FastRP embedding.
+type fastRPEmbedding struct {
+	nodeID string
+	vector []float64
+}
+
+// fastRPGraph is the part of a projection a FastRP call reads: the nodes of
+// its nodeLabels and, between them, the relationships of its
+// relationshipTypes, each node's relationships with their weights.
+type fastRPGraph struct {
+	nodes    []string
+	index    map[string]int
+	outgoing [][]fastRPEdge
+}
+
+type fastRPEdge struct {
+	target int
+	weight float64
+}
+
+// fastRPSubgraph selects config's nodes and relationships from proj, with
+// GDS's errors for labels, types and weights the graph doesn't hold.
+func fastRPSubgraph(proj *GraphProjection, config FastRPConfig) (*fastRPGraph, error) {
+	if missing := missingNames(config.NodeLabels, proj.Labels); len(missing) > 0 {
+		return nil, localizedError(localization.CypherGraphProceduresNodeLabelsNotInGraph(gdsNameList(missing), gdsNameList(proj.Labels)), nil)
+	}
+	if missing := missingNames(config.RelationshipTypes, proj.Types); len(missing) > 0 {
+		return nil, localizedError(localization.CypherGraphProceduresRelationshipTypesNotInGraph(gdsNameList(missing), gdsNameList(proj.Types)), nil)
+	}
+	types := config.RelationshipTypes
+	if types == nil {
+		types = proj.Types
+	}
+	if property := config.RelationshipWeightProperty; property != "" {
+		available := commonKeys(proj.RelationshipPropertyKeys, types)
+		if !containsString(available, property) {
+			return nil, localizedError(localization.CypherGraphProceduresWeightPropertyNotFound(property, gdsNameList(types), gdsNameList(available)), nil)
+		}
+	}
+	graph := &fastRPGraph{index: make(map[string]int)}
+	for _, id := range proj.NodeIDs {
+		if config.NodeLabels != nil && !anyString(proj.NodeLabels[id], config.NodeLabels) {
+			continue
+		}
+		graph.index[id] = len(graph.nodes)
+		graph.nodes = append(graph.nodes, id)
+	}
+	graph.outgoing = make([][]fastRPEdge, len(graph.nodes))
+	for _, relationship := range proj.Relationships {
+		if !containsString(types, relationship.Type) {
+			continue
+		}
+		source, ok := graph.index[relationship.Source]
+		if !ok {
+			continue
+		}
+		target, ok := graph.index[relationship.Target]
+		if !ok {
+			continue
+		}
+		weight := 1.0
+		if property := config.RelationshipWeightProperty; property != "" {
+			value, ok := relationship.Properties[property]
+			if !ok {
+				return nil, localizedError(localization.CypherGraphProceduresRelationshipPropertyMissing(property, strconv.Itoa(source), strconv.Itoa(target)), nil)
+			}
+			weight = value
+		}
+		graph.outgoing[source] = append(graph.outgoing[source], fastRPEdge{target: target, weight: weight})
+	}
+	return graph, nil
+}
+
+// generateFastRPEmbeddings is GDS's FastRP (#1191) over the projection's
+// nodes, in its node order. Each node starts from a sparse random vector
+// (L2-normalised, scaled by its degree to normalizationStrength), the last
+// propertyRatio of whose dimensions hold its featureProperties, each value
+// times a random vector of that property. Each iteration gives every node
+// the relationship-weighted sum of the previous iteration's vectors over its
+// relationships, as projected (outgoing; both ways for UNDIRECTED),
+// L2-normalised; the embedding is the iterations' sum, each times its
+// iterationWeights entry, plus nodeSelfInfluence times the start. A node
+// nothing propagates to gets a zero vector, as in GDS.
+func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fastRPEmbedding, error) {
+	graph, err := fastRPSubgraph(proj, config)
+	if err != nil {
+		return nil, err
+	}
+	dim := util.SafePreallocCap(config.EmbeddingDimension, maxFastRPEmbeddingDimension)
+	size := len(graph.nodes)
+	if size == 0 || dim <= 0 {
+		return nil, nil
+	}
+	propDim := int(float64(dim) * config.PropertyRatio)
+	var features [][]float64
+	if propDim > 0 {
+		labels := config.NodeLabels
+		if labels == nil {
+			labels = proj.Labels
+		}
+		available := commonKeys(proj.NodePropertyKeys, labels)
+		if missing := missingNames(config.FeatureProperties, available); len(missing) > 0 {
+			return nil, localizedError(localization.CypherGraphProceduresFeaturePropertiesMissing(gdsNameList(config.FeatureProperties), gdsNameList(labels), gdsNameList(available)), nil)
+		}
+		features = make([][]float64, size)
+		for i, id := range graph.nodes {
+			features[i] = make([]float64, len(config.FeatureProperties))
+			for p, name := range config.FeatureProperties {
+				value, ok := proj.NodeProperties[id][name]
+				if !ok || math.IsNaN(value) {
+					return nil, localizedError(localization.CypherGraphProceduresFeaturePropertyInvalid(strconv.Itoa(i), name), nil)
+				}
+				features[i][p] = value
+			}
+		}
+	}
+
+	rng := mathrand.New(mathrand.NewSource(config.RandomSeed))
+	initial := make([][]float64, size)
+	topologyDim := dim - propDim
+	for i := range initial {
+		initial[i] = make([]float64, dim)
+		for j := 0; j < topologyDim; j++ {
+			initial[i][j] = sparseRandomValue(rng)
+		}
+		normalizeEmbeddings(initial[i:i+1], topologyDim)
+		if config.NormalizationStrength != 0 {
+			if degree := len(graph.outgoing[i]); degree > 0 {
+				scale := math.Pow(float64(degree), config.NormalizationStrength)
+				for j := 0; j < topologyDim; j++ {
+					initial[i][j] *= scale
+				}
+			}
+		}
+	}
+	if propDim > 0 {
+		featureVectors := make([][]float64, len(config.FeatureProperties))
+		for p := range featureVectors {
+			featureVectors[p] = make([]float64, propDim)
+			for k := range featureVectors[p] {
+				featureVectors[p][k] = sparseRandomValue(rng)
+			}
+		}
+		for i := range initial {
+			for p, value := range features[i] {
+				for k, r := range featureVectors[p] {
+					initial[i][topologyDim+k] += value * r
+				}
+			}
+		}
+	}
+
+	previous := initial
+	final := make([][]float64, size)
+	for i := range final {
+		final[i] = make([]float64, dim)
+	}
+	for _, weight := range config.IterationWeights {
+		current := make([][]float64, size)
+		for i := range current {
+			current[i] = make([]float64, dim)
+			for _, edge := range graph.outgoing[i] {
+				for j, value := range previous[edge.target] {
+					current[i][j] += value * edge.weight
+				}
+			}
+		}
+		normalizeEmbeddings(current, dim)
+		if weight != 0 {
+			for i := range final {
+				for j, value := range current[i] {
+					final[i][j] += weight * value
+				}
+			}
+		}
+		previous = current
+	}
+	if config.NodeSelfInfluence != 0 {
+		for i := range final {
+			for j, value := range initial[i] {
+				final[i][j] += config.NodeSelfInfluence * value
+			}
+		}
+	}
+
+	embeddings := make([]fastRPEmbedding, size)
+	for i, id := range graph.nodes {
+		embeddings[i] = fastRPEmbedding{nodeID: id, vector: final[i]}
+	}
+	return embeddings, nil
+}
+
+// missingNames is the names not in available.
+func missingNames(names, available []string) []string {
+	var missing []string
+	for _, name := range names {
+		if !containsString(available, name) {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+// commonKeys is the keys every one of names has in keys, in order.
+func commonKeys(keys map[string][]string, names []string) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	var common []string
+	for _, key := range keys[names[0]] {
+		inAll := true
+		for _, name := range names[1:] {
+			if !containsString(keys[name], key) {
+				inAll = false
+				break
+			}
+		}
+		if inAll {
+			common = append(common, key)
+		}
+	}
+	return common
 }
 
 // fastRPConfigInt reads an integer config value (an INTEGER, or a FLOAT
@@ -539,141 +533,14 @@ func fastRPConfigInt(value interface{}) (int, bool) {
 	return 0, false
 }
 
-// generateFastRPEmbeddings implements the FastRP algorithm with memory-efficient processing
-// For large graphs, processes embeddings in chunks to avoid memory exhaustion
-func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) map[string][]float64 {
-	dim := util.SafePreallocCap(config.EmbeddingDimension, maxFastRPEmbeddingDimension)
-	numNodes := len(proj.NodeIDs)
-
-	if numNodes == 0 || dim == 0 {
-		return make(map[string][]float64)
-	}
-
-	// Create node index for fast lookup
-	nodeIndex := make(map[string]int, numNodes)
-	for i, nodeID := range proj.NodeIDs {
-		nodeIndex[nodeID] = i
-	}
-
-	// Initialize random projection matrix with seeded RNG
-	rng := mathrand.New(mathrand.NewSource(config.RandomSeed))
-
-	// For very large graphs, use chunked embedding generation
-	// This trades some speed for lower peak memory usage
-	isLargeGraph := numNodes > maxNodesBeforeStreaming
-
-	// Allocate embeddings - for large graphs, consider memory pressure
-	embeddings := make([][]float64, numNodes)
-
-	// Generate random initial embeddings in chunks for large graphs
-	if isLargeGraph {
-		for start := 0; start < numNodes; start += embeddingChunkSize {
-			end := start + embeddingChunkSize
-			if end > numNodes {
-				end = numNodes
-			}
-			initializeEmbeddingChunk(embeddings, start, end, dim, rng)
-		}
-	} else {
-		initializeEmbeddingChunk(embeddings, 0, numNodes, dim, rng)
-	}
-
-	// Property features, as in GDS (#1185): the last propertyRatio of the
-	// dimensions hold the node's featureProperties, each value times a
-	// random vector of that property; the rest stay random.
-	if propDim := int(float64(dim) * config.PropertyRatio); propDim > 0 && propDim <= dim && len(config.FeatureProperties) > 0 {
-		featureVectors := make([][]float64, len(config.FeatureProperties))
-		for p := range featureVectors {
-			featureVectors[p] = make([]float64, propDim)
-			for k := range featureVectors[p] {
-				featureVectors[p][k] = sparseRandomValue(rng)
-			}
-		}
-		for i, nodeID := range proj.NodeIDs {
-			properties := embeddings[i][dim-propDim:]
-			for k := range properties {
-				properties[k] = 0
-			}
-			for p, name := range config.FeatureProperties {
-				value, ok := toFloat64(proj.NodeProperties[nodeID][name])
-				if !ok {
-					continue
-				}
-				for k, r := range featureVectors[p] {
-					properties[k] += value * r
-				}
-			}
+// anyString reports whether values holds any of wanted.
+func anyString(values, wanted []string) bool {
+	for _, value := range values {
+		if containsString(wanted, value) {
+			return true
 		}
 	}
-
-	// normalizationStrength scales each node's initial vector by its degree
-	// to that power, as in GDS (#1185).
-	if config.NormalizationStrength != 0 {
-		for i, nodeID := range proj.NodeIDs {
-			if degree := len(proj.Adjacency[nodeID]); degree > 0 {
-				scale := math.Pow(float64(degree), config.NormalizationStrength)
-				for j := range embeddings[i] {
-					embeddings[i][j] *= scale
-				}
-			}
-		}
-	}
-
-	// Iteration weights: one iteration per weight; GDS's default is
-	// [0, 1, 1], NornicDB's kept default [0, 1, 1, 1].
-	weights := config.IterationWeights
-	if len(weights) == 0 {
-		weights = []float64{0.0, 1.0, 1.0, 1.0}
-	}
-
-	// FastRP propagation, as in GDS (#1185): each iteration's embedding is
-	// the relationship-weighted sum of the neighbours' previous embeddings
-	// (the first iteration's: the initial vectors), L2-normalised, and the
-	// result adds every iteration's embedding times its iterationWeights
-	// entry.
-	previous := embeddings
-	current := make([][]float64, numNodes)
-	final := make([][]float64, numNodes)
-	for i, nodeID := range proj.NodeIDs {
-		current[i] = make([]float64, len(embeddings[i]))
-		final[i] = make([]float64, len(embeddings[i]))
-		if len(proj.Adjacency[nodeID]) == 0 {
-			// A node without neighbours keeps its initial vector
-			// (NornicDB's kept form; GDS gives it zeros).
-			copy(final[i], embeddings[i])
-		}
-	}
-	for _, weight := range weights {
-		// For large graphs, process in chunks and hint GC between iterations
-		chunk := numNodes
-		if isLargeGraph {
-			chunk = embeddingChunkSize
-		}
-		for start := 0; start < numNodes; start += chunk {
-			end := start + chunk
-			if end > numNodes {
-				end = numNodes
-			}
-			propagateEmbeddingChunk(proj, previous, current, final, nodeIndex,
-				start, end, weight, config.RelationshipWeightProperty)
-		}
-		previous, current = current, previous
-		if isLargeGraph {
-			runtime.GC()
-		}
-	}
-	embeddings = final
-
-	// L2 normalize final embeddings (in-place to save memory)
-	normalizeEmbeddings(embeddings, dim)
-
-	// Build result map without a user-influenced capacity hint.
-	result := make(map[string][]float64)
-	for i, nodeID := range proj.NodeIDs {
-		result[nodeID] = embeddings[i]
-	}
-
-	return result
+	return false
 }
 
 // initializeEmbeddingChunk initializes embeddings for a chunk of nodes
@@ -706,44 +573,8 @@ func sparseRandomValue(rng *mathrand.Rand) float64 {
 	return 0.0
 }
 
-// propagateEmbeddingChunk computes one FastRP iteration for the nodes start
-// to end: current is the relationship-weighted sum of the neighbours'
-// previous embeddings (the relationshipWeightProperty's value, 1 without
-// it; #1185), L2-normalised, and final gains current times weight.
-func propagateEmbeddingChunk(proj *GraphProjection, previous, current, final [][]float64,
-	nodeIndex map[string]int, start, end int, weight float64, weightProp string) {
-
-	for i := start; i < end; i++ {
-		next := current[i]
-		for j := range next {
-			next[j] = 0
-		}
-		nodeID := proj.NodeIDs[i]
-		for _, neighborID := range proj.Adjacency[nodeID] {
-			neighborIdx, ok := nodeIndex[neighborID]
-			if !ok {
-				continue
-			}
-			edgeWeight := 1.0
-			if weightProp != "" {
-				if w, ok := proj.EdgeProperties[nodeID][neighborID][weightProp]; ok {
-					edgeWeight = w
-				}
-			}
-			for j, value := range previous[neighborIdx] {
-				next[j] += value * edgeWeight
-			}
-		}
-		normalizeEmbeddings(current[i:i+1], len(next))
-		if weight != 0 {
-			for j, value := range next {
-				final[i][j] += weight * value
-			}
-		}
-	}
-}
-
-// normalizeEmbeddings L2 normalizes all embeddings in-place
+// normalizeEmbeddings L2 normalizes the first dim coordinates of each
+// embedding in place; a zero vector stays zero.
 func normalizeEmbeddings(embeddings [][]float64, dim int) {
 	for i := range embeddings {
 		if embeddings[i] == nil {
@@ -761,10 +592,3 @@ func normalizeEmbeddings(embeddings [][]float64, dim int) {
 		}
 	}
 }
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-// Ensure rand is imported for generating random bytes if needed
-var _ = rand.Reader

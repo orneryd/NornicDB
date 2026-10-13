@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"sort"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -82,43 +81,48 @@ func TestFastRPReadsItsOptions(t *testing.T) {
 		{"a", "R", "b", 1.0}, {"b", "R", "c", 9.0}, {"c", "R", "a", 0.5}, {"c", "R", "dd", 3.0}, {"dd", "R", "eee", 7.0},
 	})
 	ctx := context.Background()
-	_, err := exec.Execute(ctx, "CALL gds.graph.project('options', 'P', 'R')", nil)
+	_, err := exec.Execute(ctx, "CALL gds.graph.project('options', {P: {properties: 'age'}}, {R: {orientation: 'UNDIRECTED', properties: ['w', 'weight']}})", nil)
 	require.NoError(t, err)
 	embeddings := func(config string) string {
 		t.Helper()
 		result, err := exec.Execute(ctx, "CALL gds.fastRP.stream('options', {embeddingDimension: 8, randomSeed: 3"+config+"})", nil)
 		require.NoError(t, err)
 		require.Len(t, result.Rows, 5)
-		// Rows by node (their order is #1183's).
-		sort.Slice(result.Rows, func(i, j int) bool { return result.Rows[i][0].(string) < result.Rows[j][0].(string) })
 		return fmt.Sprint(result.Rows)
+	}
+	refused := func(config, message string) {
+		t.Helper()
+		_, err := exec.Execute(ctx, "CALL gds.fastRP.stream('options', {embeddingDimension: 8"+config+"})", nil)
+		require.ErrorContains(t, err, message)
 	}
 	plain := embeddings("")
 	byW := embeddings(", relationshipWeightProperty: 'w'")
 	require.NotEqual(t, plain, byW)
 	require.NotEqual(t, byW, embeddings(", relationshipWeightProperty: 'weight'"))
 	require.Equal(t, byW, embeddings(", relationshipWeightProperty: 'w'"))
-	require.Equal(t, plain, embeddings(", relationshipWeightProperty: 'missing'"))
-	require.Equal(t, plain, embeddings(", iterationWeights: [0.0, 1.0, 1.0, 1.0]"))
+	refused(", relationshipWeightProperty: 'missing'", "Relationship weight property `missing` not found in relationship types ['R']. Properties existing on all relationship types: ['w', 'weight']")
+	require.Equal(t, plain, embeddings(", iterationWeights: [0.0, 1.0, 1.0]"))
 	require.NotEqual(t, plain, embeddings(", iterationWeights: [1.0, 0.5]"))
 	require.NotEqual(t, plain, embeddings(", normalizationStrength: 0.5"))
-	require.NotEqual(t, embeddings(", propertyRatio: 0.5"), embeddings(", propertyRatio: 0.5, featureProperties: ['age']"))
-	require.Equal(t, embeddings(", propertyRatio: 0.5, featureProperties: 'age'"), embeddings(", propertyRatio: 0.5, featureProperties: ['age']"))
+	require.NotEqual(t, plain, embeddings(", nodeSelfInfluence: 0.5"))
 	// propertyRatio sizes the property subspace.
+	require.NotEqual(t, plain, embeddings(", propertyRatio: 0.5, featureProperties: ['age']"))
 	require.NotEqual(t, embeddings(", propertyRatio: 0.125, featureProperties: ['age']"), embeddings(", propertyRatio: 1.0, featureProperties: ['age']"))
 
-	// More features than dimensions fit.
-	result, err := exec.Execute(ctx, "CALL gds.fastRP.stream('options', {embeddingDimension: 1, propertyRatio: 1.0, featureProperties: ['age', 'name', 'x']})", nil)
+	// More dimensions asked of the features than there are.
+	result, err := exec.Execute(ctx, "CALL gds.fastRP.stream('options', {embeddingDimension: 1, propertyRatio: 1.0, featureProperties: ['age']})", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 5)
 
-	// A propertyRatio outside [0, 1] is refused, as in GDS.
+	// GDS's refusals.
+	refused(", propertyRatio: 0.5", "When `propertyRatio` is non-zero, `featureProperties` may not be empty.")
+	refused(", propertyRatio: 0.5, featureProperties: 'age'", "The value of `featureProperties` must be of type `List` but was `String`.")
+	refused(", propertyRatio: 0.5, featureProperties: ['name']", "The feature properties ['name'] are not present for all requested labels. Requested labels: ['P']. Properties available on all requested labels: ['age']")
 	for _, procedure := range []string{"stream", "stats"} {
-		_, err = exec.Execute(ctx, "CALL gds.fastRP."+procedure+"('options', {embeddingDimension: 1, propertyRatio: 2, featureProperties: ['age', 'x']})", nil)
+		_, err = exec.Execute(ctx, "CALL gds.fastRP."+procedure+"('options', {embeddingDimension: 1, propertyRatio: 2, featureProperties: ['age']})", nil)
 		require.ErrorContains(t, err, "Value for `propertyRatio` was `2`, but must be within the range [0.00, 1.00].")
 	}
-	_, err = exec.Execute(ctx, "CALL gds.fastRP.stream('options', {propertyRatio: -0.5})", nil)
-	require.ErrorContains(t, err, "propertyRatio")
+	refused(", propertyRatio: -0.5", "Value for `propertyRatio` was `-0.5`, but must be within the range [0.00, 1.00].")
 }
 
 // TestLinkPredictionReadsRelationshipTypesAndTargetNodes (#1185).

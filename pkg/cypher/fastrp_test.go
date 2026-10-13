@@ -210,17 +210,20 @@ func TestGdsGraphProject(t *testing.T) {
 		t.Fatalf("Expected 1 row, got %d", len(result.Rows))
 	}
 
-	graphName, ok := result.Rows[0][0].(string)
+	// GDS's columns: nodeProjection, relationshipProjection, graphName,
+	// nodeCount, relationshipCount, projectMillis.
+	require.Equal(t, []string{"nodeProjection", "relationshipProjection", "graphName", "nodeCount", "relationshipCount", "projectMillis"}, result.Columns)
+	graphName, ok := result.Rows[0][2].(string)
 	if !ok {
-		t.Fatalf("Expected string graphName, got %T", result.Rows[0][0])
+		t.Fatalf("Expected string graphName, got %T", result.Rows[0][2])
 	}
-	nodeCount, ok := result.Rows[0][1].(int)
+	nodeCount, ok := result.Rows[0][3].(int64)
 	if !ok {
-		t.Fatalf("Expected int nodeCount, got %T", result.Rows[0][1])
+		t.Fatalf("Expected INTEGER nodeCount, got %T", result.Rows[0][3])
 	}
-	relCount, ok := result.Rows[0][2].(int)
+	relCount, ok := result.Rows[0][4].(int64)
 	if !ok {
-		t.Fatalf("Expected int relCount, got %T", result.Rows[0][2])
+		t.Fatalf("Expected INTEGER relCount, got %T", result.Rows[0][4])
 	}
 
 	if graphName != "test-graph" {
@@ -405,8 +408,8 @@ func TestGdsFastRPStream(t *testing.T) {
 			sumSq += v * v
 		}
 		norm := math.Sqrt(sumSq)
-		if norm < 0.99 || norm > 1.01 {
-			t.Errorf("Node %s: embedding not normalized, L2 norm = %f", nodeID, norm)
+		if norm > 2.0+1e-9 || math.IsNaN(norm) {
+			t.Errorf("Node %s: embedding out of range (GDS sums at most two normalised iterations), L2 norm = %f", nodeID, norm)
 		}
 	}
 
@@ -466,8 +469,8 @@ func TestGdsFastRPStreamDifferentDimensions(t *testing.T) {
 				for _, v := range embedding {
 					sumSq += v * v
 				}
-				if norm := math.Sqrt(sumSq); norm < 0.99 || norm > 1.01 {
-					t.Errorf("Embedding not normalized, L2 norm = %f", norm)
+				if norm := math.Sqrt(sumSq); norm > 2.0+1e-9 || math.IsNaN(norm) {
+					t.Errorf("Embedding out of range (GDS sums at most two normalised iterations), L2 norm = %f", norm)
 				}
 			}
 		})
@@ -484,7 +487,7 @@ func TestGdsFastRPWithWeights(t *testing.T) {
 	ctx := context.Background()
 
 	// Create projection
-	_, err := exec.Execute(ctx, "CALL gds.graph.project('weighted-test', 'Person', 'KNOWS')", nil)
+	_, err := exec.Execute(ctx, "CALL gds.graph.project('weighted-test', 'Person', {KNOWS: {properties: {weight: {property: 'weight', defaultValue: 1.0}}}})", nil)
 	if err != nil {
 		t.Fatalf("Failed to create graph: %v", err)
 	}
@@ -560,9 +563,9 @@ func TestGdsFastRPStats(t *testing.T) {
 		t.Fatalf("Expected 1 row, got %d", len(result.Rows))
 	}
 
-	nodeCount, ok := result.Rows[0][0].(int)
+	nodeCount, ok := result.Rows[0][0].(int64)
 	if !ok {
-		t.Fatalf("Expected int nodeCount, got %T", result.Rows[0][0])
+		t.Fatalf("Expected INTEGER nodeCount, got %T", result.Rows[0][0])
 	}
 	if nodeCount != 7 {
 		t.Errorf("Expected nodeCount 7, got: %d", nodeCount)
@@ -611,7 +614,7 @@ func TestGdsFastRPStats_ErrorBranches(t *testing.T) {
 	assert.Contains(t, strings.ToLower(err.Error()), "requires at least 1 arguments")
 
 	// Non-existent projected graph for stats.
-	_, err = exec.Execute(ctx, "CALL gds.fastRP.stats('missing-graph')", nil)
+	_, err = exec.Execute(ctx, "CALL gds.fastRP.stats('missing-graph', {embeddingDimension: 4})", nil)
 	require.Error(t, err)
 	assert.Contains(t, strings.ToLower(err.Error()), "does not exist")
 }
@@ -819,8 +822,8 @@ func TestFastRPConnectedNodesSimilarity(t *testing.T) {
 		for _, v := range emb {
 			sumSq += v * v
 		}
-		if norm := math.Sqrt(sumSq); norm < 0.99 || norm > 1.01 {
-			t.Errorf("Node %s: embedding not normalized, norm=%f", nodeID, norm)
+		if norm := math.Sqrt(sumSq); norm > 2.0+1e-9 || math.IsNaN(norm) {
+			t.Errorf("Node %s: embedding out of range (GDS sums at most two normalised iterations), norm=%f", nodeID, norm)
 		}
 	}
 
@@ -836,7 +839,7 @@ func TestFastRPEmptyGraph(t *testing.T) {
 	ctx := context.Background()
 
 	// Create projection of empty graph
-	_, err := exec.Execute(ctx, "CALL gds.graph.project('empty-test', 'Person', 'KNOWS')", nil)
+	_, err := exec.Execute(ctx, "CALL gds.graph.project('empty-test', '*', '*')", nil)
 	if err != nil {
 		t.Fatalf("Failed to create graph: %v", err)
 	}
@@ -918,8 +921,8 @@ func TestFastRPIsolatedNodes(t *testing.T) {
 		for _, v := range embedding {
 			sumSq += v * v
 		}
-		if norm := math.Sqrt(sumSq); norm < 0.99 || norm > 1.01 {
-			t.Errorf("Isolated node embedding not normalized, norm=%f", norm)
+		if norm := math.Sqrt(sumSq); norm > 2.0+1e-9 || math.IsNaN(norm) {
+			t.Errorf("Isolated node embedding out of range (GDS sums at most two normalised iterations), norm=%f", norm)
 		}
 	}
 
@@ -986,7 +989,7 @@ func TestFastRPMediumGraph(t *testing.T) {
 		for _, v := range embedding {
 			sumSq += v * v
 		}
-		if norm := math.Sqrt(sumSq); norm < 0.99 || norm > 1.01 {
+		if norm := math.Sqrt(sumSq); norm > 2.0+1e-9 || math.IsNaN(norm) {
 			invalidCount++
 		}
 	}
@@ -1054,7 +1057,7 @@ func TestFastRPLargeGraph(t *testing.T) {
 		for _, v := range embedding {
 			sumSq += v * v
 		}
-		if norm := math.Sqrt(sumSq); norm < 0.99 || norm > 1.01 {
+		if norm := math.Sqrt(sumSq); norm > 2.0+1e-9 || math.IsNaN(norm) {
 			invalidCount++
 		}
 	}
@@ -1169,25 +1172,22 @@ func TestMultipleGraphProjections(t *testing.T) {
 }
 
 func TestGenerateFastRPEmbeddings_Branches(t *testing.T) {
-	empty := generateFastRPEmbeddings(&GraphProjection{}, FastRPConfig{EmbeddingDimension: 4})
-	if len(empty) != 0 {
-		t.Fatalf("expected empty embedding map for empty projection, got %d", len(empty))
-	}
+	empty, err := generateFastRPEmbeddings(&GraphProjection{}, FastRPConfig{EmbeddingDimension: 4, IterationWeights: []float64{1}})
+	require.NoError(t, err)
+	require.Empty(t, empty)
 
 	proj := &GraphProjection{
-		NodeIDs: []string{"n1", "n2"},
-		NodeProperties: map[string]map[string]any{
-			"n1": {"age": float64(20)},
-			"n2": {"age": float64(40)},
+		NodeIDs:          []string{"n1", "n2", "n3"},
+		Labels:           []string{"P"},
+		NodeLabels:       map[string][]string{"n1": {"P"}, "n2": {"P"}, "n3": {"P"}},
+		NodeProperties:   map[string]map[string]float64{"n1": {"age": 20}, "n2": {"age": 40}, "n3": {"age": 60}},
+		NodePropertyKeys: map[string][]string{"P": {"age"}},
+		Types:            []string{"K"},
+		Relationships: []ProjectedRelationship{
+			{ID: "e1", Source: "n1", Target: "n2", Type: "K", Properties: map[string]float64{"weight": 2}},
+			{ID: "e1", Source: "n2", Target: "n1", Type: "K", Properties: map[string]float64{"weight": 2}},
 		},
-		Adjacency: map[string][]string{
-			"n1": {"n2"},
-			"n2": {"n1"},
-		},
-		EdgeProperties: map[string]map[string]map[string]float64{
-			"n1": {"n2": {"weight": 2.0}},
-			"n2": {"n1": {"weight": 1.0}},
-		},
+		RelationshipPropertyKeys: map[string][]string{"K": {"weight"}},
 	}
 	cfg := FastRPConfig{
 		EmbeddingDimension:         8,
@@ -1195,44 +1195,24 @@ func TestGenerateFastRPEmbeddings_Branches(t *testing.T) {
 		PropertyRatio:              0.25,
 		FeatureProperties:          []string{"age"},
 		RelationshipWeightProperty: "weight",
+		NormalizationStrength:      0.5,
+		NodeSelfInfluence:          0.5,
 		RandomSeed:                 7,
 	}
-	out := generateFastRPEmbeddings(proj, cfg)
-	if len(out) != 2 {
-		t.Fatalf("expected embeddings for 2 nodes, got %d", len(out))
+	out, err := generateFastRPEmbeddings(proj, cfg)
+	require.NoError(t, err)
+	require.Len(t, out, 3)
+	for _, embedding := range out {
+		require.Len(t, embedding.vector, 8)
 	}
-	for nodeID, emb := range out {
-		if len(emb) != 8 {
-			t.Fatalf("node %s: expected dim=8, got %d", nodeID, len(emb))
-		}
-		var normSq float64
-		for _, v := range emb {
-			normSq += v * v
-		}
-		norm := math.Sqrt(normSq)
-		if norm < 0.99 || norm > 1.01 {
-			t.Fatalf("node %s: expected normalized embedding, got norm=%f", nodeID, norm)
-		}
-	}
-}
+	require.Equal(t, []string{"n1", "n2", "n3"}, []string{out[0].nodeID, out[1].nodeID, out[2].nodeID})
 
-func TestGenerateFastRPEmbeddings_LargeGraphStreamingBranch(t *testing.T) {
-	nodeIDs := make([]string, maxNodesBeforeStreaming+1)
-	for i := range nodeIDs {
-		nodeIDs[i] = fmt.Sprintf("n%d", i)
-	}
-	proj := &GraphProjection{NodeIDs: nodeIDs}
-	out := generateFastRPEmbeddings(proj, FastRPConfig{
-		EmbeddingDimension: 2,
-		IterationWeights:   []float64{0.0, 0.0},
-		RandomSeed:         123,
-	})
-	if len(out) != len(nodeIDs) {
-		t.Fatalf("expected %d embeddings, got %d", len(nodeIDs), len(out))
-	}
-	if len(out["n0"]) != 2 {
-		t.Fatalf("expected n0 to have embedding dimension 2, got %d", len(out["n0"]))
-	}
+	// Without self-influence, a node nothing propagates to is zero, as in GDS.
+	cfg.NodeSelfInfluence = 0
+	out, err = generateFastRPEmbeddings(proj, cfg)
+	require.NoError(t, err)
+	require.Equal(t, make([]float64, 8), out[2].vector)
+	require.NotEqual(t, make([]float64, 8), out[0].vector)
 }
 
 func TestCallGdsGraphProject_AdditionalBranches(t *testing.T) {
@@ -1259,42 +1239,45 @@ func TestCallGdsGraphProject_AdditionalBranches(t *testing.T) {
 	require.ErrorContains(t, err, "argument graphName is null")
 
 	// A name text listing several labels / types (NornicDB's kept form).
+	counts := func(res *ExecuteResult) []any { return res.Rows[0][2:5] }
 	res, err := exec.callGdsGraphProject([]interface{}{"g_parse", "Person:User:Memory", "KNOWS|RELATES_TO|REFERENCES"})
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
-	assert.Equal(t, []any{"g_parse", 3, 3, int64(10)}, res.Rows[0])
+	assert.Equal(t, []any{"g_parse", int64(3), int64(3)}, counts(res))
 
 	// Lists, maps (an entry's label / type overrides its key) and '*'.
 	res, err = exec.callGdsGraphProject([]interface{}{"g_list", []interface{}{"Person", "User"}, map[string]interface{}{"K": map[string]interface{}{"type": "KNOWS"}}})
 	require.NoError(t, err)
-	assert.Equal(t, []any{"g_list", 2, 1, int64(10)}, res.Rows[0])
+	assert.Equal(t, []any{"g_list", int64(2), int64(1)}, counts(res))
 	res, err = exec.callGdsGraphProject([]interface{}{"g_default", "*", "*"})
 	require.NoError(t, err)
-	assert.Equal(t, []any{"g_default", 3, 3, int64(10)}, res.Rows[0])
+	assert.Equal(t, []any{"g_default", int64(3), int64(3)}, counts(res))
 	_, err = exec.callGdsGraphProject([]interface{}{"g_bad", int64(1), "*"})
-	require.ErrorContains(t, err, "argument nodeProjection must be")
+	require.ErrorContains(t, err, "Cannot construct a node projection out of a java.lang.Long")
 	_, err = exec.callGdsGraphProject([]interface{}{"g_bad", []interface{}{"Person", int64(1)}, "*"})
-	require.ErrorContains(t, err, "argument nodeProjection must be")
+	require.ErrorContains(t, err, "Cannot construct a node projection out of a java.lang.Long")
 
 	// Projections bound earlier in the statement.
 	res, err = exec.Execute(ctx, "WITH ['Person', 'User'] AS labels, 'KNOWS' AS type CALL gds.graph.project('g_bound', labels, type) YIELD graphName, nodeCount, relationshipCount RETURN graphName, nodeCount, relationshipCount", nil)
 	require.NoError(t, err)
-	assert.Equal(t, [][]interface{}{{"g_bound", 2, 1}}, res.Rows)
+	assert.Equal(t, [][]interface{}{{"g_bound", int64(2), int64(1)}}, res.Rows)
 }
 
-func TestFastRPConfigFromMap(t *testing.T) {
-	defaults := fastRPConfigFromMap(nil)
-	assert.Equal(t, 64, defaults.EmbeddingDimension)
-	assert.Equal(t, int64(42), defaults.RandomSeed)
-	config := fastRPConfigFromMap(map[string]interface{}{
-		"embeddingDimension": int64(maxFastRPEmbeddingDimension + 10), "randomSeed": 7.0,
-		"propertyRatio": 0.5, "relationshipWeightProperty": "weight",
-	})
-	assert.Equal(t, maxFastRPEmbeddingDimension, config.EmbeddingDimension)
-	assert.Equal(t, int64(7), config.RandomSeed)
-	assert.Equal(t, 0.5, config.PropertyRatio)
-	assert.Equal(t, "weight", config.RelationshipWeightProperty)
-	config = fastRPConfigFromMap(map[string]interface{}{"embeddingDimension": 1.5, "randomSeed": int64(-1)})
-	assert.Equal(t, 64, config.EmbeddingDimension)
+func TestFastRPConfiguration(t *testing.T) {
+	config, err := fastRPConfiguration(map[string]interface{}{"embeddingDimension": int64(4)})
+	require.NoError(t, err)
+	assert.Equal(t, 4, config.EmbeddingDimension)
 	assert.Equal(t, int64(42), config.RandomSeed)
+	assert.Equal(t, []float64{0, 1, 1}, config.IterationWeights)
+	config, err = fastRPConfiguration(map[string]interface{}{
+		"EMBEDDINGDIMENSION": int64(8), "randomSeed": int64(-3), "propertyRatio": 0.5, "featureProperties": []interface{}{"age"},
+		"relationshipWeightProperty": "weight", "concurrency": int64(2), "jobId": "j", "logProgress": false, "sudo": false,
+		"nodeLabels": "*", "relationshipTypes": []interface{}{"K"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 8, config.EmbeddingDimension)
+	assert.Equal(t, int64(-3), config.RandomSeed)
+	assert.Nil(t, config.NodeLabels)
+	assert.Equal(t, []string{"K"}, config.RelationshipTypes)
+	assert.Equal(t, "j", config.Configuration["jobId"])
 }

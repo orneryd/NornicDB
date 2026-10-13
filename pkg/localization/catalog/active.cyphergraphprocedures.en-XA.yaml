@@ -19,3 +19,69 @@
 - id: cyphergraphprocedures.config_value_out_of_range
   description: Expanded pseudo-locale config value outside its range.
   other: "[!! Value for `{{.Key}}` was `{{.Value}}`, but must be within the range {{.Range}}. !!]"
+- id: cyphergraphprocedures.graph_already_exists
+  description: Expanded pseudo-locale graph already exists.
+  other: '[!! A graph with name ''{{.Graph}}'' already exists. !!]'
+- id: cyphergraphprocedures.node_labels_not_found
+  description: Expanded pseudo-locale node labels not found.
+  other: '[!! Invalid node projection, one or more labels not found: ''{{.Labels}}'' !!]'
+- id: cyphergraphprocedures.relationship_types_not_found
+  description: Expanded pseudo-locale relationship types not found.
+  other: '[!! Invalid relationship projection, one or more relationship types not found: ''{{.Types}}'' !!]'
+- id: cyphergraphprocedures.node_properties_not_found
+  description: Expanded pseudo-locale node properties not found.
+  other: '[!! Node properties not found: ''{{.Properties}}'' !!]'
+- id: cyphergraphprocedures.relationship_properties_not_found
+  description: Expanded pseudo-locale relationship properties not found.
+  other: '[!! Relationship properties not found: ''{{.Properties}}'' (if you meant to count parallel relationships, use `property:''*''`). !!]'
+- id: cyphergraphprocedures.unsupported_orientation
+  description: Expanded pseudo-locale unsupported orientation.
+  other: '[!! Orientation `{{.Orientation}}` is not supported. Must be one of: [NATURAL, REVERSE, UNDIRECTED]. !!]'
+- id: cyphergraphprocedures.unsupported_aggregation
+  description: Expanded pseudo-locale unsupported aggregation.
+  other: '[!! Aggregation `{{.Aggregation}}` is not supported. Must be one of: [DEFAULT, NONE, SINGLE, SUM, MIN, MAX, COUNT]. !!]'
+- id: cyphergraphprocedures.invalid_projection
+  description: Expanded pseudo-locale invalid projection.
+  other: '[!! Cannot construct a {{.Kind}} projection out of a {{.Type}} !!]'
+- id: cyphergraphprocedures.config_unexpected_key
+  description: Expanded pseudo-locale config unexpected key.
+  other: '[!! Unexpected configuration key: {{.Key}} !!]'
+- id: cyphergraphprocedures.config_value_missing
+  description: Expanded pseudo-locale config value missing.
+  other: '[!! No value specified for the mandatory configuration parameter `{{.Key}}` !!]'
+- id: cyphergraphprocedures.config_value_type
+  description: Expanded pseudo-locale config value type.
+  other: '[!! The value of `{{.Key}}` must be of type `{{.Expected}}` but was `{{.Actual}}`. !!]'
+- id: cyphergraphprocedures.config_value_negative
+  description: Expanded pseudo-locale config value negative.
+  other: '[!! The value of `{{.Key}}` may not be negative. !!]'
+- id: cyphergraphprocedures.iteration_weight_type
+  description: Expanded pseudo-locale iteration weight type.
+  other: '[!! Iteration weights must be numbers, but found `{{.Value}}` of type `{{.Type}}` !!]'
+- id: cyphergraphprocedures.iteration_weights_empty
+  description: Expanded pseudo-locale iteration weights empty.
+  other: '[!! The value of `iterationWeights` must not be empty if `nodeSelfInfluence` is zero. !!]'
+- id: cyphergraphprocedures.feature_properties_required
+  description: Expanded pseudo-locale feature properties required.
+  other: '[!! When `propertyRatio` is non-zero, `featureProperties` may not be empty. !!]'
+- id: cyphergraphprocedures.feature_properties_missing
+  description: Expanded pseudo-locale feature properties missing.
+  other: '[!! The feature properties {{.Properties}} are not present for all requested labels. Requested labels: {{.Labels}}. Properties available on all requested labels: {{.Available}} !!]'
+- id: cyphergraphprocedures.feature_property_invalid
+  description: Expanded pseudo-locale feature property invalid.
+  other: '[!! Node with ID `{{.Node}}` has invalid feature property value `NaN` for property `{{.Property}}` !!]'
+- id: cyphergraphprocedures.weight_property_not_found
+  description: Expanded pseudo-locale weight property not found.
+  other: '[!! Relationship weight property `{{.Property}}` not found in relationship types {{.Types}}. Properties existing on all relationship types: {{.Available}} !!]'
+- id: cyphergraphprocedures.relationship_property_missing
+  description: Expanded pseudo-locale relationship property missing.
+  other: '[!! Missing relationship property `{{.Property}}` on relationship between nodes with ids `{{.Source}}` and `{{.Target}}`. !!]'
+- id: cyphergraphprocedures.node_labels_not_in_graph
+  description: Expanded pseudo-locale node labels not in graph.
+  other: '[!! Could not find the specified `nodeLabels` of {{.Labels}}. Available labels are {{.Available}}. !!]'
+- id: cyphergraphprocedures.relationship_types_not_in_graph
+  description: Expanded pseudo-locale relationship types not in graph.
+  other: '[!! Could not find the specified `relationshipTypes` of {{.Types}}. Available relationship types are {{.Available}}. !!]'
+- id: cyphergraphprocedures.source_node_not_found
+  description: Expanded pseudo-locale source node not found.
+  other: '[!! sourceNode `{{.Node}}` does not exist in the graph !!]'

@@ -413,7 +413,7 @@ CALL gds.linkPrediction.predict.stream({...}) YIELD node1, node2, score
 Use `gds.fastRP.stream` to generate node embeddings as a feature input for ML pipelines:
 
 ```cypher
-CALL gds.graph.project('people', 'Person', 'KNOWS');
+CALL gds.graph.project('people', 'Person', {KNOWS: {orientation: 'UNDIRECTED', properties: 'strength'}});
 CALL gds.fastRP.stream('people', {
   embeddingDimension: 128,
   iterationWeights: [0.0, 1.0, 1.0],
@@ -422,7 +422,11 @@ CALL gds.fastRP.stream('people', {
 RETURN nodeId, embedding
 ```
 
-As in GDS, each iteration sums the neighbours' previous embeddings (weighted by `relationshipWeightProperty` when given), and the result adds each iteration's embedding times its `iterationWeights` entry; `normalizationStrength` scales the initial vectors by degree. NornicDB L2-normalises the result, and a node without relationships keeps its initial vector.
+`gds.graph.project` and `gds.fastRP` work as in GDS 2.13:
+
+- **Projection:** a relationship projection's `orientation` (`NATURAL`, `REVERSE` or `UNDIRECTED`; an undirected relationship counts twice), `properties` (with `defaultValue`) and `aggregation` (parallel relationships merged with `SINGLE`, `SUM`, `MIN`, `MAX` or `COUNT`) apply. A label, type or property no stored element has, and a graph name already in use, are refused with GDS's messages, and `projectMillis` is the time the projection took.
+- **FastRP:** each iteration gives every node the relationship-weighted sum of the previous iteration's vectors over its relationships as projected, L2-normalised, and the embedding adds the iterations, each times its `iterationWeights` entry (default `[0.0, 1.0, 1.0]`), plus `nodeSelfInfluence` times the node's start vector. A node nothing propagates to gets a zero vector. `normalizationStrength` scales the start vectors by degree, and `featureProperties` fill the last `propertyRatio` of the dimensions. `embeddingDimension` is required, the weight and feature properties must be projected, and a key FastRP doesn't take, or a value of the wrong type or range, is refused with GDS's messages. `stats` runs FastRP and reports its time and configuration.
+- **NornicDB differences:** `randomSeed` defaults to 42, so the same call gives the same embeddings (GDS picks a random seed); `embeddingDimension` is at most 8,192; `nodeId` is the node's id.
 
 ---
 

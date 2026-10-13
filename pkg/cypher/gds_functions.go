@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	"github.com/orneryd/nornicdb/pkg/linkpredict"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -14,14 +15,16 @@ import (
 // GDS 2.13's names, arguments and values. NornicDB's own
 // gds.linkPrediction.*.stream procedures stay as extensions.
 func init() {
-	for name, score := range map[string]func(a, b gdsNeighborhood, degrees map[storage.NodeID]int) float64{
-		"adamicadar":             gdsAdamicAdar,
-		"commonneighbors":        gdsCommonNeighbors,
-		"preferentialattachment": gdsPreferentialAttachment,
-		"resourceallocation":     gdsResourceAllocation,
-		"totalneighbors":         gdsTotalNeighbors,
+	// One scoring for these functions and the gds.linkPrediction.*.stream
+	// procedures: linkpredict.PairScore (#1192).
+	for name, algorithm := range map[string]string{
+		"adamicadar":             "adamic_adar",
+		"commonneighbors":        "common_neighbors",
+		"preferentialattachment": "preferential_attachment",
+		"resourceallocation":     "resource_allocation",
+		"totalneighbors":         "total_neighbors",
 	} {
-		cypherfn.Register("gds.alpha.linkprediction."+name, gdsLinkPrediction("gds.alpha.linkprediction."+name, score))
+		cypherfn.Register("gds.alpha.linkprediction."+name, gdsLinkPrediction("gds.alpha.linkprediction."+name, algorithm))
 	}
 	cypherfn.Register("gds.alpha.linkprediction.samecommunity", fnGDSSameCommunity)
 	cypherfn.Register("gds.util.asnode", fnGDSAsNode)
@@ -87,7 +90,7 @@ type gdsLinkConfig struct {
 	direction        string
 }
 
-func gdsLinkPrediction(name string, score func(a, b gdsNeighborhood, degrees map[storage.NodeID]int) float64) cypherfn.Func {
+func gdsLinkPrediction(name, algorithm string) cypherfn.Func {
 	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
 		if err := gdsArity(name, args, 2, 3); err != nil {
 			return nil, err
@@ -125,11 +128,16 @@ func gdsLinkPrediction(name string, score func(a, b gdsNeighborhood, degrees map
 			}
 			degrees[id] = neighbors.degree
 		}
-		value := score(left, right, degrees)
-		if value == 0 {
-			value = 0 // not -0, from 1/log(0)
+		degree := func(id storage.NodeID) int {
+			switch id {
+			case first.ID:
+				return left.degree
+			case second.ID:
+				return right.degree
+			}
+			return degrees[id]
 		}
-		return value, nil
+		return linkpredict.PairScore(algorithm, first.ID, second.ID, linkpredict.NodeSet(left.nodes), linkpredict.NodeSet(right.nodes), degree), nil
 	}
 }
 
@@ -232,40 +240,6 @@ func gdsCommon(a, b gdsNeighborhood) []storage.NodeID {
 		}
 	}
 	return common
-}
-
-func gdsCommonNeighbors(a, b gdsNeighborhood, _ map[storage.NodeID]int) float64 {
-	return float64(len(gdsCommon(a, b)))
-}
-
-func gdsTotalNeighbors(a, b gdsNeighborhood, _ map[storage.NodeID]int) float64 {
-	union := len(a.nodes)
-	for id := range b.nodes {
-		if _, counted := a.nodes[id]; !counted {
-			union++
-		}
-	}
-	return float64(union)
-}
-
-func gdsPreferentialAttachment(a, b gdsNeighborhood, _ map[storage.NodeID]int) float64 {
-	return float64(a.degree * b.degree)
-}
-
-func gdsAdamicAdar(a, b gdsNeighborhood, degrees map[storage.NodeID]int) float64 {
-	score := 0.0
-	for _, id := range gdsCommon(a, b) {
-		score += 1 / math.Log(float64(degrees[id]))
-	}
-	return score
-}
-
-func gdsResourceAllocation(a, b gdsNeighborhood, degrees map[storage.NodeID]int) float64 {
-	score := 0.0
-	for _, id := range gdsCommon(a, b) {
-		score += 1 / float64(degrees[id])
-	}
-	return score
 }
 
 // fnGDSSameCommunity is gds.alpha.linkprediction.sameCommunity(node1, node2,

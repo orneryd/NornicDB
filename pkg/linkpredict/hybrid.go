@@ -62,7 +62,20 @@ import (
 type HybridScorer struct {
 	config          HybridConfig
 	semanticScorer  SemanticScorerFunc
+	degree          DegreeFunc         // nil: Graph.Degree
 	ensembleWeights map[string]float64 // For ensemble topological scoring
+}
+
+// SetDegreeFunction sets the degrees the degree-based topology scores read
+// (DegreeFunc); nil, the default, uses Graph.Degree.
+func (h *HybridScorer) SetDegreeFunction(degree DegreeFunc) {
+	h.degree = degree
+}
+
+// topology is one topology algorithm's top k predictions, rescaled to
+// [0, 1] by the algorithm's own scale (normalizeAlgorithmScore).
+func (h *HybridScorer) topology(algorithm string, graph Graph, source storage.NodeID, k int) []Prediction {
+	return topKPredictions(TopologyScores(algorithm, graph, h.degree, source), k, algorithm)
 }
 
 // HybridConfig configures hybrid scoring behavior.
@@ -292,20 +305,12 @@ type HybridPrediction struct {
 
 // singleTopology runs a single topology algorithm.
 func (h *HybridScorer) singleTopology(graph Graph, source storage.NodeID, k int) []Prediction {
-	switch h.config.TopologyAlgorithm {
-	case "common_neighbors":
-		return CommonNeighbors(graph, source, k)
-	case "jaccard":
-		return Jaccard(graph, source, k)
-	case "adamic_adar":
-		return AdamicAdar(graph, source, k)
-	case "preferential_attachment":
-		return PreferentialAttachment(graph, source, k)
-	case "resource_allocation":
-		return ResourceAllocation(graph, source, k)
+	switch algorithm := h.config.TopologyAlgorithm; algorithm {
+	case "common_neighbors", "jaccard", "adamic_adar", "preferential_attachment", "resource_allocation":
+		return h.topology(algorithm, graph, source, k)
 	default:
 		// Default to Adamic-Adar
-		return AdamicAdar(graph, source, k)
+		return h.topology("adamic_adar", graph, source, k)
 	}
 }
 
@@ -317,11 +322,11 @@ func (h *HybridScorer) ensembleTopology(graph Graph, source storage.NodeID, k in
 	// Run all algorithms
 	// Every candidate of every algorithm, so a pair's ensemble score doesn't
 	// depend on the other candidates; k applies to the ensemble.
-	cn := CommonNeighbors(graph, source, 0)
-	jac := Jaccard(graph, source, 0)
-	aa := AdamicAdar(graph, source, 0)
-	pa := PreferentialAttachment(graph, source, 0)
-	ra := ResourceAllocation(graph, source, 0)
+	cn := h.topology("common_neighbors", graph, source, 0)
+	jac := h.topology("jaccard", graph, source, 0)
+	aa := h.topology("adamic_adar", graph, source, 0)
+	pa := h.topology("preferential_attachment", graph, source, 0)
+	ra := h.topology("resource_allocation", graph, source, 0)
 
 	// Normalize each algorithm's scores independently, relative to the
 	// candidates, if requested; otherwise each keeps its own [0, 1] scale

@@ -24,7 +24,10 @@ func TestLinkPredictionConfigFromArguments(t *testing.T) {
 		{"map alone", []interface{}{map[string]interface{}{"sourceNode": "node-123", "topK": int64(10)}}, "node-123", 10, false},
 		{"after a graph name", []interface{}{"g", map[string]interface{}{"sourceNode": "node-456", "topK": int64(5)}}, "node-456", 5, false},
 		{"default topK", []interface{}{map[string]interface{}{"sourceNode": "node-789"}}, "node-789", 10, false},
-		{"a node", []interface{}{map[string]interface{}{"sourceNode": node, "topK": 3.0}}, "node-123", 3, false},
+		{"a node", []interface{}{map[string]interface{}{"sourceNode": node, "topK": int64(3)}}, "node-123", 3, false},
+		{"a FLOAT topK", []interface{}{map[string]interface{}{"sourceNode": node, "topK": 3.0}}, "", 0, true},
+		{"topK 0", []interface{}{map[string]interface{}{"sourceNode": node, "topK": int64(0)}}, "", 0, true},
+		{"an unknown key", []interface{}{map[string]interface{}{"sourceNode": node, "bogus": 1}}, "", 0, true},
 		{"an integer id", []interface{}{map[string]interface{}{"sourceNode": int64(42)}}, "42", 10, false},
 		{"missing sourceNode", []interface{}{map[string]interface{}{"topK": int64(10)}}, "", 0, true},
 		{"no config", nil, "", 0, true},
@@ -47,7 +50,7 @@ func TestLinkPredictionConfigFromArguments(t *testing.T) {
 	}
 
 	config, err := linkPredictionConfigFromArguments([]interface{}{map[string]interface{}{
-		"sourceNode": "seed", "topK": "bad", "algorithm": "jaccard", "topologyWeight": 0.7, "semanticWeight": 0.3, "minThreshold": 0.2,
+		"SOURCENODE": "seed", "algorithm": "jaccard", "topologyWeight": 0.7, "semanticWeight": 0.3, "minThreshold": 0.2,
 	}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

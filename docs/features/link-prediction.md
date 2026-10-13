@@ -35,7 +35,10 @@ As in GDS: neighbours are distinct other nodes, in both directions and over ever
 
 ### 3. NornicDB's link-prediction procedures (`pkg/cypher/linkprediction.go`)
 
-NornicDB's own procedures, which rank the top-K candidates for one source node. They are NornicDB extensions: GDS has no `gds.linkPrediction.*.stream` procedures, and their scores are rescaled into 0–1, unlike the functions above.
+NornicDB's own procedures, which rank the top-K candidates for one source node. They are NornicDB extensions: GDS has no `gds.linkPrediction.*.stream` procedures. Their scores are the functions' values above, not rescaled, from the same code: a degree counts relationships, a parallel one again and a self-loop once.
+
+- **The graph:** `stream('g', {...})` reads the projected graph `g` as projected (its labels, types and relationships at projection time; a graph that doesn't exist is an error); `stream({...})` reads every stored node and relationship. Either way relationships are read in both directions.
+- **The config:** `sourceNode` (required; a node that isn't in the graph is an error), `topK` (at least 1, default 10), `targetNodes`, `relationshipTypes`, and for `predict.stream` `algorithm`, `topologyWeight`, `semanticWeight` and `minThreshold`. Keys match whatever their case; another key, or a value of the wrong type, is refused with GDS's messages.
 
 ```cypher
 CALL gds.linkPrediction.adamicAdar.stream(...)

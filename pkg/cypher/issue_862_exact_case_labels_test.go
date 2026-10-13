@@ -126,9 +126,14 @@ func TestIssue862RelationshipTypeFiltersAreCaseSensitive(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows, "only :R joins b and c")
 
-	upper, err := exec.buildGraphProjection("upper", []string{"N"}, []string{"R"})
+	specs := func(value, kind string) []gdsElementSpec {
+		parsed, err := gdsProjectionSpecs(value, kind)
+		require.NoError(t, err)
+		return parsed
+	}
+	upper, err := exec.buildGraphProjection("upper", specs("N", "node"), specs("R", "relationship"))
 	require.NoError(t, err)
-	lower, err := exec.buildGraphProjection("lower", []string{"N"}, []string{"r"})
+	lower, err := exec.buildGraphProjection("lower", specs("N", "node"), specs("r", "relationship"))
 	require.NoError(t, err)
 	require.Equal(t, 2, upper.RelationshipCount)
 	require.Equal(t, 1, lower.RelationshipCount)
