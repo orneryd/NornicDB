@@ -96,6 +96,13 @@ RETURN node2, score, reason
 ORDER BY score DESC
 ```
 
+`predict.stream`'s columns:
+
+- `topology_score` — the topology algorithm's score on its own [0, 1] scale, the same for a pair whatever the other candidates: Jaccard as is; common neighbours `1 - 1/(1 + n/2)`; Adamic-Adar and resource allocation `tanh(score/5)`; preferential attachment `log10(score)/4`, capped at 1; `ensemble` their weighted sum.
+- `semantic_score` — the best cosine similarity between the two nodes' embeddings, over every chunk and named embedding of each (vectors of the same length); 0 when either node has none.
+- `score` — `topologyWeight * topology_score + semanticWeight * semantic_score`.
+- `reason` — both scores in words, each strong (above 0.6), moderate (above 0.3), weak (above 0) or none, for example "Strong structural connection, no semantic match".
+
 ### Via Go API
 
 ```go

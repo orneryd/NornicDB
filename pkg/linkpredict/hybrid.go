@@ -321,12 +321,17 @@ func (h *HybridScorer) ensembleTopology(graph Graph, source storage.NodeID, k in
 	pa := PreferentialAttachment(graph, source, k)
 	ra := ResourceAllocation(graph, source, k)
 
-	// Normalize each algorithm's scores independently
-	cn = h.normalizeScores(cn)
-	jac = h.normalizeScores(jac)
-	aa = h.normalizeScores(aa)
-	pa = h.normalizeScores(pa)
-	ra = h.normalizeScores(ra)
+	// Normalize each algorithm's scores independently, relative to the
+	// candidates, if requested; otherwise each keeps its own [0, 1] scale
+	// (normalizeAlgorithmScore) and the weights, which sum to 1, keep the
+	// ensemble in [0, 1].
+	if h.config.NormalizeScores {
+		cn = h.normalizeScores(cn)
+		jac = h.normalizeScores(jac)
+		aa = h.normalizeScores(aa)
+		pa = h.normalizeScores(pa)
+		ra = h.normalizeScores(ra)
+	}
 
 	// Aggregate scores
 	aggregated := make(map[storage.NodeID]float64)
@@ -404,21 +409,25 @@ func (h *HybridScorer) normalizeScores(predictions []Prediction) []Prediction {
 	return predictions
 }
 
-// explainPrediction generates human-readable explanation.
+// explainPrediction describes both scores, each by its band: strong (above
+// 0.6), moderate (above 0.3), weak (above 0) or none, so the text follows
+// the numbers beside it ("Strong structural connection, no semantic match").
 func (h *HybridScorer) explainPrediction(topoScore, semanticScore float64) string {
-	// Classify scores
-	topoHigh := topoScore > 0.6
-	semanticHigh := semanticScore > 0.6
+	return scoreBand(topoScore, "Strong structural connection", "Moderate structural connection", "Weak structural connection", "No structural connection") +
+		", " + scoreBand(semanticScore, "strong semantic similarity", "moderate semantic similarity", "weak semantic similarity", "no semantic match")
+}
 
+// scoreBand picks the description for score's band.
+func scoreBand(score float64, strong, moderate, weak, none string) string {
 	switch {
-	case topoHigh && semanticHigh:
-		return "Strong structural connection and semantic similarity"
-	case topoHigh && !semanticHigh:
-		return "Strong structural connection, moderate semantic match"
-	case !topoHigh && semanticHigh:
-		return "Weak structural connection, strong semantic similarity"
+	case score > 0.6:
+		return strong
+	case score > 0.3:
+		return moderate
+	case score > 0:
+		return weak
 	default:
-		return "Moderate structural and semantic signals"
+		return none
 	}
 }
 
@@ -438,4 +447,23 @@ func (h *HybridScorer) explainPrediction(topoScore, semanticScore float64) strin
 //	}
 func CosineSimilarity(a, b []float32) float64 {
 	return vector.CosineSimilarity(a, b)
+}
+
+// BestCosineSimilarity is the highest cosine similarity between any vector
+// of a and any vector of b of the same length: two nodes are as similar as
+// their closest chunks, as a search matches a node by its best chunk. With
+// no such pair it is 0.
+func BestCosineSimilarity(a, b [][]float32) float64 {
+	best, found := 0.0, false
+	for _, x := range a {
+		for _, y := range b {
+			if len(x) == 0 || len(x) != len(y) {
+				continue
+			}
+			if similarity := vector.CosineSimilarity(x, y); !found || similarity > best {
+				best, found = similarity, true
+			}
+		}
+	}
+	return best
 }
