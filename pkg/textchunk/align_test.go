@@ -1,6 +1,7 @@
 package textchunk
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -22,4 +23,21 @@ func TestAlignFindsChunksInOrder(t *testing.T) {
 	require.Equal(t, []Span{{8, 17}}, Align("Straße 東京都 café", []string{"東 京\n都"}))
 	require.Equal(t, []Span{{2, 6}}, Align("a \xffb c", []string{"\xffb\nc"}))
 	require.False(t, Span{-1, -1}.Found())
+}
+
+// Identical paragraphs after a key: the second paragraph's chunk also
+// occurs inside the first chunk (just after its "text: " key), and must take
+// its own occurrence, in order, so the chunk after it is found too; a chunk
+// overlapping more than half of the previous one is still found.
+func TestAlignGivesRepeatedChunksTheirOwnOccurrence(t *testing.T) {
+	paragraph := "far-from-query " + strings.Repeat("Standard recurring disclaimer. ", 80)
+	marker := "unshared zebra yankee"
+	text := "text: " + paragraph + "\n\n" + paragraph + "\n\n" + marker
+	second := len("text: ") + len(paragraph) + 2
+	last := second + len(paragraph) + 2
+	require.Equal(t, []Span{{0, second - 2}, {second, second + len(paragraph)}, {last, len(text)}},
+		Align(text, []string{"text: " + paragraph, paragraph, marker}))
+
+	// Most of the previous chunk overlapped.
+	require.Equal(t, []Span{{0, 16}, {2, 22}}, Align("alpha beta gamma delta", []string{"alpha beta gamma", "pha beta gamma delta"}))
 }

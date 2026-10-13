@@ -16,16 +16,19 @@ type Span struct {
 func (s Span) Found() bool { return s.Start >= 0 }
 
 // Align finds where each chunk lies in text. Chunks come in text order and
-// may overlap (a chunker's overlap), so each is looked for from just after
-// the previous chunk's start, within a window a little longer than the
-// chunk past where the previous one ended. A chunker that returns the text
+// may overlap (a chunker's overlap, a short tail of the previous chunk), so
+// each is looked for first from halfway through the previous chunk, and
+// only then from just after its start, within a window a little longer than
+// the chunk past where the previous one ended: in repetitive text a chunk
+// also occurs a few characters into the previous one, and each chunk must
+// take its own occurrence, in order. A chunker that returns the text
 // verbatim (NornicDB's own; Voyage's contextualized auto-chunking, checked
 // against its API) is matched exactly; one that trims or collapses
 // whitespace is matched with whitespace ignored. A chunk found neither way
 // is -1, -1, and the next is looked for from the same place.
 func Align(text string, chunks []string) []Span {
 	spans := make([]Span, len(chunks))
-	from, previousEnd, skipped := 0, 0, 0
+	from, previousEnd, skipped, preferred := 0, 0, 0, 0
 	for index, chunk := range chunks {
 		spans[index] = Span{Start: -1, End: -1}
 		if strings.TrimSpace(chunk) == "" || from >= len(text) {
@@ -33,9 +36,9 @@ func Align(text string, chunks []string) []Span {
 			continue
 		}
 		windowEnd := min(len(text), max(previousEnd, from)+skipped+2*len(chunk)+64)
-		span, ok := findExact(text, chunk, from, windowEnd)
-		if !ok {
-			span, ok = findIgnoringWhitespace(text, chunk, from, windowEnd)
+		span, ok := findChunk(text, chunk, max(from, preferred), windowEnd)
+		if !ok && preferred > from {
+			span, ok = findChunk(text, chunk, from, windowEnd)
 		}
 		if !ok {
 			skipped += len(chunk)
@@ -44,8 +47,21 @@ func Align(text string, chunks []string) []Span {
 		spans[index] = span
 		_, size := utf8.DecodeRuneInString(text[span.Start:])
 		from, previousEnd, skipped = span.Start+size, span.End, 0
+		preferred = span.Start + (span.End-span.Start)/2
 	}
 	return spans
+}
+
+// findChunk finds chunk in text[from:windowEnd], verbatim or else with
+// whitespace ignored.
+func findChunk(text, chunk string, from, windowEnd int) (Span, bool) {
+	if from >= windowEnd {
+		return Span{}, false
+	}
+	if span, ok := findExact(text, chunk, from, windowEnd); ok {
+		return span, true
+	}
+	return findIgnoringWhitespace(text, chunk, from, windowEnd)
 }
 
 func findExact(text, chunk string, from, windowEnd int) (Span, bool) {
