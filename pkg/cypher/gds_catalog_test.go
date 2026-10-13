@@ -2,10 +2,12 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 	"time"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -184,6 +186,33 @@ func TestGDSProjectionReviewFixes(t *testing.T) {
 		_, err := run(query)
 		require.ErrorContains(t, err, message, query)
 	}
+}
+
+// TestGDSCatalogArgumentBranches: argument errors the procedure signature
+// doesn't catch first, a failing argument, and a Float node property.
+func TestGDSCatalogArgumentBranches(t *testing.T) {
+	exec, run := newGDSGraph(t)
+	_, err := exec.callGdsGraphList([]interface{}{int64(5)})
+	require.ErrorContains(t, err, "graphName")
+	_, err = exec.callGdsGraphDrop([]interface{}{"g", "x"})
+	require.ErrorContains(t, err, "failIfMissing")
+	_, err = exec.callGdsGraphDrop([]interface{}{"g", true, int64(5)})
+	require.ErrorContains(t, err, "dbName")
+	_, err = exec.callGdsGraphDrop([]interface{}{"g", true, "", int64(5)})
+	require.ErrorContains(t, err, "username")
+	// A failing argument fails the function.
+	failing := cypherfn.Context{Eval: func(string) (interface{}, error) { return nil, errors.New("boom") }}
+	_, err = fnGDSGraphExists(failing, []string{"x"})
+	require.ErrorContains(t, err, "boom")
+	_, err = fnGDSNodeProperty(failing, []string{"g", "n", "age"})
+	require.ErrorContains(t, err, "boom")
+	_, err = run("CREATE (:P {name: 'f', score: 1.5}), (:P {name: 'i', score: 2})")
+	require.NoError(t, err)
+	_, err = run("CALL gds.graph.project('scored', {P: {properties: 'score'}}, 'K')")
+	require.NoError(t, err)
+	result, err := run("CALL gds.graph.list('scored') YIELD schema RETURN schema")
+	require.NoError(t, err)
+	require.Equal(t, map[string]interface{}{"score": "Float (DefaultValue(NaN), PERSISTENT)"}, result.Rows[0][0].(map[string]interface{})["nodes"].(map[string]interface{})["P"])
 }
 
 // TestGDSCatalogHelpers covers the schema text, density and degree
