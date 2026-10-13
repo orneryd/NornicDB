@@ -4084,15 +4084,22 @@ func (tx *BadgerTransaction) forEachPendingCandidateLocked(self NodeID, label, p
 	return nil
 }
 
-// writeBehindLabelNodesLocked returns the newest buffered version of every
-// node with label that the write-behind buffer holds and the background flush
-// hasn't applied yet; nil without write-behind. Index-backed constraint checks
-// compare them, since the indexes are maintained at flush.
-func (tx *BadgerTransaction) writeBehindLabelNodesLocked(label string) []*Node {
-	if tx.engine.writeBehind == nil {
+// writeBehindKeyCandidatesLocked returns the newest buffered version of the
+// unflushed nodes with label whose property equals value: the nodes an
+// index-backed constraint check must compare besides the index, which is
+// maintained at flush. nil without write-behind. It reads the buffer's pending
+// value index, so the cost is the matching nodes, not the label's unflushed
+// rows; a value without an index key falls back to the label's whole overlay.
+// Callers compare the full key / interval themselves.
+func (tx *BadgerTransaction) writeBehindKeyCandidatesLocked(label, property string, value interface{}) []*Node {
+	wb := tx.engine.writeBehind
+	if wb == nil || value == nil {
 		return nil
 	}
-	nodes, _ := tx.engine.writeBehind.LabelOverlay(label)
+	if valueKey, ok := indexValueKey(value); ok {
+		return wb.KeyCandidates(label, property, valueKey)
+	}
+	nodes, _ := wb.LabelOverlay(label)
 	return nodes
 }
 
@@ -4192,7 +4199,7 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 		// background flush applies them, so their nodes are compared here.
 		// Indexed nodes were read through GetNode, which already sees their
 		// buffered versions.
-		for _, buffered := range tx.writeBehindLabelNodesLocked(c.Label) {
+		for _, buffered := range tx.writeBehindKeyCandidatesLocked(c.Label, c.Properties[0], values[0]) {
 			if buffered.ID == node.ID || tx.committedNodeSupersededLocked(buffered.ID) || (tx.namespace != "" && !strings.HasPrefix(string(buffered.ID), nsPrefix)) {
 				continue
 			}
@@ -4359,7 +4366,7 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 				}
 			}
 			// Buffered (unflushed) nodes have no history entries yet.
-			for _, buffered := range tx.writeBehindLabelNodesLocked(c.Label) {
+			for _, buffered := range tx.writeBehindKeyCandidatesLocked(c.Label, spec.keyProps[0], node.Properties[spec.keyProps[0]]) {
 				if buffered.ID == node.ID || tx.committedNodeSupersededLocked(buffered.ID) || !strings.HasPrefix(string(buffered.ID), nsPrefix) {
 					continue
 				}

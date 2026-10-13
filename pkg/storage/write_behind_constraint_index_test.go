@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -48,4 +49,30 @@ func TestWriteBehind_TemporalSeesBufferedPeriods(t *testing.T) {
 	require.NoError(t, bufferedTry(t, engine, temporalFact("a", int64(1), 0, 10)))
 	require.Error(t, bufferedTry(t, engine, temporalFact("b", int64(1), 5, 15)), "an overlap with a buffered period must be rejected")
 	require.NoError(t, bufferedTry(t, engine, temporalFact("c", int64(1), 10, 20)))
+}
+
+// Validating a write under write-behind looks up the buffered nodes sharing
+// the key's first value (the buffer's pending value index), not every
+// unflushed node of the label: a bulk load stays linear while nothing flushes.
+func TestWriteBehind_NodeKeyBulkLoadScalesLinearly(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing test")
+	}
+	run := func(n int) time.Duration {
+		engine := newWriteBehindTestEngine(t, time.Hour)
+		sm := engine.GetSchemaForNamespace("test")
+		require.NoError(t, sm.AddConstraint(factKey))
+		idx, _ := sm.ConstraintPropertyIndex(factKey.Name)
+		require.NoError(t, sm.BackfillCompositeIndex(idx.Name, nil))
+		start := time.Now()
+		for i := 0; i < n; i++ {
+			require.NoError(t, bufferedTry(t, engine, factNode(fmt.Sprintf("n-%d", i), int64(i), "name", 1)))
+		}
+		return time.Since(start)
+	}
+	run(200)
+	small, large := run(1000), run(8000)
+	ratio := float64(large) / float64(small)
+	t.Logf("buffered writes: 1000 in %v, 8000 in %v, ratio %.1f (linear ~8, per-write overlay copy ~64)", small, large, ratio)
+	require.Less(t, ratio, 20.0)
 }

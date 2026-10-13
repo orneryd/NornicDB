@@ -859,6 +859,55 @@ func (w *WriteBehindBuffer) trackPendingValues(pairs []pendingPropertyKey) {
 	}
 }
 
+// KeyCandidates returns the newest buffered version of every unflushed node
+// with label whose property has valueKey (an indexValueKey), looked up in the
+// pending value index (the pair is tracked from its first use) instead of by
+// copying every buffered node of the label: constraint validation calls it on
+// every write of a bulk load.
+func (w *WriteBehindBuffer) KeyCandidates(label, property string, valueKey interface{}) []*Node {
+	pair := pendingPropertyKey{label: label, property: property}
+	w.mu.RLock()
+	tracked := slices.Contains(w.trackedPairs, pair)
+	w.mu.RUnlock()
+	if !tracked {
+		w.trackPendingValues([]pendingPropertyKey{pair})
+	}
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	if w.pendingIndex == nil {
+		return nil // nothing unflushed (the index is released once empty)
+	}
+	ids := w.pendingIndex.byValue[pendingValueKey{label: label, property: property, value: valueKey}]
+	out := make([]*Node, 0, len(ids))
+	for _, id := range ids {
+		if node, ok := w.newestNodeLocked(id); ok {
+			out = append(out, node)
+		}
+	}
+	return out
+}
+
+// newestNodeLocked is the newest buffered version of id across the unapplied
+// generations, or false when the newest buffered write deleted it or none
+// holds it. Caller holds w.mu.
+func (w *WriteBehindBuffer) newestNodeLocked(id NodeID) (*Node, bool) {
+	bufs := append([]*CommitBuffer{w.active}, nil...)
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		if !w.draining[i].IsApplied() {
+			bufs = append(bufs, w.draining[i])
+		}
+	}
+	for _, buf := range bufs {
+		if buf.deletes[string(id)] {
+			return nil, false
+		}
+		if node, ok := buf.nodes[id]; ok {
+			return node, true
+		}
+	}
+	return nil, false
+}
+
 // nodeSupersededLocked reports whether a committed index entry for id is
 // stale: the buffer created, rewrote or deleted the node. The caller holds
 // the pending-write lock (w.mu), so no locking here.
