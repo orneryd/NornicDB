@@ -8,10 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A string written with a doubled quote ('it”s') is a SyntaxError however
-// often a statement of the same shape with one string ran before: the
-// syntax cache shares a verdict only between statements whose literals
-// differ, and a doubled quote is two literals, not an escaped one (#907).
+// A doubled quote inside a string literal is a SyntaxError however often a
+// statement of the same shape with one string ran before: the syntax cache
+// shares a verdict only between statements whose literals differ, and a
+// doubled quote is two adjacent literals, not an escaped quote (#907).
 func TestDoubledQuoteIsRejectedAfterASingleString(t *testing.T) {
 	ctx := context.Background()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "quotes"))
