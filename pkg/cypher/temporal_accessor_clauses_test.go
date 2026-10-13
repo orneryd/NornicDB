@@ -74,6 +74,17 @@ func TestTemporalAccessorsBehaveAlikeInEveryClause(t *testing.T) {
 			require.Nil(t, value)
 		})
 	}
+	// The minimum date reads as itself, not as a failed parse (Go's zero
+	// time is 0001-01-01T00:00:00Z).
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_accessors_min"))
+	for _, call := range []string{"date.year('0001-01-01')", "datetime.year('0001-01-01T00:00:00Z')", "date.day('0001-01-01')"} {
+		require.Equal(t, int64(1), exec.evaluateExpressionWithContext(context.Background(), call, nil, nil), call)
+		value, ok, err := exec.evaluateRowValue(call, nil)
+		require.NoError(t, err, call)
+		require.True(t, ok, call)
+		require.Equal(t, int64(1), value, call)
+	}
+	require.Nil(t, exec.evaluateExpressionWithContext(context.Background(), "date.year('not a date')", nil, nil))
 	// A component that isn't an accessor is not one (date.truncate is a
 	// function of its own; the unknown-function check rejects the rest).
 	value, known := temporalComponent("truncate", "2024-03-15")

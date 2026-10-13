@@ -309,8 +309,17 @@ func rowTemporalTime(value interface{}) (time.Time, bool) {
 	case CypherLocalTime:
 		return typed.Time, true
 	case string:
-		parsed := parseDateTime(typed)
-		return parsed, !parsed.IsZero()
+		if parsed := parseDateTime(typed); !parsed.IsZero() {
+			return parsed, true
+		}
+		// parseDateTime's failure is the zero time, which is also the valid
+		// instant 0001-01-01T00:00:00Z: read that text itself.
+		for _, layout := range [...]string{"2006-01-02", time.RFC3339Nano} {
+			if parsed, err := time.Parse(layout, strings.TrimSpace(typed)); err == nil {
+				return parsed, true
+			}
+		}
+		return time.Time{}, false
 	default:
 		return time.Time{}, false
 	}
