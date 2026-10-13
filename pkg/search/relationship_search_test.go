@@ -36,16 +36,16 @@ type countingEmbed struct {
 	fail  atomic.Bool
 }
 
-func (c *countingEmbed) embed(_ context.Context, edge *storage.Edge) ([][]float32, error) {
+func (c *countingEmbed) embed(_ context.Context, edge *storage.Edge) (RelationshipEmbedding, error) {
 	c.calls.Add(1)
 	if c.fail.Load() {
-		return nil, errors.New("no embedder yet")
+		return RelationshipEmbedding{}, errors.New("no embedder yet")
 	}
 	reason, _ := edge.Properties["reason"].(string)
 	if reason == "" {
-		return nil, nil
+		return RelationshipEmbedding{}, nil
 	}
-	return [][]float32{wordVector(reason)}, nil
+	return RelationshipEmbedding{Vectors: [][]float32{wordVector(reason)}}, nil
 }
 
 func relationshipTestEngine(t *testing.T) storage.Engine {
@@ -358,7 +358,9 @@ func TestRelationshipSearchEdges(t *testing.T) {
 // no relationship search.
 func TestRelationshipSearchTiesOrderByID(t *testing.T) {
 	ctx := context.Background()
-	same := func(context.Context, *storage.Edge) ([][]float32, error) { return [][]float32{{1, 0, 0}}, nil }
+	same := func(context.Context, *storage.Edge) (RelationshipEmbedding, error) {
+		return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
+	}
 	svc := startRelationshipService(t, relationshipTestEngine(t), same, nil)
 	waitRelationshipVectors(t, svc, 2)
 	response, err := svc.SearchRelationships(ctx, "unmatched", []float32{1, 0, 0}, &SearchOptions{Limit: 5})
@@ -367,11 +369,11 @@ func TestRelationshipSearchTiesOrderByID(t *testing.T) {
 	require.Equal(t, []int{1, 2}, []int{response.Results[0].VectorRank, response.Results[1].VectorRank})
 	require.Equal(t, "r1", response.Results[0].ID)
 
-	onlyR1 := func(_ context.Context, edge *storage.Edge) ([][]float32, error) {
+	onlyR1 := func(_ context.Context, edge *storage.Edge) (RelationshipEmbedding, error) {
 		if edge.ID == "r1" {
-			return [][]float32{{1, 0, 0}}, nil
+			return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
 		}
-		return nil, nil
+		return RelationshipEmbedding{}, nil
 	}
 	svc = startRelationshipService(t, relationshipTestEngine(t), onlyR1, nil)
 	waitRelationshipVectors(t, svc, 1)

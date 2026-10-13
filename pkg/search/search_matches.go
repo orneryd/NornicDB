@@ -313,9 +313,10 @@ func matchQueryTerms(analyzer Analyzer, query string, index bm25Index) map[strin
 // relationshipChunkMatches are a relationship vector hit's best chunks, as
 // for a node (attachChunkMatches): the best one, then those at least
 // minSimilarity, up to maxChunkMatchesPerHit. scores holds each chunk's
-// similarity to the query; a relationship's chunk places in its properties
-// aren't recorded, so a match has no property or offsets.
-func relationshipChunkMatches(scores []float64, minSimilarity float64) []SearchMatch {
+// similarity to the query; spans, where the chunks lie in the relationship's
+// properties, give a match its property and offsets (one match per span),
+// as a node's chunk match has them.
+func relationshipChunkMatches(scores []float64, spans []embeddingutil.ChunkSpan, minSimilarity float64) []SearchMatch {
 	order := make([]int, len(scores))
 	for index := range order {
 		order[index] = index
@@ -326,7 +327,16 @@ func relationshipChunkMatches(scores []float64, minSimilarity float64) []SearchM
 		if len(matches) >= maxChunkMatchesPerHit || (len(matches) > 0 && scores[chunk] < minSimilarity) {
 			break
 		}
-		matches = append(matches, SearchMatch{Kind: SearchMatchChunk, Chunk: chunk, Score: scores[chunk]})
+		placed := false
+		for _, span := range spans {
+			if span.Chunk == chunk {
+				matches = append(matches, SearchMatch{Kind: SearchMatchChunk, Chunk: chunk, Score: scores[chunk], Property: span.Property, Start: span.Start, End: span.End})
+				placed = true
+			}
+		}
+		if !placed {
+			matches = append(matches, SearchMatch{Kind: SearchMatchChunk, Chunk: chunk, Score: scores[chunk]})
+		}
 	}
 	return matches
 }

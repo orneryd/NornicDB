@@ -35,15 +35,15 @@ func TestRelationshipEmbedsTheIndexedVersionOverAStaleRead(t *testing.T) {
 	engine := &staleEdgeEngine{Engine: relationshipTestEngine(t), stale: map[storage.EdgeID]*storage.Edge{}}
 	var mu sync.Mutex
 	var embedded []string
-	embed := func(_ context.Context, edge *storage.Edge) ([][]float32, error) {
+	embed := func(_ context.Context, edge *storage.Edge) (RelationshipEmbedding, error) {
 		text, _ := edge.Properties["search_text"].(string)
 		mu.Lock()
 		embedded = append(embedded, text)
 		mu.Unlock()
 		if text == "" {
-			return nil, nil
+			return RelationshipEmbedding{}, nil
 		}
-		return [][]float32{{1, 0, 0}}, nil
+		return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
 	}
 	svc := startRelationshipService(t, engine, embed, nil)
 	<-svc.relationshipSearch().ready
@@ -78,12 +78,12 @@ func TestRelationshipEmbeddingSupersededByALaterWrite(t *testing.T) {
 	first := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
-	embed := func(_ context.Context, edge *storage.Edge) ([][]float32, error) {
+	embed := func(_ context.Context, edge *storage.Edge) (RelationshipEmbedding, error) {
 		if edge.Properties["search_text"] == "first" {
 			once.Do(func() { close(first) })
 			<-release
 		}
-		return [][]float32{{1, 0, 0}}, nil
+		return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
 	}
 	svc := startRelationshipService(t, engine, embed, nil)
 	rs := svc.relationshipSearch()

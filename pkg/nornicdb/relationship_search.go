@@ -20,28 +20,53 @@ var errRelationshipEmbedderUnavailable = errors.New("no embedder loaded for rela
 // type in place of labels (NORNICDB_EMBEDDING_INCLUDE_LABELS), and split into
 // chunks and embedded as a node's is, with the database's embedder.
 func (db *DB) relationshipEmbedFunc(dbName string) search.RelationshipEmbedFunc {
-	return func(ctx context.Context, edge *storage.Edge) ([][]float32, error) {
+	return func(ctx context.Context, edge *storage.Edge) (search.RelationshipEmbedding, error) {
 		db.mu.RLock()
 		queue := db.embedQueue
 		config := db.embedWorkerConfig
 		db.mu.RUnlock()
 		if queue == nil || config == nil {
-			return nil, errRelationshipEmbedderUnavailable
+			return search.RelationshipEmbedding{}, errRelationshipEmbedderUnavailable
 		}
 		embedder, err := db.getOrCreateEmbedderForDB(dbName)
 		if err != nil {
-			return nil, err
+			return search.RelationshipEmbedding{}, err
 		}
 		if embedder == nil {
-			return nil, errRelationshipEmbedderUnavailable
+			return search.RelationshipEmbedding{}, errRelationshipEmbedderUnavailable
 		}
 		text := relationshipEmbeddingText(edge, config)
 		if text == "" {
-			return nil, nil
+			return search.RelationshipEmbedding{}, nil
 		}
-		_, embeddings, _, err := queue.embedDocumentWith(embedder, text, storage.NodeID(edge.ID))
-		return embeddings, err
+		chunks, embeddings, _, err := queue.embedDocumentWith(embedder, text, storage.NodeID(edge.ID))
+		if err != nil {
+			return search.RelationshipEmbedding{}, err
+		}
+		return search.RelationshipEmbedding{Vectors: embeddings, Spans: relationshipChunkSpans(edge, config, chunks, len(embeddings))}, nil
 	}
+}
+
+// relationshipChunkSpans is where each chunk of a relationship's embedding
+// text lies in its string properties, as a node's chunks are placed
+// (embeddingutil.RecordChunkSpans): none unless the chunks match the vectors
+// one to one. A leading "type: " line, when labels are included, isn't a
+// property, so it is left out of the text the chunks are found in.
+func relationshipChunkSpans(edge *storage.Edge, config *EmbedWorkerConfig, chunks []string, vectors int) []embeddingutil.ChunkSpan {
+	if len(chunks) == 0 || len(chunks) != vectors {
+		return nil
+	}
+	options := embeddingutil.EmbedTextOptionsFromFields(config.PropertiesInclude, config.PropertiesExclude, false)
+	source := embeddingutil.BuildEmbedText(edge.Properties, nil, options)
+	if config.IncludeLabels && edge.Type != "" {
+		prefix := "type: " + edge.Type + "\n"
+		aligned := make([]string, len(chunks))
+		for index, chunk := range chunks {
+			aligned[index] = strings.TrimPrefix(chunk, prefix)
+		}
+		chunks = aligned
+	}
+	return source.ChunkSpans(chunks)
 }
 
 // relationshipEmbeddingText is a relationship's embedding text: its type,

@@ -39,9 +39,9 @@ func TestRelationshipSearchEndToEnd(t *testing.T) {
 	}
 	require.Eventually(t, func() bool { return len(find("zephyrine")) == 1 }, 5*time.Second, 20*time.Millisecond)
 	// A relationship with no property to embed has no vectors.
-	vectors, err := db.relationshipEmbedFunc(db.defaultDatabaseName())(ctx, &storage.Edge{ID: "empty", Type: "CITES"})
+	embedding, err := db.relationshipEmbedFunc(db.defaultDatabaseName())(ctx, &storage.Edge{ID: "empty", Type: "CITES"})
 	require.NoError(t, err)
-	require.Nil(t, vectors)
+	require.Nil(t, embedding.Vectors)
 	hit := find("zephyrine")[0]
 	require.Equal(t, "CITES", hit.Relationship.Type)
 	start, err := db.GetStorage().GetNode(hit.Relationship.StartNode)

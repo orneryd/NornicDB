@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -46,7 +47,14 @@ const relationshipVectorsFormat = 1
 // RelationshipEmbedFunc embeds a relationship's text, one vector per chunk.
 // It returns no vectors for a relationship with no text to embed, and an
 // error when it can't embed now; the relationship is then tried again later.
-type RelationshipEmbedFunc func(ctx context.Context, edge *storage.Edge) ([][]float32, error)
+type RelationshipEmbedFunc func(ctx context.Context, edge *storage.Edge) (RelationshipEmbedding, error)
+
+// RelationshipEmbedding is a relationship's chunk vectors and where each
+// chunk lies in its string properties, as a node's embedding records them.
+type RelationshipEmbedding struct {
+	Vectors [][]float32
+	Spans   []embeddingutil.ChunkSpan
+}
 
 // ErrRelationshipSearchDisabled is returned for a relationship search on a
 // database whose relationship indexing is off.
@@ -59,6 +67,9 @@ type relationshipEntry struct {
 	// Vectors are the relationship's chunk embeddings, normalized; nil until
 	// embedded or when it has no text to embed.
 	Vectors [][]float32
+	// Spans are where each chunk lies in the relationship's string
+	// properties, for its chunk matches; nil when not known.
+	Spans []embeddingutil.ChunkSpan
 }
 
 type relationshipSearch struct {
@@ -182,7 +193,7 @@ func (s *Service) indexRelationship(rs *relationshipSearch, edge *storage.Edge, 
 	}
 	entry := rs.entries[id]
 	if entry == nil && persisted != nil && persisted.Source == source {
-		entry = &relationshipEntry{Source: source, Vectors: persisted.Vectors}
+		entry = &relationshipEntry{Source: source, Vectors: persisted.Vectors, Spans: persisted.Spans}
 		rs.entries[id] = entry
 	}
 	if entry != nil && entry.Source == source {
@@ -310,7 +321,8 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 				edge = stored
 			}
 		}
-		vectors, err := rs.embed(ctx, edge)
+		embedding, err := rs.embed(ctx, edge)
+		vectors := embedding.Vectors
 		if err != nil {
 			rs.mu.Lock()
 			if _, indexed := rs.entries[id]; indexed {
@@ -325,11 +337,18 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 				normalized = append(normalized, normalizeVectorCopy(vector))
 			}
 		}
+		// Spans name chunks by index: they hold only while every chunk kept
+		// its vector.
+		var spans []embeddingutil.ChunkSpan
+		if len(normalized) == len(vectors) {
+			spans = embedding.Spans
+		}
 		source := relationshipSource(edge)
 		rs.mu.Lock()
 		current := rs.entries[id]
 		if current != nil && current.Source == source {
 			current.Vectors = normalized
+			current.Spans = spans
 			changed = true
 		}
 		rs.mu.Unlock()
@@ -390,7 +409,7 @@ func (s *Service) saveRelationshipVectors(rs *relationshipSearch) {
 	entries := make(map[string]*relationshipEntry, len(rs.entries))
 	for id, entry := range rs.entries {
 		if len(entry.Vectors) > 0 {
-			entries[id] = &relationshipEntry{Source: entry.Source, Vectors: entry.Vectors}
+			entries[id] = &relationshipEntry{Source: entry.Source, Vectors: entry.Vectors, Spans: entry.Spans}
 		}
 	}
 	rs.mu.RUnlock()
@@ -480,6 +499,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 	var vectorHits []scored
 	// chunkScores are each vector hit's chunk similarities, for its matches.
 	var chunkScores map[string][]float64
+	var chunkSpans map[string][]embeddingutil.ChunkSpan
 	if len(embedding) > 0 {
 		normalizedQuery := normalizeVectorCopy(embedding)
 		for id, entry := range rs.entries {
@@ -504,8 +524,10 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 				if !opts.SkipMatches {
 					if chunkScores == nil {
 						chunkScores = make(map[string][]float64)
+						chunkSpans = make(map[string][]embeddingutil.ChunkSpan)
 					}
 					chunkScores[id] = scores
+					chunkSpans[id] = entry.Spans
 				}
 			}
 		}
@@ -614,7 +636,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		// Matches, as a node hit's: the best chunks of a vector hit, then
 		// the query terms in the properties the keyword index reads.
 		if c.vectorRank > 0 {
-			result.Matches = relationshipChunkMatches(chunkScores[c.id], minSimilarity)
+			result.Matches = relationshipChunkMatches(chunkScores[c.id], chunkSpans[c.id], minSimilarity)
 		}
 		if c.bm25Rank > 0 && len(terms) > 0 {
 			result.Matches = append(result.Matches, termMatches(&storage.Node{Properties: edge.Properties}, s.FulltextProperties(), analyzer, terms)...)
