@@ -55,3 +55,14 @@ func TestBoltBoostedProcedureGrant(t *testing.T) {
 		t.Fatalf("db.txlog.entries without a grant: executed=%v code=%q", executed, code)
 	}
 }
+
+// A nil server, or one without a resolver, has no grant check.
+func TestBoltProcedureGrantsWithoutResolver(t *testing.T) {
+	var nilServer *Server
+	if nilServer.procedureGrants([]string{"r"}) != nil {
+		t.Fatal("a nil server has no grant check")
+	}
+	if (&Server{}).procedureGrants([]string{"r"}) != nil {
+		t.Fatal("a server without a resolver has no grant check")
+	}
+}

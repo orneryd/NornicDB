@@ -92,3 +92,14 @@ func TestBoostedProcedureGrantOverHTTP(t *testing.T) {
 	require.Equal(t, forbidden, txErrorCode(t, server, "nornic", worker, "CALL db.cdc.query()"))
 	require.Equal(t, forbidden, txErrorCode(t, server, "nornic", worker, chained))
 }
+
+// Without a server, loaded grants or roles there is no grant check.
+func TestProcedureGrantCheckerWithoutGrants(t *testing.T) {
+	var nilServer *Server
+	if nilServer.ProcedureGrantChecker([]string{"r"}) != nil {
+		t.Fatal("a nil server has no grant check")
+	}
+	if (&Server{}).ProcedureGrantChecker([]string{"r"}) != nil {
+		t.Fatal("a server without loaded grants has no grant check")
+	}
+}
