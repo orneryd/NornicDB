@@ -319,7 +319,7 @@ RETURN node
 
 ## Centrality and Community Detection
 
-These algorithms run over the full graph and are useful for ranking, recommendation, and clustering workloads. They are [NornicDB extensions](../features/apoc-functions.md#nornicdb-extensions): APOC has no `apoc.algo.pageRank` and the rest (GDS's are `gds.pageRank.stream` and so on), so a query that uses them runs only on NornicDB. The relationship-type list in the examples isn't applied yet (#1169).
+These algorithms run over the nodes their first argument gives (a label, as `['Person']` in the examples below, or a list of nodes; every node when it's omitted) and are useful for ranking, recommendation, and clustering workloads. They are [NornicDB extensions](../features/apoc-functions.md#nornicdb-extensions): APOC has no `apoc.algo.pageRank` and the rest (GDS's are `gds.pageRank.stream` and so on), so a query that uses them runs only on NornicDB. The relationship-type list in the examples isn't applied yet (#1169).
 
 ### PageRank
 
