@@ -69,3 +69,47 @@ func TestRelationshipEmbedsTheIndexedVersionOverAStaleRead(t *testing.T) {
 	defer mu.Unlock()
 	require.Contains(t, embedded, "zephyrine bridge explanation")
 }
+
+// An embedding overtaken by a later write is refused, and the later version
+// is embedded; a pending relationship that can no longer be read and has no
+// copy is skipped.
+func TestRelationshipEmbeddingSupersededByALaterWrite(t *testing.T) {
+	engine := relationshipTestEngine(t)
+	first := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	embed := func(_ context.Context, edge *storage.Edge) ([][]float32, error) {
+		if edge.Properties["search_text"] == "first" {
+			once.Do(func() { close(first) })
+			<-release
+		}
+		return [][]float32{{1, 0, 0}}, nil
+	}
+	svc := startRelationshipService(t, engine, embed, nil)
+	rs := svc.relationshipSearch()
+	<-rs.ready
+
+	edge, err := engine.GetEdge("r1")
+	require.NoError(t, err)
+	edge.Properties["search_text"] = "first"
+	svc.IndexRelationship(storage.CopyEdge(edge))
+	<-first
+	edge.Properties["search_text"] = "second"
+	svc.IndexRelationship(storage.CopyEdge(edge))
+	close(release)
+	require.Eventually(t, func() bool {
+		rs.mu.RLock()
+		defer rs.mu.RUnlock()
+		entry := rs.entries["r1"]
+		return entry != nil && entry.Source == relationshipSource(edge) && len(entry.Vectors) == 1
+	}, 5*time.Second, 10*time.Millisecond)
+
+	// Pending without a copy, and gone from storage: skipped.
+	rs.mu.Lock()
+	rs.entries["ghost"] = &relationshipEntry{}
+	rs.pending["ghost"] = nil
+	rs.mu.Unlock()
+	changed, failed := svc.embedPendingRelationships(context.Background(), rs)
+	require.False(t, changed)
+	require.False(t, failed)
+}
