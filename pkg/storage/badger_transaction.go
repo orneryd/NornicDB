@@ -4084,6 +4084,18 @@ func (tx *BadgerTransaction) forEachPendingCandidateLocked(self NodeID, label, p
 	return nil
 }
 
+// writeBehindLabelNodesLocked returns the newest buffered version of every
+// node with label that the write-behind buffer holds and the background flush
+// hasn't applied yet; nil without write-behind. Index-backed constraint checks
+// compare them, since the indexes are maintained at flush.
+func (tx *BadgerTransaction) writeBehindLabelNodesLocked(label string) []*Node {
+	if tx.engine.writeBehind == nil {
+		return nil
+	}
+	nodes, _ := tx.engine.writeBehind.LabelOverlay(label)
+	return nodes
+}
+
 // scanForUniqueViolation performs a full database scan to check for UNIQUE violations
 // within a single namespace (database).
 func (tx *BadgerTransaction) scanForUniqueViolation(namespace, label, property string, value interface{}, excludeNodeID NodeID) error {
@@ -4173,6 +4185,26 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 			}
 			if match {
 				message := localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(existing.ID))
+				return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
+			}
+		}
+		// Write-behind: acknowledged commits reach the index only when the
+		// background flush applies them, so their nodes are compared here.
+		// Indexed nodes were read through GetNode, which already sees their
+		// buffered versions.
+		for _, buffered := range tx.writeBehindLabelNodesLocked(c.Label) {
+			if buffered.ID == node.ID || tx.committedNodeSupersededLocked(buffered.ID) || (tx.namespace != "" && !strings.HasPrefix(string(buffered.ID), nsPrefix)) {
+				continue
+			}
+			match := true
+			for i, prop := range c.Properties {
+				if v, ok := buffered.Properties[prop]; !ok || !compareValues(v, values[i]) {
+					match = false
+					break
+				}
+			}
+			if match {
+				message := localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(buffered.ID))
 				return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
 			}
 		}
@@ -4308,11 +4340,30 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 			return err
 		}
 		if ok {
+			writeBehind := tx.engine.writeBehind != nil
 			for _, other := range history {
 				if other.ID == node.ID || tx.committedNodeSupersededLocked(other.ID) || !strings.HasPrefix(string(other.ID), nsPrefix) {
 					continue
 				}
+				if writeBehind {
+					// The history index lags the buffer: compare the node's
+					// latest version (GetNode reads through the buffer).
+					latest, err := tx.engine.GetNode(other.ID)
+					if err != nil || latest == nil || !hasLabel(latest.Labels, c.Label) {
+						continue
+					}
+					other = latest
+				}
 				if err := collides(other); err != nil {
+					return err
+				}
+			}
+			// Buffered (unflushed) nodes have no history entries yet.
+			for _, buffered := range tx.writeBehindLabelNodesLocked(c.Label) {
+				if buffered.ID == node.ID || tx.committedNodeSupersededLocked(buffered.ID) || !strings.HasPrefix(string(buffered.ID), nsPrefix) {
+					continue
+				}
+				if err := collides(buffered); err != nil {
 					return err
 				}
 			}

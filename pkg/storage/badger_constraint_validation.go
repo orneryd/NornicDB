@@ -484,7 +484,9 @@ func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace st
 	if !hasIndexedEntries {
 		// With a complete index, a key without history has no stored node to
 		// overlap; only an incomplete one needs the label scan (#1126).
-		if b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint) {
+		// Under write-behind a buffered node has no entries yet, so only a
+		// synchronous engine may skip the scan.
+		if !b.writeBehindEnabled() && b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint) {
 			return nil
 		}
 		return b.legacyScanForTemporalOverlapInTxn(txn, namespace, constraint, keyValue, start, end, hasEnd, excludeNodeID)
