@@ -16,10 +16,13 @@ database:
   async_writes_enabled: false   # default: durable synchronous commits
 ```
 
-Enabling the buffer is an explicit throughput-for-durability trade: on crash,
-up to one flush interval of acknowledged-but-unflushed commits is lost (read
-queries are unaffected — buffered writes stay visible through an in-memory
-overlay, and `Close` / explicit `BEGIN` drain the buffer first). Validation,
+Enabling the buffer is an explicit throughput-for-durability trade. Each
+acknowledged commit is written to the WAL before the ACK and replayed on
+restart, so it survives a process kill; a power loss or OS crash can lose up
+to one flush interval of acknowledged-but-unflushed commits that the OS had not
+yet written to disk. Read queries are unaffected — buffered writes stay visible
+through an in-memory overlay, and `Close` / explicit `BEGIN` drain the buffer
+first. Validation,
 constraints, WAL markers and commit receipts all still run synchronously before
 an ACK.
 

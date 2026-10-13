@@ -90,7 +90,10 @@ CALL db.cdc.query($cursor, [
   `key`.
 - Relationships: `elementId`, `type`, `key`, and `start` / `end`, node
   selectors (`elementId`, `labels`) for the endpoints.
-- `key` matches property values. Neo4j's matches the properties of key
+- `key` matches the entity's NODE KEY / RELATIONSHIP KEY values, as Neo4j's
+  does, so a `DIFF` update that left the key unchanged is still matched.
+  Without a matching key constraint it falls back to the entity's property
+  values (after the change, or before a delete); Neo4j matches key
   constraints only.
 
 ## Exactness

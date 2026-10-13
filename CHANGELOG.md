@@ -5,17 +5,467 @@ All notable changes to NornicDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.2]
 
 ### Added
 
+#### Cypher language
+
+- Cypher 25 query structure: `NEXT` chains query parts
+  (`RETURN 1 AS a NEXT RETURN a + 1 AS b`), `WHEN c THEN q … ELSE q` picks a
+  branch, `{ q }` braced query parts group UNIONs (also inside subquery
+  bodies), and `RETURN` / `WITH … GROUP BY keys` groups explicitly, with
+  Neo4j's implicit-grouping error. Results match Neo4j 2026.09 (#1028).
+- Cypher 25 expressions: `RETURN ALL` / `WITH ALL`, interpolated strings
+  (`s"{p.name} is {p.age}"`), map comprehensions
+  (`{k: v IN m WHERE v > 1 | k: v}`), `n IS [NOT] LABELED <label expression>`,
+  dynamic label and type tests (`WHERE n:$(e)`, `n IS $any(l)`), `allReduce(...)`
+  and `PROPERTY_EXISTS(n, key)` (#1028).
+- Any clause (`WITH`, `MATCH`, `UNWIND`, `CALL { }`, `FILTER`, writes, `UNION`)
+  may follow a `SHOW` command's `YIELD`, and sees only the yielded columns
+  (`RETURN category` after `YIELD name` is now "Variable not defined") (#1028).
+- GQL path selectors and path modes: `ANY SHORTEST | ALL SHORTEST |
+  SHORTEST k [GROUPS] | ANY [k] | ALL [WALK | TRAIL | ACYCLIC]`, with the
+  pattern's own predicates choosing candidate paths and the clause's `WHERE`
+  filtering the selected ones, and Neo4j's SyntaxErrors for invalid
+  combinations (#907).
+- Quantified path patterns, `(a)((x)-[r:T]->(y) WHERE r.w > 1){1,3}(b)`, and
+  parenthesised path patterns, `MATCH p = ((a)-->(b) WHERE …)`. Variables
+  inside a group bind lists, the group's `WHERE` applies to each iteration, and
+  parameters and functions work in group predicates (also under `SHORTEST k`)
+  (#907).
+- Match modes `MATCH REPEATABLE ELEMENTS` and `MATCH DIFFERENT RELATIONSHIPS`.
+  A relationship variable named twice in one `MATCH` matches nothing under
+  `DIFFERENT RELATIONSHIPS` and joins under `REPEATABLE ELEMENTS`; without a
+  mode it is the openCypher TCK's SyntaxError (#907).
+- Dynamic labels, relationship types and property keys as in Neo4j 5.26:
+  `$(expr)`, `$all(expr)` and `$any(expr)` in `MATCH`, `CREATE` and `MERGE`
+  patterns, `SET` / `REMOVE n:$(expr)`, `SET n[key] = v` and `REMOVE n[key]`,
+  including `MERGE` actions and `FOREACH` (#907).
+- Cypher 25 `VECTOR` and `UUID` values: `vector(value, dimension, type)`,
+  `vector_dimension_count`, `vector_distance`, `vector_norm` (float32, bit for
+  bit with Neo4j), `uuid()` (v7), `uuid(text)`, `uuid(msb, lsb)` and
+  `uuid.mostSignificantBits` / `leastSignificantBits`, with equality, ordering,
+  `IS :: VECTOR(n)` / `IS :: UUID`, storage as properties, Bolt and HTTP
+  encodings, and Neo4j's compile-time type errors (#907).
+- Property type constraints accept every Neo4j property type: unions
+  (`IS :: INTEGER | STRING`), `LOCAL TIME`, `ZONED TIME`, `DURATION`, `POINT`,
+  and synonyms such as `TIMESTAMP WITH TIME ZONE` or `VARCHAR`. `SHOW
+  CONSTRAINTS` reports the normalized type (#907).
 - Support `LIST<T>` property type constraints (`REQUIRE n.tags IS :: LIST<STRING NOT NULL>`)
   for scalar element types, as primitives and inside `REQUIRE { ... }` contracts.
   `LIST<T>` is stored as Neo4j's canonical `LIST<T NOT NULL>`; every element must
   match `T`, and creation validates existing data.
+- Every spelling Neo4j 5.26 accepts for a uniqueness or key constraint
+  (`IS [NODE | RELATIONSHIP | REL] UNIQUE | KEY`, on one property or a
+  parenthesized list) creates the constraint; most were rejected as invalid
+  syntax (#1028).
+
+#### Functions and procedures
+
+- Cypher 25 functions: `coll.distinct`, `coll.flatten`, `coll.indexOf`,
+  `coll.insert`, `coll.max`, `coll.min`, `coll.remove`, `coll.sort`,
+  `string.indexOf`, `string.join`, `string.regexReplace`, `cardinality()` and a
+  fourth `limit` argument to `replace()`, with Neo4j 2026.09's ordering,
+  equality and errors. `coll.*` and `string.*` are also accepted in Cypher 5
+  statements as extensions (#907, #1028).
+- GQL function aliases (`ceiling`, `ln`, `local_time`, `local_datetime`,
+  `zoned_time`, `zoned_datetime`, `duration_between`, `path_length`,
+  `collect_list`, `percentile_cont`, `percentile_disc`, `stdev_samp`,
+  `stdev_pop`) call the function they name; the result column keeps the name as
+  written. Under Cypher 5 they are NornicDB extensions (#1028).
+- `format(value [, pattern])` prints temporal values and durations with Java
+  `DateTimeFormatter` / Neo4j duration patterns, and in Cypher 25 statements
+  `date()`, `datetime()`, `time()`, `localtime()` and `localdatetime()` parse
+  text with a pattern (`date('1986-11-18', 'yyyy-MM-dd')`), checked against
+  7,000+ answers recorded from Neo4j 2026.09 (#907, #1028).
+- `db.schema.nodeTypeProperties()` and `db.schema.relTypeProperties()` derive
+  the property schema from the data, with Neo4j 5.26 type names in Cypher 5 and
+  2026.09 names in Cypher 25 statements (they were ProcedureNotFound) (#1028).
+- `SHOW [ALL | NODE | RELATIONSHIP] UNIQUE | EXISTENCE | KEY | PROPERTY TYPE
+  CONSTRAINTS` lists constraints of that kind (every kind but `ALL` was
+  "unsupported query type"). Under Cypher 25 the listing uses Neo4j 2026.09's
+  type names and columns, and a constraint's `id` is stable across listings
+  (#907, #1028).
+- `SHOW TRANSACTIONS` has the `currentQueryProgress` column in Cypher 25
+  statements, where a null transaction id matches nothing instead of raising a
+  TypeError (#1028).
+- `apoc.custom.installProcedure`, `declareProcedure`, `dropProcedure` and `list`
+  install a parameterised statement with a typed signature, called as
+  `CALL custom.<name>(...)` and portable to Neo4j with APOC. Installed
+  procedures survive a restart; custom functions are not provided (#1066).
+- `text.locate(text, quote, {line, tolerance, from, to})` finds a cited quote's
+  span in a text and returns `{start, end}` in code points, or null. It
+  tolerates case (including `İ`), whitespace runs, typographic quotes and
+  dashes, markdown emphasis and links, reply markers, JSON escapes and a copied
+  line label. A NornicDB extension.
+- `uuid.v5(namespace, name)` returns the name-based (version 5) UUID, so the
+  same arguments always give the same UUID and `MERGE` can deduplicate on it. A
+  NornicDB extension.
+- `kp.suppress` / `kp.unsuppress` hide a node or relationship from reads on
+  demand, and undo it (#1064).
+
+#### Search and retrieval
+
+- Relationship search: with `NORNICDB_SEARCH_RELATIONSHIPS_ENABLED=true` (YAML
+  `search.relationships_enabled`), relationship properties get their own
+  keyword and vector indexes, embedded in the background. Search them with
+  `CALL db.retrieveRelationships({query: '...'})` or `relationships: true` on
+  `POST /nornicdb/search`; results carry the relationship, its type and its
+  `start` / `end` nodes. Off by default; node search is unchanged. With
+  `NORNICDB_PERSIST_SEARCH_INDEXES` the vectors survive a restart (#1065, #1150).
+- Relationship search has its own property lists:
+  `NORNICDB_SEARCH_RELATIONSHIP_BM25_PROPERTIES` for keyword text and
+  `NORNICDB_EMBEDDING_RELATIONSHIP_PROPERTIES_INCLUDE` / `_EXCLUDE` for
+  embedding text, each falling back to the node list when unset. Changing a
+  list re-embeds saved relationship vectors (#1154).
+- `db.retrieveGraph` ranks matching nodes and relationships in one list (`kind`
+  is `'node'` or `'relationship'`), and `db.rretrieveGraph` reranks that fused
+  pool with the configured reranker in one call. Both return rows or, with
+  `n` / `maxResults`, one page (`YIELD page` works after other clauses), with
+  the query chunk counts and `matches` (#1065, #1139).
+- Every search hit says what matched and where: a `matches` column on
+  `db.retrieve` / `db.rretrieve` / `db.retrieveGraph` rows and a `matches` field
+  on page results, HTTP and gRPC hits. A vector hit lists its best embedding
+  chunks with their scores; a keyword hit lists up to 32 query-term
+  occurrences, rarest terms first. Each gives the property and `[start, end)`
+  code-point offsets, so `substring(node[m.property], m.start, m.end - m.start)`
+  is the passage. Existing embeddings need no re-embedding; `matches: false`
+  skips the work (#1060, #1152, #1157).
+- `db.retrieve` takes `where`, any Cypher predicate on the candidate (bound as
+  `node`, with the statement's parameters), checked before `limit` so `limit`
+  counts only passing results:
+  `CALL db.retrieve({query: $q, where: 'node.current IS NULL OR node.current <> false'})`.
+  Patterns (`EXISTS { (node)<-[:HAS_SOURCE]-(...) }`) work. In `db.retrieveGraph`
+  and `db.retrieveRelationships` a relationship candidate is bound as
+  `relationship`, `start` and `end` (#1133, #1135).
+- `NORNICDB_SEARCH_BM25_LABELS` (YAML `search.bm25_labels`) limits keyword
+  indexing to nodes carrying one of the listed labels, as
+  `NORNICDB_EMBEDDING_LABELS_INCLUDE` does for embeddings (#1067).
+- Long search queries: `NORNICDB_SEARCH_QUERY_MAX_CHUNKS` (default 32) sets how
+  many 512-character chunks of a query are embedded and searched. Rows, pages
+  and HTTP responses report `query_chunks_searched` and `query_chunks_total`;
+  dropped chunks set `fallback_reason: query_chunks_dropped`, and
+  `NORNICDB_SEARCH_QUERY_CHUNK_OVERFLOW=error` fails such a query instead.
+  Previously the extra chunks were dropped silently (#907).
+- `NORNICDB_SEARCH_RERANK_TRUNCATION=false` (YAML `search_rerank.truncation`)
+  makes a Voyage rerank over the model's token limit fail visibly instead of
+  being shortened by the provider. The default stays `true` (#907).
+
+#### Storage, durability and operations
+
+- Opt-in write-behind commit buffer (`NORNICDB_ASYNC_WRITES_ENABLED=true`, YAML
+  `database.async_writes_enabled`). Auto-commit statements are acknowledged once
+  validation, constraints and receipts have run and the commit is written to
+  the WAL; a background flusher writes them to Badger. Reads, index lookups,
+  counts and constraint checks see acknowledged writes before they are flushed.
+  These writes survive a process kill but not a power loss. Per statement:
+  `CREATE` 60 µs → 21 µs, relationship `CREATE` 134 µs → 42 µs.
+- The write-behind buffer sizes itself. `NORNICDB_ASYNC_FLUSH_INTERVAL` (`auto`
+  by default) sets only the initial delay, which then follows the measured
+  flush latency (5 ms–1 s). `NORNICDB_ASYNC_MAX_OPS` (YAML
+  `database.async_max_ops`; `0` / `auto` = 100,000 ops) caps the batch size, and
+  a log warning explains when a manual cap or interval doesn't fit the measured
+  throughput. `StrictDurability` keeps the buffer off.
+- Over HTTP, a write accepted through the write-behind buffer returns
+  `202 Accepted` with `X-NornicDB-Consistency: eventual` and the same commit
+  receipt a durable write gets.
+- Change Data Capture in Neo4j's event format. Turn it on per database with
+  `txLogEnrichment` (`OFF`, `FULL`, `DIFF`) in `CREATE` / `ALTER DATABASE ...
+  OPTIONS`, then read changes with `db.cdc.current()`, `db.cdc.earliest()` and
+  `db.cdc.query(from, selectors, limit)`. Changes are written in the same commit
+  as the data and kept for `NORNICDB_CDC_RETENTION` (`48h`). Events carry
+  NODE KEY / RELATIONSHIP KEY values, which `key` selectors match. See
+  docs/user-guides/change-data-capture.md (#937).
+- Bolt `tx_metadata` on `BEGIN` or on an auto-commit `RUN` becomes the
+  transaction's metadata, visible in CDC events and `SHOW TRANSACTIONS`.
+- `nornicdb-admin database check-ids [--repair]`, an offline check that finds
+  nodes and relationships that lost their ID-dictionary entry or were
+  renumbered (see the rolled-back-ID fix below), and with `--repair` restores
+  those their index keys identify unambiguously (#907).
+- `NORNICDB_BOLT_MAX_CONNECTIONS` (YAML `server.bolt_max_connections`) caps
+  concurrent Bolt connections on every transport; rejected connections are
+  logged, at most once every 30 s (#1018).
+- The Northwind benchmark script can also run FalkorDB, Memgraph and LadybugDB
+  on the same data and writes one combined report, with `--nornic-only`,
+  `--falkor-only`, `--memgraph-only` and `--ladybug-only` flags and a
+  `NORTHWIND_GOGC` setting.
+
+### Changed
+
+#### Behaviour
+
+- Writes are durable by default: `NORNICDB_ASYNC_WRITES_ENABLED` now defaults to
+  `false` (it was `true`). Every Cypher write commits through the transaction,
+  so constraint violations, receipts and visibility are settled at commit, as
+  in Neo4j. Single-statement writes are slower than with the old async default;
+  turn on the write-behind buffer to trade some durability for that speed.
+- The Bolt server no longer caps connections at 100 by default:
+  `NORNICDB_BOLT_MAX_CONNECTIONS` defaults to `0` (no cap) (#1018).
+- `vector.similarity.cosine` and `vector.similarity.euclidean` return Neo4j's
+  scores, bit for bit: `max((1 + cos) / 2, 0)` and `1 / (1 + d²)` in float32,
+  both in [0, 1] (they returned the raw cosine and `1 / (1 + d)`).
+  `db.index.vector.queryNodes` / `queryRelationships` score COSINE and EUCLIDEAN
+  indexes on the same scale; candidates are ranked cheaply and only the returned
+  hits are scored exactly, so these queries don't slow down (#907).
+- Statements written `CYPHER 25` follow Neo4j 2026.09's rules where they differ
+  from 5.26, and Cypher 5 statements keep 5.26's: in Cypher 25 `$` always
+  starts a parameter (`L$props` is label `L` plus `$props`) but may appear
+  inside a name in Cypher 5 (`a$b`); `toString()` writes lists, maps and
+  entities; strings concatenate with any value but a map or entity; negative
+  `substring()` bounds are ArgumentErrors (#907, #1028).
+- Cypher 25 statements reject forms Neo4j 2026.09 removed: `SET x = e` and
+  `SET x += e` with a node or relationship `e`, and a property value that reads
+  an entity the same `CREATE` or `MERGE` creates (#1028).
+- `db.index.vector.queryNodes` / `queryRelationships` with a text query fail
+  when the query has more chunks than `NORNICDB_SEARCH_QUERY_MAX_CHUNKS` or a
+  chunk's embedding fails, instead of silently averaging the rest (#907).
+- `search_method` ends in `+rerank` only when the reranker actually ordered the
+  results. A failed provider request, an unusable answer or flat scores set
+  `fallback_triggered` with `rerank_failed`, `rerank_scores_flat` or
+  `rerank_no_candidates`, and a failed rerank isn't cached. `db.rerank` fails
+  with "rerank failed" instead of returning the input order (#1019, #1141).
+- The graph rerank is given each candidate's matched passage within a character
+  budget instead of its first characters, and sends a relationship only the
+  properties on relationship search's list (#1154, #1159).
+- Rename the knowledge-policy and decay procedures to the `kp.*` namespace:
+  `kp.info`, `kp.profiles`, `kp.policies`, `kp.resolve`, `kp.deindexStatus` and
+  `kp.decayInfo`. The functions `reveal()`, `decay()`, `decayScore()` and
+  `policy()` keep their names (#1064).
+- Built-in procedures (fulltext, vector, index, RAG, APOC load/export/periodic,
+  `apoc.algo.*`, `gds.*`) read their evaluated arguments, so variables,
+  expressions and parameters work where only literals did
+  (`WITH […] AS c CALL db.rerank({query: 'q', candidates: c})`). A null required
+  argument fails with `ProcedureCallFailed` and a wrong-typed value with
+  `TypeError`, as in Neo4j (#907).
+- Some built-in procedure signatures declare what they read and yield:
+  `apoc.algo.pageRank(nodes :: ANY, config :: MAP)`, `apoc.algo.wcc(nodes)`
+  (yields `componentId`), `gds.linkPrediction.*.stream(graphNameOrConfig,
+  config)`; `gds.linkPrediction.predict.stream` yields `score` instead of the
+  declared `probability`, and `apoc.algo.louvain` no longer declares a `score`
+  it does not yield (#907, #1164).
+- `db.temporal.asOf` and `db.temporal.assertNoOverlap` take evaluated arguments
+  with real signatures, so `datetime()`, `date()`, variables and expressions
+  work, and read validity bounds the way `TEMPORAL NO OVERLAP` constraints do.
+  Bounds stored as `datetime()` values could return nothing before.
+- A plugin function overrides a built-in of the same name in every evaluator;
+  when the plugin cannot take the call the built-in answers, and any other
+  plugin error is the statement's error. Plugin functions are found by their
+  name as written (`apoc.text.camelCase`); another letter case is an unknown
+  function, as in Neo4j with APOC (#1163).
+- Functions the engine evaluates itself (`apoc.coll.*`, `apoc.map.*`,
+  `apoc.convert.*`, `apoc.text.join`, `date.*` / `datetime.*` accessors,
+  `point.*`, …) are callable without the APOC plugin loaded, for example on
+  Windows where plugins cannot load (#907).
+- `apoc.cypher.runMany` numbers each statement's rows from 0, follows them with
+  a row `-1` holding the statement's statistics, and accepts APOC's config map
+  (`{statistics: false}`). `apoc.coll.frequencies` returns `[{item, count}]` in
+  first-seen order and `apoc.coll.frequenciesAsMap` returns `{item: count}`,
+  counting equal numbers together, in the built-in and the plugin (#1164).
+- The APOC, feature-parity and plugin docs say which `apoc.*` and `gds.*` names
+  are NornicDB extensions rather than APOC or GDS (#1105).
+- The WAL is much smaller: new records store their payload as raw bytes instead
+  of base64 JSON, and write-behind payloads are zstd-compressed. On the
+  Northwind seed the WAL dropped from 743 MB to 62 MB. Existing WAL files still
+  replay.
+- `NORNICDB_ASYNC_MAX_NODE_CACHE_SIZE` and `NORNICDB_ASYNC_MAX_EDGE_CACHE_SIZE`
+  are deprecated and default to `0` (auto). If `NORNICDB_ASYNC_MAX_OPS` is unset
+  and either is set, their sum is the cap. `auto` is accepted for the async
+  settings in env and YAML.
+
+#### Performance
+
+- Bulk loads under `UNIQUE`, `NODE KEY` and `TEMPORAL NO OVERLAP` constraints
+  and `REQUIRE { ... }` contracts no longer slow down as data grows
+  (#1114, #1120, #1126):
+  - Checks within a transaction compare only pending nodes with the same key
+    value: 16,000 nodes under one `UNIQUE` constraint, 10.3 s → 161 ms.
+  - Multi-property `NODE KEY` / `UNIQUE` constraints use an index of their own
+    instead of a label scan: 1,000-row `MERGE` batches had grown from 1.2 s to
+    5.2 s within 8,000 nodes and now stay at about 0.13 s.
+  - `TEMPORAL NO OVERLAP` reads only the written key's history: 200-node
+    `MERGE` statements stay at ~41 ms instead of growing to 217 ms, including
+    after a clean restart; a constraint created over existing data fills its
+    index at creation.
+  - Committing many temporal nodes in one transaction takes linear time: 8,000
+    nodes, 79 s → 98 ms.
+  - Under write-behind, the checks look up only buffered nodes with a matching
+    key: 8,000 buffered writes, 8.5 s → 106 ms.
+- `MERGE` of new relationships from a highly connected node walks the smaller
+  endpoint's relationships instead of every edge of the busy node: 200-row
+  batches, 2.87 s → 8.6 ms.
+- Concurrent writes contend less: node and relationship ID lookups are spread
+  across 64 locks (batched `UNWIND` node creation with 16 writers, 69k → 148k
+  nodes/s), label and relationship-type counts no longer serialize commits
+  (~31% faster with 16 durable writers), and statements with inline literals
+  no longer contend on shared caches.
+- `UNWIND ... CREATE` without other clauses writes all rows in one bulk
+  operation, `UNWIND ... MATCH (a:L {id: p[0]}), (b:L {id: p[1]}) CREATE ...`
+  batches reuse their prefetched lookups, and relationship batches reuse
+  endpoint labels already read by `MATCH` (2,000-row batches: 35.0 → 27.5 µs
+  per row).
+- Statements that differ only in literal values share cached validation
+  verdicts (literal `CREATE` about 30% faster), and creating many entities in
+  one statement no longer tracks their IDs in quadratic time (50,000 IDs:
+  seconds → ~8.5 ms).
+- Long string parameters (1,024 bytes or more) stay parameter references in
+  pipeline statements instead of being written into the text and rescanned per
+  row: a 200,000-character statement went from ~315 ms and 2.05 MB to ~170 ms
+  and 0.21 MB (#1094).
+- A node pattern whose property map holds null (`{id: null}`) matches nothing
+  without scanning the label: 500 `OPTIONAL MATCH` lookups over 4,000 nodes,
+  ~900 ms → ~3 ms (#1130).
+- A typed one-hop match from an anonymous node (`MATCH ()-[r:T {id: $id}]->()`)
+  starts from the relationship type index instead of every node (200 lookups,
+  0.95 s → 2.3 ms), and a match whose relationship is pinned by `elementId(r)`
+  or `id(r)` starts from that relationship's endpoints.
+- Traversals load labelled endpoints whose properties are never read by ID and
+  labels only, and typed chains filter adjacency by type before reading
+  relationship bodies or endpoints (#1110, #1113).
+- Label scans read their counts only when a scan gets large: a
+  `MATCH` / `CREATE` / `DELETE` benchmark ran ~1.7x faster.
+- Under `NORNICDB_PARSER=antlr` a repeated valid statement skips the ANTLR
+  parse, about doubling throughput on repeated statements (9K → 18K ops/sec in
+  the direct-executor benchmark); the default parser is unchanged (#907, #1028).
+
+### Deprecated
+
+- `nornicdb.knowledgepolicy.info`, `.profiles`, `.policies`, `.resolve`,
+  `.deindexStatus` and `nornicdb.decay.info` are deprecated aliases of the
+  `kp.*` procedures: same arguments and results, listed by `SHOW PROCEDURES`
+  with `isDeprecated` true and `deprecatedBy` naming the replacement (#1064).
+
+### Removed
+
+- `AsyncEngine`, the old write-behind cache, and the routing that sent some
+  query shapes past the transaction. The write-behind commit buffer replaces it.
+- User statements can no longer call NornicDB's internal `__nornic_*`
+  functions, directly or through `apoc.cypher.run*`, `apoc.periodic.*` or
+  `apoc.export.*.query`; such a call is an unknown function (#1105).
 
 ### Fixed
 
+#### Cypher semantics
+
+- A pattern predicate works wherever Neo4j allows a boolean: `FILTER`,
+  `exists(pattern)`, `NOT` / `AND` / `OR`, `CASE WHEN` and a comprehension's
+  `WHERE` (it was "only valid as predicates in WHERE"). `WHERE false OR (NOT
+  EXISTS {…} AND …)` no longer drops every row (#907).
+- Subquery expressions (`EXISTS`, `COUNT`, `COLLECT { }`) are evaluated where
+  they stand, with the variables in scope there, so they work inside
+  comprehensions, quantifiers, `reduce`, `coalesce` and `CASE`. An aggregation
+  inside a subquery body is the body's own (`COLLECT { UNWIND [] AS x RETURN
+  count(*) }` is `[0]`), `EXISTS { }` with several clauses or a comma list of
+  patterns finds rows (it never did), `COUNT { (a)-[r]->() }` with `r` bound
+  counts that relationship, and `COLLECT { … }[0]` subscripts work. All 109
+  subquery-scope differential statements match Neo4j 5.26 (#907, #1028, #1055).
+- A pattern comprehension accepts `IN` in its `WHERE`
+  (`[(c)<-[:COMPANY]-(a) WHERE a.role IN ['owner'] | a.role]`), binds its own
+  variables inside a `MATCH` / `WITH` `WHERE`, and is evaluated inside
+  comparisons, `CASE`, lists and function arguments (#1109).
+- Variables bound by `WITH`, `UNWIND`, `LET` or `CALL` subqueries carry one
+  static type for every check, so type errors match Neo4j 5.26 (all 712
+  projection-type differences resolved). A `CASE` nested in an expression no
+  longer types the whole expression as Boolean (#1055).
+- `ORDER BY`, `SKIP` / `OFFSET` and `LIMIT` work as clauses of their own
+  (`MATCH (n) ORDER BY n.v LIMIT 2 RETURN n`) instead of silently matching
+  nothing, `OFFSET` is a synonym of `SKIP`, and `RETURN k, count(*) AS c ORDER
+  BY count(*) DESC` orders by the aggregate however it is spelled (#907, #908).
+- Arithmetic inside function arguments, aggregate inputs and path expressions
+  binds by precedence and associates left: `10 - 3 - 2` gave 9, `2 ^ 3 ^ 2`
+  gave 512. `NOT (NOT a OR b)` is no longer read as `a OR b`, and `XOR` in a
+  `MATCH` `WHERE` no longer swallows the comparison before it (#907, #1028).
+- `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2` and `log10` use a musl
+  port and match Neo4j far more often (all of 4,000 random inputs for the
+  inverse functions, about 96% for sin/cos/tan; Go's versions differed for
+  6–40% of inputs) (#907).
+- Function argument types follow Neo4j: a wrong-typed argument known only at
+  run time (`toUpper(n.i)`) is a TypeError, not a SyntaxError or `'5'`, and a
+  `$parameter` or literal argument of known type is checked at compile time.
+  `tail()`, `range()`, `isEmpty()`, `abs()`, `sign()`, `head()`, `last()` and
+  `reverse()` handle wrong types as Neo4j does (#907, #1028).
+- An unknown function fails in every clause (`WHERE`, `WITH`, `UNWIND`,
+  `ORDER BY`, `CALL` subqueries, write clauses and `SHOW` command tails)
+  instead of evaluating to null or text. A dotted name is known only as a
+  built-in or a loaded plugin's function, without spaces around its dots
+  (#1166).
+- All `date.*` / `datetime.*` accessors (including `date.hour`,
+  `datetime.week`, `quarter`, `dayOfWeek`, `dayOfYear`, `ordinalDay`,
+  `weekYear`) are known in every clause and agree across evaluators;
+  `date.year('0001-01-01')` returns 1 instead of null (#1105).
+- Temporal values: `datetime({epochSeconds: …})` / `epochMillis` build the
+  instant (was "year must be specified"); `UTC+01:00` / `GMT-05:30` zones are
+  read; signed ISO durations (`-P1D`) and years past 9999 (`+12021-01-01`) are
+  read and written as Neo4j does (#907).
+- `format(template, values…)`, NornicDB's printf form, fails on a template that
+  doesn't fit its values instead of returning Go's `%!…` markers (#907).
+- At run time a string joins a number, boolean, point, temporal value, duration
+  or `VECTOR` as its text (`'a' + m.b` is `'atrue'`) (#907).
+- `SET` writes the value `RETURN` would project (`SET n.p = [1 > 2]` stored
+  `true`, `SET n.p = n.l[0] + 1` stored null), and counts properties set to null
+  the way Neo4j does, for embedded and Bolt sessions alike (#907).
+- Rows that bind the same entity see and write one entity: `UNWIND [1, 2] AS k
+  MERGE (m {k: 1}) ON MATCH SET m.m = k RETURN m.m` returns 2 on both rows, and
+  a later row's `SET` no longer overwrites an earlier row's write with stale
+  data (#907).
+- `CASE` reads variables, map keys, properties and labels named after keywords
+  as names, as Neo4j does: `end`, `case`, `when`, `then`, `else`, `and`, `or`,
+  `xor`, `as`, `is` and clause keywords (`CASE match WHEN 1 THEN match ELSE 0
+  END`, `ELSE end.id END`). A `CASE` inside `reduce`, a list predicate or a
+  comprehension sees that scope's variables, an operator inside a `CASE` no
+  longer splits the outer expression, and a type parameter's `>`
+  (`x IS :: LIST<INTEGER> THEN`) is not read as an operator
+  (#907, #1136, #1144, #1145, #1162).
+- A variable whose name ends in a keyword is no longer read as the keyword
+  (`... AS reason MATCH` is not `ON MATCH`).
+- A `WHERE` inside a list comprehension or list predicate belongs to it, list
+  literals split only at top-level commas (`[f(a, b)]`), and a comparison inside
+  a list or map literal stays inside it (#907).
+- Pattern property maps may read the same pattern's variables
+  (`MATCH (a)-->(b {foo: a.foo})`, and `MERGE (a:W {foo: 1})-[:T]->(b:W {foo:
+  a.foo})`, which stored the text `'a.foo'`). A `MERGE` of a relationship
+  pattern with unbound endpoints matches every existing path or creates the
+  whole pattern, as Neo4j 5.26 does (#907, #1028).
+- A variable named twice in one chain binds one node:
+  `MATCH (a)-[:R]->(b)-[:S]->(b)` matched any `S` relationship out of `b` (#908).
+- `MATCH (:A)-[r:T]->(:B) RETURN count(r)` counted every `T` relationship from
+  `A` nodes whatever the end label. Counts answered from store counters apply
+  Neo4j's rules and, inside an explicit transaction, include its own writes
+  (#1076).
+- `UNWIND n.p + n.q AS x` (or a slice or backticked property) unwound nothing;
+  any expression starting with a property is evaluated (#1127).
+- A void procedure called first (`CALL tx.setMetaData({...}) MATCH … SET …`,
+  `CALL db.awaitIndexes() RETURN 1`) keeps its row, so the clauses after it run.
+- A qualified function call works beside a variable with its first name
+  (`WITH 'x' AS text RETURN text.locate(text, 'x')`), and an aggregate can be a
+  namespaced function's argument (`apoc.coll.sort(collect(x))`).
+- `MATCH p = (:L {k: 1})` (a single-node path without a node variable) can be
+  planned, `WITH x.node AS m MATCH (m)` is accepted, and `size(kinds)` in an
+  inline pattern `WHERE` is no longer read as a node pattern (#907).
+- Backtick-quoted relationship types work in `CREATE`, `MERGE` and `MATCH`
+  (CREATE rejected them, MERGE stored the backticks, MATCH searched for the
+  quoted text) (#907).
+- `CREATE (n $props) RETURN n` binds `n`, `CREATE ()-[r:R $props]->()` takes
+  the map, and a non-map parameter there is Neo4j's SyntaxError (#907).
+- Whitespace inside a relationship arrow is ignored: `(b) <-[r]-(a)` matched
+  both directions and `(a) - [r] -> (b)` couldn't be planned (#907).
+- `AS` glued to a bracket, quote or backtick (`RETURN [1, 2][0]AS w`) is the
+  alias keyword, and quoted column names keep their spaces (#907).
+- Names follow Neo4j's Unicode rules (`a€` is a name, `€a` is not), and
+  relationship arrows accept Neo4j's Unicode dashes and heads
+  (`(a)—[r]—>(b)`) (#907, #908).
+- Statements Neo4j rejects at compile time are SyntaxErrors instead of running
+  or failing per row: `RETURN n.`, `RETURN a $b`, `'it''s'`, an arrow head that
+  ends no relationship, extra words after a `DELETE` target or `DROP` name, and
+  mixing `:A:B` with label expressions in one `MATCH` clause (#907, #908, #1028).
+- `n.v <-1` is `n.v < -1`, not an incoming arrow; `{a:0.01}` no longer fails as
+  an invalid numeric literal; `count('a)b')` and `CALL () { RETURN '}' AS y }`
+  read the quoted text as text (#907).
+- Under `NORNICDB_PARSER=antlr`: parameter names starting with a digit
+  (`$0hello`), `CREATE VECTOR INDEX … ON n.e` without parentheses,
+  `IS :: LIST<STRING NOT NULL>` and `VECTOR(n)` types now parse (#907).
+- `EXPLAIN` / `PROFILE USE <graph>` resolve the graph as the statement does,
+  and a failing statement fails its `PROFILE` (#907).
 - An OPTIONAL MATCH reusing a variable that an earlier OPTIONAL MATCH bound to
   null enumerated its pattern as if the variable were unbound: a full node scan
   per null row (seconds per row on a server holding other databases). Such a
@@ -30,6 +480,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (or DATE, LOCAL DATETIME) before a `( … ) IS TEMPORAL NO OVERLAP` entry failed
   with "Too many parameters for function 'DATETIME'". Names after `::`, `TYPED`,
   `ZONED` or `LOCAL` are types, not calls.
+- Procedure permission checks consider every `CALL` in a statement.
+
+#### Functions and procedures
+
+- `apoc.coll.subtract`, `.contains` and `.flatten` read their arguments
+  correctly (they returned nothing), `apoc.coll.sort` sorts strings in Cypher's
+  order, `apoc.coll.flatten(list, recursive)` flattens one level unless
+  `recursive` is true, and `apoc.map.clean` removes only values of the same kind
+  (`2` is not `2.0`) (#907, #1164).
+- `apoc.algo.pageRank` ranks only the given nodes over the relationships
+  between them, returning rows in the given order (#1164).
+- `apoc.convert.toJson` writes `<`, `>`, `&`, U+2028 and U+2029 as themselves,
+  matching APOC byte for byte; `apoc.convert.fromJsonMap` / `fromJsonList` keep
+  integers, fractions, nesting and large numbers (#907).
+- `apoc.xml.escape` / `unescape` give the same result for the same input and no
+  longer double-escape `&` in `&lt;` (#1163).
+- Link prediction orders equal scores by target node ID, so results are stable
+  between runs, and the `ensemble` algorithm with `topK: 0` returns every
+  prediction instead of none.
+
+#### Constraints and schema
+
 - `DROP DATABASE` now removes the database's schema (constraints, contracts,
   indexes) along with its data. Previously the schema survived the drop, so a
   database recreated under the same name came back with every constraint of the
@@ -50,8 +522,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `(valid_from, valid_to)` pair forms the key
   (`REQUIRE (n.k1, n.k2, n.valid_from, n.valid_to) IS TEMPORAL NO OVERLAP`), as a
   primitive and inside `REQUIRE { ... }` contracts. Previously node constraints
-  failed with "TEMPORAL constraint requires 3 properties". Single-key constraints
-  and their persisted temporal indexes are unchanged.
+  failed with "TEMPORAL constraint requires 3 properties".
 - Creating a constraint no longer reads every database on the server. Relationship
   constraints (`UNIQUE`, `IS NOT NULL`, `KEY`, `TEMPORAL`, `DOMAIN`, type,
   `MAX COUNT`, `ALLOWED`/`DISALLOWED`) and relationship contracts now stream only the
@@ -63,6 +534,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   0.13 ms per relationship constraint; 22.6 ms → 2 ms per `UNIQUE` refresh). Engines
   expose the new optional `storage.EdgeTypeStreamer` interface and
   `storage.StreamEdgesByType` helper.
+- A `UNIQUE` entry in a `REQUIRE { ... }` contract builds its unique-value
+  lookup when the contract is created. Before, every write to the label scanned
+  all of its nodes until the next restart, which made bulk loads quadratic (a
+  100k-node load never finished) (#1114, #1120).
+- Uniqueness, temporal and cardinality checks look at the transaction's final
+  state: deleting a relationship or changing a node's key and then creating
+  another with the same value in one transaction no longer fails with "already
+  exists" (#907).
+- Temporal history index keys were hashed with a key generated per process, so
+  index entries written before a clean restart could not be found after it.
+  Keys now hash the same in every process, and a store written by an earlier
+  version rebuilds its temporal index once at startup.
+
+#### Storage, durability and transactions
+
+- `TERMINATE TRANSACTIONS` and client disconnects stop an auto-commit
+  statement's constraint validation at commit. Before, such statements could
+  keep running for minutes; a cancelled commit writes nothing (#1115).
+- A node or relationship created with a fixed ID (such as a `MERGE`d
+  relationship) in a rolled-back transaction, then created again and committed,
+  lost its ID-dictionary entry at the next restart and was no longer traversed
+  or found by label. Use `nornicdb-admin database check-ids --repair` for stores
+  affected before this fix (#907).
+- `/admin/restore` takes the store offline while it swaps data. Under load,
+  restores could crash the process ("concurrent map read and map write") or
+  show readers a half-restored store. Reads and transactions that start during a
+  restore fail with a retryable `DatabaseUnavailable`; the restore waits up to
+  30 s for open ones and changes nothing if they don't finish (#1020).
+- A read could put an outdated copy of a node or relationship into the cache
+  while a write was updating it, so later reads returned the old version until
+  the entity was written again (#1024).
+- Auto-compaction ignored `NORNICDB_WAL_RETENTION_MAX_AGE`,
+  `NORNICDB_WAL_RETENTION_MAX_SEGMENTS` and
+  `NORNICDB_WAL_LEDGER_RETENTION_DEFAULTS` and deleted every WAL segment, so
+  `db.txlog.entries()` came back empty seconds after a write. Segments are kept
+  for the configured retention.
+- Concurrent updates could crash the process with a Badger assertion when two
+  cleanup timestamps were published out of order.
+- A statement that rewrites a node twice (`REMOVE n:Embedded, n.text SET …`)
+  no longer stores back the managed embeddings it just invalidated, so the node
+  leaves vector search, also after a restart (#907).
+- Search indexes stopped receiving storage events once the server's GraphQL
+  handler subscribed to them; storage events reach every subscriber (#1086).
+- A cached query plan no longer skips validation of `SKIP` / `LIMIT`
+  expressions whose values are invalid.
+
+#### Search and embeddings
+
+- Vector and hybrid search could break for the life of the server when nodes
+  with numeric list properties (e.g. `page_starts = [0, 30]`) were indexed before
+  the first embedding: the index took their length as its dimension and rejected
+  every real embedding. The index keeps the configured dimension, and
+  `db.rretrieve({..., failClosed: true})` returns a failed search as an error
+  instead of no rows.
+- A node embedded during a bulk write could lose its vector from the search
+  index for good, later chunks of a multi-chunk node never reached a live HNSW
+  graph, and a large transaction's cache update could hide an embedding stored
+  meanwhile (#1116).
+- A node embedded while the HNSW index was first being built was found by
+  keyword only until a rebuild; it now reaches the index.
+- Vector search with `types` or property filters stopped at the HNSW candidate
+  limit, so it returned fewer results when nearer vectors were rejected.
+- A vector query during indexing could crash the process with a concurrent map
+  read and write (#1117).
+- A search whose matches came from one ranking returned at most 40 results
+  whatever the limit (default `minRRFScore` 0.01, RRF k 60), with no reason. A
+  page that the threshold leaves short reports `fallback_reason: min_rrf_score`;
+  `minRRFScore: 0` keeps deeper results (#1092).
+- An embedding provider answering with an empty, missing or wrong-dimension
+  vector is a failed embedding: it is reported (`query_embedding_failed`), never
+  cached, and not searched as if valid (#907).
+- `group_by` in ranked continuation mode (or with no mode) is an error instead
+  of being silently ignored; use `ranked_then_id` for grouped results.
+
+#### Protocols and configuration
+
+- Bolt sent lists and maps of 65,536 or more entries with the wrong size, and
+  returned stored `LIST<BOOLEAN>` properties as null.
+- Bolt's documented `server.bolt_*` YAML settings (TLS, timeouts, WebSocket) were
+  never read; they take effect (#1018).
+- The HTTP API writes floats in Neo4j's text form (`1.0E20`, not `1e+20`)
+  (#907).
+- British and other non-US English locales (`en-GB`, `en-AU`) no longer select
+  the `en-XA` pseudo-locale, which showed messages as `[!! … !!]` (#907).
 
 ## [1.4.1]
 
