@@ -468,7 +468,7 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCypherRun(ctx, "apoc.cypher.doitall", args)
 			})
-		registerBuiltInProcedureLiteral("apoc.cypher.runMany", "apoc.cypher.runMany(statements :: STRING, params :: MAP) :: (row :: INTEGER, result :: MAP)", "Runs many Cypher statements", ProcedureModeWrite, 1, 2, false,
+		registerBuiltInProcedureLiteral("apoc.cypher.runMany", "apoc.cypher.runMany(statements :: STRING, params :: MAP, config :: MAP = {}) :: (row :: INTEGER, result :: MAP)", "Runs many Cypher statements", ProcedureModeWrite, 1, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCypherRunMany(ctx, args)
 			})

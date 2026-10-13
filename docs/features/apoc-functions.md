@@ -309,7 +309,7 @@ apoc.coll.subtract([1,2,3], [2])    // → [1,3]
 // Filtering
 apoc.coll.contains([1,2,3], 2)      // → true
 apoc.coll.duplicates([1,2,2,3])     // → [2]
-apoc.coll.frequencies([1,2,2,3])    // → {1:1, 2:2, 3:1}
+apoc.coll.frequencies([1,2,2,3])    // → [{item:1, count:1}, {item:2, count:2}, {item:3, count:1}]
 ```
 
 ### Text Functions (`apoc.text.*`)

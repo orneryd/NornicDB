@@ -500,50 +500,56 @@ func Flatten(list []interface{}, recursive bool) []interface{} {
 	return result
 }
 
-// Frequencies returns a map of values to their occurrence counts.
+// Frequencies returns each distinct item with its count, {item, count}, in
+// the order items first appear, as APOC's apoc.coll.frequencies does; equal
+// numbers (1 and 1.0) count together under the first.
 //
 // Example:
 //
 //	apoc.coll.frequencies([1,2,2,3,3,3])
 //	=> {1:1, 2:2, 3:3}
-func Frequencies(list []interface{}) map[string]int {
-	result := make(map[string]int)
+func Frequencies(list []interface{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0)
+	positions := make(map[string]int)
 	for _, item := range list {
-		key := fmt.Sprintf("%v", item)
-		result[key]++
+		key := frequencyKey(item)
+		if position, seen := positions[key]; seen {
+			result[position]["count"] = result[position]["count"].(int64) + 1
+			continue
+		}
+		positions[key] = len(result)
+		result = append(result, map[string]interface{}{"item": item, "count": int64(1)})
 	}
 	return result
 }
 
-// FrequenciesAsMap returns frequency data as a list of maps.
+// FrequenciesAsMap returns each distinct item's count keyed by the item's
+// text, as APOC's apoc.coll.frequenciesAsMap does.
 //
 // Example:
 //
 //	apoc.coll.frequenciesAsMap([1,2,2,3,3,3])
-//	=> [{item:1,count:1},{item:2,count:2},{item:3,count:3}]
-func FrequenciesAsMap(list []interface{}) []map[string]interface{} {
-	counts := make(map[string]int)
-	order := make([]string, 0)
-	items := make(map[string]interface{})
-
-	for _, item := range list {
-		key := fmt.Sprintf("%v", item)
-		if counts[key] == 0 {
-			order = append(order, key)
-			items[key] = item
-		}
-		counts[key]++
+//	=> {1:1, 2:2, 3:3}
+func FrequenciesAsMap(list []interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+	for _, entry := range Frequencies(list) {
+		result[fmt.Sprint(entry["item"])] = entry["count"]
 	}
-
-	result := make([]map[string]interface{}, 0)
-	for _, key := range order {
-		result = append(result, map[string]interface{}{
-			"item":  items[key],
-			"count": counts[key],
-		})
-	}
-
 	return result
+}
+
+// frequencyKey groups items as APOC counts them: numbers by value (1 and
+// 1.0 alike), anything else by its type and text.
+func frequencyKey(item interface{}) string {
+	switch number := item.(type) {
+	case int:
+		return fmt.Sprint("n:", float64(number))
+	case int64:
+		return fmt.Sprint("n:", float64(number))
+	case float64:
+		return fmt.Sprint("n:", number)
+	}
+	return fmt.Sprintf("%T:%v", item, item)
 }
 
 // IndexOf returns the index of the first occurrence of a value.

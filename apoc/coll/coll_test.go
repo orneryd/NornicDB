@@ -291,10 +291,16 @@ func TestZip(t *testing.T) {
 func TestFrequencies(t *testing.T) {
 	list := []interface{}{1, 2, 2, 3, 3, 3}
 
-	result := Frequencies(list)
-	assert.Equal(t, 1, result["1"])
-	assert.Equal(t, 2, result["2"])
-	assert.Equal(t, 3, result["3"])
+	// As in APOC: {item, count} in first-seen order, and the same counts
+	// keyed by item text; 1 and 1.0 count together.
+	assert.Equal(t, []map[string]interface{}{
+		{"item": 1, "count": int64(1)},
+		{"item": 2, "count": int64(2)},
+		{"item": 3, "count": int64(3)},
+	}, Frequencies(list))
+	assert.Equal(t, map[string]interface{}{"1": int64(2), "a": int64(1)}, FrequenciesAsMap([]interface{}{1, 1.0, "a"}))
+	assert.Equal(t, map[string]interface{}{"3": int64(1)}, FrequenciesAsMap([]interface{}{int64(3)}))
+	assert.Empty(t, Frequencies(nil))
 }
 
 func TestOccurrences(t *testing.T) {

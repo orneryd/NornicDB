@@ -92,6 +92,13 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 	if err != nil {
 		return nil, err
 	}
+	// APOC's config: statistics (default true) gives each statement's
+	// statistics row.
+	config, err := optionalProcedureMap(procedure, args, 2, "config")
+	if err != nil {
+		return nil, err
+	}
+	statistics := config["statistics"] != false
 
 	// Split by semicolons (respecting quotes)
 	queries := e.splitBySemicolon(statements)
@@ -103,7 +110,8 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 	}
 
 	// As in APOC, each statement gives its rows, numbered from 0, then a
-	// row -1 with its statistics (#1164).
+	// row -1 with its statistics unless config says statistics: false
+	// (#1164).
 	for _, query := range queries {
 		query = strings.TrimSpace(query)
 		if query == "" {
@@ -135,7 +143,9 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 				valueMap,
 			})
 		}
-		result.Rows = append(result.Rows, []interface{}{int64(-1), runManyStatistics(innerResult, time.Since(started))})
+		if statistics {
+			result.Rows = append(result.Rows, []interface{}{int64(-1), runManyStatistics(innerResult, time.Since(started))})
+		}
 
 		// Accumulate stats
 		if innerResult.Stats != nil {

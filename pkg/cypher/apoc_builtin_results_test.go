@@ -88,4 +88,11 @@ func TestApocCypherRunManyStatisticsRows(t *testing.T) {
 	require.Equal(t, []interface{}{int64(0), map[string]interface{}{"y": int64(2)}}, result.Rows[1])
 	require.Equal(t, counts(map[string]int64{"rows": 1, "propertiesSet": 1}), statistics(2))
 	require.Equal(t, counts(map[string]int64{"nodesDeleted": 1}), statistics(3))
+
+	// config {statistics: false} leaves the statistics rows out, as in APOC.
+	result, err = exec.Execute(context.Background(), "CALL apoc.cypher.runMany('RETURN 1 AS v;', {}, {statistics: false}) YIELD row, result RETURN row, result", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0), map[string]interface{}{"v": int64(1)}}}, result.Rows)
+	_, err = exec.Execute(context.Background(), "CALL apoc.cypher.runMany('RETURN 1 AS v;', {}, 1) YIELD row RETURN row", nil)
+	require.ErrorContains(t, err, "config")
 }
