@@ -217,9 +217,10 @@ func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
 // (CASE, WHEN, THEN, ELSE, END) as a keyword, not a name that is the same
 // word: a property (n.end, m.when), a label or type (n:End), a parameter
 // ($end) or a map key ({end: 1}, followed by one colon; END :: INTEGER is a
-// type predicate on a CASE), or a variable named end where an operand is
-// expected (ELSE end.id END; see caseOperandExpectedBefore). Every scanner of
-// the CASE grammar reads its keywords through it.
+// type predicate on a CASE), or a variable of the keyword's name where an
+// operand stands (ELSE end.id END, THEN then, WHEN case.id = 1; see
+// caseOperandExpectedBefore). Every scanner of the CASE grammar reads its
+// keywords through it.
 func caseKeywordAt(s string, i int, keyword string) bool {
 	if !matchKeywordAt(s, i, keyword) {
 		return false
@@ -230,8 +231,43 @@ func caseKeywordAt(s string, i int, keyword string) bool {
 			return false
 		}
 	}
-	if keyword == "END" && caseOperandExpectedBefore(s, i) {
-		return false
+	switch keyword {
+	case "END":
+		// END follows a complete operand; where one is expected the word is
+		// a variable (ELSE end.id END).
+		if caseOperandExpectedBefore(s, i) {
+			return false
+		}
+	case "THEN", "ELSE":
+		// As END. Scanners also read a CASE's body (WHEN … THEN … ELSE …)
+		// as text of its own: at its start the word is a keyword unless it
+		// is a simple CASE's test (then WHEN 1 …).
+		if !caseHasPreviousToken(s, i) {
+			if caseSimpleTestContinuesAt(s, i+len(keyword)) {
+				return false
+			}
+		} else if caseOperandExpectedBefore(s, i) {
+			return false
+		}
+	case "WHEN":
+		// WHEN follows a complete operand, or opens a searched CASE right
+		// after CASE or at the start of a CASE body: there the word is a
+		// variable only when what follows continues an operand (CASE when
+		// WHEN 1, CASE when.id WHEN 1).
+		if !caseHasPreviousToken(s, i) || casePreviousWordIsCase(s, i) {
+			if caseSimpleTestContinuesAt(s, i+len(keyword)) {
+				return false
+			}
+		} else if caseOperandExpectedBefore(s, i) {
+			return false
+		}
+	case "CASE":
+		// A CASE that opens an expression is followed by an operand or WHEN;
+		// followed by what only follows an operand, it is a variable
+		// (THEN case END, WHEN case.id = 1).
+		if caseVariableNamedCase(s, i+len(keyword)) {
+			return false
+		}
 	}
 	next := i + len(keyword)
 	for next < len(s) && isASCIISpace(s[next]) {
@@ -260,14 +296,174 @@ func caseOperandExpectedBefore(s string, i int) bool {
 	for start > 0 && isIdentByte(s[start-1]) {
 		start--
 	}
-	if start > 0 && (s[start-1] == '.' || s[start-1] == '$') {
-		return false
+	if start > 0 && (s[start-1] == '.' || s[start-1] == '$' || s[start-1] == ':') {
+		return false // a property, parameter or label completes an operand
 	}
-	switch lowerASCII(s[start : j+1]) {
-	case "case", "when", "then", "else", "and", "or", "xor", "not", "in", "contains", "with", "where", "return", "as", "distinct":
+	switch word := lowerASCII(s[start : j+1]); word {
+	case "case", "when", "then", "else":
+		// After the keyword an operand is expected; after a variable of that
+		// name, it is complete.
+		return caseKeywordAt(s, start, upperASCII(word))
+	case "with", "where", "return":
+		if word == "with" && casePreviousWordIn(s, start, "starts", "ends") {
+			return true // STARTS WITH, ENDS WITH
+		}
+		// Clause keywords start the text or follow a complete clause; where
+		// an operand is expected, or as a CASE body's test (where WHEN 1 …),
+		// the word is a variable that completes one.
+		if !caseHasPreviousToken(s, start) {
+			return !caseSimpleTestContinuesAt(s, j+1)
+		}
+		return !caseOperandExpectedBefore(s, start)
+	case "and", "or", "xor", "in", "contains", "as":
+		// Infix keywords follow a complete operand. Where one is expected,
+		// or at the start of a CASE body read on its own (and WHEN 1 …), the
+		// word is a variable that completes one.
+		return caseHasPreviousToken(s, start) && !caseOperandExpectedBefore(s, start)
+	case "not", "distinct":
+		// Prefix keywords stand where an operand is expected, as a variable
+		// does: the word is the keyword unless what follows ends an operand.
+		return !casePrefixWordIsVariable(s, j+1)
+	}
+	return false
+}
+
+// casePreviousWordIn reports whether the word before s[i] is one of words.
+func casePreviousWordIn(s string, i int, words ...string) bool {
+	j := i - 1
+	for j >= 0 && isASCIISpace(s[j]) {
+		j--
+	}
+	end := j + 1
+	for j >= 0 && isIdentByte(s[j]) {
+		j--
+	}
+	previous := lowerASCII(s[j+1 : end])
+	for _, word := range words {
+		if previous == word {
+			return true
+		}
+	}
+	return false
+}
+
+// casePrefixWordIsVariable reports, for a NOT or DISTINCT word ending at
+// s[i], whether what follows makes it a variable: the end of the text, a
+// property access or an infix or closing symbol, a CASE keyword (a THEN,
+// ELSE, END or WHEN that is itself the keyword), or an infix keyword.
+func casePrefixWordIsVariable(s string, i int) bool {
+	for i < len(s) && isASCIISpace(s[i]) {
+		i++
+	}
+	if i >= len(s) {
+		return true
+	}
+	if !isIdentStartByte(s[i]) {
+		return strings.IndexByte(".=<>*/%^,)]}", s[i]) >= 0
+	}
+	word := caseWordAt(s, i)
+	after := i + len(word)
+	switch word {
+	case "then", "else", "end", "when":
+		// NOT end.x: the word is a variable, so NOT is the keyword.
+		return !caseOperandEndsAt(s, after)
+	case "and", "or", "xor", "as", "is", "in", "contains":
+		// NOT in.x, NOT in > 1: likewise; otherwise the infix keyword
+		// follows a variable.
+		return !caseOperandEndsAt(s, after)
+	}
+	return false
+}
+
+// caseHasPreviousToken reports whether anything but space precedes s[i].
+func caseHasPreviousToken(s string, i int) bool {
+	for j := i - 1; j >= 0; j-- {
+		if !isASCIISpace(s[j]) {
+			return true
+		}
+	}
+	return false
+}
+
+// casePreviousWordIsCase reports whether the word before s[i] is CASE.
+func casePreviousWordIsCase(s string, i int) bool {
+	j := i - 1
+	for j >= 0 && isASCIISpace(s[j]) {
+		j--
+	}
+	return j >= 3 && matchKeywordAt(s, j-3, "CASE")
+}
+
+// caseOperandEndsAt reports whether what starts at s[i] can only follow a
+// complete operand: the end of the text, a property access, an infix or
+// closing symbol, or THEN, ELSE, END and the infix keywords.
+func caseOperandEndsAt(s string, i int) bool {
+	for i < len(s) && isASCIISpace(s[i]) {
+		i++
+	}
+	if i >= len(s) {
+		return true
+	}
+	if !isIdentStartByte(s[i]) {
+		return strings.IndexByte(".=<>*/%^,)]}", s[i]) >= 0
+	}
+	switch caseWordAt(s, i) {
+	case "then", "else", "end", "as", "and", "or", "xor", "is", "in", "contains", "starts", "ends":
 		return true
 	}
 	return false
+}
+
+// caseVariableNamedCase reports, for the word case ending at s[i], whether it
+// is a variable: what follows can only follow an operand. A word that itself
+// continues a simple CASE's test (CASE end WHEN 1, CASE and WHEN 1) is that
+// test, so the CASE before it opens an expression.
+func caseVariableNamedCase(s string, i int) bool {
+	if !caseOperandEndsAt(s, i) {
+		return false
+	}
+	for i < len(s) && isASCIISpace(s[i]) {
+		i++
+	}
+	if i < len(s) && isIdentStartByte(s[i]) {
+		word := caseWordAt(s, i)
+		return !caseSimpleTestContinuesAt(s, i+len(word))
+	}
+	return true
+}
+
+// caseSimpleTestContinuesAt reports, for a word right after CASE, whether
+// what follows it at s[i] continues a simple CASE's test operand: a
+// property access, an infix symbol or keyword, or the WHEN that ends the
+// test (a WHEN itself followed by an operand).
+func caseSimpleTestContinuesAt(s string, i int) bool {
+	for i < len(s) && isASCIISpace(s[i]) {
+		i++
+	}
+	if i >= len(s) {
+		return false
+	}
+	if !isIdentStartByte(s[i]) {
+		return strings.IndexByte(".=<>*/%^", s[i]) >= 0
+	}
+	switch word := caseWordAt(s, i); word {
+	case "and", "or", "xor", "is", "in", "contains", "starts", "ends":
+		// The infix keyword is followed by an operand; a variable of that
+		// name by what ends one (WHEN and.id, WHEN in > 1).
+		return !caseOperandEndsAt(s, i+len(word))
+	case "when":
+		return !caseOperandEndsAt(s, i+len(word))
+	}
+	return false
+}
+
+// caseWordAt is the lower-case identifier word starting at s[i].
+func caseWordAt(s string, i int) string {
+	end := i
+	for end < len(s) && isIdentByte(s[end]) {
+		end++
+	}
+	return lowerASCII(s[i:end])
 }
 
 func isCaseWordStart(expression string, index int) bool {

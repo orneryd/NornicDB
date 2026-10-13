@@ -6,7 +6,7 @@ testing/cypher/tck/testdata/differential/sweep.json.gz)
 Builds Cypher statements for every operator and clause family: each operand
 type against each operator, unary operators and predicates, literals, every
 function in Neo4j 5.26's catalogue with valid and invalid arguments,
-aggregates, keywords as variable names, map keys, properties and labels,
+aggregates, keywords as variable names (inside CASE too), map keys, properties and labels,
 undefined variables, projection
 shapes, comprehensions, patterns, writes, subqueries and clause semantics.
 Expressions are placed in several positions (RETURN, WITH, WHERE, CASE, a
@@ -192,6 +192,21 @@ for keyword in sorted(set(KEYWORDS)):
     for case in (keyword.lower(), keyword):
         for shape in SHAPES:
             add("names", "shape", shape.format(k=case))
+
+# 6c. Names: every keyword as a variable inside CASE (both forms, every
+# branch), a WHERE that holds a CASE, and a comprehension: CASE's scanners
+# read their keywords where an operand stands (#1136).
+CASE_VARIABLE_SHAPES = ["WITH {{id: 1}} AS {k} RETURN CASE WHEN {k}.id = 1 THEN {k}.id ELSE 0 END AS v",
+                        "WITH 1 AS {k} RETURN CASE {k} WHEN 1 THEN {k} ELSE 0 END AS v",
+                        "WITH 2 AS {k} RETURN CASE WHEN true THEN {k} END AS v",
+                        "WITH 2 AS {k} RETURN CASE WHEN false THEN 0 ELSE {k} END AS v",
+                        "WITH 2 AS {k} RETURN CASE WHEN {k} > 1 AND {k} < 3 THEN {k} * 2 ELSE 0 - {k} END AS v",
+                        "UNWIND [1, 2] AS {k} WITH {k} WHERE CASE WHEN {k} > 1 THEN true ELSE false END RETURN {k} AS v",
+                        "WITH 1 AS {k} RETURN [x IN [1, 2] | CASE WHEN x = {k} THEN {k} ELSE x END] AS v"]
+for keyword in sorted(set(KEYWORDS)):
+    for case in (keyword.lower(), keyword):
+        for shape in CASE_VARIABLE_SHAPES:
+            add("names", "case", shape.format(k=case))
 
 # 6b. Names: every keyword as a map key, a property and a label, inside the
 # expressions that scan for keywords (CASE in both forms, WHERE, a
