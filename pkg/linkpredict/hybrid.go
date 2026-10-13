@@ -315,11 +315,13 @@ func (h *HybridScorer) singleTopology(graph Graph, source storage.NodeID, k int)
 // configured weights. More robust than single algorithm, but slower.
 func (h *HybridScorer) ensembleTopology(graph Graph, source storage.NodeID, k int) []Prediction {
 	// Run all algorithms
-	cn := CommonNeighbors(graph, source, k)
-	jac := Jaccard(graph, source, k)
-	aa := AdamicAdar(graph, source, k)
-	pa := PreferentialAttachment(graph, source, k)
-	ra := ResourceAllocation(graph, source, k)
+	// Every candidate of every algorithm, so a pair's ensemble score doesn't
+	// depend on the other candidates; k applies to the ensemble.
+	cn := CommonNeighbors(graph, source, 0)
+	jac := Jaccard(graph, source, 0)
+	aa := AdamicAdar(graph, source, 0)
+	pa := PreferentialAttachment(graph, source, 0)
+	ra := ResourceAllocation(graph, source, 0)
 
 	// Normalize each algorithm's scores independently, relative to the
 	// candidates, if requested; otherwise each keeps its own [0, 1] scale
@@ -449,21 +451,68 @@ func CosineSimilarity(a, b []float32) float64 {
 	return vector.CosineSimilarity(a, b)
 }
 
-// BestCosineSimilarity is the highest cosine similarity between any vector
-// of a and any vector of b of the same length: two nodes are as similar as
-// their closest chunks, as a search matches a node by its best chunk. With
-// no such pair it is 0.
-func BestCosineSimilarity(a, b [][]float32) float64 {
+// maxCosinePairs bounds BestCosineSimilarity's all-pairs comparison of one
+// embedding group: past it, each vector is compared with the other side's
+// mean vector instead, so the cost grows with the number of vectors, not
+// their product.
+const maxCosinePairs = 4096
+
+// BestCosineSimilarity is how similar two nodes' embeddings are: the highest
+// cosine similarity between a vector of a and a vector of b in the same
+// group (a named embedding's name; chunk embeddings are one group), as a
+// search matches a node by its best chunk. Vectors of other groups, which
+// may come from other models, aren't compared. A group with more than
+// maxCosinePairs pairs compares each vector with the other side's mean
+// vector. With no comparable pair it is 0.
+func BestCosineSimilarity(a, b map[string][][]float32) float64 {
 	best, found := 0.0, false
-	for _, x := range a {
-		for _, y := range b {
-			if len(x) == 0 || len(x) != len(y) {
-				continue
+	consider := func(x, y []float32) {
+		if len(x) == 0 || len(x) != len(y) {
+			return
+		}
+		if similarity := vector.CosineSimilarity(x, y); !found || similarity > best {
+			best, found = similarity, true
+		}
+	}
+	for group, xs := range a {
+		ys := b[group]
+		if len(xs)*len(ys) <= maxCosinePairs {
+			for _, x := range xs {
+				for _, y := range ys {
+					consider(x, y)
+				}
 			}
-			if similarity := vector.CosineSimilarity(x, y); !found || similarity > best {
-				best, found = similarity, true
-			}
+			continue
+		}
+		meanY, meanX := meanVector(ys), meanVector(xs)
+		for _, x := range xs {
+			consider(x, meanY)
+		}
+		for _, y := range ys {
+			consider(meanX, y)
 		}
 	}
 	return best
+}
+
+// meanVector is the mean of the vectors of the first one's length.
+func meanVector(vectors [][]float32) []float32 {
+	if len(vectors) == 0 {
+		return nil
+	}
+	mean := make([]float32, len(vectors[0]))
+	count := 0
+	for _, v := range vectors {
+		if len(v) != len(mean) {
+			continue
+		}
+		for i, value := range v {
+			mean[i] += value
+		}
+		count++
+	}
+	for i := range mean {
+		mean[i] /= float32(count)
+	}
+	return mean
 }

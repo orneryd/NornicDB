@@ -63,7 +63,6 @@ package cypher
 
 import (
 	"context"
-	"sort"
 	"strconv"
 
 	"github.com/orneryd/nornicdb/pkg/linkpredict"
@@ -299,17 +298,18 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 	scorer := linkpredict.NewHybridScorer(hybridConfig)
 
 	// The semantic score: the best cosine similarity between the nodes'
-	// embeddings, every chunk and named embedding (#1186).
+	// embeddings, every chunk, each named embedding with its namesake
+	// (#1186). The source's embeddings are read once.
+	var sourceEmbeddings map[string][][]float32
+	if sourceNode, err := e.storage.GetNode(config.SourceNode); err == nil {
+		sourceEmbeddings = nodeEmbeddingGroups(sourceNode)
+	}
 	scorer.SetSemanticScorer(func(ctx context.Context, source, target storage.NodeID) float64 {
-		sourceNode, err := e.storage.GetNode(source)
-		if err != nil {
-			return 0.0
-		}
 		targetNode, err := e.storage.GetNode(target)
-		if err != nil {
+		if err != nil || source != config.SourceNode {
 			return 0.0
 		}
-		return linkpredict.BestCosineSimilarity(nodeEmbeddingVectors(sourceNode), nodeEmbeddingVectors(targetNode))
+		return linkpredict.BestCosineSimilarity(sourceEmbeddings, nodeEmbeddingGroups(targetNode))
 	})
 
 	// Get predictions
@@ -376,22 +376,22 @@ func linkPredictionTargets[P any](config *linkPredictionConfig, predictions []P,
 	return kept
 }
 
-// nodeEmbeddingVectors lists a node's embeddings: its named embeddings, in
-// name order, then its chunk embeddings.
-func nodeEmbeddingVectors(node *storage.Node) [][]float32 {
+// nodeEmbeddingGroups is a node's embeddings by group: each named embedding
+// under its name, and its chunk embeddings under "default", with a named
+// "default" embedding, as the node's default embedding reads them
+// (storage.Node.GetDefaultEmbedding).
+func nodeEmbeddingGroups(node *storage.Node) map[string][][]float32 {
 	if node == nil {
 		return nil
 	}
-	names := make([]string, 0, len(node.NamedEmbeddings))
-	for name := range node.NamedEmbeddings {
-		names = append(names, name)
+	groups := make(map[string][][]float32, len(node.NamedEmbeddings)+1)
+	for name, vector := range node.NamedEmbeddings {
+		groups[name] = append(groups[name], vector)
 	}
-	sort.Strings(names)
-	vectors := make([][]float32, 0, len(names)+len(node.ChunkEmbeddings))
-	for _, name := range names {
-		vectors = append(vectors, node.NamedEmbeddings[name])
+	if len(node.ChunkEmbeddings) > 0 {
+		groups["default"] = append(groups["default"], node.ChunkEmbeddings...)
 	}
-	return append(vectors, node.ChunkEmbeddings...)
+	return groups
 }
 
 // linkPredictionConfig holds parsed configuration for link prediction procedures

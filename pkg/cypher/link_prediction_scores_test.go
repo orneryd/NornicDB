@@ -63,11 +63,11 @@ func TestLinkPredictionPredictScores(t *testing.T) {
 	require.Equal(t, "Moderate structural connection, no semantic match", rows["g"][5])
 }
 
-func TestNodeEmbeddingVectors(t *testing.T) {
-	require.Nil(t, nodeEmbeddingVectors(nil))
+func TestNodeEmbeddingGroups(t *testing.T) {
+	require.Nil(t, nodeEmbeddingGroups(nil))
 	node := &storage.Node{
-		NamedEmbeddings: map[string][]float32{"title": {3}, "content": {2}},
+		NamedEmbeddings: map[string][]float32{"title": {3}, "default": {2}},
 		ChunkEmbeddings: [][]float32{{4}, {5}},
 	}
-	require.Equal(t, [][]float32{{2}, {3}, {4}, {5}}, nodeEmbeddingVectors(node))
+	require.Equal(t, map[string][][]float32{"title": {{3}}, "default": {{2}, {4}, {5}}}, nodeEmbeddingGroups(node))
 }
