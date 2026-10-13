@@ -768,6 +768,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cypherproceduremetadata.db_retrievegraph", Constructor: "CypherProcedureMetadataDbRetrieveGraph", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherproceduremetadata.db_retrieverelationships", Constructor: "CypherProcedureMetadataDbRetrieveRelationships", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherproceduremetadata.db_rretrieve", Constructor: "CypherProcedureMetadataDbRretrieve", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "cypherproceduremetadata.db_rretrievegraph", Constructor: "CypherProcedureMetadataDbRretrieveGraph", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherproceduremetadata.db_schema_nodeproperties", Constructor: "CypherProcedureMetadataDbSchemaNodeProperties", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherproceduremetadata.db_schema_nodetypeproperties", Constructor: "CypherProcedureMetadataDbSchemaNodeTypeProperties", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherproceduremetadata.db_schema_relproperties", Constructor: "CypherProcedureMetadataDbSchemaRelProperties", Fields: []string{}, PluralForms: []string{"other"}},

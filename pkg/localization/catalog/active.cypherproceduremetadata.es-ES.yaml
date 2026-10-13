@@ -68,6 +68,8 @@
   other: "Recuperación híbrida sobre las propiedades de las relaciones"
 - id: cypherproceduremetadata.db_rretrieve
   other: "Procedimiento de recuperación híbrida y reordenación"
+- id: cypherproceduremetadata.db_rretrievegraph
+  other: "Recuperación híbrida sobre nodos y relaciones en una sola clasificación, reordenada con el reordenador configurado"
 - id: cypherproceduremetadata.db_schema_nodeproperties
   other: "Devuelve las propiedades de nodo por etiqueta"
 - id: cypherproceduremetadata.db_schema_nodetypeproperties

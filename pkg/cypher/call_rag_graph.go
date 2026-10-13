@@ -16,7 +16,18 @@ const graphSearchRequestKey = "\x00graph"
 // relationships (types filters the nodes' labels). With n or maxResults it
 // returns one terminal page instead of rows.
 func (e *StorageExecutor) callDbRetrieveGraph(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	req, err := ragProcedureRequest("db.retrieveGraph", args)
+	return e.runGraphSearchRequest(ctx, "db.retrieveGraph", args, false)
+}
+
+// callDbRRetrieveGraph is db.retrieveGraph with the configured reranker, when
+// one is available, ordering the fused pool of nodes and relationships in one
+// call, as db.rretrieve reranks db.retrieve's nodes.
+func (e *StorageExecutor) callDbRRetrieveGraph(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	return e.runGraphSearchRequest(ctx, "db.rretrieveGraph", args, true)
+}
+
+func (e *StorageExecutor) runGraphSearchRequest(ctx context.Context, procedure string, args []interface{}, useConfiguredRerank bool) (*ExecuteResult, error) {
+	req, err := ragProcedureRequest(procedure, args)
 	if err != nil {
 		return nil, err
 	}
@@ -25,7 +36,7 @@ func (e *StorageExecutor) callDbRetrieveGraph(ctx context.Context, args []interf
 		marked[key] = value
 	}
 	marked[graphSearchRequestKey] = true
-	return e.runSearchRequest(ctx, marked, false, false)
+	return e.runSearchRequest(ctx, marked, false, useConfiguredRerank)
 }
 
 // graphSearchEntity is one graph search result's kind and entities: a node,

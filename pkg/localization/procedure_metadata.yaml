@@ -149,6 +149,11 @@
     es: "Recuperación híbrida sobre nodos y relaciones en una sola clasificación",
   }
 - {
+    name: db.rretrieveGraph,
+    en: "Hybrid retrieval over nodes and relationships in one ranking, reranked with the configured reranker",
+    es: "Recuperación híbrida sobre nodos y relaciones en una sola clasificación, reordenada con el reordenador configurado",
+  }
+- {
     name: db.retrieveRelationships,
     en: "Hybrid retrieval over relationship properties",
     es: "Recuperación híbrida sobre las propiedades de las relaciones",

@@ -27,6 +27,10 @@ These procedures are read-only and designed to map directly to internal contract
   - Automatically enables rerank only when a reranker is configured and available.
   - Useful when you want one-call behavior while keeping `db.retrieve` + `db.rerank` available for explicit before/after comparisons.
 
+- `db.rretrieveGraph`
+  - `db.retrieveGraph` with the same automatic rerank as `db.rretrieve`: when a reranker is configured and available, it orders the fused pool of nodes and relationships in one call (`search_method` ends in `+rerank`; a failed rerank keeps the fused order and reports `fallback_reason: 'rerank_failed'`).
+  - Takes `db.retrieveGraph`'s request and returns its rows, or with `n` / `maxResults` its page (see [Nodes and relationships in one ranking](#nodes-and-relationships-in-one-ranking)).
+
 - `db.rerank`
   - Matches Stage-2 rerank API directly (does not run retrieval).
   - Requires caller-provided candidate rows (for example from `db.retrieve`).
@@ -249,6 +253,10 @@ CALL db.retrieveGraph({query: 'late payment terms', limit: 10})
 YIELD kind, node, relationship, start, end, score
 RETURN kind, coalesce(node.title, type(relationship)), score
 ```
+
+`db.rretrieveGraph` takes the same request and returns the same rows and page,
+with the configured reranker ordering the fused pool when one is available, as
+`db.rretrieve` reranks `db.retrieve`'s nodes.
 
 With `n` or `maxResults` it returns one terminal page (`page.results`, each
 with `kind`, `node` or `relationship` with `start` / `end`, the scores and

@@ -155,6 +155,11 @@ func (s *Service) searchGraph(ctx context.Context, query string, embedding []flo
 		FallbackTriggered: nodes.FallbackTriggered,
 		FallbackReason:    nodes.FallbackReason,
 	}
+	if nodes.FallbackReason == SearchFallbackNoHybridResults && len(relationships) > 0 {
+		// The node side found nothing by hybrid ranking, but the relationship
+		// side matched: the graph search as a whole didn't fall back.
+		response.FallbackTriggered, response.FallbackReason = false, SearchFallbackNone
+	}
 	reranked := false
 	if opts.RerankEnabled {
 		var reason SearchFallbackReason

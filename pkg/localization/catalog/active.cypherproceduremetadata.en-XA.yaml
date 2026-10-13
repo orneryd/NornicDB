@@ -68,6 +68,8 @@
   other: "[!! Hybrid retrieval over relationship properties !!]"
 - id: cypherproceduremetadata.db_rretrieve
   other: "[!! Hybrid retrieval + rerank procedure !!]"
+- id: cypherproceduremetadata.db_rretrievegraph
+  other: "[!! Hybrid retrieval over nodes and relationships in one ranking, reranked with the configured reranker !!]"
 - id: cypherproceduremetadata.db_schema_nodeproperties
   other: "[!! Returns node properties by label !!]"
 - id: cypherproceduremetadata.db_schema_nodetypeproperties

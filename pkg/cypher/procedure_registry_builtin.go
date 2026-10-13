@@ -380,6 +380,12 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbRetrieveGraph(ctx, args)
 			})
+		// db.rretrieveGraph is db.retrieveGraph with the configured reranker
+		// ordering the fused pool of both kinds, as db.rretrieve is db.retrieve's.
+		registerBuiltInProcedure("db.rretrieveGraph", "db.rretrieveGraph(request :: MAP) :: (kind :: STRING, node :: NODE, relationship :: RELATIONSHIP, start :: NODE, end :: NODE, score :: FLOAT, rrf_score :: FLOAT, vector_rank :: INTEGER, bm25_rank :: INTEGER, search_method :: STRING, fallback_triggered :: BOOLEAN, fallback_reason :: STRING, query_chunks_searched :: INTEGER, query_chunks_total :: INTEGER, matches :: LIST<MAP>, page :: MAP)", localization.CypherProcedureMetadata("db.rretrieveGraph"), ProcedureModeRead, 1, 1, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callDbRRetrieveGraph(ctx, args)
+			})
 		registerBuiltInProcedure("db.infer", "db.infer(request :: MAP) :: (text :: STRING, structured :: ANY, model :: STRING, usage :: MAP, latencyMs :: INTEGER, finishReason :: STRING)", localization.CypherProcedureMetadata("db.infer"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbInfer(ctx, args)

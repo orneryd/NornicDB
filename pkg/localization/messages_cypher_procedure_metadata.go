@@ -38,6 +38,7 @@ const (
 	MessageCypherProcedureMetadataDbRetrieveGraph                               MessageID = "cypherproceduremetadata.db_retrievegraph"
 	MessageCypherProcedureMetadataDbRetrieveRelationships                       MessageID = "cypherproceduremetadata.db_retrieverelationships"
 	MessageCypherProcedureMetadataDbRretrieve                                   MessageID = "cypherproceduremetadata.db_rretrieve"
+	MessageCypherProcedureMetadataDbRretrieveGraph                              MessageID = "cypherproceduremetadata.db_rretrievegraph"
 	MessageCypherProcedureMetadataDbSchemaNodeProperties                        MessageID = "cypherproceduremetadata.db_schema_nodeproperties"
 	MessageCypherProcedureMetadataDbSchemaNodeTypeProperties                    MessageID = "cypherproceduremetadata.db_schema_nodetypeproperties"
 	MessageCypherProcedureMetadataDbSchemaRelProperties                         MessageID = "cypherproceduremetadata.db_schema_relproperties"
@@ -264,6 +265,11 @@ func CypherProcedureMetadataDbRetrieveRelationships() Message {
 // CypherProcedureMetadataDbRretrieve describes db.rretrieve in procedure listings.
 func CypherProcedureMetadataDbRretrieve() Message {
 	return Message{ID: MessageCypherProcedureMetadataDbRretrieve, Fallback: "Hybrid retrieval + rerank procedure"}
+}
+
+// CypherProcedureMetadataDbRretrieveGraph describes db.rretrieveGraph in procedure listings.
+func CypherProcedureMetadataDbRretrieveGraph() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbRretrieveGraph, Fallback: "Hybrid retrieval over nodes and relationships in one ranking, reranked with the configured reranker"}
 }
 
 // CypherProcedureMetadataDbSchemaNodeProperties describes db.schema.nodeProperties in procedure listings.
@@ -557,6 +563,7 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"db.retrieveGraph":                                 CypherProcedureMetadataDbRetrieveGraph,
 	"db.retrieveRelationships":                         CypherProcedureMetadataDbRetrieveRelationships,
 	"db.rretrieve":                                     CypherProcedureMetadataDbRretrieve,
+	"db.rretrieveGraph":                                CypherProcedureMetadataDbRretrieveGraph,
 	"db.schema.nodeProperties":                         CypherProcedureMetadataDbSchemaNodeProperties,
 	"db.schema.nodeTypeProperties":                     CypherProcedureMetadataDbSchemaNodeTypeProperties,
 	"db.schema.relProperties":                          CypherProcedureMetadataDbSchemaRelProperties,
