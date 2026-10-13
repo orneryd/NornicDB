@@ -2527,6 +2527,13 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 	if node := prefetchedPipelineCandidate(ctx, nodePattern); node != nil {
 		return []*storage.Node{node}, false, nil
 	}
+	// A property equal to null matches no node ({id: null}, nothing equals
+	// null): no index seek or label scan can find one.
+	for _, value := range nodePattern.properties {
+		if value == nil {
+			return nil, false, nil
+		}
+	}
 	nodes, whereApplied, used, err := e.collectPipelineIndexedNodeCandidates(ctx, nodePattern, whereClause, hint)
 	if err != nil || used {
 		return nodes, whereApplied, err
