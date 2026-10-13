@@ -297,12 +297,21 @@ func (s *Service) graphRerankContent(result *SearchResult, query string, maxChar
 	return boundedPrefix(s.extractSearchableText(graphCandidateTextNode(result)), maxChars)
 }
 
-// graphBestMatch is a candidate's best chunk match, else its first term
-// match with a place, else nil; matches come best first.
+// graphBestMatch is the match a candidate's rerank passage is centred on:
+// its best placed chunk match, else its first placed match (a term), else
+// its best chunk match without a place (whose chunk text a node may still
+// have), else nil; matches come best first.
 func graphBestMatch(result *SearchResult) *SearchMatch {
+	var unplaced *SearchMatch
 	for index := range result.Matches {
-		if result.Matches[index].Kind == SearchMatchChunk {
-			return &result.Matches[index]
+		match := &result.Matches[index]
+		if match.Kind == SearchMatchChunk {
+			if match.Property != "" {
+				return match
+			}
+			if unplaced == nil {
+				unplaced = match
+			}
 		}
 	}
 	for index := range result.Matches {
@@ -310,7 +319,7 @@ func graphBestMatch(result *SearchResult) *SearchMatch {
 			return &result.Matches[index]
 		}
 	}
-	return nil
+	return unplaced
 }
 
 // graphPassage is the window of properties[match.Property] around the

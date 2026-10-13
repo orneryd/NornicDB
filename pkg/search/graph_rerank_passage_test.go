@@ -47,6 +47,13 @@ func TestGraphRerankGetsTheMatchedPassage(t *testing.T) {
 	linked := svc.graphRerankContent(&SearchResult{ID: "linked", Relationship: edge, Matches: chunkMatch(1, "search_text")}, "closing", budget)
 	require.Contains(t, linked, late)
 	require.NotContains(t, linked, "unopted")
+	// An unplaced best chunk gives way to a placed term match.
+	termed := svc.graphRerankContent(&SearchResult{ID: "linked", Relationship: edge, Matches: []SearchMatch{
+		{Kind: SearchMatchChunk, Chunk: 0, Score: 0.9},
+		{Kind: SearchMatchTerm, Term: "decisive", Property: "search_text", Start: lateStart + 4, End: lateStart + 12},
+	}}, "decisive", budget)
+	require.Contains(t, termed, late)
+
 	// A match in a property outside the list gives no passage from it.
 	unlisted := svc.graphRerankContent(&SearchResult{ID: "linked", Relationship: edge, Matches: chunkMatch(1, "text")}, "closing", budget)
 	require.NotContains(t, unlisted, "unopted")
