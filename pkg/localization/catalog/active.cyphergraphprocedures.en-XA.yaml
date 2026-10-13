@@ -16,3 +16,6 @@
 - id: cyphergraphprocedures.source_node_required
   description: Expanded pseudo-locale missing sourceNode parameter.
   other: "[!! sourceNode parameter required !!]"
+- id: cyphergraphprocedures.config_value_out_of_range
+  description: Expanded pseudo-locale config value outside its range.
+  other: "[!! Value for `{{.Key}}` was `{{.Value}}`, but must be within the range {{.Range}}. !!]"

@@ -21,9 +21,10 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresGraphDoesNotExistProjectFirst("missing"), "graph 'missing' does not exist. Create it with gds.graph.project first"},
 		{CypherGraphProceduresBuildGraphFailed(cause), "failed to build graph: forced graph failure"},
 		{CypherGraphProceduresSourceNodeRequired(), "sourceNode parameter required"},
+		{CypherGraphProceduresConfigValueOutOfRange("propertyRatio", "2", "[0.00, 1.00]"), "Value for `propertyRatio` was `2`, but must be within the range [0.00, 1.00]."},
 	}
 
-	require.Len(t, testCases, 6)
+	require.Len(t, testCases, 7)
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {

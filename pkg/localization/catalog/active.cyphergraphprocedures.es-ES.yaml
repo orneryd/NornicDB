@@ -16,3 +16,6 @@
 - id: cyphergraphprocedures.source_node_required
   description: Falta el parámetro sourceNode. sourceNode no se traduce.
   other: se requiere el parámetro sourceNode
+- id: cyphergraphprocedures.config_value_out_of_range
+  description: Valor de configuración fuera de su rango. Key, Value y Range no se traducen.
+  other: "El valor de `{{.Key}}` fue `{{.Value}}`, pero debe estar dentro del rango {{.Range}}."

@@ -104,6 +104,21 @@ func TestFastRPReadsItsOptions(t *testing.T) {
 	require.NotEqual(t, plain, embeddings(", normalizationStrength: 0.5"))
 	require.NotEqual(t, embeddings(", propertyRatio: 0.5"), embeddings(", propertyRatio: 0.5, featureProperties: ['age']"))
 	require.Equal(t, embeddings(", propertyRatio: 0.5, featureProperties: 'age'"), embeddings(", propertyRatio: 0.5, featureProperties: ['age']"))
+	// propertyRatio sizes the property subspace.
+	require.NotEqual(t, embeddings(", propertyRatio: 0.125, featureProperties: ['age']"), embeddings(", propertyRatio: 1.0, featureProperties: ['age']"))
+
+	// More features than dimensions fit.
+	result, err := exec.Execute(ctx, "CALL gds.fastRP.stream('options', {embeddingDimension: 1, propertyRatio: 1.0, featureProperties: ['age', 'name', 'x']})", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 5)
+
+	// A propertyRatio outside [0, 1] is refused, as in GDS.
+	for _, procedure := range []string{"stream", "stats"} {
+		_, err = exec.Execute(ctx, "CALL gds.fastRP."+procedure+"('options', {embeddingDimension: 1, propertyRatio: 2, featureProperties: ['age', 'x']})", nil)
+		require.ErrorContains(t, err, "Value for `propertyRatio` was `2`, but must be within the range [0.00, 1.00].")
+	}
+	_, err = exec.Execute(ctx, "CALL gds.fastRP.stream('options', {propertyRatio: -0.5})", nil)
+	require.ErrorContains(t, err, "propertyRatio")
 }
 
 // TestLinkPredictionReadsRelationshipTypesAndTargetNodes (#1185).

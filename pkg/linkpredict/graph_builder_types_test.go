@@ -30,3 +30,30 @@ func TestGraphBuilderRelationshipTypes(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, NodeSet{"b": {}, "c": {}}, graph["a"])
 }
+
+// TestGraphBuilderCacheKeepsOptionsApart: a graph cached for every type is
+// not loaded for a build of some types only (#1185).
+func TestGraphBuilderCacheKeepsOptionsApart(t *testing.T) {
+	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	for _, id := range []string{"a", "b", "c"} {
+		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id)})
+		require.NoError(t, err)
+	}
+	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "K"}))
+	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ac", StartNode: "a", EndNode: "c", Type: "L"}))
+	cache := t.TempDir()
+	build := func(types ...string) Graph {
+		t.Helper()
+		config := DefaultBuildConfig()
+		config.CachePath = cache
+		config.RelationshipTypes = types
+		graph, err := NewGraphBuilder(engine, config).Build(context.Background())
+		require.NoError(t, err)
+		return graph
+	}
+	require.Equal(t, NodeSet{"b": {}, "c": {}}, build()["a"])
+	require.Equal(t, NodeSet{"b": {}}, build("K")["a"])
+	require.Equal(t, NodeSet{"c": {}}, build("L")["a"])
+	require.Equal(t, NodeSet{"b": {}}, build("K")["a"])
+	require.Equal(t, NodeSet{"b": {}, "c": {}}, build()["a"])
+}

@@ -7,6 +7,7 @@ const (
 	MessageCypherGraphProceduresGraphDoesNotExistProjectFirst MessageID = "cyphergraphprocedures.graph_does_not_exist_project_first"
 	MessageCypherGraphProceduresBuildGraphFailed              MessageID = "cyphergraphprocedures.build_graph_failed"
 	MessageCypherGraphProceduresSourceNodeRequired            MessageID = "cyphergraphprocedures.source_node_required"
+	MessageCypherGraphProceduresConfigValueOutOfRange         MessageID = "cyphergraphprocedures.config_value_out_of_range"
 )
 
 // CypherGraphProceduresStreamNodesFailed identifies a wrapped projection node-stream failure.
@@ -32,6 +33,12 @@ func CypherGraphProceduresGraphDoesNotExistProjectFirst(graph string) Message {
 // CypherGraphProceduresBuildGraphFailed identifies a wrapped link-prediction graph build failure.
 func CypherGraphProceduresBuildGraphFailed(cause error) Message {
 	return Message{ID: MessageCypherGraphProceduresBuildGraphFailed, Fallback: "failed to build graph: " + cause.Error(), Data: map[string]any{"Cause": cause.Error()}}
+}
+
+// CypherGraphProceduresConfigValueOutOfRange is GDS's message for a config
+// value outside its range (FastRP's propertyRatio).
+func CypherGraphProceduresConfigValueOutOfRange(key, value, valueRange string) Message {
+	return Message{ID: MessageCypherGraphProceduresConfigValueOutOfRange, Fallback: "Value for `" + key + "` was `" + value + "`, but must be within the range " + valueRange + ".", Data: map[string]any{"Key": key, "Value": value, "Range": valueRange}}
 }
 
 // CypherGraphProceduresSourceNodeRequired identifies a missing link-prediction sourceNode parameter.

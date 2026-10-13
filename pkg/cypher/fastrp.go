@@ -34,6 +34,7 @@ import (
 	mathrand "math/rand"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -406,6 +407,9 @@ func (e *StorageExecutor) callGdsFastRPStream(args []interface{}) (*ExecuteResul
 
 	// Parse config
 	config := fastRPConfigFromMap(options)
+	if err := config.validate(); err != nil {
+		return nil, err
+	}
 
 	// Generate embeddings
 	embeddings := generateFastRPEmbeddings(projection, config)
@@ -445,6 +449,9 @@ func (e *StorageExecutor) callGdsFastRPStats(args []interface{}) (*ExecuteResult
 
 	// Parse config
 	config := fastRPConfigFromMap(options)
+	if err := config.validate(); err != nil {
+		return nil, err
+	}
 
 	return &ExecuteResult{
 		Columns: []string{"nodeCount", "embeddingDimension", "computeMillis"},
@@ -507,6 +514,14 @@ func fastRPConfigFromMap(options map[string]interface{}) FastRPConfig {
 	return config
 }
 
+// validate refuses a config GDS refuses: a propertyRatio outside [0, 1].
+func (c FastRPConfig) validate() error {
+	if c.PropertyRatio < 0 || c.PropertyRatio > 1 {
+		return localizedError(localization.CypherGraphProceduresConfigValueOutOfRange("propertyRatio", strconv.FormatFloat(c.PropertyRatio, 'f', -1, 64), "[0.00, 1.00]"), nil)
+	}
+	return nil
+}
+
 // fastRPConfigInt reads an integer config value (an INTEGER, or a FLOAT
 // with no fraction).
 func fastRPConfigInt(value interface{}) (int, bool) {
@@ -558,19 +573,29 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) map[st
 		initializeEmbeddingChunk(embeddings, 0, numNodes, dim, rng)
 	}
 
-	// Add property features if configured
-	if config.PropertyRatio > 0 && len(config.FeatureProperties) > 0 {
-		propDim := int(float64(dim) * config.PropertyRatio)
+	// Property features, as in GDS (#1185): the last propertyRatio of the
+	// dimensions hold the node's featureProperties, each value times a
+	// random vector of that property; the rest stay random.
+	if propDim := int(float64(dim) * config.PropertyRatio); propDim > 0 && propDim <= dim && len(config.FeatureProperties) > 0 {
+		featureVectors := make([][]float64, len(config.FeatureProperties))
+		for p := range featureVectors {
+			featureVectors[p] = make([]float64, propDim)
+			for k := range featureVectors[p] {
+				featureVectors[p][k] = sparseRandomValue(rng)
+			}
+		}
 		for i, nodeID := range proj.NodeIDs {
-			props := proj.NodeProperties[nodeID]
-			for j, propName := range config.FeatureProperties {
-				if j >= propDim {
-					break
+			properties := embeddings[i][dim-propDim:]
+			for k := range properties {
+				properties[k] = 0
+			}
+			for p, name := range config.FeatureProperties {
+				value, ok := toFloat64(proj.NodeProperties[nodeID][name])
+				if !ok {
+					continue
 				}
-				if val, ok := props[propName]; ok {
-					if numVal, ok := toFloat64(val); ok {
-						embeddings[i][j] = numVal / 100.0 // Normalize
-					}
+				for k, r := range featureVectors[p] {
+					properties[k] += value * r
 				}
 			}
 		}
@@ -659,16 +684,21 @@ func initializeEmbeddingChunk(embeddings [][]float64, start, end, dim int, rng *
 		// dim is directly bounded above before this allocation.
 		embeddings[i] = make([]float64, dim)
 		for j := 0; j < dim; j++ {
-			// Sparse random projection: {-1, 0, 1} with probabilities {1/6, 2/3, 1/6}
-			r := rng.Float64()
-			if r < 1.0/6.0 {
-				embeddings[i][j] = -1.0
-			} else if r > 5.0/6.0 {
-				embeddings[i][j] = 1.0
-			}
-			// else 0.0 (default)
+			embeddings[i][j] = sparseRandomValue(rng)
 		}
 	}
+}
+
+// sparseRandomValue is one coordinate of a sparse random projection: -1, 0
+// or 1 with probabilities 1/6, 2/3 and 1/6.
+func sparseRandomValue(rng *mathrand.Rand) float64 {
+	r := rng.Float64()
+	if r < 1.0/6.0 {
+		return -1.0
+	} else if r > 5.0/6.0 {
+		return 1.0
+	}
+	return 0.0
 }
 
 // propagateEmbeddingChunk computes one FastRP iteration for the nodes start

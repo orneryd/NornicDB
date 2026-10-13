@@ -23,6 +23,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"os"
 	"path/filepath"
@@ -315,9 +316,18 @@ func init() {
 	gob.Register(&CachedGraph{})
 }
 
-// cacheFilePath returns the path to the cache file.
+// cacheFilePath returns the path to the cache file. A graph built with
+// other options (directed, or some relationship types only) has its own
+// file, so a build never loads a graph cached for other options.
 func (b *GraphBuilder) cacheFilePath() string {
-	return filepath.Join(b.config.CachePath, "graph_cache.gob")
+	if b.config.Undirected && len(b.config.RelationshipTypes) == 0 {
+		return filepath.Join(b.config.CachePath, "graph_cache.gob")
+	}
+	types := append([]string(nil), b.config.RelationshipTypes...)
+	slices.Sort(types)
+	identity := fnv.New64a()
+	fmt.Fprintf(identity, "undirected=%t types=%q", b.config.Undirected, types)
+	return filepath.Join(b.config.CachePath, fmt.Sprintf("graph_cache_%016x.gob", identity.Sum64()))
 }
 
 // loadFromCache attempts to load a cached graph.

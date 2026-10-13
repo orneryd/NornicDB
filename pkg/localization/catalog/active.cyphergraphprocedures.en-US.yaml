@@ -16,3 +16,6 @@
 - id: cyphergraphprocedures.source_node_required
   description: Missing sourceNode parameter. sourceNode is an untranslated machine identifier.
   other: sourceNode parameter required
+- id: cyphergraphprocedures.config_value_out_of_range
+  description: Config value outside its range. Key, Value and Range are untranslated.
+  other: "Value for `{{.Key}}` was `{{.Value}}`, but must be within the range {{.Range}}."
