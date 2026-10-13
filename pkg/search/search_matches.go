@@ -323,8 +323,10 @@ func relationshipChunkMatches(scores []float64, spans []embeddingutil.ChunkSpan,
 	}
 	slices.SortStableFunc(order, func(a, b int) int { return cmp.Compare(scores[b], scores[a]) })
 	matches := make([]SearchMatch, 0, min(len(order), maxChunkMatchesPerHit))
-	for _, chunk := range order {
-		if len(matches) >= maxChunkMatchesPerHit || (len(matches) > 0 && scores[chunk] < minSimilarity) {
+	// The cap counts chunks: a chunk across two properties gives one match
+	// per span but takes one place, as in attachChunkMatches.
+	for chosen, chunk := range order {
+		if chosen >= maxChunkMatchesPerHit || (chosen > 0 && scores[chunk] < minSimilarity) {
 			break
 		}
 		placed := false

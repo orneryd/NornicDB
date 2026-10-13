@@ -26,6 +26,11 @@ func TestRelationshipChunkSpans(t *testing.T) {
 	require.Equal(t, []embeddingutil.ChunkSpan{{Chunk: 0, Property: "search_text", Start: 0, End: 19}},
 		relationshipChunkSpans(edge, labelled, []string{text}, 1))
 
+	// A chunk that starts inside the type line still finds its property.
+	require.Equal(t, []embeddingutil.ChunkSpan{{Chunk: 1, Property: "search_text", Start: 0, End: 19}},
+		relationshipChunkSpans(edge, labelled, []string{"type: LI", "INK\nsearch_text: the stallion ledger"}, 2))
+	require.Equal(t, "rest", trimTypeLine("rest", "type: LINK\n"))
+
 	require.Nil(t, relationshipChunkSpans(edge, config, []string{"a", "b"}, 1))
 	require.Nil(t, relationshipChunkSpans(edge, config, nil, 0))
 }

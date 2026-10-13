@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"encoding/gob"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,4 +57,32 @@ func TestRelationshipChunkMatchesCarryTheirSpans(t *testing.T) {
 	loaded := svc.loadRelationshipVectors()
 	require.Equal(t, []embeddingutil.ChunkSpan{{Chunk: 0, Property: "reason", Start: 0, End: 10}, {Chunk: 1, Property: "reason", Start: 11, End: 17}}, loaded["r1"].Spans)
 	require.Nil(t, loaded["r2"].Spans)
+}
+
+// The chunk-match cap counts chunks, not spans: a chunk across two
+// properties takes one place.
+func TestRelationshipChunkMatchCapCountsChunks(t *testing.T) {
+	spans := []embeddingutil.ChunkSpan{{Chunk: 0, Property: "a", Start: 0, End: 3}, {Chunk: 0, Property: "b", Start: 0, End: 2}, {Chunk: 1, Property: "b", Start: 3, End: 5}}
+	matches := relationshipChunkMatches([]float64{0.9, 0.8, 0.7, 0.6}, spans, 0.5)
+	chunks := map[int]bool{}
+	for _, match := range matches {
+		chunks[match.Chunk] = true
+	}
+	require.Len(t, chunks, maxChunkMatchesPerHit)
+	require.Len(t, matches, maxChunkMatchesPerHit+1)
+}
+
+// A vector file of an earlier format (without chunk spans) is dropped, so
+// its relationships are embedded again.
+func TestRelationshipVectorFileOfAnEarlierFormatIsDropped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bm25")
+	file, err := os.Create(path + relationshipVectorsFileSuffix)
+	require.NoError(t, err)
+	require.NoError(t, gob.NewEncoder(file).Encode(relationshipVectorsFile{Format: 1, Entries: map[string]*relationshipEntry{"r1": {Source: 1, Vectors: [][]float32{{1, 0, 0}}}}}))
+	require.NoError(t, file.Close())
+	svc := NewServiceWithDimensions(relationshipTestEngine(t), 3)
+	t.Cleanup(func() { _ = svc.Close() })
+	svc.SetPersistenceEnabled(true)
+	svc.SetFulltextIndexPath(path)
+	require.Nil(t, svc.loadRelationshipVectors())
 }

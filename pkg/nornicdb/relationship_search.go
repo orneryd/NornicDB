@@ -47,6 +47,18 @@ func (db *DB) relationshipEmbedFunc(dbName string) search.RelationshipEmbedFunc 
 	}
 }
 
+// trimTypeLine removes the type line from a chunk's start: the whole line,
+// or, for a chunk an overlap or a small chunk size started inside it, the
+// line's tail (from any point to its newline).
+func trimTypeLine(chunk, prefix string) string {
+	for start := 0; start < len(prefix); start++ {
+		if strings.HasPrefix(chunk, prefix[start:]) {
+			return chunk[len(prefix)-start:]
+		}
+	}
+	return chunk
+}
+
 // relationshipChunkSpans is where each chunk of a relationship's embedding
 // text lies in its string properties, as a node's chunks are placed
 // (embeddingutil.RecordChunkSpans): none unless the chunks match the vectors
@@ -62,7 +74,7 @@ func relationshipChunkSpans(edge *storage.Edge, config *EmbedWorkerConfig, chunk
 		prefix := "type: " + edge.Type + "\n"
 		aligned := make([]string, len(chunks))
 		for index, chunk := range chunks {
-			aligned[index] = strings.TrimPrefix(chunk, prefix)
+			aligned[index] = trimTypeLine(chunk, prefix)
 		}
 		chunks = aligned
 	}

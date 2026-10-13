@@ -42,7 +42,9 @@ const relationshipVectorsFileSuffix = ".relationships"
 var relationshipEmbedRetryDelay = 30 * time.Second
 
 // relationshipVectorsFormat versions the relationship vector file.
-const relationshipVectorsFormat = 1
+// Format 2 added each entry's chunk spans: a format 1 file is dropped, so
+// its relationships are embedded again and gain them.
+const relationshipVectorsFormat = 2
 
 // RelationshipEmbedFunc embeds a relationship's text, one vector per chunk.
 // It returns no vectors for a relationship with no text to embed, and an
