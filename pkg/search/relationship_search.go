@@ -86,9 +86,9 @@ type relationshipSearch struct {
 	// policy hashes the embedding policy (SetRelationshipEmbedPolicy) into
 	// every source; zero when none was set.
 	policy uint64
-	wake    chan struct{}
-	ready   chan struct{}
-	start   sync.Once
+	wake   chan struct{}
+	ready  chan struct{}
+	start  sync.Once
 }
 
 type relationshipVectorsFile struct {
