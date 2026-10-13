@@ -374,7 +374,7 @@ func TestFlattenList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := flattenList(tt.input)
+			result := flattenList(tt.input, true)
 			if len(result) != tt.expected {
 				t.Errorf("Expected %d elements, got %d", tt.expected, len(result))
 			}

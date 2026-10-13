@@ -24,15 +24,8 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 	if err != nil {
 		return nil, err
 	}
-	// A config map argument may name the relationship weight property.
-	weightProp := ""
-	for _, argument := range args {
-		if config, isMap := argument.(map[string]interface{}); isMap {
-			if name, isString := config["weightProperty"].(string); isString {
-				weightProp = name
-			}
-		}
-	}
+	// The config map may name the relationship weight property.
+	weightProp, _ := algorithmConfig(args)["weightProperty"].(string)
 
 	// Run Louvain algorithm
 	communities := e.computeLouvain(nodes, weightProp)

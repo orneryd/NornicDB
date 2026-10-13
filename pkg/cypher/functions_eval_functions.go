@@ -611,12 +611,13 @@ skipArrayIndexing:
 							break
 						}
 					}
-					if skip {
+					// A null value goes, as in APOC (#1164).
+					if skip || v == nil {
 						continue
 					}
 					// Skip if value is in valuesToRemove
 					for _, vr := range valuesToRemove {
-						if (v == nil && vr == nil) || e.compareEqual(v, vr) {
+						if apocSameValue(v, vr) {
 							skip = true
 							break
 						}
@@ -1044,11 +1045,15 @@ skipArrayIndexing:
 		return nil
 	}
 
-	// apoc.coll.flatten(list) - Flatten nested lists into a single list
+	// apoc.coll.flatten(list [, recursive]) (flattenList)
 	if isFunctionCall(expr, "apoc.coll.flatten") {
-		inner := extractFuncArgs(expr, "apoc.coll.flatten")
-		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		return flattenList(listVal)
+		args := e.splitFunctionArgs(extractFuncArgs(expr, "apoc.coll.flatten"))
+		if len(args) == 0 || len(args) > 2 {
+			return nil
+		}
+		listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		recursive := len(args) == 2 && e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength) == true
+		return flattenList(listVal, recursive)
 	}
 
 	// apoc.coll.toSet(list) - Remove duplicates from list

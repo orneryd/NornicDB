@@ -93,10 +93,11 @@ func TestApocCollections_SplitPartitionPairsZip(t *testing.T) {
 
 func TestApocCollections_FrequenciesAndOccurrences(t *testing.T) {
 	vals := []interface{}{"a", "b", "a", int64(1), int64(1)}
-	freq := apocCollFrequencies(vals)
-	assert.EqualValues(t, 2, freq["a"])
-	assert.EqualValues(t, 1, freq["b"])
-	assert.EqualValues(t, 2, freq["1"])
+	assert.Equal(t, []interface{}{
+		map[string]interface{}{"item": "a", "count": int64(2)},
+		map[string]interface{}{"item": "b", "count": int64(1)},
+		map[string]interface{}{"item": int64(1), "count": int64(2)},
+	}, apocCollFrequencies(vals))
 	assert.Empty(t, apocCollFrequencies("x"))
 
 	assert.EqualValues(t, 2, apocCollOccurrences(vals, "a"))
@@ -106,9 +107,11 @@ func TestApocCollections_FrequenciesAndOccurrences(t *testing.T) {
 
 func TestApocCollections_FlattenListVariants(t *testing.T) {
 	nested := []interface{}{int64(1), []interface{}{int64(2), []interface{}{int64(3)}}, int64(4)}
-	assert.Equal(t, []interface{}{int64(1), int64(2), int64(3), int64(4)}, flattenList(nested))
-	assert.Equal(t, []interface{}{"a", "b"}, flattenList([]string{"a", "b"}))
-	assert.Equal(t, []interface{}{int64(5)}, flattenList(int64(5)))
+	assert.Equal(t, []interface{}{int64(1), int64(2), int64(3), int64(4)}, flattenList(nested, true))
+	assert.Equal(t, []interface{}{int64(1), int64(2), []interface{}{int64(3)}, int64(4)}, flattenList(nested, false))
+	assert.Equal(t, []interface{}{"a", "b"}, flattenList([]string{"a", "b"}, false))
+	assert.Equal(t, []interface{}{int64(5)}, flattenList(int64(5), false))
+	assert.Equal(t, []interface{}{}, flattenList(nil, false))
 }
 
 func TestApocCollections_FromPairsAndFromLists(t *testing.T) {

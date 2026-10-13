@@ -558,7 +558,7 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoCloseness(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.algo.louvain", "apoc.algo.louvain(nodes :: ANY) :: (node :: NODE, community :: INTEGER, score :: FLOAT)", "Runs Louvain community detection", ProcedureModeRead, 0, -1, false,
+		registerBuiltInProcedureLiteral("apoc.algo.louvain", "apoc.algo.louvain(nodes :: ANY, config :: MAP) :: (node :: NODE, community :: INTEGER)", "Runs Louvain community detection", ProcedureModeRead, 0, -1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoLouvain(ctx, args)
 			})
@@ -566,7 +566,7 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoLabelPropagation(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.algo.wcc", "apoc.algo.wcc(nodes :: ANY) :: (node :: NODE, component :: INTEGER)", "Runs weakly connected components", ProcedureModeRead, 0, -1, false,
+		registerBuiltInProcedureLiteral("apoc.algo.wcc", "apoc.algo.wcc(nodes :: ANY) :: (node :: NODE, componentId :: INTEGER)", "Runs weakly connected components", ProcedureModeRead, 0, -1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoWCC(ctx, args)
 			})

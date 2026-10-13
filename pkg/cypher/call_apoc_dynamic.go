@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // =============================================================================
@@ -54,6 +55,30 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 	return result, nil
 }
 
+// runManyStatistics is apoc.cypher.runMany's statistics row for one
+// statement, with APOC's keys.
+func runManyStatistics(result *ExecuteResult, elapsed time.Duration) map[string]interface{} {
+	stats := result.Stats
+	if stats == nil {
+		stats = &QueryStats{}
+	}
+	return map[string]interface{}{
+		"rows":                 int64(len(result.Rows)),
+		"time":                 elapsed.Milliseconds(),
+		"nodesCreated":         int64(stats.NodesCreated),
+		"nodesDeleted":         int64(stats.NodesDeleted),
+		"relationshipsCreated": int64(stats.RelationshipsCreated),
+		"relationshipsDeleted": int64(stats.RelationshipsDeleted),
+		"propertiesSet":        int64(stats.PropertiesSet),
+		"labelsAdded":          int64(stats.LabelsAdded),
+		"labelsRemoved":        int64(stats.LabelsRemoved),
+		"indexesAdded":         int64(stats.IndexesAdded),
+		"indexesRemoved":       int64(stats.IndexesRemoved),
+		"constraintsAdded":     int64(stats.ConstraintsAdded),
+		"constraintsRemoved":   int64(stats.ConstraintsRemoved),
+	}
+}
+
 // callApocCypherRunMany executes multiple Cypher statements separated by semicolons.
 // CALL apoc.cypher.runMany(statements, params) YIELD row, result
 // The statements and parameters are the call's evaluated arguments.
@@ -77,24 +102,28 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 		Stats:   &QueryStats{},
 	}
 
-	for i, query := range queries {
+	// As in APOC, each statement gives its rows, numbered from 0, then a
+	// row -1 with its statistics (#1164).
+	for _, query := range queries {
 		query = strings.TrimSpace(query)
 		if query == "" {
 			continue
 		}
 
+		started := time.Now()
 		innerResult, err := e.executeUserStatement(ctx, query, params)
 		if err != nil {
-			// Include error in result instead of failing
+			// A failed statement is a row -1 with its error, instead of
+			// failing the call.
 			result.Rows = append(result.Rows, []interface{}{
-				int64(i),
+				int64(-1),
 				map[string]interface{}{"error": err.Error()},
 			})
 			continue
 		}
 
 		// Add each row from the inner result
-		for _, row := range innerResult.Rows {
+		for i, row := range innerResult.Rows {
 			valueMap := make(map[string]interface{})
 			for j, col := range innerResult.Columns {
 				if j < len(row) {
@@ -106,6 +135,7 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 				valueMap,
 			})
 		}
+		result.Rows = append(result.Rows, []interface{}{int64(-1), runManyStatistics(innerResult, time.Since(started))})
 
 		// Accumulate stats
 		if innerResult.Stats != nil {

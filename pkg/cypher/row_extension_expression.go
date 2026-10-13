@@ -111,13 +111,16 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 			parts[index] = fmt.Sprint(item)
 		}
 		return strings.Join(parts, separator), true, true, nil
-	case "apoc.coll.flatten", "apoc.coll.toset", "apoc.coll.sum", "apoc.coll.avg", "apoc.coll.min", "apoc.coll.max", "apoc.coll.reverse":
+	case "apoc.coll.flatten":
+		values, ok := args()
+		if !ok || len(values) == 0 || len(values) > 2 {
+			return nil, true, false, nil
+		}
+		return flattenList(values[0], len(values) == 2 && values[1] == true), true, true, nil
+	case "apoc.coll.toset", "apoc.coll.sum", "apoc.coll.avg", "apoc.coll.min", "apoc.coll.max", "apoc.coll.reverse":
 		value, ok := one()
 		if !ok {
 			return nil, true, false, nil
-		}
-		if name == "apoc.coll.flatten" {
-			return flattenList(value), true, true, nil
 		}
 		switch name {
 		case "apoc.coll.toset":

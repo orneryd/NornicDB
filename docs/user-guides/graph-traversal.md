@@ -363,8 +363,8 @@ ORDER BY size(members) DESC
 
 ```cypher
 CALL apoc.algo.labelPropagation(['Person'], ['KNOWS'])
-YIELD node, label
-RETURN label AS community, count(node) AS size
+YIELD node, community
+RETURN community, count(node) AS size
 ORDER BY size DESC
 ```
 

@@ -74,27 +74,25 @@ import (
 // List Utility Functions
 // ========================================
 
-// flattenList recursively flattens nested lists into a single list.
-//
-// This function recursively processes nested lists to produce a single-level list.
-//
-// # Parameters
-//
-//   - val: A list that may contain nested lists
-//
-// # Returns
-//
-//   - A single-level list with all elements
+// flattenList is apoc.coll.flatten(list, recursive): the list with its
+// nested lists spliced in one level, or every level when recursive, as in
+// APOC (#1164). A null list is empty.
 //
 // # Example
 //
-//	flattenList([[1, 2], [3, [4, 5]]])  // [1, 2, 3, 4, 5]
-//	flattenList([1, 2, 3])              // [1, 2, 3]
-func flattenList(val interface{}) []interface{} {
+//	flattenList([[1, [2]], [3]], false)  // [1, [2], 3]
+//	flattenList([[1, [2]], [3]], true)   // [1, 2, 3]
+func flattenList(val interface{}, recursive bool) []interface{} {
+	depth := int64(1)
+	if recursive {
+		depth = math.MaxInt64
+	}
 	var result []interface{}
 	switch v := val.(type) {
+	case nil:
+		return []interface{}{}
 	case []interface{}:
-		return collFlatten(nil, v, math.MaxInt64)
+		return collFlatten(make([]interface{}, 0, len(v)), v, depth)
 	case []string:
 		for _, s := range v {
 			result = append(result, s)
@@ -807,34 +805,38 @@ func apocCollZip(list1, list2 interface{}) []interface{} {
 // APOC Analysis Functions
 // ========================================
 
-// apocCollFrequencies counts occurrences of each value.
-//
-// # Parameters
-//
-//   - val: The list to analyze
-//
-// # Returns
-//
-//   - A map of value -> count
+// apocSameValue reports whether apoc.map.clean's value list holds value: an
+// equal value of the same kind, as APOC compares (2 is not 2.0) (#1164).
+func apocSameValue(value, listed interface{}) bool {
+	if equal, _ := cypherEquality(value, listed).(bool); !equal {
+		return false
+	}
+	_, valueFloat := value.(float64)
+	_, listedFloat := listed.(float64)
+	return valueFloat == listedFloat
+}
+
+// apocCollFrequencies is apoc.coll.frequencies(list): each distinct item
+// with its count, {item, count}, in the order the items first appear, as in
+// APOC (#1164). Items equal in Cypher (1 and 1.0, [1] and [1]) count
+// together, under the first one.
 //
 // # Example
 //
-//	apocCollFrequencies([1, 2, 2, 3, 3, 3])  // {1: 1, 2: 2, 3: 3}
-func apocCollFrequencies(val interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-	list, ok := val.([]interface{})
-	if !ok {
-		return result
-	}
-
-	counts := make(map[string]int64)
+//	apocCollFrequencies([3, 1, 3])  // [{item: 3, count: 2}, {item: 1, count: 1}]
+func apocCollFrequencies(val interface{}) []interface{} {
+	list, _ := val.([]interface{})
+	result := make([]interface{}, 0, len(list))
+	positions := make(map[string]int, len(list))
 	for _, item := range list {
-		key := fmt.Sprintf("%v", item)
-		counts[key]++
-	}
-
-	for k, v := range counts {
-		result[k] = v
+		key := cypherEquivalenceKey(item)
+		if position, seen := positions[key]; seen {
+			entry := result[position].(map[string]interface{})
+			entry["count"] = entry["count"].(int64) + 1
+			continue
+		}
+		positions[key] = len(result)
+		result = append(result, map[string]interface{}{"item": item, "count": int64(1)})
 	}
 	return result
 }

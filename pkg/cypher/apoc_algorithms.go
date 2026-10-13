@@ -272,56 +272,60 @@ func (e *StorageExecutor) callApocAlgoPageRank(ctx context.Context, args []inter
 	if err != nil {
 		return nil, err
 	}
-	// APOC's config map: iterations (default 20) and dampingFactor (0.85).
+	// The config map: iterations (default 20) and dampingFactor (0.85).
+	config := algorithmConfig(args)
 	iterations, damping := 20, 0.85
-	if config, isMap := procedureArgument(args, 1).(map[string]interface{}); isMap {
-		if n, ok := fastRPConfigInt(config["iterations"]); ok && n > 0 {
-			iterations = n
-		}
-		if d, ok := toFloat64(config["dampingFactor"]); ok && d > 0 && d < 1 {
-			damping = d
-		}
+	if n, ok := fastRPConfigInt(config["iterations"]); ok && n > 0 {
+		iterations = n
+	}
+	if d, ok := toFloat64(config["dampingFactor"]); ok && d > 0 && d < 1 {
+		damping = d
 	}
 	scores := e.computePageRank(nodes, damping, iterations)
-	rows := make([][]interface{}, 0, len(scores))
-	for nodeID, score := range scores {
-		node, err := e.storage.GetNode(nodeID)
-		if err != nil {
-			continue
-		}
-		rows = append(rows, []interface{}{node, score})
+	rows := make([][]interface{}, 0, len(nodes))
+	for _, node := range nodes {
+		rows = append(rows, []interface{}{node, scores[node.ID]})
 	}
 	return &ExecuteResult{Columns: []string{"node", "score"}, Rows: rows}, nil
 }
 
+// computePageRank ranks the given nodes over the relationships between
+// them: a relationship to a node outside the set carries no score, and no
+// outside node is ranked (#1164).
 func (e *StorageExecutor) computePageRank(nodes []*storage.Node, damping float64, iterations int) map[storage.NodeID]float64 {
 	if len(nodes) == 0 {
 		return map[storage.NodeID]float64{}
 	}
 	n := float64(len(nodes))
-	scores := make(map[storage.NodeID]float64)
-	newScores := make(map[storage.NodeID]float64)
-	outDegree := make(map[storage.NodeID]int)
+	scores := make(map[storage.NodeID]float64, len(nodes))
+	newScores := make(map[storage.NodeID]float64, len(nodes))
 	for _, node := range nodes {
 		scores[node.ID] = 1.0 / n
-		outDegree[node.ID] = e.storage.GetOutDegree(node.ID)
+	}
+	targets := make(map[storage.NodeID][]storage.NodeID, len(nodes))
+	for _, node := range nodes {
+		edges, _ := e.storage.GetOutgoingEdges(node.ID)
+		for _, edge := range edges {
+			if _, inSet := scores[edge.EndNode]; inSet {
+				targets[node.ID] = append(targets[node.ID], edge.EndNode)
+			}
+		}
 	}
 	for i := 0; i < iterations; i++ {
 		for _, node := range nodes {
 			newScores[node.ID] = (1.0 - damping) / n
 		}
 		for _, node := range nodes {
-			if outDegree[node.ID] == 0 {
+			if len(targets[node.ID]) == 0 {
 				share := damping * scores[node.ID] / n
 				for _, other := range nodes {
 					newScores[other.ID] += share
 				}
-			} else {
-				edges, _ := e.storage.GetOutgoingEdges(node.ID)
-				share := damping * scores[node.ID] / float64(outDegree[node.ID])
-				for _, edge := range edges {
-					newScores[edge.EndNode] += share
-				}
+				continue
+			}
+			share := damping * scores[node.ID] / float64(len(targets[node.ID]))
+			for _, target := range targets[node.ID] {
+				newScores[target] += share
 			}
 		}
 		scores, newScores = newScores, scores
@@ -631,6 +635,14 @@ func pathAlgorithmArguments(procedure string, args []interface{}) (start, end st
 // first argument: a LIST<NODE> (APOC's form: MATCH (n:L) WITH collect(n) AS
 // nodes CALL apoc.algo.pageRank(nodes)), a label (a STRING, or a list of
 // one), or none, null, an empty string or an empty list for every node.
+// algorithmConfig is the config map an algorithm procedure reads from its
+// second argument, for pageRank and louvain alike (#1164). Any other second
+// argument (the documented relationship-type list, #1169) gives no config.
+func algorithmConfig(args []interface{}) map[string]interface{} {
+	config, _ := procedureArgument(args, 1).(map[string]interface{})
+	return config
+}
+
 func (e *StorageExecutor) algorithmNodes(procedure string, args []interface{}) ([]*storage.Node, error) {
 	value := procedureArgument(args, 0)
 	typeError := func() error {

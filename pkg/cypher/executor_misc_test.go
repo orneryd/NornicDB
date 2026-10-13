@@ -617,11 +617,12 @@ func TestApocDynamicRunAndRunMany_Direct(t *testing.T) {
 	require.Equal(t, []string{"row", "result"}, res.Columns)
 	require.NotEmpty(t, res.Rows)
 	// Ensure row index and error payload branches are deterministic.
-	require.Len(t, res.Rows, 3)
-	require.Equal(t, int64(0), res.Rows[0][0])
-	require.Equal(t, int64(1), res.Rows[1][0])
-	require.Equal(t, int64(2), res.Rows[2][0])
-	errMap, ok := res.Rows[1][1].(map[string]interface{})
+	// Each statement's rows from 0, then its statistics row -1; the failed
+	// statement is one row -1 with its error.
+	require.Len(t, res.Rows, 5)
+	require.Equal(t, []interface{}{int64(0), int64(-1), int64(-1), int64(0), int64(-1)},
+		[]interface{}{res.Rows[0][0], res.Rows[1][0], res.Rows[2][0], res.Rows[3][0], res.Rows[4][0]})
+	errMap, ok := res.Rows[2][1].(map[string]interface{})
 	require.True(t, ok)
 	_, hasErr := errMap["error"]
 	require.True(t, hasErr)

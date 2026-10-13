@@ -2728,8 +2728,10 @@ func TestFunctionEval_APOCCollectionsConvertMetaAndMapBranches(t *testing.T) {
 	}
 
 	got = e.evaluateExpressionWithContext(ctx, "apoc.coll.frequencies(['a','a','b'])", nodes, nil)
-	freq, ok := got.(map[string]interface{})
-	if !ok || freq["a"] != int64(2) || freq["b"] != int64(1) {
+	if !reflect.DeepEqual([]interface{}{
+		map[string]interface{}{"item": "a", "count": int64(2)},
+		map[string]interface{}{"item": "b", "count": int64(1)},
+	}, got) {
 		t.Fatalf("apoc.coll.frequencies returned %#v", got)
 	}
 
