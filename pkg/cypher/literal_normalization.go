@@ -64,10 +64,10 @@ func normalizeLiteralText(s string) (canonical string, changed bool) {
 				continue
 			}
 			if c == '\'' {
-				if i+1 < len(s) && s[i+1] == '\'' {
-					i++
-					continue
-				}
+				// A doubled quote is no escape in Cypher: it ends the string
+				// and opens another ('it''s' is two adjacent literals, which
+				// the validator rejects), so it must not share a canonical
+				// form with one string.
 				inSingle = false
 				if stringHasEscape {
 					flushAt(i + 1)
@@ -85,10 +85,6 @@ func normalizeLiteralText(s string) (canonical string, changed bool) {
 				continue
 			}
 			if c == '"' {
-				if i+1 < len(s) && s[i+1] == '"' {
-					i++
-					continue
-				}
 				inDouble = false
 				if stringHasEscape {
 					flushAt(i + 1)

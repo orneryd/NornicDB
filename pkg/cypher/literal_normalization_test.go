@@ -49,9 +49,13 @@ func TestNormalizeLiteralText(t *testing.T) {
 	differs("RETURN 1 // c1", "RETURN 1 // c2")
 	differs("RETURN $(['A'])", "RETURN $(['B'])")
 
-	// Quoting and escaped text: doubled quotes normalize, backslash escapes
-	// are copied verbatim (their validity can depend on the escape itself).
-	same("RETURN 'it''s' AS x", "RETURN 'other' AS x")
+	// Quoting and escaped text: a doubled quote is two adjacent strings, not
+	// an escape (Cypher has none; the validator rejects the pair), and
+	// backslash escapes are copied verbatim (their validity can depend on the
+	// escape itself).
+	differs("RETURN 'it''s' AS x", "RETURN 'other' AS x")
+	same("RETURN 'it''s' AS x", "RETURN 'a''b' AS x")
+	differs(`RETURN "say ""hi""" AS x`, `RETURN "say" AS x`)
 	unchanged(`RETURN '\'' AS x`)
 	unchanged("RETURN \"a\\\"b\" AS x")
 

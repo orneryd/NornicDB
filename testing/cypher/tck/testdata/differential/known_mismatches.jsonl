@@ -20,10 +20,7 @@
 {"id":"f8624bd233c7","route":"bolt-auto","issue":884,"intended":true}
 {"id":"2a2b4572143b","route":"bolt-auto","issue":907,"intended":true}
 {"id":"3b9cd4b82d8f","route":"bolt-auto","issue":907,"intended":true}
-{"id":"6d867e40e16c","route":"bolt-auto","issue":907}
-{"id":"9a9b630b91ef","route":"bolt-auto","issue":907}
 {"id":"d59853814a3f","route":"bolt-auto","issue":907,"intended":true}
-{"id":"e52682e105c8","route":"bolt-auto","issue":907}
 {"id":"fde24ed5419a","route":"bolt-auto","issue":907,"intended":true}
 {"id":"2986985a5e95","route":"bolt-tx","issue":256,"intended":true}
 {"id":"09200ed0088a","route":"bolt-tx","issue":500,"unstable":true}
@@ -74,12 +71,9 @@
 {"id":"1961b580dea2","route":"http","issue":907}
 {"id":"2a2b4572143b","route":"http","issue":907,"intended":true}
 {"id":"3b9cd4b82d8f","route":"http","issue":907,"intended":true}
-{"id":"6d867e40e16c","route":"http","issue":907}
 {"id":"8bae2b461002","route":"http","issue":907}
-{"id":"9a9b630b91ef","route":"http","issue":907}
 {"id":"c6f2cd61f1c5","route":"http","issue":907}
 {"id":"d59853814a3f","route":"http","issue":907,"intended":true}
 {"id":"d941a072a17e","route":"http","issue":907}
-{"id":"e52682e105c8","route":"http","issue":907}
 {"id":"e9511f11573b","route":"http","issue":907}
 {"id":"fde24ed5419a","route":"http","issue":907,"intended":true}
