@@ -278,7 +278,9 @@ func TestCypher25BatchTwoHelperEdges(t *testing.T) {
 
 	// The map comprehension builder: a null pair list is null, and an item
 	// that isn't a [key, value] pair is skipped.
-	result, err := exec.Execute(ctx, "RETURN __nornic_map_from_pairs(null) AS a, __nornic_map_from_pairs([[1], ['k', 2]]) AS b", nil)
+	// Users can't call the internal __nornic_* functions (#1105); the
+	// rewrite's internal path still runs them.
+	result, err := exec.executeInternal(ctx, "RETURN __nornic_map_from_pairs(null) AS a, __nornic_map_from_pairs([[1], ['k', 2]]) AS b", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{nil, map[string]interface{}{"k": int64(2)}}}, result.Rows)
 

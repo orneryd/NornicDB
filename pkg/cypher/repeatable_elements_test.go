@@ -69,8 +69,12 @@ func TestRepeatableElements(t *testing.T) {
 		require.Contains(t, err.Error(), message, query)
 	}
 
-	_, err := exec.Execute(ctx, "RETURN __nornic_repeatable_elements() AS x", nil)
-	require.ErrorContains(t, err, "a path selector or match mode can only be used in a MATCH pattern")
+	// A selector or match mode a step other than its MATCH reads is an error;
+	// users can't call the marker functions themselves (#1105).
+	for _, call := range []string{"__nornic_repeatable_elements()", "__nornic_path_selector('ANY', 1, false, '', true)"} {
+		_, err := evaluateInternalFunction(exec, call)
+		require.ErrorContains(t, err, "a path selector or match mode can only be used in a MATCH pattern", call)
+	}
 
 	rewritten, _, err := desugarLabelExpressions("MATCH REPEATABLE ELEMENTS p = ANY 2 (a)-->{1,3}(b:A|B) WHERE a.x = 1 RETURN p", nil, false)
 	require.NoError(t, err)

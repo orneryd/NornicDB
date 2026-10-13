@@ -18,6 +18,17 @@ import (
 // The key property is that internal subqueries/procedure bodies participate in
 // the caller's transaction context (explicit tx or implicit tx wrapper carried
 // on ctx), avoiding nested implicit transactions and misrouting.
+// executeUserStatement runs statement text a procedure was given to run
+// (apoc.cypher.run / runMany, apoc.periodic.iterate / commit,
+// apoc.export.*.query): a user's statement, which may not call NornicDB's
+// internal functions (#1105).
+func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement string, params map[string]interface{}) (*ExecuteResult, error) {
+	if err := internalFunctionCallError(statement); err != nil {
+		return nil, err
+	}
+	return e.executeInternal(ctx, statement, params)
+}
+
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

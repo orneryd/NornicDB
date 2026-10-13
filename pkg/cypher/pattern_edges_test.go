@@ -14,6 +14,8 @@ import (
 // stop on an error or a cancelled statement (#907).
 func TestPatternEdges(t *testing.T) {
 	exec, ctx := newPathSelectorExecutor(t)
+	_, err := evaluateInternalFunction(exec, "__nornic_acyclic(1 / 0)")
+	require.ErrorContains(t, err, "by zero")
 	l := func(values ...interface{}) []interface{} { return values }
 	for query, want := range map[string][][]interface{}{
 		"MATCH ((x)-->(y))*(b:SP {id: 1}) RETURN count(*) AS c":                                           {l(int64(5))},
@@ -24,7 +26,7 @@ func TestPatternEdges(t *testing.T) {
 		"MATCH p = ANY SHORTEST ((a:SP {id: 1})-->+(b) WHERE b IS SP AND b.id = 5) RETURN length(p) AS l": {l(int64(3))},
 		"RETURN __nornic_acyclic(1) AS a":                                                                 {l(nil)},
 	} {
-		result, err := exec.Execute(ctx, query, nil)
+		result, err := executeAllowingInternalFunctions(ctx, exec, query, nil)
 		require.NoError(t, err, query)
 		require.Equal(t, want, result.Rows, query)
 	}
@@ -39,11 +41,10 @@ func TestPatternEdges(t *testing.T) {
 		"MATCH ((x)-->(y) WHERE x:A:B|C)+ RETURN 1":                                                               "Mixing label expression symbols",
 		"MATCH ((x:A:B|C)-->(y))+ RETURN 1":                                                                       "Mixing label expression symbols",
 		"MATCH ((x)-->(y))*(b:SP {id: 1}) WHERE b.id / 0 = 1 RETURN 1":                                            "by zero",
-		"RETURN __nornic_acyclic(1 / 0) AS a":                                                                     "by zero",
 		"MATCH p = shortestPath((a)-->(b)), (c) WHERE __nornic_path_selector('ANY', 1, false, '', true) RETURN p": "Multiple path patterns cannot be used",
 		"MATCH shortestPath((a)-->(b)) WHERE __nornic_path_selector('ANY', 1, false, '', true) RETURN 1":          "Multiple path patterns cannot be used",
 	} {
-		_, err := exec.Execute(ctx, query, nil)
+		_, err := executeAllowingInternalFunctions(ctx, exec, query, nil)
 		require.Error(t, err, query)
 		require.Contains(t, err.Error(), message, query)
 	}

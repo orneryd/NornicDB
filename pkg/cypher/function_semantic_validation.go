@@ -3,8 +3,6 @@ package cypher
 import (
 	"fmt"
 	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // validateKnownFunctions is the unknown-function check: every function a
@@ -19,9 +17,78 @@ func validateKnownFunctions(expression string) error {
 		(isSchemaCommandStatement(expression) || isCreateSchemaOrAdministrationCommand(expression)) {
 		return nil
 	}
+	return forEachFunctionCall(expression, func(name, normalized string) error {
+		if _, known := builtInCypherFunctions[normalized]; known {
+			return nil
+		}
+		// graph.byName / graph.byElementId are catalog names; outside USE
+		// they fail where they are evaluated. graph.names and
+		// graph.propertiesByName are known on a composite database;
+		// elsewhere the call reports Neo4j's "Unknown function"
+		// (fn.UnknownFunctionError).
+		if normalized == "graph.names" || normalized == "graph.propertiesbyname" {
+			return nil
+		}
+		if _, found := pluginFunctionHandler(name); found {
+			return nil
+		}
+		return unknownFunctionError(name)
+	})
+}
+
+// internalFunctionCallError rejects a statement, as its client sent it, that
+// calls one of NornicDB's internal functions (__nornic_interpolate, …, the
+// catalog's __nornic_* names), in any letter case, with Neo4j's "Unknown
+// function" (#1105). NornicDB's own rewrites produce these calls from
+// standard syntax (string interpolation, map comprehension, vector(…),
+// dynamic labels, path selectors), so the check reads the text before any
+// rewrite: Execute's statement and the statement text a procedure runs
+// (executeUserStatement).
+func internalFunctionCallError(text string) error {
+	if !containsInternalFunctionPrefix(text) {
+		return nil
+	}
+	return forEachFunctionCall(text, func(name, normalized string) error {
+		if _, internal := builtInCypherFunctions[normalized]; internal && strings.HasPrefix(normalized, "__nornic_") {
+			return unknownFunctionError(name)
+		}
+		return nil
+	})
+}
+
+// containsInternalFunctionPrefix reports whether text holds __nornic_ in any
+// letter case: most statements don't, and skip the scan.
+func containsInternalFunctionPrefix(text string) bool {
+	const prefix = "__nornic_"
+	for i := 0; i+len(prefix) <= len(text); i++ {
+		if text[i] == '_' && text[i+1] == '_' && strings.EqualFold(text[i:i+len(prefix)], prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func unknownFunctionError(name string) error {
+	return newSemanticError(
+		"Neo.ClientError.Statement.SyntaxError",
+		"UnknownFunction",
+		fmt.Sprintf("unknown function: %s", name),
+	)
+}
+
+// forEachFunctionCall calls visit with each function call in text, in order:
+// its name as written (dotted parts joined) and lower-cased, without
+// backticks. Strings and comments, a procedure a CALL names, the graph a USE
+// names and the keywords that can stand before a parenthesis are not calls.
+func forEachFunctionCall(text string, visit func(name, normalized string) error) error {
+	expression := text
 	for index := 0; index < len(expression); {
 		if expression[index] == '\'' || expression[index] == '"' {
 			index = skipQuotedSemanticText(expression, index)
+			continue
+		}
+		if end := queryCommentEnd(expression, index); end >= 0 {
+			index = end
 			continue
 		}
 		name, next, ok := scanIdentifierToken(expression, index)
@@ -42,38 +109,17 @@ func validateKnownFunctions(expression string) error {
 			index = next
 			continue
 		}
+		index = cursor + 1
 		normalized := lowerASCII(normalizeProjectionColumnName(name))
 		// Clause and predicate keywords can legally be followed by a parenthesized
 		// pattern/expression (MATCH (n), STARTS WITH (...)). They are syntax, not
-		// function invocations, and must stay in the converged expression scanner.
+		// function invocations.
 		if isNonFunctionSemanticKeyword(normalized) {
-			index = cursor + 1
 			continue
 		}
-		if _, known := builtInCypherFunctions[normalized]; known {
-			index = cursor + 1
-			continue
+		if err := visit(name, normalized); err != nil {
+			return err
 		}
-		switch normalized {
-		case "graph.byname", "graph.byelementid":
-			// A graph reference, not a value (Neo4j 5.26).
-			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-				localization.CypherCommandRoutingGraphFunctionOnlyInUse(name))
-		case "graph.names", "graph.propertiesbyname":
-			// Known on a composite database; elsewhere the call reports
-			// Neo4j's "Unknown function" (fn.UnknownFunctionError).
-			index = cursor + 1
-			continue
-		}
-		if _, found := pluginFunctionHandler(name); found {
-			index = cursor + 1
-			continue
-		}
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"UnknownFunction",
-			fmt.Sprintf("unknown function: %s", name),
-		)
 	}
 	return nil
 }

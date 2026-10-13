@@ -535,7 +535,7 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, args []in
 	}
 
 	// Execute the query
-	result, err := e.executeInternal(ctx, query, nil)
+	result, err := e.executeUserStatement(ctx, query, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}
@@ -663,7 +663,7 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []int
 	}
 
 	// Execute the query
-	result, err := e.executeInternal(ctx, query, nil)
+	result, err := e.executeUserStatement(ctx, query, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}

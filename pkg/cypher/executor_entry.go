@@ -161,6 +161,11 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Normalize query: trim BOM (some clients send it) then whitespace
 	cypher = trimBOM(cypher)
 	cypher = normalizeCypherSyntaxConfusables(cypher)
+	// The statement as the client sent it may not call NornicDB's internal
+	// functions; the rewrites below produce them (#1105).
+	if err := internalFunctionCallError(cypher); err != nil {
+		return nil, err
+	}
 	// Comments and keyword spacing are canonical from here on; what the
 	// client sees (column names, messages, plans) is the text it sent (#740).
 	// NORNICDB_CYPHER_QUERY_NORMALIZATION=false skips the pass: the

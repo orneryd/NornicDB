@@ -33,8 +33,14 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 		batchSize = bs
 	}
 
+	// An action that calls an internal function is the call's error
+	// (#1105), not a failure per row.
+	if err := internalFunctionCallError(actionQuery); err != nil {
+		return nil, err
+	}
+
 	// Execute the iterate query to get data to process
-	iterateResult, err := e.executeInternal(ctx, iterateQuery, nil)
+	iterateResult, err := e.executeUserStatement(ctx, iterateQuery, nil)
 	if err != nil {
 		return nil, fmt.Errorf("iterate query failed: %w", err)
 	}
@@ -67,7 +73,7 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 			}
 
 			// Execute action query with row data as parameters
-			actionResult, err := e.executeInternal(ctx, actionQuery, params)
+			actionResult, err := e.executeUserStatement(ctx, actionQuery, params)
 			if err != nil {
 				errorCount++
 				continue
@@ -140,6 +146,12 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []int
 		limit = l
 	}
 
+	// A statement that calls an internal function is the call's error
+	// (#1105), not a run that stops at its first failure.
+	if err := internalFunctionCallError(statement); err != nil {
+		return nil, err
+	}
+
 	// Execute the statement repeatedly until it affects 0 rows
 	totalUpdates := int64(0)
 	executions := int64(0)
@@ -152,7 +164,7 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []int
 			statement = statement + fmt.Sprintf(" LIMIT %d", limit)
 		}
 
-		result, err := e.executeInternal(ctx, statement, params)
+		result, err := e.executeUserStatement(ctx, statement, params)
 		if err != nil {
 			break
 		}
