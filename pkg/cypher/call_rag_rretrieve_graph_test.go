@@ -94,3 +94,42 @@ func TestCallDbRRetrieveGraphReranksFusedPool(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, calls)
 }
+
+// oneChunkMatchingEmbedder embeds "bravo" towards the test's node and every
+// other chunk away from it, so only the first chunk of a query matches.
+type oneChunkMatchingEmbedder struct{ chunks []string }
+
+func (e oneChunkMatchingEmbedder) Embed(_ context.Context, text string) ([]float32, error) {
+	if text == "bravo" {
+		return []float32{1, 0}, nil
+	}
+	return []float32{-1, 0}, nil
+}
+
+func (e oneChunkMatchingEmbedder) ChunkText(string, int, int) ([]string, error) { return e.chunks, nil }
+
+// A query split into chunks of which only one matches: the chunks that match
+// nothing don't report rerank_no_candidates, and one reranked hit reports
+// rerank_scores_flat, as db.rretrieve does.
+func TestCallDbRRetrieveGraphReranksChunkedQueryHits(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	exec.SetEmbedder(oneChunkMatchingEmbedder{chunks: []string{"bravo", "zzzz", "yyyy"}})
+	_, err := store.CreateNode(&storage.Node{ID: "src", Labels: []string{"Source"}, Properties: map[string]interface{}{"text": "bravo notes"}, ChunkEmbeddings: [][]float32{{1, 0}}})
+	require.NoError(t, err)
+	svc := search.NewServiceWithDimensions(store, 2)
+	t.Cleanup(func() { _ = svc.Close() })
+	require.NoError(t, svc.BuildIndexes(ctx))
+	exec.SetSearchService(svc)
+	calls := 0
+	svc.SetReranker(bridgeFirstReranker{calls: &calls, available: true})
+
+	for _, procedure := range []string{"db.rretrieveGraph", "db.rretrieve"} {
+		result, err := exec.Execute(ctx, "CALL "+procedure+"({query: 'bravo zzzz yyyy', limit: 5}) YIELD fallback_reason RETURN fallback_reason", nil)
+		require.NoError(t, err, procedure)
+		require.Len(t, result.Rows, 1, procedure)
+		require.Equal(t, string(search.SearchFallbackRerankScoresFlat), result.Rows[0][0], procedure)
+	}
+	require.Greater(t, calls, 0)
+}
