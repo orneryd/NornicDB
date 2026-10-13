@@ -78,4 +78,10 @@ func TestGraphRerankReadsCandidateTextFromStorage(t *testing.T) {
 	require.Contains(t, contents[1], "old bridge")
 	_, reason, _ = svc.rerankGraphPool(ctx, "zephyrine", []*graphCandidate{{result: SearchResult{ID: "nothing"}}}, opts)
 	require.Equal(t, SearchFallbackRerankNoCandidates, reason)
+
+	// A relationship's text is cut at the rerank's character limit.
+	contents = nil
+	opts.RerankMaxChars = 5
+	_, _, _ = svc.rerankGraphPool(ctx, "zephyrine", bare()[1:], opts)
+	require.Equal(t, []string{"CITES"}, contents)
 }
