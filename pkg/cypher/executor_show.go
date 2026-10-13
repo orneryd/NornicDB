@@ -889,15 +889,21 @@ func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher strin
 // pluginFunctionRows are SHOW FUNCTIONS' rows for the loaded plugins'
 // functions (#1168), as Neo4j lists a plugin's: not built in, with the
 // plugin's description and category and a signature from the function's
-// Go type. A name the catalog lists already keeps the catalog's row.
+// Go type. A name the catalog lists, exactly as written, keeps the catalog's
+// row; plugin names are case-sensitive, so a plugin's apoc.coll.SUM is a
+// function of its own beside the catalog's apoc.coll.sum.
 func pluginFunctionRows() [][]interface{} {
 	if PluginFunctionList == nil {
 		return nil
 	}
+	listed := make(map[string]struct{}, len(cypherFunctionCatalog))
+	for _, function := range cypherFunctionCatalog {
+		listed[function.name] = struct{}{}
+	}
 	functions := PluginFunctionList()
 	rows := make([][]interface{}, 0, len(functions))
 	for _, function := range functions {
-		if _, builtIn := builtInCypherFunctions[lowerASCII(function.Name)]; builtIn {
+		if _, inCatalog := listed[function.Name]; inCatalog {
 			continue
 		}
 		arguments, returns := functionSignatureDescriptions(function.Signature)

@@ -21,7 +21,21 @@ type PluginFunctionInfo struct {
 }
 
 // PluginFunctionList lists the loaded plugins' functions for SHOW FUNCTIONS
-// (#1168); nornicdb.Open sets it, with PluginFunctionLookup.
+// (#1168); nornicdb.Open sets it, with PluginFunctionLookup. Each entry's
+// Name is the name a statement calls (case-sensitive), and Signature is in
+// SHOW FUNCTIONS' form, from which the argument and return descriptions are
+// read.
+//
+// Example:
+//
+//	cypher.PluginFunctionList = func() []cypher.PluginFunctionInfo {
+//		return []cypher.PluginFunctionInfo{{
+//			Name:        "acme.text.slug",
+//			Category:    "text",
+//			Description: "Returns the text as a URL slug.",
+//			Signature:   "acme.text.slug(text :: STRING) :: STRING",
+//		}}
+//	}
 var PluginFunctionList func() []PluginFunctionInfo
 
 // PluginFunctionLookup is a callback to look up functions from loaded plugins.

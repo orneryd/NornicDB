@@ -19,6 +19,8 @@ func TestShowFunctionsListsApocFunctions(t *testing.T) {
 			{Name: "zz.text.camelCase", Category: "text", Description: "Camel-cases text", Signature: "zz.text.camelCase(arg1 :: STRING) :: STRING"},
 			// A name the catalog lists keeps the catalog's row.
 			{Name: "apoc.coll.sum", Category: "coll", Description: "plugin sum", Signature: "apoc.coll.sum(arg1 :: LIST<ANY>) :: FLOAT"},
+			// Plugin names are case-sensitive: a case-distinct name is listed.
+			{Name: "apoc.coll.SUM", Category: "coll", Description: "plugin SUM", Signature: "apoc.coll.SUM(arg1 :: LIST<ANY>) :: FLOAT"},
 		}
 	}
 	t.Cleanup(func() { PluginFunctionList = previous })
@@ -38,7 +40,7 @@ func TestShowFunctionsListsApocFunctions(t *testing.T) {
 	// Every built-in apoc.* function is listed, once.
 	result, err = exec.Execute(ctx, "SHOW FUNCTIONS YIELD name WHERE name STARTS WITH 'apoc.' RETURN count(*) AS listed, count(DISTINCT name) AS names", nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(36), int64(36)}}, result.Rows)
+	require.Equal(t, [][]interface{}{{int64(37), int64(37)}}, result.Rows, "the 36 built-ins and the plugin's apoc.coll.SUM")
 	result, err = exec.Execute(ctx, "SHOW FUNCTIONS YIELD name, description WHERE name = 'apoc.coll.sum' RETURN description", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"Returns the sum of all the `INTEGER | FLOAT` in the `LIST<INTEGER | FLOAT>`."}}, result.Rows)
