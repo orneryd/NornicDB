@@ -55,9 +55,6 @@ func Align(text string, chunks []string) []Span {
 // findChunk finds chunk in text[from:windowEnd], verbatim or else with
 // whitespace ignored.
 func findChunk(text, chunk string, from, windowEnd int) (Span, bool) {
-	if from >= windowEnd {
-		return Span{}, false
-	}
 	if span, ok := findExact(text, chunk, from, windowEnd); ok {
 		return span, true
 	}
