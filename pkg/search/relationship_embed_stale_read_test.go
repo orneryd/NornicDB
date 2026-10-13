@@ -119,9 +119,9 @@ func TestRelationshipEmbeddingSupersededByALaterWrite(t *testing.T) {
 func TestRelationshipEmbedsStorageWhenTheCopyIsOlder(t *testing.T) {
 	engine := relationshipTestEngine(t)
 	var embedded []string
-	embed := func(_ context.Context, edge *storage.Edge) ([][]float32, error) {
+	embed := func(_ context.Context, edge *storage.Edge) (RelationshipEmbedding, error) {
 		embedded = append(embedded, edge.Properties["reason"].(string))
-		return [][]float32{{1, 0, 0}}, nil
+		return RelationshipEmbedding{Vectors: [][]float32{{1, 0, 0}}}, nil
 	}
 	svc := NewServiceWithDimensions(engine, 3)
 	t.Cleanup(func() { _ = svc.Close() })
