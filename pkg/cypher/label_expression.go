@@ -574,6 +574,48 @@ func (x *labelExpression) predicate(variable string) string {
 	return "(" + strings.Join(parts, separator) + ")"
 }
 
+// entityPredicate renders the expression as a boolean expression over the
+// value of subject, any expression (endNode(r), a call, a parenthesized
+// expression), as Neo4j tests labels on one: each name and the wildcard %
+// is a dynamicLabelTestFunction call, which reads a node's labels or a
+// relationship's type, and null for any other value (#1181).
+func (x *labelExpression) entityPredicate(subject string) string {
+	switch x.kind {
+	case labelExpressionName:
+		return dynamicLabelTestFunction + "((" + subject + "), " + cypherStringLiteral(x.name) + ", false)"
+	case labelExpressionAny:
+		return dynamicLabelTestFunction + "((" + subject + "), " + cypherStringLiteral(labelWildcardName) + ", false)"
+	case labelExpressionDynamic:
+		return x.predicate("(" + subject + ")")
+	case labelExpressionNot:
+		return "NOT (" + x.operands[0].entityPredicate(subject) + ")"
+	}
+	if len(x.operands) == 0 {
+		if x.kind == labelExpressionAnd {
+			return "true"
+		}
+		return "false"
+	}
+	separator := " AND "
+	if x.kind == labelExpressionOr {
+		separator = " OR "
+	}
+	parts := make([]string, len(x.operands))
+	for i, operand := range x.operands {
+		parts[i] = operand.entityPredicate(subject)
+	}
+	return "(" + strings.Join(parts, separator) + ")"
+}
+
+// labelWildcardName is the name entityPredicate gives the wildcard label %:
+// a node with any label, or any relationship.
+const labelWildcardName = "%"
+
+// cypherStringLiteral quotes text as a Cypher string literal.
+func cypherStringLiteral(text string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(text) + "'"
+}
+
 // resolveDynamic replaces the expression's dynamic terms with the names their
 // values give (resolve; dynamicLabelNames): $(e) and $all(e) by the
 // conjunction of the names, $any(e) by their disjunction. constant is false,

@@ -378,6 +378,17 @@ func fnDynamicLabelTest(ctx cypherfn.Context, args []string) (interface{}, error
 		return nil, err
 	}
 	any, _ := values[2].(bool)
+	if len(names) == 1 && names[0] == labelWildcardName {
+		// The wildcard label % (entityPredicate): a node with any label,
+		// any relationship.
+		switch entity := values[0].(type) {
+		case *storage.Node:
+			return len(entity.Labels) > 0, nil
+		case *storage.Edge:
+			return true, nil
+		}
+		return nil, nil
+	}
 	switch entity := values[0].(type) {
 	case *storage.Node:
 		return labelsSatisfyNames(entity.Labels, names, any), nil

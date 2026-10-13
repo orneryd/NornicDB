@@ -96,7 +96,8 @@ func desugarLabelExpressions(query string, params map[string]interface{}, cypher
 	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) &&
 		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
 		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) &&
-		!mayUseParenthesisedPath(query) && !mayUseVectorCall(query) && !mayReadPatternInPropertyMap(query) {
+		!mayUseParenthesisedPath(query) && !mayUseVectorCall(query) && !mayReadPatternInPropertyMap(query) &&
+		!mayTestExpressionLabels(query) {
 		return query, nil, nil
 	}
 	r := &labelExpressionRewriter{query: query, params: params, cypher25: cypher25}
@@ -129,6 +130,23 @@ func applyLabelRewriteEdits(query string, edits []labelRewriteEdit, verbatimColu
 	out.WriteString(query[last:])
 	rewrite.canonical = out.String()
 	return rewrite.canonical, rewrite
+}
+
+// mayTestExpressionLabels reports whether query may hold a colon label test
+// on a call or parenthesized expression, endNode(r):Def (#1181): a colon
+// right after a closing parenthesis, not the type cast ::.
+func mayTestExpressionLabels(query string) bool {
+	for i := strings.Index(query, "):"); i >= 0; {
+		if i+2 >= len(query) || query[i+2] != ':' {
+			return true
+		}
+		next := strings.Index(query[i+2:], "):")
+		if next < 0 {
+			return false
+		}
+		i += 2 + next
+	}
+	return false
 }
 
 // mayUsePatternPredicate reports whether query may hold a pattern element's
@@ -903,7 +921,10 @@ func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable 
 	if relationship && indexOutsideQuotes(q[open+1:where], '*') >= 0 {
 		return labelExpressionSyntaxError(localization.CypherMatchingPatternPredicateVariableLength())
 	}
-	predicate := strings.TrimSpace(q[where+len("WHERE") : close])
+	predicate, err := r.rewrittenPredicate(strings.TrimSpace(q[where+len("WHERE") : close]))
+	if err != nil {
+		return err
+	}
 	r.edit(where, close, "")
 	if quantified {
 		variable = r.elementVariable(open, variable)
@@ -912,6 +933,23 @@ func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable 
 	}
 	*predicates = append(*predicates, "("+predicate+")")
 	return nil
+}
+
+// rewrittenPredicate is predicate with its own label tests, pattern
+// predicates and comprehensions rewritten, for a predicate elementWhere
+// moves out of its element: the moved text isn't read again (#1181). Its
+// generated variables continue the statement's.
+func (r *labelExpressionRewriter) rewrittenPredicate(predicate string) (string, error) {
+	sub := &labelExpressionRewriter{query: predicate, params: r.params, cypher25: r.cypher25, generated: r.generated, syntax: r.syntax, named: map[int]string{}}
+	if err := sub.expression(0, len(predicate)); err != nil {
+		return "", err
+	}
+	r.generated = sub.generated
+	if len(sub.edits) == 0 {
+		return predicate, nil
+	}
+	rewritten, _ := applyLabelRewriteEdits(predicate, sub.edits, false)
+	return rewritten, nil
 }
 
 // relationshipElement rewrites a relationship pattern's type chain
@@ -1483,7 +1521,17 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, erro
 		if chainEnd, ok := relationshipChainEnd(r.query, open, end); ok {
 			return chainEnd, r.patternPredicate(open, chainEnd, -1, -1)
 		}
+		if next, handled, err := r.expressionLabelTest(open, open, close, end); handled {
+			return next, err
+		}
 	} else {
+		subject := open - 1
+		for subject > start && (isIdentByte(q[subject-1]) || q[subject-1] == '.') {
+			subject--
+		}
+		if next, handled, err := r.expressionLabelTest(subject, open, close, end); handled {
+			return next, err
+		}
 		// exists((n)-->(m)): the argument as the predicate.
 		nameStart := open - 1
 		for nameStart > start && isIdentByte(q[nameStart-1]) {
@@ -1497,6 +1545,48 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, erro
 		}
 	}
 	return close + 1, r.expression(open+1, close)
+}
+
+// expressionLabelTest rewrites a label test on the expression
+// query[subjectStart:close+1], a call (endNode(r)) or a parenthesized
+// expression, written expr:Labels or expr IS Labels, into the predicate over
+// the expression's value (labelExpression.entityPredicate), as Neo4j tests
+// labels on any expression (#1181). handled is false when no label test
+// follows, or when the parenthesis is a dynamic label's ($(e), $any(e),
+// $all(e)) or stands in a label chain (n:$(e):B); an expression that itself
+// holds a rewrite is left as it was.
+func (r *labelExpressionRewriter) expressionLabelTest(subjectStart, open, close, end int) (int, bool, error) {
+	q := r.query
+	if strings.HasPrefix(q[subjectStart:open], "$") || (subjectStart > 0 && (q[subjectStart-1] == '$' || q[subjectStart-1] == ':')) {
+		return 0, false, nil
+	}
+	after := close + 1
+	chainStart := -1
+	if after < end && q[after] == ':' && (after+1 >= end || q[after+1] != ':') {
+		chainStart = after + 1
+	} else if is := skipASCIISpaces(q, after, end); is > after && matchKeywordAt(q[:end], is, "IS") && isLabelIsKeyword(q[:end], is+2) {
+		label := skipASCIISpaces(q, is+2, end)
+		if matchKeywordAt(q[:end], label, "NOT") || matchKeywordAt(q[:end], label, "LABELED") {
+			return 0, false, nil
+		}
+		chainStart = label
+	}
+	if chainStart < 0 {
+		return 0, false, nil
+	}
+	chain, ok := scanLabelChain(q[chainStart:end], false)
+	if !ok || chain.end == 0 {
+		return 0, false, nil
+	}
+	mark := len(r.edits)
+	if err := r.expression(open+1, close); err != nil {
+		return 0, true, err
+	}
+	if len(r.edits) != mark {
+		return close + 1, true, nil
+	}
+	r.edit(subjectStart, chainStart+chain.end, "("+chain.expr.entityPredicate(q[subjectStart:close+1])+")")
+	return chainStart + chain.end, true, nil
 }
 
 // patternPredicate rewrites the pattern predicate query[start:end]. When its
