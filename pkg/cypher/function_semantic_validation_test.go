@@ -3,7 +3,7 @@ package cypher
 import "testing"
 
 func TestReturnRejectsUnknownFunction(t *testing.T) {
-	err := validateReturnSemanticScope(matchSemanticScope{"node": matchBindingNode}, "RETURN unknownFunction(node)")
+	err := validateKnownFunctions("MATCH (node) RETURN unknownFunction(node)")
 	requireSemanticDetail(t, err, "UnknownFunction")
 }
 
@@ -20,7 +20,7 @@ func TestReturnDoesNotTreatParenthesizedBooleanOperandsAsFunctions(t *testing.T)
 		"false OR (true XOR false)",
 		"NOT (true AND false)",
 	} {
-		if err := validateKnownFunctionsInExpression(expression); err != nil {
+		if err := validateKnownFunctions(expression); err != nil {
 			t.Fatalf("%q produced an unexpected semantic error: %v", expression, err)
 		}
 	}

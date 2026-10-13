@@ -420,6 +420,9 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) erro
 	if err := e.validateMatchSemanticScopes(cypher, cypher25); err != nil {
 		return err
 	}
+	if err := validateKnownFunctions(cypher); err != nil {
+		return err
+	}
 	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", parserError.Error())
 }
 

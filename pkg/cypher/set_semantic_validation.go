@@ -280,8 +280,8 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 }
 
 // validateWriteExpressionScope checks an expression a SET or REMOVE item
-// evaluates (a value, a dynamic key or label): complete operands, bound
-// variables and known functions.
+// evaluates (a value, a dynamic key or label): complete operands and bound
+// variables. Its functions are checked with the statement's.
 func validateWriteExpressionScope(expression string, scope *semanticBindingScope) error {
 	if err := validateExpressionOperandCompleteness(expression); err != nil {
 		return err
@@ -289,7 +289,7 @@ func validateWriteExpressionScope(expression string, scope *semanticBindingScope
 	if missing := firstUndefinedSetExpressionVariable(expression, scope); missing != "" {
 		return createUndefinedVariableError(missing)
 	}
-	return validateKnownFunctionsInExpression(expression)
+	return nil
 }
 
 func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindingScope) string {

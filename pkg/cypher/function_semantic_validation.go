@@ -7,7 +7,16 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-func validateKnownFunctionsInExpression(expression string) error {
+// validateKnownFunctions is the unknown-function check: every function a
+// statement calls, in any clause or subquery, is a built-in or a loaded
+// plugin's function, as in Neo4j, whether or not a database was opened
+// (#1166). A procedure a CALL names and the graph a USE names are not
+// function calls; schema and administration commands declare rules, not
+// calls.
+func validateKnownFunctions(expression string) error {
+	if isSchemaCommandStatement(expression) || isCreateSchemaOrAdministrationCommand(expression) {
+		return nil
+	}
 	for index := 0; index < len(expression); {
 		if expression[index] == '\'' || expression[index] == '"' {
 			index = skipQuotedSemanticText(expression, index)
@@ -18,15 +27,12 @@ func validateKnownFunctionsInExpression(expression string) error {
 			index++
 			continue
 		}
-		cursor := next
-		for cursor < len(expression) && expression[cursor] == '.' {
-			part, partEnd, partOK := scanIdentifierToken(expression, cursor+1)
-			if !partOK {
-				break
-			}
-			name += "." + part
-			cursor = partEnd
+		if expression[index] != '`' && (strings.EqualFold(name, "CALL") || strings.EqualFold(name, "USE")) {
+			index = skipCalledName(expression, next)
+			continue
 		}
+		parts, cursor := dottedNameParts(expression, next)
+		name += parts
 		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
 			cursor++
 		}
@@ -57,16 +63,7 @@ func validateKnownFunctionsInExpression(expression string) error {
 			index = cursor + 1
 			continue
 		}
-		if strings.Contains(normalized, ".") {
-			parts := strings.Split(normalized, ".")
-			if _, builtInFallback := builtInCypherFunctions[parts[len(parts)-1]]; builtInFallback {
-				index = cursor + 1
-				continue
-			}
-			if PluginFunctionLookup == nil {
-				index = cursor + 1
-				continue
-			}
+		if strings.Contains(normalized, ".") && PluginFunctionLookup != nil {
 			if _, found := PluginFunctionLookup(normalized); found {
 				index = cursor + 1
 				continue
@@ -83,11 +80,42 @@ func validateKnownFunctionsInExpression(expression string) error {
 
 func isNonFunctionSemanticKeyword(name string) bool {
 	switch name {
-	case "and", "call", "case", "create", "delete", "detach", "distinct", "do", "else", "end", "foreach", "in", "match", "merge", "not", "on", "optional", "or", "remove", "return", "set", "starts", "then", "unwind", "when", "where", "with", "xor":
+	case "and", "by", "call", "case", "contains", "create", "delete", "detach", "distinct", "do", "each", "elements", "else", "end", "filter", "for", "foreach", "group", "groups", "in", "insert", "is", "limit", "match", "merge", "not", "of", "offset", "on", "optional", "or", "path", "paths", "remove", "require", "return", "set", "shortest", "skip", "starts", "then", "union", "unwind", "when", "where", "with", "xor", "yield":
 		return true
 	default:
 		return false
 	}
+}
+
+// skipCalledName returns where the name after CALL or USE ends: a procedure
+// or graph name, dotted, which is not a function call. Anything else after
+// the keyword (a subquery, its imports) is scanned on.
+func skipCalledName(expression string, start int) int {
+	cursor := start
+	for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
+		cursor++
+	}
+	_, end, ok := scanIdentifierToken(expression, cursor)
+	if !ok {
+		return start
+	}
+	_, end = dottedNameParts(expression, end)
+	return end
+}
+
+// dottedNameParts returns the dotted parts (.b.c) following a name that ends
+// at end, and where they end.
+func dottedNameParts(expression string, end int) (string, int) {
+	parts := ""
+	for end < len(expression) && expression[end] == '.' {
+		part, partEnd, ok := scanIdentifierToken(expression, end+1)
+		if !ok {
+			break
+		}
+		parts += "." + part
+		end = partEnd
+	}
+	return parts, end
 }
 
 func skipQuotedSemanticText(expression string, start int) int {

@@ -457,9 +457,6 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 		if err := projectionItemTermError(expression); err != nil {
 			return err
 		}
-		if err := validateKnownFunctionsInExpression(expression); err != nil {
-			return err
-		}
 		if err := undefinedExpressionVariable(scope, expression); err != nil {
 			return err
 		}

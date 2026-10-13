@@ -143,9 +143,6 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 							return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: invalid RETURN alias")
 						}
 					}
-					if err := validateKnownFunctionsInExpression(expression); err != nil {
-						return err
-					}
 				}
 			}
 		}
@@ -160,6 +157,11 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 		return err
 	}
 	if err := e.validateSetSemanticScopes(cypher); err != nil {
+		return err
+	}
+	// Every function a statement calls, in any clause, is known (#1166).
+	// Neo4j reports the statement's other semantic errors first.
+	if err := validateKnownFunctions(cypher); err != nil {
 		return err
 	}
 	if normalized {
