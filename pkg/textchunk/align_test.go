@@ -38,6 +38,8 @@ func TestAlignGivesRepeatedChunksTheirOwnOccurrence(t *testing.T) {
 	require.Equal(t, []Span{{0, second - 2}, {second, second + len(paragraph)}, {last, len(text)}},
 		Align(text, []string{"text: " + paragraph, paragraph, marker}))
 
-	// Most of the previous chunk overlapped.
+	// Most of the previous chunk overlapped, also when the same text occurs
+	// again later.
 	require.Equal(t, []Span{{0, 16}, {2, 22}}, Align("alpha beta gamma delta", []string{"alpha beta gamma", "pha beta gamma delta"}))
+	require.Equal(t, []Span{{0, 16}, {2, 22}}, Align("alpha beta gamma delta | pha beta gamma delta", []string{"alpha beta gamma", "pha beta gamma delta"}))
 }
