@@ -80,10 +80,12 @@ func TestRetrieveGraphRequestErrorsAndMissingEndpoint(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
+	// Each fails at its own check: a null request before the query check, a
+	// fractional limit at the fail-closed policy check, not at the embedder.
 	_, err := exec.Execute(ctx, "CALL db.retrieveGraph(null)", nil)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "argument request is null")
 	_, err = exec.Execute(ctx, "CALL db.retrieveGraph({query: 'alpha', failClosed: true, limit: 1.5})", nil)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid limit value")
 
 	kind, node, relationship, start, end := exec.graphSearchEntity(&search.SearchResult{Relationship: &storage.Edge{ID: "r", Type: "R", StartNode: "gone", EndNode: "gone too"}})
 	require.Equal(t, "relationship", kind)
