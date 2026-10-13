@@ -348,31 +348,18 @@ func casePreviousWordIn(s string, i int, words ...string) bool {
 }
 
 // casePrefixWordIsVariable reports, for a NOT or DISTINCT word ending at
-// s[i], whether what follows makes it a variable: the end of the text, a
-// property access or an infix or closing symbol, a CASE keyword (a THEN,
-// ELSE, END or WHEN that is itself the keyword), or an infix keyword.
+// s[i], whether what follows makes it a variable: the end of the text, or a
+// word that is itself followed by what ends an operand (NOT end.x: end is
+// the variable and NOT the keyword; = not THEN 1: THEN is the keyword and
+// not the variable).
 func casePrefixWordIsVariable(s string, i int) bool {
 	for i < len(s) && isASCIISpace(s[i]) {
 		i++
 	}
-	if i >= len(s) {
-		return true
+	if i >= len(s) || !isIdentStartByte(s[i]) {
+		return i >= len(s)
 	}
-	if !isIdentStartByte(s[i]) {
-		return strings.IndexByte(".=<>*/%^,)]}", s[i]) >= 0
-	}
-	word := caseWordAt(s, i)
-	after := i + len(word)
-	switch word {
-	case "then", "else", "end", "when":
-		// NOT end.x: the word is a variable, so NOT is the keyword.
-		return !caseOperandEndsAt(s, after)
-	case "and", "or", "xor", "as", "is", "in", "contains":
-		// NOT in.x, NOT in > 1: likewise; otherwise the infix keyword
-		// follows a variable.
-		return !caseOperandEndsAt(s, after)
-	}
-	return false
+	return !caseOperandEndsAt(s, i+len(caseWordAt(s, i)))
 }
 
 // caseHasPreviousToken reports whether anything but space precedes s[i].

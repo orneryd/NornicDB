@@ -68,3 +68,38 @@ func TestCaseReadsVariablesNamedLikeItsKeywords(t *testing.T) {
 		require.Equal(t, want, result.Rows, statement)
 	}
 }
+
+// caseKeywordAt reads a word by what precedes and follows it.
+func TestCaseKeywordAtReadsWordsByContext(t *testing.T) {
+	at := func(text, word string, nth int) int {
+		index := -1
+		for ; nth > 0; nth-- {
+			index++
+			for !matchKeywordAt(text, index, word) {
+				index++
+			}
+		}
+		return index
+	}
+	for _, c := range []struct {
+		text, word string
+		nth        int
+		keyword    bool
+	}{
+		{"CASE WHEN s STARTS WITH then THEN 1 END", "THEN", 1, false},
+		{"CASE WHEN s STARTS WITH then THEN 1 END", "THEN", 2, true},
+		{"CASE WHEN NOT then.x THEN 1 END", "THEN", 1, false},
+		{"CASE WHEN NOT then.x THEN 1 END", "THEN", 2, true},
+		{"CASE WHEN x = not THEN 1 END", "THEN", 1, true},
+		{"RETURN DISTINCT then", "THEN", 1, false},
+		{"WHERE end", "END", 1, false},
+		{"x AND then", "THEN", 1, false},
+		{"CASE x WHEN 1 THEN case END", "CASE", 2, false},
+		{"CASE x WHEN 1 THEN CASE WHEN y THEN 2 END END", "CASE", 2, true},
+		{"CASE when.id WHEN 1 THEN 2 END", "WHEN", 1, false},
+		{"CASE when WHEN 1 THEN 2 END", "WHEN", 2, true},
+	} {
+		index := at(c.text, c.word, c.nth)
+		require.Equal(t, c.keyword, caseKeywordAt(c.text, index, c.word), "%s: %s #%d", c.text, c.word, c.nth)
+	}
+}
