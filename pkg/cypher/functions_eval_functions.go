@@ -214,6 +214,7 @@ skipArrayIndexing:
 		fnCtx := cypherfn.Context{
 			Nodes:    nodes,
 			Rels:     rels,
+			Storage:  e.storage,
 			Database: e.executionDatabaseName(ctx),
 			Eval: func(argExpr string) (interface{}, error) {
 				return e.evaluateExpressionWithContextFull(ctx, argExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), nil

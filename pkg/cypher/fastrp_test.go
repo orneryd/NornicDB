@@ -167,7 +167,7 @@ func TestGdsVersion(t *testing.T) {
 	exec := NewStorageExecutor(engine)
 	ctx := context.Background()
 
-	result, err := exec.Execute(ctx, "CALL gds.version() YIELD version RETURN version", nil)
+	result, err := exec.Execute(ctx, "CALL gds.version() YIELD gdsVersion RETURN gdsVersion", nil)
 	if err != nil {
 		t.Fatalf("gds.version() failed: %v", err)
 	}

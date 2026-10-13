@@ -84,13 +84,12 @@ var (
 // GDS Version
 // ============================================================================
 
-// callGdsVersion implements CALL gds.version()
+// callGdsVersion implements CALL gds.version(), with GDS's column name,
+// gdsVersion (#1161); RETURN gds.version() is the same value.
 func (e *StorageExecutor) callGdsVersion() (*ExecuteResult, error) {
 	return &ExecuteResult{
-		Columns: []string{"version"},
-		Rows: [][]any{
-			{"2.6.0-nornicdb"}, // NornicDB's GDS-compatible version
-		},
+		Columns: []string{"gdsVersion"},
+		Rows:    [][]any{{gdsVersion}},
 	}, nil
 }
 

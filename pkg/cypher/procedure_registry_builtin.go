@@ -485,7 +485,7 @@ func ensureBuiltInProceduresRegistered() {
 				return e.callApocPeriodicIterate(ctx, "apoc.periodic.rock_n_roll", args)
 			})
 
-		registerBuiltInProcedure("gds.version", "gds.version() :: (version :: STRING)", localization.CypherProcedureMetadata("gds.version"), ProcedureModeRead, 0, 0, false,
+		registerBuiltInProcedure("gds.version", "gds.version() :: (gdsVersion :: STRING)", localization.CypherProcedureMetadata("gds.version"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsVersion()
 			})

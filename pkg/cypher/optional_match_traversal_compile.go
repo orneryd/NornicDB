@@ -175,6 +175,7 @@ func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, e
 		fnCtx := cypherfn.Context{
 			Nodes:    row.nodes,
 			Rels:     row.rels,
+			Storage:  e.storage,
 			Database: e.executionDatabaseName(ctx),
 			Eval: func(argExpr string) (interface{}, error) {
 				if argFn, ok := compiledArgs[strings.TrimSpace(argExpr)]; ok {

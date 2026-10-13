@@ -232,6 +232,9 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		if value, matched, resolved, err := e.evaluateRowExtensionFunction(function, argument, values); matched {
 			return value, resolved, err
 		}
+		if isGDSFunctionName(lowerASCII(function)) {
+			return e.evaluateRowGraphFunction(function, argument, values)
+		}
 		switch lowerASCII(function) {
 		case "graph.names", "graph.propertiesbyname", "graph.byname", "graph.byelementid":
 			return e.evaluateRowGraphFunction(function, argument, values)

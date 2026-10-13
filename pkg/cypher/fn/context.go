@@ -14,6 +14,9 @@ import (
 type Context struct {
 	Nodes map[string]*storage.Node
 	Rels  map[string]*storage.Edge
+	// Storage is the graph the statement reads, for functions over the
+	// graph (GDS's link-prediction functions, gds.util.asNode).
+	Storage storage.Engine
 	// Database identifies the graph namespace used to construct elementId()
 	// values. Empty uses the storage package's default database name.
 	Database string
