@@ -120,10 +120,10 @@ func parseProjectionExprAlias(item string) (string, string) {
 }
 
 // projectionAliasIndex is the index of the AS that introduces item's alias:
-// the first AS outside strings, parentheses, brackets and braces, with
-// whitespace on both sides. An AS inside a nested expression
-// (COLLECT { UNWIND l AS y RETURN y }, 'a AS b') is not the alias; -1 when
-// there is none.
+// the first AS outside strings, parentheses, brackets, braces and CASE … END
+// blocks, with whitespace on both sides. An AS inside a nested expression
+// (COLLECT { UNWIND l AS y RETURN y }, 'a AS b', CASE WHEN true THEN as END,
+// where as is a variable; #1162) is not the alias; -1 when there is none.
 func projectionAliasIndex(item string) int {
 	opts := defaultKeywordScanOpts()
 	opts.SkipBraces = true
@@ -133,7 +133,7 @@ func projectionAliasIndex(item string) int {
 			return -1
 		}
 		end := index + len("AS")
-		if index > 0 && isWhitespace(item[index-1]) && end < len(item) && isWhitespace(item[end]) {
+		if index > 0 && isWhitespace(item[index-1]) && end < len(item) && isWhitespace(item[end]) && !insideCaseBlock(item, index) {
 			return index
 		}
 		from = end

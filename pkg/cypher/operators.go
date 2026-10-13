@@ -227,10 +227,19 @@ func splitAtOperator(expr, op string, idx int) (string, string, bool) {
 	return left, right, true
 }
 
+// insideCaseBlock reports whether s[at] is inside a CASE … END block that an
+// END closes, for the scanners that read a keyword there as a name (#1162).
+// A CASE without an END (the word case read as the keyword, as in WITH case
+// WHERE …) encloses nothing, so it can't swallow the clauses after it.
+func insideCaseBlock(s string, at int) bool {
+	end := enclosingCaseBlockEnd(s, at)
+	return end >= 2 && caseKeywordAt(s, end-2, "END")
+}
+
 // enclosingCaseBlockEnd returns the index of the last byte of the END that
 // closes the CASE … END block enclosing expr[at], or -1 when expr[at] is not
-// inside one. A CASE counts only outside quotes, brackets and property access
-// (n.case); an unterminated CASE extends to the end of expr.
+// inside one. A CASE counts only outside quotes, backtick names, brackets and
+// property access (n.case); an unterminated CASE extends to the end of expr.
 func enclosingCaseBlockEnd(expr string, at int) int {
 	depth, nest := 0, 0
 	var quote byte
@@ -240,13 +249,13 @@ func enclosingCaseBlockEnd(expr string, at int) int {
 		}
 		c := expr[i]
 		if quote != 0 {
-			if c == quote {
+			if c == quote && !isBackslashEscaped(expr, i) {
 				quote = 0
 			}
 			continue
 		}
 		switch c {
-		case '\'', '"':
+		case '\'', '"', '`':
 			quote = c
 		case '(', '[', '{':
 			nest++

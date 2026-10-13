@@ -310,11 +310,19 @@ func isOperatorWith(s string, pos int) bool {
 // or, when it starts the scanned text (a projection body such as
 // "skip + 1 AS v"), when what follows it is an operator, a separator, AS or
 // nothing. SKIP and LIMIT, which take an expression, are names before
-// another clause keyword (RETURN skip ORDER BY skip).
+// another clause keyword (RETURN skip ORDER BY skip). Inside a CASE … END
+// block no clause can start, so a clause keyword there is a name wherever it
+// stands (CASE match WHEN 1 THEN match END; #1162).
 func clauseKeywordUsedAsName(s string, pos, end int, keyword string) bool {
 	if !isNameableClauseKeyword(keyword) {
 		return false
 	}
+	return clauseKeywordNamedByContext(s, pos, end, keyword) || insideCaseBlock(s, pos)
+}
+
+// clauseKeywordNamedByContext is clauseKeywordUsedAsName's reading of the
+// keyword's neighbours.
+func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
 	i := lastLiveByte(s, pos)
 	if i >= 0 {
 		switch s[i] {

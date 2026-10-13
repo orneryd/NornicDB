@@ -1339,7 +1339,8 @@ func findListComprehensionToken(expression, token string) int {
 		case '}':
 			braceDepth--
 		}
-		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && index+len(token) <= len(expression) && strings.EqualFold(expression[index:index+len(token)], token) {
+		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && index+len(token) <= len(expression) && strings.EqualFold(expression[index:index+len(token)], token) &&
+			!insideCaseBlock(expression, index) {
 			return index
 		}
 	}

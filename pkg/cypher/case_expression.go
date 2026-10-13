@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"unicode"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -89,7 +90,19 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 	}
 
 	// Extract the content between CASE and END
-	content := strings.TrimSpace(expr[4 : len(expr)-3])
+	inner := expr[4 : len(expr)-3]
+	content := strings.TrimSpace(inner)
+	// Keywords are found in the whole expression, so the keyword reader sees
+	// the CASE and END around the body (CASE case WHEN 1 THEN case END, where
+	// case is the test; #1162); indices are content's.
+	contentStart := 4 + len(inner) - len(strings.TrimLeftFunc(inner, unicode.IsSpace))
+	findAtLevel := func(from int, keyword string) int {
+		index := findCaseKeywordAtLevel(expr, contentStart+from, keyword)
+		if index < 0 || index >= contentStart+len(content) {
+			return -1
+		}
+		return index - contentStart
+	}
 
 	ce := &caseExpression{
 		whenClauses: []caseWhenClause{},
@@ -98,7 +111,7 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 	// Only keywords at the current CASE level delimit the outer expression.
 	// A plain string search incorrectly treats WHEN/ELSE from a nested CASE as
 	// belonging to its parent.
-	firstWhenIdx := findCaseKeywordAtLevel(content, 0, "WHEN")
+	firstWhenIdx := findAtLevel(0, "WHEN")
 	if firstWhenIdx == -1 {
 		return nil, localizedError(localization.CypherCoreCaseWhenRequired(), nil)
 	}
@@ -112,14 +125,14 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 
 	for cursor := firstWhenIdx; cursor < len(content); {
 		conditionStart := cursor + len("WHEN")
-		thenIndex := findCaseKeywordAtLevel(content, conditionStart, "THEN")
+		thenIndex := findAtLevel(conditionStart, "THEN")
 		if thenIndex < 0 {
 			return nil, localizedError(localization.CypherCoreCaseThenRequired(content[cursor:]), nil)
 		}
 		condition := strings.TrimSpace(content[conditionStart:thenIndex])
 		resultStart := thenIndex + len("THEN")
-		nextWhen := findCaseKeywordAtLevel(content, resultStart, "WHEN")
-		nextElse := findCaseKeywordAtLevel(content, resultStart, "ELSE")
+		nextWhen := findAtLevel(resultStart, "WHEN")
+		nextElse := findAtLevel(resultStart, "ELSE")
 		resultEnd := len(content)
 		next := len(content)
 		if nextWhen >= 0 && nextWhen < resultEnd {
@@ -264,8 +277,12 @@ func caseKeywordAt(s string, i int, keyword string) bool {
 	case "CASE":
 		// A CASE that opens an expression is followed by an operand or WHEN;
 		// followed by what only follows an operand, it is a variable
-		// (THEN case END, WHEN case.id = 1).
-		if caseVariableNamedCase(s, i+len(keyword)) {
+		// (THEN case END, WHEN case.id = 1). After AS it is the name AS
+		// gives (WITH 1 AS case RETURN case), and right after CASE it is a
+		// simple CASE's test when a nested CASE would leave the outer one
+		// without its END (CASE case WHEN 1 THEN case END; #1162).
+		if caseVariableNamedCase(s, i+len(keyword)) || casePreviousWordIn(s, i, "as") ||
+			(casePreviousWordIsCase(s, i) && caseNestedLacksEnd(s, i)) {
 			return false
 		}
 	}
@@ -423,6 +440,41 @@ func caseHasPreviousToken(s string, i int) bool {
 }
 
 // casePreviousWordIsCase reports whether the word before s[i] is CASE.
+// caseNestedLacksEnd reports, for a CASE right after CASE at s[i], whether
+// reading it as a nested CASE leaves the outer CASE without an END before
+// the enclosing bracket or the text ends: CASE case WHEN 1 THEN case END has
+// one END, a nested CASE CASE WHEN … END WHEN … END two.
+func caseNestedLacksEnd(s string, i int) bool {
+	open, depth := 2, 0
+	for j := i + len("CASE"); j < len(s); j++ {
+		switch c := s[j]; c {
+		case '\'', '"', '`':
+			j = skipCypherQuotedText(s, j, c) - 1
+			continue
+		case '(', '[', '{':
+			depth++
+			continue
+		case ')', ']', '}':
+			if depth == 0 {
+				return open > 0
+			}
+			depth--
+			continue
+		}
+		if depth != 0 || !isIdentStartByte(s[j]) || isIdentByte(s[j-1]) {
+			continue
+		}
+		if caseKeywordAt(s, j, "CASE") {
+			open++
+		} else if caseKeywordAt(s, j, "END") {
+			if open--; open == 0 {
+				return false
+			}
+		}
+	}
+	return open > 0
+}
+
 func casePreviousWordIsCase(s string, i int) bool {
 	j := i - 1
 	for j >= 0 && isASCIISpace(s[j]) {
@@ -455,9 +507,11 @@ func caseOperandEndsAt(s string, i int) bool {
 // caseVariableNamedCase reports, for the word case ending at s[i], whether it
 // is a variable: what follows can only follow an operand. A word that itself
 // continues a simple CASE's test (CASE end WHEN 1, CASE and WHEN 1) is that
-// test, so the CASE before it opens an expression.
+// test, so the CASE before it opens an expression. A clause keyword after
+// case is read alike: WITH case WHERE … is the variable case, CASE where
+// WHEN 1 a simple CASE over where (#1162).
 func caseVariableNamedCase(s string, i int) bool {
-	if !caseOperandEndsAt(s, i) {
+	if !caseOperandEndsAt(s, i) && !isNameableClauseKeyword(caseWordAt(s, skipSpaces(s, i))) {
 		return false
 	}
 	for i < len(s) && isASCIISpace(s[i]) {

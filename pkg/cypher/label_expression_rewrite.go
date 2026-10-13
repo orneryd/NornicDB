@@ -1270,6 +1270,12 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 		}
 		return nil
 	}
+	// A label test's word is an operand: after a keyword an expression
+	// follows (THEN is ELSE, CASE is WHEN), is is a variable, as a clause
+	// keyword there is a name (#1162).
+	if isExpressionBoundaryWord(q[wordStart:wordEnd]) && !wordIsName(q, wordStart) {
+		return nil
+	}
 	is := skipASCIISpaces(q, wordEnd, end)
 	if is == wordEnd || is+2 >= end || !strings.EqualFold(q[is:is+2], "IS") || isIdentByte(q[is+2]) || !isLabelIsKeyword(q[:end], is+2) {
 		return nil
