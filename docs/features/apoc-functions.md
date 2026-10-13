@@ -1,6 +1,11 @@
 # APOC Functions
 
-NornicDB includes **850+ APOC functions** fully compatible with Neo4j's APOC library. All core functions are compiled into the binary for maximum performance, with optional plugin support for custom extensions.
+NornicDB has `apoc.*` functions and procedures from two sources:
+
+- **Built into the executor**, always available: 36 `apoc.*` functions and 47 `apoc.*` / `gds.*` procedures.
+- **The optional APOC plugin** (`apoc.so`, built from `apoc/plugin-src/apoc`), which registers 983 function names. Today 81 of them can be called from a statement: plugin names with an upper-case letter aren't found (#1163), and most Go function types and every plugin procedure can't be called yet (#1167).
+
+Some of these names aren't APOC names at all: NornicDB adds its own under the `apoc.*` and `gds.*` namespaces. They are listed under [NornicDB extensions](#nornicdb-extensions); a query that uses them won't run on Neo4j with APOC or GDS.
 
 ## Quick Start
 
@@ -14,9 +19,11 @@ RETURN apoc.coll.sum(n.scores) AS total
 // Text processing
 RETURN apoc.text.join(['Hello', 'World'], ' ') AS greeting
 
-// Graph algorithms
+// Graph algorithms (a NornicDB extension procedure)
 MATCH (n:Person)
-RETURN apoc.algo.pageRank(n) AS rank
+WITH collect(n) AS people
+CALL apoc.algo.pageRank(people) YIELD node, score
+RETURN node.name, score
 ```
 
 ### Configuration via Environment Variables
@@ -349,20 +356,27 @@ apoc.math.factorial(5)  // → 120
 apoc.math.isPrime(17)   // → true
 ```
 
-### Graph Algorithm Functions (`apoc.algo.*`)
+### Graph Algorithm Procedures (`apoc.algo.*`)
+
+These are procedures, called with `CALL`. `pageRank`, `betweenness`, `closeness`, `wcc`, `louvain` and `labelPropagation` are [NornicDB extensions](#nornicdb-extensions); `dijkstra`, `aStar` and `allSimplePaths` are APOC names.
 
 ```cypher
-// Centrality
+// Centrality (NornicDB extensions)
 MATCH (n:Person)
-RETURN n.name, apoc.algo.pageRank(n) AS rank
-ORDER BY rank DESC
+WITH collect(n) AS people
+CALL apoc.algo.pageRank(people) YIELD node, score
+RETURN node.name, score
+ORDER BY score DESC
 
 MATCH (n:Person)
-RETURN n.name, apoc.algo.betweennessCentrality(n) AS centrality
+WITH collect(n) AS people
+CALL apoc.algo.betweenness(people) YIELD node, score
+RETURN node.name, score
 
 // Pathfinding
 MATCH (start:Person {name:'Alice'}), (end:Person {name:'Bob'})
-RETURN apoc.algo.dijkstra(start, end, 'KNOWS', 'weight')
+CALL apoc.algo.dijkstra(start, end, 'KNOWS', 'weight') YIELD path, weight
+RETURN path, weight
 
 // Community detection
 MATCH (n:Person)
@@ -1011,52 +1025,108 @@ Build plugins on the same platform/architecture as your NornicDB deployment.
 
 ## Migration from Neo4j APOC
 
-NornicDB's APOC implementation is designed for compatibility:
+What carries over from Neo4j with APOC, and what doesn't:
 
-| Neo4j APOC         | NornicDB | Notes                                         |
-| ------------------ | -------- | --------------------------------------------- |
-| `apoc.coll.*`      | ✅ Same  | Full compatibility - all collection functions |
-| `apoc.text.*`      | ✅ Same  | Full compatibility - text processing          |
-| `apoc.math.*`      | ✅ Same  | Full compatibility - math operations          |
-| `apoc.algo.*`      | ✅ Same  | Real algorithms (PageRank, centrality, etc.)  |
-| `apoc.atomic.*`    | ✅ Same  | Atomic operations with locking                |
-| `apoc.bitwise.*`   | ✅ Same  | Bitwise operations                            |
-| `apoc.cypher.*`    | ✅ Same  | Dynamic Cypher execution                      |
-| `apoc.diff.*`      | ✅ Same  | Diff operations                               |
-| `apoc.export.*`    | ✅ Same  | Export to JSON, CSV, Cypher, GraphML          |
-| `apoc.import.*`    | ✅ Same  | Import from multiple formats                  |
-| `apoc.graph.*`     | ✅ Same  | Virtual graph operations                      |
-| `apoc.hashing.*`   | ✅ Same  | Multiple hash algorithms                      |
-| `apoc.label.*`     | ✅ Same  | Label operations                              |
-| `apoc.load.*`      | ✅ Same  | Load from JSON, CSV, XML, JDBC, S3, etc.      |
-| `apoc.lock.*`      | ✅ Same  | Locking mechanisms                            |
-| `apoc.log.*`       | ✅ Same  | Logging functions                             |
-| `apoc.merge.*`     | ✅ Same  | Merge operations                              |
-| `apoc.meta.*`      | ✅ Same  | Metadata functions                            |
-| `apoc.neighbors.*` | ✅ Same  | Neighbor traversal                            |
-| `apoc.nodes.*`     | ✅ Same  | Batch node operations                         |
-| `apoc.number.*`    | ✅ Same  | Number formatting and conversion              |
-| `apoc.paths.*`     | ✅ Same  | Advanced path operations                      |
-| `apoc.periodic.*`  | ✅ Same  | Periodic execution and batch processing       |
-| `apoc.refactor.*`  | ✅ Same  | Graph refactoring                             |
-| `apoc.rel.*`       | ✅ Same  | Relationship operations                       |
-| `apoc.schema.*`    | ✅ Same  | Schema management                             |
-| `apoc.scoring.*`   | ✅ Same  | Scoring and similarity functions              |
-| `apoc.search.*`    | ✅ Same  | Full-text search                              |
-| `apoc.spatial.*`   | ✅ Same  | Geographic functions                          |
-| `apoc.stats.*`     | ✅ Same  | Statistical functions                         |
-| `apoc.temporal.*`  | ✅ Same  | Advanced date/time operations                 |
-| `apoc.trigger.*`   | ✅ Same  | Trigger management                            |
-| `apoc.warmup.*`    | ✅ Same  | Database warmup                               |
-| `apoc.xml.*`       | ✅ Same  | XML processing                                |
+- **Built-in functions:** 31 of the 36 are real APOC functions. Four are [NornicDB extensions](#nornicdb-extensions), and `apoc.coll.split` is an APOC procedure offered here as a function.
+- **Built-in procedures:** 33 of the 47 `apoc.*` / `gds.*` procedures are real APOC or GDS names; 14 are NornicDB extensions. `gds.*` procedures with GDS's names don't yet take GDS's parameters or return its columns (#1161).
+- **The APOC plugin:** 176 of its 983 names are real APOC functions and 118 are real APOC *procedures* it registers as functions; the other 689 aren't APOC names. 81 of the 983 can be called today (#1163, #1167), and none appears in `SHOW FUNCTIONS` (#1168).
+- File operations respect security settings, and the plugin system allows custom extensions. Performance characteristics may differ.
 
-**Migration Notes:**
+## NornicDB extensions
 
-- Most queries work without modification
-- All core APOC functions are implemented
-- File operations respect security settings
-- Plugin system allows custom extensions
-- Performance characteristics may differ (often faster due to native Go implementation)
+These names are NornicDB's own: they don't exist in APOC Core, APOC Extended or GDS 2.13.12 (on Neo4j 5.26.30) as the same kind of name. They are kept as NornicDB extensions; a query that uses them runs only on NornicDB.
+
+**Built-in procedures (14):**
+
+| name | nearest real equivalent |
+|---|---|
+| `apoc.algo.pageRank`, `apoc.algo.betweenness`, `apoc.algo.closeness`, `apoc.algo.wcc`, `apoc.algo.louvain`, `apoc.algo.labelPropagation` | GDS's `gds.pageRank.stream`, `gds.betweenness.stream`, `gds.closeness.stream`, `gds.wcc.stream`, `gds.louvain.stream`, `gds.labelPropagation.stream` |
+| `gds.linkPrediction.adamicAdar.stream`, `.commonNeighbors.stream`, `.resourceAllocation.stream`, `.preferentialAttachment.stream` | GDS's `gds.alpha.linkprediction.adamicAdar` / `commonNeighbors` / `resourceAllocation` / `preferentialAttachment`: functions over one pair of nodes, not procedures |
+| `gds.linkPrediction.jaccard.stream`, `gds.linkPrediction.predict.stream` | none (`predict` combines topology and embeddings) |
+| `apoc.cypher.doitall` | APOC's `apoc.cypher.doIt` |
+| `apoc.periodic.rock_n_roll` | APOC's `apoc.periodic.iterate` |
+
+**Built-in functions (4, and one procedure offered as a function):** `apoc.coll.containsAny`, `apoc.coll.reverse`, `apoc.meta.isType` and `apoc.meta.type` (APOC 5's are `apoc.meta.cypher.isType` / `apoc.meta.cypher.type`); `apoc.coll.split` is an APOC procedure.
+
+**The APOC plugin:** 689 of its names aren't APOC names, and 118 are APOC procedures that it registers as functions:
+
+<details><summary>The plugin's names that aren't APOC names: 689 (the 55 callable today in <b>bold</b>)</summary>
+
+- `apoc.math` (37): **abs**, **acos**, **asin**, **atan**, atan2, **ceil**, clamp, **cos**, **exp**, factorial, fibonacci, **floor**, gcd, isPrime, lcm, lerp, **log**, **log10**, **logit**, mean, median, mode, nextPrime, normalize, percentile, pow, product, **random**, randomInt, range, round, **sin**, **sqrt**, stdev, sum, **tan**, variance
+- `apoc.number` (35): **abs**, arabize, **ceil**, clamp, exact, **exp**, factorial, fibonacci, **floor**, fromBase, fromBinary, fromHex, fromOctal, gcd, isEven, isOdd, isPrime, lcm, lerp, **log**, **log10**, map, normalize, parse, power, **random**, randomInt, romanize, round, sign, **sqrt**, toBase, toBinary, toHex, toOctal
+- `apoc.node` (31): addLabel, addLabels, clone, connected, degreeIn, degreeOut, diff, equals, fromMap, hasLabel, hasLabels, isDense, neighbors, neighborsIn, neighborsOut, properties, property, relationshipExists, relationships, relationshipsIn, relationshipsOut, relationshipTypes, relationshipTypesIn, relationshipTypesOut, removeLabel, removeLabels, removeProperties, removeProperty, setProperties, setProperty, toMap
+- `apoc.util` (31): case, coalesce, compressWithAlgorithm, decodeBase64, decodeURL, decompressWithAlgorithm, encodeBase64, encodeURL, formatTimestamp, isNode, isPath, isRelationship, md5Base64, md5Hex, **merge**, **now**, nowInSeconds, parseTimestamp, partition, randomUUID, range, repeat, sha1Base64, sha1Hex, sha256Base64, sha256Hex, **timestamp**, typeOf, **uuid**, validatePattern, when
+- `apoc.meta` (30): analyze, cardinality, compare, config, constraints, cypherType, cypherTypes, diff, export, fromString, functions, import, indexes, isNode, isPath, isRelationship, isType, nodeLabels, pattern, procedures, propertyKeys, relTypes, restore, snapshot, toString, type, typeOf, types, validate, version
+- `apoc.schema` (27): analyze, compare, createConstraint, createExistsConstraint, createIndex, createNodeKeyConstraint, createUniqueConstraint, dropConstraint, dropIndex, export, import, info, labels, nodeConstraintExists, nodeConstraints, nodeIndexes, nodeIndexExists, optimize, properties, propertiesDistinct, relationshipConstraints, relationshipIndexes, restore, snapshot, stats, types, validate
+- `apoc.label` (26): add, clear, compare, count, diff, format, fromPattern, fromString, get, has, hasAll, hasAny, intersection, list, merge, nodes, **normalize**, pattern, remove, replace, search, set, stats, toString, union, validate
+- `apoc.search` (26): autocomplete, contains, didYouMean, dropIndex, exists, fullText, fuzzy, highlight, in, index, match, missing, multiSearchAll, multiSearchAny, nodeAny, notIn, notNull, null, parallel, prefix, range, regex, reindex, score, suffix, suggest
+- `apoc.rel` (25): clone, compare, delete, direction, equals, exists, fromMap, hasProperties, hasProperty, isAnyType, isBetween, isDirectedBetween, isLoop, isType, nodes, otherNode, properties, property, removeProperties, removeProperty, reverse, setProperties, setProperty, toMap, weight
+- `apoc.temporal` (24): add, age, dayOfWeek, dayOfYear, daysInMonth, difference, duration, endOf, fromEpochMillis, isBetween, isLeapYear, isWeekday, isWeekend, parse, quarter, round, startOf, subtract, timezone, toEpochMillis, toLocal, toUTC, truncate, weekOfYear
+- `apoc.stats` (22): **correlation**, count, **covariance**, histogram, iqr, kurtosis, max, mean, median, min, mode, **normalize**, **outliers**, percentile, quartiles, range, skewness, stdDev, sum, summary, variance, zScore
+- `apoc.xml` (22): addChild, clone, create, **escape**, fromJson, fromMap, getAttribute, getNamespace, getText, **minify**, namespace, prettify, query, removeChild, setAttribute, setText, toJson, toMap, toString, transform, **unescape**, validate
+- `apoc.paths` (21): all, common, count, cycles, disjoint, distance, edgeDisjoint, elementary, eulerian, exists, hamiltonian, kShortest, longest, merge, reverse, shortest, simple, slice, unique, withinLength, withLength
+- `apoc.log` (20): audit, clear, custom, format, getLevel, memory, metrics, performance, progress, query, result, rotate, search, security, setLevel, stats, tail, timer, toFile, trace
+- `apoc.scoring` (20): bm25, **cosine**, dice, **euclidean**, idf, jaccard, **manhattan**, minMax, **normalize**, overlap, pageRank, **pearson**, percentile, rank, **sigmoid**, **softmax**, **tf**, tfidf, topK, zScore
+- `apoc.community` (19): averageClusteringCoefficient, clusteringCoefficient, conductance, connectedComponents, coreNumber, density, fastGreedy, infoMap, kCore, labelPropagation, louvain, modularity, numComponents, spinGlass, stronglyConnectedComponents, totalTriangles, triangleCount, walkTrap, weaklyConnectedComponents
+- `apoc.spatial` (19): area, bearing, boundingBox, centroid, contains, decodeGeohash, destination, distance, encodeGeohash, fromGeoJSON, haversineDistance, intersects, kNearest, midpoint, nearest, toGeoJSON, vincentyDistance, within, withinDistance
+- `apoc.json` (17): **compact**, **delete**, filter, **flatten**, keys, map, merge, parse, **pretty**, reduce, set, size, stringify, **type**, **unflatten**, validate, values
+- `apoc.load` (17): arrow, avro, azure, binary, csvStream, directoryTree, elasticsearch, gcs, graphQL, jsonSchema, jsonStream, kafka, redis, rest, s3, stream, xmlSimple
+- `apoc.lock` (17): batch, clear, detectDeadlock, isLocked, priority, readNodes, readRelationships, relationships, stats, tryLock, unlockAll, unlockBatch, unlockNodes, unlockRelationships, waitFor, withLock, withReadLock
+- `apoc.merge` (17): batch, conditional, conflict, deepMerge, labels, mergeNode, mergeRelationship, nodeEager, nodes, pattern, preview, properties, relationshipEager, rollback, snapshot, strategy, validate
+- `apoc.hashing` (16): cityHash64, consistentHash, fnv1, fnv164, fnv1a, fnv1a64, jumpHash, md5, murmurHash3, rendezvousHash, sha1, sha256, sha384, sha512, xxHash32, xxHash64
+- `apoc.import` (16): batch, convertType, csvData, cypher, cypherData, file, filter, graphMLData, jsonData, merge, parseCsvLine, parseJsonLine, stream, transform, url, validateSchema
+- `apoc.trigger` (15): after, afterAsync, before, count, disable, enable, export, import, isEnabled, nodeByLabel, onCreate, onDelete, onUpdate, relationshipByType, stats
+- `apoc.bitwise` (14): and, clearBit, countBits, leftShift, not, or, reverseBits, rightShift, rotateLeft, rotateRight, setBit, testBit, toggleBit, xor
+- `apoc.export` (14): csv, csvAll, csvData, cypher, cypherAll, cypherData, graphML, graphMLAll, graphMLData, json, jsonAll, jsonData, toFile, toString
+- `apoc.nodes` (14): batch, difference, distinct, distinctRels, filter, fromMap, intersect, map, partition, reduce, relationships, sort, toMap, union
+- `apoc.warmup` (14): cache, clear, indexes, nodes, optimize, path, progress, properties, relationships, runWithParams, schedule, stats, status, subgraph
+- `apoc.convert` (9): fromJsonNode, toBoolean, toBooleanList, toFloat, toFloatList, toInteger, toIntList, toString, toStringList
+- `apoc.graph` (9): clone, fromMap, merge, nodes, relationships, stats, subgraph, toMap, validate
+- `apoc.refactor` (9): categorizeProperty, changeType, denormalize, invertRelationship, normalize, redirectRelationship, renameLabel, renameProperty, renameType
+- `apoc.cypher` (8): explain, parse, profile, runFirstColumn, toJson, toList, toMap, validate
+- `apoc.diff` (7): deep, lists, maps, merge, patch, strings, summary
+- `apoc.algo` (6): allPairs, betweennessCentrality, closenessCentrality, community, degreeCentrality, pageRank
+- `apoc.text` (6): bytesToString, fromCodePoint, **ltrim**, **reverse**, **rtrim**, **trim**
+- `apoc.agg` (5): frequencies, histogram, **mode**, percentile, **stdev**
+- `apoc.coll` (5): containsAny, isEmpty, isNotEmpty, reverse, slice
+- `apoc.neighbors` (4): bfs, count, dfs, exists
+- `apoc.atomic` (3): compareAndSwap, decrement, increment
+- `apoc.create` (3): clone, cloneSubgraph, vPattern
+- `apoc.date` (3): fromUnixTime, parseAsZonedDateTime, toUnixTime
+- `apoc.map` (2): dropNullValues, keys
+- `apoc.path` (2): allShortestPaths, shortestPath
+- `apoc.periodic` (2): rock, schedule
+
+</details>
+
+<details><summary>APOC procedures the plugin registers as functions: 118 (none callable today)</summary>
+
+- `apoc.create` (13): addLabels, node, nodes, relationship, removeLabels, removeProperties, removeRelProperties, setProperties, setProperty, setRelProperties, setRelProperty, uuids, vNodes
+- `apoc.load` (12): csv, directory, driver, html, jdbc, jdbcUpdate, json, jsonArray, jsonParams, ldap, parquet, xml
+- `apoc.refactor` (11): cloneNodes, cloneSubgraph, cloneSubgraphFromPaths, collapseNode, deleteAndReconnect, extractNode, from, mergeNodes, mergeRelationships, normalizeAsBoolean, setType
+- `apoc.trigger` (9): add, drop, install, list, pause, remove, removeAll, resume, show
+- `apoc.meta` (8): data, graph, graphSample, nodeTypeProperties, relTypeProperties, schema, stats, subGraph
+- `apoc.periodic` (8): cancel, commit, countdown, iterate, list, repeat, submit, truncate
+- `apoc.atomic` (6): add, concat, insert, remove, subtract, update
+- `apoc.cypher` (6): doIt, mapParallel, parallel, run, runFile, runMany
+- `apoc.graph` (6): from, fromCypher, fromData, fromDocument, fromPath, fromPaths
+- `apoc.nodes` (6): collapse, cycles, delete, get, group, link
+- `apoc.log` (5): debug, error, info, stream, warn
+- `apoc.path` (4): expandConfig, spanningTree, subgraphAll, subgraphNodes
+- `apoc.algo` (3): aStar, cover, dijkstra
+- `apoc.import` (3): csv, graphML, json
+- `apoc.schema` (3): assert, nodes, relationships
+- `apoc.search` (3): node, nodeAll, nodeReduced
+- `apoc.convert` (2): setJsonProperty, toTree
+- `apoc.lock` (2): all, nodes
+- `apoc.neighbors` (2): atHop, toHop
+- `apoc.util` (2): sleep, validate
+- `apoc.coll` (1): split
+- `apoc.stats` (1): degrees
+- `apoc.text` (1): phoneticDelta
+- `apoc.warmup` (1): run
+
+</details>
 
 Test your specific APOC usage when migrating, particularly:
 

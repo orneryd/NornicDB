@@ -194,25 +194,27 @@ CALL apoc.periodic.iterate(
 )
 ```
 
-### Graph Algorithms ✅
+### Graph Algorithms
 
 | Algorithm        | Procedure                                      | Status |
 | ---------------- | ---------------------------------------------- | ------ |
-| Dijkstra         | `apoc.algo.dijkstra`                           | ✅     |
-| A\*              | `apoc.algo.aStar`                              | ✅     |
-| All Simple Paths | `apoc.algo.allSimplePaths`                     | ✅     |
-| PageRank         | `apoc.algo.pageRank`                           | ✅     |
-| Betweenness      | `apoc.algo.betweenness`                        | ✅     |
-| Closeness        | `apoc.algo.closeness`                          | ✅     |
-| Neighbors        | `apoc.neighbors.tohop`, `apoc.neighbors.byhop` | ✅     |
+| Dijkstra         | `apoc.algo.dijkstra`                           | ✅ APOC name |
+| A\*              | `apoc.algo.aStar`                              | ✅ APOC name |
+| All Simple Paths | `apoc.algo.allSimplePaths`                     | ✅ APOC name |
+| PageRank         | `apoc.algo.pageRank`                           | NornicDB extension (GDS: `gds.pageRank.stream`) |
+| Betweenness      | `apoc.algo.betweenness`                        | NornicDB extension (GDS: `gds.betweenness.stream`) |
+| Closeness        | `apoc.algo.closeness`                          | NornicDB extension (GDS: `gds.closeness.stream`) |
+| Neighbors        | `apoc.neighbors.tohop`, `apoc.neighbors.byhop` | ✅ APOC names |
 
-### Community Detection ✅
+### Community Detection
 
 | Algorithm            | Procedure                    | Status |
 | -------------------- | ---------------------------- | ------ |
-| Louvain              | `apoc.algo.louvain`          | ✅     |
-| Label Propagation    | `apoc.algo.labelPropagation` | ✅     |
-| Connected Components | `apoc.algo.wcc`              | ✅     |
+| Louvain              | `apoc.algo.louvain`          | NornicDB extension (GDS: `gds.louvain.stream`) |
+| Label Propagation    | `apoc.algo.labelPropagation` | NornicDB extension (GDS: `gds.labelPropagation.stream`) |
+| Connected Components | `apoc.algo.wcc`              | NornicDB extension (GDS: `gds.wcc.stream`) |
+
+A NornicDB extension isn't in APOC or GDS: a query that uses it runs only on NornicDB (see [NornicDB extensions](../features/apoc-functions.md#nornicdb-extensions)).
 
 ### Data Import/Export ✅
 

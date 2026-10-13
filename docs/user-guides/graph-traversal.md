@@ -319,7 +319,7 @@ RETURN node
 
 ## Centrality and Community Detection
 
-These algorithms run over the full graph (or a relationship-filtered subgraph) and are useful for ranking, recommendation, and clustering workloads.
+These algorithms run over the full graph and are useful for ranking, recommendation, and clustering workloads. They are [NornicDB extensions](../features/apoc-functions.md#nornicdb-extensions): APOC has no `apoc.algo.pageRank` and the rest (GDS's are `gds.pageRank.stream` and so on), so a query that uses them runs only on NornicDB. The relationship-type list in the examples isn't applied yet (#1169).
 
 ### PageRank
 
@@ -381,7 +381,7 @@ ORDER BY size DESC
 
 ## Link Prediction
 
-NornicDB ships GDS-style link-prediction primitives. Each one scores how likely two nodes are to form an edge based on shared neighborhood structure:
+NornicDB ships its own link-prediction procedures. Each one scores how likely two nodes are to form an edge based on shared neighborhood structure. The `gds.linkPrediction.*.stream` names are [NornicDB extensions](../features/apoc-functions.md#nornicdb-extensions): GDS has no such procedures (its topological link prediction is the `gds.alpha.linkprediction.*` functions over one pair of nodes), so these queries run only on NornicDB:
 
 ```cypher
 -- Common Neighbors: count of mutual neighbors
