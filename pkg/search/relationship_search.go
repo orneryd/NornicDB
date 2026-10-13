@@ -290,15 +290,25 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 		if id == "" {
 			return changed, false
 		}
-		edge, err := s.engine.GetEdge(storage.EdgeID(id))
-		if err != nil {
-			// Hidden from reads, or not readable yet: the write's own copy
-			// is embedded. A delete removed the entry and its pending
-			// copy, so a relationship that is gone isn't embedded.
-			if reported == nil {
-				continue
+		// The copy the index took is the version its entry stands for: it
+		// is embedded even when a read of storage would still give an older
+		// version (the write not visible yet, or a stale cached copy), whose
+		// vectors the entry would refuse. Storage is read only without a
+		// copy that matches; a delete removed the entry and its copy, so a
+		// relationship that is gone isn't embedded.
+		rs.mu.RLock()
+		entry := rs.entries[id]
+		rs.mu.RUnlock()
+		edge := reported
+		if reported == nil || entry == nil || relationshipSource(reported) != entry.Source {
+			stored, err := s.engine.GetEdge(storage.EdgeID(id))
+			if err != nil {
+				if reported == nil {
+					continue
+				}
+			} else {
+				edge = stored
 			}
-			edge = reported
 		}
 		vectors, err := rs.embed(ctx, edge)
 		if err != nil {
@@ -317,11 +327,16 @@ func (s *Service) embedPendingRelationships(ctx context.Context, rs *relationshi
 		}
 		source := relationshipSource(edge)
 		rs.mu.Lock()
-		if entry := rs.entries[id]; entry != nil && entry.Source == source {
-			entry.Vectors = normalized
+		current := rs.entries[id]
+		if current != nil && current.Source == source {
+			current.Vectors = normalized
 			changed = true
 		}
 		rs.mu.Unlock()
+		if current != nil && current.Source != source {
+			// A later write re-indexed it; its own pending copy is embedded.
+			s.logPrintf("Relationship search: embedding of %s superseded by a later write", id)
+		}
 	}
 	return changed, false
 }
