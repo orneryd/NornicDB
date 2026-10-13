@@ -34,6 +34,10 @@ func TestUnknownFunctionFailsInEveryClause(t *testing.T) {
 		"RETURN a.b.size([1, 2])",
 		"RETURN date.toUpper('a')",
 		"WITH date.toUpper('a') AS v RETURN v",
+		"RETURN nosuch . fn(1)",
+		"SHOW PROCEDURES YIELD name WHERE nosuch(name) RETURN name",
+		"SHOW FUNCTIONS YIELD name WHERE nosuch(name) IS NULL",
+		"SHOW DATABASES YIELD name WHERE nosuch(name) IS NULL",
 	}
 	known := []string{
 		"CALL db.labels() YIELD label RETURN count(label) AS n",
@@ -42,6 +46,7 @@ func TestUnknownFunctionFailsInEveryClause(t *testing.T) {
 		"WITH 'nosuch(1)' AS s RETURN s // nosuch(1)",
 		"WITH 1 AS x /* nosuch(1) */ RETURN x",
 		"RETURN date.truncate('day', date('2026-10-13')) AS d",
+		"SHOW PROCEDURES YIELD name WHERE toUpper(name) IS NOT NULL RETURN count(name) AS n",
 		"RETURN apoc.coll.sum([1, 2]) AS s",
 		"UNWIND ['ab'] AS s WITH s WHERE s CONTAINS ('a') AND s STARTS WITH ('a') RETURN s",
 		"UNWIND [3, 1] AS x RETURN x ORDER BY (x) SKIP (0) LIMIT (1)",
@@ -67,6 +72,11 @@ func TestUnknownFunctionFailsInEveryClause(t *testing.T) {
 			for _, query := range known {
 				_, err := exec.Execute(ctx, query, nil)
 				require.NoError(t, err, query)
+			}
+			// A graph a USE names is no call, and a name's dots may be
+			// spaced (the check reads date . truncate as date.truncate).
+			for _, query := range []string{"USE graph.byName('x') RETURN 1", "USE graph . byName('x') RETURN 1", "RETURN date . truncate('day', date('2026-10-13')) AS d"} {
+				require.NoError(t, validateKnownFunctions(query), query)
 			}
 			// The statement's other semantic errors come first, as in Neo4j.
 			_, err := exec.Execute(ctx, "WITH 1 AS a RETURN nosuch(b)", nil)

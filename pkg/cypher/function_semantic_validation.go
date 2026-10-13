@@ -12,9 +12,11 @@ import (
 // plugin's function, as in Neo4j, whether or not a database was opened
 // (#1166). A procedure a CALL names and the graph a USE names are not
 // function calls; schema and administration commands declare rules, not
-// calls.
+// calls. A SHOW command's YIELD / WHERE / RETURN tail is checked, as in
+// Neo4j.
 func validateKnownFunctions(expression string) error {
-	if isSchemaCommandStatement(expression) || isCreateSchemaOrAdministrationCommand(expression) {
+	if !startsWithKeywordFold(strings.TrimSpace(expression), "SHOW") &&
+		(isSchemaCommandStatement(expression) || isCreateSchemaOrAdministrationCommand(expression)) {
 		return nil
 	}
 	for index := 0; index < len(expression); {
@@ -91,11 +93,7 @@ func isNonFunctionSemanticKeyword(name string) bool {
 // or graph name, dotted, which is not a function call. Anything else after
 // the keyword (a subquery, its imports) is scanned on.
 func skipCalledName(expression string, start int) int {
-	cursor := start
-	for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
-		cursor++
-	}
-	_, end, ok := scanIdentifierToken(expression, cursor)
+	_, end, ok := scanIdentifierToken(expression, skipSpaces(expression, start))
 	if !ok {
 		return start
 	}
@@ -104,18 +102,22 @@ func skipCalledName(expression string, start int) int {
 }
 
 // dottedNameParts returns the dotted parts (.b.c) following a name that ends
-// at end, and where they end.
+// at end, and where they end. Whitespace may stand around a dot, as in
+// Neo4j (date . truncate(…), USE graph . byName(…)).
 func dottedNameParts(expression string, end int) (string, int) {
 	parts := ""
-	for end < len(expression) && expression[end] == '.' {
-		part, partEnd, ok := scanIdentifierToken(expression, end+1)
+	for {
+		dot := skipSpaces(expression, end)
+		if dot >= len(expression) || expression[dot] != '.' {
+			return parts, end
+		}
+		part, partEnd, ok := scanIdentifierToken(expression, skipSpaces(expression, dot+1))
 		if !ok {
-			break
+			return parts, end
 		}
 		parts += "." + part
 		end = partEnd
 	}
-	return parts, end
 }
 
 func skipQuotedSemanticText(expression string, start int) int {
