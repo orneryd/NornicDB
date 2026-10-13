@@ -255,26 +255,23 @@ func (s *Service) rerankGraphPool(ctx context.Context, query string, pool []*gra
 // own properties may be projected or absent (a hit found by a query chunk's
 // vector), so they serve only when the entity can't be read.
 func (s *Service) graphRerankContent(result *SearchResult, query string, maxChars int) string {
+	text := ""
 	if relationship := result.Relationship; relationship != nil {
-		text := ""
 		if edge, err := s.engine.GetEdge(relationship.ID); err == nil && edge != nil {
 			text = s.extractSearchableText(&storage.Node{Labels: []string{edge.Type}, Properties: edge.Properties})
 		} else {
 			text = s.extractSearchableText(graphCandidateTextNode(result))
 		}
-		if maxChars > 0 && len(text) > maxChars {
-			text = text[:maxChars]
+	} else {
+		id := result.NodeID
+		if id == "" {
+			id = storage.NodeID(result.ID)
 		}
-		return text
+		if node, err := s.getNodeWithoutEmbeddings(id); err == nil && node != nil {
+			return s.rerankCandidateContent(node, rrfResult{ID: string(id)}, query, maxChars)
+		}
+		text = s.extractSearchableText(graphCandidateTextNode(result))
 	}
-	id := result.NodeID
-	if id == "" {
-		id = storage.NodeID(result.ID)
-	}
-	if node, err := s.getNodeWithoutEmbeddings(id); err == nil && node != nil {
-		return s.rerankCandidateContent(node, rrfResult{ID: string(id)}, query, maxChars)
-	}
-	text := s.extractSearchableText(graphCandidateTextNode(result))
 	if maxChars > 0 && len(text) > maxChars {
 		text = text[:maxChars]
 	}
