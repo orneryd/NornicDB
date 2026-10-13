@@ -1,6 +1,9 @@
 package storage
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"strings"
 )
@@ -105,23 +108,42 @@ func (s temporalKeySpec) indexKeyProp() string {
 	return strings.Join(s.keyProps, temporalKeyPropSeparator)
 }
 
-// keyHash hashes a key value for temporal index keys.
+// keyHash hashes a key value for temporal index keys. The temporal history and
+// current-pointer keys are persisted, so the hash must be the same in every
+// process: it is a plain domain-separated SHA-256 (stableTemporalKeyDigest),
+// not NewCompositeKey's digest, whose HMAC key is generated per process (a
+// restart that skipped the rebuild couldn't find any entry written before it).
 //
 // Numeric key values are hashed in their numeric form, so keys that keyEqual
 // treats as equal (int64 1 and float64 1.0, compared with compareValues) share
-// a history: a type-sensitive hash put them in different histories and the
-// overlap check through the index missed overlaps between them. The index is
-// derived state, rebuilt from the stored nodes on every start
-// (RebuildTemporalIndexes), so entries written with the old hash are replaced.
+// a history.
 func (s temporalKeySpec) keyHash(keyValue interface{}) string {
 	if values, ok := keyValue.([]interface{}); ok && s.composite() {
 		normalized := make([]interface{}, len(values))
 		for i, v := range values {
 			normalized[i] = temporalKeyHashValue(v)
 		}
-		return constraintCompositeKey(normalized)
+		return stableTemporalKeyDigest(normalized...)
 	}
-	return constraintValueKey(temporalKeyHashValue(keyValue))
+	return stableTemporalKeyDigest(temporalKeyHashValue(keyValue))
+}
+
+// stableTemporalKeyDigest is the process-independent digest of key values for
+// persisted temporal index keys: SHA-256 over a domain tag and each value's
+// length-prefixed "%T:%v" form (NewCompositeKey's canonical text).
+func stableTemporalKeyDigest(values ...interface{}) string {
+	h := sha256.New()
+	write := func(part string) {
+		var n [8]byte
+		binary.BigEndian.PutUint64(n[:], uint64(len(part)))
+		h.Write(n[:])
+		h.Write([]byte(part))
+	}
+	write("storage.temporal_key.v2")
+	for _, v := range values {
+		write(fmt.Sprintf("%T:%v", v, v))
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // temporalKeyHashValue is the form of one key value that keyHash hashes:

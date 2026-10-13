@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"sort"
@@ -656,11 +657,45 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	// Every node of every temporal constraint is indexed now; the per-schema
-	// runtime marks are superseded.
+	// Every node of every temporal constraint is indexed now, in the current
+	// key format; the per-schema runtime marks are superseded.
+	if err := b.withUpdate(func(txn *badger.Txn) error {
+		return txn.Set(temporalIndexFormatKey, temporalIndexFormatCurrent)
+	}); err != nil {
+		return err
+	}
 	b.resetTemporalIndexCompleteness()
 	b.temporalIndexReady.Store(true)
 	return nil
+}
+
+// temporalIndexFormatKey records the key format of the stored temporal
+// history index. Format 2 hashes key values with stableTemporalKeyDigest;
+// earlier stores hashed them with a per-process key, so their entries can't
+// be found after a restart and must be rebuilt before the index is trusted.
+var (
+	temporalIndexFormatKey     = []byte{prefixMVCCMeta, prefixMVCCMetaTemporalIndexFormat}
+	temporalIndexFormatCurrent = []byte{2}
+)
+
+// temporalIndexFormatIsCurrent reports whether the stored temporal index was
+// built in the current key format.
+func (b *BadgerEngine) temporalIndexFormatIsCurrent() (bool, error) {
+	current := false
+	err := b.withView(func(txn *badger.Txn) error {
+		item, err := txn.Get(temporalIndexFormatKey)
+		if err == badger.ErrKeyNotFound {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return item.Value(func(v []byte) error {
+			current = bytes.Equal(v, temporalIndexFormatCurrent)
+			return nil
+		})
+	})
+	return current, err
 }
 
 // resetTemporalIndexCompleteness drops the runtime completeness marks of

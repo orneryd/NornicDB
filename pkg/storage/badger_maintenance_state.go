@@ -49,7 +49,17 @@ func (b *BadgerEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, er
 		// the startup rebuild then skips; the temporal history index is one of
 		// them, so NO OVERLAP validation can trust it (#1126). Without this a
 		// clean restart left every temporal constraint on the label scan.
-		b.temporalIndexReady.Store(true)
+		// A store whose temporal index predates the stable key format is
+		// rebuilt once first: its entries were keyed per process.
+		current, err := b.temporalIndexFormatIsCurrent()
+		if err != nil {
+			return false, err
+		}
+		if current {
+			b.temporalIndexReady.Store(true)
+		} else if err := b.RebuildTemporalIndexes(ctx); err != nil {
+			return false, err
+		}
 	}
 	return clean, nil
 }

@@ -170,8 +170,12 @@ func TestNodeTemporalKey_SingleKeyDescriptorUnchanged(t *testing.T) {
 		keyProp:   "fact_key",
 		startProp: "valid_from",
 		endProp:   "valid_to",
-		keyHash:   NewCompositeKey("k1").Hash,
-	}, desc, "single-key descriptors must stay byte-identical to existing persisted indexes")
+		// The key hash is the process-independent digest: NewCompositeKey's
+		// HMAC key is random per process, so persisted entries hashed with it
+		// never matched after a restart. Stores in the old format are rebuilt
+		// on open (temporalIndexFormatKey).
+		keyHash: stableTemporalKeyDigest("k1"),
+	}, desc)
 
 	composite := compositeTemporalConstraint()
 	node := compositeTemporalNode("n", "a", "x", compositeDay(0), nil)

@@ -121,6 +121,9 @@ const (
 	// clean-up writes and then drops, to have Badger compact level 0 (see
 	// deleteCleanupMarkerKey). It never outlives one clean-up.
 	prefixMVCCMetaDeleteCleanupMarker = byte(0x0E)
+	// prefixMVCCMetaTemporalIndexFormat records the temporal history index's
+	// key format; see temporalIndexFormatKey.
+	prefixMVCCMetaTemporalIndexFormat = byte(0x12)
 )
 
 // maxNodeSize is the maximum size for a node to be stored inline (50KB to leave room for BadgerDB overhead)
