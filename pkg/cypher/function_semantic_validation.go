@@ -65,11 +65,9 @@ func validateKnownFunctions(expression string) error {
 			index = cursor + 1
 			continue
 		}
-		if strings.Contains(normalized, ".") && PluginFunctionLookup != nil {
-			if _, found := PluginFunctionLookup(normalized); found {
-				index = cursor + 1
-				continue
-			}
+		if _, found := pluginFunctionHandler(name); found {
+			index = cursor + 1
+			continue
 		}
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",

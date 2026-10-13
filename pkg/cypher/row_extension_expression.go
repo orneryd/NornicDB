@@ -39,16 +39,16 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		return out, true
 	}
-	if PluginFunctionLookup != nil && strings.Contains(name, ".") {
-		if handler, found := PluginFunctionLookup(name); found {
-			arguments, ok := args()
-			if !ok {
-				return nil, true, false, nil
-			}
-			result, err := callPluginHandler(handler, arguments)
-			if err != nil {
-				return nil, true, false, err
-			}
+	if handler, found := pluginFunctionHandler(function); found {
+		arguments, ok := args()
+		if !ok {
+			return nil, true, false, nil
+		}
+		result, handled, err := callPluginFunction(function, handler, arguments)
+		if err != nil {
+			return nil, true, false, err
+		}
+		if handled {
 			return result, true, true, nil
 		}
 	}

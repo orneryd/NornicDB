@@ -196,6 +196,17 @@ skipArrayIndexing:
 	lowerExpr := lowerASCII(expr)
 
 	// ========================================
+	// Plugin Functions (loaded dynamically from .so files)
+	// ========================================
+	// A plugin function overrides a built-in of the same name, so plugins
+	// are asked first, as the row evaluator does (#1163).
+	if strings.Contains(expr, ".") && looksLikeFunctionCall(expr) {
+		if result, handled := e.tryCallPluginFunction(ctx, expr, nodes, rels); handled {
+			return result
+		}
+	}
+
+	// ========================================
 	// Registered Function Dispatch (Phase B: pkg/cypher/fn)
 	// ========================================
 	if name, inner, ok := parseFunctionCallWS(expr); ok {
@@ -1184,19 +1195,6 @@ skipArrayIndexing:
 	// rand() - random float between 0 and 1
 	if lowerExpr == "rand()" {
 		return randomCypherFloat()
-	}
-
-	// ========================================
-
-	// Plugin Functions (loaded dynamically from .so files)
-	// ========================================
-
-	// Try plugin functions for any namespaced function call (contains dots)
-	// This is GENERIC - works for any plugin, not just a specific one
-	if strings.Contains(lowerExpr, ".") && looksLikeFunctionCall(lowerExpr) {
-		if result, handled := e.tryCallPluginFunction(ctx, expr, nodes, rels); handled {
-			return result
-		}
 	}
 
 	// apoc.create.uuid() - Generate a UUID (alias for randomUUID)

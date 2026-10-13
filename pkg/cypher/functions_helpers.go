@@ -2,31 +2,58 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// tryCallPluginFunction attempts to call a function from the plugin system.
-// Returns the result and true if the function was handled, or nil and false if not found.
-// This is GENERIC - works for any plugin function (not specific to any plugin).
-func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
-	// Plugin lookup must be configured
-	if PluginFunctionLookup == nil {
+// errUnsupportedPluginSignature is a plugin handler whose Go signature
+// callPluginHandler can't call.
+var errUnsupportedPluginSignature = errors.New("unsupported function signature")
+
+// pluginFunctionHandler is the one plugin function lookup, for the
+// unknown-function check and both evaluators: the loaded plugin's handler
+// for a dotted function name, matched as written. Plugin function names are
+// case-sensitive, as in Neo4j (apoc.text.camelCase, not apoc.text.camelcase;
+// #1163).
+func pluginFunctionHandler(name string) (interface{}, bool) {
+	if PluginFunctionLookup == nil || !strings.Contains(name, ".") {
 		return nil, false
 	}
+	return PluginFunctionLookup(normalizeProjectionColumnName(strings.TrimSpace(name)))
+}
 
+// callPluginFunction calls a plugin function's handler, for both evaluators,
+// with the statement error a failed call is. A plugin function overrides a
+// built-in of the same name; when its handler can't take a call, the
+// built-in answers instead: handled is false (#1163).
+func callPluginFunction(name string, handler interface{}, args []interface{}) (value interface{}, handled bool, err error) {
+	result, err := callPluginHandler(handler, args)
+	if errors.Is(err, errUnsupportedPluginSignature) {
+		if _, builtIn := builtInCypherFunctions[lowerASCII(normalizeProjectionColumnName(strings.TrimSpace(name)))]; builtIn {
+			return nil, false, nil
+		}
+	}
+	if err != nil {
+		return nil, true, functionEvaluationError(err)
+	}
+	return result, true, nil
+}
+
+// tryCallPluginFunction calls a plugin function from the main evaluator.
+// Returns the result and true if a plugin handled the call, or nil and false
+// if no plugin has the function (or a built-in answers it instead). A call
+// the plugin fails is the statement's error, as in the row evaluator.
+func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
 	// Extract function name from expression (e.g., "myplugin.func([1,2,3])" -> "myplugin.func")
-	lowerExpr := lowerASCII(expr)
-	parenIdx := strings.Index(lowerExpr, "(")
+	parenIdx := strings.Index(expr, "(")
 	if parenIdx == -1 {
 		return nil, false
 	}
-	funcName := lowerExpr[:parenIdx]
-
-	// Look up in plugin registry
-	handler, found := PluginFunctionLookup(funcName)
+	funcName := expr[:parenIdx]
+	handler, found := pluginFunctionHandler(funcName)
 	if !found {
 		return nil, false
 	}
@@ -41,14 +68,12 @@ func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string
 		evalArgs = append(evalArgs, e.evaluateExpressionWithContext(ctx, arg, nodes, rels))
 	}
 
-	// Call the plugin function
-	result, err := callPluginHandler(handler, evalArgs)
+	result, handled, err := callPluginFunction(funcName, handler, evalArgs)
 	if err != nil {
-		// Log error but don't fail - fall back to built-in if available
-		return nil, false
+		recordExpressionFailure(ctx, err)
+		return nil, true
 	}
-
-	return result, true
+	return result, handled
 }
 
 // callPluginHandler invokes a plugin function handler with the given arguments.
@@ -171,9 +196,7 @@ func callPluginHandler(handler interface{}, args []interface{}) (interface{}, er
 		}
 	}
 
-	// Plugin dispatch consumes this registration invariant and falls back to
-	// built-in function handling; it is never returned by query execution.
-	return nil, fmt.Errorf("unsupported function signature")
+	return nil, errUnsupportedPluginSignature
 }
 
 // NOTE: Logical, Comparison, and Arithmetic operators moved to operators.go

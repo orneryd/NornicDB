@@ -421,21 +421,16 @@ func FromJson(jsonStr string) (string, error) {
 //
 //	apoc.xml.escape('<tag>') => '&lt;tag&gt;'
 func Escape(text string) string {
-	replacements := map[string]string{
-		"<":  "&lt;",
-		">":  "&gt;",
-		"&":  "&amp;",
-		"\"": "&quot;",
-		"'":  "&apos;",
-	}
-
-	result := text
-	for old, new := range replacements {
-		result = strings.ReplaceAll(result, old, new)
-	}
-
-	return result
+	return xmlEscaper.Replace(text)
 }
+
+// xmlEscaper and xmlUnescaper replace in one pass, so a replacement's own
+// text is never replaced again (& in &lt; stays), and the result doesn't
+// depend on an order (#1163).
+var (
+	xmlEscaper   = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\"", "&quot;", "'", "&apos;")
+	xmlUnescaper = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&quot;", "\"", "&apos;", "'", "&amp;", "&")
+)
 
 // Unescape unescapes XML entities.
 //
@@ -443,20 +438,7 @@ func Escape(text string) string {
 //
 //	apoc.xml.unescape('&lt;tag&gt;') => '<tag>'
 func Unescape(text string) string {
-	replacements := map[string]string{
-		"&lt;":   "<",
-		"&gt;":   ">",
-		"&amp;":  "&",
-		"&quot;": "\"",
-		"&apos;": "'",
-	}
-
-	result := text
-	for old, new := range replacements {
-		result = strings.ReplaceAll(result, old, new)
-	}
-
-	return result
+	return xmlUnescaper.Replace(text)
 }
 
 // Namespace handles XML namespaces.
