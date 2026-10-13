@@ -1011,7 +1011,8 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		}
 	}
 
-	// Wire up plugin function lookup for Cypher executor
+	// Wire up plugin function lookup and listing for Cypher executor
+	cypher.PluginFunctionList = pluginFunctionInfos
 	cypher.PluginFunctionLookup = func(name string) (interface{}, bool) {
 		fn, found := GetPluginFunction(name)
 		if !found {

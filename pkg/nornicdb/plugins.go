@@ -656,6 +656,63 @@ func GetPluginFunction(name string) (PluginFunction, bool) {
 	return fn, ok
 }
 
+// pluginFunctionInfos lists the registered plugin functions for SHOW
+// FUNCTIONS (#1168): name, category, description and a signature from each
+// handler's Go type.
+func pluginFunctionInfos() []cypher.PluginFunctionInfo {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	infos := make([]cypher.PluginFunctionInfo, 0, len(pluginFunctions))
+	for name, fn := range pluginFunctions {
+		infos = append(infos, cypher.PluginFunctionInfo{
+			Name:        name,
+			Category:    fn.Category,
+			Description: fn.Description,
+			Signature:   pluginFunctionSignature(name, fn.Handler),
+		})
+	}
+	return infos
+}
+
+// pluginFunctionSignature is a plugin function's signature in Neo4j's form,
+// name(arg1 :: T1, …) :: R, from its handler's Go type; a variadic last
+// parameter is a list.
+func pluginFunctionSignature(name string, handler interface{}) string {
+	t := reflect.TypeOf(handler)
+	if t == nil || t.Kind() != reflect.Func {
+		return name + "() :: ANY"
+	}
+	parts := make([]string, 0, t.NumIn())
+	for i := 0; i < t.NumIn(); i++ {
+		parts = append(parts, fmt.Sprintf("arg%d :: %s", i+1, pluginCypherType(t.In(i))))
+	}
+	returns := "ANY"
+	if t.NumOut() > 0 {
+		returns = pluginCypherType(t.Out(0))
+	}
+	return fmt.Sprintf("%s(%s) :: %s", name, strings.Join(parts, ", "), returns)
+}
+
+// pluginCypherType is the Cypher type a plugin handler's Go type stands for.
+func pluginCypherType(t reflect.Type) string {
+	switch t.Kind() {
+	case reflect.String:
+		return "STRING"
+	case reflect.Bool:
+		return "BOOLEAN"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return "INTEGER"
+	case reflect.Float32, reflect.Float64:
+		return "FLOAT"
+	case reflect.Slice, reflect.Array:
+		return "LIST<" + pluginCypherType(t.Elem()) + ">"
+	case reflect.Map:
+		return "MAP"
+	}
+	return "ANY"
+}
+
 // ListPluginFunctions returns all registered function names.
 func ListPluginFunctions() []string {
 	pluginsMu.RLock()

@@ -17,8 +17,11 @@ type cypherFunctionSpec struct {
 	arguments            []ProcedureParam
 	aggregating          bool
 	listed               bool
-	isDeprecated         bool
-	deprecatedBy         string
+	// userDefined lists the function as Neo4j lists a plugin's (isBuiltIn
+	// false), as for the APOC functions.
+	userDefined  bool
+	isDeprecated bool
+	deprecatedBy string
 }
 
 // cypherFunctionCatalog is the built-in function table.
@@ -253,47 +256,48 @@ var cypherFunctionCatalog = []cypherFunctionSpec{
 	{name: "allReduce", category: "Predicate", signature: "allReduce(accumulator :: VARIABLE = initial :: ANY, variable :: VARIABLE IN list :: LIST<ANY> | reducer :: ANY, predicate :: BOOLEAN) :: BOOLEAN", description: "Evaluates `expression` against each element of `LIST<ANY>`, with the result stored in `accumulator`. Returns true if `predicate` holds for each iteration of `accumulator`.", arguments: []ProcedureParam{{Name: "accumulator = initial", Type: "ANY", Description: "The variable holding the result of reducer for each iteration, set to the value initial."}, {Name: "variable IN list | reducer", Type: "ANY", Description: "The iteration over a list that binds each list element to var and evaluates reducer to update the accumulator."}, {Name: "predicate", Type: "BOOLEAN", Description: "The predicate applied to the accumulator value for each element in the list."}}, listed: true, aggregating: false, isDeprecated: false},
 	{name: "property_exists", category: "Predicate", signature: "property_exists(element :: NODE | RELATIONSHIP, propertyKeyName :: STRING) :: BOOLEAN", description: "Returns true if the given node or relationship has a property with the given key, otherwise false. Returns null if the first argument is null.", arguments: []ProcedureParam{{Name: "element", Type: "NODE | RELATIONSHIP", Description: "A node or relationship to check for the property."}, {Name: "propertyKeyName", Type: "STRING", Description: "The name of the property to check for."}}, listed: true, aggregating: false, isDeprecated: false},
 	{name: "shortestpath"},
-	// Functions the query engine evaluates itself, with no plugin: the APOC
-	// functions it implements and NornicDB's temporal and spatial accessors
-	// (date.year(d), point.x(p)). Known to the unknown-function check, so
-	// they work whether or not the APOC plugin is loaded; not listed by SHOW
-	// FUNCTIONS, which lists Neo4j's catalog.
-	{name: "apoc.coll.avg"},
-	{name: "apoc.coll.contains"},
-	{name: "apoc.coll.containsall"},
-	{name: "apoc.coll.containsany"},
-	{name: "apoc.coll.flatten"},
-	{name: "apoc.coll.frequencies"},
-	{name: "apoc.coll.indexof"},
-	{name: "apoc.coll.intersection"},
-	{name: "apoc.coll.max"},
-	{name: "apoc.coll.min"},
-	{name: "apoc.coll.occurrences"},
-	{name: "apoc.coll.pairs"},
-	{name: "apoc.coll.partition"},
-	{name: "apoc.coll.reverse"},
-	{name: "apoc.coll.sort"},
-	{name: "apoc.coll.sortnodes"},
-	{name: "apoc.coll.split"},
-	{name: "apoc.coll.subtract"},
-	{name: "apoc.coll.sum"},
-	{name: "apoc.coll.toset"},
-	{name: "apoc.coll.union"},
-	{name: "apoc.coll.unionall"},
-	{name: "apoc.coll.zip"},
-	{name: "apoc.convert.fromjsonlist"},
-	{name: "apoc.convert.fromjsonmap"},
-	{name: "apoc.convert.tojson"},
-	{name: "apoc.create.uuid"},
-	{name: "apoc.map.clean"},
-	{name: "apoc.map.fromlists"},
-	{name: "apoc.map.frompairs"},
-	{name: "apoc.map.merge"},
-	{name: "apoc.map.removekey"},
-	{name: "apoc.map.setkey"},
-	{name: "apoc.meta.istype"},
-	{name: "apoc.meta.type"},
-	{name: "apoc.text.join"},
+	// The APOC functions the query engine evaluates itself, with no plugin:
+	// known to the unknown-function check, so they work whether or not the
+	// APOC plugin is loaded, and listed by SHOW FUNCTIONS as Neo4j with APOC
+	// lists them (#1168): APOC's signature and descriptions, not built in.
+	{name: "apoc.coll.avg", signature: "apoc.coll.avg(coll :: LIST<INTEGER | FLOAT>) :: FLOAT", description: "Returns the average of the numbers in the `LIST<INTEGER | FLOAT>`.", argumentDescriptions: []string{"The list to return the average from."}, listed: true, userDefined: true},
+	{name: "apoc.coll.contains", signature: "apoc.coll.contains(coll :: LIST<ANY>, value :: ANY) :: BOOLEAN", description: "Returns whether or not the given value exists in the given collection.", argumentDescriptions: []string{"The list to search for the given value.", "The value in the list to check for the existence of."}, listed: true, userDefined: true},
+	{name: "apoc.coll.containsAll", signature: "apoc.coll.containsAll(coll1 :: LIST<ANY>, coll2 :: LIST<ANY>) :: BOOLEAN", description: "Returns whether or not all of the given values exist in the given collection.", argumentDescriptions: []string{"The list to search for the given values in.", "The list of values in the given list to check for the existence of."}, listed: true, userDefined: true},
+	{name: "apoc.coll.containsAny", signature: "apoc.coll.containsAny(coll1 :: LIST<ANY>, coll2 :: LIST<ANY>) :: BOOLEAN", description: "Returns whether or not any of the given values exist in the given collection. (NornicDB extension)", argumentDescriptions: []string{"The list to search for the given values.", "The values in the list to check for the existence of."}, listed: true, userDefined: true},
+	{name: "apoc.coll.flatten", signature: "apoc.coll.flatten(coll :: LIST<ANY>, recursive = false :: BOOLEAN) :: LIST<ANY>", description: "Flattens the given `LIST<ANY>` (to flatten nested `LIST<ANY>` values, set recursive to true).", argumentDescriptions: []string{"The list to flatten.", "Whether nested list items should also be flattened."}, listed: true, userDefined: true},
+	{name: "apoc.coll.frequencies", signature: "apoc.coll.frequencies(coll :: LIST<ANY>) :: LIST<ANY>", description: "Returns a `LIST<ANY>` of frequencies of the items in the collection, keyed by `item` and `count`.", argumentDescriptions: []string{"The list to return items and their count from."}, listed: true, userDefined: true},
+	{name: "apoc.coll.indexOf", signature: "apoc.coll.indexOf(coll :: LIST<ANY>, value :: ANY) :: INTEGER", description: "Returns the index for the first occurrence of the specified value in the `LIST<ANY>`.", argumentDescriptions: []string{"The list to find the given value in.", "The value to find the first occurrence of in the given list."}, listed: true, userDefined: true},
+	{name: "apoc.coll.intersection", signature: "apoc.coll.intersection(list1 :: LIST<ANY>, list2 :: LIST<ANY>) :: LIST<ANY>", description: "Returns the distinct intersection of two `LIST<ANY>` values.", argumentDescriptions: []string{"The list of values to compare against `list2` and form an intersection from.", "The list of values to compare against `list1` and form an intersection from."}, listed: true, userDefined: true},
+	{name: "apoc.coll.max", signature: "apoc.coll.max(values :: LIST<ANY>) :: ANY", description: "Returns the maximum of all values in the given `LIST<ANY>`.", argumentDescriptions: []string{"The list to find the maximum in."}, listed: true, userDefined: true},
+	{name: "apoc.coll.min", signature: "apoc.coll.min(values :: LIST<ANY>) :: ANY", description: "Returns the minimum of all values in the given `LIST<ANY>`.", argumentDescriptions: []string{"The list to find the minimum in."}, listed: true, userDefined: true},
+	{name: "apoc.coll.occurrences", signature: "apoc.coll.occurrences(coll :: LIST<ANY>, item :: ANY) :: INTEGER", description: "Returns the count of the given item in the collection.", argumentDescriptions: []string{"The list to collect the count of the given value from.", "The value to count in the given list."}, listed: true, userDefined: true},
+	{name: "apoc.coll.pairs", signature: "apoc.coll.pairs(list :: LIST<ANY>) :: LIST<ANY>", description: "Returns a `LIST<ANY>` of adjacent elements in the `LIST<ANY>` ([1,2],[2,3],[3,null]).", argumentDescriptions: []string{"The list to create pairs from."}, listed: true, userDefined: true},
+	{name: "apoc.coll.partition", signature: "apoc.coll.partition(coll :: LIST<ANY>, batchSize :: INTEGER) :: LIST<ANY>", description: "Partitions the original `LIST<ANY>` into a new `LIST<ANY>` of the given batch size.\nThe final `LIST<ANY>` may be smaller than the given batch size.", argumentDescriptions: []string{"The list to partition into smaller sublists.", "The max size of each partitioned sublist."}, listed: true, userDefined: true},
+	{name: "apoc.coll.reverse", signature: "apoc.coll.reverse(coll :: LIST<ANY>) :: LIST<ANY>", description: "Returns the given `LIST<ANY>` in reverse order. (NornicDB extension)", argumentDescriptions: []string{"The list to reverse."}, listed: true, userDefined: true},
+	{name: "apoc.coll.sort", signature: "apoc.coll.sort(coll :: LIST<ANY>) :: LIST<ANY>", description: "Sorts the given `LIST<ANY>` into ascending order.", argumentDescriptions: []string{"The list to be sorted."}, listed: true, userDefined: true},
+	{name: "apoc.coll.sortNodes", signature: "apoc.coll.sortNodes(coll :: LIST<NODE>, prop :: STRING) :: LIST<ANY>", description: "Sorts the given `LIST<NODE>` by the property of the nodes into descending order.", argumentDescriptions: []string{"The list of nodes to be sorted.", "The property key on the node to be used to sort the list by."}, listed: true, userDefined: true},
+	{name: "apoc.coll.split", signature: "apoc.coll.split(coll :: LIST<ANY>, value :: ANY) :: LIST<LIST<ANY>>", description: "Splits a collection by the given value. The value itself will not be part of the resulting `LIST<ANY>` values. (A procedure in APOC; a function here.)", argumentDescriptions: []string{"The list to split into parts.", "The value to split the given list by."}, listed: true, userDefined: true},
+	{name: "apoc.coll.subtract", signature: "apoc.coll.subtract(list1 :: LIST<ANY>, list2 :: LIST<ANY>) :: LIST<ANY>", description: "Returns the first `LIST<ANY>` as a set with all the elements of the second `LIST<ANY>` removed.", argumentDescriptions: []string{"The list to remove values from.", "The list of values to be removed from `list1`."}, listed: true, userDefined: true},
+	{name: "apoc.coll.sum", signature: "apoc.coll.sum(coll :: LIST<INTEGER | FLOAT>) :: FLOAT", description: "Returns the sum of all the `INTEGER | FLOAT` in the `LIST<INTEGER | FLOAT>`.", argumentDescriptions: []string{"The list of numbers to create a sum from."}, listed: true, userDefined: true},
+	{name: "apoc.coll.toSet", signature: "apoc.coll.toSet(coll :: LIST<ANY>) :: LIST<ANY>", description: "Returns a unique `LIST<ANY>` from the given `LIST<ANY>`.", argumentDescriptions: []string{"The list of values to remove all duplicates from."}, listed: true, userDefined: true},
+	{name: "apoc.coll.union", signature: "apoc.coll.union(list1 :: LIST<ANY>, list2 :: LIST<ANY>) :: LIST<ANY>", description: "Returns the distinct union of the two given `LIST<ANY>` values.", argumentDescriptions: []string{"The list of values to compare against `list2` and form a distinct union from.", "The list of values to compare against `list1` and form a distinct union from."}, listed: true, userDefined: true},
+	{name: "apoc.coll.unionAll", signature: "apoc.coll.unionAll(list1 :: LIST<ANY>, list2 :: LIST<ANY>) :: LIST<ANY>", description: "Returns the full union of the two given `LIST<ANY>` values (duplicates included).", argumentDescriptions: []string{"The list of values to compare against `list2` and form a union from.", "The list of values to compare against `list1` and form a union from."}, listed: true, userDefined: true},
+	{name: "apoc.coll.zip", signature: "apoc.coll.zip(list1 :: LIST<ANY>, list2 :: LIST<ANY>) :: LIST<ANY>", description: "Returns the two given `LIST<ANY>` values zipped together as a `LIST<LIST<ANY>>`.", argumentDescriptions: []string{"The list to zip together with `list2`.", "The list to zip together with `list1`."}, listed: true, userDefined: true},
+	{name: "apoc.convert.fromJsonList", signature: "apoc.convert.fromJsonList(list :: STRING, path =  :: STRING, pathOptions = null :: LIST<STRING>) :: LIST<ANY>", description: "Converts the given JSON list into a Cypher `LIST<STRING>`.", argumentDescriptions: []string{"A JSON stringified list.", "A JSON path expression used to extract a certain part from the list.", "JSON path options: ('ALWAYS_RETURN_LIST', 'AS_PATH_LIST', 'DEFAULT_PATH_LEAF_TO_NULL', 'REQUIRE_PROPERTIES', 'SUPPRESS_EXCEPTIONS')"}, listed: true, userDefined: true},
+	{name: "apoc.convert.fromJsonMap", signature: "apoc.convert.fromJsonMap(map :: STRING, path =  :: STRING, pathOptions = null :: LIST<STRING>) :: MAP", description: "Converts the given JSON map into a Cypher `MAP`.", argumentDescriptions: []string{"A JSON stringified map.", "A JSON path expression used to extract a certain part from the map.", "JSON path options: ('ALWAYS_RETURN_LIST', 'AS_PATH_LIST', 'DEFAULT_PATH_LEAF_TO_NULL', 'REQUIRE_PROPERTIES', 'SUPPRESS_EXCEPTIONS')"}, listed: true, userDefined: true},
+	{name: "apoc.convert.toJson", signature: "apoc.convert.toJson(value :: ANY) :: STRING", description: "Serializes the given JSON value.", argumentDescriptions: []string{"The value to serialize."}, listed: true, userDefined: true},
+	{name: "apoc.create.uuid", signature: "apoc.create.uuid() :: STRING", description: "Returns a UUID.", argumentDescriptions: []string{}, listed: true, userDefined: true},
+	{name: "apoc.map.clean", signature: "apoc.map.clean(map :: MAP, keys :: LIST<STRING>, values :: LIST<ANY>) :: MAP", description: "Filters the keys and values contained in the given `LIST<ANY>` values.", argumentDescriptions: []string{"The map to clean.", "The list of property keys to be removed.", "The list of values to be removed."}, listed: true, userDefined: true},
+	{name: "apoc.map.fromLists", signature: "apoc.map.fromLists(keys :: LIST<STRING>, values :: LIST<ANY>) :: MAP", description: "Creates a `MAP` from the keys and values in the given `LIST<ANY>` values.", argumentDescriptions: []string{"A list of keys to create a map from.", "A list of values associated with the keys to create a map from."}, listed: true, userDefined: true},
+	{name: "apoc.map.fromPairs", signature: "apoc.map.fromPairs(pairs :: LIST<LIST<ANY>>) :: MAP", description: "Creates a `MAP` from the given `LIST<LIST<ANY>>` of key-value pairs.", argumentDescriptions: []string{"A list of pairs to create a map from."}, listed: true, userDefined: true},
+	{name: "apoc.map.merge", signature: "apoc.map.merge(map1 :: MAP, map2 :: MAP) :: MAP", description: "Merges the two given `MAP` values into one `MAP`.", argumentDescriptions: []string{"The first map to merge with the second map.", "The second map to merge with the first map."}, listed: true, userDefined: true},
+	{name: "apoc.map.removeKey", signature: "apoc.map.removeKey(map :: MAP, key :: STRING, config = {} :: MAP) :: MAP", description: "Removes the given key from the `MAP` (recursively if recursive is true).", argumentDescriptions: []string{"The map to be updated.", "The key to remove from the map.", "{ recursive = false :: BOOLEAN }"}, listed: true, userDefined: true},
+	{name: "apoc.map.setKey", signature: "apoc.map.setKey(map :: MAP, key :: STRING, value :: ANY) :: MAP", description: "Adds or updates the given entry in the `MAP`.", argumentDescriptions: []string{"The map to be updated.", "The key to add or update the map with.", "The value to set the given key to."}, listed: true, userDefined: true},
+	{name: "apoc.meta.isType", signature: "apoc.meta.isType(value :: ANY, type :: STRING) :: BOOLEAN", description: "Returns whether the type name of the given value (as apoc.meta.type returns it) is the given type. (NornicDB extension; APOC 5's is apoc.meta.cypher.isType)", argumentDescriptions: []string{"The value to check the type of.", "The type name to compare with."}, listed: true, userDefined: true},
+	{name: "apoc.meta.type", signature: "apoc.meta.type(value :: ANY) :: STRING", description: "Returns the type name of the given value. (NornicDB extension; APOC 5's is apoc.meta.cypher.type)", argumentDescriptions: []string{"The value to return the type name of."}, listed: true, userDefined: true},
+	{name: "apoc.text.join", signature: "apoc.text.join(texts :: LIST<STRING>, delimiter :: STRING) :: STRING", description: "Joins the given `STRING` values using the given delimiter.", argumentDescriptions: []string{"The list of strings to be concatenated using the given delimiter.", "The given delimiter to join the given strings with."}, listed: true, userDefined: true},
+	// NornicDB's temporal and spatial accessors (date.year(d), point.x(p)):
+	// known to the unknown-function check, not listed by SHOW FUNCTIONS.
 	{name: "date.day"},
 	{name: "date.dayofweek"},
 	{name: "date.dayofyear"},

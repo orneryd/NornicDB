@@ -12,6 +12,18 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// PluginFunctionInfo describes a loaded plugin's function for SHOW FUNCTIONS.
+type PluginFunctionInfo struct {
+	Name        string
+	Category    string
+	Description string
+	Signature   string
+}
+
+// PluginFunctionList lists the loaded plugins' functions for SHOW FUNCTIONS
+// (#1168); nornicdb.Open sets it, with PluginFunctionLookup.
+var PluginFunctionList func() []PluginFunctionInfo
+
 // PluginFunctionLookup is a callback to look up functions from loaded plugins.
 // Set by pkg/nornicdb during database initialization.
 // Returns the function handler and true if found, nil and false otherwise.

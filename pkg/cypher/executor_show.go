@@ -852,7 +852,7 @@ func showFunctionRows() [][]interface{} {
 			if function.deprecatedBy != "" {
 				deprecatedBy = function.deprecatedBy
 			}
-			rows = append(rows, []interface{}{function.name, function.category, function.description, function.signature, true, arguments, returns, function.aggregating, nil, nil, function.isDeprecated, deprecatedBy})
+			rows = append(rows, []interface{}{function.name, function.category, function.description, function.signature, !function.userDefined, arguments, returns, function.aggregating, nil, nil, function.isDeprecated, deprecatedBy})
 		}
 		// Listed by name (sortShowRowsByName then finds them in order).
 		sort.SliceStable(rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
@@ -876,10 +876,34 @@ func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher strin
 		copy(rows[i], row)
 		cells = cells[len(row):]
 	}
+	if plugin := pluginFunctionRows(); len(plugin) > 0 {
+		rows = append(rows, plugin...)
+		sort.SliceStable(rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
+	}
 	return withShowDefaultColumns(&ExecuteResult{
 		Columns: []string{"name", "category", "description", "signature", "isBuiltIn", "argumentDescription", "returnDescription", "aggregating", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy"},
 		Rows:    rows,
 	}, showFunctionsDefaultColumns), nil
+}
+
+// pluginFunctionRows are SHOW FUNCTIONS' rows for the loaded plugins'
+// functions (#1168), as Neo4j lists a plugin's: not built in, with the
+// plugin's description and category and a signature from the function's
+// Go type. A name the catalog lists already keeps the catalog's row.
+func pluginFunctionRows() [][]interface{} {
+	if PluginFunctionList == nil {
+		return nil
+	}
+	functions := PluginFunctionList()
+	rows := make([][]interface{}, 0, len(functions))
+	for _, function := range functions {
+		if _, builtIn := builtInCypherFunctions[lowerASCII(function.Name)]; builtIn {
+			continue
+		}
+		arguments, returns := functionSignatureDescriptions(function.Signature)
+		rows = append(rows, []interface{}{function.Name, function.Category, function.Description, function.Signature, false, arguments, returns, false, nil, nil, false, nil})
+	}
+	return rows
 }
 
 // functionSignatureDescriptions derives SHOW FUNCTIONS' argumentDescription
