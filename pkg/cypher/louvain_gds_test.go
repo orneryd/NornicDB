@@ -41,6 +41,8 @@ func TestLouvainMatchesGDS(t *testing.T) {
 	for _, pair := range []string{"ab", "bc", "ca", "de", "ef", "fd", "cd"} {
 		triangles = append(triangles, []interface{}{pair[:1], pair[1:], 1.0})
 	}
+	selfLoops := append(append([]interface{}{}, triangles...),
+		[]interface{}{"g", "g", 1.0}, []interface{}{"a", "a", 1.0}, []interface{}{"g", "d", 1.0})
 	weighted := []interface{}{
 		[]interface{}{"p", "q", 5.0}, []interface{}{"q", "r", 5.0}, []interface{}{"r", "p", 1.0}, []interface{}{"r", "s", 1.0},
 		[]interface{}{"s", "t", 4.0}, []interface{}{"t", "u", 4.0}, []interface{}{"u", "s", 4.0}, []interface{}{"p", "u", 0.5},
@@ -62,6 +64,9 @@ func TestLouvainMatchesGDS(t *testing.T) {
 			"r00 r01 r02 r03", "r10 r11 r12 r13", "r20 r21 r22 r23", "r30 r31 r32 r33", "r40 r41 r42 r43", "r50 r51 r52 r53",
 		}, 0.6904761904761906},
 		{"W", strings.Split("pqrstu", ""), weighted, "w", []string{"p q r", "s t u"}, 0.43794252394835487},
+		{"S", strings.Split("abcdefg", ""), selfLoops, "", []string{"a b c", "d e f", "g"}, 0.41500000000000004},
+		// No relationships: every node its own community, as in GDS.
+		{"N", strings.Split("xyz", ""), nil, "", []string{"x", "y", "z"}, 0},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
@@ -141,6 +146,9 @@ func louvainModularity(edges []interface{}, community map[string]interface{}) fl
 		if community[a] == community[b] {
 			inside[community[a]] += w
 		}
+	}
+	if total == 0 {
+		return 0
 	}
 	communityDegree := map[interface{}]float64{}
 	for node, d := range degree {
