@@ -107,3 +107,26 @@ func (n *Node) withProp(k string, v interface{}) *Node {
 	n.Properties[k] = v
 	return n
 }
+
+// The owned key index is in memory only: reopening a database rebuilds and
+// fills it, so validation keeps using it after a restart.
+func TestNodeKeyIndex_FilledAfterReopen(t *testing.T) {
+	engine, dir := createTestBadgerEngineOnDisk(t)
+	sm := engine.GetSchemaForNamespace("test")
+	require.NoError(t, sm.AddConstraint(factKey))
+	commitNodes(t, engine, factNode("a", 1, "name", 1))
+	require.NoError(t, engine.Close())
+
+	reopened, err := NewBadgerEngine(dir)
+	require.NoError(t, err)
+	defer reopened.Close()
+	sm = reopened.GetSchemaForNamespace("test")
+	require.NotNil(t, sm.filledKeyIndex("Fact", factKey.Properties), "the owned key index is filled on reopen")
+	scans := countNodeKeyScans(t)
+	tx, err := reopened.BeginTransaction()
+	require.NoError(t, err)
+	_, err = tx.CreateNode(factNode("dup", 1, "name", 1))
+	require.Error(t, err, "a key stored before the restart is still taken")
+	require.NoError(t, tx.Rollback())
+	require.Zero(t, scans.Load())
+}

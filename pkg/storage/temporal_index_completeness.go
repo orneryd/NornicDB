@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -97,12 +98,17 @@ func (sm *SchemaManager) HasConstraintNamed(name string) bool {
 	return ok
 }
 
-// MarkNewTemporalConstraintsForEngine records, for the temporal node
-// constraints among constraints that DDL just created, whether their history
-// index is complete: yes when their label has no stored nodes (the usual
-// schema-first load: there is nothing to index and every later write
-// maintains it), no when it has nodes, which were written before the
-// constraint and have no entries until the next RebuildTemporalIndexes.
+// MarkNewTemporalConstraintsForEngine makes the history index of the
+// temporal node constraints DDL just created complete, and records it:
+//   - on an empty label (the usual schema-first load) there is nothing to
+//     index, and every later write maintains the index;
+//   - over existing nodes, which were written before the constraint and have
+//     no entries, their entries are written now (backfillTemporalIndexForLabel),
+//     so the index never stays incomplete across a restart that skips the
+//     rebuild (a clean shutdown certifies the derived indexes as current).
+//
+// Only an engine that doesn't unwrap to a BadgerEngine leaves a constraint over
+// existing nodes incomplete; it is validated by label scan until a rebuild.
 func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, constraints []Constraint) error {
 	if engine == nil || schema == nil {
 		return nil
@@ -115,7 +121,53 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 		if err != nil {
 			return err
 		}
-		schema.markTemporalIndexCreated(c, empty)
+		if !empty {
+			badgerEngine, ok := UnwrapEngine(engine).(*BadgerEngine)
+			if !ok {
+				schema.markTemporalIndexCreated(c, false)
+				continue
+			}
+			if err := badgerEngine.backfillTemporalIndexForLabel(engine, c.Label); err != nil {
+				return err
+			}
+		}
+		schema.markTemporalIndexCreated(c, true)
+	}
+	return nil
+}
+
+// backfillTemporalIndexForLabel writes the temporal history entries (and
+// current pointers) of every stored node of label visible through engine (a
+// database-scoped wrapper of b), in chunks: the same per-node work as
+// RebuildTemporalIndexes, for one label instead of the whole store.
+func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string) error {
+	var ids []NodeID
+	if err := streamNodesByLabelForValidation(engine, label, []string{}, func(node *Node) error {
+		if node != nil {
+			ids = append(ids, EnsureNodeIDDatabasePrefixForEngine(engine, node.ID))
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	asOf := time.Now().UTC()
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		part := ids[start:min(start+chunk, len(ids))]
+		if err := b.withUpdate(func(txn *badger.Txn) error {
+			for _, id := range part {
+				node, err := b.loadNodeForTemporalTxn(txn, id, false)
+				if err != nil {
+					return err
+				}
+				if err := b.rebuildTemporalNodeInTxn(txn, node, asOf); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

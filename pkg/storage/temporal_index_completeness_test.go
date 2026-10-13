@@ -55,24 +55,36 @@ func TestTemporalIndexAuthoritative_Lifecycle(t *testing.T) {
 	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, sm, []Constraint{factWindow}))
 	require.True(t, engine.temporalIndexAuthoritative(sm, factWindow))
 
-	// Created over existing nodes: incomplete until a rebuild.
+	// Created over existing nodes: their entries are backfilled, so the index is complete.
 	other := Constraint{Name: "role_window", Type: ConstraintTemporal, EntityType: ConstraintEntityNode, Label: "Role", Properties: []string{"role", "valid_from", "valid_to"}}
 	commitNodes(t, engine, &Node{ID: NodeID(prefixTestID("role-1")), Labels: []string{"Role"}, Properties: map[string]interface{}{
 		"role": "captain", "valid_from": temporalTestBase, "valid_to": temporalTestBase.Add(24 * time.Hour),
 	}})
 	require.NoError(t, sm.AddConstraint(other))
 	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, sm, []Constraint{other}))
-	require.False(t, engine.temporalIndexAuthoritative(sm, other), "nodes written before the constraint have no history entries")
+	require.True(t, engine.temporalIndexAuthoritative(sm, other), "nodes written before the constraint are backfilled")
+	role1, err := engine.GetNode(NodeID(prefixTestID("role-1")))
+	require.NoError(t, err)
+	history, ok, err := engine.temporalKeyHistoryNodesLatest(context.Background(), "test", other, role1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, history, 1, "the backfill writes the pre-existing node's history entry")
 
 	require.NoError(t, engine.RebuildTemporalIndexes(context.Background()))
 	require.True(t, engine.temporalIndexAuthoritative(sm, other), "a rebuild indexes every node")
 	require.True(t, engine.temporalIndexAuthoritative(sm, factWindow))
 
-	// Dropped and re-created over existing nodes after the rebuild: incomplete again.
+	// A constraint registered but not created through DDL marks (a lazily loaded
+	// schema) is trusted only after a rebuild or a clean start.
+	engine.temporalIndexReady.Store(false)
 	require.NoError(t, sm.DropConstraint(other.Name))
 	require.NoError(t, sm.AddConstraint(other))
-	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, sm, []Constraint{other}))
 	require.False(t, engine.temporalIndexAuthoritative(sm, other))
+	require.NoError(t, engine.MarkCleanShutdown(context.Background()))
+	clean, err := engine.ConsumeCleanShutdownMarker(context.Background())
+	require.NoError(t, err)
+	require.True(t, clean)
+	require.True(t, engine.temporalIndexAuthoritative(sm, other), "a clean start certifies the derived indexes, the temporal history index included")
 }
 
 // With a complete index, transactional NO OVERLAP validation reads the
@@ -123,10 +135,10 @@ func TestTemporalIndexAuthoritative_TransactionUsesKeyHistory(t *testing.T) {
 	require.Zero(t, scans.Load(), "validation with a complete index must not scan the label")
 }
 
-// While the index is incomplete (constraint created over existing nodes),
-// validation keeps the label scan and still finds overlaps with nodes the
-// index does not list; after a rebuild the index finds them.
-func TestTemporalIndexAuthoritative_IncompleteIndexScans(t *testing.T) {
+// A constraint created over existing nodes backfills their history entries:
+// validation goes through the index at once and still finds overlaps with the
+// nodes written before the constraint.
+func TestTemporalIndexAuthoritative_ConstraintOverExistingNodesIsBackfilled(t *testing.T) {
 	engine, cleanup := setupTestBadgerEngine(t)
 	defer cleanup()
 	sm := engine.GetSchemaForNamespace("test")
@@ -140,7 +152,25 @@ func TestTemporalIndexAuthoritative_IncompleteIndexScans(t *testing.T) {
 	_, err = tx.CreateNode(temporalFact("overlap", int64(1), 5, 15))
 	require.Error(t, err, "overlap with a node written before the constraint")
 	require.NoError(t, tx.Rollback())
-	require.NotZero(t, scans.Load(), "an incomplete index falls back to the label scan")
+	require.Zero(t, scans.Load(), "the backfilled index answers without scanning")
+}
+
+// While the index is not trusted (no rebuild, clean start or DDL marks yet),
+// validation keeps the label scan and still finds overlaps.
+func TestTemporalIndexAuthoritative_IncompleteIndexScans(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+	sm := engine.GetSchemaForNamespace("test")
+	commitNodes(t, engine, temporalFact("pre", int64(1), 0, 10))
+	require.NoError(t, sm.AddConstraint(factWindow)) // registered without DDL marks: not trusted
+	scans := countTemporalScans(t)
+
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	_, err = tx.CreateNode(temporalFact("overlap", int64(1), 5, 15))
+	require.Error(t, err, "overlap with a node written before the constraint")
+	require.NoError(t, tx.Rollback())
+	require.NotZero(t, scans.Load(), "an untrusted index falls back to the label scan")
 
 	require.NoError(t, engine.RebuildTemporalIndexes(context.Background()))
 	before := scans.Load()

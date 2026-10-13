@@ -45,6 +45,11 @@ func (b *BadgerEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, er
 		if err := b.db.Sync(); err != nil {
 			return false, err
 		}
+		// The marker certifies the derived storage indexes as current, which
+		// the startup rebuild then skips; the temporal history index is one of
+		// them, so NO OVERLAP validation can trust it (#1126). Without this a
+		// clean restart left every temporal constraint on the label scan.
+		b.temporalIndexReady.Store(true)
 	}
 	return clean, nil
 }
