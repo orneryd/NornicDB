@@ -237,42 +237,61 @@ func (e *StorageExecutor) evaluateRowTemporalComponent(name, argument string, va
 	if !ok {
 		return nil, true, false, nil
 	}
+	result, known := temporalComponent(component, value)
+	return result, known, known, nil
+}
+
+// temporalComponent is the date.<component> / datetime.<component> accessor
+// both evaluators read (#1105): the component of a temporal value or a
+// temporal string, null for a value that isn't one, and known false for a
+// component that isn't an accessor.
+func temporalComponent(component string, value interface{}) (interface{}, bool) {
+	if !isTemporalComponent(component) {
+		return nil, false
+	}
 	temporal, valid := rowTemporalTime(value)
 	if !valid {
-		return nil, true, true, nil
+		return nil, true
 	}
 	switch component {
 	case "year":
-		return int64(temporal.Year()), true, true, nil
+		return int64(temporal.Year()), true
 	case "month":
-		return int64(temporal.Month()), true, true, nil
+		return int64(temporal.Month()), true
 	case "day":
-		return int64(temporal.Day()), true, true, nil
+		return int64(temporal.Day()), true
 	case "hour":
-		return int64(temporal.Hour()), true, true, nil
+		return int64(temporal.Hour()), true
 	case "minute":
-		return int64(temporal.Minute()), true, true, nil
+		return int64(temporal.Minute()), true
 	case "second":
-		return int64(temporal.Second()), true, true, nil
+		return int64(temporal.Second()), true
 	case "week":
 		_, week := temporal.ISOWeek()
-		return int64(week), true, true, nil
+		return int64(week), true
 	case "quarter":
-		return int64((int(temporal.Month())-1)/3 + 1), true, true, nil
+		return int64((int(temporal.Month())-1)/3 + 1), true
 	case "dayofweek":
 		day := int64(temporal.Weekday())
 		if day == 0 {
 			day = 7
 		}
-		return day, true, true, nil
+		return day, true
 	case "dayofyear", "ordinalday":
-		return int64(temporal.YearDay()), true, true, nil
-	case "weekyear":
-		year, _ := temporal.ISOWeek()
-		return int64(year), true, true, nil
-	default:
-		return nil, false, false, nil
+		return int64(temporal.YearDay()), true
 	}
+	year, _ := temporal.ISOWeek() // weekyear
+	return int64(year), true
+}
+
+// isTemporalComponent reports whether component is one of the accessors
+// date.<component> and datetime.<component> name.
+func isTemporalComponent(component string) bool {
+	switch component {
+	case "year", "month", "day", "hour", "minute", "second", "week", "quarter", "dayofweek", "dayofyear", "ordinalday", "weekyear":
+		return true
+	}
+	return false
 }
 
 func rowTemporalTime(value interface{}) (time.Time, bool) {

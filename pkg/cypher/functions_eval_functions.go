@@ -791,123 +791,14 @@ skipArrayIndexing:
 		return time.Now().UnixMilli()
 	}
 
-	// date.year(date), date.month(date), date.day(date) - extract components
-	if matchFuncStartAndSuffix(expr, "date.year") {
-		inner := extractFuncArgs(expr, "date.year")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			if t, err := time.Parse("2006-01-02", str); err == nil {
-				return int64(t.Year())
-			}
+	// date.<component>(value) and datetime.<component>(value): read as the
+	// row evaluator reads them (temporalComponent), so both evaluators give
+	// the same value for every accessor (#1105).
+	if name, inner, ok := parseFunctionCallWS(expr); ok {
+		if kind, component, dotted := strings.Cut(lowerASCII(name), "."); dotted && (kind == "date" || kind == "datetime") && isTemporalComponent(component) {
+			value, _ := temporalComponent(component, e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			return value
 		}
-		return nil
-	}
-	if matchFuncStartAndSuffix(expr, "date.month") {
-		inner := extractFuncArgs(expr, "date.month")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			if t, err := time.Parse("2006-01-02", str); err == nil {
-				return int64(t.Month())
-			}
-		}
-		return nil
-	}
-	if matchFuncStartAndSuffix(expr, "date.day") {
-		inner := extractFuncArgs(expr, "date.day")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			if t, err := time.Parse("2006-01-02", str); err == nil {
-				return int64(t.Day())
-			}
-		}
-		return nil
-	}
-
-	// date.week(date) - ISO week number (1-53)
-	if matchFuncStartAndSuffix(expr, "date.week") {
-		inner := extractFuncArgs(expr, "date.week")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			if t, err := time.Parse("2006-01-02", str); err == nil {
-				_, week := t.ISOWeek()
-				return int64(week)
-			}
-		}
-		return nil
-	}
-
-	// date.quarter(date) - quarter of year (1-4)
-	if matchFuncStartAndSuffix(expr, "date.quarter") {
-		inner := extractFuncArgs(expr, "date.quarter")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			if t, err := time.Parse("2006-01-02", str); err == nil {
-				return int64((int(t.Month())-1)/3 + 1)
-			}
-		}
-		return nil
-	}
-
-	// date.dayOfWeek(date) - day of week (1=Monday, 7=Sunday, ISO 8601)
-	if matchFuncStartAndSuffix(expr, "date.dayofweek") {
-		inner := extractFuncArgs(expr, "date.dayofweek")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			if t, err := time.Parse("2006-01-02", str); err == nil {
-				dow := int64(t.Weekday())
-				if dow == 0 {
-					dow = 7 // Sunday = 7 in ISO 8601
-				}
-				return dow
-			}
-		}
-		return nil
-	}
-
-	// date.dayOfYear(date) - day of year (1-366)
-	if matchFuncStartAndSuffix(expr, "date.dayofyear") {
-		inner := extractFuncArgs(expr, "date.dayofyear")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			if t, err := time.Parse("2006-01-02", str); err == nil {
-				return int64(t.YearDay())
-			}
-		}
-		return nil
-	}
-
-	// date.ordinalDay(date) - same as dayOfYear
-	if matchFuncStartAndSuffix(expr, "date.ordinalday") {
-		inner := extractFuncArgs(expr, "date.ordinalday")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			if t, err := time.Parse("2006-01-02", str); err == nil {
-				return int64(t.YearDay())
-			}
-		}
-		return nil
-	}
-
-	// date.weekYear(date) - ISO week year (may differ from calendar year at year boundaries)
-	if matchFuncStartAndSuffix(expr, "date.weekyear") {
-		inner := extractFuncArgs(expr, "date.weekyear")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			if t, err := time.Parse("2006-01-02", str); err == nil {
-				year, _ := t.ISOWeek()
-				return int64(year)
-			}
-		}
-		return nil
 	}
 
 	// date.truncate(unit, date) - truncate date to specified unit
@@ -1003,82 +894,6 @@ skipArrayIndexing:
 						return t.Format("15:04:05")
 					}
 				}
-			}
-		}
-		return nil
-	}
-
-	// datetime.hour(datetime), datetime.minute(datetime), datetime.second(datetime)
-	if matchFuncStartAndSuffix(expr, "datetime.hour") {
-		inner := extractFuncArgs(expr, "datetime.hour")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			t := parseDateTime(str)
-			if !t.IsZero() {
-				return int64(t.Hour())
-			}
-		}
-		return nil
-	}
-	if matchFuncStartAndSuffix(expr, "datetime.minute") {
-		inner := extractFuncArgs(expr, "datetime.minute")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			t := parseDateTime(str)
-			if !t.IsZero() {
-				return int64(t.Minute())
-			}
-		}
-		return nil
-	}
-	if matchFuncStartAndSuffix(expr, "datetime.second") {
-		inner := extractFuncArgs(expr, "datetime.second")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			t := parseDateTime(str)
-			if !t.IsZero() {
-				return int64(t.Second())
-			}
-		}
-		return nil
-	}
-
-	// datetime.year(datetime), datetime.month(datetime), datetime.day(datetime)
-	if matchFuncStartAndSuffix(expr, "datetime.year") {
-		inner := extractFuncArgs(expr, "datetime.year")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			t := parseDateTime(str)
-			if !t.IsZero() {
-				return int64(t.Year())
-			}
-		}
-		return nil
-	}
-	if matchFuncStartAndSuffix(expr, "datetime.month") {
-		inner := extractFuncArgs(expr, "datetime.month")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			t := parseDateTime(str)
-			if !t.IsZero() {
-				return int64(t.Month())
-			}
-		}
-		return nil
-	}
-	if matchFuncStartAndSuffix(expr, "datetime.day") {
-		inner := extractFuncArgs(expr, "datetime.day")
-		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if str, ok := val.(string); ok {
-			str = strings.Trim(str, "'\"")
-			t := parseDateTime(str)
-			if !t.IsZero() {
-				return int64(t.Day())
 			}
 		}
 		return nil
