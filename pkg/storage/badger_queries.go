@@ -1640,22 +1640,48 @@ func (b *BadgerEngine) edgesBetweenFromSetIndex(startID, endID NodeID, edgeType 
 	return result, err
 }
 
-// edgesBetweenFromLegacyOutgoingIndex preserves compatibility with stores that
-// predate the edge-between indexes or missed a self-heal/backfill window.
+// edgesBetweenFromLegacyOutgoingIndex finds the edges from startID to endID
+// through the adjacency indexes, for pairs the edge-between index doesn't list
+// (stores that predate it, or a drifted ready marker). Every such edge is in
+// both the start node's outgoing and the end node's incoming adjacency, so the
+// two are walked in lockstep and the one exhausted first holds every candidate:
+// the cost is the smaller endpoint degree, not the start node's. A MERGE of a
+// new relationship from a hub with thousands of edges to a fresh node misses
+// the between index every time, and walking the hub's outgoing edges made a
+// bulk load quadratic in the hub's degree.
 func (b *BadgerEngine) edgesBetweenFromLegacyOutgoingIndex(startID, endID NodeID, edgeType string) ([]*Edge, error) {
-	prefix := b.outgoingIndexPrefixString(startID)
-	if prefix == nil {
+	outPrefix := b.outgoingIndexPrefixString(startID)
+	inPrefix := b.incomingIndexPrefixString(endID)
+	if outPrefix == nil || inPrefix == nil {
 		return nil, nil
 	}
 	var result []*Edge
 	err := b.withView(func(txn *badger.Txn) error {
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		nowNanos := DecayScoringTime()
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-
-		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-			indexKey := it.Item().KeyCopy(nil)
+		outIt := txn.NewIterator(badgerPrefixIteratorOptions(outPrefix))
+		defer outIt.Close()
+		inIt := txn.NewIterator(badgerPrefixIteratorOptions(inPrefix))
+		defer inIt.Close()
+		var outKeys, inKeys [][]byte
+		outIt.Rewind()
+		inIt.Rewind()
+		var candidates [][]byte
+		for candidates == nil {
+			if !outIt.ValidForPrefix(outPrefix) {
+				candidates = outKeys
+				break
+			}
+			if !inIt.ValidForPrefix(inPrefix) {
+				candidates = inKeys
+				break
+			}
+			outKeys = append(outKeys, outIt.Item().KeyCopy(nil))
+			inKeys = append(inKeys, inIt.Item().KeyCopy(nil))
+			outIt.Next()
+			inIt.Next()
+		}
+		for _, indexKey := range candidates {
 			if checkTombstones && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
