@@ -73,3 +73,22 @@ func TestRetrieveGraphPageYieldsAndReportsQueryChunks(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, page.Rows[0][0].(map[string]interface{}), "query_chunks_total")
 }
+
+// db.retrieveGraph's request errors, and a relationship hit whose endpoint is
+// no longer visible.
+func TestRetrieveGraphRequestErrorsAndMissingEndpoint(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
+	exec := NewStorageExecutor(store)
+	_, err := exec.Execute(ctx, "CALL db.retrieveGraph(null)", nil)
+	require.Error(t, err)
+	_, err = exec.Execute(ctx, "CALL db.retrieveGraph({query: 'alpha', failClosed: true, limit: 1.5})", nil)
+	require.Error(t, err)
+
+	kind, node, relationship, start, end := exec.graphSearchEntity(&search.SearchResult{Relationship: &storage.Edge{ID: "r", Type: "R", StartNode: "gone", EndNode: "gone too"}})
+	require.Equal(t, "relationship", kind)
+	require.Nil(t, node)
+	require.NotNil(t, relationship)
+	require.Nil(t, start)
+	require.Nil(t, end)
+}
