@@ -842,6 +842,9 @@ func (tx *BadgerTransaction) bufferTemporalIndexWrites() (map[string]temporalRef
 // every temporal key the commit touched, writing through the commit writer w
 // (see Commit); each pointer is its own unit.
 func (tx *BadgerTransaction) refreshTemporalCurrentPointers(w *batchWriter, targets map[string]temporalRefreshTarget) error {
+	if len(targets) == 0 {
+		return nil
+	}
 	now := time.Now().UTC()
 	exclude := make(map[NodeID]struct{}, util.SafePreallocSum(len(tx.deletedNodes), len(tx.pendingNodes)))
 	for nodeID := range tx.deletedNodes {
@@ -850,36 +853,82 @@ func (tx *BadgerTransaction) refreshTemporalCurrentPointers(w *batchWriter, targ
 	for nodeID := range tx.pendingNodes {
 		exclude[nodeID] = struct{}{}
 	}
-	for _, target := range targets {
-		var bestPendingID NodeID
-		var bestPendingStart time.Time
-		for _, node := range tx.pendingNodes {
-			if node == nil {
+
+	// The current pending version of each target: one pass over the pending
+	// nodes, keyed like the targets, instead of a pass per target (which made
+	// a commit of n temporal nodes O(n^2)).
+	type pendingCurrent struct {
+		id    NodeID
+		start time.Time
+	}
+	bestPending := make(map[string]pendingCurrent)
+	for _, node := range tx.pendingNodes {
+		if node == nil {
+			continue
+		}
+		namespace, _, ok := ParseDatabasePrefix(string(node.ID))
+		if !ok {
+			continue
+		}
+		for _, c := range temporalConstraintsForLabels(tx.engine.GetSchemaForNamespace(namespace), node.Labels) {
+			target, _, ok := temporalTargetForNode(namespace, node, c)
+			if !ok {
 				continue
 			}
-			if !hasLabel(node.Labels, target.constraint.Label) {
+			key := temporalTargetMapKey(target)
+			if _, wanted := targets[key]; !wanted {
 				continue
 			}
-			keyValue, start, end, hasEnd, ok := temporalNodeState(node, target.constraint)
-			if !ok || !temporalKeyValuesEqual(target.constraint, keyValue, target.keyValue) {
+			_, start, end, hasEnd, ok := temporalNodeState(node, c)
+			if !ok || now.Before(start) || (hasEnd && !now.Before(end)) {
 				continue
 			}
-			if now.Before(start) || (hasEnd && !now.Before(end)) {
-				continue
-			}
-			if bestPendingID == "" || start.After(bestPendingStart) {
-				bestPendingID = node.ID
-				bestPendingStart = start
+			if best, seen := bestPending[key]; !seen || start.After(best.start) {
+				bestPending[key] = pendingCurrent{id: node.ID, start: start}
 			}
 		}
-		if err := w.write(func(txn *badger.Txn) error {
-			if err := tx.engine.refreshTemporalCurrentPointerInTxn(txn, target, now, exclude); err != nil {
-				return err
+	}
+
+	// The current committed version of each target the transaction has no
+	// current pending version for. The transaction's own nodes are excluded,
+	// so this reads committed history only, through one read-only view: an
+	// iterator on the commit's write batch would sort all of its pending
+	// writes for every target.
+	current := make(map[string]NodeID, len(targets))
+	for key, p := range bestPending {
+		current[key] = p.id
+	}
+	if len(current) < len(targets) {
+		if err := tx.engine.withView(func(txn *badger.Txn) error {
+			for key, target := range targets {
+				if _, done := current[key]; done {
+					continue
+				}
+				node, err := tx.engine.temporalHistoryNodeAsOfInTxn(txn, target, now, exclude, false)
+				if err != nil {
+					return err
+				}
+				if node != nil {
+					current[key] = node.ID
+				}
 			}
-			if bestPendingID == "" {
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+
+	for _, target := range targets {
+		currentKey := temporalCurrentKey(target.desc)
+		id := current[temporalTargetMapKey(target)]
+		if err := w.write(func(txn *badger.Txn) error {
+			if id == "" {
+				if err := txn.Delete(currentKey); err != nil && err != badger.ErrKeyNotFound {
+					return err
+				}
 				return nil
 			}
-			return txn.Set(temporalCurrentKey(target.desc), []byte(bestPendingID))
+			return txn.Set(currentKey, []byte(id))
 		}); err != nil {
 			return err
 		}

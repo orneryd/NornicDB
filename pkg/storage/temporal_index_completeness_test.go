@@ -170,3 +170,74 @@ func TestTemporalIndexAuthoritative_EngineWriteNewKeyDoesNotScan(t *testing.T) {
 	require.Error(t, err, "overlap through the history index, across numeric types")
 	require.Zero(t, scans.Load())
 }
+
+// The commit-time refresh of the temporal "current version" pointers must be
+// linear in the transaction: it looped over every pending node per touched
+// key and sorted the commit's pending writes for every key, so a commit of n
+// temporal nodes was O(n^2 log n).
+func TestTemporalCurrentPointerRefresh_ScalesLinearly(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing test")
+	}
+	run := func(n int) time.Duration {
+		engine, cleanup := setupTestBadgerEngine(t)
+		defer cleanup()
+		sm := engine.GetSchemaForNamespace("test")
+		require.NoError(t, sm.AddConstraint(factWindow))
+		require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, sm, []Constraint{factWindow}))
+		tx, err := engine.BeginTransaction()
+		require.NoError(t, err)
+		for i := 0; i < n; i++ {
+			_, err := tx.CreateNode(temporalFact(fmt.Sprintf("s-%d", i), int64(i), -10, 10000))
+			require.NoError(t, err)
+		}
+		start := time.Now()
+		require.NoError(t, tx.Commit())
+		return time.Since(start)
+	}
+	run(300)
+	small, large := run(1000), run(8000)
+	ratio := float64(large) / float64(small)
+	t.Logf("commit of 1000 temporal nodes: %v, 8000: %v, ratio %.1f (linear ~8)", small, large, ratio)
+	require.Less(t, ratio, 20.0)
+}
+
+// The current pointer follows the latest version valid now, whether that
+// version was written by this commit or an earlier one.
+func TestTemporalCurrentPointerRefresh_PointsAtCurrentVersion(t *testing.T) {
+	engine, cleanup := setupTestBadgerEngine(t)
+	defer cleanup()
+	sm := engine.GetSchemaForNamespace("test")
+	require.NoError(t, sm.AddConstraint(factWindow))
+	require.NoError(t, MarkNewTemporalConstraintsForEngine(engine, sm, []Constraint{factWindow}))
+	now := time.Now().UTC()
+	day := 24 * time.Hour
+	at := func(id string, record int64, from, to time.Time, open bool) *Node {
+		props := map[string]interface{}{"record_id": record, "valid_from": from}
+		if !open {
+			props["valid_to"] = to
+		}
+		return &Node{ID: NodeID(prefixTestID(id)), Labels: []string{"Fact"}, Properties: props}
+	}
+	isCurrent := func(id string) bool {
+		n, err := engine.GetNode(NodeID(prefixTestID(id)))
+		require.NoError(t, err)
+		ok, err := engine.IsCurrentTemporalNode(n, now)
+		require.NoError(t, err)
+		return ok
+	}
+	// Record 1: a closed past version and the open current one, in one commit.
+	commitNodes(t, engine, at("r1-v1", 1, now.Add(-10*day), now.Add(-5*day), false), at("r1-v2", 1, now.Add(-5*day), time.Time{}, true))
+	require.True(t, isCurrent("r1-v2"))
+	require.False(t, isCurrent("r1-v1"))
+
+	// A later commit closes v2 and adds v3: the pointer moves to v3.
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	require.NoError(t, tx.UpdateNode(at("r1-v2", 1, now.Add(-5*day), now.Add(-day), false)))
+	_, err = tx.CreateNode(at("r1-v3", 1, now.Add(-day), time.Time{}, true))
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	require.True(t, isCurrent("r1-v3"))
+	require.False(t, isCurrent("r1-v2"))
+}
