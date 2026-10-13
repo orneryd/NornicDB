@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
@@ -33,4 +34,22 @@ func TestRelationshipChunkSpans(t *testing.T) {
 
 	require.Nil(t, relationshipChunkSpans(edge, config, []string{"a", "b"}, 1))
 	require.Nil(t, relationshipChunkSpans(edge, config, nil, 0))
+}
+
+// A failing provider is the relationship embedding's error, with nothing
+// embedded.
+func TestRelationshipEmbedFuncReportsAProviderFailure(t *testing.T) {
+	config := DefaultConfig()
+	config.Memory.EmbeddingEnabled = true
+	config.Memory.SearchRelationshipsEnabled = true
+	config.Memory.DecayEnabled = false
+	config.Memory.AutoLinksEnabled = false
+	db, err := Open(t.TempDir(), config)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	db.SetEmbedder(&permanentFailureEmbedder{dims: config.Memory.EmbeddingDimensions})
+	embedding, err := db.relationshipEmbedFunc(db.defaultDatabaseName())(context.Background(), &storage.Edge{ID: "r", Type: "LINK", Properties: map[string]any{"reason": "why linked"}})
+	require.Error(t, err)
+	require.Empty(t, embedding.Vectors)
+	require.Empty(t, embedding.Spans)
 }
