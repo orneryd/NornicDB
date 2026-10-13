@@ -31,7 +31,8 @@ func TestLoadCorpora(t *testing.T) {
 	require.Len(t, sweep.Cases, 1)
 
 	_, err = LoadSweep(filepath.Join(dir, "missing.json.gz"))
-	require.Error(t, err)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.ErrorContains(t, err, "make cypher-sweep")
 	plain := filepath.Join(dir, "plain.json.gz")
 	require.NoError(t, os.WriteFile(plain, []byte("{}"), 0o644))
 	_, err = LoadSweep(plain)

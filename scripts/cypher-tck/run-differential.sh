@@ -16,6 +16,12 @@ case "${mode}" in
     ;;
 esac
 
+# The sweep corpus is generated from its human-readable generator, not
+# checked in: the ratchet regenerates it before comparing.
+if [[ "${mode}" == "ratchet" ]]; then
+  python3 scripts/cypher-tck/differential/gen_sweep.py
+fi
+
 neo4j_image="neo4j:5.26.30-community@sha256:3388e05ee53c8313d01acdf33e63ad175af95a92226dc8551160564439ce2c8c"
 container_name="nornicdb-cypher-reference-$$"
 

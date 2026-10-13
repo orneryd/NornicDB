@@ -1551,7 +1551,7 @@ graphify:
 	"$(shell uv tool dir --bin)/graphify" extract . --code-only --no-cluster
 	"$(shell uv tool dir)/graphifyy/bin/python" scripts/graphify_local.py --graph graphify-out/graph.json
 
-.PHONY: cypher-tck-inventory cypher-tck cypher-tck-ratchet cypher-tck-vetted cypher-tck-update-ratchet cypher-conformance cypher-differential cypher-differential-ratchet
+.PHONY: cypher-tck-inventory cypher-tck cypher-tck-ratchet cypher-tck-vetted cypher-tck-update-ratchet cypher-conformance cypher-differential cypher-differential-ratchet cypher-sweep
 
 CYPHER_TCK_ZONEINFO := $(CURDIR)/pkg/cypher/temporal_zoneinfo.zip
 CYPHER_TCK_TAGS := noui,nolocalllm
@@ -1576,6 +1576,12 @@ cypher-conformance: cypher-tck-ratchet cypher-tck-vetted
 
 cypher-differential:
 	./scripts/cypher-tck/run-differential.sh
+
+# The differential sweep corpus is generated, not checked in: this writes
+# testing/cypher/tck/testdata/differential/sweep.json.gz from
+# scripts/cypher-tck/differential/gen_sweep.py (the ratchet runs it itself).
+cypher-sweep:
+	python3 scripts/cypher-tck/differential/gen_sweep.py
 
 # The differential ratchet over the sweep and the issue reproductions on every
 # route (#754); run nightly. NORNICDB_DIFFERENTIAL_UPDATE_RATCHET=1 rewrites
