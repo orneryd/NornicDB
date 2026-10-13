@@ -141,6 +141,11 @@ type EmbedWorkerConfig struct {
 	PropertiesInclude []string
 	// PropertiesExclude: these property keys are never used (in addition to built-in metadata skips).
 	PropertiesExclude []string
+	// RelationshipPropertiesInclude / RelationshipPropertiesExclude are the
+	// lists for relationship search's embedding text; unset, the node lists
+	// apply (relationshipEmbedProperties).
+	RelationshipPropertiesInclude []string
+	RelationshipPropertiesExclude []string
 	// IncludeLabels: if true (default), node labels are prepended to the embedding text.
 	IncludeLabels bool
 

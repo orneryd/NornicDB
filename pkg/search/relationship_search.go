@@ -184,7 +184,7 @@ func (s *Service) IndexRelationship(edge *storage.Edge) {
 
 func (s *Service) indexRelationship(rs *relationshipSearch, edge *storage.Edge, persisted *relationshipEntry) {
 	id := string(edge.ID)
-	text := s.extractSearchableText(&storage.Node{Labels: []string{edge.Type}, Properties: edge.Properties})
+	text := s.relationshipSearchableText(edge)
 	source := relationshipSource(edge)
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -641,7 +641,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 			result.Matches = relationshipChunkMatches(chunkScores[c.id], chunkSpans[c.id], minSimilarity)
 		}
 		if c.bm25Rank > 0 && len(terms) > 0 {
-			result.Matches = append(result.Matches, termMatches(&storage.Node{Properties: edge.Properties}, s.FulltextProperties(), analyzer, terms)...)
+			result.Matches = append(result.Matches, termMatches(&storage.Node{Properties: edge.Properties}, s.RelationshipFulltextProperties(), analyzer, terms)...)
 		}
 		results = append(results, result)
 	}

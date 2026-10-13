@@ -612,6 +612,12 @@ type EmbeddingWorkerConfig struct {
 	PropertiesInclude []string
 	// PropertiesExclude: these property keys are never used when building embedding text (in addition to built-in skips).
 	PropertiesExclude []string
+	// RelationshipPropertiesInclude / RelationshipPropertiesExclude are
+	// PropertiesInclude / PropertiesExclude for relationship search's
+	// embedding text; unset, the node lists apply.
+	// Env: NORNICDB_EMBEDDING_RELATIONSHIP_PROPERTIES_INCLUDE / _EXCLUDE
+	RelationshipPropertiesInclude []string
+	RelationshipPropertiesExclude []string
 	// IncludeLabels: if true (default), node labels are prepended to the embedding text.
 	IncludeLabels bool
 	// EligibleLabels limits managed embedding to nodes with at least one listed label (empty = all).
@@ -673,6 +679,10 @@ type MemoryConfig struct {
 	// Empty preserves the default behavior of indexing labels and all properties.
 	// Env: NORNICDB_SEARCH_BM25_PROPERTIES (comma-separated)
 	SearchBM25Properties []string
+	// SearchRelationshipBM25Properties is SearchBM25Properties for
+	// relationship search's keyword index; unset, the node list applies.
+	// Env: NORNICDB_SEARCH_RELATIONSHIP_BM25_PROPERTIES (comma-separated)
+	SearchRelationshipBM25Properties []string
 	// SearchBM25Labels limits BM25 indexing to nodes carrying at least one of
 	// the listed labels, as NORNICDB_EMBEDDING_LABELS_INCLUDE does for
 	// embeddings. Empty preserves the default behavior of indexing every node.
@@ -1661,10 +1671,12 @@ type YAMLConfig struct {
 		BM25Enabled    *bool    `yaml:"bm25_enabled"`
 		BM25Warming    string   `yaml:"bm25_warming"`
 		BM25Properties []string `yaml:"bm25_properties"`
-		BM25Labels     []string `yaml:"bm25_labels"`
-		BM25Stemmer    string   `yaml:"bm25_stemmer"`
-		VectorEnabled  *bool    `yaml:"vector_enabled"`
-		VectorWarming  string   `yaml:"vector_warming"`
+		// RelationshipBM25Properties: relationship search's keyword properties.
+		RelationshipBM25Properties []string `yaml:"relationship_bm25_properties"`
+		BM25Labels                 []string `yaml:"bm25_labels"`
+		BM25Stemmer                string   `yaml:"bm25_stemmer"`
+		VectorEnabled              *bool    `yaml:"vector_enabled"`
+		VectorWarming              string   `yaml:"vector_warming"`
 
 		// RelationshipsEnabled indexes relationship properties (#1065).
 		RelationshipsEnabled *bool `yaml:"relationships_enabled"`
@@ -1699,9 +1711,12 @@ type YAMLConfig struct {
 		ChunkOverlap      int      `yaml:"chunk_overlap"`
 		PropertiesInclude []string `yaml:"properties_include"`
 		PropertiesExclude []string `yaml:"properties_exclude"`
-		IncludeLabels     *bool    `yaml:"include_labels"`
-		EligibleLabels    []string `yaml:"eligible_labels"`
-		ExcludedLabels    []string `yaml:"excluded_labels"`
+		// Relationship search's embedding properties; unset, the node lists apply.
+		RelationshipPropertiesInclude []string `yaml:"relationship_properties_include"`
+		RelationshipPropertiesExclude []string `yaml:"relationship_properties_exclude"`
+		IncludeLabels                 *bool    `yaml:"include_labels"`
+		EligibleLabels                []string `yaml:"eligible_labels"`
+		ExcludedLabels                []string `yaml:"excluded_labels"`
 	} `yaml:"embedding_worker"`
 
 	// K-means clustering
@@ -2657,6 +2672,9 @@ func applyEnvVars(config *Config) error {
 	if v := getEnvStringSlice("NORNICDB_SEARCH_BM25_PROPERTIES", nil); len(v) > 0 {
 		config.Memory.SearchBM25Properties = v
 	}
+	if v := getEnvStringSlice("NORNICDB_SEARCH_RELATIONSHIP_BM25_PROPERTIES", nil); len(v) > 0 {
+		config.Memory.SearchRelationshipBM25Properties = v
+	}
 	if v := getEnvStringSlice("NORNICDB_SEARCH_BM25_LABELS", nil); len(v) > 0 {
 		config.Memory.SearchBM25Labels = v
 	}
@@ -2785,6 +2803,12 @@ func applyEnvVars(config *Config) error {
 	}
 	if v := getEnvStringSlice("NORNICDB_EMBEDDING_PROPERTIES_EXCLUDE", nil); len(v) > 0 {
 		config.EmbeddingWorker.PropertiesExclude = v
+	}
+	if v := getEnvStringSlice("NORNICDB_EMBEDDING_RELATIONSHIP_PROPERTIES_INCLUDE", nil); len(v) > 0 {
+		config.EmbeddingWorker.RelationshipPropertiesInclude = v
+	}
+	if v := getEnvStringSlice("NORNICDB_EMBEDDING_RELATIONSHIP_PROPERTIES_EXCLUDE", nil); len(v) > 0 {
+		config.EmbeddingWorker.RelationshipPropertiesExclude = v
 	}
 	if v := getEnv("NORNICDB_EMBEDDING_LABELS_INCLUDE", ""); v != "" {
 		config.EmbeddingWorker.EligibleLabels = getEnvStringSlice("NORNICDB_EMBEDDING_LABELS_INCLUDE", nil)
@@ -3627,6 +3651,9 @@ func LoadFromFile(configPath string) (*Config, error) {
 	if len(yamlCfg.Search.BM25Properties) > 0 {
 		config.Memory.SearchBM25Properties = append([]string(nil), yamlCfg.Search.BM25Properties...)
 	}
+	if len(yamlCfg.Search.RelationshipBM25Properties) > 0 {
+		config.Memory.SearchRelationshipBM25Properties = append([]string(nil), yamlCfg.Search.RelationshipBM25Properties...)
+	}
 	if len(yamlCfg.Search.BM25Labels) > 0 {
 		config.Memory.SearchBM25Labels = append([]string(nil), yamlCfg.Search.BM25Labels...)
 	}
@@ -3762,6 +3789,12 @@ func LoadFromFile(configPath string) (*Config, error) {
 	}
 	if len(yamlCfg.EmbeddingWorker.PropertiesExclude) > 0 {
 		config.EmbeddingWorker.PropertiesExclude = yamlCfg.EmbeddingWorker.PropertiesExclude
+	}
+	if len(yamlCfg.EmbeddingWorker.RelationshipPropertiesInclude) > 0 {
+		config.EmbeddingWorker.RelationshipPropertiesInclude = yamlCfg.EmbeddingWorker.RelationshipPropertiesInclude
+	}
+	if len(yamlCfg.EmbeddingWorker.RelationshipPropertiesExclude) > 0 {
+		config.EmbeddingWorker.RelationshipPropertiesExclude = yamlCfg.EmbeddingWorker.RelationshipPropertiesExclude
 	}
 	if len(yamlCfg.EmbeddingWorker.EligibleLabels) > 0 {
 		config.EmbeddingWorker.EligibleLabels = yamlCfg.EmbeddingWorker.EligibleLabels

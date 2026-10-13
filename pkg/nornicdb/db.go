@@ -1162,6 +1162,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		PropertiesInclude:       config.EmbeddingWorker.PropertiesInclude,
 		PropertiesExclude:       config.EmbeddingWorker.PropertiesExclude,
 		IncludeLabels:           config.EmbeddingWorker.IncludeLabels,
+
+		RelationshipPropertiesInclude: config.EmbeddingWorker.RelationshipPropertiesInclude,
+		RelationshipPropertiesExclude: config.EmbeddingWorker.RelationshipPropertiesExclude,
 	}
 
 	// Initialize search service config (per-database services are created lazily).

@@ -809,8 +809,11 @@ type Service struct {
 	embedTextOptions *embeddingutil.EmbedTextOptions
 	// fulltextProperties is an ordered allowlist. Empty preserves all-property indexing.
 	fulltextProperties []string
-	reranker           Reranker
-	mu                 sync.RWMutex
+	// relationshipFulltextProperties is relationship search's allowlist;
+	// empty, fulltextProperties applies.
+	relationshipFulltextProperties []string
+	reranker                       Reranker
+	mu                             sync.RWMutex
 	// fulltextLabels lists the labels whose nodes are BM25-indexed (any one
 	// suffices). Empty indexes every node.
 	fulltextLabels []string
@@ -7219,11 +7222,22 @@ func (s *Service) extractSearchableText(node *storage.Node) string {
 	// so we can safely access its properties without additional locking.
 	// The storage engine (AsyncEngine) makes copies during iteration to
 	// prevent concurrent modification issues.
+	return s.searchableText(node, s.FulltextProperties())
+}
 
+// relationshipSearchableText is a relationship's keyword text: its type and
+// properties as a node's labels and properties are read, with relationship
+// search's property allowlist.
+func (s *Service) relationshipSearchableText(edge *storage.Edge) string {
+	return s.searchableText(&storage.Node{Labels: []string{edge.Type}, Properties: edge.Properties}, s.RelationshipFulltextProperties())
+}
+
+// searchableText is node's keyword text with the property allowlist
+// properties (empty: labels and every property).
+func (s *Service) searchableText(node *storage.Node, properties []string) string {
 	if !s.fulltextLabelAllowed(node) {
 		return ""
 	}
-	properties := s.FulltextProperties()
 	var parts []string
 	if len(properties) == 0 {
 		// Labels first (important for type-based search).
@@ -7279,6 +7293,39 @@ func visitSearchableFields(node *storage.Node, fulltextProperties []string, visi
 // An empty list preserves the default behavior of indexing labels and all properties.
 // Configure this before building indexes.
 func (s *Service) SetFulltextProperties(properties []string) {
+	normalized := normalizeFulltextProperties(properties)
+	s.mu.Lock()
+	s.fulltextProperties = normalized
+	s.mu.Unlock()
+}
+
+// SetRelationshipFulltextProperties limits relationship search's keyword
+// index to the ordered property values; an empty list leaves it on the node
+// list (SetFulltextProperties). Configure this before the relationship index
+// is built.
+func (s *Service) SetRelationshipFulltextProperties(properties []string) {
+	normalized := normalizeFulltextProperties(properties)
+	s.mu.Lock()
+	s.relationshipFulltextProperties = normalized
+	s.mu.Unlock()
+}
+
+// RelationshipFulltextProperties is relationship search's keyword property
+// allowlist: its own when set, otherwise the node list.
+func (s *Service) RelationshipFulltextProperties() []string {
+	s.mu.RLock()
+	properties := s.relationshipFulltextProperties
+	if len(properties) == 0 {
+		properties = s.fulltextProperties
+	}
+	properties = append([]string(nil), properties...)
+	s.mu.RUnlock()
+	return properties
+}
+
+// normalizeFulltextProperties trims the names and drops empty and repeated
+// ones, keeping the order.
+func normalizeFulltextProperties(properties []string) []string {
 	seen := make(map[string]struct{}, len(properties))
 	normalized := make([]string, 0, len(properties))
 	for _, property := range properties {
@@ -7292,9 +7339,7 @@ func (s *Service) SetFulltextProperties(properties []string) {
 		seen[property] = struct{}{}
 		normalized = append(normalized, property)
 	}
-	s.mu.Lock()
-	s.fulltextProperties = normalized
-	s.mu.Unlock()
+	return normalized
 }
 
 // SetFulltextLabels limits BM25 indexing to nodes carrying at least one of

@@ -275,11 +275,21 @@ NORNICDB_SEARCH_RELATIONSHIPS_ENABLED=true   # or search.relationships_enabled: 
 ```
 
 - **Keyword text**: a relationship's type and every property, or only the
-  `NORNICDB_SEARCH_BM25_PROPERTIES` values when that is set, as for nodes.
-- **Embedding text**: its properties as `NORNICDB_EMBEDDING_PROPERTIES_INCLUDE`
-  / `EXCLUDE` select them for nodes, after `type: <TYPE>` when
-  `NORNICDB_EMBEDDING_INCLUDE_LABELS` is on. Relationships are embedded in the
-  background with the database's embedder.
+  listed property values: `NORNICDB_SEARCH_RELATIONSHIP_BM25_PROPERTIES`
+  (`search.relationship_bm25_properties`) when set, otherwise
+  `NORNICDB_SEARCH_BM25_PROPERTIES`, as for nodes.
+- **Embedding text**: its properties as
+  `NORNICDB_EMBEDDING_RELATIONSHIP_PROPERTIES_INCLUDE` / `_EXCLUDE`
+  (`embedding_worker.relationship_properties_include` / `_exclude`) select
+  them, each defaulting to `NORNICDB_EMBEDDING_PROPERTIES_INCLUDE` /
+  `EXCLUDE`, after `type: <TYPE>` when `NORNICDB_EMBEDDING_INCLUDE_LABELS` is
+  on. Relationships are embedded in the background with the database's
+  embedder.
+- **Only some relationships**: a relationship with none of the listed
+  properties has no keyword text and no embedding text, so it isn't found.
+  Setting both relationship lists to an opt-in property (for example
+  `search_text`) indexes just the relationships that carry it, whatever the
+  nodes' lists are.
 - **Persistence**: the keyword index is built from storage when the database
   opens. With `NORNICDB_PERSIST_SEARCH_INDEXES`, the vectors are kept beside
   the BM25 index (`bm25.relationships`), so a restart embeds only

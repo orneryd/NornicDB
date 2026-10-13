@@ -318,6 +318,7 @@ func (db *DB) getOrCreateSearchService(dbName string, storageEngine storage.Engi
 	svc.SetEmbedTextOptions(embeddingutil.EmbedTextOptionsFromConfig(db.config))
 	if db.config != nil {
 		svc.SetFulltextProperties(db.config.Memory.SearchBM25Properties)
+		svc.SetRelationshipFulltextProperties(db.config.Memory.SearchRelationshipBM25Properties)
 		svc.SetFulltextLabels(db.config.Memory.SearchBM25Labels)
 	}
 	// Per-DB master switches: pull from the resolver and seed the service.

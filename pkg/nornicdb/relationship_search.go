@@ -68,8 +68,7 @@ func relationshipChunkSpans(edge *storage.Edge, config *EmbedWorkerConfig, chunk
 	if len(chunks) == 0 || len(chunks) != vectors {
 		return nil
 	}
-	options := embeddingutil.EmbedTextOptionsFromFields(config.PropertiesInclude, config.PropertiesExclude, false)
-	source := embeddingutil.BuildEmbedText(edge.Properties, nil, options)
+	source := embeddingutil.BuildEmbedText(edge.Properties, nil, relationshipEmbedTextOptions(config))
 	if config.IncludeLabels && edge.Type != "" {
 		prefix := "type: " + edge.Type + "\n"
 		aligned := make([]string, len(chunks))
@@ -81,11 +80,26 @@ func relationshipChunkSpans(edge *storage.Edge, config *EmbedWorkerConfig, chunk
 	return source.ChunkSpans(chunks)
 }
 
+// relationshipEmbedTextOptions are the property lists for a relationship's
+// embedding text: the relationship lists where set
+// (NORNICDB_EMBEDDING_RELATIONSHIP_PROPERTIES_INCLUDE / _EXCLUDE), each
+// otherwise the node list.
+func relationshipEmbedTextOptions(config *EmbedWorkerConfig) *embeddingutil.EmbedTextOptions {
+	include, exclude := config.PropertiesInclude, config.PropertiesExclude
+	if len(config.RelationshipPropertiesInclude) > 0 {
+		include = config.RelationshipPropertiesInclude
+	}
+	if len(config.RelationshipPropertiesExclude) > 0 {
+		exclude = config.RelationshipPropertiesExclude
+	}
+	return embeddingutil.EmbedTextOptionsFromFields(include, exclude, false)
+}
+
 // relationshipEmbeddingText is a relationship's embedding text: its type,
 // when labels are included, then its properties as a node's are taken. No
 // properties to embed gives no text.
 func relationshipEmbeddingText(edge *storage.Edge, config *EmbedWorkerConfig) string {
-	options := embeddingutil.EmbedTextOptionsFromFields(config.PropertiesInclude, config.PropertiesExclude, false)
+	options := relationshipEmbedTextOptions(config)
 	policy := embeddingutil.TextPolicy(options)
 	fed := false
 	for key := range edge.Properties {
