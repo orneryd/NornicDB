@@ -85,3 +85,28 @@ func TestGraphRerankReadsCandidateTextFromStorage(t *testing.T) {
 	_, _, _ = svc.rerankGraphPool(ctx, "zephyrine", bare()[1:], opts)
 	require.Equal(t, []string{"CITES"}, contents)
 }
+
+// A relationship's rerank text reads relationship search's property list:
+// no property outside it reaches the reranker, for a stored relationship or
+// one read from the hit.
+func TestGraphRerankRelationshipTextReadsItsPropertyList(t *testing.T) {
+	ctx := context.Background()
+	engine := relationshipTestEngine(t)
+	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "opted", StartNode: "a", EndNode: "c", Type: "LINK", Properties: map[string]any{"search_text": "why they are linked", "text": "unopted metadata zephyrcensus"}}))
+	svc := startRelationshipService(t, engine, nil, func(s *Service) {
+		s.SetFulltextProperties([]string{"text", "search_text"})
+		s.SetRelationshipFulltextProperties([]string{"search_text"})
+	})
+	var contents []string
+	svc.SetReranker(recordingGraphReranker{contents: &contents})
+	_, _, _ = svc.rerankGraphPool(ctx, "linked", []*graphCandidate{
+		{result: SearchResult{ID: "opted", Relationship: &storage.Edge{ID: "opted", Type: "LINK"}}},
+		{result: SearchResult{ID: "gone", Relationship: &storage.Edge{ID: "gone", Type: "LINK", Properties: map[string]any{"search_text": "old why", "text": "unopted old"}}}},
+	}, DefaultSearchOptions())
+	require.Len(t, contents, 2)
+	for _, content := range contents {
+		require.NotContains(t, content, "unopted")
+	}
+	require.Contains(t, contents[0], "why they are linked")
+	require.Contains(t, contents[1], "old why")
+}

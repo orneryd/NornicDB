@@ -253,16 +253,18 @@ func (s *Service) rerankGraphPool(ctx context.Context, query string, pool []*gra
 
 // graphRerankContent is the text a reranker sees for a graph candidate, read
 // from storage as the node rerank reads it: a node's rerank content
-// (rerankCandidateContent), or a relationship's type and properties. A hit's
+// (rerankCandidateContent), or a relationship's keyword text, which reads
+// relationship search's property list (RelationshipFulltextProperties), so
+// no property outside it reaches the reranker. A hit's
 // own properties may be projected or absent (a hit found by a query chunk's
 // vector), so they serve only when the entity can't be read.
 func (s *Service) graphRerankContent(result *SearchResult, query string, maxChars int) string {
 	text := ""
 	if relationship := result.Relationship; relationship != nil {
 		if edge, err := s.engine.GetEdge(relationship.ID); err == nil && edge != nil {
-			text = s.extractSearchableText(&storage.Node{Labels: []string{edge.Type}, Properties: edge.Properties})
+			text = s.relationshipSearchableText(edge)
 		} else {
-			text = s.extractSearchableText(graphCandidateTextNode(result))
+			text = s.relationshipSearchableText(relationship)
 		}
 	} else {
 		id := result.NodeID
