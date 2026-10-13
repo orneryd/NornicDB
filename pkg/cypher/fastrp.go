@@ -67,10 +67,10 @@ type GraphProjection struct {
 	RelationshipTypes []string
 	NodeCount         int
 	RelationshipCount int
-	NodeIDs           []string                      // All node IDs in projection
-	NodeProperties    map[string]map[string]any     // nodeID -> properties
-	Adjacency         map[string][]string           // nodeID -> neighbor IDs
-	EdgeWeights       map[string]map[string]float64 // source -> target -> weight
+	NodeIDs           []string                                 // All node IDs in projection
+	NodeProperties    map[string]map[string]any                // nodeID -> properties
+	Adjacency         map[string][]string                      // nodeID -> neighbor IDs
+	EdgeProperties    map[string]map[string]map[string]float64 // source -> target -> numeric relationship properties
 	CreatedAt         time.Time
 }
 
@@ -198,7 +198,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeLabels, relTypes
 		NodeIDs:           make([]string, 0, 1000), // Pre-allocate reasonable capacity
 		NodeProperties:    make(map[string]map[string]any),
 		Adjacency:         make(map[string][]string),
-		EdgeWeights:       make(map[string]map[string]float64),
+		EdgeProperties:    make(map[string]map[string]map[string]float64),
 		CreatedAt:         time.Now(),
 	}
 
@@ -289,25 +289,25 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeLabels, relTypes
 		}
 		projection.Adjacency[endID] = append(projection.Adjacency[endID], startID)
 
-		// Store edge weight if present (only allocate map if needed)
-		weight := 1.0
-		if w, ok := edge.Properties["weight"]; ok {
-			if wf, ok := w.(float64); ok {
-				weight = wf
+		// The relationship's numeric properties, which FastRP's
+		// relationshipWeightProperty names one of (#1185); a relationship
+		// without any stores nothing.
+		var numeric map[string]float64
+		for key, value := range edge.Properties {
+			if number, ok := toFloat64(value); ok {
+				if numeric == nil {
+					numeric = make(map[string]float64, len(edge.Properties))
+				}
+				numeric[key] = number
 			}
 		}
-
-		// Only store weights if not default (saves memory)
-		if weight != 1.0 {
-			if projection.EdgeWeights[startID] == nil {
-				projection.EdgeWeights[startID] = make(map[string]float64)
+		if numeric != nil {
+			for _, pair := range [2][2]string{{startID, endID}, {endID, startID}} {
+				if projection.EdgeProperties[pair[0]] == nil {
+					projection.EdgeProperties[pair[0]] = make(map[string]map[string]float64)
+				}
+				projection.EdgeProperties[pair[0]][pair[1]] = numeric
 			}
-			projection.EdgeWeights[startID][endID] = weight
-
-			if projection.EdgeWeights[endID] == nil {
-				projection.EdgeWeights[endID] = make(map[string]float64)
-			}
-			projection.EdgeWeights[endID][startID] = weight
 		}
 
 		relCount++
@@ -454,11 +454,11 @@ func (e *StorageExecutor) callGdsFastRPStats(args []interface{}) (*ExecuteResult
 	}, nil
 }
 
-// parseFastRPConfig extracts FastRP configuration from Cypher
 // fastRPConfigFromMap reads gds.fastRP's config map: embeddingDimension
-// (capped at maxFastRPEmbeddingDimension), randomSeed, propertyRatio and
-// relationshipWeightProperty; absent or non-positive values keep the
-// defaults.
+// (capped at maxFastRPEmbeddingDimension), randomSeed, propertyRatio,
+// featureProperties, iterationWeights (one per iteration),
+// normalizationStrength and relationshipWeightProperty (#1185); absent or
+// non-positive values keep the defaults.
 func fastRPConfigFromMap(options map[string]interface{}) FastRPConfig {
 	config := FastRPConfig{
 		EmbeddingDimension:    64,                            // Default
@@ -483,6 +483,26 @@ func fastRPConfigFromMap(options map[string]interface{}) FastRPConfig {
 	}
 	if property, ok := options["relationshipWeightProperty"].(string); ok {
 		config.RelationshipWeightProperty = property
+	}
+	if properties, ok := cypherListValue(options["featureProperties"]); ok {
+		for _, property := range properties {
+			if name, isString := property.(string); isString {
+				config.FeatureProperties = append(config.FeatureProperties, name)
+			}
+		}
+	} else if name, isString := options["featureProperties"].(string); isString {
+		config.FeatureProperties = []string{name}
+	}
+	if weights, ok := cypherListValue(options["iterationWeights"]); ok && len(weights) > 0 {
+		config.IterationWeights = make([]float64, 0, len(weights))
+		for _, weight := range weights {
+			if number, isNumber := toFloat64(weight); isNumber {
+				config.IterationWeights = append(config.IterationWeights, number)
+			}
+		}
+	}
+	if strength, ok := toFloat64(options["normalizationStrength"]); ok {
+		config.NormalizationStrength = strength
 	}
 	return config
 }
@@ -556,40 +576,63 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) map[st
 		}
 	}
 
-	// Iteration weights (propagation)
+	// normalizationStrength scales each node's initial vector by its degree
+	// to that power, as in GDS (#1185).
+	if config.NormalizationStrength != 0 {
+		for i, nodeID := range proj.NodeIDs {
+			if degree := len(proj.Adjacency[nodeID]); degree > 0 {
+				scale := math.Pow(float64(degree), config.NormalizationStrength)
+				for j := range embeddings[i] {
+					embeddings[i][j] *= scale
+				}
+			}
+		}
+	}
+
+	// Iteration weights: one iteration per weight; GDS's default is
+	// [0, 1, 1], NornicDB's kept default [0, 1, 1, 1].
 	weights := config.IterationWeights
 	if len(weights) == 0 {
 		weights = []float64{0.0, 1.0, 1.0, 1.0}
 	}
 
-	// Reuse the validated embedding width for the scratch buffer instead of
-	// allocating directly from the request-shaped dimension.
-	neighborBuffer := append([]float64(nil), embeddings[0]...)
-
-	// FastRP propagation iterations
-	for iter := 1; iter < len(weights); iter++ {
-		weight := weights[iter]
-		if weight == 0 {
-			continue
-		}
-
-		// For large graphs, process in chunks and hint GC between chunks
-		if isLargeGraph {
-			for start := 0; start < numNodes; start += embeddingChunkSize {
-				end := start + embeddingChunkSize
-				if end > numNodes {
-					end = numNodes
-				}
-				propagateEmbeddingChunk(proj, embeddings, nodeIndex, neighborBuffer,
-					start, end, dim, weight, config.RelationshipWeightProperty)
-			}
-			// Hint GC between iterations for large graphs
-			runtime.GC()
-		} else {
-			propagateEmbeddingChunk(proj, embeddings, nodeIndex, neighborBuffer,
-				0, numNodes, dim, weight, config.RelationshipWeightProperty)
+	// FastRP propagation, as in GDS (#1185): each iteration's embedding is
+	// the relationship-weighted sum of the neighbours' previous embeddings
+	// (the first iteration's: the initial vectors), L2-normalised, and the
+	// result adds every iteration's embedding times its iterationWeights
+	// entry.
+	previous := embeddings
+	current := make([][]float64, numNodes)
+	final := make([][]float64, numNodes)
+	for i, nodeID := range proj.NodeIDs {
+		current[i] = make([]float64, len(embeddings[i]))
+		final[i] = make([]float64, len(embeddings[i]))
+		if len(proj.Adjacency[nodeID]) == 0 {
+			// A node without neighbours keeps its initial vector
+			// (NornicDB's kept form; GDS gives it zeros).
+			copy(final[i], embeddings[i])
 		}
 	}
+	for _, weight := range weights {
+		// For large graphs, process in chunks and hint GC between iterations
+		chunk := numNodes
+		if isLargeGraph {
+			chunk = embeddingChunkSize
+		}
+		for start := 0; start < numNodes; start += chunk {
+			end := start + chunk
+			if end > numNodes {
+				end = numNodes
+			}
+			propagateEmbeddingChunk(proj, previous, current, final, nodeIndex,
+				start, end, weight, config.RelationshipWeightProperty)
+		}
+		previous, current = current, previous
+		if isLargeGraph {
+			runtime.GC()
+		}
+	}
+	embeddings = final
 
 	// L2 normalize final embeddings (in-place to save memory)
 	normalizeEmbeddings(embeddings, dim)
@@ -628,55 +671,38 @@ func initializeEmbeddingChunk(embeddings [][]float64, start, end, dim int, rng *
 	}
 }
 
-// propagateEmbeddingChunk propagates embeddings for a chunk of nodes
-func propagateEmbeddingChunk(proj *GraphProjection, embeddings [][]float64,
-	nodeIndex map[string]int, buffer []float64, start, end, dim int,
-	weight float64, weightProp string) {
+// propagateEmbeddingChunk computes one FastRP iteration for the nodes start
+// to end: current is the relationship-weighted sum of the neighbours'
+// previous embeddings (the relationshipWeightProperty's value, 1 without
+// it; #1185), L2-normalised, and final gains current times weight.
+func propagateEmbeddingChunk(proj *GraphProjection, previous, current, final [][]float64,
+	nodeIndex map[string]int, start, end int, weight float64, weightProp string) {
 
 	for i := start; i < end; i++ {
+		next := current[i]
+		for j := range next {
+			next[j] = 0
+		}
 		nodeID := proj.NodeIDs[i]
-		neighbors := proj.Adjacency[nodeID]
-
-		if len(neighbors) == 0 {
-			// No neighbors - keep original embedding unchanged
-			continue
-		}
-
-		// Clear buffer
-		for j := 0; j < dim; j++ {
-			buffer[j] = 0
-		}
-
-		// Aggregate neighbor embeddings
-		totalWeight := 0.0
-		for _, neighborID := range neighbors {
+		for _, neighborID := range proj.Adjacency[nodeID] {
 			neighborIdx, ok := nodeIndex[neighborID]
 			if !ok {
 				continue
 			}
-
 			edgeWeight := 1.0
 			if weightProp != "" {
-				if weights, ok := proj.EdgeWeights[nodeID]; ok {
-					if w, ok := weights[neighborID]; ok {
-						edgeWeight = w
-					}
+				if w, ok := proj.EdgeProperties[nodeID][neighborID][weightProp]; ok {
+					edgeWeight = w
 				}
 			}
-
-			neighborEmb := embeddings[neighborIdx]
-			for j := 0; j < dim; j++ {
-				buffer[j] += neighborEmb[j] * edgeWeight
+			for j, value := range previous[neighborIdx] {
+				next[j] += value * edgeWeight
 			}
-			totalWeight += edgeWeight
 		}
-
-		// Normalize by total weight and blend with original
-		if totalWeight > 0 {
-			invWeight := 1.0 / totalWeight
-			oneMinusWeight := 1 - weight
-			for j := 0; j < dim; j++ {
-				embeddings[i][j] = embeddings[i][j]*oneMinusWeight + buffer[j]*invWeight*weight
+		normalizeEmbeddings(current[i:i+1], len(next))
+		if weight != 0 {
+			for j, value := range next {
+				final[i][j] += weight * value
 			}
 		}
 	}

@@ -84,9 +84,16 @@ func TestApocAlgoDijkstra(t *testing.T) {
 	})
 
 	t.Run("no_path", func(t *testing.T) {
-		result, err := exec.Execute(ctx, "CALL apoc.algo.dijkstra('D', 'A', 'CONNECTS', 'weight') YIELD path, weight", nil)
+		result, err := exec.Execute(ctx, "CALL apoc.algo.dijkstra('D', 'A', 'CONNECTS>', 'weight') YIELD path, weight", nil)
 		require.NoError(t, err)
 		assert.Empty(t, result.Rows, "Should find no path (no reverse edges)")
+	})
+
+	t.Run("a type without a direction follows both", func(t *testing.T) {
+		result, err := exec.Execute(ctx, "CALL apoc.algo.dijkstra('D', 'A', 'CONNECTS', 'weight') YIELD path, weight", nil)
+		require.NoError(t, err)
+		require.Len(t, result.Rows, 1)
+		assert.Equal(t, []storage.NodeID{"D", "C", "B", "A"}, result.Rows[0][0])
 	})
 }
 

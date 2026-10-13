@@ -159,22 +159,7 @@ import (
 //   - Fast for sparse graphs
 //   - Memory: ~O(nodes + edges)
 func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	config, err := linkPredictionConfigFromArguments(args)
-	if err != nil {
-		return nil, err
-	}
-
-	// Build graph from storage
-	graph, err := linkpredict.BuildGraphFromEngine(context.Background(), e.storage, true)
-	if err != nil {
-		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
-	}
-
-	// Run algorithm
-	predictions := linkpredict.AdamicAdar(graph, config.SourceNode, config.TopK)
-
-	// Format results
-	return e.formatLinkPredictionResults(predictions, config.SourceNode), nil
+	return e.callGdsLinkPredictionTopology(args, linkpredict.AdamicAdar)
 }
 
 // callGdsLinkPredictionCommonNeighbors implements gds.linkPrediction.commonNeighbors.stream
@@ -266,70 +251,22 @@ func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(ctx context.Context, a
 //   - Fastest link prediction algorithm
 //   - Memory: ~O(nodes + edges)
 func (e *StorageExecutor) callGdsLinkPredictionCommonNeighbors(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	config, err := linkPredictionConfigFromArguments(args)
-	if err != nil {
-		return nil, err
-	}
-
-	graph, err := linkpredict.BuildGraphFromEngine(context.Background(), e.storage, true)
-	if err != nil {
-		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
-	}
-
-	predictions := linkpredict.CommonNeighbors(graph, config.SourceNode, config.TopK)
-
-	return e.formatLinkPredictionResults(predictions, config.SourceNode), nil
+	return e.callGdsLinkPredictionTopology(args, linkpredict.CommonNeighbors)
 }
 
 // callGdsLinkPredictionResourceAllocation implements gds.linkPrediction.resourceAllocation.stream
 func (e *StorageExecutor) callGdsLinkPredictionResourceAllocation(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	config, err := linkPredictionConfigFromArguments(args)
-	if err != nil {
-		return nil, err
-	}
-
-	graph, err := linkpredict.BuildGraphFromEngine(context.Background(), e.storage, true)
-	if err != nil {
-		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
-	}
-
-	predictions := linkpredict.ResourceAllocation(graph, config.SourceNode, config.TopK)
-
-	return e.formatLinkPredictionResults(predictions, config.SourceNode), nil
+	return e.callGdsLinkPredictionTopology(args, linkpredict.ResourceAllocation)
 }
 
 // callGdsLinkPredictionPreferentialAttachment implements gds.linkPrediction.preferentialAttachment.stream
 func (e *StorageExecutor) callGdsLinkPredictionPreferentialAttachment(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	config, err := linkPredictionConfigFromArguments(args)
-	if err != nil {
-		return nil, err
-	}
-
-	graph, err := linkpredict.BuildGraphFromEngine(context.Background(), e.storage, true)
-	if err != nil {
-		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
-	}
-
-	predictions := linkpredict.PreferentialAttachment(graph, config.SourceNode, config.TopK)
-
-	return e.formatLinkPredictionResults(predictions, config.SourceNode), nil
+	return e.callGdsLinkPredictionTopology(args, linkpredict.PreferentialAttachment)
 }
 
 // callGdsLinkPredictionJaccard implements gds.linkPrediction.jaccard.stream (not standard GDS but useful)
 func (e *StorageExecutor) callGdsLinkPredictionJaccard(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	config, err := linkPredictionConfigFromArguments(args)
-	if err != nil {
-		return nil, err
-	}
-
-	graph, err := linkpredict.BuildGraphFromEngine(context.Background(), e.storage, true)
-	if err != nil {
-		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
-	}
-
-	predictions := linkpredict.Jaccard(graph, config.SourceNode, config.TopK)
-
-	return e.formatLinkPredictionResults(predictions, config.SourceNode), nil
+	return e.callGdsLinkPredictionTopology(args, linkpredict.Jaccard)
 }
 
 // callGdsLinkPredictionPredict implements gds.linkPrediction.predict.stream (hybrid scoring)
@@ -342,10 +279,9 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 		return nil, err
 	}
 
-	// Build graph
-	graph, err := linkpredict.BuildGraphFromEngine(context.Background(), e.storage, true)
+	graph, err := e.linkPredictionGraph(config)
 	if err != nil {
-		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
+		return nil, err
 	}
 
 	// Create hybrid scorer
@@ -373,28 +309,88 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 	})
 
 	// Get predictions
-	predictions := scorer.Predict(context.Background(), graph, config.SourceNode, config.TopK)
+	predictions := scorer.Predict(context.Background(), graph, config.SourceNode, config.candidateLimit())
+	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.HybridPrediction) storage.NodeID { return p.TargetID })
 
 	// Format hybrid results
 	return e.formatHybridPredictionResults(predictions, config.SourceNode), nil
 }
 
+// callGdsLinkPredictionTopology runs a topology link prediction algorithm
+// over the graph the config selects and keeps the config's target nodes.
+func (e *StorageExecutor) callGdsLinkPredictionTopology(args []interface{}, algorithm func(linkpredict.Graph, storage.NodeID, int) []linkpredict.Prediction) (*ExecuteResult, error) {
+	config, err := linkPredictionConfigFromArguments(args)
+	if err != nil {
+		return nil, err
+	}
+	graph, err := e.linkPredictionGraph(config)
+	if err != nil {
+		return nil, err
+	}
+	predictions := algorithm(graph, config.SourceNode, config.candidateLimit())
+	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.Prediction) storage.NodeID { return p.TargetID })
+	return e.formatLinkPredictionResults(predictions, config.SourceNode), nil
+}
+
+// linkPredictionGraph is the graph a link prediction reads: every node, and
+// the relationships of the config's relationshipTypes (every one without),
+// undirected.
+func (e *StorageExecutor) linkPredictionGraph(config *linkPredictionConfig) (linkpredict.Graph, error) {
+	build := linkpredict.DefaultBuildConfig()
+	build.RelationshipTypes = config.RelationshipTypes
+	graph, err := linkpredict.BuildGraphFromEngineOptimized(context.Background(), e.storage, build)
+	if err != nil {
+		return nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
+	}
+	return graph, nil
+}
+
+// candidateLimit is how many predictions the algorithm returns: topK, or
+// every candidate (0) when targetNodes picks among them afterwards.
+func (c *linkPredictionConfig) candidateLimit() int {
+	if c.TargetNodes != nil {
+		return 0
+	}
+	return c.TopK
+}
+
+// linkPredictionTargets keeps the predictions for the config's targetNodes,
+// in order, at most topK of them; without targetNodes, all of them.
+func linkPredictionTargets[P any](config *linkPredictionConfig, predictions []P, target func(P) storage.NodeID) []P {
+	if config.TargetNodes == nil {
+		return predictions
+	}
+	kept := predictions[:0]
+	for _, prediction := range predictions {
+		if config.TargetNodes[target(prediction)] {
+			kept = append(kept, prediction)
+		}
+	}
+	if config.TopK > 0 && len(kept) > config.TopK {
+		kept = kept[:config.TopK]
+	}
+	return kept
+}
+
 // linkPredictionConfig holds parsed configuration for link prediction procedures
 type linkPredictionConfig struct {
-	SourceNode     storage.NodeID
-	TopK           int
-	Algorithm      string
-	TopologyWeight float64
-	SemanticWeight float64
-	MinThreshold   float64
+	SourceNode        storage.NodeID
+	TopK              int
+	Algorithm         string
+	TopologyWeight    float64
+	SemanticWeight    float64
+	MinThreshold      float64
+	RelationshipTypes []string                // nil: every type
+	TargetNodes       map[storage.NodeID]bool // nil: every candidate
 }
 
 // linkPredictionConfigFromArguments reads a link prediction procedure's
 // configuration from the call's evaluated arguments: its MAP argument (the
 // only one, stream({sourceNode: id(n), topK: 5}), or after the graph name,
 // stream('g', {...})) with sourceNode (a node, its id, or an INTEGER id;
-// required), topK, algorithm, topologyWeight, semanticWeight and
-// minThreshold.
+// required), targetNodes (a list of them, or one), relationshipTypes (a
+// list of type names, or one; '*' for every type), topK, algorithm,
+// topologyWeight, semanticWeight and minThreshold (#1185).
 func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfig, error) {
 	config := &linkPredictionConfig{
 		TopK:           10,
@@ -413,17 +409,37 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 	for key, value := range options {
 		switch lowerASCII(key) {
 		case "sourcenode":
-			switch source := value.(type) {
-			case *storage.Node:
-				if source != nil {
-					config.SourceNode = source.ID
+			if source, ok := linkPredictionNodeID(value); ok {
+				config.SourceNode = source
+			}
+		case "targetnodes":
+			targets, isList := cypherListValue(value)
+			if !isList {
+				targets = []interface{}{value}
+			}
+			config.TargetNodes = make(map[storage.NodeID]bool, len(targets))
+			for _, target := range targets {
+				id, ok := linkPredictionNodeID(target)
+				if !ok {
+					return nil, procedureArgumentTypeError("gds.linkPrediction", "targetNodes", "LIST<NODE>", value)
 				}
-			case string:
-				config.SourceNode = storage.NodeID(source)
-			default:
-				if isIntegerProcedureValue(value) {
-					config.SourceNode = storage.NodeID(strconv.FormatInt(toInt64(value), 10))
+				config.TargetNodes[id] = true
+			}
+		case "relationshiptypes":
+			types, isList := cypherListValue(value)
+			if !isList {
+				types = []interface{}{value}
+			}
+			for _, relType := range types {
+				name, isString := relType.(string)
+				if !isString {
+					return nil, procedureArgumentTypeError("gds.linkPrediction", "relationshipTypes", "LIST<STRING>", value)
 				}
+				if name == "*" {
+					config.RelationshipTypes = nil
+					break
+				}
+				config.RelationshipTypes = append(config.RelationshipTypes, name)
 			}
 		case "topk":
 			if topK, ok := fastRPConfigInt(value); ok {
@@ -451,6 +467,24 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 		return nil, localizedError(localization.CypherGraphProceduresSourceNodeRequired(), nil)
 	}
 	return config, nil
+}
+
+// linkPredictionNodeID reads a link prediction node: a node, its id, or an
+// INTEGER id.
+func linkPredictionNodeID(value interface{}) (storage.NodeID, bool) {
+	switch node := value.(type) {
+	case *storage.Node:
+		if node != nil {
+			return node.ID, true
+		}
+	case string:
+		return storage.NodeID(node), true
+	default:
+		if isIntegerProcedureValue(value) {
+			return storage.NodeID(strconv.FormatInt(toInt64(value), 10)), true
+		}
+	}
+	return "", false
 }
 
 // formatLinkPredictionResults formats topology predictions as Neo4j-compatible result

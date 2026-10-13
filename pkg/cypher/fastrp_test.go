@@ -1184,9 +1184,9 @@ func TestGenerateFastRPEmbeddings_Branches(t *testing.T) {
 			"n1": {"n2"},
 			"n2": {"n1"},
 		},
-		EdgeWeights: map[string]map[string]float64{
-			"n1": {"n2": 2.0},
-			"n2": {"n1": 1.0},
+		EdgeProperties: map[string]map[string]map[string]float64{
+			"n1": {"n2": {"weight": 2.0}},
+			"n2": {"n1": {"weight": 1.0}},
 		},
 	}
 	cfg := FastRPConfig{

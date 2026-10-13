@@ -244,7 +244,7 @@ RETURN path, weight
 Arguments:
 
 - `startNode`, `endNode` — bound from a preceding `MATCH`.
-- `relationshipTypes` — comma-separated list, or `''` for all types.
+- `relTypesAndDirections` — APOC's relationship filter: `'TYPE>|<TYPE|TYPE'`, entries separated by `|`, each followed outgoing (`>`), incoming (`<`) or in both directions (no mark); `'>'` or `'<'` alone is any type in that direction, and `''` is every type in both directions. `aStar` and `allSimplePaths` read it the same way.
 - `weightProperty` — the edge property used as weight (omit / `''` for unit weights).
 
 Returns the path with the lowest sum of `weightProperty` across its relationships.
@@ -280,7 +280,7 @@ RETURN path, length(path) AS hops
 ORDER BY hops
 ```
 
-The fourth argument bounds the maximum hop count — required, because the count of simple paths grows exponentially with depth.
+The fourth argument, `maxNodes`, bounds the number of relationships in a path, as in APOC (below 1, no paths) — required, because the count of simple paths grows exponentially with depth.
 
 ---
 
@@ -411,13 +411,16 @@ CALL gds.linkPrediction.predict.stream({...}) YIELD node1, node2, score
 Use `gds.fastRP.stream` to generate node embeddings as a feature input for ML pipelines:
 
 ```cypher
-CALL gds.fastRP.stream({
-  nodeProjection: 'Person',
-  relationshipProjection: 'KNOWS',
-  embeddingDimension: 128
+CALL gds.graph.project('people', 'Person', 'KNOWS');
+CALL gds.fastRP.stream('people', {
+  embeddingDimension: 128,
+  iterationWeights: [0.0, 1.0, 1.0],
+  relationshipWeightProperty: 'strength'
 }) YIELD nodeId, embedding
 RETURN nodeId, embedding
 ```
+
+As in GDS, each iteration sums the neighbours' previous embeddings (weighted by `relationshipWeightProperty` when given), and the result adds each iteration's embedding times its `iterationWeights` entry; `normalizationStrength` scales the initial vectors by degree. NornicDB L2-normalises the result, and a node without relationships keeps its initial vector.
 
 ---
 

@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -52,6 +53,10 @@ type BuildConfig struct {
 	// Undirected treats edges as bidirectional.
 	// Default: true
 	Undirected bool
+
+	// RelationshipTypes limits the graph to relationships of these types.
+	// Default: none, every relationship
+	RelationshipTypes []string
 
 	// GCAfterChunk triggers garbage collection after each chunk.
 	// Reduces peak memory at cost of some speed.
@@ -273,6 +278,9 @@ func (b *GraphBuilder) processChunkParallel(
 			// Lock graph for writing
 			graphMu.Lock()
 			for _, edge := range edges {
+				if len(b.config.RelationshipTypes) > 0 && !slices.Contains(b.config.RelationshipTypes, edge.Type) {
+					continue
+				}
 				graph[edge.StartNode][edge.EndNode] = struct{}{}
 				if b.config.Undirected {
 					// Ensure target node exists in graph

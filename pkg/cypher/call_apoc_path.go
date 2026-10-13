@@ -447,17 +447,19 @@ func (x *apocExpansion) verdict(node *storage.Node, depth int) (include, expand 
 	return include && !x.endsOnly, expand, nil
 }
 
-// apocSteps lists the relationships the filter steps follow from node.
-func (e *StorageExecutor) apocSteps(node *storage.Node, steps []apocRelationshipStep) []*storage.Edge {
+// apocSteps lists the relationships the filter steps follow from node: no
+// steps follow every relationship. The path algorithms (dijkstra, aStar,
+// allSimplePaths) read their relTypesAndDirections through it too (#1185).
+func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshipStep) []*storage.Edge {
 	if len(steps) == 0 {
 		steps = []apocRelationshipStep{{direction: "both"}}
 	}
-	out, _ := e.storage.GetOutgoingEdges(node.ID)
-	in, _ := e.storage.GetIncomingEdges(node.ID)
+	out, _ := e.storage.GetOutgoingEdges(node)
+	in, _ := e.storage.GetIncomingEdges(node)
 	var edges []*storage.Edge
 	seen := make(map[storage.EdgeID]bool)
 	take := func(edge *storage.Edge, step apocRelationshipStep) {
-		if step.follows(edge, node.ID) && !seen[edge.ID] {
+		if step.follows(edge, node) && !seen[edge.ID] {
 			seen[edge.ID] = true
 			edges = append(edges, edge)
 		}
@@ -475,6 +477,14 @@ func (e *StorageExecutor) apocSteps(node *storage.Node, steps []apocRelationship
 		}
 	}
 	return edges
+}
+
+// otherEnd is the node edge leads to from the node from.
+func otherEnd(edge *storage.Edge, from storage.NodeID) storage.NodeID {
+	if edge.StartNode == from {
+		return edge.EndNode
+	}
+	return edge.StartNode
 }
 
 // follows reports whether this filter entry follows edge from the node
@@ -556,7 +566,7 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 			if err != nil {
 				return nil, err
 			}
-			edges := e.apocSteps(step.node, filter)
+			edges := e.apocSteps(step.node.ID, filter)
 			next := make([]*apocStep, 0, len(edges))
 			for _, edge := range edges {
 				// A path never turns straight back along the relationship
