@@ -4,12 +4,6 @@
 - id: cyphergraphprocedures.stream_edges_failed
   description: Error al transmitir aristas de la proyección. Cause no se traduce.
   other: "no se pudieron transmitir las aristas: {{.Cause}}"
-- id: cyphergraphprocedures.graph_does_not_exist
-  description: Falta el grafo proyectado. Graph no se traduce.
-  other: "el grafo '{{.Graph}}' no existe"
-- id: cyphergraphprocedures.graph_does_not_exist_project_first
-  description: Falta la proyección de grafo de FastRP. Graph y gds.graph.project no se traducen.
-  other: "el grafo '{{.Graph}}' no existe. Créelo primero con gds.graph.project"
 - id: cyphergraphprocedures.build_graph_failed
   description: Error al construir el grafo de predicción de enlaces. Cause no se traduce.
   other: "no se pudo construir el grafo: {{.Cause}}"
@@ -85,3 +79,15 @@
 - id: cyphergraphprocedures.source_node_not_found
   description: Mensaje de GDS (source node not found). Los campos no se traducen.
   other: 'sourceNode `{{.Node}}` no existe en el grafo'
+- id: cyphergraphprocedures.graph_not_found
+  description: GDS's message for a graph the database's catalog doesn't hold. Graph and Database are untranslated.
+  other: 'El grafo con el nombre `{{.Graph}}` no existe en la base de datos `{{.Database}}`. Podría existir en otra base de datos.'
+- id: cyphergraphprocedures.node_property_not_in_graph
+  description: GDS's message for a node property the graph doesn't hold. Property is untranslated.
+  other: 'No existe ninguna proyección de nodos con la propiedad ''{{.Property}}''.'
+- id: cyphergraphprocedures.star_property_requires_count
+  description: GDS's message for a '*' relationship property without COUNT aggregation.
+  other: 'Una clave de propiedad ''*'' solo se puede usar con la agregación count.'
+- id: cyphergraphprocedures.job_id_type
+  description: GDS's message for a jobId that isn't a string. Type is untranslated.
+  other: 'Se esperaba JobId o String. Se recibió {{.Type}}.'

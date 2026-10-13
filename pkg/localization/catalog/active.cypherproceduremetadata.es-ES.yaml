@@ -120,6 +120,8 @@
   other: "Transmite embeddings de FastRP"
 - id: cypherproceduremetadata.gds_graph_drop
   other: "Elimina un grafo GDS proyectado"
+- id: cypherproceduremetadata.gds_graph_exists
+  other: "Comprueba si un grafo existe en el catálogo."
 - id: cypherproceduremetadata.gds_graph_list
   other: "Enumera los grafos GDS proyectados"
 - id: cypherproceduremetadata.gds_graph_project

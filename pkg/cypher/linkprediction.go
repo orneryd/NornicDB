@@ -351,11 +351,9 @@ func (e *StorageExecutor) linkPredictionGraph(config *linkPredictionConfig) (lin
 	var graph linkpredict.Graph
 	var degree linkpredict.DegreeFunc
 	if config.GraphName != "" {
-		projectionsMu.RLock()
-		projection, exists := graphProjections[config.GraphName]
-		projectionsMu.RUnlock()
-		if !exists {
-			return nil, nil, localizedError(localization.CypherGraphProceduresGraphDoesNotExist(config.GraphName), nil)
+		projection, err := e.graphProjection(config.GraphName)
+		if err != nil {
+			return nil, nil, err
 		}
 		if missing := missingNames(config.RelationshipTypes, projection.Types); len(missing) > 0 {
 			return nil, nil, localizedError(localization.CypherGraphProceduresRelationshipTypesNotInGraph(gdsNameList(missing), gdsNameList(projection.Types)), nil)

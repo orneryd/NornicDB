@@ -216,6 +216,28 @@ CALL apoc.periodic.iterate(
 
 A NornicDB extension isn't in APOC or GDS: a query that uses it runs only on NornicDB (see [NornicDB extensions](../features/apoc-functions.md#nornicdb-extensions)).
 
+### Graph Data Science (GDS)
+
+These GDS names work as in GDS 2.13 (Neo4j 5.26), with its parameters, columns, values and error messages:
+
+| Area | Names |
+| ---- | ----- |
+| Graph catalog | `gds.graph.project` (label / type projections, with `orientation`, `properties`, `aggregation` and the configuration map), `gds.graph.list`, `gds.graph.drop`, `gds.graph.exists` (procedure and function); one catalog per database |
+| FastRP | `gds.fastRP.stream`, `gds.fastRP.stats` |
+| Link prediction | `gds.alpha.linkprediction.adamicAdar`, `commonNeighbors`, `preferentialAttachment`, `resourceAllocation`, `totalNeighbors`, `sameCommunity` |
+| Utilities | `gds.util.asNode`, `asNodes`, `nodeProperty`, `NaN`, `infinity`, `isFinite`, `isInfinite`, `gds.version` |
+
+NornicDB's differences: `nodeId` is the node's id (a STRING, #1165); FastRP's `randomSeed` defaults to 42, so the same call gives the same embeddings, and `embeddingDimension` is at most 8,192; `memoryUsage` and `sizeInBytes` are reported as unmeasured (`""`, `-1`); the catalog isn't per user; `concurrency` and `readConcurrency` are accepted and change nothing (NornicDB runs these single-threaded).
+
+**Not implemented** (a query using them fails with an unknown procedure or function):
+
+- every other GDS algorithm, in any mode: centrality (`gds.pageRank`, `gds.betweenness`, `gds.closeness`, `gds.degree`, `gds.articleRank`, …), community detection (`gds.louvain`, `gds.leiden`, `gds.labelPropagation`, `gds.wcc`, `gds.scc`, `gds.triangleCount`, `gds.localClusteringCoefficient`, `gds.kmeans`, …), similarity (`gds.nodeSimilarity`, `gds.knn`, …), path finding (`gds.shortestPath.*`, `gds.allShortestPaths.*`, `gds.bfs`, `gds.dfs`, `gds.spanningTree`, …), embeddings other than FastRP (`gds.node2vec`, `gds.beta.graphSage`, `gds.hashgnn`);
+- the `mutate`, `write` and `estimate` modes, including FastRP's;
+- Cypher projections (`gds.graph.project` as an aggregation, `gds.graph.project.cypher`) and other catalog operations (`gds.graph.filter`, `gds.graph.nodeProperties.*`, `gds.graph.relationships.*`, `gds.graph.sample.*`, graph export);
+- ML pipelines and models (`gds.beta.pipeline.*`, `gds.model.*`).
+
+Some of these algorithms exist as NornicDB extensions under `apoc.algo.*` (tables above); NornicDB's own `gds.linkPrediction.*.stream` procedures are extensions too.
+
 ### Data Import/Export ✅
 
 | Operation   | Procedure                                        | Status |

@@ -54,7 +54,12 @@ func (e *StorageExecutor) unregisterVectorSpace(indexName string) {
 }
 
 func (e *StorageExecutor) databaseName() string {
-	engine := e.storage
+	return storageDatabaseName(e.storage)
+}
+
+// storageDatabaseName is the database an engine serves: the namespace of the
+// engine or one it wraps, else the configured default database.
+func storageDatabaseName(engine storage.Engine) string {
 	visited := make(map[storage.Engine]bool)
 	for engine != nil && !visited[engine] {
 		visited[engine] = true

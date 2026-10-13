@@ -3,8 +3,6 @@ package localization
 const (
 	MessageCypherGraphProceduresStreamNodesFailed              MessageID = "cyphergraphprocedures.stream_nodes_failed"
 	MessageCypherGraphProceduresStreamEdgesFailed              MessageID = "cyphergraphprocedures.stream_edges_failed"
-	MessageCypherGraphProceduresGraphDoesNotExist              MessageID = "cyphergraphprocedures.graph_does_not_exist"
-	MessageCypherGraphProceduresGraphDoesNotExistProjectFirst  MessageID = "cyphergraphprocedures.graph_does_not_exist_project_first"
 	MessageCypherGraphProceduresBuildGraphFailed               MessageID = "cyphergraphprocedures.build_graph_failed"
 	MessageCypherGraphProceduresSourceNodeRequired             MessageID = "cyphergraphprocedures.source_node_required"
 	MessageCypherGraphProceduresConfigValueOutOfRange          MessageID = "cyphergraphprocedures.config_value_out_of_range"
@@ -29,6 +27,10 @@ const (
 	MessageCypherGraphProceduresRelationshipPropertyMissing    MessageID = "cyphergraphprocedures.relationship_property_missing"
 	MessageCypherGraphProceduresNodeLabelsNotInGraph           MessageID = "cyphergraphprocedures.node_labels_not_in_graph"
 	MessageCypherGraphProceduresRelationshipTypesNotInGraph    MessageID = "cyphergraphprocedures.relationship_types_not_in_graph"
+	MessageCypherGraphProceduresGraphNotFound                  MessageID = "cyphergraphprocedures.graph_not_found"
+	MessageCypherGraphProceduresNodePropertyNotInGraph         MessageID = "cyphergraphprocedures.node_property_not_in_graph"
+	MessageCypherGraphProceduresStarPropertyRequiresCount      MessageID = "cyphergraphprocedures.star_property_requires_count"
+	MessageCypherGraphProceduresJobIDType                      MessageID = "cyphergraphprocedures.job_id_type"
 	MessageCypherGraphProceduresSourceNodeNotFound             MessageID = "cyphergraphprocedures.source_node_not_found"
 )
 
@@ -40,16 +42,6 @@ func CypherGraphProceduresStreamNodesFailed(cause error) Message {
 // CypherGraphProceduresStreamEdgesFailed identifies a wrapped projection edge-stream failure.
 func CypherGraphProceduresStreamEdgesFailed(cause error) Message {
 	return Message{ID: MessageCypherGraphProceduresStreamEdgesFailed, Fallback: "failed to stream edges: " + cause.Error(), Data: map[string]any{"Cause": cause.Error()}}
-}
-
-// CypherGraphProceduresGraphDoesNotExist identifies a missing projected graph.
-func CypherGraphProceduresGraphDoesNotExist(graph string) Message {
-	return Message{ID: MessageCypherGraphProceduresGraphDoesNotExist, Fallback: "graph '" + graph + "' does not exist", Data: map[string]any{"Graph": graph}}
-}
-
-// CypherGraphProceduresGraphDoesNotExistProjectFirst identifies a missing FastRP graph projection.
-func CypherGraphProceduresGraphDoesNotExistProjectFirst(graph string) Message {
-	return Message{ID: MessageCypherGraphProceduresGraphDoesNotExistProjectFirst, Fallback: "graph '" + graph + "' does not exist. Create it with gds.graph.project first", Data: map[string]any{"Graph": graph}}
 }
 
 // CypherGraphProceduresBuildGraphFailed identifies a wrapped link-prediction graph build failure.
@@ -176,4 +168,28 @@ func CypherGraphProceduresRelationshipTypesNotInGraph(types, available string) M
 // CypherGraphProceduresSourceNodeNotFound identifies a link prediction sourceNode the graph doesn't hold.
 func CypherGraphProceduresSourceNodeNotFound(node string) Message {
 	return Message{ID: MessageCypherGraphProceduresSourceNodeNotFound, Fallback: "sourceNode `" + node + "` does not exist in the graph", Data: map[string]any{"Node": node}}
+}
+
+// CypherGraphProceduresGraphNotFound is GDS's message for a graph name the
+// database's catalog doesn't hold.
+func CypherGraphProceduresGraphNotFound(graph, database string) Message {
+	return Message{ID: MessageCypherGraphProceduresGraphNotFound, Fallback: "Graph with name `" + graph + "` does not exist on database `" + database + "`. It might exist on another database.", Data: map[string]any{"Graph": graph, "Database": database}}
+}
+
+// CypherGraphProceduresNodePropertyNotInGraph is GDS's message for
+// gds.util.nodeProperty of a property the graph doesn't hold.
+func CypherGraphProceduresNodePropertyNotInGraph(property string) Message {
+	return Message{ID: MessageCypherGraphProceduresNodePropertyNotInGraph, Fallback: "No node projection with property '" + property + "' exists.", Data: map[string]any{"Property": property}}
+}
+
+// CypherGraphProceduresStarPropertyRequiresCount is GDS's message for a '*'
+// relationship property without COUNT aggregation.
+func CypherGraphProceduresStarPropertyRequiresCount() Message {
+	return Message{ID: MessageCypherGraphProceduresStarPropertyRequiresCount, Fallback: "A '*' property key can only be used in combination with count aggregation."}
+}
+
+// CypherGraphProceduresJobIDType is GDS's message for a jobId that isn't a
+// STRING.
+func CypherGraphProceduresJobIDType(typeName string) Message {
+	return Message{ID: MessageCypherGraphProceduresJobIDType, Fallback: "Expected JobId or String. Got " + typeName + ".", Data: map[string]any{"Type": typeName}}
 }

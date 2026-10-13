@@ -64,6 +64,7 @@ const (
 	MessageCypherProcedureMetadataGdsFastRPStats                                MessageID = "cypherproceduremetadata.gds_fastrp_stats"
 	MessageCypherProcedureMetadataGdsFastRPStream                               MessageID = "cypherproceduremetadata.gds_fastrp_stream"
 	MessageCypherProcedureMetadataGdsGraphDrop                                  MessageID = "cypherproceduremetadata.gds_graph_drop"
+	MessageCypherProcedureMetadataGdsGraphExists                                MessageID = "cypherproceduremetadata.gds_graph_exists"
 	MessageCypherProcedureMetadataGdsGraphList                                  MessageID = "cypherproceduremetadata.gds_graph_list"
 	MessageCypherProcedureMetadataGdsGraphProject                               MessageID = "cypherproceduremetadata.gds_graph_project"
 	MessageCypherProcedureMetadataGdsLinkPredictionAdamicAdarStream             MessageID = "cypherproceduremetadata.gds_linkprediction_adamicadar_stream"
@@ -397,6 +398,11 @@ func CypherProcedureMetadataGdsGraphDrop() Message {
 	return Message{ID: MessageCypherProcedureMetadataGdsGraphDrop, Fallback: "Drops projected GDS graph"}
 }
 
+// CypherProcedureMetadataGdsGraphExists describes gds.graph.exists in procedure listings.
+func CypherProcedureMetadataGdsGraphExists() Message {
+	return Message{ID: MessageCypherProcedureMetadataGdsGraphExists, Fallback: "Checks if a graph exists in the catalog."}
+}
+
 // CypherProcedureMetadataGdsGraphList describes gds.graph.list in procedure listings.
 func CypherProcedureMetadataGdsGraphList() Message {
 	return Message{ID: MessageCypherProcedureMetadataGdsGraphList, Fallback: "Lists projected GDS graphs"}
@@ -589,6 +595,7 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"gds.fastRP.stats":                                 CypherProcedureMetadataGdsFastRPStats,
 	"gds.fastRP.stream":                                CypherProcedureMetadataGdsFastRPStream,
 	"gds.graph.drop":                                   CypherProcedureMetadataGdsGraphDrop,
+	"gds.graph.exists":                                 CypherProcedureMetadataGdsGraphExists,
 	"gds.graph.list":                                   CypherProcedureMetadataGdsGraphList,
 	"gds.graph.project":                                CypherProcedureMetadataGdsGraphProject,
 	"gds.linkPrediction.adamicAdar.stream":             CypherProcedureMetadataGdsLinkPredictionAdamicAdarStream,

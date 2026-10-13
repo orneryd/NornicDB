@@ -53,7 +53,7 @@ func TestGDSProjectionBranches(t *testing.T) {
 	require.NoError(t, err)
 	values := func(graph, key string) []float64 {
 		var out []float64
-		for _, relationship := range graphProjections[graph].Relationships {
+		for _, relationship := range graphProjections[gdsCatalogKey("gds", graph)].Relationships {
 			if value, ok := relationship.Properties[key]; ok && relationship.Source != relationship.Target {
 				out = append(out, value)
 			}

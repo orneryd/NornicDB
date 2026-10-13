@@ -95,7 +95,7 @@ func TestGraphProjectAsGDS(t *testing.T) {
 			property = "'weight'"
 		}
 		require.Equal(t, int64(4), count("CALL gds.graph.project('"+name+"', 'P', {K: {aggregation: '"+aggregation+"', properties: "+property+"}})"), aggregation)
-		projection := graphProjections[name]
+		projection := graphProjections[gdsCatalogKey("gds", name)]
 		key := "weight"
 		if aggregation == "COUNT" {
 			key = "n"
@@ -117,7 +117,7 @@ func TestGraphProjectAsGDS(t *testing.T) {
 	}
 	// A default value stands in for a missing property.
 	require.Equal(t, int64(5), count("CALL gds.graph.project('def', 'P', {K: {properties: {w: {property: 'weight', defaultValue: 1.0}}}})"))
-	for _, relationship := range graphProjections["def"].Relationships {
+	for _, relationship := range graphProjections[gdsCatalogKey("gds", "def")].Relationships {
 		require.Contains(t, relationship.Properties, "w")
 	}
 
@@ -216,7 +216,7 @@ func TestFastRPAsGDS(t *testing.T) {
 	refused("w", "embeddingDimension: 4, concurrency: 0", "Value for `concurrency` was `0`, but must be within the range [1, 2147483647].")
 	refused("w", "embeddingDimension: 4, logProgress: 'x'", "The value of `logProgress` must be of type `Boolean` but was `String`.")
 	refused("w", "embeddingDimension: 4, sudo: 'x'", "The value of `sudo` must be of type `Boolean` but was `String`.")
-	refused("missing", "embeddingDimension: 4", "graph 'missing' does not exist")
+	refused("missing", "embeddingDimension: 4", "Graph with name `missing` does not exist on database `gds`. It might exist on another database.")
 
 	// stats runs FastRP and reports GDS's columns.
 	result, err := run("CALL gds.fastRP.stats('n', {embeddingDimension: 4, randomSeed: -3, relationshipWeightProperty: null})")
@@ -304,7 +304,7 @@ func TestLinkPredictionAsGDS(t *testing.T) {
 	require.Contains(t, scores("CALL gds.linkPrediction.predict.stream('gu', {sourceNode: 'a', algorithm: 'resource_allocation'})"), "c")
 
 	for query, message := range map[string]string{
-		"CALL gds.linkPrediction.adamicAdar.stream('nope', {sourceNode: 'a'})":                         "graph 'nope' does not exist",
+		"CALL gds.linkPrediction.adamicAdar.stream('nope', {sourceNode: 'a'})":                         "Graph with name `nope` does not exist on database `lp`. It might exist on another database.",
 		"CALL gds.linkPrediction.adamicAdar.stream({sourceNode: 'no-such-id'})":                        "sourceNode `no-such-id` does not exist in the graph",
 		"CALL gds.linkPrediction.adamicAdar.stream('gk', {sourceNode: 'late'})":                        "sourceNode `late` does not exist in the graph",
 		"CALL gds.linkPrediction.adamicAdar.stream({sourceNode: 'a', topK: 0})":                        "Value for `topK` was `0`, but must be within the range [1, 2147483647].",

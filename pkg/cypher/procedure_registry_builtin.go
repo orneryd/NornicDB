@@ -489,23 +489,27 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsVersion()
 			})
-		registerBuiltInProcedure("gds.graph.list", "gds.graph.list() :: (graphName :: STRING, nodeCount :: INTEGER, relationshipCount :: INTEGER)", localization.CypherProcedureMetadata("gds.graph.list"), ProcedureModeRead, 0, 0, false,
+		registerBuiltInProcedure("gds.graph.exists", "gds.graph.exists(graphName :: STRING) :: (graphName :: STRING, exists :: BOOLEAN)", localization.CypherProcedureMetadata("gds.graph.exists"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsGraphList()
+				return e.callGdsGraphExists(args)
 			})
-		registerBuiltInProcedure("gds.graph.drop", "gds.graph.drop(graphName :: STRING)", localization.CypherProcedureMetadata("gds.graph.drop"), ProcedureModeWrite, 1, 1, false,
+		registerBuiltInProcedure("gds.graph.list", "gds.graph.list(graphName = __ALL__ :: STRING) :: (degreeDistribution :: MAP, graphName :: STRING, database :: STRING, databaseLocation :: STRING, memoryUsage :: STRING, sizeInBytes :: INTEGER, nodeCount :: INTEGER, relationshipCount :: INTEGER, configuration :: MAP, density :: FLOAT, creationTime :: ZONED DATETIME, modificationTime :: ZONED DATETIME, schema :: MAP, schemaWithOrientation :: MAP)", localization.CypherProcedureMetadata("gds.graph.list"), ProcedureModeRead, 0, 1, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callGdsGraphList(args)
+			})
+		registerBuiltInProcedure("gds.graph.drop", "gds.graph.drop(graphName :: ANY, failIfMissing = true :: BOOLEAN, dbName =  :: STRING, username =  :: STRING) :: (graphName :: STRING, database :: STRING, databaseLocation :: STRING, memoryUsage :: STRING, sizeInBytes :: INTEGER, nodeCount :: INTEGER, relationshipCount :: INTEGER, configuration :: MAP, density :: FLOAT, creationTime :: ZONED DATETIME, modificationTime :: ZONED DATETIME, schema :: MAP, schemaWithOrientation :: MAP)", localization.CypherProcedureMetadata("gds.graph.drop"), ProcedureModeWrite, 1, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsGraphDrop(args)
 			})
-		registerBuiltInProcedure("gds.graph.project", "gds.graph.project(graphName :: STRING, nodeProjection :: ANY, relationshipProjection :: ANY) :: (nodeProjection :: MAP, relationshipProjection :: MAP, graphName :: STRING, nodeCount :: INTEGER, relationshipCount :: INTEGER, projectMillis :: INTEGER)", localization.CypherProcedureMetadata("gds.graph.project"), ProcedureModeWrite, 3, 3, false,
+		registerBuiltInProcedure("gds.graph.project", "gds.graph.project(graphName :: STRING, nodeProjection :: ANY, relationshipProjection :: ANY, configuration = {} :: MAP) :: (nodeProjection :: MAP, relationshipProjection :: MAP, graphName :: STRING, nodeCount :: INTEGER, relationshipCount :: INTEGER, projectMillis :: INTEGER)", localization.CypherProcedureMetadata("gds.graph.project"), ProcedureModeWrite, 3, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsGraphProject(args)
 			})
-		registerBuiltInProcedure("gds.fastRP.stream", "gds.fastRP.stream(graphName :: STRING, config :: MAP) :: (nodeId :: INTEGER, embedding :: LIST<FLOAT>)", localization.CypherProcedureMetadata("gds.fastRP.stream"), ProcedureModeRead, 1, 2, false,
+		registerBuiltInProcedure("gds.fastRP.stream", "gds.fastRP.stream(graphName :: STRING, configuration = {} :: MAP) :: (nodeId :: INTEGER, embedding :: LIST<FLOAT>)", localization.CypherProcedureMetadata("gds.fastRP.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsFastRPStream(args)
 			})
-		registerBuiltInProcedure("gds.fastRP.stats", "gds.fastRP.stats(graphName :: STRING, config :: MAP) :: (nodeCount :: INTEGER, preProcessingMillis :: INTEGER, computeMillis :: INTEGER, configuration :: MAP)", localization.CypherProcedureMetadata("gds.fastRP.stats"), ProcedureModeRead, 1, 2, false,
+		registerBuiltInProcedure("gds.fastRP.stats", "gds.fastRP.stats(graphName :: STRING, configuration = {} :: MAP) :: (nodeCount :: INTEGER, preProcessingMillis :: INTEGER, computeMillis :: INTEGER, configuration :: MAP)", localization.CypherProcedureMetadata("gds.fastRP.stats"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsFastRPStats(args)
 			})

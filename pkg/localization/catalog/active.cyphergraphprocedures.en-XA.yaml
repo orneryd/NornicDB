@@ -4,12 +4,6 @@
 - id: cyphergraphprocedures.stream_edges_failed
   description: Expanded pseudo-locale projection edge-stream failure.
   other: "[!! failed to stream edges: {{.Cause}} !!]"
-- id: cyphergraphprocedures.graph_does_not_exist
-  description: Expanded pseudo-locale missing projected graph.
-  other: "[!! graph '{{.Graph}}' does not exist !!]"
-- id: cyphergraphprocedures.graph_does_not_exist_project_first
-  description: Expanded pseudo-locale missing FastRP graph projection.
-  other: "[!! graph '{{.Graph}}' does not exist. Create it with gds.graph.project first !!]"
 - id: cyphergraphprocedures.build_graph_failed
   description: Expanded pseudo-locale link-prediction graph build failure.
   other: "[!! failed to build graph: {{.Cause}} !!]"
@@ -85,3 +79,15 @@
 - id: cyphergraphprocedures.source_node_not_found
   description: Expanded pseudo-locale source node not found.
   other: '[!! sourceNode `{{.Node}}` does not exist in the graph !!]'
+- id: cyphergraphprocedures.graph_not_found
+  description: Expanded pseudo-locale graph not found.
+  other: '[!! Graph with name `{{.Graph}}` does not exist on database `{{.Database}}`. It might exist on another database. !!]'
+- id: cyphergraphprocedures.node_property_not_in_graph
+  description: Expanded pseudo-locale node property not in graph.
+  other: '[!! No node projection with property ''{{.Property}}'' exists. !!]'
+- id: cyphergraphprocedures.star_property_requires_count
+  description: Expanded pseudo-locale star property requires count.
+  other: '[!! A ''*'' property key can only be used in combination with count aggregation. !!]'
+- id: cyphergraphprocedures.job_id_type
+  description: Expanded pseudo-locale job id type.
+  other: '[!! Expected JobId or String. Got {{.Type}}. !!]'

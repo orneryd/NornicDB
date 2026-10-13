@@ -24,13 +24,13 @@ func TestCypherGraphProcedureErrorsHaveTypedIdentityAndExactEnglish(t *testing.T
 
 	t.Run("graph does not exist", func(t *testing.T) {
 		_, err := exec.callGdsGraphDrop([]interface{}{"missing"})
-		localizedErr := requireCypherGraphProceduresLocalizedError(t, err, localization.MessageCypherGraphProceduresGraphDoesNotExist, "graph 'missing' does not exist")
+		localizedErr := requireCypherGraphProceduresLocalizedError(t, err, localization.MessageCypherGraphProceduresGraphNotFound, "Graph with name `missing` does not exist on database `"+exec.databaseName()+"`. It might exist on another database.")
 		require.Equal(t, "missing", localizedErr.Message.Data["Graph"])
 	})
 
 	t.Run("graph must be projected first", func(t *testing.T) {
 		_, err := exec.callGdsFastRPStream([]interface{}{"missing", map[string]interface{}{"embeddingDimension": int64(4)}})
-		requireCypherGraphProceduresLocalizedError(t, err, localization.MessageCypherGraphProceduresGraphDoesNotExistProjectFirst, "graph 'missing' does not exist. Create it with gds.graph.project first")
+		requireCypherGraphProceduresLocalizedError(t, err, localization.MessageCypherGraphProceduresGraphNotFound, "Graph with name `missing` does not exist on database `"+exec.databaseName()+"`. It might exist on another database.")
 	})
 
 	t.Run("source node required", func(t *testing.T) {

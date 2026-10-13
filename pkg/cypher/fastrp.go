@@ -34,7 +34,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -133,11 +132,9 @@ func (e *StorageExecutor) runGdsFastRP(procedure string, args []interface{}) ([]
 	if err != nil {
 		return nil, FastRPConfig{}, err
 	}
-	projectionsMu.RLock()
-	projection, exists := graphProjections[graphName]
-	projectionsMu.RUnlock()
-	if !exists {
-		return nil, FastRPConfig{}, localizedError(localization.CypherGraphProceduresGraphDoesNotExistProjectFirst(graphName), nil)
+	projection, err := e.graphProjection(graphName)
+	if err != nil {
+		return nil, FastRPConfig{}, err
 	}
 	embeddings, err := generateFastRPEmbeddings(projection, config)
 	return embeddings, config, err
@@ -234,9 +231,9 @@ func fastRPConfiguration(options map[string]interface{}) (FastRPConfig, error) {
 		return config, err
 	}
 
-	jobID := c.value("jobId")
-	if jobID == nil {
-		jobID = uuid.New().String()
+	jobID, err := c.jobID()
+	if err != nil {
+		return config, err
 	}
 	config.Configuration = map[string]interface{}{
 		"embeddingDimension":    int64(config.EmbeddingDimension),

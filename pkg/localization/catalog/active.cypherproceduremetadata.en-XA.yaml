@@ -120,6 +120,8 @@
   other: "[!! Streams FastRP embeddings !!]"
 - id: cypherproceduremetadata.gds_graph_drop
   other: "[!! Drops projected GDS graph !!]"
+- id: cypherproceduremetadata.gds_graph_exists
+  other: "[!! Checks if a graph exists in the catalog. !!]"
 - id: cypherproceduremetadata.gds_graph_list
   other: "[!! Lists projected GDS graphs !!]"
 - id: cypherproceduremetadata.gds_graph_project

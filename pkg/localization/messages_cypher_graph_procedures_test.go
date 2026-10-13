@@ -17,8 +17,10 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 	}{
 		{CypherGraphProceduresStreamNodesFailed(cause), "failed to stream nodes: forced graph failure"},
 		{CypherGraphProceduresStreamEdgesFailed(cause), "failed to stream edges: forced graph failure"},
-		{CypherGraphProceduresGraphDoesNotExist("missing"), "graph 'missing' does not exist"},
-		{CypherGraphProceduresGraphDoesNotExistProjectFirst("missing"), "graph 'missing' does not exist. Create it with gds.graph.project first"},
+		{CypherGraphProceduresGraphNotFound("missing", "neo4j"), "Graph with name `missing` does not exist on database `neo4j`. It might exist on another database."},
+		{CypherGraphProceduresNodePropertyNotInGraph("nope"), "No node projection with property 'nope' exists."},
+		{CypherGraphProceduresStarPropertyRequiresCount(), "A '*' property key can only be used in combination with count aggregation."},
+		{CypherGraphProceduresJobIDType("Long"), "Expected JobId or String. Got Long."},
 		{CypherGraphProceduresBuildGraphFailed(cause), "failed to build graph: forced graph failure"},
 		{CypherGraphProceduresSourceNodeRequired(), "sourceNode parameter required"},
 		{CypherGraphProceduresConfigValueOutOfRange("propertyRatio", "2", "[0.00, 1.00]"), "Value for `propertyRatio` was `2`, but must be within the range [0.00, 1.00]."},
@@ -46,7 +48,7 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresSourceNodeNotFound("x"), "sourceNode `x` does not exist in the graph"},
 	}
 
-	require.Len(t, testCases, 29)
+	require.Len(t, testCases, 31)
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {
@@ -79,16 +81,16 @@ func TestCypherGraphProceduresLocalizedErrorsPreserveCauseIdentity(t *testing.T)
 func TestCypherGraphProceduresCatalogRendering(t *testing.T) {
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
-	message := CypherGraphProceduresGraphDoesNotExistProjectFirst("missing")
+	message := CypherGraphProceduresGraphNotFound("missing", "neo4j")
 
 	spanish, tag, err := manager.Render(WithPreferences(context.Background(), language.EuropeanSpanish), message)
 	require.NoError(t, err)
 	require.Equal(t, language.EuropeanSpanish, tag)
-	require.Equal(t, "el grafo 'missing' no existe. Créelo primero con gds.graph.project", spanish)
+	require.Equal(t, "El grafo con el nombre `missing` no existe en la base de datos `neo4j`. Podría existir en otra base de datos.", spanish)
 
 	pseudoTag := language.MustParse("en-XA")
 	pseudo, tag, err := manager.Render(WithPreferences(context.Background(), pseudoTag), message)
 	require.NoError(t, err)
 	require.Equal(t, pseudoTag, tag)
-	require.Equal(t, "[!! graph 'missing' does not exist. Create it with gds.graph.project first !!]", pseudo)
+	require.Equal(t, "[!! Graph with name `missing` does not exist on database `neo4j`. It might exist on another database. !!]", pseudo)
 }

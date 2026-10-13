@@ -260,11 +260,9 @@ Expected: Diana ranks high (2 common neighbors: Bob and Charlie)
 
 ✅ **GDS's functions**: `gds.alpha.linkprediction.*`, `gds.util.asNode` / `asNodes` / `NaN` / `infinity` / `isFinite` / `isInfinite` and `gds.version()` take GDS 2.13's arguments and give its values  
 ⚠️ **NornicDB extensions**: the `gds.linkPrediction.*.stream` procedures aren't GDS's (GDS has none by those names); a query using them runs only on NornicDB  
-⚠️ **GDS procedures**: `gds.graph.project`, `gds.graph.list`, `gds.graph.drop` and `gds.fastRP.*` don't yet take GDS's parameters or return its columns (#1161)  
+✅ **GDS procedures**: `gds.graph.project`, `gds.graph.list`, `gds.graph.drop`, `gds.graph.exists`, `gds.fastRP.stream` / `stats` and `gds.util.nodeProperty` / `gds.graph.exists()` take GDS 2.13's parameters and give its columns, values and errors; the `.stream` procedures can read a projected graph by name  
 
-❌ **Not Implemented**: Graph projections (we use in-memory adjacency instead)  
-❌ **Not Implemented**: Write mode (stream mode only, no graph mutation)  
-❌ **Not Implemented**: Stats/mutate modes (stream only)
+❌ **Not Implemented**: the rest of GDS: see [GDS in the feature parity list](../neo4j-migration/feature-parity.md#graph-data-science-gds)
 
 ## Use Cases
 

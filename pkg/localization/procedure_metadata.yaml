@@ -300,6 +300,11 @@
     es: "Elimina un grafo GDS proyectado",
   }
 - {
+    name: gds.graph.exists,
+    en: "Checks if a graph exists in the catalog.",
+    es: "Comprueba si un grafo existe en el catálogo.",
+  }
+- {
     name: gds.graph.list,
     en: "Lists projected GDS graphs",
     es: "Enumera los grafos GDS proyectados",

@@ -7,6 +7,7 @@ import (
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/linkpredict"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -34,6 +35,79 @@ func init() {
 	cypherfn.Register("gds.util.isfinite", fnGDSIsFinite(true))
 	cypherfn.Register("gds.util.isinfinite", fnGDSIsFinite(false))
 	cypherfn.Register("gds.version", gdsConstant("gds.version", gdsVersion))
+	cypherfn.Register("gds.graph.exists", fnGDSGraphExists)
+	cypherfn.Register("gds.util.nodeproperty", fnGDSNodeProperty)
+}
+
+// fnGDSGraphExists is gds.graph.exists(graphName): whether this database's
+// catalog holds the graph (#1161).
+func fnGDSGraphExists(ctx cypherfn.Context, args []string) (interface{}, error) {
+	if err := gdsArity("gds.graph.exists", args, 1, 1); err != nil {
+		return nil, err
+	}
+	values, err := evalArgs(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	name, ok := values[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("gds.graph.exists expects a graph name, got %s", cypherTypeSystemName(values[0]))
+	}
+	_, missing := lookupGraphProjection(storageDatabaseName(ctx.Storage), name)
+	return missing == nil, nil
+}
+
+// fnGDSNodeProperty is gds.util.nodeProperty(graphName, nodeId, propertyKey,
+// nodeLabel = '*'): the node's value of a projected property in the graph,
+// NaN when it has none, as in GDS (#1161). A node the graph doesn't hold
+// gives null.
+func fnGDSNodeProperty(ctx cypherfn.Context, args []string) (interface{}, error) {
+	const name = "gds.util.nodeProperty"
+	if err := gdsArity(name, args, 3, 4); err != nil {
+		return nil, err
+	}
+	values, err := evalArgs(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	graph, ok := values[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("%s expects a graph name as argument 1, got %s", name, cypherTypeSystemName(values[0]))
+	}
+	key, ok := values[2].(string)
+	if !ok {
+		return nil, fmt.Errorf("%s expects a property key as argument 3, got %s", name, cypherTypeSystemName(values[2]))
+	}
+	label := "*"
+	if len(values) == 4 {
+		if label, ok = values[3].(string); !ok {
+			return nil, fmt.Errorf("%s expects a node label as argument 4, got %s", name, cypherTypeSystemName(values[3]))
+		}
+	}
+	projection, err := lookupGraphProjection(storageDatabaseName(ctx.Storage), graph)
+	if err != nil {
+		return nil, err
+	}
+	projected := false
+	for projectedLabel, keys := range projection.NodePropertyKeys {
+		if (label == "*" || label == projectedLabel) && containsString(keys, key) {
+			projected = true
+		}
+	}
+	if !projected {
+		return nil, localizedError(localization.CypherGraphProceduresNodePropertyNotInGraph(key), nil)
+	}
+	id, ok := linkPredictionNodeID(values[1])
+	if !ok {
+		return nil, fmt.Errorf("%s expects a node or node id as argument 2, got %s", name, cypherTypeSystemName(values[1]))
+	}
+	if _, inGraph := projection.nodeIndex[string(id)]; !inGraph {
+		return nil, nil
+	}
+	if value, ok := projection.NodeProperties[string(id)][key]; ok {
+		return value, nil
+	}
+	return math.NaN(), nil
 }
 
 // gdsConstant is a GDS function of no arguments that returns value.
