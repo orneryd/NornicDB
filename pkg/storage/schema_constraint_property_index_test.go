@@ -67,8 +67,11 @@ func TestConstraintPropertyIndexOwners(t *testing.T) {
 
 	_, owned := sm.ConstraintPropertyIndex("nk")
 	require.True(t, owned)
-	_, owned = sm.ConstraintPropertyIndex("nk2")
-	require.False(t, owned)
+	// A multi-property node key owns an arity-N equality index (validation
+	// looks its key up instead of scanning the label).
+	idx, owned := sm.ConstraintPropertyIndex("nk2")
+	require.True(t, owned)
+	require.Equal(t, []string{"a", "b"}, idx.Properties)
 	_, owned = sm.ConstraintPropertyIndex("ex")
 	require.False(t, owned)
 

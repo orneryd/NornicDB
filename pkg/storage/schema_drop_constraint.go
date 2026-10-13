@@ -85,6 +85,12 @@ func (sm *SchemaManager) dropConstraintLocked(name string) (func(), error) {
 				delete(sm.compositeIndexes, idx.Name)
 			}
 		}
+		if constraintCompositeKeyIndexWanted(c) {
+			if idx := sm.compositeKeyIndexLocked(c.Label, c.Properties); idx != nil && idx.OwningConstraint == name {
+				droppedPropertyIndex = idx
+				delete(sm.compositeIndexes, idx.Name)
+			}
+		}
 
 		if c.Type == ConstraintUnique && len(c.Properties) == 1 {
 			droppedUniqueKey = fmt.Sprintf("%s:%s", c.Label, c.Properties[0])

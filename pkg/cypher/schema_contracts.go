@@ -211,8 +211,13 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	}
 	schema := e.storage.GetSchema()
 	newTemporal := make([]storage.Constraint, 0)
+	newNames := make([]string, 0, len(compiledConstraints))
 	for _, constraint := range compiledConstraints {
-		if constraint.Type == storage.ConstraintTemporal && !schema.HasConstraintNamed(constraint.Name) {
+		if schema.HasConstraintNamed(constraint.Name) {
+			continue
+		}
+		newNames = append(newNames, constraint.Name)
+		if constraint.Type == storage.ConstraintTemporal {
 			newTemporal = append(newTemporal, constraint)
 		}
 	}
@@ -223,6 +228,17 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	// empty label (#1126).
 	if err := storage.MarkNewTemporalConstraintsForEngine(e.storage, schema, newTemporal); err != nil {
 		return nil, true, err
+	}
+	// Fill the equality indexes the contract's UNIQUE / NODE KEY entries own,
+	// as a standalone constraint's DDL does (addSchemaConstraint): until an
+	// owned index is filled, validation and seeks fall back to scanning the
+	// label.
+	for _, name := range newNames {
+		if index, owned := schema.ConstraintPropertyIndex(name); owned {
+			if err := e.backfillCompositeIndex(index.Name, index.Label, index.Properties); err != nil {
+				return nil, true, err
+			}
+		}
 	}
 	// Like a standalone UNIQUE constraint, a contract's IS UNIQUE entries need
 	// their value cache built and marked complete; without it every write to

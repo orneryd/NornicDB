@@ -4149,6 +4149,36 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 		return err
 	}
 
+	// Committed nodes: with a filled equality index on exactly the key's
+	// properties, only the nodes it lists under this key can collide; each is
+	// re-read at the latest committed state and compared as the scan does.
+	// Commits update the index before releasing the key's commit lock, so a
+	// concurrent commit of the same key is listed or still holds the lock.
+	if idx := tx.engine.GetSchemaForNamespace(tx.namespace).filledKeyIndex(c.Label, c.Properties); idx != nil {
+		nsPrefix := tx.namespace + ":"
+		for _, id := range idx.LookupFull(values...) {
+			if id == node.ID || tx.committedNodeSupersededLocked(id) || (tx.namespace != "" && !strings.HasPrefix(string(id), nsPrefix)) {
+				continue
+			}
+			existing, err := tx.engine.GetNode(id)
+			if err != nil || existing == nil || !hasLabel(existing.Labels, c.Label) {
+				continue
+			}
+			match := true
+			for i, prop := range c.Properties {
+				if v, ok := existing.Properties[prop]; !ok || !compareValues(v, values[i]) {
+					match = false
+					break
+				}
+			}
+			if match {
+				message := localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(existing.ID))
+				return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
+			}
+		}
+		return nil
+	}
+
 	// Full-scan check: scan all existing nodes with this label (namespace-scoped).
 	if err := tx.scanForNodeKeyViolation(tx.namespace, c.Label, c.Properties, values, node.ID); err != nil {
 		if violation, ok := err.(*ConstraintViolationError); ok {
@@ -4163,6 +4193,9 @@ func (tx *BadgerTransaction) checkNodeKeyConstraint(node *Node, c Constraint) er
 // scanForNodeKeyViolation performs a full database scan to check for NODE KEY violations
 // within a single namespace (database).
 func (tx *BadgerTransaction) scanForNodeKeyViolation(namespace, label string, properties []string, values []interface{}, excludeNodeID NodeID) error {
+	if hook := nodeKeyScanHook.Load(); hook != nil {
+		(*hook)()
+	}
 	nodes, err := tx.committedConstraintNodesLocked(label)
 	if err != nil {
 		return err

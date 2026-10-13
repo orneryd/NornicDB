@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -365,6 +366,71 @@ func constraintPropertyIndexKey(c Constraint) string {
 	return c.Label + ":" + c.Properties[0]
 }
 
+// nodeKeyScanHook lets storage tests assert that NODE KEY validation with a
+// filled key index does not fall back to scanning the label.
+var nodeKeyScanHook atomic.Pointer[func()]
+
+// constraintCompositeKeyIndexWanted reports whether c is a multi-property
+// node key (or multi-property uniqueness) constraint: it owns an arity-N
+// equality index over its properties, so validating a write looks its key up
+// instead of scanning the label.
+func constraintCompositeKeyIndexWanted(c Constraint) bool {
+	return (c.Type == ConstraintNodeKey || c.Type == ConstraintUnique) && len(c.Properties) > 1 && c.EffectiveEntityType() == ConstraintEntityNode
+}
+
+// addConstraintCompositeKeyIndexLocked registers the arity-N equality index a
+// multi-property node key or uniqueness constraint owns. Like the arity-1
+// owned index it starts unfilled: writes maintain it, and a fill (the DDL
+// backfill or the startup rebuild) makes it usable for validation and seeks.
+// An existing standalone index on exactly these properties serves instead.
+func (sm *SchemaManager) addConstraintCompositeKeyIndexLocked(c Constraint) {
+	if sm.compositeKeyIndexLocked(c.Label, c.Properties) != nil {
+		return
+	}
+	name := c.OwnedIndex
+	if name == "" {
+		name = c.Name
+	}
+	idx := &CompositeIndex{
+		Name:             name,
+		Label:            c.Label,
+		Properties:       append([]string(nil), c.Properties...),
+		OwningConstraint: c.Name,
+		values:           make(map[interface{}][]NodeID),
+		keysDirty:        true,
+		fullIndex:        make(map[string][]NodeID),
+		prefixIndex:      make(map[string][]NodeID),
+	}
+	idx.unfilled.Store(true)
+	sm.compositeIndexes[name] = idx
+}
+
+// compositeKeyIndexLocked returns the equality index on exactly label's
+// properties (in order), owned or standalone, or nil. The caller holds sm.mu.
+func (sm *SchemaManager) compositeKeyIndexLocked(label string, properties []string) *CompositeIndex {
+	for _, idx := range sm.compositeIndexes {
+		if idx != nil && idx.Label == label && slices.Equal(idx.Properties, properties) {
+			return idx
+		}
+	}
+	return nil
+}
+
+// filledKeyIndex returns a filled equality index on exactly label's
+// properties, or nil while there is none (validation then scans the label).
+func (sm *SchemaManager) filledKeyIndex(label string, properties []string) *CompositeIndex {
+	if sm == nil {
+		return nil
+	}
+	sm.mu.RLock()
+	idx := sm.compositeKeyIndexLocked(label, properties)
+	sm.mu.RUnlock()
+	if idx == nil || idx.unfilled.Load() {
+		return nil
+	}
+	return idx
+}
+
 // arity1PropertyIndexLocked returns the arity-1 composite index on label's
 // property, or nil. The caller holds sm.mu.
 func (sm *SchemaManager) arity1PropertyIndexLocked(label, property string) (*CompositeIndex, bool) {
@@ -385,6 +451,10 @@ func (sm *SchemaManager) arity1PropertyIndexLocked(label, property string) (*Com
 // existed may already have an index of its own on the property, which then
 // serves the seeks.
 func (sm *SchemaManager) addConstraintPropertyIndexLocked(c Constraint) {
+	if constraintCompositeKeyIndexWanted(c) {
+		sm.addConstraintCompositeKeyIndexLocked(c)
+		return
+	}
 	if constraintPropertyIndexKey(c) == "" {
 		return
 	}
