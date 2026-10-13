@@ -690,6 +690,28 @@ func (e *StorageExecutor) entityRowWithPaths(ctx context.Context, nodes map[stri
 // a count is the number of rows the traversal kernel expands from the bound
 // entities (evaluateBoundPatternRows, as for COUNT predicates in WHERE),
 // without running the body as a correlated pipeline per row.
+// patternHasInlineWhere reports a WHERE inside a node or relationship
+// pattern of text ((n WHERE n.x > 1), -[r WHERE r.w = 2]->), outside quoted
+// text.
+func patternHasInlineWhere(text string) bool {
+	depth := 0
+	for index := 0; index < len(text); index++ {
+		switch character := text[index]; character {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(text, index, character) - 1
+		case '(', '[':
+			depth++
+		case ')', ']':
+			depth--
+		case 'W', 'w':
+			if depth > 0 && matchKeywordAt(text, index, "WHERE") && (index == 0 || !isIdentByte(text[index-1])) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func boundPatternCountBindings(body string, values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge, bool) {
 	query := strings.TrimSpace(body)
 	if !hasPrefixFold(query, "MATCH") {
@@ -697,6 +719,11 @@ func boundPatternCountBindings(body string, values map[string]interface{}) (map[
 	}
 	clauses, ok := splitPipelineClauses(query)
 	if !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+		return nil, nil, false
+	}
+	// The bound-pattern matcher doesn't read a node's or relationship's own
+	// WHERE ((m:Coll WHERE m.id IN $ids)); the pipeline does.
+	if patternHasInlineWhere(query) {
 		return nil, nil, false
 	}
 	for name, value := range values {

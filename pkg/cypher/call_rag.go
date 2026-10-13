@@ -249,6 +249,10 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			return nil, localizedError(localization.CypherSubqueriesWhereFilterInvalid("db.retrieve"), nil)
 		}
 		if strings.TrimSpace(where) != "" {
+			where, err := desugarRetrievalWhere(ctx, where)
+			if err != nil {
+				return nil, err
+			}
 			opts.Where = e.compileNodeWhereFilter(context.WithoutCancel(ctx), "node", where)
 		}
 	}
@@ -854,4 +858,22 @@ func continuationResultMetadata(value any) map[string]any {
 		return provider.ResultMetadata()
 	}
 	return nil
+}
+
+// desugarRetrievalWhere rewrites a retrieval's where predicate as a
+// statement's text is rewritten when it enters the executor
+// (desugarLabelExpressions): a pattern element's own WHERE
+// ((m:Coll WHERE m.id IN $ids)), label expressions and the other pattern
+// forms every route reads. The predicate is rewritten as the expression of
+// RETURN <where> AS …, and taken back from it.
+func desugarRetrievalWhere(ctx context.Context, where string) (string, error) {
+	const prefix, suffix = "RETURN ", " AS __nornic_where"
+	rewritten, rewrite, err := desugarLabelExpressions(prefix+where+suffix, getParamsFromContext(ctx), cypherVersionFromContext(ctx) == "25")
+	if err != nil {
+		return "", err
+	}
+	if rewrite == nil || !strings.HasPrefix(rewritten, prefix) || !strings.HasSuffix(rewritten, suffix) {
+		return where, nil
+	}
+	return rewritten[len(prefix) : len(rewritten)-len(suffix)], nil
 }
