@@ -201,7 +201,7 @@
   description: GDS's message for Louvain's seedProperty with consecutiveIds.
   other: 'Seeding and the `consecutiveIds` option cannot be used at the same time.'
 - id: cyphergraphprocedures.seed_property_not_long
-  description: GDS's message for a seedProperty holding Float values. Property untranslated.
+  description: GDS's message for a seedProperty not holding exclusively Integer values. Property untranslated.
   other: 'Provided seeding property `{{.Property}}` does not comprise exclusively of long values'
 - id: cyphergraphprocedures.seed_negative
   description: GDS's message for a negative seed value.

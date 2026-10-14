@@ -412,7 +412,7 @@ func CypherGraphProceduresLouvainSeedingConsecutive() Message {
 	return Message{ID: MessageCypherGraphProceduresLouvainSeedingConsecutive, Fallback: "Seeding and the `consecutiveIds` option cannot be used at the same time."}
 }
 
-// CypherGraphProceduresSeedPropertyNotLong is GDS's message for a seedProperty holding Float values.
+// CypherGraphProceduresSeedPropertyNotLong is GDS's message for a seedProperty not holding exclusively Integer values.
 func CypherGraphProceduresSeedPropertyNotLong(property string) Message {
 	return Message{ID: MessageCypherGraphProceduresSeedPropertyNotLong, Fallback: "Provided seeding property `" + property + "` does not comprise exclusively of long values", Data: map[string]any{"Property": property}}
 }
