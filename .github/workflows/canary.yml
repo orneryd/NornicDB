@@ -1,0 +1,63 @@
+name: Canary (develop)
+
+# Every Monday, the same Docker images as a release (cd.yml), built from develop
+# and published as :canary, only when develop changed in the past week. Canary
+# builds never move :latest or a version tag.
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even if develop did not change in the past week"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: write   # cd.yml's build jobs need it
+
+concurrency:
+  group: canary-develop
+  cancel-in-progress: false
+
+jobs:
+  changed:
+    name: Did develop change this week?
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          set -euo pipefail
+          if ! commit="$(gh api "repos/${GITHUB_REPOSITORY}/commits/develop" 2>/dev/null)"; then
+            echo "develop does not exist; nothing to build"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sha="$(jq -r .sha <<<"$commit")"
+          date="$(jq -r .commit.committer.date <<<"$commit")"
+          age=$(( $(date +%s) - $(date -d "$date" +%s) ))
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          if [[ "${FORCE}" == "true" || ${age} -lt 608400 ]]; then
+            echo "develop ${sha:0:9} (last commit ${date}): building :canary"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "develop ${sha:0:9} has not changed since ${date}: keeping the current :canary"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  images:
+    needs: changed
+    if: needs.changed.outputs.run == 'true'
+    uses: ./.github/workflows/cd.yml
+    with:
+      source_ref: ${{ needs.changed.outputs.sha }}
+      image_tag: canary
+    secrets:
+      DOCKER_PAT: ${{ secrets.DOCKER_PAT }}

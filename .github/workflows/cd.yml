@@ -4,6 +4,20 @@ on:
   push:
     tags:
       - "*"
+  # Called by canary.yml (the weekly develop build, tagged canary).
+  workflow_call:
+    inputs:
+      source_ref:
+        description: "Branch, tag, or commit SHA to build from"
+        required: true
+        type: string
+      image_tag:
+        description: "Docker tag to publish"
+        required: true
+        type: string
+    secrets:
+      DOCKER_PAT:
+        required: true
   workflow_dispatch:
     inputs:
       source_ref:
@@ -39,7 +53,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.ref }}
+          ref: ${{ inputs.source_ref || github.ref }}
 
       - id: meta
         run: |
@@ -58,7 +72,8 @@ jobs:
             printf '%s' "$raw"
           }
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          # A manual run or a calling workflow passes source_ref; a tag push does not.
+          if [ -n "${{ inputs.source_ref }}" ]; then
             CHECKOUT_REF="${{ inputs.source_ref }}"
             if [ -n "${{ inputs.image_tag }}" ]; then
               VERSION_INPUT="${{ inputs.image_tag }}"
@@ -71,7 +86,8 @@ jobs:
           fi
           VERSION_TAG="$(sanitize_tag "$VERSION_INPUT")"
           PUBLISH_LATEST=false
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ] && printf '%s' "$VERSION_INPUT" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+          # Only a pushed release tag (vX.Y.Z) also moves :latest; manual and canary builds never do.
+          if [ "${{ github.event_name }}" = "push" ] && [ -z "${{ inputs.source_ref }}" ] && printf '%s' "$VERSION_INPUT" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
             PUBLISH_LATEST=true
           fi
           LLAMA_VERSION="$(sed -n 's/^LLAMA_VERSION ?= //p' Makefile | head -n1)"

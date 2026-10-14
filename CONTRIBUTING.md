@@ -59,7 +59,9 @@ exhaust the Actions allowance. Instead:
    when `develop` changed in the last 24 hours (`.github/workflows/nightly.yml`).
 
 Tag pushes still build and publish the images and the macOS release, and pushes to `main` that touch `docs/` still
-publish the documentation site.
+publish the documentation site. Every Monday at 04:23 UTC, when `develop` changed during the week, the release
+images are also built from `develop` and published as **`:canary`** (`.github/workflows/canary.yml`); a canary
+never moves `:latest` or a version tag.
 
 ### Releases and milestones
 
