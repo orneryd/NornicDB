@@ -77,7 +77,7 @@ func TestGDSProjectionBranches(t *testing.T) {
 
 	// GDS's Java type names.
 	require.Equal(t, "null", gdsJavaType(nil))
-	require.Equal(t, "Map", gdsJavaType(map[string]interface{}{}))
+	require.Equal(t, "HashMap", gdsJavaType(map[string]interface{}{}))
 	require.Equal(t, "Node", gdsJavaType(&storage.Node{}))
 	require.Equal(t, "java.util.Map", gdsJavaClass(map[string]interface{}{}))
 }
@@ -114,7 +114,7 @@ func TestFastRPBranches(t *testing.T) {
 		require.ErrorContains(t, err, message, config)
 	}
 	_, err = run("CALL gds.fastRP.stream('two', {embeddingDimension: {}})")
-	require.ErrorContains(t, err, "The value of `embeddingDimension` must be of type `Integer` but was `Map`.")
+	require.ErrorContains(t, err, "The value of `embeddingDimension` must be of type `Integer` but was `HashMap`.")
 
 	require.Nil(t, commonKeys(map[string][]string{"P": {"a"}}, nil))
 	require.Equal(t, []string{"a"}, commonKeys(map[string][]string{"P": {"a", "b"}, "Q": {"a"}}, []string{"P", "Q"}))
