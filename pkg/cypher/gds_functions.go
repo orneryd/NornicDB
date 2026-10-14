@@ -104,29 +104,20 @@ func fnGDSNodeProperty(ctx cypherfn.Context, args []string) (interface{}, error)
 	if _, inGraph := projection.nodeIndex[string(id)]; !inGraph {
 		return nil, nil
 	}
-	// A list property reads as its list, a number as a Float, as GDS's
-	// nodeProperty gives them; a node without the value, NaN or [].
-	switch value := projection.NodeValues[string(id)][key].(type) {
-	case []int64:
-		list := make([]interface{}, len(value))
-		for i, element := range value {
-			list[i] = element
-		}
-		return list, nil
-	case []float64:
-		list := make([]interface{}, len(value))
-		for i, element := range value {
-			list[i] = element
-		}
+	// GDS's utility reads scalars as Double and arrays in their projected
+	// element type. Every value comes from the projection's typed reader.
+	kind := projection.NodePropertyTypes[key]
+	if !strings.HasPrefix(kind, "List") {
+		kind = "Float"
+	}
+	value, err := projection.nodePropertyValue(string(id), key, kind)
+	if err != nil {
+		return nil, err
+	}
+	if list, ok := cypherListValue(value); ok {
 		return list, nil
 	}
-	if value, ok := projection.NodeProperties[string(id)][key]; ok {
-		return value, nil
-	}
-	if strings.HasPrefix(projection.NodePropertyTypes[key], "List") {
-		return []interface{}{}, nil
-	}
-	return math.NaN(), nil
+	return value, nil
 }
 
 // gdsConstant is a GDS function of no arguments that returns value.

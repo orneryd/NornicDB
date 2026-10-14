@@ -47,6 +47,12 @@ const (
 	MessageCypherGraphProceduresUnsafeLongConversion           MessageID = "cyphergraphprocedures.unsafe_long_conversion"
 	MessageCypherGraphProceduresUnsafeLongArrayConversion      MessageID = "cyphergraphprocedures.unsafe_long_array_conversion"
 	MessageCypherGraphProceduresSourceNodeNotFound             MessageID = "cyphergraphprocedures.source_node_not_found"
+
+	MessageCypherGraphProceduresDefaultPropertyType MessageID = "cyphergraphprocedures.default_property_type"
+
+	MessageCypherGraphProceduresRelationshipValueType MessageID = "cyphergraphprocedures.relationship_value_type"
+
+	MessageCypherGraphProceduresPropertyReadType MessageID = "cyphergraphprocedures.property_read_type"
 )
 
 // CypherGraphProceduresStreamNodesFailed identifies a wrapped projection node-stream failure.
@@ -156,8 +162,8 @@ func CypherGraphProceduresFeaturePropertiesMissing(properties, labels, available
 }
 
 // CypherGraphProceduresFeaturePropertyInvalid is GDS's message for a node without a value for a feature property.
-func CypherGraphProceduresFeaturePropertyInvalid(node, property string) Message {
-	return Message{ID: MessageCypherGraphProceduresFeaturePropertyInvalid, Fallback: "Node with ID `" + node + "` has invalid feature property value `NaN` for property `" + property + "`", Data: map[string]any{"Node": node, "Property": property}}
+func CypherGraphProceduresFeaturePropertyInvalid(node, property, value string) Message {
+	return Message{ID: MessageCypherGraphProceduresFeaturePropertyInvalid, Fallback: "Node with ID `" + node + "` has invalid feature property value " + value + " for property `" + property + "`", Data: map[string]any{"Node": node, "Property": property, "Value": value}}
 }
 
 // CypherGraphProceduresWeightPropertyNotFound is GDS's message for a relationship weight property the graph doesn't hold.
@@ -282,4 +288,19 @@ func CypherGraphProceduresUnsafeLongConversion(value string) Message {
 // CypherGraphProceduresUnsafeLongArrayConversion is GDS's message for a list with a fraction given to a List of Integer property.
 func CypherGraphProceduresUnsafeLongArrayConversion(value, fraction string) Message {
 	return Message{ID: MessageCypherGraphProceduresUnsafeLongArrayConversion, Fallback: "Cannot safely convert " + value + " into a Long Array. Cannot safely convert " + fraction + " into an long value", Data: map[string]any{"Fraction": fraction, "Value": value}}
+}
+
+// CypherGraphProceduresPropertyReadType identifies a typed read of an incompatible property.
+func CypherGraphProceduresPropertyReadType(requested, stored string) Message {
+	return Message{ID: MessageCypherGraphProceduresPropertyReadType, Fallback: "Tried to retrieve a value of type " + requested + " value from properties of type " + stored, Data: map[string]any{"Requested": requested, "Stored": stored}}
+}
+
+// CypherGraphProceduresRelationshipValueType identifies a nonnumeric relationship property.
+func CypherGraphProceduresRelationshipValueType(kind, value string) Message {
+	return Message{ID: MessageCypherGraphProceduresRelationshipValueType, Fallback: "Unsupported type [" + kind + "] of value " + value + ". Please use a numeric property.", Data: map[string]any{"Type": kind, "Value": value}}
+}
+
+// CypherGraphProceduresDefaultPropertyType identifies an incompatible default value.
+func CypherGraphProceduresDefaultPropertyType(expected, actual string) Message {
+	return Message{ID: MessageCypherGraphProceduresDefaultPropertyType, Fallback: "Expected type of default value to be `" + expected + "`. But got `" + actual + "`.", Data: map[string]any{"Expected": expected, "Actual": actual}}
 }

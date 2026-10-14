@@ -63,7 +63,7 @@
   other: 'The feature properties {{.Properties}} are not present for all requested labels. Requested labels: {{.Labels}}. Properties available on all requested labels: {{.Available}}'
 - id: cyphergraphprocedures.feature_property_invalid
   description: GDS's message for a node without a value for a feature property. Node, Property are untranslated.
-  other: 'Node with ID `{{.Node}}` has invalid feature property value `NaN` for property `{{.Property}}`'
+  other: 'Node with ID `{{.Node}}` has invalid feature property value {{.Value}} for property `{{.Property}}`'
 - id: cyphergraphprocedures.weight_property_not_found
   description: GDS's message for a relationship weight property the graph doesn't hold. Property, Types, Available are untranslated.
   other: 'Relationship weight property `{{.Property}}` not found in relationship types {{.Types}}. Properties existing on all relationship types: {{.Available}}'
@@ -136,3 +136,12 @@
 - id: cyphergraphprocedures.unsafe_long_array_conversion
   description: GDS's message for a list with a fraction given to a List of Integer property. Value, Fraction untranslated.
   other: 'Cannot safely convert {{.Value}} into a Long Array. Cannot safely convert {{.Fraction}} into an long value'
+- id: cyphergraphprocedures.property_read_type
+  description: GDS incompatible typed property read. Requested and Stored are untranslated type names.
+  other: 'Tried to retrieve a value of type {{.Requested}} value from properties of type {{.Stored}}'
+- id: cyphergraphprocedures.relationship_value_type
+  description: GDS nonnumeric relationship property. Type and Value are untranslated.
+  other: 'Unsupported type [{{.Type}}] of value {{.Value}}. Please use a numeric property.'
+- id: cyphergraphprocedures.default_property_type
+  description: GDS incompatible default property value. Expected and Actual are untranslated.
+  other: 'Expected type of default value to be `{{.Expected}}`. But got `{{.Actual}}`.'

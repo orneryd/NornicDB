@@ -231,9 +231,9 @@ func TestGraphProjectListPropertyRefusalsAsGDS(t *testing.T) {
 	require.Equal(t, "DoubleArray[]", gdsJavaValueText([]float64{}))
 	// Without widening (GDS's Cypher aggregation), an Integer refuses a
 	// fraction.
-	_, err = gdsMergePropertyType("Integer", "Float", 2.5, false)
+	_, _, _, err = gdsConvertPropertyValue(2.5, "Integer", false)
 	require.ErrorContains(t, err, "Cannot safely convert 2.50 into an long value")
-	kind, err := gdsMergePropertyType("Integer", "Float", 2.5, true)
+	_, kind, _, err := gdsConvertPropertyValue(2.5, "Integer", true)
 	require.NoError(t, err)
 	require.Equal(t, "Float", kind)
 }

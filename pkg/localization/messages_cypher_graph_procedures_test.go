@@ -55,7 +55,11 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresIterationWeightsEmpty(), "The value of `iterationWeights` must not be empty if `nodeSelfInfluence` is zero."},
 		{CypherGraphProceduresFeaturePropertiesRequired(), "When `propertyRatio` is non-zero, `featureProperties` may not be empty."},
 		{CypherGraphProceduresFeaturePropertiesMissing("['age']", "['P']", "[]"), "The feature properties ['age'] are not present for all requested labels. Requested labels: ['P']. Properties available on all requested labels: []"},
-		{CypherGraphProceduresFeaturePropertyInvalid("2", "age"), "Node with ID `2` has invalid feature property value `NaN` for property `age`"},
+		{CypherGraphProceduresFeaturePropertyInvalid("2", "age", "`NaN`"), "Node with ID `2` has invalid feature property value `NaN` for property `age`"},
+		{CypherGraphProceduresFeaturePropertyInvalid("2", "age", "NaN"), "Node with ID `2` has invalid feature property value NaN for property `age`"},
+		{CypherGraphProceduresPropertyReadType("LONG", "DOUBLE"), "Tried to retrieve a value of type LONG value from properties of type DOUBLE"},
+		{CypherGraphProceduresRelationshipValueType("NUMBER_ARRAY", "LongArray[1]"), "Unsupported type [NUMBER_ARRAY] of value LongArray[1]. Please use a numeric property."},
+		{CypherGraphProceduresDefaultPropertyType("long[]", "Double"), "Expected type of default value to be `long[]`. But got `Double`."},
 		{CypherGraphProceduresWeightPropertyNotFound("nope", "['K']", "['weight']"), "Relationship weight property `nope` not found in relationship types ['K']. Properties existing on all relationship types: ['weight']"},
 		{CypherGraphProceduresRelationshipPropertyMissing("weight", "1", "2"), "Missing relationship property `weight` on relationship between nodes with ids `1` and `2`."},
 		{CypherGraphProceduresNodeLabelsNotInGraph("['Nope']", "['P']"), "Could not find the specified `nodeLabels` of ['Nope']. Available labels are ['P']."},
@@ -63,7 +67,7 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresSourceNodeNotFound("x"), "sourceNode `x` does not exist in the graph"},
 	}
 
-	require.Len(t, testCases, 46)
+	require.Len(t, testCases, 50)
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {

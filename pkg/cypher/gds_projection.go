@@ -24,10 +24,7 @@ type GraphProjection struct {
 	NodeIDs        []string
 	NodeLabels     map[string][]string           // node -> the projected labels it carries
 	Labels         []string                      // the projected labels ("__ALL__" for '*')
-	NodeProperties map[string]map[string]float64 // node -> projected numeric property -> value
-	// NodeValues holds every projected property's exact value: int64 or
-	// float64, or a list ([]int64 or []float64).
-	NodeValues map[string]map[string]interface{}
+	NodeProperties projectedNodePropertyValueMap // node -> typed value (int64, float64, []int64 or []float64)
 	// NodePropertyTypes is each projected property key's GDS type:
 	// Integer, Float, List of Integer or List of Float.
 	NodePropertyTypes        map[string]string
@@ -449,8 +446,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	projection := &GraphProjection{
 		Name:                     name,
 		NodeLabels:               make(map[string][]string),
-		NodeProperties:           make(map[string]map[string]float64),
-		NodeValues:               make(map[string]map[string]interface{}),
+		NodeProperties:           make(map[string]map[string]interface{}),
 		NodePropertyTypes:        make(map[string]string),
 		NodePropertyKeys:         make(map[string][]string),
 		RelationshipPropertyKeys: make(map[string][]string),
@@ -462,7 +458,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 
 	labelsSeen := make(map[string]bool)
 	nodePropertySeen := make(map[string]bool)
-	nodePropertyType := make(map[string]string) // each projected label's property key's GDS type, from its values
+	nodePropertyType := make(map[string]string) // one builder per projected key, shared across labels
 	err := storage.StreamNodesWithFallback(ctx, e.storage, streamChunkSize, func(node *storage.Node) error {
 		for _, label := range node.Labels {
 			labelsSeen[label] = true
@@ -474,35 +470,24 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 			}
 			labels = appendUnique(labels, spec.name)
 			for _, property := range spec.properties {
-				exact, kind, ok, err := gdsNodeValue(node.Properties[property.property])
+				exact, kind, ok, err := gdsConvertPropertyValue(node.Properties[property.property], nodePropertyType[property.key], true)
 				if err != nil {
 					return err
 				}
 				if ok {
 					nodePropertySeen[property.property] = true
-					typeKey := gdsPropertyTypeKey(spec.name, property.key)
-					merged, err := gdsMergePropertyType(nodePropertyType[typeKey], kind, exact, true)
-					if err != nil {
-						return err
-					}
-					nodePropertyType[typeKey] = merged
+					nodePropertyType[property.key] = kind
 				} else if property.defaultValue != nil {
-					exact, kind, ok = *property.defaultValue, "Float", true
+					exact, kind, ok, _ = gdsConvertPropertyValue(*property.defaultValue, "", false)
 				}
 				if !ok {
 					continue
 				}
 				id := string(node.ID)
-				if projection.NodeValues[id] == nil {
-					projection.NodeValues[id] = make(map[string]interface{})
+				if projection.NodeProperties[id] == nil {
+					projection.NodeProperties[id] = make(map[string]interface{})
 				}
-				projection.NodeValues[id][property.key] = exact
-				if value, scalar := toFloat64(exact); scalar && !strings.HasPrefix(kind, "List") {
-					if projection.NodeProperties[id] == nil {
-						projection.NodeProperties[id] = make(map[string]float64)
-					}
-					projection.NodeProperties[id][property.key] = value
-				}
+				projection.NodeProperties[id][property.key] = exact
 			}
 		}
 		if labels != nil {
@@ -592,11 +577,15 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 				if property.property == "*" {
 					continue // counted, by its COUNT aggregation
 				}
-				if value, ok := toFloat64(edge.Properties[property.property]); ok {
+				if exact, _, ok, err := gdsConvertPropertyValue(edge.Properties[property.property], "Relationship", false); err != nil {
+					return nil, err
+				} else if ok {
+					value := exact.(float64)
 					relPropertySeen[property.property] = true
 					properties[property.key] = value
 				} else if property.defaultValue != nil {
-					properties[property.key] = *property.defaultValue
+					exact, _, _, _ := gdsConvertPropertyValue(*property.defaultValue, "Relationship", false)
+					properties[property.key] = exact.(float64)
 				}
 			}
 			directions := [][2]string{{start, end}}
@@ -692,12 +681,11 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	}
 	projection.NodeCount = len(projection.NodeIDs)
 	projection.RelationshipCount = len(projection.Relationships)
-	schemaTypes := make(map[string]string)
+	// Native scalar properties can widen after their first node or through
+	// a default. Finalize each key before converting its earlier values.
 	for _, spec := range nodeSpecs {
 		for _, property := range spec.properties {
-			// A non-integer default makes an Integer property a Float.
-			typeKey := gdsPropertyTypeKey(spec.name, property.key)
-			kind := nodePropertyType[typeKey]
+			kind := nodePropertyType[property.key]
 			fractionalDefault := property.defaultValue != nil && *property.defaultValue != math.Trunc(*property.defaultValue)
 			switch {
 			case (kind == "" || kind == "Integer") && fractionalDefault:
@@ -705,10 +693,29 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 			case kind == "":
 				kind = "Integer"
 			}
-			schemaTypes[typeKey] = kind
-			if _, typed := projection.NodePropertyTypes[property.key]; !typed {
-				projection.NodePropertyTypes[property.key] = kind
+			nodePropertyType[property.key] = kind
+		}
+	}
+	projection.NodePropertyTypes = nodePropertyType
+	schemaTypes := make(map[string]string)
+	for _, spec := range nodeSpecs {
+		for _, property := range spec.properties {
+			kind := nodePropertyType[property.key]
+			if property.defaultValue != nil {
+				if _, _, _, err := gdsConvertPropertyValue(*property.defaultValue, "Default "+kind, false); err != nil {
+					return nil, err
+				}
 			}
+			schemaTypes[gdsPropertyTypeKey(spec.name, property.key)] = kind
+		}
+	}
+	for _, properties := range projection.NodeProperties {
+		for key, value := range properties {
+			exact, _, _, err := gdsConvertPropertyValue(value, nodePropertyType[key], false)
+			if err != nil {
+				return nil, err
+			}
+			properties[key] = exact
 		}
 	}
 	projection.schema = gdsGraphSchema(nodeSpecs, relSpecs, schemaTypes)
@@ -1197,80 +1204,6 @@ func gdsNameList(names []string) string {
 	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
-// gdsNodeValue reads a stored property value as GDS projects it: a number
-// (int64 for an INTEGER, else float64), or a list of numbers ([]int64 when
-// every element is an INTEGER, else []float64). ok is false for anything
-// else; a list of strings is refused, as GDS refuses it.
-func gdsNodeValue(value interface{}) (exact interface{}, kind string, ok bool, err error) {
-	if _, isText := value.(string); isText || value == nil {
-		return nil, "", false, nil
-	}
-	if isIntegerProcedureValue(value) {
-		return gdsInteger(value), "Integer", true, nil
-	}
-	if number, isNumber := toFloat64(value); isNumber {
-		return number, "Float", true, nil
-	}
-	items, isList := cypherListValue(value)
-	if !isList || len(items) == 0 {
-		return nil, "", false, nil
-	}
-	integers := make([]int64, 0, len(items))
-	floats := make([]float64, 0, len(items))
-	allIntegers := true
-	for _, item := range items {
-		if _, isText := item.(string); isText {
-			return nil, "", false, localizedError(localization.CypherGraphProceduresUnsupportedArrayType("StringArray"), nil)
-		}
-		if isIntegerProcedureValue(item) {
-			integer := gdsInteger(item)
-			integers = append(integers, integer)
-			floats = append(floats, float64(integer))
-			continue
-		}
-		number, isNumber := toFloat64(item)
-		if !isNumber {
-			return nil, "", false, nil
-		}
-		floats = append(floats, number)
-		allIntegers = false
-	}
-	if allIntegers {
-		return integers, "List of Integer", true, nil
-	}
-	return floats, "List of Float", true, nil
-}
-
-// gdsMergePropertyType is a property's type after another value of type
-// kind. A Float takes integers; an Integer takes fractions only when widen
-// (GDS's native projection widens it to Float; its Cypher aggregation keeps
-// the first value's type). A list's type is fixed by the first value, and
-// scalars and lists don't mix. The rest is refused with GDS's messages.
-func gdsMergePropertyType(current, kind string, value interface{}, widen bool) (string, error) {
-	switch {
-	case current == "" || current == kind:
-		return kind, nil
-	case current == "Float" && kind == "Integer", current == "List of Float" && kind == "List of Integer":
-		return current, nil
-	case current == "Integer" && kind == "Float":
-		if widen {
-			return "Float", nil
-		}
-		number, _ := toFloat64(value)
-		return "", localizedError(localization.CypherGraphProceduresUnsafeLongConversion(strconv.FormatFloat(number, 'f', 2, 64)), nil)
-	case current == "List of Integer" && kind == "List of Float":
-		fraction := 0.0
-		for _, element := range value.([]float64) {
-			if element != math.Trunc(element) {
-				fraction = element
-				break
-			}
-		}
-		return "", localizedError(localization.CypherGraphProceduresUnsafeLongArrayConversion(gdsJavaValueText(value), strconv.FormatFloat(fraction, 'f', 2, 64)), nil)
-	}
-	return "", localizedError(localization.CypherGraphProceduresUnsafeConversion(gdsJavaValueText(value), gdsJavaTypeTarget(current)), nil)
-}
-
 // gdsJavaValueText is a projected value as GDS's conversion messages print
 // it: 1, 1.0, LongArray[1, 2], DoubleArray[1.0, 2.0].
 func gdsJavaValueText(value interface{}) string {
@@ -1311,7 +1244,7 @@ func gdsJavaTypeTarget(kind string) string {
 }
 
 // gdsPropertyTypeKey keys a projected property's type by its label and key:
-// two labels' projections of one stored property are separate properties.
+// schema entries are per label; conversion builders are per projected key.
 func gdsPropertyTypeKey(label, key string) string {
 	return label + "\x00" + key
 }

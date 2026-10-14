@@ -32,6 +32,7 @@ import (
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	mathrand "math/rand"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -288,7 +289,7 @@ func stringsToInterfaces(values []string) []interface{} {
 
 // namesOrAll is a label or type filter as GDS reports it: ['*'] for none.
 func namesOrAll(names []string) []interface{} {
-	if names == nil {
+	if len(names) == 0 {
 		return []interface{}{"*"}
 	}
 	return stringsToInterfaces(names)
@@ -315,7 +316,8 @@ type fastRPEdge struct {
 }
 
 // fastRPSubgraph selects config's nodes and relationships from proj, with
-// GDS's errors for labels, types and weights the graph doesn't hold.
+// GDS's errors for labels, types and weight keys the graph doesn't hold.
+// Missing values stay NaN; algorithms decide whether and when to validate them.
 func fastRPSubgraph(proj *GraphProjection, config FastRPConfig) (*fastRPGraph, error) {
 	if missing := missingNames(config.NodeLabels, proj.Labels); len(missing) > 0 {
 		return nil, localizedError(localization.CypherGraphProceduresNodeLabelsNotInGraph(gdsNameList(missing), gdsNameList(proj.Labels)), nil)
@@ -324,7 +326,7 @@ func fastRPSubgraph(proj *GraphProjection, config FastRPConfig) (*fastRPGraph, e
 		return nil, localizedError(localization.CypherGraphProceduresRelationshipTypesNotInGraph(gdsNameList(missing), gdsNameList(proj.Types)), nil)
 	}
 	types := config.RelationshipTypes
-	if types == nil {
+	if len(types) == 0 {
 		types = proj.Types
 	}
 	if property := config.RelationshipWeightProperty; property != "" {
@@ -335,7 +337,7 @@ func fastRPSubgraph(proj *GraphProjection, config FastRPConfig) (*fastRPGraph, e
 	}
 	graph := &fastRPGraph{index: make(map[string]int)}
 	for _, id := range proj.NodeIDs {
-		if config.NodeLabels != nil && !anyString(proj.NodeLabels[id], config.NodeLabels) {
+		if len(config.NodeLabels) > 0 && !anyString(proj.NodeLabels[id], config.NodeLabels) {
 			continue
 		}
 		graph.index[id] = len(graph.nodes)
@@ -356,10 +358,9 @@ func fastRPSubgraph(proj *GraphProjection, config FastRPConfig) (*fastRPGraph, e
 		}
 		weight := 1.0
 		if property := config.RelationshipWeightProperty; property != "" {
-			// A NaN weight is a missing one, as GDS reads it.
 			value, ok := relationship.Properties[property]
-			if !ok || math.IsNaN(value) {
-				return nil, localizedError(localization.CypherGraphProceduresRelationshipPropertyMissing(property, strconv.Itoa(source), strconv.Itoa(target)), nil)
+			if !ok {
+				value = math.NaN()
 			}
 			weight = value
 		}
@@ -394,7 +395,7 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fas
 	featureCount := 0
 	if propDim > 0 {
 		labels := config.NodeLabels
-		if labels == nil {
+		if len(labels) == 0 {
 			labels = proj.Labels
 		}
 		available := commonKeys(proj.NodePropertyKeys, labels)
@@ -461,11 +462,16 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fas
 	for i := range final {
 		final[i] = make([]float64, dim)
 	}
-	for _, weight := range config.IterationWeights {
+	for iteration, weight := range config.IterationWeights {
 		current := make([][]float64, size)
 		for i := range current {
 			current[i] = make([]float64, dim)
 			for _, edge := range graph.outgoing[i] {
+				// GDS validates weights on the first propagation, even if
+				// this iteration contributes zero to the final embedding.
+				if iteration == 0 && math.IsNaN(edge.weight) {
+					return nil, localizedError(localization.CypherGraphProceduresRelationshipPropertyMissing(config.RelationshipWeightProperty, strconv.Itoa(i), strconv.Itoa(edge.target)), nil)
+				}
 				for j, value := range previous[edge.target] {
 					current[i][j] += value * edge.weight
 				}
@@ -515,25 +521,27 @@ func vectorNorm(vector []float64) float64 {
 	return math.Sqrt(sum)
 }
 
-// fastRPFeatureValues is one node's values of a feature property: the
-// number, or a list property's elements. A missing or NaN number is
-// refused, as GDS refuses it.
+// fastRPFeatureValues reads scalar and array features through the same
+// typed reader, then validates every component in one place.
 func fastRPFeatureValues(proj *GraphProjection, id, name string, position int) ([]float64, error) {
-	switch values := proj.NodeValues[id][name].(type) {
-	case []float64:
-		return values, nil
-	case []int64:
-		floats := make([]float64, len(values))
-		for i, value := range values {
-			floats[i] = float64(value)
+	kind, invalid := "Float", "`NaN`"
+	if strings.HasPrefix(proj.NodePropertyTypes[name], "List") {
+		kind, invalid = "List of Float", "NaN"
+	}
+	value, err := proj.nodePropertyValue(id, name, kind)
+	if err != nil {
+		return nil, err
+	}
+	values, list := value.([]float64)
+	if !list {
+		values = []float64{value.(float64)}
+	}
+	for _, component := range values {
+		if math.IsNaN(component) {
+			return nil, localizedError(localization.CypherGraphProceduresFeaturePropertyInvalid(strconv.Itoa(position), name, invalid), nil)
 		}
-		return floats, nil
 	}
-	value, ok := proj.NodeProperties[id][name]
-	if !ok || math.IsNaN(value) {
-		return nil, localizedError(localization.CypherGraphProceduresFeaturePropertyInvalid(strconv.Itoa(position), name), nil)
-	}
-	return []float64{value}, nil
+	return values, nil
 }
 
 // missingNames is the names not in available.
