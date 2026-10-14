@@ -345,6 +345,11 @@
     es: "Ejecuta la predicción de enlaces por asignación de recursos",
   }
 - {
+    name: gds.louvain.stream,
+    en: "The Louvain method for community detection is an algorithm for detecting communities in networks.",
+    es: "El método de Louvain para la detección de comunidades es un algoritmo para detectar comunidades en redes.",
+  }
+- {
     name: gds.nodeSimilarity.filtered.stream,
     en: "The Filtered Node Similarity algorithm compares a set of nodes based on the nodes they are connected to. Two nodes are considered similar if they share many of the same neighbors. The algorithm computes pair-wise similarities based on Jaccard or Overlap metrics. The filtered variant supports limiting which nodes to compare via source and target node filters.",
     es: "El algoritmo Filtered Node Similarity compara un conjunto de nodos según los nodos a los que están conectados; los filtros de nodos de origen y destino limitan qué nodos se comparan.",

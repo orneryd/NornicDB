@@ -138,6 +138,8 @@
   other: "[!! Runs preferential attachment link prediction !!]"
 - id: cypherproceduremetadata.gds_linkprediction_resourceallocation_stream
   other: "[!! Runs resource-allocation link prediction !!]"
+- id: cypherproceduremetadata.gds_louvain_stream
+  other: "[!! The Louvain method for community detection is an algorithm for detecting communities in networks. !!]"
 - id: cypherproceduremetadata.gds_nodesimilarity_filtered_stream
   other: "[!! The Filtered Node Similarity algorithm compares a set of nodes based on the nodes they are connected to. Two nodes are considered similar if they share many of the same neighbors. The algorithm computes pair-wise similarities based on Jaccard or Overlap metrics. The filtered variant supports limiting which nodes to compare via source and target node filters. !!]"
 - id: cypherproceduremetadata.gds_nodesimilarity_stream

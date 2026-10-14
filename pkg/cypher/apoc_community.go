@@ -45,9 +45,9 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 // between the given nodes, parallel ones adding their weights (weightProp's
 // value, 1 without it). Each level moves nodes, in the given order, to the
 // neighbouring community with the best modularity gain until no move
-// helps (at most louvainMaxIterations passes), then merges each community
-// into one node; levels repeat until a level moves nothing (at most
-// louvainMaxLevels). Communities are numbered by their first node.
+// helps, then merges each community into one node; levels repeat until a
+// level moves nothing (runLouvain, apocLouvainOptions). Communities are
+// numbered by their first node.
 func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp string) map[storage.NodeID]int {
 	if len(nodes) == 0 {
 		return map[storage.NodeID]int{}
@@ -81,23 +81,7 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 		}
 	}
 
-	// membership[i] is node i's community at the current level.
-	membership := make([]int, len(unique))
-	for i := range membership {
-		membership[i] = i
-	}
-	for level := 0; level < louvainMaxLevels; level++ {
-		communities, moved := graph.moveNodes()
-		if !moved {
-			break
-		}
-		count := renumberLouvainCommunities(communities)
-		for i := range membership {
-			membership[i] = communities[membership[i]]
-		}
-		graph = graph.aggregate(communities, count)
-	}
-
+	membership := louvainFinal(runLouvain(graph, apocLouvainOptions), len(unique))
 	result := make(map[storage.NodeID]int, len(unique))
 	for i, node := range unique {
 		result[node.ID] = membership[i]
@@ -105,10 +89,106 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 	return renumberInNodeOrder(unique, result)
 }
 
-const (
-	louvainMaxLevels     = 10 // GDS's maxLevels default
-	louvainMaxIterations = 10 // GDS's maxIterations default
-)
+// louvainOptions are a Louvain run's limits, GDS's maxLevels, maxIterations
+// and tolerance (a level or pass gaining less modularity ends the run),
+// and the nodes' initial communities (seed; nil: each its own).
+type louvainOptions struct {
+	maxLevels, maxIterations int
+	tolerance                float64
+	seed                     []int
+}
+
+// apocLouvainOptions are apoc.algo.louvain's: GDS's defaults (#1184).
+var apocLouvainOptions = louvainOptions{maxLevels: 10, maxIterations: 10, tolerance: 0.0001}
+
+// louvainRun is a Louvain run's result: each level's community of every
+// node, numbered by first node, and the modularity after each level.
+type louvainRun struct {
+	levels       [][]int
+	modularities []float64
+}
+
+// runLouvain runs Louvain over graph as GDS runs it: each level moves
+// nodes (the tolerance ending its passes), then merges each community into
+// one node, until a level moves nothing, a level gains less modularity than
+// the tolerance over the one before (the first: over each node alone), or
+// maxLevels levels have run.
+func runLouvain(graph *louvainGraph, options louvainOptions) louvainRun {
+	var run louvainRun
+	size := len(graph.weights)
+	membership := make([]int, size)
+	for i := range membership {
+		membership[i] = i
+	}
+	initial := options.seed
+	previous := graph.modularity(identityCommunities(size))
+	for level := 0; level < options.maxLevels; level++ {
+		communities, moved := graph.moveNodes(options.maxIterations, options.tolerance, initial)
+		if initial != nil {
+			// Seeded communities are a grouping of their own.
+			moved = moved || len(initial) > 0
+			initial = nil
+		}
+		if !moved {
+			break
+		}
+		modularity := graph.modularity(communities)
+		count := renumberLouvainCommunities(communities)
+		for i := range membership {
+			membership[i] = communities[membership[i]]
+		}
+		run.levels = append(run.levels, append([]int(nil), membership...))
+		run.modularities = append(run.modularities, modularity)
+		// A level gaining less modularity than the tolerance over the one
+		// before (the first: over each node alone) is the last.
+		if modularity-previous < options.tolerance {
+			break
+		}
+		previous = modularity
+		graph = graph.aggregate(communities, count)
+	}
+	return run
+}
+
+// louvainFinal is each node's community after the run's last level (each
+// node its own when no level ran).
+func louvainFinal(run louvainRun, size int) []int {
+	if len(run.levels) == 0 {
+		return identityCommunities(size)
+	}
+	return run.levels[len(run.levels)-1]
+}
+
+func identityCommunities(size int) []int {
+	communities := make([]int, size)
+	for i := range communities {
+		communities[i] = i
+	}
+	return communities
+}
+
+// modularity is the graph's modularity for communities: Σ over communities
+// of in/2m − (tot/2m)², a self-loop counted twice.
+func (g *louvainGraph) modularity(community []int) float64 {
+	if g.total == 0 {
+		return 0
+	}
+	inside := make(map[int]float64)
+	degree := make(map[int]float64)
+	for i, weights := range g.weights {
+		degree[community[i]] += g.degree[i]
+		for j, w := range weights {
+			if community[i] == community[j] {
+				inside[community[i]] += w
+			}
+		}
+	}
+	q := 0.0
+	for c, d := range degree {
+		q += inside[c]/g.total - (d/g.total)*(d/g.total)
+	}
+	return q
+}
 
 // louvainGraph is one Louvain level's undirected weighted graph. weights[i]
 // maps each neighbour j to the weight between i and j; a self-loop is
@@ -142,64 +222,119 @@ func (g *louvainGraph) link(i, j int, w float64) {
 	g.total += 2 * w
 }
 
-// moveNodes is a level's local moving phase: each node in turn joins the
-// neighbouring community with the largest modularity gain, kept by its own
-// community on a tie and by the smaller community between others, until a
-// pass moves nothing. It reports each node's community and whether any
-// node moved.
-func (g *louvainGraph) moveNodes() ([]int, bool) {
+// moveNodes is a level's local moving phase, as GDS's modularity
+// optimization runs it (#1198): the nodes are coloured greedily in node
+// order (no two neighbours share a colour), and each pass takes the colour
+// classes in turn, every node of a class joining the neighbouring community
+// with the largest modularity gain over the communities as they stood
+// before the class (its own kept on a tie, else the smaller community).
+// Passes repeat until one moves nothing, gains less modularity than the
+// tolerance, or maxIterations have run. Nodes start in initial's
+// communities (nil: each its own). It reports each node's community and
+// whether any node moved.
+func (g *louvainGraph) moveNodes(maxIterations int, tolerance float64, initial []int) ([]int, bool) {
 	size := len(g.weights)
 	community := make([]int, size)
 	communityDegree := make([]float64, size)
 	for i := range community {
 		community[i] = i
-		communityDegree[i] = g.degree[i]
+		if initial != nil {
+			community[i] = initial[i]
+		}
+	}
+	for i := range community {
+		communityDegree[community[i]] += g.degree[i]
 	}
 	if g.total == 0 {
 		return community, false
 	}
 	neighbours := g.neighbours()
+	classes := g.colourClasses(neighbours)
 	moved := false
-	for iteration := 0; iteration < louvainMaxIterations; iteration++ {
+	before := 0.0
+	next := make([]int, size)
+	for iteration := 0; iteration < maxIterations; iteration++ {
 		moves := 0
-		for i := 0; i < size; i++ {
-			current := community[i]
-			communityDegree[current] -= g.degree[i]
-			// The weight from i to each neighbouring community.
-			links := make(map[int]float64)
-			for _, j := range neighbours[i] {
-				if j != i {
-					links[community[j]] += g.weights[i][j]
+		for _, class := range classes {
+			for _, i := range class {
+				current := community[i]
+				// The weight from i to each neighbouring community.
+				links := make(map[int]float64)
+				for _, j := range neighbours[i] {
+					if j != i {
+						links[community[j]] += g.weights[i][j]
+					}
 				}
-			}
-			candidates := make([]int, 0, len(links))
-			for c := range links {
-				candidates = append(candidates, c)
-			}
-			sort.Ints(candidates)
-			// The gain of i joining c, up to a constant factor:
-			// k_i,in(c) - Σtot(c)·k_i / 2m.
-			gain := func(c int) float64 {
-				return links[c] - communityDegree[c]*g.degree[i]/g.total
-			}
-			best, bestGain := current, gain(current)
-			for _, c := range candidates {
-				if candidateGain := gain(c); candidateGain > bestGain {
-					best, bestGain = c, candidateGain
+				candidates := make([]int, 0, len(links))
+				for c := range links {
+					candidates = append(candidates, c)
 				}
+				sort.Ints(candidates)
+				// The gain of i joining c, up to a constant factor:
+				// k_i,in(c) - Σtot(c)·k_i / 2m, Σtot without i itself.
+				gain := func(c int) float64 {
+					total := communityDegree[c]
+					if c == current {
+						total -= g.degree[i]
+					}
+					return links[c] - total*g.degree[i]/g.total
+				}
+				best, bestGain := current, gain(current)
+				for _, c := range candidates {
+					if candidateGain := gain(c); candidateGain > bestGain {
+						best, bestGain = c, candidateGain
+					}
+				}
+				next[i] = best
 			}
-			communityDegree[best] += g.degree[i]
-			if best != current {
-				community[i] = best
-				moves++
+			for _, i := range class {
+				if best := next[i]; best != community[i] {
+					communityDegree[community[i]] -= g.degree[i]
+					communityDegree[best] += g.degree[i]
+					community[i] = best
+					moves++
+				}
 			}
 		}
 		if moves == 0 {
 			break
 		}
 		moved = true
+		// The tolerance compares each pass with the one before; the first
+		// pass is always followed by a second, as in GDS.
+		after := g.modularity(community)
+		if iteration > 0 && after-before < tolerance {
+			break
+		}
+		before = after
 	}
 	return community, moved
+}
+
+// colourClasses colours the graph greedily in node order, each node taking
+// the smallest colour none of its neighbours has, and lists each colour's
+// nodes in order.
+func (g *louvainGraph) colourClasses(neighbours [][]int) [][]int {
+	colour := make([]int, len(g.weights))
+	var classes [][]int
+	for i := range colour {
+		used := make(map[int]bool)
+		for _, j := range neighbours[i] {
+			if j < i {
+				used[colour[j]] = true
+			}
+		}
+		c := 0
+		for used[c] {
+			c++
+		}
+		colour[i] = c
+		if c == len(classes) {
+			classes = append(classes, nil)
+		}
+		classes[c] = append(classes[c], i)
+	}
+	return classes
 }
 
 // neighbours lists each node's neighbours in order, so sums over them don't

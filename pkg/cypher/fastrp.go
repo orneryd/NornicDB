@@ -313,6 +313,7 @@ type gdsSubgraph struct {
 type gdsEdge struct {
 	target int
 	weight float64
+	id     string // the projected relationship's id (an UNDIRECTED one is held twice)
 }
 
 // selectGDSSubgraph selects the nodes of nodeLabels (nil: every one) and
@@ -365,7 +366,7 @@ func selectGDSSubgraph(proj *GraphProjection, nodeLabels, relationshipTypes []st
 			}
 			weight = value
 		}
-		graph.outgoing[source] = append(graph.outgoing[source], gdsEdge{target: target, weight: weight})
+		graph.outgoing[source] = append(graph.outgoing[source], gdsEdge{target: target, weight: weight, id: relationship.ID + "/" + relationship.Type})
 	}
 	return graph, nil
 }

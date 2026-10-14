@@ -266,7 +266,7 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 		require.NotEmpty(t, spec.DescriptionMessage.ID, "core metadata requires a descriptor: %s", spec.Name)
 		require.Equal(t, spec.Description, spec.DescriptionMessage.Fallback, "English fallback changed: %s", spec.Name)
 	}
-	require.Equal(t, 76, coreCount) // gds.nodeSimilarity.stream and filtered.stream (#1195)
+	require.Equal(t, 77, coreCount) // gds.louvain.stream (#1198)
 	require.Equal(t, 30, apocCount) // apoc.path.subgraphAll and expandConfig (#907)
 	require.Equal(t, 5, customCount)
 	require.Equal(t, 6, kpAliasCount)

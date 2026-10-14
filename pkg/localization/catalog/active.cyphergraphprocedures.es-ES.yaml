@@ -109,3 +109,9 @@
 - id: cyphergraphprocedures.component_property_not_found
   description: Mensaje de GDS (component property not found).
   other: 'No se encontró la propiedad de componente `{{.Property}}` en el grafo con propiedades de nodo: {{.Available}}'
+- id: cyphergraphprocedures.louvain_intermediate_consecutive
+  description: Mensaje de GDS (louvain intermediate consecutive).
+  other: '`includeIntermediateResults` y la opción `consecutiveIds` no se pueden usar al mismo tiempo.'
+- id: cyphergraphprocedures.seed_property_not_found
+  description: Mensaje de GDS (seed property not found).
+  other: 'No se encontró la propiedad semilla `{{.Property}}` en el grafo con propiedades de nodo: {{.Available}}'
