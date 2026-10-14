@@ -167,12 +167,52 @@ func TestLocalScopeRound3(t *testing.T) {
 	})
 	scope := matchSemanticScope{"r": matchBindingRelationship}
 	text := "all(r IN [1] WHERE EXISTS { (r)-->() }) AND all(r IN [y] WHERE true)"
-	require.Equal(t, matchBindingValue, withLocalKinds(scope, text, strings.Index(text, "EXISTS"))["r"])
+	require.Equal(t, matchBindingValue, withLocalTypes(staticTypeScope{kinds: scope}, text, strings.Index(text, "EXISTS")).kinds["r"])
 	require.Equal(t, matchBindingPath, localBindingKind("[p = (a)-->(b) | p]", 17, "p", staticTypeScope{}))
 	require.Equal(t, matchBindingUnknown, localBindingKind("reduce(a = b, x IN l | a)", 23, "a", staticTypeScope{}))
 	require.Equal(t, matchBindingValue, localBindingKind("reduce(a = 0, x IN l | a)", 23, "a", staticTypeScope{}))
-	require.Equal(t, scope, withLocalKinds(scope, "true", 0))
+	require.Equal(t, scope, withLocalTypes(staticTypeScope{kinds: scope}, "true", 0).kinds)
 	require.Equal(t, matchBindingUnknown, localBindingKind("x", 0, "x", staticTypeScope{}))
 	require.Equal(t, matchBindingUnknown, localBindingKind("[x IN| x]", 7, "x", staticTypeScope{}))
-	require.Equal(t, matchSemanticScope{"x": matchBindingValue}, withLocalKinds(nil, "[x IN [1] | x]", 12))
+	require.Equal(t, matchSemanticScope{"x": matchBindingValue}, withLocalTypes(staticTypeScope{}, "[x IN [1] | x]", 12).kinds)
+}
+
+// TestSubqueryBodiesWalkTheirOwnScope: an EXISTS / COUNT / COLLECT body and
+// a CALL body are walked by the one clause walk from the variables they
+// see: a CALL body from its imports, an expression body from the
+// enclosing query's variables and its own MATCH and WITH bindings; a local
+// is typed with the locals around it resolved first. Recorded on Neo4j
+// 5.26.30 (#1227, review round 4).
+func TestSubqueryBodiesWalkTheirOwnScope(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "subquery_body_scope"))
+		ctx := context.Background()
+		_, err := exec.Execute(ctx, "CREATE (:N {id:'a', k:1})-[:R {id:'r1'}]->(:N {id:'b', k:2})-[:R {id:'r2'}]->(:N {id:'c', k:3})", nil)
+		require.NoError(t, err)
+		for query, want := range map[string]interface{}{
+			"WITH 7 AS x RETURN COLLECT { CALL (x) { RETURN [x IN [1] | x] AS v } RETURN v AS v } AS v":                              []interface{}{[]interface{}{int64(1)}},
+			"WITH 7 AS x RETURN COUNT { CALL (x) { RETURN [x IN [1] | x] AS v } RETURN v } AS v":                                     int64(1),
+			"WITH 7 AS x RETURN EXISTS { CALL (x) { RETURN [x IN [1] | x] AS v } RETURN v } AS v":                                    true,
+			"WITH 7 AS x RETURN COLLECT { CALL () { RETURN [x IN [1] | x] AS v } RETURN v AS v } AS v":                               []interface{}{[]interface{}{int64(1)}},
+			"WITH 7 AS x RETURN COLLECT { CALL { WITH x RETURN [x IN [1] | x] AS v } RETURN v AS v } AS v":                           []interface{}{[]interface{}{int64(1)}},
+			"WITH 7 AS x CALL () { RETURN COLLECT { RETURN [x IN [1] | x] AS v } AS v } RETURN v":                                    []interface{}{[]interface{}{int64(1)}},
+			"MATCH (a:N {id:'a'})-[x:R]->(y) WHERE all(x IN [y] WHERE all(r IN [x] WHERE EXISTS { (r)-->() })) RETURN count(*) AS v": int64(1),
+			"RETURN COUNT { MATCH (x:N) WHERE EXISTS { MATCH (x)-->(n) } } AS v":                                                     int64(2),
+			"RETURN COUNT { UNWIND [1, 2] AS x WITH x WHERE EXISTS { WITH x AS y RETURN y } } AS v":                                  int64(2),
+			"WITH 1 AS g RETURN COLLECT { UNWIND [1] AS x WITH count(*) AS c RETURN c + g } AS v":                                    []interface{}{int64(2)},
+		} {
+			result, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err, query)
+			require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+		}
+		for _, query := range []string{
+			"WITH 7 AS x CALL (x) { RETURN COLLECT { RETURN [x IN [1] | x] AS v } AS v } RETURN v",
+			"MATCH (r:N {id:'missing'}) WHERE all(x IN [1] WHERE all(r IN [x] WHERE EXISTS { (r)-->() })) RETURN count(*) AS v",
+			"RETURN COUNT { WITH 7 AS x WHERE EXISTS { WITH [x IN [1] | x] AS v RETURN v } } AS v",
+			"RETURN COUNT { MATCH (x:N {id:'missing'}) WHERE EXISTS { MATCH (n) WHERE all(x IN [1] WHERE x = 1) } } AS v",
+		} {
+			requireStatementCode(t, exec, query, "Neo.ClientError.Statement.SyntaxError")
+		}
+	})
+	require.Equal(t, "COUNT {     } + CALL (x) {        }", maskNestedScopeBodies("COUNT { (n) } + CALL (x) { RETURN }"))
 }
