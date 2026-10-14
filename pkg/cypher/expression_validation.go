@@ -363,30 +363,14 @@ func localVariableShadowsAt(text string, operand int, name string) bool {
 func localBindingOf(text string, operand int, name string) (localBinding, int, bool) {
 	var found localBinding
 	foundIndex, ok := 0, false
-	for open := 0; open < operand; open++ {
-		switch text[open] {
-		case '\'', '"', '`':
-			open = skipCypherQuotedText(text, open, text[open]) - 1
-			continue
-		case '/':
-			if end := queryCommentEnd(text, open); end >= 0 {
-				open = end - 1
-			}
-			continue
-		case '[', '(':
-		default:
+	for open := 0; open < operand; {
+		if !localBindingStepReads(text[open]) {
+			open++
 			continue
 		}
-		if declared, _, named := scanIdentifierToken(text, queryGapEnd(text, open+1)); !named || declared != name {
-			if text[open] != '(' || !isReduceFormFunction(bindingFunctionBeforeParen(text, open)) {
-				continue
-			}
-		}
-		binding, bound := localBindingAt(text, open)
-		if !bound {
-			continue
-		}
-		for index := 0; index < binding.count; index++ {
+		next, binding, bound := localBindingStep(text, open, name)
+		open = next
+		for index := 0; bound && index < binding.count; index++ {
 			if binding.names[index] == name && (binding.declared[index] == operand || binding.scope <= operand && operand < binding.close) {
 				// A binding opening later inside this one is inner.
 				found, foundIndex, ok = binding, index, true
@@ -394,6 +378,46 @@ func localBindingOf(text string, operand int, name string) (localBinding, int, b
 		}
 	}
 	return found, foundIndex, ok
+}
+
+// localBindingStepReads reports whether localBindingStep reads more of text
+// than the byte c at its offset; the walks step over any other byte
+// themselves.
+func localBindingStepReads(c byte) bool {
+	switch c {
+	case '\'', '"', '`', '/', '[', '(':
+		return true
+	}
+	return false
+}
+
+// localBindingStep is one step of the walk that finds the bindings of name
+// (localBindingOf, localOccurrences.keeps): the binding that opens at
+// text[open] when it may declare name, and the offset the walk goes on
+// from (past a quoted name, string or comment). A '[' or '(' whose first
+// declared name isn't name (and isn't a reduce, which declares two) is
+// passed over without being read whole. Any other byte is one step
+// (localBindingStepReads).
+func localBindingStep(text string, open int, name string) (int, localBinding, bool) {
+	switch text[open] {
+	case '\'', '"', '`':
+		return skipCypherQuotedText(text, open, text[open]), localBinding{}, false
+	case '/':
+		if end := queryCommentEnd(text, open); end >= 0 {
+			return end, localBinding{}, false
+		}
+		return open + 1, localBinding{}, false
+	case '[', '(':
+	default:
+		return open + 1, localBinding{}, false
+	}
+	if declared, _, named := scanIdentifierToken(text, queryGapEnd(text, open+1)); !named || declared != name {
+		if text[open] != '(' || !isReduceFormFunction(bindingFunctionBeforeParen(text, open)) {
+			return open + 1, localBinding{}, false
+		}
+	}
+	binding, bound := localBindingAt(text, open)
+	return open + 1, binding, bound
 }
 
 // localBindingOperand is the static type of the local name read at offset
@@ -485,7 +509,8 @@ var localBindingNames = newBoundedCache[string, map[string]struct{}](1024, bound
 // occurrences of a name read a variable an enclosing expression binds itself
 // (localVariableShadowsAt) and keep their text. It is a value the caller
 // keeps on its stack: the names text binds are read once per text
-// (localBindingNames), when first asked, so a row predicate costs one cache
+// (localBindingNames), when first asked, and the occurrences of a name in
+// one input are read in one walk (keeps), so a row predicate costs one cache
 // lookup and no allocation. (Not every binding form has an IN: a named
 // pattern comprehension [p = (a)-->(b) | p] declares with =.)
 type localOccurrences struct {
@@ -494,11 +519,86 @@ type localOccurrences struct {
 	text   string
 	read   bool
 	locals map[string]struct{}
+
+	// The walk of input for name (keeps): it has read the bindings that
+	// open before walked, and holds those of name a later occurrence can
+	// still read (scopes, then more once scopes is full).
+	input, name string
+	bound       bool
+	walked      int
+	scopes      [8]localOccurrenceScope
+	open        int
+	more        []localOccurrenceScope
 }
 
-// keep is, for name, the keep test of replaceIdentifierOutsideQuotesUnless,
-// or nil when text binds no local of that name.
-func (occurrences *localOccurrences) keep(name string) func(input string, at int) bool {
+// localOccurrenceScope is where one binding's local is read: at its
+// declaration, and from scope up to close (localBindingOf).
+type localOccurrenceScope struct{ declared, scope, close int }
+
+// keeps reports whether the occurrence of name at offset at of input reads a
+// local variable of that name (localVariableShadowsAt), so its text is
+// kept. The replacers ask it for each occurrence of input in order: the
+// bindings opening before at are read once for them all (localBindingStep),
+// and an occurrence before the last one asked, another input or another
+// name starts the walk again. A nil localOccurrences keeps nothing.
+func (occurrences *localOccurrences) keeps(input, name string, at int) bool {
+	if occurrences == nil {
+		return false
+	}
+	if input != occurrences.input || name != occurrences.name || at < occurrences.walked {
+		occurrences.input, occurrences.name, occurrences.walked = input, name, 0
+		occurrences.open, occurrences.more = 0, occurrences.more[:0]
+		occurrences.bound = occurrences.binds(name)
+	}
+	if !occurrences.bound {
+		return false
+	}
+	for occurrences.walked < at {
+		if !localBindingStepReads(input[occurrences.walked]) {
+			occurrences.walked++
+			continue
+		}
+		next, binding, bound := localBindingStep(input, occurrences.walked, name)
+		occurrences.walked = next
+		for index := 0; bound && index < binding.count; index++ {
+			if binding.names[index] == name {
+				occurrences.hold(localOccurrenceScope{declared: binding.declared[index], scope: binding.scope, close: binding.close})
+			}
+		}
+	}
+	// A binding that closes by at closes before every later occurrence
+	// too: it is let go.
+	kept, held := false, 0
+	for _, scope := range occurrences.scopes[:occurrences.open] {
+		if scope.close > at {
+			kept = kept || scope.declared == at || scope.scope <= at
+			occurrences.scopes[held] = scope
+			held++
+		}
+	}
+	occurrences.open, held = held, 0
+	for _, scope := range occurrences.more {
+		if scope.close > at {
+			kept = kept || scope.declared == at || scope.scope <= at
+			occurrences.more[held] = scope
+			held++
+		}
+	}
+	occurrences.more = occurrences.more[:held]
+	return kept
+}
+
+func (occurrences *localOccurrences) hold(scope localOccurrenceScope) {
+	if occurrences.open < len(occurrences.scopes) {
+		occurrences.scopes[occurrences.open] = scope
+		occurrences.open++
+		return
+	}
+	occurrences.more = append(occurrences.more, scope)
+}
+
+// binds reports whether text binds a local named name.
+func (occurrences *localOccurrences) binds(name string) bool {
 	if !occurrences.read {
 		occurrences.read = true
 		// A clause's text is the same for every row: its names are read
@@ -510,10 +610,8 @@ func (occurrences *localOccurrences) keep(name string) func(input string, at int
 		}
 		occurrences.locals = locals
 	}
-	if _, bound := occurrences.locals[name]; !bound {
-		return nil
-	}
-	return func(input string, at int) bool { return localVariableShadowsAt(input, at, name) }
+	_, bound := occurrences.locals[name]
+	return bound
 }
 
 // localReader answers localVariableShadowsAt for one text, reading the

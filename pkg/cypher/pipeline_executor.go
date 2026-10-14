@@ -2427,7 +2427,7 @@ func (e *StorageExecutor) materializePipelinePredicateExpressions(expression str
 		for property, propertyValue := range properties {
 			reference := name + "." + property
 			if strings.Contains(materialized, reference) {
-				materialized = replaceQualifiedReferenceOutsideQuotesUnless(materialized, reference, e.valueToLiteral(propertyValue), local.keep(name))
+				materialized = replaceQualifiedReferenceOutsideQuotesUnless(materialized, reference, e.valueToLiteral(propertyValue), &local, name)
 			}
 		}
 	}
@@ -2452,7 +2452,7 @@ func (e *StorageExecutor) materializePipelinePredicateExpressions(expression str
 			continue
 		}
 		if referencesVariable(materialized, name) {
-			materialized = replaceIdentifierOutsideQuotesUnless(materialized, name, e.valueToLiteral(value), local.keep(name))
+			materialized = replaceIdentifierOutsideQuotesUnless(materialized, name, e.valueToLiteral(value), &local)
 		}
 	}
 	return materialized
@@ -2463,15 +2463,18 @@ func (e *StorageExecutor) materializePipelinePredicateExpressions(expression str
 // property access rooted at the reference. replaceIdentifierOutsideQuotes is
 // intentionally token-oriented and therefore cannot match a dotted name.
 func replaceQualifiedReferenceOutsideQuotes(input, reference, replacement string) string {
-	return replaceQualifiedReferenceOutsideQuotesUnless(input, reference, replacement, nil)
+	return replaceQualifiedReferenceOutsideQuotesUnless(input, reference, replacement, nil, "")
 }
 
 // replaceQualifiedReferenceOutsideQuotesUnless is
-// replaceQualifiedReferenceOutsideQuotes that leaves the occurrences keep
-// reports (by their offset in input).
-func replaceQualifiedReferenceOutsideQuotesUnless(input, reference, replacement string, keep func(input string, at int) bool) string {
+// replaceQualifiedReferenceOutsideQuotes that leaves the occurrences that
+// read a local variable named variable, the reference's root (locals.keeps).
+func replaceQualifiedReferenceOutsideQuotesUnless(input, reference, replacement string, locals *localOccurrences, variable string) string {
 	if reference == "" || !strings.Contains(input, reference) {
 		return input
+	}
+	if locals != nil && !locals.binds(variable) {
+		locals = nil
 	}
 	var output strings.Builder
 	output.Grow(len(input) + len(replacement))
@@ -2501,7 +2504,7 @@ func replaceQualifiedReferenceOutsideQuotesUnless(input, reference, replacement 
 		if end <= len(input) && input[index:end] == reference &&
 			(index == 0 || (!isIdentByte(input[index-1]) && input[index-1] != '.')) &&
 			(end == len(input) || (!isIdentByte(input[end]) && input[end] != '.')) &&
-			(keep == nil || !keep(input, index)) {
+			(locals == nil || !locals.keeps(input, variable, index)) {
 			output.WriteString(replacement)
 			index = end
 			continue
@@ -4832,7 +4835,7 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 	materialized := expr
 	local := localOccurrences{text: expr}
 	for name, value := range row {
-		materialized = replaceIdentifierOutsideQuotesUnless(materialized, name, e.valueToLiteral(value), local.keep(name))
+		materialized = replaceIdentifierOutsideQuotesUnless(materialized, name, e.valueToLiteral(value), &local)
 	}
 	value := e.evaluateExpressionWithContext(ctx, materialized, nil, nil)
 	if text, unresolved := value.(string); unresolved && text == materialized && !isWholeCypherQuotedString(materialized) {

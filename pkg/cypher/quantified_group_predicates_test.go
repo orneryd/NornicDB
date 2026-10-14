@@ -412,14 +412,14 @@ func TestBoundRowValuesKeepLocalVariables(t *testing.T) {
 	})
 }
 
-// The replacers leave the occurrences keep reports, and localOccurrences
-// keeps only a local's own.
+// The replacers leave the occurrences localOccurrences keeps: only a
+// local's own.
 func TestLocalOccurrences(t *testing.T) {
 	text := "x.id = 1 AND all(x IN l WHERE x.id = 7)"
-	keep := (&localOccurrences{text: text}).keep("x")
-	require.NotNil(t, keep)
-	require.Nil(t, (&localOccurrences{text: text}).keep("y"))
-	require.Equal(t, "1 = 1 AND all(x IN l WHERE x.id = 7)", replaceQualifiedReferenceOutsideQuotesUnless(text, "x.id", "1", keep))
+	require.True(t, (&localOccurrences{text: text}).keeps(text, "x", strings.LastIndex(text, "x.id")))
+	require.False(t, (&localOccurrences{text: text}).keeps(text, "x", 0))
+	require.False(t, (&localOccurrences{text: text}).keeps(text, "y", 0))
+	require.Equal(t, "1 = 1 AND all(x IN l WHERE x.id = 7)", replaceQualifiedReferenceOutsideQuotesUnless(text, "x.id", "1", &localOccurrences{text: text}, "x"))
 	require.Equal(t, "1 = 1 AND all(x IN l WHERE 1 = 7)", replaceQualifiedReferenceOutsideQuotes(text, "x.id", "1"))
 	require.Equal(t, "v + [v IN l | v]", replaceIdentifierOutsideQuotesUnless("v + [v IN l | v]", "v", "v", nil))
 	for text, want := range map[string]string{
@@ -430,7 +430,7 @@ func TestLocalOccurrences(t *testing.T) {
 		"reduce(a = 0, k IN l | a + v)":  "reduce(a = 0, k IN l | a + 7)",
 		"[v IN l WHERE v > 0 | v] + [v]": "[v IN l WHERE v > 0 | v] + [7]",
 	} {
-		require.Equal(t, want, replaceIdentifierOutsideQuotesUnless(text, "v", "7", (&localOccurrences{text: text}).keep("v")), text)
+		require.Equal(t, want, replaceIdentifierOutsideQuotesUnless(text, "v", "7", &localOccurrences{text: text}), text)
 	}
 }
 

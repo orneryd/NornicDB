@@ -216,3 +216,38 @@ func TestSubqueryBodiesWalkTheirOwnScope(t *testing.T) {
 	})
 	require.Equal(t, "COUNT {     } + CALL (x) {        }", maskNestedScopeBodies("COUNT { (n) } + CALL (x) { RETURN }"))
 }
+
+// R3-6: the replacers' one walk of a text (localOccurrences.keeps) keeps
+// the occurrences localVariableShadowsAt reads as locals, asked in order,
+// out of order and past eight open bindings of the name.
+func TestLocalOccurrencesWalkOnce(t *testing.T) {
+	nested := strings.Repeat("all(x IN [x] WHERE ", 10) + "x > 0" + strings.Repeat(")", 10)
+	for _, text := range []string{
+		"x.k = 1 AND all(x IN [x] WHERE x.k >= 0) AND x.k = 1 AND all(x IN [{k: x}] WHERE x.k >= 0) AND x = 1",
+		"reduce(x = x, y IN [x] | x + y) + [x IN l WHERE x > 0 | x] + x",
+		"[p = (x)-->() | p] + [x IN 'x' /* x */ | `x`] + x",
+		"any(y IN [x] WHERE all(x IN y WHERE x > 0) AND x > 0)",
+		nested,
+		nested + " AND x = 1",
+	} {
+		var occurrences []int
+		for at := 0; at < len(text); at++ {
+			if text[at] == 'x' && (at == 0 || !isIdentByte(text[at-1])) && (at+1 == len(text) || !isIdentByte(text[at+1])) {
+				occurrences = append(occurrences, at)
+			}
+		}
+		local := localOccurrences{text: text}
+		for _, at := range occurrences {
+			require.Equal(t, localVariableShadowsAt(text, at, "x"), local.keeps(text, "x", at), "%s at %d", text, at)
+		}
+		for index := len(occurrences) - 1; index >= 0; index-- {
+			at := occurrences[index]
+			require.Equal(t, localVariableShadowsAt(text, at, "x"), local.keeps(text, "x", at), "%s at %d (reverse)", text, at)
+		}
+		require.False(t, local.keeps(text, "y", 0), text)
+	}
+	require.False(t, (*localOccurrences)(nil).keeps("x", "x", 0))
+	local := localOccurrences{text: nested + " AND x = 1"}
+	require.Equal(t, strings.Repeat("all(x IN [7] WHERE ", 1)+strings.Repeat("all(x IN [x] WHERE ", 9)+"x > 0"+strings.Repeat(")", 10)+" AND 7 = 1",
+		replaceIdentifierOutsideQuotesUnless(nested+" AND x = 1", "x", "7", &local))
+}
