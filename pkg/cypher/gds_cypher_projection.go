@@ -99,11 +99,14 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 		if err != nil {
 			return "", err
 		}
-		if !seen[id] {
-			seen[id] = true
-			projection.NodeIDs = append(projection.NodeIDs, id)
+		// A node's labels and properties are its first occurrence's, as in
+		// GDS: a later row naming it adds only its relationship.
+		if seen[id] {
+			return id, nil
 		}
-		if len(nodeLabels) == 0 && len(projection.NodeLabels[id]) == 0 {
+		seen[id] = true
+		projection.NodeIDs = append(projection.NodeIDs, id)
+		if len(nodeLabels) == 0 {
 			nodeLabels = []string{"__ALL__"}
 		}
 		for _, label := range nodeLabels {
