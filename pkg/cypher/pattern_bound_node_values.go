@@ -5,7 +5,7 @@ import (
 )
 
 // patternNodeVariables caches the node variables of a MATCH body's pattern
-// (the text before WHERE), by body text.
+// (matchPatternStructure), by body text.
 var patternNodeVariables = newBoundedCache[string, []string](1024, boundedCacheStringShardIndex)
 
 // validateBoundPatternNodes is Neo4j's run-time check of the node variables
@@ -22,11 +22,7 @@ func validateBoundPatternNodes(rows []pipelineRow, body string) error {
 	}
 	variables, cached := patternNodeVariables.get(body)
 	if !cached {
-		pattern := body
-		if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
-			pattern = body[:where]
-		}
-		variables = extractNodeVariables(pattern)
+		variables = extractNodeVariables(matchPatternStructure(body))
 		patternNodeVariables.put(body, variables)
 	}
 	for _, row := range rows {

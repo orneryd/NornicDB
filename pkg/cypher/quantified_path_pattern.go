@@ -578,6 +578,19 @@ func maskQuantifiedGroupPredicates(pattern string) string {
 	return string(masked)
 }
 
+// matchPatternStructure is the pattern of a MATCH body (the text before its
+// WHERE) with each quantified group's predicates blanked
+// (maskQuantifiedGroupPredicates), the text its element variables are read
+// from: in ((x WHERE x.k IN (l))-->(y))+ or the (x WHERE
+// __nornic_haslabels(x, (l), false)) a dynamic label $(l) becomes, (l) is
+// not a node.
+func matchPatternStructure(body string) string {
+	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
+		body = body[:where]
+	}
+	return maskQuantifiedGroupPredicates(body)
+}
+
 // quantifiedGroupVariables returns the node and relationship variables
 // inside pattern's quantified groups: each binds a list of its values.
 func quantifiedGroupVariables(pattern string) (map[string]struct{}, map[string]struct{}) {

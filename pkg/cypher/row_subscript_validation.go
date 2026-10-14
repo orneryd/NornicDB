@@ -39,7 +39,15 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 			continue
 		}
 		if _, err := checker.checkPostfix(receiver, text[index+1:end], true); err != nil {
-			return err
+			// The subscript may read a variable an enclosing expression
+			// binds itself ([r IN l | r[0]]), not the clause's.
+			local, shadowed := withoutLocalVariables(scope, text, index)
+			if !shadowed {
+				return err
+			}
+			if _, err := (staticOperatorChecker{scope: local, params: scope.params}).checkPostfix(receiver, text[index+1:end], true); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
