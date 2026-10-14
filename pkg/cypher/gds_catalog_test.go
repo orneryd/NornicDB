@@ -274,3 +274,10 @@ func TestGDSCatalogHelpers(t *testing.T) {
 	mergeParallelProperties(kept, map[string]float64{}, specs, 4)
 	require.Equal(t, map[string]float64{"s": 6, "m": 3, "x": 9, "n": 4, "o": 1}, kept)
 }
+
+func TestGDSConfigHas(t *testing.T) {
+	c, err := newGDSConfig(map[string]interface{}{"Present": nil}, "present", "absent")
+	require.NoError(t, err)
+	require.True(t, c.has("present"))
+	require.False(t, c.has("absent"))
+}

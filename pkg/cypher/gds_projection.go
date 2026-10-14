@@ -952,6 +952,12 @@ func newGDSConfig(entries map[string]interface{}, allowed ...string) (*gdsConfig
 	return config, nil
 }
 
+// has reports whether the map has key, null or not.
+func (c *gdsConfig) has(key string) bool {
+	_, present := c.values[strings.ToLower(key)]
+	return present
+}
+
 // value is key's value, nil when absent or null.
 func (c *gdsConfig) value(key string) interface{} {
 	return c.values[strings.ToLower(key)]
