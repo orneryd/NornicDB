@@ -396,8 +396,8 @@ func localBindingStepReads(c byte) bool {
 // text[open] when it may declare name, and the offset the walk goes on
 // from (past a quoted name, string or comment). A '[' or '(' whose first
 // declared name isn't name (and isn't a reduce, which declares two) is
-// passed over without being read whole. Any other byte is one step
-// (localBindingStepReads).
+// passed over without being read whole. It is called only at a byte
+// localBindingStepReads reads.
 func localBindingStep(text string, open int, name string) (int, localBinding, bool) {
 	switch text[open] {
 	case '\'', '"', '`':
@@ -407,10 +407,9 @@ func localBindingStep(text string, open int, name string) (int, localBinding, bo
 			return end, localBinding{}, false
 		}
 		return open + 1, localBinding{}, false
-	case '[', '(':
-	default:
-		return open + 1, localBinding{}, false
 	}
+	// text[open] is '[' or '(': the walks step over the bytes
+	// localBindingStepReads doesn't read themselves.
 	if declared, _, named := scanIdentifierToken(text, queryGapEnd(text, open+1)); !named || declared != name {
 		if text[open] != '(' || !isReduceFormFunction(bindingFunctionBeforeParen(text, open)) {
 			return open + 1, localBinding{}, false

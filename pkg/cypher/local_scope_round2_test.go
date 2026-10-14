@@ -251,3 +251,28 @@ func TestLocalOccurrencesWalkOnce(t *testing.T) {
 	require.Equal(t, strings.Repeat("all(x IN [7] WHERE ", 1)+strings.Repeat("all(x IN [x] WHERE ", 9)+"x > 0"+strings.Repeat(")", 10)+" AND 7 = 1",
 		replaceIdentifierOutsideQuotesUnless(nested+" AND x = 1", "x", "7", &local))
 }
+
+// The edges of the round-4 readers: a division isn't a comment, a scope with
+// no kinds yet takes a pattern comprehension's, a procedure CALL has no body
+// to mask or walk, and an unclosed body is left as written.
+func TestLocalScopeRound4Edges(t *testing.T) {
+	text := "x / 2 + [x IN l | x]"
+	require.False(t, localVariableShadowsAt(text, 0, "x"))
+	require.True(t, localVariableShadowsAt(text, strings.LastIndex(text, "x"), "x"))
+	local := localOccurrences{text: text}
+	require.Equal(t, "7 / 2 + [x IN l | x]", replaceIdentifierOutsideQuotesUnless(text, "x", "7", &local))
+
+	scope := withPatternComprehensionBindings(staticTypeScope{}, "[(a)-->(b) | b]", len("[(a)-->(b) | "))
+	require.True(t, scope.bound("a"))
+	require.True(t, scope.bound("b"))
+
+	require.Equal(t, "CALL db.labels() YIELD label", maskNestedScopeBodies("CALL db.labels() YIELD label"))
+	require.Equal(t, "CALL { RETURN 1", maskNestedScopeBodies("CALL { RETURN 1"))
+
+	_, _, ok := callSubqueryImports("CALL db.labels()", typeScope{})
+	require.False(t, ok)
+	exec := &StorageExecutor{}
+	returned, err := exec.callSubqueryReturnTypes("CALL db.labels()", nil, typeScope{}, false)
+	require.NoError(t, err)
+	require.Nil(t, returned)
+}
