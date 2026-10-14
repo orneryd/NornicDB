@@ -237,9 +237,9 @@ func (g *louvainGraph) link(i, j int, w float64) {
 }
 
 // moveNodes is a level's local moving phase, as GDS's modularity
-// optimization runs it (#1198): the nodes are coloured greedily in node
-// order (no two neighbours share a colour), and each pass takes the colour
-// classes in turn, every node of a class joining the neighbouring community
+// optimization runs it (#1198): serial K1 colouring determines node order.
+// Each pass takes the colour classes in turn, every node of a class joining
+// the neighbouring community
 // with the largest modularity gain over the communities as they stood
 // before the class (its own kept on a tie, else the smaller community).
 // Passes repeat until one moves nothing, a pass after the first gains no
