@@ -318,8 +318,14 @@ type pathSearchAutomaton struct {
 	moves []pathSearchMove
 	from  [][]int
 	into  [][]int
-	// maxLength is the longest path the pattern allows (-1: none).
-	maxLength int
+	// maxLength is the longest path the pattern allows (-1: none);
+	// minLength the shortest.
+	maxLength, minLength int
+	// uniform is the one relationship pattern of a uniform pattern
+	// (uniformTransition, path_selector_search_walk.go), nil for others;
+	// uniformStart is the chain from the initial slot its walks start with.
+	uniform      *pathSearchTransition
+	uniformStart int
 }
 
 // buildPathSearchAutomaton compiles a pattern's elements.
@@ -342,6 +348,8 @@ func buildPathSearchAutomaton(items []pathPatternItem) *pathSearchAutomaton {
 		}
 	}
 	a.maxLength = itemsMaxLength(items)
+	a.minLength = shortestLength(a)
+	a.uniform, a.uniformStart = uniformTransition(a)
 	return a
 }
 
@@ -514,11 +522,35 @@ type pathLengthBound struct {
 	strict bool
 }
 
+// selectedPathPlans holds compiled plans by their text: a MATCH step reads
+// its pattern on every execution of a statement. A plan isn't changed once
+// compiled, so searches share it.
+var selectedPathPlans = newBoundedCache[string, selectedPathPlanEntry](1024, boundedCacheStringShardIndex)
+
+// selectedPathPlanEntry is a compiled plan with its filters (ok false for
+// a pattern the search can't read).
+type selectedPathPlanEntry struct {
+	plan    *selectedPathPlan
+	filters []string
+	ok      bool
+}
+
 // compileSelectedPathPlan compiles a selected pattern with its predicates
 // (the pattern's own) and the clause's WHERE conjuncts; it returns the
 // conjuncts that filter the selected paths. ok is false for a pattern the
-// search can't read.
+// search can't read. The plan is shared: it must not be changed.
 func compileSelectedPathPlan(pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
+	key := pattern + "\x00" + pathVariable + "\x00" + predicate + "\x00" + strings.Join(terms, "\x00")
+	if entry, cached := selectedPathPlans.get(key); cached {
+		return entry.plan, entry.filters, entry.ok
+	}
+	plan, filters, ok := buildSelectedPathPlan(pattern, pathVariable, predicate, terms)
+	selectedPathPlans.put(key, selectedPathPlanEntry{plan: plan, filters: filters, ok: ok})
+	return plan, filters, ok
+}
+
+// buildSelectedPathPlan compiles a plan (compileSelectedPathPlan).
+func buildSelectedPathPlan(pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
 	items, ok := parsePathPatternItems(pattern, false)
 	if !ok {
 		return nil, nil, false

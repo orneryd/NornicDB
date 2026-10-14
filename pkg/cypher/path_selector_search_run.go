@@ -123,23 +123,15 @@ type pathSearch struct {
 	// can reach again.
 	dominators *pathSearchDominators
 	closed     map[int32]bool
+	// from is the node the search starts at.
+	from *storage.Node
 }
 
-// newPathSearch starts a search over automaton a for row.
+// newPathSearch starts a search over automaton a for row. Its state is
+// made when the search begins (begin), so the walk search of a uniform
+// pattern (uniformPair) doesn't pay for it.
 func (e *StorageExecutor) newPathSearch(ctx context.Context, a *pathSearchAutomaton, row pipelineRow, maxLength int, from *storage.Node) *pathSearch {
-	scratch := make(map[string]interface{}, len(row)+4)
-	for name, value := range row {
-		scratch[name] = value
-	}
-	return &pathSearch{
-		e: e, ctx: ctx, a: a, row: row, scratch: scratch, maxLength: maxLength,
-		traversal:  e.newTraversalContext(ctx, from, &RelationshipPattern{}),
-		repeatable: repeatableElements(ctx),
-		edges:      map[pathSearchEdgeKey][]*storage.Edge{},
-		index:      map[pathSearchKey]int32{},
-		roots:      map[int32]int{},
-		nogoods:    map[[2]int32][][]storage.EdgeID{},
-	}
+	return &pathSearch{e: e, ctx: ctx, a: a, row: row, maxLength: maxLength, from: from, repeatable: repeatableElements(ctx)}
 }
 
 // slotHolds reports whether node may take slot: the node a row binds to
@@ -199,6 +191,12 @@ func (s *pathSearch) transitionHolds(t *pathSearchTransition, edge *storage.Edge
 func (s *pathSearch) predicatesHold(variable string, value interface{}, predicates []string) bool {
 	if len(predicates) == 0 {
 		return true
+	}
+	if s.scratch == nil {
+		s.scratch = make(map[string]interface{}, len(s.row)+4)
+		for name, value := range s.row {
+			s.scratch[name] = value
+		}
 	}
 	if variable != "" {
 		s.scratch[variable] = value
@@ -292,8 +290,16 @@ func (s *pathSearch) expand(p int32) {
 	s.products[p].steps = steps
 }
 
-// begin makes the first level: the products of the source node.
+// begin makes the search's state and the first level: the products of the
+// source node.
 func (s *pathSearch) begin(source *storage.Node) {
+	if s.index == nil {
+		s.traversal = s.e.newTraversalContext(s.ctx, s.from, &RelationshipPattern{})
+		s.edges = map[pathSearchEdgeKey][]*storage.Edge{}
+		s.index = map[pathSearchKey]int32{}
+		s.roots = map[int32]int{}
+		s.nogoods = map[[2]int32][][]storage.EdgeID{}
+	}
 	level := pathSearchLevel{index: map[int32]int32{}}
 	for index, chain := range s.a.chains[s.a.initial] {
 		if !s.chainHolds(chain, source) {

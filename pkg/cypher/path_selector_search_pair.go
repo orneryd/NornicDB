@@ -113,14 +113,21 @@ func (s *pathSearch) meet(w *pathSearchWalks, p int32) {
 	}
 }
 
-// pair searches the paths from source to target. A walk search from both
-// ends finds the length of the shortest walk, or that there is none; when
+// pair searches the paths from source to target. A uniform pattern's
+// shortest paths come from the walk search over node ids (uniformPair).
+// Otherwise a walk search from both ends finds the length of the shortest
+// walk, or that there is none; when
 // one path (or one group) is wanted and a shortest walk is a path, the
 // shortest walks that are paths are the answer. Otherwise the search from
 // source runs toward target, skipping the products that can't reach it in
 // the length left.
 func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direct bool, bind func(pathSearchPath) (pipelineRow, bool)) []pipelineRow {
 	s.target = target
+	if direct && count == 1 {
+		if rows, ok := s.uniformPair(source, target, groups, bind); ok {
+			return rows
+		}
+	}
 	s.begin(source)
 	w := &pathSearchWalks{forward: map[int32]int{}, preds: map[int32][]pathSearchHop{}, backward: map[pathSearchKey]int{},
 		nodes: map[pathSearchKey]*storage.Node{}, succs: map[pathSearchKey][]pathSearchBack{}, shortest: -1}

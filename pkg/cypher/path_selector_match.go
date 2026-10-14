@@ -70,7 +70,13 @@ func (e *StorageExecutor) parseSelectedPathMatch(pattern, pathVariable string, o
 	if !ok {
 		return nil, true, errSelectedPathPattern(pattern)
 	}
-	plan.acyclic = selector.acyclic
+	// The compiled plan is shared (compileSelectedPathPlan): ACYCLIC goes on
+	// a copy.
+	if selector.acyclic {
+		acyclic := *plan
+		acyclic.acyclic = true
+		plan = &acyclic
+	}
 	return &shortestPathMatch{
 		selector:      selector,
 		pathVariable:  pathVariable,

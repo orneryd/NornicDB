@@ -212,6 +212,8 @@ func TestSelectedPathSearchStorage(t *testing.T) {
 	for _, query := range []string{
 		"MATCH p = SHORTEST 1 (a:S {id: 1})(()-[:T]-())+(b) RETURN count(*) AS c",
 		"MATCH p = SHORTEST 1 (a:S {id: 1})(()-[:T]->())+(b) RETURN count(*) AS c",
+		"MATCH (a:S {id: 1}), (b:S {id: 3}) MATCH p = shortestPath((a)-[:T*]-(b)) RETURN count(*) AS c",
+		"MATCH (a:S {id: 1}), (b:S {id: 3}) MATCH p = shortestPath((a)-[:T*]->(b)) RETURN count(*) AS c",
 	} {
 		_, err = failing.Execute(ctx, query, nil)
 		require.ErrorIs(t, err, errEdgeRead, query)
