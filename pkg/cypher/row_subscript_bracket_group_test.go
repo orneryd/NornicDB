@@ -40,3 +40,29 @@ func TestSubscriptValidationReadsBracketGroups(t *testing.T) {
 	_, err := exec.Execute(ctx, "WITH [1, 2] AS l RETURN l['a'] AS r", nil)
 	require.Error(t, err)
 }
+
+// TestRowSubscriptKeyHoldsBrackets: a subscript whose key holds brackets of
+// its own (m[r[k]], m[l[0].id]) is the bracket group that closes the
+// expression, read by the row evaluator wherever it is (a projection, a
+// comprehension, a quantifier, a WHERE), a missing key giving null.
+// Recorded on Neo4j 5.26.30 (#1211).
+func TestRowSubscriptKeyHoldsBrackets(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "subscript_key_brackets"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:N {id:'a'})-[:R {id:'r1'}]->(:N {id:'b'})", nil)
+	require.NoError(t, err)
+	const head = "WITH {x: true} AS m MATCH (x:N {id: 'a'})-[r:R]->() "
+	for statement, want := range map[string][][]interface{}{
+		"WITH {x: true} AS m, [{id: 'r1'}] AS r RETURN m[r[0].id] AS v":      {{nil}},
+		"WITH {x: true} AS m, [{id: 'x'}] AS r RETURN m[r[0].id] AS v":       {{true}},
+		head + "RETURN [k IN keys(r) | m[r[k]]] AS v":                        {{[]interface{}{nil}}},
+		head + "RETURN any(k IN keys(r) WHERE m[r[k]] IS NULL) AS v":         {{true}},
+		head + "RETURN none(k IN keys(x) WHERE m[x[k]] IS NOT NULL) AS v":    {{true}},
+		head + "WHERE any(k IN keys(r) WHERE m[r[k]] IS NULL) RETURN 1":      {{int64(1)}},
+		head + "WITH m, [r] AS r RETURN m[r[0]['id']] AS v, m[r[0].id] AS w": {{nil, nil}},
+	} {
+		result, err := exec.Execute(ctx, statement, nil)
+		require.NoError(t, err, statement)
+		require.Equal(t, want, result.Rows, statement)
+	}
+}
