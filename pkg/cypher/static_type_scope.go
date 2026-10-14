@@ -295,7 +295,12 @@ func projectedOperand(types typeScope, input staticTypeScope, expression string)
 // List<Integer>), a known non-list value itself (UNWIND 5), unknown for a
 // list of unknown elements.
 func unwoundOperand(types typeScope, input staticTypeScope, clause string) staticOperand {
-	list := unwindSourceExpression(clause)
+	return listElementOperand(types, input, unwindSourceExpression(clause))
+}
+
+// listElementOperand is the static type of an element of list (UNWIND's
+// variable, a comprehension's or quantifier's local; localBindingKind).
+func listElementOperand(types typeScope, input staticTypeScope, list string) staticOperand {
 	operand := projectedOperand(types, input, list)
 	if element := elementOfType(operand.kind); element != "" {
 		return typedOperand(element)
@@ -303,7 +308,7 @@ func unwoundOperand(types typeScope, input staticTypeScope, clause string) stati
 	if operand.kind != "" && !strings.Contains(operand.kind, "List<") {
 		return operand
 	}
-	if typeName := unwindStaticValueType(clause); typeName != "" {
+	if typeName := staticListElementType(list); typeName != "" {
 		return knownOperand(typeName)
 	}
 	if matchFuncStartAndSuffix(strings.TrimSpace(list), "range") {
