@@ -53,6 +53,9 @@ exhaust the Actions allowance. Instead:
    all test groups, allocation ratchet, Cypher conformance, the Neo4j differential, docs) for the files your branch
    changes, with one summary at the end. `make verify-list` shows what would run, `make verify-help` lists the
    options, and `make verify BRANCH=<branch>` verifies another branch without touching your checkout.
+   The default base is `origin/develop`; path filters and allocation comparisons use the branch's merge base.
+   For a release branch, compare with main using `VERIFY_BASE=origin/main make verify` (or
+   `make verify BASE=origin/main`).
 2. **On GitHub, when needed:** add the **`ci:run`** label to a pull request to run CI and Cypher conformance on it,
    or use *Run workflow* on the CI workflow for any branch.
 3. **Nightly:** the full suite (CI, conformance, and the differential ratchet) runs against `develop` at 03:17 UTC
