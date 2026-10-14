@@ -548,10 +548,9 @@ func (e *StorageExecutor) validateMatchClauseBindings(scope matchSemanticScope, 
 	// A WHERE inside parentheses is a quantified path pattern's own.
 	if where := topLevelKeywordIndex(pattern, "WHERE"); where >= 0 {
 		whereClause = strings.TrimSpace(pattern[where+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:where])
 	}
 	// A quantified group's WHERE is an expression, not pattern structure.
-	pattern = maskQuantifiedGroupPredicates(pattern)
+	pattern = strings.TrimSpace(matchPatternStructure(pattern))
 	if mergePatternUsesParameterPredicate(pattern) {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
@@ -861,10 +860,7 @@ func (e *StorageExecutor) validateSubqueryPatternBindings(scope matchSemanticSco
 					break
 				}
 			}
-			if where := topLevelKeywordIndex(pattern, "WHERE"); where >= 0 {
-				pattern = pattern[:where]
-			}
-			pattern = maskQuantifiedGroupPredicates(pattern)
+			pattern = matchPatternStructure(pattern)
 			for _, variable := range extractNodeVariables(pattern) {
 				if err := outerPatternVariableConflict(scope, variable, matchBindingNode); err != nil {
 					return err
@@ -985,7 +981,8 @@ func (e *StorageExecutor) validateStaticClauseTypes(clause pipelineClause, scope
 // (()-[r WHERE m[r.id] IS NULL]->())+ r.id is a relationship's property and
 // type(r) takes a relationship. Every expression check a clause's
 // expressions get runs on them with that scope: subquery patterns,
-// subscripts, list operands, function arguments and operators. It returns
+// subscripts, dynamic labels and types, list operands, function arguments
+// and operators. It returns
 // the clause with those predicates blanked, for the checks of the rest of
 // the clause.
 func (e *StorageExecutor) validateQuantifiedGroupPredicates(clause string, scope staticTypeScope) (string, error) {
@@ -1015,6 +1012,12 @@ func (e *StorageExecutor) validateQuantifiedGroupPredicates(clause string, scope
 				return "", err
 			}
 			if err := validateStaticPropertySubscripts(predicate, iteration); err != nil {
+				return "", err
+			}
+			// A dynamic label or type of the group, in its pattern
+			// ((x:$(l))) or a predicate (x:$(l)), is a predicate call
+			// here (labelExpression.predicate).
+			if err := staticPatternTokenError(pipelineClause{kind: pipelineClauseMatch, text: predicate}, iteration); err != nil {
 				return "", err
 			}
 			if err := staticListOperandTypeError(predicate, iteration); err != nil {
