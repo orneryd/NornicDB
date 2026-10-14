@@ -155,6 +155,13 @@ func canonicalSemanticExpression(expression string) string {
 }
 
 func validateReturnAggregationSemantics(body string) error {
+	return validateReturnAggregationSemanticsIn(body, nil)
+}
+
+// validateReturnAggregationSemanticsIn is validateReturnAggregationSemantics
+// with outer's variables constants: in an EXISTS / COUNT / COLLECT body the
+// enclosing query's variables aren't grouping keys.
+func validateReturnAggregationSemanticsIn(body string, outer typeScope) error {
 	end := len(body)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
@@ -202,6 +209,9 @@ func validateReturnAggregationSemantics(body string) error {
 		// blanks them in place, so a local's scope is read where it is
 		// (x + size(collect([x IN l | x])) reads the outer x).
 		for _, reference := range semanticFreeReferencesIn(expression, removeAggregateCalls(expression)) {
+			if _, constant := outer[strings.SplitN(reference, ".", 2)[0]]; constant {
+				continue
+			}
 			if _, projected := directExpressions[reference]; projected {
 				continue
 			}

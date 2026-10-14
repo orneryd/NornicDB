@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"maps"
+	"strings"
+)
 
 // typeScope is the one static type of every variable a clause sees (#1055).
 // The match validator's binding kinds (matchSemanticScope) and the static
@@ -339,21 +342,16 @@ func projectStaticValueMembers(scope staticTypeScope, clause string) map[string]
 	return projectTypeScopeIn(typeScopeOf(scope), scope, clause).static(true).members
 }
 
-// callSubqueryReturnTypes is the static type of each column a CALL subquery
-// returns, from walking its body (semanticScopeWalk) with the variables it
-// imports: CALL (a, b) { … } imports a and b, CALL (*) { … } and an
-// old-style CALL { … } every outer variable (the latter's leading WITH picks
-// them). A UNION body, a body whose walk stops early or fails, and a body
-// not ending in RETURN give no types.
-func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) typeScope {
-	if len(branches) != 1 {
-		return nil
-	}
+// callSubqueryImports is the scope a CALL subquery's body starts from: CALL
+// (a, b) { … } imports a and b, CALL (*) { … } and an old-style CALL { … }
+// every outer variable (the latter's leading WITH picks them). ok is false
+// for a CALL without a body.
+func callSubqueryImports(callText string, outer typeScope) (typeScope, bool) {
 	trimmed := strings.TrimSpace(callText)
 	open := strings.IndexByte(trimmed, '{')
 	call := indexASCIIFold(trimmed, "call")
 	if open < 0 || call < 0 || call > open {
-		return nil
+		return nil, false
 	}
 	initial := make(typeScope)
 	head := strings.TrimSpace(trimmed[call+len("CALL") : open])
@@ -364,21 +362,43 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 				initial[name] = operand
 			}
 		}
-	} else {
-		for name, operand := range outer {
-			initial[name] = operand
+		return initial, true
+	}
+	for name, operand := range outer {
+		initial[name] = operand
+	}
+	return initial, true
+}
+
+// callSubqueryReturnTypes walks a CALL subquery's body, each UNION branch
+// as a query of its own, with the one clause walk (semanticScopeWalk) from
+// the variables it imports (callSubqueryImports), and returns the static
+// type of each column a one-branch body returns. Its expression subqueries
+// see the body's scope, not the enclosing query's. A body whose walk stops
+// early, or that doesn't end in RETURN, gives no types; a walk's error is
+// the statement's.
+func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
+	initial, ok := callSubqueryImports(callText, outer)
+	if !ok {
+		return nil, nil
+	}
+	var returned typeScope
+	for _, branch := range branches {
+		clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch)
+		if !ok || len(clauses) == 0 {
+			continue
+		}
+		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, nil)
+		if err != nil {
+			return nil, err
+		}
+		last := clauses[len(clauses)-1]
+		if len(branches) == 1 && complete && last.kind == pipelineClauseReturn {
+			returnClause := strings.TrimSpace(last.text)
+			returned = projectTypeScope(final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
 		}
 	}
-	clauses, ok := splitPipelineClausesAllowingProcedureCalls(branches[0])
-	if !ok || len(clauses) == 0 || clauses[len(clauses)-1].kind != pipelineClauseReturn {
-		return nil
-	}
-	final, complete, err := e.semanticScopeWalk(clauses[:len(clauses)-1], initial, cypher25)
-	if err != nil || !complete {
-		return nil
-	}
-	returnClause := strings.TrimSpace(clauses[len(clauses)-1].text)
-	return projectTypeScope(final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
+	return returned, nil
 }
 
 // projectedFunctionOperand is the static type of a call whose result type
