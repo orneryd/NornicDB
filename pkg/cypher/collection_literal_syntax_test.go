@@ -3,12 +3,10 @@ package cypher
 import (
 	"context"
 	"testing"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func TestCollectionLiteralElementsRequireSeparators(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, query := range []string{
 		"RETURN [, ] AS literal",
 		"RETURN [[','[]',']] AS literal",

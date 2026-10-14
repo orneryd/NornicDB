@@ -3,12 +3,10 @@ package cypher
 import (
 	"context"
 	"testing"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func TestUnicodeEscapesInStringLiterals(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	result, err := exec.Execute(context.Background(), `RETURN '\u01FF' AS literal`, nil)
 	if err != nil {
 		t.Fatal(err)

@@ -98,7 +98,7 @@ func TestWithWhereFiltersWithDisjunctiveRelationshipPatterns(t *testing.T) {
 }
 
 func BenchmarkBoundOneHopRelationshipPatternPredicate(b *testing.B) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := newTestMemoryEngine(b)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(baseStore, "benchmark"))
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, `CREATE (source)-[:T]->(target)`, nil)

@@ -16,7 +16,7 @@ import (
 
 func newRangeSeekExecutor(t *testing.T, indexed bool) *StorageExecutor {
 	t.Helper()
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test"), 0, 0)
+	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
 	ctx := context.Background()
 	if indexed {
 		for _, ddl := range []string{"CREATE INDEX item_v FOR (n:Item) ON (n.v)", "CREATE INDEX extra_v FOR (n:Extra) ON (n.v)"} {

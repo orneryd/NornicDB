@@ -134,8 +134,8 @@ func TestMergeNode_FindMergeNodeIgnoresStaleCacheEntry(t *testing.T) {
 }
 
 func TestCloneWithStorageSharesNodeLookupCacheAndLock(t *testing.T) {
-	parent := NewStorageExecutor(storage.NewMemoryEngine())
-	clone := parent.cloneWithStorage(storage.NewMemoryEngine())
+	parent := NewStorageExecutor(newTestMemoryEngine(t))
+	clone := parent.cloneWithStorage(newTestMemoryEngine(t))
 
 	if parent.nodeLookupCacheMu != clone.nodeLookupCacheMu {
 		t.Fatal("cloneWithStorage must share node lookup cache lock with parent")
@@ -169,7 +169,7 @@ func TestCloneWithStorageSharesNodeLookupCacheAndLock(t *testing.T) {
 // commit-time UNIQUE shape. See docs/plans/consumer-pinned-error-contract-plan.md
 // §2.1. Transactional clones must therefore get their own cache + mutex.
 func TestCloneWithStorageIsolatesNodeLookupCacheForTxClones(t *testing.T) {
-	parent := NewStorageExecutor(storage.NewMemoryEngine())
+	parent := NewStorageExecutor(newTestMemoryEngine(t))
 	parent.ensureNodeLookupCache()
 
 	tx, err := parent.storage.(*storage.MemoryEngine).BeginTransaction()
