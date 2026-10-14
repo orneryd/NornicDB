@@ -132,3 +132,37 @@ func TestAggregatePathsAfterOneList(t *testing.T) {
 	listed := rows("SHOW FUNCTIONS YIELD name, aggregating, isBuiltIn, signature WHERE name = 'gds.graph.project' RETURN aggregating, isBuiltIn, signature")
 	require.Equal(t, [][]interface{}{{true, false, "gds.graph.project(graphName :: STRING, sourceNode :: ANY, targetNode = null :: ANY, dataConfig = null :: ANY, configuration = null :: ANY, alphaMigrationConfig = null :: ANY) :: MAP"}}, listed)
 }
+
+// TestGDSAggregationProjectionBranches covers the refusals and forms the GDS
+// probes don't reach.
+func TestGDSAggregationProjectionBranches(t *testing.T) {
+	_, rows, fails := newAggregationProjectionGraph(t)
+	// false labels; integer node properties; nodes only, undirected.
+	rows("MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('b1', s, t, {sourceNodeLabels: false, targetNodeLabels: false, sourceNodeProperties: {n: 1}, targetNodeProperties: null})")
+	schema := rows("CALL gds.graph.list('b1') YIELD schema RETURN schema")[0][0].(map[string]interface{})
+	require.Equal(t, map[string]interface{}{"n": "Integer (DefaultValue(-9223372036854775808), PERSISTENT)"}, schema["nodes"].(map[string]interface{})["__ALL__"])
+	for query, message := range map[string]string{
+		"MATCH (s:Doc) RETURN gds.graph.project('x', s, null, {}, {undirectedRelationshipTypes: ['NOPE']})":                               "Projected types are: `['__ALL__']`.",
+		"WITH 5 AS g MATCH (s:Doc) RETURN gds.graph.project(g, s)":                                                                        "The value of `graphName` must be of type `String` but was `Long`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {sourceNodeProperties: 5, targetNodeProperties: null})":        "Unsupported conversion to GDS Value from Neo4j Value with type `Long`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {sourceNodeProperties: {a: 'x'}, targetNodeProperties: null})": "Unsupported conversion to GDS Value from Neo4j Value with type `String`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, 5)":                                                            "The value of `dataConfig` must be of type `Map` but was `Long`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {relationshipProperties: 5})":                                  "Unsupported conversion to GDS Value from Neo4j Value with type `Long`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {sourceNodeLabels: 5, targetNodeLabels: null})":                "The value of `sourceNodeLabels` must be of type `List` but was `Long`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {sourceNodeLabels: [5], targetNodeLabels: null})":              "The value of `sourceNodeLabels` must be of type `List` but was `List`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {}, 5)":                                                        "The value of `configuration` must be of type `Map` but was `Long`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {}, {undirectedRelationshipTypes: [5]})":                       "The value of `undirectedRelationshipTypes` must be of type `List` but was `List`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {}, {jobId: 7})":                                               "Expected JobId or String. Got Long.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {}, {logProgress: 'x'})":                                       "The value of `logProgress` must be of type `Boolean` but was `String`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {relationshipType: true})":                                     "but was `BOOLEAN`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {relationshipType: [1]})":                                      "but was `LIST`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {relationshipType: {}})":                                       "but was `MAP`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {relationshipType: s})":                                        "but was `NODE`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {relationshipType: date('2026-01-01')})":                       "but was `DATE`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', date('not a date'), t)":                                              "",
+	} {
+		err := fails(query)
+		require.Error(t, err, query)
+		require.ErrorContains(t, err, message, query)
+	}
+}
