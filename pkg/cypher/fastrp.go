@@ -164,8 +164,8 @@ func fastRPConfiguration(options map[string]interface{}) (FastRPConfig, error) {
 		}
 		config.IterationWeights = make([]float64, 0, len(items))
 		for _, item := range items {
-			number, isNumber := toFloat64(item)
-			if _, isText := item.(string); !isNumber || isText {
+			number, isNumber := gdsScalarNumber(item)
+			if !isNumber {
 				return config, localizedError(localization.CypherGraphProceduresIterationWeightType(fmt.Sprint(item), gdsJavaType(item)), nil)
 			}
 			config.IterationWeights = append(config.IterationWeights, number)
@@ -201,12 +201,11 @@ func fastRPConfiguration(options map[string]interface{}) (FastRPConfig, error) {
 	} else if ok {
 		config.RelationshipWeightProperty = property
 	}
-	if c.value("randomSeed") != nil {
-		if !isIntegerProcedureValue(c.value("randomSeed")) {
-			return config, c.typeError("randomSeed", "Long")
-		}
-		config.RandomSeed = toInt64(c.value("randomSeed"))
+	seed, err := c.integer("randomSeed", "Long", -1<<63, 1<<63-1, 42, false)
+	if err != nil {
+		return config, err
 	}
+	config.RandomSeed = seed
 	if config.NodeLabels, err = c.names("nodeLabels"); err != nil {
 		return config, err
 	}
@@ -622,15 +621,9 @@ func commonKeys(keys map[string][]string, names []string) []string {
 // fastRPConfigInt reads an integer config value (an INTEGER, or a FLOAT
 // with no fraction).
 func fastRPConfigInt(value interface{}) (int, bool) {
-	if isIntegerProcedureValue(value) {
-		return int(toInt64(value)), true
-	}
-	if number, ok := toFloat64(value); ok && number == float64(int(number)) {
-		return int(number), true
-	}
-	return 0, false
+	number, ok := gdsConfigIntegerValue(value, true)
+	return int(number), ok
 }
-
 // anyString reports whether values holds any of wanted.
 func anyString(values, wanted []string) bool {
 	for _, value := range values {
