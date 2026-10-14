@@ -3,6 +3,7 @@ package cypher
 
 import (
 	"context"
+	"math"
 	"sort"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -213,6 +214,14 @@ func newLouvainGraph(size int) *louvainGraph {
 	return g
 }
 
+// arc adds a relationship of weight w from i to j only, as a directed
+// projection holds it (an undirected one adds both ways).
+func (g *louvainGraph) arc(i, j int, w float64) {
+	g.weights[i][j] += w
+	g.degree[i] += w
+	g.total += w
+}
+
 // link adds a relationship of weight w between i and j.
 func (g *louvainGraph) link(i, j int, w float64) {
 	if i == j {
@@ -262,31 +271,35 @@ func (g *louvainGraph) moveNodes(maxIterations int, tolerance float64, initial [
 		for _, class := range classes {
 			for _, i := range class {
 				current := community[i]
-				// The weight from i to each neighbouring community.
-				links := make(map[int]float64)
+				// The weight from i to each neighbouring community (its own
+				// self-loops apart).
+				influence := make(map[int]float64)
+				self := 0.0
 				for _, j := range neighbours[i] {
-					if j != i {
-						links[community[j]] += g.weights[i][j]
+					if j == i {
+						self += g.weights[i][j]
 					}
+					influence[community[j]] += g.weights[i][j]
 				}
-				candidates := make([]int, 0, len(links))
-				for c := range links {
+				candidates := make([]int, 0, len(influence))
+				for c := range influence {
 					candidates = append(candidates, c)
 				}
 				sort.Ints(candidates)
-				// The gain of i joining c, up to a constant factor:
-				// k_i,in(c) - Σtot(c)·k_i / 2m, Σtot without i itself.
-				gain := func(c int) float64 {
-					total := communityDegree[c]
-					if c == current {
-						total -= g.degree[i]
-					}
-					return links[c] - total*g.degree[i]/g.total
-				}
-				best, bestGain := current, gain(current)
+				// GDS's modularity gain of i leaving its community for c,
+				// computed as GDS computes it: a node moves only for a
+				// positive gain, to the smaller community on a tie.
+				ki := g.degree[i]
+				eix := influence[current] - self
+				ax := communityDegree[current] - ki
+				best, maxGain := current, 0.0
 				for _, c := range candidates {
-					if candidateGain := gain(c); candidateGain > bestGain {
-						best, bestGain = c, candidateGain
+					if c == current {
+						continue
+					}
+					gain := (influence[c]-eix)/(g.total/2) + (2*ki*ax-2*ki*communityDegree[c])/math.Pow(g.total, 2)
+					if gain > maxGain || (gain == maxGain && gain != 0 && best > c) {
+						best, maxGain = c, gain
 					}
 				}
 				next[i] = best
