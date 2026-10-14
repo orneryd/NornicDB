@@ -97,7 +97,7 @@ func TestCompositeRoot_DropConstraint_Rejected(t *testing.T) {
 // --- Step 6: Real DROP INDEX execution ---
 
 func TestDropIndex_RealExecution(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(base)
 
 	// Create an index.
@@ -122,7 +122,7 @@ func TestDropIndex_RealExecution(t *testing.T) {
 }
 
 func TestDropIndex_IfExists_NonExistent(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(base)
 
 	// DROP INDEX IF EXISTS on non-existent index should succeed silently.
@@ -132,7 +132,7 @@ func TestDropIndex_IfExists_NonExistent(t *testing.T) {
 }
 
 func TestDropIndex_NonExistent_Fails(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(base)
 
 	_, err := exec.Execute(context.Background(), "DROP INDEX nonexistent", nil)
@@ -141,7 +141,7 @@ func TestDropIndex_NonExistent_Fails(t *testing.T) {
 }
 
 func TestDropIndex_BacktickQuoted(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(base)
 
 	_, err := exec.Execute(context.Background(),
@@ -333,13 +333,13 @@ func TestCompositeRoot_ShowCompositeDatabases_Allowed(t *testing.T) {
 // --- Step 13: Search service not inherited by composite ---
 
 func TestCompositeExecutor_SearchServiceNotInherited(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(base)
 	// Simulate having a search service on the base executor.
 	// (We can't set a real one without import cycles, but we can check
 	// the cloneForStorage behavior by verifying the field is nil on composite.)
 	compositeEngine := storage.NewCompositeEngine(
-		map[string]storage.Engine{"a": storage.NewMemoryEngine()},
+		map[string]storage.Engine{"a": newTestMemoryEngine(t)},
 		map[string]string{"a": "shard_a"},
 		map[string]string{"a": "read_write"},
 	)

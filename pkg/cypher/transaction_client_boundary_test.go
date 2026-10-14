@@ -10,7 +10,7 @@ import (
 )
 
 func TestClientTransactionControlPreservesOwnedTransaction(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "client_boundary")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "client_boundary")
 	executor := NewStorageExecutor(store)
 	ctx := context.Background()
 	client := WithClientStatement(ctx)

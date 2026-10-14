@@ -461,7 +461,7 @@ func TestGh728BindingFilterScopesAreInvocationLocal(t *testing.T) {
 }
 
 func TestCompiledBindingWhere_SupportedAndFallback(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	bindingRow := binding{
 		"a": &storage.Node{ID: "n1", Properties: map[string]interface{}{"status": "active", "name": "alice", "age": int64(30)}},
 		"b": &storage.Node{ID: "n2", Properties: map[string]interface{}{"status": "pending", "name": "bob", "age": int64(40)}},
@@ -501,7 +501,7 @@ func TestCompiledBindingWhere_SupportedAndFallback(t *testing.T) {
 }
 
 func TestCompiledBindingWhere_UnsupportedFallsBackCompliantly(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	bindingRow := binding{
 		"a": &storage.Node{ID: "n1", Properties: map[string]interface{}{"name": "alice"}},
 	}
@@ -514,7 +514,7 @@ func TestCompiledBindingWhere_UnsupportedFallsBackCompliantly(t *testing.T) {
 }
 
 func TestBindingWhereStringPredicateFallsBackForExpressionOperand(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	ctx := context.Background()
 	row := binding{
 		"n": &storage.Node{ID: "n1", Properties: map[string]interface{}{"name": "alice"}},
@@ -524,7 +524,7 @@ func TestBindingWhereStringPredicateFallsBackForExpressionOperand(t *testing.T) 
 }
 
 func TestCompiledBindingWhere_NodeOrderingUsesNumericComparisonForNumericIDs(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
 	assert.True(t, exec.compareNodeIDs("2", "10", "<"))
 	assert.False(t, exec.compareNodeIDs("2", "10", ">"))

@@ -16,7 +16,7 @@ func BenchmarkQueryStatisticsCollection(b *testing.B) {
 			name = "stopped"
 		}
 		b.Run(name, func(b *testing.B) {
-			exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "bench"))
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "bench"))
 			ctx := context.Background()
 			if !collecting {
 				if _, err := exec.Execute(ctx, "CALL db.stats.stop('QUERIES')", nil); err != nil {
@@ -33,7 +33,7 @@ func BenchmarkQueryStatisticsCollection(b *testing.B) {
 			}
 		})
 		b.Run(name+"/parallel", func(b *testing.B) {
-			exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "bench"))
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "bench"))
 			ctx := context.Background()
 			if !collecting {
 				if _, err := exec.Execute(ctx, "CALL db.stats.stop('QUERIES')", nil); err != nil {

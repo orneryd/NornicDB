@@ -11,7 +11,7 @@ import (
 // BenchmarkCallSubqueryUnion_FixedCost_CacheMiss profiles the fixed execution
 // overhead of CALL { ... UNION ALL ... } with a cache-busted query per iteration.
 func BenchmarkCallSubqueryUnion_FixedCost_CacheMiss(b *testing.B) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := newTestMemoryEngine(b)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
@@ -55,7 +55,7 @@ LIMIT 6`, i)
 // Branch 1 = pure projection from seed, Branch 2 = vector search + relationship traversal.
 // Branch 2 does NOT depend on the seed (p) — static branch caching should kick in.
 func BenchmarkCallSubqueryUnion_VectorRelBranch(b *testing.B) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := newTestMemoryEngine(b)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()

@@ -48,7 +48,7 @@ func TestFindLeadingWithEndLocalAndSplitCommaTopLevelLocal(t *testing.T) {
 }
 
 func TestCypherFabricExecutor_ExecuteQuery_DelegatesAndReturnsRows(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(baseStore)
 
 	cf := &cypherFabricExecutor{
@@ -70,7 +70,7 @@ func TestCypherFabricExecutor_ExecuteQuery_DelegatesAndReturnsRows(t *testing.T)
 }
 
 func TestExecute_TrailingSemicolonCompatibility(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
@@ -120,7 +120,7 @@ func TestExecute_TrailingSemicolonCompatibility(t *testing.T) {
 }
 
 func TestShouldUseFabricPlanner_OnlyForCompositeUseTargets(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := newTestMemoryEngine(t)
 	mgr, err := multidb.NewDatabaseManager(inner, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)

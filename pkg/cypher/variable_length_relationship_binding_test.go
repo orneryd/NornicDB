@@ -9,7 +9,7 @@ import (
 )
 
 func TestVariableLengthRelationshipBindingIsAListForListFunctions(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "variable-length-list")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "variable-length-list")
 	executor := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -42,7 +42,7 @@ func TestVariableLengthRelationshipBindingIsAListForListFunctions(t *testing.T) 
 }
 
 func TestOptionalVariableLengthMatchRetainsRelationshipListAndNamedPath(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "optional-variable-length-path")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "optional-variable-length-path")
 	executor := NewStorageExecutor(store)
 	ctx := context.Background()
 

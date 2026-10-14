@@ -37,7 +37,7 @@ func TestSharedCypherGrammar(t *testing.T) {
 							if parser == "antlr" && additive && prefix != "CYPHER 25 " {
 								return
 							}
-							exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "shared"))
+							exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "shared"))
 							result, err := exec.Execute(context.Background(), prefix+test.query, map[string]interface{}{"items": []interface{}{nil, int64(2), int64(3)}})
 							require.NoError(t, err)
 							require.Equal(t, test.rows, result.Rows)
@@ -69,7 +69,7 @@ func TestSharedCypherGrammarErrorsBeforeWrites(t *testing.T) {
 				"FILTER true",
 			} {
 				t.Run(query, func(t *testing.T) {
-					exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "errors"))
+					exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "errors"))
 					_, err := exec.Execute(context.Background(), query, nil)
 					require.Error(t, err)
 					result, err := exec.Execute(context.Background(), "MATCH (n:Shared) RETURN count(n)", nil)
@@ -90,7 +90,7 @@ func TestSharedCypherGrammarAfterNodePattern(t *testing.T) {
 			previous := config.GetParserType()
 			config.SetParserType(parser)
 			t.Cleanup(func() { config.SetParserType(previous) })
-			store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "pattern")
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "pattern")
 			exec := NewStorageExecutor(store)
 			ctx := context.Background()
 			prefix := ""
@@ -122,7 +122,7 @@ func TestSharedCypherGrammarRuleBreaks(t *testing.T) {
 			previous := config.GetParserType()
 			config.SetParserType(parser)
 			t.Cleanup(func() { config.SetParserType(previous) })
-			store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "rules")
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "rules")
 			exec := NewStorageExecutor(store)
 			ctx := context.Background()
 			_, err := exec.Execute(ctx, "CREATE (:Q {id: 1})", nil)
@@ -160,7 +160,7 @@ func TestSharedCypherGrammarWrites(t *testing.T) {
 			previous := config.GetParserType()
 			config.SetParserType(parser)
 			t.Cleanup(func() { config.SetParserType(previous) })
-			store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "writes")
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "writes")
 			exec := NewStorageExecutor(store)
 			prefix := ""
 			if parser == "antlr" {
@@ -180,7 +180,7 @@ func TestSharedCypherGrammarWrites(t *testing.T) {
 }
 
 func BenchmarkSharedCypherGrammar(b *testing.B) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "benchmark"))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "benchmark"))
 	for _, query := range []string{
 		"UNWIND [1,2,3] AS x WITH x, x * 10 AS scaled WHERE scaled > 10 RETURN x, scaled",
 		"FOR x IN [1,2,3] LET scaled = x * 10 FILTER scaled > 10 RETURN x, scaled",

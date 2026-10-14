@@ -3736,7 +3736,7 @@ func TestExecuteMatchWithCallProcedure_NodeLookupAndNilResultBranches(t *testing
 }
 
 func TestExecuteCorrelatedCallWithSeedRows_BatchedLookup(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()

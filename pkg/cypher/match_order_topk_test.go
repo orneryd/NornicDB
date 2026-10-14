@@ -10,7 +10,7 @@ import (
 )
 
 func TestMatchOrderByLimit_TopKFastPath(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()

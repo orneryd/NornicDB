@@ -14,7 +14,7 @@ import (
 
 func freshExecutorForBindingWhere(t *testing.T) *StorageExecutor {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "binding-where-coverage")
 	return NewStorageExecutor(ns)
 }

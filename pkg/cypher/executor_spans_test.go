@@ -39,7 +39,7 @@ func TestExecuteSpan_ReadQuery(t *testing.T) {
 	exp, teardown := spanSetup(t)
 	defer teardown()
 
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	_, _ = exec.Execute(context.Background(), "RETURN 1 AS x", nil)
 
 	spans := exp.GetSpans()
@@ -61,7 +61,7 @@ func TestExecuteSpan_PlanSpanEmitted(t *testing.T) {
 	exp, teardown := spanSetup(t)
 	defer teardown()
 
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	_, _ = exec.Execute(context.Background(), "MATCH (n) RETURN n", nil)
 
 	spans := exp.GetSpans()
@@ -82,7 +82,7 @@ func TestExecuteSpan_ParseError(t *testing.T) {
 	exp, teardown := spanSetup(t)
 	defer teardown()
 
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	_, err := exec.Execute(context.Background(), "INVALID GARBAGE QUERY ???", nil)
 	require.Error(t, err)
 
@@ -104,7 +104,7 @@ func TestExecuteSpan_WriteQuery(t *testing.T) {
 	exp, teardown := spanSetup(t)
 	defer teardown()
 
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	_, _ = exec.Execute(context.Background(), "CREATE (n:Person {name: 'Alice'})", nil)
 
 	spans := exp.GetSpans()
@@ -124,7 +124,7 @@ func TestTracedEngine_EmitsStorageSpans(t *testing.T) {
 	exp, teardown := spanSetup(t)
 	defer teardown()
 
-	inner := storage.NewMemoryEngine()
+	inner := newTestMemoryEngine(t)
 	traced := storage.NewTracedEngine(inner)
 	exec := NewStorageExecutor(traced)
 	_, _ = exec.Execute(context.Background(), "CREATE (n:Test {x: 1})", nil)

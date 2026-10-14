@@ -17,7 +17,7 @@ import (
 
 func freshExecutorForPropsLiterals(t *testing.T) *StorageExecutor {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "props-literals-coverage")
 	return NewStorageExecutor(ns)
 }

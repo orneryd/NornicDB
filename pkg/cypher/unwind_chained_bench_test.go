@@ -9,7 +9,7 @@ import (
 
 func newChainedUnwindBenchExecutor(b *testing.B) *StorageExecutor {
 	b.Helper()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(b)
 	store := storage.NewNamespacedEngine(base, "bench")
 	return NewStorageExecutor(store)
 }

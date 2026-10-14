@@ -13,7 +13,7 @@ import (
 )
 
 func BenchmarkCartesianMatchEqualityJoin(b *testing.B) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "cartesian-bench")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "cartesian-bench")
 	const nodeCount = 500
 	for i := 0; i < nodeCount; i++ {
 		key := strconv.Itoa(i)
@@ -543,7 +543,7 @@ func TestGh713CartesianSharedProjectionWindows(t *testing.T) {
 }
 
 func TestCartesianWherePushdown_InAndEqualityJoin(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -606,7 +606,7 @@ ORDER BY k
 }
 
 func TestCartesianWherePushdown_NullConstraint(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	patternMatches := []struct {
 		variable string
 		nodes    []*storage.Node
@@ -636,7 +636,7 @@ func TestCartesianWherePushdown_NullConstraint(t *testing.T) {
 }
 
 func TestCartesianWherePushdown_ContradictoryNullConstraint(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	patternMatches := []struct {
 		variable string
 		nodes    []*storage.Node
@@ -657,7 +657,7 @@ func TestCartesianWherePushdown_ContradictoryNullConstraint(t *testing.T) {
 }
 
 func TestCartesianWherePushdown_SingleNodeComparisons(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	patternMatches := []struct {
 		variable string
 		nodes    []*storage.Node
@@ -692,7 +692,7 @@ func TestMatchCreate_BatchJoinWithDualInFilters(t *testing.T) {
 	// IDs uniformly. Without the wrapper, freshly-minted edge UUIDs would
 	// land in BadgerTransaction unprefixed and trip the per-tx namespace
 	// pin (see ErrCrossNamespaceTransaction).
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -746,7 +746,7 @@ RETURN count(*) AS created_pairs
 }
 
 func TestBuildCombinationsUsingWhereJoin_TwoVarEquality(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
 	o1 := &storage.Node{ID: "nornic:o1", Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"joinKey": "k1"}}
 	o2 := &storage.Node{ID: "nornic:o2", Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"joinKey": "k2"}}
@@ -780,7 +780,7 @@ func TestBuildCombinationsUsingWhereJoin_TwoVarEquality(t *testing.T) {
 }
 
 func TestBuildCombinationsUsingWhereJoin_ThreeVarEqualityChain(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
 	o1 := &storage.Node{ID: "nornic:o1", Properties: map[string]interface{}{"joinKey": "k1"}}
 	o2 := &storage.Node{ID: "nornic:o2", Properties: map[string]interface{}{"joinKey": "k2"}}

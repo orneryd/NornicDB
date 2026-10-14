@@ -4,12 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestShowSettingsRegistryMetadata(t *testing.T) {
-	executor := NewStorageExecutor(storage.NewMemoryEngine())
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	// Neo4j's default and full (YIELD *) column sets, in its order.
 	result, err := executor.Execute(context.Background(), "SHOW SETTING `db.nornic.memory.storage.mode`", nil)
 	require.NoError(t, err)
@@ -28,7 +27,7 @@ func TestShowSettingsRegistryMetadata(t *testing.T) {
 }
 
 func TestShowSettingsSelectionAndUnsupportedComposition(t *testing.T) {
-	executor := NewStorageExecutor(storage.NewMemoryEngine())
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	result, err := executor.Execute(context.Background(), "SHOW SETTINGS db.nornic.query_plan_cache.max_entries, db.memory.transaction.total.max", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 2)
@@ -46,7 +45,7 @@ func TestShowSettingsSelectionAndUnsupportedComposition(t *testing.T) {
 }
 
 func TestShowSettingsUsesResolvedValuesAndRedactsSecrets(t *testing.T) {
-	executor := NewStorageExecutor(storage.NewMemoryEngine())
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	executor.SetSettingsResolver(func() SettingsSnapshot {
 		return SettingsSnapshot{
 			Configured: map[string]string{

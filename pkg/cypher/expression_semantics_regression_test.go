@@ -190,7 +190,7 @@ func TestBindingWhereRejectsNonBooleanResult(t *testing.T) {
 }
 
 func TestRowPredicateNegatesParenthesizedConjunctionWithoutWhitespace(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	value, ok := rowValue(t, exec, "NOT(n.name = 'apa' AND false)", map[string]interface{}{
 		"n": &storage.Node{Properties: map[string]interface{}{"name": "a"}},
 	})
@@ -199,7 +199,7 @@ func TestRowPredicateNegatesParenthesizedConjunctionWithoutWhitespace(t *testing
 }
 
 func TestReturnRejectsDuplicateProjectedColumnNames(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	_, err := exec.Execute(context.Background(), "RETURN 1 AS value, 2 AS value", nil)
 	require.Error(t, err)
 	var semanticErr *SemanticError
@@ -209,7 +209,7 @@ func TestReturnRejectsDuplicateProjectedColumnNames(t *testing.T) {
 }
 
 func TestReturnAllowsCaseDistinctProjectedColumnNames(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
 	result, err := exec.Execute(context.Background(), "RETURN 1 AS value, 2 AS Value", nil)
 	require.NoError(t, err)

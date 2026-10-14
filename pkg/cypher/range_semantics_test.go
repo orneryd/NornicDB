@@ -384,7 +384,7 @@ RETURN n.embedding AS embedding`, map[string]interface{}{
 func BenchmarkUnwindRangeFilteredCount(b *testing.B) {
 	for _, end := range []int64{3000, 30000} {
 		b.Run(fmt.Sprint(end), func(b *testing.B) {
-			executor := NewStorageExecutorWithQueryCachePolicy(storage.NewMemoryEngine(), 0, 0)
+			executor := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(b), 0, 0)
 			query := fmt.Sprintf("UNWIND range(1, %d) AS x WITH x WHERE x < 0 RETURN count(*) AS c", end)
 			b.ReportAllocs()
 			b.ResetTimer()

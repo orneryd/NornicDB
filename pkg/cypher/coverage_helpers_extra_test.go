@@ -138,7 +138,7 @@ func TestNormalizeInterfaceMap(t *testing.T) {
 }
 
 func TestCypherCoverage_ExecutorAccessorsAndFulltextExtraction(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	exec.SetLogger(nil)
 	require.NotNil(t, exec.Logger())
 
@@ -163,7 +163,7 @@ func TestCypherCoverage_WhereAndComparableHelpers(t *testing.T) {
 func TestCypherCoverage_VisibleAtWrapperAndMergeHelpers(t *testing.T) {
 	node := &storage.Node{ID: "nornic:n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "Ada"}}
 	edge := &storage.Edge{ID: "e1", Type: "LINKS", StartNode: "nornic:n1", EndNode: "nornic:n2", Properties: map[string]interface{}{"rank": 1}}
-	visibleEngine := &cypherVisibleMemoryEngine{MemoryEngine: storage.NewMemoryEngine(), nodes: []*storage.Node{node}, edges: []*storage.Edge{edge}}
+	visibleEngine := &cypherVisibleMemoryEngine{MemoryEngine: newTestMemoryEngine(t), nodes: []*storage.Node{node}, edges: []*storage.Edge{edge}}
 	wrapper := &transactionStorageWrapper{underlying: visibleEngine}
 
 	nodes, err := wrapper.GetNodesByLabelVisibleAt("Doc", storage.MVCCVersion{})
@@ -186,7 +186,7 @@ func TestCypherCoverage_VisibleAtWrapperAndMergeHelpers(t *testing.T) {
 	nsEdge := &storage.Edge{ID: "tenant:e1", Type: "LINKS", StartNode: "tenant:n1", EndNode: "tenant:n2", Properties: map[string]interface{}{"rank": 1}}
 	otherTenantEdge := &storage.Edge{ID: "other:e2", Type: "LINKS", StartNode: "other:n1", EndNode: "other:n2", Properties: map[string]interface{}{"rank": 2}}
 	otherTenantNode := &storage.Node{ID: "other:n1", Labels: []string{"Doc"}}
-	nsVisibleEngine := &cypherVisibleMemoryEngine{MemoryEngine: storage.NewMemoryEngine(), nodes: []*storage.Node{nsNode, otherTenantNode}, edges: []*storage.Edge{nsEdge, otherTenantEdge}}
+	nsVisibleEngine := &cypherVisibleMemoryEngine{MemoryEngine: newTestMemoryEngine(t), nodes: []*storage.Node{nsNode, otherTenantNode}, edges: []*storage.Edge{nsEdge, otherTenantEdge}}
 	nsWrapper := &transactionStorageWrapper{underlying: nsVisibleEngine, namespace: "tenant", separator: ":"}
 	nodes, err = nsWrapper.GetNodesByLabelVisibleAt("Doc", storage.MVCCVersion{})
 	require.NoError(t, err)

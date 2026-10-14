@@ -76,7 +76,7 @@ func TestInQueryProcedureCallRejectsImplicitArguments(t *testing.T) {
 			previous := config.GetParserType()
 			config.SetParserType(parser)
 			t.Cleanup(func() { config.SetParserType(previous) })
-			exec := NewStorageExecutor(storage.NewMemoryEngine())
+			exec := NewStorageExecutor(newTestMemoryEngine(t))
 			for _, testCase := range []struct{ query, detail string }{
 				{"CALL custom.acceptInteger YIELD out RETURN out", "InvalidArgumentPassingMode"},
 				{"CALL custom.acceptInteger(1) YIELD * RETURN out", "UnexpectedSyntax"},

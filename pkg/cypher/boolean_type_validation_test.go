@@ -5,12 +5,11 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBooleanOperatorsRejectStaticallyKnownNonBooleanOperands(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, query := range []string{
 		"RETURN 123 AND true",
 		"RETURN false AND 'text'",

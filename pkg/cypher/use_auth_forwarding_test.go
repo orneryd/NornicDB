@@ -65,7 +65,7 @@ func (m *useAuthDBManager) GetStorageForUse(name string, authToken string) (inte
 }
 
 func TestUseClause_ForwardsAuthTokenToDatabaseManager(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "nornic")
 	exec := NewStorageExecutor(ns)
 
@@ -139,7 +139,7 @@ func TestParseUseClauseDynamicGraphRefs(t *testing.T) {
 }
 
 func TestResolveCompositeStorageAndConstituent(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "nornic")
 	exec := NewStorageExecutor(ns)
 
@@ -179,7 +179,7 @@ func TestResolveCompositeStorageAndConstituent(t *testing.T) {
 }
 
 func TestScopedExecutorForUse_Branches(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "nornic")
 	exec := NewStorageExecutor(ns)
 

@@ -9,7 +9,7 @@ import (
 )
 
 func TestSelectTopKNodesByOrder_MultiKey(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	nodes := []*storage.Node{
 		{ID: "n1", Properties: map[string]interface{}{"a": int64(3), "b": "a", "c": int64(1)}},
 		{ID: "n2", Properties: map[string]interface{}{"a": int64(3), "b": "a", "c": int64(2)}},

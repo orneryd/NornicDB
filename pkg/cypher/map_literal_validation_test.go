@@ -4,12 +4,10 @@ import (
 	"context"
 	"reflect"
 	"testing"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func TestMapLiteralKeysAndValuesAreValidated(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	tests := []struct {
 		query  string
 		detail string
@@ -32,7 +30,7 @@ func TestMapLiteralKeysAndValuesAreValidated(t *testing.T) {
 }
 
 func TestMapLiteralArgumentsUseConvergedFunctionEvaluation(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	value, ok := rowValue(t, exec, "apoc.map.merge({a: 1, b: 2}, {b: 3, c: 4})", pipelineRow{})
 	if !ok {
 		left, leftOK := rowValue(t, exec, "{a: 1, b: 2}", pipelineRow{})

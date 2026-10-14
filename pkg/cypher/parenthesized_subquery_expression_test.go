@@ -103,7 +103,7 @@ func TestParenthesizedCollectSubqueryIsNotAPatternMap(t *testing.T) {
 // and either let the malformed map through silently or return the wrong
 // rows instead of Neo4j's SyntaxError.
 func TestParenthesizedSubqueryExpressionRejectsGenuineBadPatternMap(t *testing.T) {
-	executor := NewStorageExecutor(storage.NewMemoryEngine())
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	tests := []string{
 		"MATCH (n {a}) RETURN n",
 		"MATCH (n) WHERE (true AND EXISTS((m {a}))) RETURN n",
@@ -134,7 +134,7 @@ func TestParenthesizedSubqueryExpressionRejectsGenuineBadPatternMap(t *testing.T
 // not a CALL subquery: the key name sits after the brace, never in the
 // backward scan precedingSubqueryExpressionKeyword performs.
 func TestMapKeyNamedLikeSubqueryKeywordIsNotConfusedWithCall(t *testing.T) {
-	executor := NewStorageExecutor(storage.NewMemoryEngine())
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	result, err := executor.Execute(context.Background(),
 		"RETURN {call: 1, exists: 2, count: 3, collect: 4} AS m", nil)
 	require.NoError(t, err)
