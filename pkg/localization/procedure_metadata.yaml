@@ -345,6 +345,16 @@
     es: "Ejecuta la predicción de enlaces por asignación de recursos",
   }
 - {
+    name: gds.nodeSimilarity.filtered.stream,
+    en: "The Filtered Node Similarity algorithm compares a set of nodes based on the nodes they are connected to. Two nodes are considered similar if they share many of the same neighbors. The algorithm computes pair-wise similarities based on Jaccard or Overlap metrics. The filtered variant supports limiting which nodes to compare via source and target node filters.",
+    es: "El algoritmo Filtered Node Similarity compara un conjunto de nodos según los nodos a los que están conectados; los filtros de nodos de origen y destino limitan qué nodos se comparan.",
+  }
+- {
+    name: gds.nodeSimilarity.stream,
+    en: "The Node Similarity algorithm compares a set of nodes based on the nodes they are connected to. Two nodes are considered similar if they share many of the same neighbors. Node Similarity computes pair-wise similarities based on the Jaccard metric.",
+    es: "El algoritmo Node Similarity compara un conjunto de nodos según los nodos a los que están conectados; dos nodos son similares si comparten muchos vecinos.",
+  }
+- {
     name: gds.version,
     en: "Returns GDS version",
     es: "Devuelve la versión de GDS",
