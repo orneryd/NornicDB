@@ -433,3 +433,14 @@ func TestLocalOccurrences(t *testing.T) {
 		require.Equal(t, want, replaceIdentifierOutsideQuotesUnless(text, "v", "7", localOccurrences(text)("v")), text)
 	}
 }
+
+// The readers that go through the one owners: an element's inline WHERE is
+// no pattern structure, a reference inside a binding's list is the clause's,
+// and a CALL argument's local keeps its text.
+func TestLocalScopeAndPatternStructureReaders(t *testing.T) {
+	require.Equal(t, []string{"s", "t"}, extractNodeVariables(matchPatternStructure("(s WHERE s.k IN (l))-->(t) WHERE (z)")))
+	require.False(t, localVariableShadowsAt("[r  IN l | r]", 2, "r"))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_locals"))
+	node := &storage.Node{ID: "n1", Properties: map[string]interface{}{"x": int64(5)}}
+	require.Equal(t, "CALL f([n IN l | n.x], 5)", exec.substituteBoundVariablesInCall("CALL f([n IN l | n.x], n.x)", map[string]*storage.Node{"n": node}, nil))
+}
