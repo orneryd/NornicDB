@@ -20,10 +20,14 @@ type gdsProjectionRow struct {
 }
 
 // statementTextKey carries the user statement's text, which GDS's Cypher
-// aggregation projection reports as its query.
+// aggregation projection reports as its query. Only a statement that names
+// gds.graph.project carries it, so other statements allocate nothing.
 type statementTextKey struct{}
 
 func withStatementText(ctx context.Context, statement string) context.Context {
+	if indexASCIIFold(statement, "gds.graph.project") < 0 {
+		return ctx
+	}
 	return context.WithValue(ctx, statementTextKey{}, statement)
 }
 
