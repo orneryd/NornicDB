@@ -1,3 +1,9 @@
+## Branch and milestone
+<!-- See CONTRIBUTING.md, "Development workflow". -->
+- [ ] Base branch is `develop`, or `release/vX.Y.Z` for a release fix (never `main`)
+- [ ] On the release milestone (`make milestone VERSION=x.y.z ISSUES="<this PR>"`)
+- [ ] `make verify` passes locally (list any skipped steps below). Checks do not run on GitHub unless the `ci:run` label is added.
+
 ## Description
 <!-- Provide a clear and concise description of your changes -->
 

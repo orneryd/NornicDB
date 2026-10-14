@@ -110,6 +110,7 @@ BGE_RERANKER_URL := https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/reso
 .PHONY: build run build-ui build-binary build-admin build-localllm build-headless build-localllm-headless sync-version test lint-slog install-hooks clean images help macos-menubar macos-install macos-uninstall macos-all macos-clean macos-package macos-package-lite macos-package-full macos-package-all macos-package-signed homebrew-artifacts
 .PHONY: download-models download-bge download-qwen download-bge-reranker check-models
 .PHONY: antlr-generate antlr-clean antlr-test antlr-test-full test-parsers graphify
+.PHONY: verify verify-list verify-help release-start release-pr milestone release-status release-finish repo-settings repo-settings-diff
 
 # ==============================================================================
 # Model Downloads (Heimdall prerequisites)
@@ -1273,6 +1274,20 @@ help:
 	@echo "  make download-qwen           Download Qwen LLM model (~350MB)"
 	@echo "  make check-models            Check which models are present"
 	@echo ""
+	@echo "Branch verification (the PR and merge-to-main checks of GitHub Actions, run locally):"
+	@echo "  make verify                  Verify the current checkout against origin/main"
+	@echo "  make verify BRANCH=<branch>  Verify another branch in a worktree under .verify/"
+	@echo "  make verify-list             Show which checks would run, and why"
+	@echo "  make verify-help             All options (ONLY=, SKIP=, ALL=1, FAIL_FAST=1, GROUPS=, BASE=)"
+	@echo ""
+	@echo "Releases (develop -> release/vX.Y.Z -> tag + main; see CONTRIBUTING.md):"
+	@echo "  make release-start VERSION=1.4.3     Create milestone v1.4.3 and branch release/v1.4.3 from main"
+	@echo "  make release-pr VERSION=1.4.3        Open the develop -> release/v1.4.3 PR on the milestone"
+	@echo "  make milestone VERSION=1.4.3 ISSUES=\"12 34\"  Put issues/PRs on milestone v1.4.3"
+	@echo "  make release-status VERSION=1.4.3    Milestone progress and open PRs"
+	@echo "  make release-finish VERSION=1.4.3    Tag v1.4.3, fast-forward main, close milestone, sync develop"
+	@echo "  make repo-settings                   Apply .github/rulesets/*.json (admin)"
+	@echo ""
 	@echo "Local Development:"
 ifeq ($(HOST_OS),windows)
 	@echo "  make build                   Build UI + native binary (CPU-only, no embeddings)"
@@ -1570,6 +1585,68 @@ cypher-tck-vetted: cypher-tck-inventory
 
 cypher-tck-update-ratchet: cypher-tck-inventory
 	ZONEINFO="$(CYPHER_TCK_ZONEINFO)" NORNICDB_RUN_FULL_TCK=1 NORNICDB_TCK_UPDATE_RATCHET=1 go test -tags "$(CYPHER_TCK_TAGS)" ./testing/cypher/tck -run '^TestOfficialOpenCypherCorpusInBothTransactionModes$$' -count=1 -v
+
+# ---------------------------------------------------------------------------
+# Branch verification: every check GitHub Actions runs for a pull request into
+# main and for the merge into main (ci.yml, cypher-conformance.yml,
+# docs-pages.yml), locally, with the same path filters and one summary.
+# Logs: .verify/latest/<step>.log. Options: make verify-help.
+# ---------------------------------------------------------------------------
+VERIFY_ENV = VERIFY_BRANCH="$(BRANCH)" VERIFY_BASE="$(or $(BASE),origin/main)" \
+	VERIFY_ONLY="$(ONLY)" VERIFY_SKIP="$(SKIP)" VERIFY_ALL="$(or $(ALL),0)" \
+	VERIFY_FAIL_FAST="$(or $(FAIL_FAST),0)" VERIFY_GROUPS="$(GROUPS)" VERIFY_FETCH="$(or $(FETCH),1)"
+
+verify:
+	@$(VERIFY_ENV) bash scripts/verify.sh
+
+verify-list:
+	@$(VERIFY_ENV) VERIFY_LIST=1 bash scripts/verify.sh
+
+verify-help:
+	@echo "make verify: run the GitHub Actions checks for a branch locally"
+	@echo ""
+	@echo "  make verify                         current checkout vs origin/main (uncommitted changes included)"
+	@echo "  make verify BRANCH=fix/foo          another branch or ref, in a worktree under .verify/worktrees/"
+	@echo "  make verify-list [BRANCH=...]       show the plan without running it"
+	@echo ""
+	@echo "Steps (in order): localization ui llama-libs build tests allocations conformance differential docs"
+	@echo "Like CI, a step runs only when the branch changes a path its workflow watches."
+	@echo ""
+	@echo "  ONLY=\"build tests\"     run only these steps"
+	@echo "  SKIP=differential      skip steps (e.g. when Docker is not running)"
+	@echo "  ALL=1                  ignore the path filters and run every step"
+	@echo "  FAIL_FAST=1            stop at the first failure (default: run all, then summarize)"
+	@echo "  GROUPS=\"cypher search\" only these test groups ($$(bash scripts/ci/test-groups.sh --list | tr '\n' ' '))"
+	@echo "  BASE=origin/release    compare against another ref (default origin/main)"
+	@echo "  FETCH=0                do not fetch BASE first"
+	@echo ""
+	@echo "Exit status is non-zero when any check fails. Logs: .verify/latest/<step>.log"
+
+# ---------------------------------------------------------------------------
+# Releases (CONTRIBUTING.md, "Development workflow"): work lands on develop,
+# goes to release/vX.Y.Z through a pull request on milestone vX.Y.Z, and the
+# release branch is tagged and fast-forwarded into main. DRY_RUN=1 previews.
+# ---------------------------------------------------------------------------
+release-start:   ## make release-start VERSION=1.4.3
+	@bash scripts/release.sh start "$(VERSION)"
+
+release-pr:      ## make release-pr VERSION=1.4.3 [FROM=develop]
+	@bash scripts/release.sh pr "$(VERSION)" $(FROM)
+
+milestone:       ## make milestone VERSION=1.4.3 ISSUES="12 34"
+	@bash scripts/release.sh milestone "$(VERSION)" $(ISSUES)
+
+release-status:  ## make release-status VERSION=1.4.3
+	@bash scripts/release.sh status "$(VERSION)"
+
+release-finish:  ## make release-finish VERSION=1.4.3
+	@bash scripts/release.sh finish "$(VERSION)"
+
+repo-settings:   ## apply .github/rulesets/*.json and the ci:run label (admin)
+	@bash scripts/repo-settings.sh
+
+repo-settings-diff:
+	@bash scripts/repo-settings.sh --diff
 
 cypher-conformance: cypher-tck-ratchet cypher-tck-vetted
 	ZONEINFO="$(CYPHER_TCK_ZONEINFO)" go test -tags "$(CYPHER_TCK_TAGS)" ./testing/cypher/tck/... ./pkg/cypher -count=1

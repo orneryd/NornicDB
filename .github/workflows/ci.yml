@@ -1,57 +1,49 @@
 name: CI
 
+# Actions minutes are budgeted: nothing runs automatically on pushes or pull
+# requests. Run the checks locally with `make verify`, and on GitHub either add
+# the `ci:run` label to a pull request or use "Run workflow" (workflow_dispatch).
+# See CONTRIBUTING.md, "Development workflow".
 on:
-  push:
-    branches:
-      - "main"
-    paths:
-      - "docker/**"
-      - "lib/**"
-      - "macos/**"
-      - "pkg/**"
-      - "plugins/**"
-      - "scripts/**"
-      - "cmd/nornicdb/**"
-      - "cmd/nornicdb-admin/**"
-      - "ui/**"
-      - "go.mod"
-      - "go.sum"
   pull_request:
-    branches:
-      - "main"
-    paths:
-      - "docker/**"
-      - "lib/**"
-      - "macos/**"
-      - "pkg/**"
-      - "plugins/**"
-      - "scripts/**"
-      - "cmd/nornicdb/**"
-      - "cmd/nornicdb-admin/**"
-      - "ui/**"
-      - "go.mod"
-      - "go.sum"
+    types: [labeled]
+  workflow_call:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit SHA to check out"
+        required: true
+        type: string
+    secrets:
+      COVERALLS_REPO_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       branch:
-        description: "Branch, tag, or commit SHA to run CI against"
-        required: true
-        default: "main"
+        description: "Branch, tag, or commit SHA to run CI against (default: the branch selected above)"
+        required: false
+        default: ""
         type: string
 
 permissions:
   contents: read
 
+# A newer request for the same pull request or ref replaces a running one.
+concurrency:
+  group: ci-${{ inputs.ref || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Build
+    # Runs when started by hand, by the nightly workflow (workflow_call), or by the ci:run label.
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ci:run'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+          ref: ${{ inputs.ref || inputs.branch || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -99,7 +91,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+          ref: ${{ inputs.ref || inputs.branch || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -127,89 +119,10 @@ jobs:
         run: bash scripts/hydrate-llama-cpu-libs.sh
 
       - name: Test and Generate coverage report
-        run: |
-          set -o pipefail
-          # Mirror the test step's grouping so a failing or hung
-          # package surfaces with a name attached instead of timing
-          # out the whole job. Each group appends to the same raw
-          # profile; a single filter pass at the end produces
-          # coverage.out for goveralls. Coverage exclusions
-          # (generated code, GPU stubs, etc.) live in
-          # scripts/generate-coverage.sh so the per-group invocations
-          # don't need to know about them.
-          : > coverage.raw.out
-
-          run_cov_group() {
-            local name="$1"; shift
-            echo "::group::coverage ${name}"
-            if ! bash scripts/generate-coverage.sh --append coverage.raw.out "$name" "$@"; then
-              echo "::error title=coverage failed::group ${name} failed"
-              echo "::endgroup::"
-              return 1
-            fi
-            echo "::endgroup::"
-          }
-
-          # Mirror the test job's pkg/server split. The catch-all covers
-          # any new test prefix not handled by a named bucket so coverage
-          # stays complete without manual maintenance per new test file.
-          SERVER_BUCKETS_HANDLED='^(TestAuth|TestGDPR|TestExplicit|TestCommit|TestRollback|TestTransaction|TestDatabase|TestExecute|TestDbConfig|TestDB|TestDecay|TestMultiDatabase|TestDatabaseIsolation|TestDefaultDatabaseIsolation|TestComposite|TestCompositeRoot|TestBifrost|TestUI|TestInstrumented|TestCORS|TestSession|TestServe|TestStart|TestNew|TestAddr|TestRoute|TestBaseURL|TestBackup|TestCluster|TestGetCookie|TestGraph|TestSearch|TestCollectLatest|TestCollectSnapshot|TestDiffGraph|TestEdges|TestRetention|TestGPU|TestBuildEmbed|TestBasePathAndRBAC|TestQdrant|TestServerQdrantGRPC|TestMCP|TestSecurity|TestRBAC|TestBasicAuth|TestEmbed|TestNornic)'
-
-          run_cov_server_group() {
-            local name="$1"; local pattern="$2"
-            run_cov_group "server-${name}" -run "${pattern}" ./pkg/server/...
-          }
-
-          run_cov_group util-small \
-            ./pkg/audit/... ./pkg/auth/... ./pkg/buildinfo/... \
-            ./pkg/cache/... ./pkg/compliance/... ./pkg/config/... \
-            ./pkg/convert/... ./pkg/embed/... ./pkg/embeddingutil/... \
-            ./pkg/encryption/... ./pkg/envutil/... ./pkg/errors/... \
-            ./pkg/eval/... ./pkg/fabric/... ./pkg/filter/... \
-            ./pkg/gpu/... ./pkg/heimdall/... ./pkg/indexing/... \
-            ./pkg/inference/... ./pkg/kms/... ./pkg/knowledgepolicy/... \
-            ./pkg/lifecycle/... ./pkg/linkpredict/... ./pkg/localllm/... \
-            ./pkg/math/... ./pkg/mcp/... ./pkg/multidb/... \
-            ./pkg/nornicgrpc/... ./pkg/observability/... ./pkg/pool/... \
-            ./pkg/qdrantgrpc/... ./pkg/retention/... ./pkg/security/... \
-            ./pkg/simd/... ./pkg/storage/lifecycle/... ./pkg/temporal/... \
-            ./pkg/textchunk/... ./pkg/txsession/... ./pkg/util/... \
-            ./pkg/vectorspace/...
-          run_cov_group graphql ./pkg/graphql/...
-          run_cov_group cypher ./pkg/cypher/...
-          run_cov_group search ./pkg/search/...
-          run_cov_group bolt ./pkg/bolt/...
-
-          # pkg/storage split — mirror the test job. Keep both lists in
-          # sync; if you add a bucket above, add it here too. The
-          # catch-all -skip pattern means coverage stays complete even
-          # if a new test file lands without explicit bucket assignment.
-          STORAGE_BUCKETS_HANDLED='^(TestBadgerEngine|TestBadgerTransaction|TestBadgerCache|TestBadgerSchemaHelpers|TestBadgerConstraintValidationHelpers|TestAsyncEngine|TestAsyncEngineConfig|TestNewAsyncEngine|TestBug|TestWAL|TestAtomicWAL|TestRecoverFromWAL|TestReplayAndUndoBulkWALEntries|TestReplayAndUndoWALEntry|TestRecoveryResultSummary|TestReplayResultSummary|TestReplayResultTracking|TestReplayResultHasCriticalErrors|TestReplayWALEntry|TestNewWAL|TestNewWALSyncsDirectory|TestDefaultWALConfig|TestSaveSnapshot|TestSaveSnapshotSyncsDirectory|TestPruneOldSnapshotFiles|TestSnapshot_|TestSnapshotAndSaveSnapshot|TestCheckAtomicWALIntegrity|TestCheckWALIntegrity|TestReadWALEntriesForTruncation|TestReadWALEntriesFromDir|TestSyncDirFunction|TestSyncDirInvalidPath|TestRecoverAbortedTransaction|TestRecoverCommittedTransaction|TestRecoverIncompleteTransaction|TestRecoverMixedTransactions|TestRecoverWithTransactions|TestBuildAtomicRecordV2|TestWriteAtomicRecordV2|TestCompositeEngine|TestCompositeIndex|TestCompositeKey|TestNamespacedEngine|TestTransaction|TestBatch|TestTx|TestNewTransaction|TestUndo|TestBeginTransaction|TestSnapshotIsolationConflict)'
-
-          run_cov_storage_group() {
-            local name="$1"; local pattern="$2"
-            run_cov_group "storage-${name}" -run "${pattern}" ./pkg/storage
-          }
-
-          run_cov_storage_group badger        '^(TestBadgerEngine|TestBadgerTransaction|TestBadgerCache|TestBadgerSchemaHelpers|TestBadgerConstraintValidationHelpers)'
-          run_cov_storage_group async         '^(TestAsyncEngine|TestAsyncEngineConfig|TestNewAsyncEngine|TestBug)'
-          run_cov_storage_group wal-recovery  '^(TestWAL|TestAtomicWAL|TestRecoverFromWAL|TestReplayAndUndoBulkWALEntries|TestReplayAndUndoWALEntry|TestRecoveryResultSummary|TestReplayResultSummary|TestReplayResultTracking|TestReplayResultHasCriticalErrors|TestReplayWALEntry|TestNewWAL|TestNewWALSyncsDirectory|TestDefaultWALConfig|TestSaveSnapshot|TestSaveSnapshotSyncsDirectory|TestPruneOldSnapshotFiles|TestSnapshot_|TestSnapshotAndSaveSnapshot|TestCheckAtomicWALIntegrity|TestCheckWALIntegrity|TestReadWALEntriesForTruncation|TestReadWALEntriesFromDir|TestSyncDirFunction|TestSyncDirInvalidPath|TestRecoverAbortedTransaction|TestRecoverCommittedTransaction|TestRecoverIncompleteTransaction|TestRecoverMixedTransactions|TestRecoverWithTransactions|TestBuildAtomicRecordV2|TestWriteAtomicRecordV2)'
-          run_cov_storage_group composite-tx  '^(TestCompositeEngine|TestCompositeIndex|TestCompositeKey|TestNamespacedEngine|TestTransaction|TestBatch|TestTx|TestNewTransaction|TestUndo|TestBeginTransaction|TestSnapshotIsolationConflict)'
-          run_cov_group storage-rest -skip "${STORAGE_BUCKETS_HANDLED}" ./pkg/storage
-
-          run_cov_group nornicdb ./pkg/nornicdb/...
-
-          run_cov_server_group core-tx       '^(TestAuth|TestGDPR|TestExplicit|TestCommit|TestRollback|TestTransaction)'
-          run_cov_server_group db            '^(TestDatabase(Adapter|Empty|Info|Unknown)|TestExecute|TestDbConfig|TestDB|TestDecay)'
-          run_cov_server_group multidb       '^(TestMultiDatabase|TestDatabaseIsolation|TestDefaultDatabaseIsolation|TestComposite|TestCompositeRoot)'
-          run_cov_server_group wiring        '^(TestBifrost|TestUI|TestInstrumented|TestCORS|TestSession|TestServe|TestStart|TestNew|TestAddr|TestRoute|TestBaseURL|TestBackup|TestCluster|TestGetCookie)'
-          run_cov_server_group graph-search  '^(TestGraph|TestSearch|TestCollectLatest|TestCollectSnapshot|TestDiffGraph|TestEdges|TestRetention|TestGPU|TestBuildEmbed|TestBasePathAndRBAC)'
-          run_cov_server_group integrations  '^(TestQdrant|TestServerQdrantGRPC|TestMCP|TestSecurity|TestRBAC|TestBasicAuth|TestEmbed|TestNornic)'
-          run_cov_group server-rest -skip "${SERVER_BUCKETS_HANDLED}" ./pkg/server/...
-
-          run_cov_group replication ./pkg/replication/...
-
-          bash scripts/generate-coverage.sh --filter coverage.raw.out coverage.out
+        # The groups live in scripts/ci/test-groups.sh so `make verify` runs
+        # exactly the same suite locally. It stops at the first failing group
+        # and writes coverage.out for goveralls.
+        run: bash scripts/ci/test-groups.sh coverage.raw.out coverage.out
 
       - name: Install goveralls
         run: go install github.com/mattn/goveralls@latest

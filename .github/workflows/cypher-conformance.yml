@@ -1,41 +1,41 @@
 name: Cypher Conformance
 
+# Actions minutes are budgeted: nothing runs automatically on pushes or pull
+# requests. Run the checks locally with `make verify`, and on GitHub either add
+# the `ci:run` label to a pull request or use "Run workflow" (workflow_dispatch).
+# See CONTRIBUTING.md, "Development workflow".
 on:
-  push:
-    branches: [main]
-    paths:
-      - "pkg/**"
-      - "testing/cypher/**"
-      - "scripts/cypher-tck/**"
-      - "docs/plans/cypher-convergence-*.md"
-      - "openspec/**"
-      - ".github/workflows/cypher-conformance.yml"
-      - "go.mod"
-      - "go.sum"
   pull_request:
-    branches: [main]
-    paths:
-      - "pkg/**"
-      - "testing/cypher/**"
-      - "scripts/cypher-tck/**"
-      - "docs/plans/cypher-convergence-*.md"
-      - "openspec/**"
-      - ".github/workflows/cypher-conformance.yml"
-      - "go.mod"
-      - "go.sum"
+    types: [labeled]
+  workflow_call:
+    inputs:
+      ref:
+        description: "Branch, tag, or commit SHA to check"
+        required: true
+        type: string
+      allocation_base:
+        description: "Allocation baseline ref"
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       allocation_base:
-        description: "Allocation baseline ref (defaults to parent for manual runs)"
+        description: "Allocation baseline ref, e.g. main for a release branch (default: the pull request base, or the parent commit)"
         required: false
         type: string
 
 permissions:
   contents: read
 
+concurrency:
+  group: conformance-${{ inputs.ref || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   allocations:
     name: Allocation ratchet (${{ matrix.parser }})
+    # Runs when started by hand, by the nightly workflow (workflow_call), or by the ci:run label.
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ci:run'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -47,6 +47,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: head
+          ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 2
 
       - name: Resolve allocation baseline
@@ -88,10 +89,14 @@ jobs:
 
   conformance:
     name: Cypher conformance
+    # Runs when started by hand, by the nightly workflow (workflow_call), or by the ci:run label.
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ci:run'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v7
