@@ -1,6 +1,9 @@
 package cypher
 
-import "github.com/orneryd/nornicdb/pkg/storage"
+import (
+	"context"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
 
 // The search between two bound ends of a uniform pattern (#1212): one
 // whose every relationship pattern is the same unconstrained one and whose
@@ -363,13 +366,21 @@ func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.
 // relationships and nodes) through the automaton: the chain it starts with
 // and the move of each step. ok is false when the pattern has no such path.
 func (a *pathSearchAutomaton) walkPath(start *storage.Node, steps []pathSearchPathStep) (pathSearchPath, bool) {
-	var failed map[[2]int]bool
-	var visit func(slot, step int) bool
-	visit = func(slot, step int) bool {
+	return a.walkPathContext(context.Background(), start, steps)
+}
+
+func (a *pathSearchAutomaton) walkPathContext(ctx context.Context, start *storage.Node, steps []pathSearchPathStep) (pathSearchPath, bool) {
+	type replayKey struct {
+		slot, step int
+		counts     string
+	}
+	var failed map[replayKey]bool
+	var visit func(slot, step int, counts string) bool
+	visit = func(slot, step int, counts string) bool {
 		if step == len(steps) {
 			return slot == a.final
 		}
-		if failed[[2]int{slot, step}] {
+		if failed[replayKey{slot, step, counts}] {
 			return false
 		}
 		for _, index := range a.from[slot] {
@@ -377,19 +388,26 @@ func (a *pathSearchAutomaton) walkPath(start *storage.Node, steps []pathSearchPa
 			if (step == len(steps)-1) != (to == a.final) {
 				continue
 			}
-			if visit(to, step+1) {
+			move := a.moves[index]
+			transition := a.slots[move.from].transitions[move.transition]
+			next, ok := a.chainCounts(a.chains[transition.to][move.chain], counts)
+			if ok && visit(to, step+1, next) {
 				steps[step].move = index
 				return true
 			}
 		}
 		if failed == nil {
-			failed = map[[2]int]bool{}
+			failed = map[replayKey]bool{}
 		}
-		failed[[2]int{slot, step}] = true
+		failed[replayKey{slot, step, counts}] = true
 		return false
 	}
 	for _, chain := range a.chains[a.initial] {
-		if len(steps) == 0 && chain.end == a.final || len(steps) > 0 && len(a.slots[chain.end].transitions) > 0 && visit(chain.end, 0) {
+		counts, valid := a.chainCounts(chain, "")
+		if !valid {
+			continue
+		}
+		if len(steps) == 0 && chain.end == a.final || len(steps) > 0 && len(a.slots[chain.end].transitions) > 0 && visit(chain.end, 0, counts) {
 			return pathSearchPath{start: start, chain: chain.slots, steps: steps}, true
 		}
 	}

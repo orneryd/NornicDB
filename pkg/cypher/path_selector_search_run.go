@@ -8,8 +8,9 @@ import (
 
 // pathSearchKey is a pair of a data node and a slot of the automaton.
 type pathSearchKey struct {
-	node storage.NodeID
-	slot int32
+	node   storage.NodeID
+	slot   int32
+	counts string
 }
 
 // pathSearchProduct is a pair the search reached, with the steps from it
@@ -17,6 +18,7 @@ type pathSearchKey struct {
 type pathSearchProduct struct {
 	node     *storage.Node
 	slot     int
+	counts   string
 	steps    []pathSearchStep
 	expanded bool
 }
@@ -245,12 +247,16 @@ func reverseDirection(direction string) string {
 
 // product returns the product of node and slot, added when new.
 func (s *pathSearch) product(node *storage.Node, slot int) int32 {
-	key := pathSearchKey{node: node.ID, slot: int32(slot)}
+	return s.productCounts(node, slot, "")
+}
+
+func (s *pathSearch) productCounts(node *storage.Node, slot int, counts string) int32 {
+	key := pathSearchKey{node: node.ID, slot: int32(slot), counts: counts}
 	if index, exists := s.index[key]; exists {
 		return index
 	}
 	index := int32(len(s.products))
-	s.products = append(s.products, pathSearchProduct{node: node, slot: slot})
+	s.products = append(s.products, pathSearchProduct{node: node, slot: slot, counts: counts})
 	s.index[key] = index
 	if len(s.a.slots[slot].transitions) > 0 {
 		s.unexpanded++
@@ -276,6 +282,10 @@ func (s *pathSearch) expand(p int32) {
 		move := s.a.moves[index]
 		transition := &s.a.slots[slot].transitions[move.transition]
 		chain := s.a.chains[transition.to][move.chain]
+		counts, valid := s.a.chainCounts(chain, s.products[p].counts)
+		if !valid {
+			continue
+		}
 		for _, edge := range s.relationships(node.ID, transition.direction) {
 			if !s.transitionHolds(transition, edge) {
 				continue
@@ -284,7 +294,7 @@ func (s *pathSearch) expand(p int32) {
 			if !ok || !s.chainHolds(chain, next) {
 				continue
 			}
-			steps = append(steps, pathSearchStep{edge: edge, to: s.product(next, chain.end), move: int32(index)})
+			steps = append(steps, pathSearchStep{edge: edge, to: s.productCounts(next, chain.end, counts), move: int32(index)})
 		}
 	}
 	s.products[p].steps = steps
@@ -306,7 +316,11 @@ func (s *pathSearch) begin(source *storage.Node) {
 			continue
 		}
 		// The chains from one slot end at distinct slots.
-		p := s.product(source, chain.end)
+		counts, valid := s.a.chainCounts(chain, "")
+		if !valid {
+			continue
+		}
+		p := s.productCounts(source, chain.end, counts)
 		s.roots[p] = index
 		level.index[p] = int32(len(level.entries))
 		level.entries = append(level.entries, pathSearchEntry{product: p})

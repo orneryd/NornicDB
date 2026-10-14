@@ -78,7 +78,7 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 	}
 	funcName, inner, _, _ := extractShortestPathCall(call)
 	if selector, predicate, terms, ok := splitPathSelectorTerm(where); ok {
-		return e.parseSelectedPathMatch(inner, pathVariable, others, selector, predicate, terms)
+		return e.parseSelectedPathMatchContext(ctx, inner, pathVariable, others, selector, predicate, terms)
 	}
 	startPattern, endPattern, ok := shortestPathEndpointPatterns(inner)
 	traversal := e.parseTraversalPattern(ctx, inner)

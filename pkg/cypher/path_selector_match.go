@@ -61,12 +61,19 @@ func splitPathSelectorTerm(where string) (*pathSelector, string, []string, bool)
 // the paths to select from; the clause's WHERE conjuncts that read only the
 // endpoints select the pairs, and the others filter the selected paths.
 func (e *StorageExecutor) parseSelectedPathMatch(pattern, pathVariable string, others []string, selector *pathSelector, predicate string, terms []string) (*shortestPathMatch, bool, error) {
+	return e.parseSelectedPathMatchContext(context.Background(), pattern, pathVariable, others, selector, predicate, terms)
+}
+
+func (e *StorageExecutor) parseSelectedPathMatchContext(ctx context.Context, pattern, pathVariable string, others []string, selector *pathSelector, predicate string, terms []string) (*shortestPathMatch, bool, error) {
 	if len(others) > 0 || pathVariable == "" {
 		// The statement rewrite names the path and allows no other pattern
 		// (path_selector.go); a hand-written selector call may do neither.
 		return nil, true, labelExpressionSyntaxError(localization.CypherMatchingPathSelectorMultiplePatterns())
 	}
-	plan, filters, ok := compileSelectedPathPlan(pattern, pathVariable, predicate, terms)
+	plan, filters, ok := compileSelectedPathPlanContext(ctx, pattern, pathVariable, predicate, terms)
+	if ctx.Err() != nil {
+		return nil, true, ctx.Err()
+	}
 	if !ok {
 		return nil, true, errSelectedPathPattern(pattern)
 	}

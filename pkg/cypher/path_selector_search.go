@@ -2,9 +2,11 @@ package cypher
 
 import (
 	"context"
+	"encoding/binary"
 	"math"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -26,8 +28,7 @@ import (
 // pattern is a state, a relationship pattern a transition between two
 // states, and two juxtaposed node patterns are one node (an empty
 // transition). A quantified group or a variable-length relationship is
-// unrolled up to its upper bound, or up to its lower bound and then looped
-// when it has none. The search runs over the pairs of a data node and a
+// compiled once with a counter for its bounds. The search runs over the pairs of a data node and a
 // state, breadth-first by path length from the bound end: from the start
 // node when it is bound (or the end is unbound), over the reversed pattern
 // from the end node otherwise, and from both ends when both are bound. One
@@ -268,7 +269,8 @@ func propertyMapPredicates(variable, properties string) []string {
 // pathSearchSlot is a state of a selected pattern's automaton: a node
 // position of the (unrolled) pattern.
 type pathSearchSlot struct {
-	variable string
+	counterEnter, counterStep, counterExit int
+	variable                               string
 	// list marks a variable inside a group, which binds a list.
 	list       bool
 	labels     []string
@@ -308,7 +310,12 @@ type pathSearchMove struct {
 }
 
 // pathSearchAutomaton is a selected pattern compiled for the search.
+type pathSearchCounter struct{ min, max int }
+
 type pathSearchAutomaton struct {
+	ctx            context.Context
+	counters       []pathSearchCounter
+	repetitions    int
 	slots          []pathSearchSlot
 	initial, final int
 	// chains[slot] are the chains that start at slot.
@@ -330,15 +337,25 @@ type pathSearchAutomaton struct {
 
 // buildPathSearchAutomaton compiles a pattern's elements.
 func buildPathSearchAutomaton(items []pathPatternItem) *pathSearchAutomaton {
-	a := &pathSearchAutomaton{}
+	return buildPathSearchAutomatonContext(context.Background(), items)
+}
+
+func buildPathSearchAutomatonContext(ctx context.Context, items []pathPatternItem) *pathSearchAutomaton {
+	a := &pathSearchAutomaton{ctx: ctx}
 	a.initial, a.final = a.sequence(items, -1)
 	a.chains = make([][]pathSearchChain, len(a.slots))
 	for slot := range a.slots {
+		if ctx.Err() != nil {
+			return nil
+		}
 		a.chains[slot] = a.chainsFrom(slot, nil)
 	}
 	a.from = make([][]int, len(a.slots))
 	a.into = make([][]int, len(a.slots))
 	for slot := range a.slots {
+		if ctx.Err() != nil {
+			return nil
+		}
 		for t, transition := range a.slots[slot].transitions {
 			for c, chain := range a.chains[transition.to] {
 				a.from[slot] = append(a.from[slot], len(a.moves))
@@ -348,8 +365,9 @@ func buildPathSearchAutomaton(items []pathPatternItem) *pathSearchAutomaton {
 		}
 	}
 	a.maxLength = itemsMaxLength(items)
-	a.minLength = shortestLength(a)
+	a.minLength = itemsMinLength(items)
 	a.uniform, a.uniformStart = uniformTransition(a)
+	a.ctx = context.Background()
 	return a
 }
 
@@ -375,6 +393,9 @@ func itemsMaxLength(items []pathPatternItem) int {
 }
 
 func (a *pathSearchAutomaton) addSlot(slot pathSearchSlot) int {
+	if a.ctx.Err() != nil {
+		return -1
+	}
 	a.slots = append(a.slots, slot)
 	return len(a.slots) - 1
 }
@@ -393,6 +414,9 @@ func (a *pathSearchAutomaton) sequence(items []pathPatternItem, group int) (int,
 	}
 	var pending *pathPatternItem
 	for index := range items {
+		if a.ctx.Err() != nil {
+			return first, last
+		}
 		item := &items[index]
 		switch {
 		case item.kind == pathPatternNode:
@@ -428,39 +452,109 @@ func (a *pathSearchAutomaton) transition(item pathPatternItem, to, group int) pa
 		predicates: item.predicates, to: to, group: group}
 }
 
-// repetition adds a group's slots: one copy per repetition up to max, or
-// up to min (at least one) with the last looped when max is none.
+// repetition adds one copy of a group. A counted quantifier compiles to a
+// counter instead of one copy per repetition.
 func (a *pathSearchAutomaton) repetition(members []pathPatternItem, min, max, group int) (int, int) {
+	a.repetitions++
 	entry := a.addSlot(pathSearchSlot{group: -1})
 	exit := a.addSlot(pathSearchSlot{group: -1})
-	copies, loop := max, false
-	if max < 0 || max >= VarLengthUnboundedMaxHops {
-		copies, loop = min, true
-		if copies < 1 {
-			copies = 1
-		}
+	if max == 0 {
+		a.slots[entry].empty = append(a.slots[entry].empty, exit)
+		return entry, exit
 	}
+	first, last := a.sequence(members, group)
+	if a.ctx.Err() != nil {
+		return entry, exit
+	}
+	a.slots[first].iterationStart = true
+	a.slots[entry].empty = append(a.slots[entry].empty, first)
+	a.slots[last].empty = append(a.slots[last].empty, exit, first)
 	if min == 0 {
 		a.slots[entry].empty = append(a.slots[entry].empty, exit)
 	}
-	previous := entry
-	for repetition := 1; repetition <= copies; repetition++ {
-		first, last := a.sequence(members, group)
-		a.slots[first].iterationStart = true
-		a.slots[previous].empty = append(a.slots[previous].empty, first)
-		if repetition >= min {
-			a.slots[last].empty = append(a.slots[last].empty, exit)
-		}
-		if loop && repetition == copies {
-			a.slots[last].empty = append(a.slots[last].empty, first)
-		}
-		previous = last
+	// An unbounded 0/1 minimum needs no state beyond the loop itself.
+	if max >= 0 || min > 1 {
+		a.counters = append(a.counters, pathSearchCounter{min: min, max: max})
+		id := len(a.counters)
+		a.slots[entry].counterEnter = id
+		a.slots[first].counterStep = id
+		a.slots[exit].counterExit = id
 	}
 	return entry, exit
 }
 
+// itemsMinLength is the least number of relationships the pattern allows.
+func itemsMinLength(items []pathPatternItem) int {
+	length := 0
+	for _, item := range items {
+		switch {
+		case item.kind == pathPatternNode:
+		case item.kind == pathPatternGroup:
+			length += item.min * itemsMinLength(item.items)
+		case item.varLength:
+			length += item.min
+		default:
+			length++
+		}
+	}
+	return length
+}
+
+// chainCounts applies the empty chain's counter guards and updates. Completed
+// groups clear their counter so final products still identify endpoint nodes.
+func (a *pathSearchAutomaton) chainCounts(chain pathSearchChain, counts string) (string, bool) {
+	if len(a.counters) == 0 {
+		return counts, true
+	}
+	values := []byte(counts)
+	if len(values) == 0 {
+		values = make([]byte, 8*len(a.counters))
+	}
+	for _, index := range chain.slots {
+		slot := a.slots[index]
+		for _, id := range []int{slot.counterEnter, slot.counterStep, slot.counterExit} {
+			if id == 0 {
+				continue
+			}
+			value := binary.LittleEndian.Uint64(values[(id-1)*8:])
+			bound := a.counters[id-1]
+			switch id {
+			case slot.counterEnter:
+				value = 0
+			case slot.counterStep:
+				if bound.max >= 0 && value >= uint64(bound.max) {
+					return "", false
+				}
+				if bound.max >= 0 || value < uint64(bound.min) {
+					value++
+				}
+			case slot.counterExit:
+				if value < uint64(bound.min) {
+					return "", false
+				}
+				value = 0
+			}
+			binary.LittleEndian.PutUint64(values[(id-1)*8:], value)
+		}
+	}
+	for _, value := range values {
+		if value != 0 {
+			return string(values), true
+		}
+	}
+	return "", true
+}
+
 // chainsFrom lists the chains from slot (prefix is the run so far).
 func (a *pathSearchAutomaton) chainsFrom(slot int, prefix []int) []pathSearchChain {
+	if a.ctx.Err() != nil {
+		return nil
+	}
+	for _, visited := range prefix {
+		if visited == slot {
+			return nil
+		}
+	}
 	run := append(append([]int(nil), prefix...), slot)
 	var chains []pathSearchChain
 	if len(a.slots[slot].transitions) > 0 || slot == a.final {
@@ -540,17 +634,36 @@ type selectedPathPlanEntry struct {
 // conjuncts that filter the selected paths. ok is false for a pattern the
 // search can't read. The plan is shared: it must not be changed.
 func compileSelectedPathPlan(pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
+	return compileSelectedPathPlanContext(context.Background(), pattern, pathVariable, predicate, terms)
+}
+
+func compileSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
+	if ctx.Err() != nil {
+		return nil, nil, false
+	}
 	key := pattern + "\x00" + pathVariable + "\x00" + predicate + "\x00" + strings.Join(terms, "\x00")
 	if entry, cached := selectedPathPlans.get(key); cached {
 		return entry.plan, entry.filters, entry.ok
 	}
-	plan, filters, ok := buildSelectedPathPlan(pattern, pathVariable, predicate, terms)
-	selectedPathPlans.put(key, selectedPathPlanEntry{plan: plan, filters: filters, ok: ok})
+	plan, filters, ok := buildSelectedPathPlanContext(ctx, pattern, pathVariable, predicate, terms)
+	if ctx.Err() != nil {
+		return nil, nil, false
+	}
+	if selectedPathPlanBytes(plan, filters, len(key)) <= selectedPathPlanCacheEntryBytes {
+		selectedPathPlans.put(key, selectedPathPlanEntry{plan: plan, filters: filters, ok: ok})
+	}
 	return plan, filters, ok
 }
 
 // buildSelectedPathPlan compiles a plan (compileSelectedPathPlan).
 func buildSelectedPathPlan(pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
+	return buildSelectedPathPlanContext(context.Background(), pattern, pathVariable, predicate, terms)
+}
+
+func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, predicate string, terms []string) (*selectedPathPlan, []string, bool) {
+	if ctx.Err() != nil {
+		return nil, nil, false
+	}
 	items, ok := parsePathPatternItems(pattern, false)
 	if !ok {
 		return nil, nil, false
@@ -565,6 +678,9 @@ func buildSelectedPathPlan(pattern, pathVariable, predicate string, terms []stri
 	singles := map[string]bool{}
 	groups := 0
 	for index := range items {
+		if ctx.Err() != nil {
+			return nil, nil, false
+		}
 		item := &items[index]
 		switch item.kind {
 		case pathPatternNode:
@@ -668,8 +784,11 @@ func buildSelectedPathPlan(pattern, pathVariable, predicate string, terms []stri
 		filters = append(filters, term)
 	}
 	plan.start, plan.end = items[0], items[len(items)-1]
-	plan.forward = buildPathSearchAutomaton(items)
-	plan.backward = buildPathSearchAutomaton(reversePathPatternItems(items))
+	plan.forward = buildPathSearchAutomatonContext(ctx, items)
+	plan.backward = buildPathSearchAutomatonContext(ctx, reversePathPatternItems(items))
+	if ctx.Err() != nil {
+		return nil, nil, false
+	}
 	return plan, filters, true
 }
 
@@ -1124,4 +1243,54 @@ func reverseSlice[T any](values []T) {
 	for i, j := 0, len(values)-1; i < j; i, j = i+1, j-1 {
 		values[i], values[j] = values[j], values[i]
 	}
+}
+
+// Every cached entry has a byte limit as well as the cache's entry limit.
+// This upper estimate includes slice capacities and retained query strings.
+const selectedPathPlanCacheEntryBytes = 64 << 10
+
+func selectedPathPlanBytes(plan *selectedPathPlan, filters []string, keyBytes int) int {
+	size := keyBytes + int(unsafe.Sizeof(selectedPathPlanEntry{}))
+	stringsBytes := func(values []string) int {
+		n := cap(values) * int(unsafe.Sizeof(""))
+		for _, v := range values {
+			n += len(v)
+		}
+		return n
+	}
+	size += stringsBytes(filters)
+	if plan == nil {
+		return size
+	}
+	size += int(unsafe.Sizeof(*plan)) + len(plan.pathVariable) + stringsBytes(plan.constants) + stringsBytes(plan.pathChecks) + stringsBytes(plan.listVariables)
+	for _, checks := range plan.iterationChecks {
+		size += 64 + stringsBytes(checks)
+	}
+	for _, item := range []pathPatternItem{plan.start, plan.end} {
+		size += len(item.text) + len(item.variable) + stringsBytes(item.labels) + stringsBytes(item.predicates)
+	}
+	size += cap(plan.lengthBounds) * int(unsafe.Sizeof(pathLengthBound{}))
+	for _, bound := range plan.lengthBounds {
+		size += len(bound.bound)
+	}
+	for _, a := range []*pathSearchAutomaton{plan.forward, plan.backward} {
+		size += int(unsafe.Sizeof(*a)) + cap(a.slots)*int(unsafe.Sizeof(pathSearchSlot{})) + cap(a.moves)*int(unsafe.Sizeof(pathSearchMove{})) + cap(a.counters)*int(unsafe.Sizeof(pathSearchCounter{}))
+		for _, slot := range a.slots {
+			size += len(slot.variable) + stringsBytes(slot.labels) + stringsBytes(slot.predicates) + cap(slot.empty)*int(unsafe.Sizeof(int(0))) + cap(slot.transitions)*int(unsafe.Sizeof(pathSearchTransition{}))
+			for _, t := range slot.transitions {
+				size += len(t.variable) + len(t.direction) + stringsBytes(t.types) + stringsBytes(t.predicates)
+			}
+		}
+		size += (cap(a.chains) + cap(a.from) + cap(a.into)) * int(unsafe.Sizeof([]int{}))
+		for _, chains := range a.chains {
+			size += cap(chains) * int(unsafe.Sizeof(pathSearchChain{}))
+			for _, chain := range chains {
+				size += cap(chain.slots) * int(unsafe.Sizeof(int(0)))
+			}
+		}
+		for _, indexes := range append(append([][]int(nil), a.from...), a.into...) {
+			size += cap(indexes) * int(unsafe.Sizeof(int(0)))
+		}
+	}
+	return size
 }

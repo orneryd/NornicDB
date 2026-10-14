@@ -128,6 +128,9 @@ func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direc
 			return rows
 		}
 	}
+	if len(s.a.counters) > 0 {
+		return s.run(source, count, groups, bind)
+	}
 	s.begin(source)
 	w := &pathSearchWalks{forward: map[int32]int{}, preds: map[int32][]pathSearchHop{}, backward: map[pathSearchKey]int{},
 		nodes: map[pathSearchKey]*storage.Node{}, succs: map[pathSearchKey][]pathSearchBack{}, shortest: -1}
