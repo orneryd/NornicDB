@@ -198,13 +198,10 @@ func validateReturnAggregationSemantics(body string) error {
 				"non-deterministic expressions cannot be arguments to aggregate functions",
 			)
 		}
-		// The comprehension / quantifier variables come from the whole
-		// expression: removing the aggregate calls can remove their list.
-		localBindings := expressionLocalBindings(expression)
+		// What the projection reads outside its aggregates: removeAggregateCalls
+		// blanks them in place, so a local's scope is read where it is
+		// (x + size(collect([x IN l | x])) reads the outer x).
 		for _, reference := range semanticFreeReferences(removeAggregateCalls(expression)) {
-			if _, local := localBindings[strings.SplitN(reference, ".", 2)[0]]; local {
-				continue
-			}
 			if _, projected := directExpressions[reference]; projected {
 				continue
 			}
@@ -289,6 +286,15 @@ func directSemanticReference(expression string) string {
 
 func semanticExpressionReferences(expression string) []string {
 	references := make([]string, 0, 2)
+	forEachSemanticExpressionReference(expression, func(reference string, _ int) {
+		references = append(references, reference)
+	})
+	return references
+}
+
+// forEachSemanticExpressionReference calls visit with each reference
+// semanticExpressionReferences finds and the offset of its variable.
+func forEachSemanticExpressionReference(expression string, visit func(reference string, at int)) {
 	for index := 0; index < len(expression); {
 		if expression[index] == '\'' || expression[index] == '"' {
 			index = skipQuotedSemanticText(expression, index)
@@ -309,6 +315,7 @@ func semanticExpressionReferences(expression string) []string {
 		// A name after a dot is a property key, not a variable: the receiver
 		// may be a list element or a call's result (collect(n)[0].id,
 		// head(xs).id), which the scan doesn't read as a reference itself.
+		start := index
 		before := index
 		for before > 0 && isASCIIWhitespace(expression[before-1]) {
 			before--
@@ -347,9 +354,8 @@ func semanticExpressionReferences(expression string) []string {
 				index = propertyEnd
 			}
 		}
-		references = append(references, normalized)
+		visit(normalized, start)
 	}
-	return references
 }
 
 // qualifiedFunctionNameEnd reports whether the name before at continues as
@@ -377,21 +383,21 @@ func qualifiedFunctionNameEnd(expression string, at int) (int, bool) {
 
 // semanticFreeReferences returns the variables and variable.property
 // references an expression reads from its scope: the names
-// semanticExpressionReferences finds, without the expression's own bindings
-// (list comprehension, quantifier and reduce variables) and without anything
+// semanticExpressionReferences finds, without the occurrences that read one
+// of the expression's own bindings where it is bound (list comprehension,
+// quantifier, reduce and named path variables; localReader) and without anything
 // inside braces (a COUNT / EXISTS / COLLECT subquery binds its own pattern
 // variables; a map projection's keys aren't variables). The base of a map
 // projection (n in n {.k}) is a reference.
 func semanticFreeReferences(expression string) []string {
-	locals := expressionLocalBindings(expression)
-	references := semanticExpressionReferences(maskSemanticBraceBodies(expression))
-	free := references[:0]
-	for _, reference := range references {
-		if _, local := locals[strings.SplitN(reference, ".", 2)[0]]; local {
-			continue
+	locals := newLocalReader(expression)
+	var free []string
+	// maskSemanticBraceBodies keeps offsets: each one is the expression's.
+	forEachSemanticExpressionReference(maskSemanticBraceBodies(expression), func(reference string, at int) {
+		if !locals.shadows(strings.SplitN(reference, ".", 2)[0], at) {
+			free = append(free, reference)
 		}
-		free = append(free, reference)
-	}
+	})
 	return free
 }
 

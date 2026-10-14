@@ -87,8 +87,18 @@ func mayUseQuantifiedGroup(text string) bool {
 }
 
 // nextQuantifiedGroup finds the first quantified group at or after
-// pattern[from]: its parentheses (open, close) and quantifier.
+// pattern[from] at its own level: its parentheses (open, close) and
+// quantifier (quantifiedGroupFrom).
 func nextQuantifiedGroup(pattern string, from int) (int, int, relationshipQuantifier, bool) {
+	return quantifiedGroupFrom(pattern, from, false)
+}
+
+// quantifiedGroupFrom is the one group finder: the first quantified group at
+// or after pattern[from], skipping quoted text, lists and maps. A parenthesis
+// that isn't a group is skipped whole, unless nested is set: then the groups
+// inside it count too (shortestPath((a)((x)-[r]-(y))+(b)), the form SHORTEST
+// k is read as).
+func quantifiedGroupFrom(pattern string, from int, nested bool) (int, int, relationshipQuantifier, bool) {
 	for i := from; i < len(pattern); i++ {
 		switch c := pattern[i]; c {
 		case '\'', '"', '`':
@@ -108,7 +118,9 @@ func nextQuantifiedGroup(pattern string, from int) (int, int, relationshipQuanti
 					return i, close, quantifier, true
 				}
 			}
-			i = close
+			if !nested {
+				i = close
+			}
 		}
 	}
 	return 0, 0, relationshipQuantifier{}, false
@@ -477,29 +489,9 @@ type quantifiedGroupSpan struct {
 func quantifiedGroups(pattern string) []quantifiedGroupSpan {
 	var groups []quantifiedGroupSpan
 	for index := 0; index < len(pattern); index++ {
-		switch c := pattern[index]; c {
-		case '\'', '"', '`':
-			index = skipCypherQuotedText(pattern, index, c) - 1
-			continue
-		case '[', '{':
-			closeBy := map[byte]byte{'[': ']', '{': '}'}[c]
-			if close := findMatchingDelimiter(pattern, index, rune(c), rune(closeBy)); close > index {
-				index = close
-			}
-			continue
-		case '(':
-		default:
-			continue
-		}
-		open, close := index, findMatchingParen(pattern, index)
-		if close < 0 {
+		open, close, _, found := quantifiedGroupFrom(pattern, index, true)
+		if !found {
 			return groups
-		}
-		if !parenthesisedPathAt(pattern, open, close) {
-			continue
-		}
-		if _, quantified := relationshipQuantifierAt(pattern, skipASCIISpaces(pattern, close+1, len(pattern)), len(pattern)); !quantified {
-			continue
 		}
 		group := quantifiedGroupSpan{open: open, close: close}
 		elementsEnd := close
@@ -514,8 +506,9 @@ func quantifiedGroups(pattern string) []quantifiedGroupSpan {
 				structure[index-open-1] = ' '
 			}
 		}
-		group.nodes = extractNodeVariables(string(structure))
-		group.relationships = extractRelationshipVariables(string(structure))
+		// Bound names, as the scope stores them: `x x` is x x.
+		group.nodes = normalizedBindingNames(extractNodeVariables(string(structure)))
+		group.relationships = normalizedBindingNames(extractRelationshipVariables(string(structure)))
 		groups = append(groups, group)
 		index = close
 	}
@@ -732,4 +725,13 @@ func quantifierBoundsError(quantifier relationshipQuantifier) error {
 		return labelExpressionSyntaxError(localization.CypherMatchingQuantifierBoundsReversed())
 	}
 	return nil
+}
+
+// normalizedBindingNames rewrites each name as written (`x x`) to the name
+// it binds (x x, normalizeProjectionColumnName), in place.
+func normalizedBindingNames(names []string) []string {
+	for index, name := range names {
+		names[index] = normalizeProjectionColumnName(name)
+	}
+	return names
 }
