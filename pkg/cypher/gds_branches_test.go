@@ -68,8 +68,8 @@ func TestGDSProjectionBranches(t *testing.T) {
 	// projection.
 	failure := errors.New("boom")
 	for _, engine := range []storage.Engine{
-		&streamErrEngine{MemoryEngine: storage.NewMemoryEngine(), nodes: failure},
-		&streamErrEngine{MemoryEngine: storage.NewMemoryEngine(), edges: failure},
+		&streamErrEngine{MemoryEngine: newTestMemoryEngine(t), nodes: failure},
+		&streamErrEngine{MemoryEngine: newTestMemoryEngine(t), edges: failure},
 	} {
 		_, err := NewStorageExecutor(engine).callGdsGraphProject([]interface{}{"broken", "*", "*"})
 		require.ErrorContains(t, err, "boom")

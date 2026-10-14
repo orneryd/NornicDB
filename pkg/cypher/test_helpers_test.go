@@ -12,6 +12,10 @@ import (
 func newTestMemoryEngine(t testing.TB) *storage.MemoryEngine {
 	t.Helper()
 	engine := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = engine.Close() })
+	t.Cleanup(func() {
+		if err := engine.Close(); err != nil {
+			t.Errorf("close test store: %v", err)
+		}
+	})
 	return engine
 }

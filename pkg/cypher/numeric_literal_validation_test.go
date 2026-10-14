@@ -4,12 +4,10 @@ import (
 	"context"
 	"math"
 	"testing"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func TestNumericLiteralsAreValidatedBeforeExecution(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	tests := []struct {
 		query  string
 		detail string
@@ -40,7 +38,7 @@ func TestNumericLiteralsAreValidatedBeforeExecution(t *testing.T) {
 }
 
 func TestIntegerLiteralBoundariesRemainValid(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, test := range []struct {
 		query string
 		want  int64
@@ -62,7 +60,7 @@ func TestIntegerLiteralBoundariesRemainValid(t *testing.T) {
 }
 
 func TestFloatLiteralZeroPreservesSign(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, literal := range []string{"0.0", ".0", "-0.0", "-.0", "-0e10"} {
 		value, ok := parseFloatFast(literal)
 		if !ok {

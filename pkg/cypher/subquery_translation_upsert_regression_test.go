@@ -13,7 +13,7 @@ import (
 // translation flows return rows and update existing nodes instead of duplicating.
 func TestExecuteMatchWithCallSubquery_CreateOrUpdateTranslationShape(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "nornic")
 	exec := NewStorageExecutor(store)
 

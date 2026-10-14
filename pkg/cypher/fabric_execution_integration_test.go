@@ -541,7 +541,7 @@ ORDER BY textKey128
 }
 
 func TestNormalizeFabricRowWrapper_MapInterfaceKeys(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic"))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"))
 	query := "RETURN sourceId, textKey, originalText, language, translatedText"
 	stream := &fabric.ResultStream{
 		Columns: []string{"__fabric_row"},
