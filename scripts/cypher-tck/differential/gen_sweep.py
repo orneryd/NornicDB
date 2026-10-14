@@ -551,6 +551,40 @@ for q in ["UNWIND [1, 2] AS x RETURN x + size(collect([x IN [1] | x])) AS v",
           "WITH [2] AS l MATCH (n:Q {id: 1}) RETURN [(n)-->(z) WHERE z.id IN (l) | z.id] AS v",
           "MATCH (n:Q {id: 1}) RETURN [(n)-->(z) WHERE z.id > 0 | [y IN [z.id] | y]] AS v"]:
     add("local-scope-references", "return", q)
+# An aggregate inside reduce stays its list or initial value; a local
+# inside an EXISTS / COUNT / COLLECT body may not redeclare an outer
+# variable (it may in CALL { } and at the top level) and gives the body's
+# patterns its own type; CASE in a named comprehension sees the path; a
+# backquoted named path is one (#1227).
+for q in ["UNWIND [1, 2] AS x RETURN reduce(acc = 0, y IN collect(x) | acc + y) AS v",
+          "UNWIND [1, 2] AS x RETURN reduce(acc = count(*), y IN [1, 2] | acc + y) AS v",
+          "UNWIND [1, 2] AS x WITH reduce(acc = 0, y IN collect(x) | acc + y) AS v RETURN v",
+          "UNWIND [1, 2] AS x RETURN reduce(acc = [], y IN collect(x) | acc + [y * 2]) AS v",
+          "UNWIND [1, 2] AS x RETURN count(*) AS c ORDER BY reduce(acc = 0, y IN collect(x) | acc + y)",
+          "UNWIND [1, 2] AS x RETURN [y IN collect(x) WHERE y > 1 | y] AS v",
+          "UNWIND [1, 2] AS x RETURN all(y IN collect(x) WHERE y > 0) AS v",
+          "WITH 7 AS p RETURN COLLECT { MATCH (n:Q {id: 1}) RETURN [p = (n)-->(z) | length(p)] AS v } AS v",
+          "WITH 7 AS x RETURN COLLECT { MATCH (n:Q {id: 1}) RETURN [x IN [1] | x] AS v } AS v",
+          "WITH 7 AS x RETURN COUNT { MATCH (n:Q) WHERE all(x IN [1] WHERE x = 1) } AS v",
+          "WITH 7 AS x RETURN COLLECT { MATCH (n:Q {id: 1}) RETURN reduce(x = 0, y IN [1] | x + y) AS v } AS v",
+          "WITH 7 AS p MATCH (y:Q {id: 1}) WHERE EXISTS { MATCH (y) WHERE size([p = (y)-->(z) | p]) > 0 } RETURN count(*) AS c",
+          "MATCH (r:Q {id: 1}) RETURN COUNT { MATCH (n:Q) WHERE all(r IN [1] WHERE r = 1) } AS v",
+          "WITH 7 AS x CALL (x) { RETURN [x IN [1] | x] AS v } RETURN v",
+          "WITH 7 AS p CALL (p) { MATCH (n:Q {id: 1}) RETURN [p = (n)-->(z) | length(p)] AS v } RETURN v",
+          "WITH 7 AS x RETURN COLLECT { MATCH (n:Q {id: 1}) RETURN x AS v } AS v",
+          "WITH 7 AS x RETURN COLLECT { MATCH (n:Q {id: 1}) RETURN [y IN [1] | y + x] AS v } AS v",
+          "MATCH (x:Q {id: 1})-[e:R]->(y) WHERE all(e IN [1] WHERE EXISTS { (e)-->() }) RETURN count(*) AS c",
+          "MATCH (x:Q {id: 1})-[e:R]->(y) WHERE all(e IN ['s'] WHERE COUNT { (e)-->() } > 0) RETURN count(*) AS c",
+          "MATCH (x:Q {id: 1})-[e:R]->(y) WHERE all(e IN [y] WHERE EXISTS { (e)-->() }) RETURN count(*) AS c",
+          "MATCH p = (:Q {id: 1})((x)-[e:R]->(y) WHERE all(e IN [1] WHERE EXISTS { (e)-->() }))+(t) RETURN count(p) AS c",
+          "WITH 7 AS p MATCH (x:Q {id: 1}) MATCH (x)-[e:R]->(y) WHERE [p = (y)-->(z) | CASE WHEN length(p) = 1 THEN z.id ELSE -1 END] = [3] RETURN count(*) AS c",
+          "MATCH (y:Q {id: 2}) RETURN [p = (y)-->(z) | CASE WHEN length(p) = 1 THEN z.id ELSE -1 END] AS v",
+          "MATCH (y:Q {id: 2}) RETURN [x IN[1, 2] | CASE WHEN x = 1 THEN 'one' ELSE 'other' END] AS v",
+          "RETURN [`p p` = (a:Q)-->(b:Q) | length(`p p`)] AS v",
+          "MATCH (y:Q {id: 2}) RETURN [`p p` = (y)-->(z) WHERE length(`p p`) = 1 | z.id] AS v",
+          "WITH 7 AS `p p` MATCH (x:Q {id: 1}) MATCH (x)-[e:R]->(y) WHERE size([`p p` = (y)-->(z) | length(`p p`)]) = 1 RETURN count(*) AS c",
+          "RETURN [`x x` IN[1, 2] | `x x` * 10] AS v"]:
+    add("local-scope-references", "round3", q)
 
 # 12c. Subquery bodies that start from the row's own variables (#1055): the
 # bound node, relationship and path fast paths against the pipeline. Bodies
