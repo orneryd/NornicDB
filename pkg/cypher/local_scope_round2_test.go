@@ -172,4 +172,7 @@ func TestLocalScopeRound3(t *testing.T) {
 	require.Equal(t, matchBindingUnknown, localBindingKind("reduce(a = b, x IN l | a)", 23, "a", staticTypeScope{}))
 	require.Equal(t, matchBindingValue, localBindingKind("reduce(a = 0, x IN l | a)", 23, "a", staticTypeScope{}))
 	require.Equal(t, scope, withLocalKinds(scope, "true", 0))
+	require.Equal(t, matchBindingUnknown, localBindingKind("x", 0, "x", staticTypeScope{}))
+	require.Equal(t, matchBindingUnknown, localBindingKind("[x IN| x]", 7, "x", staticTypeScope{}))
+	require.Equal(t, matchSemanticScope{"x": matchBindingValue}, withLocalKinds(nil, "[x IN [1] | x]", 12))
 }
