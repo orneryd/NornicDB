@@ -148,6 +148,16 @@
 - id: cyphergraphprocedures.graph_exists_aggregation
   description: Mensaje de GDS (graph exists aggregation).
   other: 'El grafo {{.Graph}} ya existe'
-- id: cyphergraphprocedures.unsupported_gds_value
-  description: Mensaje de GDS (unsupported gds value).
-  other: 'Conversión no compatible a un valor de GDS desde un valor de Neo4j de tipo `{{.Type}}`.'
+- id: cyphergraphprocedures.relationship_type_empty
+  description: Mensaje de GDS (relationship type empty).
+  other: 'El tipo de relación no puede estar vacío'
+- id: cyphergraphprocedures.inverse_types_not_projected
+  description: Mensaje de GDS (inverse types not projected).
+  other: 'Los inverseIndexedRelationshipTypes especificados `{{.Types}}` no se proyectaron en el grafo. Los tipos proyectados son: `{{.Projected}}`.'
+- id: cyphergraphprocedures.concurrency_below_one
+  description: Mensaje de GDS (concurrency below one).
+  other: 'Los valores válidos de Concurrency son int[1..]; el valor proporcionado fue `{{.Value}}`.'
+
+- id: cyphergraphprocedures.property_type_unknown
+  description: GDS cannot infer a projected property type from only null values.
+  other: 'No se puede inferir el tipo de la propiedad'

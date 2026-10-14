@@ -148,6 +148,16 @@
 - id: cyphergraphprocedures.graph_exists_aggregation
   description: GDS's message for the Cypher aggregation projection of a graph name in use. Graph untranslated.
   other: 'Graph {{.Graph}} already exists'
-- id: cyphergraphprocedures.unsupported_gds_value
-  description: GDS's message for a projected property value that isn't a number. Type untranslated.
-  other: 'Unsupported conversion to GDS Value from Neo4j Value with type `{{.Type}}`.'
+- id: cyphergraphprocedures.relationship_type_empty
+  description: GDS's message for an empty relationshipType.
+  other: 'Relationship type cannot be empty'
+- id: cyphergraphprocedures.inverse_types_not_projected
+  description: GDS's message for inverseIndexedRelationshipTypes the aggregation didn't project. Types, Projected untranslated.
+  other: 'Specified inverseIndexedRelationshipTypes `{{.Types}}` were not projected in the graph. Projected types are: `{{.Projected}}`.'
+- id: cyphergraphprocedures.concurrency_below_one
+  description: GDS's message for a readConcurrency below 1. Value untranslated.
+  other: 'Valid values for Concurrency are int[1..], Value provided was `{{.Value}}`.'
+
+- id: cyphergraphprocedures.property_type_unknown
+  description: GDS cannot infer a projected property type from only null values.
+  other: 'Cannot infer type of property'

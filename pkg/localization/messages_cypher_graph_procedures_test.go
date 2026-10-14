@@ -23,6 +23,9 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresUnsafeConversion("DoubleArray[1.0, 2.0]", "a Double"), "Cannot safely convert DoubleArray[1.0, 2.0] into a Double."},
 		{CypherGraphProceduresArrayLengthsDiffer("v", "2", "1"), "The property `v` contains arrays of differing lengths `2` and `1`."},
 		{CypherGraphProceduresUnsafeLongConversion("2.50"), "Cannot safely convert 2.50 into an long value"},
+		{CypherGraphProceduresRelationshipTypeEmpty(), "Relationship type cannot be empty"},
+		{CypherGraphProceduresInverseTypesNotProjected("[NOPE, X]", "['R']"), "Specified inverseIndexedRelationshipTypes `[NOPE, X]` were not projected in the graph. Projected types are: `['R']`."},
+		{CypherGraphProceduresConcurrencyBelowOne("0"), "Valid values for Concurrency are int[1..], Value provided was `0`."},
 		{CypherGraphProceduresUnsafeLongArrayConversion("DoubleArray[1.5]", "1.50"), "Cannot safely convert DoubleArray[1.5] into a Long Array. Cannot safely convert 1.50 into an long value"},
 		{CypherGraphProceduresNodePropertyNotInGraph("nope"), "No node projection with property 'nope' exists."},
 		{CypherGraphProceduresStarPropertyRequiresCount(), "A '*' property key can only be used in combination with count aggregation."},
@@ -35,6 +38,7 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresUnsupportedConcurrency("String"), "Unsupported Concurrency input of type String"},
 		{CypherGraphProceduresConfigParametersMerged(), "The parameters for `nodesConfig` and `relationshipsConfig` have been merged. Update your query by merging the 4th and 5th parameter into one parameter."},
 		{CypherGraphProceduresGraphExistsAggregation("a3"), "Graph a3 already exists"},
+		{CypherGraphProceduresPropertyTypeUnknown(), "Cannot infer type of property"},
 		{CypherGraphProceduresUnsupportedGDSValue("String"), "Unsupported conversion to GDS Value from Neo4j Value with type `String`."},
 		{CypherGraphProceduresBuildGraphFailed(cause), "failed to build graph: forced graph failure"},
 		{CypherGraphProceduresSourceNodeRequired(), "sourceNode parameter required"},
@@ -67,7 +71,7 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresSourceNodeNotFound("x"), "sourceNode `x` does not exist in the graph"},
 	}
 
-	require.Len(t, testCases, 50)
+	require.Len(t, testCases, 54)
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {

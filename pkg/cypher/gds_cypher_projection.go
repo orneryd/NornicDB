@@ -9,7 +9,6 @@ import (
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // gdsProjectionRow is one row of gds.graph.project's Cypher aggregation
@@ -79,21 +78,13 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 	if !ok {
 		return nil, localizedError(localization.CypherGraphProceduresConfigValueType("graphName", "String", gdsJavaType(rows[0].graphName)), nil)
 	}
-	configuration, undirected, err := gdsAggregationConfiguration(rows[0].config)
+	configuration, undirected, inverse, err := gdsAggregationConfiguration(rows[0].config)
 	if err != nil {
 		return nil, err
 	}
-	projection := &GraphProjection{
-		Name:                     name,
-		NodeLabels:               make(map[string][]string),
-		NodeProperties:           make(map[string]map[string]float64),
-		NodePropertyKeys:         make(map[string][]string),
-		RelationshipPropertyKeys: make(map[string][]string),
-		CreatedAt:                time.Now(),
-		Database:                 e.databaseName(),
-	}
-	nodePropertyFloat := make(map[string]bool)
+	projection := newGraphProjection(name, e.databaseName())
 	seen := make(map[string]bool)
+	relationshipKeys := make(map[string][]string) // each type's property keys, its first relationship's
 	addNode := func(value, labels, properties interface{}, labelsKey, variable string) (string, error) {
 		id, err := gdsProjectionNode(value)
 		if err != nil {
@@ -123,21 +114,30 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 		if !ok {
 			return "", localizedError(localization.CypherGraphProceduresUnsupportedGDSValue(gdsJavaType(properties)), nil)
 		}
-		for key, value := range values {
-			number, ok := toFloat64(value)
-			if _, isText := value.(string); !ok || isText {
-				return "", localizedError(localization.CypherGraphProceduresUnsupportedGDSValue(gdsJavaType(value)), nil)
-			}
-			if !isIntegerProcedureValue(value) {
-				nodePropertyFloat[key] = true
-			}
-			if projection.NodeProperties[id] == nil {
-				projection.NodeProperties[id] = make(map[string]float64)
-			}
-			projection.NodeProperties[id][key] = number
+		keys := make([]string, 0, len(values))
+		for key := range values {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
 			for _, label := range projection.NodeLabels[id] {
 				projection.NodePropertyKeys[label] = appendUnique(projection.NodePropertyKeys[label], key)
 			}
+			// A null value is no value, as in GDS. A number or a list of
+			// numbers projects; the property's type is its first value's.
+			value := values[key]
+			if value == nil {
+				continue
+			}
+			exact, kind, ok, err := gdsConvertPropertyValue(value, projection.NodePropertyTypes[key], false)
+			if err != nil {
+				return "", err
+			}
+			if !ok {
+				return "", localizedError(localization.CypherGraphProceduresUnsupportedGDSValue(gdsJavaType(value)), nil)
+			}
+			projection.NodePropertyTypes[key] = kind
+			projection.storeNodeProperty(id, key, exact)
 		}
 		return id, nil
 	}
@@ -179,8 +179,15 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 			if !ok {
 				return nil, localizedError(localization.CypherGraphProceduresRelationshipTypeNotString(gdsNeo4jValueType(value)), nil)
 			}
+			if text == "" {
+				return nil, localizedError(localization.CypherGraphProceduresRelationshipTypeEmpty(), nil)
+			}
 			relType = text
 		}
+		// A type's property keys are its first relationship's, as in GDS:
+		// a later relationship's other keys are dropped, a missing or null
+		// value is no value.
+		keys, typed := relationshipKeys[relType]
 		properties := make(map[string]float64)
 		if value := data.value("relationshipProperties"); value != nil {
 			entries, ok := value.(map[string]interface{})
@@ -188,13 +195,28 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 				return nil, localizedError(localization.CypherGraphProceduresUnsupportedGDSValue(gdsJavaType(value)), nil)
 			}
 			for key, entry := range entries {
-				number, ok := toFloat64(entry)
-				if _, isText := entry.(string); !ok || isText {
+				if !typed {
+					keys = append(keys, key)
+				} else if !containsString(keys, key) {
+					continue
+				}
+				if entry == nil {
+					continue
+				}
+				exact, _, ok, err := gdsConvertPropertyValue(entry, "Relationship", false)
+				if err != nil {
+					return nil, err
+				}
+				if !ok {
 					return nil, localizedError(localization.CypherGraphProceduresUnsupportedGDSValue(gdsJavaType(entry)), nil)
 				}
-				properties[key] = number
-				projection.RelationshipPropertyKeys[relType] = appendUnique(projection.RelationshipPropertyKeys[relType], key)
+				properties[key] = exact.(float64)
 			}
+		}
+		if !typed {
+			sort.Strings(keys)
+			relationshipKeys[relType] = keys
+			projection.RelationshipPropertyKeys[relType] = append([]string(nil), keys...)
 		}
 		projection.Types = appendUnique(projection.Types, relType)
 		id := "row-" + strconv.Itoa(index)
@@ -203,51 +225,49 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 
 	// Undirected types: each relationship of them both ways, as GDS holds
 	// them.
+	if _, err := projection.resolveRelationshipTypes(inverse, false, "inverse"); err != nil {
+		return nil, err
+	}
+	undirected, err = projection.resolveRelationshipTypes(undirected, false, "undirected")
+	if err != nil {
+		return nil, err
+	}
 	if undirected != nil {
-		if len(undirected) == 1 && undirected[0] == "*" {
-			undirected = append([]string(nil), projection.Types...)
-		} else if missing := missingNames(undirected, projection.Types); len(missing) > 0 {
-			projected := projection.Types
-			if len(projected) == 0 {
-				projected = []string{"__ALL__"}
-			}
-			return nil, localizedError(localization.CypherGraphProceduresUndirectedTypesNotProjected("["+strings.Join(missing, ", ")+"]", gdsNameList(projected)), nil)
-		}
 		forward := len(projection.Relationships)
 		for _, relationship := range projection.Relationships[:forward] {
 			if containsString(undirected, relationship.Type) {
-				projection.Relationships = append(projection.Relationships, ProjectedRelationship{
-					ID: relationship.ID, Source: relationship.Target, Target: relationship.Source, Type: relationship.Type, Properties: relationship.Properties,
-				})
+				for _, direction := range gdsRelationshipDirections(relationship.Source, relationship.Target, "UNDIRECTED")[1:] {
+					reverse := relationship
+					reverse.Source, reverse.Target = direction[0], direction[1]
+					projection.Relationships = append(projection.Relationships, reverse)
+				}
 			}
 		}
 	}
 
-	sort.Strings(projection.NodeIDs)
-	projection.nodeIndex = make(map[string]int, len(projection.NodeIDs))
-	for i, id := range projection.NodeIDs {
-		projection.nodeIndex[id] = i
+	for _, keys := range projection.NodePropertyKeys {
+		for _, key := range keys {
+			if projection.NodePropertyTypes[key] == "" {
+				return nil, localizedError(localization.CypherGraphProceduresPropertyTypeUnknown(), nil)
+			}
+		}
+	}
+	projection.indexNodes()
+	for _, id := range projection.NodeIDs {
 		for _, label := range projection.NodeLabels[id] {
 			projection.Labels = appendUnique(projection.Labels, label)
 		}
 	}
-	sort.Strings(projection.Labels)
-	sort.Strings(projection.Types)
-	projection.NodeCount = len(projection.NodeIDs)
-	projection.RelationshipCount = len(projection.Relationships)
-	projection.schema = gdsAggregationSchema(projection, undirected, nodePropertyFloat)
+	projection.finishCounts()
+	projection.schema = gdsAggregationSchema(projection, undirected)
 
 	query := statementTextFromContext(ctx)
 	configuration["query"] = query
 	projection.Configuration = configuration
-	key := gdsCatalogKey(projection.Database, name)
-	projectionsMu.Lock()
-	if _, exists := graphProjections[key]; exists {
-		projectionsMu.Unlock()
-		return nil, localizedError(localization.CypherGraphProceduresGraphExistsAggregation(name), nil)
+	if err := registerGraphProjection(projection, true); err != nil {
+		return nil, err
 	}
-	graphProjections[key] = projection
-	projectionsMu.Unlock()
+
 	return map[string]interface{}{
 		"graphName": name, "nodeCount": int64(projection.NodeCount), "relationshipCount": int64(projection.RelationshipCount),
 		"projectMillis": time.Since(started).Milliseconds(), "configuration": configuration, "query": query,
@@ -257,15 +277,10 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 // gdsProjectionNode reads a projected node: a node, or an INTEGER id, which
 // needn't be a stored node's, as in GDS.
 func gdsProjectionNode(value interface{}) (string, error) {
-	switch node := value.(type) {
-	case *storage.Node:
-		if node != nil {
-			return string(node.ID), nil
-		}
-	default:
-		if isIntegerProcedureValue(value) {
-			return strconv.FormatInt(toInt64(value), 10), nil
-		}
+	// This import accepts nodes and numeric IDs; string IDs remain a utility extension.
+	_, stringID := value.(string)
+	if id, ok := gdsNodeID(value); ok && !stringID {
+		return string(id), nil
 	}
 	typeName := gdsJavaType(value)
 	if value == nil {
@@ -286,30 +301,17 @@ func gdsAggregationLabels(value interface{}, key, variable string) ([]string, er
 			return nil, localizedError(localization.CypherGraphProceduresLabelsTrueDeprecated(key, variable), nil)
 		}
 		return nil, nil
-	case string:
-		return []string{labels}, nil
 	}
-	items, ok := cypherListValue(value)
-	if !ok {
-		return nil, localizedError(localization.CypherGraphProceduresConfigValueType(key, "List", gdsJavaType(value)), nil)
-	}
-	names := make([]string, 0, len(items))
-	for _, item := range items {
-		name, ok := item.(string)
-		if !ok {
-			return nil, localizedError(localization.CypherGraphProceduresConfigValueType(key, "List", gdsJavaType(value)), nil)
-		}
-		names = append(names, name)
-	}
-	return names, nil
+	c := &gdsConfig{values: map[string]interface{}{strings.ToLower(key): value}}
+	return c.stringNames(key, true, false)
 }
 
 // gdsAggregationConfiguration reads the aggregation's configuration map
 // (its 5th argument): undirectedRelationshipTypes, inverseIndexedRelationshipTypes,
 // readConcurrency, jobId and logProgress, other keys ignored as GDS ignores
-// them. It returns the configuration as GDS reports it and the undirected
-// types (nil for none).
-func gdsAggregationConfiguration(value interface{}) (map[string]interface{}, []string, error) {
+// them. It returns the configuration as GDS reports it, the undirected
+// types (nil for none) and the inverse-indexed types.
+func gdsAggregationConfiguration(value interface{}) (map[string]interface{}, []string, []string, error) {
 	configuration := map[string]interface{}{
 		"inverseIndexedRelationshipTypes": []interface{}{}, "undirectedRelationshipTypes": []interface{}{},
 		"readConcurrency": int64(4), "logProgress": true,
@@ -318,100 +320,80 @@ func gdsAggregationConfiguration(value interface{}) (map[string]interface{}, []s
 	if value != nil {
 		var ok bool
 		if entries, ok = value.(map[string]interface{}); !ok {
-			return nil, nil, localizedError(localization.CypherGraphProceduresConfigValueType("configuration", "Map", gdsJavaType(value)), nil)
+			return nil, nil, nil, localizedError(localization.CypherGraphProceduresConfigValueType("configuration", "Map", gdsJavaType(value)), nil)
 		}
 	}
-	known := map[string]bool{}
-	for key := range entries {
-		for _, name := range []string{"undirectedRelationshipTypes", "inverseIndexedRelationshipTypes", "readConcurrency", "jobId", "logProgress"} {
-			if strings.EqualFold(key, name) {
-				known[key] = true
-			}
-		}
-	}
-	filtered := map[string]interface{}{}
-	for key, entry := range entries {
-		if known[key] {
-			filtered[key] = entry
-		}
-	}
-	c, _ := newGDSConfig(filtered, "undirectedRelationshipTypes", "inverseIndexedRelationshipTypes", "readConcurrency", "jobId", "logProgress")
-	var undirected []string
+	c, _ := readGDSConfig(entries, true, "undirectedRelationshipTypes", "inverseIndexedRelationshipTypes", "readConcurrency", "jobId", "logProgress")
+	var undirected, inverse []string
 	for _, key := range []string{"undirectedRelationshipTypes", "inverseIndexedRelationshipTypes"} {
-		listed := c.value(key)
-		if listed == nil {
+		names, err := c.stringNames(key, false, false)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if names == nil {
 			continue
 		}
-		items, ok := cypherListValue(listed)
-		if !ok {
-			return nil, nil, c.typeError(key, "List")
+		configuration[key] = namesOrAll(names)
+		// Empty aggregation lists stay empty; unlike algorithm selection,
+		// an omitted orientation list does not mean every type.
+		if len(names) == 0 {
+			configuration[key] = []interface{}{}
 		}
-		names := make([]interface{}, 0, len(items))
-		for _, item := range items {
-			name, ok := item.(string)
-			if !ok {
-				return nil, nil, c.typeError(key, "List")
-			}
-			names = append(names, name)
-			if key == "undirectedRelationshipTypes" {
-				undirected = append(undirected, name)
-			}
+		if key == "undirectedRelationshipTypes" {
+			undirected = names
+		} else {
+			inverse = names
 		}
-		configuration[key] = names
 	}
-	if concurrency := c.value("readConcurrency"); concurrency != nil {
-		if !isIntegerProcedureValue(concurrency) {
-			return nil, nil, localizedError(localization.CypherGraphProceduresUnsupportedConcurrency(gdsJavaType(concurrency)), nil)
-		}
-		configuration["readConcurrency"] = toInt64(concurrency)
+	concurrency, err := c.integerWithErrors("readConcurrency", 1, 1<<63-1, 4, false,
+		func() error {
+			return localizedError(localization.CypherGraphProceduresUnsupportedConcurrency(gdsJavaType(c.value("readConcurrency"))), nil)
+		},
+		func(number int64) error {
+			return localizedError(localization.CypherGraphProceduresConcurrencyBelowOne(strconv.FormatInt(number, 10)), nil)
+		})
+	if err != nil {
+		return nil, nil, nil, err
 	}
+	configuration["readConcurrency"] = concurrency
 	jobID, err := c.jobID()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	configuration["jobId"] = jobID
 	if logProgress, given, err := c.boolean("logProgress"); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	} else if given {
 		configuration["logProgress"] = logProgress
 	}
-	return configuration, undirected, nil
+	return configuration, undirected, inverse, nil
 }
 
 // gdsAggregationSchema is an aggregation projection's schema as GDS reports
-// it: node properties PERSISTENT, relationship properties TRANSIENT.
-func gdsAggregationSchema(projection *GraphProjection, undirected []string, nodePropertyFloat map[string]bool) map[string]interface{} {
-	nodes := make(map[string]interface{})
+// it: node properties PERSISTENT, relationship properties TRANSIENT, and no
+// relationship types when there are no relationships.
+func gdsAggregationSchema(projection *GraphProjection, undirected []string) map[string]interface{} {
+	var nodes, relationships []gdsElementSpec
+	schemaTypes := make(map[string]string)
 	for _, label := range projection.Labels {
-		properties := make(map[string]interface{})
+		spec := gdsElementSpec{name: label}
 		for _, key := range projection.NodePropertyKeys[label] {
-			if nodePropertyFloat[key] {
-				properties[key] = "Float (DefaultValue(NaN), PERSISTENT)"
-			} else {
-				properties[key] = "Integer (DefaultValue(-9223372036854775808), PERSISTENT)"
-			}
+			spec.properties = append(spec.properties, gdsPropertySpec{key: key})
+			schemaTypes[gdsPropertyTypeKey(label, key)] = projection.NodePropertyTypes[key]
 		}
-		nodes[label] = properties
+		nodes = append(nodes, spec)
 	}
-	relationships := make(map[string]interface{})
-	directions := make(map[string]interface{})
-	types := projection.Types
-	if len(types) == 0 {
-		types = []string{"__ALL__"}
-	}
-	for _, relType := range types {
-		properties := make(map[string]interface{})
-		for _, key := range projection.RelationshipPropertyKeys[relType] {
-			properties[key] = "Float (DefaultValue(NaN), TRANSIENT, Aggregation.NONE)"
-		}
-		relationships[relType] = properties
-		direction := "DIRECTED"
+	for _, relType := range projection.Types {
+		spec := gdsElementSpec{name: relType, orientation: "NATURAL"}
 		if containsString(undirected, relType) {
-			direction = "UNDIRECTED"
+			spec.orientation = "UNDIRECTED"
 		}
-		directions[relType] = direction
+		for _, key := range projection.RelationshipPropertyKeys[relType] {
+			spec.properties = append(spec.properties, gdsPropertySpec{key: key, aggregation: "NONE"})
+		}
+		relationships = append(relationships, spec)
 	}
-	return map[string]interface{}{"graphProperties": map[string]interface{}{}, "nodes": nodes, "relationships": relationships, "directions": directions}
+	return gdsProjectionSchema(nodes, relationships, schemaTypes, "TRANSIENT")
 }
 
 // gdsNeo4jValueType is the Neo4j value type GDS's relationshipType message
@@ -424,7 +406,7 @@ func gdsNeo4jValueType(value interface{}) string {
 		return "BOOLEAN"
 	case "List":
 		return "LIST"
-	case "Map":
+	case "Map", "HashMap":
 		return "MAP"
 	case "Node":
 		return "NODE"

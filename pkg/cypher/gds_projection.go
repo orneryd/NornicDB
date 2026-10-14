@@ -104,7 +104,7 @@ func databaseProjections(database string) []*GraphProjection {
 // property, its aggregation.
 type gdsPropertySpec struct {
 	key, property string
-	defaultValue  interface{}
+	defaultValue  interface{} // exact configured Integer or Float; nil when absent
 	aggregation   string
 }
 
@@ -173,14 +173,9 @@ func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResul
 	projection.Configuration = configuration
 	projection.Database = e.databaseName()
 
-	key := gdsCatalogKey(projection.Database, graphName)
-	projectionsMu.Lock()
-	if _, exists := graphProjections[key]; exists {
-		projectionsMu.Unlock()
-		return nil, localizedError(localization.CypherGraphProceduresGraphAlreadyExists(graphName), nil)
+	if err := registerGraphProjection(projection, false); err != nil {
+		return nil, err
 	}
-	graphProjections[key] = projection
-	projectionsMu.Unlock()
 
 	return &ExecuteResult{
 		Columns: []string{"nodeProjection", "relationshipProjection", "graphName", "nodeCount", "relationshipCount", "projectMillis"},
@@ -449,17 +444,7 @@ func readGDSPropertySpecs(value interface{}, aggregation string) ([]gdsPropertyS
 // buildGraphProjection reads the projected nodes and relationships from
 // storage, streaming both.
 func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
-	projection := &GraphProjection{
-		Name:                     name,
-		NodeLabels:               make(map[string][]string),
-		NodeProperties:           make(map[string]map[string]interface{}),
-		NodePropertyTypes:        make(map[string]string),
-		NodePropertyKeys:         make(map[string][]string),
-		RelationshipPropertyKeys: make(map[string][]string),
-		NodeProjection:           make(map[string]interface{}),
-		RelationshipProjection:   make(map[string]interface{}),
-		CreatedAt:                time.Now(),
-	}
+	projection := newGraphProjection(name, e.databaseName())
 	ctx := context.Background()
 
 	labelsSeen := make(map[string]bool)
@@ -490,10 +475,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 					continue
 				}
 				id := string(node.ID)
-				if projection.NodeProperties[id] == nil {
-					projection.NodeProperties[id] = make(map[string]interface{})
-				}
-				projection.NodeProperties[id][property.key] = exact
+				projection.storeNodeProperty(id, property.key, exact)
 			}
 		}
 		if labels != nil {
@@ -522,11 +504,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 		return nil, localizedError(localization.CypherGraphProceduresNodeLabelsNotFound(strings.Join(requested, ", ")), nil)
 	}
 	// Node IDs in order, so the same graph gives the same rows (#1183).
-	sort.Strings(projection.NodeIDs)
-	projection.nodeIndex = make(map[string]int, len(projection.NodeIDs))
-	for i, id := range projection.NodeIDs {
-		projection.nodeIndex[id] = i
-	}
+	projection.indexNodes()
 
 	typesSeen := make(map[string]bool)
 	relPropertySeen := make(map[string]bool)
@@ -583,7 +561,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 				if property.property == "*" {
 					continue // counted, by its COUNT aggregation
 				}
-				if exact, _, ok, err := gdsConvertPropertyValue(edge.Properties[property.property], "Relationship", false); err != nil {
+				if exact, _, ok, err := gdsConvertPropertyValue(edge.Properties[property.property], "Relationship", true); err != nil {
 					return nil, err
 				} else if ok {
 					value := exact.(float64)
@@ -597,13 +575,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 					properties[property.key] = exact.(float64)
 				}
 			}
-			directions := [][2]string{{start, end}}
-			switch spec.orientation {
-			case "REVERSE":
-				directions = [][2]string{{end, start}}
-			case "UNDIRECTED":
-				directions = [][2]string{{start, end}, {end, start}}
-			}
+			directions := gdsRelationshipDirections(start, end, spec.orientation)
 			for _, direction := range directions {
 				relationship := ProjectedRelationship{ID: string(edge.ID), Source: direction[0], Target: direction[1], Type: spec.name, Properties: properties}
 				if !spec.merges() {
@@ -688,14 +660,16 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 			"type": spec.element, "orientation": spec.orientation, "aggregation": spec.aggregation, "properties": properties, "indexInverse": spec.indexInverse,
 		}
 	}
-	projection.NodeCount = len(projection.NodeIDs)
-	projection.RelationshipCount = len(projection.Relationships)
-	// Native scalar properties can widen after their first node or through
-	// a default. Finalize each key before converting its earlier values.
+	projection.finishCounts()
+	// Stored scalar values can widen a builder. A default must fit its
+	// stored type; without stored values the default supplies that type.
+	// Finalize each key before converting its earlier values.
 	for _, spec := range nodeSpecs {
 		for _, property := range spec.properties {
 			kind := nodePropertyType[property.key]
 			if kind == "" {
+				// Without a stored value, the configured default supplies
+				// its type. In particular, 2 and 2.0 remain distinct.
 				_, kind, _, _ = gdsConvertPropertyValue(property.defaultValue, "", false)
 				if kind == "" {
 					kind = "Integer"
@@ -755,10 +729,16 @@ func mergeParallelProperties(kept, properties map[string]float64, specs []gdsPro
 // gdsGraphSchema is the graph's schema as gds.graph.list reports it: each
 // label's and type's properties with their type and default, and each
 // type's direction. A node property is an Integer when every stored value
-// is one, a list a List of Integer or of Float (nodePropertyTypes is keyed
-// by gdsPropertyTypeKey); a relationship property is a Float, as GDS stores
+// is one, a list a List of Integer or of Float (schema types are keyed
+// by label and property); a relationship property is a Float, as GDS stores
 // them.
 func gdsGraphSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[string]string) map[string]interface{} {
+	return gdsProjectionSchema(nodeSpecs, relSpecs, nodePropertyTypes, "PERSISTENT")
+}
+
+// gdsProjectionSchema is the single schema renderer for both import forms.
+// Aggregation relationships are TRANSIENT; native ones are PERSISTENT.
+func gdsProjectionSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[string]string, relationshipPersistence string) map[string]interface{} {
 	nodes := make(map[string]interface{})
 	for _, spec := range nodeSpecs {
 		properties, _ := nodes[spec.name].(map[string]interface{})
@@ -767,17 +747,16 @@ func gdsGraphSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[
 		}
 		for _, property := range spec.properties {
 			kind := nodePropertyTypes[gdsPropertyTypeKey(spec.name, property.key)]
-			defaultNumber, numericDefault := toFloat64(property.defaultValue)
-			fractionalDefault := numericDefault && defaultNumber != math.Trunc(defaultNumber)
 			switch {
 			case kind == "List of Integer" || kind == "List of Float":
 				properties[property.key] = kind + " (DefaultValue(null), PERSISTENT)"
-			case kind == "Float" || fractionalDefault:
+			case kind == "Float":
 				properties[property.key] = "Float (DefaultValue(" + gdsDefaultText(property.defaultValue, "NaN") + "), PERSISTENT)"
 			default:
 				defaultText := "-9223372036854775808"
 				if property.defaultValue != nil {
-					defaultText = strconv.FormatInt(gdsInteger(property.defaultValue), 10)
+					value, _, _, _ := gdsConvertPropertyValue(property.defaultValue, "Integer", false)
+					defaultText = strconv.FormatInt(value.(int64), 10)
 				}
 				properties[property.key] = "Integer (DefaultValue(" + defaultText + "), PERSISTENT)"
 			}
@@ -793,7 +772,7 @@ func gdsGraphSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[
 			if aggregation == "DEFAULT" {
 				aggregation = "NONE"
 			}
-			properties[property.key] = "Float (DefaultValue(" + gdsDefaultText(property.defaultValue, "NaN") + "), PERSISTENT, Aggregation." + aggregation + ")"
+			properties[property.key] = "Float (DefaultValue(" + gdsDefaultText(property.defaultValue, "NaN") + "), " + relationshipPersistence + ", Aggregation." + aggregation + ")"
 		}
 		relationships[spec.name] = properties
 		direction := "DIRECTED"
@@ -807,13 +786,35 @@ func gdsGraphSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[
 
 // gdsDefaultText is a Float default as GDS prints it (1.0, 0.5), or none.
 func gdsDefaultText(value interface{}, none string) string {
-	if value == nil {
+	exact, _, present, _ := gdsConvertPropertyValue(value, "Float", false)
+	if !present {
 		return none
 	}
-	if gdsDefaultNumber(value) == math.Trunc(gdsDefaultNumber(value)) {
-		return strconv.FormatFloat(gdsDefaultNumber(value), 'f', 1, 64)
+	number := exact.(float64)
+	if number == math.Trunc(number) {
+		return gdsNumberText(number, 'f', 1)
 	}
-	return strconv.FormatFloat(gdsDefaultNumber(value), 'g', -1, 64)
+	return gdsNumberText(number, 'g', -1)
+}
+
+// gdsNumberText is the shared formatter for floating-point GDS values and
+// errors. Java spells infinite values Infinity and -Infinity.
+func gdsNumberText(value float64, format byte, precision int) string {
+	if math.IsInf(value, 1) {
+		return "Infinity"
+	}
+	if math.IsInf(value, -1) {
+		return "-Infinity"
+	}
+	return strconv.FormatFloat(value, format, precision, 64)
+}
+
+// javaDoubleText formats a Double in GDS configuration errors (2.0, 0.5).
+func javaDoubleText(value float64) string {
+	if value == math.Trunc(value) && math.Abs(value) < 1e15 {
+		return gdsNumberText(value, 'f', 1)
+	}
+	return gdsNumberText(value, 'g', -1)
 }
 
 // gdsGraphInfo is a projection's row in gds.graph.list and gds.graph.drop:
@@ -856,11 +857,16 @@ var gdsDropColumns = []string{
 // reports it: min, max, mean and percentiles.
 func gdsDegreeDistribution(projection *GraphProjection) map[string]interface{} {
 	degrees := make([]int64, len(projection.NodeIDs))
-	for _, relationship := range projection.Relationships {
-		if index, ok := projection.nodeIndex[relationship.Source]; ok {
-			degrees[index]++
-		}
-	}
+	// With no labels, types or property requested the shared selector cannot
+	// fail. Count every projected direction, including parallel edges and loops.
+	_, _ = selectGDSSubgraph(projection, nil, nil, "", gdsSubgraphOptions{
+		omitAdjacency: true,
+		visitRelationship: func(relationship *ProjectedRelationship) {
+			if index, ok := projection.nodeIndex[relationship.Source]; ok {
+				degrees[index]++
+			}
+		},
+	})
 	sort.Slice(degrees, func(i, j int) bool { return degrees[i] < degrees[j] })
 	distribution := map[string]interface{}{"min": int64(0), "max": int64(0), "mean": 0.0}
 	percentile := func(p float64) int64 {
@@ -886,9 +892,6 @@ func gdsDegreeDistribution(projection *GraphProjection) map[string]interface{} {
 // gdsDefaultValue is a projected property's default value as GDS reports
 // it: null when none was given.
 func gdsDefaultValue(property gdsPropertySpec) interface{} {
-	if property.defaultValue == nil {
-		return nil
-	}
 	return property.defaultValue
 }
 
@@ -1030,6 +1033,12 @@ type gdsConfig struct {
 
 // newGDSConfig reads entries, refusing a key not in allowed.
 func newGDSConfig(entries map[string]interface{}, allowed ...string) (*gdsConfig, error) {
+	return readGDSConfig(entries, false, allowed...)
+}
+
+// readGDSConfig owns key normalization and validation. The aggregation form
+// alone ignores unknown configuration keys, as GDS does.
+func readGDSConfig(entries map[string]interface{}, ignoreUnknown bool, allowed ...string) (*gdsConfig, error) {
 	known := make(map[string]bool, len(allowed))
 	for _, key := range allowed {
 		known[strings.ToLower(key)] = true
@@ -1043,6 +1052,9 @@ func newGDSConfig(entries map[string]interface{}, allowed ...string) (*gdsConfig
 	for _, key := range keys {
 		lower := strings.ToLower(key)
 		if !known[lower] {
+			if ignoreUnknown {
+				continue
+			}
 			return nil, localizedError(localization.CypherGraphProceduresConfigUnexpectedKey(key), nil)
 		}
 		config.values[lower] = entries[key]
@@ -1068,6 +1080,16 @@ func (c *gdsConfig) typeError(key, expected string) error {
 // integer is key's INTEGER value, at least min: fallback when absent, or an
 // error when mandatory.
 func (c *gdsConfig) integer(key, expected string, min, max, fallback int64, mandatory bool) (int64, error) {
+	return c.integerWithErrors(key, min, max, fallback, mandatory,
+		func() error { return c.typeError(key, expected) },
+		func(number int64) error {
+			return localizedError(localization.CypherGraphProceduresConfigValueOutOfRange(key, strconv.FormatInt(number, 10), fmt.Sprintf("[%d, %d]", min, max)), nil)
+		})
+}
+
+// integerWithErrors owns integer and range validation. GDS's aggregation
+// concurrency has its own messages and no native int32 upper bound.
+func (c *gdsConfig) integerWithErrors(key string, min, max, fallback int64, mandatory bool, typeError func() error, rangeError func(int64) error) (int64, error) {
 	value := c.value(key)
 	if value == nil {
 		if mandatory {
@@ -1076,11 +1098,11 @@ func (c *gdsConfig) integer(key, expected string, min, max, fallback int64, mand
 		return fallback, nil
 	}
 	if !isIntegerProcedureValue(value) {
-		return 0, c.typeError(key, expected)
+		return 0, typeError()
 	}
 	number := toInt64(value)
 	if number < min || number > max {
-		return 0, localizedError(localization.CypherGraphProceduresConfigValueOutOfRange(key, strconv.FormatInt(number, 10), fmt.Sprintf("[%d, %d]", min, max)), nil)
+		return 0, rangeError(number)
 	}
 	return number, nil
 }
@@ -1140,11 +1162,17 @@ func (c *gdsConfig) jobID() (string, error) {
 // names is key's label or type names: a STRING or a list of them; nil
 // when absent or '*'.
 func (c *gdsConfig) names(key string) ([]string, error) {
+	return c.stringNames(key, true, true)
+}
+
+// stringNames is the one STRING/list-of-STRING reader. Its callers choose
+// whether a scalar string is allowed and whether '*' means every name.
+func (c *gdsConfig) stringNames(key string, allowString, wildcard bool) ([]string, error) {
 	value := c.value(key)
 	if value == nil {
 		return nil, nil
 	}
-	if text, ok := value.(string); ok {
+	if text, ok := value.(string); ok && allowString {
 		value = []interface{}{text}
 	}
 	items, ok := cypherListValue(value)
@@ -1157,7 +1185,7 @@ func (c *gdsConfig) names(key string) ([]string, error) {
 		if !ok {
 			return nil, c.typeError(key, "List")
 		}
-		if name == "*" {
+		if wildcard && name == "*" {
 			return nil, nil
 		}
 		names = append(names, name)
@@ -1177,7 +1205,7 @@ func gdsJavaType(value interface{}) string {
 	case float64, float32:
 		return "Double"
 	case map[string]interface{}:
-		return "Map"
+		return "HashMap"
 	case *storage.Node:
 		return "Node"
 	}
@@ -1197,7 +1225,7 @@ func gdsJavaClass(value interface{}) string {
 		return "java.lang." + name
 	case "List":
 		return "java.util.List"
-	case "Map":
+	case "HashMap":
 		return "java.util.Map"
 	default:
 		return name
@@ -1256,6 +1284,25 @@ func gdsJavaTypeTarget(kind string) string {
 // schema entries are per label; conversion builders are per projected key.
 func gdsPropertyTypeKey(label, key string) string {
 	return label + "\x00" + key
+}
+
+// gdsNodeID is the common node representation reader for GDS procedures,
+// filters and utility functions. Whether an ID is projected, stored or a label
+// is the caller's selection contract; this reader preserves the ID exactly.
+func gdsNodeID(value interface{}) (storage.NodeID, bool) {
+	switch node := value.(type) {
+	case *storage.Node:
+		if node != nil {
+			return node.ID, true
+		}
+	case string:
+		return storage.NodeID(node), true
+	default:
+		if isIntegerProcedureValue(value) {
+			return storage.NodeID(fmt.Sprint(value)), true
+		}
+	}
+	return "", false
 }
 
 // gdsInteger is a value of any Go integer type as an int64 (the shared

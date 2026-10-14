@@ -148,6 +148,16 @@
 - id: cyphergraphprocedures.graph_exists_aggregation
   description: Expanded pseudo-locale graph exists aggregation.
   other: '[!! Graph {{.Graph}} already exists !!]'
-- id: cyphergraphprocedures.unsupported_gds_value
-  description: Expanded pseudo-locale unsupported gds value.
-  other: '[!! Unsupported conversion to GDS Value from Neo4j Value with type `{{.Type}}`. !!]'
+- id: cyphergraphprocedures.relationship_type_empty
+  description: Expanded pseudo-locale relationship type empty.
+  other: '[!! Relationship type cannot be empty !!]'
+- id: cyphergraphprocedures.inverse_types_not_projected
+  description: Expanded pseudo-locale inverse types not projected.
+  other: '[!! Specified inverseIndexedRelationshipTypes `{{.Types}}` were not projected in the graph. Projected types are: `{{.Projected}}`. !!]'
+- id: cyphergraphprocedures.concurrency_below_one
+  description: Expanded pseudo-locale concurrency below one.
+  other: '[!! Valid values for Concurrency are int[1..], Value provided was `{{.Value}}`. !!]'
+
+- id: cyphergraphprocedures.property_type_unknown
+  description: GDS cannot infer a projected property type from only null values.
+  other: '[!! Cannot infer type of property !!]'

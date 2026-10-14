@@ -192,3 +192,94 @@ func BenchmarkGDSNodePropertyRead(b *testing.B) {
 		})
 	}
 }
+
+// gdsBenchmarkAggregationQuery matches the native benchmark's exact graph and
+// properties. Both ends provide the same node values because the aggregation
+// importer keeps each node's first occurrence.
+func gdsBenchmarkAggregationQuery(withLists bool) string {
+	properties := "{integer: s.integer, float: s.float}"
+	targetProperties := "{integer: t.integer, float: t.float}"
+	if withLists {
+		properties = "{integer: s.integer, float: s.float, list: s.list}"
+		targetProperties = "{integer: t.integer, float: t.float, list: t.list}"
+	}
+	return "MATCH (s:BenchGDS)-[r:GDS_LINK]->(t:BenchGDS) RETURN gds.graph.project('gds-bench', s, t, {sourceNodeLabels: 'BenchGDS', targetNodeLabels: 'BenchGDS', sourceNodeProperties: " + properties + ", targetNodeProperties: " + targetProperties + ", relationshipType: 'GDS_LINK', relationshipProperties: {weight: r.weight}})"
+}
+
+// BenchmarkGDSProjectAggregation includes the row pipeline, import and property
+// conversion for the same 5,000 nodes and 20,000 weighted relationships as the
+// native projection benchmark. Catalog deletion and capability checks are untimed.
+func BenchmarkGDSProjectAggregation(b *testing.B) {
+	for _, withLists := range []bool{false, true} {
+		name := "scalars"
+		if withLists {
+			name = "lists"
+		}
+		b.Run(name, func(b *testing.B) {
+			exec, _ := newGDSBenchmarkExecutor(b)
+			query := gdsBenchmarkAggregationQuery(withLists)
+			// Older bases have no aggregation function; skip only that known
+			// unsupported API instead of measuring a different projection.
+			probe, err := exec.Execute(context.Background(), "RETURN gds.graph.project('gds-bench', 1, 2)", nil)
+			if err != nil {
+				message := strings.ToLower(err.Error())
+				if strings.Contains(message, "unknown function") && strings.Contains(message, "gds.graph.project") {
+					b.Skip("this API does not implement Cypher aggregation projection")
+				}
+				b.Fatal(err)
+			}
+			if len(probe.Rows) != 1 || len(probe.Rows[0]) != 1 {
+				b.Fatalf("unexpected aggregation capability result: %v", probe.Rows)
+			}
+			if probe.Rows[0][0] == nil {
+				b.Skip("this API does not implement Cypher aggregation projection")
+			}
+			if _, err := exec.Execute(context.Background(), "CALL gds.graph.drop('gds-bench')", nil); err != nil {
+				b.Fatal(err)
+			}
+			params := map[string]interface{}{"nonce": 0}
+			b.ReportAllocs()
+			b.ResetTimer()
+			b.StartTimer()
+			for i := 0; i < b.N; i++ {
+				params["nonce"] = i
+				result, err := exec.Execute(context.Background(), query, params)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if len(result.Rows) != 1 || len(result.Rows[0]) != 1 {
+					b.Fatalf("unexpected aggregation result: %v", result.Rows)
+				}
+				counts, ok := result.Rows[0][0].(map[string]interface{})
+				if !ok || counts["nodeCount"] != int64(gdsBenchmarkNodes) || counts["relationshipCount"] != int64(gdsBenchmarkRelationships) {
+					b.Fatalf("unexpected aggregation counts: %v", result.Rows)
+				}
+				gdsBenchmarkResult = result
+				b.StopTimer()
+				if _, err := exec.Execute(context.Background(), "CALL gds.graph.drop('gds-bench')", nil); err != nil {
+					b.Fatal(err)
+				}
+				b.StartTimer()
+			}
+			b.StopTimer()
+		})
+	}
+}
+
+// TestGDSAggregationBenchmarkQuery verifies both measured query shapes without
+// running the benchmark or requiring its 5,000-node fixture.
+func TestGDSAggregationBenchmarkQuery(t *testing.T) {
+	exec, rows, _ := newAggregationProjectionGraph(t)
+	rows("CREATE (s:BenchGDS {integer: 1, float: 1.5, list: [1.5]}), (t:BenchGDS {integer: 2, float: 2.5, list: [2.5]}), (s)-[:GDS_LINK {weight: 2.0}]->(t)")
+	for _, withLists := range []bool{false, true} {
+		result, err := exec.Execute(context.Background(), gdsBenchmarkAggregationQuery(withLists), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		counts := result.Rows[0][0].(map[string]interface{})
+		if counts["nodeCount"] != int64(2) || counts["relationshipCount"] != int64(1) {
+			t.Fatalf("unexpected aggregation counts: %v", counts)
+		}
+		rows("CALL gds.graph.drop('gds-bench')")
+	}
+}

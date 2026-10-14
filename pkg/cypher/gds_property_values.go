@@ -128,7 +128,7 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 		if gdsLosslessLong(number) {
 			return int64(number), target, true, nil
 		}
-		return nil, "", false, localizedError(localization.CypherGraphProceduresUnsafeLongConversion(strconv.FormatFloat(number, 'f', 2, 64)), nil)
+		return nil, "", false, localizedError(localization.CypherGraphProceduresUnsafeLongConversion(gdsNumberText(number, 'f', 2)), nil)
 	case target == "List of Float" && kind == "List of Integer":
 		integers := exact.([]int64)
 		floats := make([]float64, len(integers))
@@ -144,7 +144,7 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 		integers := make([]int64, len(floats))
 		for i, number := range floats {
 			if !gdsLosslessLong(number) {
-				return nil, "", false, localizedError(localization.CypherGraphProceduresUnsafeLongArrayConversion(gdsJavaValueText(exact), strconv.FormatFloat(number, 'f', 2, 64)), nil)
+				return nil, "", false, localizedError(localization.CypherGraphProceduresUnsafeLongArrayConversion(gdsJavaValueText(exact), gdsNumberText(number, 'f', 2)), nil)
 			}
 			integers[i] = int64(number)
 		}
@@ -169,7 +169,7 @@ func gdsLosslessLong(value float64) bool {
 }
 
 // nodePropertyValue is the typed reader for every projected node property.
-// Integer reads preserve Long values exactly and refuse Double properties;
+// Integer reads preserve Long values exactly and refuse other property types;
 // Double reads use GDS's NaN missing-value sentinel (including Long.MIN_VALUE).
 // An empty requested type reads the property's exact projected storage type.
 func (p *GraphProjection) nodePropertyValue(id, key, requested string) (interface{}, error) {
@@ -177,8 +177,8 @@ func (p *GraphProjection) nodePropertyValue(id, key, requested string) (interfac
 	if requested == "" {
 		requested = kind
 	}
-	if requested == "Integer" && kind == "Float" {
-		return nil, localizedError(localization.CypherGraphProceduresPropertyReadType("LONG", "DOUBLE"), nil)
+	if requested == "Integer" && kind != "Integer" {
+		return nil, localizedError(localization.CypherGraphProceduresPropertyReadType(gdsPropertyReadType(requested), gdsPropertyReadType(kind)), nil)
 	}
 	value, present := p.NodeProperties[id][key]
 	if !present {
@@ -202,4 +202,19 @@ func (p *GraphProjection) nodePropertyValue(id, key, requested string) (interfac
 	}
 	exact, _, _, err := gdsConvertPropertyValue(value, requested, false)
 	return exact, err
+}
+
+// gdsPropertyReadType is a projected property type as GDS read errors name it.
+func gdsPropertyReadType(kind string) string {
+	switch kind {
+	case "Integer":
+		return "LONG"
+	case "Float":
+		return "DOUBLE"
+	case "List of Integer":
+		return "LONG_ARRAY"
+	case "List of Float":
+		return "DOUBLE_ARRAY"
+	}
+	return "UNKNOWN"
 }
