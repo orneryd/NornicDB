@@ -124,3 +124,30 @@
 - id: cyphergraphprocedures.unsafe_double_conversion
   description: Un Long supera el límite de importación de Double.
   other: 'No se puede convertir de forma segura {{.Value}} en un valor double'
+- id: cyphergraphprocedures.node_not_node_or_integer
+  description: Mensaje de GDS (node not node or integer).
+  other: 'El nodo tiene que ser un NODE o un INTEGER, pero se recibió {{.Type}}'
+- id: cyphergraphprocedures.config_key_missing_pair
+  description: Mensaje de GDS (config key missing pair).
+  other: 'Falta la clave de configuración ''{{.Missing}}'', pero se proporcionó ''{{.Provided}}''. Si realmente quería proporcionar solo `{{.Provided}}` sin valor para `{{.Missing}}`, puede establecer `{{.Missing}}` en `NULL`.'
+- id: cyphergraphprocedures.relationship_type_not_string
+  description: Mensaje de GDS (relationship type not string).
+  other: 'El valor de `relationshipType` debe ser `String`, pero era `{{.Type}}`.'
+- id: cyphergraphprocedures.undirected_types_not_projected
+  description: Mensaje de GDS (undirected types not projected).
+  other: 'Los undirectedRelationshipTypes especificados `{{.Types}}` no se proyectaron en el grafo. Los tipos proyectados son: `{{.Projected}}`.'
+- id: cyphergraphprocedures.labels_true_deprecated
+  description: Mensaje de GDS (labels true deprecated).
+  other: 'Usar `true` para cargar todas las etiquetas está obsoleto; use `{ {{.Key}}: labels({{.Variable}}) }` en su lugar'
+- id: cyphergraphprocedures.unsupported_concurrency
+  description: Mensaje de GDS (unsupported concurrency).
+  other: 'Entrada de concurrencia no compatible de tipo {{.Type}}'
+- id: cyphergraphprocedures.config_parameters_merged
+  description: Mensaje de GDS (config parameters merged).
+  other: 'Los parámetros `nodesConfig` y `relationshipsConfig` se han combinado. Actualice la consulta combinando el 4.º y el 5.º parámetro en uno.'
+- id: cyphergraphprocedures.graph_exists_aggregation
+  description: Mensaje de GDS (graph exists aggregation).
+  other: 'El grafo {{.Graph}} ya existe'
+- id: cyphergraphprocedures.unsupported_gds_value
+  description: Mensaje de GDS (unsupported gds value).
+  other: 'Conversión no compatible a un valor de GDS desde un valor de Neo4j de tipo `{{.Type}}`.'

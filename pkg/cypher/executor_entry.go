@@ -173,6 +173,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err := internalFunctionCallError(cypher); err != nil {
 		return nil, err
 	}
+	// The statement as sent, which GDS's Cypher aggregation projection
+	// reports as its query (#1194).
+	ctx = withStatementText(ctx, cypher)
 	// Comments and keyword spacing are canonical from here on; what the
 	// client sees (column names, messages, plans) is the text it sent (#740).
 	// NORNICDB_CYPHER_QUERY_NORMALIZATION=false skips the pass: the

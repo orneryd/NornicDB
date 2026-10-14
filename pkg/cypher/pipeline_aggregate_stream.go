@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -74,7 +75,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 				return nil, false
 			}
 			templates[index].states = append(templates[index].states, pipelineAggregateState{name: name, expression: inner, distinct: distinct})
-			needsValidation = needsValidation || strings.ContainsAny(inner, "([") || name == "percentilecont" || name == "percentiledisc"
+			needsValidation = needsValidation || strings.ContainsAny(inner, "([") || name == "percentilecont" || name == "percentiledisc" || name == gdsProjectAggregate
 			rewritten.WriteString(projection.expr[last:span.start])
 			rewritten.WriteString(traversalAggPlaceholder(offset))
 			last = span.end
@@ -446,6 +447,10 @@ type pipelineAggregateState struct {
 	values           []interface{}
 	mean, squared    float64
 	percentileRows   []pipelineRow
+	// gdsRows are gds.graph.project's rows (#1194), gdsStarted when the
+	// first came.
+	gdsRows    []gdsProjectionRow
+	gdsStarted time.Time
 	// duration is the running sum of sum() / avg() over durations; numbers
 	// and durations can't be mixed (aggregateMixesNumberAndDuration).
 	duration *CypherDuration
@@ -455,6 +460,9 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 	if state.name == "count" && state.expression == "*" {
 		state.count++
 		return true
+	}
+	if state.name == gdsProjectAggregate {
+		return executor.addGDSProjectionRow(ctx, state, row)
 	}
 	if state.name == "percentilecont" || state.name == "percentiledisc" {
 		arguments := executor.splitFunctionArgs(state.expression)
@@ -601,6 +609,13 @@ func addInt64(left, right int64) (int64, bool) {
 
 func (state *pipelineAggregateState) result(ctx context.Context, executor *StorageExecutor) (interface{}, bool) {
 	switch state.name {
+	case gdsProjectAggregate:
+		value, err := executor.gdsCypherProjection(ctx, state.gdsRows, state.gdsStarted)
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil, false
+		}
+		return value, true
 	case "count":
 		return state.count, true
 	case "sum":
