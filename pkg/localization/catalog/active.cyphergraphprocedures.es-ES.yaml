@@ -63,7 +63,7 @@
   other: 'Las propiedades de características {{.Properties}} no están presentes en todas las etiquetas solicitadas. Etiquetas solicitadas: {{.Labels}}. Propiedades disponibles en todas las etiquetas solicitadas: {{.Available}}'
 - id: cyphergraphprocedures.feature_property_invalid
   description: Mensaje de GDS (feature property invalid). Los campos no se traducen.
-  other: 'El nodo con ID `{{.Node}}` tiene un valor de propiedad de característica no válido `NaN` para la propiedad `{{.Property}}`'
+  other: 'El nodo con ID `{{.Node}}` tiene un valor de propiedad de característica no válido {{.Value}} para la propiedad `{{.Property}}`'
 - id: cyphergraphprocedures.weight_property_not_found
   description: Mensaje de GDS (weight property not found). Los campos no se traducen.
   other: 'No se encontró la propiedad de peso de relación `{{.Property}}` en los tipos de relación {{.Types}}. Propiedades existentes en todos los tipos de relación: {{.Available}}'
@@ -136,3 +136,12 @@
 - id: cyphergraphprocedures.unsafe_long_array_conversion
   description: Mensaje de GDS (unsafe long array conversion).
   other: 'No se puede convertir de forma segura {{.Value}} en un Long Array. No se puede convertir de forma segura {{.Fraction}} en un valor long'
+- id: cyphergraphprocedures.property_read_type
+  description: GDS incompatible typed property read. Requested and Stored are untranslated type names.
+  other: 'Se intentó recuperar un valor de tipo {{.Requested}} de propiedades de tipo {{.Stored}}'
+- id: cyphergraphprocedures.relationship_value_type
+  description: GDS nonnumeric relationship property. Type and Value are untranslated.
+  other: 'Tipo [{{.Type}}] no compatible para el valor {{.Value}}. Use una propiedad numérica.'
+- id: cyphergraphprocedures.default_property_type
+  description: GDS incompatible default property value. Expected and Actual are untranslated.
+  other: 'Se esperaba que el valor predeterminado fuera de tipo `{{.Expected}}`, pero es de tipo `{{.Actual}}`.'

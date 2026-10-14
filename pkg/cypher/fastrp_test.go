@@ -1180,7 +1180,7 @@ func TestGenerateFastRPEmbeddings_Branches(t *testing.T) {
 		NodeIDs:          []string{"n1", "n2", "n3"},
 		Labels:           []string{"P"},
 		NodeLabels:       map[string][]string{"n1": {"P"}, "n2": {"P"}, "n3": {"P"}},
-		NodeProperties:   map[string]map[string]float64{"n1": {"age": 20}, "n2": {"age": 40}, "n3": {"age": 60}},
+		NodeProperties:   map[string]map[string]interface{}{"n1": {"age": 20}, "n2": {"age": 40}, "n3": {"age": 60}},
 		NodePropertyKeys: map[string][]string{"P": {"age"}},
 		Types:            []string{"K"},
 		Relationships: []ProjectedRelationship{
