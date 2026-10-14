@@ -18,16 +18,17 @@ var louvainConfigKeys = []string{
 
 // callGdsLouvainStream implements gds.louvain.stream(graphName, config) as
 // GDS 2.13 does (#1198): Louvain over the projection's nodes and
-// relationships (one undirected relationship each, its weight the
-// relationshipWeightProperty's value), with GDS's maxLevels (10),
+// relationships as projected, their weights from relationshipWeightProperty,
+// with GDS's maxLevels (10),
 // maxIterations (10) and tolerance (0.0001), seedProperty for the initial
 // communities, minCommunitySize, and includeIntermediateCommunities for
 // each level's community. Rows are in the projection's node order. As in
 // GDS, a community is named by the node it grew from: its position in the
 // projection, or with seedProperty, that node's seed (non-negative
-// integers only), or for an unseeded node, the largest seed + 1 + its
-// position (GDS adds the largest seed to the Neo4j id, which can collide
-// with a seed); consecutiveIds numbers them 0, 1, … by first node.
+// integers only; Long.MIN_VALUE means missing), or for an unseeded node,
+// the largest seed + its numeric original ID (string IDs use 1 + their
+// projection position). This can collide with a seed, as in GDS.
+// consecutiveIds numbers them 0, 1, … by first node.
 func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResult, error) {
 	const procedure = "gds.louvain.stream"
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
@@ -118,7 +119,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		if !containsString(available, seedProperty) {
 			return nil, localizedError(localization.CypherGraphProceduresSeedPropertyNotFound(seedProperty, "["+strings.Join(available, ", ")+"]"), nil)
 		}
-		if gdsNodePropertyFloat(projection, seedProperty) {
+		if gdsNodePropertyNotLong(projection, seedProperty) {
 			return nil, localizedError(localization.CypherGraphProceduresSeedPropertyNotLong(seedProperty), nil)
 		}
 	}
@@ -142,7 +143,6 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	if seedProperty != "" {
 		run.seed = make([]int, size)
 		seeds := make(map[int]int64)
-		groups := make(map[int64]int)
 		largest := int64(0)
 		for i, id := range graph.nodes {
 			run.seed[i] = i
@@ -151,22 +151,38 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 			if !ok {
 				continue
 			}
-			seed := toInt64(value)
+			seed, integer := value.(int64)
+			if !integer {
+				return nil, localizedError(localization.CypherGraphProceduresSeedPropertyNotLong(seedProperty), nil)
+			}
+			if seed == math.MinInt64 {
+				continue // GDS's missing Integer property sentinel.
+			}
 			if seed < 0 {
 				return nil, localizedError(localization.CypherGraphProceduresSeedNegative(), nil)
 			}
 			seeds[i], largest = seed, max(largest, seed)
-			if first, seen := groups[seed]; seen {
-				run.seed[i] = first
-			} else {
-				groups[seed] = i
-			}
 		}
 		name = func(node int) int64 {
 			if seed, seeded := seeds[node]; seeded {
 				return seed
 			}
-			return largest + 1 + int64(node)
+			// GDS adds the largest seed to the original numeric node ID.
+			// String IDs retain NornicDB's existing projection-position names.
+			original, err := strconv.ParseInt(graph.nodes[node], 10, 64)
+			if err != nil {
+				original = 1 + int64(projection.nodeIndex[graph.nodes[node]])
+			}
+			return largest + original
+		}
+		groups := make(map[int64]int)
+		for i := range graph.nodes {
+			seed := name(i)
+			if first, seen := groups[seed]; seen {
+				run.seed[i] = first
+			} else {
+				groups[seed] = i
+			}
 		}
 	}
 	result := runLouvain(louvain, run)
@@ -201,13 +217,13 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	return &ExecuteResult{Columns: []string{"nodeId", "communityId", "intermediateCommunityIds"}, Rows: rows}, nil
 }
 
-// gdsNodePropertyFloat reports whether the projection holds key as a
-// Float node property (its schema type, under any label).
-func gdsNodePropertyFloat(projection *GraphProjection, key string) bool {
+// gdsNodePropertyNotLong rejects any non-Integer schema for key, including
+// lists, under any projected label, before applying nodeLabels filtering.
+func gdsNodePropertyNotLong(projection *GraphProjection, key string) bool {
 	labels, _ := projection.schema["nodes"].(map[string]interface{})
 	for _, properties := range labels {
 		properties, _ := properties.(map[string]interface{})
-		if text, _ := properties[key].(string); strings.HasPrefix(text, "Float") {
+		if text, _ := properties[key].(string); text != "" && !strings.HasPrefix(text, "Integer ") {
 			return true
 		}
 	}

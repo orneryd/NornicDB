@@ -327,25 +327,58 @@ func (g *louvainGraph) moveNodes(maxIterations int, tolerance float64, initial [
 	return community
 }
 
-// colourClasses colours the graph greedily in node order, each node taking
-// the smallest colour none of its neighbours has, and lists each colour's
-// nodes in order.
+// colourClasses follows GDS's serial K1 colouring: colour the pending nodes,
+// validate outgoing conflicts, and recolour their sources. Modularity
+// optimization caps this at five rounds independently of maxIterations.
+// Self-loops never forbid a colour. Classes and their nodes are in order.
 func (g *louvainGraph) colourClasses(neighbours [][]int) [][]int {
 	colour := make([]int, len(g.weights))
-	var classes [][]int
+	pending := make([]bool, len(colour))
+	next := make([]bool, len(colour))
+	// GDS's initial colour also forbids 1000 before a neighbour is visited.
+	forbidden := make([]int, max(len(colour)+1, 1001))
+	stamp := 0
 	for i := range colour {
-		used := make(map[int]bool)
-		for _, j := range neighbours[i] {
-			if j < i {
-				used[colour[j]] = true
+		colour[i], pending[i] = 1000, true
+	}
+	for round := 0; round < 5; round++ {
+		for i := range colour {
+			if !pending[i] {
+				continue
+			}
+			stamp++
+			for _, j := range neighbours[i] {
+				if j != i {
+					forbidden[colour[j]] = stamp
+				}
+			}
+			c := 0
+			for forbidden[c] == stamp {
+				c++
+			}
+			colour[i] = c
+		}
+		clear(next)
+		conflicts := false
+		for i := range colour {
+			if !pending[i] {
+				continue
+			}
+			for _, j := range neighbours[i] {
+				if i != j && colour[i] == colour[j] && !next[j] {
+					next[i], conflicts = true, true
+					break
+				}
 			}
 		}
-		c := 0
-		for used[c] {
-			c++
+		if !conflicts {
+			break
 		}
-		colour[i] = c
-		if c == len(classes) {
+		pending, next = next, pending
+	}
+	var classes [][]int
+	for i, c := range colour {
+		for c >= len(classes) {
 			classes = append(classes, nil)
 		}
 		classes[c] = append(classes[c], i)
