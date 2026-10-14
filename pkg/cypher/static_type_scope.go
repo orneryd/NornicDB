@@ -345,13 +345,13 @@ func projectStaticValueMembers(scope staticTypeScope, clause string) map[string]
 // callSubqueryImports is the scope a CALL subquery's body starts from: CALL
 // (a, b) { … } imports a and b, CALL (*) { … } and an old-style CALL { … }
 // every outer variable (the latter's leading WITH picks them). ok is false
-// for a CALL without a body.
-func callSubqueryImports(callText string, outer typeScope) (typeScope, bool) {
+// for a CALL without a body; scoped is set for CALL (…) { }.
+func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, bool) {
 	trimmed := strings.TrimSpace(callText)
 	open := strings.IndexByte(trimmed, '{')
 	call := indexASCIIFold(trimmed, "call")
 	if open < 0 || call < 0 || call > open {
-		return nil, false
+		return nil, false, false
 	}
 	initial := make(typeScope)
 	head := strings.TrimSpace(trimmed[call+len("CALL") : open])
@@ -362,12 +362,12 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool) {
 				initial[name] = operand
 			}
 		}
-		return initial, true
+		return initial, true, true
 	}
 	for name, operand := range outer {
 		initial[name] = operand
 	}
-	return initial, true
+	return initial, false, true
 }
 
 // callSubqueryReturnTypes walks a CALL subquery's body, each UNION branch
@@ -375,10 +375,10 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool) {
 // the variables it imports (callSubqueryImports), and returns the static
 // type of each column a one-branch body returns. Its expression subqueries
 // see the body's scope, not the enclosing query's. A body whose walk stops
-// early, or that doesn't end in RETURN, gives no types; a walk's error is
-// the statement's.
+// early, or that doesn't end in RETURN, gives no types; a scoped body's
+// walk error is the statement's.
 func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
-	initial, ok := callSubqueryImports(callText, outer)
+	initial, scoped, ok := callSubqueryImports(callText, outer)
 	if !ok {
 		return nil, nil
 	}
@@ -390,6 +390,12 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 		}
 		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, nil)
 		if err != nil {
+			if !scoped {
+				// An old-style CALL { … } keeps NornicDB's implicit imports
+				// (gh648: an outer name it doesn't import is visible, or
+				// declared anew), so its walk only types its columns.
+				return nil, nil
+			}
 			return nil, err
 		}
 		last := clauses[len(clauses)-1]
