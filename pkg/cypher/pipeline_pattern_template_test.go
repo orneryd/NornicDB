@@ -12,8 +12,7 @@ import (
 
 // TestPipelinePatternTemplateMatchesTextRoute: a pattern property map
 // evaluated for a row directly (the template) holds the same values as the
-// general route, which renders the row's values into the pattern text and
-// parses it again.
+// general route, which evaluates the pattern against the same typed row.
 func TestPipelinePatternTemplateMatchesTextRoute(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "template"))
 	ctx := withParams(context.Background(), map[string]interface{}{"p": "param", "n": int64(7), "list": []interface{}{int64(1), "two"}})
@@ -43,7 +42,7 @@ func TestPipelinePatternTemplateMatchesTextRoute(t *testing.T) {
 	}
 	for _, expression := range expressions {
 		pattern := fmt.Sprintf("(x:L {k: %s})", expression)
-		textRoute := exec.parseNodePattern(ctx, exec.materializePipelinePropertyExpressions(ctx, pattern, row)).properties
+		textRoute := exec.parseNodePattern(withValueBindings(ctx, row), pattern).properties
 		pairs, ok := exec.pipelinePropertyExpressions(fmt.Sprintf("{k: %s}", expression))
 		require.True(t, ok, expression)
 		direct, evaluated := exec.evaluatePipelineProperties(ctx, pairs, row)

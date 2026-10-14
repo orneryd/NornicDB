@@ -154,42 +154,6 @@ func rowHasAggregate(items []returnItem) bool {
 	return false
 }
 
-func mapToCypherLiteral(m map[string]interface{}) string {
-	var parts []string
-	for k, v := range m {
-		parts = append(parts, fmt.Sprintf("%s: %s", formatCypherMapKey(k), valueToCypherLiteral(v)))
-	}
-	return "{" + strings.Join(parts, ", ") + "}"
-}
-
-func valueToCypherLiteral(v interface{}) string {
-	switch val := v.(type) {
-	case string:
-		return quoteCypherStringLiteral(val)
-	case bool:
-		if val {
-			return "true"
-		}
-		return "false"
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return fmt.Sprintf("%v", val)
-	case map[string]interface{}:
-		return mapToCypherLiteral(val)
-	case map[interface{}]interface{}:
-		return mapToCypherLiteral(normalizeInterfaceMap(val))
-	case []interface{}:
-		items := make([]string, len(val))
-		for i, item := range val {
-			items[i] = valueToCypherLiteral(item)
-		}
-		return "[" + strings.Join(items, ", ") + "]"
-	case nil:
-		return "null"
-	default:
-		return fmt.Sprintf("%v", val)
-	}
-}
-
 // splitWithItems splits WITH expressions respecting nested brackets and quotes
 func (e *StorageExecutor) splitWithItems(expr string) []string {
 	var items []string

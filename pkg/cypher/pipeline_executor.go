@@ -524,6 +524,7 @@ func sortBoundariesByPos(bs []pipelineBoundary) {
 // runtime failure, so callers only retry the NotApplicable state.
 func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (outcome pipelineDispatchOutcome) {
 	statement := cypher
+	cypher = e.substituteParams(cypher, getParamsFromContext(ctx))
 	ctx = withExpressionFailureSlot(ctx)
 	defer func() {
 		if recorded := getExpressionFailure(ctx); recorded != nil && outcome.err == nil {
@@ -555,10 +556,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 		}
 	}
 
-	// Substitute $param placeholders up-front — this is the same pass the
-	// other top-level handlers perform. After this step the clause texts are
-	// self-contained and our per-clause appliers only have to worry about
-	// pipeline-bound names (from WITH/UNWIND/MATCH), not caller parameters.
+	// Parameters remain typed bindings through every clause.
 	params := getParamsFromContext(ctx)
 	if !hasCallSubquery {
 		if result, handled, err := e.tryExecutePipelineSimpleNodeReadPlan(ctx, clauses, params); handled || err != nil {
@@ -570,18 +568,6 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 	}
 	if result, handled, err := e.tryExecutePipelineCreatePlan(ctx, clauses, originalClauses); handled || err != nil {
 		return newPipelineDispatchOutcome(result, handled, err)
-	}
-	if params != nil {
-		cypher = e.substituteParamsExcept(cypher, params, isLongStringParam)
-		clauses, ok = canExecuteAsPipeline(cypher)
-		if !ok {
-			return newPipelineDispatchOutcome(nil, false, nil)
-		}
-		for index := range clauses {
-			if clauses[index].kind == pipelineClauseUnwind && index < len(originalClauses) {
-				clauses[index].text = originalClauses[index].text
-			}
-		}
 	}
 	// Start with one binding row. Parameters retain their typed values under
 	// their `$name` expression keys so list/map inputs are not stringified while
@@ -2200,8 +2186,9 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		materializedPattern := e.materializePipelinePropertyExpressions(ctx, pattern, row)
-		materializedWhere := e.materializePipelinePredicateExpressions(whereClause, row)
+		rowCtx := withValueBindings(ctx, row)
+		materializedPattern := pattern
+		materializedWhere := whereClause
 		physicalWhere := pipelineTraversalPushdownPredicate(materializedWhere, row, variables)
 		rowHint := hint
 		if physicalWhere != materializedWhere || pipelinePatternJoinsOuterBinding(row, variables) {
@@ -2211,16 +2198,16 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 		var handled bool
 		var err error
 		if rowHint.limit > 0 && rowHint.orderExpr != "" {
-			result, handled, err = e.tryExecuteTraversalStartSeedOrderLimit(ctx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit)
+			result, handled, err = e.tryExecuteTraversalStartSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit)
 			if err == nil && !handled {
-				result, handled, err = e.tryExecuteTraversalEndSeedOrderLimit(ctx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit)
+				result, handled, err = e.tryExecuteTraversalEndSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit)
 			}
 		}
 		if err != nil {
 			return nil, true, err
 		}
 		if !handled {
-			startSeedNodes, endSeedNodes, seedRejected := e.pipelineTraversalSeedNodes(ctx, materializedPattern, row)
+			startSeedNodes, endSeedNodes, seedRejected := e.pipelineTraversalSeedNodes(rowCtx, materializedPattern, row)
 			if seedRejected {
 				// The bound node fails the pattern's own labels or inline
 				// properties on that endpoint, so this row matches nothing.
@@ -2229,14 +2216,14 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 			if startSeedNodes == nil && endSeedNodes == nil {
 				// A relationship pinned by id / elementId starts from its
 				// endpoints, not from every node.
-				if seeds, none, pinned := e.relationshipIDSeedNodes(ctx, materializedPattern, physicalWhere); pinned {
+				if seeds, none, pinned := e.relationshipIDSeedNodes(rowCtx, materializedPattern, physicalWhere); pinned {
 					if none {
 						continue
 					}
 					startSeedNodes = seeds
 				}
 			}
-			result, err = e.executeMatchWithRelationshipsWithPathSeeded(ctx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.readTail, rowHint.earlyLimit)
+			result, err = e.executeMatchWithRelationshipsWithPathSeeded(rowCtx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.readTail, rowHint.earlyLimit)
 			if err != nil {
 				return nil, true, err
 			}
@@ -2418,9 +2405,10 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 				cacheKey = "\x03" + propsKey + "\x00" + materializedWhere
 			}
 		} else {
-			materializedPattern := e.materializePipelinePropertyExpressions(ctx, pattern, row)
-			nodePattern = e.parseNodePattern(ctx, materializedPattern)
-			cacheKey = materializedPattern + "\x00" + materializedWhere
+			rowCtx := withValueBindings(ctx, row)
+			materializedPattern := pattern
+			nodePattern = e.parseNodePattern(rowCtx, materializedPattern)
+			cacheKey = ""
 		}
 		if bound, exists := row[nodePattern.variable]; exists {
 			node, isNode := bound.(*storage.Node)
@@ -2521,59 +2509,6 @@ func (e *StorageExecutor) pipelineBindZeroLengthPath(row pipelineRow, variable s
 	}
 	joined[variable] = e.pathToMap(PathResult{Nodes: []*storage.Node{node}})
 	return joined
-}
-
-// materializePipelinePredicateExpressions writes row's values into
-// expression: a bound entity's or map's property read (x.id) and a bound
-// value become literals. An occurrence that reads a variable the expression
-// binds itself, as in all(x IN [{id: 7}] WHERE x.id = 7), is that local's
-// and is left as written (localOccurrences).
-func (e *StorageExecutor) materializePipelinePredicateExpressions(expression string, row pipelineRow) string {
-	if expression == "" {
-		return expression
-	}
-	materialized := expression
-	local := localOccurrences{text: expression}
-	replaceProperties := func(name string, properties map[string]interface{}) {
-		for property, propertyValue := range properties {
-			if _, isMap := toStringAnyMap(propertyValue); isMap {
-				// A map stays the row's value (v.h[k], v.h.k): written as
-				// literal text it would be re-read by another reader and
-				// re-serialized per row. The term still reads v, so it
-				// runs on the joined row (pipelineTraversalPushdownPredicate).
-				continue
-			}
-			reference := name + "." + property
-			if strings.Contains(materialized, reference) {
-				materialized = replaceQualifiedReferenceOutsideQuotesUnless(materialized, reference, e.valueToLiteral(propertyValue), &local, name)
-			}
-		}
-	}
-	for name, value := range row {
-		if strings.HasPrefix(name, "$") {
-			continue
-		}
-		if object, ok := toStringAnyMap(value); ok {
-			replaceProperties(name, object)
-			continue
-		}
-		switch entity := value.(type) {
-		case *storage.Node:
-			if entity != nil {
-				replaceProperties(name, entity.Properties)
-			}
-			continue
-		case *storage.Edge:
-			if entity != nil {
-				replaceProperties(name, entity.Properties)
-			}
-			continue
-		}
-		if referencesVariable(materialized, name) {
-			materialized = replaceIdentifierOutsideQuotesUnless(materialized, name, e.valueToLiteral(value), &local)
-		}
-	}
-	return materialized
 }
 
 // replaceQualifiedReferenceOutsideQuotes replaces a complete dotted row
@@ -3416,48 +3351,6 @@ func containsRemoveClauseAnywhere(cypher string) bool {
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	return keywordIndexFrom(cypher, "REMOVE", 0, opts) >= 0
-}
-
-// materializePipelinePropertyExpressions evaluates property-map values using
-// the current row before the CREATE/MERGE parsers consume them. Substituting a
-// variable token alone is insufficient for expressions such as row.parts[0]
-// or row.value + '!': it can turn valid expressions into quoted source text.
-func (e *StorageExecutor) materializePipelinePropertyExpressions(ctx context.Context, clause string, row pipelineRow) string {
-	var output strings.Builder
-	output.Grow(len(clause))
-	for cursor := 0; cursor < len(clause); {
-		if clause[cursor] != '{' {
-			output.WriteByte(clause[cursor])
-			cursor++
-			continue
-		}
-		end := e.findMatchingBrace(clause, cursor)
-		if end < 0 {
-			output.WriteString(clause[cursor:])
-			break
-		}
-		body := clause[cursor+1 : end]
-		pairs := e.splitPropertyPairs(body)
-		materialized := make([]string, 0, len(pairs))
-		for _, pair := range pairs {
-			colon := findTopLevelMapKeyValueSeparator(pair)
-			if colon <= 0 {
-				materialized = append(materialized, pair)
-				continue
-			}
-			key := strings.TrimSpace(pair[:colon])
-			expression := strings.TrimSpace(pair[colon+1:])
-			if value, ok := e.evaluateRowExpressionWithContext(ctx, expression, row); ok {
-				expression = e.valueToLiteral(value)
-			}
-			materialized = append(materialized, key+": "+expression)
-		}
-		output.WriteByte('{')
-		output.WriteString(strings.Join(materialized, ", "))
-		output.WriteByte('}')
-		cursor = end + 1
-	}
-	return output.String()
 }
 
 // pipelineApplyWith drops / renames binding keys according to a WITH clause.
@@ -4950,16 +4843,11 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 		return coerceToUnwindItems(value), true
 	}
 
-	materialized := expr
-	local := localOccurrences{text: expr}
-	for name, value := range row {
-		materialized = replaceIdentifierOutsideQuotesUnless(materialized, name, e.valueToLiteral(value), &local)
-	}
-	value := e.evaluateExpressionWithContext(ctx, materialized, nil, nil)
-	if text, unresolved := value.(string); unresolved && text == materialized && !isWholeCypherQuotedString(materialized) {
+	value := e.evaluateExpressionWithContext(withValueBindings(ctx, row), expr, nil, nil)
+	if text, unresolved := value.(string); unresolved && text == expr && !isWholeCypherQuotedString(expr) {
 		return nil, false
 	}
-	if value == nil && !strings.EqualFold(strings.TrimSpace(materialized), "null") && !looksLikeFunctionCall(materialized) {
+	if value == nil && !strings.EqualFold(strings.TrimSpace(expr), "null") && !looksLikeFunctionCall(expr) {
 		return nil, false
 	}
 	return coerceToUnwindItems(value), true

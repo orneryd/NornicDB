@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -30,30 +29,6 @@ func TestExecuteMatchWithCallProcedure_ErrorAndEmptyPaths(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"node", "score"}, res.Columns)
 	require.Empty(t, res.Rows)
-}
-
-func TestSubstituteBoundVariablesInCall_MoreValueTypes(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	node := &storage.Node{
-		ID: "n1",
-		Properties: map[string]interface{}{
-			"embedding": []float64{0.1, 0.2},
-			"title":     "hello",
-			"age":       int64(7),
-			"active":    true,
-			"arr":       []interface{}{1, 2.5, int64(3)},
-		},
-	}
-
-	call := "CALL p.demo(n.embedding, n.title, n.age, n.active, n.arr, 'n.title')"
-	out := exec.substituteBoundVariablesInCall(call, map[string]*storage.Node{"n": node}, nil)
-
-	require.True(t, strings.Contains(out, "[0.1, 0.2]"))
-	require.True(t, strings.Contains(out, "'hello'"))
-	require.True(t, strings.Contains(out, "7"))
-	require.True(t, strings.Contains(out, "true"))
-	require.True(t, strings.Contains(out, "[1, 2.5, 3]"))
-	require.True(t, strings.Contains(out, "'n.title'"), "quoted token must not be substituted")
 }
 
 func TestExecuteMatchWithCallSubquery_ErrorAndHappyPaths(t *testing.T) {

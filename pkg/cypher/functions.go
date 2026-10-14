@@ -200,14 +200,19 @@ func (e *StorageExecutor) evaluateExpressionWithCASESubstituted(ctx context.Cont
 	var builder strings.Builder
 	builder.Grow(len(expr))
 	last := 0
+	boundCtx := ctx
 	for _, span := range spans {
+		ctx = boundCtx
 		builder.WriteString(expr[last:span.start])
 		value := e.evaluateCaseExpression(ctx, expr[span.start:span.end], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		builder.WriteString(e.valueToLiteral(value))
+		ctx, reference := withExpressionBinding(ctx, expr, value)
+		builder.WriteString(reference)
+		// Carry this binding to subsequent blocks and the final evaluation.
+		boundCtx = ctx
 		last = span.end
 	}
 	builder.WriteString(expr[last:])
-	return e.evaluateExpressionWithContextFull(ctx, builder.String(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	return e.evaluateExpressionWithContextFull(boundCtx, builder.String(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 }
 
 func splitPostfixPropertyAccess(expr string) (string, string, bool) {

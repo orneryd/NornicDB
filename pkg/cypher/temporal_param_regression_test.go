@@ -20,9 +20,8 @@ func TestTemporalParam_SubstitutionPreservesTypedBinding(t *testing.T) {
 		"dt":   dt,
 	})
 
-	// Scalar params still substitute, but temporal params must remain bound so
-	// parsePropertyValue can resolve the typed value from context.
-	require.Contains(t, out, "uuid:'t'")
+	// Every parameter remains bound so the property evaluator receives its type.
+	require.Contains(t, out, "uuid:$uuid")
 	require.True(t, strings.Contains(out, "created_at:$dt"), "expected temporal param to remain bound, got: %s", out)
 }
 

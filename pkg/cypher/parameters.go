@@ -1,4 +1,4 @@
-// Parameter substitution for NornicDB Cypher.
+// Typed parameter bindings for NornicDB Cypher.
 //
 // This file contains functions for handling Cypher query parameters.
 // Parameters allow passing values into queries without string interpolation,
@@ -50,13 +50,12 @@ package cypher
 
 import (
 	"context"
-	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // getParamKeys returns the keys from a parameter map as a slice.
@@ -147,77 +146,10 @@ func mapsEqualShallow(a, b map[string]interface{}) bool {
 	return false
 }
 
-// substituteParams replaces $paramName placeholders with actual values.
-//
-// This implements Neo4j-style parameter substitution with proper escaping
-// and type handling. Parameters that are not provided in the map are left as-is.
-//
-// # Parameters
-//
-//   - cypher: The query string with $param placeholders
-//   - params: Map of parameter names to values
-//
-// # Returns
-//
-//   - The query string with parameters substituted
-//
-// # Example
-//
-//	query := "MATCH (p:Person {name: $name}) RETURN p"
-//	params := map[string]interface{}{"name": "Alice"}
-//	result := exec.substituteParams(query, params)
-//	// result = "MATCH (p:Person {name: 'Alice'}) RETURN p"
-//
-// # Security Note
-//
-// Values are properly escaped to prevent injection attacks.
-// String values have single quotes escaped by doubling them.
+// substituteParams keeps parameter references as typed bindings. Query entry
+// normalizes values once; every clause resolves the original references.
 func (e *StorageExecutor) substituteParams(cypher string, params map[string]interface{}) string {
-	return e.substituteParamsExcept(cypher, params, nil)
-}
-
-// pipelineInlineStringLimit is the length from which a string parameter stays
-// a $name reference in a pipeline statement, read from the row's parameter
-// binding (bindParameterRow), instead of a literal that every row's
-// expression evaluation rescans (#1094).
-const pipelineInlineStringLimit = 1024
-
-// isLongStringParam reports a string parameter of pipelineInlineStringLimit
-// bytes or more.
-func isLongStringParam(value interface{}) bool {
-	text, ok := value.(string)
-	return ok && len(text) >= pipelineInlineStringLimit
-}
-
-// substituteParamsExcept is substituteParams leaving as $name references the
-// parameters keep reports, as it leaves list and map values.
-func (e *StorageExecutor) substituteParamsExcept(cypher string, params map[string]interface{}, keep func(interface{}) bool) string {
-	if len(params) == 0 {
-		return cypher
-	}
-
-	return replaceParameterReferences(cypher, func(name string, next byte) (string, bool) {
-		// Preserve parameter path expressions like $node.url and
-		// $node['url'] so downstream evaluators can resolve them from params.
-		if next == '.' || next == '[' {
-			return "", false
-		}
-		value, exists := params[name]
-		if !exists || isCompositeParamValue(value) || (keep != nil && keep(value)) {
-			return "", false
-		}
-		switch number := value.(type) {
-		case float64:
-			if math.IsNaN(number) || math.IsInf(number, 0) {
-				return "", false
-			}
-		case float32:
-			if math.IsNaN(float64(number)) || math.IsInf(float64(number), 0) {
-				return "", false
-			}
-		}
-		return e.valueToLiteral(value), true
-	})
+	return cypher
 }
 
 // scanParameterReferences is the one scanner for $name parameter references
@@ -538,7 +470,7 @@ func resolveContextPathRef(ctx context.Context, expr string) (interface{}, bool)
 // Cypher map (map[string]interface{}), and a slice or array of maps or lists
 // is a Cypher list ([]interface{}), recursively. Typed lists of scalars
 // ([]string, []int64, []float64, …) stay typed: storage keeps their element
-// type (isCompositeParamValue). The map is copied only when a value changes.
+// type. The map is copied only when a value changes.
 func normalizeQueryParameters(params map[string]interface{}) map[string]interface{} {
 	var normalized map[string]interface{}
 	for name, value := range params {
@@ -626,8 +558,17 @@ func sameParameterValue(converted, original interface{}) bool {
 func normalizeParameterValue(value interface{}) (interface{}, bool) {
 	switch typed := value.(type) {
 	case nil, string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64,
-		float32, float64, []byte, time.Time, *time.Time,
+		float32, float64, []byte, time.Time,
 		[]string, []int, []int64, []float32, []float64, []bool:
+		return value, false
+	case *time.Time, storage.TypedPropertyValue:
+		// Typed bindings replace literal reconstruction, which represented a
+		// nil temporal/point pointer as null. Keep that at the query-entry owner
+		// for scalar parameters and members of maps/lists alike.
+		reflected := reflect.ValueOf(value)
+		if reflected.Kind() == reflect.Ptr && reflected.IsNil() {
+			return nil, true
+		}
 		return value, false
 	case map[string]interface{}:
 		var converted map[string]interface{}
@@ -667,9 +608,19 @@ func normalizeParameterValue(value interface{}) (interface{}, bool) {
 	}
 	reflected := reflect.ValueOf(value)
 	switch reflected.Kind() {
+	case reflect.Ptr:
+		if reflected.IsNil() {
+			return nil, true
+		}
 	case reflect.Map:
 		if reflected.Type().Key().Kind() != reflect.String {
-			return value, false
+			converted := make(map[interface{}]interface{}, reflected.Len())
+			iterator := reflected.MapRange()
+			for iterator.Next() {
+				element, _ := normalizeParameterValue(iterator.Value().Interface())
+				converted[iterator.Key().Interface()] = element
+			}
+			return converted, true
 		}
 		converted := make(map[string]interface{}, reflected.Len())
 		iterator := reflected.MapRange()
@@ -689,35 +640,6 @@ func normalizeParameterValue(value interface{}) (interface{}, bool) {
 	return value, false
 }
 
-// isCompositeParamValue reports whether a parameter value is a typed list
-// shape that would lose type information if stringified into Cypher
-// literal syntax. Scalars (string, numeric, bool, nil) are always safe to
-// substitute. Maps are also substituted because:
-//
-//   - CREATE patterns (e.g., `CREATE (n:Label $props)`) rely on the
-//     substituted map literal being parsed by the pattern parser; the
-//     post-write read goes through storage's msgpack-and-strict-typed
-//     decode pipeline so type retention is preserved end-to-end.
-//   - SET map merges (`SET n += $props`) read $params directly through
-//     resolveDirectParamRef, bypassing literal substitution entirely.
-//
-// Only typed list slices (e.g. []string, []float64) need to stay as
-// $name references — substituting them as `[a, b, c]` literal text would
-// force the parser to re-decode them as []interface{}, which is the
-// exact widening this short-circuit prevents.
-func isCompositeParamValue(v interface{}) bool {
-	switch v.(type) {
-	case []string, []int, []int64, []float32, []float64:
-		return true
-	case time.Time, *time.Time:
-		// Keep temporal params as typed values so property parsing can bind them
-		// directly from context instead of stringifying via fmt.Sprintf("%v").
-		return true
-	default:
-		return false
-	}
-}
-
 func escapeCypherStringLiteral(raw string) string {
 	escaped := strings.ReplaceAll(raw, "'", "''")
 	escaped = strings.ReplaceAll(escaped, "\\", "\\\\")
@@ -726,249 +648,6 @@ func escapeCypherStringLiteral(raw string) string {
 
 func quoteCypherStringLiteral(raw string) string {
 	return "'" + escapeCypherStringLiteral(raw) + "'"
-}
-
-func isSimpleCypherMapKey(key string) bool {
-	if key == "" {
-		return false
-	}
-	first := key[0]
-	if !isIdentStartByte(first) {
-		return false
-	}
-	for i := 1; i < len(key); i++ {
-		if !isIdentByte(key[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func formatCypherMapKey(key string) string {
-	if isSimpleCypherMapKey(key) {
-		return key
-	}
-	return quoteCypherStringLiteral(key)
-}
-
-// valueToLiteral converts a Go value to a Cypher literal string.
-//
-// This function handles all Go types that can be passed as Cypher parameters,
-// converting them to their appropriate Cypher literal representation.
-//
-// # Parameters
-//
-//   - v: The Go value to convert
-//
-// # Returns
-//
-//   - A string representation valid in Cypher syntax
-//
-// # Type Conversions
-//
-//	nil           → "null"
-//	"hello"       → "'hello'"
-//	42            → "42"
-//	3.14          → "3.14"
-//	true          → "true"
-//	[1, 2]        → "[1, 2]"
-//	{a: 1}        → "{a: 1}"
-//
-// # Example
-//
-//	e.valueToLiteral("Alice")           // "'Alice'"
-//	e.valueToLiteral(42)                // "42"
-//	e.valueToLiteral([]int{1, 2, 3})    // "[1, 2, 3]"
-//	e.valueToLiteral(map[string]interface{}{"name": "Bob"}) // "{name: 'Bob'}"
-func (e *StorageExecutor) valueToLiteral(v interface{}) string {
-	if v == nil {
-		return "null"
-	}
-
-	switch val := v.(type) {
-	case string:
-		return quoteCypherStringLiteral(val)
-
-	case int:
-		return strconv.FormatInt(int64(val), 10)
-	case int8:
-		return strconv.FormatInt(int64(val), 10)
-	case int16:
-		return strconv.FormatInt(int64(val), 10)
-	case int32:
-		return strconv.FormatInt(int64(val), 10)
-	case int64:
-		return strconv.FormatInt(val, 10)
-	case uint:
-		return strconv.FormatUint(uint64(val), 10)
-	case uint8:
-		return strconv.FormatUint(uint64(val), 10)
-	case uint16:
-		return strconv.FormatUint(uint64(val), 10)
-	case uint32:
-		return strconv.FormatUint(uint64(val), 10)
-	case uint64:
-		return strconv.FormatUint(val, 10)
-
-	case float32:
-		return formatCypherFloatLiteral(float64(val), 32)
-	case float64:
-		return formatCypherFloatLiteral(val, 64)
-
-	case bool:
-		if val {
-			return "true"
-		}
-		return "false"
-
-	case time.Time:
-		return fmt.Sprintf("datetime('%s')", val.Format(time.RFC3339Nano))
-
-	case *time.Time:
-		if val == nil {
-			return "null"
-		}
-		return fmt.Sprintf("datetime('%s')", val.Format(time.RFC3339Nano))
-
-	case CypherDate:
-		return fmt.Sprintf("date('%s')", val.String())
-	case *CypherDate:
-		if val == nil {
-			return "null"
-		}
-		return fmt.Sprintf("date('%s')", val.String())
-	case CypherLocalTime:
-		return fmt.Sprintf("localtime('%s')", val.String())
-	case *CypherLocalTime:
-		if val == nil {
-			return "null"
-		}
-		return fmt.Sprintf("localtime('%s')", val.String())
-	case CypherTime:
-		return fmt.Sprintf("time('%s')", val.String())
-	case *CypherTime:
-		if val == nil {
-			return "null"
-		}
-		return fmt.Sprintf("time('%s')", val.String())
-	case CypherLocalDateTime:
-		return fmt.Sprintf("localdatetime('%s')", val.String())
-	case *CypherLocalDateTime:
-		if val == nil {
-			return "null"
-		}
-		return fmt.Sprintf("localdatetime('%s')", val.String())
-	case CypherDateTime:
-		return fmt.Sprintf("datetime('%s')", val.String())
-	case *CypherDateTime:
-		if val == nil {
-			return "null"
-		}
-		return fmt.Sprintf("datetime('%s')", val.String())
-	case *CypherDuration:
-		if val == nil {
-			return "null"
-		}
-		return fmt.Sprintf("duration('%s')", val.String())
-
-	case []interface{}:
-		// Convert array to Cypher list literal: [val1, val2, ...]
-		parts := make([]string, len(val))
-		for i, item := range val {
-			parts[i] = e.valueToLiteral(item)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-
-	case []string:
-		// String array
-		parts := make([]string, len(val))
-		for i, item := range val {
-			parts[i] = e.valueToLiteral(item)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-
-	case []int:
-		parts := make([]string, len(val))
-		for i, item := range val {
-			parts[i] = strconv.Itoa(item)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-
-	case []int64:
-		parts := make([]string, len(val))
-		for i, item := range val {
-			parts[i] = strconv.FormatInt(item, 10)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-
-	case []float64:
-		parts := make([]string, len(val))
-		for i, item := range val {
-			parts[i] = formatCypherFloatLiteral(item, 64)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-
-	case []float32:
-		// Float32 array (common for vector embeddings)
-		parts := make([]string, len(val))
-		for i, item := range val {
-			parts[i] = formatCypherFloatLiteral(float64(item), 32)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-
-	case map[string]interface{}:
-		// Convert map to Cypher map literal: {key1: val1, key2: val2}
-		parts := make([]string, 0, len(val))
-		for k, v := range val {
-			parts = append(parts, fmt.Sprintf("%s: %s", formatCypherMapKey(k), e.valueToLiteral(v)))
-		}
-		return "{" + strings.Join(parts, ", ") + "}"
-
-	case map[interface{}]interface{}:
-		parts := make([]string, 0, len(val))
-		for rawKey, v := range val {
-			key, ok := rawKey.(string)
-			if !ok {
-				continue
-			}
-			parts = append(parts, fmt.Sprintf("%s: %s", formatCypherMapKey(key), e.valueToLiteral(v)))
-		}
-		return "{" + strings.Join(parts, ", ") + "}"
-
-	case []map[string]interface{}:
-		parts := make([]string, len(val))
-		for i, item := range val {
-			parts[i] = e.valueToLiteral(item)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-
-	case []map[interface{}]interface{}:
-		parts := make([]string, len(val))
-		for i, item := range val {
-			parts[i] = e.valueToLiteral(item)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-
-	default:
-		// Fallback: convert to string
-		return quoteCypherStringLiteral(fmt.Sprintf("%v", v))
-	}
-}
-
-func formatCypherFloatLiteral(value float64, bitSize int) string {
-	literal := strconv.FormatFloat(value, 'g', -1, bitSize)
-	switch literal {
-	case "+Inf":
-		return "toFloat('Infinity')"
-	case "-Inf":
-		return "toFloat('-Infinity')"
-	case "NaN":
-		return "toFloat('NaN')"
-	}
-	if !strings.ContainsAny(literal, ".eE") {
-		literal += ".0"
-	}
-	return literal
 }
 
 // paramRowsKey is the context key of a query's parameters as row values;

@@ -956,7 +956,7 @@ func (e *StorageExecutor) resolveBindingFallbackValueWithOk(ctx context.Context,
 			return value, true
 		}
 	}
-	return e.evaluateExpressionWithContext(ctx, e.substituteParams(expr, params), b, nil), true
+	return e.evaluateExpressionWithContext(withParams(ctx, params), expr, b, nil), true
 }
 
 func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context, b binding, expr string, params map[string]interface{}) bool {
