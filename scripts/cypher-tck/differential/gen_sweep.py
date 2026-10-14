@@ -373,6 +373,42 @@ for sq in SUBQUERY_BOOLS:
         add("subquery-scope", "qpp", f"MATCH (s:Q {{id: 1}}) ((x)-[e:R WHERE {b}]->(y))+ (t) RETURN t.id AS v ORDER BY v")
         add("subquery-scope", "qpp", f"MATCH (s:Q {{id: 1}}) ((x)-[e:R]->(y) WHERE e.w = 2 OR {b})+ (t) RETURN t.id AS v ORDER BY v")
 
+# 12b'. A quantified group's step variables (#1211): inside the group's
+# predicates (an element's inline WHERE, the group's own WHERE) its node and
+# relationship variables are one iteration's node and relationship in every
+# expression form (a subscript's key, map and list indexing, function
+# arguments, comprehensions, CASE, EXISTS / COUNT subqueries, property
+# chains); after the pattern they are the group's lists. Each predicate runs
+# under {1,2}, +, * and SHORTEST 1.
+QPP_STEP_HEAD = "WITH {ab: 1, b: 2, `1`: true, R: 'r'} AS m, [10, 20, 30] AS l MATCH (s:Q {id: 1}) "
+QPP_STEP_RELATIONSHIP = ["m[toString(e.w)] IS NULL", "m[toString(e.w)] = true", "l[e.w] > 10", "l[e.w - 1] IS NOT NULL",
+                         "e['w'] > 0", "properties(e)['w'] >= 1", "{k: e}.k.w = 1", "coalesce(m[toString(e.w)], false)",
+                         "[m[toString(e.w)]][0] IS NULL", "[v IN l WHERE v = e.w * 10] <> []",
+                         "any(k IN keys(e) WHERE l[e[k]] > 10)", "reduce(a = 0, k IN keys(e) | a + e[k]) > 0",
+                         "CASE WHEN l[e.w] > 10 THEN true ELSE false END", "CASE m[type(e)] WHEN 'r' THEN true ELSE false END",
+                         "EXISTS { MATCH (u)-[e]->(v) WHERE l[e.w] > 0 }", "COUNT { MATCH ()-[q]->() WHERE q = e AND l[q.w] > 0 } = 1",
+                         "size([(u)-[e]->(v) | v.id]) = 1"]
+QPP_STEP_NODE = ["m[x.s] IS NULL", "m[coalesce(x.s, 'none')] IS NOT NULL", "x['id'] < 3", "l[x.id - 1] >= 10",
+                 "[k IN keys(x) WHERE x[k] IS NULL] = []", "CASE WHEN m[x.s] = 1 THEN true ELSE x.id > 1 END",
+                 "EXISTS { (x)-[:R]->() }", "COUNT { (x)-->() } >= 1"]
+QPP_STEP_GROUP = ["l[e.w] > l[x.id - 1]", "m[x.s] IS NULL OR m[y.s] = 2", "x[toString(e.w)] IS NULL", "e[y.s] IS NULL"]
+qpp_step_groups = ([f"((x)-[e:R WHERE {b}]->(y))" for b in QPP_STEP_RELATIONSHIP] +
+                   [f"((x WHERE {b})-[e:R]->(y))" for b in QPP_STEP_NODE] +
+                   [f"((x)-[e:R]->(y) WHERE {b})" for b in QPP_STEP_RELATIONSHIP + QPP_STEP_NODE + QPP_STEP_GROUP])
+for group in qpp_step_groups:
+    for selector, quantifier in [("", "{1,2}"), ("", "+"), ("", "*"), ("SHORTEST 1 ", "+")]:
+        pattern = f"MATCH p = {selector}(s){group}{quantifier}(t)"
+        add("qpp-step-variables", "count", QPP_STEP_HEAD + pattern + " RETURN count(p) AS c")
+        add("qpp-step-variables", "rows", QPP_STEP_HEAD + pattern + " RETURN t.id AS v, length(p) AS n ORDER BY v, n")
+# After the pattern: the group's lists, read whole or through a comprehension,
+# and a singleton's use of a list, which Neo4j rejects.
+for after in ["RETURN [k IN e | l[k.w]] AS v ORDER BY size(v)", "RETURN [k IN x | m[k.s]] AS v ORDER BY size(v)",
+              "WHERE all(k IN e WHERE l[k.w] > 10) RETURN count(p) AS c", "WITH e, l RETURN size(e) AS v ORDER BY v",
+              "RETURN l[e.w] AS v", "RETURN m[x.s] AS v", "WHERE l[e.w] > 10 RETURN count(p) AS c", "RETURN e.w AS v"]:
+    add("qpp-step-variables", "after", QPP_STEP_HEAD + "MATCH p = (s)((x)-[e:R WHERE l[e.w] > 10]->(y))+(t) " + after)
+for b in ["10 IN e", "e[0] IS NULL", "x[0] IS NULL", "m[e] IS NULL", "size(e) = 1", "e + 1 = 2"]:
+    add("qpp-step-variables", "singleton", QPP_STEP_HEAD + f"MATCH p = (s)((x)-[e:R]->(y) WHERE {b})+(t) RETURN count(p) AS c")
+
 # 12c. Subquery bodies that start from the row's own variables (#1055): the
 # bound node, relationship and path fast paths against the pipeline. Bodies
 # read a bound relationship, a row value in a property map or WHERE, a path,
