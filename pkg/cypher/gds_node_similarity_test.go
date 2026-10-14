@@ -217,7 +217,14 @@ func TestNodeSimilarityZeroCutoffAndComponents(t *testing.T) {
 	}
 	require.Equal(t, map[string]float64{"d1-d2": 1, "d2-d1": 1}, byName(""))
 	require.Equal(t, map[string]float64{"d1-d2": 1, "d1-d3": 0, "d2-d1": 1, "d2-d3": 0, "d3-d1": 0, "d3-d2": 0}, byName("similarityCutoff: 0.0"))
-	require.Equal(t, map[string]float64{"d1-d3": 0, "d2-d3": 0, "d3-d1": 0}, byName("similarityCutoff: 0.0, bottomK: 1"))
+	// d3's least similar is d1 or d2 (a tie at 0, broken by node id).
+	bottom := byName("similarityCutoff: 0.0, bottomK: 1")
+	require.Len(t, bottom, 3)
+	require.Equal(t, 0.0, bottom["d1-d3"])
+	require.Equal(t, 0.0, bottom["d2-d3"])
+	_, d3d1 := bottom["d3-d1"]
+	_, d3d2 := bottom["d3-d2"]
+	require.True(t, d3d1 != d3d2, "one of d3's ties")
 	require.Equal(t, map[string]float64{"d1-d2": 1, "d2-d1": 1}, byName("useComponents: 'comp', similarityCutoff: 0.0"))
 	require.Equal(t, map[string]float64{"d1-d2": 1, "d2-d1": 1}, byName("useComponents: true, similarityCutoff: 0.0"))
 	// Nodes without the property (the items here) are components of their
