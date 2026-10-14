@@ -1096,6 +1096,7 @@ func gdsConfigIntegerValue(value interface{}, coerce bool) (int64, bool) {
 	}
 	return 0, false
 }
+
 // gdsScalarNumber supplies numeric configuration values through the projected
 // value converter. Configuration readers keep their own type-error messages.
 func gdsScalarNumber(value interface{}) (float64, bool) {
@@ -1105,6 +1106,7 @@ func gdsScalarNumber(value interface{}) (float64, bool) {
 	}
 	return 0, false
 }
+
 // integer is key's INTEGER value, at least min: fallback when absent, or an
 // error when mandatory.
 func (c *gdsConfig) integer(key, expected string, min, max, fallback int64, mandatory bool) (int64, error) {
