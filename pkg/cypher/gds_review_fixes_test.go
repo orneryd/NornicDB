@@ -264,3 +264,39 @@ func TestGraphProjectValidateRelationshipsAsGDS(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), result.Rows[0][0])
 }
+
+// TestGraphProjectIntegerKindsAndAliases: integer properties of every Go
+// integer type keep their value, and two labels projecting one stored
+// property under different keys are separate properties with their own
+// types.
+func TestGraphProjectIntegerKindsAndAliases(t *testing.T) {
+	graphProjections = make(map[string]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	values := []interface{}{int8(-8), int16(16), int32(32), uint(1), uint8(8), uint16(160), uint32(320), uint64(640)}
+	nodes := make([]*storage.Node, len(values))
+	for i, value := range values {
+		nodes[i] = gdsNode("n"+string(rune('a'+i)), "I", map[string]interface{}{"v": value, "l": []interface{}{value, int64(1)}})
+	}
+	_, run := newGDSEngineGraph(t, "ints", nodes...)
+	_, err := run("CALL gds.graph.project('ints', {I: {properties: ['v', 'l']}}, '*')")
+	require.NoError(t, err)
+	result, err := run("MATCH (n:I) RETURN id(n) AS id, gds.util.nodeProperty('ints', n, 'v'), gds.util.nodeProperty('ints', n, 'l') ORDER BY id")
+	require.NoError(t, err)
+	want := []float64{-8, 16, 32, 1, 8, 160, 320, 640}
+	for i, row := range result.Rows {
+		require.Equal(t, want[i], row[1], "value %d", i)
+		require.Equal(t, []interface{}{int64(want[i]), int64(1)}, row[2], "list %d", i)
+	}
+
+	// A.foo and B.bar both read x: a scalar on A, a list on B.
+	_, run = newGDSEngineGraph(t, "alias",
+		gdsNode("a", "A", map[string]interface{}{"x": int64(1)}),
+		gdsNode("b", "B", map[string]interface{}{"x": []interface{}{int64(1), int64(2)}}))
+	_, err = run("CALL gds.graph.project('alias', {A: {properties: {foo: {property: 'x'}}}, B: {properties: {bar: {property: 'x'}}}}, '*')")
+	require.NoError(t, err)
+	result, err = run("CALL gds.graph.list('alias') YIELD schemaWithOrientation RETURN schemaWithOrientation")
+	require.NoError(t, err)
+	nodesSchema := result.Rows[0][0].(map[string]interface{})["nodes"].(map[string]interface{})
+	require.Equal(t, map[string]interface{}{"foo": "Integer (DefaultValue(-9223372036854775808), PERSISTENT)"}, nodesSchema["A"])
+	require.Equal(t, map[string]interface{}{"bar": "List of Integer (DefaultValue(null), PERSISTENT)"}, nodesSchema["B"])
+}
