@@ -2422,12 +2422,12 @@ func (e *StorageExecutor) materializePipelinePredicateExpressions(expression str
 		return expression
 	}
 	materialized := expression
-	local := localOccurrences(expression)
+	local := localOccurrences{text: expression}
 	replaceProperties := func(name string, properties map[string]interface{}) {
 		for property, propertyValue := range properties {
 			reference := name + "." + property
 			if strings.Contains(materialized, reference) {
-				materialized = replaceQualifiedReferenceOutsideQuotesUnless(materialized, reference, e.valueToLiteral(propertyValue), local(name))
+				materialized = replaceQualifiedReferenceOutsideQuotesUnless(materialized, reference, e.valueToLiteral(propertyValue), local.keep(name))
 			}
 		}
 	}
@@ -2452,7 +2452,7 @@ func (e *StorageExecutor) materializePipelinePredicateExpressions(expression str
 			continue
 		}
 		if referencesVariable(materialized, name) {
-			materialized = replaceIdentifierOutsideQuotesUnless(materialized, name, e.valueToLiteral(value), local(name))
+			materialized = replaceIdentifierOutsideQuotesUnless(materialized, name, e.valueToLiteral(value), local.keep(name))
 		}
 	}
 	return materialized
@@ -4830,9 +4830,9 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 	}
 
 	materialized := expr
-	local := localOccurrences(expr)
+	local := localOccurrences{text: expr}
 	for name, value := range row {
-		materialized = replaceIdentifierOutsideQuotesUnless(materialized, name, e.valueToLiteral(value), local(name))
+		materialized = replaceIdentifierOutsideQuotesUnless(materialized, name, e.valueToLiteral(value), local.keep(name))
 	}
 	value := e.evaluateExpressionWithContext(ctx, materialized, nil, nil)
 	if text, unresolved := value.(string); unresolved && text == materialized && !isWholeCypherQuotedString(materialized) {

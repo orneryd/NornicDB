@@ -319,31 +319,47 @@ func bindingFunctionBeforeParen(text string, open int) string {
 	}
 }
 
+// localBindingNames caches the names a text binds itself
+// (expressionLocalBindings), by text, for localOccurrences.
+var localBindingNames = newBoundedCache[string, map[string]struct{}](1024, boundedCacheStringShardIndex)
+
 // localOccurrences reads, for writing a row's values into text, which
 // occurrences of a name read a variable an enclosing expression binds itself
-// (localVariableShadowsAt) and keep their text: for name, the keep test of
-// replaceIdentifierOutsideQuotesUnless, or nil when text binds no such name.
-// The names text binds (expressionLocalBindings) are read once, when first
-// asked.
-func localOccurrences(text string) func(name string) func(input string, at int) bool {
-	var locals map[string]struct{}
-	return func(name string) func(string, int) bool {
-		if locals == nil {
-			// Every binding form declares with IN: without the keyword,
-			// text binds nothing (the common row predicate).
-			opts := defaultKeywordScanOpts()
-			opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
-			if keywordIndexFrom(text, "IN", 0, opts) < 0 {
-				locals = map[string]struct{}{}
-			} else {
-				locals = expressionLocalBindings(text)
+// (localVariableShadowsAt) and keep their text. It is a value the caller
+// keeps on its stack: the names text binds are read once per text
+// (localBindingNames), when first asked, and a text without the IN keyword
+// (every binding form declares with it) binds nothing, so the common row
+// predicate costs one scan and no allocation.
+type localOccurrences struct {
+	// text is read, never changed: the names it binds are cached by text
+	// (localBindingNames), shared and never written to.
+	text   string
+	read   bool
+	locals map[string]struct{}
+}
+
+// keep is, for name, the keep test of replaceIdentifierOutsideQuotesUnless,
+// or nil when text binds no local of that name.
+func (occurrences *localOccurrences) keep(name string) func(input string, at int) bool {
+	if !occurrences.read {
+		occurrences.read = true
+		opts := defaultKeywordScanOpts()
+		opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
+		if keywordIndexFrom(occurrences.text, "IN", 0, opts) >= 0 {
+			// A clause's text is the same for every row: its names are
+			// read once (x.id IN [1, 2] binds none, and costs no more).
+			locals, cached := localBindingNames.get(occurrences.text)
+			if !cached {
+				locals = expressionLocalBindings(occurrences.text)
+				localBindingNames.put(occurrences.text, locals)
 			}
+			occurrences.locals = locals
 		}
-		if _, bound := locals[name]; !bound {
-			return nil
-		}
-		return func(input string, at int) bool { return localVariableShadowsAt(input, at, name) }
 	}
+	if _, bound := occurrences.locals[name]; !bound {
+		return nil
+	}
+	return func(input string, at int) bool { return localVariableShadowsAt(input, at, name) }
 }
 
 // withoutLocalVariables is scope without the variables an enclosing

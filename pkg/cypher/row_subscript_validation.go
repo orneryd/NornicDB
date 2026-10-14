@@ -155,6 +155,9 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 // expression starts, reading brackets outside string literals and quoted
 // names; -1 when expression doesn't end with a balanced group.
 func closingBracketGroupStart(expression string) int {
+	if !strings.HasSuffix(expression, "]") {
+		return -1 // no scan for the common expression that ends otherwise
+	}
 	var opens []int
 	for index := 0; index < len(expression); {
 		switch c := expression[index]; c {
