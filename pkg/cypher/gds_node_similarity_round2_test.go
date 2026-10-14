@@ -261,3 +261,42 @@ func TestGDSInfiniteNumberMessages(t *testing.T) {
 		require.Equal(t, want, gdsDefaultText(&value, ""))
 	}
 }
+
+// These GDS 2.13.12 fixtures produce positive infinity in each metric,
+// while all-zero and infinite-weight undefined scores remain suppressed.
+func TestNodeSimilarityGDSInfiniteScores(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		edges  []reviewEdge
+		scores map[string]float64
+	}{
+		{"jaccard", []reviewEdge{
+			{"0", "2", "R", map[string]interface{}{"w": 1.0}},
+			{"0", "3", "R", map[string]interface{}{"w": -0.5}},
+			{"1", "2", "R", map[string]interface{}{"w": 1.0}},
+			{"1", "4", "R", map[string]interface{}{"w": -0.5}},
+		}, map[string]float64{"JACCARD": math.Inf(1), "OVERLAP": 2, "COSINE": 0.8}},
+		{"cosine", []reviewEdge{
+			{"0", "2", "R", map[string]interface{}{"w": 1e-200}},
+			{"1", "2", "R", map[string]interface{}{"w": 1e-100}},
+		}, map[string]float64{"OVERLAP": 1, "COSINE": math.Inf(1)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := reviewGraph(t, make([]map[string]interface{}, 5), tc.edges, "'N'", "{R:{properties:'w'}}")
+			for metric, want := range tc.scores {
+				rows := reviewRows(t, e, "relationshipWeightProperty:'w',similarityMetric:'"+metric+"'")
+				require.Len(t, rows, 2)
+				for _, row := range rows {
+					if math.IsInf(want, 1) {
+						require.True(t, math.IsInf(row[2].(float64), 1))
+					} else {
+						require.InDelta(t, want, row[2], 1e-12)
+					}
+				}
+			}
+			if tc.name == "cosine" {
+				require.Empty(t, reviewRows(t, e, "relationshipWeightProperty:'w',similarityMetric:'JACCARD'"))
+			}
+		})
+	}
+}
