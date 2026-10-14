@@ -167,7 +167,7 @@ func TestNodeSimilarityRefusesAsGDS(t *testing.T) {
 		"sourceNodeFilter: true":               "Invalid scalar type. Expected Long or Node but found: Boolean",
 		"sourceNodeFilter: 'Nope'":             "The label `Nope` does not exist in the graph",
 		"targetNodeFilter: [true]":             "Invalid types in list. Expected Longs or Nodes but found [Boolean]",
-		"targetNodeFilter: [1, 'x', 2.5, 'y']": "Invalid types in list. Expected Longs or Nodes but found [String, Double]",
+		"targetNodeFilter: [1, 'x', 2.5, 'y']": "Invalid types in list. Expected Longs or Nodes but found [String, Double, String]",
 	} {
 		_, err := newNodeSimilarityExec(t).Execute(context.Background(), "CALL gds.nodeSimilarity.filtered.stream('ns', {"+config+"})", nil)
 		require.ErrorContains(t, err, message, config)
