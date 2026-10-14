@@ -309,7 +309,7 @@ type gdsSubgraph struct {
 	index    map[string]int
 	outgoing [][]gdsEdge
 
-	outgoingTypes [][]string // requested only by algorithms that read type graphs in turn
+	outgoingTypes [][]int // constituent graph ranks, requested only when an algorithm reads type graphs in turn
 }
 
 // gdsSubgraphOptions preserves explicit weight-property selection and requests
@@ -369,7 +369,7 @@ func selectGDSSubgraph(proj *GraphProjection, nodeLabels, relationshipTypes []st
 		graph.outgoing = make([][]gdsEdge, len(graph.nodes))
 	}
 	if selection.includeTypes {
-		graph.outgoingTypes = make([][]string, len(graph.nodes))
+		graph.outgoingTypes = make([][]int, len(graph.nodes))
 	}
 	// A nodes-only consumer need not traverse relationships.
 	if selection.omitAdjacency && selection.visitRelationship == nil {
@@ -405,7 +405,7 @@ func selectGDSSubgraph(proj *GraphProjection, nodeLabels, relationshipTypes []st
 		}
 		graph.outgoing[source] = append(graph.outgoing[source], gdsEdge{target: target, weight: weight})
 		if selection.includeTypes {
-			graph.outgoingTypes[source] = append(graph.outgoingTypes[source], relationship.Type)
+			graph.outgoingTypes[source] = append(graph.outgoingTypes[source], proj.relationshipTypeIndex[relationship.Type])
 		}
 	}
 	return graph, nil

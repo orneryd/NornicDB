@@ -474,11 +474,14 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsVersion()
 			})
-		registerBuiltInProcedure("gds.nodeSimilarity.stream", "gds.nodeSimilarity.stream(graphName :: STRING, configuration = {} :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, similarity :: FLOAT, shared :: LIST<MAP>)", localization.CypherProcedureMetadata("gds.nodeSimilarity.stream"), ProcedureModeRead, 1, 2, false,
+		// NornicDB's stored node IDs are strings, including nonnumeric IDs.
+		// Declare that extension consistently for both procedures.
+		const nodeSimilaritySignature = "(graphName :: STRING, configuration = {} :: MAP) :: (node1 :: STRING, node2 :: STRING, similarity :: FLOAT, shared :: LIST<MAP>)"
+		registerBuiltInProcedure("gds.nodeSimilarity.stream", "gds.nodeSimilarity.stream"+nodeSimilaritySignature, localization.CypherProcedureMetadata("gds.nodeSimilarity.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsNodeSimilarityStream(args, false)
 			})
-		registerBuiltInProcedure("gds.nodeSimilarity.filtered.stream", "gds.nodeSimilarity.filtered.stream(graphName :: STRING, configuration = {} :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, similarity :: FLOAT, shared :: LIST<MAP>)", localization.CypherProcedureMetadata("gds.nodeSimilarity.filtered.stream"), ProcedureModeRead, 1, 2, false,
+		registerBuiltInProcedure("gds.nodeSimilarity.filtered.stream", "gds.nodeSimilarity.filtered.stream"+nodeSimilaritySignature, localization.CypherProcedureMetadata("gds.nodeSimilarity.filtered.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsNodeSimilarityStream(args, true)
 			})
@@ -496,7 +499,7 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("gds.graph.project", "gds.graph.project(graphName :: STRING, nodeProjection :: ANY, relationshipProjection :: ANY, configuration = {} :: MAP) :: (nodeProjection :: MAP, relationshipProjection :: MAP, graphName :: STRING, nodeCount :: INTEGER, relationshipCount :: INTEGER, projectMillis :: INTEGER)", localization.CypherProcedureMetadata("gds.graph.project"), ProcedureModeWrite, 3, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsGraphProject(args)
+				return e.callGdsGraphProject(args, ctx)
 			})
 		registerBuiltInProcedure("gds.fastRP.stream", "gds.fastRP.stream(graphName :: STRING, configuration = {} :: MAP) :: (nodeId :: INTEGER, embedding :: LIST<FLOAT>)", localization.CypherProcedureMetadata("gds.fastRP.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
