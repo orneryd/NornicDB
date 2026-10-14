@@ -156,7 +156,7 @@ func BenchmarkTopLevelOperatorPipelineScan(b *testing.B) {
 
 func freshExecutorForOperators(t *testing.T) *StorageExecutor {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "operators-test")
 	return NewStorageExecutor(ns)
 }

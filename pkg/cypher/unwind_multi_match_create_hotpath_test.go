@@ -101,7 +101,7 @@ CREATE (s)-[:SUPPLIES]->(p)`
 }
 
 func TestUnwindMultiMatchCreate_ElementIDEndpointsHitsBatchPath(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := testutil.SetupTestExecutorWithStore(t, store)
 	ctx := context.Background()
 
@@ -131,7 +131,7 @@ RETURN count(source) AS created`
 }
 
 func TestNorthwindSeeder_ProductsIncompleteIndexedMatchBucketKeepsFastPath(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := testutil.SetupTestExecutorWithStore(t, store)
 	seedCategoriesAndSuppliers(t, exec, 4, 4)
