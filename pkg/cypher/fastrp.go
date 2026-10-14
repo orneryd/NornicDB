@@ -300,48 +300,51 @@ type fastRPEmbedding struct {
 	vector []float64
 }
 
-// fastRPGraph is the part of a projection a FastRP call reads: the nodes of
-// its nodeLabels and, between them, the relationships of its
-// relationshipTypes, each node's relationships with their weights.
-type fastRPGraph struct {
+// gdsSubgraph is the part of a projection a GDS algorithm reads (FastRP,
+// node similarity): the nodes of its nodeLabels and, between them, the
+// relationships of its relationshipTypes, each node's relationships as
+// projected with their weights.
+type gdsSubgraph struct {
 	nodes    []string
 	index    map[string]int
-	outgoing [][]fastRPEdge
+	outgoing [][]gdsEdge
 }
 
-type fastRPEdge struct {
+type gdsEdge struct {
 	target int
 	weight float64
 }
 
-// fastRPSubgraph selects config's nodes and relationships from proj, with
-// GDS's errors for labels, types and weights the graph doesn't hold.
-func fastRPSubgraph(proj *GraphProjection, config FastRPConfig) (*fastRPGraph, error) {
-	if missing := missingNames(config.NodeLabels, proj.Labels); len(missing) > 0 {
+// selectGDSSubgraph selects the nodes of nodeLabels (nil: every one) and
+// the relationships of relationshipTypes (nil: every one) from proj, each
+// weighted by weightProperty (1 without), with GDS's errors for labels,
+// types and weights the graph doesn't hold.
+func selectGDSSubgraph(proj *GraphProjection, nodeLabels, relationshipTypes []string, weightProperty string) (*gdsSubgraph, error) {
+	if missing := missingNames(nodeLabels, proj.Labels); len(missing) > 0 {
 		return nil, localizedError(localization.CypherGraphProceduresNodeLabelsNotInGraph(gdsNameList(missing), gdsNameList(proj.Labels)), nil)
 	}
-	if missing := missingNames(config.RelationshipTypes, proj.Types); len(missing) > 0 {
+	if missing := missingNames(relationshipTypes, proj.Types); len(missing) > 0 {
 		return nil, localizedError(localization.CypherGraphProceduresRelationshipTypesNotInGraph(gdsNameList(missing), gdsNameList(proj.Types)), nil)
 	}
-	types := config.RelationshipTypes
+	types := relationshipTypes
 	if types == nil {
 		types = proj.Types
 	}
-	if property := config.RelationshipWeightProperty; property != "" {
+	if property := weightProperty; property != "" {
 		available := commonKeys(proj.RelationshipPropertyKeys, types)
 		if !containsString(available, property) {
 			return nil, localizedError(localization.CypherGraphProceduresWeightPropertyNotFound(property, gdsNameList(types), gdsNameList(available)), nil)
 		}
 	}
-	graph := &fastRPGraph{index: make(map[string]int)}
+	graph := &gdsSubgraph{index: make(map[string]int)}
 	for _, id := range proj.NodeIDs {
-		if config.NodeLabels != nil && !anyString(proj.NodeLabels[id], config.NodeLabels) {
+		if nodeLabels != nil && !anyString(proj.NodeLabels[id], nodeLabels) {
 			continue
 		}
 		graph.index[id] = len(graph.nodes)
 		graph.nodes = append(graph.nodes, id)
 	}
-	graph.outgoing = make([][]fastRPEdge, len(graph.nodes))
+	graph.outgoing = make([][]gdsEdge, len(graph.nodes))
 	for _, relationship := range proj.Relationships {
 		if !containsString(types, relationship.Type) {
 			continue
@@ -355,14 +358,14 @@ func fastRPSubgraph(proj *GraphProjection, config FastRPConfig) (*fastRPGraph, e
 			continue
 		}
 		weight := 1.0
-		if property := config.RelationshipWeightProperty; property != "" {
+		if property := weightProperty; property != "" {
 			value, ok := relationship.Properties[property]
 			if !ok {
 				return nil, localizedError(localization.CypherGraphProceduresRelationshipPropertyMissing(property, strconv.Itoa(source), strconv.Itoa(target)), nil)
 			}
 			weight = value
 		}
-		graph.outgoing[source] = append(graph.outgoing[source], fastRPEdge{target: target, weight: weight})
+		graph.outgoing[source] = append(graph.outgoing[source], gdsEdge{target: target, weight: weight})
 	}
 	return graph, nil
 }
@@ -378,7 +381,7 @@ func fastRPSubgraph(proj *GraphProjection, config FastRPConfig) (*fastRPGraph, e
 // iterationWeights entry, plus nodeSelfInfluence times the start. A node
 // nothing propagates to gets a zero vector, as in GDS.
 func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fastRPEmbedding, error) {
-	graph, err := fastRPSubgraph(proj, config)
+	graph, err := selectGDSSubgraph(proj, config.NodeLabels, config.RelationshipTypes, config.RelationshipWeightProperty)
 	if err != nil {
 		return nil, err
 	}

@@ -91,3 +91,18 @@
 - id: cyphergraphprocedures.job_id_type
   description: Expanded pseudo-locale job id type.
   other: '[!! Expected JobId or String. Got {{.Type}}. !!]'
+- id: cyphergraphprocedures.upper_degree_below_degree
+  description: Expanded pseudo-locale upper degree below degree.
+  other: '[!! The value of upperDegreeCutoff cannot be smaller than degreeCutoff !!]'
+- id: cyphergraphprocedures.invalid_parameter_combination
+  description: Expanded pseudo-locale invalid parameter combination.
+  other: '[!! Invalid parameter combination: {{.First}} combined with {{.Second}} !!]'
+- id: cyphergraphprocedures.invalid_similarity_metric
+  description: Expanded pseudo-locale invalid similarity metric.
+  other: '[!! {{.Metric}} is not a valid metric. Available metrics include Jaccard and Overlap !!]'
+- id: cyphergraphprocedures.invalid_scalar_type
+  description: Expanded pseudo-locale invalid scalar type.
+  other: '[!! Invalid scalar type. Expected Long or Node but found: {{.Type}} !!]'
+- id: cyphergraphprocedures.label_not_in_graph
+  description: Expanded pseudo-locale label not in graph.
+  other: '[!! The label `{{.Label}}` does not exist in the graph !!]'
