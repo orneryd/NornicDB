@@ -56,7 +56,7 @@ func (e *StorageExecutor) substituteBoundVariablesInCall(callPart string, nodeCo
 	matches := callPropertyAccessPattern.FindAllStringSubmatchIndex(callPart, -1)
 	// A reference a local variable of the same name reads
 	// ([n IN list | n.x]) is the local's (localOccurrences).
-	local := localOccurrences(callPart)
+	local := localOccurrences{text: callPart}
 
 	// Process matches in reverse order to maintain indices
 	for i := len(matches) - 1; i >= 0; i-- {
@@ -74,7 +74,7 @@ func (e *StorageExecutor) substituteBoundVariablesInCall(callPart string, nodeCo
 			// Inside a quoted string - skip
 			continue
 		}
-		if keep := local(varName); keep != nil && keep(callPart, startIdx) {
+		if keep := local.keep(varName); keep != nil && keep(callPart, startIdx) {
 			continue
 		}
 
