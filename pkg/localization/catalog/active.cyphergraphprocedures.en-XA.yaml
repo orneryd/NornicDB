@@ -118,3 +118,21 @@
 - id: cyphergraphprocedures.unsupported_gds_value
   description: Expanded pseudo-locale unsupported gds value.
   other: '[!! Unsupported conversion to GDS Value from Neo4j Value with type `{{.Type}}`. !!]'
+- id: cyphergraphprocedures.relationship_end_not_projected
+  description: Expanded pseudo-locale relationship end not projected.
+  other: '[!! Failed to load a relationship because its {{.Side}}-node with id {{.Node}} is not part of the node query or projection. To ignore the relationship, set the configuration parameter `validateRelationships` to false. !!]'
+- id: cyphergraphprocedures.unsupported_array_type
+  description: Expanded pseudo-locale unsupported array type.
+  other: '[!! Loading of values of type {{.Type}} is currently not supported !!]'
+- id: cyphergraphprocedures.unsafe_conversion
+  description: Expanded pseudo-locale unsafe conversion.
+  other: '[!! Cannot safely convert {{.Value}} into {{.Target}}. !!]'
+- id: cyphergraphprocedures.array_lengths_differ
+  description: Expanded pseudo-locale array lengths differ.
+  other: '[!! The property `{{.Property}}` contains arrays of differing lengths `{{.Found}}` and `{{.First}}`. !!]'
+- id: cyphergraphprocedures.unsafe_long_conversion
+  description: Expanded pseudo-locale unsafe long conversion.
+  other: '[!! Cannot safely convert {{.Value}} into an long value !!]'
+- id: cyphergraphprocedures.unsafe_long_array_conversion
+  description: Expanded pseudo-locale unsafe long array conversion.
+  other: '[!! Cannot safely convert {{.Value}} into a Long Array. Cannot safely convert {{.Fraction}} into an long value !!]'

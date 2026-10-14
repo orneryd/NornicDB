@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -23,7 +24,7 @@ func TestCypherGraphProcedureErrorsHaveTypedIdentityAndExactEnglish(t *testing.T
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 
 	t.Run("graph does not exist", func(t *testing.T) {
-		_, err := exec.callGdsGraphDrop([]interface{}{"missing"})
+		_, err := exec.callGdsGraphDrop(context.Background(), []interface{}{"missing"})
 		localizedErr := requireCypherGraphProceduresLocalizedError(t, err, localization.MessageCypherGraphProceduresGraphNotFound, "Graph with name `missing` does not exist on database `"+exec.databaseName()+"`. It might exist on another database.")
 		require.Equal(t, "missing", localizedErr.Message.Data["Graph"])
 	})
