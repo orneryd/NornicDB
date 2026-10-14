@@ -463,6 +463,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.yield_pagination_invalid", Constructor: "CypherCoreYieldPaginationInvalid", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.yield_where_misplaced", Constructor: "CypherCoreYieldWhereMisplaced", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.build_graph_failed", Constructor: "CypherGraphProceduresBuildGraphFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
+	{ID: "cyphergraphprocedures.component_property_not_found", Constructor: "CypherGraphProceduresComponentPropertyNotFound", Fields: []string{"Available", "Property"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.config_unexpected_key", Constructor: "CypherGraphProceduresConfigUnexpectedKey", Fields: []string{"Key"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.config_value_missing", Constructor: "CypherGraphProceduresConfigValueMissing", Fields: []string{"Key"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.config_value_negative", Constructor: "CypherGraphProceduresConfigValueNegative", Fields: []string{"Key"}, PluralForms: []string{"other"}},
