@@ -97,11 +97,11 @@ func fnGDSNodeProperty(ctx cypherfn.Context, args []string) (interface{}, error)
 	if !projected {
 		return nil, localizedError(localization.CypherGraphProceduresNodePropertyNotInGraph(key), nil)
 	}
-	id, ok := linkPredictionNodeID(values[1])
+	id, ok := gdsNodeID(values[1])
 	if !ok {
 		return nil, fmt.Errorf("%s expects a node or node id as argument 2, got %s", name, cypherTypeSystemName(values[1]))
 	}
-	if _, inGraph := projection.nodeIndex[string(id)]; !inGraph {
+	if _, inGraph := projection.nodeIndex[string(id)]; !inGraph || !projection.matchesNodeLabels(string(id), []string{label}) {
 		return nil, nil
 	}
 	// GDS's utility reads scalars as Double and arrays in their projected
@@ -398,8 +398,12 @@ func gdsNodeByID(store storage.Engine, value interface{}) interface{} {
 	if store == nil || value == nil {
 		return nil
 	}
-	id := fmt.Sprint(value)
-	if node, err := store.GetNode(storage.NodeID(id)); err == nil && node != nil {
+	id, ok := gdsNodeID(value)
+	if !ok {
+		// Preserve asNode's extension: other values may name string IDs.
+		id = storage.NodeID(fmt.Sprint(value))
+	}
+	if node, err := store.GetNode(id); err == nil && node != nil {
 		return node
 	}
 	return nil

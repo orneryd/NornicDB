@@ -123,7 +123,7 @@ func TestGDSProjectionFollowUpEmptySelections(t *testing.T) {
 			require.Equal(t, baseline.Rows, result.Rows)
 			proj, err := lookupGraphProjection(storageDatabaseName(exec.storage), "selection")
 			require.NoError(t, err)
-			graph, err := fastRPSubgraph(proj, FastRPConfig{NodeLabels: []string{}, RelationshipTypes: []string{}})
+			graph, err := selectGDSSubgraph(proj, []string{}, []string{}, "")
 			require.NoError(t, err)
 			require.Len(t, graph.nodes, 2)
 			require.Len(t, graph.outgoing[graph.index["a"]], 1)
@@ -183,7 +183,7 @@ func TestGDSProjectionFollowUpMissingWeightSelection(t *testing.T) {
 	// Also retain a missing map entry: shared selection cannot validate weights
 	// on behalf of every algorithm that reuses its topology reader.
 	delete(proj.Relationships[0].Properties, "w")
-	graph, err := fastRPSubgraph(proj, FastRPConfig{RelationshipWeightProperty: "w"})
+	graph, err := selectGDSSubgraph(proj, nil, nil, "w")
 	require.NoError(t, err)
 	require.True(t, math.IsNaN(graph.outgoing[0][0].weight))
 	_, err = run("CALL gds.fastRP.stream('missingWeights',{embeddingDimension:16,iterationWeights:[],nodeSelfInfluence:1.0,relationshipWeightProperty:'w'})")
