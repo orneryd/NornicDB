@@ -462,7 +462,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 
 	labelsSeen := make(map[string]bool)
 	nodePropertySeen := make(map[string]bool)
-	nodePropertyType := make(map[string]string) // each stored property's GDS type, from its values
+	nodePropertyType := make(map[string]string) // each projected label's property key's GDS type, from its values
 	err := storage.StreamNodesWithFallback(ctx, e.storage, streamChunkSize, func(node *storage.Node) error {
 		for _, label := range node.Labels {
 			labelsSeen[label] = true
@@ -480,11 +480,12 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 				}
 				if ok {
 					nodePropertySeen[property.property] = true
-					merged, err := gdsMergePropertyType(nodePropertyType[property.property], kind, exact, true)
+					typeKey := gdsPropertyTypeKey(spec.name, property.key)
+					merged, err := gdsMergePropertyType(nodePropertyType[typeKey], kind, exact, true)
 					if err != nil {
 						return err
 					}
-					nodePropertyType[property.property] = merged
+					nodePropertyType[typeKey] = merged
 				} else if property.defaultValue != nil {
 					exact, kind, ok = *property.defaultValue, "Float", true
 				}
@@ -548,9 +549,20 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	// relationship's SINGLE value, and anything else that keeps the first
 	// one, doesn't depend on the order storage streams them in. (NornicDB's
 	// ids don't follow creation order, so "first" is the smallest id.)
+	// Only projected relationships are kept for that (and, to refuse them
+	// with validateRelationships, those with an end outside the projection),
+	// so memory follows the projection, not the store.
 	var edges []*storage.Edge
 	err = storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(edge *storage.Edge) error {
-		edges = append(edges, edge)
+		typesSeen[edge.Type] = true
+		if !gdsTypeProjected(relSpecs, edge.Type) {
+			return nil
+		}
+		_, hasStart := projection.nodeIndex[string(edge.StartNode)]
+		_, hasEnd := projection.nodeIndex[string(edge.EndNode)]
+		if hasStart && hasEnd || validateRelationships {
+			edges = append(edges, edge)
+		}
 		return nil
 	})
 	if err != nil {
@@ -683,10 +695,12 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	}
 	projection.NodeCount = len(projection.NodeIDs)
 	projection.RelationshipCount = len(projection.Relationships)
+	schemaTypes := make(map[string]string)
 	for _, spec := range nodeSpecs {
 		for _, property := range spec.properties {
 			// A non-integer default makes an Integer property a Float.
-			kind := nodePropertyType[property.property]
+			typeKey := gdsPropertyTypeKey(spec.name, property.key)
+			kind := nodePropertyType[typeKey]
 			fractionalDefault := property.defaultValue != nil && *property.defaultValue != math.Trunc(*property.defaultValue)
 			switch {
 			case (kind == "" || kind == "Integer") && fractionalDefault:
@@ -694,10 +708,13 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 			case kind == "":
 				kind = "Integer"
 			}
-			projection.NodePropertyTypes[property.key] = kind
+			schemaTypes[typeKey] = kind
+			if _, typed := projection.NodePropertyTypes[property.key]; !typed {
+				projection.NodePropertyTypes[property.key] = kind
+			}
 		}
 	}
-	projection.schema = gdsGraphSchema(nodeSpecs, relSpecs, projection.NodePropertyTypes)
+	projection.schema = gdsGraphSchema(nodeSpecs, relSpecs, schemaTypes)
 	return projection, nil
 }
 
@@ -726,8 +743,9 @@ func mergeParallelProperties(kept, properties map[string]float64, specs []gdsPro
 // gdsGraphSchema is the graph's schema as gds.graph.list reports it: each
 // label's and type's properties with their type and default, and each
 // type's direction. A node property is an Integer when every stored value
-// is one, a list a List of Integer or of Float; a relationship property is a
-// Float, as GDS stores them.
+// is one, a list a List of Integer or of Float (nodePropertyTypes is keyed
+// by gdsPropertyTypeKey); a relationship property is a Float, as GDS stores
+// them.
 func gdsGraphSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[string]string) map[string]interface{} {
 	nodes := make(map[string]interface{})
 	for _, spec := range nodeSpecs {
@@ -736,7 +754,7 @@ func gdsGraphSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[
 			properties = make(map[string]interface{})
 		}
 		for _, property := range spec.properties {
-			kind := nodePropertyTypes[property.key]
+			kind := nodePropertyTypes[gdsPropertyTypeKey(spec.name, property.key)]
 			fractionalDefault := property.defaultValue != nil && *property.defaultValue != math.Trunc(*property.defaultValue)
 			switch {
 			case kind == "List of Integer" || kind == "List of Float":
@@ -1190,10 +1208,10 @@ func gdsNodeValue(value interface{}) (exact interface{}, kind string, ok bool, e
 	if _, isText := value.(string); isText || value == nil {
 		return nil, "", false, nil
 	}
+	if isIntegerProcedureValue(value) {
+		return gdsInteger(value), "Integer", true, nil
+	}
 	if number, isNumber := toFloat64(value); isNumber {
-		if isIntegerProcedureValue(value) {
-			return toInt64(value), "Integer", true, nil
-		}
 		return number, "Float", true, nil
 	}
 	items, isList := cypherListValue(value)
@@ -1207,16 +1225,18 @@ func gdsNodeValue(value interface{}) (exact interface{}, kind string, ok bool, e
 		if _, isText := item.(string); isText {
 			return nil, "", false, localizedError(localization.CypherGraphProceduresUnsupportedArrayType("StringArray"), nil)
 		}
+		if isIntegerProcedureValue(item) {
+			integer := gdsInteger(item)
+			integers = append(integers, integer)
+			floats = append(floats, float64(integer))
+			continue
+		}
 		number, isNumber := toFloat64(item)
 		if !isNumber {
 			return nil, "", false, nil
 		}
 		floats = append(floats, number)
-		if isIntegerProcedureValue(item) {
-			integers = append(integers, toInt64(item))
-		} else {
-			allIntegers = false
-		}
+		allIntegers = false
 	}
 	if allIntegers {
 		return integers, "List of Integer", true, nil
@@ -1291,6 +1311,36 @@ func gdsJavaTypeTarget(kind string) string {
 		return "a Long Array"
 	}
 	return "a Double Array"
+}
+
+// gdsPropertyTypeKey keys a projected property's type by its label and key:
+// two labels' projections of one stored property are separate properties.
+func gdsPropertyTypeKey(label, key string) string {
+	return label + "\x00" + key
+}
+
+// gdsInteger is a value of any Go integer type as an int64 (the shared
+// converters skip the narrow and unsigned ones).
+func gdsInteger(value interface{}) int64 {
+	switch number := value.(type) {
+	case int8:
+		return int64(number)
+	case int16:
+		return int64(number)
+	case int32:
+		return int64(number)
+	case uint:
+		return int64(number)
+	case uint8:
+		return int64(number)
+	case uint16:
+		return int64(number)
+	case uint32:
+		return int64(number)
+	case uint64:
+		return int64(number)
+	}
+	return toInt64(value)
 }
 
 // gdsTypeProjected reports whether a relationship projection takes the type.
