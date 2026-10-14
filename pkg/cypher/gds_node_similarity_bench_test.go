@@ -20,7 +20,12 @@ func BenchmarkNodeSimilarity(b *testing.B) {
 		require.NoError(b, err)
 	}
 	for source := 0; source < 64; source++ {
+		targets := make([]int, 0, 17)
 		for target := 64; target < 80; target++ {
+			targets = append(targets, target)
+		}
+		targets = append(targets, 80+source%16)
+		for _, target := range targets {
 			for _, kind := range []string{"A", "Z"} {
 				require.NoError(b, store.CreateEdge(&storage.Edge{
 					ID:        storage.EdgeID(fmt.Sprintf("%s-%03d-%03d", kind, source, target)),
