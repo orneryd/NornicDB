@@ -27,6 +27,14 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresNodePropertyNotInGraph("nope"), "No node projection with property 'nope' exists."},
 		{CypherGraphProceduresStarPropertyRequiresCount(), "A '*' property key can only be used in combination with count aggregation."},
 		{CypherGraphProceduresJobIDType("Long"), "Expected JobId or String. Got Long."},
+		{CypherGraphProceduresNodeNotNodeOrInteger("NO_VALUE"), "The node has to be either a NODE or an INTEGER, but got NO_VALUE"},
+		{CypherGraphProceduresConfigKeyMissingPair("targetNodeLabels", "sourceNodeLabels"), "The configuration key 'targetNodeLabels' is missing, but 'sourceNodeLabels' is provided. If you really meant to only provide `sourceNodeLabels` with no value for `targetNodeLabels`, you can set `targetNodeLabels` to `NULL`."},
+		{CypherGraphProceduresRelationshipTypeNotString("NUMBER"), "The value of `relationshipType` must be `String`, but was `NUMBER`."},
+		{CypherGraphProceduresUndirectedTypesNotProjected("[NOPE]", "['__ALL__']"), "Specified undirectedRelationshipTypes `[NOPE]` were not projected in the graph. Projected types are: `['__ALL__']`."},
+		{CypherGraphProceduresLabelsTrueDeprecated("sourceNodeLabels", "s"), "Using `true` to load all labels is deprecated, use `{ sourceNodeLabels: labels(s) }` instead"},
+		{CypherGraphProceduresUnsupportedConcurrency("String"), "Unsupported Concurrency input of type String"},
+		{CypherGraphProceduresConfigParametersMerged(), "The parameters for `nodesConfig` and `relationshipsConfig` have been merged. Update your query by merging the 4th and 5th parameter into one parameter."},
+		{CypherGraphProceduresGraphExistsAggregation("a3"), "Graph a3 already exists"},
 		{CypherGraphProceduresUnsupportedGDSValue("String"), "Unsupported conversion to GDS Value from Neo4j Value with type `String`."},
 		{CypherGraphProceduresBuildGraphFailed(cause), "failed to build graph: forced graph failure"},
 		{CypherGraphProceduresSourceNodeRequired(), "sourceNode parameter required"},
@@ -59,7 +67,7 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresSourceNodeNotFound("x"), "sourceNode `x` does not exist in the graph"},
 	}
 
-	require.Len(t, testCases, 42)
+	require.Len(t, testCases, 50)
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {
