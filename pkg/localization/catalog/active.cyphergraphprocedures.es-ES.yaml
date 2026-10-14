@@ -91,3 +91,48 @@
 - id: cyphergraphprocedures.job_id_type
   description: GDS's message for a jobId that isn't a string. Type is untranslated.
   other: 'Se esperaba JobId o String. Se recibió {{.Type}}.'
+- id: cyphergraphprocedures.node_not_node_or_integer
+  description: Mensaje de GDS (node not node or integer).
+  other: 'El nodo tiene que ser un NODE o un INTEGER, pero se recibió {{.Type}}'
+- id: cyphergraphprocedures.config_key_missing_pair
+  description: Mensaje de GDS (config key missing pair).
+  other: 'Falta la clave de configuración ''{{.Missing}}'', pero se proporcionó ''{{.Provided}}''. Si realmente quería proporcionar solo `{{.Provided}}` sin valor para `{{.Missing}}`, puede establecer `{{.Missing}}` en `NULL`.'
+- id: cyphergraphprocedures.relationship_type_not_string
+  description: Mensaje de GDS (relationship type not string).
+  other: 'El valor de `relationshipType` debe ser `String`, pero era `{{.Type}}`.'
+- id: cyphergraphprocedures.undirected_types_not_projected
+  description: Mensaje de GDS (undirected types not projected).
+  other: 'Los undirectedRelationshipTypes especificados `{{.Types}}` no se proyectaron en el grafo. Los tipos proyectados son: `{{.Projected}}`.'
+- id: cyphergraphprocedures.labels_true_deprecated
+  description: Mensaje de GDS (labels true deprecated).
+  other: 'Usar `true` para cargar todas las etiquetas está obsoleto; use `{ {{.Key}}: labels({{.Variable}}) }` en su lugar'
+- id: cyphergraphprocedures.unsupported_concurrency
+  description: Mensaje de GDS (unsupported concurrency).
+  other: 'Entrada de concurrencia no compatible de tipo {{.Type}}'
+- id: cyphergraphprocedures.config_parameters_merged
+  description: Mensaje de GDS (config parameters merged).
+  other: 'Los parámetros `nodesConfig` y `relationshipsConfig` se han combinado. Actualice la consulta combinando el 4.º y el 5.º parámetro en uno.'
+- id: cyphergraphprocedures.graph_exists_aggregation
+  description: Mensaje de GDS (graph exists aggregation).
+  other: 'El grafo {{.Graph}} ya existe'
+- id: cyphergraphprocedures.unsupported_gds_value
+  description: Mensaje de GDS (unsupported gds value).
+  other: 'Conversión no compatible a un valor de GDS desde un valor de Neo4j de tipo `{{.Type}}`.'
+- id: cyphergraphprocedures.relationship_end_not_projected
+  description: Mensaje de GDS (relationship end not projected).
+  other: 'No se pudo cargar una relación porque su nodo {{.Side}} con id {{.Node}} no forma parte de la consulta o proyección de nodos. Para ignorar la relación, establezca el parámetro de configuración `validateRelationships` en false.'
+- id: cyphergraphprocedures.unsupported_array_type
+  description: Mensaje de GDS (unsupported array type).
+  other: 'La carga de valores de tipo {{.Type}} no está admitida actualmente'
+- id: cyphergraphprocedures.unsafe_conversion
+  description: Mensaje de GDS (unsafe conversion).
+  other: 'No se puede convertir de forma segura {{.Value}} en {{.Target}}.'
+- id: cyphergraphprocedures.array_lengths_differ
+  description: Mensaje de GDS (array lengths differ).
+  other: 'La propiedad `{{.Property}}` contiene arrays de longitudes distintas `{{.Found}}` y `{{.First}}`.'
+- id: cyphergraphprocedures.unsafe_long_conversion
+  description: Mensaje de GDS (unsafe long conversion).
+  other: 'No se puede convertir de forma segura {{.Value}} en un valor long'
+- id: cyphergraphprocedures.unsafe_long_array_conversion
+  description: Mensaje de GDS (unsafe long array conversion).
+  other: 'No se puede convertir de forma segura {{.Value}} en un Long Array. No se puede convertir de forma segura {{.Fraction}} en un valor long'

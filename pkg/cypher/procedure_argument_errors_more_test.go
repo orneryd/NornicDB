@@ -35,7 +35,7 @@ func TestProcedureArgumentErrorsAndCalls(t *testing.T) {
 			return err
 		},
 		"graph.project rels":   func() error { _, err := exec.callGdsGraphProject([]interface{}{"g", "*", int64(1)}); return err },
-		"graph.drop name":      func() error { _, err := exec.callGdsGraphDrop(nil); return err },
+		"graph.drop name":      func() error { _, err := exec.callGdsGraphDrop(context.Background(), nil); return err },
 		"fastRP.stream name":   func() error { _, err := exec.callGdsFastRPStream(nil); return err },
 		"fastRP.stream config": func() error { _, err := exec.callGdsFastRPStream([]interface{}{"g", int64(1)}); return err },
 		"fastRP.stats name":    func() error { _, err := exec.callGdsFastRPStats(nil); return err },

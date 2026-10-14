@@ -18,9 +18,24 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresStreamNodesFailed(cause), "failed to stream nodes: forced graph failure"},
 		{CypherGraphProceduresStreamEdgesFailed(cause), "failed to stream edges: forced graph failure"},
 		{CypherGraphProceduresGraphNotFound("missing", "neo4j"), "Graph with name `missing` does not exist on database `neo4j`. It might exist on another database."},
+		{CypherGraphProceduresRelationshipEndNotProjected("source", "n1"), "Failed to load a relationship because its source-node with id n1 is not part of the node query or projection. To ignore the relationship, set the configuration parameter `validateRelationships` to false."},
+		{CypherGraphProceduresUnsupportedArrayType("StringArray"), "Loading of values of type StringArray is currently not supported"},
+		{CypherGraphProceduresUnsafeConversion("DoubleArray[1.0, 2.0]", "a Double"), "Cannot safely convert DoubleArray[1.0, 2.0] into a Double."},
+		{CypherGraphProceduresArrayLengthsDiffer("v", "2", "1"), "The property `v` contains arrays of differing lengths `2` and `1`."},
+		{CypherGraphProceduresUnsafeLongConversion("2.50"), "Cannot safely convert 2.50 into an long value"},
+		{CypherGraphProceduresUnsafeLongArrayConversion("DoubleArray[1.5]", "1.50"), "Cannot safely convert DoubleArray[1.5] into a Long Array. Cannot safely convert 1.50 into an long value"},
 		{CypherGraphProceduresNodePropertyNotInGraph("nope"), "No node projection with property 'nope' exists."},
 		{CypherGraphProceduresStarPropertyRequiresCount(), "A '*' property key can only be used in combination with count aggregation."},
 		{CypherGraphProceduresJobIDType("Long"), "Expected JobId or String. Got Long."},
+		{CypherGraphProceduresNodeNotNodeOrInteger("NO_VALUE"), "The node has to be either a NODE or an INTEGER, but got NO_VALUE"},
+		{CypherGraphProceduresConfigKeyMissingPair("targetNodeLabels", "sourceNodeLabels"), "The configuration key 'targetNodeLabels' is missing, but 'sourceNodeLabels' is provided. If you really meant to only provide `sourceNodeLabels` with no value for `targetNodeLabels`, you can set `targetNodeLabels` to `NULL`."},
+		{CypherGraphProceduresRelationshipTypeNotString("NUMBER"), "The value of `relationshipType` must be `String`, but was `NUMBER`."},
+		{CypherGraphProceduresUndirectedTypesNotProjected("[NOPE]", "['__ALL__']"), "Specified undirectedRelationshipTypes `[NOPE]` were not projected in the graph. Projected types are: `['__ALL__']`."},
+		{CypherGraphProceduresLabelsTrueDeprecated("sourceNodeLabels", "s"), "Using `true` to load all labels is deprecated, use `{ sourceNodeLabels: labels(s) }` instead"},
+		{CypherGraphProceduresUnsupportedConcurrency("String"), "Unsupported Concurrency input of type String"},
+		{CypherGraphProceduresConfigParametersMerged(), "The parameters for `nodesConfig` and `relationshipsConfig` have been merged. Update your query by merging the 4th and 5th parameter into one parameter."},
+		{CypherGraphProceduresGraphExistsAggregation("a3"), "Graph a3 already exists"},
+		{CypherGraphProceduresUnsupportedGDSValue("String"), "Unsupported conversion to GDS Value from Neo4j Value with type `String`."},
 		{CypherGraphProceduresBuildGraphFailed(cause), "failed to build graph: forced graph failure"},
 		{CypherGraphProceduresSourceNodeRequired(), "sourceNode parameter required"},
 		{CypherGraphProceduresConfigValueOutOfRange("propertyRatio", "2", "[0.00, 1.00]"), "Value for `propertyRatio` was `2`, but must be within the range [0.00, 1.00]."},
@@ -48,7 +63,7 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresSourceNodeNotFound("x"), "sourceNode `x` does not exist in the graph"},
 	}
 
-	require.Len(t, testCases, 31)
+	require.Len(t, testCases, 46)
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {

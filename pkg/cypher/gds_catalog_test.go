@@ -194,11 +194,11 @@ func TestGDSCatalogArgumentBranches(t *testing.T) {
 	exec, run := newGDSGraph(t)
 	_, err := exec.callGdsGraphList([]interface{}{int64(5)})
 	require.ErrorContains(t, err, "graphName")
-	_, err = exec.callGdsGraphDrop([]interface{}{"g", "x"})
+	_, err = exec.callGdsGraphDrop(context.Background(), []interface{}{"g", "x"})
 	require.ErrorContains(t, err, "failIfMissing")
-	_, err = exec.callGdsGraphDrop([]interface{}{"g", true, int64(5)})
+	_, err = exec.callGdsGraphDrop(context.Background(), []interface{}{"g", true, int64(5)})
 	require.ErrorContains(t, err, "dbName")
-	_, err = exec.callGdsGraphDrop([]interface{}{"g", true, "", int64(5)})
+	_, err = exec.callGdsGraphDrop(context.Background(), []interface{}{"g", true, "", int64(5)})
 	require.ErrorContains(t, err, "username")
 	// A failing argument fails the function.
 	failing := cypherfn.Context{Eval: func(string) (interface{}, error) { return nil, errors.New("boom") }}
@@ -249,13 +249,14 @@ func TestGDSCatalogHelpers(t *testing.T) {
 	require.Equal(t, "0.5", gdsDefaultText(&half, "NaN"))
 	require.Equal(t, "2.0", gdsDefaultText(&whole, "NaN"))
 	schema := gdsGraphSchema([]gdsElementSpec{{name: "P", properties: []gdsPropertySpec{
-		{key: "i", property: "i"}, {key: "f", property: "f"}, {key: "d", property: "d", defaultValue: &whole}, {key: "h", property: "h", defaultValue: &half},
-	}}}, nil, map[string]bool{"f": true})
+		{key: "i", property: "i"}, {key: "f", property: "f"}, {key: "d", property: "d", defaultValue: &whole}, {key: "h", property: "h", defaultValue: &half}, {key: "l", property: "l"},
+	}}}, nil, map[string]string{"f": "Float", "l": "List of Integer"})
 	require.Equal(t, map[string]interface{}{
 		"i": "Integer (DefaultValue(-9223372036854775808), PERSISTENT)",
 		"f": "Float (DefaultValue(NaN), PERSISTENT)",
 		"d": "Integer (DefaultValue(2), PERSISTENT)",
 		"h": "Float (DefaultValue(0.5), PERSISTENT)",
+		"l": "List of Integer (DefaultValue(null), PERSISTENT)",
 	}, schema["nodes"].(map[string]interface{})["P"])
 
 	empty := &GraphProjection{Name: "e"}
