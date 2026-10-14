@@ -586,6 +586,33 @@ for q in ["UNWIND [1, 2] AS x RETURN reduce(acc = 0, y IN collect(x) | acc + y) 
           "RETURN [`x x` IN[1, 2] | `x x` * 10] AS v"]:
     add("local-scope-references", "round3", q)
 
+# A CALL body starts its own scope from its imports; an EXISTS / COUNT /
+# COLLECT body sees the enclosing query, its own MATCH and WITH bindings,
+# and checks nested subqueries from them; a local is typed with the locals
+# around it resolved (#1227).
+for q in ["WITH 7 AS x RETURN COLLECT { CALL (x) { RETURN [x IN [1] | x] AS v } RETURN v AS v } AS v",
+          "WITH 7 AS x RETURN COUNT { CALL (x) { RETURN [x IN [1] | x] AS v } RETURN v } AS v",
+          "WITH 7 AS x RETURN EXISTS { CALL (x) { RETURN [x IN [1] | x] AS v } RETURN v } AS v",
+          "WITH 7 AS x RETURN COLLECT { CALL () { RETURN [x IN [1] | x] AS v } RETURN v AS v } AS v",
+          "WITH 7 AS x RETURN COLLECT { CALL { WITH x RETURN [x IN [1] | x] AS v } RETURN v AS v } AS v",
+          "WITH 7 AS x CALL () { RETURN COLLECT { RETURN [x IN [1] | x] AS v } AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { RETURN COLLECT { RETURN [x IN [1] | x] AS v } AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { RETURN COUNT { MATCH (n:Q) WHERE all(x IN [1] WHERE x = 1) } AS v } RETURN v",
+          "MATCH (a:Q {id: 1})-[x:R]->(y) WHERE all(x IN [y] WHERE all(r IN [x] WHERE EXISTS { (r)-->() })) RETURN count(*) AS v",
+          "MATCH (r:Q {id: 99}) WHERE all(x IN [1] WHERE all(r IN [x] WHERE EXISTS { (r)-->() })) RETURN count(*) AS v",
+          "MATCH (a:Q {id: 1})-[x:R]->(y) WHERE all(x IN [y] WHERE all(r IN [x, x] WHERE COUNT { (r)-->() } > 0)) RETURN count(*) AS v",
+          "RETURN COUNT { WITH 7 AS x WHERE EXISTS { WITH [x IN [1] | x] AS v RETURN v } } AS v",
+          "RETURN COUNT { MATCH (x:Q {id: 99}) WHERE EXISTS { MATCH (n) WHERE all(x IN [1] WHERE x = 1) } } AS v",
+          "RETURN COUNT { MATCH (x:Q) WHERE EXISTS { MATCH (x)-->(n) } } AS v",
+          "RETURN COUNT { UNWIND [1, 2] AS x WITH x WHERE EXISTS { WITH x AS y RETURN y } } AS v",
+          "WITH 1 AS g RETURN COLLECT { UNWIND [1] AS x WITH count(*) AS c RETURN c + g } AS v",
+          "MATCH (a:Q) RETURN a.id AS id, EXISTS { MATCH (x:Q) MATCH (y:Q {id: x.id}) } AS x ORDER BY id",
+          "MATCH (n:Q) WITH n, n.id AS k WHERE COUNT { MATCH (o:Q) WHERE o.id > k } > 0 RETURN n.id AS v ORDER BY v",
+          "MATCH (n:Q) RETURN [(n)-[:R]->(m) WHERE EXISTS { MATCH (o:Q) WHERE o.id = m.id + 1 } | m.id] AS v ORDER BY v",
+          "WITH 1 AS x RETURN COLLECT { WITH x AS y MATCH (n:Q) WHERE n.id = y + x RETURN n.id } AS v",
+          "RETURN COUNT { MATCH (x:Q) WITH x WHERE EXISTS { MATCH (x)-[r:R]->() } } AS v"]:
+    add("local-scope-references", "round4", q)
+
 # 12c. Subquery bodies that start from the row's own variables (#1055): the
 # bound node, relationship and path fast paths against the pipeline. Bodies
 # read a bound relationship, a row value in a property map or WHERE, a path,
