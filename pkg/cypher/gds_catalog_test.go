@@ -281,3 +281,30 @@ func TestGDSConfigHas(t *testing.T) {
 	require.True(t, c.has("present"))
 	require.False(t, c.has("absent"))
 }
+
+// TestGDSProjectionReadsRelationshipsInIDOrder: a parallel relationship's
+// SINGLE value is the one with the smallest id, as GDS keeps the first by
+// id, whatever order storage streams them in.
+func TestGDSProjectionReadsRelationshipsInIDOrder(t *testing.T) {
+	for attempt := 0; attempt < 10; attempt++ {
+		graphProjections = make(map[string]*GraphProjection)
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "order"))
+		for _, query := range []string{
+			"CREATE (:P {name: 'a'}), (:P {name: 'b'})",
+			"MATCH (a:P {name: 'a'}), (b:P {name: 'b'}) CREATE (a)-[:R {w: 1.0}]->(b)",
+			"MATCH (a:P {name: 'a'}), (b:P {name: 'b'}) CREATE (a)-[:R {w: 2.0}]->(b)",
+			"MATCH (a:P {name: 'a'}), (b:P {name: 'b'}) CREATE (a)-[:R {w: 3.0}]->(b)",
+			"CALL gds.graph.project('g', 'P', {R: {properties: {w: {aggregation: 'SINGLE'}}}})",
+		} {
+			_, err := exec.Execute(context.Background(), query, nil)
+			require.NoError(t, err, query)
+		}
+		projection, err := exec.graphProjection("g")
+		require.NoError(t, err)
+		require.Len(t, projection.Relationships, 1)
+		result, err := exec.Execute(context.Background(), "MATCH ()-[r:R]->() RETURN id(r) AS id, r.w ORDER BY id LIMIT 1", nil)
+		require.NoError(t, err)
+		require.Equal(t, result.Rows[0][1], projection.Relationships[0].Properties["w"])
+	}
+	graphProjections = make(map[string]*GraphProjection)
+}
