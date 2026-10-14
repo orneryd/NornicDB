@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -164,5 +165,30 @@ func TestGDSAggregationProjectionBranches(t *testing.T) {
 		err := fails(query)
 		require.Error(t, err, query)
 		require.ErrorContains(t, err, message, query)
+	}
+}
+
+// TestGDSAggregationProjectionFirstOccurrence: a node named by several rows
+// keeps its first row's labels and properties, and a key another label has
+// reads NaN on it, as GDS 2.13.12 gives on the same graph (#1196 review).
+func TestGDSAggregationProjectionFirstOccurrence(t *testing.T) {
+	_, rows, _ := newAggregationProjectionGraph(t)
+	rows("MATCH (n) DETACH DELETE n")
+	rows("CREATE (a:A {name:'a', x: 1}), (b:B {name:'b', y: 2}), (c:A {name:'c', x: 3}), (a)-[:R]->(b), (c)-[:R]->(a)")
+	// a first comes as a source (label A, x), then as a target (T, z).
+	rows("MATCH (s)-[:R]->(t) WITH s, t ORDER BY s.name RETURN gds.graph.project('first', s, t, {sourceNodeLabels: labels(s), targetNodeLabels: ['T'], sourceNodeProperties: s{.x}, targetNodeProperties: {z: 9}})")
+	schema := rows("CALL gds.graph.list('first') YIELD schema RETURN schema")[0][0].(map[string]interface{})
+	require.Equal(t, map[string]interface{}{
+		"A": map[string]interface{}{"x": "Integer (DefaultValue(-9223372036854775808), PERSISTENT)"},
+		"T": map[string]interface{}{"z": "Integer (DefaultValue(-9223372036854775808), PERSISTENT)"},
+	}, schema["nodes"])
+	values := rows("MATCH (n {name: 'a'}) RETURN gds.util.nodeProperty('first', n, 'x'), gds.util.nodeProperty('first', n, 'z')")[0]
+	require.Equal(t, 1.0, values[0])
+	require.True(t, math.IsNaN(values[1].(float64)))
+	projection := graphProjections[gdsCatalogKey("agg", "first")]
+	for id, labels := range projection.NodeLabels {
+		if projection.NodeProperties[id]["x"] == 1 {
+			require.Equal(t, []string{"A"}, labels)
+		}
 	}
 }
