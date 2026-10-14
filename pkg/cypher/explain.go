@@ -96,6 +96,11 @@ func parseExecutionMode(query string) (ExecutionMode, string) {
 
 // executeExplain returns the execution plan without executing the query
 func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*ExecuteResult, error) {
+	if indexASCIIFold(query, "shortestpath") >= 0 {
+		if err := e.validateMatchSemanticScopes(query, cypherVersionFromContext(ctx) == "25"); err != nil {
+			return nil, err
+		}
+	}
 	plan, err := e.buildExecutionPlan(query)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreExecutionPlanBuildFailed(err), err)

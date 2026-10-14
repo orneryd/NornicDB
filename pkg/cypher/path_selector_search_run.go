@@ -119,7 +119,6 @@ type pathSearch struct {
 	distance map[pathSearchKey]int
 	ends     map[storage.NodeID]bool
 	nogoods  map[[2]int32][][]storage.EdgeID
-	calls    int
 	// dominators tells, once every product is expanded, the relationships
 	// every walk to a product takes; closed marks the end products no path
 	// can reach again.
@@ -249,10 +248,6 @@ func reverseDirection(direction string) string {
 }
 
 // product returns the product of node and slot, added when new.
-func (s *pathSearch) product(node *storage.Node, slot int) int32 {
-	return s.productCounts(node, slot, "")
-}
-
 func (s *pathSearch) productCounts(node *storage.Node, slot int, counts string) int32 {
 	key := pathSearchKey{node: node.ID, slot: int32(slot), counts: counts}
 	if index, exists := s.index[key]; exists {
@@ -312,6 +307,9 @@ func (s *pathSearch) expand(p int32) {
 // begin makes the search's state and the first level: the products of the
 // source node.
 func (s *pathSearch) begin(source *storage.Node) {
+	if s.ctx.Err() != nil {
+		return
+	}
 	if s.index == nil {
 		s.traversal = s.e.newTraversalContext(s.ctx, s.from, &RelationshipPattern{})
 		s.edges = map[pathSearchEdgeKey][]*storage.Edge{}
@@ -321,6 +319,9 @@ func (s *pathSearch) begin(source *storage.Node) {
 	}
 	level := pathSearchLevel{index: map[int32]int32{}}
 	for index, chain := range s.a.chains[s.a.initial] {
+		if s.ctx.Err() != nil {
+			return
+		}
 		if !s.chainHolds(chain, source) {
 			continue
 		}
@@ -333,6 +334,9 @@ func (s *pathSearch) begin(source *storage.Node) {
 		s.roots[p] = index
 		level.index[p] = int32(len(level.entries))
 		level.entries = append(level.entries, pathSearchEntry{product: p})
+	}
+	if s.ctx.Err() != nil {
+		return
 	}
 	s.levels = append(s.levels[:0], level)
 }
@@ -496,6 +500,9 @@ func (s *pathSearch) trails(depth int, entry int32, used map[storage.EdgeID]stru
 // pathOf is the path of hops (from the last step back) ending at product
 // last.
 func (s *pathSearch) pathOf(hops []pathSearchHop) pathSearchPath {
+	if len(hops) == 0 || s.ctx.Err() != nil {
+		return pathSearchPath{}
+	}
 	path := s.rootPath(hops[len(hops)-1].product)
 	for index := len(hops) - 1; index >= 0; index-- {
 		if s.ctx.Err() != nil {
@@ -539,14 +546,21 @@ func (s *pathSearch) trace(depth int, entry int32, need int, take func(pathSearc
 		take(s.rootPath(s.levels[0].entries[entry].product))
 		return
 	}
-	if need == 1 && !take(s.pathOf(linkHops(s.ctx, s.levels[depth].entries[entry].witness))) {
-		return
+	if need == 1 {
+		path := s.pathOf(linkHops(s.ctx, s.levels[depth].entries[entry].witness))
+		if s.ctx.Err() != nil || !take(path) {
+			return
+		}
 	}
 	s.trails(depth, entry, map[storage.EdgeID]struct{}{}, nil, func(hops []pathSearchHop) bool {
 		if s.ctx.Err() != nil {
 			return false
 		}
-		return take(s.pathOf(hops))
+		path := s.pathOf(hops)
+		if s.ctx.Err() != nil {
+			return false
+		}
+		return take(path)
 	})
 }
 
@@ -554,7 +568,13 @@ func (s *pathSearch) trace(depth int, entry int32, need int, take func(pathSearc
 // each end node; bind makes a path's row and reports whether the path
 // counts (holds the pattern's predicates that apply to whole paths).
 func (s *pathSearch) run(source *storage.Node, count int, groups bool, bind func(pathSearchPath) (pipelineRow, bool)) []pipelineRow {
+	if s.ctx.Err() != nil {
+		return nil
+	}
 	s.begin(source)
+	if s.ctx.Err() != nil {
+		return nil
+	}
 	var rows []pipelineRow
 	targets := map[int32]*pathSearchTarget{}
 	for depth := 0; len(s.levels[0].entries) > 0; depth++ {

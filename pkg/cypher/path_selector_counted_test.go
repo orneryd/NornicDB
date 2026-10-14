@@ -2,13 +2,15 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/stretchr/testify/require"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSelectedPathCountedCompilation(t *testing.T) {
@@ -25,11 +27,20 @@ func TestSelectedPathCountedCompilation(t *testing.T) {
 			require.Len(t, plan.forward.counters, 1)
 			require.Less(t, len(plan.forward.slots), 10)
 			e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "counted"))
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
 			defer cancel()
+			runtime.ReadMemStats(&before)
+			started := time.Now()
 			result, err := e.Execute(ctx, "MATCH p = ANY SHORTEST "+pattern+" RETURN count(p)", nil)
-			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+			runtime.ReadMemStats(&after)
+			require.Less(t, time.Since(started), 100*time.Millisecond)
+			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20))
+			if err != nil {
+				require.True(t, errors.Is(err, context.DeadlineExceeded))
+			} else {
+				require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+			}
+			t.Logf("upper=%d compiled bytes<128KiB; empty graph bytes=%d elapsed=%s error=%v", bound, after.TotalAlloc-before.TotalAlloc, time.Since(started), err)
 			canceled, stop := context.WithCancel(context.Background())
 			stop()
 			p, _, ok := compileSelectedPathPlanContext(canceled, pattern, "p", "", nil)

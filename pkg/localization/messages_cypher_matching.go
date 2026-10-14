@@ -434,6 +434,6 @@ func CypherMatchingParenthesisedPathJuxtaposed() Message {
 
 // CypherMatchingBoundShortestRelationships is Neo4j's diagnostic for bound
 // relationship variables in shortestPath and allShortestPaths patterns.
-func CypherMatchingBoundShortestRelationships() Message {
-	return cypherMatchingMessage(MessageCypherMatchingBoundShortestRelationships, "Bound relationships not allowed in shortestPath(...)", nil)
+func CypherMatchingBoundShortestRelationships(function string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingBoundShortestRelationships, "Bound relationships not allowed in "+function+"(...)", map[string]any{"Function": function})
 }

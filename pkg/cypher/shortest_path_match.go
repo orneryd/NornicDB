@@ -127,7 +127,10 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 	}
 	m.endpointWhere = strings.Join(endpointTerms, " AND ")
 	m.pathWhere = strings.Join(pathTerms, " AND ")
-	if m.plan, ok = shortestPathPlan(inner, startPattern, endPattern, m.startVariable, m.endVariable, m.pathVariable, m.pathWhere); !ok {
+	if m.plan, ok = shortestPathPlanContext(ctx, inner, startPattern, endPattern, m.startVariable, m.endVariable, m.pathVariable, m.pathWhere); !ok {
+		if ctx.Err() != nil {
+			return nil, true, ctx.Err()
+		}
 		return nil, true, errSelectedPathPattern(inner)
 	}
 	m.setOthersVariables()
@@ -139,10 +142,10 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 // path search between its endpoints: the endpoints are matched first, so
 // the plan takes them as the bare variables, and predicate (the WHERE
 // conjuncts that read the path) constrains the paths selected from.
-func shortestPathPlan(pattern, startPattern, endPattern, startVariable, endVariable, pathVariable, predicate string) (*selectedPathPlan, bool) {
+func shortestPathPlanContext(ctx context.Context, pattern, startPattern, endPattern, startVariable, endVariable, pathVariable, predicate string) (*selectedPathPlan, bool) {
 	pattern = strings.TrimSpace(pattern)
 	relationship := pattern[len(startPattern) : len(pattern)-len(endPattern)]
-	plan, _, ok := compileSelectedPathPlan("("+startVariable+")"+relationship+"("+endVariable+")", pathVariable, predicate, nil)
+	plan, _, ok := compileSelectedPathPlanContext(ctx, "("+startVariable+")"+relationship+"("+endVariable+")", pathVariable, predicate, nil)
 	return plan, ok
 }
 
@@ -369,7 +372,7 @@ func (e *StorageExecutor) pipelineMatchRows(ctx context.Context, row pipelineRow
 func (e *StorageExecutor) shortestPathsBetween(ctx context.Context, m *shortestPathMatch, start, end *storage.Node, row pipelineRow) ([]pipelineRow, error) {
 	if variable := m.traversal.Relationship.Variable; variable != "" {
 		if _, bound := row[variable]; bound {
-			return nil, errBoundShortestRelationships()
+			return nil, errBoundShortestRelationships(shortestPathFunctionName(m.findAll))
 		}
 	}
 	if start.ID == end.ID && m.traversal.Relationship.MinHops > 0 {
@@ -388,8 +391,8 @@ func (e *StorageExecutor) shortestPathsBetween(ctx context.Context, m *shortestP
 
 // errBoundShortestRelationships is Neo4j 5.26.30's diagnostic for a function
 // pattern that reuses a relationship binding from an earlier pattern.
-func errBoundShortestRelationships() error {
-	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "BoundRelationships", localization.CypherMatchingBoundShortestRelationships())
+func errBoundShortestRelationships(function string) error {
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "BoundRelationships", localization.CypherMatchingBoundShortestRelationships(function))
 }
 
 // validateShortestCallBindings checks calls against the incoming semantic
@@ -426,7 +429,7 @@ func validateShortestCallBindings(text string, scope matchSemanticScope) error {
 						return errShortestCommonEndpoints()
 					}
 					if _, bound := scope[items[1].variable]; items[1].variable != "" && bound {
-						return errBoundShortestRelationships()
+						return errBoundShortestRelationships(shortestPathFunctionName(equalFoldASCII(word, "allShortestPaths")))
 					}
 				}
 			}
@@ -438,4 +441,11 @@ func validateShortestCallBindings(text string, scope matchSemanticScope) error {
 
 func errShortestCommonEndpoints() error {
 	return localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "ShortestPathCommonEndNodes", localization.CypherMatchingShortestPathCommonEndNodes())
+}
+
+func shortestPathFunctionName(all bool) string {
+	if all {
+		return "allShortestPaths"
+	}
+	return "shortestPath"
 }

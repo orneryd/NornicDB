@@ -84,8 +84,11 @@ func (e *StorageExecutor) evaluateShortestPathValue(ctx context.Context, funcNam
 	}
 	pathVariable := generatedVariablePrefix + "sp_path"
 	startVariable, endVariable := match.StartNode.variable, match.EndNode.variable
-	plan, ok := shortestPathPlan(pattern, startPattern, endPattern, startVariable, endVariable, pathVariable, "")
+	plan, ok := shortestPathPlanContext(ctx, pattern, startPattern, endPattern, startVariable, endVariable, pathVariable, "")
 	if !ok {
+		if ctx.Err() != nil {
+			return nil, true, ctx.Err()
+		}
 		return nil, true, errSelectedPathPattern(pattern)
 	}
 	findAll := strings.EqualFold(funcName, "allShortestPaths")

@@ -98,37 +98,6 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// shortestLength is the length of the shortest path a allows: the fewest
-// transitions from the initial slot to the final one.
-func shortestLength(a *pathSearchAutomaton) int {
-	distance := make([]int, len(a.slots))
-	for index := range distance {
-		distance[index] = -1
-	}
-	distance[a.initial] = 0
-	for changed := true; changed; {
-		changed = false
-		relax := func(to, length int) {
-			if distance[to] < 0 || length < distance[to] {
-				distance[to] = length
-				changed = true
-			}
-		}
-		for index := range a.slots {
-			if distance[index] < 0 {
-				continue
-			}
-			for _, to := range a.slots[index].empty {
-				relax(to, distance[index])
-			}
-			for _, transition := range a.slots[index].transitions {
-				relax(transition.to, distance[index]+1)
-			}
-		}
-	}
-	return distance[a.final]
-}
-
 // uniformPair returns the rows of the shortest path from source to target
 // (every one for groups) of a uniform pattern, and ok false when the walk
 // search can't answer, which leaves the pair to the general search.

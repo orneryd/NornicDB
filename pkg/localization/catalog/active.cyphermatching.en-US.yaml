@@ -193,4 +193,4 @@
 
 - id: cyphermatching.bound_shortest_relationships
   description: Neo4j 5.26.30 diagnostic, retained verbatim for compatibility.
-  other: Bound relationships not allowed in shortestPath(...)
+  other: Bound relationships not allowed in {{.Function}}(...)

@@ -17,8 +17,16 @@ func undirectedIncidentEdges(store storage.Engine, nodeID storage.NodeID) ([]*st
 }
 
 func combineIncidentEdges(ctx context.Context, nodeID storage.NodeID, outgoing, incoming []*storage.Edge) ([]*storage.Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	edges := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
-	edges = append(edges, outgoing...)
+	for index, edge := range outgoing {
+		if index&bfsCancelCheckMask == 0 && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		edges = append(edges, edge)
+	}
 	for index, edge := range incoming {
 		if index&bfsCancelCheckMask == 0 && ctx.Err() != nil {
 			return nil, ctx.Err()

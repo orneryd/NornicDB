@@ -26,7 +26,8 @@ func TestSelectedPathBoundRelationshipLists(t *testing.T) {
 			"MATCH (a:Missing)-[r:T*]->(b) WITH a,b,r MATCH p = " + call + "((a)-[r:T*]->(b)) RETURN p",
 			"MATCH (a:S {id:1})-[r:T*2]->(b:S {id:3}), p = " + call + "((a)-[r:T*]->(b)) RETURN p",
 		} {
-			requireStatus(t, e, q, nil, "Neo.ClientError.Statement.SyntaxError", "Bound relationships not allowed in shortestPath(...)")
+			requireStatus(t, e, q, nil, "Neo.ClientError.Statement.SyntaxError", "Bound relationships not allowed in "+call+"(...)")
+			requireStatus(t, e, "EXPLAIN "+q, nil, "Neo.ClientError.Statement.SyntaxError", "Bound relationships not allowed in "+call+"(...)")
 		}
 	}
 }
@@ -42,6 +43,7 @@ func TestShortestPathIdenticalEndpointVariables(t *testing.T) {
 			for _, filter := range []string{"", " WHERE length(p)>0"} {
 				q := "MATCH (a:S {id:1}) MATCH p = " + call + "((a)-[:T*" + bounds + "]->(a))" + filter + " RETURN p"
 				requireStatus(t, e, q, nil, "Neo.DatabaseError.Statement.ExecutionFailed", message)
+				requireStatus(t, e, "EXPLAIN "+q, nil, "Neo.DatabaseError.Statement.ExecutionFailed", message)
 			}
 			requireStatus(t, e, "MATCH (a:Missing) RETURN "+call+"((a)-[:T*"+bounds+"]->(a))", nil, "Neo.DatabaseError.Statement.ExecutionFailed", message)
 		}
@@ -49,4 +51,10 @@ func TestShortestPathIdenticalEndpointVariables(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{{int64(0)}}, r.Rows)
 	}
+}
+
+func TestShortestExplainValidBindings(t *testing.T) {
+	e, _ := newShortestSelectorExecutor(t)
+	_, err := e.Execute(context.Background(), "EXPLAIN MATCH (a:S {id:1}), (b:S {id:4}) MATCH p = shortestPath((a)-[r:T*]->(b)) RETURN p", nil)
+	require.NoError(t, err)
 }

@@ -28,8 +28,8 @@ import (
 // pattern is a state, a relationship pattern a transition between two
 // states, and two juxtaposed node patterns are one node (an empty
 // transition). A quantified group or a variable-length relationship is
-// compiled once with a counter for its bounds. The search runs over the pairs of a data node and a
-// state, breadth-first by path length from the bound end: from the start
+// compiled once with a counter for its bounds. The search runs over pairs
+// of a data node and a state, breadth-first by path length from the bound end: from the start
 // node when it is bound (or the end is unbound), over the reversed pattern
 // from the end node otherwise, and from both ends when both are bound. One
 // search gives every reachable end node its paths, so an unbound end costs
@@ -91,8 +91,15 @@ type pathPatternItem struct {
 // false for text that isn't a path pattern: node patterns joined by
 // relationship patterns, quantified groups and juxtapositions.
 func parsePathPatternItems(pattern string, nested bool) ([]pathPatternItem, bool) {
+	return parsePathPatternItemsContext(context.Background(), pattern, nested)
+}
+
+func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bool) ([]pathPatternItem, bool) {
 	var items []pathPatternItem
 	for at := skipASCIISpaces(pattern, 0, len(pattern)); at < len(pattern); at = skipASCIISpaces(pattern, at, len(pattern)) {
+		if ctx.Err() != nil {
+			return nil, false
+		}
 		switch c := pattern[at]; {
 		case c == '(':
 			close := findMatchingParen(pattern, at)
@@ -108,7 +115,7 @@ func parsePathPatternItems(pattern string, nested bool) ([]pathPatternItem, bool
 				if index := topLevelKeywordIndex(inner, "WHERE"); index >= 0 {
 					inner, where = inner[:index], strings.TrimSpace(inner[index+len("WHERE"):])
 				}
-				members, ok := parsePathPatternItems(inner, true)
+				members, ok := parsePathPatternItemsContext(ctx, inner, true)
 				if !ok || len(members) == 0 || members[0].kind != pathPatternNode || members[len(members)-1].kind != pathPatternNode {
 					return nil, false
 				}
@@ -336,13 +343,12 @@ type pathSearchAutomaton struct {
 }
 
 // buildPathSearchAutomaton compiles a pattern's elements.
-func buildPathSearchAutomaton(items []pathPatternItem) *pathSearchAutomaton {
-	return buildPathSearchAutomatonContext(context.Background(), items)
-}
-
 func buildPathSearchAutomatonContext(ctx context.Context, items []pathPatternItem) *pathSearchAutomaton {
 	a := &pathSearchAutomaton{ctx: ctx}
 	a.initial, a.final = a.sequence(items, -1)
+	if ctx.Err() != nil {
+		return nil
+	}
 	a.chains = make([][]pathSearchChain, len(a.slots))
 	for slot := range a.slots {
 		if ctx.Err() != nil {
@@ -393,9 +399,6 @@ func itemsMaxLength(items []pathPatternItem) int {
 }
 
 func (a *pathSearchAutomaton) addSlot(slot pathSearchSlot) int {
-	if a.ctx.Err() != nil {
-		return -1
-	}
 	a.slots = append(a.slots, slot)
 	return len(a.slots) - 1
 }
@@ -664,7 +667,7 @@ func buildSelectedPathPlanContext(ctx context.Context, pattern, pathVariable, pr
 	if ctx.Err() != nil {
 		return nil, nil, false
 	}
-	items, ok := parsePathPatternItems(pattern, false)
+	items, ok := parsePathPatternItemsContext(ctx, pattern, false)
 	if !ok {
 		return nil, nil, false
 	}
@@ -1172,7 +1175,11 @@ func (e *StorageExecutor) bindSelectedPath(ctx context.Context, plan *selectedPa
 		}
 	}
 	visit := func(slots []int, node *storage.Node) {
-		for _, slot := range slots {
+		for index, slot := range slots {
+			if index&bfsCancelCheckMask == 0 && ctx.Err() != nil {
+				consistent = false
+				return
+			}
 			held := &a.slots[slot]
 			if held.iterationStart {
 				iterations[held.group] = append(iterations[held.group], pipelineRow{})
@@ -1304,7 +1311,7 @@ func selectedPathPlanBytes(plan *selectedPathPlan, filters []string, keyBytes in
 	if plan == nil {
 		return size
 	}
-	size += int(unsafe.Sizeof(*plan)) + len(plan.pathVariable) + stringsBytes(plan.constants) + stringsBytes(plan.pathChecks) + stringsBytes(plan.listVariables)
+	size += 1024 + 1024*len(plan.iterationChecks) + int(unsafe.Sizeof(*plan)) + len(plan.pathVariable) + stringsBytes(plan.constants) + stringsBytes(plan.pathChecks) + stringsBytes(plan.listVariables)
 	for _, checks := range plan.iterationChecks {
 		size += 64 + stringsBytes(checks)
 	}

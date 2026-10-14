@@ -63,6 +63,9 @@ type pathSearchWalks struct {
 
 // expandForward adds the next level of the walk search from the start.
 func (s *pathSearch) expandForward(w *pathSearchWalks) {
+	if s.ctx.Err() != nil {
+		return
+	}
 	var next []int32
 	for _, p := range w.frontier {
 		if s.ctx.Err() != nil {
@@ -91,6 +94,9 @@ func (s *pathSearch) expandForward(w *pathSearchWalks) {
 
 // expandBackward adds the next level of the walk search from the end.
 func (s *pathSearch) expandBackward(w *pathSearchWalks) {
+	if s.ctx.Err() != nil {
+		return
+	}
 	var next []pathSearchKey
 	for _, key := range w.back {
 		if s.ctx.Err() != nil {
@@ -140,6 +146,9 @@ func (s *pathSearch) meet(w *pathSearchWalks, p int32) {
 // source runs toward target, skipping the products that can't reach it in
 // the length left.
 func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direct bool, bind func(pathSearchPath) (pipelineRow, bool)) []pipelineRow {
+	if s.ctx.Err() != nil {
+		return nil
+	}
 	s.target = target
 	if direct && count == 1 {
 		if rows, ok := s.uniformPair(source, target, groups, bind); ok {
@@ -149,7 +158,13 @@ func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direc
 	if len(s.a.counters) > 0 {
 		return s.run(source, count, groups, bind)
 	}
+	if s.ctx.Err() != nil {
+		return nil
+	}
 	s.begin(source)
+	if s.ctx.Err() != nil {
+		return nil
+	}
 	w := &pathSearchWalks{forward: map[int32]int{}, preds: map[int32][]pathSearchHop{}, backward: map[pathSearchKey]int{},
 		nodes: map[pathSearchKey]*storage.Node{}, succs: map[pathSearchKey][]pathSearchBack{}, shortest: -1}
 	for _, entry := range s.levels[0].entries {

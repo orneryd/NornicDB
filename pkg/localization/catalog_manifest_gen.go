@@ -533,7 +533,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cypherknowledgepolicy.visibility_unsupported", Constructor: "CypherKnowledgePolicyVisibilityUnsupported", Fields: []string{"Procedure"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.aggregate_call_expected", Constructor: "CypherMatchingAggregateCallExpected", Fields: []string{"Expression"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.aggregation_scope_variable", Constructor: "CypherMatchingAggregationScopeVariable", Fields: []string{"Variable"}, PluralForms: []string{"other"}},
-	{ID: "cyphermatching.bound_shortest_relationships", Constructor: "CypherMatchingBoundShortestRelationships", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "cyphermatching.bound_shortest_relationships", Constructor: "CypherMatchingBoundShortestRelationships", Fields: []string{"Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.collect_subquery_failed", Constructor: "CypherMatchingCollectSubqueryFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.function_parameters_insufficient", Constructor: "CypherMatchingFunctionParametersInsufficient", Fields: []string{"Function"}, PluralForms: []string{"other"}},
 	{ID: "cyphermatching.is_not_operand_invalid", Constructor: "CypherMatchingIsNotOperandInvalid", Fields: []string{"Input"}, PluralForms: []string{"other"}},

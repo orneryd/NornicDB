@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -188,7 +189,7 @@ func TestReview1238BoundList(t *testing.T) {
 		q := "MATCH (a:S {id: 1})-[r:T*2]->(b:S {id: 3}) WITH a,b,r MATCH p = " + form + " RETURN length(p), size(r)"
 		r, err := e.Execute(c, q, nil)
 		if form == "shortestPath((a)-[r:T*]->(b))" || form == "allShortestPaths((a)-[r:T*]->(b))" {
-			requireStatus(t, e, q, nil, "Neo.ClientError.Statement.SyntaxError", "Bound relationships not allowed in shortestPath(...)")
+			requireStatus(t, e, q, nil, "Neo.ClientError.Statement.SyntaxError", "Bound relationships not allowed in "+strings.SplitN(form, "(", 2)[0]+"(...)")
 			continue
 		}
 		if err != nil {
