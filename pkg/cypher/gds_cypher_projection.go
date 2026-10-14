@@ -91,7 +91,7 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 	nodePropertyFloat := make(map[string]bool)
 	seen := make(map[string]bool)
 	addNode := func(value, labels, properties interface{}, labelsKey, variable string) (string, error) {
-		id, node, err := e.gdsProjectionNode(value)
+		id, err := gdsProjectionNode(value)
 		if err != nil {
 			return "", err
 		}
@@ -103,7 +103,6 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 			seen[id] = true
 			projection.NodeIDs = append(projection.NodeIDs, id)
 		}
-		_ = node
 		if len(nodeLabels) == 0 && len(projection.NodeLabels[id]) == 0 {
 			nodeLabels = []string{"__ALL__"}
 		}
@@ -250,22 +249,22 @@ func (e *StorageExecutor) gdsCypherProjection(ctx context.Context, rows []gdsPro
 
 // gdsProjectionNode reads a projected node: a node, or an INTEGER id, which
 // needn't be a stored node's, as in GDS.
-func (e *StorageExecutor) gdsProjectionNode(value interface{}) (string, *storage.Node, error) {
+func gdsProjectionNode(value interface{}) (string, error) {
 	switch node := value.(type) {
 	case *storage.Node:
 		if node != nil {
-			return string(node.ID), node, nil
+			return string(node.ID), nil
 		}
 	default:
 		if isIntegerProcedureValue(value) {
-			return strconv.FormatInt(toInt64(value), 10), nil, nil
+			return strconv.FormatInt(toInt64(value), 10), nil
 		}
 	}
 	typeName := gdsJavaType(value)
 	if value == nil {
 		typeName = "NO_VALUE"
 	}
-	return "", nil, localizedError(localization.CypherGraphProceduresNodeNotNodeOrInteger(typeName), nil)
+	return "", localizedError(localization.CypherGraphProceduresNodeNotNodeOrInteger(typeName), nil)
 }
 
 // gdsAggregationLabels reads a dataConfig's node labels: a STRING, a list
