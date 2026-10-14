@@ -614,7 +614,9 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 		return predicate.match(leftText, rightText), true, nil
 	}
 
-	if open := strings.LastIndex(expr, "["); open > 0 && strings.HasSuffix(expr, "]") && rowSubscriptReceiverStart(expr, open) == 0 {
+	// The subscript is the bracket group that closes expr: its key may hold
+	// brackets of its own (m[r[k]], m[l[0].id]).
+	if open := closingBracketGroupStart(expr); open > 0 && rowSubscriptReceiverStart(expr, open) == 0 {
 		base, ok, err := e.evaluateRowValue(expr[:open], values)
 		if err != nil {
 			return nil, false, err
