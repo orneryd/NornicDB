@@ -396,52 +396,61 @@ func localBindingOf(text string, operand int, name string) (localBinding, int, b
 	return found, foundIndex, ok
 }
 
-// localBindingKind is the binding kind of the local name read at offset at
-// of text (localBindingOf), as the scope's static types give it: a named
-// path is a Path; an element is its list's element (listElementOperand: an
-// Integer of [1], a node of [y] for a node y); reduce's accumulator is its
-// initial value's type. It is unknown when that type isn't known.
-func localBindingKind(text string, at int, name string, scope staticTypeScope) matchBindingKind {
+// localBindingOperand is the static type of the local name read at offset
+// at of text (localBindingOf): a named path is a Path; an element is its
+// list's element (listElementOperand: an Integer of [1], a node of [y]
+// for a node y); reduce's accumulator is its initial value's type. The
+// source is typed in the scope at its own position, with the locals
+// around it typed first (withLocalTypes): in
+// all(x IN [y] WHERE all(r IN [x] WHERE …)) [x] holds the outer local's
+// node. It is unknown when that type isn't known.
+func localBindingOperand(text string, at int, name string, scope staticTypeScope) staticOperand {
 	binding, index, ok := localBindingOf(text, at, name)
 	if !ok {
-		return matchBindingUnknown
+		return staticOperand{}
 	}
 	if binding.path[index] {
-		return matchBindingPath
+		return typedOperand("Path")
 	}
 	span := binding.source[index]
 	if span[0] <= 0 || span[1] <= span[0] || span[1] > len(text) {
-		return matchBindingUnknown
+		return staticOperand{}
 	}
 	source := strings.TrimSpace(text[span[0]:span[1]])
-	types := typeScopeOf(scope)
+	inner := withLocalTypes(scope, text, span[0])
+	types := typeScopeOf(inner)
 	if binding.element[index] {
-		return listElementOperand(types, scope, source).bindingKind()
+		return listElementOperand(types, inner, source)
 	}
-	return projectedOperand(types, scope, source).bindingKind()
+	return projectedOperand(types, inner, source)
 }
 
-// withLocalKinds is scope with each name a local binds around offset at of
-// text in place of the outer variable of that name, with the local's own
-// kind (localBindingKind): in all(r IN [1] WHERE EXISTS { (r)-->() }) the r
+// localBindingKind is localBindingOperand's binding kind.
+func localBindingKind(text string, at int, name string, scope staticTypeScope) matchBindingKind {
+	return localBindingOperand(text, at, name, scope).bindingKind()
+}
+
+// withLocalTypes is scope with each name a local binds around offset at of
+// text in place of the outer variable of that name, typed as that local
+// (localBindingOperand): in all(r IN [1] WHERE EXISTS { (r)-->() }) the r
 // a subquery's pattern reads is an Integer, not the clause's relationship.
-func withLocalKinds(scope matchSemanticScope, text string, at int) matchSemanticScope {
-	var local matchSemanticScope
+// The scope goes through typeScope, the one type of every variable.
+func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope {
+	var types typeScope
 	for name := range expressionLocalBindings(text) {
 		if !localVariableShadowsAt(text, at, name) {
 			continue
 		}
-		if local == nil {
-			local = maps.Clone(scope)
-			if local == nil {
-				local = matchSemanticScope{}
-			}
+		if types == nil {
+			types = typeScopeOf(scope)
 		}
-		local[name] = localBindingKind(text, at, name, staticTypeScope{kinds: scope})
+		types[name] = localBindingOperand(text, at, name, scope)
 	}
-	if local == nil {
+	if types == nil {
 		return scope
 	}
+	local := types.static(scope.cypher25)
+	local.complete, local.params = scope.complete, scope.params
 	return local
 }
 
