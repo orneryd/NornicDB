@@ -356,8 +356,9 @@ func fastRPSubgraph(proj *GraphProjection, config FastRPConfig) (*fastRPGraph, e
 		}
 		weight := 1.0
 		if property := config.RelationshipWeightProperty; property != "" {
+			// A NaN weight is a missing one, as GDS reads it.
 			value, ok := relationship.Properties[property]
-			if !ok {
+			if !ok || math.IsNaN(value) {
 				return nil, localizedError(localization.CypherGraphProceduresRelationshipPropertyMissing(property, strconv.Itoa(source), strconv.Itoa(target)), nil)
 			}
 			weight = value
@@ -371,12 +372,13 @@ func fastRPSubgraph(proj *GraphProjection, config FastRPConfig) (*fastRPGraph, e
 // nodes, in its node order. Each node starts from a sparse random vector
 // (L2-normalised, scaled by its degree to normalizationStrength), the last
 // propertyRatio of whose dimensions hold its featureProperties, each value
-// times a random vector of that property. Each iteration gives every node
-// the relationship-weighted sum of the previous iteration's vectors over its
-// relationships, as projected (outgoing; both ways for UNDIRECTED),
-// L2-normalised; the embedding is the iterations' sum, each times its
-// iterationWeights entry, plus nodeSelfInfluence times the start. A node
-// nothing propagates to gets a zero vector, as in GDS.
+// (each element of a list property) times a random vector of its own. Each
+// iteration gives every node the relationship-weighted average of the
+// previous iteration's vectors over its relationships, as projected
+// (outgoing; both ways for UNDIRECTED), which the next iteration reads; the
+// embedding adds each iteration's vector L2-normalised, times its
+// iterationWeights entry, plus nodeSelfInfluence times the normalised start,
+// as GDS does. A node nothing propagates to gets a zero vector.
 func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fastRPEmbedding, error) {
 	graph, err := fastRPSubgraph(proj, config)
 	if err != nil {
@@ -388,7 +390,8 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fas
 		return nil, nil
 	}
 	propDim := int(float64(dim) * config.PropertyRatio)
-	var features [][]float64
+	var features [][]float64 // each node's feature values, a list property's elements in turn
+	featureCount := 0
 	if propDim > 0 {
 		labels := config.NodeLabels
 		if labels == nil {
@@ -398,17 +401,24 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fas
 		if missing := missingNames(config.FeatureProperties, available); len(missing) > 0 {
 			return nil, localizedError(localization.CypherGraphProceduresFeaturePropertiesMissing(gdsNameList(config.FeatureProperties), gdsNameList(labels), gdsNameList(available)), nil)
 		}
+		widths := make([]int, len(config.FeatureProperties))
 		features = make([][]float64, size)
 		for i, id := range graph.nodes {
-			features[i] = make([]float64, len(config.FeatureProperties))
 			for p, name := range config.FeatureProperties {
-				value, ok := proj.NodeProperties[id][name]
-				if !ok || math.IsNaN(value) {
-					return nil, localizedError(localization.CypherGraphProceduresFeaturePropertyInvalid(strconv.Itoa(i), name), nil)
+				values, err := fastRPFeatureValues(proj, id, name, i)
+				if err != nil {
+					return nil, err
 				}
-				features[i][p] = value
+				// A list property's arrays must all be one length.
+				if i == 0 {
+					widths[p] = len(values)
+				} else if len(values) != widths[p] {
+					return nil, localizedError(localization.CypherGraphProceduresArrayLengthsDiffer(name, strconv.Itoa(len(values)), strconv.Itoa(widths[p])), nil)
+				}
+				features[i] = append(features[i], values...)
 			}
 		}
+		featureCount = len(features[0])
 	}
 
 	rng := mathrand.New(mathrand.NewSource(config.RandomSeed))
@@ -430,7 +440,7 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fas
 		}
 	}
 	if propDim > 0 {
-		featureVectors := make([][]float64, len(config.FeatureProperties))
+		featureVectors := make([][]float64, featureCount)
 		for p := range featureVectors {
 			featureVectors[p] = make([]float64, propDim)
 			for k := range featureVectors[p] {
@@ -438,8 +448,8 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fas
 			}
 		}
 		for i := range initial {
-			for p, value := range features[i] {
-				for k, r := range featureVectors[p] {
+			for f, value := range features[i] {
+				for k, r := range featureVectors[f] {
 					initial[i][topologyDim+k] += value * r
 				}
 			}
@@ -460,12 +470,14 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fas
 					current[i][j] += value * edge.weight
 				}
 			}
-		}
-		normalizeEmbeddings(current, dim)
-		if weight != 0 {
-			for i := range final {
+			if degree := len(graph.outgoing[i]); degree > 1 {
+				for j := range current[i] {
+					current[i][j] /= float64(degree)
+				}
+			}
+			if norm := vectorNorm(current[i]); weight != 0 && norm > 0 {
 				for j, value := range current[i] {
-					final[i][j] += weight * value
+					final[i][j] += weight * value / norm
 				}
 			}
 		}
@@ -473,8 +485,12 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fas
 	}
 	if config.NodeSelfInfluence != 0 {
 		for i := range final {
+			norm := vectorNorm(initial[i])
+			if norm < fastRPEpsilon {
+				norm = 1
+			}
 			for j, value := range initial[i] {
-				final[i][j] += config.NodeSelfInfluence * value
+				final[i][j] += config.NodeSelfInfluence * value / norm
 			}
 		}
 	}
@@ -484,6 +500,40 @@ func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fas
 		embeddings[i] = fastRPEmbedding{nodeID: id, vector: final[i]}
 	}
 	return embeddings, nil
+}
+
+// fastRPEpsilon is GDS's smallest L2 norm FastRP divides by (10 /
+// Float.MAX_VALUE); a smaller start vector is taken as it is.
+const fastRPEpsilon = 10 / 3.40282346638528859811704183484516925440e+38
+
+// vectorNorm is a vector's L2 norm.
+func vectorNorm(vector []float64) float64 {
+	sum := 0.0
+	for _, value := range vector {
+		sum += value * value
+	}
+	return math.Sqrt(sum)
+}
+
+// fastRPFeatureValues is one node's values of a feature property: the
+// number, or a list property's elements. A missing or NaN number is
+// refused, as GDS refuses it.
+func fastRPFeatureValues(proj *GraphProjection, id, name string, position int) ([]float64, error) {
+	switch values := proj.NodeValues[id][name].(type) {
+	case []float64:
+		return values, nil
+	case []int64:
+		floats := make([]float64, len(values))
+		for i, value := range values {
+			floats[i] = float64(value)
+		}
+		return floats, nil
+	}
+	value, ok := proj.NodeProperties[id][name]
+	if !ok || math.IsNaN(value) {
+		return nil, localizedError(localization.CypherGraphProceduresFeaturePropertyInvalid(strconv.Itoa(position), name), nil)
+	}
+	return []float64{value}, nil
 }
 
 // missingNames is the names not in available.

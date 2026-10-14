@@ -561,3 +561,15 @@ func RegisteredProcedureForCall(query string) (ProcedureSpec, bool) {
 	}
 	return procedure.Spec, true
 }
+
+// authorizeDatabase requires permission on database when the context
+// carries database-scoped entitlements, so a procedure that names another
+// database (gds.graph.drop's dbName) is checked there, not only where the
+// statement runs.
+func authorizeDatabase(ctx context.Context, database, permission string) error {
+	authorization, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization)
+	if !ok || authorization.resolver(database, permission) {
+		return nil
+	}
+	return &PermissionDeniedError{Permission: permission}
+}

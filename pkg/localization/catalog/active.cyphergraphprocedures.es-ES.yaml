@@ -118,3 +118,21 @@
 - id: cyphergraphprocedures.unsupported_gds_value
   description: Mensaje de GDS (unsupported gds value).
   other: 'Conversión no compatible a un valor de GDS desde un valor de Neo4j de tipo `{{.Type}}`.'
+- id: cyphergraphprocedures.relationship_end_not_projected
+  description: Mensaje de GDS (relationship end not projected).
+  other: 'No se pudo cargar una relación porque su nodo {{.Side}} con id {{.Node}} no forma parte de la consulta o proyección de nodos. Para ignorar la relación, establezca el parámetro de configuración `validateRelationships` en false.'
+- id: cyphergraphprocedures.unsupported_array_type
+  description: Mensaje de GDS (unsupported array type).
+  other: 'La carga de valores de tipo {{.Type}} no está admitida actualmente'
+- id: cyphergraphprocedures.unsafe_conversion
+  description: Mensaje de GDS (unsafe conversion).
+  other: 'No se puede convertir de forma segura {{.Value}} en {{.Target}}.'
+- id: cyphergraphprocedures.array_lengths_differ
+  description: Mensaje de GDS (array lengths differ).
+  other: 'La propiedad `{{.Property}}` contiene arrays de longitudes distintas `{{.Found}}` y `{{.First}}`.'
+- id: cyphergraphprocedures.unsafe_long_conversion
+  description: Mensaje de GDS (unsafe long conversion).
+  other: 'No se puede convertir de forma segura {{.Value}} en un valor long'
+- id: cyphergraphprocedures.unsafe_long_array_conversion
+  description: Mensaje de GDS (unsafe long array conversion).
+  other: 'No se puede convertir de forma segura {{.Value}} en un Long Array. No se puede convertir de forma segura {{.Fraction}} en un valor long'

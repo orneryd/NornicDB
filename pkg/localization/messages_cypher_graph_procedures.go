@@ -40,6 +40,12 @@ const (
 	MessageCypherGraphProceduresConfigParametersMerged         MessageID = "cyphergraphprocedures.config_parameters_merged"
 	MessageCypherGraphProceduresGraphExistsAggregation         MessageID = "cyphergraphprocedures.graph_exists_aggregation"
 	MessageCypherGraphProceduresUnsupportedGDSValue            MessageID = "cyphergraphprocedures.unsupported_gds_value"
+	MessageCypherGraphProceduresRelationshipEndNotProjected    MessageID = "cyphergraphprocedures.relationship_end_not_projected"
+	MessageCypherGraphProceduresUnsupportedArrayType           MessageID = "cyphergraphprocedures.unsupported_array_type"
+	MessageCypherGraphProceduresUnsafeConversion               MessageID = "cyphergraphprocedures.unsafe_conversion"
+	MessageCypherGraphProceduresArrayLengthsDiffer             MessageID = "cyphergraphprocedures.array_lengths_differ"
+	MessageCypherGraphProceduresUnsafeLongConversion           MessageID = "cyphergraphprocedures.unsafe_long_conversion"
+	MessageCypherGraphProceduresUnsafeLongArrayConversion      MessageID = "cyphergraphprocedures.unsafe_long_array_conversion"
 	MessageCypherGraphProceduresSourceNodeNotFound             MessageID = "cyphergraphprocedures.source_node_not_found"
 )
 
@@ -246,4 +252,34 @@ func CypherGraphProceduresGraphExistsAggregation(graph string) Message {
 // CypherGraphProceduresUnsupportedGDSValue is GDS's message for a projected property value that isn't a number.
 func CypherGraphProceduresUnsupportedGDSValue(typeName string) Message {
 	return Message{ID: MessageCypherGraphProceduresUnsupportedGDSValue, Fallback: "Unsupported conversion to GDS Value from Neo4j Value with type `" + typeName + "`.", Data: map[string]any{"Type": typeName}}
+}
+
+// CypherGraphProceduresRelationshipEndNotProjected is GDS's message for validateRelationships and a relationship whose end isn't projected.
+func CypherGraphProceduresRelationshipEndNotProjected(side, node string) Message {
+	return Message{ID: MessageCypherGraphProceduresRelationshipEndNotProjected, Fallback: "Failed to load a relationship because its " + side + "-node with id " + node + " is not part of the node query or projection. To ignore the relationship, set the configuration parameter `validateRelationships` to false.", Data: map[string]any{"Side": side, "Node": node}}
+}
+
+// CypherGraphProceduresUnsupportedArrayType is GDS's message for a list property of a type it can't project.
+func CypherGraphProceduresUnsupportedArrayType(typeName string) Message {
+	return Message{ID: MessageCypherGraphProceduresUnsupportedArrayType, Fallback: "Loading of values of type " + typeName + " is currently not supported", Data: map[string]any{"Type": typeName}}
+}
+
+// CypherGraphProceduresUnsafeConversion is GDS's message for a property value of a different type than the property's first value.
+func CypherGraphProceduresUnsafeConversion(value, target string) Message {
+	return Message{ID: MessageCypherGraphProceduresUnsafeConversion, Fallback: "Cannot safely convert " + value + " into " + target + ".", Data: map[string]any{"Value": value, "Target": target}}
+}
+
+// CypherGraphProceduresArrayLengthsDiffer is GDS's message for a FastRP feature property holding arrays of different lengths.
+func CypherGraphProceduresArrayLengthsDiffer(property, found, first string) Message {
+	return Message{ID: MessageCypherGraphProceduresArrayLengthsDiffer, Fallback: "The property `" + property + "` contains arrays of differing lengths `" + found + "` and `" + first + "`.", Data: map[string]any{"Property": property, "Found": found, "First": first}}
+}
+
+// CypherGraphProceduresUnsafeLongConversion is GDS's message for a fraction given to an Integer property.
+func CypherGraphProceduresUnsafeLongConversion(value string) Message {
+	return Message{ID: MessageCypherGraphProceduresUnsafeLongConversion, Fallback: "Cannot safely convert " + value + " into an long value", Data: map[string]any{"Value": value}}
+}
+
+// CypherGraphProceduresUnsafeLongArrayConversion is GDS's message for a list with a fraction given to a List of Integer property.
+func CypherGraphProceduresUnsafeLongArrayConversion(value, fraction string) Message {
+	return Message{ID: MessageCypherGraphProceduresUnsafeLongArrayConversion, Fallback: "Cannot safely convert " + value + " into a Long Array. Cannot safely convert " + fraction + " into an long value", Data: map[string]any{"Fraction": fraction, "Value": value}}
 }
