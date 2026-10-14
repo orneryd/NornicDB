@@ -94,10 +94,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 			}
 
 			// Check for slice notation [..N] or [N..M] or [N..]
-			if strings.Contains(indexExpr, "..") {
+			if lowerExpr, upperExpr, slice := staticSliceBounds(indexExpr); slice {
 				// This is a slice, not an index
 				baseVal := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				lowerExpr, upperExpr, _ := strings.Cut(indexExpr, "..")
 				lowerExpr, upperExpr = strings.TrimSpace(lowerExpr), strings.TrimSpace(upperExpr)
 				var lower, upper interface{}
 				if lowerExpr != "" {

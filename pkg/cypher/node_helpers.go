@@ -364,7 +364,7 @@ func (e *StorageExecutor) applyArraySuffix(collected []interface{}, suffix strin
 
 	// Slice notation [..N], [N..M] or [N..] (cypherListSlice); the bounds
 	// are integer literals here.
-	if lowerExpr, upperExpr, isSlice := strings.Cut(indexExpr, ".."); isSlice {
+	if lowerExpr, upperExpr, isSlice := staticSliceBounds(indexExpr); isSlice {
 		lowerExpr, upperExpr = strings.TrimSpace(lowerExpr), strings.TrimSpace(upperExpr)
 		var lower, upper interface{}
 		if n, err := strconv.ParseInt(lowerExpr, 10, 64); err == nil {
