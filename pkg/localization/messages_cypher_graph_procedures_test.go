@@ -21,6 +21,11 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresNodePropertyNotInGraph("nope"), "No node projection with property 'nope' exists."},
 		{CypherGraphProceduresStarPropertyRequiresCount(), "A '*' property key can only be used in combination with count aggregation."},
 		{CypherGraphProceduresJobIDType("Long"), "Expected JobId or String. Got Long."},
+		{CypherGraphProceduresUpperDegreeBelowDegree(), "The value of upperDegreeCutoff cannot be smaller than degreeCutoff"},
+		{CypherGraphProceduresInvalidParameterCombination("topK", "bottomK"), "Invalid parameter combination: topK combined with bottomK"},
+		{CypherGraphProceduresInvalidSimilarityMetric("NOPE"), "NOPE is not a valid metric. Available metrics include Jaccard and Overlap"},
+		{CypherGraphProceduresInvalidScalarType("Boolean"), "Invalid scalar type. Expected Long or Node but found: Boolean"},
+		{CypherGraphProceduresLabelNotInGraph("Nope"), "The label `Nope` does not exist in the graph"},
 		{CypherGraphProceduresBuildGraphFailed(cause), "failed to build graph: forced graph failure"},
 		{CypherGraphProceduresSourceNodeRequired(), "sourceNode parameter required"},
 		{CypherGraphProceduresConfigValueOutOfRange("propertyRatio", "2", "[0.00, 1.00]"), "Value for `propertyRatio` was `2`, but must be within the range [0.00, 1.00]."},
@@ -48,7 +53,7 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresSourceNodeNotFound("x"), "sourceNode `x` does not exist in the graph"},
 	}
 
-	require.Len(t, testCases, 31)
+	require.Len(t, testCases, 36)
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {
