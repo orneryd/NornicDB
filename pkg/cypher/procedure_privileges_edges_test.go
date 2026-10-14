@@ -78,7 +78,8 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	require.Error(t, err)
 
 	// The system database through the database manager.
-	system := storage.NewMemoryEngine()
+	systemBase := storage.NewMemoryEngine()
+	system := storage.NewNamespacedEngine(systemBase, "system")
 	t.Cleanup(func() { _ = system.Close() })
 	require.NoError(t, auth.NewRoleStore(system).CreateRole(ctx, "a"))
 	require.NoError(t, auth.NewRoleStore(system).CreateRole(ctx, "b"))
@@ -112,9 +113,10 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	failing.failCreate = true
 	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.y ON DBMS TO a")
 	require.ErrorIs(t, err, errSystemStorage)
-	failing.failCreate, failing.failScan = false, true
+	failing.failCreate, failing.failGet = false, true
 	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.y ON DBMS TO a")
 	require.ErrorIs(t, err, errSystemStorage)
+	failing.failScan = true
 	_, err = exec.executeShowPrivileges(ctx, "SHOW PRIVILEGES")
 	require.ErrorIs(t, err, errSystemStorage)
 	// A REVOKE checks for immutable grants first: a read that fails is its
@@ -129,4 +131,12 @@ func (e *failingScanEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
 		return nil, errSystemStorage
 	}
 	return e.Engine.GetNode(id)
+}
+
+func (e *failingScanEngine) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
+	return auth.WithStoreTransaction(ctx, e.Engine, func(view storage.Engine) error {
+		staged := *e
+		staged.Engine = view
+		return mutate(&staged)
+	})
 }

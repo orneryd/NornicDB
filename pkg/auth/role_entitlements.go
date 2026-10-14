@@ -137,7 +137,9 @@ func (r *RoleEntitlementsStore) Set(ctx context.Context, role string, entitlemen
 	} else {
 		node.CreatedAt = existing.CreatedAt
 		if len(entitlementIDs) == 0 {
-			_ = r.storage.DeleteNode(nodeID)
+			if err := r.storage.DeleteNode(nodeID); err != nil {
+				return err
+			}
 		} else {
 			err = r.storage.UpdateNode(node)
 			if err != nil {

@@ -42,39 +42,41 @@ func TestNeo4jExpressionBehaviours(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &cases))
 	require.NotEmpty(t, cases)
 	for _, tc := range cases {
-		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "neo4j_expression_behaviours"))
-		databases := newMockDatabaseManager()
-		require.NoError(t, databases.CreateDatabase("neo4j_expression_behaviours"))
-		exec.SetDatabaseManager(databases)
-		params := make(map[string]interface{}, len(tc.Params))
-		for name, value := range tc.Params {
-			// JSON numbers are floats; a whole one is an integer parameter.
-			if number, isFloat := value.(float64); isFloat && number == math.Trunc(number) {
-				value = int64(number)
-			}
-			params[name] = value
-		}
-		got := ""
-		for index, statement := range tc.Statements {
-			result, err := exec.Execute(context.Background(), statement, params)
-			if err != nil {
-				var classified interface{ BoltErrorCode() string }
-				code := "Neo.ClientError.Statement.SyntaxError" // errors.Neo4jStatus's default
-				if errors.As(err, &classified) {
-					code = classified.BoltErrorCode()
+		t.Run(tc.Source, func(t *testing.T) {
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "neo4j_expression_behaviours"))
+			databases := newMockDatabaseManager(t)
+			require.NoError(t, databases.CreateDatabase("neo4j_expression_behaviours"))
+			exec.SetDatabaseManager(databases)
+			params := make(map[string]interface{}, len(tc.Params))
+			for name, value := range tc.Params {
+				// JSON numbers are floats; a whole one is an integer parameter.
+				if number, isFloat := value.(float64); isFloat && number == math.Trunc(number) {
+					value = int64(number)
 				}
-				got = "ERR " + code
-				break
+				params[name] = value
 			}
-			if index == len(tc.Statements)-1 {
-				columns := make([]interface{}, len(result.Columns))
-				for i, column := range result.Columns {
-					columns[i] = column
+			got := ""
+			for index, statement := range tc.Statements {
+				result, err := exec.Execute(context.Background(), statement, params)
+				if err != nil {
+					var classified interface{ BoltErrorCode() string }
+					code := "Neo.ClientError.Statement.SyntaxError" // errors.Neo4jStatus's default
+					if errors.As(err, &classified) {
+						code = classified.BoltErrorCode()
+					}
+					got = "ERR " + code
+					break
 				}
-				got = canonicalRecordedValue(map[string]interface{}{"cols": columns, "rows": result.Rows})
+				if index == len(tc.Statements)-1 {
+					columns := make([]interface{}, len(result.Columns))
+					for i, column := range result.Columns {
+						columns[i] = column
+					}
+					got = canonicalRecordedValue(map[string]interface{}{"cols": columns, "rows": result.Rows})
+				}
 			}
-		}
-		require.Equal(t, tc.Expected, got, "%s (%s): %v", tc.Source, tc.Reference, tc.Statements)
+			require.Equal(t, tc.Expected, got, "%s (%s): %v", tc.Source, tc.Reference, tc.Statements)
+		})
 	}
 }
 

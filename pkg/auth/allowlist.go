@@ -136,16 +136,42 @@ func (a *AllowlistStore) DeleteRoleDatabases(ctx context.Context, role string) e
 // RenameRoleInAllowlist copies allowlist entry from oldName to newName and deletes old.
 // Call when a user-defined role is renamed so DB access is preserved.
 func (a *AllowlistStore) RenameRoleInAllowlist(ctx context.Context, oldName, newName string) error {
-	a.mu.RLock()
-	dbs := a.allowlist[oldName]
-	if dbs != nil {
-		dbs = append([]string(nil), dbs...)
-	}
-	a.mu.RUnlock()
-	if err := a.SaveRoleDatabases(ctx, newName, dbs); err != nil {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	dbs := append([]string(nil), a.allowlist[oldName]...)
+	if err := WithStoreTransaction(ctx, a.storage, func(view storage.Engine) error {
+		staged := NewAllowlistStore(view)
+		if err := staged.SaveRoleDatabases(ctx, newName, dbs); err != nil {
+			return err
+		}
+		return staged.DeleteRoleDatabases(ctx, oldName)
+	}); err != nil {
 		return err
 	}
-	return a.DeleteRoleDatabases(ctx, oldName)
+	a.allowlist[newName] = dbs
+	delete(a.allowlist, oldName)
+	return nil
+}
+
+// SaveMappings persists a batch together and publishes the cache after commit.
+func (a *AllowlistStore) SaveMappings(ctx context.Context, mappings map[string][]string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err := WithStoreTransaction(ctx, a.storage, func(view storage.Engine) error {
+		staged := NewAllowlistStore(view)
+		for role, databases := range mappings {
+			if err := staged.SaveRoleDatabases(ctx, role, databases); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for role, databases := range mappings {
+		a.allowlist[role] = append([]string(nil), databases...)
+	}
+	return nil
 }
 
 // SeedIfEmpty creates default allowlist entries for admin, editor, viewer if no allowlist data exists.
@@ -160,12 +186,11 @@ func (a *AllowlistStore) SeedIfEmpty(ctx context.Context, databaseNames []string
 	}
 	// Empty list means "all databases" in NewAllowlistDatabaseAccessMode, so dynamically
 	// created databases (e.g. test_db_a) are accessible without re-seeding.
+	mappings := make(map[string][]string)
 	for _, role := range builtinRoleNames {
-		if err := a.SaveRoleDatabases(ctx, role, []string{}); err != nil {
-			return err
-		}
+		mappings[role] = []string{}
 	}
-	return nil
+	return a.SaveMappings(ctx, mappings)
 }
 
 // HasAllowlistData returns true if any allowlist entry exists in storage (for seed skip).

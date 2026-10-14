@@ -40,6 +40,10 @@ type SweepCase struct {
 	Position string `json:"position"`
 	Query    string `json:"query"`
 	Rollback bool   `json:"rollback"`
+
+	// Optional database and statement sequence retain one request/transaction.
+	Database   string   `json:"database,omitempty"`
+	Statements []string `json:"statements,omitempty"`
 }
 
 // IssueCase is the Cypher of one issue's text, in the issue's order.

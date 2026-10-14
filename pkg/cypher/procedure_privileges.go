@@ -176,33 +176,19 @@ func (e *StorageExecutor) systemStorage() (storage.Engine, error) {
 	return e.storage, nil
 }
 
-// privilegeStorage is the storage GRANT, REVOKE (writes) and SHOW
-// PRIVILEGES read and write privileges through. Neo4j runs an
-// administration command inside the explicit transaction it is sent in:
-// it takes effect when the transaction commits and is undone by its
-// rollback. So in an explicit transaction on the system database this is
-// the transaction's own storage; otherwise the system database's. A GRANT
-// or REVOKE in an explicit transaction on another database is refused, as
-// a write to a second database in a transaction is: the system database's
-// writes can't join that transaction. SHOW PRIVILEGES there reads what the
-// system database has committed.
+// privilegeStorage is the administration transaction's own view, or the
+// committed system store outside a transaction. The statement owner chooses
+// the transaction's database before executing any administration command.
 func (e *StorageExecutor) privilegeStorage(writes bool) (storage.Engine, error) {
-	system, err := e.systemStorage()
-	if err != nil {
-		return nil, err
+	if e.txContext != nil && e.txContext.active {
+		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+			return wrapper, nil
+		}
+		if wrapper := e.txContext.storageWrapper; wrapper != nil {
+			return wrapper, nil
+		}
 	}
-	if e.txContext == nil || !e.txContext.active || system == e.storage {
-		return system, nil
-	}
-	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok &&
-		(wrapper.underlying == system || strings.EqualFold(wrapper.Namespace(), "system")) {
-		return wrapper, nil
-	}
-	if !writes {
-		return system, nil
-	}
-	return nil, localizedStatusError("Neo.ClientError.Statement.AccessMode", "AccessMode",
-		localization.CypherCommandRoutingTransactionSecondDatabaseWrite("system", e.currentDatabaseName()))
+	return e.systemStorage()
 }
 
 // authenticationDisabledKey marks a statement run while authentication is
@@ -248,45 +234,52 @@ func (e *StorageExecutor) executeProcedurePrivilegeCommand(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	store := auth.NewProcedurePrivilegeStore(system)
-	if command.grant {
-		roles := auth.NewRoleStore(system)
-		if err := roles.Load(ctx); err != nil {
-			return nil, err
-		}
-		for _, role := range command.roles {
-			if !auth.IsBuiltinRole(role) && !roles.Exists(role) {
-				action := "execute"
-				if command.boosted {
-					action = "execute_boosted"
+	err = auth.WithStoreTransaction(ctx, system, func(system storage.Engine) error {
+		store := auth.NewProcedurePrivilegeStore(system)
+		if command.grant {
+			roles := auth.NewRoleStore(system)
+			for _, role := range command.roles {
+				exists, err := roles.LockRoleForGrant(ctx, role)
+				if err != nil {
+					return err
 				}
-				return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "RoleNotFound", localization.CypherAdminPrivilegeRoleNotFound(action, role))
+				if !exists {
+					action := "execute"
+					if command.boosted {
+						action = "execute_boosted"
+					}
+					return localizedStatusError("Neo.ClientError.Statement.ArgumentError", "RoleNotFound", localization.CypherAdminPrivilegeRoleNotFound(action, role))
+				}
+			}
+		} else if locked {
+			for _, role := range command.roles {
+				for _, procedure := range command.procedures {
+					grant, found, err := store.Lookup(ctx, role, procedure, command.boosted)
+					if err != nil {
+						return err
+					}
+					if found && grant.Immutable {
+						return localizedStatusError("Neo.ClientError.Security.Forbidden", "Forbidden", localization.CypherAdminImmutablePrivilegeRevokeForbidden())
+					}
+				}
 			}
 		}
-	} else if locked {
 		for _, role := range command.roles {
 			for _, procedure := range command.procedures {
-				grant, found, err := store.Lookup(ctx, role, procedure, command.boosted)
+				if command.grant {
+					err = store.Grant(ctx, role, procedure, command.boosted, command.immutable)
+				} else {
+					_, err = store.Revoke(ctx, role, procedure, command.boosted, command.immutable)
+				}
 				if err != nil {
-					return nil, err
-				}
-				if found && grant.Immutable {
-					return nil, localizedStatusError("Neo.ClientError.Security.Forbidden", "Forbidden", localization.CypherAdminImmutablePrivilegeRevokeForbidden())
+					return err
 				}
 			}
 		}
-	}
-	for _, role := range command.roles {
-		for _, procedure := range command.procedures {
-			if command.grant {
-				err = store.Grant(ctx, role, procedure, command.boosted, command.immutable)
-			} else {
-				_, err = store.Revoke(ctx, role, procedure, command.boosted, command.immutable)
-			}
-			if err != nil {
-				return nil, err
-			}
-		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }

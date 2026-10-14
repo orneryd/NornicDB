@@ -192,7 +192,8 @@ func (e *StorageExecutor) otherDatabaseInTransactionError(target, query string) 
 	if e.txContext == nil || !e.txContext.active {
 		return nil
 	}
-	current := e.currentDatabaseName()
+	current := StatementDatabase(e.currentDatabaseName(), query)
+	target = StatementDatabase(target, query)
 	if strings.EqualFold(current, target) {
 		return nil
 	}
@@ -218,7 +219,7 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 		return nil, err
 	}
 	if strings.EqualFold(resolvedDB, "system") {
-		if err := systemDatabaseStatementError(query, true); err != nil {
+		if err := systemDatabaseStatementError(query); err != nil {
 			return nil, err
 		}
 	}
@@ -238,32 +239,32 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 // there (CREATE, MERGE, SET, DELETE, REMOVE, a write procedure) is refused
 // on every route, as Neo4j refuses it (Neo.ClientError.Statement.SemanticError);
 // this keeps procedure grants coming only from GRANT and REVOKE. Reads
-// stay allowed on a request's or session's system database. A statement
-// that selects the system database with USE (selectedByUse) is refused for
-// schema commands and MATCH as well.
-func systemDatabaseStatementError(query string, selectedByUse bool) error {
+// without graph access stay allowed. Schema commands and graph reads are
+// refused by this same policy on session, USE and procedure-body routes.
+func systemDatabaseStatementError(query string) error {
+	_, query = parseExecutionMode(query)
 	if isSystemCommandNoGraph(query) {
 		return nil
 	}
 	requirements := QueryPermissionRequirements(query)
-	refused := requirements.Write
-	if selectedByUse {
-		refused = refused || requirements.Schema || queryKeywords(query)["MATCH"]
-	}
-	if !refused {
+	if !requirements.Write && !requirements.Schema && !queryKeywords(query)["MATCH"] {
 		return nil
 	}
-	return newSemanticError("Neo.ClientError.Statement.SemanticError", "SemanticError", "Graph access is not supported on the system database")
+	return localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError", localization.CypherAdminSystemGraphAccessUnsupported())
 }
 
 // systemDatabaseWriteError is systemDatabaseStatementError for a statement
 // run on this executor's own database (a request's or session's database,
 // not one a USE selects): nil unless that is the system database.
 func (e *StorageExecutor) systemDatabaseWriteError(query string) error {
-	if !strings.EqualFold(e.currentDatabaseName(), "system") {
+	database := e.currentDatabaseName()
+	if e.txContext != nil && e.txContext.active && e.txContext.statementKind == "Administration" {
+		database = "system"
+	}
+	if !strings.EqualFold(database, "system") {
 		return nil
 	}
-	return systemDatabaseStatementError(query, false)
+	return systemDatabaseStatementError(query)
 }
 
 // resolveCompositeStorage resolves USE <composite> to a CompositeEngine-backed executor.

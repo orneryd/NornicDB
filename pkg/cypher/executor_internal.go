@@ -30,6 +30,9 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 }
 
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	if e.txContext != nil && e.txContext.active {
+		defer func() { e.failTransaction(retErr) }()
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -89,6 +92,16 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		}
 		ctx = withExecutionDatabase(ctx, resolvedDB)
 		return scopedExec.executeInternal(ctx, remaining, params)
+	}
+	if err := e.admitTransactionStatement(cypher); err != nil {
+		return nil, err
+	}
+	routed, err := e.routeAdministrationStatement(ctx, cypher)
+	if err != nil {
+		return nil, err
+	}
+	if routed != e {
+		return routed.executeInternal(ctx, cypher, params)
 	}
 	if err := AuthorizeQuery(ctx, cypher); err != nil {
 		return nil, err

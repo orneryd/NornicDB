@@ -62,7 +62,7 @@ func TestDatabaseCommands_CreateDatabase_WhitespacePermutations(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newMockDatabaseManager()
+	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase("nornic") // Default database
 	exec.SetDatabaseManager(mockDBM)
 
@@ -112,7 +112,7 @@ func TestDatabaseCommands_DropDatabase_WhitespacePermutations(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newMockDatabaseManager()
+	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase("nornic")
 	exec.SetDatabaseManager(mockDBM)
 
@@ -166,7 +166,7 @@ func TestDatabaseCommands_ShowDatabases_WhitespacePermutations(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newMockDatabaseManager()
+	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase("nornic")
 	mockDBM.CreateDatabase("tenant_a")
 	mockDBM.CreateDatabase("tenant_b")
@@ -218,7 +218,7 @@ func TestDatabaseCommands_ComplexWhitespacePatterns(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newMockDatabaseManager()
+	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase("nornic")
 	exec.SetDatabaseManager(mockDBM)
 
@@ -285,7 +285,7 @@ func TestDatabaseCommands_EdgeCases_Whitespace(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newMockDatabaseManager()
+	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase("nornic")
 	exec.SetDatabaseManager(mockDBM)
 

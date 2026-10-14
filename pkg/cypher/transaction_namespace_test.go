@@ -334,7 +334,7 @@ func TestExecuteQueryAgainstStorage_ShowDispatchWithDatabaseManager(t *testing.T
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newMockDatabaseManager()
+	mockDBM := newMockDatabaseManager(t)
 	require.NoError(t, mockDBM.CreateDatabase("nornic"))
 	require.NoError(t, mockDBM.CreateDatabase("tenant_a"))
 	exec.SetDatabaseManager(mockDBM)

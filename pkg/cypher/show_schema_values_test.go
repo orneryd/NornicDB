@@ -182,7 +182,7 @@ func (m *identityDatabaseManager) SystemDatabaseName() string {
 }
 
 func TestShowDatabasePersistentIdentity(t *testing.T) {
-	manager := &identityDatabaseManager{mockDatabaseManager: newMockDatabaseManager()}
+	manager := &identityDatabaseManager{mockDatabaseManager: newMockDatabaseManager(t)}
 	require.NoError(t, manager.CreateDatabase("identity_db"))
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "identity_db"))
 	executor.SetDatabaseManager(manager)

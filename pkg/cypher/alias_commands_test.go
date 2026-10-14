@@ -21,12 +21,17 @@ import (
 type aliasTestDatabaseManager struct {
 	databases map[string]*multidb.DatabaseInfo
 	aliases   map[string]string // alias -> database
+
+	systemStore storage.Engine
 }
 
-func newAliasTestDatabaseManager() *aliasTestDatabaseManager {
+func newAliasTestDatabaseManager(t testing.TB) *aliasTestDatabaseManager {
+	t.Helper()
 	return &aliasTestDatabaseManager{
 		databases: make(map[string]*multidb.DatabaseInfo),
 		aliases:   make(map[string]string),
+
+		systemStore: storage.NewNamespacedEngine(newTestMemoryEngine(t), "system"),
 	}
 }
 
@@ -166,6 +171,9 @@ func (m *aliasTestDatabaseManager) IsCompositeDatabase(name string) bool {
 }
 
 func (m *aliasTestDatabaseManager) GetStorageForUse(name string, authToken string) (interface{}, error) {
+	if name == "system" {
+		return m.systemStore, nil
+	}
 	return nil, fmt.Errorf("not implemented in mock")
 }
 
@@ -208,7 +216,7 @@ func TestAliasCommands_CreateAlias_WhitespaceVariations(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newAliasTestDatabaseManager()
+	mockDBM := newAliasTestDatabaseManager(t)
 	mockDBM.CreateDatabase("tenant_a")
 	mockDBM.CreateDatabase("tenant_b")
 	mockDBM.CreateDatabase("tenant_c")
@@ -266,7 +274,7 @@ func TestAliasCommands_DropAlias_WhitespaceVariations(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newAliasTestDatabaseManager()
+	mockDBM := newAliasTestDatabaseManager(t)
 	mockDBM.CreateDatabase("tenant_a")
 	exec.SetDatabaseManager(mockDBM)
 
@@ -323,7 +331,7 @@ func TestAliasCommands_ShowAliases_WhitespaceVariations(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newAliasTestDatabaseManager()
+	mockDBM := newAliasTestDatabaseManager(t)
 	mockDBM.CreateDatabase("tenant_a")
 	mockDBM.CreateDatabase("tenant_b")
 	mockDBM.CreateAlias("main", "tenant_a")
@@ -366,7 +374,7 @@ func TestAliasCommands_CreateAlias_ErrorCases_WhitespaceVariations(t *testing.T)
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newAliasTestDatabaseManager()
+	mockDBM := newAliasTestDatabaseManager(t)
 	mockDBM.CreateDatabase("tenant_a")
 	mockDBM.CreateAlias("existing", "tenant_a")
 	exec.SetDatabaseManager(mockDBM)
@@ -423,7 +431,7 @@ func TestAliasCommands_DropAlias_ErrorCases_WhitespaceVariations(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newAliasTestDatabaseManager()
+	mockDBM := newAliasTestDatabaseManager(t)
 	mockDBM.CreateDatabase("tenant_a")
 	exec.SetDatabaseManager(mockDBM)
 
@@ -469,7 +477,7 @@ func TestAliasCommands_ComplexWhitespacePatterns(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newAliasTestDatabaseManager()
+	mockDBM := newAliasTestDatabaseManager(t)
 	mockDBM.CreateDatabase("tenant_a")
 	mockDBM.CreateDatabase("tenant_b")
 	exec.SetDatabaseManager(mockDBM)
@@ -516,7 +524,7 @@ func TestAliasCommands_EdgeCases_Whitespace(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newAliasTestDatabaseManager()
+	mockDBM := newAliasTestDatabaseManager(t)
 	mockDBM.CreateDatabase("tenant_a")
 	exec.SetDatabaseManager(mockDBM)
 

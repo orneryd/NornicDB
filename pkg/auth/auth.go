@@ -716,6 +716,13 @@ func (a *Authenticator) loadUsers() error {
 // saveUser saves a user to the system database.
 // Users are stored as nodes with labels ["_User", "_System"].
 func (a *Authenticator) saveUser(user *User) error {
+	return WithStoreTransaction(context.Background(), a.storage, func(view storage.Engine) error {
+		staged := &Authenticator{storage: view}
+		return staged.saveUserInTransaction(user)
+	})
+}
+
+func (a *Authenticator) saveUserInTransaction(user *User) error {
 	node := a.userToNode(user)
 
 	// Check if node exists
@@ -740,7 +747,9 @@ func (a *Authenticator) saveUser(user *User) error {
 // deleteUserNode deletes a user node from the system database.
 func (a *Authenticator) deleteUserNode(username string) error {
 	nodeID := storage.NodeID("user:" + username)
-	return a.storage.DeleteNode(nodeID)
+	return WithStoreTransaction(context.Background(), a.storage, func(view storage.Engine) error {
+		return view.DeleteNode(nodeID)
+	})
 }
 
 // userToNode converts a User to a storage.Node for persistence.
@@ -923,13 +932,12 @@ func (a *Authenticator) CreateUser(username, password string, roles []Role) (*Us
 		Metadata:     make(map[string]string),
 	}
 
-	a.users[username] = user
-
 	// Save to storage
 	if err := a.saveUser(user); err != nil {
-		delete(a.users, username) // Rollback in-memory change
 		return nil, fmt.Errorf("failed to persist user: %w", err)
 	}
+
+	a.users[username] = user
 
 	a.logAudit(AuditEvent{
 		EventType: "user_create",
@@ -1278,6 +1286,8 @@ func (a *Authenticator) ChangePassword(username, oldPassword, newPassword string
 		return ErrUserNotFound
 	}
 
+	user = cloneStoredUser(user)
+
 	// Verify old password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)); err != nil {
 		a.logAudit(AuditEvent{
@@ -1309,6 +1319,8 @@ func (a *Authenticator) ChangePassword(username, oldPassword, newPassword string
 		return fmt.Errorf("failed to persist password change: %w", err)
 	}
 
+	a.users[username] = user
+
 	a.logAudit(AuditEvent{
 		EventType: "password_change",
 		Username:  username,
@@ -1329,14 +1341,18 @@ func (a *Authenticator) UpdateRoles(username string, newRoles []Role) error {
 		return ErrUserNotFound
 	}
 
+	user = cloneStoredUser(user)
+
 	oldRoles := user.Roles
-	user.Roles = newRoles
+	user.Roles = append([]Role(nil), newRoles...)
 	user.UpdatedAt = time.Now()
 
 	// Persist role change
 	if err := a.saveUser(user); err != nil {
 		return fmt.Errorf("failed to persist role change: %w", err)
 	}
+
+	a.users[username] = user
 
 	a.logAudit(AuditEvent{
 		EventType: "role_change",
@@ -1359,6 +1375,8 @@ func (a *Authenticator) DisableUser(username string) error {
 		return ErrUserNotFound
 	}
 
+	user = cloneStoredUser(user)
+
 	user.Disabled = true
 	user.UpdatedAt = time.Now()
 
@@ -1366,6 +1384,8 @@ func (a *Authenticator) DisableUser(username string) error {
 	if err := a.saveUser(user); err != nil {
 		return fmt.Errorf("failed to persist user disable: %w", err)
 	}
+
+	a.users[username] = user
 
 	a.logAudit(AuditEvent{
 		EventType: "user_disable",
@@ -1387,6 +1407,8 @@ func (a *Authenticator) EnableUser(username string) error {
 		return ErrUserNotFound
 	}
 
+	user = cloneStoredUser(user)
+
 	user.Disabled = false
 	user.FailedLogins = 0
 	user.LockedUntil = time.Time{}
@@ -1396,6 +1418,8 @@ func (a *Authenticator) EnableUser(username string) error {
 	if err := a.saveUser(user); err != nil {
 		return fmt.Errorf("failed to persist user enable: %w", err)
 	}
+
+	a.users[username] = user
 
 	a.logAudit(AuditEvent{
 		EventType: "user_enable",
@@ -1417,6 +1441,8 @@ func (a *Authenticator) UnlockUser(username string) error {
 		return ErrUserNotFound
 	}
 
+	user = cloneStoredUser(user)
+
 	user.FailedLogins = 0
 	user.LockedUntil = time.Time{}
 	user.UpdatedAt = time.Now()
@@ -1425,6 +1451,8 @@ func (a *Authenticator) UnlockUser(username string) error {
 	if err := a.saveUser(user); err != nil {
 		return fmt.Errorf("failed to persist user unlock: %w", err)
 	}
+
+	a.users[username] = user
 
 	a.logAudit(AuditEvent{
 		EventType: "user_unlock",
@@ -1447,6 +1475,8 @@ func (a *Authenticator) UpdateUser(username string, email string, metadata map[s
 		return ErrUserNotFound
 	}
 
+	user = cloneStoredUser(user)
+
 	// Update email if provided
 	if email != "" {
 		user.Email = email
@@ -1468,6 +1498,8 @@ func (a *Authenticator) UpdateUser(username string, email string, metadata map[s
 	if err := a.saveUser(user); err != nil {
 		return fmt.Errorf("failed to persist user update: %w", err)
 	}
+
+	a.users[username] = user
 
 	a.logAudit(AuditEvent{
 		EventType: "user_update",
@@ -1918,4 +1950,15 @@ func ExtractToken(authHeader, apiKeyHeader, cookie, queryToken, queryAPIKey stri
 	}
 
 	return ""
+}
+
+// cloneStoredUser stages changes without changing the published user on error.
+func cloneStoredUser(user *User) *User {
+	copy := *user
+	copy.Roles = append([]Role(nil), user.Roles...)
+	copy.Metadata = make(map[string]string, len(user.Metadata))
+	for key, value := range user.Metadata {
+		copy.Metadata[key] = value
+	}
+	return &copy
 }

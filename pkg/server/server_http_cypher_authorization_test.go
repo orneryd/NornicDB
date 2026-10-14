@@ -22,7 +22,7 @@ func TestHTTPShowDatabasesFiltersSingleStatement(t *testing.T) {
 
 	for _, statements := range [][]map[string]any{
 		{{"statement": "SHOW DATABASES"}},
-		{{"statement": "SHOW DATABASES"}, {"statement": "RETURN 1"}},
+		{{"statement": "SHOW DATABASES"}, {"statement": "SHOW DATABASES"}},
 	} {
 		recorder := makeRequest(t, server, http.MethodPost, "/db/"+dbName+"/tx/commit", map[string]any{
 			"statements": statements,

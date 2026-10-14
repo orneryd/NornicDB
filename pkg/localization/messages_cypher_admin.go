@@ -274,3 +274,18 @@ func CypherAdminImmutablePrivilegeRevokeForbidden() Message {
 func CypherAdminPrivilegeRoleNotFound(action, role string) Message {
 	return Message{ID: MessageCypherAdminPrivilegeRoleNotFound, Fallback: "Failed to grant " + action + " privilege to role '" + role + "': Role does not exist.", Data: map[string]any{"Action": action, "Role": role}}
 }
+
+const (
+	MessageCypherAdminSystemGraphAccessUnsupported MessageID = "cypheradmin.system_graph_access_unsupported"
+	MessageCypherAdminTransactionStatementType     MessageID = "cypheradmin.transaction_statement_type"
+)
+
+// CypherAdminSystemGraphAccessUnsupported reports the system statement policy.
+func CypherAdminSystemGraphAccessUnsupported() Message {
+	return Message{ID: MessageCypherAdminSystemGraphAccessUnsupported, Fallback: "Graph access is not supported on the system database"}
+}
+
+// CypherAdminTransactionStatementType reports a transaction's statement kinds.
+func CypherAdminTransactionStatementType(previous, requested string) Message {
+	return Message{ID: MessageCypherAdminTransactionStatementType, Fallback: "Tried to execute " + requested + " query after executing " + previous + " command", Data: map[string]any{"Previous": previous, "Requested": requested}}
+}

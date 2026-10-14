@@ -122,3 +122,10 @@
 - id: cypheradmin.privilege_role_not_found
   description: Un GRANT a un rol que no existe. Action (execute, execute_boosted) y Role no se traducen.
   other: "No se pudo conceder el privilegio {{.Action}} al rol '{{.Role}}': el rol no existe."
+
+- id: cypheradmin.system_graph_access_unsupported
+  description: A graph or schema statement on the system database.
+  other: "El acceso al grafo no se admite en la base de datos del sistema"
+- id: cypheradmin.transaction_statement_type
+  description: Incompatible statement kinds in an explicit transaction. Previous and Requested are untranslated kinds.
+  other: "Se intentó ejecutar una consulta {{.Requested}} después de ejecutar un comando {{.Previous}}"

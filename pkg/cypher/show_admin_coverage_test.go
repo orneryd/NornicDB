@@ -149,7 +149,7 @@ func (m *aliasDatabaseManager) ListAliases(databaseName string) map[string]strin
 func TestShowDatabasesListsAliases(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	manager := &aliasDatabaseManager{
-		mockDatabaseManager: newMockDatabaseManager(),
+		mockDatabaseManager: newMockDatabaseManager(t),
 		aliases:             map[string]map[string]string{"nornic": {"zeta": "nornic", "alpha": "nornic"}},
 	}
 	require.NoError(t, manager.CreateDatabase("nornic"))

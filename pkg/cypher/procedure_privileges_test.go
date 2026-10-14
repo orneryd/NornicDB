@@ -38,7 +38,8 @@ func TestParseProcedurePrivilegeCommand(t *testing.T) {
 // it; a role that doesn't exist is refused, and other GRANTs are unsupported.
 func TestProcedurePrivilegeStatements(t *testing.T) {
 	ctx := context.Background()
-	system := storage.NewMemoryEngine()
+	systemBase := storage.NewMemoryEngine()
+	system := storage.NewNamespacedEngine(systemBase, "system")
 	t.Cleanup(func() { _ = system.Close() })
 	require.NoError(t, auth.NewRoleStore(system).CreateRole(ctx, "cdc_reader"))
 	exec := NewStorageExecutor(system)
@@ -107,7 +108,8 @@ func TestProcedurePrivilegeQuotedGlobs(t *testing.T) {
 	ctx := context.Background()
 	for _, written := range []string{"`db.cdc.*`", "db.`cdc`.*", "`*`", "`db`.`cdc`.`query`"} {
 		t.Run(written, func(t *testing.T) {
-			system := storage.NewMemoryEngine()
+			systemBase := storage.NewMemoryEngine()
+			system := storage.NewNamespacedEngine(systemBase, "system")
 			t.Cleanup(func() { _ = system.Close() })
 			exec := NewStorageExecutor(system)
 			_, err := exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE "+written+" ON DBMS TO viewer", nil)
@@ -131,7 +133,8 @@ func TestProcedurePrivilegeQuotedGlobs(t *testing.T) {
 // "PROCEDURE(db.cdc.*)", "r", TRUE.
 func TestProcedurePrivilegeImmutable(t *testing.T) {
 	ctx := WithAuthenticationDisabled(context.Background())
-	system := storage.NewMemoryEngine()
+	systemBase := storage.NewMemoryEngine()
+	system := storage.NewNamespacedEngine(systemBase, "system")
 	t.Cleanup(func() { _ = system.Close() })
 	exec := NewStorageExecutor(system)
 	run := func(statement string) *ExecuteResult {
@@ -169,7 +172,8 @@ func TestProcedurePrivilegeImmutable(t *testing.T) {
 // REVOKE IMMUTABLE of a regular grant has no effect; regular grants are
 // granted and revoked as usual.
 func TestProcedurePrivilegeImmutableWithAuthentication(t *testing.T) {
-	system := storage.NewMemoryEngine()
+	systemBase := storage.NewMemoryEngine()
+	system := storage.NewNamespacedEngine(systemBase, "system")
 	t.Cleanup(func() { _ = system.Close() })
 	open := WithAuthenticationDisabled(context.Background())
 	exec := NewStorageExecutor(system)
@@ -215,7 +219,8 @@ func TestProcedurePrivilegeImmutableWithAuthentication(t *testing.T) {
 // notification "Role does not exist").
 func TestProcedurePrivilegeMissingRole(t *testing.T) {
 	ctx := context.Background()
-	system := storage.NewMemoryEngine()
+	systemBase := storage.NewMemoryEngine()
+	system := storage.NewNamespacedEngine(systemBase, "system")
 	t.Cleanup(func() { _ = system.Close() })
 	exec := NewStorageExecutor(system)
 	_, err := exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO viewer, nobody", nil)
@@ -239,7 +244,8 @@ func TestProcedurePrivilegeInExplicitTransaction(t *testing.T) {
 	t.Cleanup(func() { _ = inner.Close() })
 	for name, setup := range map[string]func() (*StorageExecutor, storage.Engine){
 		"database manager's system storage": func() (*StorageExecutor, storage.Engine) {
-			system := storage.NewMemoryEngine()
+			systemBase := storage.NewMemoryEngine()
+			system := storage.NewNamespacedEngine(systemBase, "system")
 			t.Cleanup(func() { _ = system.Close() })
 			exec := NewStorageExecutor(system)
 			exec.SetDatabaseManager(systemOnlyManager{engine: storage.Engine(system)})
@@ -252,7 +258,8 @@ func TestProcedurePrivilegeInExplicitTransaction(t *testing.T) {
 			return exec, system
 		},
 		"no database manager": func() (*StorageExecutor, storage.Engine) {
-			system := storage.NewMemoryEngine()
+			systemBase := storage.NewMemoryEngine()
+			system := storage.NewNamespacedEngine(systemBase, "system")
 			t.Cleanup(func() { _ = system.Close() })
 			return NewStorageExecutor(system), system
 		},
@@ -290,10 +297,8 @@ func TestProcedurePrivilegeInExplicitTransaction(t *testing.T) {
 	}
 }
 
-// In an explicit transaction on another database, a GRANT or REVOKE is
-// refused as a write to a second database (the system database's writes
-// can't join the transaction); SHOW PRIVILEGES reads what the system
-// database has committed.
+// Administration commands choose system with their transaction's first
+// statement, even when the client opened it on a user database.
 func TestProcedurePrivilegeInOtherDatabaseTransaction(t *testing.T) {
 	ctx := context.Background()
 	inner := storage.NewMemoryEngine()
@@ -309,10 +314,10 @@ func TestProcedurePrivilegeInOtherDatabaseTransaction(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	_, err = exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO viewer", nil)
-	requireStatusCode(t, err, "Neo.ClientError.Statement.AccessMode")
-	_, err = exec.Execute(ctx, "ROLLBACK", nil)
 	require.NoError(t, err)
-	require.False(t, allowsBoosted(t, system, "viewer", "db.cdc.query"))
+	_, err = exec.Execute(ctx, "COMMIT", nil)
+	require.NoError(t, err)
+	require.True(t, allowsBoosted(t, system, "viewer", "db.cdc.query"))
 }
 
 // Procedure grants are kept apart from graph data: the system database
@@ -349,9 +354,8 @@ func TestSystemDatabaseRefusesGraphWrites(t *testing.T) {
 	require.Empty(t, nodes)
 	_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
 	require.NoError(t, err)
-	result, err := exec.Execute(ctx, "MATCH (n:_ProcedurePrivilege) RETURN n.procedure AS procedure", nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{"db.ping"}}, result.Rows)
+	_, err = exec.Execute(ctx, "MATCH (n:_ProcedurePrivilege) RETURN n.procedure AS procedure", nil)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SemanticError")
 
 	user := NewStorageExecutor(storage.NewNamespacedEngine(inner, "nornic"))
 	_, err = user.Execute(ctx, "CREATE (:Person {name: 'a'})", nil)
@@ -366,7 +370,7 @@ func TestSystemDatabaseRefusesGraphWrites(t *testing.T) {
 		_, err = user.Execute(ctx, statement, nil)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SemanticError")
 	}
-	result, err = user.Execute(ctx, "USE system RETURN 1 AS one", nil)
+	result, err := user.Execute(ctx, "USE system RETURN 1 AS one", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
 }

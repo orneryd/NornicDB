@@ -626,23 +626,16 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		var roles []auth.Role
 		if len(req.Roles) > 0 {
-			roles := make([]auth.Role, len(req.Roles))
+			roles = make([]auth.Role, len(req.Roles))
 			for i, r := range req.Roles {
 				roles[i] = auth.Role(r)
 			}
-			if err := s.auth.UpdateRoles(username, roles); err != nil {
-				s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
-				return
-			}
 		}
-
-		if req.Disabled != nil {
-			if *req.Disabled {
-				s.auth.DisableUser(username)
-			} else {
-				s.auth.EnableUser(username)
-			}
+		if err := s.auth.UpdateRolesAndStatus(r.Context(), username, roles, req.Disabled); err != nil {
+			s.writeBoundaryError(w, r, http.StatusBadRequest, err, ErrBadRequest)
+			return
 		}
 
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
@@ -833,7 +826,7 @@ func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
 			s.writeNeo4jRequestFieldRequired(w, r, "Neo.ClientError.Request.InvalidFormat", "name")
 			return
 		}
-		if err := s.roleStore.RenameRole(r.Context(), roleName, newName); err != nil {
+		if err := s.roleStore.RenameRoleWithUsers(r.Context(), roleName, newName, s.allowlistStore, s.auth); err != nil {
 			if err == auth.ErrCannotDeleteBuiltinRole || err == auth.ErrRoleNotFound {
 				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err)
 				return
@@ -844,31 +837,6 @@ func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
 			}
 			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 			return
-		}
-		if s.allowlistStore != nil {
-			_ = s.allowlistStore.RenameRoleInAllowlist(r.Context(), roleName, newName)
-		}
-		if s.auth != nil {
-			for _, u := range s.auth.ListUsers() {
-				var hasOld bool
-				for _, ur := range u.Roles {
-					if strings.EqualFold(string(ur), roleName) {
-						hasOld = true
-						break
-					}
-				}
-				if hasOld {
-					newRoles := make([]auth.Role, 0, len(u.Roles))
-					for _, ur := range u.Roles {
-						if strings.EqualFold(string(ur), roleName) {
-							newRoles = append(newRoles, auth.Role(newName))
-						} else {
-							newRoles = append(newRoles, ur)
-						}
-					}
-					_ = s.auth.UpdateRoles(u.Username, newRoles)
-				}
-			}
 		}
 		s.writeJSON(w, http.StatusOK, map[string]string{"name": newName})
 	case http.MethodDelete:
@@ -935,12 +903,14 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.Mappings != nil {
+			mappings := make(map[string][]string)
 			for _, m := range *req.Mappings {
-				if err := s.allowlistStore.SaveRoleDatabases(r.Context(), m.Role, m.Databases); err != nil {
-					s.logEvent(r.Context(), slog.LevelWarn, localization.ServerRBACAllowlistSaveFailedEvent())
-					s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
-					return
-				}
+				mappings[m.Role] = m.Databases
+			}
+			if err := s.allowlistStore.SaveMappings(r.Context(), mappings); err != nil {
+				s.logEvent(r.Context(), slog.LevelWarn, localization.ServerRBACAllowlistSaveFailedEvent())
+				s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
+				return
 			}
 		} else {
 			if req.Role == "" {

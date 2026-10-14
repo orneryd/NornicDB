@@ -84,15 +84,13 @@ func setupTestServerWithConfig(t testing.TB, configure func(*Config)) (*Server, 
 	}
 	t.Cleanup(func() { db.Close() })
 
-	// Create authenticator with memory storage for testing
+	// Share the production system database with the role and privilege stores.
 	authConfig := auth.AuthConfig{
 		SecurityEnabled: true,
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}
-	// Use memory storage for tests
-	memoryStorage := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = memoryStorage.Close() })
-	authenticator, err := auth.NewAuthenticator(authConfig, memoryStorage)
+	systemStorage := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "system")
+	authenticator, err := auth.NewAuthenticator(authConfig, systemStorage)
 	if err != nil {
 		t.Fatalf("failed to create authenticator: %v", err)
 	}
@@ -2355,7 +2353,7 @@ func TestNornicDBHandlers_AdditionalCoverage(t *testing.T) {
 		server.handleEmbedClear(rec, req)
 		require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 
-		req = httptest.NewRequest(http.MethodDelete, "/nornicdb/embed/clear", nil)
+		req = httptest.NewRequest(http.MethodDelete, "/nornicdb/embed/clear", nil).WithContext(context.WithValue(context.Background(), contextKeyClaims, &auth.JWTClaims{Username: "admin", Roles: []string{"admin"}}))
 		rec = httptest.NewRecorder()
 		server.handleEmbedClear(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
@@ -4738,7 +4736,7 @@ func TestServer_AdditionalBranches_ReusesFixture(t *testing.T) {
 
 		server.db.SetEmbedder(&countingEmbedder{dims: 1024})
 
-		req := httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil)
+		req := httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil).WithContext(enriched.Context())
 		rec := httptest.NewRecorder()
 		server.handleEmbedTrigger(rec, req)
 		require.Equal(t, http.StatusAccepted, rec.Code)
@@ -4748,7 +4746,7 @@ func TestServer_AdditionalBranches_ReusesFixture(t *testing.T) {
 		server.handleEmbedTrigger(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 
-		req = httptest.NewRequest(http.MethodDelete, "/nornicdb/embed/clear", nil)
+		req = httptest.NewRequest(http.MethodDelete, "/nornicdb/embed/clear", nil).WithContext(enriched.Context())
 		rec = httptest.NewRecorder()
 		server.handleEmbedClear(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)

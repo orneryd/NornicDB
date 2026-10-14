@@ -1,0 +1,174 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type roleDeleteFailureEngine struct {
+	storage.Engine
+	deletes  int
+	failRole bool
+}
+
+type userStatusFailureEngine struct{ storage.Engine }
+
+func (e *userStatusFailureEngine) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
+	return auth.WithStoreTransaction(ctx, e.Engine, func(view storage.Engine) error {
+		return mutate(&userStatusFailureEngine{Engine: view})
+	})
+}
+
+func (e *userStatusFailureEngine) UpdateNode(node *storage.Node) error {
+	if node.Properties["disabled"] == true {
+		return errors.New("injected user status failure")
+	}
+	return e.Engine.UpdateNode(node)
+}
+
+func TestCombinedUserChangeFailureChangesNothingOverHTTP(t *testing.T) {
+	server, _ := setupTestServer(t)
+	system, err := server.dbManager.GetStorage("system")
+	require.NoError(t, err)
+	fault := &userStatusFailureEngine{Engine: system}
+	config := auth.DefaultAuthConfig()
+	config.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
+	config.BcryptCost, config.DefaultAdminUsername = 4, ""
+	users, err := auth.NewAuthenticator(config, fault)
+	require.NoError(t, err)
+	server.auth = users
+	_, err = users.CreateUser("worker", "password123", []auth.Role{auth.RoleViewer})
+	require.NoError(t, err)
+	before, err := system.GetNode("user:worker")
+	require.NoError(t, err)
+	admin := getAuthToken(t, users, "admin")
+	resp := makeRequest(t, server, "PUT", "/auth/users/worker", map[string]any{
+		"roles": []string{"admin"}, "disabled": true,
+	}, "Bearer "+admin)
+	assert.Equal(t, http.StatusBadRequest, resp.Code, resp.Body.String())
+	after, err := system.GetNode("user:worker")
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	user, err := users.GetUser("worker")
+	require.NoError(t, err)
+	assert.Equal(t, []auth.Role{auth.RoleViewer}, user.Roles)
+	assert.False(t, user.Disabled)
+}
+
+func (e *roleDeleteFailureEngine) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
+	return auth.WithStoreTransaction(ctx, e.Engine, func(view storage.Engine) error {
+		staged := *e
+		staged.Engine = view
+		return mutate(&staged)
+	})
+}
+
+func (e *roleDeleteFailureEngine) DeleteNode(id storage.NodeID) error {
+	if strings.HasPrefix(string(id), "proc_priv:") {
+		e.deletes++
+		if !e.failRole && e.deletes == 2 {
+			return errors.New("injected grant deletion failure")
+		}
+	}
+	if e.failRole && id == "role:ops" {
+		return errors.New("injected role deletion failure")
+	}
+	return e.Engine.DeleteNode(id)
+}
+
+func TestDeleteRoleFailureChangesNothingOverHTTP(t *testing.T) {
+	for _, failRole := range []bool{false, true} {
+		t.Run(map[bool]string{false: "second grant", true: "role node"}[failRole], func(t *testing.T) {
+			ctx := context.Background()
+			server, users := setupTestServer(t)
+			admin := getAuthToken(t, users, "admin")
+			system, err := server.dbManager.GetStorage("system")
+			require.NoError(t, err)
+			fault := &roleDeleteFailureEngine{Engine: system, failRole: failRole}
+			server.roleStore = auth.NewRoleStore(fault)
+			require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
+			grants := auth.NewProcedurePrivilegeStore(system)
+			require.NoError(t, grants.Grant(ctx, "ops", "db.a", true, false))
+			require.NoError(t, grants.Grant(ctx, "ops", "db.b", false, true))
+			before, err := grants.List(ctx)
+			require.NoError(t, err)
+			resp := makeRequest(t, server, "DELETE", "/auth/roles/ops", nil, "Bearer "+admin)
+			require.Equal(t, http.StatusInternalServerError, resp.Code, resp.Body.String())
+			require.True(t, server.roleStore.Exists("ops"))
+			_, err = system.GetNode("role:ops")
+			require.NoError(t, err)
+			after, err := grants.List(ctx)
+			require.NoError(t, err)
+			require.Equal(t, before, after)
+		})
+	}
+}
+
+func TestDropRoleUnsupportedOverHTTPChangesNothing(t *testing.T) {
+	ctx := context.Background()
+	server, users := setupTestServer(t)
+	admin := getAuthToken(t, users, "admin")
+	require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
+	require.Empty(t, txErrorCode(t, server, "system", admin, "GRANT EXECUTE BOOSTED PROCEDURE db.a ON DBMS TO ops"))
+	for query, code := range map[string]string{
+		"CREATE ROLE new":             "Neo.ClientError.Statement.SemanticError",
+		"DROP ROLE ops":               "Neo.ClientError.Statement.SyntaxError",
+		"RENAME ROLE ops TO new":      "Neo.ClientError.Statement.SyntaxError",
+		"GRANT ROLE ops TO reader":    "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
+		"REVOKE ROLE ops FROM reader": "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
+	} {
+		require.Equal(t, code, txErrorCode(t, server, "system", admin, query))
+	}
+	require.True(t, server.roleStore.Exists("ops"))
+	require.True(t, server.ProcedureGrantChecker([]string{"ops"})("db.a"))
+}
+
+func TestAdministrationRequestRoutesToSystemAndRollsBackOnRejection(t *testing.T) {
+	for _, reject := range []bool{false, true} {
+		t.Run(map[bool]string{false: "two grants", true: "procedure after grant"}[reject], func(t *testing.T) {
+			ctx := context.Background()
+			server, users := setupTestServer(t)
+			admin := getAuthToken(t, users, "admin")
+			second := "GRANT EXECUTE PROCEDURE db.b ON DBMS TO viewer"
+			if reject {
+				second = "CALL dbms.components()"
+			}
+			resp := makeRequest(t, server, "POST", "/db/nornic/tx/commit", map[string]any{
+				"statements": []map[string]any{
+					{"statement": "GRANT EXECUTE PROCEDURE db.a ON DBMS TO viewer"},
+					{"statement": second},
+				},
+			}, "Bearer "+admin)
+			var body struct {
+				Errors []struct {
+					Code string `json:"code"`
+				} `json:"errors"`
+			}
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+			if reject {
+				require.Len(t, body.Errors, 1)
+				require.Equal(t, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType", body.Errors[0].Code)
+			} else {
+				require.Empty(t, body.Errors)
+			}
+			system, err := server.dbManager.GetStorage("system")
+			require.NoError(t, err)
+			grants, err := auth.NewProcedurePrivilegeStore(system).List(ctx)
+			require.NoError(t, err)
+			if reject {
+				require.Empty(t, grants)
+			} else {
+				require.Len(t, grants, 2)
+			}
+		})
+	}
+}

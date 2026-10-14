@@ -1019,3 +1019,8 @@ func (w *transactionStorageWrapper) DeleteByPrefix(prefix string) (nodesDeleted 
 	// This operation should be performed outside of a transaction.
 	return 0, 0, localizedError(localization.CypherInvariantsDeleteByPrefixTransactionUnsupported(), nil)
 }
+
+// WithStoreTransaction joins system-store mutations to this existing transaction.
+func (w *transactionStorageWrapper) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
+	return mutate(w)
+}

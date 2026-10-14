@@ -74,6 +74,9 @@ type TransactionContext struct {
 	// it wrote; any other statement is refused and COMMIT rolls it back, as in
 	// Neo4j (#683).
 	failed error
+
+	// statementKind keeps administration commands apart from data statements.
+	statementKind string
 }
 
 // failTransaction records err as the active explicit transaction's failure

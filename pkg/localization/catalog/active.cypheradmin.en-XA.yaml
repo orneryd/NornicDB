@@ -122,3 +122,10 @@
 - id: cypheradmin.privilege_role_not_found
   description: Expanded pseudo-locale privilege role not found.
   other: "[!! Failed to grant {{.Action}} privilege to role '{{.Role}}': Role does not exist. !!]"
+
+- id: cypheradmin.system_graph_access_unsupported
+  description: A graph or schema statement on the system database.
+  other: "[!! Graph access is not supported on the system database !!]"
+- id: cypheradmin.transaction_statement_type
+  description: Incompatible statement kinds in an explicit transaction. Previous and Requested are untranslated kinds.
+  other: "[!! Tried to execute {{.Requested}} query after executing {{.Previous}} command !!]"

@@ -183,36 +183,35 @@ func (p *PrivilegesStore) PutMatrix(ctx context.Context, entries []struct {
 	Read     bool   `json:"read"`
 	Write    bool   `json:"write"`
 }) error {
-	var toDelete []storage.NodeID
-	_ = storage.StreamNodesWithFallback(ctx, p.storage, 1000, func(n *storage.Node) error {
-		for _, l := range n.Labels {
-			if l == dbPrivLabel {
-				toDelete = append(toDelete, n.ID)
-				break
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var replacement *PrivilegesStore
+	err := WithStoreTransaction(ctx, p.storage, func(view storage.Engine) error {
+		nodes, err := view.GetNodesByLabel(dbPrivLabel)
+		if err != nil {
+			return err
+		}
+		for _, node := range nodes {
+			role, database := roleDbFromNodeID(string(node.ID))
+			if role == "" || database == "" {
+				continue
+			}
+			if err := view.DeleteNode(node.ID); err != nil {
+				return err
+			}
+		}
+		replacement = NewPrivilegesStore(view)
+		for _, e := range entries {
+			if err := replacement.SavePrivilege(ctx, e.Role, e.Database, e.Read, e.Write); err != nil {
+				return err
 			}
 		}
 		return nil
 	})
-	for _, id := range toDelete {
-		_ = p.storage.DeleteNode(id)
+	if err != nil {
+		return err
 	}
-	p.mu.Lock()
-	p.matrix = make(map[string]map[string]DbPrivilege)
-	p.mu.Unlock()
-	newMatrix := make(map[string]map[string]DbPrivilege)
-	for _, e := range entries {
-		role := strings.ToLower(strings.TrimSpace(e.Role))
-		if newMatrix[role] == nil {
-			newMatrix[role] = make(map[string]DbPrivilege)
-		}
-		newMatrix[role][e.Database] = DbPrivilege{Read: e.Read, Write: e.Write}
-		if err := p.SavePrivilege(ctx, e.Role, e.Database, e.Read, e.Write); err != nil {
-			return err
-		}
-	}
-	p.mu.Lock()
-	p.matrix = newMatrix
-	p.mu.Unlock()
+	p.matrix = replacement.matrix
 	return nil
 }
 

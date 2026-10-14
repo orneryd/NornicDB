@@ -165,3 +165,11 @@ func TestDeleteRoleKeepsRoleWhenGrantsCannotBeRemoved(t *testing.T) {
 	engine.failDelete = false
 	require.True(t, roles.Exists("ops"))
 }
+
+func (e *failingPrivilegeEngine) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
+	return WithStoreTransaction(ctx, e.Engine, func(view storage.Engine) error {
+		staged := *e
+		staged.Engine = view
+		return mutate(&staged)
+	})
+}

@@ -112,6 +112,19 @@ func (r *RoleStore) CreateRole(ctx context.Context, name string) error {
 // DeleteRole removes a user-defined role. Fails if name is built-in or does not exist.
 // Caller must ensure no user has this role (e.g. check auth.ListUsers()).
 func (r *RoleStore) DeleteRole(ctx context.Context, name string) error {
+	return r.deleteRole(ctx, name, false)
+}
+
+// DeleteRoleFromCypher goes through the role-deletion owner, but currently
+// rejects this unsupported command before reading or writing any role state.
+func (r *RoleStore) DeleteRoleFromCypher(ctx context.Context, name string) error {
+	return r.deleteRole(ctx, name, true)
+}
+
+func (r *RoleStore) deleteRole(ctx context.Context, name string, fromCypher bool) error {
+	if fromCypher {
+		return ErrUnsupportedRoleCommand
+	}
 	name = strings.ToLower(strings.TrimSpace(name))
 	if IsBuiltinRole(name) {
 		return ErrCannotDeleteBuiltinRole
@@ -121,13 +134,12 @@ func (r *RoleStore) DeleteRole(ctx context.Context, name string) error {
 	if _, exists := r.roles[name]; !exists {
 		return ErrRoleNotFound
 	}
-	// The role's procedure grants go first, so a role created later under
-	// this name doesn't inherit them.
-	if err := NewProcedurePrivilegeStore(r.storage).revokeRole(name); err != nil {
-		return err
-	}
-	nodeID := storage.NodeID(rolePrefix + name)
-	if err := r.storage.DeleteNode(nodeID); err != nil {
+	if err := WithStoreTransaction(ctx, r.storage, func(view storage.Engine) error {
+		if err := NewProcedurePrivilegeStore(view).revokeRole(name); err != nil {
+			return err
+		}
+		return view.DeleteNode(storage.NodeID(rolePrefix + name))
+	}); err != nil {
 		return err
 	}
 	delete(r.roles, name)
@@ -163,11 +175,12 @@ func (r *RoleStore) RenameRole(ctx context.Context, oldName, newName string) err
 			"name": newName,
 		},
 	}
-	if _, err := r.storage.CreateNode(newNode); err != nil {
-		return err
-	}
-	if err := r.storage.DeleteNode(oldID); err != nil {
-		_ = r.storage.DeleteNode(newNode.ID)
+	if err := WithStoreTransaction(ctx, r.storage, func(view storage.Engine) error {
+		if _, err := view.CreateNode(newNode); err != nil {
+			return err
+		}
+		return view.DeleteNode(oldID)
+	}); err != nil {
 		return err
 	}
 	delete(r.roles, oldName)
@@ -196,8 +209,32 @@ func roleNameFromNodeID(id string) string {
 
 // Role store errors.
 var (
+	ErrUnsupportedRoleCommand  = errors.New("role command is not supported")
 	ErrInvalidRoleName         = errors.New("invalid role name")
 	ErrRoleExists              = errors.New("role already exists")
 	ErrRoleNotFound            = errors.New("role not found")
 	ErrCannotDeleteBuiltinRole = errors.New("cannot delete or rename built-in role")
 )
+
+// LockRoleForGrant reads and writes the role record in the grant transaction.
+// Role deletion writes that same record, so their commits serialize: neither
+// can commit from a snapshot that missed the other's role or grant changes.
+func (r *RoleStore) LockRoleForGrant(ctx context.Context, name string) (bool, error) {
+	name = normalizeGrantRole(name)
+	if IsBuiltinRole(name) {
+		return true, nil
+	}
+	node, err := r.storage.GetNode(storage.NodeID(rolePrefix + name))
+	if errors.Is(err, storage.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, label := range node.Labels {
+		if label == roleLabel {
+			return true, r.storage.UpdateNode(node)
+		}
+	}
+	return false, nil
+}

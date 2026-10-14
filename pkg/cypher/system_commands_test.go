@@ -22,6 +22,8 @@ type mockDatabaseManager struct {
 	databases map[string]*mockDatabaseInfo
 	limits    map[string]interface{} // Store limits per database
 	defaultDB string
+
+	systemStore storage.Engine
 }
 
 type mockDatabaseInfo struct {
@@ -37,11 +39,14 @@ func (m *mockDatabaseInfo) Status() string       { return m.status }
 func (m *mockDatabaseInfo) IsDefault() bool      { return m.isDefault }
 func (m *mockDatabaseInfo) CreatedAt() time.Time { return time.Now() }
 
-func newMockDatabaseManager() *mockDatabaseManager {
+func newMockDatabaseManager(t testing.TB) *mockDatabaseManager {
+	t.Helper()
 	return &mockDatabaseManager{
 		databases: make(map[string]*mockDatabaseInfo),
 		limits:    make(map[string]interface{}),
 		defaultDB: "nornic",
+
+		systemStore: storage.NewNamespacedEngine(newTestMemoryEngine(t), "system"),
 	}
 }
 
@@ -146,6 +151,9 @@ func (m *mockDatabaseManager) IsCompositeDatabase(name string) bool {
 }
 
 func (m *mockDatabaseManager) GetStorageForUse(name string, authToken string) (interface{}, error) {
+	if name == "system" {
+		return m.systemStore, nil
+	}
 	return nil, fmt.Errorf("not implemented in mock")
 }
 
@@ -172,7 +180,7 @@ func TestSystemCommands_CreateDatabase(t *testing.T) {
 	ctx := context.Background()
 
 	// Set up mock database manager
-	mockDBM := newMockDatabaseManager()
+	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase("nornic") // Default database
 	exec.SetDatabaseManager(mockDBM)
 
@@ -253,7 +261,7 @@ func TestSystemCommands_DropDatabase(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newMockDatabaseManager()
+	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase("nornic")
 	mockDBM.CreateDatabase("tenant_a")
 	mockDBM.CreateDatabase("tenant_b")
@@ -327,7 +335,7 @@ func TestSystemCommands_BacktickQuotedDatabaseNames(t *testing.T) {
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
 
-	mockDBM := newMockDatabaseManager()
+	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase("nornic")
 	exec.SetDatabaseManager(mockDBM)
 
@@ -345,7 +353,7 @@ func TestSystemCommands_ShowDatabases(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newMockDatabaseManager()
+	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase("nornic")
 	mockDBM.CreateDatabase("tenant_a")
 	mockDBM.CreateDatabase("tenant_b")
@@ -422,7 +430,7 @@ func TestSystemCommands_Integration(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	mockDBM := newMockDatabaseManager()
+	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase("nornic")
 	exec.SetDatabaseManager(mockDBM)
 
@@ -459,7 +467,7 @@ func TestSystemCommands_AlterDatabaseSetLimit(t *testing.T) {
 	ctx := context.Background()
 
 	// Set up mock database manager
-	mockDBM := newMockDatabaseManager()
+	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase("nornic")
 	mockDBM.CreateDatabase("test_db")
 	exec.SetDatabaseManager(mockDBM)
@@ -609,7 +617,7 @@ func TestSystemCommands_ShowLimits(t *testing.T) {
 		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 		exec := NewStorageExecutor(store)
-		mockDBM := newMockDatabaseManager()
+		mockDBM := newMockDatabaseManager(t)
 		mockDBM.CreateDatabase("nornic")
 		mockDBM.CreateDatabase("test_db")
 		exec.SetDatabaseManager(mockDBM)
@@ -630,7 +638,7 @@ func TestSystemCommands_ShowLimits(t *testing.T) {
 		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 		exec := NewStorageExecutor(store)
-		mockDBM := newMockDatabaseManager()
+		mockDBM := newMockDatabaseManager(t)
 		mockDBM.CreateDatabase("nornic")
 		mockDBM.CreateDatabase("test_db")
 		exec.SetDatabaseManager(mockDBM)
@@ -682,7 +690,7 @@ func TestSystemCommands_ShowLimits(t *testing.T) {
 		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 		exec := NewStorageExecutor(store)
-		mockDBM := newMockDatabaseManager()
+		mockDBM := newMockDatabaseManager(t)
 		mockDBM.CreateDatabase("nornic")
 		exec.SetDatabaseManager(mockDBM)
 
@@ -698,7 +706,7 @@ func TestSystemCommands_ShowLimits(t *testing.T) {
 		store := storage.NewNamespacedEngine(baseStore, "test")
 		defer store.Close()
 		exec := NewStorageExecutor(store)
-		mockDBM := newMockDatabaseManager()
+		mockDBM := newMockDatabaseManager(t)
 		mockDBM.CreateDatabase("nornic")
 		exec.SetDatabaseManager(mockDBM)
 
@@ -742,7 +750,7 @@ func TestSystemCommands_ShowDatabase_BranchCoverage(t *testing.T) {
 	assert.Equal(t, 1, res.Stats.RelationshipsCreated)
 
 	// dbManager + namespaced engine branch prefers namespace.
-	mockDBM := newMockDatabaseManager()
+	mockDBM := newMockDatabaseManager(t)
 	mockDBM.CreateDatabase("tenant_ns")
 	exec.SetDatabaseManager(mockDBM)
 	res, err = exec.executeShowDatabase(ctx, "SHOW DATABASE")

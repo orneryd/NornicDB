@@ -60,6 +60,12 @@ func TestIssue878PatternElementWhere(t *testing.T) {
 			} {
 				_, err := exec.Execute(ctx, tc.query, nil)
 				require.Equal(t, tc.code+": "+tc.message, statusText(err), tc.query)
+				if mode == "explicit transaction" {
+					_, err = exec.Execute(ctx, "ROLLBACK", nil)
+					require.NoError(t, err)
+					_, err = exec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+				}
 			}
 		})
 	}

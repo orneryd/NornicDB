@@ -201,7 +201,8 @@ func TestProcedurePrivilegeStoreReadsOnlyItsOwnNodes(t *testing.T) {
 // under the same name starts without them; other roles keep theirs.
 func TestDeleteRoleRemovesProcedureGrants(t *testing.T) {
 	ctx := context.Background()
-	system := storage.NewMemoryEngine()
+	inner := storage.NewMemoryEngine()
+	system := storage.NewNamespacedEngine(inner, "system")
 	t.Cleanup(func() { _ = system.Close() })
 	roles := NewRoleStore(system)
 	require.NoError(t, roles.CreateRole(ctx, "ops"))

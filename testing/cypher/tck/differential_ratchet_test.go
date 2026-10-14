@@ -82,7 +82,14 @@ func newBoltDifferentialExecutor(t *testing.T, driver neo4j.DriverWithContext, d
 		backend: newDifferentialBackend(t, driver, database, mode)}
 }
 
-func (executor boltDifferentialExecutor) Execute(ctx context.Context, query string) (outcome differential.Outcome) {
+func (executor boltDifferentialExecutor) Execute(ctx context.Context, query string) differential.Outcome {
+	return executor.ExecuteStatements(ctx, "", []string{query})
+}
+
+func (executor boltDifferentialExecutor) ExecuteStatements(ctx context.Context, database string, queries []string) (outcome differential.Outcome) {
+	if database != "" {
+		executor.database = database
+	}
 	session := executor.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: executor.database})
 	defer session.Close(ctx)
 	collect := func(result neo4j.ResultWithContext) error {
@@ -106,12 +113,17 @@ func (executor boltDifferentialExecutor) Execute(ctx context.Context, query stri
 		return nil
 	}
 	var err error
-	if executor.mode == ExplicitTransactionMode {
+	if executor.mode == ExplicitTransactionMode || len(queries) > 1 {
 		var tx neo4j.ExplicitTransaction
 		if tx, err = session.BeginTransaction(ctx); err == nil {
 			var result neo4j.ResultWithContext
-			if result, err = tx.Run(ctx, query, nil); err == nil {
-				err = collect(result)
+			for _, query := range queries {
+				if result, err = tx.Run(ctx, query, nil); err == nil {
+					err = collect(result)
+				}
+				if err != nil {
+					break
+				}
 			}
 			if err == nil {
 				err = tx.Commit(ctx)
@@ -121,7 +133,7 @@ func (executor boltDifferentialExecutor) Execute(ctx context.Context, query stri
 		}
 	} else {
 		var result neo4j.ResultWithContext
-		if result, err = session.Run(ctx, query, nil); err == nil {
+		if result, err = session.Run(ctx, queries[0], nil); err == nil {
 			err = collect(result)
 		}
 	}

@@ -97,6 +97,11 @@ import (
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	// Every rejection of the caller's statement fails its explicit transaction,
+	// including errors before parsing, routing or the system statement policy.
+	if e.txContext != nil && e.txContext.active && ctx.Value(ctxKeyTxStorage) == nil {
+		defer func() { e.failTransaction(retErr) }()
+	}
 	defer func() {
 		if result != nil && retErr == nil && result.MapKeyOrders == nil {
 			if orders := snapshotMapKeyOrders(ctx); len(orders) > 0 {
@@ -153,9 +158,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		execSpan.End()
 	}()
 	if err := ctx.Err(); err != nil {
-		if ctx.Value(ctxKeyTxStorage) == nil {
-			e.failTransaction(err)
-		}
 		return nil, err
 	}
 	// Normalize query: trim BOM (some clients send it) then whitespace
@@ -307,6 +309,20 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	if err := clientTransactionCommand(ctx, cypher); err != nil {
 		return nil, err
+	}
+	// Only BEGIN can start a script; avoid its allocating classifier for
+	// ordinary statements while admitting them through the same owner.
+	if bareTransactionCommand(cypher) == "" && (!startsWithKeywordFold(cypher, "BEGIN") || !transactionScriptShape(cypher)) {
+		if err := e.admitTransactionStatement(cypher); err != nil {
+			return nil, err
+		}
+		routed, err := e.routeAdministrationStatement(ctx, cypher)
+		if err != nil {
+			return nil, err
+		}
+		if routed != e {
+			return routed.Execute(ctx, cypher, params)
+		}
 	}
 	// A cached per-database executor is shared by every auto-commit client of
 	// its database. A bare transaction command must not open a transaction on
@@ -540,9 +556,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		if tx.failed != nil {
 			return nil, queryOnFailedTransactionError(tx.failed)
 		}
-		defer func() {
-			e.failTransaction(retErr)
-		}()
 	}
 	// SHOW TRANSACTIONS lists the statement while it runs; TERMINATE
 	// TRANSACTIONS cancels it (#718). A statement of an explicit

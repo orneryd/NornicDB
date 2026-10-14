@@ -1635,6 +1635,8 @@ func (s *Server) sessionStatementRunner(session *txsession.Session) statementRun
 // for a read of a second one could not be observed; a read gets the same
 // code with the message worded for a read.
 func (s *Server) otherDatabaseInTransactionError(txDB, target, query string) *QueryError {
+	txDB = cypher.StatementDatabase(txDB, query)
+	target = cypher.StatementDatabase(target, query)
 	if s.sameDatabase(txDB, target) {
 		return nil
 	}

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/testing/cypher/differential"
@@ -55,7 +56,15 @@ type httpDifferentialExecutor struct {
 }
 
 func (executor httpDifferentialExecutor) post(ctx context.Context, statement string, into any) error {
-	payload, err := json.Marshal(map[string]any{"statements": []map[string]any{{"statement": statement}}})
+	return executor.postStatements(ctx, []string{statement}, into)
+}
+
+func (executor httpDifferentialExecutor) postStatements(ctx context.Context, statements []string, into any) error {
+	requests := make([]map[string]any, len(statements))
+	for i, statement := range statements {
+		requests[i] = map[string]any{"statement": statement}
+	}
+	payload, err := json.Marshal(map[string]any{"statements": requests})
 	if err != nil {
 		return err
 	}
@@ -81,6 +90,14 @@ func (executor httpDifferentialExecutor) post(ctx context.Context, statement str
 }
 
 func (executor httpDifferentialExecutor) Execute(ctx context.Context, query string) differential.Outcome {
+	return executor.ExecuteStatements(ctx, "", []string{query})
+}
+
+func (executor httpDifferentialExecutor) ExecuteStatements(ctx context.Context, database string, queries []string) differential.Outcome {
+	if database != "" {
+		parts := strings.Split(executor.endpoint, "/db/")
+		executor.endpoint = parts[0] + "/db/" + database + "/tx/commit"
+	}
 	var response struct {
 		Results []struct {
 			Columns []string `json:"columns"`
@@ -93,17 +110,17 @@ func (executor httpDifferentialExecutor) Execute(ctx context.Context, query stri
 			Message string `json:"message"`
 		} `json:"errors"`
 	}
-	if err := executor.post(ctx, query, &response); err != nil {
+	if err := executor.postStatements(ctx, queries, &response); err != nil {
 		return differential.Outcome{Code: "client:" + err.Error()}
 	}
 	if len(response.Errors) > 0 {
 		return differential.Outcome{Code: response.Errors[0].Code, Message: response.Errors[0].Message}
 	}
-	if len(response.Results) != 1 {
+	if len(response.Results) != len(queries) {
 		return differential.Outcome{Code: fmt.Sprintf("client:%d results", len(response.Results))}
 	}
-	outcome := differential.Outcome{Columns: response.Results[0].Columns, Rows: make([][]any, len(response.Results[0].Data))}
-	for index, data := range response.Results[0].Data {
+	outcome := differential.Outcome{Columns: response.Results[len(response.Results)-1].Columns, Rows: make([][]any, len(response.Results[len(response.Results)-1].Data))}
+	for index, data := range response.Results[len(response.Results)-1].Data {
 		outcome.Rows[index] = data.Row
 	}
 	return outcome

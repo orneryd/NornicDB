@@ -618,6 +618,26 @@ for selector in ["SHORTEST 1", "ALL SHORTEST", "SHORTEST 2 GROUPS"]:
                          ("(a:S {id: 1})(()-[r:T]-())+(b)", " WHERE size(r) > 2")]:
         add("shortest-selector", "path-filter", SHORTEST_GRAPH + f"MATCH p = {selector} {inner}{outer}"
             " RETURN length(p) AS l ORDER BY l", mode="tx")
+# System statement policy and administration transactions share one owner.
+# Database-scoped statements cover session and USE routes. Sequences retain
+# one transaction, so routing and incompatible statement types are compared.
+for schema in ["CREATE INDEX review_sweep FOR (n:Review) ON (n.x)",
+               "CREATE CONSTRAINT review_sweep FOR (n:Review) REQUIRE n.x IS UNIQUE",
+               "DROP INDEX review_sweep IF EXISTS", "MATCH (n:Review) RETURN count(n) AS n"]:
+    for mode in ["", "EXPLAIN ", "PROFILE "]:
+        query = mode + schema
+        add("system-administration", "session", query, "tx")
+        cases[-1]["database"] = "system"
+        add("system-administration", "use", "USE system " + query, "tx")
+for statements in [
+        ["SHOW USERS", "CALL dbms.components()"],
+        ["SHOW USERS", "RETURN 1 AS n"],
+        ["SHOW USERS", "EXPLAIN CREATE (:Review)"],
+        ["RETURN 1 AS n", "SHOW USERS"],
+        ["SHOW DATABASES YIELD name WHERE name = 'system' RETURN count(*) AS n"] * 2]:
+    query = "; ".join(statements)
+    add("system-administration", "transaction", query, "tx")
+    cases[-1]["statements"] = statements
 
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:
