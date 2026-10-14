@@ -44,7 +44,6 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresInvalidParameterCombination("topK", "bottomK"), "Invalid parameter combination: topK combined with bottomK"},
 		{CypherGraphProceduresInvalidSimilarityMetric("NOPE"), "NOPE is not a valid metric. Available metrics include Jaccard and Overlap"},
 		{CypherGraphProceduresInvalidScalarType("Boolean"), "Invalid scalar type. Expected Long or Node but found: Boolean"},
-		{CypherGraphProceduresNodePropertyReadType("LONG", "DOUBLE"), "Tried to retrieve a value of type LONG value from properties of type DOUBLE"},
 		{CypherGraphProceduresInvalidListTypes("[String, Double]"), "Invalid types in list. Expected Longs or Nodes but found [String, Double]"},
 		{CypherGraphProceduresLabelNotInGraph("Nope"), "The label `Nope` does not exist in the graph"},
 		{CypherGraphProceduresComponentPropertyNotFound("nope", "[comp]"), "Component property `nope` not found in graph with node properties: [comp]"},
@@ -79,7 +78,7 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresSourceNodeNotFound("x"), "sourceNode `x` does not exist in the graph"},
 	}
 
-	require.Len(t, testCases, 62)
+	require.Len(t, testCases, 61)
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {

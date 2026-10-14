@@ -300,3 +300,18 @@ func TestNodeSimilarityGDSInfiniteScores(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeSimilarityIntegralFloatComponentRejected(t *testing.T) {
+	e := reviewGraph(t, []map[string]interface{}{{"comp": 1.0}, {"comp": 1.0}, {"comp": 5.5}}, []reviewEdge{{"0", "2", "R", nil}, {"1", "2", "R", nil}}, "{N:{properties:'comp'}}", "'R'")
+	for _, filtered := range []bool{false, true} {
+		_, err := e.callGdsNodeSimilarityStream([]interface{}{"rev", map[string]interface{}{"useComponents": "comp"}}, filtered)
+		require.ErrorContains(t, err, "Tried to retrieve a value of type LONG value from properties of type DOUBLE")
+	}
+}
+
+func TestNodeSimilarityExplicitIntegerComponentDefault(t *testing.T) {
+	e := reviewGraph(t, []map[string]interface{}{nil, {"comp": int64(7)}, {"comp": int64(5)}}, []reviewEdge{{"0", "2", "R", nil}, {"1", "2", "R", nil}}, "{N:{properties:{comp:{property:'comp',defaultValue:7}}}}", "'R'")
+	rows := reviewRows(t, e, "useComponents:'comp'")
+	require.Len(t, rows, 2)
+	require.Equal(t, 1.0, rows[0][2])
+}
