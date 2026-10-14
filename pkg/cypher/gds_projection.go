@@ -575,16 +575,13 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 		_, hasStart := projection.nodeIndex[start]
 		_, hasEnd := projection.nodeIndex[end]
 		if !hasStart || !hasEnd {
-			// validateRelationships refuses a projected relationship whose
-			// end isn't projected, as GDS does; otherwise it's skipped.
-			if validateRelationships && gdsTypeProjected(relSpecs, edge.Type) {
-				side, id := "source", start
-				if hasStart {
-					side, id = "target", end
-				}
-				return nil, localizedError(localization.CypherGraphProceduresRelationshipEndNotProjected(side, id), nil)
+			// Kept only with validateRelationships, which refuses a projected
+			// relationship whose end isn't projected, as GDS does.
+			side, id := "source", start
+			if hasStart {
+				side, id = "target", end
 			}
-			continue
+			return nil, localizedError(localization.CypherGraphProceduresRelationshipEndNotProjected(side, id), nil)
 		}
 		for specIndex, spec := range relSpecs {
 			if spec.element != "*" && edge.Type != spec.element {
