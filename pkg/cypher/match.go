@@ -11,20 +11,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// isAggregateFunc checks if expression is an aggregate function (whitespace-tolerant)
-func isAggregateFunc(expr string) bool {
-	return isFunctionCallWS(expr, "count") ||
-		isFunctionCallWS(expr, "sum") ||
-		isFunctionCallWS(expr, "avg") ||
-		isFunctionCallWS(expr, "min") ||
-		isFunctionCallWS(expr, "max") ||
-		isFunctionCallWS(expr, "collect") ||
-		isFunctionCallWS(expr, "stdev") ||
-		isFunctionCallWS(expr, "stdevp") ||
-		isFunctionCallWS(expr, "percentilecont") ||
-		isFunctionCallWS(expr, "percentiledisc")
-}
-
 // containsAggregateFunc checks if expression contains any aggregate function
 // (handles expressions like SUM(a) + SUM(b))
 func containsAggregateFunc(expr string) bool {
