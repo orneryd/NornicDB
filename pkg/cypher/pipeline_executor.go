@@ -1817,11 +1817,11 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 		return nil, localizedError(localization.CypherCoreOptionalMatchRequired(), nil)
 	}
 	nodeVariables := make(map[string]struct{})
-	for _, variable := range extractNodeVariables(clause) {
+	for _, variable := range extractNodeVariables(matchPatternStructure(clause)) {
 		nodeVariables[variable] = struct{}{}
 	}
 	relationshipVariables := make(map[string]struct{})
-	for _, variable := range extractRelationshipVariables(clause) {
+	for _, variable := range extractRelationshipVariables(matchPatternStructure(clause)) {
 		relationshipVariables[variable] = struct{}{}
 	}
 
@@ -2071,10 +2071,10 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	}
 
 	variables := make([]string, 0)
-	for _, variable := range extractNodeVariables(pattern) {
+	for _, variable := range extractNodeVariables(matchPatternStructure(pattern)) {
 		variables = appendUniquePipelineBinding(variables, variable)
 	}
-	for _, variable := range extractRelationshipVariables(pattern) {
+	for _, variable := range extractRelationshipVariables(matchPatternStructure(pattern)) {
 		variables = appendUniquePipelineBinding(variables, variable)
 	}
 	pathVariable := extractPathAssignmentVariable(pattern)
@@ -2621,10 +2621,10 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 		return nil, false
 	}
 	patternBindings := make(map[string]struct{})
-	for _, variable := range extractNodeVariables(clause) {
+	for _, variable := range extractNodeVariables(matchPatternStructure(clause)) {
 		patternBindings[variable] = struct{}{}
 	}
-	for _, variable := range extractRelationshipVariables(clause) {
+	for _, variable := range extractRelationshipVariables(matchPatternStructure(clause)) {
 		patternBindings[variable] = struct{}{}
 	}
 	hasGraphBinding := false

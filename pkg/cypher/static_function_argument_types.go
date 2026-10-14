@@ -366,7 +366,7 @@ func staticArgumentMismatch(argument staticArgumentType, typeName string) error 
 // argument of a function in staticFunctionArguments. A DISTINCT before an aggregate's
 // argument is not part of it, and trim([LEADING | TRAILING | BOTH]
 // [characters] FROM source) checks its characters and source (trimFromArguments).
-func forEachStaticFunctionArgument(text string, check func(argument staticArgumentType, expression string) error) error {
+func forEachStaticFunctionArgument(text string, check func(argument staticArgumentType, expression string, at int) error) error {
 	// A type after :: or TYPED is no call (x IS :: VECTOR(3)).
 	text = maskTypePredicateTypes(text)
 	for index := 0; index < len(text); {
@@ -436,7 +436,7 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		if strings.EqualFold(name, "trim") {
 			if parameters, fromForm := trimFromArguments(inner); fromForm {
 				for _, expression := range parameters {
-					if err := check(arguments[0], expression); err != nil {
+					if err := check(arguments[0], expression, open+1); err != nil {
 						return err
 					}
 				}
@@ -471,7 +471,7 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 				if len(arguments[position].options) == 0 {
 					continue // a position no type is checked at
 				}
-				if err := check(arguments[position], expression); err != nil {
+				if err := check(arguments[position], expression, open+1); err != nil {
 					return err
 				}
 			}
@@ -533,7 +533,7 @@ func trimFromArguments(inner string) (arguments []string, fromForm bool) {
 // CASE, ORDER BY, SET values, pattern properties and subquery bodies.
 // Variables are checked clause by clause (validateStaticFunctionVariables).
 func validateStaticFunctionArguments(cypher string, cypher25 bool) error {
-	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string) error {
+	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string, _ int) error {
 		argument = argument.inVersion(cypher25)
 		typeName := staticLiteralTypeName(expression)
 		if typeName == "" {
@@ -588,7 +588,7 @@ func validateStaticFunctionParameters(cypher string, params map[string]interface
 	if strings.IndexByte(cypher, '[') >= 0 {
 		unwound = unwindParameterBindings(cypher)
 	}
-	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string) error {
+	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string, _ int) error {
 		// A Cypher 25 statement's arguments are checked as Neo4j 2026.09
 		// checks them (toString takes any value there).
 		argument = argument.inVersion(cypher25)
@@ -798,7 +798,8 @@ func (scope staticTypeScope) staticExpressionType(expression string) string {
 // whose static type it doesn't accept (toInteger(n) for a node n, type(r) for
 // a variable-length relationship list, toUpper(x) after UNWIND [1] AS x, …) in
 // one clause. A variable the clause binds itself (a list comprehension,
-// reduce, any / all / none / single) shadows the scope and is not checked.
+// reduce, any / all / none / single) shadows the scope where it is bound
+// (localVariableShadowsAt) and is not checked there.
 func validateStaticFunctionVariables(text string, scope staticTypeScope) error {
 	return validateStaticFunctionVariablesIn(text, func() staticTypeScope { return scope })
 }
@@ -806,9 +807,8 @@ func validateStaticFunctionVariables(text string, scope staticTypeScope) error {
 // validateStaticFunctionVariablesIn is validateStaticFunctionVariables with
 // the scope built only when a function has a variable argument.
 func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeScope) error {
-	var locals map[string]struct{}
 	var scope *staticTypeScope
-	return forEachStaticFunctionArgument(text, func(argument staticArgumentType, expression string) error {
+	return forEachStaticFunctionArgument(text, func(argument staticArgumentType, expression string, at int) error {
 		variable := simpleSemanticIdentifier(expression)
 		base, property := entityPropertyRead(expression)
 		// A call's result type, when it doesn't depend on its arguments
@@ -854,11 +854,8 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 		if typeName == "" || argument.accepts(typeName) {
 			return nil
 		}
-		if locals == nil {
-			locals = expressionLocalBindings(text)
-		}
-		if _, shadowed := locals[variable]; shadowed {
-			return nil
+		if localVariableShadowsAt(text, at, variable) {
+			return nil // the argument reads a local of that name
 		}
 		return staticArgumentMismatch(argument, typeName)
 	})
@@ -945,7 +942,7 @@ func uniformListElementType(list string) string {
 // call whose parentheses open at open: the call must have the function's
 // form (parseReduceForm), a list of a known type must be a list, and an
 // allReduce predicate of a known type a boolean.
-func checkReduceForm(function, text string, open int, check func(staticArgumentType, string) error) error {
+func checkReduceForm(function, text string, open int, check func(staticArgumentType, string, int) error) error {
 	closing := findMatchingDelimiter(text, open, '(', ')')
 	if closing < 0 {
 		return nil
@@ -955,10 +952,10 @@ func checkReduceForm(function, text string, open int, check func(staticArgumentT
 		entry := reduceFormEntries[lowerASCII(function)]
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherCoreReduceFormInvalidSyntax(entry.name, entry.signature))
 	}
-	if err := check(staticArgumentType{expected: "List<T>", options: []string{"List<T>"}}, form.list); err != nil || !form.all {
+	if err := check(staticArgumentType{expected: "List<T>", options: []string{"List<T>"}}, form.list, open+1); err != nil || !form.all {
 		return err
 	}
-	return check(staticArgumentType{expected: "Boolean", options: []string{"Boolean"}}, form.predicate)
+	return check(staticArgumentType{expected: "Boolean", options: []string{"Boolean"}}, form.predicate, closing) // inside the scope of acc and the element
 }
 
 // reduceFormEntries are the catalog entries of reduce and allReduce, by

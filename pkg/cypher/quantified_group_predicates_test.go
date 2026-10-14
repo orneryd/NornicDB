@@ -333,6 +333,9 @@ func TestStaticChecksReadLocalScopes(t *testing.T) {
 			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE 1 IN r AND [r IN [[1]] | 1 IN r] = [true])+(t) RETURN count(p) AS c",
 			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE reduce(acc = [], v IN [1] | acc + v) = [1] AND 1 IN r)+(t) RETURN count(p) AS c",
 			"MATCH (x:N {id:'a'})-[r:R]->(y) RETURN reduce(acc = r[0], v IN [1] | acc) AS v",
+			// A function argument outside the comprehension that binds x
+			// reads the clause's node.
+			"MATCH (x:Q {id: 1}) RETURN toUpper(x) AS v, [x IN ['a'] | toUpper(x)] AS w",
 			// x is local there, r still the step's relationship.
 			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE all(x IN [1] WHERE r[0] IS NULL))+(t) RETURN count(p) AS c",
 			"MATCH (x:N {id:'a'})-[r:R]->(y) WHERE all(x IN [1] WHERE r[0] IS NULL) RETURN count(*) AS c",
@@ -397,6 +400,10 @@ func TestBoundRowValuesKeepLocalVariables(t *testing.T) {
 			"WITH 7 AS v MATCH (x:Q {id: 1}) MATCH (x)-[e:R]->(y) WHERE all(v IN [1] WHERE v = 1) RETURN count(*) AS c":                         int64(1),
 			"WITH {k: 1} AS m MATCH (x:Q {id: 1}) MATCH (x)-[e:R]->(y) WHERE all(m IN [{k: 5}] WHERE m.k = 5) AND m.k = 1 RETURN count(*) AS c": int64(1),
 			"WITH 7 AS v UNWIND [v IN [1, 2] | v * 10] AS u RETURN collect(u) AS c":                                                             []interface{}{int64(10), int64(20)},
+			// (l) in an element's WHERE is no pattern variable
+			// (matchPatternStructure): l stays the list after the pattern.
+			"WITH ['ab'] AS l MATCH p = (s:Q {id: 1})((x WHERE x.s IN (l))-[e:R]->(y))+(t) RETURN l AS v": []interface{}{"ab"},
+			"WITH ['ab'] AS l MATCH (s:Q WHERE s.s IN (l))-[e:R]->(y) RETURN l AS v":                      []interface{}{"ab"},
 		} {
 			result, err := exec.Execute(ctx, query, nil)
 			require.NoError(t, err, query)
