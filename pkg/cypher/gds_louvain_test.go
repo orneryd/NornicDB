@@ -174,3 +174,33 @@ func TestLouvainLevelsAsGDS(t *testing.T) {
 		require.Len(t, seen, tc.communities, "%+v", tc.options)
 	}
 }
+
+// TestGDSLouvainStreamArgumentBranches covers the remaining refusals.
+func TestGDSLouvainStreamArgumentBranches(t *testing.T) {
+	newLouvainKarateGraph(t)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "lv"))
+	_, err := exec.callGdsLouvainStream(nil)
+	require.ErrorContains(t, err, "graphName")
+	_, err = exec.callGdsLouvainStream([]interface{}{"k", int64(5)})
+	require.ErrorContains(t, err, "configuration")
+	_, err = exec.callGdsLouvainStream([]interface{}{"missing"})
+	require.ErrorContains(t, err, "Graph with name `missing` does not exist")
+	for config, message := range map[string]string{
+		"maxIterations: 'x'":                  "The value of `maxIterations` must be of type `Integer` but was `String`.",
+		"tolerance: 'x'":                      "The value of `tolerance` must be of type `Double` but was `String`.",
+		"includeIntermediateCommunities: 'x'": "The value of `includeIntermediateCommunities` must be of type `Boolean` but was `String`.",
+		"consecutiveIds: 'x'":                 "The value of `consecutiveIds` must be of type `Boolean` but was `String`.",
+		"minCommunitySize: 'x'":               "The value of `minCommunitySize` must be of type `Integer` but was `String`.",
+		"relationshipWeightProperty: 5":       "The value of `relationshipWeightProperty` must be of type `String` but was `Long`.",
+		"nodeLabels: 5":                       "The value of `nodeLabels` must be of type `List` but was `Long`.",
+		"relationshipTypes: 5":                "The value of `relationshipTypes` must be of type `List` but was `Long`.",
+		"concurrency: 0":                      "Value for `concurrency` was `0`, but must be within the range [1, 2147483647].",
+		"jobId: 7":                            "Expected JobId or String. Got Long.",
+		"logProgress: 'x'":                    "The value of `logProgress` must be of type `Boolean` but was `String`.",
+		"seedProperty: 5":                     "The value of `seedProperty` must be of type `String` but was `Long`.",
+		"nodeLabels: ['Nope']":                "Could not find the specified `nodeLabels` of ['Nope']. Available labels are ['K'].",
+	} {
+		_, err := exec.Execute(context.Background(), "CALL gds.louvain.stream('k', {"+config+"})", nil)
+		require.ErrorContains(t, err, message, config)
+	}
+}
