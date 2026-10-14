@@ -434,6 +434,10 @@ for head in ["WITH {v} AS v ", "UNWIND [{v}] AS v "]:
             for token in ["$(v)", "$any(v)", "$all(v)"]:
                 prefix = head.replace("{v}", value)
                 for start, group, quantifier in groups:
+                    if value == "null" and start == "(:Missing)":
+                        # Neo4j reads a null token only where its plan
+                        # reaches it: 0 or a TypeError, by its statistics.
+                        continue
                     pattern = f"MATCH p = {start}{group.replace('{tok}', token)}{quantifier}(t)"
                     add("dynamic-labels", "group", prefix + pattern + " RETURN count(p) AS c")
                 for template in outside:
@@ -459,6 +463,9 @@ SHADOW_CONTEXTS = {
     "shortest": "WITH {k: 1} AS m MATCH p = SHORTEST 1 (s:Q {id: 1})((x WHERE {b})-[e:R]->(y))+(t) RETURN count(p) AS c",
     "where": "WITH {k: 1} AS m MATCH (x:Q {id: 1})-[e:R]->(y) WHERE {b} RETURN count(*) AS c",
     "return": "WITH {k: 1} AS m MATCH (x:Q {id: 1})-[e:R]->(y) RETURN {b} AS v",
+    # x and m bound by earlier clauses: their values are written into the
+    # WHERE, never over a local of the same name.
+    "bound": "WITH {k: 1} AS m MATCH (x:Q {id: 1}) MATCH (x)-[e:R]->(y) WHERE {b} RETURN count(*) AS c",
 }
 SHADOW_PREDICATES = ["all(V IN [[true]] WHERE V[0])", "any(V IN [[true]] WHERE V[0])", "none(V IN [[false]] WHERE V[0])",
                      "single(V IN [[true]] WHERE V[0])", "all(V IN [{id: true}] WHERE V['id'])",
@@ -476,8 +483,8 @@ SHADOW_PREDICATES = ["all(V IN [[true]] WHERE V[0])", "any(V IN [[true]] WHERE V
 for context, template in SHADOW_CONTEXTS.items():
     for variable in ["x", "e", "m"]:
         for b in SHADOW_PREDICATES:
-            if variable == "m" and "(V)" in b:
-                continue
+            if variable != "x" and "(V)" in b:
+                continue  # a pattern's (V) is a node: the step's x
             add("local-scope-shadowing", context, template.replace("{b}", b.replace("V", variable)))
 
 # 12c. Subquery bodies that start from the row's own variables (#1055): the
