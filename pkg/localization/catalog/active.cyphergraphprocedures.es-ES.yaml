@@ -199,3 +199,12 @@
 - id: cyphergraphprocedures.seed_property_not_found
   description: Mensaje de GDS (seed property not found).
   other: 'No se encontró la propiedad semilla `{{.Property}}` en el grafo con propiedades de nodo: {{.Available}}'
+- id: cyphergraphprocedures.louvain_seeding_consecutive
+  description: Mensaje de GDS (louvain seeding consecutive).
+  other: 'La siembra y la opción `consecutiveIds` no se pueden usar al mismo tiempo.'
+- id: cyphergraphprocedures.seed_property_not_long
+  description: Mensaje de GDS (seed property not long).
+  other: 'La propiedad semilla `{{.Property}}` no contiene exclusivamente valores enteros'
+- id: cyphergraphprocedures.seed_negative
+  description: Mensaje de GDS (seed negative).
+  other: 'Los valores semilla no deben ser negativos'

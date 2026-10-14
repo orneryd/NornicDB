@@ -199,3 +199,12 @@
 - id: cyphergraphprocedures.seed_property_not_found
   description: GDS's message for a seedProperty the graph doesn't hold. Property, Available untranslated.
   other: 'Seed property `{{.Property}}` not found in graph with node properties: {{.Available}}'
+- id: cyphergraphprocedures.louvain_seeding_consecutive
+  description: GDS's message for Louvain's seedProperty with consecutiveIds.
+  other: 'Seeding and the `consecutiveIds` option cannot be used at the same time.'
+- id: cyphergraphprocedures.seed_property_not_long
+  description: GDS's message for a seedProperty holding Float values. Property untranslated.
+  other: 'Provided seeding property `{{.Property}}` does not comprise exclusively of long values'
+- id: cyphergraphprocedures.seed_negative
+  description: GDS's message for a negative seed value.
+  other: 'Seeded values should be non-negative'
