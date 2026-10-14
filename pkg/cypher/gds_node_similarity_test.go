@@ -167,3 +167,31 @@ func TestNodeSimilarityRefusesAsGDS(t *testing.T) {
 func newNodeSimilarityExec(t *testing.T) *StorageExecutor {
 	return NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "ns"))
 }
+
+// TestNodeSimilarityArgumentBranches covers the remaining refusals.
+func TestNodeSimilarityArgumentBranches(t *testing.T) {
+	newNodeSimilarityGraph(t)
+	exec := newNodeSimilarityExec(t)
+	_, err := exec.callGdsNodeSimilarityStream(nil, false)
+	require.ErrorContains(t, err, "graphName")
+	_, err = exec.callGdsNodeSimilarityStream([]interface{}{"ns", int64(5)}, false)
+	require.ErrorContains(t, err, "configuration")
+	for config, message := range map[string]string{
+		"similarityCutoff: 'x'":         "The value of `similarityCutoff` must be of type `Double` but was `String`.",
+		"similarityCutoff: 1.5":         "Value for `similarityCutoff` was `1.5`, but must be within the range [0.00, 1.00].",
+		"upperDegreeCutoff: 'x'":        "The value of `upperDegreeCutoff` must be of type `Integer` but was `String`.",
+		"topN: 'x'":                     "The value of `topN` must be of type `Integer` but was `String`.",
+		"similarityMetric: 5":           "The value of `similarityMetric` must be of type `String` but was `Long`.",
+		"relationshipWeightProperty: 5": "The value of `relationshipWeightProperty` must be of type `String` but was `Long`.",
+		"nodeLabels: 5":                 "The value of `nodeLabels` must be of type `List` but was `Long`.",
+		"relationshipTypes: 5":          "The value of `relationshipTypes` must be of type `List` but was `Long`.",
+		"concurrency: 0":                "Value for `concurrency` was `0`, but must be within the range [1, 2147483647].",
+		"jobId: 7":                      "Expected JobId or String. Got Long.",
+		"logProgress: 'x'":              "The value of `logProgress` must be of type `Boolean` but was `String`.",
+	} {
+		_, err := exec.Execute(context.Background(), "CALL gds.nodeSimilarity.stream('ns', {"+config+"})", nil)
+		require.ErrorContains(t, err, message, config)
+	}
+	_, err = exec.Execute(context.Background(), "CALL gds.nodeSimilarity.filtered.stream('ns', {targetNodeFilter: 'Nope'})", nil)
+	require.ErrorContains(t, err, "The label `Nope` does not exist in the graph")
+}
