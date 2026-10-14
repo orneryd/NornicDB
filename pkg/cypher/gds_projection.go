@@ -518,14 +518,27 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	}
 	merged := make(map[parallelKey]int) // aggregated relationships -> their index
 	counts := make(map[int]float64)     // aggregated relationships -> how many were merged
+	// The relationships in id order, as GDS reads them: a parallel
+	// relationship's SINGLE value, and anything else that keeps the first
+	// one, doesn't depend on the order storage streams them in. (NornicDB's
+	// ids don't follow creation order, so "first" is the smallest id.)
+	var edges []*storage.Edge
 	err = storage.StreamEdgesWithFallback(ctx, e.storage, streamChunkSize, func(edge *storage.Edge) error {
+		edges = append(edges, edge)
+		return nil
+	})
+	if err != nil {
+		return nil, localizedError(localization.CypherGraphProceduresStreamEdgesFailed(err), err)
+	}
+	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
+	for _, edge := range edges {
 		typesSeen[edge.Type] = true
 		start, end := string(edge.StartNode), string(edge.EndNode)
 		if _, ok := projection.nodeIndex[start]; !ok {
-			return nil
+			continue
 		}
 		if _, ok := projection.nodeIndex[end]; !ok {
-			return nil
+			continue
 		}
 		for specIndex, spec := range relSpecs {
 			if spec.element != "*" && edge.Type != spec.element {
@@ -578,10 +591,6 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 				mergeParallelProperties(projection.Relationships[index].Properties, properties, spec.properties, counts[index])
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, localizedError(localization.CypherGraphProceduresStreamEdgesFailed(err), err)
 	}
 	requested, missing = nil, nil
 	for _, spec := range relSpecs {
