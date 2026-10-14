@@ -83,7 +83,14 @@ func TestGDSNativeAggregationReaderParity(t *testing.T) {
 	right, err := run("CALL gds.fastRP.stream('aggregationReaders', {embeddingDimension: 8, randomSeed: 42, propertyRatio: 1.0, featureProperties: ['features'], relationshipWeightProperty: 'w'})")
 	require.NoError(t, err)
 	require.Equal(t, left.Rows, right.Rows)
-
+	for _, procedure := range []string{"gds.nodeSimilarity.stream", "gds.louvain.stream"} {
+		left, err := run("CALL " + procedure + "('nativeReaders', {relationshipWeightProperty: 'w'})")
+		require.NoError(t, err)
+		right, err := run("CALL " + procedure + "('aggregationReaders', {relationshipWeightProperty: 'w'})")
+		require.NoError(t, err)
+		require.NotEmpty(t, left.Rows, procedure)
+		require.Equal(t, left.Rows, right.Rows, procedure)
+	}
 }
 
 // GDS's label argument selects the projected node set as well as the key.
