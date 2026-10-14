@@ -93,6 +93,9 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := AuthorizeQuery(ctx, cypher); err != nil {
 		return nil, err
 	}
+	if err := e.systemDatabaseWriteError(cypher); err != nil {
+		return nil, err
+	}
 
 	// Basic syntax validation to preserve existing error behavior.
 	if err := e.validateSyntax(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {

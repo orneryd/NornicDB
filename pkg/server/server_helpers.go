@@ -347,13 +347,20 @@ func hasPermission(s *Server, roles []string, required auth.Permission) bool {
 }
 
 // ProcedureGrantChecker reports, for a principal's roles, whether they hold
-// EXECUTE BOOSTED PROCEDURE for a procedure; nil when no grants are loaded.
+// EXECUTE BOOSTED PROCEDURE for a procedure; nil when there is no grant
+// store. When the grants can't be read it denies, and logs the error.
 func (s *Server) ProcedureGrantChecker(roles []string) func(procedure string) bool {
 	if s == nil || s.procedurePrivileges == nil || len(roles) == 0 {
 		return nil
 	}
 	store := s.procedurePrivileges
-	return func(procedure string) bool { return store.AllowsBoosted(roles, procedure) }
+	return func(procedure string) bool {
+		allowed, err := store.AllowsBoosted(roles, procedure)
+		if err != nil {
+			s.logEvent(context.Background(), slog.LevelWarn, localization.ServerRBACPrivilegesLoadFailedEvent(err))
+		}
+		return allowed
+	}
 }
 
 func isMutationQuery(query string) bool {

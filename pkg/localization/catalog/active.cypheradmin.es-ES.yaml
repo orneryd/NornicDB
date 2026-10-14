@@ -113,3 +113,12 @@
 - id: cypheradmin.database_options_unavailable
   description: El gestor de bases de datos no tiene opciones. Command no se traduce.
   other: "las opciones de base de datos no están disponibles: {{.Command}} requiere un gestor de bases de datos con opciones"
+- id: cypheradmin.immutable_privilege_grant_forbidden
+  description: Un GRANT IMMUTABLE con la autenticación activada. ASSIGN IMMUTABLE PRIVILEGE es sintaxis de privilegios de Neo4j y no se traduce.
+  other: "No se puede conceder el permiso ASSIGN IMMUTABLE PRIVILEGE."
+- id: cypheradmin.immutable_privilege_revoke_forbidden
+  description: Un REVOKE de un privilegio inmutable con la autenticación activada.
+  other: "Los privilegios inmutables no se pueden revocar."
+- id: cypheradmin.privilege_role_not_found
+  description: Un GRANT a un rol que no existe. Action (execute, execute_boosted) y Role no se traducen.
+  other: "No se pudo conceder el privilegio {{.Action}} al rol '{{.Role}}': el rol no existe."

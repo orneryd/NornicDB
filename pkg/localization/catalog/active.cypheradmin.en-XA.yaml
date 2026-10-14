@@ -113,3 +113,12 @@
 - id: cypheradmin.database_options_unavailable
   description: Expanded pseudo-locale database options unavailable.
   other: "[!! database options are not available - {{.Command}} requires a database manager with options !!]"
+- id: cypheradmin.immutable_privilege_grant_forbidden
+  description: Expanded pseudo-locale immutable privilege grant forbidden.
+  other: "[!! Permission cannot be granted for ASSIGN IMMUTABLE PRIVILEGE. !!]"
+- id: cypheradmin.immutable_privilege_revoke_forbidden
+  description: Expanded pseudo-locale immutable privilege revoke forbidden.
+  other: "[!! Immutable privileges cannot be revoked. !!]"
+- id: cypheradmin.privilege_role_not_found
+  description: Expanded pseudo-locale privilege role not found.
+  other: "[!! Failed to grant {{.Action}} privilege to role '{{.Role}}': Role does not exist. !!]"

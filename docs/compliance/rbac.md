@@ -211,7 +211,11 @@ SHOW ROLE cdc_reader PRIVILEGES
 - A procedure is named exactly or with a glob: `*` stands for any characters, dots included, and `?` for one. Several names and several roles can be listed, separated by commas.
 - `BOOSTED` lets the role run the matching procedures even when they need administrator rights. A plain `EXECUTE PROCEDURE` grant is recorded and listed, but adds nothing to what the role may already run.
 - The grant doesn't widen database access. The role still needs the global `read` entitlement and read access to each database the procedure reads; give it read access only on that database to keep it to one.
-- The role must exist (built-in, or created with `POST /auth/roles`). Only administrators may run `GRANT`, `REVOKE` and `SHOW … PRIVILEGES`.
+- `GRANT` needs the role to exist (built-in, or created with `POST /auth/roles`); `REVOKE` from a role that doesn't exist changes nothing. Only administrators may run `GRANT`, `REVOKE` and `SHOW … PRIVILEGES`.
+- Grants are read from the system database on every check, so a change applies at once to every server over the same storage. In an explicit transaction on the system database, `GRANT` and `REVOKE` take effect when it commits and are undone by a rollback; in an explicit transaction on another database they are refused.
+- Grants come only from `GRANT` and `REVOKE`: the system database runs no statement that writes graph data (`CREATE`, `MERGE`, `SET`, `DELETE`, `REMOVE`, write procedures), as in Neo4j. Deleting a role removes its grants.
+- `GRANT IMMUTABLE` / `REVOKE IMMUTABLE` follow Neo4j: immutable privileges can be granted and revoked only while authentication is disabled; with it enabled, `GRANT IMMUTABLE` and any `REVOKE` of an immutable privilege fail with `Neo.ClientError.Security.Forbidden`. `REVOKE IMMUTABLE` removes only an immutable privilege; a plain `REVOKE` removes either. `SHOW PRIVILEGES` reports it in the `immutable` column.
+- A procedure name or glob may be backticked, whole or in parts (`` `db.cdc.*` ``, ``db.`cdc`.*``); it is stored unquoted.
 - `SHOW PRIVILEGES` lists the procedure privileges in Neo4j's columns (`access`, `action`, `resource`, `graph`, `segment`, `role`, `immutable`) and takes `YIELD` and `WHERE`. Other privilege statements (`GRANT ROLE`, `DENY`, graph privileges) aren't supported.
 
 A change-feed reader, set up once:

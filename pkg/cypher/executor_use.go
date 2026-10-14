@@ -217,10 +217,9 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 	if err != nil {
 		return nil, err
 	}
-	if strings.EqualFold(resolvedDB, "system") && !isSystemCommandNoGraph(query) {
-		requirements := QueryPermissionRequirements(query)
-		if requirements.Write || requirements.Schema || queryKeywords(query)["MATCH"] {
-			return nil, newSemanticError("Neo.ClientError.Statement.SemanticError", "SemanticError", "Graph access is not supported on the system database")
+	if strings.EqualFold(resolvedDB, "system") {
+		if err := systemDatabaseStatementError(query, true); err != nil {
+			return nil, err
 		}
 	}
 	if scopedExec != e {
@@ -230,6 +229,41 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 	}
 	ctx = withExecutionDatabase(ctx, resolvedDB)
 	return scopedExec.Execute(ctx, query, params)
+}
+
+// systemDatabaseStatementError is the error for a statement the system
+// database doesn't run, or nil. The system database holds NornicDB's own
+// data (users, roles, privileges, procedure grants), which only its
+// administration commands write, so a statement that writes graph data
+// there (CREATE, MERGE, SET, DELETE, REMOVE, a write procedure) is refused
+// on every route, as Neo4j refuses it (Neo.ClientError.Statement.SemanticError);
+// this keeps procedure grants coming only from GRANT and REVOKE. Reads
+// stay allowed on a request's or session's system database. A statement
+// that selects the system database with USE (selectedByUse) is refused for
+// schema commands and MATCH as well.
+func systemDatabaseStatementError(query string, selectedByUse bool) error {
+	if isSystemCommandNoGraph(query) {
+		return nil
+	}
+	requirements := QueryPermissionRequirements(query)
+	refused := requirements.Write
+	if selectedByUse {
+		refused = refused || requirements.Schema || queryKeywords(query)["MATCH"]
+	}
+	if !refused {
+		return nil
+	}
+	return newSemanticError("Neo.ClientError.Statement.SemanticError", "SemanticError", "Graph access is not supported on the system database")
+}
+
+// systemDatabaseWriteError is systemDatabaseStatementError for a statement
+// run on this executor's own database (a request's or session's database,
+// not one a USE selects): nil unless that is the system database.
+func (e *StorageExecutor) systemDatabaseWriteError(query string) error {
+	if !strings.EqualFold(e.currentDatabaseName(), "system") {
+		return nil
+	}
+	return systemDatabaseStatementError(query, false)
 }
 
 // resolveCompositeStorage resolves USE <composite> to a CompositeEngine-backed executor.

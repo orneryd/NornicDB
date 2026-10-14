@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -14,6 +15,7 @@ import (
 type procedurePrivilegeCommand struct {
 	grant      bool
 	boosted    bool
+	immutable  bool
 	procedures []string
 	roles      []string
 }
@@ -79,6 +81,7 @@ func parseProcedurePrivilegeCommand(cypher string) (procedurePrivilegeCommand, b
 		return command, false, nil
 	}
 	if startsWithKeywordFold(rest, "IMMUTABLE") {
+		command.immutable = true
 		rest = strings.TrimSpace(rest[len("IMMUTABLE"):])
 	}
 	if !startsWithKeywordFold(rest, "EXECUTE") {
@@ -102,7 +105,7 @@ func parseProcedurePrivilegeCommand(cypher string) (procedurePrivilegeCommand, b
 		return command, true, procedurePrivilegeSyntaxError("expected ON DBMS")
 	}
 	for _, name := range splitTopLevelComma(rest[:on]) {
-		if name = strings.TrimSpace(name); name != "" {
+		if name = unquoteProcedureGlob(strings.TrimSpace(name)); name != "" {
 			command.procedures = append(command.procedures, name)
 		}
 	}
@@ -134,6 +137,26 @@ func procedurePrivilegeSyntaxError(detail string) error {
 	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", "Invalid procedure privilege statement: "+detail)
 }
 
+// unquoteProcedureGlob is a procedure name or glob as GRANT or REVOKE
+// writes it, with its backticked parts unquoted (a doubled backtick inside
+// stands for one): `db.cdc.*`, db.`cdc`.* and db.cdc.* all name db.cdc.*,
+// and `*` names *, as in Neo4j 5.26.
+func unquoteProcedureGlob(written string) string {
+	var name strings.Builder
+	for i := 0; i < len(written); {
+		if written[i] == '`' {
+			if value, end, ok := scanIdentifierToken(written, i); ok {
+				name.WriteString(value)
+				i = end
+				continue
+			}
+		}
+		name.WriteByte(written[i])
+		i++
+	}
+	return name.String()
+}
+
 // systemStorage is the system database's storage, where privileges live:
 // the database manager's, or the executor's own when it has none (an
 // executor on the system database).
@@ -153,39 +176,112 @@ func (e *StorageExecutor) systemStorage() (storage.Engine, error) {
 	return e.storage, nil
 }
 
-// executeProcedurePrivilegeCommand runs GRANT / REVOKE EXECUTE [BOOSTED]
-// PROCEDURE: each named procedure (a name or glob) for each role, which must
-// exist. It returns no rows, as Neo4j's privilege commands do.
+// privilegeStorage is the storage GRANT, REVOKE (writes) and SHOW
+// PRIVILEGES read and write privileges through. Neo4j runs an
+// administration command inside the explicit transaction it is sent in:
+// it takes effect when the transaction commits and is undone by its
+// rollback. So in an explicit transaction on the system database this is
+// the transaction's own storage; otherwise the system database's. A GRANT
+// or REVOKE in an explicit transaction on another database is refused, as
+// a write to a second database in a transaction is: the system database's
+// writes can't join that transaction. SHOW PRIVILEGES there reads what the
+// system database has committed.
+func (e *StorageExecutor) privilegeStorage(writes bool) (storage.Engine, error) {
+	system, err := e.systemStorage()
+	if err != nil {
+		return nil, err
+	}
+	if e.txContext == nil || !e.txContext.active || system == e.storage {
+		return system, nil
+	}
+	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok &&
+		(wrapper.underlying == system || strings.EqualFold(wrapper.Namespace(), "system")) {
+		return wrapper, nil
+	}
+	if !writes {
+		return system, nil
+	}
+	return nil, localizedStatusError("Neo.ClientError.Statement.AccessMode", "AccessMode",
+		localization.CypherCommandRoutingTransactionSecondDatabaseWrite("system", e.currentDatabaseName()))
+}
+
+// authenticationDisabledKey marks a statement run while authentication is
+// disabled (WithAuthenticationDisabled).
+type authenticationDisabledKey struct{}
+
+// WithAuthenticationDisabled marks the statements run with ctx as run by a
+// server whose authentication is disabled. Immutable privileges can be
+// granted and revoked only then, as in Neo4j; without the mark (any
+// authenticated route, or an embedded caller) they can't.
+func WithAuthenticationDisabled(ctx context.Context) context.Context {
+	return context.WithValue(ctx, authenticationDisabledKey{}, true)
+}
+
+func authenticationDisabled(ctx context.Context) bool {
+	disabled, _ := ctx.Value(authenticationDisabledKey{}).(bool)
+	return disabled
+}
+
+// executeProcedurePrivilegeCommand runs GRANT / REVOKE [IMMUTABLE] EXECUTE
+// [BOOSTED] PROCEDURE: each named procedure (a name or glob) for each role.
+// It returns no rows, as Neo4j's privilege commands do. As Neo4j 5.26.30
+// Enterprise does:
+//   - GRANT needs every role to exist (Neo.ClientError.Statement.ArgumentError
+//     "Failed to grant execute_boosted privilege to role 'nobody': Role does
+//     not exist."); REVOKE from a role that doesn't exist changes nothing
+//     (Neo4j's ImpossibleRevokeCommand notification, no error);
+//   - while authentication is enabled, GRANT IMMUTABLE is refused
+//     (Neo.ClientError.Security.Forbidden "Permission cannot be granted for
+//     ASSIGN IMMUTABLE PRIVILEGE."), and so is a REVOKE, with or without
+//     IMMUTABLE, that names an immutable grant (Neo.ClientError.Security.Forbidden
+//     "Immutable privileges cannot be revoked."); nothing is changed then.
 func (e *StorageExecutor) executeProcedurePrivilegeCommand(ctx context.Context, cypher string) (*ExecuteResult, error) {
 	command, _, err := parseProcedurePrivilegeCommand(cypher)
 	if err != nil {
 		return nil, err
 	}
-	system, err := e.systemStorage()
+	locked := !authenticationDisabled(ctx)
+	if command.grant && command.immutable && locked {
+		return nil, localizedStatusError("Neo.ClientError.Security.Forbidden", "Forbidden", localization.CypherAdminImmutablePrivilegeGrantForbidden())
+	}
+	system, err := e.privilegeStorage(true)
 	if err != nil {
 		return nil, err
 	}
-	roles := auth.NewRoleStore(system)
-	if err := roles.Load(ctx); err != nil {
-		return nil, err
-	}
-	for _, role := range command.roles {
-		if !auth.IsBuiltinRole(role) && !roles.Exists(role) {
-			action := "grant"
-			if !command.grant {
-				action = "revoke"
+	store := auth.NewProcedurePrivilegeStore(system)
+	if command.grant {
+		roles := auth.NewRoleStore(system)
+		if err := roles.Load(ctx); err != nil {
+			return nil, err
+		}
+		for _, role := range command.roles {
+			if !auth.IsBuiltinRole(role) && !roles.Exists(role) {
+				action := "execute"
+				if command.boosted {
+					action = "execute_boosted"
+				}
+				return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "RoleNotFound", localization.CypherAdminPrivilegeRoleNotFound(action, role))
 			}
-			return nil, newSemanticError("Neo.ClientError.Statement.ArgumentError", "RoleNotFound",
-				fmt.Sprintf("Failed to %s privilege to role '%s': Role does not exist.", action, role))
+		}
+	} else if locked {
+		for _, role := range command.roles {
+			for _, procedure := range command.procedures {
+				grant, found, err := store.Lookup(ctx, role, procedure, command.boosted)
+				if err != nil {
+					return nil, err
+				}
+				if found && grant.Immutable {
+					return nil, localizedStatusError("Neo.ClientError.Security.Forbidden", "Forbidden", localization.CypherAdminImmutablePrivilegeRevokeForbidden())
+				}
+			}
 		}
 	}
-	store := auth.NewProcedurePrivilegeStore(system)
 	for _, role := range command.roles {
 		for _, procedure := range command.procedures {
 			if command.grant {
-				err = store.Grant(ctx, role, procedure, command.boosted)
+				err = store.Grant(ctx, role, procedure, command.boosted, command.immutable)
 			} else {
-				_, err = store.Revoke(ctx, role, procedure, command.boosted)
+				_, err = store.Revoke(ctx, role, procedure, command.boosted, command.immutable)
 			}
 			if err != nil {
 				return nil, err
@@ -239,12 +335,12 @@ func showPrivilegeRoles(head string) []string {
 // executeShowPrivileges lists the procedure privileges, in Neo4j's columns:
 // access, action, resource, graph, segment, role, immutable.
 func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string) (*ExecuteResult, error) {
-	system, err := e.systemStorage()
+	system, err := e.privilegeStorage(false)
 	if err != nil {
 		return nil, err
 	}
-	store := auth.NewProcedurePrivilegeStore(system)
-	if err := store.Load(ctx); err != nil {
+	grants, err := auth.NewProcedurePrivilegeStore(system).List(ctx)
+	if err != nil {
 		return nil, err
 	}
 	only := map[string]bool{}
@@ -252,7 +348,7 @@ func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string
 		only[role] = true
 	}
 	result := &ExecuteResult{Columns: []string{"access", "action", "resource", "graph", "segment", "role", "immutable"}, Rows: [][]interface{}{}}
-	for _, grant := range store.List() {
+	for _, grant := range grants {
 		if len(only) > 0 && !only[grant.Role] {
 			continue
 		}
@@ -260,7 +356,7 @@ func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string
 		if grant.Boosted {
 			action = "execute_boosted"
 		}
-		result.Rows = append(result.Rows, []interface{}{"GRANTED", action, "database", "*", "PROCEDURE(" + grant.Procedure + ")", grant.Role, false})
+		result.Rows = append(result.Rows, []interface{}{"GRANTED", action, "database", "*", "PROCEDURE(" + grant.Procedure + ")", grant.Role, grant.Immutable})
 	}
 	return result, nil
 }

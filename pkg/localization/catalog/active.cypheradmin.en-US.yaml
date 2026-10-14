@@ -113,3 +113,12 @@
 - id: cypheradmin.database_options_unavailable
   description: The database manager has no database options. Command is untranslated Cypher syntax.
   other: "database options are not available - {{.Command}} requires a database manager with options"
+- id: cypheradmin.immutable_privilege_grant_forbidden
+  description: A GRANT IMMUTABLE while authentication is enabled. ASSIGN IMMUTABLE PRIVILEGE is untranslated Neo4j privilege syntax.
+  other: "Permission cannot be granted for ASSIGN IMMUTABLE PRIVILEGE."
+- id: cypheradmin.immutable_privilege_revoke_forbidden
+  description: A REVOKE of an immutable privilege while authentication is enabled.
+  other: "Immutable privileges cannot be revoked."
+- id: cypheradmin.privilege_role_not_found
+  description: A GRANT to a role that does not exist. Action (execute, execute_boosted) and Role are untranslated.
+  other: "Failed to grant {{.Action}} privilege to role '{{.Role}}': Role does not exist."

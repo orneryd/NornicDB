@@ -1721,12 +1721,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		} else {
 			s.privilegesStore = privilegesStore
 		}
-		procedurePrivileges := auth.NewProcedurePrivilegeStore(systemStorage)
-		if loadErr := procedurePrivileges.Load(ctx); loadErr != nil {
-			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACPrivilegesLoadFailedEvent(loadErr))
-		} else {
-			s.procedurePrivileges = procedurePrivileges
-		}
+		// Read on every check (ProcedureGrantChecker): a grant counts once
+		// committed, and a failed read denies.
+		s.procedurePrivileges = auth.NewProcedurePrivilegeStore(systemStorage)
 		roleEntitlementsStore := auth.NewRoleEntitlementsStore(systemStorage)
 		if loadErr := roleEntitlementsStore.Load(ctx); loadErr != nil {
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACRoleEntitlementsLoadFailedEvent(loadErr))

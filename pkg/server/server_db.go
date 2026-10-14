@@ -1697,6 +1697,11 @@ func (s *Server) runRequestStatements(
 	if claims != nil {
 		ctx = cypher.WithProcedureGrantChecker(ctx, s.ProcedureGrantChecker(claims.Roles))
 	}
+	if !s.isRBACEnforced() {
+		// Immutable privileges are administered only with authentication
+		// disabled, as in Neo4j.
+		ctx = cypher.WithAuthenticationDisabled(ctx)
+	}
 	mode := s.getDatabaseAccessMode(claims)
 	// A name is checked like the request's database (graphAccess: a
 	// composite constituent needs its composite and its database), and

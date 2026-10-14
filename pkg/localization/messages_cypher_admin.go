@@ -247,3 +247,30 @@ func CypherAdminTransactionIDUnparseable() Message {
 func CypherAdminTransactionIDDatabaseNameLength() Message {
 	return Message{ID: MessageCypherAdminTransactionIDDatabaseNameLength, Fallback: "The provided database name must have a length between 3 and 63 characters."}
 }
+
+// Procedure privileges: a GRANT to a role that does not exist, and immutable
+// privileges (GRANT / REVOKE IMMUTABLE …), which Neo4j lets anyone
+// administer only while authentication is disabled.
+const (
+	MessageCypherAdminImmutablePrivilegeGrantForbidden  MessageID = "cypheradmin.immutable_privilege_grant_forbidden"
+	MessageCypherAdminImmutablePrivilegeRevokeForbidden MessageID = "cypheradmin.immutable_privilege_revoke_forbidden"
+	MessageCypherAdminPrivilegeRoleNotFound             MessageID = "cypheradmin.privilege_role_not_found"
+)
+
+// CypherAdminImmutablePrivilegeGrantForbidden identifies a GRANT IMMUTABLE
+// while authentication is enabled.
+func CypherAdminImmutablePrivilegeGrantForbidden() Message {
+	return Message{ID: MessageCypherAdminImmutablePrivilegeGrantForbidden, Fallback: "Permission cannot be granted for ASSIGN IMMUTABLE PRIVILEGE."}
+}
+
+// CypherAdminImmutablePrivilegeRevokeForbidden identifies a REVOKE of an
+// immutable privilege while authentication is enabled.
+func CypherAdminImmutablePrivilegeRevokeForbidden() Message {
+	return Message{ID: MessageCypherAdminImmutablePrivilegeRevokeForbidden, Fallback: "Immutable privileges cannot be revoked."}
+}
+
+// CypherAdminPrivilegeRoleNotFound identifies a GRANT to a role that does
+// not exist; action is the privilege's action (execute, execute_boosted).
+func CypherAdminPrivilegeRoleNotFound(action, role string) Message {
+	return Message{ID: MessageCypherAdminPrivilegeRoleNotFound, Fallback: "Failed to grant " + action + " privilege to role '" + role + "': Role does not exist.", Data: map[string]any{"Action": action, "Role": role}}
+}

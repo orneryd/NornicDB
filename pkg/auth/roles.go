@@ -121,6 +121,11 @@ func (r *RoleStore) DeleteRole(ctx context.Context, name string) error {
 	if _, exists := r.roles[name]; !exists {
 		return ErrRoleNotFound
 	}
+	// The role's procedure grants go first, so a role created later under
+	// this name doesn't inherit them.
+	if err := NewProcedurePrivilegeStore(r.storage).revokeRole(name); err != nil {
+		return err
+	}
 	nodeID := storage.NodeID(rolePrefix + name)
 	if err := r.storage.DeleteNode(nodeID); err != nil {
 		return err

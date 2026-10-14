@@ -473,6 +473,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err := AuthorizeQuery(ctx, cypher); err != nil {
 		return nil, err
 	}
+	if err := e.systemDatabaseWriteError(cypher); err != nil {
+		return nil, err
+	}
 
 	// Reject data queries on composite root — callers must USE a constituent.
 	// System/admin commands (SHOW DATABASES, CREATE/DROP DATABASE, ALTER, SHOW COMPOSITE,

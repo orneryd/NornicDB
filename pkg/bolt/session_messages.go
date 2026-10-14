@@ -1828,6 +1828,11 @@ func (s *Session) withSessionIdentity(ctx context.Context) context.Context {
 		})
 		ctx = cypher.WithProcedureGrantChecker(ctx, s.server.procedureGrants(s.authResult.Roles))
 	}
+	if s.server == nil || s.server.config.Authenticator == nil {
+		// No authentication: immutable privileges can be administered, as
+		// in Neo4j with authentication disabled.
+		ctx = cypher.WithAuthenticationDisabled(ctx)
+	}
 	return ctx
 }
 
