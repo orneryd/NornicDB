@@ -884,13 +884,20 @@ func (e *StorageExecutor) validateSubqueryPatternBindings(scope staticTypeScope,
 		if strings.HasPrefix(body, "(") {
 			body = "MATCH " + body
 		}
-		clauses, ok := splitPipelineClausesAllowingProcedureCalls(body)
-		if !ok {
-			continue
+		// Each UNION branch is a query of its own.
+		branches := []string{body}
+		if unionBranches, _, _, union := parseTopLevelUnionBranches(body); union && len(unionBranches) > 0 {
+			branches = unionBranches
 		}
 		visible := typeScopeOf(local)
-		if _, _, err := e.semanticScopeWalk(clauses, maps.Clone(visible), scope.cypher25, visible); err != nil {
-			return err
+		for _, branch := range branches {
+			clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch)
+			if !ok {
+				continue
+			}
+			if _, _, err := e.semanticScopeWalk(clauses, maps.Clone(visible), scope.cypher25, visible); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
