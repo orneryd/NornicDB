@@ -224,8 +224,8 @@ func readNodeSimilarityConfig(proj *GraphProjection, options map[string]interfac
 
 // readGDSNodeFilter reads a node filter: a label, a node, an id, or a list
 // of nodes or ids; nil or an empty list admits every node, as in GDS. A
-// string is a label, or, as NornicDB's ids are strings (id(n)), the id of a
-// projected node; a label the graph doesn't hold is refused, as in GDS.
+// string first names a projected label; otherwise it is a numeric or stored
+// node id, including outside the projection. Unknown labels are refused.
 // Ids that match no node admit none.
 func readGDSNodeFilter(proj *GraphProjection, value interface{}, nodeExists ...func(string) bool) (*gdsNodeFilter, error) {
 	if value == nil {
@@ -422,19 +422,12 @@ func nodeSimilarityComponents(proj *GraphProjection, graph *gdsSubgraph, config 
 	component := make([]int64, size)
 	switch {
 	case config.componentProperty != "":
-		property := config.componentProperty
-		if kind := gdsPropertyReadType(proj.NodePropertyTypes[property]); kind != "LONG" {
-			return nil, localizedError(localization.CypherGraphProceduresNodePropertyReadType("LONG", kind), nil)
-		}
 		for i, id := range graph.nodes {
-			component[i] = math.MinInt64
-			if value, ok := proj.NodeValues[id][property]; ok {
-				integer, ok := value.(int64)
-				if !ok {
-					return nil, localizedError(localization.CypherGraphProceduresNodePropertyReadType("LONG", strings.ToUpper(gdsJavaType(value))), nil)
-				}
-				component[i] = integer
+			value, err := proj.nodePropertyValue(id, config.componentProperty, "Integer")
+			if err != nil {
+				return nil, err
 			}
+			component[i] = value.(int64)
 		}
 	case config.connectedOnly:
 		parent := make([]int, size)

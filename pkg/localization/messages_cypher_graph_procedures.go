@@ -379,10 +379,3 @@ func CypherGraphProceduresComponentPropertyNotFound(property, available string) 
 func CypherGraphProceduresInvalidListTypes(types string) Message {
 	return Message{ID: MessageCypherGraphProceduresInvalidListTypes, Fallback: "Invalid types in list. Expected Longs or Nodes but found " + types, Data: map[string]any{"Types": types}}
 }
-
-const MessageCypherGraphProceduresNodePropertyReadType MessageID = "cyphergraphprocedures.node_property_read_type"
-
-// CypherGraphProceduresNodePropertyReadType reports an incompatible typed property read.
-func CypherGraphProceduresNodePropertyReadType(requested, actual string) Message {
-	return Message{ID: MessageCypherGraphProceduresNodePropertyReadType, Fallback: "Tried to retrieve a value of type " + requested + " value from properties of type " + actual, Data: map[string]any{"Requested": requested, "Actual": actual}}
-}

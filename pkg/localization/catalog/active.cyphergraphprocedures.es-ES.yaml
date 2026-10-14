@@ -182,6 +182,3 @@
 - id: cyphergraphprocedures.invalid_list_types
   description: Mensaje de GDS (invalid list types).
   other: 'Tipos no válidos en la lista. Se esperaban Longs o Nodes, pero se encontró {{.Types}}'
-- id: cyphergraphprocedures.node_property_read_type
-  description: GDS typed property read error. Requested and Actual untranslated.
-  other: 'Se intentó recuperar un valor de tipo {{.Requested}} de propiedades de tipo {{.Actual}}'

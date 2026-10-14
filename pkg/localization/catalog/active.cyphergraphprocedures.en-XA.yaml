@@ -182,6 +182,3 @@
 - id: cyphergraphprocedures.invalid_list_types
   description: Expanded pseudo-locale invalid list types.
   other: '[!! Invalid types in list. Expected Longs or Nodes but found {{.Types}} !!]'
-- id: cyphergraphprocedures.node_property_read_type
-  description: GDS typed property read error. Requested and Actual untranslated.
-  other: '[!! Tried to retrieve a value of type {{.Requested}} value from properties of type {{.Actual}} !!]'
