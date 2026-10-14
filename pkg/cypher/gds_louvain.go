@@ -22,11 +22,12 @@ var louvainConfigKeys = []string{
 // relationshipWeightProperty's value), with GDS's maxLevels (10),
 // maxIterations (10) and tolerance (0.0001), seedProperty for the initial
 // communities, minCommunitySize, and includeIntermediateCommunities for
-// each level's community. Rows are in the projection's node order; the
-// communities are numbered by their first node, as consecutiveIds numbers
-// them in GDS (GDS's own default ids are internal node ids). A seeded
-// community keeps its first seeded node's seed, others are numbered after
-// the largest seed.
+// each level's community. Rows are in the projection's node order. As in
+// GDS, a community is named by the node it grew from: its position in the
+// projection, or with seedProperty, that node's seed (non-negative
+// integers only), or for an unseeded node, the largest seed + 1 + its
+// position (GDS adds the largest seed to the Neo4j id, which can collide
+// with a seed); consecutiveIds numbers them 0, 1, … by first node.
 func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResult, error) {
 	const procedure = "gds.louvain.stream"
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
@@ -58,7 +59,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	if run.tolerance, err = c.number("tolerance", "Double", 0.0001); err != nil {
 		return nil, err
 	}
-	if run.tolerance < 0 {
+	if run.tolerance < 0 || math.IsNaN(run.tolerance) || math.IsInf(run.tolerance, 1) {
 		return nil, localizedError(localization.CypherGraphProceduresConfigValueOutOfRange("tolerance", javaDoubleText(run.tolerance), "[0.00, "+javaPlainDouble(math.MaxFloat64)+".00]"), nil)
 	}
 	intermediate, _, err := c.boolean("includeIntermediateCommunities")
@@ -69,10 +70,17 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	if err != nil {
 		return nil, err
 	}
+	seedProperty, _, err := c.text("seedProperty")
+	if err != nil {
+		return nil, err
+	}
 	if intermediate && consecutive {
 		return nil, localizedError(localization.CypherGraphProceduresLouvainIntermediateConsecutive(), nil)
 	}
-	minSize, err := c.integer("minCommunitySize", "Integer", 0, 1<<31-1, 0, false)
+	if seedProperty != "" && consecutive {
+		return nil, localizedError(localization.CypherGraphProceduresLouvainSeedingConsecutive(), nil)
+	}
+	minSize, err := c.integer("minCommunitySize", "Integer", 1, math.MaxInt64, 1, false)
 	if err != nil {
 		return nil, err
 	}
@@ -99,10 +107,6 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 			return nil, err
 		}
 	}
-	seedProperty, _, err := c.text("seedProperty")
-	if err != nil {
-		return nil, err
-	}
 	if seedProperty != "" {
 		var available []string
 		for _, keys := range projection.NodePropertyKeys {
@@ -113,6 +117,9 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		sort.Strings(available)
 		if !containsString(available, seedProperty) {
 			return nil, localizedError(localization.CypherGraphProceduresSeedPropertyNotFound(seedProperty, "["+strings.Join(available, ", ")+"]"), nil)
+		}
+		if gdsNodePropertyFloat(projection, seedProperty) {
+			return nil, localizedError(localization.CypherGraphProceduresSeedPropertyNotLong(seedProperty), nil)
 		}
 	}
 
@@ -136,30 +143,45 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	}
 
 	// Seeds: nodes with equal seeds start in one community.
-	var seeds []float64
+	name := func(node int) int64 { return int64(node) }
 	if seedProperty != "" {
 		run.seed = make([]int, size)
-		seeds = make([]float64, size)
-		groups := make(map[float64]int)
+		seeds := make(map[int]int64)
+		groups := make(map[int64]int)
+		largest := int64(0)
 		for i, id := range graph.nodes {
+			run.seed[i] = i
 			value, ok := projection.NodeProperties[id][seedProperty]
-			seeds[i] = math.NaN()
 			if !ok {
-				run.seed[i] = i
 				continue
 			}
-			seeds[i] = value
-			first, seen := groups[value]
-			if !seen {
-				first = i
-				groups[value] = i
+			if value < 0 {
+				return nil, localizedError(localization.CypherGraphProceduresSeedNegative(), nil)
 			}
-			run.seed[i] = first
+			seed := int64(value)
+			seeds[i], largest = seed, max(largest, seed)
+			if first, seen := groups[seed]; seen {
+				run.seed[i] = first
+			} else {
+				groups[seed] = i
+			}
+		}
+		name = func(node int) int64 {
+			if seed, seeded := seeds[node]; seeded {
+				return seed
+			}
+			return largest + 1 + int64(node)
 		}
 	}
 	result := runLouvain(louvain, run)
-	final := louvainFinal(result, size)
-	ids := louvainCommunityIDs(final, seeds)
+	last := len(result.levels) - 1
+	final := result.levels[last]
+	communityID := func(level, community int) int64 {
+		if consecutive {
+			return int64(community)
+		}
+		return name(result.representatives[level][community])
+	}
 
 	sizes := make(map[int]int)
 	for _, community := range final {
@@ -174,45 +196,26 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		if intermediate {
 			list := make([]interface{}, len(result.levels))
 			for level, membership := range result.levels {
-				list[level] = int64(membership[i])
+				list[level] = communityID(level, membership[i])
 			}
 			levels = list
 		}
-		rows = append(rows, []interface{}{id, ids[final[i]], levels})
+		rows = append(rows, []interface{}{id, communityID(last, final[i]), levels})
 	}
 	return &ExecuteResult{Columns: []string{"nodeId", "communityId", "intermediateCommunityIds"}, Rows: rows}, nil
 }
 
-// louvainCommunityIDs is each community's id: its number (by first node),
-// or with seeds, its first seeded node's seed, the unseeded communities
-// numbered after the largest seed.
-func louvainCommunityIDs(final []int, seeds []float64) map[int]int64 {
-	ids := make(map[int]int64)
-	if seeds == nil {
-		for _, community := range final {
-			ids[community] = int64(community)
-		}
-		return ids
-	}
-	next := int64(0)
-	for _, seed := range seeds {
-		if !math.IsNaN(seed) && int64(seed) >= next {
-			next = int64(seed) + 1
+// gdsNodePropertyFloat reports whether the projection holds key as a
+// Float node property (its schema type, under any label).
+func gdsNodePropertyFloat(projection *GraphProjection, key string) bool {
+	labels, _ := projection.schema["nodes"].(map[string]interface{})
+	for _, properties := range labels {
+		properties, _ := properties.(map[string]interface{})
+		if text, _ := properties[key].(string); strings.HasPrefix(text, "Float") {
+			return true
 		}
 	}
-	for i, community := range final {
-		if _, numbered := ids[community]; numbered || math.IsNaN(seeds[i]) {
-			continue
-		}
-		ids[community] = int64(seeds[i])
-	}
-	for _, community := range final {
-		if _, numbered := ids[community]; !numbered {
-			ids[community] = next
-			next++
-		}
-	}
-	return ids
+	return false
 }
 
 // javaPlainDouble is a Double as GDS's range messages print it: its

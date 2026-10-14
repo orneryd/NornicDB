@@ -102,50 +102,58 @@ type louvainOptions struct {
 var apocLouvainOptions = louvainOptions{maxLevels: 10, maxIterations: 10, tolerance: 0.0001}
 
 // louvainRun is a Louvain run's result: each level's community of every
-// node, numbered by first node, and the modularity after each level.
+// node, numbered by first node; each level's representative of each
+// community, the node whose community it grew from (GDS names a community
+// by it); and the modularity after each level.
 type louvainRun struct {
-	levels       [][]int
-	modularities []float64
+	levels          [][]int
+	representatives [][]int
+	modularities    []float64
 }
 
 // runLouvain runs Louvain over graph as GDS runs it: each level moves
 // nodes (the tolerance ending its passes), then merges each community into
-// one node, until a level moves nothing, a level gains less modularity than
-// the tolerance over the one before (the first: over each node alone), or
-// maxLevels levels have run.
+// one node. A level that leaves as many communities as nodes, or a single
+// one, or gains no more modularity than the tolerance over the level
+// before, ends the run and, unless it is the first, is dropped; at most
+// maxLevels levels run.
 func runLouvain(graph *louvainGraph, options louvainOptions) louvainRun {
 	var run louvainRun
 	size := len(graph.weights)
-	membership := make([]int, size)
-	for i := range membership {
-		membership[i] = i
-	}
+	membership := identityCommunities(size)
+	representative := identityCommunities(size)
 	initial := options.seed
-	previous := graph.modularity(identityCommunities(size))
+	previous := 0.0
 	for level := 0; level < options.maxLevels; level++ {
-		communities, moved := graph.moveNodes(options.maxIterations, options.tolerance, initial)
-		if initial != nil {
-			// Seeded communities are a grouping of their own.
-			moved = moved || len(initial) > 0
-			initial = nil
-		}
-		if !moved {
-			break
-		}
+		communities := graph.moveNodes(options.maxIterations, options.tolerance, initial)
+		initial = nil
 		modularity := graph.modularity(communities)
+		var representatives []int
+		numbered := make(map[int]bool)
+		for _, c := range communities {
+			if !numbered[c] {
+				numbered[c] = true
+				representatives = append(representatives, representative[c])
+			}
+		}
 		count := renumberLouvainCommunities(communities)
 		for i := range membership {
 			membership[i] = communities[membership[i]]
 		}
 		run.levels = append(run.levels, append([]int(nil), membership...))
+		run.representatives = append(run.representatives, representatives)
 		run.modularities = append(run.modularities, modularity)
-		// A level gaining less modularity than the tolerance over the one
-		// before (the first: over each node alone) is the last.
-		if modularity-previous < options.tolerance {
+		converged := level > 0 && !(modularity > previous && modularity-previous > options.tolerance)
+		if count == len(graph.weights) || count == 1 || converged {
+			if level > 0 {
+				last := len(run.levels) - 1
+				run.levels, run.representatives, run.modularities = run.levels[:last], run.representatives[:last], run.modularities[:last]
+			}
 			break
 		}
 		previous = modularity
 		graph = graph.aggregate(communities, count)
+		representative = representatives
 	}
 	return run
 }
@@ -228,11 +236,11 @@ func (g *louvainGraph) link(i, j int, w float64) {
 // classes in turn, every node of a class joining the neighbouring community
 // with the largest modularity gain over the communities as they stood
 // before the class (its own kept on a tie, else the smaller community).
-// Passes repeat until one moves nothing, gains less modularity than the
-// tolerance, or maxIterations have run. Nodes start in initial's
-// communities (nil: each its own). It reports each node's community and
-// whether any node moved.
-func (g *louvainGraph) moveNodes(maxIterations int, tolerance float64, initial []int) ([]int, bool) {
+// Passes repeat until one moves nothing, a pass after the first gains no
+// more modularity than the tolerance, or maxIterations have run. Nodes
+// start in initial's communities (nil: each its own). It reports each
+// node's community.
+func (g *louvainGraph) moveNodes(maxIterations int, tolerance float64, initial []int) []int {
 	size := len(g.weights)
 	community := make([]int, size)
 	communityDegree := make([]float64, size)
@@ -246,11 +254,10 @@ func (g *louvainGraph) moveNodes(maxIterations int, tolerance float64, initial [
 		communityDegree[community[i]] += g.degree[i]
 	}
 	if g.total == 0 {
-		return community, false
+		return community
 	}
 	neighbours := g.neighbours()
 	classes := g.colourClasses(neighbours)
-	moved := false
 	before := 0.0
 	next := make([]int, size)
 	for iteration := 0; iteration < maxIterations; iteration++ {
@@ -299,16 +306,15 @@ func (g *louvainGraph) moveNodes(maxIterations int, tolerance float64, initial [
 		if moves == 0 {
 			break
 		}
-		moved = true
 		// The tolerance compares each pass with the one before; the first
 		// pass is always followed by a second, as in GDS.
 		after := g.modularity(community)
-		if iteration > 0 && after-before < tolerance {
+		if iteration > 0 && !(after > before && after-before > tolerance) {
 			break
 		}
 		before = after
 	}
-	return community, moved
+	return community
 }
 
 // colourClasses colours the graph greedily in node order, each node taking

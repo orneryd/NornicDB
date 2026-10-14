@@ -455,6 +455,9 @@ func nodeSimilarity(a, b map[int]float64, metric string, weighted bool, nodes []
 
 // javaDoubleText is a number as GDS's messages print a Double: 2.0, 0.5.
 func javaDoubleText(value float64) string {
+	if math.IsInf(value, 0) {
+		return strings.Replace(strings.TrimPrefix(strconv.FormatFloat(value, 'g', -1, 64), "+"), "Inf", "Infinity", 1)
+	}
 	if value == math.Trunc(value) && math.Abs(value) < 1e15 {
 		return fmt.Sprintf("%.1f", value)
 	}

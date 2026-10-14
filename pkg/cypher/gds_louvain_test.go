@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +16,16 @@ import (
 // newLouvainKarateGraph is Zachary's karate club, projected undirected with
 // a weight, as GDS's probe.
 func newLouvainKarateGraph(t *testing.T) func(string) [][]interface{} {
+	return newLouvainKarateGraphOf(t, gdsKarateIDOrder, func(member int, properties map[string]interface{}) {
+		if member <= 2 {
+			properties["seed"] = int64(100)
+		}
+	}, "{K: {properties: {seed: {property: 'seed', defaultValue: null}}}}")
+}
+
+// newLouvainKarateGraphOf is the karate club with its members in order,
+// each one's extra properties, projected with the node projection.
+func newLouvainKarateGraphOf(t *testing.T, order []int, extra func(int, map[string]interface{}), nodeProjection string) func(string) [][]interface{} {
 	t.Helper()
 	graphProjections = make(map[string]*GraphProjection)
 	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
@@ -31,19 +42,17 @@ func newLouvainKarateGraph(t *testing.T) func(string) [][]interface{} {
 		ends := strings.Split(edge, "-")
 		edges = append(edges, []interface{}{ends[0], ends[1]})
 	}
-	// Node ids that sort in GDS's internal id order of its probe.
-	for position, i := range gdsKarateIDOrder {
+	// Node ids that sort in order.
+	for position, i := range order {
 		properties := map[string]interface{}{"id": strconv.Itoa(i), "seq": int64(i)}
-		if i <= 2 {
-			properties["seed"] = int64(100)
-		}
+		extra(i, properties)
 		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("k%02d", position)), Labels: []string{"K"}, Properties: properties})
 		require.NoError(t, err)
 	}
 	var err error
 	_, err = exec.Execute(context.Background(), "UNWIND $edges AS e MATCH (a:K {id: e[0]}), (b:K {id: e[1]}) CREATE (a)-[:R {w: 1.0}]->(b)", map[string]interface{}{"edges": edges})
 	require.NoError(t, err)
-	run("CALL gds.graph.project('k', {K: {properties: {seed: {property: 'seed', defaultValue: null}}}}, {R: {orientation: 'UNDIRECTED', properties: 'w'}})")
+	run("CALL gds.graph.project('k', " + nodeProjection + ", {R: {orientation: 'UNDIRECTED', properties: 'w'}})")
 	return run
 }
 
@@ -87,8 +96,8 @@ func TestGDSLouvainStreamAsGDS(t *testing.T) {
 	require.Equal(t, 4, count("relationshipWeightProperty: 'w'"))
 	require.Equal(t, 4, count("consecutiveIds: true, concurrency: 1, jobId: 'j', logProgress: false, sudo: false, nodeLabels: ['K'], relationshipTypes: ['R']"))
 
-	// Communities numbered by first node: node 1's is 0.
-	first := run("CALL gds.louvain.stream('k') YIELD nodeId, communityId, intermediateCommunityIds RETURN communityId, intermediateCommunityIds LIMIT 1")
+	// consecutiveIds numbers the communities by first node: the first's is 0.
+	first := run("CALL gds.louvain.stream('k', {consecutiveIds: true}) YIELD nodeId, communityId, intermediateCommunityIds RETURN communityId, intermediateCommunityIds LIMIT 1")
 	require.Equal(t, int64(0), first[0][0])
 	require.Nil(t, first[0][1])
 	// includeIntermediateCommunities: one entry per level, the last the
@@ -102,19 +111,17 @@ func TestGDSLouvainStreamAsGDS(t *testing.T) {
 	// minCommunitySize drops the small communities' rows.
 	require.Less(t, len(run("CALL gds.louvain.stream('k', {minCommunitySize: 10})")), 34)
 	require.Len(t, run("CALL gds.louvain.stream('k', {minCommunitySize: 1})"), 34)
-	// seedProperty: nodes 1 and 2 seeded 100 keep the seed as their id.
-	seeded := run("CALL gds.louvain.stream('k', {seedProperty: 'seed'}) YIELD nodeId, communityId MATCH (n:K) WHERE elementId(n) ENDS WITH nodeId OR id(n) = nodeId RETURN n.seq, communityId ORDER BY n.seq LIMIT 2")
-	require.Equal(t, [][]interface{}{{int64(1), int64(100)}, {int64(2), int64(100)}}, seeded)
 
 	for config, message := range map[string]string{
 		"includeIntermediateCommunities: true, consecutiveIds: true": "`includeIntermediateResults` and the `consecutiveIds` option cannot be used at the same time.",
-		"seedProperty: 'nope'":               "Seed property `nope` not found in graph with node properties: [seed]",
-		"maxLevels: 0":                       "Value for `maxLevels` was `0`, but must be within the range [1, 2147483647].",
-		"maxIterations: 0":                   "Value for `maxIterations` was `0`, but must be within the range [1, 2147483647].",
-		"tolerance: -1":                      "Value for `tolerance` was `-1.0`, but must be within the range [0.00, 179769313486231570000",
-		"bogus: 1":                           "Unexpected configuration key: bogus",
-		"minCommunitySize: -1":               "Value for `minCommunitySize` was `-1`, but must be within the range [0, 2147483647].",
-		"relationshipWeightProperty: 'nope'": "Relationship weight property `nope` not found in relationship types ['R']. Properties existing on all relationship types: ['w']",
+		"seedProperty: 'nope'": "Seed property `nope` not found in graph with node properties: [seed]",
+		"maxLevels: 0":         "Value for `maxLevels` was `0`, but must be within the range [1, 2147483647].",
+		"maxIterations: 0":     "Value for `maxIterations` was `0`, but must be within the range [1, 2147483647].",
+		"tolerance: -1":        "Value for `tolerance` was `-1.0`, but must be within the range [0.00, 179769313486231570000",
+		"bogus: 1":             "Unexpected configuration key: bogus",
+		"minCommunitySize: 0":  "Value for `minCommunitySize` was `0`, but must be within the range [1, 9223372036854775807].",
+		"seedProperty: 'seed', consecutiveIds: true": "Seeding and the `consecutiveIds` option cannot be used at the same time.",
+		"relationshipWeightProperty: 'nope'":         "Relationship weight property `nope` not found in relationship types ['R']. Properties existing on all relationship types: ['w']",
 	} {
 		_, err := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "lv")).Execute(context.Background(), "CALL gds.louvain.stream('k', {"+config+"})", nil)
 		require.ErrorContains(t, err, message, config)
@@ -203,4 +210,111 @@ func TestGDSLouvainStreamArgumentBranches(t *testing.T) {
 		_, err := exec.Execute(context.Background(), "CALL gds.louvain.stream('k', {"+config+"})", nil)
 		require.ErrorContains(t, err, message, config)
 	}
+}
+
+// TestGDSLouvainCommunityIDsAsGDS: the community ids are GDS 2.13.12's on
+// the karate club created in order (#1198): a community is named by the
+// node it grew from, at every level; with seeds, by that node's seed, or
+// for an unseeded node, the largest seed + 1 + its position where GDS adds
+// the largest seed to its Neo4j id (29 + position in the probe).
+func TestGDSLouvainCommunityIDsAsGDS(t *testing.T) {
+	creation := make([]int, 34)
+	for i := range creation {
+		creation[i] = i + 1
+	}
+	run := newLouvainKarateGraphOf(t, creation, func(member int, properties map[string]interface{}) {
+		switch {
+		case member >= 33:
+			properties["s2"] = int64(7)
+		case member == 1:
+			properties["s2"] = int64(3)
+		}
+		if member <= 2 {
+			properties["neg"] = int64(-3)
+			properties["fl"] = 1.5
+		}
+	}, "{K: {properties: {s2: {defaultValue: null}, neg: {defaultValue: null}, fl: {defaultValue: null}}}}")
+	ids := func(config string, fromGDS func(int64) int64) string {
+		t.Helper()
+		var parts []string
+		for _, row := range run("CALL gds.louvain.stream('k', {" + config + "}) YIELD nodeId, communityId, intermediateCommunityIds MATCH (n:K) WHERE elementId(n) ENDS WITH nodeId OR id(n) = nodeId RETURN n.seq, communityId, intermediateCommunityIds ORDER BY n.seq") {
+			levels := make([]string, 0)
+			for _, level := range row[2].([]interface{}) {
+				levels = append(levels, strconv.FormatInt(level.(int64), 10))
+			}
+			parts = append(parts, fmt.Sprintf("%d, %d, [%s]", row[0], row[1], strings.Join(levels, ", ")))
+		}
+		return strings.Join(parts, " ")
+	}
+	// GDS's rows, its ids translated by fromGDS.
+	gds := func(rows string, fromGDS func(int64) int64) string {
+		var parts []string
+		for _, row := range strings.Split(strings.TrimSuffix(rows, "]"), "] ") {
+			seq, rest, _ := strings.Cut(row, ", ")
+			community, levels, _ := strings.Cut(rest, ", [")
+			translate := func(text string) string {
+				value, err := strconv.ParseInt(text, 10, 64)
+				require.NoError(t, err)
+				return strconv.FormatInt(fromGDS(value), 10)
+			}
+			var translated []string
+			for _, level := range strings.Split(levels, ", ") {
+				translated = append(translated, translate(level))
+			}
+			parts = append(parts, seq+", "+translate(community)+", ["+strings.Join(translated, ", ")+"]")
+		}
+		return strings.Join(parts, " ")
+	}
+	same := func(id int64) int64 { return id }
+	require.Equal(t, gds("1, 3, [17, 3] 2, 3, [17, 3] 3, 3, [3, 3] 4, 3, [3, 3] 5, 5, [10, 5] 6, 5, [5, 5] 7, 5, [5, 5] 8, 3, [3, 3] 9, 32, [32, 32] 10, 3, [3, 3] 11, 5, [10, 5] 12, 3, [17, 3] 13, 3, [3, 3] 14, 3, [3, 3] 15, 32, [32, 32] 16, 32, [32, 32] 17, 5, [5, 5] 18, 3, [17, 3] 19, 32, [32, 32] 20, 3, [17, 3] 21, 32, [32, 32] 22, 3, [17, 3] 23, 32, [32, 32] 24, 25, [25, 25] 25, 25, [25, 25] 26, 25, [25, 25] 27, 32, [29, 32] 28, 25, [25, 25] 29, 25, [25, 25] 30, 32, [29, 32] 31, 32, [32, 32] 32, 25, [25, 25] 33, 32, [32, 32] 34, 32, [32, 32]", same),
+		ids("includeIntermediateCommunities: true", same))
+	// Seeded: seed 7 names the community it grew from; GDS's unseeded
+	// names are 29 + position + 7, NornicDB's 7 + 1 + position.
+	seeded := func(id int64) int64 {
+		if id == 7 {
+			return id
+		}
+		return id - 28
+	}
+	require.Equal(t, gds("1, 39, [53, 39] 2, 39, [53, 39] 3, 39, [39, 39] 4, 39, [39, 39] 5, 41, [46, 41] 6, 41, [41, 41] 7, 41, [41, 41] 8, 39, [39, 39] 9, 7, [7, 7] 10, 39, [39, 39] 11, 41, [46, 41] 12, 39, [53, 39] 13, 39, [39, 39] 14, 39, [39, 39] 15, 7, [7, 7] 16, 7, [7, 7] 17, 41, [41, 41] 18, 39, [53, 39] 19, 7, [7, 7] 20, 39, [53, 39] 21, 7, [7, 7] 22, 39, [53, 39] 23, 7, [7, 7] 24, 61, [61, 61] 25, 61, [61, 61] 26, 61, [61, 61] 27, 7, [7, 7] 28, 61, [61, 61] 29, 61, [61, 61] 30, 7, [7, 7] 31, 7, [7, 7] 32, 61, [61, 61] 33, 7, [7, 7] 34, 7, [7, 7]", seeded),
+		ids("seedProperty: 's2', includeIntermediateCommunities: true", same))
+	// consecutiveIds: 0, 1, … by first node.
+	var got []string
+	for _, row := range run("CALL gds.louvain.stream('k', {consecutiveIds: true}) YIELD nodeId, communityId MATCH (n:K) WHERE elementId(n) ENDS WITH nodeId OR id(n) = nodeId RETURN n.seq, communityId ORDER BY n.seq") {
+		got = append(got, fmt.Sprint(row[1]))
+	}
+	require.Equal(t, "0 0 0 0 1 1 1 0 2 0 1 0 0 0 2 2 1 0 2 0 2 0 2 3 3 3 2 3 3 2 2 3 2 2", strings.Join(got, " "))
+	// minCommunitySize keeps the seeded run's communities of 9 or more.
+	require.Len(t, run("CALL gds.louvain.stream('k', {seedProperty: 's2', minCommunitySize: 9})"), 23)
+
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "lv"))
+	for config, message := range map[string]string{
+		"seedProperty: 'neg'": "Seeded values should be non-negative",
+		"seedProperty: 'fl'":  "Provided seeding property `fl` does not comprise exclusively of long values",
+	} {
+		_, err := exec.Execute(context.Background(), "CALL gds.louvain.stream('k', {"+config+"})", nil)
+		require.ErrorContains(t, err, message, config)
+	}
+	for _, tolerance := range []float64{math.Inf(1), math.NaN()} {
+		_, err := exec.callGdsLouvainStream([]interface{}{"k", map[string]interface{}{"tolerance": tolerance}})
+		require.ErrorContains(t, err, "Value for `tolerance` was `"+javaDoubleText(tolerance)+"`, but must be within the range [0.00, 1797", tolerance)
+	}
+	require.Equal(t, "Infinity", javaDoubleText(math.Inf(1)))
+	require.Equal(t, "-Infinity", javaDoubleText(math.Inf(-1)))
+}
+
+// TestGDSLouvainIsolatedNodes: with no relationships GDS runs one level,
+// each node its own community.
+func TestGDSLouvainIsolatedNodes(t *testing.T) {
+	graphProjections = make(map[string]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "lv"))
+	for _, query := range []string{"UNWIND range(1, 3) AS i CREATE (:Z {seq: i})", "CALL gds.graph.project('iso', 'Z', '*')"} {
+		_, err := exec.Execute(context.Background(), query, nil)
+		require.NoError(t, err)
+	}
+	result, err := exec.Execute(context.Background(), "CALL gds.louvain.stream('iso', {includeIntermediateCommunities: true}) YIELD communityId, intermediateCommunityIds RETURN communityId, intermediateCommunityIds", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{int64(0), []interface{}{int64(0)}}, {int64(1), []interface{}{int64(1)}}, {int64(2), []interface{}{int64(2)}}}, result.Rows)
+	require.Len(t, runLouvain(newLouvainGraph(0), louvainOptions{maxLevels: 1, maxIterations: 1}).levels, 1)
 }
