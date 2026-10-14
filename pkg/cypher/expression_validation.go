@@ -249,21 +249,39 @@ func localBindingAt(text string, open int) (localBinding, bool) {
 		binding.declare(name, declaration, listStart, binding.scope, true, false)
 		return binding, true
 	}
-	declaration := queryGapEnd(text, open+1)
-	name, end, ok := scanIdentifierToken(text, declaration)
-	if !ok || !list {
+	if !list {
 		return binding, false
 	}
-	if next := queryGapEnd(text, end); next+1 < len(text) && text[next] == '=' && text[next+1] != '~' {
-		// [p = (a)-->(b) …]: a named pattern comprehension.
-		if pattern := queryGapEnd(text, next+1); pattern < len(text) && text[pattern] == '(' {
-			binding.close = closing()
-			binding.declare(name, declaration, 0, 0, false, true)
-			binding.scope = next + 1
-			return binding, true
-		}
+	// [p = (a)-->(b) …]: a named pattern comprehension.
+	if name, declaration, pattern, named := namedPathDeclaration(text, open+1); named {
+		binding.close = closing()
+		binding.declare(name, declaration, 0, 0, false, true)
+		binding.scope = pattern
+		return binding, true
 	}
 	return binding, false
+}
+
+// namedPathDeclaration reads a path variable declared at text[from] before
+// its pattern: p = (a)-->(b), `p p` = (a)-->(b). It returns the name,
+// where it is written and where the pattern starts. It is the one reader of
+// a named pattern comprehension's head, for localBindingAt,
+// patternComprehensionHead and the quoted-variable classifier.
+func namedPathDeclaration(text string, from int) (name string, at, pattern int, ok bool) {
+	at = queryGapEnd(text, from)
+	name, end, ok := scanIdentifierToken(text, at)
+	if !ok {
+		return "", 0, 0, false
+	}
+	next := queryGapEnd(text, end)
+	if next+1 >= len(text) || text[next] != '=' || text[next+1] == '~' {
+		return "", 0, 0, false
+	}
+	pattern = queryGapEnd(text, next+1)
+	if pattern >= len(text) || text[pattern] != '(' {
+		return "", 0, 0, false
+	}
+	return name, at, pattern, true
 }
 
 // bindingDeclaration reads the declaration that opens a binding's arguments
