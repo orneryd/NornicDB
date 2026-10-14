@@ -33,11 +33,6 @@ func TestCallSubqueryIdentifierHelpers(t *testing.T) {
 	require.False(t, containsStandaloneIdentifier("obj.n = 1", "n"))
 	require.False(t, containsStandaloneIdentifier("'n'", "n"))
 	require.False(t, containsStandaloneIdentifier("prefix_n", "n"))
-
-	expanded := expandMapMemberAccess("WITH m RETURN m.name, m.missing", "m", map[string]interface{}{"name": "Alice"})
-	require.Equal(t, "WITH m RETURN 'Alice', null", expanded)
-
-	require.Equal(t, "RETURN x", expandMapMemberAccess("RETURN x", "", map[string]interface{}{"k": "v"}))
 }
 
 func TestSplitTopLevelResultModifiersCallSubquery(t *testing.T) {

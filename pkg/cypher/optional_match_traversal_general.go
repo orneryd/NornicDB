@@ -86,7 +86,7 @@ const traversalAnonVar = "__nornic_opt_anon"
 // node group when the pattern has no named variables at all, so the pattern
 // can be executed and its match multiplicity preserved.
 func ensureLeadingNodeNamed(pattern string) string {
-	if len(extractNodeVariables(pattern)) > 0 || len(extractRelationshipVariables(pattern)) > 0 {
+	if len(extractNodeVariables(matchPatternStructure(pattern))) > 0 || len(extractRelationshipVariables(matchPatternStructure(pattern))) > 0 {
 		return pattern
 	}
 	open := strings.Index(pattern, "(")
@@ -239,8 +239,8 @@ func pipelineRowFromTraversalOptionalRow(row traversalOptRow) pipelineRow {
 // Apply + Optional contract.
 func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
 	pattern := ensureLeadingNodeNamed(clause.pattern)
-	nodeVars := extractNodeVariables(pattern)
-	relVars := extractRelationshipVariables(pattern)
+	nodeVars := extractNodeVariables(matchPatternStructure(pattern))
+	relVars := extractRelationshipVariables(matchPatternStructure(pattern))
 	pathVar := extractPathAssignmentVariable(pattern)
 	allVars := append(append([]string{}, nodeVars...), relVars...)
 	if pathVar != "" {

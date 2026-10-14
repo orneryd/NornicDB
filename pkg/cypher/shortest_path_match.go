@@ -132,8 +132,8 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 // setOthersVariables lists the variables the clause's other patterns bind.
 func (m *shortestPathMatch) setOthersVariables() {
 	for _, part := range m.others {
-		m.othersVariables = append(m.othersVariables, extractNodeVariables(part)...)
-		m.othersVariables = append(m.othersVariables, extractRelationshipVariables(part)...)
+		m.othersVariables = append(m.othersVariables, extractNodeVariables(matchPatternStructure(part))...)
+		m.othersVariables = append(m.othersVariables, extractRelationshipVariables(matchPatternStructure(part))...)
 		if variable := extractPathAssignmentVariable(part); variable != "" {
 			m.othersVariables = append(m.othersVariables, variable)
 		}
@@ -304,8 +304,8 @@ func (m *shortestPathMatch) unmatchedRow(row pipelineRow) pipelineRow {
 		names = append(names, m.traversal.Relationship.Variable)
 	}
 	if m.pattern != "" {
-		names = append(names, extractNodeVariables(m.pattern)...)
-		names = append(names, extractRelationshipVariables(m.pattern)...)
+		names = append(names, extractNodeVariables(matchPatternStructure(m.pattern))...)
+		names = append(names, extractRelationshipVariables(matchPatternStructure(m.pattern))...)
 	}
 	bound := make(pipelineRow, len(row)+len(names))
 	for name, value := range row {

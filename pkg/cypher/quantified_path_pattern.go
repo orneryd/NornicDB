@@ -147,7 +147,8 @@ func parseQuantifiedPathMatch(body string) (*quantifiedPathMatch, bool, error) {
 				inner, piece.where = strings.TrimSpace(inner[:index]), strings.TrimSpace(inner[index+len("WHERE"):])
 			}
 			piece.chain, piece.first, piece.last = nameChainEnds(inner, name)
-			piece.variables = append(extractNodeVariables(piece.chain), extractRelationshipVariables(piece.chain)...)
+			structure := matchPatternStructure(piece.chain)
+			piece.variables = append(extractNodeVariables(structure), extractRelationshipVariables(structure)...)
 			m.pieces = append(m.pieces, piece)
 			at = quantifier.end
 			continue
@@ -162,7 +163,8 @@ func parseQuantifiedPathMatch(body string) (*quantifiedPathMatch, bool, error) {
 		}
 		piece := quantifiedPathPiece{}
 		piece.chain, piece.first, piece.last = nameChainEnds(chain, name)
-		for _, variable := range append(extractNodeVariables(chain), extractRelationshipVariables(chain)...) {
+		structure := matchPatternStructure(chain)
+		for _, variable := range append(extractNodeVariables(structure), extractRelationshipVariables(structure)...) {
 			outside[variable] = true
 		}
 		m.pieces = append(m.pieces, piece)
@@ -190,8 +192,9 @@ func splitDeferredGroupWhere(pieces []quantifiedPathPiece, index int) {
 	}
 	var later []string
 	for _, next := range pieces[index+1:] {
-		later = append(later, extractNodeVariables(next.chain)...)
-		later = append(later, extractRelationshipVariables(next.chain)...)
+		structure := matchPatternStructure(next.chain)
+		later = append(later, extractNodeVariables(structure)...)
+		later = append(later, extractRelationshipVariables(structure)...)
 	}
 	var now, deferred []string
 	for _, term := range splitTopLevelAndConjuncts(piece.where) {
@@ -578,9 +581,10 @@ func maskQuantifiedGroupPredicates(pattern string) string {
 	return string(masked)
 }
 
-// matchPatternStructure is the pattern of a MATCH body (the text before its
-// WHERE) with each quantified group's predicates blanked
-// (maskQuantifiedGroupPredicates), the text its element variables are read
+// matchPatternStructure is the pattern of a MATCH body, clause or pattern
+// part (the text before its WHERE) with every predicate in it blanked: each
+// quantified group's (maskQuantifiedGroupPredicates) and each element's
+// inline WHERE. It is the one text the variables a pattern binds are read
 // from: in ((x WHERE x.k IN (l))-->(y))+ or the (x WHERE
 // __nornic_haslabels(x, (l), false)) a dynamic label $(l) becomes, (l) is
 // not a node.
@@ -588,7 +592,20 @@ func matchPatternStructure(body string) string {
 	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
 		body = body[:where]
 	}
-	return maskQuantifiedGroupPredicates(body)
+	body = maskQuantifiedGroupPredicates(body)
+	// An element's inline WHERE outside a group ((n WHERE n.k IN (l))) is
+	// an expression too.
+	spans := elementPredicateSpans(body, 0, len(body))
+	if len(spans) == 0 {
+		return body
+	}
+	masked := []byte(body)
+	for _, span := range spans {
+		for index := span[0]; index < span[1]; index++ {
+			masked[index] = ' '
+		}
+	}
+	return string(masked)
 }
 
 // quantifiedGroupVariables returns the node and relationship variables

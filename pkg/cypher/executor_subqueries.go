@@ -54,6 +54,9 @@ func (e *StorageExecutor) substituteBoundVariablesInCall(callPart string, nodeCo
 	// Pattern: varName.propertyName (but not inside strings)
 	// We need to be careful not to match patterns inside quoted strings
 	matches := callPropertyAccessPattern.FindAllStringSubmatchIndex(callPart, -1)
+	// A reference a local variable of the same name reads
+	// ([n IN list | n.x]) is the local's (localOccurrences).
+	local := localOccurrences(callPart)
 
 	// Process matches in reverse order to maintain indices
 	for i := len(matches) - 1; i >= 0; i-- {
@@ -69,6 +72,9 @@ func (e *StorageExecutor) substituteBoundVariablesInCall(callPart string, nodeCo
 		doubleQuotes := strings.Count(beforeMatch, "\"") - strings.Count(beforeMatch, "\\\"")
 		if singleQuotes%2 != 0 || doubleQuotes%2 != 0 {
 			// Inside a quoted string - skip
+			continue
+		}
+		if keep := local(varName); keep != nil && keep(callPart, startIdx) {
 			continue
 		}
 
@@ -2164,115 +2170,6 @@ func containsStandaloneIdentifier(expr, ident string) bool {
 		return true
 	}
 	return false
-}
-
-// replaceIdentifierOutsideQuotes replaces identifier tokens that are not part of
-// a dotted access chain (e.g. preserves tt.translationId when replacing translationId).
-// expandMapMemberAccess rewrites every occurrence of `<ident>.<key>`
-// inside query into the Cypher literal of mapVal[key], leaving every
-// other use of <ident> alone for the caller's standalone-replacement
-// step. This is the per-token analog of property access on a bound
-// map value: WITH $m AS m ... m.name must evaluate to mapVal["name"],
-// not stringify into "{...}.name". When key is not present in mapVal,
-// the access expands to `null` (Cypher semantics for missing map keys).
-//
-// The scan respects token boundaries: a previous-character word /
-// underscore / dot disqualifies the match, so identifiers that happen
-// to share a suffix (e.g. `prefix_m.name` or `obj.m.name`) are left
-// alone.
-func expandMapMemberAccess(query, ident string, mapVal map[string]interface{}) string {
-	if ident == "" || query == "" || len(mapVal) == 0 {
-		return query
-	}
-	isWord := func(b byte) bool {
-		return isIdentByte(b)
-	}
-
-	var out strings.Builder
-	out.Grow(len(query))
-	i := 0
-	for i < len(query) {
-		j := strings.Index(query[i:], ident)
-		if j < 0 {
-			out.WriteString(query[i:])
-			break
-		}
-		j += i
-		k := j + len(ident)
-
-		prevWord := j > 0 && (isWord(query[j-1]) || query[j-1] == '.')
-		if prevWord || k >= len(query) {
-			out.WriteString(query[i:k])
-			i = k
-			continue
-		}
-		var key string
-		nextPos := k
-		if query[k] == '.' {
-			// Read the property key (longest run of word characters after `.`).
-			keyStart := k + 1
-			keyEnd := keyStart
-			for keyEnd < len(query) && isWord(query[keyEnd]) {
-				keyEnd++
-			}
-			if keyEnd == keyStart {
-				// `.` followed by non-word: not a property access, skip.
-				out.WriteString(query[i:k])
-				i = k
-				continue
-			}
-			key = query[keyStart:keyEnd]
-			nextPos = keyEnd
-		} else if query[k] == '[' {
-			// Bracket form: ident['key'] or ident["key"].
-			pos := k + 1
-			for pos < len(query) && isWhitespace(query[pos]) {
-				pos++
-			}
-			if pos >= len(query) || (query[pos] != '\'' && query[pos] != '"') {
-				out.WriteString(query[i:k])
-				i = k
-				continue
-			}
-			quote := query[pos]
-			pos++
-			keyStart := pos
-			for pos < len(query) && query[pos] != quote {
-				pos++
-			}
-			if pos >= len(query) {
-				out.WriteString(query[i:k])
-				i = k
-				continue
-			}
-			key = query[keyStart:pos]
-			pos++ // close quote
-			for pos < len(query) && isWhitespace(query[pos]) {
-				pos++
-			}
-			if pos >= len(query) || query[pos] != ']' {
-				out.WriteString(query[i:k])
-				i = k
-				continue
-			}
-			nextPos = pos + 1
-		} else {
-			// Not a member-access; leave for standalone replacement.
-			out.WriteString(query[i:k])
-			i = k
-			continue
-		}
-		out.WriteString(query[i:j])
-		propVal, ok := mapVal[key]
-		if !ok {
-			out.WriteString("null")
-		} else {
-			out.WriteString(valueToCypherLiteral(propVal))
-		}
-		i = nextPos
-	}
-
-	return out.String()
 }
 
 func crossJoinCallResults(left, right *ExecuteResult) *ExecuteResult {
