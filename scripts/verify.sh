@@ -122,7 +122,7 @@ if [[ -n "${DIRTY}" ]]; then
   CHANGED="$(printf '%s\n%s\n%s' "${CHANGED}" "$(git -C "${TREE}" diff --name-only HEAD)" \
     "$(git -C "${TREE}" ls-files --others --exclude-standard)" | sed '/^$/d' | sort -u)"
 fi
-CHANGED_COUNT="$(printf '%s' "${CHANGED}" | sed '/^$/d' | wc -l | tr -d ' ')"
+CHANGED_COUNT="$(printf '%s\n' "${CHANGED}" | sed '/^$/d' | wc -l | tr -d ' ')"
 
 triggered() {
   [[ "${ALL}" == "1" ]] && return 0
