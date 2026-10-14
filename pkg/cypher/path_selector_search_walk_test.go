@@ -113,4 +113,6 @@ func TestSelectedPathSearchUniformWalks(t *testing.T) {
 	shortest, meets := search.walkLevel(side, search.newWalkSide(s4.ID, "incoming", true), true)
 	require.Equal(t, -1, shortest)
 	require.Nil(t, meets)
+	require.Len(t, side.reached, 1)
+	require.Zero(t, side.radius)
 }

@@ -133,13 +133,26 @@ func labelStringSlice(in []string) []interface{} {
 
 // pathToMap converts a PathResult to a map representation
 func (e *StorageExecutor) pathToMap(path PathResult) map[string]interface{} {
+	return e.pathToMapContext(context.Background(), path)
+}
+
+func (e *StorageExecutor) pathToMapContext(ctx context.Context, path PathResult) map[string]interface{} {
+	if ctx.Err() != nil {
+		return nil
+	}
 	nodes := make([]interface{}, len(path.Nodes))
 	for i, n := range path.Nodes {
+		if i&bfsCancelCheckMask == 0 && ctx.Err() != nil {
+			return nil
+		}
 		nodes[i] = n
 	}
 
 	rels := make([]interface{}, len(path.Relationships))
 	for i, r := range path.Relationships {
+		if i&bfsCancelCheckMask == 0 && ctx.Err() != nil {
+			return nil
+		}
 		rels[i] = e.edgeToMap(r)
 	}
 

@@ -165,6 +165,9 @@ func (s *pathSearch) uniformPair(source, target *storage.Node, groups bool, bind
 	for _, meet := range meets {
 		for _, before := range s.walkHops(forward, meet, groups) {
 			for _, after := range s.walkHops(backward, meet, groups) {
+				if s.ctx.Err() != nil {
+					return nil, true
+				}
 				// The hops to meet from the start, then from meet to the end:
 				// the walk's relationships in order.
 				walk := make([]*storage.Edge, 0, shortest)
@@ -212,7 +215,7 @@ func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (in
 	shortest := -1
 	next := side.next[:0]
 	for count, id := range side.frontier {
-		if count&bfsCancelCheckMask == bfsCancelCheckMask && s.ctx.Err() != nil {
+		if count&bfsCancelCheckMask == 0 && s.ctx.Err() != nil {
 			return -1, nil
 		}
 		outgoing, incoming, err := s.walkEdges(id, side.direction)
@@ -223,7 +226,10 @@ func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (in
 		// A self-relationship (in both lists) reaches the node itself, which
 		// the side has reached.
 		for _, edges := range [2][]*storage.Edge{outgoing, incoming} {
-			for _, edge := range edges {
+			for index, edge := range edges {
+				if index&bfsCancelCheckMask == 0 && s.ctx.Err() != nil {
+					return -1, nil
+				}
 				if !walkTypeMatches(s.a.uniform.types, edge.Type) {
 					continue
 				}
@@ -291,10 +297,16 @@ func walkTypeMatches(types []string, name string) bool {
 // walkHops returns the shortest walks from side's end to node, each as its
 // hops from node back to the end: one, or all of them for groups.
 func (s *pathSearch) walkHops(side *pathSearchWalkSide, node storage.NodeID, groups bool) [][]pathSearchWalkHop {
+	if s.ctx.Err() != nil {
+		return nil
+	}
 	known := side.reached[node]
 	if !groups {
 		hops := make([]pathSearchWalkHop, 0, known.depth)
 		for ; known.depth > 0; known = side.reached[known.hop.from] {
+			if s.ctx.Err() != nil {
+				return nil
+			}
 			hops = append(hops, known.hop)
 		}
 		return [][]pathSearchWalkHop{hops}
@@ -309,6 +321,9 @@ func (s *pathSearch) walkHops(side *pathSearchWalkSide, node storage.NodeID, gro
 	var walks [][]pathSearchWalkHop
 	for _, hop := range hops {
 		for _, rest := range s.walkHops(side, hop.from, groups) {
+			if s.ctx.Err() != nil {
+				return nil
+			}
 			walks = append(walks, append([]pathSearchWalkHop{hop}, rest...))
 		}
 	}
@@ -320,10 +335,19 @@ func (s *pathSearch) walkHops(side *pathSearchWalkSide, node storage.NodeID, gro
 // the first one, or all of them for groups. ok is false when a node doesn't
 // load or a walk doesn't bind, which leaves the pair to the general search.
 func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.Edge, groups bool, bind func(pathSearchPath) (pipelineRow, bool)) ([]pipelineRow, bool) {
+	if s.ctx.Err() != nil {
+		return nil, true
+	}
 	nodes := map[storage.NodeID]*storage.Node{source.ID: source, target.ID: target}
 	var ids []storage.NodeID
 	for _, walk := range walks {
+		if s.ctx.Err() != nil {
+			return nil, true
+		}
 		for _, edge := range walk {
+			if s.ctx.Err() != nil {
+				return nil, true
+			}
 			for _, id := range [2]storage.NodeID{edge.StartNode, edge.EndNode} {
 				if _, known := nodes[id]; !known {
 					nodes[id] = nil
@@ -345,13 +369,19 @@ func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.
 	}
 	var rows []pipelineRow
 	for _, walk := range walks {
+		if s.ctx.Err() != nil {
+			return nil, true
+		}
 		steps := make([]pathSearchPathStep, len(walk))
 		at := source.ID
 		for index, edge := range walk {
+			if s.ctx.Err() != nil {
+				return nil, true
+			}
 			at = otherEnd(edge, at)
 			steps[index] = pathSearchPathStep{edge: edge, node: nodes[at]}
 		}
-		path, ok := s.a.walkPath(source, steps)
+		path, ok := s.a.walkPathContext(s.ctx, source, steps)
 		if !ok {
 			return nil, false
 		}
@@ -382,6 +412,9 @@ func (a *pathSearchAutomaton) walkPathContext(ctx context.Context, start *storag
 	var failed map[replayKey]bool
 	var visit func(slot, step int, counts string) bool
 	visit = func(slot, step int, counts string) bool {
+		if ctx.Err() != nil {
+			return false
+		}
 		if step == len(steps) {
 			return slot == a.final
 		}

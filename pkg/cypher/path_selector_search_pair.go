@@ -18,6 +18,9 @@ type pathSearchBack struct {
 func (s *pathSearch) backSteps(node *storage.Node, slot int) []pathSearchBack {
 	var steps []pathSearchBack
 	for _, index := range s.a.into[slot] {
+		if s.ctx.Err() != nil {
+			return nil
+		}
 		move := s.a.moves[index]
 		transition := &s.a.slots[move.from].transitions[move.transition]
 		if !s.chainHolds(s.a.chains[transition.to][move.chain], node) {
@@ -25,6 +28,9 @@ func (s *pathSearch) backSteps(node *storage.Node, slot int) []pathSearchBack {
 		}
 		direction := reverseDirection(transition.direction)
 		for _, edge := range s.relationships(node.ID, direction) {
+			if s.ctx.Err() != nil {
+				return nil
+			}
 			if !s.transitionHolds(transition, edge) {
 				continue
 			}
@@ -59,8 +65,14 @@ type pathSearchWalks struct {
 func (s *pathSearch) expandForward(w *pathSearchWalks) {
 	var next []int32
 	for _, p := range w.frontier {
+		if s.ctx.Err() != nil {
+			return
+		}
 		s.expand(p)
 		for stepIndex, step := range s.products[p].steps {
+			if s.ctx.Err() != nil {
+				return
+			}
 			distance, seen := w.forward[step.to]
 			if !seen {
 				distance = w.forwardRadius + 1
@@ -81,7 +93,13 @@ func (s *pathSearch) expandForward(w *pathSearchWalks) {
 func (s *pathSearch) expandBackward(w *pathSearchWalks) {
 	var next []pathSearchKey
 	for _, key := range w.back {
+		if s.ctx.Err() != nil {
+			return
+		}
 		for _, step := range s.backSteps(w.nodes[key], int(key.slot)) {
+			if s.ctx.Err() != nil {
+				return
+			}
 			distance, seen := w.backward[step.key]
 			if !seen {
 				distance = w.backwardRadius + 1
@@ -195,6 +213,10 @@ func (s *pathSearch) shortestWalkPaths(w *pathSearchWalks, groups bool, bind fun
 	}
 	var back func(key pathSearchKey, path pathSearchPath)
 	back = func(key pathSearchKey, path pathSearchPath) {
+		if s.ctx.Err() != nil {
+			stop = true
+			return
+		}
 		if w.backward[key] == 0 {
 			if row, ok := bind(path); ok {
 				rows = append(rows, row)
@@ -214,6 +236,10 @@ func (s *pathSearch) shortestWalkPaths(w *pathSearchWalks, groups bool, bind fun
 	}
 	var forward func(middle, p int32, hops []pathSearchHop)
 	forward = func(middle, p int32, hops []pathSearchHop) {
+		if s.ctx.Err() != nil {
+			stop = true
+			return
+		}
 		if w.forward[p] == 0 {
 			path := s.rootPath(p)
 			if len(hops) > 0 {

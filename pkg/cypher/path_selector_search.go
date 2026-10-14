@@ -1141,6 +1141,9 @@ func (e *StorageExecutor) selectedPathEndpoints(ctx context.Context, row pipelin
 // more than one element. A path found over the reversed pattern (reversed)
 // is read backwards.
 func (e *StorageExecutor) bindSelectedPath(ctx context.Context, plan *selectedPathPlan, a *pathSearchAutomaton, reversed bool, row pipelineRow, path pathSearchPath) (pipelineRow, bool) {
+	if ctx.Err() != nil {
+		return nil, false
+	}
 	bound := copyPipelineRow(row)
 	lists := make(map[string][]interface{}, len(plan.listVariables))
 	for _, variable := range plan.listVariables {
@@ -1176,6 +1179,9 @@ func (e *StorageExecutor) bindSelectedPath(ctx context.Context, plan *selectedPa
 	relationships := make([]*storage.Edge, 0, len(path.steps))
 	visit(path.chain, path.start)
 	for _, step := range path.steps {
+		if ctx.Err() != nil {
+			return nil, false
+		}
 		move := a.moves[step.move]
 		transition := &a.slots[move.from].transitions[move.transition]
 		bind(transition.variable, transition.list, transition.group, step.edge)
@@ -1187,24 +1193,35 @@ func (e *StorageExecutor) bindSelectedPath(ctx context.Context, plan *selectedPa
 		return nil, false
 	}
 	if reversed {
-		reverseSlice(nodes)
-		reverseSlice(relationships)
+		if !reverseSliceContext(ctx, nodes) {
+			return nil, false
+		}
+		if !reverseSliceContext(ctx, relationships) {
+			return nil, false
+		}
 		for _, values := range lists {
-			reverseSlice(values)
+			if !reverseSliceContext(ctx, values) {
+				return nil, false
+			}
 		}
 		for _, records := range iterations {
-			reverseSlice(records)
+			if !reverseSliceContext(ctx, records) {
+				return nil, false
+			}
 		}
 	}
 	for variable, values := range lists {
 		bound[variable] = values
 	}
-	bound[plan.pathVariable] = e.pathToMap(PathResult{Nodes: nodes, Relationships: relationships, Length: len(relationships)})
+	bound[plan.pathVariable] = e.pathToMapContext(ctx, PathResult{Nodes: nodes, Relationships: relationships, Length: len(relationships)})
 	if plan.acyclic && !distinctNodeIDs(pathResultNodeIDs(&PathResult{Nodes: nodes})) {
 		return nil, false
 	}
 	for group, checks := range plan.iterationChecks {
 		for _, record := range iterations[group] {
+			if ctx.Err() != nil {
+				return nil, false
+			}
 			iteration := copyPipelineRow(bound)
 			for variable, value := range record {
 				iteration[variable] = value
@@ -1221,7 +1238,7 @@ func (e *StorageExecutor) bindSelectedPath(ctx context.Context, plan *selectedPa
 			return nil, false
 		}
 	}
-	return bound, true
+	return bound, ctx.Err() == nil
 }
 
 // sameSelectedEntity reports whether two values are the same node or the
@@ -1240,9 +1257,17 @@ func sameSelectedEntity(a, b interface{}) bool {
 
 // reverseSlice reverses values in place.
 func reverseSlice[T any](values []T) {
+	reverseSliceContext(context.Background(), values)
+}
+
+func reverseSliceContext[T any](ctx context.Context, values []T) bool {
 	for i, j := 0, len(values)-1; i < j; i, j = i+1, j-1 {
+		if i&bfsCancelCheckMask == 0 && ctx.Err() != nil {
+			return false
+		}
 		values[i], values[j] = values[j], values[i]
 	}
+	return ctx.Err() == nil
 }
 
 // Every cached entry has a byte limit as well as the cache's entry limit.

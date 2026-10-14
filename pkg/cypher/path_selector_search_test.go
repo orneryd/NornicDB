@@ -248,11 +248,15 @@ func TestSelectedPathSearchCancelled(t *testing.T) {
 	require.True(t, search.nextLevel())
 	require.True(t, search.nextLevel())
 	cancel()
-	search.calls = 1023
-	keepGoing, found, _ := search.trails(2, 0, map[storage.EdgeID]struct{}{}, nil, func([]pathSearchHop) bool { return true })
+	products, levels := len(search.products), len(search.levels)
+	calls := 0
+	keepGoing, found, _ := search.trails(2, 0, map[storage.EdgeID]struct{}{}, nil, func([]pathSearchHop) bool { calls++; return true })
 	require.False(t, keepGoing)
 	require.False(t, found)
 	require.False(t, search.nextLevel(), "a cancelled search adds no level")
+	require.Zero(t, calls)
+	require.Len(t, search.products, products)
+	require.Len(t, search.levels, levels)
 }
 
 // A length bound in the clause's WHERE (length(p) <= $depth) ends the

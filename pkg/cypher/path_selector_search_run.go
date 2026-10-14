@@ -269,7 +269,7 @@ func (s *pathSearch) productCounts(node *storage.Node, slot int, counts string) 
 
 // expand lists the steps from product p.
 func (s *pathSearch) expand(p int32) {
-	if s.products[p].expanded {
+	if s.ctx.Err() != nil || s.products[p].expanded {
 		return
 	}
 	s.products[p].expanded = true
@@ -279,6 +279,9 @@ func (s *pathSearch) expand(p int32) {
 	}
 	var steps []pathSearchStep
 	for _, index := range s.a.from[slot] {
+		if s.ctx.Err() != nil {
+			return
+		}
 		move := s.a.moves[index]
 		transition := &s.a.slots[slot].transitions[move.transition]
 		chain := s.a.chains[transition.to][move.chain]
@@ -287,6 +290,9 @@ func (s *pathSearch) expand(p int32) {
 			continue
 		}
 		for _, edge := range s.relationships(node.ID, transition.direction) {
+			if s.ctx.Err() != nil {
+				return
+			}
 			if !s.transitionHolds(transition, edge) {
 				continue
 			}
@@ -343,13 +349,22 @@ func (s *pathSearch) reachable(p int32, depth int) bool {
 // (a walk that repeats no relationship) of that length reaches. It reports
 // whether there is one.
 func (s *pathSearch) nextLevel() bool {
+	if s.ctx.Err() != nil {
+		return false
+	}
 	depth := len(s.levels) - 1
 	level := &s.levels[depth]
 	next := pathSearchLevel{index: map[int32]int32{}}
 	for entryIndex := range level.entries {
+		if s.ctx.Err() != nil {
+			return false
+		}
 		entry := level.entries[entryIndex]
 		s.expand(entry.product)
 		for stepIndex, step := range s.products[entry.product].steps {
+			if s.ctx.Err() != nil {
+				return false
+			}
 			if !s.reachable(step.to, depth+1) {
 				continue
 			}
@@ -368,7 +383,13 @@ func (s *pathSearch) nextLevel() bool {
 	}
 	live := next.entries[:0]
 	for _, entry := range next.entries {
+		if s.ctx.Err() != nil {
+			return false
+		}
 		for _, pred := range entry.preds {
+			if s.ctx.Err() != nil {
+				return false
+			}
 			if entry.witness != nil {
 				break
 			}
@@ -410,11 +431,11 @@ func (s *pathSearch) nextLevel() bool {
 // it was not stopped, whether it found a path, and, when it found none, the
 // relationships of used that blocked it.
 func (s *pathSearch) trails(depth int, entry int32, used map[storage.EdgeID]struct{}, hops []pathSearchHop, yield func([]pathSearchHop) bool) (bool, bool, []storage.EdgeID) {
+	if s.ctx.Err() != nil {
+		return false, false, nil
+	}
 	if depth == 0 {
 		return yield(hops), true, nil
-	}
-	if s.calls++; s.calls&1023 == 0 && s.ctx.Err() != nil {
-		return false, false, nil
 	}
 	key := [2]int32{int32(depth), entry}
 	for _, nogood := range s.nogoods[key] {
@@ -474,6 +495,9 @@ func (s *pathSearch) trails(depth int, entry int32, used map[storage.EdgeID]stru
 func (s *pathSearch) pathOf(hops []pathSearchHop) pathSearchPath {
 	path := s.rootPath(hops[len(hops)-1].product)
 	for index := len(hops) - 1; index >= 0; index-- {
+		if s.ctx.Err() != nil {
+			return pathSearchPath{}
+		}
 		step := s.products[hops[index].product].steps[hops[index].step]
 		path.steps = append(path.steps, pathSearchPathStep{edge: step.edge, move: int(step.move), node: s.products[step.to].node})
 	}
@@ -486,9 +510,12 @@ func (s *pathSearch) rootPath(p int32) pathSearchPath {
 }
 
 // linkHops are the hops of a witness path.
-func linkHops(link *pathSearchLink) []pathSearchHop {
+func linkHops(ctx context.Context, link *pathSearchLink) []pathSearchHop {
 	var hops []pathSearchHop
 	for ; link != nil; link = link.prev {
+		if ctx.Err() != nil {
+			return nil
+		}
 		hops = append(hops, pathSearchHop{product: link.product, step: link.step})
 	}
 	return hops
@@ -502,14 +529,20 @@ type pathSearchTarget struct {
 // trace offers the paths to entry of the level at depth to take, until it
 // returns false; one path (need 1) is the entry's witness first.
 func (s *pathSearch) trace(depth int, entry int32, need int, take func(pathSearchPath) bool) {
+	if s.ctx.Err() != nil {
+		return
+	}
 	if depth == 0 {
 		take(s.rootPath(s.levels[0].entries[entry].product))
 		return
 	}
-	if need == 1 && !take(s.pathOf(linkHops(s.levels[depth].entries[entry].witness))) {
+	if need == 1 && !take(s.pathOf(linkHops(s.ctx, s.levels[depth].entries[entry].witness))) {
 		return
 	}
 	s.trails(depth, entry, map[storage.EdgeID]struct{}{}, nil, func(hops []pathSearchHop) bool {
+		if s.ctx.Err() != nil {
+			return false
+		}
 		return take(s.pathOf(hops))
 	})
 }
@@ -523,6 +556,9 @@ func (s *pathSearch) run(source *storage.Node, count int, groups bool, bind func
 	targets := map[int32]*pathSearchTarget{}
 	for depth := 0; len(s.levels[0].entries) > 0; depth++ {
 		for entryIndex, entry := range s.levels[depth].entries {
+			if s.ctx.Err() != nil {
+				return rows
+			}
 			if s.products[entry.product].slot != s.a.final {
 				continue
 			}
@@ -539,6 +575,9 @@ func (s *pathSearch) run(source *storage.Node, count int, groups bool, bind func
 				need = 0
 			}
 			s.trace(depth, int32(entryIndex), need, func(path pathSearchPath) bool {
+				if s.ctx.Err() != nil {
+					return false
+				}
 				if row, ok := bind(path); ok {
 					rows = append(rows, row)
 					found++
