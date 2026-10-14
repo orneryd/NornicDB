@@ -1275,7 +1275,7 @@ help:
 	@echo "  make check-models            Check which models are present"
 	@echo ""
 	@echo "Branch verification (the PR and merge-to-main checks of GitHub Actions, run locally):"
-	@echo "  make verify                  Verify the current checkout against origin/main"
+	@echo "  make verify                  Verify the current checkout against origin/develop"
 	@echo "  make verify BRANCH=<branch>  Verify another branch in a worktree under .verify/"
 	@echo "  make verify-list             Show which checks would run, and why"
 	@echo "  make verify-help             All options (ONLY=, SKIP=, ALL=1, FAIL_FAST=1, GROUPS=, BASE=)"
@@ -1588,11 +1588,11 @@ cypher-tck-update-ratchet: cypher-tck-inventory
 
 # ---------------------------------------------------------------------------
 # Branch verification: every check GitHub Actions runs for a pull request into
-# main and for the merge into main (ci.yml, cypher-conformance.yml,
+# develop (ci.yml, cypher-conformance.yml,
 # docs-pages.yml), locally, with the same path filters and one summary.
 # Logs: .verify/latest/<step>.log. Options: make verify-help.
 # ---------------------------------------------------------------------------
-VERIFY_ENV = VERIFY_BRANCH="$(BRANCH)" VERIFY_BASE="$(or $(BASE),origin/main)" \
+VERIFY_ENV = VERIFY_BRANCH="$(BRANCH)" VERIFY_BASE="$(or $(BASE),$(VERIFY_BASE),origin/develop)" \
 	VERIFY_ONLY="$(ONLY)" VERIFY_SKIP="$(SKIP)" VERIFY_ALL="$(or $(ALL),0)" \
 	VERIFY_FAIL_FAST="$(or $(FAIL_FAST),0)" VERIFY_GROUPS="$(GROUPS)" VERIFY_FETCH="$(or $(FETCH),1)"
 
@@ -1605,7 +1605,7 @@ verify-list:
 verify-help:
 	@echo "make verify: run the GitHub Actions checks for a branch locally"
 	@echo ""
-	@echo "  make verify                         current checkout vs origin/main (uncommitted changes included)"
+	@echo "  make verify                         current checkout vs origin/develop (uncommitted changes included)"
 	@echo "  make verify BRANCH=fix/foo          another branch or ref, in a worktree under .verify/worktrees/"
 	@echo "  make verify-list [BRANCH=...]       show the plan without running it"
 	@echo ""
@@ -1617,7 +1617,8 @@ verify-help:
 	@echo "  ALL=1                  ignore the path filters and run every step"
 	@echo "  FAIL_FAST=1            stop at the first failure (default: run all, then summarize)"
 	@echo "  GROUPS=\"cypher search\" only these test groups ($$(bash scripts/ci/test-groups.sh --list | tr '\n' ' '))"
-	@echo "  BASE=origin/release    compare against another ref (default origin/main)"
+	@echo "  BASE=origin/main       compare against another ref (default origin/develop)"
+	@echo "  VERIFY_BASE=origin/main make verify   compare release branches with main"
 	@echo "  FETCH=0                do not fetch BASE first"
 	@echo ""
 	@echo "Exit status is non-zero when any check fails. Logs: .verify/latest/<step>.log"
