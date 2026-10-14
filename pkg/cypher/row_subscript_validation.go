@@ -89,14 +89,14 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 	if err != nil {
 		return err
 	}
-	if rangeIndex := strings.Index(indexExpression, ".."); rangeIndex >= 0 {
+	if from, to, slice := staticSliceBounds(indexExpression); slice {
 		if !baseOK || base == nil {
 			return nil
 		}
 		// A value that isn't a list is sliced as a list of it
 		// (cypherListSlice); a type known before the statement runs is
 		// checked statically.
-		for _, boundExpression := range []string{strings.TrimSpace(indexExpression[:rangeIndex]), strings.TrimSpace(indexExpression[rangeIndex+2:])} {
+		for _, boundExpression := range []string{strings.TrimSpace(from), strings.TrimSpace(to)} {
 			if boundExpression == "" {
 				continue
 			}
