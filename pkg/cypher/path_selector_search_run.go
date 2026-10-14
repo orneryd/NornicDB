@@ -218,16 +218,19 @@ func (s *pathSearch) relationships(node storage.NodeID, direction string) []*sto
 	if edges, cached := s.edges[key]; cached {
 		return edges
 	}
-	var edges []*storage.Edge
-	switch direction {
-	case "outgoing":
-		edges = s.e.traversalEdges(s.traversal, node, true)
-	case "incoming":
-		edges = s.e.traversalEdges(s.traversal, node, false)
-	default:
-		var err error
-		if edges, err = undirectedIncidentEdges(s.e.storage, node); err != nil {
+	outgoing, incoming, err := s.walkEdges(node, direction)
+	if err != nil {
+		recordExpressionFailure(s.ctx, err)
+		return nil
+	}
+	edges := outgoing
+	if direction == "incoming" {
+		edges = incoming
+	} else if direction != "outgoing" {
+		edges, err = combineIncidentEdges(s.ctx, node, outgoing, incoming)
+		if err != nil {
 			recordExpressionFailure(s.ctx, err)
+			return nil
 		}
 	}
 	s.edges[key] = edges

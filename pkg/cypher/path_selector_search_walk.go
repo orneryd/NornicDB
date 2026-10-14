@@ -269,15 +269,7 @@ func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (in
 
 // walkEdges lists node's relationships in direction, in two lists.
 func (s *pathSearch) walkEdges(node storage.NodeID, direction string) ([]*storage.Edge, []*storage.Edge, error) {
-	switch direction {
-	case "outgoing":
-		edges, err := s.e.storage.GetOutgoingEdges(node)
-		return edges, nil, err
-	case "incoming":
-		edges, err := s.e.storage.GetIncomingEdges(node)
-		return edges, nil, err
-	}
-	return incidentEdgeLists(s.e.storage, node)
+	return incidentEdgeListsContext(s.ctx, s.e.storage, node, direction)
 }
 
 // walkTypeMatches reports whether a relationship of the type name takes a
