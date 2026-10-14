@@ -94,6 +94,9 @@ func TestLocalScopeOwners(t *testing.T) {
 	require.False(t, ok)
 	_, ok = localBindingAt("reduce(a = 0, x IN l", 6)
 	require.False(t, ok)
+	_, ok = localBindingAt("reduce(a, x IN l | a)", 6)
+	require.False(t, ok)
+	require.Equal(t, map[string]struct{}{"y": {}}, expressionLocalBindings("/* [x IN l | x] */ [y IN l | y]"))
 	require.False(t, localVariableShadowsAt("[x IN l] + x", 11, "x"))
 	require.Equal(t, map[string]struct{}{"x": {}, "p": {}, "a": {}, "y": {}}, expressionLocalBindings("[x IN[1] | x] + [p = (n)-->() | p] + reduce(a = 0, y IN l | a) + 'all(z IN l WHERE z)'"))
 
