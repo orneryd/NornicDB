@@ -925,6 +925,12 @@ func uniformListElementType(list string) string {
 	if !isList || strings.TrimSpace(inner) == "" {
 		return ""
 	}
+	// A comprehension isn't a list literal: its elements are its
+	// projection's (projectedListOperand), not the one element
+	// at IN l | [at] would read as.
+	if _, _, _, _, comprehension := parseListComprehension(inner); comprehension {
+		return ""
+	}
 	elementType := ""
 	for _, element := range splitTopLevelComma(inner) {
 		element = strings.TrimSpace(element)

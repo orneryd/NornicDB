@@ -628,6 +628,23 @@ for q in ["WITH 7 AS x CALL (x) { WITH 1 AS y RETURN x AS v } RETURN v",
           "WITH 7 AS x RETURN COLLECT { WITH x AS x RETURN x } AS v"]:
     add("local-scope-references", "call-imports", q)
 
+# A list comprehension's elements are its projection's, typed with its
+# local as an element of the list it iterates (#1227).
+for q in ["UNWIND [at IN range(0, 1) | [at]] AS e RETURN collect(e[0]) AS v",
+          "UNWIND [at IN range(0, 1) | [at, 'p']] AS e WITH DISTINCT e[1] AS v RETURN collect(v) AS v",
+          "WITH [{reading: {party_ids: ['a', 'b'], party_versions: [1, 2]}}] AS readings UNWIND readings AS item WITH item.reading AS r UNWIND [at IN range(0, size(coalesce(r.party_ids, [])) - 1) | ['party', r.party_ids[at], r.party_versions[at]]] AS entry WITH DISTINCT entry[1] AS element RETURN collect(element) AS v",
+          "UNWIND [[0, 'p'], [1, 'p']] AS e WITH DISTINCT e[1] AS v RETURN collect(v) AS v",
+          "UNWIND [at IN range(0, 1) | [at]] + [at IN range(2, 3) | [at]] AS e RETURN collect(e[0]) AS v",
+          "UNWIND [at IN range(0, 3) WHERE at > 1] AS e RETURN collect(e + 1) AS v",
+          "UNWIND [at IN [[1], [2]] WHERE size(at) > 0] AS e RETURN collect(e[0]) AS v",
+          "UNWIND [at IN range(0, 1) | at > 0] AS e RETURN collect(NOT e) AS v",
+          "UNWIND [at IN range(0, 1) | {k: at}] AS e RETURN collect(e.k) AS v",
+          "WITH [at IN range(0, 1) | [at]] AS l RETURN l[0][0] AS v",
+          "RETURN [at IN range(0, 1) | [at]][1][0] AS v",
+          "UNWIND [at IN range(0, 1) | [at]] AS e RETURN collect(e.k) AS v"]:
+    add("unwind-source", "comprehension", q)
+add("unwind-source", "comprehension", "CREATE (r:Tmp {ids: ['a'], vs: [1]}) WITH r UNWIND [at IN range(0, size(r.ids) - 1) | ['p', r.ids[at], r.vs[at]]] AS entry WITH DISTINCT entry[1] AS e RETURN collect(e) AS v", mode="tx")
+
 # 12c. Subquery bodies that start from the row's own variables (#1055): the
 # bound node, relationship and path fast paths against the pipeline. Bodies
 # read a bound relationship, a row value in a property map or WHERE, a path,

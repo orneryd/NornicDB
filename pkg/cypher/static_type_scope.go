@@ -446,23 +446,26 @@ func projectedFunctionOperand(types typeScope, input staticTypeScope, function, 
 // projectedListOperand is the static type of a list literal or list
 // comprehension (inner is the text between the brackets): a list of the one
 // type every element has ([p], [coalesce(1, 2)]), a map widened to "Map, Node
-// or Relationship" as Neo4j types a list of maps; a comprehension's list of
-// its projection's type. typed is false when the elements' types differ or
+// or Relationship" as Neo4j types a list of maps. A comprehension is a list
+// of its projection's type, typed with its local as an element of the list
+// it iterates (listElementOperand: [at IN range(0, 1) | [at]] is a
+// List<List<Integer>>), or of that element's type when it projects nothing
+// ([at IN l WHERE …]). typed is false when the elements' types differ or
 // aren't known.
 func projectedListOperand(types typeScope, input staticTypeScope, inner string) (staticOperand, bool) {
 	if variable, listExpression, _, projection, comprehension := parseListComprehension(inner); comprehension {
-		element := elementOfType(projectedOperand(types, input, listExpression).kind)
-		if element == "" {
-			return staticOperand{}, false
-		}
+		element := listElementOperand(types, input, listExpression)
 		if strings.TrimSpace(projection) == "" {
-			return knownOperand(listOfType(element)), true
+			if typeName := element.typeName(); typeName != "" && typeName != "Null" {
+				return knownOperand(listOfType(typeName)), true
+			}
+			return staticOperand{}, false
 		}
 		scope := make(typeScope, len(types)+1)
 		for name, operand := range types {
 			scope[name] = operand
 		}
-		scope[variable] = typedOperand(element)
+		scope[variable] = element
 		projected := projectedOperand(scope, scope.static(input.cypher25), projection).typeName()
 		if projected == "" || projected == "Null" {
 			return staticOperand{}, false
