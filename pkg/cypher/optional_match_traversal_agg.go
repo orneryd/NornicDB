@@ -29,15 +29,6 @@ import (
 	"strings"
 )
 
-// traversalAggFnNames are the aggregate functions the traversal pipeline
-// accumulates, matching the executor-wide aggregateFnNames set. stdevp is
-// listed before stdev so prefix scanning matches the longer name first.
-var traversalAggFnNames = []struct{ lower, upper string }{
-	{"percentilecont", "PERCENTILECONT"}, {"percentiledisc", "PERCENTILEDISC"},
-	{"collect", "COLLECT"}, {"count", "COUNT"}, {"sum", "SUM"}, {"avg", "AVG"},
-	{"min", "MIN"}, {"max", "MAX"}, {"stdevp", "STDEVP"}, {"stdev", "STDEV"},
-}
-
 // aggregateSpan is one aggregate call located inside a larger expression.
 type aggregateSpan struct {
 	start, end int // expr[start:end] is the full call text
@@ -50,8 +41,6 @@ type aggregateSpan struct {
 // not reported separately. An EXISTS / COUNT / COLLECT { … } subquery's body
 // is skipped: its aggregates are the subquery's own (#907).
 func findAggregateSpans(expr string) []aggregateSpan {
-	// The first letters of the aggregates, and E (EXISTS { … }).
-	const prefixMask uint32 = 1<<('A'-'A') | 1<<('C'-'A') | 1<<('E'-'A') | 1<<('M'-'A') | 1<<('P'-'A') | 1<<('S'-'A')
 	var spans []aggregateSpan
 	i := 0
 	for i < len(expr) {
@@ -67,9 +56,11 @@ func findAggregateSpans(expr string) []aggregateSpan {
 		// Only a letter at a word start can begin an aggregate or a subquery
 		// expression. A qualified function whose terminal component happens to
 		// have an aggregate name (for example apoc.coll.sum()) is not a Cypher
-		// aggregate. It is evaluated once per row by the same expression path.
+		// aggregate. It is evaluated once per row by the same expression path;
+		// a qualified aggregate (gds.graph.project) is matched by its whole
+		// name from its first component.
 		folded := asciiUpper(c)
-		if folded < 'A' || folded > 'Z' || prefixMask&(uint32(1)<<(folded-'A')) == 0 ||
+		if folded < 'A' || folded > 'Z' || aggregateStartMask&(uint32(1)<<(folded-'A')) == 0 ||
 			i > 0 && (isIdentByte(expr[i-1]) || expr[i-1] == '.') {
 			i++
 			continue

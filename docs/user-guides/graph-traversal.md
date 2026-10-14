@@ -436,6 +436,17 @@ RETURN nodeId, embedding
   RETURN node2, similarity, shared
   ```
 - **Louvain:** `gds.louvain.stream(graph, config)` finds communities as GDS 2.13 does over the projection (each relationship undirected, weighted by `relationshipWeightProperty`). Its modularity optimization colours the nodes and moves each colour class at once, levels merge communities, and `maxLevels`, `maxIterations` and `tolerance` stop it as in GDS. `seedProperty` sets initial communities, `includeIntermediateCommunities` gives each level's community, and `minCommunitySize` drops small communities. As in GDS, a community is named by the node it grew from: that node's position in the projection, or with `seedProperty` its seed (non-negative integers), or for an unseeded node the largest seed + 1 + its position (GDS adds the largest seed to the Neo4j id). `consecutiveIds` numbers them 0, 1, … by first node. `apoc.algo.louvain` runs the same algorithm with GDS's defaults.
+- **Projection from a query:** GDS's Cypher aggregation projection projects the rows of any query, so relationships can be computed rather than stored:
+
+  ```cypher
+  MATCH (d:Document)-[:MENTIONS]->(:Mention)-[:RESOLVES_TO]->(p:Party)
+  WITH d, p, 1.0 / log(2 + COUNT { (p)--() }) AS weight
+  RETURN gds.graph.project('shares', d, p,
+           {relationshipType: 'SHARES', relationshipProperties: {weight: weight}},
+           {undirectedRelationshipTypes: ['*']})
+  ```
+
+  Each row adds its source and target node (a node or an INTEGER id) and a relationship between them, with the row's `relationshipType` and numeric `relationshipProperties`. A null target adds the source alone. `sourceNodeLabels` / `targetNodeLabels` and `sourceNodeProperties` / `targetNodeProperties` come in pairs. `undirectedRelationshipTypes` holds the types (`'*'` for all) both ways. The result is GDS's map (`graphName`, `nodeCount`, `relationshipCount`, `projectMillis`, `configuration`, `query`), and FastRP, link prediction and the catalog procedures read the graph like any other. Grouping projects one graph per group.
 - **NornicDB differences:** `randomSeed` defaults to 42, so the same call gives the same embeddings (GDS picks a random seed); `embeddingDimension` is at most 8,192; `nodeId` is the node's id.
 
 ---

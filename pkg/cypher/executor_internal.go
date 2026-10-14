@@ -26,7 +26,7 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 	if err := internalFunctionCallError(statement); err != nil {
 		return nil, err
 	}
-	return e.executeInternal(ctx, statement, params)
+	return e.executeInternal(withStatementText(ctx, statement), statement, params)
 }
 
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
