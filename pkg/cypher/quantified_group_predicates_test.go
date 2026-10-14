@@ -333,6 +333,9 @@ func TestStaticChecksReadLocalScopes(t *testing.T) {
 			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE 1 IN r AND [r IN [[1]] | 1 IN r] = [true])+(t) RETURN count(p) AS c",
 			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE reduce(acc = [], v IN [1] | acc + v) = [1] AND 1 IN r)+(t) RETURN count(p) AS c",
 			"MATCH (x:N {id:'a'})-[r:R]->(y) RETURN reduce(acc = r[0], v IN [1] | acc) AS v",
+			// x is local there, r still the step's relationship.
+			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE all(x IN [1] WHERE r[0] IS NULL))+(t) RETURN count(p) AS c",
+			"MATCH (x:N {id:'a'})-[r:R]->(y) WHERE all(x IN [1] WHERE r[0] IS NULL) RETURN count(*) AS c",
 		} {
 			requireStatementCode(t, exec, query, "Neo.ClientError.Statement.SyntaxError")
 		}
