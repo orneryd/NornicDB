@@ -258,7 +258,7 @@ func TestGDSInfiniteNumberMessages(t *testing.T) {
 		}
 		_, err := fastRPConfiguration(map[string]interface{}{"embeddingDimension": int64(8), "propertyRatio": value})
 		require.ErrorContains(t, err, "was `"+want+"`")
-		require.Equal(t, want, gdsDefaultText(&value, ""))
+		require.Equal(t, want, gdsDefaultText(value, ""))
 	}
 }
 
