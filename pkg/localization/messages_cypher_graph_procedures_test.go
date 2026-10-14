@@ -22,6 +22,8 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresUnsupportedArrayType("StringArray"), "Loading of values of type StringArray is currently not supported"},
 		{CypherGraphProceduresUnsafeConversion("DoubleArray[1.0, 2.0]", "a Double"), "Cannot safely convert DoubleArray[1.0, 2.0] into a Double."},
 		{CypherGraphProceduresArrayLengthsDiffer("v", "2", "1"), "The property `v` contains arrays of differing lengths `2` and `1`."},
+		{CypherGraphProceduresInvalidComponentProperty(), "Invalid component spec: expected a valid node property"},
+		{CypherGraphProceduresInvalidComponentSpec("Long", "5"), "Invalid component spec: cannot parse type Long with value 5"},
 		{CypherGraphProceduresUnsafeLongConversion("2.50"), "Cannot safely convert 2.50 into an long value"},
 		{CypherGraphProceduresRelationshipTypeEmpty(), "Relationship type cannot be empty"},
 		{CypherGraphProceduresInverseTypesNotProjected("[NOPE, X]", "['R']"), "Specified inverseIndexedRelationshipTypes `[NOPE, X]` were not projected in the graph. Projected types are: `['R']`."},
@@ -78,7 +80,7 @@ func TestCypherGraphProceduresDescriptorsPreserveExactEnglish(t *testing.T) {
 		{CypherGraphProceduresSourceNodeNotFound("x"), "sourceNode `x` does not exist in the graph"},
 	}
 
-	require.Len(t, testCases, 61)
+	require.Len(t, testCases, 63)
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	for _, testCase := range testCases {

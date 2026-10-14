@@ -158,7 +158,7 @@ func TestNodeSimilarityRefusesAsGDS(t *testing.T) {
 		"topN: -1":                              "Value for `topN` was `-1`, but must be within the range [0, 2147483647].",
 		"topK: 'x'":                             "The value of `topK` must be of type `Integer` but was `String`.",
 		"sourceNodeFilter: 'Doc'":               "Unexpected configuration key: sourceNodeFilter",
-		"useComponents: 5":                      "The value of `useComponents` must be of type `Boolean` but was `Long`.",
+		"useComponents: 5":                      "Invalid component spec: cannot parse type Long with value 5",
 	} {
 		_, err := newNodeSimilarityExec(t).Execute(context.Background(), "CALL gds.nodeSimilarity.stream('ns', {"+config+"})", nil)
 		require.ErrorContains(t, err, message, config)
@@ -241,13 +241,11 @@ func TestNodeSimilarityZeroCutoffAndComponents(t *testing.T) {
 	require.True(t, d3d1 != d3d2, "one of d3's ties")
 	require.Equal(t, map[string]float64{"d1-d2": 1, "d2-d1": 1}, byName("useComponents: 'comp', similarityCutoff: 0.0"))
 	require.Equal(t, map[string]float64{"d1-d2": 1, "d2-d1": 1}, byName("useComponents: true, similarityCutoff: 0.0"))
-	// Nodes without the property (the items here) share the default
-	// component; the documents still pair within theirs.
+	// Component properties must be declared on every selected label.
 	_, err = exec.Execute(context.Background(), "CALL gds.graph.project('dis2', {D: {properties: 'comp'}, I: {}}, 'H')", nil)
 	require.NoError(t, err)
-	result, err := exec.Execute(context.Background(), "CALL gds.nodeSimilarity.stream('dis2', {useComponents: 'comp'}) YIELD node1 RETURN count(*)", nil)
-	require.NoError(t, err)
-	require.Equal(t, int64(2), result.Rows[0][0])
+	_, err = exec.Execute(context.Background(), "CALL gds.nodeSimilarity.stream('dis2', {useComponents: 'comp'}) YIELD node1 RETURN count(*)", nil)
+	require.ErrorContains(t, err, "Component property `comp` not found in graph with node properties: [comp]")
 	_, err = exec.Execute(context.Background(), "CALL gds.nodeSimilarity.stream('dis', {useComponents: 'nope'})", nil)
 	require.ErrorContains(t, err, "Component property `nope` not found in graph with node properties: [comp]")
 }

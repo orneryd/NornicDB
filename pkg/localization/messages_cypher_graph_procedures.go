@@ -60,6 +60,8 @@ const (
 	MessageCypherGraphProceduresComponentPropertyNotFound      MessageID = "cyphergraphprocedures.component_property_not_found"
 	MessageCypherGraphProceduresInvalidListTypes               MessageID = "cyphergraphprocedures.invalid_list_types"
 	MessageCypherGraphProceduresSourceNodeNotFound             MessageID = "cyphergraphprocedures.source_node_not_found"
+	MessageCypherGraphProceduresInvalidComponentProperty       MessageID = "cyphergraphprocedures.invalid_component_property"
+	MessageCypherGraphProceduresInvalidComponentSpec           MessageID = "cyphergraphprocedures.invalid_component_spec"
 
 	MessageCypherGraphProceduresDefaultPropertyType MessageID = "cyphergraphprocedures.default_property_type"
 
@@ -389,4 +391,14 @@ func CypherGraphProceduresComponentPropertyNotFound(property, available string) 
 // CypherGraphProceduresInvalidListTypes is GDS's message for a node filter list holding values that are neither nodes nor ids.
 func CypherGraphProceduresInvalidListTypes(types string) Message {
 	return Message{ID: MessageCypherGraphProceduresInvalidListTypes, Fallback: "Invalid types in list. Expected Longs or Nodes but found " + types, Data: map[string]any{"Types": types}}
+}
+
+// CypherGraphProceduresInvalidComponentProperty reports a blank component property.
+func CypherGraphProceduresInvalidComponentProperty() Message {
+	return Message{ID: MessageCypherGraphProceduresInvalidComponentProperty, Fallback: "Invalid component spec: expected a valid node property"}
+}
+
+// CypherGraphProceduresInvalidComponentSpec reports a component spec of the wrong type.
+func CypherGraphProceduresInvalidComponentSpec(kind, value string) Message {
+	return Message{ID: MessageCypherGraphProceduresInvalidComponentSpec, Fallback: "Invalid component spec: cannot parse type " + kind + " with value " + value, Data: map[string]any{"Type": kind, "Value": value}}
 }
