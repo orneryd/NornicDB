@@ -197,3 +197,12 @@
 - id: cyphergraphprocedures.seed_property_not_found
   description: Expanded pseudo-locale seed property not found.
   other: '[!! Seed property `{{.Property}}` not found in graph with node properties: {{.Available}} !!]'
+- id: cyphergraphprocedures.louvain_seeding_consecutive
+  description: Expanded pseudo-locale louvain seeding consecutive.
+  other: '[!! Seeding and the `consecutiveIds` option cannot be used at the same time. !!]'
+- id: cyphergraphprocedures.seed_property_not_long
+  description: Expanded pseudo-locale seed property not long.
+  other: '[!! Provided seeding property `{{.Property}}` does not comprise exclusively of long values !!]'
+- id: cyphergraphprocedures.seed_negative
+  description: Expanded pseudo-locale seed negative.
+  other: '[!! Seeded values should be non-negative !!]'

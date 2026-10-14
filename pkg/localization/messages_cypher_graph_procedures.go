@@ -59,6 +59,9 @@ const (
 	MessageCypherGraphProceduresInvalidListTypes               MessageID = "cyphergraphprocedures.invalid_list_types"
 	MessageCypherGraphProceduresLouvainIntermediateConsecutive MessageID = "cyphergraphprocedures.louvain_intermediate_consecutive"
 	MessageCypherGraphProceduresSeedPropertyNotFound           MessageID = "cyphergraphprocedures.seed_property_not_found"
+	MessageCypherGraphProceduresLouvainSeedingConsecutive      MessageID = "cyphergraphprocedures.louvain_seeding_consecutive"
+	MessageCypherGraphProceduresSeedPropertyNotLong            MessageID = "cyphergraphprocedures.seed_property_not_long"
+	MessageCypherGraphProceduresSeedNegative                   MessageID = "cyphergraphprocedures.seed_negative"
 	MessageCypherGraphProceduresSourceNodeNotFound             MessageID = "cyphergraphprocedures.source_node_not_found"
 	MessageCypherGraphProceduresInvalidComponentProperty       MessageID = "cyphergraphprocedures.invalid_component_property"
 	MessageCypherGraphProceduresInvalidComponentSpec           MessageID = "cyphergraphprocedures.invalid_component_spec"
@@ -402,4 +405,19 @@ func CypherGraphProceduresLouvainIntermediateConsecutive() Message {
 // CypherGraphProceduresSeedPropertyNotFound is GDS's message for a seedProperty the graph doesn't hold.
 func CypherGraphProceduresSeedPropertyNotFound(property, available string) Message {
 	return Message{ID: MessageCypherGraphProceduresSeedPropertyNotFound, Fallback: "Seed property `" + property + "` not found in graph with node properties: " + available, Data: map[string]any{"Property": property, "Available": available}}
+}
+
+// CypherGraphProceduresLouvainSeedingConsecutive is GDS's message for Louvain's seedProperty with consecutiveIds.
+func CypherGraphProceduresLouvainSeedingConsecutive() Message {
+	return Message{ID: MessageCypherGraphProceduresLouvainSeedingConsecutive, Fallback: "Seeding and the `consecutiveIds` option cannot be used at the same time."}
+}
+
+// CypherGraphProceduresSeedPropertyNotLong is GDS's message for a seedProperty holding Float values.
+func CypherGraphProceduresSeedPropertyNotLong(property string) Message {
+	return Message{ID: MessageCypherGraphProceduresSeedPropertyNotLong, Fallback: "Provided seeding property `" + property + "` does not comprise exclusively of long values", Data: map[string]any{"Property": property}}
+}
+
+// CypherGraphProceduresSeedNegative is GDS's message for a negative seed value.
+func CypherGraphProceduresSeedNegative() Message {
+	return Message{ID: MessageCypherGraphProceduresSeedNegative, Fallback: "Seeded values should be non-negative"}
 }
