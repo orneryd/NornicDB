@@ -329,7 +329,15 @@ func localOccurrences(text string) func(name string) func(input string, at int) 
 	var locals map[string]struct{}
 	return func(name string) func(string, int) bool {
 		if locals == nil {
-			locals = expressionLocalBindings(text)
+			// Every binding form declares with IN: without the keyword,
+			// text binds nothing (the common row predicate).
+			opts := defaultKeywordScanOpts()
+			opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
+			if keywordIndexFrom(text, "IN", 0, opts) < 0 {
+				locals = map[string]struct{}{}
+			} else {
+				locals = expressionLocalBindings(text)
+			}
 		}
 		if _, bound := locals[name]; !bound {
 			return nil
