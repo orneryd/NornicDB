@@ -21,6 +21,8 @@ func TestGDSLouvainTypedSeedsAndDefaults(t *testing.T) {
 		{"integral_double_default", int64(2), "2.0", []int64{2, 2}, false},
 		{"all_integer_default", nil, "2", []int64{2, 2}, false},
 		{"all_float_default", nil, "2.0", nil, true},
+		{"all_exact_long_default", nil, "9007199254740993", []int64{9007199254740993, 9007199254740993}, false},
+		{"integer_and_exact_long_default", int64(2), "9007199254740993", []int64{2, 9007199254740993}, false},
 		{"exact_long_and_default", int64(9007199254740993), "2.0", []int64{9007199254740993, 2}, false},
 		{"integral_float_seed", 2.0, "2.0", nil, true},
 		{"fractional_float_seed", 2.5, "2.0", nil, true},
