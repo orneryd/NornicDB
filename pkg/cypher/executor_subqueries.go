@@ -74,7 +74,7 @@ func (e *StorageExecutor) substituteBoundVariablesInCall(callPart string, nodeCo
 			// Inside a quoted string - skip
 			continue
 		}
-		if keep := local.keep(varName); keep != nil && keep(callPart, startIdx) {
+		if local.keeps(callPart, varName, startIdx) {
 			continue
 		}
 

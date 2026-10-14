@@ -2157,10 +2157,14 @@ func replaceIdentifierOutsideQuotes(input string, ident string, replacement stri
 }
 
 // replaceIdentifierOutsideQuotesUnless is replaceIdentifierOutsideQuotes
-// that leaves the occurrences keep reports (by their offset in input).
-func replaceIdentifierOutsideQuotesUnless(input string, ident string, replacement string, keep func(input string, at int) bool) string {
+// that leaves the occurrences that read a local variable named ident
+// (locals.keeps).
+func replaceIdentifierOutsideQuotesUnless(input string, ident string, replacement string, locals *localOccurrences) string {
 	if ident == "" {
 		return input
+	}
+	if locals != nil && !locals.binds(ident) {
+		locals = nil
 	}
 	var b strings.Builder
 	b.Grow(len(input) + 16)
@@ -2223,7 +2227,7 @@ func replaceIdentifierOutsideQuotesUnless(input string, ident string, replacemen
 			i++
 		}
 		token := input[start:i]
-		if token == ident && shouldReplaceIdentifierToken(input, start, i) && (keep == nil || !keep(input, start)) {
+		if token == ident && shouldReplaceIdentifierToken(input, start, i) && (locals == nil || !locals.keeps(input, ident, start)) {
 			b.WriteString(replacement)
 		} else {
 			b.WriteString(token)
