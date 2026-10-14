@@ -371,7 +371,7 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 			}
 			name, next, _ := scanIdentifierToken(text, index)
 			typeName := types[name]
-			if typeName != "" && local().shadows(name, index) {
+			if typeName != "" && localVariableShadowsAt(text, index, name) {
 				typeName = "" // a local of that name, not the clause's
 			}
 			if propertyAccessFollows(text, next) && !namespacedCallFollows(text, next) {
