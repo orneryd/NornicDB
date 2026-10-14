@@ -165,6 +165,9 @@ func shortestPathPatternError(funcName, pattern string, traversal *TraversalMatc
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShortestPathMinimalLength",
 			localization.CypherMatchingShortestPathMinimalLength(funcName))
 	}
+	if traversal.StartNode.variable != "" && traversal.StartNode.variable == traversal.EndNode.variable {
+		return errShortestCommonEndpoints()
+	}
 	if len(traversal.Relationship.Properties) > 0 {
 		properties := ""
 		if open := strings.IndexByte(pattern, '['); open >= 0 {
@@ -360,9 +363,9 @@ func (e *StorageExecutor) pipelineMatchRows(ctx context.Context, row pipelineRow
 // shortestPathsBetween returns the rows of the shortest path (all of them
 // for allShortestPaths) from start to end that satisfies the clause's path
 // predicates, given the row's bindings: the selected path search between
-// the pair (path_selector_search.go). As in Neo4j, a start that is the end
-// is an error unless the minimum length is 0, which makes the path of
-// length 0.
+// the pair (path_selector_search.go). Identical variable names are rejected
+// when the pattern is read. Different names holding the same node may take
+// a zero-length path when the lower bound is zero.
 func (e *StorageExecutor) shortestPathsBetween(ctx context.Context, m *shortestPathMatch, start, end *storage.Node, row pipelineRow) ([]pipelineRow, error) {
 	if variable := m.traversal.Relationship.Variable; variable != "" {
 		if _, bound := row[variable]; bound {
@@ -370,8 +373,7 @@ func (e *StorageExecutor) shortestPathsBetween(ctx context.Context, m *shortestP
 		}
 	}
 	if start.ID == end.ID && m.traversal.Relationship.MinHops > 0 {
-		return nil, localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "ShortestPathCommonEndNodes",
-			localization.CypherMatchingShortestPathCommonEndNodes())
+		return nil, errShortestCommonEndpoints()
 	}
 	maxLength, ok := e.selectedPathLimit(ctx, m.plan, row)
 	if !ok {
@@ -420,6 +422,9 @@ func validateShortestCallBindings(text string, scope matchSemanticScope) error {
 			_, pattern, index, ok := extractShortestPathCall(text[at:])
 			if ok && index == 0 {
 				if items, ok := parsePathPatternItems(pattern, false); ok && len(items) == 3 && items[1].kind == pathPatternRelationship {
+					if items[0].variable != "" && items[0].variable == items[2].variable && items[1].min <= 1 {
+						return errShortestCommonEndpoints()
+					}
 					if _, bound := scope[items[1].variable]; items[1].variable != "" && bound {
 						return errBoundShortestRelationships()
 					}
@@ -429,4 +434,8 @@ func validateShortestCallBindings(text string, scope matchSemanticScope) error {
 		at = end - 1
 	}
 	return nil
+}
+
+func errShortestCommonEndpoints() error {
+	return localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "ShortestPathCommonEndNodes", localization.CypherMatchingShortestPathCommonEndNodes())
 }

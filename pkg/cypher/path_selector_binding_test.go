@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -27,5 +28,25 @@ func TestSelectedPathBoundRelationshipLists(t *testing.T) {
 		} {
 			requireStatus(t, e, q, nil, "Neo.ClientError.Statement.SyntaxError", "Bound relationships not allowed in shortestPath(...)")
 		}
+	}
+}
+
+func TestShortestPathIdenticalEndpointVariables(t *testing.T) {
+	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "samevariables"))
+	ctx := context.Background()
+	_, err := e.Execute(ctx, "CREATE (a:S {id:1})-[:T]->(a)", nil)
+	require.NoError(t, err)
+	message := localization.CypherMatchingShortestPathCommonEndNodes().Fallback
+	for _, call := range []string{"shortestPath", "allShortestPaths"} {
+		for _, bounds := range []string{"0..", "0", "1..", ""} {
+			for _, filter := range []string{"", " WHERE length(p)>0"} {
+				q := "MATCH (a:S {id:1}) MATCH p = " + call + "((a)-[:T*" + bounds + "]->(a))" + filter + " RETURN p"
+				requireStatus(t, e, q, nil, "Neo.DatabaseError.Statement.ExecutionFailed", message)
+			}
+			requireStatus(t, e, "MATCH (a:Missing) RETURN "+call+"((a)-[:T*"+bounds+"]->(a))", nil, "Neo.DatabaseError.Statement.ExecutionFailed", message)
+		}
+		r, err := e.Execute(ctx, "MATCH (a:S {id:1}), (b:S {id:1}) MATCH p = "+call+"((a)-[:T*0..]->(b)) RETURN length(p)", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{int64(0)}}, r.Rows)
 	}
 }
