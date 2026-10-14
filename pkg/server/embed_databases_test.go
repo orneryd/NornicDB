@@ -177,3 +177,31 @@ func TestEmbedRegenerateNeedsAdmin(t *testing.T) {
 	server.handleEmbedTrigger(rec, as(req, "editor"))
 	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
+
+func TestEmbedDestructiveRoutesNeedAdmin(t *testing.T) {
+	server, authenticator := setupTestServer(t)
+	server.db.SetEmbedder(&countingEmbedder{dims: 1024})
+	engine := seedEmbeddedNode(t, server, server.dbManager.DefaultDatabaseName(), "doc-default")
+	_, err := authenticator.CreateUser("editor", "password123", []auth.Role{auth.RoleEditor})
+	require.NoError(t, err)
+
+	for _, user := range []string{"reader", "editor"} {
+		token := getAuthToken(t, authenticator, user)
+		for _, endpoint := range []struct{ method, path string }{
+			{http.MethodPost, "/nornicdb/embed/clear"},
+			{http.MethodDelete, "/nornicdb/embed/clear"},
+			{http.MethodPost, "/nornicdb/embed/trigger?regenerate=true"},
+		} {
+			t.Run(user+" "+endpoint.method+" "+endpoint.path, func(t *testing.T) {
+				rec := makeRequest(t, server, endpoint.method, endpoint.path, nil, "Bearer "+token)
+				require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+				require.True(t, hasEmbedding(t, engine, "doc-default"), "denied requests must preserve embeddings")
+			})
+		}
+	}
+
+	// Waking the worker does not clear embeddings and still permits editors.
+	token := getAuthToken(t, authenticator, "editor")
+	rec := makeRequest(t, server, http.MethodPost, "/nornicdb/embed/trigger", nil, "Bearer "+token)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}

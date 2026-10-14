@@ -2355,7 +2355,7 @@ func TestNornicDBHandlers_AdditionalCoverage(t *testing.T) {
 		server.handleEmbedClear(rec, req)
 		require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 
-		req = httptest.NewRequest(http.MethodDelete, "/nornicdb/embed/clear", nil)
+		req = httptest.NewRequest(http.MethodDelete, "/nornicdb/embed/clear", nil).WithContext(adminCtx)
 		rec = httptest.NewRecorder()
 		server.handleEmbedClear(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
@@ -4738,7 +4738,7 @@ func TestServer_AdditionalBranches_ReusesFixture(t *testing.T) {
 
 		server.db.SetEmbedder(&countingEmbedder{dims: 1024})
 
-		req := httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil)
+		req := as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil), "admin")
 		rec := httptest.NewRecorder()
 		server.handleEmbedTrigger(rec, req)
 		require.Equal(t, http.StatusAccepted, rec.Code)
@@ -4748,7 +4748,7 @@ func TestServer_AdditionalBranches_ReusesFixture(t *testing.T) {
 		server.handleEmbedTrigger(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 
-		req = httptest.NewRequest(http.MethodDelete, "/nornicdb/embed/clear", nil)
+		req = as(httptest.NewRequest(http.MethodDelete, "/nornicdb/embed/clear", nil), "admin")
 		rec = httptest.NewRecorder()
 		server.handleEmbedClear(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
