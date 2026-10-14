@@ -438,7 +438,10 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		paths = filtered
 	}
 	for _, item := range returnItems {
-		if !isAggregateFunc(item.expr) && containsAggregateFunc(item.expr) {
+		// An aggregate inside a larger expression, or one this path doesn't
+		// compute itself (stDev, percentiles, gds.graph.project), goes through
+		// the aggregate projection.
+		if containsAggregateFunc(item.expr) && (!isAggregateFunc(item.expr) || !traversalComputesAggregate(upperASCII(item.expr))) {
 			rows := make([]traversalOptRow, 0, len(paths))
 			for _, path := range paths {
 				pathContext := e.buildPathContext(path, matches)
@@ -459,12 +462,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	isAggFlags := make([]bool, len(returnItems))
 	for i, item := range returnItems {
 		upperExprs[i] = upperASCII(item.expr)
-		isAggFlags[i] = strings.HasPrefix(upperExprs[i], "COUNT(") ||
-			strings.HasPrefix(upperExprs[i], "SUM(") ||
-			strings.HasPrefix(upperExprs[i], "AVG(") ||
-			strings.HasPrefix(upperExprs[i], "MIN(") ||
-			strings.HasPrefix(upperExprs[i], "MAX(") ||
-			strings.HasPrefix(upperExprs[i], "COLLECT(")
+		isAggFlags[i] = traversalComputesAggregate(upperExprs[i])
 	}
 
 	// Check if this is an aggregation query

@@ -445,7 +445,7 @@ func procedureCallContainsAggregation(callCypher string) bool {
 		return false
 	}
 	body := callCypher[open+1 : close]
-	for _, name := range []string{"count", "sum", "avg", "min", "max", "collect", "stdev", "stdevp", "percentilecont", "percentiledisc"} {
+	for _, name := range cypherAggregateNames {
 		if findKeywordIndexInContext(body, name) >= 0 && strings.Contains(lowerASCII(body), name+"(") {
 			return true
 		}
