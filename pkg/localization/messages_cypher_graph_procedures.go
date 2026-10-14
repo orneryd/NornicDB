@@ -38,6 +38,8 @@ const (
 	MessageCypherGraphProceduresUnsafeConversion               MessageID = "cyphergraphprocedures.unsafe_conversion"
 	MessageCypherGraphProceduresArrayLengthsDiffer             MessageID = "cyphergraphprocedures.array_lengths_differ"
 	MessageCypherGraphProceduresUnsafeLongConversion           MessageID = "cyphergraphprocedures.unsafe_long_conversion"
+	MessageCypherGraphProceduresUnsafeDoubleConversion         MessageID = "cyphergraphprocedures.unsafe_double_conversion"
+	MessageCypherGraphProceduresProjectDistinct                MessageID = "cyphergraphprocedures.project_distinct"
 	MessageCypherGraphProceduresUnsafeLongArrayConversion      MessageID = "cyphergraphprocedures.unsafe_long_array_conversion"
 	MessageCypherGraphProceduresNodeNotNodeOrInteger           MessageID = "cyphergraphprocedures.node_not_node_or_integer"
 	MessageCypherGraphProceduresConfigKeyMissingPair           MessageID = "cyphergraphprocedures.config_key_missing_pair"
@@ -295,6 +297,16 @@ func CypherGraphProceduresArrayLengthsDiffer(property, found, first string) Mess
 // CypherGraphProceduresUnsafeLongConversion is GDS's message for a fraction given to an Integer property.
 func CypherGraphProceduresUnsafeLongConversion(value string) Message {
 	return Message{ID: MessageCypherGraphProceduresUnsafeLongConversion, Fallback: "Cannot safely convert " + value + " into an long value", Data: map[string]any{"Value": value}}
+}
+
+// CypherGraphProceduresUnsafeDoubleConversion reports a Long outside GDS's import bound.
+func CypherGraphProceduresUnsafeDoubleConversion(value string) Message {
+	return Message{ID: MessageCypherGraphProceduresUnsafeDoubleConversion, Fallback: "Cannot safely convert " + value + " into an double value", Data: map[string]any{"Value": value}}
+}
+
+// CypherGraphProceduresProjectDistinct reports DISTINCT on the projection function.
+func CypherGraphProceduresProjectDistinct() Message {
+	return Message{ID: MessageCypherGraphProceduresProjectDistinct, Fallback: "Invalid use of DISTINCT with function 'project'"}
 }
 
 // CypherGraphProceduresUnsafeLongArrayConversion is GDS's message for a list with a fraction given to a List of Integer property.
