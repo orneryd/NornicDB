@@ -374,9 +374,11 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, boo
 // as a query of its own, with the one clause walk (semanticScopeWalk) from
 // the variables it imports (callSubqueryImports), and returns the static
 // type of each column a one-branch body returns. Its expression subqueries
-// see the body's scope, not the enclosing query's. A body whose walk stops
-// early, or that doesn't end in RETURN, gives no types; a scoped body's
-// walk error is the statement's.
+// see the body's scope, not the enclosing query's. A CALL (a, b) body sees
+// its imports through the whole body, after a WITH in it too, and may not
+// declare them again (Neo4j's "is shadowing an imported variable"). A body
+// whose walk stops early, or that doesn't end in RETURN, gives no types; a
+// scoped body's walk error is the statement's.
 func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
 	initial, scoped, ok := callSubqueryImports(callText, outer)
 	if !ok {
@@ -388,7 +390,11 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 		if !ok || len(clauses) == 0 {
 			continue
 		}
-		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, nil)
+		body := subqueryScope{}
+		if scoped {
+			body = subqueryScope{visible: initial, shadowing: shadowingImported}
+		}
+		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, body)
 		if err != nil {
 			if !scoped {
 				// An old-style CALL { … } keeps NornicDB's implicit imports

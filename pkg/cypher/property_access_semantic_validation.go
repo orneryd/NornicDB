@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"reflect"
 	"strings"
 )
@@ -115,10 +114,6 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 						continue
 					}
 					name = normalizeProjectionColumnName(name)
-					if _, imported := outer[name]; imported && simpleSemanticIdentifier(expression) != name {
-						return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
-							localization.CypherCoreVariableDeclaredInOuterScope(name))
-					}
 					next[name] = propertyAccessExpressionType(expression, types, params)
 				}
 			}
@@ -146,10 +141,6 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 				return err
 			}
 			variable := normalizeProjectionColumnName(alias)
-			if _, imported := outer[variable]; imported {
-				return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
-					localization.CypherCoreVariableDeclaredInOuterScope(variable))
-			}
 			element := ""
 			listType := propertyAccessExpressionType(expression, types, params)
 			if strings.HasPrefix(listType, "List<") && strings.HasSuffix(listType, ">") && !strings.Contains(listType, ",") {

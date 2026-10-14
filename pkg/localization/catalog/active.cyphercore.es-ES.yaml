@@ -228,6 +228,8 @@
   other: "la salida del procedimiento {{.Variable}} oculta una variable existente"
 - id: cyphercore.variable_declared_in_outer_scope
   other: "La variable `{{.Variable}}` ya está declarada en el ámbito exterior"
+- id: cyphercore.variable_shadows_imported_variable
+  other: "La variable `{{.Variable}}` oculta una variable importada con el mismo nombre y debe renombrarse"
 - id: cyphercore.pattern_node_value_type
   other: "Se esperaba que `{{.Variable}}` fuera un Node, pero es: {{.Type}}"
 - id: cyphercore.expression_unevaluable

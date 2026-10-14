@@ -613,6 +613,21 @@ for q in ["WITH 7 AS x RETURN COLLECT { CALL (x) { RETURN [x IN [1] | x] AS v } 
           "RETURN COUNT { MATCH (x:Q) WITH x WHERE EXISTS { MATCH (x)-[r:R]->() } } AS v"]:
     add("local-scope-references", "round4", q)
 
+# A CALL (x) body sees its imports through the whole body, after a WITH in
+# it too, and may not declare them again (#1227).
+for q in ["WITH 7 AS x CALL (x) { WITH 1 AS y RETURN x AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { WITH 1 AS y RETURN x AS v UNION WITH 2 AS y RETURN x AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { WITH x, 1 AS y WITH y RETURN x AS v } RETURN v",
+          "WITH 7 AS x, 8 AS z CALL (x) { WITH 1 AS z RETURN x + z AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { WITH x AS x RETURN x AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { WITH 1 AS x RETURN x AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { UNWIND [1] AS x RETURN x AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { WITH 1 AS y RETURN x AS v UNION WITH 1 AS x RETURN x AS v } RETURN v",
+          "WITH 7 AS x RETURN EXISTS { WITH 1 AS x RETURN x } AS v",
+          "WITH 7 AS x RETURN COUNT { UNWIND [1] AS x RETURN x } AS v",
+          "WITH 7 AS x RETURN COLLECT { WITH x AS x RETURN x } AS v"]:
+    add("local-scope-references", "call-imports", q)
+
 # 12c. Subquery bodies that start from the row's own variables (#1055): the
 # bound node, relationship and path fast paths against the pipeline. Bodies
 # read a bound relationship, a row value in a property map or WHERE, a path,

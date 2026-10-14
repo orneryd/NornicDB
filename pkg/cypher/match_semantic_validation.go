@@ -77,8 +77,51 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 	for name := range e.fabricRecordBindings {
 		types[name] = staticOperand{}
 	}
-	_, _, err := e.semanticScopeWalk(clauses, types, cypher25, nil)
+	_, _, err := e.semanticScopeWalk(clauses, types, cypher25, subqueryScope{})
 	return err
+}
+
+// subqueryScope is what a subquery body's walk (semanticScopeWalk) sees of
+// the query around it: visible, the variables the whole body reads (after a
+// WITH in it too), and whether declaring one of them again with WITH … AS
+// or UNWIND … AS is an error (redeclarationError). The zero value is a
+// statement's own walk.
+type subqueryScope struct {
+	visible   typeScope
+	shadowing subqueryShadowing
+}
+
+// subqueryShadowing is whether a subquery body may declare again a variable
+// it sees from around it.
+type subqueryShadowing int
+
+const (
+	// shadowingAllowed: a statement, or an old-style CALL { … } body.
+	shadowingAllowed subqueryShadowing = iota
+	// shadowingOuter: an EXISTS / COUNT / COLLECT body.
+	shadowingOuter
+	// shadowingImported: a CALL (…) body's imports.
+	shadowingImported
+)
+
+// redeclarationError is the error for a WITH … AS or UNWIND … AS that
+// declares name again in a body that sees it and may not: Neo4j's "is
+// shadowing a variable with the same name from the outer scope" in an
+// expression subquery, "is shadowing an imported variable" in a CALL (…)
+// subquery. nil when it may.
+func (enclosing subqueryScope) redeclarationError(name string) error {
+	if _, visible := enclosing.visible[name]; !visible {
+		return nil
+	}
+	switch enclosing.shadowing {
+	case shadowingOuter:
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+			localization.CypherCoreVariableDeclaredInOuterScope(name))
+	case shadowingImported:
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+			localization.CypherCoreVariableShadowsImportedVariable(name))
+	}
+	return nil
 }
 
 // semanticScopeWalk checks clauses in order against the variables' static
@@ -87,9 +130,9 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 // walk stopped before the end because a clause (YIELD *, RETURN *) names
 // nothing statically. A CALL subquery's returned columns are typed by
 // walking its body the same way.
-// outer, for an EXISTS / COUNT / COLLECT body, holds the enclosing query's
-// variables, which the whole body sees, after a WITH in it too.
-func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types typeScope, cypher25 bool, outer typeScope) (typeScope, bool, error) {
+// enclosing, for a subquery body, is what it sees of the query around it
+// (subqueryScope).
+func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types typeScope, cypher25 bool, enclosing subqueryScope) (typeScope, bool, error) {
 	var scope matchSemanticScope
 	// valueTypes holds the static types of variables bound to a literal by
 	// WITH … AS or UNWIND, for the function argument checks.
@@ -293,6 +336,16 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				if err := projectionAliasError(raw); err != nil {
 					return types, false, err
 				}
+				// WITH x AS x, or WITH x, carries x on; WITH 1 AS x
+				// declares it again.
+				if _, alias := parseProjectionExprAlias(strings.TrimSpace(raw)); alias != "" {
+					name := normalizeProjectionColumnName(alias)
+					if simpleSemanticIdentifier(strings.TrimSpace(expression)) != name {
+						if err := enclosing.redeclarationError(name); err != nil {
+							return types, false, err
+						}
+					}
+				}
 				if expression != "*" {
 					if err := undefinedExpressionVariable(scope, expression); err != nil {
 						return types, false, err
@@ -307,8 +360,9 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				return types, false, err
 			}
 			types = projectedTypes
-			// An expression subquery's body keeps seeing the enclosing query.
-			for name, operand := range outer {
+			// A subquery's body keeps seeing what it sees of the query
+			// around it.
+			for name, operand := range enclosing.visible {
 				if _, projected := types[name]; !projected {
 					types[name] = operand
 				}
@@ -333,6 +387,9 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				return types, false, err
 			}
 			if alias := unwindBindingName(clause.text); alias != "" {
+				if err := enclosing.redeclarationError(normalizeProjectionColumnName(alias)); err != nil {
+					return types, false, err
+				}
 				// FOR is new syntax: unlike the pre-existing permissive UNWIND,
 				// it must not redeclare an already-bound variable, as in Neo4j.
 				if startsWithKeywordFold(clause.text, "FOR") {
@@ -355,7 +412,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			}
 		case pipelineClauseReturn:
 			stale = false
-			if err := validateReturnSemanticScopeIn(scope, clause.text, outer); err != nil {
+			if err := validateReturnSemanticScopeIn(scope, clause.text, enclosing.visible); err != nil {
 				return types, false, err
 			}
 			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25}); err != nil {
@@ -895,7 +952,7 @@ func (e *StorageExecutor) validateSubqueryPatternBindings(scope staticTypeScope,
 			if !ok {
 				continue
 			}
-			if _, _, err := e.semanticScopeWalk(clauses, maps.Clone(visible), scope.cypher25, visible); err != nil {
+			if _, _, err := e.semanticScopeWalk(clauses, maps.Clone(visible), scope.cypher25, subqueryScope{visible: visible, shadowing: shadowingOuter}); err != nil {
 				return err
 			}
 		}
