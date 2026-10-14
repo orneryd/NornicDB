@@ -47,6 +47,11 @@ type pathSearchWalkSide struct {
 // every slot but the first and the final takes any node, and a chain from
 // the first slot leads to a transition. start is that chain.
 func uniformTransition(a *pathSearchAutomaton) (uniform *pathSearchTransition, start int) {
+	// Multiple repetitions can decompose the same walk in different ways.
+	// The general automaton search already enumerates those bindings.
+	if a.repetitions > 1 {
+		return nil, -1
+	}
 	start = -1
 	for index, chain := range a.chains[a.initial] {
 		if len(a.slots[chain.end].transitions) > 0 {
