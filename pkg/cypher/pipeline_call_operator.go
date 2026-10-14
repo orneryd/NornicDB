@@ -173,7 +173,18 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					delete(branchInput, name)
 					delete(scope, name)
 				}
-				inner, handled, execErr := runExec.runPipelineClauseRows(withValueBindings(runCtx, branchInput), []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
+				// A CALL (…) body's imports stay bound through its WITH
+				// clauses (pipelineWithCarrying).
+				state := &pipelineRowOutput{}
+				if scoped {
+					state.carried = make(pipelineRow, len(imports))
+					for _, name := range imports {
+						if value, imported := branchInput[name]; imported {
+							state.carried[name] = value
+						}
+					}
+				}
+				inner, handled, execErr := runExec.runPipelineClauseRows(withValueBindings(runCtx, branchInput), []pipelineRow{branchInput}, scope, branchClauses, branchClauses, state)
 				if execErr == nil {
 					execErr = getExpressionFailure(runCtx)
 				}

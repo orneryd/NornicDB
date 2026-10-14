@@ -627,6 +627,26 @@ for q in ["WITH 7 AS x CALL (x) { WITH 1 AS y RETURN x AS v } RETURN v",
           "WITH 7 AS x RETURN COUNT { UNWIND [1] AS x RETURN x } AS v",
           "WITH 7 AS x RETURN COLLECT { WITH x AS x RETURN x } AS v"]:
     add("local-scope-references", "call-imports", q)
+# ... and when it runs, the imports stay bound through the body's WITH
+# clauses: a MATCH, OPTIONAL MATCH, WHERE pattern, MERGE or SET after a WITH
+# reads the imported variable (#1227).
+for q in ["MATCH (x:Q {id: 1}) CALL (x) { WITH 1 AS y MATCH (x)-->(m) RETURN m.id AS v } RETURN v",
+          "MATCH (x:Q {id: 3}) CALL (x) { WITH 1 AS y OPTIONAL MATCH (x)-->(m) RETURN m.id AS v } RETURN v",
+          "MATCH (x:Q {id: 1}) CALL (x) { WITH 1 AS y MATCH (m:Q) WHERE (x)-->(m) RETURN m.id AS v } RETURN v",
+          "MATCH (x:Q) CALL (x) { WITH 1 AS y WHERE (x)-->() RETURN x.id AS v } RETURN v ORDER BY v",
+          "MATCH (x:Q) CALL (x) { WITH 1 AS y WHERE EXISTS { (x)-->() } RETURN x.id AS v } RETURN v ORDER BY v",
+          "MATCH (x:Q {id: 1}) CALL (x) { OPTIONAL MATCH (n:Nope) WITH count(n) AS c MATCH (x)-->(m) RETURN c, m.id AS v } RETURN c, v",
+          "MATCH (x:Q {id: 1}) CALL (x) { MATCH (n:Nope) WITH count(*) AS c RETURN x.id AS i, c } RETURN i, c",
+          "MATCH (x:Q {id: 1}) CALL (*) { WITH 1 AS y MATCH (x)-->(m) RETURN m.id AS v } RETURN v",
+          "MATCH (x:Q {id: 1}) CALL (x) { WITH 1 AS y MATCH (x)-->(m) RETURN m.id AS v UNION WITH 2 AS y MATCH (m)-->(x) RETURN m.id AS v } RETURN v",
+          "MATCH (x:Q) CALL (x) { WITH 1 AS y MATCH (x)-->(m) RETURN m.id AS v } RETURN x.id AS i, v ORDER BY i",
+          "MATCH (x:Q {id: 1}) CALL (x) { UNWIND [1, 2] AS k WITH k MATCH (x)-->(m) RETURN k, m.id AS v } RETURN k, v ORDER BY k",
+          "MATCH (x:Q {id: 1}) CALL (x) { MATCH (m:Q {id: 3}) WITH m MATCH (x)-->(k) RETURN m.id AS mm, k.id AS v } RETURN mm, v"]:
+    add("local-scope-references", "call-imports", q)
+for q in ["MATCH (x:Q {id: 3}) CALL (x) { WITH 1 AS y MERGE (x)-[:S]->(t:T {id: 'z'}) RETURN t.id AS w } WITH count(*) AS c MATCH (n:Q)-[:S]->(:T) RETURN collect(n.id) AS v",
+          "MATCH (x:Q {id: 2}) CALL (x) { WITH 1 AS y SET x.p = y RETURN x.p AS w } WITH count(*) AS c MATCH (n:Q) WHERE n.p = 1 RETURN collect(n.id) AS v",
+          "MATCH (x:Q {id: 2}) CALL (x) { MATCH (n:Nope) WITH count(*) AS c SET x.q = c RETURN x.q AS w } WITH count(*) AS z MATCH (n:Q) WHERE n.q = 0 RETURN collect(n.id) AS v"]:
+    add("local-scope-references", "call-imports", q, mode="tx")
 
 # A list comprehension's elements are its projection's, typed with its
 # local as an element of the list it iterates (#1227).
