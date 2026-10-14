@@ -733,7 +733,7 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 	local := localOccurrences{text: rest}
 	for _, item := range imports {
 		name := strings.TrimSpace(item)
-		rewritten = replaceIdentifierOutsideQuotesUnless(rewritten, name, "$"+name, local.keep(name))
+		rewritten = replaceIdentifierOutsideQuotesUnless(rewritten, name, "$"+name, &local)
 	}
 	return rewritten
 }
