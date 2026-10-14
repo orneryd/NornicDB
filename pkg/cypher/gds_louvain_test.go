@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/louvain"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -138,17 +139,17 @@ var gdsKarateIDOrder = []int{10, 11, 12, 13, 6, 7, 8, 9, 14, 15, 16, 17, 18, 19,
 // modularity optimization colours the nodes and moves each colour class at
 // once (#1198).
 func TestLouvainLevelsAsGDS(t *testing.T) {
-	build := func(order []int) *louvainGraph {
+	build := func(order []int) *louvain.Graph {
 		position := map[int]int{}
 		for i, member := range order {
 			position[member] = i
 		}
-		g := newLouvainGraph(34)
+		g := louvain.NewGraph(34)
 		for _, edge := range strings.Split(louvainKarateClub, ",") {
 			ends := strings.Split(edge, "-")
 			a, _ := strconv.Atoi(ends[0])
 			b, _ := strconv.Atoi(ends[1])
-			g.link(position[a], position[b], 1)
+			g.Link(position[a], position[b], 1)
 		}
 		return g
 	}
@@ -158,22 +159,22 @@ func TestLouvainLevelsAsGDS(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		order        []int
-		options      louvainOptions
+		options      louvain.Options
 		modularities []float64
 		communities  int
 	}{
-		{gdsKarateIDOrder, louvainOptions{maxLevels: 10, maxIterations: 10, tolerance: 0.0001}, []float64{0.3613576594345825, 0.41880341880341876}, 4},
-		{gdsKarateIDOrder, louvainOptions{maxLevels: 10, maxIterations: 10, tolerance: 0.5}, []float64{0.3251150558842867}, 8},
-		{gdsKarateIDOrder, louvainOptions{maxLevels: 10, maxIterations: 1, tolerance: 0.0001}, []float64{0.2979125575279421, 0.41584483892176194, 0.4197896120973044}, 4},
-		{creation, louvainOptions{maxLevels: 10, maxIterations: 10, tolerance: 0.0001}, []float64{0.3465647600262985, 0.41880341880341876}, 4},
-		{creation, louvainOptions{maxLevels: 1, maxIterations: 10, tolerance: 0.0001}, []float64{0.3465647600262985}, 7},
+		{gdsKarateIDOrder, louvain.Options{MaxLevels: 10, MaxIterations: 10, Tolerance: 0.0001}, []float64{0.3613576594345825, 0.41880341880341876}, 4},
+		{gdsKarateIDOrder, louvain.Options{MaxLevels: 10, MaxIterations: 10, Tolerance: 0.5}, []float64{0.3251150558842867}, 8},
+		{gdsKarateIDOrder, louvain.Options{MaxLevels: 10, MaxIterations: 1, Tolerance: 0.0001}, []float64{0.2979125575279421, 0.41584483892176194, 0.4197896120973044}, 4},
+		{creation, louvain.Options{MaxLevels: 10, MaxIterations: 10, Tolerance: 0.0001}, []float64{0.3465647600262985, 0.41880341880341876}, 4},
+		{creation, louvain.Options{MaxLevels: 1, MaxIterations: 10, Tolerance: 0.0001}, []float64{0.3465647600262985}, 7},
 	} {
-		run := runLouvain(build(tc.order), tc.options)
-		require.Len(t, run.modularities, len(tc.modularities), "%+v", tc.options)
+		run := louvain.Run(build(tc.order), tc.options)
+		require.Len(t, run.Modularities, len(tc.modularities), "%+v", tc.options)
 		for i, want := range tc.modularities {
-			require.InDelta(t, want, run.modularities[i], 1e-12, "%+v level %d", tc.options, i)
+			require.InDelta(t, want, run.Modularities[i], 1e-12, "%+v level %d", tc.options, i)
 		}
-		final := louvainFinal(run)
+		final := louvain.Final(run)
 		seen := map[int]bool{}
 		for _, community := range final {
 			seen[community] = true
@@ -316,7 +317,7 @@ func TestGDSLouvainIsolatedNodes(t *testing.T) {
 	result, err := exec.Execute(context.Background(), "CALL gds.louvain.stream('iso', {includeIntermediateCommunities: true}) YIELD communityId, intermediateCommunityIds RETURN communityId, intermediateCommunityIds", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(0), []interface{}{int64(0)}}, {int64(1), []interface{}{int64(1)}}, {int64(2), []interface{}{int64(2)}}}, result.Rows)
-	require.Len(t, runLouvain(newLouvainGraph(0), louvainOptions{maxLevels: 1, maxIterations: 1}).levels, 1)
+	require.Len(t, louvain.Run(louvain.NewGraph(0), louvain.Options{MaxLevels: 1, MaxIterations: 1}).Levels, 1)
 }
 
 // TestGDSLouvainReadsTheProjectionAsGDS: GDS 2.13.12 on the same graphs
