@@ -81,7 +81,7 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 		}
 	}
 
-	membership := louvainFinal(runLouvain(graph, apocLouvainOptions), len(unique))
+	membership := louvainFinal(runLouvain(graph, apocLouvainOptions))
 	result := make(map[storage.NodeID]int, len(unique))
 	for i, node := range unique {
 		result[node.ID] = membership[i]
@@ -158,12 +158,9 @@ func runLouvain(graph *louvainGraph, options louvainOptions) louvainRun {
 	return run
 }
 
-// louvainFinal is each node's community after the run's last level (each
-// node its own when no level ran).
-func louvainFinal(run louvainRun, size int) []int {
-	if len(run.levels) == 0 {
-		return identityCommunities(size)
-	}
+// louvainFinal is each node's community after the run's last level (a run
+// always has one).
+func louvainFinal(run louvainRun) []int {
 	return run.levels[len(run.levels)-1]
 }
 
