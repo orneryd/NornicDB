@@ -1077,6 +1077,34 @@ func (c *gdsConfig) typeError(key, expected string) error {
 	return localizedError(localization.CypherGraphProceduresConfigValueType(key, expected, gdsJavaType(c.value(key))), nil)
 }
 
+// gdsConfigIntegerValue is the common integer configuration reader. Native
+// GDS requires integer values; APOC retains integral-number coercion.
+func gdsConfigIntegerValue(value interface{}, coerce bool) (int64, bool) {
+	if !isIntegerProcedureValue(value) {
+		if !coerce {
+			return 0, false
+		}
+		number, ok := toFloat64(value)
+		if !ok {
+			return 0, false
+		}
+		value = number
+	}
+	exact, _, ok, err := gdsConvertPropertyValue(value, "Integer", false)
+	if ok && err == nil {
+		return exact.(int64), true
+	}
+	return 0, false
+}
+// gdsScalarNumber supplies numeric configuration values through the projected
+// value converter. Configuration readers keep their own type-error messages.
+func gdsScalarNumber(value interface{}) (float64, bool) {
+	exact, _, ok, err := gdsConvertPropertyValue(value, "Float", false)
+	if ok && err == nil {
+		return exact.(float64), true
+	}
+	return 0, false
+}
 // integer is key's INTEGER value, at least min: fallback when absent, or an
 // error when mandatory.
 func (c *gdsConfig) integer(key, expected string, min, max, fallback int64, mandatory bool) (int64, error) {
@@ -1097,10 +1125,10 @@ func (c *gdsConfig) integerWithErrors(key string, min, max, fallback int64, mand
 		}
 		return fallback, nil
 	}
-	if !isIntegerProcedureValue(value) {
+	number, integer := gdsConfigIntegerValue(value, false)
+	if !integer {
 		return 0, typeError()
 	}
-	number := toInt64(value)
 	if number < min || number > max {
 		return 0, rangeError(number)
 	}
@@ -1113,8 +1141,8 @@ func (c *gdsConfig) number(key, expected string, fallback float64) (float64, err
 	if value == nil {
 		return fallback, nil
 	}
-	number, ok := toFloat64(value)
-	if _, isText := value.(string); !ok || isText {
+	number, ok := gdsScalarNumber(value)
+	if !ok {
 		return 0, c.typeError(key, expected)
 	}
 	return number, nil
