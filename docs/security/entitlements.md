@@ -16,10 +16,10 @@ The server exposes the full list at **GET /auth/entitlements** (requires read pe
 | ID | Name | What it gates |
 |----|------|----------------|
 | **read** | Read | Read data: Cypher MATCH, `/db/*`, `/status`, `/metrics`, `/auth/me`, `/auth/password`, `/auth/profile`, `/nornicdb/search`, `/nornicdb/similar`, `/nornicdb/decay`, `/nornicdb/embed/stats`, `/nornicdb/embed/failures`, Bifrost/GraphQL read, MCP read, `/gdpr/export`. Required for per-database read when privileges matrix is used. |
-| **write** | Write | Write data: Cypher CREATE/DELETE/SET/MERGE (when ResolvedAccess.Write for that DB), `/nornicdb/embed/trigger`, `/nornicdb/embed/retry-failures`, `/nornicdb/search/rebuild`, Bifrost/GraphQL mutations, MCP write. |
+| **write** | Write | Write data: Cypher CREATE/DELETE/SET/MERGE (when ResolvedAccess.Write for that DB), `/nornicdb/embed/trigger` (except `?regenerate=true`, which clears embeddings and needs admin), `/nornicdb/embed/retry-failures`, `/nornicdb/search/rebuild`, Bifrost/GraphQL mutations, MCP write. |
 | **create** | Create | Create operations (resource creation where distinguished from write). |
 | **delete** | Delete | Delete operations: e.g. `/gdpr/delete`. |
-| **admin** | Admin | Admin-only: `/auth/api-token`, `/auth/roles`, `/auth/roles/*`, `/auth/access/databases`, `/auth/access/privileges`, `/auth/entitlements` (read-only list), `/nornicdb/embed/clear`, `/admin/*` (stats, config, backup, GPU), Qdrant snapshots. Implies full system control. |
+| **admin** | Admin | Admin-only: `/auth/api-token`, `/auth/roles`, `/auth/roles/*`, `/auth/access/databases`, `/auth/access/privileges`, `/auth/entitlements` (read-only list), `/nornicdb/embed/clear` and `/nornicdb/embed/trigger?regenerate=true` (both also need write access to each named database), `/admin/*` (stats, config, backup, GPU), Qdrant snapshots. Implies full system control. |
 | **schema** | Schema | Schema operations: Bolt INDEX/CONSTRAINT Cypher. Required for creating/dropping indexes and constraints. |
 | **user_manage** | User management | User management: `/auth/users`, `/auth/users/*` (list, create, update, delete users). Distinct from admin (roles/DB access). |
 

@@ -83,6 +83,9 @@ export function Browser() {
   const [embedMessage, setEmbedMessage] = useState<string | null>(null);
   const [showAIChat, setShowAIChat] = useState(false);
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
+  const [regenerateDatabases, setRegenerateDatabases] = useState<string[]>([]);
+  const [regenerateDefaultDatabase, setRegenerateDefaultDatabase] =
+    useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -114,7 +117,24 @@ export function Browser() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleTriggerEmbed = async () => {
+  // Load the databases the regenerate dialog offers before opening it.
+  const openRegenerateConfirm = async () => {
+    try {
+      const [names, defaultName] = await Promise.all([
+        api.listDatabaseNames(),
+        api.getResolvedDatabaseName(),
+      ]);
+      setRegenerateDatabases(names);
+      setRegenerateDefaultDatabase(defaultName);
+    } catch {
+      const defaultName = await api.getResolvedDatabaseName().catch(() => "");
+      setRegenerateDatabases(defaultName ? [defaultName] : []);
+      setRegenerateDefaultDatabase(defaultName);
+    }
+    setShowRegenerateConfirm(true);
+  };
+
+  const handleTriggerEmbed = async (databases: string[]) => {
     setEmbedTriggering(true);
     setEmbedMessage(null);
     try {
@@ -122,16 +142,24 @@ export function Browser() {
         joinBasePath(BASE_PATH, "/nornicdb/embed/trigger?regenerate=true"),
         {
           method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ databases }),
         },
       );
       const data = await res.json();
       if (res.ok) {
-        setEmbedMessage(data.message);
+        setEmbedMessage(
+          `${data.message} (${(data.databases ?? databases).join(", ")})`,
+        );
         if (data.stats) {
           setEmbedData((prev) => ({ ...prev, stats: data.stats }));
         }
       } else {
-        setEmbedMessage(data.message || "Failed to trigger embeddings");
+        setEmbedMessage(
+          data.errors?.[0]?.message ||
+            data.message ||
+            "Failed to trigger embeddings",
+        );
       }
     } catch {
       setEmbedMessage("Error triggering embeddings");
@@ -265,7 +293,9 @@ export function Browser() {
         embedData={embedData}
         embedTriggering={embedTriggering}
         embedMessage={embedMessage}
-        onRegenerateClick={() => setShowRegenerateConfirm(true)}
+        onRegenerateClick={() => {
+          void openRegenerateConfirm();
+        }}
         onAIChatClick={() => setShowAIChat(true)}
         onSecurityClick={() => navigate("/security")}
       />
@@ -437,9 +467,11 @@ export function Browser() {
       <RegenerateConfirmModal
         isOpen={showRegenerateConfirm}
         totalEmbeddings={embedData.totalEmbeddings}
-        onConfirm={() => {
+        databases={regenerateDatabases}
+        defaultDatabase={regenerateDefaultDatabase}
+        onConfirm={(databases) => {
           setShowRegenerateConfirm(false);
-          handleTriggerEmbed();
+          handleTriggerEmbed(databases);
         }}
         onCancel={() => setShowRegenerateConfirm(false)}
       />

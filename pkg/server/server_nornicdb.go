@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -44,6 +45,93 @@ func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
 // handleEmbedTrigger triggers the embedding worker to process nodes without embeddings.
 // Query params:
 //   - regenerate=true: Clear all existing embeddings first, then regenerate (async)
+//
+// embedTarget is one database whose embeddings a request clears or regenerates.
+type embedTarget struct {
+	name    string
+	storage storage.Engine
+}
+
+// embedTargets resolves the databases an embedding clear/regenerate request names:
+// a JSON body {"databases": ["a", "b"]}, or ?database=a&database=b (also
+// ?database=a,b). With none, the default database only, as before. Each one must
+// exist, may not be system or a composite, and the caller needs write access to it
+// (as for /nornicdb/search/rebuild); otherwise nothing is cleared and the error names
+// the database. Writes the error response and returns false on failure.
+func (s *Server) embedTargets(w http.ResponseWriter, r *http.Request) ([]embedTarget, bool) {
+	var names []string
+	for _, value := range r.URL.Query()["database"] {
+		for _, name := range strings.Split(value, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		var body struct {
+			Databases []string `json:"databases"`
+		}
+		if err := s.readJSON(r, &body); err != nil && !errors.Is(err, io.EOF) {
+			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat",
+				"expected a JSON body like {\"databases\": [\"name\"]}: "+err.Error())
+			return nil, false
+		}
+		for _, name := range body.Databases {
+			if name = strings.TrimSpace(name); name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	if len(names) == 0 {
+		names = []string{s.dbManager.DefaultDatabaseName()}
+	}
+
+	claims := getClaims(r)
+	seen := make(map[string]bool, len(names))
+	targets := make([]embedTarget, 0, len(names))
+	for _, name := range names {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if name == "system" {
+			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported",
+				"The system database has no embeddings.")
+			return nil, false
+		}
+		if !s.getDatabaseAccessMode(claims).CanAccessDatabase(name) {
+			s.writeNeo4jDatabaseAccessDenied(w, r, name)
+			return nil, false
+		}
+		if s.dbManager.IsCompositeDatabase(name) {
+			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Statement.NotSupported",
+				fmt.Sprintf("Embeddings of composite database '%s' cannot be cleared; name its constituent databases.", name))
+			return nil, false
+		}
+		// Clearing embeddings is a write to the database (enforced when RBAC is on, as
+		// the Cypher permission checker does).
+		if s.isRBACEnforced() && !s.getResolvedAccess(claims, name).Write {
+			s.writeNeo4jDatabaseWriteDenied(w, r, name)
+			return nil, false
+		}
+		engine, err := s.dbManager.GetStorage(name)
+		if err != nil {
+			s.writeDatabaseNotFound(w, r, http.StatusNotFound, ErrNotFound, name)
+			return nil, false
+		}
+		targets = append(targets, embedTarget{name: name, storage: engine})
+	}
+	return targets, true
+}
+
+func targetNames(targets []embedTarget) []string {
+	names := make([]string, len(targets))
+	for i, target := range targets {
+		names[i] = target.name
+	}
+	return names
+}
+
 func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
@@ -60,10 +148,24 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 	regenerate := r.URL.Query().Get("regenerate") == "true"
 
 	if regenerate {
+		// Regenerating clears embeddings, which /nornicdb/embed/clear reserves for admins;
+		// the route only requires write (enough to wake the worker), so check here.
+		if s.isRBACEnforced() {
+			claims := getClaims(r)
+			if claims == nil || !hasPermission(s, claims.Roles, auth.PermAdmin) {
+				s.writeNeo4jInsufficientPermissions(w, r)
+				return
+			}
+		}
+		targets, ok := s.embedTargets(w, r)
+		if !ok {
+			return
+		}
 		// Return 202 Accepted immediately - clearing happens in background
 		response := map[string]interface{}{
 			"accepted":   true,
 			"regenerate": true,
+			"databases":  targetNames(targets),
 			"message":    s.localizedText(w, r, localization.EmbeddingRegenerationStarted()),
 		}
 		s.writeJSON(w, http.StatusAccepted, response)
@@ -85,15 +187,19 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 				s.logEvent(context.Background(), slog.LevelWarn, localization.ServerEmbedWorkerResetFailedEvent(err))
 			}
 
-			// Now clear all embeddings
-			cleared, err := s.db.ClearAllEmbeddings()
-			if err != nil {
-				if errors.Is(err, nornicdb.ErrClosed) || strings.Contains(strings.ToLower(err.Error()), "closed") {
-					s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbedRegenerationSkippedDBClosingEvent())
+			// Now clear the chosen databases' embeddings
+			cleared := 0
+			for _, target := range targets {
+				n, err := s.db.ClearEmbeddingsForDatabase(target.name, target.storage)
+				if err != nil {
+					if errors.Is(err, nornicdb.ErrClosed) || strings.Contains(strings.ToLower(err.Error()), "closed") {
+						s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbedRegenerationSkippedDBClosingEvent())
+						return
+					}
+					s.logEvent(context.Background(), slog.LevelError, localization.ServerEmbedClearFailedEvent(err))
 					return
 				}
-				s.logEvent(context.Background(), slog.LevelError, localization.ServerEmbedClearFailedEvent(err))
-				return
+				cleared += n
 			}
 			s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbedClearedEvent(cleared))
 
@@ -251,16 +357,27 @@ func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cleared, err := s.db.ClearAllEmbeddings()
-	if err != nil {
-		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
+	targets, ok := s.embedTargets(w, r)
+	if !ok {
 		return
+	}
+	cleared := 0
+	perDatabase := make(map[string]int, len(targets))
+	for _, target := range targets {
+		n, err := s.db.ClearEmbeddingsForDatabase(target.name, target.storage)
+		if err != nil {
+			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
+			return
+		}
+		perDatabase[target.name] = n
+		cleared += n
 	}
 
 	response := map[string]interface{}{
-		"success": true,
-		"cleared": cleared,
-		"message": fmt.Sprintf("Cleared embeddings from %d nodes - use /nornicdb/embed/trigger to regenerate", cleared),
+		"success":   true,
+		"cleared":   cleared,
+		"databases": perDatabase,
+		"message":   fmt.Sprintf("Cleared embeddings from %d nodes in %s - use /nornicdb/embed/trigger to regenerate", cleared, strings.Join(targetNames(targets), ", ")),
 	}
 	s.writeJSON(w, http.StatusOK, response)
 }
