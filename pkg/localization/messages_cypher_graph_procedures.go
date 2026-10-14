@@ -56,6 +56,7 @@ const (
 	MessageCypherGraphProceduresInvalidScalarType              MessageID = "cyphergraphprocedures.invalid_scalar_type"
 	MessageCypherGraphProceduresLabelNotInGraph                MessageID = "cyphergraphprocedures.label_not_in_graph"
 	MessageCypherGraphProceduresComponentPropertyNotFound      MessageID = "cyphergraphprocedures.component_property_not_found"
+	MessageCypherGraphProceduresInvalidListTypes               MessageID = "cyphergraphprocedures.invalid_list_types"
 	MessageCypherGraphProceduresSourceNodeNotFound             MessageID = "cyphergraphprocedures.source_node_not_found"
 
 	MessageCypherGraphProceduresDefaultPropertyType MessageID = "cyphergraphprocedures.default_property_type"
@@ -372,4 +373,9 @@ func CypherGraphProceduresLabelNotInGraph(label string) Message {
 // useComponents property the graph doesn't hold.
 func CypherGraphProceduresComponentPropertyNotFound(property, available string) Message {
 	return Message{ID: MessageCypherGraphProceduresComponentPropertyNotFound, Fallback: "Component property `" + property + "` not found in graph with node properties: " + available, Data: map[string]any{"Property": property, "Available": available}}
+}
+
+// CypherGraphProceduresInvalidListTypes is GDS's message for a node filter list holding values that are neither nodes nor ids.
+func CypherGraphProceduresInvalidListTypes(types string) Message {
+	return Message{ID: MessageCypherGraphProceduresInvalidListTypes, Fallback: "Invalid types in list. Expected Longs or Nodes but found " + types, Data: map[string]any{"Types": types}}
 }

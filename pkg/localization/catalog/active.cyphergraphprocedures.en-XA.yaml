@@ -179,3 +179,6 @@
 - id: cyphergraphprocedures.component_property_not_found
   description: Expanded pseudo-locale component property not found.
   other: '[!! Component property `{{.Property}}` not found in graph with node properties: {{.Available}} !!]'
+- id: cyphergraphprocedures.invalid_list_types
+  description: Expanded pseudo-locale invalid list types.
+  other: '[!! Invalid types in list. Expected Longs or Nodes but found {{.Types}} !!]'

@@ -104,7 +104,7 @@ func readNodeSimilarityConfig(proj *GraphProjection, options map[string]interfac
 	if config.cutoff, err = c.number("similarityCutoff", "Double", config.cutoff); err != nil {
 		return config, err
 	}
-	if config.cutoff < 0 || config.cutoff > 1 {
+	if config.cutoff < 0 || config.cutoff > 1 || math.IsNaN(config.cutoff) {
 		return config, localizedError(localization.CypherGraphProceduresConfigValueOutOfRange("similarityCutoff", javaDoubleText(config.cutoff), "[0.00, 1.00]"), nil)
 	}
 	// An explicit cutoff of 0 keeps the pairs that share nothing, as GDS
@@ -122,28 +122,33 @@ func readNodeSimilarityConfig(proj *GraphProjection, options map[string]interfac
 		return config, localizedError(localization.CypherGraphProceduresUpperDegreeBelowDegree(), nil)
 	}
 	config.degreeCutoff, config.upperDegreeCutoff = int(degreeCutoff), int(upperDegreeCutoff)
-	for _, pair := range [][2]string{{"topK", "bottomK"}, {"topN", "bottomN"}} {
-		if c.has(pair[0]) && c.has(pair[1]) {
-			return config, localizedError(localization.CypherGraphProceduresInvalidParameterCombination(pair[0], pair[1]), nil)
+	// topK and bottomK (topN and bottomN) clash only when both differ from
+	// their defaults, as in GDS; the bottom one applies when it does.
+	limits := make(map[string]int64)
+	for _, limit := range []struct {
+		key           string
+		min, fallback int64
+	}{{"topK", 1, 10}, {"bottomK", 1, 10}, {"topN", 0, 0}, {"bottomN", 0, 0}} {
+		value, err := c.integer(limit.key, "Integer", limit.min, 1<<31-1, limit.fallback, false)
+		if err != nil {
+			return config, err
 		}
+		limits[limit.key] = value
 	}
-	config.bottomK, config.bottomN = c.has("bottomK"), c.has("bottomN")
-	perNode, overall := "topK", "topN"
-	if c.has("bottomK") {
-		perNode = "bottomK"
+	if limits["topK"] != 10 && limits["bottomK"] != 10 {
+		return config, localizedError(localization.CypherGraphProceduresInvalidParameterCombination("topK", "bottomK"), nil)
 	}
-	if c.has("bottomN") {
-		overall = "bottomN"
+	if limits["topN"] != 0 && limits["bottomN"] != 0 {
+		return config, localizedError(localization.CypherGraphProceduresInvalidParameterCombination("topN", "bottomN"), nil)
 	}
-	topK, err := c.integer(perNode, "Integer", 1, 1<<31-1, 10, false)
-	if err != nil {
-		return config, err
+	config.bottomK, config.bottomN = limits["bottomK"] != 10, limits["bottomN"] != 0
+	config.topK, config.topN = int(limits["topK"]), int(limits["topN"])
+	if config.bottomK {
+		config.topK = int(limits["bottomK"])
 	}
-	topN, err := c.integer(overall, "Integer", 0, 1<<31-1, 0, false)
-	if err != nil {
-		return config, err
+	if config.bottomN {
+		config.topN = int(limits["bottomN"])
 	}
-	config.topK, config.topN = int(topK), int(topN)
 	if metric, ok, err := c.text("similarityMetric"); err != nil {
 		return config, err
 	} else if ok {
@@ -210,37 +215,66 @@ func readNodeSimilarityConfig(proj *GraphProjection, options map[string]interfac
 }
 
 // readGDSNodeFilter reads a node filter: a label, a node, an id, or a list
-// of nodes or ids; nil admits every node. A label the graph doesn't hold is
-// refused, as in GDS; ids that match no node admit none.
+// of nodes or ids; nil or an empty list admits every node, as in GDS. A
+// string is a label, or, as NornicDB's ids are strings (id(n)), the id of a
+// projected node; a label the graph doesn't hold is refused, as in GDS.
+// Ids that match no node admit none.
 func readGDSNodeFilter(proj *GraphProjection, value interface{}) (*gdsNodeFilter, error) {
 	if value == nil {
 		return nil, nil
 	}
 	if label, ok := value.(string); ok {
 		if !containsString(proj.Labels, label) {
+			if _, projected := proj.nodeIndex[label]; projected {
+				return &gdsNodeFilter{nodes: map[string]bool{label: true}}, nil
+			}
 			return nil, localizedError(localization.CypherGraphProceduresLabelNotInGraph(label), nil)
 		}
 		return &gdsNodeFilter{label: label}, nil
 	}
 	items, isList := cypherListValue(value)
-	if !isList {
-		items = []interface{}{value}
+	if isList && len(items) == 0 {
+		return nil, nil
 	}
 	filter := &gdsNodeFilter{nodes: make(map[string]bool, len(items))}
+	var invalid []string
 	for _, item := range items {
-		switch node := item.(type) {
-		case *storage.Node:
-			if node != nil {
-				filter.nodes[string(node.ID)] = true
-			}
-		default:
-			if !isIntegerProcedureValue(item) {
-				return nil, localizedError(localization.CypherGraphProceduresInvalidScalarType(gdsJavaType(item)), nil)
-			}
-			filter.nodes[strconv.FormatInt(toInt64(item), 10)] = true
+		if id, ok := gdsNodeFilterID(proj, item); ok {
+			filter.nodes[id] = true
+		} else {
+			invalid = appendUnique(invalid, gdsJavaType(item))
 		}
 	}
+	if !isList {
+		if id, ok := gdsNodeFilterID(proj, value); ok {
+			filter.nodes[id] = true
+		} else {
+			return nil, localizedError(localization.CypherGraphProceduresInvalidScalarType(gdsJavaType(value)), nil)
+		}
+	}
+	if len(invalid) > 0 {
+		return nil, localizedError(localization.CypherGraphProceduresInvalidListTypes("["+strings.Join(invalid, ", ")+"]"), nil)
+	}
 	return filter, nil
+}
+
+// gdsNodeFilterID is a node filter entry's node id: a node's, an integer
+// id, or a projected node's string id.
+func gdsNodeFilterID(proj *GraphProjection, item interface{}) (string, bool) {
+	switch node := item.(type) {
+	case *storage.Node:
+		if node == nil {
+			return "", false
+		}
+		return string(node.ID), true
+	case string:
+		_, projected := proj.nodeIndex[node]
+		return node, projected
+	}
+	if !isIntegerProcedureValue(item) {
+		return "", false
+	}
+	return strconv.FormatInt(toInt64(item), 10), true
 }
 
 // nodeSimilarityPair is one scored pair.
@@ -252,17 +286,19 @@ type nodeSimilarityPair struct {
 
 func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSimilarityConfig) [][]interface{} {
 	size := len(graph.nodes)
-	// Each node's neighbours with their summed weights, and who points at
-	// each node (to find the pairs sharing a neighbour).
+	// Each node's neighbours, with the first relationship's weight to each
+	// and no self-loops, as GDS reads them, and who points at each node (to
+	// find the pairs sharing a neighbour).
 	neighbors := make([]map[int]float64, size)
 	incoming := make([][]int, size)
 	for source, edges := range graph.outgoing {
 		neighbors[source] = make(map[int]float64, len(edges))
 		for _, edge := range edges {
-			if _, seen := neighbors[source][edge.target]; !seen {
-				incoming[edge.target] = append(incoming[edge.target], source)
+			if _, seen := neighbors[source][edge.target]; seen || edge.target == source {
+				continue
 			}
-			neighbors[source][edge.target] += edge.weight
+			incoming[edge.target] = append(incoming[edge.target], source)
+			neighbors[source][edge.target] = edge.weight
 		}
 	}
 	eligible := func(node int) bool {
@@ -302,7 +338,8 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 				continue
 			}
 			similarity, shared := nodeSimilarity(neighbors[source], neighbors[target], config.metric, weighted, graph.nodes)
-			if similarity < config.cutoff || (similarity == 0 && !config.includeZero) {
+			// An undefined score (0/0) is dropped, as GDS drops it.
+			if math.IsNaN(similarity) || math.IsInf(similarity, 0) || similarity < config.cutoff || (similarity == 0 && !config.includeZero) {
 				continue
 			}
 			scored = append(scored, nodeSimilarityPair{source: source, target: target, similarity: similarity, shared: shared})
@@ -336,8 +373,8 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 
 // nodeSimilarityComponents is each node's component for useComponents: the
 // projected property's value, or its connected component (the
-// relationships read both ways); nil without useComponents. A node without
-// the property is a component of its own.
+// relationships read both ways); nil without useComponents. Nodes without
+// the property share one component, the property's default, as in GDS.
 func nodeSimilarityComponents(proj *GraphProjection, graph *gdsSubgraph, config nodeSimilarityConfig) []string {
 	size := len(graph.nodes)
 	component := make([]string, size)
@@ -347,7 +384,7 @@ func nodeSimilarityComponents(proj *GraphProjection, graph *gdsSubgraph, config 
 			if value, ok := proj.NodeProperties[id][config.componentProperty]; ok {
 				component[i] = strconv.FormatFloat(value, 'g', -1, 64)
 			} else {
-				component[i] = "node:" + id
+				component[i] = "default"
 			}
 		}
 	case config.connectedOnly:
@@ -428,17 +465,11 @@ func nodeSimilarity(a, b map[int]float64, metric string, weighted bool, nodes []
 	var similarity float64
 	switch metric {
 	case "OVERLAP":
-		if denominator := math.Min(sumA, sumB); denominator > 0 {
-			similarity = intersection / denominator
-		}
+		similarity = intersection / math.Min(sumA, sumB)
 	case "COSINE":
-		if normA > 0 && normB > 0 {
-			similarity = dot / (math.Sqrt(normA) * math.Sqrt(normB))
-		}
+		similarity = dot / (math.Sqrt(normA) * math.Sqrt(normB))
 	default:
-		if union > 0 {
-			similarity = intersection / union
-		}
+		similarity = intersection / union
 	}
 	sort.Slice(shared, func(i, j int) bool {
 		if shared[i].weight != shared[j].weight {

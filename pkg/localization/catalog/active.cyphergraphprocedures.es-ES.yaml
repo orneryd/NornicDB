@@ -179,3 +179,6 @@
 - id: cyphergraphprocedures.component_property_not_found
   description: Mensaje de GDS (component property not found).
   other: 'No se encontró la propiedad de componente `{{.Property}}` en el grafo con propiedades de nodo: {{.Available}}'
+- id: cyphergraphprocedures.invalid_list_types
+  description: Mensaje de GDS (invalid list types).
+  other: 'Tipos no válidos en la lista. Se esperaban Longs o Nodes, pero se encontró {{.Types}}'

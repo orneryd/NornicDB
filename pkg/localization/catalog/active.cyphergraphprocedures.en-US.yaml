@@ -179,3 +179,6 @@
 - id: cyphergraphprocedures.component_property_not_found
   description: GDS's message for a useComponents property the graph doesn't hold. Property and Available untranslated.
   other: 'Component property `{{.Property}}` not found in graph with node properties: {{.Available}}'
+- id: cyphergraphprocedures.invalid_list_types
+  description: GDS's message for a node filter list holding values that are neither nodes nor ids. Types untranslated.
+  other: 'Invalid types in list. Expected Longs or Nodes but found {{.Types}}'

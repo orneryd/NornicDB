@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -125,8 +126,19 @@ func TestNodeSimilarityAsGDS(t *testing.T) {
 	require.Empty(t, filtered("sourceNodeFilter: [999999]"))
 	require.Empty(t, filtered("sourceNodeFilter: 'Item'"))
 	require.Len(t, filtered("sourceNodeFilter: 'Doc', targetNodeFilter: 'Doc'"), 12)
-	got := similarities(run("MATCH (d {name: 'none'}) WITH collect(d) AS none CALL gds.nodeSimilarity.filtered.stream('ns', {sourceNodeFilter: none}) YIELD node1, node2, similarity, shared RETURN node1, node2, similarity, shared"))
-	require.Empty(t, got)
+	// An empty list filters nothing, as in GDS.
+	all := similarities(run("CALL gds.nodeSimilarity.stream('ns')"))
+	got := similarities(run("MATCH (d {name: 'none'}) WITH collect(d) AS none CALL gds.nodeSimilarity.filtered.stream('ns', {sourceNodeFilter: none, targetNodeFilter: []}) YIELD node1, node2, similarity, shared RETURN node1, node2, similarity, shared"))
+	require.Equal(t, all, got)
+	// NornicDB's string ids filter by node: id(n), alone or in a list.
+	requireSimilarities(map[string]float64{"d1-d2": 0.6666666666666666, "d1-d3": 0.25, "d1-d4": 0.5},
+		similarities(run("MATCH (d {name: 'd1'}) CALL gds.nodeSimilarity.filtered.stream('ns', {sourceNodeFilter: id(d)}) YIELD node1, node2, similarity, shared RETURN node1, node2, similarity, shared")))
+	requireSimilarities(map[string]float64{"d1-d3": 0.25},
+		similarities(run("MATCH (d {name: 'd1'}), (e {name: 'd3'}) CALL gds.nodeSimilarity.filtered.stream('ns', {sourceNodeFilter: [id(d)], targetNodeFilter: [id(e)]}) YIELD node1, node2, similarity, shared RETURN node1, node2, similarity, shared")))
+	// Explicit defaults don't clash: topK 10 with bottomK, topN 0 with bottomN.
+	require.Equal(t, similarities(run("CALL gds.nodeSimilarity.stream('ns', {bottomK: 1})")), similarities(run("CALL gds.nodeSimilarity.stream('ns', {topK: 10, bottomK: 1})")))
+	require.Len(t, run("CALL gds.nodeSimilarity.stream('ns', {topN: 0, bottomN: 1})"), 1)
+	require.Len(t, run("CALL gds.nodeSimilarity.stream('ns', {topN: 1, bottomN: 0})"), 1)
 }
 
 // TestNodeSimilarityRefusesAsGDS: GDS's errors (#1195).
@@ -138,6 +150,7 @@ func TestNodeSimilarityRefusesAsGDS(t *testing.T) {
 		"topK: 0":                               "Value for `topK` was `0`, but must be within the range [1, 2147483647].",
 		"topK: 1, bottomK: 1":                   "Invalid parameter combination: topK combined with bottomK",
 		"topN: 1, bottomN: 1":                   "Invalid parameter combination: topN combined with bottomN",
+		"similarityCutoff: 0.0 / 0.0":           "Value for `similarityCutoff` was `NaN`, but must be within the range [0.00, 1.00].",
 		"similarityCutoff: 2":                   "Value for `similarityCutoff` was `2.0`, but must be within the range [0.00, 1.00].",
 		"relationshipWeightProperty: 'nope'":    "Relationship weight property `nope` not found in relationship types ['H']. Properties existing on all relationship types: ['w']",
 		"degreeCutoff: 0":                       "Value for `degreeCutoff` was `0`, but must be within the range [1, 2147483647].",
@@ -151,9 +164,10 @@ func TestNodeSimilarityRefusesAsGDS(t *testing.T) {
 		require.ErrorContains(t, err, message, config)
 	}
 	for config, message := range map[string]string{
-		"sourceNodeFilter: true":   "Invalid scalar type. Expected Long or Node but found: Boolean",
-		"sourceNodeFilter: 'Nope'": "The label `Nope` does not exist in the graph",
-		"targetNodeFilter: [true]": "Invalid scalar type. Expected Long or Node but found: Boolean",
+		"sourceNodeFilter: true":               "Invalid scalar type. Expected Long or Node but found: Boolean",
+		"sourceNodeFilter: 'Nope'":             "The label `Nope` does not exist in the graph",
+		"targetNodeFilter: [true]":             "Invalid types in list. Expected Longs or Nodes but found [Boolean]",
+		"targetNodeFilter: [1, 'x', 2.5, 'y']": "Invalid types in list. Expected Longs or Nodes but found [String, Double]",
 	} {
 		_, err := newNodeSimilarityExec(t).Execute(context.Background(), "CALL gds.nodeSimilarity.filtered.stream('ns', {"+config+"})", nil)
 		require.ErrorContains(t, err, message, config)
@@ -227,8 +241,8 @@ func TestNodeSimilarityZeroCutoffAndComponents(t *testing.T) {
 	require.True(t, d3d1 != d3d2, "one of d3's ties")
 	require.Equal(t, map[string]float64{"d1-d2": 1, "d2-d1": 1}, byName("useComponents: 'comp', similarityCutoff: 0.0"))
 	require.Equal(t, map[string]float64{"d1-d2": 1, "d2-d1": 1}, byName("useComponents: true, similarityCutoff: 0.0"))
-	// Nodes without the property (the items here) are components of their
-	// own; the documents still pair within theirs.
+	// Nodes without the property (the items here) share the default
+	// component; the documents still pair within theirs.
 	_, err = exec.Execute(context.Background(), "CALL gds.graph.project('dis2', {D: {properties: 'comp'}, I: {}}, 'H')", nil)
 	require.NoError(t, err)
 	result, err := exec.Execute(context.Background(), "CALL gds.nodeSimilarity.stream('dis2', {useComponents: 'comp'}) YIELD node1 RETURN count(*)", nil)
@@ -236,4 +250,75 @@ func TestNodeSimilarityZeroCutoffAndComponents(t *testing.T) {
 	require.Equal(t, int64(2), result.Rows[0][0])
 	_, err = exec.Execute(context.Background(), "CALL gds.nodeSimilarity.stream('dis', {useComponents: 'nope'})", nil)
 	require.ErrorContains(t, err, "Component property `nope` not found in graph with node properties: [comp]")
+}
+
+// TestNodeSimilarityNeighboursAsGDS: GDS 2.13.12 on the same graphs (#1197
+// review): a parallel relationship keeps the first one's weight, a
+// self-loop isn't a neighbour (nor counted in the degree), a node without
+// the component property is in the default component, and an undefined
+// weighted score (0/0) gives no row.
+func TestNodeSimilarityNeighboursAsGDS(t *testing.T) {
+	graphProjections = make(map[string]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "ns"))
+	run := func(query string) [][]interface{} {
+		t.Helper()
+		result, err := exec.Execute(context.Background(), query, nil)
+		require.NoError(t, err, query)
+		return result.Rows
+	}
+	named := func(graph, config string) map[string]float64 {
+		t.Helper()
+		return similarities(run("CALL gds.nodeSimilarity.stream('" + graph + "', {" + config + "}) YIELD node1, node2, similarity " +
+			"MATCH (a), (b) WHERE id(a) = node1 AND id(b) = node2 RETURN a.name, b.name, similarity"))
+	}
+	for _, label := range []string{"P1", "P2"} {
+		first, second := 1.0, 2.0
+		if label == "P2" {
+			first, second = 2.0, 1.0
+		}
+		run(fmt.Sprintf("CREATE (a:%s {name:'a'}), (b:%s {name:'b'}), (c:%s {name:'c'}), (d:%s {name:'d'})", label, label, label, label))
+		run(fmt.Sprintf("MATCH (a:%s {name:'a'}), (c:%s {name:'c'}) CREATE (a)-[:R {w: %.1f}]->(c)", label, label, first))
+		run(fmt.Sprintf("MATCH (a:%s {name:'a'}), (c:%s {name:'c'}) CREATE (a)-[:R {w: %.1f}]->(c)", label, label, second))
+		run(fmt.Sprintf("MATCH (b:%s {name:'b'}), (c:%s {name:'c'}), (d:%s {name:'d'}) CREATE (b)-[:R {w: 1.0}]->(c), (b)-[:R {w: 1.0}]->(d)", label, label, label))
+		run("CALL gds.graph.project('" + label + "', '" + label + "', {R: {properties: 'w'}})")
+	}
+	// GDS keeps the first relationship by id: weight 1 gives 0.5, weight 2
+	// gives 1/3 (GDS: 0.5 with the weight-1 relationship first, 1/3 with
+	// the weight-2 one). NornicDB's first is the smallest id.
+	for _, label := range []string{"P1", "P2"} {
+		first := run("MATCH (:" + label + " {name: 'a'})-[r:R]->() RETURN id(r) AS id, r.w ORDER BY id LIMIT 1")[0][1]
+		want := 0.5
+		if first == 2.0 {
+			want = 1.0 / 3
+		}
+		require.Equal(t, map[string]float64{"a-b": want, "b-a": want}, named(label, "relationshipWeightProperty: 'w'"), label)
+		require.Equal(t, map[string]float64{"a-b": 0.5, "b-a": 0.5}, named(label, ""), label)
+	}
+	cosine := named("P1", "relationshipWeightProperty: 'w', similarityMetric: 'COSINE'")
+	require.InDelta(t, 0.7071067811865475, cosine["a-b"], 1e-12) // either weight
+
+	run("CREATE (a:P3 {name:'a'}), (b:P3 {name:'b'}), (c:P3 {name:'c'}), (a)-[:R]->(a), (a)-[:R]->(c), (b)-[:R]->(a), (b)-[:R]->(c)")
+	run("CALL gds.graph.project('P3', 'P3', 'R')")
+	require.Equal(t, map[string]float64{"a-b": 0.5, "b-a": 0.5}, named("P3", ""))
+	require.Empty(t, named("P3", "degreeCutoff: 2"))
+
+	run("CREATE (a:P4 {name:'a'}), (b:P4 {name:'b'}), (c:P4 {name:'c', comp: 5}), (a)-[:R]->(c), (b)-[:R]->(c)")
+	run("CALL gds.graph.project('P4', {P4: {properties: 'comp'}}, 'R')")
+	require.Equal(t, map[string]float64{"a-b": 1, "b-a": 1}, named("P4", "useComponents: 'comp'"))
+
+	run("CREATE (a:P5 {name:'a'}), (b:P5 {name:'b'}), (c:P5 {name:'c'}), (a)-[:R {w: 0.0}]->(c), (b)-[:R {w: 0.0}]->(c)")
+	run("CALL gds.graph.project('P5', 'P5', {R: {properties: 'w'}})")
+	require.Empty(t, named("P5", "relationshipWeightProperty: 'w', similarityCutoff: 0"))
+	require.Empty(t, named("P5", "relationshipWeightProperty: 'w'"))
+	require.Empty(t, named("P5", "relationshipWeightProperty: 'w', similarityMetric: 'OVERLAP'"))
+	require.Empty(t, named("P5", "relationshipWeightProperty: 'w', similarityMetric: 'COSINE'"))
+
+	// A nil node admits nothing (a typed nil, which no statement produces).
+	_, ok := gdsNodeFilterID(&GraphProjection{}, (*storage.Node)(nil))
+	require.False(t, ok)
+
+	// A NaN cutoff is out of range, as in GDS.
+	_, err := exec.callGdsNodeSimilarityStream([]interface{}{"P5", map[string]interface{}{"similarityCutoff": math.NaN()}}, false)
+	require.ErrorContains(t, err, "Value for `similarityCutoff` was `NaN`, but must be within the range [0.00, 1.00].")
 }
