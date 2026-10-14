@@ -487,6 +487,8 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphergraphprocedures.graph_already_exists", Constructor: "CypherGraphProceduresGraphAlreadyExists", Fields: []string{"Graph"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.graph_exists_aggregation", Constructor: "CypherGraphProceduresGraphExistsAggregation", Fields: []string{"Graph"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.graph_not_found", Constructor: "CypherGraphProceduresGraphNotFound", Fields: []string{"Database", "Graph"}, PluralForms: []string{"other"}},
+	{ID: "cyphergraphprocedures.invalid_component_property", Constructor: "CypherGraphProceduresInvalidComponentProperty", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "cyphergraphprocedures.invalid_component_spec", Constructor: "CypherGraphProceduresInvalidComponentSpec", Fields: []string{"Type", "Value"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.invalid_list_types", Constructor: "CypherGraphProceduresInvalidListTypes", Fields: []string{"Types"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.invalid_parameter_combination", Constructor: "CypherGraphProceduresInvalidParameterCombination", Fields: []string{"First", "Second"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.invalid_projection", Constructor: "CypherGraphProceduresInvalidProjection", Fields: []string{"Kind", "Type"}, PluralForms: []string{"other"}},

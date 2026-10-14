@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -197,6 +198,9 @@ func readNodeSimilarityConfig(proj *GraphProjection, options map[string]interfac
 	case bool:
 		config.connectedOnly = value
 	case string:
+		if strings.TrimSpace(value) == "" {
+			return config, localizedError(localization.CypherGraphProceduresInvalidComponentProperty(), nil)
+		}
 		var available []string
 		for _, keys := range proj.NodePropertyKeys {
 			for _, key := range keys {
@@ -204,18 +208,22 @@ func readNodeSimilarityConfig(proj *GraphProjection, options map[string]interfac
 			}
 		}
 		sort.Strings(available)
-		if !containsString(available, value) {
+		labels := config.nodeLabels
+		if len(labels) == 0 {
+			labels = proj.Labels
+		}
+		if !containsString(commonKeys(proj.NodePropertyKeys, labels), value) {
 			return config, localizedError(localization.CypherGraphProceduresComponentPropertyNotFound(value, "["+strings.Join(available, ", ")+"]"), nil)
 		}
 		config.componentProperty = value
 	default:
-		return config, c.typeError("useComponents", "Boolean")
+		return config, localizedError(localization.CypherGraphProceduresInvalidComponentSpec(gdsJavaType(value), fmt.Sprint(value)), nil)
 	}
 	if filtered {
-		if config.sourceFilter, err = readGDSNodeFilter(proj, c.value("sourceNodeFilter"), nodeExists...); err != nil {
+		if config.sourceFilter, err = readGDSNodeFilter(proj, c.value("sourceNodeFilter"), config.nodeLabels, nodeExists...); err != nil {
 			return config, err
 		}
-		if config.targetFilter, err = readGDSNodeFilter(proj, c.value("targetNodeFilter"), nodeExists...); err != nil {
+		if config.targetFilter, err = readGDSNodeFilter(proj, c.value("targetNodeFilter"), config.nodeLabels, nodeExists...); err != nil {
 			return config, err
 		}
 	}
@@ -227,11 +235,14 @@ func readNodeSimilarityConfig(proj *GraphProjection, options map[string]interfac
 // string first names a projected label; otherwise it is a numeric or stored
 // node id, including outside the projection. Unknown labels are refused.
 // Ids that match no node admit none.
-func readGDSNodeFilter(proj *GraphProjection, value interface{}, nodeExists ...func(string) bool) (*gdsNodeFilter, error) {
+func readGDSNodeFilter(proj *GraphProjection, value interface{}, selectedLabels []string, nodeExists ...func(string) bool) (*gdsNodeFilter, error) {
 	if value == nil {
 		return nil, nil
 	}
 	if label, ok := value.(string); ok {
+		if containsString(proj.Labels, label) && len(selectedLabels) > 0 && !containsString(selectedLabels, label) {
+			return nil, localizedError(localization.CypherGraphProceduresLabelNotInGraph(label), nil)
+		}
 		if !containsString(proj.Labels, label) {
 			if id, ok := gdsNodeFilterID(proj, label, nodeExists...); ok {
 				return &gdsNodeFilter{nodes: map[string]bool{id: true}}, nil
@@ -305,15 +316,15 @@ func nodeSimilarityNeighbors(graph *gdsSubgraph) ([][]gdsEdge, [][]int) {
 	for source, outgoing := range graph.outgoing {
 		type typedEdge struct {
 			gdsEdge
-			kind string
+			typeOrder int
 		}
 		edges := make([]typedEdge, len(outgoing))
 		for i, edge := range outgoing {
-			edges[i] = typedEdge{gdsEdge: edge, kind: graph.outgoingTypes[source][i]}
+			edges[i] = typedEdge{gdsEdge: edge, typeOrder: graph.outgoingTypes[source][i]}
 		}
 		sort.SliceStable(edges, func(i, j int) bool {
-			if edges[i].kind != edges[j].kind {
-				return edges[i].kind < edges[j].kind
+			if edges[i].typeOrder != edges[j].typeOrder {
+				return edges[i].typeOrder < edges[j].typeOrder
 			}
 			return edges[i].target < edges[j].target
 		})

@@ -182,3 +182,12 @@
 - id: cyphergraphprocedures.invalid_list_types
   description: GDS's message for a node filter list holding values that are neither nodes nor ids. Types untranslated.
   other: 'Invalid types in list. Expected Longs or Nodes but found {{.Types}}'
+- id: cyphergraphprocedures.project_distinct
+  description: DISTINCT on the GDS projection function.
+  other: "Invalid use of DISTINCT with function 'project'"
+- id: cyphergraphprocedures.invalid_component_property
+  description: A blank component property.
+  other: 'Invalid component spec: expected a valid node property'
+- id: cyphergraphprocedures.invalid_component_spec
+  description: A component spec of the wrong type. Type, Value untranslated.
+  other: 'Invalid component spec: cannot parse type {{.Type}} with value {{.Value}}'

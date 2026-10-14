@@ -182,3 +182,12 @@
 - id: cyphergraphprocedures.invalid_list_types
   description: Expanded pseudo-locale invalid list types.
   other: '[!! Invalid types in list. Expected Longs or Nodes but found {{.Types}} !!]'
+- id: cyphergraphprocedures.project_distinct
+  description: Expanded pseudo-locale projection DISTINCT error.
+  other: "[!! Invalid use of DISTINCT with function 'project' !!]"
+- id: cyphergraphprocedures.invalid_component_property
+  description: Expanded pseudo-locale blank component property.
+  other: '[!! Invalid component spec: expected a valid node property !!]'
+- id: cyphergraphprocedures.invalid_component_spec
+  description: Expanded pseudo-locale component type.
+  other: '[!! Invalid component spec: cannot parse type {{.Type}} with value {{.Value}} !!]'

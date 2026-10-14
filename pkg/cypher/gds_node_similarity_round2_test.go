@@ -128,7 +128,7 @@ func TestReviewRound2ConfirmedFixVariants(t *testing.T) {
 		require.Error(t, err)
 	}
 	for _, value := range []interface{}{nil, []interface{}{}, []int64{}} {
-		filter, err := readGDSNodeFilter(&GraphProjection{}, value)
+		filter, err := readGDSNodeFilter(&GraphProjection{}, value, nil)
 		require.NoError(t, err)
 		require.True(t, filter.admits(&GraphProjection{}, "0"))
 	}
@@ -334,7 +334,7 @@ func TestReviewRound2SharedNodeIDs(t *testing.T) {
 	})
 	for _, value := range []interface{}{int64(9), int(9), int8(9), int16(9), int32(9), uint8(9), "9", &storage.Node{ID: "9"}} {
 		t.Run(fmt.Sprintf("%T", value), func(t *testing.T) {
-			filter, err := readGDSNodeFilter(projection, []interface{}{value})
+			filter, err := readGDSNodeFilter(projection, []interface{}{value}, nil)
 			require.NoError(t, err)
 			require.Equal(t, map[string]bool{"9": true}, filter.nodes)
 			config, err := linkPredictionConfigFromArguments([]interface{}{map[string]interface{}{"sourceNode": value, "targetNodes": []interface{}{value}}})
@@ -356,7 +356,7 @@ func TestReviewRound2SharedNodeIDs(t *testing.T) {
 		{int64(math.MaxInt64), "9223372036854775807"},
 		{^uint64(0), "18446744073709551615"},
 	} {
-		filter, err := readGDSNodeFilter(projection, []interface{}{tc.value})
+		filter, err := readGDSNodeFilter(projection, []interface{}{tc.value}, nil)
 		require.NoError(t, err)
 		require.True(t, filter.nodes[tc.id])
 		config, err := linkPredictionConfigFromArguments([]interface{}{map[string]interface{}{"sourceNode": tc.value}})

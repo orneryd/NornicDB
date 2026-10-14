@@ -182,3 +182,12 @@
 - id: cyphergraphprocedures.invalid_list_types
   description: Mensaje de GDS (invalid list types).
   other: 'Tipos no válidos en la lista. Se esperaban Longs o Nodes, pero se encontró {{.Types}}'
+- id: cyphergraphprocedures.project_distinct
+  description: DISTINCT en la función de proyección.
+  other: "Uso no válido de DISTINCT con la función 'project'"
+- id: cyphergraphprocedures.invalid_component_property
+  description: Propiedad de componente vacía.
+  other: 'Especificación de componente no válida: se esperaba una propiedad de nodo válida'
+- id: cyphergraphprocedures.invalid_component_spec
+  description: Tipo de especificación de componente no válido.
+  other: 'Especificación de componente no válida: no se puede interpretar el tipo {{.Type}} con valor {{.Value}}'

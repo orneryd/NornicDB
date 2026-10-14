@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,6 +45,9 @@ type GraphProjection struct {
 	Configuration            map[string]interface{} // as gds.graph.list reports it
 	schema                   map[string]interface{} // GDS's schema, with each relationship type's direction
 	nodeIndex                map[string]int
+
+	relationshipTypeOrder []string // constituent graph order, separate from sorted catalog display
+	relationshipTypeIndex map[string]int
 }
 
 // ProjectedRelationship is one relationship of a projection, from Source
@@ -145,18 +149,18 @@ func (spec gdsElementSpec) merges() bool {
 // '|' ('Person:User', 'KNOWS|REFERENCES'): NornicDB's kept form. Labels,
 // types and properties no stored element has, and a name already in use,
 // are refused with GDS's messages.
-func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsGraphProject(args []interface{}, contexts ...context.Context) (*ExecuteResult, error) {
 	const procedure = "gds.graph.project"
 	started := time.Now()
 	graphName, err := requiredProcedureString(procedure, args, 0, "graphName")
 	if err != nil {
 		return nil, err
 	}
-	nodeSpecs, err := gdsProjectionSpecs(procedureArgument(args, 1), "node")
+	nodeSpecs, err := gdsProjectionSpecs(procedureArgument(args, 1), "node", contexts...)
 	if err != nil {
 		return nil, err
 	}
-	relSpecs, err := gdsProjectionSpecs(procedureArgument(args, 2), "relationship")
+	relSpecs, err := gdsProjectionSpecs(procedureArgument(args, 2), "relationship", contexts...)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +241,7 @@ func gdsProjectConfiguration(procedure string, args []interface{}, nodeSpecs, re
 }
 
 // gdsProjectionSpecs reads a node or relationship projection argument.
-func gdsProjectionSpecs(value interface{}, kind string) ([]gdsElementSpec, error) {
+func gdsProjectionSpecs(value interface{}, kind string, contexts ...context.Context) ([]gdsElementSpec, error) {
 	nameKey := "label"
 	if kind == "relationship" {
 		nameKey = "type"
@@ -267,6 +271,11 @@ func gdsProjectionSpecs(value interface{}, kind string) ([]gdsElementSpec, error
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
+		if kind == "relationship" && len(keys) > 1 && len(contexts) > 0 {
+			if ordered := snapshotMapKeyOrders(contexts[0])[uintptr(reflect.ValueOf(projection).UnsafePointer())]; len(ordered) == len(keys) {
+				keys = gdsNativeProjectionMapOrder(ordered)
+			}
+		}
 		for _, key := range keys {
 			spec := gdsElementSpec{name: key, element: key, orientation: "NATURAL", aggregation: "DEFAULT"}
 			switch entry := projection[key].(type) {

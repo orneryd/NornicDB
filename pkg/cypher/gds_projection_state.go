@@ -34,10 +34,70 @@ func (p *GraphProjection) indexNodes() {
 // and types. Native projections retain requested empty labels/types; aggregation
 // imports infer them only from their rows.
 func (p *GraphProjection) finishCounts() {
+	contexts := 0
+	if len(p.RelationshipProjection) > 0 {
+		contexts = len(p.Types)
+		for _, raw := range p.RelationshipProjection {
+			if spec, ok := raw.(map[string]interface{}); ok && spec["indexInverse"] == true {
+				contexts++
+			}
+		}
+	}
+	p.relationshipTypeOrder = gdsRelationshipTypeOrder(p.Types, contexts)
+	if len(p.relationshipTypeOrder) > 1 {
+		p.relationshipTypeIndex = gdsNodeIndex(p.relationshipTypeOrder)
+	}
 	sort.Strings(p.Labels)
 	sort.Strings(p.Types)
 	p.NodeCount = len(p.NodeIDs)
 	p.RelationshipCount = len(p.Relationships)
+}
+
+// gdsRelationshipTypeOrder reproduces the constituent order of GDS 2.13's
+// relationship import map and CSRGraphStore's map copy. RelationshipType uses
+// the case-sensitive UTF-16 name hash with the Objects.hash offset. Each map
+// walks buckets in order and retains insertion order inside a bucket. Catalog
+// display and algorithm selection order do not change this traversal order.
+func gdsRelationshipTypeOrder(types []string, nativeContexts int) []string {
+	if len(types) < 2 {
+		return types
+	}
+	ordered := append([]string(nil), types...)
+	hashes := make(map[string]uint32, len(types))
+	for _, name := range types {
+		hash := gdsJavaStringHash(name) + 31
+		hashes[name] = hash ^ (hash >> 16)
+	}
+	orderBuckets := func(capacity int) {
+		sort.SliceStable(ordered, func(i, j int) bool {
+			return hashes[ordered[i]]&uint32(capacity-1) < hashes[ordered[j]]&uint32(capacity-1)
+		})
+	}
+	if nativeContexts > 0 {
+		// Native RelationshipImportResult first builds a HashMap sized to
+		// the import contexts. computeIfAbsent prepends a new bucket entry.
+		for i, j := 0, len(ordered)-1; i < j; i, j = i+1, j-1 {
+			ordered[i], ordered[j] = ordered[j], ordered[i]
+		}
+		capacity := 1
+		for capacity < nativeContexts || capacity*3/4 < len(types)-1 {
+			capacity *= 2
+		}
+		orderBuckets(capacity)
+	}
+	// The native collector and aggregation ConcurrentHashMap both start
+	// with sixteen buckets and preserve the order within each bucket.
+	capacity := 16
+	for capacity*3/4 < len(types) {
+		capacity *= 2
+	}
+	orderBuckets(capacity)
+	copyCapacity := 1
+	for copyCapacity < len(types)*4/3+1 {
+		copyCapacity *= 2
+	}
+	orderBuckets(copyCapacity)
+	return ordered
 }
 
 // registerGraphProjection owns the atomic catalog insertion for both imports.
