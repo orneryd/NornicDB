@@ -43,7 +43,7 @@ func seedTraversalOptionalBenchGraph(b *testing.B, exec *StorageExecutor, ctx co
 // relationship-context handler shape: one anchored source, four chained
 // OPTIONAL MATCH clauses, function-call projections.
 func BenchmarkTraversalOptionalMatch_SingleSeedChained(b *testing.B) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(b)
 	store := storage.NewNamespacedEngine(base, "bench")
 	exec := NewStorageExecutor(store)
 	// Disable the query result cache so every iteration measures real
@@ -82,7 +82,7 @@ func BenchmarkTraversalOptionalMatch_SingleSeedChained(b *testing.B) {
 // cost: every class row (150 relationship rows over 50 sources) flows through
 // the OPTIONAL MATCH join and the function-call projection.
 func BenchmarkTraversalOptionalMatch_FanOutProjection(b *testing.B) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(b)
 	store := storage.NewNamespacedEngine(base, "bench")
 	exec := NewStorageExecutor(store)
 	// Disable the query result cache so every iteration measures real

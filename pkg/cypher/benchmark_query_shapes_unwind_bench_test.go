@@ -9,7 +9,7 @@ import (
 )
 
 func BenchmarkUnwindMergeBatch_OriginalTextUpsert(b *testing.B) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(b)
 	store := storage.NewNamespacedEngine(base, "bench")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
@@ -58,7 +58,7 @@ RETURN count(o) AS prepared`
 }
 
 func BenchmarkUnwindBenchHopLinkBatch(b *testing.B) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(b)
 	store := storage.NewNamespacedEngine(base, "bench")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()

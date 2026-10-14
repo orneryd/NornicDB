@@ -73,7 +73,7 @@ SET rel.last_seen = 'benchmark'`
 
 func newRelationshipMergeIdentityBenchmark(b *testing.B, fanout int) (*StorageExecutor, context.Context) {
 	b.Helper()
-	baseStore := storage.NewMemoryEngine()
+	baseStore := newTestMemoryEngine(b)
 	store := storage.NewNamespacedEngine(baseStore, "bench")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
@@ -110,7 +110,7 @@ func newRelationshipMergeIdentityBenchmark(b *testing.B, fanout int) (*StorageEx
 func BenchmarkRelationshipMergeOneOfManyRelationships(b *testing.B) {
 	for _, others := range []int{16, 1024} {
 		b.Run(fmt.Sprintf("others=%d", others), func(b *testing.B) {
-			baseStore := storage.NewMemoryEngine()
+			baseStore := newTestMemoryEngine(b)
 			store := storage.NewNamespacedEngine(baseStore, "bench")
 			exec := NewStorageExecutor(store)
 			ctx := context.Background()

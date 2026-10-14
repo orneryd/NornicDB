@@ -9,7 +9,7 @@ import (
 )
 
 func TestMatchMergeOptionalMatchPreservesEveryInputRow(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "match-merge-optional")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "match-merge-optional")
 	executor := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -32,7 +32,7 @@ func TestMatchMergeOptionalMatchPreservesEveryInputRow(t *testing.T) {
 }
 
 func TestIndependentMatchAfterWithProducesCartesianRows(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "independent-match")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "independent-match")
 	executor := NewStorageExecutor(store)
 	ctx := context.Background()
 
@@ -82,7 +82,7 @@ func TestIndependentMatchAfterWithProducesCartesianRows(t *testing.T) {
 }
 
 func TestWithPreservesBoundRelationshipAcrossSubsequentMatch(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "with-bound-relationship")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "with-bound-relationship")
 	executor := NewStorageExecutor(store)
 	ctx := context.Background()
 

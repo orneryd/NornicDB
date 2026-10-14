@@ -9,7 +9,7 @@ import (
 )
 
 func TestCompileSimpleWhere_SupportedPatterns(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	node := &storage.Node{
 		ID: storage.NodeID("n1"),
 		Properties: map[string]interface{}{
@@ -58,7 +58,7 @@ func TestCompileSimpleWhere_SupportedPatterns(t *testing.T) {
 }
 
 func TestCompileSimpleWhere_UnsupportedPatterns(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	ctx := context.Background()
 
 	_, ok := exec.getCompiledSimpleWhere(ctx, "n", "size(n.sourceId) > 0")
@@ -66,7 +66,7 @@ func TestCompileSimpleWhere_UnsupportedPatterns(t *testing.T) {
 }
 
 func BenchmarkEvaluateWhereCompiledCandidatePredicate(b *testing.B) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(b))
 	ctx := context.Background()
 	node := &storage.Node{
 		ID:     "n1",

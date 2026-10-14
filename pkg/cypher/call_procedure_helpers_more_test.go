@@ -99,17 +99,17 @@ func TestCallDbHelpers_ErrorAndNilSchemaBranches(t *testing.T) {
 	nodesErr := errors.New("all nodes failed")
 	edgesErr := errors.New("all edges failed")
 
-	execNodesErr := NewStorageExecutor(&allNodesErrEngine{MemoryEngine: storage.NewMemoryEngine(), err: nodesErr})
+	execNodesErr := NewStorageExecutor(&allNodesErrEngine{MemoryEngine: newTestMemoryEngine(t), err: nodesErr})
 	_, err := execNodesErr.callDbLabels()
 	require.ErrorIs(t, err, nodesErr)
 	require.Equal(t, 0, execNodesErr.countLabels())
 
-	execEdgesErr := NewStorageExecutor(&allEdgesErrEngine{MemoryEngine: storage.NewMemoryEngine(), err: edgesErr})
+	execEdgesErr := NewStorageExecutor(&allEdgesErrEngine{MemoryEngine: newTestMemoryEngine(t), err: edgesErr})
 	_, err = execEdgesErr.callDbRelationshipTypes()
 	require.ErrorIs(t, err, edgesErr)
 	require.Equal(t, 0, execEdgesErr.countRelTypes())
 
-	execNilSchema := NewStorageExecutor(&callNilSchemaEngine{MemoryEngine: storage.NewMemoryEngine()})
+	execNilSchema := NewStorageExecutor(&callNilSchemaEngine{MemoryEngine: newTestMemoryEngine(t)})
 	res, err := execNilSchema.callDbConstraints()
 	require.NoError(t, err)
 	require.Equal(t, []string{"name", "type", "labelsOrTypes", "properties", "propertyType"}, res.Columns)

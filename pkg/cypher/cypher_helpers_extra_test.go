@@ -362,7 +362,7 @@ func TestCypherHelpers_NodeLookupCacheHelpers(t *testing.T) {
 }
 
 func TestCypherHelpers_UnwindMergeChainPlanCacheHelpers(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	mutation := "MERGE (t:TranslatedText {translationId: row.translationId, language: row.language}) ON CREATE SET t.translatedText = row.translatedText ON MATCH SET t.translatedText = row.translatedText"
 
 	plan := exec.cachedUnwindMergeChainPlan(mutation)

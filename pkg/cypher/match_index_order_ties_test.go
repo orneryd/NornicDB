@@ -126,7 +126,7 @@ func TestIndexedOrderMixedNumericExact(t *testing.T) {
 
 func indexedOrderFixture(tb testing.TB, count int) *StorageExecutor {
 	tb.Helper()
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "order-ties")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(tb), "order-ties")
 	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
 	for i := 0; i < count; i++ {
 		_, err := store.CreateNode(&storage.Node{
@@ -210,7 +210,7 @@ func TestIndexedOrderPatternPropertiesAndCancellation(t *testing.T) {
 }
 
 func TestIndexedOrderEmptyIndexPreservesGeneralRead(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "null-order")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "null-order")
 	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
 	_, err := exec.Execute(context.Background(), "CREATE INDEX empty_title FOR (n:NullTitle) ON (n.title)", nil)
 	require.NoError(t, err)
@@ -233,7 +233,7 @@ func TestIndexedOrderHeapWorstFirst(t *testing.T) {
 }
 
 func TestIndexedOrderPartialIndexPreservesNullRows(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "partial-index")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "partial-index")
 	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
 	ctx := context.Background()
 	for i := 0; i < 250; i++ {
@@ -266,7 +266,7 @@ func TestIndexedOrderPartialIndexPreservesNullRows(t *testing.T) {
 }
 
 func TestIndexedOrderDescendingPreservesNullRows(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "descending-null-order")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "descending-null-order")
 	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
 	ctx := context.Background()
 	for _, node := range []*storage.Node{
@@ -314,7 +314,7 @@ func TestIndexedOrderTraversalTiedLimit(t *testing.T) {
 }
 
 func TestIndexedOrderTraversalRejectsOtherVariableSortKeys(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "cross-variable-order")
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "cross-variable-order")
 	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
 	ctx := context.Background()
 	for _, node := range []*storage.Node{
