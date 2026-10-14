@@ -123,8 +123,12 @@ func TestFastRPPropagationAsGDS(t *testing.T) {
 	vectors = fastRPVectors(t, run, "CALL gds.fastRP.stream('self', {embeddingDimension: 16, propertyRatio: 1.0, featureProperties: ['f'], iterationWeights: [], nodeSelfInfluence: 1.0, randomSeed: 42}) YIELD nodeId, embedding RETURN nodeId, embedding")
 	require.InDelta(t, 1.0, squaredNorm(vectors["x"]), 1e-9)
 	require.InDelta(t, 1.0, squaredNorm(vectors["y"]), 1e-9)
-	// A zero start vector is taken as it is.
-	require.Equal(t, 0.0, vectorNorm([]float64{0, 0}))
+	// A zero start vector is taken as it is (no division by its norm).
+	_, run = newGDSEngineGraph(t, "zero", gdsNode("z", "Z", map[string]interface{}{"f": 0.0}))
+	_, err = run("CALL gds.graph.project('zero', {Z: {properties: 'f'}}, '*')")
+	require.NoError(t, err)
+	vectors = fastRPVectors(t, run, "CALL gds.fastRP.stream('zero', {embeddingDimension: 4, propertyRatio: 1.0, featureProperties: ['f'], iterationWeights: [], nodeSelfInfluence: 1.0, randomSeed: 42}) YIELD nodeId, embedding RETURN nodeId, embedding")
+	require.Equal(t, []float64{0, 0, 0, 0}, vectors["z"])
 
 	// A NaN weight is a missing weight, as GDS reads it.
 	_, run = newGDSEngineGraph(t, "nan", gdsNode("n1", "W", nil), gdsNode("n2", "W", nil))
@@ -169,6 +173,14 @@ func TestGraphProjectListPropertiesAsGDS(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []interface{}{"a", []interface{}{1.0, 2.0}, []interface{}{int64(1), int64(2), int64(3)}, 2.0}, result.Rows[0])
 	require.Equal(t, []interface{}{"c", []interface{}{}, []interface{}{}, 1.0}, result.Rows[1])
+	// A fractional default makes an Integer property a Float.
+	result, err = run("CALL gds.graph.project('half', {A: {properties: {s2: {property: 'missing', defaultValue: 0.5}, s3: {property: 's', defaultValue: 0.5}}}}, 'R') YIELD graphName RETURN graphName")
+	require.NoError(t, err)
+	result, err = run("CALL gds.graph.list('half') YIELD schemaWithOrientation RETURN schemaWithOrientation")
+	require.NoError(t, err)
+	require.Equal(t, map[string]interface{}{"s2": "Float (DefaultValue(0.5), PERSISTENT)", "s3": "Float (DefaultValue(0.5), PERSISTENT)"},
+		result.Rows[0][0].(map[string]interface{})["nodes"].(map[string]interface{})["A"])
+
 	// A property no node holds as a number or list isn't projected.
 	_, err = run("CALL gds.graph.project('bools', {A: {properties: 'b'}}, '*')")
 	require.ErrorContains(t, err, "Node properties not found: 'b'")
