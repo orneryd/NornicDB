@@ -1274,7 +1274,7 @@ func parseListComprehension(inner string) (variable, listExpression, predicate, 
 	if !declared {
 		return "", "", "", "", false
 	}
-	rest := " " + inner[listStart:]
+	rest := inner[listStart:]
 	whereIndex := findListComprehensionToken(rest, " WHERE ")
 	pipeIndex := findListComprehensionToken(rest, "|")
 	endList := len(rest)
