@@ -465,6 +465,10 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsVersion()
 			})
+		registerBuiltInProcedure("gds.louvain.stream", "gds.louvain.stream(graphName :: STRING, configuration = {} :: MAP) :: (nodeId :: INTEGER, communityId :: INTEGER, intermediateCommunityIds :: LIST<INTEGER>)", localization.CypherProcedureMetadata("gds.louvain.stream"), ProcedureModeRead, 1, 2, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callGdsLouvainStream(args)
+			})
 		// NornicDB's stored node IDs are strings, including nonnumeric IDs.
 		// Declare that extension consistently for both procedures.
 		const nodeSimilaritySignature = "(graphName :: STRING, configuration = {} :: MAP) :: (node1 :: STRING, node2 :: STRING, similarity :: FLOAT, shared :: LIST<MAP>)"

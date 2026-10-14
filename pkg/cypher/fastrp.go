@@ -327,6 +327,7 @@ type gdsSubgraphOptions struct {
 type gdsEdge struct {
 	target int
 	weight float64
+	id     string // the projected relationship's id (an UNDIRECTED one is held twice)
 }
 
 // selectGDSSubgraph selects nodes and relationships from proj, with
