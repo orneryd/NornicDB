@@ -136,6 +136,14 @@ func TestLocalScopeRound3(t *testing.T) {
 			"WITH 7 AS x CALL (x) { RETURN [x IN [1] | x] AS v } RETURN v":                                                   []interface{}{int64(1)},
 			"WITH 7 AS p CALL (p) { MATCH (x:N {id:'a'}) RETURN [p = (x)-->(z) | length(p)] AS v } RETURN v":                 []interface{}{int64(1)},
 			"WITH 7 AS x RETURN COLLECT { MATCH (n:N {id:'a'}) RETURN x AS v } AS v":                                         []interface{}{int64(7)},
+			// CASE inside a named comprehension sees its path; a backquoted
+			// named path is one too.
+			"WITH 7 AS p MATCH (x:N {id:'a'}) MATCH (x)-[r:R]->(y) WHERE [p = (y)-->(z) | CASE WHEN length(p)=1 THEN z.id ELSE 'bad' END] = ['c'] RETURN count(*) AS c": int64(1),
+			"MATCH (y:N {id:'b'}) RETURN [p = (y)-->(z) | CASE WHEN length(p)=1 THEN z.id ELSE 'bad' END] AS v":                                                         []interface{}{"c"},
+			"RETURN [`p p` = (a:N)-->(b:N) | length(`p p`)] AS v":                                                                                                       []interface{}{int64(1), int64(1)},
+			"MATCH (y:N {id:'b'}) RETURN [`p p` = (y)-->(z) WHERE length(`p p`) = 1 | z.id] AS v":                                                                       []interface{}{"c"},
+			"WITH 7 AS `p p` MATCH (x:N {id:'a'}) MATCH (x)-[r:R]->(y) WHERE size([`p p` = (y)-->(z) | length(`p p`)]) = 1 RETURN count(*) AS c":                        int64(1),
+			"RETURN [`x x` IN[1, 2] | `x x` * 10] AS v":                                                                                                                 []interface{}{int64(10), int64(20)},
 		} {
 			result, err := exec.Execute(ctx, query, nil)
 			require.NoError(t, err, query)

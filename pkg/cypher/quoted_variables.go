@@ -323,8 +323,8 @@ func classifyQuotedToken(query string, token *quotedToken, inner byte) {
 		token.selector = true
 	case prevWord == "AS":
 		token.binding = true
-	case nextWord == "IN" && (prev == '[' || prev == '(' || prev == ','):
-		token.binding = true // comprehension, quantifier, reduce or FOREACH variable
+	case (prev == '[' || prev == '(' || prev == ',') && declaredAt(query, prevIndex+1, token.start):
+		token.binding = true // comprehension, quantifier, reduce, FOREACH or named path variable
 	case prev == '(' && (next == ':' || next == ')' || next == '{') && !callParenthesis(query, prevIndex):
 		token.binding = true // node pattern variable
 	case prev == '[' && (next == ':' || next == ']' || next == '*' || next == '{'):
@@ -858,4 +858,16 @@ func (names *quotedVariableNames) restoreStatementText(text string) string {
 		}
 	}
 	return names.restoreText(text)
+}
+
+// declaredAt reports whether the name written at offset at is the variable
+// a declaration after text[from] declares, as the declaration readers read
+// it: v IN … (bindingDeclaration, also FOREACH's) or p = (…)
+// (namedPathDeclaration).
+func declaredAt(text string, from, at int) bool {
+	if _, declared, _, ok := bindingDeclaration(text, from); ok && declared == at {
+		return true
+	}
+	_, declared, _, ok := namedPathDeclaration(text, from)
+	return ok && declared == at
 }

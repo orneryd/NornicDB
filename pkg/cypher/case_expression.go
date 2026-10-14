@@ -642,19 +642,23 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 }
 
 // caseVariableScopeOpensAt reports whether the delimiter at expr[open] (one
-// of ( [ {) opens a scope that binds names: [x IN …] or [(a)-->(b) | …], the
-// arguments of reduce / all / any / none / single / filter, or the { … } of an
-// EXISTS, COUNT, COLLECT or CALL subquery.
+// of ( [ {) opens a scope that binds names: a local binding (localBindingAt:
+// [x IN …], [p = (a)-->(b) | …], reduce / allReduce / all / any / none /
+// single / filter), an unnamed pattern comprehension [(a)-->(b) | …], or
+// the { … } of an EXISTS, COUNT, COLLECT or CALL subquery.
 func caseVariableScopeOpensAt(expr string, open int) bool {
+	if expr[open] != '{' {
+		if _, ok := localBindingAt(expr, open); ok {
+			return true
+		}
+	}
 	switch expr[open] {
 	case '[':
 		next := skipSpaces(expr, open+1)
-		if next < len(expr) && expr[next] == '(' {
-			return true
-		}
-		_, end, ok := scanIdentifierToken(expr, next)
-		return ok && matchKeywordAt(expr, skipSpaces(expr, end), "IN")
-	default: // ( or {
+		return next < len(expr) && expr[next] == '('
+	case '(':
+		return false
+	default: // {
 		end := open
 		for end > 0 && isASCIISpace(expr[end-1]) {
 			end--
@@ -667,10 +671,7 @@ func caseVariableScopeOpensAt(expr string, open int) bool {
 			return false
 		}
 		name := lowerASCII(expr[start:end])
-		if expr[open] == '{' {
-			return name == "exists" || name == "count" || name == "collect" || name == "call"
-		}
-		return name == "reduce" || name == "filter" || isQuantifierFunction(name)
+		return name == "exists" || name == "count" || name == "collect" || name == "call"
 	}
 }
 
