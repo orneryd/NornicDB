@@ -321,7 +321,7 @@ func TestNodeSimilarityExplicitIntegerComponentDefault(t *testing.T) {
 func TestReviewRound2SharedNodeIDs(t *testing.T) {
 	projection := &GraphProjection{nodeIndex: map[string]int{"9": 0}}
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "gds-ids")
-	for _, id := range []string{"9", "true", "9.5"} {
+	for _, id := range []string{"9", "true", "9.5", "9223372036854775807", "18446744073709551615"} {
 		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"N"}, Properties: map[string]interface{}{"v": int64(7)}})
 		require.NoError(t, err)
 	}
@@ -348,6 +348,24 @@ func TestReviewRound2SharedNodeIDs(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, float64(7), result.Rows[0][0])
 		})
+	}
+	for _, tc := range []struct {
+		value interface{}
+		id    string
+	}{
+		{int64(math.MaxInt64), "9223372036854775807"},
+		{^uint64(0), "18446744073709551615"},
+	} {
+		filter, err := readGDSNodeFilter(projection, []interface{}{tc.value})
+		require.NoError(t, err)
+		require.True(t, filter.nodes[tc.id])
+		config, err := linkPredictionConfigFromArguments([]interface{}{map[string]interface{}{"sourceNode": tc.value}})
+		require.NoError(t, err)
+		require.Equal(t, storage.NodeID(tc.id), config.SourceNode)
+		require.Equal(t, storage.NodeID(tc.id), gdsNodeByID(store, tc.value).(*storage.Node).ID)
+		result, err := e.Execute(context.Background(), "RETURN gds.util.nodeProperty('gds-ids', $node, 'v') AS value", map[string]interface{}{"node": tc.value})
+		require.NoError(t, err)
+		require.Equal(t, float64(7), result.Rows[0][0])
 	}
 	// asNode's pre-existing extension accepts other values naming string IDs.
 	require.Equal(t, storage.NodeID("true"), gdsNodeByID(store, true).(*storage.Node).ID)
@@ -389,4 +407,32 @@ func TestReviewRound2LinkProjectionSelection(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, result.Rows)
 	require.Equal(t, []interface{}{"0", "1", float64(1)}, result.Rows[0])
+}
+
+// The shared selector's immutable-index path is equivalent to selecting every
+// label explicitly. Degree statistics retain parallel edges and self-loops.
+func TestReviewRound2ProjectionReaderEquivalence(t *testing.T) {
+	e := reviewGraph(t, make([]map[string]interface{}, 4), []reviewEdge{
+		{"0", "2", "A", map[string]interface{}{"w": 2.0}},
+		{"0", "2", "A", map[string]interface{}{"w": 3.0}},
+		{"1", "2", "A", map[string]interface{}{"w": 1.0}},
+		{"0", "0", "Z", map[string]interface{}{"w": 4.0}},
+	}, "'N'", "{A:{orientation:'UNDIRECTED', properties:'w'}, Z:{properties:'w'}}")
+	projection, err := e.graphProjection("rev")
+	require.NoError(t, err)
+	cached, err := selectGDSSubgraph(projection, nil, nil, "w", gdsSubgraphOptions{includeTypes: true})
+	require.NoError(t, err)
+	selected, err := selectGDSSubgraph(projection, projection.Labels, projection.Types, "w", gdsSubgraphOptions{includeTypes: true})
+	require.NoError(t, err)
+	require.Equal(t, selected, cached)
+	originalIDs := append([]string(nil), projection.NodeIDs...)
+	nodeSimilarityNeighbors(cached)
+	require.Equal(t, originalIDs, projection.NodeIDs)
+	distribution := gdsDegreeDistribution(projection)
+	require.Equal(t, int64(0), distribution["min"])
+	require.Equal(t, int64(3), distribution["max"])
+	require.Equal(t, 1.75, distribution["mean"])
+	result, err := e.Execute(context.Background(), "CALL gds.graph.list('rev') YIELD degreeDistribution RETURN degreeDistribution", nil)
+	require.NoError(t, err)
+	require.Equal(t, distribution, result.Rows[0][0])
 }
