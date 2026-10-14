@@ -146,46 +146,10 @@ func (r *RoleStore) deleteRole(ctx context.Context, name string, fromCypher bool
 	return nil
 }
 
-// RenameRole renames a user-defined role (oldName -> newName). Fails if old is built-in,
-// new is built-in or exists, or old does not exist. Does not update user nodes or allowlist;
-// caller should update those or document that rename is for the role list only and
-// allowlist/user assignments use the new name going forward.
+// RenameRole moves the role and all its stored grants and assignments atomically.
+// Servers use RenameRoleWithStores to publish their loaded caches after commit.
 func (r *RoleStore) RenameRole(ctx context.Context, oldName, newName string) error {
-	oldName = strings.ToLower(strings.TrimSpace(oldName))
-	newName = strings.ToLower(strings.TrimSpace(newName))
-	if IsBuiltinRole(oldName) {
-		return ErrCannotDeleteBuiltinRole
-	}
-	if IsBuiltinRole(newName) || newName == "" {
-		return ErrRoleExists
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, exists := r.roles[oldName]; !exists {
-		return ErrRoleNotFound
-	}
-	if _, exists := r.roles[newName]; exists {
-		return ErrRoleExists
-	}
-	oldID := storage.NodeID(rolePrefix + oldName)
-	newNode := &storage.Node{
-		ID:     storage.NodeID(rolePrefix + newName),
-		Labels: []string{roleLabel, roleSystems},
-		Properties: map[string]any{
-			"name": newName,
-		},
-	}
-	if err := WithStoreTransaction(ctx, r.storage, func(view storage.Engine) error {
-		if _, err := view.CreateNode(newNode); err != nil {
-			return err
-		}
-		return view.DeleteNode(oldID)
-	}); err != nil {
-		return err
-	}
-	delete(r.roles, oldName)
-	r.roles[newName] = struct{}{}
-	return nil
+	return r.RenameRoleWithStores(ctx, oldName, newName, RoleRenameStores{})
 }
 
 // Exists returns true if the role exists (built-in or user-defined).

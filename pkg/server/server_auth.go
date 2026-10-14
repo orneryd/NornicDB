@@ -826,7 +826,10 @@ func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
 			s.writeNeo4jRequestFieldRequired(w, r, "Neo.ClientError.Request.InvalidFormat", "name")
 			return
 		}
-		if err := s.roleStore.RenameRoleWithUsers(r.Context(), roleName, newName, s.allowlistStore, s.auth); err != nil {
+		if err := s.roleStore.RenameRoleWithStores(r.Context(), roleName, newName, auth.RoleRenameStores{
+			Allowlist: s.allowlistStore, Privileges: s.privilegesStore,
+			Entitlements: s.roleEntitlementsStore, Users: s.auth,
+		}); err != nil {
 			if err == auth.ErrCannotDeleteBuiltinRole || err == auth.ErrRoleNotFound {
 				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err)
 				return

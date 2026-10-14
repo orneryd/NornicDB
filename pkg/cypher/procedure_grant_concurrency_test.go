@@ -34,35 +34,44 @@ func (e *grantBarrierEngine) CreateNode(node *storage.Node) (storage.NodeID, err
 	return e.Engine.CreateNode(node)
 }
 
-func TestGrantsAndRoleDeletionSerialize(t *testing.T) {
-	ctx := context.Background()
-	base := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
-	system := storage.NewNamespacedEngine(base, "system")
-	roles := auth.NewRoleStore(system)
-	require.NoError(t, roles.CreateRole(ctx, "ops"))
-	barrier := &grantBarrierEngine{Engine: system, entered: make(chan struct{}), release: make(chan struct{})}
-	exec := NewStorageExecutor(barrier)
-	done := make(chan error, 1)
-	go func() {
-		_, err := exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO ops", nil)
-		done <- err
-	}()
-	select {
-	case <-barrier.entered:
-	case err := <-done:
-		t.Fatalf("grant did not reach its write: %v", err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("grant did not reach barrier")
+func TestGrantsAndRoleChangesSerialize(t *testing.T) {
+	for _, rename := range []bool{false, true} {
+		t.Run(map[bool]string{false: "delete", true: "rename"}[rename], func(t *testing.T) {
+			ctx := context.Background()
+			base := storage.NewMemoryEngine()
+			t.Cleanup(func() { _ = base.Close() })
+			system := storage.NewNamespacedEngine(base, "system")
+			roles := auth.NewRoleStore(system)
+			require.NoError(t, roles.CreateRole(ctx, "ops"))
+			barrier := &grantBarrierEngine{Engine: system, entered: make(chan struct{}), release: make(chan struct{})}
+			exec := NewStorageExecutor(barrier)
+			done := make(chan error, 1)
+			go func() {
+				_, err := exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO ops", nil)
+				done <- err
+			}()
+			select {
+			case <-barrier.entered:
+			case err := <-done:
+				t.Fatalf("grant did not reach its write: %v", err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("grant did not reach barrier")
+			}
+			var err error
+			if rename {
+				err = roles.RenameRole(ctx, "ops", "renamed")
+			} else {
+				err = roles.DeleteRole(ctx, "ops")
+			}
+			close(barrier.release)
+			require.NoError(t, err)
+			require.Error(t, <-done, "the grant's role snapshot must conflict with the role change")
+			require.NoError(t, roles.CreateRole(ctx, "ops"))
+			allowed, err := auth.NewProcedurePrivilegeStore(system).AllowsBoosted([]string{"ops"}, "db.cdc.query")
+			require.NoError(t, err)
+			require.False(t, allowed)
+		})
 	}
-	err := roles.DeleteRole(ctx, "ops")
-	close(barrier.release)
-	require.NoError(t, err)
-	require.Error(t, <-done, "the grant's role snapshot must conflict with deletion")
-	require.NoError(t, roles.CreateRole(ctx, "ops"))
-	allowed, err := auth.NewProcedurePrivilegeStore(system).AllowsBoosted([]string{"ops"}, "db.cdc.query")
-	require.NoError(t, err)
-	require.False(t, allowed)
 }
 
 type immutableUpgradeFailure struct {
