@@ -192,11 +192,28 @@ curl http://localhost:7474/status | jq .embeddings
 
 ### Trigger Regeneration
 
+Regeneration clears the stored embeddings of the chosen databases and re-embeds their
+nodes, for example after switching embedding models (vectors from different models
+cannot be compared). It needs the **admin** role, and write access to every database
+it names. Without a list it regenerates the default database only; other databases
+keep their embeddings.
+
 ```bash
-# Regenerate all embeddings
-curl -X POST http://localhost:7474/nornicdb/embed/trigger?regenerate=true \
+# The default database
+curl -X POST "http://localhost:7474/nornicdb/embed/trigger?regenerate=true" \
   -H "Authorization: Bearer $TOKEN"
+
+# Specific databases (a JSON list, or ?database=a&database=b, or ?database=a,b)
+curl -X POST "http://localhost:7474/nornicdb/embed/trigger?regenerate=true" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"databases": ["nornic", "soraban-connect"]}'
 ```
+
+The response (`202 Accepted`) lists the databases being regenerated. An unknown,
+composite or `system` database, or one the caller may not write, rejects the whole
+request before anything is cleared. `POST /nornicdb/embed/clear` takes the same
+`databases` list and only clears (reporting the count per database); the UI's
+regenerate dialog lets you tick the databases, with the default one pre-selected.
 
 ### Recover Terminal Failures
 

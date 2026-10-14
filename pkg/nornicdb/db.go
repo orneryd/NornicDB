@@ -2182,40 +2182,53 @@ func (db *DB) ResetEmbedWorker() error {
 	return nil
 }
 
-// ClearAllEmbeddings removes embeddings from all nodes, allowing them to be regenerated.
-// This is useful for re-embedding with a new model or fixing corrupted embeddings.
-// It clears both the node embeddings in storage AND the search index.
+// ClearAllEmbeddings removes the embeddings of the default database's nodes, allowing
+// them to be regenerated (with a new model, or to fix corrupted embeddings). It clears
+// both the node embeddings in storage and the search index. Use
+// ClearEmbeddingsForDatabase for other databases.
 func (db *DB) ClearAllEmbeddings() (int, error) {
-	// First, clear the search service's vector index
-	// This ensures EmbeddingCount() returns 0 immediately
-	if svc, _ := db.getOrCreateSearchService(db.defaultDatabaseName(), db.storage); svc != nil {
+	return db.ClearEmbeddingsForDatabase(db.defaultDatabaseName(), db.storage)
+}
+
+// ClearEmbeddingsForDatabase removes the embeddings of one database's nodes so the
+// embedding worker regenerates them (after switching embedding models, for example),
+// and empties that database's vector index so searches stop using the old vectors at
+// once. storageEngine is the database's storage as DatabaseManager.GetStorage returns
+// it: a namespaced engine, so only that database's nodes are touched. Other databases
+// keep their embeddings.
+func (db *DB) ClearEmbeddingsForDatabase(dbName string, storageEngine storage.Engine) (int, error) {
+	if svc, _ := db.getOrCreateSearchService(dbName, storageEngine); svc != nil {
 		svc.ClearVectorIndex()
 	}
+	return clearStoredEmbeddings(storageEngine)
+}
 
-	// Unwrap storage layers to find the BadgerEngine
-	// The storage chain is: WALEngine -> BadgerEngine
-	engine := db.storage
+// clearStoredEmbeddings walks the storage decorators (namespace, size tracking, WAL,
+// async, ...) through storage.EngineUnwrapper down to the Badger engine and clears the
+// embeddings of the outermost namespace's nodes, or of every node when the engine is not
+// namespaced.
+func clearStoredEmbeddings(engine storage.Engine) (int, error) {
 	idPrefix := ""
-
-	// Unwrap NamespacedEngine first (DB instances are scoped to a single database namespace)
-	if namespacedEngine, ok := engine.(*storage.NamespacedEngine); ok {
-		idPrefix = namespacedEngine.Namespace() + ":"
-		engine = namespacedEngine.GetInnerEngine()
-	}
-
-	// Unwrap WALEngine if present
-	if walEngine, ok := engine.(*storage.WALEngine); ok {
-		engine = walEngine.GetInnerEngine()
-	}
-
-	// Now check if we have a BadgerEngine
-	if badgerStorage, ok := engine.(*storage.BadgerEngine); ok {
-		if idPrefix != "" {
-			return badgerStorage.ClearAllEmbeddingsForPrefix(idPrefix)
+	for engine != nil {
+		if namespacedEngine, ok := engine.(*storage.NamespacedEngine); ok && idPrefix == "" {
+			idPrefix = namespacedEngine.Namespace() + ":"
 		}
-		return badgerStorage.ClearAllEmbeddings()
+		if badgerStorage, ok := engine.(*storage.BadgerEngine); ok {
+			if idPrefix != "" {
+				return badgerStorage.ClearAllEmbeddingsForPrefix(idPrefix)
+			}
+			return badgerStorage.ClearAllEmbeddings()
+		}
+		unwrapper, ok := engine.(storage.EngineUnwrapper)
+		if !ok {
+			break
+		}
+		inner := unwrapper.GetInnerEngine()
+		if inner == nil || inner == engine {
+			break
+		}
+		engine = inner
 	}
-
 	return 0, localizedError(localization.NornicDBCoreClearEmbeddingsUnsupported(), nil)
 }
 

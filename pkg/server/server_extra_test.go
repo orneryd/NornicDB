@@ -1569,9 +1569,10 @@ func TestEmbedHandlersAndHelperUnits(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 
 	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/clear", nil)
+	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Sub: "admin", Username: "admin", Roles: []string{"admin"}}))
 	rec = httptest.NewRecorder()
 	server.handleEmbedClear(rec, req)
-	assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, rec.Code)
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	// Tiny zero-coverage helper: search service wrapper and permission parser.
 	_, err := server.getOrCreateSearchService(server.dbManager.DefaultDatabaseName(), server.db.GetStorage())
@@ -2196,7 +2197,9 @@ func TestEmbedTriggerAdditionalBranches(t *testing.T) {
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, rec.Code)
 
+	// Regenerating clears the database's embeddings, so it needs write access to it.
 	req = httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil)
+	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Sub: "admin", Username: "admin", Roles: []string{"admin"}}))
 	rec = httptest.NewRecorder()
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusAccepted, http.StatusInternalServerError}, rec.Code)

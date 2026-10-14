@@ -7,12 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Regenerating or clearing embeddings can target any databases: `POST /nornicdb/embed/trigger?regenerate=true` and
+  `POST /nornicdb/embed/clear` take `{"databases": [...]}` (or `?database=`), defaulting to the default database as
+  before. Each named database needs write access, and an unknown, composite or `system` database rejects the request
+  before anything is cleared. The UI's regenerate dialog lists the databases with checkboxes (the default one
+  pre-selected) and a "Select all" box.
+
 ### Fixed
 
 - With an OpenAI-compatible embedder (`openai`, `orca`, or a gateway in front of another provider), text longer
   than `NORNICDB_EMBED_CHUNK_SIZE` is split into chunks as with the other providers. The OpenAI provider sent it
   whole, so a node longer than the model's context window (8,191 tokens for OpenAI, 8,192 for Amazon Titan) was
   rejected and never got a vector. Chunks are cut by UTF-8 bytes, an upper bound on tokens.
+
+### Security
+
+- `POST /nornicdb/embed/trigger?regenerate=true` requires the admin role, like `/nornicdb/embed/clear`. The route only
+  required write, so any writer could clear and rebuild every embedding.
 
 ## [1.4.2]
 

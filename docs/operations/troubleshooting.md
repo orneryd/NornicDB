@@ -358,9 +358,11 @@ safe recovery path is snapshot + WAL replay into a fresh store.
    curl http://localhost:7474/status | jq .embeddings.pending
    ```
 
-4. **Trigger regeneration:**
+4. **Trigger regeneration** (admin; the default database unless you name others):
    ```bash
-   curl -X POST http://localhost:7474/nornicdb/embed/trigger?regenerate=true
+   curl -X POST "http://localhost:7474/nornicdb/embed/trigger?regenerate=true" \
+     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"databases": ["nornic", "my-other-db"]}'
    ```
 
 ## Docker Issues
