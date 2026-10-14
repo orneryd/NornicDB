@@ -296,6 +296,18 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 	if strings.IndexByte(text, '.') < 0 && strings.IndexByte(text, '{') < 0 {
 		return nil
 	}
+	// A comprehension, quantifier or reduce is scanned in place: an access
+	// whose base reads a local of that name (localVariableShadowsAt) isn't
+	// the clause's variable, and a pattern comprehension or subquery body
+	// sees the outer types without the names bound around it.
+	var locals *localReader
+	local := func() *localReader {
+		if locals == nil {
+			reader := newLocalReader(text)
+			locals = &reader
+		}
+		return locals
+	}
 	for index := 0; index < len(text); index++ {
 		switch c := text[index]; {
 		case c == '\'' || c == '"':
@@ -315,25 +327,12 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 			if end < 0 {
 				return nil
 			}
-			inner := text[index+1 : end]
 			if pattern, projection, isPattern := splitPatternComprehension(text[index : end+1]); isPattern {
 				// The pattern's own variables are nodes, relationships or
-				// paths; outer variables keep their types inside.
-				if err := checkPropertyAccesses(pattern, types, params); err != nil {
-					return err
-				}
-				if err := checkExpressionPropertyAccesses(projection, types, params); err != nil {
-					return err
-				}
-				index = end
-				continue
-			}
-			if variable, list, predicate, projection, comprehension := parseListComprehension(inner); comprehension {
-				if err := checkExpressionPropertyAccesses(list, types, params); err != nil {
-					return err
-				}
-				inside := shadowPropertyAccessTypes(types, variable)
-				if err := checkExpressionPropertyAccesses(predicate, inside, params); err != nil {
+				// paths; outer variables keep their types inside, but for
+				// the names bound around it.
+				inside := local().withoutTypes(types, index)
+				if err := checkPropertyAccesses(pattern, inside, params); err != nil {
 					return err
 				}
 				if err := checkExpressionPropertyAccesses(projection, inside, params); err != nil {
@@ -348,7 +347,7 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 					return nil
 				}
 				// A subquery body sees the outer variables.
-				if err := validatePropertyAccessClauses(text[index+1:end], types, params); err != nil {
+				if err := validatePropertyAccessClauses(text[index+1:end], local().withoutTypes(types, index), params); err != nil {
 					return err
 				}
 				index = end
@@ -371,81 +370,22 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 				continue
 			}
 			name, next, _ := scanIdentifierToken(text, index)
-			if after := skipSpaces(text, next); after < len(text) && text[after] == '(' && isQuantifierOrReduceFunction(name) {
-				end := findMatchingDelimiter(text, after, '(', ')')
-				if end < 0 {
-					return nil
-				}
-				if err := checkBindingFunctionPropertyAccesses(name, text[after+1:end], types, params); err != nil {
-					return err
-				}
-				index = end
-				continue
+			typeName := types[name]
+			if typeName != "" && local().shadows(name, index) {
+				typeName = "" // a local of that name, not the clause's
 			}
 			if propertyAccessFollows(text, next) && !namespacedCallFollows(text, next) {
-				if err := propertyAccessMismatch(types[name], ""); err != nil {
+				if err := propertyAccessMismatch(typeName, ""); err != nil {
 					return err
 				}
 			}
-			if after := skipSpaces(text, next); expressions && after < len(text) && text[after] == '{' && rejectsPropertyAccess(types[name]) && !isSubqueryBrace(text, after) {
-				return typeNameMismatchError("Map, Node or Relationship", types[name])
+			if after := skipSpaces(text, next); expressions && after < len(text) && text[after] == '{' && rejectsPropertyAccess(typeName) && !isSubqueryBrace(text, after) {
+				return typeNameMismatchError("Map, Node or Relationship", typeName)
 			}
 			index = next - 1
 		}
 	}
 	return nil
-}
-
-// checkBindingFunctionPropertyAccesses checks any / all / none / single
-// (x IN list WHERE predicate) and the reduce forms (parseReduceForm), whose
-// variables shadow the scope.
-func checkBindingFunctionPropertyAccesses(function, arguments string, types map[string]string, params map[string]interface{}) error {
-	if isReduceFormFunction(function) {
-		form, ok := parseReduceForm(function, arguments)
-		if !ok {
-			return nil
-		}
-		for _, outer := range []string{form.initial, form.list} {
-			if err := checkExpressionPropertyAccesses(outer, types, params); err != nil {
-				return err
-			}
-		}
-		inner := shadowPropertyAccessTypes(types, form.variable, form.accumulator)
-		if err := checkExpressionPropertyAccesses(form.step, inner, params); err != nil {
-			return err
-		}
-		return checkExpressionPropertyAccesses(form.predicate, inner, params)
-	}
-	variable, list, predicate, _, ok := parseListComprehension(arguments)
-	if !ok {
-		return nil
-	}
-	if err := checkExpressionPropertyAccesses(list, types, params); err != nil {
-		return err
-	}
-	return checkExpressionPropertyAccesses(predicate, shadowPropertyAccessTypes(types, variable), params)
-}
-
-// shadowPropertyAccessTypes is types without the variables an inner scope
-// binds.
-func shadowPropertyAccessTypes(types map[string]string, variables ...string) map[string]string {
-	shadowed := false
-	for _, variable := range variables {
-		if _, known := types[normalizeProjectionColumnName(variable)]; known {
-			shadowed = true
-		}
-	}
-	if !shadowed {
-		return types
-	}
-	inner := make(map[string]string, len(types))
-	for name, typeName := range types {
-		inner[name] = typeName
-	}
-	for _, variable := range variables {
-		delete(inner, normalizeProjectionColumnName(variable))
-	}
-	return inner
 }
 
 // propertyAccessMismatch is the SyntaxError of a property access on a base of
