@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // --- ChunkText coverage (0% on all embedder types) ---
@@ -47,6 +49,39 @@ func TestOpenAIEmbedder_ChunkText(t *testing.T) {
 	}
 	if len(chunks) != 1 || chunks[0] != "some text" {
 		t.Errorf("Expected [\"some text\"], got %v", chunks)
+	}
+}
+
+// A text longer than the chunk size is split into chunks of at most that many
+// UTF-8 bytes, an upper bound on any provider's token count. Before, the
+// OpenAI embedder returned the text whole and ignored NORNICDB_EMBED_CHUNK_SIZE,
+// so a long node (12,010 tokens against Titan's 8,192) failed and got no vector.
+func TestOpenAIEmbedder_ChunkTextRespectsChunkSize(t *testing.T) {
+	for _, provider := range []string{"openai", "orca"} {
+		cfg := DefaultOpenAIConfig("fake-key")
+		cfg.Provider = provider
+		e := NewOpenAI(cfg)
+		text := strings.Repeat("func handler(w http.ResponseWriter) { écrire(w, \"données\") }\n", 400)
+		chunks, err := e.ChunkText(text, 1024, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(chunks) < 2 {
+			t.Fatalf("%s: expected the %d-byte text to be split, got %d chunk(s)", provider, len(text), len(chunks))
+		}
+		covered := 0
+		for i, chunk := range chunks {
+			if len(chunk) > 1024 {
+				t.Errorf("%s: chunk %d is %d bytes, over the 1024 cap", provider, i, len(chunk))
+			}
+			if !utf8.ValidString(chunk) {
+				t.Errorf("%s: chunk %d splits a UTF-8 character", provider, i)
+			}
+			covered += len(chunk)
+		}
+		if covered < len(strings.TrimSpace(text)) {
+			t.Errorf("%s: chunks cover %d of %d bytes", provider, covered, len(text))
+		}
 	}
 }
 

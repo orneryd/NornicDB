@@ -5,6 +5,15 @@ All notable changes to NornicDB will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- With an OpenAI-compatible embedder (`openai`, `orca`, or a gateway in front of another provider), text longer
+  than `NORNICDB_EMBED_CHUNK_SIZE` is split into chunks as with the other providers. The OpenAI provider sent it
+  whole, so a node longer than the model's context window (8,191 tokens for OpenAI, 8,192 for Amazon Titan) was
+  rejected and never got a vector. Chunks are cut by UTF-8 bytes, an upper bound on tokens.
+
 ## [1.4.2]
 
 ### Added

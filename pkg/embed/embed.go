@@ -922,7 +922,16 @@ func (e *OpenAIEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 }
 
 func (e *OpenAIEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
-	return []string{text}, nil
+	// OpenAI-compatible endpoints (OpenAI, OrcaRouter, gateways such as LiteLLM
+	// in front of Bedrock) reject inputs over the model's context window
+	// (8191 tokens for OpenAI, 8192 for Titan) and do not expose their
+	// tokenizer. As for Ollama, UTF-8 bytes are a conservative upper bound on
+	// tokens, so chunks of at most maxTokens bytes (NORNICDB_EMBED_CHUNK_SIZE)
+	// always fit. Returning the text whole sent long nodes in one request,
+	// which the provider rejected, and the node never got a vector.
+	return textchunk.ChunkByTokenCount(text, maxTokens, overlap, func(value string) (int, error) {
+		return len(value), nil
+	})
 }
 
 // Dimensions returns the expected embedding dimensions.
