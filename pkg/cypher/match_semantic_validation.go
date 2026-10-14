@@ -125,6 +125,11 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				return types, false, err
 			}
 		}
+		if clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseOptionalMatch {
+			if err := validateShortestCallBindings(clause.text, scope); err != nil {
+				return types, false, err
+			}
+		}
 		var projectedTypes typeScope
 		if clause.kind == pipelineClauseWith {
 			projectedTypes = projectTypeScopeIn(types, view, clause.text)
@@ -584,6 +589,11 @@ func (e *StorageExecutor) validateMatchClauseBindings(scope matchSemanticScope, 
 			scope[pathVariable] = matchBindingPath
 		}
 
+		if _, _, _, selected := splitPathSelectorTerm(whereClause); !selected {
+			if err := validateShortestCallBindings(entityPattern, scope); err != nil {
+				return err
+			}
+		}
 		for _, variable := range extractNodeVariables(entityPattern) {
 			if variable == pathVariable {
 				return newSemanticError(

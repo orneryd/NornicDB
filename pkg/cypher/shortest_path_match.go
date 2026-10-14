@@ -364,6 +364,11 @@ func (e *StorageExecutor) pipelineMatchRows(ctx context.Context, row pipelineRow
 // is an error unless the minimum length is 0, which makes the path of
 // length 0.
 func (e *StorageExecutor) shortestPathsBetween(ctx context.Context, m *shortestPathMatch, start, end *storage.Node, row pipelineRow) ([]pipelineRow, error) {
+	if variable := m.traversal.Relationship.Variable; variable != "" {
+		if _, bound := row[variable]; bound {
+			return nil, errBoundShortestRelationships()
+		}
+	}
 	if start.ID == end.ID && m.traversal.Relationship.MinHops > 0 {
 		return nil, localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "ShortestPathCommonEndNodes",
 			localization.CypherMatchingShortestPathCommonEndNodes())
@@ -377,4 +382,51 @@ func (e *StorageExecutor) shortestPathsBetween(ctx context.Context, m *shortestP
 		return nil, err
 	}
 	return rows, getExpressionFailure(ctx)
+}
+
+// errBoundShortestRelationships is Neo4j 5.26.30's diagnostic for a function
+// pattern that reuses a relationship binding from an earlier pattern.
+func errBoundShortestRelationships() error {
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "BoundRelationships", localization.CypherMatchingBoundShortestRelationships())
+}
+
+// validateShortestCallBindings checks calls against the incoming semantic
+// scope. Subqueries are checked by their own scope walk, and selector calls
+// inserted by the rewrite have the selector's equality semantics instead.
+func validateShortestCallBindings(text string, scope matchSemanticScope) error {
+	if indexASCIIFold(text, "shortestpath") < 0 {
+		return nil
+	}
+	if where := topLevelKeywordIndex(text, "WHERE"); where >= 0 {
+		if _, _, _, selected := splitPathSelectorTerm(strings.TrimSpace(text[where+len("WHERE"):])); selected {
+			return nil
+		}
+	}
+	text = maskSubqueryBodies(text)
+	for at := 0; at < len(text); at++ {
+		if text[at] == '\'' || text[at] == '"' || text[at] == '`' {
+			at = skipCypherQuotedText(text, at, text[at]) - 1
+			continue
+		}
+		if !isIdentStartByte(text[at]) || at > 0 && (isIdentByte(text[at-1]) || text[at-1] == '.' || text[at-1] == '$') {
+			continue
+		}
+		end := at + 1
+		for end < len(text) && isIdentByte(text[end]) {
+			end++
+		}
+		word := text[at:end]
+		if equalFoldASCII(word, "shortestPath") || equalFoldASCII(word, "allShortestPaths") {
+			_, pattern, index, ok := extractShortestPathCall(text[at:])
+			if ok && index == 0 {
+				if items, ok := parsePathPatternItems(pattern, false); ok && len(items) == 3 && items[1].kind == pathPatternRelationship {
+					if _, bound := scope[items[1].variable]; items[1].variable != "" && bound {
+						return errBoundShortestRelationships()
+					}
+				}
+			}
+		}
+		at = end - 1
+	}
+	return nil
 }

@@ -35,6 +35,17 @@ type relationshipPlace struct {
 // other repeat is the TCK's SyntaxError unless modeWritten (see above).
 func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, modeWritten bool) ([]string, error) {
 	q := r.query
+	if indexASCIIFold(q[start:end], "shortestpath") >= 0 {
+		scope := matchSemanticScope{}
+		for _, part := range splitTopLevelComma(q[start:end]) {
+			if err := validateShortestCallBindings(part, scope); err != nil {
+				return nil, err
+			}
+			for _, variable := range extractRelationshipVariables(part) {
+				scope[variable] = matchBindingUnknown
+			}
+		}
+	}
 	places := make(map[string][]relationshipPlace)
 	var order []string
 	for i := start; i < end; i++ {

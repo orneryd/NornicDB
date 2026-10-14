@@ -1054,6 +1054,11 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 	s := e.newPathSearch(ctx, a, row, maxLength, source)
 	if target != nil {
 		direct := len(plan.pathChecks) == 0 && len(plan.iterationChecks) == 0 && !plan.acyclic && !plan.repeated
+		for _, variable := range plan.listVariables {
+			if _, bound := row[variable]; bound {
+				direct = false
+			}
+		}
 		return s.pair(source, target, count, groups, direct, bind)
 	}
 	if ends != nil {
@@ -1211,6 +1216,18 @@ func (e *StorageExecutor) bindSelectedPath(ctx context.Context, plan *selectedPa
 		}
 	}
 	for variable, values := range lists {
+		if existing, exists := row[variable]; exists {
+			items, ok := toInterfaceSlice(existing)
+			if !ok || len(items) != len(values) {
+				return nil, false
+			}
+			for index, value := range values {
+				if ctx.Err() != nil || !sameSelectedEntity(items[index], value) {
+					return nil, false
+				}
+			}
+			continue
+		}
 		bound[variable] = values
 	}
 	bound[plan.pathVariable] = e.pathToMapContext(ctx, PathResult{Nodes: nodes, Relationships: relationships, Length: len(relationships)})
