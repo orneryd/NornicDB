@@ -81,9 +81,12 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 		requirements.Read = false
 	}
 	// GDS aggregation projection writes the same catalog as the procedure.
-	if indexASCIIFold(query, "gds.graph.project") >= 0 {
-		requirements.Write = true
-	}
+	_ = forEachFunctionCall(query, func(_, normalized string) error {
+		if normalized == "gds.graph.project" {
+			requirements.Write = true
+		}
+		return nil
+	})
 	return requirements
 }
 

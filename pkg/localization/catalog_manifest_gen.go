@@ -507,6 +507,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphergraphprocedures.node_not_node_or_integer", Constructor: "CypherGraphProceduresNodeNotNodeOrInteger", Fields: []string{"Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.node_properties_not_found", Constructor: "CypherGraphProceduresNodePropertiesNotFound", Fields: []string{"Properties"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.node_property_not_in_graph", Constructor: "CypherGraphProceduresNodePropertyNotInGraph", Fields: []string{"Property"}, PluralForms: []string{"other"}},
+	{ID: "cyphergraphprocedures.project_distinct", Constructor: "CypherGraphProceduresProjectDistinct", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.property_read_type", Constructor: "CypherGraphProceduresPropertyReadType", Fields: []string{"Requested", "Stored"}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.property_type_unknown", Constructor: "CypherGraphProceduresPropertyTypeUnknown", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphergraphprocedures.relationship_end_not_projected", Constructor: "CypherGraphProceduresRelationshipEndNotProjected", Fields: []string{"Node", "Side"}, PluralForms: []string{"other"}},
