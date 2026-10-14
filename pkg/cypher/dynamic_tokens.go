@@ -538,7 +538,11 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 			}
 			if args := splitTopLevelComma(text[open+1 : closing]); len(args) == 3 {
 				if err := staticDynamicTokenError(args[1], scope, dynamicTokenLabel); err != nil {
-					return err
+					// all(l IN ['A'] WHERE x:$(l)) reads the list's l.
+					local, shadowed := withoutLocalVariables(scope, text, open)
+					if !shadowed || staticDynamicTokenError(args[1], local, dynamicTokenLabel) != nil {
+						return err
+					}
 				}
 			}
 			i = closing

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"maps"
 	"reflect"
 	"strings"
 
@@ -104,7 +105,7 @@ func staticListOperandTypeError(text string, scope staticTypeScope) error {
 		if typeName == "" || mayBeListType(typeName) {
 			return nil
 		}
-		if foreachDeclaration(text, in) || forIterationDeclaration(text, in) || localListBindingShadowsOperand(text, start, name) {
+		if foreachDeclaration(text, in) || forIterationDeclaration(text, in) || localVariableShadowsAt(text, start, name) {
 			return nil
 		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreListOperandTypeMismatch(typeName))
@@ -174,7 +175,17 @@ func forIterationDeclaration(text string, in int) bool {
 	return false
 }
 
-func localListBindingShadowsOperand(text string, operand int, name string) bool {
+// localVariableShadowsAt reports whether name, read at offset operand of
+// text, is a variable an enclosing expression binds itself rather than the
+// clause's: a list comprehension's element in its WHERE and projection
+// ([n IN l WHERE 1 IN n | n[0]]), the element of all / any / none / single
+// in its predicate (all(n IN l WHERE n[0])), and reduce's accumulator and
+// element in its step (reduce(acc = [], n IN l | [s IN acc | s])). The list
+// a binding iterates and reduce's initial value are read outside it: in
+// 1 IN n, [n IN [1] | n] the first n is the clause's. It is the one reader
+// of these scopes for the static checks that scan raw text (list operands,
+// subscripts, dynamic labels; withoutLocalVariables).
+func localVariableShadowsAt(text string, operand int, name string) bool {
 	for open := 0; open < operand; open++ {
 		switch text[open] {
 		case '\'', '"', '`':
@@ -187,17 +198,39 @@ func localListBindingShadowsOperand(text string, operand int, name string) bool 
 			}
 		}
 		isList := text[open] == '['
-		if !isList && (text[open] != '(' || !quantifierBeforeParen(text, open)) {
-			continue
+		function := ""
+		if !isList {
+			if text[open] != '(' {
+				continue
+			}
+			if function = bindingFunctionBeforeParen(text, open); function == "" {
+				continue
+			}
 		}
-		declaration := queryGapEnd(text, open+1)
-		variable, end, ok := scanIdentifierToken(text, declaration)
-		if !ok || variable != name {
-			continue
-		}
-		in := queryGapEnd(text, end)
-		if in+2 > operand || !strings.EqualFold(text[in:in+2], "IN") || in+2 < len(text) && isIdentByte(text[in+2]) {
-			continue
+		reduce := isReduceFormFunction(function)
+		scanFrom := open + 1
+		if reduce {
+			// reduce(acc = initial, element IN list | step): both names
+			// are bound from the | on.
+			closing := findMatchingParen(text, open)
+			if closing < 0 {
+				continue
+			}
+			form, ok := parseReduceForm(function, text[open+1:closing])
+			if !ok || form.accumulator != name && form.variable != name {
+				continue
+			}
+		} else {
+			declaration := queryGapEnd(text, open+1)
+			variable, end, ok := scanIdentifierToken(text, declaration)
+			if !ok || variable != name {
+				continue
+			}
+			in := queryGapEnd(text, end)
+			if in+2 > operand || !strings.EqualFold(text[in:in+2], "IN") || in+2 < len(text) && isIdentByte(text[in+2]) {
+				continue
+			}
+			scanFrom = in + 2
 		}
 		brackets, parens, braces := 0, 0, 0
 		if isList {
@@ -206,7 +239,7 @@ func localListBindingShadowsOperand(text string, operand int, name string) bool 
 			parens = 1
 		}
 		projecting := false
-		for index := in + 2; index < operand; index++ {
+		for index := scanFrom; index < operand; index++ {
 			switch text[index] {
 			case '\'', '"', '`':
 				index = skipCypherQuotedText(text, index, text[index]) - 1
@@ -229,11 +262,12 @@ func localListBindingShadowsOperand(text string, operand int, name string) bool 
 			case '}':
 				braces--
 			case '|':
-				if isList && brackets == 1 && parens == 0 && braces == 0 {
+				if isList && brackets == 1 && parens == 0 && braces == 0 || reduce && parens == 1 && brackets == 0 && braces == 0 {
 					projecting = true
 				}
 			}
-			if !isList && parens == 1 && brackets == 0 && braces == 0 && index+5 <= operand && strings.EqualFold(text[index:index+5], "WHERE") &&
+			outermost := isList && brackets == 1 && parens == 0 || !isList && parens == 1 && brackets == 0
+			if !reduce && outermost && braces == 0 && index+5 <= operand && strings.EqualFold(text[index:index+5], "WHERE") &&
 				(index == 0 || !isIdentByte(text[index-1])) && (index+5 == len(text) || !isIdentByte(text[index+5])) {
 				projecting = true
 				index += 4
@@ -249,7 +283,10 @@ func localListBindingShadowsOperand(text string, operand int, name string) bool 
 	return false
 }
 
-func quantifierBeforeParen(text string, open int) bool {
+// bindingFunctionBeforeParen is the name of the function whose arguments
+// open at text[open] when it binds variables of its own (all / any / none /
+// single / filter, reduce / allReduce), as written; "" for any other.
+func bindingFunctionBeforeParen(text string, open int) string {
 	end := open
 	for end > 0 && isWhitespace(text[end-1]) {
 		end--
@@ -259,14 +296,39 @@ func quantifierBeforeParen(text string, open int) bool {
 		start--
 	}
 	if start == end || start > 0 && isIdentByte(text[start-1]) {
-		return false
+		return ""
 	}
 	switch strings.ToLower(text[start:end]) {
-	case "any", "all", "none", "single":
-		return true
+	case "any", "all", "none", "single", "filter", "reduce", "allreduce":
+		return text[start:end]
 	default:
-		return false
+		return ""
 	}
+}
+
+// withoutLocalVariables is scope without the variables an enclosing
+// expression binds around offset at of text (localVariableShadowsAt), and
+// whether it bound any of scope's: in all(r IN [[true]] WHERE r[0]) the r
+// read is the list's element, whatever the clause binds r to. The names
+// come from expressionLocalBindings, read only when a check would fail.
+func withoutLocalVariables(scope staticTypeScope, text string, at int) (staticTypeScope, bool) {
+	var shadowed []string
+	for name := range expressionLocalBindings(text) {
+		if scope.bound(name) && localVariableShadowsAt(text, at, name) {
+			shadowed = append(shadowed, name)
+		}
+	}
+	if len(shadowed) == 0 {
+		return scope, false
+	}
+	local := scope
+	local.kinds, local.values, local.members = maps.Clone(scope.kinds), maps.Clone(scope.values), maps.Clone(scope.members)
+	for _, name := range shadowed {
+		delete(local.kinds, name)
+		delete(local.values, name)
+		delete(local.members, name)
+	}
+	return local, true
 }
 
 // staticListOperand reads the operand of a list position starting at start

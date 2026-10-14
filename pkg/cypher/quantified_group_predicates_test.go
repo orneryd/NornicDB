@@ -2,8 +2,10 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -203,4 +205,167 @@ func TestQuantifiedGroupStepVariablesAreSingletons(t *testing.T) {
 	require.Error(t, err)
 	code, _ := nornicerrors.Neo4jStatus(err)
 	require.Equal(t, "Neo.ClientError.Statement.TypeError", code)
+}
+
+// forEachParser runs body on the default parser and on ANTLR.
+func forEachParser(t *testing.T, body func(t *testing.T)) {
+	for _, parser := range []string{config.ParserTypeNornic, config.ParserTypeANTLR} {
+		t.Run(parser, func(t *testing.T) {
+			previous := config.GetParserType()
+			config.SetParserType(parser)
+			t.Cleanup(func() { config.SetParserType(previous) })
+			body(t)
+		})
+	}
+}
+
+// requireStatementCode runs query and requires it to fail with code.
+func requireStatementCode(t *testing.T, exec *StorageExecutor, query, code string) {
+	t.Helper()
+	_, err := exec.Execute(context.Background(), query, nil)
+	require.Error(t, err, query)
+	got, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, code, got, query)
+}
+
+// TestQuantifiedGroupDynamicLabels: a dynamic label or type inside a
+// quantified group, in its pattern or a predicate, is read per step. Its
+// value is a label, not a pattern node (the (l) of the predicate it becomes
+// is not one, nor is any parenthesised variable in a group predicate), and a
+// value of a type that can't name one is the SyntaxError Neo4j reports when
+// it compiles the pattern, as outside a group. Recorded on Neo4j 2026.09
+// (#1211).
+func TestQuantifiedGroupDynamicLabels(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "quantified_dynamic_labels"))
+		ctx := context.Background()
+		_, err := exec.Execute(ctx, "CREATE (:S {k:'a'})-[:R]->(:A {k:'a'})-[:R]->(:A)", nil)
+		require.NoError(t, err)
+		for _, query := range []string{
+			"CYPHER 25 WITH 'A' AS l MATCH p = (:S)(()-->(y WHERE y:$(l)))+(t) RETURN count(p)",
+			"CYPHER 25 WITH ['A'] AS l MATCH p = (:S)(()-->(y WHERE y:$any(l)))+(t) RETURN count(p)",
+			"CYPHER 25 WITH ['A'] AS l MATCH p = (:S)(()-->(y WHERE y:$all(l)))+(t) RETURN count(p)",
+			"CYPHER 25 WITH 'R' AS l MATCH p = (:S)(()-[r WHERE r:$(l)]->())+(t) RETURN count(p)",
+			"CYPHER 25 WITH 'A' AS l MATCH p = (:S)(()-->(y:$(l)))+(t) RETURN count(p)",
+			"CYPHER 25 WITH 'R' AS l MATCH p = (:S)(()-[r:$(l)]->())+(t) RETURN count(p)",
+			"CYPHER 25 WITH 'A' AS l MATCH p = (:S)(()-->(y) WHERE y:$(l))+(t) RETURN count(p)",
+			"CYPHER 25 WITH 'A' AS l OPTIONAL MATCH p = (:S)(()-->(y WHERE y:$(l)))+(t) RETURN count(p)",
+			"CYPHER 25 WITH 'A' AS l MATCH p = SHORTEST 1 (:S)(()-->(y WHERE y:$(l)))+(t) RETURN count(p)",
+			"CYPHER 25 WITH 'A' AS l MATCH (s:S) MATCH p = (s)(()-->(y WHERE y:$(l)))+(t) RETURN count(p)",
+			"CYPHER 25 WITH ['a'] AS l MATCH p = (:S)((x WHERE x.k IN (l))-->(y))+(t) RETURN count(p)",
+			"CYPHER 25 WITH 'a' AS l MATCH p = (:S)((x)-->(y) WHERE x.k = (l))+(t) RETURN count(p)",
+			"CYPHER 25 WITH 'a' AS l OPTIONAL MATCH p = (:S)((x WHERE x.k = (l))-->(y))+(t) RETURN count(p)",
+		} {
+			result, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err, query)
+			require.Equal(t, [][]interface{}{{int64(2)}}, result.Rows, query)
+		}
+		for _, query := range []string{
+			"CYPHER 25 WITH 1 AS l MATCH p = (:Missing)((x:$(l))-->(y))+(t) RETURN count(p)",
+			"CYPHER 25 WITH 1 AS l MATCH p = (:Missing)(()-[r:$(l)]->())+(t) RETURN count(p)",
+			"CYPHER 25 WITH 1 AS l MATCH p = (:S)(()-->(y:$any(l)))+(t) RETURN count(p)",
+			"CYPHER 25 WITH [1] AS l MATCH p = (:Missing)((x:$all(l))-->(y))+(t) RETURN count(p)",
+			"CYPHER 25 WITH 1 AS l MATCH p = (:S)(()-[r:$any(l)]->())+(t) RETURN count(p)",
+		} {
+			requireStatementCode(t, exec, query, "Neo.ClientError.Statement.SyntaxError")
+		}
+		// A group predicate's dynamic label is checked as one outside a
+		// group is.
+		for group, outside := range map[string]string{
+			"CYPHER 25 WITH 1 AS l MATCH p = (:Missing)((x WHERE x:$(l))-->(y))+(t) RETURN count(p)":    "CYPHER 25 WITH 1 AS l MATCH (x:Missing WHERE x:$(l)) RETURN count(x)",
+			"CYPHER 25 WITH 1 AS l MATCH p = (:Missing)((x)-->(y) WHERE x:$any(l))+(t) RETURN count(p)": "CYPHER 25 WITH 1 AS l MATCH (x:Missing)-->(y) WHERE x:$any(l) RETURN count(x)",
+		} {
+			_, groupErr := exec.Execute(ctx, group, nil)
+			_, outsideErr := exec.Execute(ctx, outside, nil)
+			groupCode, _ := nornicerrors.Neo4jStatus(groupErr)
+			outsideCode, _ := nornicerrors.Neo4jStatus(outsideErr)
+			require.Equal(t, outsideErr == nil, groupErr == nil, group)
+			require.Equal(t, outsideCode, groupCode, group)
+		}
+		// A local l shadows the statement's: its value is the list's.
+		for _, query := range []string{
+			"CYPHER 25 WITH 1 AS l MATCH (x:Missing) WHERE all(l IN ['A'] WHERE x:$(l)) RETURN count(x)",
+			"CYPHER 25 WITH 1 AS l MATCH p = (:Missing)((x WHERE all(l IN ['A'] WHERE x:$(l)))-->(y))+(t) RETURN count(p)",
+		} {
+			result, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err, query)
+			require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows, query)
+		}
+	})
+}
+
+// TestStaticChecksReadLocalScopes: a variable a list comprehension,
+// all / any / none / single or reduce binds shadows the clause's of the
+// same name where it is bound, in a quantified group's predicates and
+// anywhere else, so its subscripts and list operands are checked as the
+// local value's (the subscript, list-operand and dynamic-label checks read
+// localVariableShadowsAt). The same variable outside that scope is still
+// the clause's. Recorded on Neo4j 5.26.30 and 2026.09.
+func TestStaticChecksReadLocalScopes(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "static_local_scopes"))
+		ctx := context.Background()
+		_, err := exec.Execute(ctx, "CREATE (:N {id:'a'})-[:R {id:'r1'}]->(:N {id:'b'})-[:R {id:'r2'}]->(:N {id:'c'})", nil)
+		require.NoError(t, err)
+		for query, want := range map[string]interface{}{
+			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE all(r IN [[true]] WHERE r[0]))+(t) RETURN count(p) AS c":                       int64(2),
+			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE [r IN [[true]] | r[0]][0])+(t) RETURN count(p) AS c":                           int64(2),
+			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE all(x IN [[true]] WHERE x[0]))+(t) RETURN count(p) AS c":                       int64(2),
+			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE all(r IN [{id:true}] WHERE r['id']))+(t) RETURN count(p) AS c":                 int64(2),
+			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE all(r IN [[true]] WHERE size(r[0..1]) = 1))+(t) RETURN count(p) AS c":          int64(2),
+			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE reduce(r = [[true]], v IN [1] | [s IN r | s])[0][0])+(t) RETURN count(p) AS c": int64(2),
+			"MATCH (x:N {id:'a'})-[r:R]->(y) WHERE all(r IN [[true]] WHERE r[0]) RETURN count(*) AS c":                                   int64(1),
+			"MATCH (x:N {id:'a'})-[r:R]->(y) WHERE [r IN [[true]] | r[0]][0] RETURN count(*) AS c":                                       int64(1),
+			"MATCH (x:N {id:'a'})-[r:R]->(y) WHERE all(x IN [[true]] WHERE x[0]) RETURN count(*) AS c":                                   int64(1),
+			"MATCH (x:N {id:'a'})-[r:R]->(y) WHERE all(r IN [[true]] WHERE size(r[0..1]) = 1) RETURN count(*) AS c":                      int64(1),
+			"MATCH (x:N {id:'a'})-[r:R]->(y) WHERE reduce(r = [[true]], v IN [1] | [s IN r | s])[0][0] RETURN count(*) AS c":             int64(1),
+			"MATCH (x:N {id:'a'})-[r:R]->(y) RETURN [r IN [[true]] | r[0]] AS v":                                                         []interface{}{true},
+			"MATCH (x:N {id:'a'})-[r:R]->(y) RETURN [r IN [[1]] WHERE 1 IN r] AS v":                                                      []interface{}{[]interface{}{int64(1)}},
+			"MATCH (x:N {id:'a'})-[r:R]->(y) RETURN [r IN [[1]] WHERE r[0] = 1] AS v":                                                    []interface{}{[]interface{}{int64(1)}},
+			"CYPHER 25 MATCH (x:N {id:'a'})-[r:R]->(y) RETURN allReduce(r = [1], v IN [1] | r + v, 1 IN r) AS v":                         true,
+		} {
+			result, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err, query)
+			require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+		}
+		for _, query := range []string{
+			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE r[0] IS NULL AND all(r IN [[true]] WHERE r[0]))+(t) RETURN count(p) AS c",
+			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE 1 IN r AND [r IN [[1]] | 1 IN r] = [true])+(t) RETURN count(p) AS c",
+			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE reduce(acc = [], v IN [1] | acc + v) = [1] AND 1 IN r)+(t) RETURN count(p) AS c",
+			"MATCH (x:N {id:'a'})-[r:R]->(y) RETURN reduce(acc = r[0], v IN [1] | acc) AS v",
+		} {
+			requireStatementCode(t, exec, query, "Neo.ClientError.Statement.SyntaxError")
+		}
+	})
+}
+
+// localVariableShadowsAt reads each binding form's scope: a quoted or
+// commented bracket opens none, an unbalanced reduce binds nothing, and a
+// binding's list is outside its scope.
+func TestLocalVariableShadowsAt(t *testing.T) {
+	for text, shadowed := range map[string]bool{
+		"[r IN l WHERE r[0]]":                    true,
+		"[r IN l | r[0]]":                        true,
+		"[r IN r[0] | 0]":                        false,
+		"any(r IN l WHERE r[0])":                 true,
+		"single (r IN l WHERE r[0])":             true,
+		"reduce(r = [], v IN l | r[0])":          true,
+		"reduce(acc = r[0], v IN l | acc)":       false,
+		"allReduce(a = 0, r IN l | a, r[0] > 0)": true,
+		"reduce(r = [], v IN l | 0) + r[0]":      false,
+		"reduce(r = [], v IN l r[0]":             false,
+		"'[r IN l | ' + r[0]":                    false,
+		"/* [r IN l | */ r[0]":                   false,
+		"size(r IN l WHERE r[0])":                false,
+		"[x IN l | x] + r[0]":                    false,
+	} {
+		require.Equal(t, shadowed, localVariableShadowsAt(text, strings.LastIndex(text, "r[0]"), "r"), text)
+	}
+	scope := staticTypeScope{kinds: matchSemanticScope{"r": matchBindingRelationship}}
+	local, shadowed := withoutLocalVariables(scope, "[r IN l | r[0]]", 11)
+	require.True(t, shadowed)
+	require.False(t, local.bound("r"))
+	require.True(t, scope.bound("r"))
+	_, shadowed = withoutLocalVariables(scope, "[x IN l | r[0]]", 11)
+	require.False(t, shadowed)
 }
