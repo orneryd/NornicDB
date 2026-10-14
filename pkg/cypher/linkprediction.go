@@ -63,7 +63,6 @@ package cypher
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/orneryd/nornicdb/pkg/linkpredict"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -355,13 +354,7 @@ func (e *StorageExecutor) linkPredictionGraph(config *linkPredictionConfig) (lin
 		if err != nil {
 			return nil, nil, err
 		}
-		if missing := missingNames(config.RelationshipTypes, projection.Types); len(missing) > 0 {
-			return nil, nil, localizedError(localization.CypherGraphProceduresRelationshipTypesNotInGraph(gdsNameList(missing), gdsNameList(projection.Types)), nil)
-		}
 		graph = make(linkpredict.Graph, len(projection.NodeIDs))
-		for _, id := range projection.NodeIDs {
-			graph[storage.NodeID(id)] = make(linkpredict.NodeSet)
-		}
 		relationships := make(map[storage.NodeID]map[string]struct{})
 		touch := func(node storage.NodeID, relationship string) {
 			if relationships[node] == nil {
@@ -369,19 +362,39 @@ func (e *StorageExecutor) linkPredictionGraph(config *linkPredictionConfig) (lin
 			}
 			relationships[node][relationship] = struct{}{}
 		}
-		for _, relationship := range projection.Relationships {
-			if config.RelationshipTypes != nil && !containsString(config.RelationshipTypes, relationship.Type) {
-				continue
-			}
+		visit := func(relationship *ProjectedRelationship) {
 			source, target := storage.NodeID(relationship.Source), storage.NodeID(relationship.Target)
+			sourceNeighbors := graph[source]
+			if sourceNeighbors == nil {
+				sourceNeighbors = make(linkpredict.NodeSet)
+				graph[source] = sourceNeighbors
+			}
+			targetNeighbors := graph[target]
+			if targetNeighbors == nil {
+				targetNeighbors = make(linkpredict.NodeSet)
+				graph[target] = targetNeighbors
+			}
 			if source != target {
-				graph[source][target] = struct{}{}
-				graph[target][source] = struct{}{}
+				sourceNeighbors[target] = struct{}{}
+				targetNeighbors[source] = struct{}{}
 			}
 			// An UNDIRECTED relationship is held both ways, an aggregated
 			// one once: each counts once by its id.
 			touch(source, relationship.ID+"/"+relationship.Type)
 			touch(target, relationship.ID+"/"+relationship.Type)
+		}
+		selected, err := selectGDSSubgraph(projection, nil, config.RelationshipTypes, "", gdsSubgraphOptions{
+			omitAdjacency: true, visitRelationship: visit,
+			emptyTypesNone: config.RelationshipTypes != nil,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, id := range selected.nodes {
+			node := storage.NodeID(id)
+			if graph[node] == nil {
+				graph[node] = make(linkpredict.NodeSet)
+			}
 		}
 		degree = func(node storage.NodeID) int { return len(relationships[node]) }
 	} else {
@@ -508,7 +521,7 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 		return nil, err
 	}
 	if value := c.value("sourceNode"); value != nil {
-		source, ok := linkPredictionNodeID(value)
+		source, ok := gdsNodeID(value)
 		if !ok {
 			return nil, c.typeError("sourceNode", "Node")
 		}
@@ -521,7 +534,7 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 		}
 		config.TargetNodes = make(map[storage.NodeID]bool, len(targets))
 		for _, target := range targets {
-			id, ok := linkPredictionNodeID(target)
+			id, ok := gdsNodeID(target)
 			if !ok {
 				return nil, c.typeError("targetNodes", "List")
 			}
@@ -554,24 +567,6 @@ func linkPredictionConfigFromArguments(args []interface{}) (*linkPredictionConfi
 		return nil, localizedError(localization.CypherGraphProceduresSourceNodeRequired(), nil)
 	}
 	return config, nil
-}
-
-// linkPredictionNodeID reads a link prediction node: a node, its id, or an
-// INTEGER id.
-func linkPredictionNodeID(value interface{}) (storage.NodeID, bool) {
-	switch node := value.(type) {
-	case *storage.Node:
-		if node != nil {
-			return node.ID, true
-		}
-	case string:
-		return storage.NodeID(node), true
-	default:
-		if isIntegerProcedureValue(value) {
-			return storage.NodeID(strconv.FormatInt(toInt64(value), 10)), true
-		}
-	}
-	return "", false
 }
 
 // formatLinkPredictionResults formats topology predictions as Neo4j-compatible result

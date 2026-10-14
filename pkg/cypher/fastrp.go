@@ -260,7 +260,7 @@ func fastRPConfiguration(options map[string]interface{}) (FastRPConfig, error) {
 // validate refuses a configuration GDS refuses as a whole.
 func (c FastRPConfig) validate() error {
 	if c.PropertyRatio < 0 || c.PropertyRatio > 1 {
-		return localizedError(localization.CypherGraphProceduresConfigValueOutOfRange("propertyRatio", strconv.FormatFloat(c.PropertyRatio, 'f', -1, 64), "[0.00, 1.00]"), nil)
+		return localizedError(localization.CypherGraphProceduresConfigValueOutOfRange("propertyRatio", gdsNumberText(c.PropertyRatio, 'f', -1), "[0.00, 1.00]"), nil)
 	}
 	if c.PropertyRatio > 0 && len(c.FeatureProperties) == 0 {
 		return localizedError(localization.CypherGraphProceduresFeaturePropertiesRequired(), nil)
@@ -301,50 +301,83 @@ type fastRPEmbedding struct {
 	vector []float64
 }
 
-// fastRPGraph is the part of a projection a FastRP call reads: the nodes of
-// its nodeLabels and, between them, the relationships of its
-// relationshipTypes, each node's relationships with their weights.
-type fastRPGraph struct {
+// gdsSubgraph is the part of a projection a GDS algorithm reads (FastRP,
+// node similarity, link prediction): the selected nodes and, between them,
+// relationships of its relationshipTypes, each node's relationships as
+// projected with their weights.
+type gdsSubgraph struct {
 	nodes    []string
 	index    map[string]int
-	outgoing [][]fastRPEdge
+	outgoing [][]gdsEdge
+
+	outgoingTypes [][]string // requested only by algorithms that read type graphs in turn
 }
 
-type fastRPEdge struct {
+// gdsSubgraphOptions preserves explicit weight-property selection and requests
+// type metadata or a relationship visitor without unused adjacency allocations.
+type gdsSubgraphOptions struct {
+	// Link prediction preserves its empty-list selection extension.
+	emptyTypesNone bool
+
+	weightRequested   bool
+	includeTypes      bool
+	omitAdjacency     bool
+	visitRelationship func(*ProjectedRelationship)
+}
+
+type gdsEdge struct {
 	target int
 	weight float64
 }
 
-// fastRPSubgraph selects config's nodes and relationships from proj, with
+// selectGDSSubgraph selects nodes and relationships from proj, with
 // GDS's errors for labels, types and weight keys the graph doesn't hold.
 // Missing values stay NaN; algorithms decide whether and when to validate them.
-func fastRPSubgraph(proj *GraphProjection, config FastRPConfig) (*fastRPGraph, error) {
-	if missing := missingNames(config.NodeLabels, proj.Labels); len(missing) > 0 {
+func selectGDSSubgraph(proj *GraphProjection, nodeLabels, relationshipTypes []string, weightProperty string, options ...gdsSubgraphOptions) (*gdsSubgraph, error) {
+	var selection gdsSubgraphOptions
+	if len(options) > 0 {
+		selection = options[0]
+	}
+	if missing := missingNames(nodeLabels, proj.Labels); len(missing) > 0 {
 		return nil, localizedError(localization.CypherGraphProceduresNodeLabelsNotInGraph(gdsNameList(missing), gdsNameList(proj.Labels)), nil)
 	}
-	if missing := missingNames(config.RelationshipTypes, proj.Types); len(missing) > 0 {
-		return nil, localizedError(localization.CypherGraphProceduresRelationshipTypesNotInGraph(gdsNameList(missing), gdsNameList(proj.Types)), nil)
+	types, err := proj.resolveRelationshipTypes(relationshipTypes, !selection.emptyTypesNone, "selection")
+	if err != nil {
+		return nil, err
 	}
-	types := config.RelationshipTypes
-	if len(types) == 0 {
-		types = proj.Types
-	}
-	if property := config.RelationshipWeightProperty; property != "" {
+	if property := weightProperty; property != "" || selection.weightRequested {
 		available := commonKeys(proj.RelationshipPropertyKeys, types)
 		if !containsString(available, property) {
 			return nil, localizedError(localization.CypherGraphProceduresWeightPropertyNotFound(property, gdsNameList(types), gdsNameList(available)), nil)
 		}
 	}
-	graph := &fastRPGraph{index: make(map[string]int)}
-	for _, id := range proj.NodeIDs {
-		if len(config.NodeLabels) > 0 && !anyString(proj.NodeLabels[id], config.NodeLabels) {
-			continue
+	graph := &gdsSubgraph{}
+	// The projection owns an immutable index. Without a label restriction,
+	// reuse it; filtered selections build only their selected-node index.
+	if len(nodeLabels) == 0 && len(proj.nodeIndex) == len(proj.NodeIDs) {
+		graph.nodes, graph.index = proj.NodeIDs, proj.nodeIndex
+	} else {
+		graph.index = make(map[string]int)
+		for _, id := range proj.NodeIDs {
+			if !proj.matchesNodeLabels(id, nodeLabels) {
+				continue
+			}
+			graph.index[id] = len(graph.nodes)
+			graph.nodes = append(graph.nodes, id)
 		}
-		graph.index[id] = len(graph.nodes)
-		graph.nodes = append(graph.nodes, id)
 	}
-	graph.outgoing = make([][]fastRPEdge, len(graph.nodes))
-	for _, relationship := range proj.Relationships {
+	if !selection.omitAdjacency {
+		graph.outgoing = make([][]gdsEdge, len(graph.nodes))
+	}
+	if selection.includeTypes {
+		graph.outgoingTypes = make([][]string, len(graph.nodes))
+	}
+	// A nodes-only consumer need not traverse relationships.
+	if selection.omitAdjacency && selection.visitRelationship == nil {
+		return graph, nil
+	}
+	for i := range proj.Relationships {
+		relationship := &proj.Relationships[i]
 		if !containsString(types, relationship.Type) {
 			continue
 		}
@@ -356,15 +389,25 @@ func fastRPSubgraph(proj *GraphProjection, config FastRPConfig) (*fastRPGraph, e
 		if !ok {
 			continue
 		}
+		if selection.visitRelationship != nil {
+			selection.visitRelationship(relationship)
+		}
+		if selection.omitAdjacency {
+			continue
+		}
 		weight := 1.0
-		if property := config.RelationshipWeightProperty; property != "" {
+		if property := weightProperty; property != "" || selection.weightRequested {
+			// A NaN weight is a missing one, as GDS reads it.
 			value, ok := relationship.Properties[property]
 			if !ok {
 				value = math.NaN()
 			}
 			weight = value
 		}
-		graph.outgoing[source] = append(graph.outgoing[source], fastRPEdge{target: target, weight: weight})
+		graph.outgoing[source] = append(graph.outgoing[source], gdsEdge{target: target, weight: weight})
+		if selection.includeTypes {
+			graph.outgoingTypes[source] = append(graph.outgoingTypes[source], relationship.Type)
+		}
 	}
 	return graph, nil
 }
@@ -381,7 +424,7 @@ func fastRPSubgraph(proj *GraphProjection, config FastRPConfig) (*fastRPGraph, e
 // iterationWeights entry, plus nodeSelfInfluence times the normalised start,
 // as GDS does. A node nothing propagates to gets a zero vector.
 func generateFastRPEmbeddings(proj *GraphProjection, config FastRPConfig) ([]fastRPEmbedding, error) {
-	graph, err := fastRPSubgraph(proj, config)
+	graph, err := selectGDSSubgraph(proj, config.NodeLabels, config.RelationshipTypes, config.RelationshipWeightProperty)
 	if err != nil {
 		return nil, err
 	}

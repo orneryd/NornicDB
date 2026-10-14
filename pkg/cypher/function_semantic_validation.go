@@ -17,7 +17,7 @@ func validateKnownFunctions(expression string) error {
 		(isSchemaCommandStatement(expression) || isCreateSchemaOrAdministrationCommand(expression)) {
 		return nil
 	}
-	return forEachFunctionCall(expression, func(name, normalized string) error {
+	if err := forEachFunctionCall(expression, func(name, normalized string) error {
 		if _, known := builtInCypherFunctions[normalized]; known {
 			return nil
 		}
@@ -33,7 +33,27 @@ func validateKnownFunctions(expression string) error {
 			return nil
 		}
 		return unknownFunctionError(name)
-	})
+	}); err != nil {
+		return err
+	}
+	return gdsProjectDistinctError(expression)
+}
+
+// gdsProjectDistinctError refuses DISTINCT in gds.graph.project(...), as
+// Neo4j refuses it for that aggregating function.
+func gdsProjectDistinctError(text string) error {
+	const name = "gds.graph.project"
+	for from := 0; ; {
+		at := indexASCIIFold(text[from:], name)
+		if at < 0 {
+			return nil
+		}
+		rest := strings.TrimLeft(text[from+at+len(name):], " \t\r\n")
+		if strings.HasPrefix(rest, "(") && startsWithKeywordFold(strings.TrimLeft(rest[1:], " \t\r\n"), "DISTINCT") {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidUseOfDistinct", "Invalid use of DISTINCT with function 'project'")
+		}
+		from += at + len(name)
+	}
 }
 
 // internalFunctionCallError rejects a statement, as its client sent it, that

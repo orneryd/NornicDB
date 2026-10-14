@@ -75,7 +75,9 @@ func TestGDSAggregationProjection(t *testing.T) {
 	require.Equal(t, int64(4), rows("MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('a3', s, t)")[0][0].(map[string]interface{})["relationshipCount"])
 	require.Equal(t, int64(1), rows("RETURN gds.graph.project('a4', 1)")[0][0].(map[string]interface{})["nodeCount"])
 	// Node properties, both sides or one with the other null.
-	rows("MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('a5', s, t, {sourceNodeProperties: null, targetNodeProperties: {size: t.size}, sourceNodeLabels: null, targetNodeLabels: 'Party'})")
+	// A property's type is its first row's, as in GDS: 2.5 first makes size
+	// a Float that takes 2 (2 first would refuse 2.5).
+	rows("MATCH (s:Doc)-[:M]->(t:Party) WITH s, t ORDER BY t.size DESC RETURN gds.graph.project('a5', s, t, {sourceNodeProperties: null, targetNodeProperties: {size: t.size}, sourceNodeLabels: null, targetNodeLabels: 'Party'})")
 	schema := rows("CALL gds.graph.list('a5') YIELD schema RETURN schema")[0][0].(map[string]interface{})
 	require.Equal(t, map[string]interface{}{"size": "Float (DefaultValue(NaN), PERSISTENT)"}, schema["nodes"].(map[string]interface{})["Party"])
 	// The other configuration keys are ignored, as GDS ignores them.
@@ -102,7 +104,7 @@ func TestGDSAggregationProjection(t *testing.T) {
 		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {sourceNodeLabels: true, targetNodeLabels: false})":        "Using `true` to load all labels is deprecated, use `{ sourceNodeLabels: labels(s) }` instead",
 		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {relationshipProperties: {w: 1}}, {readConcurrency: 'x'})": "Unsupported Concurrency input of type String",
 		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {}, {}, {})":                                               "The parameters for `nodesConfig` and `relationshipsConfig` have been merged.",
-		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {relationshipProperties: {w: 'x'}})":                       "Unsupported conversion to GDS Value from Neo4j Value with type `String`.",
+		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {relationshipProperties: {w: 'x'}})":                       "Unsupported type [TEXT]",
 		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x', s, t, {bogus: 1})":                                               "Unexpected configuration key: bogus",
 		"MATCH (s:Doc)-[:M]->(t:Party) RETURN gds.graph.project('x')":                                                                 "gds.graph.project",
 	} {
@@ -187,8 +189,93 @@ func TestGDSAggregationProjectionFirstOccurrence(t *testing.T) {
 	require.True(t, math.IsNaN(values[1].(float64)))
 	projection := graphProjections[gdsCatalogKey("agg", "first")]
 	for id, labels := range projection.NodeLabels {
-		if projection.NodeProperties[id]["x"] == 1 {
+		if projection.NodeProperties[id]["x"] == int64(1) {
 			require.Equal(t, []string{"A"}, labels)
 		}
 	}
+}
+
+// TestGDSAggregationProjectionValuesAsGDS: the Cypher aggregation
+// projection's values and checks as GDS 2.13.12 gives them (#1194 review).
+func TestGDSAggregationProjectionValuesAsGDS(t *testing.T) {
+	_, rows, fails := newAggregationProjectionGraph(t)
+	schema := func(graph string) map[string]interface{} {
+		t.Helper()
+		return rows("CALL gds.graph.list('" + graph + "') YIELD schemaWithOrientation RETURN schemaWithOrientation")[0][0].(map[string]interface{})
+	}
+
+	// A null node property is no value; the property's type comes from the
+	// others.
+	rows("RETURN gds.graph.project('nulls', 1, 2, {sourceNodeProperties: {x: null}, targetNodeProperties: {x: 2}})")
+	require.Equal(t, map[string]interface{}{"x": "Integer (DefaultValue(-9223372036854775808), PERSISTENT)"}, schema("nulls")["nodes"].(map[string]interface{})["__ALL__"])
+	values := rows("RETURN gds.util.nodeProperty('nulls', 1, 'x'), gds.util.nodeProperty('nulls', 2, 'x')")[0]
+	require.True(t, math.IsNaN(values[0].(float64)))
+	require.Equal(t, 2.0, values[1])
+	// A null relationship property keeps its key.
+	rows("RETURN gds.graph.project('nullrel', 1, 2, {relationshipProperties: {w: null}})")
+	require.Equal(t, map[string]interface{}{"w": "Float (DefaultValue(NaN), TRANSIENT, Aggregation.NONE)"}, schema("nullrel")["relationships"].(map[string]interface{})["__ALL__"].(map[string]interface{})["properties"])
+
+	// A list of numbers projects as a list.
+	rows("RETURN gds.graph.project('lists', 1, null, {sourceNodeProperties: {x: [1, 2, 3]}, targetNodeProperties: null})")
+	require.Equal(t, map[string]interface{}{"x": "List of Integer (DefaultValue(null), PERSISTENT)"}, schema("lists")["nodes"].(map[string]interface{})["__ALL__"])
+	require.Equal(t, []interface{}{int64(1), int64(2), int64(3)}, rows("RETURN gds.util.nodeProperty('lists', 1, 'x')")[0][0])
+	rows("RETURN gds.graph.project('floats', 1, null, {sourceNodeProperties: {x: [1.5]}, targetNodeProperties: null})")
+	require.Equal(t, map[string]interface{}{"x": "List of Float (DefaultValue(null), PERSISTENT)"}, schema("floats")["nodes"].(map[string]interface{})["__ALL__"])
+
+	// A property's type is its first value's: a Float takes integers, an
+	// Integer refuses fractions, a scalar and a list don't mix.
+	rows("UNWIND [1, 2] AS v WITH v ORDER BY v RETURN gds.graph.project('widen', v, null, {sourceNodeProperties: {x: CASE v WHEN 1 THEN 1.5 ELSE 3 END}, targetNodeProperties: null})")
+	require.Equal(t, 3.0, rows("RETURN gds.util.nodeProperty('widen', 2, 'x')")[0][0])
+	for query, message := range map[string]string{
+		"UNWIND [1, 2.5] AS v WITH v ORDER BY v RETURN gds.graph.project('t1', toInteger(v), null, {sourceNodeProperties: {x: v}, targetNodeProperties: null})":                           "Cannot safely convert 2.50 into an long value",
+		"UNWIND [1, 2] AS v WITH v ORDER BY v RETURN gds.graph.project('t3', v, null, {sourceNodeProperties: {x: CASE v WHEN 1 THEN 1 ELSE [1, 2] END}, targetNodeProperties: null})":     "Cannot safely convert LongArray[1, 2] into a Long.",
+		"UNWIND [1, 2] AS v WITH v ORDER BY v RETURN gds.graph.project('t4', v, null, {sourceNodeProperties: {x: CASE v WHEN 1 THEN [1, 2] ELSE [1.5] END}, targetNodeProperties: null})": "Cannot safely convert DoubleArray[1.5] into a Long Array. Cannot safely convert 1.50 into an long value",
+		"RETURN gds.graph.project('t7', 1, null, {sourceNodeProperties: {x: ['a']}, targetNodeProperties: null})":                                                                         "Loading of values of type StringArray is currently not supported",
+		"RETURN gds.graph.project('t8', 1, null, {sourceNodeProperties: {x: true}, targetNodeProperties: null})":                                                                          "Unsupported conversion to GDS Value from Neo4j Value with type `Boolean`.",
+		"RETURN gds.graph.project('inv', 1, 2, {}, {inverseIndexedRelationshipTypes: ['NOPE']})":                                                                                          "Specified inverseIndexedRelationshipTypes `[NOPE]` were not projected in the graph. Projected types are: `['__ALL__']`.",
+		"RETURN gds.graph.project('inv2', 1, 2, {relationshipType: 'R'}, {inverseIndexedRelationshipTypes: ['R', 'NOPE', 'X']})":                                                          "Specified inverseIndexedRelationshipTypes `[NOPE, X]` were not projected in the graph. Projected types are: `['R']`.",
+		"RETURN gds.graph.project('conc', 1, 2, {}, {readConcurrency: 0})":                                                                                                                "Valid values for Concurrency are int[1..], Value provided was `0`.",
+		"RETURN gds.graph.project('empty', 1, 2, {relationshipType: ''})":                                                                                                                 "Relationship type cannot be empty",
+		"UNWIND [1, 1] AS i RETURN gds.graph.project(DISTINCT 'dist', i, i)":                                                                                                              "Invalid use of DISTINCT with function 'project'",
+	} {
+		require.ErrorContains(t, fails(query), message, query)
+	}
+
+	// A type's property keys are its first relationship's.
+	rows("UNWIND [1, 2] AS i WITH i ORDER BY i RETURN gds.graph.project('keys', i, i + 1, {relationshipProperties: CASE i WHEN 1 THEN {x: 1} ELSE {y: 2} END})")
+	require.Equal(t, map[string]interface{}{"x": "Float (DefaultValue(NaN), TRANSIENT, Aggregation.NONE)"}, schema("keys")["relationships"].(map[string]interface{})["__ALL__"].(map[string]interface{})["properties"])
+	rows("UNWIND [1, 2] AS i WITH i ORDER BY i RETURN gds.graph.project('keyst', i, i + 1, {relationshipType: CASE i WHEN 1 THEN 'A' ELSE 'B' END, relationshipProperties: CASE i WHEN 1 THEN {x: 1} ELSE {y: 2, z: null} END})")
+	typed := schema("keyst")["relationships"].(map[string]interface{})
+	require.Equal(t, map[string]interface{}{"x": "Float (DefaultValue(NaN), TRANSIENT, Aggregation.NONE)"}, typed["A"].(map[string]interface{})["properties"])
+	require.Equal(t, map[string]interface{}{"y": "Float (DefaultValue(NaN), TRANSIENT, Aggregation.NONE)", "z": "Float (DefaultValue(NaN), TRANSIENT, Aggregation.NONE)"}, typed["B"].(map[string]interface{})["properties"])
+	rows("UNWIND [1, 2] AS i WITH i ORDER BY i RETURN gds.graph.project('keysn', i, i + 1, {relationshipProperties: CASE i WHEN 1 THEN null ELSE {y: 2} END})")
+	require.Equal(t, map[string]interface{}{}, schema("keysn")["relationships"].(map[string]interface{})["__ALL__"].(map[string]interface{})["properties"])
+
+	// '*' anywhere in a type list names every type.
+	require.Equal(t, int64(2), rows("RETURN gds.graph.project('wild', 1, 2, {}, {undirectedRelationshipTypes: ['*', 'NOPE']}).relationshipCount")[0][0])
+	require.Equal(t, int64(1), rows("RETURN gds.graph.project('wildinv', 1, 2, {relationshipType: 'R'}, {inverseIndexedRelationshipTypes: ['*', 'NOPE']}).relationshipCount")[0][0])
+	require.Equal(t, int64(1), rows("RETURN gds.graph.project('blank', 1, 2, {relationshipType: ' '}).relationshipCount")[0][0])
+
+	// A graph without relationships has no relationship types.
+	rows("RETURN gds.graph.project('nodes', 1)")
+	require.Equal(t, map[string]interface{}{}, schema("nodes")["relationships"])
+	require.Equal(t, map[string]interface{}{}, rows("CALL gds.graph.list('nodes') YIELD schema RETURN schema")[0][0].(map[string]interface{})["relationships"])
+}
+
+// TestGDSAggregationProjectionNeedsWrite: the projection function writes
+// the graph catalog, so it needs write permission as CALL
+// gds.graph.project does.
+func TestGDSAggregationProjectionNeedsWrite(t *testing.T) {
+	exec, _, _ := newAggregationProjectionGraph(t)
+	require.True(t, QueryPermissionRequirements("RETURN gds.graph.project('g', 1, 2)").Write)
+	require.False(t, QueryPermissionRequirements("RETURN gds.graph.exists('g')").Write)
+	readOnly := WithPermissionChecker(context.Background(), func(permission string) bool { return permission == "read" })
+	_, err := exec.Execute(readOnly, "RETURN gds.graph.project('reserved', 1, 2)", nil)
+	var denied *PermissionDeniedError
+	require.ErrorAs(t, err, &denied)
+	require.Equal(t, "write", denied.Permission)
+	exists, err := exec.Execute(context.Background(), "RETURN gds.graph.exists('reserved')", nil)
+	require.NoError(t, err)
+	require.Equal(t, false, exists.Rows[0][0])
+	require.NoError(t, gdsProjectDistinctError("RETURN gds.graph.project('g', 1) AS a, gds.graph.projectX"))
 }
