@@ -99,7 +99,7 @@ func TestRoleRenamePublishesCachesAfterCommit(t *testing.T) {
 			system := storage.NewNamespacedEngine(base, "system")
 			fault := &mutationFault{Engine: system}
 			roles := seedRoleRename(t, fault)
-			stores := RoleRenameStores{Allowlist: NewAllowlistStore(fault), Privileges: NewPrivilegesStore(fault), Entitlements: NewRoleEntitlementsStore(fault), Users: &Authenticator{storage: fault, users: map[string]*User{}}}
+			stores := RoleMutationStores{Allowlist: NewAllowlistStore(fault), Privileges: NewPrivilegesStore(fault), Entitlements: NewRoleEntitlementsStore(fault), Users: &Authenticator{storage: fault, users: map[string]*User{}}}
 			require.NoError(t, stores.Allowlist.Load(ctx))
 			require.NoError(t, stores.Privileges.Load(ctx))
 			require.NoError(t, stores.Entitlements.Load(ctx))
@@ -133,7 +133,7 @@ func TestRoleRenameReadAndCacheFailuresChangeNothing(t *testing.T) {
 		id  storage.NodeID
 		nth int
 	}{
-		{"scan", "", 1}, {"scan", "", 2}, {"scan", "", 3}, {"scan", "", 4}, {"scan", "", 5},
+		{"scan", "", 1}, {"scan", "", 2}, {"scan", "", 3}, {"scan", "", 4}, {"scan", "", 5}, {"scan", "", 6},
 		{"allnodes", "", 2}, {"allnodes", "", 3}, {"allnodes", "", 4},
 		{"get", "proc_priv:boosted:renamed:db.cdc.*", 1},
 	} {
@@ -144,7 +144,7 @@ func TestRoleRenameReadAndCacheFailuresChangeNothing(t *testing.T) {
 			system := storage.NewNamespacedEngine(base, "system")
 			fault := &mutationFault{Engine: system}
 			roles := seedRoleRename(t, fault)
-			stores := RoleRenameStores{Allowlist: NewAllowlistStore(fault), Privileges: NewPrivilegesStore(fault), Entitlements: NewRoleEntitlementsStore(fault)}
+			stores := RoleMutationStores{Allowlist: NewAllowlistStore(fault), Privileges: NewPrivilegesStore(fault), Entitlements: NewRoleEntitlementsStore(fault)}
 			require.NoError(t, stores.Allowlist.Load(ctx))
 			require.NoError(t, stores.Privileges.Load(ctx))
 			require.NoError(t, stores.Entitlements.Load(ctx))
@@ -168,7 +168,7 @@ func TestRoleRenameRejectsDifferentCacheStores(t *testing.T) {
 	base, other := storage.NewMemoryEngine(), storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = base.Close(); _ = other.Close() })
 	roles := seedRoleRename(t, base)
-	for _, stores := range []RoleRenameStores{
+	for _, stores := range []RoleMutationStores{
 		{Privileges: NewPrivilegesStore(other)}, {Entitlements: NewRoleEntitlementsStore(other)},
 	} {
 		require.ErrorIs(t, roles.RenameRoleWithStores(ctx, "ops", "renamed", stores), storage.ErrCrossNamespaceTransaction)
@@ -220,7 +220,7 @@ func TestRoleRenamePreservesUnrelatedRecordsAndRejectsOccupiedKeys(t *testing.T)
 	require.NoError(t, err)
 	require.ElementsMatch(t, before, after)
 	require.NoError(t, system.DeleteNode("role_entitlement:renamed"))
-	stores := RoleRenameStores{Users: &Authenticator{storage: system, users: map[string]*User{}}}
+	stores := RoleMutationStores{Users: &Authenticator{storage: system, users: map[string]*User{}}}
 	require.NoError(t, roles.RenameRoleWithStores(ctx, "ops", "renamed", stores))
 	require.Equal(t, []Role{"renamed", RoleViewer}, stores.Users.users["worker"].Roles)
 	for _, id := range []storage.NodeID{"proc_priv:unrelated", "db_priv:other:nornic", "role_db_access:other", "role_entitlement:other", "user:invalid", "user:other"} {

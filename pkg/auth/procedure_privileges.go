@@ -11,8 +11,8 @@
 // kept apart from graph data the way the other system stores keep theirs:
 //   - the system database runs no Cypher graph writes (the cypher package
 //     refuses CREATE, MERGE, SET, DELETE, REMOVE and write procedures there,
-//     on every route), so only GRANT and REVOKE, through this store, write
-//     these nodes;
+//     on every route), so grants originate in GRANT and REVOKE through this
+//     store; role changes move or remove them through the shared transaction owner;
 //   - as RoleStore and PrivilegesStore key their nodes by an ID only the
 //     store chooses (role:…, db_priv:…), a node counts as a grant only when
 //     its ID is the one Grant gives that grant, so a node made any other way
@@ -172,26 +172,6 @@ func (p *ProcedurePrivilegeStore) Revoke(ctx context.Context, role, procedure st
 		return false, err
 	}
 	return true, nil
-}
-
-// revokeRole removes every grant of role, immutable ones too: a deleted
-// role's grants go with it, so a role created later under the same name
-// starts without them (Neo4j's DROP ROLE).
-func (p *ProcedurePrivilegeStore) revokeRole(role string) error {
-	grants, err := p.grants()
-	if err != nil {
-		return err
-	}
-	role = normalizeGrantRole(role)
-	for _, grant := range grants {
-		if grant.Role != role {
-			continue
-		}
-		if err := p.storage.DeleteNode(procedurePrivilegeNodeID(grant)); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // List returns every grant, in role, procedure order.

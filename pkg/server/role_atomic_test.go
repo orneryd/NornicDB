@@ -20,6 +20,9 @@ type roleDeleteFailureEngine struct {
 	failRole bool
 }
 
+func (e *roleDeleteFailureEngine) GetInnerEngine() storage.Engine { return e.Engine }
+func (e *roleDeleteFailureEngine) Namespace() string              { return "system" }
+
 type userStatusFailureEngine struct{ storage.Engine }
 
 type roleRenameFailureEngine struct {
@@ -95,6 +98,61 @@ func TestRenamedRoleKeepsItsGrantsOverHTTP(t *testing.T) {
 			worker, err := users.GetUser("worker")
 			require.NoError(t, err)
 			require.Equal(t, []auth.Role{auth.Role(name)}, worker.Roles)
+		})
+	}
+}
+
+func TestDeletedRoleStartsEmptyAfterRecreationOverHTTP(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(map[bool]string{false: "success", true: "failure"}[fail], func(t *testing.T) {
+			ctx := context.Background()
+			server, users := setupTestServer(t)
+			admin := getAuthToken(t, users, "admin")
+			system, err := server.dbManager.GetStorage("system")
+			require.NoError(t, err)
+			server.roleStore = auth.NewRoleStore(system)
+			require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
+			server.allowlistStore = auth.NewAllowlistStore(system)
+			server.privilegesStore = auth.NewPrivilegesStore(system)
+			server.roleEntitlementsStore = auth.NewRoleEntitlementsStore(system)
+			require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "ops", []string{"nornic"}))
+			require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "ops", "nornic", true, true))
+			require.NoError(t, server.roleEntitlementsStore.Set(ctx, "ops", []string{"read", "write"}))
+			_, err = users.CreateUser("worker", "password123", []auth.Role{"ops", auth.RoleViewer})
+			require.NoError(t, err)
+			require.Empty(t, txErrorCode(t, server, "system", admin, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO ops"))
+			before, err := system.AllNodes()
+			require.NoError(t, err)
+			fired := false
+			if fail {
+				server.roleStore = auth.NewRoleStore(&roleRenameFailureEngine{Engine: system, fired: &fired})
+				require.NoError(t, server.roleStore.Load(ctx))
+			}
+			resp := makeRequest(t, server, "DELETE", "/auth/roles/ops", nil, "Bearer "+admin)
+			worker, err := users.GetUser("worker")
+			require.NoError(t, err)
+			if fail {
+				require.Equal(t, http.StatusInternalServerError, resp.Code, resp.Body.String())
+				require.True(t, fired, resp.Body.String())
+				after, err := system.AllNodes()
+				require.NoError(t, err)
+				require.ElementsMatch(t, before, after)
+				require.True(t, server.roleStore.Exists("ops"))
+				require.True(t, server.ProcedureGrantChecker([]string{"ops"})("db.cdc.query"))
+				require.Equal(t, []string{"nornic"}, server.allowlistStore.Allowlist()["ops"])
+				require.Equal(t, auth.ResolvedAccess{Read: true, Write: true}, server.privilegesStore.Resolve([]string{"ops"}, "nornic"))
+				require.Equal(t, []string{"read", "write"}, server.roleEntitlementsStore.Get("ops"))
+				require.Equal(t, []auth.Role{"ops", auth.RoleViewer}, worker.Roles)
+			} else {
+				require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+				require.False(t, server.roleStore.Exists("ops"))
+				require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
+				require.False(t, server.ProcedureGrantChecker([]string{"ops"})("db.cdc.query"))
+				require.NotContains(t, server.allowlistStore.Allowlist(), "ops")
+				require.Equal(t, auth.ResolvedAccess{}, server.privilegesStore.Resolve([]string{"ops"}, "nornic"))
+				require.Empty(t, server.roleEntitlementsStore.Get("ops"))
+				require.Equal(t, []auth.Role{auth.RoleViewer}, worker.Roles)
+			}
 		})
 	}
 }

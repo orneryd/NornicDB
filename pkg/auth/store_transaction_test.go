@@ -73,7 +73,8 @@ func (e *mutationFault) AllNodes() ([]*storage.Node, error) {
 
 func TestRoleAndAllowlistRenameFailureChangesNothing(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	inner := storage.NewMemoryEngine()
+	base := storage.NewNamespacedEngine(inner, "system")
 	t.Cleanup(func() { _ = base.Close() })
 	fault := &mutationFault{Engine: base}
 	roles := NewRoleStore(fault)

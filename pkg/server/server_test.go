@@ -4247,7 +4247,7 @@ func TestServerAuthAndAuxHandlers_AdditionalBranches(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, rec.Code)
 	})
 
-	t.Run("roles and role-by-id success and conflict branches", func(t *testing.T) {
+	t.Run("role deletion detaches users and preserves builtin roles", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/auth/roles", nil)
 		rec := httptest.NewRecorder()
 		server.handleRoles(rec, req)
@@ -4263,7 +4263,12 @@ func TestServerAuthAndAuxHandlers_AdditionalBranches(t *testing.T) {
 		req = httptest.NewRequest(http.MethodDelete, "/auth/roles/analyst", nil)
 		rec = httptest.NewRecorder()
 		server.handleRoleByID(rec, req)
-		require.Equal(t, http.StatusConflict, rec.Code)
+		require.Equal(t, http.StatusOK, rec.Code)
+		reader, err := server.auth.GetUser("reader")
+		require.NoError(t, err)
+		require.Empty(t, reader.Roles)
+		require.False(t, server.roleStore.Exists("analyst"))
+		require.NoError(t, server.roleStore.CreateRole(context.Background(), "analyst"))
 
 		_ = server.auth.UpdateRoles("reader", []auth.Role{auth.RoleViewer})
 		req = httptest.NewRequest(http.MethodDelete, "/auth/roles/analyst", nil)

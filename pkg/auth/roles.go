@@ -109,47 +109,29 @@ func (r *RoleStore) CreateRole(ctx context.Context, name string) error {
 	return nil
 }
 
-// DeleteRole removes a user-defined role. Fails if name is built-in or does not exist.
-// Caller must ensure no user has this role (e.g. check auth.ListUsers()).
+// DeleteRole removes the role, its grants and stored user assignments atomically.
+// Servers use DeleteRoleWithStores to publish their loaded caches after commit.
 func (r *RoleStore) DeleteRole(ctx context.Context, name string) error {
-	return r.deleteRole(ctx, name, false)
+	return r.DeleteRoleWithStores(ctx, name, RoleMutationStores{})
 }
 
 // DeleteRoleFromCypher goes through the role-deletion owner, but currently
 // rejects this unsupported command before reading or writing any role state.
 func (r *RoleStore) DeleteRoleFromCypher(ctx context.Context, name string) error {
-	return r.deleteRole(ctx, name, true)
+	return r.deleteRole(ctx, name, true, RoleMutationStores{})
 }
 
-func (r *RoleStore) deleteRole(ctx context.Context, name string, fromCypher bool) error {
+func (r *RoleStore) deleteRole(ctx context.Context, name string, fromCypher bool, stores RoleMutationStores) error {
 	if fromCypher {
 		return ErrUnsupportedRoleCommand
 	}
-	name = strings.ToLower(strings.TrimSpace(name))
-	if IsBuiltinRole(name) {
-		return ErrCannotDeleteBuiltinRole
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, exists := r.roles[name]; !exists {
-		return ErrRoleNotFound
-	}
-	if err := WithStoreTransaction(ctx, r.storage, func(view storage.Engine) error {
-		if err := NewProcedurePrivilegeStore(view).revokeRole(name); err != nil {
-			return err
-		}
-		return view.DeleteNode(storage.NodeID(rolePrefix + name))
-	}); err != nil {
-		return err
-	}
-	delete(r.roles, name)
-	return nil
+	return r.changeRole(ctx, name, "", true, stores)
 }
 
 // RenameRole moves the role and all its stored grants and assignments atomically.
 // Servers use RenameRoleWithStores to publish their loaded caches after commit.
 func (r *RoleStore) RenameRole(ctx context.Context, oldName, newName string) error {
-	return r.RenameRoleWithStores(ctx, oldName, newName, RoleRenameStores{})
+	return r.RenameRoleWithStores(ctx, oldName, newName, RoleMutationStores{})
 }
 
 // Exists returns true if the role exists (built-in or user-defined).

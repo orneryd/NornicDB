@@ -826,7 +826,7 @@ func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
 			s.writeNeo4jRequestFieldRequired(w, r, "Neo.ClientError.Request.InvalidFormat", "name")
 			return
 		}
-		if err := s.roleStore.RenameRoleWithStores(r.Context(), roleName, newName, auth.RoleRenameStores{
+		if err := s.roleStore.RenameRoleWithStores(r.Context(), roleName, newName, auth.RoleMutationStores{
 			Allowlist: s.allowlistStore, Privileges: s.privilegesStore,
 			Entitlements: s.roleEntitlementsStore, Users: s.auth,
 		}); err != nil {
@@ -843,18 +843,10 @@ func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
 		}
 		s.writeJSON(w, http.StatusOK, map[string]string{"name": newName})
 	case http.MethodDelete:
-		// Reject if any user has this role
-		if s.auth != nil {
-			for _, u := range s.auth.ListUsers() {
-				for _, ur := range u.Roles {
-					if strings.EqualFold(string(ur), roleName) {
-						s.writeLocalizedNeo4jError(w, r, http.StatusConflict, "Neo.ClientError.General.SchemaViolation", localization.RoleCannotDeleteWhileInUse())
-						return
-					}
-				}
-			}
-		}
-		if err := s.roleStore.DeleteRole(r.Context(), roleName); err != nil {
+		if err := s.roleStore.DeleteRoleWithStores(r.Context(), roleName, auth.RoleMutationStores{
+			Allowlist: s.allowlistStore, Privileges: s.privilegesStore,
+			Entitlements: s.roleEntitlementsStore, Users: s.auth,
+		}); err != nil {
 			if err == auth.ErrCannotDeleteBuiltinRole || err == auth.ErrRoleNotFound {
 				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err)
 				return

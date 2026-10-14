@@ -1934,18 +1934,23 @@ func TestAuthMeAndRoleByIDBranches(t *testing.T) {
 	server.handleRoleByID(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
-	// DELETE conflict when user has role.
+	// DELETE detaches the role while retaining the user.
 	_, _ = authn.CreateUser("role_user", "password123", []auth.Role{"r1"})
 	req = httptest.NewRequest(http.MethodDelete, "/auth/roles/r1", nil)
 	rec = httptest.NewRecorder()
 	server.handleRoleByID(rec, req)
-	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	roleUser, err := authn.GetUser("role_user")
+	assert.NoError(t, err)
+	assert.Empty(t, roleUser.Roles)
+	assert.False(t, server.roleStore.Exists("r1"))
 
 	// DELETE builtin role branch.
 	req = httptest.NewRequest(http.MethodDelete, "/auth/roles/admin", nil)
 	rec = httptest.NewRecorder()
 	server.handleRoleByID(rec, req)
-	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.True(t, server.roleStore.Exists("admin"))
 }
 
 func TestSearchAndRebuildAdditionalBranches(t *testing.T) {
