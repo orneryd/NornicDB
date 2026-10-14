@@ -58,6 +58,8 @@ const (
 	MessageCypherGraphProceduresLabelNotInGraph                MessageID = "cyphergraphprocedures.label_not_in_graph"
 	MessageCypherGraphProceduresComponentPropertyNotFound      MessageID = "cyphergraphprocedures.component_property_not_found"
 	MessageCypherGraphProceduresInvalidListTypes               MessageID = "cyphergraphprocedures.invalid_list_types"
+	MessageCypherGraphProceduresLouvainIntermediateConsecutive MessageID = "cyphergraphprocedures.louvain_intermediate_consecutive"
+	MessageCypherGraphProceduresSeedPropertyNotFound           MessageID = "cyphergraphprocedures.seed_property_not_found"
 	MessageCypherGraphProceduresSourceNodeNotFound             MessageID = "cyphergraphprocedures.source_node_not_found"
 	MessageCypherGraphProceduresInvalidComponentProperty       MessageID = "cyphergraphprocedures.invalid_component_property"
 	MessageCypherGraphProceduresInvalidComponentSpec           MessageID = "cyphergraphprocedures.invalid_component_spec"
@@ -395,4 +397,14 @@ func CypherGraphProceduresInvalidComponentProperty() Message {
 // CypherGraphProceduresInvalidComponentSpec reports a component spec of the wrong type.
 func CypherGraphProceduresInvalidComponentSpec(kind, value string) Message {
 	return Message{ID: MessageCypherGraphProceduresInvalidComponentSpec, Fallback: "Invalid component spec: cannot parse type " + kind + " with value " + value, Data: map[string]any{"Type": kind, "Value": value}}
+}
+
+// CypherGraphProceduresLouvainIntermediateConsecutive is GDS's message for Louvain's includeIntermediateCommunities with consecutiveIds.
+func CypherGraphProceduresLouvainIntermediateConsecutive() Message {
+	return Message{ID: MessageCypherGraphProceduresLouvainIntermediateConsecutive, Fallback: "`includeIntermediateResults` and the `consecutiveIds` option cannot be used at the same time."}
+}
+
+// CypherGraphProceduresSeedPropertyNotFound is GDS's message for a seedProperty the graph doesn't hold.
+func CypherGraphProceduresSeedPropertyNotFound(property, available string) Message {
+	return Message{ID: MessageCypherGraphProceduresSeedPropertyNotFound, Fallback: "Seed property `" + property + "` not found in graph with node properties: " + available, Data: map[string]any{"Property": property, "Available": available}}
 }

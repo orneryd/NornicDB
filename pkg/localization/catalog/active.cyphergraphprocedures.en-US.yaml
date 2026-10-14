@@ -193,3 +193,9 @@
 - id: cyphergraphprocedures.invalid_component_spec
   description: A component spec of the wrong type. Type, Value untranslated.
   other: 'Invalid component spec: cannot parse type {{.Type}} with value {{.Value}}'
+- id: cyphergraphprocedures.louvain_intermediate_consecutive
+  description: GDS's message for Louvain's includeIntermediateCommunities with consecutiveIds.
+  other: '`includeIntermediateResults` and the `consecutiveIds` option cannot be used at the same time.'
+- id: cyphergraphprocedures.seed_property_not_found
+  description: GDS's message for a seedProperty the graph doesn't hold. Property, Available untranslated.
+  other: 'Seed property `{{.Property}}` not found in graph with node properties: {{.Available}}'

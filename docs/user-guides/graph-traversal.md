@@ -447,6 +447,7 @@ RETURN nodeId, embedding
   YIELD node2, similarity, shared
   RETURN node2, similarity, shared
   ```
+- **Louvain:** `gds.louvain.stream(graph, config)` finds communities as GDS 2.13 does over the projection (each relationship undirected, weighted by `relationshipWeightProperty`). Its modularity optimization colours the nodes and moves each colour class at once, levels merge communities, and `maxLevels`, `maxIterations` and `tolerance` stop it as in GDS. `seedProperty` sets initial communities, `includeIntermediateCommunities` gives each level's community, and `minCommunitySize` drops small communities. Communities are numbered by their first node, as GDS's `consecutiveIds` numbers them (GDS's own default ids are internal node ids); a seeded community keeps its first seeded node's seed. `apoc.algo.louvain` runs the same algorithm with GDS's defaults.
 - **NornicDB differences:** `randomSeed` defaults to 42, so the same call gives the same embeddings (GDS picks a random seed); `embeddingDimension` is at most 8,192; `nodeId` is the node's id.
 
 For Go integrations, `cypher.GraphProjection.NodeProperties` now has the underlying type

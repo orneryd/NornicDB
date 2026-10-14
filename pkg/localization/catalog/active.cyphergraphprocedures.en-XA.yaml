@@ -193,3 +193,9 @@
 - id: cyphergraphprocedures.invalid_component_spec
   description: Expanded pseudo-locale component type.
   other: '[!! Invalid component spec: cannot parse type {{.Type}} with value {{.Value}} !!]'
+- id: cyphergraphprocedures.louvain_intermediate_consecutive
+  description: Expanded pseudo-locale louvain intermediate consecutive.
+  other: '[!! `includeIntermediateResults` and the `consecutiveIds` option cannot be used at the same time. !!]'
+- id: cyphergraphprocedures.seed_property_not_found
+  description: Expanded pseudo-locale seed property not found.
+  other: '[!! Seed property `{{.Property}}` not found in graph with node properties: {{.Available}} !!]'
