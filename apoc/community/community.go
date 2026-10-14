@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"github.com/orneryd/nornicdb/apoc/storage"
+	"github.com/orneryd/nornicdb/pkg/louvain"
 )
 
 // Node represents a graph node.
@@ -62,12 +63,13 @@ func DefaultLouvainConfig() LouvainConfig {
 	}
 }
 
-// Louvain detects communities using the Louvain algorithm.
+// Louvain adapts APOC's nodes, undirected relationships and configuration to
+// the same engine as gds.louvain.stream and apoc.algo.louvain. Communities are
+// numbered by their first node in the supplied order.
 func Louvain(nodes []*Node, rels []*Relationship, config LouvainConfig) []CommunityResult {
 	if len(nodes) == 0 {
 		return []CommunityResult{}
 	}
-
 	if config.MaxIterations == 0 {
 		config.MaxIterations = 100
 	}
@@ -75,117 +77,28 @@ func Louvain(nodes []*Node, rels []*Relationship, config LouvainConfig) []Commun
 		config.Threshold = 0.0001
 	}
 	if config.Resolution == 0 {
-		config.Resolution = 1.0
+		config.Resolution = 1
 	}
-
-	nodeIndex := make(map[int64]int)
+	index := make(map[int64]int, len(nodes))
 	for i, node := range nodes {
-		nodeIndex[node.ID] = i
+		index[node.ID] = i
 	}
-
-	community := make([]int64, len(nodes))
-	for i, node := range nodes {
-		community[i] = node.ID
-	}
-
-	weights := make(map[int64]map[int64]float64)
-	for _, node := range nodes {
-		weights[node.ID] = make(map[int64]float64)
-	}
-
-	totalWeight := 0.0
-	for _, rel := range rels {
-		weight := getRelWeight(rel)
-		if _, ok := nodeIndex[rel.StartNode]; !ok {
-			continue
-		}
-		if _, ok := nodeIndex[rel.EndNode]; !ok {
-			continue
-		}
-		weights[rel.StartNode][rel.EndNode] += weight
-		weights[rel.EndNode][rel.StartNode] += weight
-		totalWeight += 2 * weight
-	}
-
-	if totalWeight == 0 {
-		result := make([]CommunityResult, len(nodes))
-		for i, node := range nodes {
-			result[i] = CommunityResult{Node: node, CommunityID: node.ID}
-		}
-		return result
-	}
-
-	degree := make([]float64, len(nodes))
-	for i, node := range nodes {
-		for _, w := range weights[node.ID] {
-			degree[i] += w
+	graph := louvain.NewGraph(len(nodes))
+	for _, relationship := range rels {
+		source, sourceFound := index[relationship.StartNode]
+		target, targetFound := index[relationship.EndNode]
+		if sourceFound && targetFound {
+			graph.Link(source, target, getRelWeight(relationship))
 		}
 	}
-
-	communityWeight := make(map[int64]float64)
-	for i, node := range nodes {
-		communityWeight[node.ID] = degree[i]
-	}
-
-	for iter := 0; iter < config.MaxIterations; iter++ {
-		improved := false
-		nodeOrder := rand.Perm(len(nodes))
-
-		for _, i := range nodeOrder {
-			node := nodes[i]
-			currentCommunity := community[i]
-
-			neighborCommunities := make(map[int64]float64)
-			for neighborID, weight := range weights[node.ID] {
-				if idx, ok := nodeIndex[neighborID]; ok {
-					neighborCommunities[community[idx]] += weight
-				}
-			}
-
-			currentIn := neighborCommunities[currentCommunity]
-			currentTot := communityWeight[currentCommunity]
-
-			bestCommunity := currentCommunity
-			bestGain := 0.0
-			ki := degree[i]
-
-			for comm, kiin := range neighborCommunities {
-				if comm == currentCommunity {
-					continue
-				}
-				sigmaTot := communityWeight[comm]
-				gain := config.Resolution*(kiin-currentIn) - ki*(sigmaTot-(currentTot-ki))/(2*totalWeight)
-				if gain > bestGain {
-					bestGain = gain
-					bestCommunity = comm
-				}
-			}
-
-			if bestCommunity != currentCommunity {
-				communityWeight[currentCommunity] -= ki
-				communityWeight[bestCommunity] += ki
-				community[i] = bestCommunity
-				improved = true
-			}
-		}
-
-		if !improved {
-			break
-		}
-	}
-
-	communityRemap := make(map[int64]int64)
-	nextID := int64(0)
-	for _, comm := range community {
-		if _, ok := communityRemap[comm]; !ok {
-			communityRemap[comm] = nextID
-			nextID++
-		}
-	}
-
+	options := louvain.DefaultOptions()
+	options.MaxIterations = config.MaxIterations
+	options.Tolerance = config.Threshold
+	options.Resolution = config.Resolution
+	membership := louvain.Final(louvain.Run(graph, options))
 	result := make([]CommunityResult, len(nodes))
 	for i, node := range nodes {
-		result[i] = CommunityResult{Node: node, CommunityID: communityRemap[community[i]]}
+		result[i] = CommunityResult{Node: node, CommunityID: int64(membership[i])}
 	}
 	return result
 }
