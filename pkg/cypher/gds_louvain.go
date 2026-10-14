@@ -123,22 +123,17 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		}
 	}
 
-	graph, err := selectGDSSubgraph(projection, nodeLabels, relationshipTypes, weightProperty)
+	graph, err := selectGDSSubgraph(projection, nodeLabels, relationshipTypes, weightProperty, true)
 	if err != nil {
 		return nil, err
 	}
 	size := len(graph.nodes)
+	// The relationships as projected, as GDS reads them: outgoing (an
+	// UNDIRECTED projection holds each both ways), a missing weight NaN.
 	louvain := newLouvainGraph(size)
-	linked := make(map[string]bool)
 	for source, edges := range graph.outgoing {
 		for _, edge := range edges {
-			// One undirected relationship each: an UNDIRECTED projection
-			// holds it both ways.
-			if linked[edge.id] {
-				continue
-			}
-			linked[edge.id] = true
-			louvain.link(source, edge.target, edge.weight)
+			louvain.arc(source, edge.target, edge.weight)
 		}
 	}
 
@@ -151,14 +146,15 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		largest := int64(0)
 		for i, id := range graph.nodes {
 			run.seed[i] = i
-			value, ok := projection.NodeProperties[id][seedProperty]
+			// The exact value: a large seed doesn't round through a float.
+			value, ok := projection.NodeValues[id][seedProperty]
 			if !ok {
 				continue
 			}
-			if value < 0 {
+			seed := toInt64(value)
+			if seed < 0 {
 				return nil, localizedError(localization.CypherGraphProceduresSeedNegative(), nil)
 			}
-			seed := int64(value)
 			seeds[i], largest = seed, max(largest, seed)
 			if first, seen := groups[seed]; seen {
 				run.seed[i] = first

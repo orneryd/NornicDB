@@ -318,3 +318,66 @@ func TestGDSLouvainIsolatedNodes(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(0), []interface{}{int64(0)}}, {int64(1), []interface{}{int64(1)}}, {int64(2), []interface{}{int64(2)}}}, result.Rows)
 	require.Len(t, runLouvain(newLouvainGraph(0), louvainOptions{maxLevels: 1, maxIterations: 1}).levels, 1)
 }
+
+// TestGDSLouvainReadsTheProjectionAsGDS: GDS 2.13.12 on the same graphs
+// (#1198 review): a directed projection is read in its direction, a
+// missing weight is NaN (no node moves), GDS's gain arithmetic decides a
+// tie, and large seeds keep every digit.
+func TestGDSLouvainReadsTheProjectionAsGDS(t *testing.T) {
+	graphProjections = make(map[string]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	communities := func(run func(string) (*ExecuteResult, error), query string) []interface{} {
+		t.Helper()
+		result, err := run(query)
+		require.NoError(t, err, query)
+		ids := make([]interface{}, len(result.Rows))
+		for i, row := range result.Rows {
+			ids[i] = row[1]
+		}
+		return ids
+	}
+	setup := func(run func(string) (*ExecuteResult, error), queries ...string) {
+		t.Helper()
+		for _, query := range queries {
+			_, err := run(query)
+			require.NoError(t, err, query)
+		}
+	}
+
+	// A star 0→1, 0→2, 0→3: GDS gives [0, 0, 0, 1] (default ids [2, 2, 2,
+	// 3]); reversed, [0, 0, 0, 0].
+	_, run := newGDSEngineGraph(t, "star", gdsNode("n0", "S", nil), gdsNode("n1", "S", nil), gdsNode("n2", "S", nil), gdsNode("n3", "S", nil))
+	setup(run, "MATCH (a), (b) WHERE id(a) = 'n0' AND id(b) IN ['n1', 'n2', 'n3'] CREATE (a)-[:R]->(b)",
+		"CALL gds.graph.project('star', 'S', 'R')", "CALL gds.graph.project('rats', 'S', {R: {orientation: 'REVERSE'}})")
+	require.Equal(t, []interface{}{int64(0), int64(0), int64(0), int64(1)}, communities(run, "CALL gds.louvain.stream('star', {consecutiveIds: true})"))
+	require.Equal(t, []interface{}{int64(2), int64(2), int64(2), int64(3)}, communities(run, "CALL gds.louvain.stream('star')"))
+	require.Equal(t, []interface{}{int64(0), int64(0), int64(0), int64(0)}, communities(run, "CALL gds.louvain.stream('rats', {consecutiveIds: true})"))
+
+	// An undirected path 0—1—2 weighted 1.0 then nothing: GDS weighs the
+	// second NaN and leaves every node alone.
+	_, run = newGDSEngineGraph(t, "nan", gdsNode("n0", "P", nil), gdsNode("n1", "P", nil), gdsNode("n2", "P", nil))
+	setup(run, "MATCH (a), (b) WHERE id(a) = 'n0' AND id(b) = 'n1' CREATE (a)-[:R {w: 1.0}]->(b)",
+		"MATCH (a), (b) WHERE id(a) = 'n1' AND id(b) = 'n2' CREATE (a)-[:R]->(b)",
+		"CALL gds.graph.project('nan', 'P', {R: {orientation: 'UNDIRECTED', properties: 'w'}})")
+	require.Equal(t, []interface{}{int64(0), int64(1), int64(2)}, communities(run, "CALL gds.louvain.stream('nan', {relationshipWeightProperty: 'w'})"))
+
+	// Undirected 0—1 (2), 0—2 (1) and self-loops on 1 (9), 2 (1.5), 3
+	// (10.5): both of node 0's gains are 0.03125 up to rounding, and GDS's
+	// arithmetic puts it with node 2: [2, 1, 2, 3].
+	_, run = newGDSEngineGraph(t, "tie", gdsNode("n0", "T", nil), gdsNode("n1", "T", nil), gdsNode("n2", "T", nil), gdsNode("n3", "T", nil))
+	setup(run, "MATCH (a), (b) WHERE id(a) = 'n0' AND id(b) = 'n1' CREATE (a)-[:R {w: 2.0}]->(b)",
+		"MATCH (a), (b) WHERE id(a) = 'n0' AND id(b) = 'n2' CREATE (a)-[:R {w: 1.0}]->(b)",
+		"MATCH (a) WHERE id(a) = 'n1' CREATE (a)-[:R {w: 9.0}]->(a)",
+		"MATCH (a) WHERE id(a) = 'n2' CREATE (a)-[:R {w: 1.5}]->(a)",
+		"MATCH (a) WHERE id(a) = 'n3' CREATE (a)-[:R {w: 10.5}]->(a)",
+		"CALL gds.graph.project('tie', 'T', {R: {orientation: 'UNDIRECTED', properties: 'w'}})")
+	require.Equal(t, []interface{}{int64(2), int64(1), int64(2), int64(3)}, communities(run, "CALL gds.louvain.stream('tie', {relationshipWeightProperty: 'w'})"))
+
+	// Seeds past 2^53 stay distinct.
+	_, run = newGDSEngineGraph(t, "big",
+		gdsNode("n0", "B", map[string]interface{}{"seed": int64(9007199254740992)}),
+		gdsNode("n1", "B", map[string]interface{}{"seed": int64(9007199254740993)}),
+		gdsNode("n2", "B", map[string]interface{}{"seed": int64(9007199254740994)}))
+	setup(run, "CALL gds.graph.project('big', {B: {properties: 'seed'}}, '*')")
+	require.Equal(t, []interface{}{int64(9007199254740992), int64(9007199254740993), int64(9007199254740994)}, communities(run, "CALL gds.louvain.stream('big', {seedProperty: 'seed'})"))
+}
