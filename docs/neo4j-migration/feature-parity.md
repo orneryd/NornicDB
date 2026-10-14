@@ -222,7 +222,7 @@ These GDS names work as in GDS 2.13 (Neo4j 5.26), with its parameters, columns, 
 
 | Area | Names |
 | ---- | ----- |
-| Graph catalog | `gds.graph.project` (label / type projections, with `orientation`, `properties`, `aggregation` and the configuration map), `gds.graph.list`, `gds.graph.drop`, `gds.graph.exists` (procedure and function); one catalog per database |
+| Graph catalog | `gds.graph.project` (label / type projections, with `orientation`, `properties`, `aggregation` and the configuration map; and the Cypher aggregation projection, `RETURN gds.graph.project(name, source, target, dataConfig, configuration)`), `gds.graph.list`, `gds.graph.drop`, `gds.graph.exists` (procedure and function); one catalog per database |
 | FastRP | `gds.fastRP.stream`, `gds.fastRP.stats` |
 | Link prediction | `gds.alpha.linkprediction.adamicAdar`, `commonNeighbors`, `preferentialAttachment`, `resourceAllocation`, `totalNeighbors`, `sameCommunity` |
 | Utilities | `gds.util.asNode`, `asNodes`, `nodeProperty`, `NaN`, `infinity`, `isFinite`, `isInfinite`, `gds.version` |
@@ -233,7 +233,7 @@ NornicDB's differences: `nodeId` is the node's id (a STRING, #1165); FastRP's `r
 
 - every other GDS algorithm, in any mode: centrality (`gds.pageRank`, `gds.betweenness`, `gds.closeness`, `gds.degree`, `gds.articleRank`, …), community detection (`gds.louvain`, `gds.leiden`, `gds.labelPropagation`, `gds.wcc`, `gds.scc`, `gds.triangleCount`, `gds.localClusteringCoefficient`, `gds.kmeans`, …), similarity (`gds.nodeSimilarity`, `gds.knn`, …), path finding (`gds.shortestPath.*`, `gds.allShortestPaths.*`, `gds.bfs`, `gds.dfs`, `gds.spanningTree`, …), embeddings other than FastRP (`gds.node2vec`, `gds.beta.graphSage`, `gds.hashgnn`);
 - the `mutate`, `write` and `estimate` modes, including FastRP's;
-- Cypher projections (`gds.graph.project` as an aggregation, `gds.graph.project.cypher`) and other catalog operations (`gds.graph.filter`, `gds.graph.nodeProperties.*`, `gds.graph.relationships.*`, `gds.graph.sample.*`, graph export);
+- the legacy Cypher projection `gds.graph.project.cypher` (use the aggregation form) and other catalog operations (`gds.graph.filter`, `gds.graph.nodeProperties.*`, `gds.graph.relationships.*`, `gds.graph.sample.*`, graph export);
 - ML pipelines and models (`gds.beta.pipeline.*`, `gds.model.*`).
 
 Some of these algorithms exist as NornicDB extensions under `apoc.algo.*` (tables above); NornicDB's own `gds.linkPrediction.*.stream` procedures are extensions too.
