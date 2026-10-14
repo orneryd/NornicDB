@@ -221,7 +221,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 // javaPlainDouble is a Double as GDS's range messages print it: its
 // shortest digits, padded with zeros to its full integer part.
 func javaPlainDouble(value float64) string {
-	text := strconv.FormatFloat(value, 'e', -1, 64)
+	text := gdsNumberText(value, 'e', -1)
 	mantissa, exponent, _ := strings.Cut(text, "e")
 	digits := strings.Replace(mantissa, ".", "", 1)
 	power, _ := strconv.Atoi(exponent)
