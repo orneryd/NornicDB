@@ -224,6 +224,7 @@ These GDS names work as in GDS 2.13 (Neo4j 5.26), with its parameters, columns, 
 | ---- | ----- |
 | Graph catalog | `gds.graph.project` (label / type projections, with `orientation`, `properties`, `aggregation` and the configuration map; and the Cypher aggregation projection, `RETURN gds.graph.project(name, source, target, dataConfig, configuration)`), `gds.graph.list`, `gds.graph.drop`, `gds.graph.exists` (procedure and function); one catalog per database |
 | FastRP | `gds.fastRP.stream`, `gds.fastRP.stats` |
+| Similarity | `gds.nodeSimilarity.stream`, `gds.nodeSimilarity.filtered.stream` (JACCARD, weighted Jaccard, OVERLAP, COSINE; topK / bottomK, topN / bottomN, cutoffs, source and target filters), with a NornicDB extension column `shared` |
 | Link prediction | `gds.alpha.linkprediction.adamicAdar`, `commonNeighbors`, `preferentialAttachment`, `resourceAllocation`, `totalNeighbors`, `sameCommunity` |
 | Utilities | `gds.util.asNode`, `asNodes`, `nodeProperty`, `NaN`, `infinity`, `isFinite`, `isInfinite`, `gds.version` |
 
@@ -231,7 +232,7 @@ NornicDB's differences: `nodeId` is the node's id (a STRING, #1165); FastRP's `r
 
 **Not implemented** (a query using them fails with an unknown procedure or function):
 
-- every other GDS algorithm, in any mode: centrality (`gds.pageRank`, `gds.betweenness`, `gds.closeness`, `gds.degree`, `gds.articleRank`, …), community detection (`gds.louvain`, `gds.leiden`, `gds.labelPropagation`, `gds.wcc`, `gds.scc`, `gds.triangleCount`, `gds.localClusteringCoefficient`, `gds.kmeans`, …), similarity (`gds.nodeSimilarity`, `gds.knn`, …), path finding (`gds.shortestPath.*`, `gds.allShortestPaths.*`, `gds.bfs`, `gds.dfs`, `gds.spanningTree`, …), embeddings other than FastRP (`gds.node2vec`, `gds.beta.graphSage`, `gds.hashgnn`);
+- every other GDS algorithm, in any mode: centrality (`gds.pageRank`, `gds.betweenness`, `gds.closeness`, `gds.degree`, `gds.articleRank`, …), community detection (`gds.louvain`, `gds.leiden`, `gds.labelPropagation`, `gds.wcc`, `gds.scc`, `gds.triangleCount`, `gds.localClusteringCoefficient`, `gds.kmeans`, …), similarity other than node similarity (`gds.knn`, `gds.knn.filtered`, …), path finding (`gds.shortestPath.*`, `gds.allShortestPaths.*`, `gds.bfs`, `gds.dfs`, `gds.spanningTree`, …), embeddings other than FastRP (`gds.node2vec`, `gds.beta.graphSage`, `gds.hashgnn`);
 - the `mutate`, `write` and `estimate` modes, including FastRP's;
 - the legacy Cypher projection `gds.graph.project.cypher` (use the aggregation form) and other catalog operations (`gds.graph.filter`, `gds.graph.nodeProperties.*`, `gds.graph.relationships.*`, `gds.graph.sample.*`, graph export);
 - ML pipelines and models (`gds.beta.pipeline.*`, `gds.model.*`).

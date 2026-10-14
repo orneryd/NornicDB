@@ -439,6 +439,14 @@ RETURN nodeId, embedding
   ```
 
   Each row adds its source and target node (a node or an INTEGER id) and a relationship between them, with the row's `relationshipType` and numeric `relationshipProperties`. A null target adds the source alone. `sourceNodeLabels` / `targetNodeLabels` and `sourceNodeProperties` / `targetNodeProperties` come in pairs. `undirectedRelationshipTypes` holds the types (`'*'` for all) both ways. The result is GDS's map (`graphName`, `nodeCount`, `relationshipCount`, `projectMillis`, `configuration`, `query`), and FastRP, link prediction and the catalog procedures read the graph like any other. Grouping projects one graph per group.
+- **Node similarity:** `gds.nodeSimilarity.stream(graph, config)` and `gds.nodeSimilarity.filtered.stream` score every pair of nodes that share a neighbour in the projection, as GDS 2.13 does. The metric is `JACCARD` (weighted: Σmin / Σmax when `relationshipWeightProperty` is set), `OVERLAP` or `COSINE`, with `topK` / `bottomK` per node, `topN` / `bottomN` overall, `similarityCutoff`, `degreeCutoff` and `upperDegreeCutoff`. The filtered form takes `sourceNodeFilter` / `targetNodeFilter` (nodes, ids or a label). Only pairs sharing a neighbour are scored, so a few source nodes cost their neighbourhoods, not the whole graph. Rows come in node order, then most similar first. The extra column `shared`, a NornicDB extension, lists the neighbours each pair shares with their weight in the score, so the reason two nodes are similar is part of the row:
+
+  ```cypher
+  MATCH (seed:Document {id: $id})
+  CALL gds.nodeSimilarity.filtered.stream('shares', {sourceNodeFilter: seed, relationshipWeightProperty: 'weight', topK: 20})
+  YIELD node2, similarity, shared
+  RETURN node2, similarity, shared
+  ```
 - **NornicDB differences:** `randomSeed` defaults to 42, so the same call gives the same embeddings (GDS picks a random seed); `embeddingDimension` is at most 8,192; `nodeId` is the node's id.
 
 For Go integrations, `cypher.GraphProjection.NodeProperties` now has the underlying type

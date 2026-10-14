@@ -50,6 +50,11 @@ const (
 	MessageCypherGraphProceduresRelationshipTypeEmpty          MessageID = "cyphergraphprocedures.relationship_type_empty"
 	MessageCypherGraphProceduresInverseTypesNotProjected       MessageID = "cyphergraphprocedures.inverse_types_not_projected"
 	MessageCypherGraphProceduresConcurrencyBelowOne            MessageID = "cyphergraphprocedures.concurrency_below_one"
+	MessageCypherGraphProceduresUpperDegreeBelowDegree         MessageID = "cyphergraphprocedures.upper_degree_below_degree"
+	MessageCypherGraphProceduresInvalidParameterCombination    MessageID = "cyphergraphprocedures.invalid_parameter_combination"
+	MessageCypherGraphProceduresInvalidSimilarityMetric        MessageID = "cyphergraphprocedures.invalid_similarity_metric"
+	MessageCypherGraphProceduresInvalidScalarType              MessageID = "cyphergraphprocedures.invalid_scalar_type"
+	MessageCypherGraphProceduresLabelNotInGraph                MessageID = "cyphergraphprocedures.label_not_in_graph"
 	MessageCypherGraphProceduresSourceNodeNotFound             MessageID = "cyphergraphprocedures.source_node_not_found"
 
 	MessageCypherGraphProceduresDefaultPropertyType MessageID = "cyphergraphprocedures.default_property_type"
@@ -335,4 +340,29 @@ func CypherGraphProceduresPropertyTypeUnknown() Message {
 // CypherGraphProceduresUnsafeDoubleConversion reports a Long outside GDS import bounds.
 func CypherGraphProceduresUnsafeDoubleConversion(value string) Message {
 	return Message{ID: MessageCypherGraphProceduresUnsafeDoubleConversion, Fallback: "Cannot safely convert " + value + " into an double value", Data: map[string]any{"Value": value}}
+}
+
+// CypherGraphProceduresUpperDegreeBelowDegree is GDS's message for an upperDegreeCutoff below degreeCutoff.
+func CypherGraphProceduresUpperDegreeBelowDegree() Message {
+	return Message{ID: MessageCypherGraphProceduresUpperDegreeBelowDegree, Fallback: "The value of upperDegreeCutoff cannot be smaller than degreeCutoff"}
+}
+
+// CypherGraphProceduresInvalidParameterCombination is GDS's message for two settings that can't be combined.
+func CypherGraphProceduresInvalidParameterCombination(first, second string) Message {
+	return Message{ID: MessageCypherGraphProceduresInvalidParameterCombination, Fallback: "Invalid parameter combination: " + first + " combined with " + second, Data: map[string]any{"First": first, "Second": second}}
+}
+
+// CypherGraphProceduresInvalidSimilarityMetric is GDS's message for an unknown similarity metric.
+func CypherGraphProceduresInvalidSimilarityMetric(metric string) Message {
+	return Message{ID: MessageCypherGraphProceduresInvalidSimilarityMetric, Fallback: metric + " is not a valid metric. Available metrics include Jaccard and Overlap", Data: map[string]any{"Metric": metric}}
+}
+
+// CypherGraphProceduresInvalidScalarType is GDS's message for a node filter value that is neither a node nor an id.
+func CypherGraphProceduresInvalidScalarType(typeName string) Message {
+	return Message{ID: MessageCypherGraphProceduresInvalidScalarType, Fallback: "Invalid scalar type. Expected Long or Node but found: " + typeName, Data: map[string]any{"Type": typeName}}
+}
+
+// CypherGraphProceduresLabelNotInGraph is GDS's message for a node filter label the graph doesn't hold.
+func CypherGraphProceduresLabelNotInGraph(label string) Message {
+	return Message{ID: MessageCypherGraphProceduresLabelNotInGraph, Fallback: "The label `" + label + "` does not exist in the graph", Data: map[string]any{"Label": label}}
 }

@@ -73,6 +73,8 @@ const (
 	MessageCypherProcedureMetadataGdsLinkPredictionPredictStream                MessageID = "cypherproceduremetadata.gds_linkprediction_predict_stream"
 	MessageCypherProcedureMetadataGdsLinkPredictionPreferentialAttachmentStream MessageID = "cypherproceduremetadata.gds_linkprediction_preferentialattachment_stream"
 	MessageCypherProcedureMetadataGdsLinkPredictionResourceAllocationStream     MessageID = "cypherproceduremetadata.gds_linkprediction_resourceallocation_stream"
+	MessageCypherProcedureMetadataGdsNodeSimilarityFilteredStream               MessageID = "cypherproceduremetadata.gds_nodesimilarity_filtered_stream"
+	MessageCypherProcedureMetadataGdsNodeSimilarityStream                       MessageID = "cypherproceduremetadata.gds_nodesimilarity_stream"
 	MessageCypherProcedureMetadataGdsVersion                                    MessageID = "cypherproceduremetadata.gds_version"
 	MessageCypherProcedureMetadataKpDecayInfo                                   MessageID = "cypherproceduremetadata.kp_decayinfo"
 	MessageCypherProcedureMetadataKpDeindexStatus                               MessageID = "cypherproceduremetadata.kp_deindexstatus"
@@ -443,6 +445,16 @@ func CypherProcedureMetadataGdsLinkPredictionResourceAllocationStream() Message 
 	return Message{ID: MessageCypherProcedureMetadataGdsLinkPredictionResourceAllocationStream, Fallback: "Runs resource-allocation link prediction"}
 }
 
+// CypherProcedureMetadataGdsNodeSimilarityFilteredStream describes gds.nodeSimilarity.filtered.stream in procedure listings.
+func CypherProcedureMetadataGdsNodeSimilarityFilteredStream() Message {
+	return Message{ID: MessageCypherProcedureMetadataGdsNodeSimilarityFilteredStream, Fallback: "The Filtered Node Similarity algorithm compares a set of nodes based on the nodes they are connected to. Two nodes are considered similar if they share many of the same neighbors. The algorithm computes pair-wise similarities based on Jaccard or Overlap metrics. The filtered variant supports limiting which nodes to compare via source and target node filters."}
+}
+
+// CypherProcedureMetadataGdsNodeSimilarityStream describes gds.nodeSimilarity.stream in procedure listings.
+func CypherProcedureMetadataGdsNodeSimilarityStream() Message {
+	return Message{ID: MessageCypherProcedureMetadataGdsNodeSimilarityStream, Fallback: "The Node Similarity algorithm compares a set of nodes based on the nodes they are connected to. Two nodes are considered similar if they share many of the same neighbors. Node Similarity computes pair-wise similarities based on the Jaccard metric."}
+}
+
 // CypherProcedureMetadataGdsVersion describes gds.version in procedure listings.
 func CypherProcedureMetadataGdsVersion() Message {
 	return Message{ID: MessageCypherProcedureMetadataGdsVersion, Fallback: "Returns GDS version"}
@@ -604,6 +616,8 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"gds.linkPrediction.predict.stream":                CypherProcedureMetadataGdsLinkPredictionPredictStream,
 	"gds.linkPrediction.preferentialAttachment.stream": CypherProcedureMetadataGdsLinkPredictionPreferentialAttachmentStream,
 	"gds.linkPrediction.resourceAllocation.stream":     CypherProcedureMetadataGdsLinkPredictionResourceAllocationStream,
+	"gds.nodeSimilarity.filtered.stream":               CypherProcedureMetadataGdsNodeSimilarityFilteredStream,
+	"gds.nodeSimilarity.stream":                        CypherProcedureMetadataGdsNodeSimilarityStream,
 	"gds.version":                                      CypherProcedureMetadataGdsVersion,
 	"kp.decayInfo":                                     CypherProcedureMetadataKpDecayInfo,
 	"kp.deindexStatus":                                 CypherProcedureMetadataKpDeindexStatus,

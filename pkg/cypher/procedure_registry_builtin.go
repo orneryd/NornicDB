@@ -465,6 +465,14 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsVersion()
 			})
+		registerBuiltInProcedure("gds.nodeSimilarity.stream", "gds.nodeSimilarity.stream(graphName :: STRING, configuration = {} :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, similarity :: FLOAT, shared :: LIST<MAP>)", localization.CypherProcedureMetadata("gds.nodeSimilarity.stream"), ProcedureModeRead, 1, 2, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callGdsNodeSimilarityStream(args, false)
+			})
+		registerBuiltInProcedure("gds.nodeSimilarity.filtered.stream", "gds.nodeSimilarity.filtered.stream(graphName :: STRING, configuration = {} :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, similarity :: FLOAT, shared :: LIST<MAP>)", localization.CypherProcedureMetadata("gds.nodeSimilarity.filtered.stream"), ProcedureModeRead, 1, 2, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callGdsNodeSimilarityStream(args, true)
+			})
 		registerBuiltInProcedure("gds.graph.exists", "gds.graph.exists(graphName :: STRING) :: (graphName :: STRING, exists :: BOOLEAN)", localization.CypherProcedureMetadata("gds.graph.exists"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsGraphExists(args)

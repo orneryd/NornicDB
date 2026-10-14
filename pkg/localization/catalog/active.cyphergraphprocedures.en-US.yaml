@@ -161,3 +161,18 @@
 - id: cyphergraphprocedures.property_type_unknown
   description: GDS cannot infer a projected property type from only null values.
   other: 'Cannot infer type of property'
+- id: cyphergraphprocedures.upper_degree_below_degree
+  description: GDS's message for an upperDegreeCutoff below degreeCutoff.
+  other: 'The value of upperDegreeCutoff cannot be smaller than degreeCutoff'
+- id: cyphergraphprocedures.invalid_parameter_combination
+  description: GDS's message for two settings that can't be combined. First, Second untranslated.
+  other: 'Invalid parameter combination: {{.First}} combined with {{.Second}}'
+- id: cyphergraphprocedures.invalid_similarity_metric
+  description: GDS's message for an unknown similarity metric. Metric untranslated.
+  other: '{{.Metric}} is not a valid metric. Available metrics include Jaccard and Overlap'
+- id: cyphergraphprocedures.invalid_scalar_type
+  description: GDS's message for a node filter value that is neither a node nor an id. Type untranslated.
+  other: 'Invalid scalar type. Expected Long or Node but found: {{.Type}}'
+- id: cyphergraphprocedures.label_not_in_graph
+  description: GDS's message for a node filter label the graph doesn't hold. Label untranslated.
+  other: 'The label `{{.Label}}` does not exist in the graph'

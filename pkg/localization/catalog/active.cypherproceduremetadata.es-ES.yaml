@@ -138,6 +138,10 @@
   other: "Ejecuta la predicción de enlaces por asociación preferente"
 - id: cypherproceduremetadata.gds_linkprediction_resourceallocation_stream
   other: "Ejecuta la predicción de enlaces por asignación de recursos"
+- id: cypherproceduremetadata.gds_nodesimilarity_filtered_stream
+  other: "El algoritmo Filtered Node Similarity compara un conjunto de nodos según los nodos a los que están conectados; los filtros de nodos de origen y destino limitan qué nodos se comparan."
+- id: cypherproceduremetadata.gds_nodesimilarity_stream
+  other: "El algoritmo Node Similarity compara un conjunto de nodos según los nodos a los que están conectados; dos nodos son similares si comparten muchos vecinos."
 - id: cypherproceduremetadata.gds_version
   other: "Devuelve la versión de GDS"
 - id: cypherproceduremetadata.kp_decayinfo
