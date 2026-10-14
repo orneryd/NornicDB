@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -205,6 +206,15 @@ func (e *StorageExecutor) evaluatePatternComprehension(ctx context.Context, patt
 // horizons on the same row-expression path while preserving scalar aliases
 // that are visible inside the comprehension projection.
 func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Context, pattern, projection string, outer pipelineRow) []interface{} {
+	// The comprehension's named path (p = …) is its own variable
+	// (localBindingAt), shadowing an outer one of the same name rather than
+	// constraining the match.
+	if path := extractPathAssignmentVariable(pattern); path != "" {
+		if _, bound := outer[path]; bound {
+			outer = maps.Clone(outer)
+			delete(outer, path)
+		}
+	}
 	nodes := make(map[string]*storage.Node)
 	rels := make(map[string]*storage.Edge)
 	for variable, value := range outer {

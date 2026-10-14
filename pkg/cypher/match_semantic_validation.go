@@ -841,6 +841,13 @@ func (e *StorageExecutor) validateSubqueryPatternBindings(scope matchSemanticSco
 		return nil
 	}
 	for _, subquery := range findSubqueryExpressions(text) {
+		// A variable an enclosing expression binds itself
+		// (all(r IN [y] WHERE EXISTS { (r)-->() })) is that local, not the
+		// outer one (withoutLocalVariables).
+		scope := scope
+		if local, shadowed := withoutLocalVariables(staticTypeScope{kinds: scope}, text, subquery.start); shadowed {
+			scope = local.kinds
+		}
 		body := strings.TrimSpace(subquery.body)
 		if strings.HasPrefix(body, "(") {
 			body = "MATCH " + body
@@ -1267,6 +1274,8 @@ func addMatchPatternBindingKinds(scope matchSemanticScope, clause string) {
 			break
 		}
 	}
+	// The pattern binds what its structure names: (l) in a WHERE is no node.
+	pattern = matchPatternStructure(pattern)
 	for _, variable := range extractNodeVariables(pattern) {
 		if _, found := scope[variable]; !found {
 			scope[variable] = matchBindingNode
