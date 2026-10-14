@@ -344,7 +344,7 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 		degree := len(neighbors[node])
 		return degree >= config.degreeCutoff && degree <= config.upperDegreeCutoff
 	}
-	weighted := config.weightProperty != ""
+	weighted := config.weightRequested || config.weightProperty != ""
 	component, err := nodeSimilarityComponents(proj, graph, config)
 	if err != nil {
 		return nil, err
@@ -423,8 +423,8 @@ func nodeSimilarityComponents(proj *GraphProjection, graph *gdsSubgraph, config 
 	switch {
 	case config.componentProperty != "":
 		property := config.componentProperty
-		if kind := proj.NodePropertyTypes[property]; kind != "Integer" {
-			return nil, localizedError(localization.CypherGraphProceduresNodePropertyReadType("LONG", gdsPropertyReadType(kind)), nil)
+		if kind := gdsPropertyReadType(proj.NodePropertyTypes[property]); kind != "LONG" {
+			return nil, localizedError(localization.CypherGraphProceduresNodePropertyReadType("LONG", kind), nil)
 		}
 		for i, id := range graph.nodes {
 			component[i] = math.MinInt64
