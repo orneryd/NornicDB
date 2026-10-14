@@ -30,6 +30,14 @@ func isCacheableReadQuery(cypher string) bool {
 		return false
 	}
 
+	// The GDS graph catalog (projections, gds.graph.list / exists,
+	// gds.util.nodeProperty, the algorithms over a projection) changes
+	// without a graph write, so the write invalidation can't keep a cached
+	// answer right (#1161).
+	if strings.Contains(upper, "GDS.") {
+		return false
+	}
+
 	// Non-deterministic / time-sensitive builtins.
 	// Keep this intentionally small and conservative; add more as we support them.
 	if strings.Contains(upper, "RAND(") ||

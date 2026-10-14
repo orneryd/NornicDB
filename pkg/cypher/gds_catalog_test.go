@@ -215,6 +215,32 @@ func TestGDSCatalogArgumentBranches(t *testing.T) {
 	require.Equal(t, map[string]interface{}{"score": "Float (DefaultValue(NaN), PERSISTENT)"}, result.Rows[0][0].(map[string]interface{})["nodes"].(map[string]interface{})["P"])
 }
 
+// TestGDSCatalogIsNeverCached: the catalog changes without a graph write,
+// so the same gds.graph.list / exists statement sees a drop (#1161).
+func TestGDSCatalogIsNeverCached(t *testing.T) {
+	_, run := newGDSGraph(t)
+	list := func() [][]interface{} {
+		t.Helper()
+		result, err := run("CALL gds.graph.list() YIELD graphName RETURN graphName")
+		require.NoError(t, err)
+		return result.Rows
+	}
+	_, err := run("CALL gds.graph.project('g', 'P', 'K')")
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"g"}}, list())
+	exists, err := run("RETURN gds.graph.exists('g')")
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{true}}, exists.Rows)
+	_, err = run("CALL gds.graph.drop('g')")
+	require.NoError(t, err)
+	require.Empty(t, list())
+	exists, err = run("RETURN gds.graph.exists('g')")
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{false}}, exists.Rows)
+	require.False(t, isCacheableReadQuery("CALL gds.graph.list()"))
+	require.True(t, isCacheableReadQuery("MATCH (n) RETURN n"))
+}
+
 // TestGDSCatalogHelpers covers the schema text, density and degree
 // distribution of edge cases, and the parallel-relationship merge.
 func TestGDSCatalogHelpers(t *testing.T) {
