@@ -2412,48 +2412,47 @@ func (e *StorageExecutor) pipelineBindZeroLengthPath(row pipelineRow, variable s
 	return joined
 }
 
+// materializePipelinePredicateExpressions writes row's values into
+// expression: a bound entity's or map's property read (x.id) and a bound
+// value become literals. An occurrence that reads a variable the expression
+// binds itself, as in all(x IN [{id: 7}] WHERE x.id = 7), is that local's
+// and is left as written (localOccurrences).
 func (e *StorageExecutor) materializePipelinePredicateExpressions(expression string, row pipelineRow) string {
 	if expression == "" {
 		return expression
 	}
 	materialized := expression
+	local := localOccurrences(expression)
+	replaceProperties := func(name string, properties map[string]interface{}) {
+		for property, propertyValue := range properties {
+			reference := name + "." + property
+			if strings.Contains(materialized, reference) {
+				materialized = replaceQualifiedReferenceOutsideQuotesUnless(materialized, reference, e.valueToLiteral(propertyValue), local(name))
+			}
+		}
+	}
 	for name, value := range row {
 		if strings.HasPrefix(name, "$") {
 			continue
 		}
 		if object, ok := toStringAnyMap(value); ok {
-			for property, propertyValue := range object {
-				reference := name + "." + property
-				if strings.Contains(materialized, reference) {
-					materialized = replaceQualifiedReferenceOutsideQuotes(materialized, reference, e.valueToLiteral(propertyValue))
-				}
-			}
+			replaceProperties(name, object)
 			continue
 		}
 		switch entity := value.(type) {
 		case *storage.Node:
 			if entity != nil {
-				for property, propertyValue := range entity.Properties {
-					reference := name + "." + property
-					if strings.Contains(materialized, reference) {
-						materialized = replaceQualifiedReferenceOutsideQuotes(materialized, reference, e.valueToLiteral(propertyValue))
-					}
-				}
+				replaceProperties(name, entity.Properties)
 			}
 			continue
 		case *storage.Edge:
 			if entity != nil {
-				for property, propertyValue := range entity.Properties {
-					reference := name + "." + property
-					if strings.Contains(materialized, reference) {
-						materialized = replaceQualifiedReferenceOutsideQuotes(materialized, reference, e.valueToLiteral(propertyValue))
-					}
-				}
+				replaceProperties(name, entity.Properties)
 			}
 			continue
 		}
 		if referencesVariable(materialized, name) {
-			materialized = replaceIdentifierOutsideQuotes(materialized, name, e.valueToLiteral(value))
+			materialized = replaceIdentifierOutsideQuotesUnless(materialized, name, e.valueToLiteral(value), local(name))
 		}
 	}
 	return materialized
@@ -2464,6 +2463,13 @@ func (e *StorageExecutor) materializePipelinePredicateExpressions(expression str
 // property access rooted at the reference. replaceIdentifierOutsideQuotes is
 // intentionally token-oriented and therefore cannot match a dotted name.
 func replaceQualifiedReferenceOutsideQuotes(input, reference, replacement string) string {
+	return replaceQualifiedReferenceOutsideQuotesUnless(input, reference, replacement, nil)
+}
+
+// replaceQualifiedReferenceOutsideQuotesUnless is
+// replaceQualifiedReferenceOutsideQuotes that leaves the occurrences keep
+// reports (by their offset in input).
+func replaceQualifiedReferenceOutsideQuotesUnless(input, reference, replacement string, keep func(input string, at int) bool) string {
 	if reference == "" || !strings.Contains(input, reference) {
 		return input
 	}
@@ -2494,7 +2500,8 @@ func replaceQualifiedReferenceOutsideQuotes(input, reference, replacement string
 		end := index + len(reference)
 		if end <= len(input) && input[index:end] == reference &&
 			(index == 0 || (!isIdentByte(input[index-1]) && input[index-1] != '.')) &&
-			(end == len(input) || (!isIdentByte(input[end]) && input[end] != '.')) {
+			(end == len(input) || (!isIdentByte(input[end]) && input[end] != '.')) &&
+			(keep == nil || !keep(input, index)) {
 			output.WriteString(replacement)
 			index = end
 			continue
@@ -4823,8 +4830,9 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 	}
 
 	materialized := expr
+	local := localOccurrences(expr)
 	for name, value := range row {
-		materialized = replaceIdentifierOutsideQuotes(materialized, name, e.valueToLiteral(value))
+		materialized = replaceIdentifierOutsideQuotesUnless(materialized, name, e.valueToLiteral(value), local(name))
 	}
 	value := e.evaluateExpressionWithContext(ctx, materialized, nil, nil)
 	if text, unresolved := value.(string); unresolved && text == materialized && !isWholeCypherQuotedString(materialized) {

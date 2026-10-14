@@ -372,3 +372,57 @@ func TestLocalVariableShadowsAt(t *testing.T) {
 	_, shadowed = withoutLocalVariables(scope, "[x IN l | r[0]]", 11)
 	require.False(t, shadowed)
 }
+
+// TestBoundRowValuesKeepLocalVariables: a MATCH whose WHERE reads variables
+// earlier clauses bound has their values written into it, but not over a
+// local variable of the same name (all(x IN l WHERE x.id = 7), a
+// comprehension's, reduce's): that occurrence reads the local value, in a
+// quantified group's step too (each step starts from the previous step's
+// node). Recorded on Neo4j 5.26.30.
+func TestBoundRowValuesKeepLocalVariables(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "bound_row_locals"))
+		ctx := context.Background()
+		_, err := exec.Execute(ctx, "CREATE (:Q {id: 1, s: 'ab'})-[:R {w: 1}]->(:Q {id: 2})-[:R {w: 2}]->(:Q {id: 3})", nil)
+		require.NoError(t, err)
+		for query, want := range map[string]interface{}{
+			"MATCH p = (s:Q {id: 1})((x)-[e:R]->(y) WHERE all(x IN [{id: {k: true}}] WHERE x.id['k']))+(t) RETURN count(p) AS c":                int64(2),
+			"MATCH p = (s:Q {id: 1})((x)-[e:R]->(y) WHERE any(x IN [{s: 'z'}] WHERE x.s = 'z'))+(t) RETURN count(p) AS c":                       int64(2),
+			"MATCH p = (s:Q {id: 1})((x)-[e:R]->(y) WHERE [x IN [{id: 7}] | x.id][0] = 7)+(t) RETURN count(p) AS c":                             int64(2),
+			"MATCH p = (s:Q {id: 1})((x WHERE all(x IN [{id: 7}] WHERE x.id = 7))-[e:R]->(y))+(t) RETURN count(p) AS c":                         int64(2),
+			"MATCH (x:Q {id: 1}) MATCH (x)-[e:R]->(y) WHERE all(x IN [{id: 7}] WHERE x.id = 7) RETURN count(*) AS c":                            int64(1),
+			"MATCH (x:Q {id: 1}) MATCH (x)-[e:R]->(y) WHERE reduce(x = 0, k IN [7] | x + k) = 7 RETURN count(*) AS c":                           int64(1),
+			"MATCH (x:Q {id: 1})-[e:R]->(y) MATCH (y)-[f:R]->(z) WHERE all(y IN [{id: 7}] WHERE y.id = 7) RETURN count(*) AS c":                 int64(1),
+			"MATCH (x:Q {id: 1}) OPTIONAL MATCH (x)-[e:R]->(y) WHERE all(x IN [{id: 7}] WHERE x.id = 7) RETURN count(y) AS c":                   int64(1),
+			"WITH 7 AS v MATCH (x:Q {id: 1}) MATCH (x)-[e:R]->(y) WHERE all(v IN [1] WHERE v = 1) RETURN count(*) AS c":                         int64(1),
+			"WITH {k: 1} AS m MATCH (x:Q {id: 1}) MATCH (x)-[e:R]->(y) WHERE all(m IN [{k: 5}] WHERE m.k = 5) AND m.k = 1 RETURN count(*) AS c": int64(1),
+			"WITH 7 AS v UNWIND [v IN [1, 2] | v * 10] AS u RETURN collect(u) AS c":                                                             []interface{}{int64(10), int64(20)},
+		} {
+			result, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err, query)
+			require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+		}
+	})
+}
+
+// The replacers leave the occurrences keep reports, and localOccurrences
+// keeps only a local's own.
+func TestLocalOccurrences(t *testing.T) {
+	text := "x.id = 1 AND all(x IN l WHERE x.id = 7)"
+	keep := localOccurrences(text)("x")
+	require.NotNil(t, keep)
+	require.Nil(t, localOccurrences(text)("y"))
+	require.Equal(t, "1 = 1 AND all(x IN l WHERE x.id = 7)", replaceQualifiedReferenceOutsideQuotesUnless(text, "x.id", "1", keep))
+	require.Equal(t, "1 = 1 AND all(x IN l WHERE 1 = 7)", replaceQualifiedReferenceOutsideQuotes(text, "x.id", "1"))
+	require.Equal(t, "v + [v IN l | v]", replaceIdentifierOutsideQuotesUnless("v + [v IN l | v]", "v", "v", nil))
+	for text, want := range map[string]string{
+		"v + [v IN l | v]":               "7 + [v IN l | v]",
+		"all(v IN v WHERE v > 0)":        "all(v IN 7 WHERE v > 0)",
+		"reduce(v = v, k IN l | v + k)":  "reduce(v = 7, k IN l | v + k)",
+		"reduce(a = v, v IN v | a + v)":  "reduce(a = 7, v IN 7 | a + v)",
+		"reduce(a = 0, k IN l | a + v)":  "reduce(a = 0, k IN l | a + 7)",
+		"[v IN l WHERE v > 0 | v] + [v]": "[v IN l WHERE v > 0 | v] + [7]",
+	} {
+		require.Equal(t, want, replaceIdentifierOutsideQuotesUnless(text, "v", "7", localOccurrences(text)("v")), text)
+	}
+}

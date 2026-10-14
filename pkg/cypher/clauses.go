@@ -2148,6 +2148,12 @@ func (e *StorageExecutor) executeLoadCSV(ctx context.Context, cypher string) (*E
 // ========================================
 
 func replaceIdentifierOutsideQuotes(input string, ident string, replacement string) string {
+	return replaceIdentifierOutsideQuotesUnless(input, ident, replacement, nil)
+}
+
+// replaceIdentifierOutsideQuotesUnless is replaceIdentifierOutsideQuotes
+// that leaves the occurrences keep reports (by their offset in input).
+func replaceIdentifierOutsideQuotesUnless(input string, ident string, replacement string, keep func(input string, at int) bool) string {
 	if ident == "" {
 		return input
 	}
@@ -2212,7 +2218,7 @@ func replaceIdentifierOutsideQuotes(input string, ident string, replacement stri
 			i++
 		}
 		token := input[start:i]
-		if token == ident && shouldReplaceIdentifierToken(input, start, i) {
+		if token == ident && shouldReplaceIdentifierToken(input, start, i) && (keep == nil || !keep(input, start)) {
 			b.WriteString(replacement)
 		} else {
 			b.WriteString(token)

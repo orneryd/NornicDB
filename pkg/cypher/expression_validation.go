@@ -182,9 +182,11 @@ func forIterationDeclaration(text string, in int) bool {
 // in its predicate (all(n IN l WHERE n[0])), and reduce's accumulator and
 // element in its step (reduce(acc = [], n IN l | [s IN acc | s])). The list
 // a binding iterates and reduce's initial value are read outside it: in
-// 1 IN n, [n IN [1] | n] the first n is the clause's. It is the one reader
-// of these scopes for the static checks that scan raw text (list operands,
-// subscripts, dynamic labels; withoutLocalVariables).
+// 1 IN n, [n IN [1] | n] the first n is the clause's. A binding's own
+// declaration (the n of n IN, the acc of acc =) is the local too. It is the
+// one reader of these scopes for the code that reads raw text: the static
+// checks (list operands, subscripts, dynamic labels; withoutLocalVariables)
+// and the writing of a row's values into an expression (localOccurrences).
 func localVariableShadowsAt(text string, operand int, name string) bool {
 	for open := 0; open < operand; open++ {
 		switch text[open] {
@@ -220,6 +222,11 @@ func localVariableShadowsAt(text string, operand int, name string) bool {
 			if !ok || form.accumulator != name && form.variable != name {
 				continue
 			}
+			// The declarations themselves: acc = and element IN.
+			comma := open + 1 + findTopLevelByte(text[open+1:closing], ',')
+			if operand == queryGapEnd(text, open+1) && form.accumulator == name || operand == queryGapEnd(text, comma+1) && form.variable == name {
+				return true
+			}
 		} else {
 			declaration := queryGapEnd(text, open+1)
 			variable, end, ok := scanIdentifierToken(text, declaration)
@@ -227,7 +234,13 @@ func localVariableShadowsAt(text string, operand int, name string) bool {
 				continue
 			}
 			in := queryGapEnd(text, end)
-			if in+2 > operand || !strings.EqualFold(text[in:in+2], "IN") || in+2 < len(text) && isIdentByte(text[in+2]) {
+			if in+2 > len(text) || !strings.EqualFold(text[in:in+2], "IN") || in+2 < len(text) && isIdentByte(text[in+2]) {
+				continue
+			}
+			if declaration == operand {
+				return true // the declaration itself
+			}
+			if in+2 > operand {
 				continue
 			}
 			scanFrom = in + 2
@@ -303,6 +316,25 @@ func bindingFunctionBeforeParen(text string, open int) string {
 		return text[start:end]
 	default:
 		return ""
+	}
+}
+
+// localOccurrences reads, for writing a row's values into text, which
+// occurrences of a name read a variable an enclosing expression binds itself
+// (localVariableShadowsAt) and keep their text: for name, the keep test of
+// replaceIdentifierOutsideQuotesUnless, or nil when text binds no such name.
+// The names text binds (expressionLocalBindings) are read once, when first
+// asked.
+func localOccurrences(text string) func(name string) func(input string, at int) bool {
+	var locals map[string]struct{}
+	return func(name string) func(string, int) bool {
+		if locals == nil {
+			locals = expressionLocalBindings(text)
+		}
+		if _, bound := locals[name]; !bound {
+			return nil
+		}
+		return func(input string, at int) bool { return localVariableShadowsAt(input, at, name) }
 	}
 }
 
