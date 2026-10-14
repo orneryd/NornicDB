@@ -85,7 +85,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	if err != nil {
 		return nil, err
 	}
-	weightProperty, _, err := c.text("relationshipWeightProperty")
+	weightProperty, weightRequested, err := c.text("relationshipWeightProperty")
 	if err != nil {
 		return nil, err
 	}
@@ -119,12 +119,15 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		if !containsString(available, seedProperty) {
 			return nil, localizedError(localization.CypherGraphProceduresSeedPropertyNotFound(seedProperty, "["+strings.Join(available, ", ")+"]"), nil)
 		}
-		if gdsNodePropertyNotLong(projection, seedProperty) {
+		// Ask the shared typed reader to validate the requested type even
+		// when the selection is empty; translate its error into GDS's
+		// community-seeding message without a second schema/type reader.
+		if _, err := projection.nodePropertyValue("", seedProperty, "Integer"); err != nil {
 			return nil, localizedError(localization.CypherGraphProceduresSeedPropertyNotLong(seedProperty), nil)
 		}
 	}
 
-	graph, err := selectGDSSubgraph(projection, nodeLabels, relationshipTypes, weightProperty, true)
+	graph, err := selectGDSSubgraph(projection, nodeLabels, relationshipTypes, weightProperty, gdsSubgraphOptions{weightRequested: weightRequested})
 	if err != nil {
 		return nil, err
 	}
@@ -146,15 +149,13 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		largest := int64(0)
 		for i, id := range graph.nodes {
 			run.seed[i] = i
-			// The exact value: a large seed doesn't round through a float.
-			value, ok := projection.NodeValues[id][seedProperty]
-			if !ok {
-				continue
+			// Integer reads preserve exact Long values and supply GDS's
+			// missing sentinel through the single projected-property owner.
+			value, err := projection.nodePropertyValue(id, seedProperty, "Integer")
+			if err != nil {
+				return nil, err
 			}
-			seed, integer := value.(int64)
-			if !integer {
-				return nil, localizedError(localization.CypherGraphProceduresSeedPropertyNotLong(seedProperty), nil)
-			}
+			seed := value.(int64)
 			if seed == math.MinInt64 {
 				continue // GDS's missing Integer property sentinel.
 			}
@@ -215,19 +216,6 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		rows = append(rows, []interface{}{id, communityID(last, final[i]), levels})
 	}
 	return &ExecuteResult{Columns: []string{"nodeId", "communityId", "intermediateCommunityIds"}, Rows: rows}, nil
-}
-
-// gdsNodePropertyNotLong rejects any non-Integer schema for key, including
-// lists, under any projected label, before applying nodeLabels filtering.
-func gdsNodePropertyNotLong(projection *GraphProjection, key string) bool {
-	labels, _ := projection.schema["nodes"].(map[string]interface{})
-	for _, properties := range labels {
-		properties, _ := properties.(map[string]interface{})
-		if text, _ := properties[key].(string); text != "" && !strings.HasPrefix(text, "Integer ") {
-			return true
-		}
-	}
-	return false
 }
 
 // javaPlainDouble is a Double as GDS's range messages print it: its
