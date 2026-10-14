@@ -65,3 +65,11 @@ func TestGDSLouvainExplicitEmptyWeightProperty(t *testing.T) {
 	_, err = run("CALL gds.louvain.stream('emptyweight',{relationshipWeightProperty:''})")
 	require.ErrorContains(t, err, "Relationship weight property `` not found")
 }
+
+func TestGDSLouvainIntegerSeedRejectsFractionalDefault(t *testing.T) {
+	graphProjections = make(map[string]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	_, run := newGDSEngineGraph(t, "invaliddefault", gdsNode("0", "N", map[string]interface{}{"seed": int64(2)}), gdsNode("1", "N", nil))
+	_, err := run("CALL gds.graph.project('invaliddefault',{N:{properties:{seed:{defaultValue:2.5}}}},'*')")
+	require.ErrorContains(t, err, "Cannot safely convert 2.50 into an long value")
+}
