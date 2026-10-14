@@ -100,17 +100,12 @@ func (e *StorageExecutor) evaluateWithWhere(ctx context.Context, whereExpr strin
 	return accepted, getExpressionFailure(ctx)
 }
 
-// aggregateFnNames lists the aggregating function names recognized
-// by isAggregateExpression / aggregateIdentity. The set matches what
-// the rest of the executor (functions.go) treats as aggregates.
-var aggregateFnNames = []string{"collect", "count", "sum", "avg", "min", "max", "stdev", "stdevp"}
-
 // isAggregateExpression reports whether expr is an aggregating Cypher
 // expression at the top level. Recognizes the canonical forms
 // `collect(...)`, `count(...)`, etc., case-insensitively.
 func isAggregateExpression(expr string) bool {
 	trimmed := lowerASCII(strings.TrimSpace(expr))
-	for _, fn := range aggregateFnNames {
+	for _, fn := range cypherAggregateNames {
 		if strings.HasPrefix(trimmed, fn+"(") || strings.HasPrefix(trimmed, fn+" (") {
 			return true
 		}
