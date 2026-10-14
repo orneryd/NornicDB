@@ -67,6 +67,7 @@ run_cov_storage_group() {
 
 groups() {
   run_cov_group util-small \
+    ./apoc/community/... \
     ./pkg/audit/... ./pkg/auth/... ./pkg/buildinfo/... \
     ./pkg/cache/... ./pkg/compliance/... ./pkg/config/... \
     ./pkg/convert/... ./pkg/embed/... ./pkg/embeddingutil/... \
@@ -74,7 +75,7 @@ groups() {
     ./pkg/eval/... ./pkg/fabric/... ./pkg/filter/... \
     ./pkg/gpu/... ./pkg/heimdall/... ./pkg/indexing/... \
     ./pkg/inference/... ./pkg/kms/... ./pkg/knowledgepolicy/... \
-    ./pkg/lifecycle/... ./pkg/linkpredict/... ./pkg/localllm/... \
+    ./pkg/lifecycle/... ./pkg/linkpredict/... ./pkg/localllm/... ./pkg/louvain/... \
     ./pkg/math/... ./pkg/mcp/... ./pkg/multidb/... \
     ./pkg/nornicgrpc/... ./pkg/observability/... ./pkg/pool/... \
     ./pkg/qdrantgrpc/... ./pkg/retention/... ./pkg/security/... \

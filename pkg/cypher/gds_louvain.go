@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/louvain"
 )
 
 // louvainConfigKeys are the configuration keys gds.louvain.stream takes.
@@ -47,7 +48,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	if err != nil {
 		return nil, err
 	}
-	run := louvainOptions{}
+	run := louvain.Options{}
 	maxLevels, err := c.integer("maxLevels", "Integer", 1, 1<<31-1, 10, false)
 	if err != nil {
 		return nil, err
@@ -56,12 +57,12 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	if err != nil {
 		return nil, err
 	}
-	run.maxLevels, run.maxIterations = int(maxLevels), int(maxIterations)
-	if run.tolerance, err = c.number("tolerance", "Double", 0.0001); err != nil {
+	run.MaxLevels, run.MaxIterations = int(maxLevels), int(maxIterations)
+	if run.Tolerance, err = c.number("tolerance", "Double", 0.0001); err != nil {
 		return nil, err
 	}
-	if run.tolerance < 0 || math.IsNaN(run.tolerance) || math.IsInf(run.tolerance, 1) {
-		return nil, localizedError(localization.CypherGraphProceduresConfigValueOutOfRange("tolerance", javaDoubleText(run.tolerance), "[0.00, "+javaPlainDouble(math.MaxFloat64)+".00]"), nil)
+	if run.Tolerance < 0 || math.IsNaN(run.Tolerance) || math.IsInf(run.Tolerance, 1) {
+		return nil, localizedError(localization.CypherGraphProceduresConfigValueOutOfRange("tolerance", javaDoubleText(run.Tolerance), "[0.00, "+javaPlainDouble(math.MaxFloat64)+".00]"), nil)
 	}
 	intermediate, _, err := c.boolean("includeIntermediateCommunities")
 	if err != nil {
@@ -134,21 +135,21 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 	size := len(graph.nodes)
 	// The relationships as projected, as GDS reads them: outgoing (an
 	// UNDIRECTED projection holds each both ways), a missing weight NaN.
-	louvain := newLouvainGraph(size)
+	solver := louvain.NewGraph(size)
 	for source, edges := range graph.outgoing {
 		for _, edge := range edges {
-			louvain.arc(source, edge.target, edge.weight)
+			solver.Arc(source, edge.target, edge.weight)
 		}
 	}
 
 	// Seeds: nodes with equal seeds start in one community.
 	name := func(node int) int64 { return int64(node) }
 	if seedProperty != "" {
-		run.seed = make([]int, size)
+		run.Seed = make([]int, size)
 		seeds := make(map[int]int64)
 		largest := int64(0)
 		for i, id := range graph.nodes {
-			run.seed[i] = i
+			run.Seed[i] = i
 			// Integer reads preserve exact Long values and supply GDS's
 			// missing sentinel through the single projected-property owner.
 			value, err := projection.nodePropertyValue(id, seedProperty, "Integer")
@@ -180,20 +181,20 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		for i := range graph.nodes {
 			seed := name(i)
 			if first, seen := groups[seed]; seen {
-				run.seed[i] = first
+				run.Seed[i] = first
 			} else {
 				groups[seed] = i
 			}
 		}
 	}
-	result := runLouvain(louvain, run)
-	last := len(result.levels) - 1
-	final := result.levels[last]
+	result := louvain.Run(solver, run)
+	last := len(result.Levels) - 1
+	final := result.Levels[last]
 	communityID := func(level, community int) int64 {
 		if consecutive {
 			return int64(community)
 		}
-		return name(result.representatives[level][community])
+		return name(result.Representatives[level][community])
 	}
 
 	sizes := make(map[int]int)
@@ -207,13 +208,25 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		}
 		var levels interface{}
 		if intermediate {
-			list := make([]interface{}, len(result.levels))
-			for level, membership := range result.levels {
+			list := make([]interface{}, len(result.Levels))
+			for level, membership := range result.Levels {
 				list[level] = communityID(level, membership[i])
 			}
 			levels = list
 		}
 		rows = append(rows, []interface{}{id, communityID(last, final[i]), levels})
+	}
+	if consecutive && minSize > 1 {
+		// Number only surviving rows, through the same owner that numbers
+		// the solver's communities. The unfiltered stream needs no remap.
+		visible := make([]int, len(rows))
+		for i, row := range rows {
+			visible[i] = int(row[1].(int64))
+		}
+		louvain.Renumber(visible)
+		for i, community := range visible {
+			rows[i][1] = int64(community)
+		}
 	}
 	return &ExecuteResult{Columns: []string{"nodeId", "communityId", "intermediateCommunityIds"}, Rows: rows}, nil
 }
