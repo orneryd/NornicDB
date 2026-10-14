@@ -176,3 +176,6 @@
 - id: cyphergraphprocedures.label_not_in_graph
   description: GDS's message for a node filter label the graph doesn't hold. Label untranslated.
   other: 'The label `{{.Label}}` does not exist in the graph'
+- id: cyphergraphprocedures.component_property_not_found
+  description: GDS's message for a useComponents property the graph doesn't hold. Property and Available untranslated.
+  other: 'Component property `{{.Property}}` not found in graph with node properties: {{.Available}}'

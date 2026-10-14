@@ -55,6 +55,7 @@ const (
 	MessageCypherGraphProceduresInvalidSimilarityMetric        MessageID = "cyphergraphprocedures.invalid_similarity_metric"
 	MessageCypherGraphProceduresInvalidScalarType              MessageID = "cyphergraphprocedures.invalid_scalar_type"
 	MessageCypherGraphProceduresLabelNotInGraph                MessageID = "cyphergraphprocedures.label_not_in_graph"
+	MessageCypherGraphProceduresComponentPropertyNotFound      MessageID = "cyphergraphprocedures.component_property_not_found"
 	MessageCypherGraphProceduresSourceNodeNotFound             MessageID = "cyphergraphprocedures.source_node_not_found"
 
 	MessageCypherGraphProceduresDefaultPropertyType MessageID = "cyphergraphprocedures.default_property_type"
@@ -365,4 +366,10 @@ func CypherGraphProceduresInvalidScalarType(typeName string) Message {
 // CypherGraphProceduresLabelNotInGraph is GDS's message for a node filter label the graph doesn't hold.
 func CypherGraphProceduresLabelNotInGraph(label string) Message {
 	return Message{ID: MessageCypherGraphProceduresLabelNotInGraph, Fallback: "The label `" + label + "` does not exist in the graph", Data: map[string]any{"Label": label}}
+}
+
+// CypherGraphProceduresComponentPropertyNotFound is GDS's message for a
+// useComponents property the graph doesn't hold.
+func CypherGraphProceduresComponentPropertyNotFound(property, available string) Message {
+	return Message{ID: MessageCypherGraphProceduresComponentPropertyNotFound, Fallback: "Component property `" + property + "` not found in graph with node properties: " + available, Data: map[string]any{"Property": property, "Available": available}}
 }

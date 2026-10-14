@@ -176,3 +176,6 @@
 - id: cyphergraphprocedures.label_not_in_graph
   description: Mensaje de GDS (label not in graph).
   other: 'La etiqueta `{{.Label}}` no existe en el grafo'
+- id: cyphergraphprocedures.component_property_not_found
+  description: Mensaje de GDS (component property not found).
+  other: 'No se encontró la propiedad de componente `{{.Property}}` en el grafo con propiedades de nodo: {{.Available}}'

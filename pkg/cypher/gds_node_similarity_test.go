@@ -195,3 +195,38 @@ func TestNodeSimilarityArgumentBranches(t *testing.T) {
 	_, err = exec.Execute(context.Background(), "CALL gds.nodeSimilarity.filtered.stream('ns', {targetNodeFilter: 'Nope'})", nil)
 	require.ErrorContains(t, err, "The label `Nope` does not exist in the graph")
 }
+
+// TestNodeSimilarityZeroCutoffAndComponents: an explicit similarityCutoff of
+// 0 keeps the pairs sharing nothing, and useComponents keeps pairs within
+// one component, as GDS 2.13.12 gives on the same graph (#1197 review).
+func TestNodeSimilarityZeroCutoffAndComponents(t *testing.T) {
+	graphProjections = make(map[string]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "ns"))
+	_, err := exec.Execute(context.Background(), `CREATE (d1:D {name:'d1', comp: 1}), (d2:D {name:'d2', comp: 1}), (d3:D {name:'d3', comp: 2}),
+		(i1:I {name:'i1', comp: 1}), (i2:I {name:'i2', comp: 2}), (d1)-[:H]->(i1), (d2)-[:H]->(i1), (d3)-[:H]->(i2)`, nil)
+	require.NoError(t, err)
+	_, err = exec.Execute(context.Background(), "CALL gds.graph.project('dis', {D: {properties: 'comp'}, I: {properties: 'comp'}}, 'H')", nil)
+	require.NoError(t, err)
+	byName := func(query string) map[string]float64 {
+		t.Helper()
+		result, err := exec.Execute(context.Background(), "CALL gds.nodeSimilarity.stream('dis', {"+query+"}) YIELD node1, node2, similarity "+
+			"MATCH (a), (b) WHERE elementId(a) ENDS WITH node1 AND elementId(b) ENDS WITH node2 OR (id(a) = node1 AND id(b) = node2) RETURN a.name, b.name, similarity", nil)
+		require.NoError(t, err, query)
+		return similarities(result.Rows)
+	}
+	require.Equal(t, map[string]float64{"d1-d2": 1, "d2-d1": 1}, byName(""))
+	require.Equal(t, map[string]float64{"d1-d2": 1, "d1-d3": 0, "d2-d1": 1, "d2-d3": 0, "d3-d1": 0, "d3-d2": 0}, byName("similarityCutoff: 0.0"))
+	require.Equal(t, map[string]float64{"d1-d3": 0, "d2-d3": 0, "d3-d1": 0}, byName("similarityCutoff: 0.0, bottomK: 1"))
+	require.Equal(t, map[string]float64{"d1-d2": 1, "d2-d1": 1}, byName("useComponents: 'comp', similarityCutoff: 0.0"))
+	require.Equal(t, map[string]float64{"d1-d2": 1, "d2-d1": 1}, byName("useComponents: true, similarityCutoff: 0.0"))
+	// Nodes without the property (the items here) are components of their
+	// own; the documents still pair within theirs.
+	_, err = exec.Execute(context.Background(), "CALL gds.graph.project('dis2', {D: {properties: 'comp'}, I: {}}, 'H')", nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(context.Background(), "CALL gds.nodeSimilarity.stream('dis2', {useComponents: 'comp'}) YIELD node1 RETURN count(*)", nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), result.Rows[0][0])
+	_, err = exec.Execute(context.Background(), "CALL gds.nodeSimilarity.stream('dis', {useComponents: 'nope'})", nil)
+	require.ErrorContains(t, err, "Component property `nope` not found in graph with node properties: [comp]")
+}

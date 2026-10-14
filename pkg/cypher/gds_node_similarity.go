@@ -30,6 +30,9 @@ type nodeSimilarityConfig struct {
 	weightProperty    string
 	nodeLabels        []string
 	relationshipTypes []string
+	includeZero       bool   // an explicit similarityCutoff of 0: every eligible pair
+	componentProperty string // useComponents' property: pairs within one component
+	connectedOnly     bool   // useComponents: true: pairs within one connected component
 	sourceFilter      *gdsNodeFilter
 	targetFilter      *gdsNodeFilter
 }
@@ -104,6 +107,9 @@ func readNodeSimilarityConfig(proj *GraphProjection, options map[string]interfac
 	if config.cutoff < 0 || config.cutoff > 1 {
 		return config, localizedError(localization.CypherGraphProceduresConfigValueOutOfRange("similarityCutoff", javaDoubleText(config.cutoff), "[0.00, 1.00]"), nil)
 	}
+	// An explicit cutoff of 0 keeps the pairs that share nothing, as GDS
+	// does (#1197 review); the default keeps only pairs sharing a neighbour.
+	config.includeZero = c.has("similarityCutoff") && config.cutoff == 0
 	degreeCutoff, err := c.integer("degreeCutoff", "Integer", 1, 1<<31-1, 1, false)
 	if err != nil {
 		return config, err
@@ -170,14 +176,27 @@ func readNodeSimilarityConfig(proj *GraphProjection, options map[string]interfac
 			return config, err
 		}
 	}
-	// useComponents (a Boolean or a property name) only changes how GDS
-	// finds the pairs, not which: it is accepted and changes nothing.
-	if value := c.value("useComponents"); value != nil {
-		if _, isBool := value.(bool); !isBool {
-			if _, isText := value.(string); !isText {
-				return config, c.typeError("useComponents", "Boolean")
+	// useComponents compares nodes within one component only: by a
+	// projected property's values, or (true) by connected components, as
+	// GDS does (#1197 review).
+	switch value := c.value("useComponents").(type) {
+	case nil:
+	case bool:
+		config.connectedOnly = value
+	case string:
+		var available []string
+		for _, keys := range proj.NodePropertyKeys {
+			for _, key := range keys {
+				available = appendUnique(available, key)
 			}
 		}
+		sort.Strings(available)
+		if !containsString(available, value) {
+			return config, localizedError(localization.CypherGraphProceduresComponentPropertyNotFound(value, "["+strings.Join(available, ", ")+"]"), nil)
+		}
+		config.componentProperty = value
+	default:
+		return config, c.typeError("useComponents", "Boolean")
 	}
 	if filtered {
 		if config.sourceFilter, err = readGDSNodeFilter(proj, c.value("sourceNodeFilter")); err != nil {
@@ -251,6 +270,7 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 		return degree >= config.degreeCutoff && degree <= config.upperDegreeCutoff
 	}
 	weighted := config.weightProperty != ""
+	component := nodeSimilarityComponents(proj, graph, config)
 
 	var pairs []nodeSimilarityPair
 	for source := 0; source < size; source++ {
@@ -258,10 +278,18 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 			continue
 		}
 		candidates := make(map[int]bool)
-		for neighbor := range neighbors[source] {
-			for _, other := range incoming[neighbor] {
+		if config.includeZero {
+			for other := 0; other < size; other++ {
 				if other != source {
 					candidates[other] = true
+				}
+			}
+		} else {
+			for neighbor := range neighbors[source] {
+				for _, other := range incoming[neighbor] {
+					if other != source {
+						candidates[other] = true
+					}
 				}
 			}
 		}
@@ -270,8 +298,11 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 			if !eligible(target) || !config.targetFilter.admits(proj, graph.nodes[target]) {
 				continue
 			}
+			if component != nil && component[source] != component[target] {
+				continue
+			}
 			similarity, shared := nodeSimilarity(neighbors[source], neighbors[target], config.metric, weighted, graph.nodes)
-			if similarity < config.cutoff || similarity == 0 {
+			if similarity < config.cutoff || (similarity == 0 && !config.includeZero) {
 				continue
 			}
 			scored = append(scored, nodeSimilarityPair{source: source, target: target, similarity: similarity, shared: shared})
@@ -301,6 +332,50 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 		rows[i] = []interface{}{graph.nodes[pair.source], graph.nodes[pair.target], pair.similarity, pair.shared}
 	}
 	return rows
+}
+
+// nodeSimilarityComponents is each node's component for useComponents: the
+// projected property's value, or its connected component (the
+// relationships read both ways); nil without useComponents. A node without
+// the property is a component of its own.
+func nodeSimilarityComponents(proj *GraphProjection, graph *gdsSubgraph, config nodeSimilarityConfig) []string {
+	size := len(graph.nodes)
+	component := make([]string, size)
+	switch {
+	case config.componentProperty != "":
+		for i, id := range graph.nodes {
+			if value, ok := proj.NodeProperties[id][config.componentProperty]; ok {
+				component[i] = strconv.FormatFloat(value, 'g', -1, 64)
+			} else {
+				component[i] = "node:" + id
+			}
+		}
+	case config.connectedOnly:
+		parent := make([]int, size)
+		for i := range parent {
+			parent[i] = i
+		}
+		find := func(i int) int {
+			for parent[i] != i {
+				parent[i] = parent[parent[i]]
+				i = parent[i]
+			}
+			return i
+		}
+		for source, edges := range graph.outgoing {
+			for _, edge := range edges {
+				if a, b := find(source), find(edge.target); a != b {
+					parent[a] = b
+				}
+			}
+		}
+		for i := range component {
+			component[i] = strconv.Itoa(find(i))
+		}
+	default:
+		return nil
+	}
+	return component
 }
 
 // nodeSimilarityBefore orders a node's pairs: most similar first (least for

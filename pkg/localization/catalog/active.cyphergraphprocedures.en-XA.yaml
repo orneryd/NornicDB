@@ -176,3 +176,6 @@
 - id: cyphergraphprocedures.label_not_in_graph
   description: Expanded pseudo-locale label not in graph.
   other: '[!! The label `{{.Label}}` does not exist in the graph !!]'
+- id: cyphergraphprocedures.component_property_not_found
+  description: Expanded pseudo-locale component property not found.
+  other: '[!! Component property `{{.Property}}` not found in graph with node properties: {{.Available}} !!]'
