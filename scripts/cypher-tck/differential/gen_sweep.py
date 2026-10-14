@@ -562,6 +562,63 @@ for e in UNWIND_SOURCES:
     add("unwind-source", "unwind", PREFIX + f" UNWIND {e} AS v RETURN v")
     add("unwind-source", "unwind-count", PREFIX + f" UNWIND {e} AS v RETURN count(v) AS c")
 
+# 16. Selected shortest paths (#1212): SHORTEST k, ANY SHORTEST, ALL SHORTEST
+# and SHORTEST k GROUPS over quantified path patterns, quantified and
+# variable-length relationships, with a bound or unbound end, both ends
+# bound, a cycle back to the start, filters on the end, length bounds, and
+# no path. Each statement creates its own small graph (a directed triangle
+# 1->2->3->1 with the chord 1->3, a tail 3->4, a cycle 4->5->6->4, a :U
+# shortcut 2->5 and the isolated 7) and is rolled back. A SHORTEST k may take
+# any of the paths tied at its last length, so only the lengths and end
+# nodes of its paths are returned; ALL SHORTEST and GROUPS take every path
+# of their lengths, so their nodes are returned too.
+SHORTEST_GRAPH = ("CREATE (s1:S {id: 1}), (s2:S {id: 2}), (s3:S {id: 3}), (s4:S {id: 4}), (s5:S {id: 5}), "
+                  "(s6:S {id: 6}), (s7:S {id: 7}), (s1)-[:T {w: 1}]->(s2), (s2)-[:T {w: 2}]->(s3), "
+                  "(s3)-[:T {w: 3}]->(s1), (s1)-[:T {w: 2}]->(s3), (s3)-[:T {w: 1}]->(s4), (s4)-[:T {w: 2}]->(s5), "
+                  "(s5)-[:T {w: 3}]->(s6), (s6)-[:T {w: 1}]->(s4), (s2)-[:U {w: 5}]->(s5) WITH count(*) AS created ")
+SHORTEST_SELECTORS = ["ANY SHORTEST", "SHORTEST 1", "SHORTEST 2", "SHORTEST 3", "ALL SHORTEST", "SHORTEST 2 GROUPS",
+                      "SHORTEST 1 PATHS"]
+SHORTEST_PATTERNS = ["(()-[:T]->())+", "(()-[:T]-())+", "(()<-[:T]-())+", "(()-[:T]->()){2,}", "(()-[:T]-())*",
+                     "(()-[:T|U]->())+", "(()-[r:T WHERE r.w > 1]-())+", "((x)-[:T]->(y) WHERE x.id < y.id)+",
+                     "(()-[:T]-(x WHERE x.id <> 3))+", "-[:T]->+", "-[:T*]-", "-[:T]->{1,3}",
+                     "-[:T]->(m)(()-[:T]-())+", "(()-[:T]->()-[:T]->())+"]
+SHORTEST_ENDS = {
+    "start": ("(a:S {id: 1})", "(b)", "b.id AS e"),
+    "end": ("(a)", "(b:S {id: 5})", "a.id AS e"),
+    "pair": ("(a:S {id: 1})", "(b:S {id: 5})", "a.id AS e"),
+    "cycle": ("(a:S {id: 1})", "(a)", "a.id AS e"),
+    "none": ("(a:S {id: 4})", "(b:S {id: 7})", "b.id AS e"),
+    "filtered": ("(a:S {id: 2})", "(b:S WHERE b.id >= 4)", "b.id AS e"),
+}
+for selector in SHORTEST_SELECTORS:
+    whole = "GROUP" in selector or selector.startswith("ALL")
+    for pattern in SHORTEST_PATTERNS:
+        for position, (start, end, projected) in SHORTEST_ENDS.items():
+            match = f"MATCH p = {selector} {start}{pattern}{end}"
+            add("shortest-selector", position, SHORTEST_GRAPH + match + f" RETURN {projected}, length(p) AS l ORDER BY e, l", mode="tx")
+            if whole:
+                add("shortest-selector", position + "-nodes", SHORTEST_GRAPH + match
+                    + " RETURN [n IN nodes(p) | n.id] AS ns ORDER BY ns", mode="tx")
+# Length bounds on the clause's WHERE, a bound start from an earlier MATCH,
+# an end filter in the WHERE, and a parameter-free bound expression.
+for selector in ["SHORTEST 1", "SHORTEST 2", "ALL SHORTEST", "SHORTEST 2 GROUPS"]:
+    for pattern in ["(()-[:T]-())+", "(()-[:T]->())+", "-[:T]-+", "(()-[:T|U]-())*"]:
+        for where in ["length(p) <= 2", "length(p) < 2", "2 >= length(p)", "length(p) <= 1 + 1", "length(p) <= 0",
+                      "length(p) <= 2.5", "b.id > 2", "b.id > 2 AND length(p) <= 3", "length(p) > 2"]:
+            add("shortest-selector", "where", SHORTEST_GRAPH + f"MATCH p = {selector} (a:S {{id: 1}}){pattern}(b) WHERE {where}"
+                " RETURN b.id AS e, length(p) AS l ORDER BY e, l", mode="tx")
+            add("shortest-selector", "bound-start", SHORTEST_GRAPH + f"MATCH (a:S {{id: 3}}) MATCH p = {selector} (a){pattern}(b:S)"
+                f" WHERE {where} RETURN count(*) AS c, sum(length(p)) AS l", mode="tx")
+# Pre-filters on the whole path (a parenthesised path's WHERE) select among
+# the paths that hold them; the clause's WHERE filters the selected ones.
+for selector in ["SHORTEST 1", "ALL SHORTEST", "SHORTEST 2 GROUPS"]:
+    for inner, outer in [("((a:S {id: 1})(()-[:T]-(n))+(b:S {id: 4}) WHERE none(x IN n WHERE x.id = 3))", ""),
+                         ("(a:S {id: 1})(()-[:T]-(n))+(b:S {id: 4})", " WHERE none(x IN n WHERE x.id = 3)"),
+                         ("((a:S {id: 1})(()-[r:T]-())+(b) WHERE size(r) > 2)", ""),
+                         ("(a:S {id: 1})(()-[r:T]-())+(b)", " WHERE size(r) > 2")]:
+        add("shortest-selector", "path-filter", SHORTEST_GRAPH + f"MATCH p = {selector} {inner}{outer}"
+            " RETURN length(p) AS l ORDER BY l", mode="tx")
+
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:
     json.dump({"setup": SETUP, "cases": cases}, out, separators=(",", ":"))
