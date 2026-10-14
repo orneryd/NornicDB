@@ -409,6 +409,77 @@ for after in ["RETURN [k IN e | l[k.w]] AS v ORDER BY size(v)", "RETURN [k IN x 
 for b in ["10 IN e", "e[0] IS NULL", "x[0] IS NULL", "m[e] IS NULL", "size(e) = 1", "e + 1 = 2"]:
     add("qpp-step-variables", "singleton", QPP_STEP_HEAD + f"MATCH p = (s)((x)-[e:R]->(y) WHERE {b})+(t) RETURN count(p) AS c")
 
+# 12b''. Dynamic labels and types inside and outside quantified groups
+# (#1227): a pattern's $(v) / $any(v) / $all(v) is read per step from a value
+# bound before the MATCH; a value that can't name a label or type is a
+# compile-time SyntaxError whether or not a row reaches it (the :Missing
+# start), and a valid one matches as the written label would. The (v) is a
+# value, not a pattern node. In Cypher 5 a dynamic label in a predicate
+# (x:$(v) in WHERE) is a SyntaxError.
+DYNAMIC_NODE_VALUES = ["'Q'", "['Q']", "['Q', 'P']", "'P'", "'Missing'", "[]", "1", "[1]", "true", "null"]
+DYNAMIC_TYPE_VALUES = ["'R'", "['R']", "['R', 'S']", "'S'", "[]", "1", "[1]", "null"]
+DYNAMIC_GROUPS = [("(s:Q {id: 1})", "(()-->(y:{tok}))", "+"), ("(s:Q {id: 1})", "((x:{tok})-->(y))", "{1,2}"),
+                  ("(s:Q {id: 1})", "((x)-->(y:{tok}))", "*"), ("SHORTEST 1 (s:Q {id: 1})", "(()-->(y:{tok}))", "+"),
+                  ("(:Missing)", "((x:{tok})-->(y))", "+")]
+DYNAMIC_REL_GROUPS = [("(s:Q {id: 1})", "(()-[e:{tok}]->())", "+"), ("(s:Q {id: 1})", "((x)-[e:{tok}]->(y))", "{1,2}"),
+                      ("(:Missing)", "(()-[e:{tok}]->())", "+")]
+for head in ["WITH {v} AS v ", "UNWIND [{v}] AS v "]:
+    for values, groups, outside in [
+            (DYNAMIC_NODE_VALUES, DYNAMIC_GROUPS,
+             ["MATCH (x:{tok}) RETURN count(x) AS c", "MATCH (s:Q {id: 1})-->(y:{tok}) RETURN y.id AS v ORDER BY v",
+              "OPTIONAL MATCH (s:Q {id: 1})-->(y:{tok}) RETURN y.id AS v ORDER BY v"]),
+            (DYNAMIC_TYPE_VALUES, DYNAMIC_REL_GROUPS,
+             ["MATCH (s:Q {id: 1})-[e:{tok}]->(y) RETURN y.id AS v ORDER BY v", "MATCH ()-[e:{tok}]->() RETURN count(e) AS c"])]:
+        for value in values:
+            for token in ["$(v)", "$any(v)", "$all(v)"]:
+                prefix = head.replace("{v}", value)
+                for start, group, quantifier in groups:
+                    pattern = f"MATCH p = {start}{group.replace('{tok}', token)}{quantifier}(t)"
+                    add("dynamic-labels", "group", prefix + pattern + " RETURN count(p) AS c")
+                for template in outside:
+                    add("dynamic-labels", "outside", prefix + template.replace("{tok}", token))
+for value in ["'Q'", "1"]:
+    for where in ["((x WHERE x:$(v))-->(y))+", "((x)-->(y) WHERE y:$any(v))+", "(()-[e WHERE e:$(v)]->())+"]:
+        add("dynamic-labels", "predicate", f"WITH {value} AS v MATCH p = (s:Q {{id: 1}}){where}(t) RETURN count(p) AS c")
+    add("dynamic-labels", "predicate", f"WITH {value} AS v MATCH (x:Q) WHERE x:$(v) RETURN count(x) AS c")
+# A literal dynamic label is resolved before the statement runs.
+for token in ["$('Q')", "$(['Q'])", "$any(['Q', 'P'])", "$(1)", "$('')", "$(null)"]:
+    add("dynamic-labels", "literal", f"MATCH p = (s:Q {{id: 1}})(()-->(y:{token}))+(t) RETURN count(p) AS c")
+    add("dynamic-labels", "literal", f"MATCH (y:{token}) RETURN count(y) AS c")
+
+# 12b'''. A variable that all / any / none / single, a list comprehension (its
+# WHERE too) or reduce binds shadows the clause's variable of the same name
+# where it is bound, in a quantified group's predicates and anywhere else
+# (#1227): its subscripts, slices, map keys and list operands are the local
+# value's. The same name outside that scope is still the clause's, and a
+# relationship or node there is still a type error.
+SHADOW_CONTEXTS = {
+    "group": "WITH {k: 1} AS m MATCH p = (s:Q {id: 1})((x)-[e:R]->(y) WHERE {b})+(t) RETURN count(p) AS c",
+    "inline": "WITH {k: 1} AS m MATCH p = (s:Q {id: 1})((x)-[e:R WHERE {b}]->(y))+(t) RETURN count(p) AS c",
+    "shortest": "WITH {k: 1} AS m MATCH p = SHORTEST 1 (s:Q {id: 1})((x WHERE {b})-[e:R]->(y))+(t) RETURN count(p) AS c",
+    "where": "WITH {k: 1} AS m MATCH (x:Q {id: 1})-[e:R]->(y) WHERE {b} RETURN count(*) AS c",
+    "return": "WITH {k: 1} AS m MATCH (x:Q {id: 1})-[e:R]->(y) RETURN {b} AS v",
+}
+SHADOW_PREDICATES = ["all(V IN [[true]] WHERE V[0])", "any(V IN [[true]] WHERE V[0])", "none(V IN [[false]] WHERE V[0])",
+                     "single(V IN [[true]] WHERE V[0])", "all(V IN [{id: true}] WHERE V['id'])",
+                     "all(V IN [{id: {k: true}}] WHERE V.id['k'])", "all(V IN [[true]] WHERE size(V[0..1]) = 1)",
+                     "all(V IN [[1, 2]] WHERE V[-1] = 2)", "[V IN [[true]] | V[0]][0]", "[V IN [[true]] WHERE V[0] | V][0][0]",
+                     "size([V IN [[1]] WHERE 1 IN V]) = 1", "[V IN [[1, 2]] | V[0..1]][0] = [1]",
+                     "reduce(V = [[true]], k IN [1] | [s IN V | s])[0][0]", "reduce(a = true, V IN [[true]] | a AND V[0])",
+                     "reduce(V = [], k IN [1, 2] | V + [k])[1] = 2", "all(V IN [[[true]]] WHERE all(w IN V[0] WHERE w))",
+                     "[V IN [{k: [true]}] | V['k'][0]][0]",
+                     "size([(V)-->(w) WHERE w.id > 0 | w.id]) >= 0", "size([(w)-->(z) WHERE w.id > 0 | [z.id][0]]) >= 0",
+                     # Outside the local scope the name is the clause's.
+                     "V[0] IS NULL AND all(V IN [[true]] WHERE V[0])", "1 IN V AND [V IN [[1]] | 1 IN V] = [true]",
+                     "reduce(a = V[0], k IN [1] | a) IS NULL", "all(z IN [1] WHERE V[0] IS NULL)",
+                     "[V IN [[1]] | V][0][0] = 1 AND V[0] IS NULL"]
+for context, template in SHADOW_CONTEXTS.items():
+    for variable in ["x", "e", "m"]:
+        for b in SHADOW_PREDICATES:
+            if variable == "m" and "(V)" in b:
+                continue
+            add("local-scope-shadowing", context, template.replace("{b}", b.replace("V", variable)))
+
 # 12c. Subquery bodies that start from the row's own variables (#1055): the
 # bound node, relationship and path fast paths against the pipeline. Bodies
 # read a bound relationship, a row value in a property map or WHERE, a path,
