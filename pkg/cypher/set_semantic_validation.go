@@ -309,7 +309,8 @@ func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindi
 // It is the one reference scanner for the static SET and CREATE checks.
 func expressionFreeVariables(expression string) []string {
 	expression = maskTypePredicateTypes(maskPathFunctionCalls(expression))
-	locals := expressionLocalBindings(expression)
+	// Both maskers blank in place: offsets are the expression's.
+	locals := newLocalReader(expression)
 	var names []string
 	delimiters := make([]byte, 0, 8)
 	for index := 0; index < len(expression); {
@@ -326,7 +327,7 @@ func expressionFreeVariables(expression string) []string {
 						if _, bound := bindings[reference]; bound {
 							continue
 						}
-						if _, local := locals[reference]; !local {
+						if !locals.shadows(reference, index) {
 							names = append(names, reference)
 						}
 					}
@@ -369,7 +370,7 @@ func expressionFreeVariables(expression string) []string {
 				}
 				sort.Strings(references)
 				for _, reference := range references {
-					if _, local := locals[reference]; !local {
+					if !locals.shadows(reference, index) {
 						names = append(names, reference)
 					}
 				}
@@ -412,7 +413,7 @@ func expressionFreeVariables(expression string) []string {
 				if grammar {
 					for _, parameter := range parameters {
 						for _, reference := range expressionFreeVariables(parameter) {
-							if _, local := locals[reference]; !local {
+							if !locals.shadows(reference, open) {
 								names = append(names, reference)
 							}
 						}
@@ -454,7 +455,7 @@ func expressionFreeVariables(expression string) []string {
 			normalForm = word && strings.EqualFold(form, "NORMALIZED")
 		}
 		if previous != '$' && previous != '.' && following != '(' && !mapKey && !normalForm && !setExpressionKeyword(upper) {
-			if _, exists := locals[name]; !exists {
+			if !locals.shadows(name, index) {
 				names = append(names, name)
 			}
 		}
@@ -484,94 +485,29 @@ func expressionFreeVariables(expression string) []string {
 }
 
 // expressionLocalBindings returns the variables an expression binds itself,
-// at any depth: list comprehension iterators and the variables of reduce /
-// all / any / none / single / filter. It is the one owner of an expression's
-// local names for the reference scanners (expressionFreeVariables,
-// semanticFreeReferences) and the static checks, so a scope nested in another
-// ([w IN l | any(v IN [w] WHERE v > 0)]) is local wherever it is read.
+// at any depth: every declaration localBindingAt reads (list and named
+// pattern comprehensions, reduce / all / any / none / single / filter). It
+// is the names-only view of the one declaration reader, for the caches and
+// pre-filters in front of localVariableShadowsAt.
 func expressionLocalBindings(expression string) map[string]struct{} {
 	locals := make(map[string]struct{})
-	collectListComprehensionBindings(expression, locals)
-	collectFunctionExpressionBindings(expression, locals)
-	return locals
-}
-
-func collectFunctionExpressionBindings(expression string, bindings map[string]struct{}) {
-	lower := lowerASCII(expression)
-	for _, functionName := range []string{"reduce", "allreduce", "all", "any", "none", "single", "filter"} {
-		searchFrom := 0
-		for searchFrom < len(expression) {
-			relative := strings.Index(lower[searchFrom:], functionName)
-			if relative < 0 {
-				break
-			}
-			nameStart := searchFrom + relative
-			open := nameStart + len(functionName)
-			if nameStart > 0 && isIdentByte(expression[nameStart-1]) {
-				searchFrom = open
-				continue
-			}
-			for open < len(expression) && isWhitespace(expression[open]) {
-				open++
-			}
-			if open >= len(expression) || expression[open] != '(' {
-				searchFrom = nameStart + len(functionName)
-				continue
-			}
-			close := findMatchingParen(expression, open)
-			if close < 0 {
-				break
-			}
-			inner := strings.TrimSpace(expression[open+1 : close])
-			if isReduceFormFunction(functionName) {
-				if form, ok := parseReduceForm(functionName, inner); ok {
-					bindings[form.accumulator] = struct{}{}
-					bindings[form.variable] = struct{}{}
-				}
-			} else {
-				collectLeadingIteratorBinding(inner, bindings)
-			}
-			searchFrom = open + 1
-		}
-	}
-}
-
-func collectLeadingIteratorBinding(expression string, bindings map[string]struct{}) {
-	expression = strings.TrimSpace(expression)
-	name, next, ok := scanIdentifierToken(expression, 0)
-	if !ok {
-		return
-	}
-	for next < len(expression) && isWhitespace(expression[next]) {
-		next++
-	}
-	if next+2 <= len(expression) && strings.EqualFold(expression[next:next+2], "IN") &&
-		(next+2 == len(expression) || isWhitespace(expression[next+2]) || expression[next+2] == '(') {
-		bindings[name] = struct{}{}
-	}
-}
-
-func collectListComprehensionBindings(expression string, bindings map[string]struct{}) {
 	for index := 0; index < len(expression); index++ {
-		if expression[index] != '[' {
-			continue
-		}
-		start := index + 1
-		for start < len(expression) && isWhitespace(expression[start]) {
-			start++
-		}
-		name, next, ok := scanIdentifierToken(expression, start)
-		if !ok {
-			continue
-		}
-		for next < len(expression) && isWhitespace(expression[next]) {
-			next++
-		}
-		if next+2 <= len(expression) && strings.EqualFold(expression[next:next+2], "IN") &&
-			(next+2 == len(expression) || isWhitespace(expression[next+2])) {
-			bindings[name] = struct{}{}
+		switch c := expression[index]; c {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(expression, index, c) - 1
+		case '/':
+			if end := queryCommentEnd(expression, index); end >= 0 {
+				index = end - 1
+			}
+		case '[', '(':
+			if binding, ok := localBindingAt(expression, index); ok {
+				for declared := 0; declared < binding.count; declared++ {
+					locals[binding.names[declared]] = struct{}{}
+				}
+			}
 		}
 	}
+	return locals
 }
 
 func previousSetExpressionByte(text string, index int) byte {
