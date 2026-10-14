@@ -75,3 +75,132 @@ func TestQuantifiedGroupsSpans(t *testing.T) {
 	// Quoted text between elements is skipped whole.
 	require.Equal(t, [][2]int{{9, 22}}, elementPredicateSpans("'(z)' (y WHERE y.k = 1)", 0, len("'(z)' (y WHERE y.k = 1)")))
 }
+
+// TestQuantifiedGroupStepVariablesAreSingletons: inside a quantified group's
+// predicates (its own WHERE and its elements' inline WHERE) the group's node
+// and relationship variables are one iteration's node and relationship in
+// every expression form, a subscript's key included (m[r.id]), in the static
+// checks and when the rows run; after the pattern they are the group's lists.
+// Graph and expectations recorded on Neo4j 5.26.30 (#1211).
+func TestQuantifiedGroupStepVariablesAreSingletons(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "quantified_step_singletons"))
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:N {id:'a'})-[:R {id:'r1'}]->(:N {id:'b'})-[:R {id:'r2'}]->(:N {id:'c'})", nil)
+	require.NoError(t, err)
+	const head = "WITH {x: true} AS m, ['x'] AS l MATCH (s:N {id: 'a'}) "
+	// Each step predicate holds for every relationship: * matches 3 paths
+	// from a, + and {1,2} match 2, SHORTEST 1 one per end node (2).
+	for _, step := range []string{
+		"()-[r:R WHERE NOT startNode(r).id IN l]->()",
+		"()-[r:R WHERE m[startNode(r).id] IS NULL]->()",
+		"()-[r:R WHERE m[r.id] IS NULL]->()",
+		"()-[r:R WHERE m['y'] IS NULL]->()",
+		"()-[r:R WHERE l[0] = 'x']->()",
+		"()-[r:R WHERE m[toString(r.id)] IS NULL]->()",
+		"()-[r:R WHERE r['id'] IS NOT NULL]->()",
+		"()-[r:R WHERE properties(r)['id'] IS NOT NULL]->()",
+		"()-[r:R WHERE {e: r}.e.id IS NOT NULL]->()",
+		"()-[r:R WHERE coalesce(m[r.id], true)]->()",
+		"()-[r:R WHERE [m[r.id]][0] IS NULL]->()",
+		"()-[r:R WHERE m[r.id][0] IS NULL]->()",
+		"()-[r:R WHERE [x IN l WHERE x = r.id] = []]->()",
+		"()-[r:R WHERE all(k IN [r.id] WHERE m[k] IS NULL)]->()",
+		"()-[r:R WHERE any(k IN keys(r) WHERE m[r[k]] IS NULL)]->()",
+		"()-[r:R WHERE reduce(acc = true, k IN [r.id] | acc AND m[k] IS NULL)]->()",
+		"()-[r:R WHERE CASE WHEN m[r.id] IS NULL THEN true ELSE false END]->()",
+		"()-[r:R WHERE CASE m[r.id] WHEN true THEN false ELSE true END]->()",
+		"()-[r:R WHERE type(r) = 'R' AND m[r.id] IS NULL]->()",
+		"()-[r:R WHERE EXISTS { MATCH (u)-[r]->(v) }]->()",
+		"()-[r:R WHERE COUNT { MATCH (u)-[r]->(v) } = 1]->()",
+		"()-[r:R WHERE EXISTS { WITH r MATCH ()-[q]->() WHERE q = r AND m[q.id] IS NULL }]->()",
+		"(x WHERE m[x.id] IS NULL)-[r:R]->()",
+		"(x WHERE x['id'] IS NOT NULL)-[r:R]->()",
+		"(x WHERE none(k IN keys(x) WHERE m[x[k]] IS NOT NULL))-[r:R]->()",
+		"(x WHERE CASE WHEN m[x.id] IS NULL THEN true END)-[r:R]->()",
+		"(x WHERE COUNT { (x)-->() } >= 1)-[r:R]->()",
+		"(x WHERE size([(x)-->(v) | v.id]) >= 1)-[r:R]->()",
+		"(x)-[r:R]->(y) WHERE m[r.id] IS NULL",
+		"(x)-[r:R]->(y) WHERE m[x.id] IS NULL AND m[y.id] IS NULL",
+		"(x)-[r:R]->(y) WHERE x[r.id] IS NULL",
+		"(x)-[r:R]->(y) WHERE r[x.id] IS NULL",
+	} {
+		for query, want := range map[string]int64{
+			head + "MATCH p = (s)(" + step + ")*(t) RETURN count(p) AS c":            3,
+			head + "MATCH p = (s)(" + step + ")+(t) RETURN count(p) AS c":            2,
+			head + "MATCH p = (s)(" + step + "){1,2}(t) RETURN count(p) AS c":        2,
+			head + "MATCH p = SHORTEST 1 (s)(" + step + ")+(t) RETURN count(p) AS c": 2,
+		} {
+			result, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err, query)
+			require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+		}
+	}
+	for query, want := range map[string][][]interface{}{
+		// The step predicate filters by the step's relationship or node.
+		"WITH {r1: true} AS m MATCH p = (:N {id: 'a'})(()-[r:R WHERE m[r.id] IS NULL]->())+(t) RETURN count(p) AS c":                                          {{int64(0)}},
+		"WITH {r2: true} AS m MATCH p = (:N {id: 'a'})(()-[r:R WHERE m[r.id] IS NULL]->())*(t) RETURN count(p) AS c":                                          {{int64(2)}},
+		"WITH {b: true} AS m MATCH p = (:N {id: 'a'})((x)-[r:R]->(y WHERE m[y.id] IS NULL))+(t) RETURN count(p) AS c":                                         {{int64(0)}},
+		"WITH {r1: 1, r2: 2} AS m MATCH p = (:N {id: 'a'})(()-[r:R WHERE m[r.id] > 1]->())+(t) RETURN count(p) AS c":                                          {{int64(0)}},
+		"WITH {r1: 1, r2: 2} AS m MATCH p = (:N {id: 'a'})(()-[r:R WHERE m[r.id] >= 1]->()){1,2}(t) RETURN count(p) AS c":                                     {{int64(2)}},
+		"WITH {x: true} AS m MATCH p = (:N {id: 'a'})(()-[r:R WHERE r.id IN keys(m)]->())*(t) RETURN count(p) AS c":                                           {{int64(1)}},
+		"WITH {x: true} AS m MATCH p = (:N {id: 'a'})(()-[r:R WHERE EXISTS { MATCH (u {id: m[r.id]}) }]->())*(t) RETURN count(p) AS c":                        {{int64(1)}},
+		"WITH {x: true} AS m MATCH p = (s:N {id: 'a'})(()-[r:R WHERE m[r.id] IS NULL]->()){1}(()-[q:R WHERE m[q.id] IS NULL]->()){1}(t) RETURN count(p) AS c": {{int64(1)}},
+		// After the pattern the variables are the group's lists.
+		head + "MATCH p = (s)(()-[r:R WHERE m[r.id] IS NULL]->())+(t) RETURN [e IN r | e.id] AS ids ORDER BY size(ids)":              {{[]interface{}{"r1"}}, {[]interface{}{"r1", "r2"}}},
+		head + "MATCH p = (s)(()-[r:R WHERE m[r.id] IS NULL]->())+(t) WITH r RETURN size(r) AS n ORDER BY n":                         {{int64(1)}, {int64(2)}},
+		head + "MATCH p = (s)(()-[r:R WHERE m[r.id] IS NULL]->())+(t) WHERE all(e IN r WHERE m[e.id] IS NULL) RETURN count(p) AS c":  {{int64(2)}},
+		head + "MATCH p = (s)(()-[r:R WHERE m[r.id] IS NULL]->())+(t) WHERE 'r1' IN r RETURN count(p) AS c":                          {{int64(0)}},
+		head + "MATCH p = (s)(()-[r:R WHERE m[r.id] IS NULL]->())+(t) RETURN m[r[0].id] AS v":                                        {{nil}, {nil}},
+		head + "MATCH p = (s)((a)-[r:R]->(b) WHERE m[a.id] IS NULL AND m[r.id] IS NULL)+(t:N {id: 'c'}) RETURN [n IN b | n.id] AS b": {{[]interface{}{"b", "c"}}},
+		// Other contexts: OPTIONAL MATCH, subqueries, CALL, selectors.
+		head + "OPTIONAL MATCH p = (s)(()-[r:R WHERE m[r.id] IS NULL]->())+(t) RETURN count(p) AS c":                                          {{int64(2)}},
+		head + "WITH s, m WHERE EXISTS { MATCH (s)(()-[r:R WHERE m[r.id] IS NULL]->())+(t) } RETURN count(*) AS c":                            {{int64(1)}},
+		head + "RETURN COUNT { MATCH (s)(()-[r:R WHERE m[r.id] IS NULL]->())+(t) } AS c":                                                      {{int64(2)}},
+		head + "CALL (s, m) { MATCH p = (s)(()-[r:R WHERE m[r.id] IS NULL]->())+(t) RETURN count(p) AS c } RETURN c":                          {{int64(2)}},
+		head + "CALL { WITH s, m MATCH p = (s)((x)-[r:R]->(y) WHERE m[x.id] IS NULL AND m[r.id] IS NULL)+(t) RETURN count(p) AS c } RETURN c": {{int64(2)}},
+		head + "MATCH p = ANY SHORTEST (s)(()-[r:R WHERE m[r.id] IS NULL]->())+(t:N {id: 'c'}) RETURN length(p) AS l":                         {{int64(2)}},
+		head + "MATCH p = ALL SHORTEST (s)(()-[r:R WHERE m[r.id] IS NULL]->())+(t:N {id: 'c'}) RETURN length(p) AS l":                         {{int64(2)}},
+		head + "MATCH p = SHORTEST 2 GROUPS (s)(()-[r:R WHERE m[r.id] IS NULL]->())*(t) RETURN length(p) AS l ORDER BY l":                     {{int64(0)}, {int64(1)}, {int64(2)}},
+	} {
+		result, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err, query)
+		require.Equal(t, want, result.Rows, query)
+	}
+	// A parameter map keyed by the step's relationship.
+	for query, want := range map[string]int64{
+		"MATCH p = (:N {id: 'a'})(()-[r:R WHERE $m[r.id] IS NULL]->())+(t) RETURN count(p) AS c": 0,
+		"MATCH p = (:N {id: 'a'})(()-[r:R WHERE $m[r.id] IS NULL]->())*(t) RETURN count(p) AS c": 1,
+	} {
+		result, err := exec.Execute(ctx, query, map[string]interface{}{"m": map[string]interface{}{"r1": true}})
+		require.NoError(t, err, query)
+		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+	}
+	// Each check sees the step's singletons: a list operation on one is the
+	// SyntaxError Neo4j reports, as are list-only uses after the pattern.
+	for _, query := range []string{
+		"MATCH p = (:N {id: 'a'})(()-[r:R WHERE 'r1' IN r]->())+(t) RETURN count(p) AS c",
+		"MATCH p = (:N {id: 'a'})(()-[r:R WHERE r[0] IS NULL]->())+(t) RETURN count(p) AS c",
+		"MATCH p = (:N {id: 'a'})((x WHERE x[0] IS NULL)-[r:R]->())+(t) RETURN count(p) AS c",
+		"WITH {x: true} AS m MATCH p = (:N {id: 'a'})(()-[r:R WHERE m[r] IS NULL]->())+(t) RETURN count(p) AS c",
+		"MATCH p = (:N {id: 'a'})(()-[r:R WHERE size(r) = 1]->())+(t) RETURN count(p) AS c",
+		"MATCH p = (:N {id: 'a'})(()-[r:R WHERE r + 1 = 2]->())+(t) RETURN count(p) AS c",
+		"MATCH p = (:N {id: 'a'})((x WHERE COUNT { ()-[x]->() } > 0)-[r:R]->())+(t) RETURN count(p) AS c",
+		"MATCH p = (:N {id: 'a'})(()-[r:R WHERE EXISTS { (r)-->() }]->())+(t) RETURN count(p) AS c",
+		head + "MATCH p = (s)(()-[r:R]->())+(t) RETURN m[r.id] AS v",
+		head + "MATCH p = (s)(()-[r:R]->())+(t) WHERE m[r.id] IS NULL RETURN count(p) AS c",
+		head + "MATCH p = (s)((x)-[r:R]->())+(t) RETURN x.id AS v",
+		head + "MATCH p = (s)(()-[r:R WHERE m[r.id] IS NULL]->())+(t) WITH r, m RETURN m[r.id] AS v",
+		// The clause's own WHERE is checked with the clause's types.
+		"MATCH p = (s:N {id: 'a'})((x)-[r:R]->())+(t) WHERE type(t) = 'R' RETURN count(p) AS c",
+		"MATCH p = (s:N {id: 'a'})((x)-[r:R WHERE type(r) = 'R']->())+(t) WHERE type(r) = 'R' RETURN count(p) AS c",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+		code, _ := nornicerrors.Neo4jStatus(err)
+		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code, query)
+	}
+	_, err = exec.Execute(ctx, "MATCH p = (:N {id: 'a'})(()-[r:R WHERE r.id[0] = 'r']->())+(t) RETURN count(p) AS c", nil)
+	require.Error(t, err)
+	code, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, "Neo.ClientError.Statement.TypeError", code)
+}

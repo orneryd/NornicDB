@@ -231,6 +231,14 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			if err := e.validateMatchClauseBindings(scope, clause.text); err != nil {
 				return types, false, err
 			}
+			// A quantified group's predicates see one iteration's node and
+			// relationship; every check after them reads the clause without
+			// them, where the group's variables are lists.
+			masked, err := e.validateQuantifiedGroupPredicates(clause.text, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, complete: true, cypher25: cypher25})
+			if err != nil {
+				return types, false, err
+			}
+			clause.text = masked
 			// The clause's WHERE subqueries see its own bindings.
 			if err := e.validateSubqueryPatternBindings(scope, clause.text); err != nil {
 				return types, false, err
@@ -964,29 +972,23 @@ func (e *StorageExecutor) validateStaticClauseTypes(clause pipelineClause, scope
 		}); err != nil {
 			return err
 		}
-	} else {
-		text := clause.text
-		if clause.kind == pipelineClauseMatch || clause.kind == pipelineClauseOptionalMatch {
-			var err error
-			if text, err = validateQuantifiedGroupPredicateTypes(clause.text, scope); err != nil {
-				return err
-			}
-		}
-		if err := validateStaticFunctionVariables(text, scope); err != nil {
-			return err
-		}
+	} else if err := validateStaticFunctionVariables(clause.text, scope); err != nil {
+		return err
 	}
 	return e.validateStaticOperatorTypes(clause, scope, projectedScope, nil)
 }
 
-// validateQuantifiedGroupPredicateTypes checks each quantified group's
+// validateQuantifiedGroupPredicates checks each quantified group's
 // predicates (its own WHERE and its elements' inline WHERE) in a MATCH
-// clause where the group's variables are one node or
-// relationship each (an iteration's), not the lists the group binds after
-// it: type(r) in ((a)-[r]-(b) WHERE type(r) = 'T')+ takes a relationship.
-// It returns the clause with those predicates blanked for the clause-wide
-// checks.
-func validateQuantifiedGroupPredicateTypes(clause string, scope staticTypeScope) (string, error) {
+// clause where the group's variables are one node or relationship each (an
+// iteration's), not the lists the group binds after it: in
+// (()-[r WHERE m[r.id] IS NULL]->())+ r.id is a relationship's property and
+// type(r) takes a relationship. Every expression check a clause's
+// expressions get runs on them with that scope: subquery patterns,
+// subscripts, list operands, function arguments and operators. It returns
+// the clause with those predicates blanked, for the checks of the rest of
+// the clause.
+func (e *StorageExecutor) validateQuantifiedGroupPredicates(clause string, scope staticTypeScope) (string, error) {
 	groups := quantifiedGroups(clause)
 	if len(groups) == 0 {
 		return clause, nil
@@ -1006,8 +1008,18 @@ func validateQuantifiedGroupPredicateTypes(clause string, scope staticTypeScope)
 		for _, variable := range group.relationships {
 			kinds[variable] = matchBindingRelationship
 		}
-		iteration := staticTypeScope{kinds: kinds, values: scope.values, complete: scope.complete}
+		iteration := scope
+		iteration.kinds = kinds
 		for _, predicate := range predicates {
+			if err := e.validateSubqueryPatternBindings(kinds, predicate); err != nil {
+				return "", err
+			}
+			if err := validateStaticPropertySubscripts(predicate, iteration); err != nil {
+				return "", err
+			}
+			if err := staticListOperandTypeError(predicate, iteration); err != nil {
+				return "", err
+			}
 			if err := validateStaticFunctionVariables(predicate, iteration); err != nil {
 				return "", err
 			}
