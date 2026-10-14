@@ -173,7 +173,7 @@ func TestLouvainLevelsAsGDS(t *testing.T) {
 		for i, want := range tc.modularities {
 			require.InDelta(t, want, run.modularities[i], 1e-12, "%+v level %d", tc.options, i)
 		}
-		final := louvainFinal(run, 34)
+		final := louvainFinal(run)
 		seen := map[int]bool{}
 		for _, community := range final {
 			seen[community] = true
