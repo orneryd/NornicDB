@@ -52,3 +52,30 @@ func BenchmarkNodeSimilarity(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkGDSLinkPrediction measures the shared projection selection and the
+// undirected relationship-degree reducer on 5,000 nodes and 20,000 edges.
+func BenchmarkGDSLinkPrediction(b *testing.B) {
+	for _, algorithm := range []string{"commonNeighbors", "adamicAdar"} {
+		b.Run(algorithm, func(b *testing.B) {
+			exec, ids := newGDSBenchmarkExecutor(b)
+			ctx := context.Background()
+			if _, err := exec.Execute(ctx, gdsBenchmarkScalarProjection, nil); err != nil {
+				b.Fatal(err)
+			}
+			query := "CALL gds.linkPrediction." + algorithm + ".stream('gds-bench', {sourceNode:$source, topK:100})"
+			params := map[string]interface{}{"source": ids[0], "nonce": 0}
+			b.ReportAllocs()
+			b.ResetTimer()
+			b.StartTimer()
+			for i := 0; i < b.N; i++ {
+				params["nonce"] = i
+				result, err := exec.Execute(ctx, query, params)
+				if err != nil {
+					b.Fatal(err)
+				}
+				gdsBenchmarkResult = result
+			}
+		})
+	}
+}
