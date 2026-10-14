@@ -624,6 +624,7 @@ func fastRPConfigInt(value interface{}) (int, bool) {
 	number, ok := gdsConfigIntegerValue(value, true)
 	return int(number), ok
 }
+
 // anyString reports whether values holds any of wanted.
 func anyString(values, wanted []string) bool {
 	for _, value := range values {
