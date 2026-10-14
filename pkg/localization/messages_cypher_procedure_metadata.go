@@ -73,6 +73,7 @@ const (
 	MessageCypherProcedureMetadataGdsLinkPredictionPredictStream                MessageID = "cypherproceduremetadata.gds_linkprediction_predict_stream"
 	MessageCypherProcedureMetadataGdsLinkPredictionPreferentialAttachmentStream MessageID = "cypherproceduremetadata.gds_linkprediction_preferentialattachment_stream"
 	MessageCypherProcedureMetadataGdsLinkPredictionResourceAllocationStream     MessageID = "cypherproceduremetadata.gds_linkprediction_resourceallocation_stream"
+	MessageCypherProcedureMetadataGdsLouvainStream                              MessageID = "cypherproceduremetadata.gds_louvain_stream"
 	MessageCypherProcedureMetadataGdsNodeSimilarityFilteredStream               MessageID = "cypherproceduremetadata.gds_nodesimilarity_filtered_stream"
 	MessageCypherProcedureMetadataGdsNodeSimilarityStream                       MessageID = "cypherproceduremetadata.gds_nodesimilarity_stream"
 	MessageCypherProcedureMetadataGdsVersion                                    MessageID = "cypherproceduremetadata.gds_version"
@@ -445,6 +446,11 @@ func CypherProcedureMetadataGdsLinkPredictionResourceAllocationStream() Message 
 	return Message{ID: MessageCypherProcedureMetadataGdsLinkPredictionResourceAllocationStream, Fallback: "Runs resource-allocation link prediction"}
 }
 
+// CypherProcedureMetadataGdsLouvainStream describes gds.louvain.stream in procedure listings.
+func CypherProcedureMetadataGdsLouvainStream() Message {
+	return Message{ID: MessageCypherProcedureMetadataGdsLouvainStream, Fallback: "The Louvain method for community detection is an algorithm for detecting communities in networks."}
+}
+
 // CypherProcedureMetadataGdsNodeSimilarityFilteredStream describes gds.nodeSimilarity.filtered.stream in procedure listings.
 func CypherProcedureMetadataGdsNodeSimilarityFilteredStream() Message {
 	return Message{ID: MessageCypherProcedureMetadataGdsNodeSimilarityFilteredStream, Fallback: "The Filtered Node Similarity algorithm compares a set of nodes based on the nodes they are connected to. Two nodes are considered similar if they share many of the same neighbors. The algorithm computes pair-wise similarities based on Jaccard or Overlap metrics. The filtered variant supports limiting which nodes to compare via source and target node filters."}
@@ -616,6 +622,7 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"gds.linkPrediction.predict.stream":                CypherProcedureMetadataGdsLinkPredictionPredictStream,
 	"gds.linkPrediction.preferentialAttachment.stream": CypherProcedureMetadataGdsLinkPredictionPreferentialAttachmentStream,
 	"gds.linkPrediction.resourceAllocation.stream":     CypherProcedureMetadataGdsLinkPredictionResourceAllocationStream,
+	"gds.louvain.stream":                               CypherProcedureMetadataGdsLouvainStream,
 	"gds.nodeSimilarity.filtered.stream":               CypherProcedureMetadataGdsNodeSimilarityFilteredStream,
 	"gds.nodeSimilarity.stream":                        CypherProcedureMetadataGdsNodeSimilarityStream,
 	"gds.version":                                      CypherProcedureMetadataGdsVersion,

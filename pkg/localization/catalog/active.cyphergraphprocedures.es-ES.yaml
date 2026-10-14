@@ -193,3 +193,9 @@
 - id: cyphergraphprocedures.invalid_component_spec
   description: Tipo de especificación de componente no válido.
   other: 'Especificación de componente no válida: no se puede interpretar el tipo {{.Type}} con valor {{.Value}}'
+- id: cyphergraphprocedures.louvain_intermediate_consecutive
+  description: Mensaje de GDS (louvain intermediate consecutive).
+  other: '`includeIntermediateResults` y la opción `consecutiveIds` no se pueden usar al mismo tiempo.'
+- id: cyphergraphprocedures.seed_property_not_found
+  description: Mensaje de GDS (seed property not found).
+  other: 'No se encontró la propiedad semilla `{{.Property}}` en el grafo con propiedades de nodo: {{.Available}}'
