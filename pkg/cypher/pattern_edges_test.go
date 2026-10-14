@@ -86,8 +86,8 @@ func TestPatternEdges(t *testing.T) {
 	} {
 		require.Equal(t, unbounded, hasUnboundedRepetition(text, 0, len(text)), text)
 	}
-	// A pattern the clause pipeline can't run fails the step.
-	_, err = exec.selectMatchedPaths(ctx, &shortestPathMatch{pathVariable: "p", pattern: "(a) (b)", selector: &pathSelector{}}, pipelineRow{}, 1)
+	// A pattern the selected path search can't read fails the step.
+	_, _, err = exec.parseSelectedPathMatch("(a) (b)", "p", nil, &pathSelector{}, "", nil)
 	require.Error(t, err)
 	err = exec.matchQuantifiedChain(ctx, "(a) (b)", "a", "", quantifiedPathState{used: map[storage.EdgeID]struct{}{}}, func(quantifiedPathState, pipelineRow) error { return nil })
 	require.Error(t, err)

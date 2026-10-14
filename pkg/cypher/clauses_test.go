@@ -2059,17 +2059,14 @@ func TestAllShortestPathsMultiple(t *testing.T) {
 	store.CreateEdge(&storage.Edge{ID: "e3", Type: "LINK", StartNode: "b", EndNode: "d"})
 	store.CreateEdge(&storage.Edge{ID: "e4", Type: "LINK", StartNode: "c", EndNode: "d"})
 
-	startNode, _ := store.GetNode("a")
-	endNode, _ := store.GetNode("d")
-
-	// allShortestPaths(ctx, start, end, relTypes, direction, maxHops)
-	paths, err := e.allShortestPaths(context.Background(), startNode, endNode, nil, "both", 10)
+	result, err := e.Execute(context.Background(), "MATCH (a:Node {name: 'A'}), (d:Node {name: 'D'}) MATCH p = allShortestPaths((a)-[*..10]-(d)) RETURN [n IN nodes(p) | n.name] AS names ORDER BY names", nil)
 	if err != nil {
 		t.Fatalf("allShortestPaths: %v", err)
 	}
-	if len(paths) < 2 {
-		t.Errorf("Expected at least 2 shortest paths in diamond graph, got %d", len(paths))
+	if len(result.Rows) != 2 {
+		t.Fatalf("Expected the 2 shortest paths of the diamond graph, got %v", result.Rows)
 	}
+	require.Equal(t, [][]interface{}{{[]interface{}{"A", "B", "D"}}, {[]interface{}{"A", "C", "D"}}}, result.Rows)
 }
 
 // ========================================

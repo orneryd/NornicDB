@@ -12,8 +12,9 @@ import (
 // [p =] shortestPath(...) or allShortestPaths(...). It runs as a pipeline
 // step like any other MATCH (#863): for each input row the endpoint node
 // patterns are matched with the WHERE conjuncts that don't mention the path,
-// the search runs once per start/end pair, and the path is bound, so ORDER
-// BY, LIMIT, aggregation and later clauses apply to its rows as Neo4j's do.
+// the selected path search (path_selector_search.go) runs once per
+// start/end pair, and the path is bound, so ORDER BY, LIMIT, aggregation and
+// later clauses apply to its rows as Neo4j's do.
 type shortestPathMatch struct {
 	findAll bool
 	// others are the clause's other comma-separated patterns, matched first
@@ -29,7 +30,7 @@ type shortestPathMatch struct {
 	traversal    *TraversalMatch
 	// endpointWhere selects the endpoints; pathWhere mentions the path or its
 	// relationship variable and constrains the search (Neo4j returns the
-	// shortest path that satisfies it).
+	// shortest path that satisfies it): it is the plan's predicate.
 	endpointWhere, pathWhere string
 	// selector is the pattern's path selector (ANY, SHORTEST), nil for
 	// shortestPath and allShortestPaths (path_selector_match.go).
@@ -37,9 +38,10 @@ type shortestPathMatch struct {
 	// postWhere filters a selector's selected paths: the clause's WHERE
 	// conjuncts that read the path, its relationships or its inner nodes.
 	postWhere string
-	// pattern is a selected pattern the search can't run (more than one
-	// relationship, or none): it is matched whole, with pathWhere.
+	// pattern is a selected pattern; plan is the compiled search of a
+	// selected pattern or of a shortestPath pattern (path_selector_search.go).
 	pattern string
+	plan    *selectedPathPlan
 }
 
 // parseShortestPathMatch reads the body of a MATCH clause (after MATCH or
@@ -76,7 +78,7 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 	}
 	funcName, inner, _, _ := extractShortestPathCall(call)
 	if selector, predicate, terms, ok := splitPathSelectorTerm(where); ok {
-		return e.parseSelectedPathMatch(ctx, inner, pathVariable, others, selector, predicate, terms)
+		return e.parseSelectedPathMatch(inner, pathVariable, others, selector, predicate, terms)
 	}
 	startPattern, endPattern, ok := shortestPathEndpointPatterns(inner)
 	traversal := e.parseTraversalPattern(ctx, inner)
@@ -125,8 +127,23 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 	}
 	m.endpointWhere = strings.Join(endpointTerms, " AND ")
 	m.pathWhere = strings.Join(pathTerms, " AND ")
+	if m.plan, ok = shortestPathPlan(inner, startPattern, endPattern, m.startVariable, m.endVariable, m.pathVariable, m.pathWhere); !ok {
+		return nil, true, errSelectedPathPattern(inner)
+	}
 	m.setOthersVariables()
 	return m, true, nil
+}
+
+// shortestPathPlan compiles a shortestPath pattern, (start)-[...]-(end) with
+// the endpoint node patterns startPattern and endPattern, for the selected
+// path search between its endpoints: the endpoints are matched first, so
+// the plan takes them as the bare variables, and predicate (the WHERE
+// conjuncts that read the path) constrains the paths selected from.
+func shortestPathPlan(pattern, startPattern, endPattern, startVariable, endVariable, pathVariable, predicate string) (*selectedPathPlan, bool) {
+	pattern = strings.TrimSpace(pattern)
+	relationship := pattern[len(startPattern) : len(pattern)-len(endPattern)]
+	plan, _, ok := compileSelectedPathPlan("("+startVariable+")"+relationship+"("+endVariable+")", pathVariable, predicate, nil)
+	return plan, ok
 }
 
 // setOthersVariables lists the variables the clause's other patterns bind.
@@ -252,10 +269,8 @@ func (e *StorageExecutor) pipelineApplyShortestPathMatch(ctx context.Context, ro
 			if err != nil {
 				return nil, err
 			}
-			for _, path := range paths {
-				out = append(out, e.bindShortestPath(ctx, m, pair, path))
-				found++
-			}
+			out = append(out, paths...)
+			found += len(paths)
 		}
 		if optional && found == 0 {
 			out = append(out, m.unmatchedRow(row))
@@ -280,20 +295,6 @@ func (e *StorageExecutor) shortestPathBases(ctx context.Context, m *shortestPath
 		bases = next
 	}
 	return bases, nil
-}
-
-// bindShortestPath returns pair with the path, and the relationship
-// variable when there is one, bound.
-func (e *StorageExecutor) bindShortestPath(ctx context.Context, m *shortestPathMatch, pair pipelineRow, path PathResult) pipelineRow {
-	bound := make(pipelineRow, len(pair)+2)
-	for name, value := range pair {
-		bound[name] = value
-	}
-	bound[m.pathVariable] = e.pathToMap(path)
-	if relationship := m.traversal.Relationship.Variable; relationship != "" {
-		bound[relationship] = e.evaluateExpressionWithPathContext(ctx, relationship, e.buildPathContext(path, m.traversal))
-	}
-	return bound
 }
 
 // unmatchedRow is an OPTIONAL MATCH's row for an input row that matches
@@ -356,52 +357,24 @@ func (e *StorageExecutor) pipelineMatchRows(ctx context.Context, row pipelineRow
 	return rows, err
 }
 
-// shortestPathsBetween returns the shortest path (all of them for
-// allShortestPaths) from start to end that satisfies the clause's path
-// predicates, given the row's bindings. As in Neo4j:
-//   - a start that is the end is an error unless the minimum length is 0,
-//     which makes the path of length 0;
-//   - without path predicates the breadth-first search answers directly;
-//     with them, paths are tried by increasing length until one satisfies
-//     them.
-func (e *StorageExecutor) shortestPathsBetween(ctx context.Context, m *shortestPathMatch, start, end *storage.Node, row pipelineRow) ([]PathResult, error) {
-	relationship := m.traversal.Relationship
-	if start.ID == end.ID {
-		if relationship.MinHops > 0 {
-			return nil, localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "ShortestPathCommonEndNodes",
-				localization.CypherMatchingShortestPathCommonEndNodes())
-		}
-		zero := []PathResult{{Nodes: []*storage.Node{start}}}
-		return e.filterPathsByWhere(ctx, zero, m.traversal, m.pathWhere, map[string]interface{}(row)), nil
+// shortestPathsBetween returns the rows of the shortest path (all of them
+// for allShortestPaths) from start to end that satisfies the clause's path
+// predicates, given the row's bindings: the selected path search between
+// the pair (path_selector_search.go). As in Neo4j, a start that is the end
+// is an error unless the minimum length is 0, which makes the path of
+// length 0.
+func (e *StorageExecutor) shortestPathsBetween(ctx context.Context, m *shortestPathMatch, start, end *storage.Node, row pipelineRow) ([]pipelineRow, error) {
+	if start.ID == end.ID && m.traversal.Relationship.MinHops > 0 {
+		return nil, localizedStatusError("Neo.DatabaseError.Statement.ExecutionFailed", "ShortestPathCommonEndNodes",
+			localization.CypherMatchingShortestPathCommonEndNodes())
 	}
-	if m.pathWhere == "" {
-		if m.findAll {
-			return e.allShortestPaths(ctx, start, end, relationship.Types, relationship.Direction, relationship.MaxHops)
-		}
-		path, err := e.shortestPath(ctx, start, end, relationship.Types, relationship.Direction, relationship.MaxHops)
-		if err != nil || path == nil {
-			return nil, err
-		}
-		return []PathResult{*path}, nil
+	maxLength, ok := e.selectedPathLimit(ctx, m.plan, row)
+	if !ok {
+		return nil, getExpressionFailure(ctx)
 	}
-	for length := max(relationship.MinHops, 1); length <= relationship.MaxHops; length++ {
-		search := e.newTraversalContext(ctx, start, &relationship)
-		search.minHops, search.maxHops = length, length
-		search.endNodeID = end.ID
-		paths := e.findPaths(search, start, []*storage.Node{start}, nil, 0, nil)
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if paths = e.filterPathsByWhere(ctx, paths, m.traversal, m.pathWhere, map[string]interface{}(row)); len(paths) > 0 {
-			if !m.findAll {
-				paths = paths[:1]
-			}
-			return paths, nil
-		}
-		if search.deepest < length {
-			// No path from start is this long, so none is longer.
-			return nil, nil
-		}
+	rows := e.searchSelectedPaths(ctx, m.plan, m.plan.forward, false, row, maxLength, start, end, nil, 1, m.findAll)
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return nil, nil
+	return rows, getExpressionFailure(ctx)
 }
