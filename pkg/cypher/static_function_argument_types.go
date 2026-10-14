@@ -883,6 +883,12 @@ func unwindStaticValueType(clause string) string {
 	if asIndex := findKeywordIndexInContext(body, "AS"); asIndex >= 0 {
 		body = strings.TrimSpace(body[:asIndex])
 	}
+	return staticListElementType(body)
+}
+
+// staticListElementType is the element type of a list expression whose
+// elements are typed before the statement runs, "" otherwise.
+func staticListElementType(body string) string {
 	if elementType := literalListElementType(body); elementType != "" {
 		return elementType
 	}

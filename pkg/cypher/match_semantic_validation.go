@@ -842,11 +842,19 @@ func (e *StorageExecutor) validateSubqueryPatternBindings(scope matchSemanticSco
 	}
 	for _, subquery := range findSubqueryExpressions(text) {
 		// A variable an enclosing expression binds itself
-		// (all(r IN [y] WHERE EXISTS { (r)-->() })) is that local, not the
-		// outer one (withoutLocalVariables).
-		scope := scope
-		if local, shadowed := withoutLocalVariables(staticTypeScope{kinds: scope}, text, subquery.start); shadowed {
-			scope = local.kinds
+		// (all(r IN [1] WHERE EXISTS { (r)-->() })) is that local, of its own
+		// type, not the outer one (withLocalKinds).
+		scope := withLocalKinds(scope, text, subquery.start)
+		// A local the body declares (a comprehension's, a quantifier's,
+		// reduce's, a named path; localBindingAt) may not redeclare a
+		// variable of the enclosing query: Neo4j's "is shadowing a variable
+		// with the same name from the outer scope". At the top level, and in
+		// CALL { }, such a local shadows instead.
+		for name := range expressionLocalBindings(subquery.body) {
+			if _, outer := scope[name]; outer {
+				return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+					localization.CypherCoreVariableDeclaredInOuterScope(name))
+			}
 		}
 		body := strings.TrimSpace(subquery.body)
 		if strings.HasPrefix(body, "(") {

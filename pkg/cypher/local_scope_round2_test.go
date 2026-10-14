@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -113,4 +114,54 @@ func TestLocalScopeOwners(t *testing.T) {
 	require.NoError(t, checkExpressionPropertyAccesses("[i IN [{p: 1}] | [(n)-->(m) | i.p]]", types, nil))
 	require.Error(t, checkExpressionPropertyAccesses("[j IN [1] | [(n)-->(m) | i.p]]", types, nil))
 	require.Equal(t, types, newLocalReader("[i IN l | i]").withoutTypes(types, 0))
+}
+
+// TestLocalScopeRound3: an aggregate inside reduce stays reduce's list or
+// initial value, a local in an enclosing expression gives a subquery
+// pattern its own type, and a local inside an EXISTS / COUNT / COLLECT body
+// may not redeclare an outer variable (it may in CALL { } and at the top
+// level). Recorded on Neo4j 5.26.30 (#1227, review round 3).
+func TestLocalScopeRound3(t *testing.T) {
+	forEachParser(t, func(t *testing.T) {
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "local_scope_round3"))
+		ctx := context.Background()
+		_, err := exec.Execute(ctx, "CREATE (:N {id:'a', k:1})-[:R {id:'r1'}]->(:N {id:'b', k:2})-[:R {id:'r2'}]->(:N {id:'c', k:3})", nil)
+		require.NoError(t, err)
+		for query, want := range map[string]interface{}{
+			"UNWIND [1,2] AS x RETURN reduce(acc = 0, y IN collect(x) | acc + y) AS total":                                   int64(3),
+			"UNWIND [1,2] AS x RETURN reduce(acc = count(*), y IN [1,2] | acc + y) AS total":                                 int64(5),
+			"UNWIND [1,2] AS x WITH reduce(acc = 0, y IN collect(x) | acc + y) AS total RETURN total":                        int64(3),
+			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE all(r IN [y] WHERE EXISTS { (r)-->() }))+(t) RETURN count(p) AS c": int64(1),
+			"WITH 7 AS p RETURN [p = (x:N)-->(z) | length(p)] AS v":                                                          []interface{}{int64(1), int64(1)},
+			"WITH 7 AS x CALL (x) { RETURN [x IN [1] | x] AS v } RETURN v":                                                   []interface{}{int64(1)},
+			"WITH 7 AS p CALL (p) { MATCH (x:N {id:'a'}) RETURN [p = (x)-->(z) | length(p)] AS v } RETURN v":                 []interface{}{int64(1)},
+			"WITH 7 AS x RETURN COLLECT { MATCH (n:N {id:'a'}) RETURN x AS v } AS v":                                         []interface{}{int64(7)},
+		} {
+			result, err := exec.Execute(ctx, query, nil)
+			require.NoError(t, err, query)
+			require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+		}
+		for _, query := range []string{
+			"UNWIND [1,2] AS x RETURN x + size(collect([x IN [1] | x])) AS v",
+			"MATCH p = (:N {id:'missing'})((x)-[r:R]->(y) WHERE all(r IN [1] WHERE EXISTS { (r)-->() }))+(t) RETURN count(p) AS c",
+			"MATCH p = (:N {id:'a'})((x)-[r:R]->(y) WHERE all(r IN [1] WHERE EXISTS { (r)-->() }))+(t) RETURN count(p) AS c",
+			"MATCH p = (:N {id:'missing'})((x)-[r:R]->(y) WHERE all(r IN [1] WHERE COUNT { (r)-->() } > 0))+(t) RETURN count(p) AS c",
+			"MATCH (x:N {id:'a'})-[r:R]->(y) WHERE all(r IN ['s'] WHERE EXISTS { (r)-->() }) RETURN count(*) AS c",
+			"WITH 7 AS p RETURN COLLECT { MATCH (x:N {id:'a'}) RETURN [p = (x)-->(z) | length(p)] AS v } AS v",
+			"WITH 7 AS x RETURN COLLECT { MATCH (n:N {id:'a'}) RETURN [x IN [1] | x] AS v } AS v",
+			"WITH 7 AS x RETURN COUNT { MATCH (n:N) WHERE all(x IN [1] WHERE x = 1) } AS v",
+			"WITH 7 AS p MATCH (y:N {id:'a'}) WHERE EXISTS { MATCH (y) WHERE size([p = (y)-->(z) | p]) > 0 } RETURN count(*) AS c",
+			"WITH 7 AS x RETURN COLLECT { MATCH (n:N {id:'a'}) RETURN reduce(x = 0, y IN [1] | x + y) AS v } AS v",
+			"MATCH (r:N {id:'a'}) RETURN COUNT { MATCH (n:N) WHERE all(r IN [1] WHERE r = 1) } AS v",
+		} {
+			requireStatementCode(t, exec, query, "Neo.ClientError.Statement.SyntaxError")
+		}
+	})
+	scope := matchSemanticScope{"r": matchBindingRelationship}
+	text := "all(r IN [1] WHERE EXISTS { (r)-->() }) AND all(r IN [y] WHERE true)"
+	require.Equal(t, matchBindingValue, withLocalKinds(scope, text, strings.Index(text, "EXISTS"))["r"])
+	require.Equal(t, matchBindingPath, localBindingKind("[p = (a)-->(b) | p]", 17, "p", staticTypeScope{}))
+	require.Equal(t, matchBindingUnknown, localBindingKind("reduce(a = b, x IN l | a)", 23, "a", staticTypeScope{}))
+	require.Equal(t, matchBindingValue, localBindingKind("reduce(a = 0, x IN l | a)", 23, "a", staticTypeScope{}))
+	require.Equal(t, scope, withLocalKinds(scope, "true", 0))
 }

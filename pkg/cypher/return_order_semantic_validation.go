@@ -83,7 +83,7 @@ func validateReturnOrderBySemanticScope(clause string) error {
 		if hasOrderAggregate {
 			scalarExpression = removeAggregateCalls(expression)
 		}
-		for _, reference := range semanticFreeReferences(scalarExpression) {
+		for _, reference := range semanticFreeReferencesIn(expression, scalarExpression) {
 			if _, projectedAlias := aliases[reference]; projectedAlias {
 				continue
 			}
@@ -201,7 +201,7 @@ func validateReturnAggregationSemantics(body string) error {
 		// What the projection reads outside its aggregates: removeAggregateCalls
 		// blanks them in place, so a local's scope is read where it is
 		// (x + size(collect([x IN l | x])) reads the outer x).
-		for _, reference := range semanticFreeReferences(removeAggregateCalls(expression)) {
+		for _, reference := range semanticFreeReferencesIn(expression, removeAggregateCalls(expression)) {
 			if _, projected := directExpressions[reference]; projected {
 				continue
 			}
@@ -390,10 +390,18 @@ func qualifiedFunctionNameEnd(expression string, at int) (int, bool) {
 // variables; a map projection's keys aren't variables). The base of a map
 // projection (n in n {.k}) is a reference.
 func semanticFreeReferences(expression string) []string {
-	locals := newLocalReader(expression)
-	var free []string
-	// maskSemanticBraceBodies keeps offsets: each one is the expression's.
-	forEachSemanticExpressionReference(maskSemanticBraceBodies(expression), func(reference string, at int) {
+	return semanticFreeReferencesIn(expression, expression)
+}
+
+// semanticFreeReferencesIn is semanticFreeReferences of text with the local
+// scopes read from scopes, a text of the same length text was blanked from
+// (removeAggregateCalls): blanking reduce(acc = 0, y IN collect(x) | …)'s
+// list would leave no reduce to bind y.
+func semanticFreeReferencesIn(scopes, text string) []string {
+	locals := newLocalReader(scopes)
+	free := make([]string, 0, 2)
+	// maskSemanticBraceBodies keeps offsets: each one is the scopes text's.
+	forEachSemanticExpressionReference(maskSemanticBraceBodies(text), func(reference string, at int) {
 		if !locals.shadows(strings.SplitN(reference, ".", 2)[0], at) {
 			free = append(free, reference)
 		}

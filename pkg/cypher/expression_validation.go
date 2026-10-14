@@ -186,10 +186,18 @@ type localBinding struct {
 	close, scope, count int
 	names               [2]string
 	declared            [2]int
+	// source is the text span that types each name: the list an element
+	// iterates (element), reduce's initial value for its accumulator; a
+	// named path (path) is a Path.
+	source  [2][2]int
+	element [2]bool
+	path    [2]bool
 }
 
-func (binding *localBinding) declare(name string, at int) {
-	binding.names[binding.count], binding.declared[binding.count] = name, at
+func (binding *localBinding) declare(name string, at, sourceStart, sourceEnd int, element, path bool) {
+	index := binding.count
+	binding.names[index], binding.declared[index] = name, at
+	binding.source[index], binding.element[index], binding.path[index] = [2]int{sourceStart, sourceEnd}, element, path
 	binding.count++
 }
 
@@ -227,15 +235,18 @@ func localBindingAt(text string, open int) (localBinding, bool) {
 			return binding, false
 		}
 		comma := open + 1 + findTopLevelByte(text[open+1:binding.close], ',')
-		binding.declare(form.accumulator, queryGapEnd(text, open+1))
-		binding.declare(form.variable, queryGapEnd(text, comma+1))
 		binding.scope = localScopeStart(text, comma+1, binding.close, true, false)
+		accumulator := queryGapEnd(text, open+1)
+		equals := open + 1 + strings.IndexByte(text[open+1:comma], '=')
+		binding.declare(form.accumulator, accumulator, equals+1, comma, false, false)
+		_, element, list, _ := bindingDeclaration(text, comma+1)
+		binding.declare(form.variable, element, list, binding.scope, true, false)
 		return binding, true
 	}
 	if name, declaration, listStart, declared := bindingDeclaration(text, open+1); declared {
 		binding.close = closing()
-		binding.declare(name, declaration)
 		binding.scope = localScopeStart(text, listStart, binding.close, list, true)
+		binding.declare(name, declaration, listStart, binding.scope, true, false)
 		return binding, true
 	}
 	declaration := queryGapEnd(text, open+1)
@@ -247,7 +258,7 @@ func localBindingAt(text string, open int) (localBinding, bool) {
 		// [p = (a)-->(b) …]: a named pattern comprehension.
 		if pattern := queryGapEnd(text, next+1); pattern < len(text) && text[pattern] == '(' {
 			binding.close = closing()
-			binding.declare(name, declaration)
+			binding.declare(name, declaration, 0, 0, false, true)
 			binding.scope = next + 1
 			return binding, true
 		}
@@ -322,6 +333,18 @@ func localScopeStart(text string, from, close int, pipe, where bool) int {
 // reference scanners and the writing of a row's values into an expression
 // (localOccurrences).
 func localVariableShadowsAt(text string, operand int, name string) bool {
+	_, _, ok := localBindingOf(text, operand, name)
+	return ok
+}
+
+// localBindingOf is the innermost local binding that binds name where it is
+// read at offset operand of text (localVariableShadowsAt), and the index of
+// name among its declarations. A '[' or '(' whose first declared name isn't
+// name (and isn't a reduce, which declares two) is passed over without
+// being read whole.
+func localBindingOf(text string, operand int, name string) (localBinding, int, bool) {
+	var found localBinding
+	foundIndex, ok := 0, false
 	for open := 0; open < operand; open++ {
 		switch text[open] {
 		case '\'', '"', '`':
@@ -336,17 +359,72 @@ func localVariableShadowsAt(text string, operand int, name string) bool {
 		default:
 			continue
 		}
-		binding, ok := localBindingAt(text, open)
-		if !ok {
+		if declared, _, named := scanIdentifierToken(text, queryGapEnd(text, open+1)); !named || declared != name {
+			if text[open] != '(' || !isReduceFormFunction(bindingFunctionBeforeParen(text, open)) {
+				continue
+			}
+		}
+		binding, bound := localBindingAt(text, open)
+		if !bound {
 			continue
 		}
 		for index := 0; index < binding.count; index++ {
 			if binding.names[index] == name && (binding.declared[index] == operand || binding.scope <= operand && operand < binding.close) {
-				return true
+				// A binding opening later inside this one is inner.
+				found, foundIndex, ok = binding, index, true
 			}
 		}
 	}
-	return false
+	return found, foundIndex, ok
+}
+
+// localBindingKind is the binding kind of the local name read at offset at
+// of text (localBindingOf), as the scope's static types give it: a named
+// path is a Path; an element is its list's element (listElementOperand: an
+// Integer of [1], a node of [y] for a node y); reduce's accumulator is its
+// initial value's type. It is unknown when that type isn't known.
+func localBindingKind(text string, at int, name string, scope staticTypeScope) matchBindingKind {
+	binding, index, ok := localBindingOf(text, at, name)
+	if !ok {
+		return matchBindingUnknown
+	}
+	if binding.path[index] {
+		return matchBindingPath
+	}
+	span := binding.source[index]
+	if span[0] <= 0 || span[1] <= span[0] || span[1] > len(text) {
+		return matchBindingUnknown
+	}
+	source := strings.TrimSpace(text[span[0]:span[1]])
+	types := typeScopeOf(scope)
+	if binding.element[index] {
+		return listElementOperand(types, scope, source).bindingKind()
+	}
+	return projectedOperand(types, scope, source).bindingKind()
+}
+
+// withLocalKinds is scope with each name a local binds around offset at of
+// text in place of the outer variable of that name, with the local's own
+// kind (localBindingKind): in all(r IN [1] WHERE EXISTS { (r)-->() }) the r
+// a subquery's pattern reads is an Integer, not the clause's relationship.
+func withLocalKinds(scope matchSemanticScope, text string, at int) matchSemanticScope {
+	var local matchSemanticScope
+	for name := range expressionLocalBindings(text) {
+		if !localVariableShadowsAt(text, at, name) {
+			continue
+		}
+		if local == nil {
+			local = maps.Clone(scope)
+			if local == nil {
+				local = matchSemanticScope{}
+			}
+		}
+		local[name] = localBindingKind(text, at, name, staticTypeScope{kinds: scope})
+	}
+	if local == nil {
+		return scope
+	}
+	return local
 }
 
 // bindingFunctionBeforeParen is the name of the function whose arguments
