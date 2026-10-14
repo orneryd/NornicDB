@@ -99,12 +99,9 @@ func patternComprehensionHead(pattern string) bool {
 	if strings.HasPrefix(head, "(") {
 		return true
 	}
-	if eq := strings.Index(head, "="); eq > 0 {
-		if isValidIdentifier(strings.TrimSpace(head[:eq])) {
-			return strings.HasPrefix(strings.TrimSpace(head[eq+1:]), "(")
-		}
-	}
-	return false
+	// p = (…) or `p p` = (…), read as every reader reads it.
+	_, _, _, named := namedPathDeclaration(head, 0)
+	return named
 }
 
 // isStandaloneExistsSubquery reports whether expr is exactly one
