@@ -625,8 +625,8 @@ func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interf
 			return nil, false, nil
 		}
 		subscript := strings.TrimSpace(expr[open+1 : len(expr)-1])
-		if rangeIndex := strings.Index(subscript, ".."); rangeIndex >= 0 {
-			return e.evaluateRowListSlice(base, strings.TrimSpace(subscript[:rangeIndex]), strings.TrimSpace(subscript[rangeIndex+2:]), values)
+		if from, to, slice := staticSliceBounds(subscript); slice {
+			return e.evaluateRowListSlice(base, strings.TrimSpace(from), strings.TrimSpace(to), values)
 		}
 		indexValue, ok, err := e.evaluateRowValue(subscript, values)
 		if err != nil {
@@ -1268,15 +1268,13 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 }
 
 func parseListComprehension(inner string) (variable, listExpression, predicate, projection string, ok bool) {
-	inIndex := findListComprehensionToken(inner, " IN ")
-	if inIndex <= 0 {
+	// The declaration as every reader reads it (bindingDeclaration): x IN[1]
+	// and x /* … */ IN l too.
+	variable, _, listStart, declared := bindingDeclaration(inner, 0)
+	if !declared {
 		return "", "", "", "", false
 	}
-	variable = strings.TrimSpace(inner[:inIndex])
-	if !isValidIdentifier(variable) {
-		return "", "", "", "", false
-	}
-	rest := inner[inIndex+len(" IN "):]
+	rest := " " + inner[listStart:]
 	whereIndex := findListComprehensionToken(rest, " WHERE ")
 	pipeIndex := findListComprehensionToken(rest, "|")
 	endList := len(rest)
