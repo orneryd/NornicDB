@@ -269,28 +269,23 @@ func readGDSNodeFilter(proj *GraphProjection, value interface{}, nodeExists ...f
 // gdsNodeFilterID is a node filter entry's node id: a node's, an integer
 // id, or a numeric or stored string id (including outside the projection).
 func gdsNodeFilterID(proj *GraphProjection, item interface{}, nodeExists ...func(string) bool) (string, bool) {
-	switch node := item.(type) {
-	case *storage.Node:
-		if node == nil {
-			return "", false
-		}
-		return string(node.ID), true
-	case string:
-		_, projected := proj.nodeIndex[node]
-		if projected {
-			return node, true
-		}
-		// id(n) is a string in NornicDB. Numeric ids remain valid outside
-		// the projection; stored nonnumeric ids use the same reader.
-		if _, err := strconv.ParseInt(node, 10, 64); err == nil {
-			return node, true
-		}
-		return node, len(nodeExists) > 0 && nodeExists[0](node)
-	}
-	if !isIntegerProcedureValue(item) {
+	id, ok := gdsNodeID(item)
+	if !ok {
 		return "", false
 	}
-	return strconv.FormatInt(toInt64(item), 10), true
+	node, isString := item.(string)
+	if !isString {
+		return string(id), true
+	}
+	if _, projected := proj.nodeIndex[node]; projected {
+		return node, true
+	}
+	// id(n) is a string in NornicDB. Numeric ids remain valid outside
+	// the projection; stored nonnumeric ids use the same reader.
+	if _, err := strconv.ParseInt(node, 10, 64); err == nil {
+		return node, true
+	}
+	return node, len(nodeExists) > 0 && nodeExists[0](node)
 }
 
 // nodeSimilarityPair is one scored pair.

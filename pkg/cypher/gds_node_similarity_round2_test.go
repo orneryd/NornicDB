@@ -315,3 +315,78 @@ func TestNodeSimilarityExplicitIntegerComponentDefault(t *testing.T) {
 	require.Len(t, rows, 2)
 	require.Equal(t, 1.0, rows[0][2])
 }
+
+// The same node representations enter node-similarity filters, procedure
+// configurations and scalar GDS functions. Narrow Go integers must keep the ID.
+func TestReviewRound2SharedNodeIDs(t *testing.T) {
+	projection := &GraphProjection{nodeIndex: map[string]int{"9": 0}}
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "gds-ids")
+	for _, id := range []string{"9", "true", "9.5"} {
+		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"N"}, Properties: map[string]interface{}{"v": int64(7)}})
+		require.NoError(t, err)
+	}
+	e := NewStorageExecutor(store)
+	_, err := e.Execute(context.Background(), "CALL gds.graph.project('gds-ids', {N:{properties:'v'}}, '*')", nil)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, err := e.Execute(context.Background(), "CALL gds.graph.drop('gds-ids')", nil)
+		require.NoError(t, err)
+	})
+	for _, value := range []interface{}{int64(9), int(9), int8(9), int16(9), int32(9), uint8(9), "9", &storage.Node{ID: "9"}} {
+		t.Run(fmt.Sprintf("%T", value), func(t *testing.T) {
+			filter, err := readGDSNodeFilter(projection, []interface{}{value})
+			require.NoError(t, err)
+			require.Equal(t, map[string]bool{"9": true}, filter.nodes)
+			config, err := linkPredictionConfigFromArguments([]interface{}{map[string]interface{}{"sourceNode": value, "targetNodes": []interface{}{value}}})
+			require.NoError(t, err)
+			require.Equal(t, storage.NodeID("9"), config.SourceNode)
+			require.Equal(t, map[storage.NodeID]bool{"9": true}, config.TargetNodes)
+			node := gdsNodeByID(store, value)
+			require.NotNil(t, node)
+			require.Equal(t, storage.NodeID("9"), node.(*storage.Node).ID)
+			result, err := e.Execute(context.Background(), "RETURN gds.util.nodeProperty('gds-ids', $node, 'v') AS value", map[string]interface{}{"node": value})
+			require.NoError(t, err)
+			require.Equal(t, float64(7), result.Rows[0][0])
+		})
+	}
+	// asNode's pre-existing extension accepts other values naming string IDs.
+	require.Equal(t, storage.NodeID("true"), gdsNodeByID(store, true).(*storage.Node).ID)
+	require.Equal(t, storage.NodeID("9.5"), gdsNodeByID(store, 9.5).(*storage.Node).ID)
+}
+
+// The common projection selector preserves link prediction's relationship
+// degree (including parallel edges and one self-loop), undirected neighbours,
+// isolated nodes and the extension where an explicit empty type list picks none.
+func TestReviewRound2LinkProjectionSelection(t *testing.T) {
+	e := reviewGraph(t, make([]map[string]interface{}, 4), []reviewEdge{
+		{"0", "2", "A", nil}, {"0", "2", "A", nil},
+		{"1", "2", "A", nil}, {"0", "0", "Z", nil},
+	}, "'N'", "{A:{orientation:'UNDIRECTED'}, Z:{orientation:'UNDIRECTED'}}")
+	for _, tc := range []struct {
+		name             string
+		types            []string
+		degree0, degree2 int
+	}{{"all", nil, 3, 3}, {"A", []string{"A"}, 2, 3}, {"none", []string{}, 0, 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			graph, degree, err := e.linkPredictionGraph(&linkPredictionConfig{GraphName: "rev", SourceNode: "0", RelationshipTypes: tc.types})
+			require.NoError(t, err)
+			require.Len(t, graph, 4)
+			require.Empty(t, graph["3"])
+			require.Equal(t, tc.degree0, degree("0"))
+			require.Equal(t, tc.degree2, degree("2"))
+			require.NotContains(t, graph["0"], storage.NodeID("0"))
+			if tc.degree2 > 0 {
+				require.Contains(t, graph["0"], storage.NodeID("2"))
+				require.Contains(t, graph["2"], storage.NodeID("0"))
+			} else {
+				require.Empty(t, graph["0"])
+			}
+		})
+	}
+	_, _, err := e.linkPredictionGraph(&linkPredictionConfig{GraphName: "rev", SourceNode: "0", RelationshipTypes: []string{"missing"}})
+	require.ErrorContains(t, err, "missing")
+	result, err := e.Execute(context.Background(), "CALL gds.linkPrediction.commonNeighbors.stream('rev', {sourceNode:'0'})", nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Rows)
+	require.Equal(t, []interface{}{"0", "1", float64(1)}, result.Rows[0])
+}
