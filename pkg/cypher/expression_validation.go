@@ -200,12 +200,9 @@ func (binding *localBinding) declare(name string, at int) {
 // x IN[…], x /* … */ IN … and p = (…) read alike everywhere.
 func localBindingAt(text string, open int) (localBinding, bool) {
 	var binding localBinding
-	list := text[open] == '['
+	list := text[open] == '[' // else the '(' of a call: callers pass only these
 	function := ""
 	if !list {
-		if text[open] != '(' {
-			return binding, false
-		}
 		if function = bindingFunctionBeforeParen(text, open); function == "" {
 			return binding, false
 		}
