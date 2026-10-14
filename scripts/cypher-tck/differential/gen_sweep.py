@@ -486,6 +486,71 @@ for context, template in SHADOW_CONTEXTS.items():
             if variable != "x" and "(V)" in b:
                 continue  # a pattern's (V) is a node: the step's x
             add("local-scope-shadowing", context, template.replace("{b}", b.replace("V", variable)))
+# The same declarations however they are written (x IN[…], a comment
+# before IN, a quoted name), a named pattern comprehension's path, and a
+# subquery's pattern reading the local (#1227).
+SHADOW_SPELLINGS = ["all(V IN[[true]] WHERE V[0])", "[V IN[[true]] | V[0]][0]", "all(V /* c */ IN [[true]] WHERE V[0])",
+                    "size([V IN[{k: 1}] WHERE V.k = 1 | V]) = 1", "reduce(a = true, V IN[[true]] | a AND V[0])",
+                    "all(`V V` IN [[true]] WHERE `V V`[0])", "all(V IN [y] WHERE EXISTS { (V)-->() })",
+                    "all(V IN [y] WHERE COUNT { (V)-->() } > 0)", "all(V IN [y] WHERE size(COLLECT { MATCH (V)-->(z) RETURN z.id }) > 0)"]
+for context, template in SHADOW_CONTEXTS.items():
+    for variable in ["x", "e", "m"]:
+        for b in SHADOW_SPELLINGS:
+            add("local-scope-shadowing", context, template.replace("{b}", b.replace("V", variable)))
+for head in ["WITH 7 AS p ", "WITH 'outer' AS p "]:
+    for b in ["size([p = (y)-->(z) | length(p)]) = 1", "[p = (y)-->(z) | length(p)] = [1]", "size([p = (y)-->(z) | z.id]) = 1",
+              "size([p = (y)-->(z) | p]) = 1", "all(v IN [true] WHERE v) AND size([p = (y)-->(z) | length(p)]) = 1"]:
+        add("local-scope-shadowing", "named-path", head + "MATCH (x:Q {id: 1}) MATCH (x)-[e:R]->(y) WHERE " + b + " RETURN count(*) AS c")
+        add("local-scope-shadowing", "named-path", head + "MATCH q = (:Q {id: 1})((x)-[e:R]->(y) WHERE " + b.replace("= 1", ">= 0") + ")+(t) RETURN count(q) AS c")
+# A quoted group variable is the name it binds.
+for step in ["((`x x` WHERE m[`x x`.s] IS NULL)-[e:R]->(y))", "((x)-[`e e`:R WHERE m[toString(`e e`.w)] IS NULL]->(y))",
+             "((`x x`)-[e:R]->(y) WHERE `x x`.id > 0)"]:
+    add("local-scope-shadowing", "quoted", "WITH {k: 1} AS m MATCH p = (s:Q {id: 1})" + step + "+(t) RETURN count(p) AS c")
+add("local-scope-shadowing", "quoted", "MATCH (`x x`:Q {id: 1}) MATCH p = (s:Q {id: 1})((`x x`)-[e:R]->(y))+(t) RETURN count(p) AS c")
+
+# 12b''''. Slice bounds (#1227): a ".." nested in the key or quoted in it
+# belongs to the key, in every evaluator and check.
+SLICE_SUBSCRIPTS = ["WITH {v: true} AS m, {`a..b`: 'v'} AS r RETURN m[r['a..b']] AS v",
+                    "WITH [10, 20] AS l RETURN l[head([0, 1][0..1])] AS v",
+                    "WITH {v: true} AS m, ['v'] AS l RETURN m[head(l[0..1])] AS v",
+                    "WITH {`a..b`: 7} AS m RETURN m[['a..b'][0]] AS v",
+                    "WITH [1, 2, 3] AS l RETURN l[size(l[0..2])..] AS v",
+                    "WITH [1, 2, 3] AS l RETURN l[[0, 2][0]..[0, 2][1]] AS v",
+                    "RETURN {`..`: 1}['..'] AS v",
+                    "MATCH (n:Q {id: 1}) RETURN n.l[head([0, 1][0..1])] AS v",
+                    "MATCH (n:Q {id: 1}) RETURN n.l[size(n.l[1..])..] AS v",
+                    "MATCH (n:Q {id: 1}) WITH n, {`a..b`: 'l'} AS k RETURN n[k['a..b']] AS v",
+                    "MATCH (n:Q {id: 1}) RETURN [x IN [n.l] | x[head([1, 2][0..1])..]] AS v",
+                    "WITH {v: true} AS m, {`a..b`: 'v'} AS r WHERE m[r['a..b']] RETURN 1 AS v",
+                    "WITH {v: true} AS m, {`a..b`: 'v'} AS r WHERE m[r['a..b']] IS NULL RETURN 1 AS v",
+                    "WITH [true, false] AS l WHERE l[head([0, 1][0..1])] RETURN 1 AS v",
+                    "UNWIND [[1, 2, 3]] AS l RETURN l[head([1, 2][0..1])..] AS v",
+                    "WITH ['a..b'] AS l RETURN {`a..b`: 1}[l[0]] AS v"]
+for q in SLICE_SUBSCRIPTS:
+    add("slice-bounds", "return", q)
+
+# 12b'''''. References and locals (#1227): a name read outside the local that
+# binds it is the clause's variable (an implicit grouping key, an undefined
+# variable); inside, the local's. A pattern comprehension's WHERE binds
+# nothing.
+for q in ["UNWIND [1, 2] AS x RETURN x + size(collect([x IN [1] | x])) AS v",
+          "UNWIND [1, 2] AS x RETURN x, size(collect([x IN [1] | x])) AS v ORDER BY x",
+          "UNWIND [1, 2] AS x RETURN size(collect([x IN [x] | x])) AS v",
+          "UNWIND [1, 2] AS x RETURN count(*) + size([x IN [1] | x]) AS v",
+          "UNWIND [1, 2] AS x RETURN x + size(collect(x)) AS v",
+          "RETURN all(z IN [x] WHERE z) OR all(x IN [true] WHERE x) AS v",
+          "RETURN CASE WHEN true THEN all(z IN [x] WHERE z) ELSE all(x IN [true] WHERE x) END AS v",
+          "RETURN x + size([x IN [1] | x]) AS v",
+          "RETURN size([x IN [1] | x]) + size([x IN [2] | x]) AS v",
+          "WITH 1 AS x RETURN all(x IN[{k: 7}] WHERE x.k = 7) AS v",
+          "WITH 1 AS x RETURN CASE WHEN true THEN all(x IN [{k: 7}] WHERE x.k = 7) ELSE x.k = 1 END AS v",
+          "WITH 7 AS v UNWIND [v IN[1, 2] | v * 10] AS u RETURN collect(u) AS c",
+          "WITH 7 AS v RETURN reduce(v = v, z IN [1] | v + z) AS r",
+          "MATCH (n:Q {id: 1}) RETURN [(n)-->(z) WHERE z.id IN (l) | z.id] AS v",
+          "MATCH (n:Q {id: 1}) RETURN [(n)-->(z) WHERE z.id IN (l) | l] AS v",
+          "WITH [2] AS l MATCH (n:Q {id: 1}) RETURN [(n)-->(z) WHERE z.id IN (l) | z.id] AS v",
+          "MATCH (n:Q {id: 1}) RETURN [(n)-->(z) WHERE z.id > 0 | [y IN [z.id] | y]] AS v"]:
+    add("local-scope-references", "return", q)
 
 # 12c. Subquery bodies that start from the row's own variables (#1055): the
 # bound node, relationship and path fast paths against the pipeline. Bodies
