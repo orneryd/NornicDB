@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - "*"
-  # Called by canary.yml (the weekly develop build, tagged canary).
+  # Called by canary.yml (the manually approved develop build, tagged canary).
   workflow_call:
     inputs:
       source_ref:
@@ -40,6 +40,8 @@ permissions:
 jobs:
   meta:
     name: Release Metadata
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     outputs:
       checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
@@ -105,6 +107,8 @@ jobs:
 
   build-general-images:
     name: Build and Push ${{ matrix.image_name }}
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     needs: meta
     permissions:
@@ -227,6 +231,8 @@ jobs:
 
   build-cuda-images:
     name: Build and Push ${{ matrix.image_name }}
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     needs:
       - meta

@@ -1,13 +1,7 @@
 name: Nightly (develop)
 
-# The full check suite against develop, once a night, only when develop changed
-# in the last 24 hours: CI (build and every test group), Cypher conformance
-# (allocation ratchet against main, TCK, fixed Neo4j differential) and the
-# differential ratchet. Pull requests run nothing automatically (see
-# CONTRIBUTING.md); this is where develop gets checked on GitHub.
+# Manually requested develop verification; automatic nightly runs are paused.
 on:
-  schedule:
-    - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
       force:
@@ -25,6 +19,8 @@ concurrency:
 jobs:
   changed:
     name: Did develop change?
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.check.outputs.run }}
