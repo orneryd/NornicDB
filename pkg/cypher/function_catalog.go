@@ -352,6 +352,7 @@ var cypherFunctionCatalog = []cypherFunctionSpec{
 	// The predicate a MATCH pattern's row-dependent dynamic label or type
 	// becomes (dynamicLabelTestFunction); not listed.
 	{name: dynamicLabelTestFunction},
+	{name: dynamicLabelPredicateFunction},
 }
 
 // builtInCypherFunctions is every catalog name, lower-cased, for the

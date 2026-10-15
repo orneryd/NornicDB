@@ -51,6 +51,9 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := e.validateCallSubqueryScopes(cypher, cypher25); err != nil {
 		return err
 	}
+	if err := validateListComprehensionVariables(cypher); err != nil {
+		return err
+	}
 	if err := validateStaticQuantifierTypes(cypher); err != nil {
 		return err
 	}

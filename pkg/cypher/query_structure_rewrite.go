@@ -63,6 +63,20 @@ func desugarQueryStructure(query string, columns statementColumner) (string, *qu
 // mayUseQueryStructure is desugarQueryStructure's quick check: NEXT or WHEN
 // appear, or a brace starts the statement or follows UNION.
 func mayUseQueryStructure(query string) bool {
+	if strings.Contains(query, "{") {
+		opener := &labelExpressionRewriter{query: query}
+		for index := 0; index < len(query); index++ {
+			if query[index] == '\'' || query[index] == '"' || query[index] == '`' {
+				index = skipCypherQuotedText(query, index, query[index]) - 1
+				continue
+			}
+			if query[index] == '{' && opener.opensSubquery(index) {
+				if next := skipSpaces(query, index+1); next < len(query) && query[next] == '{' {
+					return true
+				}
+			}
+		}
+	}
 	return indexASCIIFold(query, "next") >= 0 || indexASCIIFold(query, "when") >= 0 || strings.HasPrefix(strings.TrimSpace(query), "{") ||
 		indexASCIIFold(query, "union") >= 0
 }

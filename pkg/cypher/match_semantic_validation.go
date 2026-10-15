@@ -179,7 +179,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 		// a WITH's or RETURN's projected ones (WITH i.n AS k WHERE COUNT { … k … });
 		// a MATCH's are checked once its pattern binds, a CALL subquery's
 		// body from its imports (pipelineClauseCallSubquery).
-		if clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseOptionalMatch && clause.kind != pipelineClauseCallSubquery && mayContainSubqueryExpression(clause.text) {
+		if clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseOptionalMatch && clause.kind != pipelineClauseCallSubquery && (mayContainSubqueryExpression(clause.text) || containsRelationshipPattern(clause.text)) {
 			if err := e.validateClauseSubqueries(clause, types, view, projectedTypes, cypher25); err != nil {
 				return types, false, err
 			}
@@ -918,6 +918,9 @@ func maskSubqueryBodies(expression string) string {
 // sees: Neo4j's "is shadowing a variable with the same name from the outer
 // scope". At the top level and in CALL { } such a local shadows instead.
 func (e *StorageExecutor) validateSubqueryPatternBindings(scope staticTypeScope, text string) error {
+	if err := validateExpressionPatternBindings(scope, text); err != nil {
+		return err
+	}
 	if !mayContainSubqueryExpression(text) {
 		return nil
 	}
@@ -947,6 +950,82 @@ func (e *StorageExecutor) validateSubqueryPatternBindings(scope staticTypeScope,
 			if _, _, err := e.semanticScopeWalk(clauses, maps.Clone(visible), scope.cypher25, subqueryScope{visible: visible, outer: true}); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// validateExpressionPatternBindings applies the shared pattern-kind check
+// to expression chains with the local scope at their actual occurrence.
+func validateExpressionPatternBindings(scope staticTypeScope, text string) error {
+	if !containsRelationshipPattern(text) {
+		return nil
+	}
+	start := 0
+	// MATCH's own pattern was already checked and bound; its predicate
+	// contains the expression patterns checked here.
+	if startsWithKeywordFold(text, "MATCH") || startsWithKeywordFold(text, "OPTIONAL MATCH") {
+		start = topLevelKeywordIndex(text, "WHERE")
+		if start < 0 {
+			return nil
+		}
+	}
+	structure := maskNestedScopeBodies(text)
+	local := func(at int) staticTypeScope {
+		return withPatternComprehensionBindings(withLocalTypes(scope, text, at), text, at)
+	}
+	for index := start; index < len(structure); index++ {
+		if structure[index] == '\'' || structure[index] == '"' || structure[index] == '`' {
+			index = skipCypherQuotedText(structure, index, structure[index]) - 1
+			continue
+		}
+		if structure[index] == '[' {
+			close := findMatchingBracket(structure, index)
+			if close < 0 {
+				break
+			}
+			if pattern, _, comprehension := splitPatternComprehension(structure[index : close+1]); comprehension {
+				// The head is checked before its new locals are introduced;
+				// enclosing comprehensions still supply their own local types.
+				if err := validateBoundPatternKinds(local(index-1).kinds, pattern); err != nil {
+					return err
+				}
+			}
+		}
+		if structure[index] != '(' {
+			continue
+		}
+		end, chain := relationshipChainEnd(structure, index, len(structure))
+		if !chain {
+			continue
+		}
+		if err := validateBoundPatternKinds(local(index).kinds, structure[index:end]); err != nil {
+			return err
+		}
+		index = end - 1
+	}
+	return nil
+}
+
+func validateBoundPatternKinds(scope matchSemanticScope, pattern string) error {
+	pattern = matchPatternStructure(pattern)
+	kinds := maps.Clone(scope)
+	if kinds == nil {
+		kinds = make(matchSemanticScope)
+	}
+	for _, variable := range extractNodeVariables(pattern) {
+		if err := bindMatchSemanticKind(kinds, variable, matchBindingNode); err != nil {
+			return err
+		}
+	}
+	lists := variableLengthRelationshipVariableSet(pattern)
+	for _, variable := range extractRelationshipVariables(pattern) {
+		kind := matchBindingRelationship
+		if _, list := lists[variable]; list {
+			kind = matchBindingRelationshipList
+		}
+		if err := bindMatchSemanticKind(kinds, variable, kind); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -1536,7 +1615,7 @@ func (e *StorageExecutor) validateClauseSubqueries(clause pipelineClause, types 
 	if err := e.validateSubqueryPatternBindings(view, projection); err != nil {
 		return err
 	}
-	if !mayContainSubqueryExpression(rest) {
+	if !mayContainSubqueryExpression(rest) && !containsRelationshipPattern(rest) {
 		return nil
 	}
 	merged := typeScopeOf(view)

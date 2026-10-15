@@ -830,3 +830,28 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 	}
 	return value, true
 }
+
+// validateListComprehensionVariables rejects a property expression where
+// Cypher requires a local iterator name, including nested projections.
+func validateListComprehensionVariables(text string) error {
+	for index := 0; index < len(text); index++ {
+		if text[index] == '\'' || text[index] == '"' || text[index] == '`' {
+			index = skipCypherQuotedText(text, index, text[index]) - 1
+			continue
+		}
+		if text[index] != '[' {
+			continue
+		}
+		close := findMatchingBracket(text, index)
+		if close < 0 {
+			break
+		}
+		inner := text[index+1 : close]
+		in := findListComprehensionToken(inner, " IN ")
+		pipe := findListComprehensionToken(inner, "|")
+		if in > 0 && pipe > in && !patternComprehensionHead(inner) && !isValidIdentifier(strings.TrimSpace(inner[:in])) && !isBacktickQuotedName(strings.TrimSpace(inner[:in])) {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "a list comprehension iterator must be a variable")
+		}
+	}
+	return nil
+}
