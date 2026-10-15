@@ -210,7 +210,7 @@ func validateUniqueConstraintOnCreationWithEngine(engine Engine, c Constraint) e
 	}
 
 	property := c.Properties[0]
-	seen := make(map[interface{}]NodeID)
+	seen := make(constraintCreationValues)
 
 	// Scan all nodes with this label
 	nodes, err := engine.GetNodesByLabel(c.Label)
@@ -224,12 +224,11 @@ func validateUniqueConstraintOnCreationWithEngine(engine Engine, c Constraint) e
 			continue // NULL values don't violate uniqueness
 		}
 
-		if existingNodeID, found := seen[value]; found {
+		if existingNodeID, found := seen.add(string(node.ID), []interface{}{value}); found {
 			message := localization.StorageValidationNodeUniqueDuplicate(string(existingNodeID), string(node.ID), property, value)
 			return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{property}, message, nil)
 		}
 
-		seen[value] = node.ID
 	}
 
 	return nil
@@ -241,7 +240,7 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 		return localizedError(localization.StorageValidationNodeKeyPropertyRequired(), nil)
 	}
 
-	seen := make(map[string][]*Node)
+	seen := make(constraintCreationValues)
 
 	nodes, err := engine.GetNodesByLabel(c.Label)
 	if err != nil {
@@ -251,7 +250,6 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 	for _, node := range nodes {
 		// Extract all property values
 		values := make([]interface{}, len(c.Properties))
-		keyValues := make([]interface{}, len(c.Properties))
 		hasAllValues := true
 
 		for i, prop := range c.Properties {
@@ -265,34 +263,20 @@ func validateNodeKeyConstraintOnCreationWithEngine(engine Engine, c Constraint) 
 				return newLocalizedConstraintViolation(ConstraintNodeKey, c.Label, c.Properties, message, nil)
 			}
 			values[i] = val
-			keyValues[i] = val
-			if numeric, ok := numericConstraintValue(val); ok {
-				keyValues[i] = numeric
-			}
 		}
 
 		if !hasAllValues {
 			continue
 		}
 
-		key := fmt.Sprintf("%#v", keyValues)
-		for _, existing := range seen[key] {
-			match := true
-			for index, property := range c.Properties {
-				if !compareValues(existing.Properties[property], values[index]) {
-					match = false
-					break
-				}
+		if existingID, found := seen.add(string(node.ID), values); found {
+			message := localization.StorageValidationNodeKeyDuplicateCreation(existingID, string(node.ID), c.Properties, values)
+			if c.Type == ConstraintUnique {
+				message = localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, existingID)
 			}
-			if match {
-				message := localization.StorageValidationNodeKeyDuplicateCreation(string(existing.ID), string(node.ID), c.Properties, values)
-				if c.Type == ConstraintUnique {
-					message = localization.StorageValidationNodeCompositeKeyExisting(c.Properties, values, string(existing.ID))
-				}
-				return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
-			}
+			return newLocalizedConstraintViolation(c.Type, c.Label, c.Properties, message, nil)
 		}
-		seen[key] = append(seen[key], node)
+
 	}
 
 	return nil

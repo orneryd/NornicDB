@@ -125,40 +125,40 @@ func newRelUniquenessCheck(c Constraint) relEdgeCheck {
 		return newRelCompositeUniquenessCheck(c)
 	}
 	property := c.Properties[0]
-	seen := make(map[interface{}]EdgeID)
+	seen := make(constraintCreationValues)
 	return relEdgeCheck{visit: ofType(c.Label, func(edge *Edge) error {
 		value := edge.Properties[property]
 		if value == nil {
 			return nil
 		}
-		if existingID, found := seen[value]; found {
-			message := localization.StorageValidationRelationshipUniqueDuplicate(string(existingID), string(edge.ID), property, value)
+		if existingID, found := seen.add(string(edge.ID), []interface{}{value}); found {
+			message := localization.StorageValidationRelationshipUniqueDuplicate(existingID, string(edge.ID), property, value)
 			return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{property}, message, nil)
 		}
-		seen[value] = edge.ID
 		return nil
 	})}
 }
 
 // newRelCompositeUniquenessCheck checks composite uniqueness for relationship properties.
 func newRelCompositeUniquenessCheck(c Constraint) relEdgeCheck {
-	seen := make(map[string]EdgeID)
+	seen := make(constraintCreationValues)
 	return relEdgeCheck{visit: ofType(c.Label, func(edge *Edge) error {
-		// Build composite key — skip if any property is nil
-		parts := make([]string, len(c.Properties))
+		values := make([]interface{}, len(c.Properties))
 		for i, prop := range c.Properties {
-			val := edge.Properties[prop]
-			if val == nil {
+			value := edge.Properties[prop]
+			if value == nil {
 				return nil
 			}
-			parts[i] = fmt.Sprintf("%v", val)
+			values[i] = value
 		}
-		key := strings.Join(parts, "\x00")
-		if existingID, found := seen[key]; found {
-			message := localization.StorageValidationRelationshipCompositeDuplicate(string(existingID), string(edge.ID), parts)
+		if existingID, found := seen.add(string(edge.ID), values); found {
+			parts := make([]string, len(values))
+			for i, value := range values {
+				parts[i] = fmt.Sprint(value)
+			}
+			message := localization.StorageValidationRelationshipCompositeDuplicate(existingID, string(edge.ID), parts)
 			return newLocalizedConstraintViolation(ConstraintUnique, c.Label, c.Properties, message, nil)
 		}
-		seen[key] = edge.ID
 		return nil
 	})}
 }
