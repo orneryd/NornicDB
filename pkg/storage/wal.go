@@ -1396,7 +1396,7 @@ func LoadSnapshot(path string) (*Snapshot, error) {
 		snapshot.Timestamp = metadata.Timestamp
 		return &snapshot, nil
 	}
-	if err := json.NewDecoder(file).Decode(&snapshot); err != nil {
+	if err := decodeLegacyRecoveryJSON(file, &snapshot); err != nil {
 		return nil, fmt.Errorf("wal: failed to decode snapshot: %w", err)
 	}
 

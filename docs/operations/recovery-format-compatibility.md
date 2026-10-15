@@ -13,6 +13,15 @@ Current readers use that sidecar. Control records retain their previous JSON
 representation. Current readers also accept older version 1–3 WAL records
 without a sidecar.
 
+Legacy JSON recovery keeps numeric lexemes before interpreting property values,
+including nested lists/maps and buffered-commit operations. Integer lexemes become
+`int64`, or `uint64` when a larger nonnegative value fits that range; fractional
+and exponent lexemes become `float64`. Values outside those integer ranges are
+rejected rather than rounded. This preserves `9007199254740993` exactly, but old
+JSON cannot reveal whether an integer-looking value originally came from a Go
+integer or an integral float. New typed sidecars retain that original distinction.
+The same reader is used by legacy JSON and version 1 snapshot frames.
+
 Older binaries ignore the sidecar and recover their previous JSON projection.
 They consequently lose the same internal metadata and integer precision that
 older recovery already lost. This is baseline readability, not a lossless
@@ -52,8 +61,10 @@ colons. This preserves existing snapshot qualification semantics.
 
 Streaming snapshot export retains its established embedding-free enumeration
 contract: separately stored vectors are not fetched by that route. The new
-codec preserves all fields supplied by the chosen enumeration route; it does
-not change which sidecars that route loads.
+codec does not change which sidecars that route loads. Exported nodes clear the
+separate-storage flag, and metadata no longer advertises omitted chunk vectors or
+unavailable embeddings. Inline vectors and unrelated metadata remain intact;
+the source node is unchanged.
 
 ## Local validation
 

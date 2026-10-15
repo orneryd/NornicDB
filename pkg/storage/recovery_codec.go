@@ -65,14 +65,14 @@ func decodeRecoveryPayload(data []byte, target any) error {
 	if !hasHeader {
 		trimmed := bytes.TrimSpace(data)
 		if len(trimmed) == 0 || trimmed[0] != '{' {
-			return json.Unmarshal(data, target)
+			return decodeLegacyRecoveryJSON(bytes.NewReader(data), target)
 		}
 		var sidecar walRecoverySidecar
 		if err := json.Unmarshal(data, &sidecar); err != nil {
 			return err
 		}
 		if sidecar.Encoding == "" {
-			return json.Unmarshal(data, target)
+			return decodeLegacyRecoveryJSON(bytes.NewReader(data), target)
 		}
 		if sidecar.Encoding != walRecoveryEncoding {
 			return fmt.Errorf("unsupported recovery encoding %q", sidecar.Encoding)
@@ -224,6 +224,17 @@ func transformRecoveryEntities(value any, node func(*Node) *Node, edge func(*Edg
 		*value = *node(value)
 	case *Edge:
 		*value = *edge(value)
+	case *WALBufferedCommitData:
+		for i := range value.Ops {
+			operation := &value.Ops[i]
+			operation.Node = node(operation.Node)
+			operation.OldNode = node(operation.OldNode)
+			operation.Edge = edge(operation.Edge)
+			operation.OldEdge = edge(operation.OldEdge)
+		}
+	case *Snapshot:
+		value.Nodes = mapRecoveryEntities(value.Nodes, node)
+		value.Edges = mapRecoveryEntities(value.Edges, edge)
 	case *WALNodeData:
 		value.Node = node(value.Node)
 		value.OldNode = node(value.OldNode)

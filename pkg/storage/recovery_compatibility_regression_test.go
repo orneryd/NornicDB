@@ -15,15 +15,18 @@ import (
 )
 
 func TestRecoveryReadsLegacySnapshotFormats(t *testing.T) {
-	n := &Node{ID: "a", Labels: []string{"Legacy"}, Properties: map[string]any{"name": "kept"}}
-	legacy := &Snapshot{Sequence: 19, Timestamp: time.Unix(20, 0), Version: "legacy", Nodes: []*Node{n}}
+	n := &Node{ID: "a", Labels: []string{"Legacy"}, Properties: map[string]any{"name": "kept", "integer": int64(9007199254740993)}}
+	legacy := &Snapshot{Sequence: 19, Timestamp: time.Unix(20, 0).In(time.FixedZone("Fixture", 3600)), Version: "legacy", Nodes: []*Node{n}}
 	raw, err := json.Marshal(legacy)
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "legacy.json")
 	require.NoError(t, os.WriteFile(path, raw, 0600))
 	loaded, err := LoadSnapshot(path)
 	require.NoError(t, err)
-	assert.Equal(t, legacy, loaded)
+	require.True(t, legacy.Timestamp.Equal(loaded.Timestamp))
+	expected := *legacy
+	expected.Timestamp = loaded.Timestamp
+	assert.Equal(t, &expected, loaded)
 	var framed bytes.Buffer
 	buffered := bufio.NewWriter(&framed)
 	require.NoError(t, writeSnapshotHeader(buffered, 19, legacy.Timestamp))

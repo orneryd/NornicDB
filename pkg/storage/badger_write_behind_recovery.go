@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"fmt"
 )
 
@@ -41,7 +40,7 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 		if err != nil {
 			return err
 		}
-		if err := json.Unmarshal(payload, &data); err != nil {
+		if err := decodeRecoveryPayload(payload, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal buffered commit %d: %w", entry.Sequence, err)
 		}
 		if data.TxID == "" {

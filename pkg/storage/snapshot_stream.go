@@ -67,7 +67,7 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 	}
 	var nodeCount uint64
 	if err := nodeStream(ctx, func(node *Node) error {
-		if err := writeSnapshotFrame(buffered, streamSnapshotNode, node, maxRecordBytes); err != nil {
+		if err := writeSnapshotFrame(buffered, streamSnapshotNode, snapshotNodeVectorMetadata(node), maxRecordBytes); err != nil {
 			return err
 		}
 		nodeCount++
