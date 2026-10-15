@@ -42,6 +42,6 @@ func TestOrderByReadsOnlyVariablesInScope(t *testing.T) {
 	} {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
-		require.Contains(t, err.Error(), "variable y is not defined", query)
+		require.Contains(t, err.Error(), "Variable `y` not defined", query)
 	}
 }

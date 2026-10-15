@@ -19,14 +19,14 @@ func TestUndefinedVariableInUpdateClauseIsRejected(t *testing.T) {
 		wantErr string // "" = succeeds with want
 		want    [][]interface{}
 	}{
-		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n SET m:B } RETURN n.id AS id", wantErr: "variable m is not defined"},
-		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n SET m.x = 1 } RETURN n.id AS id", wantErr: "variable m is not defined"},
-		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n REMOVE m.x } RETURN n.id AS id", wantErr: "variable m is not defined"},
+		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n SET m:B } RETURN n.id AS id", wantErr: "Variable `m` not defined"},
+		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n SET m.x = 1 } RETURN n.id AS id", wantErr: "Variable `m` not defined"},
+		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n REMOVE m.x } RETURN n.id AS id", wantErr: "Variable `m` not defined"},
 		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n DETACH DELETE m } RETURN count(*) AS c", wantErr: "refers to an undefined variable"},
-		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n CALL { WITH n SET m:B } } RETURN n.id AS id", wantErr: "variable m is not defined"},
+		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n CALL { WITH n SET m:B } } RETURN n.id AS id", wantErr: "Variable `m` not defined"},
 		{stmt: "MATCH (n:T {id: 1}) CALL (n) { SET m:B } RETURN n.id AS id", wantErr: "SyntaxError"},
-		{stmt: "MATCH (n:T {id: 1}) REMOVE m.x RETURN n.id AS id", wantErr: "variable m is not defined"},
-		{stmt: "MATCH (n:T {id: 1}) SET m:B RETURN n.id AS id", wantErr: "variable m is not defined"},
+		{stmt: "MATCH (n:T {id: 1}) REMOVE m.x RETURN n.id AS id", wantErr: "Variable `m` not defined"},
+		{stmt: "MATCH (n:T {id: 1}) SET m:B RETURN n.id AS id", wantErr: "Variable `m` not defined"},
 		{stmt: "MATCH (n:T {id: 1}) DETACH DELETE m RETURN count(*) AS c", wantErr: "refers to an undefined variable"},
 		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n SET n:B } RETURN n.id AS id", want: [][]interface{}{{int64(1)}}},
 		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n MATCH (m:U) SET m.x = n.id } RETURN n.id AS id", want: [][]interface{}{{int64(1)}}},
