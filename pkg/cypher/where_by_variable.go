@@ -84,11 +84,8 @@ func hasPatternOrSubquery(expression string) bool {
 				return true
 			}
 		case '{':
-			word := strings.TrimSpace(expression[:index])
-			for _, keyword := range [...]string{"EXISTS", "COUNT", "COLLECT"} {
-				if len(word) >= len(keyword) && strings.EqualFold(word[len(word)-len(keyword):], keyword) {
-					return true
-				}
+			if isSubqueryBrace(expression, index) {
+				return true
 			}
 		}
 	}

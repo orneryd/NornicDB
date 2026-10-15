@@ -126,7 +126,7 @@ func isStandaloneExistsSubquery(expr string) bool {
 	if open >= len(expr) || expr[open] != '{' {
 		return false
 	}
-	return findMatchingDelimiter(expr, open, '{', '}') == len(expr)-1
+	return isSubqueryBrace(expr, open) && findMatchingDelimiter(expr, open, '{', '}') == len(expr)-1
 }
 
 // evaluateExistsSubqueryValue evaluates a standalone EXISTS { ... } expression
