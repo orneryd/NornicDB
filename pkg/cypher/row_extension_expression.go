@@ -44,7 +44,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		if !ok {
 			return nil, true, false, nil
 		}
-		result, handled, err := callPluginFunction(function, handler, arguments)
+		result, handled, err := callPluginFunction(rowStatementContextOrBackground(values), function, handler, arguments)
 		if err != nil {
 			return nil, true, false, err
 		}

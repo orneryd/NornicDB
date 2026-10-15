@@ -59,9 +59,9 @@ func TestPluginFunctionsMatchTheirNameAsWritten(t *testing.T) {
 // the same error in both (#1163).
 func TestPluginFunctionsComeFirstAndBuiltInsAnswerWhatPluginsCantCall(t *testing.T) {
 	withPluginFunctions(t, map[string]interface{}{
-		"apoc.text.join": func(int8) int8 { return 0 },
+		"apoc.text.join": func(chan int) int8 { return 0 },
 		"apoc.coll.sum":  func(values []interface{}) float64 { return 999 },
-		"zz.only":        func(int8) int8 { return 0 },
+		"zz.only":        func(chan int) int8 { return 0 },
 	})
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "plugin_first"))
 	ctx := context.Background()

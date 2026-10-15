@@ -1245,7 +1245,7 @@ func TestCypherHelpers_CallPluginHandlerSignatures(t *testing.T) {
 		{name: "two_strings_float", handler: func(a, b string) float64 { return float64(len(a) * len(b)) }, args: []interface{}{"aa", "bbb"}, expect: 6.0},
 		{name: "two_float_slices", handler: func(a, b []float64) float64 { return a[0] + b[0] }, args: []interface{}{[]interface{}{1.0}, []interface{}{2.0}}, expect: 3.0},
 		{name: "three_strings", handler: func(a, b, c string) string { return a + b + c }, args: []interface{}{"a", "b", "c"}, expect: "abc"},
-		{name: "unsupported", handler: func(int) int { return 1 }, args: []interface{}{1}, expectErr: true},
+		{name: "typed_integer", handler: func(int) int { return 1 }, args: []interface{}{1}, expect: 1},
 	}
 
 	for _, c := range cases {

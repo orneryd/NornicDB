@@ -2,10 +2,54 @@
 
 NornicDB has `apoc.*` functions and procedures from two sources:
 
-- **Built into the executor**, always available: 36 `apoc.*` functions and 47 `apoc.*` / `gds.*` procedures.
-- **The optional APOC plugin** (`apoc.so`, built from `apoc/plugin-src/apoc`), which registers 983 function names. Today 81 of them can be called from a statement: plugin names with an upper-case letter aren't found (#1163), and most Go function types and every plugin procedure can't be called yet (#1167).
+- **Built into the executor**, always available: inspect `SHOW FUNCTIONS` and `SHOW PROCEDURES` for the current registered surface.
+- **The optional APOC plugin** (`apoc.so`, built from `apoc/plugin-src/apoc`) has an inventory of 983 names. Registered names preserve their exact case. Its supported Go handler bindings are described below; registration alone does not establish that a name implements Neo4j APOC semantics or can accept Cypher values.
 
 Some of these names aren't APOC names at all: NornicDB adds its own under the `apoc.*` and `gds.*` namespaces. They are listed under [NornicDB extensions](#nornicdb-extensions); a query that uses them won't run on Neo4j with APOC or GDS.
+
+## Plugin handler bindings
+
+Both expression evaluators use the same checked invocation owner. Common Go
+signatures retain direct calls; other supported signatures use a reflection
+fallback. For example, plugin `Functions()` entries can contain:
+
+```go
+// Cypher Integer arguments bind to declared int64 values.
+Handler: func(a, b int64) int64 { return a & b },
+
+// A Cypher numeric list binds element by element to []float64.
+Handler: func(xs []float64) float64 {
+    var sum float64
+    for _, x := range xs { sum += x }
+    return sum
+},
+
+// Map results remain maps, including property/subscript access in queries.
+Handler: func() map[string]interface{} {
+    return map[string]interface{}{"status": "ready"}
+},
+```
+
+Handlers may take fixed or variadic arguments and return no value, one value,
+`error`, or `(value, error)`. An optional first `context.Context` argument
+receives the calling statement context and is not a Cypher argument. Cancellation
+is checked before invocation; panics and returned errors become query errors.
+The Go callback remains responsible for observing cancellation during its work.
+
+Arity must match. Integer conversion rejects fractions, overflow, NaN, infinity,
+and negative values for unsigned arguments. Lists and maps convert recursively
+to their declared element types. Null binds to nullable Go interfaces, pointers,
+slices, or maps; it does not silently become an integer or other scalar zero.
+
+This removes the previous 18-signature dispatcher ceiling, not every capability
+limitation in the 983-name inventory. Cypher does not supply Go callbacks,
+`io.Reader` instances, or private APOC entity structs. Multiple non-error return
+values and function/channel return types are unsupported handler contracts.
+Transporting an arbitrary Go object is not guaranteed by accepting its Go
+signature. Such entries require explicit adapters and semantic tests before they
+can be described as supported Cypher functions. Procedure names require a real
+procedure declaration/implementation; scalar functions are not automatically
+promoted to `CALL`.
 
 ## Quick Start
 
