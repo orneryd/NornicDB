@@ -25,6 +25,18 @@ func (b *BadgerEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 // (ScopedLabelNodeReader).
 func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
 	var node *Node
+	if b.writeBehind != nil {
+		// Share the overlay's shadowing and current-label decisions with the
+		// ordinary stream, while stopping after its first visible node.
+		err := b.StreamNodesByLabelProjectedInScope(scope, label, nil, func(first *Node) error {
+			node = first
+			return ErrIterationStopped
+		})
+		if err == ErrIterationStopped {
+			err = nil
+		}
+		return node, err
+	}
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
 		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
@@ -69,14 +81,37 @@ func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 // ForEachNodeIDByLabel streams node IDs for a label without decoding nodes.
 // Stops early when visit returns false.
 func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) bool) error {
+	return b.ForEachNodeIDByLabelInScope("", label, visit)
+}
+
+// ForEachNodeIDByLabelInScope streams only this database's label IDs. Empty
+// scope preserves the unscoped interface's behavior.
+func (b *BadgerEngine) ForEachNodeIDByLabelInScope(scope, label string, visit func(NodeID) bool) error {
 	if visit == nil {
 		return nil
 	}
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	if b.writeBehind != nil {
+		err := b.StreamNodesByLabelProjectedInScope(scope, label, []string{}, func(node *Node) error {
+			if !visit(node.ID) {
+				return ErrIterationStopped
+			}
+			return nil
+		})
+		if err == ErrIterationStopped {
+			return nil
+		}
+		return err
+	}
 
 	cachedID, cachedOK := b.labelCacheGetFirst(label)
+	// The first-ID cache is global. Scoped reads keep their own ordered
+	// candidate stream instead of borrowing or replacing another scope's hint.
+	if scope != "" {
+		cachedID, cachedOK = "", false
+	}
 	cachedValid := false
 
 	labelGen := b.labelFirstCacheGen.current()
@@ -101,7 +136,7 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 			}
 		}
 
-		it := b.newNodeIndexReader(txn, "", labelIndexPrefix(label), "")
+		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
 		defer it.Close()
 
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
@@ -115,7 +150,9 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 				continue
 			}
 			if !cachedValid {
-				b.labelCacheSetFirst(labelGen, label, nodeID)
+				if scope == "" {
+					b.labelCacheSetFirst(labelGen, label, nodeID)
+				}
 				cachedValid = true
 			}
 			if !visit(nodeID) {

@@ -186,6 +186,10 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node != nil && op.Node.ID != "" {
+				// A later live body supersedes this node's tombstone. Deletes
+				// of its detached relationships still belong to the generation.
+				delete(b.deletes, string(op.Node.ID))
+				delete(b.deletedNodeIDs, op.Node.ID)
 				b.nodes[op.Node.ID] = op.Node
 				b.indexNodeLabels(op.Node.ID, op.Node.Labels)
 				if op.OldNode != nil {

@@ -13,15 +13,20 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 	for _, fixture := range []struct {
 		name              string
 		matching, foreign int
-	}{{"own1000", 1000, 0}, {"own1000_foreign50000", 1000, 50000}, {"own1000_sparse", 1, 0}} {
+		foreignFirst      bool
+	}{{"own1000", 1000, 0, false}, {"own1000_foreign50000", 1000, 50000, false}, {"foreign50000_before_own1000", 1000, 50000, true}, {"own1000_sparse", 1, 0, false}} {
 		b.Run(fixture.name, func(b *testing.B) {
 			engine, err := NewBadgerEngineInMemory()
 			require.NoError(b, err)
 			b.Cleanup(func() { _ = engine.Close() })
-			for _, population := range []struct {
+			populations := []struct {
 				namespace string
 				count     int
-			}{{"a", 1000}, {"b", fixture.foreign}} {
+			}{{"a", 1000}, {"b", fixture.foreign}}
+			if fixture.foreignFirst {
+				populations[0], populations[1] = populations[1], populations[0]
+			}
+			for _, population := range populations {
 				nodes := make([]*Node, 0, population.count)
 				for index := 0; index < population.count; index++ {
 					label := "Person"
@@ -32,7 +37,8 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 				}
 				require.NoError(b, engine.BulkCreateNodes(nodes))
 			}
-			for _, mode := range []string{"slice", "projected", "first", "snapshot_first"} {
+			namespace := NewNamespacedEngine(engine, "a")
+			for _, mode := range []string{"slice", "projected", "first", "snapshot_first", "id_first", "absent"} {
 				b.Run(mode, func(b *testing.B) {
 					b.ReportAllocs()
 					b.ResetTimer()
@@ -57,6 +63,18 @@ func BenchmarkScopedLabelReaders(b *testing.B) {
 							err = tx.StreamNodesByLabelProjected("Person", []string{"age"}, func(*Node) error { return ErrIterationStopped })
 							require.ErrorIs(b, err, ErrIterationStopped)
 							require.NoError(b, tx.Rollback())
+						case "id_first":
+							seen := 0
+							require.NoError(b, namespace.ForEachNodeIDByLabel("Person", func(id NodeID) bool {
+								seen++
+								require.Equal(b, NodeID("n00000"), id)
+								return false
+							}))
+							require.Equal(b, 1, seen)
+						case "absent":
+							node, err := engine.GetFirstNodeByLabelInScope("a:", "Missing")
+							require.NoError(b, err)
+							require.Nil(b, node)
 						}
 					}
 				})
