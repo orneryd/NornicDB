@@ -337,17 +337,6 @@ func TestCoverageLiftOperatorsAndRelationshipVectorLimitZero(t *testing.T) {
 	assert.True(t, exec.hasStringPredicate("n.name CONTAINS 'Ada'", " CONTAINS "))
 	assert.False(t, exec.hasStringPredicate("'CONTAINS' = n.name", " CONTAINS "))
 
-	assert.Nil(t, exec.evaluateSetExpression("null"))
-	assert.Equal(t, "Ada", exec.evaluateSetExpression("\"Ada\""))
-	assert.Equal(t, true, exec.evaluateSetExpression("true"))
-	assert.Equal(t, []interface{}{int64(1), "two", false}, exec.evaluateSetExpression("[1, 'two', false]"))
-	assert.IsType(t, CypherDateTime{}, exec.evaluateSetExpression("datetime()"))
-	assert.NotEmpty(t, exec.evaluateSetExpression("randomUUID()"))
-	assert.Equal(t, "42", exec.evaluateSetExpression("toString(42)"))
-	assert.Equal(t, "ell", exec.evaluateSetExpression("substring('hello', 1, 3)"))
-	assert.Equal(t, "prefix-42", exec.evaluateSetExpression("'prefix-' + toString(42)"))
-	assert.Equal(t, "rawExpression", exec.evaluateSetExpression("rawExpression"))
-
 	assert.True(t, relationshipBatchRowHasRequiredFields(map[string]interface{}{"source": "a", "target": "b", "score": 0.9, "embedding": []float32{1}, "ret": "ok"}, unwindRelationshipMergeBatchPlan{
 		matches:       []matchClauseSpec{{rowField: "source"}, {rowField: "target"}},
 		merge:         relationshipMergeSpec{rowFieldRefs: map[string]string{"score": "score"}},

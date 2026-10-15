@@ -11,7 +11,6 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 	"strings"
 	"unicode"
@@ -38,7 +37,7 @@ type caseExpression struct {
 // isCaseExpression checks if an expression is a CASE expression.
 func isCaseExpression(expr string) bool {
 	trimmed := strings.TrimSpace(expr)
-	return hasPrefixFoldASCII(trimmed, "CASE") && hasSuffixFoldASCII(trimmed, "END")
+	return hasPrefixFoldASCII(trimmed, "CASE") && hasSuffixFoldASCII(trimmed, "END") && leadingCaseExpressionEnd(trimmed) == len(trimmed)
 }
 
 // leadingCaseExpressionEnd returns the exclusive end of a leading CASE ... END
@@ -426,6 +425,11 @@ func casePrefixWordIsVariable(s string, i int) bool {
 	if i >= len(s) || !isIdentStartByte(s[i]) {
 		return i >= len(s)
 	}
+	// A terminal END closes the CASE after a variable named NOT or
+	// DISTINCT; treating it as their operand would leave no closing END.
+	if caseWordAt(s, i) == "end" && strings.TrimSpace(s[i+len("end"):]) == "" {
+		return true
+	}
 	return !caseOperandEndsAt(s, i+len(caseWordAt(s, i)))
 }
 
@@ -677,38 +681,20 @@ func caseVariableScopeOpensAt(expr string, open int) bool {
 
 // evaluateCaseExpression evaluates a CASE expression and returns the result.
 func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
-	ce, err := parseCaseExpression(expr)
+	parsed, err := parseCaseExpression(expr)
 	if err != nil {
-		// Return nil if parsing fails
 		return nil
 	}
-
-	if ce.isSimple {
-		// Simple CASE: evaluate test expression once
-		testValue := e.evaluateExpressionWithContextFull(ctx, ce.testExpression, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-
-		// Check each WHEN clause
-		for _, clause := range ce.whenClauses {
-			whenValue := e.evaluateExpressionWithContextFull(ctx, clause.value, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			// CASE x WHEN y compares as x = y does (promoteConstantNumbers).
-			if compareValues(promoteConstantNumbers("=", ce.testExpression, clause.value, testValue, whenValue, cypherVersionFromContext(ctx) == "25")) {
-				return e.evaluateExpressionWithContextFull(ctx, clause.result, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			}
+	value, _, err := runCaseExpression(parsed, cypherVersionFromContext(ctx) == "25", func(part caseValuePart, _ int, text string) (interface{}, bool, error) {
+		if part == caseWhen && !parsed.isSimple {
+			return e.conditionValue(ctx, text, nodes, rels), true, nil
 		}
-	} else {
-		// Searched CASE: evaluate each WHEN condition
-		for _, clause := range ce.whenClauses {
-			if e.evaluateCondition(ctx, clause.condition, nodes, rels) {
-				return e.evaluateExpressionWithContextFull(ctx, clause.result, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			}
-		}
+		return e.evaluateExpressionWithContextFull(ctx, text, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), true, nil
+	})
+	if err != nil {
+		recordExpressionFailure(ctx, err)
 	}
-
-	// No WHEN matched, return ELSE result or NULL
-	if ce.elseResult != "" {
-		return e.evaluateExpressionWithContextFull(ctx, ce.elseResult, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-	}
-	return nil
+	return value
 }
 
 // evaluateCondition reports whether a CASE WHEN (or WITH … WHERE) condition
@@ -731,7 +717,9 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 	upper := upperASCII(condition)
 
 	if value, logical, _, err := evaluateLogicalExpression(condition, func(operand string) (interface{}, bool, error) {
-		return e.conditionValue(ctx, operand, nodes, rels), true, nil
+		return deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
+			return e.conditionValue(ctx, operand, nodes, rels)
+		})
 	}); logical {
 		if err != nil {
 			recordExpressionFailure(ctx, err)
@@ -749,7 +737,15 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 			return truth.value()
 		}
 	}
-	if result, ok := evaluateComparisonChain(condition, resolveComparisonOperand, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25"); ok {
+	if result, matched, _, err := evaluateComparisonChain(condition, func(operand string) (interface{}, bool, error) {
+		return deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
+			return e.evaluateExpressionWithContext(ctx, operand, nodes, rels)
+		})
+	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25"); matched {
+		if err != nil {
+			recordExpressionFailure(ctx, err)
+			return nil
+		}
 		return result
 	}
 
@@ -757,51 +753,23 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 	if strings.HasSuffix(upper, " IS NULL") {
 		expr := strings.TrimSpace(condition[:len(condition)-8])
 		val := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
-		return val == nil
+		return nullEvaluationHandler(false).evaluate(val)
 	}
 	if strings.HasSuffix(upper, " IS NOT NULL") {
 		expr := strings.TrimSpace(condition[:len(condition)-12])
 		val := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
-		return val != nil
+		return nullEvaluationHandler(true).evaluate(val)
 	}
 
-	// Handle CONTAINS, STARTS WITH, ENDS WITH string predicates
-	containsIdx := findTopLevelKeyword(condition, " CONTAINS ")
-	if containsIdx > 0 {
-		left := strings.TrimSpace(condition[:containsIdx])
-		right := strings.TrimSpace(condition[containsIdx+10:])
-		leftVal := e.evaluateExpressionWithContext(ctx, left, nodes, rels)
-		rightVal := e.evaluateExpressionWithContext(ctx, right, nodes, rels)
-		leftStr, lok := leftVal.(string)
-		rightStr, rok := rightVal.(string)
-		if lok && rok {
-			return strings.Contains(leftStr, rightStr)
+	for _, p := range []struct {
+		operator string
+		match    func(string, string) bool
+	}{
+		{" STARTS WITH ", strings.HasPrefix}, {" ENDS WITH ", strings.HasSuffix}, {" CONTAINS ", strings.Contains},
+	} {
+		if left, right, ok := splitByOperatorOutsideCase(condition, p.operator, true, true); ok {
+			return rowStringPredicateValue(e.evaluateExpressionWithContext(ctx, left, nodes, rels), e.evaluateExpressionWithContext(ctx, right, nodes, rels), p.match)
 		}
-		return false
-	}
-	if idx := findTopLevelKeyword(condition, " STARTS WITH "); idx > 0 {
-		left := strings.TrimSpace(condition[:idx])
-		right := strings.TrimSpace(condition[idx+13:])
-		leftVal := e.evaluateExpressionWithContext(ctx, left, nodes, rels)
-		rightVal := e.evaluateExpressionWithContext(ctx, right, nodes, rels)
-		leftStr, lok := leftVal.(string)
-		rightStr, rok := rightVal.(string)
-		if lok && rok {
-			return strings.HasPrefix(leftStr, rightStr)
-		}
-		return false
-	}
-	if idx := findTopLevelKeyword(condition, " ENDS WITH "); idx > 0 {
-		left := strings.TrimSpace(condition[:idx])
-		right := strings.TrimSpace(condition[idx+11:])
-		leftVal := e.evaluateExpressionWithContext(ctx, left, nodes, rels)
-		rightVal := e.evaluateExpressionWithContext(ctx, right, nodes, rels)
-		leftStr, lok := leftVal.(string)
-		rightStr, rok := rightVal.(string)
-		if lok && rok {
-			return strings.HasSuffix(leftStr, rightStr)
-		}
-		return false
 	}
 
 	// Handle label check: n:Label, n:A:B, n:A|B (the shared label test, #860).
@@ -916,107 +884,6 @@ func strictNumericValue(value interface{}) (float64, bool) {
 	default:
 		return 0, false
 	}
-}
-
-// compareWithOperator compares two values using the given operator.
-func compareWithOperator(left, right interface{}, op string) bool {
-	// Handle NULL comparisons
-	if left == nil || right == nil {
-		switch op {
-		case "=":
-			return left == nil && right == nil
-		case "<>":
-			return !(left == nil && right == nil)
-		default:
-			return false // NULL comparisons with <, >, etc. are false
-		}
-	}
-	if equal, temporal := compareTemporalValues(left, right); temporal {
-		switch op {
-		case "=":
-			return equal
-		case "<>":
-			return !equal
-		}
-	}
-	if equal, point := comparePointValues(left, right); point {
-		switch op {
-		case "=":
-			return equal
-		case "<>":
-			return !equal
-		default:
-			return false // points are not ordered by <, >, <=, >=
-		}
-	}
-	if comparison, temporal := compareTemporalOrdering(left, right); temporal {
-		switch op {
-		case "<":
-			return comparison < 0
-		case ">":
-			return comparison > 0
-		case "<=":
-			return comparison <= 0
-		case ">=":
-			return comparison >= 0
-		}
-	}
-
-	// Try numeric comparison: an integer exactly, two floats as float64.
-	if comparison, exact := compareCypherNumbersExactly(left, right); exact {
-		switch op {
-		case "<":
-			return comparison < 0
-		case ">":
-			return comparison > 0
-		case "<=":
-			return comparison <= 0
-		case ">=":
-			return comparison >= 0
-		case "=":
-			return comparison == 0
-		case "<>":
-			return comparison != 0
-		}
-	}
-	numLeft, okLeft := toFloat64(left)
-	numRight, okRight := toFloat64(right)
-	if okLeft && okRight {
-		switch op {
-		case "<":
-			return numLeft < numRight
-		case ">":
-			return numLeft > numRight
-		case "<=":
-			return numLeft <= numRight
-		case ">=":
-			return numLeft >= numRight
-		case "=":
-			return numLeft == numRight
-		case "<>":
-			return numLeft != numRight
-		}
-	}
-
-	// String comparison
-	strLeft := fmt.Sprintf("%v", left)
-	strRight := fmt.Sprintf("%v", right)
-	switch op {
-	case "<":
-		return strLeft < strRight
-	case ">":
-		return strLeft > strRight
-	case "<=":
-		return strLeft <= strRight
-	case ">=":
-		return strLeft >= strRight
-	case "=":
-		return strLeft == strRight
-	case "<>":
-		return strLeft != strRight
-	}
-
-	return false
 }
 
 // indexCaseInsensitive finds the index of a keyword in a case-insensitive manner.

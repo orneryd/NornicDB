@@ -23,9 +23,6 @@
 // List operations:
 //   - evaluateInOp: n.status IN ['active', 'pending']
 //
-// NULL checks:
-//   - evaluateIsNull: IS NULL / IS NOT NULL
-//
 // # Type Coercion
 //
 // Comparisons follow Neo4j's type coercion rules:
@@ -51,7 +48,6 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -185,63 +181,6 @@ func (e *StorageExecutor) compareRegex(actual, expected interface{}) bool {
 	return err == nil && matched == true
 }
 
-// evaluateStringOp handles CONTAINS, STARTS WITH, ENDS WITH.
-//
-// # Parameters
-//
-//   - node: The node containing the property
-//   - variable: The variable name in the query
-//   - whereClause: The WHERE clause string
-//   - op: The operator ("CONTAINS", "STARTS WITH", "ENDS WITH")
-//
-// # Returns
-//
-//   - true if the string operation evaluates to true
-//
-// # Example
-//
-//	evaluateStringOp(ctx, node, "n", "n.name CONTAINS 'Smith'", "CONTAINS")
-//	// Returns true if node.Properties["name"] contains "Smith"
-func (e *StorageExecutor) evaluateStringOp(ctx context.Context, node *storage.Node, variable, whereClause, op string) bool {
-	upperClause := upperASCII(whereClause)
-	opIdx := strings.Index(upperClause, " "+op+" ")
-	if opIdx < 0 {
-		return true
-	}
-
-	left := strings.TrimSpace(whereClause[:opIdx])
-	right := strings.TrimSpace(whereClause[opIdx+len(op)+2:])
-
-	// If the left side doesn't reference this variable, it's not our concern in this
-	// single-node evaluation context. Treat it as a pass-through.
-	if !containsIdentifierToken(left, variable) {
-		return true
-	}
-
-	// Evaluate left/right expressions to support functions like toLower()/toUpper()
-	actualVal := e.evaluateExpression(ctx, left, variable, node)
-	if actualVal == nil {
-		return false
-	}
-	expectedVal := e.evaluateExpression(ctx, right, variable, node)
-	if expectedVal == nil {
-		expectedVal = e.parseValue(ctx, right)
-	}
-
-	actualStr := fmt.Sprintf("%v", actualVal)
-	expectedStr := fmt.Sprintf("%v", expectedVal)
-
-	switch op {
-	case "CONTAINS":
-		return strings.Contains(actualStr, expectedStr)
-	case "STARTS WITH":
-		return strings.HasPrefix(actualStr, expectedStr)
-	case "ENDS WITH":
-		return strings.HasSuffix(actualStr, expectedStr)
-	}
-	return true
-}
-
 // evaluateInOpTruth evaluates a single-node `x IN list` / `x NOT IN list`
 // WHERE leaf with the same three-valued membership as the expression
 // evaluator (cypherMembership): null x, a null list, or a list that holds null
@@ -342,85 +281,4 @@ func containsIdentifierToken(expr, ident string) bool {
 		}
 	}
 	return flush()
-}
-
-
-// evaluateIsNull handles IS NULL / IS NOT NULL.
-//
-// # Parameters
-//
-//   - node: The node containing the property
-//   - variable: The variable name in the query
-//   - whereClause: The WHERE clause string
-//   - expectNotNull: true for IS NOT NULL, false for IS NULL
-//
-// # Returns
-//
-//   - true if the NULL check evaluates to true
-//
-// # Example
-//
-//	evaluateIsNull(ctx, node, "n", "n.email IS NOT NULL", true)
-//	// Returns true if node.Properties["email"] exists and is not nil
-func (e *StorageExecutor) evaluateIsNull(ctx context.Context, node *storage.Node, variable, whereClause string, expectNotNull bool) bool {
-	upperClause := upperASCII(whereClause)
-	var propExpr string
-
-	if expectNotNull {
-		idx := strings.Index(upperClause, " IS NOT NULL")
-		propExpr = strings.TrimSpace(whereClause[:idx])
-	} else {
-		idx := strings.Index(upperClause, " IS NULL")
-		propExpr = strings.TrimSpace(whereClause[:idx])
-	}
-
-	// Extract property
-	if !strings.HasPrefix(propExpr, variable+".") {
-		// Keep historical permissive per-node behavior for unknown identifiers in
-		// single-node evaluation (e.g. "something IS NULL"), which many existing
-		// tests and call paths rely on.
-		if strings.Contains(propExpr, ".") {
-			return true
-		}
-		valExpr := strings.TrimSpace(propExpr)
-		if isValidIdentifier(valExpr) {
-			// If the identifier is row-bound (fabric/correlated execution), evaluate
-			// actual null semantics from the binding.
-			if bound, ok := e.boundValue(ctx, valExpr); ok {
-				if expectNotNull {
-					return bound != nil
-				}
-				return bound == nil
-			}
-			// Otherwise preserve permissive legacy semantics for unbound identifiers.
-			return true
-		}
-		// Literal/null expression support:
-		//   null IS NOT NULL -> false
-		//   'x' IS NOT NULL  -> true
-		//   1 IS NULL        -> false
-		val := e.parseValue(ctx, valExpr)
-		if expectNotNull {
-			return val != nil
-		}
-		return val == nil
-	}
-	propName := propExpr[len(variable)+1:]
-
-	// Check EmbedMeta for managed embedding metadata (e.g., has_embedding).
-	if node.EmbedMeta != nil {
-		if val, exists := node.EmbedMeta[propName]; exists {
-			if expectNotNull {
-				return val != nil
-			}
-			return val == nil
-		}
-	}
-
-	val, exists := node.Properties[propName]
-
-	if expectNotNull {
-		return exists && val != nil
-	}
-	return !exists || val == nil
 }

@@ -4,14 +4,48 @@ import (
 	"cmp"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // cypherEquality applies Cypher's three-valued structural equality. A nil
 // result represents unknown, which occurs when no definite inequality exists
 // but at least one nested comparison involves null.
-func cypherEquality(left, right interface{}) interface{} {
+func cypherEquality[L, R any](left L, right R) interface{} {
+	// Keep typed arithmetic operands unboxed on the common integer path.
+	if actual, ok := any(left).(int64); ok {
+		if expected, ok := any(right).(int64); ok {
+			return actual == expected
+		}
+	}
+	return cypherEqualityValue(any(left), any(right))
+}
+
+func cypherEqualityValue(left, right interface{}) interface{} {
 	if left == nil || right == nil {
 		return nil
+	}
+	// Two strings or two booleans are none of the forms below:
+	// their equality is ==. The equality of every evaluator (= / <>, IN,
+	// CASE) starts here (#1214).
+	switch actual := left.(type) {
+	case string:
+		if expected, ok := right.(string); ok {
+			return actual == expected
+		}
+	case bool:
+		if expected, ok := right.(bool); ok {
+			return actual == expected
+		}
+	}
+	// Entity snapshots compare by identity even if their properties differ.
+	leftNode, leftIsNode := left.(*storage.Node)
+	rightNode, rightIsNode := right.(*storage.Node)
+	leftEdge, leftIsEdge := left.(*storage.Edge)
+	rightEdge, rightIsEdge := right.(*storage.Edge)
+	if leftIsNode || rightIsNode || leftIsEdge || rightIsEdge {
+		return (leftIsNode && rightIsNode && leftNode != nil && rightNode != nil && leftNode.ID == rightNode.ID) ||
+			(leftIsEdge && rightIsEdge && leftEdge != nil && rightEdge != nil && leftEdge.ID == rightEdge.ID)
 	}
 	leftList, leftIsList := cypherListValue(left)
 	rightList, rightIsList := cypherListValue(right)

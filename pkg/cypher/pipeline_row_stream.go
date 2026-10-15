@@ -170,7 +170,6 @@ func (e *StorageExecutor) validatePipelineWithRows(rows []pipelineRow, clause st
 func (e *StorageExecutor) validatePipelineProjectionValues(rows []pipelineRow, clause, keyword string) error {
 	for _, validate := range []func([]pipelineRow, string, string) error{
 		e.validatePipelineRangeArguments,
-		e.validatePipelineConversionArguments, e.validatePipelineGraphFunctionArguments,
 		e.validatePipelineProjectionSubscripts, e.validatePipelineSizeArguments,
 	} {
 		if err := validate(rows, clause, keyword); err != nil {

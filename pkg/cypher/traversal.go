@@ -2325,6 +2325,7 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 	}
 
 	var filtered []PathResult
+	where := prepareRowPredicate(strings.TrimSpace(whereClause))
 	for _, path := range paths {
 		context := e.buildPathContext(path, matches)
 		for name, value := range extra {
@@ -2339,7 +2340,9 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 				}
 			}
 		}
-		if e.evaluateWhereOnPath(ctx, whereClause, context) {
+		values := e.pathContextValues(context)
+		bindParameterRow(ctx, values)
+		if where.holds(e, ctx, values) {
 			filtered = append(filtered, path)
 		}
 	}

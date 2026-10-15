@@ -94,37 +94,34 @@ func evalLabels(ctx Context, args []string) (interface{}, error) {
 		return nil, nil
 	}
 	inner := strings.TrimSpace(args[0])
-	if node, ok := ctx.Nodes[inner]; ok && node != nil {
-		result := make([]interface{}, len(node.Labels))
-		for i, label := range node.Labels {
-			result[i] = label
-		}
-		return result, nil
+	if node, ok := ctx.Nodes[inner]; ok {
+		return Labels(node)
 	}
-	v, _ := ctx.Eval(inner)
-	switch value := v.(type) {
-	case nil:
+	value, err := ctx.Eval(inner)
+	if err != nil {
+		return nil, err
+	}
+	return Labels(value)
+}
+
+// Labels returns the labels of a node, null for null, or an argument error.
+// For example, Labels(&storage.Node{Labels: []string{"N"}}) returns ["N"].
+func Labels(value interface{}) (interface{}, error) {
+	if value == nil {
 		return nil, nil
-	case *storage.Node:
-		if value == nil {
-			return nil, nil
-		}
-		result := make([]interface{}, len(value.Labels))
-		for i, label := range value.Labels {
-			result[i] = label
-		}
-		return result, nil
-	case map[string]interface{}:
-		// A node projected as a map: the projected label list is the
-		// contract, with or without the nodeToMap _nodeId marker.
-		if labels, ok := value["labels"]; ok {
-			return labels, nil
-		}
-		if _, isNode := value["_nodeId"]; isNode {
-			return value["labels"], nil
-		}
 	}
-	return nil, &ArgumentTypeError{Function: "labels", Value: v}
+	node, ok := value.(*storage.Node)
+	if !ok {
+		return nil, &ArgumentTypeError{Function: "labels", Value: value}
+	}
+	if node == nil {
+		return nil, nil
+	}
+	result := make([]interface{}, len(node.Labels))
+	for i, label := range node.Labels {
+		result[i] = label
+	}
+	return result, nil
 }
 
 func evalType(ctx Context, args []string) (interface{}, error) {
@@ -132,16 +129,30 @@ func evalType(ctx Context, args []string) (interface{}, error) {
 		return nil, nil
 	}
 	inner := strings.TrimSpace(args[0])
-	if rel, ok := ctx.Rels[inner]; ok && rel != nil {
-		return rel.Type, nil
+	if edge, ok := ctx.Rels[inner]; ok {
+		return RelationshipType(edge)
 	}
-	v, _ := ctx.Eval(inner)
-	if m, ok := v.(map[string]interface{}); ok {
-		if t, ok := m["type"]; ok {
-			return t, nil
-		}
+	value, err := ctx.Eval(inner)
+	if err != nil {
+		return nil, err
 	}
-	return nil, nil
+	return RelationshipType(value)
+}
+
+// RelationshipType returns a relationship's type, null for null, or an argument
+// error. For example, RelationshipType(&storage.Edge{Type: "R"}) returns "R".
+func RelationshipType(value interface{}) (interface{}, error) {
+	if value == nil {
+		return nil, nil
+	}
+	edge, ok := value.(*storage.Edge)
+	if !ok {
+		return nil, &ArgumentTypeError{Function: "type", Value: value}
+	}
+	if edge == nil {
+		return nil, nil
+	}
+	return edge.Type, nil
 }
 
 func evalKeys(ctx Context, args []string) (interface{}, error) {
@@ -312,16 +323,11 @@ func evalStringCase(ctx Context, args []string, function string, convert func(st
 }
 
 func evalCoalesce(ctx Context, args []string) (interface{}, error) {
-	for _, a := range args {
-		v, err := ctx.Eval(a)
-		if err != nil {
-			return nil, err
-		}
-		if v != nil {
-			return v, nil
-		}
-	}
-	return nil, nil
+	value, _, err := Coalesce(len(args), func(i int) (interface{}, bool, error) {
+		value, err := ctx.Eval(args[i])
+		return value, true, err
+	})
+	return value, err
 }
 
 // EntityProperties is properties() of a node or relationship: its property
@@ -332,4 +338,20 @@ func EntityProperties(properties map[string]interface{}) map[string]interface{} 
 		return map[string]interface{}{}
 	}
 	return properties
+}
+
+// Coalesce is coalesce over n operands, operand i evaluated by eval(i):
+// the first resolved non-null value; an unresolved operand counts as null,
+// returning null when every operand is null or unresolved.
+func Coalesce(n int, eval func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
+	for index := 0; index < n; index++ {
+		value, resolved, err := eval(index)
+		if err != nil {
+			return nil, false, err
+		}
+		if resolved && value != nil {
+			return value, true, nil
+		}
+	}
+	return nil, true, nil
 }

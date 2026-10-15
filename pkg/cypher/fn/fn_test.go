@@ -87,7 +87,7 @@ func TestBuiltinsCore(t *testing.T) {
 			case "node_expr":
 				return n, nil
 			case "rel_map":
-				return map[string]interface{}{"type": "LIKES"}, nil
+				return &storage.Edge{Type: "LIKES"}, nil
 			case "string_expr":
 				return "Hello", nil
 			case "list_expr":
@@ -116,7 +116,7 @@ func TestBuiltinsCore(t *testing.T) {
 		{name: "elementId node", fn: "elementid", args: []string{"n"}, want: "4:test:n1"},
 		{name: "elementId rel", fn: "elementid", args: []string{"r"}, want: "5:test:r1"},
 		{name: "type from rel", fn: "type", args: []string{"r"}, want: "KNOWS"},
-		{name: "type from map", fn: "type", args: []string{"rel_map"}, want: "LIKES"},
+		{name: "type from evaluated relationship", fn: "type", args: []string{"rel_map"}, want: "LIKES"},
 		{name: "size string", fn: "size", args: []string{"string_expr"}, want: int64(5)},
 		{name: "size []string", fn: "size", args: []string{"list_expr"}, want: int64(2)},
 		{name: "size []interface{}", fn: "size", args: []string{"iface_list"}, want: int64(3)},

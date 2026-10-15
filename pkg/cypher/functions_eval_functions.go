@@ -216,7 +216,11 @@ skipArrayIndexing:
 			Storage:  e.storage,
 			Database: e.executionDatabaseName(ctx),
 			Eval: func(argExpr string) (interface{}, error) {
-				return e.evaluateExpressionWithContextFull(ctx, argExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), nil
+				value := e.evaluateExpressionWithContextFull(ctx, argExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+				if err := getExpressionFailure(ctx); err != nil {
+					return nil, err
+				}
+				return value, nil
 			},
 			Now:      time.Now,
 			Graphs:   e,

@@ -90,10 +90,6 @@ func TestPointFieldsAndComparisons(t *testing.T) {
 	order, _ = comparePointOrdering(CypherPoint{SRID: 7203, X: 1, Y: 1}, CypherPoint{SRID: 7203, X: 1, Y: 1})
 	require.Equal(t, 0, order)
 
-	for op, want := range map[string]bool{"=": false, "<>": true, "<": false} {
-		require.Equal(t, want, compareWithOperator(CypherPoint{SRID: 7203, X: 1, Y: 1}, CypherPoint{SRID: 7203, X: 2, Y: 1}, op), op)
-	}
-
 	distance, ok := pointDistance(CypherPoint{SRID: 4979, X: 0, Y: 0, Z: 0}, CypherPoint{SRID: 4979, X: 0, Y: 0, Z: 3})
 	require.True(t, ok)
 	require.Equal(t, 3.0, distance)

@@ -711,6 +711,13 @@ func (e *StorageExecutor) add(left, right interface{}) interface{} {
 	if left == nil || right == nil {
 		return nil
 	}
+	// Two strings are none of the temporal, list or duration forms below:
+	// concatenated first, for every evaluator (#1214).
+	if leftText, ok := left.(string); ok {
+		if rightText, ok := right.(string); ok {
+			return leftText + rightText
+		}
+	}
 	if result, handled := addTemporalValues(left, right); handled {
 		return result
 	}

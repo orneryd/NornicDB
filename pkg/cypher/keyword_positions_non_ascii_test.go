@@ -91,9 +91,9 @@ func TestKeywordPositionHelpersWithNonASCIIText(t *testing.T) {
 	ctx := context.Background()
 
 	node := &storage.Node{ID: "k748h:n", Labels: []string{"P"}, Properties: map[string]any{"name": "ıstanbul", "tag": "İİ-x"}}
-	require.True(t, exec.evaluateStringOp(ctx, node, "n", "n.name STARTS WITH 'ıs'", "STARTS WITH"))
-	require.True(t, exec.evaluateStringOp(ctx, node, "n", "n.tag CONTAINS 'İ-'", "CONTAINS"))
-	require.False(t, exec.evaluateStringOp(ctx, node, "n", "n.name ENDS WITH 'ıı'", "ENDS WITH"))
+	require.True(t, exec.evaluateRowStringPredicate(ctx, "n.name", "'ıs'", map[string]interface{}{"n": node}, strings.HasPrefix))
+	require.True(t, exec.evaluateRowStringPredicate(ctx, "n.tag", "'İ-'", map[string]interface{}{"n": node}, strings.Contains))
+	require.False(t, exec.evaluateRowStringPredicate(ctx, "n.name", "'ıı'", map[string]interface{}{"n": node}, strings.HasSuffix))
 
 	require.NoError(t, exec.validateSetAssignments([]string{"n.a = toUpper('ıı')", "n:İ"}))
 	require.Error(t, exec.validateSetAssignments([]string{"n.a = notAFunction('ıı')"}))

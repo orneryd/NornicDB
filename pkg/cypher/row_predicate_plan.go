@@ -604,111 +604,111 @@ func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *ro
 	return e.evaluateRowPredicatePartScope(ctx, part, compiledRowScope{values: values}, nil)
 }
 
+// evaluateRowPredicatePartScope reads the plan's value as a WHERE predicate.
+// Values and errors stay explicit inside a junction until its logical fold decides.
 func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) bool {
-	switch part.kind {
-	case rowPredicateAnd:
-		for i := range part.parts {
-			if !e.evaluateRowPredicatePartScope(ctx, &part.parts[i], scope, memberships) {
-				return false
-			}
-		}
-		return true
-	case rowPredicateOr:
-		for i := range part.parts {
-			if e.evaluateRowPredicatePartScope(ctx, &part.parts[i], scope, memberships) {
-				return true
-			}
-		}
+	value, err := e.rowPredicatePartValue(ctx, part, scope, memberships)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
 		return false
+	}
+	return predicateValueHolds(ctx, value, false)
+}
+
+func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) (interface{}, error) {
+	textValue := func() (interface{}, error) {
+		value, _, err := deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
+			values := rowValuesInExpressionContext(ctx, scope.materialize())
+			value, ok, err := e.evaluateRowValue(part.text, values)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
+			if ok {
+				return value
+			}
+			return e.evaluateRowPredicateText(ctx, part.text, values)
+		})
+		return value, err
+	}
+	switch part.kind {
+	case rowPredicateAnd, rowPredicateOr:
+		value, _, err := evaluateLogicalOperands(len(part.parts), part.kind == rowPredicateOr, func(i int) (interface{}, bool, error) {
+			value, err := e.rowPredicatePartValue(ctx, &part.parts[i], scope, memberships)
+			return value, true, err
+		})
+		return value, err
 	case rowPredicateComparison:
 		if part.left.compiled != nil || part.right.compiled != nil {
 			left, leftOK, err := part.left.evaluate(e, scope)
 			if err != nil {
-				recordExpressionFailure(ctx, err)
-				return false
+				return nil, err
 			}
 			right, rightOK, err := part.right.evaluate(e, scope)
 			if err != nil {
-				recordExpressionFailure(ctx, err)
-				return false
+				return nil, err
 			}
 			if !leftOK || !rightOK {
-				return e.evaluateRowPredicateText(ctx, part.text, scope.materialize())
+				return textValue()
 			}
-			if left.isInteger && right.isInteger {
-				switch part.operator {
-				case "=":
-					return left.integer == right.integer
-				case "<>", "!=":
-					return left.integer != right.integer
-				case "<":
-					return left.integer < right.integer
-				case ">":
-					return left.integer > right.integer
-				case "<=":
-					return left.integer <= right.integer
-				case ">=":
-					return left.integer >= right.integer
-				}
+
+			if left.isInteger && right.isInteger && !(part.constantNumbers && foldsConstantNumbers(string(part.operator), cypherVersionFromContext(ctx) == "25")) {
+				return compareCypherPredicateValue(left.integer, right.integer, string(part.operator)), nil
 			}
 			leftValue, rightValue := left.materialize(), right.materialize()
 			if part.constantNumbers && foldsConstantNumbers(string(part.operator), cypherVersionFromContext(ctx) == "25") {
 				leftValue, rightValue = promoteIntegerToFloat(leftValue, rightValue)
 			}
-			matched, known := part.operator.evaluate(leftValue, rightValue).(bool)
-			return known && matched
+			return part.operator.evaluate(leftValue, rightValue), nil
 		}
 		left, leftOK := part.left.resolveScope(scope)
 		right, rightOK := part.right.resolveScope(scope)
 		if !leftOK || !rightOK {
-			return e.evaluateRowPredicateText(ctx, part.text, scope.materialize())
-		}
-		if left == nil || right == nil {
-			return false
+			return textValue()
 		}
 		if part.constantNumbers && foldsConstantNumbers(string(part.operator), cypherVersionFromContext(ctx) == "25") {
 			left, right = promoteIntegerToFloat(left, right)
 		}
-		matched, known := part.operator.evaluate(left, right).(bool)
-		return known && matched
+		return part.operator.evaluate(left, right), nil
 	case rowPredicateString:
 		left, leftOK := part.left.resolveScope(scope)
 		right, rightOK := part.right.resolveScope(scope)
 		if !leftOK || !rightOK {
-			return e.evaluateRowPredicateText(ctx, part.text, scope.materialize())
+			return textValue()
 		}
-		return evaluateRowStringPredicateValues(left, right, part.stringPredicate)
+		return rowStringPredicateValue(left, right, part.stringPredicate), nil
 	case rowPredicateIn:
 		needle, needleOK := part.left.resolveScope(scope)
 		haystack, haystackOK := part.right.resolveScope(scope)
 		if !needleOK || !haystackOK {
-			return e.evaluateRowPredicateText(ctx, part.text, scope.materialize())
+			return textValue()
 		}
 		if part.membership != nil {
 			switch needle.(type) {
 			case string, bool:
 				if prepared := memberships.find(part); prepared != nil && len(prepared.nonComparable) == 0 {
-					return membershipTruth(needle, prepared.comparable, nil, prepared.hasNull, e.compareBindingValuesEqual) == truthTrue
+					return membershipTruth(needle, prepared.comparable, nil, prepared.hasNull, e.compareBindingValuesEqual).value(), nil
 				}
 				if items, ok := toInterfaceSlice(haystack); ok {
 					comparable, nonComparable, hasNull := part.membership.get(items, firstInterfaceElement(items))
 					if len(nonComparable) == 0 {
-						return membershipTruth(needle, comparable, nil, hasNull, e.compareBindingValuesEqual) == truthTrue
+						return membershipTruth(needle, comparable, nil, hasNull, e.compareBindingValuesEqual).value(), nil
 					}
 				}
 			}
 		}
 		member, ok := rowMembershipOfValues(needle, haystack, false)
-		return ok && member == true
+		if !ok {
+			return textValue()
+		}
+		return member, nil
 	case rowPredicateIsNull, rowPredicateIsNotNull:
 		value, ok := part.left.resolveScope(scope)
 		if !ok {
-			return e.evaluateRowPredicateText(ctx, part.text, scope.materialize())
+			return textValue()
 		}
-		return nullEvaluationHandler(part.kind == rowPredicateIsNotNull).evaluate(value)
+		return nullEvaluationHandler(part.kind == rowPredicateIsNotNull).evaluate(value), nil
 	default:
-		// Text parts go through the whole row predicate evaluator: they have
-		// no plan of their own, so this doesn't come back here.
-		return e.evaluateRowPredicateMode(ctx, part.text, scope.materialize())
+		return textValue()
 	}
 }

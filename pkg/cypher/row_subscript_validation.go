@@ -151,6 +151,19 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 	return nil
 }
 
+// rowSubscriptStart returns where the subscript or slice that ends expr
+// starts (expr[open:] is [key] or [from..to] applied to expr[:open]), or -1:
+// the bracket group that closes expr (its key may hold brackets of its own:
+// m[r[k]], m[l[0].id]) on a receiver that is the whole rest of expr. The one
+// reader of the form, for the row evaluator (evaluateRowValueText) and its
+// compiled programs (rowValueCompiler.compile).
+func rowSubscriptStart(expr string) int {
+	if open := closingBracketGroupStart(expr); open > 0 && rowSubscriptReceiverStart(expr, open) == 0 {
+		return open
+	}
+	return -1
+}
+
 // closingBracketGroupStart returns where the [ … ] group that ends
 // expression starts, reading brackets outside string literals and quoted
 // names; -1 when expression doesn't end with a balanced group.
@@ -192,6 +205,9 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		end--
 	}
 	if end < 0 {
+		return -1
+	}
+	if !isRowReceiverIdentifierByte(expression[end]) && !strings.ContainsRune(")]'\"`}", rune(expression[end])) {
 		return -1
 	}
 	start := end

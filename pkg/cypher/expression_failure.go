@@ -10,6 +10,27 @@ import (
 
 type expressionFailureKey struct{}
 
+// expressionOperandFailureKey isolates only errors while preserving the
+// statement's map ordering and REVEAL metadata in expressionFailureKey.
+type expressionOperandFailureKey struct{}
+
+// deferredExpressionValue adapts a context evaluator to the logical fold's
+// explicit error contract. A later deciding operand can discard this error.
+func deferredExpressionValue(ctx context.Context, evaluate func(context.Context) interface{}) (interface{}, bool, error) {
+	return deferredExpressionResult(ctx, func(ctx context.Context) (interface{}, bool, error) {
+		return evaluate(ctx), true, nil
+	})
+}
+
+func deferredExpressionResult(ctx context.Context, evaluate func(context.Context) (interface{}, bool, error)) (interface{}, bool, error) {
+	ctx = context.WithValue(ctx, expressionOperandFailureKey{}, &expressionFailure{})
+	value, ok, err := evaluate(ctx)
+	if err == nil {
+		err = getExpressionFailure(ctx)
+	}
+	return value, ok, err
+}
+
 // withExpressionFailureSlot gives ctx a slot that collects the first
 // expression error of the statement (recordExpressionFailure), unless it
 // has one: the running statement's own slot when there is one (no
@@ -59,7 +80,7 @@ func snapshotMapKeyOrders(ctx context.Context) map[uintptr][]string {
 }
 
 func recordExpressionFailure(ctx context.Context, err error) {
-	if failure, ok := ctx.Value(expressionFailureKey{}).(*expressionFailure); ok {
+	if failure := expressionErrorSlot(ctx); failure != nil {
 		failure.mu.Lock()
 		if failure.err == nil {
 			failure.err = err
@@ -69,10 +90,43 @@ func recordExpressionFailure(ctx context.Context, err error) {
 }
 
 func getExpressionFailure(ctx context.Context) error {
-	if failure, ok := ctx.Value(expressionFailureKey{}).(*expressionFailure); ok {
+	if failure := expressionErrorSlot(ctx); failure != nil {
 		failure.mu.Lock()
 		defer failure.mu.Unlock()
 		return failure.err
 	}
 	return nil
+}
+
+func expressionErrorSlot(ctx context.Context) *expressionFailure {
+	if failure, ok := ctx.Value(expressionOperandFailureKey{}).(*expressionFailure); ok {
+		return failure
+	}
+	failure, _ := ctx.Value(expressionFailureKey{}).(*expressionFailure)
+	return failure
+}
+
+// rowValuesInExpressionContext overrides the statement context for a deferred
+// operand; nested context evaluators must record their errors in that operand.
+func rowValuesInExpressionContext(ctx context.Context, values map[string]interface{}) map[string]interface{} {
+	scope := make(map[string]interface{}, len(values)+1)
+	for name, value := range values {
+		scope[name] = value
+	}
+	scope[rowStatementContextKey] = ctx
+	return scope
+}
+
+// deferredRowOperand keeps a subquery operand's statement errors local until
+// the surrounding OR decides whether they count.
+func deferredRowOperand(values map[string]interface{}, evaluate func(map[string]interface{}) (interface{}, bool, error)) (interface{}, bool, error) {
+	return deferredExpressionResult(rowStatementContextOrBackground(values), func(ctx context.Context) (interface{}, bool, error) {
+		return evaluate(rowValuesInExpressionContext(ctx, values))
+	})
+}
+
+// rowOperandRecordsFailure identifies operations whose adapters record errors
+// through the statement context, rather than returning them explicitly.
+func rowOperandRecordsFailure(expression string) bool {
+	return mayContainSubqueryExpression(expression)
 }

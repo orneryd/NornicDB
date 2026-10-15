@@ -321,9 +321,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		if err := e.validateRowSubscriptTypes(part, pipelineRow{}); err != nil {
 			return nil, err
 		}
-		if err := e.validateRowConversionArguments(part, row); err != nil {
-			return nil, err
-		}
+
 		if variable := undefinedStandaloneMapValue(part); variable != "" {
 			return nil, newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",

@@ -20,9 +20,8 @@ import (
 //     x > 0 AND 1 / x > 0 never divides by zero.
 //   - OR is the same with true in place of false.
 //
-// An evaluator that records an operand's error on the statement
-// (recordExpressionFailure) rather than returning it can't take it back: in
-// it, an error before the deciding operand still fails the statement.
+// Context evaluators capture operand errors until the chain decides whether
+// they count (deferredExpressionValue).
 //   - XOR and NOT take predicates: a non-predicate operand is a TypeError,
 //     and null gives null.
 //
@@ -42,10 +41,46 @@ type logicalOperandEvaluator func(operand string) (value interface{}, ok bool, e
 // evaluateLogicalExpression evaluates expr when its top level is OR, XOR,
 // AND or NOT (logical reports whether it is), each operand through eval.
 func evaluateLogicalExpression(expr string, eval logicalOperandEvaluator) (value interface{}, logical, ok bool, err error) {
-	if !mayBeLogicalExpression(expr) {
+	var buffer [8]string
+	plan := planLogicalExpression(expr, buffer[:0])
+	if plan.kind == logicalNone {
 		return nil, false, false, nil
 	}
-	var buffer [8]string
+	value, ok, err = plan.evaluate(func(index int) (interface{}, bool, error) {
+		return eval(plan.operands[index])
+	})
+	return value, true, ok, err
+}
+
+// logicalKind is the top-level logical operator of an expression.
+type logicalKind uint8
+
+const (
+	logicalNone logicalKind = iota
+	logicalOr
+	logicalXor
+	logicalAnd
+	logicalNot
+	// logicalNotNot is NOT NOT x: x's value as it is.
+	logicalNotNot
+)
+
+// logicalPlan is an expression's top-level logical operator and the
+// operands it evaluates, read from the text once: an evaluator that keeps
+// the plan (rowValueProgram) evaluates the operator without reading the
+// text again, through the same evaluate as evaluateLogicalExpression.
+type logicalPlan struct {
+	kind     logicalKind
+	operands []string
+}
+
+// planLogicalExpression reads expr's top-level OR, XOR, AND or NOT,
+// simplified as Neo4j's planner does (see above); kind is logicalNone for
+// any other expression. operands are appended to buffer.
+func planLogicalExpression(expr string, buffer []string) logicalPlan {
+	if !mayBeLogicalExpression(expr) {
+		return logicalPlan{}
+	}
 	for _, operator := range [...]string{" OR ", " XOR ", " AND "} {
 		operands := appendLogicalOperands(buffer[:0], expr, operator)
 		if len(operands) == 0 {
@@ -53,33 +88,54 @@ func evaluateLogicalExpression(expr string, eval logicalOperandEvaluator) (value
 		}
 		switch operator {
 		case " OR ":
-			value, ok, err = evaluateLogicalChain(simplifyLogicalChain(operands, "false"), true, eval)
+			return logicalPlan{kind: logicalOr, operands: simplifyLogicalChain(operands, "false")}
 		case " AND ":
-			value, ok, err = evaluateLogicalChain(simplifyLogicalChain(operands, "true"), false, eval)
+			return logicalPlan{kind: logicalAnd, operands: simplifyLogicalChain(operands, "true")}
 		default:
-			value, ok, err = evaluateLogicalXor(operands, eval)
+			// false drops out of an XOR.
+			kept := operands[:0]
+			for _, operand := range operands {
+				if !strings.EqualFold(logicalOperandKey(operand), "false") {
+					kept = append(kept, operand)
+				}
+			}
+			return logicalPlan{kind: logicalXor, operands: kept}
 		}
-		return value, true, ok, err
 	}
 	operand, negated := logicalNotOperand(expr)
 	if !negated {
-		return nil, false, false, nil
+		return logicalPlan{}
 	}
 	// NOT (NOT x) is x only when the inner NOT covers its whole operand:
 	// NOT (NOT a OR b) negates the OR, whose left operand is NOT a.
 	if inner, doubled := logicalNotOperand(operand); doubled && !hasTopLevelLogicalOperator(logicalOperandKey(operand)) {
-		value, ok, err = eval(inner)
-		return value, true, ok, err
+		return logicalPlan{kind: logicalNotNot, operands: append(buffer[:0], inner)}
 	}
-	value, ok, err = eval(operand)
+	return logicalPlan{kind: logicalNot, operands: append(buffer[:0], operand)}
+}
+
+// evaluate evaluates the plan, operand i through eval(i); operands are
+// evaluated in order, only as far as the result needs them.
+func (p logicalPlan) evaluate(eval func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
+	switch p.kind {
+	case logicalOr:
+		return evaluateLogicalChain(p.operands, true, eval)
+	case logicalAnd:
+		return evaluateLogicalChain(p.operands, false, eval)
+	case logicalXor:
+		return evaluateLogicalXor(p.operands, eval)
+	case logicalNotNot:
+		return eval(0)
+	}
+	value, ok, err := eval(0)
 	if !ok || err != nil {
-		return nil, true, ok, err
+		return nil, ok, err
 	}
 	truth, err := cypherPredicateTruth(value)
 	if err != nil {
-		return nil, true, true, err
+		return nil, true, err
 	}
-	return truth.not().value(), true, true, nil
+	return truth.not().value(), true, nil
 }
 
 // hasTopLevelLogicalOperator reports whether expr is an OR, XOR or AND
@@ -195,25 +251,29 @@ func logicalOperandKey(operand string) string {
 
 // evaluateLogicalChain evaluates an AND chain (decisive false) or an OR
 // chain (decisive true). A chain of one operand is its value as it is.
-func evaluateLogicalChain(operands []string, decisive bool, eval logicalOperandEvaluator) (interface{}, bool, error) {
+func evaluateLogicalChain(operands []string, decisive bool, eval func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
 	if len(operands) == 1 {
 		if strings.EqualFold(operands[0], "true") || strings.EqualFold(operands[0], "false") {
 			return strings.EqualFold(operands[0], "true"), true, nil
 		}
-		return eval(operands[0])
+		return eval(0)
 	}
+	return evaluateLogicalOperands(len(operands), decisive, eval)
+}
+
+func evaluateLogicalOperands(count int, decisive bool, eval func(int) (interface{}, bool, error)) (interface{}, bool, error) {
 	var evaluationErr, typeErr error
 	unknown := false
-	for _, operand := range operands {
-		value, ok, err := eval(operand)
-		if !ok {
-			return nil, false, err
-		}
+	for index := 0; index < count; index++ {
+		value, ok, err := eval(index)
 		if err != nil {
 			if evaluationErr == nil {
 				evaluationErr = err
 			}
 			continue
+		}
+		if !ok {
+			return nil, false, nil
 		}
 		truth, err := cypherPredicateTruth(value)
 		switch {
@@ -242,24 +302,19 @@ func evaluateLogicalChain(operands []string, decisive bool, eval logicalOperandE
 	return !decisive, true, nil
 }
 
-// evaluateLogicalXor evaluates an XOR chain left to right. false drops out
-// of it; what is left of one operand is that operand's value as it is.
-func evaluateLogicalXor(operands []string, eval logicalOperandEvaluator) (interface{}, bool, error) {
-	kept := operands[:0]
-	for _, operand := range operands {
-		if !strings.EqualFold(logicalOperandKey(operand), "false") {
-			kept = append(kept, operand)
-		}
-	}
-	switch len(kept) {
+// evaluateLogicalXor evaluates an XOR chain left to right, its false
+// operands already dropped (planLogicalExpression); what is left of one
+// operand is that operand's value as it is.
+func evaluateLogicalXor(operands []string, eval func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
+	switch len(operands) {
 	case 0:
 		return false, true, nil
 	case 1:
-		return eval(kept[0])
+		return eval(0)
 	}
 	result := truthFalse
-	for _, operand := range kept {
-		value, ok, err := eval(operand)
+	for index := range operands {
+		value, ok, err := eval(index)
 		if !ok || err != nil {
 			return nil, ok, err
 		}

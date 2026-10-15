@@ -13,7 +13,7 @@ func TestConversionRejectsInvalidTypedValuesInsideListComprehension(t *testing.T
 		"values": []interface{}{true, []interface{}{}},
 	}
 
-	err := executor.validateRowConversionArguments(
+	_, _, err := executor.evaluateRowValue(
 		"[value IN values | toBoolean(value)]",
 		row,
 	)
@@ -30,10 +30,6 @@ func TestConversionRetainsNullForUnparseableStrings(t *testing.T) {
 		"values": []interface{}{"true", "not a boolean"},
 	}
 
-	require.NoError(t, executor.validateRowConversionArguments(
-		"[value IN values | toBoolean(value)]",
-		row,
-	))
 	result, ok := rowValue(t, executor, "[value IN values | toBoolean(value)]", row)
 	require.True(t, ok)
 	require.Equal(t, []interface{}{true, nil}, result)

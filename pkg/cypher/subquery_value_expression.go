@@ -179,20 +179,8 @@ func parseIntegerComparison(comparison string) (*integerComparison, bool) {
 // holds compares value with the literal, as the comparison evaluator does for
 // two integers.
 func (c *integerComparison) holds(value int64) bool {
-	switch c.operator {
-	case "=":
-		return value == c.literal
-	case "<>", "!=":
-		return value != c.literal
-	case "<":
-		return value < c.literal
-	case "<=":
-		return value <= c.literal
-	case ">":
-		return value > c.literal
-	default:
-		return value >= c.literal
-	}
+	matched, _ := compareCypherPredicateValue(value, c.literal, c.operator).(bool)
+	return matched
 }
 
 // rowSubqueryPlans caches row subquery plans by expression text: an
@@ -255,6 +243,25 @@ func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values
 	return correlated
 }
 
+// rowSubqueryAtom reads an expression that is one EXISTS / COUNT / COLLECT
+// { … } subquery: its keyword and the position of its {. The one reader of
+// the form, for evaluateRowSubqueryAtom and the compiled row programs.
+func rowSubqueryAtom(expr string) (kind string, open int, ok bool) {
+	if expr == "" {
+		return "", 0, false
+	}
+	switch expr[0] {
+	case 'E', 'e', 'C', 'c':
+	default:
+		return "", 0, false
+	}
+	kind, open, ok = subqueryExpressionKeywordAt(expr, 0)
+	if !ok || findMatchingDelimiter(expr, open, '{', '}') != len(expr)-1 {
+		return "", 0, false
+	}
+	return kind, open, true
+}
+
 // evaluateRowSubqueryAtom evaluates an expression that is one EXISTS / COUNT /
 // COLLECT { … } subquery for the row evaluator, with the row's variables, in
 // the statement context the row carries (rowStatementContextKey). Nested in
@@ -263,16 +270,8 @@ func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values
 // comprehension's, reduce's). matched is false for any other expression and
 // when the row carries no statement context.
 func (e *StorageExecutor) evaluateRowSubqueryAtom(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	if expr == "" {
-		return nil, false, nil
-	}
-	switch expr[0] {
-	case 'E', 'e', 'C', 'c':
-	default:
-		return nil, false, nil
-	}
-	kind, open, ok := subqueryExpressionKeywordAt(expr, 0)
-	if !ok || findMatchingDelimiter(expr, open, '{', '}') != len(expr)-1 {
+	kind, open, ok := rowSubqueryAtom(expr)
+	if !ok {
 		return nil, false, nil
 	}
 	ctx := rowStatementContext(values)

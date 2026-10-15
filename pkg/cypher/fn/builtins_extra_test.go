@@ -122,8 +122,9 @@ func TestEvalLabels_NoMatch(t *testing.T) {
 func TestEvalType_ViaEvalMap(t *testing.T) {
 	ctx := makeCtxWithEval(map[string]interface{}{"type": "CONNECTED_TO"})
 	v, _, err := EvaluateFunction("type", []string{"expr"}, ctx)
-	require.NoError(t, err)
-	assert.Equal(t, "CONNECTED_TO", v)
+	var argumentError *ArgumentTypeError
+	require.ErrorAs(t, err, &argumentError)
+	assert.Nil(t, v)
 }
 
 func TestEvalType_NoArgs(t *testing.T) {

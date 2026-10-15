@@ -2243,6 +2243,10 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 		}
 		e.normalizeSetMatchRowsToNodes(result, store)
 		e.normalizeSetMatchRowsToEdges(result, store)
+		var rowWhere *preparedRowPredicate
+		if materializedWhere != "" {
+			rowWhere = prepareRowPredicate(materializedWhere)
+		}
 		for _, resultRow := range result.Rows {
 			joined := make(pipelineRow, util.SafePreallocSum(len(row), len(result.Columns)))
 			for name, value := range row {
@@ -2260,7 +2264,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 				}
 				joined[column] = value
 			}
-			if compatible && (materializedWhere == "" || e.evaluateWithWhereCondition(ctx, materializedWhere, map[string]interface{}(joined))) {
+			if compatible && (rowWhere == nil || rowWhere.holds(e, ctx, map[string]interface{}(joined))) {
 				out = append(out, joined)
 			}
 		}

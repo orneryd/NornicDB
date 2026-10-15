@@ -252,28 +252,13 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// Relationship Functions
 	// ========================================
 
-	// startNode(r) - return start node of relationship
+	// startNode(r) / endNode(r): relationshipEndpoint, as the row evaluator
+	// reads them.
 	if matchFuncStartAndSuffix(expr, "startnode") {
-		inner := extractFuncArgs(expr, "startnode")
-		if rel, ok := rels[inner]; ok {
-			node, err := e.storage.GetNode(rel.StartNode)
-			if err == nil {
-				return node
-			}
-		}
-		return nil
+		return e.relationshipEndpoint(rels[extractFuncArgs(expr, "startnode")], false)
 	}
-
-	// endNode(r) - return end node of relationship
 	if matchFuncStartAndSuffix(expr, "endnode") {
-		inner := extractFuncArgs(expr, "endnode")
-		if rel, ok := rels[inner]; ok {
-			node, err := e.storage.GetNode(rel.EndNode)
-			if err == nil {
-				return node
-			}
-		}
-		return nil
+		return e.relationshipEndpoint(rels[extractFuncArgs(expr, "endnode")], true)
 	}
 
 	// nodes(path) - return list of nodes in a path
@@ -1095,7 +1080,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// ========================================
 	// CASE WHEN Expressions (must be before operators)
 	// ========================================
-	if strings.HasPrefix(lowerExpr, "case") && strings.HasSuffix(lowerExpr, "end") {
+	if isCaseExpression(expr) {
 		return e.evaluateCaseExpression(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
@@ -1136,25 +1121,10 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 			}
 		}
 	}
-	fold := quantifierFold{function: function}
-	for _, item := range coerceToUnwindItems(list) {
-		result, _ := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels, pathValues)
-		if value, decided := fold.add(result); decided {
-			return value
-		}
-	}
-	return fold.result()
-}
-
-func (e *StorageExecutor) evaluateQuantifierPredicate(
-	ctx context.Context,
-	predicate string,
-	variable string,
-	item interface{},
-	nodes map[string]*storage.Node,
-	rels map[string]*storage.Edge,
-	pathValues map[string]interface{},
-) (interface{}, bool) {
+	// One row for every element, the variable rebound per element, with
+	// the context's value bindings, parameters and statement context bound
+	// once: evaluateRowExpressionWithContext binds the ones a row lacks,
+	// and copied the row to do it for every element (#1214).
 	values := make(map[string]interface{}, len(pathValues)+len(nodes)+len(rels)+1)
 	for name, value := range pathValues {
 		values[name] = value
@@ -1165,7 +1135,32 @@ func (e *StorageExecutor) evaluateQuantifierPredicate(
 	for name, relationship := range rels {
 		values[name] = relationship
 	}
-	values[variable] = item
+	values[varName] = nil
+	bindAbsent := func(name string, value interface{}) {
+		if _, exists := values[name]; !exists {
+			values[name] = value
+		}
+	}
+	for name, value := range valueBindingsFromContext(ctx) {
+		bindAbsent(name, value)
+	}
+	for name, value := range parameterRowValues(ctx) {
+		bindAbsent(name, value)
+	}
+	if needsRowStatementContext(predicate) {
+		bindAbsent(rowStatementContextKey, ctx)
+	}
+	value, _, err := rowQuantifierLoop(function, coerceToUnwindItems(list), func(item interface{}) { values[varName] = item }, func() (interface{}, bool, error) {
+		value, ok := e.evaluateQuantifierPredicate(ctx, predicate, values)
+		return value, ok, getExpressionFailure(ctx)
+	})
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+	}
+	return value
+}
+
+func (e *StorageExecutor) evaluateQuantifierPredicate(ctx context.Context, predicate string, values map[string]interface{}) (interface{}, bool) {
 	value, ok := e.evaluateRowExpressionWithContext(ctx, predicate, values)
 	if !ok {
 		return nil, false
@@ -1204,7 +1199,6 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 	if !ok {
 		items = []interface{}{list}
 	}
-	result := make([]interface{}, 0, len(items))
 	boundNodes := make(map[string]*storage.Node, len(nodes)+1)
 	for name, node := range nodes {
 		boundNodes[name] = node
@@ -1215,28 +1209,30 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 	}
 	values := valueBindingsLayer(ctx, 1)
 	itemCtx := withValueBindings(ctx, values)
-	for _, item := range items {
+	var current interface{}
+	var holds func() (bool, bool, error)
+	if condition != "" {
+		holds = func() (bool, bool, error) {
+			value := e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
+			return rowConditionHolds(value, true, getExpressionFailure(itemCtx))
+		}
+	}
+	var project func() (interface{}, bool, error)
+	if projection != "" {
+		project = func() (interface{}, bool, error) {
+			if value, handled := relationshipMapProjection(projection, current); handled {
+				return value, true, nil
+			}
+			value := e.evaluateExpressionWithContextFull(itemCtx, projection, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
+			return value, true, getExpressionFailure(itemCtx)
+		}
+	}
+	result, _, err := rowComprehensionLoop(items, func(item interface{}) {
+		current = item
 		bindEvaluationValue(varName, item, boundNodes, boundRels, values)
-		if condition != "" {
-			predicate := e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
-			truth, err := cypherPredicateTruth(predicate)
-			if err != nil {
-				recordExpressionFailure(ctx, err)
-				return nil
-			}
-			if truth != truthTrue {
-				continue
-			}
-		}
-		value := item
-		if projection != "" {
-			if relationshipValue, handled := relationshipMapProjection(projection, item); handled {
-				value = relationshipValue
-			} else {
-				value = e.evaluateExpressionWithContextFull(itemCtx, projection, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
-			}
-		}
-		result = append(result, value)
+	}, holds, project)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
 	}
 	return result
 }
