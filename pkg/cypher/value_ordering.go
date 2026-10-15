@@ -33,30 +33,9 @@ func cypherPathElements(value interface{}) ([]interface{}, bool) {
 // cypherPathElementsOf is cypherPathElements for a value already converted
 // with toStringAnyMap, so a map is converted only once.
 func cypherPathElementsOf(value interface{}, object map[string]interface{}, isMap bool) ([]interface{}, bool) {
-	var path PathResult
-	switch typed := value.(type) {
-	case PathResult:
-		path = typed
-	case *PathResult:
-		if typed == nil {
-			return nil, false
-		}
-		path = *typed
-	default:
-		if !isMap {
-			return nil, false
-		}
-		switch inner := object["_pathResult"].(type) {
-		case PathResult:
-			path = inner
-		case *PathResult:
-			if inner == nil {
-				return nil, false
-			}
-			path = *inner
-		default:
-			return nil, false
-		}
+	path, ok := cypherPathResultOf(value, object, isMap)
+	if !ok {
+		return nil, false
 	}
 	elements := make([]interface{}, 0, len(path.Nodes)+len(path.Relationships))
 	for index, node := range path.Nodes {
@@ -66,6 +45,37 @@ func cypherPathElementsOf(value interface{}, object map[string]interface{}, isMa
 		}
 	}
 	return elements, true
+}
+
+// cypherPathResultOf recognizes an actual path carrier, rather than a user map
+// with coincidentally named keys such as length or _pathResult.
+func cypherPathResultOf(value interface{}, object map[string]interface{}, isMap bool) (PathResult, bool) {
+	var path PathResult
+	switch typed := value.(type) {
+	case PathResult:
+		path = typed
+	case *PathResult:
+		if typed == nil {
+			return PathResult{}, false
+		}
+		path = *typed
+	default:
+		if !isMap {
+			return PathResult{}, false
+		}
+		switch inner := object["_pathResult"].(type) {
+		case PathResult:
+			path = inner
+		case *PathResult:
+			if inner == nil {
+				return PathResult{}, false
+			}
+			path = *inner
+		default:
+			return PathResult{}, false
+		}
+	}
+	return path, true
 }
 
 // compareCypherStructuredValues orders two values when either is a map, node,

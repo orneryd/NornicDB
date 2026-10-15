@@ -219,20 +219,25 @@ func TestDeleteHelpers_StreamExecution_ExpressionDeleteVarsBranches(t *testing.T
 	_, err = exec.Execute(ctx, "CREATE (x:Tmp {id:'x'}), (y:Tmp {id:'y'}), (x)-[:R]->(y)", nil)
 	require.NoError(t, err)
 
-	// Map branch with _edgeId key via map projection expression.
-	res, err = exec.Execute(ctx, "MATCH ()-[r:R]->()"+" DELETE "+"{_edgeId: id(r)}", getParamsFromContext(ctx))
-	require.NoError(t, err)
-	require.EqualValues(t, 1, res.Stats.RelationshipsDeleted)
-
+	// Public marker maps are ordinary data, not relationship/node values.
+	_, err = exec.Execute(ctx, "MATCH ()-[r:R]->() DELETE {_edgeId: id(r)}", nil)
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.SyntaxError")
 	verify, err = exec.Execute(ctx, "MATCH ()-[r:R]->() RETURN count(r)", nil)
 	require.NoError(t, err)
-	require.EqualValues(t, 0, verify.Rows[0][0])
+	require.EqualValues(t, 1, verify.Rows[0][0])
 
-	// Map branch with _nodeId key via map projection expression.
-	res, err = exec.Execute(ctx, "MATCH (n:Tmp)"+" DELETE "+"{_nodeId: id(n)}", getParamsFromContext(ctx))
+	_, err = exec.Execute(ctx, "MATCH (n:Tmp) DELETE {_nodeId: id(n)}", nil)
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.SyntaxError")
+	verify, err = exec.Execute(ctx, "MATCH (n:Tmp) RETURN count(n)", nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, verify.Rows[0][0])
+
+	res, err = exec.Execute(ctx, "MATCH ()-[r:R]->() DELETE r", nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, res.Stats.RelationshipsDeleted)
+	res, err = exec.Execute(ctx, "MATCH (n:Tmp) DELETE id(n)", nil)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, res.Stats.NodesDeleted)
-
 	verify, err = exec.Execute(ctx, "MATCH (n:Tmp) RETURN count(n)", nil)
 	require.NoError(t, err)
 	require.EqualValues(t, 0, verify.Rows[0][0])

@@ -1601,7 +1601,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 			}
 			if !isDeleteTargetValue(value) {
 				return nil, true, newSemanticError(
-					"Neo.ClientError.Statement.SyntaxError",
+					"Neo.ClientError.Statement.TypeError",
 					"InvalidArgumentType",
 					fmt.Sprintf("DELETE expression %q does not evaluate to a node, relationship, or path", strings.TrimSpace(expression)),
 				)
@@ -3934,7 +3934,7 @@ func stripExpressionWhitespace(expression string) string {
 // false; when an operator of it failed (1/0, a runtime TypeError) that failure
 // is recorded as the statement's error, as for a projection item.
 func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows, scopes []pipelineRow, terms []orderByTerm) bool {
-	if len(terms) == 0 || len(rows) < 2 {
+	if len(terms) == 0 || len(rows) == 0 {
 		return true
 	}
 	if len(rows) != len(scopes) {

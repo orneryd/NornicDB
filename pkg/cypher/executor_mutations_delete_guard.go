@@ -76,6 +76,13 @@ func collectDeleteTargetValue(value interface{}, seenNodes, seenEdges map[string
 }
 
 func isDeleteTargetValue(value interface{}) bool {
+	// Marker keys in an ordinary Cypher map are user data, not authority to
+	// delete an entity. Only the evaluator's actual PathResult carrier is a
+	// map-shaped DELETE value; legacy projection classification stays private.
+	if object, isMap := value.(map[string]interface{}); isMap {
+		_, isPath := cypherPathResultOf(value, object, true)
+		return isPath
+	}
 	if value == nil || classifyDeleteTargetValue(value).kind != deleteProjectionUnknown {
 		return true
 	}
@@ -91,16 +98,6 @@ func isDeleteTargetValue(value interface{}) bool {
 			}
 		}
 		return true
-	case map[string]interface{}:
-		if path, ok := typed["_pathResult"]; ok {
-			return isDeleteTargetValue(path)
-		}
-		for _, item := range typed {
-			if !isDeleteTargetValue(item) {
-				return false
-			}
-		}
-		return len(typed) > 0
 	default:
 		return false
 	}
@@ -348,4 +345,24 @@ func residualRelationshipDeleteError(nodeID storage.NodeID) error {
 		code:   "Neo.ClientError.Schema.ConstraintValidationFailed",
 		detail: "DeleteConnectedNode",
 	}
+}
+
+// staticDeleteTargetTypeError keeps known non-entity values as compile-time
+// errors, while widened UNWIND map elements remain runtime checks. Strings
+// and lists retain the existing NornicDB DELETE extensions.
+func staticDeleteTargetTypeError(clause string, scope staticTypeScope) error {
+	targets, _, _ := deleteClauseTargets(clause)
+	// Undefined targets retain the existing DELETE scope error owner.
+	scope.complete = false
+	checker := staticOperatorChecker{scope: scope}
+	for _, target := range targets {
+		operand, err := checker.check(strings.TrimSpace(target))
+		if err != nil {
+			return err
+		}
+		if operand.known() && operand.bindingKind() == matchBindingValue && operand.kind != "String" && !operand.list() {
+			return typeNameMismatchError("Node, Path or Relationship", operand.kind)
+		}
+	}
+	return nil
 }

@@ -38,10 +38,12 @@ func TestExecuteDeleteStreaming_FallbackMapEdgeBranch(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:Ghost {id:'g1'})", nil)
 	require.NoError(t, err)
 
-	res, err := exec.Execute(ctx, "MATCH (n:Ghost)"+" DELETE "+"{_edgeId:'missing-edge'}", getParamsFromContext(ctx))
+	res, err := exec.Execute(ctx, "MATCH (n:Ghost) DELETE {_edgeId:'missing-edge'}", nil)
+	require.ErrorContains(t, err, "Neo.ClientError.Statement.SyntaxError")
+	require.Nil(t, res)
+	verify, err := exec.Execute(ctx, "MATCH (n:Ghost) RETURN count(n)", nil)
 	require.NoError(t, err)
-	require.EqualValues(t, 0, res.Stats.NodesDeleted)
-	require.EqualValues(t, 0, res.Stats.RelationshipsDeleted)
+	require.EqualValues(t, 1, verify.Rows[0][0])
 }
 
 func TestExecuteDeleteStreaming_FallbackDeletesAfterInitialDeleteFailure(t *testing.T) {

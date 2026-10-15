@@ -244,6 +244,12 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			return e.evaluateRowGraphFunction(function, argument, values)
 		}
 		switch lowerASCII(function) {
+		case "exists":
+			if isRelationshipPatternOperand(strings.TrimSpace(argument)) {
+				nodes, _ := withWhereValueContext(values)
+				matched, recognized := e.evaluateBoundRelationshipPattern(rowStatementContextOrBackground(values), argument, nodes)
+				return matched, recognized, nil
+			}
 		case "graph.names", "graph.propertiesbyname", "graph.byname", "graph.byelementid":
 			return e.evaluateRowGraphFunction(function, argument, values)
 		case "shortestpath", "allshortestpaths":
@@ -287,25 +293,12 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			if value == nil {
 				return nil, true, nil
 			}
-			if path, isPath := toStringAnyMap(value); isPath {
-				if length, exists := path["length"]; exists {
-					switch distance := length.(type) {
-					case int:
-						return int64(distance), true, nil
-					case int64:
-						return distance, true, nil
-					}
-				}
-				if relationships, exists := path["relationships"]; exists {
-					return int64(len(toAnySlice(relationships))), true, nil
-				}
+			object, isMap := toStringAnyMap(value)
+			if path, ok := cypherPathResultOf(value, object, isMap); ok {
+				return int64(path.Length), true, nil
 			}
-			switch cypherValueKindOf(value) {
-			case valueKindNode, valueKindRelationship:
-				return nil, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-					localization.CypherCoreFunctionArgumentInvalid("length", "a Path", neo4jValueRepr(value)))
-			}
-			return nil, false, nil
+			return nil, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
+				localization.CypherCoreFunctionArgumentInvalid("length", "a Path", neo4jValueRepr(value)))
 		case "range":
 			parts := e.splitFunctionArgs(argument)
 			arguments := make([]interface{}, len(parts))
@@ -411,8 +404,15 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			if object, isMap := toStringAnyMap(value); isMap {
 				value = object
 			}
+			object, isMap := toStringAnyMap(value)
+			if _, isPath := cypherPathResultOf(value, object, isMap); isPath {
+				return nil, false, invalidFunctionArgument("keys", value)
+			}
 			keys, ok := cypherfn.PropertyKeys(e.queryVisibleValue(value))
-			return keys, ok, nil
+			if !ok {
+				return nil, false, invalidFunctionArgument("keys", value)
+			}
+			return keys, true, nil
 		case "labels":
 			value, resolved, err := e.evaluateRowValue(argument, values)
 			if err != nil {

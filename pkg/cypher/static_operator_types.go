@@ -60,7 +60,8 @@ func knownOperand(kind string) staticOperand {
 func (operand staticOperand) known() bool { return operand.kind != "" }
 
 func (operand staticOperand) numeric() bool {
-	return operand.kind == "Integer" || operand.kind == "Float"
+	return operand.kind == "Integer" || operand.kind == "Float" || operand.kind == "Number" ||
+		operand.kind == "Float, Integer or Number"
 }
 
 func (operand staticOperand) list() bool { return strings.HasPrefix(operand.kind, "List<") }
@@ -261,6 +262,13 @@ func checkOperator(op byte, left, right staticOperand, cypher25 bool) (staticOpe
 			return knownOperand("String"), nil
 		case left.list() || right.list():
 			return knownOperand("List<T>"), nil
+		}
+		if left.kind == "String" && !right.known() || right.kind == "String" && !left.known() {
+			// Unknown + String cannot be an integer subscript, but Neo4j
+			// defers its predicate semantics: WHERE filters a resulting string,
+			// while NOT reports a runtime TypeError. Keep the union for index
+			// validation without marking the row-dependent operand nonBoolean.
+			return staticOperand{display: "String or List<T>"}, nil
 		}
 		if left.numeric() || right.numeric() {
 			return staticOperand{display: "Float, Integer, String or List<T>", nonBoolean: true}, nil
@@ -719,19 +727,20 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		return staticOperand{}, err
 	}
 	keyKnown := key.known() && key.kind != "Null"
+	invalidIntegerKey := keyKnown && key.kind != "Integer" || key.kind == "" && key.display == "String or List<T>"
 	const syntaxError, detail = "Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType"
 	switch {
 	case !receiver.known():
 		// A node's or relationship's property can't be a map, so it takes
 		// only a list index (#882).
-		if base, _, property := rowPropertyChainShape(receiverText); property && keyKnown && key.kind != "Integer" {
+		if base, _, property := rowPropertyChainShape(receiverText); property && invalidIntegerKey {
 			if kind := checker.scope.typeOf(base); kind == "Node" || kind == "Relationship" {
 				return staticOperand{}, operandMismatch(key, "Integer")
 			}
 		}
 	case receiver.kind == "Null":
 	case receiver.list():
-		if keyKnown && key.kind != "Integer" {
+		if invalidIntegerKey {
 			return staticOperand{}, localizedStatusError(syntaxError, detail, localization.CypherCoreListIndexTypeMismatch(key.display))
 		}
 		if element := strings.TrimSuffix(strings.TrimPrefix(receiver.kind, "List<"), ">"); element != "T" && !strings.ContainsAny(element, "<,") {
@@ -909,9 +918,8 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		return checker.checkPostfix(receiver, inner, subscript)
 	}
 	if inner, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
-		if _, _, _, _, comprehension := parseListComprehension(inner); comprehension {
-			// The comprehension binds its own variable; only its type is known.
-			return knownOperand("List<T>"), nil
+		if variable, list, predicate, projection, comprehension := parseListComprehension(inner); comprehension {
+			return checker.checkListComprehension(variable, list, predicate, projection)
 		}
 		for _, item := range splitTopLevelComma(inner) {
 			if _, err := checker.check(item); err != nil {
@@ -954,6 +962,32 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		return knownOperand("Map"), nil
 	}
 	if function, arguments, call := parseFunctionCallWS(expression); call && function != "" {
+		if strings.EqualFold(function, "coalesce") {
+			result := knownOperand("Null")
+			agree := true
+			for _, text := range splitTopLevelComma(arguments) {
+				operand, err := checker.check(text)
+				if err != nil {
+					return staticOperand{}, err
+				}
+				if !operand.known() {
+					agree = false
+					continue
+				}
+				if operand.kind == "Null" {
+					continue
+				}
+				if result.kind == "Null" {
+					result = operand
+				} else if result.kind != operand.kind {
+					agree = false
+				}
+			}
+			if !agree {
+				return staticOperand{}, nil
+			}
+			return result, nil
+		}
 		if !isQuantifierOrReduceFunction(function) {
 			for index, argument := range splitTopLevelComma(arguments) {
 				// normalize(s, NFC) names its normal form, not a variable.
@@ -1222,6 +1256,11 @@ func forEachProjectedTailExpression(projection, rest string, visit func(expressi
 // projection's aliases replace the variables they rename
 // (RETURN n.num AS n ORDER BY n + 2).
 func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, scope staticTypeScope, projectedScope func() staticTypeScope, params map[string]interface{}) error {
+	if clause.kind == pipelineClauseDelete {
+		if err := staticDeleteTargetTypeError(clause.text, scope); err != nil {
+			return err
+		}
+	}
 	if where := topLevelKeywordIndex(clause.text, "WHERE"); where >= 0 {
 		predicate := clause.text[where+len("WHERE"):]
 		for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {

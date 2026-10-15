@@ -180,6 +180,9 @@ func fnRound(ctx cypherfn.Context, args []string) (interface{}, error) {
 		if !validMode {
 			return nil, newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", "Unknown rounding mode. Valid values are: CEILING, FLOOR, UP, DOWN, HALF_EVEN, HALF_UP, HALF_DOWN, UNNECESSARY.")
 		}
+	} else if len(values) == 2 {
+		// Explicit precision uses HALF_UP on the magnitude for either sign.
+		rounded = math.Round(number * factor)
 	} else {
 		rounded = math.Floor(number*factor + 0.5)
 	}

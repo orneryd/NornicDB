@@ -780,7 +780,8 @@ func (scope staticTypeScope) staticExpressionType(expression string) string {
 		}
 		return ""
 	}
-	if mayContainArithmetic(expression) {
+	function, _, call := parseFunctionCallWS(strings.TrimSpace(expression))
+	if mayNeedStaticTypeCheck(expression) || call && strings.EqualFold(function, "coalesce") {
 		operand, err := (staticOperatorChecker{scope: scope}).check(expression)
 		if err == nil {
 			if operand.known() {
@@ -831,7 +832,7 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 		default:
 			if memberBase, member := staticMemberAccessBase(expression); member {
 				variable = memberBase // its members' types (Cypher 25)
-			} else if variable == "" && !mayContainArithmetic(expression) {
+			} else if variable == "" && !mayNeedStaticTypeCheck(expression) && !strings.EqualFold(function, "coalesce") {
 				return nil
 			}
 		}
@@ -840,6 +841,16 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 			scope = &built
 		}
 		argument = argument.inVersion(scope.cypher25)
+		if startsWithKeywordFold(strings.TrimSpace(expression), "CASE") {
+			for _, reference := range semanticExpressionReferences(expression) {
+				if localVariableShadowsAt(text, at, reference) {
+					return nil // the comprehension owner checks its local types
+				}
+			}
+			if err := validateStaticCaseArgument(argument, expression, *scope); err != nil {
+				return err
+			}
+		}
 		typeName := scope.staticExpressionType(expression)
 		if property {
 			// A node's or relationship's property is a property value,
@@ -859,6 +870,35 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 		}
 		return staticArgumentMismatch(argument, typeName)
 	})
+}
+
+// validateStaticCaseArgument preserves each known non-null branch's type
+// when mixed CASE results do not have one common operator type. Nullable or
+// unknown results remain runtime checks, as in the ordinary CASE type owner.
+func validateStaticCaseArgument(argument staticArgumentType, expression string, scope staticTypeScope) error {
+	parsed, err := parseCaseExpression(expression)
+	if err != nil || strings.TrimSpace(parsed.elseResult) == "" {
+		return nil
+	}
+	results := make([]string, 0, len(parsed.whenClauses)+1)
+	for _, branch := range parsed.whenClauses {
+		results = append(results, branch.result)
+	}
+	results = append(results, parsed.elseResult)
+	types := make([]string, 0, len(results))
+	for _, result := range results {
+		typeName := scope.staticExpressionType(result)
+		if typeName == "" || typeName == "Null" {
+			return nil
+		}
+		types = append(types, typeName)
+	}
+	for _, typeName := range types {
+		if !argument.accepts(typeName) {
+			return staticArgumentMismatch(argument, typeName)
+		}
+	}
+	return nil
 }
 
 // staticPropertyValueType is the static type of a node's or relationship's
