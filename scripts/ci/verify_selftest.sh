@@ -5,6 +5,8 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 verify="${1:-${root}/scripts/verify.sh}"
+# Resolve caller-relative overrides before entering any fixture directories.
+verify="$(cd "$(dirname "${verify}")" && pwd)/$(basename "${verify}")"
 
 # Load only the matcher and its path filters; do not fetch or run checks.
 # shellcheck disable=SC1091
@@ -80,6 +82,7 @@ echo 'PASS: build input gates (exact paths, every mapped step, near misses, ALL/
 # branch forked. Substitute only the benchmark runner, keeping real Git refs
 # and worktrees so this stays a fast local test without running benchmarks.
 fixture="$(mktemp -d)"
+fixture="$(cd "${fixture}" && pwd)"
 trap 'rm -rf "${fixture}"' EXIT
 
 # Run the real verifier in plan-only mode on isolated, committed file changes.
@@ -191,3 +194,10 @@ python3() {
 }
 step_allocations
 echo 'PASS: allocation base is the branch merge base when the base tip moves'
+
+# Re-run from the repository root with a caller-relative override. Supplying
+# the argument prevents recursion; all fixture copies must still find it.
+if (( $# == 0 )); then
+  (cd "${root}" && bash scripts/ci/verify_selftest.sh scripts/verify.sh)
+  echo 'PASS: relative verifier override survives fixture directory changes'
+fi
