@@ -4,6 +4,8 @@
 - [ ] On the release milestone, or N/A for maintainer maintenance (`make milestone VERSION=x.y.z ISSUES="<this PR>"`)
 - [ ] `make verify BASE=origin/<pr-base>` passes locally (list any skipped steps below). PRs and labels do not run GitHub checks. Manual runs require admin approval.
 
+- [ ] Through October 31, 2026 (America/Phoenix): local `make verify` result comment posted for the current head/base SHAs, with failures/skips explained; regressions fixed or linked to a shared-root fix PR pending propagation.
+
 ## Description
 <!-- Provide a clear and concise description of your changes -->
 

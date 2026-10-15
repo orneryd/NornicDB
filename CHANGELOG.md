@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Through October 31, 2026, require local PR verification result comments and regression fixes, with shared-root
+  fixes propagated through dedicated PRs.
+
 - Pause scheduled develop verification/canary builds and remove PR label CI triggers. Manual Actions jobs now require administrator environment approval; existing main push and tag publishing triggers remain unchanged.
 
 ### Documentation
