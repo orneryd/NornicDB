@@ -37,10 +37,64 @@ func TestShowFunctionsListsApocFunctions(t *testing.T) {
 		{"zz.text.camelCase", "Camel-cases text", "zz.text.camelCase(arg1 :: STRING) :: STRING", false, []interface{}{""}},
 	}, result.Rows)
 
-	// Every built-in apoc.* function is listed, once.
-	result, err = exec.Execute(ctx, "SHOW FUNCTIONS YIELD name WHERE name STARTS WITH 'apoc.' RETURN count(*) AS listed, count(DISTINCT name) AS names", nil)
+	// Pin the exact release inventory, not just its count: a missing function
+	// cannot be hidden by an unrelated addition, and duplicate rows fail too.
+	// This includes the twelve native graph/path/temporal bindings and the
+	// case-distinct plugin entry, while catalog/plugin overlap stays one row.
+	result, err = exec.Execute(ctx, "SHOW FUNCTIONS YIELD name, isBuiltIn WHERE name STARTS WITH 'apoc.' RETURN name, isBuiltIn ORDER BY name", nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(37), int64(37)}}, result.Rows, "the 36 built-ins and the plugin's apoc.coll.SUM")
+	require.Equal(t, [][]interface{}{
+		{"apoc.coll.SUM", false},
+		{"apoc.coll.avg", false},
+		{"apoc.coll.contains", false},
+		{"apoc.coll.containsAll", false},
+		{"apoc.coll.containsAny", false},
+		{"apoc.coll.flatten", false},
+		{"apoc.coll.frequencies", false},
+		{"apoc.coll.indexOf", false},
+		{"apoc.coll.intersection", false},
+		{"apoc.coll.max", false},
+		{"apoc.coll.min", false},
+		{"apoc.coll.occurrences", false},
+		{"apoc.coll.pairs", false},
+		{"apoc.coll.partition", false},
+		{"apoc.coll.reverse", false},
+		{"apoc.coll.sort", false},
+		{"apoc.coll.sortNodes", false},
+		{"apoc.coll.split", false},
+		{"apoc.coll.subtract", false},
+		{"apoc.coll.sum", false},
+		{"apoc.coll.toSet", false},
+		{"apoc.coll.union", false},
+		{"apoc.coll.unionAll", false},
+		{"apoc.coll.zip", false},
+		{"apoc.convert.fromJsonList", false},
+		{"apoc.convert.fromJsonMap", false},
+		{"apoc.convert.toJson", false},
+		{"apoc.create.uuid", false},
+		{"apoc.map.clean", false},
+		{"apoc.map.fromLists", false},
+		{"apoc.map.fromPairs", false},
+		{"apoc.map.merge", false},
+		{"apoc.map.removeKey", false},
+		{"apoc.map.setKey", false},
+		{"apoc.meta.isType", false},
+		{"apoc.meta.type", false},
+		{"apoc.node.degree", false},
+		{"apoc.node.id", false},
+		{"apoc.node.labels", false},
+		{"apoc.nodes.connected", false},
+		{"apoc.path.combine", false},
+		{"apoc.path.elements", false},
+		{"apoc.path.slice", false},
+		{"apoc.rel.endNode", false},
+		{"apoc.rel.id", false},
+		{"apoc.rel.startNode", false},
+		{"apoc.rel.type", false},
+		{"apoc.temporal.format", false},
+		{"apoc.text.join", false},
+	}, result.Rows)
+
 	result, err = exec.Execute(ctx, "SHOW FUNCTIONS YIELD name, description WHERE name = 'apoc.coll.sum' RETURN description", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"Returns the sum of all the `INTEGER | FLOAT` in the `LIST<INTEGER | FLOAT>`."}}, result.Rows)
