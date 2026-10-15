@@ -76,8 +76,7 @@ func (p *PrivilegesStore) Resolve(principalRoles []string, dbName string) Resolv
 	var read, write bool
 	matchedMatrixEntry := false
 	for _, role := range principalRoles {
-		role = strings.ToLower(strings.TrimSpace(role))
-		role = strings.TrimPrefix(role, "role_")
+		role = NormalizeRoleName(role)
 		if perDb, ok := p.matrix[role]; ok {
 			if priv, ok := perDb[dbName]; ok {
 				matchedMatrixEntry = true
@@ -91,8 +90,7 @@ func (p *PrivilegesStore) Resolve(principalRoles []string, dbName string) Resolv
 	}
 	// Fall back to global role permissions
 	for _, role := range principalRoles {
-		role = strings.ToLower(strings.TrimSpace(role))
-		role = strings.TrimPrefix(role, "role_")
+		role = NormalizeRoleName(role)
 		perms, ok := RolePermissions[Role(role)]
 		if !ok {
 			continue
@@ -138,13 +136,13 @@ func (p *PrivilegesStore) Matrix() []struct {
 }
 
 // SavePrivilege persists one (role, database, read, write) and refreshes
-// in-memory, through the role-record owner (withRoleRecords). The role must
+// in-memory, through the role-record owner (WithRoleRecords). The role must
 // exist (ErrRoleNotFound).
 func (p *PrivilegesStore) SavePrivilege(ctx context.Context, role, dbName string, read, write bool) error {
-	role = strings.ToLower(strings.TrimSpace(role))
+	role = NormalizeRoleName(role)
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := withRoleRecords(ctx, p.storage, []string{role}, func(view storage.Engine) error {
+	if err := WithRoleRecords(ctx, p.storage, []string{role}, func(view storage.Engine) error {
 		return putDbPrivilege(view, role, dbName, read, write)
 	}); err != nil {
 		return err
@@ -187,7 +185,7 @@ func (p *PrivilegesStore) PutMatrix(ctx context.Context, entries []struct {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	matrix := make(map[string]map[string]DbPrivilege)
-	err := withRoleRecords(ctx, p.storage, roles, func(view storage.Engine) error {
+	err := WithRoleRecords(ctx, p.storage, roles, func(view storage.Engine) error {
 		nodes, err := view.GetNodesByLabel(dbPrivLabel)
 		if err != nil {
 			return err
@@ -202,7 +200,7 @@ func (p *PrivilegesStore) PutMatrix(ctx context.Context, entries []struct {
 			}
 		}
 		for _, e := range entries {
-			role := strings.ToLower(strings.TrimSpace(e.Role))
+			role := NormalizeRoleName(e.Role)
 			if err := putDbPrivilege(view, role, e.Database, e.Read, e.Write); err != nil {
 				return err
 			}

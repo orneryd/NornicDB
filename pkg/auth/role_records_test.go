@@ -167,3 +167,31 @@ func TestRoleRecordOwnerEdges(t *testing.T) {
 		require.ErrorIs(t, err, storage.ErrNotFound, "nothing is written")
 	}
 }
+
+// A role's name has one form everywhere (NormalizeRoleName): a write for
+// " ROLE_Ops " locks and stores the records of the role ops, and a missing
+// role is reported by the name the caller gave.
+func TestRoleRecordWritesUseTheOneRoleName(t *testing.T) {
+	ctx := context.Background()
+	system := newSystemTestEngine(t)
+	require.NoError(t, NewRoleStore(system).CreateRole(ctx, "ops"))
+	require.Equal(t, "ops", NormalizeRoleName(" ROLE_Ops "))
+
+	allowlist := NewAllowlistStore(system)
+	require.NoError(t, allowlist.SaveRoleDatabases(ctx, " ROLE_Ops ", []string{"nornic"}))
+	require.Equal(t, map[string][]string{"ops": {"nornic"}}, allowlist.Allowlist())
+	_, err := system.GetNode("role_db_access:ops")
+	require.NoError(t, err)
+	entitlements := NewRoleEntitlementsStore(system)
+	require.NoError(t, entitlements.Set(ctx, "ROLE_OPS", []string{"read"}))
+	require.Equal(t, []string{"read"}, entitlements.Get("ops"))
+	privileges := NewPrivilegesStore(system)
+	require.NoError(t, privileges.SavePrivilege(ctx, "Role_Ops", "nornic", true, false))
+	require.True(t, privileges.Resolve([]string{"ops"}, "nornic").Read)
+
+	err = NewAllowlistStore(system).SaveRoleDatabases(ctx, "Missing", nil)
+	var missing *RoleNotFoundError
+	require.ErrorAs(t, err, &missing)
+	require.Equal(t, "Missing", missing.Role)
+	require.ErrorIs(t, err, ErrRoleNotFound)
+}

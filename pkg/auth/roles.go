@@ -70,7 +70,7 @@ func (r *RoleStore) AllRoles() []string {
 
 // IsBuiltin returns true if the role name is a built-in (admin, editor, viewer).
 func IsBuiltinRole(name string) bool {
-	n := strings.ToLower(strings.TrimSpace(name))
+	n := NormalizeRoleName(name)
 	for _, b := range builtinRoleNames {
 		if b == n {
 			return true
@@ -81,7 +81,7 @@ func IsBuiltinRole(name string) bool {
 
 // CreateRole creates a user-defined role. Fails if name is built-in or already exists.
 func (r *RoleStore) CreateRole(ctx context.Context, name string) error {
-	name = strings.ToLower(strings.TrimSpace(name))
+	name = NormalizeRoleName(name)
 	if name == "" {
 		return ErrInvalidRoleName
 	}
@@ -123,7 +123,7 @@ func (r *RoleStore) RenameRole(ctx context.Context, oldName, newName string) err
 
 // Exists returns true if the role exists (built-in or user-defined).
 func (r *RoleStore) Exists(name string) bool {
-	name = strings.ToLower(strings.TrimSpace(name))
+	name = NormalizeRoleName(name)
 	if IsBuiltinRole(name) {
 		return true
 	}
@@ -152,7 +152,7 @@ var (
 // Role deletion writes that same record, so their commits serialize: neither
 // can commit from a snapshot that missed the other's role or grant changes.
 func (r *RoleStore) LockRoleForGrant(ctx context.Context, name string) (bool, error) {
-	name = normalizeGrantRole(name)
+	name = NormalizeRoleName(name)
 	if IsBuiltinRole(name) {
 		return true, nil
 	}

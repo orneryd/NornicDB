@@ -61,9 +61,10 @@ func NewProcedurePrivilegeStore(systemStorage storage.Engine) *ProcedurePrivileg
 	return &ProcedurePrivilegeStore{storage: systemStorage}
 }
 
-// normalizeGrantRole is a role's name as privileges store it: lower case,
-// without a role_ prefix (PrivilegesStore.Resolve).
-func normalizeGrantRole(role string) string {
+// NormalizeRoleName is the one form of a role's name, for every role store,
+// record and lookup: trimmed, lower case, without the role_ prefix identity
+// providers add (ROLE_ops is the role ops).
+func NormalizeRoleName(role string) string {
 	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(role)), "role_")
 }
 
@@ -121,7 +122,7 @@ func sortProcedurePrivileges(grants []ProcedurePrivilege) {
 // Lookup returns role's grant for procedure (boosted or not), if it holds
 // one. A read that fails is an error, never "no grant".
 func (p *ProcedurePrivilegeStore) Lookup(ctx context.Context, role, procedure string, boosted bool) (ProcedurePrivilege, bool, error) {
-	key := ProcedurePrivilege{Role: normalizeGrantRole(role), Procedure: strings.TrimSpace(procedure), Boosted: boosted}
+	key := ProcedurePrivilege{Role: NormalizeRoleName(role), Procedure: strings.TrimSpace(procedure), Boosted: boosted}
 	node, err := p.storage.GetNode(procedurePrivilegeNodeID(key))
 	if errors.Is(err, storage.ErrNotFound) {
 		return ProcedurePrivilege{}, false, nil
@@ -145,7 +146,7 @@ func (p *ProcedurePrivilegeStore) Grant(ctx context.Context, role, procedure str
 	if found && (existing.Immutable || !immutable) {
 		return nil
 	}
-	grant := ProcedurePrivilege{Role: normalizeGrantRole(role), Procedure: strings.TrimSpace(procedure), Boosted: boosted, Immutable: immutable}
+	grant := ProcedurePrivilege{Role: NormalizeRoleName(role), Procedure: strings.TrimSpace(procedure), Boosted: boosted, Immutable: immutable}
 	node := &storage.Node{
 		ID:     procedurePrivilegeNodeID(grant),
 		Labels: []string{procedurePrivilegeLabel, "_System"},
@@ -197,7 +198,7 @@ func (p *ProcedurePrivilegeStore) AllowsBoosted(roles []string, procedure string
 		return false, err
 	}
 	for _, role := range roles {
-		role = normalizeGrantRole(role)
+		role = NormalizeRoleName(role)
 		for _, grant := range grants {
 			if grant.Boosted && grant.Role == role && ProcedureGlobMatches(grant.Procedure, procedure) {
 				return true, nil

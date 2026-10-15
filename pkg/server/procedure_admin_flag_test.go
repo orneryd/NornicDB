@@ -1,8 +1,11 @@
 package server
 
 import (
+	"context"
+	"net/http"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,4 +41,20 @@ func TestAdminProceduresFollowTheirAdminFlagOverHTTP(t *testing.T) {
 	} {
 		require.Empty(t, txErrorCode(t, server, "nornic", reader, statement), statement)
 	}
+}
+
+// An API token needs the admin entitlement, whatever the role holding it is
+// called: a custom role with the admin entitlement may create one, a reader
+// may not.
+func TestAPITokenNeedsTheAdminEntitlement(t *testing.T) {
+	ctx := context.Background()
+	server, users := setupTestServer(t)
+	require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
+	require.NoError(t, server.roleEntitlementsStore.Set(ctx, "ops", []string{"read", "admin"}))
+	_, err := users.CreateUser("opsuser", "password123", []auth.Role{"ops"})
+	require.NoError(t, err)
+	response := makeRequest(t, server, "POST", "/auth/api-token", map[string]any{"subject": "svc"}, "Bearer "+getAuthToken(t, users, "opsuser"))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	response = makeRequest(t, server, "POST", "/auth/api-token", map[string]any{"subject": "svc"}, "Bearer "+getAuthToken(t, users, "reader"))
+	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
 }

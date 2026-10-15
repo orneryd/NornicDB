@@ -2,45 +2,50 @@ package auth
 
 import (
 	"context"
-	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// withRoleRecords is the one owner of writes to the records a role owns
-// besides its role node: entitlement overrides, database allowlists and
-// database privileges. It runs mutate in one system-store transaction
+// RoleNotFoundError is ErrRoleNotFound for one role, by the name its
+// caller gave.
+type RoleNotFoundError struct{ Role string }
+
+func (e *RoleNotFoundError) Error() string { return ErrRoleNotFound.Error() + ": " + e.Role }
+func (e *RoleNotFoundError) Unwrap() error { return ErrRoleNotFound }
+
+// WithRoleRecords is the one owner of writes to what a role owns besides
+// its role node (procedure grants, entitlement overrides, database
+// allowlists, database privileges) and the one check that the roles they
+// name exist. It runs mutate in one system-store transaction
 // (WithStoreTransaction) after taking each named role's lock
-// (LockRoleForGrant), the same lock GRANT takes, so the write and a
+// (LockRoleForGrant), in one order for every caller, so the write and a
 // concurrent delete or rename of the role can't both commit. A role that
-// doesn't exist is refused with ErrRoleNotFound naming it, and nothing is
+// doesn't exist is refused with a RoleNotFoundError, and nothing is
 // written. Callers publish their caches only after it returns nil.
-func withRoleRecords(ctx context.Context, system storage.Engine, roles []string, mutate func(view storage.Engine) error) error {
+func WithRoleRecords(ctx context.Context, system storage.Engine, roles []string, mutate func(view storage.Engine) error) error {
 	names := make([]string, 0, len(roles))
-	seen := make(map[string]struct{}, len(roles))
+	given := make(map[string]string, len(roles))
 	for _, role := range roles {
-		role = strings.ToLower(strings.TrimSpace(role))
-		if role == "" {
+		name := NormalizeRoleName(role)
+		if name == "" {
 			return ErrInvalidRoleName
 		}
-		if _, dup := seen[role]; !dup {
-			seen[role] = struct{}{}
-			names = append(names, role)
+		if _, dup := given[name]; !dup {
+			given[name] = role
+			names = append(names, name)
 		}
 	}
-	// One lock order for every caller.
 	sort.Strings(names)
 	return WithStoreTransaction(ctx, system, func(view storage.Engine) error {
 		locks := NewRoleStore(view)
-		for _, role := range names {
-			exists, err := locks.LockRoleForGrant(ctx, role)
+		for _, name := range names {
+			exists, err := locks.LockRoleForGrant(ctx, name)
 			if err != nil {
 				return err
 			}
 			if !exists {
-				return fmt.Errorf("%w: %s", ErrRoleNotFound, role)
+				return &RoleNotFoundError{Role: given[name]}
 			}
 		}
 		return mutate(view)

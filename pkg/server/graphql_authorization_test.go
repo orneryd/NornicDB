@@ -65,7 +65,7 @@ func TestGraphQLCypherEnforcesViewerPermissions(t *testing.T) {
 		"with create":                 {statement: "WITH 1 AS value CREATE (:DeniedWith {value: value})", permission: "write"},
 		"call dynamic":                {statement: "CALL apoc.cypher.run('CREATE (:DeniedDynamic)', {})", permission: "write"},
 		"schema":                      {statement: "DROP INDEX denied_index IF EXISTS", permission: "schema"},
-		"admin":                       {statement: "CALL dbms.info()", permission: "admin"},
+		"admin":                       {statement: "CALL dbms.listConfig()", permission: "admin"},
 		"admin DDL":                   {statement: "DROP DATABASE nornic", permission: "admin"},
 		"out of scope USE":            {statement: "USE forbidden RETURN 1", permission: "read"},
 		"out of scope lower-case USE": {statement: "use forbidden return 1", permission: "read"},

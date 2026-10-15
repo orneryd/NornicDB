@@ -3,6 +3,8 @@ package cypher
 import (
 	"context"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/auth"
 )
 
 // PermissionRequirements describes the entitlements required to execute a query.
@@ -520,23 +522,41 @@ func WithProcedureGrantChecker(ctx context.Context, allowsBoosted func(procedure
 // Top-level and nested execution boundaries both call it so dynamically
 // supplied procedure statements cannot bypass transport authorization.
 func AuthorizeQuery(ctx context.Context, query string) error {
-	checker, _ := ctx.Value(permissionCheckerKey{}).(PermissionChecker)
-	databaseAuth, hasDatabaseAuth := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization)
-	if checker == nil && !hasDatabaseAuth {
+	hasPermission := contextPermissions(ctx)
+	if hasPermission == nil {
 		return nil
 	}
-	hasPermission := checker
-	if hasDatabaseAuth {
-		hasPermission = func(permission string) bool {
+	allowsBoosted, _ := ctx.Value(procedureGrantCheckerKey{}).(func(string) bool)
+	if missing := MissingPermission(QueryPermissionRequirements(query), hasPermission, allowsBoosted); missing != "" {
+		return &PermissionDeniedError{Permission: missing}
+	}
+	return nil
+}
+
+// contextPermissions is the principal's permission check the context
+// carries (WithDatabasePermissionResolver for the statement's database, else
+// WithPermissionChecker), or nil when it carries none (no authorization).
+func contextPermissions(ctx context.Context) func(permission string) bool {
+	if databaseAuth, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization); ok {
+		return func(permission string) bool {
 			return databaseAuth.resolver(databaseAuth.database, permission)
 		}
 	}
-	requirements := QueryPermissionRequirements(query)
-	if requirements.Admin && !hasPermission("admin") {
-		allowsBoosted, _ := ctx.Value(procedureGrantCheckerKey{}).(func(string) bool)
-		if requirements.AdminGrantedBy(allowsBoosted) {
-			requirements.Admin = false
-		}
+	if checker, _ := ctx.Value(permissionCheckerKey{}).(PermissionChecker); checker != nil {
+		return checker
+	}
+	return nil
+}
+
+// MissingPermission is the one authorization decision, which the executor
+// (AuthorizeQuery) and the HTTP and Bolt request checks share: the first
+// permission requirements need that allows denies, in Neo4j's order
+// (schema, admin, write, read), or "" when allows grants them all. A query
+// that needs admin only for procedures that allowsBoosted grants every one
+// of boosted needs no admin (AdminGrantedBy).
+func MissingPermission(requirements PermissionRequirements, allows func(permission string) bool, allowsBoosted func(procedure string) bool) string {
+	if requirements.Admin && !allows("admin") && requirements.AdminGrantedBy(allowsBoosted) {
+		requirements.Admin = false
 	}
 	for _, permission := range []struct {
 		name     string
@@ -547,11 +567,49 @@ func AuthorizeQuery(ctx context.Context, query string) error {
 		{name: "write", required: requirements.Write},
 		{name: "read", required: requirements.Read},
 	} {
-		if permission.required && !hasPermission(permission.name) {
-			return &PermissionDeniedError{Permission: permission.name}
+		if permission.required && !allows(permission.name) {
+			return permission.name
 		}
 	}
-	return nil
+	return ""
+}
+
+// PrincipalAccess is the one permission resolver for a principal, which
+// HTTP and Bolt both build from their stores: whether the principal holds a
+// permission on a graph.
+type PrincipalAccess struct {
+	// GraphAccess resolves a graph name (a database, alias or composite
+	// constituent) to the database its data is in, and reports whether the
+	// principal may use it; nil allows every graph.
+	GraphAccess func(graph string) (database string, allowed bool)
+	// DatabaseAccess is the principal's read and write on a database; nil
+	// leaves read and write to Entitlement.
+	DatabaseAccess func(database string) auth.ResolvedAccess
+	// Entitlement reports a global entitlement (schema, admin, and read and
+	// write when DatabaseAccess is nil); nil holds every one.
+	Entitlement func(permission string) bool
+}
+
+// Allows reports whether the principal holds permission on graph: it may use
+// the graph, read and write come from its access to the database the graph's
+// data is in, and the other permissions from its global entitlements.
+func (p PrincipalAccess) Allows(graph, permission string) bool {
+	database := graph
+	if p.GraphAccess != nil {
+		target, allowed := p.GraphAccess(graph)
+		if !allowed {
+			return false
+		}
+		database = target
+	}
+	if p.DatabaseAccess != nil && (permission == "read" || permission == "write") {
+		access := p.DatabaseAccess(database)
+		if permission == "read" {
+			return access.Read
+		}
+		return access.Write
+	}
+	return p.Entitlement == nil || p.Entitlement(permission)
 }
 
 // RegisteredProcedureForCall resolves a CALL statement through the canonical

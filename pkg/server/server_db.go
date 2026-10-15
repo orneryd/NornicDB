@@ -1223,12 +1223,6 @@ func (s *Server) grantAccessToNewDatabase(ctx context.Context, dbName string, cl
 		return
 	}
 	allowlist := s.allowlistStore.Allowlist()
-	normalizeRole := func(r string) string {
-		r = strings.TrimSpace(r)
-		r = strings.ToLower(r)
-		r = strings.TrimPrefix(r, "role_")
-		return r
-	}
 
 	// Ensure admin role has full access to the new database.
 	adminRole := string(auth.RoleAdmin)
@@ -1251,7 +1245,7 @@ func (s *Server) grantAccessToNewDatabase(ctx context.Context, dbName string, cl
 	if claims != nil && len(claims.Roles) > 0 {
 		seenRoles := map[string]struct{}{adminRole: {}}
 		for _, r := range claims.Roles {
-			role := normalizeRole(r)
+			role := auth.NormalizeRoleName(r)
 			if role == "" {
 				continue
 			}
@@ -1666,28 +1660,11 @@ func (s *Server) runRequestStatements(
 		// disabled, as in Neo4j.
 		ctx = cypher.WithAuthenticationDisabled(ctx)
 	}
-	mode := s.getDatabaseAccessMode(claims)
 	// A name is checked like the request's database (graphAccess: a
 	// composite constituent needs its composite and its database), and
-	// read / write are the privileges of the database its data is in.
-	ctx = cypher.WithDatabasePermissionResolver(ctx, defaultDB, func(database, permission string) bool {
-		target, allowed := s.graphAccess(mode, database)
-		if !allowed {
-			return false
-		}
-		if !s.isRBACEnforced() {
-			return true
-		}
-		switch permission {
-		case "read":
-			return s.getResolvedAccess(claims, target).Read
-		case "write":
-			return s.getResolvedAccess(claims, target).Write
-		case "schema", "admin":
-			return claims != nil && hasPermission(s, claims.Roles, auth.Permission(permission))
-		}
-		return false
-	})
+	// read / write are the privileges of the database its data is in: the
+	// principal's one resolver (principalAccess).
+	ctx = cypher.WithDatabasePermissionResolver(ctx, defaultDB, s.principalAccess(claims).Allows)
 	for _, stmt := range statements {
 		if queryErr := s.runRequestStatement(ctx, claims, defaultDB, stmt, run, localize, response); queryErr != nil {
 			response.Errors = append(response.Errors, *queryErr)
@@ -1733,10 +1710,13 @@ func (s *Server) runRequestStatement(
 	}
 	if missing := s.missingQueryPermission(claims, checkedDB, queryStatement); missing != "" {
 		message := localization.DatabaseWriteDenied(checkedDB)
-		if missing == auth.PermSchema {
+		switch missing {
+		case auth.PermSchema:
 			message = localization.SchemaPermissionRequired()
-		} else if missing == auth.PermAdmin {
+		case auth.PermAdmin:
 			message = localization.AdminPermissionRequired()
+		case auth.PermRead:
+			message = localization.ReadPermissionRequired()
 		}
 		return &QueryError{Code: "Neo.ClientError.Security.Forbidden", Message: localize(message)}
 	}

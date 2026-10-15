@@ -3363,11 +3363,13 @@ func TestHasPermission(t *testing.T) {
 		{"admin perm implies write", []string{"admin"}, auth.PermDelete, true},
 		{"viewer has read", []string{"viewer"}, auth.PermRead, true},
 		{"viewer no write", []string{"viewer"}, auth.PermWrite, false},
-		{"perm token allowed", []string{"write"}, auth.PermWrite, true},
+		// A role is not a permission: a role named after one grants nothing
+		// (the one entitlement check, auth.EntitlementsAllow, as Bolt).
+		{"permission name as role grants nothing", []string{"write"}, auth.PermWrite, false},
 		{"perm admin implies delete", []string{"admin"}, auth.PermDelete, true},
 		{"role casing normalized", []string{"Admin"}, auth.PermWrite, true},
 		{"role_ prefix normalized", []string{"ROLE_ADMIN"}, auth.PermWrite, true},
-		{"perm casing normalized", []string{"WRITE"}, auth.PermWrite, true},
+		{"permission name as role in capitals grants nothing", []string{"WRITE"}, auth.PermWrite, false},
 		{"empty roles", []string{}, auth.PermRead, false},
 		{"invalid role", []string{"invalid"}, auth.PermRead, false},
 	}
@@ -4660,11 +4662,13 @@ func TestAuthHandlers_BranchExpansion(t *testing.T) {
 		server.handleRoleByID(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 
+		// role_src and role_dst are the roles src and dst (one role-name
+		// form, auth.NormalizeRoleName): the user's assignment moves to dst.
 		user, err := server.auth.GetUser("reader")
 		require.NoError(t, err)
 		var hasRoleDst bool
 		for _, r := range user.Roles {
-			if string(r) == "role_dst" {
+			if string(r) == "dst" {
 				hasRoleDst = true
 			}
 		}

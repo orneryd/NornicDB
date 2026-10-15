@@ -212,28 +212,8 @@ func (s *Server) GetEffectivePermissions(roles []string) []string {
 	if len(roles) == 0 {
 		return nil
 	}
-	if s.roleEntitlementsStore != nil {
-		return auth.PermissionsForRoles(roles, s.roleEntitlementsStore)
-	}
-	// Fallback: static RolePermissions
-	var out []string
-	seen := make(map[string]struct{})
-	for _, role := range roles {
-		role = strings.ToLower(strings.TrimSpace(role))
-		role = strings.TrimPrefix(role, "role_")
-		perms, ok := auth.RolePermissions[auth.Role(role)]
-		if !ok {
-			continue
-		}
-		for _, p := range perms {
-			id := string(p)
-			if _, ok := seen[id]; !ok {
-				seen[id] = struct{}{}
-				out = append(out, id)
-			}
-		}
-	}
-	return out
+	// Without a store, the built-in roles' entitlements.
+	return auth.PermissionsForRoles(roles, s.roleEntitlementsStore)
 }
 
 // GetResolvedAccessForRoles returns per-DB read/write for (roles, dbName). Used by Bolt for mutation checks.
@@ -308,42 +288,36 @@ func parseCreatedDatabaseName(statement string) (dbName string, ok bool) {
 	return "", false
 }
 
+// hasPermission reports a global entitlement of roles, through the one
+// entitlement check (auth.EntitlementsAllow): the role entitlements store
+// (stored overrides and the built-in roles' defaults), or without one the
+// built-in roles' defaults.
 func hasPermission(s *Server, roles []string, required auth.Permission) bool {
-	// When role entitlements store is set, use it (includes built-in defaults and stored overrides).
-	if s != nil && s.roleEntitlementsStore != nil {
-		effective := auth.PermissionsForRoles(roles, s.roleEntitlementsStore)
-		for _, p := range effective {
-			if p == string(required) || p == string(auth.PermAdmin) {
-				return true
-			}
-		}
-		return false
+	var store *auth.RoleEntitlementsStore
+	if s != nil {
+		store = s.roleEntitlementsStore
 	}
-	// Fallback: static RolePermissions (no store)
-	for _, roleOrPerm := range roles {
-		roleOrPerm = strings.ToLower(strings.TrimSpace(roleOrPerm))
-		roleOrPerm = strings.TrimPrefix(roleOrPerm, "role_")
+	return auth.EntitlementsAllow(auth.PermissionsForRoles(roles, store), string(required))
+}
 
-		// Allow tokens that encode permissions directly (defensive for interop).
-		if auth.Permission(roleOrPerm) == required {
-			return true
-		}
-		if auth.Permission(roleOrPerm) == auth.PermAdmin {
-			return true
-		}
-
-		role := auth.Role(roleOrPerm)
-		perms, ok := auth.RolePermissions[role]
-		if !ok {
-			continue
-		}
-		for _, p := range perms {
-			if p == auth.PermAdmin || p == required {
-				return true
-			}
-		}
+// principalAccess is the principal's permission resolver
+// (cypher.PrincipalAccess), the one Bolt builds too: graph access from the
+// database allowlist, read and write from the database privileges, and the
+// other permissions from the role entitlements. Without RBAC every graph the
+// access mode allows is open for every permission.
+func (s *Server) principalAccess(claims *auth.JWTClaims) cypher.PrincipalAccess {
+	mode := s.getDatabaseAccessMode(claims)
+	access := cypher.PrincipalAccess{
+		GraphAccess: func(graph string) (string, bool) { return s.graphAccess(mode, graph) },
 	}
-	return false
+	if !s.isRBACEnforced() {
+		return access
+	}
+	access.DatabaseAccess = func(database string) auth.ResolvedAccess { return s.getResolvedAccess(claims, database) }
+	access.Entitlement = func(permission string) bool {
+		return claims != nil && hasPermission(s, claims.Roles, auth.Permission(permission))
+	}
+	return access
 }
 
 // ProcedureGrantChecker reports, for a principal's roles, whether they hold
@@ -368,47 +342,28 @@ func isMutationQuery(query string) bool {
 	return requirements.Write || requirements.Schema
 }
 
+// missingQueryPermission is the permission query lacks on dbName for the
+// principal, from the one decision (cypher.MissingPermission) over the
+// principal's resolver, or "".
 func (s *Server) missingQueryPermission(claims *auth.JWTClaims, dbName, query string) auth.Permission {
 	if !s.isRBACEnforced() {
 		return ""
 	}
-
-	requirements := cypher.QueryPermissionRequirements(query)
-	roles := []string(nil)
+	var roles []string
 	if claims != nil {
 		roles = claims.Roles
 	}
-	if requirements.Schema && !hasPermission(s, roles, auth.PermSchema) {
-		return auth.PermSchema
-	}
-	if requirements.Admin && !hasPermission(s, roles, auth.PermAdmin) && !requirements.AdminGrantedBy(s.ProcedureGrantChecker(roles)) {
-		return auth.PermAdmin
-	}
-	target, _ := s.graphAccess(nil, dbName)
-	if requirements.Write && !s.getResolvedAccess(claims, target).Write {
-		return auth.PermWrite
-	}
-	return ""
+	access := s.principalAccess(claims)
+	allows := func(permission string) bool { return access.Allows(dbName, permission) }
+	return auth.Permission(cypher.MissingPermission(cypher.QueryPermissionRequirements(query), allows, s.ProcedureGrantChecker(roles)))
 }
 
 func (s *Server) withDatabasePermissionChecker(ctx context.Context, claims *auth.JWTClaims, dbName string) context.Context {
 	if !s.isRBACEnforced() {
 		return ctx
 	}
-	return cypher.WithPermissionChecker(ctx, func(permission string) bool {
-		switch auth.Permission(permission) {
-		case auth.PermRead:
-			return s.getResolvedAccess(claims, dbName).Read
-		case auth.PermWrite:
-			return s.getResolvedAccess(claims, dbName).Write
-		case auth.PermSchema:
-			return claims != nil && hasPermission(s, claims.Roles, auth.PermSchema)
-		case auth.PermAdmin:
-			return claims != nil && hasPermission(s, claims.Roles, auth.PermAdmin)
-		default:
-			return false
-		}
-	})
+	access := s.principalAccess(claims)
+	return cypher.WithPermissionChecker(ctx, func(permission string) bool { return access.Allows(dbName, permission) })
 }
 
 // canAccessGraph reports whether the principal may use graph, a request's

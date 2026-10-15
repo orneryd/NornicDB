@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -36,8 +35,8 @@ func (r *RoleStore) DeleteRoleWithStores(ctx context.Context, name string, store
 }
 
 func (r *RoleStore) changeRole(ctx context.Context, oldName, newName string, remove bool, stores RoleMutationStores) error {
-	oldName = strings.ToLower(strings.TrimSpace(oldName))
-	newName = strings.ToLower(strings.TrimSpace(newName))
+	oldName = NormalizeRoleName(oldName)
+	newName = NormalizeRoleName(newName)
 	if IsBuiltinRole(oldName) {
 		return ErrCannotDeleteBuiltinRole
 	}
@@ -173,10 +172,10 @@ func roleOwnedRecords(view storage.Engine, oldName, newName string) ([]roleOwned
 			switch label {
 			case procedurePrivilegeLabel:
 				grant, valid := procedurePrivilegeNode(node)
-				if !valid || grant.Role != normalizeGrantRole(oldName) {
+				if !valid || grant.Role != NormalizeRoleName(oldName) {
 					continue
 				}
-				grant.Role = normalizeGrantRole(newName)
+				grant.Role = NormalizeRoleName(newName)
 				record.replacementID = procedurePrivilegeNodeID(grant)
 				record.replacementRole = grant.Role
 			case dbPrivLabel:
@@ -202,7 +201,7 @@ func roleOwnedRecords(view storage.Engine, oldName, newName string) ([]roleOwned
 				}
 				found := false
 				for _, role := range user.Roles {
-					if strings.EqualFold(string(role), oldName) {
+					if NormalizeRoleName(string(role)) == oldName {
 						found = true
 						break
 					}
@@ -233,7 +232,7 @@ func applyRoleRecords(view storage.Engine, records []roleOwnedRecord, oldName, n
 		if user := record.user; user != nil {
 			roles := make([]Role, 0, len(user.Roles))
 			for _, role := range user.Roles {
-				if strings.EqualFold(string(role), oldName) {
+				if NormalizeRoleName(string(role)) == oldName {
 					if !remove {
 						roles = append(roles, Role(newName))
 					}

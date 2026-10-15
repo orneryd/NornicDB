@@ -63,3 +63,21 @@ func TestAdministrationCommandInProcedureStatementIsRefused(t *testing.T) {
 		})
 	}
 }
+
+// GRANT checks and locks its roles through the one role-record owner
+// (auth.WithRoleRecords): a ROLE_ prefixed name grants the role it names,
+// and a missing role is Neo4j's ArgumentError naming it as written.
+func TestGrantGoesThroughTheRoleRecordOwner(t *testing.T) {
+	ctx := context.Background()
+	exec, stores := nestedUseRouterExecutor(t, "system")
+	require.NoError(t, auth.NewRoleStore(stores["system"]).CreateRole(ctx, "ops"))
+	_, err := exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO ROLE_ops", nil)
+	require.NoError(t, err)
+	allowed, err := auth.NewProcedurePrivilegeStore(stores["system"]).AllowsBoosted([]string{"ops"}, "db.cdc.query")
+	require.NoError(t, err)
+	require.True(t, allowed)
+
+	_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO nobody", nil)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.ArgumentError")
+	require.ErrorContains(t, err, "Failed to grant execute privilege to role 'nobody': Role does not exist.")
+}

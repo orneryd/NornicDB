@@ -188,9 +188,9 @@ func TestHTTPQueryPermissionModesMatchBolt(t *testing.T) {
 			username:  "editor",
 			statement: "CREATE INDEX security_probe FOR (n:SecurityProbe) ON (n.value)",
 		},
-		"DBMS procedure requires admin permission": {
+		"admin procedure requires admin permission": {
 			username:  "reader",
-			statement: "CALL dbms.components()",
+			statement: "CALL dbms.listConfig()",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

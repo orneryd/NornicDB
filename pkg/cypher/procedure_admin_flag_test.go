@@ -3,6 +3,9 @@ package cypher
 import (
 	"context"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
 // Authorization asks for admin for a procedure call exactly when the
@@ -39,5 +42,49 @@ func TestUserProcedureModeSetsAdminFlag(t *testing.T) {
 		if procedure.Spec.Admin != admin {
 			t.Errorf("%s: Admin = %v, want %v", mode, procedure.Spec.Admin, admin)
 		}
+	}
+}
+
+// dbms.listConnections lists every connection to a principal holding the
+// admin entitlement, whatever its role is called, and only its own to any
+// other, as in Neo4j. Its result is never served from the result cache the
+// callers of one executor share: a reader calling after an administrator
+// still sees only its own connection.
+func TestListConnectionsShowsOtherUsersOnlyToAdministrators(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic"))
+	connections := func() []ConnectionListing {
+		return []ConnectionListing{{ConnectionID: "bolt-1", Username: "reader"}, {ConnectionID: "bolt-2", Username: "other"}}
+	}
+	for _, c := range []struct {
+		name        string
+		roles       []string
+		permissions []string
+		want        []string
+	}{
+		{"role with the admin entitlement", []string{"ops"}, []string{"read", "admin"}, []string{"bolt-1", "bolt-2"}},
+		{"reader after an administrator", []string{"viewer"}, []string{"read"}, []string{"bolt-1"}},
+		{"role named admin without the admin entitlement", []string{"admin"}, []string{"read"}, []string{"bolt-1"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := WithRequestIdentity(context.Background(), &RequestIdentity{
+				User:        &AuthenticatedUser{Name: "reader", Roles: c.roles},
+				Connections: connections,
+			})
+			ctx = WithPermissionChecker(ctx, func(permission string) bool {
+				for _, held := range c.permissions {
+					if held == permission {
+						return true
+					}
+				}
+				return false
+			})
+			result, err := exec.Execute(ctx, "CALL dbms.listConnections() YIELD connectionId RETURN connectionId", nil)
+			require.NoError(t, err)
+			var listed []string
+			for _, row := range result.Rows {
+				listed = append(listed, row[0].(string))
+			}
+			require.Equal(t, c.want, listed)
+		})
 	}
 }

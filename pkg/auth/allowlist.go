@@ -90,17 +90,20 @@ func (a *AllowlistStore) SaveRoleDatabases(ctx context.Context, role string, dat
 }
 
 // SaveMappings persists a batch in one transaction through the role-record
-// owner (withRoleRecords): every role's list is stored, or none when one
+// owner (WithRoleRecords): every role's list is stored, or none when one
 // fails or names a role that doesn't exist. The cache changes only after
 // commit.
 func (a *AllowlistStore) SaveMappings(ctx context.Context, mappings map[string][]string) error {
 	roles := make([]string, 0, len(mappings))
-	for role := range mappings {
+	normalized := make(map[string][]string, len(mappings))
+	for role, databases := range mappings {
 		roles = append(roles, role)
+		normalized[NormalizeRoleName(role)] = databases
 	}
+	mappings = normalized
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if err := withRoleRecords(ctx, a.storage, roles, func(view storage.Engine) error {
+	if err := WithRoleRecords(ctx, a.storage, roles, func(view storage.Engine) error {
 		for role, databases := range mappings {
 			databasesJSON, _ := json.Marshal(databases)
 			node := &storage.Node{
@@ -208,8 +211,7 @@ func (m *allowlistDBAccessMode) CanAccessDatabase(dbName string) bool {
 
 func (m *allowlistDBAccessMode) canAccess(dbName string) bool {
 	for _, role := range m.roles {
-		role = strings.ToLower(strings.TrimSpace(role))
-		role = strings.TrimPrefix(role, "role_")
+		role = NormalizeRoleName(role)
 		dbs, ok := m.allowlist[role]
 		if !ok {
 			// No allowlist for this role → "all databases"

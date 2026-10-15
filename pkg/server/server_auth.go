@@ -104,15 +104,9 @@ func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Check if user has admin role (use canonical role name from auth)
-	isAdmin := false
-	for _, role := range claims.Roles {
-		if strings.ToLower(strings.TrimSpace(role)) == string(auth.RoleAdmin) {
-			isAdmin = true
-			break
-		}
-	}
-	if !isAdmin {
+	// The admin entitlement, whatever the role holding it is called (the one
+	// entitlement check, hasPermission).
+	if !hasPermission(s, claims.Roles, auth.PermAdmin) {
 		s.writeLocalizedError(w, r, http.StatusForbidden, localization.APITokenAdminRequired(), ErrForbidden)
 		return
 	}
@@ -728,7 +722,7 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 		mappings := make(map[string][]string)
 		if len(body.Mappings) > 0 {
 			for _, m := range body.Mappings {
-				role := strings.ToLower(strings.TrimSpace(m.Role))
+				role := auth.NormalizeRoleName(m.Role)
 				if role == "" {
 					continue
 				}
@@ -745,7 +739,7 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", err)
 				return
 			}
-			mappings[strings.ToLower(strings.TrimSpace(body.Role))] = norm
+			mappings[auth.NormalizeRoleName(body.Role)] = norm
 		} else {
 			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", localization.RoleEntitlementsBodyInvalid())
 			return

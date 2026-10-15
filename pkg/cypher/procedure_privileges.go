@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -234,24 +235,9 @@ func (e *StorageExecutor) executeProcedurePrivilegeCommand(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	err = auth.WithStoreTransaction(ctx, system, func(system storage.Engine) error {
+	apply := func(system storage.Engine) error {
 		store := auth.NewProcedurePrivilegeStore(system)
-		if command.grant {
-			roles := auth.NewRoleStore(system)
-			for _, role := range command.roles {
-				exists, err := roles.LockRoleForGrant(ctx, role)
-				if err != nil {
-					return err
-				}
-				if !exists {
-					action := "execute"
-					if command.boosted {
-						action = "execute_boosted"
-					}
-					return localizedStatusError("Neo.ClientError.Statement.ArgumentError", "RoleNotFound", localization.CypherAdminPrivilegeRoleNotFound(action, role))
-				}
-			}
-		} else if locked {
+		if !command.grant && locked {
 			for _, role := range command.roles {
 				for _, procedure := range command.procedures {
 					grant, found, err := store.Lookup(ctx, role, procedure, command.boosted)
@@ -277,7 +263,24 @@ func (e *StorageExecutor) executeProcedurePrivilegeCommand(ctx context.Context, 
 			}
 		}
 		return nil
-	})
+	}
+	if command.grant {
+		// A GRANT writes role-owned records: through the one owner that
+		// requires and locks its roles (auth.WithRoleRecords), as Neo4j
+		// refuses a GRANT to a missing role with ArgumentError.
+		err = auth.WithRoleRecords(ctx, system, command.roles, apply)
+		var missing *auth.RoleNotFoundError
+		if errors.As(err, &missing) {
+			action := "execute"
+			if command.boosted {
+				action = "execute_boosted"
+			}
+			err = localizedStatusError("Neo.ClientError.Statement.ArgumentError", "RoleNotFound", localization.CypherAdminPrivilegeRoleNotFound(action, missing.Role))
+		}
+	} else {
+		// REVOKE from a role that doesn't exist changes nothing, as in Neo4j.
+		err = auth.WithStoreTransaction(ctx, system, apply)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +322,7 @@ func showPrivilegeRoles(head string) []string {
 	var roles []string
 	for _, role := range splitTopLevelComma(rest[:end]) {
 		if role = strings.Trim(strings.TrimSpace(role), "`"); role != "" {
-			roles = append(roles, strings.ToLower(strings.TrimPrefix(role, "role_")))
+			roles = append(roles, auth.NormalizeRoleName(role))
 		}
 	}
 	return roles

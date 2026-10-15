@@ -63,5 +63,18 @@ func isCacheableReadQuery(cypher string) bool {
 		return inferCacheTrueRe.MatchString(cypher)
 	}
 
+	// A DBMS procedure reports the server's live state (its connections,
+	// configuration, transaction log), which graph writes don't invalidate
+	// and which can differ for each caller (dbms.listConnections lists only
+	// the caller's own connections to a non-administrator): its result is
+	// never served from the cache, which is shared by a database's callers.
+	if strings.Contains(upper, "CALL") {
+		for _, procedure := range registeredProceduresForCalls(cypher) {
+			if procedure.Mode == ProcedureModeDBMS {
+				return false
+			}
+		}
+	}
+
 	return true
 }

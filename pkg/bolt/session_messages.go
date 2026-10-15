@@ -118,24 +118,7 @@ func (s *Session) handleRun(data []byte) error {
 	// outer query text, so keyword matching alone is not an authorization boundary.
 	requirements := cypher.QueryPermissionRequirements(query)
 	isWrite := requirements.Write
-	isSchema := requirements.Schema
-	isAdmin := requirements.Admin
 
-	// Check permissions based on query type (use canonical entitlement IDs from auth)
-	if s.authResult != nil {
-		if isSchema && !s.authResult.HasPermission(string(auth.PermSchema)) {
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.SchemaPermissionRequired())
-		}
-		if isAdmin && !s.authResult.HasPermission(string(auth.PermAdmin)) && !requirements.AdminGrantedBy(s.server.procedureGrants(s.authResult.Roles)) {
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.AdminPermissionRequired())
-		}
-		if isWrite && !s.authResult.HasPermission(string(auth.PermWrite)) {
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.WritePermissionRequired())
-		}
-		if !s.authResult.HasPermission(string(auth.PermRead)) {
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.ReadPermissionRequired())
-		}
-	}
 	// Log query if enabled
 	if s.server != nil && s.server.config.LogQueries {
 		remoteAddr := "unknown"
@@ -205,16 +188,24 @@ func (s *Session) handleRun(data []byte) error {
 		}
 	}
 
-	// Per-DB write: for mutations, require ResolvedAccess.Write for this (principal, db).
-	if isWrite && s.server != nil && s.server.resolvedAccessResolver != nil {
-		var roles []string
-		if s.authResult != nil {
-			roles = s.authResult.Roles
-		}
-		target, _ := s.graphAccess(nil, dbName)
-		ra := s.server.resolvedAccessResolver(roles, target)
-		if !ra.Write {
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseWriteDenied(dbName))
+	// The statement's permissions on this database: the one decision
+	// (cypher.MissingPermission) over the principal's resolver, as HTTP
+	// decides them.
+	if s.authResult != nil {
+		access := s.principalAccess(mode)
+		allows := func(permission string) bool { return access.Allows(dbName, permission) }
+		switch cypher.MissingPermission(requirements, allows, s.server.procedureGrants(s.authResult.Roles)) {
+		case "schema":
+			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.SchemaPermissionRequired())
+		case "admin":
+			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.AdminPermissionRequired())
+		case "write":
+			if access.DatabaseAccess != nil {
+				return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseWriteDenied(dbName))
+			}
+			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.WritePermissionRequired())
+		case "read":
+			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.ReadPermissionRequired())
 		}
 	}
 
@@ -271,30 +262,9 @@ func (s *Session) handleRun(data []byte) error {
 	if mode != nil {
 		// A name is checked like the session's database (graphAccess: a
 		// composite constituent needs its composite and its database), and
-		// read / write are the privileges of the database its data is in.
-		ctx = cypher.WithDatabasePermissionResolver(ctx, dbName, func(database, permission string) bool {
-			target, allowed := s.graphAccess(mode, database)
-			if !allowed {
-				return false
-			}
-			if s.server != nil && s.server.resolvedAccessResolver != nil {
-				var roles []string
-				if s.authResult != nil {
-					roles = s.authResult.Roles
-				}
-				access := s.server.resolvedAccessResolver(roles, target)
-				switch permission {
-				case "read":
-					return access.Read
-				case "write":
-					return access.Write
-				}
-			}
-			if s.authResult != nil {
-				return s.authResult.HasPermission(permission)
-			}
-			return true
-		})
+		// read / write are the privileges of the database its data is in: the
+		// principal's one resolver (principalAccess).
+		ctx = cypher.WithDatabasePermissionResolver(ctx, dbName, s.principalAccess(mode).Allows)
 	}
 
 	runStart := time.Now()
@@ -1791,6 +1761,27 @@ func (s *Session) writeMessageNoFlush(data []byte) error {
 		return err
 	}
 	return s.writer.WriteByte(0x00)
+}
+
+// principalAccess is the session principal's permission resolver
+// (cypher.PrincipalAccess), the one HTTP builds too: graph access from mode,
+// read and write from the server's database privileges, and the other
+// permissions from the principal's entitlements. Without an authenticated
+// principal every permission the graph access allows is open.
+func (s *Session) principalAccess(mode auth.DatabaseAccessMode) cypher.PrincipalAccess {
+	access := cypher.PrincipalAccess{
+		GraphAccess: func(graph string) (string, bool) { return s.graphAccess(mode, graph) },
+	}
+	if s.authResult == nil {
+		return access
+	}
+	roles := s.authResult.Roles
+	if s.server != nil && s.server.resolvedAccessResolver != nil {
+		resolve := s.server.resolvedAccessResolver
+		access.DatabaseAccess = func(database string) auth.ResolvedAccess { return resolve(roles, database) }
+	}
+	access.Entitlement = s.authResult.HasPermission
+	return access
 }
 
 // graphAccess reports whether mode allows graph, a RUN's or BEGIN's
