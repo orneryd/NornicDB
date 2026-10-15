@@ -1,0 +1,221 @@
+{
+  "results": [
+    {
+      "columns": [
+        "ordinary",
+        "entity",
+        "nested",
+        "relationship",
+        "wrapped",
+        "p"
+      ],
+      "data": [
+        {
+          "row": [
+            {},
+            {},
+            [
+              {}
+            ],
+            {},
+            {
+              "items": [
+                {},
+                {},
+                {}
+              ]
+            },
+            [
+              {},
+              {},
+              {}
+            ]
+          ],
+          "meta": [
+            {
+              "id": 95,
+              "elementId": "4:8afea8cc-10e5-4393-8a59-377f05cc2a73:95",
+              "type": "node",
+              "deleted": false
+            },
+            {
+              "id": 2,
+              "elementId": "5:8afea8cc-10e5-4393-8a59-377f05cc2a73:2",
+              "type": "relationship",
+              "deleted": false
+            },
+            {
+              "id": 95,
+              "elementId": "4:8afea8cc-10e5-4393-8a59-377f05cc2a73:95",
+              "type": "node",
+              "deleted": false
+            },
+            {
+              "id": 2,
+              "elementId": "5:8afea8cc-10e5-4393-8a59-377f05cc2a73:2",
+              "type": "relationship",
+              "deleted": false
+            },
+            [
+              {
+                "id": 95,
+                "elementId": "4:8afea8cc-10e5-4393-8a59-377f05cc2a73:95",
+                "type": "node",
+                "deleted": false
+              },
+              {
+                "id": 2,
+                "elementId": "5:8afea8cc-10e5-4393-8a59-377f05cc2a73:2",
+                "type": "relationship",
+                "deleted": false
+              },
+              {
+                "id": 5,
+                "elementId": "4:8afea8cc-10e5-4393-8a59-377f05cc2a73:5",
+                "type": "node",
+                "deleted": false
+              }
+            ]
+          ],
+          "graph": {
+            "nodes": [
+              {
+                "id": "5",
+                "elementId": "4:8afea8cc-10e5-4393-8a59-377f05cc2a73:5",
+                "labels": [
+                  "RemoteProvenanceProbe"
+                ],
+                "properties": {}
+              },
+              {
+                "id": "95",
+                "elementId": "4:8afea8cc-10e5-4393-8a59-377f05cc2a73:95",
+                "labels": [
+                  "RemoteProvenanceProbe"
+                ],
+                "properties": {}
+              }
+            ],
+            "relationships": [
+              {
+                "id": "2",
+                "elementId": "5:8afea8cc-10e5-4393-8a59-377f05cc2a73:2",
+                "type": "LINKS",
+                "startNode": "95",
+                "startNodeElementId": "4:8afea8cc-10e5-4393-8a59-377f05cc2a73:95",
+                "endNode": "5",
+                "endNodeElementId": "4:8afea8cc-10e5-4393-8a59-377f05cc2a73:5",
+                "properties": {}
+              }
+            ]
+          },
+          "rest": [
+            {},
+            {
+              "metadata": {
+                "elementId": "4:8afea8cc-10e5-4393-8a59-377f05cc2a73:95",
+                "id": 95,
+                "labels": [
+                  "RemoteProvenanceProbe"
+                ]
+              },
+              "paged_traverse": "http://127.0.0.1:62521/db/neo4j/node/95/paged/traverse/{returnType}{?pageSize,leaseTime}",
+              "outgoing_relationships": "http://127.0.0.1:62521/db/neo4j/node/95/relationships/out",
+              "outgoing_typed_relationships": "http://127.0.0.1:62521/db/neo4j/node/95/relationships/out/{-list|&|types}",
+              "create_relationship": "http://127.0.0.1:62521/db/neo4j/node/95/relationships",
+              "labels": "http://127.0.0.1:62521/db/neo4j/node/95/labels",
+              "traverse": "http://127.0.0.1:62521/db/neo4j/node/95/traverse/{returnType}",
+              "all_relationships": "http://127.0.0.1:62521/db/neo4j/node/95/relationships/all",
+              "all_typed_relationships": "http://127.0.0.1:62521/db/neo4j/node/95/relationships/all/{-list|&|types}",
+              "property": "http://127.0.0.1:62521/db/neo4j/node/95/properties/{key}",
+              "self": "http://127.0.0.1:62521/db/neo4j/node/95",
+              "incoming_relationships": "http://127.0.0.1:62521/db/neo4j/node/95/relationships/in",
+              "properties": "http://127.0.0.1:62521/db/neo4j/node/95/properties",
+              "incoming_typed_relationships": "http://127.0.0.1:62521/db/neo4j/node/95/relationships/in/{-list|&|types}",
+              "data": {}
+            },
+            [
+              {}
+            ],
+            {
+              "metadata": {
+                "elementId": "5:8afea8cc-10e5-4393-8a59-377f05cc2a73:2",
+                "id": 2,
+                "type": "LINKS"
+              },
+              "property": "http://127.0.0.1:62521/db/neo4j/relationship/2/properties/{key}",
+              "start": "http://127.0.0.1:62521/db/neo4j/node/95",
+              "self": "http://127.0.0.1:62521/db/neo4j/relationship/2",
+              "end": "http://127.0.0.1:62521/db/neo4j/node/5",
+              "type": "LINKS",
+              "properties": "http://127.0.0.1:62521/db/neo4j/relationship/2/properties",
+              "data": {}
+            },
+            {
+              "items": [
+                {},
+                {
+                  "metadata": {
+                    "elementId": "4:8afea8cc-10e5-4393-8a59-377f05cc2a73:95",
+                    "id": 95,
+                    "labels": [
+                      "RemoteProvenanceProbe"
+                    ]
+                  },
+                  "paged_traverse": "http://127.0.0.1:62521/db/neo4j/node/95/paged/traverse/{returnType}{?pageSize,leaseTime}",
+                  "outgoing_relationships": "http://127.0.0.1:62521/db/neo4j/node/95/relationships/out",
+                  "outgoing_typed_relationships": "http://127.0.0.1:62521/db/neo4j/node/95/relationships/out/{-list|&|types}",
+                  "create_relationship": "http://127.0.0.1:62521/db/neo4j/node/95/relationships",
+                  "labels": "http://127.0.0.1:62521/db/neo4j/node/95/labels",
+                  "traverse": "http://127.0.0.1:62521/db/neo4j/node/95/traverse/{returnType}",
+                  "all_relationships": "http://127.0.0.1:62521/db/neo4j/node/95/relationships/all",
+                  "all_typed_relationships": "http://127.0.0.1:62521/db/neo4j/node/95/relationships/all/{-list|&|types}",
+                  "property": "http://127.0.0.1:62521/db/neo4j/node/95/properties/{key}",
+                  "self": "http://127.0.0.1:62521/db/neo4j/node/95",
+                  "incoming_relationships": "http://127.0.0.1:62521/db/neo4j/node/95/relationships/in",
+                  "properties": "http://127.0.0.1:62521/db/neo4j/node/95/properties",
+                  "incoming_typed_relationships": "http://127.0.0.1:62521/db/neo4j/node/95/relationships/in/{-list|&|types}",
+                  "data": {}
+                },
+                {
+                  "metadata": {
+                    "elementId": "5:8afea8cc-10e5-4393-8a59-377f05cc2a73:2",
+                    "id": 2,
+                    "type": "LINKS"
+                  },
+                  "property": "http://127.0.0.1:62521/db/neo4j/relationship/2/properties/{key}",
+                  "start": "http://127.0.0.1:62521/db/neo4j/node/95",
+                  "self": "http://127.0.0.1:62521/db/neo4j/relationship/2",
+                  "end": "http://127.0.0.1:62521/db/neo4j/node/5",
+                  "type": "LINKS",
+                  "properties": "http://127.0.0.1:62521/db/neo4j/relationship/2/properties",
+                  "data": {}
+                }
+              ]
+            },
+            {
+              "relationships": [
+                "http://127.0.0.1:62521/db/neo4j/relationship/2"
+              ],
+              "nodes": [
+                "http://127.0.0.1:62521/db/neo4j/node/95",
+                "http://127.0.0.1:62521/db/neo4j/node/5"
+              ],
+              "directions": [
+                "->"
+              ],
+              "length": 1,
+              "start": "http://127.0.0.1:62521/db/neo4j/node/95",
+              "end": "http://127.0.0.1:62521/db/neo4j/node/5"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "commit": "http://127.0.0.1:62521/db/neo4j/tx/21/commit",
+  "transaction": {
+    "expires": "Thu, 15 Oct 2026 16:31:02 GMT"
+  }
+}

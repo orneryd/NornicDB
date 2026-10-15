@@ -435,6 +435,7 @@ type remoteTxResponse struct {
 			RawRow []json.RawMessage `json:"row"`
 			Row    []interface{}     `json:"-"`
 			Meta   []interface{}     `json:"meta"`
+			REST   []json.RawMessage `json:"rest"`
 			Graph  struct {
 				Nodes         []map[string]interface{} `json:"nodes"`
 				Relationships []map[string]interface{} `json:"relationships"`
@@ -540,7 +541,11 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 			metadataIndex := 0
 			data.Row = make([]interface{}, len(data.RawRow))
 			for column, raw := range data.RawRow {
-				value, err := decodeRemoteHTTPValue(raw, data.Meta, &metadataIndex, entities)
+				var rest json.RawMessage
+				if len(data.REST) == len(data.RawRow) {
+					rest = data.REST[column]
+				}
+				value, err := decodeRemoteHTTPValueWithREST(raw, rest, data.Meta, &metadataIndex, entities)
 				if err != nil {
 					return nil, err
 				}
@@ -553,7 +558,7 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 
 func (h *httpTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error) {
 	txResp, err := h.doRequest(ctx, remoteTxRequest{
-		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph"}}},
+		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph", "rest"}}},
 	})
 	if err != nil {
 		return nil, err
@@ -570,7 +575,7 @@ func (h *httpTransport) query(ctx context.Context, statement string, params map[
 
 func (h *httpTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
 	txResp, err := h.doRequest(ctx, remoteTxRequest{
-		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph"}}},
+		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph", "rest"}}},
 	})
 	if err != nil {
 		return nil, nil, err
@@ -648,7 +653,7 @@ func (t *httpCypherTx) QueryCypher(ctx context.Context, statement string, params
 		return nil, nil, localizedError(localization.StorageRemoteTransactionClosed(), nil)
 	}
 	txResp, err := t.transport.doRequestToURL(ctx, http.MethodPost, t.executeURL, remoteTxRequest{
-		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph"}}},
+		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph", "rest"}}},
 	})
 	if err != nil {
 		return nil, nil, err
