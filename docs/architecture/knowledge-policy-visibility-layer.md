@@ -132,6 +132,8 @@ If an entity survives the node/edge visibility filter, the Cypher materializatio
 - Projections use detached property maps. Mutation owners retain full entities, so an unrelated `SET` preserves suppressed stored fields. Direct engine reads and `reveal()` expose the stored properties for debugging.
 - The property scorer uses the same namespace and access metadata inputs as the entity scorer, but evaluates per-property compiled overrides.
 
+Normal computed HTTP graph `neighborhood`, `expand`, and `path` responses use the same detached node/relationship property projection as Cypher. These operations are query results even though their traversal starts from supplied IDs. Their property filters also evaluate the visible property maps. Direct engine/Go CRUD lookups, explicit debug reads, `reveal()`, temporal/diff history views, snapshots, backups and GDPR exports retain stored properties. Property suppression is a query presentation policy, not an authorization or storage erasure boundary. Other query/search/discover integrations are tracked explicitly in issue #1229; this paragraph does not claim those paths are already covered.
+
 While decay is enabled, Cypher bypasses result caching: visibility can change with elapsed time or access metadata without a graph-write revision. Ordinary reads retain result caching when decay is disabled.
 
 ### 4. Persisted suppression state is the fallback truth when no scorer exists

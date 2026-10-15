@@ -218,26 +218,7 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 // decayVisibleNodeProperties is the shared property-visibility owner for node
 // maps and expression/result projections. It never changes the stored map.
 func (e *StorageExecutor) decayVisibleNodeProperties(node *storage.Node) map[string]interface{} {
-	be := unwrapBadgerEngine(e.storage)
-	var nowNanos int64
-	if be != nil {
-		nowNanos = storage.DecayScoringTime()
-	}
-	props := node.Properties
-	if be != nil {
-		createdAt := node.CreatedAt.UnixNano()
-		versionAt := nodeVersionAtNanos(node, createdAt)
-		storedID := storage.NodeID(storage.QualifiedEntityID(e.storage, string(node.ID)))
-		filtered := make(map[string]interface{}, len(node.Properties))
-		for k, v := range node.Properties {
-			if be.FilterPropertyByDecay(storedID, node.Labels, k, createdAt, versionAt, nowNanos) {
-				continue
-			}
-			filtered[k] = v
-		}
-		props = filtered
-	}
-	return props
+	return storage.NewQueryResultProjection(e.storage).NodeProperties(node)
 }
 
 func nodeVersionAtNanos(node *storage.Node, createdAt int64) int64 {
@@ -281,25 +262,7 @@ func (e *StorageExecutor) edgeToMap(edge *storage.Edge) map[string]interface{} {
 // hides at the current scoring time (the edge's own map when decay filtering
 // doesn't apply).
 func (e *StorageExecutor) decayVisibleEdgeProperties(edge *storage.Edge) map[string]interface{} {
-	be := unwrapBadgerEngine(e.storage)
-	if be == nil {
-		return edge.Properties
-	}
-	nowNanos := storage.DecayScoringTime()
-	createdAt := edge.CreatedAt.UnixNano()
-	versionAt := createdAt
-	if !edge.UpdatedAt.IsZero() {
-		versionAt = edge.UpdatedAt.UnixNano()
-	}
-	filtered := make(map[string]interface{}, len(edge.Properties))
-	storedID := storage.EdgeID(storage.QualifiedEntityID(e.storage, string(edge.ID)))
-	for k, v := range edge.Properties {
-		if be.FilterEdgePropertyByDecay(storedID, edge.Type, k, createdAt, versionAt, nowNanos) {
-			continue
-		}
-		filtered[k] = v
-	}
-	return filtered
+	return storage.NewQueryResultProjection(e.storage).EdgeProperties(edge)
 }
 
 // procedureRelationship is a relationship a procedure yields: the
