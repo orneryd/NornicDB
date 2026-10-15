@@ -357,6 +357,32 @@ func projectStaticValueMembers(scope staticTypeScope, clause string) map[string]
 	return projectTypeScopeIn(typeScopeOf(scope), scope, clause).static(true).members
 }
 
+// carryStaticSubqueryImports models both possible global-aggregate rows. A
+// nonempty group carries current operands; an empty group's missing input
+// falls back to original imports. Both scopes use the runtime retention owner.
+// When they disagree, defer the operand's type checks until the row runs,
+// just as for a CASE whose branches have different types. No cardinality
+// guess is needed for parameterized UNWIND, filters or data-dependent MATCH.
+func carryStaticSubqueryImports(projected, input, imports typeScope, projection string) {
+	var empty typeScope
+	if len(imports) > 0 && pipelineProjectionHasOnlyAggregates(returnProjectionPlanFor("RETURN "+projection).projections) {
+		empty = maps.Clone(projected)
+		carrySubqueryImports(empty, nil, imports)
+	}
+	carrySubqueryImports(projected, input, imports)
+	for name, operand := range empty {
+		if !staticOperandsEqual(projected[name], operand) {
+			projected[name] = staticOperand{}
+		}
+	}
+}
+
+func staticOperandsEqual(left, right staticOperand) bool {
+	return left.kind == right.kind && left.display == right.display &&
+		left.parameter == right.parameter && left.nonBoolean == right.nonBoolean &&
+		left.nonEntity == right.nonEntity && maps.EqualFunc(left.members, right.members, staticOperandsEqual)
+}
+
 // callSubqueryImports is the scope a CALL subquery's body starts from: CALL
 // (a, b) { … } imports a and b, CALL (*) { … } and an old-style CALL { … }
 // every outer variable (the latter's leading WITH picks them). ok is false

@@ -353,7 +353,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			}
 			// Retain each import's current operand after a rebinding, using
 			// the same rule that carries runtime values across WITH.
-			carrySubqueryImports(projectedTypes, types, enclosing.visible)
+			carryStaticSubqueryImports(projectedTypes, types, enclosing.visible, projectionBody)
 			types = projectedTypes
 			unwound = projectUnwoundValues(unwound, clause.text)
 			projected := types.static(cypher25)
