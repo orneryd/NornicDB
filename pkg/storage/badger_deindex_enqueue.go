@@ -21,9 +21,11 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 
 	becameSuppressed := false
 	nodeChanged := false
+	var edgeChanged *Edge
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		if isEdge {
-			changed, err := b.evaluateEdgeSuppressionInTxn(txn, EdgeID(entityID))
+			changed, mutation, err := b.evaluateEdgeSuppressionInTxn(txn, EdgeID(entityID))
+			edgeChanged = mutation
 			if changed {
 				becameSuppressed = true
 			}
@@ -37,8 +39,19 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 		return err
 	})
 	if err == nil && nodeChanged {
+		// Suppression rewrites the persisted body without UpdateNode. Drop both
+		// node caches with their generation guard before indexed reads reuse it.
+		b.cacheDeleteNode(NodeID(entityID))
 		b.graphMutationVersions.changed(namespaceForNodeID(NodeID(entityID)))
 	}
+	if err == nil && edgeChanged != nil {
+		// A policy transition rewrites the relationship body just like UpdateEdge.
+		// Publish it through the same cache lifecycle so adjacency/type reads do
+		// not retain a suppressed body or an empty filtered scan after relaxation.
+		b.cacheOnEdgeUpdated(edgeChanged.Type, edgeChanged)
+		b.graphMutationVersions.changed(namespaceForEdgeID(edgeChanged.ID))
+	}
+
 	return becameSuppressed, err
 }
 
@@ -137,10 +150,10 @@ func (b *BadgerEngine) rescoreSuppressionAfterLabelChangeInTxn(txn *badger.Txn, 
 	return clearTombstonesForEntityInTxn(txn, string(node.ID))
 }
 
-func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID EdgeID) (bool, error) {
+func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID EdgeID) (bool, *Edge, error) {
 	item, err := txn.Get(edgeKey(edgeID))
 	if err != nil {
-		return false, nil
+		return false, nil, nil
 	}
 
 	var edge *Edge
@@ -149,7 +162,7 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 		edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
 		return decodeErr
 	}); err != nil {
-		return false, nil
+		return false, nil, nil
 	}
 
 	nowNanos := DecayScoringTime()
@@ -161,35 +174,35 @@ func (b *BadgerEngine) evaluateEdgeSuppressionInTxn(txn *badger.Txn, edgeID Edge
 		edge.VisibilitySuppressed = true
 		data, err := b.encodeEdgeInTxn(txn, namespaceForEdgeID(edgeID), edge)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 		if err := txn.Set(edgeKey(edgeID), data); err != nil {
-			return false, err
+			return false, nil, err
 		}
 		if err := b.setAdjacencyValuesInTxn(txn, edge, data); err != nil {
-			return false, err
+			return false, nil, err
 		}
 		if err := enqueueWorkItemInTxn(txn, string(edgeID), "EDGE"); err != nil {
-			return false, err
+			return false, nil, err
 		}
-		return true, nil
+		return true, edge, nil
 	}
 
 	if !suppress && wasSuppressed {
 		data, err := b.encodeEdgeInTxn(txn, namespaceForEdgeID(edgeID), edge)
 		if err != nil {
-			return false, err
+			return false, nil, err
 		}
 		if err := txn.Set(edgeKey(edgeID), data); err != nil {
-			return false, err
+			return false, nil, err
 		}
 		if err := b.setAdjacencyValuesInTxn(txn, edge, data); err != nil {
-			return false, err
+			return false, nil, err
 		}
-		return false, clearTombstonesForEntityInTxn(txn, string(edgeID))
+		return false, edge, clearTombstonesForEntityInTxn(txn, string(edgeID))
 	}
 
-	return false, nil
+	return false, nil, nil
 }
 
 func enqueueWorkItemInTxn(txn *badger.Txn, entityID, scope string) error {

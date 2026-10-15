@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Pause scheduled develop verification/canary builds and remove PR label CI triggers. Manual Actions jobs now require administrator environment approval; existing main push and tag publishing triggers remain unchanged.
 
+### Visibility cache fixes
+
+- Publish node and relationship suppression transitions through the storage cache lifecycle after commit,
+  restoring indexed, outgoing and incoming reads after hidden-entity updates and policy relaxation (#1228).
+
 ### Documentation
 
 - Correct release-helper PR guidance to require manual workflow dispatch and administrator approval instead of the retired `ci:run` label.
