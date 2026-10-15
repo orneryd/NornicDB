@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -110,10 +111,18 @@ func TestScopedLabelReadersKeepBufferedReplacementVisibility(t *testing.T) {
 	require.NoError(t, tx.UpdateNode(&Node{ID: "test:remove-label", Labels: []string{"Other"}}))
 	require.NoError(t, tx.UpdateNode(&Node{ID: "test:add-label", Labels: []string{"Person"}, Properties: map[string]any{"v": int64(7)}}))
 	require.NoError(t, tx.DeleteNode("test:delete"))
-	_, err = tx.CreateNode(&Node{ID: "test:new", Labels: []string{"Person"}})
+	_, err = tx.CreateNode(&Node{ID: "test:new", Labels: []string{"Person", "NewOnly"}})
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 	check := func() {
+		first, err := engine.GetFirstNodeByLabelInScope("test:", "Person")
+		require.NoError(t, err)
+		require.NotNil(t, first)
+		require.Contains(t, []NodeID{"test:add-label", "test:new"}, first.ID)
+		first, err = engine.GetFirstNodeByLabelInScope("test:", "NewOnly")
+		require.NoError(t, err)
+		require.NotNil(t, first)
+		require.Equal(t, NodeID("test:new"), first.ID)
 		nodes, err := engine.GetNodesByLabelInScope("test:", "Person")
 		require.NoError(t, err)
 		require.Equal(t, []string{"test:add-label", "test:new"}, sortedIDs(nodes))
@@ -160,4 +169,50 @@ func TestScopedLabelBufferedMembershipUsesNewestGeneration(t *testing.T) {
 	buffer.AppendCommit(bufferedCommit{ops: []Operation{{Type: OpUpdateNode, OldNode: other, Node: person}}})
 	require.Equal(t, []NodeID{person.ID}, orderedScopedIDs(buffer.LabelNodes("Person")))
 	require.Empty(t, buffer.LabelNodes("Other"))
+}
+
+func TestScopedLabelSnapshotCursorErrors(t *testing.T) {
+	engine := scopedLabelOrderFixture(t)
+	for _, scope := range []string{"", "a:"} {
+		var ids []NodeID
+		err := engine.streamNodesByLabelFromPhysicalSnapshotAfter(scope, "Person", engine.withView, nil, "missing:n", func(node *Node) error {
+			ids = append(ids, node.ID)
+			return nil
+		})
+		require.ErrorIs(t, err, ErrNotFound)
+		require.Empty(t, ids)
+	}
+	var resumed []NodeID
+	require.NoError(t, engine.streamNodesByLabelFromPhysicalSnapshotAfter("", "Person", engine.withView, nil, "a:z", func(node *Node) error {
+		resumed = append(resumed, node.ID)
+		return nil
+	}))
+	require.Equal(t, []NodeID{"b:z", "a:a", "a:m", "ab:foreign"}, resumed)
+	// A damaged cursor mapping is an error, not a different resume position.
+	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		return txn.Set(nodeIDForwardKey("a:z"), []byte{1})
+	}))
+	require.ErrorIs(t, engine.streamNodesByLabelFromPhysicalSnapshotAfter("a:", "Person", engine.withView, nil, "a:z", func(*Node) error {
+		t.Fatal("corrupt cursor must not produce rows")
+		return nil
+	}), ErrInvalidData)
+}
+
+func TestScopedLabelIgnoresMalformedAndUnresolvedMemberships(t *testing.T) {
+	engine := scopedLabelOrderFixture(t)
+	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		if err := txn.Set(labelIndexPrefix("Person"), nil); err != nil {
+			return err
+		}
+		return txn.Set(labelIndexKey("Person", ^uint64(0)), nil)
+	}))
+	for _, scope := range []string{"a:", ""} {
+		nodes, err := engine.GetNodesByLabelInScope(scope, "Person")
+		require.NoError(t, err)
+		want := []NodeID{"a:z", "a:a", "a:m"}
+		if scope == "" {
+			want = []NodeID{"a:z", "b:z", "a:a", "a:m", "ab:foreign"}
+		}
+		require.Equal(t, want, orderedScopedIDs(nodes))
+	}
 }

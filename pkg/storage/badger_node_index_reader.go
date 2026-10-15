@@ -9,17 +9,22 @@ import (
 )
 
 // nodeIndexReader walks a numeric node index in its existing key order. A
-// scoped read derives candidates from the forward dictionary's physical
-// namespace range, then probes index membership in the same transaction.
+// scoped read walks the index only until its first foreign or unresolved
+// entry, then derives remaining candidates from the forward dictionary's
+// physical namespace range and probes membership in the same transaction.
 // The global label and MVCC-head indexes contain no namespace in their keys;
 // walking them and filtering afterwards makes a small database pay for all
-// other databases. No node bodies, embeddings or unrelated dictionary ranges
-// are read while selecting candidates.
+// other databases. The first boundary entry stops that walk: no foreign run
+// is enumerated. A sparse label or LIMIT satisfied before the boundary keeps
+// its original streaming cost. No node bodies, embeddings or unrelated
+// dictionary ranges are read while selecting candidates.
 type nodeIndexReader struct {
 	engine     *BadgerEngine
 	txn        *badger.Txn
 	index      *badger.Iterator
 	prefix     []byte
+	scope      string
+	afterNum   uint64
 	key        []byte
 	candidates []nodeIndexCandidate
 	position   int
@@ -35,9 +40,9 @@ type nodeIndexCandidate struct {
 }
 
 func (b *BadgerEngine) newNodeIndexReader(txn *badger.Txn, scope string, prefix []byte, after NodeID) *nodeIndexReader {
-	r := &nodeIndexReader{engine: b, txn: txn, prefix: prefix}
+	r := &nodeIndexReader{engine: b, txn: txn, prefix: prefix, scope: scope}
+	r.index = txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	if scope == "" {
-		r.index = txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		if after != "" {
 			num, ok := b.idDict.lookupNodeNumID(after)
 			if !ok {
@@ -49,7 +54,6 @@ func (b *BadgerEngine) newNodeIndexReader(txn *badger.Txn, scope string, prefix 
 		return r
 	}
 
-	var afterNum uint64
 	if after != "" {
 		item, err := txn.Get(nodeIDForwardKey(after))
 		if errors.Is(err, badger.ErrKeyNotFound) {
@@ -60,7 +64,7 @@ func (b *BadgerEngine) newNodeIndexReader(txn *badger.Txn, scope string, prefix 
 				if len(value) != 8 {
 					return ErrInvalidData
 				}
-				afterNum = binary.BigEndian.Uint64(value)
+				r.afterNum = binary.BigEndian.Uint64(value)
 				return nil
 			})
 		}
@@ -68,11 +72,21 @@ func (b *BadgerEngine) newNodeIndexReader(txn *badger.Txn, scope string, prefix 
 			r.err = err
 			return r
 		}
+		r.key = append(append([]byte(nil), prefix...), encodeNumID(r.afterNum)...)
 	}
+	return r
+}
+
+// useScopedCandidates switches once, before stepping past the first boundary
+// entry. Already emitted numeric IDs are excluded, preserving index order and
+// cursor behavior without reading or buffering another database's entries.
+func (r *nodeIndexReader) useScopedCandidates() {
+	r.index.Close()
+	r.index = nil
 	// The dictionary is already persisted by every numeric-index writer and
 	// retains entries needed by MVCC history. Use its snapshot, not the live
 	// dictionary cache: a later deletion must not hide a BEGIN-visible node.
-	entries := txn.NewIterator(badgerPrefixIteratorOptions(nodeIDForwardKey(NodeID(scope))))
+	entries := r.txn.NewIterator(badgerPrefixIteratorOptions(nodeIDForwardKey(NodeID(r.scope))))
 	defer entries.Close()
 	for entries.Rewind(); entries.Valid(); entries.Next() {
 		item := entries.Item()
@@ -84,16 +98,15 @@ func (b *BadgerEngine) newNodeIndexReader(txn *badger.Txn, scope string, prefix 
 			return nil
 		}); err != nil {
 			r.err = err
-			return r
+			return
 		}
-		if num != 0 && (after == "" || num > afterNum) {
+		if num > r.afterNum {
 			r.candidates = append(r.candidates, nodeIndexCandidate{id: NodeID(item.Key()[1:]), num: num})
 		}
 	}
 	sort.Slice(r.candidates, func(i, j int) bool { return r.candidates[i].num < r.candidates[j].num })
-	r.key = make([]byte, len(prefix)+8)
-	copy(r.key, prefix)
-	return r
+	r.key = make([]byte, len(r.prefix)+8)
+	copy(r.key, r.prefix)
 }
 
 func (r *nodeIndexReader) Next() bool {
@@ -118,12 +131,21 @@ func (r *nodeIndexReader) Next() bool {
 			item := r.index.Item()
 			key := item.Key()
 			if len(key) != len(r.prefix)+8 {
+				if r.scope != "" {
+					r.useScopedCandidates()
+					return r.Next()
+				}
 				continue
 			}
 			num := binary.BigEndian.Uint64(key[len(r.prefix):])
 			id, ok := r.engine.idDict.lookupNodeIDByNum(num)
+			if r.scope != "" && (!ok || id == "" || !nodeIDInScope(id, r.scope)) {
+				r.useScopedCandidates()
+				return r.Next()
+			}
 			if ok && id != "" {
 				r.item, r.id = item, id
+				r.afterNum = num
 				return true
 			}
 		}
