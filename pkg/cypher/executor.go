@@ -2165,6 +2165,9 @@ func graphReadingExpression(cypher string) string {
 			from = at + len(keyword)
 		}
 	}
+	if comprehension, _ := classifyPatternComprehensions(cypher); comprehension {
+		return graphReadingPatternComprehension
+	}
 	pattern := ""
 	for i := 0; i < len(cypher); i++ {
 		switch cypher[i] {
@@ -2185,95 +2188,8 @@ func graphReadingExpression(cypher string) string {
 			}
 			continue
 		}
-		if patternComprehensionStartsAt(cypher, i) {
-			return graphReadingPatternComprehension
-		}
 	}
 	return pattern
-}
-
-// patternComprehensionStartsAt reports whether a pattern comprehension
-// starts at cypher[i]: a '[' followed (after gaps) by a node pattern, '[('
-// … '|'. A subscript such as arr[(i)] has the '[' glued directly to the
-// expression atom it indexes, so it does not qualify; whitespace before the
-// '[' starts a new construct. A relationship or comprehension separator must
-// follow the first node pattern; [(1)] is an ordinary list.
-func patternComprehensionStartsAt(cypher string, i int) bool {
-	if cypher[i] != '[' {
-		return false
-	}
-	next := queryGapEnd(cypher, i+1)
-	if next >= len(cypher) || cypher[next] != '(' {
-		return false
-	}
-	if i > 0 && !isASCIISpace(cypher[i-1]) && (isIdentByte(cypher[i-1]) || cypher[i-1] == ']' || cypher[i-1] == ')' ||
-		cypher[i-1] == '\'' || cypher[i-1] == '"' || cypher[i-1] == '`' || cypher[i-1] == '$') {
-		return false
-	}
-	close := findMatchingDelimiter(cypher, next, '(', ')')
-	if close < 0 {
-		return false
-	}
-	after := queryGapEnd(cypher, close+1)
-	return relationshipPatternFollows(cypher, after) || after < len(cypher) &&
-		(cypher[after] == '|' || startsWithKeywordFold(cypher[after:], "WHERE"))
-}
-
-// singleNodePatternComprehension reports whether cypher holds a pattern
-// comprehension whose pattern is one node, [(n) | …] or [(n) WHERE … | …]:
-// Cypher's grammar (openCypher, Neo4j, the ANTLR parser) needs a
-// relationship in it, so it is a syntax error on both parsers.
-func singleNodePatternComprehension(cypher string) bool {
-	if strings.IndexByte(cypher, '[') < 0 {
-		return false
-	}
-	for i := 0; i < len(cypher); i++ {
-		switch cypher[i] {
-		case '\'', '"', '`':
-			i = skipCypherQuotedText(cypher, i, cypher[i]) - 1
-			continue
-		case '/':
-			if end := queryCommentEnd(cypher, i); end >= 0 {
-				i = end - 1
-			}
-			continue
-		}
-		if !patternComprehensionStartsAt(cypher, i) {
-			continue
-		}
-		open := queryGapEnd(cypher, i+1)
-		close := findMatchingDelimiter(cypher, open, '(', ')')
-		if close < 0 {
-			continue
-		}
-		after := queryGapEnd(cypher, close+1)
-		if after < len(cypher) && (cypher[after] == '|' || startsWithKeywordFold(cypher[after:], "WHERE")) {
-			return true
-		}
-	}
-	return false
-}
-
-// relationshipPatternFollows reports whether a relationship pattern starts
-// at cypher[at] (after gaps): "<-" followed by "-" or "[", or "-" followed
-// by "-", "[" or ">".
-func relationshipPatternFollows(cypher string, at int) bool {
-	at = queryGapEnd(cypher, at)
-	if at+1 >= len(cypher) {
-		return false
-	}
-	if cypher[at] == '<' {
-		if cypher[at+1] != '-' {
-			return false
-		}
-		next := queryGapEnd(cypher, at+2)
-		return next < len(cypher) && (cypher[next] == '-' || cypher[next] == '[')
-	}
-	if cypher[at] != '-' {
-		return false
-	}
-	next := queryGapEnd(cypher, at+1)
-	return next < len(cypher) && (cypher[next] == '-' || cypher[next] == '[' || cypher[next] == '>')
 }
 
 // statementReadsGraphText reports whether cypher reads the graph: a MATCH,
