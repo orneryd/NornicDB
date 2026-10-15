@@ -159,7 +159,7 @@ import (
 //   - Fast for sparse graphs
 //   - Memory: ~O(nodes + edges)
 func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	return e.callGdsLinkPredictionTopology(args, "adamic_adar")
+	return e.callGdsLinkPredictionTopology(ctx, args, "adamic_adar")
 }
 
 // callGdsLinkPredictionCommonNeighbors implements gds.linkPrediction.commonNeighbors.stream
@@ -251,22 +251,22 @@ func (e *StorageExecutor) callGdsLinkPredictionAdamicAdar(ctx context.Context, a
 //   - Fastest link prediction algorithm
 //   - Memory: ~O(nodes + edges)
 func (e *StorageExecutor) callGdsLinkPredictionCommonNeighbors(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	return e.callGdsLinkPredictionTopology(args, "common_neighbors")
+	return e.callGdsLinkPredictionTopology(ctx, args, "common_neighbors")
 }
 
 // callGdsLinkPredictionResourceAllocation implements gds.linkPrediction.resourceAllocation.stream
 func (e *StorageExecutor) callGdsLinkPredictionResourceAllocation(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	return e.callGdsLinkPredictionTopology(args, "resource_allocation")
+	return e.callGdsLinkPredictionTopology(ctx, args, "resource_allocation")
 }
 
 // callGdsLinkPredictionPreferentialAttachment implements gds.linkPrediction.preferentialAttachment.stream
 func (e *StorageExecutor) callGdsLinkPredictionPreferentialAttachment(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	return e.callGdsLinkPredictionTopology(args, "preferential_attachment")
+	return e.callGdsLinkPredictionTopology(ctx, args, "preferential_attachment")
 }
 
 // callGdsLinkPredictionJaccard implements gds.linkPrediction.jaccard.stream (not standard GDS but useful)
 func (e *StorageExecutor) callGdsLinkPredictionJaccard(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	return e.callGdsLinkPredictionTopology(args, "jaccard")
+	return e.callGdsLinkPredictionTopology(ctx, args, "jaccard")
 }
 
 // callGdsLinkPredictionPredict implements gds.linkPrediction.predict.stream (hybrid scoring)
@@ -279,7 +279,7 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 		return nil, err
 	}
 
-	graph, degree, err := e.linkPredictionGraph(config)
+	graph, degree, err := e.linkPredictionGraph(ctx, config)
 	if err != nil {
 		return nil, err
 	}
@@ -314,7 +314,7 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 	})
 
 	// Get predictions
-	predictions := scorer.Predict(context.Background(), graph, config.SourceNode, config.candidateLimit())
+	predictions := scorer.Predict(ctx, graph, config.SourceNode, config.candidateLimit())
 	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.HybridPrediction) storage.NodeID { return p.TargetID })
 
 	// Format hybrid results
@@ -326,12 +326,12 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 // scores are GDS's values (gds.alpha.linkprediction.*), not rescaled: a
 // degree counts relationships, a parallel one again and a self-loop once
 // (#1192).
-func (e *StorageExecutor) callGdsLinkPredictionTopology(args []interface{}, algorithm string) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsLinkPredictionTopology(ctx context.Context, args []interface{}, algorithm string) (*ExecuteResult, error) {
 	config, err := linkPredictionConfigFromArguments(args)
 	if err != nil {
 		return nil, err
 	}
-	graph, degree, err := e.linkPredictionGraph(config)
+	graph, degree, err := e.linkPredictionGraph(ctx, config)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +347,7 @@ func (e *StorageExecutor) callGdsLinkPredictionTopology(args []interface{}, algo
 // relationshipTypes (every one without); undirected. The degree function
 // counts a node's relationships in that graph, a self-loop once. The
 // sourceNode must be in the graph.
-func (e *StorageExecutor) linkPredictionGraph(config *linkPredictionConfig) (linkpredict.Graph, linkpredict.DegreeFunc, error) {
+func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkPredictionConfig) (linkpredict.Graph, linkpredict.DegreeFunc, error) {
 	var graph linkpredict.Graph
 	var degree linkpredict.DegreeFunc
 	if config.GraphName != "" {
@@ -387,7 +387,7 @@ func (e *StorageExecutor) linkPredictionGraph(config *linkPredictionConfig) (lin
 	} else {
 		build := linkpredict.DefaultBuildConfig()
 		build.RelationshipTypes = config.RelationshipTypes
-		built, err := linkpredict.BuildGraphFromEngineOptimized(context.Background(), e.storage, build)
+		built, err := linkpredict.BuildGraphFromEngineOptimized(ctx, e.storage, build)
 		if err != nil {
 			return nil, nil, localizedError(localization.CypherGraphProceduresBuildGraphFailed(err), err)
 		}

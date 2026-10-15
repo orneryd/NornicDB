@@ -224,7 +224,10 @@ func (b *GraphBuilder) buildStreaming(ctx context.Context) (Graph, int, int, err
 		chunk := nodes[start:end]
 
 		// Process chunk with parallel edge fetching
-		edgesInChunk := b.processChunkParallel(ctx, graph, &graphMu, chunk)
+		edgesInChunk, err := b.processChunkParallel(ctx, graph, &graphMu, chunk)
+		if err != nil {
+			return nil, 0, 0, err
+		}
 		atomic.AddInt64(&totalEdges, int64(edgesInChunk))
 
 		processed = end
@@ -249,23 +252,30 @@ func (b *GraphBuilder) processChunkParallel(
 	graph Graph,
 	graphMu *sync.RWMutex,
 	chunk []*storage.Node,
-) int {
+) (int, error) {
 	var wg sync.WaitGroup
 	var edgeCount int64
+	var readErr error
+	var firstError sync.Once
 
 	// Semaphore to limit concurrent workers
 	sem := make(chan struct{}, b.config.WorkerCount)
 
+schedule:
 	for _, node := range chunk {
 		// Check cancellation
 		select {
 		case <-ctx.Done():
-			return int(edgeCount)
+			break schedule
 		default:
 		}
 
+		select {
+		case <-ctx.Done():
+			break schedule
+		case sem <- struct{}{}:
+		}
 		wg.Add(1)
-		sem <- struct{}{} // Acquire semaphore
 
 		go func(nodeID storage.NodeID) {
 			defer wg.Done()
@@ -273,6 +283,7 @@ func (b *GraphBuilder) processChunkParallel(
 
 			edges, err := b.storage.GetOutgoingEdges(nodeID)
 			if err != nil {
+				firstError.Do(func() { readErr = fmt.Errorf("failed to read relationships of node %q: %w", nodeID, err) })
 				return
 			}
 
@@ -295,8 +306,15 @@ func (b *GraphBuilder) processChunkParallel(
 		}(node.ID)
 	}
 
+	// Never return a partially built graph while a worker can still mutate it.
 	wg.Wait()
-	return int(edgeCount)
+	if readErr != nil {
+		return 0, readErr
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return int(atomic.LoadInt64(&edgeCount)), nil
 }
 
 // =============================================================================
