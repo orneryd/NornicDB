@@ -390,14 +390,30 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 		if !ok || len(clauses) == 0 {
 			continue
 		}
-		body := subqueryScope{}
-		if scoped {
-			body.visible = initial
+		retained := initial
+		importing := false
+		if !scoped {
+			// Unlisted outer names remain implicit imports under the documented
+			// gh648 extension. A leading importing WITH explicitly projects its
+			// listed names (including *), so those names follow ordinary WITH
+			// scope instead. A branch's own declarations never become imports.
+			retained = maps.Clone(initial)
+			_, importing, _ = branchLeadingWithImport(branch, func(name string) bool { _, exists := initial[name]; return exists }, false)
+			if importing {
+				for name := range projectTypeScope(initial, cypher25, clauses[0].text) {
+					delete(retained, name)
+				}
+			}
+			for name := range retained {
+				if branchDeclaresVariable(branch, name) {
+					delete(retained, name)
+				}
+			}
 		}
+		body := subqueryScope{visible: retained}
 		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, body)
 		if err != nil {
 			if !scoped {
-				_, importing, _ := branchLeadingWithImport(branch, func(name string) bool { _, exists := outer[name]; return exists }, false)
 				if detail, classified := err.(interface{ BoltErrorDetail() string }); importing && classified && detail.BoltErrorDetail() == "UndefinedVariable" {
 					return nil, err
 				}
