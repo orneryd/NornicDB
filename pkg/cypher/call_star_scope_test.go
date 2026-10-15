@@ -15,8 +15,8 @@ import (
 func TestScopedCallAggregateCommonTypes(t *testing.T) {
 	for _, tc := range []struct {
 		name, original, rebound, tail string
-		rows                         []interface{}
-		want                         [][]interface{}
+		rows                          []interface{}
+		want                          [][]interface{}
 	}{
 		{"map_kind", "{factor:11}", "{factor:'s'}", "RETURN x*3 AS a", nil, nil},
 		{"different_keys", "{factor:11}", "{other:2}", "RETURN x*3 AS a", nil, nil},
