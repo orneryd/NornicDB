@@ -379,9 +379,6 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				return types, false, err
 			}
 			if alias := unwindBindingName(clause.text); alias != "" {
-				if err := enclosing.redeclarationError(normalizeProjectionColumnName(alias)); err != nil {
-					return types, false, err
-				}
 				// FOR is new syntax: unlike the pre-existing permissive UNWIND,
 				// it must not redeclare an already-bound variable, as in Neo4j.
 				if startsWithKeywordFold(clause.text, "FOR") {
