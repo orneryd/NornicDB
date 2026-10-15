@@ -100,9 +100,11 @@ func TestProcedureCatalogMigrationFailuresPreserveRecord(t *testing.T) {
 	for _, stage := range []string{"read", "create", "delete"} {
 		t.Run(stage, func(t *testing.T) {
 			base := newTestMemoryEngine(t)
-			record := persistedProcedureRecord{Name: "custom.Report"}
-			legacy := &storage.Node{ID: storage.NodeID(procedureCatalogPrefix + "custom.report"), Labels: []string{procedureCatalogLabel}}
-			_, err := base.CreateNode(legacy)
+			record := persistedProcedureRecord{Name: "custom.Report", Mode: "READ", Body: "RETURN 1 AS v", Signature: "custom.Report() :: (v :: INTEGER)"}
+			blob, err := msgpack.Marshal(record)
+			require.NoError(t, err)
+			legacy := &storage.Node{ID: storage.NodeID(procedureCatalogPrefix + "custom.report"), Labels: []string{procedureCatalogLabel}, Properties: map[string]interface{}{"name": record.Name, "record": base64.StdEncoding.EncodeToString(blob)}}
+			_, err = base.CreateNode(legacy)
 			require.NoError(t, err)
 			fault := errors.New("catalog " + stage + " unavailable")
 			engine := &procedureIdentityFaultEngine{Engine: base}
@@ -114,7 +116,7 @@ func TestProcedureCatalogMigrationFailuresPreserveRecord(t *testing.T) {
 			case "delete":
 				engine.deleteErr = fault
 			}
-			exec := &StorageExecutor{storage: engine}
+			exec := NewStorageExecutor(engine)
 			_, err = exec.migrateProcedureCatalogIdentity(engine, legacy, record)
 			require.Error(t, err)
 			_, err = base.GetNode(legacy.ID)

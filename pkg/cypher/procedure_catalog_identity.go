@@ -3,6 +3,7 @@ package cypher
 import (
 	"encoding/base64"
 	"errors"
+	"slices"
 	"strings"
 
 	nerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -24,6 +25,18 @@ func (e *StorageExecutor) migrateProcedureCatalogIdentity(store storage.Engine, 
 		return false, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
 	}
 	superseded := existing != nil
+	if superseded {
+		destination, err := decodeProcedureCatalogRecord(existing)
+		if err != nil {
+			return false, err
+		}
+		if destination.Name != record.Name || !slices.Contains(existing.Labels, procedureCatalogLabel) {
+			return false, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(existing.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
+		}
+		if _, _, _, err := e.compilePersistedProcedure(destination); err != nil {
+			return false, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(existing.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
+		}
+	}
 	if !superseded {
 		migrated := *node
 		migrated.ID = canonical
