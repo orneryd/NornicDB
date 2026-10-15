@@ -58,6 +58,8 @@ type Service struct {
 	allowDatabase    func(context.Context, string) error
 	resolveDatabase  func(context.Context, string) (DatabaseDependencies, error)
 	resolveQID       func(owner, qid, requestedDatabase string) (string, error)
+
+	prepareQueryEmbedding func(context.Context, string) (EmbedQueryFunc, ChunkQueryFunc)
 }
 
 type Config struct {
@@ -73,6 +75,9 @@ type Config struct {
 	AllowDatabase func(context.Context, string) error
 	// ResolveDatabase returns search dependencies bound to a canonical database.
 	ResolveDatabase func(context.Context, string) (DatabaseDependencies, error)
+	// PrepareQueryEmbedding binds both callbacks once for a new text search.
+	// ID starts, continuation pulls and discards never prepare a query model.
+	PrepareQueryEmbedding func(context.Context, string) (EmbedQueryFunc, ChunkQueryFunc)
 	// ResolveContinuationDatabase validates a qid and returns its database binding.
 	ResolveContinuationDatabase func(owner, qid, requestedDatabase string) (string, error)
 }
@@ -108,6 +113,8 @@ func NewService(cfg Config, embedQuery EmbedQueryFunc, chunkQuery ChunkQueryFunc
 		allowDatabase:    cfg.AllowDatabase,
 		resolveDatabase:  cfg.ResolveDatabase,
 		resolveQID:       cfg.ResolveContinuationDatabase,
+
+		prepareQueryEmbedding: cfg.PrepareQueryEmbedding,
 	}, nil
 }
 
@@ -153,6 +160,9 @@ func (s *Service) SearchText(ctx context.Context, req *gen.SearchTextRequest) (*
 	}
 	if dependencies.Searcher == nil {
 		return nil, s.localizedStatus(ctx, codes.Unavailable, localization.SearcherRequired())
+	}
+	if s.prepareQueryEmbedding != nil && req.Qid == "" && !req.Discard && req.Mode != string(search.SearchContinuationID) {
+		dependencies.EmbedQuery, dependencies.ChunkQuery = s.prepareQueryEmbedding(ctx, database)
 	}
 	if continuationRequested {
 		continuable, ok := dependencies.Searcher.(continuationSearcher)

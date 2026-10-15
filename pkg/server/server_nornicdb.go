@@ -532,9 +532,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	const embedTimeout = 8 * time.Second
 
-	queryEmbedding := s.db.QueryEmbeddingForDB(dbName)
+	var queryEmbedding nornicdb.QueryEmbeddingSnapshot
 	queryChunks := []string(nil)
 	if !idStart {
+		queryEmbedding = s.db.QueryEmbeddingForDB(dbName)
 		queryChunks, err = queryEmbedding.ChunkQuery(ctx, req.Query)
 		if err != nil {
 			s.writeQueryChunkingFailed(w, r)
@@ -560,7 +561,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if req.Relationships {
 		embeddings = searchSvc.RelationshipEmbeddingCount()
 	}
-	if embeddings > 0 {
+	if !idStart && embeddings > 0 {
 		embedQuery = func(parent context.Context, query string) ([]float32, error) {
 			embedCalls++
 			embedStart := time.Now()

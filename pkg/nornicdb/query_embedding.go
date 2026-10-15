@@ -125,7 +125,7 @@ func (db *DB) embedQueryChunksForDBWithEmbedder(ctx context.Context, dbName stri
 // EmbedQueryChunks returns embedder-safe query chunks and one embedding per chunk.
 // This is the preferred API for search paths that should compare best-of chunks.
 func (db *DB) EmbedQueryChunks(ctx context.Context, query string) ([]string, [][]float32, error) {
-	emb := db.globalEmbedder()
+	emb := db.queryEmbedderForRequest(ctx)
 	if emb == nil {
 		return nil, nil, nil
 	}
@@ -154,7 +154,7 @@ func (db *DB) chunkQueryWithEmbedder(ctx context.Context, emb cypher.QueryEmbedd
 // EmbedQuery generates an embedding for a search query.
 // Returns nil if embeddings are not enabled or embedder is not yet set (e.g. still loading).
 func (db *DB) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
-	emb := db.globalEmbedder()
+	emb := db.queryEmbedderForRequest(ctx)
 	if emb == nil {
 		return nil, nil // Not an error - just no embedding available
 	}
@@ -163,7 +163,7 @@ func (db *DB) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
 
 // ChunkQuery splits a search query using the configured global embedder.
 func (db *DB) ChunkQuery(ctx context.Context, query string) ([]string, error) {
-	emb := db.globalEmbedder()
+	emb := db.queryEmbedderForRequest(ctx)
 	if emb == nil {
 		return []string{query}, nil
 	}
@@ -177,6 +177,39 @@ func (db *DB) globalEmbedder() cypher.QueryEmbedder {
 		return nil
 	}
 	return db.cypherExecutor.GetEmbedder()
+}
+
+type queryEmbeddingRequestKey struct{}
+
+type queryEmbeddingRequestContext struct {
+	context.Context
+	db       *DB
+	embedder cypher.QueryEmbedder
+}
+
+func (c *queryEmbeddingRequestContext) Value(key any) any {
+	if _, ok := key.(queryEmbeddingRequestKey); ok {
+		return c
+	}
+	return c.Context.Value(key)
+}
+
+// WithQueryEmbeddingSnapshot binds the current global query provider to a text
+// request. EmbedQuery, ChunkQuery and EmbedQueryChunks reuse it, including nil
+// during startup. Nested requests on this DB keep the outer snapshot. Call only
+// when text must be embedded; ID and numeric-vector operations need no binding.
+func (db *DB) WithQueryEmbeddingSnapshot(ctx context.Context) context.Context {
+	if snapshot, ok := ctx.Value(queryEmbeddingRequestKey{}).(*queryEmbeddingRequestContext); ok && snapshot.db == db {
+		return ctx
+	}
+	return &queryEmbeddingRequestContext{Context: ctx, db: db, embedder: db.globalEmbedder()}
+}
+
+func (db *DB) queryEmbedderForRequest(ctx context.Context) cypher.QueryEmbedder {
+	if snapshot, ok := ctx.Value(queryEmbeddingRequestKey{}).(*queryEmbeddingRequestContext); ok && snapshot.db == db {
+		return snapshot.embedder
+	}
+	return db.globalEmbedder()
 }
 
 // EmbedQueryForDB generates an embedding for a search query using the embedder for the given database.
