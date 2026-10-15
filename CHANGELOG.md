@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Enforce node and relationship list-property uniqueness across typed and generic list representations, preserving
+  exact large integer identities, composite values, transaction checks and buffered recovery (#1316).
+
 - Keep buffered adjacency reads stable while a flush publishes caches: pending edges shadow the same persisted IDs,
   and acknowledged writes retain their query-cache revision when becoming durable. This prevents duplicate grouped
   counts and repeated cold `products_per_category` executions during the publication tail (#1316).

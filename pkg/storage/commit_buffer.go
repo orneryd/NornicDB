@@ -1425,8 +1425,9 @@ func (w *WriteBehindBuffer) NodeDeletedOverlay(nodeID NodeID) bool {
 }
 
 // EdgeAdjacencyOverlay returns the buffered live edges adjacent to nodeID
-// (outgoing or incoming) plus every buffered-deleted edge ID, which committed
-// adjacency scans must suppress. nodeDeleted reports that a buffered delete
+// (outgoing or incoming) plus every buffered edge ID that committed adjacency
+// scans must suppress, including live IDs shadowed by the buffer.
+// nodeDeleted reports that a buffered delete
 // hides the node itself, which hides all of its committed adjacency too.
 // The returned edge pointers are buffer-owned; callers must copy them.
 func (w *WriteBehindBuffer) EdgeAdjacencyOverlay(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
