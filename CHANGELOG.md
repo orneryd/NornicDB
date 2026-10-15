@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Align relationship `decay()` and `decayScore()` VERSION anchors with update time and resolve relationship
   property options through edge-type rules, sharing one entity/property scoring dispatch (#1055).
 
+### Upgrade metadata fixes
+
+- Preserve complete node and relationship metadata during legacy-ID migration, including named embeddings,
+  embedding storage state and visibility suppression. Anonymization now preserves entity suppression while
+  retaining its existing property redaction and embedding behavior (#1228).
+
 ### Documentation
 
 - Correct release-helper PR guidance to require manual workflow dispatch and administrator approval instead of the retired `ci:run` label.
