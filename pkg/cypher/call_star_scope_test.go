@@ -2,12 +2,49 @@ package cypher
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
+
+// Rebinding an imported name is a NornicDB extension. Its current value and
+// type survive later WITH horizons; Neo4j rejects imported-name shadowing.
+func TestScopedCallReboundImportType(t *testing.T) {
+	for _, tc := range []struct {
+		name, query string
+		want        [][]interface{}
+	}{
+		{"map_to_integer", "WITH {factor:11} AS x CALL (%s) { WITH 2 AS x WITH 1 AS ignored RETURN x*3 AS a } RETURN a", [][]interface{}{{int64(6)}}},
+		{"integer_to_map", "WITH 11 AS x CALL (%s) { WITH {factor:2} AS x WITH 1 AS ignored RETURN x.factor*3 AS a } RETURN x AS original, a", [][]interface{}{{int64(11), int64(6)}}},
+		{"distinct", "WITH {factor:11} AS x CALL (%s) { WITH 2 AS x WITH DISTINCT 1 AS ignored RETURN x*3 AS a } RETURN a", [][]interface{}{{int64(6)}}},
+		{"aggregation", "WITH {factor:11} AS x CALL (%s) { WITH 2 AS x UNWIND [1,2] AS y WITH count(*) AS c RETURN x*c AS a } RETURN a", [][]interface{}{{int64(4)}}},
+		{"unwind", "WITH {factor:11} AS x CALL (%s) { UNWIND [2] AS x WITH 1 AS ignored RETURN x*3 AS a } RETURN a", [][]interface{}{{int64(6)}}},
+	} {
+		for _, imports := range []string{"*", "x"} {
+			for _, explicit := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/imports=%s/explicit=%t", tc.name, imports, explicit), func(t *testing.T) {
+					exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_rebound"))
+					ctx := context.Background()
+					if explicit {
+						_, err := exec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+						t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+					}
+					result, err := exec.Execute(ctx, fmt.Sprintf(tc.query, imports), nil)
+					require.NoError(t, err)
+					require.Equal(t, tc.want, result.Rows)
+					if explicit {
+						_, err = exec.Execute(ctx, "COMMIT", nil)
+						require.NoError(t, err)
+					}
+				})
+			}
+		}
+	}
+}
 
 // Answers independently checked against Neo4j 5.26.30 in both transaction modes.
 func TestCallStarScope(t *testing.T) {
