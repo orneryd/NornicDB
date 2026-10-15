@@ -354,7 +354,7 @@ func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clau
 			}
 			if path, isMap := toStringAnyMap(value); isMap {
 				if _, isPath := path["_pathResult"]; isPath {
-					return typeMismatchError(sizeArgumentTypes, pathTypeMarker{})
+					return sizeArgumentError(value)
 				}
 			}
 		}

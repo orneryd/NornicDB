@@ -21,7 +21,7 @@ func TestIssue1226MainRuntimeRegressions(t *testing.T) {
 		{name: "valid_map_keys_marker", query: "WITH {_pathResult: 1, a: 2} AS m RETURN keys(m)", rows: [][]interface{}{{[]interface{}{"_pathResult", "a"}}}},
 		{name: "length_runtime_map", query: "UNWIND [{length: 42}] AS m RETURN length(CASE WHEN true THEN m ELSE null END)", code: "Neo.ClientError.Statement.TypeError"},
 		{name: "valid_comprehension_case_shadow", setup: "CREATE (:X)", query: "MATCH (x:X) RETURN [x IN ['a'] | toUpper(CASE WHEN true THEN x ELSE x END)]", rows: [][]interface{}{{[]interface{}{"A"}}}},
-		{name: "comprehension_case_static_error", query: "RETURN [x IN [1] | toUpper(CASE WHEN true THEN x ELSE 'a' END)]", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "comprehension_case_runtime_error", query: "RETURN [x IN [1] | toUpper(CASE WHEN true THEN x ELSE 'a' END)]", code: "Neo.ClientError.Statement.TypeError"},
 		{name: "comprehension_nodes_static_error", query: "UNWIND [1] AS x RETURN [y IN [x] | nodes(y)]", code: "Neo.ClientError.Statement.SyntaxError"},
 		{name: "property_concat_predicate_filters", setup: "CREATE (:X {id: 'a'})", query: "MATCH (n:X) WHERE n.id + 'z' RETURN n.id", rows: [][]interface{}{}},
 		{name: "property_concat_and_filters", setup: "CREATE (:X {id: 'a'})", query: "MATCH (n:X) WHERE n.id + 'z' AND true RETURN n.id", rows: [][]interface{}{}},
@@ -122,12 +122,20 @@ func TestIssue1226DeletePreservesEntityPathAndStringTargets(t *testing.T) {
 				require.NoError(t, err)
 			}
 			require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "link", StartNode: "left", EndNode: "right", Type: "R"}))
-			_, err := NewStorageExecutor(engine).Execute(context.Background(), tc.query, nil)
+			result, err := NewStorageExecutor(engine).Execute(context.Background(), tc.query, nil)
 			require.NoError(t, err)
 			_, err = engine.GetNode("victim")
 			require.Equal(t, tc.nodeGone, err != nil)
 			_, err = engine.GetEdge("link")
 			require.Equal(t, tc.edgeGone, err != nil)
+			if tc.name == "path" {
+				for _, id := range []storage.NodeID{"left", "right"} {
+					_, err := engine.GetNode(id)
+					require.Error(t, err, "path endpoint survived DELETE")
+				}
+				require.Equal(t, 2, result.Stats.NodesDeleted)
+				require.Equal(t, 1, result.Stats.RelationshipsDeleted)
+			}
 		})
 	}
 }

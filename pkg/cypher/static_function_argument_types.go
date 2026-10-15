@@ -332,6 +332,9 @@ func (argument staticArgumentType) accepts(typeName string) bool {
 		}
 		return false
 	}
+	if typeName == "Number" {
+		return argument.accepts("Integer") || argument.accepts("Float")
+	}
 	isList := strings.HasPrefix(typeName, "List<")
 	if isList && argument.acceptsLists || containsString(argument.unlisted, typeName) {
 		return true
@@ -681,6 +684,8 @@ func parameterMayBeFunctionArgument(cypher string) bool {
 type staticTypeScope struct {
 	kinds  matchSemanticScope
 	values map[string]string
+	// derived preserves operator constraints of projected expressions whose exact type is unknown.
+	derived map[string]staticOperand
 	// members are the member types of the variables a WITH bound to a map
 	// literal in a Cypher 25 statement (projectStaticValueMembers).
 	members map[string]map[string]staticOperand
@@ -845,9 +850,6 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 					return nil // the comprehension owner checks its local types
 				}
 			}
-			if err := validateStaticCaseArgument(argument, expression, *scope); err != nil {
-				return err
-			}
 		}
 		typeName := scope.staticExpressionType(expression)
 		if property {
@@ -868,35 +870,6 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 		}
 		return staticArgumentMismatch(argument, typeName)
 	})
-}
-
-// validateStaticCaseArgument preserves each known non-null branch's type
-// when mixed CASE results do not have one common operator type. Nullable or
-// unknown results remain runtime checks, as in the ordinary CASE type owner.
-func validateStaticCaseArgument(argument staticArgumentType, expression string, scope staticTypeScope) error {
-	parsed, err := parseCaseExpression(expression)
-	if err != nil || strings.TrimSpace(parsed.elseResult) == "" {
-		return nil
-	}
-	results := make([]string, 0, len(parsed.whenClauses)+1)
-	for _, branch := range parsed.whenClauses {
-		results = append(results, branch.result)
-	}
-	results = append(results, parsed.elseResult)
-	types := make([]string, 0, len(results))
-	for _, result := range results {
-		typeName := scope.staticExpressionType(result)
-		if typeName == "" || typeName == "Null" {
-			return nil
-		}
-		types = append(types, typeName)
-	}
-	for _, typeName := range types {
-		if !argument.accepts(typeName) {
-			return staticArgumentMismatch(argument, typeName)
-		}
-	}
-	return nil
 }
 
 // staticPropertyValueType is the static type of a node's or relationship's

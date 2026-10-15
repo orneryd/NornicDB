@@ -133,6 +133,18 @@ func (types typeScope) kinds() matchSemanticScope {
 func (types typeScope) static(cypher25 bool) staticTypeScope {
 	scope := staticTypeScope{kinds: types.kinds(), complete: true, cypher25: cypher25}
 	for name, operand := range types {
+		if operand.kind == "" && operand.nonInteger {
+			if scope.derived == nil {
+				scope.derived = make(map[string]staticOperand)
+			}
+			scope.derived[name] = operand
+			if operand.display != "" {
+				if scope.values == nil {
+					scope.values = make(map[string]string)
+				}
+				scope.values[name] = operand.display
+			}
+		}
 		if typeName := operand.typeName(); typeName != "" && !isEntityTypeName(typeName) {
 			if scope.values == nil {
 				scope.values = make(map[string]string)
@@ -164,6 +176,9 @@ func typeScopeOf(scope staticTypeScope) typeScope {
 	for name, members := range scope.members {
 		operand := types[name]
 		operand.members = members
+		types[name] = operand
+	}
+	for name, operand := range scope.derived {
 		types[name] = operand
 	}
 	return types

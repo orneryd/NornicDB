@@ -673,10 +673,12 @@ func withoutLocalVariables(scope staticTypeScope, text string, at int) (staticTy
 	}
 	local := scope
 	local.kinds, local.values, local.members = maps.Clone(scope.kinds), maps.Clone(scope.values), maps.Clone(scope.members)
+	local.derived = maps.Clone(scope.derived)
 	for _, name := range shadowed {
 		delete(local.kinds, name)
 		delete(local.values, name)
 		delete(local.members, name)
+		delete(local.derived, name)
 	}
 	return local, true
 }
