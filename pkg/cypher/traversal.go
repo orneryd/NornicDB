@@ -273,6 +273,9 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	if matches == nil {
 		return result, localizedError(localization.CypherMatchingTraversalPatternInvalid(pattern), nil)
 	}
+	if !matches.IsChained && len(seedNodes) > 0 && len(endSeedNodes) == 1 {
+		matches.boundEndNodeID = endSeedNodes[0].ID
+	}
 	returnItems = expandTraversalWildcardReturnItems(returnItems, matches, pathVariable)
 	for _, item := range returnItems {
 		result.Columns = append(result.Columns, item.column())
@@ -1092,6 +1095,8 @@ type TraversalMatch struct {
 	IsChained         bool               // True if this is a multi-segment pattern
 	PathVariable      string             // Variable name for path assignment (e.g., "path" in "path = (a)-[r]-(b)")
 	TraversalLimit    int                // Early traversal cap for LIMIT-only shapes (0 = disabled)
+	// boundEndNodeID filters endpoints before they count toward TraversalLimit.
+	boundEndNodeID storage.NodeID
 	// UnusedPropertyVariables lists pattern node variables whose properties no
 	// later clause (RETURN, WHERE) reads, so the traversal may load a named
 	// labelled endpoint by ID + labels alone. nil means "not analysed": every
@@ -1593,6 +1598,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 		}
 		traversalCtx := &TraversalContext{
 			startNode:                    startNode,
+			endNodeID:                    match.boundEndNodeID,
 			relTypes:                     match.Relationship.Types,
 			relTypeSet:                   buildRelTypeSet(match.Relationship.Types),
 			relProperties:                match.Relationship.Properties,
@@ -1664,6 +1670,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 				// Each goroutine gets its own traversal state (no shared state)
 				traversalCtx := &TraversalContext{
 					startNode:                    startNode,
+					endNodeID:                    match.boundEndNodeID,
 					relTypes:                     match.Relationship.Types,
 					relTypeSet:                   buildRelTypeSet(match.Relationship.Types),
 					relProperties:                match.Relationship.Properties,
@@ -1905,6 +1912,7 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 	}
 
 	ctx := e.newTraversalContext(traversalCtx, startNode, &match.Relationship)
+	ctx.endNodeID = match.boundEndNodeID
 	// Single-segment traversals (including each segment of a chain) share the
 	// planner's endpoint/relationship read analysis so the header and
 	// labels-only fast paths apply to chained patterns too (#1110).
