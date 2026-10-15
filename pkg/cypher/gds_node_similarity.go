@@ -201,18 +201,8 @@ func readNodeSimilarityConfig(ctx context.Context, proj *GraphProjection, option
 		if strings.TrimSpace(value) == "" {
 			return config, localizedError(localization.CypherGraphProceduresInvalidComponentProperty(), nil)
 		}
-		var available []string
-		for _, keys := range proj.NodePropertyKeys {
-			for _, key := range keys {
-				available = appendUnique(available, key)
-			}
-		}
-		sort.Strings(available)
-		labels := config.nodeLabels
-		if len(labels) == 0 {
-			labels = proj.Labels
-		}
-		if !containsString(commonKeys(proj.NodePropertyKeys, labels), value) {
+		selected, available := proj.nodePropertyAvailability(config.nodeLabels)
+		if !containsString(selected, value) {
 			return config, localizedError(localization.CypherGraphProceduresComponentPropertyNotFound(value, "["+strings.Join(available, ", ")+"]"), nil)
 		}
 		config.componentProperty = value

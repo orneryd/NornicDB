@@ -221,12 +221,26 @@ func gdsProjectConfiguration(procedure string, args []interface{}, nodeSpecs, re
 		key   string
 		specs []gdsElementSpec
 	}{{"nodeProperties", nodeSpecs}, {"relationshipProperties", relSpecs}} {
+		hasMappings := false
 		for i := range kind.specs {
 			properties, err := gdsPropertySpecs(c.value(kind.key), kind.specs[i].aggregation)
 			if err != nil {
 				return nil, err
 			}
 			kind.specs[i].properties = append(kind.specs[i].properties, properties...)
+			hasMappings = hasMappings || len(properties) > 0
+		}
+		if kind.key == "relationshipProperties" && hasMappings && len(kind.specs) > 1 {
+			// GDS's addPropertyMappings rebuilds RelationshipProjections
+			// through a default HashMap before creating import contexts.
+			names := make([]string, len(kind.specs))
+			byName := make(map[string]gdsElementSpec, len(kind.specs))
+			for i, spec := range kind.specs {
+				names[i], byName[spec.name] = spec.name, spec
+			}
+			for i, name := range gdsJavaMapOrder(names, 31, 16, gdsJavaMapPut) {
+				kind.specs[i] = byName[name]
+			}
 		}
 	}
 	jobID, err := c.jobID()
