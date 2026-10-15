@@ -193,7 +193,7 @@ func TestDynamicTokenBranches(t *testing.T) {
 
 	// Statements: a relationship's dynamic type, a MERGE's row value.
 	for query, code := range map[string]string{
-		"MATCH ()-[r:$(null)]->() RETURN r":                 "Neo.ClientError.Statement.SyntaxError",
+		"MATCH ()-[r:$(null)]->() RETURN r":                  "Neo.ClientError.Statement.SyntaxError",
 		"WITH null AS l MERGE (n:$(l) {k: 1}) RETURN n":      "Neo.ClientError.Statement.TypeError",
 		"WITH 'A' AS l MATCH (n:DB) SET n[1 +] = 1 RETURN n": "Neo.ClientError.Statement.SyntaxError",
 	} {
@@ -219,8 +219,25 @@ func TestDynamicTokenBranches(t *testing.T) {
 	_, _, err = exec.pipelineApplyRowDynamicMerge(ctx, []pipelineRow{{"l": int64(1)}}, "MERGE (n:$(l) {k: 1})", "(n:$(l) {k: 1})")
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
 
-	// A store that can't write: REMOVE reports it.
+	// Removing an absent property is a no-op even when the store rejects writes.
 	failing := NewStorageExecutor(&updateErrorEngine{Engine: store, nodeErr: context.DeadlineExceeded, edgeErr: context.DeadlineExceeded})
+	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n.k", result)
+	require.NoError(t, err)
+	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, "REMOVE r.k", result)
+	require.NoError(t, err)
+
+	// Seed real persisted properties so REMOVE must write and report rejection.
+	node, err = store.GetNode(node.ID)
+	require.NoError(t, err)
+	node.Properties["k"] = int64(1)
+	require.NoError(t, store.UpdateNode(node))
+	edge, err = store.GetEdge(edge.ID)
+	require.NoError(t, err)
+	if edge.Properties == nil {
+		edge.Properties = make(map[string]interface{})
+	}
+	edge.Properties["k"] = int64(1)
+	require.NoError(t, store.UpdateEdge(edge))
 	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n.k", result)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, "REMOVE r.k", result)
