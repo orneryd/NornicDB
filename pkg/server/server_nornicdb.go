@@ -580,16 +580,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// the first lazy request: by the time we reach EmbeddingCount() and
 	// the embedding decision, the in-memory ANN substrate is populated.
 	if !req.Relationships && !continuationResume && !idStart && !searchStatus.Ready && !searchStatus.LazyTriggerNeeded {
-		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
-			"error":          search.ErrSearchIndexBuilding.Error(),
-			"database":       dbName,
-			"bm25_enabled":   searchStatus.BM25Enabled,
-			"vector_enabled": searchStatus.VectorEnabled,
-			"search_status":  searchStatus,
-			"retryable":      true,
-			"http_code":      http.StatusServiceUnavailable,
-			"request_status": "search_not_ready",
-		})
+		s.writeSearchNotReady(w, dbName, searchStatus)
 		return
 	}
 
@@ -776,7 +767,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			}))
 		}
 		if errors.Is(err, search.ErrSearchIndexBuilding) {
-			s.writeBoundaryError(w, r, http.StatusServiceUnavailable, err, ErrServiceUnavailable)
+			// Readiness can change after the initial gate while embedding the
+			// query. Preserve the same retry contract for that later failure.
+			s.writeSearchNotReady(w, dbName, s.db.GetDatabaseSearchStatus(dbName))
 			return
 		}
 		if continuationRequested {
