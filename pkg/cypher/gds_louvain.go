@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -110,14 +109,8 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		}
 	}
 	if seedProperty != "" {
-		var available []string
-		for _, keys := range projection.NodePropertyKeys {
-			for _, key := range keys {
-				available = appendUnique(available, key)
-			}
-		}
-		sort.Strings(available)
-		if !containsString(available, seedProperty) {
+		selected, available := projection.nodePropertyAvailability(nodeLabels)
+		if !containsString(selected, seedProperty) {
 			return nil, localizedError(localization.CypherGraphProceduresSeedPropertyNotFound(seedProperty, "["+strings.Join(available, ", ")+"]"), nil)
 		}
 		// Ask the shared typed reader to validate the requested type even
