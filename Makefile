@@ -110,7 +110,7 @@ BGE_RERANKER_URL := https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/reso
 .PHONY: build run build-ui build-binary build-admin build-localllm build-headless build-localllm-headless sync-version test lint-slog install-hooks clean images help macos-menubar macos-install macos-uninstall macos-all macos-clean macos-package macos-package-lite macos-package-full macos-package-all macos-package-signed homebrew-artifacts
 .PHONY: download-models download-bge download-qwen download-bge-reranker check-models
 .PHONY: antlr-generate antlr-clean antlr-test antlr-test-full test-parsers graphify
-.PHONY: verify verify-list verify-help release-start release-pr milestone release-status release-finish repo-settings repo-settings-diff
+.PHONY: verify verify-selftest verify-list verify-help release-start release-pr milestone release-status release-finish repo-settings repo-settings-diff
 
 # ==============================================================================
 # Model Downloads (Heimdall prerequisites)
@@ -1596,10 +1596,13 @@ VERIFY_ENV = VERIFY_BRANCH="$(BRANCH)" VERIFY_BASE="$(or $(BASE),origin/main)" \
 	VERIFY_ONLY="$(ONLY)" VERIFY_SKIP="$(SKIP)" VERIFY_ALL="$(or $(ALL),0)" \
 	VERIFY_FAIL_FAST="$(or $(FAIL_FAST),0)" VERIFY_GROUPS="$(GROUPS)" VERIFY_FETCH="$(or $(FETCH),1)"
 
-verify:
+verify-selftest:
+	@bash scripts/ci/verify_selftest.sh
+
+verify: verify-selftest
 	@$(VERIFY_ENV) bash scripts/verify.sh
 
-verify-list:
+verify-list: verify-selftest
 	@$(VERIFY_ENV) VERIFY_LIST=1 bash scripts/verify.sh
 
 verify-help:

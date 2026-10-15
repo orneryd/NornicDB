@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Verification correctness fixes
+
+- Match large changed-file lists without SIGPIPE skipping applicable verification gates; self-test path selection and compare allocation workloads at the actual merge base. Keep the main default PR base.
+
 ### Search readiness fixes
 
 - Return the documented retryable `search_not_ready` HTTP 503 response when search readiness changes during

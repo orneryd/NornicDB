@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Run the checks GitHub Actions runs for a pull request into main and for the
-# merge into main, locally, with one summary at the end. See `make verify-help`.
+# Run the checks GitHub Actions runs for a pull request into main, locally,
+# with one summary at the end. See `make verify-help`.
 #
 #   ci.yml                    localization, ui, llama-libs, build, tests
 #   cypher-conformance.yml    allocations, conformance, differential
@@ -63,7 +63,7 @@ describe() {
     llama-libs)   echo "llama CPU libs (Linux amd64 only; needs Docker)" ;;
     build)        echo "make build" ;;
     tests)        echo "all test groups with coverage, as CI (scripts/ci/test-groups.sh)" ;;
-    allocations)  echo "allocation ratchet against BASE (fixed-count workloads, 1% B/op tolerance)" ;;
+    allocations)  echo "allocation ratchet against the merge base (fixed-count workloads, 1% B/op tolerance)" ;;
     conformance)  echo "make cypher-conformance (pinned TCK corpus + regressions)" ;;
     differential) echo "make cypher-differential (fixed corpus vs pinned Neo4j; needs Docker)" ;;
     docs)         echo "mkdocs build --strict (pushes to main)" ;;
@@ -81,7 +81,7 @@ watched() {
 
 # --- which tree we verify ------------------------------------------------------
 
-cd "${ROOT}"
+cd "${ROOT}" || die "cannot enter ${ROOT}"
 if [[ "${VERIFY_FETCH:-1}" == "1" && "${BASE}" == origin/* ]]; then
   note "fetching ${BASE#origin/} from origin ..."
   git fetch --quiet origin "${BASE#origin/}" || warn "could not fetch ${BASE}; using the local copy"
@@ -126,7 +126,7 @@ CHANGED_COUNT="$(printf '%s\n' "${CHANGED}" | sed '/^$/d' | wc -l | tr -d ' ')"
 
 triggered() {
   [[ "${ALL}" == "1" ]] && return 0
-  printf '%s\n' "${CHANGED}" | grep -Eq "$(watched "$(workflow_of "$1")")"
+  grep -Eq "$(watched "$(workflow_of "$1")")" <<<"${CHANGED}"
 }
 
 selected() {
@@ -171,7 +171,7 @@ fi
 
 # --- tool checks ----------------------------------------------------------------
 
-CI_GO="$(sed -n 's/.*go-version: *"\([0-9.]*\)".*/\1/p' "${TREE}/.github/workflows/ci.yml" | head -n1)"
+CI_GO="$(sed -n 's/.*go-version: *"\([0-9.]*\)".*/\1/p' "${TREE}/.github/workflows/ci.yml" | sed -n '1p')"
 if command -v go >/dev/null; then
   local_go="$(go env GOVERSION 2>/dev/null | sed 's/^go//')"
   [[ -n "${CI_GO}" && "${local_go}" != "${CI_GO}" ]] && warn "Go ${local_go} here, CI uses ${CI_GO}"
@@ -229,7 +229,7 @@ step_tests() {
 # shallow fetch that would turn a full clone shallow.
 step_allocations() {
   local base_sha head_dir base_dir
-  base_sha="$(git rev-parse "${BASE}^{commit}")"
+  base_sha="${MERGE_BASE}"
   head_dir="${STATE_DIR}/worktrees/allocations-head"
   base_dir="${STATE_DIR}/worktrees/allocations-base"
   for pair in "${head_dir}:${HEAD_SHA}" "${base_dir}:${base_sha}"; do
@@ -240,7 +240,7 @@ step_allocations() {
       mkdir -p "${STATE_DIR}/worktrees" && git worktree add --quiet --detach "${dir}" "${sha}" || return 1
     fi
   done
-  echo "base ${base_sha:0:9} (${BASE}), head ${HEAD_SHA:0:9}"
+  echo "base ${base_sha} (merge base with ${BASE}), head ${HEAD_SHA}"
   python3 "${head_dir}/scripts/cypher-tck/allocation_ratchet.py" --self-test &&
     python3 "${head_dir}/scripts/cypher-tck/allocation_ratchet.py" \
       --base "${base_dir}" --head "${head_dir}" --parser nornic \
@@ -287,7 +287,7 @@ for step in ${PLAN}; do
     3) result="n/a" ;;
     *) result="FAIL"; FAILED=$((FAILED + 1)) ;;
   esac
-  RESULTS="${RESULTS}${step} ${result} ${elapsed}\n"
+  RESULTS="${RESULTS}${step} ${result} ${elapsed}"$'\n'
   if [[ "${result}" == "FAIL" && "${FAIL_FAST}" == "1" ]]; then
     break
   fi
@@ -295,7 +295,7 @@ done
 
 say ""
 say "${BOLD}verify summary${RESET}  ${LABEL}  ($(( (SECONDS - STARTED_ALL) / 60 ))m $(( (SECONDS - STARTED_ALL) % 60 ))s)"
-printf "${RESULTS}" | while read -r step result elapsed; do
+printf '%s' "${RESULTS}" | while read -r step result elapsed; do
   case "${result}" in
     pass) color="${GREEN}" ;;
     FAIL) color="${RED}" ;;
