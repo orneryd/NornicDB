@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before. Each named database needs write access, and an unknown, composite or `system` database rejects the request
   before anything is cleared. The UI's regenerate dialog lists the databases with checkboxes (the default one
   pre-selected) and a "Select all" box.
+### Changed
+
+- Pause scheduled develop verification/canary builds and remove PR label CI triggers. Manual Actions jobs now require administrator environment approval; existing main push and tag publishing triggers remain unchanged.
+
+### Documentation
+
+- Align contributor and agent workflows with rapid `develop` integration, release branches, and scoped maintainer
+  operational/documentation PRs into `main`, including verification and synchronization requirements.
 
 ### Fixed
 

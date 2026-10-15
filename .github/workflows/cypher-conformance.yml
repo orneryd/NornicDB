@@ -1,12 +1,10 @@
 name: Cypher Conformance
 
 # Actions minutes are budgeted: nothing runs automatically on pushes or pull
-# requests. Run the checks locally with `make verify`, and on GitHub either add
-# the `ci:run` label to a pull request or use "Run workflow" (workflow_dispatch).
+# requests. Run checks locally with `make verify`; manual GitHub runs require
+# approval through the admin-approved-actions environment before jobs start.
 # See CONTRIBUTING.md, "Development workflow".
 on:
-  pull_request:
-    types: [labeled]
   workflow_call:
     inputs:
       ref:
@@ -34,8 +32,8 @@ concurrency:
 jobs:
   allocations:
     name: Allocation ratchet (${{ matrix.parser }})
-    # Runs when started by hand, by the nightly workflow (workflow_call), or by the ci:run label.
-    if: github.event_name != 'pull_request' || github.event.label.name == 'ci:run'
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -89,8 +87,8 @@ jobs:
 
   conformance:
     name: Cypher conformance
-    # Runs when started by hand, by the nightly workflow (workflow_call), or by the ci:run label.
-    if: github.event_name != 'pull_request' || github.event.label.name == 'ci:run'
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

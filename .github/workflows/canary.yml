@@ -1,11 +1,8 @@
 name: Canary (develop)
 
-# Every Monday, the same Docker images as a release (cd.yml), built from develop
-# and published as :canary, only when develop changed in the past week. Canary
-# builds never move :latest or a version tag.
+# Manually requested develop canary; automatic weekly builds are paused.
+# Builds never move :latest or a version tag.
 on:
-  schedule:
-    - cron: "23 4 * * 1"
   workflow_dispatch:
     inputs:
       force:
@@ -24,6 +21,8 @@ concurrency:
 jobs:
   changed:
     name: Did develop change this week?
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     outputs:
       run: ${{ steps.check.outputs.run }}
