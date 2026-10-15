@@ -93,29 +93,54 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 		edge.EndNode = projected.EndNode
 		states.finalEdges[id] = edge
 	}
-	for i := range commit.ops {
-		op := &commit.ops[i]
+	// Committed/final bodies describe MVCC endpoints. Cache/index publication
+	// follows the ordered operations instead: an update followed by deletion
+	// must unregister the intermediate value, not the initial committed one.
+	currentNodes := make(map[NodeID]*Node, len(states.committedNodes))
+	for id, node := range states.committedNodes {
+		currentNodes[id] = node
+	}
+	currentEdges := make(map[EdgeID]*Edge, len(states.committedEdges))
+	for id, edge := range states.committedEdges {
+		currentEdges[id] = edge
+	}
+	lastNodeWrite := make(map[NodeID]int)
+	lastEdgeWrite := make(map[EdgeID]int)
+	for i, op := range commit.ops {
 		if op.Node != nil {
-			if node := states.finalNodes[op.Node.ID]; node != nil {
-				op.Node = node
-			}
-		}
-		if op.OldNode != nil {
-			op.OldNode = states.committedNodes[op.OldNode.ID]
-		}
-		if op.Type == OpDeleteNode {
-			op.OldNode = states.committedNodes[op.NodeID]
+			lastNodeWrite[op.Node.ID] = i
 		}
 		if op.Edge != nil {
-			if edge := states.finalEdges[op.Edge.ID]; edge != nil {
-				op.Edge = edge
+			lastEdgeWrite[op.Edge.ID] = i
+		}
+	}
+	for i := range commit.ops {
+		op := &commit.ops[i]
+		if op.OldNode != nil {
+			op.OldNode = currentNodes[op.OldNode.ID]
+		}
+		if op.Node != nil {
+			if node := states.finalNodes[op.Node.ID]; node != nil && lastNodeWrite[op.Node.ID] == i {
+				op.Node = node
 			}
+			currentNodes[op.Node.ID] = op.Node
+		}
+		if op.Type == OpDeleteNode {
+			op.OldNode = currentNodes[op.NodeID]
+			delete(currentNodes, op.NodeID)
 		}
 		if op.OldEdge != nil {
-			op.OldEdge = states.committedEdges[op.OldEdge.ID]
+			op.OldEdge = currentEdges[op.OldEdge.ID]
+		}
+		if op.Edge != nil {
+			if edge := states.finalEdges[op.Edge.ID]; edge != nil && lastEdgeWrite[op.Edge.ID] == i {
+				op.Edge = edge
+			}
+			currentEdges[op.Edge.ID] = op.Edge
 		}
 		if op.Type == OpDeleteEdge {
-			op.OldEdge = states.committedEdges[op.EdgeID]
+			op.OldEdge = currentEdges[op.EdgeID]
+			delete(currentEdges, op.EdgeID)
 		}
 	}
 	return nil
