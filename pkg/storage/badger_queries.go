@@ -27,20 +27,12 @@ func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 	var node *Node
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
 		defer it.Close()
 
-		for it.Rewind(); it.Valid(); it.Next() {
+		for it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
-			if !ok {
-				continue
-			}
-			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) {
-				continue
-			}
+			nodeID := it.NodeID()
 
 			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
 				continue
@@ -68,7 +60,7 @@ func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 
 			return nil // Found first node, stop
 		}
-		return nil
+		return it.Err()
 	})
 
 	return node, err
@@ -109,22 +101,13 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 			}
 		}
 
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		it := b.newNodeIndexReader(txn, "", labelIndexPrefix(label), "")
 		defer it.Close()
 
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
-		labelLen := len(label)
-		for it.Rewind(); it.Valid(); it.Next() {
+		for it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, labelLen)
-			if !ok {
-				continue
-			}
-			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" {
-				continue
-			}
+			nodeID := it.NodeID()
 			if cachedValid && nodeID == cachedID {
 				continue
 			}
@@ -140,7 +123,7 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 			}
 		}
 
-		return nil
+		return it.Err()
 	})
 	if err == ErrIterationStopped {
 		return nil
@@ -163,20 +146,12 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
 	err := b.withView(func(txn *badger.Txn) error {
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
 		defer it.Close()
 
-		for it.Rewind(); it.Valid(); it.Next() {
+		for it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
-			if !ok {
-				continue
-			}
-			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) {
-				continue
-			}
+			nodeID := it.NodeID()
 
 			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
 				continue
@@ -220,7 +195,7 @@ func (b *BadgerEngine) GetNodesByLabelInScope(scope, label string) ([]*Node, err
 			loaded = append(loaded, node)
 			nodes = append(nodes, node)
 		}
-		return nil
+		return it.Err()
 	})
 
 	if err != nil {
@@ -329,18 +304,13 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 			err  error
 		}
 		var pending []pendingNode
-		prefix := labelIndexPrefix(label)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
 		defer it.Close()
 		lookups := 0
-		for it.Rewind(); it.Valid(); it.Next() {
+		for it.Next() {
 			indexKey := it.Item().KeyCopy(nil)
-			nodeNum, ok := extractNodeNumIDFromLabelIndex(indexKey, len(label))
-			if !ok {
-				continue
-			}
-			nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-			if !ok || nodeID == "" || !nodeIDInScope(nodeID, scope) || (b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey)) {
+			nodeID := it.NodeID()
+			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 
@@ -365,6 +335,9 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 			if err := readPoint(nodeID); err != nil {
 				return err
 			}
+		}
+		if err := it.Err(); err != nil {
+			return err
 		}
 		if len(pending) == 0 {
 			return nil

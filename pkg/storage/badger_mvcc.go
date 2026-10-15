@@ -1297,36 +1297,24 @@ func (b *BadgerEngine) iterateNodesVisibleAtInTxn(txn *badger.Txn, version MVCCV
 }
 
 // iterateNodesVisibleAtInScopeInTxn is iterateNodesVisibleAtInTxn over one
-// database's nodes: a head of another database is skipped before its value is
-// read (#851).
+// database's nodes, with candidates bounded to its dictionary namespace.
 func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope string, version MVCCVersion, yield func(*Node) error) error {
 	// Post-refactor: we walk the head keyspace (the definitive list of
 	// live node IDs) and resolve each ID to a body. If the request is at
 	// or after the current head version and the entity is live, the body
 	// comes from the primary nodeKey. Otherwise we fall back to historic
 	// mvccNodeVersionKey records (only present when retention > 0).
-	headPrefix := []byte{prefixMVCCNodeHead}
-	opts := badgerIteratorOptions()
-	// PrefetchValues stays off: badger v4.9.6 spawns a goroutine per entry
-	// when prefetching, which made TCK allocation churn worse (#48).
-	opts.Prefix = headPrefix
-	it := txn.NewIterator(opts)
+	it := b.newNodeIndexReader(txn, scope, []byte{prefixMVCCNodeHead}, "")
 	defer it.Close()
 
 	nowNanos := DecayScoringTime()
 	var headBuf []byte
-	for it.Rewind(); it.Valid(); it.Next() {
+	for it.Next() {
 		// it.Item().Key() stays valid until the next Next(); parse in place
 		// instead of copying a fresh slice per entry.
 		key := it.Item().Key()
-		if len(key) != 1+8 {
-			continue
-		}
 		nodeNum := binary.BigEndian.Uint64(key[1:])
-		nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-		if !ok || !nodeIDInScope(nodeID, scope) {
-			continue
-		}
+		nodeID := it.NodeID()
 		// Reuse a scratch buffer across entries: ValueCopy allocates only
 		// while the buffer is still growing (#48).
 		var err error
@@ -1393,7 +1381,7 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 			return err
 		}
 	}
-	return nil
+	return it.Err()
 }
 
 func (b *BadgerEngine) iterateEdgesVisibleAtInTxn(txn *badger.Txn, version MVCCVersion, yield func(*Edge) error) error {
