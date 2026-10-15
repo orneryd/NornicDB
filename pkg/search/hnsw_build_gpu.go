@@ -529,12 +529,35 @@ func (g *hnswBuildGraphSnapshot) vectorsForInternalIDs(ids []uint32) [][]float32
 	return vecs
 }
 
-func buildHNSWCPU(ctx context.Context, dimensions int, config HNSWConfig, lookup VectorLookup, total int, iter hnswBuildIterator) (*HNSWIndex, hnswBuildStats, error) {
-	started := time.Now()
-	built := NewHNSWIndex(dimensions, config)
-	if lookup != nil {
-		built.SetVectorLookup(lookup)
+func newHNSWBuildIndex(dimensions int, config HNSWConfig, lookup VectorLookup, total int) *HNSWIndex {
+	built := newHNSWIndex(dimensions, config, lookup)
+	if dimensions >= 256 {
+		built.buildDistances = make([]hnswDistanceCacheEntry, 16384)
 	}
+	// Bound retained lookup copies as well as slice headers. Immutable memory
+	// and lease views usually share existing storage, but a fallback lookup may
+	// return owning copies. Large indexes must never retain an extra full set.
+	if lookup != nil {
+		built.buildVectorLimit = min(max(total, 0), 10000, (8*1024*1024/4)/max(dimensions, 1))
+		built.buildVectors = make([][]float32, 0, built.buildVectorLimit)
+	}
+	return built
+}
+
+func (h *HNSWIndex) finishBuild() {
+	h.buildVectors = nil
+	h.buildVectorLimit = 0
+	h.addQueryScratch = nil
+	h.buildDistances = nil
+}
+
+func buildHNSWCPU(ctx context.Context, dimensions int, config HNSWConfig, lookup VectorLookup, total int, iter hnswBuildIterator) (*HNSWIndex, hnswBuildStats, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, hnswBuildStats{}, err
+	}
+	started := time.Now()
+	built := newHNSWBuildIndex(dimensions, config, lookup, total)
+	defer built.finishBuild()
 	added := 0
 	stats := hnswBuildStats{Strategy: "cpu", Backend: "cpu"}
 	err := iter(10000, func(batch []hnswBuildPair) error {
@@ -582,6 +605,9 @@ func newBestHNSWBuildAccelerator() (HNSWBuildAccelerator, error) {
 }
 
 func buildHNSWWithOptionalGPU(ctx context.Context, dimensions int, config HNSWConfig, lookup VectorLookup, total int, iter hnswBuildIterator, accel HNSWBuildAccelerator) (*HNSWIndex, hnswBuildStats, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, hnswBuildStats{}, err
+	}
 	if !config.UseGPUBuild {
 		return buildHNSWCPU(ctx, dimensions, config, lookup, total, iter)
 	}
@@ -589,6 +615,9 @@ func buildHNSWWithOptionalGPU(ctx context.Context, dimensions int, config HNSWCo
 		var err error
 		accel, err = newBestHNSWBuildAccelerator()
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, hnswBuildStats{}, ctxErr
+			}
 			logSearchPrintf("[HNSW] GPU build unavailable, falling back to CPU: %v", err)
 			built, stats, cpuErr := buildHNSWCPU(ctx, dimensions, config, lookup, total, iter)
 			stats.Fallback = true
@@ -597,6 +626,9 @@ func buildHNSWWithOptionalGPU(ctx context.Context, dimensions int, config HNSWCo
 	}
 	if err := accel.Prepare(dimensions, total); err != nil {
 		_ = accel.Close()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, hnswBuildStats{}, ctxErr
+		}
 		logSearchPrintf("[HNSW] GPU build prepare failed, falling back to CPU: %v", err)
 		built, stats, cpuErr := buildHNSWCPU(ctx, dimensions, config, lookup, total, iter)
 		stats.Fallback = true
@@ -620,10 +652,8 @@ func buildHNSWWithOptionalGPU(ctx context.Context, dimensions int, config HNSWCo
 
 func buildHNSWAccelerated(ctx context.Context, dimensions int, config HNSWConfig, lookup VectorLookup, total int, iter hnswBuildIterator, accel HNSWBuildAccelerator) (*HNSWIndex, hnswBuildStats, error) {
 	started := time.Now()
-	built := NewHNSWIndex(dimensions, config)
-	if lookup != nil {
-		built.SetVectorLookup(lookup)
-	}
+	built := newHNSWBuildIndex(dimensions, config, lookup, total)
+	defer built.finishBuild()
 	stats := hnswBuildStats{Strategy: "gpu_assisted", Backend: fmt.Sprintf("%T", accel)}
 	frontierVecs := make([][]float32, 0, min(total, config.GPUBuildBatchSize))
 	frontierInternalIDs := make([]uint32, 0, min(total, config.GPUBuildBatchSize))

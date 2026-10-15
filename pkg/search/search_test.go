@@ -1660,6 +1660,7 @@ func TestVectorSearchOnly_MethodAndFilterBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, svc.BuildIndexes(context.Background()))
 
+	requireHNSWReady(t, svc)
 	opts := DefaultSearchOptions()
 	opts.Limit = 5
 	resp, err := svc.vectorSearchOnly(context.Background(), []float32{1, 0, 0}, opts)
