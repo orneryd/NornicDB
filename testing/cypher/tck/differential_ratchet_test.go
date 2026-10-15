@@ -163,7 +163,8 @@ func (executor boltDifferentialExecutor) NormalizeExpectedValue(value any) (any,
 // encode equally on both servers and values of different types never do:
 // every scalar carries its type ({"Integer": "1"}, {"Float": "1"},
 // {"Date": "2020-01-02"}), entities lose their internal identities, and a
-// node's labels are sorted.
+// node's labels are sorted. Ordinary maps have a Map wrapper so a user map
+// such as {Integer: '1'} cannot impersonate a typed scalar in either comparison.
 func differentialOutcomeValue(value any) any {
 	switch typed := value.(type) {
 	case nil, bool, string:
@@ -188,7 +189,7 @@ func differentialOutcomeValue(value any) any {
 		for key, item := range typed {
 			result[key] = differentialOutcomeValue(item)
 		}
-		return result
+		return map[string]any{"Map": result}
 	case dbtype.Node:
 		labels := append([]string(nil), typed.Labels...)
 		sort.Strings(labels)
