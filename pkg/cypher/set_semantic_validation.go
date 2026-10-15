@@ -547,55 +547,56 @@ func setExpressionKeyword(token string) bool {
 // TypeError of a value a property cannot store: value normalized first
 // (normalizedPropValue: Go integers and times become Cypher values, in lists
 // too), then checked by the property value rule (validateSetPropertyValue),
-// whose int/float list coercion is made on the normalized copy. rewritten
+// whose int/float list coercion copies only a mixed numeric list. rewritten
 // reports whether stored is not value itself. Every SET route checks its
 // values here, so a value is storable or not whichever route writes it: a
 // map entry as a direct property value (#1055).
 func storablePropertyValue(value interface{}) (stored interface{}, rewritten bool, err error) {
 	stored, rewritten = normalizedPropValue(value)
-	if err := validateSetPropertyValue(stored); err != nil {
+	validated, coerced, err := validateSetPropertyValue(stored)
+	if err != nil {
 		return nil, false, err
 	}
-	return stored, rewritten, nil
+	return validated, rewritten || coerced, nil
 }
 
-func validateSetPropertyValue(value interface{}) error {
+func validateSetPropertyValue(value interface{}) (stored interface{}, rewritten bool, err error) {
 	if value == nil {
-		return nil
+		return value, false, nil
 	}
 	if _, invalid := value.(*storage.Node); invalid {
-		return invalidSetPropertyType(value)
+		return nil, false, invalidSetPropertyType(value)
 	}
 	if _, invalid := value.(*storage.Edge); invalid {
-		return invalidSetPropertyType(value)
+		return nil, false, invalidSetPropertyType(value)
 	}
 	if _, invalid := value.(*PathResult); invalid {
-		return invalidSetPropertyType(value)
+		return nil, false, invalidSetPropertyType(value)
 	}
 	switch value.(type) {
 	case []float64, []float32, []int64, []int, []int32, []string, []bool:
-		return nil // typed lists of primitives (e.g. embeddings) are valid as-is
+		return value, false, nil // typed lists of primitives (e.g. embeddings) are valid as-is
 	}
 	typeOf := reflect.TypeOf(value)
 	if typeOf != nil && typeOf.Kind() == reflect.Map {
-		return invalidSetPropertyType(value)
+		return nil, false, invalidSetPropertyType(value)
 	}
 	items, list := toInterfaceSlice(value)
 	if !list {
-		return nil
+		return value, false, nil
 	}
 	if len(items) == 0 {
-		return nil
+		return value, false, nil
 	}
 	// Neo4j's array property rule (#643): elements must share one primitive
 	// or temporal kind, null is not storable, and an int/float mix is stored
-	// as floats. The backing []interface{} is mutated in place so the coerced
-	// floats are the values that get stored. Kinds are a bitmask so the rule
-	// is allocation-free per write.
+	// as floats. A mixed numeric list is copied so the coerced
+	// floats are stored without changing the caller's list. The kind bitmask
+	// keeps homogeneous-list validation allocation-free.
 	var kinds uint16
 	for _, item := range items {
 		if item == nil {
-			return newSemanticError(
+			return nil, false, newSemanticError(
 				"Neo.ClientError.Statement.TypeError",
 				"InvalidPropertyType",
 				"Collections containing null values can not be stored in properties.",
@@ -603,23 +604,23 @@ func validateSetPropertyValue(value interface{}) error {
 		}
 		itemType := reflect.TypeOf(item)
 		if itemType != nil && (itemType.Kind() == reflect.Map || itemType.Kind() == reflect.Slice || itemType.Kind() == reflect.Array) {
-			return invalidSetPropertyType(value)
+			return nil, false, invalidSetPropertyType(value)
 		}
 		if _, invalid := item.(*storage.Node); invalid {
-			return invalidSetPropertyType(value)
+			return nil, false, invalidSetPropertyType(value)
 		}
 		if _, invalid := item.(*storage.Edge); invalid {
-			return invalidSetPropertyType(value)
+			return nil, false, invalidSetPropertyType(value)
 		}
 		kinds |= 1 << propertyArrayElementOf(item)
 	}
 	if kinds&(1<<arrayElemOther) != 0 {
-		return invalidSetPropertyType(value)
+		return nil, false, invalidSetPropertyType(value)
 	}
 	numIntFloat := uint16(1<<arrayElemInt) | uint16(1<<arrayElemFloat)
 	if bits.OnesCount16(kinds) > 2 ||
 		(bits.OnesCount16(kinds) == 2 && kinds&numIntFloat != numIntFloat) {
-		return newSemanticError(
+		return nil, false, newSemanticError(
 			"Neo.ClientError.Statement.TypeError",
 			"InvalidPropertyType",
 			"Neo4j only supports a subset of Cypher types for storage as singleton or array properties.",
@@ -629,7 +630,7 @@ func validateSetPropertyValue(value interface{}) error {
 		first, _ := pointValue(items[0])
 		for _, item := range items[1:] {
 			if point, _ := pointValue(item); point.SRID != first.SRID {
-				return newSemanticError(
+				return nil, false, newSemanticError(
 					"Neo.ClientError.Statement.TypeError",
 					"InvalidPropertyType",
 					"Collections containing point values with different CRS can not be stored in properties.",
@@ -637,14 +638,16 @@ func validateSetPropertyValue(value interface{}) error {
 			}
 		}
 	}
-	if kinds&(1<<arrayElemFloat) != 0 {
+	if kinds == numIntFloat {
+		items = append([]interface{}(nil), items...)
 		for i, item := range items {
 			if f, ok := toFloat64(item); ok {
 				items[i] = f
 			}
 		}
+		return items, true, nil
 	}
-	return nil
+	return value, false, nil
 }
 
 // propertyArrayElement categorizes an array element for the Neo4j property
@@ -703,10 +706,12 @@ func propertyArrayElementOf(item interface{}) propertyArrayElement {
 // node fast path) and relationships, MERGE node and relationship creation,
 // and the UNWIND batch creators.
 func validatePropertyValues(properties map[string]interface{}) error {
-	for _, value := range properties {
-		if err := validateSetPropertyValue(value); err != nil {
+	for key, value := range properties {
+		stored, _, err := storablePropertyValue(value)
+		if err != nil {
 			return err
 		}
+		properties[key] = stored
 	}
 	return nil
 }

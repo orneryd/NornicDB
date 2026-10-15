@@ -119,6 +119,6 @@ func BenchmarkValidatePropertyArrayRule(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		shape := append([]interface{}{}, shapes[i%len(shapes)]...)
-		_ = validateSetPropertyValue(shape)
+		_, _, _ = validateSetPropertyValue(shape)
 	}
 }

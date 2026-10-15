@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/localization"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strconv"
 	"strings"
@@ -237,7 +238,7 @@ func parseCypherDateTimeTextWithError(text string) (time.Time, string, bool, err
 		if _, actualOffset := instant.Zone(); actualOffset == offset {
 			return instant, zoneID, true, nil
 		}
-		return time.Time{}, "", false, newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", "Timezone and offset do not match: "+original)
+		return time.Time{}, "", false, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", localization.CypherCoreTemporalOffsetMismatch(original))
 	}
 	local := time.Date(date.Year(), date.Month(), date.Day(), hour, minute, second, nanos, time.UTC)
 	if zoneID != "" {

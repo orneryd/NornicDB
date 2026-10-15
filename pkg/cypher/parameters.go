@@ -448,20 +448,16 @@ func resolveParamPathRef(ctx context.Context, expr string) (interface{}, bool) {
 	return resolveSetMergeSourceFromParams(params, strings.TrimSpace(expr[1:]))
 }
 
-// resolveContextPathRef resolves a bare identifier or dotted path against the
-// current query parameters. This is used by MERGE pattern parsing and SET label
-// expressions so row-scoped values like row.uuid and row.labels can be read
-// without forcing them through Cypher string literal parsing.
+// resolveContextPathRef resolves a variable path in the row's value scope.
+// Parameters have a separate namespace, reached only through $name by
+// resolveParamPathRef; an unrelated parameter must never shadow a row's
+// MERGE identity or SET source.
 func resolveContextPathRef(ctx context.Context, expr string) (interface{}, bool) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil, false
 	}
-	params := getParamsFromContext(ctx)
-	if params == nil {
-		return nil, false
-	}
-	return resolveSetMergeSourceFromParams(params, expr)
+	return resolveSetMergeSourceFromParams(valueBindingsFromContext(ctx), expr)
 }
 
 // normalizeQueryParameters converts parameter values whose Go types aren't the

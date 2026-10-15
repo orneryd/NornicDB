@@ -48,10 +48,10 @@ func TestMutationRowAndParameterNamespaces(t *testing.T) {
 func TestSetListCopyOnChange(t *testing.T) {
 	for name, list := range map[string]interface{}{
 		"integers": []interface{}{int64(1), int64(2)},
-		"floats": []interface{}{1.0, 2.5},
-		"strings": []interface{}{"a", "b"},
-		"empty": []interface{}{},
-		"typed": []int64{1, 2},
+		"floats":   []interface{}{1.0, 2.5},
+		"strings":  []interface{}{"a", "b"},
+		"empty":    []interface{}{},
+		"typed":    []int64{1, 2},
 	} {
 		t.Run(name, func(t *testing.T) {
 			source := map[string]interface{}{"v": list}

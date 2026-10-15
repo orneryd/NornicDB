@@ -529,7 +529,7 @@ func normalizeRelationshipBatchRowProperties(row map[string]interface{}, vectorS
 		// The row's values were checked above: a setter writes a copy of its
 		// field's stored value.
 		if stored, ok := props[setter.rowField]; ok {
-			props[setter.propName] = normalizePropValue(stored)
+			props[setter.propName] = copyStoredPropertyValue(stored)
 		}
 	}
 	return props, true

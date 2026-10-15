@@ -29,7 +29,7 @@ func TestNamedZoneDateTimeTextResolution(t *testing.T) {
 				r, err := exec.Execute(context.Background(), q, map[string]any{"s": text})
 				if want == "" {
 					require.Error(t, err)
-					require.Equal(t, "Timezone and offset do not match: "+text, err.(*SemanticError).Message)
+					require.Contains(t, err.Error(), "Timezone and offset do not match: "+text)
 					require.Equal(t, "Neo.ClientError.Statement.ArgumentError", err.(interface{ BoltErrorCode() string }).BoltErrorCode())
 				} else {
 					require.NoError(t, err)

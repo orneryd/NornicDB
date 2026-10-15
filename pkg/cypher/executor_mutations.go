@@ -709,8 +709,8 @@ func normalizePropValue(value interface{}) interface{} {
 
 // normalizedPropValue is the one property value normalizer: Go integers
 // become int64, float32 float64 and Go times DateTimes, in lists and maps
-// too. rewritten reports whether normalized is a new value rather than
-// value itself (a list or map is always rebuilt).
+// too. A container is copied only when a descendant changes; rewritten
+// describes a value conversion, independently of a writer's ownership copy.
 func normalizedPropValue(value interface{}) (normalized interface{}, rewritten bool) {
 	switch v := value.(type) {
 	case time.Time:
@@ -746,17 +746,36 @@ func normalizedPropValue(value interface{}) (normalized interface{}, rewritten b
 	case float32:
 		return float64(v), true
 	case []interface{}:
-		out := make([]interface{}, len(v))
+		var out []interface{}
 		for i, item := range v {
-			out[i] = normalizePropValue(item)
+			stored, changed := normalizedPropValue(item)
+			if changed && out == nil {
+				out = make([]interface{}, len(v))
+				copy(out, v)
+			}
+			if out != nil {
+				out[i] = stored
+			}
 		}
-		return out, true
+		if out != nil {
+			return out, true
+		}
+		return value, false
 	case map[string]interface{}:
-		out := make(map[string]interface{}, len(v))
+		var out map[string]interface{}
 		for k, item := range v {
-			out[k] = normalizePropValue(item)
+			stored, changed := normalizedPropValue(item)
+			if changed && out == nil {
+				out = cloneStringAnyMap(v)
+			}
+			if out != nil {
+				out[k] = stored
+			}
 		}
-		return out, true
+		if out != nil {
+			return out, true
+		}
+		return value, false
 	default:
 		return value, false
 	}
