@@ -107,6 +107,8 @@ func TestGh648_ImplicitImportExtension(t *testing.T) {
 		{"WITH 1 AS v CALL { RETURN 2 AS x UNION RETURN v AS x } RETURN x ORDER BY x", [][]interface{}{{int64(1)}, {int64(2)}}},
 		{"WITH 1 AS i CALL { MATCH (n:CQ) WHERE n.id = i RETURN n.id AS v } RETURN v", [][]interface{}{{int64(1)}}},
 		{"WITH 1 AS i, 2 AS z CALL { WITH i RETURN i + z AS j } RETURN j", [][]interface{}{{int64(3)}}},
+		{"WITH 1 AS i, 2 AS z CALL { WITH i WITH DISTINCT i RETURN i + z AS j } RETURN j", [][]interface{}{{int64(3)}}},
+		{"WITH 1 AS i, 2 AS z CALL { WITH i WITH DISTINCT i WHERE z = 2 RETURN i + z AS j } RETURN j", [][]interface{}{{int64(3)}}},
 	} {
 		t.Run(testCase.query, func(t *testing.T) {
 			result, err := exec.Execute(ctx, testCase.query, nil)

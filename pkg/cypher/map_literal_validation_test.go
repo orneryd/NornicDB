@@ -4,6 +4,8 @@ import (
 	"context"
 	"reflect"
 	"testing"
+
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 )
 
 func TestMapLiteralKeysAndValuesAreValidated(t *testing.T) {
@@ -22,10 +24,11 @@ func TestMapLiteralKeysAndValuesAreValidated(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%s: expected compile-time error", test.query)
 		}
-		semanticError, ok := err.(*SemanticError)
-		if !ok || semanticError.Detail != test.detail {
-			t.Fatalf("%s: error = %#v, want %s", test.query, err, test.detail)
+		code, _ := nornicerrors.Neo4jStatus(err)
+		if code != "Neo.ClientError.Statement.SyntaxError" {
+			t.Fatalf("%s: status = %q, want SyntaxError", test.query, code)
 		}
+		requireSemanticDetail(t, err, test.detail)
 	}
 }
 
