@@ -150,6 +150,12 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 
 	for i := 0; i <= len(expr)-len(op); i++ {
 		c := expr[i]
+		if c == '/' {
+			if end := queryCommentEnd(expr, i); end >= 0 {
+				i = end - 1
+				continue
+			}
+		}
 		switch {
 		case c == '\'' || c == '"' || c == '`':
 			i = skipCypherQuotedText(expr, i, c) - 1

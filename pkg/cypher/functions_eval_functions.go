@@ -198,7 +198,7 @@ skipArrayIndexing:
 	// ========================================
 	// A plugin function overrides a built-in of the same name, so plugins
 	// are asked first, as the row evaluator does (#1163).
-	if strings.Contains(expr, ".") && looksLikeFunctionCall(expr) {
+	if _, _, call := parseFunctionCallWS(expr); call && strings.Contains(expr, ".") {
 		if result, handled := e.tryCallPluginFunction(ctx, expr, nodes, rels); handled {
 			return result
 		}

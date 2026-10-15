@@ -22,11 +22,9 @@ func pluginFunctionHandler(name string) (interface{}, bool) {
 	if PluginFunctionLookup == nil || !strings.Contains(name, ".") {
 		return nil, false
 	}
-	canonical, ok := canonicalCallableName(name)
-	if !ok {
-		return nil, false
-	}
-	return PluginFunctionLookup(canonical)
+	// Call readers have already decoded the identifier components. Reparsing
+	// this key would interpret literal spaces/comment characters as syntax.
+	return PluginFunctionLookup(name)
 }
 
 // callPluginFunction calls a plugin function's handler, for both evaluators,
@@ -51,19 +49,14 @@ func callPluginFunction(name string, handler interface{}, args []interface{}) (v
 // if no plugin has the function (or a built-in answers it instead). A call
 // the plugin fails is the statement's error, as in the row evaluator.
 func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
-	// Extract function name from expression (e.g., "myplugin.func([1,2,3])" -> "myplugin.func")
-	parenIdx := strings.Index(expr, "(")
-	if parenIdx == -1 {
+	funcName, argsStr, valid := parseFunctionCallWS(expr)
+	if !valid {
 		return nil, false
 	}
-	funcName := expr[:parenIdx]
 	handler, found := pluginFunctionHandler(funcName)
 	if !found {
 		return nil, false
 	}
-
-	// Parse arguments
-	argsStr := strings.TrimSpace(expr[parenIdx+1 : len(expr)-1])
 	args := e.splitFunctionArgs(argsStr)
 
 	// Evaluate each argument

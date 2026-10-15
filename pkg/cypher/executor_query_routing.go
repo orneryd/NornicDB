@@ -532,6 +532,12 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 			}
 			continue
 		}
+		if c == '/' {
+			if end := queryCommentEnd(cypher, i); end >= 0 {
+				i = end - 1
+				continue
+			}
+		}
 		if c == '.' && i+1 < len(cypher) && cypher[i+1] == '.' && bracketCount == 0 {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: malformed expression")
 		}
@@ -539,7 +545,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 			// A dot other than a range's (1..2) starts a property key (n.k,
 			// n.`k`), a map projection's all-properties (.*) or a number's
 			// digits: RETURN n. is Neo4j's "expected an identifier".
-			if next := skipSpaces(cypher, i+1); next == len(cypher) || (!isIdentByte(cypher[next]) || cypher[next] == '$') && cypher[next] != '`' && cypher[next] != '*' {
+			if next := queryGapEnd(cypher, i+1); next == len(cypher) || (!isIdentByte(cypher[next]) || cypher[next] == '$') && cypher[next] != '`' && cypher[next] != '*' {
 				token := ""
 				if next < len(cypher) {
 					token = cypher[next : next+1]

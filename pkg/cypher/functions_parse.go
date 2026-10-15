@@ -74,8 +74,27 @@ func functionNameStartsAt(text string, at int) bool {
 		return true
 	}
 	previous := at - 1
-	for previous >= 0 && isASCIIWhitespace(text[previous]) {
-		previous--
+	if strings.Contains(text[:at], "/*") || strings.Contains(text[:at], "//") {
+		// Comments can separate a namespace dot from its final component.
+		// Use the query trivia reader; comment-like text inside quotes is data.
+		previous = -1
+		for index := 0; index < at; {
+			if end := queryGapEnd(text, index); end > index {
+				index = end
+				continue
+			}
+			if text[index] == '\'' || text[index] == '"' || text[index] == '`' {
+				index = skipQuotedSemanticText(text, index)
+				previous = index - 1
+				continue
+			}
+			previous = index
+			index++
+		}
+	} else {
+		for previous >= 0 && isASCIIWhitespace(text[previous]) {
+			previous--
+		}
 	}
 	if previous >= 0 && text[previous] == '.' {
 		return false

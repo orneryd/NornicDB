@@ -772,6 +772,12 @@ func splitRowArithmeticTier(expr, operators string) (left, right string, operato
 	operatorIndex := -1
 	for index := 0; index < len(expr); index++ {
 		current := expr[index]
+		if current == '/' {
+			if end := queryCommentEnd(expr, index); end >= 0 {
+				index = end - 1
+				continue
+			}
+		}
 		switch current {
 		case '\'', '"', '`':
 			index = skipCypherQuotedText(expr, index, current) - 1

@@ -314,6 +314,10 @@ func expressionFreeVariables(expression string) []string {
 	var names []string
 	delimiters := make([]byte, 0, 8)
 	for index := 0; index < len(expression); {
+		if end := queryGapEnd(expression, index); end > index {
+			index = end
+			continue
+		}
 		character := expression[index]
 		if character == '[' {
 			if closing := findMatchingBracket(expression, index); closing >= 0 {
@@ -423,20 +427,10 @@ func expressionFreeVariables(expression string) []string {
 				}
 			}
 		}
-		if following == '.' {
-			functionEnd := skipSpaces(expression, next)
-			for functionEnd < len(expression) && expression[functionEnd] == '.' {
-				_, end, identifier := scanIdentifierToken(expression, skipSpaces(expression, functionEnd+1))
-				if !identifier {
-					break
-				}
-				functionEnd = skipSpaces(expression, end)
-			}
-			if functionEnd < len(expression) && expression[functionEnd] == '(' {
-				delimiters = append(delimiters, '(')
-				index = functionEnd + 1
-				continue
-			}
+		if functionEnd, call := qualifiedFunctionNameEnd(expression, next); call {
+			delimiters = append(delimiters, '(')
+			index = functionEnd + 1
+			continue
 		}
 		// A subquery expression (EXISTS / COUNT / COLLECT { … }) binds its own
 		// variables and sees the outer ones; its body isn't an expression.

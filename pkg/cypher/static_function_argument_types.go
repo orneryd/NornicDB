@@ -377,12 +377,6 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		case '\'', '"':
 			index = skipQuotedSemanticText(text, index)
 			continue
-		case '`':
-			if end := strings.IndexByte(text[index+1:], '`'); end >= 0 {
-				index += end + 2
-				continue
-			}
-			return nil
 		}
 		name, next, ok := scanIdentifierToken(text, index)
 		if !ok {
