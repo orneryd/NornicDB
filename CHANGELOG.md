@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep buffered adjacency reads stable while a flush publishes caches: pending edges shadow the same persisted IDs,
+  and acknowledged writes retain their query-cache revision when becoming durable. This prevents duplicate grouped
+  counts and repeated cold `products_per_category` executions during the publication tail (#1316).
+- Apply shared property visibility before search/similarity/Qdrant result formatting, continuation reuse, GraphQL
+  subscription events and MCP/Heimdall related-node display fields, retaining explicit raw-read exceptions (#1316).
+- Separate confirmed APOC procedure names from scalar plugin exports and document supported procedure capabilities
+  rather than advertising unimplemented handlers as callable functions (#1316).
 - Keep buffered label, relationship-type and endpoint counts consistent as a generation becomes durable, including
   count reads from publication callbacks. Retire each derived-count overlay with its matching persisted counters
   rather than counting both during the cache-publication tail (#1316).
