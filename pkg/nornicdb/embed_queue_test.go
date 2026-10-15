@@ -2489,7 +2489,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		require.Len(t, worker.trigger, 1)
 	})
 
-	t.Run("worker waits for embedder then ticker picks up new node", func(t *testing.T) {
+	t.Run("worker waits for embedder then enqueue picks up new node", func(t *testing.T) {
 		base := storage.NewMemoryEngine()
 		base.SetEmbeddingsEnabled(true)
 		engine := storage.NewNamespacedEngine(base, "test")
@@ -2508,14 +2508,13 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		defer worker.Close()
 		worker.StartWorkers()
 
-		// Worker should be waiting for embedder and not processing yet. Let
-		// it wait through one poll interval before the embedder arrives.
+		// Worker should be waiting for the model without accessing storage.
 		time.Sleep(1100 * time.Millisecond)
 		require.Equal(t, 0, worker.Stats().Processed)
 
 		worker.SetEmbedder(newMockEmbedder())
 
-		// Create node after worker activation; ticker path should discover it without explicit Trigger.
+		// Create a node after activation and notify the sleeping worker.
 		_, err := engine.CreateNode(&storage.Node{
 			ID:     storage.NodeID("ticker-node"),
 			Labels: []string{"Doc"},
@@ -2524,6 +2523,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
+		worker.Enqueue("ticker-node")
 
 		require.Eventually(t, func() bool {
 			return worker.Stats().Processed >= 1

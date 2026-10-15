@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pre-selected) and a "Select all" box.
 ### Changed
 
+- Idle automatic embedding workers wait for enqueue notifications. Recovery scans have a 30-second minimum
+  interval, and all embedding batch paths honor foreground-pressure pauses (#1230).
+
 - Pause scheduled develop verification/canary builds and remove PR label CI triggers. Manual Actions jobs now require administrator environment approval; existing main push and tag publishing triggers remain unchanged.
 
 ### Documentation
