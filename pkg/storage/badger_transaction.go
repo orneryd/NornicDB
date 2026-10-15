@@ -960,12 +960,8 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 	if len(node.ChunkEmbeddings) > 0 && !sameChunkEmbeddings(node.ChunkEmbeddings, oldNode.ChunkEmbeddings) {
 		return node, nil
 	}
-	var sidecar bool
-	if err := tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
-		_, fresh, err := tx.engine.loadEmbeddingSidecar(txn, oldNode, node.ID)
-		sidecar = fresh
-		return err
-	}); err != nil {
+	meta, sidecar, err := tx.retainedSidecarMetadataLocked(oldNode)
+	if err != nil {
 		return nil, err
 	}
 	if tx.engine.sameEmbeddingSource(oldNode, node) {
@@ -973,6 +969,17 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 		node.EmbedMeta = oldNode.EmbedMeta
 		if !sidecar {
 			return node, nil
+		}
+		// An unrelated user mutation advances the body version without
+		// changing the embedded source. Publish the retained sidecar's new
+		// freshness stamp atomically with that body, including repeated writes.
+		if !oldNode.UpdatedAt.Equal(node.UpdatedAt) {
+			meta[embeddingContentUpdatedAtKey] = node.UpdatedAt.UTC().Format(time.RFC3339Nano)
+			data, err := encodeValue(meta)
+			if err != nil {
+				return nil, err
+			}
+			tx.bufferSet(embeddingMetaKey(node.ID), data)
 		}
 		body := *node
 		body.ChunkEmbeddings = nil
