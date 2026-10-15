@@ -47,10 +47,11 @@ func withExpressionFailureSlot(ctx context.Context) context.Context {
 }
 
 type expressionFailure struct {
-	mu              sync.Mutex
-	err             error
-	readScopeEngine *storage.BadgerEngine
-	mapKeyOrders    map[uintptr][]string
+	mu               sync.Mutex
+	err              error
+	readScopeEngine  *storage.BadgerEngine
+	readScopeContext context.Context
+	mapKeyOrders     map[uintptr][]string
 }
 
 func (failure *expressionFailure) recordMapKeyOrder(value map[string]interface{}, keys []string) {

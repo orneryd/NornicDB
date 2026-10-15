@@ -115,6 +115,8 @@ Cypher detects `reveal(...)` in the submitted query text and calls `setRevealOnE
 - Normal queries take a **shared** scope so they cannot observe another query's reveal mode.
 - This bypass lives at the storage/read layer. It does not rewrite scores or persisted suppression state.
 
+External query result owners use `storage.BeginQueryResultProjectionContext(ctx, engine)` and defer its returned release. Cypher records its existing reveal mutex ownership with `BeginQueryRevealScopeContext`, so a nested search service borrows a genuine live lease instead of recursively acquiring a read lock behind a waiting reveal writer. Nested work preserves the owning query's reveal mode. Distinct physical engines have distinct leases; database namespaces and property policies are always resolved from the supplied projection engine, never borrowed from another database. Derived expression contexts inherit only opaque live leases; released contexts cannot impersonate an active scope. Borrowed work must finish before its owner releases the scope.
+
 ### 2. Visibility is enforced twice on reads
 
 The visibility layer does not rely on a single check.
