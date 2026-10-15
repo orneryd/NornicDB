@@ -112,3 +112,8 @@ func (p QueryResultProjection) Edge(edge *Edge) *Edge {
 	out.Properties = p.EdgeProperties(edge)
 	return &out
 }
+
+// Enabled reports whether this projection applies property decay. Result owners
+// use it to bypass caches whose graph revision cannot represent elapsed decay.
+// For example, do not reuse cached search payloads when view.Enabled() is true.
+func (p QueryResultProjection) Enabled() bool { return p.engine != nil }

@@ -1,6 +1,7 @@
 package search
 
 type resultPropertyProjection struct {
+	groupBy string
 	include map[string]struct{}
 	exclude map[string]struct{}
 }

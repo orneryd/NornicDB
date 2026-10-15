@@ -505,7 +505,7 @@ func (s *searchMetadataStream) Pull(ctx context.Context, position uint64, n int)
 		}
 		compact[index] = result
 	}
-	results, err := hydrateContinuationResults(s.engine, compact, s.authorizeNode, s.projection)
+	results, err := hydrateContinuationResultsContext(ctx, s.engine, compact, s.authorizeNode, s.projection)
 	if err != nil {
 		return nil, err
 	}
