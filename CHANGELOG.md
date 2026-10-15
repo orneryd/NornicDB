@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Return the shared runtime TypeError for numeric predicates in all/any/none/single quantifiers across row, compiled
+  and context evaluation while preserving null, empty-input and short-circuit behavior (#1315 follow-up).
+
 - Honor the already-accepted explicit Dijkstra missing-weight fallback instead of ignoring its fifth argument (#1316).
 
 - Bind existing APOC node, relationship, path and temporal functions to native query values and the current graph;
