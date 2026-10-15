@@ -12,10 +12,11 @@ import (
 type requestRBACKey string
 
 var (
-	requestRBACKeyPrincipalRoles      = requestRBACKey("principal_roles")
-	requestRBACKeyDatabaseAccessMode  = requestRBACKey("database_access_mode")
-	requestRBACKeyEntitlementResolver = requestRBACKey("entitlement_resolver")
-	requestRBACKeyDatabaseScope       = requestRBACKey("database_scope")
+	requestRBACKeyResolvedAccessResolver = requestRBACKey("resolved_access_resolver")
+	requestRBACKeyPrincipalRoles         = requestRBACKey("principal_roles")
+	requestRBACKeyDatabaseAccessMode     = requestRBACKey("database_access_mode")
+	requestRBACKeyEntitlementResolver    = requestRBACKey("entitlement_resolver")
+	requestRBACKeyDatabaseScope          = requestRBACKey("database_scope")
 )
 
 // RequestEntitlementResolver checks an effective permission for a database.
@@ -87,6 +88,18 @@ func WithRequestDatabaseAccessMode(ctx context.Context, mode DatabaseAccessMode)
 	return context.WithValue(ctx, requestRBACKeyDatabaseAccessMode, mode)
 }
 
+// WithRequestResolvedAccessResolver preserves the legacy read/write context
+// adapter. For example, attach a function returning ResolvedAccess{Read: true}
+// to supply a legacy read-only consumer. It leaves any complete entitlement
+// resolver unchanged, including administrator and schema checks; a nil fn clears
+// the legacy adapter without clearing those checks.
+//
+// Deprecated: production transports should attach the complete permission owner
+// with WithRequestEntitlementResolver instead.
+func WithRequestResolvedAccessResolver(ctx context.Context, fn func(string) ResolvedAccess) context.Context {
+	return context.WithValue(ctx, requestRBACKeyResolvedAccessResolver, fn)
+}
+
 // WithRequestEntitlementResolver attaches the principal's one permission resolver
 // (the server builds it from cypher.PrincipalAccess): whether it holds a
 // permission on a database. RequestResolvedAccessResolverFromContext reads
@@ -115,8 +128,12 @@ func RequestDatabaseAccessModeFromContext(ctx context.Context) DatabaseAccessMod
 // RequestResolvedAccessResolverFromContext returns the principal's read and
 // write on a database (dbName -> ResolvedAccess), read from the one
 // entitlement resolver the context carries (WithRequestEntitlementResolver),
-// or nil when it carries none.
+// or nil when it carries none. An explicitly attached legacy adapter takes
+// precedence for this read/write compatibility accessor only.
 func RequestResolvedAccessResolverFromContext(ctx context.Context) func(string) ResolvedAccess {
+	if legacy, attached := ctx.Value(requestRBACKeyResolvedAccessResolver).(func(string) ResolvedAccess); attached {
+		return legacy
+	}
 	allows := RequestEntitlementResolverFromContext(ctx)
 	if allows == nil {
 		return nil

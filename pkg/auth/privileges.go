@@ -90,6 +90,29 @@ func (p *PrivilegesStore) Granted(roles []string, database string) (ResolvedAcce
 	return access, found
 }
 
+// Resolve preserves the legacy database-access contract: explicit matrix grants
+// win, otherwise built-in role permissions supply the defaults. For example,
+// store.Resolve([]string{"viewer"}, "reports") returns that role's matrix grant
+// when present, even if it differs from the role's global entitlements.
+//
+// Deprecated: production authorization should use ResolveDatabaseAccess with
+// the stored entitlement policy; Resolve intentionally retains legacy semantics.
+func (p *PrivilegesStore) Resolve(principalRoles []string, dbName string) ResolvedAccess {
+	if granted, found := p.Granted(principalRoles, dbName); found {
+		return granted
+	}
+	var access ResolvedAccess
+	for _, permission := range PermissionsForRoles(principalRoles, nil) {
+		switch permission {
+		case string(PermRead):
+			access.Read = true
+		case string(PermWrite), string(PermAdmin):
+			access.Write = true
+		}
+	}
+	return access
+}
+
 // ResolveDatabaseAccess is the one resolver of a principal's read and write
 // on a database, which HTTP, Bolt, gRPC, GraphQL, MCP and plugins all use
 // (through cypher.PrincipalAccess or the server's resolved-access
