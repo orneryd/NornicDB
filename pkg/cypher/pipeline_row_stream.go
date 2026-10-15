@@ -160,21 +160,53 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 	}, true
 }
 
-func (e *StorageExecutor) validatePipelineWithRows(rows []pipelineRow, clause string) error {
+func (e *StorageExecutor) validatePipelineWithRows(ctx context.Context, rows []pipelineRow, clause string) error {
 	if err := e.validatePipelinePercentileArguments(rows, clause, "WITH"); err != nil {
 		return err
 	}
-	return e.validatePipelineProjectionValues(rows, clause, "WITH")
+	return e.validatePipelineProjectionValues(ctx, rows, clause, "WITH")
 }
 
-func (e *StorageExecutor) validatePipelineProjectionValues(rows []pipelineRow, clause, keyword string) error {
+func (e *StorageExecutor) validatePipelineProjectionValues(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellation{ctx: ctx}
+	if ctx.Done() != nil {
+		scoped := make([]pipelineRow, len(rows))
+		for index, row := range rows {
+			if !probe.check() {
+				return probe.err
+			}
+			scope := make(pipelineRow, len(row)+1)
+			for name, value := range row {
+				if !probe.check() {
+					return probe.err
+				}
+				scope[name] = value
+			}
+			scope[rowStatementContextKey] = ctx
+			scoped[index] = scope
+		}
+		rows = scoped
+	}
 	for _, validate := range []func([]pipelineRow, string, string) error{
 		e.validatePipelineRangeArguments,
 		e.validatePipelineConversionArguments, e.validatePipelineGraphFunctionArguments,
 		e.validatePipelineProjectionSubscripts, e.validatePipelineSizeArguments,
 	} {
-		if err := validate(rows, clause, keyword); err != nil {
-			return err
+		if len(rows) <= pipelineCancellationInterval {
+			if err := validate(rows, clause, keyword); err != nil {
+				return err
+			}
+			continue
+		}
+		// Keep each validator's row order, but bound its unchecked scan.
+		for start := 0; start < max(1, len(rows)); start += pipelineCancellationInterval {
+			if !probe.poll() {
+				return probe.err
+			}
+			if err := validate(rows[start:min(start+pipelineCancellationInterval, len(rows))], clause, keyword); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -185,7 +217,7 @@ func (e *StorageExecutor) pipelineApplyUnwindPrefix(ctx context.Context, rows []
 	if !ok {
 		return nil, 0, false
 	}
-	out, ok := materializePipelineSource(source)
+	out, ok := materializePipelineSource(ctx, source)
 	return out, consumed, ok
 }
 
@@ -202,9 +234,13 @@ func (e *StorageExecutor) pipelineProjectReturnRow(ctx context.Context, projecti
 	return values, true
 }
 
-func materializePipelineSource(source pipelineRowSource) ([]pipelineRow, bool) {
+func materializePipelineSource(ctx context.Context, source pipelineRowSource) ([]pipelineRow, bool) {
+	probe := pipelineCancellation{ctx: ctx}
 	out := make([]pipelineRow, 0)
 	ok := source(func(row pipelineRow) bool {
+		if !probe.check() {
+			return false
+		}
 		retained := make(pipelineRow, len(row))
 		for name, value := range row {
 			retained[name] = value
@@ -212,7 +248,7 @@ func materializePipelineSource(source pipelineRowSource) ([]pipelineRow, bool) {
 		out = append(out, retained)
 		return true
 	})
-	return out, ok
+	return out, ok && probe.err == nil
 }
 
 func (e *StorageExecutor) pipelineNodeProductSource(ctx context.Context, rows []pipelineRow, clause string) (pipelineRowSource, bool, error) {
@@ -303,6 +339,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 	caches := make([]candidateCache, len(templates))
 	prefetched, _ := ctx.Value(pipelinePrefetchedNodeCandidatesKey{}).(map[nodeBatchMatchKey]map[string]*storage.Node)
 	return func(yield func(pipelineRow) bool) bool {
+		probe := pipelineCancellation{ctx: ctx}
 		valid := true
 		current := make(pipelineRow, len(templates))
 		resolved := make([]nodePatternInfo, len(templates))
@@ -376,8 +413,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 			}
 			var visit func(int) bool
 			visit = func(index int) bool {
-				if err := ctx.Err(); err != nil {
-					recordExpressionFailure(ctx, err)
+				if !probe.check() {
 					valid = false
 					return false
 				}
@@ -400,6 +436,10 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 					return visit(index + 1)
 				}
 				for _, node := range candidates[index] {
+					if !probe.check() {
+						valid = false
+						return false
+					}
 					if !pipelineNodeMatchesPattern(node, pattern) {
 						continue
 					}
@@ -425,6 +465,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 // pipelineNodeMatchSourceWithHint.
 func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, inputSource pipelineRowSource, template *pipelineNodeMatchTemplate, hint pipelineMatchPhysicalHint) pipelineRowSource {
 	return func(yield func(pipelineRow) bool) bool {
+		probe := pipelineCancellation{ctx: ctx}
 		valid := true
 		current := make(pipelineRow)
 		completed := inputSource(func(input pipelineRow) bool {
@@ -446,8 +487,8 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 			}
 			accepted := true
 			err := e.visitPipelineInitialNodeCandidates(candidateCtx, pattern, hint, func(node *storage.Node) error {
-				if err := ctx.Err(); err != nil {
-					return err
+				if !probe.check() {
+					return probe.err
 				}
 				if !pipelineNodeMatchesPattern(node, pattern) {
 					return nil
@@ -472,17 +513,18 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 }
 
 func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipelineRowSource, plan pipelineRowWith) pipelineRowSource {
+	ctx = withPipelineCancellation(ctx)
 	return func(yield func(pipelineRow) bool) bool {
+		probe := pipelineCancellation{ctx: ctx}
 		projected, scope := pipelineRow{}, pipelineRow{}
 		valid := true
 		completed := input(func(row pipelineRow) bool {
-			if err := ctx.Err(); err != nil {
-				recordExpressionFailure(ctx, err)
+			if !probe.check() {
 				valid = false
 				return false
 			}
 			if strings.ContainsAny(plan.clause, "([") {
-				if err := e.validatePipelineWithRows([]pipelineRow{row}, plan.clause); err != nil {
+				if err := e.validatePipelineWithRows(ctx, []pipelineRow{row}, plan.clause); err != nil {
 					recordExpressionFailure(ctx, err)
 					valid = false
 					return false
@@ -557,14 +599,18 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 		if !local {
 			break
 		}
-		if err := e.validatePipelineWithRows(rows, clause.text); err != nil {
+		if err := e.validatePipelineWithRows(ctx, rows, clause.text); err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil, 0, false
 		}
 		plans = append(plans, plan)
 	}
 	source := pipelineRowSource(func(yield func(pipelineRow) bool) bool {
+		probe := pipelineCancellation{ctx: ctx}
 		for _, input := range rows {
+			if !probe.check() {
+				return false
+			}
 			values, ok := e.pipelineUnwindValues(ctx, expression, input)
 			if !ok {
 				return false
@@ -574,8 +620,7 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 				child[name] = value
 			}
 			for value := range values {
-				if err := ctx.Err(); err != nil {
-					recordExpressionFailure(ctx, err)
+				if !probe.check() {
 					return false
 				}
 				child[alias] = value

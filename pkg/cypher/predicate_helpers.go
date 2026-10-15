@@ -37,9 +37,16 @@ func getBindingNodeValue(node *storage.Node, propName string) (any, bool) {
 }
 
 func buildComparableMembershipIndex(items []interface{}) (map[interface{}]struct{}, []interface{}) {
+	return buildComparableMembershipIndexWithCancellation(items, nil)
+}
+
+func buildComparableMembershipIndexWithCancellation(items []interface{}, probe *pipelineCancellation) (map[interface{}]struct{}, []interface{}) {
 	comparableSet := make(map[interface{}]struct{}, len(items))
 	nonComparable := make([]interface{}, 0)
 	for _, item := range items {
+		if probe != nil && !probe.check() {
+			return nil, nil
+		}
 		if item == nil {
 			continue
 		}
@@ -118,6 +125,11 @@ func floatMembershipKey(f float64) interface{} {
 
 func isComparableValue(v interface{}) bool {
 	if v == nil {
+		return false
+	}
+	// Large strings use structural comparison so a native map hash/equality
+	// cannot hide an unbounded byte scan between cancellation samples.
+	if text, ok := v.(string); ok && len(text) > 4096 {
 		return false
 	}
 	return reflect.TypeOf(v).Comparable()

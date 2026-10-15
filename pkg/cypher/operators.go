@@ -707,9 +707,18 @@ func (e *StorageExecutor) splitByOperator(expr, op string) []string {
 //	add(5.0, 3)                                  // float64(8.0)
 //	add("2025-01-01", &CypherDuration{Days: 5})  // "2025-01-06T00:00:00Z"
 func (e *StorageExecutor) add(left, right interface{}) interface{} {
+	return e.addWithCancellation(left, right, nil)
+}
+
+func (e *StorageExecutor) addWithCancellation(left, right interface{}, probe *pipelineCancellation) interface{} {
 	// A null operand makes the sum null, for lists and strings too.
 	if left == nil || right == nil {
 		return nil
+	}
+	if text, ok := left.(string); ok {
+		if other, both := right.(string); both {
+			return concatPipelineStrings(text, other, probe)
+		}
 	}
 	if result, handled := addTemporalValues(left, right); handled {
 		return result
@@ -718,24 +727,36 @@ func (e *StorageExecutor) add(left, right interface{}) interface{} {
 	// - list + list
 	// - list + scalar
 	// - scalar + list
-	leftList, leftIsList := toInterfaceSlice(left)
-	rightList, rightIsList := toInterfaceSlice(right)
+	leftList, leftIsList := cypherListValueWithCancellation(left, probe)
+	if probe != nil && probe.err != nil {
+		return nil
+	}
+	rightList, rightIsList := cypherListValueWithCancellation(right, probe)
+	if probe != nil && probe.err != nil {
+		return nil
+	}
 	if leftIsList && rightIsList {
 		out := make([]interface{}, 0, util.SafePreallocSum(len(leftList), len(rightList)))
-		out = append(out, leftList...)
-		out = append(out, rightList...)
+		out = appendPipelineValues(out, leftList, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		out = appendPipelineValues(out, rightList, probe)
 		return out
 	}
 	if leftIsList {
 		out := make([]interface{}, 0, util.SafePreallocSum(len(leftList), 1))
-		out = append(out, leftList...)
+		out = appendPipelineValues(out, leftList, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 		out = append(out, right)
 		return out
 	}
 	if rightIsList {
 		out := make([]interface{}, 0, util.SafePreallocSum(len(rightList), 1))
 		out = append(out, left)
-		out = append(out, rightList...)
+		out = appendPipelineValues(out, rightList, probe)
 		return out
 	}
 
@@ -757,13 +778,13 @@ func (e *StorageExecutor) add(left, right interface{}) interface{} {
 	// String concatenation: string + string, string + number, number + string.
 	if text, isText := left.(string); isText {
 		if other, ok := concatOperandText(right); ok {
-			return text + other
+			return concatPipelineStrings(text, other, probe)
 		}
 		return nil
 	}
 	if text, isText := right.(string); isText {
 		if other, ok := concatOperandText(left); ok {
-			return other + text
+			return concatPipelineStrings(other, text, probe)
 		}
 		return nil
 	}

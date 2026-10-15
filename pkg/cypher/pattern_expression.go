@@ -203,6 +203,8 @@ func (e *StorageExecutor) evaluatePatternComprehension(ctx context.Context, patt
 // horizons on the same row-expression path while preserving scalar aliases
 // that are visible inside the comprehension projection.
 func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Context, pattern, projection string, outer pipelineRow) []interface{} {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	// The comprehension's named path (p = …) is its own variable
 	// (localBindingAt), shadowing an outer one of the same name rather than
 	// constraining the match.
@@ -225,6 +227,9 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 	rows := e.evaluateBoundPatternRows(ctx, pattern, nodes, rels, outer)
 	values := make([]interface{}, 0, len(rows))
 	for _, row := range rows {
+		if !probe.check() {
+			return nil
+		}
 		scope := make(pipelineRow, len(outer)+len(row.nodes)+len(row.rels)+len(row.values))
 		for variable, value := range outer {
 			scope[variable] = value
@@ -246,9 +251,8 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 		for variable, value := range row.values {
 			scope[variable] = value
 		}
-		value, evaluated, err := e.evaluateRowValue(projection, scope)
-		if err != nil {
-			recordExpressionFailure(ctx, err)
+		value, evaluated := e.evaluateRowExpressionWithContext(ctx, projection, scope)
+		if getExpressionFailure(ctx) != nil {
 			return nil
 		}
 		if evaluated {
@@ -277,7 +281,7 @@ func evaluateBoundRowValue(expr string, values pipelineRow) (interface{}, bool) 
 	return nil, false
 }
 
-func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow) (interface{}, bool) {
+func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow, cancellation ...*pipelineCancellation) (interface{}, bool) {
 	if value, bound := evaluateBoundRowValue(expr, values); bound {
 		return value, true
 	}
@@ -305,7 +309,8 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 	for name, value := range parameterRowValues(ctx) {
 		bind(name, value)
 	}
-	if needsRowStatementContext(expr) {
+	if needsRowStatementContext(expr) || strings.ContainsAny(expr, "([{") {
+		ctx = withPipelineCancellation(ctx)
 		bind(rowStatementContextKey, ctx)
 	}
 	if extended != nil {
@@ -330,7 +335,8 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		}
 	}
 	if pattern, projection, ok := splitPatternComprehension(expr); ok {
-		return e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, values), true
+		value := e.evaluatePatternComprehensionFromRow(ctx, pattern, projection, values)
+		return value, getExpressionFailure(ctx) == nil
 	}
 	if trimmed := strings.TrimSpace(expr); isStandaloneExistsSubquery(trimmed) {
 		matched, _ := e.evaluateRowExistsPredicate(ctx, trimmed, values)
@@ -348,9 +354,22 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 			values = scope
 		}
 	}
-	value, resolved, err := e.evaluateRowValue(expr, values)
+	// Simple arithmetic/comparisons borrow a probe without cloning the row to
+	// carry context metadata. Recursive calls keep this same budget.
+	probe, _ := ctx.Value(pipelineCancellationKey{}).(*pipelineCancellation)
+	local := pipelineCancellation{ctx: ctx}
+	if len(cancellation) > 0 {
+		probe = cancellation[0]
+	}
+	if probe == nil {
+		probe = &local
+	}
+	value, resolved, err := e.evaluateRowValueWithCancellation(expr, values, probe)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
+		return nil, false
+	}
+	if getExpressionFailure(ctx) != nil {
 		return nil, false
 	}
 	if !resolved && containsRelationshipPattern(expr) {

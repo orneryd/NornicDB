@@ -16,6 +16,7 @@ import (
 // its CartesianProduct; only the other conditions are evaluated on the
 // combinations (#940).
 func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []pipelineRow, parts []string, where string) ([]pipelineRow, bool, error) {
+	probe := pipelineCancellation{ctx: ctx}
 	nodeVariables := make([]string, 0, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
@@ -40,6 +41,9 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 			}
 			bound := false
 			for _, row := range rows {
+				if !probe.check() {
+					return ""
+				}
 				if _, exists := row[name]; exists {
 					bound = true
 					break
@@ -79,6 +83,9 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 		if len(paths) > 1 {
 			filtered := rows[:0]
 			for _, row := range rows {
+				if !probe.check() {
+					return nil, true, probe.err
+				}
 				if repeatableElements(ctx) || pipelineProductPathsUnique(row, paths) {
 					filtered = append(filtered, row)
 				}
@@ -88,6 +95,9 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 	}
 	filtered := rows[:0]
 	for _, row := range rows {
+		if !probe.check() {
+			return nil, true, probe.err
+		}
 		if strings.TrimSpace(where) != "" && !e.evaluateRowPredicate(ctx, where, row) {
 			continue
 		}
@@ -107,6 +117,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 // candidates are narrowed by the conditions that read its variable only
 // (splitWhereByVariable) first.
 func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows []pipelineRow, parts []string, where string) ([]pipelineRow, bool, error) {
+	probe := pipelineCancellation{ctx: ctx}
 	if strings.TrimSpace(where) == "" {
 		return nil, false, nil
 	}
@@ -184,6 +195,9 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 		}
 		combinations, _ := e.buildCombinationsUsingWhereJoin(matches, where)
 		for _, combination := range combinations {
+			if !probe.check() {
+				return nil, true, probe.err
+			}
 			joined := make(pipelineRow, len(row)+len(combination))
 			for name, value := range row {
 				joined[name] = value

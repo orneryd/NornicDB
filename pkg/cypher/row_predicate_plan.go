@@ -111,6 +111,10 @@ func (value plannedRowValue) materialize() interface{} {
 }
 
 func (operand *rowOperand) evaluate(e *StorageExecutor, scope compiledRowScope) (plannedRowValue, bool, error) {
+	return operand.evaluateWithCancellation(e, scope, nil)
+}
+
+func (operand *rowOperand) evaluateWithCancellation(e *StorageExecutor, scope compiledRowScope, probe *pipelineCancellation) (plannedRowValue, bool, error) {
 	if operand.compiled == nil {
 		value, ok := operand.resolveScope(scope)
 		if !ok && operand.kind == rowOperandPropertyChain {
@@ -121,7 +125,10 @@ func (operand *rowOperand) evaluate(e *StorageExecutor, scope compiledRowScope) 
 		integer, isInteger := cypherIntegerOperand(value)
 		return plannedRowValue{value: value, integer: integer, isInteger: isInteger}, ok, nil
 	}
-	left, leftOK, err := operand.compiled.left.evaluate(e, scope)
+	if probe != nil && !probe.check() {
+		return plannedRowValue{}, false, probe.err
+	}
+	left, leftOK, err := operand.compiled.left.evaluateWithCancellation(e, scope, probe)
 	if err != nil || !leftOK {
 		return plannedRowValue{}, leftOK, err
 	}
@@ -129,10 +136,10 @@ func (operand *rowOperand) evaluate(e *StorageExecutor, scope compiledRowScope) 
 		if left.value == nil && !left.isInteger {
 			return plannedRowValue{}, true, nil
 		}
-		integer, ok, err := evaluateCypherSizeInteger(left.materialize())
+		integer, ok, err := evaluateCypherSizeIntegerWithCancellation(left.materialize(), probe)
 		return plannedRowValue{integer: integer, isInteger: ok}, ok, err
 	}
-	right, rightOK, err := operand.compiled.right.evaluate(e, scope)
+	right, rightOK, err := operand.compiled.right.evaluateWithCancellation(e, scope, probe)
 	if err != nil || !rightOK {
 		return plannedRowValue{}, rightOK, err
 	}
@@ -148,7 +155,7 @@ func (operand *rowOperand) evaluate(e *StorageExecutor, scope compiledRowScope) 
 			return plannedRowValue{}, false, divisionByZeroError()
 		}
 	}
-	value, ok, err := e.evaluateRowArithmeticValues(operand.compiled.operator, left.materialize(), right.materialize())
+	value, ok, err := e.evaluateRowArithmeticValuesWithCancellation(operand.compiled.operator, left.materialize(), right.materialize(), probe)
 	integer, isInteger := cypherIntegerOperand(value)
 	return plannedRowValue{value: value, integer: integer, isInteger: isInteger}, ok, err
 }
@@ -560,10 +567,20 @@ type compiledRowMemberships struct {
 }
 
 func (memberships *compiledRowMemberships) prepare(part *rowPredicatePart, scope compiledRowScope) {
+	memberships.prepareWithCancellation(part, scope, nil)
+}
+
+func (memberships *compiledRowMemberships) prepareWithCancellation(part *rowPredicatePart, scope compiledRowScope, probe *pipelineCancellation) {
+	if probe != nil && !probe.check() {
+		return
+	}
 	if part.membership != nil {
 		if value, ok := part.right.resolveScope(scope); ok {
-			if items, ok := toInterfaceSlice(value); ok {
-				comparable, nonComparable, hasNull := part.membership.getValidated(items)
+			if items, ok := cypherListValueWithCancellation(value, probe); ok {
+				comparable, nonComparable, hasNull := part.membership.getValidatedWithCancellation(items, probe)
+				if probe != nil && probe.err != nil {
+					return
+				}
 				entry := compiledRowMembership{part: part, comparable: comparable, nonComparable: nonComparable, hasNull: hasNull}
 				if memberships.count < len(memberships.inline) {
 					memberships.inline[memberships.count] = entry
@@ -575,7 +592,10 @@ func (memberships *compiledRowMemberships) prepare(part *rowPredicatePart, scope
 		}
 	}
 	for index := range part.parts {
-		memberships.prepare(&part.parts[index], scope)
+		memberships.prepareWithCancellation(&part.parts[index], scope, probe)
+		if probe != nil && probe.err != nil {
+			return
+		}
 	}
 }
 
@@ -600,34 +620,54 @@ func (e *StorageExecutor) evaluateRowPredicatePlan(ctx context.Context, plan *ro
 	return e.evaluateRowPredicatePart(ctx, &plan.root, values)
 }
 
+func (e *StorageExecutor) evaluateRowPredicatePlanWithCancellation(ctx context.Context, plan *rowPredicatePlan, values map[string]interface{}, probe *pipelineCancellation) bool {
+	return e.evaluateRowPredicatePartScopeWithCancellation(ctx, &plan.root, compiledRowScope{values: values}, nil, probe)
+}
+
 func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *rowPredicatePart, values map[string]interface{}) bool {
 	return e.evaluateRowPredicatePartScope(ctx, part, compiledRowScope{values: values}, nil)
 }
 
 func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) bool {
+	probe, _ := ctx.Value(pipelineCancellationKey{}).(*pipelineCancellation)
+	var local pipelineCancellation
+	if probe == nil && ctx.Done() != nil {
+		local.ctx = ctx
+		probe = &local
+	}
+	return e.evaluateRowPredicatePartScopeWithCancellation(ctx, part, scope, memberships, probe)
+}
+
+func (e *StorageExecutor) evaluateRowPredicatePartScopeWithCancellation(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships, probe *pipelineCancellation) bool {
 	switch part.kind {
 	case rowPredicateAnd:
 		for i := range part.parts {
-			if !e.evaluateRowPredicatePartScope(ctx, &part.parts[i], scope, memberships) {
+			if probe != nil && !probe.check() {
+				return false
+			}
+			if !e.evaluateRowPredicatePartScopeWithCancellation(ctx, &part.parts[i], scope, memberships, probe) {
 				return false
 			}
 		}
 		return true
 	case rowPredicateOr:
 		for i := range part.parts {
-			if e.evaluateRowPredicatePartScope(ctx, &part.parts[i], scope, memberships) {
+			if probe != nil && !probe.check() {
+				return false
+			}
+			if e.evaluateRowPredicatePartScopeWithCancellation(ctx, &part.parts[i], scope, memberships, probe) {
 				return true
 			}
 		}
 		return false
 	case rowPredicateComparison:
 		if part.left.compiled != nil || part.right.compiled != nil {
-			left, leftOK, err := part.left.evaluate(e, scope)
+			left, leftOK, err := part.left.evaluateWithCancellation(e, scope, probe)
 			if err != nil {
 				recordExpressionFailure(ctx, err)
 				return false
 			}
-			right, rightOK, err := part.right.evaluate(e, scope)
+			right, rightOK, err := part.right.evaluateWithCancellation(e, scope, probe)
 			if err != nil {
 				recordExpressionFailure(ctx, err)
 				return false
@@ -655,7 +695,7 @@ func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, par
 			if part.constantNumbers && foldsConstantNumbers(string(part.operator), cypherVersionFromContext(ctx) == "25") {
 				leftValue, rightValue = promoteIntegerToFloat(leftValue, rightValue)
 			}
-			matched, known := part.operator.evaluate(leftValue, rightValue).(bool)
+			matched, known := compareCypherPredicateValueWithCancellation(leftValue, rightValue, string(part.operator), probe).(bool)
 			return known && matched
 		}
 		left, leftOK := part.left.resolveScope(scope)
@@ -669,7 +709,7 @@ func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, par
 		if part.constantNumbers && foldsConstantNumbers(string(part.operator), cypherVersionFromContext(ctx) == "25") {
 			left, right = promoteIntegerToFloat(left, right)
 		}
-		matched, known := part.operator.evaluate(left, right).(bool)
+		matched, known := compareCypherPredicateValueWithCancellation(left, right, string(part.operator), probe).(bool)
 		return known && matched
 	case rowPredicateString:
 		left, leftOK := part.left.resolveScope(scope)
@@ -690,15 +730,18 @@ func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, par
 				if prepared := memberships.find(part); prepared != nil && len(prepared.nonComparable) == 0 {
 					return membershipTruth(needle, prepared.comparable, nil, prepared.hasNull, e.compareBindingValuesEqual) == truthTrue
 				}
-				if items, ok := toInterfaceSlice(haystack); ok {
-					comparable, nonComparable, hasNull := part.membership.get(items, firstInterfaceElement(items))
+				if items, ok := cypherListValueWithCancellation(haystack, probe); ok {
+					comparable, nonComparable, hasNull := part.membership.getValidatedWithCancellation(items, probe)
+					if probe != nil && probe.err != nil {
+						return false
+					}
 					if len(nonComparable) == 0 {
 						return membershipTruth(needle, comparable, nil, hasNull, e.compareBindingValuesEqual) == truthTrue
 					}
 				}
 			}
 		}
-		member, ok := rowMembershipOfValues(needle, haystack, false)
+		member, ok := rowMembershipOfValuesWithCancellation(needle, haystack, false, probe)
 		return ok && member == true
 	case rowPredicateIsNull, rowPredicateIsNotNull:
 		value, ok := part.left.resolveScope(scope)

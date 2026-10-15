@@ -1112,6 +1112,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 // arguments of any other shape before evaluation; here they, and a list
 // expression this evaluator can't evaluate, are null.
 func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, function, inner string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	varName, listExpr, predicate, parsed := parseQuantifierArguments(inner)
 	if !parsed {
 		return nil
@@ -1137,7 +1139,10 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 		}
 	}
 	fold := quantifierFold{function: function}
-	for _, item := range coerceToUnwindItems(list) {
+	for _, item := range coerceToUnwindItemsWithCancellation(list, probe) {
+		if !probe.check() {
+			return nil
+		}
 		result, _ := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels, pathValues)
 		if value, decided := fold.add(result); decided {
 			return value
@@ -1186,6 +1191,8 @@ func (e *StorageExecutor) evaluateQuantifierPredicate(
 // predicate doesn't hold for is left out. A relationship item's type(x) /
 // id(x) projection reads a relationship map's type / _edgeId as well.
 func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName, listExpr, condition, projection string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	if list == nil {
 		return nil
@@ -1194,13 +1201,16 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 		if texts, isTexts := list.([]string); isTexts {
 			items := make([]interface{}, len(texts))
 			for index, item := range texts {
+				if !probe.check() {
+					return nil
+				}
 				items[index] = item
 			}
 			return items
 		}
 		return list
 	}
-	items, ok := toInterfaceSlice(list)
+	items, ok := cypherListValueWithCancellation(list, probe)
 	if !ok {
 		items = []interface{}{list}
 	}
@@ -1216,6 +1226,9 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 	values := valueBindingsLayer(ctx, 1)
 	itemCtx := withValueBindings(ctx, values)
 	for _, item := range items {
+		if !probe.check() {
+			return nil
+		}
 		bindEvaluationValue(varName, item, boundNodes, boundRels, values)
 		if condition != "" {
 			predicate := e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1270,6 +1283,8 @@ func relationshipMapProjection(projection string, item interface{}) (interface{}
 // expression evaluator: a list that isn't one is a one-item list, and an
 // error is recorded on ctx, giving null.
 func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inner string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	form, ok := parseReduceForm(function, inner)
 	if !ok {
 		return nil
@@ -1302,7 +1317,7 @@ func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inne
 			return e.evaluateExpressionWithContextFull(itemCtx, expression, tempNodes, tempRels, paths, allPathEdges, allPathNodes, pathLength), nil
 		}
 	}
-	result, err := runReduceForm(form, acc, items, evaluate(form.step), evaluate(form.predicate))
+	result, err := runReduceFormWithCancellation(form, acc, items, evaluate(form.step), evaluate(form.predicate), probe)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil

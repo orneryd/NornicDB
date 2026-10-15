@@ -322,7 +322,7 @@ skipArrayIndexing:
 	if matchFuncStartAndSuffix(expr, "head") {
 		inner := extractFuncArgs(expr, "head")
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		result, err := evaluateListAccessFunction("head", innerVal)
+		result, err := evaluateListAccessFunctionWithCancellation("head", innerVal, pipelineCancellationForContext(ctx))
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil
@@ -334,7 +334,7 @@ skipArrayIndexing:
 	if matchFuncStartAndSuffix(expr, "last") {
 		inner := extractFuncArgs(expr, "last")
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		result, err := evaluateListAccessFunction("last", innerVal)
+		result, err := evaluateListAccessFunctionWithCancellation("last", innerVal, pipelineCancellationForContext(ctx))
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil
@@ -356,7 +356,7 @@ skipArrayIndexing:
 	if matchFuncStartAndSuffix(expr, "reverse") {
 		inner := extractFuncArgs(expr, "reverse")
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		result, err := evaluateListAccessFunction("reverse", innerVal)
+		result, err := evaluateListAccessFunctionWithCancellation("reverse", innerVal, pipelineCancellationForContext(ctx))
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil
@@ -372,8 +372,9 @@ skipArrayIndexing:
 		for index, argument := range args {
 			arguments[index] = e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(argument), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
-		result, err := evaluateCypherRange(arguments)
+		result, err := evaluateCypherRangeWithCancellation(arguments, pipelineCancellationForContext(ctx))
 		if err != nil {
+			recordExpressionFailure(ctx, err)
 			return nil
 		}
 		return result
@@ -1375,19 +1376,29 @@ func randomCypherFloat() float64 {
 // string or a list. Any other value is the function's TypeError (Neo4j 5.26
 // and 2026.09; head('ab') too).
 func evaluateListAccessFunction(function string, value interface{}) (interface{}, error) {
+	return evaluateListAccessFunctionWithCancellation(function, value, nil)
+}
+
+func evaluateListAccessFunctionWithCancellation(function string, value interface{}, probe *pipelineCancellation) (interface{}, error) {
 	if value == nil {
 		return nil, nil
 	}
 	if text, isString := value.(string); isString && function == "reverse" {
-		runes := []rune(text)
+		runes := pipelineRunes(text, probe)
 		for left, right := 0, len(runes)-1; left < right; left, right = left+1, right-1 {
+			if probe != nil && !probe.check() {
+				return nil, probe.err
+			}
 			runes[left], runes[right] = runes[right], runes[left]
 		}
-		return string(runes), nil
+		return pipelineStringFromRunes(runes, probe)
 	}
 	if _, isString := value.(string); !isString {
 		if valueType := reflect.TypeOf(value); valueType.Kind() == reflect.Slice || valueType.Kind() == reflect.Array {
-			items := toAnySlice(value)
+			items := toAnySliceWithCancellation(value, probe)
+			if probe != nil && probe.err != nil {
+				return nil, probe.err
+			}
 			switch function {
 			case "head":
 				if len(items) == 0 {
@@ -1402,6 +1413,9 @@ func evaluateListAccessFunction(function string, value interface{}) (interface{}
 			}
 			reversed := make([]interface{}, len(items))
 			for index := range items {
+				if probe != nil && !probe.check() {
+					return nil, probe.err
+				}
 				reversed[len(items)-1-index] = items[index]
 			}
 			return reversed, nil

@@ -4,7 +4,6 @@ import (
 	"context"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,14 +101,14 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		stringGroups map[string]*pipelineAggregateGroup
 	}{ordered: make([]*pipelineAggregateGroup, 0)}
 	valid := true
+	probe := pipelineCancellation{ctx: ctx}
 	completed := source(func(row pipelineRow) bool {
-		if err := ctx.Err(); err != nil {
-			recordExpressionFailure(ctx, err)
+		if !probe.check() {
 			valid = false
 			return false
 		}
 		for _, clause := range validationClauses {
-			if err := e.validatePipelineProjectionValues([]pipelineRow{row}, clause, "WITH"); err != nil {
+			if err := e.validatePipelineProjectionValues(ctx, []pipelineRow{row}, clause, "WITH"); err != nil {
 				recordExpressionFailure(ctx, err)
 				valid = false
 				return false
@@ -140,15 +139,19 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 						}
 						lookup = grouping.stringGroups
 					} else {
-						key = cypherEquivalenceKey(value)
+						key = cypherEquivalenceKeyWithCancellation(value, &probe)
 					}
 				} else {
-					parts = append(parts, cypherEquivalenceKey(value))
+					parts = append(parts, cypherEquivalenceKeyWithCancellation(value, &probe))
 				}
 			}
 			if groupingCount > 1 {
-				key = strings.Join(parts, "\x1f")
+				key = joinPipelineStrings(parts, "\x1f", &probe)
 			}
+		}
+		if probe.err != nil {
+			valid = false
+			return false
 		}
 		group := lookup[key]
 		if group == nil {
@@ -158,7 +161,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		}
 		for index := range group.projections {
 			for offset := range group.projections[index].states {
-				if !group.projections[index].states[offset].add(ctx, e, row) {
+				if !group.projections[index].states[offset].addWithCancellation(ctx, e, row, &probe) {
 					valid = false
 					return false
 				}
@@ -166,7 +169,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		}
 		return true
 	})
-	if !completed || !valid {
+	if !completed || !valid || !probe.poll() {
 		return nil, false
 	}
 	if len(grouping.ordered) == 0 && allAggregates {
@@ -232,6 +235,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 	if err := ctx.Err(); err != nil {
 		return nil, true, err
 	}
+	preparationProbe := pipelineCancellation{ctx: ctx}
 	complexity := 0
 	for _, projection := range plan.projections {
 		if !projection.isAggr {
@@ -264,6 +268,9 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			if name == "sum" {
 				complexity++
 				for _, node := range patterns[patternIndex].nodes {
+					if !preparationProbe.check() {
+						return nil, true, preparationProbe.err
+					}
 					if node == nil || node.Properties[property] == nil {
 						continue
 					}
@@ -291,6 +298,9 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 	var next atomic.Int64
 	run := func(worker int) {
 		workerContext := context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
+		// A recursive expression probe belongs to its evaluating goroutine,
+		// just like the worker's failure slot. Never inherit a parent's budget.
+		workerContext = context.WithValue(workerContext, pipelineCancellationKey{}, nil)
 		source := func(yield func(pipelineRow) bool) bool {
 			values := make(pipelineRow, len(patterns))
 			for {
@@ -347,10 +357,14 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 	if workers == 1 {
 		return partitions[0].groups, true, partitions[0].err
 	}
+	probe := pipelineCancellation{ctx: ctx}
 	positions := make([]map[*storage.Node]int, len(patterns))
 	for index, pattern := range patterns {
 		positions[index] = make(map[*storage.Node]int, len(pattern.nodes))
 		for position, node := range pattern.nodes {
+			if !probe.check() {
+				return nil, true, probe.err
+			}
 			if _, exists := positions[index][node]; !exists {
 				positions[index][node] = position
 			}
@@ -367,6 +381,9 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			return nil, true, partition.err
 		}
 		for _, partial := range partition.groups {
+			if !probe.check() {
+				return nil, true, probe.err
+			}
 			if len(partial.first) == 0 {
 				continue
 			}
@@ -382,10 +399,13 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 					if !ok {
 						return nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidAggregate", "invalid Cartesian grouping expression")
 					}
-					parts = append(parts, cypherEquivalenceKey(value))
+					parts = append(parts, cypherEquivalenceKeyWithCancellation(value, &probe))
 				}
 			}
-			key := strings.Join(parts, "\x1f")
+			key := joinPipelineStrings(parts, "\x1f", &probe)
+			if probe.err != nil {
+				return nil, true, probe.err
+			}
 			merged := groups[key]
 			if merged == nil {
 				merged = &mergedGroup{group: partial, ordinal: ordinal}
@@ -408,9 +428,14 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			}
 		}
 	}
-	sort.Slice(ordered, func(left, right int) bool { return ordered[left].ordinal < ordered[right].ordinal })
+	if !probe.sort(ordered, func(left, right int) bool { return ordered[left].ordinal < ordered[right].ordinal }, false) {
+		return nil, true, probe.err
+	}
 	result := make([]*pipelineAggregateGroup, len(ordered))
 	for index, merged := range ordered {
+		if !probe.check() {
+			return nil, true, probe.err
+		}
 		result[index] = merged.group
 	}
 	return result, true, nil
@@ -457,6 +482,11 @@ type pipelineAggregateState struct {
 }
 
 func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageExecutor, row pipelineRow) bool {
+	probe := pipelineCancellation{ctx: ctx}
+	return state.addWithCancellation(ctx, executor, row, &probe)
+}
+
+func (state *pipelineAggregateState) addWithCancellation(ctx context.Context, executor *StorageExecutor, row pipelineRow, probe *pipelineCancellation) bool {
 	if state.name == "count" && state.expression == "*" {
 		state.count++
 		return true
@@ -480,7 +510,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		}
 		for _, argument := range arguments {
 			argument = strings.TrimSpace(argument)
-			value, ok := executor.evaluateRowExpressionWithContext(ctx, argument, row)
+			value, ok := executor.evaluateRowExpressionWithContext(ctx, argument, row, probe)
 			if !ok {
 				return false
 			}
@@ -491,7 +521,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 	}
 	value, ok := row[state.expression]
 	if !ok || isLiteralKeyword(state.expression) {
-		value, ok = executor.evaluateRowExpressionWithContext(ctx, state.expression, row)
+		value, ok = executor.evaluateRowExpressionWithContext(ctx, state.expression, row, probe)
 	}
 	if !ok {
 		return false
@@ -503,7 +533,10 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		if state.seen == nil {
 			state.seen = make(map[string]struct{})
 		}
-		key := cypherEquivalenceKey(value)
+		key := cypherEquivalenceKeyWithCancellation(value, probe)
+		if probe.err != nil {
+			return false
+		}
 		if _, exists := state.seen[key]; exists {
 			return true
 		}
@@ -555,7 +588,10 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		if state.selected == nil {
 			state.selected = value
 		} else {
-			comparison := compareValuesForSort(value, state.selected)
+			comparison := compareValuesForSortWithCancellation(value, state.selected, probe)
+			if probe.err != nil {
+				return false
+			}
 			if state.name == "min" && comparison < 0 || state.name == "max" && comparison > 0 {
 				state.selected = value
 			}

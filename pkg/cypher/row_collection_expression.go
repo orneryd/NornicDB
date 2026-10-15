@@ -34,7 +34,8 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 			return value, err
 		}
 	}
-	result, err := runReduceForm(form, accumulator, coerceToUnwindItems(listValue), step(form.step), step(form.predicate))
+	probe := rowPipelineCancellation(values)
+	result, err := runReduceFormWithCancellation(form, accumulator, coerceToUnwindItemsWithCancellation(listValue, probe), step(form.step), step(form.predicate), probe)
 	if err == errRowArgumentUnresolved {
 		return nil, false, nil
 	}

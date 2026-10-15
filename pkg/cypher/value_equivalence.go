@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"math/big"
 	"sort"
@@ -28,13 +27,28 @@ import (
 //     have no identity, so every NaN is apart.)
 //   - any other value (temporal, spatial, path) keeps its Go type and value.
 func cypherEquivalenceKey(value interface{}) string {
+	return cypherEquivalenceKeyWithCancellation(value, nil)
+}
+
+func cypherEquivalenceKeyWithCancellation(value interface{}, probe *pipelineCancellation) string {
+	if probe != nil && !probe.check() {
+		return ""
+	}
 	// The common single values get their key in one allocation; the rest are
 	// written by appendEquivalenceKey.
 	switch typed := value.(type) {
 	case nil:
 		return "N"
 	case string:
-		return "S" + typed
+		if probe == nil || len(typed) <= 4096 {
+			return "S" + typed
+		}
+		var key strings.Builder
+		key.WriteByte('S')
+		if !appendPipelineString(&key, typed, probe) {
+			return ""
+		}
+		return key.String()
 	case *storage.Node:
 		if typed != nil {
 			return "n:" + string(typed.ID)
@@ -49,14 +63,14 @@ func cypherEquivalenceKey(value interface{}) string {
 		return "I" + strconv.FormatInt(typed, 10)
 	}
 	var key strings.Builder
-	appendEquivalenceKey(&key, value)
+	appendEquivalenceKey(&key, value, probe)
 	return key.String()
 }
 
 // appendEquivalenceKey writes value's equivalence key (cypherEquivalenceKey).
 // A key starts with one letter naming its kind; a list or map element's key
 // is preceded by its length, so a composite key has one reading.
-func appendEquivalenceKey(key *strings.Builder, value interface{}) {
+func appendEquivalenceKey(key *strings.Builder, value interface{}, probe *pipelineCancellation) {
 	switch typed := value.(type) {
 	case bool:
 		if typed {
@@ -67,7 +81,12 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 		return
 	case []byte:
 		key.WriteByte('X')
-		key.Write(typed)
+		for start := 0; start < len(typed); start += 4096 {
+			if probe != nil && !probe.check() {
+				return
+			}
+			key.Write(typed[start:min(start+4096, len(typed))])
+		}
 		return
 	}
 	if signed, ok := cypherSignedInteger(value); ok {
@@ -84,43 +103,72 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 		appendFloatEquivalenceKey(key, number)
 		return
 	}
-	if list, ok := cypherListValue(value); ok {
+	if list, ok := cypherListValueWithCancellation(value, probe); ok {
 		key.WriteByte('L')
 		key.WriteString(strconv.Itoa(len(list)))
 		for _, item := range list {
-			appendNestedEquivalenceKey(key, item)
+			if probe != nil && !probe.check() {
+				return
+			}
+			appendNestedEquivalenceKey(key, item, probe)
+			if probe != nil && probe.err != nil {
+				return
+			}
 		}
 		return
 	}
-	if fields, ok := toStringAnyMap(value); ok {
+	if fields, ok := toStringAnyMapWithCancellation(value, probe); ok {
 		names := make([]string, 0, len(fields))
+		largeName := false
 		for name := range fields {
+			if probe != nil && !probe.check() {
+				return
+			}
 			names = append(names, name)
+			largeName = largeName || len(name) > 4096
 		}
-		sort.Strings(names)
+		if probe == nil || len(names) <= pipelineCancellationInterval && !largeName {
+			sort.Strings(names)
+		} else if !probe.sort(names, func(i, j int) bool { return comparePipelineStrings(names[i], names[j], probe) < 0 }, false) {
+			return
+		}
 		key.WriteByte('M')
 		key.WriteString(strconv.Itoa(len(names)))
 		for _, name := range names {
+			if probe != nil && !probe.check() {
+				return
+			}
 			key.WriteByte('|')
 			key.WriteString(strconv.Itoa(len(name)))
 			key.WriteByte(':')
-			key.WriteString(name)
-			appendNestedEquivalenceKey(key, fields[name])
+			if !appendPipelineString(key, name, probe) {
+				return
+			}
+			appendNestedEquivalenceKey(key, fields[name], probe)
+			if probe != nil && probe.err != nil {
+				return
+			}
 		}
 		return
 	}
+	if probe != nil && probe.err != nil {
+		return
+	}
 	key.WriteByte('T')
-	key.WriteString(fmt.Sprintf("%T:%#v", value, value))
+	appendEquivalenceFallback(key, value, probe)
 }
 
 // appendNestedEquivalenceKey writes a list or map element's key preceded by
 // its length.
-func appendNestedEquivalenceKey(key *strings.Builder, value interface{}) {
-	nested := cypherEquivalenceKey(value)
+func appendNestedEquivalenceKey(key *strings.Builder, value interface{}, probe *pipelineCancellation) {
+	nested := cypherEquivalenceKeyWithCancellation(value, probe)
+	if probe != nil && probe.err != nil {
+		return
+	}
 	key.WriteByte('|')
 	key.WriteString(strconv.Itoa(len(nested)))
 	key.WriteByte(':')
-	key.WriteString(nested)
+	appendPipelineString(key, nested, probe)
 }
 
 // nanKeys numbers NaN keys, so no two NaNs share one.

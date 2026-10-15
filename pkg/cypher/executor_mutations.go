@@ -641,10 +641,14 @@ func hasOuterParens(s string) bool {
 // unwinds to no rows, a list to its elements (cypherListValue), and any other
 // value to one row holding it.
 func coerceToUnwindItems(value interface{}) []interface{} {
+	return coerceToUnwindItemsWithCancellation(value, nil)
+}
+
+func coerceToUnwindItemsWithCancellation(value interface{}, probe *pipelineCancellation) []interface{} {
 	if value == nil {
 		return nil
 	}
-	if items, isList := cypherListValue(value); isList {
+	if items, isList := cypherListValueWithCancellation(value, probe); isList {
 		return items
 	}
 	return []interface{}{value}

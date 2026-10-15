@@ -10,18 +10,28 @@ import (
 // result represents unknown, which occurs when no definite inequality exists
 // but at least one nested comparison involves null.
 func cypherEquality(left, right interface{}) interface{} {
+	return cypherEqualityWithCancellation(left, right, nil)
+}
+
+func cypherEqualityWithCancellation(left, right interface{}, probe *pipelineCancellation) interface{} {
+	if probe != nil && !probe.check() {
+		return nil
+	}
 	if left == nil || right == nil {
 		return nil
 	}
-	leftList, leftIsList := cypherListValue(left)
-	rightList, rightIsList := cypherListValue(right)
+	leftList, leftIsList := cypherListValueWithCancellation(left, probe)
+	rightList, rightIsList := cypherListValueWithCancellation(right, probe)
 	if leftIsList || rightIsList {
 		if !leftIsList || !rightIsList || len(leftList) != len(rightList) {
 			return false
 		}
 		unknown := false
 		for index := range leftList {
-			equal := cypherEquality(leftList[index], rightList[index])
+			equal := cypherEqualityWithCancellation(leftList[index], rightList[index], probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
 			if equal == nil {
 				unknown = true
 				continue
@@ -36,8 +46,8 @@ func cypherEquality(left, right interface{}) interface{} {
 		return true
 	}
 
-	leftMap, leftIsMap := toStringAnyMap(left)
-	rightMap, rightIsMap := toStringAnyMap(right)
+	leftMap, leftIsMap := toStringAnyMapWithCancellation(left, probe)
+	rightMap, rightIsMap := toStringAnyMapWithCancellation(right, probe)
 	if leftIsMap || rightIsMap {
 		if !leftIsMap || !rightIsMap || len(leftMap) != len(rightMap) {
 			return false
@@ -48,7 +58,10 @@ func cypherEquality(left, right interface{}) interface{} {
 			if !exists {
 				return false
 			}
-			equal := cypherEquality(leftValue, rightValue)
+			equal := cypherEqualityWithCancellation(leftValue, rightValue, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
 			if equal == nil {
 				unknown = true
 				continue
@@ -68,6 +81,11 @@ func cypherEquality(left, right interface{}) interface{} {
 	}
 	if equal, point := comparePointValues(left, right); point {
 		return equal
+	}
+	if text, ok := left.(string); ok {
+		if other, both := right.(string); both {
+			return comparePipelineStrings(text, other, probe) == 0
+		}
 	}
 	return compareValues(left, right)
 }
@@ -296,9 +314,13 @@ func cypherUnsignedInteger(value interface{}) (uint64, bool) {
 }
 
 func cypherListValue(value interface{}) ([]interface{}, bool) {
+	return cypherListValueWithCancellation(value, nil)
+}
+
+func cypherListValueWithCancellation(value interface{}, probe *pipelineCancellation) ([]interface{}, bool) {
 	valueType := reflect.TypeOf(value)
 	if valueType == nil || (valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array) {
 		return nil, false
 	}
-	return toAnySlice(value), true
+	return toAnySliceWithCancellation(value, probe), true
 }

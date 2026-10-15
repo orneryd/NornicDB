@@ -133,10 +133,14 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		if !ok && !isUnion {
 			return nil, nil, false, nil
 		}
+		cancellation := pipelineCancellation{ctx: runCtx}
 		stats := &QueryStats{}
 		out := make([]pipelineRow, 0, len(outerRows))
 		hasReturn := isUnion || pipelineHasClauseKind(clauses, pipelineClauseReturn)
 		for _, outer := range outerRows {
+			if !cancellation.check() {
+				return nil, stats, true, cancellation.err
+			}
 			input := pipelineRow{}
 			bindParameterRow(runCtx, input)
 			if hasLegacyImports {
@@ -185,7 +189,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			var inner *ExecuteResult
 			var execErr error
 			if isUnion {
-				inner, execErr = runExec.executeUnionBranches(body, unionAll, runBranch)
+				inner, execErr = runExec.executeUnionBranches(runCtx, body, unionAll, runBranch)
 			} else {
 				inner, execErr = runBranch(body)
 			}
@@ -202,13 +206,13 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			}
 			if execErr != nil {
 				if hasReturn && inner != nil {
-					out = appendCallReturnRows(out, outer, inner.Columns, inner.Rows)
+					out = appendCallReturnRows(runCtx, out, outer, inner.Columns, inner.Rows)
 				}
 				return out, stats, true, execErr
 			}
 			if hasReturn {
 				if inner != nil {
-					out = appendCallReturnRows(out, outer, inner.Columns, inner.Rows)
+					out = appendCallReturnRows(runCtx, out, outer, inner.Columns, inner.Rows)
 				}
 			} else {
 				retained := make(pipelineRow, len(outer))
@@ -217,6 +221,9 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				}
 				out = append(out, retained)
 			}
+		}
+		if failure := getExpressionFailure(runCtx); failure != nil {
+			return nil, stats, true, failure
 		}
 		return out, stats, true, nil
 	}
@@ -227,9 +234,13 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			if err != nil || !ok {
 				return innerRows, stats, ok, err
 			}
+			probe := pipelineCancellation{ctx: ctx}
 			joined := make([]pipelineRow, 0, len(rows)*len(innerRows))
 			for _, outer := range rows {
 				for _, inner := range innerRows {
+					if !probe.check() {
+						return nil, stats, true, probe.err
+					}
 					joined = append(joined, mergeCallPipelineRows(outer, inner))
 				}
 			}
@@ -272,8 +283,12 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	return combined, stats, true, nil
 }
 
-func appendCallReturnRows(out []pipelineRow, outer pipelineRow, columns []string, rows [][]interface{}) []pipelineRow {
+func appendCallReturnRows(ctx context.Context, out []pipelineRow, outer pipelineRow, columns []string, rows [][]interface{}) []pipelineRow {
+	probe := pipelineCancellation{ctx: ctx}
 	for _, values := range rows {
+		if !probe.check() {
+			return nil
+		}
 		joined := make(pipelineRow, len(outer)+len(columns))
 		for name, value := range outer {
 			joined[name] = value
@@ -302,6 +317,7 @@ func mergeCallPipelineRows(outer, inner pipelineRow) pipelineRow {
 }
 
 func callPipelineRowsFromResult(ctx context.Context, result *ExecuteResult) []pipelineRow {
+	probe := pipelineCancellation{ctx: ctx}
 	if result == nil {
 		row := pipelineRow{}
 		bindParameterRow(ctx, row)
@@ -313,6 +329,9 @@ func callPipelineRowsFromResult(ctx context.Context, result *ExecuteResult) []pi
 	rows := make([]pipelineRow, 0, len(result.Rows))
 	params := getParamsFromContext(ctx)
 	for _, values := range result.Rows {
+		if !probe.check() {
+			return nil
+		}
 		row := make(pipelineRow, len(result.Columns)+len(params))
 		for index, name := range result.Columns {
 			if index < len(values) {
@@ -327,7 +346,8 @@ func callPipelineRowsFromResult(ctx context.Context, result *ExecuteResult) []pi
 	return rows
 }
 
-func callPipelineResultFromRows(rows []pipelineRow, seed *ExecuteResult, stats *QueryStats, callColumns []string) *ExecuteResult {
+func callPipelineResultFromRows(ctx context.Context, rows []pipelineRow, seed *ExecuteResult, stats *QueryStats, callColumns []string) *ExecuteResult {
+	probe := pipelineCancellation{ctx: ctx}
 	columns := make([]string, 0)
 	seen := make(map[string]struct{})
 	if seed != nil {
@@ -346,6 +366,9 @@ func callPipelineResultFromRows(rows []pipelineRow, seed *ExecuteResult, stats *
 	}
 	additional := make(map[string]struct{})
 	for _, row := range rows {
+		if !probe.check() {
+			return nil
+		}
 		for name := range row {
 			if !strings.HasPrefix(name, "$") {
 				if _, exists := seen[name]; !exists {
@@ -362,6 +385,9 @@ func callPipelineResultFromRows(rows []pipelineRow, seed *ExecuteResult, stats *
 	columns = append(columns, sorted...)
 	result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows)), Stats: mergeQueryStats(seedStats(seed), stats)}
 	for _, row := range rows {
+		if !probe.check() {
+			return nil
+		}
 		values := make([]interface{}, len(columns))
 		for index, name := range columns {
 			values[index] = row[name]

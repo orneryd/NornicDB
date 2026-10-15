@@ -172,6 +172,10 @@ var vectorCoordinateTypeOrder = [...]int{
 // compareVectors orders vectors as Neo4j does: by coordinate type, then
 // dimension, then coordinates.
 func compareVectors(left, right CypherVector) int {
+	return compareVectorsWithCancellation(left, right, nil)
+}
+
+func compareVectorsWithCancellation(left, right CypherVector, probe *pipelineCancellation) int {
 	if order := compareOrderedInts(vectorCoordinateTypeOrder[left.Type], vectorCoordinateTypeOrder[right.Type]); order != 0 {
 		return order
 	}
@@ -179,6 +183,9 @@ func compareVectors(left, right CypherVector) int {
 		return order
 	}
 	for i := 0; i < left.Dimension(); i++ {
+		if probe != nil && !probe.check() {
+			return 0
+		}
 		var order int
 		if left.Type.IsFloat() {
 			order = compareOrderedFloats(left.Floats[i], right.Floats[i])

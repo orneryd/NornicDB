@@ -48,7 +48,15 @@ func (e *StorageExecutor) validateRowGraphFunctionArguments(expression string, r
 				return nil
 			}
 			scope := make(pipelineRow, len(row)+1)
-			for _, item := range toAnySlice(listValue) {
+			probe := rowPipelineCancellation(row)
+			items := toAnySliceWithCancellation(listValue, probe)
+			if probe != nil && probe.err != nil {
+				return probe.err
+			}
+			for _, item := range items {
+				if probe != nil && !probe.check() {
+					return probe.err
+				}
 				clear(scope)
 				for name, value := range row {
 					scope[name] = value

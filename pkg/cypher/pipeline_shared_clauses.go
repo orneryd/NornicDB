@@ -165,10 +165,10 @@ func (e *StorageExecutor) pipelineSharedClauseSource(ctx context.Context, input 
 			return nil, sharedClauseSyntaxError("FILTER requires a predicate")
 		}
 		return func(yield func(pipelineRow) bool) bool {
+			probe := pipelineCancellation{ctx: ctx}
 			valid := true
 			completed := input(func(row pipelineRow) bool {
-				if err := ctx.Err(); err != nil {
-					recordExpressionFailure(ctx, err)
+				if !probe.check() {
 					valid = false
 					return false
 				}

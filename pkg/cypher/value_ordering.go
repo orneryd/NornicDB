@@ -33,6 +33,10 @@ func cypherPathElements(value interface{}) ([]interface{}, bool) {
 // cypherPathElementsOf is cypherPathElements for a value already converted
 // with toStringAnyMap, so a map is converted only once.
 func cypherPathElementsOf(value interface{}, object map[string]interface{}, isMap bool) ([]interface{}, bool) {
+	return cypherPathElementsOfWithCancellation(value, object, isMap, nil)
+}
+
+func cypherPathElementsOfWithCancellation(value interface{}, object map[string]interface{}, isMap bool, probe *pipelineCancellation) ([]interface{}, bool) {
 	var path PathResult
 	switch typed := value.(type) {
 	case PathResult:
@@ -60,6 +64,9 @@ func cypherPathElementsOf(value interface{}, object map[string]interface{}, isMa
 	}
 	elements := make([]interface{}, 0, len(path.Nodes)+len(path.Relationships))
 	for index, node := range path.Nodes {
+		if probe != nil && !probe.check() {
+			return nil, false
+		}
 		elements = append(elements, node)
 		if index < len(path.Relationships) {
 			elements = append(elements, path.Relationships[index])
@@ -73,6 +80,10 @@ func cypherPathElementsOf(value interface{}, object map[string]interface{}, isMa
 // for values of different kinds and for maps holding values compareValue
 // can't order.
 func compareCypherStructuredValues(left, right interface{}, compareValue func(a, b interface{}) (int, bool)) (order int, comparable bool, handled bool) {
+	return compareCypherStructuredValuesWithCancellation(left, right, compareValue, nil)
+}
+
+func compareCypherStructuredValuesWithCancellation(left, right interface{}, compareValue func(a, b interface{}) (int, bool), probe *pipelineCancellation) (order int, comparable bool, handled bool) {
 	switch leftValue := left.(type) {
 	case *storage.Node:
 		rightValue, ok := right.(*storage.Node)
@@ -91,16 +102,20 @@ func compareCypherStructuredValues(left, right interface{}, compareValue func(a,
 	case *storage.Node, *storage.Edge:
 		return 0, false, true
 	}
-	leftMap, leftIsMap := toStringAnyMap(left)
-	rightMap, rightIsMap := toStringAnyMap(right)
-	leftPath, leftIsPath := cypherPathElementsOf(left, leftMap, leftIsMap)
-	rightPath, rightIsPath := cypherPathElementsOf(right, rightMap, rightIsMap)
+	leftMap, leftIsMap := toStringAnyMapWithCancellation(left, probe)
+	rightMap, rightIsMap := toStringAnyMapWithCancellation(right, probe)
+	leftPath, leftIsPath := cypherPathElementsOfWithCancellation(left, leftMap, leftIsMap, probe)
+	rightPath, rightIsPath := cypherPathElementsOfWithCancellation(right, rightMap, rightIsMap, probe)
 	if leftIsPath || rightIsPath {
 		if !leftIsPath || !rightIsPath {
 			return 0, false, true
 		}
 		for index := 0; index < len(leftPath) && index < len(rightPath); index++ {
-			if order, _, _ := compareCypherStructuredValues(leftPath[index], rightPath[index], compareValue); order != 0 {
+			if probe != nil && !probe.check() {
+				return 0, false, true
+			}
+			order, _, _ := compareCypherStructuredValuesWithCancellation(leftPath[index], rightPath[index], compareValue, probe)
+			if order != 0 {
 				return order, true, true
 			}
 		}
@@ -110,7 +125,7 @@ func compareCypherStructuredValues(left, right interface{}, compareValue func(a,
 		if !leftIsMap || !rightIsMap {
 			return 0, false, true
 		}
-		order, comparable := compareCypherMaps(leftMap, rightMap, compareValue)
+		order, comparable := compareCypherMapsWithCancellation(leftMap, rightMap, compareValue, probe)
 		return order, comparable, true
 	}
 	return 0, false, false
@@ -119,19 +134,39 @@ func compareCypherStructuredValues(left, right interface{}, compareValue func(a,
 // compareCypherMaps orders two maps: fewer keys first, then the sorted key
 // names compared in order, then the values in key order by compareValue.
 func compareCypherMaps(left, right map[string]interface{}, compareValue func(a, b interface{}) (int, bool)) (int, bool) {
+	return compareCypherMapsWithCancellation(left, right, compareValue, nil)
+}
+
+func compareCypherMapsWithCancellation(left, right map[string]interface{}, compareValue func(a, b interface{}) (int, bool), probe *pipelineCancellation) (int, bool) {
 	if order := compareOrderedInts(len(left), len(right)); order != 0 {
 		return order, true
 	}
 	// Small maps sort their keys on the stack.
 	var leftBuffer, rightBuffer [8]string
-	leftKeys, rightKeys := appendSortedMapKeys(leftBuffer[:0], left), appendSortedMapKeys(rightBuffer[:0], right)
+	leftKeys, rightKeys := appendSortedMapKeysWithCancellation(leftBuffer[:0], left, probe), appendSortedMapKeysWithCancellation(rightBuffer[:0], right, probe)
+	if probe != nil && probe.err != nil {
+		return 0, false
+	}
 	for index := range leftKeys {
-		if order := compareStrings(leftKeys[index], rightKeys[index]); order != 0 {
+		if probe != nil && !probe.check() {
+			return 0, false
+		}
+		order := comparePipelineStrings(leftKeys[index], rightKeys[index], probe)
+		if probe != nil && probe.err != nil {
+			return 0, false
+		}
+		if order != 0 {
 			return order, true
 		}
 	}
 	for _, key := range leftKeys {
+		if probe != nil && !probe.check() {
+			return 0, false
+		}
 		order, comparable := compareValue(left[key], right[key])
+		if probe != nil && probe.err != nil {
+			return 0, false
+		}
 		if !comparable {
 			return 0, false
 		}
@@ -143,10 +178,23 @@ func compareCypherMaps(left, right map[string]interface{}, compareValue func(a, 
 }
 
 func appendSortedMapKeys(keys []string, object map[string]interface{}) []string {
+	return appendSortedMapKeysWithCancellation(keys, object, nil)
+}
+
+func appendSortedMapKeysWithCancellation(keys []string, object map[string]interface{}, probe *pipelineCancellation) []string {
+	largeKey := false
 	for key := range object {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		keys = append(keys, key)
+		largeKey = largeKey || len(key) > 4096
 	}
-	slices.Sort(keys)
+	if probe == nil || len(keys) <= pipelineCancellationInterval && !largeKey {
+		slices.Sort(keys)
+	} else if !probe.sort(keys, func(i, j int) bool { return comparePipelineStrings(keys[i], keys[j], probe) < 0 }, false) {
+		return nil
+	}
 	return keys
 }
 
@@ -165,10 +213,17 @@ func compareStrings(left, right string) int {
 // order (two equal durations); values that are neither ordered nor equal
 // (null, or of different kinds) are not comparable.
 func compareCypherComparableValues(left, right interface{}) (int, bool) {
-	if order, comparable := compareCypherOrderedValues(left, right); comparable {
+	return compareCypherComparableValuesWithCancellation(left, right, nil)
+}
+
+func compareCypherComparableValuesWithCancellation(left, right interface{}, probe *pipelineCancellation) (int, bool) {
+	if probe != nil && !probe.check() {
+		return 0, false
+	}
+	if order, comparable := compareCypherOrderedValuesWithCancellation(left, right, probe); comparable {
 		return order, true
 	}
-	if equal, known := cypherEquality(left, right).(bool); known && equal {
+	if equal, known := cypherEqualityWithCancellation(left, right, probe).(bool); known && equal {
 		return 0, true
 	}
 	return 0, false

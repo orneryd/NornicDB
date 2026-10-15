@@ -2268,8 +2268,12 @@ func (e *StorageExecutor) applyOrderByToResult(result *ExecuteResult, orderByCla
 }
 
 func (e *StorageExecutor) applyCallResultOrderWindow(ctx context.Context, result *ExecuteResult, terms []orderByTerm, skip, limit int) (*ExecuteResult, error) {
+	probe := pipelineCancellation{ctx: ctx}
 	rows := make([]pipelineRow, 0, len(result.Rows))
 	for _, values := range result.Rows {
+		if !probe.check() {
+			return nil, probe.err
+		}
 		row := make(pipelineRow, len(result.Columns))
 		for index, column := range result.Columns {
 			if index < len(values) {
@@ -2299,6 +2303,9 @@ func (e *StorageExecutor) applyCallResultOrderWindow(ctx context.Context, result
 	rows = applyPipelineWindow(rows, skip, limit)
 	result.Rows = make([][]interface{}, 0, len(rows))
 	for _, row := range rows {
+		if !probe.check() {
+			return nil, probe.err
+		}
 		values := make([]interface{}, len(result.Columns))
 		for index, column := range result.Columns {
 			values[index] = row[column]
@@ -2392,6 +2399,13 @@ func extractPropertyFromValue(val interface{}, propName string) interface{} {
 }
 
 func compareValuesForSort(a, b interface{}) int {
+	return compareValuesForSortWithCancellation(a, b, nil)
+}
+
+func compareValuesForSortWithCancellation(a, b interface{}, probe *pipelineCancellation) int {
+	if probe != nil && !probe.check() {
+		return 0
+	}
 	if a == nil && b == nil {
 		return 0
 	}
@@ -2408,8 +2422,11 @@ func compareValuesForSort(a, b interface{}) int {
 		return comparison
 	}
 
-	aRank := cypherSortRank(a)
-	bRank := cypherSortRank(b)
+	aRank := cypherSortRankWithCancellation(a, probe)
+	bRank := cypherSortRankWithCancellation(b, probe)
+	if probe != nil && probe.err != nil {
+		return 0
+	}
 	if aRank != bRank {
 		if aRank < bRank {
 			return -1
@@ -2422,10 +2439,14 @@ func compareValuesForSort(a, b interface{}) int {
 		}
 	}
 
-	if aList, ok := cypherSortList(a); ok {
-		bList, _ := cypherSortList(b)
+	if aList, ok := cypherListValueWithCancellation(a, probe); ok {
+		bList, _ := cypherListValueWithCancellation(b, probe)
 		for index := 0; index < len(aList) && index < len(bList); index++ {
-			if comparison := compareValuesForSort(aList[index], bList[index]); comparison != 0 {
+			comparison := compareValuesForSortWithCancellation(aList[index], bList[index], probe)
+			if probe != nil && probe.err != nil {
+				return 0
+			}
+			if comparison != 0 {
 				return comparison
 			}
 		}
@@ -2459,18 +2480,12 @@ func compareValuesForSort(a, b interface{}) int {
 	}
 	switch left := a.(type) {
 	case CypherVector:
-		return compareVectors(left, b.(CypherVector))
+		return compareVectorsWithCancellation(left, b.(CypherVector), probe)
 	case CypherUUID:
 		return compareUUIDs(left, b.(CypherUUID))
 	case string:
 		right := b.(string)
-		if left < right {
-			return -1
-		}
-		if left > right {
-			return 1
-		}
-		return 0
+		return comparePipelineStrings(left, right, probe)
 	case bool:
 		right := b.(bool)
 		if left == right {
@@ -2482,8 +2497,13 @@ func compareValuesForSort(a, b interface{}) int {
 		return 1
 	}
 
-	if comparison, _, structured := compareCypherStructuredValues(a, b, compareSortableValues); structured {
+	if comparison, _, structured := compareCypherStructuredValuesWithCancellation(a, b, func(left, right interface{}) (int, bool) {
+		return compareValuesForSortWithCancellation(left, right, probe), true
+	}, probe); structured {
 		return comparison
+	}
+	if probe != nil && probe.err != nil {
+		return 0
 	}
 	sa := fmt.Sprintf("%v", a)
 	sb := fmt.Sprintf("%v", b)
@@ -2503,6 +2523,10 @@ func compareValuesForSort(a, b interface{}) int {
 // datetime < date < zoned time < local time < duration < string < boolean <
 // number < NaN (#817, #837).
 func cypherSortRank(value interface{}) int {
+	return cypherSortRankWithCancellation(value, nil)
+}
+
+func cypherSortRankWithCancellation(value interface{}, probe *pipelineCancellation) int {
 	if _, ok := pointValue(value); ok {
 		return 6
 	}
@@ -2527,7 +2551,7 @@ func cypherSortRank(value interface{}) int {
 	case CypherUUID, *CypherUUID:
 		return 15
 	}
-	if object, isMap := toStringAnyMap(value); isMap {
+	if object, isMap := toStringAnyMapWithCancellation(value, probe); isMap {
 		if _, isPath := object["_pathResult"]; isPath {
 			return 4
 		}

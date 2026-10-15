@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -16,7 +17,7 @@ var patternNodeVariables = newBoundedCache[string, []string](1024, boundedCacheS
 // relationship position bound to another value only matches nothing, as in
 // Neo4j. A node projected as a map or a value of no Cypher type is not
 // rejected here.
-func validateBoundPatternNodes(rows []pipelineRow, body string) error {
+func validateBoundPatternNodes(ctx context.Context, rows []pipelineRow, body string) error {
 	if len(rows) == 0 || len(rows) == 1 && len(rows[0]) == 0 {
 		return nil
 	}
@@ -25,7 +26,11 @@ func validateBoundPatternNodes(rows []pipelineRow, body string) error {
 		variables = extractNodeVariables(matchPatternStructure(body))
 		patternNodeVariables.put(body, variables)
 	}
+	probe := pipelineCancellation{ctx: ctx}
 	for _, row := range rows {
+		if !probe.check() {
+			return probe.err
+		}
 		for _, variable := range variables {
 			if value, bound := row[variable]; bound {
 				if err := boundPatternNodeValueError(variable, value); err != nil {
