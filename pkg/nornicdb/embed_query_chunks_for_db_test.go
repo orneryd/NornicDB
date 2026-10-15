@@ -81,7 +81,7 @@ func TestDB_EmbedQueryChunksForDB_UsesRegistryEmbedderWhenConfigured(t *testing.
 	cfg := &embed.Config{Provider: "ollama", Model: "special", Dimensions: 2}
 
 	db := &DB{
-		embedQueue: &EmbedQueue{embedder: defaultEmb},
+		cypherExecutor: queryEmbeddingTestExecutor(t, defaultEmb),
 		embedConfigForDB: func(dbName string) (*embed.Config, error) {
 			require.Equal(t, "tenant", dbName)
 			return cfg, nil
@@ -112,10 +112,10 @@ func TestDB_EmbedQueryChunksForDB_FallbackPaths(t *testing.T) {
 
 	t.Run("global fallback enforces resolver dimensions", func(t *testing.T) {
 		db := &DB{
-			embedQueue: &EmbedQueue{embedder: &coverageQueryEmbedder{
+			cypherExecutor: queryEmbeddingTestExecutor(t, &coverageQueryEmbedder{
 				chunks: []string{"g1", "g2"},
 				batch:  [][]float32{{1, 2, 3}, {4, 5, 6}},
-			}},
+			}),
 			dbConfigResolver: func(dbName string) (int, float64, string) { return 2, 0, "" },
 		}
 
