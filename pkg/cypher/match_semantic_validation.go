@@ -317,7 +317,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			if containsMalformedCreateClauseToken(clause.text) {
 				return types, false, nil
 			}
-			if err := validateWithOrderBySemanticScope(scope, clause.text); err != nil {
+			if err := validateWithOrderBySemanticScope(scope, clause.text, outer); err != nil {
 				return types, false, err
 			}
 			// The WHERE after WITH reads the projected scope merged over the
@@ -445,7 +445,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 	return types, true, nil
 }
 
-func validateWithOrderBySemanticScope(input matchSemanticScope, clause string) error {
+func validateWithOrderBySemanticScope(input matchSemanticScope, clause string, retained typeScope) error {
 	body := strings.TrimSpace(clause[len("WITH"):])
 	orderIndex := topLevelKeywordIndex(body, "ORDER BY")
 	if orderIndex < 0 {
@@ -461,7 +461,7 @@ func validateWithOrderBySemanticScope(input matchSemanticScope, clause string) e
 			break
 		}
 	}
-	if err := validateReturnOrderBySemanticScope("RETURN " + body); err != nil {
+	if err := validateReturnOrderBySemanticScopeIn("RETURN "+body, retained); err != nil {
 		return err
 	}
 	for _, term := range parseOrderByClause(orderBody) {
@@ -509,7 +509,7 @@ func validateReturnSemanticScope(scope matchSemanticScope, clause string) error 
 // COUNT / COLLECT body, whose enclosing query's variables (outer) are
 // constants there, not grouping keys: COLLECT { … RETURN count(*) + g }.
 func validateReturnSemanticScopeIn(scope matchSemanticScope, clause string, outer typeScope) error {
-	if err := validateReturnOrderBySemanticScope(clause); err != nil {
+	if err := validateReturnOrderBySemanticScopeIn(clause, outer); err != nil {
 		return err
 	}
 	body := strings.TrimSpace(clause[len("RETURN"):])
