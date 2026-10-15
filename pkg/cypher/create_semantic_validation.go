@@ -297,11 +297,15 @@ func createVariableAlreadyBoundError(variable string) error {
 }
 
 func createUndefinedVariableError(variable string) error {
-	return newSemanticError(
-		"Neo.ClientError.Statement.SyntaxError",
-		"UndefinedVariable",
-		fmt.Sprintf("variable %s is not defined", variable),
-	)
+	message := localization.CypherAdminVariableNotDefined(variable)
+	// Preserve the semantic error in the chain for callers that inspect its
+	// detail, while the client-visible text uses the localized constructor.
+	semantic := newSemanticError("Neo.ClientError.Statement.SyntaxError", "UndefinedVariable", message.Fallback)
+	return &classifiedCypherError{
+		cause:  localizedError(message, semantic),
+		code:   "Neo.ClientError.Statement.SyntaxError",
+		detail: "UndefinedVariable",
+	}
 }
 
 func (e *StorageExecutor) validateCreatePatternExpressions(scope *semanticBindingScope, pattern string) error {

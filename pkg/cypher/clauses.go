@@ -1826,7 +1826,7 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 
 	// Execute all queries and combine results
 	var combinedResult *ExecuteResult
-	seen := make(map[string]bool) // For UNION (distinct) deduplication
+	var seen cypherValueIndex // Shared equivalence for UNION and DISTINCT.
 
 	for i, query := range queries {
 		result, err := runBranch(query)
@@ -1882,10 +1882,8 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 		} else {
 			// UNION (distinct) - deduplicate rows
 			for _, row := range result.Rows {
-				key := cypherValueKey(row, cypherEquivalenceContract)
-				if !seen[key] {
+				if _, exists := seen.addTupleByContract(row, cypherEquivalenceContract); !exists {
 					combinedResult.Rows = append(combinedResult.Rows, row)
-					seen[key] = true
 				}
 			}
 		}

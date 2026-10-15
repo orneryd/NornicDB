@@ -34,7 +34,7 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 		original interface{}
 	}
 	values := make([]percentileValue, 0, len(rows))
-	seen := make(map[string]struct{}, len(rows))
+	var seen cypherValueIndex
 	for _, row := range rows {
 		value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(arguments[0]), row)
 		if !resolved {
@@ -51,11 +51,9 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 			return nil, false
 		}
 		if distinct {
-			key := cypherValueKey(value, cypherEquivalenceContract)
-			if _, exists := seen[key]; exists {
+			if _, exists := seen.addByContract(value, cypherEquivalenceContract); exists {
 				continue
 			}
-			seen[key] = struct{}{}
 		}
 		values = append(values, percentileValue{numeric: numeric, original: value})
 	}
