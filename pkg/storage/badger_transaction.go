@@ -4431,7 +4431,8 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 
 // acquireUniqueConstraintCommitLocks acquires the commit locks of the
 // constraint keys (UNIQUE values, NODE KEY composite values, TEMPORAL keys)
-// touched by this transaction's pending nodes, on the transaction's pinned
+// touched by this transaction's pending nodes and relationship scalar keys, on
+// the transaction's pinned
 // namespace's schema (SchemaManager.lockConstraintKeysOf, shared with the
 // engine's direct writes). Returns a release function that unlocks in reverse
 // order; safe to defer.
@@ -4459,7 +4460,7 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 // already locked for it is taken without waiting. A wait that would close a
 // cycle of transactions fails with ErrDeadlock.
 func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() (func(), error) {
-	if len(tx.pendingNodes) == 0 || tx.namespace == "" {
+	if (len(tx.pendingNodes) == 0 && len(tx.pendingEdges) == 0) || tx.namespace == "" {
 		return func() {}, nil
 	}
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
@@ -4467,7 +4468,20 @@ func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() (func(), error
 	for _, node := range tx.pendingNodes {
 		nodes = append(nodes, node)
 	}
-	return schema.lockConstraintKeysOf(context.Background(), tx.ID, nodes...)
+	releaseNodes, err := schema.lockConstraintKeysOf(context.Background(), tx.ID, nodes...)
+	if err != nil {
+		return nil, err
+	}
+	edges := make([]*Edge, 0, len(tx.pendingEdges))
+	for _, edge := range tx.pendingEdges {
+		edges = append(edges, edge)
+	}
+	releaseEdges, err := schema.lockRelationshipConstraintKeysOf(tx.ID, edges...)
+	if err != nil {
+		releaseNodes()
+		return nil, err
+	}
+	return func() { releaseEdges(); releaseNodes() }, nil
 }
 
 // PrepareMergeKey readies the transaction for a MERGE that looks up the node
@@ -4737,7 +4751,35 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, c Constraint, names
 		}
 	}
 
+	if candidates, indexed, err := tx.engine.relationshipUniqueCandidates(edge, c, namespace); err != nil {
+		return err
+	} else if indexed {
+		for _, candidate := range candidates {
+			id := EdgeID(candidate)
+			if id == edge.ID || tx.committedEdgeSupersededLocked(id) {
+				continue
+			}
+			existing, err := tx.engine.GetEdge(id)
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if existing.Type != edge.Type {
+				continue
+			}
+			if err := collides(existing); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	// Check against committed edges via the engine
+	if hook := getUniqueConstraintScanHook(); hook != nil {
+		hook()
+	}
 	existingEdges, err := tx.engine.GetEdgesByType(edge.Type)
 	if err != nil {
 		return err

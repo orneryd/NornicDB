@@ -541,6 +541,7 @@ func (b *BadgerEngine) cacheOnEdgeCreated(edge *Edge) {
 	if edge == nil {
 		return
 	}
+	b.updateRelationshipUniqueIndexes(edge)
 	b.InvalidateEdgeTypeCacheForType(edge.Type)
 	b.cacheStoreEdge(edge)
 	b.adjCacheInvalidateForEdge(edge)
@@ -553,6 +554,7 @@ func (b *BadgerEngine) cacheOnEdgeUpdated(oldType string, newEdge *Edge) {
 	if newEdge == nil {
 		return
 	}
+	b.updateRelationshipUniqueIndexes(newEdge)
 	// If type changed, invalidate both old and new (old cache would still contain this edge).
 	if oldType != "" && oldType != newEdge.Type {
 		b.InvalidateEdgeTypeCacheForType(oldType)
@@ -568,6 +570,7 @@ func (b *BadgerEngine) cacheOnEdgeUpdated(oldType string, newEdge *Edge) {
 }
 
 func (b *BadgerEngine) cacheOnEdgeDeleted(id EdgeID, edgeType string) {
+	b.deleteRelationshipUniqueIndexes(id)
 	if edgeType != "" {
 		b.InvalidateEdgeTypeCacheForType(edgeType)
 	} else {
@@ -587,6 +590,7 @@ func (b *BadgerEngine) cacheOnEdgesDeleted(deletedIDs []EdgeID) {
 	if len(deletedIDs) == 0 {
 		return
 	}
+	b.deleteRelationshipUniqueIndexes(deletedIDs...)
 	// Bulk delete may cover many types; invalidate once.
 	b.InvalidateEdgeTypeCache()
 	b.cacheInvalidateEdges()

@@ -252,8 +252,9 @@ type BadgerEngine struct {
 
 	// Edge type cache for mutual relationship queries
 	// Caches edges by type for O(1) lookup
-	edgeTypeCache   map[string][]*Edge // edgeType -> edges of that type
-	edgeTypeCacheMu sync.RWMutex
+	relationshipUniqueIndexes relationshipUniqueIndexSet
+	edgeTypeCache             map[string][]*Edge // edgeType -> edges of that type
+	edgeTypeCacheMu           sync.RWMutex
 
 	// Hot edge-body cache. BFS-style traversals (shortestPath, variable-
 	// length MATCH) re-read the same edges repeatedly across requests; the
