@@ -1575,11 +1575,7 @@ func (n *NamespacedEngine) AddToPendingEmbeddings(nodeID NodeID) {
 // fully qualified entity ID in the underlying engine.
 func (n *NamespacedEngine) RecordMaterializedAccess(entityID string) {
 	if recorder, ok := n.inner.(interface{ RecordMaterializedAccess(string) }); ok {
-		prefixed := entityID
-		if !strings.Contains(entityID, n.separator) {
-			prefixed = n.namespace + n.separator + entityID
-		}
-		recorder.RecordMaterializedAccess(prefixed)
+		recorder.RecordMaterializedAccess(QualifiedEntityID(n, entityID))
 	}
 }
 

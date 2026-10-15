@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Pause scheduled develop verification/canary builds and remove PR label CI triggers. Manual Actions jobs now require administrator environment approval; existing main push and tag publishing triggers remain unchanged.
 
+### Fixed knowledge-policy lookups
+
+- Decay functions, property filters and decay CLI commands use the active database's qualified entity IDs
+  for policy and access metadata, including local IDs containing colons. CLI commands unwrap WAL storage.
+
+### Decay scalar scoring fixes
+
+- Align relationship `decay()` and `decayScore()` VERSION anchors with update time and resolve relationship
+  property options through edge-type rules, sharing one entity/property scoring dispatch (#1055).
+
 ### Visibility cache fixes
 
 - Publish node and relationship suppression transitions through the storage cache lifecycle after commit,

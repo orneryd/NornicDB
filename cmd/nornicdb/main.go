@@ -1856,8 +1856,8 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 	}
 	defer db.Close()
 
-	be, ok := db.GetBaseStorageForManager().(*storage.BadgerEngine)
-	if !ok {
+	be := unwrapBadgerEngine(db.GetBaseStorageForManager())
+	if be == nil {
 		return newCommandError(cmd, localization.NornicDBCLIDecaySuppressStorage(), nil)
 	}
 
@@ -1876,7 +1876,8 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		ns := storage.ExtractNamespaceFromID(string(node.ID))
+		entityID := storage.QualifiedEntityID(db.GetStorage(), string(node.ID))
+		ns := storage.ExtractNamespaceFromID(entityID)
 		scorer := be.ScorerForNamespace(ns)
 		if scorer == nil {
 			aboveThreshold++
@@ -1884,17 +1885,17 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 		}
 
 		var accessMeta *knowledgepolicy.AccessMetaEntry
-		if meta, metaErr := be.GetAccessMeta(string(node.ID)); metaErr == nil {
+		if meta, metaErr := be.GetAccessMeta(entityID); metaErr == nil {
 			accessMeta = meta
 		}
 
 		res := scorer.ScoreNode(
-			string(node.ID), node.Labels, accessMeta,
+			entityID, node.Labels, accessMeta,
 			node.CreatedAt.UnixNano(), node.UpdatedAt.UnixNano(), nowNanos,
 		)
 
 		if res.FinalScore < threshold {
-			becameSuppressed, err := be.EnqueueDeindexIfSuppressed(string(node.ID), false)
+			becameSuppressed, err := be.EnqueueDeindexIfSuppressed(entityID, false)
 			if err != nil {
 				commandPrintln(cmd, localization.NornicDBCLIDecaySuppressWarning(string(node.ID), err))
 				continue
@@ -1932,8 +1933,8 @@ func runDecayStats(cmd *cobra.Command, args []string) error {
 	}
 	defer db.Close()
 
-	be, ok := db.GetBaseStorageForManager().(*storage.BadgerEngine)
-	if !ok {
+	be := unwrapBadgerEngine(db.GetBaseStorageForManager())
+	if be == nil {
 		return newCommandError(cmd, localization.NornicDBCLIDecayStatsStorage(), nil)
 	}
 
@@ -1961,7 +1962,8 @@ func runDecayStats(cmd *cobra.Command, args []string) error {
 			suppressed++
 		}
 
-		ns := storage.ExtractNamespaceFromID(string(node.ID))
+		entityID := storage.QualifiedEntityID(db.GetStorage(), string(node.ID))
+		ns := storage.ExtractNamespaceFromID(entityID)
 		scorer := be.ScorerForNamespace(ns)
 		if scorer == nil {
 			noDecay++
@@ -1970,12 +1972,12 @@ func runDecayStats(cmd *cobra.Command, args []string) error {
 		}
 
 		var accessMeta *knowledgepolicy.AccessMetaEntry
-		if meta, metaErr := be.GetAccessMeta(string(node.ID)); metaErr == nil {
+		if meta, metaErr := be.GetAccessMeta(entityID); metaErr == nil {
 			accessMeta = meta
 		}
 
 		res := scorer.ScoreNode(
-			string(node.ID), node.Labels, accessMeta,
+			entityID, node.Labels, accessMeta,
 			node.CreatedAt.UnixNano(), node.UpdatedAt.UnixNano(), nowNanos,
 		)
 

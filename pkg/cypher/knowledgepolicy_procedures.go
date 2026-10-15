@@ -387,7 +387,7 @@ func loadAccessMeta(eng storage.Engine, entityID string) *knowledgepolicy.Access
 	if be == nil {
 		return nil
 	}
-	meta, err := be.GetAccessMeta(entityID)
+	meta, err := be.GetAccessMeta(storage.QualifiedEntityID(eng, entityID))
 	if err != nil {
 		return nil
 	}
