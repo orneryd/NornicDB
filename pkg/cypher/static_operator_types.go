@@ -551,6 +551,11 @@ func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOp
 			agree = false
 		case !result.known():
 			result = operand
+		case result.kind != operand.kind && result.numeric() && operand.numeric():
+			// Integer/Float alternatives are a numeric union, not an unknown
+			// result. Keep that constraint even when the selected branch depends
+			// on a row (and when an outer stream is empty).
+			result = knownOperand("Number")
 		case result.kind != operand.kind:
 			agree = false
 		}
