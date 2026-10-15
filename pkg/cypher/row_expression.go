@@ -122,7 +122,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	// directly instead of scanning for literals, operators and subscripts.
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
-			value, ok := evaluateRowPropertyChain(base, chain)
+			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), chain)
 			if !ok {
 				return nil, false, rowPropertyChainTypeError(base, chain)
 			}
@@ -376,12 +376,12 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 				if entity == nil {
 					return nil, true, nil
 				}
-				return cypherfn.EntityProperties(entity.Properties), true, nil
+				return cypherfn.EntityProperties(e.queryEntityProperties(entity)), true, nil
 			case *storage.Edge:
 				if entity == nil {
 					return nil, true, nil
 				}
-				return cypherfn.EntityProperties(entity.Properties), true, nil
+				return cypherfn.EntityProperties(e.queryEntityProperties(entity)), true, nil
 			case storage.RemoteEntityValue:
 				return entity["properties"], true, nil
 			default:
@@ -411,7 +411,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			if object, isMap := toStringAnyMap(value); isMap {
 				value = object
 			}
-			keys, ok := cypherfn.PropertyKeys(value)
+			keys, ok := cypherfn.PropertyKeys(e.queryVisibleValue(value))
 			return keys, ok, nil
 		case "labels":
 			value, resolved, err := e.evaluateRowValue(argument, values)
@@ -589,7 +589,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			if !isString {
 				return nil, false, nil
 			}
-			value, ok := rowPropertyValue(base, key)
+			value, ok := rowPropertyValue(e.queryVisibleValue(base), key)
 			return value, ok, nil
 		}
 		if key, isKey := indexValue.(string); isKey && (isRuntimeTemporal(base) || isRuntimeDuration(base)) {
@@ -736,7 +736,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 		if ok {
 			chain := strings.TrimSpace(expr[dot+1:])
-			value, ok := evaluateRowPropertyChain(base, chain)
+			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), chain)
 			if !ok {
 				if err := rowPropertyChainTypeError(base, chain); err != nil {
 					return nil, false, err

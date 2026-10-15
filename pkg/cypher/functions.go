@@ -164,13 +164,13 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 			return value[property]
 		case *storage.Node:
 			if value != nil {
-				propertyValue, _ := getNodePropertyValue(value, property)
+				propertyValue, _ := getNodePropertyValue(e.queryVisibleValue(value).(*storage.Node), property)
 				return propertyValue
 			}
 			return nil
 		case *storage.Edge:
 			if value != nil {
-				return value.Properties[property]
+				return e.queryEntityProperties(value)[property]
 			}
 			return nil
 		}
@@ -350,7 +350,7 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 			if node == nil {
 				return nil, true
 			}
-			if val, ok := getNodePropertyValue(node, propName); ok {
+			if val, ok := getNodePropertyValue(e.queryVisibleValue(node).(*storage.Node), propName); ok {
 				return val, true
 			}
 			return nil, true
@@ -359,7 +359,7 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 			if rel == nil {
 				return nil, true
 			}
-			if val, ok := rel.Properties[propName]; ok {
+			if val, ok := e.queryEntityProperties(rel)[propName]; ok {
 				return val, true
 			}
 			return nil, true
@@ -374,7 +374,7 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 				}
 				return nil, true
 			case *storage.Node:
-				if propVal, exists := v.Properties[propName]; exists {
+				if propVal, exists := e.queryEntityProperties(v)[propName]; exists {
 					return propVal, true
 				}
 				return nil, true

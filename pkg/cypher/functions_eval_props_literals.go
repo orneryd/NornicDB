@@ -37,7 +37,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 				}
 				return len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0
 			}
-			if val, ok := node.Properties[propName]; ok {
+			if val, ok := e.queryEntityProperties(node)[propName]; ok {
 				return val
 			}
 			return nil
@@ -46,7 +46,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 			if rel == nil {
 				return nil
 			}
-			if val, ok := rel.Properties[propName]; ok {
+			if val, ok := e.queryEntityProperties(rel)[propName]; ok {
 				return val
 			}
 			return nil
@@ -61,7 +61,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 				}
 				return nil
 			case *storage.Node:
-				if pv, exists := v.Properties[propName]; exists {
+				if pv, exists := e.queryEntityProperties(v)[propName]; exists {
 					return pv
 				}
 				return nil

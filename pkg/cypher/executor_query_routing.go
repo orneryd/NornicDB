@@ -49,6 +49,7 @@ func topLevelUnion(cypher, upperQuery string) (unionAll, union bool) {
 func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher string, upperQuery string) (result *ExecuteResult, err error) {
 	ctx, cleanupReveal, readScopeEngine := setRevealOnEngine(ctx, e.storage, hasRevealCall(cypher))
 	defer cleanupReveal()
+	defer func() { e.projectQueryResultProperties(result) }()
 	if readScopeEngine != nil {
 		defer clearRevealScope(ctx, readScopeEngine)
 	}

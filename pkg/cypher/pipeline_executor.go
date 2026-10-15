@@ -1314,7 +1314,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		if len(candidates) > hint.earlyLimit {
 			candidates = candidates[:hint.earlyLimit]
 		}
-		return projectPipelineSimpleNodeRead(candidates, items, nodePattern.variable), true, nil
+		return e.projectVisiblePipelineNodeRead(candidates, items, nodePattern.variable), true, nil
 	}
 	rows := make([]pipelineRow, 0, len(candidates))
 	for _, node := range candidates {

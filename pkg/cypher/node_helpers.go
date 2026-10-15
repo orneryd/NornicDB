@@ -187,6 +187,23 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 	}
 
 	// Add properties both at top level (for Neo4j compatibility) and nested (for standard graph format)
+	props := e.decayVisibleNodeProperties(node)
+	for k, v := range props {
+		result[k] = v
+	}
+	result["properties"] = props
+
+	// If no user "id" property, use storage ID for backward compatibility
+	if _, hasUserID := result["id"]; !hasUserID {
+		result["id"] = string(node.ID)
+	}
+
+	return result
+}
+
+// decayVisibleNodeProperties is the shared property-visibility owner for node
+// maps and expression/result projections. It never changes the stored map.
+func (e *StorageExecutor) decayVisibleNodeProperties(node *storage.Node) map[string]interface{} {
 	be := unwrapBadgerEngine(e.storage)
 	var nowNanos int64
 	if be != nil {
@@ -206,17 +223,7 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 		}
 		props = filtered
 	}
-	for k, v := range props {
-		result[k] = v
-	}
-	result["properties"] = props
-
-	// If no user "id" property, use storage ID for backward compatibility
-	if _, hasUserID := result["id"]; !hasUserID {
-		result["id"] = string(node.ID)
-	}
-
-	return result
+	return props
 }
 
 func nodeVersionAtNanos(node *storage.Node, createdAt int64) int64 {

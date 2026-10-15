@@ -128,9 +128,11 @@ That second check matters because it keeps correctness even if a body is reached
 
 If an entity survives the node/edge visibility filter, the Cypher materialization path still removes properties whose property-level rules are currently suppressed.
 
-- Nodes are filtered in `nodeToMap`.
-- Edges are filtered in `edgeToMap`.
+- Entity projections, property expressions, `properties()`, `keys()`, map projections and entities inside paths share the node and relationship property filters.
+- Projections use detached property maps. Mutation owners retain full entities, so an unrelated `SET` preserves suppressed stored fields. Direct engine reads and `reveal()` expose the stored properties for debugging.
 - The property scorer uses the same namespace and access metadata inputs as the entity scorer, but evaluates per-property compiled overrides.
+
+While decay is enabled, Cypher bypasses result caching: visibility can change with elapsed time or access metadata without a graph-write revision. Ordinary reads retain result caching when decay is disabled.
 
 ### 4. Persisted suppression state is the fallback truth when no scorer exists
 

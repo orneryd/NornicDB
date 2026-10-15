@@ -125,12 +125,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 					return value[key]
 				case *storage.Node:
 					if value != nil {
-						return value.Properties[key]
+						return e.queryEntityProperties(value)[key]
 					}
 					return nil
 				case *storage.Edge:
 					if value != nil {
-						return value.Properties[key]
+						return e.queryEntityProperties(value)[key]
 					}
 					return nil
 				}
@@ -227,6 +227,21 @@ skipArrayIndexing:
 			Cypher25: cypherVersionFromContext(ctx) == "25",
 		}
 
+		if (strings.EqualFold(name, "properties") || strings.EqualFold(name, "keys")) && e.queryPropertyDecayEnabled() {
+			originalEval := fnCtx.Eval
+			fnCtx.Eval = func(expression string) (interface{}, error) {
+				value, err := originalEval(expression)
+				return e.queryVisibleValue(value), err
+			}
+			fnCtx.Nodes = make(map[string]*storage.Node, len(nodes))
+			for key, node := range nodes {
+				fnCtx.Nodes[key] = e.queryVisibleValue(node).(*storage.Node)
+			}
+			fnCtx.Rels = make(map[string]*storage.Edge, len(rels))
+			for key, rel := range rels {
+				fnCtx.Rels[key] = e.queryVisibleValue(rel).(*storage.Edge)
+			}
+		}
 		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {
 			if err != nil {
 				functionEvaluationFailure(ctx, err)
@@ -315,7 +330,7 @@ skipArrayIndexing:
 			varName := inner[:dotIdx]
 			propName := inner[dotIdx+1:]
 			if node, ok := nodes[varName]; ok {
-				_, exists := node.Properties[propName]
+				_, exists := e.queryEntityProperties(node)[propName]
 				return exists
 			}
 		}

@@ -23,6 +23,11 @@ import (
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
+type snapshotLabelCacheKey struct {
+	projectionKey string
+	reveal        bool
+}
+
 // BadgerTransaction wraps Badger's native transaction with constraint validation.
 //
 // Provides ACID guarantees:
@@ -140,7 +145,7 @@ type BadgerTransaction struct {
 	// snapshotLabelNodes retains completed, immutable label streams for the
 	// lifetime of this pinned snapshot. Bounded/aborted streams are never
 	// cached, so LIMIT preserves early termination and memory proportionality.
-	snapshotLabelNodes map[string][]*Node
+	snapshotLabelNodes map[snapshotLabelCacheKey][]*Node
 	// snapshotLabelNodeByID indexes the whole nodes of those completed label
 	// streams by ID, so a write to a node the statement just read from the
 	// snapshot (MATCH (n:L) SET ...) doesn't read the node again
@@ -152,12 +157,12 @@ type BadgerTransaction struct {
 	// snapshotProjectedLabelNodes applies the same rule to exact property
 	// projections. Keeping it separate preserves full-node cache reuse while
 	// avoiding a full physical snapshot walk for every repeated projected read.
-	snapshotProjectedLabelNodes map[string][]*Node
+	snapshotProjectedLabelNodes map[snapshotLabelCacheKey][]*Node
 	// snapshotLabelPrefixNodes retains small, early-stopped physical prefixes.
 	// These are never treated as complete streams; a later caller resumes the
 	// pinned label index after the last cached node when it needs more rows.
-	snapshotLabelPrefixNodes     map[string][]*Node
-	snapshotLabelPrefixNodeBytes map[string]int
+	snapshotLabelPrefixNodes     map[snapshotLabelCacheKey][]*Node
+	snapshotLabelPrefixNodeBytes map[snapshotLabelCacheKey]int
 	snapshotLabelPrefixBytes     int
 	snapshotPrefixNodeByID       map[NodeID]*Node
 	snapshotPrefixNodeBytesByID  map[NodeID]int
@@ -2369,12 +2374,16 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		return invokeVisit(forCaller(node))
 	}
 
-	cacheKey := label
+	cacheKey := snapshotLabelCacheKey{projectionKey: label, reveal: tx.engine.revealAll.Load()}
 	cache := tx.snapshotLabelNodes
 	if properties != nil {
-		cacheKey = snapshotLabelProjectionKey(label, properties)
+		cacheKey.projectionKey = snapshotLabelProjectionKey(label, properties)
 		cache = tx.snapshotProjectedLabelNodes
 	}
+	// Label streams have already applied entity visibility. A transaction
+	// outlives each statement's REVEAL scope, so its filtered population must
+	// never answer a reveal read (or the reverse). Keep both views pinned to
+	// the same physical snapshot, but cache their populations independently.
 	if cached, ok := cache[cacheKey]; ok {
 		for _, node := range cached {
 			if err := emitCommitted(node); err != nil {
@@ -2423,7 +2432,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	}
 	if properties == nil {
 		if tx.snapshotLabelNodes == nil {
-			tx.snapshotLabelNodes = make(map[string][]*Node)
+			tx.snapshotLabelNodes = make(map[snapshotLabelCacheKey][]*Node)
 		}
 		tx.snapshotLabelNodes[cacheKey] = completed
 		tx.clearSnapshotLabelPrefixLocked(cacheKey)
@@ -2437,7 +2446,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		}
 	} else if len(tx.snapshotProjectedLabelNodes) < maxSnapshotProjectedLabelStreams {
 		if tx.snapshotProjectedLabelNodes == nil {
-			tx.snapshotProjectedLabelNodes = make(map[string][]*Node)
+			tx.snapshotProjectedLabelNodes = make(map[snapshotLabelCacheKey][]*Node)
 		}
 		tx.snapshotProjectedLabelNodes[cacheKey] = completed
 		tx.clearSnapshotLabelPrefixLocked(cacheKey)

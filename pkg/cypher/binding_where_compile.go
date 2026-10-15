@@ -914,7 +914,7 @@ func (e *StorageExecutor) compileBindingValueResolver(expr string) (bindingValue
 			if node == nil {
 				return nil, false
 			}
-			return getBindingNodeValue(node, property)
+			return getBindingNodeValue(e.queryVisibleValue(node).(*storage.Node), property)
 		}, true
 	}
 	if isValidIdentifier(clause) {

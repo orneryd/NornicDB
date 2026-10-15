@@ -272,13 +272,13 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 // evaluateRowExpressionWithContext extends the allocation-conscious row
 // evaluator with graph expressions that require storage access. Callers with
 // an execution context use this as the converged expression entry point.
-func evaluateBoundRowValue(expr string, values pipelineRow) (interface{}, bool) {
+func (e *StorageExecutor) evaluateBoundRowValue(expr string, values pipelineRow) (interface{}, bool) {
 	if value, bound := values[expr]; bound && !isLiteralKeyword(expr) {
 		return value, true
 	}
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
-			if value, resolved := evaluateRowPropertyChain(base, chain); resolved {
+			if value, resolved := evaluateRowPropertyChain(e.queryVisibleValue(base), chain); resolved {
 				return value, true
 			}
 		}
@@ -330,7 +330,7 @@ func rowContextShapeOf(expr string) *rowContextShape {
 }
 
 func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, expr string, values pipelineRow) (interface{}, bool) {
-	if value, bound := evaluateBoundRowValue(expr, values); bound {
+	if value, bound := e.evaluateBoundRowValue(expr, values); bound {
 		return value, true
 	}
 	shape := rowContextShapeOf(expr)
@@ -366,7 +366,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		// A row variable, or a plain property chain on one (e.uuid),
 		// resolves without the graph-expression checks below, which can't
 		// match it.
-		if value, bound := evaluateBoundRowValue(expr, values); bound {
+		if value, bound := e.evaluateBoundRowValue(expr, values); bound {
 			return value, true
 		}
 	}

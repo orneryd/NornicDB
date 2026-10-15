@@ -60,7 +60,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 		return nil, true, true, nil
 	}
 	temporal := isRuntimeTemporal(base) || isRuntimeDuration(base)
-	properties, hasProperties := rowProjectionProperties(base)
+	properties, hasProperties := rowProjectionProperties(e.queryVisibleValue(base))
 	if !hasProperties && !temporal {
 		if _, isPath := cypherPathElements(base); isPath {
 			return nil, true, false, runtimeTypeError("Type mismatch: expected a map but was Path")

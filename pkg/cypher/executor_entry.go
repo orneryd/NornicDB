@@ -425,7 +425,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		// Mirror normal query-cache policy for Fabric reads (autocommit only).
 		// A cached result is served only to a caller the statement is
 		// authorized for (fabricResultCacheKey).
-		if allowResultCache && !inExplicitTx && info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) {
+		if allowResultCache && e.canUseResultCache(ctx, info, cypher) {
 			if key, cacheable := e.fabricResultCacheKey(ctx, preparedFabric, cypher, mergedParams); cacheable {
 				fabricResultCacheKey = key
 				if cached, found := e.cache.get(fabricResultCacheKey); found {
@@ -738,7 +738,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// the same text can mean different things in Cypher 5 and Cypher 25
 	// (#907); a Cypher 5 key pays for no version text.
 	resultCacheKey := ""
-	if info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) {
+	if e.canUseResultCache(ctx, info, cypher) {
 		resultCacheKey = resultCacheEntryKey(cypher, params)
 		if version := cypherVersionFromContext(ctx); version != "5" {
 			resultCacheKey += ":cypher:" + version

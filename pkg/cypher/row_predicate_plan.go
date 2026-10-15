@@ -47,6 +47,7 @@ type plannedRowValue struct {
 }
 
 type compiledRowScope struct {
+	executor   *StorageExecutor
 	values     map[string]interface{}
 	nodes      binding
 	rels       relationshipBinding
@@ -111,6 +112,7 @@ func (value plannedRowValue) materialize() interface{} {
 }
 
 func (operand *rowOperand) evaluate(e *StorageExecutor, scope compiledRowScope) (plannedRowValue, bool, error) {
+	scope.executor = e
 	if operand.compiled == nil {
 		value, ok := operand.resolveScope(scope)
 		if !ok && operand.kind == rowOperandPropertyChain {
@@ -180,6 +182,9 @@ func (o *rowOperand) resolveScope(scope compiledRowScope) (interface{}, bool) {
 		base, bound := scope.lookup(o.variable)
 		if !bound {
 			return nil, false
+		}
+		if scope.executor != nil {
+			base = scope.executor.queryVisibleValue(base)
 		}
 		if o.directProperty {
 			return rowPropertyValue(base, o.chain)
@@ -616,6 +621,7 @@ func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, par
 }
 
 func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) (interface{}, error) {
+	scope.executor = e
 	textValue := func() (interface{}, error) {
 		value, _, err := deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
 			values := rowValuesInExpressionContext(ctx, scope.materialize())
