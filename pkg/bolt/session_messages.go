@@ -168,20 +168,7 @@ func (s *Session) handleRun(data []byte) error {
 		return s.sendRunFailure("Neo.TransientError.General.DatabaseUnavailable", err.Error())
 	}
 	// Per-database access: deny if principal may not access this database (Neo4j-aligned).
-	var mode auth.DatabaseAccessMode
-	if s.server != nil && s.server.databaseAccessModeResolver != nil {
-		var roles []string
-		if s.authResult != nil {
-			roles = s.authResult.Roles
-		}
-		mode = s.server.databaseAccessModeResolver(roles)
-	} else if s.server != nil && s.server.databaseAccessMode != nil {
-		mode = s.server.databaseAccessMode
-	}
-	// When auth is required but no resolver/mode was set (e.g. standalone Bolt), deny all DB access (secure default).
-	if mode == nil && s.server != nil && s.server.config.RequireAuth {
-		mode = auth.DenyAllDatabaseAccessMode
-	}
+	mode := s.accessMode()
 	if mode != nil {
 		if _, allowed := s.graphAccess(mode, dbName); !allowed {
 			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
@@ -259,11 +246,13 @@ func (s *Session) handleRun(data []byte) error {
 	defer s.clearActiveRun()
 	ctx = s.withSessionIdentity(ctx)
 	ctx = cypher.WithClientStatement(ctx)
-	if mode != nil {
-		// A name is checked like the session's database (graphAccess: a
-		// composite constituent needs its composite and its database), and
-		// read / write are the privileges of the database its data is in: the
-		// principal's one resolver (principalAccess).
+	if mode != nil || s.authResult != nil {
+		// The principal's one permission resolver (principalAccess), which the
+		// executor authorizes the statement, the databases it selects and the
+		// procedures it calls with: a name is checked like the session's
+		// database (graphAccess: a composite constituent needs its composite
+		// and its database), and read / write are the privileges of the
+		// database its data is in.
 		ctx = cypher.WithDatabasePermissionResolver(ctx, dbName, s.principalAccess(mode).Allows)
 	}
 
@@ -1817,10 +1806,36 @@ func (s *Session) refreshAuthResult() {
 	}
 }
 
+// accessMode is the databases the session's principal may use: the server's
+// resolver for its roles, or the server's fixed mode; nil allows every
+// database. When authentication is required and neither is set (a
+// standalone Bolt server), no database (secure default).
+func (s *Session) accessMode() auth.DatabaseAccessMode {
+	if s.server == nil {
+		return nil
+	}
+	if s.server.databaseAccessModeResolver != nil {
+		var roles []string
+		if s.authResult != nil {
+			roles = s.authResult.Roles
+		}
+		return s.server.databaseAccessModeResolver(roles)
+	}
+	if s.server.databaseAccessMode != nil {
+		return s.server.databaseAccessMode
+	}
+	if s.server.config.RequireAuth {
+		return auth.DenyAllDatabaseAccessMode
+	}
+	return nil
+}
+
 // withSessionIdentity adds what the executor knows about the session to a
 // statement's or transaction's context: the forwarded auth header, the
 // client connection, the user directory, and the authenticated user with
-// their principal and permissions.
+// their principal and boosted procedure grants. A statement's permissions
+// are the principal's one resolver, which handleRun adds for the
+// statement's database (principalAccess).
 func (s *Session) withSessionIdentity(ctx context.Context) context.Context {
 	ctx = cypher.WithAuthToken(ctx, s.forwardedAuthHeader)
 	ctx = cypher.WithRequestIdentity(ctx, s.requestIdentity())
@@ -1830,9 +1845,6 @@ func (s *Session) withSessionIdentity(ctx context.Context) context.Context {
 			principal = auth.UsernamePrincipalID(s.authResult.Username)
 		}
 		ctx = cypher.WithAuthenticatedPrincipal(ctx, principal)
-		ctx = cypher.WithPermissionChecker(ctx, func(permission string) bool {
-			return s.authResult.HasPermission(permission)
-		})
 		ctx = cypher.WithProcedureGrantChecker(ctx, s.server.procedureGrants(s.authResult.Roles))
 	}
 	if s.authenticationDisabled() {

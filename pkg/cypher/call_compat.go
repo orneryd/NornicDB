@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -146,19 +145,15 @@ func (e *StorageExecutor) callDbmsListConnectionsWithContext(ctx context.Context
 	}
 	// A principal holding the admin entitlement (whatever its role is
 	// called) sees every connection; any other sees its own, as in Neo4j.
-	// Without the transport's permission check (an embedded caller), the
-	// signed-in user's roles' built-in entitlements decide, through the same
-	// entitlement check.
-	viewAll := identity.User == nil
-	if !viewAll {
-		if allows := contextPermissions(ctx); allows != nil {
-			viewAll = allows("admin")
-		} else {
-			viewAll = auth.EntitlementsAllow(auth.PermissionsForRoles(identity.User.Roles, nil), string(auth.PermAdmin))
-		}
+	// The principal's permissions are the one resolver the transport
+	// attaches (contextPermissions); without one (an embedded caller) the
+	// executor authorizes nothing, so every connection is listed.
+	viewAll := true
+	if allows := contextPermissions(ctx); allows != nil {
+		viewAll = allows("admin")
 	}
 	for _, connection := range identity.Connections() {
-		if !viewAll && connection.Username != identity.User.Name {
+		if !viewAll && (identity.User == nil || connection.Username != identity.User.Name) {
 			continue
 		}
 		result.Rows = append(result.Rows, []interface{}{connection.ConnectionID, connection.ConnectTime, connection.Connector, connection.Username, connection.UserAgent, connection.ServerAddress, connection.ClientAddress})

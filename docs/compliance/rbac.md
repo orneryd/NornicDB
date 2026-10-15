@@ -165,7 +165,7 @@ curl -X PUT http://localhost:7474/auth/access/databases \
 
 ### Per-Database Privileges
 
-The privileges matrix provides fine-grained **read** and **write** control per (role, database) pair. When no privilege entry exists for a combination, access falls back to the role's global permissions (e.g. editor = read+write, viewer = read-only).
+The privileges matrix provides fine-grained **read** and **write** control per (role, database) pair, within the role's global entitlements: reading a database needs the global `read` entitlement, and writing it the `write` entitlement too. When none of a principal's roles has a privilege entry for a database, its global entitlements decide alone (the ones stored with `PUT /auth/role-entitlements`, else the built-in defaults: editor = read+write, viewer = read-only).
 
 **View current privileges:**
 
@@ -235,8 +235,11 @@ A change-feed reader, set up once:
 When a user queries a database, NornicDB resolves access in this order:
 
 1. **Allowlist check** — Can this user's role(s) see and access this database?
-2. **Privileges check** — Is there a (role, database) privilege entry? If yes, use it.
-3. **Global fallback** — If no privilege entry, use the role's global permissions (admin/editor = read+write, viewer = read-only).
+2. **Global entitlements** — The roles' global entitlements (stored overrides, else the built-in defaults) gate the rest: without `read` the user can use no database; without `write` it writes none.
+3. **Privileges check** — Is there a (role, database) privilege entry? If yes, it decides read and write within the entitlements.
+4. **Global fallback** — If no privilege entry, the global entitlements decide (admin/editor = read+write, viewer = read-only).
+
+HTTP, Bolt, gRPC, GraphQL, MCP and plugins resolve access through this one resolver, and decide a statement's permissions with one decision, so a change to a role's entitlements or privileges applies at once on every transport. A statement that only writes (`CREATE`, and `SET` or `DELETE` of what it created) needs write but not read on the database, as in Neo4j, where a principal with `WRITE` but no `READ` can run `CREATE`; a statement that reads the graph (`MATCH`, `MERGE`, `CALL`, a `WHERE`, a `COUNT { }` or `EXISTS { }` subquery, a pattern comprehension) needs read, since NornicDB doesn't hide individual records from a read.
 
 When a new database is created, the **admin** role and the creating user's roles are automatically granted full access.
 

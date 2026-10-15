@@ -207,35 +207,14 @@ func (r *Resolver) executeCypher(ctx context.Context, query string, params map[s
 	if err != nil {
 		return nil, err
 	}
-	if entitlementResolver := auth.RequestEntitlementResolverFromContext(ctx); entitlementResolver != nil {
+	// The principal's one permission resolver (cypher.PrincipalAccess, which
+	// the server attaches to the request): the executor authorizes the
+	// statement and every database it selects with it, and the principal's
+	// boosted procedure grants come with the request too, as on HTTP and
+	// Bolt.
+	if allows := auth.RequestEntitlementResolverFromContext(ctx); allows != nil {
 		ctx = cypher.WithDatabasePermissionResolver(ctx, effectiveDb, func(database, permission string) bool {
-			if scope := auth.RequestDatabaseScopeFromContext(ctx); scope != nil {
-				resolved, allowed := scope.Resolve(database)
-				if !allowed {
-					return false
-				}
-				database = resolved
-			}
-			return entitlementResolver(database, auth.Permission(permission))
-		})
-	} else if accessResolver := auth.RequestResolvedAccessResolverFromContext(ctx); accessResolver != nil {
-		ctx = cypher.WithDatabasePermissionResolver(ctx, effectiveDb, func(database, permission string) bool {
-			if scope := auth.RequestDatabaseScopeFromContext(ctx); scope != nil {
-				resolved, allowed := scope.Resolve(database)
-				if !allowed {
-					return false
-				}
-				database = resolved
-			}
-			access := accessResolver(database)
-			switch auth.Permission(permission) {
-			case auth.PermRead:
-				return access.Read
-			case auth.PermWrite:
-				return access.Write
-			default:
-				return false
-			}
+			return allows(database, auth.Permission(permission))
 		})
 	}
 	executor, err := r.getCypherExecutor(ctx, effectiveDb)

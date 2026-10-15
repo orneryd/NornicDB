@@ -694,15 +694,18 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 		if !allowed {
 			return nil, localizedError(localization.DatabaseAccessDenied("requested database"), nil)
 		}
-		resolveAccess := auth.RequestResolvedAccessResolverFromContext(ctx)
-		if resolveAccess == nil {
+		// The tool's permissions on the database: the one decision
+		// (cypher.MissingPermission) over the principal's one resolver, as
+		// HTTP and Bolt decide a statement's.
+		allows := auth.RequestEntitlementResolverFromContext(ctx)
+		if allows == nil {
 			return nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
 		}
-		resolvedAccess := resolveAccess(database)
-		if !resolvedAccess.Read {
+		requirements := cypher.PermissionRequirements{Read: true, Write: accessRequirement == toolDatabaseWrite}
+		switch cypher.MissingPermission(requirements, func(permission string) bool { return allows(database, auth.Permission(permission)) }, nil) {
+		case string(auth.PermRead):
 			return nil, localizedError(localization.DatabaseAccessDenied("requested database"), nil)
-		}
-		if accessRequirement == toolDatabaseWrite && !resolvedAccess.Write {
+		case string(auth.PermWrite):
 			return nil, localizedError(localization.DatabaseWriteDenied(database), nil)
 		}
 		ctx = contextWithAuthorizedDatabase(ctx, database)

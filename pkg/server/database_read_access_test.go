@@ -8,10 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Every statement reads, so a role whose access to a database is write
-// without read, though its global entitlements hold read, runs nothing
-// there, and is told it lacks read permission.
-func TestWriteOnlyDatabaseAccessRunsNothing(t *testing.T) {
+// A role whose access to a database is write without read (its global
+// entitlements hold read and write) runs a statement that only writes, as
+// Neo4j runs CREATE for a principal with WRITE but no READ privilege; a
+// statement that reads the graph (MATCH, MERGE, a COUNT { } subquery) is
+// refused with the read message, since NornicDB can't hide the records a
+// read would see.
+func TestWriteOnlyDatabaseAccessRunsOnlyWrites(t *testing.T) {
 	ctx := context.Background()
 	server, users := setupTestServer(t)
 	system, err := server.dbManager.GetStorage("system")
@@ -28,7 +31,19 @@ func TestWriteOnlyDatabaseAccessRunsNothing(t *testing.T) {
 	require.NoError(t, err)
 	token := getAuthToken(t, users, "loader1")
 
-	for _, statement := range []string{"CREATE (:Loaded {n: 1})", "MATCH (n:Loaded) RETURN n.n AS n"} {
+	for _, statement := range []string{
+		"CREATE (:Loaded {n: 1})",
+		"CREATE (a:Loaded {n: 2})-[:NEXT]->(b:Loaded {n: 3}) SET a.done = true",
+		"UNWIND [4, 5] AS n CREATE (:Loaded {n: n})",
+	} {
+		require.Empty(t, txErrorCode(t, server, "nornic", token, statement), statement)
+	}
+	for _, statement := range []string{
+		"MATCH (n:Loaded) RETURN n.n AS n",
+		"MATCH (n:Loaded) SET n.seen = true",
+		"MERGE (:Loaded {n: 1})",
+		"CREATE (:Loaded {count: COUNT { (n:Loaded) }})",
+	} {
 		response := makeRequest(t, server, "POST", "/db/nornic/tx/commit", map[string]any{"statements": []map[string]any{{"statement": statement}}}, "Bearer "+token)
 		require.Contains(t, response.Body.String(), "Neo.ClientError.Security.Forbidden", statement)
 		require.Contains(t, response.Body.String(), "Read operations require read permission", statement)
@@ -37,5 +52,5 @@ func TestWriteOnlyDatabaseAccessRunsNothing(t *testing.T) {
 	require.NoError(t, err)
 	loaded, err := nornic.GetNodesByLabel("Loaded")
 	require.NoError(t, err)
-	require.Empty(t, loaded)
+	require.Len(t, loaded, 5)
 }

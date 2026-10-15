@@ -74,6 +74,12 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 			requirements.Admin = true
 		}
 	}
+	// A write that reads nothing of the graph (CREATE, and SET / DELETE of
+	// what it created) needs write but not read, as Neo4j lets a principal
+	// with WRITE but no READ privilege run CREATE. Any other statement reads.
+	if requirements.Write && !requirements.Schema && !requirements.Admin && !statementReadsGraphText(query) {
+		requirements.Read = false
+	}
 	return requirements
 }
 

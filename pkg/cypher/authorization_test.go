@@ -15,12 +15,23 @@ func TestQueryPermissionRequirementsRecognizesCypherKeywords(t *testing.T) {
 		write  bool
 		schema bool
 		admin  bool
+		// noRead: a write that reads nothing of the graph needs no read.
+		noRead bool
 	}{
 		"read":                   {query: "MATCH (n) RETURN n"},
 		"set after match":        {query: "MATCH (n) SET n.value = 1", write: true},
 		"set before newline":     {query: "MATCH (n) SET\nn.value = 1", write: true},
 		"remove before tab":      {query: "MATCH (n) REMOVE\tn.value", write: true},
-		"create after unwind":    {query: "UNWIND [1] AS value CREATE ({value: value})", write: true},
+		"create after unwind":    {query: "UNWIND [1] AS value CREATE ({value: value})", write: true, noRead: true},
+		"create and set":         {query: "CREATE (a:A)-[:R]->(b:B) SET a.x = 1 RETURN a, b", write: true, noRead: true},
+		"create in foreach":      {query: "FOREACH (x IN [1] | CREATE (:A {x: x}))", write: true, noRead: true},
+		"merge reads":            {query: "MERGE (a:A {x: 1})", write: true},
+		"merge in foreach":       {query: "FOREACH (x IN [1] | MERGE (:A {x: x}))", write: true},
+		"create with count":      {query: "CREATE (:A {c: toString(COUNT { (n) })})", write: true},
+		"create with collect":    {query: "CREATE (:A {c: size(COLLECT { MATCH (n) RETURN n })})", write: true},
+		"create, pattern list":   {query: "CREATE (:A {c: size([(n)-->(m) | m])})", write: true},
+		"create after where":     {query: "WITH 1 AS x WHERE x > 0 CREATE (:A)", write: true},
+		"create in call":         {query: "CALL { CREATE (:A) }", write: true},
 		"schema":                 {query: "CREATE INDEX example FOR (n:Example) ON (n.value)", schema: true},
 		"commented schema":       {query: "/* migration */ CREATE INDEX example FOR (n:Example) ON (n.value)", schema: true},
 		"admin database DDL":     {query: "DROP DATABASE restricted", admin: true},
@@ -38,7 +49,7 @@ func TestQueryPermissionRequirementsRecognizesCypherKeywords(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			requirements := QueryPermissionRequirements(testCase.query)
-			require.True(t, requirements.Read)
+			require.Equal(t, !testCase.noRead, requirements.Read, testCase.query)
 			require.Equal(t, testCase.write, requirements.Write)
 			require.Equal(t, testCase.schema, requirements.Schema)
 			require.Equal(t, testCase.admin, requirements.Admin)

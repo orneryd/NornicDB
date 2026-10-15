@@ -87,4 +87,18 @@ func TestListConnectionsShowsOtherUsersOnlyToAdministrators(t *testing.T) {
 			require.Equal(t, c.want, listed)
 		})
 	}
+
+	// Only the principal's resolver decides: without one (an embedded
+	// caller, which the executor authorizes nothing for) every connection is
+	// listed, whatever the roles are called; a resolver without the admin
+	// entitlement and no signed-in user lists none.
+	listed := func(ctx context.Context) int {
+		result, err := exec.Execute(ctx, "CALL dbms.listConnections() YIELD connectionId RETURN connectionId", nil)
+		require.NoError(t, err)
+		return len(result.Rows)
+	}
+	embedded := WithRequestIdentity(context.Background(), &RequestIdentity{User: &AuthenticatedUser{Name: "reader", Roles: []string{"viewer"}}, Connections: connections})
+	require.Equal(t, 2, listed(embedded))
+	anonymous := WithPermissionChecker(WithRequestIdentity(context.Background(), &RequestIdentity{Connections: connections}), func(permission string) bool { return permission == "read" })
+	require.Equal(t, 0, listed(anonymous))
 }

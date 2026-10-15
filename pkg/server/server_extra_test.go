@@ -2133,8 +2133,8 @@ func TestGrantAccessAndRBACResolverBranches(t *testing.T) {
 	al := server.allowlistStore.Allowlist()
 	assert.Contains(t, al["admin"], "db_new")
 	assert.Contains(t, al["custom"], "db_new")
-	assert.True(t, server.privilegesStore.Resolve([]string{"admin"}, "db_new").Write)
-	assert.True(t, server.privilegesStore.Resolve([]string{"custom"}, "db_new").Read)
+	assert.True(t, grantedAccess(server.privilegesStore, []string{"admin"}, "db_new").Write)
+	assert.True(t, grantedAccess(server.privilegesStore, []string{"custom"}, "db_new").Read)
 
 	// Explicit helper branches.
 	server.auth = nil

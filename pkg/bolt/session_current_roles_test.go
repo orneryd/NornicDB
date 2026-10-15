@@ -77,9 +77,26 @@ func TestBoltSessionAuthenticationDisabled(t *testing.T) {
 	}
 }
 
+// boltStores are the system database's auth stores a Bolt server reads
+// through the production resolvers.
+type boltStores struct {
+	roles        *auth.RoleStore
+	privileges   *auth.PrivilegesStore
+	entitlements *auth.RoleEntitlementsStore
+}
+
 // boltAccountFixture is an authenticator over a system database, its adapter
-// with the server's permission resolver, and a Bolt server using it.
+// with the server's permission resolver, and a Bolt server using it, wired
+// as the production server wires it (cmd/nornicdb): the effective
+// entitlements are auth.PermissionsForRoles over the role entitlements, and
+// the database read / write resolver is auth.ResolveDatabaseAccess over the
+// privileges and the entitlements (Server.GetResolvedAccessForRoles).
 func boltAccountFixture(t *testing.T) (*auth.Authenticator, *AuthenticatorAdapter, *Server) {
+	authenticator, adapter, server, _ := boltProductionFixture(t)
+	return authenticator, adapter, server
+}
+
+func boltProductionFixture(t *testing.T) (*auth.Authenticator, *AuthenticatorAdapter, *Server, boltStores) {
 	t.Helper()
 	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = base.Close() })
@@ -89,12 +106,20 @@ func boltAccountFixture(t *testing.T) (*auth.Authenticator, *AuthenticatorAdapte
 	config.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
 	authenticator, err := auth.NewAuthenticator(config, engine)
 	require.NoError(t, err)
-	entitlements := auth.NewRoleEntitlementsStore(engine)
+	stores := boltStores{
+		roles:        auth.NewRoleStore(engine),
+		privileges:   auth.NewPrivilegesStore(engine),
+		entitlements: auth.NewRoleEntitlementsStore(engine),
+	}
 	adapter := NewAuthenticatorAdapter(authenticator)
-	adapter.SetGetEffectivePermissions(func(roles []string) []string { return auth.PermissionsForRoles(roles, entitlements) })
+	adapter.SetGetEffectivePermissions(func(roles []string) []string { return auth.PermissionsForRoles(roles, stores.entitlements) })
 	serverConfig := DefaultConfig()
 	serverConfig.Authenticator = adapter
-	return authenticator, adapter, &Server{config: serverConfig, sessions: map[string]*Session{}}
+	server := &Server{config: serverConfig, sessions: map[string]*Session{}}
+	server.SetResolvedAccessResolver(func(roles []string, database string) auth.ResolvedAccess {
+		return auth.ResolveDatabaseAccess(roles, database, stores.privileges, stores.entitlements)
+	})
+	return authenticator, adapter, server, stores
 }
 
 // A Bolt session of an account that is deleted, disabled, or deleted and
