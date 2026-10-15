@@ -58,7 +58,7 @@ func TestIssueExpectedRows(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			issues := loadExpectedRowsCase(t, test.query, test.annotation)
 			pair := &Pair{
-				Neo4j: &fakeServer{answers: map[string]Outcome{test.query: test.reference}},
+				Neo4j:    &fakeServer{answers: map[string]Outcome{test.query: test.reference}},
 				NornicDB: &fakeServer{answers: map[string]Outcome{test.query: test.actual}},
 			}
 			results, err := RunIssues(context.Background(), issues, pair, Options{StatementTimeout: time.Second})
