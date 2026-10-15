@@ -83,7 +83,16 @@ func Louvain(nodes []*Node, rels []*Relationship, config LouvainConfig) []Commun
 	for i, node := range nodes {
 		index[node.ID] = i
 	}
-	graph := louvain.NewGraph(len(nodes))
+	arcCounts := make([]int, len(nodes))
+	for _, relationship := range rels {
+		source, sourceFound := index[relationship.StartNode]
+		target, targetFound := index[relationship.EndNode]
+		if sourceFound && targetFound {
+			arcCounts[source]++
+			arcCounts[target]++
+		}
+	}
+	graph := louvain.NewGraph(len(nodes), arcCounts)
 	for _, relationship := range rels {
 		source, sourceFound := index[relationship.StartNode]
 		target, targetFound := index[relationship.EndNode]

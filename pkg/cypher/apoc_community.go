@@ -42,7 +42,7 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 
 // computeLouvain is Louvain community detection (#1184), as GDS's
 // gds.louvain computes it over an undirected graph: the relationships
-// between the given nodes, parallel ones adding their weights (weightProp's
+// between the given nodes, preserving parallel arcs (weightProp's
 // value, 1 without it). Each level moves nodes, in the given order, to the
 // neighbouring community with the best modularity gain until no move
 // helps, then merges each community into one node; levels repeat until a

@@ -306,27 +306,14 @@ type nodeSimilarityPair struct {
 // dropped, including at a type boundary, before sorting the resulting vector.
 // Repeated targets separated by another target remain distinct entries in GDS.
 func nodeSimilarityNeighbors(graph *gdsSubgraph) ([][]gdsEdge, [][]int) {
+	graph.orderOutgoing()
 	neighbors := make([][]gdsEdge, len(graph.nodes))
 	incoming := make([][]int, len(graph.nodes))
 	for source, outgoing := range graph.outgoing {
-		type typedEdge struct {
-			gdsEdge
-			typeOrder int
-		}
-		edges := make([]typedEdge, len(outgoing))
-		for i, edge := range outgoing {
-			edges[i] = typedEdge{gdsEdge: edge, typeOrder: graph.outgoingTypes[source][i]}
-		}
-		sort.SliceStable(edges, func(i, j int) bool {
-			if edges[i].typeOrder != edges[j].typeOrder {
-				return edges[i].typeOrder < edges[j].typeOrder
-			}
-			return edges[i].target < edges[j].target
-		})
 		lastTarget := -1
-		for _, edge := range edges {
+		for _, edge := range outgoing {
 			if edge.target != source && edge.target != lastTarget {
-				neighbors[source] = append(neighbors[source], edge.gdsEdge)
+				neighbors[source] = append(neighbors[source], edge)
 				incoming[edge.target] = append(incoming[edge.target], source)
 			}
 			lastTarget = edge.target

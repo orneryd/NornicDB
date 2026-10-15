@@ -121,14 +121,19 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 		}
 	}
 
-	graph, err := selectGDSSubgraph(projection, nodeLabels, relationshipTypes, weightProperty, gdsSubgraphOptions{weightRequested: weightRequested})
+	graph, err := selectGDSSubgraph(projection, nodeLabels, relationshipTypes, weightProperty, gdsSubgraphOptions{weightRequested: weightRequested, includeTypes: true})
 	if err != nil {
 		return nil, err
 	}
 	size := len(graph.nodes)
+	graph.orderOutgoing()
 	// The relationships as projected, as GDS reads them: outgoing (an
 	// UNDIRECTED projection holds each both ways), a missing weight NaN.
-	solver := louvain.NewGraph(size)
+	arcCounts := make([]int, size)
+	for source, edges := range graph.outgoing {
+		arcCounts[source] = len(edges)
+	}
+	solver := louvain.NewGraph(size, arcCounts)
 	for source, edges := range graph.outgoing {
 		for _, edge := range edges {
 			solver.Arc(source, edge.target, edge.weight)
