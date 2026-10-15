@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Honor the already-accepted explicit Dijkstra missing-weight fallback instead of ignoring its fifth argument (#1316).
+
+- Bind existing APOC node, relationship, path and temporal functions to native query values and the current graph;
+  retain compatible custom plugin handlers and document unsupported capabilities separately (#1316, #1318).
+- Propagate live link-prediction graph read errors and cancellation, and join owned graph-builder workers before
+  returning so failed or canceled reads cannot produce a partial successful graph (#1316).
+
 - Enforce node and relationship list-property uniqueness across typed and generic list representations, preserving
   exact large integer identities, composite values, transaction checks and buffered recovery (#1316).
 
