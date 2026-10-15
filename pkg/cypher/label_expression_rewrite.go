@@ -1305,7 +1305,7 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 				return labelExpressionSyntaxError(localization.CypherCoreDynamicTokenPositionInvalid())
 			}
 			// A Cypher 25 label test with a dynamic term: its predicate.
-			r.edit(wordStart, chainEnd, "("+strings.ReplaceAll(chain.expr.predicate(q[wordStart:wordEnd]), dynamicLabelTestFunction, dynamicLabelPredicateFunction)+")")
+			r.edit(wordStart, chainEnd, "("+chain.expr.predicateWithFunction(q[wordStart:wordEnd], dynamicLabelPredicateFunction)+")")
 			return nil
 		}
 		if ok && chain.end == chainEnd-wordEnd-1 && chain.colons && chain.symbols {
@@ -1357,7 +1357,7 @@ func (r *labelExpressionRewriter) labelTest(wordStart, wordEnd, end int) error {
 			// predicate.
 			if chain, ok := scanLabelChain(q[textStart:closing+1], false); ok && chain.dynamic && chain.end == closing+1-textStart {
 				variableStart := labelTestWordStart(q, wordEnd)
-				r.edit(variableStart, closing+1, "("+strings.ReplaceAll(chain.expr.predicate(q[variableStart:wordEnd]), dynamicLabelTestFunction, dynamicLabelPredicateFunction)+")")
+				r.edit(variableStart, closing+1, "("+chain.expr.predicateWithFunction(q[variableStart:wordEnd], dynamicLabelPredicateFunction)+")")
 				return nil
 			}
 			return labelExpressionSyntaxError(localization.CypherCoreDynamicTokenPositionInvalid())
@@ -1590,10 +1590,11 @@ func (r *labelExpressionRewriter) expressionLabelTest(subjectStart, open, close,
 	if len(r.edits) != mark {
 		return close + 1, true, nil
 	}
-	predicate := chain.expr.entityPredicate(q[subjectStart : close+1])
+	callee := dynamicLabelTestFunction
 	if chain.dynamic {
-		predicate = strings.ReplaceAll(predicate, dynamicLabelTestFunction, dynamicLabelPredicateFunction)
+		callee = dynamicLabelPredicateFunction
 	}
+	predicate := chain.expr.entityPredicateWithFunction(q[subjectStart:close+1], callee)
 	r.edit(subjectStart, chainStart+chain.end, "("+predicate+")")
 	return chainStart + chain.end, true, nil
 }
