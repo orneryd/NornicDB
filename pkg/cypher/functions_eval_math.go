@@ -1179,18 +1179,7 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 }
 
 func (e *StorageExecutor) evaluateQuantifierPredicate(ctx context.Context, predicate string, values map[string]interface{}) (interface{}, bool) {
-	value, ok := e.evaluateRowExpressionWithContext(ctx, predicate, values)
-	if !ok {
-		return nil, false
-	}
-	if value == nil {
-		return nil, true
-	}
-	boolean, ok := value.(bool)
-	if !ok {
-		return nil, false
-	}
-	return boolean, true
+	return e.evaluateRowExpressionWithContext(ctx, predicate, values)
 }
 
 // evaluateListComprehension evaluates [x IN list WHERE predicate |

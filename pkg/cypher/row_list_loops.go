@@ -7,8 +7,8 @@ package cypher
 // form's value, and when an element leaves it unresolved or fails.
 
 // rowQuantifierLoop is all / any / none / single(variable IN items WHERE
-// predicate), folded by quantifierFold. A predicate that can't be evaluated,
-// or is neither a boolean nor null, leaves the quantifier unresolved.
+// predicate), folded by quantifierFold. An unevaluated predicate leaves the
+// quantifier unresolved; an evaluated value uses the shared predicate contract.
 func rowQuantifierLoop(function string, items []interface{}, bind func(interface{}), predicate func() (interface{}, bool, error)) (interface{}, bool, error) {
 	fold := quantifierFold{function: function}
 	for _, item := range items {
@@ -20,10 +20,11 @@ func rowQuantifierLoop(function string, items []interface{}, bind func(interface
 		if !evaluated {
 			return nil, false, nil
 		}
-		if _, isBool := result.(bool); !isBool && result != nil {
-			return nil, false, nil
+		truth, err := cypherPredicateTruth(result)
+		if err != nil {
+			return nil, true, err
 		}
-		if value, decided := fold.add(result); decided {
+		if value, decided := fold.add(truth.value()); decided {
 			return value, true, nil
 		}
 	}
