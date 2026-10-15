@@ -7,94 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Traversal cancellation fixes
-
-- Stop plain variable-length DFS at cancelled frame entry and sibling expansion so a timed-out query unwinds instead of continuing to enumerate paths.
-### Verification correctness fixes
-
-- Match large changed-file lists without SIGPIPE skipping applicable verification gates; self-test path selection and compare allocation workloads at the actual merge base. Keep the main default PR base.
-
-### Search readiness fixes
-
-- Return the documented retryable `search_not_ready` HTTP 503 response when search readiness changes during
-  query embedding, using the same response owner as the initial readiness gate. Coordinate the long-query
-  regression fixture with the database's asynchronous initial build instead of starting a competing rebuild.
-
-### Fixed storage and decay
-
-- Transactional node and relationship creation now initializes creation and update timestamps while preserving
-  explicitly supplied times. Namespaced node and relationship writes retain visibility suppression metadata (#1228).
-- Deleting a node or moving its embeddings inline removes every separately stored embedding key (#1228).
-- Relationship VERSION decay and policy resolution use the last update time, preserving visibility and correct
-  suppression eligibility after a recent update (#1229).
-
-### Procedure name compatibility
-
-- Resolve procedure names with their registered letter case, preserving canonical mixed-case names and rejecting misspellings with `ProcedureNotFound`, including calls reached by an empty input stream. Keep authorization conservative for invalid case variants without creating executable aliases or overriding an exact registration's permissions.
-
-### Changed
-
-- Through October 31, 2026, require local PR verification result comments and regression fixes, with shared-root
-  fixes propagated through dedicated PRs.
-
-- Pause scheduled develop verification/canary builds and remove PR label CI triggers. Manual Actions jobs now require administrator environment approval; existing main push and tag publishing triggers remain unchanged.
-
-### Fixed knowledge-policy lookups
-
-- Decay functions, property filters and decay CLI commands use the active database's qualified entity IDs
-  for policy and access metadata, including local IDs containing colons. CLI commands unwrap WAL storage.
-
-### Decay scalar scoring fixes
-
-- Align relationship `decay()` and `decayScore()` VERSION anchors with update time and resolve relationship
-  property options through edge-type rules, sharing one entity/property scoring dispatch (#1055).
-
-### Visibility cache fixes
-
-- Publish node and relationship suppression transitions through the storage cache lifecycle after commit,
-  restoring indexed, outgoing and incoming reads after hidden-entity updates and policy relaxation (#1228).
-
-### Decay scalar scoring fixes
-
-- Align relationship `decay()` and `decayScore()` VERSION anchors with update time and resolve relationship
-  property options through edge-type rules, sharing one entity/property scoring dispatch (#1055).
-
-### Upgrade metadata fixes
-
-- Preserve complete node and relationship metadata during legacy-ID migration, including named embeddings,
-  embedding storage state and visibility suppression. Anonymization now preserves entity suppression while
-  retaining its existing property redaction and embedding behavior (#1228).
-
-### Documentation
-
-- Correct release-helper PR guidance to require manual workflow dispatch and administrator approval instead of the retired `ci:run` label.
-
-- Align contributor and agent workflows with rapid `develop` integration, release branches, and scoped maintainer
-  operational/documentation PRs into `main`, including verification and synchronization requirements.
-
 ### Fixed
 
-- Cypher readers distinguish map projections from subquery bodies and pattern maps, and normalize standalone ordering clauses inside imported `CALL` subqueries.
-- Preserve typed subquery operands during semantic scope masking so grouped EXISTS/COUNT/COLLECT predicates remain valid alongside keyword-named map projections.
+- Preserve typed MERGE/SET map and list parameters, temporal offsets, parameter isolation, and list ownership (#1239).
+- Validate expression patterns and subqueries in their local scopes, preserve dynamic-label error timing and argument
+  bytes, and distinguish nested map projections from pattern maps and `EXISTS`/`COUNT`/`COLLECT` bodies. Preserve
+  imported subquery ordering and validate original nested syntax before binding substitution (#1263, #1284, #1289,
+  #1290, #1291, #1295, #1307, #1308).
+- Correct mixed CASE/numeric-union inference, comprehension/reduce/quantifier local types, composed list indexes,
+  `WITH` type constraints, nullable-path argument errors, safe DELETE targets, and row-dependent string predicates
+  (#1260, #1271, #1302). Distinguish CASE keywords from variable, property, map-key and iterator names (#1270, #1298).
+- Keep qualified plugin function calls on their registered handlers across argument, Boolean and path readers,
+  including spaced and quoted name components and calls beside builtin names (#1279, #1303).
+- Honor inclusive GraphQL path bounds and shortest-path correctness through shared Cypher authorization, filtering,
+  traversal and cancellation. Stop safe bound-endpoint traversals at parameterized LIMIT without truncating before
+  ordering or row joins. Cancel plain DFS promptly without per-edge Context.Err calls (#1238, #1268, #1275, #1297, #1304).
+- Cancel active statements when a client disconnects behind a full Bolt message queue on Linux and macOS,
+  including sockets with unread data (#1276).
+- Retain pending writes and pinned snapshots in label/REVEAL caches; bypass result caching in explicit transactions,
+  procedure callbacks inside implicit writes, and while decay can change visibility (#1254, #1267, #1272, #1301).
+- Apply property visibility consistently to projections, paths and inline patterns while retaining stored fields needed
+  by mutations and REVEAL. Avoid repeated storage-wrapper discovery during ordinary property reads (#1272, #1300).
+- Resolve decay/policy lookups using database-qualified IDs, retain visibility metadata through storage caches,
+  migration and anonymization, and use relationship update time for VERSION decay (#1228, #1229).
+- Initialize entity timestamps without overwriting supplied times. Advance timestamps only for actual SET/REMOVE
+  and vector changes; preserve creation/no-op times, sidecar embedding metadata, conflict detection and rollback
+  (#1259, #1292). Remove separately stored embeddings when deleting nodes or moving vectors inline (#1228).
+- Preserve exact recovery property types and metadata through WAL v3 sidecars and NDS2 v2 snapshots; retain legacy
+  integer precision and report snapshot vector metadata from the data actually exported. Reject unknown WAL
+  versions without destructive repair (#1262, #1296). Rebuild buffered recovery caches and retained MVCC history
+  from typed bodies, keep distinct versions across multiple unflushed commits and repeated mutations, and clear
+  unavailable-vector metadata when exported named vectors are nil or empty (#1311).
+- Preserve genuine remote node/relationship identity through transport decoding, nested HTTP result positions,
+  Fabric bindings, property readers and graph functions. Ordinary maps retain their own properties and never acquire
+  identity from entity-shaped keys. Keep null projections and context/collection/COALESCE reads consistent
+  (#1273, #1293, #1299, #1305). Preserve remote numeric/element identity and ordered path values across
+  HTTP and Bolt output, including nested maps, without exposing private identity metadata (#1312).
+- Resolve database entitlements consistently across transports and Fabric. Require administrator permission to
+  install, replace or drop custom procedures; preserve exact-case catalog identity and CALL grammar; restrict
+  nonadministrator connection listings to the caller's own connections; reject unsafe system SHOW tails and
+  unauthorized results in open HTTP transactions. Preserve differently-cased procedure records across interrupted
+  migration, install/drop operations and retryable storage failures (#1235, #1277, #1283, #1294, #1310).
+- Invalidate cached Basic credentials after password changes and reject stale in-flight cache writes while preserving
+  public cache setter signatures. This does not revoke existing JWTs or sessions (#1283).
+- Publish embedder readiness/replacement to cached executors and native transports, with one provider snapshot per
+  request. Return retryable search_not_ready HTTP 503 when readiness changes during embedding. Chunk long input
+  for OpenAI-compatible embedders as for other providers (#1286).
+- Preserve native GDS numeric values and list defaults, validate unsafe Long-to-Double imports, respect graph-drop
+  permissions and align existing FastRP behavior. Declare vector similarity arguments as LIST<INTEGER | FLOAT>.
+- Keep verification path gates correct for large/renamed changed-file lists, relative overrides and Makefile/workflow
+  changes, and compare allocation workloads at the actual merge base (#1241, #1288).
 
-- `SHOW FUNCTIONS` declares vector similarity arguments as `LIST<INTEGER | FLOAT>`, matching Neo4j 5.26 rather than advertising its newer `VECTOR` type.
-- Go API: `cypher.GraphProjection.NodeProperties` now stores `interface{}` values (`int64`, `float64`, `[]int64`, `[]float64`) instead of always `float64`; direct Go consumers must handle the projected type.
-- Preserve native GDS projected numeric values and list defaults, validate unsafe Long-to-Double imports, honor cross-database graph-drop permissions, and align existing FastRP propagation and feature validation with GDS.
+### Compatibility
 
-- Preserve remote node and relationship provenance across transport decoding and Fabric bindings so graph
-  functions accept genuine remote values while rejecting ordinary maps; return property keys instead of
-  remote metadata from `keys()` without changing JSON or Bolt result shapes (#1055).
+- Go API: genuine RemoteEngine.QueryCypher entities and paths use storage.RemoteEntityValue and
+  storage.RemotePathValue. Direct unnamed-map or driver-path assertions must adapt; forwarding must preserve
+  markers. Use storage.PublicRemoteMap for plain-map interoperability: an explicit map cast discards custom JSON
+  marshaling. See
+  [remote entity values](docs/architecture/remote-entity-values.md).
+- Go API: cypher.GraphProjection.NodeProperties values preserve their projected types (int64, float64, []int64 or
+  []float64); direct consumers must handle those types.
+- Older binaries ignore WAL v3 sidecars and recover the prior lossy JSON projection; they reject NDS2 v2 snapshots.
+  Keep pre-upgrade snapshots and matching WAL for full-fidelity rollback. See
+  [recovery format compatibility](docs/operations/recovery-format-compatibility.md).
 
-- Harden existing boosted procedure grants, transactional role changes, principal refresh, and system database
-  authorization; bring the follow-up security fixes onto the v1.4.3 release baseline.
+### Development and documentation
 
-- With an OpenAI-compatible embedder (`openai`, `orca`, or a gateway in front of another provider), text longer
-  than `NORNICDB_EMBED_CHUNK_SIZE` is split into chunks as with the other providers. The OpenAI provider sent it
-  whole, so a node longer than the model's context window (8,191 tokens for OpenAI, 8,192 for Amazon Titan) was
-  rejected and never got a vector. Chunks are cut by UTF-8 bytes, an upper bound on tokens.
-
-- Cypher SET and REMOVE advance node and relationship version timestamps when their values or labels change,
-  preserving creation times, no-op timestamps, and timestamps supplied to storage by imports and recovery.
+- Align rapid develop integration, release branches, and scoped maintainer operational/documentation PRs into main,
+  including verification and synchronization requirements. Keep GHA verification/nightly/canary workflows disabled;
+  manual runs require administrator approval. Existing main push and tag publishing triggers remain unchanged.
+- Through October 31, 2026, record local verification results on each PR. A maintainer-approved release batch may
+  merge focused-validated fixes and use one combined full verification, with its exact head/base/result shared on
+  participating PRs. Preserve canceled/failed-run records and fix integration regressions through follow-up PRs.
+- Split pipeline orchestration, projection, mutation and value helpers without changing package declarations or behavior;
+  each extracted file and the remaining executor fit the 2,500-line limit (#1306).
 
 ## [1.4.2]
 

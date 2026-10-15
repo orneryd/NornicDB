@@ -481,7 +481,14 @@ base SHA, exact command, results, failures, and any skipped or unexecuted checks
 changes or rebases and post the updated result. Path-filtered no-op runs must be reported as such, not as a
 full-suite pass. GitHub Actions remains manual and administrator-approved.
 
-Fix every regression found before declaring the PR ready. If several PRs share a root cause, open a dedicated
+For a maintainer-approved release batch, focused-validated fixes that merge cleanly may be integrated before
+full verification. Run one combined `make verify ALL=1 BASE=<immutable-base>` on the frozen release head,
+and post its checked head, base, command, result, and skips on every participating PR. Clearly identify this
+as shared release verification, not an individual PR-head pass. Cancel redundant individual full runs, preserve
+their logs, and open follow-up PRs against the release branch for any integration regressions. Re-run the
+combined checks after fixes; do not declare the release verified while failures remain.
+
+Fix every regression found before declaring the PR or combined release verified. If several PRs share a root cause, open a dedicated
 fix PR against their common integration base, link it from affected PRs, and propagate it into each affected
 branch before re-running verification. Do not waive regressions or claim a blocked check passed. Report local
 toolchain blockers separately, resolve them where possible, and rerun the affected checks.
