@@ -3,6 +3,12 @@ package cypher
 import "strings"
 
 func validateReturnOrderBySemanticScope(clause string) error {
+	return validateReturnOrderBySemanticScopeIn(clause, nil)
+}
+
+// Retained imports are available throughout a subquery, including a DISTINCT
+// or aggregating horizon's ORDER BY. They remain outside its projection key.
+func validateReturnOrderBySemanticScopeIn(clause string, retained typeScope) error {
 	body := strings.TrimSpace(clause[len("RETURN"):])
 	orderIndex := topLevelKeywordIndex(body, "ORDER BY")
 	if orderIndex < 0 {
@@ -91,6 +97,9 @@ func validateReturnOrderBySemanticScope(clause string) error {
 				continue
 			}
 			baseReference := strings.SplitN(reference, ".", 2)[0]
+			if _, global := retained[baseReference]; global {
+				continue
+			}
 			if _, projectedEntity := directExpressions[baseReference]; projectedEntity || star {
 				continue
 			}
