@@ -83,7 +83,7 @@ type CommitBuffer struct {
 
 	nodes   map[NodeID]*Node
 	edges   map[EdgeID]*Edge
-	deletes map[string]bool
+	deletes map[string]bufferedEntityKind // legacy generic deletion masks only
 	order   []bufferedMutation
 
 	nodesByLabel map[string][]NodeID
@@ -144,7 +144,7 @@ func newCommitBuffer() *CommitBuffer {
 	return &CommitBuffer{
 		nodes:          make(map[NodeID]*Node),
 		edges:          make(map[EdgeID]*Edge),
-		deletes:        make(map[string]bool),
+		deletes:        make(map[string]bufferedEntityKind),
 		nodesByLabel:   make(map[string][]NodeID),
 		edgesByType:    make(map[string][]EdgeID),
 		labelSeen:      make(map[labelSeenKey]struct{}),
@@ -186,10 +186,7 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node != nil && op.Node.ID != "" {
-				// A later live body supersedes this node's tombstone. Deletes
-				// of its detached relationships still belong to the generation.
-				delete(b.deletes, string(op.Node.ID))
-				delete(b.deletedNodeIDs, op.Node.ID)
+				b.clearEntityDeletion(bufferedNodeEntity, string(op.Node.ID))
 				b.nodes[op.Node.ID] = op.Node
 				b.indexNodeLabels(op.Node.ID, op.Node.Labels)
 				if op.OldNode != nil {
@@ -199,7 +196,6 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 				}
 			}
 		case OpDeleteNode:
-			b.deletes[string(op.NodeID)] = true
 			b.deletedNodeIDs[op.NodeID] = struct{}{}
 			// DETACH DELETE tombstones the node's relationships too. Fold
 			// them into the generation's delete set so the overlay hides
@@ -208,7 +204,6 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 			// delete (and count) them a second time.
 			for _, edgeID := range op.DeletedEdgeIDs {
 				if edgeID != "" {
-					b.deletes[string(edgeID)] = true
 					b.deletedEdgeIDs[edgeID] = struct{}{}
 					b.edgeDeleteCount++
 				}
@@ -220,6 +215,7 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 			}
 		case OpCreateEdge, OpUpdateEdge:
 			if op.Edge != nil && op.Edge.ID != "" {
+				b.clearEntityDeletion(bufferedEdgeEntity, string(op.Edge.ID))
 				b.edges[op.Edge.ID] = op.Edge
 				key := typeSeenKey{edgeType: op.Edge.Type, id: op.Edge.ID}
 				if _, seen := b.typeSeen[key]; !seen {
@@ -232,7 +228,6 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 				}
 			}
 		case OpDeleteEdge:
-			b.deletes[string(op.EdgeID)] = true
 			b.deletedEdgeIDs[op.EdgeID] = struct{}{}
 			b.edgeDeleteCount++
 			if op.OldEdge != nil && op.OldEdge.Type != "" {
@@ -275,6 +270,7 @@ func (b *CommitBuffer) addNode(n *Node) {
 		b.totalCounts.add(string(n.ID), false, 1)
 	}
 	copyNode := *n
+	b.clearEntityDeletion(bufferedNodeEntity, string(n.ID))
 	b.nodes[n.ID] = &copyNode
 	b.order = append(b.order, bufferedMutation{kind: bufferedOpNode, id: string(n.ID), node: &copyNode})
 	b.indexNodeLabels(n.ID, n.Labels)
@@ -300,6 +296,7 @@ func (b *CommitBuffer) addEdge(e *Edge) {
 		b.totalCounts.add(string(e.ID), true, 1)
 	}
 	copyEdge := *e
+	b.clearEntityDeletion(bufferedEdgeEntity, string(e.ID))
 	b.edges[e.ID] = &copyEdge
 	b.order = append(b.order, bufferedMutation{kind: bufferedOpEdge, id: string(e.ID), edge: &copyEdge})
 	b.edgesByType[e.Type] = append(b.edgesByType[e.Type], e.ID)
@@ -330,7 +327,7 @@ func (b *CommitBuffer) addDelete(key string) {
 	if key == "" {
 		return
 	}
-	b.deletes[key] = true
+	b.deletes[key] = bufferedNodeEntity | bufferedEdgeEntity
 	b.order = append(b.order, bufferedMutation{kind: bufferedOpDelete, id: key})
 }
 
@@ -338,42 +335,14 @@ func (b *CommitBuffer) addDelete(key string) {
 // Returns (value, found, deleted). found is false when this generation has
 // no entry for id.
 func (b *CommitBuffer) getNode(id NodeID) (*Node, bool, bool) {
-	if b.deletes[string(id)] {
-		return nil, true, true
-	}
-	if n, ok := b.nodes[id]; ok {
-		return n, true, false
-	}
-	return nil, false, false
+	state := b.entityState(bufferedNodeEntity, string(id))
+	return state.node, state.found, state.deleted
 }
 
 // getEdge resolves the latest buffered state for id in this generation.
 func (b *CommitBuffer) getEdge(id EdgeID) (*Edge, bool, bool) {
-	if b.deletes[string(id)] {
-		return nil, true, true
-	}
-	if e, ok := b.edges[id]; ok {
-		return e, true, false
-	}
-	return nil, false, false
-}
-
-// typeEdges lists buffered edges of the given type, newest append first.
-func (b *CommitBuffer) typeEdges(edgeType string) []*Edge {
-	ids := b.edgesByType[edgeType]
-	if len(ids) == 0 {
-		return nil
-	}
-	out := make([]*Edge, 0, len(ids))
-	for _, id := range ids {
-		if b.deletes[string(id)] {
-			continue
-		}
-		if e, ok := b.edges[id]; ok {
-			out = append(out, e)
-		}
-	}
-	return out
+	state := b.entityState(bufferedEdgeEntity, string(id))
+	return state.edge, state.found, state.deleted
 }
 
 // WriteBehindBuffer holds the active generation and FIFO draining
@@ -791,19 +760,8 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 // nodeLocked resolves the newest buffered version of id across the active
 // and unapplied generations. Caller holds w.mu.
 func (w *WriteBehindBuffer) nodeLocked(id NodeID) (*Node, bool) {
-	if node, ok := w.active.nodes[id]; ok {
-		return node, true
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		buf := w.draining[i]
-		if buf.IsApplied() {
-			continue
-		}
-		if node, ok := buf.nodes[id]; ok {
-			return node, true
-		}
-	}
-	return nil, false
+	state := w.entityStateLocked(bufferedNodeEntity, string(id))
+	return state.node, state.found && !state.deleted
 }
 
 // pendingWriteSource: schemas attach the buffer so property-index (and
@@ -892,46 +850,14 @@ func (w *WriteBehindBuffer) KeyCandidates(label, property string, valueKey inter
 // generations, or false when the newest buffered write deleted it or none
 // holds it. Caller holds w.mu.
 func (w *WriteBehindBuffer) newestNodeLocked(id NodeID) (*Node, bool) {
-	bufs := append([]*CommitBuffer{w.active}, nil...)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if !w.draining[i].IsApplied() {
-			bufs = append(bufs, w.draining[i])
-		}
-	}
-	for _, buf := range bufs {
-		if buf.deletes[string(id)] {
-			return nil, false
-		}
-		if node, ok := buf.nodes[id]; ok {
-			return node, true
-		}
-	}
-	return nil, false
+	return w.nodeLocked(id)
 }
 
 // nodeSupersededLocked reports whether a committed index entry for id is
 // stale: the buffer created, rewrote or deleted the node. The caller holds
 // the pending-write lock (w.mu), so no locking here.
 func (w *WriteBehindBuffer) nodeSupersededLocked(id NodeID) bool {
-	if _, ok := w.active.nodes[id]; ok {
-		return true
-	}
-	if w.active.deletes[string(id)] {
-		return true
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		buf := w.draining[i]
-		if buf.IsApplied() {
-			continue
-		}
-		if _, ok := buf.nodes[id]; ok {
-			return true
-		}
-		if buf.deletes[string(id)] {
-			return true
-		}
-	}
-	return false
+	return w.entityStateLocked(bufferedNodeEntity, string(id)).found
 }
 
 // Flush rotates the active generation and drains every generation
@@ -988,18 +914,8 @@ func (w *WriteBehindBuffer) Close() {
 func (w *WriteBehindBuffer) GetNode(id NodeID) (*Node, bool, bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if n, found, deleted := w.active.getNode(id); found {
-		return n, true, deleted
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		if n, found, deleted := w.draining[i].getNode(id); found {
-			return n, true, deleted
-		}
-	}
-	return nil, false, false
+	state := w.entityStateLocked(bufferedNodeEntity, string(id))
+	return state.node, state.found, state.deleted
 }
 
 // GetEdge resolves the latest buffered state for id across generations,
@@ -1007,18 +923,8 @@ func (w *WriteBehindBuffer) GetNode(id NodeID) (*Node, bool, bool) {
 func (w *WriteBehindBuffer) GetEdge(id EdgeID) (*Edge, bool, bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if e, found, deleted := w.active.getEdge(id); found {
-		return e, true, deleted
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		if e, found, deleted := w.draining[i].getEdge(id); found {
-			return e, true, deleted
-		}
-	}
-	return nil, false, false
+	state := w.entityStateLocked(bufferedEdgeEntity, string(id))
+	return state.edge, state.found, state.deleted
 }
 
 // LabelNodes returns buffered nodes carrying label, newest generation first,
@@ -1039,32 +945,18 @@ func (w *WriteBehindBuffer) LabelOverlay(label string) ([]*Node, map[NodeID]bool
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	touched := make(map[NodeID]bool)
-	seen := make(map[NodeID]bool)
 	var out []*Node
-	collect := func(buf *CommitBuffer) {
+	w.visitEntityOverlayLocked(bufferedNodeEntity, func(buf *CommitBuffer, emit func(string)) {
 		ids := buf.nodesByLabel[label]
 		for i := len(ids) - 1; i >= 0; i-- {
-			id := ids[i]
-			touched[id] = true
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			if buf.deletes[string(id)] {
-				continue
-			}
-			if n, ok := buf.nodes[id]; ok && hasLabel(n.Labels, label) {
-				out = append(out, n)
-			}
+			emit(string(ids[i]))
 		}
-	}
-	collect(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
+	}, func(id string, state bufferedEntityState) {
+		touched[NodeID(id)] = true
+		if !state.deleted && hasLabel(state.node.Labels, label) {
+			out = append(out, state.node)
 		}
-		collect(w.draining[i])
-	}
+	})
 	return out, touched
 }
 
@@ -1073,39 +965,18 @@ func (w *WriteBehindBuffer) TypeOverlay(edgeType string) ([]*Edge, map[EdgeID]bo
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	touched := make(map[EdgeID]bool)
-	seen := make(map[EdgeID]bool)
 	var out []*Edge
-	collect := func(buf *CommitBuffer) {
+	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
 		ids := buf.edgesByType[edgeType]
 		for i := len(ids) - 1; i >= 0; i-- {
-			id := ids[i]
-			touched[id] = true
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			if buf.deletes[string(id)] {
-				continue
-			}
-			if e, ok := buf.edges[id]; ok {
-				out = append(out, e)
-			}
+			emit(string(ids[i]))
 		}
-		// Tombstones hide committed rows: a DETACH DELETE folds its
-		// relationships' IDs into the delete set without a type, so
-		// every buffered delete must shadow the committed row regardless
-		// of type (the ID spaces of nodes and edges never collide).
-		for key := range buf.deletes {
-			touched[EdgeID(key)] = true
+	}, func(id string, state bufferedEntityState) {
+		touched[EdgeID(id)] = true
+		if !state.deleted && state.edge.Type == edgeType {
+			out = append(out, state.edge)
 		}
-	}
-	collect(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		collect(w.draining[i])
-	}
+	})
 	return out, touched
 }
 
@@ -1114,38 +985,14 @@ func (w *WriteBehindBuffer) TypeOverlay(edgeType string) ([]*Edge, map[EdgeID]bo
 func (w *WriteBehindBuffer) LookupNode(id NodeID) (*Node, bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if n, ok := w.active.nodes[id]; ok {
-		return n, true
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		buf := w.draining[i]
-		if buf.IsApplied() {
-			continue
-		}
-		if n, ok := buf.nodes[id]; ok {
-			return n, true
-		}
-	}
-	return nil, false
+	return w.nodeLocked(id)
 }
 
 // NodeDeleted reports whether the buffer's newest state for id is a delete.
 func (w *WriteBehindBuffer) NodeDeleted(id NodeID) bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if w.active.deletes[string(id)] {
-		return true
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		buf := w.draining[i]
-		if buf.IsApplied() {
-			continue
-		}
-		if buf.deletes[string(id)] {
-			return true
-		}
-	}
-	return false
+	return w.entityStateLocked(bufferedNodeEntity, string(id)).deleted
 }
 
 // LookupEdge resolves the newest buffered version of id, if the buffer has
@@ -1153,38 +1000,15 @@ func (w *WriteBehindBuffer) NodeDeleted(id NodeID) bool {
 func (w *WriteBehindBuffer) LookupEdge(id EdgeID) (*Edge, bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if e, ok := w.active.edges[id]; ok {
-		return e, true
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		buf := w.draining[i]
-		if buf.IsApplied() {
-			continue
-		}
-		if e, ok := buf.edges[id]; ok {
-			return e, true
-		}
-	}
-	return nil, false
+	state := w.entityStateLocked(bufferedEdgeEntity, string(id))
+	return state.edge, state.found && !state.deleted
 }
 
 // EdgeDeleted reports whether the buffer's newest state for id is a delete.
 func (w *WriteBehindBuffer) EdgeDeleted(id EdgeID) bool {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	if w.active.deletes[string(id)] {
-		return true
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		buf := w.draining[i]
-		if buf.IsApplied() {
-			continue
-		}
-		if buf.deletes[string(id)] {
-			return true
-		}
-	}
-	return false
+	return w.entityStateLocked(bufferedEdgeEntity, string(id)).deleted
 }
 
 // AllNodesOverlay returns the buffered node state as (nodes, touched):
@@ -1197,31 +1021,17 @@ func (w *WriteBehindBuffer) AllNodesOverlay() ([]*Node, map[NodeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	touched := make(map[NodeID]bool)
-	seen := make(map[NodeID]bool)
 	var out []*Node
-	collect := func(buf *CommitBuffer) {
+	w.visitEntityOverlayLocked(bufferedNodeEntity, func(buf *CommitBuffer, emit func(string)) {
 		for id := range buf.nodes {
-			touched[id] = true
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			if buf.deletes[string(id)] {
-				continue
-			}
-			out = append(out, buf.nodes[id])
+			emit(string(id))
 		}
-		for key := range buf.deletes {
-			touched[NodeID(key)] = true
+	}, func(id string, state bufferedEntityState) {
+		touched[NodeID(id)] = true
+		if !state.deleted {
+			out = append(out, state.node)
 		}
-	}
-	collect(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		collect(w.draining[i])
-	}
+	})
 	return out, touched
 }
 
@@ -1230,31 +1040,17 @@ func (w *WriteBehindBuffer) AllEdgesOverlay() ([]*Edge, map[EdgeID]bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	touched := make(map[EdgeID]bool)
-	seen := make(map[EdgeID]bool)
 	var out []*Edge
-	collect := func(buf *CommitBuffer) {
+	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
 		for id := range buf.edges {
-			touched[id] = true
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			if buf.deletes[string(id)] {
-				continue
-			}
-			out = append(out, buf.edges[id])
+			emit(string(id))
 		}
-		for key := range buf.deletes {
-			touched[EdgeID(key)] = true
+	}, func(id string, state bufferedEntityState) {
+		touched[EdgeID(id)] = true
+		if !state.deleted {
+			out = append(out, state.edge)
 		}
-	}
-	collect(w.active)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		collect(w.draining[i])
-	}
+	})
 	return out, touched
 }
 
@@ -1370,17 +1166,8 @@ func (w *WriteBehindBuffer) EdgeTypeCountDeltaInNamespace(namespace, edgeType st
 // TypeEdges returns buffered edges of edgeType, newest generation first,
 // not yet applied.
 func (w *WriteBehindBuffer) TypeEdges(edgeType string) []*Edge {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var out []*Edge
-	out = append(out, w.active.typeEdges(edgeType)...)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		out = append(out, w.draining[i].typeEdges(edgeType)...)
-	}
-	return out
+	edges, _ := w.TypeOverlay(edgeType)
+	return edges
 }
 
 // liveBuffers returns the active generation and every draining generation
@@ -1399,17 +1186,7 @@ func (w *WriteBehindBuffer) liveBuffers() []*CommitBuffer {
 // NodeDeletedOverlay reports whether a buffered delete hides nodeID from
 // committed reads (PR #1043 read-overlay parity).
 func (w *WriteBehindBuffer) NodeDeletedOverlay(nodeID NodeID) bool {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	for _, buf := range w.liveBuffers() {
-		if buf.deletes[string(nodeID)] {
-			return true
-		}
-		if _, ok := buf.nodes[nodeID]; ok {
-			return false
-		}
-	}
-	return false
+	return w.NodeDeleted(nodeID)
 }
 
 // EdgeAdjacencyOverlay returns the buffered live edges adjacent to nodeID
@@ -1421,48 +1198,28 @@ func (w *WriteBehindBuffer) NodeDeletedOverlay(nodeID NodeID) bool {
 func (w *WriteBehindBuffer) EdgeAdjacencyOverlay(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	buffers := w.liveBuffers()
+	nodeDeleted = w.entityStateLocked(bufferedNodeEntity, string(nodeID)).deleted
 	suppressed = make(map[EdgeID]struct{})
-	for _, buf := range buffers {
-		for id := range buf.deletedEdgeIDs {
-			suppressed[id] = struct{}{}
-		}
-	}
-	// Newest-first resolution of the node's own state: the first generation
-	// that mentions the node decides.
-	for _, buf := range buffers {
-		if buf.deletes[string(nodeID)] {
-			return nil, suppressed, true
-		}
-		if _, ok := buf.nodes[nodeID]; ok {
-			break
-		}
-	}
-	seen := make(map[EdgeID]struct{})
-	for _, buf := range buffers {
-		var ids []EdgeID
+	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
+		ids := buf.incomingByNode[nodeID]
 		if outgoing {
 			ids = buf.outgoingByNode[nodeID]
-		} else {
-			ids = buf.incomingByNode[nodeID]
 		}
 		for _, id := range ids {
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			seen[id] = struct{}{}
-			if _, dead := suppressed[id]; dead {
-				continue
-			}
-			if e, ok := buf.edges[id]; ok && e != nil {
-				// The buffered body shadows this identity even after its physical
-				// record is durable but publication has not retired the generation.
-				suppressed[id] = struct{}{}
-				live = append(live, e)
-			}
+			emit(string(id))
 		}
-	}
-	return live, suppressed, false
+	}, func(id string, state bufferedEntityState) {
+		// Both replacements and tombstones shadow the committed identity.
+		suppressed[EdgeID(id)] = struct{}{}
+		if state.deleted || nodeDeleted {
+			return
+		}
+		edge := state.edge
+		if (outgoing && edge.StartNode == nodeID) || (!outgoing && edge.EndNode == nodeID) {
+			live = append(live, edge)
+		}
+	})
+	return live, suppressed, nodeDeleted
 }
 
 // EdgesBetweenOverlay returns the buffered live edges from source to target

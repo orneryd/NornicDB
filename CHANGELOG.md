@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep scoped CALL imports available after WITH while excluding unprojected imports from DISTINCT and grouping keys.
   Use structural value comparison for DISTINCT, grouping and collection deduplication without serializing lists or maps.
+
 - Close owning test stores in Cypher fixtures and use admin requests for destructive embedding endpoint tests
   on develop, preserving the feature-dependent verification fixes outside the bugfix-only release.
 
