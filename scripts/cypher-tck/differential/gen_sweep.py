@@ -1091,10 +1091,17 @@ for payload in ["[]", "[{k: 1}]", "[{k: [1, null]}, {k: [2, null]}]"]:
         add("scoped-distinct", "aggregate-distinct", prefix + "CALL (payload, keys) { UNWIND keys AS each RETURN collect(DISTINCT each) AS things } RETURN things")
 for body in ["UNWIND [2,2,3] AS y WITH DISTINCT y RETURN x*y AS a",
              "UNWIND [2,3] AS y WITH y RETURN x*y AS a",
-             "UNWIND [2,2,3] AS y WITH DISTINCT x, y RETURN x*y AS a"]:
+             "UNWIND [2,2,3] AS y WITH DISTINCT x, y RETURN x*y AS a",
+             "UNWIND [2,2,3] AS y WITH DISTINCT y ORDER BY x RETURN x*y AS a",
+             "UNWIND [2,2,3] AS y WITH y, count(*) AS c ORDER BY x RETURN x*y AS a",
+             "UNWIND [2,2,3] AS y RETURN DISTINCT x*y AS a ORDER BY x"]:
     add("scoped-distinct", "retained-import", "WITH 11 AS x CALL (x) { " + body + " } RETURN a ORDER BY a")
 add("scoped-distinct", "dropped-local", "CALL () { WITH 11 AS x UNWIND [2,2,3] AS y WITH DISTINCT y RETURN x*y AS a } RETURN a")
 add("scoped-distinct", "dropped-legacy-import", "WITH 11 AS x CALL { WITH x UNWIND [2,2,3] AS y WITH DISTINCT y RETURN x*y AS a } RETURN a")
+add("scoped-distinct", "retained-map-order", "WITH {factor:11} AS x CALL (x) { UNWIND [2,2,3] AS y WITH DISTINCT y ORDER BY x.factor RETURN x.factor*y AS a } RETURN a ORDER BY a")
+add("scoped-distinct", "dropped-local-order", "CALL () { WITH 11 AS x UNWIND [2,2,3] AS y WITH DISTINCT y ORDER BY x RETURN y AS a } RETURN a")
+add("scoped-distinct", "dropped-local-return-order", "CALL () { WITH 11 AS x UNWIND [2,2,3] AS y RETURN DISTINCT y AS a ORDER BY x } RETURN a")
+add("scoped-distinct", "dropped-legacy-order", "WITH 11 AS x CALL { WITH x UNWIND [2,2,3] AS y WITH DISTINCT y ORDER BY x RETURN y AS a } RETURN a")
 
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:
