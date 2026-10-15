@@ -454,7 +454,14 @@ func expressionFreeVariables(expression string) []string {
 			form, _, word := scanIdentifierToken(expression, skipSpaces(expression, next))
 			normalForm = word && strings.EqualFold(form, "NORMALIZED")
 		}
-		if previous != '$' && previous != '.' && following != '(' && !mapKey && !normalForm && !setExpressionKeyword(upper) {
+		keyword := setExpressionKeyword(upper)
+		// END is also a legal variable, notably the operand in NOT end +
+		// another CASE. Preserve the full expression when asking the CASE
+		// grammar owner, before evaluation splits it into atomic operands.
+		if upper == "END" && !caseKeywordAt(expression, index, "END") {
+			keyword = false
+		}
+		if previous != '$' && previous != '.' && following != '(' && !mapKey && !normalForm && !keyword {
 			if !locals.shadows(name, index) {
 				names = append(names, name)
 			}

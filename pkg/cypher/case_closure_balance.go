@@ -1,5 +1,7 @@
 package cypher
 
+import "strings"
+
 // casePrefixEndRequired asks whether treating the candidate END as a prefix
 // operand leaves no complete CASE parse. A state records the CASE stack at one
 // bracket level: 'c' awaits THEN, 'v' has a branch value and may close. Other
@@ -44,6 +46,13 @@ func casePrefixEndRequired(text string, candidate int) bool {
 		}
 		word := caseWordAt(text, i)
 		if word == "end" && i == candidate {
+			// At a complete top-level branch, an operator after END can
+			// continue NOT's operand (NOT end + ...). Do not reinterpret it
+			// solely to repair a missing closing END in a sibling expression.
+			after := queryGapEnd(text, i+len(word))
+			if len(states) == 1 && len(states[0]) == 1 && after < len(text) && strings.IndexByte("+-*/%^", text[after]) >= 0 {
+				return false
+			}
 			candidateDepth = len(parents)
 		} else {
 			states = advanceCaseClosureStates(text, i, word, states)

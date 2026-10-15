@@ -443,6 +443,11 @@ func casePrefixWordIsVariable(s string, i int, balancePrefix bool) bool {
 	if balancePrefix && caseWordAt(s, i) == "end" && casePrefixEndRequired(s, i) {
 		return true
 	}
+	// WHEN terminates a simple CASE's test, so NOT end WHEN ... reads
+	// END as the negated variable rather than NOT as the test variable.
+	if matchKeywordAt(s, queryGapEnd(s, i+len(caseWordAt(s, i))), "WHEN") {
+		return false
+	}
 	return !caseOperandEndsAt(s, i+len(caseWordAt(s, i)))
 }
 
