@@ -59,7 +59,9 @@ type expectedBoltServer struct {
 	answer differential.Outcome
 }
 
-func (server expectedBoltServer) Execute(context.Context, string) differential.Outcome { return server.answer }
+func (server expectedBoltServer) Execute(context.Context, string) differential.Outcome {
+	return server.answer
+}
 func (server expectedBoltServer) Reset(context.Context) error { return nil }
 
 func TestDifferentialExpectedOverflowRejectsMatchingRoundedOutcomes(t *testing.T) {
@@ -83,9 +85,9 @@ func TestDifferentialExpectedOverflowRejectsMatchingRoundedOutcomes(t *testing.T
 
 func TestDifferentialExpectedRowsDistinguishTypedValuesFromMaps(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		input any
-		actual any
+		name      string
+		input     any
+		actual    any
 		wantError bool
 	}{
 		{"integer versus shaped map", json.Number("1"), map[string]any{"Integer": "1"}, true},
@@ -98,7 +100,11 @@ func TestDifferentialExpectedRowsDistinguishTypedValuesFromMaps(t *testing.T) {
 			issues := []differential.IssueCase{{Issue: 12, Statements: []differential.IssueStatement{{ID: "typed-map", Query: "RETURN value AS v", ExpectedRows: &expected}}}}
 			server := expectedBoltServer{answer: differential.Outcome{Columns: []string{"v"}, Rows: [][]any{{differentialOutcomeValue(test.actual)}}}}
 			_, err := differential.RunIssues(context.Background(), issues, &differential.Pair{Neo4j: server, NornicDB: server}, differential.Options{StatementTimeout: time.Second})
-			if test.wantError { require.ErrorContains(t, err, "expected_rows") } else { require.NoError(t, err) }
+			if test.wantError {
+				require.ErrorContains(t, err, "expected_rows")
+			} else {
+				require.NoError(t, err)
+			}
 		})
 	}
 }
@@ -117,7 +123,9 @@ func expectedBoltJSONValue(value any) (any, error) {
 		result := make([]any, len(typed))
 		for index, item := range typed {
 			converted, err := expectedBoltJSONValue(item)
-			if err != nil { return nil, err }
+			if err != nil {
+				return nil, err
+			}
 			result[index] = converted
 		}
 		return result, nil
@@ -125,7 +133,9 @@ func expectedBoltJSONValue(value any) (any, error) {
 		result := make(map[string]any, len(typed))
 		for key, item := range typed {
 			converted, err := expectedBoltJSONValue(item)
-			if err != nil { return nil, err }
+			if err != nil {
+				return nil, err
+			}
 			result[key] = converted
 		}
 		return result, nil
