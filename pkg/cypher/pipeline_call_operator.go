@@ -27,9 +27,10 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 	// An unscoped body imports through its branches' leading WITHs
 	// (unscopedCallImports, #907).
-	scoped := callSubqueryHasScopeClause(clause)
+	callScope := readCallSubqueryScope(clause)
+	scopedImports, scoped := callScope.names, callScope.scoped
 	if metadata != nil {
-		declared := parseCallSubqueryImportVariables(clause)
+		declared := scopedImports
 		if declared == nil && !scoped {
 			var importErr error
 			declared, _, importErr = unscopedCallImports(body, func(name string) bool {
@@ -73,7 +74,6 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		body = remaining
 	}
 
-	scopedImports := parseCallSubqueryImportVariables(clause)
 	hasLegacyImports := false
 	if !scoped {
 		var importErr error
