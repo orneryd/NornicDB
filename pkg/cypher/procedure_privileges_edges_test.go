@@ -78,9 +78,8 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	require.Error(t, err)
 
 	// The system database through the database manager.
-	systemBase := storage.NewMemoryEngine()
+	systemBase := newTestMemoryEngine(t)
 	system := storage.NewNamespacedEngine(systemBase, "system")
-	t.Cleanup(func() { _ = system.Close() })
 	require.NoError(t, auth.NewRoleStore(system).CreateRole(ctx, "a"))
 	require.NoError(t, auth.NewRoleStore(system).CreateRole(ctx, "b"))
 	user := storage.NewMemoryEngine()

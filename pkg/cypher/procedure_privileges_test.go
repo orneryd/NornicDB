@@ -38,9 +38,8 @@ func TestParseProcedurePrivilegeCommand(t *testing.T) {
 // it; a role that doesn't exist is refused, and other GRANTs are unsupported.
 func TestProcedurePrivilegeStatements(t *testing.T) {
 	ctx := context.Background()
-	systemBase := storage.NewMemoryEngine()
+	systemBase := newTestMemoryEngine(t)
 	system := storage.NewNamespacedEngine(systemBase, "system")
-	t.Cleanup(func() { _ = system.Close() })
 	require.NoError(t, auth.NewRoleStore(system).CreateRole(ctx, "cdc_reader"))
 	exec := NewStorageExecutor(system)
 
@@ -108,9 +107,8 @@ func TestProcedurePrivilegeQuotedGlobs(t *testing.T) {
 	ctx := context.Background()
 	for _, written := range []string{"`db.cdc.*`", "db.`cdc`.*", "`*`", "`db`.`cdc`.`query`"} {
 		t.Run(written, func(t *testing.T) {
-			systemBase := storage.NewMemoryEngine()
+			systemBase := newTestMemoryEngine(t)
 			system := storage.NewNamespacedEngine(systemBase, "system")
-			t.Cleanup(func() { _ = system.Close() })
 			exec := NewStorageExecutor(system)
 			_, err := exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE "+written+" ON DBMS TO viewer", nil)
 			require.NoError(t, err)
@@ -133,9 +131,8 @@ func TestProcedurePrivilegeQuotedGlobs(t *testing.T) {
 // "PROCEDURE(db.cdc.*)", "r", TRUE.
 func TestProcedurePrivilegeImmutable(t *testing.T) {
 	ctx := WithAuthenticationDisabled(context.Background())
-	systemBase := storage.NewMemoryEngine()
+	systemBase := newTestMemoryEngine(t)
 	system := storage.NewNamespacedEngine(systemBase, "system")
-	t.Cleanup(func() { _ = system.Close() })
 	exec := NewStorageExecutor(system)
 	run := func(statement string) *ExecuteResult {
 		t.Helper()
@@ -172,9 +169,8 @@ func TestProcedurePrivilegeImmutable(t *testing.T) {
 // REVOKE IMMUTABLE of a regular grant has no effect; regular grants are
 // granted and revoked as usual.
 func TestProcedurePrivilegeImmutableWithAuthentication(t *testing.T) {
-	systemBase := storage.NewMemoryEngine()
+	systemBase := newTestMemoryEngine(t)
 	system := storage.NewNamespacedEngine(systemBase, "system")
-	t.Cleanup(func() { _ = system.Close() })
 	open := WithAuthenticationDisabled(context.Background())
 	exec := NewStorageExecutor(system)
 	_, err := exec.Execute(open, "GRANT IMMUTABLE EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
@@ -219,9 +215,8 @@ func TestProcedurePrivilegeImmutableWithAuthentication(t *testing.T) {
 // notification "Role does not exist").
 func TestProcedurePrivilegeMissingRole(t *testing.T) {
 	ctx := context.Background()
-	systemBase := storage.NewMemoryEngine()
+	systemBase := newTestMemoryEngine(t)
 	system := storage.NewNamespacedEngine(systemBase, "system")
-	t.Cleanup(func() { _ = system.Close() })
 	exec := NewStorageExecutor(system)
 	_, err := exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO viewer, nobody", nil)
 	requireStatusCode(t, err, "Neo.ClientError.Statement.ArgumentError")
@@ -244,9 +239,8 @@ func TestProcedurePrivilegeInExplicitTransaction(t *testing.T) {
 	t.Cleanup(func() { _ = inner.Close() })
 	for name, setup := range map[string]func() (*StorageExecutor, storage.Engine){
 		"database manager's system storage": func() (*StorageExecutor, storage.Engine) {
-			systemBase := storage.NewMemoryEngine()
+			systemBase := newTestMemoryEngine(t)
 			system := storage.NewNamespacedEngine(systemBase, "system")
-			t.Cleanup(func() { _ = system.Close() })
 			exec := NewStorageExecutor(system)
 			exec.SetDatabaseManager(systemOnlyManager{engine: storage.Engine(system)})
 			return exec, system
@@ -258,9 +252,8 @@ func TestProcedurePrivilegeInExplicitTransaction(t *testing.T) {
 			return exec, system
 		},
 		"no database manager": func() (*StorageExecutor, storage.Engine) {
-			systemBase := storage.NewMemoryEngine()
+			systemBase := newTestMemoryEngine(t)
 			system := storage.NewNamespacedEngine(systemBase, "system")
-			t.Cleanup(func() { _ = system.Close() })
 			return NewStorageExecutor(system), system
 		},
 	} {

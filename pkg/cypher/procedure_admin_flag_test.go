@@ -51,7 +51,7 @@ func TestUserProcedureModeSetsAdminFlag(t *testing.T) {
 // callers of one executor share: a reader calling after an administrator
 // still sees only its own connection.
 func TestListConnectionsShowsOtherUsersOnlyToAdministrators(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic"))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"))
 	connections := func() []ConnectionListing {
 		return []ConnectionListing{{ConnectionID: "bolt-1", Username: "reader"}, {ConnectionID: "bolt-2", Username: "other"}}
 	}
