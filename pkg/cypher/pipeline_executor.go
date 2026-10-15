@@ -2412,7 +2412,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		}
 		if bound, exists := row[nodePattern.variable]; exists {
 			node, isNode := bound.(*storage.Node)
-			if !isNode || node == nil || !pipelineNodeMatchesPattern(node, nodePattern) {
+			if !isNode || node == nil || !e.pipelineNodeMatchesPattern(node, nodePattern) {
 				continue
 			}
 			// The WHERE sees the path too (WHERE length(p) = 0).
@@ -2587,7 +2587,7 @@ func (e *StorageExecutor) whereIsSimpleIndexedIn(ctx context.Context, variable, 
 type pipelinePrefetchedNodeCandidatesKey struct{}
 
 func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
-	if node := prefetchedPipelineCandidate(ctx, nodePattern); node != nil {
+	if node := e.prefetchedPipelineCandidate(ctx, nodePattern); node != nil {
 		return []*storage.Node{node}, false, nil
 	}
 	// A property equal to null matches no node ({id: null}, nothing equals
@@ -2634,14 +2634,14 @@ func (e *StorageExecutor) visitPipelineInitialNodeCandidates(ctx context.Context
 
 // prefetchedPipelineCandidate is the node a batch prefetch already found for
 // a one-label, one-property pattern, or nil.
-func prefetchedPipelineCandidate(ctx context.Context, nodePattern nodePatternInfo) *storage.Node {
+func (e *StorageExecutor) prefetchedPipelineCandidate(ctx context.Context, nodePattern nodePatternInfo) *storage.Node {
 	prefetched, ok := ctx.Value(pipelinePrefetchedNodeCandidatesKey{}).(map[nodeBatchMatchKey]map[string]*storage.Node)
 	if !ok || len(nodePattern.labels) != 1 || len(nodePattern.properties) != 1 {
 		return nil
 	}
 	for property, value := range nodePattern.properties {
 		key := nodeBatchMatchKey{label: nodePattern.labels[0], prop: property}
-		if node := prefetched[key][propEqKeyBatch(value)]; node != nil && pipelineNodeMatchesPattern(node, nodePattern) {
+		if node := prefetched[key][propEqKeyBatch(value)]; node != nil && e.pipelineNodeMatchesPattern(node, nodePattern) {
 			return node
 		}
 	}
@@ -2772,7 +2772,7 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 			start, startErr := store.GetNode(endpoints[0])
 			end, endErr := store.GetNode(endpoints[1])
 			if startErr != nil || endErr != nil || start == nil || end == nil ||
-				!pipelineNodeMatchesPattern(start, match.StartNode) || !pipelineNodeMatchesPattern(end, match.EndNode) {
+				!e.pipelineNodeMatchesPattern(start, match.StartNode) || !e.pipelineNodeMatchesPattern(end, match.EndNode) {
 				continue
 			}
 			if bound, exists := row[match.StartNode.variable]; exists {
@@ -2872,11 +2872,11 @@ func traceRelationshipList(relationships []*storage.Edge, direction string) [][2
 	return starts
 }
 
-func pipelineNodeMatchesPattern(node *storage.Node, pattern nodePatternInfo) bool {
+func (e *StorageExecutor) pipelineNodeMatchesPattern(node *storage.Node, pattern nodePatternInfo) bool {
 	if !mergeNodeHasLabels(node, pattern.labels) {
 		return false
 	}
-	return nodePropertiesMatch(node, pattern.properties)
+	return e.nodeMatchesProps(node, pattern.properties)
 }
 
 func (e *StorageExecutor) tryExecutePipelineCreatePlan(ctx context.Context, clauses, originalClauses []pipelineClause) (*ExecuteResult, bool, error) {

@@ -2,8 +2,17 @@ package cypher
 
 import "github.com/orneryd/nornicdb/pkg/storage"
 
+func (e *StorageExecutor) propertyViewEngine() *storage.BadgerEngine {
+	if e.propertyDecayEngineKnown {
+		return e.propertyDecayEngine
+	}
+	// Internal test literals can bypass the constructors. Do not mutate the
+	// shared executor lazily, since independent statements may run concurrently.
+	return unwrapBadgerEngine(e.storage)
+}
+
 func (e *StorageExecutor) queryPropertyDecayEnabled() bool {
-	be := unwrapBadgerEngine(e.storage)
+	be := e.propertyViewEngine()
 	return be != nil && be.IsDecayEnabled()
 }
 
@@ -11,7 +20,7 @@ func (e *StorageExecutor) queryPropertyDecayEnabled() bool {
 // row bindings and mutation owners retain full entities: filtering their maps
 // in place would make an unrelated SET persist the removal of hidden fields.
 func (e *StorageExecutor) queryVisibleValue(value interface{}) interface{} {
-	be := unwrapBadgerEngine(e.storage)
+	be := e.propertyViewEngine()
 	if be == nil || !be.IsDecayEnabled() {
 		return value
 	}
@@ -103,7 +112,7 @@ func (e *StorageExecutor) queryEntityProperties(value interface{}) map[string]in
 }
 
 func (e *StorageExecutor) projectQueryResultProperties(result *ExecuteResult) {
-	be := unwrapBadgerEngine(e.storage)
+	be := e.propertyViewEngine()
 	if result == nil || be == nil || !be.IsDecayEnabled() {
 		return
 	}

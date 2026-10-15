@@ -656,7 +656,7 @@ func (e *StorageExecutor) filterNodesByProperties(nodes []*storage.Node, props m
 	// The node-pattern property test (nodePropertiesMatch) is the one owner
 	// of pattern-property equality.
 	filterFn := func(node *storage.Node) bool {
-		return nodePropertiesMatch(node, props)
+		return e.nodeMatchesProps(node, props)
 	}
 
 	// Use parallel filtering for large datasets

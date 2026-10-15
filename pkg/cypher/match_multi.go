@@ -1458,7 +1458,7 @@ func (e *StorageExecutor) evaluateBoundOneHopPattern(ctx context.Context, match 
 		reversed := reverseTraversalMatch(match)
 		return reversed != nil && e.evaluateBoundOneHopPattern(ctx, reversed, nodes)
 	}
-	if !pipelineNodeMatchesPattern(start, match.StartNode) {
+	if !e.pipelineNodeMatchesPattern(start, match.StartNode) {
 		return false
 	}
 	viewport, _ := TemporalViewportFromContext(ctx)

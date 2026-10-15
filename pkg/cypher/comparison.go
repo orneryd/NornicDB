@@ -69,7 +69,10 @@ import (
 //	nodeMatchesProps(node, map[string]interface{}{"name": "Alice", "age": 30})
 //	// Returns true only if node has both name="Alice" AND age=30
 func (e *StorageExecutor) nodeMatchesProps(node *storage.Node, props map[string]interface{}) bool {
-	return nodePropertiesMatch(node, props)
+	if len(props) == 0 {
+		return true
+	}
+	return nodePropertiesMatch(e.queryVisibleValue(node).(*storage.Node), props)
 }
 
 // nodePropertiesMatch is the one property test of a node pattern
@@ -97,11 +100,12 @@ func nodePropertiesMatch(node *storage.Node, props map[string]interface{}) bool 
 
 // edgeMatchesProps checks if an edge's properties match the expected values.
 func (e *StorageExecutor) edgeMatchesProps(edge *storage.Edge, props map[string]interface{}) bool {
-	if props == nil {
+	if len(props) == 0 {
 		return true
 	}
+	properties := e.queryEntityProperties(edge)
 	for key, expected := range props {
-		actual, exists := edge.Properties[key]
+		actual, exists := properties[key]
 		if !exists {
 			return false
 		}

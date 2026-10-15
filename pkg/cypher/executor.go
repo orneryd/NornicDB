@@ -321,9 +321,13 @@ type SettingsSnapshot struct {
 type SettingsResolver func() SettingsSnapshot
 
 type StorageExecutor struct {
-	parser    *Parser
-	storage   storage.Engine
-	txContext *TransactionContext // Active transaction context
+	parser  *Parser
+	storage storage.Engine
+	// The storage decorator chain is immutable for an executor. Discover the
+	// policy engine once; its enabled setting is still read dynamically.
+	propertyDecayEngine      *storage.BadgerEngine
+	propertyDecayEngineKnown bool
+	txContext                *TransactionContext // Active transaction context
 	// sharedExecutor marks a cached per-database executor that every
 	// auto-commit client of the database runs on (server cached executors,
 	// the embedded DB's base executor). A statement must never leave such an
@@ -532,6 +536,8 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 	return &StorageExecutor{
 		parser:                         e.parser,
 		storage:                        override,
+		propertyDecayEngine:            unwrapBadgerEngine(override),
+		propertyDecayEngineKnown:       true,
 		txContext:                      e.txContext,
 		sharedExecutor:                 e.sharedExecutor,
 		cache:                          e.cache,
@@ -730,6 +736,8 @@ func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntr
 	exec := &StorageExecutor{
 		parser:                         NewParser(),
 		storage:                        store,
+		propertyDecayEngine:            unwrapBadgerEngine(store),
+		propertyDecayEngineKnown:       true,
 		cache:                          queryCache,
 		queryCacheMaxEntries:           maxEntries,
 		queryCacheTTL:                  queryCacheTTL,
