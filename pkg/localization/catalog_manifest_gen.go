@@ -450,7 +450,6 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.unterminated_string_literal", Constructor: "CypherCoreUnterminatedStringLiteral", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.uuid_invalid_text", Constructor: "CypherCoreUUIDInvalidText", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.variable_declared_in_outer_scope", Constructor: "CypherCoreVariableDeclaredInOuterScope", Fields: []string{"Variable"}, PluralForms: []string{"other"}},
-	{ID: "cyphercore.variable_shadows_imported_variable", Constructor: "CypherCoreVariableShadowsImportedVariable", Fields: []string{"Variable"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.vector_coordinate_range", Constructor: "CypherCoreVectorCoordinateRange", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.vector_coordinate_type", Constructor: "CypherCoreVectorCoordinateType", Fields: []string{"Function", "Got"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.vector_coordinates_not_finite", Constructor: "CypherCoreVectorCoordinatesNotFinite", Fields: []string{}, PluralForms: []string{"other"}},

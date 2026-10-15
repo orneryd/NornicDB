@@ -614,7 +614,9 @@ for q in ["WITH 7 AS x RETURN COLLECT { CALL (x) { RETURN [x IN [1] | x] AS v } 
     add("local-scope-references", "round4", q)
 
 # A CALL (x) body sees its imports through the whole body, after a WITH in
-# it too, and may not declare them again (#1227).
+# it too, and may declare them again: Neo4j rejects that ("is shadowing an
+# imported variable"), NornicDB keeps it as an extension (known_mismatches,
+# intended, #907). An expression subquery may not (#1227).
 for q in ["WITH 7 AS x CALL (x) { WITH 1 AS y RETURN x AS v } RETURN v",
           "WITH 7 AS x CALL (x) { WITH 1 AS y RETURN x AS v UNION WITH 2 AS y RETURN x AS v } RETURN v",
           "WITH 7 AS x CALL (x) { WITH x, 1 AS y WITH y RETURN x AS v } RETURN v",

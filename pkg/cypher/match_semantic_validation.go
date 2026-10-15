@@ -83,45 +83,33 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 
 // subqueryScope is what a subquery body's walk (semanticScopeWalk) sees of
 // the query around it: visible, the variables the whole body reads (after a
-// WITH in it too), and whether declaring one of them again with WITH … AS
-// or UNWIND … AS is an error (redeclarationError). The zero value is a
-// statement's own walk.
+// WITH in it too), and outer, whether declaring one of them again with
+// WITH … AS or UNWIND … AS is an error (redeclarationError). The zero value
+// is a statement's own walk.
 type subqueryScope struct {
-	visible   typeScope
-	shadowing subqueryShadowing
+	visible typeScope
+	// outer: an EXISTS / COUNT / COLLECT body, which may not declare the
+	// enclosing query's variables again. A CALL (…) body may declare its
+	// imports again, as a top-level WITH may: the new value holds in the
+	// body and the enclosing query keeps its own. Neo4j 5.26.30 rejects
+	// that ("is shadowing an imported variable"); NornicDB keeps it as an
+	// extension (#907).
+	outer bool
 }
 
-// subqueryShadowing is whether a subquery body may declare again a variable
-// it sees from around it.
-type subqueryShadowing int
-
-const (
-	// shadowingAllowed: a statement, or an old-style CALL { … } body.
-	shadowingAllowed subqueryShadowing = iota
-	// shadowingOuter: an EXISTS / COUNT / COLLECT body.
-	shadowingOuter
-	// shadowingImported: a CALL (…) body's imports.
-	shadowingImported
-)
-
 // redeclarationError is the error for a WITH … AS or UNWIND … AS that
-// declares name again in a body that sees it and may not: Neo4j's "is
-// shadowing a variable with the same name from the outer scope" in an
-// expression subquery, "is shadowing an imported variable" in a CALL (…)
-// subquery. nil when it may.
+// declares name again in an expression subquery's body that sees it from
+// the enclosing query: Neo4j's "is shadowing a variable with the same name
+// from the outer scope". nil when the body may.
 func (enclosing subqueryScope) redeclarationError(name string) error {
+	if !enclosing.outer {
+		return nil
+	}
 	if _, visible := enclosing.visible[name]; !visible {
 		return nil
 	}
-	switch enclosing.shadowing {
-	case shadowingOuter:
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
-			localization.CypherCoreVariableDeclaredInOuterScope(name))
-	case shadowingImported:
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
-			localization.CypherCoreVariableShadowsImportedVariable(name))
-	}
-	return nil
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
+		localization.CypherCoreVariableDeclaredInOuterScope(name))
 }
 
 // semanticScopeWalk checks clauses in order against the variables' static
@@ -952,7 +940,7 @@ func (e *StorageExecutor) validateSubqueryPatternBindings(scope staticTypeScope,
 			if !ok {
 				continue
 			}
-			if _, _, err := e.semanticScopeWalk(clauses, maps.Clone(visible), scope.cypher25, subqueryScope{visible: visible, shadowing: shadowingOuter}); err != nil {
+			if _, _, err := e.semanticScopeWalk(clauses, maps.Clone(visible), scope.cypher25, subqueryScope{visible: visible, outer: true}); err != nil {
 				return err
 			}
 		}
