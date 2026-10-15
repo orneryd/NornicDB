@@ -107,7 +107,7 @@ func databaseProjections(database string) []*GraphProjection {
 // property, its aggregation.
 type gdsPropertySpec struct {
 	key, property string
-	defaultValue  interface{}
+	defaultValue  interface{} // typed numeric scalar or node array; nil when absent
 	aggregation   string
 }
 
@@ -223,7 +223,7 @@ func gdsProjectConfiguration(procedure string, args []interface{}, nodeSpecs, re
 	}{{"nodeProperties", nodeSpecs}, {"relationshipProperties", relSpecs}} {
 		hasMappings := false
 		for i := range kind.specs {
-			properties, err := gdsPropertySpecs(c.value(kind.key), kind.specs[i].aggregation)
+			properties, err := gdsPropertySpecs(c.value(kind.key), kind.specs[i].aggregation, strings.TrimSuffix(kind.key, "Properties"))
 			if err != nil {
 				return nil, err
 			}
@@ -356,7 +356,7 @@ func (spec *gdsElementSpec) read(entry map[string]interface{}, kind, nameKey str
 			return err
 		}
 	}
-	properties, err := gdsPropertySpecs(config.value("properties"), spec.aggregation)
+	properties, err := gdsPropertySpecs(config.value("properties"), spec.aggregation, kind)
 	if err != nil {
 		return err
 	}
@@ -376,8 +376,8 @@ func gdsAggregation(text string) (string, error) {
 // gdsPropertySpecs reads a projection entry's properties: a name, a list of
 // names, or a map from the projected key to the stored property name or to
 // its settings (property, defaultValue, aggregation).
-func gdsPropertySpecs(value interface{}, aggregation string) ([]gdsPropertySpec, error) {
-	specs, err := readGDSPropertySpecs(value, aggregation)
+func gdsPropertySpecs(value interface{}, aggregation string, elementKinds ...string) ([]gdsPropertySpec, error) {
+	specs, err := readGDSPropertySpecs(value, aggregation, elementKinds...)
 	if err != nil {
 		return nil, err
 	}
@@ -390,7 +390,7 @@ func gdsPropertySpecs(value interface{}, aggregation string) ([]gdsPropertySpec,
 	return specs, nil
 }
 
-func readGDSPropertySpecs(value interface{}, aggregation string) ([]gdsPropertySpec, error) {
+func readGDSPropertySpecs(value interface{}, aggregation string, elementKinds ...string) ([]gdsPropertySpec, error) {
 	var specs []gdsPropertySpec
 	add := func(name string) {
 		specs = append(specs, gdsPropertySpec{key: name, property: name, aggregation: aggregation})
@@ -422,7 +422,11 @@ func readGDSPropertySpecs(value interface{}, aggregation string) ([]gdsPropertyS
 					spec.property = property
 				}
 				if config.value("defaultValue") != nil {
-					value, _, ok, err := gdsConvertPropertyValue(config.value("defaultValue"), "", false)
+					target := ""
+					if len(elementKinds) > 0 && elementKinds[0] == "relationship" {
+						target = "Default Relationship"
+					}
+					value, _, ok, err := gdsConvertPropertyValue(config.value("defaultValue"), target, false)
 					if err != nil {
 						return nil, err
 					}
@@ -586,11 +590,13 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 					relPropertySeen[property.property] = true
 					properties[property.key] = value
 				} else if property.defaultValue != nil {
-					exact, _, _, err := gdsConvertPropertyValue(property.defaultValue, "Relationship", false)
+					exact, _, present, err := gdsConvertPropertyValue(property.defaultValue, "Default Relationship", true)
 					if err != nil {
 						return nil, err
 					}
-					properties[property.key] = exact.(float64)
+					if present {
+						properties[property.key] = exact.(float64)
+					}
 				}
 			}
 			directions := gdsRelationshipDirections(start, end, spec.orientation)
