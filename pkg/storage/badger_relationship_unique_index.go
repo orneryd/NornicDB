@@ -29,6 +29,11 @@ type relationshipUniqueIndexSet struct {
 }
 
 func relationshipConstraintValues(properties []string, values map[string]interface{}) ([]interface{}, bool) {
+	return relationshipConstraintValueKeys(properties, values, false)
+}
+
+// Composite/list keys serialize equal-value commits, but remain scan validated.
+func relationshipConstraintValueKeys(properties []string, values map[string]interface{}, includeComposite bool) ([]interface{}, bool) {
 	out := make([]interface{}, len(properties))
 	for i, p := range properties {
 		key, ok := indexValueKey(values[p])
@@ -41,6 +46,8 @@ func relationshipConstraintValues(properties []string, values map[string]interfa
 				key = float64(0)
 			}
 		case string, bool:
+		case compositeIndexKey:
+			ok = includeComposite
 		default:
 			ok = false
 		}
@@ -171,7 +178,7 @@ func (sm *SchemaManager) lockRelationshipConstraintKeysOf(owner string, edges ..
 			if c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
 				continue
 			}
-			values, ok := relationshipConstraintValues(c.Properties, edge.Properties)
+			values, ok := relationshipConstraintValueKeys(c.Properties, edge.Properties, true)
 			if !ok || len(values) == 0 {
 				continue
 			}

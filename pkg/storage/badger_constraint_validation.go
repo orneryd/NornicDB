@@ -63,6 +63,9 @@ func compareValues(a, b interface{}) bool {
 		return a == b
 	}
 	if !reflect.TypeOf(a).Comparable() || !reflect.TypeOf(b).Comparable() {
+		if equal, lists := equalConstraintLists(a, b); lists {
+			return equal
+		}
 		return reflect.DeepEqual(a, b)
 	}
 	return a == b

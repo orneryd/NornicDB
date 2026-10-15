@@ -1022,9 +1022,7 @@ func compositeIndexKeyOf(value interface{}) (compositeIndexKey, bool) {
 }
 
 func writeCompositeIndexKey(b *strings.Builder, value interface{}) bool {
-	if numeric, ok := numericConstraintValue(value); ok {
-		b.WriteByte('n')
-		b.WriteString(strconv.FormatFloat(numeric, 'g', -1, 64))
+	if writeConstraintListNumericKey(b, value) {
 		return true
 	}
 	switch v := value.(type) {
