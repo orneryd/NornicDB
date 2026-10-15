@@ -265,12 +265,12 @@ func TestHNSWPublishedGraphUsesCurrentVectorStore(t *testing.T) {
 func TestHNSWFailedJobsReleaseContexts(t *testing.T) {
 	svc := NewServiceWithDimensions(newNamespacedEngine(t), 3)
 	t.Cleanup(func() { _ = svc.Close() })
-	svc.vectorIndex = nil
-	_, err := svc.getOrCreateHNSWIndex(context.Background(), 3)
+	require.NoError(t, svc.IndexNode(&storage.Node{ID: "item", ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
+	// A dimension mismatch fails inside the worker, after source validation.
+	_, err := svc.getOrCreateHNSWIndex(context.Background(), 2)
 	require.Error(t, err)
 	failed := svc.hnswBuild
 	require.NotNil(t, failed)
-	svc.vectorIndex = NewVectorIndex(3)
 	_, err = svc.getOrCreateHNSWIndex(context.Background(), 3)
 	require.NoError(t, err)
 	require.ErrorIs(t, failed.ctx.Err(), context.Canceled)

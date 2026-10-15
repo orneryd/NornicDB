@@ -22,6 +22,11 @@ type hnswBuildJob struct {
 // startHNSWBuild is the single-flight owner for initial construction and runtime
 // transitions. Searches use the exact pipeline while done is still open.
 func (s *Service) startHNSWBuild(dimensions int) (*HNSWIndex, *hnswBuildJob, error) {
+	// Validate before launching a worker: an absent source cannot serve the
+	// exact fallback either. Snapshot without reversing mu -> hnswMu ordering.
+	s.mu.RLock()
+	sourceErr := validateHNSWVectorSource(s.vectorIndex, s.vectorFileStore)
+	s.mu.RUnlock()
 	s.hnswMu.Lock()
 	defer s.hnswMu.Unlock()
 	ctx := s.lifecycleCtx
@@ -47,6 +52,9 @@ func (s *Service) startHNSWBuild(dimensions int) (*HNSWIndex, *hnswBuildJob, err
 			return nil, job, nil
 		}
 	}
+	if sourceErr != nil {
+		return nil, nil, sourceErr
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	job := &hnswBuildJob{ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	s.hnswBuild = job
@@ -58,6 +66,15 @@ func (s *Service) startHNSWBuild(dimensions int) (*HNSWIndex, *hnswBuildJob, err
 		close(job.done)
 	}()
 	return nil, job, nil
+}
+
+// validateHNSWVectorSource is shared by scheduling and snapshot construction so
+// invalid sources preserve the synchronous, localized initialization error.
+func validateHNSWVectorSource(vi *VectorIndex, vfs *VectorFileStore) error {
+	if vi != nil || (vfs != nil && vfs.Count() > 0) {
+		return nil
+	}
+	return localizedError(localization.SearchVectorIndexNil(), nil)
 }
 
 // invalidateHNSWLocked prevents an obsolete generation from publishing after a
@@ -146,7 +163,10 @@ func (s *Service) buildHNSWSnapshot(ctx context.Context, dimensions int, config 
 	if err := ctx.Err(); err != nil {
 		return nil, hnswBuildStats{}, err
 	}
-	if vfs != nil && vfs.Count() > 0 {
+	if err := validateHNSWVectorSource(vi, vfs); err != nil {
+		return nil, hnswBuildStats{}, err
+	}
+	if vfs != nil && (vi == nil || vfs.Count() > 0) {
 		total := vfs.Count()
 		s.logPrintf("[HNSW] Building from file store: %d vectors", total)
 		lookup := s.getVectorLookup()
@@ -161,9 +181,6 @@ func (s *Service) buildHNSWSnapshot(ctx context.Context, dimensions int, config 
 			built.SetVectorLookup(s.getVectorLookup())
 		}
 		return built, stats, err
-	}
-	if vi == nil {
-		return nil, hnswBuildStats{}, localizedError(localization.SearchVectorIndexUnavailable(), nil)
 	}
 	pairs := hnswOrderedVectorIndexPairs(vi, hints)
 	s.logPrintf("[HNSW] Building from in-memory index: %d vectors", len(pairs))
