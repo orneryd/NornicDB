@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -219,5 +220,83 @@ func TestExpressionSubqueryBindingsKeepOuterScope(t *testing.T) {
 		result, err := exec.Execute(ctx, query, nil)
 		require.NoError(t, err, query)
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
+	}
+}
+
+// Grouping a variable leaves its binding intact; grouping a property or
+// another expression must not let it redeclare the protected outer variable.
+func TestExpressionSubqueryGroupedPassThrough(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "grouped_bindings"))
+	ctx := context.Background()
+	for _, query := range []string{
+		"CREATE FULLTEXT INDEX grouped_idx FOR (s:Src) ON EACH [s.text]",
+		"CREATE (:Src {id:'s',text:'boiler',x:7})",
+	} {
+		_, err := exec.Execute(ctx, query, nil)
+		require.NoError(t, err)
+	}
+	for _, expression := range []string{
+		"n", "(n)", "((n))", " ( ( \t n \n ) ) ", "((`n`))",
+		strings.Repeat("(", 16) + " n " + strings.Repeat(")", 16),
+	} {
+		for _, clause := range []string{"WITH", "RETURN"} {
+			body := clause + " " + expression + " AS n"
+			if clause == "WITH" {
+				body += " RETURN n"
+			}
+			for _, keyword := range []string{"EXISTS", "COUNT", "COLLECT"} {
+				t.Run(expression+"/"+clause+"/"+keyword, func(t *testing.T) {
+					subquery := keyword + " { " + body + " }"
+					var want interface{} = true
+					predicate := subquery
+					switch keyword {
+					case "COUNT":
+						want = int64(1)
+						predicate += " = 1"
+					case "COLLECT":
+						want = []interface{}{int64(1)}
+						predicate = "size(" + subquery + ") = 1"
+					}
+					result, err := exec.Execute(ctx, "WITH 1 AS n RETURN "+subquery+" AS v", nil)
+					require.NoError(t, err)
+					require.Equal(t, [][]interface{}{{want}}, result.Rows)
+					result, err = exec.Execute(ctx, "CALL db.index.fulltext.queryNodes('grouped_idx', 'boiler') YIELD node AS n WHERE "+predicate+" RETURN n.x AS v", nil)
+					require.NoError(t, err)
+					require.Equal(t, [][]interface{}{{int64(7)}}, result.Rows)
+				})
+			}
+		}
+	}
+	// A pass-through binding also keeps the variable's static type.
+	for _, expression := range []string{"n", "(n)", "((n))"} {
+		query := "WITH 1 AS n RETURN COUNT { WITH " + expression + " AS n RETURN n.x } AS v"
+		_, err := exec.Execute(ctx, query, nil)
+		require.Error(t, err, query)
+		require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError", query)
+	}
+	for _, expression := range []string{"(n.x)", "((n.x))", " ( ( n.x ) ) ", "(n.x) + 0"} {
+		for _, clause := range []string{"WITH", "RETURN"} {
+			body := clause + " " + expression + " AS n"
+			if clause == "WITH" {
+				body += " RETURN n"
+			}
+			for _, keyword := range []string{"EXISTS", "COUNT", "COLLECT"} {
+				subquery := keyword + " { " + body + " }"
+				predicate := subquery
+				if keyword == "COUNT" {
+					predicate += " = 1"
+				} else if keyword == "COLLECT" {
+					predicate = "size(" + subquery + ") = 1"
+				}
+				for _, query := range []string{
+					"WITH {x:7} AS n RETURN " + subquery + " AS v",
+					"CALL db.index.fulltext.queryNodes('grouped_idx', 'boiler') YIELD node AS n WHERE " + predicate + " RETURN n.x AS v",
+				} {
+					_, err := exec.Execute(ctx, query, nil)
+					require.Error(t, err, query)
+					require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError", query)
+				}
+			}
+		}
 	}
 }
