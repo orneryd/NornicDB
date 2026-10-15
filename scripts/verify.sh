@@ -73,8 +73,8 @@ describe() {
 # The `paths:` filters of each workflow, as extended regexes over changed files.
 watched() {
   case "$1" in
-    ci)          echo '^(docker|lib|macos|pkg|plugins|scripts|ui)/|^cmd/nornicdb/|^cmd/nornicdb-admin/|^go\.(mod|sum)$' ;;
-    conformance) echo '^pkg/|^testing/cypher/|^scripts/cypher-tck/|^docs/plans/cypher-convergence-[^/]*\.md$|^openspec/|^\.github/workflows/cypher-conformance\.yml$|^go\.(mod|sum)$' ;;
+    ci)          echo '^(docker|lib|macos|pkg|plugins|scripts|ui)/|^cmd/nornicdb/|^cmd/nornicdb-admin/|^go\.(mod|sum)$|^Makefile$|^\.github/workflows/ci\.yml$' ;;
+    conformance) echo '^pkg/|^testing/cypher/|^scripts/cypher-tck/|^docs/plans/cypher-convergence-[^/]*\.md$|^openspec/|^\.github/workflows/cypher-conformance\.yml$|^go\.(mod|sum)$|^Makefile$' ;;
     docs)        echo '^docs/|^mkdocs\.yml$|^\.github/workflows/docs-pages\.yml$|^requirements-docs\.txt$' ;;
   esac
 }
