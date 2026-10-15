@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"sort"
 	"unicode/utf16"
 )
 
@@ -31,11 +30,9 @@ func gdsNativeProjectionMapOrder(keys []string) []string {
 		return keys
 	}
 	ordered := append([]string(nil), keys...)
-	rawHashes := make(map[string]uint32, len(keys))
 	improved := make(map[string]uint32, len(keys))
 	for _, key := range keys {
 		raw := gdsJavaStringHash(key)
-		rawHashes[key] = raw ^ (raw >> 16)
 		// Scala's hash-trie mixer, expressed with wrapping uint32 math.
 		mixed := uint32(0) - 511*raw - 1
 		mixed ^= mixed >> 14
@@ -69,20 +66,8 @@ func gdsNativeProjectionMapOrder(keys []string) []string {
 		}
 		walk(keys, 0)
 	}
-	orderBuckets := func(capacity int) {
-		sort.SliceStable(ordered, func(i, j int) bool {
-			return rawHashes[ordered[i]]&uint32(capacity-1) < rawHashes[ordered[j]]&uint32(capacity-1)
-		})
-	}
-	capacity := 16
-	for capacity*3/4 < len(keys) {
-		capacity *= 2
-	}
-	orderBuckets(capacity)
-	capacity = 1
-	for capacity*3/4 < len(keys) {
-		capacity *= 2
-	}
-	orderBuckets(capacity)
-	return ordered
+	ordered = gdsJavaMapOrder(ordered, 0, 16, gdsJavaMapPut)
+	// JavaMapper starts with the entry count, not the final load-adjusted
+	// capacity: collision-driven resizes can treeify at a different insertion.
+	return gdsJavaMapOrder(ordered, 0, len(keys), gdsJavaMapPut)
 }
