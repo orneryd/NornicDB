@@ -187,12 +187,11 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node != nil && op.Node.ID != "" {
 				b.nodes[op.Node.ID] = op.Node
-				for _, label := range op.Node.Labels {
-					key := labelSeenKey{label: label, id: op.Node.ID}
-					if _, seen := b.labelSeen[key]; !seen {
-						b.labelSeen[key] = struct{}{}
-						b.nodesByLabel[label] = append(b.nodesByLabel[label], op.Node.ID)
-					}
+				b.indexNodeLabels(op.Node.ID, op.Node.Labels)
+				if op.OldNode != nil {
+					// Removing a label must shadow its durable membership and
+					// any older generation, just as deleting the node does.
+					b.indexNodeLabels(op.Node.ID, op.OldNode.Labels)
 				}
 			}
 		case OpDeleteNode:
@@ -213,13 +212,7 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 			if op.OldNode != nil {
 				// Mark the deleted node's labels as touched so scan overlays
 				// drop the committed row too, not just the buffered one.
-				for _, label := range op.OldNode.Labels {
-					key := labelSeenKey{label: label, id: op.NodeID}
-					if _, seen := b.labelSeen[key]; !seen {
-						b.labelSeen[key] = struct{}{}
-						b.nodesByLabel[label] = append(b.nodesByLabel[label], op.NodeID)
-					}
-				}
+				b.indexNodeLabels(op.NodeID, op.OldNode.Labels)
 			}
 		case OpCreateEdge, OpUpdateEdge:
 			if op.Edge != nil && op.Edge.ID != "" {
@@ -280,8 +273,18 @@ func (b *CommitBuffer) addNode(n *Node) {
 	copyNode := *n
 	b.nodes[n.ID] = &copyNode
 	b.order = append(b.order, bufferedMutation{kind: bufferedOpNode, id: string(n.ID), node: &copyNode})
-	for _, label := range n.Labels {
-		b.nodesByLabel[label] = append(b.nodesByLabel[label], n.ID)
+	b.indexNodeLabels(n.ID, n.Labels)
+}
+
+// indexNodeLabels records every membership a generation touches. The latest
+// body decides whether that membership is still live when readers merge it.
+func (b *CommitBuffer) indexNodeLabels(id NodeID, labels []string) {
+	for _, label := range labels {
+		key := labelSeenKey{label: label, id: id}
+		if _, seen := b.labelSeen[key]; !seen {
+			b.labelSeen[key] = struct{}{}
+			b.nodesByLabel[label] = append(b.nodesByLabel[label], id)
+		}
 	}
 }
 
@@ -349,24 +352,6 @@ func (b *CommitBuffer) getEdge(id EdgeID) (*Edge, bool, bool) {
 		return e, true, false
 	}
 	return nil, false, false
-}
-
-// labelNodes lists buffered nodes carrying label, newest append first.
-func (b *CommitBuffer) labelNodes(label string) []*Node {
-	ids := b.nodesByLabel[label]
-	if len(ids) == 0 {
-		return nil
-	}
-	out := make([]*Node, 0, len(ids))
-	for _, id := range ids {
-		if b.deletes[string(id)] {
-			continue
-		}
-		if n, ok := b.nodes[id]; ok {
-			out = append(out, n)
-		}
-	}
-	return out
 }
 
 // typeEdges lists buffered edges of the given type, newest append first.
@@ -1035,17 +1020,8 @@ func (w *WriteBehindBuffer) GetEdge(id EdgeID) (*Edge, bool, bool) {
 // LabelNodes returns buffered nodes carrying label, newest generation first,
 // not yet applied. The caller merges these over committed rows.
 func (w *WriteBehindBuffer) LabelNodes(label string) []*Node {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var out []*Node
-	out = append(out, w.active.labelNodes(label)...)
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		if w.draining[i].IsApplied() {
-			continue
-		}
-		out = append(out, w.draining[i].labelNodes(label)...)
-	}
-	return out
+	nodes, _ := w.LabelOverlay(label)
+	return nodes
 }
 
 // LabelOverlay returns the buffered state for label as (nodes, touched):
@@ -1073,7 +1049,7 @@ func (w *WriteBehindBuffer) LabelOverlay(label string) ([]*Node, map[NodeID]bool
 			if buf.deletes[string(id)] {
 				continue
 			}
-			if n, ok := buf.nodes[id]; ok {
+			if n, ok := buf.nodes[id]; ok && hasLabel(n.Labels, label) {
 				out = append(out, n)
 			}
 		}

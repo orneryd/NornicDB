@@ -4,9 +4,9 @@ import "strings"
 
 // ScopedLabelNodeReader is an optional extension interface for label reads
 // within one database. The label index is shared by every database on the
-// server, so an unscoped label read loads and decodes the label's nodes in
-// all of them; a scoped read skips another database's index entries before
-// reading their nodes (#851). scope is the database's node ID prefix ("db:");
+// server. Scoped Badger reads select candidates from the existing namespace
+// dictionary range and probe label membership without enumerating other
+// databases' index entries. scope is the database's node ID prefix ("db:");
 // "" reads every database, as the unscoped methods do.
 //
 // Engines that wrap another engine pass the scope down when the inner engine
