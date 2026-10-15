@@ -30,3 +30,15 @@ func TestDifferentialExpectedValueNormalization(t *testing.T) {
 		differentialOutcomeValue(map[string]any{"nested": []any{int64(9007199254740993), float64(1), true, nil}}),
 		executor.NormalizeExpectedValue(map[string]any{"nested": []any{json.Number("9007199254740993"), json.Number("1.0"), true, nil}}))
 }
+
+func TestDifferentialExpectedIntegerOverflowDoesNotBecomeFloat(t *testing.T) {
+	executor := boltDifferentialExecutor{}
+	for _, literal := range []string{"9223372036854775808", "-9223372036854775809", "18446744073709551615"} {
+		t.Run(literal, func(t *testing.T) {
+			rounded, err := json.Number(literal).Float64()
+			require.NoError(t, err)
+			require.NotEqual(t, differentialOutcomeValue(rounded), executor.NormalizeExpectedValue(json.Number(literal)),
+				"an out-of-range integer oracle must not accept a rounded float")
+		})
+	}
+}
