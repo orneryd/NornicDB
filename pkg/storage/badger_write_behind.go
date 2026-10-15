@@ -409,22 +409,34 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 			schema = b.GetSchemaForNamespace(c.namespace)
 			schemas[c.namespace] = schema
 		}
-		b.publishCommitOperations(c.namespace, schema, c.ops)
+		b.publishCommitOperations(c.namespace, schema, c.ops, c.recovered)
 	}
 	return nil
 }
 
 // publishCommitOperations mirrors the commit tail's callback and unique-value
 // cache updates for one buffered statement.
-func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation) {
+func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation, publishRevision bool) {
+	// Normal buffered writes already advanced their logical revision at ACK.
+	// Replaying durability must not invalidate stable query results once per row.
+	// Recovery has no prior ACK in this process and still publishes its revision.
+	notifyNodeCreated, notifyNodeUpdated := b.dispatchNodeCreated, b.dispatchNodeUpdated
+	notifyNodeDeleted := b.publishNodeDeleted
+	notifyEdgeCreated, notifyEdgeUpdated := b.dispatchEdgeCreated, b.dispatchEdgeUpdated
+	notifyEdgeDeleted := b.dispatchEdgeDeleted
+	if publishRevision {
+		notifyNodeCreated, notifyNodeUpdated, notifyNodeDeleted = b.notifyNodeCreated, b.notifyNodeUpdated, b.notifyNodeDeleted
+		notifyEdgeCreated, notifyEdgeUpdated, notifyEdgeDeleted = b.notifyEdgeCreated, b.notifyEdgeUpdated, b.notifyEdgeDeleted
+	}
+
 	for _, op := range ops {
 		switch op.Type {
 		case OpCreateNode:
 			b.cacheOnNodeCreated(op.Node)
-			b.notifyNodeCreated(op.Node)
+			notifyNodeCreated(op.Node)
 		case OpUpdateNode:
 			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
-			b.notifyNodeUpdated(op.Node)
+			notifyNodeUpdated(op.Node)
 		case OpDeleteNode:
 			if op.OldNode != nil {
 				// The replay's own pre-delete snapshot drives the property
@@ -437,26 +449,26 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 				b.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
 			}
 			for _, edgeID := range op.DeletedEdgeIDs {
-				b.notifyEdgeDeleted(edgeID)
+				notifyEdgeDeleted(edgeID)
 			}
-			b.notifyNodeDeleted(op.NodeID)
+			notifyNodeDeleted(op.NodeID)
 		case OpCreateEdge:
 			b.cacheOnEdgeCreated(op.Edge)
-			b.notifyEdgeCreated(op.Edge)
+			notifyEdgeCreated(op.Edge)
 		case OpUpdateEdge:
 			oldType := ""
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
 			b.cacheOnEdgeUpdated(oldType, op.Edge)
-			b.notifyEdgeUpdated(op.Edge)
+			notifyEdgeUpdated(op.Edge)
 		case OpDeleteEdge:
 			oldType := ""
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
 			b.cacheOnEdgeDeleted(op.EdgeID, oldType)
-			b.notifyEdgeDeleted(op.EdgeID)
+			notifyEdgeDeleted(op.EdgeID)
 		}
 	}
 

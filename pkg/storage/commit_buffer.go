@@ -1466,6 +1466,9 @@ func (w *WriteBehindBuffer) EdgeAdjacencyOverlay(nodeID NodeID, outgoing bool) (
 				continue
 			}
 			if e, ok := buf.edges[id]; ok && e != nil {
+				// The buffered body shadows this identity even after its physical
+				// record is durable but publication has not retired the generation.
+				suppressed[id] = struct{}{}
 				live = append(live, e)
 			}
 		}
