@@ -45,7 +45,8 @@ func TestAdminProceduresFollowTheirAdminFlagOverHTTP(t *testing.T) {
 
 // An API token needs the admin entitlement, whatever the role holding it is
 // called: a custom role with the admin entitlement may create one, a reader
-// may not.
+// may not. The route's guard is the one decision (the handler makes none),
+// so the reader is refused with the guard's answer and gets no token.
 func TestAPITokenNeedsTheAdminEntitlement(t *testing.T) {
 	ctx := context.Background()
 	server, users := setupTestServer(t)
@@ -55,6 +56,9 @@ func TestAPITokenNeedsTheAdminEntitlement(t *testing.T) {
 	require.NoError(t, err)
 	response := makeRequest(t, server, "POST", "/auth/api-token", map[string]any{"subject": "svc"}, "Bearer "+getAuthToken(t, users, "opsuser"))
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "token\"")
 	response = makeRequest(t, server, "POST", "/auth/api-token", map[string]any{"subject": "svc"}, "Bearer "+getAuthToken(t, users, "reader"))
 	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "Neo.ClientError.Security.Forbidden")
+	require.NotContains(t, response.Body.String(), "token\"")
 }

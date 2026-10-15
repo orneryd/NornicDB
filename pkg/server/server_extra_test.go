@@ -779,15 +779,9 @@ func TestHandleGenerateAPIToken(t *testing.T) {
 		assert.Equal(t, "not authenticated", payload["message"])
 	})
 
-	t.Run("requires admin role", func(t *testing.T) {
-		rec, payload := makeReq(http.MethodPost, `{}`, &auth.JWTClaims{
-			Sub:      "reader-id",
-			Username: "reader",
-			Roles:    []string{string(auth.RoleViewer)},
-		})
-		assert.Equal(t, http.StatusForbidden, rec.Code)
-		assert.Equal(t, "admin role required to generate API tokens", payload["message"])
-	})
+	// The admin requirement is the route guard's (withAuth with
+	// auth.PermAdmin): TestAPITokenNeedsTheAdminEntitlement goes through the
+	// router; the handler itself makes no second decision.
 
 	t.Run("validates request body and expiry", func(t *testing.T) {
 		adminClaims := &auth.JWTClaims{
