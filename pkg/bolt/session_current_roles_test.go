@@ -77,22 +77,86 @@ func TestBoltSessionAuthenticationDisabled(t *testing.T) {
 	}
 }
 
-// CurrentAuthResult leaves an identity the user store doesn't keep as it
-// is.
-func TestCurrentAuthResultKeepsUnstoredIdentity(t *testing.T) {
-	engine := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = engine.Close() })
+// boltAccountFixture is an authenticator over a system database, its adapter
+// with the server's permission resolver, and a Bolt server using it.
+func boltAccountFixture(t *testing.T) (*auth.Authenticator, *AuthenticatorAdapter, *Server) {
+	t.Helper()
+	base := storage.NewMemoryEngine()
+	t.Cleanup(func() { _ = base.Close() })
+	engine := storage.NewNamespacedEngine(base, "system")
 	config := auth.DefaultAuthConfig()
 	config.DefaultAdminUsername = ""
 	config.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
 	authenticator, err := auth.NewAuthenticator(config, engine)
 	require.NoError(t, err)
+	entitlements := auth.NewRoleEntitlementsStore(engine)
 	adapter := NewAuthenticatorAdapter(authenticator)
-	for _, result := range []*BoltAuthResult{
-		nil,
-		{Authenticated: true, Username: "", Roles: []string{"viewer"}},
-		{Authenticated: true, Username: "cluster-node-2", PrincipalID: "sub:cluster-node-2", Roles: []string{"admin"}},
-	} {
-		require.Equal(t, result, adapter.CurrentAuthResult(result))
+	adapter.SetGetEffectivePermissions(func(roles []string) []string { return auth.PermissionsForRoles(roles, entitlements) })
+	serverConfig := DefaultConfig()
+	serverConfig.Authenticator = adapter
+	return authenticator, adapter, &Server{config: serverConfig, sessions: map[string]*Session{}}
+}
+
+// A Bolt session of an account that is deleted, disabled, or deleted and
+// created again under the same name runs nothing more: its next statement is
+// refused, and the account's cached password no longer authenticates.
+func TestBoltSessionOfRemovedAccountRunsNothing(t *testing.T) {
+	for _, change := range []string{"deleted", "disabled", "deleted and recreated"} {
+		t.Run(change, func(t *testing.T) {
+			authenticator, adapter, server := boltAccountFixture(t)
+			_, err := authenticator.CreateUser("bob", "password123", []auth.Role{auth.RoleAdmin})
+			require.NoError(t, err)
+			result, err := adapter.Authenticate("basic", "bob", "password123")
+			require.NoError(t, err)
+			run := func() (bool, string) {
+				return runOnBoltSession(t, server, result, "CALL dbms.listConfig()", func(context.Context, string, map[string]any) error { return nil })
+			}
+			executed, code := run()
+			require.True(t, executed, code)
+
+			switch change {
+			case "deleted":
+				require.NoError(t, authenticator.DeleteUser("bob"))
+			case "disabled":
+				require.NoError(t, authenticator.DisableUser("bob"))
+			case "deleted and recreated":
+				require.NoError(t, authenticator.DeleteUser("bob"))
+				_, err = authenticator.CreateUser("bob", "password123", []auth.Role{auth.RoleAdmin})
+				require.NoError(t, err)
+			}
+			executed, code = run()
+			require.False(t, executed, "the statement ran for a removed account")
+			require.Equal(t, "Neo.ClientError.Security.Forbidden", code)
+			fresh, err := adapter.Authenticate("basic", "bob", "password123")
+			if change == "deleted and recreated" {
+				require.NoError(t, err, "the new account's password is checked in full")
+				executed, code = runOnBoltSession(t, server, fresh, "CALL dbms.listConfig()", func(context.Context, string, map[string]any) error { return nil })
+				require.True(t, executed, code)
+			} else {
+				require.Error(t, err, "the cached password authenticates no more")
+			}
+		})
 	}
+}
+
+// The identities that are not user accounts keep their roles: the anonymous
+// principal while the adapter allows anonymous access (and only then), and a
+// cluster node's token.
+func TestCurrentAuthResultNonAccountIdentities(t *testing.T) {
+	authenticator, adapter, _ := boltAccountFixture(t)
+	require.Nil(t, adapter.CurrentAuthResult(nil))
+
+	adapter.SetAllowAnonymous(true)
+	anonymous, err := adapter.Authenticate("none", "", "")
+	require.NoError(t, err)
+	require.Same(t, anonymous, adapter.CurrentAuthResult(anonymous))
+	adapter.SetAllowAnonymous(false)
+	require.Empty(t, adapter.CurrentAuthResult(anonymous).Roles)
+
+	token, err := authenticator.GenerateClusterToken("node-2", auth.RoleAdmin)
+	require.NoError(t, err)
+	cluster, err := adapter.Authenticate("bearer", "", token)
+	require.NoError(t, err)
+	require.Same(t, cluster, adapter.CurrentAuthResult(cluster))
+	require.Equal(t, []string{"admin"}, cluster.Roles)
 }

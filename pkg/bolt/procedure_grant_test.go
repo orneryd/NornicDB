@@ -175,9 +175,17 @@ func TestBoltImmutableGrantNeedsAuthenticationDisabled(t *testing.T) {
 	t.Cleanup(func() { _ = authStorage.Close() })
 	authenticator, err := auth.NewAuthenticator(auth.AuthConfig{SecurityEnabled: true, JWTSecret: []byte("test-secret-key-for-testing-only-32b")}, authStorage)
 	require.NoError(t, err)
+	// A stored administrator: a session's roles are its account's current
+	// ones.
+	_, err = authenticator.CreateUser("admin", "password123", []auth.Role{auth.RoleAdmin})
+	require.NoError(t, err)
+	adapter := NewAuthenticatorAdapter(authenticator)
+	adapter.SetGetEffectivePermissions(func(roles []string) []string { return auth.PermissionsForRoles(roles, nil) })
 	secured := &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
-	secured.config.Authenticator = NewAuthenticatorAdapter(authenticator)
-	executed, _ = runOnBoltSession(t, secured, admin, grant, execute)
+	secured.config.Authenticator = adapter
+	storedAdmin, err := adapter.Authenticate("basic", "admin", "password123")
+	require.NoError(t, err)
+	executed, _ = runOnBoltSession(t, secured, storedAdmin, grant, execute)
 	require.True(t, executed)
 	require.ErrorContains(t, execErr, "Permission cannot be granted for ASSIGN IMMUTABLE PRIVILEGE.")
 }

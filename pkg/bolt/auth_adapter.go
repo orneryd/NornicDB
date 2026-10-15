@@ -154,7 +154,7 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 			return nil, fmt.Errorf("anonymous authentication not allowed")
 		}
 		roles := []string{string(auth.RoleViewer)}
-		result := &BoltAuthResult{Authenticated: true, Username: "anonymous", PrincipalID: "anonymous", Roles: roles}
+		result := &BoltAuthResult{Authenticated: true, Username: anonymousPrincipal, PrincipalID: anonymousPrincipal, Roles: roles}
 		if a.getEffectivePermissions != nil {
 			result.Permissions = a.getEffectivePermissions(roles)
 		}
@@ -205,16 +205,21 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 
 	if a.basicAuthCache != nil {
 		if cached, ok := a.basicAuthCache.Get(principal, credentials); ok {
-			result := &BoltAuthResult{
-				Authenticated: true,
-				Username:      cached.Username,
-				PrincipalID:   auth.PrincipalID(cached),
-				Roles:         cached.Roles,
+			// The cache spares the password check, not the current roles. A
+			// cached account that is gone (deleted, disabled, replaced) is
+			// checked again in full below.
+			if current, err := a.auth.CurrentClaims(cached); err == nil {
+				result := &BoltAuthResult{
+					Authenticated: true,
+					Username:      current.Username,
+					PrincipalID:   auth.PrincipalID(current),
+					Roles:         current.Roles,
+				}
+				if a.getEffectivePermissions != nil {
+					result.Permissions = a.getEffectivePermissions(current.Roles)
+				}
+				return result, nil
 			}
-			if a.getEffectivePermissions != nil {
-				result.Permissions = a.getEffectivePermissions(cached.Roles)
-			}
-			return result, nil
 		}
 	}
 
@@ -256,27 +261,34 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 	return result, nil
 }
 
-// CurrentAuthResult is result with the roles its user holds now
-// (auth.Authenticator.CurrentRoles) and the permissions those roles give, so
-// a session's privileges follow changes to the user's roles and the roles'
-// deletion as soon as they commit, as in Neo4j. A result for an identity the
-// user store doesn't keep (anonymous, a cluster token) is returned as it is,
-// and so is one whose roles and permissions haven't changed.
+// anonymousPrincipal is the principal of a session the adapter admits
+// without credentials (SetAllowAnonymous).
+const anonymousPrincipal = "anonymous"
+
+// CurrentAuthResult is result with the roles its principal holds now
+// (auth.Authenticator.CurrentClaims, the one owner HTTP uses too) and the
+// permissions those roles give, so a session's privileges follow changes to
+// the user's roles and the roles' deletion as soon as they commit, as in
+// Neo4j. A deleted or disabled account, or another account created under the
+// same name, holds no roles and no permissions. The anonymous principal, while
+// the adapter allows anonymous access, is not a user account and keeps its
+// roles. A result whose roles and permissions haven't changed is returned as
+// it is.
 func (a *AuthenticatorAdapter) CurrentAuthResult(result *BoltAuthResult) *BoltAuthResult {
-	if result == nil || result.Username == "" {
+	if result == nil || (result.PrincipalID == anonymousPrincipal && a.allowAnonymous.Load()) {
 		return result
 	}
 	userID, isUserID := strings.CutPrefix(result.PrincipalID, "sub:")
 	if !isUserID {
 		userID = ""
 	}
-	roles, stored := a.auth.CurrentRoles(result.Username, userID)
-	if !stored {
-		return result
-	}
-	permissions := result.Permissions
-	if a.getEffectivePermissions != nil {
-		permissions = a.getEffectivePermissions(roles)
+	roles, permissions := []string{}, []string{}
+	if current, err := a.auth.CurrentClaims(&auth.JWTClaims{Sub: userID, Username: result.Username, Roles: result.Roles}); err == nil {
+		roles = current.Roles
+		permissions = result.Permissions
+		if a.getEffectivePermissions != nil {
+			permissions = a.getEffectivePermissions(roles)
+		}
 	}
 	if slices.Equal(roles, result.Roles) && slices.Equal(permissions, result.Permissions) {
 		return result

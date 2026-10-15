@@ -1210,7 +1210,7 @@ func (a *Authenticator) ValidateToken(token string) (*JWTClaims, error) {
 
 	if a.tokenCache != nil {
 		if cached, ok := a.tokenCache.get(token); ok {
-			return a.currentRoleClaims(cached), nil
+			return a.CurrentClaims(cached)
 		}
 	}
 
@@ -1221,50 +1221,42 @@ func (a *Authenticator) ValidateToken(token string) (*JWTClaims, error) {
 	if a.tokenCache != nil {
 		a.tokenCache.set(token, claims)
 	}
-	return a.currentRoleClaims(claims), nil
+	return a.CurrentClaims(claims)
 }
 
-// currentRoleClaims is claims with the roles its user holds now, as the
-// user store records them: a role removed from the user, or deleted (which
-// detaches it from every user), no longer applies to a token issued
-// before, as in Neo4j, where privileges follow the current role
-// membership. A token of an account since deleted and created again under
-// the same name holds no roles. A token whose user this store doesn't keep
-// (a cluster or external identity) keeps its own roles. The cached claims
-// are never changed.
-func (a *Authenticator) currentRoleClaims(claims *JWTClaims) *JWTClaims {
-	if claims == nil || claims.Username == "" {
-		return claims
-	}
-	roles, stored := a.CurrentRoles(claims.Username, claims.Sub)
-	if !stored {
-		return claims
-	}
-	current := *claims
-	current.Roles = roles
-	return &current
-}
+// clusterSubjectPrefix starts the subject of a cluster node's token
+// (GenerateClusterToken): an identity that is not a user account.
+const clusterSubjectPrefix = "cluster-"
 
-// CurrentRoles returns the roles the stored user username holds now, and
-// whether this store keeps that user. A non-empty userID must be the stored
-// account's: an account deleted and created again under the same name
-// gives a token or session of the old one no roles. Token checks and Bolt
-// sessions read a principal's roles through it on every request.
-func (a *Authenticator) CurrentRoles(username, userID string) ([]string, bool) {
+// CurrentClaims is the one owner of a principal's roles on every request:
+// claims with the roles its user account holds now, as the user store
+// records them. Bearer tokens, cached Basic authentication and Bolt
+// sessions all read a principal's roles through it. A role removed from the
+// user, or deleted (which detaches it from every user), stops applying at
+// once, as in Neo4j, where privileges follow the current role membership.
+// A deleted or disabled account, or another account created under the same
+// name, authorizes nothing: ErrInvalidToken. The one identity that is not a
+// user account is a cluster node's token, which keeps its own roles. claims
+// is never changed.
+func (a *Authenticator) CurrentClaims(claims *JWTClaims) (*JWTClaims, error) {
+	if claims == nil {
+		return nil, ErrInvalidToken
+	}
+	if strings.HasPrefix(claims.Sub, clusterSubjectPrefix) {
+		return claims, nil
+	}
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	user, stored := a.users[username]
-	if !stored {
-		return nil, false
+	user, stored := a.users[claims.Username]
+	if !stored || user.Disabled || (claims.Sub != "" && user.ID != claims.Sub) {
+		return nil, ErrInvalidToken
 	}
-	if userID != "" && user.ID != userID {
-		return []string{}, true
-	}
-	roles := make([]string, len(user.Roles))
+	current := *claims
+	current.Roles = make([]string, len(user.Roles))
 	for i, role := range user.Roles {
-		roles[i] = string(role)
+		current.Roles[i] = string(role)
 	}
-	return roles, true
+	return &current, nil
 }
 
 // GetUserByID retrieves a user by their ID.
@@ -1659,7 +1651,7 @@ func (a *Authenticator) GenerateClusterToken(nodeID string, role Role) (string, 
 
 	// Create a virtual user for the cluster node
 	user := &User{
-		ID:       "cluster-" + nodeID,
+		ID:       clusterSubjectPrefix + nodeID,
 		Username: nodeID,
 		Roles:    []Role{role},
 	}
@@ -1701,7 +1693,7 @@ func (a *Authenticator) GenerateClusterTokenWithExpiry(nodeID string, role Role,
 	now := time.Now().Unix()
 
 	claims := JWTClaims{
-		Sub:      "cluster-" + nodeID,
+		Sub:      clusterSubjectPrefix + nodeID,
 		Username: nodeID,
 		Roles:    []string{string(role)},
 		Iat:      now,
@@ -1736,7 +1728,7 @@ func (a *Authenticator) GenerateClusterTokenWithExpiry(nodeID string, role Role,
 		Timestamp: time.Now(),
 		EventType: "cluster_token_generated",
 		Username:  nodeID,
-		UserID:    "cluster-" + nodeID,
+		UserID:    clusterSubjectPrefix + nodeID,
 		Success:   true,
 		Details:   fmt.Sprintf("cluster token generated for node %s with role %s, expiry=%v", nodeID, role, expiry),
 	})

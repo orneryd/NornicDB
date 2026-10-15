@@ -15,7 +15,9 @@ const (
 )
 
 // BasicAuthCache caches successful Basic authentication results to avoid
-// repeated bcrypt work on high-volume request paths.
+// repeated bcrypt work on high-volume request paths. It spares the password
+// check only: every caller passes a cached result through
+// Authenticator.CurrentClaims, so the roles are the account's current ones.
 type BasicAuthCache struct {
 	mu         sync.Mutex
 	entries    map[[32]byte]basicAuthCacheEntry

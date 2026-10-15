@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -100,4 +101,110 @@ func mustSystemStorage(t *testing.T, server *Server) storage.Engine {
 	system, err := server.dbManager.GetStorage("system")
 	require.NoError(t, err)
 	return system
+}
+
+// basicAuthorization is the Basic Authorization header for user with the
+// test password.
+func basicAuthorization(user string) string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":password123"))
+}
+
+// A deleted or disabled account authorizes nothing more, through a Bearer
+// token issued before and through Basic credentials a request already
+// used (which the server caches): the requests are refused as
+// unauthenticated, and a GRANT on the system database writes nothing. An
+// account created again under the same name is another account: the old
+// token is refused, and the same Basic credentials now sign in as the new
+// account, with its roles only.
+func TestRemovedAccountAuthorizesNothingOverHTTP(t *testing.T) {
+	ctx := context.Background()
+	for _, scheme := range []string{"bearer", "basic"} {
+		for _, change := range []string{"deleted", "disabled", "deleted and recreated"} {
+			t.Run(scheme+"/"+change, func(t *testing.T) {
+				server, users := setupTestServer(t)
+				admin := "Bearer " + getAuthToken(t, users, "admin")
+				_, err := users.CreateUser("carol", "password123", []auth.Role{auth.RoleAdmin})
+				require.NoError(t, err)
+				carol := basicAuthorization("carol")
+				if scheme == "bearer" {
+					carol = "Bearer " + getAuthToken(t, users, "carol")
+				}
+				response := makeRequest(t, server, "GET", "/auth/users", nil, carol)
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+				if change == "disabled" {
+					response = makeRequest(t, server, "PUT", "/auth/users/carol", map[string]any{"disabled": true}, admin)
+				} else {
+					response = makeRequest(t, server, "DELETE", "/auth/users/carol", nil, admin)
+				}
+				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+				refused := http.StatusUnauthorized
+				if change == "deleted and recreated" {
+					_, err = users.CreateUser("carol", "password123", []auth.Role{auth.RoleViewer})
+					require.NoError(t, err)
+					if scheme == "basic" {
+						refused = http.StatusForbidden
+					}
+				}
+
+				response = makeRequest(t, server, "GET", "/auth/users", nil, carol)
+				require.Equal(t, refused, response.Code, response.Body.String())
+				response = makeRequest(t, server, "POST", "/auth/users", map[string]any{"username": "eve", "password": "password123", "roles": []string{"admin"}}, carol)
+				require.Equal(t, refused, response.Code, response.Body.String())
+				response = makeRequest(t, server, "POST", "/db/system/tx/commit", map[string]any{"statements": []map[string]any{{"statement": "GRANT EXECUTE BOOSTED PROCEDURE * ON DBMS TO viewer"}}}, carol)
+				if refused == http.StatusUnauthorized {
+					require.Equal(t, http.StatusUnauthorized, response.Code, response.Body.String())
+				} else {
+					require.Contains(t, response.Body.String(), "Neo.ClientError.Security.Forbidden")
+				}
+				grants, err := server.procedurePrivileges.List(ctx)
+				require.NoError(t, err)
+				require.Empty(t, grants)
+			})
+		}
+	}
+}
+
+// Basic credentials a request already used carry the account's current
+// roles, as a Bearer token does: after the account loses the admin role,
+// or its role is deleted and created again with the admin entitlement, its
+// next Basic request is refused.
+func TestBasicAuthenticationFollowsCurrentRoles(t *testing.T) {
+	ctx := context.Background()
+	t.Run("role taken away", func(t *testing.T) {
+		server, users := setupTestServer(t)
+		admin := "Bearer " + getAuthToken(t, users, "admin")
+		_, err := users.CreateUser("bob", "password123", []auth.Role{auth.RoleAdmin})
+		require.NoError(t, err)
+		response := makeRequest(t, server, "GET", "/auth/users", nil, basicAuthorization("bob"))
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		response = makeRequest(t, server, "PUT", "/auth/users/bob", map[string]any{"roles": []string{"viewer"}}, admin)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+		response = makeRequest(t, server, "GET", "/auth/users", nil, basicAuthorization("bob"))
+		require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+		response = makeRequest(t, server, "POST", "/db/system/tx/commit", map[string]any{"statements": []map[string]any{{"statement": "GRANT EXECUTE BOOSTED PROCEDURE * ON DBMS TO viewer"}}}, basicAuthorization("bob"))
+		require.Contains(t, response.Body.String(), "Neo.ClientError.Security.Forbidden")
+		grants, err := server.procedurePrivileges.List(ctx)
+		require.NoError(t, err)
+		require.Empty(t, grants)
+	})
+	t.Run("role deleted and created again", func(t *testing.T) {
+		server, users := setupTestServer(t)
+		admin := "Bearer " + getAuthToken(t, users, "admin")
+		require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
+		_, err := users.CreateUser("bob", "password123", []auth.Role{"ops"})
+		require.NoError(t, err)
+		response := makeRequest(t, server, "GET", "/auth/users", nil, basicAuthorization("bob"))
+		require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+		response = makeRequest(t, server, "DELETE", "/auth/roles/ops", nil, admin)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		response = makeRequest(t, server, "POST", "/auth/roles", map[string]any{"name": "ops"}, admin)
+		require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+		response = makeRequest(t, server, "PUT", "/auth/role-entitlements", map[string]any{"role": "ops", "entitlements": []string{"admin"}}, admin)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+		response = makeRequest(t, server, "POST", "/auth/users", map[string]any{"username": "eve", "password": "password123", "roles": []string{"admin"}}, basicAuthorization("bob"))
+		require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	})
 }

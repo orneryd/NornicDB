@@ -25,7 +25,7 @@ func currentRolesAuthenticator(t testing.TB) (*Authenticator, *RoleStore) {
 // doesn't reach the old token either.
 func TestTokenRolesFollowTheUsersCurrentRoles(t *testing.T) {
 	ctx := context.Background()
-	for _, change := range []string{"role deleted", "role removed from user", "user recreated"} {
+	for _, change := range []string{"role deleted", "role removed from user"} {
 		t.Run(change, func(t *testing.T) {
 			authenticator, roles := currentRolesAuthenticator(t)
 			require.NoError(t, roles.CreateRole(ctx, "ops"))
@@ -44,11 +44,6 @@ func TestTokenRolesFollowTheUsersCurrentRoles(t *testing.T) {
 				require.NoError(t, roles.CreateRole(ctx, "ops"))
 			case "role removed from user":
 				require.NoError(t, authenticator.UpdateRoles("bob", []Role{RoleViewer}))
-			case "user recreated":
-				require.NoError(t, authenticator.DeleteUser("bob"))
-				_, err := authenticator.CreateUser("bob", "password123", []Role{"ops", RoleViewer})
-				require.NoError(t, err)
-				want = []string{}
 			}
 			claims, err = authenticator.ValidateToken(token.AccessToken)
 			require.NoError(t, err)
@@ -107,10 +102,63 @@ func BenchmarkValidateTokenCurrentRoles(b *testing.B) {
 	})
 }
 
-// Claims without a username (or none at all) are returned as they are.
-func TestCurrentRoleClaimsWithoutUsername(t *testing.T) {
+// A deleted or disabled user's token, and the token of an account deleted
+// and created again under the same name, no longer authorize anything:
+// ValidateToken refuses them, and a fresh login of the new account works.
+func TestTokenOfRemovedAccountAuthorizesNothing(t *testing.T) {
+	for _, change := range []string{"deleted", "disabled", "deleted and recreated"} {
+		t.Run(change, func(t *testing.T) {
+			authenticator, _ := currentRolesAuthenticator(t)
+			_, err := authenticator.CreateUser("carol", "password123", []Role{RoleAdmin})
+			require.NoError(t, err)
+			token, _, err := authenticator.Authenticate("carol", "password123", "", "")
+			require.NoError(t, err)
+			_, err = authenticator.ValidateToken(token.AccessToken)
+			require.NoError(t, err)
+			switch change {
+			case "deleted":
+				require.NoError(t, authenticator.DeleteUser("carol"))
+			case "disabled":
+				require.NoError(t, authenticator.DisableUser("carol"))
+			case "deleted and recreated":
+				require.NoError(t, authenticator.DeleteUser("carol"))
+				_, err = authenticator.CreateUser("carol", "password123", []Role{RoleAdmin})
+				require.NoError(t, err)
+			}
+			_, err = authenticator.ValidateToken(token.AccessToken)
+			require.ErrorIs(t, err, ErrInvalidToken)
+			// Twice: the first refusal leaves the cached token as it was.
+			_, err = authenticator.ValidateToken(token.AccessToken)
+			require.ErrorIs(t, err, ErrInvalidToken)
+			if change == "deleted and recreated" {
+				fresh, _, err := authenticator.Authenticate("carol", "password123", "", "")
+				require.NoError(t, err)
+				claims, err := authenticator.ValidateToken(fresh.AccessToken)
+				require.NoError(t, err)
+				require.Equal(t, []string{"admin"}, claims.Roles)
+			}
+		})
+	}
+}
+
+// CurrentClaims refuses no claims and claims naming no stored account, and
+// keeps a cluster node's token, the one identity that is not a user
+// account, with its own roles.
+func TestCurrentClaimsIdentities(t *testing.T) {
 	authenticator, _ := currentRolesAuthenticator(t)
-	require.Nil(t, authenticator.currentRoleClaims(nil))
-	claims := &JWTClaims{Sub: "service", Roles: []string{"viewer"}}
-	require.Same(t, claims, authenticator.currentRoleClaims(claims))
+	_, err := authenticator.CurrentClaims(nil)
+	require.ErrorIs(t, err, ErrInvalidToken)
+	_, err = authenticator.CurrentClaims(&JWTClaims{Sub: "service", Roles: []string{"admin"}})
+	require.ErrorIs(t, err, ErrInvalidToken)
+
+	token, err := authenticator.GenerateClusterToken("node-2", RoleAdmin)
+	require.NoError(t, err)
+	claims, err := authenticator.ValidateToken(token)
+	require.NoError(t, err)
+	require.Equal(t, []string{"admin"}, claims.Roles)
+	token, err = authenticator.GenerateClusterTokenWithExpiry("node-3", RoleViewer, 0)
+	require.NoError(t, err)
+	claims, err = authenticator.ValidateToken(token)
+	require.NoError(t, err)
+	require.Equal(t, []string{"viewer"}, claims.Roles)
 }
