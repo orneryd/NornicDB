@@ -10,6 +10,51 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// A global aggregate with no input row restores original imports, while a
+// nonempty group retains rebound values. This is the existing extension's
+// runtime behavior, including when emptiness depends on parameters.
+func TestScopedCallEmptyAggregateImportType(t *testing.T) {
+	for _, tc := range []struct {
+		name, query string
+		rows        []interface{}
+		want        [][]interface{}
+	}{
+		{"map_to_integer", "WITH {factor:11} AS x CALL (%s) { WITH 2 AS x UNWIND [] AS y WITH count(*) AS c RETURN x.factor*3 AS a } RETURN a", nil, [][]interface{}{{int64(33)}}},
+		{"integer_to_map", "WITH 11 AS x CALL (%s) { WITH {factor:2} AS x UNWIND [] AS y WITH count(*) AS c RETURN x*3 AS a } RETURN a", nil, [][]interface{}{{int64(33)}}},
+		{"filtered", "WITH {factor:11} AS x CALL (%s) { WITH 2 AS x WHERE false WITH count(*) AS c RETURN x.factor*3 AS a } RETURN a", nil, [][]interface{}{{int64(33)}}},
+		{"no_rebind", "WITH {factor:11} AS x CALL (%s) { UNWIND [] AS y WITH count(*) AS c RETURN x.factor*3 AS a } RETURN a", nil, [][]interface{}{{int64(33)}}},
+		{"dynamic_empty", "WITH {factor:11} AS x CALL (%s) { WITH 2 AS x UNWIND $rows AS y WITH count(*) AS c RETURN (CASE WHEN c=0 THEN x.factor ELSE x END)*3 AS a } RETURN a", []interface{}{}, [][]interface{}{{int64(33)}}},
+		{"dynamic_nonempty", "WITH {factor:11} AS x CALL (%s) { WITH 2 AS x UNWIND $rows AS y WITH count(*) AS c RETURN (CASE WHEN c=0 THEN x.factor ELSE x END)*3 AS a } RETURN a", []interface{}{int64(1)}, [][]interface{}{{int64(6)}}},
+		{"aggregate_alias_wins", "WITH {factor:11} AS x CALL (%s) { WITH 2 AS x UNWIND [] AS y WITH count(*) AS x RETURN x*3 AS a } RETURN a", nil, [][]interface{}{{int64(0)}}},
+		{"grouped_empty", "WITH {factor:11} AS x CALL (%s) { WITH 2 AS x UNWIND [] AS y WITH y, count(*) AS c RETURN x*3 AS a } RETURN a", nil, [][]interface{}{}},
+	} {
+		for _, imports := range []string{"*", "x"} {
+			for _, explicit := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/imports=%s/explicit=%t", tc.name, imports, explicit), func(t *testing.T) {
+					exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_empty_aggregate"))
+					ctx := context.Background()
+					if explicit {
+						_, err := exec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+						t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+					}
+					result, err := exec.Execute(ctx, fmt.Sprintf(tc.query, imports), map[string]interface{}{"rows": tc.rows})
+					require.NoError(t, err)
+					if len(tc.want) == 0 {
+						require.Empty(t, result.Rows)
+					} else {
+						require.Equal(t, tc.want, result.Rows)
+					}
+					if explicit {
+						_, err = exec.Execute(ctx, "COMMIT", nil)
+						require.NoError(t, err)
+					}
+				})
+			}
+		}
+	}
+}
+
 // Rebinding an imported name is a NornicDB extension. Its current value and
 // type survive later WITH horizons; Neo4j rejects imported-name shadowing.
 func TestScopedCallReboundImportType(t *testing.T) {
