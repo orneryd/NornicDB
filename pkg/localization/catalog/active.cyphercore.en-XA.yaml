@@ -244,6 +244,8 @@
   other: "[!! Not supported: {{.Field}} !!]"
 - id: cyphercore.temporal_fields_conflict
   other: "[!! {{.Field}} cannot be selected together with {{.Other}}. !!]"
+- id: cyphercore.temporal_offset_mismatch
+  other: "[!! Timezone and offset do not match: {{.Input}} !!]"
 - id: cyphercore.temporal_epoch_invalid
   other: "[!! Cannot construct date time from: {{.Value}} !!]"
 - id: cyphercore.temporal_field_requires_field

@@ -437,6 +437,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.temporal_map_invalid", Constructor: "CypherCoreTemporalMapInvalid", Fields: []string{"Type", "Value"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.temporal_missing_component", Constructor: "CypherCoreTemporalMissingComponent", Fields: []string{"Component", "Value"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.temporal_no_such_field", Constructor: "CypherCoreTemporalNoSuchField", Fields: []string{"Field"}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.temporal_offset_mismatch", Constructor: "CypherCoreTemporalOffsetMismatch", Fields: []string{"Input"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.temporal_pattern_invalid_character", Constructor: "CypherCoreTemporalPatternInvalidCharacter", Fields: []string{"Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.temporal_pattern_mismatch", Constructor: "CypherCoreTemporalPatternMismatch", Fields: []string{"Input", "Pattern", "Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.temporal_pattern_requires_string", Constructor: "CypherCoreTemporalPatternRequiresString", Fields: []string{}, PluralForms: []string{"other"}},

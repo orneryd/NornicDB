@@ -703,53 +703,81 @@ func normalizePropsMap(value interface{}, source string) (map[string]interface{}
 }
 
 func normalizePropValue(value interface{}) interface{} {
+	normalized, _ := normalizedPropValue(value)
+	return normalized
+}
+
+// normalizedPropValue is the one property value normalizer: Go integers
+// become int64, float32 float64 and Go times DateTimes, in lists and maps
+// too. A container is copied only when a descendant changes; rewritten
+// describes a value conversion, independently of a writer's ownership copy.
+func normalizedPropValue(value interface{}) (normalized interface{}, rewritten bool) {
 	switch v := value.(type) {
 	case time.Time:
-		return CypherDateTime{Time: v}
+		return dateTimeFromGoTime(v), true
 	case *time.Time:
 		if v == nil {
-			return nil
+			return nil, true
 		}
-		return CypherDateTime{Time: *v}
+		return dateTimeFromGoTime(*v), true
 	case int:
-		return int64(v)
+		return int64(v), true
 	case int8:
-		return int64(v)
+		return int64(v), true
 	case int16:
-		return int64(v)
+		return int64(v), true
 	case int32:
-		return int64(v)
+		return int64(v), true
 	case int64:
-		return v
+		return v, false
 	case uint:
-		return int64(v)
+		return int64(v), true
 	case uint8:
-		return int64(v)
+		return int64(v), true
 	case uint16:
-		return int64(v)
+		return int64(v), true
 	case uint32:
-		return int64(v)
+		return int64(v), true
 	case uint64:
 		if v > math.MaxInt64 {
-			return float64(v)
+			return float64(v), true
 		}
-		return int64(v)
+		return int64(v), true
 	case float32:
-		return float64(v)
+		return float64(v), true
 	case []interface{}:
-		out := make([]interface{}, len(v))
+		var out []interface{}
 		for i, item := range v {
-			out[i] = normalizePropValue(item)
+			stored, changed := normalizedPropValue(item)
+			if changed && out == nil {
+				out = make([]interface{}, len(v))
+				copy(out, v)
+			}
+			if out != nil {
+				out[i] = stored
+			}
 		}
-		return out
+		if out != nil {
+			return out, true
+		}
+		return value, false
 	case map[string]interface{}:
-		out := make(map[string]interface{}, len(v))
+		var out map[string]interface{}
 		for k, item := range v {
-			out[k] = normalizePropValue(item)
+			stored, changed := normalizedPropValue(item)
+			if changed && out == nil {
+				out = cloneStringAnyMap(v)
+			}
+			if out != nil {
+				out[k] = stored
+			}
 		}
-		return out
+		if out != nil {
+			return out, true
+		}
+		return value, false
 	default:
-		return value
+		return value, false
 	}
 }
 

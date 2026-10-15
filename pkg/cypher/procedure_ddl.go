@@ -69,9 +69,6 @@ func (e *StorageExecutor) executeCreateProcedure(ctx context.Context, cypher str
 	if e.txContext != nil && e.txContext.active {
 		return nil, localizedError(localization.CypherProceduresCreateInTransaction(), nil)
 	}
-	if params := getParamsFromContext(ctx); params != nil {
-		cypher = e.substituteParams(cypher, params)
-	}
 	m := createProcedurePattern.FindStringSubmatch(strings.TrimSpace(cypher))
 	if len(m) != 6 {
 		return nil, localizedError(localization.CypherProceduresCreateInvalidSyntax(), nil)

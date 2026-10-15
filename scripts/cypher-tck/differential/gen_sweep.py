@@ -965,6 +965,71 @@ for statements in [
     add("system-administration", "transaction", query, "tx")
     cases[-1]["statements"] = statements
 
+# TemporalBinding: a named-zone overlap must retain the selected offset through every
+# mutation source and action. WITH-bound maps exercise the same expression
+# paths as parameter maps; the Bolt regression supplies driver temporals.
+for text in ["2026-10-25T01:30:00+01:00[Europe/London]",
+             "2026-10-25T01:30:00.123456789+01:00[Europe/London]",
+             "2026-10-25T01:30:00Z[Europe/London]",
+             "2026-11-01T01:30:00.123456789-04:00[America/New_York]",
+             "2026-11-01T01:30:00.123456789-05:00[America/New_York]",
+             "2026-10-25T01:30:00[Europe/London]",
+             "2026-03-29T01:30:00[Europe/London]",
+             "2026-11-01T01:30:00[America/New_York]",
+             "2026-03-08T02:30:00[America/New_York]"]:
+    dt = f"datetime('{text}')"
+    add("temporal-map-offset", "constructor", f"WITH {dt} AS d RETURN d.epochSeconds AS e, toString(d) AS s")
+    for relationship in [False, True]:
+        pattern = "(n:TemporalBinding {id:'v'})"
+        lead = ""
+        if relationship:
+            pattern = "(a)-[n:TemporalBinding {id:'v'}]->(b)"
+            lead = "MATCH (a:Q {id:1}), (b:Q {id:2}) "
+        for source in ["m", "{t:d, ts:[d]}", f"{{t:{dt}, ts:[{dt}]}}"]:
+            binding = f"WITH {dt} AS d WITH d, {{t:d, ts:[d]}} AS m "
+            for route in ["create", "property", "replace", "create-add", "merge", "where-merge", "on-create", "on-match"]:
+                prefix = binding + lead
+                if route == "create":
+                    body = "CREATE " + ("(a)-[n:TemporalBinding {id:'v', t:d, ts:[d]}]->(b)" if relationship else "(n:TemporalBinding {id:'v', t:d, ts:[d]})")
+                elif route == "property":
+                    body = "CREATE " + pattern + " SET n.t=d, n.ts=[d]"
+                elif route == "replace":
+                    body = "CREATE " + pattern + f" SET n={source}, n.id='v'"
+                elif route == "create-add":
+                    body = "CREATE " + pattern + f" SET n += {source}"
+                elif route == "merge":
+                    body = "MERGE " + pattern + f" SET n += {source}"
+                elif route == "where-merge":
+                    prefix = binding + "WITH d, m WHERE m.t IS NOT NULL " + lead
+                    body = "MERGE " + pattern + f" SET n += {source}"
+                elif route == "on-create":
+                    body = "MERGE " + pattern + f" ON CREATE SET n += {source}"
+                else:
+                    body = "CREATE " + pattern + " WITH " + ("a, b, " if relationship else "") + "d, m MERGE " + pattern + f" ON MATCH SET n += {source}"
+                query = prefix + body + " RETURN n.t.epochSeconds AS e, toString(n.t) AS s, n.ts[0].epochSeconds AS le, toString(n.ts[0]) AS ls"
+                add("temporal-map-offset", ("rel-" if relationship else "node-") + route, query, "tx")
+
+
+for text in ["2026-10-25T01:30:00+02:00[Europe/London]",
+             "2026-03-29T01:30:00Z[Europe/London]",
+             "2026-03-29T01:30:00+01:00[Europe/London]",
+             "2026-03-08T02:30:00-05:00[America/New_York]",
+             "2026-03-08T02:30:00-04:00[America/New_York]",
+             "2026-11-01T01:30:00-06:00[America/New_York]",
+             "2026-07-01T12:00:00Z[Europe/London]",
+             "2026-01-01T12:00:00+01:00[Europe/London]"]:
+    add("temporal-map-offset", "conflicting-zone-offset", f"RETURN datetime('{text}')")
+
+for value in ["point({x:1.25,y:2.5})", "[true,false]"]:
+    for relationship in [False, True]:
+        pattern = "(n:TypedBinding)"
+        read = "MATCH (n:TypedBinding)"
+        if relationship:
+            pattern = "(a:TypedStart)-[n:TYPED_BINDING]->(b:TypedEnd)"
+            read = "MATCH (:TypedStart)-[n:TYPED_BINDING]->(:TypedEnd)"
+        add("temporal-map-offset", "typed-predicate", f"WITH {value} AS p CREATE {pattern} SET n.v=p WITH p {read} WHERE n.v=p MERGE (h:TypedHit) RETURN count(h)", "tx")
+        add("temporal-map-offset", "typed-case", f"WITH {value} AS p MERGE {pattern} SET n.v=CASE WHEN true THEN p ELSE null END RETURN n.v=p", "tx")
+
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:
     json.dump({"setup": SETUP, "cases": cases}, out, separators=(",", ":"))

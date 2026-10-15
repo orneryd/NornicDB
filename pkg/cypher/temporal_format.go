@@ -311,6 +311,33 @@ func formatPrintf(template string, values []interface{}) (interface{}, error) {
 
 // formatPrintfArgument is value as verb prints it, or the error for a value
 // verb can't print.
+// formatPrintfCollection is display text for format(), never query source.
+func formatPrintfCollection(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return quoteCypherStringLiteral(typed)
+	case nil:
+		return "null"
+	case []interface{}:
+		parts := make([]string, len(typed))
+		for index, item := range typed {
+			parts[index] = formatPrintfCollection(item)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case map[string]interface{}:
+		parts := make([]string, 0, len(typed))
+		for key, item := range typed {
+			if !isSimpleCypherName(key) {
+				key = quoteCypherStringLiteral(key)
+			}
+			parts = append(parts, key+": "+formatPrintfCollection(item))
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	default:
+		return fmt.Sprint(value)
+	}
+}
+
 func formatPrintfArgument(spec string, verb byte, value interface{}) (interface{}, error) {
 	switch verb {
 	case 's', 'q', 'v':
@@ -318,7 +345,7 @@ func formatPrintfArgument(spec string, verb byte, value interface{}) (interface{
 		case string:
 			return typed, nil
 		case []interface{}, map[string]interface{}:
-			return valueToCypherLiteral(typed), nil
+			return formatPrintfCollection(typed), nil
 		}
 		return formatCypherValueString(value), nil
 	case 'd', 'b', 'o', 'c', 'U', 'x', 'X':

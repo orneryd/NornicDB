@@ -9,14 +9,12 @@ import (
 )
 
 // A pipeline MATCH or MERGE clause evaluates its pattern's property map for
-// every row. The general route renders each row's values into the pattern
-// text and parses that text again (materializePipelinePropertyExpressions,
-// parseNodePattern). A pattern template parses the clause text once and
-// evaluates each property expression for the row directly: the same values,
-// without the text round trip. An expression the row evaluator doesn't
-// resolve (a parameter path the text parser reads, …) makes that row take
-// the general route. TestPipelinePatternTemplateMatchesTextRoute runs both on
-// the same values.
+// every row. A pattern template parses the clause text once and evaluates
+// each property expression for the row directly. An expression the row
+// evaluator doesn't resolve (a parameter path the general parser reads, …)
+// makes that row take the general route. That route parses the original text
+// with the row's typed bindings in its context.
+// TestPipelinePatternTemplateMatchesTextRoute runs both on the same values.
 
 // pipelinePropertyExpression is one key: expression pair of a pattern's
 // property map.

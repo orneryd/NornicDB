@@ -1294,6 +1294,13 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		}}
 	}
 	switch typed := value.(type) {
+	case []byte:
+		// Neo4j HTTP writes the signed Java byte values, including in maps.
+		bytes := make([]int8, len(typed))
+		for index, value := range typed {
+			bytes[index] = int8(value)
+		}
+		return bytes, []interface{}{nil}
 	case float32:
 		return transactionHTTPFloat(float64(typed), 32), []interface{}{nil}
 	case float64:

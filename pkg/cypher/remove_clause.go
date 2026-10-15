@@ -182,15 +182,11 @@ func (e *StorageExecutor) removeProperty(ctx context.Context, properties map[str
 
 // pipelineRowWriteContext is the context a write clause (SET, REMOVE)
 // evaluates a row's expressions in: the row's nodes and relationships as
-// entity scopes, and its other values as variables, also reachable as
-// parameters for resolveContextPathRef.
+// entity scopes, and its other values as variables. Request parameters keep
+// their own namespace even when a row binds a variable with the same name.
 func (e *StorageExecutor) pipelineRowWriteContext(ctx context.Context, row pipelineRow) (context.Context, map[string]*storage.Node, map[string]*storage.Edge) {
 	nodes := make(map[string]*storage.Node)
 	rels := make(map[string]*storage.Edge)
-	params := make(map[string]interface{})
-	for name, value := range getParamsFromContext(ctx) {
-		params[name] = value
-	}
 	var values map[string]interface{}
 	for name, value := range row {
 		switch entity := value.(type) {
@@ -199,14 +195,13 @@ func (e *StorageExecutor) pipelineRowWriteContext(ctx context.Context, row pipel
 		case *storage.Edge:
 			rels[name] = entity
 		default:
-			params[name] = value
 			if values == nil {
 				values = valueBindingsLayer(ctx, len(row))
 			}
 			values[name] = value
 		}
 	}
-	rowCtx := withParams(ctx, params)
+	rowCtx := ctx
 	if values != nil {
 		rowCtx = withValueBindings(rowCtx, values)
 	}

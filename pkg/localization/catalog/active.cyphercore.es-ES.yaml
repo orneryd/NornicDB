@@ -244,6 +244,8 @@
   other: "No admitido: {{.Field}}"
 - id: cyphercore.temporal_fields_conflict
   other: "{{.Field}} no se puede seleccionar junto con {{.Other}}."
+- id: cyphercore.temporal_offset_mismatch
+  other: "La zona horaria y el desfase no coinciden: {{.Input}}"
 - id: cyphercore.temporal_epoch_invalid
   other: "No se puede construir una fecha y hora a partir de: {{.Value}}"
 - id: cyphercore.temporal_field_requires_field

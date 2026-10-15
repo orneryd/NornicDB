@@ -927,7 +927,7 @@ func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expression
 	ctx = withQueryParams(ctx, values)
 	out := make([]string, len(expressions))
 	for i, expression := range expressions {
-		value, ok := e.evaluateRowExpressionWithContext(ctx, e.substituteParams(expression, values), pipelineRow(values))
+		value, ok := e.evaluateRowExpressionWithContext(ctx, expression, pipelineRow(values))
 		if !ok {
 			if err, undefined := undefinedVariableError(expression); undefined {
 				return nil, err
