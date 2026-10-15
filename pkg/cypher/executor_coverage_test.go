@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -961,8 +962,10 @@ func TestResolveReturnItemDifferentVariable(t *testing.T) {
 	// "Variable `m` not defined" SyntaxError, not null.
 	_, err = exec.Execute(ctx, "MATCH (n:DiffVar) RETURN m.val", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
-	require.Contains(t, err.Error(), "Variable `m` not defined")
+	code, classified := nornicerrors.Neo4jStatus(err)
+	require.True(t, classified)
+	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
+	require.EqualError(t, err, "Variable `m` not defined")
 }
 
 func TestDbSchemaVisualizationWithRelationships(t *testing.T) {
