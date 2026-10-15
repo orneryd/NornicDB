@@ -18,6 +18,13 @@ var (
 // functions can vary over time (or be inherently non-deterministic) without any writes.
 // Those queries should not be cached.
 func isCacheableReadQuery(cypher string) bool {
+	return cacheableReadQuery(cypher, 0)
+}
+
+func cacheableReadQuery(cypher string, depth int) bool {
+	if depth >= 16 {
+		return false
+	}
 	cypher = classificationText(cypher)
 	upper := upperASCII(cypher)
 	if strings.Contains(upper, "DB.STATS.") {
@@ -60,7 +67,9 @@ func isCacheableReadQuery(cypher string) bool {
 
 	// Inference is non-cacheable by default; allow explicit opt-in via request map.
 	if strings.Contains(upper, "CALL DB.INFER(") {
-		return inferCacheTrueRe.MatchString(cypher)
+		if !inferCacheTrueRe.MatchString(cypher) {
+			return false
+		}
 	}
 
 	// A DBMS procedure reports the server's live state (its connections,
@@ -77,6 +86,9 @@ func isCacheableReadQuery(cypher string) bool {
 		if globalProcedureRegistry.callsUserProcedure(cypher) {
 			return false
 		}
+		if strings.Contains(upper, "APOC.") && !cacheableDynamicStatements(cypher, depth) {
+			return false
+		}
 		for _, procedure := range registeredProceduresForCalls(cypher) {
 			if procedure.Mode == ProcedureModeDBMS {
 				return false
@@ -84,5 +96,43 @@ func isCacheableReadQuery(cypher string) bool {
 		}
 	}
 
+	return true
+}
+
+// cacheableDynamicStatements follows literal executable arguments through the
+// same cache policy as the outer statement. Parameters and row expressions
+// are resolved during execution, so their outer results cannot be reused.
+func cacheableDynamicStatements(query string, depth int) bool {
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
+	for from := 0; from < len(query); {
+		at := keywordIndexFrom(query, "CALL", from, opts)
+		if at < 0 {
+			break
+		}
+		from = at + len("CALL")
+		name, ok := procedureNameAt(query, queryGapEnd(query, from))
+		if !ok {
+			continue
+		}
+		switch name = lowerASCII(name); name {
+		case "apoc.cypher.run", "apoc.cypher.doitall":
+			args := explicitProcedureArgumentTexts(query[at:])
+			if len(args) == 0 || !isWholeCypherQuotedString(args[0]) {
+				return false
+			}
+			statement, decoded := decodeCypherQuotedString(args[0])
+			requirements := QueryPermissionRequirements(statement)
+			if !decoded || requirements.Write || requirements.Schema || requirements.Admin || !cacheableReadQuery(statement, depth+1) {
+				return false
+			}
+		default:
+			if strings.HasPrefix(name, "apoc.cypher.") || strings.HasPrefix(name, "apoc.periodic.") ||
+				strings.HasPrefix(name, "apoc.do.") || name == "apoc.when" || name == "apoc.case" ||
+				name == "apoc.export.json.query" || name == "apoc.export.csv.query" {
+				return false
+			}
+		}
+	}
 	return true
 }

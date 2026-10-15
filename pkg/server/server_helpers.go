@@ -328,30 +328,6 @@ func isMutationQuery(query string) bool {
 	return requirements.Write || requirements.Schema
 }
 
-// missingQueryPermission is the permission query lacks on dbName for the
-// principal, from the one decision (cypher.MissingPermission) over the
-// principal's resolver, or "".
-func (s *Server) missingQueryPermission(claims *auth.JWTClaims, dbName, query string) auth.Permission {
-	if !s.isRBACEnforced() {
-		return ""
-	}
-	var roles []string
-	if claims != nil {
-		roles = claims.Roles
-	}
-	access := s.principalAccess(claims)
-	allows := func(permission string) bool { return access.Allows(dbName, permission) }
-	return auth.Permission(cypher.MissingPermission(cypher.QueryPermissionRequirements(query), allows, s.ProcedureGrantChecker(roles)))
-}
-
-func (s *Server) withDatabasePermissionChecker(ctx context.Context, claims *auth.JWTClaims, dbName string) context.Context {
-	if !s.isRBACEnforced() {
-		return ctx
-	}
-	access := s.principalAccess(claims)
-	return cypher.WithPermissionChecker(ctx, func(permission string) bool { return access.Allows(dbName, permission) })
-}
-
 // canAccessGraph reports whether the principal may use graph, a request's
 // database: a database, an alias, or a composite constituent, which needs
 // access to its composite and its database (graphAccess), as the executor

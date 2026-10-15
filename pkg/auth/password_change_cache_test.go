@@ -26,9 +26,9 @@ func TestPasswordChangeForgetsCachedCredentials(t *testing.T) {
 	authenticator.OnPasswordChange(cache.ForgetUser)
 	authenticator.OnPasswordChange(nil)
 	(*Authenticator)(nil).OnPasswordChange(cache.ForgetUser)
-	cache.Set("bob", "password123", &JWTClaims{Username: "bob"})
-	cache.SetFromHeader("Basic Ym9iOnBhc3N3b3JkMTIz", &JWTClaims{Username: "bob"})
-	cache.Set("carol", "password123", &JWTClaims{Username: "carol"})
+	cache.Set("bob", "password123", &JWTClaims{Username: "bob"}, cache.Generation())
+	cache.SetFromHeader("Basic Ym9iOnBhc3N3b3JkMTIz", &JWTClaims{Username: "bob"}, cache.Generation())
+	cache.Set("carol", "password123", &JWTClaims{Username: "carol"}, cache.Generation())
 
 	require.Error(t, authenticator.ChangePassword("bob", "wrong-password", "newPassword456"))
 	_, cached := cache.Get("bob", "password123")

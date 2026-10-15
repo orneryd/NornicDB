@@ -101,7 +101,7 @@ func TestBasicAuthCache_GetSet_ByCredentials(t *testing.T) {
 		t.Skip("cache not created")
 	}
 	claims := &JWTClaims{Username: "bob", Sub: "bob-id"}
-	c.Set("bob", "password123", claims)
+	c.Set("bob", "password123", claims, c.Generation())
 
 	got, ok := c.Get("bob", "password123")
 	assert.True(t, ok)

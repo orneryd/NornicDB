@@ -14,6 +14,31 @@ func TestIsCacheableReadQuery_NewPrimitives(t *testing.T) {
 			expect: false,
 		},
 		{
+			name:   "literal dynamic scalar remains cacheable",
+			query:  "CALL apoc.cypher.run('RETURN 1 AS v', {}) YIELD value RETURN value.v",
+			expect: true,
+		},
+		{
+			name:   "parameterized dynamic body executes each time",
+			query:  "CALL apoc.cypher.run($statement, {}) YIELD value RETURN value",
+			expect: false,
+		},
+		{
+			name:   "computed dynamic body executes each time",
+			query:  "WITH $statement AS body CALL apoc.cypher.run(body, {}) YIELD value RETURN value",
+			expect: false,
+		},
+		{
+			name:   "nested executable parameter",
+			query:  "CALL apoc.cypher.run('CALL apoc.cypher.run($statement, {}) YIELD value RETURN value', {statement: $statement}) YIELD value RETURN value",
+			expect: false,
+		},
+		{
+			name:   "literal nested write",
+			query:  "CALL apoc.cypher.run('CREATE (:Created)', {}) YIELD value RETURN value",
+			expect: false,
+		},
+		{
 			name:   "nested statistics state not cacheable",
 			query:  "CALL { CALL db.stats.retrieve('QUERIES') YIELD data RETURN data } RETURN data",
 			expect: false,

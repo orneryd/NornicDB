@@ -25,6 +25,7 @@ type BasicAuthCache struct {
 	entries    map[[32]byte]basicAuthCacheEntry
 	maxEntries int
 	ttl        time.Duration
+	generation uint64
 }
 
 type basicAuthCacheEntry struct {
@@ -53,11 +54,11 @@ func (c *BasicAuthCache) GetFromHeader(authHeader string) (*JWTClaims, bool) {
 }
 
 // SetFromHeader caches claims using the full Basic auth header.
-func (c *BasicAuthCache) SetFromHeader(authHeader string, claims *JWTClaims) {
+func (c *BasicAuthCache) SetFromHeader(authHeader string, claims *JWTClaims, generation uint64) {
 	if c == nil || authHeader == "" || claims == nil {
 		return
 	}
-	c.set(basicAuthCacheKeyFromHeader(authHeader), claims)
+	c.set(basicAuthCacheKeyFromHeader(authHeader), claims, generation)
 }
 
 // Get retrieves cached claims using username/password (when header isn't available).
@@ -69,11 +70,22 @@ func (c *BasicAuthCache) Get(username, password string) (*JWTClaims, bool) {
 }
 
 // Set caches claims using username/password (when header isn't available).
-func (c *BasicAuthCache) Set(username, password string, claims *JWTClaims) {
+func (c *BasicAuthCache) Set(username, password string, claims *JWTClaims, generation uint64) {
 	if c == nil || username == "" || password == "" || claims == nil {
 		return
 	}
-	c.set(basicAuthCacheKeyFromCredentials(username, password), claims)
+	c.set(basicAuthCacheKeyFromCredentials(username, password), claims, generation)
+}
+
+// Generation captures the cache publication generation before credentials are
+// authenticated. Set and SetFromHeader publish only within that generation.
+func (c *BasicAuthCache) Generation() uint64 {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.generation
 }
 
 // ForgetUser drops every cached result of username, so a password that was
@@ -85,6 +97,7 @@ func (c *BasicAuthCache) ForgetUser(username string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.generation++
 	for key, entry := range c.entries {
 		if entry.claims != nil && entry.claims.Username == username {
 			delete(c.entries, key)
@@ -117,7 +130,7 @@ func (c *BasicAuthCache) get(key [32]byte) (*JWTClaims, bool) {
 	return cloneJWTClaims(entry.claims), true
 }
 
-func (c *BasicAuthCache) set(key [32]byte, claims *JWTClaims) {
+func (c *BasicAuthCache) set(key [32]byte, claims *JWTClaims, generation uint64) {
 	if c == nil || claims == nil {
 		return
 	}
@@ -127,6 +140,9 @@ func (c *BasicAuthCache) set(key [32]byte, claims *JWTClaims) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if generation != c.generation {
+		return
+	}
 
 	// Opportunistic cleanup of expired entries.
 	for k, entry := range c.entries {

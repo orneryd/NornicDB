@@ -363,7 +363,8 @@ type PermissionChecker func(permission string) bool
 type permissionCheckerKey struct{}
 
 // DatabasePermissionResolver answers whether the caller holds an entitlement
-// for the database where a statement is executing.
+// for the database where a statement is executing. "access" checks selection
+// of a containing composite or alias; data permissions apply to its target.
 type DatabasePermissionResolver func(database, permission string) bool
 
 type databaseAuthorization struct {
@@ -463,19 +464,42 @@ func GraphAccess(manager DatabaseManagerInterface, graph string, canAccess func(
 	return dataDatabase, true
 }
 
-// authorizeSelectedDatabase checks that the principal may use database,
-// a graph the statement selects: each database AccessDatabases lists, with
-// the real statement's requirements through the same decision as execution.
+// authorizeSelectedDatabase owns the selection and permission decision for a
+// statement or fragment. Each containing composite or alias needs access;
+// the physical target needs the statement's data permissions. An empty name
+// selects the request's execution database from the context.
 func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, database, query string) error {
-	if _, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization); !ok {
-		return nil
+	authorization, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization)
+	if !ok {
+		return AuthorizeQuery(ctx, query)
+	}
+	selectionOnly := false
+	if database != "" {
+		_, body := parseExecutionMode(query)
+		body = body[firstExecutableCypherOffset(body):]
+		// A shell selection can precede another USE or a Fabric statement.
+		// Those statements decide data permissions on their own targets.
+		selectionOnly = startsWithKeywordFold(body, "USE") ||
+			e.dbManager != nil && e.dbManager.IsCompositeDatabase(database) && e.shouldUseFabricPlanner(body)
+	}
+	if database == "" {
+		database = authorization.database
+		if database == "" {
+			database = e.currentDatabaseName()
+		}
 	}
 	var manager DatabaseManagerInterface
 	if e.dbManager != nil {
 		manager = e.dbManager
 	}
 	databases, listErr := AccessDatabases(manager, database)
-	for _, selected := range databases {
+	for i, selected := range databases {
+		if selectionOnly || i < len(databases)-1 && listErr == nil {
+			if err := authorizeDatabase(ctx, selected, "access"); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := AuthorizeQuery(withExecutionDatabase(ctx, selected), query); err != nil {
 			return err
 		}
@@ -579,8 +603,8 @@ func principalPermissions(ctx context.Context) func(permission string) bool {
 	return func(permission string) bool { return auth.EntitlementsAllow(entitlements, permission) }
 }
 
-// MissingPermission is the one authorization decision, which the executor
-// (AuthorizeQuery) and the HTTP and Bolt request checks share: the first
+// MissingPermission is the entitlement decision used by statement execution
+// (AuthorizeQuery) and non-Cypher consumers: the first
 // permission requirements need that allows denies, in Neo4j's order
 // (schema, admin, write, read), or "" when allows grants them all. A query
 // that needs admin only for procedures that allowsBoosted grants every one
@@ -632,6 +656,9 @@ func (p PrincipalAccess) Allows(graph, permission string) bool {
 			return false
 		}
 		database = target
+	}
+	if permission == "access" {
+		return true
 	}
 	if p.DatabaseAccess != nil && (permission == "read" || permission == "write") {
 		access := p.DatabaseAccess(database)

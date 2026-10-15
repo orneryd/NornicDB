@@ -639,6 +639,7 @@ func (s *Server) handleBasicAuth(ctx context.Context, authHeader string) (*auth.
 	}
 
 	// Authenticate and get user
+	generation := s.basicAuthCache.Generation()
 	_, user, err := s.authenticator.Authenticate(username, password, clientIP, "gRPC")
 	if err != nil {
 		return nil, err
@@ -658,7 +659,7 @@ func (s *Server) handleBasicAuth(ctx context.Context, authHeader string) (*auth.
 	}
 
 	if s.basicAuthCache != nil {
-		s.basicAuthCache.Set(username, password, claims)
+		s.basicAuthCache.Set(username, password, claims, generation)
 	}
 
 	return claims, nil

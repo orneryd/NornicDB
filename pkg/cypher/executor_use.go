@@ -252,10 +252,24 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 	if err != nil {
 		return nil, err
 	}
+	var result *ExecuteResult
 	if nested {
-		return scopedExec.executeInternal(ctx, query, params)
+		result, err = scopedExec.executeInternal(ctx, query, params)
+	} else {
+		result, err = scopedExec.Execute(ctx, query, params)
 	}
-	return scopedExec.Execute(ctx, query, params)
+	if result != nil {
+		// A routed result can come from a shared cache. Attach the selected
+		// database to a private copy for transport metadata and entity ids.
+		routed := *result
+		routed.Metadata = make(map[string]interface{}, len(result.Metadata)+1)
+		for key, value := range result.Metadata {
+			routed.Metadata[key] = value
+		}
+		routed.Metadata["db"] = GetUseDatabaseFromContext(ctx)
+		result = &routed
+	}
+	return result, err
 }
 
 // useDatabase resolves the database db a USE selects for query and applies

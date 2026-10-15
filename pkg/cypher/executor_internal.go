@@ -109,7 +109,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if routed != e {
 		return routed.executeInternal(ctx, cypher, params)
 	}
-	if err := AuthorizeQuery(ctx, cypher); err != nil {
+	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
 		return nil, err
 	}
 	if err := e.systemDatabaseWriteError(cypher); err != nil {

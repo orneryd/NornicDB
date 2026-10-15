@@ -495,7 +495,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 		return e.executeOnDatabase(ctx, use.Name, remaining, params, false)
 	}
-	if err := AuthorizeQuery(ctx, cypher); err != nil {
+	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
 		return nil, err
 	}
 	if err := e.systemDatabaseWriteError(cypher); err != nil {

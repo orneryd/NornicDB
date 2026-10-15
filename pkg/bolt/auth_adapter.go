@@ -233,6 +233,7 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 	// - Account lockout (after failed attempts)
 	// - Account disabled status
 	// - Audit logging
+	generation := a.basicAuthCache.Generation()
 	_, user, err := a.auth.Authenticate(principal, credentials, "bolt", "Bolt/4.4")
 	if err != nil {
 		return nil, err
@@ -250,7 +251,7 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 			Username: user.Username,
 			Email:    user.Email,
 			Roles:    roles,
-		})
+		}, generation)
 	}
 
 	result := &BoltAuthResult{

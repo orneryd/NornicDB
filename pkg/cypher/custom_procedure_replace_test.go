@@ -50,12 +50,13 @@ func TestReplacedCustomProcedureIsNotServedFromTheCache(t *testing.T) {
 	require.True(t, isCacheableReadQuery("CALL apoc.cypher.run('RETURN 1 AS c', {}) YIELD value RETURN value"), "a query calling no custom procedure is cached")
 }
 
-// A call of a user procedure is recognised in any letter case, however the
-// registry keys the procedure's name (lower-cased, or exactly as registered),
-// so whether the call is cached doesn't depend on the key.
+// Cache recognition uses registered names independently of execution-key casing.
 func TestCallsUserProcedureMatchesAnyLetterCase(t *testing.T) {
 	registry := NewProcedureRegistry()
-	registry.user["custom.Tally"] = registeredProcedure{Spec: ProcedureSpec{Name: "custom.Tally"}, User: true}
+	require.NoError(t, registry.RegisterUser(ProcedureSpec{Name: "custom.Tally", Mode: ProcedureModeRead},
+		func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+			return &ExecuteResult{}, nil
+		}))
 	for _, query := range []string{
 		"CALL custom.Tally() YIELD c RETURN c",
 		"CALL custom.tally() YIELD c RETURN c",
@@ -64,6 +65,27 @@ func TestCallsUserProcedureMatchesAnyLetterCase(t *testing.T) {
 		require.True(t, registry.callsUserProcedure(query), query)
 	}
 	require.False(t, registry.callsUserProcedure("CALL db.labels() YIELD label RETURN label"))
+}
+
+func TestCallsUserProcedureWithExactRegistryKeys(t *testing.T) {
+	registry := NewProcedureRegistry()
+	require.NoError(t, registry.RegisterUser(ProcedureSpec{Name: "custom.CacheTick", Mode: ProcedureModeRead},
+		func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+			return &ExecuteResult{}, nil
+		}))
+	if procedure, ok := registry.user["custom.cachetick"]; ok {
+		delete(registry.user, "custom.cachetick")
+		registry.user["custom.CacheTick"] = procedure
+	}
+	for _, query := range []string{
+		"CALL custom.CacheTick() YIELD v RETURN v",
+		"CALL `custom`.`CacheTick`() YIELD v RETURN v",
+		"CALL apoc.cypher.run('CALL custom.CacheTick() YIELD v RETURN v', {}) YIELD value RETURN value",
+	} {
+		require.True(t, registry.callsUserProcedure(query), query)
+	}
+	_, executable := registry.Get("custom.cachetick")
+	require.False(t, executable)
 }
 
 // Installing, replacing or dropping a custom procedure needs the admin

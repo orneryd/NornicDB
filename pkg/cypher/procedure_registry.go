@@ -99,12 +99,14 @@ type ProcedureRegistry struct {
 	mu       sync.RWMutex
 	builtins map[string]registeredProcedure
 	user     map[string]registeredProcedure
+	userFold map[string]struct{}
 }
 
 func NewProcedureRegistry() *ProcedureRegistry {
 	return &ProcedureRegistry{
 		builtins: make(map[string]registeredProcedure),
 		user:     make(map[string]registeredProcedure),
+		userFold: make(map[string]struct{}),
 	}
 }
 
@@ -138,6 +140,7 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.user[key] = registeredProcedure{Spec: spec, Handler: handler, User: true}
+	r.userFold[lowerASCII(spec.Name)] = struct{}{}
 	return nil
 }
 
@@ -176,10 +179,8 @@ func (r *ProcedureRegistry) callsUserProcedure(query string) bool {
 		}
 		from = at + len("CALL")
 		if name, ok := procedureNameAt(query, from); ok {
-			for registered := range r.user {
-				if strings.EqualFold(name, registered) {
-					return true
-				}
+			if _, exists := r.userFold[lowerASCII(name)]; exists {
+				return true
 			}
 		}
 	}
@@ -215,6 +216,7 @@ func (r *ProcedureRegistry) ClearUser() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.user = make(map[string]registeredProcedure)
+	r.userFold = make(map[string]struct{})
 }
 
 func validateProcedureSpec(spec ProcedureSpec) error {

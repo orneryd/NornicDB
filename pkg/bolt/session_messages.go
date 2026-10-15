@@ -175,27 +175,6 @@ func (s *Session) handleRun(data []byte) error {
 		}
 	}
 
-	// The statement's permissions on this database: the one decision
-	// (cypher.MissingPermission) over the principal's resolver, as HTTP
-	// decides them.
-	if s.authResult != nil {
-		access := s.principalAccess(mode)
-		allows := func(permission string) bool { return access.Allows(dbName, permission) }
-		switch cypher.MissingPermission(requirements, allows, s.server.procedureGrants(s.authResult.Roles)) {
-		case "schema":
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.SchemaPermissionRequired())
-		case "admin":
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.AdminPermissionRequired())
-		case "write":
-			if access.DatabaseAccess != nil {
-				return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseWriteDenied(dbName))
-			}
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.WritePermissionRequired())
-		case "read":
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.ReadPermissionRequired())
-		}
-	}
-
 	// Keep explicit transactions pinned to the executor selected at BEGIN.
 	executor := s.executor
 	if s.inTransaction {
@@ -328,7 +307,13 @@ func (s *Session) handleRun(data []byte) error {
 		s.pendingFlush = true
 	}
 	s.lastQueryIsWrite = isWrite
-	s.lastQueryDatabase = dbName
+	resultDatabase := dbName
+	if result != nil {
+		if selected, ok := result.Metadata["db"].(string); ok && selected != "" {
+			resultDatabase = selected
+		}
+	}
+	s.lastQueryDatabase = resultDatabase
 	if s.inTransaction {
 		s.recordExplicitTransactionWrite(query, params, isWrite)
 	}
@@ -349,7 +334,7 @@ func (s *Session) handleRun(data []byte) error {
 		s.resultStreams[statementID] = &resultStream{
 			result:   result,
 			isWrite:  isWrite,
-			database: dbName,
+			database: resultDatabase,
 		}
 		s.latestStatementID = statementID
 		successMetadata := map[string]any{
