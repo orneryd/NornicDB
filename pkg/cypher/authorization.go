@@ -126,29 +126,52 @@ func procedureNameAt(query string, offset int) (string, bool) {
 			i++
 		}
 	}
-	var parts []string
+	// Keep the ordinary dotted name as a source slice. Only quoted parts
+	// or spaces around separators need normalization, shared by auth and CALL.
+	var normalized strings.Builder
+	normalizing := false
+	startName, endName, components := offset, offset, 0
 	for {
 		skipSpace()
 		if i >= len(query) {
 			break
 		}
-		if query[i] == '`' {
+		partStart := i
+		quoted := query[i] == '`'
+		var part string
+		if quoted {
 			end := strings.IndexByte(query[i+1:], '`')
 			if end < 0 {
 				return "", false
 			}
-			parts = append(parts, query[i+1:i+1+end])
+			part = query[i+1 : i+1+end]
 			i += end + 2
 		} else {
-			start := i
 			for i < len(query) && (query[i] == '_' || query[i] == '$' || query[i] >= '0' && query[i] <= '9' || query[i] >= 'a' && query[i] <= 'z' || query[i] >= 'A' && query[i] <= 'Z') {
 				i++
 			}
-			if i == start {
+			if i == partStart {
 				break
 			}
-			parts = append(parts, query[start:i])
+			part = query[partStart:i]
 		}
+		if components == 0 {
+			startName = partStart
+		}
+		if !normalizing && (quoted || components > 0 && partStart != endName+1) {
+			if components > 0 {
+				normalized.WriteString(query[startName:endName])
+			}
+			normalizing = true
+		}
+		if normalizing {
+			if components > 0 {
+				normalized.WriteByte('.')
+			}
+			normalized.WriteString(part)
+		}
+		endName = i
+		components++
 		skipSpace()
 		if i < len(query) && query[i] == '.' {
 			i++
@@ -156,10 +179,13 @@ func procedureNameAt(query string, offset int) (string, bool) {
 		}
 		break
 	}
-	if len(parts) == 0 {
+	if components == 0 {
 		return "", false
 	}
-	return strings.Join(parts, "."), true
+	if normalizing {
+		return normalized.String(), true
+	}
+	return query[startName:endName], true
 }
 
 func isSchemaPermissionQuery(query string) bool {

@@ -131,3 +131,29 @@ func TestProcedureCatalogMigrationFailuresPreserveRecord(t *testing.T) {
 		})
 	}
 }
+
+func TestProcedureNameReaderCanonicalComponents(t *testing.T) {
+	for _, tc := range []struct {
+		input, want string
+		found       bool
+	}{
+		{"db.labels()", "db.labels", true},
+		{"DB.Cdc.Query()", "DB.Cdc.Query", true},
+		{" db.cdc.query  ()", "db.cdc.query", true},
+		{"db.cdc . query()", "db.cdc.query", true},
+		{"db.`cdc`.query()", "db.cdc.query", true},
+		{"`db` . cdc . `query`()", "db.cdc.query", true},
+		{" `db.cdc.query`()", "db.cdc.query", true},
+		{"", "", false},
+		{" ", "", false},
+		{"{ RETURN 1 }", "", false},
+		{"(i) { RETURN 1 }", "", false},
+		{"db.`unterminated", "", false},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			name, found := procedureNameAt(tc.input, 0)
+			require.Equal(t, tc.found, found)
+			require.Equal(t, tc.want, name)
+		})
+	}
+}
