@@ -63,6 +63,14 @@ func (t *sizeTrackingEngine) GetInnerEngine() storage.Engine {
 	return t.Engine
 }
 
+// RecordMaterializedAccess preserves result-access accounting across the
+// database size-tracking wrapper.
+func (t *sizeTrackingEngine) RecordMaterializedAccess(entityID string) {
+	if recorder, ok := t.Engine.(interface{ RecordMaterializedAccess(string) }); ok {
+		recorder.RecordMaterializedAccess(entityID)
+	}
+}
+
 // RegisterSnapshotReader preserves MVCC lifecycle admission and tracking across
 // size-tracking wrapper boundaries.
 func (t *sizeTrackingEngine) RegisterSnapshotReader(info storage.SnapshotReaderInfo) func() {
