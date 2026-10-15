@@ -234,6 +234,12 @@ func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
 // caseOperandExpectedBefore). Every scanner of the CASE grammar reads its
 // keywords through it.
 func caseKeywordAt(s string, i int, keyword string) bool {
+	return caseKeywordAtMode(s, i, keyword, true)
+}
+
+// caseKeywordAtMode can use the non-balancing prefix reader when the closure
+// budget itself scans keywords, avoiding recursive balance scans.
+func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool {
 	if !matchKeywordAt(s, i, keyword) {
 		return false
 	}
@@ -247,7 +253,7 @@ func caseKeywordAt(s string, i int, keyword string) bool {
 	case "END":
 		// END follows a complete operand; where one is expected the word is
 		// a variable (ELSE end.id END).
-		if caseOperandExpectedBefore(s, i) {
+		if caseOperandExpectedBeforeMode(s, i, balancePrefix) {
 			return false
 		}
 	case "THEN", "ELSE":
@@ -258,7 +264,7 @@ func caseKeywordAt(s string, i int, keyword string) bool {
 			if caseSimpleTestContinuesAt(s, i+len(keyword)) {
 				return false
 			}
-		} else if caseOperandExpectedBefore(s, i) {
+		} else if caseOperandExpectedBeforeMode(s, i, balancePrefix) {
 			return false
 		}
 	case "WHEN":
@@ -270,7 +276,7 @@ func caseKeywordAt(s string, i int, keyword string) bool {
 			if caseSimpleTestContinuesAt(s, i+len(keyword)) {
 				return false
 			}
-		} else if caseOperandExpectedBefore(s, i) {
+		} else if caseOperandExpectedBeforeMode(s, i, balancePrefix) {
 			return false
 		}
 	case "CASE":
@@ -281,7 +287,7 @@ func caseKeywordAt(s string, i int, keyword string) bool {
 		// simple CASE's test when a nested CASE would leave the outer one
 		// without its END (CASE case WHEN 1 THEN case END; #1162).
 		if caseVariableNamedCase(s, i+len(keyword)) || casePreviousWordIn(s, i, "as") ||
-			(casePreviousWordIsCase(s, i) && caseNestedLacksEnd(s, i)) {
+			(casePreviousWordIsCase(s, i) && caseNestedLacksEnd(s, i, balancePrefix)) {
 			return false
 		}
 	}
@@ -298,6 +304,10 @@ func caseKeywordAt(s string, i int, keyword string) bool {
 // IN, AS, …). END always follows a complete operand, so a word end there is a
 // variable, as Neo4j reads ELSE end.id END and ELSE end END.id.
 func caseOperandExpectedBefore(s string, i int) bool {
+	return caseOperandExpectedBeforeMode(s, i, true)
+}
+
+func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
 	j := i - 1
 	for j >= 0 && isASCIISpace(s[j]) {
 		j--
@@ -333,7 +343,7 @@ func caseOperandExpectedBefore(s string, i int) bool {
 	case "case", "when", "then", "else":
 		// After the keyword an operand is expected; after a variable of that
 		// name, it is complete.
-		return caseKeywordAt(s, start, upperASCII(word))
+		return caseKeywordAtMode(s, start, upperASCII(word), balancePrefix)
 	case "with", "where", "return":
 		if word == "with" && casePreviousWordIn(s, start, "starts", "ends") {
 			return true // STARTS WITH, ENDS WITH
@@ -344,16 +354,16 @@ func caseOperandExpectedBefore(s string, i int) bool {
 		if !caseHasPreviousToken(s, start) {
 			return !caseSimpleTestContinuesAt(s, j+1)
 		}
-		return !caseOperandExpectedBefore(s, start)
+		return !caseOperandExpectedBeforeMode(s, start, balancePrefix)
 	case "and", "or", "xor", "in", "contains", "as":
 		// Infix keywords follow a complete operand. Where one is expected,
 		// or at the start of a CASE body read on its own (and WHEN 1 …), the
 		// word is a variable that completes one.
-		return caseHasPreviousToken(s, start) && !caseOperandExpectedBefore(s, start)
+		return caseHasPreviousToken(s, start) && !caseOperandExpectedBeforeMode(s, start, balancePrefix)
 	case "not", "distinct":
 		// Prefix keywords stand where an operand is expected, as a variable
 		// does: the word is the keyword unless what follows ends an operand.
-		return !casePrefixWordIsVariable(s, j+1)
+		return !casePrefixWordIsVariable(s, j+1, balancePrefix)
 	}
 	return false
 }
@@ -418,7 +428,7 @@ func casePreviousWordIn(s string, i int, words ...string) bool {
 // word that is itself followed by what ends an operand (NOT end.x: end is
 // the variable and NOT the keyword; = not THEN 1: THEN is the keyword and
 // not the variable).
-func casePrefixWordIsVariable(s string, i int) bool {
+func casePrefixWordIsVariable(s string, i int, balancePrefix bool) bool {
 	for i < len(s) && isASCIISpace(s[i]) {
 		i++
 	}
@@ -428,6 +438,9 @@ func casePrefixWordIsVariable(s string, i int) bool {
 	// A terminal END closes the CASE after a variable named NOT or
 	// DISTINCT; treating it as their operand would leave no closing END.
 	if caseWordAt(s, i) == "end" && strings.TrimSpace(s[i+len("end"):]) == "" {
+		return true
+	}
+	if balancePrefix && caseWordAt(s, i) == "end" && casePrefixEndRequired(s, i) {
 		return true
 	}
 	return !caseOperandEndsAt(s, i+len(caseWordAt(s, i)))
@@ -448,7 +461,7 @@ func caseHasPreviousToken(s string, i int) bool {
 // reading it as a nested CASE leaves the outer CASE without an END before
 // the enclosing bracket or the text ends: CASE case WHEN 1 THEN case END has
 // one END, a nested CASE CASE WHEN … END WHEN … END two.
-func caseNestedLacksEnd(s string, i int) bool {
+func caseNestedLacksEnd(s string, i int, balancePrefix bool) bool {
 	open, depth := 2, 0
 	for j := i + len("CASE"); j < len(s); j++ {
 		switch c := s[j]; c {
@@ -468,9 +481,9 @@ func caseNestedLacksEnd(s string, i int) bool {
 		if depth != 0 || !isIdentStartByte(s[j]) || isIdentByte(s[j-1]) {
 			continue
 		}
-		if caseKeywordAt(s, j, "CASE") {
+		if caseKeywordAtMode(s, j, "CASE", balancePrefix) {
 			open++
-		} else if caseKeywordAt(s, j, "END") {
+		} else if caseKeywordAtMode(s, j, "END", balancePrefix) {
 			if open--; open == 0 {
 				return false
 			}
