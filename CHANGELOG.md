@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve a transitive order for mixed native and remote graph values, and use entity identity consistently for
+  snapshot equality and grouping. Keep ordinary maps with `_pathResult` keys classified as maps (#1325).
+- Carry lexical predecessor state through cold map validation and repeated subquery-brace readers, retaining
+  comment-separated subqueries without rescanning every query prefix (#1325).
+- Validate existing node and relationship UNIQUE values through shared exact value comparison, avoiding list-key
+  panics, scalar numeric duplicate acceptance, composite collisions and large-integer cache rounding (#1325).
+- Publish buffered total node and relationship counters with their matching pending-delta retirement before
+  callbacks, while retaining entity overlays and excluding updates from creation counts (#1325).
+
 - Recognize comment-separated COUNT, EXISTS and COLLECT subqueries consistently when query normalization is
   disabled, using the shared lexical reader for execution and semantic variable checks (#1323).
 
