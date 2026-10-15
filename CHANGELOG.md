@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- Align contributor and agent workflows with rapid `develop` integration, release branches, and scoped maintainer
+  operational/documentation PRs into `main`, including verification and synchronization requirements.
+
 ### Fixed
 
 - With an OpenAI-compatible embedder (`openai`, `orca`, or a gateway in front of another provider), text longer

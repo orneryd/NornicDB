@@ -453,21 +453,36 @@ nornicdb/
 
 ## Development Workflow
 
+### Branches, PRs, and releases
+
+[CONTRIBUTING.md](CONTRIBUTING.md#development-workflow) is the canonical source for branch routing,
+release ownership, milestones, and verification. Read it before choosing a branch or PR base.
+
+- **Product work:** branch from `develop` into `feature/<topic>` or `fix/<topic>` and integrate into `develop`.
+  Maintainers can push or merge into `develop` for rapid iteration; do not force-push or delete it.
+- **Releases:** integrate into `release/vX.Y.Z` through PRs on milestone `vX.Y.Z`. Maintainers own release
+  branch creation, merges, tags, and the final fast-forward of `main`. Use the documented `make release-*` helpers.
+- **Maintainer maintenance:** scoped documentation, agent/contributor instructions, repository administration,
+  and CI/CD or operational changes may use a short-lived branch from `main` and a PR targeting `main`.
+  Explain the scope in the PR; a release milestone is optional. Product behavior changes use the release path.
+  Do not include unrelated unreleased feature commits in a maintenance PR.
+- After a maintenance PR merges, sync `main` into `develop`. An active release branch must also include the
+  updated `main` before final verification and tagging. Coordinate history changes with the maintainer.
+- Opening a PR does not start CI automatically. Use `ci:run` or manual dispatch when GitHub checks are needed;
+  nightly verification runs on changed `develop`. Publishing workflows have separate triggers.
+- Choosing a PR route does not authorize pushing, merging, tagging, or changing repository settings.
+
 ### 1. **Before Starting Work**
 
+Inspect the working tree and applicable instructions. Choose the PR base using the rules above and preserve
+unrelated work. Do not update dependencies unless the task requires it.
+
 ```bash
-# Update dependencies
-go mod tidy
+# Preview checks for the intended PR base (substitute origin/main or origin/release/vX.Y.Z as needed)
+make verify-list BASE=origin/develop
 
-# Run full test suite
-go test ./... -v
-
-# Check test coverage
-go test ./... -coverprofile=coverage.out
-go tool cover -func=coverage.out
-
-# Run benchmarks (baseline)
-go test ./pkg/cypher -bench=. -benchmem > before.txt
+# For performance work, record a workload-specific baseline before editing
+go test ./pkg/cypher -bench='BenchmarkRelevantName$' -benchmem
 ```
 
 ### 2. **During Development**
@@ -487,6 +502,10 @@ go test ./... -race
 ```
 
 ### 3. **Before Committing**
+
+Run `make verify BASE=origin/<pr-base>` for the actual target branch; `make verify` defaults to `origin/main`.
+Use `make verify-help` for options and report any skips. Documentation-only changes need the applicable docs
+checks; runtime tests, coverage, and benchmarks below apply when the change affects code or performance.
 
 ```bash
 # Format code
