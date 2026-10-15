@@ -11,7 +11,6 @@ import (
 	nerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/orneryd/nornicdb/pkg/util"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -116,8 +115,11 @@ func (e *StorageExecutor) installPersistedProcedure(ctx context.Context, record 
 
 	nodeID := procedureCatalogNodeID(name)
 	store := e.getStorage(ctx)
-	existing, getErr := store.GetNode(nodeID)
-	if getErr == nil && existing != nil && !replace {
+	existing, err := e.resolveProcedureCatalogIdentity(store, name)
+	if err != nil {
+		return err
+	}
+	if existing != nil && !replace {
 		return localizedError(localization.CypherProceduresAlreadyExists(name), nil)
 	}
 
@@ -173,7 +175,14 @@ func (e *StorageExecutor) executeDropProcedure(ctx context.Context, cypher strin
 // the user procedures from it.
 func (e *StorageExecutor) dropPersistedProcedure(ctx context.Context, name string) error {
 	store := e.getStorage(ctx)
-	if err := store.DeleteNode(procedureCatalogNodeID(name)); err != nil {
+	existing, err := e.resolveProcedureCatalogIdentity(store, name)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return localizedError(localization.CypherProceduresDropFailed(name, storage.ErrNotFound), storage.ErrNotFound)
+	}
+	if err := store.DeleteNode(existing.ID); err != nil {
 		return localizedError(localization.CypherProceduresDropFailed(name, err), err)
 	}
 	// Keep implementation simple and deterministic: refresh user registry from persisted catalog.
@@ -303,32 +312,18 @@ func (e *StorageExecutor) loadPersistedProcedures() error {
 		return localizedError(localization.CypherProceduresCatalogReadFailed(err), nerrors.ErrProcedureCatalogReadFailed)
 	}
 	for _, node := range nodes {
-		raw, ok := node.Properties["record"]
-		if !ok {
+		if _, ok := node.Properties["record"]; !ok {
 			continue
 		}
-		var payload []byte
-		switch v := raw.(type) {
-		case []byte:
-			payload = v
-		case string:
-			decoded, err := base64.StdEncoding.DecodeString(v)
-			if err != nil {
-				return localizedError(localization.CypherProceduresCatalogRecordDecodeFailed(string(node.ID)), nerrors.ErrProcedureCatalogRecordDecodeFailed)
-			}
-			payload = decoded
-		default:
-			return localizedError(localization.CypherProceduresCatalogRecordDecodeFailed(string(node.ID)), nerrors.ErrProcedureCatalogRecordDecodeFailed)
-		}
-		var record persistedProcedureRecord
-		if err := util.DecodeMsgpackBytes(payload, &record); err != nil {
-			return localizedError(localization.CypherProceduresCatalogRecordDecodeFailed(string(node.ID)), nerrors.ErrProcedureCatalogRecordDecodeFailed)
+		record, err := decodeProcedureCatalogRecord(node)
+		if err != nil {
+			return err
 		}
 		spec, handler, _, err := e.compilePersistedProcedure(record)
 		if err != nil {
 			return localizedError(localization.CypherProceduresCatalogRecordInvalid(string(node.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
 		}
-		if superseded, err := e.migrateProcedureCatalogIdentity(node, record); err != nil {
+		if superseded, err := e.migrateProcedureCatalogIdentity(e.storage, node, record); err != nil {
 			return err
 		} else if superseded {
 			continue

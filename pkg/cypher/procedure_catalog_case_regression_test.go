@@ -115,14 +115,14 @@ func TestProcedureCatalogMigrationFailuresPreserveRecord(t *testing.T) {
 				engine.deleteErr = fault
 			}
 			exec := &StorageExecutor{storage: engine}
-			_, err = exec.migrateProcedureCatalogIdentity(legacy, record)
+			_, err = exec.migrateProcedureCatalogIdentity(engine, legacy, record)
 			require.Error(t, err)
 			_, err = base.GetNode(legacy.ID)
 			require.NoError(t, err, "failed migration must preserve original record")
 			engine.readErr = nil
 			engine.createErr = nil
 			engine.deleteErr = nil
-			_, err = exec.migrateProcedureCatalogIdentity(legacy, record)
+			_, err = exec.migrateProcedureCatalogIdentity(engine, legacy, record)
 			require.NoError(t, err)
 			_, err = base.GetNode(procedureCatalogNodeID(record.Name))
 			require.NoError(t, err)
