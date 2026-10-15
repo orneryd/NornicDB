@@ -530,45 +530,55 @@ func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall stri
 // import list (parseLeadingWithImports): CALL () { WITH 1 AS x FINISH } is a
 // unit subquery whose body is just that WITH (#907).
 func callSubqueryHasScopeClause(cypher string) bool {
-	trimmed := strings.TrimSpace(cypher)
-	if findKeywordIndex(trimmed, "CALL") != 0 {
-		return false
-	}
-	idx := skipSpaces(trimmed, len("CALL"))
-	return idx < len(trimmed) && trimmed[idx] == '('
+	return readCallSubqueryScope(cypher).scoped
 }
 
-func parseCallSubqueryImportVariables(cypher string) []string {
+type callSubqueryScopeClause struct {
+	names      []string
+	scoped     bool
+	text       string
+	bodyOffset int
+	invalid    bool
+}
+
+// readCallSubqueryScope is the shared static/runtime owner of CALL's scope
+// clause. scoped distinguishes CALL (*) from legacy CALL { ... }; a nil name
+// list means all outer variables, and a non-nil empty list means CALL ().
+// text and bodyOffset let validation use the same parsed clause. Legacy
+// importing-WITH and implicit imports are resolved by their existing owners.
+func readCallSubqueryScope(cypher string) callSubqueryScopeClause {
 	trimmed := strings.TrimSpace(cypher)
 	if findKeywordIndex(trimmed, "CALL") != 0 {
-		return nil
+		return callSubqueryScopeClause{}
 	}
 	idx := skipSpaces(trimmed, len("CALL"))
+	offset := strings.Index(cypher, trimmed)
+	scope := callSubqueryScopeClause{bodyOffset: offset + idx}
 	if idx >= len(trimmed) || trimmed[idx] != '(' {
-		return nil
+		return scope
 	}
 	close := findMatchingCallParen(trimmed, idx)
 	if close < 0 {
-		return nil
+		return scope
 	}
-	body := strings.TrimSpace(trimmed[idx+1 : close])
-	if body == "" {
-		return []string{}
+	scope.scoped = true
+	scope.text = strings.TrimSpace(trimmed[idx+1 : close])
+	scope.bodyOffset = offset + skipSpaces(trimmed, close+1)
+	if scope.text == "*" {
+		return scope
 	}
-	if body == "*" {
-		return nil
-	}
-	parts := splitProcedureTopLevelComma(body)
-	vars := make([]string, 0, len(parts))
+	parts := splitProcedureTopLevelComma(scope.text)
+	scope.names = make([]string, 0, len(parts))
 	for _, part := range parts {
-		name := strings.TrimSpace(part)
-		name = strings.Trim(name, "`")
-		if !isSimpleIdentifier(name) {
-			continue
+		if simpleSemanticIdentifier(part) == "" && scope.text != "" {
+			scope.invalid = true
 		}
-		vars = append(vars, name)
+		name := strings.Trim(strings.TrimSpace(part), "`")
+		if isSimpleIdentifier(name) {
+			scope.names = append(scope.names, name)
+		}
 	}
-	return vars
+	return scope
 }
 
 // prefixUnionBranches puts prefix before body, or before each branch of a
