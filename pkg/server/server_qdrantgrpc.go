@@ -149,23 +149,15 @@ func (s *Server) startQdrantGRPC() error {
 				if err != nil {
 					return nornicgrpc.DatabaseDependencies{}, err
 				}
+				queryEmbedding := s.db.QueryEmbeddingForDB(database)
 				return nornicgrpc.DatabaseDependencies{
-					Searcher: svc,
-					EmbedQuery: func(ctx context.Context, query string) ([]float32, error) {
-						return s.db.EmbedQueryForDB(ctx, database, query)
-					},
-					ChunkQuery: func(ctx context.Context, query string) ([]string, error) {
-						return s.db.ChunkQueryForDB(ctx, database, query)
-					},
+					Searcher:   svc,
+					EmbedQuery: queryEmbedding.EmbedQuery,
+					ChunkQuery: queryEmbedding.ChunkQuery,
 				}, nil
 			},
 		},
-		func(ctx context.Context, query string) ([]float32, error) {
-			return s.db.EmbedQuery(ctx, query)
-		},
-		func(ctx context.Context, query string) ([]string, error) {
-			return s.db.ChunkQueryForDB(ctx, dbName, query)
-		},
+		nil, nil, // ResolveDatabase binds both callbacks for every request, including the default DB.
 		searchSvc,
 	)
 	if err != nil {
