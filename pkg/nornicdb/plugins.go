@@ -6,7 +6,6 @@
 package nornicdb
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -287,8 +286,8 @@ func loadFunctionPlugin(sym interface{}, path string) (*LoadedPlugin, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, proc := range procedures {
-		registerProcedureWithCypher(proc)
+	if err := registerPluginProcedures(procedures); err != nil {
+		return nil, err
 	}
 
 	return &LoadedPlugin{
@@ -499,35 +498,6 @@ func extractProcedures(val reflect.Value, pluginName string) ([]PluginProcedure,
 	}
 
 	return procedures, nil
-}
-
-func registerProcedureWithCypher(proc PluginProcedure) {
-	handler, ok := proc.Handler.(func(context.Context, string, []interface{}) (*cypher.ExecuteResult, error))
-	if !ok {
-		return
-	}
-	mode := cypher.ProcedureModeRead
-	switch strings.ToUpper(proc.Mode) {
-	case "WRITE":
-		mode = cypher.ProcedureModeWrite
-	case "SCHEMA":
-		mode = cypher.ProcedureModeSchema
-	case "ADMIN":
-		mode = cypher.ProcedureModeAdmin
-	case "DBMS":
-		mode = cypher.ProcedureModeDBMS
-	}
-	_ = cypher.RegisterUserProcedure(cypher.ProcedureSpec{
-		Name:          proc.Name,
-		Signature:     proc.Signature,
-		Description:   proc.Description,
-		Mode:          mode,
-		WorksOnSystem: proc.WorksOnSystem,
-		MinArgs:       proc.MinArgs,
-		MaxArgs:       proc.MaxArgs,
-	}, func(ctx context.Context, _ *cypher.StorageExecutor, cypherQuery string, args []interface{}) (*cypher.ExecuteResult, error) {
-		return handler(ctx, cypherQuery, args)
-	})
 }
 
 // callStringMethod calls a method and returns its string result.

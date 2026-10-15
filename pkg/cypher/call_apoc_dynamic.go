@@ -30,7 +30,7 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 	// Execute the inner query
 	innerResult, err := e.executeUserStatement(ctx, innerQuery, params)
 	if err != nil {
-		return nil, fmt.Errorf("apoc.cypher.run inner query failed: %w", err)
+		return nil, fmt.Errorf("%s inner query failed: %w", procedure, err)
 	}
 
 	// Transform result to match APOC format (YIELD value)
