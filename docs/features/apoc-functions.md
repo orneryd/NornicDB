@@ -1117,9 +1117,9 @@ Build plugins on the same platform/architecture as your NornicDB deployment.
 
 What carries over from Neo4j with APOC, and what doesn't:
 
-- **Built-in functions:** 31 of the 36 are real APOC functions. Four are [NornicDB extensions](#nornicdb-extensions), and `apoc.coll.split` is an APOC procedure offered here as a function.
-- **Built-in procedures:** 33 of the 47 `apoc.*` / `gds.*` procedures are real APOC or GDS names; 14 are NornicDB extensions. `gds.*` procedures with GDS's names don't yet take GDS's parameters or return its columns (#1161).
-- **The APOC plugin:** the Go library catalog has 983 names, including genuine functions, procedure-only entries and NornicDB extensions. The plugin excludes the 118 confirmed procedure-only entries from scalar function exports. See the [versioned procedure capability audit](apoc-procedure-capabilities.md) for every entry, available native contracts, and remaining gaps; the typed handler dispatcher does not certify full APOC semantics. Loaded function metadata is available through `SHOW FUNCTIONS`.
+- **Built-in functions:** `SHOW FUNCTIONS` lists 48 built-in `apoc.*` functions (49 beside a loaded plugin's case-distinct `apoc.coll.SUM`). Of the original 36, 31 are real APOC functions, four are [NornicDB extensions](#nornicdb-extensions), and `apoc.coll.split` is an APOC procedure offered here as a function. The twelve [native graph, path and temporal functions](#native-graph-and-temporal-values) — `apoc.node.id`, `apoc.node.labels`, `apoc.node.degree`, `apoc.rel.id`, `apoc.rel.type`, `apoc.rel.startNode`, `apoc.rel.endNode`, `apoc.nodes.connected`, `apoc.path.elements`, `apoc.path.slice`, `apoc.path.combine`, and `apoc.temporal.format` — bring the total to 48. `apoc.node.id` and `apoc.rel.id` keep NornicDB's accepted string-ID design exception; they do not implement Neo4j's numeric internal IDs.
+- **Built-in procedures:** `SHOW PROCEDURES` lists the current registered surface. The GDS-named graph catalog — `gds.graph.list`, `gds.graph.drop`, `gds.graph.exists`, and `gds.graph.project` — now takes GDS's parameters and returns GDS's columns, as do `gds.fastRP.stream` / `gds.fastRP.stats` (#1161 closed); `gds.version` answers as a function. The `gds.linkPrediction.*.stream` names and the `apoc.algo.*` family remain [NornicDB extensions](#nornicdb-extensions). The remaining procedure capability gaps — the 102 of 118 historical procedure-only catalog entries with no bundled `CALL` contract — are tracked in the [versioned procedure capability audit](apoc-procedure-capabilities.md) and [#1318](https://github.com/orneryd/NornicDB/issues/1318).
+- **The APOC plugin:** the Go library catalog has 983 names, including genuine functions, procedure-only entries and NornicDB extensions. The plugin excludes the 118 confirmed procedure-only entries from scalar function exports, exporting the other 865. See the [versioned procedure capability audit](apoc-procedure-capabilities.md) for every entry, available native contracts, and remaining gaps; the typed handler dispatcher does not certify full APOC semantics. Loaded function metadata is available through `SHOW FUNCTIONS`.
 - File operations respect security settings, and the plugin system allows custom extensions. Performance characteristics may differ.
 
 ## NornicDB extensions
@@ -1140,7 +1140,7 @@ These names are NornicDB's own: they don't exist in APOC Core, APOC Extended or 
 
 **The APOC plugin:** the historical catalog includes NornicDB extensions and 118 procedure-only entries, now excluded from function exports. The following historical inventory is not a declaration that every listed capability is implemented:
 
-<details><summary>The plugin's names that aren't APOC names: 689 (the 55 callable today in <b>bold</b>)</summary>
+<details><summary>The plugin's names that aren't APOC names: 689 (historical inventory; the original audit's 55 measured-callable names are in <b>bold</b> and are not a current capability claim)</summary>
 
 - `apoc.math` (37): **abs**, **acos**, **asin**, **atan**, atan2, **ceil**, clamp, **cos**, **exp**, factorial, fibonacci, **floor**, gcd, isPrime, lcm, lerp, **log**, **log10**, **logit**, mean, median, mode, nextPrime, normalize, percentile, pow, product, **random**, randomInt, range, round, **sin**, **sqrt**, stdev, sum, **tan**, variance
 - `apoc.number` (35): **abs**, arabize, **ceil**, clamp, exact, **exp**, factorial, fibonacci, **floor**, fromBase, fromBinary, fromHex, fromOctal, gcd, isEven, isOdd, isPrime, lcm, lerp, **log**, **log10**, map, normalize, parse, power, **random**, randomInt, romanize, round, sign, **sqrt**, toBase, toBinary, toHex, toOctal
@@ -1189,7 +1189,7 @@ These names are NornicDB's own: they don't exist in APOC Core, APOC Extended or 
 
 </details>
 
-<details><summary>Historical procedure-only catalog entries: 118 (see the capability audit for current CALL support)</summary>
+<details><summary>Historical procedure-only catalog entries: 118 (16 have registered native contracts; 102 have no bundled CALL contract — see the capability audit)</summary>
 
 - `apoc.create` (13): addLabels, node, nodes, relationship, removeLabels, removeProperties, removeRelProperties, setProperties, setProperty, setRelProperties, setRelProperty, uuids, vNodes
 - `apoc.load` (12): csv, directory, driver, html, jdbc, jdbcUpdate, json, jsonArray, jsonParams, ldap, parquet, xml

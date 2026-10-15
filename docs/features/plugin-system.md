@@ -19,11 +19,11 @@ NORNICDB_HEIMDALL_PLUGINS_DIR=plugins/heimdall/built-plugins \
 ╔══════════════════════════════════════════════════════════════╗
 ║ Loading Plugins                                              ║
 ╠══════════════════════════════════════════════════════════════╣
-║ ✓ [FUNC] apoc            v1.0.0       983 functions          ║
+║ ✓ [FUNC] apoc            v1.0.0    865 exported functions    ║
 ║ ✓ [HEIM] watcher         v1.0.0        11 actions            ║
 ╠══════════════════════════════════════════════════════════════╣
 ║ Loaded: 2 plugins (1 function, 1 heimdall)                  ║
-║         983 Cypher functions available                        ║
+║         865 exported Cypher function names                    ║
 ║         11 Heimdall actions available                         ║
 ╚══════════════════════════════════════════════════════════════╝
 ```
@@ -47,7 +47,7 @@ make plugins-clean
 
 | Type | Purpose | Example | Configuration |
 |------|---------|---------|---------------|
-| **Function** | Extend Cypher with custom functions | APOC (983 functions) | `NORNICDB_PLUGINS_DIR` |
+| **Function** | Extend Cypher with custom functions | APOC (865 exported function names) | `NORNICDB_PLUGINS_DIR` |
 | **Heimdall** | Extend SLM with subsystem management | Watcher (11 actions) | `NORNICDB_HEIMDALL_PLUGINS_DIR` |
 
 ### Function Plugins
@@ -280,7 +280,7 @@ Result: "Repository context analyzed"
 ### APOC Plugin
 
 **Type:** Function  
-**Functions:** 983  
+**Exported function names:** 865 (of the 983-name library catalog; the 118 procedure-only entries are excluded — see the [APOC procedure capability audit](apoc-procedure-capabilities.md))  
 **Location:** `apoc/built-plugins/apoc.so`
 
 Provides Neo4j-compatible APOC functions:
@@ -579,7 +579,7 @@ func (p *MonitoringPlugin) getCPU(ctx heimdall.ActionContext) (*heimdall.ActionR
 │  └─ Load Heimdall plugins → SubsystemManager               │
 ├─────────────────────────────────────────────────────────────┤
 │  Function Plugins          │  Heimdall Plugins              │
-│  ├─ APOC (983 funcs)      │  ├─ Watcher (11 actions)      │
+│  ├─ APOC (865 funcs)      │  ├─ Watcher (11 actions)      │
 │  └─ Custom plugins         │  └─ Custom subsystems         │
 └─────────────────────────────────────────────────────────────┘
 ```
