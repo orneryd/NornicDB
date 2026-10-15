@@ -47,7 +47,7 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 	}
 	for _, expr := range []string{
 		"startNode(r)", "endNode(r)", "startNode( r )", "STARTNODE(r)", "endnode(r)",
-		"startNode(d)", "endNode(d)", "startNode(n)", "startNode(m)", "startNode(z)", "startNode(unbound)",
+		"startNode(d)", "endNode(d)", "startNode(z)", "startNode(unbound)",
 		"startNode(r).id", "endNode(r).id + '|' + startNode(r).id",
 	} {
 		got, gotOK, gotErr := exec.evaluateRowValue(expr, values)
@@ -61,6 +61,16 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 		}
 		if gotOK != wantOK || !sameRowValue(got, want) {
 			t.Fatalf("%s: row evaluator %#v (%v), context evaluator %#v (%v)", expr, got, gotOK, want, wantOK)
+		}
+	}
+	// Wrong argument types must fail through the same shared contract in both
+	// evaluators; neither path may silently turn an ordinary value into null.
+	for _, expr := range []string{"startNode(n)", "endNode(n)", "startNode(m)", "endNode(m)"} {
+		_, _, gotErr := exec.evaluateRowValue(expr, values)
+		_, wantErr := exec.evaluateRowFallback(expr, values)
+		if gotErr == nil || wantErr == nil || gotErr.Error() != wantErr.Error() ||
+			!strings.Contains(gotErr.Error(), "Neo.ClientError.Statement.TypeError") {
+			t.Fatalf("%s: expected matching TypeError, got %v / %v", expr, gotErr, wantErr)
 		}
 	}
 	if node, _, _ := exec.evaluateRowValue("startNode(r)", values); node.(*storage.Node).ID != "a" {

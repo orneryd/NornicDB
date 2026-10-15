@@ -71,20 +71,20 @@ func TestKeysReturnsEveryKeyInOneOrder(t *testing.T) {
 	}
 }
 
-// PropertyKeys reads the properties of converted node / relationship maps
-// and all keys of any other map.
-func TestPropertyKeysOfConvertedEntityMaps(t *testing.T) {
+// PropertyKeys reads all keys of ordinary maps, including graph-shaped maps.
+// Only actual entity values expose their nested properties.
+func TestPropertyKeysOfGraphShapedOrdinaryMaps(t *testing.T) {
 	keys, ok := cypherfn.PropertyKeys(map[string]interface{}{
 		"_nodeId": "n1", "labels": []string{"L"}, "id": "n1", "b": 1, "a": 2,
 		"properties": map[string]interface{}{"b": 1, "a": 2},
 	})
 	require.True(t, ok)
-	assert.Equal(t, []interface{}{"a", "b"}, keys)
+	assert.Equal(t, []interface{}{"_nodeId", "a", "b", "id", "labels", "properties"}, keys)
 	keys, ok = cypherfn.PropertyKeys(map[string]interface{}{
 		"_edgeId": "e1", "type": "R", "properties": map[string]interface{}{"w": 1},
 	})
 	require.True(t, ok)
-	assert.Equal(t, []interface{}{"w"}, keys)
+	assert.Equal(t, []interface{}{"_edgeId", "properties", "type"}, keys)
 	keys, ok = cypherfn.PropertyKeys(map[string]interface{}{"properties": 1, "x": 2})
 	require.True(t, ok)
 	assert.Equal(t, []interface{}{"properties", "x"}, keys)

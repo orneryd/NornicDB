@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Go API: `cypher.GraphProjection.NodeProperties` now stores `interface{}` values (`int64`, `float64`, `[]int64`, `[]float64`) instead of always `float64`; direct Go consumers must handle the projected type.
 - Preserve native GDS projected numeric values and list defaults, validate unsafe Long-to-Double imports, honor cross-database graph-drop permissions, and align existing FastRP propagation and feature validation with GDS.
 
+- Preserve remote node and relationship provenance across transport decoding and Fabric bindings so graph
+  functions accept genuine remote values while rejecting ordinary maps; return property keys instead of
+  remote metadata from `keys()` without changing JSON or Bolt result shapes (#1055).
+
 - Harden existing boosted procedure grants, transactional role changes, principal refresh, and system database
   authorization; bring the follow-up security fixes onto the v1.4.3 release baseline.
 

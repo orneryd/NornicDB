@@ -18,8 +18,8 @@ import (
 var _ Engine = (*RemoteEngine)(nil)
 
 func TestRemoteHTTPValueDecoding(t *testing.T) {
-	node := map[string]interface{}{"elementId": "4:db:n", "properties": map[string]interface{}{"a": float64(1)}}
-	entities := map[string]interface{}{"4:db:n": node}
+	node := RemoteEntityValue{"elementId": "4:db:n", "properties": map[string]interface{}{"a": float64(1)}}
+	entities := map[string]interface{}{"4:db:n": map[string]interface{}(node)}
 	meta := map[string]interface{}{"elementId": "4:db:n", "type": "node"}
 	for _, testCase := range []struct {
 		name, raw string
