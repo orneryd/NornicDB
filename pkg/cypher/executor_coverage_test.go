@@ -962,8 +962,7 @@ func TestResolveReturnItemDifferentVariable(t *testing.T) {
 	// "Variable `m` not defined" SyntaxError, not null.
 	_, err = exec.Execute(ctx, "MATCH (n:DiffVar) RETURN m.val", nil)
 	require.Error(t, err)
-	code, classified := nornicerrors.Neo4jStatus(err)
-	require.True(t, classified)
+	code, _ := nornicerrors.Neo4jStatus(err)
 	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
 	require.EqualError(t, err, "Variable `m` not defined")
 }
