@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resolve nonexistent named-zone local times consistently in datetime map constructors while preserving the distinct
+  map/string overlap preferences. Preserve numeric CASE union types during static argument validation (#1316).
+- Stop traversals when parent cancellation precedes the statement relay and return cancellation errors before an
+  implicit write can commit. Retain stored identity during whole-path MERGE and apply visible properties when
+  sorting entity collections without losing mutation bindings (#1316).
+- Preserve remote entity kinds through list access and ordering, emit requested HTTP REST provenance with numeric
+  relationship endpoints, and reject inconsistent sidecars with localized errors (#1316).
 - Preserve typed MERGE/SET map and list parameters, temporal offsets, parameter isolation, and list ownership (#1239).
 - Validate expression patterns and subqueries in their local scopes, preserve dynamic-label error timing and argument
   bytes, and distinguish nested map projections from pattern maps and `EXISTS`/`COUNT`/`COLLECT` bodies. Preserve
