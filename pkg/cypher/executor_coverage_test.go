@@ -260,7 +260,7 @@ func TestCompareRegexNonStringExpected(t *testing.T) {
 	// =~ takes strings: a number is a type error, as in Neo4j.
 	_, err = exec.Execute(ctx, "MATCH (n:RegexNum) WHERE n.val =~ 123 RETURN n", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 	assert.Contains(t, err.Error(), "Type mismatch: expected String")
 }
 
@@ -2594,7 +2594,7 @@ func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 	res, err := exec.Execute(ctx, "MATCH (a:Person {name:'alice'})", nil)
 	require.Error(t, err)
 	require.Nil(t, res)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	// MATCH producing zero rows should short-circuit CREATE and still shape RETURN columns.
 	res, err = exec.Execute(ctx, "MATCH (m:Missing) CREATE (x:Tmp {id:'x'}) RETURN x", nil)
@@ -2631,7 +2631,7 @@ func TestExecuteMatchCreateBlock_AdditionalSetAndDeleteBranches(t *testing.T) {
 		"MATCH (a:Person {name:'alice'}) CREATE (b:Tmp {id:'u1'}) SET z.flag = true RETURN b", nil,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 	assert.Contains(t, err.Error(), "z")
 
 	// Missing parameter for SET assignment must error.
