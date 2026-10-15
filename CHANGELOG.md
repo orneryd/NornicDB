@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Close owning test stores in Cypher fixtures and use admin requests for destructive embedding endpoint tests
+  on develop, preserving the feature-dependent verification fixes outside the bugfix-only release.
+
 - With an OpenAI-compatible embedder (`openai`, `orca`, or a gateway in front of another provider), text longer
   than `NORNICDB_EMBED_CHUNK_SIZE` is split into chunks as with the other providers. The OpenAI provider sent it
   whole, so a node longer than the model's context window (8,191 tokens for OpenAI, 8,192 for Amazon Titan) was
