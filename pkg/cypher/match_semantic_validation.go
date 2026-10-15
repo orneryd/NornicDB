@@ -137,7 +137,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 	var view staticTypeScope
 	stale := true
 	for _, clause := range clauses {
-		if err := expressionSubqueryClauseBindingError(clause, outer); err != nil {
+		if err := expressionSubqueryClauseBindingError(clause, enclosing); err != nil {
 			return types, false, err
 		}
 		if returnSeen {
@@ -338,16 +338,6 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				if err := projectionAliasError(raw); err != nil {
 					return types, false, err
 				}
-				// WITH x AS x, or WITH x, carries x on; WITH 1 AS x
-				// declares it again.
-				if _, alias := parseProjectionExprAlias(strings.TrimSpace(raw)); alias != "" {
-					name := normalizeProjectionColumnName(alias)
-					if simpleSemanticIdentifier(strings.TrimSpace(expression)) != name {
-						if err := enclosing.redeclarationError(name); err != nil {
-							return types, false, err
-						}
-					}
-				}
 				if expression != "*" {
 					if err := undefinedExpressionVariable(scope, expression); err != nil {
 						return types, false, err
@@ -389,9 +379,6 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				return types, false, err
 			}
 			if alias := unwindBindingName(clause.text); alias != "" {
-				if err := enclosing.redeclarationError(normalizeProjectionColumnName(alias)); err != nil {
-					return types, false, err
-				}
 				// FOR is new syntax: unlike the pre-existing permissive UNWIND,
 				// it must not redeclare an already-bound variable, as in Neo4j.
 				if startsWithKeywordFold(clause.text, "FOR") {
