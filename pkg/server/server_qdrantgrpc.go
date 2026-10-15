@@ -88,6 +88,7 @@ func (s *Server) startQdrantGRPC() error {
 	}
 	if s.config.EmbeddingEnabled {
 		cfg.EmbedQuery = s.db.EmbedQuery
+		cfg.BindQueryEmbedding = s.db.WithQueryEmbeddingSnapshot
 	}
 	if len(features.QdrantGRPCMethodPermissions) > 0 {
 		overrides := make(map[string]auth.Permission, len(features.QdrantGRPCMethodPermissions))
@@ -140,6 +141,10 @@ func (s *Server) startQdrantGRPC() error {
 				return grpcServer.AllowDatabaseAccess(ctx, database, false)
 			},
 			ResolveContinuationDatabase: s.db.ResolveSearchContinuationDatabase,
+			PrepareQueryEmbedding: func(_ context.Context, database string) (nornicgrpc.EmbedQueryFunc, nornicgrpc.ChunkQueryFunc) {
+				queryEmbedding := s.db.QueryEmbeddingForDB(database)
+				return queryEmbedding.EmbedQuery, queryEmbedding.ChunkQuery
+			},
 			ResolveDatabase: func(ctx context.Context, database string) (nornicgrpc.DatabaseDependencies, error) {
 				store, err := s.dbManager.GetStorage(database)
 				if err != nil {
@@ -149,15 +154,10 @@ func (s *Server) startQdrantGRPC() error {
 				if err != nil {
 					return nornicgrpc.DatabaseDependencies{}, err
 				}
-				queryEmbedding := s.db.QueryEmbeddingForDB(database)
-				return nornicgrpc.DatabaseDependencies{
-					Searcher:   svc,
-					EmbedQuery: queryEmbedding.EmbedQuery,
-					ChunkQuery: queryEmbedding.ChunkQuery,
-				}, nil
+				return nornicgrpc.DatabaseDependencies{Searcher: svc}, nil
 			},
 		},
-		nil, nil, // ResolveDatabase binds both callbacks for every request, including the default DB.
+		nil, nil, // PrepareQueryEmbedding binds both callbacks only for text requests.
 		searchSvc,
 	)
 	if err != nil {

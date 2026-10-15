@@ -150,6 +150,11 @@ type Config struct {
 	// If nil, those query variants return FailedPrecondition.
 	EmbedQuery func(ctx context.Context, text string) ([]float32, error)
 
+	// BindQueryEmbedding captures the provider used by EmbedQuery for a text
+	// request. It must preserve an existing binding in nested batch calls.
+	// ID and numeric-vector requests never invoke it.
+	BindQueryEmbedding func(context.Context) context.Context
+
 	// MethodPermissions optionally overrides the default RBAC requirements for
 	// specific RPCs.
 	//
