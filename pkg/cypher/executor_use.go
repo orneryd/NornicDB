@@ -290,30 +290,57 @@ func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*S
 // administration commands write, so a statement that writes graph data
 // there (CREATE, MERGE, SET, DELETE, REMOVE, a write procedure) is refused
 // on every route, as Neo4j refuses it (Neo.ClientError.Statement.SemanticError);
-// this keeps procedure grants coming only from GRANT and REVOKE. Reads
-// without graph access stay allowed. Schema commands and graph reads are
-// refused by this same policy on session, USE and procedure-body routes.
-// Only system procedures (ProcedureSpec.WorksOnSystem) run there, as in
-// Neo4j; a call of any other registered procedure, wherever it stands in
-// the statement, fails with Neo4j's SemanticError. A system procedure that
-// reads the graph sees none of the system database's records
-// (systemProcedureScope).
+// this keeps procedure grants coming only from GRANT and REVOKE. Schema
+// commands and graph reads are refused too. The system database runs what
+// Neo4j's runs: administration and SHOW commands, and calls of system
+// procedures (ProcedureSpec.WorksOnSystem) whose results read no graph. A
+// call of any other registered procedure, wherever it stands in the
+// statement, and any other statement (RETURN 1, RETURN COUNT { … },
+// UNWIND …) fail with Neo4j's SemanticError "Not a recognised system
+// command or procedure". A system procedure that reads the graph sees none
+// of the system database's records (systemProcedureScope). This is the one
+// policy, applied on every route: the request's or session's database, USE,
+// a statement a procedure runs, and CALL { USE … }.
 func systemDatabaseStatementError(query string) error {
 	_, query = parseExecutionMode(query)
-	if isSystemCommandNoGraph(query) {
+	query = strings.TrimSpace(query)
+	// Transaction control (BEGIN, COMMIT, ROLLBACK) is no statement on a
+	// graph; a BEGIN … COMMIT script is its statement.
+	if isSystemCommandNoGraph(query) || bareTransactionCommand(query) != "" {
 		return nil
 	}
+	if startsWithKeywordFold(query, "BEGIN") && transactionScriptShape(query) {
+		body, _ := stripBeginTransactionPrefix(query)
+		if statement, _, ok := splitTransactionScriptTailAction(body); ok {
+			body = statement
+		}
+		return systemDatabaseStatementError(body)
+	}
+	notRecognised := localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError",
+		localization.CypherAdminSystemProcedureUnsupported(query))
 	for _, procedure := range registeredProceduresForCalls(query) {
 		if !procedure.WorksOnSystem {
-			return localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError",
-				localization.CypherAdminSystemProcedureUnsupported(strings.TrimSpace(query)))
+			return notRecognised
 		}
 	}
 	requirements := QueryPermissionRequirements(query)
-	if !requirements.Write && !requirements.Schema && !queryKeywords(query)["MATCH"] {
+	graphAccess := localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError", localization.CypherAdminSystemGraphAccessUnsupported())
+	if requirements.Write || requirements.Schema || queryKeywords(query)["MATCH"] {
+		return graphAccess
+	}
+	if StatementDatabase("", query) == "system" || startsWithKeywordFold(query, "SHOW") ||
+		startsWithKeywordFold(query, "TERMINATE") || isNornicExtensionStatement(query) {
 		return nil
 	}
-	return localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError", localization.CypherAdminSystemGraphAccessUnsupported())
+	if startsWithKeywordFold(query, "CALL") {
+		if _, procedureCall := procedureNameAt(query, len("CALL")); procedureCall {
+			if expressionReadsGraphText(query) {
+				return graphAccess
+			}
+			return nil
+		}
+	}
+	return notRecognised
 }
 
 // systemDatabaseWriteError is systemDatabaseStatementError for a statement

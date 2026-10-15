@@ -444,6 +444,10 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) erro
 // the grammar doesn't model yet (CREATE DATABASE … OPTIONS, ALTER DATABASE …
 // SET / REMOVE OPTION, #937).
 func isNornicExtensionStatement(cypher string) bool {
+	// EXPLAIN / PROFILE of one is one too, so both parsers treat EXPLAIN
+	// GRANT … as the default parser does.
+	_, cypher = parseExecutionMode(cypher)
+	cypher = strings.TrimSpace(cypher)
 	return isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
 		isPrivilegeAdministrationCommand(cypher) || isDropRoleCommand(cypher) ||
 		startsWithKeywords(cypher, "SHOW", "LIMITS") ||

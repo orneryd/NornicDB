@@ -361,16 +361,18 @@ func TestSystemDatabaseRefusesGraphWrites(t *testing.T) {
 	_, err = user.Execute(ctx, "CREATE (:Person {name: 'a'})", nil)
 	require.NoError(t, err)
 
-	// Selected with USE, the system database refuses MATCH as well, and
-	// still runs a statement that reads no graph.
+	// Selected with USE, the system database refuses MATCH and a bare
+	// RETURN as well, as Neo4j 5.26.30 does, and still runs a call of a
+	// system procedure.
 	for _, statement := range []string{
 		"USE system CREATE (:_ProcedurePrivilege {role: 'editor', procedure: '*', boosted: true})",
 		"USE system MATCH (n:_ProcedurePrivilege) RETURN n",
+		"USE system RETURN 1 AS one",
 	} {
 		_, err = user.Execute(ctx, statement, nil)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SemanticError")
 	}
-	result, err := user.Execute(ctx, "USE system RETURN 1 AS one", nil)
+	result, err := user.Execute(ctx, "USE system CALL db.ping() YIELD success RETURN success", nil)
 	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{int64(1)}}, result.Rows)
+	require.Equal(t, [][]interface{}{{true}}, result.Rows)
 }

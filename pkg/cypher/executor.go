@@ -2097,12 +2097,23 @@ func statementAccessesGraphText(cypher string) bool {
 			return true
 		}
 	}
+	return expressionReadsGraphText(cypher)
+}
+
+// expressionReadsGraphText reports whether cypher holds an expression that
+// reads the graph: shortestPath / allShortestPaths, a pattern subquery
+// (COUNT { }, EXISTS { }, COLLECT { }, EXISTS((n)-->(m))) or a pattern
+// comprehension. statementAccessesGraphText and the system database's
+// statement policy read expressions through it.
+func expressionReadsGraphText(cypher string) bool {
+	opts := defaultKeywordScanOpts()
 	upper := upperASCII(cypher)
 	if strings.Contains(upper, "SHORTESTPATH") || strings.Contains(upper, "ALLSHORTESTPATHS") {
 		return true
 	}
-	// COUNT { … } and EXISTS { … } are pattern subqueries over the graph.
-	for _, keyword := range []string{"COUNT", "EXISTS"} {
+	// COUNT { … }, EXISTS { … } and COLLECT { … } are subqueries over the
+	// graph.
+	for _, keyword := range []string{"COUNT", "EXISTS", "COLLECT"} {
 		for from := 0; ; {
 			index := keywordIndexFrom(cypher, keyword, from, opts)
 			if index < 0 {
