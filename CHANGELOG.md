@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Search readiness fixes
+
+- Return the documented retryable `search_not_ready` HTTP 503 response when search readiness changes during
+  query embedding, using the same response owner as the initial readiness gate. Coordinate the long-query
+  regression fixture with the database's asynchronous initial build instead of starting a competing rebuild.
+
 ### Changed
 
 - Through October 31, 2026, require local PR verification result comments and regression fixes, with shared-root
