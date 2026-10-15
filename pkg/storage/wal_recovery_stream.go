@@ -39,7 +39,7 @@ func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayR
 				return result, status, fmt.Errorf("wal: failed to open snapshot: %w", err)
 			}
 			visitor := newRecoverySnapshotVisitor(destination, recoveryBatchSize)
-			metadata, readErr := ReadSnapshot(file, visitor)
+			metadata, readErr := readSnapshot(file, visitor, nil, materializedSnapshotRecordSize)
 			if readErr == nil {
 				readErr = visitor.Flush()
 			}
@@ -71,7 +71,9 @@ func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayR
 	}
 
 	activePath := walActivePath(walDir)
-	_, _, _ = repairWALTailIfNeeded(activePath, defaultWALLogger{})
+	if _, _, err := repairWALTailIfNeeded(activePath, defaultWALLogger{}); err != nil {
+		return result, status, fmt.Errorf("wal: failed to inspect recovery log: %w", err)
+	}
 	err := VisitWALEntriesAfterFromDir(walDir, snapshotSeq, func(entry WALEntry) error {
 		status.WALEntries++
 		if entry.Operation == OpCheckpoint {
@@ -111,6 +113,7 @@ func newRecoverySnapshotVisitor(engine Engine, batchSize int) *recoverySnapshotV
 }
 
 func (v *recoverySnapshotVisitor) VisitNode(node *Node) error {
+	node = qualifyRecoverySnapshotNode(node)
 	if len(v.nodes) > 0 {
 		previous, _, _ := ParseDatabasePrefix(string(v.nodes[0].ID))
 		current, _, _ := ParseDatabasePrefix(string(node.ID))
@@ -128,6 +131,7 @@ func (v *recoverySnapshotVisitor) VisitNode(node *Node) error {
 }
 
 func (v *recoverySnapshotVisitor) VisitEdge(edge *Edge) error {
+	edge = qualifyRecoverySnapshotEdge(edge)
 	if err := v.flushNodes(); err != nil {
 		return err
 	}
@@ -159,7 +163,7 @@ func (v *recoverySnapshotVisitor) flushNodes() error {
 		return nil
 	}
 	if err := v.engine.BulkCreateNodes(v.nodes); err != nil {
-		return err
+		return fmt.Errorf("wal: failed to restore nodes: %w", err)
 	}
 	v.nodes = v.nodes[:0]
 	return nil
@@ -170,7 +174,7 @@ func (v *recoverySnapshotVisitor) flushEdges() error {
 		return nil
 	}
 	if err := v.engine.BulkCreateEdges(v.edges); err != nil {
-		return err
+		return fmt.Errorf("wal: failed to restore edges: %w", err)
 	}
 	v.edges = v.edges[:0]
 	return nil

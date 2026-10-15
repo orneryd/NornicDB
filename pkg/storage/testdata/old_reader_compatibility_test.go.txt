@@ -1,0 +1,50 @@
+package storage
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type oldReaderVisitor struct{ visits int }
+
+func (v *oldReaderVisitor) VisitNode(*Node) error { v.visits++; return nil }
+func (v *oldReaderVisitor) VisitEdge(*Edge) error { v.visits++; return nil }
+func TestOldReaderCompatibilityFixture(t *testing.T) {
+	dir := os.Getenv("NORNICDB_RECOVERY_FIXTURE_DIR")
+ require.NotEmpty(t,dir)
+	path := filepath.Join(dir, "wal", "wal.log")
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+	wal, err := NewWAL(filepath.Dir(path), &WALConfig{SyncMode: "none"})
+	require.NoError(t, err)
+	require.NoError(t, wal.Close())
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	entries, err := ReadWALEntries(path)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	engine := NewMemoryEngine()
+	defer engine.Close()
+	require.NoError(t, ReplayWALEntry(engine, entries[0]))
+	node, err := engine.GetNode("test:a")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Doc"}, node.Labels)
+	assert.Equal(t, float64(9007199254740992), node.Properties["integer"])
+	snapshot, err := os.ReadFile(filepath.Join(dir, "snapshot.nds"))
+	require.NoError(t, err)
+	visitor := &oldReaderVisitor{}
+	_, err = ReadSnapshot(bytes.NewReader(snapshot), visitor)
+	assert.ErrorContains(t, err, "unsupported")
+	assert.Zero(t, visitor.visits)
+	_, err = LoadSnapshot(filepath.Join(dir, "snapshot.nds"))
+	assert.Error(t, err)
+	untouched, err := os.ReadFile(filepath.Join(dir, "snapshot.nds"))
+	require.NoError(t, err)
+	assert.Equal(t, snapshot, untouched)
+}

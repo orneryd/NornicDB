@@ -876,15 +876,15 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 	t.Run("snapshot restore returns node restore error", func(t *testing.T) {
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot-dupe.json")
-		require.NoError(t, SaveSnapshot(&Snapshot{
-			Sequence: 1,
-			Nodes: []*Node{
-				nil, // invalid node should cause BulkCreateNodes to fail
-			},
-			Version: "1.0",
-		}, snapshotPath))
+		// The current writer rejects nil entities. Keep the legacy loader's
+		// restore-error coverage using an explicit pre-upgrade JSON fixture.
+		legacy, err := json.Marshal(&Snapshot{
+			Sequence: 1, Nodes: []*Node{nil}, Version: "1.0",
+		})
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(snapshotPath, legacy, 0600))
 
-		_, _, err := RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
+		_, _, err = RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
 		require.ErrorContains(t, err, "failed to restore nodes")
 	})
 

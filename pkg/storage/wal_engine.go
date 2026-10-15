@@ -583,6 +583,10 @@ func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
+	if node != nil {
+		initializeCreationTimes(&node.CreatedAt, &node.UpdatedAt)
+	}
+
 	if config.IsWALEnabled() {
 		dbName := w.databaseFromNode(node)
 		if err := w.wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: cloneNodeForWAL(dbName, node)}, dbName); err != nil {
@@ -596,6 +600,11 @@ func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
 func (w *WALEngine) UpdateNode(node *Node) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
+
+	// The underlying engine fills a missing update time; log that same value.
+	if node != nil && node.UpdatedAt.IsZero() {
+		node.UpdatedAt = time.Now()
+	}
 
 	if config.IsWALEnabled() {
 		dbName := w.databaseFromNode(node)
@@ -659,6 +668,10 @@ func (w *WALEngine) CreateEdge(edge *Edge) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
+	if edge != nil {
+		initializeCreationTimes(&edge.CreatedAt, &edge.UpdatedAt)
+	}
+
 	if config.IsWALEnabled() {
 		dbName, err := w.databaseFromEdge(edge)
 		if err != nil {
@@ -710,6 +723,12 @@ func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
+	for _, entity := range nodes {
+		if entity != nil {
+			initializeCreationTimes(&entity.CreatedAt, &entity.UpdatedAt)
+		}
+	}
+
 	if config.IsWALEnabled() {
 		dbName := w.getDatabaseName()
 		cloned := make([]*Node, 0, len(nodes))
@@ -738,6 +757,12 @@ func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
 func (w *WALEngine) BulkCreateEdges(edges []*Edge) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
+
+	for _, entity := range edges {
+		if entity != nil {
+			initializeCreationTimes(&entity.CreatedAt, &entity.UpdatedAt)
+		}
+	}
 
 	if config.IsWALEnabled() {
 		dbName := w.getDatabaseName()

@@ -3,7 +3,6 @@ package storage
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -96,7 +95,7 @@ func (b *BatchWriter) append(op OperationType, data interface{}) error {
 		return nil
 	}
 
-	dataBytes, err := json.Marshal(data)
+	dataBytes, err := marshalWALRecoveryPayload(nil, data)
 	if err != nil {
 		return fmt.Errorf("wal batch: failed to marshal data: %w", err)
 	}
