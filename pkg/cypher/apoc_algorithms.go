@@ -62,14 +62,24 @@ func (e *StorageExecutor) callApocAlgoDijkstra(ctx context.Context, args []inter
 	if err != nil {
 		return nil, err
 	}
-	path, weight := e.dijkstra(startID, endID, steps, weightProp)
+	// Keep the legacy omitted fallback; an explicitly supplied fifth argument
+	// selects the cost of relationships without the requested weight property.
+	defaultWeight := 1.0
+	if value := procedureArgument(args, 4); value != nil {
+		var numeric bool
+		defaultWeight, numeric = strictNumericValue(value)
+		if !numeric {
+			return nil, procedureArgumentTypeError(procedure, "defaultWeight", "FLOAT", value)
+		}
+	}
+	path, weight := e.dijkstra(startID, endID, steps, weightProp, defaultWeight)
 	if path == nil {
 		return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{}}, nil
 	}
 	return &ExecuteResult{Columns: []string{"path", "weight"}, Rows: [][]interface{}{{path, weight}}}, nil
 }
 
-func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp string) ([]storage.NodeID, float64) {
+func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRelationshipStep, weightProp string, defaultWeight float64) ([]storage.NodeID, float64) {
 	dist := make(map[storage.NodeID]float64)
 	dist[startID] = 0
 	pq := &priorityQueue{}
@@ -91,7 +101,7 @@ func (e *StorageExecutor) dijkstra(startID, endID storage.NodeID, steps []apocRe
 			if visited[neighbor] {
 				continue
 			}
-			weight := 1.0
+			weight := defaultWeight
 			if weightProp != "" {
 				if w, ok := edge.Properties[weightProp]; ok {
 					if wf, ok := toFloat64(w); ok {

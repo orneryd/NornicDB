@@ -267,7 +267,7 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 		require.Equal(t, spec.Description, spec.DescriptionMessage.Fallback, "English fallback changed: %s", spec.Name)
 	}
 	require.Equal(t, 74, coreCount) // gds.graph.exists (#1161)
-	require.Equal(t, 30, apocCount) // apoc.path.subgraphAll and expandConfig (#907)
+	require.Equal(t, 31, apocCount) // Includes canonical apoc.cypher.doIt alongside the retained aliases.
 	require.Equal(t, 5, customCount)
 	require.Equal(t, 6, kpAliasCount)
 }

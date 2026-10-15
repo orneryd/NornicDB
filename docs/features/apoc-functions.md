@@ -463,6 +463,11 @@ MATCH (start:Person {name:'Alice'}), (end:Person {name:'Bob'})
 CALL apoc.algo.dijkstra(start, end, 'KNOWS', 'weight') YIELD path, weight
 RETURN path, weight
 
+// Explicit cost for relationships without the weight property
+MATCH (start:Person {name:'Alice'}), (end:Person {name:'Bob'})
+CALL apoc.algo.dijkstra(start, end, 'KNOWS', 'weight', 10.0) YIELD path, weight
+RETURN path, weight
+
 // Community detection
 MATCH (n:Person)
 RETURN apoc.algo.community(n) AS communityId

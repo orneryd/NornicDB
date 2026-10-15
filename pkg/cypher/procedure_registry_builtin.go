@@ -523,7 +523,7 @@ func ensureBuiltInProceduresRegistered() {
 				return e.callGdsLinkPredictionPredict(ctx, args)
 			})
 
-		registerBuiltInProcedureLiteral("apoc.algo.dijkstra", "apoc.algo.dijkstra(startNode :: NODE, endNode :: NODE, relTypesAndDirections :: STRING, weightPropertyName :: STRING) :: (path :: PATH, weight :: FLOAT)", "Runs weighted shortest path", ProcedureModeRead, 4, 5, false,
+		registerBuiltInProcedureLiteral("apoc.algo.dijkstra", "apoc.algo.dijkstra(startNode :: NODE, endNode :: NODE, relTypesAndDirections :: STRING, weightPropertyName :: STRING, defaultWeight :: FLOAT) :: (path :: PATH, weight :: FLOAT)", "Runs weighted shortest path", ProcedureModeRead, 4, 5, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocAlgoDijkstra(ctx, args)
 			})
