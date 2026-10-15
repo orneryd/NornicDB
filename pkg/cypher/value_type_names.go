@@ -100,6 +100,14 @@ func cypherValueKindOf(value interface{}) cypherValueKind {
 		return valueKindNode
 	case *storage.Edge:
 		return valueKindRelationship
+	case storage.RemoteEntityValue:
+		if v == nil {
+			return valueKindNull
+		}
+		if _, relationship := v["type"].(string); relationship {
+			return valueKindRelationship
+		}
+		return valueKindNode
 	case storage.RemotePathValue:
 		if v == nil {
 			return valueKindNull

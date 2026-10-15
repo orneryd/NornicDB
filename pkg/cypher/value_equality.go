@@ -3,7 +3,6 @@ package cypher
 import (
 	"cmp"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"reflect"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -330,11 +329,7 @@ func cypherUnsignedInteger(value interface{}) (uint64, bool) {
 }
 
 func cypherListValue(value interface{}) ([]interface{}, bool) {
-	if _, path := value.(storage.RemotePathValue); path {
-		return nil, false
-	}
-	valueType := reflect.TypeOf(value)
-	if valueType == nil || (valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array) {
+	if cypherValueKindOf(value) != valueKindList {
 		return nil, false
 	}
 	return toAnySlice(value), true

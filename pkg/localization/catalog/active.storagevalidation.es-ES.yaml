@@ -190,3 +190,17 @@
   other: 'el cambio de etiqueta infringiría la directiva DISALLOWED: (:{{.SourceLabel}})-[:{{.RelationshipType}}]->(:{{.TargetLabel}}) (restricción {{printf "%q" .ConstraintName}})'
 - id: storage.validation.label_change_allowed
   other: "el cambio de etiqueta infringiría la directiva ALLOWED: ninguna directiva ALLOWED permite (:{{.SourceLabels}})-[:{{.RelationshipType}}]->(:{{.TargetLabels}})"
+- id: storage.remote.rest_invalid_json
+  other: "JSON REST de HTTP remoto no válido"
+- id: storage.remote.path_entity_sequence_missing
+  other: "la ruta remota no contiene una secuencia de entidades"
+- id: storage.remote.path_non_entity
+  other: "la ruta remota contiene un valor que no es una entidad"
+- id: storage.remote.path_entities_inconsistent
+  other: "la ruta HTTP remota contiene entidades inconsistentes"
+- id: storage.remote.rest_map_keys_mismatch
+  other: "las claves de los mapas de fila y REST de HTTP remoto son distintas"
+- id: storage.remote.rest_list_length_mismatch
+  other: "las longitudes de las listas de fila y REST de HTTP remoto son distintas"
+- id: storage.remote.rest_row_length_mismatch
+  other: "las longitudes de fila y REST de HTTP remoto son distintas"

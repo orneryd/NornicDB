@@ -950,6 +950,7 @@ type ResultRow struct {
 	Row   []interface{} `json:"row"`
 	Meta  []interface{} `json:"meta,omitempty"`
 	Graph *GraphResult  `json:"graph,omitempty"`
+	REST  []interface{} `json:"rest,omitempty"`
 }
 
 // GraphResult holds graph-format results.
@@ -968,12 +969,14 @@ type GraphNode struct {
 
 // GraphRelationship is a relationship in graph format.
 type GraphRelationship struct {
-	ID         string                 `json:"id"`
-	ElementID  string                 `json:"elementId"`
-	Type       string                 `json:"type"`
-	StartNode  string                 `json:"startNodeElementId"`
-	EndNode    string                 `json:"endNodeElementId"`
-	Properties map[string]interface{} `json:"properties"`
+	StartNodeID string                 `json:"startNode,omitempty"`
+	EndNodeID   string                 `json:"endNode,omitempty"`
+	ID          string                 `json:"id"`
+	ElementID   string                 `json:"elementId"`
+	Type        string                 `json:"type"`
+	StartNode   string                 `json:"startNodeElementId"`
+	EndNode     string                 `json:"endNodeElementId"`
+	Properties  map[string]interface{} `json:"properties"`
 }
 
 // QueryStats holds query execution statistics.
@@ -1244,7 +1247,7 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		if typed == nil {
 			return nil, []interface{}{nil}
 		}
-		id, _, _ := typed.LegacyIDs()
+		id, startID, endID := typed.LegacyIDs()
 		elementID, _ := typed["elementId"].(string)
 		props, _ := typed["properties"].(map[string]interface{})
 		if props == nil {
@@ -1258,7 +1261,7 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 			if len(graph) > 0 && graph[0].graph != nil {
 				start, _ := typed["startNodeElementId"].(string)
 				end, _ := typed["endNodeElementId"].(string)
-				graph[0].addEdge(GraphRelationship{ID: strconv.FormatInt(id, 10), ElementID: elementID, Type: relationshipType, StartNode: start, EndNode: end, Properties: properties})
+				graph[0].addEdge(GraphRelationship{StartNodeID: strconv.FormatInt(startID, 10), EndNodeID: strconv.FormatInt(endID, 10), ID: strconv.FormatInt(id, 10), ElementID: elementID, Type: relationshipType, StartNode: start, EndNode: end, Properties: properties})
 			}
 		} else if len(graph) > 0 && graph[0].graph != nil {
 			var labels []string
@@ -1274,7 +1277,11 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 			}
 			graph[0].addNode(GraphNode{ID: strconv.FormatInt(id, 10), ElementID: elementID, Labels: labels, Properties: properties})
 		}
-		return properties, []interface{}{map[string]interface{}{"id": id, "elementId": elementID, "type": kind, "deleted": false}}
+		meta := map[string]interface{}{"id": id, "elementId": elementID, "type": kind, "deleted": false}
+		if transactionHTTPWantsREST(graph) {
+			return transactionHTTPRESTEntity(kind, dbName, meta, properties, typed), []interface{}{meta}
+		}
+		return properties, []interface{}{meta}
 	case storage.RemotePathValue:
 		if _, _, valid := typed.Parts(); !valid {
 			return nil, []interface{}{nil}
@@ -1282,6 +1289,9 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		entities := make([]interface{}, len(typed))
 		for i, entity := range typed {
 			entities[i] = entity
+		}
+		if transactionHTTPWantsREST(graph) {
+			return s.transactionHTTPRESTPath(entities, dbName, graph[0]), nil
 		}
 		row, metadata := s.transactionHTTPValue(entities, dbName, graph...)
 		return row, []interface{}{metadata}
@@ -1295,7 +1305,11 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		if len(graph) > 0 && graph[0].graph != nil {
 			graph[0].addNode(GraphNode{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Labels: typed.Labels, Properties: properties})
 		}
-		return properties, entityMeta(string(typed.ID), elementID, "node")
+		meta := entityMeta(string(typed.ID), elementID, "node")
+		if transactionHTTPWantsREST(graph) {
+			return transactionHTTPRESTEntity("node", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"labels": typed.Labels}), meta
+		}
+		return properties, meta
 	case *storage.Edge:
 		if typed == nil {
 			return nil, []interface{}{nil}
@@ -1304,9 +1318,13 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		properties := converted.(map[string]interface{})
 		elementID := storage.RelationshipElementID(s.entityDatabase(dbName, "", typed.ID), typed.ID)
 		if len(graph) > 0 && graph[0].graph != nil {
-			graph[0].addEdge(GraphRelationship{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: storage.NodeElementID(s.entityDatabase(dbName, typed.StartNode, ""), typed.StartNode), EndNode: storage.NodeElementID(s.entityDatabase(dbName, typed.EndNode, ""), typed.EndNode), Properties: properties})
+			graph[0].addEdge(GraphRelationship{StartNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.StartNode)), 10), EndNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.EndNode)), 10), ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: storage.NodeElementID(s.entityDatabase(dbName, typed.StartNode, ""), typed.StartNode), EndNode: storage.NodeElementID(s.entityDatabase(dbName, typed.EndNode, ""), typed.EndNode), Properties: properties})
 		}
-		return properties, entityMeta(string(typed.ID), elementID, "relationship")
+		meta := entityMeta(string(typed.ID), elementID, "relationship")
+		if transactionHTTPWantsREST(graph) {
+			return transactionHTTPRESTEntity("relationship", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"type": typed.Type, "startNodeElementId": storage.NodeElementID(s.entityDatabase(dbName, typed.StartNode, ""), typed.StartNode), "endNodeElementId": storage.NodeElementID(s.entityDatabase(dbName, typed.EndNode, ""), typed.EndNode)}), meta
+		}
+		return properties, meta
 	case *cypher.PathResult:
 		if typed == nil {
 			return nil, []interface{}{nil}
@@ -1319,6 +1337,9 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 			if index < len(typed.Relationships) {
 				entities = append(entities, typed.Relationships[index])
 			}
+		}
+		if transactionHTTPWantsREST(graph) {
+			return s.transactionHTTPRESTPath(entities, dbName, graph[0]), nil
 		}
 		row, metadata := s.transactionHTTPValue(entities, dbName, graph...)
 		return row, []interface{}{metadata}
@@ -1485,6 +1506,18 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 			metadata = append(metadata, nested...)
 		}
 		qr.Data[i] = ResultRow{Row: convertedRow, Meta: metadata}
+		if len(contents) > 0 {
+			for _, format := range contents[0] {
+				if format == "rest" {
+					state := &transactionHTTPValueState{rest: true, mapKeyOrders: result.MapKeyOrders}
+					qr.Data[i].REST = make([]interface{}, len(row))
+					for column, value := range row {
+						qr.Data[i].REST[column], _ = s.transactionHTTPValue(value, dbName, state)
+					}
+					break
+				}
+			}
+		}
 		if len(graph) > 0 && graph[0].graph != nil {
 			qr.Data[i].Graph = graph[0].graph
 		}

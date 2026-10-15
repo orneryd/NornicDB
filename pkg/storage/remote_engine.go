@@ -537,6 +537,9 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 	for resultIndex := range txResp.Results {
 		for rowIndex := range txResp.Results[resultIndex].Data {
 			data := &txResp.Results[resultIndex].Data[rowIndex]
+			if data.REST != nil && len(data.REST) != len(data.RawRow) {
+				return nil, localizedError(localization.StorageRemoteRESTRowLengthMismatch(), nil)
+			}
 			entities := make(map[string]interface{})
 			for _, node := range data.Graph.Nodes {
 				entities[fmt.Sprint(node["elementId"])] = map[string]interface{}{

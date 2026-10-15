@@ -200,20 +200,7 @@ func isRuntimeTemporal(v interface{}) bool {
 	return false
 }
 
-func isRuntimeList(v interface{}) bool {
-	if _, path := v.(storage.RemotePathValue); path {
-		return false
-	}
-	if v == nil {
-		return false
-	}
-	switch v.(type) {
-	case string, map[string]interface{}:
-		return false
-	}
-	kind := reflect.TypeOf(v).Kind()
-	return kind == reflect.Slice || kind == reflect.Array
-}
+func isRuntimeList(v interface{}) bool { return cypherValueKindOf(v) == valueKindList }
 
 // runtimeArithmeticTypeError is the TypeError of left op right when an
 // operand is of a type the operator can't take, or nil. Null operands make the

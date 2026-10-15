@@ -36,3 +36,27 @@ func TestStorageTransactionLargeCommitUnrecoverableRendering(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "el almacenamiento rechaza escrituras hasta reiniciar: no se pudo revertir una confirmación grande fallida: disk gone", spanish)
 }
+
+func TestStorageRemoteGraphValidationCatalogRendering(t *testing.T) {
+	bundle := i18n.NewBundle(language.AmericanEnglish)
+	bundle.RegisterUnmarshalFunc("yaml", yaml.Unmarshal)
+	for _, locale := range []string{"en-US", "es-ES", "en-XA"} {
+		_, err := bundle.LoadMessageFileFS(catalogFS, "catalog/active.storagevalidation."+locale+".yaml")
+		require.NoError(t, err)
+	}
+	messages := []Message{StorageRemoteRESTInvalidJSON(), StorageRemotePathEntitySequenceMissing(), StorageRemotePathNonEntity(), StorageRemotePathEntitiesInconsistent(), StorageRemoteRESTMapKeysMismatch(), StorageRemoteRESTListLengthMismatch(), StorageRemoteRESTRowLengthMismatch()}
+	for _, message := range messages {
+		t.Run(string(message.ID), func(t *testing.T) {
+			config := &i18n.LocalizeConfig{MessageID: string(message.ID)}
+			english, err := i18n.NewLocalizer(bundle, "en-US").Localize(config)
+			require.NoError(t, err)
+			require.Equal(t, message.Fallback, english)
+			spanish, err := i18n.NewLocalizer(bundle, "es-ES").Localize(config)
+			require.NoError(t, err)
+			require.NotEqual(t, english, spanish)
+			pseudo, err := i18n.NewLocalizer(bundle, "en-XA").Localize(config)
+			require.NoError(t, err)
+			require.Contains(t, pseudo, "[!! "+english+" !!]")
+		})
+	}
+}

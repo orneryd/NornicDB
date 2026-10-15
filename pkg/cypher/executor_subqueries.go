@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -2309,72 +2308,6 @@ func compareValuesForSort(a, b interface{}) int {
 		return 1
 	}
 	return 0
-}
-
-// cypherSortRank implements the openCypher comparability order used by ORDER
-// BY: maps, nodes, relationships, lists, paths, strings, booleans, numbers,
-// NaN, and null. Null is handled before this function.
-// cypherSortRank is a value's position in Neo4j's orderability across types:
-// map < node < relationship < list < path < point < zoned datetime < local
-// datetime < date < zoned time < local time < duration < string < boolean <
-// number < NaN (#817, #837).
-func cypherSortRank(value interface{}) int {
-	if _, ok := pointValue(value); ok {
-		return 6
-	}
-	if kind, _, ok := temporalOrderParts(value); ok {
-		return temporalSortRanks[kind]
-	}
-	switch value.(type) {
-	case *storage.Node:
-		return 1
-	case *storage.Edge:
-		return 2
-	case PathResult, *PathResult:
-		return 4
-	case CypherVector, *CypherVector:
-		return 5
-	case CypherDuration, *CypherDuration:
-		return 12
-	case string:
-		return 13
-	case bool:
-		return 14
-	case CypherUUID, *CypherUUID:
-		return 15
-	}
-	if object, isMap := toStringAnyMap(value); isMap {
-		if _, isPath := object["_pathResult"]; isPath {
-			return 4
-		}
-	}
-	if number, ok := strictNumericValue(value); ok {
-		if math.IsNaN(number) {
-			return 17
-		}
-		return 16
-	}
-	typeOf := reflect.TypeOf(value)
-	if typeOf != nil {
-		switch typeOf.Kind() {
-		case reflect.Map:
-			return 0
-		case reflect.Slice, reflect.Array:
-			return 3
-		}
-	}
-	return 20
-}
-
-// temporalSortRanks are the temporal kinds' positions in cypherSortRank.
-var temporalSortRanks = map[string]int{"datetime": 7, "localdatetime": 8, "date": 9, "time": 10, "localtime": 11}
-
-func cypherSortList(value interface{}) ([]interface{}, bool) {
-	typeOf := reflect.TypeOf(value)
-	if typeOf == nil || (typeOf.Kind() != reflect.Slice && typeOf.Kind() != reflect.Array) {
-		return nil, false
-	}
-	return toAnySlice(value), true
 }
 
 func compareOrderedInts(left, right int) int {

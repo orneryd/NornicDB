@@ -99,3 +99,24 @@ compact response data increases from 1,504 bytes (`row` + `graph`) to 5,050 byte
 with REST, or 3.36 times the wire size. This fixture-specific correctness cost is
 not a heap, latency, or throughput measurement. The decoder reads the REST
 identity and data fields without retaining its navigation fields.
+
+### HTTP positional provenance and runtime kinds
+
+NornicDB transaction responses now include the `rest` representation when requested
+through `resultDataContents`, including entity envelopes inside maps and lists and
+ordered path descriptors. RemoteEngine requests this alongside `row` and `graph`,
+so an ordinary empty map cannot steal an entity's flattened metadata. A supplied
+REST column list with a different length from the row is rejected before entity
+metadata advances; an absent legacy sidecar retains the legacy fallback.
+Relationship graph entries carry both element IDs and legacy numeric endpoint IDs,
+including relationship-only results, for forwarding to older Bolt versions.
+REST `self` values identify legacy entities; this representation does not add
+legacy HTTP CRUD/navigation routes.
+
+Marked remote entities participate in the shared Cypher type, list and ordering
+rules as nodes or relationships. Remote paths remain paths: `head`, `last` and
+`reverse` reject them rather than treating their Go representation as a list.
+Entity ordering follows source identity, never its mutable properties; legacy ID
+ties across source elements use element IDs to keep a stable order. Ordinary maps
+and lists retain their existing types and behavior. Malformed remote path/REST
+errors preserve storage localization message identities.

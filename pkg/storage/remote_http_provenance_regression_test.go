@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"io"
 	"net/http"
 	"os"
@@ -107,4 +109,20 @@ func TestRemoteHTTPRejectsInconsistentRESTSidecars(t *testing.T) {
 		})
 	}
 	require.False(t, remoteHTTPRESTEntity(json.RawMessage(`{"metadata":{"elementId":"node"},"self":"url","data":{}}`), map[string]interface{}{}, map[string]interface{}{"elementId": float64(1)}))
+}
+
+func TestRemoteHTTPRejectsInconsistentTopLevelREST(t *testing.T) {
+	for _, rest := range []string{`[]`, `[{}]`, `[{},{},{}]`} {
+		t.Run(rest, func(t *testing.T) {
+			engine := makeEngineWithTransport(t, "http://remote.example", func(*http.Request) (*http.Response, error) {
+				response := `{"results":[{"columns":["a","b"],"data":[{"row":[{},{}],"rest":` + rest + `,"meta":[{"elementId":"n","type":"node"}],"graph":{"nodes":[{"id":"1","elementId":"n","labels":[],"properties":{}}],"relationships":[]}}]}],"errors":[]}`
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(response))}, nil
+			})
+			_, _, err := engine.QueryCypher(context.Background(), "RETURN ordinary,entity", nil)
+			require.Error(t, err)
+			var localized *localization.LocalizedError
+			require.True(t, errors.As(err, &localized))
+			require.Equal(t, localization.MessageStorageRemoteRESTRowLengthMismatch, localized.Message.ID)
+		})
+	}
 }

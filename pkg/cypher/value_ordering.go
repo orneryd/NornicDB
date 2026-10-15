@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"math"
 	"slices"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -95,6 +96,27 @@ func cypherPathResultOf(value interface{}, object map[string]interface{}, isMap 
 // can't order.
 func compareCypherStructuredValues(left, right interface{}, compareValue func(a, b interface{}) (int, bool)) (order int, comparable bool, handled bool) {
 	switch leftValue := left.(type) {
+	case storage.RemoteEntityValue:
+		rightValue, ok := right.(storage.RemoteEntityValue)
+		if !ok || cypherValueKindOf(leftValue) != cypherValueKindOf(rightValue) {
+			return 0, false, true
+		}
+		leftElement, _ := leftValue["elementId"].(string)
+		rightElement, _ := rightValue["elementId"].(string)
+		if leftElement == rightElement {
+			return 0, true, true
+		}
+		leftID, _, _ := leftValue.LegacyIDs()
+		rightID, _, _ := rightValue.LegacyIDs()
+		if leftID >= 0 && rightID >= 0 {
+			if leftID < rightID {
+				return -1, true, true
+			}
+			if leftID > rightID {
+				return 1, true, true
+			}
+		}
+		return compareStrings(leftElement, rightElement), true, true
 	case *storage.Node:
 		rightValue, ok := right.(*storage.Node)
 		if !ok || leftValue == nil || rightValue == nil {
@@ -109,7 +131,7 @@ func compareCypherStructuredValues(left, right interface{}, compareValue func(a,
 		return compareStrings(string(leftValue.ID), string(rightValue.ID)), true, true
 	}
 	switch right.(type) {
-	case *storage.Node, *storage.Edge:
+	case *storage.Node, *storage.Edge, storage.RemoteEntityValue:
 		return 0, false, true
 	}
 	leftMap, leftIsMap := toStringAnyMap(left)
@@ -200,3 +222,54 @@ func compareCypherComparableValues(left, right interface{}) (int, bool) {
 func compareSortableValues(left, right interface{}) (int, bool) {
 	return compareValuesForSort(left, right), true
 }
+
+// cypherSortRank implements the openCypher comparability order used by ORDER
+// BY: maps, nodes, relationships, lists, paths, strings, booleans, numbers,
+// NaN, and null. Null is handled before this function.
+// cypherSortRank is a value's position in Neo4j's orderability across types:
+// map < node < relationship < list < path < point < zoned datetime < local
+// datetime < date < zoned time < local time < duration < string < boolean <
+// number < NaN (#817, #837).
+
+func cypherSortRank(value interface{}) int {
+	if _, ok := pointValue(value); ok {
+		return 6
+	}
+	if kind, _, ok := temporalOrderParts(value); ok {
+		return temporalSortRanks[kind]
+	}
+	switch cypherValueKindOf(value) {
+	case valueKindMap:
+		return 0
+	case valueKindNode:
+		return 1
+	case valueKindRelationship:
+		return 2
+	case valueKindList:
+		return 3
+	case valueKindPath:
+		return 4
+	case valueKindVector:
+		return 5
+	case valueKindDuration:
+		return 12
+	case valueKindString:
+		return 13
+	case valueKindBoolean:
+		return 14
+	case valueKindUUID:
+		return 15
+	}
+	if number, ok := strictNumericValue(value); ok {
+		if math.IsNaN(number) {
+			return 17
+		}
+		return 16
+	}
+	return 20
+}
+
+// temporalSortRanks are the temporal kinds' positions in cypherSortRank.
+var temporalSortRanks = map[string]int{"datetime": 7, "localdatetime": 8, "date": 9, "time": 10, "localtime": 11}
+
+func cypherSortList(value interface{}) ([]interface{}, bool) { return cypherListValue(value) }

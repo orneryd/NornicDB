@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -1399,7 +1398,7 @@ func randomCypherFloat() float64 {
 // string or a list. Any other value is the function's TypeError (Neo4j 5.26
 // and 2026.09; head('ab') too).
 func evaluateListAccessFunction(function string, value interface{}) (interface{}, error) {
-	if value == nil {
+	if cypherValueKindOf(value) == valueKindNull {
 		return nil, nil
 	}
 	if text, isString := value.(string); isString && function == "reverse" {
@@ -1410,8 +1409,7 @@ func evaluateListAccessFunction(function string, value interface{}) (interface{}
 		return string(runes), nil
 	}
 	if _, isString := value.(string); !isString {
-		if valueType := reflect.TypeOf(value); valueType.Kind() == reflect.Slice || valueType.Kind() == reflect.Array {
-			items := toAnySlice(value)
+		if items, isList := cypherListValue(value); isList {
 			switch function {
 			case "head":
 				if len(items) == 0 {

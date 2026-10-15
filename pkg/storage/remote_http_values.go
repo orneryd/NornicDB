@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"reflect"
 	"strconv"
 )
@@ -21,7 +22,7 @@ func decodeRemoteHTTPValueWithREST(raw, restRaw json.RawMessage, metadata []inte
 		return nil, err
 	}
 	if len(restRaw) > 0 && !json.Valid(restRaw) {
-		return nil, fmt.Errorf("invalid remote HTTP REST JSON")
+		return nil, localizedError(localization.StorageRemoteRESTInvalidJSON(), nil)
 	}
 	if len(entities) == 0 {
 		return plain, nil
@@ -36,18 +37,18 @@ func decodeRemoteHTTPValueWithREST(raw, restRaw json.RawMessage, metadata []inte
 			}
 			items, ok := value.([]interface{})
 			if !ok {
-				return nil, fmt.Errorf("remote path has no entity sequence")
+				return nil, localizedError(localization.StorageRemotePathEntitySequenceMissing(), nil)
 			}
 			path := make(RemotePathValue, len(items))
 			for i, item := range items {
 				entity, ok := item.(RemoteEntityValue)
 				if !ok {
-					return nil, fmt.Errorf("remote path contains a non-entity")
+					return nil, localizedError(localization.StorageRemotePathNonEntity(), nil)
 				}
 				path[i] = entity
 			}
 			if _, _, valid := path.Parts(); !valid {
-				return nil, fmt.Errorf("remote HTTP path has inconsistent entities")
+				return nil, localizedError(localization.StorageRemotePathEntitiesInconsistent(), nil)
 			}
 			return path, nil
 		}
@@ -82,7 +83,7 @@ func decodeRemoteHTTPValueWithREST(raw, restRaw json.RawMessage, metadata []inte
 			}
 			nestedREST, present := restFields[key.(string)]
 			if len(restRaw) > 0 && !present {
-				return nil, fmt.Errorf("remote HTTP row/REST map keys differ")
+				return nil, localizedError(localization.StorageRemoteRESTMapKeysMismatch(), nil)
 			}
 			value, err := decodeRemoteHTTPValueWithREST(nested, nestedREST, metadata, index, entities)
 			if err != nil {
@@ -102,7 +103,7 @@ func decodeRemoteHTTPValueWithREST(raw, restRaw json.RawMessage, metadata []inte
 				return nil, err
 			}
 			if len(restItems) != len(nested) {
-				return nil, fmt.Errorf("remote HTTP row/REST list lengths differ")
+				return nil, localizedError(localization.StorageRemoteRESTListLengthMismatch(), nil)
 			}
 		}
 		result := make([]interface{}, len(nested))
