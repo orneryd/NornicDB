@@ -104,7 +104,7 @@ func (e *StorageExecutor) evaluateRowPatternComprehensionAtom(expr string, value
 // assignment ("p = "). A list comprehension head is an identifier followed by
 // IN, which this rejects.
 func patternComprehensionHead(pattern string) bool {
-	head := strings.TrimSpace(pattern)
+	head := strings.TrimSpace(StripComments(pattern))
 	if eq := strings.IndexByte(head, '='); eq > 0 && isValidIdentifier(strings.TrimSpace(head[:eq])) {
 		head = strings.TrimSpace(head[eq+1:])
 	}

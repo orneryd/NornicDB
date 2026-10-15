@@ -14,8 +14,11 @@ func TestPatternComprehensionBindingAndIteratorRegressions(t *testing.T) {
 		want              interface{}
 	}{
 		{"heterogeneous_node_binding", `MATCH (n:Q {id:1}) RETURN [e IN [n,1] | [(e)-->(w) | w.id]] AS v`, "Neo.ClientError.Statement.TypeError", nil},
+		{"heterogeneous_ordinary_node_marker_map", `MATCH (n:Q {id:1}) RETURN [e IN [n,{_nodeId:'binding_regression:missing'}] | [(e)-->(w) | w.id]] AS v`, "Neo.ClientError.Statement.TypeError", nil},
 		{"parenthesized_iterator", `MATCH (n:Q {id:1}) RETURN [(n)-->(z) | [(z.id) IN [2] | z]] AS v`, "Neo.ClientError.Statement.SyntaxError", nil},
 		{"empty_iterator", `MATCH (n:Q {id:1}) RETURN [(n)-->(z) | [ IN [2] | z]] AS v`, "Neo.ClientError.Statement.SyntaxError", nil},
+		{"commented_relationship_head", `MATCH (n:Q {id:1}) RETURN [(n) /* edge */-->(w) WHERE w.id IN [2] | w.id] AS v`, "", []interface{}{int64(2)}},
+		{"mixed_null_binding", `MATCH (n:Q {id:1}) RETURN [e IN [n,null] | [(e)-->(w) | w.id]] AS v`, "", []interface{}{[]interface{}{int64(2)}, []interface{}{}}},
 		{"null_binding", `WITH null AS e RETURN [(e)-->(w) | w.id] AS v`, "", []interface{}{}},
 		{"local_node_binding", `MATCH (n:Q {id:1}) RETURN [e IN [n] | [(e)-->(w) | w.id]] AS v`, "", []interface{}{[]interface{}{int64(2)}}},
 	} {
