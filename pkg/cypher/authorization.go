@@ -564,6 +564,27 @@ func contextPermissions(ctx context.Context) func(permission string) bool {
 	return nil
 }
 
+// principalPermissions is the permission check of the statement's principal,
+// for what a principal sees rather than what it may run (dbms.listConnections
+// lists other users' connections only to a principal holding admin): the
+// transport's resolver (contextPermissions); without one (an embedded
+// caller), the signed-in user's roles, resolved as HTTP and Bolt resolve an
+// entitlement (auth.PermissionsForRoles, auth.EntitlementsAllow) with no
+// stored entitlements, which the executor doesn't have, so the built-in
+// roles' defaults decide. It is nil when the statement has neither a resolver
+// nor a signed-in user: the executor authorizes nothing for that caller.
+func principalPermissions(ctx context.Context) func(permission string) bool {
+	if allows := contextPermissions(ctx); allows != nil {
+		return allows
+	}
+	user, signedIn := authenticatedUserFromContext(ctx)
+	if !signedIn {
+		return nil
+	}
+	entitlements := auth.PermissionsForRoles(user.Roles, nil)
+	return func(permission string) bool { return auth.EntitlementsAllow(entitlements, permission) }
+}
+
 // MissingPermission is the one authorization decision, which the executor
 // (AuthorizeQuery) and the HTTP and Bolt request checks share: the first
 // permission requirements need that allows denies, in Neo4j's order

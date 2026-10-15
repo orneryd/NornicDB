@@ -145,11 +145,11 @@ func (e *StorageExecutor) callDbmsListConnectionsWithContext(ctx context.Context
 	}
 	// A principal holding the admin entitlement (whatever its role is
 	// called) sees every connection; any other sees its own, as in Neo4j.
-	// The principal's permissions are the one resolver the transport
-	// attaches (contextPermissions); without one (an embedded caller) the
-	// executor authorizes nothing, so every connection is listed.
+	// The principal's permissions are principalPermissions; a statement with
+	// neither a resolver nor a signed-in user (an embedded caller) lists
+	// every connection.
 	viewAll := true
-	if allows := contextPermissions(ctx); allows != nil {
+	if allows := principalPermissions(ctx); allows != nil {
 		viewAll = allows("admin")
 	}
 	for _, connection := range identity.Connections() {
