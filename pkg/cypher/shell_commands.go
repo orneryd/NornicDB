@@ -61,6 +61,18 @@ func nextShellCommand(input string) (string, string, bool) {
 	}
 
 	commandName := lowerASCII(fields[0])
+	if commandName == ":use" && len(fields) > 2 {
+		// HTTP has always accepted :USE db followed by a statement on the
+		// same line. Preserve the original statement bytes (including quoted
+		// whitespace) rather than swallowing them as command arguments.
+		databaseStart := len(fields[0]) + strings.Index(firstLine[len(fields[0]):], fields[1])
+		databaseEnd := databaseStart + len(fields[1])
+		remaining := strings.TrimSpace(firstLine[databaseEnd:])
+		if lineEnd >= 0 {
+			remaining += "\n" + trimmed[lineEnd+1:]
+		}
+		return strings.TrimSpace(firstLine[:databaseEnd]), remaining, true
+	}
 	if (commandName == ":param" || commandName == ":params") && isMapStyleShellParam(trimmed) {
 		command, consumed, ok := consumeShellMapCommand(trimmed)
 		if !ok {
@@ -202,6 +214,15 @@ func (e *StorageExecutor) executeShellCommand(ctx context.Context, command, quer
 		}
 		if err := e.authorizeSelectedDatabase(ctx, dbName, query); err != nil {
 			return nil, ctx, err
+		}
+		if e.dbManager != nil {
+			// Resolve shell selections before the statement starts, including
+			// selections with no following query. Reuse USE's canonical resolver.
+			_, resolved, err := e.scopedExecutorForUse(dbName, GetAuthTokenFromContext(ctx))
+			if err != nil {
+				return nil, ctx, nerrors.MarkCompileTime(err)
+			}
+			dbName = resolved
 		}
 		ctx = withExecutionDatabase(ctx, dbName)
 		return &ExecuteResult{

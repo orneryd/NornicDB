@@ -3043,7 +3043,7 @@ func TestImplicitTransactionGenericPathAdditionalBranches(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 		require.Len(t, response.Errors, 1)
 		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", response.Errors[0].Code)
-		require.Contains(t, response.Errors[0].Message, ":USE requires a database name")
+		require.Equal(t, ":use requires a database name", response.Errors[0].Message)
 		require.Empty(t, response.Results)
 	})
 

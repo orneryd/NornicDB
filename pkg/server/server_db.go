@@ -1622,7 +1622,14 @@ func (s *Server) runRequestStatement(
 		if errors.As(err, &own) {
 			return &own.QueryError
 		}
-		if failure := statementError(err); result != nil && len(result.Columns) > 0 && !nornicerrors.IsCompileTimeStatus(failure.Code) {
+		failure := statementError(err)
+		// Authorization failures never publish a statement result, even when
+		// the executor supplies column metadata alongside the denial. Keep
+		// runtime partial results for non-security statement failures below.
+		if strings.HasPrefix(failure.Code, "Neo.ClientError.Security.") {
+			return &failure
+		}
+		if result != nil && len(result.Columns) > 0 && !nornicerrors.IsCompileTimeStatus(failure.Code) {
 			s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
 			return &failure
 		}
