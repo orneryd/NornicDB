@@ -270,6 +270,7 @@ func TestReportedPredicateContextVariants(t *testing.T) {
 		{"comprehension multiplication", "MATCH (n:W2) RETURN [x IN [1, 2] WHERE x * n.id] AS l", "SyntaxError", nil},
 		{"where unknown addition", "MATCH (n:W2) WHERE n.id + 1 RETURN n.id", "", [][]interface{}{}},
 		{"comprehension arithmetic empty match", "MATCH (n:MissingW2) RETURN [x IN [1, 2] WHERE x + n.id] AS l", "", [][]interface{}{}},
+		{"property syntax before missing parameter", "WITH $m + 1 AS m RETURN m.a", "SyntaxError", nil},
 		{"comprehension unknown property predicate", "MATCH (n:W2) RETURN [x IN [1, 2] WHERE n.id] AS l", "TypeError", nil},
 		{"comprehension boolean comparison", "MATCH (n:W2) RETURN [x IN [1, 2] WHERE x + n.id > 2] AS l", "", [][]interface{}{{[]interface{}{int64(2)}}}},
 	} {

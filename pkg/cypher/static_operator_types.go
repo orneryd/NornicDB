@@ -36,6 +36,9 @@ type staticOperand struct {
 	display    string
 	parameter  string
 	nonBoolean bool
+	// predicateDeferred preserves union constraints for property/binding checks
+	// while deferring Neo4j's row-dependent addition predicate errors to runtime.
+	predicateDeferred bool
 	// nonInteger excludes Integer from an otherwise unresolved union.
 	nonInteger bool
 	// nonEntity is set for a value known not to be a node, relationship,
@@ -188,6 +191,9 @@ func operandMismatch(operand staticOperand, expected string) error {
 // Neo4j's coercion error, any other known type with a type mismatch. Null
 // and unknown types pass.
 func requireBooleanOperand(operand staticOperand) error {
+	if operand.predicateDeferred {
+		return nil
+	}
 	switch {
 	case operand.list():
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreListCoercionToBoolean())
@@ -279,8 +285,9 @@ func checkOperator(op byte, left, right staticOperand, cypher25 bool) (result st
 		if left.numeric() || right.numeric() {
 			// Pinned Neo4j also defers numeric + row-dependent operands:
 			// comprehensions report runtime TypeError, and an empty MATCH never
-			// evaluates the predicate. Preserve the union without eager rejection.
-			return staticOperand{display: "Float, Integer, String or List<T>"}, nil
+			// evaluates the predicate. Retain its union for property/binding checks
+			// independently of this deferred predicate error phase.
+			return staticOperand{display: "Float, Integer, String or List<T>", nonBoolean: true, predicateDeferred: true}, nil
 		}
 		return staticOperand{}, nil
 	case '-':
