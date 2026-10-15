@@ -2178,9 +2178,7 @@ func (s *Server) initEmbedderWithRetry(embedConfig *embed.Config, embeddingCache
 						embedConfig.APIURL, embedConfig.Model, embedConfig.Dimensions))
 			}
 
-			if mcpServer != nil {
-				mcpServer.SetEmbedder(embedder)
-			}
+			// DB publishes the query provider once; MCP shares its binding.
 			// Share embedder with DB for auto-embed queue.
 			// The embed worker will wait for this to be set before processing.
 			db.SetEmbedder(embedder)
