@@ -288,7 +288,11 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 			resolution = scorer.ScoreNode(entityID, node.Labels, loadAccessMeta(e.storage, lookupID), createdNanos, versionNanos, nowNanos)
 		} else if edge, edgeErr := e.storage.GetEdge(storage.EdgeID(lookupID)); entityKind != knowledgePolicyEntityNode && edgeErr == nil && edge != nil {
 			createdNanos := edge.CreatedAt.UnixNano()
-			resolution = scorer.ScoreEdge(entityID, edge.Type, loadAccessMeta(e.storage, lookupID), createdNanos, createdNanos, nowNanos)
+			versionNanos := createdNanos
+			if !edge.UpdatedAt.IsZero() {
+				versionNanos = edge.UpdatedAt.UnixNano()
+			}
+			resolution = scorer.ScoreEdge(entityID, edge.Type, loadAccessMeta(e.storage, lookupID), createdNanos, versionNanos, nowNanos)
 		} else {
 			return nil, localizedError(localization.CypherKnowledgePolicyEntityNotFound(entityID), nil)
 		}
