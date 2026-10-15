@@ -2679,7 +2679,7 @@ func TestCypherHelpers_ExecuteMatchWithPipelineToRows_Branches(t *testing.T) {
 	_, err = exec.sharedPipelineRowsForTest(ctx, "MATCH (:OrderStatus) WITH o", []string{"o"}, eng)
 	require.Error(t, err)
 	// o is not bound: Neo4j's "Variable `o` not defined" (#907).
-	assert.Contains(t, err.Error(), "o is not defined")
+	assert.Contains(t, err.Error(), "Variable `o` not defined")
 }
 
 func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {

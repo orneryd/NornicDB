@@ -14,7 +14,7 @@ import (
 // validateSetSemanticScopes validates SET expressions against the clause
 // horizon before execution. This is deliberately independent of row count:
 // an undefined variable is a compile-time error even when MATCH yields no rows.
-func (e *StorageExecutor) validateSetSemanticScopes(cypher string) error {
+func (e *StorageExecutor) validateSetSemanticScopes(cypher string, imports ...string) error {
 	if !containsKeywordOutsideStrings(cypher, "SET") && !containsKeywordOutsideStrings(cypher, "REMOVE") &&
 		!containsKeywordOutsideStrings(cypher, "DELETE") && !containsKeywordOutsideStrings(cypher, "FOREACH") {
 		return nil
@@ -23,10 +23,10 @@ func (e *StorageExecutor) validateSetSemanticScopes(cypher string) error {
 	if !ok {
 		return nil
 	}
-	return e.validateMutationClauseScopes(clauses, newSemanticBindingScope())
+	return e.validateMutationClauseScopes(clauses, newSemanticBindingScope(), imports...)
 }
 
-func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause, scope *semanticBindingScope) error {
+func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause, scope *semanticBindingScope, imports ...string) error {
 	for _, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseMerge, pipelineClauseCreate:
@@ -44,6 +44,9 @@ func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause,
 			}
 		case pipelineClauseWith:
 			scope = projectedBindingScope(scope, clause.text)
+			for _, name := range imports {
+				scope.bind(name)
+			}
 		case pipelineClauseLet:
 			if err := bindPipelineLet(scope, clause.text); err != nil {
 				return err

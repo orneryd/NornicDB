@@ -397,6 +397,10 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, body)
 		if err != nil {
 			if !scoped {
+				_, importing, _ := branchLeadingWithImport(branch, func(name string) bool { _, exists := outer[name]; return exists }, false)
+				if detail, classified := err.(interface{ BoltErrorDetail() string }); importing && classified && detail.BoltErrorDetail() == "UndefinedVariable" {
+					return nil, err
+				}
 				// An old-style CALL { … } keeps NornicDB's implicit imports
 				// (gh648: an outer name it doesn't import is visible, or
 				// declared anew), so its walk only types its columns.

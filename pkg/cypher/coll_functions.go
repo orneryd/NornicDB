@@ -82,14 +82,12 @@ func fnCollDistinct(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || null {
 		return nil, err
 	}
-	seen := make(map[string]struct{}, len(list))
+	var seen cypherValueIndex
 	out := make([]interface{}, 0, len(list))
 	for _, item := range list {
-		key := cypherEquivalenceKey(item)
-		if _, duplicate := seen[key]; duplicate {
+		if _, duplicate := seen.add(item); duplicate {
 			continue
 		}
-		seen[key] = struct{}{}
 		out = append(out, item)
 	}
 	return out, nil

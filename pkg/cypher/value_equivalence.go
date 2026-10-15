@@ -12,9 +12,11 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// cypherEquivalenceKey is value's key under Cypher equivalence, the sameness
-// DISTINCT, grouping keys, UNION and count/collect(DISTINCT …) use: two values
-// are equivalent exactly when their keys are equal. Equivalence is equality
+// cypherEquivalenceKey is value's deterministic encoded key under Cypher
+// equivalence. Execution uses cypherValueIndex's native scalar keys and
+// collision-checked structural hashes instead of serializing containers.
+// Two values are equivalent exactly when their encoded keys are equal.
+// Equivalence is equality
 // (cypherEquality) except that null is equivalent to null:
 //   - numbers are equivalent when their exact values are, whatever their
 //     types: 1 ≡ 1.0 and -0.0 ≡ 0, while 9007199254740993 and

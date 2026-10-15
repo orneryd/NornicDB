@@ -610,107 +610,9 @@ type pipelineRowOutput struct {
 	rows  []pipelineRow
 	scope map[string]struct{}
 	wrote bool
-	// carried holds the imports of the CALL (…) subquery whose body runs
-	// here, with their values: they stay bound through the body's WITH
-	// clauses (pipelineWithCarrying).
-	carried pipelineRow
-}
-
-// carriedImports is the imports a CALL (…) body carries through its WITH
-// clauses (pipelineRowOutput.carried), none outside one.
-func (output *pipelineRowOutput) carriedImports() pipelineRow {
-	if output == nil {
-		return nil
-	}
-	return output.carried
-}
-
-// pipelineWithCarrying is a WITH clause of a CALL (…) subquery's body that
-// also projects the imports the body carries (carried) and the clause
-// doesn't project itself: in CALL (x) { … }, WITH 1 AS y runs as
-// WITH 1 AS y, x, so its WHERE and ORDER BY and the clauses after it read
-// the imported x, as in Neo4j, where a CALL subquery's imports are in scope
-// through its whole body. WITH * already carries them. An aggregating WITH
-// isn't rewritten (a constant x would be a grouping key, and no input row
-// would give no row): its rows get the imports after the projection
-// (carryPipelineImports).
-func pipelineWithCarrying(clause string, carried pipelineRow) string {
-	projection, rest := splitWithProjection(clause)
-	body, distinct := cutDistinct(strings.TrimSpace(projection[len("WITH"):]))
-	body = strings.TrimSpace(body)
-	if body == "" || strings.HasPrefix(body, "*") {
-		return clause
-	}
-	projected := make(map[string]bool)
-	for _, item := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(item))
-		if alias == "" {
-			alias = simpleSemanticIdentifier(strings.TrimSpace(expression))
-		}
-		projected[normalizeProjectionColumnName(alias)] = true
-	}
-	var extra []string
-	for name := range carried {
-		if !projected[name] && isSimpleIdentifier(name) {
-			extra = append(extra, name)
-		}
-	}
-	if len(extra) == 0 {
-		return clause
-	}
-	sort.Strings(extra)
-	keyword := "WITH "
-	if distinct {
-		keyword = "WITH DISTINCT "
-	}
-	return keyword + body + ", " + strings.Join(extra, ", ") + " " + rest
-}
-
-// pipelineClausesCarrying is clauses with each WITH that doesn't aggregate
-// projecting the imports a CALL (…) body carries (pipelineWithCarrying), for
-// every step that reads a WITH: the WITH step, and an UNWIND that streams
-// the WITHs after it. clauses is not modified.
-func pipelineClausesCarrying(clauses []pipelineClause, carried pipelineRow) []pipelineClause {
-	var carrying []pipelineClause
-	for index, clause := range clauses {
-		if clause.kind != pipelineClauseWith || pipelineClauseAggregates(clause) {
-			continue
-		}
-		text := pipelineWithCarrying(clause.text, carried)
-		if text == clause.text {
-			continue
-		}
-		if carrying == nil {
-			carrying = slices.Clone(clauses)
-		}
-		carrying[index].text = text
-	}
-	if carrying == nil {
-		return clauses
-	}
-	return carrying
-}
-
-// carryPipelineImports binds, in each row an aggregating WITH of a CALL (…)
-// body projected, the imports it carries that the projection didn't
-// (pipelineWithCarrying), and puts them in scope.
-func carryPipelineImports(rows []pipelineRow, scope map[string]struct{}, carried pipelineRow) {
-	for name, value := range carried {
-		for _, row := range rows {
-			if _, projected := row[name]; !projected {
-				row[name] = value
-			}
-		}
-		scope[name] = struct{}{}
-	}
 }
 
 func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clauses, originalClauses []pipelineClause, output *pipelineRowOutput) (*ExecuteResult, bool, error) {
-	// A CALL (…) body's imports stay bound through its WITH clauses.
-	carried := output.carriedImports()
-	if len(carried) > 0 {
-		clauses = pipelineClausesCarrying(clauses, carried)
-	}
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -755,7 +657,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				for name := range scope {
 					rowScope[name] = struct{}{}
 				}
-				state := &pipelineRowOutput{wrote: wrote, carried: output.carriedImports()}
+				state := &pipelineRowOutput{wrote: wrote}
 				partial, handled, err := e.runPipelineClauseRows(ctx, []pipelineRow{row}, rowScope, clauses[:prefix], originalClauses[:prefix], state)
 				if !handled || err != nil {
 					return partial, handled, err
@@ -937,19 +839,15 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				e.refreshRowEntities(ctx, rows)
 			}
 		case pipelineClauseWith:
-			// An aggregating WITH of a CALL (…) body binds the imports it
-			// carries after its projection (pipelineClausesCarrying
-			// rewrote every other WITH to project them).
-			carryAfter := len(carried) > 0 && pipelineClauseAggregates(clause)
-			if source != nil && !carryAfter {
+			if source != nil {
 				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause.text); supported {
 					source = windowed
-					scope = pipelineProjectionScope(scope, clause.text)
+					scope = pipelineProjectionScope(scope, clause.text, pipelineImports(ctx))
 					continue
 				}
 				if plan, local := parsePipelineRowWith(clause.text); local {
 					source = e.pipelineWithRowSource(ctx, source, plan)
-					scope = pipelineProjectionScope(scope, clause.text)
+					scope = pipelineProjectionScope(scope, clause.text, pipelineImports(ctx))
 					continue
 				}
 			}
@@ -978,10 +876,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			rows = newRows
-			scope = pipelineProjectionScope(scope, clause.text)
-			if carryAfter {
-				carryPipelineImports(rows, scope, carried)
-			}
+			scope = pipelineProjectionScope(scope, clause.text, pipelineImports(ctx))
 		case pipelineClauseUnwind:
 			if err := e.validatePipelineRangeArguments(rows, clause.text, "UNWIND"); err != nil {
 				return nil, true, err
@@ -994,7 +889,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				scope[alias] = struct{}{}
 			}
 			for offset := 1; offset <= consumed; offset++ {
-				scope = pipelineProjectionScope(scope, clauses[idx+offset].text)
+				scope = pipelineProjectionScope(scope, clauses[idx+offset].text, pipelineImports(ctx))
 			}
 			idx += consumed
 			if idx+1 < len(clauses) && (pipelineClauseAggregates(clauses[idx+1]) || streamsReturn(ctx, clauses, idx+1)) {
@@ -1007,7 +902,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			if len(rows) > 1 && idx+1 < len(clauses) {
-				state := &pipelineRowOutput{wrote: wrote, carried: output.carriedImports()}
+				state := &pipelineRowOutput{wrote: wrote}
 				if output != nil {
 					state = output
 					state.wrote = wrote
@@ -3370,6 +3265,7 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 
 func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
 	if plan, ok := parsePipelineRowWith(clause); ok {
+		plan.imports = pipelineImports(ctx)
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
 			projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, nil, nil)
@@ -3433,7 +3329,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if withDistinct {
 			// WITH DISTINCT * keeps one row per distinct set of the
 			// variables in scope (#883).
-			out = deduplicatePipelineRows(out, pipelineRowColumns(out))
+			out = deduplicatePipelineRows(out, pipelineWildcardColumns(out))
 		}
 		out = e.filterPipelineRows(ctx, out, postWithWhere)
 		if !e.orderPipelineRows(ctx, out, orderTerms) {
@@ -3536,6 +3432,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 					projectedExpressions[projection.expr] = value
 				}
 			}
+			carryPipelineRowImports(newRow, group.first, pipelineImports(ctx))
 			if !needsOrderScopes {
 				out = append(out, newRow)
 				continue
@@ -3574,7 +3471,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	if needsOrderScopes {
 		orderScopes = make([]pipelineRow, 0, len(rows))
 	}
-	rowPlan := pipelineRowWith{where: postWithWhere}
+	rowPlan := pipelineRowWith{where: postWithWhere, imports: pipelineImports(ctx)}
 	for _, projection := range projections {
 		rowPlan.projections = append(rowPlan.projections, pipelineRowProjection{projection.expr, projection.alias})
 	}
@@ -3896,42 +3793,23 @@ func (e *StorageExecutor) filterPipelineRows(ctx context.Context, rows []pipelin
 	return filtered
 }
 
-// pipelineRowColumns returns the variables bound in rows, sorted: the
-// columns of WITH *.
-func pipelineRowColumns(rows []pipelineRow) []string {
-	seen := make(map[string]struct{})
-	columns := make([]string, 0)
-	for _, row := range rows {
-		for name := range row {
-			if _, ok := seen[name]; !ok {
-				seen[name] = struct{}{}
-				columns = append(columns, name)
-			}
-		}
-	}
-	sort.Strings(columns)
-	return columns
-}
-
 func deduplicatePipelineRows(rows []pipelineRow, columns []string) []pipelineRow {
 	unique, _ := deduplicatePipelineRowsWithScopes(rows, rows, columns)
 	return unique
 }
 
 func deduplicatePipelineRowsWithScopes(rows, scopes []pipelineRow, columns []string) ([]pipelineRow, []pipelineRow) {
-	seen := make(map[string]struct{}, len(rows))
+	var seen cypherValueIndex
 	unique := make([]pipelineRow, 0, len(rows))
 	uniqueScopes := make([]pipelineRow, 0, len(rows))
-	keys := make([]string, len(columns))
+	values := make([]interface{}, len(columns))
 	for rowIndex, row := range rows {
 		for i, column := range columns {
-			keys[i] = cypherEquivalenceKey(row[column])
+			values[i] = row[column]
 		}
-		key := strings.Join(keys, "\x1f")
-		if _, exists := seen[key]; exists {
+		if _, exists := seen.addTuple(values); exists {
 			continue
 		}
-		seen[key] = struct{}{}
 		unique = append(unique, row)
 		uniqueScopes = append(uniqueScopes, scopes[rowIndex])
 	}
@@ -4654,23 +4532,12 @@ func streamsReturn(ctx context.Context, clauses []pipelineClause, idx int) bool 
 }
 
 func deduplicatePipelineResultRows(rows [][]interface{}) [][]interface{} {
-	seen := make(map[string]struct{}, len(rows))
+	var seen cypherValueIndex
 	unique := make([][]interface{}, 0, len(rows))
-	keys := make([]string, 0)
 	for _, row := range rows {
-		if cap(keys) < len(row) {
-			keys = make([]string, len(row))
-		} else {
-			keys = keys[:len(row)]
-		}
-		for index, value := range row {
-			keys[index] = cypherEquivalenceKey(value)
-		}
-		key := strings.Join(keys, "\x1f")
-		if _, exists := seen[key]; exists {
+		if _, exists := seen.addTuple(row); exists {
 			continue
 		}
-		seen[key] = struct{}{}
 		unique = append(unique, row)
 	}
 	return unique

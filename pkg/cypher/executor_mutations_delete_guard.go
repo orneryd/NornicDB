@@ -212,7 +212,7 @@ func appendUniquePipelineBinding(bindings []string, binding string) []string {
 	return append(bindings, binding)
 }
 
-func pipelineProjectionScope(previous map[string]struct{}, clause string) map[string]struct{} {
+func pipelineProjectionScope(previous map[string]struct{}, clause string, imports pipelineRow) map[string]struct{} {
 	body := strings.TrimSpace(clause)
 	if len(body) >= len("WITH") && strings.EqualFold(body[:len("WITH")], "WITH") {
 		body = strings.TrimSpace(body[len("WITH"):])
@@ -238,6 +238,9 @@ func pipelineProjectionScope(previous map[string]struct{}, clause string) map[st
 		if alias != "" {
 			next[alias] = struct{}{}
 		}
+	}
+	for name := range imports {
+		next[name] = struct{}{}
 	}
 	return next
 }
