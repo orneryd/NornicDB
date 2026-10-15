@@ -117,9 +117,10 @@ HEAD_SHA="$(git -C "${TREE}" rev-parse HEAD)"
 MERGE_BASE="$(git -C "${TREE}" merge-base "${BASE}" HEAD 2>/dev/null || true)"
 [[ -n "${MERGE_BASE}" ]] || die "${LABEL} has no merge base with ${BASE}"
 
-CHANGED="$(git -C "${TREE}" diff --name-only "${MERGE_BASE}" HEAD)"
+# Treat renames as deletion/addition so both paths reach the single matcher.
+CHANGED="$(git -C "${TREE}" diff --no-renames --name-only "${MERGE_BASE}" HEAD)"
 if [[ -n "${DIRTY}" ]]; then
-  CHANGED="$(printf '%s\n%s\n%s' "${CHANGED}" "$(git -C "${TREE}" diff --name-only HEAD)" \
+  CHANGED="$(printf '%s\n%s\n%s' "${CHANGED}" "$(git -C "${TREE}" diff --no-renames --name-only HEAD)" \
     "$(git -C "${TREE}" ls-files --others --exclude-standard)" | sed '/^$/d' | sort -u)"
 fi
 CHANGED_COUNT="$(printf '%s\n' "${CHANGED}" | sed '/^$/d' | wc -l | tr -d ' ')"

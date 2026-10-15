@@ -112,6 +112,55 @@ for path in Makefile .github/workflows/ci.yml; do
 done
 echo 'PASS: plan-only verifier selects checks for isolated Makefile and CI workflow changes'
 
+# Preserve both names of real detected renames, in dirty and committed diffs.
+rename_case=0
+for path in Makefile .github/workflows/ci.yml near-miss; do
+  expected="${ci_steps}"
+  [[ "${path}" != Makefile ]] || expected="${expected} ${conformance_steps}"
+  [[ "${path}" != near-miss ]] || expected=''
+  for direction in from to; do
+    rename_case=$((rename_case + 1))
+    mkdir -p "${fixture}/rename-${rename_case}/scripts"
+    cp "${verify}" "${fixture}/rename-${rename_case}/scripts/verify.sh"
+    cd "${fixture}/rename-${rename_case}"
+    git init --quiet
+    git config user.name 'Verify self-test'
+    git config user.email 'verify-test@example.invalid'
+    git config diff.renames true
+    old="${path}"
+    new="${path}.old copy"
+    if [[ "${path}" == near-miss ]]; then
+      old=Makefile.bak
+      new=.github/workflows/ci.yml.orig
+    fi
+    if [[ "${direction}" == to ]]; then swap="${old}"; old="${new}"; new="${swap}"; fi
+    mkdir -p "$(dirname "${old}")" "$(dirname "${new}")"
+    printf '# unchanged rename fixture\n' > "${old}"
+    git add .
+    git commit --quiet -m 'rename fixture base'
+    rename_base="$(git rev-parse HEAD)"
+    git mv "${old}" "${new}"
+    for state in staged committed; do
+      if [[ "${state}" == committed ]]; then git commit --quiet -m 'rename input'; fi
+      # Ensure this exercises rename detection, rather than an unrelated add/delete.
+      summary="$(git diff -M --summary "${rename_base}")"
+      if [[ "${summary}" != *'rename '*'(100%)'* ]]; then
+        echo "FAIL: fixture did not detect ${state} rename ${old} -> ${new}" >&2
+        exit 1
+      fi
+      plan="$(VERIFY_BASE="${rename_base}" VERIFY_FETCH=0 VERIFY_LIST=1 VERIFY_ALL=0 \
+        VERIFY_ONLY='' VERIFY_SKIP='' VERIFY_BRANCH='' bash scripts/verify.sh)"
+      actual="$(awk '$2 == "run" { steps = steps (steps ? " " : "") $1 } END { print steps }' <<<"${plan}")"
+      if [[ "${actual}" != "${expected}" ]]; then
+        echo "FAIL: ${state} rename ${old} -> ${new}: expected '${expected}', got:" >&2
+        echo "${plan}" >&2
+        exit 1
+      fi
+    done
+  done
+done
+echo 'PASS: staged/committed renames to/from build inputs and near misses select exactly their checks'
+
 git init --quiet "${fixture}/repo"
 cd "${fixture}/repo"
 git config user.name 'Verify self-test'
