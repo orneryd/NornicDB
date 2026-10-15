@@ -2532,6 +2532,13 @@ func (e *StorageExecutor) materializePipelinePredicateExpressions(expression str
 	local := localOccurrences{text: expression}
 	replaceProperties := func(name string, properties map[string]interface{}) {
 		for property, propertyValue := range properties {
+			if _, isMap := toStringAnyMap(propertyValue); isMap {
+				// A map stays the row's value (v.h[k], v.h.k): written as
+				// literal text it would be re-read by another reader and
+				// re-serialized per row. The term still reads v, so it
+				// runs on the joined row (pipelineTraversalPushdownPredicate).
+				continue
+			}
 			reference := name + "." + property
 			if strings.Contains(materialized, reference) {
 				materialized = replaceQualifiedReferenceOutsideQuotesUnless(materialized, reference, e.valueToLiteral(propertyValue), &local, name)

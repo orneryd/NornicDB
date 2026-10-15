@@ -667,6 +667,38 @@ for q in ["UNWIND [at IN range(0, 1) | [at]] AS e RETURN collect(e[0]) AS v",
     add("unwind-source", "comprehension", q)
 add("unwind-source", "comprehension", "CREATE (r:Tmp {ids: ['a'], vs: [1]}) WITH r UNWIND [at IN range(0, size(r.ids) - 1) | ['p', r.ids[at], r.vs[at]]] AS entry WITH DISTINCT entry[1] AS e RETURN collect(e) AS v", mode="tx")
 
+# 12b''''''. A subscript on a map variable's property (#1227): v.h[k],
+# v.a.b[k] and v.l[i] read the row's map in a MATCH's own WHERE, a
+# variable-length or quantified step's, an EXISTS / COUNT / CALL
+# subquery's, and after WITH, as h[k] does; v comes from WITH, a CALL
+# result or UNWIND.
+MAP_HEADS = ["WITH {h: {`1`: true, `2`: false}, l: [2, 3], a: {b: {k: 2}}} AS v ",
+             "CALL () { RETURN {`1`: true, `2`: false} AS hh } WITH {h: hh, l: [2, 3], a: {b: {k: 2}}} AS v ",
+             "UNWIND [{h: {`1`: true, `2`: false}, l: [2, 3], a: {b: {k: 2}}}] AS v "]
+MAP_FORMS = ["MATCH (n:Q) WHERE v.h[toString(n.id)] IS NULL RETURN n.id AS v ORDER BY v",
+             "MATCH (n:Q) WHERE v.h[toString(n.id)] RETURN n.id AS v ORDER BY v",
+             "MATCH (s:Q {id: 1})-[rs:R*1..2]->(e) WHERE all(x IN rs WHERE v.h[toString(startNode(x).id)] IS NULL) RETURN e.id AS v ORDER BY v",
+             "MATCH (s:Q {id: 1})-[rs:R*1..2]->(e) WHERE any(x IN rs WHERE v.h[toString(x.w)] IS NOT NULL) RETURN e.id AS v ORDER BY v",
+             "MATCH (s:Q {id: 1})(()-[r:R WHERE v.h[toString(r.w)] IS NULL]->()){1,2}(e) RETURN e.id AS v ORDER BY v",
+             "MATCH (s:Q {id: 1})((x)-[r:R]->(y) WHERE v.h[toString(x.id)] IS NOT NULL)+(e) RETURN e.id AS v ORDER BY v",
+             "MATCH (s:Q)-[r:R]->(e)-[r2:R]->(f) WHERE any(k IN [r.w, r2.w] WHERE v.h[toString(k)] IS NOT NULL) RETURN count(*) AS v",
+             "MATCH (n:Q) WHERE EXISTS { MATCH (n)-[r:R]->() WHERE v.h[toString(r.w)] } RETURN n.id AS v ORDER BY v",
+             "MATCH (n:Q) WHERE NOT EXISTS { MATCH (n)-[r:R]->() WHERE v.h[toString(r.w)] IS NOT NULL } RETURN n.id AS v ORDER BY v",
+             "MATCH (n:Q) RETURN n.id AS id, COUNT { MATCH (n)-[r:R]->() WHERE v.h[toString(r.w)] IS NULL } AS v ORDER BY id",
+             "MATCH (n:Q) CALL (n, v) { MATCH (n)-[r:R]->(m) WHERE v.h[toString(r.w)] IS NULL RETURN count(m) AS c } RETURN n.id AS id, c AS v ORDER BY id",
+             "MATCH (n:Q) WITH v, n WHERE v.h[toString(n.id)] IS NULL RETURN n.id AS v ORDER BY v",
+             "WITH v.h AS h MATCH (n:Q) WHERE h[toString(n.id)] IS NULL RETURN n.id AS v ORDER BY v",
+             "MATCH (n:Q) WHERE v.a.b['k'] = n.id RETURN n.id AS v",
+             "MATCH (n:Q) WHERE v.a.b[toString(n.id)] IS NULL RETURN count(n) AS v",
+             "MATCH (n:Q) WHERE v.l[0] = n.id RETURN n.id AS v",
+             "MATCH (n:Q) WHERE v.l[n.id - 2] = n.id RETURN n.id AS v ORDER BY v",
+             "MATCH (n:Q) WHERE n.id IN v.l[0..1] RETURN n.id AS v",
+             "MATCH (n:Q) WHERE v.h[toString(n.id)] = true AND n.id IN v.l RETURN n.id AS v",
+             "MATCH (n:Q) RETURN n.id AS id, {b: true, `1`: 7}[toString(n.id)] AS v ORDER BY id"]
+for head in MAP_HEADS:
+    for form in MAP_FORMS:
+        add("map-property-subscript", "where", head + form)
+
 # 12c. Subquery bodies that start from the row's own variables (#1055): the
 # bound node, relationship and path fast paths against the pipeline. Bodies
 # read a bound relationship, a row value in a property map or WHERE, a path,
