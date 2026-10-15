@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Publish node and relationship suppression transitions through the storage cache lifecycle after commit,
   restoring indexed, outgoing and incoming reads after hidden-entity updates and policy relaxation (#1228).
 
+### Decay scalar scoring fixes
+
+- Align relationship `decay()` and `decayScore()` VERSION anchors with update time and resolve relationship
+  property options through edge-type rules, sharing one entity/property scoring dispatch (#1055).
+
 ### Documentation
 
 - Correct release-helper PR guidance to require manual workflow dispatch and administrator approval instead of the retired `ci:run` label.

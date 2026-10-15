@@ -65,10 +65,25 @@ func (e *StorageExecutor) resolveEntityForDecay(
 			isEdge:         true,
 			edgeType:       rel.Type,
 			createdAtNanos: rel.CreatedAt.UnixNano(),
-			versionAtNanos: rel.CreatedAt.UnixNano(),
+			versionAtNanos: rel.UpdatedAt.UnixNano(),
 		}, true
 	}
 	return resolvedEntity{}, false
+}
+
+// score keeps entity-kind and property dispatch identical for decay() and
+// decayScore(). Relationship property bindings resolve by type, not labels.
+func (ent resolvedEntity) score(scorer *knowledgepolicy.Scorer, accessMeta *knowledgepolicy.AccessMetaEntry, property string, nowNanos int64) knowledgepolicy.ScoringResolution {
+	if property != "" {
+		if ent.isEdge {
+			return scorer.ScoreEdgeProperty(ent.entityID, ent.edgeType, property, accessMeta, ent.createdAtNanos, ent.versionAtNanos, nowNanos)
+		}
+		return scorer.ScoreProperty(ent.entityID, ent.labels, property, accessMeta, ent.createdAtNanos, ent.versionAtNanos, nowNanos)
+	}
+	if ent.isEdge {
+		return scorer.ScoreEdge(ent.entityID, ent.edgeType, accessMeta, ent.createdAtNanos, ent.versionAtNanos, nowNanos)
+	}
+	return scorer.ScoreNode(ent.entityID, ent.labels, accessMeta, ent.createdAtNanos, ent.versionAtNanos, nowNanos)
 }
 
 // getDecayContext returns the Badger engine that scores decay and the scoring
@@ -141,20 +156,7 @@ func (e *StorageExecutor) evalDecayScore(
 		}
 	}
 
-	if property != "" {
-		res := scorer.ScoreProperty(ent.entityID, ent.labels, property, accessMeta,
-			ent.createdAtNanos, ent.versionAtNanos, nowNanos)
-		return res.FinalScore
-	}
-
-	if ent.isEdge {
-		res := scorer.ScoreEdge(ent.entityID, ent.edgeType, accessMeta,
-			ent.createdAtNanos, ent.versionAtNanos, nowNanos)
-		return res.FinalScore
-	}
-	res := scorer.ScoreNode(ent.entityID, ent.labels, accessMeta,
-		ent.createdAtNanos, ent.versionAtNanos, nowNanos)
-	return res.FinalScore
+	return ent.score(scorer, accessMeta, property, nowNanos).FinalScore
 }
 
 // evalDecay implements decay(entity) and decay(entity, {property: "key"}).
@@ -204,19 +206,7 @@ func (e *StorageExecutor) evalDecay(
 		}
 	}
 
-	var res knowledgepolicy.ScoringResolution
-	if property != "" {
-		res = scorer.ScoreProperty(ent.entityID, ent.labels, property, accessMeta,
-			ent.createdAtNanos, ent.versionAtNanos, nowNanos)
-	} else if ent.isEdge {
-		res = scorer.ScoreEdge(ent.entityID, ent.edgeType, accessMeta,
-			ent.createdAtNanos, ent.versionAtNanos, nowNanos)
-	} else {
-		res = scorer.ScoreNode(ent.entityID, ent.labels, accessMeta,
-			ent.createdAtNanos, ent.versionAtNanos, nowNanos)
-	}
-
-	return resolutionToMap(res)
+	return resolutionToMap(ent.score(scorer, accessMeta, property, nowNanos))
 }
 
 // evalPolicy implements policy(entity) returning AccessMeta as a map.
