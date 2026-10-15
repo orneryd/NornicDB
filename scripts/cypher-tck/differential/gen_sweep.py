@@ -373,6 +373,35 @@ for sq in SUBQUERY_BOOLS:
         add("subquery-scope", "qpp", f"MATCH (s:Q {{id: 1}}) ((x)-[e:R WHERE {b}]->(y))+ (t) RETURN t.id AS v ORDER BY v")
         add("subquery-scope", "qpp", f"MATCH (s:Q {{id: 1}}) ((x)-[e:R]->(y) WHERE e.w = 2 OR {b})+ (t) RETURN t.id AS v ORDER BY v")
 
+# Procedure YIELD predicates use the same correlated scope as WITH (#1226).
+# Cover scalars independently of any particular search procedure.
+YIELD_SCOPE_PREDICATES = [
+    "EXISTS {{ MATCH (x) WHERE {v} IN labels(x) }}",
+    "COUNT {{ MATCH (x) WHERE {v} IN labels(x) }} > 0",
+    "size(COLLECT {{ MATCH (x) WHERE {v} IN labels(x) RETURN x.id }}) > 0",
+    "size([(x:Q)-->(y) WHERE {v} IN labels(x) | y.id]) > 0",
+    "EXISTS {{ MATCH (x) WHERE {v} IN labels(x) AND COUNT {{ (x)-->() }} > 0 }}",
+    "EXISTS {{ WITH 1 AS {v} RETURN {v} }}",
+    "EXISTS {{ UNWIND [1] AS {v} RETURN {v} }}",
+    "EXISTS {{ RETURN 1 AS {v} }}",
+    "EXISTS {{ WITH {v} AS {v} RETURN {v} }}",
+    "EXISTS {{ WITH {v} RETURN {v} }}",
+    "EXISTS {{ MATCH (x) WHERE missing IN labels(x) }}",
+    "EXISTS {{ MATCH (x) WHERE label IN labels(x) }}",
+]
+for prefix in ["", "WITH 'Q' AS wanted ", "MATCH (seed:Q {id: 1}) "]:
+    for yielded, variable in [("label", "label"), ("label AS l", "l")]:
+        for predicate in YIELD_SCOPE_PREDICATES:
+            for position in ["yield-where", "yield-with-where"]:
+                bridge = f" WITH {variable}" if position == "yield-with-where" else ""
+                query = (prefix +
+                         f"CALL db.labels() YIELD {yielded}{bridge} WHERE " +
+                         predicate.format(v=variable) + f" RETURN {variable} AS v ORDER BY v")
+                add("subquery-scope", position, query)
+for prefix in ["WITH 'Q' AS wanted ", "MATCH (seed:Q {id: 1}) WITH seed, 'Q' AS wanted "]:
+    add("subquery-scope", "yield-where", prefix + "CALL db.labels() YIELD label "
+        "WHERE EXISTS { MATCH (x) WHERE label IN labels(x) AND label = wanted } RETURN label AS v ORDER BY v")
+
 # 12b'. A quantified group's step variables (#1211): inside the group's
 # predicates (an element's inline WHERE, the group's own WHERE) its node and
 # relationship variables are one iteration's node and relationship in every
