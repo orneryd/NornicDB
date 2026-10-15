@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recognize comment-separated COUNT, EXISTS and COLLECT subqueries consistently when query normalization is
+  disabled, using the shared lexical reader for execution and semantic variable checks (#1323).
+
 - Return the shared runtime TypeError for numeric predicates in all/any/none/single quantifiers across row, compiled
   and context evaluation while preserving null, empty-input and short-circuit behavior (#1315 follow-up).
 
