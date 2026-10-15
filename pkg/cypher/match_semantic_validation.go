@@ -146,6 +146,9 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				continue
 			}
 		}
+		if err := expressionSubqueryClauseBindingError(clause, enclosing); err != nil {
+			return types, false, err
+		}
 		if returnSeen {
 			// RETURN is the terminal clause: a clause after it is never a
 			// legal statement (RETURN 1 AS x RETURN 2 AS y is Neo4j's
@@ -186,9 +189,9 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 		}
 		// A clause's EXISTS / COUNT / COLLECT subqueries see its variables, and
 		// a WITH's or RETURN's projected ones (WITH i.n AS k WHERE COUNT { … k … });
-		// a MATCH's are checked once its pattern binds, a CALL subquery's
-		// body from its imports (pipelineClauseCallSubquery).
-		if clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseOptionalMatch && clause.kind != pipelineClauseCallSubquery && (mayContainSubqueryExpression(clause.text) || containsRelationshipPattern(clause.text)) {
+		// MATCH and procedure CALL are checked once their outputs bind;
+		// a CALL subquery's body starts from its imports.
+		if clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseOptionalMatch && clause.kind != pipelineClauseCall && clause.kind != pipelineClauseCallSubquery && (mayContainSubqueryExpression(clause.text) || containsRelationshipPattern(clause.text)) {
 			if err := e.validateClauseSubqueries(clause, types, view, projectedTypes, cypher25); err != nil {
 				return types, false, err
 			}
@@ -258,6 +261,11 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			}
 			yield := parseYieldClause(clause.text)
 			if yield == nil || yield.yieldAll {
+				if mayContainSubqueryExpression(clause.text) || containsRelationshipPattern(clause.text) {
+					if err := e.validateClauseSubqueries(clause, types, view, nil, cypher25); err != nil {
+						return types, false, err
+					}
+				}
 				return types, false, nil
 			}
 			outputTypes := procedureOutputTypes(clause.text)
@@ -266,7 +274,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				if item.alias != "" {
 					name = item.alias
 				}
-				if _, bound := scope[name]; bound {
+				if _, bound := types[name]; bound {
 					return types, false, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
 						localization.CypherCoreProcedureOutputShadowsVariable(name))
 				}
@@ -274,7 +282,13 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				if typeName := outputTypes[item.name]; typeName != "" {
 					types[name] = knownOperand(typeName)
 				}
-				scope[name] = types[name].bindingKind()
+			}
+			// Like WITH, the invocation reads the incoming scope and the
+			// predicate reads it extended by the projected (yielded) names.
+			if mayContainSubqueryExpression(clause.text) || containsRelationshipPattern(clause.text) {
+				if err := e.validateClauseSubqueries(clause, types, view, types, cypher25); err != nil {
+					return types, false, err
+				}
 			}
 			if err := e.validateStaticClauseTypes(clause, types.static(cypher25)); err != nil {
 				return types, false, err
@@ -332,16 +346,6 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				}
 				if err := projectionAliasError(raw); err != nil {
 					return types, false, err
-				}
-				// WITH x AS x, or WITH x, carries x on; WITH 1 AS x
-				// declares it again.
-				if _, alias := parseProjectionExprAlias(strings.TrimSpace(raw)); alias != "" {
-					name := normalizeProjectionColumnName(alias)
-					if simpleSemanticIdentifier(strings.TrimSpace(expression)) != name {
-						if err := enclosing.redeclarationError(name); err != nil {
-							return types, false, err
-						}
-					}
 				}
 				if expression != "*" {
 					if err := undefinedExpressionVariable(scope, expression); err != nil {
@@ -1588,10 +1592,12 @@ func withPatternComprehensionBindings(scope staticTypeScope, text string, at int
 // subqueries (validateSubqueryPatternBindings) with the variables each
 // sees: a WITH's or RETURN's projection reads the incoming ones, its WHERE
 // and ORDER BY the projected ones over them (WITH i.n AS k WHERE
-// COUNT { … k … }); any other clause's read the incoming ones.
+// COUNT { … k … }). CALL's invocation reads the incoming scope, while
+// YIELD's WHERE reads the yielded names over it through the same path.
+// Any other clause's subqueries read the incoming scope.
 func (e *StorageExecutor) validateClauseSubqueries(clause pipelineClause, types typeScope, view staticTypeScope, projected typeScope, cypher25 bool) error {
 	switch clause.kind {
-	case pipelineClauseWith:
+	case pipelineClauseWith, pipelineClauseCall:
 	case pipelineClauseReturn:
 		projected = projectTypeScopeIn(types, view, "WITH "+strings.TrimSpace(strings.TrimSpace(clause.text)[len("RETURN"):]))
 	default:
