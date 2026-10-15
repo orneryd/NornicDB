@@ -65,7 +65,7 @@ func gdsProjectDistinctError(text string) error {
 }
 
 func gdsProjectDistinctCallError(text, normalized string, arguments int) error {
-	if normalized == "gds.graph.project" && startsWithKeywordFold(text[skipSemanticTrivia(text, arguments):], "DISTINCT") {
+	if normalized == "gds.graph.project" && startsWithKeywordFold(text[queryGapEnd(text, arguments):], "DISTINCT") {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidUseOfDistinct", localization.CypherGraphProceduresProjectDistinct())
 	}
 	return nil
@@ -145,7 +145,7 @@ func forEachSemanticCall(text string, visit func(name, normalized string, argume
 		}
 		procedure := expression[index] != '`' && strings.EqualFold(name, "CALL")
 		if procedure || expression[index] != '`' && strings.EqualFold(name, "USE") {
-			start := skipSemanticTrivia(expression, next)
+			start := queryGapEnd(expression, next)
 			called, end, named := scanIdentifierToken(expression, start)
 			if !named {
 				index = next
@@ -159,7 +159,7 @@ func forEachSemanticCall(text string, visit func(name, normalized string, argume
 		}
 		parts, cursor := dottedNameParts(expression, next, true)
 		name += parts
-		cursor = skipSemanticTrivia(expression, cursor)
+		cursor = queryGapEnd(expression, cursor)
 		parenthesis := cursor < len(expression) && expression[cursor] == '('
 		if !parenthesis && !procedure {
 			index = next
@@ -189,18 +189,6 @@ func isNonFunctionSemanticKeyword(name string) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-// skipSemanticTrivia skips whitespace and comments between call tokens.
-func skipSemanticTrivia(text string, index int) int {
-	for {
-		index = skipSpaces(text, index)
-		if end := queryCommentEnd(text, index); end >= 0 {
-			index = end
-			continue
-		}
-		return index
 	}
 }
 

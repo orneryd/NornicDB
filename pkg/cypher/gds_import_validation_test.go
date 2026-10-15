@@ -106,7 +106,7 @@ func TestGDSAggregationRelationshipLongBoundary(t *testing.T) {
 
 func TestGDSFunctionDetectionCallSpellings(t *testing.T) {
 	for _, name := range []string{"gds.graph.project", "GdS.GrApH.PrOjEcT", "`gds`.`graph`.`project`", "gds.graph.`project`", "gds.`graph`.project", "`gds.graph.project`", "gds /* a */ . graph . /* b */ project"} {
-		for _, gap := range []string{"", " \n\t", "/* comment */", "// comment\n"} {
+		for _, gap := range []string{"", " \n\t", "\u00a0", "/* comment */", "// comment\n"} {
 			for _, prefix := range []string{"RETURN ", "CALL ", "CALL /* comment */ "} {
 				q := prefix + name + gap + "('g',1)"
 				require.True(t, QueryPermissionRequirements(q).Write, q)
