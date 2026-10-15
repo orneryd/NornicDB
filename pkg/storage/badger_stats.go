@@ -344,6 +344,11 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 	p := &b.pendingCandidates
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// Hints can be lost: an empty catalog cannot prove an empty durable
+	// index. Reconcile at the empty boundary; a previously verified empty
+	// snapshot is reusable until storage publishes another commit. Live
+	// claims keep their point-read path; worker scheduling owns idle backoff.
+	reconciled := len(p.ids) == 0 || !p.loaded || p.generation != b.pendingCandidatesGeneration.Load()
 	if p.load(b) != nil {
 		return nil
 	}
@@ -355,77 +360,88 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 	removedStale := 0
 	removedNoLongerNeeds := 0
 
-	err := b.withUpdate(func(txn *badger.Txn) error {
-		for len(p.ids) > 0 {
-			nodeID := p.ids[0]
-			if _, err := txn.Get(pendingEmbedKey(nodeID)); err == badger.ErrKeyNotFound {
-				p.removeFirst()
-				continue
-			} else if err != nil {
-				return err
-			}
-			remove := func() error {
-				if err := txn.Delete(pendingEmbedKey(nodeID)); err != nil {
+	for len(p.ids) > 0 {
+		err := b.withUpdate(func(txn *badger.Txn) error {
+			for len(p.ids) > 0 {
+				nodeID := p.ids[0]
+				if _, err := txn.Get(pendingEmbedKey(nodeID)); err == badger.ErrKeyNotFound {
+					p.removeFirst()
+					continue
+				} else if err != nil {
 					return err
 				}
-				p.removeFirst()
-				return nil
-			}
+				remove := func() error {
+					if err := txn.Delete(pendingEmbedKey(nodeID)); err != nil {
+						return err
+					}
+					p.removeFirst()
+					return nil
+				}
 
-			// Never embed the system database; remove any stale/system entries.
-			if isSystemNamespaceID(string(nodeID)) {
-				if err := remove(); err != nil {
+				// Never embed the system database; remove any stale/system entries.
+				if isSystemNamespaceID(string(nodeID)) {
+					if err := remove(); err != nil {
+						return err
+					}
+					removedNoLongerNeeds++
+					continue
+				}
+
+				// Verify node exists in the same transaction for consistency.
+				item, err := txn.Get(nodeKey(nodeID))
+				if err == badger.ErrKeyNotFound {
+					if err := remove(); err != nil {
+						return err
+					}
+					removedStale++
+					continue
+				}
+				if err != nil {
 					return err
 				}
-				removedNoLongerNeeds++
-				continue
-			}
 
-			// Verify node exists in the same transaction for consistency.
-			item, err := txn.Get(nodeKey(nodeID))
-			if err == badger.ErrKeyNotFound {
-				if err := remove(); err != nil {
-					return err
+				var node *Node
+				if err := item.Value(func(val []byte) error {
+					var decErr error
+					node, decErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
+					return decErr
+				}); err != nil || node == nil {
+					if err := remove(); err != nil {
+						return err
+					}
+					removedStale++
+					continue
 				}
-				removedStale++
-				continue
-			}
-			if err != nil {
-				return err
-			}
 
-			var node *Node
-			if err := item.Value(func(val []byte) error {
-				var decErr error
-				node, decErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				return decErr
-			}); err != nil || node == nil {
-				if err := remove(); err != nil {
-					return err
+				// If node no longer needs embedding, remove it from the pending index.
+				if !b.shouldIndexPendingEmbed(node) {
+					if err := remove(); err != nil {
+						return err
+					}
+					removedNoLongerNeeds++
+					continue
 				}
-				removedStale++
-				continue
-			}
 
-			// If node no longer needs embedding, remove it from the pending index.
-			if !b.shouldIndexPendingEmbed(node) {
-				if err := remove(); err != nil {
-					return err
-				}
-				removedNoLongerNeeds++
-				continue
+				found = node
+				break
 			}
+			return nil
+		})
 
-			found = node
+		if err != nil {
+			// A failed cleanup commit must not discard still-durable candidates.
+			b.InvalidatePendingEmbeddingsIndex()
+			return nil
+		}
+		if found != nil || reconciled {
 			break
 		}
-		return nil
-	})
-
-	if err != nil {
-		// A failed cleanup commit must not discard still-durable candidates.
-		b.InvalidatePendingEmbeddingsIndex()
-		return nil
+		// The last cached hints were stale. A committed marker whose hint was
+		// lost may still exist, so check the durable index before returning nil.
+		reconciled = true
+		if p.load(b) != nil {
+			return nil
+		}
 	}
 	// Log at most once per call (avoid per-entry spam on large stale indexes).
 	if removedStale > 0 || removedNoLongerNeeds > 0 {

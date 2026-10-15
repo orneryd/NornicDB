@@ -313,6 +313,9 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		dropPrefixes = append(dropPrefixes, countDeltaNamespacePrefix(countDeltaKindLabel, namespace))
 		dropPrefixes = append(dropPrefixes, countDeltaNamespacePrefix(countDeltaKindEdgeType, namespace))
 	}
+	// Bulk deletion bypasses per-node marker writes. Invalidate even on a
+	// partial drop failure so future claims rebuild from the durable index.
+	defer b.InvalidatePendingEmbeddingsIndex()
 	if err := b.db.DropPrefix(dropPrefixes...); err != nil {
 		return 0, 0, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
