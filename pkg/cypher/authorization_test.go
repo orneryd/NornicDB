@@ -79,8 +79,9 @@ func TestStorageExecutorEnforcesQueryPermissions(t *testing.T) {
 		require.Equal(t, "schema", denied.Permission)
 	})
 
+	// dbms.info is public, as in Neo4j; dbms.listConfig is an admin procedure.
 	t.Run("admin procedure", func(t *testing.T) {
-		_, err := executor.Execute(readOnlyCtx, "CALL dbms.info()", nil)
+		_, err := executor.Execute(readOnlyCtx, "CALL dbms.listConfig()", nil)
 		var denied *PermissionDeniedError
 		require.True(t, errors.As(err, &denied))
 		require.Equal(t, "admin", denied.Permission)

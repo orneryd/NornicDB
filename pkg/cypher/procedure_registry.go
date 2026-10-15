@@ -122,6 +122,11 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	if err := validateProcedureSpec(spec); err != nil {
 		return err
 	}
+	// A user-defined or plugin procedure declares a mode, not an admin
+	// flag: an ADMIN or DBMS one is admin-only.
+	if spec.Mode == ProcedureModeAdmin || spec.Mode == ProcedureModeDBMS {
+		spec.Admin = true
+	}
 	if handler == nil {
 		return fmt.Errorf("procedure %q: nil handler", spec.Name)
 	}

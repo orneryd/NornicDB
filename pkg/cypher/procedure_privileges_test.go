@@ -333,14 +333,14 @@ func TestSystemDatabaseRefusesGraphWrites(t *testing.T) {
 	system := storage.NewNamespacedEngine(inner, "system")
 	exec := NewStorageExecutor(system)
 
-	for _, statement := range []string{
-		"CREATE (:_ProcedurePrivilege {role: 'editor', procedure: '*', boosted: true})",
-		"MERGE (g:_ProcedurePrivilege {role: 'editor'}) SET g.procedure = '*', g.boosted = true",
-		`CALL apoc.cypher.run("CREATE (n:_ProcedurePrivilege {role: 'editor'}) RETURN n", {})`,
+	for _, refused := range []struct{ statement, message string }{
+		{"CREATE (:_ProcedurePrivilege {role: 'editor', procedure: '*', boosted: true})", "not supported on the system database"},
+		{"MERGE (g:_ProcedurePrivilege {role: 'editor'}) SET g.procedure = '*', g.boosted = true", "not supported on the system database"},
+		{`CALL apoc.cypher.run("CREATE (n:_ProcedurePrivilege {role: 'editor'}) RETURN n", {})`, "can only be executed in a user database"},
 	} {
-		_, err := exec.Execute(ctx, statement, nil)
+		_, err := exec.Execute(ctx, refused.statement, nil)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SemanticError")
-		require.ErrorContains(t, err, "not supported on the system database", statement)
+		require.ErrorContains(t, err, refused.message, refused.statement)
 	}
 	_, err := exec.Execute(ctx, "BEGIN", nil)
 	require.NoError(t, err)

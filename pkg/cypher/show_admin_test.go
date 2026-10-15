@@ -114,7 +114,7 @@ func TestUnsupportedAdministrationCommands(t *testing.T) {
 	for query, code := range map[string]string{
 		"SHOW ROLES":                    "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
 		"CREATE ROLE ops":               "Neo.ClientError.Statement.SyntaxError",
-		"DROP ROLE ops":                 "Neo.ClientError.Statement.SyntaxError",
+		"DROP ROLE ops":                 "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
 		"RENAME ROLE ops TO new":        "Neo.ClientError.Statement.SyntaxError",
 		"REVOKE ROLE reader FROM bob":   "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
 		"GRANT ROLE reader TO bob":      "Neo.ClientError.Statement.UnsupportedAdministrationCommand",

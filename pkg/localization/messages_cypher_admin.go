@@ -277,6 +277,7 @@ func CypherAdminPrivilegeRoleNotFound(action, role string) Message {
 
 const (
 	MessageCypherAdminSystemGraphAccessUnsupported MessageID = "cypheradmin.system_graph_access_unsupported"
+	MessageCypherAdminSystemProcedureUnsupported   MessageID = "cypheradmin.system_procedure_unsupported"
 	MessageCypherAdminTransactionStatementType     MessageID = "cypheradmin.transaction_statement_type"
 )
 
@@ -285,7 +286,17 @@ func CypherAdminSystemGraphAccessUnsupported() Message {
 	return Message{ID: MessageCypherAdminSystemGraphAccessUnsupported, Fallback: "Graph access is not supported on the system database"}
 }
 
-// CypherAdminTransactionStatementType reports a transaction's statement kinds.
+// CypherAdminSystemProcedureUnsupported reports a call of a procedure that
+// doesn't run on the system database, in Neo4j's words; query is the
+// statement.
+func CypherAdminSystemProcedureUnsupported(query string) Message {
+	return Message{ID: MessageCypherAdminSystemProcedureUnsupported, Fallback: "Not a recognised system command or procedure. This Cypher command can only be executed in a user database: " + query, Data: map[string]any{"Query": query}}
+}
+
+// CypherAdminTransactionStatementType reports a statement whose type a
+// transaction can't take, in Neo4j's words; previous and requested are
+// Neo4j's statement type names ("Read query", "Write query", "Schema
+// modification", "Administration command").
 func CypherAdminTransactionStatementType(previous, requested string) Message {
-	return Message{ID: MessageCypherAdminTransactionStatementType, Fallback: "Tried to execute " + requested + " query after executing " + previous + " command", Data: map[string]any{"Previous": previous, "Requested": requested}}
+	return Message{ID: MessageCypherAdminTransactionStatementType, Fallback: "Tried to execute " + requested + " after executing " + previous, Data: map[string]any{"Previous": previous, "Requested": requested}}
 }

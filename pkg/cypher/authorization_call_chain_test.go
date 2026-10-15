@@ -43,7 +43,7 @@ func TestStorageExecutorEnforcesPermissionsOfChainedCalls(t *testing.T) {
 	for _, query := range []string{
 		"CALL db.cdc.earliest() YIELD id CALL db.cdc.query(id, [], 5) YIELD id AS change RETURN count(*) AS n",
 		"CALL db.cdc.earliest() YIELD id CALL `db`.`cdc`.`query`(id) YIELD id AS change RETURN count(*) AS n",
-		"CALL db.cdc.earliest() YIELD id CALL dbms.info() YIELD id AS dbmsID RETURN dbmsID",
+		"CALL db.cdc.earliest() YIELD id CALL dbms.listConfig() YIELD name RETURN name",
 	} {
 		t.Run(query, func(t *testing.T) {
 			_, err := executor.Execute(readOnlyCtx, query, nil)

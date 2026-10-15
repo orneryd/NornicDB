@@ -126,6 +126,9 @@
 - id: cypheradmin.system_graph_access_unsupported
   description: A graph or schema statement on the system database.
   other: "[!! Graph access is not supported on the system database !!]"
+- id: cypheradmin.system_procedure_unsupported
+  description: A call of a procedure that does not run on the system database. Query is the untranslated statement.
+  other: "[!! Not a recognised system command or procedure. This Cypher command can only be executed in a user database: {{.Query}} !!]"
 - id: cypheradmin.transaction_statement_type
-  description: Incompatible statement kinds in an explicit transaction. Previous and Requested are untranslated kinds.
-  other: "[!! Tried to execute {{.Requested}} query after executing {{.Previous}} command !!]"
+  description: Incompatible statement types in an explicit transaction. Previous and Requested are Neo4j's untranslated statement type names.
+  other: "[!! Tried to execute {{.Requested}} after executing {{.Previous}} !!]"

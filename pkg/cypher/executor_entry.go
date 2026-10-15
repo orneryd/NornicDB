@@ -313,6 +313,15 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Only BEGIN can start a script; avoid its allocating classifier for
 	// ordinary statements while admitting them through the same owner.
 	if bareTransactionCommand(cypher) == "" && (!startsWithKeywordFold(cypher, "BEGIN") || !transactionScriptShape(cypher)) {
+		// Neo4j parses a statement before it checks it against its
+		// transaction, so a rejected USE clause (USE before an
+		// administration command among them) is the SyntaxError in an
+		// explicit transaction too.
+		if startsWithKeywordFold(cypher, "USE") {
+			if _, _, _, err := parseUseClause(cypher, false); err != nil {
+				return nil, err
+			}
+		}
 		if err := e.admitTransactionStatement(cypher); err != nil {
 			return nil, err
 		}
@@ -340,7 +349,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// A query after :USE <db> runs on that database, like one after a USE
 	// clause (#738).
 	if useDB := GetUseDatabaseFromContext(ctx); useDB != "" && useDB != useBefore {
-		return e.executeOnDatabase(ctx, useDB, cypher, params)
+		return e.executeOnDatabase(ctx, useDB, cypher, params, false)
 	}
 
 	// The quoted-variable and label-expression rewrites map the finished
@@ -473,7 +482,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			if mode == ModeProfile {
 				keyword = "PROFILE "
 			}
-			return e.executeOnDatabase(ctx, use.Name, keyword+remaining, params)
+			return e.executeOnDatabase(ctx, use.Name, keyword+remaining, params, false)
 		}
 	}
 	// Handle leading Cypher USE clause (openCypher multi-graph syntax).
@@ -484,7 +493,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		if err := e.dynamicUseError(use); err != nil {
 			return nil, err
 		}
-		return e.executeOnDatabase(ctx, use.Name, remaining, params)
+		return e.executeOnDatabase(ctx, use.Name, remaining, params, false)
 	}
 	if err := AuthorizeQuery(ctx, cypher); err != nil {
 		return nil, err

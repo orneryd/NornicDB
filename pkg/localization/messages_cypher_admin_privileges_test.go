@@ -9,9 +9,9 @@ import (
 )
 
 // TestCypherAdminProcedurePrivilegeMessagesRender pins the procedure
-// privilege messages: each keeps Neo4j 5.26.30 Enterprise's English text as
-// its fallback and in the en-US catalog, and renders from the es-ES and
-// en-XA catalogs with its data.
+// privilege and system database messages: each keeps its English text
+// (Neo4j 5.26.30's where Neo4j has one) as its fallback and in the en-US
+// catalog, and renders from the es-ES and en-XA catalogs with its data.
 func TestCypherAdminProcedurePrivilegeMessagesRender(t *testing.T) {
 	testCases := []struct {
 		message          Message
@@ -33,6 +33,21 @@ func TestCypherAdminProcedurePrivilegeMessagesRender(t *testing.T) {
 			CypherAdminPrivilegeRoleNotFound("execute_boosted", "nobody"), MessageCypherAdminPrivilegeRoleNotFound, map[string]any{"Action": "execute_boosted", "Role": "nobody"},
 			"Failed to grant execute_boosted privilege to role 'nobody': Role does not exist.",
 			"No se pudo conceder el privilegio execute_boosted al rol 'nobody': el rol no existe.",
+		},
+		{
+			CypherAdminSystemGraphAccessUnsupported(), MessageCypherAdminSystemGraphAccessUnsupported, nil,
+			"Graph access is not supported on the system database",
+			"El acceso al grafo no se admite en la base de datos del sistema",
+		},
+		{
+			CypherAdminSystemProcedureUnsupported("CALL db.createLabel('X')"), MessageCypherAdminSystemProcedureUnsupported, map[string]any{"Query": "CALL db.createLabel('X')"},
+			"Not a recognised system command or procedure. This Cypher command can only be executed in a user database: CALL db.createLabel('X')",
+			"No es un comando ni un procedimiento de sistema reconocido. Este comando Cypher solo se puede ejecutar en una base de datos de usuario: CALL db.createLabel('X')",
+		},
+		{
+			CypherAdminTransactionStatementType("Administration command", "Read query"), MessageCypherAdminTransactionStatementType, map[string]any{"Previous": "Administration command", "Requested": "Read query"},
+			"Tried to execute Read query after executing Administration command",
+			"Se intentó ejecutar Read query después de ejecutar Administration command",
 		},
 	}
 

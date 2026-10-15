@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -232,15 +231,9 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeDropProcedure(ctx, cypher)
 	case startsWithKeywords(cypher, "DROP", "INDEX"):
 		return e.executeSchemaCommand(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "ROLE"):
-		// The same owner used by the REST route rejects this currently
-		// unsupported Cypher command before any role or grant is changed.
-		role := strings.TrimSpace(cypher[findKeywordIndex(cypher, "ROLE")+len("ROLE"):])
-		err := auth.NewRoleStore(nil).DeleteRoleFromCypher(ctx, role)
-		return nil, &classifiedCypherError{
-			cause: localizedError(localization.CypherAdminUnsupportedAdministrationCommand(cypher), err),
-			code:  "Neo.ClientError.Statement.SyntaxError", detail: "UnexpectedSyntax",
-		}
+	case isDropRoleCommand(cypher):
+		return nil, localizedStatusError("Neo.ClientError.Statement.UnsupportedAdministrationCommand", "UnsupportedAdministrationCommand",
+			localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(cypher)))
 	case findKeywordIndex(cypher, "DROP") == 0:
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid DROP clause: "+truncateQuery(cypher, 80))
 	case findKeywordIndex(cypher, "WITH") == 0:
@@ -452,12 +445,20 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) erro
 // SET / REMOVE OPTION, #937).
 func isNornicExtensionStatement(cypher string) bool {
 	return isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
-		isPrivilegeAdministrationCommand(cypher) ||
+		isPrivilegeAdministrationCommand(cypher) || isDropRoleCommand(cypher) ||
 		startsWithKeywords(cypher, "SHOW", "LIMITS") ||
 		(startsWithKeywords(cypher, "ALTER", "DATABASE") && (findKeywordIndex(cypher, "SET LIMIT") >= 0 ||
 			findKeywordIndex(cypher, "SET OPTION") >= 0 || findKeywordIndex(cypher, "REMOVE OPTION") >= 0)) ||
 		((startsWithKeywords(cypher, "CREATE", "DATABASE") || startsWithKeywords(cypher, "CREATE", "OR")) &&
 			findKeywordIndex(cypher, "DATABASE") >= 0 && findKeywordIndex(cypher, "OPTIONS") >= 0)
+}
+
+// isDropRoleCommand reports DROP ROLE, which Neo4j parses and Neo4j
+// Community refuses as an unsupported administration command; NornicDB
+// does the same on both parsers. Roles are deleted through the HTTP role
+// API, whose owner also updates the server's loaded role caches.
+func isDropRoleCommand(cypher string) bool {
+	return startsWithKeywords(cypher, "DROP", "ROLE")
 }
 
 // validateSyntaxNornic performs fast inline syntax validation.

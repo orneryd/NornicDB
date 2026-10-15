@@ -22,9 +22,6 @@
 - id: cyphersubqueries.call_body_empty
   description: Expanded pseudo-locale empty CALL body.
   other: "[!! invalid CALL {} subquery: empty body !!]"
-- id: cyphersubqueries.use_database_failed
-  description: Expanded pseudo-locale USE database failure.
-  other: "[!! CALL subquery USE {{.Database}} failed: {{.Cause}} !!]"
 - id: cyphersubqueries.correlated_union_parse_failed
   description: Expanded pseudo-locale correlated UNION parse failure.
   other: "[!! failed to parse UNION branches in correlated CALL subquery !!]"

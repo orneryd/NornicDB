@@ -612,20 +612,17 @@ func TestApocDynamicRunAndRunMany_Direct(t *testing.T) {
 	_, err = exec.callApocCypherRunMany(ctx, nil)
 	require.ErrorContains(t, err, "argument statements is null")
 
-	res, err = exec.callApocCypherRunMany(ctx, []interface{}{"RETURN 1 AS n; INVALID CYPHER; RETURN 2 AS n", map[string]interface{}{}})
+	// A failed statement fails the call, as in apoc.cypher.run.
+	_, err = exec.callApocCypherRunMany(ctx, []interface{}{"RETURN 1 AS n; INVALID CYPHER; RETURN 2 AS n", map[string]interface{}{}})
+	require.Error(t, err)
+
+	// Each statement's rows from 0, then its statistics row -1.
+	res, err = exec.callApocCypherRunMany(ctx, []interface{}{"RETURN 1 AS n; RETURN 2 AS n", map[string]interface{}{}})
 	require.NoError(t, err)
 	require.Equal(t, []string{"row", "result"}, res.Columns)
-	require.NotEmpty(t, res.Rows)
-	// Ensure row index and error payload branches are deterministic.
-	// Each statement's rows from 0, then its statistics row -1; the failed
-	// statement is one row -1 with its error.
-	require.Len(t, res.Rows, 5)
-	require.Equal(t, []interface{}{int64(0), int64(-1), int64(-1), int64(0), int64(-1)},
-		[]interface{}{res.Rows[0][0], res.Rows[1][0], res.Rows[2][0], res.Rows[3][0], res.Rows[4][0]})
-	errMap, ok := res.Rows[2][1].(map[string]interface{})
-	require.True(t, ok)
-	_, hasErr := errMap["error"]
-	require.True(t, hasErr)
+	require.Len(t, res.Rows, 4)
+	require.Equal(t, []interface{}{int64(0), int64(-1), int64(0), int64(-1)},
+		[]interface{}{res.Rows[0][0], res.Rows[1][0], res.Rows[2][0], res.Rows[3][0]})
 
 	// Stats accumulation branch: runMany with CREATE should increment NodesCreated.
 	createRes, err := exec.callApocCypherRunMany(ctx, []interface{}{`CREATE (:Dyn {name:"x"}); CREATE (:Dyn {name:"y"})`})

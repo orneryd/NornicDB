@@ -64,15 +64,12 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		if err := e.dynamicUseError(use); err != nil {
 			return nil, nil, true, err
 		}
-		if err := e.authorizeSelectedDatabase(ctx, use.Name); err != nil {
+		scoped, scopedCtx, err := e.useDatabase(ctx, use.Name, remaining)
+		if err != nil {
 			return nil, nil, true, err
 		}
-		scoped, database, err := e.scopedExecutorForUse(use.Name, GetAuthTokenFromContext(ctx))
-		if err != nil {
-			return nil, nil, true, localizedError(localization.CypherSubqueriesUseDatabaseFailed(use.Name, err), err)
-		}
 		targetExec = scoped
-		ctx = withExecutionDatabase(ctx, database)
+		ctx = scopedCtx
 		body = remaining
 	}
 

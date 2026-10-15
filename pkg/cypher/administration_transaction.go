@@ -49,22 +49,39 @@ func (e *StorageExecutor) admitTransactionStatement(query string) error {
 		kind = "Administration"
 	}
 	if tx.statementKind != "" && tx.statementKind != kind {
-		requested := "Read"
-		permissions := QueryPermissionRequirements(query)
-		if permissions.Write {
-			requested = "Write"
-		}
-		if permissions.Schema {
-			requested = "Schema modification"
-		}
-		if kind == "Administration" {
-			requested = kind
-		}
-		return localizedStatusError("Neo.ClientError.Transaction.ForbiddenDueToTransactionType", "ForbiddenDueToTransactionType",
-			localization.CypherAdminTransactionStatementType(tx.statementKind, requested))
+		return statementTypeError(query, kind, tx.statementKind, tx.tx)
 	}
 	tx.statementKind = kind
 	return nil
+}
+
+// statementTypeError is Neo4j's ForbiddenDueToTransactionType for query, a
+// statement of kind ("Data" or "Administration"), in a transaction whose
+// statements so far are of kind previousKind; its storage transaction, when
+// it holds writes, makes a data transaction's type "Write query". The
+// message uses Neo4j's statement type names: "Read query", "Write query",
+// "Schema modification", "Administration command".
+func statementTypeError(query, kind, previousKind string, transaction any) error {
+	requested := "Read query"
+	permissions := QueryPermissionRequirements(query)
+	if permissions.Write {
+		requested = "Write query"
+	}
+	if permissions.Schema {
+		requested = "Schema modification"
+	}
+	if kind == "Administration" {
+		requested = "Administration command"
+	}
+	previous := "Administration command"
+	if previousKind == "Data" {
+		previous = "Read query"
+		if writes, ok := transaction.(interface{ OperationCount() int }); ok && writes.OperationCount() > 0 {
+			previous = "Write query"
+		}
+	}
+	return localizedStatusError("Neo.ClientError.Transaction.ForbiddenDueToTransactionType", "ForbiddenDueToTransactionType",
+		localization.CypherAdminTransactionStatementType(previous, requested))
 }
 
 func (e *StorageExecutor) routeAdministrationStatement(ctx context.Context, query string) (*StorageExecutor, error) {

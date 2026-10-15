@@ -7,7 +7,6 @@ const (
 	MessageRoleAlreadyExists             MessageID = "server.role_already_exists"
 	MessageRolesUnavailable              MessageID = "server.roles_unavailable"
 	MessageNewRoleAlreadyExists          MessageID = "server.new_role_already_exists"
-	MessageRoleInUse                     MessageID = "server.role_in_use"
 	MessagePatchOrDeleteRequired         MessageID = "server.method_patch_or_delete_required"
 	MessageDatabaseAllowlistUnavailable  MessageID = "server.database_allowlist_unavailable"
 	MessageDatabasePrivilegesUnavailable MessageID = "server.database_privileges_unavailable"
@@ -45,9 +44,6 @@ func RolesUnavailable() Message {
 }
 func NewRoleNameAlreadyExists() Message {
 	return Message{ID: MessageNewRoleAlreadyExists, Fallback: "new role name already exists"}
-}
-func RoleCannotDeleteWhileInUse() Message {
-	return Message{ID: MessageRoleInUse, Fallback: "cannot delete role: at least one user has this role"}
 }
 func PatchOrDeleteRequired() Message {
 	return Message{ID: MessagePatchOrDeleteRequired, Fallback: "PATCH or DELETE required"}

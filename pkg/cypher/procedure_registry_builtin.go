@@ -200,30 +200,6 @@ func ensureBuiltInProceduresRegistered() {
 				return e.callDbmsFunctions()
 			})
 
-		// Query statistics procedures: canonical Neo4j 5.26 signatures. The
-		// section argument is required; retrieve/collect accept an optional
-		// config map.
-		registerBuiltInProcedure("db.stats.retrieve", "db.stats.retrieve(section :: STRING, config = {} :: MAP) :: (section :: STRING, data :: MAP)", localization.CypherProcedureMetadata("db.stats.retrieve"), ProcedureModeDBMS, 1, 2, true,
-			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callQueryStatistics(ctx, "retrieve", args)
-			})
-		registerBuiltInProcedure("db.stats.collect", "db.stats.collect(section :: STRING, config = {} :: MAP) :: (section :: STRING, success :: BOOLEAN, message :: STRING)", localization.CypherProcedureMetadata("db.stats.collect"), ProcedureModeDBMS, 1, 2, true,
-			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callQueryStatistics(ctx, "collect", args)
-			})
-		registerBuiltInProcedure("db.stats.clear", "db.stats.clear(section :: STRING) :: (section :: STRING, success :: BOOLEAN, message :: STRING)", localization.CypherProcedureMetadata("db.stats.clear"), ProcedureModeDBMS, 1, 1, true,
-			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callQueryStatistics(ctx, "clear", args)
-			})
-		registerBuiltInProcedure("db.stats.status", "db.stats.status() :: (section :: STRING, status :: STRING, data :: MAP)", localization.CypherProcedureMetadata("db.stats.status"), ProcedureModeDBMS, 0, 0, true,
-			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callQueryStatistics(ctx, "status", nil)
-			})
-		registerBuiltInProcedure("db.stats.stop", "db.stats.stop(section :: STRING) :: (section :: STRING, success :: BOOLEAN, message :: STRING)", localization.CypherProcedureMetadata("db.stats.stop"), ProcedureModeDBMS, 1, 1, true,
-			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callQueryStatistics(ctx, "stop", args)
-			})
-
 		registerProcedure(awaitIndexProcedureSpec("db.awaitIndex", true),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNamedIndexManagement("db.awaitIndex", args)
@@ -268,7 +244,7 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callQueryStatistics(ctx, "retrieve", args)
 			})
-		registerBuiltInProcedure("db.stats.retrieveAllAnTheStats", "db.stats.retrieveAllAnTheStats()", localization.CypherProcedureMetadata("db.stats.retrieveAllAnTheStats"), ProcedureModeDBMS, 0, 0, true,
+		registerAdminBuiltInProcedure("db.stats.retrieveAllAnTheStats", "db.stats.retrieveAllAnTheStats()", localization.CypherProcedureMetadata("db.stats.retrieveAllAnTheStats"), ProcedureModeDBMS, 0, 0, true,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.retrieveGraphStatistics(ctx, "ALL")
 			})
@@ -401,15 +377,15 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbCdcEarliest()
 			})
-		registerBuiltInProcedure("db.cdc.query", "db.cdc.query(from = \"\" :: STRING, selectors = [] :: LIST<MAP>, limit = null :: INTEGER) :: (id :: STRING, txId :: INTEGER, seq :: INTEGER, metadata :: MAP, event :: MAP)", localization.CypherProcedureMetadata("db.cdc.query"), ProcedureModeDBMS, 0, 3, false,
+		registerAdminBuiltInProcedure("db.cdc.query", "db.cdc.query(from = \"\" :: STRING, selectors = [] :: LIST<MAP>, limit = null :: INTEGER) :: (id :: STRING, txId :: INTEGER, seq :: INTEGER, metadata :: MAP, event :: MAP)", localization.CypherProcedureMetadata("db.cdc.query"), ProcedureModeDBMS, 0, 3, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbCdcQuery(args)
 			})
-		registerBuiltInProcedure("db.txlog.entries", "db.txlog.entries(fromSeq = null :: INTEGER, toSeq = null :: INTEGER) :: (txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER, timestamp :: STRING, payload :: STRING)", localization.CypherProcedureMetadata("db.txlog.entries"), ProcedureModeDBMS, 0, 2, true,
+		registerAdminBuiltInProcedure("db.txlog.entries", "db.txlog.entries(fromSeq = null :: INTEGER, toSeq = null :: INTEGER) :: (txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER, timestamp :: STRING, payload :: STRING)", localization.CypherProcedureMetadata("db.txlog.entries"), ProcedureModeDBMS, 0, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbTxlogEntries(ctx, args)
 			})
-		registerBuiltInProcedure("db.txlog.byTxId", "db.txlog.byTxId(txId :: STRING, limit = null :: INTEGER) :: (txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER, timestamp :: STRING, payload :: STRING)", localization.CypherProcedureMetadata("db.txlog.byTxId"), ProcedureModeDBMS, 1, 2, true,
+		registerAdminBuiltInProcedure("db.txlog.byTxId", "db.txlog.byTxId(txId :: STRING, limit = null :: INTEGER) :: (txId :: STRING, db :: STRING, kind :: STRING, seq :: INTEGER, timestamp :: STRING, payload :: STRING)", localization.CypherProcedureMetadata("db.txlog.byTxId"), ProcedureModeDBMS, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbTxlogByTxID(ctx, args)
 			})
@@ -878,6 +854,22 @@ func registerBuiltInProcedure(name, signature string, description localization.M
 		DescriptionMessage: description,
 		Mode:               mode,
 		WorksOnSystem:      worksOnSystem,
+		MinArgs:            minArgs,
+		MaxArgs:            maxArgs,
+	}, handler)
+}
+
+// registerAdminBuiltInProcedure is registerBuiltInProcedure for a procedure
+// only an administrator runs (ProcedureSpec.Admin).
+func registerAdminBuiltInProcedure(name, signature string, description localization.Message, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
+	registerProcedure(ProcedureSpec{
+		Name:               name,
+		Signature:          signature,
+		Description:        description.Fallback,
+		DescriptionMessage: description,
+		Mode:               mode,
+		WorksOnSystem:      worksOnSystem,
+		Admin:              true,
 		MinArgs:            minArgs,
 		MaxArgs:            maxArgs,
 	}, handler)

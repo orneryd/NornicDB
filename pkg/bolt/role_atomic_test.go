@@ -25,7 +25,7 @@ func TestBoltDropRoleUnsupportedChangesNothing(t *testing.T) {
 		Permissions: []string{string(auth.PermRead), string(auth.PermWrite), string(auth.PermSchema), string(auth.PermAdmin)}}
 	for query, expected := range map[string]string{
 		"CREATE ROLE new":             "Neo.ClientError.Statement.SemanticError",
-		"DROP ROLE ops":               "Neo.ClientError.Statement.SyntaxError",
+		"DROP ROLE ops":               "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
 		"RENAME ROLE ops TO new":      "Neo.ClientError.Statement.SyntaxError",
 		"GRANT ROLE ops TO reader":    "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
 		"REVOKE ROLE ops FROM reader": "Neo.ClientError.Statement.UnsupportedAdministrationCommand",

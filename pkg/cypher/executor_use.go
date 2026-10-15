@@ -177,9 +177,18 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 	return e.cloneForStorage(storage.NewNamespacedEngine(ns.GetInnerEngine(), targetDB)), targetDB, nil
 }
 
-// otherDatabaseInTransactionError is the error for a statement of an
-// explicit transaction that targets database target (with USE or :USE)
-// other than the transaction's own, or nil. A transaction cannot span
+// TransactionDatabases resolves database names for TransactionDatabaseError:
+// aliases, and whether a name is a composite database.
+type TransactionDatabases interface {
+	ResolveDatabase(name string) (string, error)
+	IsCompositeDatabase(name string) bool
+}
+
+// TransactionDatabaseError is the one check that a transaction stays on one
+// database: the error for a statement of a transaction on txDB that targets
+// database target (with USE or :USE), or nil when target is txDB (by name or
+// alias, through databases) or a constituent of composite txDB. The executor
+// and the HTTP transaction boundary both use it. A transaction cannot span
 // databases (Neo4j Operations Manual: "a transaction cannot span across
 // multiple databases"); composite databases read several constituents
 // through Fabric instead. A write gets Neo4j's
@@ -188,48 +197,91 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 // Community has one user database, so its error for a read of a second one
 // could not be observed; a read gets the same code with the message worded
 // for a read.
-func (e *StorageExecutor) otherDatabaseInTransactionError(target, query string) error {
-	if e.txContext == nil || !e.txContext.active {
-		return nil
-	}
-	current := StatementDatabase(e.currentDatabaseName(), query)
+func TransactionDatabaseError(databases TransactionDatabases, txDB, target, query string) error {
+	txDB = StatementDatabase(txDB, query)
 	target = StatementDatabase(target, query)
-	if strings.EqualFold(current, target) {
+	if sameTransactionDatabase(databases, txDB, target) {
 		return nil
 	}
 	requirements := QueryPermissionRequirements(query)
 	if requirements.Write || requirements.Schema {
 		return localizedStatusError("Neo.ClientError.Statement.AccessMode", "AccessMode",
-			localization.CypherCommandRoutingTransactionSecondDatabaseWrite(target, current))
+			localization.CypherCommandRoutingTransactionSecondDatabaseWrite(target, txDB))
 	}
 	return localizedStatusError("Neo.ClientError.Statement.AccessMode", "AccessMode",
-		localization.CypherCommandRoutingTransactionSecondDatabaseAccess(target, current))
+		localization.CypherCommandRoutingTransactionSecondDatabaseAccess(target, txDB))
 }
 
-// executeOnDatabase runs query on database db, the target a leading USE
-// clause or :USE command names: on this executor for its own database,
-// else on db's executor. In an explicit transaction the target must be the
-// transaction's database.
-func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query string, params map[string]interface{}) (*ExecuteResult, error) {
-	if err := e.authorizeSelectedDatabase(ctx, db); err != nil {
-		return nil, err
+// sameTransactionDatabase reports whether target is txDB, by name or alias,
+// or a constituent of composite txDB.
+func sameTransactionDatabase(databases TransactionDatabases, txDB, target string) bool {
+	if strings.EqualFold(txDB, target) {
+		return true
 	}
-	scopedExec, resolvedDB, err := e.scopedExecutorForUse(db, GetAuthTokenFromContext(ctx))
+	if databases == nil {
+		return false
+	}
+	if databases.IsCompositeDatabase(txDB) && strings.HasPrefix(target, txDB+".") {
+		return true
+	}
+	resolvedTx, txErr := databases.ResolveDatabase(txDB)
+	resolvedTarget, targetErr := databases.ResolveDatabase(target)
+	return txErr == nil && targetErr == nil && resolvedTx == resolvedTarget
+}
+
+// inTransaction reports whether a statement run with ctx belongs to a
+// transaction: this executor's explicit one, or the transaction of the
+// statement it is nested in (an implicit transaction's storage wrapper
+// carried on ctx).
+func (e *StorageExecutor) inTransaction(ctx context.Context) bool {
+	if e.txContext != nil && e.txContext.active {
+		return true
+	}
+	_, nested := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper)
+	return nested
+}
+
+// executeOnDatabase is the one database router: it runs query on database
+// db, the target a leading USE clause or :USE command names, on this
+// executor for its own database, else on db's executor. Every route that
+// selects a database with USE goes through useDatabase: a top-level
+// statement, a statement a procedure runs (nested, run with executeInternal
+// so it stays in the caller's execution) and a CALL { USE … } body.
+func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query string, params map[string]interface{}, nested bool) (*ExecuteResult, error) {
+	scopedExec, ctx, err := e.useDatabase(ctx, db, query)
 	if err != nil {
 		return nil, err
 	}
+	if nested {
+		return scopedExec.executeInternal(ctx, query, params)
+	}
+	return scopedExec.Execute(ctx, query, params)
+}
+
+// useDatabase resolves the database db a USE selects for query and applies
+// the rules every such statement follows: the caller may use db, the system
+// database runs only what its statement policy allows, and a statement of a
+// transaction (explicit, or the one the statement is nested in) stays on
+// that transaction's database. It returns db's executor and ctx scoped to db.
+func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*StorageExecutor, context.Context, error) {
+	if err := e.authorizeSelectedDatabase(ctx, db); err != nil {
+		return nil, ctx, err
+	}
+	scopedExec, resolvedDB, err := e.scopedExecutorForUse(db, GetAuthTokenFromContext(ctx))
+	if err != nil {
+		return nil, ctx, err
+	}
 	if strings.EqualFold(resolvedDB, "system") {
 		if err := systemDatabaseStatementError(query); err != nil {
-			return nil, err
+			return nil, ctx, err
 		}
 	}
-	if scopedExec != e {
-		if err := e.otherDatabaseInTransactionError(resolvedDB, query); err != nil {
-			return nil, err
+	if scopedExec != e && e.inTransaction(ctx) {
+		if err := TransactionDatabaseError(e.dbManager, e.currentDatabaseName(), resolvedDB, query); err != nil {
+			return nil, ctx, err
 		}
 	}
-	ctx = withExecutionDatabase(ctx, resolvedDB)
-	return scopedExec.Execute(ctx, query, params)
+	return scopedExec, withExecutionDatabase(ctx, resolvedDB), nil
 }
 
 // systemDatabaseStatementError is the error for a statement the system
@@ -241,10 +293,21 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 // this keeps procedure grants coming only from GRANT and REVOKE. Reads
 // without graph access stay allowed. Schema commands and graph reads are
 // refused by this same policy on session, USE and procedure-body routes.
+// Only system procedures (ProcedureSpec.WorksOnSystem) run there, as in
+// Neo4j; a call of any other registered procedure, wherever it stands in
+// the statement, fails with Neo4j's SemanticError. A system procedure that
+// reads the graph sees none of the system database's records
+// (systemProcedureScope).
 func systemDatabaseStatementError(query string) error {
 	_, query = parseExecutionMode(query)
 	if isSystemCommandNoGraph(query) {
 		return nil
+	}
+	for _, procedure := range registeredProceduresForCalls(query) {
+		if !procedure.WorksOnSystem {
+			return localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError",
+				localization.CypherAdminSystemProcedureUnsupported(strings.TrimSpace(query)))
+		}
 	}
 	requirements := QueryPermissionRequirements(query)
 	if !requirements.Write && !requirements.Schema && !queryKeywords(query)["MATCH"] {

@@ -1546,7 +1546,8 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 		if params := getParamsFromContext(ctx); params != nil {
 			handlerCypher = e.substituteParams(callCypher, params)
 		}
-		result, err := proc.Handler(ctx, e, handlerCypher, args)
+		procedureCtx, procedureExec := e.systemProcedureScope(ctx)
+		result, err := proc.Handler(procedureCtx, procedureExec, handlerCypher, args)
 		if err != nil {
 			return nil, procedureRuntimeError(procName, err)
 		}

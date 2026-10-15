@@ -113,7 +113,7 @@ func TestBoltProcedureModesRequireDeclaredPermissions(t *testing.T) {
 		}
 	})
 
-	t.Run("DBMS procedure requires admin", func(t *testing.T) {
+	t.Run("admin procedure requires admin", func(t *testing.T) {
 		serverConn, clientConn := net.Pipe()
 		defer serverConn.Close()
 		defer clientConn.Close()
@@ -130,7 +130,7 @@ func TestBoltProcedureModesRequireDeclaredPermissions(t *testing.T) {
 		session.authResult = &BoltAuthResult{Authenticated: true, Permissions: []string{string(auth.PermRead)}}
 
 		done := make(chan error, 1)
-		go func() { done <- session.handleRun(buildRunMessageData("CALL dbms.components()", nil, nil)) }()
+		go func() { done <- session.handleRun(buildRunMessageData("CALL dbms.listConfig()", nil, nil)) }()
 		code, message, err := AssertFailure(t, clientConn)
 		if err != nil {
 			t.Fatalf("expected permission failure: %v", err)
@@ -142,7 +142,7 @@ func TestBoltProcedureModesRequireDeclaredPermissions(t *testing.T) {
 			t.Fatalf("unexpected failure %q: %s", code, message)
 		}
 		if executed {
-			t.Fatal("DBMS procedure reached the executor for a non-admin principal")
+			t.Fatal("admin procedure reached the executor for a non-admin principal")
 		}
 	})
 

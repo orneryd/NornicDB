@@ -52,7 +52,9 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 
 	// Every procedure the query calls counts, not just the first: a later
 	// CALL (chained after YIELD, or inside a subquery) needs its own mode's
-	// permission too.
+	// permission too. A procedure needs admin exactly when its Admin flag
+	// says so (the flag SHOW PROCEDURES lists, as in Neo4j); its mode says
+	// only whether it reads, writes or changes the schema.
 	// An administration command needs admin whatever it calls; otherwise
 	// the admin procedures the query calls are listed for procedure grants.
 	adminCommand := requirements.Admin
@@ -62,7 +64,8 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 			requirements.Write = true
 		case ProcedureModeSchema:
 			requirements.Schema = true
-		case ProcedureModeDBMS, ProcedureModeAdmin:
+		}
+		if procedure.Admin {
 			if !adminCommand {
 				requirements.BoostedProcedures = append(requirements.BoostedProcedures, procedure.Name)
 			}
