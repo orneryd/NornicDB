@@ -389,6 +389,15 @@ YIELD_SCOPE_PREDICATES = [
     "EXISTS {{ MATCH (x) WHERE missing IN labels(x) }}",
     "EXISTS {{ MATCH (x) WHERE label IN labels(x) }}",
 ]
+# Parenthesized identity projections preserve the enclosing variable, both
+# directly in YIELD's WHERE and after an explicit WITH.
+for expression in ["({v})", "(({v}))", "( ( {v} ) )", "((`{v}`))"]:
+    for body in ["WITH " + expression + " AS {v} RETURN {v}", "RETURN " + expression + " AS {v}"]:
+        for keyword in ["EXISTS", "COUNT", "COLLECT"]:
+            subquery = keyword + " {{ " + body + " }}"
+            predicate = subquery if keyword == "EXISTS" else (
+                subquery + " = 1" if keyword == "COUNT" else "size(" + subquery + ") = 1")
+            YIELD_SCOPE_PREDICATES.append(predicate)
 for prefix in ["", "WITH 'Q' AS wanted ", "MATCH (seed:Q {id: 1}) "]:
     for yielded, variable in [("label", "label"), ("label AS l", "l")]:
         for predicate in YIELD_SCOPE_PREDICATES:
@@ -401,6 +410,13 @@ for prefix in ["", "WITH 'Q' AS wanted ", "MATCH (seed:Q {id: 1}) "]:
 for prefix in ["WITH 'Q' AS wanted ", "MATCH (seed:Q {id: 1}) WITH seed, 'Q' AS wanted "]:
     add("subquery-scope", "yield-where", prefix + "CALL db.labels() YIELD label "
         "WHERE EXISTS { MATCH (x) WHERE label IN labels(x) AND label = wanted } RETURN label AS v ORDER BY v")
+
+# The same declaration owner checks ordinary expression subqueries too.
+for expression in ["n", "(n)", "((n))", "( ( n ) )", "((`n`))", "(n.x)", "((n.x))", "( ( n.x ) )", "(n.x) + 0"]:
+    source = "{x: 7}" if ".x" in expression else "1"
+    for body in ["WITH " + expression + " AS n RETURN n", "RETURN " + expression + " AS n"]:
+        for keyword in ["EXISTS", "COUNT", "COLLECT"]:
+            add("subquery-scope", "grouped-binding", "WITH " + source + " AS n RETURN " + keyword + " { " + body + " } AS v")
 
 # 12b'. A quantified group's step variables (#1211): inside the group's
 # predicates (an element's inline WHERE, the group's own WHERE) its node and
