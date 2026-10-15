@@ -9370,5 +9370,999 @@
     "query": "MATCH (a {id: $src}), (b {id: $tgt}) MERGE (a)-[r:LINKS]->(b) SET r += $props"
    }
   ]
- }
+ },
+{
+  "issue": 1226,
+  "title": "Procedure YIELD predicates share correlated eligibility scope",
+  "statements": [
+    {
+      "id": "i85-search-fulltext-index",
+      "query": "CREATE FULLTEXT INDEX yield_text FOR (n:SearchItem) ON EACH [n.text]"
+    },
+    {
+      "id": "i85-search-vector-index",
+      "query": "CREATE VECTOR INDEX yield_vector FOR (n:SearchItem) ON (n.embedding) OPTIONS {indexConfig: {`vector.dimensions`: 4, `vector.similarity_function`: 'cosine'}}"
+    },
+    {
+      "id": "i85-search-await-indexes",
+      "query": "CALL db.awaitIndexes()"
+    },
+    {
+      "id": "i85-search-empty-fulltext-initial-unfiltered",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-initial-correlated",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE EXISTS { MATCH (:Doc {id: node.document_id}) } RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-initial-archive",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-initial-summary",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-initial-shared",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-initial-count",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE COUNT { MATCH (:Doc {id: node.document_id}) } > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-initial-collect",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE size(COLLECT { MATCH (d:Doc {id: node.document_id}) RETURN d.id }) > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-initial-with_shared",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WITH node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-inquery-unfiltered",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-inquery-correlated",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE EXISTS { MATCH (:Doc {id: node.document_id}) } RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-inquery-archive",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-inquery-summary",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-inquery-shared",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-inquery-count",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE COUNT { MATCH (:Doc {id: node.document_id}) } > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-inquery-collect",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE size(COLLECT { MATCH (d:Doc {id: node.document_id}) RETURN d.id }) > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-fulltext-inquery-with_shared",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WITH node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-initial-unfiltered",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-initial-correlated",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE EXISTS { MATCH (:Doc {id: node.document_id}) } RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-initial-archive",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-initial-summary",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-initial-shared",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-initial-count",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE COUNT { MATCH (:Doc {id: node.document_id}) } > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-initial-collect",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE size(COLLECT { MATCH (d:Doc {id: node.document_id}) RETURN d.id }) > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-initial-with_shared",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WITH node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-inquery-unfiltered",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-inquery-correlated",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE EXISTS { MATCH (:Doc {id: node.document_id}) } RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-inquery-archive",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-inquery-summary",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-inquery-shared",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-inquery-count",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE COUNT { MATCH (:Doc {id: node.document_id}) } > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-inquery-collect",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE size(COLLECT { MATCH (d:Doc {id: node.document_id}) RETURN d.id }) > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-empty-vector-inquery-with_shared",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WITH node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-create-fixture",
+      "query": "CREATE (d:Doc {id:'d',current_version_id:'v'})-[:MEMBER_OF]->(:Collection {id:'c',archived:true}), (:Version {id:'v',document_id:'d',current_source_id:'s'}), (:SearchItem:Src {id:'s',document_id:'d',current:true,text:'boiler',embedding:[1.0,0.0,0.0,0.0]}), (:SearchItem:Summary {id:'sc',owner_kind:'collection',owner_id:'c',current:true,source_ids:['s'],text:'boiler',embedding:[1.0,0.0,0.0,0.0]}), (:SearchItem:Summary {id:'sd',owner_kind:'document',owner_id:'d',current:true,source_ids:['s'],text:'boiler',embedding:[1.0,0.0,0.0,0.0]}), (:SearchItem:Summary {id:'stale',owner_kind:'document',owner_id:'d',current:false,source_ids:['s'],text:'boiler',embedding:[1.0,0.0,0.0,0.0]}), (:SearchItem:Summary {id:'unknown',owner_kind:'document',owner_id:'missing',current:true,source_ids:['s'],text:'boiler',embedding:[1.0,0.0,0.0,0.0]})"
+    },
+    {
+      "id": "i85-search-await-populated",
+      "query": "CALL db.awaitIndexes()"
+    },
+    {
+      "id": "i85-search-archived-fulltext-initial-unfiltered",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ],
+        [
+          "stale",
+          true
+        ],
+        [
+          "unknown",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-fulltext-initial-correlated",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE EXISTS { MATCH (:Doc {id: node.document_id}) } RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-fulltext-initial-archive",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-archived-fulltext-initial-summary",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-fulltext-initial-shared",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-archived-fulltext-initial-count",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE COUNT { MATCH (:Doc {id: node.document_id}) } > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-fulltext-initial-collect",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE size(COLLECT { MATCH (d:Doc {id: node.document_id}) RETURN d.id }) > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-fulltext-initial-with_shared",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WITH node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-archived-fulltext-inquery-unfiltered",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ],
+        [
+          "stale",
+          true
+        ],
+        [
+          "unknown",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-fulltext-inquery-correlated",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE EXISTS { MATCH (:Doc {id: node.document_id}) } RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-fulltext-inquery-archive",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-archived-fulltext-inquery-summary",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-fulltext-inquery-shared",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-archived-fulltext-inquery-count",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE COUNT { MATCH (:Doc {id: node.document_id}) } > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-fulltext-inquery-collect",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE size(COLLECT { MATCH (d:Doc {id: node.document_id}) RETURN d.id }) > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-fulltext-inquery-with_shared",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WITH node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-archived-vector-initial-unfiltered",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ],
+        [
+          "stale",
+          true
+        ],
+        [
+          "unknown",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-vector-initial-correlated",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE EXISTS { MATCH (:Doc {id: node.document_id}) } RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-vector-initial-archive",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-archived-vector-initial-summary",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-vector-initial-shared",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-archived-vector-initial-count",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE COUNT { MATCH (:Doc {id: node.document_id}) } > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-vector-initial-collect",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE size(COLLECT { MATCH (d:Doc {id: node.document_id}) RETURN d.id }) > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-vector-initial-with_shared",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WITH node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-archived-vector-inquery-unfiltered",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ],
+        [
+          "stale",
+          true
+        ],
+        [
+          "unknown",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-vector-inquery-correlated",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE EXISTS { MATCH (:Doc {id: node.document_id}) } RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-vector-inquery-archive",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-archived-vector-inquery-summary",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-vector-inquery-shared",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-archived-vector-inquery-count",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE COUNT { MATCH (:Doc {id: node.document_id}) } > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-vector-inquery-collect",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE size(COLLECT { MATCH (d:Doc {id: node.document_id}) RETURN d.id }) > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-archived-vector-inquery-with_shared",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WITH node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": []
+    },
+    {
+      "id": "i85-search-activate",
+      "query": "MATCH (c:Collection {id:'c'}) SET c.archived=false"
+    },
+    {
+      "id": "i85-search-active-fulltext-initial-unfiltered",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ],
+        [
+          "stale",
+          true
+        ],
+        [
+          "unknown",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-initial-correlated",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE EXISTS { MATCH (:Doc {id: node.document_id}) } RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-initial-archive",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-initial-summary",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-initial-shared",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-initial-count",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE COUNT { MATCH (:Doc {id: node.document_id}) } > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-initial-collect",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE size(COLLECT { MATCH (d:Doc {id: node.document_id}) RETURN d.id }) > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-initial-with_shared",
+      "query": "CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WITH node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-inquery-unfiltered",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ],
+        [
+          "stale",
+          true
+        ],
+        [
+          "unknown",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-inquery-correlated",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE EXISTS { MATCH (:Doc {id: node.document_id}) } RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-inquery-archive",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-inquery-summary",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-inquery-shared",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-inquery-count",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE COUNT { MATCH (:Doc {id: node.document_id}) } > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-inquery-collect",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WHERE size(COLLECT { MATCH (d:Doc {id: node.document_id}) RETURN d.id }) > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-fulltext-inquery-with_shared",
+      "query": "WITH 1 AS input CALL db.index.fulltext.queryNodes('yield_text', 'boiler') YIELD node, score WITH node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-initial-unfiltered",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ],
+        [
+          "stale",
+          true
+        ],
+        [
+          "unknown",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-initial-correlated",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE EXISTS { MATCH (:Doc {id: node.document_id}) } RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-initial-archive",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-initial-summary",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-initial-shared",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-initial-count",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE COUNT { MATCH (:Doc {id: node.document_id}) } > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-initial-collect",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE size(COLLECT { MATCH (d:Doc {id: node.document_id}) RETURN d.id }) > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-initial-with_shared",
+      "query": "CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WITH node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-inquery-unfiltered",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ],
+        [
+          "stale",
+          true
+        ],
+        [
+          "unknown",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-inquery-correlated",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE EXISTS { MATCH (:Doc {id: node.document_id}) } RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-inquery-archive",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-inquery-summary",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-inquery-shared",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-inquery-count",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE COUNT { MATCH (:Doc {id: node.document_id}) } > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-inquery-collect",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WHERE size(COLLECT { MATCH (d:Doc {id: node.document_id}) RETURN d.id }) > 0 RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ]
+      ]
+    },
+    {
+      "id": "i85-search-active-vector-inquery-with_shared",
+      "query": "WITH 1 AS input CALL db.index.vector.queryNodes('yield_vector', 10, [1.0,0.0,0.0,0.0]) YIELD node, score WITH node, score WHERE ((node:Src AND (NOT EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (:Doc {id: node.document_id})-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) })) OR (NOT node:Src AND (false OR coalesce(node.current, true)))) AND (NOT node:Summary OR (coalesce(node.current, false) AND ((node.owner_kind = 'collection' AND EXISTS { MATCH (c:Collection {id: node.owner_id}) WHERE NOT coalesce(c.archived, false) }) OR (node.owner_kind = 'document' AND EXISTS { MATCH (d:Doc {id: node.owner_id}) MATCH (v:Version {id: d.current_version_id, document_id: d.id}) WHERE v.current_source_id IN node.source_ids AND (NOT EXISTS { MATCH (d)-[:MEMBER_OF]->(:Collection) } OR EXISTS { MATCH (d)-[:MEMBER_OF]->(c:Collection) WHERE NOT coalesce(c.archived, false) }) })))) RETURN node.id AS id, score > 0 AS positive ORDER BY id",
+      "expected_rows": [
+        [
+          "s",
+          true
+        ],
+        [
+          "sc",
+          true
+        ],
+        [
+          "sd",
+          true
+        ]
+      ]
+    }
+  ]
+}
 ]
