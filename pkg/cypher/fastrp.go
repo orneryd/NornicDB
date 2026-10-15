@@ -350,6 +350,17 @@ func selectGDSSubgraph(proj *GraphProjection, nodeLabels, relationshipTypes []st
 			return nil, localizedError(localization.CypherGraphProceduresWeightPropertyNotFound(property, gdsNameList(types), gdsNameList(available)), nil)
 		}
 	}
+	// One selected constituent needs only target ordering. Repeated names in
+	// the selection do not introduce another graph or require per-arc ranks.
+	includeTypes := false
+	if selection.includeTypes && !selection.omitAdjacency && len(types) > 1 {
+		for _, relationshipType := range types[1:] {
+			if relationshipType != types[0] {
+				includeTypes = true
+				break
+			}
+		}
+	}
 	graph := &gdsSubgraph{}
 	// The projection owns an immutable index. Without a label restriction,
 	// reuse it; filtered selections build only their selected-node index.
@@ -368,7 +379,7 @@ func selectGDSSubgraph(proj *GraphProjection, nodeLabels, relationshipTypes []st
 	if !selection.omitAdjacency {
 		graph.outgoing = make([][]gdsEdge, len(graph.nodes))
 	}
-	if selection.includeTypes {
+	if includeTypes {
 		graph.outgoingTypes = make([][]int, len(graph.nodes))
 	}
 	// A nodes-only consumer need not traverse relationships.
@@ -404,7 +415,7 @@ func selectGDSSubgraph(proj *GraphProjection, nodeLabels, relationshipTypes []st
 			weight = value
 		}
 		graph.outgoing[source] = append(graph.outgoing[source], gdsEdge{target: target, weight: weight})
-		if selection.includeTypes {
+		if includeTypes {
 			graph.outgoingTypes[source] = append(graph.outgoingTypes[source], proj.relationshipTypeIndex[relationship.Type])
 		}
 	}
