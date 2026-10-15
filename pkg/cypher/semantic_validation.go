@@ -549,7 +549,7 @@ func maskPathFunctionCalls(expression string) string {
 				break
 			}
 			idx += searchStart
-			if idx > 0 && isIdentByte(expression[idx-1]) {
+			if !functionNameStartsAt(expression, idx) {
 				searchStart = idx + 1
 				continue
 			}

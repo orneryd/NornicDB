@@ -182,7 +182,7 @@ func namedFunctionArguments(expression, function string) []string {
 			}
 			continue
 		}
-		if !strings.HasPrefix(lower[index:], function) || (index > 0 && isIdentByte(lower[index-1])) {
+		if !strings.HasPrefix(lower[index:], function) || !functionNameStartsAt(expression, index) {
 			index++
 			continue
 		}

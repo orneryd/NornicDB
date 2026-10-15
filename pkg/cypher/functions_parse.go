@@ -78,3 +78,9 @@ func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
 
 	return name, expr[openIdx+1 : closeIdx], true
 }
+
+// functionNameStartsAt prevents a builtin scanner from matching only the last
+// component of a qualified function name (custom.range is not range).
+func functionNameStartsAt(text string, at int) bool {
+	return at == 0 || (!isIdentByte(text[at-1]) && text[at-1] != '.')
+}

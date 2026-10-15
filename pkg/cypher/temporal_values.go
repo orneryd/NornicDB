@@ -313,6 +313,9 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 		return value, true, nil
 	}
 	if strings.HasSuffix(kind, ".truncate") {
+		if _, builtin := builtInCypherFunctions[kind]; !builtin {
+			return nil, false, nil // A qualified plugin keeps its own handler.
+		}
 		kind = strings.TrimSuffix(kind, ".truncate")
 		arguments := e.splitFunctionArgs(argument)
 		if len(arguments) < 1 || len(arguments) > 3 {

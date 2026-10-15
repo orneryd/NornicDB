@@ -34,7 +34,7 @@ func extractShortestPathCall(cypher string) (string, string, int, bool) {
 				break
 			}
 			idx += searchStart
-			if idx > 0 && isIdentByte(cypher[idx-1]) {
+			if !functionNameStartsAt(cypher, idx) {
 				searchStart = idx + 1
 				continue
 			}
