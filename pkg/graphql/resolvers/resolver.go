@@ -97,12 +97,12 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 			// Node events
 			notifier.OnNodeCreated(func(node *storage.Node) {
 				// Create a copy with unprefixed ID for GraphQL
-				unprefixedNode := *node
+				unprefixedNode := *storage.NewNormalEventResultProjection(underlyingEngine).Node(node)
 				unprefixedNode.ID = unprefixNodeID(node.ID)
 				broker.PublishNodeCreated(storageNodeToModel(&unprefixedNode))
 			})
 			notifier.OnNodeUpdated(func(node *storage.Node) {
-				unprefixedNode := *node
+				unprefixedNode := *storage.NewNormalEventResultProjection(underlyingEngine).Node(node)
 				unprefixedNode.ID = unprefixNodeID(node.ID)
 				broker.PublishNodeUpdated(storageNodeToModel(&unprefixedNode))
 			})
@@ -113,14 +113,14 @@ func NewResolver(db *nornicdb.DB, dbManager *multidb.DatabaseManager) *Resolver 
 
 			// Relationship (edge) events
 			notifier.OnEdgeCreated(func(edge *storage.Edge) {
-				unprefixedEdge := *edge
+				unprefixedEdge := *storage.NewNormalEventResultProjection(underlyingEngine).Edge(edge)
 				unprefixedEdge.ID = unprefixEdgeID(edge.ID)
 				unprefixedEdge.StartNode = unprefixNodeID(edge.StartNode)
 				unprefixedEdge.EndNode = unprefixNodeID(edge.EndNode)
 				broker.PublishRelationshipCreated(storageEdgeToModel(&unprefixedEdge))
 			})
 			notifier.OnEdgeUpdated(func(edge *storage.Edge) {
-				unprefixedEdge := *edge
+				unprefixedEdge := *storage.NewNormalEventResultProjection(underlyingEngine).Edge(edge)
 				unprefixedEdge.ID = unprefixEdgeID(edge.ID)
 				unprefixedEdge.StartNode = unprefixNodeID(edge.StartNode)
 				unprefixedEdge.EndNode = unprefixNodeID(edge.EndNode)

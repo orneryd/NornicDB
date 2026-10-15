@@ -219,10 +219,14 @@ func (b *BadgerEngine) filterPropertyByDecay(
 
 // FilterPropertyByDecay returns true if the property should be hidden from results.
 func (b *BadgerEngine) FilterPropertyByDecay(nodeID NodeID, labels []string, propKey string, createdAtNanos, versionAtNanos, nowNanos int64) bool {
+	return b.filterNodePropertyByDecay(nodeID, labels, propKey, createdAtNanos, versionAtNanos, nowNanos, true)
+}
+
+func (b *BadgerEngine) filterNodePropertyByDecay(nodeID NodeID, labels []string, propKey string, createdAtNanos, versionAtNanos, nowNanos int64, honorReveal bool) bool {
 	if !b.decayEnabled {
 		return false
 	}
-	if b.revealAll.Load() {
+	if honorReveal && b.revealAll.Load() {
 		return false
 	}
 
@@ -241,10 +245,14 @@ func (b *BadgerEngine) FilterPropertyByDecay(nodeID NodeID, labels []string, pro
 
 // FilterEdgePropertyByDecay returns true if the edge property should be hidden from results.
 func (b *BadgerEngine) FilterEdgePropertyByDecay(edgeID EdgeID, edgeType, propKey string, createdAtNanos, versionAtNanos, nowNanos int64) bool {
+	return b.filterRelationshipPropertyByDecay(edgeID, edgeType, propKey, createdAtNanos, versionAtNanos, nowNanos, true)
+}
+
+func (b *BadgerEngine) filterRelationshipPropertyByDecay(edgeID EdgeID, edgeType, propKey string, createdAtNanos, versionAtNanos, nowNanos int64, honorReveal bool) bool {
 	if !b.decayEnabled {
 		return false
 	}
-	if b.revealAll.Load() {
+	if honorReveal && b.revealAll.Load() {
 		return false
 	}
 

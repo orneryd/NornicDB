@@ -224,3 +224,18 @@ The scoring page ends when `SuppressionEligible` is determined. This page starts
 - [Visibility Suppression and Deindex](../user-guides/visibility-suppression-deindex.md) — user-facing semantics and operational usage
 - [Retention Policies](../user-guides/retention-policies.md) — operator-facing retention configuration and caveats
 - [Knowledge Policy Metrics](../observability/knowledge-policy-metrics.md) — counters and histograms emitted by the scoring and visibility paths
+
+### Normal subscription and related-node payloads
+
+GraphQL node/relationship created and updated events retain their whole-entity
+notification contract and synchronous publication order. Their detached property
+payloads use `storage.NewNormalEventResultProjection` before transport ID prefix
+removal, so the original namespace policy applies. Event projection deliberately
+ignores a mutation producer's REVEAL mode without changing that mode or acquiring
+another query mutex inside the callback. Stored values and the producer's own
+REVEAL results remain intact. Deleted notifications contain only IDs.
+
+Heimdall related-node titles use the same contextual query-result projection as
+normal search payloads. A discover operation called from an already owned REVEAL
+query retains its owning scope. Neither integration changes raw storage/debug,
+history, backup or export APIs.

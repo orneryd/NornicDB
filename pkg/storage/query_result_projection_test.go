@@ -8,6 +8,10 @@ import (
 )
 
 func TestQueryResultProjectionDisabledAndNil(t *testing.T) {
+	event := NewNormalEventResultProjection(NewMemoryEngine())
+	require.Nil(t, event.Node(nil))
+	require.Nil(t, event.Edge(nil))
+
 	view, release := BeginQueryResultProjection(NewMemoryEngine())
 	defer release()
 	require.Nil(t, view.Node(nil))
@@ -16,6 +20,8 @@ func TestQueryResultProjectionDisabledAndNil(t *testing.T) {
 	require.Nil(t, view.EdgeProperties(nil))
 	n := &Node{Properties: map[string]interface{}{"x": "raw"}}
 	e := &Edge{Properties: n.Properties}
+	require.Same(t, n, event.Node(n))
+	require.Same(t, e, event.Edge(e))
 	require.Same(t, n, view.Node(n))
 	require.Same(t, e, view.Edge(e))
 	require.Zero(t, testing.AllocsPerRun(100, func() { view.Node(n); view.Edge(e) }))
@@ -59,5 +65,16 @@ func TestQueryResultProjectionNamespaceDetachedAndRevealIsolation(t *testing.T) 
 	<-done
 	end := be.BeginQueryRevealScope(true)
 	require.Contains(t, NewQueryResultProjection(engine).Node(n).Properties, "secret")
+	// A normal event must ignore the producer's REVEAL without acquiring another
+	// lock; qualified source IDs still select the original namespace's policy.
+	event := NewNormalEventResultProjection(be)
+	eventNode := *n
+	eventNode.ID = "tenant:a:b"
+	eventEdge := *e
+	eventEdge.ID = "tenant:a:b"
+	require.NotContains(t, event.Node(&eventNode).Properties, "secret")
+	require.NotContains(t, event.Edge(&eventEdge).Properties, "secret")
+	require.Contains(t, n.Properties, "secret")
+	require.Contains(t, e.Properties, "secret")
 	end()
 }

@@ -7,9 +7,10 @@ import "strings"
 // their source database's projection instead of being scored against this store.
 // Construct it once per result owner; raw debug/history/export reads omit it.
 type QueryResultProjection struct {
-	engine *BadgerEngine
-	prefix string
-	now    int64
+	engine      *BadgerEngine
+	prefix      string
+	now         int64
+	normalEvent bool
 }
 
 // NewQueryResultProjection resolves the database and storage wrapper once.
@@ -22,6 +23,19 @@ func NewQueryResultProjection(engine Engine) QueryResultProjection {
 		return QueryResultProjection{}
 	}
 	return QueryResultProjection{engine: be, prefix: QualifiedEntityID(engine, ""), now: DecayScoringTime()}
+}
+
+// NewNormalEventResultProjection projects normal subscription events without
+// inheriting a mutation producer's REVEAL mode. It does not acquire a query
+// mutex: storage callbacks run synchronously inside the producer's write scope.
+// Supply the source engine and original qualified entity IDs before adapting
+// IDs for a transport. For example, emit(NewNormalEventResultProjection(source).Node(node)).
+// This changes only detached event properties, not stored entities, whole-entity
+// notification membership, or the producer's own REVEAL result.
+func NewNormalEventResultProjection(engine Engine) QueryResultProjection {
+	view := NewQueryResultProjection(engine)
+	view.normalEvent = true
+	return view
 }
 
 // BeginQueryResultProjection owns a normal-query reveal scope until release.
@@ -61,7 +75,7 @@ func (p QueryResultProjection) NodeProperties(node *Node) map[string]interface{}
 	out := make(map[string]interface{}, len(node.Properties))
 	id := NodeID(p.qualified(string(node.ID)))
 	for key, value := range node.Properties {
-		if !p.engine.FilterPropertyByDecay(id, node.Labels, key, created, updated, p.now) {
+		if !p.engine.filterNodePropertyByDecay(id, node.Labels, key, created, updated, p.now, !p.normalEvent) {
 			out[key] = value
 		}
 	}
@@ -84,7 +98,7 @@ func (p QueryResultProjection) EdgeProperties(edge *Edge) map[string]interface{}
 	out := make(map[string]interface{}, len(edge.Properties))
 	id := EdgeID(p.qualified(string(edge.ID)))
 	for key, value := range edge.Properties {
-		if !p.engine.FilterEdgePropertyByDecay(id, edge.Type, key, created, updated, p.now) {
+		if !p.engine.filterRelationshipPropertyByDecay(id, edge.Type, key, created, updated, p.now, !p.normalEvent) {
 			out[key] = value
 		}
 	}

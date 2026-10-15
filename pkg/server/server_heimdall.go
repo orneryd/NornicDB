@@ -311,7 +311,7 @@ func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query 
 
 		// Get related nodes when depth >= 1 (1 = direct neighbors, 2+ = multi-hop)
 		if depth >= 1 {
-			sr.Related = r.getRelatedNodes(engine, r0.ID, depth)
+			sr.Related = r.getRelatedNodesContext(ctx, engine, r0.ID, depth)
 		}
 
 		results = append(results, sr)
@@ -330,9 +330,16 @@ func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query 
 
 // getRelatedNodes fetches connected nodes up to the specified depth (BFS).
 func (r *heimdallDBRouter) getRelatedNodes(engine storage.Engine, nodeID string, depth int) []heimdall.RelatedNode {
+	return r.getRelatedNodesContext(context.Background(), engine, nodeID, depth)
+}
+
+func (r *heimdallDBRouter) getRelatedNodesContext(ctx context.Context, engine storage.Engine, nodeID string, depth int) []heimdall.RelatedNode {
 	if depth < 1 || engine == nil {
 		return nil
 	}
+
+	_, visible, release := storage.BeginQueryResultProjectionContext(ctx, engine)
+	defer release()
 
 	var related []heimdall.RelatedNode
 	visited := map[string]bool{nodeID: true}
@@ -392,7 +399,7 @@ func (r *heimdallDBRouter) getRelatedNodes(engine storage.Engine, nodeID string,
 			rel := heimdall.RelatedNode{
 				ID:           neighborID,
 				Type:         getFirstLabel(node.Labels),
-				Title:        getStringProperty(node.Properties, "title"),
+				Title:        getStringProperty(visible.NodeProperties(node), "title"),
 				Distance:     current.distance + 1,
 				Relationship: e.Type,
 				Direction:    er.direction,
