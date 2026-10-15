@@ -13,6 +13,7 @@ func validateStaticMapKeys(query string) error {
 	if strings.HasPrefix(upper, "CREATE CONSTRAINT") && findKeywordIndex(query, "REQUIRE") >= 0 {
 		return nil
 	}
+	var patternContext *mapPatternContext
 	for index := 0; index < len(query); index++ {
 		if query[index] == '\'' || query[index] == '"' || query[index] == '`' {
 			index = numericValidationSkipQuoted(query, index) - 1
@@ -57,7 +58,13 @@ func validateStaticMapKeys(query string) error {
 			}
 		}
 		if !mapLiteral {
-			if strings.TrimSpace(query[index+1:close]) != "" && insidePatternDelimiter(query, index) && !inProjectionClause(query, index) {
+			if strings.TrimSpace(query[index+1:close]) == "" {
+				continue
+			}
+			if patternContext == nil {
+				patternContext = newMapPatternContext(query)
+			}
+			if patternContext.insidePatternDelimiter(query, index) && !inProjectionClause(query, index) {
 				return newSemanticError(
 					"Neo.ClientError.Statement.SyntaxError",
 					"UnexpectedSyntax",
@@ -230,49 +237,12 @@ func isCypherWhitespace(c byte) bool {
 // or SET clause, where parentheses group an expression, such as a map
 // projection (n {.k}).k, rather than delimit a node pattern.
 func inProjectionClause(query string, position int) bool {
-	clause, last := "", -1
-	for _, keyword := range []string{"MATCH", "CREATE", "MERGE", "WHERE", "RETURN", "WITH", "UNWIND", "SET"} {
-		positions := findAllTopLevelPipelineKeywordPositions(query[:position], keyword)
-		if len(positions) > 0 && positions[len(positions)-1] > last {
-			clause, last = keyword, positions[len(positions)-1]
-		}
-	}
-	switch clause {
+
+	switch mapClauseBefore(query[:position]) {
 	case "RETURN", "WITH", "UNWIND", "SET":
 		return true
 	}
 	return false
-}
-
-func insidePatternDelimiter(query string, end int) bool {
-	var parentheses []bool
-	brackets := 0
-	for index := 0; index < end; index++ {
-		if query[index] == '\'' || query[index] == '"' || query[index] == '`' {
-			index = numericValidationSkipQuoted(query, index) - 1
-			continue
-		}
-		switch query[index] {
-		case '(':
-			parentheses = append(parentheses, !functionCallParenAt(query, index))
-		case ')':
-			if len(parentheses) > 0 {
-				parentheses = parentheses[:len(parentheses)-1]
-			}
-		case '[':
-			brackets++
-		case ']':
-			if brackets > 0 {
-				brackets--
-			}
-		}
-	}
-	for _, pattern := range parentheses {
-		if pattern {
-			return true
-		}
-	}
-	return brackets > 0
 }
 
 func validMapLiteralKey(key string) bool {

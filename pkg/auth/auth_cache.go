@@ -17,12 +17,15 @@ const (
 // BasicAuthCache caches successful Basic authentication results to avoid
 // repeated bcrypt work on high-volume request paths. It spares the password
 // check only: every caller passes a cached result through
-// Authenticator.CurrentClaims, so the roles are the account's current ones.
+// Authenticator.CurrentClaims, so the roles are the account's current ones,
+// and every owner registers ForgetUser with Authenticator.OnPasswordChange,
+// so a changed password stops working at once.
 type BasicAuthCache struct {
 	mu         sync.Mutex
 	entries    map[[32]byte]basicAuthCacheEntry
 	maxEntries int
 	ttl        time.Duration
+	generation uint64
 }
 
 type basicAuthCacheEntry struct {
@@ -50,12 +53,22 @@ func (c *BasicAuthCache) GetFromHeader(authHeader string) (*JWTClaims, bool) {
 	return c.get(basicAuthCacheKeyFromHeader(authHeader))
 }
 
-// SetFromHeader caches claims using the full Basic auth header.
+// SetFromHeader caches claims using the full Basic auth header at the current
+// generation. It preserves the original setter contract; authentication paths
+// must use SetFromHeaderAtGeneration with a generation captured before checking
+// credentials to reject publication racing a password change.
 func (c *BasicAuthCache) SetFromHeader(authHeader string, claims *JWTClaims) {
+	c.SetFromHeaderAtGeneration(authHeader, claims, c.Generation())
+}
+
+// SetFromHeaderAtGeneration caches claims only if generation, captured before
+// authentication, still matches. For example, capture cache.Generation(), check
+// credentials, then publish with the captured value so ForgetUser wins a race.
+func (c *BasicAuthCache) SetFromHeaderAtGeneration(authHeader string, claims *JWTClaims, generation uint64) {
 	if c == nil || authHeader == "" || claims == nil {
 		return
 	}
-	c.set(basicAuthCacheKeyFromHeader(authHeader), claims)
+	c.set(basicAuthCacheKeyFromHeader(authHeader), claims, generation)
 }
 
 // Get retrieves cached claims using username/password (when header isn't available).
@@ -66,12 +79,50 @@ func (c *BasicAuthCache) Get(username, password string) (*JWTClaims, bool) {
 	return c.get(basicAuthCacheKeyFromCredentials(username, password))
 }
 
-// Set caches claims using username/password (when header isn't available).
+// Set caches claims using username/password at the current generation. It
+// preserves the original setter contract; authentication paths must instead use
+// SetAtGeneration with a generation captured before checking credentials.
 func (c *BasicAuthCache) Set(username, password string, claims *JWTClaims) {
+	c.SetAtGeneration(username, password, claims, c.Generation())
+}
+
+// SetAtGeneration caches claims only if generation, captured before checking
+// credentials, still matches. For example, capture cache.Generation() before
+// authenticating and pass it here to prevent a password change from racing
+// publication of a successful check of the old password.
+func (c *BasicAuthCache) SetAtGeneration(username, password string, claims *JWTClaims, generation uint64) {
 	if c == nil || username == "" || password == "" || claims == nil {
 		return
 	}
-	c.set(basicAuthCacheKeyFromCredentials(username, password), claims)
+	c.set(basicAuthCacheKeyFromCredentials(username, password), claims, generation)
+}
+
+// Generation captures the cache publication generation before credentials are
+// authenticated. SetAtGeneration and SetFromHeaderAtGeneration publish only within that generation.
+func (c *BasicAuthCache) Generation() uint64 {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.generation
+}
+
+// ForgetUser drops every cached result of username, so a password that was
+// just changed authenticates no more (Authenticator.OnPasswordChange calls
+// it): the next request with it is checked in full.
+func (c *BasicAuthCache) ForgetUser(username string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.generation++
+	for key, entry := range c.entries {
+		if entry.claims != nil && entry.claims.Username == username {
+			delete(c.entries, key)
+		}
+	}
 }
 
 func basicAuthCacheKeyFromHeader(authHeader string) [32]byte {
@@ -99,7 +150,7 @@ func (c *BasicAuthCache) get(key [32]byte) (*JWTClaims, bool) {
 	return cloneJWTClaims(entry.claims), true
 }
 
-func (c *BasicAuthCache) set(key [32]byte, claims *JWTClaims) {
+func (c *BasicAuthCache) set(key [32]byte, claims *JWTClaims, generation uint64) {
 	if c == nil || claims == nil {
 		return
 	}
@@ -109,6 +160,9 @@ func (c *BasicAuthCache) set(key [32]byte, claims *JWTClaims) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if generation != c.generation {
+		return
+	}
 
 	// Opportunistic cleanup of expired entries.
 	for k, entry := range c.entries {

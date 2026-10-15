@@ -690,7 +690,7 @@ func TestCallToolEnforcesRequestDatabaseScopeBeforeDispatch(t *testing.T) {
 
 	newContext := func(scope *auth.RequestDatabaseScope, access auth.ResolvedAccess) context.Context {
 		ctx := auth.WithRequestDatabaseAccessMode(context.Background(), auth.FullDatabaseAccessMode)
-		ctx = auth.WithRequestResolvedAccessResolver(ctx, func(string) auth.ResolvedAccess { return access })
+		ctx = withResolvedAccess(ctx, func(string) auth.ResolvedAccess { return access })
 		if scope != nil {
 			ctx = auth.WithRequestDatabaseScope(ctx, scope)
 		}

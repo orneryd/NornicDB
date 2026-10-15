@@ -418,15 +418,20 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocPathSpanningTree(ctx, args)
 			})
-		registerBuiltInProcedureLiteral("apoc.custom.installProcedure", "apoc.custom.installProcedure(signature :: STRING, statement :: STRING, databaseName :: STRING = 'neo4j', mode :: STRING = 'read', description :: STRING = '')", "Installs a statement as the procedure custom.<name>", ProcedureModeWrite, 2, 5, false,
+		// A custom procedure is one for the whole server (the procedure
+		// registry is process-wide), and whoever calls it runs its body, on
+		// any database: installing, replacing and dropping one needs the
+		// admin entitlement, as CREATE / DROP PROCEDURE does and as APOC 5
+		// marks apoc.custom.installProcedure and dropProcedure (@Admin).
+		registerAdminBuiltInProcedureLiteral("apoc.custom.installProcedure", "apoc.custom.installProcedure(signature :: STRING, statement :: STRING, databaseName :: STRING = 'neo4j', mode :: STRING = 'read', description :: STRING = '')", "Installs a statement as the procedure custom.<name>", ProcedureModeWrite, 2, 5, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCustomInstall(ctx, "apoc.custom.installProcedure", args, true)
 			})
-		registerBuiltInProcedureLiteral("apoc.custom.declareProcedure", "apoc.custom.declareProcedure(signature :: STRING, statement :: STRING, mode :: STRING = 'read', description :: STRING = '')", "Installs a statement as the procedure custom.<name> (APOC 4 form)", ProcedureModeWrite, 2, 4, false,
+		registerAdminBuiltInProcedureLiteral("apoc.custom.declareProcedure", "apoc.custom.declareProcedure(signature :: STRING, statement :: STRING, mode :: STRING = 'read', description :: STRING = '')", "Installs a statement as the procedure custom.<name> (APOC 4 form)", ProcedureModeWrite, 2, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCustomInstall(ctx, "apoc.custom.declareProcedure", args, false)
 			})
-		registerBuiltInProcedureLiteral("apoc.custom.dropProcedure", "apoc.custom.dropProcedure(name :: STRING, databaseName :: STRING = 'neo4j')", "Drops the custom procedure custom.<name>", ProcedureModeWrite, 1, 2, false,
+		registerAdminBuiltInProcedureLiteral("apoc.custom.dropProcedure", "apoc.custom.dropProcedure(name :: STRING, databaseName :: STRING = 'neo4j')", "Drops the custom procedure custom.<name>", ProcedureModeWrite, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCustomDrop(ctx, args)
 			})
@@ -901,6 +906,21 @@ func registerBuiltInProcedureLiteral(name, signature, description string, mode P
 		Description:   description,
 		Mode:          mode,
 		WorksOnSystem: worksOnSystem,
+		MinArgs:       minArgs,
+		MaxArgs:       maxArgs,
+	}, handler)
+}
+
+// registerAdminBuiltInProcedureLiteral is registerBuiltInProcedureLiteral
+// for a procedure only an administrator runs (ProcedureSpec.Admin).
+func registerAdminBuiltInProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
+	registerProcedure(ProcedureSpec{
+		Name:          name,
+		Signature:     signature,
+		Description:   description,
+		Mode:          mode,
+		WorksOnSystem: worksOnSystem,
+		Admin:         true,
 		MinArgs:       minArgs,
 		MaxArgs:       maxArgs,
 	}, handler)

@@ -9,7 +9,7 @@ func TestBasicAuthCache_GetSet(t *testing.T) {
 	cache := NewBasicAuthCache(4, 50*time.Millisecond)
 	claims := &JWTClaims{Sub: "u1", Roles: []string{"admin"}}
 
-	cache.Set("user", "pass", claims)
+	cache.SetAtGeneration("user", "pass", claims, cache.Generation())
 	got, ok := cache.Get("user", "pass")
 	if !ok {
 		t.Fatalf("expected cache hit")
@@ -31,7 +31,7 @@ func TestBasicAuthCache_GetSet(t *testing.T) {
 
 func TestBasicAuthCache_Expires(t *testing.T) {
 	cache := NewBasicAuthCache(4, 20*time.Millisecond)
-	cache.Set("user", "pass", &JWTClaims{Sub: "u1"})
+	cache.SetAtGeneration("user", "pass", &JWTClaims{Sub: "u1"}, cache.Generation())
 
 	time.Sleep(30 * time.Millisecond)
 	if _, ok := cache.Get("user", "pass"); ok {

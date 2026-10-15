@@ -151,7 +151,7 @@ func (s *Server) GetDatabaseManager() *multidb.DatabaseManager {
 	return s.dbManager
 }
 
-// getResolvedAccess returns per-DB read/write for (claims, dbName). When privilegesStore is set, uses it; else falls back to global PermRead/PermWrite.
+// getResolvedAccess is GetResolvedAccessForRoles for claims (none: no access).
 func (s *Server) getResolvedAccess(claims *auth.JWTClaims, dbName string) auth.ResolvedAccess {
 	if claims == nil {
 		return auth.ResolvedAccess{}
@@ -170,21 +170,14 @@ func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	databaseAccessMode := s.getDatabaseAccessMode(claims)
 	ctx = auth.WithRequestPrincipalRoles(ctx, claims.Roles)
 	ctx = auth.WithRequestDatabaseAccessMode(ctx, databaseAccessMode)
-	ctx = auth.WithRequestResolvedAccessResolver(ctx, func(dbName string) auth.ResolvedAccess {
-		return s.getResolvedAccess(claims, dbName)
+	// The principal's one permission resolver (principalAccess), which
+	// HTTP and Bolt use too, and its boosted procedure grants: GraphQL,
+	// Heimdall, MCP and plugins authorize through them.
+	access := s.principalAccess(claims)
+	ctx = auth.WithRequestEntitlementResolver(ctx, func(database string, permission auth.Permission) bool {
+		return access.Allows(database, string(permission))
 	})
-	ctx = auth.WithRequestEntitlementResolver(ctx, func(dbName string, permission auth.Permission) bool {
-		switch permission {
-		case auth.PermRead:
-			return s.getResolvedAccess(claims, dbName).Read
-		case auth.PermWrite:
-			return s.getResolvedAccess(claims, dbName).Write
-		case auth.PermSchema, auth.PermAdmin:
-			return hasPermission(s, claims.Roles, permission)
-		default:
-			return false
-		}
-	})
+	ctx = cypher.WithProcedureGrantChecker(ctx, s.ProcedureGrantChecker(claims.Roles))
 	selections := make(map[string]string)
 	defaultDatabase := ""
 	if s.dbManager != nil {
@@ -216,18 +209,11 @@ func (s *Server) GetEffectivePermissions(roles []string) []string {
 	return auth.PermissionsForRoles(roles, s.roleEntitlementsStore)
 }
 
-// GetResolvedAccessForRoles returns per-DB read/write for (roles, dbName). Used by Bolt for mutation checks.
+// GetResolvedAccessForRoles is the principal's read and write on dbName from
+// the one resolver (auth.ResolveDatabaseAccess) over the server's privileges
+// and role entitlements. HTTP (principalAccess), Bolt and gRPC use it.
 func (s *Server) GetResolvedAccessForRoles(roles []string, dbName string) auth.ResolvedAccess {
-	if len(roles) == 0 {
-		return auth.ResolvedAccess{}
-	}
-	if s.privilegesStore != nil {
-		return s.privilegesStore.Resolve(roles, dbName)
-	}
-	return auth.ResolvedAccess{
-		Read:  hasPermission(s, roles, auth.PermRead),
-		Write: hasPermission(s, roles, auth.PermWrite),
-	}
+	return auth.ResolveDatabaseAccess(roles, dbName, s.privilegesStore, s.roleEntitlementsStore)
 }
 
 // isCreateDatabaseStatement returns true if the statement is CREATE DATABASE or CREATE COMPOSITE DATABASE.
@@ -340,30 +326,6 @@ func (s *Server) ProcedureGrantChecker(roles []string) func(procedure string) bo
 func isMutationQuery(query string) bool {
 	requirements := cypher.QueryPermissionRequirements(query)
 	return requirements.Write || requirements.Schema
-}
-
-// missingQueryPermission is the permission query lacks on dbName for the
-// principal, from the one decision (cypher.MissingPermission) over the
-// principal's resolver, or "".
-func (s *Server) missingQueryPermission(claims *auth.JWTClaims, dbName, query string) auth.Permission {
-	if !s.isRBACEnforced() {
-		return ""
-	}
-	var roles []string
-	if claims != nil {
-		roles = claims.Roles
-	}
-	access := s.principalAccess(claims)
-	allows := func(permission string) bool { return access.Allows(dbName, permission) }
-	return auth.Permission(cypher.MissingPermission(cypher.QueryPermissionRequirements(query), allows, s.ProcedureGrantChecker(roles)))
-}
-
-func (s *Server) withDatabasePermissionChecker(ctx context.Context, claims *auth.JWTClaims, dbName string) context.Context {
-	if !s.isRBACEnforced() {
-		return ctx
-	}
-	access := s.principalAccess(claims)
-	return cypher.WithPermissionChecker(ctx, func(permission string) bool { return access.Allows(dbName, permission) })
 }
 
 // canAccessGraph reports whether the principal may use graph, a request's

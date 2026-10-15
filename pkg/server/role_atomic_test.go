@@ -93,7 +93,7 @@ func TestRenamedRoleKeepsItsGrantsOverHTTP(t *testing.T) {
 			if !fail {
 				require.NotContains(t, server.allowlistStore.Allowlist(), "ops")
 			}
-			require.Equal(t, auth.ResolvedAccess{Read: true, Write: true}, server.privilegesStore.Resolve([]string{name}, "nornic"))
+			require.Equal(t, auth.ResolvedAccess{Read: true, Write: true}, grantedAccess(server.privilegesStore, []string{name}, "nornic"))
 			require.Equal(t, []string{"read", "write"}, server.roleEntitlementsStore.Get(name))
 			worker, err := users.GetUser("worker")
 			require.NoError(t, err)
@@ -140,7 +140,7 @@ func TestDeletedRoleStartsEmptyAfterRecreationOverHTTP(t *testing.T) {
 				require.True(t, server.roleStore.Exists("ops"))
 				require.True(t, server.ProcedureGrantChecker([]string{"ops"})("db.cdc.query"))
 				require.Equal(t, []string{"nornic"}, server.allowlistStore.Allowlist()["ops"])
-				require.Equal(t, auth.ResolvedAccess{Read: true, Write: true}, server.privilegesStore.Resolve([]string{"ops"}, "nornic"))
+				require.Equal(t, auth.ResolvedAccess{Read: true, Write: true}, grantedAccess(server.privilegesStore, []string{"ops"}, "nornic"))
 				require.Equal(t, []string{"read", "write"}, server.roleEntitlementsStore.Get("ops"))
 				require.Equal(t, []auth.Role{"ops", auth.RoleViewer}, worker.Roles)
 			} else {
@@ -149,7 +149,7 @@ func TestDeletedRoleStartsEmptyAfterRecreationOverHTTP(t *testing.T) {
 				require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
 				require.False(t, server.ProcedureGrantChecker([]string{"ops"})("db.cdc.query"))
 				require.NotContains(t, server.allowlistStore.Allowlist(), "ops")
-				require.Equal(t, auth.ResolvedAccess{}, server.privilegesStore.Resolve([]string{"ops"}, "nornic"))
+				require.Equal(t, auth.ResolvedAccess{}, grantedAccess(server.privilegesStore, []string{"ops"}, "nornic"))
 				require.Empty(t, server.roleEntitlementsStore.Get("ops"))
 				require.Equal(t, []auth.Role{auth.RoleViewer}, worker.Roles)
 			}

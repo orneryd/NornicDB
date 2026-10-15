@@ -405,6 +405,10 @@ type Authenticator struct {
 	// auth_attempts_total{result, protocol} counter (D-11 / D-05e / GAP-6).
 	// Injected via SetAuthMetrics; nil-safe pre-injection.
 	metrics authMetricsHolder
+
+	// passwordListeners are told a user's name once the user's password
+	// has changed (OnPasswordChange).
+	passwordListeners []func(username string)
 }
 
 // AuditEvent represents an authentication-related event for compliance logging.
@@ -1311,6 +1315,20 @@ func (a *Authenticator) ListUsers() []*User {
 	return users
 }
 
+// OnPasswordChange registers fn, called with a user's name once the user's
+// password has changed. Every cache of Basic credentials registers its
+// ForgetUser (HTTP, Bolt, gRPC), so the old password stops working at
+// once instead of when its cache entry expires. fn runs while the
+// authenticator is locked, so it must not call back into it.
+func (a *Authenticator) OnPasswordChange(fn func(username string)) {
+	if a == nil || fn == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.passwordListeners = append(a.passwordListeners, fn)
+}
+
 // ChangePassword updates a user's password.
 func (a *Authenticator) ChangePassword(username, oldPassword, newPassword string) error {
 	a.mu.Lock()
@@ -1362,6 +1380,9 @@ func (a *Authenticator) ChangePassword(username, oldPassword, newPassword string
 		UserID:    user.ID,
 		Success:   true,
 	})
+	for _, forget := range a.passwordListeners {
+		forget(username)
+	}
 
 	return nil
 }

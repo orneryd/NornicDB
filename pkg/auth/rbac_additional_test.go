@@ -67,11 +67,9 @@ func TestRequestRBACContextRoundTrip(t *testing.T) {
 
 	ctx := WithRequestPrincipalRoles(base, []string{"admin", "editor"})
 	ctx = WithRequestDatabaseAccessMode(ctx, FullDatabaseAccessMode)
-	ctx = WithRequestResolvedAccessResolver(ctx, func(db string) ResolvedAccess {
-		return ResolvedAccess{Read: db != "forbidden", Write: db == "system"}
-	})
+	// One resolver: read and write come from it too.
 	ctx = WithRequestEntitlementResolver(ctx, func(db string, permission Permission) bool {
-		return db == "system" && permission == PermAdmin
+		return db == "system" || (db != "forbidden" && permission == PermRead)
 	})
 
 	roles := RequestPrincipalRolesFromContext(ctx)
@@ -89,6 +87,12 @@ func TestRequestRBACContextRoundTrip(t *testing.T) {
 	got := resolver("system")
 	if !got.Read || !got.Write {
 		t.Fatalf("unexpected resolved access from resolver: %#v", got)
+	}
+	if got := resolver("nornic"); !got.Read || got.Write {
+		t.Fatalf("unexpected resolved access on nornic: %#v", got)
+	}
+	if got := resolver("forbidden"); got.Read || got.Write {
+		t.Fatalf("unexpected resolved access on forbidden: %#v", got)
 	}
 	entitlementResolver := RequestEntitlementResolverFromContext(ctx)
 	if entitlementResolver == nil || !entitlementResolver("system", PermAdmin) || entitlementResolver("nornic", PermAdmin) {
@@ -250,13 +254,13 @@ func TestPrivilegesStore_SaveLoadResolveAndPutMatrix(t *testing.T) {
 		t.Fatalf("save privilege failed: %v", err)
 	}
 
-	resolved := store.Resolve([]string{"ROLE_viewer"}, "neo4j")
+	resolved := ResolveDatabaseAccess([]string{"ROLE_viewer"}, "neo4j", store, nil)
 	if !resolved.Read || resolved.Write {
 		t.Fatalf("unexpected resolved access from matrix: %#v", resolved)
 	}
 
 	// Non-matrix DB for built-in editor should fall back to role permissions.
-	fallback := store.Resolve([]string{"editor"}, "otherdb")
+	fallback := ResolveDatabaseAccess([]string{"editor"}, "otherdb", store, nil)
 	if !fallback.Read || !fallback.Write {
 		t.Fatalf("expected editor fallback read+write, got %#v", fallback)
 	}
@@ -270,7 +274,7 @@ func TestPrivilegesStore_SaveLoadResolveAndPutMatrix(t *testing.T) {
 	if err := loaded.Load(ctx); err != nil {
 		t.Fatalf("load privileges failed: %v", err)
 	}
-	resolvedLoaded := loaded.Resolve([]string{"viewer"}, "neo4j")
+	resolvedLoaded := ResolveDatabaseAccess([]string{"viewer"}, "neo4j", loaded, nil)
 	if !resolvedLoaded.Read || resolvedLoaded.Write {
 		t.Fatalf("unexpected loaded resolved access: %#v", resolvedLoaded)
 	}
@@ -287,17 +291,17 @@ func TestPrivilegesStore_SaveLoadResolveAndPutMatrix(t *testing.T) {
 	if err := loaded.PutMatrix(ctx, entries); err != nil {
 		t.Fatalf("put matrix failed: %v", err)
 	}
-	if got := loaded.Resolve([]string{"viewer"}, "neo4j"); got.Write || !got.Read {
+	if got := ResolveDatabaseAccess([]string{"viewer"}, "neo4j", loaded, nil); got.Write || !got.Read {
 		t.Fatalf("expected fallback read-only on neo4j after matrix replace, got %#v", got)
 	}
-	if got := loaded.Resolve([]string{"viewer"}, "analytics"); !got.Read || got.Write {
+	if got := ResolveDatabaseAccess([]string{"viewer"}, "analytics", loaded, nil); !got.Read || got.Write {
 		t.Fatalf("expected explicit analytics privilege, got %#v", got)
 	}
 
 	if err := loaded.SavePrivilege(ctx, "viewer", "locked", false, false); err != nil {
 		t.Fatalf("save explicit deny privilege failed: %v", err)
 	}
-	if got := loaded.Resolve([]string{"viewer"}, "locked"); got.Read || got.Write {
+	if got := ResolveDatabaseAccess([]string{"viewer"}, "locked", loaded, nil); got.Read || got.Write {
 		t.Fatalf("expected explicit deny to override global viewer fallback, got %#v", got)
 	}
 }
@@ -345,7 +349,7 @@ func TestPrivilegesStore_LoadAndUpdatePaths(t *testing.T) {
 	if err := store.Load(ctx); err != nil {
 		t.Fatalf("load privileges: %v", err)
 	}
-	if got := store.Resolve([]string{"loaded"}, "neo4j"); !got.Read || got.Write {
+	if got := grantedAccess(store, []string{"loaded"}, "neo4j"); !got.Read || got.Write {
 		t.Fatalf("unexpected loaded privilege resolution: %#v", got)
 	}
 	if err := NewRoleStore(eng).CreateRole(ctx, "loaded"); err != nil {
@@ -355,7 +359,7 @@ func TestPrivilegesStore_LoadAndUpdatePaths(t *testing.T) {
 	if err := store.SavePrivilege(ctx, " Loaded ", "neo4j", true, true); err != nil {
 		t.Fatalf("update privilege: %v", err)
 	}
-	if got := store.Resolve([]string{"loaded"}, "neo4j"); !got.Read || !got.Write {
+	if got := grantedAccess(store, []string{"loaded"}, "neo4j"); !got.Read || !got.Write {
 		t.Fatalf("expected updated privilege resolution, got %#v", got)
 	}
 

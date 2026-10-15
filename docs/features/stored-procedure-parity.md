@@ -84,6 +84,12 @@ CALL custom.reach($start, 3) YIELD n RETURN n;
 - `apoc.custom.dropProcedure(name, databaseName = 'neo4j')` removes it;
   `apoc.custom.list()` and `apoc.custom.show()` list the installed procedures
   (type, name, description, mode, statement, inputs, outputs, forceSingle).
+- A custom procedure is one for the whole server: whoever calls it, on any
+  database, runs its statement with their own permissions. Installing,
+  replacing and dropping one need the `admin` entitlement, as `CREATE` /
+  `DROP PROCEDURE` do and as APOC 5 marks `installProcedure` and
+  `dropProcedure`. A call of a custom procedure is never answered from the
+  result cache, so the call after a replacement runs the new statement.
 - Custom functions (`apoc.custom.installFunction`) are not provided.
 
 ## Startup Precompile and Persistence

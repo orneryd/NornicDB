@@ -779,15 +779,9 @@ func TestHandleGenerateAPIToken(t *testing.T) {
 		assert.Equal(t, "not authenticated", payload["message"])
 	})
 
-	t.Run("requires admin role", func(t *testing.T) {
-		rec, payload := makeReq(http.MethodPost, `{}`, &auth.JWTClaims{
-			Sub:      "reader-id",
-			Username: "reader",
-			Roles:    []string{string(auth.RoleViewer)},
-		})
-		assert.Equal(t, http.StatusForbidden, rec.Code)
-		assert.Equal(t, "admin role required to generate API tokens", payload["message"])
-	})
+	// The admin requirement is the route guard's (withAuth with
+	// auth.PermAdmin): TestAPITokenNeedsTheAdminEntitlement goes through the
+	// router; the handler itself makes no second decision.
 
 	t.Run("validates request body and expiry", func(t *testing.T) {
 		adminClaims := &auth.JWTClaims{
@@ -2133,8 +2127,8 @@ func TestGrantAccessAndRBACResolverBranches(t *testing.T) {
 	al := server.allowlistStore.Allowlist()
 	assert.Contains(t, al["admin"], "db_new")
 	assert.Contains(t, al["custom"], "db_new")
-	assert.True(t, server.privilegesStore.Resolve([]string{"admin"}, "db_new").Write)
-	assert.True(t, server.privilegesStore.Resolve([]string{"custom"}, "db_new").Read)
+	assert.True(t, grantedAccess(server.privilegesStore, []string{"admin"}, "db_new").Write)
+	assert.True(t, grantedAccess(server.privilegesStore, []string{"custom"}, "db_new").Read)
 
 	// Explicit helper branches.
 	server.auth = nil
@@ -3049,7 +3043,7 @@ func TestImplicitTransactionGenericPathAdditionalBranches(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 		require.Len(t, response.Errors, 1)
 		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", response.Errors[0].Code)
-		require.Contains(t, response.Errors[0].Message, ":USE requires a database name")
+		require.Equal(t, ":use requires a database name", response.Errors[0].Message)
 		require.Empty(t, response.Results)
 	})
 
