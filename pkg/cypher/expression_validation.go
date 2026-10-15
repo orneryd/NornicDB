@@ -849,7 +849,9 @@ func validateListComprehensionVariables(text string) error {
 		inner := text[index+1 : close]
 		in := findListComprehensionToken(inner, " IN ")
 		pipe := findListComprehensionToken(inner, "|")
-		if in > 0 && pipe > in && !patternComprehensionHead(inner) && !isValidIdentifier(strings.TrimSpace(inner[:in])) && !isBacktickQuotedName(strings.TrimSpace(inner[:in])) {
+		_, _, _, declared := bindingDeclaration(inner, 0)
+		emptyIterator := matchKeywordAt(inner, queryGapEnd(inner, 0), "IN")
+		if pipe >= 0 && (in >= 0 && pipe > in || emptyIterator) && !patternComprehensionHead(inner) && !declared {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "a list comprehension iterator must be a variable")
 		}
 	}

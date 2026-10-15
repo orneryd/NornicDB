@@ -105,12 +105,18 @@ func (e *StorageExecutor) evaluateRowPatternComprehensionAtom(expr string, value
 // IN, which this rejects.
 func patternComprehensionHead(pattern string) bool {
 	head := strings.TrimSpace(pattern)
-	if strings.HasPrefix(head, "(") {
-		return true
+	if eq := strings.IndexByte(head, '='); eq > 0 && isValidIdentifier(strings.TrimSpace(head[:eq])) {
+		head = strings.TrimSpace(head[eq+1:])
 	}
-	// p = (…) or `p p` = (…), read as every reader reads it.
-	_, _, _, named := namedPathDeclaration(head, 0)
-	return named
+	if !strings.HasPrefix(head, "(") {
+		return false
+	}
+	end, chain := relationshipChainEnd(head, 0, len(head))
+	if !chain {
+		return false
+	}
+	tail := strings.TrimSpace(head[end:])
+	return tail == "" || strings.HasPrefix(tail, "|") || startsWithKeywordFold(tail, "WHERE")
 }
 
 // isStandaloneExistsSubquery reports whether expr is exactly one
@@ -212,6 +218,14 @@ func (e *StorageExecutor) evaluatePatternComprehension(ctx context.Context, patt
 // horizons on the same row-expression path while preserving scalar aliases
 // that are visible inside the comprehension projection.
 func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Context, pattern, projection string, outer pipelineRow) []interface{} {
+	// Static scopes cannot know a heterogeneous iterator's current element.
+	// Validate the actual correlated row before matching instead of treating a
+	// non-node binding as an absent match.
+	if err := validateBoundPatternNodes([]pipelineRow{outer}, pattern); err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil
+	}
+
 	// The comprehension's named path (p = …) is its own variable
 	// (localBindingAt), shadowing an outer one of the same name rather than
 	// constraining the match.
