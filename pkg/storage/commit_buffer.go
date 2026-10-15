@@ -14,7 +14,6 @@ package storage
 import (
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -104,6 +103,8 @@ type CommitBuffer struct {
 
 	// edgeCreateCount / edgeDeleteCount feed the buffered total edge-count
 	// delta (creates minus deletes) the engine's EdgeCount readers overlay.
+	// Cardinality deltas exclude updates and are independent of entity overlays.
+	totalCounts     bufferedCardinalityDeltas
 	edgeCreateCount int
 	edgeDeleteCount int
 
@@ -118,7 +119,7 @@ type CommitBuffer struct {
 	ops int
 
 	applied atomic.Bool
-	// Derived counters become durable before entity-cache callbacks finish.
+	// All counters publish before entity-cache callbacks finish.
 	// Retire only their overlay at that boundary; entity overlays remain live.
 	countsApplied atomic.Bool
 	draining      atomic.Bool // claims the single flusher slot for this generation
@@ -181,6 +182,7 @@ func (b *CommitBuffer) Commits() []bufferedCommit {
 func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 	b.commits = append(b.commits, c)
 	for _, op := range c.ops {
+		visitOperationTotalCounts(op, b.totalCounts.add)
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node != nil && op.Node.ID != "" {
@@ -272,6 +274,9 @@ func (b *CommitBuffer) addNode(n *Node) {
 	if n == nil || n.ID == "" {
 		return
 	}
+	if _, exists := b.nodes[n.ID]; !exists {
+		b.totalCounts.add(string(n.ID), false, 1)
+	}
 	copyNode := *n
 	b.nodes[n.ID] = &copyNode
 	b.order = append(b.order, bufferedMutation{kind: bufferedOpNode, id: string(n.ID), node: &copyNode})
@@ -283,6 +288,9 @@ func (b *CommitBuffer) addNode(n *Node) {
 func (b *CommitBuffer) addEdge(e *Edge) {
 	if e == nil || e.ID == "" {
 		return
+	}
+	if _, exists := b.edges[e.ID]; !exists {
+		b.totalCounts.add(string(e.ID), true, 1)
 	}
 	copyEdge := *e
 	b.edges[e.ID] = &copyEdge
@@ -1497,13 +1505,7 @@ func (w *WriteBehindBuffer) EdgesBetweenOverlay(source, target NodeID) (live []*
 // EdgeCountDelta is the buffered total edge-count delta: creates minus
 // deletes across every generation that has not been replayed yet.
 func (w *WriteBehindBuffer) EdgeCountDelta() int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var delta int64
-	for _, buf := range w.liveBuffers() {
-		delta += int64(buf.edgeCreateCount - buf.edgeDeleteCount)
-	}
-	return delta
+	return w.totalCountDeltaForPrefix("", true)
 }
 
 // EdgeTypeLabelCountDeltaInNamespace sums the buffered positional
@@ -1565,72 +1567,14 @@ func (w *WriteBehindBuffer) EdgeTypeLabelCountDelta(sub byte, label, edgeType st
 // edges whose ID starts with prefix: live buffered edge IDs minus buffered
 // deleted edge IDs. prefix may be empty for the whole graph.
 func (w *WriteBehindBuffer) EdgeCountDeltaForPrefix(prefix string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	live := make(map[EdgeID]struct{})
-	dead := make(map[EdgeID]struct{})
-	for _, buf := range w.liveBuffers() {
-		for id := range buf.edges {
-			live[id] = struct{}{}
-		}
-		for id := range buf.deletedEdgeIDs {
-			dead[id] = struct{}{}
-		}
-	}
-	var delta int64
-	for id := range live {
-		if _, isDead := dead[id]; isDead {
-			continue
-		}
-		if prefix == "" || strings.HasPrefix(string(id), prefix) {
-			delta++
-		}
-	}
-	for id := range dead {
-		if _, isLive := live[id]; isLive {
-			continue
-		}
-		if prefix == "" || strings.HasPrefix(string(id), prefix) {
-			delta--
-		}
-	}
-	return delta
+	return w.totalCountDeltaForPrefix(prefix, true)
 }
 
 // NodeCountDeltaForPrefix is the buffered total node-count delta restricted to
 // nodes whose ID starts with prefix: live buffered node IDs minus buffered
 // deleted node IDs. prefix may be empty for the whole graph.
 func (w *WriteBehindBuffer) NodeCountDeltaForPrefix(prefix string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	live := make(map[NodeID]struct{})
-	dead := make(map[NodeID]struct{})
-	for _, buf := range w.liveBuffers() {
-		for id := range buf.nodes {
-			live[id] = struct{}{}
-		}
-		for id := range buf.deletedNodeIDs {
-			dead[id] = struct{}{}
-		}
-	}
-	var delta int64
-	for id := range live {
-		if _, isDead := dead[id]; isDead {
-			continue
-		}
-		if prefix == "" || strings.HasPrefix(string(id), prefix) {
-			delta++
-		}
-	}
-	for id := range dead {
-		if _, isLive := live[id]; isLive {
-			continue
-		}
-		if prefix == "" || strings.HasPrefix(string(id), prefix) {
-			delta--
-		}
-	}
-	return delta
+	return w.totalCountDeltaForPrefix(prefix, false)
 }
 
 // PendingOps reports how many mutations are buffered but not yet applied.

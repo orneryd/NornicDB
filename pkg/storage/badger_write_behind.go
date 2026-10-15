@@ -319,11 +319,17 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		b.edgeTypeCountWriteMu.Lock()
 	}
 
+	// Total readers also cover cold prefix scans: keep the durable publication
+	// and counter-overlay retirement in one read boundary. Lock order is
+	// label, edge type, total; callbacks execute after all three unlock.
+	b.totalCountWriteMu.Lock()
+
 	// The replay resolves IDs too: entries it found pending are persisted
 	// by its commit, as the sync path's (markTxnCommitted).
 	b.idDict.flushTxnCounters(cw.txn)
 	committing := cw.txn
 	if err := cw.finish(); err != nil {
+		b.totalCountWriteMu.Unlock()
 		b.idDict.discardTxnCounters(committing)
 		if holdEdge {
 			b.edgeTypeCountWriteMu.Unlock()
@@ -385,9 +391,11 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 			}
 		}
 	}
+	b.publishBufferedTotalCounts(commits)
 	if publishCounts != nil {
 		publishCounts()
 	}
+	b.totalCountWriteMu.Unlock()
 	// Close the double-count window before releasing the count locks: the
 	// derived-count fast paths hold these same locks, so they observe
 	// either the persisted deltas AND the applied flag, or neither —
@@ -432,7 +440,7 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 	for _, op := range ops {
 		switch op.Type {
 		case OpCreateNode:
-			b.cacheOnNodeCreated(op.Node)
+			b.cacheOnNodeCreatedWithCounts(op.Node, false)
 			notifyNodeCreated(op.Node)
 		case OpUpdateNode:
 			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
@@ -444,16 +452,16 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 				// cache, so the cache-based maintenance would leave their
 				// committed index entries dangling.
 				b.maintainPropertyIndexesOnNodeDeletedWithNode(op.NodeID, op.OldNode)
-				b.cacheOnNodeDeletedWithLabels(op.NodeID, op.OldNode.Labels, op.EdgesDeleted)
+				b.cacheOnNodeDeletedWithLabelsAndCounts(op.NodeID, op.OldNode.Labels, op.EdgesDeleted, false)
 			} else {
-				b.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
+				b.cacheOnNodeDeletedWithCounts(op.NodeID, op.EdgesDeleted, false)
 			}
 			for _, edgeID := range op.DeletedEdgeIDs {
 				notifyEdgeDeleted(edgeID)
 			}
 			notifyNodeDeleted(op.NodeID)
 		case OpCreateEdge:
-			b.cacheOnEdgeCreated(op.Edge)
+			b.cacheOnEdgeCreatedWithCounts(op.Edge, false)
 			notifyEdgeCreated(op.Edge)
 		case OpUpdateEdge:
 			oldType := ""
@@ -467,7 +475,7 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
-			b.cacheOnEdgeDeleted(op.EdgeID, oldType)
+			b.cacheOnEdgeDeletedWithCounts(op.EdgeID, oldType, false)
 			notifyEdgeDeleted(op.EdgeID)
 		}
 	}

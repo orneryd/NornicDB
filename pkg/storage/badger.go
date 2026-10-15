@@ -289,8 +289,11 @@ type BadgerEngine struct {
 
 	// Cached counts for O(1) stats lookups (updated on create/delete)
 	// Eliminates expensive full table scans for node/edge counts
-	nodeCount atomic.Int64
-	edgeCount atomic.Int64
+	// totalCountWriteMu publishes cached totals and retires their buffered delta
+	// together. It is released before any storage callbacks.
+	totalCountWriteMu sync.RWMutex
+	nodeCount         atomic.Int64
+	edgeCount         atomic.Int64
 
 	// mvccByNamespace holds the per-database MVCC sequence counter and
 	// high-water clamp. Each transaction is pinned to one namespace at
