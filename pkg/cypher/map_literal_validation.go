@@ -183,8 +183,18 @@ func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
 // '(' in `(count {bad})` and `(EXISTS { MATCH ... })`).
 func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 	index := braceIndex + 1
-	for index < len(query) && isCypherWhitespace(query[index]) {
-		index++
+	for index < len(query) {
+		if isCypherWhitespace(query[index]) {
+			index++
+			continue
+		}
+		if query[index] == '/' {
+			if end := queryCommentEnd(query, index); end > index {
+				index = end
+				continue
+			}
+		}
+		break
 	}
 	if index >= len(query) {
 		return false
@@ -199,6 +209,11 @@ func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 	if index == start {
 		return false
 	}
+	// A clause keyword can name a map-projection entry too.
+	if next := skipSpaces(query, index); next < len(query) && query[next] == ':' {
+		return false
+	}
+
 	switch upperASCII(query[start:index]) {
 	case "MATCH", "OPTIONAL", "CALL", "WITH", "UNWIND", "RETURN":
 		return true
@@ -230,7 +245,7 @@ func inProjectionClause(query string, position int) bool {
 }
 
 func insidePatternDelimiter(query string, end int) bool {
-	parentheses := 0
+	var parentheses []bool
 	brackets := 0
 	for index := 0; index < end; index++ {
 		if query[index] == '\'' || query[index] == '"' || query[index] == '`' {
@@ -239,10 +254,10 @@ func insidePatternDelimiter(query string, end int) bool {
 		}
 		switch query[index] {
 		case '(':
-			parentheses++
+			parentheses = append(parentheses, !functionCallParenAt(query, index))
 		case ')':
-			if parentheses > 0 {
-				parentheses--
+			if len(parentheses) > 0 {
+				parentheses = parentheses[:len(parentheses)-1]
 			}
 		case '[':
 			brackets++
@@ -252,7 +267,12 @@ func insidePatternDelimiter(query string, end int) bool {
 			}
 		}
 	}
-	return parentheses > 0 || brackets > 0
+	for _, pattern := range parentheses {
+		if pattern {
+			return true
+		}
+	}
+	return brackets > 0
 }
 
 func validMapLiteralKey(key string) bool {

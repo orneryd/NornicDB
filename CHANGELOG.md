@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cypher readers distinguish map projections from subquery bodies and pattern maps, and normalize standalone ordering clauses inside imported `CALL` subqueries.
+- Preserve typed subquery operands during semantic scope masking so grouped EXISTS/COUNT/COLLECT predicates remain valid alongside keyword-named map projections.
+
 - `SHOW FUNCTIONS` declares vector similarity arguments as `LIST<INTEGER | FLOAT>`, matching Neo4j 5.26 rather than advertising its newer `VECTOR` type.
 - Go API: `cypher.GraphProjection.NodeProperties` now stores `interface{}` values (`int64`, `float64`, `[]int64`, `[]float64`) instead of always `float64`; direct Go consumers must handle the projected type.
 - Preserve native GDS projected numeric values and list defaults, validate unsafe Long-to-Double imports, honor cross-database graph-drop permissions, and align existing FastRP propagation and feature validation with GDS.

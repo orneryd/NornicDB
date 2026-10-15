@@ -37,10 +37,10 @@ func rowMapProjectionSplit(expression string) (variable, items string, ok bool) 
 	if !isValidIdentifier(variable) && !isBacktickQuotedName(variable) {
 		return "", "", false
 	}
-	switch upperASCII(variable) {
-	case "EXISTS", "COUNT", "COLLECT", "CALL":
+	if precedingSubqueryExpressionKeyword(trimmed, open) {
 		return "", "", false
 	}
+
 	return variable, strings.TrimSpace(trimmed[open+1 : len(trimmed)-1]), true
 }
 
