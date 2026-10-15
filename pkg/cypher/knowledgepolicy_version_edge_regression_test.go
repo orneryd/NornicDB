@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -13,9 +14,10 @@ import (
 // VERSION must use the same last-update anchor for procedure explanations
 // and storage visibility, rather than explaining a recent edit as stale.
 func TestKnowledgePolicyResolveRelationshipVersionUsesUpdatedTime(t *testing.T) {
-	for _, parser := range []string{"", "antlr"} {
+	for _, parser := range []string{"nornic", "antlr"} {
 		t.Run("parser="+parser, func(t *testing.T) {
-			t.Setenv("NORNICDB_PARSER", parser)
+			restoreParserTypeAfter(t)
+			config.SetParserType(parser)
 			eng := newTestMemoryEngine(t).BadgerEngine
 			eng.SetDecayEnabled(true)
 			eng.SetRevealAll(true) // Resolve must also explain a stale relationship.
