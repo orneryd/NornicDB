@@ -93,13 +93,28 @@ func TestCypher25ValueTextOfOtherValues(t *testing.T) {
 	text, ok = cypher25ValueText(map[string]interface{}{"_pathResult": &PathResult{Nodes: []*storage.Node{end, start}, Relationships: []*storage.Edge{edge}}})
 	require.True(t, ok)
 	require.Equal(t, "()<-[:T]-(:A)", text)
-	text, ok = cypher25ValueText(map[string]interface{}{"_pathResult": true, "nodes": []interface{}{start, end}, "rels": []interface{}{edge}})
+	text, ok = cypher25ValueText(map[string]interface{}{"_pathResult": PathResult{Nodes: []*storage.Node{start, end}, Relationships: []*storage.Edge{edge}}})
 	require.True(t, ok)
 	require.Equal(t, "(:A)-[:T]->()", text)
+	// A boolean marker is ordinary user data, even beside graph-valued keys.
+	// Only a typed path carrier makes this a path rather than a map.
+	for _, tc := range []struct {
+		value map[string]interface{}
+		want  string
+	}{
+		{map[string]interface{}{"_pathResult": true}, "{_pathResult: true}"},
+		{map[string]interface{}{"_pathResult": true, "nodes": []interface{}{"x"}}, "{_pathResult: true, nodes: [x]}"},
+		{map[string]interface{}{"_pathResult": true, "nodes": []interface{}{start, end}, "rels": []interface{}{"x"}}, "{_pathResult: true, nodes: [(:A), ()], rels: [x]}"},
+		{map[string]interface{}{"_pathResult": true, "nodes": []interface{}{start, end}, "rels": []interface{}{edge}}, "{_pathResult: true, nodes: [(:A), ()], rels: [[:T]]}"},
+	} {
+		text, ok = cypher25ValueText(tc.value)
+		require.True(t, ok)
+		require.Equal(t, tc.want, text)
+	}
 	for _, path := range []interface{}{
-		map[string]interface{}{"_pathResult": true},
-		map[string]interface{}{"_pathResult": true, "nodes": []interface{}{"x"}},
-		map[string]interface{}{"_pathResult": true, "nodes": []interface{}{start, end}, "rels": []interface{}{"x"}},
+		PathResult{},
+		(*PathResult)(nil),
+		map[string]interface{}{"_pathResult": &PathResult{}},
 		PathResult{Nodes: []*storage.Node{start}, Relationships: []*storage.Edge{edge}},
 	} {
 		_, ok = cypher25ValueText(path)
@@ -108,4 +123,25 @@ func TestCypher25ValueTextOfOtherValues(t *testing.T) {
 	require.Nil(t, convertToStringInVersion([]interface{}{struct{}{}}, true))
 	require.Equal(t, "1", convertToStringInVersion(int64(1), false))
 	require.Equal(t, "null", convertToStringInVersion(nil, true))
+}
+
+// Keep actual query-produced paths and user maps distinct across the public
+// type-name and Cypher 25 rendering routes, not just helper-only fixtures.
+func TestPathCarrierTypeAndTextContract(t *testing.T) {
+	exec, _ := newTestExecutor(t)
+	ctx := context.Background()
+	_, err := exec.Execute(ctx, "CREATE (:CarrierA)-[:CarrierT]->(:CarrierB)", nil)
+	require.NoError(t, err)
+	for _, tc := range []struct{ query, kind, text string }{
+		{"MATCH p = (:CarrierA)-[:CarrierT]->(:CarrierB) RETURN valueType(p), toString(p)", "PATH NOT NULL", "(:CarrierA)-[:CarrierT]->(:CarrierB)"},
+		{"MATCH p = (:CarrierB)<-[:CarrierT]-(:CarrierA) RETURN valueType(p), toString(p)", "PATH NOT NULL", "(:CarrierB)<-[:CarrierT]-(:CarrierA)"},
+		{"RETURN valueType({_pathResult:true}), toString({_pathResult:true})", "MAP NOT NULL", "{_pathResult: true}"},
+		{"MATCH (a:CarrierA)-[r:CarrierT]->(b:CarrierB) WITH {_pathResult:true, nodes:[a,b], rels:[r]} AS m RETURN valueType(m), toString(m)", "MAP NOT NULL", "{_pathResult: true, nodes: [(:CarrierA), (:CarrierB)], rels: [[:CarrierT]]}"},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			result, err := exec.Execute(ctx, "CYPHER 25 "+tc.query, nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{tc.kind, tc.text}}, result.Rows)
+		})
+	}
 }

@@ -82,8 +82,9 @@ var valueTypeNames = [...]valueTypeName{
 // _pathResult) for the classifier.
 type pathTypeMarker struct{}
 
-// cypherValueKindOf classifies a runtime value. Paths carried as maps with a
-// _pathResult are paths; any Go map is a map and any slice a list.
+// cypherValueKindOf classifies a runtime value. A map is a path only when
+// _pathResult carries an actual PathResult value or non-nil pointer. A boolean
+// or other ordinary user property does not confer graph identity.
 func cypherValueKindOf(value interface{}) cypherValueKind {
 	switch v := value.(type) {
 	case nil:

@@ -250,6 +250,7 @@ func TestOrdinaryMapPathKeyDoesNotConferGraphIdentity(t *testing.T) {
 		same  interface{}
 	}{
 		{"ordinary map", map[string]interface{}{"name": "map"}, "MAP NOT NULL", true},
+		{"forged boolean path key", map[string]interface{}{"_pathResult": true, "name": "map"}, "MAP NOT NULL", true},
 		{"forged scalar path key", map[string]interface{}{"_pathResult": int64(1), "name": "map"}, "MAP NOT NULL", true},
 		{"forged nil path key", map[string]interface{}{"_pathResult": nil}, "MAP NOT NULL", nil},
 		{"typed path wrapper", map[string]interface{}{"_pathResult": genuine}, "PATH NOT NULL", true},
