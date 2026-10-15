@@ -1777,8 +1777,8 @@ func TestCypherHelpers_EvaluateMapLiteralFromValues_Branches(t *testing.T) {
 		"name": "alice",
 		"age":  int64(30),
 		"rels": []interface{}{
-			map[string]interface{}{"type": "KNOWS"},
-			map[string]interface{}{"type": "WORKS_WITH"},
+			&storage.Edge{ID: "e1", Type: "KNOWS"},
+			&storage.Edge{ID: "e2", Type: "WORKS_WITH"},
 		},
 	}
 
