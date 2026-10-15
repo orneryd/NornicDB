@@ -110,6 +110,13 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 		}
 		return nil, "", false, localizedError(localization.CypherGraphProceduresDefaultPropertyType(expected, gdsJavaType(exact)), nil)
 	}
+	if defaultValue && relationship && strings.HasPrefix(kind, "List") {
+		actual := "long[]"
+		if kind == "List of Float" {
+			actual = "double[]"
+		}
+		return nil, "", false, localizedError(localization.CypherGraphProceduresDefaultPropertyType("Double", actual), nil)
+	}
 	if relationship && strings.HasPrefix(kind, "List") {
 		return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("NUMBER_ARRAY", gdsJavaValueText(exact, true)), nil)
 	}
