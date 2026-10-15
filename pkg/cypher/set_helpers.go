@@ -74,7 +74,7 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 		}
 		writes.mapEntries(node.Properties, props, false)
 		for k, v := range props {
-			setNodeProperty(node, k, normalizePropValue(v))
+			setNodeProperty(node, k, v)
 		}
 		return nil
 	}
@@ -97,7 +97,7 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 	}
 	writes.mapEntries(node.Properties, props, false)
 	for k, v := range props {
-		setNodeProperty(node, k, normalizePropValue(v))
+		setNodeProperty(node, k, v)
 	}
 	return nil
 }

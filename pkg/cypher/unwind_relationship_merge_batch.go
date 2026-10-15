@@ -514,29 +514,23 @@ func (e *StorageExecutor) evaluateRelationshipBatchLookupExpr(match matchClauseS
 func normalizeRelationshipBatchRowProperties(row map[string]interface{}, vectorSetters []relationshipVectorSetterSpec) (map[string]interface{}, bool) {
 	props := make(map[string]interface{}, util.SafePreallocSum(len(row), len(vectorSetters)))
 	for key, value := range row {
-		if value = normalizePropValue(value); value == nil {
-			continue
-		}
-		if validateSetPropertyValue(value) != nil {
+		stored, _, err := storablePropertyValue(value)
+		if err != nil {
 			return nil, false
 		}
-		props[key] = value
+		if stored != nil {
+			props[key] = stored
+		}
 	}
 	for _, setter := range vectorSetters {
 		if setter.propName == setter.rowField {
 			continue
 		}
-		value, ok := row[setter.rowField]
-		if !ok {
-			continue
+		// The row's values were checked above: a setter writes a copy of its
+		// field's stored value.
+		if stored, ok := props[setter.rowField]; ok {
+			props[setter.propName] = normalizePropValue(stored)
 		}
-		if value = normalizePropValue(value); value == nil {
-			continue
-		}
-		if validateSetPropertyValue(value) != nil {
-			return nil, false
-		}
-		props[setter.propName] = value
 	}
 	return props, true
 }

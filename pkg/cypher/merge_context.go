@@ -671,18 +671,20 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 
 // setPropertyValue evaluates the right-hand side of SET x.p = <expr>. A direct
 // $param keeps its declared Go type. A map, entity or nested list is rejected
-// with a TypeError, as in Neo4j.
+// with a TypeError, as in Neo4j (storablePropertyValue).
 func (e *StorageExecutor) setPropertyValue(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
 	if err := requireSetParameter(ctx, expr); err != nil {
 		return nil, err
 	}
-	var value interface{}
-	if v, ok := resolveDirectParamRef(ctx, expr); ok {
-		value = normalizePropValue(v)
-	} else {
-		value = e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels)
+	value, ok := resolveDirectParamRef(ctx, expr)
+	if !ok {
+		var err error
+		if value, err = e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels); err != nil {
+			return nil, err
+		}
 	}
-	if err := validateSetPropertyValue(value); err != nil {
+	value, _, err := storablePropertyValue(value)
+	if err != nil {
 		return nil, err
 	}
 	return value, nil
@@ -705,7 +707,10 @@ func (e *StorageExecutor) setSourceMap(ctx context.Context, expr, operator strin
 		value, ok = resolveContextPathRef(ctx, expr)
 	}
 	if !ok {
-		value = e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels)
+		var err error
+		if value, err = e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels); err != nil {
+			return nil, err
+		}
 		if text, isText := value.(string); isText && strings.TrimSpace(text) == strings.TrimSpace(expr) {
 			value = e.parseValue(ctx, strings.TrimSpace(expr))
 		}
@@ -790,7 +795,9 @@ func requireSetParameter(ctx context.Context, expr string) error {
 // map to write: maps as-is, nodes and relationships by their properties
 // (propertyMapForSetValue). Anything else is a TypeError, null included (Neo4j
 // 5.26: "Expected Null() to be a map", #907), as is a map holding a value a
-// property cannot store.
+// property cannot store. The map's values are the values a property stores
+// (storablePropertyValue), so a map entry is checked as SET x.p = v checks v;
+// the source map is copied only when one of them was rewritten.
 func setPropertyMapValue(value interface{}, operator string) (map[string]interface{}, error) {
 	typeName := "NULL"
 	if value != nil {
@@ -801,10 +808,24 @@ func setPropertyMapValue(value interface{}, operator string) (map[string]interfa
 		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
 			localization.CypherMutationsSetSourceNotMap(operator, typeName))
 	}
-	for _, v := range props {
-		if err := validateSetPropertyValue(v); err != nil {
+	var stored map[string]interface{}
+	for key, v := range props {
+		storedValue, rewritten, err := storablePropertyValue(v)
+		if err != nil {
 			return nil, err
 		}
+		if rewritten && stored == nil {
+			stored = make(map[string]interface{}, len(props))
+			for k, original := range props {
+				stored[k] = original
+			}
+		}
+		if stored != nil {
+			stored[key] = storedValue
+		}
+	}
+	if stored != nil {
+		return stored, nil
 	}
 	return props, nil
 }
@@ -813,10 +834,16 @@ func setPropertyMapValue(value interface{}, operator string) (map[string]interfa
 // MATCH SET) value over the clause's nodes and relationships and the value
 // scope of ctx, with the row evaluator RETURN and WITH use: a value written
 // is the value the same expression projects ([1 > 2] is [false], n.l[0] + 1
-// reads the list).
-func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+// reads the list). An error the evaluation recorded (a temporal
+// constructor's ArgumentError, a division by zero) is returned: it is the
+// statement's error, which a check of the value it left (null is not a map,
+// a list may not hold null) must not replace.
+func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
 	value, _ := e.evaluateRowExpressionWithContext(ctx, expr, entityRow(ctx, nodes, rels))
-	return value
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, failure
+	}
+	return value, nil
 }
 
 // mergeBindingRow is the row a MERGE's RETURN reads: the values bound in

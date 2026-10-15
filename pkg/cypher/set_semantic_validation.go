@@ -543,6 +543,22 @@ func setExpressionKeyword(token string) bool {
 	}
 }
 
+// storablePropertyValue is the value a property write stores, or the
+// TypeError of a value a property cannot store: value normalized first
+// (normalizedPropValue: Go integers and times become Cypher values, in lists
+// too), then checked by the property value rule (validateSetPropertyValue),
+// whose int/float list coercion is made on the normalized copy. rewritten
+// reports whether stored is not value itself. Every SET route checks its
+// values here, so a value is storable or not whichever route writes it: a
+// map entry as a direct property value (#1055).
+func storablePropertyValue(value interface{}) (stored interface{}, rewritten bool, err error) {
+	stored, rewritten = normalizedPropValue(value)
+	if err := validateSetPropertyValue(stored); err != nil {
+		return nil, false, err
+	}
+	return stored, rewritten, nil
+}
+
 func validateSetPropertyValue(value interface{}) error {
 	if value == nil {
 		return nil

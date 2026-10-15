@@ -703,53 +703,62 @@ func normalizePropsMap(value interface{}, source string) (map[string]interface{}
 }
 
 func normalizePropValue(value interface{}) interface{} {
+	normalized, _ := normalizedPropValue(value)
+	return normalized
+}
+
+// normalizedPropValue is the one property value normalizer: Go integers
+// become int64, float32 float64 and Go times DateTimes, in lists and maps
+// too. rewritten reports whether normalized is a new value rather than
+// value itself (a list or map is always rebuilt).
+func normalizedPropValue(value interface{}) (normalized interface{}, rewritten bool) {
 	switch v := value.(type) {
 	case time.Time:
-		return dateTimeFromGoTime(v)
+		return dateTimeFromGoTime(v), true
 	case *time.Time:
 		if v == nil {
-			return nil
+			return nil, true
 		}
-		return dateTimeFromGoTime(*v)
+		return dateTimeFromGoTime(*v), true
 	case int:
-		return int64(v)
+		return int64(v), true
 	case int8:
-		return int64(v)
+		return int64(v), true
 	case int16:
-		return int64(v)
+		return int64(v), true
 	case int32:
-		return int64(v)
+		return int64(v), true
 	case int64:
-		return v
+		return v, false
 	case uint:
-		return int64(v)
+		return int64(v), true
 	case uint8:
-		return int64(v)
+		return int64(v), true
 	case uint16:
-		return int64(v)
+		return int64(v), true
 	case uint32:
-		return int64(v)
+		return int64(v), true
 	case uint64:
 		if v > math.MaxInt64 {
-			return float64(v)
+			return float64(v), true
 		}
-		return int64(v)
+		return int64(v), true
 	case float32:
-		return float64(v)
+		return float64(v), true
 	case []interface{}:
 		out := make([]interface{}, len(v))
 		for i, item := range v {
 			out[i] = normalizePropValue(item)
 		}
-		return out
+		return out, true
 	case map[string]interface{}:
 		out := make(map[string]interface{}, len(v))
 		for k, item := range v {
 			out[k] = normalizePropValue(item)
 		}
-		return out
+		return out, true
 	default:
-		return value
+		return value, false
 	}
 }
 
