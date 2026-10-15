@@ -2102,11 +2102,11 @@ func TestExecuteMatchRelationshipsWithClauseBranches(t *testing.T) {
 
 	_, err = exec.sharedRelationshipPipelineForTest(ctx, "not-a-pattern", "", "WITH a RETURN a")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	_, err = exec.sharedRelationshipPipelineForTest(ctx, "(a:Person)-[r:KNOWS]->(b:Person)", "", "WITH a")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	pathRes, err := exec.sharedRelationshipPipelineForTest(
 		ctx,
@@ -2326,7 +2326,7 @@ func TestExecuteMatchCreateBlock_AdditionalBranches(t *testing.T) {
 	res, err := exec.Execute(ctx, "MATCH (a:Person {name: 'alice'})", nil)
 	require.Error(t, err)
 	require.Nil(t, res)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	// Relationship creation and edge-property return path.
 	res, err = exec.Execute(
@@ -2344,7 +2344,7 @@ func TestExecuteMatchCreateBlock_AdditionalBranches(t *testing.T) {
 		"MATCH (a:Person {name: 'alice'}) CREATE (t:Temp {name:'tmp'}) SET missing.flag = true", nil,
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 	assert.Contains(t, err.Error(), "missing")
 
 	// CREATE ... WITH ... DELETE ... RETURN count() path.
@@ -2690,7 +2690,7 @@ func TestExecuteDeleteAndSetAdditionalBranches(t *testing.T) {
 	// DETACH without DELETE should fail with deterministic syntax error.
 	_, err = exec.Execute(ctx, "MATCH (n:P) DETACH n", getParamsFromContext(ctx))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	// Relationship delete path (row map with _edgeId) and count(*) branch.
 	relDelete, err := exec.Execute(ctx, "MATCH (a:P)-[r:REL]->(b:P) DELETE r RETURN count(*) AS c", nil)
@@ -2773,7 +2773,7 @@ func TestExecuteSet_AdditionalMapAndLabelValidationBranches(t *testing.T) {
 	// Empty assignment list should fail fast.
 	_, err = exec.Execute(ctx, "MATCH (n:P) SET    ", getParamsFromContext(ctx))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	// Map-variable merge path inside executeSet (SET n += props).
 	merged, err := exec.Execute(ctx, "MATCH (n:P) WITH n, {level: 3} AS props SET n += props RETURN n.level", nil)

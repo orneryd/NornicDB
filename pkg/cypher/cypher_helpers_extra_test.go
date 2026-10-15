@@ -2441,7 +2441,7 @@ func TestCypherHelpers_ExecuteMatchRelationshipsWithClause_Branches(t *testing.T
 		"WITH a, b, r",
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	_, err = exec.sharedRelationshipPipelineForTest(
 		ctx,
@@ -2450,7 +2450,7 @@ func TestCypherHelpers_ExecuteMatchRelationshipsWithClause_Branches(t *testing.T
 		"WITH a RETURN a",
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 }
 
 func TestCypherHelpers_CountSubqueryAndComparison_Branches(t *testing.T) {
