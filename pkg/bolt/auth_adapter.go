@@ -246,7 +246,7 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 	}
 
 	if a.basicAuthCache != nil {
-		a.basicAuthCache.Set(principal, credentials, &auth.JWTClaims{
+		a.basicAuthCache.SetAtGeneration(principal, credentials, &auth.JWTClaims{
 			Sub:      user.ID,
 			Username: user.Username,
 			Email:    user.Email,

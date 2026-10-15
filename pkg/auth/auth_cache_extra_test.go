@@ -25,7 +25,7 @@ func TestBasicAuthCache_SetFromHeader_RoundTrip(t *testing.T) {
 	c := NewBasicAuthCache(10, time.Minute)
 
 	claims := &JWTClaims{Username: "alice", Sub: "alice-id"}
-	c.SetFromHeader("Basic YWxpY2U6cGFzcw==", claims, c.Generation())
+	c.SetFromHeaderAtGeneration("Basic YWxpY2U6cGFzcw==", claims, c.Generation())
 
 	got, ok := c.GetFromHeader("Basic YWxpY2U6cGFzcw==")
 	assert.True(t, ok)
@@ -35,7 +35,7 @@ func TestBasicAuthCache_SetFromHeader_RoundTrip(t *testing.T) {
 func TestBasicAuthCache_SetFromHeader_NilClaims(t *testing.T) {
 	c := NewBasicAuthCache(10, time.Minute)
 	// Should not panic
-	c.SetFromHeader("Basic header", nil, c.Generation())
+	c.SetFromHeaderAtGeneration("Basic header", nil, c.Generation())
 	_, ok := c.GetFromHeader("Basic header")
 	assert.False(t, ok)
 }
@@ -43,7 +43,7 @@ func TestBasicAuthCache_SetFromHeader_NilClaims(t *testing.T) {
 func TestBasicAuthCache_SetFromHeader_NilCache(t *testing.T) {
 	var c *BasicAuthCache
 	// Should not panic
-	c.SetFromHeader("Basic header", &JWTClaims{Username: "bob"}, c.Generation())
+	c.SetFromHeaderAtGeneration("Basic header", &JWTClaims{Username: "bob"}, c.Generation())
 }
 
 func TestBasicAuthCache_GetFromHeader_Miss(t *testing.T) {
@@ -56,7 +56,7 @@ func TestBasicAuthCache_GetFromHeader_Miss(t *testing.T) {
 func TestBasicAuthCache_GetFromHeader_Expired(t *testing.T) {
 	c := NewBasicAuthCache(10, 1*time.Nanosecond)
 	claims := &JWTClaims{Username: "eve"}
-	c.SetFromHeader("Basic ZXZlOnBhc3M=", claims, c.Generation())
+	c.SetFromHeaderAtGeneration("Basic ZXZlOnBhc3M=", claims, c.Generation())
 
 	// Let TTL expire
 	time.Sleep(2 * time.Millisecond)
@@ -74,14 +74,14 @@ func TestNewBasicAuthCache_InvalidParams(t *testing.T) {
 
 func TestBasicAuthCache_SetCredentialNoopsAndEviction(t *testing.T) {
 	c := NewBasicAuthCache(1, time.Minute)
-	c.Set("", "password", &JWTClaims{Username: "alice"}, c.Generation())
-	c.Set("alice", "", &JWTClaims{Username: "alice"}, c.Generation())
-	c.Set("alice", "password", nil, c.Generation())
+	c.SetAtGeneration("", "password", &JWTClaims{Username: "alice"}, c.Generation())
+	c.SetAtGeneration("alice", "", &JWTClaims{Username: "alice"}, c.Generation())
+	c.SetAtGeneration("alice", "password", nil, c.Generation())
 	_, ok := c.Get("alice", "password")
 	assert.False(t, ok)
 
-	c.Set("alice", "password", &JWTClaims{Username: "alice"}, c.Generation())
-	c.Set("bob", "password", &JWTClaims{Username: "bob"}, c.Generation())
+	c.SetAtGeneration("alice", "password", &JWTClaims{Username: "alice"}, c.Generation())
+	c.SetAtGeneration("bob", "password", &JWTClaims{Username: "bob"}, c.Generation())
 
 	_, aliceOK := c.Get("alice", "password")
 	bobClaims, bobOK := c.Get("bob", "password")

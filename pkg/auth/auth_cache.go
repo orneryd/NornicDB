@@ -53,8 +53,18 @@ func (c *BasicAuthCache) GetFromHeader(authHeader string) (*JWTClaims, bool) {
 	return c.get(basicAuthCacheKeyFromHeader(authHeader))
 }
 
-// SetFromHeader caches claims using the full Basic auth header.
-func (c *BasicAuthCache) SetFromHeader(authHeader string, claims *JWTClaims, generation uint64) {
+// SetFromHeader caches claims using the full Basic auth header at the current
+// generation. It preserves the original setter contract; authentication paths
+// must use SetFromHeaderAtGeneration with a generation captured before checking
+// credentials to reject publication racing a password change.
+func (c *BasicAuthCache) SetFromHeader(authHeader string, claims *JWTClaims) {
+	c.SetFromHeaderAtGeneration(authHeader, claims, c.Generation())
+}
+
+// SetFromHeaderAtGeneration caches claims only if generation, captured before
+// authentication, still matches. For example, capture cache.Generation(), check
+// credentials, then publish with the captured value so ForgetUser wins a race.
+func (c *BasicAuthCache) SetFromHeaderAtGeneration(authHeader string, claims *JWTClaims, generation uint64) {
 	if c == nil || authHeader == "" || claims == nil {
 		return
 	}
@@ -69,8 +79,18 @@ func (c *BasicAuthCache) Get(username, password string) (*JWTClaims, bool) {
 	return c.get(basicAuthCacheKeyFromCredentials(username, password))
 }
 
-// Set caches claims using username/password (when header isn't available).
-func (c *BasicAuthCache) Set(username, password string, claims *JWTClaims, generation uint64) {
+// Set caches claims using username/password at the current generation. It
+// preserves the original setter contract; authentication paths must instead use
+// SetAtGeneration with a generation captured before checking credentials.
+func (c *BasicAuthCache) Set(username, password string, claims *JWTClaims) {
+	c.SetAtGeneration(username, password, claims, c.Generation())
+}
+
+// SetAtGeneration caches claims only if generation, captured before checking
+// credentials, still matches. For example, capture cache.Generation() before
+// authenticating and pass it here to prevent a password change from racing
+// publication of a successful check of the old password.
+func (c *BasicAuthCache) SetAtGeneration(username, password string, claims *JWTClaims, generation uint64) {
 	if c == nil || username == "" || password == "" || claims == nil {
 		return
 	}
@@ -78,7 +98,7 @@ func (c *BasicAuthCache) Set(username, password string, claims *JWTClaims, gener
 }
 
 // Generation captures the cache publication generation before credentials are
-// authenticated. Set and SetFromHeader publish only within that generation.
+// authenticated. SetAtGeneration and SetFromHeaderAtGeneration publish only within that generation.
 func (c *BasicAuthCache) Generation() uint64 {
 	if c == nil {
 		return 0

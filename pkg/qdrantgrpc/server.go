@@ -659,7 +659,7 @@ func (s *Server) handleBasicAuth(ctx context.Context, authHeader string) (*auth.
 	}
 
 	if s.basicAuthCache != nil {
-		s.basicAuthCache.Set(username, password, claims, generation)
+		s.basicAuthCache.SetAtGeneration(username, password, claims, generation)
 	}
 
 	return claims, nil

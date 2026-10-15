@@ -15,9 +15,9 @@ func TestBasicAuthCachePublicationGeneration(t *testing.T) {
 			generation := cache.Generation()
 			publish := func(version uint64) {
 				if header {
-					cache.SetFromHeader("Basic YWxpY2U6b2xk", claims, version)
+					cache.SetFromHeaderAtGeneration("Basic YWxpY2U6b2xk", claims, version)
 				} else {
-					cache.Set("alice", "old", claims, version)
+					cache.SetAtGeneration("alice", "old", claims, version)
 				}
 			}
 			lookup := func() bool {
