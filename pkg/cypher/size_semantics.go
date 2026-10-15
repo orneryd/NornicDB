@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"reflect"
-	"time"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
@@ -51,18 +50,6 @@ func sizeArgumentError(value interface{}) error {
 		code:   "Neo.ClientError.Statement.TypeError",
 		detail: "InvalidArgumentType",
 	}
-}
-
-// isStorableScalar reports whether value is a boolean, temporal value or
-// point: a non-number property value.
-func isStorableScalar(value interface{}) bool {
-	switch value.(type) {
-	case bool, CypherDate, *CypherDate, CypherLocalTime, *CypherLocalTime, CypherTime, *CypherTime,
-		CypherLocalDateTime, *CypherLocalDateTime, CypherDateTime, *CypherDateTime,
-		CypherDuration, *CypherDuration, CypherPoint, *CypherPoint, time.Time, *time.Time:
-		return true
-	}
-	return false
 }
 
 // typeMismatchFromFunctionError converts a registry TypeMismatchError, a
