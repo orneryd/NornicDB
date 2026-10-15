@@ -1240,7 +1240,13 @@ func (r embeddingRecordReader) read(key, dst []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return item.ValueCopy(dst)
+	// ValueCopy replaces dst rather than appending. Preserve earlier shards
+	// when persisted and staged records share the same assembly buffer.
+	err = item.Value(func(value []byte) error {
+		dst = append(dst, value...)
+		return nil
+	})
+	return dst, err
 }
 
 // loadEmbeddingChunksFrom also reads an unflushed recovery write set without
