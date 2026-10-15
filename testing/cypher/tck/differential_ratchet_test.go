@@ -2,7 +2,6 @@ package tck
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -152,8 +151,12 @@ func (executor boltDifferentialExecutor) Reset(ctx context.Context) error {
 	return executor.backend.Reset(ctx)
 }
 
-func (executor boltDifferentialExecutor) NormalizeExpectedValue(value any) any {
-	return differentialOutcomeValue(value)
+func (executor boltDifferentialExecutor) NormalizeExpectedValue(value any) (any, error) {
+	native, err := expectedBoltJSONValue(value)
+	if err != nil {
+		return nil, err
+	}
+	return differentialOutcomeValue(native), nil
 }
 
 // differentialOutcomeValue writes a Bolt value so that equal Cypher values
@@ -165,15 +168,6 @@ func differentialOutcomeValue(value any) any {
 	switch typed := value.(type) {
 	case nil, bool, string:
 		return typed
-	case json.Number:
-		// JSON oracle integers must not pass through float64: that would erase
-		// distinctions above 2^53. Decimal/exponent tokens carry the float type.
-		if integer, err := typed.Int64(); err == nil {
-			return differentialOutcomeValue(integer)
-		}
-		if decimal, err := typed.Float64(); err == nil {
-			return differentialOutcomeValue(decimal)
-		}
 	case int64:
 		return map[string]string{"Integer": strconv.FormatInt(typed, 10)}
 	case float64:
