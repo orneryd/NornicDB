@@ -1767,43 +1767,6 @@ func (s *Session) processMessage(msg *boltMessage) error {
 	return s.dispatchMessage(msg.msgType, msg.data)
 }
 
-func (s *Session) startMessageReader() {
-	if s.reader == nil || s.messageQueue == nil || s.readErrQueue == nil {
-		return
-	}
-	var connDone <-chan struct{}
-	if s.connCtx != nil {
-		connDone = s.connCtx.Done()
-	}
-
-	go func() {
-		for {
-			msg, err := s.readMessage()
-			if err != nil {
-				if s.connCancel != nil {
-					s.connCancel()
-				}
-				s.cancelActiveRun(0)
-				select {
-				case s.readErrQueue <- err:
-				default:
-				}
-				return
-			}
-			if msg == nil {
-				continue
-			}
-			if msg.msgType == MsgReset || msg.msgType == MsgGoodbye {
-				s.cancelActiveRun(msg.msgType)
-			}
-			select {
-			case s.messageQueue <- msg:
-			case <-connDone:
-				return
-			}
-		}
-	}()
-}
 
 func (s *Session) handleQueuedMessage() error {
 	if s.messageQueue == nil || s.readErrQueue == nil {
