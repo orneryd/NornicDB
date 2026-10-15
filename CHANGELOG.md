@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Correct release-helper PR guidance to require manual workflow dispatch and administrator approval instead of the retired `ci:run` label.
+
 - Align contributor and agent workflows with rapid `develop` integration, release branches, and scoped maintainer
   operational/documentation PRs into `main`, including verification and synchronization requirements.
 

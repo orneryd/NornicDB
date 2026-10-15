@@ -79,7 +79,7 @@ cmd_pr() {
     --title "Release ${tag}: ${head} -> ${branch}" \
     --body "Work from \`${head}\` for ${tag}. Milestone: ${tag}.
 
-Checks do not run automatically. Before merging, run \`make verify BRANCH=${head} BASE=${REMOTE}/${branch}\` locally, or add the \`ci:run\` label to run them on GitHub."
+Checks do not run automatically. Before merging, run \`make verify BRANCH=${head} BASE=${REMOTE}/${branch}\` locally. For GitHub checks, manually dispatch the workflow and obtain administrator approval through \`admin-approved-actions\`. PR events and labels do not start checks."
 }
 
 cmd_milestone() {
