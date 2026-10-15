@@ -36,6 +36,8 @@ type staticOperand struct {
 	display    string
 	parameter  string
 	nonBoolean bool
+	// nonInteger excludes Integer from an otherwise unresolved union.
+	nonInteger bool
 	// nonEntity is set for a value known not to be a node, relationship,
 	// path or list of them whose type isn't otherwise known (a node's
 	// property, an aggregate): the match validator's value kind (#1055).
@@ -268,7 +270,7 @@ func checkOperator(op byte, left, right staticOperand, cypher25 bool) (staticOpe
 			// defers its predicate semantics: WHERE filters a resulting string,
 			// while NOT reports a runtime TypeError. Keep the union for index
 			// validation without marking the row-dependent operand nonBoolean.
-			return staticOperand{display: "String or List<T>"}, nil
+			return staticOperand{display: "String or List<T>", nonInteger: true}, nil
 		}
 		if left.numeric() || right.numeric() {
 			return staticOperand{display: "Float, Integer, String or List<T>", nonBoolean: true}, nil
@@ -338,6 +340,11 @@ func checkOperator(op byte, left, right staticOperand, cypher25 bool) (staticOpe
 			return knownOperand("Integer"), nil
 		}
 		return knownOperand("Float"), nil
+	}
+	// Multiplying a Float by an unresolved value can produce a Float or a
+	// Duration, never an Integer. Retain this exclusion for list subscripts.
+	if op == '*' && (left.kind == "Float" || right.kind == "Float") {
+		return staticOperand{display: "Float or Duration", nonBoolean: true, nonInteger: true}, nil
 	}
 	return staticOperand{display: "Float, Integer or Duration", nonBoolean: true}, nil
 }
@@ -727,7 +734,7 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		return staticOperand{}, err
 	}
 	keyKnown := key.known() && key.kind != "Null"
-	invalidIntegerKey := keyKnown && key.kind != "Integer" || key.kind == "" && key.display == "String or List<T>"
+	invalidIntegerKey := keyKnown && key.kind != "Integer" || key.nonInteger
 	const syntaxError, detail = "Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType"
 	switch {
 	case !receiver.known():
