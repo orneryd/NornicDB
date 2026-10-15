@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep buffered label, relationship-type and endpoint counts consistent as a generation becomes durable, including
+  count reads from publication callbacks. Retire each derived-count overlay with its matching persisted counters
+  rather than counting both during the cache-publication tail (#1316).
+- Preserve recovered update/delete before-images when releasing UNIQUE values, validate procedure migration
+  destinations before removing legacy definitions, and preserve decoded plugin names through shared readers (#1316).
+- Reuse verified property views within read-only statements and share active query reveal scopes with nested result
+  services, avoiding repeated projection work and recursive read-lock acquisition (#1316).
 - Resolve nonexistent named-zone local times consistently in datetime map constructors while preserving the distinct
   map/string overlap preferences. Preserve numeric CASE union types during static argument validation (#1316).
 - Stop traversals when parent cancellation precedes the statement relay and return cancellation errors before an
