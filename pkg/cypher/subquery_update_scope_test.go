@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +25,7 @@ func TestUndefinedVariableInUpdateClauseIsRejected(t *testing.T) {
 		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n REMOVE m.x } RETURN n.id AS id", wantErr: "Variable `m` not defined"},
 		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n DETACH DELETE m } RETURN count(*) AS c", wantErr: "refers to an undefined variable"},
 		{stmt: "MATCH (n:T {id: 1}) CALL { WITH n CALL { WITH n SET m:B } } RETURN n.id AS id", wantErr: "Variable `m` not defined"},
-		{stmt: "MATCH (n:T {id: 1}) CALL (n) { SET m:B } RETURN n.id AS id", wantErr: "SyntaxError"},
+		{stmt: "MATCH (n:T {id: 1}) CALL (n) { SET m:B } RETURN n.id AS id", wantErr: "Variable `m` not defined"},
 		{stmt: "MATCH (n:T {id: 1}) REMOVE m.x RETURN n.id AS id", wantErr: "Variable `m` not defined"},
 		{stmt: "MATCH (n:T {id: 1}) SET m:B RETURN n.id AS id", wantErr: "Variable `m` not defined"},
 		{stmt: "MATCH (n:T {id: 1}) DETACH DELETE m RETURN count(*) AS c", wantErr: "refers to an undefined variable"},
@@ -62,6 +63,8 @@ func TestUndefinedVariableInUpdateClauseIsRejected(t *testing.T) {
 					}
 					if tc.wantErr != "" {
 						require.Error(t, err)
+						code, _ := nornicerrors.Neo4jStatus(err)
+						require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
 						assert.Contains(t, err.Error(), tc.wantErr)
 						stored, serr := exec.Execute(ctx, "MATCH (n) RETURN labels(n) AS l, properties(n) AS p", nil)
 						require.NoError(t, serr)
