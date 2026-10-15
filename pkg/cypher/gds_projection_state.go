@@ -118,6 +118,40 @@ func gdsNodeIndex(nodes []string) map[string]int {
 	return index
 }
 
+// orderOutgoing owns GDS's constituent graph traversal: relationship types in
+// their import-map order, then targets within each type. Stable sorting retains
+// the order of parallel arcs. Algorithms consume this order before arithmetic.
+func (g *gdsSubgraph) orderOutgoing() {
+	for source, edges := range g.outgoing {
+		if len(edges) > 1 {
+			var ranks []int
+			if len(g.outgoingTypes) > source {
+				ranks = g.outgoingTypes[source]
+			}
+			sort.Stable(gdsOrderedEdges{edges: edges, ranks: ranks})
+		}
+	}
+}
+
+type gdsOrderedEdges struct {
+	edges []gdsEdge
+	ranks []int
+}
+
+func (e gdsOrderedEdges) Len() int { return len(e.edges) }
+func (e gdsOrderedEdges) Less(i, j int) bool {
+	if len(e.ranks) > 0 && e.ranks[i] != e.ranks[j] {
+		return e.ranks[i] < e.ranks[j]
+	}
+	return e.edges[i].target < e.edges[j].target
+}
+func (e gdsOrderedEdges) Swap(i, j int) {
+	e.edges[i], e.edges[j] = e.edges[j], e.edges[i]
+	if len(e.ranks) > 0 {
+		e.ranks[i], e.ranks[j] = e.ranks[j], e.ranks[i]
+	}
+}
+
 // gdsRelationshipDirections owns orientation for both projection imports.
 func gdsRelationshipDirections(source, target, orientation string) [][2]string {
 	switch orientation {

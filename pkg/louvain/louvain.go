@@ -39,11 +39,17 @@ type Result struct {
 // before, ends the run and, unless it is the first, is dropped; at most
 // MaxLevels levels run.
 func Run(graph *Graph, options Options) Result {
+	// GDS reduces outgoing degrees, rather than reducing every arc into one
+	// running total. These differ under signed floating-point cancellation.
+	graph.total = 0
+	for _, degree := range graph.degree {
+		graph.total += degree
+	}
 	if options.Resolution == 0 {
 		options.Resolution = 1
 	}
 	var run Result
-	size := len(graph.weights)
+	size := len(graph.arcs)
 	membership := identityCommunities(size)
 	representative := identityCommunities(size)
 	initial := options.Seed
@@ -68,7 +74,7 @@ func Run(graph *Graph, options Options) Result {
 		run.Representatives = append(run.Representatives, representatives)
 		run.Modularities = append(run.Modularities, modularity)
 		converged := level > 0 && !(modularity > previous && modularity-previous > options.Tolerance)
-		if count == len(graph.weights) || count == 1 || converged {
+		if count == len(graph.arcs) || count == 1 || converged {
 			if level > 0 {
 				last := len(run.Levels) - 1
 				run.Levels, run.Representatives, run.Modularities = run.Levels[:last], run.Representatives[:last], run.Modularities[:last]
@@ -99,13 +105,13 @@ func identityCommunities(size int) []int {
 // modularity is the graph's modularity for communities: Σ over communities
 // of in/2m − (tot/2m)², a self-loop counted twice.
 func (g *Graph) modularity(community []int, resolution float64) float64 {
-	inside := make([]float64, len(g.weights))
-	degree := make([]float64, len(g.weights))
-	for i, weights := range g.weights {
+	inside := make([]float64, len(g.arcs))
+	degree := make([]float64, len(g.arcs))
+	for i, arcs := range g.arcs {
 		degree[community[i]] += g.degree[i]
-		for j, w := range weights {
-			if community[i] == community[j] {
-				inside[community[i]] += w
+		for _, arc := range arcs {
+			if community[i] == community[arc.target] {
+				inside[community[i]] += arc.weight
 			}
 		}
 	}
@@ -126,40 +132,49 @@ func (g *Graph) modularity(community []int, resolution float64) float64 {
 // direction; Link adds both directions and counts a self-loop twice. A
 // node's degree is its outgoing weight, and total is the sum of degrees.
 type Graph struct {
-	weights []map[int]float64
-	degree  []float64
-	total   float64
+	arcs   [][]weightedArc
+	degree []float64
+	total  float64
 }
 
-// NewGraph creates a graph with size nodes and no relationships.
-func NewGraph(size int) *Graph {
-	g := &Graph{weights: make([]map[int]float64, size), degree: make([]float64, size)}
-	for i := range g.weights {
-		g.weights[i] = make(map[int]float64)
+type weightedArc struct {
+	target int
+	weight float64
+}
+
+// NewGraph creates a graph with size nodes and no relationships. Optional
+// per-node arc counts reserve one backing array; they affect allocation only.
+// Counts must contain size nonnegative entries, including both arcs of a Link.
+func NewGraph(size int, arcCounts ...[]int) *Graph {
+	graph := &Graph{arcs: make([][]weightedArc, size), degree: make([]float64, size)}
+	if len(arcCounts) > 0 {
+		total := 0
+		for _, count := range arcCounts[0] {
+			total += count
+		}
+		storage := make([]weightedArc, total)
+		offset := 0
+		for source, count := range arcCounts[0] {
+			graph.arcs[source] = storage[offset : offset : offset+count]
+			offset += count
+		}
 	}
-	return g
+	return graph
 }
 
 // Arc adds a relationship of weight w from i to j only, as a directed
 // projection holds it (an undirected one adds both ways).
 func (g *Graph) Arc(i, j int, w float64) {
-	g.weights[i][j] += w
+	// Keep individual arcs in traversal order. Summing parallel targets here
+	// changes floating-point community influence when seeded targets coincide.
+	g.arcs[i] = append(g.arcs[i], weightedArc{target: j, weight: w})
 	g.degree[i] += w
-	g.total += w
 }
 
 // Link adds a relationship of weight w between i and j.
 func (g *Graph) Link(i, j int, w float64) {
-	if i == j {
-		g.weights[i][i] += 2 * w
-		g.degree[i] += 2 * w
-	} else {
-		g.weights[i][j] += w
-		g.weights[j][i] += w
-		g.degree[i] += w
-		g.degree[j] += w
-	}
-	g.total += 2 * w
+	g.Arc(i, j, w)
+	g.Arc(j, i, w)
 }
 
 // moveNodes is a level's local moving phase, as GDS's modularity
@@ -173,7 +188,7 @@ func (g *Graph) Link(i, j int, w float64) {
 // start in initial's communities (nil: each its own). It reports each
 // node's community.
 func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, resolution float64) []int {
-	size := len(g.weights)
+	size := len(g.arcs)
 	community := make([]int, size)
 	communityDegree := make([]float64, size)
 	for i := range community {
@@ -204,6 +219,9 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 	classes := g.colourClasses(neighbours)
 	before := 0.0
 	next := make([]int, size)
+	// Reuse influence storage across nodes and passes. Candidate scores are
+	// independent; the explicit positive-gain/minimum-ID rule resolves ties.
+	influence := make(map[int]float64)
 	for iteration := 0; iteration < maxIterations; iteration++ {
 		moves := 0
 		for _, class := range classes {
@@ -211,19 +229,14 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 				current := community[i]
 				// The weight from i to each neighbouring community (its own
 				// self-loops apart).
-				influence := make(map[int]float64)
+				clear(influence)
 				self := 0.0
-				for _, j := range neighbours[i] {
-					if j == i {
-						self += g.weights[i][j]
+				for _, arc := range g.arcs[i] {
+					if arc.target == i {
+						self += arc.weight
 					}
-					influence[community[j]] += g.weights[i][j]
+					influence[community[arc.target]] += arc.weight
 				}
-				candidates := make([]int, 0, len(influence))
-				for c := range influence {
-					candidates = append(candidates, c)
-				}
-				sort.Ints(candidates)
 				// GDS's modularity gain of i leaving its community for c,
 				// computed as GDS computes it: a node moves only for a
 				// positive gain, to the smaller community on a tie.
@@ -231,11 +244,11 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 				eix := influence[current] - self
 				ax := communityDegree[current] - ki
 				best, maxGain := current, 0.0
-				for _, c := range candidates {
+				for c, weight := range influence {
 					if c == current {
 						continue
 					}
-					observed := influence[c] - eix
+					observed := weight - eix
 					if resolution != 1 {
 						observed *= resolution
 					}
@@ -274,7 +287,7 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 // optimization caps this at five rounds independently of MaxIterations.
 // Self-loops never forbid a colour. Classes and their nodes are in order.
 func (g *Graph) colourClasses(neighbours [][]int) [][]int {
-	colour := make([]int, len(g.weights))
+	colour := make([]int, len(g.arcs))
 	pending := make([]bool, len(colour))
 	next := make([]bool, len(colour))
 	// GDS's initial colour also forbids 1000 before a neighbour is visited.
@@ -328,16 +341,22 @@ func (g *Graph) colourClasses(neighbours [][]int) [][]int {
 	return classes
 }
 
-// neighbours lists each node's neighbours in order, so sums over them don't
-// depend on map order.
+// neighbours lists distinct targets in node order for colouring. Numeric
+// reductions consume the original ordered arcs, including parallel arcs.
 func (g *Graph) neighbours() [][]int {
-	lists := make([][]int, len(g.weights))
-	for i, weights := range g.weights {
-		lists[i] = make([]int, 0, len(weights))
-		for j := range weights {
-			lists[i] = append(lists[i], j)
+	lists := make([][]int, len(g.arcs))
+	for i, arcs := range g.arcs {
+		list := make([]int, len(arcs))
+		for j, arc := range arcs {
+			list[j] = arc.target
 		}
-		sort.Ints(lists[i])
+		sort.Ints(list)
+		for _, target := range list {
+			if len(lists[i]) == 0 || lists[i][len(lists[i])-1] != target {
+				list[len(lists[i])] = target
+				lists[i] = list[:len(lists[i])+1]
+			}
+		}
 	}
 	return lists
 }
@@ -362,11 +381,26 @@ func Renumber(community []int) int {
 // self-loop.
 func (g *Graph) aggregate(community []int, count int) *Graph {
 	next := NewGraph(count)
-	for i, neighbours := range g.neighbours() {
-		for _, j := range neighbours {
-			next.weights[community[i]][community[j]] += g.weights[i][j]
+	weights := make([]map[int]float64, count)
+	for i := range weights {
+		weights[i] = make(map[int]float64)
+	}
+	for i, arcs := range g.arcs {
+		for _, arc := range arcs {
+			weights[community[i]][community[arc.target]] += arc.weight
 		}
 		next.degree[community[i]] += g.degree[i]
+	}
+	for source, targets := range weights {
+		ordered := make([]int, 0, len(targets))
+		for target := range targets {
+			ordered = append(ordered, target)
+		}
+		sort.Ints(ordered)
+		next.arcs[source] = make([]weightedArc, len(ordered))
+		for i, target := range ordered {
+			next.arcs[source][i] = weightedArc{target: target, weight: targets[target]}
+		}
 	}
 	next.total = g.total
 	return next
