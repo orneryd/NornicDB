@@ -100,7 +100,7 @@ func forEachFunctionCall(text string, visit func(name, normalized string) error)
 			index = skipCalledName(expression, next)
 			continue
 		}
-		parts, cursor := dottedNameParts(expression, next, false)
+		parts, cursor := dottedNameParts(expression, next, true)
 		name += parts
 		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
 			cursor++
@@ -148,26 +148,42 @@ func skipCalledName(expression string, start int) int {
 // dottedNameParts returns the dotted parts (.b.c) following a name that ends
 // at end, and where they end. Each name is read as the code that runs it
 // reads it: whitespace may stand around a dot only when spaced is set, for a
-// procedure or graph name (the USE parser accepts USE graph . byName(…));
-// the evaluators read a function name without it.
+// procedure, function or graph name. Contiguous unquoted components reuse
+// the source slice; only names containing trivia or quotes are normalized.
 func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 	skip := func(index int) int {
-		if spaced {
-			return skipSpaces(expression, index)
+		if spaced && index < len(expression) && (isASCIIWhitespace(expression[index]) || expression[index] == '/' || expression[index] >= 0x80) {
+			return queryGapEnd(expression, index)
 		}
 		return index
 	}
-	parts := ""
+	origin := end
+	var normalized strings.Builder
+	normalizing := false
 	for {
 		dot := skip(end)
 		if dot >= len(expression) || expression[dot] != '.' {
-			return parts, end
+			if normalizing {
+				return normalized.String(), end
+			}
+			return expression[origin:end], end
 		}
-		part, partEnd, ok := scanIdentifierToken(expression, skip(dot+1))
+		partStart := skip(dot + 1)
+		part, partEnd, ok := scanIdentifierToken(expression, partStart)
 		if !ok {
-			return parts, end
+			if normalizing {
+				return normalized.String(), end
+			}
+			return expression[origin:end], end
 		}
-		parts += "." + part
+		if !normalizing && (dot != end || partStart != dot+1 || expression[partStart] == '`') {
+			normalized.WriteString(expression[origin:end])
+			normalizing = true
+		}
+		if normalizing {
+			normalized.WriteByte('.')
+			normalized.WriteString(part)
+		}
 		end = partEnd
 	}
 }

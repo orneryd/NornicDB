@@ -22,7 +22,11 @@ func pluginFunctionHandler(name string) (interface{}, bool) {
 	if PluginFunctionLookup == nil || !strings.Contains(name, ".") {
 		return nil, false
 	}
-	return PluginFunctionLookup(normalizeProjectionColumnName(strings.TrimSpace(name)))
+	canonical, ok := canonicalCallableName(name)
+	if !ok {
+		return nil, false
+	}
+	return PluginFunctionLookup(canonical)
 }
 
 // callPluginFunction calls a plugin function's handler, for both evaluators,

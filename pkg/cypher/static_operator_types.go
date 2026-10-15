@@ -577,7 +577,7 @@ func infixKeywordIndex(s, keyword string) int {
 		if index < 0 {
 			return -1
 		}
-		if !caseOperandExpectedBefore(s, index) {
+		if functionNameStartsAt(s, index) && !caseOperandExpectedBefore(s, index) {
 			return index
 		}
 		from = index + len(keyword)

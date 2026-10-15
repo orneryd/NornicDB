@@ -195,6 +195,9 @@ func shortestPathPatternError(funcName, pattern string, traversal *TraversalMatc
 // the call.
 func shortestPathExpressionError(query string, wordStart, wordEnd, end int) error {
 	name := query[wordStart:wordEnd]
+	if !functionNameStartsAt(query, wordStart) {
+		return nil
+	}
 	if !equalFoldASCII(name, "shortestPath") && !equalFoldASCII(name, "allShortestPaths") {
 		return nil
 	}
@@ -413,7 +416,7 @@ func validateShortestCallBindings(text string, scope matchSemanticScope) error {
 			at = skipCypherQuotedText(text, at, text[at]) - 1
 			continue
 		}
-		if !isIdentStartByte(text[at]) || at > 0 && (isIdentByte(text[at-1]) || text[at-1] == '.' || text[at-1] == '$') {
+		if !isIdentStartByte(text[at]) || !functionNameStartsAt(text, at) || at > 0 && text[at-1] == '$' {
 			continue
 		}
 		end := at + 1

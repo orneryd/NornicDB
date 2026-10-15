@@ -397,12 +397,10 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			index = next
 			continue
 		}
-		// A namespaced name (date.truncate, vector.similarity.cosine) is one
-		// function name.
-		for next < len(text) && text[next] == '.' && next+1 < len(text) && isIdentStartByte(text[next+1]) {
-			_, end, _ := scanIdentifierToken(text, next+1)
-			name, next = text[index:end], end
-		}
+		// A qualified name has one canonical identity in validation and dispatch.
+		parts, end := dottedNameParts(text, next, true)
+		name, next = name+parts, end
+
 		open := skipSpaces(text, next)
 		if open >= len(text) || text[open] != '(' {
 			index = next
