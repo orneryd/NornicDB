@@ -10,6 +10,59 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Aggregate input/fallback alternatives must preserve every shared type fact,
+// even when an unrelated map member disagrees or a later filter removes rows.
+func TestScopedCallAggregateCommonTypes(t *testing.T) {
+	for _, tc := range []struct {
+		name, original, rebound, tail string
+		rows                         []interface{}
+		want                         [][]interface{}
+	}{
+		{"map_kind", "{factor:11}", "{factor:'s'}", "RETURN x*3 AS a", nil, nil},
+		{"different_keys", "{factor:11}", "{other:2}", "RETURN x*3 AS a", nil, nil},
+		{"shared_member", "{factor:'a', other:11}", "{factor:'b', other:'s'}", "RETURN x.factor*3 AS a", nil, nil},
+		{"nested_member", "{inner:{factor:'a', other:11}}", "{inner:{factor:'b', other:'s'}}", "RETURN x.inner.factor*3 AS a", nil, nil},
+		{"nested_map_kind", "{inner:{factor:11}}", "{inner:{other:2}}", "RETURN x.inner*3 AS a", nil, nil},
+		{"filtered_map", "{factor:'a', other:11}", "{factor:'b', other:'s'}", "WITH 1 AS ignored WHERE false RETURN x*3 AS a", nil, nil},
+		{"filtered_member", "{factor:'a', other:11}", "{factor:'b', other:'s'}", "WITH 1 AS ignored WHERE false RETURN x.factor*3 AS a", nil, nil},
+		{"match_map", "{factor:11}", "{other:2}", "MATCH (x) RETURN count(*) AS a", nil, nil},
+		{"nonempty_member", "{factor:'a', other:11}", "{factor:'b', other:'s'}", "RETURN x.factor*3 AS a", []interface{}{int64(1)}, nil},
+		{"shared_integer_empty", "{factor:11, other:11}", "{factor:2, other:'s'}", "RETURN x.factor*3 AS a", nil, [][]interface{}{{int64(33)}}},
+		{"shared_integer_nonempty", "{factor:11, other:11}", "{factor:2, other:'s'}", "RETURN x.factor*3 AS a", []interface{}{int64(1)}, [][]interface{}{{int64(6)}}},
+		{"different_member_empty", "{factor:11}", "{factor:'s'}", "RETURN CASE WHEN c=0 THEN x.factor*3 ELSE size(x.factor) END AS a", nil, [][]interface{}{{int64(33)}}},
+		{"different_member_nonempty", "{factor:11}", "{factor:'s'}", "RETURN CASE WHEN c=0 THEN x.factor*3 ELSE size(x.factor) END AS a", []interface{}{int64(1)}, [][]interface{}{{int64(1)}}},
+		{"missing_member", "{factor:'a'}", "{other:2}", "RETURN x.factor*3 AS a", []interface{}{int64(1)}, [][]interface{}{{nil}}},
+	} {
+		for _, imports := range []string{"*", "x"} {
+			for _, explicit := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/imports=%s/explicit=%t", tc.name, imports, explicit), func(t *testing.T) {
+					exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_common_types"))
+					ctx := context.Background()
+					if explicit {
+						_, err := exec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+						t.Cleanup(func() { _, _ = exec.Execute(ctx, "ROLLBACK", nil) })
+					}
+					query := fmt.Sprintf("CYPHER 25 WITH %s AS x CALL (%s) { WITH %s AS x UNWIND $rows AS y WITH count(*) AS c %s } RETURN a", tc.original, imports, tc.rebound, tc.tail)
+					result, err := exec.Execute(ctx, query, map[string]interface{}{"rows": tc.rows})
+					if tc.want == nil {
+						require.Error(t, err)
+						code, _ := nornicerrors.Neo4jStatus(err)
+						require.Equal(t, "Neo.ClientError.Statement.SyntaxError", code)
+						return
+					}
+					require.NoError(t, err)
+					require.Equal(t, tc.want, result.Rows)
+					if explicit {
+						_, err = exec.Execute(ctx, "COMMIT", nil)
+						require.NoError(t, err)
+					}
+				})
+			}
+		}
+	}
+}
+
 // A global aggregate with no input row restores original imports, while a
 // nonempty group retains rebound values. This is the existing extension's
 // runtime behavior, including when emptiness depends on parameters.
