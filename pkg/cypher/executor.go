@@ -363,9 +363,9 @@ type StorageExecutor struct {
 	// deferFlush when true, writes are not auto-flushed (Bolt layer handles it)
 	deferFlush bool
 
-	// embedder for server-side query embedding (optional)
+	// Shared binding for server-side query embedding (optional).
 	// If set, vector search can accept string queries which are embedded automatically
-	embedder QueryEmbedder
+	queryEmbedder *queryEmbedderBinding
 
 	// searchService optionally provides unified search semantics for Cypher procedures.
 	// When set, db.index.vector.queryNodes delegates to search.Service.
@@ -412,14 +412,6 @@ type StorageExecutor struct {
 
 	decayMismatchLogged bool
 	hotPathTraceState   *hotPathTraceState
-
-	// vectorQueryEmbedCache caches server-side embeddings for db.index.vector.queryNodes/
-	// queryRelationships string-input mode to avoid repeated embedding latency.
-	// Key is canonicalized (case/whitespace normalized) query text.
-	vectorQueryEmbedCache map[string][]float32
-	// vectorQueryEmbedInflight de-duplicates concurrent embedding work per key.
-	vectorQueryEmbedInflight map[string]*vectorEmbedInflight
-	vectorQueryEmbedMu       sync.Mutex
 
 	// unwindMergeChainPlanCache memoizes parsed plans for the generalized
 	// UNWIND ... MERGE batch hot path keyed by mutation query text.
@@ -554,7 +546,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		nodeLookupCache:                lookupCache,
 		nodeLookupCacheMu:              lookupCacheMu,
 		deferFlush:                     e.deferFlush,
-		embedder:                       e.embedder,
+		queryEmbedder:                  e.queryEmbedder,
 		searchService:                  e.searchService,
 		inferenceManager:               e.inferenceManager,
 		localizationRenderer:           e.localizationRenderer,
@@ -572,8 +564,6 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		vectorIndexSpaces:              e.vectorIndexSpaces,
 		fabricRecordBindings:           e.fabricRecordBindings,
 		hotPathTraceState:              e.hotPathTraceState,
-		vectorQueryEmbedCache:          e.vectorQueryEmbedCache,
-		vectorQueryEmbedInflight:       e.vectorQueryEmbedInflight,
 		unwindMergeChainPlanCache:      e.unwindMergeChainPlanCache,
 		upperQueryCache:                e.upperQueryCache,
 		syntaxValidationCache:          e.syntaxValidationCache,
@@ -756,8 +746,7 @@ func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntr
 		vectorRegistry:                 vectorspace.NewIndexRegistry(),
 		vectorIndexSpaces:              make(map[string]vectorspace.VectorSpaceKey),
 		hotPathTraceState:              &hotPathTraceState{},
-		vectorQueryEmbedCache:          make(map[string][]float32, 512),
-		vectorQueryEmbedInflight:       make(map[string]*vectorEmbedInflight, 64),
+		queryEmbedder:                  &queryEmbedderBinding{},
 		unwindMergeChainPlanCache:      &unwindMergeChainPlanCache{plans: make(map[string]unwindMergeChainPlan, 128)},
 		inlineEmbeddingTextOptions:     embeddingutil.EmbedTextOptionsFromConfig(runtimeCfg),
 		inlineEmbeddingChunkSize:       maxInt(runtimeCfg.EmbeddingWorker.ChunkSize, 1),
@@ -1117,17 +1106,36 @@ func (e *StorageExecutor) SetDatabaseManager(dbManager DatabaseManagerInterface)
 //	// CALL db.index.vector.queryNodes('idx', 10, [0.1, 0.2, ...])  // Vector
 //	// CALL db.index.vector.queryNodes('idx', 10, 'search query')   // String (auto-embedded)
 func (e *StorageExecutor) SetEmbedder(embedder QueryEmbedder) {
-	e.embedder = embedder
-	e.vectorQueryEmbedMu.Lock()
-	e.vectorQueryEmbedCache = make(map[string][]float32, 512)
-	e.vectorQueryEmbedInflight = make(map[string]*vectorEmbedInflight, 64)
-	e.vectorQueryEmbedMu.Unlock()
+	if e.queryEmbedder == nil {
+		e.queryEmbedder = &queryEmbedderBinding{}
+	}
+	var state *queryEmbedderState
+	if embedder != nil {
+		state = &queryEmbedderState{
+			embedder: embedder,
+			cache:    make(map[string][]float32, 512),
+			inflight: make(map[string]*vectorEmbedInflight, 64),
+		}
+	}
+	e.queryEmbedder.mu.Lock()
+	defer e.queryEmbedder.mu.Unlock()
+	e.queryEmbedder.current.Store(state)
+	// Existing cache keys already include this revision. A startup fallback
+	// must not survive readiness, even when its query is still in flight.
+	for ref := range e.queryEmbedder.services {
+		if svc := ref.Value(); svc != nil {
+			svc.InvalidateQueryEmbeddingResults()
+		} else {
+			delete(e.queryEmbedder.services, ref)
+		}
+	}
 }
 
 // SetSearchService sets the unified search service used by Cypher procedures.
 // When set, db.index.vector.queryNodes will delegate to search.Service.
 func (e *StorageExecutor) SetSearchService(svc *search.Service) {
 	e.searchService = svc
+	e.queryEmbedder.registerSearchService(svc)
 }
 
 // SetInferenceManager sets the inference manager used by db.infer.
@@ -1154,10 +1162,13 @@ func (e *StorageExecutor) GetVectorRegistry() *vectorspace.IndexRegistry {
 	return e.vectorRegistry
 }
 
-// GetEmbedder returns the query embedder if set.
-// This allows copying the embedder to namespaced executors for GraphQL.
+// GetEmbedder returns the current query embedder, or nil during startup.
+// Scoped executors should use ShareEmbedderFrom to observe later readiness.
 func (e *StorageExecutor) GetEmbedder() QueryEmbedder {
-	return e.embedder
+	if state := e.currentQueryEmbedder(); state != nil {
+		return state.embedder
+	}
+	return nil
 }
 
 // SetNodeMutatedCallback sets a callback that is invoked when nodes are created
@@ -1886,11 +1897,12 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 	if len(ids) == 0 {
 		return nil
 	}
-	if e.embedder == nil {
+	embedder := e.GetEmbedder()
+	if embedder == nil {
 		return localizedError(localization.CypherCoreEmbeddingConfiguredRequired(), nil)
 	}
 	store := e.getStorage(ctx)
-	typedEmbedder, hasTypedEmbedder := e.embedder.(typedQueryEmbedder)
+	typedEmbedder, hasTypedEmbedder := embedder.(typedQueryEmbedder)
 	for id := range ids {
 		node, err := store.GetNode(storage.NodeID(id))
 		if err != nil {
@@ -1904,7 +1916,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 		}
 		source := embeddingutil.BuildEmbedText(node.Properties, node.Labels, e.inlineEmbeddingTextOptions)
 		text := source.Text
-		chunks, err := e.embedder.ChunkText(text, e.inlineEmbeddingChunkSize, e.inlineEmbeddingChunkOverlap)
+		chunks, err := embedder.ChunkText(text, e.inlineEmbeddingChunkSize, e.inlineEmbeddingChunkOverlap)
 		if err != nil {
 			return localizedError(localization.CypherCoreEmbeddingChunkFailed(id, err), err)
 		}
@@ -1918,7 +1930,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 			if hasTypedEmbedder {
 				emb, err = typedEmbedder.EmbedWithInputType(ctx, chunk, "document")
 			} else {
-				emb, err = e.embedder.Embed(ctx, chunk)
+				emb, err = embedder.Embed(ctx, chunk)
 			}
 			if err != nil {
 				return localizedError(localization.CypherCoreEmbeddingNodeFailed(id, err), err)
@@ -1930,12 +1942,12 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 		}
 		model := "inline-cypher"
 		dimensions := len(embeddings[0])
-		if named, ok := e.embedder.(interface{ Model() string }); ok {
+		if named, ok := embedder.(interface{ Model() string }); ok {
 			if v := strings.TrimSpace(named.Model()); v != "" {
 				model = v
 			}
 		}
-		if d, ok := e.embedder.(interface{ Dimensions() int }); ok {
+		if d, ok := embedder.(interface{ Dimensions() int }); ok {
 			if v := d.Dimensions(); v > 0 {
 				dimensions = v
 			}

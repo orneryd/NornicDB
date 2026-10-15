@@ -29,21 +29,22 @@ func cloneFloat32Slice(src []float32) []float32 {
 }
 
 func (e *StorageExecutor) embedVectorQueryText(ctx context.Context, text string) ([]float32, error) {
-	if e.embedder == nil {
+	state := e.currentQueryEmbedder()
+	if state == nil {
 		return nil, localizedError(localization.CypherCoreEmbedderNotConfigured(), nil)
 	}
 	key := canonicalizeVectorQueryText(text)
 	if key == "" {
-		return embedQueryChunked(ctx, e.embedder, text)
+		return embedQueryChunked(ctx, state.embedder, text)
 	}
 
-	e.vectorQueryEmbedMu.Lock()
-	if vec, ok := e.vectorQueryEmbedCache[key]; ok {
-		e.vectorQueryEmbedMu.Unlock()
+	state.mu.Lock()
+	if vec, ok := state.cache[key]; ok {
+		state.mu.Unlock()
 		return cloneFloat32Slice(vec), nil
 	}
-	if in, ok := e.vectorQueryEmbedInflight[key]; ok {
-		e.vectorQueryEmbedMu.Unlock()
+	if in, ok := state.inflight[key]; ok {
+		state.mu.Unlock()
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -56,24 +57,24 @@ func (e *StorageExecutor) embedVectorQueryText(ctx context.Context, text string)
 	}
 
 	in := &vectorEmbedInflight{done: make(chan struct{})}
-	e.vectorQueryEmbedInflight[key] = in
-	e.vectorQueryEmbedMu.Unlock()
+	state.inflight[key] = in
+	state.mu.Unlock()
 
-	vec, err := embedQueryChunked(ctx, e.embedder, key)
+	vec, err := embedQueryChunked(ctx, state.embedder, key)
 	in.vec = cloneFloat32Slice(vec)
 	in.err = err
 
-	e.vectorQueryEmbedMu.Lock()
-	delete(e.vectorQueryEmbedInflight, key)
+	state.mu.Lock()
+	delete(state.inflight, key)
 	if err == nil && len(in.vec) > 0 {
-		if len(e.vectorQueryEmbedCache) >= maxVectorQueryEmbedCacheEntries {
+		if len(state.cache) >= maxVectorQueryEmbedCacheEntries {
 			// Keep eviction policy simple and deterministic: clear on capacity.
-			e.vectorQueryEmbedCache = make(map[string][]float32, 512)
+			state.cache = make(map[string][]float32, 512)
 		}
-		e.vectorQueryEmbedCache[key] = cloneFloat32Slice(in.vec)
+		state.cache[key] = cloneFloat32Slice(in.vec)
 	}
 	close(in.done)
-	e.vectorQueryEmbedMu.Unlock()
+	state.mu.Unlock()
 
 	if err != nil {
 		return nil, err
