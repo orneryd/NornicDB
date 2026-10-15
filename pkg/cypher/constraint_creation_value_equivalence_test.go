@@ -20,6 +20,8 @@ func TestConstraintCreationValueEquivalence(t *testing.T) {
 		duplicate bool
 		ka, kb    string
 	}{
+		{"byte integer lists", []byte{1, 2}, []int64{1, 2}, true, "", ""},
+		{"integer byte lists", []int64{1, 2}, []byte{1, 2}, true, "", ""},
 		{"integer lists", []int64{1, 2}, []int64{1, 2}, true, "", ""},
 		{"string lists", []string{"a", "b"}, []string{"a", "b"}, true, "", ""},
 		{"numeric lists", []int64{1, 2}, []float64{1, 2}, true, "", ""},

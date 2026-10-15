@@ -155,3 +155,46 @@ func TestUniqueConstraintPendingNamespaceAndOrdinaryKeys(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, integerKey, floatKey)
 }
+
+func TestConstraintCreationByteListEquivalenceBothOrders(t *testing.T) {
+	cases := []struct {
+		name  string
+		a, b  interface{}
+		equal bool
+	}{
+		{"bytes and integers", []byte{1, 2}, []int64{1, 2}, true},
+		{"empty bytes and integers", []byte{}, []int64{}, true},
+		{"nil bytes and integers", []byte(nil), []int64(nil), true},
+		{"nested bytes and integers", []interface{}{[]byte{1, 2}}, [][]int64{{1, 2}}, true},
+		{"nested empty bytes and integers", []interface{}{[]byte{}}, [][]int64{{}}, true},
+		{"nested prefix and tail preserved", []interface{}{int64(7), []byte{1, 2}, "tail"}, []interface{}{int64(7), []int64{1, 2}, "tail"}, true},
+		{"same nested byte arrays", []interface{}{[2]byte{1, 2}}, []interface{}{[2]byte{1, 2}}, true},
+		{"nested byte array versus list stays distinct", []interface{}{[2]byte{1, 2}}, []interface{}{[]int64{1, 2}}, false},
+		{"nested byte slice versus array stays distinct", []interface{}{[]byte{1, 2}}, []interface{}{[2]byte{1, 2}}, false},
+		{"empty versus nil stays distinct", []byte{}, []int64(nil), false},
+	}
+	for _, tc := range cases {
+		for direction, pair := range [][2]interface{}{{tc.a, tc.b}, {tc.b, tc.a}} {
+			t.Run(fmt.Sprintf("%s/order%d", tc.name, direction), func(t *testing.T) {
+				require.Equal(t, tc.equal, constraintCreationValueEqual(pair[0], pair[1]), "pin existing shared equality semantics")
+				seen := make(constraintCreationValues)
+				_, duplicate := seen.add("first", []interface{}{pair[0]})
+				require.False(t, duplicate)
+				id, duplicate := seen.add("second", []interface{}{pair[1]})
+				require.Equal(t, tc.equal, duplicate)
+				if tc.equal {
+					require.Equal(t, "first", id)
+				}
+				// A comparable temporal second property takes the existing
+				// fallback key path; it must use the same normalized bucket.
+				stamp := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+				composite := make(constraintCreationValues)
+				_, duplicate = composite.add("first", []interface{}{pair[0], stamp})
+				require.False(t, duplicate)
+				_, duplicate = composite.add("second", []interface{}{pair[1], stamp})
+				require.Equal(t, tc.equal, duplicate)
+
+			})
+		}
+	}
+}
