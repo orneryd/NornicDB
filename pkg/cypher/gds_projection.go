@@ -19,6 +19,9 @@ import (
 // GraphProjection is a gds.graph.project graph (#1190): its nodes, in node
 // ID order, and its relationships, oriented as projected. An UNDIRECTED
 // relationship is held in both directions, as GDS holds and counts it.
+// NodeProperties preserves each projected numeric type; direct Go consumers
+// must handle int64, float64, []int64 and []float64 values rather than assume
+// float64. For example, age, ok := projection.NodeProperties["alice"]["age"].(int64).
 type GraphProjection struct {
 	Name           string
 	NodeIDs        []string
