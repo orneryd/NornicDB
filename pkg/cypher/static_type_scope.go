@@ -360,9 +360,9 @@ func projectStaticValueMembers(scope staticTypeScope, clause string) map[string]
 // carryStaticSubqueryImports models both possible global-aggregate rows. A
 // nonempty group carries current operands; an empty group's missing input
 // falls back to original imports. Both scopes use the runtime retention owner.
-// When they disagree, defer the operand's type checks until the row runs,
-// just as for a CASE whose branches have different types. No cardinality
-// guess is needed for parameterized UNWIND, filters or data-dependent MATCH.
+// Keep the type facts shared by both rows and defer only disagreements until
+// execution. No cardinality guess is needed for parameterized UNWIND, filters
+// or data-dependent MATCH.
 func carryStaticSubqueryImports(projected, input, imports typeScope, projection string) {
 	var empty typeScope
 	if len(imports) > 0 && pipelineProjectionHasOnlyAggregates(returnProjectionPlanFor("RETURN "+projection).projections) {
@@ -371,16 +371,36 @@ func carryStaticSubqueryImports(projected, input, imports typeScope, projection 
 	}
 	carrySubqueryImports(projected, input, imports)
 	for name, operand := range empty {
-		if !staticOperandsEqual(projected[name], operand) {
-			projected[name] = staticOperand{}
-		}
+		projected[name] = commonStaticOperand(projected[name], operand)
 	}
 }
 
-func staticOperandsEqual(left, right staticOperand) bool {
-	return left.kind == right.kind && left.display == right.display &&
-		left.parameter == right.parameter && left.nonBoolean == right.nonBoolean &&
-		left.nonEntity == right.nonEntity && maps.EqualFunc(left.members, right.members, staticOperandsEqual)
+// commonStaticOperand widens differing facts independently: an unrelated map
+// member must not erase the Map kind or another member's agreed type. Members
+// present in only one alternative have no guaranteed type in the result.
+func commonStaticOperand(left, right staticOperand) staticOperand {
+	common := staticOperand{
+		nonBoolean: left.nonBoolean && right.nonBoolean,
+		nonEntity:  left.nonEntity && right.nonEntity,
+	}
+	if left.kind == right.kind {
+		common.kind = left.kind
+	}
+	if left.display == right.display {
+		common.display = left.display
+	}
+	if left.parameter == right.parameter {
+		common.parameter = left.parameter
+	}
+	for name, member := range left.members {
+		if other, exists := right.members[name]; exists {
+			if common.members == nil {
+				common.members = make(map[string]staticOperand)
+			}
+			common.members[name] = commonStaticOperand(member, other)
+		}
+	}
+	return common
 }
 
 // callSubqueryImports is the scope a CALL subquery's body starts from: CALL
