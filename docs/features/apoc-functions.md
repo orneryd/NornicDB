@@ -1073,7 +1073,7 @@ What carries over from Neo4j with APOC, and what doesn't:
 
 - **Built-in functions:** 31 of the 36 are real APOC functions. Four are [NornicDB extensions](#nornicdb-extensions), and `apoc.coll.split` is an APOC procedure offered here as a function.
 - **Built-in procedures:** 33 of the 47 `apoc.*` / `gds.*` procedures are real APOC or GDS names; 14 are NornicDB extensions. `gds.*` procedures with GDS's names don't yet take GDS's parameters or return its columns (#1161).
-- **The APOC plugin:** 176 of its 983 names are real APOC functions and 118 are real APOC *procedures* it registers as functions; the other 689 aren't APOC names. 81 of the 983 can be called today (#1163, #1167), and none appears in `SHOW FUNCTIONS` (#1168).
+- **The APOC plugin:** the Go library catalog has 983 names, including genuine functions, procedure-only entries and NornicDB extensions. The plugin excludes the 118 confirmed procedure-only entries from scalar function exports. See the [versioned procedure capability audit](apoc-procedure-capabilities.md) for every entry, available native contracts, and remaining gaps; the typed handler dispatcher does not certify full APOC semantics. Loaded function metadata is available through `SHOW FUNCTIONS`.
 - File operations respect security settings, and the plugin system allows custom extensions. Performance characteristics may differ.
 
 ## NornicDB extensions
@@ -1092,7 +1092,7 @@ These names are NornicDB's own: they don't exist in APOC Core, APOC Extended or 
 
 **Built-in functions (4, and one procedure offered as a function):** `apoc.coll.containsAny`, `apoc.coll.reverse`, `apoc.meta.isType` and `apoc.meta.type` (APOC 5's are `apoc.meta.cypher.isType` / `apoc.meta.cypher.type`); `apoc.coll.split` is an APOC procedure.
 
-**The APOC plugin:** 689 of its names aren't APOC names, and 118 are APOC procedures that it registers as functions:
+**The APOC plugin:** the historical catalog includes NornicDB extensions and 118 procedure-only entries, now excluded from function exports. The following historical inventory is not a declaration that every listed capability is implemented:
 
 <details><summary>The plugin's names that aren't APOC names: 689 (the 55 callable today in <b>bold</b>)</summary>
 
@@ -1143,7 +1143,7 @@ These names are NornicDB's own: they don't exist in APOC Core, APOC Extended or 
 
 </details>
 
-<details><summary>APOC procedures the plugin registers as functions: 118 (none callable today)</summary>
+<details><summary>Historical procedure-only catalog entries: 118 (see the capability audit for current CALL support)</summary>
 
 - `apoc.create` (13): addLabels, node, nodes, relationship, removeLabels, removeProperties, removeRelProperties, setProperties, setProperty, setRelProperties, setRelProperty, uuids, vNodes
 - `apoc.load` (12): csv, directory, driver, html, jdbc, jdbcUpdate, json, jsonArray, jsonParams, ldap, parquet, xml

@@ -1191,6 +1191,7 @@ PLUGINS_SRC_DIR := apoc/plugin-src
 plugin-apoc: plugin-check
 	@mkdir -p $(PLUGINS_DIR)
 	@echo "Building APOC plugin..."
+	cd $(PLUGINS_SRC_DIR)/apoc && go test apoc_plugin.go apoc_plugin_test.go
 	cd $(PLUGINS_SRC_DIR)/apoc && go build -buildmode=plugin -o ../../../$(PLUGINS_DIR)/apoc.so apoc_plugin.go
 	@echo "Built: $(PLUGINS_DIR)/apoc.so"
 
