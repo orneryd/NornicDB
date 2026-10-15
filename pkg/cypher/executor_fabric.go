@@ -124,9 +124,6 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		authToken:  authToken,
 		autoCommit: autoCommit,
 	}, func(dbName string) (storage.Engine, error) {
-		if err := e.authorizeSelectedDatabase(ctx, dbName); err != nil {
-			return nil, err
-		}
 		if e.dbManager != nil {
 			engineIface, err := e.dbManager.GetStorageForUse(dbName, authToken)
 			if err == nil {
@@ -676,6 +673,11 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 }
 
 func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+	// Each database needs the permissions of its own fragment, rather than
+	// those of an enclosing statement that may write another database.
+	if err := c.base.authorizeSelectedDatabase(ctx, GetUseDatabaseFromContext(ctx), query); err != nil {
+		return nil, nil, err
+	}
 	result, err := exec.executeInternal(ctx, query, params)
 	if err != nil {
 		return nil, nil, err

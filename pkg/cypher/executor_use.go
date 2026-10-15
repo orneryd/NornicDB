@@ -264,7 +264,7 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 // transaction (explicit, or the one the statement is nested in) stays on
 // that transaction's database. It returns db's executor and ctx scoped to db.
 func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*StorageExecutor, context.Context, error) {
-	if err := e.authorizeSelectedDatabase(ctx, db); err != nil {
+	if err := e.authorizeSelectedDatabase(ctx, db, query); err != nil {
 		return nil, ctx, err
 	}
 	scopedExec, resolvedDB, err := e.scopedExecutorForUse(db, GetAuthTokenFromContext(ctx))

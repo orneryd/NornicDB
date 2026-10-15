@@ -404,13 +404,6 @@ func withExecutionDatabase(ctx context.Context, database string) context.Context
 	return context.WithValue(ctx, databaseAuthorizationKey{}, authorization)
 }
 
-func authorizeDatabaseSelection(ctx context.Context, database string) error {
-	if _, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization); !ok {
-		return nil
-	}
-	return AuthorizeQuery(withExecutionDatabase(ctx, database), "RETURN 1")
-}
-
 // AccessDatabases returns the databases a principal must be allowed to use
 // for a statement on database, the graph name it selects (a request or
 // session database, a USE, :USE or subquery USE, a composite constituent):
@@ -471,8 +464,9 @@ func GraphAccess(manager DatabaseManagerInterface, graph string, canAccess func(
 }
 
 // authorizeSelectedDatabase checks that the principal may use database,
-// a graph the statement selects: each database AccessDatabases lists.
-func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, database string) error {
+// a graph the statement selects: each database AccessDatabases lists, with
+// the real statement's requirements through the same decision as execution.
+func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, database, query string) error {
 	if _, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization); !ok {
 		return nil
 	}
@@ -482,7 +476,7 @@ func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, databas
 	}
 	databases, listErr := AccessDatabases(manager, database)
 	for _, selected := range databases {
-		if err := authorizeDatabaseSelection(ctx, selected); err != nil {
+		if err := AuthorizeQuery(withExecutionDatabase(ctx, selected), query); err != nil {
 			return err
 		}
 	}

@@ -43,6 +43,49 @@ func TestSystemShowTailError(t *testing.T) {
 	}
 }
 
+func TestSystemShowTailThroughExecutor(t *testing.T) {
+	ctx := context.Background()
+	for _, route := range []struct{ database, prefix string }{
+		{"system", ""},
+		{"nornic", "USE system "},
+		{"nornic", ":USE system\n"},
+	} {
+		t.Run(route.database+"/"+route.prefix, func(t *testing.T) {
+			exec, stores := nestedUseRouterExecutor(t, route.database)
+			const marker = "system-show-tail-private-value"
+			_, err := stores["system"].CreateNode(&storage.Node{
+				ID: "show-tail-user", Labels: []string{"_User"},
+				Properties: map[string]interface{}{"username": "show-tail-user", "password_hash": marker},
+			})
+			require.NoError(t, err)
+			for _, statement := range []string{
+				"SHOW PROCEDURES YIELD name RETURN name, COUNT { (u:_User) } AS c LIMIT 1",
+				"SHOW PROCEDURES YIELD name RETURN name, COLLECT { MATCH (u:_User) RETURN u.password_hash } AS hashes LIMIT 1",
+				"SHOW SETTINGS YIELD name RETURN name, [(u:_User)-->() | u.password_hash] AS hashes LIMIT 1",
+				"SHOW PROCEDURES YIELD name WITH name LIMIT 1 RETURN [(u:_User) | u.password_hash] AS hashes",
+				"SHOW SETTINGS YIELD name WITH name LIMIT 1 RETURN EXISTS { (u:_User) WHERE u.password_hash <> '' } AS e",
+				"SHOW FUNCTIONS YIELD name UNWIND [1] AS x RETURN x",
+				"SHOW PROCEDURES YIELD name CALL { RETURN 1 AS one } RETURN one",
+				"SHOW PROCEDURES YIELD name CREATE (:ShowTailWrite) RETURN name",
+			} {
+				result, err := exec.Execute(ctx, route.prefix+statement, nil)
+				require.Error(t, err, statement)
+				require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err), statement)
+				require.Nil(t, result, "a refused SHOW returns no graph data: %s", statement)
+			}
+			written, err := stores["system"].GetNodesByLabel("ShowTailWrite")
+			require.NoError(t, err)
+			require.Empty(t, written, "no continuation clause ran")
+			user, err := stores["system"].GetNode("show-tail-user")
+			require.NoError(t, err)
+			require.Equal(t, marker, user.Properties["password_hash"])
+			result, err := exec.Execute(ctx, route.prefix+"SHOW PROCEDURES YIELD name ORDER BY name LIMIT 1 RETURN name", nil)
+			require.NoError(t, err, "a legitimate SHOW tail still runs")
+			require.Len(t, result.Rows, 1)
+		})
+	}
+}
+
 // errorStatusCode is the Neo4j status code an error carries, or "".
 func errorStatusCode(err error) string {
 	var coded interface{ BoltErrorCode() string }
