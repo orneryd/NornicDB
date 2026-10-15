@@ -108,3 +108,39 @@ func TestTransactionRetainedSidecarRejectsUnavailableMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestTransactionRetainedSidecarMetadataStates(t *testing.T) {
+	for _, state := range []string{"absent", "deleted", "nil", "stale", "writer"} {
+		t.Run(state, func(t *testing.T) {
+			b := newSidecarTestBadger(t)
+			defer b.Close()
+			at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			n := sidecarTestNode(t, b, "states", map[string]any{"text": "source"}, at)
+			tx, err := b.BeginTransaction()
+			require.NoError(t, err)
+			defer tx.Rollback()
+			switch state {
+			case "deleted":
+				tx.bufferDelete(embeddingMetaKey(n.ID))
+			case "nil":
+				v, e := encodeValue(map[string]any(nil))
+				require.NoError(t, e)
+				tx.bufferSet(embeddingMetaKey(n.ID), v)
+			case "stale":
+				v, e := encodeValue(map[string]any{embeddingContentUpdatedAtKey: at.Add(-time.Second).Format(time.RFC3339Nano)})
+				require.NoError(t, e)
+				tx.bufferSet(embeddingMetaKey(n.ID), v)
+			case "writer":
+				tx.badgerTx.Discard()
+			}
+			meta, fresh, err := tx.retainedSidecarMetadataLocked(n)
+			if state == "writer" {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.False(t, fresh)
+			require.Nil(t, meta)
+		})
+	}
+}

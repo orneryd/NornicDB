@@ -2,8 +2,9 @@ package storage
 
 import (
 	"fmt"
-	"github.com/dgraph-io/badger/v4"
 	"time"
+
+	"github.com/dgraph-io/badger/v4"
 )
 
 // retainedSidecarMetadataLocked reads through the writer to enroll the metadata
