@@ -717,14 +717,11 @@ func TestEmbedWorkerFindNodeWithoutEmbedding(t *testing.T) {
 		err = engine.DeleteNode(storage.NodeID("to-delete"))
 		require.NoError(t, err)
 
-		// processNextBatch should skip the deleted node
-		// It will find the node from the index, but then check if it exists
-		// and skip it if it's been deleted
+		// DeleteNode already removed the pending marker, so this is a genuinely
+		// empty lookup rather than a candidate skipped during the claim.
 		didWork := worker.processNextBatch()
 
-		// Should return false (no work done) because node was deleted
-		// The node was found in the index but doesn't exist, so it's skipped
-		assert.False(t, didWork, "Should skip deleted node and return false")
+		assert.False(t, didWork, "an empty queue does no work")
 
 		// Verify node was not embedded (embedder should not have been called)
 		assert.Equal(t, 0, embedder.embedCount, "Should not embed deleted node")
@@ -2171,7 +2168,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 			trigger:  make(chan struct{}, 1),
 		}
 		didWork := ew.processNextBatch()
-		require.False(t, didWork)
+		require.True(t, didWork, "discarding a stale pending marker advances the drain")
 		require.Equal(t, []storage.NodeID{"missing"}, qe.marked)
 	})
 
@@ -2192,7 +2189,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		}
 
 		didWork := ew.processNextBatch()
-		require.False(t, didWork)
+		require.True(t, didWork, "discarding a stale pending marker advances the drain")
 		require.Equal(t, []storage.NodeID{"ghost"}, qe.marked)
 	})
 
@@ -2391,7 +2388,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		}
 
 		didWork := ew.processNextBatch()
-		require.False(t, didWork)
+		require.True(t, didWork, "discarding a deleted candidate advances the drain")
 		require.Equal(t, []storage.NodeID{"n3", "n3"}, qe.marked)
 	})
 
@@ -2423,7 +2420,7 @@ func TestEmbedQueueDebounceAndHelpers(t *testing.T) {
 		// claim): the worker marks it embedded and skips it. One mark comes
 		// from the claim itself, the other from the delete-skip.
 		didWork := ew.processNextBatch()
-		require.False(t, didWork)
+		require.True(t, didWork, "discarding a deleted candidate advances the drain")
 		require.Equal(t, []storage.NodeID{"n4", "n4"}, qe.marked)
 	})
 
