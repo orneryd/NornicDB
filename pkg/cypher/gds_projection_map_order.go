@@ -20,13 +20,12 @@ func gdsJavaStringHash(name string) uint32 {
 	return hash
 }
 
-// gdsNativeProjectionMapOrder adapts a Cypher literal's keys to the native
-// projection's Java argument map. Neo4j's LiteralMap evaluates a Scala map
+// gdsNativeProjectionMapOrder owns procedure argument map order, shared by
+// native projection and GDS error values. Neo4j's LiteralMap evaluates a Scala map
 // (insertion ordered up to four entries, then a hash trie), followed by
 // MapValueBuilder's Java map and the procedure argument map. These stages
 // matter when distinct names collide in the later RelationshipType map.
-// This adapter is specific to native projection; aggregation builds its
-// relationship map from rows instead of a Cypher projection map.
+// Aggregation builds its relationship map from rows instead of a Cypher map.
 func gdsNativeProjectionMapOrder(keys []string) []string {
 	if len(keys) < 2 {
 		return keys

@@ -30,9 +30,9 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 	if relationship {
 		switch typed := value.(type) {
 		case string:
-			return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("TEXT", "String("+strconv.Quote(typed)+")"), nil)
+			return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("TEXT", gdsJavaValueText(typed, true)), nil)
 		case bool:
-			return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("BOOLEAN", "Boolean('"+strconv.FormatBool(typed)+"')"), nil)
+			return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("BOOLEAN", gdsJavaValueText(typed, true)), nil)
 		}
 	}
 	switch typed := value.(type) {
@@ -52,7 +52,7 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 		} else if items, list := cypherListValue(value); list {
 			if len(items) == 0 {
 				if relationship {
-					return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("TEXT_ARRAY", "StringArray[]"), nil)
+					return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("TEXT_ARRAY", gdsJavaValueText([]string{}, true)), nil)
 				}
 				// Extension: native Neo4j stores untyped [] as StringArray
 				// and refuses it. NornicDB's storage erases array element
@@ -71,7 +71,7 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 						for j, element := range items {
 							texts[j], _ = element.(string)
 						}
-						return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("TEXT_ARRAY", "StringArray["+strings.Join(texts, ", ")+"]"), nil)
+						return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("TEXT_ARRAY", gdsJavaValueText(texts, true)), nil)
 					}
 					return nil, "", false, localizedError(localization.CypherGraphProceduresUnsupportedArrayType("StringArray"), nil)
 				}
@@ -111,7 +111,7 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 		return nil, "", false, localizedError(localization.CypherGraphProceduresDefaultPropertyType(expected, gdsJavaType(exact)), nil)
 	}
 	if relationship && strings.HasPrefix(kind, "List") {
-		return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("NUMBER_ARRAY", gdsJavaValueText(exact)), nil)
+		return nil, "", false, localizedError(localization.CypherGraphProceduresRelationshipValueType("NUMBER_ARRAY", gdsJavaValueText(exact, true)), nil)
 	}
 	if target == "" || target == kind {
 		return exact, kind, true, nil
@@ -144,13 +144,13 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 		integers := make([]int64, len(floats))
 		for i, number := range floats {
 			if !gdsLosslessLong(number) {
-				return nil, "", false, localizedError(localization.CypherGraphProceduresUnsafeLongArrayConversion(gdsJavaValueText(exact), gdsNumberText(number, 'f', 2)), nil)
+				return nil, "", false, localizedError(localization.CypherGraphProceduresUnsafeLongArrayConversion(gdsJavaValueText(exact, true), gdsNumberText(number, 'f', 2)), nil)
 			}
 			integers[i] = int64(number)
 		}
 		return integers, target, true, nil
 	}
-	return nil, "", false, localizedError(localization.CypherGraphProceduresUnsafeConversion(gdsJavaValueText(exact), gdsJavaTypeTarget(target)), nil)
+	return nil, "", false, localizedError(localization.CypherGraphProceduresUnsafeConversion(gdsJavaValueText(exact, true), gdsJavaTypeTarget(target)), nil)
 }
 
 // gdsLongToDouble owns Long-to-Double conversion. GDS 2.13.12 import
