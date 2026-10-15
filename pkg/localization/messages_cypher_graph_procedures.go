@@ -1,7 +1,6 @@
 package localization
 
 const (
-	MessageCypherGraphProceduresUnsafeDoubleConversion         MessageID = "cyphergraphprocedures.unsafe_double_conversion"
 	MessageCypherGraphProceduresStreamNodesFailed              MessageID = "cyphergraphprocedures.stream_nodes_failed"
 	MessageCypherGraphProceduresStreamEdgesFailed              MessageID = "cyphergraphprocedures.stream_edges_failed"
 	MessageCypherGraphProceduresBuildGraphFailed               MessageID = "cyphergraphprocedures.build_graph_failed"
@@ -32,12 +31,13 @@ const (
 	MessageCypherGraphProceduresNodePropertyNotInGraph         MessageID = "cyphergraphprocedures.node_property_not_in_graph"
 	MessageCypherGraphProceduresStarPropertyRequiresCount      MessageID = "cyphergraphprocedures.star_property_requires_count"
 	MessageCypherGraphProceduresJobIDType                      MessageID = "cyphergraphprocedures.job_id_type"
-	MessageCypherGraphProceduresUnsupportedGDSValue            MessageID = "cyphergraphprocedures.unsupported_gds_value"
 	MessageCypherGraphProceduresRelationshipEndNotProjected    MessageID = "cyphergraphprocedures.relationship_end_not_projected"
 	MessageCypherGraphProceduresUnsupportedArrayType           MessageID = "cyphergraphprocedures.unsupported_array_type"
 	MessageCypherGraphProceduresUnsafeConversion               MessageID = "cyphergraphprocedures.unsafe_conversion"
 	MessageCypherGraphProceduresArrayLengthsDiffer             MessageID = "cyphergraphprocedures.array_lengths_differ"
 	MessageCypherGraphProceduresUnsafeLongConversion           MessageID = "cyphergraphprocedures.unsafe_long_conversion"
+	MessageCypherGraphProceduresUnsafeDoubleConversion         MessageID = "cyphergraphprocedures.unsafe_double_conversion"
+	MessageCypherGraphProceduresProjectDistinct                MessageID = "cyphergraphprocedures.project_distinct"
 	MessageCypherGraphProceduresUnsafeLongArrayConversion      MessageID = "cyphergraphprocedures.unsafe_long_array_conversion"
 	MessageCypherGraphProceduresNodeNotNodeOrInteger           MessageID = "cyphergraphprocedures.node_not_node_or_integer"
 	MessageCypherGraphProceduresConfigKeyMissingPair           MessageID = "cyphergraphprocedures.config_key_missing_pair"
@@ -47,6 +47,7 @@ const (
 	MessageCypherGraphProceduresUnsupportedConcurrency         MessageID = "cyphergraphprocedures.unsupported_concurrency"
 	MessageCypherGraphProceduresConfigParametersMerged         MessageID = "cyphergraphprocedures.config_parameters_merged"
 	MessageCypherGraphProceduresGraphExistsAggregation         MessageID = "cyphergraphprocedures.graph_exists_aggregation"
+	MessageCypherGraphProceduresUnsupportedGDSValue            MessageID = "cyphergraphprocedures.unsupported_gds_value"
 	MessageCypherGraphProceduresRelationshipTypeEmpty          MessageID = "cyphergraphprocedures.relationship_type_empty"
 	MessageCypherGraphProceduresInverseTypesNotProjected       MessageID = "cyphergraphprocedures.inverse_types_not_projected"
 	MessageCypherGraphProceduresConcurrencyBelowOne            MessageID = "cyphergraphprocedures.concurrency_below_one"
@@ -260,6 +261,16 @@ func CypherGraphProceduresUnsafeLongConversion(value string) Message {
 	return Message{ID: MessageCypherGraphProceduresUnsafeLongConversion, Fallback: "Cannot safely convert " + value + " into an long value", Data: map[string]any{"Value": value}}
 }
 
+// CypherGraphProceduresUnsafeDoubleConversion reports a Long outside GDS's import bound.
+func CypherGraphProceduresUnsafeDoubleConversion(value string) Message {
+	return Message{ID: MessageCypherGraphProceduresUnsafeDoubleConversion, Fallback: "Cannot safely convert " + value + " into an double value", Data: map[string]any{"Value": value}}
+}
+
+// CypherGraphProceduresProjectDistinct reports DISTINCT on the projection function.
+func CypherGraphProceduresProjectDistinct() Message {
+	return Message{ID: MessageCypherGraphProceduresProjectDistinct, Fallback: "Invalid use of DISTINCT with function 'project'"}
+}
+
 // CypherGraphProceduresUnsafeLongArrayConversion is GDS's message for a list with a fraction given to a List of Integer property.
 func CypherGraphProceduresUnsafeLongArrayConversion(value, fraction string) Message {
 	return Message{ID: MessageCypherGraphProceduresUnsafeLongArrayConversion, Fallback: "Cannot safely convert " + value + " into a Long Array. Cannot safely convert " + fraction + " into an long value", Data: map[string]any{"Fraction": fraction, "Value": value}}
@@ -344,11 +355,6 @@ func CypherGraphProceduresConcurrencyBelowOne(value string) Message {
 // any non-null value from which GDS can infer its storage type.
 func CypherGraphProceduresPropertyTypeUnknown() Message {
 	return Message{ID: MessageCypherGraphProceduresPropertyTypeUnknown, Fallback: "Cannot infer type of property"}
-}
-
-// CypherGraphProceduresUnsafeDoubleConversion reports a Long outside GDS import bounds.
-func CypherGraphProceduresUnsafeDoubleConversion(value string) Message {
-	return Message{ID: MessageCypherGraphProceduresUnsafeDoubleConversion, Fallback: "Cannot safely convert " + value + " into an double value", Data: map[string]any{"Value": value}}
 }
 
 // CypherGraphProceduresUpperDegreeBelowDegree is GDS's message for an upperDegreeCutoff below degreeCutoff.

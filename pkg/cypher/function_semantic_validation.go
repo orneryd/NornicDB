@@ -3,6 +3,8 @@ package cypher
 import (
 	"fmt"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // validateKnownFunctions is the unknown-function check: every function a
@@ -17,7 +19,14 @@ func validateKnownFunctions(expression string) error {
 		(isSchemaCommandStatement(expression) || isCreateSchemaOrAdministrationCommand(expression)) {
 		return nil
 	}
-	if err := forEachFunctionCall(expression, func(name, normalized string) error {
+	var distinctError error
+	if err := forEachSemanticCall(expression, func(name, normalized string, arguments int, procedure bool) error {
+		if procedure {
+			return nil
+		}
+		if distinctError == nil {
+			distinctError = gdsProjectDistinctCallError(expression, normalized, arguments)
+		}
 		if _, known := builtInCypherFunctions[normalized]; known {
 			return nil
 		}
@@ -36,24 +45,25 @@ func validateKnownFunctions(expression string) error {
 	}); err != nil {
 		return err
 	}
-	return gdsProjectDistinctError(expression)
+	return distinctError
 }
 
 // gdsProjectDistinctError refuses DISTINCT in gds.graph.project(...), as
 // Neo4j refuses it for that aggregating function.
 func gdsProjectDistinctError(text string) error {
-	const name = "gds.graph.project"
-	for from := 0; ; {
-		at := indexASCIIFold(text[from:], name)
-		if at < 0 {
-			return nil
+	return forEachSemanticCall(text, func(_, normalized string, arguments int, procedure bool) error {
+		if !procedure {
+			return gdsProjectDistinctCallError(text, normalized, arguments)
 		}
-		rest := strings.TrimLeft(text[from+at+len(name):], " \t\r\n")
-		if strings.HasPrefix(rest, "(") && startsWithKeywordFold(strings.TrimLeft(rest[1:], " \t\r\n"), "DISTINCT") {
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidUseOfDistinct", "Invalid use of DISTINCT with function 'project'")
-		}
-		from += at + len(name)
+		return nil
+	})
+}
+
+func gdsProjectDistinctCallError(text, normalized string, arguments int) error {
+	if normalized == "gds.graph.project" && startsWithKeywordFold(text[skipSemanticTrivia(text, arguments):], "DISTINCT") {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidUseOfDistinct", localization.CypherGraphProceduresProjectDistinct())
 	}
+	return nil
 }
 
 // internalFunctionCallError rejects a statement, as its client sent it, that
@@ -101,6 +111,18 @@ func unknownFunctionError(name string) error {
 // backticks. Strings and comments, a procedure a CALL names, the graph a USE
 // names and the keywords that can stand before a parenthesis are not calls.
 func forEachFunctionCall(text string, visit func(name, normalized string) error) error {
+	return forEachSemanticCall(text, func(name, normalized string, _ int, procedure bool) error {
+		if procedure {
+			return nil
+		}
+		return visit(name, normalized)
+	})
+}
+
+// forEachSemanticCall is the token-aware owner for function and procedure
+// detection. arguments is the position after the opening parenthesis (or the
+// end of a procedure name when its optional parentheses are absent).
+func forEachSemanticCall(text string, visit func(name, normalized string, arguments int, procedure bool) error) error {
 	expression := text
 	for index := 0; index < len(expression); {
 		if expression[index] == '\'' || expression[index] == '"' {
@@ -116,28 +138,40 @@ func forEachFunctionCall(text string, visit func(name, normalized string) error)
 			index++
 			continue
 		}
-		if expression[index] != '`' && (strings.EqualFold(name, "CALL") || strings.EqualFold(name, "USE")) {
-			index = skipCalledName(expression, next)
-			continue
+		procedure := expression[index] != '`' && strings.EqualFold(name, "CALL")
+		if procedure || expression[index] != '`' && strings.EqualFold(name, "USE") {
+			start := skipSemanticTrivia(expression, next)
+			called, end, named := scanIdentifierToken(expression, start)
+			if !named {
+				index = next
+				continue
+			}
+			name, next = called, end
+			if !procedure {
+				_, index = dottedNameParts(expression, next, true)
+				continue
+			}
 		}
-		parts, cursor := dottedNameParts(expression, next, false)
+		parts, cursor := dottedNameParts(expression, next, true)
 		name += parts
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
-			cursor++
-		}
-		if cursor >= len(expression) || expression[cursor] != '(' {
+		cursor = skipSemanticTrivia(expression, cursor)
+		parenthesis := cursor < len(expression) && expression[cursor] == '('
+		if !parenthesis && !procedure {
 			index = next
 			continue
 		}
-		index = cursor + 1
+		index = cursor
+		if parenthesis {
+			index++
+		}
 		normalized := lowerASCII(normalizeProjectionColumnName(name))
 		// Clause and predicate keywords can legally be followed by a parenthesized
 		// pattern/expression (MATCH (n), STARTS WITH (...)). They are syntax, not
 		// function invocations.
-		if isNonFunctionSemanticKeyword(normalized) {
+		if !procedure && isNonFunctionSemanticKeyword(normalized) {
 			continue
 		}
-		if err := visit(name, normalized); err != nil {
+		if err := visit(name, normalized, index, procedure); err != nil {
 			return err
 		}
 	}
@@ -153,16 +187,16 @@ func isNonFunctionSemanticKeyword(name string) bool {
 	}
 }
 
-// skipCalledName returns where the name after CALL or USE ends: a procedure
-// or graph name, dotted, which is not a function call. Anything else after
-// the keyword (a subquery, its imports) is scanned on.
-func skipCalledName(expression string, start int) int {
-	_, end, ok := scanIdentifierToken(expression, skipSpaces(expression, start))
-	if !ok {
-		return start
+// skipSemanticTrivia skips whitespace and comments between call tokens.
+func skipSemanticTrivia(text string, index int) int {
+	for {
+		index = skipSpaces(text, index)
+		if end := queryCommentEnd(text, index); end >= 0 {
+			index = end
+			continue
+		}
+		return index
 	}
-	_, end = dottedNameParts(expression, end, true)
-	return end
 }
 
 // dottedNameParts returns the dotted parts (.b.c) following a name that ends
@@ -173,7 +207,7 @@ func skipCalledName(expression string, start int) int {
 func dottedNameParts(expression string, end int, spaced bool) (string, int) {
 	skip := func(index int) int {
 		if spaced {
-			return skipSpaces(expression, index)
+			return skipSemanticTrivia(expression, index)
 		}
 		return index
 	}

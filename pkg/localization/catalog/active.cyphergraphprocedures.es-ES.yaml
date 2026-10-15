@@ -91,9 +91,6 @@
 - id: cyphergraphprocedures.job_id_type
   description: GDS's message for a jobId that isn't a string. Type is untranslated.
   other: 'Se esperaba JobId o String. Se recibió {{.Type}}.'
-- id: cyphergraphprocedures.unsupported_gds_value
-  description: Mensaje de GDS (unsupported gds value).
-  other: 'Conversión no compatible a un valor de GDS desde un valor de Neo4j de tipo `{{.Type}}`.'
 - id: cyphergraphprocedures.relationship_end_not_projected
   description: Mensaje de GDS (relationship end not projected).
   other: 'No se pudo cargar una relación porque su nodo {{.Side}} con id {{.Node}} no forma parte de la consulta o proyección de nodos. Para ignorar la relación, establezca el parámetro de configuración `validateRelationships` en false.'
@@ -121,9 +118,6 @@
 - id: cyphergraphprocedures.default_property_type
   description: GDS incompatible default property value. Expected and Actual are untranslated.
   other: 'Se esperaba que el valor predeterminado fuera de tipo `{{.Expected}}`, pero es de tipo `{{.Actual}}`.'
-- id: cyphergraphprocedures.unsafe_double_conversion
-  description: Un Long supera el límite de importación de Double.
-  other: 'No se puede convertir de forma segura {{.Value}} en un valor double'
 - id: cyphergraphprocedures.node_not_node_or_integer
   description: Mensaje de GDS (node not node or integer).
   other: 'El nodo tiene que ser un NODE o un INTEGER, pero se recibió {{.Type}}'
@@ -148,6 +142,9 @@
 - id: cyphergraphprocedures.graph_exists_aggregation
   description: Mensaje de GDS (graph exists aggregation).
   other: 'El grafo {{.Graph}} ya existe'
+- id: cyphergraphprocedures.unsupported_gds_value
+  description: Mensaje de GDS (unsupported gds value).
+  other: 'Conversión no compatible a un valor de GDS desde un valor de Neo4j de tipo `{{.Type}}`.'
 - id: cyphergraphprocedures.relationship_type_empty
   description: Mensaje de GDS (relationship type empty).
   other: 'El tipo de relación no puede estar vacío'
@@ -182,6 +179,9 @@
 - id: cyphergraphprocedures.invalid_list_types
   description: Mensaje de GDS (invalid list types).
   other: 'Tipos no válidos en la lista. Se esperaban Longs o Nodes, pero se encontró {{.Types}}'
+- id: cyphergraphprocedures.unsafe_double_conversion
+  description: Un Long supera el límite de importación de Double.
+  other: 'No se puede convertir de forma segura {{.Value}} en un valor double'
 - id: cyphergraphprocedures.project_distinct
   description: DISTINCT en la función de proyección.
   other: "Uso no válido de DISTINCT con la función 'project'"

@@ -50,7 +50,7 @@ func (f *gdsNodeFilter) admits(proj *GraphProjection, id string) bool {
 		return true
 	}
 	if f.label != "" {
-		return containsString(proj.NodeLabels[id], f.label)
+		return proj.matchesNodeLabels(id, []string{f.label})
 	}
 	return f.nodes[id]
 }
