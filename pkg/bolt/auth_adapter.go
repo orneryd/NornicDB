@@ -91,6 +91,8 @@ func NewAuthenticatorAdapter(authenticator *auth.Authenticator) *AuthenticatorAd
 		auth:           authenticator,
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 	}
+	// A changed password stops working at once (auth.BasicAuthCache).
+	authenticator.OnPasswordChange(adapter.basicAuthCache.ForgetUser)
 	adapter.allowAnonymous.Store(false)
 	return adapter
 }
@@ -108,6 +110,8 @@ func NewAuthenticatorAdapterWithAnonymous(authenticator *auth.Authenticator) *Au
 		auth:           authenticator,
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 	}
+	// A changed password stops working at once (auth.BasicAuthCache).
+	authenticator.OnPasswordChange(adapter.basicAuthCache.ForgetUser)
 	adapter.allowAnonymous.Store(true)
 	return adapter
 }

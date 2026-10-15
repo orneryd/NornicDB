@@ -404,7 +404,7 @@ Passwords are hashed using **bcrypt** with automatic salt generation. Plain-text
 
 Tokens can be revoked (logout) by adding them to a server-side blacklist. Revoked tokens are rejected on subsequent requests.
 
-A principal's roles are read from the user store on every request, by one owner: for a Bearer token and for Basic credentials (whose password check the server caches for 30 seconds, but not the roles) on HTTP and gRPC, and for a Bolt session before every statement and transaction. A role removed from a user, or deleted (which removes it from every user), stops applying at once, as Neo4j applies role changes at once. A deleted or disabled account, or another account created later under the same name, authorizes nothing: its token is refused (HTTP 401) and its open Bolt session runs no statement. A cluster node's token (from `/api/v1/auth/cluster-token`) is not a user account and keeps its own role.
+A principal's roles are read from the user store on every request, by one owner: for a Bearer token and for Basic credentials (whose password check the server caches for 30 seconds, but not the roles; a changed password stops working at once, on HTTP, Bolt and gRPC) on HTTP and gRPC, and for a Bolt session before every statement and transaction. A role removed from a user, or deleted (which removes it from every user), stops applying at once, as Neo4j applies role changes at once. A deleted or disabled account, or another account created later under the same name, authorizes nothing: its token is refused (HTTP 401) and its open Bolt session runs no statement. A cluster node's token (from `/api/v1/auth/cluster-token`) is not a user account and keeps its own role.
 
 ### Role Records
 

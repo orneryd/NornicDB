@@ -17,7 +17,9 @@ const (
 // BasicAuthCache caches successful Basic authentication results to avoid
 // repeated bcrypt work on high-volume request paths. It spares the password
 // check only: every caller passes a cached result through
-// Authenticator.CurrentClaims, so the roles are the account's current ones.
+// Authenticator.CurrentClaims, so the roles are the account's current ones,
+// and every owner registers ForgetUser with Authenticator.OnPasswordChange,
+// so a changed password stops working at once.
 type BasicAuthCache struct {
 	mu         sync.Mutex
 	entries    map[[32]byte]basicAuthCacheEntry
@@ -72,6 +74,22 @@ func (c *BasicAuthCache) Set(username, password string, claims *JWTClaims) {
 		return
 	}
 	c.set(basicAuthCacheKeyFromCredentials(username, password), claims)
+}
+
+// ForgetUser drops every cached result of username, so a password that was
+// just changed authenticates no more (Authenticator.OnPasswordChange calls
+// it): the next request with it is checked in full.
+func (c *BasicAuthCache) ForgetUser(username string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key, entry := range c.entries {
+		if entry.claims != nil && entry.claims.Username == username {
+			delete(c.entries, key)
+		}
+	}
 }
 
 func basicAuthCacheKeyFromHeader(authHeader string) [32]byte {

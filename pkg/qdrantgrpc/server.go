@@ -309,6 +309,8 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 		register:       nil,
 	}
+	// A changed password stops working at once (auth.BasicAuthCache).
+	authenticator.OnPasswordChange(srv.basicAuthCache.ForgetUser)
 	if config != nil {
 		srv.databaseAccessModeResolver = config.DatabaseAccessModeResolver
 		srv.resolvedAccessResolver = config.ResolvedAccessResolver
