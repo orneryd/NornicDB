@@ -48,8 +48,12 @@ func TestIssueExpectedRows(t *testing.T) {
 		{"row multiplicity", "UNWIND [1,1] AS v RETURN v", `,"expected_rows":[[1],[1]]`, rows([]any{1}), rows([]any{1}), true},
 		{"large integer exact", "RETURN 9007199254740993 AS v", `,"expected_rows":[[9007199254740993]]`, rows([]any{int64(9007199254740993)}), rows([]any{int64(9007199254740993)}), false},
 		{"large integer differs by one", "RETURN 9007199254740993 AS v", `,"expected_rows":[[9007199254740993]]`, rows([]any{int64(9007199254740992)}), rows([]any{int64(9007199254740992)}), true},
-		{"fraction and exponent", "RETURN 1000.5 AS v", `,"expected_rows":[[1.0005e3]]`, rows([]any{1000.5}), rows([]any{1000.5}), false},
+		{"fraction", "RETURN 1000.5 AS v", `,"expected_rows":[[1000.5]]`, rows([]any{1000.5}), rows([]any{1000.5}), false},
+		{"HTTP float token", "RETURN 1.0 AS v", `,"expected_rows":[[1.0]]`, rows([]any{json.Number("1.0")}), rows([]any{json.Number("1.0")}), false},
+		{"HTTP integer and float differ", "RETURN 1 AS v", `,"expected_rows":[[1]]`, rows([]any{json.Number("1.0")}), rows([]any{json.Number("1.0")}), true},
 		{"short row with returned sort key", "RETURN 1 AS v ORDER BY v", `,"expected_rows":[[]]`, rows([]any{1}), rows([]any{1}), true},
+		{"null expected row", "RETURN 1 AS v", `,"expected_rows":[null]`, rows([]any{1}), rows([]any{1}), true},
+		{"short actual row", "RETURN 1 AS v ORDER BY v", `,"expected_rows":[[1]]`, rows([]any{}), rows([]any{}), true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			issues := loadExpectedRowsCase(t, test.query, test.annotation)
@@ -68,6 +72,62 @@ func TestIssueExpectedRows(t *testing.T) {
 				require.True(t, results[0].Match)
 			}
 		})
+	}
+}
+
+type expectedValueServer struct {
+	*fakeServer
+	normalize func(any) any
+}
+
+func (server expectedValueServer) NormalizeExpectedValue(value any) any {
+	return server.normalize(value)
+}
+
+func TestIssueExpectedRowsUsesEachRouteNormalizer(t *testing.T) {
+	query := "RETURN 9007199254740993 AS v"
+	issues := loadExpectedRowsCase(t, query, `,"expected_rows":[[9007199254740993]]`)
+	before, err := json.Marshal(issues)
+	require.NoError(t, err)
+	calls := 0
+	newServer := func() Executor {
+		return expectedValueServer{
+			fakeServer: &fakeServer{answers: map[string]Outcome{
+				query: rows([]any{map[string]string{"Integer": "9007199254740993"}}),
+			}},
+			normalize: func(value any) any {
+				calls++
+				return map[string]string{"Integer": value.(json.Number).String()}
+			},
+		}
+	}
+	pair := &Pair{Neo4j: newServer(), NornicDB: newServer()}
+	results, err := RunIssues(context.Background(), issues, pair, Options{StatementTimeout: time.Second})
+	require.NoError(t, err)
+	require.Equal(t, 2, calls)
+	require.True(t, results[0].Match)
+	after, err := json.Marshal(issues)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "route conversion must preserve the reusable oracle")
+}
+
+func TestIssueExpectedRowsCorpusValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "issues.json")
+	valid := `[{"issue":12,"statements":[{"id":"empty","query":"RETURN 1","expected_rows":[]}]}]`
+	for _, suffix := range []string{"", " \t\r\n", " {}", " garbage"} {
+		require.NoError(t, os.WriteFile(path, []byte(valid+suffix), 0o644))
+		_, err := LoadIssues(path)
+		if suffix == " {}" || suffix == " garbage" {
+			require.ErrorContains(t, err, "decode")
+		} else {
+			require.NoError(t, err)
+		}
+	}
+	for _, invalid := range []string{`true`, `{}`, `[[1],2]`} {
+		content := fmt.Sprintf(`[{"issue":12,"statements":[{"id":"bad","query":"RETURN 1","expected_rows":%s}]}]`, invalid)
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+		_, err := LoadIssues(path)
+		require.ErrorContains(t, err, "decode")
 	}
 }
 

@@ -230,7 +230,8 @@ func RunSweep(ctx context.Context, corpus SweepCorpus, pair *Pair, options Optio
 
 // RunIssues compares every issue's statements on pair, issue by issue, each
 // on an empty graph and in the issue's order. After a statement that writes,
-// the graph state is compared too.
+// the graph state is compared too. Explicit expected_rows are independent
+// assertions on both servers; a violation stops the run with a harness error.
 func RunIssues(ctx context.Context, issues []IssueCase, pair *Pair, options Options) ([]Result, error) {
 	var results []Result
 	for _, issue := range issues {
@@ -239,6 +240,9 @@ func RunIssues(ctx context.Context, issues []IssueCase, pair *Pair, options Opti
 		}
 		for _, statement := range issue.Statements {
 			reference, actual := pair.execute(ctx, options, statement.Query)
+			if err := pair.assertExpectedRows(issue.Issue, statement, reference, actual); err != nil {
+				return nil, err
+			}
 			results = append(results, pair.compare(ctx, options, statement.ID, issue.Issue, statement.Query, reference, actual))
 			if Writes(statement.Query) {
 				results = append(results, pair.graphState(ctx, options, statement.ID, issue.Issue, statement.Query))

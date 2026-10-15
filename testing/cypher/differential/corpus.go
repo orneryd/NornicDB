@@ -18,6 +18,7 @@
 package differential
 
 import (
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"errors"
@@ -57,6 +58,11 @@ type IssueCase struct {
 type IssueStatement struct {
 	ID    string `json:"id"`
 	Query string `json:"query"`
+	// ExpectedRows, when present, requires successful rows on both servers,
+	// independently of their agreement and the known-mismatch ratchet. An empty
+	// array asserts zero rows; omission or null adds no assertion. Values use
+	// JSON types; numbers retain their exact text for route-specific conversion.
+	ExpectedRows *[][]any `json:"expected_rows,omitempty"`
 }
 
 // SweepIssue is the issue that tracks the sweep's differences.
@@ -94,8 +100,14 @@ func LoadIssues(path string) ([]IssueCase, error) {
 		return nil, err
 	}
 	var corpus []IssueCase
-	if err := json.Unmarshal(content, &corpus); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.UseNumber()
+	if err := decoder.Decode(&corpus); err != nil {
 		return nil, fmt.Errorf("decode %s: %w", path, err)
+	}
+	// Keep json.Unmarshal's rejection of trailing JSON values or junk.
+	if decoder.InputOffset() != int64(len(bytes.TrimRight(content, " \t\r\n"))) {
+		return nil, fmt.Errorf("decode %s: trailing content after issue corpus", path)
 	}
 	if len(corpus) == 0 {
 		return nil, fmt.Errorf("%s has no issues", path)
