@@ -19,6 +19,11 @@ func validateKnownFunctions(expression string) error {
 	}
 	return forEachFunctionCall(expression, func(name, normalized string) error {
 		if _, known := builtInCypherFunctions[normalized]; known {
+			if nativeAPOCCaseMismatch(name) {
+				if _, found := pluginFunctionHandler(name); !found {
+					return unknownFunctionError(name)
+				}
+			}
 			return nil
 		}
 		// graph.byName / graph.byElementId are catalog names; outside USE

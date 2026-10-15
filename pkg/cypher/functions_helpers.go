@@ -32,6 +32,9 @@ func pluginFunctionHandler(name string) (interface{}, bool) {
 // built-in of the same name; when its handler can't take a call, the
 // built-in answers instead: handled is false (#1163).
 func callPluginFunction(ctx context.Context, name string, handler interface{}, args []interface{}) (value interface{}, handled bool, err error) {
+	if nativeAPOCForeignGraphHandler(name, handler) {
+		return nil, false, nil
+	}
 	result, err := callPluginHandlerContext(ctx, handler, args)
 	if errors.Is(err, errUnsupportedPluginSignature) {
 		if _, builtIn := builtInCypherFunctions[lowerASCII(normalizeProjectionColumnName(strings.TrimSpace(name)))]; builtIn {
@@ -48,13 +51,13 @@ func callPluginFunction(ctx context.Context, name string, handler interface{}, a
 // Returns the result and true if a plugin handled the call, or nil and false
 // if no plugin has the function (or a built-in answers it instead). A call
 // the plugin fails is the statement's error, as in the row evaluator.
-func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
+func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
 	funcName, argsStr, valid := parseFunctionCallWS(expr)
 	if !valid {
 		return nil, false
 	}
 	handler, found := pluginFunctionHandler(funcName)
-	if !found {
+	if !found && !isNativeAPOCFunction(funcName) {
 		return nil, false
 	}
 	args := e.splitFunctionArgs(argsStr)
@@ -62,10 +65,21 @@ func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string
 	// Evaluate each argument
 	var evalArgs []interface{}
 	for _, arg := range args {
-		evalArgs = append(evalArgs, e.evaluateExpressionWithContext(ctx, arg, nodes, rels))
+		evalArgs = append(evalArgs, e.evaluateExpressionWithContextFull(ctx, arg, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+		if getExpressionFailure(ctx) != nil {
+			return nil, true
+		}
 	}
 
-	result, handled, err := callPluginFunction(ctx, funcName, handler, evalArgs)
+	var result interface{}
+	var handled bool
+	var err error
+	if found {
+		result, handled, err = callPluginFunction(ctx, funcName, handler, evalArgs)
+	}
+	if !handled && err == nil {
+		result, handled, err = e.evaluateNativeAPOCFunction(ctx, funcName, evalArgs)
+	}
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil, true

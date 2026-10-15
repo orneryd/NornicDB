@@ -7,6 +7,47 @@ NornicDB has `apoc.*` functions and procedures from two sources:
 
 Some of these names aren't APOC names at all: NornicDB adds its own under the `apoc.*` and `gds.*` namespaces. They are listed under [NornicDB extensions](#nornicdb-extensions); a query that uses them won't run on Neo4j with APOC or GDS.
 
+## Native graph and temporal values
+
+The native executor implements `apoc.node.id`, `apoc.node.labels`,
+`apoc.node.degree`, `apoc.rel.id`, `apoc.rel.type`, `apoc.rel.startNode`,
+`apoc.rel.endNode`, `apoc.nodes.connected`, `apoc.path.elements`,
+`apoc.path.slice`, `apoc.path.combine`, and `apoc.temporal.format` for query
+values. These functions are available without the optional plugin. Compatible
+custom plugin handlers keep precedence; standalone APOC Go graph structs use a
+separate store and cannot replace the current query's graph reader.
+
+```cypher
+MATCH (a:Person {name: 'Alice'})
+RETURN apoc.node.labels(a), apoc.node.degree(a, 'KNOWS>');
+
+MATCH p=(:Person {name: 'Alice'})-[:KNOWS*1..3]->()
+RETURN apoc.path.elements(apoc.path.slice(p, 0, 1));
+
+RETURN apoc.temporal.format(datetime('2020-01-02T03:04:05Z'), 'yyyy-MM-dd');
+```
+
+Degree and connectivity read the current database and transaction. Relationship
+filters use APOC direction notation such as `KNOWS>`, `<KNOWS`, and `KNOWS|LIKES`.
+An undirected degree counts a self-relationship twice. Path slicing takes an
+offset and a relationship count, with defaults `0` and `-1` (remaining path).
+Offsets past the end return the terminal node's zero-hop path. Combining paths
+requires the first path's end to equal the second path's start; genuine remote
+path carriers retain their source identities.
+
+Native `apoc.node.id` and `apoc.rel.id` preserve NornicDB's accepted string ID
+contract; they do not implement Neo4j's numeric internal IDs. Remote values use
+the existing remote identity owner. Temporal formatting uses Java-style patterns
+and APOC's null/error and scalar text rules, rather than the standalone Go
+helper's `time.Format` layout. APOC duration fraction formatting is intentionally
+different from Cypher `format(duration, pattern)` and follows the pinned APOC
+5.26.30 behavior.
+
+`apoc.nodes.isDense` is **not implemented** for native graph values. Neo4j's
+answer reflects retained storage representation, including after relationships
+are deleted; a current degree threshold would give incorrect results. This and
+missing procedure capabilities remain tracked in [#1318](https://github.com/orneryd/NornicDB/issues/1318).
+
 ## Plugin handler bindings
 
 Both expression evaluators use the same checked invocation owner. Common Go

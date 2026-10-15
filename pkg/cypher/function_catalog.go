@@ -25,7 +25,7 @@ type cypherFunctionSpec struct {
 }
 
 // cypherFunctionCatalog is the built-in function table.
-var cypherFunctionCatalog = []cypherFunctionSpec{
+var cypherFunctionCatalog = append([]cypherFunctionSpec{
 	{name: "file", category: "Scalar", signature: "file() :: STRING", description: "Returns the absolute path of the file that LOAD CSV is using.", arguments: []ProcedureParam{}, listed: true, aggregating: false, isDeprecated: false},
 	{name: "linenumber", category: "Scalar", signature: "linenumber() :: INTEGER", description: "Returns the line number that LOAD CSV is currently using.", arguments: []ProcedureParam{}, listed: true, aggregating: false, isDeprecated: false},
 	{name: "graph.byName", category: "Graph", signature: "graph.byName(name :: STRING) :: GRAPH", description: "Returns the graph reference of the given name. It is only supported in the `USE` clause, on composite databases.", arguments: []ProcedureParam{{Name: "name", Type: "STRING", Description: "The name of the graph to be resolved."}}, listed: true, aggregating: false, isDeprecated: false},
@@ -353,7 +353,7 @@ var cypherFunctionCatalog = []cypherFunctionSpec{
 	// becomes (dynamicLabelTestFunction); not listed.
 	{name: dynamicLabelTestFunction},
 	{name: dynamicLabelPredicateFunction},
-}
+}, nativeAPOCFunctionCatalog()...)
 
 // builtInCypherFunctions is every catalog name, lower-cased, for the
 // unknown-function check.
