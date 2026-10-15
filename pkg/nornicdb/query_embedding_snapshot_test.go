@@ -62,6 +62,45 @@ func TestQueryEmbeddingSnapshotKeepsStartupAbsence(t *testing.T) {
 	require.ErrorContains(t, err, "embedding failed")
 }
 
+func TestQueryEmbeddingRequestContextKeepsProvider(t *testing.T) {
+	db := &DB{cypherExecutor: queryEmbeddingTestExecutor(t, nil)}
+	ctx := db.WithQueryEmbeddingSnapshot(context.Background())
+	ready := &snapshotQueryProvider{name: "ready", vector: []float32{1, 0}}
+	db.cypherExecutor.SetEmbedder(ready)
+	// Nested calls and timeout/cancellation wrappers must preserve captured nil.
+	nested, cancel := context.WithCancel(ctx)
+	defer cancel()
+	require.Same(t, nested, db.WithQueryEmbeddingSnapshot(nested))
+	vec, err := db.EmbedQuery(nested, "query")
+	require.NoError(t, err)
+	require.Nil(t, vec)
+	chunks, err := db.ChunkQuery(nested, "query")
+	require.NoError(t, err)
+	require.Equal(t, []string{"query"}, chunks)
+	_, vectors, err := db.EmbedQueryChunks(nested, "query")
+	require.NoError(t, err)
+	require.Nil(t, vectors)
+
+	ctx = db.WithQueryEmbeddingSnapshot(context.Background())
+	replacement := &snapshotQueryProvider{name: "replacement", vector: []float32{0, 1}}
+	db.cypherExecutor.SetEmbedder(replacement)
+	chunks, vectors, err = db.EmbedQueryChunks(db.WithQueryEmbeddingSnapshot(ctx), "query")
+	require.NoError(t, err)
+	require.Equal(t, []string{"ready", "ready"}, chunks)
+	require.Equal(t, [][]float32{{1, 0}, {1, 0}}, vectors)
+	vec, err = db.EmbedQuery(context.Background(), "query")
+	require.NoError(t, err)
+	require.Equal(t, replacement.vector, vec)
+	// A different DB cannot consume this DB's request binding.
+	other := &DB{cypherExecutor: queryEmbeddingTestExecutor(t, replacement)}
+	vec, err = other.EmbedQuery(ctx, "query")
+	require.NoError(t, err)
+	require.Equal(t, replacement.vector, vec)
+	vec, err = other.EmbedQuery(other.WithQueryEmbeddingSnapshot(ctx), "query")
+	require.NoError(t, err)
+	require.Equal(t, replacement.vector, vec)
+}
+
 func TestQueryEmbeddingSnapshotResolvesDatabaseOnce(t *testing.T) {
 	for _, mode := range []string{"default", "override", "resolver error", "nil config", "factory error"} {
 		t.Run(mode, func(t *testing.T) {
