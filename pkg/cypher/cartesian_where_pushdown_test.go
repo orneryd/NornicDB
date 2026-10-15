@@ -43,8 +43,7 @@ func BenchmarkCartesianMatchEqualityJoin(b *testing.B) {
 }
 
 func BenchmarkGh728CartesianPreparedMembership(b *testing.B) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "cartesian-membership-bench")
-	b.Cleanup(func() { require.NoError(b, store.Close()) })
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "cartesian-membership-bench")
 	for index := 0; index < 32; index++ {
 		key := "key-" + strconv.Itoa(index)
 		for _, side := range []string{"Left", "Right"} {
@@ -250,8 +249,7 @@ func BenchmarkGh713CartesianPartitionWorkers(b *testing.B) {
 func BenchmarkGh713CartesianParallel(b *testing.B) {
 	for _, size := range []int{32, 512} {
 		b.Run(strconv.Itoa(size), func(b *testing.B) {
-			store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "cartesian-parallel-bench")
-			b.Cleanup(func() { require.NoError(b, store.Close()) })
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "cartesian-parallel-bench")
 			for index := 0; index < size; index++ {
 				for _, side := range []string{"Left", "Right"} {
 					_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + strconv.Itoa(index)), Labels: []string{"Parallel" + side}, Properties: map[string]interface{}{"key": "group-" + strconv.Itoa(index%16), "value": int64(index)}})
@@ -347,8 +345,7 @@ func BenchmarkGh713CartesianAggregation(b *testing.B) {
 }
 
 func TestGh728CartesianMembershipParameterFreshness(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "cartesian-membership-test")
-	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "cartesian-membership-test")
 	for _, key := range []string{"key-1", "key-2"} {
 		for _, side := range []string{"Left", "Right"} {
 			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Prepared" + side}, Properties: map[string]interface{}{"key": key}})
@@ -465,8 +462,7 @@ func TestGh713SharedReturnBorrowedSourceOwnership(t *testing.T) {
 }
 
 func TestGh713CartesianSharedProjectionWindows(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "cartesian-projection-test")
-	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "cartesian-projection-test")
 	for _, key := range []string{"key-1", "key-2"} {
 		for _, side := range []string{"Left", "Right"} {
 			_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(side + key), Labels: []string{"Projection" + side}, Properties: map[string]interface{}{"key": key}})

@@ -98,8 +98,11 @@ func (e *StorageExecutor) sharedTrailingRowsForTest(ctx context.Context, query s
 }
 
 func sharedSetAssignmentForTest(entity interface{}, assignment unwindSimpleSetAssignment, values map[string]interface{}, _ func(string, map[string]interface{}) interface{}, _ *setWrites) (int, error) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "fixture")
-	defer store.Close()
+	// NamespacedEngine.Close does not close its shared owner. This fixture owns
+	// the MemoryEngine and must close it directly.
+	base := storage.NewMemoryEngine()
+	defer base.Close()
+	store := storage.NewNamespacedEngine(base, "fixture")
 	row := pipelineRow(maps.Clone(values))
 	var before map[string]interface{}
 	switch original := entity.(type) {
