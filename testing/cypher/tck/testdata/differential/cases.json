@@ -311,6 +311,38 @@
     "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE x + n.id] AS l"
   },
   {
+    "name": "comprehension reverse arithmetic predicate is type error",
+    "setup": [
+      "CREATE (:W1 {id:1})"
+    ],
+    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE n.id + x] AS l"
+  },
+  {
+    "name": "comprehension arithmetic empty match has no runtime error",
+    "query": "MATCH (n:MissingW1) RETURN [x IN [1,2] WHERE x + n.id] AS l"
+  },
+  {
+    "name": "where row dependent numeric addition filters instead of compile error",
+    "setup": [
+      "CREATE (:W1 {id:1})"
+    ],
+    "query": "MATCH (n:W1) WHERE n.id + 1 RETURN n.id"
+  },
+  {
+    "name": "comprehension known addition remains syntax error",
+    "setup": [
+      "CREATE (:W1 {id:1})"
+    ],
+    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE x + 1] AS l"
+  },
+  {
+    "name": "comprehension multiplication remains syntax error",
+    "setup": [
+      "CREATE (:W1 {id:1})"
+    ],
+    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE x * n.id] AS l"
+  },
+  {
     "name": "foreach trailing garbage rejected before writes",
     "setup": ["CREATE (:T {id:1})"],
     "query": "MATCH (t:T) FOREACH (i IN [1,2] | CREATE (w:W {id:i}) SET w.y = 1 garbage here) RETURN t.id"

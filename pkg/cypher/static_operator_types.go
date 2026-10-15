@@ -277,7 +277,10 @@ func checkOperator(op byte, left, right staticOperand, cypher25 bool) (result st
 			return staticOperand{display: "String or List<T>", nonInteger: true}, nil
 		}
 		if left.numeric() || right.numeric() {
-			return staticOperand{display: "Float, Integer, String or List<T>", nonBoolean: true}, nil
+			// Pinned Neo4j also defers numeric + row-dependent operands:
+			// comprehensions report runtime TypeError, and an empty MATCH never
+			// evaluates the predicate. Preserve the union without eager rejection.
+			return staticOperand{display: "Float, Integer, String or List<T>"}, nil
 		}
 		return staticOperand{}, nil
 	case '-':
