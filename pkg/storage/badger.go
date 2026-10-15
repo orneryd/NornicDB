@@ -173,6 +173,11 @@ type BadgerEngine struct {
 	db     *managedBadgerDB
 	mu     sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
 	closed bool
+	// pendingCandidates accelerates the durable pending-embedding index. Adds
+	// are published by the common commit writer only after a successful commit.
+	pendingCandidates           pendingEmbeddingCandidates
+	pendingEmbeddingAdds        sync.Map // *badger.Txn -> map[NodeID]struct{}
+	pendingCandidatesGeneration atomic.Uint64
 	// changes is the change data capture state (change_capture.go, #937).
 	changes changeCapture
 	// notifyWG tracks the asynchronous node-deleted notification goroutines

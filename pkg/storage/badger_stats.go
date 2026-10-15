@@ -258,6 +258,7 @@ func (b *BadgerEngine) Close() error {
 	// Fold any derived-count deltas the last commits left behind so a clean
 	// reopen has no open-time write to perform (PR #1043 item #2).
 	b.foldRemainingCountDeltasOnClose(db)
+	b.releasePendingEmbeddingCandidates()
 
 	b.mu.Lock()
 	b.releaseClosedStateLocked()
@@ -330,19 +331,23 @@ func (b *BadgerEngine) Size() (lsm, vlog int64) {
 }
 
 // FindNodeNeedingEmbedding returns a node that needs embedding.
-// Uses Badger's secondary index (prefixPendingEmbed) for O(1) lookup.
-//
-// This is highly optimized:
-// - O(1) to find next node (just seek to prefix and get first key)
-// - No in-memory index needed
-// - Persistent across restarts
-// - Atomic with node operations
-//
-// CRITICAL: This method aggressively cleans up stale entries to prevent
-// processing non-existent nodes. It will skip up to 100 stale entries
-// before giving up to prevent infinite loops.
+// The durable prefixPendingEmbed index is authoritative. A derived candidate
+// heap avoids reopening/rewinding that range for every claim: Badger's rewind
+// and read-ahead revisit deleted marker versions even with a prefix bound.
+// After one lazy index load, a live candidate needs only point validation;
+// stale candidates are removed once. Node validation and marker cleanup still
+// share one atomic engine write. Claim serialization remains with the worker.
 func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 	if b.ensureOpen() != nil {
+		return nil
+	}
+	p := &b.pendingCandidates
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.load(b) != nil {
+		return nil
+	}
+	if len(p.ids) == 0 {
 		return nil
 	}
 
@@ -350,21 +355,28 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 	removedStale := 0
 	removedNoLongerNeeds := 0
 
-	_ = b.withUpdate(func(txn *badger.Txn) error {
-		prefix := []byte{prefixPendingEmbed}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			key := it.Item().Key()
-			if len(key) <= 1 {
+	err := b.withUpdate(func(txn *badger.Txn) error {
+		for len(p.ids) > 0 {
+			nodeID := p.ids[0]
+			if _, err := txn.Get(pendingEmbedKey(nodeID)); err == badger.ErrKeyNotFound {
+				p.removeFirst()
 				continue
+			} else if err != nil {
+				return err
 			}
-			nodeID := NodeID(key[1:])
+			remove := func() error {
+				if err := txn.Delete(pendingEmbedKey(nodeID)); err != nil {
+					return err
+				}
+				p.removeFirst()
+				return nil
+			}
 
 			// Never embed the system database; remove any stale/system entries.
 			if isSystemNamespaceID(string(nodeID)) {
-				_ = txn.Delete(pendingEmbedKey(nodeID))
+				if err := remove(); err != nil {
+					return err
+				}
 				removedNoLongerNeeds++
 				continue
 			}
@@ -372,13 +384,14 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 			// Verify node exists in the same transaction for consistency.
 			item, err := txn.Get(nodeKey(nodeID))
 			if err == badger.ErrKeyNotFound {
-				_ = txn.Delete(pendingEmbedKey(nodeID))
+				if err := remove(); err != nil {
+					return err
+				}
 				removedStale++
 				continue
 			}
 			if err != nil {
-				// Conservatively skip on unexpected errors.
-				continue
+				return err
 			}
 
 			var node *Node
@@ -387,14 +400,18 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 				node, decErr = b.decodeNodeWithEmbeddings(txn, val, nodeID)
 				return decErr
 			}); err != nil || node == nil {
-				_ = txn.Delete(pendingEmbedKey(nodeID))
+				if err := remove(); err != nil {
+					return err
+				}
 				removedStale++
 				continue
 			}
 
 			// If node no longer needs embedding, remove it from the pending index.
 			if !b.shouldIndexPendingEmbed(node) {
-				_ = txn.Delete(pendingEmbedKey(nodeID))
+				if err := remove(); err != nil {
+					return err
+				}
 				removedNoLongerNeeds++
 				continue
 			}
@@ -405,6 +422,11 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		return nil
 	})
 
+	if err != nil {
+		// A failed cleanup commit must not discard still-durable candidates.
+		b.InvalidatePendingEmbeddingsIndex()
+		return nil
+	}
 	// Log at most once per call (avoid per-entry spam on large stale indexes).
 	if removedStale > 0 || removedNoLongerNeeds > 0 {
 		b.log.Info("pending embeddings cleanup",
@@ -445,7 +467,7 @@ func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
 		} else if err != badger.ErrKeyNotFound {
 			return err
 		}
-		return txn.Set(pendingEmbedKey(nodeID), []byte{})
+		return b.setPendingEmbeddingInTxn(txn, nodeID)
 	})
 }
 
@@ -466,10 +488,11 @@ func (b *BadgerEngine) PendingEmbeddingsCount() int {
 	return count
 }
 
-// InvalidatePendingEmbeddingsIndex is a no-op for Badger index.
-// The index is persistent and doesn't need invalidation.
+// InvalidatePendingEmbeddingsIndex discards only the derived candidate catalog.
+// The durable pending index is unchanged. The generation needs no queue lock,
+// including during Restore while new read transactions are held off.
 func (b *BadgerEngine) InvalidatePendingEmbeddingsIndex() {
-	// No-op - Badger index is persistent and self-maintaining
+	b.pendingCandidatesGeneration.Add(1)
 }
 
 // RefreshPendingEmbeddingsIndex rebuilds the pending embeddings index.
@@ -477,6 +500,7 @@ func (b *BadgerEngine) InvalidatePendingEmbeddingsIndex() {
 // It also removes stale entries for nodes that no longer exist or already have embeddings.
 // Use this on startup or after bulk imports.
 func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
+	b.InvalidatePendingEmbeddingsIndex()
 	added := 0
 	removed := 0
 
@@ -601,7 +625,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 					// Check if already in pending index
 					_, err := txn.Get(pendingEmbedKey(node.ID))
 					if err == badger.ErrKeyNotFound {
-						txn.Set(pendingEmbedKey(node.ID), []byte{})
+						b.setPendingEmbeddingInTxn(txn, node.ID)
 						added++
 					}
 				}
