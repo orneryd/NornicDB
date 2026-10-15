@@ -2491,7 +2491,12 @@ func TestHandleSearch_LongChunkedBranches(t *testing.T) {
 	svc, err := server.db.GetOrCreateSearchService("translations", st)
 	require.NoError(t, err)
 	require.NotNil(t, svc)
-	require.NoError(t, svc.BuildIndexes(context.Background()))
+	// The DB owner schedules the initial build asynchronously. Calling
+	// svc.BuildIndexes here would allow that queued build to start afterward
+	// and invalidate the readiness just established by the manual build.
+	require.Eventually(t, func() bool {
+		return svc.IsReady() && svc.EmbeddingCount() > 0
+	}, 10*time.Second, 20*time.Millisecond)
 
 	// Use embedder so chunked vector path is exercised.
 	server.db.SetEmbedder(&countingEmbedder{dims: 1024})
