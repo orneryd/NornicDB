@@ -173,7 +173,14 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 		if id == "" {
 			return false
 		}
+	case PathResult:
+		return materializedPathResult(recorder, &v)
+	case *PathResult:
+		return materializedPathResult(recorder, v)
 	case map[string]interface{}:
+		if path, ok := cypherPathResultOf(v, v, true); ok {
+			return materializedPathResult(recorder, &path)
+		}
 		found := false
 		for _, nested := range v {
 			if materializedValue(recorder, nested) {
@@ -204,6 +211,33 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 		recorder.RecordMaterializedAccess(id)
 	}
 	return true
+}
+
+// materializedPathResult visits the native entities carried by a local path.
+// The typed carrier is authoritative, so its public map fields are not walked
+// a second time.
+func materializedPathResult(recorder materializedAccessRecorder, path *PathResult) bool {
+	if path == nil {
+		return false
+	}
+	found := false
+	for _, node := range path.Nodes {
+		if materializedValue(recorder, node) {
+			if recorder == nil {
+				return true
+			}
+			found = true
+		}
+	}
+	for _, relationship := range path.Relationships {
+		if materializedValue(recorder, relationship) {
+			if recorder == nil {
+				return true
+			}
+			found = true
+		}
+	}
+	return found
 }
 
 // nodeToMap converts a storage.Node to a map for result output.
