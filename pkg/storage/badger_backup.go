@@ -119,6 +119,7 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	if err := db.DropAll(); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
+	b.InvalidatePendingEmbeddingsIndex()
 	if err := db.Load(bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}

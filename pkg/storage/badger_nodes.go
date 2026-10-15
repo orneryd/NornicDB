@@ -118,7 +118,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 			return localizedError(localization.StorageClientNodeIndexCatalogWriteFailed(err), err)
 		}
 		if b.shouldIndexPendingEmbed(node) {
-			if err := txn.Set(pendingEmbedKey(node.ID), []byte{}); err != nil {
+			if err := b.setPendingEmbeddingInTxn(txn, node.ID); err != nil {
 				return localizedError(localization.StorageClientNodePendingEmbedIndexWriteFailed(err), err)
 			}
 		}
@@ -427,7 +427,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			}
 			// Add to pending embeddings index if needed (same as CreateNode)
 			if b.shouldIndexPendingEmbed(node) {
-				if err := txn.Set(pendingEmbedKey(node.ID), []byte{}); err != nil {
+				if err := b.setPendingEmbeddingInTxn(txn, node.ID); err != nil {
 					return err
 				}
 			}
@@ -547,7 +547,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			txn.Delete(pendingEmbedKey(node.ID))
 		} else if b.shouldIndexPendingEmbed(node) {
 			// Node needs embedding - ensure it's in pending index
-			txn.Set(pendingEmbedKey(node.ID), []byte{})
+			b.setPendingEmbeddingInTxn(txn, node.ID)
 		} else {
 			// Never embed system database nodes.
 			txn.Delete(pendingEmbedKey(node.ID))
