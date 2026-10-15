@@ -97,7 +97,7 @@ func (e *StorageExecutor) dynamicTokenValue(ctx context.Context, expression stri
 	if value, ok := resolveContextPathRef(ctx, expression); ok {
 		return value, nil
 	}
-	return e.evaluateSetExpressionWithContext(ctx, expression, nodes, rels), nil
+	return e.evaluateSetExpressionWithContext(ctx, expression, nodes, rels)
 }
 
 // chainLabelNames resolves the items of a SET or REMOVE label chain

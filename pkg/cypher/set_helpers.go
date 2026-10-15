@@ -52,8 +52,8 @@ import (
 
 // applySetMapMergeToNode applies SET n += <expr>: every key of the map (or of
 // the node / relationship) is written, and a null value removes the key.
-// Row bindings from UNWIND / WITH that travel in the parameter context are
-// visible to the expression. Non-map values are an error (setSourceMap).
+// Row bindings from UNWIND / WITH are visible in the value scope.
+// Non-map values are an error (setSourceMap).
 func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, writes *setWrites) error {
 	if node == nil {
 		return nil
@@ -74,30 +74,17 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 		}
 		writes.mapEntries(node.Properties, props, false)
 		for k, v := range props {
-			setNodeProperty(node, k, normalizePropValue(v))
+			setNodeProperty(node, k, v)
 		}
 		return nil
 	}
-	// Row bindings from UNWIND / WITH that travel in the parameter context on
-	// fallback mutation paths are variables in the value scope.
-	params := getParamsFromContext(ctx)
-	evalCtx := ctx
-	if len(params) > 0 {
-		values := valueBindingsLayer(ctx, len(params))
-		for name, value := range params {
-			if _, isNode := nodes[name]; !isNode {
-				values[name] = value
-			}
-		}
-		evalCtx = withValueBindings(ctx, values)
-	}
-	props, err := e.setSourceMap(evalCtx, rightExpr, "+=", nodes, rels)
+	props, err := e.setSourceMap(ctx, rightExpr, "+=", nodes, rels)
 	if err != nil {
 		return err
 	}
 	writes.mapEntries(node.Properties, props, false)
 	for k, v := range props {
-		setNodeProperty(node, k, normalizePropValue(v))
+		setNodeProperty(node, k, v)
 	}
 	return nil
 }
@@ -121,7 +108,7 @@ func setNodeProperty(node *storage.Node, propName string, value interface{}) {
 	if node.Properties == nil {
 		node.Properties = make(map[string]interface{})
 	}
-	value = normalizePropValue(value)
+	value = copyStoredPropertyValue(value)
 	if value == nil {
 		delete(node.Properties, propName)
 		return
@@ -133,7 +120,7 @@ func setRelationshipProperty(relationship *storage.Edge, propName string, value 
 	if relationship.Properties == nil {
 		relationship.Properties = make(map[string]interface{})
 	}
-	value = normalizePropValue(value)
+	value = copyStoredPropertyValue(value)
 	if value == nil {
 		delete(relationship.Properties, propName)
 		return
@@ -145,10 +132,22 @@ func setPropertyMap(properties map[string]interface{}) map[string]interface{} {
 	result := make(map[string]interface{}, len(properties))
 	for key, value := range properties {
 		if value != nil {
-			result[key] = normalizePropValue(value)
+			result[key] = copyStoredPropertyValue(value)
 		}
 	}
 	return result
+}
+
+// copyStoredPropertyValue gives a writer ownership of a generic property list.
+// Its elements were already normalized and validated by storablePropertyValue;
+// storage copies typed slices at its own boundary, as before.
+func copyStoredPropertyValue(value interface{}) interface{} {
+	if list, ok := value.([]interface{}); ok {
+		copied := make([]interface{}, len(list))
+		copy(copied, list)
+		return copied
+	}
+	return value
 }
 
 // propertyMapForSetValue implements Cypher's entity-as-property-map semantics

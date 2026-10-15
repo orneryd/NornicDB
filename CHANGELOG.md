@@ -59,6 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Harden existing boosted procedure grants, transactional role changes, principal refresh, and system database
   authorization; bring the follow-up security fixes onto the v1.4.3 release baseline.
 
+- Preserve typed Cypher map/list and temporal parameters across mutation routes, including named-zone
+  offsets during MERGE and SET map updates (#1055).
+
 - With an OpenAI-compatible embedder (`openai`, `orca`, or a gateway in front of another provider), text longer
   than `NORNICDB_EMBED_CHUNK_SIZE` is split into chunks as with the other providers. The OpenAI provider sent it
   whole, so a node longer than the model's context window (8,191 tokens for OpenAI, 8,192 for Amazon Titan) was

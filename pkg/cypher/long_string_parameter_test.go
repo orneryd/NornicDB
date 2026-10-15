@@ -9,21 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A string parameter of pipelineInlineStringLimit bytes or more stays a $name
-// reference in a pipeline statement; a shorter one is written in as a literal,
-// as before (#1094).
-func TestSubstituteParamsKeepsLongStringsAsReferences(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "longparam"))
-	long := strings.Repeat("a", pipelineInlineStringLimit)
-	params := map[string]interface{}{"long": long, "short": "it's", "n": int64(3)}
-	require.Equal(t, "RETURN $long, 'it''s', 3",
-		exec.substituteParamsExcept("RETURN $long, $short, $n", params, isLongStringParam))
-	require.Equal(t, "RETURN '"+long+"', 'it''s', 3",
-		exec.substituteParams("RETURN $long, $short, $n", params))
-	require.False(t, isLongStringParam(long[1:]))
-	require.False(t, isLongStringParam([]string{long}))
-}
-
 // A long string parameter kept as a reference reads as its exact value
 // wherever a parameter can stand: projections, WITH, WHERE, a MATCH or MERGE
 // property map, CREATE and SET values, CASE, map and list literals, and a

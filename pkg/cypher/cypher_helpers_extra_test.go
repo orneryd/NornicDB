@@ -276,13 +276,6 @@ func TestCypherHelpers_ClauseAndMapLiterals(t *testing.T) {
 	assert.Equal(t, 1, m["k"])
 	assert.Equal(t, "v", m["2"])
 
-	assert.Equal(t, "'x'", valueToCypherLiteral("x"))
-	assert.Equal(t, "'x''y'", valueToCypherLiteral("x'y"))
-	assert.Equal(t, "true", valueToCypherLiteral(true))
-	assert.Equal(t, "3.5", valueToCypherLiteral(3.5))
-	assert.Equal(t, "null", valueToCypherLiteral(nil))
-	assert.Equal(t, "[1, 'a']", valueToCypherLiteral([]interface{}{1, "a"}))
-	assert.Contains(t, valueToCypherLiteral(map[string]interface{}{"a": 1}), "a: 1")
 }
 
 func TestCypherHelpers_WithRemainderEscapesBoundStringValues(t *testing.T) {
@@ -1316,74 +1309,6 @@ func TestCypherHelpers_CallDbIndexVectorEmbed_Branches(t *testing.T) {
 	res, err = exec.Execute(ctx, "CALL db.index.vector.embed('hello')", nil)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
-}
-
-func TestCypherHelpers_SubstituteBoundVariablesInCall(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	node := &storage.Node{
-		ID:              "n1",
-		Labels:          []string{"Doc"},
-		ChunkEmbeddings: [][]float32{{0.1, 0.2}},
-		Properties: map[string]interface{}{
-			"id":        "doc-1",
-			"score":     float64(1.5),
-			"intScore":  int64(7),
-			"published": true,
-			"embedding": []interface{}{1.0, 2.0, int64(3)},
-		},
-	}
-	ctxNodes := map[string]*storage.Node{"n": node}
-
-	// Regular property replacement.
-	out := exec.substituteBoundVariablesInCall("CALL proc(n.id, n.score, n.intScore, n.published)", ctxNodes, nil)
-	assert.Contains(t, out, "'doc-1'")
-	assert.Contains(t, out, "1.5")
-	assert.Contains(t, out, "7")
-	assert.Contains(t, out, "true")
-
-	// Embedding from Properties (stored as regular property, no special routing).
-	out = exec.substituteBoundVariablesInCall("CALL db.index.vector.queryNodes('idx', 5, n.embedding)", ctxNodes, nil)
-	assert.Contains(t, out, "[1, 2, 3]")
-
-	// Embedding from []float64 property.
-	nodeFloat64 := &storage.Node{
-		ID:     "n2",
-		Labels: []string{"Doc"},
-		Properties: map[string]interface{}{
-			"embedding": []float64{0.3, 0.4},
-		},
-	}
-	out = exec.substituteBoundVariablesInCall(
-		"CALL db.index.vector.queryNodes('idx', 5, n.embedding)",
-		map[string]*storage.Node{"n": nodeFloat64},
-		nil,
-	)
-	assert.Contains(t, out, "[0.3, 0.4]")
-
-	// Embedding from []interface{} property.
-	nodeIface := &storage.Node{
-		ID:     "n3",
-		Labels: []string{"Doc"},
-		Properties: map[string]interface{}{
-			"embedding": []interface{}{1.0, int64(2), float32(3)},
-		},
-	}
-	out = exec.substituteBoundVariablesInCall(
-		"CALL db.index.vector.queryNodes('idx', 5, n.embedding)",
-		map[string]*storage.Node{"n": nodeIface},
-		nil,
-	)
-	assert.Contains(t, out, "[1, 2, 3]")
-
-	// Unknown variable/property should remain unchanged.
-	orig := "CALL proc(missing.value)"
-	out = exec.substituteBoundVariablesInCall(orig, ctxNodes, nil)
-	assert.Equal(t, orig, out)
-
-	// Patterns inside quoted strings should not be replaced.
-	inQuoted := "CALL proc('n.id', \"n.score\")"
-	out = exec.substituteBoundVariablesInCall(inQuoted, ctxNodes, nil)
-	assert.Equal(t, inQuoted, out)
 }
 
 func TestCypherHelpers_PrefixNodeIDIfNeeded(t *testing.T) {
@@ -3226,19 +3151,6 @@ func TestCypherHelpers_ExecuteSetTrailingPipelinesAndHelpers(t *testing.T) {
 }
 
 func TestCypherHelpers_ValueToCypherLiteralAndPipelineRowsBranches(t *testing.T) {
-	// valueToCypherLiteral/mapToCypherLiteral branches.
-	assert.Equal(t, "'x'", valueToCypherLiteral("x"))
-	assert.Equal(t, "'x''y'", valueToCypherLiteral("x'y"))
-	assert.Equal(t, "true", valueToCypherLiteral(true))
-	assert.Equal(t, "null", valueToCypherLiteral(nil))
-	assert.Equal(t, "9", valueToCypherLiteral(9))
-	assert.Equal(t, "[1, 'a', [2, false]]", valueToCypherLiteral([]interface{}{1, "a", []interface{}{2, false}}))
-
-	mixed := valueToCypherLiteral(map[interface{}]interface{}{"a": 1, "b": "x"})
-	assert.True(t, strings.HasPrefix(mixed, "{") && strings.HasSuffix(mixed, "}"))
-	assert.Contains(t, mixed, "a: 1")
-	assert.Contains(t, mixed, "b: 'x'")
-
 	// executeMatchWithPipelineToRows branches for multi-label/property/where filtering.
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")

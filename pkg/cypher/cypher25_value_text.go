@@ -158,8 +158,24 @@ func convertToStringInVersion(value interface{}, cypher25 bool) interface{} {
 // cypher25NameText is a key, label or type as cypher25ValueText writes it:
 // as it is when it is a plain name, else backtick-quoted (`a b`).
 func cypher25NameText(name string) string {
-	if isSimpleCypherMapKey(name) {
+	if isSimpleCypherName(name) {
 		return name
 	}
 	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+}
+
+func isSimpleCypherName(key string) bool {
+	if key == "" {
+		return false
+	}
+	first := key[0]
+	if !isIdentStartByte(first) {
+		return false
+	}
+	for i := 1; i < len(key); i++ {
+		if !isIdentByte(key[i]) {
+			return false
+		}
+	}
+	return true
 }

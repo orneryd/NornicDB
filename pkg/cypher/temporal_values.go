@@ -382,7 +382,10 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 			return nil, true, nil
 		}
 		if text, isString := value.(string); isString {
-			parsed, valid := parseTemporalText(kind, text)
+			parsed, valid, err := parseTemporalTextWithError(kind, text)
+			if err != nil {
+				return nil, true, err
+			}
 			if !valid {
 				return nil, true, nil
 			}
