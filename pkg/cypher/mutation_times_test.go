@@ -37,6 +37,10 @@ func TestCypherMutationUpdatesVersionTime(t *testing.T) {
 					edge, unchanged bool
 				}{
 					{"MATCH (n:Clock) SET n.title = 'v2'", false, false},
+					{"MATCH (n:Clock) CALL db.create.setNodeVectorProperty(n, 'emb', [2.0,3.0])", false, false},
+					{"MATCH ()-[r:VERSION]->() CALL db.create.setRelationshipVectorProperty(r, 'emb', [2.0,3.0])", true, false},
+					{"MATCH (n:Clock) CALL db.create.setNodeVectorProperty(n, 'emb', [1.0,2.0])", false, true},
+					{"MATCH ()-[r:VERSION]->() CALL db.create.setRelationshipVectorProperty(r, 'emb', [1.0,2.0])", true, true},
 					{"MATCH (n:Clock) SET n += {title: 'v2'}", false, false},
 					{"MATCH (n:Clock) SET n = {title: 'v2'}", false, false},
 					{"MATCH (n:Clock) SET n:Changed", false, false},
@@ -57,13 +61,13 @@ func TestCypherMutationUpdatesVersionTime(t *testing.T) {
 						store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "clock")
 						old := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
 						for _, node := range []*storage.Node{
-							{ID: "a", Labels: []string{"Clock", "Old"}, Properties: map[string]interface{}{"title": "v1"}, CreatedAt: old, UpdatedAt: old},
+							{ID: "a", Labels: []string{"Clock", "Old"}, Properties: map[string]interface{}{"title": "v1", "emb": []float64{1, 2}}, CreatedAt: old, UpdatedAt: old},
 							{ID: "b", Labels: []string{"Other"}, Properties: map[string]interface{}{}, CreatedAt: old, UpdatedAt: old},
 						} {
 							_, err := store.CreateNode(node)
 							require.NoError(t, err)
 						}
-						require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "VERSION", Properties: map[string]interface{}{"v": int64(1)}, CreatedAt: old, UpdatedAt: old}))
+						require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e", StartNode: "a", EndNode: "b", Type: "VERSION", Properties: map[string]interface{}{"v": int64(1), "emb": []float64{1, 2}}, CreatedAt: old, UpdatedAt: old}))
 						exec := NewStorageExecutor(store)
 						if explicit {
 							_, err := exec.Execute(ctx, "BEGIN", nil)
