@@ -1616,7 +1616,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	}
 
 	// Log authentication status
-	if authenticator == nil || !authenticator.IsSecurityEnabled() {
+	if auth.AuthenticationDisabled(authenticator) {
 		s.logEvent(context.Background(), slog.LevelWarn, localization.ServerAuthenticationDisabledEvent())
 	}
 
@@ -1686,7 +1686,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	}
 
 	// Per-database access: Full when auth disabled; when auth enabled, DenyAll until allowlist resolves.
-	if authenticator == nil || !authenticator.IsSecurityEnabled() {
+	if auth.AuthenticationDisabled(authenticator) {
 		s.databaseAccessMode = auth.FullDatabaseAccessMode
 	} else {
 		s.databaseAccessMode = auth.DenyAllDatabaseAccessMode

@@ -54,6 +54,7 @@ func (s *Session) handleRun(data []byte) error {
 	if s.server != nil && s.server.config.RequireAuth && !s.authenticated {
 		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Unauthorized", localization.NotAuthenticated())
 	}
+	s.refreshAuthResult()
 
 	// Parse PackStream to extract query, params, and metadata
 	query, params, metadata, err := s.parseRunMessage(data)
@@ -1129,6 +1130,7 @@ func (s *Session) handleBegin(data []byte) error {
 		return s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionStartFailed",
 			"an explicit transaction is already active")
 	}
+	s.refreshAuthResult()
 
 	// Parse BEGIN metadata (contains tx_timeout, bookmarks, etc.)
 	var metadata map[string]any
@@ -1810,6 +1812,20 @@ func (s *Session) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataD
 	return cypher.GraphAccess(manager, graph, canAccess)
 }
 
+// refreshAuthResult reads the session's roles and permissions again, from
+// the authenticator, before a statement or transaction runs: a role removed
+// from the user or deleted since HELLO no longer applies (CurrentAuthResult).
+func (s *Session) refreshAuthResult() {
+	if s.authResult == nil || s.server == nil {
+		return
+	}
+	if current, ok := s.server.config.Authenticator.(interface {
+		CurrentAuthResult(*BoltAuthResult) *BoltAuthResult
+	}); ok {
+		s.authResult = current.CurrentAuthResult(s.authResult)
+	}
+}
+
 // withSessionIdentity adds what the executor knows about the session to a
 // statement's or transaction's context: the forwarded auth header, the
 // client connection, the user directory, and the authenticated user with
@@ -1828,12 +1844,24 @@ func (s *Session) withSessionIdentity(ctx context.Context) context.Context {
 		})
 		ctx = cypher.WithProcedureGrantChecker(ctx, s.server.procedureGrants(s.authResult.Roles))
 	}
-	if s.server == nil || s.server.config.Authenticator == nil {
+	if s.authenticationDisabled() {
 		// No authentication: immutable privileges can be administered, as
 		// in Neo4j with authentication disabled.
 		ctx = cypher.WithAuthenticationDisabled(ctx)
 	}
 	return ctx
+}
+
+// authenticationDisabled is auth.AuthenticationDisabled for the session: no
+// authenticator configured, or one whose user store has security disabled.
+func (s *Session) authenticationDisabled() bool {
+	if s.server == nil || s.server.config.Authenticator == nil {
+		return true
+	}
+	if authenticator, ok := s.server.config.Authenticator.(interface{ AuthenticationDisabled() bool }); ok {
+		return authenticator.AuthenticationDisabled()
+	}
+	return false
 }
 
 // requestIdentity is the session's identity for SHOW USERS, SHOW CURRENT

@@ -3,8 +3,6 @@ package auth
 import (
 	"context"
 	"testing"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func TestNewAllowlistDatabaseAccessMode(t *testing.T) {
@@ -46,8 +44,7 @@ func TestNewAllowlistDatabaseAccessMode(t *testing.T) {
 
 func TestAllowlistStore_Load_Save_SeedIfEmpty(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
-	defer eng.Close()
+	eng := newSystemTestEngine(t)
 
 	store := NewAllowlistStore(eng)
 
@@ -79,6 +76,9 @@ func TestAllowlistStore_Load_Save_SeedIfEmpty(t *testing.T) {
 	}
 
 	// SaveRoleDatabases for one role
+	if err := NewRoleStore(eng).CreateRole(ctx, "analyst"); err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
 	if err := store.SaveRoleDatabases(ctx, "analyst", []string{"nornic"}); err != nil {
 		t.Fatalf("SaveRoleDatabases: %v", err)
 	}

@@ -88,7 +88,7 @@ func TestRoleAndAllowlistRenameFailureChangesNothing(t *testing.T) {
 	_, err := base.GetNode("role:new")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 	fault.failID = "role_db_access:ops"
-	require.ErrorIs(t, allowlist.RenameRoleInAllowlist(ctx, "ops", "new"), errRoleMutation)
+	require.ErrorIs(t, roles.RenameRoleWithStores(ctx, "ops", "new", RoleMutationStores{Allowlist: allowlist}), errRoleMutation)
 	require.Equal(t, map[string][]string{"ops": {"nornic"}}, allowlist.Allowlist())
 	_, err = base.GetNode("role_db_access:new")
 	require.ErrorIs(t, err, storage.ErrNotFound)
@@ -98,9 +98,10 @@ func TestPrivilegeMatrixFailureChangesNothing(t *testing.T) {
 	for _, op := range []string{"scan", "delete", "create"} {
 		t.Run(op, func(t *testing.T) {
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
-			t.Cleanup(func() { _ = base.Close() })
-			fault := &mutationFault{Engine: base}
+			system := newSystemTestEngine(t)
+			fault := &mutationFault{Engine: system}
+			require.NoError(t, NewRoleStore(system).CreateRole(ctx, "ops"))
+			require.NoError(t, NewRoleStore(system).CreateRole(ctx, "new"))
 			privileges := NewPrivilegesStore(fault)
 			require.NoError(t, privileges.SavePrivilege(ctx, "ops", "a", true, false))
 			require.NoError(t, privileges.SavePrivilege(ctx, "ops", "b", false, true))
@@ -117,7 +118,7 @@ func TestPrivilegeMatrixFailureChangesNothing(t *testing.T) {
 			}{{"new", "c", true, true}, {"new", "d", true, true}}
 			require.ErrorIs(t, privileges.PutMatrix(ctx, entries), errRoleMutation)
 			require.ElementsMatch(t, before, privileges.Matrix())
-			reloaded := NewPrivilegesStore(base)
+			reloaded := NewPrivilegesStore(system)
 			require.NoError(t, reloaded.Load(ctx))
 			require.ElementsMatch(t, before, reloaded.Matrix())
 		})
@@ -125,13 +126,15 @@ func TestPrivilegeMatrixFailureChangesNothing(t *testing.T) {
 }
 
 func TestAllowlistBatchFailureChangesNothing(t *testing.T) {
-	base := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
-	fault := &mutationFault{Engine: base, failOp: "create", nth: 2}
+	system := newSystemTestEngine(t)
+	for _, role := range []string{"a", "b"} {
+		require.NoError(t, NewRoleStore(system).CreateRole(context.Background(), role))
+	}
+	fault := &mutationFault{Engine: system, failOp: "create", nth: 2}
 	allowlist := NewAllowlistStore(fault)
 	require.ErrorIs(t, allowlist.SaveMappings(context.Background(), map[string][]string{"a": {"nornic"}, "b": {"system"}}), errRoleMutation)
 	require.Empty(t, allowlist.Allowlist())
-	nodes, err := base.GetNodesByLabel(roleDbAccessLabel)
+	nodes, err := system.GetNodesByLabel(roleDbAccessLabel)
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }
@@ -288,22 +291,6 @@ func TestStoreTransactionReadsItsOwnChangesAndStartFailures(t *testing.T) {
 	require.ErrorIs(t, WithStoreTransaction(ctx, storage.NewNamespacedEngine(beginner, "system"), func(storage.Engine) error { return nil }), storage.ErrCrossNamespaceTransaction)
 }
 
-func TestRoleDeletionRejectsCypherBeforeChangingAnything(t *testing.T) {
-	ctx := context.Background()
-	base := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
-	system := storage.NewNamespacedEngine(base, "system")
-	roles := NewRoleStore(system)
-	require.NoError(t, roles.CreateRole(ctx, "ops"))
-	grants := NewProcedurePrivilegeStore(system)
-	require.NoError(t, grants.Grant(ctx, "ops", "db.a", true, true))
-	require.ErrorIs(t, roles.DeleteRoleFromCypher(ctx, "ops"), ErrUnsupportedRoleCommand)
-	require.True(t, roles.Exists("ops"))
-	listed, err := grants.List(ctx)
-	require.NoError(t, err)
-	require.Len(t, listed, 1)
-}
-
 func TestCoordinatedRoleRenameRejectsDistinctStores(t *testing.T) {
 	ctx := context.Background()
 	base := storage.NewMemoryEngine()
@@ -363,15 +350,15 @@ func TestCoordinatedRoleRenameStagedFailuresChangeNothing(t *testing.T) {
 
 func TestEntitlementDeletionFailurePreservesState(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = base.Close() })
-	fault := &mutationFault{Engine: base}
+	system := newSystemTestEngine(t)
+	fault := &mutationFault{Engine: system}
+	require.NoError(t, NewRoleStore(system).CreateRole(ctx, "ops"))
 	store := NewRoleEntitlementsStore(fault)
 	require.NoError(t, store.Set(ctx, "ops", []string{"read"}))
 	fault.failOp = "delete"
 	require.ErrorIs(t, store.Set(ctx, "ops", nil), errRoleMutation)
 	require.Equal(t, []string{"read"}, store.Get("ops"))
-	_, err := base.GetNode(storage.NodeID(roleEntitlementPrefix + "ops"))
+	_, err := system.GetNode(storage.NodeID(roleEntitlementPrefix + "ops"))
 	require.NoError(t, err)
 }
 

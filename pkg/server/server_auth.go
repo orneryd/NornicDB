@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -210,7 +211,7 @@ func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
 		} `json:"oauthProviders"`
 	}{
 		DevLoginEnabled: true, // Dev login enabled for development convenience
-		SecurityEnabled: s.auth != nil && s.auth.IsSecurityEnabled(),
+		SecurityEnabled: s.isRBACEnforced(),
 		OAuthProviders: []struct {
 			Name        string `json:"name"`
 			URL         string `json:"url"`
@@ -386,7 +387,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If auth is disabled, return anonymous admin user (canonical role from auth)
-	if s.auth == nil || !s.auth.IsSecurityEnabled() {
+	if !s.isRBACEnforced() {
 		s.writeJSON(w, http.StatusOK, map[string]interface{}{
 			"id":       "anonymous",
 			"username": "anonymous",
@@ -722,6 +723,9 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 			}
 			return out, nil
 		}
+		// Every entry is checked before anything is written, and the whole
+		// request is one write: all of its entries are stored, or none.
+		mappings := make(map[string][]string)
 		if len(body.Mappings) > 0 {
 			for _, m := range body.Mappings {
 				role := strings.ToLower(strings.TrimSpace(m.Role))
@@ -733,25 +737,22 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 					s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", err)
 					return
 				}
-				if err := s.roleEntitlementsStore.Set(r.Context(), role, norm); err != nil {
-					s.logEvent(r.Context(), slog.LevelWarn, localization.ServerRBACRoleEntitlementsSetFailedEvent(len(norm)))
-					s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
-					return
-				}
+				mappings[role] = norm
 			}
 		} else if body.Role != "" {
-			role := strings.ToLower(strings.TrimSpace(body.Role))
 			norm, err := normalize(body.Entitlements)
 			if err != nil {
 				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", err)
 				return
 			}
-			if err := s.roleEntitlementsStore.Set(r.Context(), role, norm); err != nil {
-				s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
-				return
-			}
+			mappings[strings.ToLower(strings.TrimSpace(body.Role))] = norm
 		} else {
 			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", localization.RoleEntitlementsBodyInvalid())
+			return
+		}
+		if err := s.roleEntitlementsStore.SetMappings(r.Context(), mappings); err != nil {
+			s.logEvent(r.Context(), slog.LevelWarn, localization.ServerRBACRoleEntitlementsSetFailedEvent(len(mappings)))
+			s.writeRoleRecordError(w, r, err)
 			return
 		}
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
@@ -904,7 +905,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := s.allowlistStore.SaveMappings(r.Context(), mappings); err != nil {
 				s.logEvent(r.Context(), slog.LevelWarn, localization.ServerRBACAllowlistSaveFailedEvent())
-				s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
+				s.writeRoleRecordError(w, r, err)
 				return
 			}
 		} else {
@@ -914,7 +915,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := s.allowlistStore.SaveRoleDatabases(r.Context(), req.Role, req.Databases); err != nil {
 				s.logEvent(r.Context(), slog.LevelWarn, localization.ServerRBACAllowlistSaveFailedEvent())
-				s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
+				s.writeRoleRecordError(w, r, err)
 				return
 			}
 		}
@@ -923,6 +924,18 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.writeGetOrPutRequired(w, r)
 	}
+}
+
+// writeRoleRecordError answers a failed write of role records (entitlements,
+// database allowlist, database privileges): a role that doesn't exist is the
+// client's error, as for a role rename or delete; anything else is the
+// server's.
+func (s *Server) writeRoleRecordError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, auth.ErrRoleNotFound) || errors.Is(err, auth.ErrInvalidRoleName) {
+		s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err)
+		return
+	}
+	s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
 }
 
 // handleAccessPrivileges serves GET/PUT /auth/access/privileges (per-DB read/write, admin only, Phase 4).
@@ -948,7 +961,7 @@ func (s *Server) handleAccessPrivileges(w http.ResponseWriter, r *http.Request) 
 		}
 		if err := s.privilegesStore.PutMatrix(r.Context(), entries); err != nil {
 			s.logEvent(r.Context(), slog.LevelWarn, localization.ServerRBACPrivilegesPutMatrixFailedEvent())
-			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
+			s.writeRoleRecordError(w, r, err)
 			return
 		}
 		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})

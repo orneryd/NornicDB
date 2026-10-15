@@ -98,7 +98,7 @@ These apply server-wide and are assigned to roles by default (built-in roles) or
 | `write` | Write | Cypher CREATE/DELETE/SET/MERGE, registered `MODE WRITE` procedures, embed triggers, search rebuild, GraphQL mutations |
 | `create` | Create | Resource creation operations |
 | `delete` | Delete | Delete operations (e.g. GDPR delete) |
-| `admin` | Admin | Role management, database access/privileges, backup, GPU config, system administration, registered `MODE ADMIN` and `MODE DBMS` procedures |
+| `admin` | Admin | Role management, database access/privileges, backup, GPU config, system administration, and the procedures `SHOW PROCEDURES` lists as `admin` (for example `db.stats.*`, `dbms.listConfig`, `db.clearQueryCaches`, `db.cdc.query`, `db.txlog.*`; a registered `MODE ADMIN` or `MODE DBMS` procedure is one of them) |
 | `schema` | Schema | CREATE/DROP INDEX and CONSTRAINT via Bolt, registered `MODE SCHEMA` procedures |
 | `user_manage` | User Management | Create, update, delete user accounts (distinct from admin) |
 
@@ -212,8 +212,11 @@ SHOW ROLE cdc_reader PRIVILEGES
 - `BOOSTED` lets the role run the matching procedures even when they need administrator rights. A plain `EXECUTE PROCEDURE` grant is recorded and listed, but adds nothing to what the role may already run.
 - The grant doesn't widen database access. The role still needs the global `read` entitlement and read access to each database the procedure reads; give it read access only on that database to keep it to one.
 - `GRANT` needs the role to exist (built-in, or created with `POST /auth/roles`); `REVOKE` from a role that doesn't exist changes nothing. Only administrators may run `GRANT`, `REVOKE` and `SHOW … PRIVILEGES`.
-- Grants are read from the system database on every check, so a change applies at once to every server over the same storage. In an explicit transaction on the system database, `GRANT` and `REVOKE` take effect when it commits and are undone by a rollback; in an explicit transaction on another database they are refused.
+- Grants are read from the system database on every check, so a change applies at once to every server over the same storage. In an explicit transaction, `GRANT` and `REVOKE` take effect when it commits and are undone by a rollback. They run on the system database whichever database the transaction was opened on, as in Neo4j: an administration command as a transaction's first statement makes it an administration transaction, and after a data statement (or in a statement a procedure such as `apoc.cypher.run` runs) it fails with `Neo.ClientError.Transaction.ForbiddenDueToTransactionType`.
 - Grants come only from `GRANT` and `REVOKE`: the system database runs no statement that writes graph data (`CREATE`, `MERGE`, `SET`, `DELETE`, `REMOVE`, write procedures), as in Neo4j. Deleting a role removes its grants.
+- The system database runs only system procedures (`worksOnSystem` in `SHOW PROCEDURES`), as in Neo4j; any other procedure fails there with `Neo.ClientError.Statement.SemanticError`, on every route (directly, after `USE system`, in a statement `apoc.cypher.run` or a `CALL { }` runs). A system procedure that reads the graph, such as `db.labels()`, sees none of the records the system database keeps.
+- A statement that selects a database with `USE`, at the top level, in `CALL { }` or in a statement a procedure runs, goes through one router: in a transaction it must stay on the transaction's database (`Neo.ClientError.Statement.AccessMode` otherwise), and on the system database the rules above apply.
+- `DROP ROLE` is Neo4j Community's `Neo.ClientError.Statement.UnsupportedAdministrationCommand`; roles are deleted with `DELETE /auth/roles/{name}`.
 - `GRANT IMMUTABLE` / `REVOKE IMMUTABLE` follow Neo4j: immutable privileges can be granted and revoked only while authentication is disabled; with it enabled, `GRANT IMMUTABLE` and any `REVOKE` of an immutable privilege fail with `Neo.ClientError.Security.Forbidden`. `REVOKE IMMUTABLE` removes only an immutable privilege; a plain `REVOKE` removes either. `SHOW PRIVILEGES` reports it in the `immutable` column.
 - A procedure name or glob may be backticked, whole or in parts (`` `db.cdc.*` ``, ``db.`cdc`.*``); it is stored unquoted.
 - `SHOW PRIVILEGES` lists the procedure privileges in Neo4j's columns (`access`, `action`, `resource`, `graph`, `segment`, `role`, `immutable`) and takes `YIELD` and `WHERE`. Other privilege statements (`GRANT ROLE`, `DENY`, graph privileges) aren't supported.
@@ -393,6 +396,12 @@ Passwords are hashed using **bcrypt** with automatic salt generation. Plain-text
 ### Session Management
 
 Tokens can be revoked (logout) by adding them to a server-side blacklist. Revoked tokens are rejected on subsequent requests.
+
+A token's roles are read from the user store on every request (HTTP), and a Bolt session's before every statement and transaction: a role removed from a user, or deleted (which removes it from every user), stops applying to tokens and sessions issued before, as Neo4j applies role changes at once. A token of an account deleted and created again under the same name carries no roles.
+
+### Role Records
+
+A role's entitlement overrides, database allowlist and database privileges are written only for a role that exists: a write for a missing role fails (HTTP 400, `Neo.ClientError.General.SchemaViolation`) and changes nothing. Each request is one transaction, so a batch (`mappings`, the privilege matrix) applies all of its entries or none, and a write racing the role's deletion or rename can't commit alongside it.
 
 ---
 

@@ -1210,7 +1210,7 @@ func (a *Authenticator) ValidateToken(token string) (*JWTClaims, error) {
 
 	if a.tokenCache != nil {
 		if cached, ok := a.tokenCache.get(token); ok {
-			return cached, nil
+			return a.currentRoleClaims(cached), nil
 		}
 	}
 
@@ -1221,7 +1221,50 @@ func (a *Authenticator) ValidateToken(token string) (*JWTClaims, error) {
 	if a.tokenCache != nil {
 		a.tokenCache.set(token, claims)
 	}
-	return claims, nil
+	return a.currentRoleClaims(claims), nil
+}
+
+// currentRoleClaims is claims with the roles its user holds now, as the
+// user store records them: a role removed from the user, or deleted (which
+// detaches it from every user), no longer applies to a token issued
+// before, as in Neo4j, where privileges follow the current role
+// membership. A token of an account since deleted and created again under
+// the same name holds no roles. A token whose user this store doesn't keep
+// (a cluster or external identity) keeps its own roles. The cached claims
+// are never changed.
+func (a *Authenticator) currentRoleClaims(claims *JWTClaims) *JWTClaims {
+	if claims == nil || claims.Username == "" {
+		return claims
+	}
+	roles, stored := a.CurrentRoles(claims.Username, claims.Sub)
+	if !stored {
+		return claims
+	}
+	current := *claims
+	current.Roles = roles
+	return &current
+}
+
+// CurrentRoles returns the roles the stored user username holds now, and
+// whether this store keeps that user. A non-empty userID must be the stored
+// account's: an account deleted and created again under the same name
+// gives a token or session of the old one no roles. Token checks and Bolt
+// sessions read a principal's roles through it on every request.
+func (a *Authenticator) CurrentRoles(username, userID string) ([]string, bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	user, stored := a.users[username]
+	if !stored {
+		return nil, false
+	}
+	if userID != "" && user.ID != userID {
+		return []string{}, true
+	}
+	roles := make([]string, len(user.Roles))
+	for i, role := range user.Roles {
+		roles[i] = string(role)
+	}
+	return roles, true
 }
 
 // GetUserByID retrieves a user by their ID.
@@ -1552,6 +1595,15 @@ func (a *Authenticator) UserCount() int {
 // IsSecurityEnabled returns whether security is enabled.
 func (a *Authenticator) IsSecurityEnabled() bool {
 	return a.config.SecurityEnabled
+}
+
+// AuthenticationDisabled is the one definition of "authentication is
+// disabled", which HTTP and Bolt both read: no authenticator, or one with
+// security disabled. Then every request runs with full access, and
+// immutable privileges can be administered, as in Neo4j with
+// authentication disabled.
+func AuthenticationDisabled(a *Authenticator) bool {
+	return a == nil || !a.IsSecurityEnabled()
 }
 
 // GenerateClusterToken creates a JWT token for cluster inter-node authentication.

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -10,14 +11,18 @@ import (
 
 func TestAllowlistStore_DeleteRenameAndHelpers(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
-	defer eng.Close()
+	eng := newSystemTestEngine(t)
 
 	store := NewAllowlistStore(eng)
+	roles := NewRoleStore(eng)
+	if err := roles.CreateRole(ctx, "analyst"); err != nil {
+		t.Fatalf("create analyst role failed: %v", err)
+	}
 	if err := store.SaveRoleDatabases(ctx, "analyst", []string{"neo4j", "system"}); err != nil {
 		t.Fatalf("save analyst allowlist failed: %v", err)
 	}
-	if err := store.RenameRoleInAllowlist(ctx, "analyst", "scientist"); err != nil {
+	// A role's allowlist entry moves and goes with the role (changeRole).
+	if err := roles.RenameRoleWithStores(ctx, "analyst", "scientist", RoleMutationStores{Allowlist: store}); err != nil {
 		t.Fatalf("rename allowlist role failed: %v", err)
 	}
 	al := store.Allowlist()
@@ -28,11 +33,11 @@ func TestAllowlistStore_DeleteRenameAndHelpers(t *testing.T) {
 		t.Fatalf("unexpected copied databases after rename: %#v", al["scientist"])
 	}
 
-	if err := store.DeleteRoleDatabases(ctx, "scientist"); err != nil {
+	if err := roles.DeleteRoleWithStores(ctx, "scientist", RoleMutationStores{Allowlist: store}); err != nil {
 		t.Fatalf("delete role allowlist failed: %v", err)
 	}
-	if err := store.DeleteRoleDatabases(ctx, "scientist"); err != nil {
-		t.Fatalf("delete missing role allowlist should be no-op, got %v", err)
+	if err := store.SaveRoleDatabases(ctx, "scientist", []string{"neo4j"}); !errors.Is(err, ErrRoleNotFound) {
+		t.Fatalf("an allowlist for a deleted role must be refused, got %v", err)
 	}
 
 	has, err := store.HasAllowlistData(ctx)
@@ -80,10 +85,14 @@ func TestAllowlistDatabaseAccessMode_NormalizationPaths(t *testing.T) {
 
 func TestAllowlistStore_CopyAndSeedSkipPaths(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
-	defer eng.Close()
+	eng := newSystemTestEngine(t)
 
 	store := NewAllowlistStore(eng)
+	for _, role := range []string{"analyst", "global"} {
+		if err := NewRoleStore(eng).CreateRole(ctx, role); err != nil {
+			t.Fatalf("create %s role failed: %v", role, err)
+		}
+	}
 	if err := store.SaveRoleDatabases(ctx, "analyst", []string{"neo4j"}); err != nil {
 		t.Fatalf("save analyst allowlist failed: %v", err)
 	}

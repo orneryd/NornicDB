@@ -32,7 +32,7 @@ func (r *RoleStore) RenameRoleWithStores(ctx context.Context, oldName, newName s
 // DeleteRoleWithStores removes every role-owned record and user assignment in
 // the same transaction owner as rename, publishing loaded caches after commit.
 func (r *RoleStore) DeleteRoleWithStores(ctx context.Context, name string, stores RoleMutationStores) error {
-	return r.deleteRole(ctx, name, false, stores)
+	return r.changeRole(ctx, name, "", true, stores)
 }
 
 func (r *RoleStore) changeRole(ctx context.Context, oldName, newName string, remove bool, stores RoleMutationStores) error {

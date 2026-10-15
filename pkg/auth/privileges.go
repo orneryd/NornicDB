@@ -137,12 +137,29 @@ func (p *PrivilegesStore) Matrix() []struct {
 	return out
 }
 
-// SavePrivilege persists one (role, database, read, write) and refreshes in-memory.
+// SavePrivilege persists one (role, database, read, write) and refreshes
+// in-memory, through the role-record owner (withRoleRecords). The role must
+// exist (ErrRoleNotFound).
 func (p *PrivilegesStore) SavePrivilege(ctx context.Context, role, dbName string, read, write bool) error {
 	role = strings.ToLower(strings.TrimSpace(role))
-	nodeID := storage.NodeID(dbPrivPrefix + role + ":" + dbName)
-	node := &storage.Node{
-		ID:     nodeID,
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := withRoleRecords(ctx, p.storage, []string{role}, func(view storage.Engine) error {
+		return putDbPrivilege(view, role, dbName, read, write)
+	}); err != nil {
+		return err
+	}
+	if p.matrix[role] == nil {
+		p.matrix[role] = make(map[string]DbPrivilege)
+	}
+	p.matrix[role][dbName] = DbPrivilege{Read: read, Write: write}
+	return nil
+}
+
+// putDbPrivilege stores one database privilege record in view.
+func putDbPrivilege(view storage.Engine, role, dbName string, read, write bool) error {
+	return putRoleRecord(view, &storage.Node{
+		ID:     storage.NodeID(dbPrivPrefix + role + ":" + dbName),
 		Labels: []string{dbPrivLabel, dbPrivSystems},
 		Properties: map[string]any{
 			"role":     role,
@@ -150,43 +167,27 @@ func (p *PrivilegesStore) SavePrivilege(ctx context.Context, role, dbName string
 			"read":     read,
 			"write":    write,
 		},
-	}
-	existing, err := p.storage.GetNode(nodeID)
-	if err == storage.ErrNotFound {
-		_, err = p.storage.CreateNode(node)
-		if err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	} else {
-		node.CreatedAt = existing.CreatedAt
-		err = p.storage.UpdateNode(node)
-		if err != nil {
-			return err
-		}
-	}
-	p.mu.Lock()
-	if p.matrix[role] == nil {
-		p.matrix[role] = make(map[string]DbPrivilege)
-	}
-	p.matrix[role][dbName] = DbPrivilege{Read: read, Write: write}
-	p.mu.Unlock()
-	return nil
+	}, false)
 }
 
-// PutMatrix replaces the stored matrix with the given list (for PUT /auth/access/privileges).
-// Deletes all existing _DbPrivilege nodes then creates nodes for each entry.
+// PutMatrix replaces the stored matrix with the given list (for PUT
+// /auth/access/privileges): it deletes every _DbPrivilege node and creates
+// one per entry, in one transaction through the role-record owner, so the
+// matrix changes entirely or not at all, and every entry's role must exist.
 func (p *PrivilegesStore) PutMatrix(ctx context.Context, entries []struct {
 	Role     string `json:"role"`
 	Database string `json:"database"`
 	Read     bool   `json:"read"`
 	Write    bool   `json:"write"`
 }) error {
+	roles := make([]string, 0, len(entries))
+	for _, e := range entries {
+		roles = append(roles, e.Role)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	var replacement *PrivilegesStore
-	err := WithStoreTransaction(ctx, p.storage, func(view storage.Engine) error {
+	matrix := make(map[string]map[string]DbPrivilege)
+	err := withRoleRecords(ctx, p.storage, roles, func(view storage.Engine) error {
 		nodes, err := view.GetNodesByLabel(dbPrivLabel)
 		if err != nil {
 			return err
@@ -200,18 +201,22 @@ func (p *PrivilegesStore) PutMatrix(ctx context.Context, entries []struct {
 				return err
 			}
 		}
-		replacement = NewPrivilegesStore(view)
 		for _, e := range entries {
-			if err := replacement.SavePrivilege(ctx, e.Role, e.Database, e.Read, e.Write); err != nil {
+			role := strings.ToLower(strings.TrimSpace(e.Role))
+			if err := putDbPrivilege(view, role, e.Database, e.Read, e.Write); err != nil {
 				return err
 			}
+			if matrix[role] == nil {
+				matrix[role] = make(map[string]DbPrivilege)
+			}
+			matrix[role][e.Database] = DbPrivilege{Read: e.Read, Write: e.Write}
 		}
 		return nil
 	})
 	if err != nil {
 		return err
 	}
-	p.matrix = replacement.matrix
+	p.matrix = matrix
 	return nil
 }
 

@@ -83,90 +83,44 @@ func (a *AllowlistStore) Allowlist() map[string][]string {
 	return out
 }
 
-// SaveRoleDatabases persists one role's database list and refreshes in-memory allowlist.
+// SaveRoleDatabases persists one role's database list and refreshes the
+// in-memory allowlist. The role must exist (ErrRoleNotFound).
 func (a *AllowlistStore) SaveRoleDatabases(ctx context.Context, role string, databases []string) error {
-	nodeID := storage.NodeID(roleDbAccessPrefix + role)
-	databasesJSON, _ := json.Marshal(databases)
-	node := &storage.Node{
-		ID:     nodeID,
-		Labels: []string{roleDbAccessLabel, roleDbAccessSystems},
-		Properties: map[string]any{
-			"role":      role,
-			"databases": string(databasesJSON),
-		},
-	}
-	existing, err := a.storage.GetNode(nodeID)
-	if err == storage.ErrNotFound {
-		_, err = a.storage.CreateNode(node)
-		if err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	} else {
-		node.CreatedAt = existing.CreatedAt
-		err = a.storage.UpdateNode(node)
-		if err != nil {
-			return err
-		}
-	}
-	// Refresh in-memory
-	a.mu.Lock()
-	if a.allowlist == nil {
-		a.allowlist = make(map[string][]string)
-	}
-	a.allowlist[role] = databases
-	a.mu.Unlock()
-	return nil
+	return a.SaveMappings(ctx, map[string][]string{role: databases})
 }
 
-// DeleteRoleDatabases removes one role's allowlist entry (node + in-memory).
-// Used when a user-defined role is deleted or renamed.
-func (a *AllowlistStore) DeleteRoleDatabases(ctx context.Context, role string) error {
-	nodeID := storage.NodeID(roleDbAccessPrefix + role)
-	if err := a.storage.DeleteNode(nodeID); err != nil && err != storage.ErrNotFound {
-		return err
-	}
-	a.mu.Lock()
-	delete(a.allowlist, role)
-	a.mu.Unlock()
-	return nil
-}
-
-// RenameRoleInAllowlist copies allowlist entry from oldName to newName and deletes old.
-// Call when a user-defined role is renamed so DB access is preserved.
-func (a *AllowlistStore) RenameRoleInAllowlist(ctx context.Context, oldName, newName string) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	dbs := append([]string(nil), a.allowlist[oldName]...)
-	if err := WithStoreTransaction(ctx, a.storage, func(view storage.Engine) error {
-		staged := NewAllowlistStore(view)
-		if err := staged.SaveRoleDatabases(ctx, newName, dbs); err != nil {
-			return err
-		}
-		return staged.DeleteRoleDatabases(ctx, oldName)
-	}); err != nil {
-		return err
-	}
-	a.allowlist[newName] = dbs
-	delete(a.allowlist, oldName)
-	return nil
-}
-
-// SaveMappings persists a batch together and publishes the cache after commit.
+// SaveMappings persists a batch in one transaction through the role-record
+// owner (withRoleRecords): every role's list is stored, or none when one
+// fails or names a role that doesn't exist. The cache changes only after
+// commit.
 func (a *AllowlistStore) SaveMappings(ctx context.Context, mappings map[string][]string) error {
+	roles := make([]string, 0, len(mappings))
+	for role := range mappings {
+		roles = append(roles, role)
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if err := WithStoreTransaction(ctx, a.storage, func(view storage.Engine) error {
-		staged := NewAllowlistStore(view)
+	if err := withRoleRecords(ctx, a.storage, roles, func(view storage.Engine) error {
 		for role, databases := range mappings {
-			if err := staged.SaveRoleDatabases(ctx, role, databases); err != nil {
+			databasesJSON, _ := json.Marshal(databases)
+			node := &storage.Node{
+				ID:     storage.NodeID(roleDbAccessPrefix + role),
+				Labels: []string{roleDbAccessLabel, roleDbAccessSystems},
+				Properties: map[string]any{
+					"role":      role,
+					"databases": string(databasesJSON),
+				},
+			}
+			if err := putRoleRecord(view, node, false); err != nil {
 				return err
 			}
 		}
 		return nil
 	}); err != nil {
 		return err
+	}
+	if a.allowlist == nil {
+		a.allowlist = make(map[string][]string)
 	}
 	for role, databases := range mappings {
 		a.allowlist[role] = append([]string(nil), databases...)

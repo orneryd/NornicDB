@@ -26,7 +26,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 		traceAuth := os.Getenv("NORNICDB_TRACE_AUTH") != ""
 
 		// Check if auth is enabled
-		if s.auth == nil || !s.auth.IsSecurityEnabled() {
+		if !s.isRBACEnforced() {
 			// Auth disabled - allow all
 			handler(w, r)
 			return

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -178,8 +179,7 @@ func TestRoleEntitlementParsingHelpers(t *testing.T) {
 }
 
 func TestRoleEntitlementsStore_LoadAndUpdatePaths(t *testing.T) {
-	eng := storage.NewMemoryEngine()
-	defer eng.Close()
+	eng := newSystemTestEngine(t)
 	ctx := context.Background()
 
 	_, err := eng.CreateNode(&storage.Node{
@@ -208,8 +208,12 @@ func TestRoleEntitlementsStore_LoadAndUpdatePaths(t *testing.T) {
 		t.Fatalf("unexpected loaded entitlements: %#v", store.Get("loaded"))
 	}
 
-	if err := store.Set(ctx, "ephemeral", nil); err != nil {
-		t.Fatalf("empty set on missing role should no-op: %v", err)
+	// Every entitlement write requires its role, an empty one too.
+	if err := store.Set(ctx, "ephemeral", nil); !errors.Is(err, ErrRoleNotFound) {
+		t.Fatalf("a set for a missing role must be refused, got %v", err)
+	}
+	if err := NewRoleStore(eng).CreateRole(ctx, "loaded"); err != nil {
+		t.Fatalf("create loaded role: %v", err)
 	}
 
 	if err := store.Set(ctx, "loaded", []string{"write"}); err != nil {
@@ -315,8 +319,7 @@ func TestPrivilegesParsingHelpers(t *testing.T) {
 }
 
 func TestPrivilegesStore_LoadAndUpdatePaths(t *testing.T) {
-	eng := storage.NewMemoryEngine()
-	defer eng.Close()
+	eng := newSystemTestEngine(t)
 	ctx := context.Background()
 
 	_, err := eng.CreateNode(&storage.Node{
@@ -344,6 +347,9 @@ func TestPrivilegesStore_LoadAndUpdatePaths(t *testing.T) {
 	}
 	if got := store.Resolve([]string{"loaded"}, "neo4j"); !got.Read || got.Write {
 		t.Fatalf("unexpected loaded privilege resolution: %#v", got)
+	}
+	if err := NewRoleStore(eng).CreateRole(ctx, "loaded"); err != nil {
+		t.Fatalf("create loaded role: %v", err)
 	}
 
 	if err := store.SavePrivilege(ctx, " Loaded ", "neo4j", true, true); err != nil {

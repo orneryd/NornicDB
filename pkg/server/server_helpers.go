@@ -102,7 +102,7 @@ func getClientIP(r *http.Request) string {
 // isRBACEnforced reports whether RBAC checks should be enforced for requests.
 // When auth is disabled (e.g. --no-auth), request-level RBAC checks are skipped.
 func (s *Server) isRBACEnforced() bool {
-	return s.auth != nil && s.auth.IsSecurityEnabled()
+	return !auth.AuthenticationDisabled(s.auth)
 }
 
 // getDatabaseAccessMode returns the per-database access mode for the given principal (claims).

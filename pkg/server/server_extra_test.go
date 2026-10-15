@@ -811,11 +811,11 @@ func TestHandleGenerateAPIToken(t *testing.T) {
 	})
 
 	t.Run("returns signed token with defaults and day parsing", func(t *testing.T) {
-		adminClaims := &auth.JWTClaims{
-			Sub:      "admin-id",
-			Username: "admin",
-			Email:    "admin@example.com",
-			Roles:    []string{string(auth.RoleAdmin)},
+		// The stored admin's own claims: a token's roles are the ones its
+		// stored account holds now, so the claims must name that account.
+		adminClaims, err := authenticator.ValidateToken(getAuthToken(t, authenticator, "admin"))
+		if err != nil {
+			t.Fatalf("ValidateToken failed: %v", err)
 		}
 
 		rec, payload := makeReq(http.MethodPost, `{"expires_in":"7d"}`, adminClaims)
@@ -831,7 +831,7 @@ func TestHandleGenerateAPIToken(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ValidateToken failed: %v", err)
 		}
-		assert.Equal(t, "admin-id", claims.Sub)
+		assert.Equal(t, adminClaims.Sub, claims.Sub)
 		assert.Equal(t, "admin", claims.Username)
 		assert.Contains(t, claims.Roles, string(auth.RoleAdmin))
 
@@ -2124,6 +2124,7 @@ func TestGrantAccessAndRBACResolverBranches(t *testing.T) {
 
 	// Seed explicit allowlists and grant with claims.
 	requireAllow := []string{"nornic"}
+	require.NoError(t, server.roleStore.CreateRole(context.Background(), "custom"))
 	_ = server.allowlistStore.SaveRoleDatabases(context.Background(), "admin", requireAllow)
 	_ = server.allowlistStore.SaveRoleDatabases(context.Background(), "custom", requireAllow)
 	claims := &auth.JWTClaims{Roles: []string{"role_custom", "admin", "role_custom"}}
@@ -2351,7 +2352,7 @@ func TestAccessControlHandlersAdditionalBranches(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// access/databases: mappings branch
-	req = httptest.NewRequest(http.MethodPut, "/auth/access/databases", strings.NewReader(`{"mappings":[{"role":"reader","databases":["nornic","system"]}]}`))
+	req = httptest.NewRequest(http.MethodPut, "/auth/access/databases", strings.NewReader(`{"mappings":[{"role":"viewer","databases":["nornic","system"]}]}`))
 	rec = httptest.NewRecorder()
 	server.handleAccessDatabases(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
@@ -2378,7 +2379,7 @@ func TestAccessControlHandlersAdditionalBranches(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// access/privileges: valid matrix update
-	req = httptest.NewRequest(http.MethodPut, "/auth/access/privileges", strings.NewReader(`[{"role":"reader","database":"nornic","read":true,"write":false}]`))
+	req = httptest.NewRequest(http.MethodPut, "/auth/access/privileges", strings.NewReader(`[{"role":"viewer","database":"nornic","read":true,"write":false}]`))
 	rec = httptest.NewRecorder()
 	server.handleAccessPrivileges(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)

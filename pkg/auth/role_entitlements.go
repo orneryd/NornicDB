@@ -107,53 +107,56 @@ func (r *RoleEntitlementsStore) Get(role string) []string {
 	return out
 }
 
-// Set persists one role's entitlement IDs and refreshes in-memory. Empty list removes override (built-in will use RolePermissions).
+// Set persists one role's entitlement IDs and refreshes in-memory. Empty list
+// removes the override (a built-in role then uses RolePermissions). The role
+// must exist (ErrRoleNotFound).
 func (r *RoleEntitlementsStore) Set(ctx context.Context, role string, entitlementIDs []string) error {
-	role = strings.ToLower(strings.TrimSpace(role))
-	if role == "" {
-		return ErrInvalidRoleName
-	}
-	nodeID := storage.NodeID(roleEntitlementPrefix + role)
-	entitlementsJSON, _ := json.Marshal(entitlementIDs)
-	node := &storage.Node{
-		ID:     nodeID,
-		Labels: []string{roleEntitlementLabel, roleEntitlementSystems},
-		Properties: map[string]any{
-			"role":         role,
-			"entitlements": string(entitlementsJSON),
-		},
-	}
-	existing, err := r.storage.GetNode(nodeID)
-	if err == storage.ErrNotFound {
-		if len(entitlementIDs) == 0 {
-			return nil
+	return r.SetMappings(ctx, map[string][]string{role: entitlementIDs})
+}
+
+// SetMappings persists every role's entitlement IDs in one transaction
+// through the role-record owner (withRoleRecords): all of them are stored,
+// or, when one fails or names a role that doesn't exist, none. The cache
+// changes only after commit.
+func (r *RoleEntitlementsStore) SetMappings(ctx context.Context, mappings map[string][]string) error {
+	normalized := make(map[string][]string, len(mappings))
+	roles := make([]string, 0, len(mappings))
+	for role, ids := range mappings {
+		role = strings.ToLower(strings.TrimSpace(role))
+		if role == "" {
+			return ErrInvalidRoleName
 		}
-		_, err = r.storage.CreateNode(node)
-		if err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	} else {
-		node.CreatedAt = existing.CreatedAt
-		if len(entitlementIDs) == 0 {
-			if err := r.storage.DeleteNode(nodeID); err != nil {
-				return err
-			}
-		} else {
-			err = r.storage.UpdateNode(node)
-			if err != nil {
-				return err
-			}
-		}
+		normalized[role] = ids
+		roles = append(roles, role)
 	}
 	r.mu.Lock()
-	if len(entitlementIDs) == 0 {
-		delete(r.entitlements, role)
-	} else {
-		r.entitlements[role] = append([]string(nil), entitlementIDs...)
+	defer r.mu.Unlock()
+	if err := withRoleRecords(ctx, r.storage, roles, func(view storage.Engine) error {
+		for role, ids := range normalized {
+			entitlementsJSON, _ := json.Marshal(ids)
+			node := &storage.Node{
+				ID:     storage.NodeID(roleEntitlementPrefix + role),
+				Labels: []string{roleEntitlementLabel, roleEntitlementSystems},
+				Properties: map[string]any{
+					"role":         role,
+					"entitlements": string(entitlementsJSON),
+				},
+			}
+			if err := putRoleRecord(view, node, len(ids) == 0); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
-	r.mu.Unlock()
+	for role, ids := range normalized {
+		if len(ids) == 0 {
+			delete(r.entitlements, role)
+		} else {
+			r.entitlements[role] = append([]string(nil), ids...)
+		}
+	}
 	return nil
 }
 

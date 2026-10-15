@@ -115,19 +115,6 @@ func (r *RoleStore) DeleteRole(ctx context.Context, name string) error {
 	return r.DeleteRoleWithStores(ctx, name, RoleMutationStores{})
 }
 
-// DeleteRoleFromCypher goes through the role-deletion owner, but currently
-// rejects this unsupported command before reading or writing any role state.
-func (r *RoleStore) DeleteRoleFromCypher(ctx context.Context, name string) error {
-	return r.deleteRole(ctx, name, true, RoleMutationStores{})
-}
-
-func (r *RoleStore) deleteRole(ctx context.Context, name string, fromCypher bool, stores RoleMutationStores) error {
-	if fromCypher {
-		return ErrUnsupportedRoleCommand
-	}
-	return r.changeRole(ctx, name, "", true, stores)
-}
-
 // RenameRole moves the role and all its stored grants and assignments atomically.
 // Servers use RenameRoleWithStores to publish their loaded caches after commit.
 func (r *RoleStore) RenameRole(ctx context.Context, oldName, newName string) error {
@@ -155,7 +142,6 @@ func roleNameFromNodeID(id string) string {
 
 // Role store errors.
 var (
-	ErrUnsupportedRoleCommand  = errors.New("role command is not supported")
 	ErrInvalidRoleName         = errors.New("invalid role name")
 	ErrRoleExists              = errors.New("role already exists")
 	ErrRoleNotFound            = errors.New("role not found")

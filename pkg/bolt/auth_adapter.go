@@ -3,6 +3,8 @@ package bolt
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -252,6 +254,43 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 		result.Permissions = a.getEffectivePermissions(roles)
 	}
 	return result, nil
+}
+
+// CurrentAuthResult is result with the roles its user holds now
+// (auth.Authenticator.CurrentRoles) and the permissions those roles give, so
+// a session's privileges follow changes to the user's roles and the roles'
+// deletion as soon as they commit, as in Neo4j. A result for an identity the
+// user store doesn't keep (anonymous, a cluster token) is returned as it is,
+// and so is one whose roles and permissions haven't changed.
+func (a *AuthenticatorAdapter) CurrentAuthResult(result *BoltAuthResult) *BoltAuthResult {
+	if result == nil || result.Username == "" {
+		return result
+	}
+	userID, isUserID := strings.CutPrefix(result.PrincipalID, "sub:")
+	if !isUserID {
+		userID = ""
+	}
+	roles, stored := a.auth.CurrentRoles(result.Username, userID)
+	if !stored {
+		return result
+	}
+	permissions := result.Permissions
+	if a.getEffectivePermissions != nil {
+		permissions = a.getEffectivePermissions(roles)
+	}
+	if slices.Equal(roles, result.Roles) && slices.Equal(permissions, result.Permissions) {
+		return result
+	}
+	current := *result
+	current.Roles = roles
+	current.Permissions = permissions
+	return &current
+}
+
+// AuthenticationDisabled reports auth.AuthenticationDisabled for the
+// adapter's authenticator.
+func (a *AuthenticatorAdapter) AuthenticationDisabled() bool {
+	return auth.AuthenticationDisabled(a.auth)
 }
 
 // SetAllowAnonymous enables or disables anonymous authentication for direct
