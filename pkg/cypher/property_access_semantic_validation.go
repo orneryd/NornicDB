@@ -56,7 +56,8 @@ func validatePropertyAccessTypes(cypher string, params map[string]interface{}) e
 
 // validatePropertyAccessClauses is validatePropertyAccessTypes for a
 // statement or a subquery body that sees the outer variables' types. The
-// outer map is never modified.
+// outer map is never modified. Declaration validity belongs to the shared
+// semantic scope walk; this visitor only tracks property receiver types.
 func validatePropertyAccessClauses(cypher string, outer map[string]string, params map[string]interface{}) error {
 	clauses, ok := splitPipelineClauses(cypher)
 	if !ok {
