@@ -133,7 +133,12 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// the original query text — by the time the deferred emission fires,
 	// `cypher` has been normalized; we want to log what the client submitted.
 	slowStart := time.Now()
-	ctx = context.WithValue(ctx, temporalStatementTimeKey{}, slowStart.UTC())
+	embeddingState := e.queryEmbeddingState(ctx)
+	var embeddingGeneration uint64
+	if embeddingState != nil {
+		embeddingGeneration = embeddingState.generation
+	}
+	ctx = &queryEmbeddingStatementContext{Context: ctx, instant: slowStart.UTC(), binding: e.queryEmbedder, state: embeddingState}
 	originalCypher := cypher
 	collectionGeneration := e.queryStatistics.start(originalCypher, slowStart)
 	defer func() {
@@ -406,7 +411,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		if allowResultCache && !inExplicitTx && info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) {
 			if key, cacheable := e.fabricResultCacheKey(ctx, preparedFabric, cypher, mergedParams); cacheable {
 				fabricResultCacheKey = key
-				if cached, found := e.cache.get(fabricResultCacheKey); found {
+				if cached, _, _, found := e.cache.getWithTraceForEmbedding(fabricResultCacheKey, embeddingGeneration); found {
 					return cached, nil
 				}
 			}
@@ -431,7 +436,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		}
 
 		if fabricResultCacheKey != "" {
-			e.cache.putWithLabels(fabricResultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher))
+			e.cache.putWithLabelsAndTraceForEmbedding(fabricResultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), HotPathTrace{}, embeddingGeneration)
 		}
 
 		if info.IsWriteQuery && e.cache != nil {
@@ -729,7 +734,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		if svc := e.searchService; svc != nil {
 			resultCacheKey += ":search:" + strconv.FormatUint(svc.IndexRevision(), 10)
 		}
-		if cached, trace, entities, found := e.cache.getWithTrace(resultCacheKey); found {
+		if cached, trace, entities, found := e.cache.getWithTraceForEmbedding(resultCacheKey, embeddingGeneration); found {
 			e.restoreHotPathTrace(trace)
 			recordAccess = entities
 			return cached, nil
@@ -813,7 +818,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// Retain the revision captured before execution. A read overlapping a
 	// mutation must not publish its stale result under the newer revision.
 	if err == nil && resultCacheKey != "" && !stream.streamed() {
-		e.cache.putWithLabelsAndTrace(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), e.LastHotPathTrace())
+		e.cache.putWithLabelsAndTraceForEmbedding(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), e.LastHotPathTrace(), embeddingGeneration)
 	}
 
 	// Invalidate caches on write operations (using cached analysis)

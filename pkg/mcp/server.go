@@ -124,8 +124,9 @@ type Embedder interface {
 type Server struct {
 	db        *nornicdb.DB
 	config    *ServerConfig
-	embed     Embedder
 	localizer *localization.Manager
+
+	queryEmbedder *cypher.QueryEmbedderBinding
 
 	// HTTP server
 	httpServer *http.Server
@@ -177,7 +178,8 @@ type ServerConfig struct {
 	MaxRequestSize int64 `yaml:"max_request_size"`
 	// EnableCORS for cross-origin requests
 	EnableCORS bool `yaml:"enable_cors"`
-	// EmbeddingEnabled controls whether embeddings are generated
+	// EmbeddingEnabled enables the optional Embedder supplied at construction.
+	// Runtime readiness is read from the shared query provider binding.
 	EmbeddingEnabled bool `yaml:"embedding_enabled"`
 	// EmbeddingModel is the model name (for error messages)
 	EmbeddingModel string `yaml:"embedding_model"`
@@ -231,13 +233,23 @@ func NewServer(db *nornicdb.DB, config *ServerConfig) *Server {
 	if config == nil {
 		config = DefaultServerConfig()
 	}
+	binding := &cypher.QueryEmbedderBinding{}
+	if db != nil {
+		if executor := db.GetCypherExecutor(); executor != nil {
+			binding = executor.QueryEmbedderBinding()
+		}
+	}
+	if config.EmbeddingEnabled && config.Embedder != nil {
+		binding.Store(config.Embedder)
+	}
 
 	s := &Server{
 		db:        db,
 		config:    config,
-		embed:     config.Embedder,
 		localizer: config.Localizer,
 		handlers:  make(map[string]ToolHandler),
+
+		queryEmbedder: binding,
 	}
 
 	// Register all tool handlers
@@ -248,8 +260,7 @@ func NewServer(db *nornicdb.DB, config *ServerConfig) *Server {
 
 // SetEmbedder sets the embedding service.
 func (s *Server) SetEmbedder(e Embedder) {
-	s.embed = e
-	s.config.EmbeddingEnabled = e != nil
+	s.queryEmbedder.Store(e)
 }
 
 // SetDatabaseScopedExecutor sets the optional per-database executor and node getter.
@@ -1088,11 +1099,12 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 
 			var chunkQuery search.ChunkQueryFunc
 			var embedQuery search.EmbedQueryFunc
-			if s.embed != nil && s.config.EmbeddingEnabled {
+			embedder := s.queryEmbedder.Load()
+			if embedder != nil {
 				chunkQuery = func(_ context.Context, text string) ([]string, error) {
-					return s.embed.ChunkText(text, 512, 50)
+					return embedder.ChunkText(text, 512, 50)
 				}
-				embedQuery = s.embed.Embed
+				embedQuery = embedder.Embed
 			}
 
 			resp, err := search.SearchTextChunksWithErrorPolicy(
