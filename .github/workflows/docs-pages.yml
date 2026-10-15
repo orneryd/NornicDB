@@ -23,6 +23,8 @@ concurrency:
 jobs:
   build:
     name: Build Docs Site
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -53,6 +55,8 @@ jobs:
 
   deploy:
     name: Deploy Docs Site
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     needs: build
     steps:

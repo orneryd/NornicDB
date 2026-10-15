@@ -21,7 +21,7 @@ into `main`, using the path described below.
 
 ```
 feature/<topic> ──┐  (no checks; merge freely)
-feature/<topic> ──┼──► develop ──── nightly checks ────┐
+feature/<topic> ──┼──► develop ──── manual admin-approved checks ────┐
 fix/<topic>     ──┘                                     │ pull request (milestone vX.Y.Z)
                                                         ▼
                                               release/vX.Y.Z ──► tag vX.Y.Z ──► main
@@ -31,9 +31,9 @@ fix/<topic>     ──┘                                     │ pull request (
 | Branch | Who | How changes land | Checks on GitHub |
 |---|---|---|---|
 | `feature/*`, `fix/*` | anyone with write access | push freely; open PRs into `develop` if you want a review | none |
-| `develop` | integration branch | push or merge freely (no force-push, no deletion) | nightly, when `develop` changed |
-| `release/vX.Y.Z` | created and merged by the maintainer | pull request from `develop` (or a fix branch), on milestone `vX.Y.Z` | on request (`ci:run` label) |
-| `main` | maintainers only | fast-forward from a finished release branch, or a scoped operational/documentation PR | local verification; GitHub checks on request |
+| `develop` | integration branch | push or merge freely (no force-push, no deletion) | manual, admin-approved |
+| `release/vX.Y.Z` | created and merged by the maintainer | pull request from `develop` (or a fix branch), on milestone `vX.Y.Z` | manual, admin-approved |
+| `main` | maintainers only | fast-forward from a finished release branch, or a scoped operational/documentation PR | local verification; manual, admin-approved GitHub checks |
 
 - **Experiment on `feature/<topic>` branches** cut from `develop`, iterate as fast as you like, and merge them into
   `develop`. Nothing runs on GitHub for these pushes or pull requests.
@@ -78,15 +78,33 @@ exhaust the Actions allowance. Instead:
    all test groups, allocation ratchet, Cypher conformance, the Neo4j differential, docs) for the files your branch
    changes, with one summary at the end. `make verify-list` shows what would run, `make verify-help` lists the
    options, and `make verify BRANCH=<branch>` verifies another branch without touching your checkout.
-2. **On GitHub, when needed:** add the **`ci:run`** label to a pull request to run CI and Cypher conformance on it,
-   or use *Run workflow* on the CI workflow for any branch.
-3. **Nightly:** the full suite (CI, conformance, and the differential ratchet) runs against `develop` at 03:17 UTC
-   when `develop` changed in the last 24 hours (`.github/workflows/nightly.yml`).
+2. **On GitHub, when needed:** use *Run workflow* to select a branch/ref, then an administrator approves
+   the waiting jobs through the `admin-approved-actions` environment. PR events and labels, including
+   `ci:run`, never start checks. Check the exact ref before approving; approval permits that run's jobs.
+3. **Automatic develop runs are paused:** both nightly verification and weekly canary publishing are
+   manual-only until the metered Actions budget policy changes.
 
-Tag pushes still build and publish the images and the macOS release, and pushes to `main` that touch `docs/` still
-publish the documentation site. Every Monday at 04:23 UTC, when `develop` changed during the week, the release
-images are also built from `develop` and published as **`:canary`** (`.github/workflows/canary.yml`); a canary
-never moves `:latest` or a version tag.
+Existing tag pushes still build/publish images and macOS releases. Existing pushes to `main` can publish
+GitHub Pages and rebuild llama libraries when their path filters match. These push jobs use the
+`automatic-publishing` environment without an approval requirement. All manual runs, including runs
+selected on `main`, and reusable runs from manual callers require admin approval before runner allocation.
+
+#### Administrator approval setting
+
+In **Settings → Environments → admin-approved-actions**, keep **Required reviewers** limited to repository
+administrators (currently `orneryd`) and disable **Allow administrators to bypass configured protection
+rules**. Self-review is allowed so the sole administrator can approve their own manual dispatch. Keep
+this reviewer list current when admin membership changes; GitHub does not automatically bind it to the
+admin role. Configure this environment before enabling these workflows: merely naming an environment
+in YAML creates an unprotected environment if it does not exist.
+
+Repository writers can request manual runs; they cannot approve them unless named as reviewers.
+The repository's separate fork-PR approval setting is not an admin-only gate for collaborator PRs.
+Workflow editors can remove YAML gates, so protect workflow changes through repository review policy.
+Existing branches retain their old workflow definitions until updated; disable their live workflows during
+rollout and only re-enable them after merging and syncing this policy to `develop` and release branches.
+
+Run `python3 scripts/check-actions-policy.py` to check trigger and runner approval policy locally.
 
 ### Releases and milestones
 

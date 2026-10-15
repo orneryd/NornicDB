@@ -2,7 +2,7 @@
 <!-- See CONTRIBUTING.md, "Development workflow". -->
 - [ ] Base is `develop`, `release/vX.Y.Z` for a release fix, or `main` for scoped maintainer operational/documentation work (explain below)
 - [ ] On the release milestone, or N/A for maintainer maintenance (`make milestone VERSION=x.y.z ISSUES="<this PR>"`)
-- [ ] `make verify BASE=origin/<pr-base>` passes locally (list any skipped steps below). Checks do not run on GitHub unless the `ci:run` label is added.
+- [ ] `make verify BASE=origin/<pr-base>` passes locally (list any skipped steps below). PRs and labels do not run GitHub checks. Manual runs require admin approval.
 
 ## Description
 <!-- Provide a clear and concise description of your changes -->

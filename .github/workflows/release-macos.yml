@@ -23,6 +23,8 @@ permissions:
 jobs:
   build-macos-release-assets:
     name: Build macOS Release Assets
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: macos-latest
     outputs:
       checkout_ref: ${{ steps.meta.outputs.checkout_ref }}
@@ -83,6 +85,8 @@ jobs:
 
   build-homebrew-release-assets:
     name: Build Homebrew ${{ matrix.goarch }} Tarball
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ${{ matrix.runner }}
     needs: build-macos-release-assets
     strategy:
@@ -137,6 +141,8 @@ jobs:
 
   publish-github-release-assets:
     name: Publish GitHub Release Assets
+    # Manual and reusable runs wait for an administrator before allocating a runner.
+    environment: ${{ github.event_name == 'push' && 'automatic-publishing' || 'admin-approved-actions' }}
     runs-on: ubuntu-latest
     needs:
       - build-macos-release-assets
