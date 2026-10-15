@@ -64,6 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole, so a node longer than the model's context window (8,191 tokens for OpenAI, 8,192 for Amazon Titan) was
   rejected and never got a vector. Chunks are cut by UTF-8 bytes, an upper bound on tokens.
 
+- Cypher SET and REMOVE advance node and relationship version timestamps when their values or labels change,
+  preserving creation times, no-op timestamps, and timestamps supplied to storage by imports and recovery.
+
 ## [1.4.2]
 
 ### Added

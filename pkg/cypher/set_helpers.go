@@ -351,7 +351,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 			if stats != nil {
 				stats.LabelsAdded += labelsAdded
 			}
-			if err := store.UpdateNode(node); err != nil {
+			if err := updateMutatedNode(store, node); err != nil {
 				restore()
 				return wrap(*state, err)
 			}
@@ -362,7 +362,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 		if changedPropertyCount(state.properties, relationship.Properties) == 0 {
 			continue
 		}
-		if err := store.UpdateEdge(relationship); err != nil {
+		if err := updateMutatedEdge(store, relationship); err != nil {
 			relationship.Properties = state.properties
 			return wrap(*state, err)
 		}

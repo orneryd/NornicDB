@@ -88,6 +88,7 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 		}
 		touched = touched[:0]
 		for _, item := range items {
+			propertiesBefore, labelsBefore := result.Stats.PropertiesSet, result.Stats.LabelsRemoved
 			switch entity := row[item.variable].(type) {
 			case *storage.Node:
 				if entity == nil {
@@ -96,7 +97,9 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 				if err := e.removeFromNode(rowCtx, store, entity, item, nodes, rels, result.Stats); err != nil {
 					return err
 				}
-				touched = appendTouchedEntity(touched, entity)
+				if result.Stats.PropertiesSet != propertiesBefore || result.Stats.LabelsRemoved != labelsBefore {
+					touched = appendTouchedEntity(touched, entity)
+				}
 			case *storage.Edge:
 				if entity == nil {
 					continue
@@ -107,18 +110,20 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 				if err := e.removeProperty(rowCtx, entity.Properties, item, nodes, rels, result.Stats); err != nil {
 					return err
 				}
-				touched = appendTouchedEntity(touched, entity)
+				if result.Stats.PropertiesSet != propertiesBefore {
+					touched = appendTouchedEntity(touched, entity)
+				}
 			}
 		}
 		for _, entity := range touched {
 			switch typed := entity.(type) {
 			case *storage.Node:
-				if err := store.UpdateNode(typed); err != nil {
+				if err := updateMutatedNode(store, typed); err != nil {
 					return err
 				}
 				e.notifyNodeMutated(string(typed.ID))
 			case *storage.Edge:
-				if err := store.UpdateEdge(typed); err != nil {
+				if err := updateMutatedEdge(store, typed); err != nil {
 					return err
 				}
 				e.notifyEdgeMutated(string(typed.ID))
