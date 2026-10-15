@@ -70,14 +70,14 @@ func (e *adjacentDirectEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge
 
 func TestRemoteExtraNormalizeBoltValues(t *testing.T) {
 	node := dbtype.Node{ElementId: "node-element", Labels: []string{"Doc", "File"}, Props: map[string]interface{}{"id": "node-id", "name": "readme"}}
-	normalizedNode := normalizeBoltValue(node).(map[string]interface{})
+	normalizedNode := normalizeBoltValue(node).(RemoteEntityValue)
 	require.Equal(t, "node-element", normalizedNode["elementId"])
 	require.Equal(t, "node-id", normalizedNode["id"])
 	require.Equal(t, []interface{}{"Doc", "File"}, normalizedNode["labels"])
 	require.Equal(t, map[string]interface{}{"id": "node-id", "name": "readme"}, normalizedNode["properties"])
 
 	rel := dbtype.Relationship{ElementId: "rel-element", StartElementId: "start", EndElementId: "end", Type: "LINKS", Props: map[string]interface{}{"id": "rel-id", "weight": 2}}
-	normalizedRel := normalizeBoltValue(rel).(map[string]interface{})
+	normalizedRel := normalizeBoltValue(rel).(RemoteEntityValue)
 	require.Equal(t, "rel-element", normalizedRel["elementId"])
 	require.Equal(t, "rel-id", normalizedRel["id"])
 	require.Equal(t, "LINKS", normalizedRel["type"])

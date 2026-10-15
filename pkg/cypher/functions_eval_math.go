@@ -254,11 +254,19 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// startNode(r) / endNode(r): relationshipEndpoint, as the row evaluator
 	// reads them.
-	if matchFuncStartAndSuffix(expr, "startnode") {
-		return e.relationshipEndpoint(rels[extractFuncArgs(expr, "startnode")], false)
-	}
-	if matchFuncStartAndSuffix(expr, "endnode") {
-		return e.relationshipEndpoint(rels[extractFuncArgs(expr, "endnode")], true)
+	for _, function := range []string{"startnode", "endnode"} {
+		if matchFuncStartAndSuffix(expr, function) {
+			value := e.evaluateExpressionWithContextFull(ctx, extractFuncArgs(expr, function), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			if getExpressionFailure(ctx) != nil {
+				return nil
+			}
+			result, err := e.relationshipEndpointValue(value, function == "endnode")
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
+			return result
+		}
 	}
 
 	// nodes(path) - return list of nodes in a path

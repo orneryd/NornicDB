@@ -87,7 +87,7 @@ func subqueryExpressionKeywordAt(expr string, i int) (keyword string, open int, 
 		if !matchKeywordAt(expr, i, keyword) {
 			continue
 		}
-		if open := skipSpaces(expr, i+len(keyword)); open < len(expr) && expr[open] == '{' {
+		if open := skipSpaces(expr, i+len(keyword)); open < len(expr) && expr[open] == '{' && precedingSubqueryExpressionKeyword(expr, open) {
 			return keyword, open, true
 		}
 	}

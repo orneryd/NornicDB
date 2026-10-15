@@ -24,7 +24,7 @@ func decodeRemoteHTTPValue(raw json.RawMessage, metadata []interface{}, index *i
 		if entityMetadata, ok := metadata[*index].(map[string]interface{}); ok {
 			if entity, found := entities[fmt.Sprint(entityMetadata["elementId"])].(map[string]interface{}); found && reflect.DeepEqual(plain, entity["properties"]) {
 				*index++
-				return entity, nil
+				return RemoteEntityValue(entity), nil
 			}
 		}
 	}

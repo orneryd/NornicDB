@@ -553,6 +553,9 @@ func sameParameterValue(converted, original interface{}) bool {
 // normalizeParameterValue converts one parameter value (normalizeQueryParameters).
 func normalizeParameterValue(value interface{}) (interface{}, bool) {
 	switch typed := value.(type) {
+	case storage.RemoteEntityValue:
+		// Fabric graph values retain their transport provenance across parameters.
+		return value, false
 	case nil, string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64,
 		float32, float64, []byte, time.Time,
 		[]string, []int, []int64, []float32, []float64, []bool:

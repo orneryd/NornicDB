@@ -169,6 +169,8 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 	case storage.EdgeID:
 		return encodePackStreamStringInto(dst, string(val))
 	// Map types
+	case storage.RemoteEntityValue:
+		return encodePackStreamMapIntoWithUTC(dst, map[string]any(val), useUTCDateTimeStructs)
 	case map[string]any:
 		if path, ok := extractPathFromMap(val); ok {
 			return encodePathIntoWithUTC(dst, path.Nodes, path.Relationships, useUTCDateTimeStructs)
@@ -481,6 +483,8 @@ func encodePackStreamValue(v any) []byte {
 		}
 		return encodePackStreamList(items)
 	// Map types
+	case storage.RemoteEntityValue:
+		return encodePackStreamMap(map[string]any(val))
 	case map[string]any:
 		// Check if this is a node (has _nodeId and labels)
 		if nodeId, hasNodeId := val["_nodeId"]; hasNodeId {
@@ -867,6 +871,8 @@ func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool,
 			dst = encodeRecordValueInto(dst, m, useUTCDateTimeStructs, true, dbName, resolvers...)
 		}
 		return dst
+	case storage.RemoteEntityValue:
+		return encodeRecordValueInto(dst, map[string]any(val), useUTCDateTimeStructs, true, dbName, resolvers...)
 	case map[string]any:
 		// Node maps (_nodeId + labels) and paths carry entities.
 		if nodeId, hasNodeId := val["_nodeId"]; hasNodeId {

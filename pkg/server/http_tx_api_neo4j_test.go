@@ -1181,7 +1181,8 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 	_, rows, err := transaction.QueryCypher(context.Background(), "MATCH (n:RP) RETURN n", nil)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	require.Equal(t, "x", rows[0][0].(map[string]interface{})["properties"].(map[string]interface{})["name"])
+	require.IsType(t, storage.RemoteEntityValue{}, rows[0][0])
+	require.Equal(t, "x", rows[0][0].(storage.RemoteEntityValue)["properties"].(map[string]interface{})["name"])
 	for _, query := range []string{
 		"MATCH (n:RP) RETURN {node:n} AS m, n",
 		"MATCH (n:RP) RETURN {node:n,k:1} AS m, n, [n,1] AS mixed",
@@ -1210,7 +1211,8 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 			row := rows[0]
 			require.Len(t, row, 11)
 			for index := 0; index < 3; index++ {
-				entity := row[index].(map[string]interface{})
+				require.IsType(t, storage.RemoteEntityValue{}, row[index])
+				entity := row[index].(storage.RemoteEntityValue)
 				require.Equal(t, row[6+index], entity["elementId"])
 				properties := entity["properties"].(map[string]interface{})
 				for key, expected := range wantTemporal {
@@ -1221,7 +1223,7 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 			require.Equal(t, string(edges[0].ID), row[7])
 			require.Equal(t, string(edges[0].StartNode), row[9])
 			require.Equal(t, string(edges[0].EndNode), row[10])
-			relationship := row[1].(map[string]interface{})
+			relationship := row[1].(storage.RemoteEntityValue)
 			require.Equal(t, row[9], relationship["startNodeElementId"])
 			require.Equal(t, row[10], relationship["endNodeElementId"])
 			require.Equal(t, []interface{}{row[0], row[1]}, row[3])

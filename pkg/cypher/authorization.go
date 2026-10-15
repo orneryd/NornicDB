@@ -92,10 +92,20 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 func registeredProceduresForCalls(query string) []ProcedureSpec {
 	ensureBuiltInProceduresRegistered()
 	var procedures []ProcedureSpec
-	_ = forEachSemanticCall(query, func(_, normalized string, _ int, procedure bool) error {
-		if procedure {
-			if registered, found := globalProcedureRegistry.Get(normalized); found {
-				procedures = append(procedures, registered.Spec)
+	_ = forEachSemanticCall(query, func(name, _ string, _ int, procedure bool) error {
+		if !procedure {
+			return nil
+		}
+		if registered, found := globalProcedureRegistry.Get(name); found {
+			procedures = append(procedures, registered.Spec)
+			return nil
+		}
+		// Keep release's conservative authorization for an invalid case
+		// variant, without making that variant an executable alias. An
+		// exact match above remains decisive for case-distinct contracts.
+		for _, registered := range globalProcedureRegistry.List() {
+			if strings.EqualFold(name, registered.Name) {
+				procedures = append(procedures, registered)
 			}
 		}
 		return nil

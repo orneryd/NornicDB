@@ -878,25 +878,29 @@ func maskPatternComprehensions(expression string) string {
 	return string(masked)
 }
 
+// maskSubqueryBodies replaces each classified subquery operand with a literal
+// of its result kind, preserving byte offsets. Leaving EXISTS/COUNT/COLLECT
+// before an erased body makes later readers mistake it for a pattern variable
+// or keyword-named map projection. Classify the original body before masking;
+// quoted text and actual map projections keep their meaning.
 func maskSubqueryBodies(expression string) string {
+	subqueries := findSubqueryExpressions(expression)
+	if len(subqueries) == 0 {
+		return expression
+	}
 	masked := []byte(expression)
-	for index := 0; index < len(expression); index++ {
-		name, next, ok := scanIdentifierToken(expression, index)
-		if !ok || (!strings.EqualFold(name, "exists") && !strings.EqualFold(name, "count") && !strings.EqualFold(name, "collect")) {
-			continue
-		}
-		open := skipSpaces(expression, next)
-		if open >= len(expression) || expression[open] != '{' {
-			continue
-		}
-		close := findMatchingDelimiter(expression, open, '{', '}')
-		if close < 0 {
-			continue
-		}
-		for position := open + 1; position < close; position++ {
+	for _, subquery := range subqueries {
+		for position := subquery.start; position < subquery.end; position++ {
 			masked[position] = ' '
 		}
-		index = close
+		literal := "true"
+		switch subquery.kind {
+		case "COUNT":
+			literal = "0"
+		case "COLLECT":
+			literal = "[]"
+		}
+		copy(masked[subquery.start:], literal)
 	}
 	return string(masked)
 }

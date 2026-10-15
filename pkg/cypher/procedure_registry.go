@@ -91,6 +91,10 @@ type registeredProcedure struct {
 	User    bool
 }
 
+// ProcedureRegistry resolves each built-in or user procedure by its exact
+// registered name, including namespace and letter case, as Neo4j does.
+// For example, "tenant.Report" and "tenant.report" are distinct registrations;
+// CALL tenant.REPORT() cannot select either.
 type ProcedureRegistry struct {
 	mu       sync.RWMutex
 	builtins map[string]registeredProcedure
@@ -111,7 +115,7 @@ func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler Procedur
 	if handler == nil {
 		return fmt.Errorf("procedure %q: nil handler", spec.Name)
 	}
-	key := lowerASCII(spec.Name)
+	key := spec.Name
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.builtins[key] = registeredProcedure{Spec: spec, Handler: handler}
@@ -130,7 +134,7 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	if handler == nil {
 		return fmt.Errorf("procedure %q: nil handler", spec.Name)
 	}
-	key := lowerASCII(spec.Name)
+	key := spec.Name
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.user[key] = registeredProcedure{Spec: spec, Handler: handler, User: true}
@@ -138,7 +142,7 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 }
 
 func (r *ProcedureRegistry) Get(name string) (registeredProcedure, bool) {
-	key := lowerASCII(name)
+	key := name
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if p, ok := r.user[key]; ok {
