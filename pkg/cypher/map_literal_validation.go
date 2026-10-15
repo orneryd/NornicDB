@@ -125,7 +125,8 @@ func validateStaticMapKeys(query string) error {
 //     expression, keyword also preceded by '(') from `(count {bad})` (a
 //     node pattern, invalid property map).
 func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
-	return subqueryExpressionAfterLiveByte(query, braceIndex, lastLiveByte(query, braceIndex))
+	scanner := newSubqueryBraceScanner(query, 0)
+	return scanner.at(braceIndex)
 }
 
 // subqueryExpressionAfterLiveByte shares the same classification with callers
@@ -342,6 +343,9 @@ func newSubqueryBraceScanner(query string, start int) subqueryBraceScanner {
 }
 
 func (scanner *subqueryBraceScanner) at(brace int) bool {
+	if brace < 0 || brace >= len(scanner.query) || scanner.query[brace] != '{' {
+		return false
+	}
 	for scanner.position < brace {
 		i := scanner.position
 		c := scanner.query[i]

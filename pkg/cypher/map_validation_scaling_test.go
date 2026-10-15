@@ -65,6 +65,10 @@ func BenchmarkStaticMapKeysColdLists(b *testing.B) {
 }
 
 func TestSubqueryBracePredecessorConsistency(t *testing.T) {
+	for _, position := range []int{-1, 0, 2} {
+		require.False(t, precedingSubqueryExpressionKeyword("", position))
+	}
+	require.False(t, precedingSubqueryExpressionKeyword("RETURN 1", 3))
 	for _, gap := range []string{" ", "\f", "\v", " /*gap*/ ", " //gap\n"} {
 		query := "RETURN COUNT" + gap + "{ RETURN 1 AS x } AS v"
 		brace := strings.IndexByte(query, '{')
