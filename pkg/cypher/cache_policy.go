@@ -1,9 +1,18 @@
 package cypher
 
 import (
+	"context"
 	"regexp"
 	"strings"
 )
+
+// canUseResultCache applies the same transaction boundary to local and Fabric
+// reads. Auto-commit revisions cannot represent an explicit transaction's pending
+// writes, so neither a cache hit nor a cache entry is valid inside BEGIN.
+func (e *StorageExecutor) canUseResultCache(ctx context.Context, info *QueryInfo, cypher string) bool {
+	return (e.txContext == nil || !e.txContext.active) && info.IsReadOnly &&
+		e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx)
+}
 
 var (
 	// inferCacheTrueRe enables db.infer cache only when the request explicitly opts in:

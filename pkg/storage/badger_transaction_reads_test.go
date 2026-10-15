@@ -349,7 +349,7 @@ func TestTxReads_PrefixAdmissionReusesValidatedSizes(t *testing.T) {
 		{ID: "test:small", Labels: []string{"Person"}},
 		{ID: "test:larger", Labels: []string{"Person", "Engineer"}, Properties: map[string]any{"name": "Alice"}},
 	}
-	transaction.storeSnapshotLabelPrefixLocked(nil, "Person", nodes, true)
+	transaction.storeSnapshotLabelPrefixLocked(nil, snapshotLabelCacheKey{projectionKey: "Person"}, nodes, true)
 	require.Len(t, transaction.snapshotPrefixNodeByID, len(nodes))
 	total := 0
 	for _, node := range nodes {
@@ -364,7 +364,7 @@ func TestTxReads_PrefixAdmissionReusesValidatedSizes(t *testing.T) {
 	}
 	require.Equal(t, total, transaction.snapshotPrefixNodeBytes)
 	require.Equal(t, total, transaction.snapshotLabelPrefixBytes)
-	transaction.storeSnapshotLabelPrefixLocked(nil, "Other", nodes, true)
+	transaction.storeSnapshotLabelPrefixLocked(nil, snapshotLabelCacheKey{projectionKey: "Other"}, nodes, true)
 	require.Equal(t, total, transaction.snapshotPrefixNodeBytes)
 	require.Len(t, transaction.snapshotPrefixNodeOrder, len(nodes))
 }
@@ -379,7 +379,7 @@ func TestTxReads_PrefixAdmissionExcludesEmbeddingSidecars(t *testing.T) {
 	transaction, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = transaction.Rollback() })
-	transaction.storeSnapshotLabelPrefixLocked(transaction.snapshotTx, "Person", []*Node{node}, true)
+	transaction.storeSnapshotLabelPrefixLocked(transaction.snapshotTx, snapshotLabelCacheKey{projectionKey: "Person"}, []*Node{node}, true)
 	require.Empty(t, transaction.snapshotLabelPrefixNodes)
 	require.Empty(t, transaction.snapshotPrefixNodeByID)
 	transaction.cacheSnapshotPrefixNodeByIDLocked(transaction.snapshotTx, node)
@@ -402,7 +402,7 @@ func TestTxReads_GetNodeUsesUnprojectedSnapshotPrefix(t *testing.T) {
 	require.ErrorIs(t, err, ErrIterationStopped)
 	require.Len(t, tx.snapshotPrefixNodeByID, 1)
 
-	first := tx.snapshotLabelPrefixNodes["Person"][0]
+	first := tx.snapshotLabelPrefixNodes[snapshotLabelCacheKey{projectionKey: "Person"}][0]
 	got, err := tx.GetNode(first.ID)
 	require.NoError(t, err)
 	require.Equal(t, first, got)
