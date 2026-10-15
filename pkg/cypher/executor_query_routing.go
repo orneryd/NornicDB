@@ -476,6 +476,12 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			"Invalid input ']': expected an expression")
 	}
+	if singleNodePatternComprehension(cypher) {
+		// [(n) | …]: a pattern comprehension needs a relationship, as the
+		// ANTLR parser and Neo4j require ("Invalid input '|'").
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherCoreInvalidInputExpectedExpression("|"))
+	}
 	if hasAdjacentStringLiterals(cypher) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			"Invalid input: adjacent string literals require an operator between them")

@@ -292,7 +292,8 @@ func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*S
 // on every route, as Neo4j refuses it (Neo.ClientError.Statement.SemanticError);
 // this keeps procedure grants coming only from GRANT and REVOKE. Schema
 // commands and graph reads are refused too. The system database runs what
-// Neo4j's runs: administration and SHOW commands, and calls of system
+// Neo4j's runs: administration commands, SHOW commands whose tail reads no
+// graph (systemShowTailError), and calls of system
 // procedures (ProcedureSpec.WorksOnSystem) whose results read no graph. A
 // call of any other registered procedure, wherever it stands in the
 // statement, and any other statement (RETURN 1, RETURN COUNT { … },
@@ -304,6 +305,11 @@ func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*S
 func systemDatabaseStatementError(query string) error {
 	_, query = parseExecutionMode(query)
 	query = strings.TrimSpace(query)
+	// A SHOW command runs, and its tail is held to Neo4j's rules for it
+	// (systemShowTailError).
+	if startsWithKeywordFold(query, "SHOW") {
+		return systemShowTailError(query)
+	}
 	// Transaction control (BEGIN, COMMIT, ROLLBACK) is no statement on a
 	// graph; a BEGIN … COMMIT script is its statement.
 	if isSystemCommandNoGraph(query) || bareTransactionCommand(query) != "" {
@@ -328,8 +334,7 @@ func systemDatabaseStatementError(query string) error {
 	if requirements.Write || requirements.Schema || queryKeywords(query)["MATCH"] {
 		return graphAccess
 	}
-	if StatementDatabase("", query) == "system" || startsWithKeywordFold(query, "SHOW") ||
-		startsWithKeywordFold(query, "TERMINATE") || isNornicExtensionStatement(query) {
+	if StatementDatabase("", query) == "system" || startsWithKeywordFold(query, "TERMINATE") || isNornicExtensionStatement(query) {
 		return nil
 	}
 	if startsWithKeywordFold(query, "CALL") {
@@ -341,6 +346,51 @@ func systemDatabaseStatementError(query string) error {
 		}
 	}
 	return notRecognised
+}
+
+// systemShowTailError is the system database's rule for the tail of a SHOW
+// command (YIELD, WHERE, ORDER BY, SKIP, LIMIT, RETURN), as Neo4j 5.26.30
+// applies it there: the tail filters, orders, pages and projects the
+// command's own columns, and reads no graph. Another clause after YIELD
+// (WITH, UNWIND, CALL { }, MATCH, a write, …) is a SyntaxError "Invalid
+// input …"; a COUNT, EXISTS or COLLECT subquery ("The COUNT expression is
+// not valid on SHOW commands."), a pattern comprehension or a pattern
+// expression (graphReadingExpression) is Neo4j's SyntaxError for it. On a
+// user database a SHOW tail is not limited this way (the Cypher 25 clauses
+// after YIELD and graph-reading expressions run there, as Neo4j runs the
+// expressions).
+func systemShowTailError(query string) error {
+	query = strings.TrimSpace(strings.TrimSuffix(query, ";"))
+	tail := strings.TrimSpace(query[len(showCommandHead(query)):])
+	if tail == "" {
+		return nil
+	}
+	body := tail
+	if startsWithKeywordFold(body, "YIELD") {
+		body = body[len("YIELD"):]
+	}
+	if start := showContinuationStart(body); start >= 0 {
+		clause := body[start:]
+		end := 0
+		for end < len(clause) && isIdentByte(clause[end]) {
+			end++
+		}
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherAdminShowClauseUnexpected(clause[:end]))
+	}
+	switch kind := graphReadingExpression(tail); kind {
+	case "":
+		return nil
+	case "COUNT", "EXISTS", "COLLECT":
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherAdminShowExpressionInvalid(kind))
+	case graphReadingPatternComprehension:
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherAdminShowPatternComprehensionInvalid())
+	default:
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherAdminShowPatternExpressionInvalid())
+	}
 }
 
 // systemDatabaseWriteError is systemDatabaseStatementError for a statement

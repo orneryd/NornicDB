@@ -2177,26 +2177,64 @@ func graphReadingExpression(cypher string) string {
 			}
 			continue
 		}
-		if cypher[i] != '[' {
-			continue
+		if patternComprehensionStartsAt(cypher, i) {
+			return graphReadingPatternComprehension
 		}
-		// A pattern comprehension starts with '[' followed (after gaps) by
-		// a node or relationship pattern: '[(' … '|'. A subscript such as
-		// arr[(i)] has the '[' glued directly to the expression atom it
-		// indexes, so it does not qualify; whitespace before the '[' means
-		// the bracket starts a new construct, which in '[' + '(' position
-		// is a pattern comprehension.
-		next := queryGapEnd(cypher, i+1)
-		if next >= len(cypher) || cypher[next] != '(' {
-			continue
-		}
-		if i > 0 && !isASCIISpace(cypher[i-1]) && (isIdentByte(cypher[i-1]) || cypher[i-1] == ']' || cypher[i-1] == ')' ||
-			cypher[i-1] == '\'' || cypher[i-1] == '"' || cypher[i-1] == '`' || cypher[i-1] == '$') {
-			continue
-		}
-		return graphReadingPatternComprehension
 	}
 	return pattern
+}
+
+// patternComprehensionStartsAt reports whether a pattern comprehension
+// starts at cypher[i]: a '[' followed (after gaps) by a node pattern, '[('
+// … '|'. A subscript such as arr[(i)] has the '[' glued directly to the
+// expression atom it indexes, so it does not qualify; whitespace before the
+// '[' means the bracket starts a new construct, which in '[' + '('
+// position is a pattern comprehension.
+func patternComprehensionStartsAt(cypher string, i int) bool {
+	if cypher[i] != '[' {
+		return false
+	}
+	next := queryGapEnd(cypher, i+1)
+	if next >= len(cypher) || cypher[next] != '(' {
+		return false
+	}
+	return i == 0 || isASCIISpace(cypher[i-1]) || !(isIdentByte(cypher[i-1]) || cypher[i-1] == ']' || cypher[i-1] == ')' ||
+		cypher[i-1] == '\'' || cypher[i-1] == '"' || cypher[i-1] == '`' || cypher[i-1] == '$')
+}
+
+// singleNodePatternComprehension reports whether cypher holds a pattern
+// comprehension whose pattern is one node, [(n) | …] or [(n) WHERE … | …]:
+// Cypher's grammar (openCypher, Neo4j, the ANTLR parser) needs a
+// relationship in it, so it is a syntax error on both parsers.
+func singleNodePatternComprehension(cypher string) bool {
+	if strings.IndexByte(cypher, '[') < 0 {
+		return false
+	}
+	for i := 0; i < len(cypher); i++ {
+		switch cypher[i] {
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(cypher, i, cypher[i]) - 1
+			continue
+		case '/':
+			if end := queryCommentEnd(cypher, i); end >= 0 {
+				i = end - 1
+			}
+			continue
+		}
+		if !patternComprehensionStartsAt(cypher, i) {
+			continue
+		}
+		open := queryGapEnd(cypher, i+1)
+		close := findMatchingDelimiter(cypher, open, '(', ')')
+		if close < 0 {
+			continue
+		}
+		after := queryGapEnd(cypher, close+1)
+		if after < len(cypher) && (cypher[after] == '|' || startsWithKeywordFold(cypher[after:], "WHERE")) {
+			return true
+		}
+	}
+	return false
 }
 
 // relationshipPatternFollows reports whether a relationship pattern starts
