@@ -63,13 +63,13 @@ func TestExecuteShellCommand_Errors(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 
-	_, _, err := exec.executeShellCommand(ctx, "   ", nil)
+	_, _, err := exec.executeShellCommand(ctx, "   ", "", nil)
 	require.EqualError(t, err, "empty command")
 
-	_, _, err = exec.executeShellCommand(ctx, ":use", nil)
+	_, _, err = exec.executeShellCommand(ctx, ":use", "", nil)
 	require.EqualError(t, err, ":use requires a database name")
 
-	_, _, err = exec.executeShellCommand(ctx, ":unknown thing", nil)
+	_, _, err = exec.executeShellCommand(ctx, ":unknown thing", "", nil)
 	require.EqualError(t, err, "unknown command: :unknown")
 }
 

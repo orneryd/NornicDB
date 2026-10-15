@@ -20,7 +20,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
-	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -77,79 +76,8 @@ func hasPrefixFold(s, prefix string) bool {
 	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
 }
 
-func statementTargetDatabase(defaultDB string, statement string) (string, error) {
-	db := strings.TrimSpace(defaultDB)
-	trimmed := strings.TrimSpace(statement)
-	if trimmed == "" {
-		return db, nil
-	}
-
-	if hasPrefixFold(trimmed, ":USE ") {
-		parts := strings.Fields(trimmed)
-		if len(parts) < 2 {
-			return "", fmt.Errorf(":USE requires a database name")
-		}
-		target := strings.TrimSpace(parts[1])
-		if target == "" {
-			return "", fmt.Errorf(":USE requires a database name")
-		}
-		return target, nil
-	}
-
-	// A USE clause runs on the request's database's executor, which routes
-	// it (resolving aliases, composite constituents and dynamic references),
-	// checks the principal's access to its target and keeps a transaction on
-	// its database: one USE rule for every route (#738).
-	return db, nil
-}
-
-func normalizeStatementForExecution(defaultDB string, statement string) (effectiveDB string, query string, err error) {
-	effectiveDB = strings.TrimSpace(defaultDB)
-	query = statement
-	trimmed := strings.TrimSpace(statement)
-	if trimmed == "" {
-		return effectiveDB, "", nil
-	}
-
-	if strings.HasPrefix(strings.ToUpper(trimmed), ":USE") {
-		lines := strings.Split(statement, "\n")
-		remainingLines := make([]string, 0, len(lines))
-		foundUse := false
-		for _, line := range lines {
-			lineTrimmed := strings.TrimSpace(line)
-			if !foundUse && strings.HasPrefix(strings.ToUpper(lineTrimmed), ":USE") {
-				parts := strings.Fields(lineTrimmed)
-				if len(parts) < 2 {
-					return "", "", fmt.Errorf(":USE requires a database name")
-				}
-				effectiveDB = strings.TrimSpace(parts[1])
-				if effectiveDB == "" {
-					return "", "", fmt.Errorf(":USE requires a database name")
-				}
-				foundUse = true
-				if len(parts) > 2 {
-					remainingLines = append(remainingLines, strings.Join(parts[2:], " "))
-				}
-				continue
-			}
-			remainingLines = append(remainingLines, line)
-		}
-		if foundUse {
-			query = strings.TrimSpace(strings.Join(remainingLines, "\n"))
-		}
-		return effectiveDB, query, nil
-	}
-
-	target, targetErr := statementTargetDatabase(defaultDB, statement)
-	if targetErr != nil {
-		return "", "", targetErr
-	}
-	return target, query, nil
-}
-
-// withRequestIdentity attaches the signed-in user, the user directory and
-// the request's connection, for SHOW USERS, SHOW CURRENT USER and SHOW
-// TRANSACTIONS (#718).
+// withRequestIdentity attaches the signed-in user, user directory and client
+// connection to administration statements.
 func (s *Server) withRequestIdentity(ctx context.Context, r *http.Request, claims *auth.JWTClaims) context.Context {
 	identity := &cypher.RequestIdentity{Connection: cypher.ClientConnection{Protocol: "http"}}
 	identity.Connections = s.connectionLister
@@ -1479,6 +1407,9 @@ func (s *Server) transactionCommitURL(r *http.Request, dbName, txID string) stri
 }
 
 func (s *Server) appendStatementResult(response *TransactionResponse, result *cypher.ExecuteResult, dbName string, includeStats bool, contents ...[]string) {
+	if selected, ok := result.Metadata["db"].(string); ok && selected != "" {
+		dbName = selected
+	}
 	columns := result.Columns
 	if columns == nil {
 		columns = []string{}
@@ -1590,42 +1521,13 @@ func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 	}
 }
 
-// sessionStatementRunner runs a statement in an open transaction. A
-// statement whose :USE names a constituent of the transaction's composite
-// database reaches it through a USE clause, the one way a composite
-// transaction targets a constituent (as in Neo4j); a statement with its own
-// USE clause keeps it.
+// sessionStatementRunner runs the original statement in an open transaction.
+// The executor owns USE, :USE and the transaction's database selection rules.
 func (s *Server) sessionStatementRunner(session *txsession.Session) statementRunner {
 	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
-		// A request that switches database with :USE partway through fails
-		// as a whole (#683): the statement fails, so the request's
-		// transaction is rolled back and nothing it wrote is kept.
-		if err := cypher.TransactionDatabaseError(s.transactionDatabases(), session.Database, dbName, query); err != nil {
-			return nil, nil, err
-		}
-		if s.isConstituentOf(session.Database, dbName) {
-			if _, _, hasUse, _ := fabric.ParseUseClause(query, false); !hasUse {
-				query = "USE " + dbName + " " + query
-			}
-		}
 		result, err := s.txSessions.ExecuteInSession(cypher.WithClientStatement(ctx), session, query, params)
 		return result, session.Executor, err
 	}
-}
-
-// transactionDatabases is the database manager as
-// cypher.TransactionDatabaseError reads it, or nil without one.
-func (s *Server) transactionDatabases() cypher.TransactionDatabases {
-	if s.dbManager == nil {
-		return nil
-	}
-	return s.dbManager
-}
-
-// isConstituentOf reports whether target names a constituent of composite
-// database composite (composite.alias).
-func (s *Server) isConstituentOf(composite, target string) bool {
-	return s.dbManager != nil && s.dbManager.IsCompositeDatabase(composite) && strings.HasPrefix(target, composite+".")
 }
 
 // runRequestStatements runs an HTTP /tx request's statements in order with
@@ -1681,41 +1583,7 @@ func (s *Server) runRequestStatement(
 	localize func(localization.Message) string,
 	response *TransactionResponse,
 ) *QueryError {
-	// Each statement can override the URL's database with its own :USE.
-	effectiveDB, queryStatement, resolveErr := normalizeStatementForExecution(defaultDB, stmt.Statement)
-	if resolveErr != nil {
-		queryErr := statementError(resolveErr)
-		return &queryErr
-	}
-
-	// Per-database access: deny if principal may not access this database
-	// (Neo4j-aligned). A statement's leading USE clause names the database
-	// it runs on: its access and permissions are checked here with the
-	// same messages as the request's database, before the executor routes
-	// the statement there (the executor checks every database a statement
-	// selects again, including subquery USE and composite constituents).
-	checkedDB := effectiveDB
-	if use, _, hasUse, err := fabric.ParseUseClause(queryStatement, false); err == nil && hasUse && !use.IsDynamic() {
-		checkedDB = use.Name
-	}
-	if !s.canAccessGraph(claims, checkedDB) {
-		return &QueryError{
-			Code:    "Neo.ClientError.Security.Forbidden",
-			Message: localize(localization.DatabaseAccessDenied(checkedDB)),
-		}
-	}
-	if missing := s.missingQueryPermission(claims, checkedDB, queryStatement); missing != "" {
-		message := localization.DatabaseWriteDenied(checkedDB)
-		switch missing {
-		case auth.PermSchema:
-			message = localization.SchemaPermissionRequired()
-		case auth.PermAdmin:
-			message = localization.AdminPermissionRequired()
-		case auth.PermRead:
-			message = localization.ReadPermissionRequired()
-		}
-		return &QueryError{Code: "Neo.ClientError.Security.Forbidden", Message: localize(message)}
-	}
+	effectiveDB, queryStatement := defaultDB, stmt.Statement
 
 	// Use ExistsOrIsConstituent to accept dotted composite.alias references.
 	if !s.dbManager.ExistsOrIsConstituent(effectiveDB) {
@@ -1743,14 +1611,21 @@ func (s *Server) runRequestStatement(
 	}
 
 	queryStart := time.Now()
-	result, executor, err := run(s.withDatabasePermissionChecker(ctx, claims, effectiveDB), effectiveDB, queryStatement, stmt.Parameters)
+	result, executor, err := run(ctx, effectiveDB, queryStatement, stmt.Parameters)
 	s.logSlowQuery(stmt.Statement, stmt.Parameters, time.Since(queryStart), err)
 	if err != nil {
 		var own *requestStatementError
 		if errors.As(err, &own) {
 			return &own.QueryError
 		}
-		if failure := statementError(err); result != nil && len(result.Columns) > 0 && !nornicerrors.IsCompileTimeStatus(failure.Code) {
+		failure := statementError(err)
+		// Authorization failures never publish a statement result, even when
+		// the executor supplies column metadata alongside the denial. Keep
+		// runtime partial results for non-security statement failures below.
+		if strings.HasPrefix(failure.Code, "Neo.ClientError.Security.") {
+			return &failure
+		}
+		if result != nil && len(result.Columns) > 0 && !nornicerrors.IsCompileTimeStatus(failure.Code) {
 			s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
 			return &failure
 		}

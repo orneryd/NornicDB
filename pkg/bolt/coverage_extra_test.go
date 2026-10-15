@@ -1181,7 +1181,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 				{name: "schema", query: "CREATE INDEX ON :Person(name)", message: "Schema operations require schema permission"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					session, serverConn, clientConn := makeSession(&mockExecutor{})
+					session, serverConn, clientConn := makeSession(&cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
 					defer serverConn.Close()
 					defer clientConn.Close()
 					session.authenticated = true
@@ -1278,7 +1278,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			serverConn2, clientConn2 := net.Pipe()
 			defer serverConn2.Close()
 			defer clientConn2.Close()
-			session = newTestSession(serverConn2, &mockExecutor{})
+			session = newTestSession(serverConn2, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
 			session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 			session.authenticated = true
 			session.authResult = &BoltAuthResult{Authenticated: true, Username: "editor", Roles: []string{"editor"}, Permissions: []string{"read", "write"}}
@@ -1292,7 +1292,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, <-done)
 			assert.Equal(t, "Neo.ClientError.Security.Forbidden", code)
-			assert.Contains(t, msg, "Write on database 'nornic' is not allowed")
+			assert.Contains(t, msg, "Write operations require write permission")
 		})
 
 		t.Run("returns executor error and success metadata", func(t *testing.T) {
@@ -1363,7 +1363,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 		})
 
 		t.Run("read permission secure default and db executor errors", func(t *testing.T) {
-			session, serverConn, clientConn := makeSession(&mockExecutor{})
+			session, serverConn, clientConn := makeSession(&cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
 			defer serverConn.Close()
 			defer clientConn.Close()
 			session.authenticated = true

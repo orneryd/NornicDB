@@ -12,38 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestStatementTargetDatabase_UseClauseStaysOnRequestDatabase: a USE
-// clause, well-formed or not, runs on the request's database, whose
-// executor routes it and reports its errors (#738).
-func TestStatementTargetDatabase_UseClauseStaysOnRequestDatabase(t *testing.T) {
-	for _, statement := range []string{"USE graph.byName(", "USE `unterminated", "USE tenant RETURN 1"} {
-		db, err := statementTargetDatabase("nornic", statement)
-		require.NoError(t, err, statement)
-		require.Equal(t, "nornic", db, statement)
-	}
-}
-
-func TestNormalizeStatementForExecution_ErrorCoverage(t *testing.T) {
-	t.Run("empty statement", func(t *testing.T) {
-		dbName, query, err := normalizeStatementForExecution(" nornic ", "  ")
-		require.NoError(t, err)
-		require.Equal(t, "nornic", dbName)
-		require.Equal(t, "", query)
-	})
-
-	t.Run("colon use missing database in multiline", func(t *testing.T) {
-		_, _, err := normalizeStatementForExecution("nornic", ":USE\nMATCH (n) RETURN n")
-		require.EqualError(t, err, ":USE requires a database name")
-	})
-
-	t.Run("a USE clause stays on the request database", func(t *testing.T) {
-		dbName, query, err := normalizeStatementForExecution("nornic", "USE `unterminated")
-		require.NoError(t, err)
-		require.Equal(t, "nornic", dbName)
-		require.Equal(t, "USE `unterminated", query)
-	})
-}
-
 func TestHandleImplicitTransaction_AdditionalPermissionAndStatusBranches(t *testing.T) {
 	server, _ := setupTestServer(t)
 	require.NotNil(t, server.auth)
@@ -62,7 +30,7 @@ func TestHandleImplicitTransaction_AdditionalPermissionAndStatusBranches(t *test
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 		require.NotEmpty(t, resp.Errors)
 		require.Equal(t, "Neo.ClientError.Security.Forbidden", resp.Errors[0].Code)
-		require.Contains(t, resp.Errors[0].Message, "Access to database 'nornic' is not allowed")
+		require.Contains(t, resp.Errors[0].Message, "Write operations require write permission")
 	})
 
 	t.Run("mutation denied when role has no write privilege", func(t *testing.T) {
@@ -81,7 +49,7 @@ func TestHandleImplicitTransaction_AdditionalPermissionAndStatusBranches(t *test
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 		require.NotEmpty(t, resp.Errors)
 		require.Equal(t, "Neo.ClientError.Security.Forbidden", resp.Errors[0].Code)
-		require.Contains(t, resp.Errors[0].Message, "Write on database 'nornic' is not allowed")
+		require.Contains(t, resp.Errors[0].Message, "Write operations require write permission")
 	})
 
 	// An empty statement is Neo4j's SyntaxError (#683).
@@ -105,6 +73,7 @@ func TestHandleImplicitTransaction_AdditionalPermissionAndStatusBranches(t *test
 	})
 
 	t.Run("executor access failure maps to 500 infrastructure status", func(t *testing.T) {
+		server, _ := setupTestServer(t)
 		require.NoError(t, server.dbManager.SetDatabaseStatus("nornic", "offline"))
 		t.Cleanup(func() {
 			_ = server.dbManager.SetDatabaseStatus("nornic", "online")

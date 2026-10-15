@@ -1435,7 +1435,7 @@ func TestResolverAccessControlAdditionalCoverage(t *testing.T) {
 	})
 
 	t.Run("execute cypher enforces write access for mutations", func(t *testing.T) {
-		deniedCtx := auth.WithRequestResolvedAccessResolver(ctx, func(string) auth.ResolvedAccess {
+		deniedCtx := withResolvedAccess(ctx, func(string) auth.ResolvedAccess {
 			return auth.ResolvedAccess{Read: true, Write: false}
 		})
 		_, err := resolver.executeCypher(deniedCtx, "CREATE (n:Denied)", nil, "")
@@ -1447,7 +1447,7 @@ func TestResolverAccessControlAdditionalCoverage(t *testing.T) {
 		_, err := resolver.executeCypher(ctx, "CREATE (:Protected)", nil, "")
 		require.NoError(t, err)
 
-		readOnlyCtx := auth.WithRequestResolvedAccessResolver(ctx, func(string) auth.ResolvedAccess {
+		readOnlyCtx := withResolvedAccess(ctx, func(string) auth.ResolvedAccess {
 			return auth.ResolvedAccess{Read: true, Write: false}
 		})
 		query := &queryResolver{resolver}
@@ -1462,7 +1462,7 @@ func TestResolverAccessControlAdditionalCoverage(t *testing.T) {
 	})
 
 	t.Run("execute cypher allows write when resolver grants access", func(t *testing.T) {
-		allowedCtx := auth.WithRequestResolvedAccessResolver(ctx, func(string) auth.ResolvedAccess {
+		allowedCtx := withResolvedAccess(ctx, func(string) auth.ResolvedAccess {
 			return auth.ResolvedAccess{Read: true, Write: true}
 		})
 		result, err := resolver.executeCypher(allowedCtx, "CREATE (n:Allowed {name: 'ok'}) RETURN n", nil, "")
@@ -1479,7 +1479,7 @@ func TestResolverAccessControlAdditionalCoverage(t *testing.T) {
 			"restricted":       "restricted",
 			"restricted-alias": "restricted",
 		}))
-		aliasCtx = auth.WithRequestResolvedAccessResolver(aliasCtx, func(database string) auth.ResolvedAccess {
+		aliasCtx = withResolvedAccess(aliasCtx, func(database string) auth.ResolvedAccess {
 			return auth.ResolvedAccess{Read: true, Write: database != "restricted"}
 		})
 		_, err := resolver.executeCypher(aliasCtx, "CREATE (:DeniedAlias)", nil, "restricted-alias")

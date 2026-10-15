@@ -74,6 +74,12 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 			requirements.Admin = true
 		}
 	}
+	// A write that reads nothing of the graph (CREATE, and SET / DELETE of
+	// what it created) needs write but not read, as Neo4j lets a principal
+	// with WRITE but no READ privilege run CREATE. Any other statement reads.
+	if requirements.Write && !requirements.Schema && !requirements.Admin && !statementReadsGraphText(query) {
+		requirements.Read = false
+	}
 	return requirements
 }
 
@@ -357,7 +363,8 @@ type PermissionChecker func(permission string) bool
 type permissionCheckerKey struct{}
 
 // DatabasePermissionResolver answers whether the caller holds an entitlement
-// for the database where a statement is executing.
+// for the database where a statement is executing. "access" checks selection
+// of a containing composite or alias; data permissions apply to its target.
 type DatabasePermissionResolver func(database, permission string) bool
 
 type databaseAuthorization struct {
@@ -396,13 +403,6 @@ func withExecutionDatabase(ctx context.Context, database string) context.Context
 	}
 	authorization.database = database
 	return context.WithValue(ctx, databaseAuthorizationKey{}, authorization)
-}
-
-func authorizeDatabaseSelection(ctx context.Context, database string) error {
-	if _, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization); !ok {
-		return nil
-	}
-	return AuthorizeQuery(withExecutionDatabase(ctx, database), "RETURN 1")
 }
 
 // AccessDatabases returns the databases a principal must be allowed to use
@@ -464,19 +464,43 @@ func GraphAccess(manager DatabaseManagerInterface, graph string, canAccess func(
 	return dataDatabase, true
 }
 
-// authorizeSelectedDatabase checks that the principal may use database,
-// a graph the statement selects: each database AccessDatabases lists.
-func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, database string) error {
-	if _, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization); !ok {
-		return nil
+// authorizeSelectedDatabase owns the selection and permission decision for a
+// statement or fragment. Each containing composite or alias needs access;
+// the physical target needs the statement's data permissions. An empty name
+// selects the request's execution database from the context.
+func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, database, query string) error {
+	authorization, ok := ctx.Value(databaseAuthorizationKey{}).(databaseAuthorization)
+	if !ok {
+		return AuthorizeQuery(ctx, query)
+	}
+	selectionOnly := false
+	if database != "" {
+		_, body := parseExecutionMode(query)
+		body = body[firstExecutableCypherOffset(body):]
+		// A shell selection can precede another USE or a Fabric statement.
+		// Those statements decide data permissions on their own targets.
+		selectionOnly = startsWithKeywordFold(body, "USE") ||
+			e.dbManager != nil && e.dbManager.IsCompositeDatabase(database) && e.shouldUseFabricPlanner(body)
+	}
+	if database == "" {
+		database = authorization.database
+		if database == "" {
+			database = e.currentDatabaseName()
+		}
 	}
 	var manager DatabaseManagerInterface
 	if e.dbManager != nil {
 		manager = e.dbManager
 	}
 	databases, listErr := AccessDatabases(manager, database)
-	for _, selected := range databases {
-		if err := authorizeDatabaseSelection(ctx, selected); err != nil {
+	for i, selected := range databases {
+		if selectionOnly || i < len(databases)-1 && listErr == nil {
+			if err := authorizeDatabase(ctx, selected, "access"); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := AuthorizeQuery(withExecutionDatabase(ctx, selected), query); err != nil {
 			return err
 		}
 	}
@@ -558,8 +582,29 @@ func contextPermissions(ctx context.Context) func(permission string) bool {
 	return nil
 }
 
-// MissingPermission is the one authorization decision, which the executor
-// (AuthorizeQuery) and the HTTP and Bolt request checks share: the first
+// principalPermissions is the permission check of the statement's principal,
+// for what a principal sees rather than what it may run (dbms.listConnections
+// lists other users' connections only to a principal holding admin): the
+// transport's resolver (contextPermissions); without one (an embedded
+// caller), the signed-in user's roles, resolved as HTTP and Bolt resolve an
+// entitlement (auth.PermissionsForRoles, auth.EntitlementsAllow) with no
+// stored entitlements, which the executor doesn't have, so the built-in
+// roles' defaults decide. It is nil when the statement has neither a resolver
+// nor a signed-in user: the executor authorizes nothing for that caller.
+func principalPermissions(ctx context.Context) func(permission string) bool {
+	if allows := contextPermissions(ctx); allows != nil {
+		return allows
+	}
+	user, signedIn := authenticatedUserFromContext(ctx)
+	if !signedIn {
+		return nil
+	}
+	entitlements := auth.PermissionsForRoles(user.Roles, nil)
+	return func(permission string) bool { return auth.EntitlementsAllow(entitlements, permission) }
+}
+
+// MissingPermission is the entitlement decision used by statement execution
+// (AuthorizeQuery) and non-Cypher consumers: the first
 // permission requirements need that allows denies, in Neo4j's order
 // (schema, admin, write, read), or "" when allows grants them all. A query
 // that needs admin only for procedures that allowsBoosted grants every one
@@ -611,6 +656,9 @@ func (p PrincipalAccess) Allows(graph, permission string) bool {
 			return false
 		}
 		database = target
+	}
+	if permission == "access" {
+		return true
 	}
 	if p.DatabaseAccess != nil && (permission == "read" || permission == "write") {
 		access := p.DatabaseAccess(database)

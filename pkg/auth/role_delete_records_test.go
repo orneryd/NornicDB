@@ -23,7 +23,7 @@ func TestDeletedRoleStartsEmptyAfterRecreation(t *testing.T) {
 	privileges := NewPrivilegesStore(system)
 	require.NoError(t, privileges.Load(ctx))
 	require.Empty(t, privileges.Matrix())
-	require.Equal(t, ResolvedAccess{}, privileges.Resolve([]string{"ops"}, "nornic"))
+	require.Equal(t, ResolvedAccess{}, grantedAccess(privileges, []string{"ops"}, "nornic"))
 	allowlist := NewAllowlistStore(system)
 	require.NoError(t, allowlist.Load(ctx))
 	require.Empty(t, allowlist.Allowlist())
@@ -107,7 +107,7 @@ func TestDeleteRolePublishesCachesAfterCommit(t *testing.T) {
 				require.ElementsMatch(t, before, after)
 				require.True(t, roles.Exists("ops"))
 				require.Equal(t, map[string][]string{"ops": {"nornic"}}, stores.Allowlist.Allowlist())
-				require.Equal(t, ResolvedAccess{Read: true, Write: true}, stores.Privileges.Resolve([]string{"ops"}, "nornic"))
+				require.Equal(t, ResolvedAccess{Read: true, Write: true}, grantedAccess(stores.Privileges, []string{"ops"}, "nornic"))
 				require.Equal(t, []string{"read", "write"}, stores.Entitlements.Get("ops"))
 				require.Equal(t, []Role{"ops", RoleViewer}, stores.Users.users["worker"].Roles)
 			}

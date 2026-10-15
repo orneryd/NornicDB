@@ -21,7 +21,7 @@ func (e *StorageExecutor) preprocessShellCommands(ctx context.Context, cypher st
 			break
 		}
 
-		result, nextCtx, err := e.executeShellCommand(ctx, cmd, explicitParams)
+		result, nextCtx, err := e.executeShellCommand(ctx, cmd, rest, explicitParams)
 		if err != nil {
 			return "", ctx, nil, err
 		}
@@ -61,6 +61,18 @@ func nextShellCommand(input string) (string, string, bool) {
 	}
 
 	commandName := lowerASCII(fields[0])
+	if commandName == ":use" && len(fields) > 2 {
+		// HTTP has always accepted :USE db followed by a statement on the
+		// same line. Preserve the original statement bytes (including quoted
+		// whitespace) rather than swallowing them as command arguments.
+		databaseStart := len(fields[0]) + strings.Index(firstLine[len(fields[0]):], fields[1])
+		databaseEnd := databaseStart + len(fields[1])
+		remaining := strings.TrimSpace(firstLine[databaseEnd:])
+		if lineEnd >= 0 {
+			remaining += "\n" + trimmed[lineEnd+1:]
+		}
+		return strings.TrimSpace(firstLine[:databaseEnd]), remaining, true
+	}
 	if (commandName == ":param" || commandName == ":params") && isMapStyleShellParam(trimmed) {
 		command, consumed, ok := consumeShellMapCommand(trimmed)
 		if !ok {
@@ -172,7 +184,7 @@ func consumeShellMapCommand(input string) (string, int, bool) {
 	return "", 0, false
 }
 
-func (e *StorageExecutor) executeShellCommand(ctx context.Context, command string, explicitParams map[string]interface{}) (*ExecuteResult, context.Context, error) {
+func (e *StorageExecutor) executeShellCommand(ctx context.Context, command, query string, explicitParams map[string]interface{}) (*ExecuteResult, context.Context, error) {
 	trimmed := strings.TrimSpace(strings.TrimSuffix(command, ";"))
 	parts := strings.Fields(trimmed)
 	if len(parts) == 0 {
@@ -191,8 +203,26 @@ func (e *StorageExecutor) executeShellCommand(ctx context.Context, command strin
 			return nil, ctx, localizedError(localization.CypherCommandRoutingShellUseDatabaseRequired(), nil)
 		}
 		dbName := strings.Fields(args)[0]
-		if err := e.authorizeSelectedDatabase(ctx, dbName); err != nil {
+		// The query follows any remaining shell commands. Select its database
+		// with its own requirements, just as a Cypher USE clause does.
+		for {
+			_, rest, ok := nextShellCommand(query)
+			if !ok {
+				break
+			}
+			query = rest
+		}
+		if err := e.authorizeSelectedDatabase(ctx, dbName, query); err != nil {
 			return nil, ctx, err
+		}
+		if e.dbManager != nil {
+			// Resolve shell selections before the statement starts, including
+			// selections with no following query. Reuse USE's canonical resolver.
+			_, resolved, err := e.scopedExecutorForUse(dbName, GetAuthTokenFromContext(ctx))
+			if err != nil {
+				return nil, ctx, nerrors.MarkCompileTime(err)
+			}
+			dbName = resolved
 		}
 		ctx = withExecutionDatabase(ctx, dbName)
 		return &ExecuteResult{

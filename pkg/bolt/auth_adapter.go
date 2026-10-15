@@ -91,6 +91,8 @@ func NewAuthenticatorAdapter(authenticator *auth.Authenticator) *AuthenticatorAd
 		auth:           authenticator,
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 	}
+	// A changed password stops working at once (auth.BasicAuthCache).
+	authenticator.OnPasswordChange(adapter.basicAuthCache.ForgetUser)
 	adapter.allowAnonymous.Store(false)
 	return adapter
 }
@@ -108,6 +110,8 @@ func NewAuthenticatorAdapterWithAnonymous(authenticator *auth.Authenticator) *Au
 		auth:           authenticator,
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 	}
+	// A changed password stops working at once (auth.BasicAuthCache).
+	authenticator.OnPasswordChange(adapter.basicAuthCache.ForgetUser)
 	adapter.allowAnonymous.Store(true)
 	return adapter
 }
@@ -229,6 +233,7 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 	// - Account lockout (after failed attempts)
 	// - Account disabled status
 	// - Audit logging
+	generation := a.basicAuthCache.Generation()
 	_, user, err := a.auth.Authenticate(principal, credentials, "bolt", "Bolt/4.4")
 	if err != nil {
 		return nil, err
@@ -241,12 +246,12 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 	}
 
 	if a.basicAuthCache != nil {
-		a.basicAuthCache.Set(principal, credentials, &auth.JWTClaims{
+		a.basicAuthCache.SetAtGeneration(principal, credentials, &auth.JWTClaims{
 			Sub:      user.ID,
 			Username: user.Username,
 			Email:    user.Email,
 			Roles:    roles,
-		})
+		}, generation)
 	}
 
 	result := &BoltAuthResult{

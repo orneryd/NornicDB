@@ -1,7 +1,8 @@
 // Package auth: per-database read/write privileges (Phase 4 RBAC).
 //
 // Privileges are stored in the system database as _DbPrivilege nodes.
-// ResolvedAccess is resolved from the matrix; when no entry exists, fall back to global RolePermissions.
+// ResolveDatabaseAccess resolves read/write from the matrix within the roles' global
+// entitlements; when no entry exists, from the entitlements alone.
 // See docs/plans/per-database-rbac-neo4j-style.md §4.4.
 
 package auth
@@ -68,43 +69,70 @@ func (p *PrivilegesStore) Load(ctx context.Context) error {
 	return nil
 }
 
-// Resolve returns ResolvedAccess for (principalRoles, dbName).
-// If any role has an entry for this db, aggregate read/write. If none have an entry, fall back to global RolePermissions.
-func (p *PrivilegesStore) Resolve(principalRoles []string, dbName string) ResolvedAccess {
+// Granted is the read and write the privileges matrix records for roles on
+// database, the union of their entries, and whether any of the roles has an
+// entry there. A nil store records none.
+func (p *PrivilegesStore) Granted(roles []string, database string) (ResolvedAccess, bool) {
+	if p == nil {
+		return ResolvedAccess{}, false
+	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	var read, write bool
-	matchedMatrixEntry := false
-	for _, role := range principalRoles {
-		role = NormalizeRoleName(role)
-		if perDb, ok := p.matrix[role]; ok {
-			if priv, ok := perDb[dbName]; ok {
-				matchedMatrixEntry = true
-				read = read || priv.Read
-				write = write || priv.Write
-			}
+	var access ResolvedAccess
+	found := false
+	for _, role := range roles {
+		if priv, ok := p.matrix[NormalizeRoleName(role)][database]; ok {
+			found = true
+			access.Read = access.Read || priv.Read
+			access.Write = access.Write || priv.Write
 		}
 	}
-	if matchedMatrixEntry {
-		return ResolvedAccess{Read: read, Write: write}
+	return access, found
+}
+
+// Resolve preserves the legacy database-access contract: explicit matrix grants
+// win, otherwise built-in role permissions supply the defaults. For example,
+// store.Resolve([]string{"viewer"}, "reports") returns that role's matrix grant
+// when present, even if it differs from the role's global entitlements.
+//
+// Deprecated: production authorization should use ResolveDatabaseAccess with
+// the stored entitlement policy; Resolve intentionally retains legacy semantics.
+func (p *PrivilegesStore) Resolve(principalRoles []string, dbName string) ResolvedAccess {
+	if granted, found := p.Granted(principalRoles, dbName); found {
+		return granted
 	}
-	// Fall back to global role permissions
-	for _, role := range principalRoles {
-		role = NormalizeRoleName(role)
-		perms, ok := RolePermissions[Role(role)]
-		if !ok {
-			continue
-		}
-		for _, perm := range perms {
-			if perm == PermRead {
-				read = true
-			}
-			if perm == PermWrite || perm == PermAdmin {
-				write = true
-			}
+	var access ResolvedAccess
+	for _, permission := range PermissionsForRoles(principalRoles, nil) {
+		switch permission {
+		case string(PermRead):
+			access.Read = true
+		case string(PermWrite), string(PermAdmin):
+			access.Write = true
 		}
 	}
-	return ResolvedAccess{Read: read, Write: write}
+	return access
+}
+
+// ResolveDatabaseAccess is the one resolver of a principal's read and write
+// on a database, which HTTP, Bolt, gRPC, GraphQL, MCP and plugins all use
+// (through cypher.PrincipalAccess or the server's resolved-access
+// resolver). The roles' global entitlements (PermissionsForRoles: stored
+// overrides, else the built-in roles' defaults) gate it: the read
+// entitlement is what lets a principal use a database at all, and write
+// needs the write entitlement too. Within that, the privileges matrix
+// decides when any of the roles has an entry for the database; otherwise
+// the entitlements decide alone. So removing a role's write entitlement
+// stops its writes on every database at once.
+func ResolveDatabaseAccess(roles []string, database string, privileges *PrivilegesStore, entitlements *RoleEntitlementsStore) ResolvedAccess {
+	global := PermissionsForRoles(roles, entitlements)
+	if !EntitlementsAllow(global, string(PermRead)) {
+		return ResolvedAccess{}
+	}
+	write := EntitlementsAllow(global, string(PermWrite))
+	if granted, found := privileges.Granted(roles, database); found {
+		return ResolvedAccess{Read: granted.Read, Write: granted.Write && write}
+	}
+	return ResolvedAccess{Read: true, Write: write}
 }
 
 // Matrix returns a copy of the full matrix for GET API.

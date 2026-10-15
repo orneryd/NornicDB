@@ -49,6 +49,26 @@ func TestCypherAdminProcedurePrivilegeMessagesRender(t *testing.T) {
 			"Tried to execute Read query after executing Administration command",
 			"Se intentó ejecutar Read query después de ejecutar Administration command",
 		},
+		{
+			CypherAdminShowClauseUnexpected("WITH"), MessageCypherAdminShowClauseUnexpected, map[string]any{"Clause": "WITH"},
+			"Invalid input 'WITH': expected ',', 'AS', 'ORDER BY', 'LIMIT', 'OFFSET', 'RETURN', 'SHOW', 'SKIP', 'TERMINATE', 'WHERE' or <EOF>",
+			"Entrada no válida 'WITH': se esperaba ',', 'AS', 'ORDER BY', 'LIMIT', 'OFFSET', 'RETURN', 'SHOW', 'SKIP', 'TERMINATE', 'WHERE' o <EOF>",
+		},
+		{
+			CypherAdminShowExpressionInvalid("COUNT"), MessageCypherAdminShowExpressionInvalid, map[string]any{"Expression": "COUNT"},
+			"The COUNT expression is not valid on SHOW commands.",
+			"La expresión COUNT no es válida en los comandos SHOW.",
+		},
+		{
+			CypherAdminShowPatternComprehensionInvalid(), MessageCypherAdminShowPatternComprehensionInvalid, nil,
+			"Pattern comprehensions are not valid on SHOW commands.",
+			"Las comprensiones de patrón no son válidas en los comandos SHOW.",
+		},
+		{
+			CypherAdminShowPatternExpressionInvalid(), MessageCypherAdminShowPatternExpressionInvalid, nil,
+			"Pattern expressions are not valid on SHOW commands.",
+			"Las expresiones de patrón no son válidas en los comandos SHOW.",
+		},
 	}
 
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)

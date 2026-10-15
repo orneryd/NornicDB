@@ -300,3 +300,37 @@ func CypherAdminSystemProcedureUnsupported(query string) Message {
 func CypherAdminTransactionStatementType(previous, requested string) Message {
 	return Message{ID: MessageCypherAdminTransactionStatementType, Fallback: "Tried to execute " + requested + " after executing " + previous, Data: map[string]any{"Previous": previous, "Requested": requested}}
 }
+
+const (
+	MessageCypherAdminShowClauseUnexpected            MessageID = "cypheradmin.show_clause_unexpected"
+	MessageCypherAdminShowExpressionInvalid           MessageID = "cypheradmin.show_expression_invalid"
+	MessageCypherAdminShowPatternComprehensionInvalid MessageID = "cypheradmin.show_pattern_comprehension_invalid"
+	MessageCypherAdminShowPatternExpressionInvalid    MessageID = "cypheradmin.show_pattern_expression_invalid"
+)
+
+// CypherAdminShowClauseUnexpected reports a clause after a SHOW command's
+// YIELD on the system database, in Neo4j's words; clause is the clause's
+// first keyword.
+func CypherAdminShowClauseUnexpected(clause string) Message {
+	return Message{ID: MessageCypherAdminShowClauseUnexpected, Fallback: "Invalid input '" + clause + "': expected ',', 'AS', 'ORDER BY', 'LIMIT', 'OFFSET', 'RETURN', 'SHOW', 'SKIP', 'TERMINATE', 'WHERE' or <EOF>", Data: map[string]any{"Clause": clause}}
+}
+
+// CypherAdminShowExpressionInvalid reports a COUNT, EXISTS or COLLECT
+// subquery in a SHOW command on the system database, in Neo4j's words;
+// expression is COUNT, EXISTS or COLLECT.
+func CypherAdminShowExpressionInvalid(expression string) Message {
+	return Message{ID: MessageCypherAdminShowExpressionInvalid, Fallback: "The " + expression + " expression is not valid on SHOW commands.", Data: map[string]any{"Expression": expression}}
+}
+
+// CypherAdminShowPatternComprehensionInvalid reports a pattern
+// comprehension in a SHOW command on the system database, in Neo4j's words.
+func CypherAdminShowPatternComprehensionInvalid() Message {
+	return Message{ID: MessageCypherAdminShowPatternComprehensionInvalid, Fallback: "Pattern comprehensions are not valid on SHOW commands."}
+}
+
+// CypherAdminShowPatternExpressionInvalid reports a pattern expression (a
+// pattern predicate, EXISTS of a pattern, shortestPath) in a SHOW command
+// on the system database, in Neo4j's words.
+func CypherAdminShowPatternExpressionInvalid() Message {
+	return Message{ID: MessageCypherAdminShowPatternExpressionInvalid, Fallback: "Pattern expressions are not valid on SHOW commands."}
+}

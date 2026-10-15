@@ -1172,6 +1172,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		dbConfigActive:       make(map[string]map[string]string),
 		dbConfigPending:      make(map[string]map[string]struct{}),
 	}
+	// A changed password stops working at once (auth.BasicAuthCache).
+	s.auth.OnPasswordChange(s.basicAuthCache.ForgetUser)
 	// Foreground-first policy: while tx requests are active, background embed work yields.
 	s.db.SetEmbedQueueShouldYield(func() bool {
 		return s.activeTxReqs.Load() > 0

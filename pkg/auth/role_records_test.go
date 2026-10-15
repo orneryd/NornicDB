@@ -187,7 +187,7 @@ func TestRoleRecordWritesUseTheOneRoleName(t *testing.T) {
 	require.Equal(t, []string{"read"}, entitlements.Get("ops"))
 	privileges := NewPrivilegesStore(system)
 	require.NoError(t, privileges.SavePrivilege(ctx, "Role_Ops", "nornic", true, false))
-	require.True(t, privileges.Resolve([]string{"ops"}, "nornic").Read)
+	require.True(t, grantedAccess(privileges, []string{"ops"}, "nornic").Read)
 
 	err = NewAllowlistStore(system).SaveRoleDatabases(ctx, "Missing", nil)
 	var missing *RoleNotFoundError

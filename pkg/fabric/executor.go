@@ -25,6 +25,7 @@ type FabricExecutor struct {
 	remote  *RemoteFragmentExecutor
 
 	evaluateGraphArguments GraphArgumentEvaluator
+	authorizeGraph         func(context.Context, string, string) error
 }
 
 const (
@@ -190,7 +191,7 @@ func wrapPipelineIterator(ctx context.Context, it RowIterator, prefetch int) Row
 }
 
 // prepareExecDispatch resolves the graph a fragment runs on
-// (resolveExecGraph, which authorizes it), joins the distributed
+// (resolveExecGraph), preserves its catalog name for selection checks, joins the distributed
 // transaction, and merges the row's variables into the parameters.
 func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTransaction, f *FragmentExec, params map[string]interface{}) (Location, map[string]interface{}, context.Context, error) {
 	recordBindings, _ := RecordBindingsFromContext(ctx)
@@ -204,9 +205,14 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 			execParams[k] = v
 		}
 	}
-	_, loc, err := e.resolveExecGraph(ctx, f, execParams)
+	graph, loc, err := e.resolveExecGraph(ctx, f, execParams)
 	if err != nil {
 		return nil, nil, ctx, err
+	}
+	if e.authorizeGraph != nil {
+		if err := e.authorizeGraph(ctx, graph, f.Query); err != nil {
+			return nil, nil, ctx, err
+		}
 	}
 	if tx != nil {
 		participant := participantKeyFromLocation(loc)
@@ -218,6 +224,12 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 		ctx = WithSubTransaction(ctx, sub)
 	}
 	return loc, execParams, ctx, nil
+}
+
+// SetGraphAuthorizer installs the statement owner's selection check. Dispatch
+// calls it with the original catalog name before opening a participant.
+func (e *FabricExecutor) SetGraphAuthorizer(authorize func(context.Context, string, string) error) {
+	e.authorizeGraph = authorize
 }
 
 func materializeIterator(columns []string, it RowIterator) (*ResultStream, error) {

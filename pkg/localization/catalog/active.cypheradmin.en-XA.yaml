@@ -132,3 +132,16 @@
 - id: cypheradmin.transaction_statement_type
   description: Incompatible statement types in an explicit transaction. Previous and Requested are Neo4j's untranslated statement type names.
   other: "[!! Tried to execute {{.Requested}} after executing {{.Previous}} !!]"
+
+- id: cypheradmin.show_clause_unexpected
+  description: A clause after a SHOW command's YIELD on the system database. Clause is the clause's untranslated first keyword; the expected keywords are untranslated Cypher syntax.
+  other: "[!! Invalid input '{{.Clause}}': expected ',', 'AS', 'ORDER BY', 'LIMIT', 'OFFSET', 'RETURN', 'SHOW', 'SKIP', 'TERMINATE', 'WHERE' or <EOF> !!]"
+- id: cypheradmin.show_expression_invalid
+  description: A COUNT, EXISTS or COLLECT subquery in a SHOW command on the system database. Expression is the untranslated keyword.
+  other: "[!! The {{.Expression}} expression is not valid on SHOW commands. !!]"
+- id: cypheradmin.show_pattern_comprehension_invalid
+  description: A pattern comprehension in a SHOW command on the system database.
+  other: "[!! Pattern comprehensions are not valid on SHOW commands. !!]"
+- id: cypheradmin.show_pattern_expression_invalid
+  description: A pattern expression in a SHOW command on the system database.
+  other: "[!! Pattern expressions are not valid on SHOW commands. !!]"

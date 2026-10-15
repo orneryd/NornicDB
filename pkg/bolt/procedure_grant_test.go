@@ -24,8 +24,11 @@ func TestBoltBoostedProcedureGrant(t *testing.T) {
 		defer clientConn.Close()
 		session := newTestSession(serverConn, &mockExecutor{
 			executeFunc: func(ctx context.Context, query string, _ map[string]any) (*QueryResult, error) {
-				executed = true
 				authorizeErr = cypher.AuthorizeQuery(ctx, query)
+				if authorizeErr != nil {
+					return nil, authorizeErr
+				}
+				executed = true
 				return &QueryResult{}, nil
 			},
 		})
@@ -81,6 +84,9 @@ func runOnBoltSession(t *testing.T, server *Server, result *BoltAuthResult, quer
 	defer clientConn.Close()
 	session := newTestSession(serverConn, &mockExecutor{
 		executeFunc: func(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
+			if err := cypher.AuthorizeQuery(ctx, query); err != nil {
+				return nil, err
+			}
 			executed = true
 			return &QueryResult{}, execute(ctx, query, params)
 		},

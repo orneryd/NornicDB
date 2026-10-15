@@ -314,6 +314,8 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 		register:       nil,
 	}
+	// A changed password stops working at once (auth.BasicAuthCache).
+	authenticator.OnPasswordChange(srv.basicAuthCache.ForgetUser)
 	if config != nil {
 		srv.databaseAccessModeResolver = config.DatabaseAccessModeResolver
 		srv.resolvedAccessResolver = config.ResolvedAccessResolver
@@ -642,6 +644,7 @@ func (s *Server) handleBasicAuth(ctx context.Context, authHeader string) (*auth.
 	}
 
 	// Authenticate and get user
+	generation := s.basicAuthCache.Generation()
 	_, user, err := s.authenticator.Authenticate(username, password, clientIP, "gRPC")
 	if err != nil {
 		return nil, err
@@ -661,7 +664,7 @@ func (s *Server) handleBasicAuth(ctx context.Context, authHeader string) (*auth.
 	}
 
 	if s.basicAuthCache != nil {
-		s.basicAuthCache.Set(username, password, claims)
+		s.basicAuthCache.SetAtGeneration(username, password, claims, generation)
 	}
 
 	return claims, nil
