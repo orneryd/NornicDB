@@ -66,6 +66,44 @@ func (s *PointsService) getSearchService(database string, store storage.Engine) 
 	return svc
 }
 
+// Only text requests capture a provider. The owner keeps the same binding when
+// a batch delegates to Query or Recommend, including an unavailable provider.
+func (s *PointsService) bindQueryEmbedding(ctx context.Context, request any) context.Context {
+	if s.config.BindQueryEmbedding != nil && queryRequestHasText(request) {
+		return s.config.BindQueryEmbedding(ctx)
+	}
+	return ctx
+}
+
+func queryRequestHasText(request any) bool {
+	switch req := request.(type) {
+	case *qpb.QueryPoints:
+		return req.GetQuery().GetNearest().GetDocument().GetText() != ""
+	case *qpb.RecommendPoints:
+		for _, vectors := range [][]*qpb.Vector{req.GetPositiveVectors(), req.GetNegativeVectors()} {
+			for _, v := range vectors {
+				// Match vectorFromVector's precedence: dense data needs no model.
+				if len(v.GetDense().GetData()) == 0 && len(v.GetData()) == 0 && v.GetDocument().GetText() != "" {
+					return true
+				}
+			}
+		}
+	case *qpb.QueryBatchPoints:
+		for _, query := range req.GetQueryPoints() {
+			if queryRequestHasText(query) {
+				return true
+			}
+		}
+	case *qpb.RecommendBatchPoints:
+		for _, query := range req.GetRecommendPoints() {
+			if queryRequestHasText(query) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Upsert inserts or overwrites points. If a point exists, its payload/vectors are replaced.
 func (s *PointsService) Upsert(ctx context.Context, req *qpb.UpsertPoints) (*qpb.PointsOperationResponse, error) {
 	start := time.Now()
@@ -867,6 +905,7 @@ func (s *PointsService) Recommend(ctx context.Context, req *qpb.RecommendPoints)
 		using = *req.Using
 	}
 
+	ctx = s.bindQueryEmbedding(ctx, req)
 	queryVec, err := s.recommendQueryVector(ctx, req.CollectionName, using, req.Positive, req.Negative, req.PositiveVectors, req.NegativeVectors)
 	if err != nil {
 		return nil, err
@@ -906,6 +945,7 @@ func (s *PointsService) RecommendBatch(ctx context.Context, req *qpb.RecommendBa
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantFieldsRequired("recommend_points"))
 	}
 
+	ctx = s.bindQueryEmbedding(ctx, req)
 	results := make([]*qpb.BatchResult, 0, len(req.RecommendPoints))
 	for _, r := range req.RecommendPoints {
 		if r == nil {
@@ -1089,6 +1129,7 @@ func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.Q
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.Unimplemented, localization.QdrantQueryVariantMissing())
 	}
 
+	ctx = s.bindQueryEmbedding(ctx, req)
 	switch q := req.Query.Variant.(type) {
 	case *qpb.Query_Nearest:
 		vec, err := s.vectorFromInput(ctx, req.CollectionName, using, q.Nearest)
@@ -1128,6 +1169,7 @@ func (s *PointsService) Query(ctx context.Context, req *qpb.QueryPoints) (*qpb.Q
 func (s *PointsService) QueryBatch(ctx context.Context, req *qpb.QueryBatchPoints) (*qpb.QueryBatchResponse, error) {
 	start := time.Now()
 
+	ctx = s.bindQueryEmbedding(ctx, req)
 	results := make([]*qpb.BatchResult, 0, len(req.GetQueryPoints()))
 	for _, q := range req.GetQueryPoints() {
 		resp, err := s.Query(ctx, q)
