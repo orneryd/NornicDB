@@ -55,7 +55,10 @@ type TraversalContext struct {
 	// cancelCtx is consulted at DFS entry and sibling expansion so callers can
 	// abandon long traversals on client disconnect / server shutdown. It is
 	// allowed to be nil for legacy call sites that pass through Background.
-	cancelCtx context.Context
+	cancelCtx            context.Context
+	cancelDone           <-chan struct{}
+	cancelInitialized    bool
+	cancellationObserved bool
 	// endNodeID, when set, is the only node a path may end at (a shortestPath
 	// pair, #863).
 	endNodeID storage.NodeID
@@ -1996,7 +1999,7 @@ func (e *StorageExecutor) findPaths(
 	// Every frame and sibling expansion must observe cancellation. Sampling
 	// recursive entries alone leaves callers expanding the remaining siblings
 	// after a cancelled child returns.
-	if ctx.cancelCtx != nil && ctx.cancelCtx.Err() != nil {
+	if ctx.traversalCancelled() {
 		return results
 	}
 
@@ -2049,7 +2052,7 @@ func (e *StorageExecutor) findPaths(
 
 	// Traverse each edge
 	for _, edge := range edges {
-		if ctx.cancelCtx != nil && ctx.cancelCtx.Err() != nil {
+		if ctx.traversalCancelled() {
 			return results
 		}
 		// A Cypher path may revisit a node, but it cannot reuse a relationship.
