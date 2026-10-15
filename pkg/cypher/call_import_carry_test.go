@@ -53,11 +53,9 @@ func TestCallImportsStayBoundThroughWith(t *testing.T) {
 		require.Equal(t, testCase.want, result.Rows, testCase.query)
 	}
 
-	// The rewrite of a body's WITH (pipelineWithCarrying): the imports it
-	// doesn't project, after its own items; WITH * and WITH x leave it.
-	carried := pipelineRow{"x": nil, "z": nil}
-	require.Equal(t, "WITH 1 AS y, x, z WHERE y > 0", pipelineWithCarrying("WITH 1 AS y WHERE y > 0", carried))
-	require.Equal(t, "WITH DISTINCT x, 1 AS y, z ORDER BY y", pipelineWithCarrying("WITH DISTINCT x, 1 AS y ORDER BY y", carried))
-	require.Equal(t, "WITH *", pipelineWithCarrying("WITH *", carried))
-	require.Equal(t, "WITH x, z AS z", pipelineWithCarrying("WITH x, z AS z", carried))
+	projected := pipelineRow{"y": int64(1)}
+	carryPipelineRowImports(projected, pipelineRow{"x": int64(11)}, pipelineRow{"x": int64(11), "z": nil})
+	require.Equal(t, pipelineRow{"y": int64(1), "x": int64(11), "z": nil}, projected)
+	carryPipelineRowImports(projected, pipelineRow{"x": int64(12)}, pipelineRow{"x": int64(11)})
+	require.Equal(t, int64(11), projected["x"], "a projection is never overwritten")
 }
