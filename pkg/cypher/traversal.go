@@ -57,6 +57,7 @@ type TraversalContext struct {
 	// allowed to be nil for legacy call sites that pass through Background.
 	cancelCtx            context.Context
 	cancelDone           <-chan struct{}
+	cancelParentDone     <-chan struct{}
 	cancelInitialized    bool
 	cancellationObserved bool
 	// endNodeID, when set, is the only node a path may end at (a shortestPath
