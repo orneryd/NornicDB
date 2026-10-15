@@ -311,38 +311,6 @@
     "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE x + n.id] AS l"
   },
   {
-    "name": "comprehension reverse arithmetic predicate is type error",
-    "setup": [
-      "CREATE (:W1 {id:1})"
-    ],
-    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE n.id + x] AS l"
-  },
-  {
-    "name": "comprehension arithmetic empty match has no runtime error",
-    "query": "MATCH (n:MissingW1) RETURN [x IN [1,2] WHERE x + n.id] AS l"
-  },
-  {
-    "name": "where row dependent numeric addition filters instead of compile error",
-    "setup": [
-      "CREATE (:W1 {id:1})"
-    ],
-    "query": "MATCH (n:W1) WHERE n.id + 1 RETURN n.id"
-  },
-  {
-    "name": "comprehension known addition remains syntax error",
-    "setup": [
-      "CREATE (:W1 {id:1})"
-    ],
-    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE x + 1] AS l"
-  },
-  {
-    "name": "comprehension multiplication remains syntax error",
-    "setup": [
-      "CREATE (:W1 {id:1})"
-    ],
-    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE x * n.id] AS l"
-  },
-  {
     "name": "foreach trailing garbage rejected before writes",
     "setup": ["CREATE (:T {id:1})"],
     "query": "MATCH (t:T) FOREACH (i IN [1,2] | CREATE (w:W {id:i}) SET w.y = 1 garbage here) RETURN t.id"
@@ -3047,5 +3015,37 @@
   {"name": "temporal map spring gap resolves forward", "query": "RETURN toString(datetime({year:2026,month:3,day:8,hour:2,minute:30,timezone:'America/New_York'})) AS t"},
   {"name": "temporal parameter map spring gap resolves forward", "parameters": {"fields": {"year": 2026, "month": 3, "day": 8, "hour": 2, "minute": 30, "timezone": "America/New_York"}}, "query": "RETURN toString(datetime($fields)) AS t"},
   {"name": "temporal map overlap prefers later instant", "query": "RETURN toString(datetime({year:2026,month:10,day:25,hour:1,minute:30,timezone:'Europe/London'})) AS t"},
-  {"name": "temporal string overlap prefers earlier instant", "query": "RETURN toString(datetime('2026-10-25T01:30:00[Europe/London]')) AS t"}
+  {"name": "temporal string overlap prefers earlier instant", "query": "RETURN toString(datetime('2026-10-25T01:30:00[Europe/London]')) AS t"},
+  {
+    "name": "comprehension reverse arithmetic predicate is type error",
+    "setup": [
+      "CREATE (:W1 {id:1})"
+    ],
+    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE n.id + x] AS l"
+  },
+  {
+    "name": "comprehension arithmetic empty match has no runtime error",
+    "query": "MATCH (n:MissingW1) RETURN [x IN [1,2] WHERE x + n.id] AS l"
+  },
+  {
+    "name": "where row dependent numeric addition filters instead of compile error",
+    "setup": [
+      "CREATE (:W1 {id:1})"
+    ],
+    "query": "MATCH (n:W1) WHERE n.id + 1 RETURN n.id"
+  },
+  {
+    "name": "comprehension known addition remains syntax error",
+    "setup": [
+      "CREATE (:W1 {id:1})"
+    ],
+    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE x + 1] AS l"
+  },
+  {
+    "name": "comprehension multiplication remains syntax error",
+    "setup": [
+      "CREATE (:W1 {id:1})"
+    ],
+    "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE x * n.id] AS l"
+  }
 ]
