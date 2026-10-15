@@ -2512,6 +2512,12 @@ func (s *Service) embeddingCountLocked() int {
 func (s *Service) VectorIndexDimensions() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.vectorIndexDimensionsLocked()
+}
+
+// vectorIndexDimensionsLocked reads the active dimensions. Caller holds s.mu
+// (at least RLock); taking a second RLock can deadlock behind a waiting writer.
+func (s *Service) vectorIndexDimensionsLocked() int {
 	if s.vectorFileStore != nil && s.vectorFileStore.Count() > 0 {
 		return s.vectorFileStore.GetDimensions()
 	}
@@ -5407,7 +5413,7 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 
 	s.mu.RLock()
 	vectorCount := s.embeddingCountLocked()
-	dimensions := s.VectorIndexDimensions()
+	dimensions := s.vectorIndexDimensionsLocked()
 	vfs := s.vectorFileStore
 	vi := s.vectorIndex
 	s.mu.RUnlock()
