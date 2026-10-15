@@ -465,7 +465,9 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsVersion()
 			})
-		registerBuiltInProcedure("gds.louvain.stream", "gds.louvain.stream(graphName :: STRING, configuration = {} :: MAP) :: (nodeId :: INTEGER, communityId :: INTEGER, intermediateCommunityIds :: LIST<INTEGER>)", localization.CypherProcedureMetadata("gds.louvain.stream"), ProcedureModeRead, 1, 2, false,
+		// Expose stored string node IDs consistently with node similarity;
+		// community IDs remain integers. GDS itself exposes integer node IDs.
+		registerBuiltInProcedure("gds.louvain.stream", "gds.louvain.stream(graphName :: STRING, configuration = {} :: MAP) :: (nodeId :: STRING, communityId :: INTEGER, intermediateCommunityIds :: LIST<INTEGER>)", localization.CypherProcedureMetadata("gds.louvain.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsLouvainStream(args)
 			})
