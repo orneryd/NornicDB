@@ -105,3 +105,53 @@ func BenchmarkUniqueCachePrecision(b *testing.B) {
 		})
 	}
 }
+
+// A namespace view filters the buffer's shared rounded property-index bucket,
+// while unattached schemas and ordinary keys keep their existing behavior.
+func TestUniqueConstraintPendingNamespaceAndOrdinaryKeys(t *testing.T) {
+	buffer := newCommitBuffer()
+	index := newPendingNodeIndex()
+	index.tracked["N"] = map[string]struct{}{"v": {}}
+	entries := []struct {
+		id    NodeID
+		value interface{}
+	}{
+		{"tenant:odd", int64(9007199254740993)},
+		{"tenant:even", int64(9007199254740992)},
+		{"other:odd", int64(9007199254740993)},
+		{"other:even", int64(9007199254740992)},
+		{"tenant:small", int(42)},
+		{"tenant:text", "ordinary"},
+		{"other:small", int(42)},
+		{"other:text", "ordinary"},
+	}
+	for _, entry := range entries {
+		node := &Node{ID: entry.id, Labels: []string{"N"}, Properties: map[string]interface{}{"v": entry.value}}
+		buffer.nodes[entry.id] = node
+		index.add(node)
+	}
+	view := pendingWriteView{index: index, owner: &WriteBehindBuffer{active: buffer}, namespace: "tenant"}
+	for _, tc := range []struct {
+		value interface{}
+		want  NodeID
+	}{
+		{int64(9007199254740993), "tenant:odd"},
+		{int64(9007199254740992), "tenant:even"},
+		{int(42), "tenant:small"},
+		{float64(42), "tenant:small"},
+		{"ordinary", "tenant:text"},
+	} {
+		key, ok := uniqueConstraintValueKey(tc.value)
+		require.True(t, ok)
+		require.Equal(t, []NodeID{tc.want}, view.uniqueValueMatches(nil, "N", "v", tc.value, key))
+		// The same real value on a schema with no write-behind attachment must
+		// neither fabricate a pending holder nor allocate an index dependency.
+		require.Empty(t, (pendingWriteView{}).uniqueValueMatches(nil, "N", "v", tc.value, key))
+	}
+	// The platform int path must preserve equality with an integral float.
+	integerKey, ok := uniqueConstraintValueKey(int(42))
+	require.True(t, ok)
+	floatKey, ok := uniqueConstraintValueKey(float64(42))
+	require.True(t, ok)
+	require.Equal(t, integerKey, floatKey)
+}
