@@ -117,8 +117,11 @@ type CommitBuffer struct {
 	// adaptive sizer uses it to measure drain throughput.
 	ops int
 
-	applied  atomic.Bool
-	draining atomic.Bool // claims the single flusher slot for this generation
+	applied atomic.Bool
+	// Derived counters become durable before entity-cache callbacks finish.
+	// Retire only their overlay at that boundary; entity overlays remain live.
+	countsApplied atomic.Bool
+	draining      atomic.Bool // claims the single flusher slot for this generation
 
 	// retired guards the buffer's pending-node index retirement: a
 	// generation that reached the applied state retires its nodes from the
@@ -1276,6 +1279,9 @@ func (w *WriteBehindBuffer) LabelCountDelta(label string) int64 {
 	defer w.mu.RUnlock()
 	var total int64
 	sum := func(buf *CommitBuffer) {
+		if buf.countsApplied.Load() {
+			return
+		}
 		for _, c := range buf.commits {
 			for key, delta := range c.labelDeltas {
 				if key.label == label {
@@ -1300,6 +1306,9 @@ func (w *WriteBehindBuffer) LabelCountDeltaInNamespace(namespace, label string) 
 	defer w.mu.RUnlock()
 	var total int64
 	sum := func(buf *CommitBuffer) {
+		if buf.countsApplied.Load() {
+			return
+		}
 		for _, c := range buf.commits {
 			if delta, ok := c.labelDeltas[namespaceLabel{namespace: namespace, label: label}]; ok {
 				total += delta
@@ -1323,6 +1332,9 @@ func (w *WriteBehindBuffer) EdgeTypeCountDelta(edgeType string) int64 {
 	defer w.mu.RUnlock()
 	var total int64
 	sum := func(buf *CommitBuffer) {
+		if buf.countsApplied.Load() {
+			return
+		}
 		for _, c := range buf.commits {
 			for key, delta := range c.edgeTypeDeltas {
 				if key.edgeType == edgeType {
@@ -1348,6 +1360,9 @@ func (w *WriteBehindBuffer) EdgeTypeCountDeltaInNamespace(namespace, edgeType st
 	defer w.mu.RUnlock()
 	var total int64
 	sum := func(buf *CommitBuffer) {
+		if buf.countsApplied.Load() {
+			return
+		}
 		for _, c := range buf.commits {
 			if delta, ok := c.edgeTypeDeltas[namespaceEdgeType{namespace: namespace, edgeType: edgeType}]; ok {
 				total += delta
@@ -1495,6 +1510,9 @@ func (w *WriteBehindBuffer) EdgeTypeLabelCountDeltaInNamespace(sub byte, namespa
 	defer w.mu.RUnlock()
 	var total int64
 	sum := func(buf *CommitBuffer) {
+		if buf.countsApplied.Load() {
+			return
+		}
 		for _, c := range buf.commits {
 			if c.edgeTypeLabelDeltas == nil {
 				continue
@@ -1519,6 +1537,9 @@ func (w *WriteBehindBuffer) EdgeTypeLabelCountDelta(sub byte, label, edgeType st
 	defer w.mu.RUnlock()
 	var total int64
 	sum := func(buf *CommitBuffer) {
+		if buf.countsApplied.Load() {
+			return
+		}
 		for _, c := range buf.commits {
 			if c.edgeTypeLabelDeltas == nil {
 				continue

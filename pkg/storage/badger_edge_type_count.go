@@ -94,14 +94,18 @@ func (b *BadgerEngine) EdgeCountByTypeInNamespace(namespace, edgeType string) (i
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
+	b.edgeTypeCountWriteMu.RLock()
+	defer b.edgeTypeCountWriteMu.RUnlock()
 	count, _, err := b.readEdgeCountByTypeInNamespace(namespace, edgeType)
 	if errors.Is(err, errMalformedDerivedCount) {
 		// A malformed persisted base count is repaired from the edge-type
 		// index and the read retries once, as the pre-delta path repaired it
 		// (PR #1043 item #2).
+		b.edgeTypeCountWriteMu.RUnlock()
 		b.edgeTypeCountWriteMu.Lock()
 		repairErr := b.repairEdgeTypeCountLocked(namespace, edgeType)
 		b.edgeTypeCountWriteMu.Unlock()
+		b.edgeTypeCountWriteMu.RLock()
 		if repairErr != nil {
 			return 0, repairErr
 		}
@@ -194,6 +198,8 @@ func (b *BadgerEngine) EdgeCountByType(edgeType string) (int64, error) {
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
+	b.edgeTypeCountWriteMu.RLock()
+	defer b.edgeTypeCountWriteMu.RUnlock()
 	needle := []byte(edgeType)
 	var total int64
 	err := b.withView(func(txn *badger.Txn) error {

@@ -175,7 +175,7 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 	if len(commits) == 0 {
 		return nil
 	}
-	if err := b.applyBufferedCommits(commits); err != nil {
+	if err := b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }); err != nil {
 		return err
 	}
 	buf.markApplied()
@@ -190,6 +190,12 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 // durable exactly when the data is — recovery at open skips any commit whose
 // marker exists.
 func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
+	return b.applyBufferedCommitsWithCountPublication(commits, nil)
+}
+
+// publishCounts retires the generation count overlay under the same locks that
+// publish persisted counters. Entity/cache callbacks run afterward without locks.
+func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func()) error {
 	if len(commits) == 0 {
 		return nil
 	}
@@ -378,6 +384,9 @@ func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
 				}
 			}
 		}
+	}
+	if publishCounts != nil {
+		publishCounts()
 	}
 	// Close the double-count window before releasing the count locks: the
 	// derived-count fast paths hold these same locks, so they observe
