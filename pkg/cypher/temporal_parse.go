@@ -242,14 +242,14 @@ func parseCypherDateTimeTextWithError(text string) (time.Time, string, bool, err
 	}
 	local := time.Date(date.Year(), date.Month(), date.Day(), hour, minute, second, nanos, time.UTC)
 	if zoneID != "" {
-		return resolveNamedZoneLocalTime(local, location), zoneID, true, nil
+		return resolveNamedZoneLocalTime(local, location, false), zoneID, true, nil
 	}
 	return time.Date(date.Year(), date.Month(), date.Day(), hour, minute, second, nanos, location), zoneID, true, nil
 }
 
-// resolveNamedZoneLocalTime follows ZonedDateTime's default: the earlier
-// instant in an overlap, and the clock shifted forward by the gap duration.
-func resolveNamedZoneLocalTime(local time.Time, location *time.Location) time.Time {
+// resolveNamedZoneLocalTime shifts gaps forward. String constructors prefer
+// the earlier overlap instant; map constructors prefer the later instant.
+func resolveNamedZoneLocalTime(local time.Time, location *time.Location, preferLater bool) time.Time {
 	_, before := local.Add(-48 * time.Hour).In(location).Zone()
 	_, after := local.Add(48 * time.Hour).In(location).Zone()
 	first := local.Add(-time.Duration(before) * time.Second).In(location)
@@ -257,7 +257,7 @@ func resolveNamedZoneLocalTime(local time.Time, location *time.Location) time.Ti
 	_, firstOffset := first.Zone()
 	_, secondOffset := second.Zone()
 	firstValid, secondValid := firstOffset == before, secondOffset == after
-	if firstValid && (!secondValid || first.Before(second)) {
+	if firstValid && (!secondValid || (first.Before(second) != preferLater)) {
 		return first
 	}
 	if secondValid {

@@ -3043,5 +3043,9 @@
     "query": "CREATE (:P {x: 1}) -- note",
     "expected_code": "Neo.ClientError.Statement.SyntaxError",
     "no_effects": true
-  }
+  },
+  {"name": "temporal map spring gap resolves forward", "query": "RETURN toString(datetime({year:2026,month:3,day:8,hour:2,minute:30,timezone:'America/New_York'})) AS t"},
+  {"name": "temporal parameter map spring gap resolves forward", "parameters": {"fields": {"year": 2026, "month": 3, "day": 8, "hour": 2, "minute": 30, "timezone": "America/New_York"}}, "query": "RETURN toString(datetime($fields)) AS t"},
+  {"name": "temporal map overlap prefers later instant", "query": "RETURN toString(datetime({year:2026,month:10,day:25,hour:1,minute:30,timezone:'Europe/London'})) AS t"},
+  {"name": "temporal string overlap prefers earlier instant", "query": "RETURN toString(datetime('2026-10-25T01:30:00[Europe/London]')) AS t"}
 ]
