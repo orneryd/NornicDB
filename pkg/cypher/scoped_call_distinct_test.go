@@ -66,6 +66,10 @@ func TestScopedCallDistinctScope(t *testing.T) {
 		"WITH 11 AS x CALL (x) { UNWIND [2,2,3] AS y WITH DISTINCT y RETURN x*y AS a } RETURN a ORDER BY a",
 		"WITH 11 AS x CALL (x) { UNWIND [2,3] AS y WITH y RETURN x*y AS a } RETURN a ORDER BY a",
 		"WITH 11 AS x CALL (x) { UNWIND [2,2,3] AS y WITH DISTINCT x, y RETURN x*y AS a } RETURN a ORDER BY a",
+		"WITH 11 AS x CALL (x) { UNWIND [2,2,3] AS y WITH DISTINCT y ORDER BY x RETURN x*y AS a } RETURN a ORDER BY a",
+		"WITH 11 AS x CALL (x) { UNWIND [2,2,3] AS y WITH y, count(*) AS c ORDER BY x RETURN x*y AS a } RETURN a ORDER BY a",
+		"WITH 11 AS x CALL (x) { UNWIND [2,2,3] AS y RETURN DISTINCT x*y AS a ORDER BY x } RETURN a ORDER BY a",
+		"WITH {factor:11} AS x CALL (x) { UNWIND [2,2,3] AS y WITH DISTINCT y ORDER BY x.factor RETURN x.factor*y AS a } RETURN a ORDER BY a",
 		"WITH 11 AS x CALL (*) { UNWIND [2,2,3] AS y WITH DISTINCT y RETURN x*y AS a } RETURN a ORDER BY a",
 		"WITH 11 AS x CALL (x) { CALL () { UNWIND [22,33] AS a RETURN a } RETURN a } RETURN a ORDER BY a",
 		"WITH 11 AS x CALL (x) { UNWIND [2,2,3] AS y WITH DISTINCT y WHERE x = 11 WITH y ORDER BY x RETURN x*y AS a } RETURN a ORDER BY a",
@@ -83,6 +87,9 @@ func TestScopedCallDistinctScope(t *testing.T) {
 		"CALL () { WITH 11 AS x UNWIND [2,2,3] AS y WITH DISTINCT y RETURN x*y AS a } RETURN a",
 		"WITH 11 AS x CALL { WITH x UNWIND [2,2,3] AS y WITH DISTINCT y RETURN x*y AS a } RETURN a",
 		"WITH 11 AS imported CALL (imported) { WITH 7 AS local UNWIND [2,2,3] AS y WITH DISTINCT y RETURN local*y AS a } RETURN a",
+		"CALL () { WITH 11 AS x UNWIND [2,2,3] AS y WITH DISTINCT y ORDER BY x RETURN y AS a } RETURN a",
+		"CALL () { WITH 11 AS x UNWIND [2,2,3] AS y RETURN DISTINCT y AS a ORDER BY x } RETURN a",
+		"WITH 11 AS x CALL { WITH x UNWIND [2,2,3] AS y WITH DISTINCT y ORDER BY x RETURN y AS a } RETURN a",
 	} {
 		t.Run(query, func(t *testing.T) {
 			_, err := exec.Execute(context.Background(), query, nil)
