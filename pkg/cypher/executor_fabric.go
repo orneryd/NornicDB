@@ -878,7 +878,7 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 
 	txExec := NewStorageExecutor(engine)
 	txExec.deferFlush = c.base.deferFlush
-	txExec.embedder = c.base.embedder
+	txExec.ShareEmbedderFrom(c.base)
 	txExec.searchService = c.base.searchService
 	txExec.inferenceManager = c.base.inferenceManager
 	txExec.onNodeMutated = c.base.onNodeMutated

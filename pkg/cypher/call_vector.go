@@ -52,7 +52,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 		queryVector = input.vector
 	} else if input.stringQuery != "" {
 		// String query - embed server-side (NornicDB enhancement)
-		if e.embedder == nil {
+		if e.GetEmbedder() == nil {
 			return nil, localizedError(localization.CypherSpecializedCallsStringQueryEmbedderRequired(), nil)
 		}
 		embedded, embedErr := e.embedVectorQueryText(ctx, input.stringQuery)
@@ -104,7 +104,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 			}
 		case string:
 			// String parameter - embed it
-			if e.embedder == nil {
+			if e.GetEmbedder() == nil {
 				return nil, localizedError(localization.CypherSpecializedCallsParameterStringEmbedderRequired(input.paramName), nil)
 			}
 			embedded, embedErr := e.embedVectorQueryText(ctx, val)
@@ -275,7 +275,8 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 // the call's evaluated STRING argument.
 // Syntax: CALL db.index.vector.embed('query text') YIELD embedding
 func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	if e.embedder == nil {
+	embedder := e.GetEmbedder()
+	if embedder == nil {
 		return nil, localizedError(localization.CypherSpecializedCallsEmbedderNotConfigured(), nil)
 	}
 	text, err := requiredProcedureString("db.index.vector.embed", args, 0, "text")
@@ -286,7 +287,7 @@ func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, args []int
 		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedTextRequired(), nil)
 	}
 
-	embedding, err := embedQueryChunked(ctx, e.embedder, text)
+	embedding, err := embedQueryChunked(ctx, embedder, text)
 	if err != nil {
 		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedFailed(err), err)
 	}
