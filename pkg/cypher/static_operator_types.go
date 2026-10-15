@@ -826,7 +826,8 @@ func staticMapProjectionReceiver(expression string) (receiver string, projected 
 		case '{':
 			if findMatchingDelimiter(expression, open, '{', '}') == len(expression)-1 {
 				receiver = strings.TrimSpace(expression[:open])
-				if !endsWithOperand(receiver) && (simpleSemanticIdentifier(receiver) == "" || isSubqueryBrace(expression, open)) {
+				_, subqueryName := staticSubqueryExpressionTypes[upperASCII(receiver)]
+				if !endsWithOperand(receiver) && (!subqueryName || isSubqueryBrace(expression, open)) {
 					// After an operator, a comma or a keyword ({a: 1} + x,
 					// x = {a: 1}, THEN {a: 1}, and EXISTS / COUNT / COLLECT
 					// { … } subqueries) the brace opens a map literal or a
@@ -892,7 +893,8 @@ func staticMapProjectionSplit(expression string) (variable, items string, projec
 		return "", "", false
 	}
 	variable = simpleSemanticIdentifier(strings.TrimSpace(expression[:open]))
-	if variable == "" || isSubqueryBrace(expression, open) {
+	_, subqueryName := staticSubqueryExpressionTypes[upperASCII(variable)]
+	if variable == "" || isCypherKeyword(variable) && !subqueryName || isSubqueryBrace(expression, open) {
 		return "", "", false
 	}
 	return variable, expression[open+1 : len(expression)-1], true
