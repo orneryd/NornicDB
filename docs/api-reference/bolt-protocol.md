@@ -50,6 +50,29 @@ If you need the original stable ID, use Cypher functions like:
 - `id(n)` (returns NornicDB string ID)
 - `elementId(n)` (Neo4j-style string form, e.g. `4:nornicdb:<id>`)
 
+**Accepted compatibility exception for v1.4.3:** For locally stored NornicDB entities, Cypher `id(node)` and
+`id(relationship)` retain their native **string** return type. Neo4j 5.26
+returns an `INTEGER`; NornicDB intentionally preserves its documented string
+contract for existing clients. This exception is accepted, not an implementation
+of Neo4j's integer `id()` semantics (#1165). Use `elementId()` when an application
+needs the explicit database-qualified string identity.
+
+GDS stream outputs that identify local nodes, including
+`gds.fastRP.stream(...).nodeId`, likewise remain string identifiers. They must not
+be treated as Neo4j/GDS integer node IDs for arithmetic or integer properties.
+The integer `id` field in a Bolt Node/Relationship structure is a separate
+transport representation; it does not change the Cypher function or GDS output
+type. The integer comparison support described below does not change that return
+contract either. Remote/fabric entities can retain identifiers from their source
+database; this local contract does not redefine those source identifiers.
+
+Procedure names are a separate compatibility rule: registry lookup and persisted
+custom-procedure identity preserve the exact registered letter case. The
+case-sensitive dispatch and legacy catalog migration fixes (#1274, #1294, #1310)
+do not alter entity IDs. This resolves the procedure-case portion of #1165 while
+the string-ID portion remains an explicit accepted design exception.
+
+
 ## Property value types (what you can store in `{ ... }`)
 
 This is the key compatibility question: **what types are allowed as node/relationship properties?**
