@@ -46,6 +46,7 @@ func extractPaginationExpressions(cypher string) []paginationExpression {
 }
 
 func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) error {
+	braces := newSubqueryBraceScanner(cypher, 0)
 	// Check original subquery bodies before imported variables are replaced
 	// with their row values. A substituted integer is still a row dependency.
 	for index := 0; index < len(cypher); index++ {
@@ -59,7 +60,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) err
 				continue
 			}
 		case '{':
-			if isSubqueryBrace(cypher, index) {
+			if braces.at(index) {
 				if close := findMatchingDelimiter(cypher, index, '{', '}'); close >= 0 {
 					if err := e.validateStaticPaginationExpressions(cypher[index+1 : close]); err != nil {
 						return err

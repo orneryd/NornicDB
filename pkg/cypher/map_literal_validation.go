@@ -14,30 +14,31 @@ func validateStaticMapKeys(query string) error {
 		return nil
 	}
 	var patternContext *mapPatternContext
+	// Carry the predecessor through this lexical pass. Re-reading from byte
+	// zero for each brace makes a flat list of ordinary maps quadratic.
+	lastLive := -1
 	for index := 0; index < len(query); index++ {
 		if query[index] == '\'' || query[index] == '"' || query[index] == '`' {
 			index = numericValidationSkipQuoted(query, index) - 1
+			lastLive = index
 			continue
 		}
-		if index+1 < len(query) && query[index] == '/' && query[index+1] == '/' {
-			index += 2
-			for index < len(query) && query[index] != '\n' && query[index] != '\r' {
-				index++
+		if query[index] == '/' {
+			if end := queryCommentEnd(query, index); end >= 0 {
+				index = end - 1
+				continue
 			}
+		}
+		if size := queryWhitespaceAt(query, index); size > 0 {
+			index += size - 1
 			continue
 		}
-		if index+1 < len(query) && query[index] == '/' && query[index+1] == '*' {
-			index += 2
-			for index+1 < len(query) && (query[index] != '*' || query[index+1] != '/') {
-				index++
-			}
-			index++
-			continue
-		}
+		previous := lastLive
+		lastLive = index
 		if query[index] != '{' {
 			continue
 		}
-		if precedingSubqueryExpressionKeyword(query, index) {
+		if subqueryExpressionAfterLiveByte(query, index, previous) {
 			// Validate in the nearest statement scope: an outer RETURN must
 			// not turn a nested MATCH property map into a map projection.
 			if close := findMatchingDelimiter(query, index, '{', '}'); close >= 0 {
@@ -45,6 +46,7 @@ func validateStaticMapKeys(query string) error {
 					return err
 				}
 				index = close
+				lastLive = close
 			}
 			continue
 		}
@@ -101,8 +103,8 @@ func validateStaticMapKeys(query string) error {
 
 // precedingSubqueryExpressionKeyword reports whether the '{' at braceIndex
 // opens a brace-bodied subquery expression (EXISTS {, COUNT {, COLLECT {, or
-// CALL {) rather than a node/relationship pattern property map. It scans
-// backward over whitespace and comments to the nearest identifier token and matches it
+// CALL {) rather than a node/relationship pattern property map. It finds the lexical
+// predecessor outside whitespace/comments and matches its identifier
 // case-insensitively against the subquery-introducing keywords the grammar
 // allows before a bare '{'.
 //
@@ -123,7 +125,12 @@ func validateStaticMapKeys(query string) error {
 //     expression, keyword also preceded by '(') from `(count {bad})` (a
 //     node pattern, invalid property map).
 func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
-	index := lastLiveByte(query, braceIndex)
+	return subqueryExpressionAfterLiveByte(query, braceIndex, lastLiveByte(query, braceIndex))
+}
+
+// subqueryExpressionAfterLiveByte shares the same classification with callers
+// that already know the last live byte from a forward lexical pass.
+func subqueryExpressionAfterLiveByte(query string, braceIndex, index int) bool {
 	// CALL (a, b) { … }: step back over the import list to the CALL.
 	if index >= 0 && query[index] == ')' {
 		depth := 0
@@ -321,4 +328,40 @@ func colonIsMapKeySeparator(query string, colon int) bool {
 		index--
 	}
 	return index >= 0 && (query[index] == '{' || query[index] == ',')
+}
+
+// subqueryBraceScanner retains lexical progress across increasing brace offsets.
+// Each query byte is read once even when a statement contains many plain maps.
+type subqueryBraceScanner struct {
+	query              string
+	position, lastLive int
+}
+
+func newSubqueryBraceScanner(query string, start int) subqueryBraceScanner {
+	return subqueryBraceScanner{query: query, position: start, lastLive: start - 1}
+}
+
+func (scanner *subqueryBraceScanner) at(brace int) bool {
+	for scanner.position < brace {
+		i := scanner.position
+		c := scanner.query[i]
+		if c == '\'' || c == '"' || c == '`' {
+			scanner.position = skipCypherQuotedText(scanner.query, i, c)
+			scanner.lastLive = scanner.position - 1
+			continue
+		}
+		if c == '/' {
+			if end := queryCommentEnd(scanner.query, i); end > i {
+				scanner.position = end
+				continue
+			}
+		}
+		if size := queryWhitespaceAt(scanner.query, i); size > 0 {
+			scanner.position += size
+			continue
+		}
+		scanner.lastLive = i
+		scanner.position++
+	}
+	return scanner.position == brace && subqueryExpressionAfterLiveByte(scanner.query, brace, scanner.lastLive)
 }

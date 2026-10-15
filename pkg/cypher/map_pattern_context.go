@@ -184,16 +184,17 @@ func mapPatternScope(query string, open int, stack []mapDelimiter, context *mapP
 	if parent.kind != '{' {
 		return parent.pattern
 	}
-	return precedingSubqueryExpressionKeyword(query, parent.open) && context.scope(query, parent.open+1).pattern(open)
+	return context.subqueries[parent.open] && context.scope(query, parent.open+1).pattern(open)
 }
 
 // Matching delimiters and clause/selector positions are indexed once per
 // statement scope. Nested expression groups and sibling patterns then use
 // constant-time delimiter lookups rather than rescanning overlapping suffixes.
 type mapPatternContext struct {
-	closes    map[int]int
-	scopes    map[int]*mapPatternClauseIndex
-	qualified map[int]bool
+	closes     map[int]int
+	scopes     map[int]*mapPatternClauseIndex
+	qualified  map[int]bool
+	subqueries map[int]bool
 }
 type mapPatternClausePosition struct {
 	position int
@@ -221,11 +222,18 @@ func newMapPatternContext(query string) *mapPatternContext {
 				continue
 			}
 		}
-		if isCypherWhitespace(c) {
+		if size := queryWhitespaceAt(query, index); size > 0 {
+			index += size - 1
 			continue
 		}
 		if isIdentStartByte(c) && (index == 0 || !isIdentByte(query[index-1])) && previous >= 0 && query[previous] == '.' {
 			context.qualified[index] = true
+		}
+		if c == '{' && subqueryExpressionAfterLiveByte(query, index, previous) {
+			if context.subqueries == nil {
+				context.subqueries = make(map[int]bool)
+			}
+			context.subqueries[index] = true
 		}
 		previous = index
 		switch c {
@@ -300,7 +308,7 @@ func (context *mapPatternContext) selected(query string, open int, stack []mapDe
 	start := 0
 	if len(stack) > 0 {
 		parent := stack[len(stack)-1]
-		if parent.kind != '{' || !precedingSubqueryExpressionKeyword(query, parent.open) {
+		if parent.kind != '{' || !context.subqueries[parent.open] {
 			return false
 		}
 		start = parent.open + 1

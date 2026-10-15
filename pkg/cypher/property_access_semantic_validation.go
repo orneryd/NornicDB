@@ -284,6 +284,7 @@ func checkExpressionPropertyAccesses(text string, types map[string]string, param
 // scanPropertyAccesses checks the property accesses (and, in expression
 // text, the map projections) of text; see checkPropertyAccesses.
 func scanPropertyAccesses(text string, types map[string]string, params map[string]interface{}, expressions bool) error {
+	braces := newSubqueryBraceScanner(text, 0)
 	if strings.IndexByte(text, '.') < 0 && strings.IndexByte(text, '{') < 0 {
 		return nil
 	}
@@ -332,7 +333,7 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 				index = end
 			}
 		case c == '{':
-			if index > 0 && isSubqueryBrace(text, index) {
+			if index > 0 && braces.at(index) {
 				end := findMatchingDelimiter(text, index, '{', '}')
 				if end < 0 {
 					return nil
@@ -370,7 +371,7 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 					return err
 				}
 			}
-			if after := skipSpaces(text, next); expressions && after < len(text) && text[after] == '{' && rejectsPropertyAccess(typeName) && !isSubqueryBrace(text, after) {
+			if after := skipSpaces(text, next); expressions && after < len(text) && text[after] == '{' && rejectsPropertyAccess(typeName) && !braces.at(after) {
 				return typeNameMismatchError("Map, Node or Relationship", typeName)
 			}
 			index = next - 1

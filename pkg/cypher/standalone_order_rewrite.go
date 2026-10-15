@@ -52,6 +52,7 @@ const (
 // scanStandaloneOrderClauses scans the statement or subquery body
 // query[start:end], appending its edits in order.
 func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewriteEdit) {
+	braces := newSubqueryBraceScanner(query, start)
 	inProjection, stage := false, standaloneStageItems
 	// previousWord is the last word read, "" after any other token; last is
 	// the last character of the last token, comments and spaces skipped (0
@@ -87,7 +88,7 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 			if close < 0 {
 				return
 			}
-			if isSubqueryBrace(query, index) {
+			if braces.at(index) {
 				scanStandaloneOrderClauses(query, index+1, close, edits)
 			} else {
 				scanStandaloneOrderContainers(query, index+1, close, edits)
@@ -250,6 +251,7 @@ func standaloneClausePosition(previousWord string, last byte) bool {
 // their identifiers as statement clauses. Only classified subquery bodies have
 // an independent projection/order state; offsets stay in the original query.
 func scanStandaloneOrderContainers(query string, start, end int, edits *[]labelRewriteEdit) {
+	braces := newSubqueryBraceScanner(query, start)
 	for index := start; index < end; index++ {
 		switch query[index] {
 		case '\'', '"', '`':
@@ -259,7 +261,7 @@ func scanStandaloneOrderContainers(query string, start, end int, edits *[]labelR
 				index = next - 1
 			}
 		case '{':
-			if !isSubqueryBrace(query, index) {
+			if !braces.at(index) {
 				continue
 			}
 			close := findMatchingDelimiter(query[:end], index, '{', '}')
