@@ -132,7 +132,7 @@ func loadLargeDocQuery(t *testing.T) string {
 
 func TestDB_EmbedQuery_ShortQuery_UsesEmbed(t *testing.T) {
 	emb := &chunkingTestEmbedder{dims: 4}
-	db := &DB{embedQueue: &EmbedQueue{embedder: emb}}
+	db := &DB{cypherExecutor: queryEmbeddingTestExecutor(t, emb)}
 
 	vec, err := db.EmbedQuery(context.Background(), "hello world")
 	require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestDB_EmbedQuery_ShortQuery_UsesEmbed(t *testing.T) {
 
 func TestDB_EmbedQuery_LongQuery_UsesFirstChunkForCompatibility(t *testing.T) {
 	emb := &chunkingTestEmbedder{dims: 4}
-	db := &DB{embedQueue: &EmbedQueue{embedder: emb}}
+	db := &DB{cypherExecutor: queryEmbeddingTestExecutor(t, emb)}
 
 	longQuery := loadLargeDocQuery(t)
 	vec, err := db.EmbedQuery(context.Background(), longQuery)
@@ -177,7 +177,7 @@ func TestDB_EmbedQueryChunks_LongQuery_ReturnsChunkEmbeddings(t *testing.T) {
 			"second chunk",
 		},
 	}
-	db := &DB{embedQueue: &EmbedQueue{embedder: emb}}
+	db := &DB{cypherExecutor: queryEmbeddingTestExecutor(t, emb)}
 
 	chunks, embs, err := db.EmbedQueryChunks(context.Background(), "long query")
 	require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestDB_EmbedQueryChunks_LongQuery_ReturnsChunkEmbeddings(t *testing.T) {
 
 func TestDB_EmbedQueryForDB_NoResolver_ReturnsSameAsEmbedQuery(t *testing.T) {
 	emb := &chunkingTestEmbedder{dims: 8}
-	db := &DB{embedQueue: &EmbedQueue{embedder: emb}}
+	db := &DB{cypherExecutor: queryEmbeddingTestExecutor(t, emb)}
 
 	vec, err := db.EmbedQueryForDB(context.Background(), "mydb", "hello")
 	require.NoError(t, err)
@@ -207,7 +207,7 @@ func TestDB_EmbedQueryForDB_NoResolver_ReturnsSameAsEmbedQuery(t *testing.T) {
 func TestDB_EmbedQueryForDB_ResolverMatchesDims_Success(t *testing.T) {
 	emb := &chunkingTestEmbedder{dims: 8}
 	db := &DB{
-		embedQueue: &EmbedQueue{embedder: emb},
+		cypherExecutor: queryEmbeddingTestExecutor(t, emb),
 		dbConfigResolver: func(dbName string) (embeddingDims int, searchMinSimilarity float64, bm25Engine string) {
 			return 8, 0.5, ""
 		},
@@ -221,7 +221,7 @@ func TestDB_EmbedQueryForDB_ResolverMatchesDims_Success(t *testing.T) {
 func TestDB_EmbedQueryForDB_ResolverMismatchDims_ReturnsErrQueryEmbeddingDimensionMismatch(t *testing.T) {
 	emb := &chunkingTestEmbedder{dims: 8}
 	db := &DB{
-		embedQueue: &EmbedQueue{embedder: emb},
+		cypherExecutor: queryEmbeddingTestExecutor(t, emb),
 		dbConfigResolver: func(dbName string) (embeddingDims int, searchMinSimilarity float64, bm25Engine string) {
 			return 768, 0.5, "" // index is 768-d, query will be 8-d from global embedder
 		},
@@ -289,7 +289,7 @@ func TestDB_EmbedQueryForDB_ResolverUnsetDimsOrNoVector(t *testing.T) {
 	t.Run("resolver <= 0 dims bypasses mismatch check", func(t *testing.T) {
 		emb := &chunkingTestEmbedder{dims: 5}
 		db := &DB{
-			embedQueue: &EmbedQueue{embedder: emb},
+			cypherExecutor: queryEmbeddingTestExecutor(t, emb),
 			dbConfigResolver: func(dbName string) (embeddingDims int, searchMinSimilarity float64, bm25Engine string) {
 				return 0, 0.5, ""
 			},
