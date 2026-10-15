@@ -77,10 +77,10 @@ func TestIssueExpectedRows(t *testing.T) {
 
 type expectedValueServer struct {
 	*fakeServer
-	normalize func(any) any
+	normalize func(any) (any, error)
 }
 
-func (server expectedValueServer) NormalizeExpectedValue(value any) any {
+func (server expectedValueServer) NormalizeExpectedValue(value any) (any, error) {
 	return server.normalize(value)
 }
 
@@ -95,9 +95,9 @@ func TestIssueExpectedRowsUsesEachRouteNormalizer(t *testing.T) {
 			fakeServer: &fakeServer{answers: map[string]Outcome{
 				query: rows([]any{map[string]string{"Integer": "9007199254740993"}}),
 			}},
-			normalize: func(value any) any {
+			normalize: func(value any) (any, error) {
 				calls++
-				return map[string]string{"Integer": value.(json.Number).String()}
+				return map[string]string{"Integer": value.(json.Number).String()}, nil
 			},
 		}
 	}
@@ -109,6 +109,11 @@ func TestIssueExpectedRowsUsesEachRouteNormalizer(t *testing.T) {
 	after, err := json.Marshal(issues)
 	require.NoError(t, err)
 	require.Equal(t, before, after, "route conversion must preserve the reusable oracle")
+	pair.NornicDB = expectedValueServer{fakeServer: &fakeServer{}, normalize: func(any) (any, error) {
+		return nil, fmt.Errorf("value outside route range")
+	}}
+	_, err = RunIssues(context.Background(), issues, pair, Options{StatementTimeout: time.Second})
+	require.ErrorContains(t, err, "expected_rows mismatch on NornicDB")
 }
 
 func TestIssueExpectedRowsCorpusValidation(t *testing.T) {

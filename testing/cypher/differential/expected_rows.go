@@ -6,8 +6,9 @@ import "fmt"
 // representation. Routes that tag Bolt types reuse their existing result
 // normalizer here. JSON routes need no adapter and keep number lexemes intact.
 // Implementations must not mutate the input, which is shared by both servers.
+// A value that the route cannot represent returns an error, never a lossy value.
 type ExpectedValueNormalizer interface {
-	NormalizeExpectedValue(value any) any
+	NormalizeExpectedValue(value any) (any, error)
 }
 
 // assertExpectedRows checks the independent oracle before differential agreement
@@ -44,7 +45,11 @@ func matchesExpectedRows(query string, expected [][]any, executor Executor, actu
 		rows[index] = append([]any{}, row...)
 		if normalize {
 			for column, value := range row {
-				rows[index][column] = normalizer.NormalizeExpectedValue(value)
+				normalized, err := normalizer.NormalizeExpectedValue(value)
+				if err != nil {
+					return false
+				}
+				rows[index][column] = normalized
 			}
 		}
 	}
