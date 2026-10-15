@@ -262,7 +262,12 @@ func TestReportedPredicateContextVariants(t *testing.T) {
 		{"and true", "MATCH (n:W1) WHERE n.id + 'z' AND true RETURN n.id", "", [][]interface{}{}},
 		{"or comparison", "MATCH (n:W1) WHERE n.id + 'z' OR n.id = 'a' RETURN n.id", "", [][]interface{}{{"a"}}},
 		{"numeric multiplication", "MATCH (n:W2) WHERE n.id * 0 RETURN n.id", "SyntaxError", nil},
-		{"comprehension arithmetic", "MATCH (n:W2) RETURN [x IN [1, 2] WHERE x + n.id] AS l", "TypeError", nil},
+		// Addition's possible numeric/string/list results exclude Boolean, so
+		// the invalid predicate is rejected statically, even before matching rows.
+		{"comprehension arithmetic", "MATCH (n:W2) RETURN [x IN [1, 2] WHERE x + n.id] AS l", "SyntaxError", nil},
+		{"comprehension arithmetic empty match", "MATCH (n:MissingW2) RETURN [x IN [1, 2] WHERE x + n.id] AS l", "SyntaxError", nil},
+		{"comprehension unknown property predicate", "MATCH (n:W2) RETURN [x IN [1, 2] WHERE n.id] AS l", "TypeError", nil},
+		{"comprehension boolean comparison", "MATCH (n:W2) RETURN [x IN [1, 2] WHERE x + n.id > 2] AS l", "", [][]interface{}{{[]interface{}{int64(2)}}}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))

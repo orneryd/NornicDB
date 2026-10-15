@@ -112,7 +112,10 @@ func TestCypherHelpers_ExtractorsAndEnsureLabel(t *testing.T) {
 
 func TestCypherHelpers_ProcedureCatalogNodeID(t *testing.T) {
 	id := procedureCatalogNodeID("  Db.Labels  ")
-	assert.Equal(t, storage.NodeID(procedureCatalogPrefix+"db.labels"), id)
+	// Procedure persistence uses the same exact-case identity as CALL.
+	assert.Equal(t, storage.NodeID(procedureCatalogPrefix+"Db.Labels"), id)
+	assert.Equal(t, storage.NodeID(procedureCatalogPrefix+"db.labels"), procedureCatalogNodeID("db.labels"))
+	assert.NotEqual(t, id, procedureCatalogNodeID("db.labels"))
 }
 
 func TestCypherHelpers_NodeMapAndProperties(t *testing.T) {
