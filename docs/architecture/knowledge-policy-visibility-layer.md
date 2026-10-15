@@ -235,7 +235,8 @@ ignores a mutation producer's REVEAL mode without changing that mode or acquirin
 another query mutex inside the callback. Stored values and the producer's own
 REVEAL results remain intact. Deleted notifications contain only IDs.
 
-Heimdall related-node titles use the same contextual query-result projection as
+MCP discover related-node title/name fallbacks and Heimdall related-node titles
+use the same contextual query-result projection as
 normal search payloads. A discover operation called from an already owned REVEAL
 query retains its owning scope. Neither integration changes raw storage/debug,
 history, backup or export APIs.

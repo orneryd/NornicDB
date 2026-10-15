@@ -2142,6 +2142,9 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 		return nil
 	}
 
+	_, visible, release := storage.BeginQueryResultProjectionContext(ctx, engine)
+	defer release()
+
 	maxDepth := depth - 1
 	const maxRelated = 50
 
@@ -2179,7 +2182,7 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 
 			ntype, ntitle := "Node", ""
 			if n, err := engine.GetNode(storage.NodeID(neighbor)); err == nil && n != nil {
-				props := toInterfaceMap(n.Properties)
+				props := visible.NodeProperties(n)
 				ntype = getLabelType(n.Labels)
 				ntitle = getStringProp(props, "title")
 				if ntitle == "" {
@@ -2218,7 +2221,7 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 
 			ntype, ntitle := "Node", ""
 			if n, err := engine.GetNode(storage.NodeID(neighbor)); err == nil && n != nil {
-				props := toInterfaceMap(n.Properties)
+				props := visible.NodeProperties(n)
 				ntype = getLabelType(n.Labels)
 				ntitle = getStringProp(props, "title")
 				if ntitle == "" {
