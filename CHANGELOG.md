@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Traversal cancellation fixes
+
+- Stop plain variable-length DFS at cancelled frame entry and sibling expansion so a timed-out query unwinds instead of continuing to enumerate paths.
 ### Verification correctness fixes
 
 - Match large changed-file lists without SIGPIPE skipping applicable verification gates; self-test path selection and compare allocation workloads at the actual merge base. Keep the main default PR base.
@@ -25,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Relationship VERSION decay and policy resolution use the last update time, preserving visibility and correct
   suppression eligibility after a recent update (#1229).
 
+### Procedure name compatibility
+
+- Resolve procedure names with their registered letter case, preserving canonical mixed-case names and rejecting misspellings with `ProcedureNotFound`, including calls reached by an empty input stream. Keep authorization conservative for invalid case variants without creating executable aliases or overriding an exact registration's permissions.
 
 ### Changed
 
@@ -32,6 +38,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixes propagated through dedicated PRs.
 
 - Pause scheduled develop verification/canary builds and remove PR label CI triggers. Manual Actions jobs now require administrator environment approval; existing main push and tag publishing triggers remain unchanged.
+
+### Fixed knowledge-policy lookups
+
+- Decay functions, property filters and decay CLI commands use the active database's qualified entity IDs
+  for policy and access metadata, including local IDs containing colons. CLI commands unwrap WAL storage.
+
+### Decay scalar scoring fixes
+
+- Align relationship `decay()` and `decayScore()` VERSION anchors with update time and resolve relationship
+  property options through edge-type rules, sharing one entity/property scoring dispatch (#1055).
 
 ### Visibility cache fixes
 
@@ -43,6 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Align relationship `decay()` and `decayScore()` VERSION anchors with update time and resolve relationship
   property options through edge-type rules, sharing one entity/property scoring dispatch (#1055).
 
+### Upgrade metadata fixes
+
+- Preserve complete node and relationship metadata during legacy-ID migration, including named embeddings,
+  embedding storage state and visibility suppression. Anonymization now preserves entity suppression while
+  retaining its existing property redaction and embedding behavior (#1228).
+
 ### Documentation
 
 - Correct release-helper PR guidance to require manual workflow dispatch and administrator approval instead of the retired `ci:run` label.
@@ -52,9 +74,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cypher readers distinguish map projections from subquery bodies and pattern maps, and normalize standalone ordering clauses inside imported `CALL` subqueries.
+- Preserve typed subquery operands during semantic scope masking so grouped EXISTS/COUNT/COLLECT predicates remain valid alongside keyword-named map projections.
+
 - `SHOW FUNCTIONS` declares vector similarity arguments as `LIST<INTEGER | FLOAT>`, matching Neo4j 5.26 rather than advertising its newer `VECTOR` type.
 - Go API: `cypher.GraphProjection.NodeProperties` now stores `interface{}` values (`int64`, `float64`, `[]int64`, `[]float64`) instead of always `float64`; direct Go consumers must handle the projected type.
 - Preserve native GDS projected numeric values and list defaults, validate unsafe Long-to-Double imports, honor cross-database graph-drop permissions, and align existing FastRP propagation and feature validation with GDS.
+
+- Preserve remote node and relationship provenance across transport decoding and Fabric bindings so graph
+  functions accept genuine remote values while rejecting ordinary maps; return property keys instead of
+  remote metadata from `keys()` without changing JSON or Bolt result shapes (#1055).
 
 - Harden existing boosted procedure grants, transactional role changes, principal refresh, and system database
   authorization; bring the follow-up security fixes onto the v1.4.3 release baseline.

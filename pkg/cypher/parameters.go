@@ -52,6 +52,7 @@ import (
 	"context"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"reflect"
 	"strconv"
 	"strings"
@@ -625,6 +626,9 @@ func sameParameterValue(converted, original interface{}) bool {
 // normalizeParameterValue converts one parameter value (normalizeQueryParameters).
 func normalizeParameterValue(value interface{}) (interface{}, bool) {
 	switch typed := value.(type) {
+	case storage.RemoteEntityValue:
+		// Fabric graph values retain their transport provenance across parameters.
+		return value, false
 	case nil, string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64,
 		float32, float64, []byte, time.Time, *time.Time,
 		[]string, []int, []int64, []float32, []float64, []bool:
@@ -706,6 +710,9 @@ func normalizeParameterValue(value interface{}) (interface{}, bool) {
 // force the parser to re-decode them as []interface{}, which is the
 // exact widening this short-circuit prevents.
 func isCompositeParamValue(v interface{}) bool {
+	if containsRemoteEntityValue(v) {
+		return true
+	}
 	switch v.(type) {
 	case []string, []int, []int64, []float32, []float64:
 		return true
@@ -716,6 +723,28 @@ func isCompositeParamValue(v interface{}) bool {
 	default:
 		return false
 	}
+}
+
+// A transport entity must remain a bound value, including when nested inside a
+// list or map. Serializing it as a literal discards its graph provenance.
+func containsRemoteEntityValue(value interface{}) bool {
+	switch typed := value.(type) {
+	case storage.RemoteEntityValue:
+		return true
+	case map[string]interface{}:
+		for _, nested := range typed {
+			if containsRemoteEntityValue(nested) {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, nested := range typed {
+			if containsRemoteEntityValue(nested) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func escapeCypherStringLiteral(raw string) string {

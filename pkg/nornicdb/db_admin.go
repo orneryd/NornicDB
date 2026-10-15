@@ -1830,11 +1830,12 @@ func (db *DB) nodeMatchesSubject(node *storage.Node, subjectID string) bool {
 
 func (db *DB) anonymizedNodeCopy(node *storage.Node, anonymousID string) *storage.Node {
 	nodeCopy := &storage.Node{
-		ID:         node.ID,
-		Labels:     append([]string(nil), node.Labels...),
-		Properties: make(map[string]any, len(node.Properties)),
-		CreatedAt:  node.CreatedAt,
-		UpdatedAt:  node.UpdatedAt,
+		ID:                   node.ID,
+		VisibilitySuppressed: node.VisibilitySuppressed,
+		Labels:               append([]string(nil), node.Labels...),
+		Properties:           make(map[string]any, len(node.Properties)),
+		CreatedAt:            node.CreatedAt,
+		UpdatedAt:            node.UpdatedAt,
 		ChunkEmbeddings: func() [][]float32 {
 			chunks := make([][]float32, len(node.ChunkEmbeddings))
 			for i, emb := range node.ChunkEmbeddings {

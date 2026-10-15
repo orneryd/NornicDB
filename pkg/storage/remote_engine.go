@@ -324,9 +324,17 @@ func accessModeForStatement(statement string) neo4j.AccessMode {
 // normalizeBoltValue converts neo4j dbtype values into the map shapes that
 // valueToNode/valueToEdge expect, so all downstream code works for both transports.
 func normalizeBoltValue(v interface{}) interface{} {
+	value, _ := normalizeBoltGraphValue(v)
+	return value
+}
+
+// normalizeBoltGraphValue copies a container only when an actual graph child
+// needs normalization. Ordinary remote row maps/lists retain their zero-allocation
+// baseline; a recursive graph conversion never mutates the driver's input value.
+func normalizeBoltGraphValue(v interface{}) (interface{}, bool) {
 	switch n := v.(type) {
 	case dbtype.Node:
-		m := map[string]interface{}{
+		m := RemoteEntityValue{
 			"elementId":  n.ElementId,
 			"labels":     toInterfaceSlice(n.Labels),
 			"properties": n.Props,
@@ -334,9 +342,9 @@ func normalizeBoltValue(v interface{}) interface{} {
 		if id, ok := n.Props["id"]; ok {
 			m["id"] = id
 		}
-		return m
+		return m, true
 	case dbtype.Relationship:
-		m := map[string]interface{}{
+		m := RemoteEntityValue{
 			"elementId":          n.ElementId,
 			"type":               n.Type,
 			"startNodeElementId": n.StartElementId,
@@ -346,9 +354,44 @@ func normalizeBoltValue(v interface{}) interface{} {
 		if id, ok := n.Props["id"]; ok {
 			m["id"] = id
 		}
-		return m
+		return m, true
+	case []interface{}:
+		var result []interface{}
+		for index, value := range n {
+			normalized, changed := normalizeBoltGraphValue(value)
+			if !changed {
+				continue
+			}
+			if result == nil {
+				result = append([]interface{}(nil), n...)
+			}
+			result[index] = normalized
+		}
+		if result == nil {
+			return v, false
+		}
+		return result, true
+	case map[string]interface{}:
+		var result map[string]interface{}
+		for key, value := range n {
+			normalized, changed := normalizeBoltGraphValue(value)
+			if !changed {
+				continue
+			}
+			if result == nil {
+				result = make(map[string]interface{}, len(n))
+				for originalKey, originalValue := range n {
+					result[originalKey] = originalValue
+				}
+			}
+			result[key] = normalized
+		}
+		if result == nil {
+			return v, false
+		}
+		return result, true
 	default:
-		return v
+		return v, false
 	}
 }
 
@@ -662,6 +705,9 @@ func labelsExpr(labels []string) string {
 }
 
 func asMap(v interface{}) map[string]interface{} {
+	if remote, ok := v.(RemoteEntityValue); ok {
+		return map[string]interface{}(remote)
+	}
 	if m, ok := v.(map[string]interface{}); ok {
 		return m
 	}

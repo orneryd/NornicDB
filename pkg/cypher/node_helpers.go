@@ -196,9 +196,10 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 	if be != nil {
 		createdAt := node.CreatedAt.UnixNano()
 		versionAt := nodeVersionAtNanos(node, createdAt)
+		storedID := storage.NodeID(storage.QualifiedEntityID(e.storage, string(node.ID)))
 		filtered := make(map[string]interface{}, len(node.Properties))
 		for k, v := range node.Properties {
-			if be.FilterPropertyByDecay(node.ID, node.Labels, k, createdAt, versionAt, nowNanos) {
+			if be.FilterPropertyByDecay(storedID, node.Labels, k, createdAt, versionAt, nowNanos) {
 				continue
 			}
 			filtered[k] = v
@@ -270,8 +271,9 @@ func (e *StorageExecutor) decayVisibleEdgeProperties(edge *storage.Edge) map[str
 		versionAt = edge.UpdatedAt.UnixNano()
 	}
 	filtered := make(map[string]interface{}, len(edge.Properties))
+	storedID := storage.EdgeID(storage.QualifiedEntityID(e.storage, string(edge.ID)))
 	for k, v := range edge.Properties {
-		if be.FilterEdgePropertyByDecay(edge.ID, edge.Type, k, createdAt, versionAt, nowNanos) {
+		if be.FilterEdgePropertyByDecay(storedID, edge.Type, k, createdAt, versionAt, nowNanos) {
 			continue
 		}
 		filtered[k] = v

@@ -260,8 +260,8 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			value, handled, err := e.evaluateShortestPathValue(search, function, argument, nodes)
 			return value, handled, err
 		case "startnode", "endnode":
-			if value, handled := e.rowRelationshipEndpoint(function, argument, values); handled {
-				return value, true, nil
+			if value, handled, err := e.rowRelationshipEndpoint(function, argument, values); handled || err != nil {
+				return value, handled, err
 			}
 		case "reduce", "allreduce":
 			return e.evaluateRowReduce(function, argument, values, e.evaluateRowValue)
@@ -382,6 +382,8 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 					return nil, true, nil
 				}
 				return cypherfn.EntityProperties(entity.Properties), true, nil
+			case storage.RemoteEntityValue:
+				return entity["properties"], true, nil
 			default:
 				object, isMap := toStringAnyMap(value)
 				return object, isMap, nil
@@ -1878,17 +1880,28 @@ func rowIdentityPayload(value interface{}) interface{} {
 	return text
 }
 
-// rowRelationshipEndpoint is startNode(r) / endNode(r) of a relationship the
-// row binds to a variable (relationshipEndpoint). handled is false for any
-// other argument, which the context evaluator still evaluates. Before, the
-// row evaluator handed every call to the context evaluator, whose function
-// dispatch cost microseconds per call before it reached the read (#1214).
-func (e *StorageExecutor) rowRelationshipEndpoint(function, argument string, values map[string]interface{}) (interface{}, bool) {
-	edge, isEdge := values[strings.TrimSpace(argument)].(*storage.Edge)
-	if !isEdge || edge == nil {
-		return nil, false
+// rowRelationshipEndpoint evaluates startNode(r) / endNode(r), reading bound
+// variables directly and sharing argument validation with the context evaluator.
+// Non-variable arguments use the regular row expression evaluator.
+func (e *StorageExecutor) rowRelationshipEndpoint(function, argument string, values map[string]interface{}) (interface{}, bool, error) {
+	value, resolved := values[strings.TrimSpace(argument)]
+	if !resolved {
+		var err error
+		value, resolved, err = e.evaluateRowValue(strings.TrimSpace(argument), values)
+		if err != nil || !resolved {
+			return nil, resolved, err
+		}
 	}
-	return e.relationshipEndpoint(edge, equalFoldASCII(function, "endNode")), true
+	result, err := e.relationshipEndpointValue(value, equalFoldASCII(function, "endNode"))
+	return result, true, err
+}
+
+func (e *StorageExecutor) relationshipEndpointValue(value interface{}, end bool) (interface{}, error) {
+	edge, err := relationshipEndpointArgument(value, end)
+	if err != nil {
+		return nil, err
+	}
+	return e.relationshipEndpoint(edge, end), nil
 }
 
 // relationshipEndpoint is startNode(edge) / endNode(edge) (end): the

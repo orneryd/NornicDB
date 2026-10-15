@@ -53,7 +53,7 @@ func (e *StorageExecutor) resolveEntityForDecay(
 	arg := strings.TrimSpace(argExpr)
 	if node, ok := nodes[arg]; ok {
 		return resolvedEntity{
-			entityID:       string(node.ID),
+			entityID:       storage.QualifiedEntityID(e.storage, string(node.ID)),
 			labels:         node.Labels,
 			createdAtNanos: node.CreatedAt.UnixNano(),
 			versionAtNanos: node.UpdatedAt.UnixNano(),
@@ -61,7 +61,7 @@ func (e *StorageExecutor) resolveEntityForDecay(
 	}
 	if rel, ok := rels[arg]; ok {
 		return resolvedEntity{
-			entityID:       string(rel.ID),
+			entityID:       storage.QualifiedEntityID(e.storage, string(rel.ID)),
 			isEdge:         true,
 			edgeType:       rel.Type,
 			createdAtNanos: rel.CreatedAt.UnixNano(),

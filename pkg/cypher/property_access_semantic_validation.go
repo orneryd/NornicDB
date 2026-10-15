@@ -418,19 +418,7 @@ func namespacedCallFollows(text string, index int) bool {
 // isSubqueryBrace reports whether the { at text[index] opens a subquery body
 // (EXISTS { … }, COUNT { … }, COLLECT { … }, CALL { … }) rather than a map.
 func isSubqueryBrace(text string, index int) bool {
-	before := index - 1
-	for before >= 0 && isWhitespace(text[before]) {
-		before--
-	}
-	start := before
-	for start >= 0 && isIdentByte(text[start]) {
-		start--
-	}
-	switch upperASCII(text[start+1 : before+1]) {
-	case "EXISTS", "COUNT", "COLLECT", "CALL":
-		return true
-	}
-	return false
+	return precedingSubqueryExpressionKeyword(text, index)
 }
 
 // parameterMayRejectPropertyAccess reports whether a parameter whose value a

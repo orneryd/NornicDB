@@ -849,8 +849,8 @@ type rowEndpointNode struct {
 }
 
 func (n *rowEndpointNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
-	if value, handled := e.rowRelationshipEndpoint(n.function, n.variable, values); handled {
-		return value, true, nil
+	if value, handled, err := e.rowRelationshipEndpoint(n.function, n.variable, values); handled || err != nil {
+		return value, handled, err
 	}
 	return e.evaluateRowValueText(n.text, values)
 }

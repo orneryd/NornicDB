@@ -52,13 +52,10 @@ type TraversalContext struct {
 	resultCount      int                              // Count of results found so far
 	temporalViewport TemporalViewport
 	temporalChecker  temporalCurrentNodeChecker
-	// cancelCtx is consulted periodically inside findPaths so callers can
+	// cancelCtx is consulted at DFS entry and sibling expansion so callers can
 	// abandon long traversals on client disconnect / server shutdown. It is
 	// allowed to be nil for legacy call sites that pass through Background.
 	cancelCtx context.Context
-	// findPathsCalls counts entries into the recursive search; used to amortise
-	// the ctx.Err() probe (one check per N calls).
-	findPathsCalls int
 	// endNodeID, when set, is the only node a path may end at (a shortestPath
 	// pair, #863).
 	endNodeID storage.NodeID
@@ -1996,16 +1993,11 @@ func (e *StorageExecutor) findPaths(
 ) []PathResult {
 	var results []PathResult
 
-	// Cancellation probe — amortised across recursive entries to keep the
-	// per-call cost negligible. When ctx.cancelCtx is canceled we unwind the
-	// recursion immediately by returning whatever we've gathered so far.
-	if ctx.cancelCtx != nil {
-		ctx.findPathsCalls++
-		if ctx.findPathsCalls&bfsCancelCheckMask == 0 {
-			if ctx.cancelCtx.Err() != nil {
-				return results
-			}
-		}
+	// Every frame and sibling expansion must observe cancellation. Sampling
+	// recursive entries alone leaves callers expanding the remaining siblings
+	// after a cancelled child returns.
+	if ctx.cancelCtx != nil && ctx.cancelCtx.Err() != nil {
+		return results
 	}
 
 	// OPTIMIZATION: Early termination if limit reached
@@ -2057,6 +2049,9 @@ func (e *StorageExecutor) findPaths(
 
 	// Traverse each edge
 	for _, edge := range edges {
+		if ctx.cancelCtx != nil && ctx.cancelCtx.Err() != nil {
+			return results
+		}
 		// A Cypher path may revisit a node, but it cannot reuse a relationship.
 		// This also prevents an undirected expansion from walking the same edge
 		// immediately back in the opposite direction.
