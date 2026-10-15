@@ -235,26 +235,13 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 		return nil
 	}
 	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
-		index := skipSpaces(cypher, position+len("CALL"))
-		imports := ""
-		scoped := false
-		if index < len(cypher) && cypher[index] == '(' {
-			closeParen := findMatchingCallParen(cypher, index)
-			if closeParen < 0 {
-				continue
-			}
-			imports = strings.TrimSpace(cypher[index+1 : closeParen])
-			scoped = true
-			if imports != "" && imports != "*" {
-				for _, name := range splitTopLevelComma(imports) {
-					if simpleSemanticIdentifier(strings.TrimSpace(name)) == "" {
-						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
-							"CALL imports must contain only variable names")
-					}
-				}
-			}
-			index = skipSpaces(cypher, closeParen+1)
+		scope := readCallSubqueryScope(cypher[position:])
+		if scope.invalid {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
+				"CALL imports must contain only variable names")
 		}
+		index := position + scope.bodyOffset
+		imports, scoped := scope.text, scope.scoped
 		if index >= len(cypher) || cypher[index] != '{' {
 			continue // a procedure call
 		}
@@ -309,14 +296,12 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 				}
 			}
 		}
-		if imports == "*" || startsWithKeywordFold(body, "WITH *") {
+		if scoped && scope.names == nil || startsWithKeywordFold(body, "WITH *") {
 			continue
 		}
 		var retained []string
-		if scoped && imports != "" {
-			for _, name := range splitTopLevelComma(imports) {
-				retained = append(retained, normalizeProjectionColumnName(strings.TrimSpace(name)))
-			}
+		if scoped && len(scope.names) > 0 {
+			retained = scope.names
 			body = "WITH " + imports + " " + body
 		}
 		if body == "" {
@@ -324,7 +309,7 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 		}
 		// A body that imports nothing (CALL () { … }) sees no outer
 		// variable: it is checked as a statement of its own.
-		if scoped && imports == "" {
+		if scoped && len(scope.names) == 0 {
 			if err := e.validateMatchSemanticScopes(body, cypher25); err != nil {
 				return err
 			}

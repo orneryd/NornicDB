@@ -369,20 +369,20 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, boo
 		return nil, false, false
 	}
 	initial := make(typeScope)
-	head := strings.TrimSpace(trimmed[call+len("CALL") : open])
-	if imports, scoped := stripEnclosingRowDelimiter(head, '(', ')'); scoped && strings.TrimSpace(imports) != "*" {
-		for _, name := range splitTopLevelComma(imports) {
-			name = normalizeProjectionColumnName(strings.TrimSpace(name))
+	scope := readCallSubqueryScope(callText)
+	imports, scoped := scope.names, scope.scoped
+	if scoped && imports != nil {
+		for _, name := range imports {
 			if operand, bound := outer[name]; bound {
 				initial[name] = operand
 			}
 		}
-		return initial, true, true
+		return initial, scoped, true
 	}
 	for name, operand := range outer {
 		initial[name] = operand
 	}
-	return initial, false, true
+	return initial, scoped, true
 }
 
 // callSubqueryReturnTypes walks a CALL subquery's body, each UNION branch
