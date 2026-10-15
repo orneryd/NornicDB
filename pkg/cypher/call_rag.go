@@ -360,7 +360,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		}
 		response, err = service.Search(ctx, query, embedding, opts)
 	} else {
-		embedder := e.GetEmbedder()
+		embedder := e.queryEmbedderForStatement(ctx)
 		if embedder == nil && failClosed {
 			return nil, failClosedEmbeddingUnavailable(localizedError(localization.CypherCoreEmbedderNotConfigured(), nil))
 		}

@@ -116,6 +116,7 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 	exec = cypher.NewStorageExecutor(engine)
 	if r.db != nil {
 		if baseExecutor := r.db.GetCypherExecutor(); baseExecutor != nil {
+			exec.ShareEmbedderFrom(baseExecutor)
 			exec.SetLocalizationRenderer(baseExecutor.GetLocalizationRenderer())
 			// NornicDB issue #563 defect 1: without this, Heimdall-routed
 			// queries against a non-default database log to io.Discard and
