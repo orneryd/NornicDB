@@ -448,6 +448,9 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 	includeVectors, requestedVectorNames := withVectorsSelection(req.WithVectors)
 	includePayload := req.WithPayload != nil
 
+	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, store)
+	defer releaseProjection()
+
 	searchSvc := s.getSearchService(req.CollectionName, store)
 	results := s.searchCollection(ctx, store, searchSvc, req.CollectionName, meta.Distance, vectorName, req.Vector, req.Filter, limit, offset, minSimilarity, ef)
 
@@ -478,7 +481,7 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 			node, err := store.GetNode(nodeID)
 			if err == nil {
 				if includePayload {
-					sp.Payload = propertiesToPayload(withPayloadSelection(node.Properties, req.WithPayload))
+					sp.Payload = propertiesToPayload(withPayloadSelection(projection.NodeProperties(node), req.WithPayload))
 				}
 				if includeVectors {
 					sp.Vectors = vectorsOutputFromNode(node, requestedVectorNames)
@@ -516,6 +519,9 @@ func (s *PointsService) Scroll(ctx context.Context, req *qpb.ScrollPoints) (*qpb
 	if err != nil {
 		return nil, err
 	}
+
+	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, store)
+	defer releaseProjection()
 
 	nodes, err := store.GetNodesByLabel(QdrantPointLabel)
 	if err != nil && err != storage.ErrNotFound {
@@ -555,7 +561,7 @@ func (s *PointsService) Scroll(ctx context.Context, req *qpb.ScrollPoints) (*qpb
 		pid := nodeIDToPointID(node.ID)
 		p := &qpb.RetrievedPoint{
 			Id:      pid,
-			Payload: propertiesToPayload(withPayloadSelection(node.Properties, req.WithPayload)),
+			Payload: propertiesToPayload(withPayloadSelection(projection.NodeProperties(node), req.WithPayload)),
 		}
 		if includeVectors {
 			p.Vectors = vectorsOutputFromNode(node, requestedVectorNames)

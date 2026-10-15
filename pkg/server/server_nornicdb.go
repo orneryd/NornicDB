@@ -849,6 +849,9 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(r.Context(), storageEngine)
+	defer releaseProjection()
+
 	// Get the target node from namespaced storage
 	targetNode, err := storageEngine.GetNode(storage.NodeID(req.NodeID))
 	if err != nil {
@@ -868,7 +871,6 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 	}
 	var results []scored
 
-	ctx := r.Context()
 	err = storage.StreamNodesWithFallback(ctx, storageEngine, 1000, func(n *storage.Node) error {
 		// Skip self and nodes without embeddings
 		if string(n.ID) == req.NodeID || len(n.ChunkEmbeddings) == 0 || len(n.ChunkEmbeddings[0]) == 0 {
@@ -919,7 +921,7 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 			Node: &nornicdb.Node{
 				ID:         string(r.node.ID),
 				Labels:     r.node.Labels,
-				Properties: r.node.Properties,
+				Properties: projection.NodeProperties(r.node),
 				CreatedAt:  r.node.CreatedAt,
 			},
 			Score: r.score,

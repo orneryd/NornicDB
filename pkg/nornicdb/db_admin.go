@@ -1048,6 +1048,9 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
 		return nil, localizedError(localization.NornicDBCoreFindSimilarLimitInvalid(), nil)
 	}
 
+	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, db.storage)
+	defer releaseProjection()
+
 	// Get target node
 	target, err := db.storage.GetNode(storage.NodeID(nodeID))
 	if err != nil {
@@ -1106,7 +1109,7 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
 			Node: &Node{
 				ID:         string(r.node.ID),
 				Labels:     r.node.Labels,
-				Properties: r.node.Properties,
+				Properties: projection.NodeProperties(r.node),
 				CreatedAt:  r.node.CreatedAt,
 			},
 			Score: r.score,
