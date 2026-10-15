@@ -81,6 +81,28 @@ func TestDifferentialExpectedOverflowRejectsMatchingRoundedOutcomes(t *testing.T
 	}
 }
 
+func TestDifferentialExpectedRowsDistinguishTypedValuesFromMaps(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		input any
+		actual any
+		wantError bool
+	}{
+		{"integer versus shaped map", json.Number("1"), map[string]any{"Integer": "1"}, true},
+		{"float versus shaped map", json.Number("1.0"), map[string]any{"Float": "1"}, true},
+		{"nested integer versus shaped map", []any{json.Number("1")}, []any{map[string]any{"Integer": "1"}}, true},
+		{"ordinary shaped map remains valid", map[string]any{"Integer": "1"}, map[string]any{"Integer": "1"}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			expected := [][]any{{test.input}}
+			issues := []differential.IssueCase{{Issue: 12, Statements: []differential.IssueStatement{{ID: "typed-map", Query: "RETURN value AS v", ExpectedRows: &expected}}}}
+			server := expectedBoltServer{answer: differential.Outcome{Columns: []string{"v"}, Rows: [][]any{{differentialOutcomeValue(test.actual)}}}}
+			_, err := differential.RunIssues(context.Background(), issues, &differential.Pair{Neo4j: server, NornicDB: server}, differential.Options{StatementTimeout: time.Second})
+			if test.wantError { require.ErrorContains(t, err, "expected_rows") } else { require.NoError(t, err) }
+		})
+	}
+}
+
 // expectedBoltJSONValue converts only JSON number syntax to the corresponding
 // native Bolt input type. Range errors remain errors; integer tokens never fall
 // back to float. The existing outcome normalizer owns all result type encoding.
