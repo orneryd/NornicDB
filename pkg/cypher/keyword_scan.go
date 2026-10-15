@@ -2039,7 +2039,7 @@ func scanIdentifierToken(text string, start int) (string, int, bool) {
 	}
 	if text[start] == '`' {
 		end, closed := scanCypherQuotedText(text, start, '`')
-		if !closed || end == start+2 {
+		if !closed {
 			return "", start, false
 		}
 		return strings.ReplaceAll(text[start+1:end-1], "``", "`"), end, true

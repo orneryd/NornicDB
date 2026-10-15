@@ -50,7 +50,7 @@ func isOneSymbolicName(text string) (string, bool) {
 // isBacktickQuotedName reports whether name is one backtick-quoted name
 // (`a b`, with “ for a backtick inside).
 func isBacktickQuotedName(name string) bool {
-	if len(name) < 3 || name[0] != '`' {
+	if len(name) < 2 || name[0] != '`' {
 		return false
 	}
 	_, end, ok := scanSymbolicName(name, 0)
