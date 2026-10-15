@@ -36,10 +36,11 @@ func TestPendingClaimBoundedWork(t *testing.T) {
 				require.Equal(t, pendingCandidateNode(i).ID, node.ID)
 				e.MarkNodeEmbedded(node.ID)
 			}
-			require.Nil(t, e.FindNodeNeedingEmbedding())
 			work := metric.Value() - before
 			t.Logf("ACTIVE_WORK pending=%d claims=%d range_iterators=%d", n, n, work)
 			require.Zero(t, work, "active claims must use point reads, independent of pending/store size")
+			require.Nil(t, e.FindNodeNeedingEmbedding())
+			require.EqualValues(t, 1, metric.Value()-before-work, "one empty-boundary reconciliation recovers lost hints")
 		})
 	}
 }

@@ -18,6 +18,11 @@ type pendingEmbeddingCandidates struct {
 	generation uint64
 	ids        pendingEmbeddingHeap
 	members    map[NodeID]struct{}
+	// A verified empty snapshot is reusable only while the authoritative
+	// commit timestamp and invalidation generation are unchanged. Hint loss
+	// cannot hide a new durable marker: its commit advances the timestamp.
+	emptyVerified bool
+	emptyReadTs   uint64
 }
 
 type pendingEmbeddingHeap []NodeID
@@ -39,13 +44,22 @@ func (p *pendingEmbeddingCandidates) add(id NodeID) {
 	if _, exists := p.members[id]; exists {
 		return
 	}
+	if p.members == nil {
+		p.members = make(map[NodeID]struct{})
+	}
 	p.members[id] = struct{}{}
+	p.emptyVerified = false
 	heap.Push(&p.ids, id)
 }
 
 func (p *pendingEmbeddingCandidates) removeFirst() {
 	id := heap.Pop(&p.ids).(NodeID)
 	delete(p.members, id)
+	if len(p.ids) == 0 {
+		p.ids = nil
+		p.members = nil
+		p.emptyVerified = false
+	}
 }
 
 // load runs under mu. A concurrent commit publishes its additions under the
@@ -53,12 +67,17 @@ func (p *pendingEmbeddingCandidates) removeFirst() {
 // loads leave the catalog unloaded and can be retried.
 func (p *pendingEmbeddingCandidates) load(b *BadgerEngine) error {
 	generation := b.pendingCandidatesGeneration.Load()
-	if p.loaded && p.generation == generation {
+	if p.loaded && p.generation == generation && len(p.ids) > 0 {
 		return nil
 	}
-	ids := pendingEmbeddingHeap{}
-	members := make(map[NodeID]struct{})
+	var ids pendingEmbeddingHeap
+	var members map[NodeID]struct{}
+	var readTs uint64
 	err := b.withView(func(txn *badger.Txn) error {
+		readTs = txn.ReadTs()
+		if p.loaded && p.generation == generation && p.emptyVerified && p.emptyReadTs == readTs {
+			return nil
+		}
 		prefix := []byte{prefixPendingEmbed}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -68,6 +87,9 @@ func (p *pendingEmbeddingCandidates) load(b *BadgerEngine) error {
 				continue
 			}
 			id := NodeID(key[1:])
+			if members == nil {
+				members = make(map[NodeID]struct{})
+			}
 			ids = append(ids, id)
 			members[id] = struct{}{}
 		}
@@ -78,6 +100,8 @@ func (p *pendingEmbeddingCandidates) load(b *BadgerEngine) error {
 	}
 	p.ids, p.members, p.loaded = ids, members, true
 	p.generation = generation
+	p.emptyVerified = len(ids) == 0
+	p.emptyReadTs = readTs
 	heap.Init(&p.ids)
 	return nil
 }
