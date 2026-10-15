@@ -2085,14 +2085,7 @@ func (s *Service) SetPersistenceEnabled(enabled bool) {
 		s.persistTimer = nil
 	}
 	s.persistMu.Unlock()
-	s.persistRunMu.Lock()
-	s.indexMu.Lock()
-	if s.vectorFileStore != nil {
-		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
-	}
-	s.indexMu.Unlock()
-	s.persistRunMu.Unlock()
+	s.closeVectorFileStore()
 }
 
 // Close stops search-service background workers and releases file-backed vector resources.
@@ -2130,15 +2123,23 @@ func (s *Service) Close() error {
 	s.strategyTransitionPending = strategyModeUnknown
 	s.strategyTransitionMu.Unlock()
 
+	s.closeVectorFileStore()
+	return nil
+}
+
+// closeVectorFileStore serializes teardown with persistence, vector mutation
+// and source snapshots, including late HNSW scheduling after lifecycle cancel.
+func (s *Service) closeVectorFileStore() {
 	s.persistRunMu.Lock()
+	defer s.persistRunMu.Unlock()
 	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.vectorFileStore != nil {
 		_ = s.vectorFileStore.Close()
 		s.vectorFileStore = nil
 	}
-	s.indexMu.Unlock()
-	s.persistRunMu.Unlock()
-	return nil
 }
 
 // schedulePersist schedules a write of BM25 and vector indexes to disk after an idle delay.

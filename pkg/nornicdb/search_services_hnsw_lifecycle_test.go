@@ -109,6 +109,30 @@ func TestDatabaseSearchTeardownJoinsHNSWBuild(t *testing.T) {
 					t.Fatal("database teardown returned before joining construction")
 				default:
 				}
+				// Keep late preflight calls active across worker release and
+				// file-store retirement; they belong to callers, not the joined job.
+				stopLate := make(chan struct{})
+				var late sync.WaitGroup
+				lateReady := make(chan struct{}, 8)
+				for i := 0; i < cap(lateReady); i++ {
+					late.Add(1)
+					go func() {
+						defer late.Done()
+						lateReady <- struct{}{}
+						for {
+							select {
+							case <-stopLate:
+								return
+							default:
+							}
+							_, _ = svc.VectorSearchCandidates(context.Background(), []float32{1, 0, 0}, nil)
+						}
+					}()
+				}
+				for i := 0; i < cap(lateReady); i++ {
+					<-lateReady
+				}
+				defer func() { close(stopLate); late.Wait() }()
 				release()
 				select {
 				case err := <-teardownDone:
