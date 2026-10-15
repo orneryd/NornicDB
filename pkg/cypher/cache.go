@@ -495,6 +495,10 @@ type smartCachedResult struct {
 	ttl       time.Duration
 	labels    []string // Labels this query depends on
 	key       string
+
+	// The provider publication captured before execution. A scalar token keeps
+	// cached results from retaining old providers or their embedding caches.
+	embeddingGeneration uint64
 }
 
 // NewSmartQueryCache creates a cache with label-aware invalidation.
@@ -559,11 +563,15 @@ func (sc *SmartQueryCache) get(key string) (*ExecuteResult, bool) {
 // getWithTrace returns a cached result, its hot-path trace, and whether it
 // returns nodes or relationships (entities).
 func (sc *SmartQueryCache) getWithTrace(key string) (result *ExecuteResult, trace HotPathTrace, entities bool, found bool) {
+	return sc.getWithTraceForEmbedding(key, 0)
+}
+
+func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint64) (result *ExecuteResult, trace HotPathTrace, entities bool, found bool) {
 	sc.mu.RLock()
 	cached, exists := sc.cache[key]
 	sc.mu.RUnlock()
 
-	if !exists {
+	if !exists || cached.embeddingGeneration != generation {
 		sc.mu.Lock()
 		sc.misses++
 		sc.mu.Unlock()
@@ -609,6 +617,10 @@ func (sc *SmartQueryCache) putWithLabels(key string, result *ExecuteResult, ttl 
 }
 
 func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace) {
+	sc.putWithLabelsAndTraceForEmbedding(key, result, ttl, labels, trace, 0)
+}
+
+func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace, generation uint64) {
 	entities := resultHasMaterializedEntities(result)
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
@@ -632,6 +644,8 @@ func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResu
 		ttl:       ttl,
 		labels:    labels,
 		key:       key,
+
+		embeddingGeneration: generation,
 	}
 	sc.cache[key] = entry
 	elem := sc.lru.PushFront(entry)

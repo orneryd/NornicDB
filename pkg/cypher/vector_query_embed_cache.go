@@ -29,8 +29,8 @@ func cloneFloat32Slice(src []float32) []float32 {
 }
 
 func (e *StorageExecutor) embedVectorQueryText(ctx context.Context, text string) ([]float32, error) {
-	state := e.currentQueryEmbedder()
-	if state == nil {
+	state := e.queryEmbeddingState(ctx)
+	if state == nil || state.embedder == nil {
 		return nil, localizedError(localization.CypherCoreEmbedderNotConfigured(), nil)
 	}
 	key := canonicalizeVectorQueryText(text)

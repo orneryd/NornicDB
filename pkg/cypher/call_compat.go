@@ -512,7 +512,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 		queryVector = input.vector
 	} else if input.stringQuery != "" {
 		// String query - embed server-side (NornicDB enhancement)
-		if e.GetEmbedder() == nil {
+		if e.queryEmbedderForStatement(ctx) == nil {
 			return nil, localizedError(localization.CypherProceduresStringQueryEmbedderRequired(), nil)
 		}
 		embedded, embedErr := e.embedVectorQueryText(ctx, input.stringQuery)
@@ -563,7 +563,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 			}
 		case string:
 			// String parameter - embed it
-			if e.GetEmbedder() == nil {
+			if e.queryEmbedderForStatement(ctx) == nil {
 				return nil, localizedError(localization.CypherProceduresParameterStringEmbedderRequired(input.paramName), nil)
 			}
 			embedded, embedErr := e.embedVectorQueryText(ctx, val)

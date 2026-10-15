@@ -365,7 +365,7 @@ type StorageExecutor struct {
 
 	// Shared binding for server-side query embedding (optional).
 	// If set, vector search can accept string queries which are embedded automatically
-	queryEmbedder *queryEmbedderBinding
+	queryEmbedder *QueryEmbedderBinding
 
 	// searchService optionally provides unified search semantics for Cypher procedures.
 	// When set, db.index.vector.queryNodes delegates to search.Service.
@@ -746,7 +746,7 @@ func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntr
 		vectorRegistry:                 vectorspace.NewIndexRegistry(),
 		vectorIndexSpaces:              make(map[string]vectorspace.VectorSpaceKey),
 		hotPathTraceState:              &hotPathTraceState{},
-		queryEmbedder:                  &queryEmbedderBinding{},
+		queryEmbedder:                  &QueryEmbedderBinding{},
 		unwindMergeChainPlanCache:      &unwindMergeChainPlanCache{plans: make(map[string]unwindMergeChainPlan, 128)},
 		inlineEmbeddingTextOptions:     embeddingutil.EmbedTextOptionsFromConfig(runtimeCfg),
 		inlineEmbeddingChunkSize:       maxInt(runtimeCfg.EmbeddingWorker.ChunkSize, 1),
@@ -1107,35 +1107,15 @@ func (e *StorageExecutor) SetDatabaseManager(dbManager DatabaseManagerInterface)
 //	// CALL db.index.vector.queryNodes('idx', 10, 'search query')   // String (auto-embedded)
 func (e *StorageExecutor) SetEmbedder(embedder QueryEmbedder) {
 	if e.queryEmbedder == nil {
-		e.queryEmbedder = &queryEmbedderBinding{}
+		e.queryEmbedder = &QueryEmbedderBinding{}
 	}
-	var state *queryEmbedderState
-	if embedder != nil {
-		state = &queryEmbedderState{
-			embedder: embedder,
-			cache:    make(map[string][]float32, 512),
-			inflight: make(map[string]*vectorEmbedInflight, 64),
-		}
-	}
-	e.queryEmbedder.mu.Lock()
-	defer e.queryEmbedder.mu.Unlock()
-	e.queryEmbedder.current.Store(state)
-	// Existing cache keys already include this revision. A startup fallback
-	// must not survive readiness, even when its query is still in flight.
-	for ref := range e.queryEmbedder.services {
-		if svc := ref.Value(); svc != nil {
-			svc.InvalidateQueryEmbeddingResults()
-		} else {
-			delete(e.queryEmbedder.services, ref)
-		}
-	}
+	e.queryEmbedder.Store(embedder)
 }
 
 // SetSearchService sets the unified search service used by Cypher procedures.
 // When set, db.index.vector.queryNodes will delegate to search.Service.
 func (e *StorageExecutor) SetSearchService(svc *search.Service) {
 	e.searchService = svc
-	e.queryEmbedder.registerSearchService(svc)
 }
 
 // SetInferenceManager sets the inference manager used by db.infer.
@@ -1897,7 +1877,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 	if len(ids) == 0 {
 		return nil
 	}
-	embedder := e.GetEmbedder()
+	embedder := e.queryEmbedderForStatement(ctx)
 	if embedder == nil {
 		return localizedError(localization.CypherCoreEmbeddingConfiguredRequired(), nil)
 	}
