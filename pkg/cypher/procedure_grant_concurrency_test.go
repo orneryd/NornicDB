@@ -2,7 +2,10 @@ package cypher
 
 import (
 	"context"
+	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -108,4 +111,51 @@ func TestImmutableUpgradeFailureChangesNothing(t *testing.T) {
 	after, err := grants.List(ctx)
 	require.NoError(t, err)
 	require.Equal(t, before, after)
+}
+
+// A GRANT racing a role delete or rename, with no barrier, never leaves the
+// grant behind: either the GRANT or the role change fails, or the grant
+// moved with the role. A role created later with the old name starts
+// without it. NORNICDB_GRANT_RACE_ITERATIONS raises the iteration count.
+func TestGrantRacingRoleChangeNeverLeavesTheGrant(t *testing.T) {
+	iterations := 200
+	if raw := os.Getenv("NORNICDB_GRANT_RACE_ITERATIONS"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		require.NoError(t, err)
+		iterations = parsed
+	}
+	ctx := context.Background()
+	for i := 0; i < iterations; i++ {
+		rename := i%2 == 1
+		base := storage.NewMemoryEngine()
+		system := storage.NewNamespacedEngine(base, "system")
+		roles := auth.NewRoleStore(system)
+		require.NoError(t, roles.CreateRole(ctx, "ops"))
+		exec := NewStorageExecutor(system)
+		var wg sync.WaitGroup
+		var changeErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, _ = exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO ops", nil)
+		}()
+		go func() {
+			defer wg.Done()
+			if rename {
+				changeErr = roles.RenameRole(ctx, "ops", "renamed")
+			} else {
+				changeErr = roles.DeleteRole(ctx, "ops")
+			}
+		}()
+		wg.Wait()
+		fresh := auth.NewRoleStore(system)
+		require.NoError(t, fresh.Load(ctx))
+		if !fresh.Exists("ops") {
+			require.NoError(t, fresh.CreateRole(ctx, "ops"))
+		}
+		allowed, err := auth.NewProcedurePrivilegeStore(system).AllowsBoosted([]string{"ops"}, "db.cdc.query")
+		require.NoError(t, err)
+		require.False(t, allowed && changeErr == nil, "iteration %d (rename=%v): the role named ops after a successful role change holds the grant", i, rename)
+		require.NoError(t, base.Close())
+	}
 }

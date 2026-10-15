@@ -832,11 +832,8 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 		if err != nil {
 			return fmt.Errorf("reading node: %w", err)
 		}
-		// Snapshot body reads use a separate view. Enroll only this write's
-		// primary key in Badger's conflict set so a peer publishing after
-		// precommit validation cannot be overwritten by the buffered update.
-		if _, err := tx.badgerTx.Get(nodeKey(node.ID)); err != nil && err != badger.ErrKeyNotFound {
-			return fmt.Errorf("tracking node write conflict: %w", err)
+		if err := tx.enrollCommittedWriteLocked(nodeKey(node.ID), "node"); err != nil {
+			return err
 		}
 	}
 
@@ -1355,9 +1352,25 @@ func (tx *BadgerTransaction) DeleteNode(nodeID NodeID) error {
 		if err != nil {
 			return err
 		}
+		if err := tx.enrollCommittedWriteLocked(nodeKey(nodeID), "node"); err != nil {
+			return err
+		}
 	}
 
 	return tx.deleteNodeLocked(nodeID, oldNode)
+}
+
+// enrollCommittedWriteLocked adds key, the primary key of a committed node or
+// relationship this transaction updates or deletes, to Badger's conflict
+// set. Snapshot body reads use a separate view, so without it a peer that
+// commits the same key after this transaction's snapshot validation and
+// before its Badger commit would be overwritten or deleted, and both
+// transactions would commit. A missing key still enrolls the read.
+func (tx *BadgerTransaction) enrollCommittedWriteLocked(key []byte, kind string) error {
+	if _, err := tx.badgerTx.Get(key); err != nil && err != badger.ErrKeyNotFound {
+		return fmt.Errorf("tracking %s write conflict: %w", kind, err)
+	}
+	return nil
 }
 
 // deleteNodeLocked deletes nodeID, whose state before is oldNode, with the
@@ -1420,6 +1433,9 @@ func (tx *BadgerTransaction) DeleteConnectedNode(nodeID NodeID) error {
 	} else {
 		var err error
 		if oldNode, err = tx.getCommittedNodeLocked(nodeID); err != nil {
+			return err
+		}
+		if err := tx.enrollCommittedWriteLocked(nodeKey(nodeID), "node"); err != nil {
 			return err
 		}
 	}
@@ -1678,12 +1694,8 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 		if err != nil {
 			return fmt.Errorf("reading edge: %w", err)
 		}
-		// Snapshot body reads use a separate view. Enroll only this write's
-		// primary key in Badger's conflict set so a peer publishing after
-		// precommit validation cannot be overwritten by the buffered update.
-		// A missing key still enrolls the read; retain snapshot body semantics.
-		if _, err := tx.badgerTx.Get(edgeKey(edge.ID)); err != nil && err != badger.ErrKeyNotFound {
-			return fmt.Errorf("tracking edge write conflict: %w", err)
+		if err := tx.enrollCommittedWriteLocked(edgeKey(edge.ID), "edge"); err != nil {
+			return err
 		}
 	}
 
@@ -1836,6 +1848,9 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 		}
 		if err != nil {
 			return fmt.Errorf("reading edge: %w", err)
+		}
+		if err := tx.enrollCommittedWriteLocked(edgeKey(edgeID), "edge"); err != nil {
+			return err
 		}
 	}
 
