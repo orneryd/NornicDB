@@ -1,0 +1,182 @@
+[
+  {
+    "Form": "global",
+    "Count": 8,
+    "Reverse": false,
+    "Score": 0.1111111111111111
+  },
+  {
+    "Form": "local",
+    "Count": 8,
+    "Reverse": false,
+    "Score": 0.2
+  },
+  {
+    "Form": "aggregation",
+    "Count": 8,
+    "Reverse": false,
+    "Score": 0.5
+  },
+  {
+    "Form": "global",
+    "Count": 8,
+    "Reverse": true,
+    "Score": 0.5
+  },
+  {
+    "Form": "local",
+    "Count": 8,
+    "Reverse": true,
+    "Score": 0.2
+  },
+  {
+    "Form": "aggregation",
+    "Count": 8,
+    "Reverse": true,
+    "Score": 0.1111111111111111
+  },
+  {
+    "Form": "global",
+    "Count": 9,
+    "Reverse": false,
+    "Score": 0.1
+  },
+  {
+    "Form": "local",
+    "Count": 9,
+    "Reverse": false,
+    "Score": 0.2
+  },
+  {
+    "Form": "aggregation",
+    "Count": 9,
+    "Reverse": false,
+    "Score": 0.5
+  },
+  {
+    "Form": "global",
+    "Count": 9,
+    "Reverse": true,
+    "Score": 0.5
+  },
+  {
+    "Form": "local",
+    "Count": 9,
+    "Reverse": true,
+    "Score": 0.2
+  },
+  {
+    "Form": "aggregation",
+    "Count": 9,
+    "Reverse": true,
+    "Score": 0.1
+  },
+  {
+    "Form": "global",
+    "Count": 10,
+    "Reverse": false,
+    "Score": 0.125
+  },
+  {
+    "Form": "local",
+    "Count": 10,
+    "Reverse": false,
+    "Score": 0.125
+  },
+  {
+    "Form": "aggregation",
+    "Count": 10,
+    "Reverse": false,
+    "Score": 0.5
+  },
+  {
+    "Form": "global",
+    "Count": 10,
+    "Reverse": true,
+    "Score": 0.25
+  },
+  {
+    "Form": "local",
+    "Count": 10,
+    "Reverse": true,
+    "Score": 0.125
+  },
+  {
+    "Form": "aggregation",
+    "Count": 10,
+    "Reverse": true,
+    "Score": 0.09090909090909091
+  },
+  {
+    "Form": "global",
+    "Count": 12,
+    "Reverse": false,
+    "Score": 0.25
+  },
+  {
+    "Form": "local",
+    "Count": 12,
+    "Reverse": false,
+    "Score": 0.25
+  },
+  {
+    "Form": "aggregation",
+    "Count": 12,
+    "Reverse": false,
+    "Score": 0.25
+  },
+  {
+    "Form": "global",
+    "Count": 12,
+    "Reverse": true,
+    "Score": 0.2
+  },
+  {
+    "Form": "local",
+    "Count": 12,
+    "Reverse": true,
+    "Score": 0.25
+  },
+  {
+    "Form": "aggregation",
+    "Count": 12,
+    "Reverse": true,
+    "Score": 0.07692307692307693
+  },
+  {
+    "Form": "global",
+    "Count": 16,
+    "Reverse": false,
+    "Score": 0.07692307692307693
+  },
+  {
+    "Form": "local",
+    "Count": 16,
+    "Reverse": false,
+    "Score": 0.06666666666666667
+  },
+  {
+    "Form": "aggregation",
+    "Count": 16,
+    "Reverse": false,
+    "Score": 0.07692307692307693
+  },
+  {
+    "Form": "global",
+    "Count": 16,
+    "Reverse": true,
+    "Score": 0.07692307692307693
+  },
+  {
+    "Form": "local",
+    "Count": 16,
+    "Reverse": true,
+    "Score": 0.06666666666666667
+  },
+  {
+    "Form": "aggregation",
+    "Count": 16,
+    "Reverse": true,
+    "Score": 0.25
+  }
+]
