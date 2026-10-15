@@ -134,7 +134,7 @@ func cypherValueKindOf(value interface{}) cypherValueKind {
 	case CypherUUID, *CypherUUID:
 		return valueKindUUID
 	case map[string]interface{}:
-		if _, isPath := v["_pathResult"]; isPath {
+		if _, isPath := cypherPathResultOf(v, v, true); isPath {
 			return valueKindPath
 		}
 		return valueKindMap

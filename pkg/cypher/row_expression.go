@@ -911,6 +911,14 @@ func compareCypherOrderedValues(left, right interface{}) (int, bool) {
 			return 0, true
 		}
 	}
+	// ORDER BY distinguishes optional identity metadata for a total order;
+	// relational predicates still recognize the same remote entity. Element
+	// identity remains authoritative even when optional numeric metadata differs.
+	if leftRemote, leftIsRemote := left.(storage.RemoteEntityValue); leftIsRemote {
+		if rightRemote, rightIsRemote := right.(storage.RemoteEntityValue); rightIsRemote && cypherEquality(leftRemote, rightRemote) == true {
+			return 0, true
+		}
+	}
 	// Maps, nodes, relationships and paths, after the scalar kinds above.
 	if comparison, comparable, structured := compareCypherStructuredValues(left, right, compareCypherComparableValues); structured {
 		return comparison, comparable

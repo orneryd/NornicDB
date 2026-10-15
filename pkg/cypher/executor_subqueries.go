@@ -2211,9 +2211,15 @@ func compareValuesForSort(a, b interface{}) int {
 		return 0
 	}
 	if a == nil {
+		if cypherValueKindOf(b) == valueKindNull {
+			return 0
+		}
 		return 1
 	}
 	if b == nil {
+		if cypherValueKindOf(a) == valueKindNull {
+			return 0
+		}
 		return -1
 	}
 	if comparison, temporal := compareTemporalOrdering(a, b); temporal {

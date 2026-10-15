@@ -95,56 +95,53 @@ func cypherPathResultOf(value interface{}, object map[string]interface{}, isMap 
 // for values of different kinds and for maps holding values compareValue
 // can't order.
 func compareCypherStructuredValues(left, right interface{}, compareValue func(a, b interface{}) (int, bool)) (order int, comparable bool, handled bool) {
-	switch leftValue := left.(type) {
-	case storage.RemoteEntityValue:
-		rightValue, ok := right.(storage.RemoteEntityValue)
-		if !ok || cypherValueKindOf(leftValue) != cypherValueKindOf(rightValue) {
+	if leftKey, leftEntity := cypherEntityOrderingKey(left); leftEntity {
+		rightKey, rightEntity := cypherEntityOrderingKey(right)
+		if !rightEntity || leftKey.kind != rightKey.kind || leftKey.kind == valueKindNull {
 			return 0, false, true
 		}
-		leftElement, _ := leftValue["elementId"].(string)
-		rightElement, _ := rightValue["elementId"].(string)
-		if leftElement == rightElement {
-			return 0, true, true
+		// A total sort key does not manufacture relational comparability
+		// across ID domains, or for a nil native entity carrier.
+		comparable := leftKey.carrier == rightKey.carrier && leftKey.carrier != 0
+		if order := compareOrderedInts(leftKey.carrier, rightKey.carrier); order != 0 {
+			return order, comparable, true
 		}
-		leftID, _, _ := leftValue.LegacyIDs()
-		rightID, _, _ := rightValue.LegacyIDs()
-		if leftID >= 0 && rightID >= 0 {
-			if leftID < rightID {
-				return -1, true, true
-			}
-			if leftID > rightID {
-				return 1, true, true
-			}
+		if leftKey.legacy < rightKey.legacy {
+			return -1, comparable, true
 		}
-		return compareStrings(leftElement, rightElement), true, true
-	case *storage.Node:
-		rightValue, ok := right.(*storage.Node)
-		if !ok || leftValue == nil || rightValue == nil {
-			return 0, false, true
+		if leftKey.legacy > rightKey.legacy {
+			return 1, comparable, true
 		}
-		return compareStrings(string(leftValue.ID), string(rightValue.ID)), true, true
-	case *storage.Edge:
-		rightValue, ok := right.(*storage.Edge)
-		if !ok || leftValue == nil || rightValue == nil {
-			return 0, false, true
-		}
-		return compareStrings(string(leftValue.ID), string(rightValue.ID)), true, true
+		return compareStrings(leftKey.identity, rightKey.identity), comparable, true
 	}
-	switch right.(type) {
-	case *storage.Node, *storage.Edge, storage.RemoteEntityValue:
+	if _, rightEntity := cypherEntityOrderingKey(right); rightEntity {
 		return 0, false, true
 	}
 	leftMap, leftIsMap := toStringAnyMap(left)
 	rightMap, rightIsMap := toStringAnyMap(right)
 	leftPath, leftIsPath := cypherPathElementsOf(left, leftMap, leftIsMap)
 	rightPath, rightIsPath := cypherPathElementsOf(right, rightMap, rightIsMap)
-	if leftIsPath || rightIsPath {
-		if !leftIsPath || !rightIsPath {
+	leftPathCarrier := leftIsPath || cypherValueKindOf(left) == valueKindPath
+	rightPathCarrier := rightIsPath || cypherValueKindOf(right) == valueKindPath
+	if leftPathCarrier || rightPathCarrier {
+		if !leftPathCarrier || !rightPathCarrier {
 			return 0, false, true
 		}
+		if !leftIsPath || !rightIsPath {
+			// Invalid/nil path carriers must not sort equal to every valid
+			// path. They remain incomparable to comparison operators.
+			leftValid, rightValid := 0, 0
+			if leftIsPath {
+				leftValid = 1
+			}
+			if rightIsPath {
+				rightValid = 1
+			}
+			return compareOrderedInts(leftValid, rightValid), false, true
+		}
 		for index := 0; index < len(leftPath) && index < len(rightPath); index++ {
-			if order, _, _ := compareCypherStructuredValues(leftPath[index], rightPath[index], compareValue); order != 0 {
-				return order, true, true
+			if order, comparable := compareValue(leftPath[index], rightPath[index]); !comparable || order != 0 {
+				return order, comparable, true
 			}
 		}
 		return compareOrderedInts(len(leftPath), len(rightPath)), true, true
@@ -157,6 +154,47 @@ func compareCypherStructuredValues(left, right interface{}, compareValue func(a,
 		return order, comparable, true
 	}
 	return 0, false, false
+}
+
+// cypherEntityOrderKey is a per-value key, never a pairwise fallback. Native
+// IDs and remote numeric IDs belong to different identity domains. Remote
+// carriers without a legacy numeric ID form a further domain ordered by
+// element ID. Mixing numeric and element-only comparisons pairwise would
+// violate transitivity. Properties never participate in entity ordering.
+// Typed nil native carriers are distinguished from every real native entity.
+type cypherEntityOrderKey struct {
+	kind     cypherValueKind
+	carrier  int
+	legacy   int64
+	identity string
+}
+
+func cypherEntityOrderingKey(value interface{}) (cypherEntityOrderKey, bool) {
+	switch entity := value.(type) {
+	case *storage.Node:
+		key := cypherEntityOrderKey{kind: valueKindNode}
+		if entity != nil {
+			key.carrier = 1
+			key.identity = string(entity.ID)
+		}
+		return key, true
+	case *storage.Edge:
+		key := cypherEntityOrderKey{kind: valueKindRelationship}
+		if entity != nil {
+			key.carrier = 1
+			key.identity = string(entity.ID)
+		}
+		return key, true
+	case storage.RemoteEntityValue:
+		element, _ := entity["elementId"].(string)
+		key := cypherEntityOrderKey{kind: cypherValueKindOf(entity), carrier: 2, identity: element}
+		if id, _, _ := entity.LegacyIDs(); id >= 0 {
+			key.carrier = 3
+			key.legacy = id
+		}
+		return key, true
+	}
+	return cypherEntityOrderKey{}, false
 }
 
 // compareCypherMaps orders two maps: fewer keys first, then the sorted key

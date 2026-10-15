@@ -37,6 +37,9 @@ func cypherEqualityValue(left, right interface{}) interface{} {
 			return actual == expected
 		}
 	}
+	if cypherValueKindOf(left) == valueKindNull || cypherValueKindOf(right) == valueKindNull {
+		return nil
+	}
 	// Entity snapshots compare by identity even if their properties differ.
 	leftNode, leftIsNode := left.(*storage.Node)
 	rightNode, rightIsNode := right.(*storage.Node)
@@ -45,6 +48,25 @@ func cypherEqualityValue(left, right interface{}) interface{} {
 	if leftIsNode || rightIsNode || leftIsEdge || rightIsEdge {
 		return (leftIsNode && rightIsNode && leftNode != nil && rightNode != nil && leftNode.ID == rightNode.ID) ||
 			(leftIsEdge && rightIsEdge && leftEdge != nil && rightEdge != nil && leftEdge.ID == rightEdge.ID)
+	}
+	// Source element identity survives property snapshots and optional legacy
+	// metadata. ORDER BY also distinguishes identity-availability domains to
+	// remain transitive; as with signed zero, sort order need not imply <>.
+	leftRemote, leftIsRemote := left.(storage.RemoteEntityValue)
+	rightRemote, rightIsRemote := right.(storage.RemoteEntityValue)
+	if leftIsRemote || rightIsRemote {
+		leftElement, leftHasElement := leftRemote["elementId"].(string)
+		rightElement, rightHasElement := rightRemote["elementId"].(string)
+		return leftIsRemote && rightIsRemote && leftHasElement && rightHasElement && cypherValueKindOf(leftRemote) == cypherValueKindOf(rightRemote) && leftElement == rightElement
+	}
+	// Compare actual path carriers, including the legacy typed _pathResult
+	// wrapper, through their ordered entity identities in either direction.
+	if cypherValueKindOf(left) == valueKindPath || cypherValueKindOf(right) == valueKindPath {
+		leftParts, leftPath := cypherPathElements(left)
+		rightParts, rightPath := cypherPathElements(right)
+		if leftPath || rightPath {
+			return leftPath && rightPath && cypherEquality(leftParts, rightParts) == true
+		}
 	}
 	leftList, leftIsList := cypherListValue(left)
 	rightList, rightIsList := cypherListValue(right)
