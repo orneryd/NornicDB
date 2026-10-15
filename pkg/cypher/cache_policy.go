@@ -7,10 +7,10 @@ import (
 )
 
 // canUseResultCache applies the same transaction boundary to local and Fabric
-// reads. Auto-commit revisions cannot represent an explicit transaction's pending
-// writes, so neither a cache hit nor a cache entry is valid inside BEGIN.
+// reads. Committed revisions cannot represent a transaction's pending writes,
+// including an implicit transaction carried by context or a storage-scoped view.
 func (e *StorageExecutor) canUseResultCache(ctx context.Context, info *QueryInfo, cypher string) bool {
-	return (e.txContext == nil || !e.txContext.active) && info.IsReadOnly &&
+	return !e.inTransaction(ctx) && info.IsReadOnly &&
 		e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) &&
 		// Visibility changes with elapsed time and access metadata, independently
 		// of graph-write revisions. Cache neither raw nor previously stripped rows.

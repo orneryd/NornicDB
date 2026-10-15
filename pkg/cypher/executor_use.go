@@ -232,13 +232,16 @@ func sameTransactionDatabase(databases TransactionDatabases, txDB, target string
 // inTransaction reports whether a statement run with ctx belongs to a
 // transaction: this executor's explicit one, or the transaction of the
 // statement it is nested in (an implicit transaction's storage wrapper
-// carried on ctx).
+// carried on ctx), or the transaction pinned to this executor's storage view.
 func (e *StorageExecutor) inTransaction(ctx context.Context) bool {
 	if e.txContext != nil && e.txContext.active {
 		return true
 	}
-	_, nested := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper)
-	return nested
+	if _, nested := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); nested {
+		return true
+	}
+	_, scoped := e.storage.(*transactionStorageWrapper)
+	return scoped
 }
 
 // executeOnDatabase is the one database router: it runs query on database
