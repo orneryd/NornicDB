@@ -1025,11 +1025,18 @@ RETURN count(t) AS c
 	require.NotNil(t, directRes)
 	require.Len(t, directRes.Rows, 1, "direct executeMultiMatch should preserve matching row")
 	require.Equal(t, int64(1), directRes.Rows[0][0])
+	// Parameter references stay typed bindings: substituteParams no longer
+	// writes values into the statement text, so the statement still needs its
+	// parameter map. Without one, Neo4j 5.26.30 and NornicDB both report
+	// ParameterMissing for both names, in order of first appearance.
 	substituted := exec.substituteParams(normalized, map[string]interface{}{"language": "es", "pagePath": "/benefits"})
-	directSubRes, directSubErr := exec.Execute(ctx, substituted, getParamsFromContext(ctx))
+	require.Equal(t, normalized, substituted)
+	_, missingErr := exec.Execute(ctx, substituted, nil)
+	require.ErrorContains(t, missingErr, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): language, pagePath")
+	directSubRes, directSubErr := exec.Execute(directCtx, substituted, getParamsFromContext(directCtx))
 	require.NoError(t, directSubErr)
 	require.NotNil(t, directSubRes)
-	require.Len(t, directSubRes.Rows, 1, "executeMultiMatch with pre-substituted query should preserve matching row")
+	require.Len(t, directSubRes.Rows, 1, "executeMultiMatch with the parameterized query should preserve matching row")
 	require.Equal(t, int64(1), directSubRes.Rows[0][0])
 	require.Equal(t, 2, countKeywordOccurrences(strings.ToUpper(substituted), "MATCH"))
 	require.Equal(t, 0, countKeywordOccurrences(strings.ToUpper(substituted), "OPTIONAL MATCH"))
