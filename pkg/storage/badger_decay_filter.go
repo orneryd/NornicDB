@@ -153,7 +153,7 @@ func (b *BadgerEngine) filterEdgeByDecay(edge *Edge, nowNanos int64) bool {
 		edge.Type,
 		edge.Properties,
 		edge.CreatedAt.UnixNano(),
-		edge.CreatedAt.UnixNano(),
+		edge.UpdatedAt.UnixNano(),
 		nowNanos,
 		true,
 	)

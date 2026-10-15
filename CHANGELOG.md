@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Harden existing boosted procedure grants, transactional role changes, principal refresh, and system database
   authorization; bring the follow-up security fixes onto the v1.4.3 release baseline.
 
+- Transactional node and relationship creation now initializes creation and update timestamps while preserving
+  explicitly supplied times. Namespaced relationship writes retain visibility suppression metadata (#1228).
+- Deleting a node or moving its embeddings inline removes every separately stored embedding key (#1228).
+- Relationship VERSION decay uses the last update time, preserving visibility after a recent update (#1229).
+
 - With an OpenAI-compatible embedder (`openai`, `orca`, or a gateway in front of another provider), text longer
   than `NORNICDB_EMBED_CHUNK_SIZE` is split into chunks as with the other providers. The OpenAI provider sent it
   whole, so a node longer than the model's context window (8,191 tokens for OpenAI, 8,192 for Amazon Titan) was

@@ -734,6 +734,8 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	// PERFORMANCE OPTIMIZATION: Buffer all writes and flush at commit time
 	// This batches all writes together for better performance while maintaining ACID guarantees
 
+	// Stamp creation times before encoding, as direct engine creation does (#1228).
+	initializeCreationTimes(&node.CreatedAt, &node.UpdatedAt)
 	// Serialize node (may store embeddings separately if too large)
 	data, embeddingsSeparate, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), node)
 	if err != nil {
@@ -1608,6 +1610,7 @@ func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(Nod
 // counters for its endpoints' labels (as validateNewEdgeLocked returned
 // them), the read-your-writes copy and the create operation.
 func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLabels []string) error {
+	initializeCreationTimes(&edge.CreatedAt, &edge.UpdatedAt)
 	tx.engine.NotePropertyKeysInNamespace(namespaceForEdgeID(edge.ID), edge.Properties)
 	delete(tx.cancelledEdgeWrites, edge.ID)
 	_, recreated := tx.deletedEdges[edge.ID]

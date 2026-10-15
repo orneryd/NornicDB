@@ -508,7 +508,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			it := txn.NewIterator(opts)
 			defer it.Close()
 			for it.Rewind(); it.Valid(); it.Next() {
-				if err := txn.Delete(it.Item().Key()); err != nil {
+				if err := txn.Delete(it.Item().KeyCopy(nil)); err != nil {
 					return localizedError(localization.StorageClientNodeEmbeddingChunkDeleteFailed(err), err)
 				}
 			}

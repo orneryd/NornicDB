@@ -631,7 +631,7 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 	it := txn.NewIterator(opts)
 	defer it.Close()
 	for it.Rewind(); it.Valid(); it.Next() {
-		if err := txn.Delete(it.Item().Key()); err != nil {
+		if err := txn.Delete(it.Item().KeyCopy(nil)); err != nil {
 			return 0, nil, nil, nil, fmt.Errorf("failed to delete embedding chunk: %w", err)
 		}
 	}
