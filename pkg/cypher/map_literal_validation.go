@@ -187,15 +187,10 @@ func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
 	return subqueryBraceBodyStartsLikeClause(query, braceIndex)
 }
 
-// subqueryBraceBodyStartsLikeClause reports whether the body of the brace at
-// braceIndex opens with a subquery clause keyword (MATCH, OPTIONAL, CALL,
-// WITH, UNWIND, RETURN) or a bare pattern element ('('), which is how every
-// EXISTS/COUNT/COLLECT/CALL subquery body starts. A malformed pattern
-// property map's body is a bare (invalid) key/value list and never starts
-// this way, so this rejects `(count {bad})` and `(n:Count {bad})` even
-// though the preceding-token check above cannot always tell a node-pattern
-// '(' apart from an expression-grouping '(' (both precede the keyword with
-// '(' in `(count {bad})` and `(EXISTS { MATCH ... })`).
+// subqueryBraceBodyStartsLikeClause distinguishes a subquery's opening clause
+// from an identically named map-projection selector. A selector ends at a comma
+// or closing brace; a clause requires a following body. Standalone ordering and
+// pagination also open valid expression subqueries and must reach normalization.
 func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 	index := braceIndex + 1
 	for index < len(query) {
@@ -224,13 +219,13 @@ func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 	if index == start {
 		return false
 	}
-	// A clause keyword can name a map-projection entry too.
-	if next := skipSpaces(query, index); next < len(query) && query[next] == ':' {
+	// A clause keyword can name a map key or a standalone projection selector.
+	if next := queryGapEnd(query, index); next < len(query) && (query[next] == ':' || query[next] == ',' || query[next] == '}') {
 		return false
 	}
 
 	switch upperASCII(query[start:index]) {
-	case "MATCH", "OPTIONAL", "CALL", "WITH", "UNWIND", "RETURN":
+	case "MATCH", "OPTIONAL", "CALL", "WITH", "UNWIND", "RETURN", "ORDER", "LIMIT", "SKIP", "OFFSET":
 		return true
 	default:
 		return false
