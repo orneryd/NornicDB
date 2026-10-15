@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Traversal cancellation fixes
+
+- Stop plain variable-length DFS at cancelled frame entry and sibling expansion so a timed-out query unwinds instead of continuing to enumerate paths.
 ### Verification correctness fixes
 
 - Match large changed-file lists without SIGPIPE skipping applicable verification gates; self-test path selection and compare allocation workloads at the actual merge base. Keep the main default PR base.
