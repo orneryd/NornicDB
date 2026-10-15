@@ -2475,18 +2475,14 @@ func (s *Session) newDatabaseScopedCypherExecutor(dbName string, useAuthScopedRe
 		executor.SetLocalizationRenderer(s.server.config.Localizer)
 	}
 	if baseAdapter, ok := s.server.executor.(*boltQueryExecutorAdapter); ok && baseAdapter != nil && baseAdapter.executor != nil {
-		if emb := baseAdapter.executor.GetEmbedder(); emb != nil {
-			executor.SetEmbedder(emb)
-		}
+		executor.ShareEmbedderFrom(baseAdapter.executor)
 	}
 	if cfg, ok := s.server.executor.(databaseExecutorConfigurator); ok && cfg != nil {
 		cfg.ConfigureDatabaseExecutor(executor, dbName, storageEngine)
 	}
 	if provider, ok := s.server.executor.(baseCypherExecutorProvider); ok && provider != nil {
 		if baseExec := provider.BaseCypherExecutor(); baseExec != nil {
-			if emb := baseExec.GetEmbedder(); emb != nil {
-				executor.SetEmbedder(emb)
-			}
+			executor.ShareEmbedderFrom(baseExec)
 		}
 	}
 	if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {

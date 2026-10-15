@@ -94,7 +94,7 @@ func TestVectorQueryEmbedCache_Branches(t *testing.T) {
 	require.EqualError(t, err, "no embedder configured")
 
 	em := &countingEmbedder{}
-	exec.embedder = em
+	exec.SetEmbedder(em)
 
 	v1, err := exec.embedVectorQueryText(ctx, "  Hello   World ")
 	require.NoError(t, err)
@@ -124,7 +124,7 @@ func TestVectorQueryEmbedCache_InflightAndEvictionBranches(t *testing.T) {
 		release: make(chan struct{}),
 		result:  []float32{9, 9},
 	}
-	exec.embedder = blk
+	exec.SetEmbedder(blk)
 
 	done := make(chan error, 1)
 	go func() {
@@ -147,7 +147,7 @@ func TestVectorQueryEmbedCache_InflightAndEvictionBranches(t *testing.T) {
 		release: make(chan struct{}),
 		err:     errors.New("inflight boom"),
 	}
-	exec.embedder = blk2
+	exec.SetEmbedder(blk2)
 	done2 := make(chan error, 1)
 	go func() {
 		_, err := exec.embedVectorQueryText(context.Background(), "error key")
@@ -167,17 +167,17 @@ func TestVectorQueryEmbedCache_InflightAndEvictionBranches(t *testing.T) {
 	for i := 0; i < maxVectorQueryEmbedCacheEntries; i++ {
 		full[fmt.Sprintf("k-%d", i)] = []float32{1}
 	}
-	exec.vectorQueryEmbedMu.Lock()
-	exec.vectorQueryEmbedCache = full
-	exec.vectorQueryEmbedMu.Unlock()
-
-	exec.embedder = &countingEmbedder{}
+	exec.SetEmbedder(&countingEmbedder{})
+	state := exec.currentQueryEmbedder()
+	state.mu.Lock()
+	state.cache = full
+	state.mu.Unlock()
 	_, err = exec.embedVectorQueryText(context.Background(), "fresh key")
 	require.NoError(t, err)
-	exec.vectorQueryEmbedMu.Lock()
-	defer exec.vectorQueryEmbedMu.Unlock()
-	require.LessOrEqual(t, len(exec.vectorQueryEmbedCache), 2)
-	require.Contains(t, exec.vectorQueryEmbedCache, canonicalizeVectorQueryText("fresh key"))
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	require.LessOrEqual(t, len(state.cache), 2)
+	require.Contains(t, state.cache, canonicalizeVectorQueryText("fresh key"))
 }
 
 func TestVectorQueryHelpers_AndHotPathTraceMarks(t *testing.T) {
