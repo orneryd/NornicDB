@@ -308,7 +308,7 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			if containsMalformedCreateClauseToken(clause.text) {
 				return types, false, nil
 			}
-			if err := validateWithOrderBySemanticScope(scope, clause.text, outer); err != nil {
+			if err := validateWithOrderBySemanticScope(scope, clause.text, enclosing.visible); err != nil {
 				return types, false, err
 			}
 			// The WHERE after WITH reads the projected scope merged over the
