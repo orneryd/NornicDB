@@ -330,6 +330,7 @@ type StorageExecutor struct {
 	// storedPropertyIdentity is set only on a private whole-path MERGE matcher.
 	// Its identity predicates see stored values; the statement still projects results.
 	storedPropertyIdentity bool
+	statementPropertyViews *statementPropertyViews
 	txContext              *TransactionContext // Active transaction context
 	// sharedExecutor marks a cached per-database executor that every
 	// auto-commit client of the database runs on (server cached executors,

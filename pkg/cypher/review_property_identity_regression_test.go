@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func reviewPropertyExecutor(t *testing.T) (*StorageExecutor, *storage.BadgerEngine) {
+func reviewPropertyExecutor(t testing.TB) (*StorageExecutor, *storage.BadgerEngine) {
 	t.Helper()
 	be, err := storage.NewBadgerEngineInMemory()
 	require.NoError(t, err)

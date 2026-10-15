@@ -218,6 +218,9 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 // decayVisibleNodeProperties is the shared property-visibility owner for node
 // maps and expression/result projections. It never changes the stored map.
 func (e *StorageExecutor) decayVisibleNodeProperties(node *storage.Node) map[string]interface{} {
+	if e.statementPropertyViews != nil {
+		return e.statementPropertyViews.node(node).Properties
+	}
 	return storage.NewQueryResultProjection(e.storage).NodeProperties(node)
 }
 
@@ -262,6 +265,9 @@ func (e *StorageExecutor) edgeToMap(edge *storage.Edge) map[string]interface{} {
 // hides at the current scoring time (the edge's own map when decay filtering
 // doesn't apply).
 func (e *StorageExecutor) decayVisibleEdgeProperties(edge *storage.Edge) map[string]interface{} {
+	if e.statementPropertyViews != nil {
+		return e.statementPropertyViews.edge(edge).Properties
+	}
 	return storage.NewQueryResultProjection(e.storage).EdgeProperties(edge)
 }
 
