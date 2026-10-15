@@ -360,14 +360,10 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			if err := e.validateStaticOperatorTypes(clause, input, func() staticTypeScope { return projectionAliasScope(input, clause.text) }, nil); err != nil {
 				return types, false, err
 			}
+			// Retain each import's current operand after a rebinding, using
+			// the same rule that carries runtime values across WITH.
+			carrySubqueryImports(projectedTypes, types, enclosing.visible)
 			types = projectedTypes
-			// A subquery's body keeps seeing what it sees of the query
-			// around it.
-			for name, operand := range enclosing.visible {
-				if _, projected := types[name]; !projected {
-					types[name] = operand
-				}
-			}
 			unwound = projectUnwoundValues(unwound, clause.text)
 			projected := types.static(cypher25)
 			scope, valueTypes, valueMembers = projected.kinds, projected.values, projected.members
