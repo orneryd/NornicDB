@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authorization; bring the follow-up security fixes onto the v1.4.3 release baseline.
 
 - Transactional node and relationship creation now initializes creation and update timestamps while preserving
-  explicitly supplied times. Namespaced relationship writes retain visibility suppression metadata (#1228).
+  explicitly supplied times. Namespaced node and relationship writes retain visibility suppression metadata (#1228).
 - Deleting a node or moving its embeddings inline removes every separately stored embedding key (#1228).
 - Relationship VERSION decay and policy resolution use the last update time, preserving visibility and correct
   suppression eligibility after a recent update (#1229).
