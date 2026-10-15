@@ -285,7 +285,7 @@ func buildProcedureSignature(name string, args []string) string {
 }
 
 func procedureCatalogNodeID(name string) storage.NodeID {
-	return storage.NodeID(procedureCatalogPrefix + lowerASCII(strings.TrimSpace(name)))
+	return storage.NodeID(procedureCatalogPrefix + strings.TrimSpace(name))
 }
 
 func ensureLabel(labels []string, label string) []string {
@@ -327,6 +327,11 @@ func (e *StorageExecutor) loadPersistedProcedures() error {
 		spec, handler, _, err := e.compilePersistedProcedure(record)
 		if err != nil {
 			return localizedError(localization.CypherProceduresCatalogRecordInvalid(string(node.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
+		}
+		if superseded, err := e.migrateProcedureCatalogIdentity(node, record); err != nil {
+			return err
+		} else if superseded {
+			continue
 		}
 		if err := RegisterUserProcedure(spec, handler); err != nil {
 			return localizedError(localization.CypherProceduresRegistryReloadFailed(err), nerrors.ErrProcedureRegistryReloadFailed)

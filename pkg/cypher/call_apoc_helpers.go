@@ -1,9 +1,5 @@
 package cypher
 
-import (
-	"regexp"
-)
-
 // =============================================================================
 // APOC Helper Functions
 // =============================================================================
@@ -41,16 +37,13 @@ func (e *StorageExecutor) splitBySemicolon(s string) []string {
 	return result
 }
 
-// extractProcedureName extracts the procedure name from a CALL statement for error messages.
-// callProcedureNamePattern matches CALL followed by a procedure name
-// ("CALL db.labels()" -> "db.labels"). It is compiled once: authorization
-// looks up the procedure of every statement.
-var callProcedureNamePattern = regexp.MustCompile(`(?i)CALL\s+([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)`)
-
+// extractProcedureName uses the same component reader as authorization,
+// retaining exact case while accepting quoted names and spaced separators.
 func extractProcedureName(cypher string) string {
-	matches := callProcedureNamePattern.FindStringSubmatch(cypher)
-	if len(matches) > 1 {
-		return matches[1]
+	if at := keywordIndexFrom(cypher, "CALL", 0, defaultKeywordScanOpts()); at >= 0 {
+		if name, ok := procedureNameAt(cypher, at+len("CALL")); ok {
+			return name
+		}
 	}
 	// Fallback: return truncated query
 	if len(cypher) > 60 {
