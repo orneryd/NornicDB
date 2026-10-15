@@ -20,11 +20,17 @@ func TestTemporalBindingTemporalOffsetMutationRoutes(t *testing.T) {
 	})
 	london, ok := loadPinnedTemporalLocation("Europe/London")
 	require.True(t, ok)
+	// Neo4j 5.26.30's toString of the instant, on every route below.
+	texts := map[int]string{
+		0:         "2026-10-25T01:30:00+01:00[Europe/London]",
+		123456789: "2026-10-25T01:30:00.123456789+01:00[Europe/London]",
+	}
 	for _, nanos := range []int{0, 123456789} {
 		instant := CypherDateTime{Time: time.Unix(1792888200, int64(nanos)).In(london), ZoneID: "Europe/London"}
+		text := texts[nanos]
 		for _, explicit := range []bool{false, true} {
 			for _, relationship := range []bool{false, true} {
-				for _, source := range []string{"$m", "{t: $t, ts: [$t]}", "{t: datetime('" + instant.String() + "'), ts: [datetime('" + instant.String() + "')]}"} {
+				for _, source := range []string{"$m", "{t: $t, ts: [$t]}", "{t: datetime('" + text + "'), ts: [datetime('" + text + "')]}"} {
 					for _, route := range []string{"create", "property", "replace", "create merge map", "merge", "with merge", "on create", "on match"} {
 						t.Run(fmt.Sprintf("nanos=%d/tx=%t/rel=%t/%s/%s", nanos, explicit, relationship, source, route), func(t *testing.T) {
 							exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal_binding"))
@@ -74,7 +80,7 @@ func TestTemporalBindingTemporalOffsetMutationRoutes(t *testing.T) {
 								prefix = ""
 							}
 							projection := " RETURN n.t.epochSeconds, toString(n.t), n.ts[0].epochSeconds, toString(n.ts[0])"
-							want := []interface{}{int64(1792888200), formatTemporalISO(instant), int64(1792888200), formatTemporalISO(instant)}
+							want := []interface{}{int64(1792888200), text, int64(1792888200), text}
 							result, err := exec.Execute(ctx, prefix+query+projection, params)
 							require.NoError(t, err)
 							require.Equal(t, [][]interface{}{want}, result.Rows)
