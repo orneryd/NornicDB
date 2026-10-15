@@ -47,9 +47,9 @@ func TestCommitBuffer_NodeRecreationSupersedesDeletion(t *testing.T) {
 			t.Run("tombstones", func(t *testing.T) {
 				require.NotContains(t, generation.deletes, string(newest.ID))
 				require.NotContains(t, generation.deletedNodeIDs, newest.ID)
-				require.Contains(t, generation.deletes, string(peer.ID))
+				require.True(t, buffer.NodeDeleted(peer.ID))
 				require.Contains(t, generation.deletedNodeIDs, peer.ID)
-				require.Contains(t, generation.deletes, "test:detached", "recreating the node does not revive detached edges")
+				require.True(t, buffer.EdgeDeleted("test:detached"), "recreating the node does not revive detached edges")
 				require.Contains(t, generation.deletedEdgeIDs, EdgeID("test:detached"))
 			})
 		})
