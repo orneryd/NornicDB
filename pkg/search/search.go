@@ -1453,6 +1453,13 @@ func (s *Service) IndexRevision() uint64 {
 	return s.indexRevision.Load()
 }
 
+// InvalidateQueryEmbeddingResults advances the search revision after the query
+// embedder becomes ready or is replaced. Callers' cached keyword-only results
+// then expire without a readiness check on each query. Index contents stay intact.
+func (s *Service) InvalidateQueryEmbeddingResults() {
+	s.indexChanged()
+}
+
 // indexChanged advances IndexRevision. Call it after the change is applied,
 // so a reader that sees the new revision also sees the change.
 func (s *Service) indexChanged() {

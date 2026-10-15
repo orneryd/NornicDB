@@ -2079,7 +2079,7 @@ func TestCallDbIndexVectorQueryNodes_AdditionalParameterBranches(t *testing.T) {
 	require.NotNil(t, res)
 
 	// string parameter embedding path.
-	exec.embedder = &sequenceEmbedder{embs: [][]float32{{0.1, 0.2, 0.3}}}
+	exec.SetEmbedder(&sequenceEmbedder{embs: [][]float32{{0.1, 0.2, 0.3}}})
 	res, err = exec.callDbIndexVectorQueryNodes(
 		context.WithValue(ctx, paramsKey, map[string]interface{}{"q": "semantic query"}),
 		"CALL db.index.vector.queryNodes('idx_doc', 5, $q)",
