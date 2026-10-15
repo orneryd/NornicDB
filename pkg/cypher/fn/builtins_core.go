@@ -283,11 +283,6 @@ func evalProperties(ctx Context, args []string) (interface{}, error) {
 		return remote["properties"], nil
 	}
 	if object, ok := value.(map[string]interface{}); ok {
-		// A node projected as a map: properties live in the "properties"
-		// sub-map, which takes precedence over same-named top-level keys.
-		if props, nested := object["properties"].(map[string]interface{}); nested {
-			return props, nil
-		}
 		return object, nil
 	}
 	return nil, nil

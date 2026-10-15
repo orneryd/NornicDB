@@ -143,6 +143,9 @@ func mapProjectionPropertySelector(item string) (string, bool) {
 // map; ok is false for any other value.
 func rowProjectionProperties(value interface{}) (map[string]interface{}, bool) {
 	switch typed := value.(type) {
+	case storage.RemoteEntityValue:
+		properties, _ := typed["properties"].(map[string]interface{})
+		return properties, true
 	case *storage.Node:
 		if typed == nil {
 			return nil, false

@@ -126,7 +126,7 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		return nil
 	}
 	switch base.(type) {
-	case *storage.Node, *storage.Edge:
+	case *storage.Node, *storage.Edge, storage.RemoteEntityValue:
 		if _, valid := index.(string); !valid {
 			return invalidSubscriptTypeError("entity subscript requires a STRING property key", index)
 		}

@@ -532,7 +532,7 @@ func TestBoltCoverage_PackStreamValueAndDecodeBranches(t *testing.T) {
 			{name: "uint64", value: uint64(9), marker: 0x09},
 			{name: "float32", value: float32(1.5), marker: 0xC1},
 			{name: "map path result", value: map[string]any{"_pathResult": cypher.PathResult{Nodes: []*storage.Node{nodePtr}, Relationships: []*storage.Edge{}, Length: 0}}, marker: 0xB3},
-			{name: "map node structure", value: map[string]any{"_nodeId": "n1", "labels": []string{"Person"}, "name": "Alice"}, marker: 0xB3},
+			{name: "ordinary node-shaped map", value: map[string]any{"_nodeId": "n1", "labels": []string{"Person"}, "name": "Alice"}, marker: 0xA3},
 			{name: "string map empty", value: map[string]string{}, marker: 0xA0},
 			{name: "string map large", value: func() map[string]string {
 				m := map[string]string{}
@@ -605,7 +605,7 @@ func TestBoltCoverage_PackStreamValueAndDecodeBranches(t *testing.T) {
 			{name: "float32 slice", value: []float32{1.2, 2.3}, marker: 0x92},
 			{name: "map slice", value: []map[string]any{{"k": "v"}}, marker: 0x91},
 			{name: "plain map", value: map[string]any{"k": "v"}, marker: 0xA1},
-			{name: "node map", value: nodeMap, marker: 0xB3},
+			{name: "ordinary node-shaped map", value: nodeMap, marker: 0xA3},
 			{name: "node", value: node, marker: 0xB3},
 			{name: "edge", value: edge, marker: 0xB5},
 			{name: "unknown", value: struct{}{}, marker: 0xC0},

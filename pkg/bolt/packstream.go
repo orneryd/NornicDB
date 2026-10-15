@@ -175,12 +175,7 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 		if path, ok := extractPathFromMap(val); ok {
 			return encodePathIntoWithUTC(dst, path.Nodes, path.Relationships, useUTCDateTimeStructs)
 		}
-		// Check if this is a node (has _nodeId and labels)
-		if nodeId, hasNodeId := val["_nodeId"]; hasNodeId {
-			if labels, hasLabels := val["labels"]; hasLabels {
-				return encodeNodeIntoWithUTC(dst, nodeId, labels, val, useUTCDateTimeStructs)
-			}
-		}
+
 		return encodePackStreamMapIntoWithUTC(dst, val, useUTCDateTimeStructs)
 	case map[string]string:
 		if len(val) == 0 {
@@ -486,12 +481,7 @@ func encodePackStreamValue(v any) []byte {
 	case storage.RemoteEntityValue:
 		return encodePackStreamMap(map[string]any(val))
 	case map[string]any:
-		// Check if this is a node (has _nodeId and labels)
-		if nodeId, hasNodeId := val["_nodeId"]; hasNodeId {
-			if labels, hasLabels := val["labels"]; hasLabels {
-				return encodeNode(nodeId, labels, val)
-			}
-		}
+
 		return encodePackStreamMap(val)
 	// Storage types - Neo4j compatible node/edge encoding
 	case *storage.Node:
@@ -874,12 +864,7 @@ func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool,
 	case storage.RemoteEntityValue:
 		return encodeRecordValueInto(dst, map[string]any(val), useUTCDateTimeStructs, true, dbName, resolvers...)
 	case map[string]any:
-		// Node maps (_nodeId + labels) and paths carry entities.
-		if nodeId, hasNodeId := val["_nodeId"]; hasNodeId {
-			if labels, hasLabels := val["labels"]; hasLabels {
-				return encodeNodeV5Into(dst, nodeId, labels, val, recordEntityDatabase(dbName, storage.NodeID(fmt.Sprint(nodeId)), "", resolvers))
-			}
-		}
+
 		if path, ok := extractPathFromMap(val); ok {
 			return encodePathV5Into(dst, path.Nodes, path.Relationships, dbName, resolvers...)
 		}

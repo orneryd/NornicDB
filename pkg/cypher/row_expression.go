@@ -583,7 +583,8 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 		_, isNode := base.(*storage.Node)
 		_, isRelationship := base.(*storage.Edge)
-		if _, isObject := toStringAnyMap(base); isObject || isNode || isRelationship {
+		_, isRemote := base.(storage.RemoteEntityValue)
+		if _, isObject := toStringAnyMap(base); isObject || isNode || isRelationship || isRemote {
 			// A dynamic property access: n[key] is n.key.
 			key, isString := indexValue.(string)
 			if !isString {
@@ -1325,6 +1326,9 @@ func rowPropertyValue(value interface{}, property string) (interface{}, bool) {
 		return nil, true
 	}
 	switch typed := value.(type) {
+	case storage.RemoteEntityValue:
+		properties, _ := rowProjectionProperties(typed)
+		return properties[property], true
 	case *storage.Node:
 		if typed == nil {
 			return nil, true

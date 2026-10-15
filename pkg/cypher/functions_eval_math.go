@@ -1217,7 +1217,6 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 	}
 	values := valueBindingsLayer(ctx, 1)
 	itemCtx := withValueBindings(ctx, values)
-	var current interface{}
 	var holds func() (bool, bool, error)
 	if condition != "" {
 		holds = func() (bool, bool, error) {
@@ -1228,46 +1227,17 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 	var project func() (interface{}, bool, error)
 	if projection != "" {
 		project = func() (interface{}, bool, error) {
-			if value, handled := relationshipMapProjection(projection, current); handled {
-				return value, true, nil
-			}
 			value := e.evaluateExpressionWithContextFull(itemCtx, projection, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
 			return value, true, getExpressionFailure(itemCtx)
 		}
 	}
 	result, _, err := rowComprehensionLoop(items, func(item interface{}) {
-		current = item
 		bindEvaluationValue(varName, item, boundNodes, boundRels, values)
 	}, holds, project)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 	}
 	return result
-}
-
-// relationshipMapProjection is type(x) or id(x) of a relationship item held
-// as a map (its type / _edgeId) or an edge; handled is false otherwise.
-func relationshipMapProjection(projection string, item interface{}) (interface{}, bool) {
-	isType, isID := matchFuncStartAndSuffix(projection, "type"), matchFuncStartAndSuffix(projection, "id")
-	if !isType && !isID {
-		return nil, false
-	}
-	key := "type"
-	if isID {
-		key = "_edgeId"
-	}
-	if mapItem, ok := item.(map[string]interface{}); ok {
-		if value, ok := mapItem[key]; ok {
-			return value, true
-		}
-	}
-	if edge, ok := item.(*storage.Edge); ok {
-		if isType {
-			return edge.Type, true
-		}
-		return string(edge.ID), true
-	}
-	return nil, false
 }
 
 // evaluateReduceForm evaluates reduce and allReduce (parseReduceForm) in the
