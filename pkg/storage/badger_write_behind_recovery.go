@@ -54,6 +54,7 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 			return nil // already applied to Badger
 		}
 		c := bufferedCommit{
+			recovered:      true,
 			namespace:      data.Namespace,
 			txID:           data.TxID,
 			ops:            data.Ops,
@@ -83,17 +84,6 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 	if err := b.applyBufferedCommits(pending); err != nil {
 		return 0, fmt.Errorf("wal: replaying %d buffered commits: %w", len(pending), err)
 	}
-
-	// applyBufferedCommits cached the JSON round-tripped node/edge structs
-	// (int64 property values decode as float64 after the WAL JSON hop). Drop
-	// those cache entries so readers decode the exact committed bodies from
-	// Badger instead of a float64-typed cache copy.
-	b.nodeCacheMu.Lock()
-	b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
-	b.nodeCacheMu.Unlock()
-	b.edgeCacheMu.Lock()
-	b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
-	b.edgeCacheMu.Unlock()
 
 	// The replayed commits carried no count deltas; rebuild the derived
 	// counts from committed entities so readers never observe committed

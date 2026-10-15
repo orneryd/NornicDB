@@ -225,7 +225,8 @@ func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
 		return err
 	}
 
-	for _, c := range commits {
+	for commitIndex := range commits {
+		c := &commits[commitIndex]
 		// The commit's MVCC version was allocated at ACK time; the flusher
 		// only materializes it, so head order matches commit order.
 		v := c.version
@@ -255,7 +256,12 @@ func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
 		if err := b.persistReplayTxnCounters(cw, c.propKeyDrain); err != nil {
 			return abort(err)
 		}
-		if err := b.materializeMVCCCommit(w, versions[c.namespace], c.ops); err != nil {
+		if c.recovered {
+			if err := b.restoreBufferedOperationBodies(cw.txn, c); err != nil {
+				return abort(err)
+			}
+		}
+		if err := b.materializeMVCCCommitWithHeads(w, versions[c.namespace], c.ops, true); err != nil {
 			return abort(err)
 		}
 		for keyStr := range c.deletes {

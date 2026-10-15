@@ -41,6 +41,7 @@ type bufferedMutation struct {
 // commit for background replay: its ordered physical operations, raw KV
 // writes/deletes, namespace, and staged ID-counter high-water marks.
 type bufferedCommit struct {
+	recovered bool // WAL operations require authoritative binary-body hydration before publication.
 	namespace string
 	txID      string // transaction ID, used for the WAL buffered-commit payload and flush marker
 	ops       []Operation

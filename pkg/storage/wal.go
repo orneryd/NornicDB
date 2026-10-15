@@ -2346,6 +2346,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 			return nil
 		}
 		c := bufferedCommit{
+			recovered:      true,
 			namespace:      data.Namespace,
 			txID:           data.TxID,
 			ops:            data.Ops,

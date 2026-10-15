@@ -16,11 +16,20 @@ func snapshotNodeVectorMetadata(node *Node) *Node {
 			delete(copy.EmbedMeta, "has_chunks")
 			delete(copy.EmbedMeta, "chunk_count")
 		}
-		if len(copy.NamedEmbeddings) == 0 && len(copy.ChunkEmbeddings) == 0 {
+		if !snapshotHasNamedVector(copy.NamedEmbeddings) && len(copy.ChunkEmbeddings) == 0 {
 			delete(copy.EmbedMeta, "has_embedding")
 			delete(copy.EmbedMeta, "embedding_dimensions")
 			delete(copy.EmbedMeta, "embedded_at")
 		}
 	}
 	return &copy
+}
+
+func snapshotHasNamedVector(vectors map[string][]float32) bool {
+	for _, vector := range vectors {
+		if len(vector) > 0 {
+			return true
+		}
+	}
+	return false
 }

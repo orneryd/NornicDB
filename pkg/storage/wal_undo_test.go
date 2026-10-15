@@ -651,8 +651,8 @@ func TestUndoDeleteEdge(t *testing.T) {
 	if e == nil {
 		t.Fatal("Edge should be restored after undo")
 	}
-	// JSON unmarshaling converts integers to float64
-	since, ok := e.Properties["since"].(float64)
+	// Legacy JSON recovery preserves integer literals as int64.
+	since, ok := e.Properties["since"].(int64)
 	if !ok || since != 2020 {
 		t.Errorf("Edge properties should be restored with since=2020, got %v", e.Properties)
 	}
@@ -677,12 +677,12 @@ func TestUndoUpdateEdge(t *testing.T) {
 	require.NoError(t, ReplayWALEntry(engine, entry))
 	updated, _ := engine.GetEdge("e1")
 	require.NotNil(t, updated)
-	require.Equal(t, float64(2024), updated.Properties["since"])
+	require.Equal(t, int64(2024), updated.Properties["since"])
 
 	require.NoError(t, UndoWALEntry(engine, entry))
 	restored, _ := engine.GetEdge("e1")
 	require.NotNil(t, restored)
-	require.Equal(t, float64(2020), restored.Properties["since"])
+	require.Equal(t, int64(2020), restored.Properties["since"])
 }
 
 func TestReplayAndUndoBulkWALEntries(t *testing.T) {
