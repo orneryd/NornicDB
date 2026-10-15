@@ -3,6 +3,9 @@ package cypher
 import "github.com/orneryd/nornicdb/pkg/storage"
 
 func (e *StorageExecutor) propertyViewEngine() *storage.BadgerEngine {
+	if e.storedPropertyIdentity {
+		return nil
+	}
 	if e.propertyDecayEngineKnown {
 		return e.propertyDecayEngine
 	}

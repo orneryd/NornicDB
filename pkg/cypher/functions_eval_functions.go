@@ -1128,7 +1128,10 @@ skipArrayIndexing:
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			propName := strings.Trim(args[1], "'\"")
-			return apocCollSortNodes(listVal, propName)
+			return apocCollSortNodesByProperty(listVal, propName, func(value interface{}, property string) interface{} {
+				result, _ := rowPropertyValue(e.queryVisibleValue(value), property)
+				return result
+			})
 		}
 		return nil
 	}

@@ -327,7 +327,10 @@ type StorageExecutor struct {
 	// policy engine once; its enabled setting is still read dynamically.
 	propertyDecayEngine      *storage.BadgerEngine
 	propertyDecayEngineKnown bool
-	txContext                *TransactionContext // Active transaction context
+	// storedPropertyIdentity is set only on a private whole-path MERGE matcher.
+	// Its identity predicates see stored values; the statement still projects results.
+	storedPropertyIdentity bool
+	txContext              *TransactionContext // Active transaction context
 	// sharedExecutor marks a cached per-database executor that every
 	// auto-commit client of the database runs on (server cached executors,
 	// the embedded DB's base executor). A statement must never leave such an

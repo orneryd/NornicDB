@@ -256,7 +256,12 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	if err != nil {
 		return nil, nil, false, err
 	}
-	matched, err := e.pipelineMatchRows(ctx, row, match)
+	// MERGE identity is stored identity, unlike the visible inline MATCH view.
+	// A private executor keeps this distinction local to the identity lookup;
+	// returned bindings remain raw for writes and the outer query projects them.
+	identity := e.cloneWithStorage(e.storage)
+	identity.storedPropertyIdentity = true
+	matched, err := identity.pipelineMatchRows(ctx, row, match)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -283,7 +288,7 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 		}
 		// A concurrent MERGE created part of the path first: match again,
 		// as the node and relationship MERGE routes recover (mergeCreateConflict).
-		recovered, matchErr := e.pipelineMatchRows(ctx, row, match)
+		recovered, matchErr := identity.pipelineMatchRows(ctx, row, match)
 		if matchErr != nil || len(recovered) == 0 {
 			return nil, nil, false, err
 		}
