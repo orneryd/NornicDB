@@ -68,7 +68,15 @@ func isCacheableReadQuery(cypher string) bool {
 	// and which can differ for each caller (dbms.listConnections lists only
 	// the caller's own connections to a non-administrator): its result is
 	// never served from the cache, which is shared by a database's callers.
+	// A user-defined procedure (CREATE PROCEDURE, apoc.custom) can be
+	// replaced or dropped from any database, which writes nothing to this
+	// database's graph: a query that calls one, itself or in a statement it
+	// hands to a procedure such as apoc.cypher.run, isn't cached, so a call
+	// after the replacement runs the new body.
 	if strings.Contains(upper, "CALL") {
+		if globalProcedureRegistry.callsUserProcedure(cypher) {
+			return false
+		}
 		for _, procedure := range registeredProceduresForCalls(cypher) {
 			if procedure.Mode == ProcedureModeDBMS {
 				return false

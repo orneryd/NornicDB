@@ -152,6 +152,40 @@ func (r *ProcedureRegistry) Get(name string) (registeredProcedure, bool) {
 	return p, ok
 }
 
+// callsUserProcedure reports whether query calls a user-defined procedure:
+// a CALL of one anywhere in query, string literals included (a statement
+// query hands to apoc.cypher.run). A name matches in any letter case, so
+// the answer doesn't depend on how the registry keys a name; erring towards
+// "calls one" only skips the cache. It is false at once while none is
+// registered.
+func (r *ProcedureRegistry) callsUserProcedure(query string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.user) == 0 {
+		return false
+	}
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens = false
+	opts.SkipBrackets = false
+	opts.SkipBraces = false
+	opts.SkipStrings = false
+	for from := 0; from < len(query); {
+		at := keywordIndexFrom(query, "CALL", from, opts)
+		if at < 0 {
+			return false
+		}
+		from = at + len("CALL")
+		if name, ok := procedureNameAt(query, from); ok {
+			for registered := range r.user {
+				if strings.EqualFold(name, registered) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (r *ProcedureRegistry) List() []ProcedureSpec {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
