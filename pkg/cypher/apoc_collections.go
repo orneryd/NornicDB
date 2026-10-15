@@ -66,8 +66,6 @@ package cypher
 import (
 	"fmt"
 	"math"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // ========================================
@@ -350,16 +348,8 @@ func apocCollSortNodes(val interface{}, propName string) []interface{} {
 //
 //   - The property value, or nil if not found
 func getNodeProperty(node interface{}, propName string) interface{} {
-	switch n := node.(type) {
-	case map[string]interface{}:
-		if props, ok := n["properties"].(map[string]interface{}); ok {
-			return props[propName]
-		}
-		return n[propName]
-	case *storage.Node:
-		return n.Properties[propName]
-	}
-	return nil
+	property, _ := rowPropertyValue(node, propName)
+	return property
 }
 
 // apocCollReverse reverses a list.

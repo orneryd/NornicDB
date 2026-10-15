@@ -51,13 +51,13 @@ type recordingAccessRecorder struct{ ids []string }
 func (r *recordingAccessRecorder) RecordMaterializedAccess(id string) { r.ids = append(r.ids, id) }
 
 // TestMaterializedValueShapes: the access walk finds a node or relationship
-// as a *storage.Node / *storage.Edge, as a map with _nodeId / _edgeId, and
+// as a *storage.Node / *storage.Edge or marked remote entity, and
 // inside maps, lists and lists of maps; nil entities and scalars are none.
 // Without a recorder it only reports whether there is one.
 func TestMaterializedValueShapes(t *testing.T) {
 	var nilNode *storage.Node
 	var nilEdge *storage.Edge
-	for _, value := range []interface{}{nilNode, nilEdge, "text", int64(1), map[string]interface{}{"a": 1}, []interface{}{}, []map[string]interface{}{{"a": 1}}} {
+	for _, value := range []interface{}{nilNode, nilEdge, "text", int64(1), map[string]interface{}{"a": 1}, map[string]interface{}{"_nodeId": "forged"}, map[string]interface{}{"_edgeId": "forged"}, []interface{}{}, []map[string]interface{}{{"a": 1}}} {
 		require.False(t, materializedValue(nil, value), "%#v", value)
 	}
 	for _, tc := range []struct {
@@ -66,11 +66,11 @@ func TestMaterializedValueShapes(t *testing.T) {
 	}{
 		{&storage.Node{ID: "n1"}, []string{"n1"}},
 		{&storage.Edge{ID: "e1"}, []string{"e1"}},
-		{map[string]interface{}{"_nodeId": "n2"}, []string{"n2"}},
-		{map[string]interface{}{"_edgeId": "e2"}, []string{"e2"}},
+		{storage.RemoteEntityValue{"elementId": "n2"}, []string{"n2"}},
+		{storage.RemoteEntityValue{"elementId": "e2"}, []string{"e2"}},
 		{map[string]interface{}{"x": &storage.Node{ID: "n3"}}, []string{"n3"}},
 		{[]interface{}{&storage.Node{ID: "n4"}, "s"}, []string{"n4"}},
-		{[]map[string]interface{}{{"_nodeId": "n5"}, {"_edgeId": "e5"}}, []string{"n5", "e5"}},
+		{[]map[string]interface{}{{"node": &storage.Node{ID: "n5"}}, {"edge": &storage.Edge{ID: "e5"}}}, []string{"n5", "e5"}},
 	} {
 		require.True(t, materializedValue(nil, tc.value), "%#v", tc.value)
 		recorder := &recordingAccessRecorder{}

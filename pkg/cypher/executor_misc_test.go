@@ -2432,7 +2432,7 @@ func TestEvaluateExpressionFromValues_Branches(t *testing.T) {
 	}
 
 	require.Equal(t, "alice", exec.evaluateExpressionFromValues("n.name", values))
-	require.Equal(t, "eng", exec.evaluateExpressionFromValues("m.title", values))
+	require.Nil(t, exec.evaluateExpressionFromValues("m.title", values))
 	require.Equal(t, int64(2), exec.evaluateExpressionFromValues("length(path)", values))
 	require.Equal(t, int64(3), exec.evaluateExpressionFromValues("size(xs)", values))
 	require.Equal(t, int64(4), exec.evaluateExpressionFromValues("size('abcd')", values))

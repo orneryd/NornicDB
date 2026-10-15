@@ -204,7 +204,7 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 
 func TestCallSubqueryHelpers_PropertyExtractionAndOrdering(t *testing.T) {
 	require.Equal(t, "Ada", extractPropertyFromValue(map[string]interface{}{"name": "Ada"}, "name"))
-	require.Equal(t, 42, extractPropertyFromValue(map[string]interface{}{"properties": map[string]interface{}{"age": 42}}, "age"))
+	require.Nil(t, extractPropertyFromValue(map[string]interface{}{"properties": map[string]interface{}{"age": 42}}, "age"))
 	require.Nil(t, extractPropertyFromValue(map[string]interface{}{"properties": "wrong"}, "age"))
 	require.Nil(t, extractPropertyFromValue("not-a-map", "age"))
 

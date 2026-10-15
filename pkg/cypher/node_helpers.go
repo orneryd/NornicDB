@@ -115,15 +115,15 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 			return false
 		}
 		id = string(v.ID)
+	case storage.RemoteEntityValue:
+		if v == nil {
+			return false
+		}
+		id, _ = v["elementId"].(string)
+		if id == "" {
+			return false
+		}
 	case map[string]interface{}:
-		if nodeID, ok := v["_nodeId"].(string); ok && nodeID != "" {
-			id = nodeID
-			break
-		}
-		if edgeID, ok := v["_edgeId"].(string); ok && edgeID != "" {
-			id = edgeID
-			break
-		}
 		found := false
 		for _, nested := range v {
 			if materializedValue(recorder, nested) {

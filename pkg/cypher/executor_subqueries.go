@@ -2203,28 +2203,8 @@ func parseOrderByClause(clause string) []orderByTerm {
 // compareValuesForSort compares two values for sorting, returns -1, 0, or 1
 // extractPropertyFromValue extracts a named property from a value that may be a node map.
 func extractPropertyFromValue(val interface{}, propName string) interface{} {
-	switch entity := val.(type) {
-	case *storage.Node:
-		if entity != nil {
-			return entity.Properties[propName]
-		}
-	case *storage.Edge:
-		if entity != nil {
-			return entity.Properties[propName]
-		}
-	}
-	if m, ok := val.(map[string]interface{}); ok {
-		if pv, exists := m[propName]; exists {
-			return pv
-		}
-		// Check nested properties map
-		if props, ok := m["properties"].(map[string]interface{}); ok {
-			if pv, exists := props[propName]; exists {
-				return pv
-			}
-		}
-	}
-	return nil
+	property, _ := rowPropertyValue(val, propName)
+	return property
 }
 
 func compareValuesForSort(a, b interface{}) int {

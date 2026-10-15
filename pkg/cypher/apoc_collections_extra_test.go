@@ -32,7 +32,7 @@ func TestApocCollections_SortAndReverse(t *testing.T) {
 func TestApocCollections_SortNodesAndProperty(t *testing.T) {
 	n1 := &storage.Node{Properties: map[string]interface{}{"age": int64(40)}}
 	n2 := &storage.Node{Properties: map[string]interface{}{"age": int64(20)}}
-	n3 := map[string]interface{}{"properties": map[string]interface{}{"age": int64(30)}}
+	n3 := storage.RemoteEntityValue{"properties": map[string]interface{}{"age": int64(30)}}
 
 	sorted := apocCollSortNodes([]interface{}{n1, n2, n3}, "age")
 	assert.Len(t, sorted, 3)

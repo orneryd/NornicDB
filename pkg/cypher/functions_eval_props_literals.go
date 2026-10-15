@@ -52,19 +52,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 			return nil
 		}
 		if val, ok := e.boundValue(ctx, varName); ok {
-			switch v := val.(type) {
-			case nil:
-				return nil
-			case map[string]interface{}:
-				if pv, exists := v[propName]; exists {
-					return pv
-				}
-				return nil
-			case *storage.Node:
-				if pv, exists := e.queryEntityProperties(v)[propName]; exists {
-					return pv
-				}
-				return nil
+			if property, supported := rowPropertyValue(e.queryVisibleValue(val), propName); supported {
+				return property
 			}
 		}
 	}

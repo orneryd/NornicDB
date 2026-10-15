@@ -44,7 +44,7 @@ func TestEvaluateExpressionFromValues_AdditionalBranches(t *testing.T) {
 
 	require.Nil(t, exec.evaluateExpressionFromValues("", values))
 	require.Equal(t, "alice", exec.evaluateExpressionFromValues("n.name", values))
-	require.Equal(t, "T", exec.evaluateExpressionFromValues("nodeMap.title", values))
+	require.Equal(t, "T2", exec.evaluateExpressionFromValues("nodeMap.title", values))
 	require.Equal(t, int64(2), exec.evaluateExpressionFromValues("length(path)", values))
 	require.Equal(t, int64(3), exec.evaluateExpressionFromValues("size(xs)", values))
 	require.Equal(t, int64(4), exec.evaluateExpressionFromValues("size(asText)", values))

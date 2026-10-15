@@ -56,7 +56,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 	if !resolved {
 		return nil, true, false, nil
 	}
-	if base == nil {
+	if base == nil || isNilRemoteEntity(base) {
 		return nil, true, true, nil
 	}
 	temporal := isRuntimeTemporal(base) || isRuntimeDuration(base)
@@ -161,4 +161,10 @@ func rowProjectionProperties(value interface{}) (map[string]interface{}, bool) {
 		return nil, false
 	}
 	return toStringAnyMap(value)
+}
+
+// A typed nil marker has the same null projection semantics as a nil entity.
+func isNilRemoteEntity(value interface{}) bool {
+	remote, ok := value.(storage.RemoteEntityValue)
+	return ok && remote == nil
 }
