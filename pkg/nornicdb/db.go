@@ -1720,13 +1720,12 @@ func (db *DB) SetEmbedConfigForDB(fn func(dbName string) (*embed.Config, error))
 func (db *DB) getOrCreateEmbedderForDB(dbName string) (embed.Embedder, error) {
 	db.mu.RLock()
 	fn := db.embedConfigForDB
-	embedQueue := db.embedQueue
+	queue := db.embedQueue
 	db.mu.RUnlock()
-
-	if embedQueue == nil {
+	if queue == nil {
 		return nil, nil
 	}
-	fallback := embedQueue.currentEmbedder()
+	fallback := queue.currentEmbedder()
 	if fn == nil || fallback == nil {
 		return fallback, nil
 	}
@@ -1734,12 +1733,21 @@ func (db *DB) getOrCreateEmbedderForDB(dbName string) (embed.Embedder, error) {
 	if err != nil || cfg == nil {
 		return fallback, nil
 	}
+	if resolved := db.embedderForConfig(cfg); resolved != nil {
+		return resolved, nil
+	}
+	return fallback, nil
+}
+
+// embedderForConfig shares the model registry and single-flight creation between
+// document workers and query snapshots. The caller owns its fallback provider.
+func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
 	key := embedConfigKey(cfg)
 	db.embedderRegistryMu.RLock()
 	if db.embedderRegistry != nil {
 		if e, ok := db.embedderRegistry[key]; ok {
 			db.embedderRegistryMu.RUnlock()
-			return e, nil
+			return e
 		}
 	}
 	db.embedderRegistryMu.RUnlock()
@@ -1772,7 +1780,7 @@ func (db *DB) getOrCreateEmbedderForDB(dbName string) (embed.Embedder, error) {
 	if e, ok := db.embedderRegistry[key]; ok {
 		db.embedderRegistryMu.RUnlock()
 		db.embedderCreateMu.Unlock()
-		return e, nil
+		return e
 	}
 	db.embedderRegistryMu.RUnlock()
 	if ch, ok := db.embedderCreate[key]; ok {
@@ -1781,11 +1789,11 @@ func (db *DB) getOrCreateEmbedderForDB(dbName string) (embed.Embedder, error) {
 		db.embedderRegistryMu.RLock()
 		if e, ok := db.embedderRegistry[key]; ok {
 			db.embedderRegistryMu.RUnlock()
-			return e, nil
+			return e
 		}
 		db.embedderRegistryMu.RUnlock()
 		// Creation completed but no registry entry (likely create failed). Fall back.
-		return fallback, nil
+		return nil
 	}
 	ch := make(chan struct{})
 	db.embedderCreate[key] = ch
@@ -1809,9 +1817,9 @@ func (db *DB) getOrCreateEmbedderForDB(dbName string) (embed.Embedder, error) {
 	db.embedderCreateMu.Unlock()
 
 	if createErr != nil || newEmbedder == nil {
-		return fallback, nil
+		return nil
 	}
-	return newEmbedder, nil
+	return newEmbedder
 }
 
 // BuildSearchIndexes builds the search indexes of the default database from
@@ -2217,231 +2225,6 @@ func (db *DB) ClearAllEmbeddings() (int, error) {
 	}
 
 	return 0, localizedError(localization.NornicDBCoreClearEmbeddingsUnsupported(), nil)
-}
-
-// embedQueryChunksWithEmbedder runs query chunking and embeds each chunk.
-// Callers that can score multiple query vectors should use this shape and keep
-// the best result across chunks instead of collapsing the query into a centroid.
-func (db *DB) embedQueryChunksWithEmbedder(ctx context.Context, emb embed.Embedder, query string) ([]string, [][]float32, error) {
-	if emb == nil {
-		return nil, nil, nil
-	}
-	chunks, err := db.chunkQueryWithEmbedder(ctx, emb, query)
-	if err != nil {
-		return nil, nil, err
-	}
-	if chunks, err = search.LimitQueryChunks(chunks); err != nil {
-		return nil, nil, err
-	}
-	if len(chunks) == 0 {
-		return nil, nil, nil
-	}
-	if len(chunks) == 1 {
-		var vec []float32
-		var err error
-		if typed, ok := emb.(embed.TypedEmbedder); ok {
-			vec, err = typed.EmbedWithInputType(ctx, chunks[0], embed.InputTypeQuery)
-		} else {
-			vec, err = emb.Embed(ctx, chunks[0])
-		}
-		if err != nil {
-			return chunks, nil, err
-		}
-		if err := embed.CheckEmbeddings([][]float32{vec}, 1, 0); err != nil {
-			return chunks, nil, err
-		}
-		return chunks, [][]float32{vec}, nil
-	}
-	var embs [][]float32
-	if typed, ok := emb.(embed.TypedEmbedder); ok {
-		embs, err = typed.EmbedBatchWithInputType(ctx, chunks, embed.InputTypeQuery)
-	} else {
-		embs, err = emb.EmbedBatch(ctx, chunks)
-	}
-	if err != nil {
-		return chunks, nil, err
-	}
-	// One non-empty vector per chunk, or the query's embedding failed; the
-	// dimension is checked per database (validateQueryEmbeddingDimensions).
-	if err := embed.CheckEmbeddings(embs, len(chunks), 0); err != nil {
-		return chunks, nil, err
-	}
-	return chunks, embs, nil
-}
-
-// embedQueryWithEmbedder returns a single query embedding for compatibility-only callers.
-// Multi-chunk queries are intentionally not averaged; callers that need full
-// recall should use embedQueryChunksWithEmbedder and score best-of chunks.
-func (db *DB) embedQueryWithEmbedder(ctx context.Context, emb embed.Embedder, query string) ([]float32, error) {
-	_, embs, err := db.embedQueryChunksWithEmbedder(ctx, emb, query)
-	if err != nil || len(embs) == 0 {
-		return nil, err
-	}
-	for _, v := range embs {
-		if len(v) > 0 {
-			return v, nil
-		}
-	}
-	return nil, nil
-}
-
-func (db *DB) validateQueryEmbeddingDimensions(dbName string, vec []float32) error {
-	db.dbConfigResolverMu.RLock()
-	resolver := db.dbConfigResolver
-	db.dbConfigResolverMu.RUnlock()
-	if resolver == nil || len(vec) == 0 {
-		return nil
-	}
-	resolvedDims, _, _ := resolver(dbName)
-	if resolvedDims <= 0 {
-		return nil
-	}
-	if len(vec) != resolvedDims {
-		return localizedError(localization.NornicDBCoreQueryDimensionMismatchForDatabase(dbName, resolvedDims, len(vec)), ErrQueryEmbeddingDimensionMismatch)
-	}
-	return nil
-}
-
-func (db *DB) validateQueryEmbeddingBatchDimensions(dbName string, embs [][]float32) error {
-	for _, vec := range embs {
-		if err := db.validateQueryEmbeddingDimensions(dbName, vec); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (db *DB) embedQueryChunksForDBWithEmbedder(ctx context.Context, dbName string, emb embed.Embedder, query string) ([]string, [][]float32, error) {
-	chunks, embs, err := db.embedQueryChunksWithEmbedder(ctx, emb, query)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := db.validateQueryEmbeddingBatchDimensions(dbName, embs); err != nil {
-		return nil, nil, err
-	}
-	return chunks, embs, nil
-}
-
-// EmbedQueryChunks returns embedder-safe query chunks and one embedding per chunk.
-// This is the preferred API for search paths that should compare best-of chunks.
-func (db *DB) EmbedQueryChunks(ctx context.Context, query string) ([]string, [][]float32, error) {
-	emb := db.globalEmbedder()
-	if emb == nil {
-		return nil, nil, nil
-	}
-	return db.embedQueryChunksWithEmbedder(ctx, emb, query)
-}
-
-// EmbedQueryChunksForDB returns per-chunk query embeddings using the embedder configured for a database.
-func (db *DB) EmbedQueryChunksForDB(ctx context.Context, dbName string, query string) ([]string, [][]float32, error) {
-	db.mu.RLock()
-	useRegistry := db.embedConfigForDB != nil
-	db.mu.RUnlock()
-	if useRegistry {
-		emb, err := db.getOrCreateEmbedderForDB(dbName)
-		if err != nil {
-			return nil, nil, err
-		}
-		if emb != nil {
-			return db.embedQueryChunksForDBWithEmbedder(ctx, dbName, emb, query)
-		}
-	}
-	chunks, embs, err := db.EmbedQueryChunks(ctx, query)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := db.validateQueryEmbeddingBatchDimensions(dbName, embs); err != nil {
-		return nil, nil, err
-	}
-	return chunks, embs, nil
-}
-
-func (db *DB) chunkQueryWithEmbedder(ctx context.Context, emb embed.Embedder, query string) ([]string, error) {
-	if emb == nil {
-		return nil, nil
-	}
-	const (
-		queryChunkSize    = 512
-		queryChunkOverlap = 50
-	)
-	// Every chunk: the search that uses them keeps the first
-	// NORNICDB_SEARCH_QUERY_MAX_CHUNKS and reports how many it searched
-	// (search.LimitQueryChunks).
-	return emb.ChunkText(query, queryChunkSize, queryChunkOverlap)
-}
-
-// EmbedQuery generates an embedding for a search query.
-// Returns nil if embeddings are not enabled or embedder is not yet set (e.g. still loading).
-func (db *DB) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
-	emb := db.globalEmbedder()
-	if emb == nil {
-		return nil, nil // Not an error - just no embedding available
-	}
-	return db.embedQueryWithEmbedder(ctx, emb, query)
-}
-
-// ChunkQuery splits a search query using the configured global embedder.
-func (db *DB) ChunkQuery(ctx context.Context, query string) ([]string, error) {
-	emb := db.globalEmbedder()
-	if emb == nil {
-		return []string{query}, nil
-	}
-	return db.chunkQueryWithEmbedder(ctx, emb, query)
-}
-
-// globalEmbedder returns the embed queue's current embedder, or nil when
-// embeddings are disabled or the model is still loading. The embedder is
-// read under the queue's lock because SetEmbedder can replace it at any time.
-func (db *DB) globalEmbedder() embed.Embedder {
-	if db.embedQueue == nil {
-		return nil
-	}
-	return db.embedQueue.currentEmbedder()
-}
-
-// EmbedQueryForDB generates an embedding for a search query using the embedder for the given database.
-// When SetEmbedConfigForDB is set, the per-DB embedder registry is used so the query vector matches
-// the index for that database. Otherwise it uses the global embedder and validates dimensions match
-// (returns ErrQueryEmbeddingDimensionMismatch if not).
-func (db *DB) EmbedQueryForDB(ctx context.Context, dbName string, query string) ([]float32, error) {
-	db.mu.RLock()
-	useRegistry := db.embedConfigForDB != nil
-	db.mu.RUnlock()
-	if useRegistry {
-		emb, err := db.getOrCreateEmbedderForDB(dbName)
-		if err != nil {
-			return nil, err
-		}
-		if emb != nil {
-			return db.embedQueryWithEmbedder(ctx, emb, query)
-		}
-	}
-	// No registry or fallback: use global embedder and dimension check (legacy behavior).
-	vec, err := db.EmbedQuery(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	if err := db.validateQueryEmbeddingDimensions(dbName, vec); err != nil {
-		return nil, err
-	}
-	return vec, nil
-}
-
-// ChunkQueryForDB splits a search query using the embedder configured for the given database.
-func (db *DB) ChunkQueryForDB(ctx context.Context, dbName string, query string) ([]string, error) {
-	db.mu.RLock()
-	useRegistry := db.embedConfigForDB != nil
-	db.mu.RUnlock()
-	if useRegistry {
-		emb, err := db.getOrCreateEmbedderForDB(dbName)
-		if err != nil {
-			return nil, err
-		}
-		if emb != nil {
-			return db.chunkQueryWithEmbedder(ctx, emb, query)
-		}
-	}
-	return db.ChunkQuery(ctx, query)
 }
 
 // DecayInfo contains decay system information for monitoring.

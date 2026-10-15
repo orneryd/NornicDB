@@ -532,9 +532,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	const embedTimeout = 8 * time.Second
 
+	queryEmbedding := s.db.QueryEmbeddingForDB(dbName)
 	queryChunks := []string(nil)
 	if !idStart {
-		queryChunks, err = s.db.ChunkQueryForDB(ctx, dbName, req.Query)
+		queryChunks, err = queryEmbedding.ChunkQuery(ctx, req.Query)
 		if err != nil {
 			s.writeQueryChunkingFailed(w, r)
 			return
@@ -564,7 +565,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			embedCalls++
 			embedStart := time.Now()
 			embedding, embedErr := runEmbedWithTimeout(parent, embedTimeout, func(embedCtx context.Context) ([]float32, error) {
-				return s.db.EmbedQueryForDB(embedCtx, dbName, query)
+				return queryEmbedding.EmbedQuery(embedCtx, query)
 			})
 			embedTotalDur += time.Since(embedStart)
 			if embedErr == nil && len(embedding) > 0 {

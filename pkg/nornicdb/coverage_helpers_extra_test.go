@@ -294,7 +294,7 @@ func TestDBSubjectPropertyAndProviderKeyHelpers(t *testing.T) {
 
 func TestDBPublicQueryEmbeddingAndChunkingBranches(t *testing.T) {
 	defaultEmbedder := &coverageQueryEmbedder{chunks: []string{"default-a", "default-b"}, embed: []float32{1, 0, 0}, batch: [][]float32{{1, 0, 0}, {1, 0, 0}}}
-	db := &DB{embedQueue: &EmbedQueue{embedder: defaultEmbedder}}
+	db := &DB{cypherExecutor: queryEmbeddingTestExecutor(t, defaultEmbedder)}
 
 	chunks, err := db.ChunkQuery(context.Background(), "query")
 	require.NoError(t, err)
@@ -327,7 +327,7 @@ func TestDBPublicQueryEmbeddingAndChunkingBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []float32{0, 1, 0}, vec)
 
-	db = &DB{embedQueue: &EmbedQueue{embedder: defaultEmbedder}}
+	db = &DB{cypherExecutor: queryEmbeddingTestExecutor(t, defaultEmbedder)}
 	db.SetDbConfigResolver(func(dbName string) (int, float64, string) { return 99, 0, "" })
 	vec, err = db.EmbedQueryForDB(context.Background(), "tenant", "query")
 	require.ErrorIs(t, err, ErrQueryEmbeddingDimensionMismatch)
