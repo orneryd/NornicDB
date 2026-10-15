@@ -102,7 +102,7 @@ func validateStaticMapKeys(query string) error {
 // precedingSubqueryExpressionKeyword reports whether the '{' at braceIndex
 // opens a brace-bodied subquery expression (EXISTS {, COUNT {, COLLECT {, or
 // CALL {) rather than a node/relationship pattern property map. It scans
-// backward over whitespace to the nearest identifier token and matches it
+// backward over whitespace and comments to the nearest identifier token and matches it
 // case-insensitively against the subquery-introducing keywords the grammar
 // allows before a bare '{'.
 //
@@ -123,10 +123,7 @@ func validateStaticMapKeys(query string) error {
 //     expression, keyword also preceded by '(') from `(count {bad})` (a
 //     node pattern, invalid property map).
 func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
-	index := braceIndex - 1
-	for index >= 0 && isCypherWhitespace(query[index]) {
-		index--
-	}
+	index := lastLiveByte(query, braceIndex)
 	// CALL (a, b) { … }: step back over the import list to the CALL.
 	if index >= 0 && query[index] == ')' {
 		depth := 0
@@ -161,6 +158,12 @@ func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
 	if start >= end {
 		return false
 	}
+	return subqueryExpressionKeywordBeforeBrace(query, start, end, braceIndex)
+}
+
+// subqueryExpressionKeywordBeforeBrace validates a known keyword token and its
+// brace without rescanning its prefix when the forward reader already found it.
+func subqueryExpressionKeywordBeforeBrace(query string, start, end, braceIndex int) bool {
 	switch upperASCII(query[start:end]) {
 	case "EXISTS", "COUNT", "COLLECT", "CALL":
 	default:

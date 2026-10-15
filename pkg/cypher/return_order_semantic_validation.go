@@ -418,6 +418,9 @@ func maskSemanticBraceBodies(expression string) string {
 	if strings.IndexByte(expression, '{') < 0 {
 		return expression
 	}
+	// Classify operands before blanking their bodies, using the same lexical
+	// reader as evaluation so a comment cannot expose COUNT as a variable.
+	expression = maskSubqueryBodies(expression)
 	masked := []byte(expression)
 	for index := 0; index < len(expression); index++ {
 		switch expression[index] {

@@ -434,8 +434,8 @@ func expressionFreeVariables(expression string) []string {
 		}
 		// A subquery expression (EXISTS / COUNT / COLLECT { … }) binds its own
 		// variables and sees the outer ones; its body isn't an expression.
-		if following == '{' && (upper == "EXISTS" || upper == "COUNT" || upper == "COLLECT") {
-			if closing := findMatchingDelimiter(expression, skipSpaces(expression, next), '{', '}'); closing > next {
+		if _, open, subquery := subqueryExpressionKeywordAt(expression, index); subquery {
+			if closing := findMatchingDelimiter(expression, open, '{', '}'); closing > next {
 				index = closing + 1
 				continue
 			}
