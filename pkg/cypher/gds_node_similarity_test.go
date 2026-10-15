@@ -186,9 +186,9 @@ func newNodeSimilarityExec(t *testing.T) *StorageExecutor {
 func TestNodeSimilarityArgumentBranches(t *testing.T) {
 	newNodeSimilarityGraph(t)
 	exec := newNodeSimilarityExec(t)
-	_, err := exec.callGdsNodeSimilarityStream(nil, false)
+	_, err := exec.callGdsNodeSimilarityStream(t.Context(), nil, false)
 	require.ErrorContains(t, err, "graphName")
-	_, err = exec.callGdsNodeSimilarityStream([]interface{}{"ns", int64(5)}, false)
+	_, err = exec.callGdsNodeSimilarityStream(t.Context(), []interface{}{"ns", int64(5)}, false)
 	require.ErrorContains(t, err, "configuration")
 	for config, message := range map[string]string{
 		"similarityCutoff: 'x'":         "The value of `similarityCutoff` must be of type `Double` but was `String`.",
@@ -317,6 +317,6 @@ func TestNodeSimilarityNeighboursAsGDS(t *testing.T) {
 	require.False(t, ok)
 
 	// A NaN cutoff is out of range, as in GDS.
-	_, err := exec.callGdsNodeSimilarityStream([]interface{}{"P5", map[string]interface{}{"similarityCutoff": math.NaN()}}, false)
+	_, err := exec.callGdsNodeSimilarityStream(t.Context(), []interface{}{"P5", map[string]interface{}{"similarityCutoff": math.NaN()}}, false)
 	require.ErrorContains(t, err, "Value for `similarityCutoff` was `NaN`, but must be within the range [0.00, 1.00].")
 }

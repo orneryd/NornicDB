@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -266,13 +265,9 @@ func gdsProjectionSpecs(value interface{}, kind string, contexts ...context.Cont
 	case string:
 		addText(projection)
 	case map[string]interface{}:
-		keys := make([]string, 0, len(projection))
-		for key := range projection {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
+		keys := appendSortedMapKeys(nil, projection)
 		if kind == "relationship" && len(keys) > 1 && len(contexts) > 0 {
-			if ordered := snapshotMapKeyOrders(contexts[0])[uintptr(reflect.ValueOf(projection).UnsafePointer())]; len(ordered) == len(keys) {
+			if ordered, literalOrder := gdsMapLiteralKeys(projection, contexts...); literalOrder {
 				keys = gdsNativeProjectionMapOrder(ordered)
 			}
 		}
@@ -1278,32 +1273,6 @@ func gdsNameList(names []string) string {
 		quoted[i] = "'" + name + "'"
 	}
 	return "[" + strings.Join(quoted, ", ") + "]"
-}
-
-// gdsJavaValueText is a projected value as GDS's conversion messages print
-// it: 1, 1.0, LongArray[1, 2], DoubleArray[1.0, 2.0].
-func gdsJavaValueText(value interface{}) string {
-	double := func(number float64) string {
-		return gdsDefaultText(number, "")
-	}
-	switch typed := value.(type) {
-	case int64:
-		return strconv.FormatInt(typed, 10)
-	case float64:
-		return double(typed)
-	case []int64:
-		parts := make([]string, len(typed))
-		for i, number := range typed {
-			parts[i] = strconv.FormatInt(number, 10)
-		}
-		return "LongArray[" + strings.Join(parts, ", ") + "]"
-	}
-	floats, _ := value.([]float64)
-	parts := make([]string, len(floats))
-	for i, number := range floats {
-		parts[i] = double(number)
-	}
-	return "DoubleArray[" + strings.Join(parts, ", ") + "]"
 }
 
 // gdsJavaTypeTarget is a GDS type as its conversion messages name it.

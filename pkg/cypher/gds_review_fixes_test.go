@@ -228,7 +228,7 @@ func TestGraphProjectListPropertyRefusalsAsGDS(t *testing.T) {
 	}
 	_, err = run("CALL gds.fastRP.stream('l', {embeddingDimension: 8, propertyRatio: 0.5, featureProperties: ['v'], randomSeed: 42})")
 	require.ErrorContains(t, err, "The property `v` contains arrays of differing lengths `2` and `1`.")
-	require.Equal(t, "DoubleArray[]", gdsJavaValueText([]float64{}))
+	require.Equal(t, "DoubleArray[]", gdsJavaValueText([]float64{}, true))
 	// Without widening (GDS's Cypher aggregation), an Integer refuses a
 	// fraction.
 	_, _, _, err = gdsConvertPropertyValue(2.5, "Integer", false)

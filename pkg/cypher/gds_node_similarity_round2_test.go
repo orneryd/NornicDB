@@ -121,10 +121,10 @@ func TestReviewRound2ConfirmedFixVariants(t *testing.T) {
 	require.Len(t, reviewRows(t, e, ""), 2)
 	require.Equal(t, 0.5, reviewRows(t, e, "")[0][2])
 	require.Empty(t, reviewRows(t, e, "degreeCutoff:2"))
-	_, err := readNodeSimilarityConfig(&GraphProjection{}, map[string]interface{}{"similarityCutoff": math.NaN()}, false)
+	_, err := readNodeSimilarityConfig(t.Context(), &GraphProjection{}, map[string]interface{}{"similarityCutoff": math.NaN()}, false)
 	require.ErrorContains(t, err, "NaN")
 	for _, cutoff := range []float64{math.Inf(1), math.Inf(-1), -0.1, 1.1} {
-		_, err = readNodeSimilarityConfig(&GraphProjection{}, map[string]interface{}{"similarityCutoff": cutoff}, false)
+		_, err = readNodeSimilarityConfig(t.Context(), &GraphProjection{}, map[string]interface{}{"similarityCutoff": cutoff}, false)
 		require.Error(t, err)
 	}
 	for _, value := range []interface{}{nil, []interface{}{}, []int64{}} {
@@ -133,7 +133,7 @@ func TestReviewRound2ConfirmedFixVariants(t *testing.T) {
 		require.True(t, filter.admits(&GraphProjection{}, "0"))
 	}
 	for _, config := range []map[string]interface{}{{"topK": int64(10), "bottomK": int64(1)}, {"topK": int64(1), "bottomK": int64(10)}, {"topK": int64(10), "bottomK": int64(10)}, {"topN": int64(0), "bottomN": int64(1)}, {"topN": int64(1), "bottomN": int64(0)}} {
-		_, err = readNodeSimilarityConfig(&GraphProjection{}, config, false)
+		_, err = readNodeSimilarityConfig(t.Context(), &GraphProjection{}, config, false)
 		require.NoError(t, err)
 	}
 }
@@ -214,7 +214,7 @@ func TestNodeSimilarityInfiniteCutoffMessages(t *testing.T) {
 		text  string
 	}{{math.Inf(1), "Infinity"}, {math.Inf(-1), "-Infinity"}} {
 		for _, filtered := range []bool{false, true} {
-			_, err := e.callGdsNodeSimilarityStream([]interface{}{"rev", map[string]interface{}{"similarityCutoff": tc.value}}, filtered)
+			_, err := e.callGdsNodeSimilarityStream(t.Context(), []interface{}{"rev", map[string]interface{}{"similarityCutoff": tc.value}}, filtered)
 			require.ErrorContains(t, err, "Value for `similarityCutoff` was `"+tc.text+"`")
 		}
 	}
@@ -304,7 +304,7 @@ func TestNodeSimilarityGDSInfiniteScores(t *testing.T) {
 func TestNodeSimilarityIntegralFloatComponentRejected(t *testing.T) {
 	e := reviewGraph(t, []map[string]interface{}{{"comp": 1.0}, {"comp": 1.0}, {"comp": 5.5}}, []reviewEdge{{"0", "2", "R", nil}, {"1", "2", "R", nil}}, "{N:{properties:'comp'}}", "'R'")
 	for _, filtered := range []bool{false, true} {
-		_, err := e.callGdsNodeSimilarityStream([]interface{}{"rev", map[string]interface{}{"useComponents": "comp"}}, filtered)
+		_, err := e.callGdsNodeSimilarityStream(t.Context(), []interface{}{"rev", map[string]interface{}{"useComponents": "comp"}}, filtered)
 		require.ErrorContains(t, err, "Tried to retrieve a value of type LONG value from properties of type DOUBLE")
 	}
 }

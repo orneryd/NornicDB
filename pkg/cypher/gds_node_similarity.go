@@ -1,7 +1,7 @@
 package cypher
 
 import (
-	"fmt"
+	"context"
 	"math"
 	"sort"
 	"strconv"
@@ -64,7 +64,7 @@ func (f *gdsNodeFilter) admits(proj *GraphProjection, id string) bool {
 // neighbourhoods, not the whole graph. Rows are in node order, then most
 // similar first; the shared column, a NornicDB extension, lists the
 // neighbours each pair shares with their weight in the score.
-func (e *StorageExecutor) callGdsNodeSimilarityStream(args []interface{}, filtered bool) (*ExecuteResult, error) {
+func (e *StorageExecutor) callGdsNodeSimilarityStream(ctx context.Context, args []interface{}, filtered bool) (*ExecuteResult, error) {
 	procedure := "gds.nodeSimilarity.stream"
 	if filtered {
 		procedure = "gds.nodeSimilarity.filtered.stream"
@@ -81,7 +81,7 @@ func (e *StorageExecutor) callGdsNodeSimilarityStream(args []interface{}, filter
 	if err != nil {
 		return nil, err
 	}
-	config, err := readNodeSimilarityConfig(projection, options, filtered, func(id string) bool {
+	config, err := readNodeSimilarityConfig(ctx, projection, options, filtered, func(id string) bool {
 		_, err := e.storage.GetNode(storage.NodeID(id))
 		return err == nil
 	})
@@ -99,7 +99,7 @@ func (e *StorageExecutor) callGdsNodeSimilarityStream(args []interface{}, filter
 	return &ExecuteResult{Columns: []string{"node1", "node2", "similarity", "shared"}, Rows: rows}, nil
 }
 
-func readNodeSimilarityConfig(proj *GraphProjection, options map[string]interface{}, filtered bool, nodeExists ...func(string) bool) (nodeSimilarityConfig, error) {
+func readNodeSimilarityConfig(ctx context.Context, proj *GraphProjection, options map[string]interface{}, filtered bool, nodeExists ...func(string) bool) (nodeSimilarityConfig, error) {
 	config := nodeSimilarityConfig{metric: "JACCARD", cutoff: 1e-42}
 	keys := nodeSimilarityConfigKeys
 	if filtered {
@@ -217,7 +217,12 @@ func readNodeSimilarityConfig(proj *GraphProjection, options map[string]interfac
 		}
 		config.componentProperty = value
 	default:
-		return config, localizedError(localization.CypherGraphProceduresInvalidComponentSpec(gdsJavaType(value), fmt.Sprint(value)), nil)
+		kind := gdsJavaType(value)
+		if kind == "List" {
+			// ComponentSpec reports the concrete procedure argument class.
+			kind = "ArrayList"
+		}
+		return config, localizedError(localization.CypherGraphProceduresInvalidComponentSpec(kind, gdsJavaValueText(value, false, ctx)), nil)
 	}
 	if filtered {
 		if config.sourceFilter, err = readGDSNodeFilter(proj, c.value("sourceNodeFilter"), config.nodeLabels, nodeExists...); err != nil {
