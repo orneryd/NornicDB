@@ -85,7 +85,8 @@ func containsNotInOperator(cypher string) bool {
 		// owner as the list/quantifier evaluators, rather than an infix NOT.
 		if c == '[' || c == '(' && bindingFunctionBeforeParen(cypher, i) != "" {
 			if name, at, _, declared := bindingDeclaration(cypher, i+1); declared && strings.EqualFold(name, "NOT") {
-				i = at + len(name) - 1
+				_, end, _ := scanIdentifierToken(cypher, at)
+				i = end - 1
 				continue
 			}
 		}

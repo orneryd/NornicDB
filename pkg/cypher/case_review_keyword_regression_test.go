@@ -36,3 +36,8 @@ func TestCaseReviewKeywordBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestQuotedNotIteratorDoesNotHideInvalidOperator(t *testing.T) {
+	require.True(t, containsNotInOperator("RETURN [`not` IN [1,2] | `not`], 1 NOT IN [2]"))
+	require.False(t, containsNotInOperator("RETURN [`not` IN [1,2] | `not`]"))
+}
