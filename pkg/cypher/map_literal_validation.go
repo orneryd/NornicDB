@@ -37,6 +37,14 @@ func validateStaticMapKeys(query string) error {
 			continue
 		}
 		if precedingSubqueryExpressionKeyword(query, index) {
+			// Validate in the nearest statement scope: an outer RETURN must
+			// not turn a nested MATCH property map into a map projection.
+			if close := findMatchingDelimiter(query, index, '{', '}'); close >= 0 {
+				if err := validateStaticMapKeys(query[index+1 : close]); err != nil {
+					return err
+				}
+				index = close
+			}
 			continue
 		}
 		// A {m,n} after a parenthesised path quantifies it
