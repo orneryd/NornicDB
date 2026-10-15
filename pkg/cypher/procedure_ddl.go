@@ -267,7 +267,11 @@ func (e *StorageExecutor) compilePersistedProcedure(record persistedProcedureRec
 			// An omitted optional argument takes its declared default.
 			params[arg], _ = parseLiteralValueFromComputedRow(record.ArgDefaults[i])
 		}
-		return exec.Execute(ctx, record.Body, params)
+		// The body is a statement the procedure runs, like one
+		// apoc.cypher.run runs: through the one route for those, which
+		// refuses administration commands and NornicDB's internal functions
+		// and keeps the body in the caller's transaction.
+		return exec.executeUserStatement(ctx, record.Body, params)
 	}
 	return spec, handler, record, nil
 }
