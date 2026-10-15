@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Procedure name compatibility
 
-- Resolve procedure names with their registered letter case, preserving canonical mixed-case names and rejecting misspellings with `ProcedureNotFound`, including calls reached by an empty input stream.
+- Resolve procedure names with their registered letter case, preserving canonical mixed-case names and rejecting misspellings with `ProcedureNotFound`, including calls reached by an empty input stream. Keep authorization conservative for invalid case variants without creating executable aliases or overriding an exact registration's permissions.
 
 ### Changed
 

@@ -101,6 +101,16 @@ func registeredProceduresForCalls(query string) []ProcedureSpec {
 		}
 		if procedure, found := globalProcedureRegistry.Get(name); found {
 			procedures = append(procedures, procedure.Spec)
+			continue
+		}
+		// Execution resolves exact names. Preserve conservative authorization
+		// for an invalid case variant without making it executable: every
+		// matching contract counts, since case-distinct registrations can
+		// require different permissions. An exact match above remains decisive.
+		for _, procedure := range globalProcedureRegistry.List() {
+			if strings.EqualFold(name, procedure.Name) {
+				procedures = append(procedures, procedure)
+			}
 		}
 	}
 	return procedures

@@ -23,6 +23,7 @@ func TestCompatProcedureNamesMatchCanonicalCase(t *testing.T) {
 		{"CALL DB.labels()", true},
 		{"CALL db.awaitIndexes()", false},
 		{"CALL db.awaitindexes()", true},
+		{"CALL DB.CDC.QUERY()", true},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "case_audit"))
