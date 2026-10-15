@@ -1437,7 +1437,7 @@ func (e *StorageExecutor) resolveCosineQueryVector(ctx context.Context, queryExp
 		out := toFloat32Slice(v)
 		return out, len(out) > 0
 	case string:
-		if strings.TrimSpace(v) == "" || e.embedder == nil {
+		if strings.TrimSpace(v) == "" || e.queryEmbedderForStatement(ctx) == nil {
 			return nil, false
 		}
 		embedded, err := e.embedVectorQueryText(ctx, v)

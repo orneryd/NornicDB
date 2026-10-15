@@ -219,8 +219,8 @@ func TestSetEmbedder(t *testing.T) {
 	server := NewServer(nil, nil)
 	embedder := &mockEmbedder{}
 	server.SetEmbedder(embedder)
-	if !server.config.EmbeddingEnabled {
-		t.Error("Embedding should be enabled after SetEmbedder")
+	if server.queryEmbedder.Load() != embedder {
+		t.Error("Embedding provider should be published after SetEmbedder")
 	}
 }
 

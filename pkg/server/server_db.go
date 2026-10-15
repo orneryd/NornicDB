@@ -210,13 +210,6 @@ func (s *Server) getExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 	s.executorsMu.RLock()
 	if executor, ok := s.executors[dbName]; ok {
 		s.executorsMu.RUnlock()
-		// Executors can be created before the embedding model finishes loading.
-		// Ensure cached executors pick up the latest query embedder lazily.
-		if baseExec := s.db.GetCypherExecutor(); baseExec != nil {
-			if emb := baseExec.GetEmbedder(); emb != nil && executor.GetEmbedder() == nil {
-				executor.SetEmbedder(emb)
-			}
-		}
 		return executor, nil
 	}
 	s.executorsMu.RUnlock()
@@ -276,9 +269,7 @@ func (s *Server) getExecutorForDatabaseWithAuth(dbName string, authToken string)
 
 	if baseExec := s.db.GetCypherExecutor(); baseExec != nil {
 		executor.ShareQueryStatisticsFrom(baseExec)
-		if emb := baseExec.GetEmbedder(); emb != nil {
-			executor.SetEmbedder(emb)
-		}
+		executor.ShareEmbedderFrom(baseExec)
 		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
 			executor.SetInferenceManager(inferMgr)
 		}
@@ -351,9 +342,7 @@ func (s *Server) newDatabaseScopedExecutor(dbName string) (*cypher.StorageExecut
 	// Copy query embedder from the base DB executor so string-input vector procedures work.
 	if baseExec := s.db.GetCypherExecutor(); baseExec != nil {
 		executor.ShareQueryStatisticsFrom(baseExec)
-		if emb := baseExec.GetEmbedder(); emb != nil {
-			executor.SetEmbedder(emb)
-		}
+		executor.ShareEmbedderFrom(baseExec)
 		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
 			executor.SetInferenceManager(inferMgr)
 		}

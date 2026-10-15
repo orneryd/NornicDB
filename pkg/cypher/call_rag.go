@@ -57,7 +57,7 @@ func (e *StorageExecutor) callDbRerank(ctx context.Context, args []interface{}) 
 	svc := e.searchService
 	if svc == nil {
 		svc = search.NewService(e.storage)
-		e.searchService = svc
+		e.SetSearchService(svc)
 	}
 	reranked, err := svc.RerankCandidates(ctx, query, candidates, opts)
 	if err != nil {
@@ -298,7 +298,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 				dims = len(queryEmbedding)
 			}
 			svc = search.NewServiceWithDimensions(e.storage, dims)
-			e.searchService = svc
+			e.SetSearchService(svc)
 		}
 		return svc
 	}
@@ -360,14 +360,15 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		}
 		response, err = service.Search(ctx, query, embedding, opts)
 	} else {
-		if e.embedder == nil && failClosed {
+		embedder := e.queryEmbedderForStatement(ctx)
+		if embedder == nil && failClosed {
 			return nil, failClosedEmbeddingUnavailable(localizedError(localization.CypherCoreEmbedderNotConfigured(), nil))
 		}
 
 		var embedQuery search.EmbedQueryFunc
-		if e.embedder != nil {
+		if embedder != nil {
 			embedQuery = func(ctx context.Context, chunk string) ([]float32, error) {
-				embedding, embedErr := e.embedder.Embed(ctx, chunk)
+				embedding, embedErr := embedder.Embed(ctx, chunk)
 				if embedErr != nil {
 					if failClosed {
 						return nil, failClosedEmbeddingUnavailable(embedErr)
@@ -376,7 +377,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 				}
 				// An empty, non-finite or wrong-dimension vector is a failed
 				// embedding (query_embedding_failed), not a missing one.
-				if dimensions := queryEmbedderDimensions(e.embedder); !usableEmbedding(embedding) || dimensions > 0 && len(embedding) != dimensions {
+				if dimensions := queryEmbedderDimensions(embedder); !usableEmbedding(embedding) || dimensions > 0 && len(embedding) != dimensions {
 					unusable := localizedError(localization.CypherCoreEmbeddingNoOutput(), nil)
 					if failClosed {
 						return nil, failClosedEmbeddingUnavailable(unusable)
@@ -395,7 +396,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			return service.Search(ctx, text, queryEmbedding, searchOpts)
 		}
 		chunkQuery := func(_ context.Context, text string) ([]string, error) {
-			return e.embedder.ChunkText(text, 512, 50)
+			return embedder.ChunkText(text, 512, 50)
 		}
 		// failClosed disables every fallback: an embedding failure or a
 		// failed hybrid search is the procedure's error, never an empty or
