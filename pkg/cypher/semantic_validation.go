@@ -312,14 +312,12 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 		if imports == "*" || startsWithKeywordFold(body, "WITH *") {
 			continue
 		}
+		var retained []string
 		if scoped && imports != "" {
-			// The imports stay in scope through the body's WITH clauses,
-			// as when it runs (pipelineWithCarrying).
-			carried := pipelineRow{}
 			for _, name := range splitTopLevelComma(imports) {
-				carried[normalizeProjectionColumnName(strings.TrimSpace(name))] = nil
+				retained = append(retained, normalizeProjectionColumnName(strings.TrimSpace(name)))
 			}
-			body = "WITH " + imports + " " + callSubqueryBodyCarrying(body, carried)
+			body = "WITH " + imports + " " + body
 		}
 		if body == "" {
 			continue
@@ -331,7 +329,7 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 				return err
 			}
 		}
-		if err := e.validateSetSemanticScopes(body); err != nil {
+		if err := e.validateSetSemanticScopes(body, retained...); err != nil {
 			return err
 		}
 		if err := e.validateCallSubqueryScopes(body, cypher25); err != nil {

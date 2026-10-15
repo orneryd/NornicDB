@@ -85,15 +85,16 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			return nil, nil, true, importErr
 		}
 	}
-	// CALL (*) imports every outer variable the body reads. So does an
-	// unscoped subquery without an importing WITH: a NornicDB extension.
+	// CALL (*) imports every outer variable, including for WITH/RETURN *.
+	// An unscoped body without an importing WITH implicitly imports the
+	// outer variables it reads: a NornicDB extension.
 	// Neo4j 5.26 rejects the outer variable there ("Variable `n` not
 	// defined"); NornicDB keeps running such statements as before, since
 	// the import is unambiguous (#907, kept at the owner's direction).
 	imports := scopedImports
 	if scopedImports == nil && (scoped || !hasLegacyImports) && len(rows) > 0 {
 		for name := range rows[0] {
-			if !strings.HasPrefix(name, "$") && isIdentifierReferenced(body, name) {
+			if !strings.HasPrefix(name, "$") && (scoped || isIdentifierReferenced(body, name)) {
 				imports = append(imports, name)
 			}
 		}
@@ -170,18 +171,16 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					delete(branchInput, name)
 					delete(scope, name)
 				}
-				// A CALL (…) body's imports stay bound through its WITH
-				// clauses (pipelineWithCarrying).
-				state := &pipelineRowOutput{}
+				var carried pipelineRow
 				if scoped {
-					state.carried = make(pipelineRow, len(imports))
+					carried = make(pipelineRow, len(imports))
 					for _, name := range imports {
-						if value, imported := branchInput[name]; imported {
-							state.carried[name] = value
-						}
+						carried[name] = branchInput[name]
 					}
 				}
-				inner, handled, execErr := runExec.runPipelineClauseRows(withValueBindings(runCtx, branchInput), []pipelineRow{branchInput}, scope, branchClauses, branchClauses, state)
+				branchCtx := withPipelineImports(withValueBindings(runCtx, branchInput), carried)
+				
+				inner, handled, execErr := runExec.runPipelineClauseRows(branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
 				if execErr == nil {
 					execErr = getExpressionFailure(runCtx)
 				}

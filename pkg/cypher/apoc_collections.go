@@ -823,15 +823,13 @@ func apocSameValue(value, listed interface{}) bool {
 func apocCollFrequencies(val interface{}) []interface{} {
 	list, _ := val.([]interface{})
 	result := make([]interface{}, 0, len(list))
-	positions := make(map[string]int, len(list))
+	var positions cypherValueIndex
 	for _, item := range list {
-		key := cypherEquivalenceKey(item)
-		if position, seen := positions[key]; seen {
+		if position, seen := positions.add(item); seen {
 			entry := result[position].(map[string]interface{})
 			entry["count"] = entry["count"].(int64) + 1
 			continue
 		}
-		positions[key] = len(result)
 		result = append(result, map[string]interface{}{"item": item, "count": int64(1)})
 	}
 	return result

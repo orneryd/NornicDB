@@ -1074,6 +1074,27 @@ for value in ["point({x:1.25,y:2.5})", "[true,false]"]:
             read = "MATCH (:TypedStart)-[n:TYPED_BINDING]->(:TypedEnd)"
         add("temporal-map-offset", "typed-predicate", f"WITH {value} AS p CREATE {pattern} SET n.v=p WITH p {read} WHERE n.v=p MERGE (h:TypedHit) RETURN count(h)", "tx")
         add("temporal-map-offset", "typed-case", f"WITH {value} AS p MERGE {pattern} SET n.v=CASE WHEN true THEN p ELSE null END RETURN n.v=p", "tx")
+# Scoped imports remain visible but are not implicit DISTINCT/grouping keys.
+# Exercise the same equivalence owner through WITH, RETURN, aggregates and
+# UNION, with containers, mixed numeric values and nulls.
+for payload in ["[]", "[{k: 1}]", "[{k: [1, null]}, {k: [2, null]}]"]:
+    for keys in ["[1, 1.0, null, null, 2]", "[[1], [1.0], [null], [null]]",
+                 "[{a: 1, b: null}, {b: null, a: 1.0}, {a: 2, b: null}]"]:
+        prefix = f"WITH {payload} AS payload, {keys} AS keys "
+        for scope in ["(payload, keys)", "(keys)", "(*)"]:
+            add("scoped-distinct", "projected-value", prefix + f"CALL {scope} {{ UNWIND keys AS each WITH DISTINCT each AS thing RETURN count(*) AS things }} RETURN things")
+        for projection in ["payload, each AS thing", "payload AS retained, each AS thing"]:
+            add("scoped-distinct", "projected-import", prefix + f"CALL (payload, keys) {{ UNWIND keys AS each WITH DISTINCT {projection} RETURN count(*) AS things }} RETURN things")
+        add("scoped-distinct", "nested", prefix + "CALL (payload, keys) { WITH keys CALL (keys) { UNWIND keys AS each WITH DISTINCT each RETURN count(*) AS c } RETURN c AS things } RETURN things")
+        add("scoped-distinct", "union", prefix + "CALL (payload, keys) { UNWIND keys AS each WITH DISTINCT each RETURN each AS thing UNION UNWIND keys AS each RETURN DISTINCT each AS thing } RETURN count(*) AS things")
+        add("scoped-distinct", "aggregate", prefix + "CALL (payload, keys) { UNWIND keys AS each WITH each AS thing, count(*) AS occurrences RETURN count(*) AS things } RETURN things")
+        add("scoped-distinct", "aggregate-distinct", prefix + "CALL (payload, keys) { UNWIND keys AS each RETURN collect(DISTINCT each) AS things } RETURN things")
+for body in ["UNWIND [2,2,3] AS y WITH DISTINCT y RETURN x*y AS a",
+             "UNWIND [2,3] AS y WITH y RETURN x*y AS a",
+             "UNWIND [2,2,3] AS y WITH DISTINCT x, y RETURN x*y AS a"]:
+    add("scoped-distinct", "retained-import", "WITH 11 AS x CALL (x) { " + body + " } RETURN a ORDER BY a")
+add("scoped-distinct", "dropped-local", "CALL () { WITH 11 AS x UNWIND [2,2,3] AS y WITH DISTINCT y RETURN x*y AS a } RETURN a")
+add("scoped-distinct", "dropped-legacy-import", "WITH 11 AS x CALL { WITH x UNWIND [2,2,3] AS y WITH DISTINCT y RETURN x*y AS a } RETURN a")
 
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:
