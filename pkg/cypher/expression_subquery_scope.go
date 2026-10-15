@@ -1,24 +1,20 @@
 package cypher
 
-import (
-	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/localization"
-)
+import "strings"
 
 // expressionSubqueryClauseBindingError protects an expression subquery's
 // outer variables from declarations in its clauses. Passing a variable
-// through WITH or RETURN keeps its binding; assigning a new value to that
-// name shadows it. CALL bodies permit redeclaring imports (enclosing.outer is false).
+// through WITH or RETURN, including redundant grouping, keeps its binding;
+// assigning a new value to that name shadows it. CALL bodies permit
+// redeclaring imports (enclosing.outer is false).
 func expressionSubqueryClauseBindingError(clause pipelineClause, enclosing subqueryScope) error {
 	if !enclosing.outer {
 		return nil
 	}
 	check := func(expression, alias string) error {
 		name := normalizeProjectionColumnName(alias)
-		if simpleSemanticIdentifier(expression) != name {
-			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
-				localization.CypherCoreVariableDeclaredInOuterScope(name))
+		if simpleSemanticIdentifier(unwrapOuterParens(expression)) != name {
+			return enclosing.redeclarationError(name)
 		}
 		return nil
 	}
