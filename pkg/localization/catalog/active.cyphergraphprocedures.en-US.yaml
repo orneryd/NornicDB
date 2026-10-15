@@ -91,30 +91,6 @@
 - id: cyphergraphprocedures.job_id_type
   description: GDS's message for a jobId that isn't a string. Type is untranslated.
   other: 'Expected JobId or String. Got {{.Type}}.'
-- id: cyphergraphprocedures.node_not_node_or_integer
-  description: GDS's message for a projected node that is neither a node nor an INTEGER. Type untranslated.
-  other: 'The node has to be either a NODE or an INTEGER, but got {{.Type}}'
-- id: cyphergraphprocedures.config_key_missing_pair
-  description: GDS's message for a source or target setting given without its pair. Missing, Provided untranslated.
-  other: 'The configuration key ''{{.Missing}}'' is missing, but ''{{.Provided}}'' is provided. If you really meant to only provide `{{.Provided}}` with no value for `{{.Missing}}`, you can set `{{.Missing}}` to `NULL`.'
-- id: cyphergraphprocedures.relationship_type_not_string
-  description: GDS's message for a relationshipType that isn't a string. Type untranslated.
-  other: 'The value of `relationshipType` must be `String`, but was `{{.Type}}`.'
-- id: cyphergraphprocedures.undirected_types_not_projected
-  description: GDS's message for undirected types the projection has none of. Types, Projected untranslated.
-  other: 'Specified undirectedRelationshipTypes `{{.Types}}` were not projected in the graph. Projected types are: `{{.Projected}}`.'
-- id: cyphergraphprocedures.labels_true_deprecated
-  description: GDS's message for node labels given as true. Key, Variable untranslated.
-  other: 'Using `true` to load all labels is deprecated, use `{ {{.Key}}: labels({{.Variable}}) }` instead'
-- id: cyphergraphprocedures.unsupported_concurrency
-  description: GDS's message for a concurrency that isn't an integer. Type untranslated.
-  other: 'Unsupported Concurrency input of type {{.Type}}'
-- id: cyphergraphprocedures.config_parameters_merged
-  description: GDS's message for a sixth gds.graph.project argument.
-  other: 'The parameters for `nodesConfig` and `relationshipsConfig` have been merged. Update your query by merging the 4th and 5th parameter into one parameter.'
-- id: cyphergraphprocedures.graph_exists_aggregation
-  description: GDS's message for the Cypher aggregation projection of a graph name in use. Graph untranslated.
-  other: 'Graph {{.Graph}} already exists'
 - id: cyphergraphprocedures.unsupported_gds_value
   description: GDS's message for a projected property value that isn't a number. Type untranslated.
   other: 'Unsupported conversion to GDS Value from Neo4j Value with type `{{.Type}}`.'
@@ -145,3 +121,6 @@
 - id: cyphergraphprocedures.default_property_type
   description: GDS incompatible default property value. Expected and Actual are untranslated.
   other: 'Expected type of default value to be `{{.Expected}}`. But got `{{.Actual}}`.'
+- id: cyphergraphprocedures.unsafe_double_conversion
+  description: GDS's message for a Long outside the Double import bound. Value untranslated.
+  other: 'Cannot safely convert {{.Value}} into an double value'

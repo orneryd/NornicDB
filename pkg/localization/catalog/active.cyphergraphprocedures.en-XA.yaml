@@ -91,30 +91,6 @@
 - id: cyphergraphprocedures.job_id_type
   description: Expanded pseudo-locale job id type.
   other: '[!! Expected JobId or String. Got {{.Type}}. !!]'
-- id: cyphergraphprocedures.node_not_node_or_integer
-  description: Expanded pseudo-locale node not node or integer.
-  other: '[!! The node has to be either a NODE or an INTEGER, but got {{.Type}} !!]'
-- id: cyphergraphprocedures.config_key_missing_pair
-  description: Expanded pseudo-locale config key missing pair.
-  other: '[!! The configuration key ''{{.Missing}}'' is missing, but ''{{.Provided}}'' is provided. If you really meant to only provide `{{.Provided}}` with no value for `{{.Missing}}`, you can set `{{.Missing}}` to `NULL`. !!]'
-- id: cyphergraphprocedures.relationship_type_not_string
-  description: Expanded pseudo-locale relationship type not string.
-  other: '[!! The value of `relationshipType` must be `String`, but was `{{.Type}}`. !!]'
-- id: cyphergraphprocedures.undirected_types_not_projected
-  description: Expanded pseudo-locale undirected types not projected.
-  other: '[!! Specified undirectedRelationshipTypes `{{.Types}}` were not projected in the graph. Projected types are: `{{.Projected}}`. !!]'
-- id: cyphergraphprocedures.labels_true_deprecated
-  description: Expanded pseudo-locale labels true deprecated.
-  other: '[!! Using `true` to load all labels is deprecated, use `{ {{.Key}}: labels({{.Variable}}) }` instead !!]'
-- id: cyphergraphprocedures.unsupported_concurrency
-  description: Expanded pseudo-locale unsupported concurrency.
-  other: '[!! Unsupported Concurrency input of type {{.Type}} !!]'
-- id: cyphergraphprocedures.config_parameters_merged
-  description: Expanded pseudo-locale config parameters merged.
-  other: '[!! The parameters for `nodesConfig` and `relationshipsConfig` have been merged. Update your query by merging the 4th and 5th parameter into one parameter. !!]'
-- id: cyphergraphprocedures.graph_exists_aggregation
-  description: Expanded pseudo-locale graph exists aggregation.
-  other: '[!! Graph {{.Graph}} already exists !!]'
 - id: cyphergraphprocedures.unsupported_gds_value
   description: Expanded pseudo-locale unsupported gds value.
   other: '[!! Unsupported conversion to GDS Value from Neo4j Value with type `{{.Type}}`. !!]'
@@ -145,3 +121,6 @@
 - id: cyphergraphprocedures.default_property_type
   description: GDS incompatible default property value. Expected and Actual are untranslated.
   other: '[!! Expected type of default value to be `{{.Expected}}`. But got `{{.Actual}}`. !!]'
+- id: cyphergraphprocedures.unsafe_double_conversion
+  description: Expanded pseudo-locale Long to Double import bound.
+  other: '[!! Cannot safely convert {{.Value}} into an double value !!]'

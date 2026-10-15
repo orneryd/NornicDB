@@ -1,6 +1,7 @@
 package localization
 
 const (
+	MessageCypherGraphProceduresUnsafeDoubleConversion         MessageID = "cyphergraphprocedures.unsafe_double_conversion"
 	MessageCypherGraphProceduresStreamNodesFailed              MessageID = "cyphergraphprocedures.stream_nodes_failed"
 	MessageCypherGraphProceduresStreamEdgesFailed              MessageID = "cyphergraphprocedures.stream_edges_failed"
 	MessageCypherGraphProceduresBuildGraphFailed               MessageID = "cyphergraphprocedures.build_graph_failed"
@@ -31,14 +32,6 @@ const (
 	MessageCypherGraphProceduresNodePropertyNotInGraph         MessageID = "cyphergraphprocedures.node_property_not_in_graph"
 	MessageCypherGraphProceduresStarPropertyRequiresCount      MessageID = "cyphergraphprocedures.star_property_requires_count"
 	MessageCypherGraphProceduresJobIDType                      MessageID = "cyphergraphprocedures.job_id_type"
-	MessageCypherGraphProceduresNodeNotNodeOrInteger           MessageID = "cyphergraphprocedures.node_not_node_or_integer"
-	MessageCypherGraphProceduresConfigKeyMissingPair           MessageID = "cyphergraphprocedures.config_key_missing_pair"
-	MessageCypherGraphProceduresRelationshipTypeNotString      MessageID = "cyphergraphprocedures.relationship_type_not_string"
-	MessageCypherGraphProceduresUndirectedTypesNotProjected    MessageID = "cyphergraphprocedures.undirected_types_not_projected"
-	MessageCypherGraphProceduresLabelsTrueDeprecated           MessageID = "cyphergraphprocedures.labels_true_deprecated"
-	MessageCypherGraphProceduresUnsupportedConcurrency         MessageID = "cyphergraphprocedures.unsupported_concurrency"
-	MessageCypherGraphProceduresConfigParametersMerged         MessageID = "cyphergraphprocedures.config_parameters_merged"
-	MessageCypherGraphProceduresGraphExistsAggregation         MessageID = "cyphergraphprocedures.graph_exists_aggregation"
 	MessageCypherGraphProceduresUnsupportedGDSValue            MessageID = "cyphergraphprocedures.unsupported_gds_value"
 	MessageCypherGraphProceduresRelationshipEndNotProjected    MessageID = "cyphergraphprocedures.relationship_end_not_projected"
 	MessageCypherGraphProceduresUnsupportedArrayType           MessageID = "cyphergraphprocedures.unsupported_array_type"
@@ -215,46 +208,6 @@ func CypherGraphProceduresJobIDType(typeName string) Message {
 	return Message{ID: MessageCypherGraphProceduresJobIDType, Fallback: "Expected JobId or String. Got " + typeName + ".", Data: map[string]any{"Type": typeName}}
 }
 
-// CypherGraphProceduresNodeNotNodeOrInteger is GDS's message for a projected node that is neither a node nor an INTEGER.
-func CypherGraphProceduresNodeNotNodeOrInteger(typeName string) Message {
-	return Message{ID: MessageCypherGraphProceduresNodeNotNodeOrInteger, Fallback: "The node has to be either a NODE or an INTEGER, but got " + typeName, Data: map[string]any{"Type": typeName}}
-}
-
-// CypherGraphProceduresConfigKeyMissingPair is GDS's message for a source or target setting given without its pair.
-func CypherGraphProceduresConfigKeyMissingPair(missing, provided string) Message {
-	return Message{ID: MessageCypherGraphProceduresConfigKeyMissingPair, Fallback: "The configuration key '" + missing + "' is missing, but '" + provided + "' is provided. If you really meant to only provide `" + provided + "` with no value for `" + missing + "`, you can set `" + missing + "` to `NULL`.", Data: map[string]any{"Missing": missing, "Provided": provided}}
-}
-
-// CypherGraphProceduresRelationshipTypeNotString is GDS's message for a relationshipType that isn't a string.
-func CypherGraphProceduresRelationshipTypeNotString(typeName string) Message {
-	return Message{ID: MessageCypherGraphProceduresRelationshipTypeNotString, Fallback: "The value of `relationshipType` must be `String`, but was `" + typeName + "`.", Data: map[string]any{"Type": typeName}}
-}
-
-// CypherGraphProceduresUndirectedTypesNotProjected is GDS's message for undirected types the projection has none of.
-func CypherGraphProceduresUndirectedTypesNotProjected(types, projected string) Message {
-	return Message{ID: MessageCypherGraphProceduresUndirectedTypesNotProjected, Fallback: "Specified undirectedRelationshipTypes `" + types + "` were not projected in the graph. Projected types are: `" + projected + "`.", Data: map[string]any{"Types": types, "Projected": projected}}
-}
-
-// CypherGraphProceduresLabelsTrueDeprecated is GDS's message for node labels given as true.
-func CypherGraphProceduresLabelsTrueDeprecated(key, variable string) Message {
-	return Message{ID: MessageCypherGraphProceduresLabelsTrueDeprecated, Fallback: "Using `true` to load all labels is deprecated, use `{ " + key + ": labels(" + variable + ") }` instead", Data: map[string]any{"Key": key, "Variable": variable}}
-}
-
-// CypherGraphProceduresUnsupportedConcurrency is GDS's message for a concurrency that isn't an integer.
-func CypherGraphProceduresUnsupportedConcurrency(typeName string) Message {
-	return Message{ID: MessageCypherGraphProceduresUnsupportedConcurrency, Fallback: "Unsupported Concurrency input of type " + typeName, Data: map[string]any{"Type": typeName}}
-}
-
-// CypherGraphProceduresConfigParametersMerged is GDS's message for a sixth gds.graph.project argument.
-func CypherGraphProceduresConfigParametersMerged() Message {
-	return Message{ID: MessageCypherGraphProceduresConfigParametersMerged, Fallback: "The parameters for `nodesConfig` and `relationshipsConfig` have been merged. Update your query by merging the 4th and 5th parameter into one parameter."}
-}
-
-// CypherGraphProceduresGraphExistsAggregation is GDS's message for the Cypher aggregation projection of a graph name in use.
-func CypherGraphProceduresGraphExistsAggregation(graph string) Message {
-	return Message{ID: MessageCypherGraphProceduresGraphExistsAggregation, Fallback: "Graph " + graph + " already exists", Data: map[string]any{"Graph": graph}}
-}
-
 // CypherGraphProceduresUnsupportedGDSValue is GDS's message for a projected property value that isn't a number.
 func CypherGraphProceduresUnsupportedGDSValue(typeName string) Message {
 	return Message{ID: MessageCypherGraphProceduresUnsupportedGDSValue, Fallback: "Unsupported conversion to GDS Value from Neo4j Value with type `" + typeName + "`.", Data: map[string]any{"Type": typeName}}
@@ -303,4 +256,9 @@ func CypherGraphProceduresRelationshipValueType(kind, value string) Message {
 // CypherGraphProceduresDefaultPropertyType identifies an incompatible default value.
 func CypherGraphProceduresDefaultPropertyType(expected, actual string) Message {
 	return Message{ID: MessageCypherGraphProceduresDefaultPropertyType, Fallback: "Expected type of default value to be `" + expected + "`. But got `" + actual + "`.", Data: map[string]any{"Expected": expected, "Actual": actual}}
+}
+
+// CypherGraphProceduresUnsafeDoubleConversion reports a Long outside GDS import bounds.
+func CypherGraphProceduresUnsafeDoubleConversion(value string) Message {
+	return Message{ID: MessageCypherGraphProceduresUnsafeDoubleConversion, Fallback: "Cannot safely convert " + value + " into an double value", Data: map[string]any{"Value": value}}
 }

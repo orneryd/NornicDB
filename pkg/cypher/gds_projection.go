@@ -101,7 +101,7 @@ func databaseProjections(database string) []*GraphProjection {
 // property, its aggregation.
 type gdsPropertySpec struct {
 	key, property string
-	defaultValue  *float64
+	defaultValue  interface{}
 	aggregation   string
 }
 
@@ -406,11 +406,14 @@ func readGDSPropertySpecs(value interface{}, aggregation string) ([]gdsPropertyS
 					spec.property = property
 				}
 				if config.value("defaultValue") != nil {
-					number, err := config.number("defaultValue", "Double", 0)
+					value, _, ok, err := gdsConvertPropertyValue(config.value("defaultValue"), "", false)
 					if err != nil {
 						return nil, err
 					}
-					spec.defaultValue = &number
+					if !ok {
+						return nil, config.typeError("defaultValue", "Double")
+					}
+					spec.defaultValue = value
 				}
 				if text, ok, err := config.text("aggregation"); err != nil {
 					return nil, err
@@ -478,7 +481,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 					nodePropertySeen[property.property] = true
 					nodePropertyType[property.key] = kind
 				} else if property.defaultValue != nil {
-					exact, kind, ok, _ = gdsConvertPropertyValue(*property.defaultValue, "", false)
+					exact, kind, ok, _ = gdsConvertPropertyValue(property.defaultValue, "", false)
 				}
 				if !ok {
 					continue
@@ -584,7 +587,10 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 					relPropertySeen[property.property] = true
 					properties[property.key] = value
 				} else if property.defaultValue != nil {
-					exact, _, _, _ := gdsConvertPropertyValue(*property.defaultValue, "Relationship", false)
+					exact, _, _, err := gdsConvertPropertyValue(property.defaultValue, "Relationship", false)
+					if err != nil {
+						return nil, err
+					}
 					properties[property.key] = exact.(float64)
 				}
 			}
@@ -686,12 +692,11 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	for _, spec := range nodeSpecs {
 		for _, property := range spec.properties {
 			kind := nodePropertyType[property.key]
-			fractionalDefault := property.defaultValue != nil && *property.defaultValue != math.Trunc(*property.defaultValue)
-			switch {
-			case (kind == "" || kind == "Integer") && fractionalDefault:
-				kind = "Float"
-			case kind == "":
-				kind = "Integer"
+			if kind == "" {
+				_, kind, _, _ = gdsConvertPropertyValue(property.defaultValue, "", false)
+				if kind == "" {
+					kind = "Integer"
+				}
 			}
 			nodePropertyType[property.key] = kind
 		}
@@ -702,7 +707,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 		for _, property := range spec.properties {
 			kind := nodePropertyType[property.key]
 			if property.defaultValue != nil {
-				if _, _, _, err := gdsConvertPropertyValue(*property.defaultValue, "Default "+kind, false); err != nil {
+				if _, _, _, err := gdsConvertPropertyValue(property.defaultValue, "Default "+kind, false); err != nil {
 					return nil, err
 				}
 			}
@@ -759,7 +764,8 @@ func gdsGraphSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[
 		}
 		for _, property := range spec.properties {
 			kind := nodePropertyTypes[gdsPropertyTypeKey(spec.name, property.key)]
-			fractionalDefault := property.defaultValue != nil && *property.defaultValue != math.Trunc(*property.defaultValue)
+			defaultNumber, numericDefault := toFloat64(property.defaultValue)
+			fractionalDefault := numericDefault && defaultNumber != math.Trunc(defaultNumber)
 			switch {
 			case kind == "List of Integer" || kind == "List of Float":
 				properties[property.key] = kind + " (DefaultValue(null), PERSISTENT)"
@@ -768,7 +774,7 @@ func gdsGraphSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[
 			default:
 				defaultText := "-9223372036854775808"
 				if property.defaultValue != nil {
-					defaultText = strconv.FormatInt(int64(*property.defaultValue), 10)
+					defaultText = strconv.FormatInt(gdsInteger(property.defaultValue), 10)
 				}
 				properties[property.key] = "Integer (DefaultValue(" + defaultText + "), PERSISTENT)"
 			}
@@ -797,14 +803,14 @@ func gdsGraphSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes map[
 }
 
 // gdsDefaultText is a Float default as GDS prints it (1.0, 0.5), or none.
-func gdsDefaultText(value *float64, none string) string {
+func gdsDefaultText(value interface{}, none string) string {
 	if value == nil {
 		return none
 	}
-	if *value == math.Trunc(*value) {
-		return strconv.FormatFloat(*value, 'f', 1, 64)
+	if gdsDefaultNumber(value) == math.Trunc(gdsDefaultNumber(value)) {
+		return strconv.FormatFloat(gdsDefaultNumber(value), 'f', 1, 64)
 	}
-	return strconv.FormatFloat(*value, 'g', -1, 64)
+	return strconv.FormatFloat(gdsDefaultNumber(value), 'g', -1, 64)
 }
 
 // gdsGraphInfo is a projection's row in gds.graph.list and gds.graph.drop:
@@ -880,7 +886,7 @@ func gdsDefaultValue(property gdsPropertySpec) interface{} {
 	if property.defaultValue == nil {
 		return nil
 	}
-	return *property.defaultValue
+	return property.defaultValue
 }
 
 func nodeHasLabel(node *storage.Node, label string) bool {
@@ -1208,7 +1214,7 @@ func gdsNameList(names []string) string {
 // it: 1, 1.0, LongArray[1, 2], DoubleArray[1.0, 2.0].
 func gdsJavaValueText(value interface{}) string {
 	double := func(number float64) string {
-		return gdsDefaultText(&number, "")
+		return gdsDefaultText(number, "")
 	}
 	switch typed := value.(type) {
 	case int64:
@@ -1282,3 +1288,5 @@ func gdsTypeProjected(relSpecs []gdsElementSpec, relType string) bool {
 	}
 	return false
 }
+
+func gdsDefaultNumber(value interface{}) float64 { number, _ := toFloat64(value); return number }

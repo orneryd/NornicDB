@@ -14,7 +14,8 @@ type projectedNodePropertyValueMap = map[string]map[string]interface{}
 // gdsConvertPropertyValue is the single conversion of projected values.
 // An empty target infers the storage type. A target converts to that type;
 // the Relationship target requires a numeric scalar and stores Float. Only
-// native scalar import may widen Integer to Float. Array builders keep
+// native scalar import may widen Integer to Float. All imports validate
+// Long-to-Double conversion with GDS's bound. Array builders keep
 // their first type and permit only lossless Double-to-Long conversion.
 func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exact interface{}, kind string, ok bool, err error) {
 	defaultValue := strings.HasPrefix(target, "Default ")
@@ -86,7 +87,10 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 				floats := make([]float64, len(items))
 				for i, item := range items {
 					if isIntegerProcedureValue(item) {
-						floats[i] = float64(gdsInteger(item))
+						floats[i], err = gdsLongToDouble(gdsInteger(item), true)
+						if err != nil {
+							return nil, "", false, err
+						}
 					} else if number, numeric := toFloat64(item); numeric {
 						floats[i] = number
 					} else {
@@ -114,7 +118,8 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 	}
 	switch {
 	case target == "Float" && kind == "Integer":
-		return float64(exact.(int64)), target, true, nil
+		number, err := gdsLongToDouble(exact.(int64), true)
+		return number, target, err == nil, err
 	case target == "Integer" && kind == "Float":
 		if widen {
 			return exact, "Float", true, nil
@@ -128,7 +133,10 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 		integers := exact.([]int64)
 		floats := make([]float64, len(integers))
 		for i, number := range integers {
-			floats[i] = float64(number)
+			floats[i], err = gdsLongToDouble(number, true)
+			if err != nil {
+				return nil, "", false, err
+			}
 		}
 		return floats, target, true, nil
 	case target == "List of Integer" && kind == "List of Float":
@@ -143,6 +151,16 @@ func gdsConvertPropertyValue(value interface{}, target string, widen bool) (exac
 		return integers, target, true, nil
 	}
 	return nil, "", false, localizedError(localization.CypherGraphProceduresUnsafeConversion(gdsJavaValueText(exact), gdsJavaTypeTarget(target)), nil)
+}
+
+// gdsLongToDouble owns Long-to-Double conversion. GDS 2.13.12 import
+// validation bounds only positive Longs, even when a larger Long is exactly
+// representable. Reads of already stored Long properties permit rounding.
+func gdsLongToDouble(value int64, importing bool) (float64, error) {
+	if importing && value > 1<<53 {
+		return 0, localizedError(localization.CypherGraphProceduresUnsafeDoubleConversion(strconv.FormatInt(value, 10)), nil)
+	}
+	return float64(value), nil
 }
 
 // The upper bound is exclusive: float64(MaxInt64) rounds to 2^63.
@@ -176,6 +194,11 @@ func (p *GraphProjection) nodePropertyValue(id, key, requested string) (interfac
 		}
 	} else if requested == "Float" && kind == "Integer" && value == int64(math.MinInt64) {
 		value = math.NaN()
+	}
+	if requested == "Float" && kind == "Integer" {
+		if number, ok := value.(int64); ok {
+			return gdsLongToDouble(number, false)
+		}
 	}
 	exact, _, _, err := gdsConvertPropertyValue(value, requested, false)
 	return exact, err

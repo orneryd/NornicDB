@@ -246,10 +246,10 @@ func TestGDSCatalogIsNeverCached(t *testing.T) {
 func TestGDSCatalogHelpers(t *testing.T) {
 	half, whole := 0.5, 2.0
 	require.Equal(t, "NaN", gdsDefaultText(nil, "NaN"))
-	require.Equal(t, "0.5", gdsDefaultText(&half, "NaN"))
-	require.Equal(t, "2.0", gdsDefaultText(&whole, "NaN"))
+	require.Equal(t, "0.5", gdsDefaultText(half, "NaN"))
+	require.Equal(t, "2.0", gdsDefaultText(whole, "NaN"))
 	schema := gdsGraphSchema([]gdsElementSpec{{name: "P", properties: []gdsPropertySpec{
-		{key: "i", property: "i"}, {key: "f", property: "f"}, {key: "d", property: "d", defaultValue: &whole}, {key: "h", property: "h", defaultValue: &half}, {key: "l", property: "l"},
+		{key: "i", property: "i"}, {key: "f", property: "f"}, {key: "d", property: "d", defaultValue: int64(whole)}, {key: "h", property: "h", defaultValue: half}, {key: "l", property: "l"},
 	}}}, nil, map[string]string{gdsPropertyTypeKey("P", "f"): "Float", gdsPropertyTypeKey("P", "l"): "List of Integer"})
 	require.Equal(t, map[string]interface{}{
 		"i": "Integer (DefaultValue(-9223372036854775808), PERSISTENT)",
