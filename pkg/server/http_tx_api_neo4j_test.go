@@ -1228,7 +1228,7 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 			require.Equal(t, row[10], relationship["endNodeElementId"])
 			require.Equal(t, []interface{}{row[0], row[1]}, row[3])
 			require.Equal(t, map[string]interface{}{"node": row[0], "edge": row[1]}, row[4])
-			require.Equal(t, []interface{}{row[0], row[1], row[2]}, row[5])
+			require.Equal(t, storage.RemotePathValue{row[0].(storage.RemoteEntityValue), row[1].(storage.RemoteEntityValue), row[2].(storage.RemoteEntityValue)}, row[5])
 		})
 	}
 }

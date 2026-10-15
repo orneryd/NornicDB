@@ -26,10 +26,60 @@ relationship continues to use its existing storage type. Converting a remote
 value to `map[string]interface{}` intentionally discards its graph provenance;
 this representation marker is not a Go authorization boundary.
 
-HTTP and GraphQL JSON output retains the existing remote map shape, including
-its remote `elementId`, `labels` or `type`, and nested `properties`. Bolt output
-retains the previous map encoding. Remote endpoint functions retain their
-existing null result instead of resolving remote IDs against a local database.
+Remote graph protocol output preserves graph identity: genuine marked nodes,
+relationships, and paths use Bolt entity structures and HTTP transaction
+row/meta/graph entries. Source element IDs and relationship endpoints remain
+unchanged. Numeric source IDs are retained when the transport supplies them;
+older hand-built markers without those IDs report the explicit unknown value
+`-1`. A property named `id` never substitutes for a numeric source ID. Ordinary
+maps and lists keep their container identities.
+
+Go callers forwarding remote values should preserve their named types:
+
+```go
+columns, rows, err := remote.QueryCypher(ctx,
+    "MATCH p=(a:Doc)-[:LINKS]->(b) RETURN p", nil)
+if err != nil {
+    return err
+}
+path := rows[0][0].(storage.RemotePathValue)
+nodes, relationships, valid := path.Parts()
+_ = nodes
+_ = relationships
+_ = valid
+bindings := map[string]interface{}{columns[0]: path}
+_ = bindings // Forward the marked path into another query unchanged.
+```
+
+`Parts()` validates the node/relationship sequence and endpoint connections.
+A zero-hop path has one node and no relationships. A nil carrier is null;
+an empty carrier has no valid path and is never treated as an empty list.
+Cypher `length()`, `nodes()`, and `relationships()` use these same validated
+parts; `size()` and list predicates reject a non-null path.
+
+This corrects an observable Go API defect: actual Bolt paths previously escaped
+as driver `dbtype.Path` structs, while actual HTTP paths became unnamed lists.
+Callers asserting those old concrete types must use `storage.RemotePathValue`
+and `Parts()`. Ordinary result lists remain unchanged. Node and relationship
+markers retain their existing public map fields.
+
+Transport-produced markers also carry private numeric identity metadata in Go.
+Their custom JSON marshaler excludes that metadata while keeping ordinary
+property keys intact. Direct `json.Marshal()` on a marked path produces its
+ordered public entity envelopes, with no raw driver structs or private IDs.
+Preserving the named marker also preserves this JSON filtering; an explicit
+conversion to a plain map discards both graph provenance and its custom
+marshaling behavior. For plain-map JSON interop, sanitize the sealed implementation metadata first:
+
+```go
+public := storage.PublicRemoteMap(map[string]interface{}(entity))
+encoded, err := json.Marshal(public)
+_ = encoded
+_ = err
+```
+
+`PublicRemoteMap` preserves all ordinary user map keys, returns ordinary maps without copying, and never gives a plain map graph identity. Direct `json.Marshal(map[string]interface{}(entity))` does not invoke the marker marshaler and can expose implementation metadata. Protocol output uses entity structures, rather than the
+former remote-envelope-as-ordinary-map representation.
 
 
 HTTP transactions request `row`, `graph`, and `rest` representations. The REST

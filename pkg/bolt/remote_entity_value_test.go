@@ -7,14 +7,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRemoteEntityValuePreservesBoltMapEncoding(t *testing.T) {
+func TestRemoteEntityValuePreservesOrdinaryMapEncoding(t *testing.T) {
 	remote := storage.RemoteEntityValue{"elementId": "4:remote:n", "labels": []interface{}{"Doc"}, "properties": map[string]interface{}{"name": "Remote"}}
 	plain := map[string]interface{}(remote)
-	assertRemoteBoltValueEqual(t, encodePackStreamValue(plain), encodePackStreamValue(remote))
 	for _, utc := range []bool{false, true} {
-		assertRemoteBoltValueEqual(t, encodePackStreamValueIntoWithUTC(nil, plain, utc), encodePackStreamValueIntoWithUTC(nil, remote, utc))
-		assertRemoteBoltValueEqual(t, encodeRecordValueInto(nil, plain, utc, true, "local"), encodeRecordValueInto(nil, remote, utc, true, "local"))
-		assertRemoteBoltValueEqual(t, encodeRecordValueInto(nil, []interface{}{plain}, utc, true, "local"), encodeRecordValueInto(nil, []interface{}{remote}, utc, true, "local"))
+		wire := encodeRecordValueInto(nil, plain, utc, true, "local")
+		require.Equal(t, byte(0xa3), wire[0])
+		require.Equal(t, byte(0x4e), encodeRecordValueInto(nil, remote, utc, true, "local")[1])
 	}
 }
 

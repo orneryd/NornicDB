@@ -1240,6 +1240,51 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 			return nil, []interface{}{nil}
 		}
 		return transactionHTTPPoint(*typed), []interface{}{map[string]interface{}{"type": "point"}}
+	case storage.RemoteEntityValue:
+		if typed == nil {
+			return nil, []interface{}{nil}
+		}
+		id, _, _ := typed.LegacyIDs()
+		elementID, _ := typed["elementId"].(string)
+		props, _ := typed["properties"].(map[string]interface{})
+		if props == nil {
+			props = map[string]interface{}{}
+		}
+		converted, _ := s.transactionHTTPValue(props, dbName)
+		properties := converted.(map[string]interface{})
+		kind := "node"
+		if relationshipType, relationship := typed["type"].(string); relationship {
+			kind = "relationship"
+			if len(graph) > 0 && graph[0].graph != nil {
+				start, _ := typed["startNodeElementId"].(string)
+				end, _ := typed["endNodeElementId"].(string)
+				graph[0].addEdge(GraphRelationship{ID: strconv.FormatInt(id, 10), ElementID: elementID, Type: relationshipType, StartNode: start, EndNode: end, Properties: properties})
+			}
+		} else if len(graph) > 0 && graph[0].graph != nil {
+			var labels []string
+			switch values := typed["labels"].(type) {
+			case []string:
+				labels = values
+			case []interface{}:
+				for _, value := range values {
+					if label, ok := value.(string); ok {
+						labels = append(labels, label)
+					}
+				}
+			}
+			graph[0].addNode(GraphNode{ID: strconv.FormatInt(id, 10), ElementID: elementID, Labels: labels, Properties: properties})
+		}
+		return properties, []interface{}{map[string]interface{}{"id": id, "elementId": elementID, "type": kind, "deleted": false}}
+	case storage.RemotePathValue:
+		if _, _, valid := typed.Parts(); !valid {
+			return nil, []interface{}{nil}
+		}
+		entities := make([]interface{}, len(typed))
+		for i, entity := range typed {
+			entities[i] = entity
+		}
+		row, metadata := s.transactionHTTPValue(entities, dbName, graph...)
+		return row, []interface{}{metadata}
 	case *storage.Node:
 		if typed == nil {
 			return nil, []interface{}{nil}
@@ -1278,6 +1323,7 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		row, metadata := s.transactionHTTPValue(entities, dbName, graph...)
 		return row, []interface{}{metadata}
 	case map[string]interface{}:
+		typed = storage.PublicRemoteMap(typed)
 		switch path := typed["_pathResult"].(type) {
 		case cypher.PathResult:
 			return s.transactionHTTPValue(path, dbName, graph...)

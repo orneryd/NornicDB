@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"reflect"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
@@ -39,7 +40,8 @@ func sizeArgumentError(value interface{}) error {
 	if _, isString := value.(string); isString {
 		return nil
 	}
-	if kind := reflect.TypeOf(value).Kind(); kind == reflect.Slice || kind == reflect.Array {
+	_, remotePath := value.(storage.RemotePathValue)
+	if kind := reflect.TypeOf(value).Kind(); !remotePath && (kind == reflect.Slice || kind == reflect.Array) {
 		return nil
 	}
 	// Static validation rejects known invalid argument types before execution.

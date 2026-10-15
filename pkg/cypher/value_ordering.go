@@ -33,6 +33,17 @@ func cypherPathElements(value interface{}) ([]interface{}, bool) {
 // cypherPathElementsOf is cypherPathElements for a value already converted
 // with toStringAnyMap, so a map is converted only once.
 func cypherPathElementsOf(value interface{}, object map[string]interface{}, isMap bool) ([]interface{}, bool) {
+	if remote, ok := value.(storage.RemotePathValue); ok {
+		if _, _, valid := remote.Parts(); !valid {
+			return nil, false
+		}
+		elements := make([]interface{}, len(remote))
+		for i, entity := range remote {
+			elements[i] = entity
+		}
+		return elements, true
+	}
+
 	path, ok := cypherPathResultOf(value, object, isMap)
 	if !ok {
 		return nil, false

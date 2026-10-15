@@ -100,6 +100,11 @@ func cypherValueKindOf(value interface{}) cypherValueKind {
 		return valueKindNode
 	case *storage.Edge:
 		return valueKindRelationship
+	case storage.RemotePathValue:
+		if v == nil {
+			return valueKindNull
+		}
+		return valueKindPath
 	case pathTypeMarker, *PathResult, PathResult:
 		return valueKindPath
 	case CypherDate, *CypherDate:

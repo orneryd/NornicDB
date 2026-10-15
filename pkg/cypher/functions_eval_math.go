@@ -296,6 +296,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		}
 		// A path carried as a computed-row map (WITH p AS path).
 		if innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); innerVal != nil {
+			if remote, ok := innerVal.(storage.RemotePathValue); ok {
+				value, err := remotePathFunctionValue("nodes", remote)
+				recordExpressionFailure(ctx, err)
+				return value
+			}
 			if pathMap, ok := innerVal.(map[string]interface{}); ok {
 				if nodesList, _, hasNodes, _ := pathValueParts(pathMap); hasNodes {
 					return nodesList
@@ -332,6 +337,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		}
 		// A path carried as a computed-row map (WITH p AS path).
 		if innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); innerVal != nil {
+			if remote, ok := innerVal.(storage.RemotePathValue); ok {
+				value, err := remotePathFunctionValue("relationships", remote)
+				recordExpressionFailure(ctx, err)
+				return value
+			}
 			if pathMap, ok := innerVal.(map[string]interface{}); ok {
 				if _, relationshipsList, _, hasRelationships := pathValueParts(pathMap); hasRelationships {
 					return relationshipsList

@@ -939,8 +939,11 @@ func (n *rowQuantifierNode) eval(e *StorageExecutor, values map[string]interface
 	if !ok {
 		return nil, false, nil
 	}
-	if listValue == nil {
+	if listValue == nil || nilRemotePath(listValue) {
 		return nil, true, nil
+	}
+	if cypherValueKindOf(listValue) == valueKindPath {
+		return nil, false, runtimeTypeError("Type mismatch: expected List<T> but was Path")
 	}
 	scope, inner := rowLoopScope(values, frames, n.loop)
 	return rowQuantifierLoop(n.function, coerceToUnwindItems(listValue), func(item interface{}) { scope[n.variable] = item }, func() (interface{}, bool, error) {

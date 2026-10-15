@@ -115,6 +115,20 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 			return false
 		}
 		id = string(v.ID)
+	case storage.RemotePathValue:
+		if _, _, valid := v.Parts(); !valid {
+			return false
+		}
+		found := false
+		for _, entity := range v {
+			if materializedValue(recorder, entity) {
+				if recorder == nil {
+					return true
+				}
+				found = true
+			}
+		}
+		return found
 	case storage.RemoteEntityValue:
 		if v == nil {
 			return false

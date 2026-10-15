@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strconv"
 )
 
 func decodeRemoteHTTPValue(raw json.RawMessage, metadata []interface{}, index *int, entities map[string]interface{}) (interface{}, error) {
@@ -29,7 +30,26 @@ func decodeRemoteHTTPValueWithREST(raw, restRaw json.RawMessage, metadata []inte
 		if pathMetadata, ok := metadata[*index].([]interface{}); ok && (len(restRaw) == 0 || remoteHTTPRESTPath(restRaw, plain)) {
 			*index++
 			nestedIndex := 0
-			return decodeRemoteHTTPValue(raw, pathMetadata, &nestedIndex, entities)
+			value, err := decodeRemoteHTTPValue(raw, pathMetadata, &nestedIndex, entities)
+			if err != nil {
+				return nil, err
+			}
+			items, ok := value.([]interface{})
+			if !ok {
+				return nil, fmt.Errorf("remote path has no entity sequence")
+			}
+			path := make(RemotePathValue, len(items))
+			for i, item := range items {
+				entity, ok := item.(RemoteEntityValue)
+				if !ok {
+					return nil, fmt.Errorf("remote path contains a non-entity")
+				}
+				path[i] = entity
+			}
+			if _, _, valid := path.Parts(); !valid {
+				return nil, fmt.Errorf("remote HTTP path has inconsistent entities")
+			}
+			return path, nil
 		}
 		if entityMetadata, ok := metadata[*index].(map[string]interface{}); ok {
 			if entity, found := entities[fmt.Sprint(entityMetadata["elementId"])].(map[string]interface{}); found && reflect.DeepEqual(plain, entity["properties"]) && (len(restRaw) == 0 || remoteHTTPRESTEntity(restRaw, plain, entityMetadata)) {
@@ -141,5 +161,29 @@ func remoteHTTPRESTPath(raw json.RawMessage, plain interface{}) bool {
 		Relationships []string `json:"relationships"`
 		Length        *int     `json:"length"`
 	}
-	return json.Unmarshal(raw, &path) == nil && path.Nodes != nil && path.Relationships != nil && path.Length != nil
+	if json.Unmarshal(raw, &path) != nil || path.Nodes == nil || path.Relationships == nil || path.Length == nil || *path.Length < 0 {
+		return false
+	}
+	items := plain.([]interface{})
+	return len(path.Relationships) == *path.Length && len(path.Nodes) == *path.Length+1 && len(items) == 2*(*path.Length)+1
+}
+
+func remoteHTTPNumericID(value interface{}) int64 {
+	id, err := strconv.ParseInt(fmt.Sprint(value), 10, 64)
+	if err != nil {
+		return -1
+	}
+	return id
+}
+
+func remoteHTTPEndpointID(edge map[string]interface{}, key string, entities map[string]interface{}) int64 {
+	if id := remoteHTTPNumericID(edge[key]); id != -1 {
+		return id
+	}
+	if node, ok := entities[fmt.Sprint(edge[key+"ElementId"])].(map[string]interface{}); ok {
+		if identity, ok := node[remoteIdentityKey].(remoteNumericIdentity); ok {
+			return identity.id
+		}
+	}
+	return -1
 }

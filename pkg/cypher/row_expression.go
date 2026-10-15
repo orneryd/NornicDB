@@ -290,8 +290,12 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			if !resolved {
 				return nil, false, nil
 			}
-			if value == nil {
+			if value == nil || nilRemotePath(value) {
 				return nil, true, nil
+			}
+			if remote, ok := value.(storage.RemotePathValue); ok {
+				result, err := remotePathFunctionValue("length", remote)
+				return result, err == nil, err
 			}
 			object, isMap := toStringAnyMap(value)
 			if path, ok := cypherPathResultOf(value, object, isMap); ok {
@@ -341,8 +345,12 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			if !resolved {
 				return nil, false, nil
 			}
-			if value == nil {
+			if value == nil || nilRemotePath(value) {
 				return nil, true, nil
+			}
+			if remote, ok := value.(storage.RemotePathValue); ok {
+				result, err := remotePathFunctionValue(function, remote)
+				return result, err == nil, err
 			}
 			path, isPath := toStringAnyMap(value)
 			if !isPath {
@@ -1233,8 +1241,11 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 	if !ok {
 		return nil, true, false, nil
 	}
-	if listValue == nil {
+	if listValue == nil || nilRemotePath(listValue) {
 		return nil, true, true, nil
+	}
+	if cypherValueKindOf(listValue) == valueKindPath {
+		return nil, true, false, runtimeTypeError("Type mismatch: expected List<T> but was Path")
 	}
 	// One scope for every element, the variable rebound per element, as
 	// reduce does: copying the row per element cost an allocation of the
@@ -1790,6 +1801,9 @@ func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Con
 // of the same evaluator, #728): null stays null, a string sizes in runes, a
 // list or array in items, and anything else is the argument type error.
 func evaluateCypherSize(value interface{}) (interface{}, bool, error) {
+	if nilRemotePath(value) {
+		return nil, true, nil
+	}
 	if value == nil {
 		return nil, true, nil
 	}
@@ -1801,6 +1815,9 @@ func evaluateCypherSize(value interface{}) (interface{}, bool, error) {
 }
 
 func evaluateCypherSizeInteger(value interface{}) (int64, bool, error) {
+	if _, path := value.(storage.RemotePathValue); path {
+		return 0, false, sizeArgumentError(value)
+	}
 	if text, isString := value.(string); isString {
 		// RuneCountInString counts code points the way len([]rune(s)) does
 		// (invalid UTF-8 bytes become U+FFFD), without the allocation.

@@ -553,6 +553,11 @@ func sameParameterValue(converted, original interface{}) bool {
 // normalizeParameterValue converts one parameter value (normalizeQueryParameters).
 func normalizeParameterValue(value interface{}) (interface{}, bool) {
 	switch typed := value.(type) {
+	case storage.RemotePathValue:
+		if typed == nil {
+			return nil, true
+		}
+		return value, false
 	case storage.RemoteEntityValue:
 		// Fabric graph values retain their transport provenance across parameters.
 		return value, false
@@ -570,6 +575,12 @@ func normalizeParameterValue(value interface{}) (interface{}, bool) {
 		}
 		return value, false
 	case map[string]interface{}:
+		public := storage.PublicRemoteMap(typed)
+		if len(public) != len(typed) {
+			normalized, _ := normalizeParameterValue(public)
+			return normalized, true
+		}
+
 		var converted map[string]interface{}
 		for key, element := range typed {
 			normalized, changed := normalizeParameterValue(element)

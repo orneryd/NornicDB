@@ -61,7 +61,7 @@ func TestRemoteHTTPRecordedEmptyEntityPositions(t *testing.T) {
 	require.Equal(t, map[string]interface{}{}, wrapped[0])
 	require.IsType(t, RemoteEntityValue{}, wrapped[1])
 	require.IsType(t, RemoteEntityValue{}, wrapped[2])
-	path := row[5].([]interface{})
+	path := row[5].(RemotePathValue)
 	require.Len(t, path, 3)
 	for _, entity := range path {
 		require.IsType(t, RemoteEntityValue{}, entity)
@@ -79,8 +79,8 @@ func TestRemoteHTTPRESTEnvelopeRequiresDistinctSerializerMetadata(t *testing.T) 
 	require.False(t, remoteHTTPRESTEntity(asRemoteRESTRaw(t, envelope), nil, metadata))
 	require.False(t, remoteHTTPRESTPath(asRemoteRESTRaw(t, "ordinary"), nil))
 	require.False(t, remoteHTTPRESTPath(asRemoteRESTRaw(t, map[string]interface{}{}), nil))
-	path := map[string]interface{}{"nodes": []interface{}{}, "relationships": []interface{}{}, "length": float64(0)}
-	require.True(t, remoteHTTPRESTPath(asRemoteRESTRaw(t, path), []interface{}{}))
+	path := map[string]interface{}{"nodes": []interface{}{"node"}, "relationships": []interface{}{}, "length": float64(0)}
+	require.True(t, remoteHTTPRESTPath(asRemoteRESTRaw(t, path), []interface{}{nil}))
 	require.False(t, remoteHTTPRESTPath(asRemoteRESTRaw(t, path), path))
 }
 

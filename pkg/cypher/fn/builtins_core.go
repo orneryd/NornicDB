@@ -248,7 +248,7 @@ func PropertyKeys(value interface{}) ([]interface{}, bool) {
 	case storage.RemoteEntityValue:
 		properties, _ = v["properties"].(map[string]interface{})
 	case map[string]interface{}:
-		properties = v
+		properties = storage.PublicRemoteMap(v)
 	default:
 		return nil, false
 	}
@@ -280,10 +280,17 @@ func evalProperties(ctx Context, args []string) (interface{}, error) {
 		return nil, err
 	}
 	if remote, ok := value.(storage.RemoteEntityValue); ok {
-		return remote["properties"], nil
+		if remote == nil {
+			return nil, nil
+		}
+		properties, _ := remote["properties"].(map[string]interface{})
+		if properties == nil {
+			properties = map[string]interface{}{}
+		}
+		return properties, nil
 	}
 	if object, ok := value.(map[string]interface{}); ok {
-		return object, nil
+		return storage.PublicRemoteMap(object), nil
 	}
 	return nil, nil
 }
@@ -295,6 +302,12 @@ func evalSize(ctx Context, args []string) (interface{}, error) {
 	v, _ := ctx.Eval(args[0])
 	if v == nil {
 		return nil, nil
+	}
+	if path, ok := v.(storage.RemotePathValue); ok {
+		if path == nil {
+			return nil, nil
+		}
+		return nil, &TypeMismatchError{Function: "size", Expected: sizeArgumentTypes, Value: v}
 	}
 	switch vv := v.(type) {
 	case string:

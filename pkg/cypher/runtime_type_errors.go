@@ -201,6 +201,9 @@ func isRuntimeTemporal(v interface{}) bool {
 }
 
 func isRuntimeList(v interface{}) bool {
+	if _, path := v.(storage.RemotePathValue); path {
+		return false
+	}
 	if v == nil {
 		return false
 	}

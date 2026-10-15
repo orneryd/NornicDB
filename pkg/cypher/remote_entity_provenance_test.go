@@ -118,6 +118,16 @@ func TestRemoteEntityCacheIdentity(t *testing.T) {
 	require.NoError(t, err)
 	node := rows[0][0].(storage.RemoteEntityValue)
 	ordinary := map[string]interface{}(node)
+	public := storage.PublicRemoteMap(ordinary)
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	result, err := exec.Execute(context.Background(), "WITH $m AS m RETURN properties(m),m{.*},m[$key]", map[string]interface{}{"m": ordinary, "key": "\x00remoteIdentity"})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{public, public, nil}}, result.Rows)
+	user := map[string]interface{}{"\x00remoteIdentity": "user"}
+	result, err = exec.Execute(context.Background(), "RETURN $m[$key]", map[string]interface{}{"m": user, "key": "\x00remoteIdentity"})
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"user"}}, result.Rows)
+
 	for _, reverse := range []bool{false, true} {
 		exec := NewStorageExecutor(newTestMemoryEngine(t))
 		values := []interface{}{node, ordinary}

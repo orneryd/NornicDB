@@ -2233,7 +2233,7 @@ func nextNonSpaceByte(s string, pos int) byte {
 
 func toStringAnyMap(value interface{}) (map[string]interface{}, bool) {
 	if m, ok := value.(map[string]interface{}); ok {
-		return m, true
+		return storage.PublicRemoteMap(m), true
 	}
 	if m, ok := value.(map[interface{}]interface{}); ok {
 		out := make(map[string]interface{}, len(m))
@@ -2244,7 +2244,7 @@ func toStringAnyMap(value interface{}) (map[string]interface{}, bool) {
 			}
 			out[ks] = v
 		}
-		return out, true
+		return storage.PublicRemoteMap(out), true
 	}
 	return nil, false
 }

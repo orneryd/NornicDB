@@ -291,6 +291,11 @@ skipArrayIndexing:
 			// not report a fabricated zero-length value (#581).
 			return nil
 		}
+		if remote, ok := innerVal.(storage.RemotePathValue); ok {
+			value, err := remotePathFunctionValue("length", remote)
+			recordExpressionFailure(ctx, err)
+			return value
+		}
 		switch v := innerVal.(type) {
 		case string:
 			return int64(cyphertext.Length(v))
