@@ -167,3 +167,47 @@ func waitNodeAdmission(t *testing.T, svc *Service) error {
 		return nil
 	}
 }
+
+// A write is visible to search as soon as it returns, even while the
+// population it started on a persisted, never-built service is still running
+// (F-I86 B1; orchestrator 16 Oct). The population is held at its storage
+// traversal, so this cannot pass by the population finishing first.
+func TestWriteIsSearchableWhileItsPopulationRuns(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "10")
+	for _, backend := range []string{"v1", "v2"} {
+		t.Run(backend, func(t *testing.T) {
+			ctx := context.Background()
+			engine := &traversalGatedEngine{MemoryEngine: storage.NewMemoryEngine()}
+			t.Cleanup(func() { require.NoError(t, engine.Close()) })
+			svc := configureNodeAdmissionService(t, engine, t.TempDir(), backend, nil)
+			entered, release := engine.arm()
+			defer release()
+
+			b := admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named")
+			_, err := engine.CreateNode(b)
+			require.NoError(t, err)
+			require.NoError(t, svc.IndexNode(b))
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the write did not start the population")
+			}
+
+			resp, err := svc.Search(ctx, "bterm", nil, &SearchOptions{Limit: 10})
+			require.NoError(t, err)
+			require.Len(t, resp.Results, 1, "text search must see the write while its population runs")
+			require.Equal(t, "nornic:b", resp.Results[0].ID)
+
+			hits, err := svc.VectorQueryNodes(ctx, []float32{0, 1, 0}, VectorQuerySpec{Label: "Doc", Property: "v", Similarity: "cosine", Limit: 10})
+			require.NoError(t, err)
+			require.Len(t, hits, 1, "vector search must see the write while its population runs")
+			require.Equal(t, "nornic:b", hits[0].ID)
+
+			candidates, err := svc.VectorSearchCandidates(ctx, []float32{0, 1, 0}, &SearchOptions{Limit: 10})
+			require.NoError(t, err)
+			require.NotEmpty(t, candidates, "candidate search must see the write while its population runs")
+			require.Equal(t, "nornic:b", normalizeVectorResultIDToNodeID(candidates[0].ID))
+			release()
+		})
+	}
+}
