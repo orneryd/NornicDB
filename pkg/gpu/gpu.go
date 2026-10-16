@@ -1439,14 +1439,20 @@ func (ei *EmbeddingIndex) AddBatch(nodeIDs []string, embeddings [][]float32) err
 func (ei *EmbeddingIndex) Remove(nodeID string) bool {
 	ei.mu.Lock()
 	defer ei.mu.Unlock()
+	_, _, removed := ei.removeLocked(nodeID)
+	return removed
+}
 
+// removeLocked removes nodeID by swapping the last slot into its place and
+// returns the removed slot and the moved (former last) slot. Caller holds mu.
+func (ei *EmbeddingIndex) removeLocked(nodeID string) (idx, lastIdx int, removed bool) {
 	idx, exists := ei.idToIndex[nodeID]
 	if !exists {
-		return false
+		return 0, 0, false
 	}
 
 	// Swap with last element for O(1) removal
-	lastIdx := len(ei.nodeIDs) - 1
+	lastIdx = len(ei.nodeIDs) - 1
 	if idx != lastIdx {
 		lastNodeID := ei.nodeIDs[lastIdx]
 		ei.nodeIDs[idx] = lastNodeID
@@ -1469,7 +1475,7 @@ func (ei *EmbeddingIndex) Remove(nodeID string) bool {
 		// Use unlocked version since we already hold the lock.
 		_ = ei.syncToGPUUnlocked()
 	}
-	return true
+	return idx, lastIdx, true
 }
 
 func (ei *EmbeddingIndex) shouldAutoSync(delta int) bool {
