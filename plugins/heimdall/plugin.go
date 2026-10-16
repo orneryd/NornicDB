@@ -375,7 +375,7 @@ func (p *WatcherPlugin) actionRepoMap(ctx heimdall.ActionContext) (*heimdall.Act
 		dbName = ctx.Database.DefaultDatabaseName()
 	}
 
-	stats, err := ctx.Database.Stats(dbName)
+	stats, err := ctx.Database.Stats(ctx.Context, dbName)
 	if err != nil {
 		return &heimdall.ActionResult{
 			Success: false,
@@ -679,7 +679,7 @@ func (p *WatcherPlugin) actionStatus(ctx heimdall.ActionContext) (*heimdall.Acti
 
 	if ctx.Database != nil {
 		dbName := getDatabaseParam(ctx.Params)
-		dbStats, err := ctx.Database.Stats(dbName)
+		dbStats, err := ctx.Database.Stats(ctx.Context, dbName)
 		if err == nil {
 			status["database"] = map[string]interface{}{
 				"database":      coalesceString(dbName, ctx.Database.DefaultDatabaseName()),
@@ -717,7 +717,7 @@ func (p *WatcherPlugin) actionDBStats(ctx heimdall.ActionContext) (*heimdall.Act
 
 	if ctx.Database != nil {
 		dbName := getDatabaseParam(ctx.Params)
-		dbStats, err := ctx.Database.Stats(dbName)
+		dbStats, err := ctx.Database.Stats(ctx.Context, dbName)
 		if err != nil {
 			stats["database"] = map[string]interface{}{
 				"database": coalesceString(dbName, ctx.Database.DefaultDatabaseName()),

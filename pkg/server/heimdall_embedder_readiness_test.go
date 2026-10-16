@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"sync"
 	"testing"
 
@@ -11,17 +10,17 @@ import (
 func TestHeimdallQuerySeesEmbedderReadiness(t *testing.T) {
 	server, _ := setupTestServer(t)
 	router := newHeimdallDBRouter(server.db, server.dbManager, nil)
-	_, err := router.Query(context.Background(), "nornic", "RETURN 1", nil)
+	_, err := router.Query(heimdallAuthDisabled(), "nornic", "RETURN 1", nil)
 	require.NoError(t, err)
 	embedder := &countingEmbedder{dims: 2}
 	server.db.GetCypherExecutor().SetEmbedder(embedder)
 	const query = "CALL db.index.vector.embed('alpha') YIELD embedding RETURN embedding"
-	rows, err := router.Query(context.Background(), "nornic", query, nil)
+	rows, err := router.Query(heimdallAuthDisabled(), "nornic", query, nil)
 	require.NoError(t, err, "Heimdall must see the base executor's ready provider")
 	require.Len(t, rows[0]["embedding"], 2)
 	server.db.GetCypherExecutor().SetEmbedder(&countingEmbedder{dims: 3})
 	for _, current := range []*heimdallDBRouter{router, newHeimdallDBRouter(server.db, server.dbManager, nil)} {
-		rows, err := current.Query(context.Background(), "nornic", query, nil)
+		rows, err := current.Query(heimdallAuthDisabled(), "nornic", query, nil)
 		require.NoError(t, err)
 		require.Len(t, rows[0]["embedding"], 3, "cached and new executors must use the replacement")
 	}
@@ -46,7 +45,7 @@ func TestHeimdallQueryConcurrentEmbedderPublication(t *testing.T) {
 	workers.Go(func() {
 		<-start
 		for range 50 {
-			_, err := router.Query(context.Background(), "nornic", "CALL db.index.vector.embed('alpha') YIELD embedding RETURN embedding", nil)
+			_, err := router.Query(heimdallAuthDisabled(), "nornic", "CALL db.index.vector.embed('alpha') YIELD embedding RETURN embedding", nil)
 			if err != nil {
 				failures <- err
 			}

@@ -183,32 +183,65 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 	return dbName, exec, engine, nil
 }
 
-// authorizeDatabase is the request principal's check on dbName, which the
-// server attaches to the request (auth.WithRequestEntitlementResolver, the
-// one resolver HTTP, Bolt and GraphQL use): it refuses a principal that may
-// not hold permission there, and returns ctx carrying the resolver for the
-// executor, which then authorizes each statement as on the other
-// transports. A context without a resolver (no authentication) is unchanged.
-func authorizeHeimdallDatabase(ctx context.Context, dbName string, permission auth.Permission) (context.Context, error) {
+// authorizeDatabase is the request principal's decision on the database a
+// call selects, taken before the router resolves or opens anything. The
+// server attaches the principal to the request (withBifrostRBAC): its one
+// permission resolver, which HTTP, Bolt and GraphQL use, and the databases
+// and aliases it may select. A selection outside that scope, or one where
+// the principal lacks permission, gets the same Forbidden error naming the
+// selection as given. Otherwise it returns the canonical name and ctx
+// carrying the resolver for the executor, which then authorizes each
+// statement as on the other transports. A context the server marked as
+// served with authentication disabled resolves the name as given; a context
+// with no principal and no such mark is refused.
+func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database string, permission auth.Permission) (context.Context, string, error) {
 	allows := auth.RequestEntitlementResolverFromContext(ctx)
 	if allows == nil {
-		return ctx, nil
+		if !auth.RequestAuthenticationDisabledFromContext(ctx) {
+			return nil, "", r.databaseForbidden(database)
+		}
+		dbName, err := r.ResolveDatabase(database)
+		if err != nil {
+			return nil, "", err
+		}
+		return ctx, dbName, nil
 	}
-	if !allows(dbName, permission) {
-		denied := localization.DatabaseAccessDenied(dbName)
-		return nil, localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
+	dbName, selectable := auth.RequestDatabaseScopeFromContext(ctx).Resolve(database)
+	if !selectable || !allows(dbName, permission) {
+		return nil, "", r.databaseForbidden(database)
 	}
 	return cypher.WithDatabasePermissionResolver(ctx, dbName, func(database, permission string) bool {
 		return allows(database, auth.Permission(permission))
-	}), nil
+	}), dbName, nil
+}
+
+// databaseForbidden is Neo4j's Forbidden error for the selection as the
+// caller gave it (the default database's name when it gave none).
+func (r *heimdallDBRouter) databaseForbidden(database string) error {
+	if database == "" {
+		database = r.DefaultDatabaseName()
+	}
+	denied := localization.DatabaseAccessDenied(database)
+	return localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
+}
+
+// requireNonComposite refuses a composite database for the calls that read
+// one database's storage directly (Stats, Discover), as the REST search and
+// similarity routes do: they would read every constituent under the one
+// decision on the composite. Cypher (Query) authorizes each constituent.
+func (r *heimdallDBRouter) requireNonComposite(dbName string) error {
+	if r.dbManager != nil && r.dbManager.IsCompositeDatabase(dbName) {
+		return fmt.Errorf("composite database '%s' is not supported here; target a constituent database explicitly", dbName)
+	}
+	return nil
 }
 
 func (r *heimdallDBRouter) Query(ctx context.Context, database string, cypherQuery string, params map[string]interface{}) ([]map[string]interface{}, error) {
-	dbName, exec, _, err := r.executorForDatabase(database)
+	ctx, dbName, err := r.authorizeDatabase(ctx, database, auth.Permission("access"))
 	if err != nil {
 		return nil, err
 	}
-	ctx, err = authorizeHeimdallDatabase(ctx, dbName, auth.Permission("access"))
+	dbName, exec, _, err := r.executorForDatabase(dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -232,8 +265,15 @@ func (r *heimdallDBRouter) Query(ctx context.Context, database string, cypherQue
 	return rows, nil
 }
 
-func (r *heimdallDBRouter) Stats(database string) (heimdall.DatabaseStats, error) {
-	dbName, engine, err := r.storageForDatabase(database)
+func (r *heimdallDBRouter) Stats(ctx context.Context, database string) (heimdall.DatabaseStats, error) {
+	_, dbName, err := r.authorizeDatabase(ctx, database, auth.PermRead)
+	if err != nil {
+		return heimdall.DatabaseStats{}, err
+	}
+	if err := r.requireNonComposite(dbName); err != nil {
+		return heimdall.DatabaseStats{}, err
+	}
+	dbName, engine, err := r.storageForDatabase(dbName)
 	if err != nil {
 		return heimdall.DatabaseStats{}, err
 	}
@@ -300,11 +340,15 @@ func (r *heimdallDBRouter) Stats(database string) (heimdall.DatabaseStats, error
 
 // Discover implements semantic search with graph traversal for Graph-RAG.
 func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query string, nodeTypes []string, limit int, depth int) (*heimdall.DiscoverResult, error) {
-	dbName, engine, err := r.storageForDatabase(database)
+	ctx, dbName, err := r.authorizeDatabase(ctx, database, auth.PermRead)
 	if err != nil {
 		return nil, err
 	}
-	if ctx, err = authorizeHeimdallDatabase(ctx, dbName, auth.PermRead); err != nil {
+	if err := r.requireNonComposite(dbName); err != nil {
+		return nil, err
+	}
+	dbName, engine, err := r.storageForDatabase(dbName)
+	if err != nil {
 		return nil, err
 	}
 	if r.db == nil {
