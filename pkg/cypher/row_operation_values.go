@@ -24,3 +24,57 @@ func rowStringPredicateValue(left, right interface{}, predicate func(string, str
 	}
 	return predicate(leftText, rightText)
 }
+
+// cypherMembershipValues owns the IN fold over comparisons supplied by an
+// ordered scan or an index adapter. Empty lists decide before a null needle;
+// a match decides before any unknown comparison.
+func cypherMembershipValues(value interface{}, count int, compare func(int) interface{}) interface{} {
+	if count == 0 {
+		return false
+	}
+	if value == nil {
+		return nil
+	}
+	unknown := false
+	for i := 0; i < count; i++ {
+		equal := compare(i)
+		if equal == true {
+			return true
+		}
+		if equal == nil {
+			unknown = true
+		}
+	}
+	if unknown {
+		return nil
+	}
+	return false
+}
+
+// indexedMembershipValue supplies the same fold with a single indexed probe,
+// followed by comparisons for values that cannot be indexed. A null list item
+// is an unknown probe; non-comparable items preserve Cypher equality's nulls.
+func indexedMembershipValue(actual interface{}, comparableSet map[interface{}]struct{}, nonComparable []interface{}, hasNull bool, equals func(interface{}, interface{}) interface{}) interface{} {
+	indexed := len(comparableSet) > 0 || hasNull
+	count := len(nonComparable)
+	if indexed {
+		count++
+	}
+	return cypherMembershipValues(actual, count, func(i int) interface{} {
+		if indexed {
+			if i == 0 {
+				if isComparableValue(actual) {
+					if _, hit := comparableSet[membershipKey(actual)]; hit {
+						return true
+					}
+				}
+				if hasNull {
+					return nil
+				}
+				return false
+			}
+			i--
+		}
+		return equals(actual, nonComparable[i])
+	})
+}

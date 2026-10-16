@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/storage"
-	"reflect"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
@@ -31,22 +29,10 @@ func typeNameMismatchError(expected, typeName string) error {
 	)
 }
 
-// sizeArgumentError is the error for size(value), or nil when size() accepts
-// the value (null, a string, a list).
+// sizeArgumentError classifies an argument rejected by the shared size owner.
 func sizeArgumentError(value interface{}) error {
-	if value == nil {
-		return nil
-	}
-	if _, isString := value.(string); isString {
-		return nil
-	}
-	_, remotePath := value.(storage.RemotePathValue)
-	if kind := reflect.TypeOf(value).Kind(); !remotePath && (kind == reflect.Slice || kind == reflect.Array) {
-		return nil
-	}
-	// Static validation rejects known invalid argument types before execution.
-	// A CASE or other nullable expression may reveal a map/entity only now;
-	// every invalid value reaching this runtime owner is a TypeError.
+	// Static validation owns known type mismatches; rejected runtime values
+	// retain release's TypeError classification.
 	return &classifiedCypherError{
 		cause:  localizedError(localization.CypherCoreFunctionArgumentInvalid("size", "a String or List", neo4jValueRepr(value)), nil),
 		code:   "Neo.ClientError.Statement.TypeError",
@@ -64,6 +50,9 @@ func sizeArgumentError(value interface{}) error {
 func typeMismatchFromFunctionError(err error) error {
 	var mismatch *cypherfn.TypeMismatchError
 	if errors.As(err, &mismatch) {
+		if mismatch.Function == "size" {
+			return sizeArgumentError(mismatch.Value)
+		}
 		return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
 			localization.CypherCoreFunctionArgumentInvalid(mismatch.Function, "a "+mismatch.Expected, neo4jValueRepr(mismatch.Value)))
 	}
