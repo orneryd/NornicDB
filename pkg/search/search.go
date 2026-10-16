@@ -408,6 +408,13 @@ type SearchOptions struct {
 	// doesn't read them (#1060): no hit's chunks are scored, no text scanned.
 	SkipMatches bool
 
+	// HNSWEf is this search's HNSW beam width (ef), as Qdrant's per-request
+	// hnsw_ef: 0 uses the configured preset (NORNICDB_VECTOR_HNSW_EF_SEARCH and
+	// the beam factor). Only HNSW-based strategies read it (global HNSW and the
+	// per-cluster graphs of IVF-HNSW); IVF-PQ, k-means routing and brute force
+	// don't search a graph and ignore it.
+	HNSWEf int
+
 	// Where admits a candidate node, as a Cypher WHERE on it does: a missing
 	// property, a negation or a pattern from the node; nil admits every node. It
 	// is applied with Types and Filters to the candidates, before the top-K cut.
@@ -2620,6 +2627,19 @@ func firstEdgeVectorDimensions(edge *storage.Edge) int {
 	return 0
 }
 
+// adoptFirstVectorDimensions applies IndexNode's rule to a batch of a rebuild
+// from storage: the first vector of an empty index whose dimension isn't fixed
+// sets the dimension, whichever stored node carries it. A node without a
+// vector (a document, a Qdrant collection's metadata node) never decides it.
+func (s *Service) adoptFirstVectorDimensions(batch []*storage.Node) {
+	for _, node := range batch {
+		if dims := firstVectorDimensions(node); dims > 0 {
+			s.maybeAutoSetVectorDimensions(dims)
+			return
+		}
+	}
+}
+
 func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 	if s == nil || dimensions <= 0 || s.vectorDimensionsFixed.Load() {
 		return
@@ -4062,9 +4082,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 			if len(batch) == 0 {
 				return nil
 			}
-			if count == 0 && len(batch) > 0 {
-				s.maybeAutoSetVectorDimensions(firstVectorDimensions(batch[0]))
-			}
+			s.adoptFirstVectorDimensions(batch)
 			filtered := make([]*storage.Node, 0, len(batch))
 			for _, n := range batch {
 				shouldIndex, err := s.shouldIndexNode(n)
@@ -4200,9 +4218,7 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		if len(batch) == 0 {
 			return nil
 		}
-		if count == 0 && len(batch) > 0 {
-			s.maybeAutoSetVectorDimensions(firstVectorDimensions(batch[0]))
-		}
+		s.adoptFirstVectorDimensions(batch)
 		filtered := make([]*storage.Node, 0, len(batch))
 		for _, n := range batch {
 			shouldIndex, err := s.shouldIndexNode(n)
@@ -4960,7 +4976,10 @@ func resolveVectorAdaptiveOverfetch(opts *SearchOptions, pipeline *VectorSearchP
 			config.initialLimit = rescoreFloor
 		}
 	}
-	if planner, ok := pipeline.candidateGen.(approximateCandidateDepthPlanner); ok {
+	// A request's own HNSW ef (SearchOptions.HNSWEf) sets the graph search depth
+	// itself, so the generator's preferred depth doesn't widen it.
+	_, hnsw := pipeline.candidateGen.(*HNSWCandidateGen)
+	if planner, ok := pipeline.candidateGen.(approximateCandidateDepthPlanner); ok && !(hnsw && opts.HNSWEf > 0) {
 		preferred := planner.preferredCandidateDepth(config.target, config.maxLimit)
 		if preferred > config.initialLimit {
 			config.initialLimit = min(preferred, config.maxLimit)
@@ -4983,6 +5002,7 @@ func (s *Service) adaptiveVectorSearch(
 	}
 	config := resolveVectorAdaptiveOverfetch(opts, pipeline)
 	requestLimit := config.initialLimit
+	ctx = withHNSWEf(ctx, opts.HNSWEf)
 	var stats vectorOverfetchStats
 	for {
 		if err := ctx.Err(); err != nil {

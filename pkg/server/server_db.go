@@ -187,7 +187,7 @@ func (s *Server) getExecutorForDatabaseWithAuth(dbName string, authToken string)
 		active, _ := s.databaseConfigRuntimeState(dbName, current)
 		return cypher.SettingsSnapshot{Configured: overrides, Active: active}
 	})
-	executor.SetDatabaseManager(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s})
+	executor.SetDatabaseManager(s.databaseManager())
 
 	if !s.dbManager.IsCompositeDatabase(dbName) {
 		if searchSvc, err := s.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
@@ -257,7 +257,7 @@ func (s *Server) newDatabaseScopedExecutor(dbName string) (*cypher.StorageExecut
 	resolved := dbconfig.Resolve(s.processConfig, overrides)
 	executor := cypher.NewStorageExecutorWithQueryCachePolicy(storageEngine, resolved.QueryCacheMaxEntries, resolved.QueryCacheTTL)
 	executor.SetLocalizationRenderer(s.localizer)
-	executor.SetDatabaseManager(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s})
+	executor.SetDatabaseManager(s.databaseManager())
 
 	// Reuse DB's cached search service instead of creating a new one.
 	// Composite roots do not own a search service; search/index operations must target constituents.
@@ -316,6 +316,14 @@ type databaseManagerAdapter struct {
 	manager *multidb.DatabaseManager
 	db      *nornicdb.DB
 	server  *Server // Reference to server for cache invalidation
+}
+
+// databaseManager is the server's database administration (CREATE, DROP and
+// SHOW DATABASE, aliases, composites) for Cypher and the Qdrant API: it keeps
+// the state the server derives from a database (search services, cached
+// executors) in step with it.
+func (s *Server) databaseManager() *databaseManagerAdapter {
+	return &databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}
 }
 
 func (a *databaseManagerAdapter) CreateDatabase(name string) error {

@@ -76,6 +76,9 @@
 - id: qdrant.scan_points_failed
   description: Error al examinar puntos. Cause no se traduce.
   other: "no se pudieron examinar los puntos: {{.Cause}}"
+- id: qdrant.search_failed
+  description: Error en la búsqueda vectorial. Cause no se traduce.
+  other: "la búsqueda vectorial falló: {{.Cause}}"
 - id: qdrant.points_selector_invalid
   description: Error para un selector de puntos no válido.
   other: selector de puntos no válido

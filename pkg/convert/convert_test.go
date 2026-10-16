@@ -77,6 +77,11 @@ func TestToInt64(t *testing.T) {
 		{"uint", uint(10), 10, true},
 		{"uint32", uint32(25), 25, true},
 		{"uint64", uint64(100), 100, true},
+		// The compact integer types a stored property can decode to.
+		{"int8", int8(-4), -4, true},
+		{"int16", int16(300), 300, true},
+		{"uint8", uint8(200), 200, true},
+		{"uint16", uint16(60000), 60000, true},
 
 		// Float conversion (truncation)
 		{"float64", 3.7, 3, true},

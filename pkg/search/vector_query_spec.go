@@ -39,7 +39,26 @@ type VectorQuerySpec struct {
 
 	// Limit is the maximum number of results to return (top-K).
 	Limit int
+
+	// ScoreScale is the scale of each hit's Score: Neo4j's (the zero value, for
+	// Cypher) or the raw similarity (for the Qdrant API).
+	ScoreScale VectorScoreScale
 }
+
+// VectorScoreScale is the scale a vector query reports its scores on. It never
+// changes which nodes are returned or their order.
+type VectorScoreScale int
+
+const (
+	// VectorScoreNeo4j is Neo4j's scale for its vector indexes (#907): cosine
+	// max((1 + cos) / 2, 0) and euclidean 1 / (1 + d²), both in [0, 1]; dot is
+	// the dot product.
+	VectorScoreNeo4j VectorScoreScale = iota
+	// VectorScoreSimilarity is the raw similarity, as Qdrant reports it: the
+	// cosine similarity in [-1, 1], the dot product, and for euclidean
+	// 1 / (1 + d) (vector.EuclideanSimilarity).
+	VectorScoreSimilarity
+)
 
 // VectorQueryHit is a lightweight result row for Cypher-compatible vector queries.
 // ID is the node ID (not a chunk/named vector ID).
@@ -84,11 +103,27 @@ type RelationshipVectorQueryHit struct {
 // For performance, cosine-similarity queries are executed against the in-memory
 // vector index (unified pipeline) rather than scanning storage.
 //
-// Scores are on Neo4j's scale for its vector indexes (#907): cosine
-// max((1 + cos) / 2, 0) and euclidean 1 / (1 + d²), both in [0, 1]
-// (vector.Neo4jCosineSimilarity, vector.Neo4jEuclideanSimilarity); dot, a
-// NornicDB similarity, is the dot product.
+// Scores are on spec.ScoreScale; the zero value is Neo4j's scale for its vector
+// indexes (#907): cosine max((1 + cos) / 2, 0) and euclidean 1 / (1 + d²), both
+// in [0, 1] (vector.Neo4jCosineSimilarity, vector.Neo4jEuclideanSimilarity);
+// dot, a NornicDB similarity, is the dot product.
 func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec) ([]VectorQueryHit, error) {
+	return s.VectorQueryNodesWithOptions(ctx, queryEmbedding, spec, nil)
+}
+
+// VectorQueryNodesWithOptions is VectorQueryNodes for a caller with its own
+// search options. Of opts it reads HNSWEf, the query's own HNSW beam width, and
+// Where, which admits candidate nodes before the top-K cut, as a Cypher WHERE
+// on the node does; nil opts is VectorQueryNodes. It is the vector query the
+// Qdrant API's Search runs, on the same index and strategy as Cypher's.
+//
+// Example:
+//
+//	hits, err := svc.VectorQueryNodesWithOptions(ctx, query, search.VectorQuerySpec{
+//		Label: "QdrantPoint", Property: "default", Similarity: "cosine",
+//		Limit: 10, ScoreScale: search.VectorScoreSimilarity,
+//	}, &search.SearchOptions{HNSWEf: 128, Where: func(n *storage.Node) bool { return n.Properties["tag"] == "a" }})
+func (s *Service) VectorQueryNodesWithOptions(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, opts *SearchOptions) ([]VectorQueryHit, error) {
 	if s == nil || s.engine == nil {
 		return nil, localizedError(localization.SearchServiceUnavailable(), nil)
 	}
@@ -120,16 +155,18 @@ func (s *Service) VectorQueryNodes(ctx context.Context, queryEmbedding []float32
 
 	// Fast path: cosine queries can use the indexed vector pipeline.
 	if strings.EqualFold(similarity, "cosine") {
-		hits, err := s.vectorQueryNodesIndexed(ctx, queryEmbedding, spec, vectorName)
-		for i := range hits {
-			hits[i].Score = neo4jCosineScore(hits[i].Score)
+		hits, err := s.vectorQueryNodesIndexed(ctx, queryEmbedding, spec, vectorName, opts)
+		if spec.ScoreScale == VectorScoreNeo4j {
+			for i := range hits {
+				hits[i].Score = neo4jCosineScore(hits[i].Score)
+			}
 		}
 		return hits, err
 	}
 
 	// Exact (index-backed) path for dot/euclidean: compute per-node scores from in-memory vectors
 	// without scanning storage.
-	return s.vectorQueryNodesExact(ctx, queryEmbedding, spec, vectorName, strings.ToLower(similarity))
+	return s.vectorQueryNodesExact(ctx, queryEmbedding, spec, vectorName, strings.ToLower(similarity), opts)
 }
 
 // VectorQueryRelationships executes a Cypher-style relationship vector query using
@@ -225,10 +262,14 @@ func (s *Service) VectorQueryRelationships(ctx context.Context, queryEmbedding [
 	return out, nil
 }
 
-func (s *Service) vectorQueryNodesIndexed(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, vectorName string) ([]VectorQueryHit, error) {
+func (s *Service) vectorQueryNodesIndexed(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, vectorName string, caller *SearchOptions) ([]VectorQueryHit, error) {
 	opts := DefaultSearchOptions()
 	opts.Limit = spec.Limit
 	opts.CandidateTarget = spec.Limit
+	if caller != nil {
+		opts.HNSWEf = caller.HNSWEf
+		opts.Where = caller.Where
+	}
 	return s.vectorQueryNodesIndexedWithOptions(ctx, queryEmbedding, spec, vectorName, opts)
 }
 
@@ -265,13 +306,16 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 	}
 
 	var postProcessErr error
+	seenOrphans := make(map[string]bool)
 	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, queryEmbedding, resolved, nil, func(candidates []indexResult) []indexResult {
 		if postProcessErr != nil {
 			return nil
 		}
 		processed, processErr := s.scoreVectorQueryCandidates(ctx, normalizedQuery, spec, vectorName, candidates, supplement)
 		postProcessErr = processErr
-		return processed
+		// Filtering here, inside the widening loop, lets a selective Where
+		// widen the search until it has the top K it admits.
+		return s.filterByTypeAndProperties(ctx, processed, resolved, seenOrphans)
 	})
 	if err != nil {
 		if errors.Is(err, ErrDimensionMismatch) {
@@ -531,7 +575,7 @@ func cloneStringMap(src map[string]string) map[string]string {
 	return out
 }
 
-func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, vectorName string, similarity string) ([]VectorQueryHit, error) {
+func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []float32, spec VectorQuerySpec, vectorName string, similarity string, opts *SearchOptions) ([]VectorQueryHit, error) {
 	if s.EmbeddingCount() == 0 {
 		return nil, nil
 	}
@@ -539,53 +583,79 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 		return nil, nil
 	}
 	prepared := newCypherVectorQuery(similarity, queryEmbedding)
+	prepared.scale = spec.ScoreScale
 
 	type scoredNode struct {
 		id    string
 		score float64
 	}
-	scored := make([]scoredNode, 0, util.SafePreallocProduct(spec.Limit, 2))
+	// scoreAll scores every node under the metadata read locks; the Where
+	// filter below reads storage, so it runs after they are released.
+	scoreAll := func() ([]scoredNode, error) {
+		scored := make([]scoredNode, 0, util.SafePreallocProduct(spec.Limit, 2))
 
-	// The node and relationship metadata is written under indexMu (index
-	// writes): lock order indexMu -> mu.
-	s.indexMu.RLock()
-	defer s.indexMu.RUnlock()
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+		// The node and relationship metadata is written under indexMu (index
+		// writes): lock order indexMu -> mu.
+		s.indexMu.RLock()
+		defer s.indexMu.RUnlock()
+		s.mu.RLock()
+		defer s.mu.RUnlock()
 
-	for nodeID, labels := range s.nodeLabels {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
+		for nodeID, labels := range s.nodeLabels {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
 
-		if spec.Label != "" {
-			has := false
-			for _, l := range labels {
-				if l == spec.Label {
-					has = true
-					break
+			if spec.Label != "" {
+				has := false
+				for _, l := range labels {
+					if l == spec.Label {
+						has = true
+						break
+					}
+				}
+				if !has {
+					continue
 				}
 			}
-			if !has {
-				continue
-			}
-		}
 
-		bestScore := math.Inf(-1)
+			bestScore := math.Inf(-1)
 
-		// Apply Cypher precedence for selecting which vector represents this node.
-		if named := s.nodeNamedVector[nodeID]; named != nil {
-			if vecID, ok := named[vectorName]; ok {
-				if v, ok := s.getVectorForCypher(vecID); ok {
-					bestScore = prepared.score(v)
+			// Apply Cypher precedence for selecting which vector represents this node.
+			if named := s.nodeNamedVector[nodeID]; named != nil {
+				if vecID, ok := named[vectorName]; ok {
+					if v, ok := s.getVectorForCypher(vecID); ok {
+						bestScore = prepared.score(v)
+					}
+				}
+				// If there is no explicit Cypher property/index mapping (property key is empty),
+				// fall through to managed named embeddings (any key) before chunk fallback.
+				if math.IsInf(bestScore, -1) && spec.Property == "" {
+					for _, vecID := range named {
+						if v, ok := s.getVectorForCypher(vecID); ok {
+							score := prepared.score(v)
+							if score > bestScore {
+								bestScore = score
+							}
+						}
+					}
 				}
 			}
-			// If there is no explicit Cypher property/index mapping (property key is empty),
-			// fall through to managed named embeddings (any key) before chunk fallback.
-			if math.IsInf(bestScore, -1) && spec.Property == "" {
-				for _, vecID := range named {
+
+			if math.IsInf(bestScore, -1) && spec.Property != "" {
+				if props := s.nodePropVector[nodeID]; props != nil {
+					if vecID, ok := props[spec.Property]; ok {
+						if v, ok := s.getVectorForCypher(vecID); ok {
+							bestScore = prepared.score(v)
+						}
+					}
+				}
+			}
+
+			if math.IsInf(bestScore, -1) {
+				for _, vecID := range s.nodeChunkVectors[nodeID] {
 					if v, ok := s.getVectorForCypher(vecID); ok {
 						score := prepared.score(v)
 						if score > bestScore {
@@ -594,35 +664,37 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 					}
 				}
 			}
-		}
 
-		if math.IsInf(bestScore, -1) && spec.Property != "" {
-			if props := s.nodePropVector[nodeID]; props != nil {
-				if vecID, ok := props[spec.Property]; ok {
-					if v, ok := s.getVectorForCypher(vecID); ok {
-						bestScore = prepared.score(v)
-					}
-				}
+			if !math.IsInf(bestScore, -1) {
+				scored = append(scored, scoredNode{id: nodeID, score: bestScore})
 			}
 		}
 
-		if math.IsInf(bestScore, -1) {
-			for _, vecID := range s.nodeChunkVectors[nodeID] {
-				if v, ok := s.getVectorForCypher(vecID); ok {
-					score := prepared.score(v)
-					if score > bestScore {
-						bestScore = score
-					}
-				}
-			}
-		}
-
-		if !math.IsInf(bestScore, -1) {
-			scored = append(scored, scoredNode{id: nodeID, score: bestScore})
-		}
+		return scored, nil
+	}
+	scored, err := scoreAll()
+	if err != nil {
+		return nil, err
 	}
 
 	sort.Slice(scored, func(i, j int) bool { return scored[i].score > scored[j].score })
+	if opts != nil && opts.Where != nil {
+		admitted := scored[:0]
+		for _, candidate := range scored {
+			if len(admitted) == spec.Limit {
+				break
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			node, err := s.getNodeWithoutEmbeddings(storage.NodeID(candidate.id))
+			if err != nil || !opts.Where(node) {
+				continue
+			}
+			admitted = append(admitted, candidate)
+		}
+		scored = admitted
+	}
 	if len(scored) > spec.Limit {
 		scored = scored[:spec.Limit]
 	}
@@ -643,6 +715,8 @@ type cypherVectorQuery struct {
 	query      []float32
 	cosine     vector.Neo4jCosineQuery
 	valid      bool
+	// scale is the scale score reports on; the zero value is Neo4j's.
+	scale VectorScoreScale
 }
 
 func newCypherVectorQuery(similarity string, query []float32) cypherVectorQuery {
@@ -653,17 +727,23 @@ func newCypherVectorQuery(similarity string, query []float32) cypherVectorQuery 
 	return prepared
 }
 
-// score is candidate's score on Neo4j's scale (see VectorQueryNodes); a
-// candidate that isn't a valid vector for the similarity scores -Inf, no hit.
+// score is candidate's score on q.scale (see VectorScoreScale); a candidate
+// that isn't a valid vector for the similarity scores -Inf, no hit.
 func (q cypherVectorQuery) score(candidate []float32) float64 {
 	var score float64
 	ok := q.valid
 	switch {
 	case !ok:
+	case q.similarity == "euclidean" && q.scale == VectorScoreSimilarity:
+		ok = len(candidate) == len(q.query)
+		score = vector.EuclideanSimilarity(q.query, candidate)
 	case q.similarity == "euclidean":
 		score, ok = vector.Neo4jEuclideanSimilarity(q.query, candidate)
 	case q.similarity == "dot":
 		return float64(vector.DotProduct(q.query, candidate))
+	case q.scale == VectorScoreSimilarity:
+		ok = len(candidate) == len(q.query)
+		score = vector.CosineSimilarity(q.query, candidate)
 	default:
 		score, ok = q.cosine.Similarity(candidate)
 	}

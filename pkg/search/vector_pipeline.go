@@ -249,8 +249,7 @@ func (h *HNSWCandidateGen) searchCandidatesWithExhaustion(ctx context.Context, q
 
 func (h *HNSWCandidateGen) searchCandidatesWithLexicalEntries(ctx context.Context, query []float32, k int, minSimilarity float64, entryIDs []string) ([]Candidate, bool, error) {
 	candidateLimit := boundCandidateLimit(k)
-	config := h.hnswIndex.Config()
-	searchBeam := hnswSearchBeam(candidateLimit, config.EfSearch, config.SearchBeamFactor)
+	searchBeam := h.searchBeam(ctx, candidateLimit)
 
 	// Ask HNSW to retain the whole beam. Selecting only k vectors inside the
 	// graph traversal clamps recall to ef == k even when traversal was wider.
@@ -286,6 +285,18 @@ func (h *HNSWCandidateGen) searchCandidatesWithLexicalEntries(ctx context.Contex
 	}
 
 	return candidates, exhausted, nil
+}
+
+// searchBeam is the HNSW beam width (ef) for a request for candidateLimit
+// candidates: the request's own ef (SearchOptions.HNSWEf) when it has one,
+// widened only to hold the candidates asked for; otherwise the configured
+// EfSearch or candidateLimit times the beam factor, whichever is larger.
+func (h *HNSWCandidateGen) searchBeam(ctx context.Context, candidateLimit int) int {
+	if ef := hnswEfFromContext(ctx); ef > 0 {
+		return max(ef, candidateLimit)
+	}
+	config := h.hnswIndex.Config()
+	return hnswSearchBeam(candidateLimit, config.EfSearch, config.SearchBeamFactor)
 }
 
 func hnswSearchBeam(resultLimit, configuredEf, factor int) int {
