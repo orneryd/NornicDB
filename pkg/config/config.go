@@ -770,8 +770,8 @@ type MemoryConfig struct {
 	TransactionMax int64
 	// TransactionTotalMax is Neo4j's dbms.memory.transaction.total.max: the
 	// estimated memory, in bytes, all transactions together may use
-	// (0 = unlimited). -1 (unset) is Neo4j's default, 70% of the Go memory
-	// limit (EffectiveTransactionTotalMax).
+	// (0 = unlimited). -1 (unset) is unlimited, not Neo4j's 70% of the heap
+	// (EffectiveTransactionTotalMax).
 	// Env: NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX (default: unset)
 	TransactionTotalMax int64
 	// GCPercent controls GC aggressiveness (GOGC)
@@ -4443,23 +4443,21 @@ func ParseByteSize(raw string) (int64, error) {
 }
 
 // EffectiveTransactionTotalMax is dbms.memory.transaction.total.max in
-// bytes (0 = unlimited): the configured value, or, unset, Neo4j's default
-// of 70% of the memory limit - the Go runtime's (memory.runtime_limit,
-// NORNICDB_MEMORY_LIMIT or GOMEMLIMIT), unlimited when it has none.
+// bytes (0 = unlimited): the configured value, or, unset, unlimited.
+//
+// Deviation from Neo4j (#1343): Neo4j defaults the global pool to 70% of
+// the heap. NornicDB's estimates still count some shared values once per
+// row that references them (a CALL subquery's outer row per inner row), so
+// on real statements the counted use can exceed the memory actually held
+// many times over: a 70% default rejected statements that used a fraction
+// of the memory limit. Until the accounting is shown to track real use, the
+// pool is unlimited unless dbms.memory.transaction.total.max (or
+// NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX) is set.
 func (c *MemoryConfig) EffectiveTransactionTotalMax() int64 {
 	if c.TransactionTotalMax >= 0 {
 		return c.TransactionTotalMax
 	}
-	limit := c.RuntimeLimit
-	if limit <= 0 {
-		if current := debug.SetMemoryLimit(-1); current > 0 && current < math.MaxInt64 {
-			limit = current
-		}
-	}
-	if limit <= 0 {
-		return 0
-	}
-	return limit / 10 * 7
+	return 0
 }
 
 // FormatMemorySize formats bytes as human-readable string.

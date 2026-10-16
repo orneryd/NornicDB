@@ -14,17 +14,21 @@ the queries that go over fail cleanly, and the client can retry them later.
 |---|---|---|---|---|
 | `db.memory.transaction.max` | One transaction of a database | `0` (unlimited) | yes | `NORNICDB_MEMORY_TRANSACTION_MAX`, YAML `memory.transaction_max`, or the database's config override |
 | `db.memory.transaction.total.max` | All transactions of one database together | `0` (unlimited) | yes | The database's config override |
-| `dbms.memory.transaction.total.max` | All transactions of the process together | 70% of the memory limit; unlimited without one | no (restart) | `NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX`, YAML `memory.transaction_total_max` |
+| `dbms.memory.transaction.total.max` | All transactions of the process together | `0` (unlimited) | no (restart) | `NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX`, YAML `memory.transaction_total_max` |
 
 - **Units:** bytes. Use a `k`, `m`, `g` or `t` suffix for kibibytes,
   mebibytes, gibibytes or tebibytes: `512m`, `2g`. `0` means unlimited.
-- **The global pool's default** follows Neo4j, which defaults it to 70% of
-  the heap. NornicDB's equivalent of the heap is the Go memory limit:
-  `memory.runtime_limit` / `NORNICDB_MEMORY_LIMIT` (in MB), or `GOMEMLIMIT`.
-  Unset or `auto`, the server derives that limit from its container's
-  cgroup memory limit (see [The Go memory limit](#the-go-memory-limit)), so
-  in a container the pool defaults to 70% of 85% of the container's memory.
-  With no limit anywhere, the pool is unlimited.
+- **The global pool's default is unlimited.** This deviates from Neo4j,
+  which defaults it to 70% of the heap. NornicDB's estimates still count
+  some shared values once per row that references them (for example a
+  `CALL` subquery's outer row once per inner row), so on real statements the
+  counted use can be many times the memory actually held. With a 70%
+  default, statements that used a fraction of the memory limit were
+  rejected with `MemoryPoolOutOfMemoryError`. Until the accounting tracks
+  real use, set `dbms.memory.transaction.total.max` explicitly to enable
+  the pool. The Go memory limit (`memory.runtime_limit` /
+  `NORNICDB_MEMORY_LIMIT`, `GOMEMLIMIT`, or the cgroup-derived default; see
+  [The Go memory limit](#the-go-memory-limit)) no longer sets it.
 - **Dynamic settings** apply to the statements that start after the change,
   with no restart. Set a database's own values through the per-database
   config API (`PUT /admin/databases/<db>/config` with

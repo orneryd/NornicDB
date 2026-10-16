@@ -63,8 +63,9 @@ func TestResolveRuntimeLimit(t *testing.T) {
 		require.Equal(t, RuntimeLimitResolution{CgroupLimit: cgroup, Derived: true}, resolution)
 		require.Equal(t, derived, c.RuntimeLimit)
 		require.Less(t, c.RuntimeLimit, cgroup)
-		// dbms.memory.transaction.total.max follows: 70% of the limit.
-		require.Equal(t, derived/10*7, c.EffectiveTransactionTotalMax())
+		// dbms.memory.transaction.total.max does not follow it: unset, the
+		// pool is unlimited (#1343).
+		require.Zero(t, c.EffectiveTransactionTotalMax())
 	})
 	t.Run("unset is auto", func(t *testing.T) {
 		c := &MemoryConfig{}
@@ -76,7 +77,7 @@ func TestResolveRuntimeLimit(t *testing.T) {
 		resolution := c.resolveRuntimeLimit(cgroup, 0)
 		require.Equal(t, RuntimeLimitResolution{CgroupLimit: cgroup, Clamped: true, Configured: 7 * gib}, resolution)
 		require.Equal(t, derived, c.RuntimeLimit)
-		require.Equal(t, derived/10*7, c.EffectiveTransactionTotalMax())
+		require.Zero(t, c.EffectiveTransactionTotalMax())
 	})
 	t.Run("an explicit limit within the cgroup stands", func(t *testing.T) {
 		c := &MemoryConfig{RuntimeLimitStr: "4096", RuntimeLimit: 4 * gib}
