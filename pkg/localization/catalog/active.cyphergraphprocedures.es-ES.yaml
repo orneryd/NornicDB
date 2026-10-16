@@ -184,9 +184,6 @@
 - id: cyphergraphprocedures.invalid_list_types
   description: Mensaje de GDS (invalid list types).
   other: 'Tipos no válidos en la lista. Se esperaban Longs o Nodes, pero se encontró {{.Types}}'
-- id: cyphergraphprocedures.unsafe_double_conversion
-  description: Un Long supera el límite de importación de Double.
-  other: 'No se puede convertir de forma segura {{.Value}} en un valor double'
 - id: cyphergraphprocedures.project_distinct
   description: DISTINCT en la función de proyección.
   other: "Uso no válido de DISTINCT con la función 'project'"

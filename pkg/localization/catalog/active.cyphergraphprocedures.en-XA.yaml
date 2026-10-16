@@ -184,9 +184,6 @@
 - id: cyphergraphprocedures.invalid_list_types
   description: Expanded pseudo-locale invalid list types.
   other: '[!! Invalid types in list. Expected Longs or Nodes but found {{.Types}} !!]'
-- id: cyphergraphprocedures.unsafe_double_conversion
-  description: Expanded pseudo-locale Long to Double import bound.
-  other: '[!! Cannot safely convert {{.Value}} into an double value !!]'
 - id: cyphergraphprocedures.project_distinct
   description: Expanded pseudo-locale projection DISTINCT error.
   other: "[!! Invalid use of DISTINCT with function 'project' !!]"
