@@ -308,10 +308,7 @@ func caseOperandExpectedBefore(s string, i int) bool {
 }
 
 func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
-	j := i - 1
-	for j >= 0 && isASCIISpace(s[j]) {
-		j--
-	}
+	j := queryGapStart(s, i) - 1
 	if j < 0 {
 		return true
 	}
@@ -336,7 +333,7 @@ func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
 	for start > 0 && isIdentByte(s[start-1]) {
 		start--
 	}
-	if start > 0 && (s[start-1] == '.' || s[start-1] == '$' || s[start-1] == ':') {
+	if !functionNameStartsAt(s, start) || start > 0 && (s[start-1] == '$' || s[start-1] == ':') {
 		return false // a property, parameter or label completes an operand
 	}
 	switch word := lowerASCII(s[start : j+1]); word {
@@ -406,10 +403,7 @@ func caseTypeParameterCloses(s string, j int) bool {
 
 // casePreviousWordIn reports whether the word before s[i] is one of words.
 func casePreviousWordIn(s string, i int, words ...string) bool {
-	j := i - 1
-	for j >= 0 && isASCIISpace(s[j]) {
-		j--
-	}
+	j := queryGapStart(s, i) - 1
 	end := j + 1
 	for j >= 0 && isIdentByte(s[j]) {
 		j--
@@ -498,10 +492,7 @@ func caseNestedLacksEnd(s string, i int, balancePrefix bool) bool {
 }
 
 func casePreviousWordIsCase(s string, i int) bool {
-	j := i - 1
-	for j >= 0 && isASCIISpace(s[j]) {
-		j--
-	}
+	j := queryGapStart(s, i) - 1
 	return j >= 3 && matchKeywordAt(s, j-3, "CASE")
 }
 
