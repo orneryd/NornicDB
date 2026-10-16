@@ -1,0 +1,139 @@
+# Vector ANN benchmark: NornicDB vs Qdrant
+
+This benchmark compares NornicDB's vector search with Qdrant's on recall and speed, across every mode each engine supports. Like the Northwind benchmark, it runs one engine and mode at a time, each on a fresh data directory, and writes Markdown reports.
+
+- **Corpus:** real documentation and code from the git repositories you choose. Each file is cut into chunks and embedded once; the embeddings are cached and reused on later runs.
+- **Queries:** 1,000 chunks are held out of the corpus as queries.
+- **Ground truth:** the exact nearest neighbours of each query, computed by brute force.
+- **Same client for both engines:** NornicDB and Qdrant are driven through the same Qdrant gRPC calls (`Upsert`, `Search`).
+- **Where the engines run:** NornicDB is built from this checkout and Qdrant runs as its native release binary. The benchmark **never uses a NornicDB you have installed**.
+- **Modes without an equivalent:** a mode with no equivalent on one engine is reported `N/A` for that engine.
+
+## Run it
+
+You need:
+- Go;
+- Python 3.10 or newer;
+- AWS credentials that can call Bedrock's `amazon.titan-embed-text-v2:0`, for embedding the corpus. Only the first run embeds; later runs reuse the cache.
+
+```sh
+cd /path/to/NornicDB
+
+# 1. Which repositories make up the corpus (colon-separated git checkouts).
+#    Without this, the corpus is this repository alone.
+export VECTOR_CORPUS_ROOTS="$PWD:$HOME/src/other-repo:$HOME/src/another-repo"
+
+# 2. AWS credentials for Titan V2 on Bedrock (first run only).
+export AWS_PROFILE=my-profile AWS_REGION=us-east-1
+
+# 3. Run everything: it builds NornicDB, downloads Qdrant (pinned, checksum
+#    verified), builds the corpus if missing, runs every mode on both engines
+#    and writes the reports.
+./scripts/benchmark_vector_vs_qdrant.sh
+```
+
+A full run takes about an hour on an M4 Pro, and most of that is building indexes. The reports go to `testing/benchmarks/vector_ann/reports/<timestamp>/`:
+
+| File | Contents |
+|---|---|
+| `comparison.md` | NornicDB vs Qdrant per mode (recall@10, p50/p95 latency, QPS), the `hnsw_ef` sweeps side by side, and load time, index time, disk and memory |
+| `nornicdb.md`, `qdrant.md` | every run of each engine in detail |
+| `<engine>-<mode>.json` | raw results; `<engine>-<mode>.log` is the server log |
+| `environment.json`, `corpus.json` | versions, settings, machine, corpus |
+
+### Common variations
+
+```sh
+# Only some modes or one engine
+VECTOR_MODES=hnsw-fast,hnsw-balanced ./scripts/benchmark_vector_vs_qdrant.sh
+VECTOR_ENGINES=nornicdb ./scripts/benchmark_vector_vs_qdrant.sh
+
+# Leave NornicDB's GPU paths on (Metal on macOS); by default the benchmark compares CPU with CPU
+NORNIC_GPU=1 ./scripts/benchmark_vector_vs_qdrant.sh
+
+# A smaller or larger corpus (chunks sampled with a fixed seed; 0 = every chunk)
+VECTOR_CORPUS_MAX_CHUNKS=20000 VECTOR_CORPUS_DIR=bench-data/vector_ann/corpus-20k ./scripts/benchmark_vector_vs_qdrant.sh
+```
+
+### Running the steps yourself
+
+The script runs three Python programs, which you can also run directly. For example, to try a NornicDB setting on one mode without a full sweep:
+
+```sh
+PY=bench-data/vector_ann/venv/bin/python   # created by the script on its first run
+
+# Build (or extend) the corpus.
+$PY testing/benchmarks/vector_ann/corpus.py --roots "$VECTOR_CORPUS_ROOTS" --out bench-data/vector_ann/corpus
+
+# One mode, NornicDB only, with extra NornicDB settings, tagged as a variant.
+$PY testing/benchmarks/vector_ann/run.py --corpus bench-data/vector_ann/corpus \
+  --out testing/benchmarks/vector_ann/reports/my-try --data-root bench-data/vector_ann/data \
+  --nornic-bin bench-data/vector_ann/nornicdb --qdrant-bin bench-data/vector_ann/qdrant-v1.19.2/qdrant \
+  --engines nornicdb --modes ivf-pq --tag rerank100 --nornic-env NORNICDB_VECTOR_IVFPQ_RERANK_TOPK=100
+
+# Reports for a results directory.
+$PY testing/benchmarks/vector_ann/report.py --results testing/benchmarks/vector_ann/reports/my-try --corpus bench-data/vector_ann/corpus
+```
+
+## Modes
+
+| Mode | NornicDB | Qdrant |
+|---|---|---|
+| `exact` | CPU brute force (`NORNICDB_VECTOR_CPU_BRUTE_MAX_N`) | `exact=true` |
+| `hnsw-fast` | `NORNICDB_VECTOR_ANN_QUALITY=fast` (M 16, efConstruction 100, efSearch 50) | HNSW m 16, ef_construct 100 |
+| `hnsw-balanced` | `balanced` (16 / 200 / 100) | m 16, ef_construct 200 |
+| `hnsw-accurate` | `accurate` (32 / 400 / 200) | m 32, ef_construct 400 |
+| `ivf-hnsw` | k-means routing (`NORNICDB_KMEANS_CLUSTERING_ENABLED`); restarts after loading, since clustering runs while the index warms up | N/A |
+| `ivf-pq` | `compressed` (IVF-PQ) | N/A |
+| `sq-int8` | N/A | HNSW + scalar int8 quantization, rescored |
+| `pq-x16` | N/A | HNSW + product quantization x16, rescored |
+| `bq` | N/A | HNSW + binary quantization, rescored, 2× oversampling |
+
+The HNSW modes also sweep `hnsw_ef` (16, 32, 64, 128, 256, 512), the same Search parameter on both engines. Without `hnsw_ef`, each engine uses its own default: NornicDB uses the preset's `efSearch`.
+
+## What is measured, and how
+
+- **Recall@1 and recall@10:** each Search's results compared with the exact top-K by cosine.
+- **Latency:** one client, 1,000 queries after 100 warm-up queries; mean, p50, p95 and p99.
+- **Throughput:** queries per second with 8 concurrent clients.
+- **Load:** time to upsert the corpus in batches of 500 over gRPC.
+- **Index ready:**
+  - NornicDB: until its search index reports ready and the first Search has answered.
+  - Qdrant: until the collection is green with every vector indexed. `indexing_threshold` is set so every segment gets its HNSW index rather than a plain brute-force one.
+- **Disk:** allocated blocks under the data directory. Both engines preallocate sparse files, so apparent file sizes would overstate it.
+- **Memory:** the server's RSS. On macOS, RSS keeps memory Go has already handed back to the OS until the OS needs it, so it overstates NornicDB's resident memory. The physical footprint (`footprint <pid>`) is the fairer number.
+- **Strategy:**
+  - NornicDB: the strategy it reports in its `Vector search strategy:` log line.
+  - Qdrant: its collection configuration.
+
+## Settings
+
+All settings are environment variables read by `scripts/benchmark_vector_vs_qdrant.sh`. The script's header documents each one.
+
+| Variable | Default | |
+|---|---|---|
+| `VECTOR_CORPUS_ROOTS` | this repository | colon-separated git repositories to chunk |
+| `VECTOR_CORPUS_DIR` | `bench-data/vector_ann/corpus` | corpus location; rebuilt only when `meta.json` is missing |
+| `VECTOR_CORPUS_MAX_CHUNKS` | 100000 | chunk sample size (0 = all) |
+| `VECTOR_QUERIES` | 1000 | held-out queries |
+| `VECTOR_K` | 10 | recall@K and Search limit |
+| `VECTOR_WARMUP` | 100 | unrecorded warm-up queries |
+| `VECTOR_CONCURRENCY` | 8 | clients for the throughput measurement |
+| `VECTOR_EF_SWEEP` | 16,32,64,128,256,512 | `hnsw_ef` values on HNSW modes |
+| `VECTOR_MODES`, `VECTOR_ENGINES` | all | subsets to run |
+| `NORNIC_GPU` | 0 | 1 leaves NornicDB's GPU brute force and GPU HNSW build on |
+| `QDRANT_VERSION`, `QDRANT_SHA256` | v1.19.2 | pinned Qdrant release |
+
+Ports are fixed and away from NornicDB's and Qdrant's defaults: NornicDB uses HTTP 18474, Bolt 18687, gRPC 16334 and telemetry 19190; Qdrant uses HTTP 17333 and gRPC 17334. `run.py --help` lists the flags to change them.
+
+## Files
+
+| File | Role |
+|---|---|
+| `corpus.py` | chunks the repositories, embeds them (cached by chunk content in `embeddings-<model>.sqlite`), holds out queries and computes the exact top-100 |
+| `run.py` | starts each engine and mode in turn, loads the corpus and measures it; `MODES` defines the modes |
+| `report.py` | renders the reports from a results directory |
+| `requirements.txt` | Python dependencies, installed into `bench-data/vector_ann/venv` by the script |
+| `../../../scripts/benchmark_vector_vs_qdrant.sh` | builds, fetches, runs and reports |
+
+`bench-data/` is git-ignored: it holds the corpus, the embedding cache, the binaries and the per-run data directories.
