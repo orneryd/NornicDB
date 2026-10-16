@@ -127,6 +127,9 @@
 - id: cyphergraphprocedures.node_not_node_or_integer
   description: Expanded pseudo-locale node not node or integer.
   other: '[!! The node has to be either a NODE or an INTEGER, but got {{.Type}} !!]'
+- id: cyphergraphprocedures.node_id_negative
+  description: Expanded pseudo-locale node id negative.
+  other: '[!! GDS expects node ids to be positive. But got a negative id of `{{.ID}}`. !!]'
 - id: cyphergraphprocedures.config_key_missing_pair
   description: Expanded pseudo-locale config key missing pair.
   other: '[!! The configuration key ''{{.Missing}}'' is missing, but ''{{.Provided}}'' is provided. If you really meant to only provide `{{.Provided}}` with no value for `{{.Missing}}`, you can set `{{.Missing}}` to `NULL`. !!]'

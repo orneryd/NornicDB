@@ -105,7 +105,8 @@ func TestGDSLouvainNumericalReferenceProjections(t *testing.T) {
 			require.Len(t, result.Rows, tc.N)
 			actual, expected := make([]int, tc.N), make([]int, tc.N)
 			for _, row := range result.Rows {
-				node, ok := logical[row[0].(string)]
+				// Stored nodes' ids are strings; aggregation INTEGER ids stay INTEGERs.
+				node, ok := logical[fmt.Sprint(row[0])]
 				require.True(t, ok)
 				actual[node] = int(row[1].(int64))
 			}

@@ -26,7 +26,7 @@ func TestGDSLouvainSingleTypeStreamAllocationBound(t *testing.T) {
 				for i := 0; i < size; i++ {
 					p.NodeIDs = append(p.NodeIDs, fmt.Sprintf("n%06d", i))
 				}
-				p.indexNodes()
+				p.indexNodes(true)
 				weight := map[string]float64{"w": 1}
 				for i := 0; i < size; i++ {
 					for j := 1; j <= degree; j++ {

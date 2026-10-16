@@ -212,7 +212,7 @@ func (e *StorageExecutor) callGdsLouvainStream(args []interface{}) (*ExecuteResu
 			}
 			levels = list
 		}
-		rows = append(rows, []interface{}{id, communityID(last, final[i]), levels})
+		rows = append(rows, []interface{}{projection.nodeIDValue(id), communityID(last, final[i]), levels})
 	}
 	if consecutive && minSize > 1 {
 		// Number only surviving rows, through the same owner that numbers

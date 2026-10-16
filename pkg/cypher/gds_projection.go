@@ -44,6 +44,7 @@ type GraphProjection struct {
 	Configuration            map[string]interface{} // as gds.graph.list reports it
 	schema                   map[string]interface{} // GDS's schema, with each relationship type's direction
 	nodeIndex                map[string]int
+	integerNodeIDs           map[string]bool // nodes an aggregation row supplied as INTEGER ids
 
 	relationshipTypeOrder []string // constituent graph order, separate from sorted catalog display
 	relationshipTypeIndex map[string]int
@@ -526,7 +527,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 		return nil, localizedError(localization.CypherGraphProceduresNodeLabelsNotFound(strings.Join(requested, ", ")), nil)
 	}
 	// Node IDs in order, so the same graph gives the same rows (#1183).
-	projection.indexNodes()
+	projection.indexNodes(true)
 
 	typesSeen := make(map[string]bool)
 	relPropertySeen := make(map[string]bool)

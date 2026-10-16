@@ -127,6 +127,9 @@
 - id: cyphergraphprocedures.node_not_node_or_integer
   description: GDS's message for a projected node that is neither a node nor an INTEGER. Type untranslated.
   other: 'The node has to be either a NODE or an INTEGER, but got {{.Type}}'
+- id: cyphergraphprocedures.node_id_negative
+  description: GDS's message for a negative INTEGER node id in an aggregation projection. ID untranslated.
+  other: 'GDS expects node ids to be positive. But got a negative id of `{{.ID}}`.'
 - id: cyphergraphprocedures.config_key_missing_pair
   description: GDS's message for a source or target setting given without its pair. Missing, Provided untranslated.
   other: 'The configuration key ''{{.Missing}}'' is missing, but ''{{.Provided}}'' is provided. If you really meant to only provide `{{.Provided}}` with no value for `{{.Missing}}`, you can set `{{.Missing}}` to `NULL`.'
