@@ -117,7 +117,7 @@ func TestGPUManagerChangeRetiresConcurrentFactory(t *testing.T) {
 	}
 	require.NoError(t, factoryErr)
 	svc.pipelineMu.RLock()
-	cached := svc.vectorPipeline
+	cached := cachedVectorPipeline(svc)
 	svc.pipelineMu.RUnlock()
 	assert.Nil(t, cached, "an old-token factory must not survive the setter's final cache barrier")
 }
@@ -211,7 +211,7 @@ func TestGPUManagerChangeSerializesCompletedTransition(t *testing.T) {
 	}
 	assert.Greater(t, svc.hnswGeneration.Load(), generation)
 	svc.pipelineMu.RLock()
-	cached := svc.vectorPipeline
+	cached := cachedVectorPipeline(svc)
 	svc.pipelineMu.RUnlock()
 	assert.Nil(t, cached, "the setter must retire a wrapper published before its field replacement")
 	svc.hnswMu.RLock()
@@ -262,7 +262,7 @@ func TestGPUManagerDisablePreservesCappedCurrentResultsWithoutHardware(t *testin
 			assert.Same(t, manager, currentManager)
 			assert.Nil(t, currentIndex)
 			svc.pipelineMu.RLock()
-			cached := svc.vectorPipeline
+			cached := cachedVectorPipeline(svc)
 			svc.pipelineMu.RUnlock()
 			assert.Nil(t, cached)
 			replacement := &storage.Node{ID: "nornic:item", ChunkEmbeddings: [][]float32{{0, 1, 0}}}

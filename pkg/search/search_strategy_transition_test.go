@@ -84,7 +84,7 @@ func TestSwitchBruteStrategyFromGPUToCPUWithoutHardware(t *testing.T) {
 	require.Nil(t, svc.hnswIndex)
 
 	svc.pipelineMu.RLock()
-	pipeline := svc.vectorPipeline
+	pipeline := cachedVectorPipeline(svc)
 	svc.pipelineMu.RUnlock()
 	require.IsType(t, &BruteForceCandidateGen{}, pipeline.candidateGen)
 	require.IsType(t, &CPUExactScorer{}, pipeline.exactScorer)

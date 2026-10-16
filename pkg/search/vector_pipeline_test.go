@@ -279,7 +279,13 @@ func TestVectorSearchCandidates_AutoStrategyDefaultsToHNSW(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(candidates), 1)
 	requireHNSWReady(t, svc)
-	_, ok := svc.vectorPipeline.candidateGen.(*HNSWCandidateGen)
+	// Installing the graph invalidated the exact-fallback pipeline; the next
+	// query caches one over the graph.
+	_, err = svc.VectorSearchCandidates(context.Background(), query, opts)
+	require.NoError(t, err)
+	pipeline := cachedVectorPipeline(svc)
+	require.NotNil(t, pipeline)
+	_, ok := pipeline.candidateGen.(*HNSWCandidateGen)
 	require.True(t, ok)
 }
 
@@ -303,7 +309,7 @@ func TestVectorSearchCandidates_CPUBruteForceThresholdOptIn(t *testing.T) {
 	candidates, err := svc.VectorSearchCandidates(context.Background(), query, opts)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(candidates), 1)
-	_, ok := svc.vectorPipeline.candidateGen.(*BruteForceCandidateGen)
+	_, ok := cachedVectorPipeline(svc).candidateGen.(*BruteForceCandidateGen)
 	require.True(t, ok)
 }
 

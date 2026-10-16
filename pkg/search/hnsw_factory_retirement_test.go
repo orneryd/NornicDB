@@ -95,7 +95,7 @@ func TestVectorFactorySnapshotRetiredByReset(t *testing.T) {
 					t.Fatal("factory waited for reset's mutation boundary")
 				}
 				svc.pipelineMu.RLock()
-				cached := svc.vectorPipeline
+				cached := cachedVectorPipeline(svc)
 				svc.pipelineMu.RUnlock()
 				releaseIndex()
 				select {
@@ -109,7 +109,7 @@ func TestVectorFactorySnapshotRetiredByReset(t *testing.T) {
 				_, readyHNSW := answer.pipeline.candidateGen.(*HNSWCandidateGen)
 				require.False(t, readyHNSW, "paused construction returned a retired ready graph")
 				svc.pipelineMu.RLock()
-				cached = svc.vectorPipeline
+				cached = cachedVectorPipeline(svc)
 				svc.pipelineMu.RUnlock()
 				require.Nil(t, cached)
 				svc.ClearVectorIndex()
@@ -142,7 +142,7 @@ func TestVectorFactoryDoesNotCacheChangingSources(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, p)
 				svc.pipelineMu.RLock()
-				cached := svc.vectorPipeline
+				cached := cachedVectorPipeline(svc)
 				svc.pipelineMu.RUnlock()
 				require.Nil(t, cached, "factory cached a source while base vectors were changing")
 				_, readyHNSW := p.candidateGen.(*HNSWCandidateGen)

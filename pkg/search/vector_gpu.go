@@ -18,7 +18,7 @@ func (s *Service) SetGPUManager(manager *gpu.Manager) {
 	s.mu.Lock()
 	retired := s.gpuEmbeddingIndex
 	s.gpuManager = manager
-	s.gpuEmbeddingIndex = nil
+	s.setGPUEmbeddingIndexLocked(nil)
 	vi, vfs := s.vectorIndex, s.vectorFileStore
 	s.mu.Unlock()
 
@@ -98,7 +98,7 @@ func (s *Service) ensureGPUIndexSynced(vi *VectorIndex, vfs *VectorFileStore) er
 		return err
 	}
 	s.mu.Lock()
-	s.gpuEmbeddingIndex = index
+	s.setGPUEmbeddingIndexLocked(index)
 	s.mu.Unlock()
 	published = true
 	return nil

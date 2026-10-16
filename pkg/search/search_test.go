@@ -500,7 +500,7 @@ func TestSearchWarmupVectorPipelineBranches(t *testing.T) {
 	var nilCtx context.Context
 	svc.warmupVectorPipeline(nilCtx)
 	svc.pipelineMu.RLock()
-	require.Nil(t, svc.vectorPipeline)
+	require.Nil(t, cachedVectorPipeline(svc))
 	svc.pipelineMu.RUnlock()
 
 	_, err := engine.CreateNode(&storage.Node{
@@ -515,7 +515,7 @@ func TestSearchWarmupVectorPipelineBranches(t *testing.T) {
 	// Embeddings present: warmup builds a ready pipeline.
 	svc.warmupVectorPipeline(context.Background())
 	svc.pipelineMu.RLock()
-	require.NotNil(t, svc.vectorPipeline)
+	require.NotNil(t, cachedVectorPipeline(svc))
 	svc.pipelineMu.RUnlock()
 }
 
@@ -2787,7 +2787,7 @@ func TestSearchHelpers_SetGPUManager_NonGPUBranches(t *testing.T) {
 	// Nil manager clears pipeline and keeps GPU index nil.
 	svc.SetGPUManager(nil)
 	svc.pipelineMu.RLock()
-	require.Nil(t, svc.vectorPipeline)
+	require.Nil(t, cachedVectorPipeline(svc))
 	svc.pipelineMu.RUnlock()
 	require.Nil(t, svc.gpuEmbeddingIndex)
 
@@ -2945,7 +2945,7 @@ func TestSearchHelpers_MaybeRebuildHNSW_RebuildAndCancelBranches(t *testing.T) {
 	require.NotSame(t, old, rebuilt)
 	require.Equal(t, 3, rebuilt.Size())
 	svc.pipelineMu.RLock()
-	require.Nil(t, svc.vectorPipeline)
+	require.Nil(t, cachedVectorPipeline(svc))
 	svc.pipelineMu.RUnlock()
 
 	// Recreate a tombstoned index and cancel rebuild mid-flight.

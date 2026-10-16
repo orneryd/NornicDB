@@ -50,7 +50,7 @@ func TestVectorSourceMigrationRetiresCachedMemoryPipeline(t *testing.T) {
 			// the empty pipeline, since configured dimensions are fixed.
 			_, err := svc.getOrCreateVectorPipeline(context.Background())
 			require.NoError(t, err)
-			require.NotNil(t, svc.vectorPipeline)
+			require.NotNil(t, cachedVectorPipeline(svc))
 			svc.SetVectorIndexPath(filepath.Join(t.TempDir(), "vectors"))
 			svc.SetPersistenceEnabled(true)
 			sourceRetirementNode(t, svc, "after", []float32{1, 1, 0})

@@ -94,3 +94,11 @@ func TestLifecycleWorkerRegistryPauseAndResume(t *testing.T) {
 	require.True(t, ok)
 	again()
 }
+
+// cachedVectorPipeline reads the published query pipeline under its lock;
+// background builds publish and clear it concurrently.
+func cachedVectorPipeline(svc *Service) *VectorSearchPipeline {
+	svc.pipelineMu.Lock()
+	defer svc.pipelineMu.Unlock()
+	return svc.vectorPipeline
+}

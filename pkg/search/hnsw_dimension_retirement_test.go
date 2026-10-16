@@ -63,7 +63,7 @@ func TestVectorDimensionReplacementRetiresConcurrentFactory(t *testing.T) {
 				t.Fatal("dimension replacement did not finish")
 			}
 			svc.pipelineMu.RLock()
-			cached := svc.vectorPipeline
+			cached := cachedVectorPipeline(svc)
 			svc.pipelineMu.RUnlock()
 			assert.Nil(t, cached, "dimension replacement retained a pipeline admitted before backend retirement")
 			// The stale HNSW pipeline rejects this valid new-dimension query

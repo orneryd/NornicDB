@@ -86,18 +86,31 @@ func writeMsgpackSnapshots(dir string, snapshots map[string]any) error {
 // directory rename operations. This is intended for multipart snapshot sets
 // (e.g. codebooks + postings + metadata) that must move together.
 func writeMsgpackSnapshotsAtomic(dir string, snapshots map[string]any) error {
+	tmpDir, err := stageMsgpackSnapshots(dir, snapshots)
+	if err != nil {
+		return err
+	}
+	return publishStagedSnapshots(tmpDir, dir)
+}
+
+// stageMsgpackSnapshots writes snapshots into a private directory beside dir.
+// The caller publishes it with publishStagedSnapshots or removes it.
+func stageMsgpackSnapshots(dir string, snapshots map[string]any) (string, error) {
 	parent := filepath.Dir(dir)
 	if err := security.EnsureRootedParent(filepath.Join(parent, ".snapshot"), 0o755); err != nil {
-		return err
+		return "", err
 	}
 	tmpDir := filepath.Join(parent, fmt.Sprintf(".tmp-%d", time.Now().UnixNano()))
-	backupDir := filepath.Join(parent, fmt.Sprintf(".bak-%d", time.Now().UnixNano()))
-
 	if err := writeMsgpackSnapshots(tmpDir, snapshots); err != nil {
 		_ = security.RemoveAllRootedPath(tmpDir)
-		return err
+		return "", err
 	}
+	return tmpDir, nil
+}
 
+// publishStagedSnapshots atomically replaces dir with a staged directory.
+func publishStagedSnapshots(tmpDir, dir string) error {
+	backupDir := filepath.Join(filepath.Dir(dir), fmt.Sprintf(".bak-%d", time.Now().UnixNano()))
 	if _, err := security.RootedStat(dir); err == nil {
 		if err := security.RenameRootedFile(dir, backupDir); err != nil {
 			_ = security.RemoveAllRootedPath(tmpDir)

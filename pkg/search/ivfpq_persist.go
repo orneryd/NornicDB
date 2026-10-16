@@ -44,6 +44,13 @@ func saveIVFPQBundle(basePath string, idx *IVFPQIndex, overlay *annMutationOverl
 }
 
 func saveIVFPQBundleSnapshot(basePath string, idx *IVFPQIndex, mutations annMutationOverlaySnapshot) error {
+	return saveIVFPQBundleSnapshotIf(basePath, idx, mutations, nil)
+}
+
+// saveIVFPQBundleSnapshotIf stages the bundle, then publishes it through
+// publish (nil: unconditionally). publish runs the commit inside the caller's
+// retirement barrier and returns false to discard an obsolete bundle.
+func saveIVFPQBundleSnapshotIf(basePath string, idx *IVFPQIndex, mutations annMutationOverlaySnapshot, publish func(commit func() error) (bool, error)) error {
 	if basePath == "" || idx == nil {
 		return nil
 	}
@@ -51,14 +58,30 @@ func saveIVFPQBundleSnapshot(basePath string, idx *IVFPQIndex, mutations annMuta
 	if dir == "" {
 		return nil
 	}
-	return writeMsgpackSnapshotsAtomic(dir, map[string]any{
+	staged, err := stageMsgpackSnapshots(dir, map[string]any{
 		"meta":      ivfpqMetaSnapshot{FormatVersion: ivfpqBundleFormatVersion, Profile: idx.profile, BuiltAtUnixNano: idx.builtAtUnixNano},
 		"centroids": idx.centroids,
 		"codebooks": ivfpqCodebooksSnapshot{Codebooks: idx.codebooks},
 		"lists":     ivfpqListsSnapshot{Lists: idx.lists, Overflow: idx.overflow},
 		"mutations": mutations,
 	})
+	if err != nil {
+		return err
+	}
+	commit := func() error { return publishStagedSnapshots(staged, dir) }
+	if publish == nil {
+		return commit()
+	}
+	published, err := publish(commit)
+	if !published {
+		_ = security.RemoveAllRootedPath(staged)
+	}
+	return err
 }
+
+// ivfpqBeforePublishHook lets tests retire the source between staging and
+// publishing a compressed bundle.
+var ivfpqBeforePublishHook func()
 
 // LoadIVFPQBundle loads an IVFPQ multipart snapshot bundle.
 func LoadIVFPQBundle(basePath string) (*IVFPQIndex, error) {
@@ -145,7 +168,8 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 	s.indexMu.Lock()
 	s.ivfpqMu.RLock()
 	idx := s.ivfpqIndex
-	if s.ivfpqEpoch != s.vectorSourceEpoch.Load() {
+	epoch := s.vectorSourceEpoch.Load()
+	if s.ivfpqEpoch != epoch {
 		// Built for a retired source: saving it under the current store's
 		// version would let a later load reuse it for different vectors.
 		idx = nil
@@ -160,8 +184,22 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 	if idx == nil || idx.Count() == 0 {
 		return
 	}
-	if err := saveIVFPQBundleSnapshot(basePath, idx, mutations); err != nil {
+	// The owner publishes it only if its source is still current.
+	stale := false
+	err := saveIVFPQBundleSnapshotIf(basePath, idx, mutations, func(commit func() error) (bool, error) {
+		if hook := ivfpqBeforePublishHook; hook != nil {
+			hook()
+		}
+		published, err := s.publishPersistedArtifact(epoch, commit)
+		stale = !published
+		return published, err
+	})
+	if err != nil {
 		logSearchPrintf("⚠️ Background persist: failed to save IVFPQ bundle (%s): %v", basePath, err)
+		return
+	}
+	if stale {
+		logSearchPrintf("📇 Background persist: IVFPQ bundle discarded; its vector source was retired (%s)", basePath)
 		return
 	}
 	logSearchPrintf("📇 Background persist: IVFPQ bundle saved (%s, vectors=%d)", basePath, idx.Count())
@@ -206,8 +244,7 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 			return loaded, nil
 		}
 		s.ivfpqOverlay.restore(mutations)
-		s.ivfpqIndex = loaded
-		s.ivfpqEpoch = sourceEpoch
+		s.installIVFPQLocked(loaded, sourceEpoch)
 		return s.ivfpqIndex, nil
 	}
 
@@ -224,8 +261,7 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 	if !current() {
 		return built, nil
 	}
-	s.ivfpqIndex = built
-	s.ivfpqEpoch = sourceEpoch
+	s.installIVFPQLocked(built, sourceEpoch)
 	s.ivfpqOverlay.Reset()
 	return s.ivfpqIndex, nil
 }

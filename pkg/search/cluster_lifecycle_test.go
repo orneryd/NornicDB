@@ -41,7 +41,7 @@ func TestClusterReplacementRetiresClusteredDescriptors(t *testing.T) {
 	require.True(t, ok, "cluster routing selected: %T", pipeline.candidateGen)
 	require.Same(t, old, gen.clusterIndex)
 	svc.pipelineMu.RLock()
-	require.Same(t, pipeline, svc.vectorPipeline, "the descriptor is cached")
+	require.Same(t, pipeline, cachedVectorPipeline(svc), "the descriptor is cached")
 	svc.pipelineMu.RUnlock()
 	svc.clusterHNSWMu.Lock()
 	svc.clusterHNSW = map[int]*HNSWIndex{0: NewHNSWIndex(3, DefaultHNSWConfig())}
@@ -58,7 +58,7 @@ func TestClusterReplacementRetiresClusteredDescriptors(t *testing.T) {
 	require.NotSame(t, old, replacement)
 	require.NotEqual(t, oldGeneration, generation)
 	svc.pipelineMu.RLock()
-	cached := svc.vectorPipeline
+	cached := cachedVectorPipeline(svc)
 	svc.pipelineMu.RUnlock()
 	require.Nil(t, cached, "a descriptor routing through the retired cluster object stayed cached")
 	svc.clusterHNSWMu.RLock()

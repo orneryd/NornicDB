@@ -87,9 +87,7 @@ func (s *Service) retireVectorSourceLocked(keepGraph bool) {
 		s.invalidateHNSWLocked()
 	}
 	s.hnswMu.Unlock()
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
+	s.invalidateVectorPipeline()
 }
 
 // vectorMemoryFromFileStore transfers canonical normalized coordinates in

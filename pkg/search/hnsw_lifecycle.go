@@ -81,7 +81,7 @@ func validateHNSWVectorSource(vi *VectorIndex, vfs *VectorFileStore) error {
 // dimension change, strategy switch or index drop. Caller holds hnswMu.
 func (s *Service) invalidateHNSWLocked() {
 	s.retireVectorSnapshotLocked()
-	s.hnswIndex = nil
+	s.installHNSWLocked(nil)
 }
 
 // retireVectorSnapshotLocked retires captured sources without discarding a
@@ -309,11 +309,9 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 		quality, config.M, config.EfConstruction, config.EfSearch, built.Size(), built.TombstoneRatio(),
 		buildStats.Strategy, buildStats.Backend, buildStats.Batches, buildStats.KernelErrors, buildStats.Fallback, buildStats.Duration)
 
-	s.hnswIndex = built
+	s.installHNSWLocked(built)
 	s.hnswMu.Unlock()
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
+	s.invalidateVectorPipeline()
 
 	s.ensureHNSWMaintenance()
 	s.schedulePersist()
@@ -466,7 +464,7 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 	swapped := false
 	s.hnswMu.Lock()
 	if s.hnswIndex == old && ctx.Err() == nil {
-		s.hnswIndex = rebuilt
+		s.installHNSWLocked(rebuilt)
 		s.hnswLastRebuildUnix.Store(time.Now().Unix())
 		swapped = true
 	}
@@ -475,9 +473,7 @@ func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold,
 
 	if swapped {
 		// Invalidate pipeline after releasing hnswMu so lock order remains consistent.
-		s.pipelineMu.Lock()
-		s.vectorPipeline = nil
-		s.pipelineMu.Unlock()
+		s.invalidateVectorPipeline()
 	}
 
 	return nil

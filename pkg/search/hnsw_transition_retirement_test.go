@@ -83,7 +83,7 @@ func TestRuntimeStrategyTransitionDoesNotRepublishRetiredGraph(t *testing.T) {
 				installed := svc.hnswIndex
 				svc.hnswMu.RUnlock()
 				svc.pipelineMu.RLock()
-				pipeline := svc.vectorPipeline
+				pipeline := cachedVectorPipeline(svc)
 				svc.pipelineMu.RUnlock()
 				if installed != nil {
 					t.Error("transition republished a graph captured before retirement")
