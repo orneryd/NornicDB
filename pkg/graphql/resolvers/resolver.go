@@ -211,6 +211,12 @@ func (r *Resolver) readDatabase(ctx context.Context) (string, storage.Engine, er
 		denied := localization.DatabaseAccessDenied(database)
 		return "", nil, localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
 	}
+	// A composite's storage reads every constituent, which this one decision
+	// on the composite does not cover; the REST search and similarity routes
+	// refuse it the same way.
+	if r.dbManager.IsCompositeDatabase(database) {
+		return "", nil, fmt.Errorf("search on composite database '%s' is not supported; target a constituent database explicitly", database)
+	}
 	engine, err := r.dbManager.GetStorage(database)
 	if err != nil {
 		return "", nil, fmt.Errorf("database '%s' not found: %w", database, err)
