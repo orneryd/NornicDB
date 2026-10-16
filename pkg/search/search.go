@@ -3832,6 +3832,10 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	return s.runBasePopulationOperation(ctx, s.claimNodeAdmission(), true)
 }
 
+// baseSourceRestartHook lets tests observe the service once a rebuild has
+// replaced a vector store older than storage.
+var baseSourceRestartHook func()
+
 // runBasePopulationOperation owns the existing base lifetime and NODE phase.
 // Caller holds buildMu. Live first mutation stops at NODE completion.
 func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopulationAdmission, explicit bool) (resultErr error) {
@@ -4105,6 +4109,9 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 					_ = s.vectorFileStore.Close()
 					s.vectorFileStore = nil
 					s.mu.Unlock()
+					if hook := baseSourceRestartHook; hook != nil {
+						hook()
+					}
 				}
 			}
 		}
