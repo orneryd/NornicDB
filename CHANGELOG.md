@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Correct path-carrier regression fixtures to cover typed paths and ordinary boolean-marker maps separately,
-  retaining public-query type-name and Cypher 25 rendering controls.
+  retaining public-query type-name and Cypher 25 rendering controls. Make the total-count recovery fixture
+  enable WAL explicitly and verify its durable ACK record independently of test order.
 
 - Preserve a transitive order for mixed native and remote graph values, and use entity identity consistently for
   snapshot equality and grouping. Keep ordinary maps with `_pathResult` keys classified as maps (#1325).
