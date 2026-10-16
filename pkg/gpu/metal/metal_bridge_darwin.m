@@ -922,16 +922,19 @@ void metal_get_device_capabilities(void* device, MetalDeviceCapabilities* caps) 
 
 // Matrix multiplication using MPS (optimized for Apple Silicon)
 // Computes: C = alpha * A * B + beta * C
-int metal_mps_matrix_multiply(
+// mps_matrix_multiply computes C (m x n) = alpha * A (m x k) * B + beta * C,
+// where B is k x n, or n x k used transposed when transpose_b is set.
+static int mps_matrix_multiply(
     void* device,
     void* a_buf,
     void* b_buf,
     void* c_buf,
-    unsigned int m,      // rows of A and C
-    unsigned int n,      // cols of B and C
-    unsigned int k,      // cols of A, rows of B
+    unsigned int m,
+    unsigned int n,
+    unsigned int k,
     float alpha,
-    float beta)
+    float beta,
+    BOOL transpose_b)
 {
     if (!device || !a_buf || !b_buf || !c_buf) {
         set_error(nil, "Invalid parameters for MPS matrix multiply");
@@ -944,36 +947,34 @@ int metal_mps_matrix_multiply(
         id<MTLBuffer> bufB = (__bridge id<MTLBuffer>)b_buf;
         id<MTLBuffer> bufC = (__bridge id<MTLBuffer>)c_buf;
         
-        // Create MPS matrix descriptors
         MPSMatrixDescriptor* descA = [MPSMatrixDescriptor matrixDescriptorWithRows:m
                                                                            columns:k
                                                                           rowBytes:k * sizeof(float)
                                                                           dataType:MPSDataTypeFloat32];
-        MPSMatrixDescriptor* descB = [MPSMatrixDescriptor matrixDescriptorWithRows:k
-                                                                           columns:n
-                                                                          rowBytes:n * sizeof(float)
+        unsigned int bRows = transpose_b ? n : k;
+        unsigned int bCols = transpose_b ? k : n;
+        MPSMatrixDescriptor* descB = [MPSMatrixDescriptor matrixDescriptorWithRows:bRows
+                                                                           columns:bCols
+                                                                          rowBytes:bCols * sizeof(float)
                                                                           dataType:MPSDataTypeFloat32];
         MPSMatrixDescriptor* descC = [MPSMatrixDescriptor matrixDescriptorWithRows:m
                                                                            columns:n
                                                                           rowBytes:n * sizeof(float)
                                                                           dataType:MPSDataTypeFloat32];
         
-        // Create MPS matrices
         MPSMatrix* matA = [[MPSMatrix alloc] initWithBuffer:bufA descriptor:descA];
         MPSMatrix* matB = [[MPSMatrix alloc] initWithBuffer:bufB descriptor:descB];
         MPSMatrix* matC = [[MPSMatrix alloc] initWithBuffer:bufC descriptor:descC];
         
-        // Create matrix multiplication kernel
         MPSMatrixMultiplication* matMul = [[MPSMatrixMultiplication alloc] initWithDevice:ctx->device
                                                                             transposeLeft:NO
-                                                                           transposeRight:NO
+                                                                           transposeRight:transpose_b
                                                                                resultRows:m
                                                                             resultColumns:n
                                                                           interiorColumns:k
                                                                                     alpha:alpha
                                                                                      beta:beta];
         
-        // Execute
         id<MTLCommandBuffer> cmdBuf = [ctx->commandQueue commandBuffer];
         [matMul encodeToCommandBuffer:cmdBuf leftMatrix:matA rightMatrix:matB resultMatrix:matC];
         [cmdBuf commit];
@@ -986,6 +987,34 @@ int metal_mps_matrix_multiply(
         
         return 0;
     }
+}
+
+int metal_mps_matrix_multiply(
+    void* device,
+    void* a_buf,
+    void* b_buf,
+    void* c_buf,
+    unsigned int m,      // rows of A and C
+    unsigned int n,      // cols of B and C
+    unsigned int k,      // cols of A, rows of B
+    float alpha,
+    float beta)
+{
+    return mps_matrix_multiply(device, a_buf, b_buf, c_buf, m, n, k, alpha, beta, NO);
+}
+
+// Computes C (m x n) = A (m x k) * B^T, B stored as n x k: every row of A
+// dotted with every row of B.
+int metal_mps_matrix_multiply_bt(
+    void* device,
+    void* a_buf,
+    void* b_buf,
+    void* c_buf,
+    unsigned int m,
+    unsigned int n,
+    unsigned int k)
+{
+    return mps_matrix_multiply(device, a_buf, b_buf, c_buf, m, n, k, 1.0f, 0.0f, YES);
 }
 
 // Matrix-vector multiplication using MPS

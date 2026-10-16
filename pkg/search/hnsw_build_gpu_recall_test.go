@@ -50,6 +50,38 @@ func (a exactGraphBuildAccelerator) CandidateSearchGraph(ctx context.Context, qu
 	return candidateSearchGraphBatched(ctx, a, queries, graph, topK)
 }
 
+// exactResidentBuildAccelerator is the resident build path
+// (HNSWResidentBuildAccelerator) with the inserted vectors held in host memory
+// and scored exactly, so the build's use of it is tested on any platform.
+type exactResidentBuildAccelerator struct {
+	exactGraphBuildAccelerator
+	inserted [][]float32
+	appended []int // vectors per AppendInserted call
+}
+
+func (*exactResidentBuildAccelerator) ResidentReady() bool { return true }
+
+func (a *exactResidentBuildAccelerator) AppendInserted(vecs [][]float32) error {
+	a.inserted = append(a.inserted, vecs...)
+	a.appended = append(a.appended, len(vecs))
+	return nil
+}
+
+func (a *exactResidentBuildAccelerator) CandidateSearchInserted(ctx context.Context, queries [][]float32, topK int) ([][]uint32, [][]float32, error) {
+	normalized := make([][]float32, len(queries))
+	for i, q := range queries {
+		normalized[i] = vector.Normalize(q)
+	}
+	idx, dist, err := a.candidateSearch(ctx, normalized, a.inserted, topK, true)
+	out := make([][]uint32, len(idx))
+	for qi, row := range idx {
+		for _, i := range row {
+			out[qi] = append(out[qi], uint32(i))
+		}
+	}
+	return out, dist, err
+}
+
 func clusteredUnitVectors(rng *rand.Rand, n, dims, clusters int) [][]float32 {
 	centers := make([][]float32, clusters)
 	for i := range centers {
@@ -152,6 +184,44 @@ func TestHNSWGraphAcceleratedBuildRecallMatchesCPU(t *testing.T) {
 	require.GreaterOrEqual(t, parallelRecall, cpuRecall-0.03)
 }
 
+// A device holding the inserted vectors gives each vector its exact nearest
+// inserted vectors as level-0 candidates; the index matches the one-at-a-time
+// build's recall, and the build appends each batch once, in internal-ID order.
+func TestHNSWResidentAcceleratedBuildRecallMatchesCPU(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds two 20k-vector indexes")
+	}
+	rng := rand.New(rand.NewSource(7))
+	const dims = 64
+	data := clusteredUnitVectors(rng, 20000, dims, 200)
+	queries := clusteredUnitVectors(rng, 100, dims, 200)
+	pairs := make([]hnswBuildPair, len(data))
+	for i, v := range data {
+		pairs[i] = hnswBuildPair{id: fmt.Sprintf("v%d", i), vec: v}
+	}
+	config := DefaultHNSWConfig()
+	cpu, _, err := buildHNSWSequential(dims, config, pairs)
+	require.NoError(t, err)
+
+	config.UseGPUBuild = true
+	accel := &exactResidentBuildAccelerator{}
+	resident, stats, err := buildHNSWWithOptionalGPU(context.Background(), dims, config, nil, len(pairs), hnswPairSliceIterator(pairs), accel)
+	require.NoError(t, err)
+	require.False(t, stats.Fallback)
+	require.Len(t, accel.inserted, len(data))
+	require.Len(t, accel.appended, stats.Batches, "one append per batch")
+	for i := range data {
+		id, ok := resident.internalID(fmt.Sprintf("v%d", i))
+		require.True(t, ok)
+		require.InDeltaSlice(t, data[i], accel.inserted[id], 1e-5, "resident vector %d is internal ID %d's", i, id)
+	}
+
+	cpuRecall := hnswRecallAt10(t, cpu, data, queries, 64)
+	residentRecall := hnswRecallAt10(t, resident, data, queries, 64)
+	t.Logf("recall@10 at ef=64: one-at-a-time %.3f, resident exact candidates %.3f", cpuRecall, residentRecall)
+	require.GreaterOrEqual(t, residentRecall, cpuRecall-0.03)
+}
+
 // With BM25 lexical hints, each GPU build query also starts from inserted
 // vectors sharing a signature band with it; the index still matches the CPU
 // build's recall.
@@ -214,4 +284,74 @@ func TestOrderLexicalTies(t *testing.T) {
 	dists := []float32{0.1, 0.2, 0.2, 0.2, 0.3}
 	orderLexicalTies(0b1111, candidates, dists, func(id uint32) uint64 { return signatures[id] })
 	require.Equal(t, []uint32{4, 1, 0, 2, 3}, candidates, "0.2 ties: 1 (1 bit off), 0 (4 bits), 2 (no signature)")
+}
+
+// On a Metal device, the resident search returns each query's exact nearest
+// inserted vectors, also after the build outgrows the room Prepare reserved.
+func TestMetalResidentCandidateSearchIsExact(t *testing.T) {
+	accel, err := NewMetalHNSWBuildAccelerator()
+	if err != nil {
+		t.Skipf("Metal unavailable: %v", err)
+	}
+	defer accel.Close()
+	rng := rand.New(rand.NewSource(3))
+	const dims = 32
+	data := clusteredUnitVectors(rng, 3000, dims, 30)
+	queries := clusteredUnitVectors(rng, 50, dims, 30)
+	require.NoError(t, accel.Prepare(dims, 1000))
+	require.True(t, accel.ResidentReady())
+	for start := 0; start < len(data); start += 700 {
+		require.NoError(t, accel.AppendInserted(data[start:min(start+700, len(data))]))
+	}
+
+	got, dists, err := accel.CandidateSearchInserted(context.Background(), queries, 20)
+	require.NoError(t, err)
+	want, wantDists, err := exactGraphBuildAccelerator{}.candidateSearch(context.Background(), queries, data, 20, true)
+	require.NoError(t, err)
+	for qi := range queries {
+		require.Len(t, got[qi], 20)
+		for i := range got[qi] {
+			require.InDelta(t, wantDists[qi][i], dists[qi][i], 1e-4, "query %d rank %d", qi, i)
+			require.InDelta(t, wantDists[qi][i], 1-vector.DotProductSIMD(queries[qi], data[got[qi][i]]), 1e-4, "query %d rank %d: id %d (exact %d)", qi, i, got[qi][i], want[qi][i])
+		}
+	}
+}
+
+// A score row's top k come highest first, equal scores lower index first, as
+// distances 1-score; k beyond the row returns the whole row.
+func TestTopKScoreRow(t *testing.T) {
+	ids, dists := topKScoreRow([]float32{0.1, 0.9, 0.5, 0.9, -0.2, 0.7}, 4)
+	require.Equal(t, []uint32{1, 3, 5, 2}, ids)
+	require.InDeltaSlice(t, []float32{0.1, 0.1, 0.3, 0.5}, dists, 1e-6)
+	ids, _ = topKScoreRow([]float32{0.2, 0.4}, 5)
+	require.Equal(t, []uint32{1, 0}, ids)
+}
+
+// Metal's frontier search (the graph search's and the batch self-scoring's
+// kernel) returns each query's exact nearest frontier vectors, also across
+// frontier shards.
+func TestMetalCandidateSearchIsExact(t *testing.T) {
+	accel, err := NewMetalHNSWBuildAccelerator()
+	if err != nil {
+		t.Skipf("Metal unavailable: %v", err)
+	}
+	defer accel.Close()
+	accel.maxFrontierPerShard = 700
+	rng := rand.New(rand.NewSource(5))
+	const dims = 32
+	frontier := clusteredUnitVectors(rng, 2500, dims, 25)
+	queries := clusteredUnitVectors(rng, 40, dims, 25)
+	require.NoError(t, accel.Prepare(dims, 0))
+
+	got, dists, err := accel.CandidateSearch(context.Background(), queries, frontier, 30)
+	require.NoError(t, err)
+	_, wantDists, err := exactGraphBuildAccelerator{}.candidateSearch(context.Background(), queries, frontier, 30, true)
+	require.NoError(t, err)
+	for qi := range queries {
+		require.Len(t, got[qi], 30)
+		require.InDeltaSlice(t, wantDists[qi], dists[qi], 1e-4, "query %d", qi)
+		for i, id := range got[qi] {
+			require.InDelta(t, dists[qi][i], 1-vector.DotProductSIMD(queries[qi], frontier[id]), 1e-4)
+		}
+	}
 }
