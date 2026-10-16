@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
+	"github.com/orneryd/nornicdb/pkg/gpu"
 )
 
 type queryTextContextKey struct{}
@@ -107,9 +108,19 @@ func topNTokenWeights(weights map[string]float64, n int) map[string]float64 {
 }
 
 func (s *Service) selectHybridClusters(ctx context.Context, query []float32, defaultN int) []int {
-	s.mu.RLock()
-	clusterIndex := s.clusterIndex
-	s.mu.RUnlock()
+	clusterIndex, _ := s.clusterState()
+	return s.selectHybridClustersFor(ctx, clusterIndex, query, defaultN)
+}
+
+// hybridClusterSelector binds selection to the cluster object a generator
+// captured, so selected cluster IDs index that object's membership.
+func (s *Service) hybridClusterSelector(clusterIndex *gpu.ClusterIndex) func(context.Context, []float32, int) []int {
+	return func(ctx context.Context, query []float32, defaultN int) []int {
+		return s.selectHybridClustersFor(ctx, clusterIndex, query, defaultN)
+	}
+}
+
+func (s *Service) selectHybridClustersFor(ctx context.Context, clusterIndex *gpu.ClusterIndex, query []float32, defaultN int) []int {
 	if clusterIndex == nil || !clusterIndex.IsClustered() {
 		return nil
 	}

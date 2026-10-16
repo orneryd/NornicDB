@@ -74,6 +74,12 @@ func (s *Service) ownBaseBuildContext(ctx context.Context) (context.Context, fun
 // retires that graph too. Every case cancels captured construction and retires
 // wrappers/scorers before crossing the final pipeline publication boundary.
 func (s *Service) retireVectorSourceLocked(keepGraph bool) {
+	if !keepGraph {
+		// Destruction also retires derived compressed indexes. They are not
+		// cleared here: a builder may hold ivfpqMu for a long time, so reuse
+		// and publication check this epoch instead.
+		s.vectorSourceEpoch.Add(1)
+	}
 	s.hnswMu.Lock()
 	if keepGraph {
 		s.retireVectorSnapshotLocked()

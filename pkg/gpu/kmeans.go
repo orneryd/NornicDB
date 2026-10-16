@@ -43,6 +43,9 @@ var (
 	ErrNotClustered     = errors.New("gpu: clustering not yet performed")
 	ErrTooFewEmbeddings = errors.New("gpu: too few embeddings for requested clusters")
 	ErrInvalidK         = errors.New("gpu: invalid number of clusters")
+	// ErrClusteringSuperseded reports that Clear retired the population a
+	// clustering run copied; its result describes vectors that no longer exist.
+	ErrClusteringSuperseded = errors.New("gpu: clustering superseded by clear")
 )
 
 // KMeansConfig configures k-means clustering behavior.
@@ -169,11 +172,19 @@ type ClusterIndex struct {
 
 	clusterMu sync.RWMutex // Separate mutex for cluster operations
 
+	// epoch advances on Clear (under clusterMu). A clustering run publishes
+	// only into the population it copied.
+	epoch uint64
+
 	// Optional preferred seed embedding indices for k-means++ first centroid selection.
 	// When set, ClusterWithContext uses one of these as the first centroid, then
 	// proceeds with standard k-means++ distance-weighted selection.
 	preferredSeedIndices []int
 }
+
+// beforeClusterPublish lets tests mutate the index between the unlocked
+// k-means iteration and publication. Nil outside tests.
+var beforeClusterPublish func(*ClusterIndex)
 
 // nodeUpdate tracks pending node reassignments for Tier 2 updates.
 type nodeUpdate struct {
@@ -301,6 +312,8 @@ func (ci *ClusterIndex) ClusterWithContext(ctx context.Context) error {
 	// Search needs ci.mu.RLock() in GetClusterMemberIDs, so we must not hold ci.mu.
 	vectorsCopy := make([]float32, len(ci.cpuVectors))
 	copy(vectorsCopy, ci.cpuVectors)
+	idsCopy := append([]string(nil), ci.nodeIDs...)
+	epoch := ci.epoch
 	initMethod := ci.config.InitMethod
 	maxIter := ci.config.MaxIterations
 	preferredSeeds := append([]int(nil), ci.preferredSeedIndices...)
@@ -348,29 +361,36 @@ func (ci *ClusterIndex) ClusterWithContext(ctx context.Context) error {
 		}
 	}
 
-	clusterMap := buildClusterMapFromAssignments(assignments)
-
+	if beforeClusterPublish != nil {
+		beforeClusterPublish(ci)
+	}
 	// Brief lock to publish new cluster state (order: clusterMu then mu).
-	// If the index grew during clustering, extend assignments and clusterMap for new embeddings.
 	ci.clusterMu.Lock()
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
 	defer ci.clusterMu.Unlock()
-	nowN := len(ci.nodeIDs)
-	if nowN > n {
-		// Extend assignments for new indices and add them to clusterMap
-		extended := make([]int, nowN)
-		copy(extended, assignments)
-		for i := n; i < nowN; i++ {
-			embStart := i * dims
-			if embStart+dims <= len(ci.cpuVectors) {
-				extended[i] = nearestCentroidFromList(ci.cpuVectors[embStart:embStart+dims], centroids)
-				cid := extended[i]
-				clusterMap[cid] = append(clusterMap[cid], i)
-			}
-		}
-		assignments = extended
+	if ci.epoch != epoch {
+		return ErrClusteringSuperseded
 	}
+	// Removal swap-moves vectors between slots, so slot numbers from the copy
+	// do not identify current vectors. Map the result by node ID; vectors
+	// added during the run take their nearest new centroid.
+	if nowN := len(ci.nodeIDs); nowN != n || !sameNodeIDs(ci.nodeIDs, idsCopy) {
+		byID := make(map[string]int, n)
+		for i, id := range idsCopy {
+			byID[id] = assignments[i]
+		}
+		current := make([]int, nowN)
+		for i, id := range ci.nodeIDs {
+			cid, ok := byID[id]
+			if !ok {
+				cid = nearestCentroidFromList(ci.cpuVectors[i*dims:(i+1)*dims], centroids)
+			}
+			current[i] = cid
+		}
+		assignments = current
+	}
+	clusterMap := buildClusterMapFromAssignments(assignments)
 	ci.centroids = centroids
 	ci.assignments = assignments
 	ci.clusterMap = clusterMap
@@ -850,6 +870,7 @@ func (ci *ClusterIndex) Clear() {
 
 	// Clear the embedded EmbeddingIndex
 	ci.EmbeddingIndex.Clear()
+	ci.epoch++
 
 	// Reset cluster state
 	ci.centroids = nil
@@ -1283,6 +1304,56 @@ func (ci *ClusterIndex) removeFromClusterMap(cluster, embIdx int) {
 			return
 		}
 	}
+}
+
+func sameNodeIDs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Remove deletes an embedding and keeps cluster membership consistent with
+// the slot that EmbeddingIndex.Remove swap-moves into the removed position.
+func (ci *ClusterIndex) Remove(nodeID string) bool {
+	ci.clusterMu.Lock()
+	defer ci.clusterMu.Unlock()
+	ci.mu.RLock()
+	idx, exists := ci.idToIndex[nodeID]
+	last := len(ci.nodeIDs) - 1
+	ci.mu.RUnlock()
+	if !exists || !ci.EmbeddingIndex.Remove(nodeID) {
+		return false
+	}
+	if idx >= len(ci.assignments) {
+		return true
+	}
+	ci.removeFromClusterMap(ci.assignments[idx], idx)
+	if idx != last {
+		var moved int
+		if last < len(ci.assignments) {
+			moved = ci.assignments[last]
+			ci.removeFromClusterMap(moved, last)
+		} else {
+			// The moved vector arrived after clustering and had no slot.
+			ci.mu.RLock()
+			moved = ci.findNearestCentroidLocked(ci.cpuVectors[idx*ci.dimensions : (idx+1)*ci.dimensions])
+			ci.mu.RUnlock()
+		}
+		ci.assignments[idx] = moved
+		if moved >= 0 {
+			ci.addToClusterMap(moved, idx)
+		}
+	}
+	if last < len(ci.assignments) {
+		ci.assignments = ci.assignments[:last]
+	}
+	return true
 }
 
 // addToClusterMap adds an embedding index to a cluster's member list.

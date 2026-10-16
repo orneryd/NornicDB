@@ -145,6 +145,11 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 	s.indexMu.Lock()
 	s.ivfpqMu.RLock()
 	idx := s.ivfpqIndex
+	if s.ivfpqEpoch != s.vectorSourceEpoch.Load() {
+		// Built for a retired source: saving it under the current store's
+		// version would let a later load reuse it for different vectors.
+		idx = nil
+	}
 	mutations := s.ivfpqOverlay.snapshot()
 	s.ivfpqMu.RUnlock()
 	s.mu.RLock()
@@ -162,12 +167,16 @@ func (s *Service) persistIVFPQBackground(vectorPath, hnswPath string) {
 	logSearchPrintf("📇 Background persist: IVFPQ bundle saved (%s, vectors=%d)", basePath, idx.Count())
 }
 
-func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile, vfs *VectorFileStore) (*IVFPQIndex, error) {
+// getOrBuildIVFPQIndex returns the compressed index for vfs. sourceEpoch is
+// the vectorSourceEpoch the caller observed before reading vfs: an index is
+// reused only within its own epoch, and one loaded or built for a source that
+// has since been retired is returned to this caller but never published.
+func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile, vfs *VectorFileStore, sourceEpoch uint64) (*IVFPQIndex, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	s.ivfpqMu.RLock()
-	if s.ivfpqIndex != nil && s.ivfpqIndex.compatibleProfile(profile) {
+	if s.ivfpqIndex != nil && s.ivfpqEpoch == sourceEpoch && s.ivfpqIndex.compatibleProfile(profile) {
 		idx := s.ivfpqIndex
 		s.ivfpqMu.RUnlock()
 		return idx, nil
@@ -176,9 +185,10 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 
 	s.ivfpqMu.Lock()
 	defer s.ivfpqMu.Unlock()
-	if s.ivfpqIndex != nil && s.ivfpqIndex.compatibleProfile(profile) {
+	if s.ivfpqIndex != nil && s.ivfpqEpoch == sourceEpoch && s.ivfpqIndex.compatibleProfile(profile) {
 		return s.ivfpqIndex, nil
 	}
+	current := func() bool { return s.vectorSourceEpoch.Load() == sourceEpoch }
 
 	s.mu.RLock()
 	vectorPath := s.vectorIndexPath
@@ -192,8 +202,12 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 		// Query-only knobs do not require rebuilding the compressed codes.
 		loaded.profile.NProbe = profile.NProbe
 		loaded.profile.RerankTopK = profile.RerankTopK
+		if !current() {
+			return loaded, nil
+		}
 		s.ivfpqOverlay.restore(mutations)
 		s.ivfpqIndex = loaded
+		s.ivfpqEpoch = sourceEpoch
 		return s.ivfpqIndex, nil
 	}
 
@@ -207,7 +221,11 @@ func (s *Service) getOrBuildIVFPQIndex(ctx context.Context, profile IVFPQProfile
 	}
 	logSearchPrintf("[IVFPQ] ✅ built | vectors=%d sample=%d lists=%d avg_list=%.1f max_list=%d bytes_per_vector=%.2f duration=%v",
 		stats.VectorCount, stats.TrainingSampleCount, stats.ListCount, stats.AvgListSize, stats.MaxListSize, stats.BytesPerVector, stats.BuildDuration)
+	if !current() {
+		return built, nil
+	}
 	s.ivfpqIndex = built
+	s.ivfpqEpoch = sourceEpoch
 	s.ivfpqOverlay.Reset()
 	return s.ivfpqIndex, nil
 }
