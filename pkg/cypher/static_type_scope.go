@@ -408,6 +408,9 @@ func commonStaticOperand(left, right staticOperand) staticOperand {
 	common := staticOperand{
 		nonBoolean: left.nonBoolean && right.nonBoolean,
 		nonEntity:  left.nonEntity && right.nonEntity,
+		// A union in either alternative keeps only an operator category in
+		// kind, so the common operand can't claim that kind as known.
+		union: left.union || right.union,
 	}
 	if left.kind == right.kind {
 		common.kind = left.kind
