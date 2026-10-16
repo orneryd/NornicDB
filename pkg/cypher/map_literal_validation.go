@@ -203,20 +203,7 @@ func subqueryExpressionKeywordBeforeBrace(query string, start, end, braceIndex i
 // or closing brace; a clause requires a following body. Standalone ordering and
 // pagination also open valid expression subqueries and must reach normalization.
 func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
-	index := braceIndex + 1
-	for index < len(query) {
-		if isCypherWhitespace(query[index]) {
-			index++
-			continue
-		}
-		if query[index] == '/' {
-			if end := queryCommentEnd(query, index); end > index {
-				index = end
-				continue
-			}
-		}
-		break
-	}
+	index := queryGapEnd(query, braceIndex+1)
 	if index >= len(query) {
 		return false
 	}
