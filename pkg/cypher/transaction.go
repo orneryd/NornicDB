@@ -284,7 +284,7 @@ func (e *StorageExecutor) handleCommit() (*ExecuteResult, error) {
 	switch tx := e.txContext.tx.(type) {
 	case *storage.BadgerTransaction:
 		opCount = tx.OperationCount()
-		err = tx.Commit()
+		err = e.commitStorageTransaction(context.Background(), tx)
 	case *fabric.FabricTransaction:
 		err = tx.Commit(nil, nil)
 	default:
