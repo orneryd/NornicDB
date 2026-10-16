@@ -1398,6 +1398,8 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "nornicdbcli.serve.localization_init_failed", Constructor: "NornicDBCLILocalizationInitFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.serve.long", Constructor: "NornicDBCLIServeLong", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.serve.memory_limit", Constructor: "NornicDBCLIMemoryLimit", Fields: []string{"Value"}, PluralForms: []string{"other"}},
+	{ID: "nornicdbcli.serve.memory_limit_cgroup", Constructor: "NornicDBCLIMemoryLimitFromCgroup", Fields: []string{"Cgroup", "Percent", "Value"}, PluralForms: []string{"other"}},
+	{ID: "nornicdbcli.serve.memory_limit_clamped", Constructor: "NornicDBCLIMemoryLimitClamped", Fields: []string{"Cgroup", "Configured", "Value"}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.serve.memory_unlimited", Constructor: "NornicDBCLIMemoryUnlimited", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.serve.no_jwt", Constructor: "NornicDBCLINoJWT", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "nornicdbcli.serve.object_pooling", Constructor: "NornicDBCLIObjectPooling", Fields: []string{}, PluralForms: []string{"other"}},

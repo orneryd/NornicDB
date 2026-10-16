@@ -21,7 +21,10 @@ the queries that go over fail cleanly, and the client can retry them later.
 - **The global pool's default** follows Neo4j, which defaults it to 70% of
   the heap. NornicDB's equivalent of the heap is the Go memory limit:
   `memory.runtime_limit` / `NORNICDB_MEMORY_LIMIT` (in MB), or `GOMEMLIMIT`.
-  When none is set, the pool is unlimited.
+  Unset or `auto`, the server derives that limit from its container's
+  cgroup memory limit (see [The Go memory limit](#the-go-memory-limit)), so
+  in a container the pool defaults to 70% of 85% of the container's memory.
+  With no limit anywhere, the pool is unlimited.
 - **Dynamic settings** apply to the statements that start after the change,
   with no restart. Set a database's own values through the per-database
   config API (`PUT /admin/databases/<db>/config` with
@@ -144,3 +147,34 @@ keep running and keep their results. A pool limit makes the statement that
 would overflow the pool fail, whichever it is; small statements that fit
 keep succeeding. When the failed statement ends, its memory goes back to the
 pool at once.
+
+## The Go memory limit
+
+The server's soft memory limit (Go's `GOMEMLIMIT`) makes the garbage
+collector work harder as the process approaches it. It only protects the
+process while it sits below the hard limit the kernel enforces: a soft limit
+of 7 GiB in a 6 GiB container lets the heap grow until the process is
+OOM-killed.
+
+`nornicdb serve` therefore settles the limit against the container's cgroup
+memory limit at startup (cgroup v2 `memory.max`, cgroup v1
+`memory.limit_in_bytes`, the tightest of the process's cgroup and its
+ancestors):
+
+| `memory.runtime_limit` / `NORNICDB_MEMORY_LIMIT` / `--memory-limit` | In a container with a memory limit | Without one |
+|---|---|---|
+| unset or `auto` (default) | 85% of the container limit; a `GOMEMLIMIT` from the environment is used instead when it fits | `GOMEMLIMIT`, or unlimited |
+| a value in MB at or below the container limit | that value | that value |
+| a value in MB above the container limit | lowered to 85% of the container limit, with a startup warning | that value |
+| `0` | unlimited | unlimited |
+
+The startup banner shows the outcome, for example
+`Memory limit:    5.10 GB (85% of the container limit 6.00 GB)`, or the
+warning `Warning: memory limit 7.00 GB is above the container's memory limit
+6.00 GB and could not prevent an OOM kill; using 5.10 GB`.
+
+The 15% of headroom is for memory the Go limit doesn't cover but the
+container is charged for: cgo allocations (llama.cpp embedding models, GPU
+drivers), C thread stacks, kernel memory such as socket buffers, and the
+brief overshoot of the soft limit while a GC cycle catches up. A server that
+loads a large local model may need a lower explicit limit.
