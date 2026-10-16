@@ -1679,7 +1679,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		}
 		candidateHint := hint
 		for name := range row {
-			if name != nodePattern.variable && referencesVariable(whereClause, name) {
+			if name != nodePattern.variable && referencesVariableFor(ctx, whereClause, name) {
 				cacheKey = ""
 				candidateHint.earlyLimit = -1
 				break
@@ -1688,7 +1688,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		// A WHERE that reads the path is tested below, where the path is
 		// bound; the candidates are collected without it.
 		candidateWhere := materializedWhere
-		if pathVariable != "" && referencesVariable(whereClause, pathVariable) {
+		if pathVariable != "" && referencesVariableFor(ctx, whereClause, pathVariable) {
 			candidateWhere = ""
 			cacheKey = ""
 		}
