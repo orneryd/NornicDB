@@ -1821,7 +1821,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			}
 			var path interface{}
 			if pathVariable != "" {
-				path = e.pathToMap(PathResult{Nodes: []*storage.Node{node}})
+				path = e.pathToMapContext(ctx, PathResult{Nodes: []*storage.Node{node}})
 			}
 			if materializedWhere != "" {
 				if probe == nil {

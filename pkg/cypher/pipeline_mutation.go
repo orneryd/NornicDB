@@ -505,7 +505,7 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 			newRow[name] = edge
 		}
 		for name, path := range paths {
-			newRow[name] = e.pathToMap(path)
+			newRow[name] = e.pathToMapContext(ctx, path)
 		}
 	}
 	return newRow, nil
@@ -651,7 +651,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 							}
 							if nodePathVariable != "" {
 								path := PathResult{Nodes: []*storage.Node{node}}
-								expanded[nodePathVariable] = e.pathToMap(path)
+								expanded[nodePathVariable] = e.pathToMapContext(ctx, path)
 							}
 							matchedRows = append(matchedRows, expanded)
 						}
@@ -730,7 +730,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		if nodePathVariable != "" {
 			if node := nodeContext[nodePathBinding]; node != nil {
 				path := PathResult{Nodes: []*storage.Node{node}}
-				newRow[nodePathVariable] = e.pathToMap(path)
+				newRow[nodePathVariable] = e.pathToMapContext(ctx, path)
 			}
 		}
 		if relationshipPattern != nil {

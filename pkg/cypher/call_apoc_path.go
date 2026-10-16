@@ -704,7 +704,7 @@ func (e *StorageExecutor) callApocPathExpandConfig(ctx context.Context, args []i
 	if err != nil {
 		return nil, err
 	}
-	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMap(end.path())} }, "path")
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMapContext(ctx, end.path())} }, "path")
 }
 
 // callApocPathExpand implements apoc.path.expand(start, relationshipFilter,
@@ -725,7 +725,7 @@ func (e *StorageExecutor) callApocPathExpand(ctx context.Context, args []interfa
 	if err != nil {
 		return nil, err
 	}
-	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMap(end.path())} }, "path")
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMapContext(ctx, end.path())} }, "path")
 }
 
 // callApocPathSubgraphNodes implements apoc.path.subgraphNodes(start,
@@ -745,7 +745,7 @@ func (e *StorageExecutor) callApocPathSpanningTree(ctx context.Context, args []i
 	if err != nil {
 		return nil, err
 	}
-	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMap(end.path())} }, "path")
+	return e.apocPathRows(ctx, x, func(end *apocStep) []interface{} { return []interface{}{e.pathToMapContext(ctx, end.path())} }, "path")
 }
 
 // callApocPathSubgraphAll implements apoc.path.subgraphAll(start, config) ::

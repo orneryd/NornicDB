@@ -652,7 +652,7 @@ func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr strin
 	if leftExpr, rightExpr, operator, ok := splitRowArithmeticTier(expr, "+-"); ok && binaryOperands(leftExpr, rightExpr) {
 		left, right := operands(leftExpr, rightExpr)
 		if operator == '+' {
-			return result('+', left, right, e.add(left, right))
+			return result('+', left, right, e.addWithCancellation(left, right, contextPipelineProbe(ctx)))
 		}
 		return result('-', left, right, e.subtract(left, right))
 	}

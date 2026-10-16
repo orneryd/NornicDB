@@ -49,6 +49,7 @@ type cancellationWrapper struct {
 	target   string   // the probe form it forwards to
 	args     []ast.Expr
 	method   bool
+	context  bool // forwards context.Background() rather than a nil probe
 }
 
 func cancellationScope(fn *ast.FuncDecl) (ctxName, probeName string) {
@@ -172,6 +173,20 @@ func probeForm(name string) bool {
 	return strings.HasSuffix(name, "WithCancellation") || strings.HasSuffix(name, "Probed")
 }
 
+// backgroundArg is a context.Background() or context.TODO() argument.
+func backgroundArg(expr ast.Expr) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == "context" && (sel.Sel.Name == "Background" || sel.Sel.Name == "TODO")
+}
+
 func nilArg(expr ast.Expr) bool {
 	id, ok := expr.(*ast.Ident)
 	return ok && id.Name == "nil"
@@ -228,14 +243,19 @@ func loadCancellationSources(t *testing.T) (*token.FileSet, []cancellationSource
 // wrapperTemplate is how a wrapper forwards: its parameters, in order, plus a
 // nil probe at one position. Wrappers that forward anything else are not
 // rewritten automatically.
-func rewriteCall(fset *token.FileSet, src []byte, call *ast.CallExpr, wrapper cancellationWrapper, probe string) (string, bool) {
+func rewriteCall(fset *token.FileSet, src []byte, call *ast.CallExpr, wrapper cancellationWrapper, probe, ctxName string) (string, bool) {
 	text := func(node ast.Node) string {
 		return string(src[fset.Position(node.Pos()).Offset:fset.Position(node.End()).Offset])
 	}
 	var args []string
 	for index, arg := range wrapper.args {
 		switch {
-		case nilArg(arg):
+		case wrapper.context && backgroundArg(arg):
+			if ctxName == "" {
+				return "", false
+			}
+			args = append(args, ctxName)
+		case !wrapper.context && nilArg(arg):
 			args = append(args, probe)
 		default:
 			id, isIdent := arg.(*ast.Ident)
@@ -288,6 +308,8 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 	fset, files := loadCancellationSources(t)
 	// Pass 1: the wrappers, and how many methods share each method name.
 	wrappers := map[string]cancellationWrapper{} // function name, or "." + method name
+	methodWrappers := map[string]cancellationWrapper{} // "Type.method"
+	probeIndex := map[string]int{}            // probe form name -> index of its probe parameter
 	methodNames := map[string]int{}
 	for _, f := range files {
 		for _, decl := range f.file.Decls {
@@ -298,6 +320,21 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 			if fn.Recv != nil {
 				methodNames[fn.Name.Name]++
 			}
+			if probeForm(fn.Name.Name) && fn.Type.Params != nil {
+				index := 0
+				for _, field := range fn.Type.Params.List {
+					names := len(field.Names)
+					if names == 0 {
+						names = 1
+					}
+					if star, ok := field.Type.(*ast.StarExpr); ok {
+						if id, ok := star.X.(*ast.Ident); ok && id.Name == "pipelineCancellation" {
+							probeIndex[fn.Name.Name] = index
+						}
+					}
+					index += names
+				}
+			}
 			if fn.Body == nil {
 				continue
 			}
@@ -307,8 +344,14 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 					return true
 				}
 				name := callName(call)
-				if (name == fn.Name.Name+"WithCancellation" || name == fn.Name.Name+"Probed") && hasNilArg(call) {
-					wrapper := cancellationWrapper{target: name, args: call.Args, method: fn.Recv != nil}
+				background := false
+				if len(fn.Body.List) == 1 && name != "" && name != fn.Name.Name {
+					for _, arg := range call.Args {
+						background = background || backgroundArg(arg)
+					}
+				}
+				if (name == fn.Name.Name+"WithCancellation" || name == fn.Name.Name+"Probed") && hasNilArg(call) || background && node == cancellationForwardingCall(fn) {
+					wrapper := cancellationWrapper{target: name, args: call.Args, method: fn.Recv != nil, context: background}
 					for _, field := range fn.Type.Params.List {
 						if _, ok := field.Type.(*ast.Ellipsis); ok {
 							wrapper.variadic = true
@@ -322,6 +365,9 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 						key = "." + key
 					}
 					wrappers[key] = wrapper
+					if fn.Recv != nil {
+						methodWrappers[funcKey(fn)] = wrapper
+					}
 				}
 				return true
 			})
@@ -339,6 +385,7 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 			key := funcKey(fn)
 			ctxName, probeName := cancellationScope(fn)
 			scoped := ctxName != "" || probeName != ""
+			varTypes := cancellationVarTypes(fn)
 			selfKey := fn.Name.Name
 			if fn.Recv != nil {
 				selfKey = "." + selfKey
@@ -391,7 +438,7 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 				if !scoped || !callIsLocal(call, imports) {
 					return true
 				}
-				if probeForm(name) && hasNilArg(call) && !(name == fn.Name.Name+"WithCancellation" || name == fn.Name.Name+"Probed") {
+				if index, known := probeIndex[name]; known && index < len(call.Args) && nilArg(call.Args[index]) && !(name == fn.Name.Name+"WithCancellation" || name == fn.Name.Name+"Probed") {
 					counts["C"]++
 					findings = append(findings, cancellationFinding{rule: "C", key: key + " -> " + name + "(…, nil)", where: where})
 				}
@@ -400,12 +447,19 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 					wrapperKey = "." + name
 				}
 				wrapper, isWrapper := wrappers[wrapperKey]
-				if !isWrapper || wrapperKey == selfKey {
+				resolved := false
+				if sel, isSel := call.Fun.(*ast.SelectorExpr); isSel && isWrapper {
+					if recv, ok := sel.X.(*ast.Ident); ok && varTypes[recv.Name] != "" {
+						resolved = true
+						wrapper, isWrapper = methodWrappers[varTypes[recv.Name]+"."+name]
+					}
+				}
+				if !isWrapper || wrapperKey == selfKey && !resolved || resolved && varTypes[call.Fun.(*ast.SelectorExpr).X.(*ast.Ident).Name]+"."+name == key {
 					return true
 				}
 				counts["B"]++
 				finding := cancellationFinding{rule: "B", key: key + " -> " + name, where: where}
-				if wrapper.method && methodNames[name] > 1 {
+				if wrapper.method && methodNames[name] > 1 && !resolved {
 					finding.key += " (ambiguous method)"
 				} else if !inside(call) {
 					probe := probeName
@@ -415,7 +469,7 @@ func collectCancellationFindings(t *testing.T) ([]cancellationFinding, map[strin
 					if probe == "" {
 						probe = "contextPipelineProbe(" + ctxName + ")"
 					}
-					if text, ok := rewriteCall(fset, f.src, call, wrapper, probe); ok {
+					if text, ok := rewriteCall(fset, f.src, call, wrapper, probe, ctxName); ok {
 						end := fset.Position(call.End())
 						finding.rewrite = fmt.Sprintf("REWRITE %s %d %d %d %d %s", f.name, position.Line, position.Column, end.Line, end.Column, base64.StdEncoding.EncodeToString([]byte(text)))
 						emitted = append(emitted, call)
@@ -493,4 +547,85 @@ func TestCancellationOwnerStaticInventory(t *testing.T) {
 	if len(open) > 0 || len(stale) > 0 {
 		t.Fatalf("%d findings drop the statement deadline (convert them or allowlist with a reason; CANCELLATION_INVENTORY=1 lists them); %d stale allowlist entries: %v", len(open), len(stale), stale)
 	}
+}
+
+// cancellationVarTypes names the package type of the variables in fn whose
+// type is plain to read: its receiver, its parameters, `var x T` and
+// `x := T{…}` / `x := &T{…}`. A method call on one of them resolves to that
+// type's method; a call on anything else stays ambiguous.
+func cancellationVarTypes(fn *ast.FuncDecl) map[string]string {
+	types := map[string]string{}
+	typeName := func(expr ast.Expr) string {
+		if star, ok := expr.(*ast.StarExpr); ok {
+			expr = star.X
+		}
+		if index, ok := expr.(*ast.IndexExpr); ok {
+			expr = index.X
+		}
+		if id, ok := expr.(*ast.Ident); ok {
+			return id.Name
+		}
+		return ""
+	}
+	fields := func(list *ast.FieldList) {
+		if list == nil {
+			return
+		}
+		for _, field := range list.List {
+			for _, name := range field.Names {
+				if typ := typeName(field.Type); typ != "" {
+					types[name.Name] = typ
+				}
+			}
+		}
+	}
+	fields(fn.Recv)
+	fields(fn.Type.Params)
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.ValueSpec:
+			if typ := typeName(node.Type); typ != "" {
+				for _, name := range node.Names {
+					types[name.Name] = typ
+				}
+			}
+		case *ast.AssignStmt:
+			if len(node.Lhs) == 1 && len(node.Rhs) == 1 {
+				rhs := node.Rhs[0]
+				if unary, ok := rhs.(*ast.UnaryExpr); ok && unary.Op == token.AND {
+					rhs = unary.X
+				}
+				if lit, ok := rhs.(*ast.CompositeLit); ok {
+					if id, ok := node.Lhs[0].(*ast.Ident); ok {
+						if typ := typeName(lit.Type); typ != "" {
+							types[id.Name] = typ
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+	return types
+}
+
+// cancellationForwardingCall is the call a one-statement function forwards
+// to (`return f(…)` or `f(…)`), or nil.
+func cancellationForwardingCall(fn *ast.FuncDecl) ast.Node {
+	if fn.Body == nil || len(fn.Body.List) != 1 {
+		return nil
+	}
+	switch stmt := fn.Body.List[0].(type) {
+	case *ast.ReturnStmt:
+		if len(stmt.Results) == 1 {
+			if call, ok := stmt.Results[0].(*ast.CallExpr); ok {
+				return call
+			}
+		}
+	case *ast.ExprStmt:
+		if call, ok := stmt.X.(*ast.CallExpr); ok {
+			return call
+		}
+	}
+	return nil
 }

@@ -380,7 +380,7 @@ func (e *StorageExecutor) projectCreateReturn(ctx context.Context, out *createOu
 	}
 	row := e.mergeBindingRow(ctx, out.nodes, out.edges)
 	for name, path := range out.paths {
-		row[name] = e.pathToMap(path)
+		row[name] = e.pathToMapContext(ctx, path)
 	}
 	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, out.cypher[out.returnIdx:])
 	if err != nil {

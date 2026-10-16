@@ -99,7 +99,25 @@ func rowValueProgramFor(expr string) *rowValueProgram {
 // resolved (an expression this evaluator can't evaluate is not), and the
 // statement error.
 func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	return e.evaluateRowValueProbed(expr, values, nil)
+	return e.evaluateRowValueProbed(expr, values, rowValuesProbe(values))
+}
+
+// rowValuesProbe is the statement probe a row carries (rowStatementContextKey),
+// or nil: it never allocates, so the allocation-free row evaluator can borrow it.
+func rowValuesProbe(values map[string]interface{}) *pipelineCancellation {
+	if ctx := rowStatementContext(values); ctx != nil {
+		return contextPipelineProbe(ctx)
+	}
+	return nil
+}
+
+// rowValueTextProbed is evaluateRowValueText under probe: a compiled node
+// hands its text part on with the statement's budget.
+func (e *StorageExecutor) rowValueTextProbed(text string, values map[string]interface{}, probe *pipelineCancellation) (interface{}, bool, error) {
+	if probe == nil {
+		return e.evaluateRowValueText(text, values)
+	}
+	return e.evaluateRowValueTextWithCancellation(text, values, probe)
 }
 
 // evaluateRowValueProbed is evaluateRowValue under the statement's probe:
@@ -663,7 +681,7 @@ func (n *rowSubqueryNode) eval(e *StorageExecutor, values map[string]interface{}
 type rowTextNode struct{ text string }
 
 func (n *rowTextNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
-	return e.evaluateRowValueText(n.text, values)
+	return e.rowValueTextProbed(n.text, values, probe)
 }
 
 // rowBoundNode is values[text] when the row binds the text, else inner.
@@ -719,7 +737,7 @@ func (n *rowPropertyChainNode) eval(e *StorageExecutor, values map[string]interf
 	}
 	base, bound := values[n.variable]
 	if !bound {
-		return e.evaluateRowValueText(n.text, values)
+		return e.rowValueTextProbed(n.text, values, probe)
 	}
 	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), n.chain)
 	if !ok {
@@ -933,7 +951,7 @@ func (n *rowEndpointNode) eval(e *StorageExecutor, values map[string]interface{}
 	if value, handled, err := e.rowRelationshipEndpoint(n.function, n.variable, values); handled || err != nil {
 		return value, handled, err
 	}
-	return e.evaluateRowValueText(n.text, values)
+	return e.rowValueTextProbed(n.text, values, probe)
 }
 
 // rowUnaryFunctionNode is size / head / last / reverse / type of one

@@ -298,7 +298,7 @@ func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(ctx context.Context, 
 		err := e.matchQuantifiedPieces(ctx, m, 0, state, func(done quantifiedPathState) error {
 			bound := done.row
 			if m.pathVariable != "" {
-				bound[m.pathVariable] = e.pathToMap(PathResult{Nodes: done.nodes, Relationships: done.relationships, Length: len(done.relationships)})
+				bound[m.pathVariable] = e.pathToMapContext(ctx, PathResult{Nodes: done.nodes, Relationships: done.relationships, Length: len(done.relationships)})
 			}
 			for name := range bound {
 				if strings.HasPrefix(name, generatedVariablePrefix+"qpp") {

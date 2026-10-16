@@ -347,7 +347,7 @@ func pipelineMatchPartsFor(ctx context.Context, body string) pipelineMatchParts 
 // a MATCH clause's whole body.
 func pipelineMatchBodyPartCountFor(ctx context.Context, clause string) int {
 	return clauseAnalysisFor(ctx, clauseAnalysisMatchBodyPartCount, clause, func(clause string) int {
-		return len(splitTopLevelCommaWithCancellation(pipelineClauseBody(clause, "MATCH"), contextPipelineProbe(ctx)))
+		return len(splitTopLevelCommaWithCancellation(pipelineClauseBodyWithCancellation(clause, "MATCH", contextPipelineProbe(ctx)), contextPipelineProbe(ctx)))
 	})
 }
 

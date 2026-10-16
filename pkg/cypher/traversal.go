@@ -1685,10 +1685,15 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 		wg.Add(1)
 		go func(workerNodes []*storage.Node) {
 			defer wg.Done()
+			// Each worker has its own probe for the statement (pipelineWorkerContext).
+			workerCtx := ctx
+			if workerCtx != nil {
+				workerCtx = pipelineWorkerContext(workerCtx)
+			}
 
 			var workerPaths []PathResult
 			for _, startNode := range workerNodes {
-				if ctx != nil && ctx.Err() != nil {
+				if workerCtx != nil && workerCtx.Err() != nil {
 					break
 				}
 				// Each goroutine gets its own traversal state (no shared state)
@@ -1705,8 +1710,8 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					nodeCache:                    make(map[storage.NodeID]*storage.Node),
 					temporalViewport:             viewport,
 					temporalChecker:              checker,
-					cancelCtx:                    ctx,
-					repeatable:                   repeatableElements(ctx),
+					cancelCtx:                    workerCtx,
+					repeatable:                   repeatableElements(workerCtx),
 					endpointsNeedOnlyExist:       traversalEndpointsNeedOnlyExist(match),
 					endpointsNeedOnlyLabels:      traversalEndpointsNeedOnlyLabels(match),
 					relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),

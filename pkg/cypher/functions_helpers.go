@@ -37,7 +37,7 @@ func callPluginFunction(ctx context.Context, name string, handler interface{}, a
 	}
 	result, err := callPluginHandlerContext(ctx, handler, args)
 	if errors.Is(err, errUnsupportedPluginSignature) {
-		if _, builtIn := builtInCypherFunctions[lowerASCIIWithCancellation(normalizeProjectionColumnName(strings.TrimSpace(name)), contextPipelineProbe(ctx))]; builtIn {
+		if _, builtIn := builtInCypherFunctions[lowerASCIIWithCancellation(normalizeProjectionColumnNameWithCancellation(strings.TrimSpace(name), contextPipelineProbe(ctx)), contextPipelineProbe(ctx))]; builtIn {
 			return nil, false, nil
 		}
 	}
