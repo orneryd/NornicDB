@@ -570,6 +570,35 @@ func (e *PermissionDeniedError) Error() string {
 	}
 }
 
+// statementAdmittedKey carries WithStatementAdmitted's executor and callback.
+type statementAdmittedKey struct{}
+
+type statementAdmission struct {
+	executor *StorageExecutor
+	admitted func()
+}
+
+// WithStatementAdmitted runs admitted when executor has authorized a
+// statement on its own database (the decision Execute and nested execution
+// take before running one, authorizeSelectedDatabase) and before that
+// statement runs; it can run once per statement. A
+// caller that builds an executor for a statement uses it to finish and share
+// that executor only once the principal is admitted there. Other executors
+// the statement reaches (a USE target, a nested statement) don't run it.
+func WithStatementAdmitted(ctx context.Context, executor *StorageExecutor, admitted func()) context.Context {
+	if executor == nil || admitted == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, statementAdmittedKey{}, statementAdmission{executor: executor, admitted: admitted})
+}
+
+// statementAdmitted runs the WithStatementAdmitted callback bound to e.
+func (e *StorageExecutor) statementAdmitted(ctx context.Context) {
+	if admission, ok := ctx.Value(statementAdmittedKey{}).(statementAdmission); ok && admission.executor == e {
+		admission.admitted()
+	}
+}
+
 // procedureGrantCheckerKey carries the principal's boosted procedure grants
 // (WithProcedureGrantChecker).
 type procedureGrantCheckerKey struct{}
