@@ -146,10 +146,11 @@ func TestPerRowRound5ExecutePatternAllocationBudget(t *testing.T) {
 		}
 		perRow := (allocations[1] - allocations[0]) / 100
 		t.Logf("%s: %g allocations/row, maximum %g", tc.predicate, perRow, tc.maximum)
-		// Separate one fixed allocation between differently sized executions
-		// from the linear per-row cost. A one-per-row regression adds 100 and
-		// still fails; the base budgets remain 27 and 28 allocations per row.
-		require.LessOrEqual(t, allocations[1]-allocations[0], tc.maximum*100+1)
+		// Separate a few fixed allocations between differently sized
+		// executions (map growth differs by parser and under -race) from the
+		// linear per-row cost. A one-per-row regression adds 100 and still
+		// fails; the base budgets remain 27 and 28 allocations per row.
+		require.LessOrEqual(t, allocations[1]-allocations[0], tc.maximum*100+5)
 	}
 }
 func TestPerRowRound5ConstantSubqueryGuards(t *testing.T) {
