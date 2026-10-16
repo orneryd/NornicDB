@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"fmt"
 	"strings"
 	"time"
 )
@@ -13,6 +12,10 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 	// replaces whatever the function would return.
 	var argumentErr error
 	defer func() {
+		if probe != nil && probe.err != nil {
+			value, resolved, err = nil, false, probe.err
+			return
+		}
 		if argumentErr != nil {
 			value, resolved, err = nil, false, argumentErr
 		}
@@ -107,30 +110,13 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		if !separatorOK {
 			return nil, true, false, nil
 		}
-		items := toAnySliceWithCancellation(values[0], probe)
-		parts := make([]string, len(items))
-		for index, item := range items {
-			if probe != nil && !probe.check() {
-				return nil, true, false, probe.err
-			}
-			parts[index] = fmt.Sprint(item)
-		}
-		var joined strings.Builder
-		for index, part := range parts {
-			if index > 0 && !appendPipelineString(&joined, separator, probe) {
-				return nil, true, false, probe.err
-			}
-			if !appendPipelineString(&joined, part, probe) {
-				return nil, true, false, probe.err
-			}
-		}
-		return joined.String(), true, true, nil
+		return joinPipelineValues(values[0], separator, probe), true, true, nil
 	case "apoc.coll.flatten":
 		values, ok := args()
 		if !ok || len(values) == 0 || len(values) > 2 {
 			return nil, true, false, nil
 		}
-		return flattenList(values[0], len(values) == 2 && values[1] == true), true, true, nil
+		return flattenListWithCancellation(values[0], len(values) == 2 && values[1] == true, probe), true, true, nil
 	case "apoc.coll.toset", "apoc.coll.sum", "apoc.coll.avg", "apoc.coll.min", "apoc.coll.max", "apoc.coll.reverse":
 		value, ok := one()
 		if !ok {
@@ -138,17 +124,17 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		switch name {
 		case "apoc.coll.toset":
-			return toSet(value), true, true, nil
+			return toSetWithCancellation(value, probe), true, true, nil
 		case "apoc.coll.sum":
-			return apocCollSum(value), true, true, nil
+			return apocCollSumWithCancellation(value, probe), true, true, nil
 		case "apoc.coll.avg":
-			return apocCollAvg(value), true, true, nil
+			return apocCollAvgWithCancellation(value, probe), true, true, nil
 		case "apoc.coll.min":
-			return apocCollMin(value), true, true, nil
+			return apocCollMinWithCancellation(value, probe), true, true, nil
 		case "apoc.coll.reverse":
-			return apocCollReverse(value), true, true, nil
+			return apocCollReverseWithCancellation(value, probe), true, true, nil
 		default:
-			return apocCollMax(value), true, true, nil
+			return apocCollMaxWithCancellation(value, probe), true, true, nil
 		}
 	case "apoc.convert.tojson":
 		value, ok := one()
@@ -180,12 +166,12 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 			return nil, true, false, nil
 		}
 		if name == "apoc.map.merge" {
-			return mergeMaps(values[0], values[1]), true, true, nil
+			return mergeMapsWithCancellation(values[0], values[1], probe), true, true, nil
 		}
-		return fromLists(values[0], values[1]), true, true, nil
+		return fromListsWithCancellation(values[0], values[1], probe), true, true, nil
 	case "apoc.map.frompairs":
 		value, ok := one()
-		return fromPairs(value), true, ok, nil
+		return fromPairsWithCancellation(value, probe), true, ok, nil
 	case "kalman.init", "kalman.adaptive.init":
 		var config map[string]interface{}
 		if strings.TrimSpace(argument) != "" {

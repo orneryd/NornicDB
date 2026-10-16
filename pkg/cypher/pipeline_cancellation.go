@@ -5,11 +5,34 @@ import (
 	"hash/maphash"
 	"sort"
 	"strings"
+
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
 
 const pipelineCancellationInterval = 128
 
+func pipelineInitialCapacity(length int, probe *pipelineCancellation) int {
+	if length <= pipelineCancellationInterval || probe == nil || probe.ctx.Done() == nil {
+		return length
+	}
+	return pipelineCancellationInterval
+}
+
 type pipelineCancellationKey struct{}
+
+func functionCancellation(probe *pipelineCancellation) cypherfn.Cancellation {
+	if probe == nil {
+		return nil
+	}
+	return probe
+}
+
+func functionCancellationForContext(ctx context.Context) cypherfn.Cancellation {
+	if ctx.Done() == nil {
+		return nil
+	}
+	return pipelineCancellationForContext(ctx)
+}
 
 // An expression's recursive readers share one probe. Context-free readers
 // retain their nil-probe wrappers; a running expression carries its probe in
@@ -172,6 +195,14 @@ func pipelineStringFromRunes(characters []rune, probe *pipelineCancellation) (st
 
 type pipelineSortCancellation struct{}
 
+func (probe *pipelineCancellation) compareForSort(left, right interface{}) int {
+	order := compareValuesForSortWithCancellation(left, right, probe)
+	if probe.err != nil {
+		panic(pipelineSortCancellation{})
+	}
+	return order
+}
+
 // pipelineCancellation belongs to one synchronous stage (and one goroutine).
 // The hot path is an inlinable decrement. The first unit and then every 128
 // units consult the context; cancellation is latched and recorded in the
@@ -188,6 +219,12 @@ func (probe *pipelineCancellation) check() bool {
 		return true
 	}
 	return probe.poll()
+}
+
+func (probe *pipelineCancellation) Continue() bool { return probe.check() }
+func (probe *pipelineCancellation) Err() error     { return probe.err }
+func (probe *pipelineCancellation) SortStrings(values []string) bool {
+	return probe.sort(values, func(i, j int) bool { return comparePipelineStrings(values[i], values[j], probe) < 0 }, false)
 }
 
 //go:noinline

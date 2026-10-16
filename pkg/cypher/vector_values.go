@@ -97,13 +97,14 @@ func (v CypherVector) CypherSize() int64 {
 
 // coordinates returns the coordinates as Cypher values: integers or floats.
 func (v CypherVector) coordinates() []interface{} {
-	out := make([]interface{}, v.Dimension())
-	for i := range out {
-		if v.Type.IsFloat() {
-			out[i] = v.Floats[i]
-		} else {
-			out[i] = v.Ints[i]
-		}
+	return v.coordinatesWithCancellation(nil)
+}
+
+func (v CypherVector) coordinatesWithCancellation(probe *pipelineCancellation) []interface{} {
+	out := make([]interface{}, 0, pipelineInitialCapacity(v.Dimension(), probe))
+	for i := 0; i < v.Dimension(); i++ {
+		if probe != nil && !probe.check() { return nil }
+		if v.Type.IsFloat() { out = append(out, v.Floats[i]) } else { out = append(out, v.Ints[i]) }
 	}
 	return out
 }

@@ -2294,7 +2294,7 @@ func toStringAnyMapWithCancellation(value interface{}, probe *pipelineCancellati
 		return m, true
 	}
 	if m, ok := value.(map[interface{}]interface{}); ok {
-		out := make(map[string]interface{}, len(m))
+		out := make(map[string]interface{}, pipelineInitialCapacity(len(m), probe))
 		for k, v := range m {
 			if probe != nil && !probe.check() {
 				return nil, false

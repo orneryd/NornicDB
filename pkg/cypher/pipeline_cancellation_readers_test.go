@@ -13,7 +13,7 @@ func TestPipelineCancellationReaderBoundaries(t *testing.T) {
 	e := NewStorageExecutor(newTestMemoryEngine(t))
 	typed := make([]int, 257)
 	list := make([]interface{}, 257)
-	fields := map[string]int{}
+	fields := map[interface{}]interface{}{}
 	for index := range typed {
 		typed[index] = index
 		list[index] = int64(index)

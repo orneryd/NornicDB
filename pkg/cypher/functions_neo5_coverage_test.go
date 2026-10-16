@@ -94,7 +94,7 @@ func TestNeo4j5FunctionImplementations(t *testing.T) {
 		"radians":       fnRadians,
 		"isNaN":         fnIsNaN,
 		"char_length":   fnCharLength,
-		"upper":         fnStringCase(func(s string) string { return s }, "upper"),
+		"upper":         fnStringCase("upper"),
 		"toIntegerList": fnListConversion("toIntegerList", sameInEveryVersion(convertToIntegerOrNull)),
 		"valueType":     fnValueType,
 	}
@@ -126,7 +126,7 @@ func TestNeo4j5FunctionImplementations(t *testing.T) {
 		"isNaN":       func() (interface{}, error) { return fnIsNaN(ctx, []string{"boom"}) },
 		"char_length": func() (interface{}, error) { return fnCharLength(ctx, []string{"boom"}) },
 		"upper": func() (interface{}, error) {
-			return fnStringCase(func(s string) string { return s }, "upper")(ctx, []string{"boom"})
+			return fnStringCase("upper")(ctx, []string{"boom"})
 		},
 		"btrim":     func() (interface{}, error) { return fnTrimFunction("btrim", true, true)(ctx, []string{"boom"}) },
 		"trim text": func() (interface{}, error) { return fnTrim(ctx, []string{"boom"}) },

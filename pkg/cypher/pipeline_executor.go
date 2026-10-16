@@ -3961,26 +3961,29 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 		values []interface{}
 		row    pipelineRow
 	}
-	ordered := make([]orderValue, 0, len(rows))
+	ordered := make([]orderValue, 0, pipelineInitialCapacity(len(rows), &probe))
 	for index, row := range rows {
 		if !probe.check() {
 			return false
 		}
-		values := make([]interface{}, len(terms))
-		for termIndex, term := range terms {
+		values := make([]interface{}, 0, pipelineInitialCapacity(len(terms), &probe))
+		for _, term := range terms {
+			if !probe.check() {
+				return false
+			}
 			// The projections' evaluator: subquery values (COUNT { … }) and
 			// recorded failures behave as in a RETURN item.
-			value, ok := e.evaluateRowExpressionWithContext(ctx, term.column, scopes[index])
+			value, ok := e.evaluateRowExpressionWithContext(ctx, term.column, scopes[index], &probe)
 			if !ok {
 				return false
 			}
-			values[termIndex] = value
+			values = append(values, value)
 		}
 		ordered = append(ordered, orderValue{values: values, row: row})
 	}
 	if !probe.sort(ordered, func(left, right int) bool {
 		for index, term := range terms {
-			comparison := compareValuesForSortWithCancellation(ordered[left].values[index], ordered[right].values[index], &probe)
+			comparison := probe.compareForSort(ordered[left].values[index], ordered[right].values[index])
 			if comparison == 0 {
 				continue
 			}
@@ -4036,22 +4039,7 @@ func (e *StorageExecutor) filterPipelineRows(ctx context.Context, rows []pipelin
 // pipelineRowColumns returns the variables bound in rows, sorted: the
 // columns of WITH *.
 func pipelineRowColumns(ctx context.Context, rows []pipelineRow) []string {
-	probe := pipelineCancellation{ctx: ctx}
-	seen := make(map[string]struct{})
-	columns := make([]string, 0)
-	for _, row := range rows {
-		if !probe.check() {
-			return nil
-		}
-		for name := range row {
-			if _, ok := seen[name]; !ok {
-				seen[name] = struct{}{}
-				columns = append(columns, name)
-			}
-		}
-	}
-	sort.Strings(columns)
-	return columns
+	return pipelineColumns(ctx, rows, true)
 }
 
 func deduplicatePipelineRows(ctx context.Context, rows []pipelineRow, columns []string) []pipelineRow {
@@ -4061,16 +4049,21 @@ func deduplicatePipelineRows(ctx context.Context, rows []pipelineRow, columns []
 
 func deduplicatePipelineRowsWithScopes(ctx context.Context, rows, scopes []pipelineRow, columns []string) ([]pipelineRow, []pipelineRow) {
 	probe := pipelineCancellation{ctx: ctx}
-	seen := make(map[string]struct{}, len(rows))
+	seen := pipelineStringSet{probe: &probe}
 	unique := make([]pipelineRow, 0, len(rows))
 	uniqueScopes := make([]pipelineRow, 0, len(rows))
-	keys := make([]string, len(columns))
+	keys := make([]string, 0, pipelineInitialCapacity(len(columns), &probe))
 	for rowIndex, row := range rows {
 		if !probe.check() {
 			return nil, nil
 		}
-		for i, column := range columns {
-			keys[i] = cypherEquivalenceKeyWithCancellation(row[column], &probe)
+		keys = keys[:0]
+		for _, column := range columns {
+			key := cypherEquivalenceKeyWithCancellation(row[column], &probe)
+			if probe.err != nil {
+				return nil, nil
+			}
+			keys = append(keys, key)
 		}
 		if probe.err != nil {
 			return nil, nil
@@ -4079,10 +4072,13 @@ func deduplicatePipelineRowsWithScopes(ctx context.Context, rows, scopes []pipel
 		if probe.err != nil {
 			return nil, nil
 		}
-		if _, exists := seen[key]; exists {
+		exists := seen.add(key)
+		if probe.err != nil {
+			return nil, nil
+		}
+		if exists {
 			continue
 		}
-		seen[key] = struct{}{}
 		unique = append(unique, row)
 		uniqueScopes = append(uniqueScopes, scopes[rowIndex])
 	}
@@ -4834,20 +4830,20 @@ func streamsReturn(ctx context.Context, clauses []pipelineClause, idx int) bool 
 
 func deduplicatePipelineResultRows(ctx context.Context, rows [][]interface{}) [][]interface{} {
 	probe := pipelineCancellation{ctx: ctx}
-	seen := make(map[string]struct{}, len(rows))
+	seen := pipelineStringSet{probe: &probe}
 	unique := make([][]interface{}, 0, len(rows))
 	keys := make([]string, 0)
 	for _, row := range rows {
 		if !probe.check() {
 			return nil
 		}
-		if cap(keys) < len(row) {
-			keys = make([]string, len(row))
-		} else {
-			keys = keys[:len(row)]
-		}
-		for index, value := range row {
-			keys[index] = cypherEquivalenceKeyWithCancellation(value, &probe)
+		keys = keys[:0]
+		for _, value := range row {
+			key := cypherEquivalenceKeyWithCancellation(value, &probe)
+			if probe.err != nil {
+				return nil
+			}
+			keys = append(keys, key)
 		}
 		if probe.err != nil {
 			return nil
@@ -4856,16 +4852,23 @@ func deduplicatePipelineResultRows(ctx context.Context, rows [][]interface{}) []
 		if probe.err != nil {
 			return nil
 		}
-		if _, exists := seen[key]; exists {
+		exists := seen.add(key)
+		if probe.err != nil {
+			return nil
+		}
+		if exists {
 			continue
 		}
-		seen[key] = struct{}{}
 		unique = append(unique, row)
 	}
 	return unique
 }
 
 func pipelineWildcardColumns(ctx context.Context, rows []pipelineRow) []string {
+	return pipelineColumns(ctx, rows, false)
+}
+
+func pipelineColumns(ctx context.Context, rows []pipelineRow, includeInternal bool) []string {
 	probe := pipelineCancellation{ctx: ctx}
 	seen := make(map[string]struct{})
 	for _, row := range rows {
@@ -4876,13 +4879,13 @@ func pipelineWildcardColumns(ctx context.Context, rows []pipelineRow) []string {
 			if !probe.check() {
 				return nil
 			}
-			if strings.HasPrefix(column, "$") || isGeneratedVariable(column) {
+			if !includeInternal && (strings.HasPrefix(column, "$") || isGeneratedVariable(column)) {
 				continue
 			}
 			seen[column] = struct{}{}
 		}
 	}
-	columns := make([]string, 0, len(seen))
+	columns := make([]string, 0, pipelineInitialCapacity(len(seen), &probe))
 	for column := range seen {
 		if !probe.check() {
 			return nil
@@ -5072,70 +5075,73 @@ func toAnySlice(v interface{}) []interface{} {
 }
 
 func toAnySliceWithCancellation(v interface{}, probe *pipelineCancellation) []interface{} {
+	if probe != nil && !probe.check() {
+		return nil
+	}
 	switch s := v.(type) {
 	case []interface{}:
 		return s
 	case []map[string]interface{}:
-		out := make([]interface{}, len(s))
-		for i, m := range s {
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
+		for _, m := range s {
 			if probe != nil && !probe.check() {
 				return nil
 			}
-			out[i] = m
+			out = append(out, m)
 		}
 		return out
 	case []string:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
 			if probe != nil && !probe.check() {
 				return nil
 			}
-			out[i] = s[i]
+			out = append(out, s[i])
 		}
 		return out
 	case []int:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
 			if probe != nil && !probe.check() {
 				return nil
 			}
-			out[i] = int64(s[i])
+			out = append(out, int64(s[i]))
 		}
 		return out
 	case []int64:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
 			if probe != nil && !probe.check() {
 				return nil
 			}
-			out[i] = s[i]
+			out = append(out, s[i])
 		}
 		return out
 	case []float64:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
 			if probe != nil && !probe.check() {
 				return nil
 			}
-			out[i] = s[i]
+			out = append(out, s[i])
 		}
 		return out
 	case []float32:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
 			if probe != nil && !probe.check() {
 				return nil
 			}
-			out[i] = float64(s[i])
+			out = append(out, float64(s[i]))
 		}
 		return out
 	case []bool:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
 			if probe != nil && !probe.check() {
 				return nil
 			}
-			out[i] = s[i]
+			out = append(out, s[i])
 		}
 		return out
 	}
@@ -5143,12 +5149,12 @@ func toAnySliceWithCancellation(v interface{}, probe *pipelineCancellation) []in
 	if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) {
 		return nil
 	}
-	out := make([]interface{}, rv.Len())
+	out := make([]interface{}, 0, pipelineInitialCapacity(rv.Len(), probe))
 	for i := 0; i < rv.Len(); i++ {
 		if probe != nil && !probe.check() {
 			return nil
 		}
-		out[i] = rv.Index(i).Interface()
+		out = append(out, rv.Index(i).Interface())
 	}
 	return out
 }

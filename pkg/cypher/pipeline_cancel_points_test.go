@@ -38,7 +38,7 @@ func (ctx *pipelineCancelPointContext) Err() error {
 		frame, more := frames.Next()
 		if strings.HasSuffix(frame.Function, "(*pipelineCancellation).poll") {
 			inProbe = true
-		} else if inProbe && !strings.HasSuffix(frame.Function, "(*pipelineCancellation).check") {
+		} else if inProbe && !strings.HasSuffix(frame.Function, "(*pipelineCancellation).check") && !strings.HasSuffix(frame.Function, "(*pipelineCancellation).Continue") {
 			site := frame.Function + ":" + strconv.Itoa(frame.Line)
 			ctx.mu.Lock()
 			if ctx.sites != nil {
@@ -564,39 +564,44 @@ func TestPipelineCancellationAtEveryReachableStagePoll(t *testing.T) {
 	}
 	for _, stage := range stages {
 		t.Run(stage.name, func(t *testing.T) {
-			healthy, healthyCancel := context.WithCancel(context.Background())
-			defer healthyCancel()
-			collector := &pipelineCancelPointContext{Context: healthy, sites: map[string]bool{}}
-			require.NoError(t, stage.run(withExpressionFailureSlot(collector)), "healthy stage")
-			sites := make([]string, 0, len(collector.sites))
-			for site := range collector.sites {
-				sites = append(sites, site)
+			runPipelineCancelPointStage(t, stage.run)
+		})
+	}
+}
+
+func runPipelineCancelPointStage(t *testing.T, run func(context.Context) error) {
+	t.Helper()
+	healthy, healthyCancel := context.WithCancel(context.Background())
+	defer healthyCancel()
+	collector := &pipelineCancelPointContext{Context: healthy, sites: map[string]bool{}}
+	require.NoError(t, run(withExpressionFailureSlot(collector)), "healthy stage")
+	sites := make([]string, 0, len(collector.sites))
+	for site := range collector.sites {
+		sites = append(sites, site)
+	}
+	sort.Strings(sites)
+	require.NotEmpty(t, sites, "stage must reach the shared cancellation owner")
+	for _, site := range sites {
+		t.Run(site, func(t *testing.T) {
+			// Randomized map iteration changes the sorting comparison count
+			// and therefore which check lands on a sample. Retry healthy
+			// traversals to reach the selected sampled site, without sleeps.
+			for attempt := 0; attempt < 32; attempt++ {
+				base, expire := context.WithTimeout(context.Background(), 500*time.Millisecond)
+				defer expire()
+				base, cancel := context.WithCancel(base)
+				defer cancel()
+				probe := &pipelineCancelPointContext{Context: base, target: site, cancel: cancel}
+				err := run(withExpressionFailureSlot(probe))
+				if !probe.hit {
+					cancel()
+					continue
+				}
+				require.ErrorIs(t, err, context.Canceled)
+				require.Less(t, time.Since(probe.cancelledAt), 250*time.Millisecond, "stage continued after cancellation")
+				return
 			}
-			sort.Strings(sites)
-			require.NotEmpty(t, sites, "stage must reach the shared cancellation owner")
-			for _, site := range sites {
-				t.Run(site, func(t *testing.T) {
-					// Randomized map iteration changes the sorting comparison count
-					// and therefore which check lands on a sample. Retry healthy
-					// traversals to reach the selected sampled site, without sleeps.
-					for attempt := 0; attempt < 32; attempt++ {
-						base, expire := context.WithTimeout(context.Background(), 500*time.Millisecond)
-						defer expire()
-						base, cancel := context.WithCancel(base)
-						defer cancel()
-						probe := &pipelineCancelPointContext{Context: base, target: site, cancel: cancel}
-						err := stage.run(withExpressionFailureSlot(probe))
-						if !probe.hit {
-							cancel()
-							continue
-						}
-						require.ErrorIs(t, err, context.Canceled)
-						require.Less(t, time.Since(probe.cancelledAt), 250*time.Millisecond, "stage continued after cancellation")
-						return
-					}
-					t.Fatal("selected stage poll must execute")
-				})
-			}
+			t.Fatal("selected stage poll must execute")
 		})
 	}
 }

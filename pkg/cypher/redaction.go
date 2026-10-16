@@ -125,6 +125,10 @@ func redactQueryLiterals(query string, validateGrammar bool) string {
 		return RedactedPlaceholder
 	}
 	grammarValid := validateGrammar && cantlr.Validate(query) == nil
+	var knownIdentifiers map[int]bool
+	if !validateGrammar {
+		knownIdentifiers = diagnosticBoundIdentifiers(toks)
+	}
 
 	var b strings.Builder
 	b.Grow(len(query))
@@ -132,7 +136,7 @@ func redactQueryLiterals(query string, validateGrammar bool) string {
 	// inside a node or relationship pattern, never inside a map.
 	var stack []int
 	prev := noPrevToken
-	for _, tok := range toks {
+	for index, tok := range toks {
 		ttype := tok.GetTokenType()
 		text := tok.GetText()
 		switch ttype {
@@ -147,7 +151,7 @@ func redactQueryLiterals(query string, validateGrammar bool) string {
 			ttype == cantlr.CypherLexerINTEGER,
 			ttype == cantlr.CypherLexerFLOAT:
 			b.WriteString(RedactedPlaceholder)
-		case !grammarValid && redactStructuralOnly(ttype, prev, stack):
+		case !grammarValid && !knownIdentifiers[index] && redactStructuralOnly(ttype, prev, stack):
 			b.WriteString(RedactedPlaceholder)
 		default:
 			b.WriteString(text)

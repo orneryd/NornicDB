@@ -19,6 +19,18 @@ func appendEquivalenceFallback(out *strings.Builder, value interface{}, probe *p
 }
 
 func appendEquivalenceGoValue(out *strings.Builder, value reflect.Value, probe *pipelineCancellation, nested bool) {
+	appendPipelineFormatValue(out, value, probe, nested, true)
+}
+
+func appendPipelineDisplayValue(out *strings.Builder, value interface{}, probe *pipelineCancellation) {
+	if probe == nil {
+		out.WriteString(fmt.Sprint(value))
+		return
+	}
+	appendPipelineFormatValue(out, reflect.ValueOf(value), probe, false, false)
+}
+
+func appendPipelineFormatValue(out *strings.Builder, value reflect.Value, probe *pipelineCancellation, nested, goSyntax bool) {
 	if probe != nil && !probe.check() {
 		return
 	}
@@ -28,20 +40,38 @@ func appendEquivalenceGoValue(out *strings.Builder, value reflect.Value, probe *
 	}
 	if value.Kind() == reflect.Interface {
 		if value.IsNil() {
-			out.WriteString("interface {}(nil)")
+			if goSyntax {
+				out.WriteString("interface {}(nil)")
+			} else {
+				out.WriteString("<nil>")
+			}
 			return
 		}
-		appendEquivalenceGoValue(out, value.Elem(), probe, nested)
+		appendPipelineFormatValue(out, value.Elem(), probe, nested, goSyntax)
 		return
 	}
 	if value.CanInterface() {
-		if _, custom := value.Interface().(fmt.GoStringer); custom {
-			out.WriteString(fmt.Sprintf("%#v", value.Interface()))
+		if custom, ok := value.Interface().(fmt.GoStringer); ok && goSyntax && !(value.Kind() == reflect.Pointer && value.IsNil()) {
+			appendPipelineString(out, custom.GoString(), probe)
+			return
+		}
+	}
+	if !goSyntax && value.Kind() == reflect.Pointer && value.IsNil() {
+		out.WriteString("<nil>")
+		return
+	}
+	if !goSyntax && value.CanInterface() {
+		if custom, ok := value.Interface().(fmt.Stringer); ok {
+			appendPipelineString(out, custom.String(), probe)
 			return
 		}
 	}
 	switch value.Kind() {
 	case reflect.String:
+		if !goSyntax {
+			appendPipelineString(out, value.String(), probe)
+			return
+		}
 		out.WriteByte('"')
 		text := value.String()
 		for len(text) > 0 {
@@ -55,43 +85,67 @@ func appendEquivalenceGoValue(out *strings.Builder, value reflect.Value, probe *
 		}
 		out.WriteByte('"')
 	case reflect.Struct:
-		out.WriteString(value.Type().String())
+		if goSyntax {
+			out.WriteString(value.Type().String())
+		}
 		out.WriteByte('{')
 		for index := 0; index < value.NumField(); index++ {
 			if probe != nil && !probe.check() {
 				return
 			}
 			if index > 0 {
-				out.WriteString(", ")
+				if goSyntax {
+					out.WriteString(", ")
+				} else {
+					out.WriteByte(' ')
+				}
 			}
-			out.WriteString(value.Type().Field(index).Name)
-			out.WriteByte(':')
-			appendEquivalenceGoValue(out, value.Field(index), probe, true)
+			if goSyntax {
+				out.WriteString(value.Type().Field(index).Name)
+				out.WriteByte(':')
+			}
+			appendPipelineFormatValue(out, value.Field(index), probe, true, goSyntax)
 			if probe != nil && probe.err != nil {
 				return
 			}
 		}
 		out.WriteByte('}')
 	case reflect.Slice, reflect.Array:
-		out.WriteString(value.Type().String())
-		if value.Kind() == reflect.Slice && value.IsNil() {
+		if goSyntax {
+			out.WriteString(value.Type().String())
+		}
+		if goSyntax && value.Kind() == reflect.Slice && value.IsNil() {
 			out.WriteString("(nil)")
 			return
 		}
-		out.WriteByte('{')
+		if goSyntax {
+			out.WriteByte('{')
+		} else {
+			out.WriteByte('[')
+		}
 		for index := 0; index < value.Len(); index++ {
 			if index > 0 {
-				out.WriteString(", ")
+				if goSyntax {
+					out.WriteString(", ")
+				} else {
+					out.WriteByte(' ')
+				}
 			}
-			appendEquivalenceGoValue(out, value.Index(index), probe, true)
+			appendPipelineFormatValue(out, value.Index(index), probe, true, goSyntax)
 			if probe != nil && probe.err != nil {
 				return
 			}
 		}
-		out.WriteByte('}')
+		if goSyntax {
+			out.WriteByte('}')
+		} else {
+			out.WriteByte(']')
+		}
 	case reflect.Map:
-		out.WriteString(value.Type().String())
-		if value.IsNil() {
+		if goSyntax {
+			out.WriteString(value.Type().String())
+		}
+		if goSyntax && value.IsNil() {
 			out.WriteString("(nil)")
 			return
 		}
@@ -100,11 +154,11 @@ func appendEquivalenceGoValue(out *strings.Builder, value reflect.Value, probe *
 			original reflect.Value
 			value    reflect.Value
 		}
-		entries := make([]entry, 0, value.Len())
+		entries := make([]entry, 0, pipelineInitialCapacity(value.Len(), probe))
 		iterator := value.MapRange()
 		for iterator.Next() {
 			var key strings.Builder
-			appendEquivalenceGoValue(&key, iterator.Key(), probe, true)
+			appendPipelineFormatValue(&key, iterator.Key(), probe, true, goSyntax)
 			if probe != nil && probe.err != nil {
 				return
 			}
@@ -118,29 +172,49 @@ func appendEquivalenceGoValue(out *strings.Builder, value reflect.Value, probe *
 		} else if !probe.sort(entries, less, false) {
 			return
 		}
-		out.WriteByte('{')
+		if goSyntax {
+			out.WriteByte('{')
+		} else {
+			out.WriteString("map[")
+		}
 		for index, entry := range entries {
 			if index > 0 {
-				out.WriteString(", ")
+				if goSyntax {
+					out.WriteString(", ")
+				} else {
+					out.WriteByte(' ')
+				}
 			}
 			if !appendPipelineString(out, entry.key, probe) {
 				return
 			}
 			out.WriteByte(':')
-			appendEquivalenceGoValue(out, entry.value, probe, true)
+			appendPipelineFormatValue(out, entry.value, probe, true, goSyntax)
 			if probe != nil && probe.err != nil {
 				return
 			}
 		}
-		out.WriteByte('}')
+		if goSyntax {
+			out.WriteByte('}')
+		} else {
+			out.WriteByte(']')
+		}
 	case reflect.Pointer:
 		if !nested && !value.IsNil() {
 			switch value.Elem().Kind() {
 			case reflect.Struct, reflect.Array, reflect.Slice, reflect.Map:
 				out.WriteByte('&')
-				appendEquivalenceGoValue(out, value.Elem(), probe, true)
+				appendPipelineFormatValue(out, value.Elem(), probe, true, goSyntax)
 				return
 			}
+		}
+		if !goSyntax {
+			if value.IsNil() {
+				out.WriteString("<nil>")
+			} else {
+				out.WriteString(fmt.Sprintf("%v", value.Interface()))
+			}
+			return
 		}
 		out.WriteByte('(')
 		out.WriteString(value.Type().String())
@@ -154,7 +228,11 @@ func appendEquivalenceGoValue(out *strings.Builder, value reflect.Value, probe *
 		}
 	default:
 		if value.CanInterface() {
-			out.WriteString(fmt.Sprintf("%#v", value.Interface()))
+			if goSyntax {
+				out.WriteString(fmt.Sprintf("%#v", value.Interface()))
+			} else {
+				out.WriteString(fmt.Sprint(value.Interface()))
+			}
 			return
 		}
 		// Unexported fields cannot be passed to fmt through Interface.
@@ -164,8 +242,12 @@ func appendEquivalenceGoValue(out *strings.Builder, value reflect.Value, probe *
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 			out.WriteString(strconv.FormatInt(value.Int(), 10))
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-			out.WriteString("0x")
-			out.WriteString(strconv.FormatUint(value.Uint(), 16))
+			if goSyntax {
+				out.WriteString("0x")
+				out.WriteString(strconv.FormatUint(value.Uint(), 16))
+			} else {
+				out.WriteString(strconv.FormatUint(value.Uint(), 10))
+			}
 		case reflect.Float32, reflect.Float64:
 			out.WriteString(strconv.FormatFloat(value.Float(), 'g', -1, value.Type().Bits()))
 		case reflect.Complex64, reflect.Complex128:

@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -420,7 +419,10 @@ func (e *StorageExecutor) evaluateRowValueWithCancellation(expr string, values m
 			if object, isMap := toStringAnyMapWithCancellation(value, probe); isMap {
 				value = object
 			}
-			keys, ok := cypherfn.PropertyKeys(value)
+			keys, ok := cypherfn.PropertyKeysWithCancellation(value, functionCancellation(probe))
+			if probe != nil && probe.err != nil {
+				return nil, false, probe.err
+			}
 			return keys, ok, nil
 		case "labels":
 			value, resolved, err := e.evaluateRowValueWithCancellation(argument, values, probe)
@@ -2013,19 +2015,8 @@ func evaluateCypherSizeInteger(value interface{}) (int64, bool, error) {
 
 func evaluateCypherSizeIntegerWithCancellation(value interface{}, probe *pipelineCancellation) (int64, bool, error) {
 	if text, isString := value.(string); isString {
-		if probe != nil && len(text) > 4096 {
-			var length int64
-			for range text {
-				if !probe.check() {
-					return 0, false, probe.err
-				}
-				length++
-			}
-			return length, true, nil
-		}
-		// RuneCountInString counts code points the way len([]rune(s)) does
-		// (invalid UTF-8 bytes become U+FFFD), without the allocation.
-		return int64(utf8.RuneCountInString(text)), true, nil
+		length, err := cypherfn.CharacterCount(text, functionCancellation(probe))
+		return int64(length), err == nil, err
 	}
 	if sized, ok := value.(cypherfn.Sized); ok {
 		return sized.CypherSize(), true, nil

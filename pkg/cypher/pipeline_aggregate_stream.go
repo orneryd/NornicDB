@@ -95,13 +95,15 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		}
 		return group
 	}
-	groups := make(map[string]*pipelineAggregateGroup)
+	groups := pipelineStringMap[*pipelineAggregateGroup]{}
 	grouping := struct {
 		ordered      []*pipelineAggregateGroup
-		stringGroups map[string]*pipelineAggregateGroup
+		stringGroups pipelineStringMap[*pipelineAggregateGroup]
 	}{ordered: make([]*pipelineAggregateGroup, 0)}
 	valid := true
 	probe := pipelineCancellation{ctx: ctx}
+	groups.probe = &probe
+	grouping.stringGroups.probe = &probe
 	completed := source(func(row pipelineRow) bool {
 		if !probe.check() {
 			valid = false
@@ -115,7 +117,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			}
 		}
 		key := ""
-		lookup := groups
+		lookup := &groups
 		if !allAggregates {
 			var parts []string
 			if groupingCount > 1 {
@@ -134,15 +136,16 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 				if groupingCount == 1 {
 					if text, ok := value.(string); ok {
 						key = text
-						if grouping.stringGroups == nil {
-							grouping.stringGroups = make(map[string]*pipelineAggregateGroup)
-						}
-						lookup = grouping.stringGroups
+						lookup = &grouping.stringGroups
 					} else {
 						key = cypherEquivalenceKeyWithCancellation(value, &probe)
 					}
 				} else {
 					parts = append(parts, cypherEquivalenceKeyWithCancellation(value, &probe))
+					if probe.err != nil {
+						valid = false
+						return false
+					}
 				}
 			}
 			if groupingCount > 1 {
@@ -153,10 +156,17 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			valid = false
 			return false
 		}
-		group := lookup[key]
+		group, _ := lookup.Get(key)
+		if probe.err != nil {
+			valid = false
+			return false
+		}
 		if group == nil {
 			group = newGroup(row)
-			lookup[key] = group
+			if !lookup.Set(key, group) {
+				valid = false
+				return false
+			}
 			grouping.ordered = append(grouping.ordered, group)
 		}
 		for index := range group.projections {
@@ -374,7 +384,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 		group   *pipelineAggregateGroup
 		ordinal int
 	}
-	groups := make(map[string]*mergedGroup)
+	groups := pipelineStringMap[*mergedGroup]{probe: &probe}
 	var ordered []*mergedGroup
 	for _, partition := range partitions {
 		if partition.err != nil {
@@ -400,16 +410,24 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 						return nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidAggregate", "invalid Cartesian grouping expression")
 					}
 					parts = append(parts, cypherEquivalenceKeyWithCancellation(value, &probe))
+					if probe.err != nil {
+						return nil, true, probe.err
+					}
 				}
 			}
 			key := joinPipelineStrings(parts, "\x1f", &probe)
 			if probe.err != nil {
 				return nil, true, probe.err
 			}
-			merged := groups[key]
+			merged, _ := groups.Get(key)
+			if probe.err != nil {
+				return nil, true, probe.err
+			}
 			if merged == nil {
 				merged = &mergedGroup{group: partial, ordinal: ordinal}
-				groups[key] = merged
+				if !groups.Set(key, merged) {
+					return nil, true, probe.err
+				}
 				ordered = append(ordered, merged)
 				continue
 			}
@@ -463,7 +481,7 @@ func (group *pipelineAggregateGroup) value(ctx context.Context, executor *Storag
 type pipelineAggregateState struct {
 	name, expression string
 	distinct         bool
-	seen             map[string]struct{}
+	seen             pipelineStringSet
 	count            int64
 	integerTotal     int64
 	floatingTotal    float64
@@ -530,17 +548,18 @@ func (state *pipelineAggregateState) addWithCancellation(ctx context.Context, ex
 		return true
 	}
 	if state.distinct {
-		if state.seen == nil {
-			state.seen = make(map[string]struct{})
-		}
+		state.seen.probe = probe
 		key := cypherEquivalenceKeyWithCancellation(value, probe)
 		if probe.err != nil {
 			return false
 		}
-		if _, exists := state.seen[key]; exists {
+		exists := state.seen.add(key)
+		if probe.err != nil {
+			return false
+		}
+		if exists {
 			return true
 		}
-		state.seen[key] = struct{}{}
 	}
 	switch state.name {
 	case "count":

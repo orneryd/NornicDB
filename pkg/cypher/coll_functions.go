@@ -40,7 +40,11 @@ func collArguments(ctx cypherfn.Context, function string, args []string, minimum
 	if values[0] == nil {
 		return nil, nil, true, nil
 	}
-	items, isList := cypherListValue(values[0])
+	probe := functionPipelineProbe(ctx)
+	items, isList := cypherListValueWithCancellation(values[0], probe)
+	if probe != nil && probe.err != nil {
+		return nil, nil, false, probe.err
+	}
 	if !isList {
 		return nil, nil, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
 			localization.CypherCoreFunctionArgumentInvalid(function, "a List", neo4jValueRepr(values[0])))
@@ -82,14 +86,24 @@ func fnCollDistinct(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || null {
 		return nil, err
 	}
-	seen := make(map[string]struct{}, len(list))
-	out := make([]interface{}, 0, len(list))
+	probe := functionPipelineProbe(ctx)
+	seen := pipelineStringSet{probe: probe}
+	out := make([]interface{}, 0, pipelineInitialCapacity(len(list), functionPipelineProbe(ctx)))
 	for _, item := range list {
-		key := cypherEquivalenceKey(item)
-		if _, duplicate := seen[key]; duplicate {
+		if probe != nil && !probe.check() {
+			return nil, probe.err
+		}
+		key := cypherEquivalenceKeyWithCancellation(item, probe)
+		if probe != nil && probe.err != nil {
+			return nil, probe.err
+		}
+		duplicate := seen.add(key)
+		if probe != nil && probe.err != nil {
+			return nil, probe.err
+		}
+		if duplicate {
 			continue
 		}
-		seen[key] = struct{}{}
 		out = append(out, item)
 	}
 	return out, nil
@@ -113,13 +127,28 @@ func fnCollFlatten(ctx cypherfn.Context, args []string) (interface{}, error) {
 			return nil, functionArgumentOutOfRange("coll.flatten")
 		}
 	}
-	return collFlatten(make([]interface{}, 0, len(list)), list, depth), nil
+	probe := functionPipelineProbe(ctx)
+	result := collFlattenWithCancellation(make([]interface{}, 0, pipelineInitialCapacity(len(list), probe)), list, depth, probe)
+	if probe != nil {
+		return result, probe.err
+	}
+	return result, nil
 }
 
 func collFlatten(out, list []interface{}, depth int64) []interface{} {
+	return collFlattenWithCancellation(out, list, depth, nil)
+}
+
+func collFlattenWithCancellation(out, list []interface{}, depth int64, probe *pipelineCancellation) []interface{} {
 	for _, item := range list {
-		if nested, isList := cypherListValue(item); isList && depth > 0 {
-			out = collFlatten(out, nested, depth-1)
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		if nested, isList := cypherListValueWithCancellation(item, probe); isList && depth > 0 {
+			out = collFlattenWithCancellation(out, nested, depth-1, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
 			continue
 		}
 		out = append(out, item)
@@ -135,8 +164,16 @@ func fnCollIndexOf(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || null || rest[0] == nil {
 		return nil, err
 	}
+	probe := functionPipelineProbe(ctx)
 	for index, item := range list {
-		if equal, known := cypherEquality(item, rest[0]).(bool); known && equal {
+		if probe != nil && !probe.check() {
+			return nil, probe.err
+		}
+		equal, known := cypherEqualityWithCancellation(item, rest[0], probe).(bool)
+		if probe != nil && probe.err != nil {
+			return nil, probe.err
+		}
+		if known && equal {
 			return int64(index), nil
 		}
 	}
@@ -157,10 +194,18 @@ func fnCollInsert(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if index < 0 || index > int64(len(list)) {
 		return nil, functionArgumentOutOfRange("coll.insert")
 	}
-	out := make([]interface{}, 0, len(list)+1)
-	out = append(out, list[:index]...)
+	out := make([]interface{}, 0, pipelineInitialCapacity(len(list)+1, functionPipelineProbe(ctx)))
+	probe := functionPipelineProbe(ctx)
+	out = appendPipelineValues(out, list[:index], probe)
+	if probe != nil && probe.err != nil {
+		return nil, probe.err
+	}
 	out = append(out, rest[1])
-	return append(out, list[index:]...), nil
+	out = appendPipelineValues(out, list[index:], probe)
+	if probe != nil {
+		return out, probe.err
+	}
+	return out, nil
 }
 
 // fnCollRemove is coll.remove(list, index): the list without list[index];
@@ -182,9 +227,17 @@ func fnCollRemove(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if index < 0 || index >= int64(len(list)) {
 		return nil, functionArgumentOutOfRange("coll.remove")
 	}
-	out := make([]interface{}, 0, len(list)-1)
-	out = append(out, list[:index]...)
-	return append(out, list[index+1:]...), nil
+	out := make([]interface{}, 0, pipelineInitialCapacity(len(list)-1, functionPipelineProbe(ctx)))
+	probe := functionPipelineProbe(ctx)
+	out = appendPipelineValues(out, list[:index], probe)
+	if probe != nil && probe.err != nil {
+		return nil, probe.err
+	}
+	out = appendPipelineValues(out, list[index+1:], probe)
+	if probe != nil {
+		return out, probe.err
+	}
+	return out, nil
 }
 
 // fnCollExtreme is coll.max (sign 1) or coll.min (sign -1): the greatest or
@@ -198,8 +251,16 @@ func fnCollExtreme(function string, sign int) cypherfn.Func {
 			return nil, err
 		}
 		best := list[0]
+		probe := functionPipelineProbe(ctx)
 		for _, item := range list[1:] {
-			if compareValuesForSort(item, best)*sign > 0 {
+			if probe != nil && !probe.check() {
+				return nil, probe.err
+			}
+			comparison := compareValuesForSortWithCancellation(item, best, probe)
+			if probe != nil && probe.err != nil {
+				return nil, probe.err
+			}
+			if comparison*sign > 0 {
 				best = item
 			}
 		}
@@ -214,14 +275,31 @@ func fnCollSort(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || null {
 		return nil, err
 	}
-	return sortedCypherValues(list), nil
+	probe := functionPipelineProbe(ctx)
+	result := sortedCypherValuesWithCancellation(list, probe)
+	if probe != nil {
+		return result, probe.err
+	}
+	return result, nil
 }
 
 // sortedCypherValues returns a copy of list in ORDER BY order, equal items
 // kept in their order: coll.sort and apoc.coll.sort.
 func sortedCypherValues(list []interface{}) []interface{} {
-	out := make([]interface{}, len(list))
-	copy(out, list)
-	sort.SliceStable(out, func(i, j int) bool { return compareValuesForSort(out[i], out[j]) < 0 })
+	return sortedCypherValuesWithCancellation(list, nil)
+}
+
+func sortedCypherValuesWithCancellation(list []interface{}, probe *pipelineCancellation) []interface{} {
+	out := appendPipelineValues(make([]interface{}, 0, pipelineInitialCapacity(len(list), probe)), list, probe)
+	if probe == nil {
+		sort.SliceStable(out, func(i, j int) bool { return compareValuesForSort(out[i], out[j]) < 0 })
+	} else if !probe.sort(out, func(i, j int) bool { return probe.compareForSort(out[i], out[j]) < 0 }, true) {
+		return nil
+	}
 	return out
+}
+
+func functionPipelineProbe(ctx cypherfn.Context) *pipelineCancellation {
+	probe, _ := ctx.Cancellation.(*pipelineCancellation)
+	return probe
 }

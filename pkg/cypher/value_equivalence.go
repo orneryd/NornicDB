@@ -118,7 +118,7 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}, probe *pipeli
 		return
 	}
 	if fields, ok := toStringAnyMapWithCancellation(value, probe); ok {
-		names := make([]string, 0, len(fields))
+		names := make([]string, 0, pipelineInitialCapacity(len(fields), probe))
 		largeName := false
 		for name := range fields {
 			if probe != nil && !probe.check() {
