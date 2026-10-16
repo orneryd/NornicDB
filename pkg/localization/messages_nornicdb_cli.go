@@ -186,7 +186,7 @@ func NornicDBCLIFlagParallelBatchSize() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagParallelBatchSize, "Min batch size before parallelizing")
 }
 func NornicDBCLIFlagMemoryLimit() Message {
-	return nornicDBCLIText(MessageNornicDBCLIFlagMemoryLimit, "Memory limit in MB as an integer (e.g., 500, 0 for unlimited)")
+	return nornicDBCLIText(MessageNornicDBCLIFlagMemoryLimit, "Memory limit in MB as an integer (e.g., 500), 0 for unlimited, or auto (the default: 85% of the container's memory limit)")
 }
 func NornicDBCLIFlagGCPercent() Message {
 	return nornicDBCLIText(MessageNornicDBCLIFlagGCPercent, "GC aggressiveness (100=default, lower=more aggressive)")
