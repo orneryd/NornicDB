@@ -43,3 +43,25 @@ func TestCompiledRowProgramsStopAtDeadline(t *testing.T) {
 		})
 	}
 }
+
+// A cold evaluation hands an inner comprehension to the shared evaluator
+// (rowValueFallback); that evaluator checks the statement's probe too, so
+// the first evaluation of a nested comprehension stops at its deadline.
+func TestColdNestedComprehensionStopsAtDeadline(t *testing.T) {
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
+	items := make([]interface{}, 1000000)
+	for index := range items {
+		items[index] = int64(index)
+	}
+	for attempt := 0; attempt < 5; attempt++ {
+		clearExpressionCaches()
+		ctx, cancel := context.WithTimeout(withExpressionFailureSlot(context.Background()), 20*time.Millisecond)
+		deadline, _ := ctx.Deadline()
+		_, ok := executor.evaluateRowExpressionWithContext(ctx, "[x IN items | [y IN items | x + y]]", pipelineRow{"items": items})
+		overdue := time.Since(deadline)
+		cancel()
+		require.False(t, ok)
+		require.ErrorIs(t, getExpressionFailure(ctx), context.DeadlineExceeded)
+		require.Less(t, overdue, 250*time.Millisecond, "cold nested comprehension continued past the deadline")
+	}
+}

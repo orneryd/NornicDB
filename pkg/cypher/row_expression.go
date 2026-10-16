@@ -762,7 +762,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			return value, ok, nil
 		}
 	}
-	return e.rowValueFallback(expr, values)
+	return e.rowValueFallbackProbed(expr, values, probe)
 }
 
 // splitRowArithmeticTier splits at the rightmost top-level operator in one

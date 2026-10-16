@@ -111,9 +111,19 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 // rather than returning it; the row evaluator reports the expression as
 // unresolved and evaluateRowExpressionWithContext records err.
 func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}) (interface{}, error) {
+	return e.evaluateRowFallbackProbed(expr, values, nil)
+}
+
+// evaluateRowFallbackProbed is evaluateRowFallback under the statement's
+// probe: the shared evaluator's loops check it, so an expression handed to
+// it (a nested comprehension, an APOC call) stops at the deadline too.
+func (e *StorageExecutor) evaluateRowFallbackProbed(expr string, values map[string]interface{}, probe *pipelineCancellation) (interface{}, error) {
 	// The slot names expr as the row evaluator's: the shared evaluator
 	// evaluates it itself rather than hand it back (handedBackByRowEvaluator).
 	ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{rowFallback: expr})
+	if probe != nil {
+		ctx = context.WithValue(ctx, pipelineCancellationKey{}, probe)
+	}
 	// Keep the statement's clock for the functions that read it (decay, #866).
 	if statement, ok := values[rowStatementContextKey].(context.Context); ok {
 		if instant, ok := statement.Value(temporalStatementTimeKey{}).(time.Time); ok {

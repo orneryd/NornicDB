@@ -733,14 +733,20 @@ func (n *rowPropertyChainNode) eval(e *StorageExecutor, values map[string]interf
 type rowFallbackNode struct{ text string }
 
 func (n *rowFallbackNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
-	return e.rowValueFallback(n.text, values)
+	return e.rowValueFallbackProbed(n.text, values, probe)
 }
 
 // rowValueFallback is evaluateRowValueText's last step for expr.
 func (e *StorageExecutor) rowValueFallback(expr string, values map[string]interface{}) (interface{}, bool, error) {
+	return e.rowValueFallbackProbed(expr, values, nil)
+}
+
+// rowValueFallbackProbed is rowValueFallback under the statement's probe:
+// the shared evaluator it hands expr to checks the same budget.
+func (e *StorageExecutor) rowValueFallbackProbed(expr string, values map[string]interface{}, probe *pipelineCancellation) (interface{}, bool, error) {
 	// The shared evaluator evaluates the text it is handed itself and hands
 	// back only its parts, subqueries included (handedBackByRowEvaluator).
-	value, err := e.evaluateRowFallback(expr, values)
+	value, err := e.evaluateRowFallbackProbed(expr, values, probe)
 	if err != nil {
 		return nil, false, err
 	}
@@ -907,7 +913,7 @@ func (n *rowPropertyNode) eval(e *StorageExecutor, values map[string]interface{}
 		return nil, false, err
 	}
 	if !ok {
-		return e.rowValueFallback(n.text, values)
+		return e.rowValueFallbackProbed(n.text, values, probe)
 	}
 	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), n.chain)
 	if !ok {
