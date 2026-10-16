@@ -234,6 +234,8 @@ func TestParallelTraversalMatchesSequentialForEndpointShapes(t *testing.T) {
 		result, err := exec.Execute(ctx, query, nil)
 		require.NoError(t, err)
 		require.Equal(t, sequential[i], result.Rows, query)
+		if i == 0 {
+			require.EqualValues(t, 80, store.checks.Load(), "every anonymous end node checked once, from the workers")
+		}
 	}
-	require.Positive(t, store.reads.Load(), "the full-read shape reads end nodes")
 }
