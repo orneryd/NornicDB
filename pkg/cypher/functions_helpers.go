@@ -37,7 +37,7 @@ func callPluginFunction(ctx context.Context, name string, handler interface{}, a
 	}
 	result, err := callPluginHandlerContext(ctx, handler, args)
 	if errors.Is(err, errUnsupportedPluginSignature) {
-		if _, builtIn := builtInCypherFunctions[lowerASCII(normalizeProjectionColumnName(strings.TrimSpace(name)))]; builtIn {
+		if _, builtIn := builtInCypherFunctions[lowerASCIIWithCancellation(normalizeProjectionColumnName(strings.TrimSpace(name)), contextPipelineProbe(ctx))]; builtIn {
 			return nil, false, nil
 		}
 	}
@@ -52,7 +52,7 @@ func callPluginFunction(ctx context.Context, name string, handler interface{}, a
 // if no plugin has the function (or a built-in answers it instead). A call
 // the plugin fails is the statement's error, as in the row evaluator.
 func (e *StorageExecutor) tryCallPluginFunction(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
-	funcName, argsStr, valid := parseFunctionCallWS(expr)
+	funcName, argsStr, valid := parseFunctionCallWSWithCancellation(expr, contextPipelineProbe(ctx))
 	if !valid {
 		return nil, false
 	}
@@ -256,7 +256,7 @@ func (e *StorageExecutor) evaluateMapLiteralFull(ctx context.Context, expr strin
 	}
 
 	// Split by commas, respecting nesting and quoted values.
-	pairs := splitTopLevelComma(inner)
+	pairs := splitTopLevelCommaWithCancellation(inner, contextPipelineProbe(ctx))
 
 	for _, pair := range pairs {
 		pair = strings.TrimSpace(pair)
@@ -264,14 +264,14 @@ func (e *StorageExecutor) evaluateMapLiteralFull(ctx context.Context, expr strin
 			continue
 		}
 
-		colonIdx := findTopLevelMapKeyValueSeparator(pair)
+		colonIdx := findTopLevelMapKeyValueSeparatorWithCancellation(pair, contextPipelineProbe(ctx))
 		if colonIdx == -1 {
 			continue
 		}
 
 		// Keep map-literal key normalization aligned with property/map parsing:
 		// supports backticked and quoted keys like `foo`, 'foo', "foo".
-		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
+		key := normalizePropertyKeyWithCancellation(strings.TrimSpace(pair[:colonIdx]), contextPipelineProbe(ctx))
 		valueExpr := strings.TrimSpace(pair[colonIdx+1:])
 
 		// Evaluate the value expression in context with full path info

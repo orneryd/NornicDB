@@ -81,7 +81,7 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 		Pattern: PatternGeneric,
 	}
 
-	upperQuery := upperASCII(query)
+	upperQuery := upperASCIIWithCancellation(query, contextPipelineProbe(ctx))
 
 	// Don't optimize queries with WITH clause - they have complex aggregation
 	// semantics that the optimized executors don't handle (aliases, collect, etc.)
@@ -200,7 +200,7 @@ func detectMutualRelationship(ctx context.Context, query string, info *PatternIn
 	if matchClause == "" {
 		return false
 	}
-	if strings.HasPrefix(upperASCII(matchClause), "MATCH") {
+	if strings.HasPrefix(upperASCIIWithCancellation(matchClause, contextPipelineProbe(ctx)), "MATCH") {
 		matchClause = strings.TrimSpace(matchClause[len("MATCH"):])
 	}
 
@@ -246,8 +246,8 @@ func detectIncomingCountAgg(ctx context.Context, query string, info *PatternInfo
 
 	// Check if count() is on the end variable (the one doing the incoming), and
 	// only optimize the narrow "RETURN x.name, count(y)" shape that the optimized executor implements.
-	upperQuery := upperASCII(query)
-	countPattern := "COUNT(" + upperASCII(endVar)
+	upperQuery := upperASCIIWithCancellation(query, contextPipelineProbe(ctx))
+	countPattern := "COUNT(" + upperASCIIWithCancellation(endVar, contextPipelineProbe(ctx))
 	countStarPattern := "COUNT(*)"
 
 	if (strings.Contains(upperQuery, countPattern) || strings.Contains(upperQuery, countStarPattern)) &&
@@ -273,8 +273,8 @@ func detectOutgoingCountAgg(ctx context.Context, query string, info *PatternInfo
 
 	// Check if count() is on the end variable, and only optimize the narrow
 	// "RETURN x.name, count(y)" shape that the optimized executor implements.
-	upperQuery := upperASCII(query)
-	countPattern := "COUNT(" + upperASCII(endVar)
+	upperQuery := upperASCIIWithCancellation(query, contextPipelineProbe(ctx))
+	countPattern := "COUNT(" + upperASCIIWithCancellation(endVar, contextPipelineProbe(ctx))
 
 	if strings.Contains(upperQuery, countPattern) && isReturnNameCountShape(query, startVar, endVar) {
 		info.Pattern = PatternOutgoingCountAgg
@@ -341,7 +341,7 @@ func parseDirectionalCountPattern(ctx context.Context, matchClause string, incom
 	if matchClause == "" {
 		return "", "", "", "", false
 	}
-	if strings.HasPrefix(upperASCII(matchClause), "MATCH") {
+	if strings.HasPrefix(upperASCIIWithCancellation(matchClause, contextPipelineProbe(ctx)), "MATCH") {
 		matchClause = strings.TrimSpace(matchClause[len("MATCH"):])
 	}
 	if matchClause == "" {

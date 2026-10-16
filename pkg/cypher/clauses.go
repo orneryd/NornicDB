@@ -1168,7 +1168,7 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 }
 
 func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, unwindVar string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
-	returnIdx := topLevelKeywordIndex(restQuery, "RETURN")
+	returnIdx := topLevelKeywordIndexWithCancellation(restQuery, "RETURN", contextPipelineProbe(ctx))
 	if returnIdx <= 0 {
 		return nil, false, nil
 	}
@@ -1202,7 +1202,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 		base := strings.TrimSpace(trimmed[:dotIdx])
 		field := strings.TrimSpace(trimmed[dotIdx+1:])
-		if !isSimpleIdentifier(base) || !isSimpleIdentifier(field) {
+		if !isSimpleIdentifierWithCancellation(base, contextPipelineProbe(ctx)) || !isSimpleIdentifierWithCancellation(field, contextPipelineProbe(ctx)) {
 			return "", "", false
 		}
 		return base, field, true
@@ -1229,24 +1229,24 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 		varName := strings.TrimSpace(parts[0])
 		label := strings.TrimSpace(parts[1])
-		if !isSimpleIdentifier(varName) || !isSimpleIdentifier(label) {
+		if !isSimpleIdentifierWithCancellation(varName, contextPipelineProbe(ctx)) || !isSimpleIdentifierWithCancellation(label, contextPipelineProbe(ctx)) {
 			return "", "", "", "", false
 		}
 		if props == "" {
 			return varName, label, "", "", true
 		}
-		pairs := splitTopLevelComma(props)
+		pairs := splitTopLevelCommaWithCancellation(props, contextPipelineProbe(ctx))
 		if len(pairs) != 1 {
 			return "", "", "", "", false
 		}
 		pair := strings.TrimSpace(pairs[0])
-		colonIdx := findTopLevelMapKeyValueSeparator(pair)
+		colonIdx := findTopLevelMapKeyValueSeparatorWithCancellation(pair, contextPipelineProbe(ctx))
 		if colonIdx <= 0 || colonIdx == len(pair)-1 {
 			return "", "", "", "", false
 		}
-		propName := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
+		propName := normalizePropertyKeyWithCancellation(strings.TrimSpace(pair[:colonIdx]), contextPipelineProbe(ctx))
 		propExpr := strings.TrimSpace(pair[colonIdx+1:])
-		if !isSimpleIdentifier(propName) || propExpr == "" {
+		if !isSimpleIdentifierWithCancellation(propName, contextPipelineProbe(ctx)) || propExpr == "" {
 			return "", "", "", "", false
 		}
 		return varName, label, propName, propExpr, true
@@ -1279,7 +1279,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	}
 	parseMergeClause := func(clause string) (string, string, string, bool) {
 		trimmed := strings.TrimSpace(clause)
-		if !strings.HasPrefix(upperASCII(trimmed), "MERGE ") {
+		if !strings.HasPrefix(upperASCIIWithCancellation(trimmed, contextPipelineProbe(ctx)), "MERGE ") {
 			return "", "", "", false
 		}
 		body := strings.TrimSpace(trimmed[len("MERGE "):])
@@ -1292,7 +1292,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 		fromVar := strings.TrimSpace(body[1:fromEnd])
 		rest := strings.TrimSpace(body[fromEnd+1:])
-		if !isSimpleIdentifier(fromVar) || !strings.HasPrefix(rest, "-") {
+		if !isSimpleIdentifierWithCancellation(fromVar, contextPipelineProbe(ctx)) || !strings.HasPrefix(rest, "-") {
 			return "", "", "", false
 		}
 		openBracket := strings.Index(rest, "[")
@@ -1318,10 +1318,10 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 			return "", "", "", false
 		}
 		toVar := strings.TrimSpace(afterArrow[1:toEnd])
-		if !isSimpleIdentifier(relType) || !isSimpleIdentifier(toVar) {
+		if !isSimpleIdentifierWithCancellation(relType, contextPipelineProbe(ctx)) || !isSimpleIdentifierWithCancellation(toVar, contextPipelineProbe(ctx)) {
 			return "", "", "", false
 		}
-		return lowerASCII(fromVar), relType, lowerASCII(toVar), true
+		return lowerASCIIWithCancellation(fromVar, contextPipelineProbe(ctx)), relType, lowerASCIIWithCancellation(toVar, contextPipelineProbe(ctx)), true
 	}
 	splitMutationClauses := func(input string) ([]string, bool) {
 		trimmed := strings.TrimSpace(input)
@@ -1330,7 +1330,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 		var clauses []string
 		for trimmed != "" {
-			upper := upperASCII(trimmed)
+			upper := upperASCIIWithCancellation(trimmed, contextPipelineProbe(ctx))
 			var keyword string
 			switch {
 			case strings.HasPrefix(upper, "MATCH "):
@@ -1360,7 +1360,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	}
 	parseRootSpec := func(clause string) (rootSpec, bool) {
 		trimmed := strings.TrimSpace(clause)
-		if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
+		if !strings.HasPrefix(upperASCIIWithCancellation(trimmed, contextPipelineProbe(ctx)), "MATCH ") {
 			return rootSpec{}, false
 		}
 		body := strings.TrimSpace(trimmed[len("MATCH "):])
@@ -1377,7 +1377,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 		rest := strings.TrimSpace(body[closeIdx+1:])
 		var out rootSpec
-		out.varName = lowerASCII(varName)
+		out.varName = lowerASCIIWithCancellation(varName, contextPipelineProbe(ctx))
 		out.label = label
 		if propName != "" {
 			rowVar, rowField, ok := parseRowFieldRef(propExpr)
@@ -1388,7 +1388,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 			out.rowField = rowField
 			return out, rest == ""
 		}
-		if rest == "" || !strings.HasPrefix(upperASCII(rest), "WHERE ") {
+		if rest == "" || !strings.HasPrefix(upperASCIIWithCancellation(rest, contextPipelineProbe(ctx)), "WHERE ") {
 			return rootSpec{}, false
 		}
 		whereExpr := strings.TrimSpace(rest[len("WHERE "):])
@@ -1398,7 +1398,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 		left := strings.TrimSpace(parts[0])
 		right := strings.TrimSpace(parts[1])
-		lowerLeft := lowerASCII(left)
+		lowerLeft := lowerASCIIWithCancellation(left, contextPipelineProbe(ctx))
 		if !strings.HasPrefix(lowerLeft, "elementid(") || !strings.HasSuffix(left, ")") {
 			return rootSpec{}, false
 		}
@@ -1421,11 +1421,11 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		seenDepth := make(map[int]bool)
 		for _, clause := range clauses {
 			trimmed := strings.TrimSpace(clause)
-			if !strings.HasPrefix(upperASCII(trimmed), "MATCH ") {
+			if !strings.HasPrefix(upperASCIIWithCancellation(trimmed, contextPipelineProbe(ctx)), "MATCH ") {
 				return hopSpec{}, false
 			}
 			body := strings.TrimSpace(trimmed[len("MATCH "):])
-			if strings.Contains(upperASCII(body), " WHERE ") {
+			if strings.Contains(upperASCIIWithCancellation(body, contextPipelineProbe(ctx)), " WHERE ") {
 				return hopSpec{}, false
 			}
 			varName, label, propName, propExpr, ok := parseIdentifierNodePattern(body)
@@ -1444,7 +1444,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 			if out.label != label || out.propName != propName || out.rowField != rowField {
 				return hopSpec{}, false
 			}
-			lowerVar := lowerASCII(varName)
+			lowerVar := lowerASCIIWithCancellation(varName, contextPipelineProbe(ctx))
 			if prev, exists := out.depthByVar[lowerVar]; exists && prev != depth {
 				return hopSpec{}, false
 			}
@@ -1463,7 +1463,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	}
 	firstMergeIdx := -1
 	for idx, clause := range mutationClauses {
-		if strings.HasPrefix(upperASCII(clause), "MERGE ") {
+		if strings.HasPrefix(upperASCIIWithCancellation(clause, contextPipelineProbe(ctx)), "MERGE ") {
 			firstMergeIdx = idx
 			break
 		}
@@ -1816,7 +1816,7 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 
 func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	ctx = withExpressionFailureSlot(ctx)
-	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(cypher)
+	queries, splitAll, mixed, ok := parseTopLevelUnionBranchesWithCancellation(cypher, contextPipelineProbe(ctx))
 	if !ok || len(queries) < 2 {
 		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
@@ -1852,11 +1852,11 @@ func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher strin
 		// even though the query has an explicit RETURN/YIELD projection. For UNION semantics we
 		// must validate/provide branch column shapes deterministically.
 		if len(result.Columns) == 0 {
-			result.Columns = e.inferExplainColumns(query)
+			result.Columns = e.inferExplainColumnsWithCancellation(query, probe)
 			if len(result.Columns) == 0 {
 				// UNION branch execution can legitimately return zero rows; still preserve
 				// projected column shape from the branch RETURN clause.
-				result.Columns = e.inferTopLevelReturnColumns(query)
+				result.Columns = e.inferTopLevelReturnColumnsWithCancellation(query, probe)
 			}
 		}
 

@@ -164,12 +164,12 @@ func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr string,
 	pairs := e.splitPropertyPairs(propsStr)
 
 	for _, pair := range pairs {
-		colonIdx := findTopLevelMapKeyValueSeparator(pair)
+		colonIdx := findTopLevelMapKeyValueSeparatorWithCancellation(pair, contextPipelineProbe(ctx))
 		if colonIdx <= 0 {
 			continue
 		}
 
-		key := normalizePropertyKey(strings.TrimSpace(pair[:colonIdx]))
+		key := normalizePropertyKeyWithCancellation(strings.TrimSpace(pair[:colonIdx]), contextPipelineProbe(ctx))
 		valueStr := strings.TrimSpace(pair[colonIdx+1:])
 
 		value := e.parsePropertyValue(ctx, valueStr)
@@ -428,15 +428,15 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 	// literal. A leading quote is not enough: 'a' + 'b' is an expression, and
 	// decoding it as one string produced "a' + 'b" instead of "ab" (#514).
 	if len(valueStr) >= 2 && (valueStr[0] == '\'' || valueStr[0] == '"') {
-		if end := skipCypherQuotedText(valueStr, 0, valueStr[0]); end >= len(valueStr) || strings.TrimSpace(valueStr[end:]) == "" {
-			if decoded, ok := decodeCypherQuotedString(valueStr); ok {
+		if end := skipCypherQuotedTextWithCancellation(valueStr, 0, valueStr[0], contextPipelineProbe(ctx)); end >= len(valueStr) || strings.TrimSpace(valueStr[end:]) == "" {
+			if decoded, ok := decodeCypherQuotedStringWithCancellation(valueStr, contextPipelineProbe(ctx)); ok {
 				return decoded
 			}
 		}
 	}
 
 	// Handle booleans
-	lowerVal := lowerASCII(valueStr)
+	lowerVal := lowerASCIIWithCancellation(valueStr, contextPipelineProbe(ctx))
 	if lowerVal == "true" {
 		return true
 	}
@@ -456,7 +456,7 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 
 	// Handle arrays
 	if strings.HasPrefix(valueStr, "[") && strings.HasSuffix(valueStr, "]") {
-		if _, _, _, _, comprehension := parseListComprehension(valueStr[1 : len(valueStr)-1]); comprehension {
+		if _, _, _, _, comprehension := parseListComprehensionWithCancellation(valueStr[1 : len(valueStr)-1], contextPipelineProbe(ctx)); comprehension {
 			value, _ := e.evaluateRowExpressionWithContext(ctx, valueStr, e.fabricRecordBindings)
 			return value
 		}
@@ -469,7 +469,7 @@ func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr strin
 	}
 
 	// Check for malformed values (unquoted colon indicates injection attempt or syntax error)
-	if findTopLevelMapKeyValueSeparator(valueStr) >= 0 && !strings.HasPrefix(valueStr, "{") {
+	if findTopLevelMapKeyValueSeparatorWithCancellation(valueStr, contextPipelineProbe(ctx)) >= 0 && !strings.HasPrefix(valueStr, "{") {
 		// Return a special marker that will trigger validation error
 		return invalidPropertyValue{raw: valueStr}
 	}

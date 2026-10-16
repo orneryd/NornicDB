@@ -295,7 +295,7 @@ func sortedCypherValues(list []interface{}) []interface{} {
 func sortedCypherValuesWithCancellation(list []interface{}, probe *pipelineCancellation) []interface{} {
 	out := appendPipelineValues(make([]interface{}, 0, pipelineInitialCapacity(len(list), probe)), list, probe)
 	if probe == nil {
-		sort.SliceStable(out, func(i, j int) bool { return compareValuesForSort(out[i], out[j]) < 0 })
+		sort.SliceStable(out, func(i, j int) bool { return compareValuesForSortWithCancellation(out[i], out[j], probe) < 0 })
 	} else if !probe.sort(out, func(i, j int) bool { return compareValuesForSortWithCancellation(out[i], out[j], probe) < 0 }, true) {
 		return nil
 	}

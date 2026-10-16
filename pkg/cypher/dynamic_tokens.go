@@ -446,9 +446,9 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 	for i := 0; i < len(pattern); i++ {
 		switch c := pattern[i]; c {
 		case '\'', '"', '`':
-			i = skipCypherQuotedText(pattern, i, c) - 1
+			i = skipCypherQuotedTextWithCancellation(pattern, i, c, contextPipelineProbe(ctx)) - 1
 		case '{':
-			if closing := findMatchingDelimiter(pattern, i, '{', '}'); closing > 0 {
+			if closing := findMatchingDelimiterWithCancellation(pattern, i, '{', '}', contextPipelineProbe(ctx)); closing > 0 {
 				i = closing
 			}
 		case '[':
@@ -460,7 +460,7 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 				continue
 			}
 			open := i + strings.IndexByte(pattern[i:], '(')
-			closing := findMatchingDelimiter(pattern, open, '(', ')')
+			closing := findMatchingDelimiterWithCancellation(pattern, open, '(', ')', contextPipelineProbe(ctx))
 			if closing < 0 {
 				return pattern, nil
 			}

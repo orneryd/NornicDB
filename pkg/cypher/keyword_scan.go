@@ -616,7 +616,7 @@ func isNameableClauseKeywordWithCancellation(keyword string, probe *pipelineCanc
 			return false
 		}
 
-		if clause[0] == first && equalFoldASCII(word, clause) {
+		if clause[0] == first && equalFoldASCIIWithCancellation(word, clause, probe) {
 			return true
 		}
 	}

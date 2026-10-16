@@ -93,11 +93,11 @@ func subqueryExpressionKeywordAtWithCancellation(expr string, i int, probe *pipe
 		if probe != nil && !probe.check() {
 			return "", 0, false
 		}
-		end, matched := keywordMatchAt(expr, i, keyword, 0, len(keyword))
+		end, matched := keywordMatchAtWithCancellation(expr, i, keyword, 0, len(keyword), probe)
 		if !matched {
 			continue
 		}
-		if open := queryGapEndWithCancellation(expr, end, probe); open < len(expr) && expr[open] == '{' && (probe == nil || probe.err == nil) && subqueryExpressionKeywordBeforeBrace(expr, i, end, open) {
+		if open := queryGapEndWithCancellation(expr, end, probe); open < len(expr) && expr[open] == '{' && (probe == nil || probe.err == nil) && subqueryExpressionKeywordBeforeBraceWithCancellation(expr, i, end, open, probe) {
 			return keyword, open, true
 		}
 	}

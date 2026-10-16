@@ -915,7 +915,7 @@ func (e *StorageExecutor) evaluateCondition(ctx context.Context, condition strin
 // predicates conditions read directly, then any other expression.
 func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
 	condition = strings.TrimSpace(condition)
-	upper := upperASCII(condition)
+	upper := upperASCIIWithCancellation(condition, contextPipelineProbe(ctx))
 
 	if value, logical, _, err := evaluateLogicalExpressionInContext(ctx, condition, func(operand string, position foldPosition) (interface{}, bool, error) {
 		return contextFoldOperand(ctx, operand, position, func(ctx context.Context) interface{} {
@@ -933,7 +933,7 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 		return e.evaluateExpressionWithContext(ctx, operand, nodes, rels)
 	}
 	// IN and NOT IN are unknown for a null in the list (x IN [1, null]).
-	if indexASCIIFold(condition, " in ") >= 0 {
+	if indexASCIIFoldWithCancellation(condition, " in ", contextPipelineProbe(ctx)) >= 0 {
 		if truth, ok := inPredicateTruth(condition, resolveComparisonOperand); ok {
 			return truth.value()
 		}

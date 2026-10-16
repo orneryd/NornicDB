@@ -76,9 +76,30 @@ func cancellationScope(fn *ast.FuncDecl) (ctxName, probeName string) {
 // owner's accessors.
 func localProbe(fn *ast.FuncDecl, pos token.Pos) string {
 	found := ""
+	var blocks []*ast.BlockStmt
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		if block, ok := node.(*ast.BlockStmt); ok {
+			blocks = append(blocks, block)
+		}
+		return true
+	})
+	// innermost is the smallest block holding node: a variable declared in
+	// it is in scope at pos only if that block holds pos too.
+	innermost := func(node ast.Node) *ast.BlockStmt {
+		var best *ast.BlockStmt
+		for _, block := range blocks {
+			if block.Pos() <= node.Pos() && node.End() <= block.End() && (best == nil || block.End()-block.Pos() < best.End()-best.Pos()) {
+				best = block
+			}
+		}
+		return best
+	}
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
 		assign, ok := node.(*ast.AssignStmt)
 		if !ok || assign.Pos() >= pos || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+			return true
+		}
+		if block := innermost(assign); block == nil || pos < block.Pos() || pos >= block.End() {
 			return true
 		}
 		call, ok := assign.Rhs[0].(*ast.CallExpr)

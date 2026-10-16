@@ -143,7 +143,7 @@ func pipelineUnwindUsesRange(clause string) bool {
 }
 
 func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression string, row pipelineRow) (iter.Seq[interface{}], bool) {
-	function, arguments, call := parseFunctionCallWS(strings.TrimSpace(expression))
+	function, arguments, call := parseFunctionCallWSWithCancellation(strings.TrimSpace(expression), contextPipelineProbe(ctx))
 	if call && strings.EqualFold(function, "range") {
 		parts := e.splitFunctionArgs(arguments)
 		values := make([]interface{}, len(parts))
@@ -583,11 +583,11 @@ func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipel
 func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pipelineRowSource, rows []pipelineRow, clause string) (pipelineRowSource, bool) {
 	end := len(clause)
 	for _, keyword := range []string{"SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
+		if index := topLevelKeywordIndexWithCancellation(clause, keyword, contextPipelineProbe(ctx)); index >= 0 && index < end {
 			end = index
 		}
 	}
-	if end == len(clause) || topLevelKeywordIndex(clause, "WHERE") >= 0 {
+	if end == len(clause) || topLevelKeywordIndexWithCancellation(clause, "WHERE", contextPipelineProbe(ctx)) >= 0 {
 		return nil, false
 	}
 	plan, ok := parsePipelineRowWith(clause[:end])
@@ -595,13 +595,13 @@ func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pi
 		return nil, false
 	}
 	skip, limit := 0, -1
-	if topLevelKeywordIndex(clause, "SKIP") >= 0 {
+	if topLevelKeywordIndexWithCancellation(clause, "SKIP", contextPipelineProbe(ctx)) >= 0 {
 		skip, ok = e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(clause, "SKIP"), rows)
 		if !ok {
 			return nil, false
 		}
 	}
-	if topLevelKeywordIndex(clause, "LIMIT") >= 0 {
+	if topLevelKeywordIndexWithCancellation(clause, "LIMIT", contextPipelineProbe(ctx)) >= 0 {
 		limit, ok = e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(clause, "LIMIT"), rows)
 		if !ok {
 			return nil, false

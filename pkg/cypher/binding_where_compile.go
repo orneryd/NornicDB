@@ -355,7 +355,7 @@ func (e *StorageExecutor) compileBindingWherePlan(ctx context.Context, whereClau
 	if clause == "" {
 		return bindingWherePlan{predicate: func(binding, map[string]interface{}) bool { return true }}, true
 	}
-	if inner, ok := stripEnclosingExpressionParentheses(clause); ok {
+	if inner, ok := stripEnclosingExpressionParenthesesWithCancellation(clause, contextPipelineProbe(ctx)); ok {
 		return e.compileBindingWherePlan(ctx, inner)
 	}
 	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {

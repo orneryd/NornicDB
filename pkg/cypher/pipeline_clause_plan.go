@@ -285,7 +285,7 @@ type unionBranchesParse struct {
 func parseTopLevelUnionBranchesFor(ctx context.Context, query string) ([]string, bool, bool, bool) {
 	parsed := clauseAnalysisFor(ctx, clauseAnalysisUnionBranches, query, func(query string) unionBranchesParse {
 		var parsed unionBranchesParse
-		parsed.branches, parsed.all, parsed.mixed, parsed.ok = parseTopLevelUnionBranches(query)
+		parsed.branches, parsed.all, parsed.mixed, parsed.ok = parseTopLevelUnionBranchesWithCancellation(query, contextPipelineProbe(ctx))
 		return parsed
 	})
 	return parsed.branches, parsed.all, parsed.mixed, parsed.ok
@@ -347,7 +347,7 @@ func pipelineMatchPartsFor(ctx context.Context, body string) pipelineMatchParts 
 // a MATCH clause's whole body.
 func pipelineMatchBodyPartCountFor(ctx context.Context, clause string) int {
 	return clauseAnalysisFor(ctx, clauseAnalysisMatchBodyPartCount, clause, func(clause string) int {
-		return len(splitTopLevelComma(pipelineClauseBody(clause, "MATCH")))
+		return len(splitTopLevelCommaWithCancellation(pipelineClauseBody(clause, "MATCH"), contextPipelineProbe(ctx)))
 	})
 }
 
@@ -382,7 +382,7 @@ func simpleIndexedEqualityShapeFor(ctx context.Context, variable, where string) 
 // COUNT / COLLECT subquery expression, whose body every row runs again. A
 // statement without one runs without plans.
 func withStatementClausePlans(ctx context.Context, cypher string) context.Context {
-	if strings.IndexByte(cypher, '{') < 0 || !mayContainSubqueryExpression(cypher) && !containsFold(cypher, "CALL") {
+	if strings.IndexByte(cypher, '{') < 0 || !mayContainSubqueryExpression(cypher) && !containsFoldWithCancellation(cypher, "CALL", contextPipelineProbe(ctx)) {
 		return ctx
 	}
 	return withPipelineClausePlans(ctx)

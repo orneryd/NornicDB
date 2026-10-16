@@ -980,7 +980,7 @@ func (e *StorageExecutor) callGdsGraphDrop(ctx context.Context, args []interface
 	case string:
 		names = []string{value}
 	default:
-		items, ok := cypherListValue(value)
+		items, ok := cypherListValueWithCancellation(value, contextPipelineProbe(ctx))
 		if !ok {
 			return nil, procedureArgumentTypeError(procedure, "graphName", "STRING or LIST<STRING>", value)
 		}

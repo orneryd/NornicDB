@@ -114,7 +114,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 		return nil, false, nil
 	}
 
-	upper := upperASCII(mutationPart)
+	upper := upperASCIIWithCancellation(mutationPart, contextPipelineProbe(ctx))
 	// nested UNWIND / SET / MERGE / DELETE / REMOVE / FOREACH disqualify
 	// this fast path. RETURN and a simple passthrough WITH are handled above.
 	disqualifiers := []string{"SET", "MERGE", "DELETE", "REMOVE", "FOREACH", "OPTIONAL MATCH"}
@@ -148,7 +148,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 	}
 	rows := make([]map[string]interface{}, 0, len(items))
 	for _, item := range items {
-		row, ok := toStringAnyMap(item)
+		row, ok := toStringAnyMapWithCancellation(item, contextPipelineProbe(ctx))
 		if !ok {
 			rows = nil
 			break

@@ -427,7 +427,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
-		upperQuery = upperASCII(cypher)
+		upperQuery = upperASCIIWithCancellation(cypher, contextPipelineProbe(ctx))
 	}
 
 	if ftx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {

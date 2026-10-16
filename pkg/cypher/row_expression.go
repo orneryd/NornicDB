@@ -91,7 +91,7 @@ func (e *StorageExecutor) evaluateRowArithmeticValuesWithCancellation(operator b
 // stops before the expression and wins over its result.
 func (e *StorageExecutor) evaluateRowValueWithCancellation(expr string, values map[string]interface{}, probe *pipelineCancellation) (interface{}, bool, error) {
 	if probe == nil {
-		return e.evaluateRowValue(expr, values)
+		return e.evaluateRowValueProbed(expr, values, probe)
 	}
 	if !probe.check() {
 		return nil, false, probe.err
@@ -289,10 +289,10 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		if value, matched, resolved, err := e.evaluateRowExtensionFunction(function, argument, values); matched {
 			return value, resolved, err
 		}
-		if isGDSFunctionName(lowerASCII(function)) {
+		if isGDSFunctionName(lowerASCIIWithCancellation(function, probe)) {
 			return e.evaluateRowGraphFunction(function, argument, values)
 		}
-		switch lowerASCII(function) {
+		switch lowerASCIIWithCancellation(function, probe) {
 		case "exists":
 			if isRelationshipPatternOperand(strings.TrimSpace(argument)) {
 				nodes, _ := withWhereValueContext(values)
@@ -380,7 +380,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			}
 			return result, true, nil
 		case "head", "last", "reverse", "size":
-			if equalFoldASCII(function, "size") {
+			if equalFoldASCIIWithCancellation(function, "size", probe) {
 				argument = sizeArgumentExpression(argument)
 			}
 			value, resolved, err := e.evaluateRowValueWithCancellation(argument, values, probe)
@@ -393,7 +393,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 			if strings.EqualFold(function, "size") {
 				return evaluateCypherSizeWithCancellation(value, probe)
 			}
-			result, err := evaluateListAccessFunctionWithCancellation(lowerASCII(function), value, probe)
+			result, err := evaluateListAccessFunctionWithCancellation(lowerASCIIWithCancellation(function, probe), value, probe)
 			if err != nil {
 				return nil, false, err
 			}
@@ -579,7 +579,7 @@ func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, valu
 		{suffix: " IS NOT NULL", notNull: true},
 		{suffix: " IS NULL"},
 	} {
-		if hasSuffixFoldASCII(expr, lowerASCII(predicate.suffix)) {
+		if hasSuffixFoldASCII(expr, lowerASCIIWithCancellation(predicate.suffix, probe)) {
 			value, ok, err := e.evaluateRowValueWithCancellation(strings.TrimSpace(expr[:len(expr)-len(predicate.suffix)]), values, probe)
 			if err != nil {
 				return nil, false, err
@@ -1743,12 +1743,12 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	// prefix from those recognizers, silently falling through to the
 	// generic comparison/expression evaluators and returning a wrong
 	// (false) result instead of evaluating the subquery.
-	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
+	if inner, ok := stripEnclosingExpressionParenthesesWithCancellation(expression, contextPipelineProbe(ctx)); ok {
 		return e.evaluateRowPredicateParts(ctx, inner, values)
 	}
 	strictLogical := rowPredicateIsStrictLogical(expression)
 	if mayContainArithmetic(expression) && strictLogical && !containsRelationshipPattern(expression) {
-		value, evaluated, err := e.evaluateRowValue(expression, values)
+		value, evaluated, err := e.evaluateRowValueProbed(expression, values, contextPipelineProbe(ctx))
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return false
@@ -1825,7 +1825,7 @@ func (e *StorageExecutor) evaluateRowPredicatePartsFromSubqueries(ctx context.Co
 // stands; evaluated is false when the row evaluator doesn't handle the
 // predicate. An error is recorded on ctx and the predicate doesn't hold.
 func (e *StorageExecutor) rowPredicateWithSubqueries(ctx context.Context, expression string, values map[string]interface{}) (bool, bool) {
-	value, evaluated, err := e.evaluateRowValue(expression, rowValuesWithStatementContext(ctx, expression, values))
+	value, evaluated, err := e.evaluateRowValueProbed(expression, rowValuesWithStatementContext(ctx, expression, values), contextPipelineProbe(ctx))
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false, true
@@ -2020,7 +2020,7 @@ func (e *StorageExecutor) rowPredicateOperand(ctx context.Context, expr string, 
 			}
 		}
 	}
-	value, ok, err := e.evaluateRowValue(expr, values)
+	value, ok, err := e.evaluateRowValueProbed(expr, values, contextPipelineProbe(ctx))
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil, false

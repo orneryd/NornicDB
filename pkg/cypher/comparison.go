@@ -190,7 +190,7 @@ func (e *StorageExecutor) compareRegex(actual, expected interface{}) bool {
 // evaluator (cypherMembership): null x, a null list, or a list that holds null
 // without a match give unknown, and NOT IN of unknown stays unknown.
 func (e *StorageExecutor) evaluateInOpTruth(ctx context.Context, node *storage.Node, variable, whereClause string) cypherTruth {
-	upperClause := upperASCII(whereClause)
+	upperClause := upperASCIIWithCancellation(whereClause, contextPipelineProbe(ctx))
 
 	// Cypher: `<expr> NOT IN <list>` must split on " NOT IN ", not on
 	// the substring " IN " (which would leave the trailing "NOT" on the
@@ -232,7 +232,7 @@ func (e *StorageExecutor) evaluateInOpTruth(ctx context.Context, node *storage.N
 	value := e.evaluateExpressionWithContext(ctx, left, nodes, nil)
 	rightIdent := strings.TrimSpace(right)
 	var listVal interface{}
-	if isValidIdentifier(rightIdent) {
+	if isValidIdentifierWithCancellation(rightIdent, contextPipelineProbe(ctx)) {
 		if v, ok := e.boundValue(ctx, rightIdent); ok {
 			listVal = v
 		}

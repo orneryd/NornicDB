@@ -99,8 +99,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	}
 
 	// String literal (single or double quotes)
-	if isWholeCypherQuotedString(expr) {
-		if decoded, ok := decodeCypherQuotedString(expr); ok {
+	if isWholeCypherQuotedStringWithCancellation(expr, contextPipelineProbe(ctx)) {
+		if decoded, ok := decodeCypherQuotedStringWithCancellation(expr, contextPipelineProbe(ctx)); ok {
 			return decoded
 		}
 	}
@@ -116,7 +116,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	// List literal [a, b, c]: every element is an expression evaluated in the
 	// same context (as the row and path evaluators do), so [a.v, b.v] yields
 	// the property values rather than their text.
-	if inner, isList := stripEnclosingRowDelimiter(expr, '[', ']'); isList {
+	if inner, isList := stripEnclosingRowDelimiterWithCancellation(expr, '[', ']', contextPipelineProbe(ctx)); isList {
 		elements := e.splitArrayElements(strings.TrimSpace(inner))
 		result, _, _ := rowListLiteral(len(elements), func(i int) (interface{}, bool, error) {
 			value := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(elements[i]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -156,7 +156,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	}
 
 	// Check if this is an aggregation function - they should not be evaluated in expression context
-	exprLower := lowerASCII(expr)
+	exprLower := lowerASCIIWithCancellation(expr, contextPipelineProbe(ctx))
 	if strings.HasPrefix(exprLower, "count(") ||
 		strings.HasPrefix(exprLower, "sum(") ||
 		strings.HasPrefix(exprLower, "avg(") ||

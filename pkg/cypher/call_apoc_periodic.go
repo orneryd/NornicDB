@@ -159,7 +159,7 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []int
 
 	for {
 		// Add LIMIT to statement if not present
-		stmtUpper := upperASCII(statement)
+		stmtUpper := upperASCIIWithCancellation(statement, contextPipelineProbe(ctx))
 		if !strings.Contains(stmtUpper, "LIMIT") {
 			statement = statement + fmt.Sprintf(" LIMIT %d", limit)
 		}

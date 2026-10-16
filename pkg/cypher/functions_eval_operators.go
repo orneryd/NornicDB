@@ -125,7 +125,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	// ========================================
 
 	if lowerExpr == "" {
-		lowerExpr = lowerASCII(expr)
+		lowerExpr = lowerASCIIWithCancellation(expr, contextPipelineProbe(ctx))
 	}
 	return e.evaluateExpressionWithContextFullPropsLiterals(ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 }

@@ -46,7 +46,7 @@ func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, ele
 		return "", "", false, false
 	}
 
-	upper := upperASCII(clause)
+	upper := upperASCIIWithCancellation(clause, contextPipelineProbe(ctx))
 	if strings.Contains(upper, " AND ") || strings.Contains(upper, " OR ") || strings.Contains(upper, " IN ") {
 		return "", "", false, false
 	}
@@ -70,7 +70,7 @@ func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, ele
 	}
 
 	kind := ""
-	lowerLeft := lowerASCII(left)
+	lowerLeft := lowerASCIIWithCancellation(left, contextPipelineProbe(ctx))
 	switch {
 	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
 		kind = "id"
@@ -159,7 +159,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 	}
 	clause := strings.TrimSpace(whereClause)
 
-	upper := upperASCII(clause)
+	upper := upperASCIIWithCancellation(clause, contextPipelineProbe(ctx))
 	if strings.Contains(upper, " AND ") || strings.Contains(upper, " OR ") || strings.Contains(upper, " IN ") {
 		return nil, false, nil
 	}
@@ -198,7 +198,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 
 	kind := ""
 	varName := ""
-	lowerLeft := lowerASCII(left)
+	lowerLeft := lowerASCIIWithCancellation(left, contextPipelineProbe(ctx))
 	switch {
 	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
 		kind = "id"
@@ -792,7 +792,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 	if clause == "" {
 		return nil, false, nil
 	}
-	upper := upperASCII(clause)
+	upper := upperASCIIWithCancellation(clause, contextPipelineProbe(ctx))
 	inIdx := strings.Index(upper, " IN ")
 	if inIdx <= 0 {
 		return nil, false, nil
@@ -810,7 +810,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 
 	kind := ""
 	varName := ""
-	lowerLeft := lowerASCII(left)
+	lowerLeft := lowerASCIIWithCancellation(left, contextPipelineProbe(ctx))
 	switch {
 	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
 		kind = "id"
@@ -826,7 +826,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 	}
 
 	var list []interface{}
-	if paramName := strings.TrimPrefix(right, "$"); paramName != right && isValidIdentifier(paramName) {
+	if paramName := strings.TrimPrefix(right, "$"); paramName != right && isValidIdentifierWithCancellation(paramName, contextPipelineProbe(ctx)) {
 		if params == nil {
 			return nil, false, nil
 		}
@@ -834,14 +834,14 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 		if !ok {
 			return []*storage.Node{}, true, nil
 		}
-		list = toAnySlice(raw)
+		list = toAnySliceWithCancellation(raw, contextPipelineProbe(ctx))
 	} else {
 		value, constant := e.indexSeekConstant(ctx, right)
 		if !constant {
 			return nil, false, nil
 		}
 		if value != nil {
-			if list = toAnySlice(value); list == nil {
+			if list = toAnySliceWithCancellation(value, contextPipelineProbe(ctx)); list == nil {
 				return nil, false, nil
 			}
 		}
@@ -1252,10 +1252,10 @@ func (e *StorageExecutor) parseSimpleIndexedInParamWithCancellation(variable, wh
 		return "", nil, false
 	}
 	// Keep this optimization deterministic and safe: only simple standalone IN predicates.
-	if containsFold(clause, " AND ") || containsFold(clause, " OR ") {
+	if containsFoldWithCancellation(clause, " AND ", probe) || containsFoldWithCancellation(clause, " OR ", probe) {
 		return "", nil, false
 	}
-	inIdx := keywordIndexFrom(clause, "IN", 0, defaultKeywordScanOpts())
+	inIdx := keywordIndexFromWithCancellation(clause, "IN", 0, defaultKeywordScanOpts(), probe)
 	if inIdx <= 0 || inIdx >= len(clause)-2 {
 		return "", nil, false
 	}
@@ -1318,10 +1318,10 @@ func (e *StorageExecutor) parseSimpleIndexedInLiteral(ctx context.Context, varia
 		return "", nil, false
 	}
 	// Keep this optimization deterministic and safe: only simple standalone IN predicates.
-	if containsFold(clause, " AND ") || containsFold(clause, " OR ") {
+	if containsFoldWithCancellation(clause, " AND ", contextPipelineProbe(ctx)) || containsFoldWithCancellation(clause, " OR ", contextPipelineProbe(ctx)) {
 		return "", nil, false
 	}
-	inIdx := keywordIndexFrom(clause, "IN", 0, defaultKeywordScanOpts())
+	inIdx := keywordIndexFromWithCancellation(clause, "IN", 0, defaultKeywordScanOpts(), contextPipelineProbe(ctx))
 	if inIdx <= 0 || inIdx >= len(clause)-2 {
 		return "", nil, false
 	}

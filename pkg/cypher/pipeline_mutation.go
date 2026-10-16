@@ -34,7 +34,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 			if _, bound := scope[root]; !bound {
 				return nil, true, deleteUndefinedVariableError(expression)
 			}
-		} else if value, evaluated, err := e.evaluateRowValue(strings.TrimSpace(expression), pipelineRow{}); err != nil {
+		} else if value, evaluated, err := e.evaluateRowValueProbed(strings.TrimSpace(expression), pipelineRow{}, contextPipelineProbe(ctx)); err != nil {
 			return nil, true, err
 		} else if evaluated && !isDeleteTargetValue(value) {
 			return nil, true, newSemanticError(
@@ -51,7 +51,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		}
 		values := make([]interface{}, 0, len(targets))
 		for _, expression := range targets {
-			value, ok, err := e.evaluateRowValue(strings.TrimSpace(expression), row)
+			value, ok, err := e.evaluateRowValueProbed(strings.TrimSpace(expression), row, contextPipelineProbe(ctx))
 			if err != nil {
 				return nil, true, err
 			}
@@ -459,7 +459,7 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 	}
 	for _, clause := range clauses {
 		rowCtx := withValueBindings(ctx, newRow)
-		pattern := pipelineClauseBody(clause.text, "CREATE")
+		pattern := pipelineClauseBodyWithCancellation(clause.text, "CREATE", contextPipelineProbe(ctx))
 		dynamic := hasDynamicToken(pattern)
 		if dynamic {
 			// Labels and types whose values depend on the row.

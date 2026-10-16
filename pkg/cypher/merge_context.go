@@ -361,14 +361,14 @@ func (e *StorageExecutor) parseMergeProperties(ctx context.Context, propsText st
 		return props
 	}
 	for _, pair := range e.splitPropertyPairs(propsText) {
-		colon := findTopLevelMapKeyValueSeparator(pair)
+		colon := findTopLevelMapKeyValueSeparatorWithCancellation(pair, contextPipelineProbe(ctx))
 		if colon <= 0 {
 			continue
 		}
-		key := normalizePropertyKey(strings.TrimSpace(pair[:colon]))
+		key := normalizePropertyKeyWithCancellation(strings.TrimSpace(pair[:colon]), contextPipelineProbe(ctx))
 		valueText := strings.TrimSpace(pair[colon+1:])
 		value := e.parsePropertyValue(ctx, valueText)
-		if text, unresolved := value.(string); unresolved && text == valueText && !isWholeCypherQuotedString(valueText) {
+		if text, unresolved := value.(string); unresolved && text == valueText && !isWholeCypherQuotedStringWithCancellation(valueText, contextPipelineProbe(ctx)) {
 			if dot := strings.Index(text, "."); dot > 0 {
 				variable := strings.TrimSpace(text[:dot])
 				_, boundNode := nodeContext[variable]
@@ -778,7 +778,7 @@ func requireSetParameter(ctx context.Context, expr string) error {
 		return nil
 	}
 	name := expr[1:]
-	if !isValidIdentifier(name) {
+	if !isValidIdentifierWithCancellation(name, contextPipelineProbe(ctx)) {
 		return nil
 	}
 	params := getParamsFromContext(ctx)
@@ -892,7 +892,7 @@ func (e *StorageExecutor) projectMergeReturn(ctx context.Context, rows []pipelin
 
 func (e *StorageExecutor) projectMergeReturnSource(ctx context.Context, rows []pipelineRow, returnClause string, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
 	returnClause = strings.TrimSpace(returnClause)
-	return e.projectMergeReturnPlan(ctx, rows, returnClause, returnProjectionPlanFor(returnClause), source, preparedGroups...)
+	return e.projectMergeReturnPlan(ctx, rows, returnClause, returnProjectionPlanForWithCancellation(returnClause, contextPipelineProbe(ctx)), source, preparedGroups...)
 }
 
 func (e *StorageExecutor) projectMergeReturnPlan(ctx context.Context, rows []pipelineRow, returnClause string, plan *returnProjectionPlan, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {

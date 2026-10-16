@@ -365,7 +365,7 @@ func (n *rowPredicateMembershipNode) holds(e *StorageExecutor, ctx context.Conte
 	if !leftOK || !rightOK {
 		return false
 	}
-	membership, known := rowMembershipOfValues(needle, haystack, n.identity)
+	membership, known := rowMembershipOfValuesWithCancellation(needle, haystack, n.identity, contextPipelineProbe(ctx))
 	return known && membership == !n.negated
 }
 

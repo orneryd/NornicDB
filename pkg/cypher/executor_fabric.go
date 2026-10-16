@@ -178,7 +178,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
 	if len(stream.Columns) == 0 {
-		if inferred := e.inferTopLevelReturnColumns(cypher); len(inferred) > 0 {
+		if inferred := e.inferTopLevelReturnColumnsWithCancellation(cypher, contextPipelineProbe(ctx)); len(inferred) > 0 {
 			stream.Columns = inferred
 		}
 	}

@@ -114,7 +114,7 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 				}
 			}
 			optionalPart = strings.TrimSpace(optionalPart[:end])
-			if strings.HasPrefix(upperASCII(optionalPart), "OPTIONAL MATCH") {
+			if strings.HasPrefix(upperASCIIWithCancellation(optionalPart, contextPipelineProbe(ctx)), "OPTIONAL MATCH") {
 				requiredPart := optionalPart
 				if len(requiredPart) >= len("OPTIONAL MATCH") {
 					requiredPart = "MATCH" + requiredPart[len("OPTIONAL MATCH"):]
@@ -365,7 +365,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 	}
 
 	seedQuery := trimmedOuter
-	if topLevelKeywordIndex(seedQuery, "RETURN") < 0 {
+	if topLevelKeywordIndexWithCancellation(seedQuery, "RETURN", contextPipelineProbe(ctx)) < 0 {
 		seedQuery += " RETURN " + variable
 	}
 	outerRes, err := e.executeInternal(ctx, seedQuery, nil)
@@ -1542,10 +1542,10 @@ func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
 	}
 
 	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(innerBody), ";"))
-	if findKeywordIndex(trimmed, "MATCH") != 0 || !containsFold(trimmed, "RETURN ") || callSubqueryQueryIsWrite(trimmed) {
+	if findKeywordIndex(trimmed, "MATCH") != 0 || !containsFoldWithCancellation(trimmed, "RETURN ", contextPipelineProbe(ctx)) || callSubqueryQueryIsWrite(trimmed) {
 		return nil, false, nil
 	}
-	if containsFold(trimmed, "OPTIONAL MATCH") {
+	if containsFoldWithCancellation(trimmed, "OPTIONAL MATCH", contextPipelineProbe(ctx)) {
 		return nil, false, nil
 	}
 
@@ -2166,7 +2166,7 @@ func (e *StorageExecutor) applyResultModifiers(ctx context.Context, result *Exec
 	if value, ok := e.parseIntModifier(ctx, modifiers, "LIMIT"); ok {
 		limit = value
 	}
-	return e.applyCallResultOrderWindow(ctx, result, parseOrderByTerms(modifiers), skip, limit)
+	return e.applyCallResultOrderWindow(ctx, result, parseOrderByTermsWithCancellation(modifiers, contextPipelineProbe(ctx)), skip, limit)
 }
 
 // applyOrderByToResult applies ORDER BY to a result set
@@ -2291,7 +2291,7 @@ func parseOrderByClauseWithCancellation(clause string, probe *pipelineCancellati
 		if len(fields) > 1 {
 			direction := ""
 			if len(fields[len(fields)-1]) <= len("DESCENDING") {
-				direction = upperASCII(fields[len(fields)-1])
+				direction = upperASCIIWithCancellation(fields[len(fields)-1], probe)
 			}
 			switch direction {
 			case "DESC", "DESCENDING":

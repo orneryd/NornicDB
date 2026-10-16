@@ -101,7 +101,7 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 	statistics := config["statistics"] != false
 
 	// Split by semicolons (respecting quotes)
-	queries := e.splitBySemicolon(statements)
+	queries := e.splitBySemicolonWithCancellation(statements, contextPipelineProbe(ctx))
 
 	result := &ExecuteResult{
 		Columns: []string{"row", "result"},

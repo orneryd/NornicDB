@@ -94,18 +94,18 @@ func (e *StorageExecutor) tryCompileTraversalExpr(ctx context.Context, expr stri
 	}
 
 	// Literals — replicate evaluateExpressionFastLeaf's order and results.
-	if isWholeCypherQuotedString(expr) {
-		if decoded, ok := decodeCypherQuotedString(expr); ok {
+	if isWholeCypherQuotedStringWithCancellation(expr, contextPipelineProbe(ctx)) {
+		if decoded, ok := decodeCypherQuotedStringWithCancellation(expr, contextPipelineProbe(ctx)); ok {
 			return func(traversalOptRow) interface{} { return decoded }, true
 		}
 	}
-	if equalFoldASCII(expr, "true") {
+	if equalFoldASCIIWithCancellation(expr, "true", contextPipelineProbe(ctx)) {
 		return func(traversalOptRow) interface{} { return true }, true
 	}
-	if equalFoldASCII(expr, "false") {
+	if equalFoldASCIIWithCancellation(expr, "false", contextPipelineProbe(ctx)) {
 		return func(traversalOptRow) interface{} { return false }, true
 	}
-	if equalFoldASCII(expr, "null") {
+	if equalFoldASCIIWithCancellation(expr, "null", contextPipelineProbe(ctx)) {
 		// fastLeaf declines null and the props/literals branch resolves it to
 		// nil; the compiled result is identical.
 		return func(traversalOptRow) interface{} { return nil }, true
@@ -152,7 +152,7 @@ func isCompilableTraversalVarExpr(expr string) bool {
 // their compiled form when the function requests lazy evaluation via
 // Context.Eval, and everything else routes through the full evaluator.
 func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, expr string) (compiledTraversalProjection, bool) {
-	name, inner, ok := parseFunctionCallWS(expr)
+	name, inner, ok := parseFunctionCallWSWithCancellation(expr, contextPipelineProbe(ctx))
 	if !ok {
 		return nil, false
 	}

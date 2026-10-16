@@ -1029,7 +1029,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					}
 				}
 			}
-			if callSubqueryQueryIsWrite(clause.text) || strings.Contains(upperASCII(clause.text), "IN TRANSACTIONS") {
+			if callSubqueryQueryIsWrite(clause.text) || strings.Contains(upperASCIIWithCancellation(clause.text, cancellation), "IN TRANSACTIONS") {
 				wrote = true
 			}
 		case pipelineClauseForeach:
@@ -1104,7 +1104,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		if cancellation.err != nil {
 			return nil, true, cancellation.err
 		}
-		if topLevelKeywordIndex(body, "RETURN") >= 0 {
+		if topLevelKeywordIndexWithCancellation(body, "RETURN", cancellation) >= 0 {
 			result = callPipelineResultFromRows(ctx, rows, nil, result.Stats, terminalCallColumns)
 		}
 	}
@@ -1161,17 +1161,17 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 		return nil, false, nil
 	}
 	matchBody := strings.TrimSpace(clauses[0].text[len("MATCH"):])
-	if topLevelKeywordIndex(matchBody, "WHERE") >= 0 {
+	if topLevelKeywordIndexWithCancellation(matchBody, "WHERE", contextPipelineProbe(ctx)) >= 0 {
 		return nil, false, nil
 	}
-	if len(splitTopLevelComma(matchBody)) != 1 {
+	if len(splitTopLevelCommaWithCancellation(matchBody, contextPipelineProbe(ctx))) != 1 {
 		return nil, false, nil
 	}
 	matches := e.parseTraversalPattern(ctx, matchBody)
 	if matches == nil {
 		return nil, false, nil
 	}
-	items := e.parseReturnItems(strings.TrimSpace(clauses[1].text[len("RETURN"):]))
+	items := e.parseReturnItemsWithCancellation(strings.TrimSpace(clauses[1].text[len("RETURN"):]), contextPipelineProbe(ctx))
 	if len(items) > 1 && items[0].expr == "*" {
 		// RETURN *, items: the general projection writes the * out (#883).
 		return nil, false, nil
@@ -1200,7 +1200,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 	}
 	matchBody := strings.TrimSpace(clauses[0].text[len("MATCH"):])
 	whereClause := ""
-	if whereIndex := topLevelKeywordIndex(matchBody, "WHERE"); whereIndex >= 0 {
+	if whereIndex := topLevelKeywordIndexWithCancellation(matchBody, "WHERE", contextPipelineProbe(ctx)); whereIndex >= 0 {
 		whereClause = strings.TrimSpace(matchBody[whereIndex+len("WHERE"):])
 		matchBody = strings.TrimSpace(matchBody[:whereIndex])
 	}
@@ -1214,7 +1214,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		return nil, false, nil
 	}
 
-	items := e.parseReturnItems(strings.TrimSpace(clauses[1].text[len("RETURN"):]))
+	items := e.parseReturnItemsWithCancellation(strings.TrimSpace(clauses[1].text[len("RETURN"):]), contextPipelineProbe(ctx))
 	if len(items) > 1 && items[0].expr == "*" {
 		// RETURN *, items: the general projection writes the * out (#883).
 		return nil, false, nil
@@ -1445,7 +1445,7 @@ func projectPipelineSimpleNodeRead(ctx context.Context, nodes []*storage.Node, i
 				row[index] = node
 				continue
 			}
-			property := normalizeProjectionColumnName(strings.TrimSpace(expression[len(prefix):]))
+			property := normalizeProjectionColumnNameWithCancellation(strings.TrimSpace(expression[len(prefix):]), probe)
 			row[index] = node.Properties[property]
 		}
 		result.Rows = append(result.Rows, row)
@@ -1624,7 +1624,7 @@ func (e *StorageExecutor) pipelineApplyMatch(ctx context.Context, rows []pipelin
 }
 
 func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
-	body := pipelineClauseBody(clause, "MATCH")
+	body := pipelineClauseBodyWithCancellation(clause, "MATCH", contextPipelineProbe(ctx))
 	if stripped, repeatable := stripRepeatableElements(body); repeatable {
 		ctx, body, clause = withRepeatableElements(ctx), stripped, "MATCH "+stripped
 	}
@@ -2070,7 +2070,7 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 	// executeChainedMatch runs one pattern part. A MATCH of several parts
 	// ((a)-->(x), (b)-->(x)) needs its relationships distinct across the
 	// parts, which the MATCH executor below enforces.
-	if len(splitTopLevelComma(pattern)) != 1 || !containsRelationshipPattern(pattern) {
+	if len(splitTopLevelCommaWithCancellation(pattern, cancellation)) != 1 || !containsRelationshipPattern(pattern) {
 		return nil, false
 	}
 	out := make([]pipelineRow, 0, len(rows))

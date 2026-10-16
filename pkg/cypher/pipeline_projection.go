@@ -55,14 +55,14 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	body := strings.TrimSpace(clause)
 	orderTerms := parseOrderByTermsWithCancellation(body, probe)
 	withSkip, withLimit := 0, -1
-	if skipIndex := topLevelKeywordIndex(body, "SKIP"); skipIndex >= 0 {
+	if skipIndex := topLevelKeywordIndexWithCancellation(body, "SKIP", probe); skipIndex >= 0 {
 		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "SKIP"), rows)
 		if !ok {
 			return nil, false
 		}
 		withSkip = value
 	}
-	if limitIndex := topLevelKeywordIndex(body, "LIMIT"); limitIndex >= 0 {
+	if limitIndex := topLevelKeywordIndexWithCancellation(body, "LIMIT", probe); limitIndex >= 0 {
 		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "LIMIT"), rows)
 		if !ok {
 			return nil, false
@@ -70,7 +70,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		withLimit = value
 	}
 	postWithWhere := ""
-	if whereIdx := topLevelKeywordIndex(body, "WHERE"); whereIdx >= 0 {
+	if whereIdx := topLevelKeywordIndexWithCancellation(body, "WHERE", probe); whereIdx >= 0 {
 		postWithWhere = strings.TrimSpace(body[whereIdx+len("WHERE"):])
 		body = strings.TrimSpace(body[:whereIdx])
 	}
@@ -86,7 +86,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if !probe.check() {
 			return nil, false
 		}
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
+		if index := topLevelKeywordIndexWithCancellation(body, keyword, probe); index >= 0 {
 			body = strings.TrimSpace(body[:index])
 		}
 	}
@@ -848,7 +848,7 @@ func parsePipelineAggregateWithCancellation(expr string, probe *pipelineCancella
 	if open < 0 || !isAggregateFuncWithCancellation(expr, probe) {
 		return "", "", false, false
 	}
-	name = lowerASCII(trimSpaceWithCancellation(expr[:open], probe))
+	name = lowerASCIIWithCancellation(trimSpaceWithCancellation(expr[:open], probe), probe)
 	inner = trimSpaceWithCancellation(extractFuncInnerWithCancellation(expr, probe), probe)
 	inner, distinct = cutDistinctArgumentWithCancellation(inner, probe)
 	if inner == "" || probe != nil && probe.err != nil {

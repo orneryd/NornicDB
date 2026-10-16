@@ -160,7 +160,7 @@ func (e *StorageExecutor) evaluateBoundPatternRows(ctx context.Context, pattern 
 // which isn't "no rows" (#1055).
 func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, values map[string]interface{}) ([]traversalOptRow, bool) {
 	pattern = strings.TrimSpace(pattern)
-	if strings.HasPrefix(upperASCII(pattern), "MATCH ") {
+	if strings.HasPrefix(upperASCIIWithCancellation(pattern, contextPipelineProbe(ctx)), "MATCH ") {
 		pattern = strings.TrimSpace(pattern[len("MATCH "):])
 	}
 	clauses := splitOptionalMatchClauses(pattern)
@@ -481,7 +481,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		if getExpressionFailure(ctx) != nil {
 			return nil, false
 		}
-		if text, ok := value.(string); ok && text == trimmed && !isWholeCypherQuotedString(trimmed) {
+		if text, ok := value.(string); ok && text == trimmed && !isWholeCypherQuotedStringWithCancellation(trimmed, probe) {
 			return nil, false
 		}
 	}
@@ -500,7 +500,7 @@ func (e *StorageExecutor) evaluateRowEntityIdentity(ctx context.Context, functio
 	if value, bound := values[inner]; bound {
 		node, _ = value.(*storage.Node)
 		edge, _ = value.(*storage.Edge)
-	} else if value, resolved, err := e.evaluateRowValue(inner, values); err == nil && resolved {
+	} else if value, resolved, err := e.evaluateRowValueProbed(inner, values, contextPipelineProbe(ctx)); err == nil && resolved {
 		node, _ = value.(*storage.Node)
 		edge, _ = value.(*storage.Edge)
 	} else {

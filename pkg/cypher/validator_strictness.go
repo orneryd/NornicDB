@@ -90,8 +90,8 @@ func containsNotInOperatorWithCancellation(cypher string, probe *pipelineCancell
 		// NOT is a valid local iterator name, read by the same declaration
 		// owner as the list/quantifier evaluators, rather than an infix NOT.
 		if c == '[' || c == '(' && bindingFunctionBeforeParen(cypher, i) != "" {
-			if name, at, _, declared := bindingDeclaration(cypher, i+1); declared && strings.EqualFold(name, "NOT") {
-				_, end, _ := scanIdentifierToken(cypher, at)
+			if name, at, _, declared := bindingDeclarationWithCancellation(cypher, i+1, probe); declared && strings.EqualFold(name, "NOT") {
+				_, end, _ := scanIdentifierTokenWithCancellation(cypher, at, probe)
 				i = end - 1
 				continue
 			}

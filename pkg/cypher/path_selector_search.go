@@ -96,7 +96,7 @@ func parsePathPatternItems(pattern string, nested bool) ([]pathPatternItem, bool
 
 func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bool) ([]pathPatternItem, bool) {
 	var items []pathPatternItem
-	for at := skipASCIISpaces(pattern, 0, len(pattern)); at < len(pattern); at = skipASCIISpaces(pattern, at, len(pattern)) {
+	for at := skipASCIISpacesWithCancellation(pattern, 0, len(pattern), contextPipelineProbe(ctx)); at < len(pattern); at = skipASCIISpacesWithCancellation(pattern, at, len(pattern), contextPipelineProbe(ctx)) {
 		if ctx.Err() != nil {
 			return nil, false
 		}
@@ -106,13 +106,13 @@ func parsePathPatternItemsContext(ctx context.Context, pattern string, nested bo
 			if close < 0 {
 				return nil, false
 			}
-			if parenthesisedPathAt(pattern, at, close) {
-				quantifier, ok := relationshipQuantifierAt(pattern, skipASCIISpaces(pattern, close+1, len(pattern)), len(pattern))
+			if parenthesisedPathAtWithCancellation(pattern, at, close, contextPipelineProbe(ctx)) {
+				quantifier, ok := relationshipQuantifierAt(pattern, skipASCIISpacesWithCancellation(pattern, close+1, len(pattern), contextPipelineProbe(ctx)), len(pattern))
 				if nested || !ok {
 					return nil, false
 				}
 				inner, where := pattern[at+1:close], ""
-				if index := topLevelKeywordIndex(inner, "WHERE"); index >= 0 {
+				if index := topLevelKeywordIndexWithCancellation(inner, "WHERE", contextPipelineProbe(ctx)); index >= 0 {
 					inner, where = inner[:index], strings.TrimSpace(inner[index+len("WHERE"):])
 				}
 				members, ok := parsePathPatternItemsContext(ctx, inner, true)

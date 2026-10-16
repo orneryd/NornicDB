@@ -774,7 +774,7 @@ func isCypherListParameter(value interface{}) bool {
 // runtime validation by the row evaluator.
 func (e *StorageExecutor) validateStaticBooleanOperands(ctx context.Context, expression string) error {
 	expression = strings.TrimSpace(expression)
-	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
+	if inner, ok := stripEnclosingExpressionParenthesesWithCancellation(expression, contextPipelineProbe(ctx)); ok {
 		return e.validateStaticBooleanOperands(ctx, inner)
 	}
 	if hasPrefixFoldASCII(expression, "NOT ") {
@@ -817,7 +817,7 @@ func (e *StorageExecutor) validateStaticBooleanOperands(ctx context.Context, exp
 
 func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, expression string) (interface{}, bool) {
 	expression = strings.TrimSpace(expression)
-	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
+	if inner, ok := stripEnclosingExpressionParenthesesWithCancellation(expression, contextPipelineProbe(ctx)); ok {
 		expression = inner
 	}
 	if value, literal := parseLiteralValueFromComputedRow(expression); literal {
@@ -831,7 +831,7 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 			return true, true
 		}
 	}
-	upper := upperASCII(expression)
+	upper := upperASCIIWithCancellation(expression, contextPipelineProbe(ctx))
 	if strings.HasSuffix(upper, " IS NULL") || strings.HasSuffix(upper, " IS NOT NULL") || strings.HasPrefix(upper, "NOT ") {
 		return true, true
 	}
@@ -839,7 +839,7 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 	if !defined {
 		return nil, false
 	}
-	if text, unresolved := value.(string); unresolved && text == expression && !isWholeCypherQuotedString(expression) {
+	if text, unresolved := value.(string); unresolved && text == expression && !isWholeCypherQuotedStringWithCancellation(expression, contextPipelineProbe(ctx)) {
 		return nil, false
 	}
 	return value, true

@@ -289,7 +289,7 @@ func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cy
 	// Check for IF NOT EXISTS after database name.
 	ifNotExists := false
 	remaining := strings.TrimSpace(cypher[dbNameEnd:])
-	upperRemaining := upperASCII(remaining)
+	upperRemaining := upperASCIIWithCancellation(remaining, contextPipelineProbe(ctx))
 	if strings.HasPrefix(upperRemaining, "IF NOT EXISTS") {
 		ifNotExists = true
 		remaining = strings.TrimSpace(remaining[len("IF NOT EXISTS"):])
@@ -616,7 +616,7 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 
 	// Check for ADD or DROP
 	remaining := strings.TrimSpace(cypher[dbNameEnd:])
-	upperRemaining := upperASCII(remaining)
+	upperRemaining := upperASCIIWithCancellation(remaining, contextPipelineProbe(ctx))
 
 	if strings.HasPrefix(upperRemaining, "ADD ALIAS") {
 		tokens, err := tokenize(remaining)

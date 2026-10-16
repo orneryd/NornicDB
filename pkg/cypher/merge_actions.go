@@ -273,7 +273,7 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	// set once its elements exist, as Neo4j's MERGE evaluates it; CREATE
 	// itself can't read an element it creates.
 	createPattern, assignments := pattern, ""
-	if where := topLevelKeywordIndex(match, "WHERE"); where >= 0 {
+	if where := topLevelKeywordIndexWithCancellation(match, "WHERE", contextPipelineProbe(ctx)); where >= 0 {
 		createPattern = strings.TrimSpace(match[len("MATCH"):where])
 		assignments = strings.Join(splitTopLevelAndConjuncts(match[where+len("WHERE"):]), ", ")
 	}

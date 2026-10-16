@@ -135,7 +135,7 @@ func (e *StorageExecutor) createPatternsInScope(ctx context.Context, pattern str
 // into createdNodes / createdEdges for later patterns and clauses. Adjacent
 // pipeline CREATE clauses share one plan and are published atomically.
 func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, error) {
-	for _, fragment := range splitTopLevelComma(pattern) {
+	for _, fragment := range splitTopLevelCommaWithCancellation(pattern, contextPipelineProbe(ctx)) {
 		_, body := parseCreatePathAssignment(strings.TrimSpace(fragment))
 		if !strings.HasPrefix(body, "(") || !strings.HasSuffix(strings.TrimSpace(body), ")") {
 			return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "Invalid CREATE pattern")
@@ -497,11 +497,11 @@ func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern
 		return nil
 	}
 	for _, pair := range e.splitPropertyPairs(pattern[open+1 : close]) {
-		separator := findTopLevelMapKeyValueSeparator(pair)
+		separator := findTopLevelMapKeyValueSeparatorWithCancellation(pair, contextPipelineProbe(ctx))
 		if separator <= 0 {
 			continue
 		}
-		key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
+		key := normalizePropertyKeyWithCancellation(strings.TrimSpace(pair[:separator]), contextPipelineProbe(ctx))
 		expression := strings.TrimSpace(pair[separator+1:])
 		if expression == "" {
 			continue
@@ -514,7 +514,7 @@ func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern
 		if !isString || text != expression {
 			continue
 		}
-		if isWholeCypherQuotedString(expression) {
+		if isWholeCypherQuotedStringWithCancellation(expression, contextPipelineProbe(ctx)) {
 			continue
 		}
 		values := make(map[string]interface{}, len(nodes)+len(relationships)+len(valueBindingsFromContext(ctx)))
@@ -527,7 +527,7 @@ func (e *StorageExecutor) validateNoTextFallthrough(ctx context.Context, pattern
 		for name, edge := range relationships {
 			values[name] = edge.Properties
 		}
-		if _, resolved, evalErr := e.evaluateRowValue(expression, values); evalErr != nil {
+		if _, resolved, evalErr := e.evaluateRowValueProbed(expression, values, contextPipelineProbe(ctx)); evalErr != nil {
 			return evalErr
 		} else if resolved {
 			continue
@@ -557,13 +557,13 @@ func (e *StorageExecutor) resolveCreatePropertyReferences(
 		return
 	}
 	for _, pair := range e.splitPropertyPairs(pattern[open+1 : close]) {
-		separator := findTopLevelMapKeyValueSeparator(pair)
+		separator := findTopLevelMapKeyValueSeparatorWithCancellation(pair, contextPipelineProbe(ctx))
 		if separator <= 0 {
 			continue
 		}
-		key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
+		key := normalizePropertyKeyWithCancellation(strings.TrimSpace(pair[:separator]), contextPipelineProbe(ctx))
 		expression := strings.TrimSpace(pair[separator+1:])
-		if expression == "" || isWholeCypherQuotedString(expression) {
+		if expression == "" || isWholeCypherQuotedStringWithCancellation(expression, contextPipelineProbe(ctx)) {
 			continue
 		}
 		dot := strings.IndexByte(expression, '.')
@@ -862,7 +862,7 @@ func (e *StorageExecutor) parseRelationshipTypeAndProps(ctx context.Context, rel
 	// rejects a relationship without exactly one type.
 	declaration := relationshipDeclarationOf(relStr)
 	if declaration.properties != "" {
-		if propsEnd := findMatchingDelimiter(declaration.properties, 0, '{', '}'); propsEnd > 0 {
+		if propsEnd := findMatchingDelimiterWithCancellation(declaration.properties, 0, '{', '}', contextPipelineProbe(ctx)); propsEnd > 0 {
 			relProps = e.parseProperties(ctx, declaration.properties[:propsEnd+1])
 		}
 	}
@@ -899,7 +899,7 @@ func splitPatternParameterMap(text string) (rest, parameter string, ok bool) {
 // Integer") when it isn't a map.
 func createParameterProperties(ctx context.Context, parameter string) (map[string]interface{}, error) {
 	value, _ := resolveDirectParamRef(ctx, parameter)
-	properties, isMap := toStringAnyMap(value)
+	properties, isMap := toStringAnyMapWithCancellation(value, contextPipelineProbe(ctx))
 	if !isMap {
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
 			localization.CypherCoreParameterTypeMismatch(parameter[1:], "Map, Node or Relationship", staticParameterOperand(value).display))

@@ -79,7 +79,7 @@ func (e *StorageExecutor) executeCreateProcedure(ctx context.Context, cypher str
 	if err != nil {
 		return nil, err
 	}
-	mode := upperASCII(strings.TrimSpace(m[4]))
+	mode := upperASCIIWithCancellation(strings.TrimSpace(m[4]), contextPipelineProbe(ctx))
 	body := strings.TrimSpace(m[5])
 	if body == "" {
 		return nil, localizedError(localization.CypherProceduresBodyRequired(), nil)

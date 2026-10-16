@@ -832,7 +832,7 @@ func (e *StorageExecutor) rowPredicatePartText(ctx context.Context, part *rowPre
 	var resolve func(context.Context, map[string]interface{}) (interface{}, bool, error)
 	if !part.predicateOnly {
 		resolve = func(_ context.Context, values map[string]interface{}) (interface{}, bool, error) {
-			return e.evaluateRowValue(part.text, values)
+			return e.evaluateRowValueProbed(part.text, values, contextPipelineProbe(ctx))
 		}
 	}
 	value, _, err := part.isolation.evaluate(ctx, values, resolve,

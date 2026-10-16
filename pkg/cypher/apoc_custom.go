@@ -176,7 +176,7 @@ func (e *StorageExecutor) callApocCustomInstall(ctx context.Context, procedure s
 	err = e.installPersistedProcedure(ctx, persistedProcedureRecord{
 		Name:        apocCustomPrefix + signature.name,
 		ArgNames:    signature.args,
-		Mode:        upperASCII(strings.TrimSpace(mode)),
+		Mode:        upperASCIIWithCancellation(strings.TrimSpace(mode), contextPipelineProbe(ctx)),
 		Body:        strings.TrimSpace(statement),
 		Signature:   signature.text(),
 		Description: description,
@@ -235,7 +235,7 @@ func (e *StorageExecutor) callApocCustomList(ctx context.Context) (*ExecuteResul
 		for i, arg := range record.ArgNames {
 			input := []interface{}{arg, "ANY"}
 			if i < len(record.ArgTypes) {
-				input[1] = lowerASCII(record.ArgTypes[i])
+				input[1] = lowerASCIIWithCancellation(record.ArgTypes[i], contextPipelineProbe(ctx))
 			}
 			if i < len(record.ArgDefaults) && record.ArgDefaults[i] != "" {
 				input = append(input, record.ArgDefaults[i])
@@ -244,11 +244,11 @@ func (e *StorageExecutor) callApocCustomList(ctx context.Context) (*ExecuteResul
 		}
 		outputs := make([]interface{}, len(record.Outputs))
 		for i, column := range record.Outputs {
-			outputs[i] = []interface{}{column.Name, lowerASCII(column.Type)}
+			outputs[i] = []interface{}{column.Name, lowerASCIIWithCancellation(column.Type, contextPipelineProbe(ctx))}
 		}
 		result.Rows = append(result.Rows, []interface{}{
 			"procedure", strings.TrimPrefix(record.Name, apocCustomPrefix), record.Description,
-			lowerASCII(record.Mode), record.Body, inputs, outputs, false,
+			lowerASCIIWithCancellation(record.Mode, contextPipelineProbe(ctx)), record.Body, inputs, outputs, false,
 		})
 	}
 	return result, nil

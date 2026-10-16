@@ -141,7 +141,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := e.validateSyntaxWithCancellation(cypher, cypherVersionFromContext(ctx) == "25", parameterCancellationForContext(ctx)); err != nil {
 		return nil, err
 	}
-	if err := e.validateDuplicateReturnColumnName(cypher, quotedVariableNamesFor(ctx, cypher)); err != nil {
+	if err := e.validateDuplicateReturnColumnName(cypher, quotedVariableNamesForWithCancellation(ctx, cypher, preparationProbe)); err != nil {
 		return nil, err
 	}
 	if err := e.statementParametersError(ctx, cypher, params); err != nil {

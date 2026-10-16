@@ -168,13 +168,13 @@ func (e *StorageExecutor) parseValue(ctx context.Context, s string) interface{} 
 	// Handle quoted strings with escape sequence support
 	if (strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'")) ||
 		(strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"")) {
-		if decoded, ok := decodeCypherQuotedString(s); ok {
+		if decoded, ok := decodeCypherQuotedStringWithCancellation(s, contextPipelineProbe(ctx)); ok {
 			return decoded
 		}
 	}
 
 	// Handle booleans
-	upper := upperASCII(s)
+	upper := upperASCIIWithCancellation(s, contextPipelineProbe(ctx))
 	if upper == "TRUE" {
 		return true
 	}

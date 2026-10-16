@@ -78,7 +78,7 @@ func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression st
 	if inner == "" {
 		return result, true, true, nil
 	}
-	for _, rawItem := range splitTopLevelComma(inner) {
+	for _, rawItem := range splitTopLevelCommaWithCancellation(inner, probe) {
 		if probe != nil && !probe.check() {
 			return nil, true, false, probe.err
 		}
@@ -96,7 +96,7 @@ func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression st
 				result[name] = value
 			}
 		case strings.HasPrefix(item, "."):
-			name, selector := mapProjectionPropertySelector(item)
+			name, selector := mapProjectionPropertySelectorWithCancellation(item, probe)
 			if !selector {
 				return nil, true, false, nil
 			}
@@ -110,9 +110,9 @@ func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression st
 			}
 			result[name] = value
 		default:
-			separator := findTopLevelMapKeyValueSeparator(item)
+			separator := findTopLevelMapKeyValueSeparatorWithCancellation(item, probe)
 			if separator > 0 {
-				name := normalizePropertyKey(strings.TrimSpace(item[:separator]))
+				name := normalizePropertyKeyWithCancellation(strings.TrimSpace(item[:separator]), probe)
 				value, ok, err := e.evaluateRowValueWithCancellation(strings.TrimSpace(item[separator+1:]), values, probe)
 				if err != nil {
 					return nil, true, false, err
@@ -123,7 +123,7 @@ func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression st
 				result[name] = value
 				continue
 			}
-			if !isValidIdentifier(item) && !isBacktickQuotedName(item) {
+			if !isValidIdentifierWithCancellation(item, probe) && !isBacktickQuotedNameWithCancellation(item, probe) {
 				return nil, true, false, nil
 			}
 			value, ok, err := e.evaluateRowValueWithCancellation(item, values, probe)
@@ -133,7 +133,7 @@ func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression st
 			if !ok {
 				return nil, true, false, nil
 			}
-			result[normalizePropertyKey(item)] = value
+			result[normalizePropertyKeyWithCancellation(item, probe)] = value
 		}
 	}
 	return result, true, true, nil

@@ -750,7 +750,7 @@ func (e *StorageExecutor) rowValueFallbackProbed(expr string, values map[string]
 	if err != nil {
 		return nil, false, err
 	}
-	if text, ok := value.(string); ok && text == expr && !isWholeCypherQuotedString(expr) {
+	if text, ok := value.(string); ok && text == expr && !isWholeCypherQuotedStringWithCancellation(expr, probe) {
 		return nil, false, nil
 	}
 	return value, true, nil
@@ -846,7 +846,7 @@ func (n *rowMembershipNode) eval(e *StorageExecutor, values map[string]interface
 	if !leftOK || !rightOK {
 		return nil, false, nil
 	}
-	value, ok := rowMembershipOfValues(needle, haystack, n.identity)
+	value, ok := rowMembershipOfValuesWithCancellation(needle, haystack, n.identity, probe)
 	if !n.negated || !ok || value == nil {
 		return value, ok, nil
 	}
@@ -896,7 +896,7 @@ func (n *rowArithmeticNode) eval(e *StorageExecutor, values map[string]interface
 			return value, true, nil
 		}
 	}
-	return e.evaluateRowArithmeticValues(n.operator, leftValue, rightValue)
+	return e.evaluateRowArithmeticValuesWithCancellation(n.operator, leftValue, rightValue, probe)
 }
 
 // rowPropertyNode is base.chain for a base that isn't a row variable

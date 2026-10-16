@@ -114,7 +114,7 @@ func (e *StorageExecutor) validateStaticPaginationExpression(keyword, expression
 }
 
 func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Context, cypher string) error {
-	if !strings.Contains(cypher, "$") || (!containsFold(cypher, "SKIP") && !containsFold(cypher, "LIMIT")) {
+	if !strings.Contains(cypher, "$") || (!containsFoldWithCancellation(cypher, "SKIP", contextPipelineProbe(ctx)) && !containsFoldWithCancellation(cypher, "LIMIT", contextPipelineProbe(ctx))) {
 		return nil
 	}
 	params := getParamsFromContext(ctx)
@@ -127,7 +127,7 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 		if !strings.Contains(pagination.value, "$") {
 			continue
 		}
-		value, evaluated, err := e.evaluateRowValue(pagination.value, values)
+		value, evaluated, err := e.evaluateRowValueProbed(pagination.value, values, contextPipelineProbe(ctx))
 		if err != nil {
 			return err
 		}

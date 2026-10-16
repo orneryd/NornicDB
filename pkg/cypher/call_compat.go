@@ -1091,9 +1091,9 @@ func (e *StorageExecutor) callTxSetMetadataArguments(ctx context.Context, argume
 		return nil, localizedError(localization.CypherProceduresMetadataObjectRequired(), nil)
 	}
 
-	metadata, valid := toStringAnyMap(arguments[0])
+	metadata, valid := toStringAnyMapWithCancellation(arguments[0], contextPipelineProbe(ctx))
 	if expression, raw := arguments[0].(string); raw {
-		metadata, valid = toStringAnyMap(e.evaluateExpressionWithContext(ctx, expression, nil, nil))
+		metadata, valid = toStringAnyMapWithCancellation(e.evaluateExpressionWithContext(ctx, expression, nil, nil), contextPipelineProbe(ctx))
 	}
 	if !valid {
 		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "tx.setMetaData requires a MAP")

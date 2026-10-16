@@ -407,7 +407,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// reduce(acc = initial, x IN list | step) and allReduce(…, predicate)
 	if matchFuncStartAndSuffix(expr, "reduce") || matchFuncStartAndSuffix(expr, "allreduce") {
-		if function, inner, isCall := parseFunctionCallWS(expr); isCall && isReduceFormFunction(function) {
+		if function, inner, isCall := parseFunctionCallWSWithCancellation(expr, contextPipelineProbe(ctx)); isCall && isReduceFormFunction(function) {
 			return e.evaluateReduceForm(ctx, function, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
 	}
@@ -1089,8 +1089,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// [x IN list WHERE predicate | projection], each part but the list
 	// optional; parseListComprehension finds the parts at the top level, so a
 	// list literal holding a nested comprehension or reduce isn't one.
-	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
-		if varName, listExpr, condition, projection, comprehension := parseListComprehension(inner); comprehension {
+	if inner, enclosed := stripEnclosingRowDelimiterWithCancellation(expr, '[', ']', contextPipelineProbe(ctx)); enclosed {
+		if varName, listExpr, condition, projection, comprehension := parseListComprehensionWithCancellation(inner, contextPipelineProbe(ctx)); comprehension {
 			return e.evaluateListComprehension(ctx, varName, listExpr, condition, projection, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
 	}
@@ -1117,7 +1117,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, function, inner string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
 	ctx = withPipelineCancellation(ctx)
 	probe := pipelineCancellationForContext(ctx)
-	varName, listExpr, predicate, parsed := parseQuantifierArguments(inner)
+	varName, listExpr, predicate, parsed := parseQuantifierArgumentsWithCancellation(inner, probe)
 	if !parsed {
 		return nil
 	}

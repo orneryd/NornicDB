@@ -67,7 +67,7 @@ func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, pa
 func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
 	// Parse RETURN clause to get actual column names/aliases
 	returnItems := e.extractReturnItemsFromQuery(query)
-	columns := e.buildColumnsFromReturnItems(returnItems)
+	columns := e.buildColumnsFromReturnItemsWithCancellation(returnItems, contextPipelineProbe(ctx))
 
 	result := &ExecuteResult{
 		Columns: columns,
@@ -138,7 +138,7 @@ func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context
 func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
 	// Parse RETURN clause to get actual column names/aliases
 	returnItems := e.extractReturnItemsFromQuery(query)
-	columns := e.buildColumnsFromReturnItems(returnItems)
+	columns := e.buildColumnsFromReturnItemsWithCancellation(returnItems, contextPipelineProbe(ctx))
 
 	result := &ExecuteResult{
 		Columns: columns,
@@ -206,7 +206,7 @@ func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, que
 func (e *StorageExecutor) executeOutgoingCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
 	// Parse RETURN clause to get actual column names/aliases
 	returnItems := e.extractReturnItemsFromQuery(query)
-	columns := e.buildColumnsFromReturnItems(returnItems)
+	columns := e.buildColumnsFromReturnItemsWithCancellation(returnItems, contextPipelineProbe(ctx))
 
 	result := &ExecuteResult{
 		Columns: columns,
@@ -340,7 +340,7 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 
 	// Build columns from RETURN clause (respects aliases)
 	returnItems := e.extractReturnItemsFromQuery(query)
-	result.Columns = e.buildColumnsFromReturnItems(returnItems)
+	result.Columns = e.buildColumnsFromReturnItemsWithCancellation(returnItems, contextPipelineProbe(ctx))
 
 	// Convert to result rows
 	type aggRow struct {

@@ -48,18 +48,18 @@ type shortestPathMatch struct {
 // OPTIONAL MATCH). ok is false when no comma-separated part of its pattern is
 // a shortestPath or allShortestPaths call.
 func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body string) (*shortestPathMatch, bool, error) {
-	if indexASCIIFold(body, "shortestpath") < 0 {
+	if indexASCIIFoldWithCancellation(body, "shortestpath", contextPipelineProbe(ctx)) < 0 {
 		return nil, false, nil
 	}
 	pattern := strings.TrimSpace(body)
 	where := ""
-	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
+	if index := topLevelKeywordIndexWithCancellation(pattern, "WHERE", contextPipelineProbe(ctx)); index >= 0 {
 		where = strings.TrimSpace(pattern[index+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:index])
 	}
 	var call, pathVariable string
 	var others []string
-	for _, part := range splitTopLevelComma(pattern) {
+	for _, part := range splitTopLevelCommaWithCancellation(pattern, contextPipelineProbe(ctx)) {
 		part = strings.TrimSpace(part)
 		variable := extractPathAssignmentVariable(part)
 		candidate := part

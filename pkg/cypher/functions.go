@@ -91,7 +91,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextDefined(ctx context.Conte
 			return nil, true
 		}
 	}
-	upper := upperASCII(expr)
+	upper := upperASCIIWithCancellation(expr, contextPipelineProbe(ctx))
 	if strings.HasPrefix(upper, "NOT ") || strings.HasSuffix(upper, " IS NULL") || strings.HasSuffix(upper, " IS NOT NULL") {
 		return nil, true
 	}
@@ -111,8 +111,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		if len(head) > len("allShortestPaths") {
 			head = head[:len("allShortestPaths")]
 		}
-		if equalFoldASCII(head[:len("shortestPath")], "shortestpath") || equalFoldASCII(head, "allshortestpaths") {
-			if name, inner, ok := parseFunctionCallWS(expr); ok &&
+		if equalFoldASCIIWithCancellation(head[:len("shortestPath")], "shortestpath", contextPipelineProbe(ctx)) || equalFoldASCIIWithCancellation(head, "allshortestpaths", contextPipelineProbe(ctx)) {
+			if name, inner, ok := parseFunctionCallWSWithCancellation(expr, contextPipelineProbe(ctx)); ok &&
 				(strings.EqualFold(name, "shortestPath") || strings.EqualFold(name, "allShortestPaths")) {
 				if value, handled, err := e.evaluateShortestPathValue(ctx, name, inner, nodes); handled {
 					if err != nil {
@@ -320,19 +320,19 @@ func isSimpleIdentifierOrProperty(expr string) bool {
 }
 
 func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult) (interface{}, bool) {
-	if isWholeCypherQuotedString(expr) {
-		if decoded, ok := decodeCypherQuotedString(expr); ok {
+	if isWholeCypherQuotedStringWithCancellation(expr, contextPipelineProbe(ctx)) {
+		if decoded, ok := decodeCypherQuotedStringWithCancellation(expr, contextPipelineProbe(ctx)); ok {
 			return decoded, true
 		}
 	}
 
-	if equalFoldASCII(expr, "null") {
+	if equalFoldASCIIWithCancellation(expr, "null", contextPipelineProbe(ctx)) {
 		return nil, false
 	}
-	if equalFoldASCII(expr, "true") {
+	if equalFoldASCIIWithCancellation(expr, "true", contextPipelineProbe(ctx)) {
 		return true, true
 	}
-	if equalFoldASCII(expr, "false") {
+	if equalFoldASCIIWithCancellation(expr, "false", contextPipelineProbe(ctx)) {
 		return false, true
 	}
 

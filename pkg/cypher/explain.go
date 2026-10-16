@@ -96,7 +96,7 @@ func parseExecutionMode(query string) (ExecutionMode, string) {
 
 // executeExplain returns the execution plan without executing the query
 func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*ExecuteResult, error) {
-	if indexASCIIFold(query, "shortestpath") >= 0 {
+	if indexASCIIFoldWithCancellation(query, "shortestpath", contextPipelineProbe(ctx)) >= 0 {
 		if err := e.validateMatchSemanticScopes(query, cypherVersionFromContext(ctx) == "25"); err != nil {
 			return nil, err
 		}
@@ -107,7 +107,7 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 	}
 	plan.Mode = ModeExplain
 	result := &ExecuteResult{
-		Columns: e.inferExplainColumns(query),
+		Columns: e.inferExplainColumnsWithCancellation(query, contextPipelineProbe(ctx)),
 		Rows:    [][]interface{}{},
 		Stats:   &QueryStats{},
 	}

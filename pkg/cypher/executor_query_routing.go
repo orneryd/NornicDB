@@ -86,7 +86,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	startsWithCreate := strings.HasPrefix(upperQuery, "CREATE")
 	startsWithMerge := strings.HasPrefix(upperQuery, "MERGE")
 
-	if startsWithMatch && topLevelKeywordIndex(cypher, "CALL") > 0 {
+	if startsWithMatch && topLevelKeywordIndexWithCancellation(cypher, "CALL", contextPipelineProbe(ctx)) > 0 {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
@@ -307,14 +307,14 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 
 	body := strings.TrimSpace(cypher[returnIdx+len("RETURN"):])
 	items := body
-	if cut := firstTopLevelModifierIndex(items); cut >= 0 {
+	if cut := firstTopLevelModifierIndexWithCancellation(items, contextPipelineProbe(ctx)); cut >= 0 {
 		items = strings.TrimSpace(items[:cut])
 	}
-	items, _ = cutDistinct(items)
-	parts := splitTopLevelComma(items)
+	items, _ = cutDistinctWithCancellation(items, contextPipelineProbe(ctx))
+	parts := splitTopLevelCommaWithCancellation(items, contextPipelineProbe(ctx))
 	for index, part := range parts {
 		// Same alias parsing as every projection (parseProjectionExprAlias).
-		part, _ = parseProjectionExprAlias(strings.TrimSpace(part))
+		part, _ = parseProjectionExprAliasWithCancellation(strings.TrimSpace(part), contextPipelineProbe(ctx))
 		parts[index] = part
 		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
 			return nil, err
@@ -540,10 +540,10 @@ func (e *StorageExecutor) validateSyntaxNornicWithCancellation(cypher string, pr
 	if probe != nil && probe.err != nil {
 		return probe.err
 	}
-	if explainProfileConflict(cypher) {
+	if explainProfileConflictWithCancellation(cypher, probe) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "EXPLAIN cannot be combined with PROFILE")
 	}
-	if _, ok := trailingBareFinish(cypher); ok {
+	if _, ok := trailingBareFinishWithCancellation(cypher, probe); ok {
 		// FINISH can't follow RETURN, as in Neo4j; every valid trailing
 		// FINISH was stripped before validation.
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "RETURN can only be used at the end of the query")
@@ -859,7 +859,7 @@ func bareWordBeforeLiteralWithCancellation(cypher string, start, end int, probe 
 	if end-start > 32 {
 		return true
 	}
-	_, keyword := literalLeadingKeywords[upperASCII(cypher[start:end])]
+	_, keyword := literalLeadingKeywords[upperASCIIWithCancellation(cypher[start:end], probe)]
 	return !keyword
 }
 

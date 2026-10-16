@@ -49,7 +49,7 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		return nil, false
 	}
 
-	limitExpression := StripComments(pipelinePaginationExpression(trimmed[returnIdx:], "LIMIT"))
+	limitExpression := StripCommentsWithCancellation(pipelinePaginationExpression(trimmed[returnIdx:], "LIMIT"), contextPipelineProbe(ctx))
 	limit, ok := e.evaluatePipelinePagination(ctx, limitExpression, nil)
 	if !ok {
 		return nil, false

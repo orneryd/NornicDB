@@ -316,12 +316,12 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			complexity += 2
 			continue
 		}
-		spans := findAggregateSpans(projection.expr)
+		spans := findAggregateSpansWithCancellation(projection.expr, preparationProbe)
 		if len(spans) == 0 {
 			return nil, false, nil
 		}
 		for _, span := range spans {
-			name, expression, distinct, ok := parsePipelineAggregate(projection.expr[span.start:span.end])
+			name, expression, distinct, ok := parsePipelineAggregateWithCancellation(projection.expr[span.start:span.end], preparationProbe)
 			if !ok || distinct || (name != "count" && name != "sum") {
 				return nil, false, nil
 			}

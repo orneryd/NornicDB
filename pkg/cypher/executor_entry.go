@@ -756,13 +756,13 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// fragment, and a FINISH terminator is itself the clause that follows, so
 	// both are exempt.
 	if !finishTerminated {
-		last := lastTopLevelClauseWord(cypher)
+		last := lastTopLevelClauseWordWithCancellation(cypher, preparationProbe)
 		// `WITH EMBEDDING` is a NornicDB execution option, not a WITH
 		// projection: a statement that ends with it is complete. Only exempt
 		// it when the text before the trailer is itself a complete statement.
 		if last == "WITH" {
 			if scope, ok := stripWithEmbeddingSuffix(cypher); ok {
-				switch lastTopLevelClauseWord(scope) {
+				switch lastTopLevelClauseWordWithCancellation(scope, preparationProbe) {
 				case "", "UNWIND", "MATCH", "OPTIONAL", "WITH", "CALL", "LET", "FILTER", "FOR":
 				default:
 					last = ""

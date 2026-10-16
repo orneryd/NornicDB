@@ -13,7 +13,7 @@ import (
 // canonicalize alike but can validate differently (their column names
 // differ).
 func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher string) error {
-	names := quotedVariableNamesFor(ctx, cypher)
+	names := quotedVariableNamesForWithCancellation(ctx, cypher, contextPipelineProbe(ctx))
 	cypher25 := cypherVersionFromContext(ctx) == "25"
 	cacheKey := cypher
 	if names != nil {
@@ -31,7 +31,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	var canonical string
 	var normalized bool
 	if !cached {
-		canonical, normalized = normalizeLiteralText(cacheKey)
+		canonical, normalized = normalizeLiteralTextWithCancellation(cacheKey, contextPipelineProbe(ctx))
 		cached = normalized && e.semanticValidationCache.contains(canonical)
 	}
 	if cached && names == nil && !normalized {
@@ -109,7 +109,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 				pendingUpdate = true
 			}
 			// Subquery bodies are checked as their own statements.
-			if whereIndex := topLevelKeywordIndex(clause.text, "WHERE"); whereIndex >= 0 &&
+			if whereIndex := topLevelKeywordIndexWithCancellation(clause.text, "WHERE", contextPipelineProbe(ctx)); whereIndex >= 0 &&
 				hasUnexpectedIdentifierAfterNumber(maskSubqueryBodies(clause.text[whereIndex+len("WHERE"):])) {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unexpected identifier in WHERE")
 			}
@@ -126,7 +126,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 				clauseText := strings.TrimSpace(clause.text)
 				end := len(clauseText)
 				for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT", "UNION"} {
-					if index := topLevelKeywordIndex(clauseText, keyword); index >= len("RETURN") && index < end {
+					if index := topLevelKeywordIndexWithCancellation(clauseText, keyword, contextPipelineProbe(ctx)); index >= len("RETURN") && index < end {
 						end = index
 					}
 				}
@@ -134,15 +134,15 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 				if projectionHasEmptyItem(items) {
 					return emptyProjectionItemError("RETURN")
 				}
-				projectionItems, _ := cutDistinct(strings.TrimSpace(items))
-				for _, item := range splitTopLevelComma(projectionItems) {
-					expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
+				projectionItems, _ := cutDistinctWithCancellation(strings.TrimSpace(items), contextPipelineProbe(ctx))
+				for _, item := range splitTopLevelCommaWithCancellation(projectionItems, contextPipelineProbe(ctx)) {
+					expression, _ := parseProjectionExprAliasWithCancellation(strings.TrimSpace(item), contextPipelineProbe(ctx))
 					if err := validateExpressionOperandCompleteness(expression); err != nil {
 						return err
 					}
-					if aliasIndex := projectionAliasIndex(item); aliasIndex >= 0 {
+					if aliasIndex := projectionAliasIndexWithCancellation(item, contextPipelineProbe(ctx)); aliasIndex >= 0 {
 						alias := strings.TrimSpace(item[aliasIndex+len("AS"):])
-						if simpleSemanticIdentifier(alias) == "" && !(len(alias) >= 2 && alias[0] == '`' && alias[len(alias)-1] == '`') {
+						if simpleSemanticIdentifierWithCancellation(alias, contextPipelineProbe(ctx)) == "" && !(len(alias) >= 2 && alias[0] == '`' && alias[len(alias)-1] == '`') {
 							return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: invalid RETURN alias")
 						}
 					}

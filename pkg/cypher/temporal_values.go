@@ -283,11 +283,11 @@ func temporalClockValue(kind string, instant time.Time, zoneID string) (interfac
 // returns its error: an argument of a type the function doesn't take is
 // ProcedureCallFailed ("Invalid call signature for Truncate: …").
 func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEval func(string) interface{}, expression string) (interface{}, bool, error) {
-	name, argument, ok := parseFunctionCallWS(expression)
+	name, argument, ok := parseFunctionCallWSWithCancellation(expression, contextPipelineProbe(ctx))
 	if !ok {
 		return nil, false, nil
 	}
-	kind := lowerASCII(name)
+	kind := lowerASCIIWithCancellation(name, contextPipelineProbe(ctx))
 	if kind == "duration.between" || kind == "duration.inmonths" || kind == "duration.indays" || kind == "duration.inseconds" {
 		arguments := e.splitFunctionArgs(argument)
 		if len(arguments) != 2 {
@@ -336,7 +336,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 		unit, unitOK := unitValue.(string)
 		if fieldsValue != nil {
 			var fieldsOK bool
-			if fields, fieldsOK = toStringAnyMap(fieldsValue); !fieldsOK {
+			if fields, fieldsOK = toStringAnyMapWithCancellation(fieldsValue, contextPipelineProbe(ctx)); !fieldsOK {
 				unitOK = false
 			}
 		}
@@ -397,7 +397,7 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 		if converted, valid := projectTemporalValue(kind, value); valid {
 			return converted, true, nil
 		}
-		fields, isMap := toStringAnyMap(value)
+		fields, isMap := toStringAnyMapWithCancellation(value, contextPipelineProbe(ctx))
 		if !isMap {
 			return nil, true, nil
 		}
