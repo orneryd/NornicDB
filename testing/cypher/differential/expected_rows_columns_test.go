@@ -46,15 +46,24 @@ func TestIssueExpectedRowsKeepColumnPositionsWithCollect(t *testing.T) {
 	bolt := func(first, second string) Outcome {
 		return Outcome{Columns: columns, Rows: [][]any{{[]any{typed("1")}, typed(first), typed(second)}}}
 	}
+	var normalize func(any) (any, error)
+	normalize = func(value any) (any, error) {
+		switch v := value.(type) {
+		case json.Number:
+			return typed(v.String()), nil
+		case []any:
+			items := make([]any, len(v))
+			for index, item := range v {
+				items[index], _ = normalize(item)
+			}
+			return items, nil
+		}
+		return value, nil
+	}
 	normalizer := func(answer Outcome) Executor {
 		return expectedValueServer{
 			fakeServer: &fakeServer{answers: map[string]Outcome{query: answer}},
-			normalize: func(value any) (any, error) {
-				if number, ok := value.(json.Number); ok {
-					return typed(number.String()), nil
-				}
-				return value, nil
-			},
+			normalize:  normalize,
 		}
 	}
 	pair := &Pair{Neo4j: normalizer(bolt("2", "3")), NornicDB: normalizer(bolt("3", "2"))}
