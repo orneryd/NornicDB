@@ -86,6 +86,10 @@ func TestEmbeddedPublicationDoesNotOverwriteNewerUpdate(t *testing.T) {
 	require.NoError(t, db.storage.UpdateNode(newer))
 	newer.ChunkEmbeddings = [][]float32{newVector}
 	require.NoError(t, db.storage.(storage.EmbeddingSidecarUpdater).UpdateNodeEmbeddingSidecar(newer))
+	current, err := db.storage.GetNode("source")
+	require.NoError(t, err)
+	require.Len(t, current.ChunkEmbeddings, 1)
+	require.Equal(t, newVector, current.ChunkEmbeddings[0], "storage holds the newer vector")
 	require.NoError(t, svc.PublishStoredNode("source"))
 
 	// The older callback resumes after the newer state was published.
@@ -93,7 +97,11 @@ func TestEmbeddedPublicationDoesNotOverwriteNewerUpdate(t *testing.T) {
 
 	require.Equal(t, []storage.NodeID{"source"}, textHitIDs(t, svc, "charlie"))
 	require.Empty(t, textHitIDs(t, svc, "bravo"), "the older text overwrote the update")
-	require.Empty(t, vectorOnlySearch(t, svc, oldVector).Results, "the older vector overwrote the update")
+	// Candidate search applies the similarity floor, so only a stored copy of
+	// the older vector could match it.
+	stale, err := svc.VectorSearchCandidates(context.Background(), oldVector, search.DefaultSearchOptions())
+	require.NoError(t, err)
+	require.Empty(t, stale, "the older vector overwrote the update")
 	hits := vectorOnlySearch(t, svc, newVector).Results
 	require.Len(t, hits, 1)
 	require.Equal(t, storage.NodeID("source"), hits[0].NodeID)
