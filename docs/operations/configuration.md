@@ -743,7 +743,7 @@ Runtime transition behavior:
 
 **Strategy selection (order of precedence):**
 
-1. **GPU brute-force** – when GPU is enabled and vector count is in `[NORNICDB_VECTOR_GPU_BRUTE_MIN_N, NORNICDB_VECTOR_GPU_BRUTE_MAX_N]`.
+1. **GPU brute-force** – when GPU is enabled and vector count is in `[NORNICDB_VECTOR_GPU_BRUTE_MIN_N, NORNICDB_VECTOR_GPU_BRUTE_MAX_N]`. Its GPU copy of the vectors is built when it is first chosen.
 2. **CPU brute-force** – only when `NORNICDB_VECTOR_CPU_BRUTE_MAX_N` is greater than 0 and vector count is below that value.
 3. **Cluster-based** (IVF-HNSW or k-means) – when clustering is enabled and built.
 4. **Global HNSW** – default strategy when neither GPU brute-force, CPU brute-force opt-in, nor clustering is chosen.
