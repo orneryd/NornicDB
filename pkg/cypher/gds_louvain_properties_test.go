@@ -28,8 +28,8 @@ func TestGDSLouvainTypedSeedsAndDefaults(t *testing.T) {
 		{"fractional_float_seed", 2.5, "2.0", nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			graphProjections = make(map[string]*GraphProjection)
-			t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+			graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+			t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 			properties := map[string]interface{}{}
 			if tc.stored != nil {
 				properties["seed"] = tc.stored
@@ -55,8 +55,8 @@ func TestGDSLouvainTypedSeedsAndDefaults(t *testing.T) {
 }
 
 func TestGDSLouvainExplicitEmptyWeightProperty(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	_, run := newGDSEngineGraph(t, "emptyweight", gdsNode("0", "N", nil))
 	_, err := run("MATCH (n:N) CREATE (n)-[:R {w:1.0}]->(n)")
 	require.NoError(t, err)
@@ -67,8 +67,8 @@ func TestGDSLouvainExplicitEmptyWeightProperty(t *testing.T) {
 }
 
 func TestGDSLouvainIntegerSeedRejectsFractionalDefault(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	_, run := newGDSEngineGraph(t, "invaliddefault", gdsNode("0", "N", map[string]interface{}{"seed": int64(2)}), gdsNode("1", "N", nil))
 	_, err := run("CALL gds.graph.project('invaliddefault',{N:{properties:{seed:{defaultValue:2.5}}}},'*')")
 	require.ErrorContains(t, err, "Cannot safely convert 2.50 into an long value")

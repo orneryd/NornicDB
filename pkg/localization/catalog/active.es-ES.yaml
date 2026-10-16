@@ -257,6 +257,18 @@
 - id: bolt.bookmark_validation_failed
   description: Error de Bolt RUN para un marcador no válido. Cause no se traduce.
   other: "Error de validación del marcador: {{.Cause}}"
+- id: bolt.impersonation_forbidden
+  description: Error de Bolt al pedir suplantar a un usuario que el usuario autenticado no puede suplantar. User no se traduce.
+  other: "Permiso denegado: no se permite suplantar al usuario '{{.User}}'."
+- id: bolt.impersonation_auth_disabled
+  description: Error de Bolt al pedir suplantar a un usuario con la autenticación desactivada.
+  other: "La suplantación no se admite con la autenticación desactivada."
+- id: bolt.impersonation_unsupported
+  description: Error de Bolt al pedir suplantar a un usuario en un servidor cuyo autenticador no resuelve usuarios.
+  other: "El autenticador de este servidor no admite la suplantación."
+- id: bolt.impersonated_user_invalid
+  description: Error de Bolt para un campo imp_user que no es una cadena ni null. imp_user es sintaxis del protocolo y no se traduce.
+  other: "imp_user debe ser una cadena o null."
 - id: search.searcher_required
   description: Error de configuración cuando falta el servicio de búsqueda.
   other: se requiere un servicio de búsqueda

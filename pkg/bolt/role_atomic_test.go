@@ -62,7 +62,7 @@ func TestBoltRejectedStatementDiscardsAdministrationTransaction(t *testing.T) {
 		})
 		return code
 	}
-	require.Empty(t, run("GRANT EXECUTE PROCEDURE db.a ON DBMS TO viewer"))
+	require.Empty(t, run("GRANT EXECUTE BOOSTED PROCEDURE db.a ON DBMS TO viewer"))
 	require.Equal(t, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType", run("CALL dbms.components()"))
 	_, err = exec.Execute(ctx, "COMMIT", nil)
 	require.Error(t, err)

@@ -257,6 +257,18 @@
 - id: bolt.bookmark_validation_failed
   description: Bolt RUN failure for an invalid causal-consistency bookmark. Cause is diagnostic text and must not be translated.
   other: "Bookmark validation failed: {{.Cause}}"
+- id: bolt.impersonation_forbidden
+  description: Bolt failure for a request to impersonate a user the authenticated user may not impersonate. User is the requested user name and must not be translated.
+  other: "Permission denied: impersonating user '{{.User}}' is not allowed."
+- id: bolt.impersonation_auth_disabled
+  description: Bolt failure for a request to impersonate a user while authentication is disabled.
+  other: "Impersonation is not supported with auth disabled."
+- id: bolt.impersonation_unsupported
+  description: Bolt failure for a request to impersonate a user on a server whose authenticator cannot resolve users.
+  other: "Impersonation is not supported by this server's authenticator."
+- id: bolt.impersonated_user_invalid
+  description: Bolt failure for an imp_user field that is neither a string nor null. imp_user is protocol syntax and must not be translated.
+  other: "imp_user must be a string or null."
 - id: search.searcher_required
   description: gRPC service configuration error when no search implementation is supplied.
   other: searcher is required

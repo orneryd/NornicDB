@@ -220,6 +220,11 @@ type BadgerTransaction struct {
 	Metadata           map[string]interface{}
 	snapshotReaderInfo SnapshotReaderInfo
 
+	// executingUser and authenticatedUser are who the transaction runs for
+	// (SetUsers), recorded on its change events.
+	executingUser     string
+	authenticatedUser string
+
 	// observed is set once the transaction reads through its snapshot; from
 	// then on the snapshot can't move forward (PrepareMergeKey, #961).
 	observed bool
@@ -3264,6 +3269,19 @@ func (tx *BadgerTransaction) SetMetadata(metadata map[string]interface{}) error 
 		tx.Metadata[k] = v
 	}
 
+	return nil
+}
+
+// SetUsers records who the transaction runs for, as Neo4j's change events
+// carry them: the executing user, whose privileges apply, and the
+// authenticated user, who differs from it only while impersonating.
+func (tx *BadgerTransaction) SetUsers(executing, authenticated string) error {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+		return err
+	}
+	tx.executingUser, tx.authenticatedUser = executing, authenticated
 	return nil
 }
 

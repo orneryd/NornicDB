@@ -79,6 +79,11 @@ type ChangeEvent struct {
 	CommitTime int64             `msgpack:"tc"` // its commit, Unix nanoseconds
 	Mode       ChangeCaptureMode `msgpack:"m"`
 	TxMetadata map[string]any    `msgpack:"md,omitempty"`
+	// ExecutingUser and AuthenticatedUser are who the transaction ran for
+	// (Neo4j's metadata.executingUser and authenticatedUser); events
+	// written before they were recorded have neither.
+	ExecutingUser     string `msgpack:"eu,omitempty"`
+	AuthenticatedUser string `msgpack:"au,omitempty"`
 	// Node is true for a node's change, false for a relationship's.
 	Node bool `msgpack:"n"`
 	// Operation is 'c', 'u' or 'd'.
@@ -326,6 +331,7 @@ func (tx *BadgerTransaction) writeChangeEventsLocked(w *batchWriter, operations 
 	base := ChangeEvent{
 		CommitSeq: capture.commitSeq, StartTime: tx.StartTime.UnixNano(), CommitTime: commitTime.UnixNano(),
 		Mode: capture.mode, TxMetadata: copyChangeMetadata(tx.Metadata),
+		ExecutingUser: tx.executingUser, AuthenticatedUser: tx.authenticatedUser,
 	}
 	seq := uint32(0)
 	write := func(event ChangeEvent) error {

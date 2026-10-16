@@ -63,7 +63,7 @@ func argumentCount(args []string) int {
 
 func init() {
 	for _, name := range []string{"graph.byName", "graph.byElementId"} {
-		Register(name, func(ctx Context, args []string) (interface{}, error) {
+		Register(name, PrivilegeNone, func(ctx Context, args []string) (interface{}, error) {
 			return nil, &GraphSelectionContextError{Function: name}
 		})
 	}
@@ -71,7 +71,7 @@ func init() {
 	// runs on, as their qualified names (composite.alias), the names
 	// USE graph.byName(…) takes (Cypher Manual, "Composite databases").
 	// Neo4j knows the function only on a composite database.
-	Register("graph.names", func(ctx Context, args []string) (interface{}, error) {
+	Register("graph.names", PrivilegeRead, func(ctx Context, args []string) (interface{}, error) {
 		graphs, composite := compositeGraphs(ctx)
 		if !composite {
 			return nil, &UnknownFunctionError{Function: "graph.names"}
@@ -89,7 +89,7 @@ func init() {
 	// that added the graph to the composite database. NornicDB aliases have
 	// no properties, so it is an empty map for each of the composite's
 	// graphs.
-	Register("graph.propertiesByName", func(ctx Context, args []string) (interface{}, error) {
+	Register("graph.propertiesByName", PrivilegeRead, func(ctx Context, args []string) (interface{}, error) {
 		graphs, composite := compositeGraphs(ctx)
 		if !composite {
 			return nil, &UnknownFunctionError{Function: "graph.propertiesByName"}

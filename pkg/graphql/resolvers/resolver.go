@@ -155,7 +155,7 @@ func (r *Resolver) getCypherExecutor(ctx context.Context, database string) (*cyp
 		return nil, fmt.Errorf("database '%s' not found: %w", effectiveDb, err)
 	}
 
-	executor := cypher.NewStorageExecutor(storage)
+	executor := cypher.NewStatementExecutor(storage)
 	executor.SetDatabaseManager(&graphqlDatabaseManagerAdapter{manager: r.dbManager})
 
 	// Copy configuration from base DB's executor if available
@@ -181,17 +181,14 @@ func (r *Resolver) getCypherExecutor(ctx context.Context, database string) (*cyp
 }
 
 func (r *Resolver) resolveCypherDatabase(ctx context.Context, database string) (string, error) {
-	if scope := auth.RequestDatabaseScopeFromContext(ctx); scope != nil {
-		resolved, allowed := scope.Resolve(database)
-		if !allowed {
-			return "", fmt.Errorf("access to database '%s' is not allowed", database)
-		}
-		return resolved, nil
+	_, selected, err := cypher.AdmitRequestOperation(ctx, r.dbManager.DefaultDatabaseName(), database, cypher.PrivilegeNone)
+	if err != nil {
+		return "", err
 	}
-	if database == "" {
-		return r.dbManager.DefaultDatabaseName(), nil
+	if auth.RequestDatabaseScopeFromContext(ctx) != nil {
+		return selected, nil
 	}
-	resolved, err := r.dbManager.ResolveDatabase(database)
+	resolved, err := r.dbManager.ResolveDatabase(selected)
 	if err != nil {
 		return "", fmt.Errorf("database '%s' not found: %w", database, err)
 	}
@@ -203,13 +200,10 @@ func (r *Resolver) resolveCypherDatabase(ctx context.Context, database string) (
 // resolves it (resolveCypherDatabase), on which the principal must hold read
 // (the request's entitlement resolver), as a Cypher read there needs.
 func (r *Resolver) readDatabase(ctx context.Context) (string, storage.Engine, error) {
-	database, err := r.resolveCypherDatabase(ctx, "")
+	_, database, err := cypher.AdmitRequestOperation(ctx, r.dbManager.DefaultDatabaseName(), "", cypher.PrivilegeRead)
 	if err != nil {
-		return "", nil, err
-	}
-	if allows := auth.RequestEntitlementResolverFromContext(ctx); allows != nil && !allows(database, auth.PermRead) {
 		denied := localization.DatabaseAccessDenied(database)
-		return "", nil, localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
+		return "", nil, localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, err)
 	}
 	// A composite's storage reads every constituent, which this one decision
 	// on the composite does not cover; the REST search and similarity routes
@@ -241,6 +235,9 @@ func (r *Resolver) executeCypher(ctx context.Context, query string, params map[s
 		ctx = cypher.WithDatabasePermissionResolver(ctx, effectiveDb, func(database, permission string) bool {
 			return allows(database, auth.Permission(permission))
 		})
+	}
+	if err := cypher.AdmitStatement(ctx, &graphqlDatabaseManagerAdapter{manager: r.dbManager}, effectiveDb, query); err != nil {
+		return nil, err
 	}
 	executor, err := r.getCypherExecutor(ctx, effectiveDb)
 	if err != nil {

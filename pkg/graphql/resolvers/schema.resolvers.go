@@ -14,6 +14,10 @@ import (
 
 // Rows is the resolver for the rows field.
 func (r *cypherResultResolver) Rows(ctx context.Context, obj *models.CypherResult) ([][]models.JSON, error) {
+	ctx, err := r.admitField(ctx, "cypherResultResolver.Rows")
+	if err != nil {
+		return nil, err
+	}
 	if obj == nil || obj.Rows == nil {
 		return nil, nil
 	}
@@ -34,261 +38,469 @@ func (r *cypherResultResolver) Rows(ctx context.Context, obj *models.CypherResul
 
 // CreateNode is the resolver for the createNode field.
 func (r *mutationResolver) CreateNode(ctx context.Context, input models.CreateNodeInput) (*models.Node, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.CreateNode")
+	if err != nil {
+		return nil, err
+	}
 	return r.mutationCreateNode(ctx, input)
 }
 
 // UpdateNode is the resolver for the updateNode field.
 func (r *mutationResolver) UpdateNode(ctx context.Context, input models.UpdateNodeInput) (*models.Node, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.UpdateNode")
+	if err != nil {
+		return nil, err
+	}
 	return r.mutationUpdateNode(ctx, input)
 }
 
 // DeleteNode is the resolver for the deleteNode field.
 func (r *mutationResolver) DeleteNode(ctx context.Context, id string) (bool, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.DeleteNode")
+	if err != nil {
+		return false, err
+	}
 	return r.mutationDeleteNode(ctx, id)
 }
 
 // BulkCreateNodes is the resolver for the bulkCreateNodes field.
 func (r *mutationResolver) BulkCreateNodes(ctx context.Context, input models.BulkCreateNodesInput) (*models.BulkCreateResult, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.BulkCreateNodes")
+	if err != nil {
+		return nil, err
+	}
 	return r.mutationBulkCreateNodes(ctx, input)
 }
 
 // BulkDeleteNodes is the resolver for the bulkDeleteNodes field.
 func (r *mutationResolver) BulkDeleteNodes(ctx context.Context, ids []string) (*models.BulkDeleteResult, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.BulkDeleteNodes")
+	if err != nil {
+		return nil, err
+	}
 	return r.mutationBulkDeleteNodes(ctx, ids)
 }
 
 // MergeNode is the resolver for the mergeNode field.
 func (r *mutationResolver) MergeNode(ctx context.Context, labels []string, matchProperties models.JSON, setProperties models.JSON) (*models.Node, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.MergeNode")
+	if err != nil {
+		return nil, err
+	}
 	return r.mutationMergeNode(ctx, labels, matchProperties, setProperties)
 }
 
 // CreateRelationship is the resolver for the createRelationship field.
 func (r *mutationResolver) CreateRelationship(ctx context.Context, input models.CreateRelationshipInput) (*models.Relationship, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.CreateRelationship")
+	if err != nil {
+		return nil, err
+	}
 	return r.mutationCreateRelationship(ctx, input)
 }
 
 // UpdateRelationship is the resolver for the updateRelationship field.
 func (r *mutationResolver) UpdateRelationship(ctx context.Context, input models.UpdateRelationshipInput) (*models.Relationship, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.UpdateRelationship")
+	if err != nil {
+		return nil, err
+	}
 	return r.mutationUpdateRelationship(ctx, input)
 }
 
 // DeleteRelationship is the resolver for the deleteRelationship field.
 func (r *mutationResolver) DeleteRelationship(ctx context.Context, id string) (bool, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.DeleteRelationship")
+	if err != nil {
+		return false, err
+	}
 	return r.mutationDeleteRelationship(ctx, id)
 }
 
 // BulkCreateRelationships is the resolver for the bulkCreateRelationships field.
 func (r *mutationResolver) BulkCreateRelationships(ctx context.Context, input models.BulkCreateRelationshipsInput) (*models.BulkCreateResult, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.BulkCreateRelationships")
+	if err != nil {
+		return nil, err
+	}
 	return r.mutationBulkCreateRelationships(ctx, input)
 }
 
 // BulkDeleteRelationships is the resolver for the bulkDeleteRelationships field.
 func (r *mutationResolver) BulkDeleteRelationships(ctx context.Context, ids []string) (*models.BulkDeleteResult, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.BulkDeleteRelationships")
+	if err != nil {
+		return nil, err
+	}
 	return r.mutationBulkDeleteRelationships(ctx, ids)
 }
 
 // MergeRelationship is the resolver for the mergeRelationship field.
 func (r *mutationResolver) MergeRelationship(ctx context.Context, startNodeID string, endNodeID string, typeArg string, properties models.JSON) (*models.Relationship, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.MergeRelationship")
+	if err != nil {
+		return nil, err
+	}
 	return r.mutationMergeRelationship(ctx, startNodeID, endNodeID, typeArg, properties)
 }
 
 // ExecuteCypher is the resolver for the executeCypher field.
 func (r *mutationResolver) ExecuteCypher(ctx context.Context, input models.CypherInput) (*models.CypherResult, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.ExecuteCypher")
+	if err != nil {
+		return nil, err
+	}
 	return r.mutationExecuteCypher(ctx, input)
 }
 
 // TriggerEmbedding is the resolver for the triggerEmbedding field.
 func (r *mutationResolver) TriggerEmbedding(ctx context.Context, regenerate *bool) (*models.EmbeddingStatus, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.TriggerEmbedding")
+	if err != nil {
+		return nil, err
+	}
 	return r.mutationTriggerEmbedding(ctx, regenerate)
 }
 
 // RebuildSearchIndex is the resolver for the rebuildSearchIndex field.
 func (r *mutationResolver) RebuildSearchIndex(ctx context.Context) (bool, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.RebuildSearchIndex")
+	if err != nil {
+		return false, err
+	}
 	return r.mutationRebuildSearchIndex(ctx)
 }
 
 // RunDecay is the resolver for the runDecay field.
 func (r *mutationResolver) RunDecay(ctx context.Context) (*models.DecayResult, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.RunDecay")
+	if err != nil {
+		return nil, err
+	}
 	return r.mutationRunDecay(ctx)
 }
 
 // ClearAll is the resolver for the clearAll field.
 func (r *mutationResolver) ClearAll(ctx context.Context, confirmPhrase string) (bool, error) {
+	ctx, err := r.admitField(ctx, "mutationResolver.ClearAll")
+	if err != nil {
+		return false, err
+	}
 	return r.mutationClearAll(ctx, confirmPhrase)
 }
 
 // Relationships is the resolver for the relationships field.
 func (r *nodeResolver) Relationships(ctx context.Context, obj *models.Node, types []string, direction *models.RelationshipDirection, limit *int) ([]models.Relationship, error) {
+	ctx, err := r.admitField(ctx, "nodeResolver.Relationships")
+	if err != nil {
+		return nil, err
+	}
 	return r.nodeRelationships(ctx, obj, types, direction, limit)
 }
 
 // Outgoing is the resolver for the outgoing field.
 func (r *nodeResolver) Outgoing(ctx context.Context, obj *models.Node, types []string, limit *int) ([]models.Relationship, error) {
+	ctx, err := r.admitField(ctx, "nodeResolver.Outgoing")
+	if err != nil {
+		return nil, err
+	}
 	return r.nodeOutgoing(ctx, obj, types, limit)
 }
 
 // Incoming is the resolver for the incoming field.
 func (r *nodeResolver) Incoming(ctx context.Context, obj *models.Node, types []string, limit *int) ([]models.Relationship, error) {
+	ctx, err := r.admitField(ctx, "nodeResolver.Incoming")
+	if err != nil {
+		return nil, err
+	}
 	return r.nodeIncoming(ctx, obj, types, limit)
 }
 
 // Neighbors is the resolver for the neighbors field.
 func (r *nodeResolver) Neighbors(ctx context.Context, obj *models.Node, direction *models.RelationshipDirection, relationshipTypes []string, labels []string, limit *int) ([]models.Node, error) {
+	ctx, err := r.admitField(ctx, "nodeResolver.Neighbors")
+	if err != nil {
+		return nil, err
+	}
 	return r.nodeNeighbors(ctx, obj, direction, relationshipTypes, labels, limit)
 }
 
 // Similar is the resolver for the similar field.
 func (r *nodeResolver) Similar(ctx context.Context, obj *models.Node, limit *int, threshold *float64) ([]models.SimilarNode, error) {
+	ctx, err := r.admitField(ctx, "nodeResolver.Similar")
+	if err != nil {
+		return nil, err
+	}
 	return r.nodeSimilar(ctx, obj, limit, threshold)
 }
 
 // Node is the resolver for the node field.
 func (r *queryResolver) Node(ctx context.Context, id string) (*models.Node, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.Node")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryNode(ctx, id)
 }
 
 // Nodes is the resolver for the nodes field.
 func (r *queryResolver) Nodes(ctx context.Context, ids []string) ([]models.Node, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.Nodes")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryNodes(ctx, ids)
 }
 
 // AllNodes is the resolver for the allNodes field.
 func (r *queryResolver) AllNodes(ctx context.Context, labels []string, limit *int, offset *int) ([]models.Node, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.AllNodes")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryAllNodes(ctx, labels, limit, offset)
 }
 
 // NodesByLabel is the resolver for the nodesByLabel field.
 func (r *queryResolver) NodesByLabel(ctx context.Context, label string, limit *int, offset *int) ([]models.Node, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.NodesByLabel")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryNodesByLabel(ctx, label, limit, offset)
 }
 
 // NodeCount is the resolver for the nodeCount field.
 func (r *queryResolver) NodeCount(ctx context.Context, label *string) (int, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.NodeCount")
+	if err != nil {
+		return 0, err
+	}
 	return r.queryNodeCount(ctx, label)
 }
 
 // Relationship is the resolver for the relationship field.
 func (r *queryResolver) Relationship(ctx context.Context, id string) (*models.Relationship, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.Relationship")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryRelationship(ctx, id)
 }
 
 // AllRelationships is the resolver for the allRelationships field.
 func (r *queryResolver) AllRelationships(ctx context.Context, types []string, limit *int, offset *int) ([]models.Relationship, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.AllRelationships")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryAllRelationships(ctx, types, limit, offset)
 }
 
 // RelationshipsByType is the resolver for the relationshipsByType field.
 func (r *queryResolver) RelationshipsByType(ctx context.Context, typeArg string, limit *int, offset *int) ([]models.Relationship, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.RelationshipsByType")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryRelationshipsByType(ctx, typeArg, limit, offset)
 }
 
 // RelationshipsBetween is the resolver for the relationshipsBetween field.
 func (r *queryResolver) RelationshipsBetween(ctx context.Context, startNodeID string, endNodeID string) ([]models.Relationship, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.RelationshipsBetween")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryRelationshipsBetween(ctx, startNodeID, endNodeID)
 }
 
 // RelationshipCount is the resolver for the relationshipCount field.
 func (r *queryResolver) RelationshipCount(ctx context.Context, typeArg *string) (int, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.RelationshipCount")
+	if err != nil {
+		return 0, err
+	}
 	return r.queryRelationshipCount(ctx, typeArg)
 }
 
 // Search is the resolver for the search field.
 func (r *queryResolver) Search(ctx context.Context, query string, options *models.SearchOptions) (*models.SearchResponse, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.Search")
+	if err != nil {
+		return nil, err
+	}
 	return r.querySearch(ctx, query, options)
 }
 
 // Similar is the resolver for the similar field.
 func (r *queryResolver) Similar(ctx context.Context, nodeID string, limit *int, threshold *float64) ([]models.SimilarNode, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.Similar")
+	if err != nil {
+		return nil, err
+	}
 	return r.querySimilar(ctx, nodeID, limit, threshold)
 }
 
 // SearchByProperty is the resolver for the searchByProperty field.
 func (r *queryResolver) SearchByProperty(ctx context.Context, key string, value models.JSON, labels []string, limit *int) ([]models.Node, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.SearchByProperty")
+	if err != nil {
+		return nil, err
+	}
 	return r.querySearchByProperty(ctx, key, value, labels, limit)
 }
 
 // Cypher is the resolver for the cypher field.
 func (r *queryResolver) Cypher(ctx context.Context, input models.CypherInput) (*models.CypherResult, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.Cypher")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryCypher(ctx, input)
 }
 
 // Stats is the resolver for the stats field.
 func (r *queryResolver) Stats(ctx context.Context) (*models.DatabaseStats, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.Stats")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryStats(ctx)
 }
 
 // Schema is the resolver for the schema field.
 func (r *queryResolver) Schema(ctx context.Context) (*models.GraphSchema, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.Schema")
+	if err != nil {
+		return nil, err
+	}
 	return r.querySchema(ctx)
 }
 
 // Labels is the resolver for the labels field.
 func (r *queryResolver) Labels(ctx context.Context) ([]string, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.Labels")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryLabels(ctx)
 }
 
 // RelationshipTypes is the resolver for the relationshipTypes field.
 func (r *queryResolver) RelationshipTypes(ctx context.Context) ([]string, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.RelationshipTypes")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryRelationshipTypes(ctx)
 }
 
 // ShortestPath is the resolver for the shortestPath field.
 func (r *queryResolver) ShortestPath(ctx context.Context, startNodeID string, endNodeID string, maxDepth *int, relationshipTypes []string) ([]models.Node, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.ShortestPath")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryShortestPath(ctx, startNodeID, endNodeID, maxDepth, relationshipTypes)
 }
 
 // AllPaths is the resolver for the allPaths field.
 func (r *queryResolver) AllPaths(ctx context.Context, startNodeID string, endNodeID string, maxDepth *int, limit *int) ([][]models.Node, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.AllPaths")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryAllPaths(ctx, startNodeID, endNodeID, maxDepth, limit)
 }
 
 // Neighborhood is the resolver for the neighborhood field.
 func (r *queryResolver) Neighborhood(ctx context.Context, nodeID string, depth *int, relationshipTypes []string, labels []string, limit *int) (*models.Subgraph, error) {
+	ctx, err := r.admitField(ctx, "queryResolver.Neighborhood")
+	if err != nil {
+		return nil, err
+	}
 	return r.queryNeighborhood(ctx, nodeID, depth, relationshipTypes, labels, limit)
 }
 
 // StartNode is the resolver for the startNode field.
 func (r *relationshipResolver) StartNode(ctx context.Context, obj *models.Relationship) (*models.Node, error) {
+	ctx, err := r.admitField(ctx, "relationshipResolver.StartNode")
+	if err != nil {
+		return nil, err
+	}
 	return r.relationshipStartNode(ctx, obj)
 }
 
 // EndNode is the resolver for the endNode field.
 func (r *relationshipResolver) EndNode(ctx context.Context, obj *models.Relationship) (*models.Node, error) {
+	ctx, err := r.admitField(ctx, "relationshipResolver.EndNode")
+	if err != nil {
+		return nil, err
+	}
 	return r.relationshipEndNode(ctx, obj)
 }
 
 // NodeCreated is the resolver for the nodeCreated field.
 func (r *subscriptionResolver) NodeCreated(ctx context.Context, labels []string) (<-chan *models.Node, error) {
+	ctx, err := r.admitField(ctx, "subscriptionResolver.NodeCreated")
+	if err != nil {
+		return nil, err
+	}
 	return r.subscriptionNodeCreated(ctx, labels)
 }
 
 // NodeUpdated is the resolver for the nodeUpdated field.
 func (r *subscriptionResolver) NodeUpdated(ctx context.Context, id *string, labels []string) (<-chan *models.Node, error) {
+	ctx, err := r.admitField(ctx, "subscriptionResolver.NodeUpdated")
+	if err != nil {
+		return nil, err
+	}
 	return r.subscriptionNodeUpdated(ctx, id, labels)
 }
 
 // NodeDeleted is the resolver for the nodeDeleted field.
 func (r *subscriptionResolver) NodeDeleted(ctx context.Context, labels []string) (<-chan string, error) {
+	ctx, err := r.admitField(ctx, "subscriptionResolver.NodeDeleted")
+	if err != nil {
+		return nil, err
+	}
 	return r.subscriptionNodeDeleted(ctx, labels)
 }
 
 // RelationshipCreated is the resolver for the relationshipCreated field.
 func (r *subscriptionResolver) RelationshipCreated(ctx context.Context, types []string) (<-chan *models.Relationship, error) {
+	ctx, err := r.admitField(ctx, "subscriptionResolver.RelationshipCreated")
+	if err != nil {
+		return nil, err
+	}
 	return r.subscriptionRelationshipCreated(ctx, types)
 }
 
 // RelationshipUpdated is the resolver for the relationshipUpdated field.
 func (r *subscriptionResolver) RelationshipUpdated(ctx context.Context, id *string, types []string) (<-chan *models.Relationship, error) {
+	ctx, err := r.admitField(ctx, "subscriptionResolver.RelationshipUpdated")
+	if err != nil {
+		return nil, err
+	}
 	return r.subscriptionRelationshipUpdated(ctx, id, types)
 }
 
 // RelationshipDeleted is the resolver for the relationshipDeleted field.
 func (r *subscriptionResolver) RelationshipDeleted(ctx context.Context, types []string) (<-chan string, error) {
+	ctx, err := r.admitField(ctx, "subscriptionResolver.RelationshipDeleted")
+	if err != nil {
+		return nil, err
+	}
 	return r.subscriptionRelationshipDeleted(ctx, types)
 }
 
 // SearchStream is the resolver for the searchStream field.
 func (r *subscriptionResolver) SearchStream(ctx context.Context, query string, options *models.SearchOptions) (<-chan *models.SearchResult, error) {
+	ctx, err := r.admitField(ctx, "subscriptionResolver.SearchStream")
+	if err != nil {
+		return nil, err
+	}
 	return r.subscriptionSearchStream(ctx, query, options)
 }
 

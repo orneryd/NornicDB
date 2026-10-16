@@ -81,6 +81,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -175,6 +176,8 @@ type Config struct {
 	// ResolvedAccessResolver, when set, is used for write RPCs: ResolvedAccess.Write
 	// for (roles, collectionName) must be true or the request is denied.
 	ResolvedAccessResolver func(roles []string, dbName string) auth.ResolvedAccess
+	// EntitlementsResolver uses the same role-entitlement store as HTTP/Bolt.
+	EntitlementsResolver func(roles []string) []string
 }
 
 // SearchServiceProvider returns a search service configured for the provided database namespace.
@@ -203,8 +206,9 @@ func DefaultConfig() *Config {
 // DatabaseAccessChecker is used by Points, Collections, and Snapshots services to enforce
 // per-database (per-collection) RBAC. Collection name = database name.
 type DatabaseAccessChecker interface {
-	// AllowDatabaseAccess returns nil if the principal in ctx may access the database (read-only if write is false, write if write is true).
-	AllowDatabaseAccess(ctx context.Context, database string, write bool) error
+	// AllowDatabaseOperation admits the declared effect before collection or
+	// service resolution, using the same policy as Cypher.
+	AllowDatabaseOperation(ctx context.Context, database string, class cypher.PrivilegeClass) error
 	// VisibleDatabases returns the subset of candidates that the principal may see (e.g. for List filtering).
 	VisibleDatabases(ctx context.Context, candidates []string) ([]string, error)
 }
@@ -240,25 +244,46 @@ func AuthenticatedPrincipalID(ctx context.Context) string {
 
 // AllowDatabaseAccess implements DatabaseAccessChecker. Returns PermissionDenied if the principal may not access the database.
 func (s *Server) AllowDatabaseAccess(ctx context.Context, database string, write bool) error {
-	if s.databaseAccessModeResolver == nil {
-		return nil
+	class := cypher.PrivilegeRead
+	if write {
+		class = cypher.PrivilegeWrite
 	}
+	return s.AllowDatabaseOperation(ctx, database, class)
+}
+
+func (s *Server) AllowDatabaseOperation(ctx context.Context, database string, class cypher.PrivilegeClass) error {
 	claims, _ := ctx.Value(contextKeyClaims{}).(*auth.JWTClaims)
+	if err := cypher.AdmitOperation(ctx, s.principalAccess(claims).Allows, database, class); err != nil {
+		if class.Has(cypher.PrivilegeWrite) {
+			return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseWriteDenied(database))
+		}
+		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
+	}
+	return nil
+}
+
+func (s *Server) principalAccess(claims *auth.JWTClaims) cypher.PrincipalAccess {
+	sources := cypher.PrincipalAccessSources{DatabaseAccess: s.resolvedAccessResolver}
+	if s.databaseAccessModeResolver != nil {
+		var roles []string
+		if claims != nil {
+			roles = claims.Roles
+		}
+		mode := s.databaseAccessModeResolver(roles)
+		sources.GraphAccess = func(database string) (string, bool) { return database, mode != nil && mode.CanAccessDatabase(database) }
+	}
+	if claims == nil && s.resolvedAccessResolver == nil {
+		return cypher.NewPrincipalAccess(sources, nil)
+	}
 	var roles []string
 	if claims != nil {
 		roles = claims.Roles
 	}
-	mode := s.databaseAccessModeResolver(roles)
-	if mode == nil || !mode.CanAccessDatabase(database) {
-		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseAccessDenied(database))
+	entitlements := auth.PermissionsForRoles(roles, nil)
+	if s.config != nil && s.config.EntitlementsResolver != nil {
+		entitlements = s.config.EntitlementsResolver(roles)
 	}
-	if write && s.resolvedAccessResolver != nil {
-		ra := s.resolvedAccessResolver(roles, database)
-		if !ra.Write {
-			return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantDatabaseWriteDenied(database))
-		}
-	}
-	return nil
+	return cypher.NewPrincipalAccess(sources, &cypher.AccessPrincipal{Roles: roles, Entitlement: func(permission string) bool { return auth.EntitlementsAllow(entitlements, permission) }})
 }
 
 // VisibleDatabases implements DatabaseAccessChecker. Returns the subset of candidates the principal may see.
@@ -483,8 +508,18 @@ func (s *Server) authorizeMethod(ctx context.Context, fullMethod string, claims 
 			}
 		}
 	}
-	if hasPermissionFromClaims(claims, required) {
-		return nil
+	if claims != nil {
+		access := s.principalAccess(claims)
+		key, _ := methodKey(fullMethod)
+		contract := defaultMethodPermissions[key]
+		// Availability/configuration and effect authorization are separate.
+		// An override cannot turn database management into an ordinary write.
+		if access.Entitlement(string(required)) {
+			operationCtx := cypher.WithPermissionChecker(ctx, access.Entitlement)
+			if err := cypher.AdmitOperation(operationCtx, nil, "", contract.Class); err == nil {
+				return nil
+			}
+		}
 	}
 	return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())
 }
@@ -671,24 +706,8 @@ func (s *Server) handleBasicAuth(ctx context.Context, authHeader string) (*auth.
 }
 
 func hasPermissionFromClaims(claims *auth.JWTClaims, required auth.Permission) bool {
-	if claims == nil {
-		return false
-	}
-	for _, roleStr := range claims.Roles {
-		role := auth.Role(roleStr)
-		perms, ok := auth.RolePermissions[role]
-		if !ok {
-			continue
-		}
-		for _, p := range perms {
-			if p == required {
-				return true
-			}
-		}
-	}
-	return false
+	return claims != nil && auth.EntitlementsAllow(auth.PermissionsForRoles(claims.Roles, nil), string(required))
 }
-
 func methodKey(fullMethod string) (string, bool) {
 	if fullMethod == "" {
 		return "", false
@@ -708,49 +727,54 @@ func methodKey(fullMethod string) (string, bool) {
 	return serviceShort + "/" + method, true
 }
 
-var defaultMethodPermissions = map[string]auth.Permission{
+type methodContract struct {
+	Permission auth.Permission
+	Class      cypher.PrivilegeClass
+}
+
+var defaultMethodPermissions = map[string]methodContract{
 	// Collections (admin/DDL-ish)
-	"Collections/Create":                   auth.PermCreate,
-	"Collections/Update":                   auth.PermCreate,
-	"Collections/UpdateAliases":            auth.PermCreate,
-	"Collections/CreateAlias":              auth.PermCreate,
-	"Collections/DeleteAlias":              auth.PermCreate,
-	"Collections/RenameAlias":              auth.PermCreate,
-	"Collections/Delete":                   auth.PermDelete,
-	"Collections/Get":                      auth.PermRead,
-	"Collections/List":                     auth.PermRead,
-	"Collections/GetAliases":               auth.PermRead,
-	"Collections/CollectionExists":         auth.PermRead,
-	"Collections/GetCollectionClusterInfo": auth.PermRead,
+	"Collections/Create":                   {auth.PermAdmin, cypher.PrivilegeDBMS},
+	"Collections/Update":                   {auth.PermAdmin, cypher.PrivilegeDBMS},
+	"Collections/UpdateAliases":            {auth.PermAdmin, cypher.PrivilegeDBMS},
+	"Collections/CreateAlias":              {auth.PermAdmin, cypher.PrivilegeDBMS},
+	"Collections/DeleteAlias":              {auth.PermAdmin, cypher.PrivilegeDBMS},
+	"Collections/RenameAlias":              {auth.PermAdmin, cypher.PrivilegeDBMS},
+	"Collections/Delete":                   {auth.PermAdmin, cypher.PrivilegeDBMS},
+	"Collections/Get":                      {auth.PermRead, cypher.PrivilegeRead},
+	"Collections/List":                     {auth.PermRead, cypher.PrivilegeRead},
+	"Collections/GetAliases":               {auth.PermRead, cypher.PrivilegeRead},
+	"Collections/CollectionExists":         {auth.PermRead, cypher.PrivilegeRead},
+	"Collections/GetCollectionClusterInfo": {auth.PermRead, cypher.PrivilegeRead},
 
 	// Points (data plane)
-	"Points/Search":         auth.PermRead,
-	"Points/SearchBatch":    auth.PermRead,
-	"Points/Scroll":         auth.PermRead,
-	"Points/Get":            auth.PermRead,
-	"Points/Count":          auth.PermRead,
-	"Points/Recommend":      auth.PermRead,
-	"Points/RecommendBatch": auth.PermRead,
-	"Points/Discover":       auth.PermRead,
-	"Points/DiscoverBatch":  auth.PermRead,
+	"Points/Search":         {auth.PermRead, cypher.PrivilegeRead},
+	"Points/SearchBatch":    {auth.PermRead, cypher.PrivilegeRead},
+	"Points/Scroll":         {auth.PermRead, cypher.PrivilegeRead},
+	"Points/Get":            {auth.PermRead, cypher.PrivilegeRead},
+	"Points/Count":          {auth.PermRead, cypher.PrivilegeRead},
+	"Points/Recommend":      {auth.PermRead, cypher.PrivilegeRead},
+	"Points/RecommendBatch": {auth.PermRead, cypher.PrivilegeRead},
+	"Points/Discover":       {auth.PermRead, cypher.PrivilegeRead},
+	"Points/DiscoverBatch":  {auth.PermRead, cypher.PrivilegeRead},
 
-	"Points/Upsert":           auth.PermWrite,
-	"Points/UpdateVectors":    auth.PermWrite,
-	"Points/DeleteVectors":    auth.PermWrite,
-	"Points/SetPayload":       auth.PermWrite,
-	"Points/OverwritePayload": auth.PermWrite,
-	"Points/ClearPayload":     auth.PermWrite,
+	"Points/Upsert":           {auth.PermWrite, cypher.PrivilegeWrite},
+	"Points/UpdateVectors":    {auth.PermWrite, cypher.PrivilegeWrite},
+	"Points/DeleteVectors":    {auth.PermWrite, cypher.PrivilegeWrite},
+	"Points/SetPayload":       {auth.PermWrite, cypher.PrivilegeWrite},
+	"Points/OverwritePayload": {auth.PermWrite, cypher.PrivilegeWrite},
+	"Points/ClearPayload":     {auth.PermWrite, cypher.PrivilegeWrite},
 
-	"Points/Delete": auth.PermDelete,
+	"Points/Delete": {auth.PermDelete, cypher.PrivilegeWrite},
 
 	// Snapshots are privileged operations.
-	"Snapshots/Create":  auth.PermAdmin,
-	"Snapshots/List":    auth.PermAdmin,
-	"Snapshots/Delete":  auth.PermAdmin,
-	"Snapshots/Recover": auth.PermAdmin,
+	"Snapshots/Create":  {auth.PermAdmin, cypher.PrivilegeAdmin | cypher.PrivilegeRead | cypher.PrivilegeWrite | cypher.PrivilegeFileIO},
+	"Snapshots/List":    {auth.PermAdmin, cypher.PrivilegeAdmin | cypher.PrivilegeRead | cypher.PrivilegeFileIO},
+	"Snapshots/Delete":  {auth.PermAdmin, cypher.PrivilegeAdmin | cypher.PrivilegeWrite | cypher.PrivilegeFileIO},
+	"Snapshots/Recover": {auth.PermAdmin, cypher.PrivilegeAdmin | cypher.PrivilegeWrite | cypher.PrivilegeFileIO | cypher.PrivilegeRemote},
 
 	// gRPC reflection is useful for debugging but should be gated.
-	"ServerReflection/ServerReflectionInfo": auth.PermAdmin,
+	"ServerReflection/ServerReflectionInfo": {auth.PermAdmin, cypher.PrivilegeAdmin},
 }
 
 func requiredPermissionForMethod(fullMethod string) (auth.Permission, bool) {
@@ -759,7 +783,7 @@ func requiredPermissionForMethod(fullMethod string) (auth.Permission, bool) {
 		return "", false
 	}
 	p, ok := defaultMethodPermissions[key]
-	return p, ok
+	return p.Permission, ok
 }
 
 // extractTokenFromMetadata extracts JWT token from gRPC metadata.

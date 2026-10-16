@@ -122,6 +122,15 @@
 - id: cypheradmin.privilege_role_not_found
   description: A GRANT to a role that does not exist. Action (execute, execute_boosted) and Role are untranslated.
   other: "Failed to grant {{.Action}} privilege to role '{{.Role}}': Role does not exist."
+- id: cypheradmin.privilege_deny_role_not_found
+  description: A DENY to a role that does not exist. Action (impersonate) and Role are untranslated.
+  other: "Failed to deny {{.Action}} privilege to role '{{.Role}}': Role does not exist."
+- id: cypheradmin.impersonation_system_update_denied
+  description: An updating administration command run while impersonating a user.
+  other: "Not allowed to run updating system commands when impersonating a user."
+- id: cypheradmin.impersonation_remote_database_denied
+  description: A statement or transaction impersonating a user on a remote database or a composite with a remote constituent. Database is untranslated.
+  other: "Impersonating a user is not supported on remote database '{{.Database}}'."
 
 - id: cypheradmin.system_graph_access_unsupported
   description: A graph or schema statement on the system database.

@@ -159,7 +159,15 @@ Provides custom Cypher functions.
 // my-plugin/plugin.go
 package main
 
-import "github.com/orneryd/nornicdb/pkg/cypher"
+import "github.com/orneryd/nornicdb/pkg/auth"
+
+// The loader reads this exported descriptor shape by reflection.
+type PluginFunction struct {
+    Handler     interface{}
+    Description string
+    Category    string
+    Privilege   auth.OperationClass
+}
 
 type MyPlugin struct{}
 
@@ -167,9 +175,10 @@ func (p *MyPlugin) Name() string    { return "myplugin" }
 func (p *MyPlugin) Version() string { return "1.0.0" }
 func (p *MyPlugin) Type() string    { return "function" }
 
-func (p *MyPlugin) Functions() map[string]cypher.PluginFunction {
-    return map[string]cypher.PluginFunction{
+func (p *MyPlugin) Functions() map[string]PluginFunction {
+    return map[string]PluginFunction{
         "myplugin.greet": {
+            Privilege: auth.OperationNone,
             Handler: func(args ...interface{}) (interface{}, error) {
                 if len(args) == 0 {
                     return "Hello!", nil
@@ -184,6 +193,23 @@ func (p *MyPlugin) Functions() map[string]cypher.PluginFunction {
 // Export as Plugin
 var Plugin = &MyPlugin{}
 ```
+
+Every function descriptor must declare a valid `Privilege`. Use
+`auth.OperationNone` for a value-only function. Combine actual effects with `|`:
+`OperationRead`, `OperationWrite`, `OperationSchema`, `OperationAdmin`,
+`OperationDBMS`, `OperationSharedState`, `OperationFileIO`, and `OperationRemote`.
+For example, a function that reads graph data and writes a file declares
+`OperationRead | OperationWrite | OperationFileIO`. File and provider operations
+also retain their configuration gates. `OperationNone` cannot be combined with
+other effects; an omitted, zero, or unknown class is rejected before publication.
+The declared effects are checked using the executing user's permissions, including
+when the login is impersonating that user.
+
+Procedure plugins must explicitly declare one supported `Mode`: `READ`, `WRITE`,
+`SCHEMA`, `DBMS`, or `ADMIN`. An omitted or unknown mode is rejected. Statements
+executed inside a procedure also go through the normal statement authorization.
+Rebuild existing plugins with these declarations using the server's Go version
+before loading them.
 
 **Build:**
 
@@ -360,8 +386,9 @@ heimdall.mysubsystem.action
 Document each function/action:
 
 ```go
-return map[string]cypher.PluginFunction{
+return map[string]PluginFunction{
     "myplugin.analyze": {
+        Privilege:   auth.OperationNone, // Analyzes its supplied values only.
         Handler:     analyzeFunc,
         Description: "Analyzes data and returns insights",
         Category:    "analysis",
@@ -378,7 +405,8 @@ func TestMyPlugin(t *testing.T) {
     // Test plugin directly
     p := &MyPlugin{}
     funcs := p.Functions()
-    result, err := funcs["myplugin.greet"].Handler("World")
+    handler := funcs["myplugin.greet"].Handler.(func(...interface{}) (interface{}, error))
+    result, err := handler("World")
     assert.NoError(t, err)
     assert.Equal(t, "Hello, World!", result)
 }
@@ -517,9 +545,10 @@ type CollectionPlugin struct{}
 func (p *CollectionPlugin) Type() string { return "function" }
 func (p *CollectionPlugin) Name() string { return "collections" }
 
-func (p *CollectionPlugin) Functions() map[string]cypher.PluginFunction {
-    return map[string]cypher.PluginFunction{
+func (p *CollectionPlugin) Functions() map[string]PluginFunction {
+    return map[string]PluginFunction{
         "collections.unique": {
+            Privilege: auth.OperationNone,
             Handler: func(args ...interface{}) (interface{}, error) {
                 list := args[0].([]interface{})
                 seen := make(map[interface{}]bool)

@@ -15,6 +15,9 @@ import (
 // =============================================================================
 
 func (s *Server) handleGDPRExport(w http.ResponseWriter, r *http.Request) {
+	if !s.admitHTTPOperation(w, r, "gdpr.export", "") {
+		return
+	}
 	if r.Method != http.MethodPost {
 		s.writePostRequired(w, r)
 		return
@@ -57,6 +60,9 @@ func (s *Server) handleGDPRExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGDPRDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.admitHTTPOperation(w, r, "gdpr.delete", "") {
+		return
+	}
 	if r.Method != http.MethodPost {
 		s.writePostRequired(w, r)
 		return

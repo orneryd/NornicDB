@@ -245,6 +245,9 @@ type Server struct {
 	databaseConnectionAdmit   func(databaseName string) error
 	databaseConnectionRelease func(databaseName string)
 
+	// impersonationAllowed decides IMPERSONATE (SetImpersonationResolver).
+	impersonationAllowed func(roles []string, admin bool, user string) bool
+
 	// Transaction sequence tracking for causal consistency
 	// Tracks the highest committed transaction sequence number across all sessions
 	txSequence   int64        // Monotonically increasing transaction sequence number
@@ -405,6 +408,7 @@ type QueryResult struct {
 	Rows     [][]any
 	Metadata map[string]any
 	Stats    *QueryStats // Write counters for ResultSummary
+	entityDatabase boltEntityDatabaseResolver // Captured executing context for subsequent PULL.
 }
 
 type resultStream struct {
@@ -1523,6 +1527,9 @@ type Session struct {
 	// (identityAuth); requestIdentity rebuilds it after LOGON / LOGOFF.
 	identity     *cypher.RequestIdentity
 	identityAuth *BoltAuthResult
+	// impersonated is the user the current auto-commit RUN or explicit
+	// transaction impersonates (imp_user), nil for none (executingAuth).
+	impersonated *BoltAuthResult
 	// forwardedAuthHeader carries caller identity for downstream remote constituent
 	// routing (e.g. OIDC credential forwarding over Fabric/USE paths).
 	forwardedAuthHeader string
@@ -2337,12 +2344,13 @@ func (s *Session) getExecutorForDatabase(dbName string) (QueryExecutor, error) {
 	}
 
 	useAuthScopedResolver := false
-	if resolver, ok := s.server.dbManager.(authAwareStorageResolver); ok && strings.TrimSpace(s.forwardedAuthHeader) != "" {
+	if resolver, ok := s.server.dbManager.(authAwareStorageResolver); ok && strings.TrimSpace(s.forwardedAuth()) != "" {
 		_ = resolver
 		useAuthScopedResolver = true
 	}
 
-	if !useAuthScopedResolver {
+	requestScoped := useAuthScopedResolver || cypher.GraphIsRemote(s.cypherDatabaseManager(), dbName)
+	if !requestScoped {
 		s.server.executorsMu.RLock()
 		if executor, ok := s.server.executors[dbName]; ok {
 			s.server.executorsMu.RUnlock()
@@ -2363,7 +2371,7 @@ func (s *Session) getExecutorForDatabase(dbName string) (QueryExecutor, error) {
 	executor.SetSharedExecutor(true)
 
 	dbExecutor := &boltQueryExecutorAdapter{executor: executor}
-	if useAuthScopedResolver {
+	if requestScoped {
 		return dbExecutor, nil
 	}
 
@@ -2398,7 +2406,7 @@ func (s *Session) getTransactionalExecutorForDatabase(dbName string) (QueryExecu
 		return nil, fmt.Errorf("database manager not available")
 	}
 	useAuthScopedResolver := false
-	if resolver, ok := s.server.dbManager.(authAwareStorageResolver); ok && strings.TrimSpace(s.forwardedAuthHeader) != "" {
+	if resolver, ok := s.server.dbManager.(authAwareStorageResolver); ok && strings.TrimSpace(s.forwardedAuth()) != "" {
 		_ = resolver
 		useAuthScopedResolver = true
 	}
@@ -2406,11 +2414,13 @@ func (s *Session) getTransactionalExecutorForDatabase(dbName string) (QueryExecu
 	if err != nil {
 		return nil, err
 	}
-	base, err := s.getExecutorForDatabase(dbName)
-	if err != nil {
-		return nil, err
-	}
-	if adapter, ok := base.(*boltQueryExecutorAdapter); ok {
+	// Share the database executor's statistics and statement caches when it
+	// already exists. BEGIN creates none: a statement the transaction
+	// admits does (getExecutorForDatabase).
+	s.server.executorsMu.RLock()
+	cached := s.server.executors[dbName]
+	s.server.executorsMu.RUnlock()
+	if adapter, ok := cached.(*boltQueryExecutorAdapter); ok && adapter.executor != nil {
 		executor.ShareQueryStatisticsFrom(adapter.executor)
 		executor.ShareStatementCachesFrom(adapter.executor)
 	}
@@ -2425,7 +2435,7 @@ func (s *Session) newDatabaseScopedCypherExecutor(dbName string, useAuthScopedRe
 		err           error
 	)
 	if resolver, ok := s.server.dbManager.(authAwareStorageResolver); ok && useAuthScopedResolver {
-		storageEngine, err = resolver.GetStorageWithAuth(dbName, s.forwardedAuthHeader)
+		storageEngine, err = resolver.GetStorageWithAuth(dbName, s.forwardedAuth())
 	} else {
 		storageEngine, err = s.server.dbManager.GetStorage(dbName)
 	}
@@ -2433,23 +2443,39 @@ func (s *Session) newDatabaseScopedCypherExecutor(dbName string, useAuthScopedRe
 		return nil, err
 	}
 
-	executor := cypher.NewStorageExecutor(storageEngine)
+	executor := cypher.NewStatementExecutor(storageEngine)
 	if s.server.config != nil {
 		executor.SetLocalizationRenderer(s.server.config.Localizer)
 	}
 	if baseAdapter, ok := s.server.executor.(*boltQueryExecutorAdapter); ok && baseAdapter != nil && baseAdapter.executor != nil {
 		executor.ShareEmbedderFrom(baseAdapter.executor)
+		executor.ShareMutationCallbackFrom(baseAdapter.executor)
+		executor.ShareQueryStatisticsFrom(baseAdapter.executor)
+		executor.SetLogger(baseAdapter.executor.Logger())
+		executor.SetSlowQueryThreshold(baseAdapter.executor.SlowQueryThreshold())
 	}
-	if cfg, ok := s.server.executor.(databaseExecutorConfigurator); ok && cfg != nil {
-		cfg.ConfigureDatabaseExecutor(executor, dbName, storageEngine)
+	composite := false
+	if scoped, ok := storageEngine.(interface{ IsComposite() bool }); ok {
+		composite = scoped.IsComposite()
+	}
+	if cfg, ok := s.server.executor.(databaseExecutorConfigurator); ok && cfg != nil && !composite && !cypher.GraphIsRemote(s.cypherDatabaseManager(), dbName) {
+		executor.SetFirstAdmission(func() { cfg.ConfigureDatabaseExecutor(executor, dbName, storageEngine) })
 	}
 	if provider, ok := s.server.executor.(baseCypherExecutorProvider); ok && provider != nil {
 		if baseExec := provider.BaseCypherExecutor(); baseExec != nil {
 			executor.ShareEmbedderFrom(baseExec)
+			executor.ShareMutationCallbackFrom(baseExec)
+			executor.SetInferenceManager(baseExec.GetInferenceManager())
+			executor.ShareQueryStatisticsFrom(baseExec)
+			executor.SetLogger(baseExec.Logger())
+			executor.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
 		}
 	}
 	if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
 		executor.SetDatabaseManager(&boltDatabaseManagerAdapter{manager: mgr})
+	}
+	if cypher.GraphIsRemote(s.cypherDatabaseManager(), dbName) {
+		executor.SetOwnedStorageCleanup(storageEngine.Close)
 	}
 	return executor, nil
 }
@@ -2458,6 +2484,8 @@ func (s *Session) newDatabaseScopedCypherExecutor(dbName string, useAuthScopedRe
 type boltQueryExecutorAdapter struct {
 	executor *cypher.StorageExecutor
 }
+
+func (a *boltQueryExecutorAdapter) ReleaseDatabaseResources() { a.executor.ReleaseOwnedStorage() }
 
 func (a *boltQueryExecutorAdapter) Execute(ctx context.Context, query string, params map[string]any) (*QueryResult, error) {
 	// Convert params from map[string]any to map[string]interface{} only when

@@ -361,8 +361,8 @@ const dynamicLabelTestFunction = "__nornic_haslabels"
 const dynamicLabelPredicateFunction = "__nornic_labelpredicate"
 
 func init() {
-	cypherfn.Register(dynamicLabelTestFunction, fnDynamicLabelTest)
-	cypherfn.Register(dynamicLabelPredicateFunction, fnDynamicLabelTest)
+	cypherfn.Register(dynamicLabelTestFunction, cypherfn.PrivilegeNone, fnDynamicLabelTest)
+	cypherfn.Register(dynamicLabelPredicateFunction, cypherfn.PrivilegeNone, fnDynamicLabelTest)
 }
 
 func fnDynamicLabelTest(ctx cypherfn.Context, args []string) (interface{}, error) {

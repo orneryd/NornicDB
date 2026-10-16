@@ -241,6 +241,8 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNamedIndexManagement("db.resampleIndex", args)
 			})
+		// db.clearQueryCaches empties every session's query and plan caches
+		// (UpdatesDBMS).
 		registerProcedure(ProcedureSpec{
 			Name:               "db.clearQueryCaches",
 			Signature:          "db.clearQueryCaches() :: (value :: STRING)",
@@ -248,7 +250,6 @@ func ensureBuiltInProceduresRegistered() {
 			DescriptionMessage: localization.CypherProcedureMetadata("db.clearQueryCaches"),
 			Mode:               ProcedureModeDBMS,
 			WorksOnSystem:      true,
-			Admin:              true,
 			Returns:            []ProcedureColumn{{Name: "value", Type: "STRING", Description: "Information about the number of cleared query caches."}},
 		},
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
@@ -441,16 +442,18 @@ func ensureBuiltInProceduresRegistered() {
 		// registry is process-wide), and whoever calls it runs its body, on
 		// any database: installing, replacing and dropping one needs the
 		// admin entitlement, as CREATE / DROP PROCEDURE does and as APOC 5
-		// marks apoc.custom.installProcedure and dropProcedure (@Admin).
-		registerAdminBuiltInProcedureLiteral("apoc.custom.installProcedure", "apoc.custom.installProcedure(signature :: STRING, statement :: STRING, databaseName :: STRING = 'neo4j', mode :: STRING = 'read', description :: STRING = '')", "Installs a statement as the procedure custom.<name>", ProcedureModeWrite, 2, 5, false,
+		// marks apoc.custom.installProcedure and dropProcedure (@Admin). It
+		// changes the DBMS, not a database, so none of them runs while
+		// impersonating a user (ProcedureSpec.UpdatesDBMS).
+		registerDBMSUpdatingProcedureLiteral("apoc.custom.installProcedure", "apoc.custom.installProcedure(signature :: STRING, statement :: STRING, databaseName :: STRING = 'neo4j', mode :: STRING = 'read', description :: STRING = '')", "Installs a statement as the procedure custom.<name>", ProcedureModeWrite, 2, 5, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCustomInstall(ctx, "apoc.custom.installProcedure", args, true)
 			})
-		registerAdminBuiltInProcedureLiteral("apoc.custom.declareProcedure", "apoc.custom.declareProcedure(signature :: STRING, statement :: STRING, mode :: STRING = 'read', description :: STRING = '')", "Installs a statement as the procedure custom.<name> (APOC 4 form)", ProcedureModeWrite, 2, 4, false,
+		registerDBMSUpdatingProcedureLiteral("apoc.custom.declareProcedure", "apoc.custom.declareProcedure(signature :: STRING, statement :: STRING, mode :: STRING = 'read', description :: STRING = '')", "Installs a statement as the procedure custom.<name> (APOC 4 form)", ProcedureModeWrite, 2, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCustomInstall(ctx, "apoc.custom.declareProcedure", args, false)
 			})
-		registerAdminBuiltInProcedureLiteral("apoc.custom.dropProcedure", "apoc.custom.dropProcedure(name :: STRING, databaseName :: STRING = 'neo4j')", "Drops the custom procedure custom.<name>", ProcedureModeWrite, 1, 2, false,
+		registerDBMSUpdatingProcedureLiteral("apoc.custom.dropProcedure", "apoc.custom.dropProcedure(name :: STRING, databaseName :: STRING = 'neo4j')", "Drops the custom procedure custom.<name>", ProcedureModeWrite, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callApocCustomDrop(ctx, args)
 			})
@@ -497,7 +500,7 @@ func ensureBuiltInProceduresRegistered() {
 		// NornicDB's stored string ID (#1165), so both procedures declare ANY.
 		registerBuiltInProcedure("gds.louvain.stream", "gds.louvain.stream(graphName :: STRING, configuration = {} :: MAP) :: (nodeId :: ANY, communityId :: INTEGER, intermediateCommunityIds :: LIST<INTEGER>)", localization.CypherProcedureMetadata("gds.louvain.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsLouvainStream(args)
+				return e.callGdsLouvainStream(args, ctx)
 			})
 		const nodeSimilaritySignature = "(graphName :: STRING, configuration = {} :: MAP) :: (node1 :: ANY, node2 :: ANY, similarity :: FLOAT, shared :: LIST<MAP>)"
 		registerBuiltInProcedure("gds.nodeSimilarity.stream", "gds.nodeSimilarity.stream"+nodeSimilaritySignature, localization.CypherProcedureMetadata("gds.nodeSimilarity.stream"), ProcedureModeRead, 1, 2, false,
@@ -517,11 +520,11 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("gds.graph.exists", "gds.graph.exists(graphName :: STRING) :: (graphName :: STRING, exists :: BOOLEAN)", localization.CypherProcedureMetadata("gds.graph.exists"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsGraphExists(args)
+				return e.callGdsGraphExists(args, ctx)
 			})
 		registerBuiltInProcedure("gds.graph.list", "gds.graph.list(graphName = __ALL__ :: STRING) :: (degreeDistribution :: MAP, graphName :: STRING, database :: STRING, databaseLocation :: STRING, memoryUsage :: STRING, sizeInBytes :: INTEGER, nodeCount :: INTEGER, relationshipCount :: INTEGER, configuration :: MAP, density :: FLOAT, creationTime :: ZONED DATETIME, modificationTime :: ZONED DATETIME, schema :: MAP, schemaWithOrientation :: MAP)", localization.CypherProcedureMetadata("gds.graph.list"), ProcedureModeRead, 0, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsGraphList(args)
+				return e.callGdsGraphList(args, ctx)
 			})
 		registerBuiltInProcedure("gds.graph.drop", "gds.graph.drop(graphName :: ANY, failIfMissing = true :: BOOLEAN, dbName =  :: STRING, username =  :: STRING) :: (graphName :: STRING, database :: STRING, databaseLocation :: STRING, memoryUsage :: STRING, sizeInBytes :: INTEGER, nodeCount :: INTEGER, relationshipCount :: INTEGER, configuration :: MAP, density :: FLOAT, creationTime :: ZONED DATETIME, modificationTime :: ZONED DATETIME, schema :: MAP, schemaWithOrientation :: MAP)", localization.CypherProcedureMetadata("gds.graph.drop"), ProcedureModeWrite, 1, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
@@ -533,11 +536,11 @@ func ensureBuiltInProceduresRegistered() {
 			})
 		registerBuiltInProcedure("gds.fastRP.stream", "gds.fastRP.stream(graphName :: STRING, configuration = {} :: MAP) :: (nodeId :: INTEGER, embedding :: LIST<FLOAT>)", localization.CypherProcedureMetadata("gds.fastRP.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsFastRPStream(args)
+				return e.callGdsFastRPStream(args, ctx)
 			})
 		registerBuiltInProcedure("gds.fastRP.stats", "gds.fastRP.stats(graphName :: STRING, configuration = {} :: MAP) :: (nodeCount :: INTEGER, preProcessingMillis :: INTEGER, computeMillis :: INTEGER, configuration :: MAP)", localization.CypherProcedureMetadata("gds.fastRP.stats"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callGdsFastRPStats(args)
+				return e.callGdsFastRPStats(args, ctx)
 			})
 		registerBuiltInProcedure("gds.linkPrediction.adamicAdar.stream", "gds.linkPrediction.adamicAdar.stream(graphNameOrConfig :: ANY, config :: MAP) :: (node1 :: INTEGER, node2 :: INTEGER, score :: FLOAT)", localization.CypherProcedureMetadata("gds.linkPrediction.adamicAdar.stream"), ProcedureModeRead, 1, 2, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
@@ -646,7 +649,7 @@ func ensureBuiltInProceduresRegistered() {
 func queryStatisticsProcedureSpec(action string) ProcedureSpec {
 	name := "db.stats." + action
 	description := localization.CypherProcedureMetadata(name)
-	spec := ProcedureSpec{Name: name, Description: description.Fallback, DescriptionMessage: description, Mode: ProcedureModeRead, WorksOnSystem: true, Admin: true}
+	spec := ProcedureSpec{Name: name, Description: description.Fallback, DescriptionMessage: description, Mode: ProcedureModeRead, WorksOnSystem: true}
 	if action == "status" {
 		spec.Signature = name + "() :: (section :: STRING, status :: STRING, data :: MAP)"
 		spec.Returns = []ProcedureColumn{{Name: "section", Type: "STRING", Description: "String with the message \"QUERIES\"."}, {Name: "status", Type: "STRING", Description: "The status of the QueryCollector: \"idle\" or \"collecting\"."}, {Name: "data", Type: "MAP", Description: "data :: MAP"}}
@@ -718,7 +721,6 @@ func dbmsListConfigProcedureSpec() ProcedureSpec {
 		DescriptionMessage: description,
 		Mode:               ProcedureModeDBMS,
 		WorksOnSystem:      true,
-		Admin:              true,
 		Params:             []ProcedureParam{{Name: "searchString", Type: "STRING", Optional: true, Default: "DefaultParameterValue{value=, type=STRING}", Description: "A string that filters on the name of config settings."}},
 		Returns: []ProcedureColumn{
 			{Name: "name", Type: "STRING", Description: "The name of the setting."},
@@ -919,7 +921,6 @@ func registerAdminBuiltInProcedure(name, signature string, description localizat
 		DescriptionMessage: description,
 		Mode:               mode,
 		WorksOnSystem:      worksOnSystem,
-		Admin:              true,
 		MinArgs:            minArgs,
 		MaxArgs:            maxArgs,
 	}, handler)
@@ -941,7 +942,7 @@ func registerDeprecatedProcedureAlias(alias, name string) {
 	spec.DescriptionMessage = description
 	spec.IsDeprecated = true
 	spec.DeprecatedBy = name
-	_ = globalProcedureRegistry.RegisterBuiltIn(spec, procedure.Handler)
+	registerProcedure(spec, procedure.Handler)
 }
 
 func registerBuiltInProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
@@ -956,22 +957,30 @@ func registerBuiltInProcedureLiteral(name, signature, description string, mode P
 	}, handler)
 }
 
-// registerAdminBuiltInProcedureLiteral is registerBuiltInProcedureLiteral
-// for a procedure only an administrator runs (ProcedureSpec.Admin).
-func registerAdminBuiltInProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
+// registerDBMSUpdatingProcedureLiteral is registerBuiltInProcedureLiteral for
+// a procedure only an administrator runs (ProcedureSpec.Admin) that changes
+// the DBMS rather than one database (ProcedureSpec.UpdatesDBMS).
+func registerDBMSUpdatingProcedureLiteral(name, signature, description string, mode ProcedureMode, minArgs, maxArgs int, worksOnSystem bool, handler ProcedureHandler) {
 	registerProcedure(ProcedureSpec{
 		Name:          name,
 		Signature:     signature,
 		Description:   description,
 		Mode:          mode,
 		WorksOnSystem: worksOnSystem,
-		Admin:         true,
 		MinArgs:       minArgs,
 		MaxArgs:       maxArgs,
 	}, handler)
 }
 
 func registerProcedure(spec ProcedureSpec, handler ProcedureHandler) {
+	class, found := builtinProcedureClasses[spec.Name]
+	if !found || !class.Valid() {
+		panic("procedure " + spec.Name + ": explicit privilege class required")
+	}
+	spec.Privilege = class
+	if class == PrivilegeSchema {
+		spec.Mode = ProcedureModeSchema
+	}
 	arguments, returnSignature := functionSignatureDescriptions(spec.Signature)
 	if len(spec.Params) == 0 {
 		for index, argument := range arguments {
@@ -995,5 +1004,7 @@ func registerProcedure(spec ProcedureSpec, handler ProcedureHandler) {
 			})
 		}
 	}
-	_ = globalProcedureRegistry.RegisterBuiltIn(spec, handler)
+	if err := globalProcedureRegistry.RegisterBuiltIn(spec, handler); err != nil {
+		panic(err)
+	}
 }

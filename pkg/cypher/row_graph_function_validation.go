@@ -178,7 +178,7 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 	if strings.TrimSpace(argument) != "" {
 		args = splitTopLevelComma(argument)
 	}
-	value, found, err := cypherfn.EvaluateFunction(function, args, cypherfn.Context{
+	value, found, err := cypherfn.EvaluateFunction(function, args, cypherfn.Context{Request: rowStatementContextOrBackground(values),
 		Storage:  e.storage,
 		Cypher25: rowIsCypher25(values),
 		Eval: func(expression string) (interface{}, error) {

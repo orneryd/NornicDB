@@ -9,10 +9,11 @@ import (
 
 // subscriptionInfo holds a channel and its filter parameters.
 type subscriptionInfo struct {
-	ch     interface{} // Channel (type varies by subscription type)
-	labels []string
-	types  []string
-	id     *string
+	visible func(string) bool
+	ch      interface{} // Channel (type varies by subscription type)
+	labels  []string
+	types   []string
+	id      *string
 }
 
 // EventBroker is a thread-safe pub/sub system for GraphQL subscriptions.
@@ -111,8 +112,9 @@ func (b *EventBroker) SubscribeNodeCreated(ctx context.Context, labels []string)
 
 	b.mu.Lock()
 	b.nodeCreatedSubs = append(b.nodeCreatedSubs, subscriptionInfo{
-		ch:     ch,
-		labels: labels,
+		visible: eventVisibility(ctx),
+		ch:      ch,
+		labels:  labels,
 	})
 	b.mu.Unlock()
 
@@ -132,9 +134,10 @@ func (b *EventBroker) SubscribeNodeUpdated(ctx context.Context, id *string, labe
 
 	b.mu.Lock()
 	b.nodeUpdatedSubs = append(b.nodeUpdatedSubs, subscriptionInfo{
-		ch:     ch,
-		labels: labels,
-		id:     id,
+		visible: eventVisibility(ctx),
+		ch:      ch,
+		labels:  labels,
+		id:      id,
 	})
 	b.mu.Unlock()
 
@@ -153,8 +156,9 @@ func (b *EventBroker) SubscribeNodeDeleted(ctx context.Context, labels []string)
 
 	b.mu.Lock()
 	b.nodeDeletedSubs = append(b.nodeDeletedSubs, subscriptionInfo{
-		ch:     ch,
-		labels: labels,
+		visible: eventVisibility(ctx),
+		ch:      ch,
+		labels:  labels,
 	})
 	b.mu.Unlock()
 
@@ -173,8 +177,9 @@ func (b *EventBroker) SubscribeRelationshipCreated(ctx context.Context, types []
 
 	b.mu.Lock()
 	b.relationshipCreatedSubs = append(b.relationshipCreatedSubs, subscriptionInfo{
-		ch:    ch,
-		types: types,
+		visible: eventVisibility(ctx),
+		ch:      ch,
+		types:   types,
 	})
 	b.mu.Unlock()
 
@@ -193,9 +198,10 @@ func (b *EventBroker) SubscribeRelationshipUpdated(ctx context.Context, id *stri
 
 	b.mu.Lock()
 	b.relationshipUpdatedSubs = append(b.relationshipUpdatedSubs, subscriptionInfo{
-		ch:    ch,
-		types: types,
-		id:    id,
+		visible: eventVisibility(ctx),
+		ch:      ch,
+		types:   types,
+		id:      id,
 	})
 	b.mu.Unlock()
 
@@ -214,8 +220,9 @@ func (b *EventBroker) SubscribeRelationshipDeleted(ctx context.Context, types []
 
 	b.mu.Lock()
 	b.relationshipDeletedSubs = append(b.relationshipDeletedSubs, subscriptionInfo{
-		ch:    ch,
-		types: types,
+		visible: eventVisibility(ctx),
+		ch:      ch,
+		types:   types,
 	})
 	b.mu.Unlock()
 
@@ -240,7 +247,7 @@ func (b *EventBroker) PublishNodeCreated(node *models.Node) {
 
 	// Publish to all matching subscriptions
 	for _, sub := range subs {
-		if matchesFilter(sub.labels, nil, nil, node.Labels, "", node.ID) {
+		if (sub.visible == nil || sub.visible(node.ID)) && matchesFilter(sub.labels, nil, nil, node.Labels, "", node.ID) {
 			if ch, ok := sub.ch.(chan *models.Node); ok {
 				select {
 				case ch <- node:
@@ -264,7 +271,7 @@ func (b *EventBroker) PublishNodeUpdated(node *models.Node) {
 	b.mu.RUnlock()
 
 	for _, sub := range subs {
-		if matchesFilter(sub.labels, nil, sub.id, node.Labels, "", node.ID) {
+		if (sub.visible == nil || sub.visible(node.ID)) && matchesFilter(sub.labels, nil, sub.id, node.Labels, "", node.ID) {
 			if ch, ok := sub.ch.(chan *models.Node); ok {
 				select {
 				case ch <- node:
@@ -291,6 +298,9 @@ func (b *EventBroker) PublishNodeDeleted(nodeID string) {
 
 	// Send to all subscriptions (can't filter by labels without node data)
 	for _, sub := range subs {
+		if sub.visible != nil && !sub.visible(nodeID) {
+			continue
+		}
 		if ch, ok := sub.ch.(chan string); ok {
 			select {
 			case ch <- nodeID:
@@ -313,7 +323,7 @@ func (b *EventBroker) PublishRelationshipCreated(rel *models.Relationship) {
 	b.mu.RUnlock()
 
 	for _, sub := range subs {
-		if matchesFilter(nil, sub.types, nil, nil, rel.Type, rel.ID) {
+		if (sub.visible == nil || sub.visible(rel.ID)) && matchesFilter(nil, sub.types, nil, nil, rel.Type, rel.ID) {
 			if ch, ok := sub.ch.(chan *models.Relationship); ok {
 				select {
 				case ch <- rel:
@@ -337,7 +347,7 @@ func (b *EventBroker) PublishRelationshipUpdated(rel *models.Relationship) {
 	b.mu.RUnlock()
 
 	for _, sub := range subs {
-		if matchesFilter(nil, sub.types, sub.id, nil, rel.Type, rel.ID) {
+		if (sub.visible == nil || sub.visible(rel.ID)) && matchesFilter(nil, sub.types, sub.id, nil, rel.Type, rel.ID) {
 			if ch, ok := sub.ch.(chan *models.Relationship); ok {
 				select {
 				case ch <- rel:
@@ -364,6 +374,9 @@ func (b *EventBroker) PublishRelationshipDeleted(relID string) {
 
 	// Send to all subscriptions (can't filter by type without relationship data)
 	for _, sub := range subs {
+		if sub.visible != nil && !sub.visible(relID) {
+			continue
+		}
 		if ch, ok := sub.ch.(chan string); ok {
 			select {
 			case ch <- relID:

@@ -30,8 +30,8 @@ func gdsNode(id, label string, properties map[string]interface{}) *storage.Node 
 // TestGDSGraphDropNeedsWriteOnItsDatabase: gds.graph.drop's dbName is
 // checked against the caller's rights on that database.
 func TestGDSGraphDropNeedsWriteOnItsDatabase(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	_, runPrivate := newGDSEngineGraph(t, "private", gdsNode("p1", "Private", map[string]interface{}{"secret": int64(42)}))
 	_, err := runPrivate("CALL gds.graph.project('secretGraph', {Private: {properties: 'secret'}}, '*')")
 	require.NoError(t, err)
@@ -90,8 +90,8 @@ func squaredNorm(vector []float64) float64 {
 // its contribution to the embedding is normalised), and nodeSelfInfluence
 // adds the normalised start vector.
 func TestFastRPPropagationAsGDS(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	// a→b→d and a→c→e: after one iteration b holds d's vector and c holds
 	// e's, -2 times it; a's second iteration averages them to -0.5 times the
 	// vector. Normalising b and c first would cancel a out to zero.
@@ -148,8 +148,8 @@ func TestFastRPPropagationAsGDS(t *testing.T) {
 // of Integer in the schema, gds.util.nodeProperty gives the list (or []
 // where a node has none), and FastRP takes each element as a feature.
 func TestGraphProjectListPropertiesAsGDS(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	_, run := newGDSEngineGraph(t, "lists",
 		gdsNode("a", "A", map[string]interface{}{"f": []interface{}{1.0, 2.0}, "i": []interface{}{int64(1), int64(2), int64(3)}, "s": 2.0, "b": []interface{}{true}}),
 		gdsNode("b", "A", map[string]interface{}{"f": []float64{3.0, 4.0}, "i": []int64{4, 5, 6}, "s": 3.0}),
@@ -208,8 +208,8 @@ func TestGraphProjectListPropertiesAsGDS(t *testing.T) {
 // list don't mix, a List of Integer takes no fractions), string lists
 // aren't projected, and FastRP needs one length per list property.
 func TestGraphProjectListPropertyRefusalsAsGDS(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	for _, tc := range []struct {
 		first, second interface{}
 		message       string
@@ -255,8 +255,8 @@ func TestGraphProjectListPropertyRefusalsAsGDS(t *testing.T) {
 // projection, naming that end, as GDS 2.13.12 does; without it the
 // relationship is skipped. Relationships of other types don't count.
 func TestGraphProjectValidateRelationshipsAsGDS(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	_, run := newGDSEngineGraph(t, "validate", gdsNode("q1", "Q", nil), gdsNode("a1", "A", nil), gdsNode("a2", "A", nil))
 	for _, query := range []string{
 		"MATCH (q), (a) WHERE id(q) = 'q1' AND id(a) = 'a1' CREATE (q)-[:R]->(a)",
@@ -282,8 +282,8 @@ func TestGraphProjectValidateRelationshipsAsGDS(t *testing.T) {
 // property under different keys are separate properties with their own
 // types.
 func TestGraphProjectIntegerKindsAndAliases(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	values := []interface{}{int8(-8), int16(16), int32(32), uint(1), uint8(8), uint16(160), uint32(320), uint64(640)}
 	nodes := make([]*storage.Node, len(values))
 	for i, value := range values {

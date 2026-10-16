@@ -134,6 +134,9 @@ func transactionOwnerKey(_ *http.Request, claims *auth.JWTClaims) string {
 //   - Subsequent requests reuse the cached executor (zero allocation overhead)
 //   - Storage engines are cached by DatabaseManager for efficiency
 func (s *Server) getExecutorForDatabase(dbName string) (*cypher.StorageExecutor, error) {
+	if cypher.GraphIsRemote(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}, dbName) {
+		return s.getExecutorForDatabaseWithAuth(dbName, "")
+	}
 	// Check cache first (read lock for fast path)
 	s.executorsMu.RLock()
 	if executor, ok := s.executors[dbName]; ok {
@@ -143,7 +146,7 @@ func (s *Server) getExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 	s.executorsMu.RUnlock()
 
 	// Get namespaced storage for this database
-	executor, err := s.newDatabaseScopedExecutor(dbName)
+	executor, engine, err := s.newDatabaseScopedExecutor(dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -151,24 +154,57 @@ func (s *Server) getExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 	// database: a statement must never leave it inside a transaction.
 	// Explicit transactions run on their own per-session executors.
 	executor.SetSharedExecutor(true)
+	s.finishDatabaseExecutor(dbName, engine, executor)
+	return s.publishExecutor(dbName, executor), nil
+}
 
-	// Cache the executor (write lock for cache update)
+// publishExecutor caches executor as dbName's shared executor, or returns
+// the one another request cached first.
+func (s *Server) publishExecutor(dbName string, executor *cypher.StorageExecutor) *cypher.StorageExecutor {
 	s.executorsMu.Lock()
-	// Double-check in case another goroutine created it while we were waiting
+	defer s.executorsMu.Unlock()
 	if existing, ok := s.executors[dbName]; ok {
-		s.executorsMu.Unlock()
-		return existing, nil
+		return existing
 	}
 	s.executors[dbName] = executor
-	s.executorsMu.Unlock()
+	return executor
+}
 
+// statementExecutorForDatabase is the executor an auto-commit statement runs
+// on in dbName, which the request has admitted (cypher.AdmitGraph): the
+// shared one when there is one; otherwise a minimal one that gets the
+// database's search service and embed queue and becomes the shared one only
+// once it has authorized the statement (SetFirstAdmission). A statement the
+// principal may not run there opens no search service, starts no index work
+// and leaves nothing cached. A composite with remote constituents gets an
+// executor built with the request's auth token (getExecutorForDatabaseWithAuth),
+// which is never cached.
+func (s *Server) statementExecutorForDatabase(dbName, authToken string) (*cypher.StorageExecutor, error) {
+	if cypher.GraphIsRemote(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}, dbName) {
+		return s.getExecutorForDatabaseWithAuth(dbName, authToken)
+	}
+	s.executorsMu.RLock()
+	cached, ok := s.executors[dbName]
+	s.executorsMu.RUnlock()
+	if ok {
+		return cached, nil
+	}
+	executor, engine, err := s.newDatabaseScopedExecutor(dbName)
+	if err != nil {
+		return nil, err
+	}
+	executor.SetSharedExecutor(true)
+	executor.SetFirstAdmission(func() {
+		s.finishDatabaseExecutor(dbName, engine, executor)
+		s.publishExecutor(dbName, executor)
+	})
 	return executor, nil
 }
 
 // getExecutorForDatabaseWithAuth returns an executor for dbName and forwards authToken
 // to remote constituent resolution when a composite database contains remote constituents.
 func (s *Server) getExecutorForDatabaseWithAuth(dbName string, authToken string) (*cypher.StorageExecutor, error) {
-	if authToken == "" || !s.databaseHasRemoteConstituent(dbName) {
+	if !cypher.GraphIsRemote(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}, dbName) {
 		return s.getExecutorForDatabase(dbName)
 	}
 
@@ -177,41 +213,10 @@ func (s *Server) getExecutorForDatabaseWithAuth(dbName string, authToken string)
 		return nil, err
 	}
 
-	overrides := s.dbConfigStore.GetOverrides(dbName)
-	resolved := dbconfig.Resolve(s.processConfig, overrides)
-	s.applyTransactionMemoryLimits(dbName, resolved)
-	executor := cypher.NewStorageExecutorWithQueryCachePolicy(storageEngine, resolved.QueryCacheMaxEntries, resolved.QueryCacheTTL)
-	executor.SetLocalizationRenderer(s.localizer)
-	executor.SetSettingsResolver(s.databaseSettingsResolver(dbName))
-	executor.SetDatabaseManager(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s})
-
-	if !s.dbManager.IsCompositeDatabase(dbName) {
-		if searchSvc, err := s.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
-			executor.SetSearchService(searchSvc)
-		}
-	}
-
-	if baseExec := s.db.GetCypherExecutor(); baseExec != nil {
-		executor.ShareQueryStatisticsFrom(baseExec)
-		executor.ShareEmbedderFrom(baseExec)
-		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
-			executor.SetInferenceManager(inferMgr)
-		}
-		// NornicDB issue #563 defect 1: without this, every query against a
-		// composite/remote-auth-scoped database executor logs to io.Discard
-		// and never emits a slow_query record, no matter how
-		// NORNICDB_SLOW_QUERY_THRESHOLD is configured.
-		executor.SetLogger(baseExec.Logger())
-		executor.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
-	}
-
-	if q := s.db.GetEmbedQueue(); q != nil {
-		executor.SetNodeMutatedCallback(func(nodeID string) { q.Enqueue(nodeID) })
-	}
-
+	executor := s.newExecutorOnStorage(dbName, storageEngine)
+	executor.SetFirstAdmission(func() { s.finishDatabaseExecutor(dbName, storageEngine, executor) })
 	return executor, nil
 }
-
 func (s *Server) databaseHasRemoteConstituent(dbName string) bool {
 	info, err := s.dbManager.GetDatabase(dbName)
 	if err != nil || info == nil || info.Type != "composite" {
@@ -229,69 +234,69 @@ func (s *Server) databaseHasRemoteConstituent(dbName string) bool {
 // Unlike getExecutorForDatabase, this does not cache the executor and is intended
 // for per-transaction session state (explicit HTTP transactions).
 func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor, error) {
-	base, err := s.getExecutorForDatabase(dbName)
+	executor, engine, err := s.newDatabaseScopedExecutor(dbName)
 	if err != nil {
 		return nil, err
 	}
-	executor, err := s.newDatabaseScopedExecutor(dbName)
-	if err != nil {
-		return nil, err
+	// Share the database executor's statistics and statement caches when it
+	// already exists; opening a transaction creates none.
+	s.executorsMu.RLock()
+	base := s.executors[dbName]
+	s.executorsMu.RUnlock()
+	if base != nil {
+		executor.ShareQueryStatisticsFrom(base)
+		executor.ShareStatementCachesFrom(base)
 	}
-	executor.ShareQueryStatisticsFrom(base)
-	executor.ShareStatementCachesFrom(base)
+	executor.SetFirstAdmission(func() {
+		s.finishDatabaseExecutor(dbName, engine, executor)
+	})
 	return executor, nil
 }
-
-func (s *Server) newDatabaseScopedExecutor(dbName string) (*cypher.StorageExecutor, error) {
+func (s *Server) newDatabaseScopedExecutor(dbName string) (*cypher.StorageExecutor, storage.Engine, error) {
 	// This returns a NamespacedEngine that automatically prefixes all keys
 	// with the database name, ensuring complete data isolation.
 	storageEngine, err := s.dbManager.GetStorage(dbName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
+	return s.newExecutorOnStorage(dbName, storageEngine), storageEngine, nil
+}
+
+// newExecutorOnStorage binds metadata and the existing query-provider owner.
+// It resolves no provider or per-database service. Finish runs after admission.
+func (s *Server) newExecutorOnStorage(dbName string, storageEngine storage.Engine) *cypher.StorageExecutor {
 	overrides := s.dbConfigStore.GetOverrides(dbName)
 	resolved := dbconfig.Resolve(s.processConfig, overrides)
 	s.applyTransactionMemoryLimits(dbName, resolved)
-	executor := cypher.NewStorageExecutorWithQueryCachePolicy(storageEngine, resolved.QueryCacheMaxEntries, resolved.QueryCacheTTL)
+	executor := cypher.NewStatementExecutorWithQueryCachePolicy(storageEngine, resolved.QueryCacheMaxEntries, resolved.QueryCacheTTL)
 	executor.SetLocalizationRenderer(s.localizer)
 	// SHOW SETTINGS reports the database's own and active values, dynamic
 	// changes included (db.memory.transaction.max, #1343).
 	executor.SetSettingsResolver(s.databaseSettingsResolver(dbName))
 	executor.SetDatabaseManager(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s})
-
+	if cypher.GraphIsRemote(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}, dbName) {
+		executor.SetOwnedStorageCleanup(storageEngine.Close)
+	}
+	if base := s.db.GetCypherExecutor(); base != nil {
+		executor.ShareQueryStatisticsFrom(base)
+		executor.ShareEmbedderFrom(base)
+		executor.ShareMutationCallbackFrom(base)
+		executor.SetInferenceManager(base.GetInferenceManager())
+		executor.SetLogger(base.Logger())
+		executor.SetSlowQueryThreshold(base.SlowQueryThreshold())
+	}
+	return executor
+}
+func (s *Server) finishDatabaseExecutor(dbName string, storageEngine storage.Engine, executor *cypher.StorageExecutor) {
 	// Reuse DB's cached search service instead of creating a new one.
 	// Composite roots do not own a search service; search/index operations must target constituents.
-	if !s.dbManager.IsCompositeDatabase(dbName) {
+	if !s.dbManager.IsCompositeDatabase(dbName) && !cypher.GraphIsRemote(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}, dbName) {
 		if searchSvc, err := s.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
 			executor.SetSearchService(searchSvc)
 		}
 	}
 
-	// Copy query embedder from the base DB executor so string-input vector procedures work.
-	if baseExec := s.db.GetCypherExecutor(); baseExec != nil {
-		executor.ShareQueryStatisticsFrom(baseExec)
-		executor.ShareEmbedderFrom(baseExec)
-		if inferMgr := baseExec.GetInferenceManager(); inferMgr != nil {
-			executor.SetInferenceManager(inferMgr)
-		}
-		// NornicDB issue #563 defect 1: this is the executor behind every
-		// HTTP POST /db/{name}/tx/commit for a non-default database — the
-		// overwhelming majority of this HTTP traffic. Without inheriting
-		// the base executor's logger + threshold here, none of it ever
-		// emits a slow_query record.
-		executor.SetLogger(baseExec.Logger())
-		executor.SetSlowQueryThreshold(baseExec.SlowQueryThreshold())
-	}
-
-	// Wire embed queue callback for per-database executor mutations.
-	if q := s.db.GetEmbedQueue(); q != nil {
-		executor.SetNodeMutatedCallback(func(nodeID string) {
-			q.Enqueue(nodeID)
-		})
-	}
-
-	return executor, nil
 }
 
 // invalidateExecutor removes a cached executor for a dropped database.
@@ -317,6 +322,10 @@ type databaseManagerAdapter struct {
 	manager *multidb.DatabaseManager
 	db      *nornicdb.DB
 	server  *Server // Reference to server for cache invalidation
+
+	// finish finishes routed executors when the adapter's owner is not the
+	// server (Heimdall's router); see StatementExecutorFinisher.
+	finish cypher.StatementExecutorFinisher
 }
 
 func (a *databaseManagerAdapter) CreateDatabase(name string) error {
@@ -494,6 +503,36 @@ func (a *databaseManagerAdapter) GetStorageForUse(name string, authToken string)
 	return a.manager.GetStorageWithAuth(name, authToken)
 }
 
+// StatementExecutorFinisher is the owner that completes a routed executor
+// only after the executor has admitted its actual target statement: USE and
+// Fabric share the search-service/mutation owner of directly selected
+// database statements. An adapter built by the server finishes through the
+// server, one built by Heimdall's router through the router (finish), and
+// one with neither owner offers none, so routed executors keep what they
+// inherited.
+func (a *databaseManagerAdapter) StatementExecutorFinisher() cypher.StatementExecutorFinisher {
+	if a.finish != nil {
+		return a.finish
+	}
+	if a.server == nil {
+		return nil
+	}
+	return a.finishThroughServer
+}
+
+func (a *databaseManagerAdapter) finishThroughServer(database string, engine storage.Engine, executor *cypher.StorageExecutor, shared bool) {
+	if physical, allowed := cypher.GraphAccess(a, database, nil); allowed && !cypher.GraphIsRemote(a, database) {
+		database = physical
+	}
+	if base := a.server.db.GetCypherExecutor(); base != nil {
+		executor.ShareMutationCallbackFrom(base)
+	}
+	a.server.finishDatabaseExecutor(database, engine, executor)
+	if shared && !cypher.GraphIsRemote(a, database) {
+		a.server.publishExecutor(database, executor)
+	}
+}
+
 // Helper function to get string from map
 func getString(m map[string]interface{}, key string) string {
 	if v, ok := m[key]; ok {
@@ -578,16 +617,16 @@ func (a *databaseInfoAdapter) CreatedAt() time.Time {
 //   - For large databases, this may take a few milliseconds
 //   - Consider caching if this endpoint is called frequently
 func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbName string) {
+	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
+	if err := cypher.AdmitOperation(r.Context(), s.principalAccess(getClaims(r)).Allows, dbName, cypher.PrivilegeRead); err != nil {
+		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+		return
+	}
+
 	// Check if database exists (also accepts dotted composite.alias references).
 	// This is a fast lookup in the DatabaseManager's metadata.
 	if !s.dbManager.ExistsOrIsConstituent(dbName) {
 		s.writeNeo4jDatabaseNotFound(w, r, dbName)
-		return
-	}
-
-	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.canAccessGraph(getClaims(r), dbName) {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
 
@@ -761,6 +800,13 @@ func (s *Server) compositeConstituentStats(r *http.Request, compositeName string
 			"searchEtaSeconds":      int64(-1),
 		}
 		target := compositeName + "." + c.Alias
+		if err := cypher.AdmitOperation(r.Context(), s.principalAccess(getClaims(r)).Allows, target, cypher.PrivilegeRead); err != nil {
+			partial = true
+			row["reachable"] = false
+			row["error"] = err.Error()
+			stats = append(stats, row)
+			continue
+		}
 		engine, getErr := s.dbManager.GetStorageWithAuth(target, authToken)
 		if getErr != nil {
 			partial = true
@@ -768,6 +814,13 @@ func (s *Server) compositeConstituentStats(r *http.Request, compositeName string
 			row["error"] = getErr.Error()
 			stats = append(stats, row)
 			continue
+		}
+		if strings.EqualFold(c.Type, "remote") {
+			defer func() {
+				if err := engine.Close(); err != nil {
+					s.logEvent(r.Context(), slog.LevelError, localization.OperationStorageCleanupFailedEvent(target, err))
+				}
+			}()
 		}
 		nodeCount, nErr := engine.NodeCount()
 		edgeCount, eErr := engine.EdgeCount()
@@ -782,11 +835,15 @@ func (s *Server) compositeConstituentStats(r *http.Request, compositeName string
 			stats = append(stats, row)
 			continue
 		}
+		row["nodeCount"] = nodeCount
+		row["edgeCount"] = edgeCount
+		if strings.EqualFold(c.Type, "remote") {
+			stats = append(stats, row)
+			continue
+		}
 		_, nodeStorageBytes, _ := s.dbManager.GetStorageSize(c.DatabaseName)
 		_, _, managedEmbeddingBytes := s.db.GetDatabaseManagedEmbeddingStats(c.DatabaseName)
 		searchStatus := s.db.GetDatabaseSearchStatus(c.DatabaseName)
-		row["nodeCount"] = nodeCount
-		row["edgeCount"] = edgeCount
 		row["nodeStorageBytes"] = nodeStorageBytes
 		row["managedEmbeddingBytes"] = managedEmbeddingBytes
 		row["searchReady"] = searchStatus.Ready
@@ -806,7 +863,7 @@ func (s *Server) compositeConstituentStats(r *http.Request, compositeName string
 // handleClusterStatus returns cluster status (standalone mode)
 func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request, dbName string) {
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.canAccessGraph(getClaims(r), dbName) {
+	if err := cypher.AdmitOperation(r.Context(), s.principalAccess(getClaims(r)).Allows, dbName, cypher.PrivilegeRead); err != nil {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
@@ -1077,6 +1134,13 @@ type NotificationPos struct {
 // handleImplicitTransaction executes statements in an implicit transaction.
 // This is the main query endpoint: POST /db/{dbName}/tx/commit
 func (s *Server) handleImplicitTransaction(w http.ResponseWriter, r *http.Request, dbName string) {
+	if err := s.admitGraph(getClaims(r), dbName); err != nil {
+		s.writeJSON(w, http.StatusOK, TransactionResponse{
+			Results: make([]QueryResult, 0),
+			Errors:  []QueryError{statementError(err)},
+		})
+		return
+	}
 	var req TransactionRequest
 	if err := s.readTransactionRequest(r, &req); err != nil && err != io.EOF {
 		s.writeNeo4jInvalidTransactionBody(w, r, err)
@@ -1208,6 +1272,15 @@ func (s *Server) convertValueToNeo4jFormat(val interface{}, dbName string) inter
 }
 
 func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ...*transactionHTTPValueState) (interface{}, []interface{}) {
+	entityDatabase := func(nodeID storage.NodeID, edgeID storage.EdgeID) string {
+		if len(graph) > 0 && graph[0] != nil && graph[0].entityContextBound {
+			if graph[0].entityDatabase != nil {
+				return graph[0].entityDatabase(nodeID, edgeID)
+			}
+			return dbName
+		}
+		return s.entityDatabase(dbName, nodeID, edgeID)
+	}
 	entityMeta := func(id, elementID, entityType string) []interface{} {
 		return []interface{}{map[string]interface{}{
 			"id": s.hashStringToInt64(id), "elementId": elementID,
@@ -1302,7 +1375,7 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		}
 		converted, _ := s.transactionHTTPValue(typed.Properties, dbName)
 		properties := converted.(map[string]interface{})
-		elementID := storage.NodeElementID(s.entityDatabase(dbName, typed.ID, ""), typed.ID)
+		elementID := storage.NodeElementID(entityDatabase(typed.ID, ""), typed.ID)
 		if len(graph) > 0 && graph[0].graph != nil {
 			graph[0].addNode(GraphNode{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Labels: typed.Labels, Properties: properties})
 		}
@@ -1317,13 +1390,13 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		}
 		converted, _ := s.transactionHTTPValue(typed.Properties, dbName)
 		properties := converted.(map[string]interface{})
-		elementID := storage.RelationshipElementID(s.entityDatabase(dbName, "", typed.ID), typed.ID)
+		elementID := storage.RelationshipElementID(entityDatabase("", typed.ID), typed.ID)
 		if len(graph) > 0 && graph[0].graph != nil {
-			graph[0].addEdge(GraphRelationship{StartNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.StartNode)), 10), EndNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.EndNode)), 10), ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: storage.NodeElementID(s.entityDatabase(dbName, typed.StartNode, ""), typed.StartNode), EndNode: storage.NodeElementID(s.entityDatabase(dbName, typed.EndNode, ""), typed.EndNode), Properties: properties})
+			graph[0].addEdge(GraphRelationship{StartNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.StartNode)), 10), EndNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.EndNode)), 10), ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: storage.NodeElementID(entityDatabase(typed.StartNode, ""), typed.StartNode), EndNode: storage.NodeElementID(entityDatabase(typed.EndNode, ""), typed.EndNode), Properties: properties})
 		}
 		meta := entityMeta(string(typed.ID), elementID, "relationship")
 		if transactionHTTPWantsREST(graph) {
-			return transactionHTTPRESTEntity("relationship", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"type": typed.Type, "startNodeElementId": storage.NodeElementID(s.entityDatabase(dbName, typed.StartNode, ""), typed.StartNode), "endNodeElementId": storage.NodeElementID(s.entityDatabase(dbName, typed.EndNode, ""), typed.EndNode)}), meta
+			return transactionHTTPRESTEntity("relationship", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"type": typed.Type, "startNodeElementId": storage.NodeElementID(entityDatabase(typed.StartNode, ""), typed.StartNode), "endNodeElementId": storage.NodeElementID(entityDatabase(typed.EndNode, ""), typed.EndNode)}), meta
 		}
 		return properties, meta
 	case *cypher.PathResult:
@@ -1412,23 +1485,8 @@ func (s *Server) entityDatabase(dbName string, nodeID storage.NodeID, edgeID sto
 	if s.dbManager == nil || !s.dbManager.IsCompositeDatabase(dbName) {
 		return dbName
 	}
-	engine, err := s.dbManager.GetStorage(dbName)
-	if err != nil {
-		return dbName
-	}
-	composite, ok := engine.(*storage.CompositeEngine)
-	if !ok {
-		return dbName
-	}
-	if nodeID != "" {
-		if name := composite.ConstituentDatabaseForNode(nodeID); name != "" {
-			return name
-		}
-	}
-	if edgeID != "" {
-		if name := composite.ConstituentDatabaseForEdge(edgeID); name != "" {
-			return name
-		}
+	if resolve := cypher.NewEntityDatabaseResolver(context.Background(), &databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}, dbName, nil); resolve != nil {
+		return resolve(nodeID, edgeID)
 	}
 	return dbName
 }
@@ -1475,6 +1533,10 @@ func (s *Server) transactionCommitURL(r *http.Request, dbName, txID string) stri
 }
 
 func (s *Server) appendStatementResult(response *TransactionResponse, result *cypher.ExecuteResult, dbName string, includeStats bool, contents ...[]string) {
+	s.appendStatementResultWithContext(context.Background(), response, result, dbName, includeStats, contents...)
+}
+
+func (s *Server) appendStatementResultWithContext(ctx context.Context, response *TransactionResponse, result *cypher.ExecuteResult, dbName string, includeStats bool, contents ...[]string) {
 	if selected, ok := result.Metadata["db"].(string); ok && selected != "" {
 		dbName = selected
 	}
@@ -1486,15 +1548,19 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 		Columns: columns,
 		Data:    make([]ResultRow, len(result.Rows)),
 	}
+	var entityDatabase cypher.EntityDatabaseResolver
+	if s.dbManager != nil {
+		entityDatabase = cypher.NewEntityDatabaseResolver(ctx, &databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}, dbName, func(database string, err error) {
+			s.logEvent(ctx, slog.LevelError, localization.OperationStorageCleanupFailedEvent(database, err))
+		})
+	}
+	identityState := &transactionHTTPValueState{mapKeyOrders: result.MapKeyOrders, entityDatabase: entityDatabase, entityContextBound: true}
 	for i, row := range result.Rows {
-		var graph []*transactionHTTPValueState
-		if len(result.MapKeyOrders) > 0 {
-			graph = []*transactionHTTPValueState{{mapKeyOrders: result.MapKeyOrders}}
-		}
+		graph := []*transactionHTTPValueState{identityState}
 		if len(contents) > 0 {
 			for _, format := range contents[0] {
 				if format == "graph" {
-					graph = []*transactionHTTPValueState{{graph: &GraphResult{Nodes: []GraphNode{}, Relationships: []GraphRelationship{}}, mapKeyOrders: result.MapKeyOrders}}
+					graph = []*transactionHTTPValueState{{graph: &GraphResult{Nodes: []GraphNode{}, Relationships: []GraphRelationship{}}, mapKeyOrders: result.MapKeyOrders, entityDatabase: entityDatabase, entityContextBound: true}}
 					break
 				}
 			}
@@ -1510,7 +1576,7 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 		if len(contents) > 0 {
 			for _, format := range contents[0] {
 				if format == "rest" {
-					state := &transactionHTTPValueState{rest: true, mapKeyOrders: result.MapKeyOrders}
+					state := &transactionHTTPValueState{rest: true, mapKeyOrders: result.MapKeyOrders, entityDatabase: entityDatabase, entityContextBound: true}
 					qr.Data[i].REST = make([]interface{}, len(row))
 					for column, value := range row {
 						qr.Data[i].REST[column], _ = s.transactionHTTPValue(value, dbName, state)
@@ -1587,15 +1653,19 @@ func (e *requestStatementError) Error() string { return e.Code + ": " + e.Messag
 // committed on its own.
 func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
+		if err := cypher.AdmitStatement(ctx, &databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}, dbName, query); err != nil {
+			return nil, nil, err
+		}
 		// For composite databases with remote constituents, the request's
 		// auth token is forwarded to the remote constituent engines.
-		executor, err := s.getExecutorForDatabaseWithAuth(dbName, authToken)
+		executor, err := s.statementExecutorForDatabase(dbName, authToken)
 		if err != nil {
 			return nil, nil, &requestStatementError{QueryError{
 				Code:    "Neo.ClientError.Database.General",
 				Message: fmt.Sprintf("Failed to access database '%s': %v", dbName, err),
 			}}
 		}
+		defer executor.ReleaseOwnedStorage()
 		result, err := executor.Execute(cypher.WithClientStatement(ctx), query, params)
 		return result, executor, err
 	}
@@ -1628,6 +1698,23 @@ func (s *Server) runRequestStatements(
 	localize func(localization.Message) string,
 	response *TransactionResponse,
 ) (failed bool) {
+	if err := s.admitGraph(claims, defaultDB); err != nil {
+		response.Errors = append(response.Errors, statementError(err))
+		return true
+	}
+	ctx = s.withHTTPPrincipal(ctx, claims, defaultDB, authToken)
+	for _, stmt := range statements {
+		if queryErr := s.runRequestStatement(ctx, claims, defaultDB, stmt, run, localize, response); queryErr != nil {
+			response.Errors = append(response.Errors, *queryErr)
+			return true
+		}
+	}
+	return false
+}
+
+// withHTTPPrincipal supplies the same executing identity and resolver to
+// transaction BEGIN and every HTTP statement.
+func (s *Server) withHTTPPrincipal(ctx context.Context, claims *auth.JWTClaims, defaultDB, authToken string) context.Context {
 	ctx = cypher.WithAuthToken(ctx, authToken)
 	ctx = cypher.WithAuthenticatedPrincipal(ctx, transactionOwnerKey(nil, claims))
 	if claims != nil {
@@ -1643,13 +1730,7 @@ func (s *Server) runRequestStatements(
 	// read / write are the privileges of the database its data is in: the
 	// principal's one resolver (principalAccess).
 	ctx = cypher.WithDatabasePermissionResolver(ctx, defaultDB, s.principalAccess(claims).Allows)
-	for _, stmt := range statements {
-		if queryErr := s.runRequestStatement(ctx, claims, defaultDB, stmt, run, localize, response); queryErr != nil {
-			response.Errors = append(response.Errors, *queryErr)
-			return true
-		}
-	}
-	return false
+	return ctx
 }
 
 // runRequestStatement runs one statement of an HTTP /tx request and appends
@@ -1665,6 +1746,10 @@ func (s *Server) runRequestStatement(
 ) *QueryError {
 	effectiveDB, queryStatement := defaultDB, stmt.Statement
 
+	if err := s.admitGraph(claims, effectiveDB); err != nil {
+		failure := statementError(err)
+		return &failure
+	}
 	// Use ExistsOrIsConstituent to accept dotted composite.alias references.
 	if !s.dbManager.ExistsOrIsConstituent(effectiveDB) {
 		return &QueryError{
@@ -1706,7 +1791,7 @@ func (s *Server) runRequestStatement(
 			return &failure
 		}
 		if result != nil && len(result.Columns) > 0 && !nornicerrors.IsCompileTimeStatus(failure.Code) {
-			s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
+			s.appendStatementResultWithContext(ctx, response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
 			return &failure
 		}
 		queryErr := statementFailure(response, executor, queryStatement, err)
@@ -1740,7 +1825,7 @@ func (s *Server) runRequestStatement(
 		result.Rows = filtered
 	}
 
-	s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
+	s.appendStatementResultWithContext(ctx, response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
 	return nil
 }
 
@@ -1756,7 +1841,7 @@ func (s *Server) runOneShotTransaction(
 	localize func(localization.Message) string,
 	response *TransactionResponse,
 ) {
-	if !s.canAccessGraph(claims, dbName) {
+	if err := s.admitGraph(claims, dbName); err != nil {
 		response.Errors = append(response.Errors, QueryError{
 			Code:    "Neo.ClientError.Security.Forbidden",
 			Message: localize(localization.DatabaseAccessDenied(dbName)),
@@ -1813,18 +1898,23 @@ func (s *Server) runOneShotTransaction(
 // A database with remote constituents gets an executor built with the
 // request's auth token, which it forwards to the remote engines.
 func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims, dbName string, localize func(localization.Message) string) (*txsession.Session, *QueryError) {
+	if err := s.admitGraph(claims, dbName); err != nil {
+		failure := statementError(err)
+		return nil, &failure
+	}
 	var session *txsession.Session
 	var err error
 	authToken := r.Header.Get("Authorization")
 	ownerKey := transactionOwnerKey(r, claims)
+	ctx := s.withHTTPPrincipal(s.withRequestIdentity(r.Context(), r, claims), claims, dbName, authToken)
 	if authToken != "" && s.databaseHasRemoteConstituent(dbName) {
 		executor, execErr := s.getExecutorForDatabaseWithAuth(dbName, authToken)
 		if execErr != nil {
 			return nil, &QueryError{Code: "Neo.ClientError.Transaction.TransactionStartFailed", Message: execErr.Error()}
 		}
-		session, err = s.txSessions.OpenWithExecutorForOwner(r.Context(), dbName, executor, ownerKey)
+		session, err = s.txSessions.OpenWithExecutorForOwner(ctx, dbName, executor, ownerKey)
 	} else {
-		session, err = s.txSessions.OpenForOwner(r.Context(), dbName, ownerKey)
+		session, err = s.txSessions.OpenForOwner(ctx, dbName, ownerKey)
 	}
 	if err != nil {
 		if errors.Is(err, multidb.ErrDatabaseNotFound) {
@@ -1896,7 +1986,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 	claims := getClaims(r)
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.canAccessGraph(claims, dbName) {
+	if err := s.admitGraph(claims, dbName); err != nil {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
@@ -1940,7 +2030,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 
 func (s *Server) handleExecuteInTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
 	claims := getClaims(r)
-	if !s.canAccessGraph(claims, dbName) {
+	if err := s.admitGraph(claims, dbName); err != nil {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
@@ -1980,7 +2070,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 	claims := getClaims(r)
 
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.canAccessGraph(claims, dbName) {
+	if err := s.admitGraph(claims, dbName); err != nil {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}
@@ -2019,7 +2109,7 @@ func (s *Server) handleCommitTransaction(w http.ResponseWriter, r *http.Request,
 
 func (s *Server) handleRollbackTransaction(w http.ResponseWriter, r *http.Request, dbName, txID string) {
 	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.canAccessGraph(getClaims(r), dbName) {
+	if err := s.admitGraph(getClaims(r), dbName); err != nil {
 		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
 		return
 	}

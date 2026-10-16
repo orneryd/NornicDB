@@ -54,7 +54,12 @@ func (s *Session) handleRun(data []byte) error {
 	if s.server != nil && s.server.config.RequireAuth && !s.authenticated {
 		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Unauthorized", localization.NotAuthenticated())
 	}
-	s.refreshAuthResult()
+	if !s.refreshAuthResult() {
+		if err := s.rollbackExplicitTransaction(transactionTerminalRollback); err != nil {
+			return fmt.Errorf("revoked account transaction cleanup failed: %w", err)
+		}
+		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.NotAuthenticated())
+	}
 
 	// Parse PackStream to extract query, params, and metadata
 	query, params, metadata, err := s.parseRunMessage(data)
@@ -66,6 +71,19 @@ func (s *Session) handleRun(data []byte) error {
 		if tag, localeErr := localization.NormalizeLanguage(requestedLocale); localeErr == nil && tag != language.Und {
 			s.language = tag
 		}
+	}
+
+	// An auto-commit RUN may impersonate a user (imp_user); a RUN in an
+	// explicit transaction runs as its BEGIN did, as in Neo4j, which reads
+	// imp_user only where a transaction starts. A refused impersonation
+	// fails before anything runs.
+	if !s.inTransaction {
+		impersonated, failure := s.resolveImpersonation(metadata)
+		if failure != nil {
+			return s.sendLocalizedRunFailure(failure.code, failure.message)
+		}
+		s.impersonated = impersonated
+		defer func() { s.impersonated = nil }()
 	}
 
 	// Store metadata for potential use (bookmarks, tx_timeout, etc.)
@@ -128,16 +146,19 @@ func (s *Session) handleRun(data []byte) error {
 		if s.conn != nil {
 			remoteAddr = s.conn.RemoteAddr().String()
 		}
-		user := "unknown"
+		user, executingUser := "unknown", ""
 		if s.authResult != nil {
 			user = s.authResult.Username
+		}
+		if s.impersonated != nil {
+			executingUser = s.impersonated.Username
 		}
 		// D-10a: "[BOLT]" bracket dropped (component attribute carries
 		// it). D-03a: any "credentials"/"password"/"token" key in the
 		// `params` map is auto-redacted by the Plan 02-01 redactingHandler
 		// chain via DefaultRedactKeys.
 		s.server.logEvent(context.Background(), slog.LevelDebug,
-			localization.BoltQueryEvent(user, remoteAddr, truncateQuery(query, 200), params))
+			localization.BoltQueryEvent(user, executingUser, remoteAddr, truncateQuery(query, 200), params))
 	}
 
 	// Resolve effective database name (Neo4j-compatible precedence):
@@ -163,6 +184,21 @@ func (s *Session) handleRun(data []byte) error {
 			dbName = "nornic" // single-DB mode default
 		}
 	}
+	// Admission first (cypher.AdmitGraph): a database the principal may not
+	// use is refused before its existence is checked or a connection bound,
+	// so an existing one and a missing one look the same.
+	mode := s.accessMode()
+	if err := s.admitGraph(mode, dbName); err != nil {
+		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
+	}
+	admissionCtx := s.withSessionIdentity(parentCtx)
+	if mode != nil || s.authResult != nil {
+		admissionCtx = cypher.WithDatabasePermissionResolver(admissionCtx, dbName, s.principalAccess(mode).Allows)
+	}
+	if err := cypher.AdmitStatement(admissionCtx, s.cypherDatabaseManager(), dbName, query); err != nil {
+		code, message := nornicerrors.Neo4jStatus(err)
+		return s.sendRunFailure(code, message)
+	}
 	if s.server != nil && s.server.dbManager != nil && dbName != "" && !constituentAwareExists(s.server.dbManager, dbName) {
 		return s.sendRunFailure("Neo.ClientError.Database.DatabaseNotFound",
 			s.localize(localization.DatabaseNotFound(dbName)))
@@ -170,12 +206,11 @@ func (s *Session) handleRun(data []byte) error {
 	if err := s.bindDatabaseConnection(dbName); err != nil {
 		return s.sendRunFailure("Neo.TransientError.General.DatabaseUnavailable", err.Error())
 	}
-	// Per-database access: deny if principal may not access this database (Neo4j-aligned).
-	mode := s.accessMode()
-	if mode != nil {
-		if _, allowed := s.graphAccess(mode, dbName); !allowed {
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
-		}
+
+	// An impersonating RUN never reaches a remote graph, checked before its
+	// executor (and storage) is opened.
+	if failure := s.remoteImpersonationFailure(s.impersonated, dbName); failure != nil {
+		return s.sendLocalizedRunFailure(failure.code, failure.message)
 	}
 
 	// Keep explicit transactions pinned to the executor selected at BEGIN.
@@ -191,6 +226,11 @@ func (s *Session) handleRun(data []byte) error {
 			return s.sendLocalizedRunFailure("Neo.ClientError.Database.DatabaseNotFound", localization.BoltDatabaseNotFoundWithCause(dbName, err))
 		}
 		executor = dbExecutor
+	}
+	if !s.inTransaction {
+		if owned, ok := executor.(interface{ ReleaseDatabaseResources() }); ok {
+			defer owned.ReleaseDatabaseResources()
+		}
 	}
 
 	// Claim explicit-transaction operation ownership only after every
@@ -317,6 +357,7 @@ func (s *Session) handleRun(data []byte) error {
 		}
 	}
 	s.lastQueryDatabase = resultDatabase
+	s.bindResultEntityDatabase(ctx, result, resultDatabase)
 	if s.inTransaction {
 		s.recordExplicitTransactionWrite(query, params, isWrite)
 	}
@@ -782,7 +823,7 @@ func (s *Session) handlePull(data []byte) error {
 
 	// For large batches (>50 records), use batched writing to reduce syscalls
 	if remaining > 50 {
-		if err := s.sendRecordsBatched(stream.result.Rows[stream.index:stream.index+remaining], stream.database); err != nil {
+		if err := s.sendRecordsBatched(stream.result.Rows[stream.index:stream.index+remaining], stream.database, stream.result.entityDatabase); err != nil {
 			return err
 		}
 		stream.index += remaining
@@ -795,7 +836,7 @@ func (s *Session) handlePull(data []byte) error {
 			}
 
 			row := stream.result.Rows[stream.index]
-			if err := s.writeRecordNoFlush(row, stream.database); err != nil {
+			if err := s.writeRecordNoFlush(row, stream.database, stream.result.entityDatabase); err != nil {
 				return err
 			}
 
@@ -1015,6 +1056,33 @@ func (s *Session) handleDiscard(data []byte) error {
 
 // handleRoute handles the ROUTE message (for cluster routing).
 func (s *Session) handleRoute(data []byte) error {
+	// A ROUTE may name a user to impersonate (Bolt 4.4+ extra dictionary),
+	// decided on the session's current roles as for a BEGIN or RUN. The
+	// impersonated user is this message's only: its database (db, or the
+	// default one, as NornicDB has no per-user home database) must be one
+	// that user may use, refused as a RUN would be, and the routing table
+	// names it. The session's own principal is left as it was.
+	if !s.refreshAuthResult() {
+		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.NotAuthenticated())
+	}
+	extra := routeExtra(data)
+	impersonated, failure := s.resolveImpersonation(extra)
+	if failure != nil {
+		// A FAILURE poisons the connection until RESET, as for RUN.
+		return s.sendLocalizedRunFailure(failure.code, failure.message)
+	}
+	routedDatabase := ""
+	if impersonated != nil {
+		routedDatabase = s.routeDatabase(extra)
+		if failure := s.remoteImpersonationFailure(impersonated, routedDatabase); failure != nil {
+			return s.sendLocalizedRunFailure(failure.code, failure.message)
+		}
+		if mode := s.accessModeFor(impersonated); mode != nil {
+			if _, allowed := s.graphAccess(mode, routedDatabase); !allowed {
+				return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(routedDatabase))
+			}
+		}
+	}
 	address := "localhost:7687"
 	if s.conn != nil {
 		if tcp, ok := s.conn.LocalAddr().(*net.TCPAddr); ok {
@@ -1026,19 +1094,36 @@ func (s *Session) handleRoute(data []byte) error {
 		}
 	}
 
-	if err := s.sendSuccessNoFlush(map[string]any{
-		"rt": map[string]any{
-			"ttl": 300,
-			"servers": []map[string]any{
-				{"role": "ROUTE", "addresses": []string{address}},
-				{"role": "READ", "addresses": []string{address}},
-				{"role": "WRITE", "addresses": []string{address}},
-			},
+	routingTable := map[string]any{
+		"ttl": 300,
+		"servers": []map[string]any{
+			{"role": "ROUTE", "addresses": []string{address}},
+			{"role": "READ", "addresses": []string{address}},
+			{"role": "WRITE", "addresses": []string{address}},
 		},
-	}); err != nil {
+	}
+	if routedDatabase != "" {
+		routingTable["db"] = routedDatabase
+	}
+	if err := s.sendSuccessNoFlush(map[string]any{"rt": routingTable}); err != nil {
 		return err
 	}
 	return s.flushIfPending()
+}
+
+// routeDatabase is the database a ROUTE asks for: its db, else the session's,
+// else the server's default.
+func (s *Session) routeDatabase(extra map[string]any) string {
+	if db, ok := databaseFromMetadata(extra); ok {
+		return db
+	}
+	if s.database != "" {
+		return s.database
+	}
+	if s.server != nil && s.server.dbManager != nil {
+		return s.server.dbManager.DefaultDatabaseName()
+	}
+	return "nornic"
 }
 
 // handleReset handles the RESET message.
@@ -1077,7 +1162,9 @@ func (s *Session) handleBegin(data []byte) error {
 		return s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionStartFailed",
 			"an explicit transaction is already active")
 	}
-	s.refreshAuthResult()
+	if !s.refreshAuthResult() {
+		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.NotAuthenticated())
+	}
 
 	// Parse BEGIN metadata (contains tx_timeout, bookmarks, etc.)
 	var metadata map[string]any
@@ -1093,6 +1180,20 @@ func (s *Session) handleBegin(data []byte) error {
 	if err != nil {
 		return s.sendTransactionControlFailure("Neo.ClientError.Request.Invalid", err.Error())
 	}
+	// The transaction may impersonate a user (imp_user) for its whole life;
+	// clearExplicitTransactionState ends it. A refused impersonation fails
+	// BEGIN before a transaction exists, and a BEGIN that fails later
+	// leaves none behind.
+	impersonated, failure := s.resolveImpersonation(metadata)
+	if failure != nil {
+		return s.sendTransactionControlFailure(failure.code, s.localize(failure.message))
+	}
+	s.impersonated = impersonated
+	defer func() {
+		if !s.inTransaction {
+			s.impersonated = nil
+		}
+	}()
 
 	// Pin every explicit transaction provider to the BEGIN database, not only
 	// database-manager adapters. Factory and single-connection raw executors are
@@ -1110,12 +1211,32 @@ func (s *Session) handleBegin(data []byte) error {
 		if _, explicitlyNamed := databaseFromMetadata(metadata); !explicitlyNamed && s.database == "" {
 			dbName = s.server.dbManager.DefaultDatabaseName()
 		}
+		txDatabase = dbName
+	}
+	// Admission first (cypher.AdmitGraph), as for RUN: a database the
+	// principal may not use is refused before an executor is resolved or a
+	// connection bound, whether or not it exists.
+	if err := s.admitGraph(s.accessMode(), txDatabase); err != nil {
+		return s.sendTransactionControlFailure("Neo.ClientError.Security.Forbidden", s.localize(localization.DatabaseAccessDenied(txDatabase)))
+	}
+	if s.server != nil && s.server.dbManager != nil {
+		dbName := txDatabase
+		if failure := s.remoteImpersonationFailure(s.impersonated, dbName); failure != nil {
+			return s.sendTransactionControlFailure(failure.code, s.localize(failure.message))
+		}
 		txExec, err := s.getTransactionalExecutorForDatabase(dbName)
 		if err != nil {
 			return s.sendTransactionControlFailure("Neo.ClientError.Database.DatabaseNotFound",
 				s.localize(localization.BoltDatabaseNotFoundWithCause(dbName, err)))
 		}
 		s.executor = txExec
+		defer func() {
+			if !s.inTransaction {
+				if owned, ok := txExec.(interface{ ReleaseDatabaseResources() }); ok {
+					owned.ReleaseDatabaseResources()
+				}
+			}
+		}()
 		txDatabase = dbName
 	}
 	if err := s.bindDatabaseConnection(txDatabase); err != nil {
@@ -1470,10 +1591,33 @@ func (s *Session) handleRollback(data []byte) error {
 
 // sendRecord sends a RECORD response.
 // Uses buffer pooling to reduce allocations for high-frequency record sending.
-func (s *Session) recordEntityDatabaseResolver(dbName string) boltEntityDatabaseResolver {
+func (s *Session) bindResultEntityDatabase(ctx context.Context, result *QueryResult, database string) {
+	if result != nil {
+		result.entityDatabase = s.newRecordEntityDatabaseResolver(context.WithoutCancel(ctx), database)
+	}
+}
+
+func (s *Session) recordEntityDatabaseResolver(dbName string, provided ...boltEntityDatabaseResolver) boltEntityDatabaseResolver {
+	if len(provided) > 0 {
+		return provided[0]
+	}
+	ctx := s.withSessionIdentity(context.Background())
+	if s.server != nil && s.authResult != nil {
+		ctx = cypher.WithDatabasePermissionResolver(ctx, dbName, s.principalAccess(s.accessMode()).Allows)
+	}
+	return s.newRecordEntityDatabaseResolver(ctx, dbName)
+}
+
+func (s *Session) newRecordEntityDatabaseResolver(ctx context.Context, dbName string) boltEntityDatabaseResolver {
 	if s.server == nil || s.server.dbManager == nil {
 		return nil
 	}
+	if manager := s.cypherDatabaseManager(); manager != nil {
+		return boltEntityDatabaseResolver(cypher.NewEntityDatabaseResolver(ctx, manager, dbName, func(database string, err error) {
+			s.server.logEvent(ctx, slog.LevelError, localization.OperationStorageCleanupFailedEvent(database, err))
+		}))
+	}
+	// Custom embedded managers retain their existing trusted storage contract.
 	engine, err := s.server.dbManager.GetStorage(dbName)
 	if err != nil {
 		return nil
@@ -1511,7 +1655,7 @@ func (s *Session) sendRecord(fields []any) error {
 // It is used by PULL streaming to batch many records into a single flush
 // (the final SUCCESS message flushes everything). dbName is the database the
 // active result stream ran on (its entities carry its element ids, #745).
-func (s *Session) writeRecordNoFlush(fields []any, dbName string) error {
+func (s *Session) writeRecordNoFlush(fields []any, dbName string, provided ...boltEntityDatabaseResolver) error {
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
 		buf = make([]byte, 0, 16*1024)
@@ -1519,7 +1663,7 @@ func (s *Session) writeRecordNoFlush(fields []any, dbName string) error {
 	buf = buf[:0]
 
 	buf = append(buf, recordHeader...)
-	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), dbName, s.recordEntityDatabaseResolver(dbName))
+	buf = encodeRecordListInto(buf, fields, s.useUTCDateTimeStructs(), s.boltV5(), dbName, s.recordEntityDatabaseResolver(dbName, provided...))
 
 	err := s.writeMessageNoFlush(buf)
 	s.recordBuf = buf[:0]
@@ -1531,11 +1675,11 @@ func (s *Session) writeRecordNoFlush(fields []any, dbName string) error {
 // For 500 records: ~500 syscalls → 1 syscall = ~8x faster
 // Uses buffer pooling to reduce allocations per record. dbName is the
 // database the active result stream ran on (#745 element ids).
-func (s *Session) sendRecordsBatched(rows [][]any, dbName string) error {
+func (s *Session) sendRecordsBatched(rows [][]any, dbName string, provided ...boltEntityDatabaseResolver) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	resolver := s.recordEntityDatabaseResolver(dbName)
+	resolver := s.recordEntityDatabaseResolver(dbName, provided...)
 
 	buf := s.recordBuf
 	if cap(buf) < 16*1024 {
@@ -1740,25 +1884,33 @@ func (s *Session) writeMessageNoFlush(data []byte) error {
 	return s.writer.WriteByte(0x00)
 }
 
-// principalAccess is the session principal's permission resolver
-// (cypher.PrincipalAccess), the one HTTP builds too: graph access from mode,
+// principalAccess is the session principal's permission resolver, built by
+// the one constructor HTTP uses too (cypher.NewPrincipalAccess): graph
+// access from mode,
 // read and write from the server's database privileges, and the other
-// permissions from the principal's entitlements. Without an authenticated
+// permissions from the principal's entitlements. The principal is the
+// executing user (executingAuth): the impersonated user while the session
+// impersonates one, whose privileges alone apply. Without an authenticated
 // principal every permission the graph access allows is open.
 func (s *Session) principalAccess(mode auth.DatabaseAccessMode) cypher.PrincipalAccess {
-	access := cypher.PrincipalAccess{
+	sources := cypher.PrincipalAccessSources{
 		GraphAccess: func(graph string) (string, bool) { return s.graphAccess(mode, graph) },
 	}
-	if s.authResult == nil {
-		return access
+	if s.server != nil {
+		sources.DatabaseAccess = s.server.resolvedAccessResolver
 	}
-	roles := s.authResult.Roles
-	if s.server != nil && s.server.resolvedAccessResolver != nil {
-		resolve := s.server.resolvedAccessResolver
-		access.DatabaseAccess = func(database string) auth.ResolvedAccess { return resolve(roles, database) }
+	who := s.executingAuth()
+	if who == nil {
+		return cypher.NewPrincipalAccess(sources, nil)
 	}
-	access.Entitlement = s.authResult.HasPermission
-	return access
+	return cypher.NewPrincipalAccess(sources, &cypher.AccessPrincipal{Roles: who.Roles, Entitlement: who.HasPermission})
+}
+
+// admitGraph is cypher.AdmitGraph for the session's executing principal
+// under mode: the one admission decision, taken before the graph is checked
+// for existence, bound or opened.
+func (s *Session) admitGraph(mode auth.DatabaseAccessMode, graph string) error {
+	return cypher.AdmitGraph(s.principalAccess(mode).Allows, graph)
 }
 
 // graphAccess reports whether mode allows graph, a RUN's or BEGIN's
@@ -1767,45 +1919,68 @@ func (s *Session) principalAccess(mode auth.DatabaseAccessMode) cypher.Principal
 // executor checks a USE of the same name). A nil mode allows every
 // database.
 func (s *Session) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataDatabase string, allowed bool) {
-	var manager cypher.DatabaseManagerInterface
-	if s.server != nil {
-		if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
-			manager = &boltDatabaseManagerAdapter{manager: mgr}
-		}
-	}
 	var canAccess func(string) bool
 	if mode != nil {
 		canAccess = mode.CanAccessDatabase
 	}
-	return cypher.GraphAccess(manager, graph, canAccess)
+	return cypher.GraphAccess(s.cypherDatabaseManager(), graph, canAccess)
+}
+
+// cypherDatabaseManager is the server's database manager as the executor
+// sees it, for deciding a graph the way the executor does, or nil.
+func (s *Session) cypherDatabaseManager() cypher.DatabaseManagerInterface {
+	if s.server != nil {
+		if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
+			return &boltDatabaseManagerAdapter{manager: mgr}
+		}
+	}
+	return nil
 }
 
 // refreshAuthResult reads the session's roles and permissions again, from
 // the authenticator, before a statement or transaction runs: a role removed
 // from the user or deleted since HELLO no longer applies (CurrentAuthResult).
-func (s *Session) refreshAuthResult() {
+// An impersonated user's are read again the same way, so a transaction
+// impersonating them follows their current roles.
+func (s *Session) refreshAuthResult() bool {
 	if s.authResult == nil || s.server == nil {
-		return
+		return true
 	}
 	if current, ok := s.server.config.Authenticator.(interface {
 		CurrentAuthResult(*BoltAuthResult) *BoltAuthResult
 	}); ok {
 		s.authResult = current.CurrentAuthResult(s.authResult)
+		// The signer's account authorizes the connection itself. Refreshing
+		// the target must never keep a revoked signer's transaction usable.
+		if s.authResult == nil || !s.authResult.Authenticated {
+			return false
+		}
+		if s.impersonated != nil {
+			s.impersonated = current.CurrentAuthResult(s.impersonated)
+			return s.impersonated != nil && s.impersonated.Authenticated
+		}
 	}
+	return true
 }
 
-// accessMode is the databases the session's principal may use: the server's
-// resolver for its roles, or the server's fixed mode; nil allows every
-// database. When authentication is required and neither is set (a
-// standalone Bolt server), no database (secure default).
+// accessMode is the databases the session's principal (the executing user,
+// executingAuth) may use (accessModeFor).
 func (s *Session) accessMode() auth.DatabaseAccessMode {
+	return s.accessModeFor(s.executingAuth())
+}
+
+// accessModeFor is the databases who may use: the server's resolver for its
+// roles, or the server's fixed mode; nil allows every database. When
+// authentication is required and neither is set (a standalone Bolt server),
+// no database (secure default).
+func (s *Session) accessModeFor(who *BoltAuthResult) auth.DatabaseAccessMode {
 	if s.server == nil {
 		return nil
 	}
 	if s.server.databaseAccessModeResolver != nil {
 		var roles []string
-		if s.authResult != nil {
-			roles = s.authResult.Roles
+		if who != nil {
+			roles = who.Roles
 		}
 		return s.server.databaseAccessModeResolver(roles)
 	}
@@ -1820,20 +1995,22 @@ func (s *Session) accessMode() auth.DatabaseAccessMode {
 
 // withSessionIdentity adds what the executor knows about the session to a
 // statement's or transaction's context: the forwarded auth header, the
-// client connection, the user directory, and the authenticated user with
-// their principal and boosted procedure grants. A statement's permissions
-// are the principal's one resolver, which handleRun adds for the
-// statement's database (principalAccess).
+// client connection, the user directory, and the executing user
+// (executingAuth: the impersonated user while impersonating, with the
+// authenticated one kept in the request identity) with their principal and
+// boosted procedure grants. A statement's permissions are the principal's
+// one resolver, which handleRun adds for the statement's database
+// (principalAccess).
 func (s *Session) withSessionIdentity(ctx context.Context) context.Context {
-	ctx = cypher.WithAuthToken(ctx, s.forwardedAuthHeader)
+	ctx = cypher.WithAuthToken(ctx, s.forwardedAuth())
 	ctx = cypher.WithRequestIdentity(ctx, s.requestIdentity())
-	if s.authResult != nil {
-		principal := s.authResult.PrincipalID
+	if who := s.executingAuth(); who != nil {
+		principal := who.PrincipalID
 		if principal == "" {
-			principal = auth.UsernamePrincipalID(s.authResult.Username)
+			principal = auth.UsernamePrincipalID(who.Username)
 		}
 		ctx = cypher.WithAuthenticatedPrincipal(ctx, principal)
-		ctx = cypher.WithProcedureGrantChecker(ctx, s.server.procedureGrants(s.authResult.Roles))
+		ctx = cypher.WithProcedureGrantChecker(ctx, s.server.procedureGrants(who.Roles))
 	}
 	if s.authenticationDisabled() {
 		// No authentication: immutable privileges can be administered, as
@@ -1858,8 +2035,23 @@ func (s *Session) authenticationDisabled() bool {
 // requestIdentity is the session's identity for SHOW USERS, SHOW CURRENT
 // USER and SHOW TRANSACTIONS: its connection, its signed-in user and the
 // user store. It is built once and rebuilt only when the signed-in user
-// changes (LOGON / LOGOFF), so a statement doesn't rebuild it.
+// changes (LOGON / LOGOFF), so a statement doesn't rebuild it. While the
+// session impersonates a user, a statement gets a copy whose user is the
+// impersonated one, impersonated by the signed-in user.
 func (s *Session) requestIdentity() *cypher.RequestIdentity {
+	identity := s.signedInIdentity()
+	if s.impersonated == nil || identity.User == nil {
+		return identity
+	}
+	impersonating := *identity
+	impersonating.ImpersonatedBy = identity.User
+	impersonating.User = &cypher.AuthenticatedUser{Name: s.impersonated.Username, Roles: s.impersonated.Roles}
+	return &impersonating
+}
+
+// signedInIdentity is the session's identity for its signed-in user, built
+// once per signed-in user (requestIdentity).
+func (s *Session) signedInIdentity() *cypher.RequestIdentity {
 	if s.identity != nil && s.identityAuth == s.authResult {
 		return s.identity
 	}

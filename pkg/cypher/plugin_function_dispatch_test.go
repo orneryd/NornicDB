@@ -13,10 +13,10 @@ import (
 func withPluginFunctions(t *testing.T, functions map[string]interface{}) {
 	t.Helper()
 	previous := PluginFunctionLookup
-	PluginFunctionLookup = func(name string) (interface{}, bool) {
+	PluginFunctionLookup = withPurePluginContracts(func(name string) (interface{}, bool) {
 		handler, found := functions[name]
 		return handler, found
-	}
+	})
 	t.Cleanup(func() { PluginFunctionLookup = previous })
 }
 

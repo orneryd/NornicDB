@@ -181,9 +181,11 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	switch {
 	case isProcedurePrivilegeCommand(cypher):
 		return e.executeProcedurePrivilegeCommand(ctx, cypher)
+	case isImpersonatePrivilegeCommand(cypher):
+		return e.executeImpersonatePrivilegeCommand(ctx, cypher)
 	case startsWithKeywordFold(strings.TrimSpace(cypher), "GRANT"), startsWithKeywordFold(strings.TrimSpace(cypher), "REVOKE"),
 		startsWithKeywordFold(strings.TrimSpace(cypher), "DENY"):
-		// Only procedure execution privileges are supported.
+		// Only procedure execution and impersonation privileges are supported.
 		return nil, unsupportedAdministrationCommandError(cypher)
 	case isCreateProcedureCommand(cypher):
 		return e.executeCreateProcedure(ctx, cypher)

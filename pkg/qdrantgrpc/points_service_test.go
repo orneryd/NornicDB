@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -1006,10 +1007,10 @@ func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 
 type denyChecker struct{}
 
-func (denyChecker) AllowDatabaseAccess(ctx context.Context, database string, write bool) error {
+func (denyChecker) AllowDatabaseOperation(ctx context.Context, database string, class cypher.PrivilegeClass) error {
 	_ = ctx
 	_ = database
-	_ = write
+	_ = class
 	return errors.New("denied")
 }
 

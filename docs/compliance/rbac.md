@@ -209,7 +209,7 @@ SHOW ROLE cdc_reader PRIVILEGES
 ```
 
 - A procedure is named exactly or with a glob: `*` stands for any characters, dots included, and `?` for one. Several names and several roles can be listed, separated by commas.
-- `BOOSTED` lets the role run the matching procedures even when they need administrator rights. A plain `EXECUTE PROCEDURE` grant is recorded and listed, but adds nothing to what the role may already run.
+- `BOOSTED` lets the role run the matching procedures even when they need administrator rights. Ordinary `EXECUTE PROCEDURE`, `EXECUTE ADMIN`, `EXECUTE FUNCTION` (including boosted functions), and setting grants are refused with `Neo.ClientError.Statement.UnsupportedAdministrationCommand`; they are never accepted without enforcement. These procedure privileges are administered through Cypher only.
 - The grant doesn't widen database access. The role still needs the global `read` entitlement and read access to each database the procedure reads; give it read access only on that database to keep it to one.
 - `GRANT` needs the role to exist (built-in, or created with `POST /auth/roles`); `REVOKE` from a role that doesn't exist changes nothing. Only administrators may run `GRANT`, `REVOKE` and `SHOW … PRIVILEGES`.
 - Grants are read from the system database on every check, so a change applies at once to every server over the same storage. In an explicit transaction, `GRANT` and `REVOKE` take effect when it commits and are undone by a rollback. They run on the system database whichever database the transaction was opened on, as in Neo4j: an administration command as a transaction's first statement makes it an administration transaction, and after a data statement (or in a statement a procedure such as `apoc.cypher.run` runs) it fails with `Neo.ClientError.Transaction.ForbiddenDueToTransactionType`.
@@ -223,23 +223,52 @@ SHOW ROLE cdc_reader PRIVILEGES
 - `DROP ROLE` is Neo4j Community's `Neo.ClientError.Statement.UnsupportedAdministrationCommand`; roles are deleted with `DELETE /auth/roles/{name}`.
 - `GRANT IMMUTABLE` / `REVOKE IMMUTABLE` follow Neo4j: immutable privileges can be granted and revoked only while authentication is disabled; with it enabled, `GRANT IMMUTABLE` and any `REVOKE` of an immutable privilege fail with `Neo.ClientError.Security.Forbidden`. `REVOKE IMMUTABLE` removes only an immutable privilege; a plain `REVOKE` removes either. `SHOW PRIVILEGES` reports it in the `immutable` column.
 - A procedure name or glob may be backticked, whole or in parts (`` `db.cdc.*` ``, ``db.`cdc`.*``); it is stored unquoted.
-- `SHOW PRIVILEGES` lists the procedure privileges in Neo4j's columns (`access`, `action`, `resource`, `graph`, `segment`, `role`, `immutable`) and takes `YIELD` and `WHERE`. Other privilege statements (`GRANT ROLE`, `DENY`, graph privileges) aren't supported.
+- `SHOW PRIVILEGES` lists the procedure and impersonation privileges in Neo4j's columns (`access`, `action`, `resource`, `graph`, `segment`, `role`, `immutable`) and takes `YIELD` and `WHERE`. Other privilege statements (`GRANT ROLE`, `DENY` of anything but `IMPERSONATE`, graph privileges) aren't supported.
 
 A change-feed reader, set up once:
 
 1. Create the role (`POST /auth/roles`), give it the `read` entitlement (`PUT /auth/role-entitlements`) and read access on its database only (`PUT /auth/access/privileges`), and assign it to the worker login.
 2. Run `GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO cdc_reader` on the system database as an administrator.
 
+### User Impersonation
+
+A service that connects with one login on behalf of many users can run each user's transactions as that user, with Neo4j's `IMPERSONATE` privilege and Bolt's `imp_user`:
+
+```cypher
+// On the system database, as an administrator
+GRANT IMPERSONATE (alice, bob) ON DBMS TO app_service
+GRANT IMPERSONATE (*) ON DBMS TO app_service      // every user; also: GRANT IMPERSONATE ON DBMS TO …
+DENY IMPERSONATE (admin) ON DBMS TO app_service
+REVOKE [GRANT | DENY] IMPERSONATE (alice) ON DBMS FROM app_service
+SHOW ROLE app_service PRIVILEGES                  // action impersonate, segment USER(alice) / USER(*)
+```
+
+Only a bare `*` means every user. A backticked `` `*` `` names the user called `*` (listed as ``USER(`*`)``), and a list mixing `*` with users is a syntax error.
+
+- A Bolt 4.4+ client names the user in `imp_user` on `BEGIN`, on an auto-commit `RUN`, or on `ROUTE` (drivers: the session's `impersonated_user` / `impersonatedUser`). `null` means no impersonation; naming the signed-in user is no impersonation either. A `RUN` inside an explicit transaction runs as its `BEGIN` did.
+- A `ROUTE` with `imp_user` is decided on the login's current roles, like a `RUN`, and its database (`db`, or the default database, as NornicDB has no per-user home database) must be one the impersonated user may use; the routing table names that database.
+- The transaction runs in the impersonated user's complete security context: their current roles, entitlements, database allowlist, per-database privileges and procedure grants, through the same resolver as their own login. The signed-in user's privileges don't apply, not even where they are wider.
+- A login may impersonate a user when one of its roles is granted that user or `*`, or it holds the `admin` entitlement (Neo4j's admin role has `ALL DBMS PRIVILEGES`, which include `IMPERSONATE`), and none of its roles is denied that user or `*`. A `DENY` wins over every grant.
+- Without the privilege, the request fails with `Neo.ClientError.Security.Forbidden` before anything runs. A user who doesn't exist or is disabled is refused the same way, so a request can't learn which users exist. With authentication disabled, `imp_user` fails with `Neo.ClientError.Statement.ArgumentError`, as in Neo4j.
+- While impersonating, administration commands that change the DBMS (`GRANT`, `DENY`, `REVOKE`, database and alias DDL, procedure and knowledge-policy DDL) fail with `Neo.ClientError.Security.Forbidden`, whatever the impersonated user may do, and so does a procedure that changes state every session shares (`apoc.custom.installProcedure`, `declareProcedure` and `dropProcedure`, `db.clearQueryCaches`, `db.stats.collect`, `stop` and `clear`, and user-defined or plugin procedures of mode `ADMIN`), called directly or through dynamic Cypher; `SHOW` commands run.
+- A user can't be impersonated on a remote database, as Neo4j documents for remote database aliases: an impersonating `RUN`, `BEGIN`, `ROUTE` or `USE` of a remote constituent, or of a composite with one, fails with `Neo.ClientError.Security.Forbidden` before anything reaches the remote server, and the login's credential is never forwarded while impersonating.
+- `TERMINATE TRANSACTIONS` is decided per transaction, as in Neo4j, for every login and for an impersonated user alike: a user may end its own transactions (while impersonating, the impersonated user's), and another user's only with the `admin` permission. A transaction it may not end is reported `Transaction not found.` and keeps running.
+- Both users are kept: `SHOW TRANSACTIONS` retains Neo4j's executing `username` and default columns, and additionally supports `YIELD authenticatedUser, executingUser` (NornicDB attribution columns). `SHOW CURRENT USER` shows the executing user. The Bolt query log records `user` (the signed-in user) and, while impersonating, `authenticatedUser` and `executingUser`; change events carry `metadata.executingUser` and `metadata.authenticatedUser`.
+- `GRANT` and `DENY` need the role to exist; `REVOKE` from a missing role changes nothing; immutable privileges, explicit transactions and role rename or delete behave as for procedure privileges above.
+- Impersonation is a Bolt feature. NornicDB's HTTP API is Neo4j's transactional endpoint (`/db/{name}/tx`), which has no impersonation; Neo4j's Query API (`/db/{name}/query/v2`, `impersonatedUser`) isn't implemented.
+
 ### How Access Is Resolved
 
 When a user queries a database, NornicDB resolves access in this order:
 
 1. **Allowlist check** — Can this user's role(s) see and access this database?
-2. **Global entitlements** — The roles' global entitlements (stored overrides, else the built-in defaults) gate the rest: without `read` the user can use no database; without `write` it writes none.
+2. **Global entitlements** — The roles' global entitlements (stored overrides, else the built-in defaults) cap graph-data permissions: without global `read` there is no database read/write entitlement; without `write` there is no database write entitlement. Selection access remains a separate decision.
 3. **Privileges check** — Is there a (role, database) privilege entry? If yes, it decides read and write within the entitlements.
 4. **Global fallback** — If no privilege entry, the global entitlements decide (admin/editor = read+write, viewer = read-only).
 
-HTTP, Bolt, gRPC, GraphQL, MCP and plugins resolve access through this one resolver, and decide a statement's permissions with one decision, so a change to a role's entitlements or privileges applies at once on every transport. A statement that only writes (`CREATE`, and `SET` or `DELETE` of what it created) needs write but not read on the database, as in Neo4j, where a principal with `WRITE` but no `READ` can run `CREATE`; a statement that reads the graph (`MATCH`, `MERGE`, `CALL`, a `WHERE`, a `COUNT { }` or `EXISTS { }` subquery, a pattern comprehension) needs read, since NornicDB doesn't hide individual records from a read.
+HTTP, Bolt, gRPC, GraphQL, MCP and plugins resolve access through this one resolver. Each operation declares its actual effects and is admitted before its database storage or services are resolved. A change to a role's entitlements or privileges applies at once on every transport. A statement that only writes (`CREATE`, and `SET` or `DELETE` of what it created) needs write but not read on the database, as in Neo4j, where a principal with `WRITE` but no `READ` can run `CREATE`; a statement that reads the graph (`MATCH`, `MERGE`, graph-reading procedures/functions, a `COUNT { }` or `EXISTS { }` subquery, a pattern comprehension) needs read, since NornicDB doesn't hide individual records from a read. Value-only expressions such as `RETURN 1` and terminating one's own transaction require selection access without a generic graph-read permission.
+
+GDS projections belong to the executing user in the selected database. Users may create, list, use and drop their own projections with the operation's read/write permissions; selecting another owner's projection for an administrative drop requires the executing user's admin permission. Impersonating a user selects that user's catalog.
 
 When a new database is created, the **admin** role and the creating user's roles are automatically granted full access.
 

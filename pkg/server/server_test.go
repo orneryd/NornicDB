@@ -1083,6 +1083,9 @@ func TestGetExecutorForDatabaseWithAuthBranches(t *testing.T) {
 	execRemote, err := server.getExecutorForDatabaseWithAuth("comp_remote_exec", "Bearer remote")
 	require.NoError(t, err)
 	require.NotNil(t, execRemote)
+	require.Empty(t, tokenSeen, "constructing an unused composite opens no remote")
+	_, err = dbManager.GetStorageWithAuth("comp_remote_exec.r1", "Bearer remote")
+	require.NoError(t, err)
 	require.Equal(t, "Bearer remote", tokenSeen)
 
 	// Factory error propagation path.
@@ -1105,6 +1108,8 @@ func TestGetExecutorForDatabaseWithAuthBranches(t *testing.T) {
 	}))
 	server.dbManager = badManager
 	_, err = server.getExecutorForDatabaseWithAuth("comp_remote_bad", "Bearer token")
+	require.NoError(t, err, "unused remote failures are deferred until target resolution")
+	_, err = badManager.GetStorageWithAuth("comp_remote_bad.r1", "Bearer token")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "remote dial failed")
 }

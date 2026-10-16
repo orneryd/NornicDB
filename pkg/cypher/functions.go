@@ -38,6 +38,13 @@ type PluginFunctionInfo struct {
 //	}
 var PluginFunctionList func() []PluginFunctionInfo
 
+// PluginFunctionContract binds an exposed handler to its declared effects.
+// Plugin lookups return this value; an unclassified raw handler is refused.
+type PluginFunctionContract struct {
+	Handler   interface{}
+	Privilege PrivilegeClass
+}
+
 // PluginFunctionLookup is a callback to look up functions from loaded plugins.
 // Set by pkg/nornicdb during database initialization.
 // Returns the function handler and true if found, nil and false otherwise.

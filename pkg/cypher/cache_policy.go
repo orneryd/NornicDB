@@ -38,6 +38,35 @@ func cacheableReadQuery(cypher string, depth int) bool {
 		return false
 	}
 	cypher = classificationText(cypher)
+	requirements := QueryPermissionRequirements(cypher)
+	if requirements.Unclassified || requirements.Write || requirements.Schema || requirements.Admin || requirements.UpdatesDBMS {
+		return false
+	}
+	cacheableFunctions := true
+	_ = forEachSemanticCall(cypher, func(name, normalized string, _ int, procedure bool) error {
+		// Catalog state belongs to the executing principal and changes without
+		// a graph revision. Use decoded callable names for functions and
+		// procedures, including quoted or spaced identifier components.
+		if strings.HasPrefix(normalized, "gds.") {
+			cacheableFunctions = false
+		}
+		if procedure {
+			return nil
+		}
+		// An extension's privilege contract does not promise determinism or
+		// principal-independent output. Always invoke its actual handler.
+		if _, installed := pluginFunctionHandler(name); installed {
+			cacheableFunctions = false
+			return nil
+		}
+		if class, found := functionPrivilegeClass(name); found && class.Has(PrivilegeFileIO|PrivilegeSharedState|PrivilegeDBMS|PrivilegeWrite|PrivilegeSchema|PrivilegeAdmin) {
+			cacheableFunctions = false
+		}
+		return nil
+	})
+	if !cacheableFunctions {
+		return false
+	}
 	upper := upperASCII(cypher)
 	if strings.Contains(upper, "DB.STATS.") {
 		return false
@@ -46,14 +75,6 @@ func cacheableReadQuery(cypher string, depth int) bool {
 	// schema — that graph-write invalidation doesn't track, and TERMINATE
 	// acts on it: neither is ever served from the result cache (#718, #531).
 	if startsWithKeywordFold(strings.TrimSpace(cypher), "SHOW") || startsWithKeywordFold(strings.TrimSpace(cypher), "TERMINATE") {
-		return false
-	}
-
-	// The GDS graph catalog (projections, gds.graph.list / exists,
-	// gds.util.nodeProperty, the algorithms over a projection) changes
-	// without a graph write, so the write invalidation can't keep a cached
-	// answer right (#1161).
-	if strings.Contains(upper, "GDS.") {
 		return false
 	}
 
@@ -102,7 +123,7 @@ func cacheableReadQuery(cypher string, depth int) bool {
 			return false
 		}
 		for _, procedure := range registeredProceduresForCalls(cypher) {
-			if procedure.Mode == ProcedureModeDBMS {
+			if procedure.Mode == ProcedureModeDBMS || procedure.Privilege.Has(PrivilegeFileIO|PrivilegeSharedState|PrivilegeDBMS) {
 				return false
 			}
 		}

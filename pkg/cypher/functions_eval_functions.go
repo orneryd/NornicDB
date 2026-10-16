@@ -93,7 +93,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 		if equalFoldASCII(name, "size") && len(args) == 1 {
 			args[0] = sizeArgumentExpression(args[0])
 		}
-		fnCtx := cypherfn.Context{
+		fnCtx := cypherfn.Context{Request: ctx,
 			Nodes:    nodes,
 			Rels:     rels,
 			Storage:  e.storage,

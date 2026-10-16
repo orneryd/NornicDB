@@ -112,7 +112,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
 		return nil, err
 	}
-	e.statementAdmitted(ctx)
+	e.statementAdmitted(ctx, cypher)
 	if err := e.systemDatabaseWriteError(cypher); err != nil {
 		return nil, err
 	}

@@ -53,7 +53,11 @@ func fabricStatsAccumulatorFromContext(ctx context.Context) *fabricStatsAccumula
 }
 
 func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
-	if e.dbManager == nil {
+	return statementUsesFabric(e.dbManager, e.currentDatabaseName(), cypher)
+}
+
+func statementUsesFabric(manager DatabaseManagerInterface, database, cypher string) bool {
+	if manager == nil {
 		return false
 	}
 	// Engage Fabric only when a parsed USE target references a composite scope:
@@ -68,7 +72,7 @@ func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
 			break
 		}
 		use, _, hasUse, err := fabric.ParseUseClause(cypher[useIdx:], true)
-		if hasUse && err == nil && (e.useTargetRequiresFabric(use.Name) || (use.IsDynamic() && e.sessionIsComposite())) {
+		if hasUse && err == nil && (useTargetRequiresFabric(manager, use.Name) || (use.IsDynamic() && manager.IsCompositeDatabase(database))) {
 			return true
 		}
 		searchFrom = useIdx + len("USE")
@@ -77,16 +81,20 @@ func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
 }
 
 func (e *StorageExecutor) useTargetRequiresFabric(target string) bool {
+	return useTargetRequiresFabric(e.dbManager, target)
+}
+
+func useTargetRequiresFabric(manager DatabaseManagerInterface, target string) bool {
 	target = strings.TrimSpace(target)
-	if target == "" || e.dbManager == nil {
+	if target == "" || manager == nil {
 		return false
 	}
-	if e.dbManager.IsCompositeDatabase(target) {
+	if manager.IsCompositeDatabase(target) {
 		return true
 	}
 	if dot := strings.IndexByte(target, '.'); dot > 0 {
 		base := strings.TrimSpace(target[:dot])
-		if base != "" && e.dbManager.IsCompositeDatabase(base) {
+		if base != "" && manager.IsCompositeDatabase(base) {
 			return true
 		}
 	}
@@ -238,6 +246,12 @@ func (e *StorageExecutor) fabricLocalDatabases(ctx context.Context, prepared *fa
 			if current.Graph != nil && current.Graph.IsDynamic() ||
 				e.authorizeSelectedDatabase(ctx, current.GraphName, current.Query) != nil {
 				return false
+			}
+			// Projection-only fragments depend on their input records, not the
+			// source composite's storage. Versioning that shell would open every
+			// unused constituent before actual target admission.
+			if !QueryPermissionRequirements(current.Query).Read {
+				return collect(current.Input)
 			}
 			location, err := prepared.catalog.Resolve(current.GraphName)
 			if err != nil {
@@ -651,7 +665,10 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
 
-	exec := c.base.cloneForStorage(engine)
+	exec := c.base.cloneForDatabaseStorage(engine, dbName)
+	// Fragment executors carry per-record bindings and are never published
+	// as the database's reusable executor.
+	exec.SetSharedExecutor(false)
 	if len(recordBindings) > 0 {
 		exec.fabricRecordBindings = recordBindings
 		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)
@@ -874,16 +891,11 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 		return existing, nil
 	}
 
-	txExec := NewStorageExecutor(engine)
-	txExec.deferFlush = c.base.deferFlush
-	txExec.ShareEmbedderFrom(c.base)
-	txExec.searchService = c.base.searchService
-	txExec.inferenceManager = c.base.inferenceManager
-	txExec.onNodeMutated = c.base.onNodeMutated
-	txExec.defaultEmbeddingDimensions = c.base.defaultEmbeddingDimensions
-	txExec.dbManager = c.base.dbManager
-	txExec.vectorRegistry = c.base.vectorRegistry
-	txExec.vectorIndexSpaces = c.base.vectorIndexSpaces
+	txExec := c.base.cloneForDatabaseStorage(engine, dbName)
+	txExec.SetSharedExecutor(false)
+	// The coordinator's Fabric transaction and this shard's storage
+	// transaction have separate owners.
+	txExec.txContext = nil
 
 	beginCtx := WithTransactionControl(WithAuthToken(ctx, c.authToken))
 	if _, err := txExec.Execute(beginCtx, "BEGIN", nil); err != nil {

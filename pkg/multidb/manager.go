@@ -492,54 +492,28 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 
 	// Handle composite databases differently
 	if info.Type == "composite" {
-		// Build constituent engines map
-		constituents := make(map[string]storage.Engine)
+		// Build the routing view from metadata only. Actual target admission
+		// happens before the selected constituent is resolved through the same
+		// dotted-name path used by direct USE requests.
+		factories := make(map[string]func() (storage.Engine, error))
 		constituentNames := make(map[string]string)
 		accessModes := make(map[string]string)
-
 		for _, ref := range info.Constituents {
-			var constituentStorage storage.Engine
-			runtimeRef := ref
 			actualName := ref.DatabaseName
-			var err error
-
-			switch ref.Type {
-			case "remote":
-				if strings.EqualFold(strings.TrimSpace(runtimeRef.AuthMode), "user_password") {
-					decrypted, decErr := m.decryptStoredRemotePassword(runtimeRef.Password)
-					if decErr != nil {
-						return nil, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(runtimeRef.Alias, decErr), decErr)
-					}
-					runtimeRef.Password = decrypted
-				}
-				constituentStorage, err = m.getRemoteStorageInternal(runtimeRef, authToken)
-				if err != nil {
-					return nil, localizedError(localization.MultidbManagerGetRemoteStorageFailed(ref.Alias, err), err)
-				}
-			default:
-				// Resolve actual database name (might be an alias)
+			if !strings.EqualFold(ref.Type, "remote") {
+				var err error
 				actualName, err = m.resolveDatabaseInternal(ref.DatabaseName)
 				if err != nil {
 					return nil, localizedError(localization.MultidbCompositeConstituentDatabaseNotFound(ref.DatabaseName, err), err)
 				}
-
-				// Get storage for constituent
-				constituentStorage, err = m.getStorageInternal(actualName)
-				if err != nil {
-					return nil, localizedError(localization.MultidbManagerGetConstituentStorageFailed(ref.DatabaseName, err), err)
-				}
 			}
-
-			constituents[ref.Alias] = constituentStorage
+			selection := name + "." + ref.Alias
+			factories[ref.Alias] = func() (storage.Engine, error) { return m.GetStorageWithAuth(selection, authToken) }
 			constituentNames[ref.Alias] = actualName
 			accessModes[ref.Alias] = ref.AccessMode
 		}
-
-		// Create composite engine with intelligent default routing
-		// Routing will be auto-configured based on constituent aliases and access modes
-		compositeEngine := storage.NewCompositeEngine(constituents, constituentNames, accessModes)
+		compositeEngine := storage.NewDeferredCompositeEngine(factories, constituentNames, accessModes)
 		compositeEngine.SetCompositeName(name)
-		// Note: We don't cache composite engines the same way as they're lightweight wrappers
 		return compositeEngine, nil
 	}
 

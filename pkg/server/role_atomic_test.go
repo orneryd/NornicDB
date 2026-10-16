@@ -273,13 +273,13 @@ func TestAdministrationRequestRoutesToSystemAndRollsBackOnRejection(t *testing.T
 			ctx := context.Background()
 			server, users := setupTestServer(t)
 			admin := getAuthToken(t, users, "admin")
-			second := "GRANT EXECUTE PROCEDURE db.b ON DBMS TO viewer"
+			second := "GRANT EXECUTE BOOSTED PROCEDURE db.b ON DBMS TO viewer"
 			if reject {
 				second = "CALL dbms.components()"
 			}
 			resp := makeRequest(t, server, "POST", "/db/nornic/tx/commit", map[string]any{
 				"statements": []map[string]any{
-					{"statement": "GRANT EXECUTE PROCEDURE db.a ON DBMS TO viewer"},
+					{"statement": "GRANT EXECUTE BOOSTED PROCEDURE db.a ON DBMS TO viewer"},
 					{"statement": second},
 				},
 			}, "Bearer "+admin)

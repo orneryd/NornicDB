@@ -6,6 +6,7 @@ package apoc
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/auth"
 	"sync"
 
 	"github.com/orneryd/nornicdb/apoc/agg"
@@ -66,6 +67,7 @@ var (
 
 // Function represents a registered APOC function.
 type Function struct {
+	Privilege   auth.OperationClass
 	Name        string
 	Category    string
 	Handler     interface{}
@@ -208,7 +210,12 @@ func GetInfo(name string) (*Function, bool) {
 
 // register adds a function to the registry.
 func register(name, category string, handler interface{}, description string, examples []string) {
+	class, found := builtinFunctionClasses[name]
+	if !found || !class.Valid() {
+		panic("APOC function " + name + ": explicit privilege class required")
+	}
 	functions[name] = Function{
+		Privilege:   class,
 		Name:        name,
 		Category:    category,
 		Handler:     handler,

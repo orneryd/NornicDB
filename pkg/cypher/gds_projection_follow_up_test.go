@@ -8,8 +8,8 @@ import (
 )
 
 func gdsFollowUpCatalog(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 }
 
 func TestGDSProjectionFollowUpIntegralDoubleList(t *testing.T) {

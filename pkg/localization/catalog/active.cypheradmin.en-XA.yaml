@@ -122,6 +122,15 @@
 - id: cypheradmin.privilege_role_not_found
   description: Expanded pseudo-locale privilege role not found.
   other: "[!! Failed to grant {{.Action}} privilege to role '{{.Role}}': Role does not exist. !!]"
+- id: cypheradmin.privilege_deny_role_not_found
+  description: Expanded pseudo-locale privilege deny role not found.
+  other: "[!! Failed to deny {{.Action}} privilege to role '{{.Role}}': Role does not exist. !!]"
+- id: cypheradmin.impersonation_system_update_denied
+  description: Expanded pseudo-locale impersonation system update denied.
+  other: "[!! Not allowed to run updating system commands when impersonating a user. !!]"
+- id: cypheradmin.impersonation_remote_database_denied
+  description: Expanded pseudo-locale impersonation on a remote database denied.
+  other: "[!! Impersonating a user is not supported on remote database '{{.Database}}'. !!]"
 
 - id: cypheradmin.system_graph_access_unsupported
   description: A graph or schema statement on the system database.

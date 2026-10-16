@@ -46,11 +46,11 @@ func NewSnapshotsService(config *Config, collections CollectionStore, baseStorag
 	}
 }
 
-func (s *SnapshotsService) allowAccess(ctx context.Context, collectionName string, write bool) error {
+func (s *SnapshotsService) allowAccess(ctx context.Context, collectionName, method string) error {
 	if s.checker == nil {
 		return nil
 	}
-	return s.checker.AllowDatabaseAccess(ctx, collectionName, write)
+	return s.checker.AllowDatabaseOperation(ctx, collectionName, defaultMethodPermissions["Snapshots/"+method].Class)
 }
 
 // Create creates a new snapshot of a collection.
@@ -61,7 +61,7 @@ func (s *SnapshotsService) Create(ctx context.Context, req *qpb.CreateSnapshotRe
 	if req.GetCollectionName() == "" {
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.allowAccess(ctx, req.GetCollectionName(), "Create"); err != nil {
 		return nil, err
 	}
 
@@ -136,7 +136,7 @@ func (s *SnapshotsService) List(ctx context.Context, req *qpb.ListSnapshotsReque
 	if req.GetCollectionName() == "" {
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), false); err != nil {
+	if err := s.allowAccess(ctx, req.GetCollectionName(), "List"); err != nil {
 		return nil, err
 	}
 
@@ -202,7 +202,7 @@ func (s *SnapshotsService) Delete(ctx context.Context, req *qpb.DeleteSnapshotRe
 	if req.GetCollectionName() == "" {
 		return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantCollectionNameRequired())
 	}
-	if err := s.allowAccess(ctx, req.GetCollectionName(), true); err != nil {
+	if err := s.allowAccess(ctx, req.GetCollectionName(), "Delete"); err != nil {
 		return nil, err
 	}
 

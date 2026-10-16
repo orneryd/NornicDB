@@ -70,19 +70,14 @@ import (
 
 const cypherMutationConflictRetries = 5
 
-type toolDatabaseAccess uint8
-
-const (
-	toolDatabaseRead toolDatabaseAccess = iota
-	toolDatabaseWrite
-)
-
-var toolDatabaseAccessByName = map[string]toolDatabaseAccess{
-	ToolStore:    toolDatabaseWrite,
-	ToolRecall:   toolDatabaseRead,
-	ToolDiscover: toolDatabaseRead,
-	ToolLink:     toolDatabaseWrite,
-	ToolTasks:    toolDatabaseRead,
+// Required effects for every exposed tool. A missing or invalid entry is
+// refused before tool or database factories run.
+var toolDatabaseAccessByName = map[string]cypher.PrivilegeClass{
+	ToolStore:    cypher.PrivilegeRead | cypher.PrivilegeWrite,
+	ToolRecall:   cypher.PrivilegeRead,
+	ToolDiscover: cypher.PrivilegeRead,
+	ToolLink:     cypher.PrivilegeRead | cypher.PrivilegeWrite,
+	ToolTasks:    cypher.PrivilegeRead,
 }
 
 // taskArgsMutate reports whether the tasks tool arguments request a task
@@ -696,35 +691,26 @@ func (s *Server) doCallTool(ctx context.Context, params map[string]interface{}) 
 	// The tasks tool lists by default (read) and mutates when task-management
 	// arguments are present; mutations require write access to the database.
 	if name == ToolTasks && taskArgsMutate(args) {
-		accessRequirement = toolDatabaseWrite
+		accessRequirement |= cypher.PrivilegeWrite
 	}
 
 	databaseSelection := extractDatabaseArg(args)
-	if scope := auth.RequestDatabaseScopeFromContext(ctx); scope != nil {
-		database, allowed := scope.Resolve(databaseSelection)
-		if !allowed {
-			return nil, localizedError(localization.DatabaseAccessDenied("requested database"), nil)
-		}
-		// The tool's permissions on the database: the one decision
-		// (cypher.MissingPermission) over the principal's one resolver, as
-		// HTTP and Bolt decide a statement's.
-		allows := auth.RequestEntitlementResolverFromContext(ctx)
-		if allows == nil {
-			return nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
-		}
-		requirements := cypher.PermissionRequirements{Read: true, Write: accessRequirement == toolDatabaseWrite}
-		switch cypher.MissingPermission(requirements, func(permission string) bool { return allows(database, auth.Permission(permission)) }, nil) {
-		case string(auth.PermRead):
-			return nil, localizedError(localization.DatabaseAccessDenied("requested database"), nil)
-		case string(auth.PermWrite):
-			return nil, localizedError(localization.DatabaseWriteDenied(database), nil)
-		}
-		ctx = contextWithAuthorizedDatabase(ctx, database)
-	} else if auth.RequestDatabaseAccessModeFromContext(ctx) != nil {
-		return nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
-	} else if databaseSelection != "" {
-		ctx = ContextWithDatabase(ctx, databaseSelection)
+	if auth.RequestDatabaseScopeFromContext(ctx) == nil && databaseSelection == "" {
+		databaseSelection = DatabaseFromContext(ctx)
 	}
+	if (auth.RequestDatabaseScopeFromContext(ctx) != nil || auth.RequestDatabaseAccessModeFromContext(ctx) != nil) &&
+		(auth.RequestEntitlementResolverFromContext(ctx) == nil || auth.RequestDatabaseScopeFromContext(ctx) == nil) {
+		return nil, localizedError(localization.MCPAuthenticationContextMissing(), nil)
+	}
+	admittedCtx, database, err := cypher.AdmitRequestOperation(ctx, s.DefaultDatabaseName(), databaseSelection, accessRequirement)
+	if err != nil {
+		var denied *cypher.PermissionDeniedError
+		if errors.As(err, &denied) && denied.Permission == "write" {
+			return nil, localizedError(localization.DatabaseWriteDenied(database), err)
+		}
+		return nil, localizedError(localization.DatabaseAccessDenied("requested database"), err)
+	}
+	ctx = contextWithAuthorizedDatabase(admittedCtx, database)
 
 	return handler(ctx, args)
 }

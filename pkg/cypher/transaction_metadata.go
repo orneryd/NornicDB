@@ -21,10 +21,19 @@ func WithTransactionMetadata(ctx context.Context, metadata map[string]any) conte
 	return context.WithValue(ctx, transactionMetadataKey{}, metadata)
 }
 
-// applyTransactionMetadata sets the metadata ctx carries on tx.
+// applyTransactionMetadata sets the metadata ctx carries on tx, and who the
+// transaction runs for (StatementUsers), which its change events record.
 func applyTransactionMetadata(ctx context.Context, tx *storage.BadgerTransaction) error {
+	if tx == nil {
+		return nil
+	}
+	if executing, authenticated := StatementUsers(ctx); executing != "" {
+		if err := tx.SetUsers(executing, authenticated); err != nil {
+			return err
+		}
+	}
 	metadata, _ := ctx.Value(transactionMetadataKey{}).(map[string]any)
-	if len(metadata) == 0 || tx == nil {
+	if len(metadata) == 0 {
 		return nil
 	}
 	return tx.SetMetadata(metadata)

@@ -122,6 +122,15 @@
 - id: cypheradmin.privilege_role_not_found
   description: Un GRANT a un rol que no existe. Action (execute, execute_boosted) y Role no se traducen.
   other: "No se pudo conceder el privilegio {{.Action}} al rol '{{.Role}}': el rol no existe."
+- id: cypheradmin.privilege_deny_role_not_found
+  description: Un DENY a un rol que no existe. Action (impersonate) y Role no se traducen.
+  other: "No se pudo denegar el privilegio {{.Action}} al rol '{{.Role}}': el rol no existe."
+- id: cypheradmin.impersonation_system_update_denied
+  description: Un comando de administración que modifica el sistema ejecutado suplantando a un usuario.
+  other: "No se permite ejecutar comandos que modifican el sistema mientras se suplanta a un usuario."
+- id: cypheradmin.impersonation_remote_database_denied
+  description: Una sentencia o transacción que suplanta a un usuario en una base de datos remota o en una compuesta con un constituyente remoto. Database no se traduce.
+  other: "No se admite suplantar a un usuario en la base de datos remota '{{.Database}}'."
 
 - id: cypheradmin.system_graph_access_unsupported
   description: A graph or schema statement on the system database.

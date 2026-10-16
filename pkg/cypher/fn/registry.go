@@ -43,21 +43,46 @@ type Func func(ctx Context, args []string) (interface{}, error)
 var (
 	mu       sync.RWMutex
 	registry = map[string]Func{}
+	classes  = map[string]PrivilegeClass{}
 )
 
 // Register registers a function implementation for the given name.
 // Names are stored in lower-case.
-func Register(name string, fn Func) {
+func Register(name string, class PrivilegeClass, fn Func) {
 	if strings.TrimSpace(name) == "" {
 		panic("fn.Register: empty name")
 	}
 	if fn == nil {
 		panic("fn.Register: nil function")
 	}
+	if !class.Valid() {
+		panic("fn.Register: explicit privilege class required")
+	}
 	key := strings.ToLower(strings.TrimSpace(name))
 	mu.Lock()
 	defer mu.Unlock()
 	registry[key] = fn
+	classes[key] = class
+}
+
+// Classes returns a snapshot of every implementation's declared contract,
+// including internal parser helpers that are not listed by SHOW FUNCTIONS.
+func Classes() map[string]PrivilegeClass {
+	mu.RLock()
+	defer mu.RUnlock()
+	out := make(map[string]PrivilegeClass, len(classes))
+	for name, class := range classes {
+		out[name] = class
+	}
+	return out
+}
+
+// Class reports the contract of a registered implementation.
+func Class(name string) (PrivilegeClass, bool) {
+	mu.RLock()
+	defer mu.RUnlock()
+	class, found := classes[strings.ToLower(strings.TrimSpace(name))]
+	return class, found
 }
 
 // EvaluateFunction evaluates a function by name.

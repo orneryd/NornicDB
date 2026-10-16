@@ -101,7 +101,7 @@ func allowsBoosted(t *testing.T, system storage.Engine, role, procedure string) 
 // matched unquoted, as Neo4j 5.26 accepts it: Neo4j 5.26.30 Enterprise lists
 // GRANT EXECUTE BOOSTED PROCEDURE `db.cdc.*` as PROCEDURE(db.cdc.*) (one row
 // with the unquoted grant, "has no effect" when that is already granted),
-// and GRANT EXECUTE PROCEDURE db.`cdc`.query, `*` as PROCEDURE(db.cdc.query)
+// and GRANT EXECUTE BOOSTED PROCEDURE db.`cdc`.query, `*` as PROCEDURE(db.cdc.query)
 // and PROCEDURE(*).
 func TestProcedurePrivilegeQuotedGlobs(t *testing.T) {
 	ctx := context.Background()
@@ -173,7 +173,7 @@ func TestProcedurePrivilegeImmutableWithAuthentication(t *testing.T) {
 	system := storage.NewNamespacedEngine(systemBase, "system")
 	open := WithAuthenticationDisabled(context.Background())
 	exec := NewStorageExecutor(system)
-	_, err := exec.Execute(open, "GRANT IMMUTABLE EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
+	_, err := exec.Execute(open, "GRANT IMMUTABLE EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO viewer", nil)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -185,23 +185,23 @@ func TestProcedurePrivilegeImmutableWithAuthentication(t *testing.T) {
 		requireStatusCode(t, err, "Neo.ClientError.Security.Forbidden")
 		require.ErrorContains(t, err, "Permission cannot be granted for ASSIGN IMMUTABLE PRIVILEGE.")
 	}
-	_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.other ON DBMS TO viewer", nil)
+	_, err = exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.other ON DBMS TO viewer", nil)
 	require.NoError(t, err)
 	for _, statement := range []string{
-		"REVOKE EXECUTE PROCEDURE db.ping ON DBMS FROM viewer",
-		"REVOKE IMMUTABLE EXECUTE PROCEDURE db.ping ON DBMS FROM viewer",
-		"REVOKE EXECUTE PROCEDURE db.other, db.ping ON DBMS FROM viewer",
+		"REVOKE EXECUTE BOOSTED PROCEDURE db.ping ON DBMS FROM viewer",
+		"REVOKE IMMUTABLE EXECUTE BOOSTED PROCEDURE db.ping ON DBMS FROM viewer",
+		"REVOKE EXECUTE BOOSTED PROCEDURE db.other, db.ping ON DBMS FROM viewer",
 	} {
 		_, err = exec.Execute(ctx, statement, nil)
 		requireStatusCode(t, err, "Neo.ClientError.Security.Forbidden")
 		require.ErrorContains(t, err, "Immutable privileges cannot be revoked.")
 	}
-	_, err = exec.Execute(ctx, "REVOKE IMMUTABLE EXECUTE PROCEDURE db.other ON DBMS FROM viewer", nil)
+	_, err = exec.Execute(ctx, "REVOKE IMMUTABLE EXECUTE BOOSTED PROCEDURE db.other ON DBMS FROM viewer", nil)
 	require.NoError(t, err)
 	result, err := exec.Execute(ctx, "SHOW ROLE viewer PRIVILEGES YIELD segment, immutable RETURN segment, immutable", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"PROCEDURE(db.other)", false}, {"PROCEDURE(db.ping)", true}}, result.Rows)
-	_, err = exec.Execute(ctx, "REVOKE EXECUTE PROCEDURE db.other ON DBMS FROM viewer", nil)
+	_, err = exec.Execute(ctx, "REVOKE EXECUTE BOOSTED PROCEDURE db.other ON DBMS FROM viewer", nil)
 	require.NoError(t, err)
 	result, err = exec.Execute(ctx, "SHOW ROLE viewer PRIVILEGES YIELD segment RETURN segment", nil)
 	require.NoError(t, err)
@@ -221,8 +221,8 @@ func TestProcedurePrivilegeMissingRole(t *testing.T) {
 	_, err := exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO viewer, nobody", nil)
 	requireStatusCode(t, err, "Neo.ClientError.Statement.ArgumentError")
 	require.ErrorContains(t, err, "Failed to grant execute_boosted privilege to role 'nobody': Role does not exist.")
-	_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO nobody", nil)
-	require.ErrorContains(t, err, "Failed to grant execute privilege to role 'nobody'")
+	_, err = exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO nobody", nil)
+	require.ErrorContains(t, err, "Failed to grant execute_boosted privilege to role 'nobody'")
 	require.False(t, allowsBoosted(t, system, "viewer", "db.cdc.query"))
 	_, err = exec.Execute(ctx, "REVOKE EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS FROM nobody", nil)
 	require.NoError(t, err)
@@ -345,7 +345,7 @@ func TestSystemDatabaseRefusesGraphWrites(t *testing.T) {
 	nodes, err := system.GetNodesByLabel("_ProcedurePrivilege")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
-	_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
+	_, err = exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO viewer", nil)
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "MATCH (n:_ProcedurePrivilege) RETURN n.procedure AS procedure", nil)
 	requireStatusCode(t, err, "Neo.ClientError.Statement.SemanticError")

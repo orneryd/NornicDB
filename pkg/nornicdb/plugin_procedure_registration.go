@@ -59,7 +59,7 @@ func pluginProcedureForCypher(proc PluginProcedure) (pluginProcedureDefinition, 
 	}
 	mode := cypher.ProcedureModeRead
 	switch strings.ToUpper(proc.Mode) {
-	case "", "READ":
+	case "READ":
 	case "WRITE":
 		mode = cypher.ProcedureModeWrite
 	case "SCHEMA":

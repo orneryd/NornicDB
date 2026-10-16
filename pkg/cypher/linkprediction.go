@@ -355,7 +355,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 	var degree linkpredict.DegreeFunc
 	var read *GraphProjection
 	if config.GraphName != "" {
-		projection, err := e.graphProjection(config.GraphName)
+		projection, err := e.graphProjection(config.GraphName, ctx)
 		read = projection
 		if err != nil {
 			return nil, nil, nil, err

@@ -2193,6 +2193,7 @@ func TestEmbedTriggerAdditionalBranches(t *testing.T) {
 	server.db.SetEmbedder(&countingEmbedder{dims: 1024})
 
 	req := httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger", nil)
+	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Sub: "admin", Username: "admin", Roles: []string{"admin"}}))
 	rec := httptest.NewRecorder()
 	server.handleEmbedTrigger(rec, req)
 	assert.Contains(t, []int{http.StatusOK, http.StatusInternalServerError}, rec.Code)
@@ -2866,7 +2867,7 @@ func TestPublicHandlersAdditionalBranches(t *testing.T) {
 	// status with canceled context returns early without writing full response.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	req = httptest.NewRequest(http.MethodGet, "/status", nil).WithContext(ctx)
+	req = httptest.NewRequest(http.MethodGet, "/status", nil).WithContext(context.WithValue(ctx, contextKeyClaims, &auth.JWTClaims{Sub: "admin", Username: "admin", Roles: []string{"admin"}}))
 	rec = httptest.NewRecorder()
 	server.handleStatus(rec, req)
 	assert.True(t, rec.Code == 0 || rec.Code == http.StatusOK)
@@ -2875,6 +2876,7 @@ func TestPublicHandlersAdditionalBranches(t *testing.T) {
 	origManager := server.dbManager
 	server.dbManager = nil
 	req = httptest.NewRequest(http.MethodGet, "/status", nil)
+	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Sub: "admin", Username: "admin", Roles: []string{"admin"}}))
 	rec = httptest.NewRecorder()
 	server.handleStatus(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)

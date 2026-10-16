@@ -473,6 +473,10 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		if execErr != nil {
 			return nil, execErr
 		}
+		// Fabric admits each actual fragment before its target is resolved.
+		// Publish the source's metadata executor only after that admission has
+		// succeeded; composite roots do not own a graph search service.
+		e.statementAdmitted(ctx, cypher)
 
 		if fabricResultCacheKey != "" {
 			e.cache.putWithLabelsAndTraceForEmbedding(fabricResultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), HotPathTrace{}, embeddingGeneration)
@@ -520,7 +524,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
 		return nil, err
 	}
-	e.statementAdmitted(ctx)
+	e.statementAdmitted(ctx, cypher)
 	if err := e.systemDatabaseWriteError(cypher); err != nil {
 		return nil, err
 	}

@@ -13,8 +13,8 @@ import (
 func TestGDSLouvainMissingSeedNames(t *testing.T) {
 	for _, missing := range []interface{}{nil, int64(math.MinInt64)} {
 		t.Run(fmt.Sprint(missing), func(t *testing.T) {
-			graphProjections = make(map[string]*GraphProjection)
-			t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+			graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+			t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 			props := map[string]interface{}{}
 			if missing != nil {
 				props["seed"] = missing

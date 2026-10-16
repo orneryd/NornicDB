@@ -332,7 +332,7 @@ func TestShowProceduresPreservesCanonicalFieldMetadata(t *testing.T) {
 		Name:         "custom.old",
 		Signature:    "custom.old(value :: STRING = 'sample') :: (value :: STRING)",
 		Mode:         ProcedureModeRead,
-		Admin:        true,
+		Privilege:    PrivilegeRead | PrivilegeAdmin,
 		IsDeprecated: true,
 		DeprecatedBy: "custom.new",
 		MinArgs:      0,

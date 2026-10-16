@@ -104,7 +104,7 @@ func TestAdministrationAndDataStatementsDoNotMix(t *testing.T) {
 			exec, system := administrationReviewExecutor(t, database)
 			_, err := exec.handleBegin()
 			require.NoError(t, err)
-			_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.a ON DBMS TO viewer", nil)
+			_, err = exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.a ON DBMS TO viewer", nil)
 			require.NoError(t, err)
 			_, err = exec.Execute(ctx, "CALL dbms.components()", nil)
 			requireStatusCode(t, err, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType")
@@ -123,10 +123,10 @@ func TestTransactionStatementTypeMessages(t *testing.T) {
 	for _, c := range []struct {
 		database, first, second, message string
 	}{
-		{"system", "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", "CALL dbms.components()", "Tried to execute Read query after executing Administration command"},
-		{"system", "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", "CREATE INDEX type_probe FOR (n:TypeProbe) ON (n.v)", "Tried to execute Schema modification after executing Administration command"},
-		{"nornic", "CREATE (:TypeProbe)", "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", "Tried to execute Administration command after executing Write query"},
-		{"nornic", "MATCH (n) RETURN count(n) AS c", "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", "Tried to execute Administration command after executing Read query"},
+		{"system", "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO viewer", "CALL dbms.components()", "Tried to execute Read query after executing Administration command"},
+		{"system", "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO viewer", "CREATE INDEX type_probe FOR (n:TypeProbe) ON (n.v)", "Tried to execute Schema modification after executing Administration command"},
+		{"nornic", "CREATE (:TypeProbe)", "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO viewer", "Tried to execute Administration command after executing Write query"},
+		{"nornic", "MATCH (n) RETURN count(n) AS c", "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO viewer", "Tried to execute Administration command after executing Read query"},
 	} {
 		t.Run(c.first+" then "+c.second, func(t *testing.T) {
 			ctx := context.Background()
@@ -153,7 +153,7 @@ func TestUseBeforeAdministrationCommandIsSyntaxError(t *testing.T) {
 			if tx {
 				_, err := exec.handleBegin()
 				require.NoError(t, err)
-				_, err = exec.Execute(ctx, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer", nil)
+				_, err = exec.Execute(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO viewer", nil)
 				require.NoError(t, err)
 			}
 			_, err := exec.Execute(ctx, "USE system SHOW USERS", nil)

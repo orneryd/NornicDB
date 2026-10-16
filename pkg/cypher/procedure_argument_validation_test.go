@@ -61,6 +61,7 @@ func TestInQueryProcedureCallRejectsImplicitArguments(t *testing.T) {
 	require.NoError(t, globalProcedureRegistry.RegisterUser(
 		ProcedureSpec{
 			Name:    "custom.acceptInteger",
+			Mode:    ProcedureModeRead,
 			Params:  []ProcedureParam{{Name: "value", Type: "INTEGER", Optional: true}},
 			Returns: []ProcedureColumn{{Name: "out", Type: "INTEGER"}},
 			MinArgs: 1,

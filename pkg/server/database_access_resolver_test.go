@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -47,7 +48,14 @@ func TestDatabaseAccessFollowsStoredEntitlements(t *testing.T) {
 	// A read privilege without the read entitlement reads nothing.
 	require.NoError(t, server.privilegesStore.SavePrivilege(ctx, "plain", "nornic", true, false))
 	response = makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]any{"statements": []map[string]any{{"statement": "MATCH (n) RETURN count(n) AS c"}}}, "Bearer "+getAuthToken(t, users, "pat"))
-	require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	// Authenticated transaction statement failures use the transaction error
+	// envelope; the outer route no longer imposes a generic read gate.
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var refused TransactionResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &refused))
+	require.Len(t, refused.Errors, 1)
+	require.Equal(t, "Neo.ClientError.Security.Forbidden", refused.Errors[0].Code)
+	require.Empty(t, refused.Results, "a privilege without its entitlement returns no graph data")
 	require.Equal(t, auth.ResolvedAccess{}, server.GetResolvedAccessForRoles([]string{"plain"}, "nornic"))
 
 	// A custom role with the read entitlement and no privilege entry reads,

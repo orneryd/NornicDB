@@ -32,6 +32,9 @@ import (
 
 // handleDecay returns memory decay information (NornicDB-specific)
 func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
+	if !s.admitHTTPOperation(w, r, "decay.info", "") {
+		return
+	}
 	info := s.db.GetDecayInfo()
 
 	response := map[string]interface{}{
@@ -86,7 +89,6 @@ func (s *Server) embedTargets(w http.ResponseWriter, r *http.Request) ([]embedTa
 		names = []string{s.dbManager.DefaultDatabaseName()}
 	}
 
-	claims := getClaims(r)
 	seen := make(map[string]bool, len(names))
 	targets := make([]embedTarget, 0, len(names))
 	for _, name := range names {
@@ -99,8 +101,7 @@ func (s *Server) embedTargets(w http.ResponseWriter, r *http.Request) ([]embedTa
 				"The system database has no embeddings.")
 			return nil, false
 		}
-		if !s.getDatabaseAccessMode(claims).CanAccessDatabase(name) {
-			s.writeNeo4jDatabaseAccessDenied(w, r, name)
+		if !s.admitHTTPOperation(w, r, "embed.target", name) {
 			return nil, false
 		}
 		if s.dbManager.IsCompositeDatabase(name) {
@@ -108,18 +109,17 @@ func (s *Server) embedTargets(w http.ResponseWriter, r *http.Request) ([]embedTa
 				fmt.Sprintf("Embeddings of composite database '%s' cannot be cleared; name its constituent databases.", name))
 			return nil, false
 		}
-		// Clearing embeddings is a write to the database (enforced when RBAC is on, as
-		// the Cypher permission checker does).
-		if s.isRBACEnforced() && !s.getResolvedAccess(claims, name).Write {
-			s.writeNeo4jDatabaseWriteDenied(w, r, name)
-			return nil, false
-		}
+		targets = append(targets, embedTarget{name: name})
+	}
+	// Admit the complete target set before opening any target's storage.
+	for i := range targets {
+		name := targets[i].name
 		engine, err := s.dbManager.GetStorage(name)
 		if err != nil {
 			s.writeDatabaseNotFound(w, r, http.StatusNotFound, ErrNotFound, name)
 			return nil, false
 		}
-		targets = append(targets, embedTarget{name: name, storage: engine})
+		targets[i].storage = engine
 	}
 	return targets, true
 }
@@ -133,6 +133,9 @@ func targetNames(targets []embedTarget) []string {
 }
 
 func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
+	if !s.admitHTTPOperation(w, r, "embed.trigger", "") {
+		return
+	}
 	if r.Method != http.MethodPost {
 		s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
 		return
@@ -246,6 +249,9 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 
 // handleEmbedStats returns embedding worker statistics.
 func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
+	if !s.admitHTTPOperation(w, r, "embed.stats", "") {
+		return
+	}
 	stats := s.db.EmbedQueueStats()
 	// Keep contended stats reads bounded. total_embeddings uses authoritative
 	// aggregate count to avoid false zeros.
@@ -302,6 +308,9 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 // handleEmbedFailures lists durable terminal embedding failures without
 // returning node properties or embedding vectors.
 func (s *Server) handleEmbedFailures(w http.ResponseWriter, r *http.Request) {
+	if !s.admitHTTPOperation(w, r, "embed.failures", "") {
+		return
+	}
 	if r.Method != http.MethodGet {
 		s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.Request.Invalid")
 		return
@@ -330,6 +339,9 @@ func (s *Server) handleEmbedFailures(w http.ResponseWriter, r *http.Request) {
 // handleEmbedFailureRetry restores selected terminal failures to the durable
 // pending queue. An empty request body or node_ids list retries all failures.
 func (s *Server) handleEmbedFailureRetry(w http.ResponseWriter, r *http.Request) {
+	if !s.admitHTTPOperation(w, r, "embed.retry", "") {
+		return
+	}
 	if r.Method != http.MethodPost {
 		s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
 		return
@@ -439,10 +451,7 @@ func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 		dbName = s.dbManager.DefaultDatabaseName()
 	}
 
-	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	claims := getClaims(r)
-	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+	if !s.admitHTTPOperation(w, r, "search.rebuild", dbName) {
 		return
 	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
@@ -450,12 +459,6 @@ func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("Search rebuild on composite database '%s' is not supported; target a constituent database explicitly.", dbName))
 		return
 	}
-	// Rebuild is a write to the database; require ResolvedAccess.Write for this DB.
-	if !s.getResolvedAccess(claims, dbName).Write {
-		s.writeNeo4jDatabaseWriteDenied(w, r, dbName)
-		return
-	}
-
 	// Get namespaced storage for the specified database
 	storageEngine, err := s.dbManager.GetStorage(dbName)
 	if err != nil {

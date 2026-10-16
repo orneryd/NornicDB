@@ -46,11 +46,11 @@ func TestProcedurePrivilegeBatchFailureChangesNothing(t *testing.T) {
 			t.Cleanup(func() { _ = inner.Close() })
 			system := storage.NewNamespacedEngine(inner, "system")
 			store := auth.NewProcedurePrivilegeStore(system)
-			query := "GRANT EXECUTE PROCEDURE db.a, db.b ON DBMS TO viewer"
+			query := "GRANT EXECUTE BOOSTED PROCEDURE db.a, db.b ON DBMS TO viewer"
 			if revoke {
-				require.NoError(t, store.Grant(ctx, "viewer", "db.a", false, false))
-				require.NoError(t, store.Grant(ctx, "viewer", "db.b", false, false))
-				query = "REVOKE EXECUTE PROCEDURE db.a, db.b ON DBMS FROM viewer"
+				require.NoError(t, store.Grant(ctx, "viewer", "db.a", true, false))
+				require.NoError(t, store.Grant(ctx, "viewer", "db.b", true, false))
+				query = "REVOKE EXECUTE BOOSTED PROCEDURE db.a, db.b ON DBMS FROM viewer"
 			}
 			before, err := store.List(ctx)
 			require.NoError(t, err)

@@ -203,7 +203,7 @@ func TestSystemDatabaseGraphWritesOverHTTP(t *testing.T) {
 		require.Equal(t, "Neo.ClientError.Statement.SemanticError",
 			txErrorCode(t, server, "system", token, "CREATE (:_ProcedurePrivilege {role: 'editor', procedure: '*', boosted: true})"))
 	}
-	require.Empty(t, txErrorCode(t, server, "system", admin, "GRANT EXECUTE PROCEDURE db.ping ON DBMS TO viewer"))
+	require.Empty(t, txErrorCode(t, server, "system", admin, "GRANT EXECUTE BOOSTED PROCEDURE db.ping ON DBMS TO viewer"))
 	for _, query := range []string{"CALL db.cdc.query()", "CALL db.txlog.entries()"} {
 		require.Equal(t, "Neo.ClientError.Security.Forbidden", txErrorCode(t, server, "nornic", editor, query))
 	}

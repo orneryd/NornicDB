@@ -14,8 +14,8 @@ import (
 // weights), the bank held by every document.
 func newNodeSimilarityGraph(t *testing.T) func(string) [][]interface{} {
 	t.Helper()
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "ns")
 	exec := NewStorageExecutor(engine)
 	for _, id := range []string{"d1", "d2", "d3", "d4"} {
@@ -214,8 +214,8 @@ func TestNodeSimilarityArgumentBranches(t *testing.T) {
 // 0 keeps the pairs sharing nothing, and useComponents keeps pairs within
 // one component, as GDS 2.13.12 gives on the same graph (#1197 review).
 func TestNodeSimilarityZeroCutoffAndComponents(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "ns"))
 	_, err := exec.Execute(context.Background(), `CREATE (d1:D {name:'d1', comp: 1}), (d2:D {name:'d2', comp: 1}), (d3:D {name:'d3', comp: 2}),
 		(i1:I {name:'i1', comp: 1}), (i2:I {name:'i2', comp: 2}), (d1)-[:H]->(i1), (d2)-[:H]->(i1), (d3)-[:H]->(i2)`, nil)
@@ -256,8 +256,8 @@ func TestNodeSimilarityZeroCutoffAndComponents(t *testing.T) {
 // the component property is in the default component, and an undefined
 // weighted score (0/0) gives no row.
 func TestNodeSimilarityNeighboursAsGDS(t *testing.T) {
-	graphProjections = make(map[string]*GraphProjection)
-	t.Cleanup(func() { graphProjections = make(map[string]*GraphProjection) })
+	graphProjections = make(map[gdsProjectionKey]*GraphProjection)
+	t.Cleanup(func() { graphProjections = make(map[gdsProjectionKey]*GraphProjection) })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "ns"))
 	run := func(query string) [][]interface{} {
 		t.Helper()

@@ -4,7 +4,6 @@ import (
 	"context"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -102,7 +101,7 @@ func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereC
 // callers can tell "unrecognized" apart from "evaluated to null" and raise the
 // proper statement error (or route to the EXISTS-subquery machinery).
 func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[string]interface{}) interface{} {
-	return e.evaluateExpressionFromValuesContext(context.Background(), expr, values)
+	return e.evaluateExpressionFromValuesContext(rowStatementContextOrBackground(values), expr, values)
 }
 
 // evaluateRowFallback is the row evaluator's fallback to the shared
@@ -113,13 +112,9 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}) (interface{}, error) {
 	// The slot names expr as the row evaluator's: the shared evaluator
 	// evaluates it itself rather than hand it back (handedBackByRowEvaluator).
-	ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{rowFallback: expr})
-	// Keep the statement's clock for the functions that read it (decay, #866).
-	if statement, ok := values[rowStatementContextKey].(context.Context); ok {
-		if instant, ok := statement.Value(temporalStatementTimeKey{}).(time.Time); ok {
-			ctx = context.WithValue(ctx, temporalStatementTimeKey{}, instant)
-		}
-	}
+	// Preserve the complete statement context across the evaluator bridge:
+	// principal, entitlements, transaction and clock travel together.
+	ctx := context.WithValue(rowStatementContextOrBackground(values), expressionFailureKey{}, &expressionFailure{rowFallback: expr})
 	// And the statement's Cypher version, which the row carries.
 	if rowIsCypher25(values) {
 		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
@@ -231,7 +226,7 @@ func (e *StorageExecutor) evaluateCaseExpressionFromValues(expr string, values m
 	// The shared CASE evaluator resolves non-entity variables through the
 	// context value bindings, so the values scope is passed the same way as
 	// every other scope instead of using a parallel evaluator.
-	return e.evaluateCaseExpression(withValueBindings(context.Background(), values), expr, nil, nil, nil, nil, nil, 0)
+	return e.evaluateCaseExpression(withValueBindings(rowStatementContextOrBackground(values), values), expr, nil, nil, nil, nil, nil, 0)
 }
 
 // evaluateConditionFromValues evaluates a boolean condition over a computed
@@ -239,7 +234,7 @@ func (e *StorageExecutor) evaluateCaseExpressionFromValues(expr string, values m
 // carried as context bindings, mirroring how the main expression evaluator
 // resolves non-entity variables.
 func (e *StorageExecutor) evaluateConditionFromValues(condition string, values map[string]interface{}) bool {
-	return e.evaluateCondition(withValueBindings(context.Background(), values), condition, nil, nil)
+	return e.evaluateCondition(withValueBindings(rowStatementContextOrBackground(values), values), condition, nil, nil)
 }
 
 func parseLiteralValueFromComputedRow(expr string) (interface{}, bool) {

@@ -74,7 +74,29 @@ func (e *StorageExecutor) sessionIsComposite() bool {
 }
 
 func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor {
-	cloned := NewStorageExecutor(store)
+	return e.cloneForDatabaseStorage(store, "")
+}
+
+// StatementExecutorFinisher finishes a routed executor (USE target, Fabric
+// fragment) after it admitted its statement: the target's search service and
+// mutation callback, and publication when shared. A database manager offers
+// one through StatementExecutorFinisher, returning nil when it has no
+// transport owner to finish with.
+type StatementExecutorFinisher func(database string, engine storage.Engine, executor *StorageExecutor, shared bool)
+
+// statementExecutorFinisher is manager's available finisher, or nil.
+func statementExecutorFinisher(manager DatabaseManagerInterface) StatementExecutorFinisher {
+	owner, ok := manager.(interface {
+		StatementExecutorFinisher() StatementExecutorFinisher
+	})
+	if !ok {
+		return nil
+	}
+	return owner.StatementExecutorFinisher()
+}
+
+func (e *StorageExecutor) cloneForDatabaseStorage(store storage.Engine, database string) *StorageExecutor {
+	cloned := NewStatementExecutor(store)
 	cloned.deferFlush = e.deferFlush
 	cloned.ShareEmbedderFrom(e)
 	cloned.sharedExecutor = e.sharedExecutor
@@ -113,6 +135,18 @@ func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor
 	}
 	e.shellParamsMu.RUnlock()
 	cloned.shellParamsByToken = cloneShellParamsByToken(e)
+	if finish := statementExecutorFinisher(cloned.dbManager); finish != nil {
+		if database == "" {
+			database = cloned.currentDatabaseName()
+		}
+		// A routed executor needs the target's services. Bind their
+		// transport owner now, but open them only after target admission.
+		// Without an available owner the clone keeps what it inherited.
+		cloned.searchService = nil
+		cloned.SetFirstAdmission(func() {
+			finish(database, store, cloned, cloned.sharedExecutor)
+		})
+	}
 
 	return cloned
 }
@@ -165,7 +199,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 		if !ok {
 			return nil, "", localizedError(localization.CypherCommandRoutingUseStorageTypeInvalid(targetDB), nil)
 		}
-		return e.cloneForStorage(store), targetDB, nil
+		return e.cloneForDatabaseStorage(store, targetDB), targetDB, nil
 	}
 
 	// Without a database manager (embedded), a namespaced store switches
@@ -174,7 +208,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 	if !ok {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseBackendUnsupported(targetDB), nil)
 	}
-	return e.cloneForStorage(storage.NewNamespacedEngine(ns.GetInnerEngine(), targetDB)), targetDB, nil
+	return e.cloneForDatabaseStorage(storage.NewNamespacedEngine(ns.GetInnerEngine(), targetDB), targetDB), targetDB, nil
 }
 
 // TransactionDatabases resolves database names for TransactionDatabaseError:
@@ -440,7 +474,7 @@ func (e *StorageExecutor) resolveCompositeStorage(compositeName string, authToke
 		return nil, "", localizedError(localization.CypherCommandRoutingUseStorageTypeInvalid(compositeName), nil)
 	}
 
-	return e.cloneForStorage(engine), compositeName, nil
+	return e.cloneForDatabaseStorage(engine, compositeName), compositeName, nil
 }
 
 // resolveCompositeConstituent resolves USE <composite.alias> to a specific
@@ -467,5 +501,5 @@ func (e *StorageExecutor) resolveCompositeConstituent(fullName, compositeName, a
 		return nil, "", localizedError(localization.CypherCommandRoutingUseFailed(fullName, err), err)
 	}
 
-	return e.cloneForStorage(constituentEngine), fullName, nil
+	return e.cloneForDatabaseStorage(constituentEngine, fullName), fullName, nil
 }

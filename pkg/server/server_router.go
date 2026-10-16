@@ -122,7 +122,9 @@ func (s *Server) registerNeo4jRoutes(mux *http.ServeMux, uiHandler *uiHandler) {
 	// Pattern: /db/{databaseName}/tx for explicit transaction creation
 	// Pattern: /db/{databaseName}/tx/{txId} for transaction operations
 	// Pattern: /db/{databaseName}/tx/{txId}/commit for transaction commit
-	mux.HandleFunc("/db/", s.withAuth(s.handleDatabaseEndpoint, auth.PermRead))
+	// Each database operation admits its own effect through the principal's
+	// resolver. Transaction control (including own TERMINATE) needs no read.
+	mux.HandleFunc("/db/", s.withAuth(s.handleDatabaseEndpoint, ""))
 }
 
 func (s *Server) registerHealthRoutes(mux *http.ServeMux) {
@@ -145,9 +147,9 @@ func (s *Server) registerAuthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/auth/logout", s.handleLogout)
 
 	s.registerRouteTable(mux, []routeSpec{
-		{"/auth/me", auth.PermRead, s.handleMe},
-		{"/auth/password", auth.PermRead, s.handleChangePassword},     // Users can change their own password
-		{"/auth/profile", auth.PermRead, s.handleUpdateProfile},       // Users can update their own profile
+		{"/auth/me", "", s.handleMe},
+		{"/auth/password", "", s.handleChangePassword}, // Authenticated users manage their own account.
+		{"/auth/profile", "", s.handleUpdateProfile},
 		{"/auth/api-token", auth.PermAdmin, s.handleGenerateAPIToken}, // Admin only - generate API tokens
 	})
 
@@ -163,7 +165,7 @@ func (s *Server) registerAuthRoutes(mux *http.ServeMux) {
 		{"/auth/roles/", auth.PermAdmin, s.handleRoleByID},
 		{"/auth/access/databases", auth.PermAdmin, s.handleAccessDatabases},
 		{"/auth/access/privileges", auth.PermAdmin, s.handleAccessPrivileges},
-		{"/auth/entitlements", auth.PermRead, s.handleEntitlements},
+		{"/auth/entitlements", "", s.handleEntitlements},
 		{"/auth/role-entitlements", auth.PermAdmin, s.handleRoleEntitlements},
 	})
 }
@@ -319,7 +321,7 @@ func (s *Server) registerGraphQLRoutes(mux *http.ServeMux) {
 		return
 	}
 
-	// GraphQL endpoint - read access required; enrich request with RBAC for per-DB enforcement
+	// GraphQL fields decide their own effects using the same resolver.
 	mux.HandleFunc("/graphql", s.withAuth(func(w http.ResponseWriter, r *http.Request) {
 		r = s.withBifrostRBAC(r)
 		if os.Getenv("NORNICDB_TRACE_GRAPHQL") != "" {
@@ -329,7 +331,7 @@ func (s *Server) registerGraphQLRoutes(mux *http.ServeMux) {
 			return
 		}
 		s.graphqlHandler.ServeHTTP(w, r)
-	}, auth.PermRead))
+	}, ""))
 
 	// GraphQL Playground - interactive IDE (read access required)
 	if !s.config.Headless {
