@@ -199,6 +199,8 @@ func (b *BadgerEngine) GetSchema() *SchemaManager {
 
 // Close closes the BadgerDB database.
 func (b *BadgerEngine) Close() error {
+	b.closeMu.Lock()
+	defer b.closeMu.Unlock()
 	// Stop the background backfills before taking the write barrier: they
 	// write through withUpdate and must not be left waiting on a barrier
 	// this goroutine holds while it waits for them to stop.
@@ -230,14 +232,14 @@ func (b *BadgerEngine) Close() error {
 
 	// Wait for every in-flight durable write (see writeBarrier) so no
 	// commit that already reached Badger has its publication tail torn by
-	// the release below, and hold the barrier through db.Close so no new
-	// write reaches a closing Badger handle.
+	// the release below. Mark closed before releasing the barrier; later
+	// writers fail before reaching Badger, while listeners can re-enter.
 	b.writeBarrier.Lock()
-	defer b.writeBarrier.Unlock()
 
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()
+		b.writeBarrier.Unlock()
 		return nil
 	}
 	if b.lifecycleController != nil {
@@ -247,6 +249,9 @@ func (b *BadgerEngine) Close() error {
 	b.closed = true
 	db := b.db
 	b.mu.Unlock()
+	// Publication has finished and new writes observe closed. Do not retain
+	// the barrier while listeners re-enter storage; keep state until they finish.
+	b.writeBarrier.Unlock()
 
 	// Drain in-flight node-deleted notifications before releasing the
 	// callback fields and other engine state they run against (#726). No
