@@ -48,7 +48,16 @@ func TestNodePopulationRestoresCapacityBeforeFirstMutation(t *testing.T) {
 					case "remove_edge":
 						err = svc.RemoveEdge(existing.ID)
 					}
-					require.ErrorIs(t, err, ErrIndexMemoryBudgetExceeded)
+					// The write never runs the population inline; it is folded into
+					// the population it starts, which restores the saved image under
+					// the same budget.
+					require.NoError(t, err)
+					admissionErr := waitNodeAdmission(t, svc)
+					if operation == "new_node" {
+						require.NoError(t, admissionErr, "the restored population fits; the folded write is refused")
+					} else {
+						require.ErrorIs(t, admissionErr, ErrIndexMemoryBudgetExceeded, "the restored population exceeds the budget")
+					}
 					assert.False(t, svc.IsReady())
 					assert.Contains(t, svc.indexCapacityByNode, "nornic:a")
 					assert.NotContains(t, svc.indexCapacityByNode, "nornic:b")

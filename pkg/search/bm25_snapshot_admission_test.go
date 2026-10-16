@@ -76,6 +76,7 @@ func TestBM25RejectedCheckpointRebuildsInitialNodePopulation(t *testing.T) {
 						_, err = engine.CreateNode(b)
 						require.NoError(t, err)
 						require.NoError(t, svc.IndexNode(b))
+						require.NoError(t, waitNodeAdmission(t, svc), "the write-started population")
 						// In the live-first route these assertions precede any later
 						// BuildIndexes call that could repair a partial initial base.
 						assert.Positive(t, engine.nodeReads, "rejected text requires real NODE rebuilding")
@@ -206,6 +207,7 @@ func TestBM25AcceptedCheckpointPreservesNodeRestore(t *testing.T) {
 						_, err = engine.CreateNode(b)
 						require.NoError(t, err)
 						require.NoError(t, svc.IndexNode(b))
+						require.NoError(t, waitNodeAdmission(t, svc), "the write-started population")
 						assert.Zero(t, engine.nodeReads, "accepted restoration must retain its no-traversal route")
 						response, err := svc.Search(ctx, "aterm", nil, &SearchOptions{Limit: 10})
 						require.NoError(t, err)

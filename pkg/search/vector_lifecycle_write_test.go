@@ -147,3 +147,23 @@ func TestCloseJoinsWriteStartedPopulation(t *testing.T) {
 	_, _, ok := svc.runWorker(context.Background(), workerAdmission)
 	require.False(t, ok, "a closed service admitted a worker")
 }
+
+// waitNodeAdmission joins the NODE population a live write started (or the
+// last one) and returns its outcome. Writes no longer admit synchronously, so
+// tests observe the folded state only after this join.
+func waitNodeAdmission(t *testing.T, svc *Service) error {
+	t.Helper()
+	svc.baseBuildControlMu.Lock()
+	job := svc.nodeAdmission
+	svc.baseBuildControlMu.Unlock()
+	if job == nil {
+		return nil
+	}
+	select {
+	case <-job.done:
+		return job.err
+	case <-time.After(10 * time.Second):
+		t.Fatal("the NODE population started by a live write did not finish")
+		return nil
+	}
+}

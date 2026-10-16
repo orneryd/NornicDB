@@ -80,6 +80,9 @@ func TestHandleSearch_ReadinessChangesAfterInitialCheck(t *testing.T) {
 	_, err = engine.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}, ChunkEmbeddings: [][]float32{vector}})
 	require.NoError(t, err)
 	gated := &iterationGatedEngine{Engine: engine}
+	// The database may already own a service built over its plain engine;
+	// replace it so the next service traverses through the gate.
+	server.db.ResetSearchService(database)
 	service, err := server.db.GetOrCreateSearchService(database, gated)
 	require.NoError(t, err)
 	// Wait for the DB owner's initial build; starting a second BuildIndexes
