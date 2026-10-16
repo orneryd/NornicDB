@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -381,4 +382,49 @@ func TestEngineGetQueryNodeCache(t *testing.T) {
 			require.ErrorIs(t, err, ErrNotFound)
 		})
 	}
+}
+
+// TestEngineGetQueryNodeCacheConcurrentWrites: query-node reads running
+// alongside full reads and updates never serve a write's predecessor once the
+// write returns: the last update is what the next query-node read returns.
+func TestEngineGetQueryNodeCacheConcurrentWrites(t *testing.T) {
+	b := newSidecarTestBadger(t)
+	id := NodeID("test:lazy")
+	lazyEmbeddingCases()[0].create(t, b, id)
+	stop := make(chan struct{})
+	var readers sync.WaitGroup
+	for r := 0; r < 4; r++ {
+		readers.Add(1)
+		go func(full bool) {
+			defer readers.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				var err error
+				if full {
+					_, err = b.GetNode(id)
+				} else {
+					_, err = b.GetQueryNode(id)
+				}
+				if err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}(r%2 == 0)
+	}
+	for v := int64(1); v <= 200; v++ {
+		node, err := b.GetNode(id)
+		require.NoError(t, err)
+		node.Properties["v"] = v
+		require.NoError(t, b.UpdateNode(node))
+		got, err := b.GetQueryNode(id)
+		require.NoError(t, err)
+		require.Equal(t, v, got.Properties["v"])
+	}
+	close(stop)
+	readers.Wait()
 }
