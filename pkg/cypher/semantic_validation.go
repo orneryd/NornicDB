@@ -770,35 +770,3 @@ func invalidAggregationInListComprehension(cypher string) bool {
 	return false
 }
 
-// callSubqueryBodyCarrying is a CALL (…) body's text with each of its WITH
-// clauses projecting the imports it carries (pipelineWithCarrying), for the
-// update-clause scope check: SET x.p = y after WITH 1 AS y reads the
-// imported x. Each UNION branch is rewritten alike.
-func callSubqueryBodyCarrying(body string, carried pipelineRow) string {
-	branches, unionAll, mixed, union := parseTopLevelUnionBranches(body)
-	if !union || mixed || len(branches) < 2 {
-		branches = []string{body}
-	}
-	for index, branch := range branches {
-		clauses, ok := splitPipelineClauses(strings.TrimSpace(branch))
-		if !ok {
-			continue
-		}
-		texts := make([]string, len(clauses))
-		for position, clause := range clauses {
-			texts[position] = clause.text
-			if clause.kind == pipelineClauseWith {
-				texts[position] = pipelineWithCarrying(clause.text, carried)
-			}
-		}
-		branches[index] = strings.Join(texts, " ")
-	}
-	if len(branches) == 1 {
-		return branches[0]
-	}
-	separator := " UNION "
-	if unionAll {
-		separator = " UNION ALL "
-	}
-	return strings.Join(branches, separator)
-}
