@@ -184,9 +184,6 @@
 - id: cyphergraphprocedures.invalid_list_types
   description: GDS's message for a node filter list holding values that are neither nodes nor ids. Types untranslated.
   other: 'Invalid types in list. Expected Longs or Nodes but found {{.Types}}'
-- id: cyphergraphprocedures.unsafe_double_conversion
-  description: GDS's message for a Long outside the Double import bound. Value untranslated.
-  other: 'Cannot safely convert {{.Value}} into an double value'
 - id: cyphergraphprocedures.project_distinct
   description: DISTINCT on the GDS projection function.
   other: "Invalid use of DISTINCT with function 'project'"
