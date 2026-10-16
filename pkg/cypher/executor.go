@@ -1823,7 +1823,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// Commit successful transaction. The statement's context makes commit-time
 	// validation stop when the statement is terminated or its client goes away
 	// (#1115); the deferred handler in Execute reports Transaction.Terminated.
-	if err := tx.CommitContext(ctx); err != nil {
+	if err := e.commitStorageTransaction(ctx, tx); err != nil {
 		txExec.invalidateNodeLookupCache()
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
