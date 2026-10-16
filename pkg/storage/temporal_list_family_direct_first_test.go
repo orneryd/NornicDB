@@ -34,8 +34,8 @@ func tlfCurrentLockState(sm *SchemaManager, waiter string) (waiting bool, held, 
 	return waiting, len(sm.uniqueConstraintCommitLocks), len(sm.uniqueConstraintLockWaits)
 }
 
-// TestTemporalListFamilyTemporalCompositeListCommitLocksDirectFirst closes the two
-// acquisition orders not covered by the retained TX-first fixture. A direct
+// TestTemporalListFamilyTemporalCompositeListCommitLocksDirectFirst covers the
+// two acquisition orders where a direct write takes the lock first. A direct
 // node create is held after its Badger commit while it still owns the complete
 // composite/list-bearing temporal lock; a transaction or a second direct
 // writer must wait, then recheck and reject the overlapping equivalent key.
