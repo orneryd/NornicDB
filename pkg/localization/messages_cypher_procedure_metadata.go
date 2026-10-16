@@ -12,6 +12,9 @@ const (
 	MessageCypherProcedureMetadataDbConstraints                                 MessageID = "cypherproceduremetadata.db_constraints"
 	MessageCypherProcedureMetadataDbCreateSetNodeVectorProperty                 MessageID = "cypherproceduremetadata.db_create_setnodevectorproperty"
 	MessageCypherProcedureMetadataDbCreateSetRelationshipVectorProperty         MessageID = "cypherproceduremetadata.db_create_setrelationshipvectorproperty"
+	MessageCypherProcedureMetadataDbEmbeddingPause                              MessageID = "cypherproceduremetadata.db_embedding_pause"
+	MessageCypherProcedureMetadataDbEmbeddingResume                             MessageID = "cypherproceduremetadata.db_embedding_resume"
+	MessageCypherProcedureMetadataDbEmbeddingStatus                             MessageID = "cypherproceduremetadata.db_embedding_status"
 	MessageCypherProcedureMetadataDbIndexFulltextCreateNodeIndex                MessageID = "cypherproceduremetadata.db_index_fulltext_createnodeindex"
 	MessageCypherProcedureMetadataDbIndexFulltextCreateRelationshipIndex        MessageID = "cypherproceduremetadata.db_index_fulltext_createrelationshipindex"
 	MessageCypherProcedureMetadataDbIndexFulltextDrop                           MessageID = "cypherproceduremetadata.db_index_fulltext_drop"
@@ -140,6 +143,21 @@ func CypherProcedureMetadataDbCreateSetNodeVectorProperty() Message {
 // CypherProcedureMetadataDbCreateSetRelationshipVectorProperty describes db.create.setRelationshipVectorProperty in procedure listings.
 func CypherProcedureMetadataDbCreateSetRelationshipVectorProperty() Message {
 	return Message{ID: MessageCypherProcedureMetadataDbCreateSetRelationshipVectorProperty, Fallback: "Sets vector property on a relationship"}
+}
+
+// CypherProcedureMetadataDbEmbeddingPause describes db.embedding.pause in procedure listings.
+func CypherProcedureMetadataDbEmbeddingPause() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbEmbeddingPause, Fallback: "Pauses automatic embedding, kept across restarts; pending nodes stay pending"}
+}
+
+// CypherProcedureMetadataDbEmbeddingResume describes db.embedding.resume in procedure listings.
+func CypherProcedureMetadataDbEmbeddingResume() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbEmbeddingResume, Fallback: "Resumes automatic embedding of pending nodes"}
+}
+
+// CypherProcedureMetadataDbEmbeddingStatus describes db.embedding.status in procedure listings.
+func CypherProcedureMetadataDbEmbeddingStatus() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbEmbeddingStatus, Fallback: "Reports whether automatic embedding is paused and how many nodes are pending"}
 }
 
 // CypherProcedureMetadataDbIndexFulltextCreateNodeIndex describes db.index.fulltext.createNodeIndex in procedure listings.
@@ -567,6 +585,9 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"db.constraints":                                   CypherProcedureMetadataDbConstraints,
 	"db.create.setNodeVectorProperty":                  CypherProcedureMetadataDbCreateSetNodeVectorProperty,
 	"db.create.setRelationshipVectorProperty":          CypherProcedureMetadataDbCreateSetRelationshipVectorProperty,
+	"db.embedding.pause":                               CypherProcedureMetadataDbEmbeddingPause,
+	"db.embedding.resume":                              CypherProcedureMetadataDbEmbeddingResume,
+	"db.embedding.status":                              CypherProcedureMetadataDbEmbeddingStatus,
 	"db.index.fulltext.createNodeIndex":                CypherProcedureMetadataDbIndexFulltextCreateNodeIndex,
 	"db.index.fulltext.createRelationshipIndex":        CypherProcedureMetadataDbIndexFulltextCreateRelationshipIndex,
 	"db.index.fulltext.drop":                           CypherProcedureMetadataDbIndexFulltextDrop,

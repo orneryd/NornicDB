@@ -16,6 +16,12 @@
   other: "[!! Sets vector property on a node !!]"
 - id: cypherproceduremetadata.db_create_setrelationshipvectorproperty
   other: "[!! Sets vector property on a relationship !!]"
+- id: cypherproceduremetadata.db_embedding_pause
+  other: "[!! Pauses automatic embedding, kept across restarts; pending nodes stay pending !!]"
+- id: cypherproceduremetadata.db_embedding_resume
+  other: "[!! Resumes automatic embedding of pending nodes !!]"
+- id: cypherproceduremetadata.db_embedding_status
+  other: "[!! Reports whether automatic embedding is paused and how many nodes are pending !!]"
 - id: cypherproceduremetadata.db_index_fulltext_createnodeindex
   other: "[!! Creates fulltext index on nodes !!]"
 - id: cypherproceduremetadata.db_index_fulltext_createrelationshipindex

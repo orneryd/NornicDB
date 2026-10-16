@@ -263,6 +263,9 @@ func TestBuiltInProcedureMetadataDescriptorCoverage(t *testing.T) {
 		if spec.Name == "db.retrieveRelationships" || spec.Name == "db.retrieveGraph" || spec.Name == "db.rretrieveGraph" {
 			coreCount-- // relationship search's procedures, counted apart (#1065)
 		}
+		if strings.HasPrefix(spec.Name, "db.embedding.") {
+			coreCount-- // TestEmbeddingControlProcedures (#1021)
+		}
 		require.NotEmpty(t, spec.DescriptionMessage.ID, "core metadata requires a descriptor: %s", spec.Name)
 		require.Equal(t, spec.Description, spec.DescriptionMessage.Fallback, "English fallback changed: %s", spec.Name)
 	}

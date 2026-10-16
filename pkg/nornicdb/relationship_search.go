@@ -22,6 +22,12 @@ var errRelationshipEmbedderUnavailable = errors.New("no embedder loaded for rela
 // chunks and embedded as a node's is, with the database's embedder.
 func (db *DB) relationshipEmbedFunc(dbName string) search.RelationshipEmbedFunc {
 	return func(ctx context.Context, edge *storage.Edge) (search.RelationshipEmbedding, error) {
+		// Relationship embedding is automatic embedding too: an
+		// administrator's pause holds it here, asleep until the resume; a
+		// shutdown's error returns the relationship to its pending set.
+		if err := db.embeddingPause.wait(ctx); err != nil {
+			return search.RelationshipEmbedding{}, err
+		}
 		db.mu.RLock()
 		queue := db.embedQueue
 		config := db.embedWorkerConfig

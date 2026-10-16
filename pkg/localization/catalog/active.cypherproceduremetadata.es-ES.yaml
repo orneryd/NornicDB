@@ -16,6 +16,12 @@
   other: "Establece una propiedad vectorial en un nodo"
 - id: cypherproceduremetadata.db_create_setrelationshipvectorproperty
   other: "Establece una propiedad vectorial en una relación"
+- id: cypherproceduremetadata.db_embedding_pause
+  other: "Pausa el embedding automático, también tras un reinicio; los nodos pendientes siguen pendientes"
+- id: cypherproceduremetadata.db_embedding_resume
+  other: "Reanuda el embedding automático de los nodos pendientes"
+- id: cypherproceduremetadata.db_embedding_status
+  other: "Indica si el embedding automático está en pausa y cuántos nodos están pendientes"
 - id: cypherproceduremetadata.db_index_fulltext_createnodeindex
   other: "Crea un índice de texto completo en nodos"
 - id: cypherproceduremetadata.db_index_fulltext_createrelationshipindex

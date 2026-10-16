@@ -19,7 +19,7 @@ The server exposes the full list at **GET /auth/entitlements** (requires read pe
 | **write** | Write | Write data: Cypher CREATE/DELETE/SET/MERGE (when ResolvedAccess.Write for that DB), `/nornicdb/embed/trigger` (except `?regenerate=true`, which clears embeddings and needs admin), `/nornicdb/embed/retry-failures`, `/nornicdb/search/rebuild`, Bifrost/GraphQL mutations, MCP write. |
 | **create** | Create | Create operations (resource creation where distinguished from write). |
 | **delete** | Delete | Delete operations: e.g. `/gdpr/delete`. |
-| **admin** | Admin | Admin-only: `/auth/api-token`, `/auth/roles`, `/auth/roles/*`, `/auth/access/databases`, `/auth/access/privileges`, `/auth/entitlements` (read-only list), `/nornicdb/embed/clear` and `/nornicdb/embed/trigger?regenerate=true` (both also need write access to each named database), `/admin/*` (stats, config, backup, GPU), Qdrant snapshots. Implies full system control. |
+| **admin** | Admin | Admin-only: `/auth/api-token`, `/auth/roles`, `/auth/roles/*`, `/auth/access/databases`, `/auth/access/privileges`, `/auth/entitlements` (read-only list), `/nornicdb/embed/clear` and `/nornicdb/embed/trigger?regenerate=true` (both also need write access to each named database), `/nornicdb/embed/pause`, `/nornicdb/embed/resume`, `/nornicdb/embed/status` (and the `db.embedding.pause` / `resume` / `status` procedures), `/admin/*` (stats, config, backup, GPU), Qdrant snapshots. Implies full system control. |
 | **schema** | Schema | Schema operations: Bolt INDEX/CONSTRAINT Cypher. Required for creating/dropping indexes and constraints. |
 | **user_manage** | User management | User management: `/auth/users`, `/auth/users/*` (list, create, update, delete users). Distinct from admin (roles/DB access). |
 

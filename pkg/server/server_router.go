@@ -191,6 +191,9 @@ func (s *Server) registerNornicDBRoutes(mux *http.ServeMux) {
 		{"/nornicdb/embed/failures", auth.PermRead, s.handleEmbedFailures},
 		{"/nornicdb/embed/retry-failures", auth.PermWrite, s.handleEmbedFailureRetry},
 		{"/nornicdb/embed/clear", auth.PermAdmin, s.handleEmbedClear},
+		{"/nornicdb/embed/pause", auth.PermAdmin, s.handleEmbedPause},
+		{"/nornicdb/embed/resume", auth.PermAdmin, s.handleEmbedResume},
+		{"/nornicdb/embed/status", auth.PermAdmin, s.handleEmbedStatus},
 		{"/nornicdb/search/rebuild", auth.PermWrite, s.handleSearchRebuild},
 	})
 }

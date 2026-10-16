@@ -72,6 +72,16 @@ type EmbedWorker struct {
 	// restoreHolds counts the restores holding the worker (holdForRestore);
 	// while one does, it claims no nodes and doesn't scan the store.
 	restoreHolds atomic.Int32
+	// operatorPaused is an administrator's pause (db.embedding.pause, #1021):
+	// workers claim no nodes and wait, with no timer, for the resume's
+	// readiness broadcast. Claimed nodes finish; pending ones stay pending.
+	operatorPaused atomic.Bool
+	// passes counts worker loop passes, so a test can prove a paused worker
+	// stays asleep.
+	passes atomic.Int64
+	// pausedWaiting counts workers asleep in the paused wait, so a test can
+	// tell when every worker has settled.
+	pausedWaiting atomic.Int32
 
 	// Recently processed node IDs to prevent re-processing before DB commit is visible
 	// This prevents the same node being processed multiple times in quick succession
@@ -159,6 +169,10 @@ type EmbedWorkerConfig struct {
 	// DeferWorkerStart, when true, creates the queue but does not start worker goroutines.
 	// Call StartWorkers() after the database has warmed up (e.g. after search index build).
 	DeferWorkerStart bool
+
+	// StartPaused creates the queue paused (SetPaused), so a queue created
+	// while an administrator's pause holds never claims a node.
+	StartPaused bool
 }
 
 // DefaultEmbedWorkerConfig returns sensible defaults.
@@ -213,6 +227,7 @@ func NewEmbedWorker(embedder embed.Embedder, storage storage.Engine, config *Emb
 		providerRetries:   make(map[string]providerRetryState),
 		claimedNodes:      make(map[string]struct{}),
 	}
+	ew.operatorPaused.Store(config.StartPaused)
 
 	// Start N workers unless deferred until after DB warmup
 	if !config.DeferWorkerStart {
@@ -321,6 +336,20 @@ func (ew *EmbedWorker) SetShouldYield(fn func() bool) {
 	ew.signalAllWorkers()
 }
 
+// SetPaused pauses or resumes background embedding. Paused, workers claim
+// no new node and sleep until resumed; a node already claimed is embedded and
+// written. Resuming wakes every worker to take the pending nodes.
+func (ew *EmbedWorker) SetPaused(paused bool) {
+	if ew.operatorPaused.Swap(paused) != paused {
+		ew.signalAllWorkers()
+	}
+}
+
+// Paused reports whether background embedding is paused (SetPaused).
+func (ew *EmbedWorker) Paused() bool {
+	return ew.operatorPaused.Load()
+}
+
 // Trigger wakes up the worker to check for nodes without embeddings.
 // Call this after creating a new node.
 func (ew *EmbedWorker) Trigger() {
@@ -402,6 +431,9 @@ type WorkerStats struct {
 	Processed int  `json:"processed"`
 	Failed    int  `json:"failed"`
 	Parked    int  `json:"parked"`
+
+	// Paused is an administrator's pause (SetPaused).
+	Paused bool `json:"paused"`
 }
 
 // EmbeddingFailure describes a node parked after a terminal provider error.
@@ -443,6 +475,7 @@ func (ew *EmbedWorker) Stats() WorkerStats {
 		Processed: int(ew.processed.Load()),
 		Failed:    int(ew.failed.Load()),
 		Parked:    int(ew.parked.Load()),
+		Paused:    ew.operatorPaused.Load(),
 	}
 }
 
@@ -723,9 +756,25 @@ func (ew *EmbedWorker) worker() {
 		recoveryInterval = minRefreshOnEmptyInterval
 	}
 	for {
+		ew.passes.Add(1)
 		readiness := ew.readinessNotification()
 		if ew.closed.Load() || ew.ctx.Err() != nil {
 			return
+		}
+		if ew.operatorPaused.Load() {
+			// Only a resume (or another readiness broadcast) wakes a paused
+			// worker: no timer and no enqueue trigger, so it neither scans
+			// nor spins. The trigger stays buffered for after the resume.
+			ew.pausedWaiting.Add(1)
+			select {
+			case <-ew.ctx.Done():
+				ew.pausedWaiting.Add(-1)
+				fmt.Println("🧠 Embed worker stopped")
+				return
+			case <-readiness:
+			}
+			ew.pausedWaiting.Add(-1)
+			continue
 		}
 		paused := ew.embeddingPaused()
 		if ew.currentEmbedder() != nil && !paused {
@@ -757,6 +806,9 @@ func (ew *EmbedWorker) worker() {
 		// not read storage. Model loading, restore release and writes signal us.
 		// A pass that observed pressure must retain its bounded readiness retry
 		// even if the pressure clears before this final sample.
+		if ew.operatorPaused.Load() {
+			continue // paused during the pass: wait for the resume above
+		}
 		paused = ew.embeddingPaused() || paused
 		delay := recoveryInterval
 		if paused && ew.restoreHolds.Load() == 0 {
@@ -797,9 +849,10 @@ func (ew *EmbedWorker) waitForWorkDelay(delay time.Duration) bool {
 }
 
 // embeddingPaused is shared by every provider/batching path, so none can
-// claim nodes while a restore or foreground-pressure pause is active.
+// claim nodes while an administrator's, a restore or a foreground-pressure
+// pause is active.
 func (ew *EmbedWorker) embeddingPaused() bool {
-	if ew.restoreHolds.Load() > 0 {
+	if ew.operatorPaused.Load() || ew.restoreHolds.Load() > 0 {
 		return true
 	}
 	ew.mu.Lock()
@@ -1850,6 +1903,7 @@ func (s WorkerStats) MarshalJSON() ([]byte, error) {
 		"processed": s.Processed,
 		"failed":    s.Failed,
 		"parked":    s.Parked,
+		"paused":    s.Paused,
 	})
 }
 

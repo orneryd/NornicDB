@@ -125,6 +125,21 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexVectorEmbed(ctx, args)
 			})
+		// Automatic embedding's pause (#1021): administrators only, for the
+		// whole DBMS, so callable from the system database too.
+		pauseEmbedding, resumeEmbedding := true, false
+		registerAdminBuiltInProcedure("db.embedding.pause", "db.embedding.pause() :: (paused :: BOOLEAN, pending :: INTEGER)", localization.CypherProcedureMetadata("db.embedding.pause"), ProcedureModeDBMS, 0, 0, true,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callEmbeddingControl(ctx, &pauseEmbedding)
+			})
+		registerAdminBuiltInProcedure("db.embedding.resume", "db.embedding.resume() :: (paused :: BOOLEAN, pending :: INTEGER)", localization.CypherProcedureMetadata("db.embedding.resume"), ProcedureModeDBMS, 0, 0, true,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callEmbeddingControl(ctx, &resumeEmbedding)
+			})
+		registerAdminBuiltInProcedure("db.embedding.status", "db.embedding.status() :: (paused :: BOOLEAN, pending :: INTEGER)", localization.CypherProcedureMetadata("db.embedding.status"), ProcedureModeDBMS, 0, 0, true,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return e.callEmbeddingControl(ctx, nil)
+			})
 		registerProcedure(vectorCreateNodeProcedureSpec(),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbIndexVectorCreateIndex(ctx, args, storage.ConstraintEntityNode)

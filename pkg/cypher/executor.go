@@ -381,6 +381,10 @@ type StorageExecutor struct {
 	// If set, vector search can accept string queries which are embedded automatically
 	queryEmbedder *QueryEmbedderBinding
 
+	// embeddingController pauses and resumes automatic embedding
+	// (db.embedding.*); nil where the executor has no database behind it.
+	embeddingController EmbeddingController
+
 	// searchService optionally provides unified search semantics for Cypher procedures.
 	// When set, db.index.vector.queryNodes delegates to search.Service.
 	searchService *search.Service
@@ -563,6 +567,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		nodeLookupCacheMu:              lookupCacheMu,
 		deferFlush:                     e.deferFlush,
 		queryEmbedder:                  e.queryEmbedder,
+		embeddingController:            e.embeddingController,
 		searchService:                  e.searchService,
 		inferenceManager:               e.inferenceManager,
 		localizationRenderer:           e.localizationRenderer,
