@@ -59,8 +59,9 @@ When evidence requires a different causal owner, document that decision and remo
 
 Creating new behavioral divergence is prohibited. Do not add parser-, route-, transport-, or evaluator-specific
 leaf workarounds, duplicate formulas, or parallel implementations of the same contract. Converge affected
-existing divergence encountered in the current correction unit through the established shared owner whenever
-possible. Preserve genuine protocol boundaries, but do not use those boundaries to excuse duplicated behavior.
+existing divergence encountered in the current correction unit through one shared semantic owner. If the
+existing owner cannot carry the contract, change the causal architecture and migrate the complete unit; do
+not retain parallel implementations or defer that convergence. Preserve genuine protocol boundaries, but do not use those boundaries to excuse duplicated behavior.
 
 Graphify is mandatory for finding overlapping implementations and verifying that a correction converges the
 whole affected family. Follow [the local Graphify workflow](docs/user-guides/graphify-local.md): extract fresh
@@ -74,7 +75,8 @@ Record the repository, database, base/candidate source SHAs, graph artifacts, ex
 `CodeRepository` commit metadata, embedding readiness, semantic search requests/results, and call-graph/source
 review. Verify that ingested metadata and searchable affected symbols match the candidate source; stale graphs
 or unfinished embeddings are not current proof. Use configured credentials without printing or hardcoding
-secrets. Missing Graphify, ingestion, authenticated MCP access, or current searchable graph evidence blocks
+secrets. Preserve unrelated graph data and repository snapshots; use explicit snapshot/database targets when
+extracting or ingesting different worktrees, and never relabel stale graph contents as a current revision. Missing Graphify, ingestion, authenticated MCP access, or current searchable graph evidence blocks
 readiness; report the missing prerequisite rather than waiving it. Keep generated graph artifacts ignored.
 
 ## 4. Convergence and Rule 73
