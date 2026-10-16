@@ -5,45 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
-
-// unitVectorEmbedder embeds every text as the same unit vector, so a query
-// with that vector finds every embedded node by vector, and by nothing else.
-type unitVectorEmbedder struct {
-	dims int
-}
-
-var _ embed.Embedder = (*unitVectorEmbedder)(nil)
-
-func (e *unitVectorEmbedder) Embed(context.Context, string) ([]float32, error) {
-	return unitVector(e.dims), nil
-}
-
-func (e *unitVectorEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	out := make([][]float32, len(texts))
-	for i := range texts {
-		out[i], _ = e.Embed(ctx, texts[i])
-	}
-	return out, nil
-}
-
-func (e *unitVectorEmbedder) Dimensions() int { return e.dims }
-func (e *unitVectorEmbedder) Model() string   { return "unit-vector-test" }
-func (e *unitVectorEmbedder) Backend() string { return "cpu" }
-
-func (e *unitVectorEmbedder) ChunkText(text string, maxTokens, overlap int) ([]string, error) {
-	return chunkTestText(text, maxTokens, overlap)
-}
-
-func unitVector(dims int) []float32 {
-	vector := make([]float32, dims)
-	vector[0] = 1
-	return vector
-}
 
 // vectorOnlySearch searches for a word no node contains, so only a vector
 // match can answer it.
@@ -56,24 +21,17 @@ func vectorOnlySearch(t *testing.T, svc *search.Service, vector []float32) *sear
 	return response
 }
 
-func openVisibilityTestDB(t *testing.T, embeddingEnabled bool) *DB {
-	t.Helper()
-	config := DefaultConfig()
-	config.Memory.EmbeddingEnabled = embeddingEnabled
-	config.Memory.DecayEnabled = false
-	config.Memory.AutoLinksEnabled = false
-	db, err := Open(t.TempDir(), config)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-	return db
-}
-
 // Once the embed callback returns, which the worker does before it reports
 // the node embedded, a ready search service finds the persisted vector:
 // publication does not wait for the deferred search-mutation flush.
 func TestEmbeddedNodeIsSearchableWhenEmbedCallbackReturns(t *testing.T) {
 	ctx := context.Background()
-	db := openVisibilityTestDB(t, false)
+	config := DefaultConfig()
+	config.Memory.DecayEnabled = false
+	config.Memory.AutoLinksEnabled = false
+	db, err := Open(t.TempDir(), config)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
 	dbName := db.defaultDatabaseName()
 	svc, err := db.EnsureSearchIndexesBuilt(ctx, dbName, nil)
 	require.NoError(t, err)
@@ -81,7 +39,7 @@ func TestEmbeddedNodeIsSearchableWhenEmbedCallbackReturns(t *testing.T) {
 
 	_, err = db.storage.CreateNode(&storage.Node{ID: "source", Labels: []string{"SearchSource"}, Properties: map[string]interface{}{"content": "bravo filler"}})
 	require.NoError(t, err)
-	vector := unitVector(db.config.Memory.EmbeddingDimensions)
+	vector := unitVector(config.Memory.EmbeddingDimensions)
 	stored, err := db.storage.GetNode("source")
 	require.NoError(t, err)
 	embedded := storage.CopyNode(stored)
@@ -109,13 +67,10 @@ func TestEmbeddedNodeIsSearchableWhenEmbedCallbackReturns(t *testing.T) {
 // search on the already-ready service finds them by vector.
 func TestEmbeddingsAreSearchableWhenWaitForEmbeddingsReturns(t *testing.T) {
 	ctx := context.Background()
-	db := openVisibilityTestDB(t, true)
-	db.embedWorkerConfig.BatchDelay = 0
-	dims := db.config.Memory.EmbeddingDimensions
-	db.SetEmbedder(&unitVectorEmbedder{dims: dims})
-	svc, err := db.EnsureSearchIndexesBuilt(ctx, db.defaultDatabaseName(), nil)
+	const dims = 64
+	db := openEmbeddingSearchDB(t, dims)
+	svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), nil)
 	require.NoError(t, err)
-	require.True(t, svc.IsReady())
 
 	const sources = 3
 	for range sources {
