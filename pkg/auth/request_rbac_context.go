@@ -17,6 +17,7 @@ var (
 	requestRBACKeyDatabaseAccessMode     = requestRBACKey("database_access_mode")
 	requestRBACKeyEntitlementResolver    = requestRBACKey("entitlement_resolver")
 	requestRBACKeyDatabaseScope          = requestRBACKey("database_scope")
+	requestRBACKeyAuthenticationDisabled = requestRBACKey("authentication_disabled")
 )
 
 // RequestEntitlementResolver checks an effective permission for a database.
@@ -106,6 +107,22 @@ func WithRequestResolvedAccessResolver(ctx context.Context, fn func(string) Reso
 // read and write from it.
 func WithRequestEntitlementResolver(ctx context.Context, resolver RequestEntitlementResolver) context.Context {
 	return context.WithValue(ctx, requestRBACKeyEntitlementResolver, resolver)
+}
+
+// WithRequestAuthenticationDisabled marks a request the server serves with
+// authentication disabled, which therefore carries no principal. Callers that
+// authorize through the request principal (RequestEntitlementResolverFromContext)
+// treat a context with neither a resolver nor this mark as refused.
+func WithRequestAuthenticationDisabled(ctx context.Context) context.Context {
+	return context.WithValue(ctx, requestRBACKeyAuthenticationDisabled, true)
+}
+
+// RequestAuthenticationDisabledFromContext reports whether the server marked
+// the request as served with authentication disabled
+// (WithRequestAuthenticationDisabled).
+func RequestAuthenticationDisabledFromContext(ctx context.Context) bool {
+	disabled, _ := ctx.Value(requestRBACKeyAuthenticationDisabled).(bool)
+	return disabled
 }
 
 // WithRequestDatabaseScope attaches the server-derived database scope.
