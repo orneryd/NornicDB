@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/observability"
-	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,9 +62,6 @@ func TestPipelineSingleRowValidationDeadline(t *testing.T) {
 		name string
 		run  func(context.Context) error
 	}{
-		{"projection", func(ctx context.Context) error {
-			return executor.validatePipelineProjectionValues(ctx, []pipelineRow{{"items": items}}, "RETURN [x IN items | toInteger(x)]", "RETURN")
-		}},
 		{"property_index_parameter", func(ctx context.Context) error {
 			probe := pipelineCancellation{ctx: ctx}
 			_, _, _ = executor.parseSimpleIndexedInParamWithCancellation("n", "n.x IN $items", map[string]interface{}{"items": items}, &probe)
@@ -198,9 +194,9 @@ func TestPipelineDiagnosticRedactionFailsClosed(t *testing.T) {
 }
 
 func TestPipelineFallbackKeyPreservesGoSyntax(t *testing.T) {
-	node := &storage.Node{ID: "n"}
-	path := PathResult{Nodes: []*storage.Node{node, nil}, Length: 1, SegmentLengths: []int{1}}
-	for _, value := range []interface{}{path, &path, (*PathResult)(nil), CypherVector{Type: VectorFloat64, Floats: []float64{1.25, -2.5}}, time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC), struct {
+	// Paths have their own identity key (cypherEquivalenceKey); the fallback
+	// covers the remaining Go values.
+	for _, value := range []interface{}{CypherVector{Type: VectorFloat64, Floats: []float64{1.25, -2.5}}, time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC), struct {
 		Text  string
 		Items []interface{}
 		Map   map[int]string

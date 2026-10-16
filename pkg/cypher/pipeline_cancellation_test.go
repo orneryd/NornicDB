@@ -251,6 +251,12 @@ func TestPipelineStageDeadlineProbes(t *testing.T) {
 	for index := range rows {
 		rows[index] = pipelineRow{"x": int64(len(rows) - index), "nested": nested}
 	}
+	// Compiled per-row expressions make the cheap projection stages fast; they
+	// read the rows four times over so the deadline still falls inside them.
+	cheap := make([]pipelineRow, 0, 4*len(rows))
+	for range 4 {
+		cheap = append(cheap, rows...)
+	}
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	stages := []struct {
 		name string
@@ -264,7 +270,7 @@ func TestPipelineStageDeadlineProbes(t *testing.T) {
 			return executor.orderPipelineRowsWithScopes(ctx, rows, rows, parseOrderByTerms("ORDER BY x + 1 DESC"))
 		}},
 		{"collect", func(ctx context.Context) bool {
-			_, ok := executor.pipelineAggregateGroups(ctx, pipelineRowsSource(rows), []returnProjection{{expr: "collect(x + 1)", alias: "xs", isAggr: true}}, true)
+			_, ok := executor.pipelineAggregateGroups(ctx, pipelineRowsSource(cheap), []returnProjection{{expr: "collect(x + 1)", alias: "xs", isAggr: true}}, true)
 			return ok
 		}},
 		{"grouping", func(ctx context.Context) bool {
@@ -272,11 +278,11 @@ func TestPipelineStageDeadlineProbes(t *testing.T) {
 			return ok
 		}},
 		{"with_projection", func(ctx context.Context) bool {
-			_, ok := executor.pipelineApplyWith(ctx, rows, "WITH x + 1 AS y")
+			_, ok := executor.pipelineApplyWith(ctx, cheap, "WITH x + 1 AS y")
 			return ok
 		}},
 		{"return_projection", func(ctx context.Context) bool {
-			_, ok := executor.pipelineApplyReturn(ctx, rows, "RETURN x + 1 AS y")
+			_, ok := executor.pipelineApplyReturn(ctx, cheap, "RETURN x + 1 AS y")
 			return ok
 		}},
 		{"unwind", func(ctx context.Context) bool {

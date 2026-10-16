@@ -211,7 +211,7 @@ func (e *StorageExecutor) newBindingFilterPredicate(ctx context.Context, whereCl
 			params = getParamsFromContext(ctx)
 		}
 		ctx = withPipelineCancellation(ctx)
-		predicate := bindingFilterPredicate{executor: e, ctx: ctx, clause: whereClause, plan: plan, queryParameters: params, cancellation: pipelineCancellationForContext(ctx)}
+		predicate := bindingFilterPredicate{executor: e, ctx: ctx, clause: whereClause, plan: plan, queryParameters: params, cancellation: contextPipelineProbe(ctx)}
 		predicate.membership.prepareWithCancellation(&plan.root, compiledRowScope{parameters: params}, predicate.cancellation)
 		return predicate
 	}

@@ -569,13 +569,12 @@ func TestPipelineCancellationAtEveryReachableStagePoll(t *testing.T) {
 
 func runPipelineCancelPointStage(t *testing.T, run func(context.Context) error) {
 	t.Helper()
-	// Replays start from the same empty projection cache as discovery. A
-	// completed first parse must not hide a cold preparation poll on replay.
+	// Replays start from the same empty plan and program caches as discovery.
+	// A completed first parse or compile must not hide a cold poll on replay;
+	// TestCompiledRowProgramsStopAtDeadline covers the warm compiled path.
 	// These instrumented loop tests do not warm the independent deadline probes.
 	invoke := func(ctx context.Context) error {
-		returnProjectionPlans.Lock()
-		returnProjectionPlans.plans.Clear()
-		returnProjectionPlans.Unlock()
+		clearExpressionCaches()
 		return run(ctx)
 	}
 	healthy, healthyCancel := context.WithCancel(context.Background())
