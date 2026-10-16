@@ -13,17 +13,18 @@ import (
 //   - state: Unloaded -> Populating -> Ready, back to Populating on rebuild,
 //     to Unloaded when a population that replaced the sources fails, and
 //     Closed for good. Readiness is state == Ready.
-//   - generation: one counter for every derived artifact. A transition
-//     advances it once; an artifact built for an older generation can
-//     neither publish nor be persisted.
+//   - generations, one per artifact scope (see advanceSnapshotGeneration,
+//     advanceSourceEpoch, advanceClusterGeneration). A transition advances
+//     the scopes it retires; an artifact built for an older generation of
+//     its scope can neither publish nor be persisted. The scopes stay apart
+//     so a strategy switch does not discard clustering or compressed work.
 //   - the transition lock is Service.indexMu. Transitions hold it; builders
 //     never hold it while building, only for the O(1) publication check.
 //   - workers: every background job (population admission, HNSW maintenance,
 //     clustering, compressed-index builds) registers here, so retirement and
 //     Close can cancel and join it whatever context it was started from.
 type vectorLifecycle struct {
-	state      atomic.Int32
-	generation atomic.Uint64
+	state atomic.Int32
 
 	workersMu sync.Mutex
 	workers   map[workerKind]*workerSet
@@ -101,16 +102,23 @@ func (s *Service) setLifecycleState(next lifecycleState) {
 	}
 }
 
-// lifecycleGeneration is the generation an artifact built now belongs to.
-// Read it before reading the source pointers it is built from.
-func (s *Service) lifecycleGeneration() uint64 {
-	return s.life.generation.Load()
+// advanceSnapshotGeneration retires every captured source snapshot: native
+// graph construction and cached pipelines built before it cannot publish.
+func (s *Service) advanceSnapshotGeneration() {
+	s.hnswGeneration.Add(1)
 }
 
-// advanceGenerationLocked retires every artifact of the current generation.
-// Caller holds indexMu.
-func (s *Service) advanceGenerationLocked() uint64 {
-	return s.life.generation.Add(1)
+// advanceSourceEpoch retires artifacts derived from the vector content (the
+// compressed index, its overlay and saved bundle). Equivalent moves between
+// stores keep the epoch.
+func (s *Service) advanceSourceEpoch() {
+	s.vectorSourceEpoch.Add(1)
+}
+
+// advanceClusterGeneration retires the cluster object's derived state: its
+// clustering result, per-cluster graphs and lexical profiles.
+func (s *Service) advanceClusterGeneration() {
+	s.clusterGeneration.Add(1)
 }
 
 // runWorker registers a background job of kind. The returned context is
@@ -219,4 +227,48 @@ func (s *Service) lifecycleErr() error {
 		return nil
 	}
 	return s.lifecycleCtx.Err()
+}
+
+// setVectorsChanging marks whether a base population is replacing the vector
+// source (F-I86 B4). While set, no ANN construction snapshots the source and
+// no pipeline is cached. The population sets it when it starts replacing
+// sources and its warmup clears it once every base vector is loaded; the
+// population's exit clears it on any other path. This owner method is its
+// only writer.
+func (s *Service) setVectorsChanging(changing bool) {
+	s.hnswVectorsChanging.Store(changing)
+}
+
+// changeNodeSourcesLocked is the sole completion/authority writer. The
+// replacing operation supplies its actual meaning; no caller infers it from
+// counts, a dirty backend, a whole-service ready flag or pointer identity.
+func (s *Service) changeNodeSourcesLocked(change nodeSourceChange) {
+	switch change {
+	case nodeTextRestored:
+		s.nodeSources.textComplete = true
+	case nodeVectorsRestored:
+		s.nodeSources.vectorsComplete = true
+	case nodePopulationAdmitted:
+		s.nodeSources.textComplete, s.nodeSources.vectorsComplete = true, true
+		if s.vectorFileStore == nil {
+			s.nodeSources.memoryAuthoritative = true
+		}
+	case nodePopulationFailed:
+		s.nodeSources.textComplete, s.nodeSources.vectorsComplete = false, false
+	case nodeVectorMemoryMoved:
+		s.nodeSources.memoryAuthoritative = true
+	case nodeVectorCleared:
+		s.nodeSources.vectorsComplete, s.nodeSources.memoryAuthoritative = true, true
+	case nodeVectorReset:
+		s.nodeSources.vectorsComplete, s.nodeSources.memoryAuthoritative = false, true
+	case nodeVectorFileMoved:
+		s.nodeSources.memoryAuthoritative = false
+	case nodeFulltextReset:
+		s.nodeSources.textComplete = false
+	}
+}
+
+func (s *Service) setNodeFulltextCheckpointLocked(path string, count int) {
+	s.nodeSources.fulltextCheckpoint = path
+	s.nodeSources.fulltextCheckpointCount = count
 }

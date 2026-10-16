@@ -2189,12 +2189,12 @@ func (s *Service) closeVectorFileStore(preserveVectors bool) bool {
 				s.logPrintf("⚠️ Vector source migration failed; keeping file source available: %v", err)
 				return false
 			}
-			s.vectorIndex = memory
+			s.setVectorIndexLocked(memory)
 			s.changeNodeSourcesLocked(nodeVectorMemoryMoved)
 			s.reconcileVectorSourceCapacityLocked(memory)
 		}
 		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
+		s.setVectorFileStoreLocked(nil)
 	}
 	if preserveVectors {
 		// Publish a live disable only after the admitted base build has joined
@@ -2744,13 +2744,13 @@ func (s *Service) replaceEmptyVectorDimensionsLocked(dimensions int) {
 		s.mu.Unlock()
 		return
 	}
-	s.vectorIndex = NewVectorIndex(dimensions)
+	s.setVectorIndexLocked(NewVectorIndex(dimensions))
 	// An empty file still has an immutable dimension and remains the writer
 	// until explicitly retired. Its old artifacts must not be reloaded by
 	// live ingestion after the first vector selects a different dimension.
 	if s.vectorFileStore != nil {
 		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
+		s.setVectorFileStoreLocked(nil)
 	}
 	s.changeNodeSourcesLocked(nodeVectorCleared)
 	s.reconcileVectorSourceCapacityLocked(nil)
@@ -2800,7 +2800,7 @@ func (s *Service) ClearVectorIndex() {
 	s.changeNodeSourcesLocked(nodeVectorCleared)
 	if s.vectorFileStore != nil {
 		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
+		s.setVectorFileStoreLocked(nil)
 	}
 	if s.vectorIndex != nil {
 		s.vectorIndex.Clear()
@@ -3071,7 +3071,7 @@ func (s *Service) admitVectorFileStore(storageEmpty bool) bool {
 		restoreMetadata()
 	}
 	s.vectorIndex.mu.Lock()
-	s.vectorFileStore = vfs
+	s.setVectorFileStoreLocked(vfs)
 	s.vectorIndex.vectors = make(map[string][]float32)
 	s.vectorIndex.rawVectors = make(map[string][]float32)
 	s.vectorIndex.mu.Unlock()
@@ -3881,8 +3881,8 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 		return reloadErr
 	}
 	// Prevent a new snapshot while the base vector store is being replaced.
-	s.hnswVectorsChanging.Store(true)
-	defer s.hnswVectorsChanging.Store(false)
+	s.setVectorsChanging(true)
+	defer s.setVectorsChanging(false)
 	s.resetANNForBuild()
 	s.indexChanged()
 	s.setLifecycleState(lifecyclePopulating)
@@ -3962,6 +3962,7 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 
 	}
 	skipIteration := false
+	sourceReset := false
 	restartVectorStore := false
 	forceFulltextRebuild := false
 	forceVectorRebuild := false
@@ -4105,10 +4106,12 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 					restartVectorStore = true
 					s.logPrintf("📇 BuildIndexes: db updated after vector store (db=%s, vec=%s); restarting vector build",
 						lastWrite.Format(time.RFC3339), info.ModTime().Format(time.RFC3339))
-					s.mu.Lock()
-					_ = s.vectorFileStore.Close()
-					s.vectorFileStore = nil
-					s.mu.Unlock()
+					// Replacing the store is a source transition: retire it with every
+					// artifact and cached pipeline built over it (F-I86 B2).
+					if err := s.resetBaseVectorSource(); err != nil {
+						return err
+					}
+					sourceReset = true
 					if hook := baseSourceRestartHook; hook != nil {
 						hook()
 					}
@@ -4149,7 +4152,7 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 	}
 
 	// Start from 0 only when we cannot resume (missing/corrupt .vec/.meta). Otherwise keep existing .vec/.meta.
-	if vectorPath != "" && !resumeVectors {
+	if vectorPath != "" && !resumeVectors && !sourceReset {
 		if err := s.resetBaseVectorSource(); err != nil {
 			return err
 		}
@@ -4349,7 +4352,7 @@ func (s *Service) warmupVectorPipeline(ctx context.Context) {
 		ctx = context.Background()
 	}
 	// All base vectors have been loaded before warmup starts.
-	s.hnswVectorsChanging.Store(false)
+	s.setVectorsChanging(false)
 	if !s.vectorEnabled.Load() {
 		s.logPrintf("🔍 Vector search disabled — skipping ANN warmup")
 		return

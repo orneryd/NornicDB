@@ -70,3 +70,34 @@ func TestBaseRestartRetiresReplacedVectorStore(t *testing.T) {
 	require.Len(t, results, 3)
 }
 
+// F-I86 B4: the "vectors changing" mark has one owner. It holds while a base
+// population replaces the source, so no graph is snapshotted from a partial
+// source, and it is clear once the population has finished.
+func TestVectorsChangingSpansThePopulation(t *testing.T) {
+	ctx := context.Background()
+	engine := &traversalGatedEngine{MemoryEngine: storage.NewMemoryEngine()}
+	t.Cleanup(func() { require.NoError(t, engine.Close()) })
+	for i := 0; i < 3; i++ {
+		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:n%d", i)), ChunkEmbeddings: [][]float32{{1, float32(i), 0}}})
+		require.NoError(t, err)
+	}
+	svc := NewServiceWithDimensions(engine, 3)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	require.False(t, svc.hnswVectorsChanging.Load())
+
+	entered, release := engine.arm()
+	defer release()
+	done := make(chan error, 1)
+	go func() { done <- svc.BuildIndexes(ctx) }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the population did not reach its traversal")
+	}
+	require.True(t, svc.hnswVectorsChanging.Load(), "a population replacing the source must hold the mark")
+	snapshot := svc.captureVectorSnapshot()
+	require.False(t, snapshot.available, "no graph may snapshot a partial source")
+	release()
+	require.NoError(t, <-done)
+	require.False(t, svc.hnswVectorsChanging.Load(), "a finished population must clear the mark")
+}

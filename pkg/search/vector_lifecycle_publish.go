@@ -73,7 +73,7 @@ func (s *Service) setGPUEmbeddingIndexLocked(idx *gpu.EmbeddingIndex) {
 // the replacement. dropLexical also clears the cluster lexical profiles.
 // Caller holds indexMu and not mu.
 func (s *Service) retireDerivedANNLocked(dropCompressed, dropLexical bool) {
-	s.clusterGeneration.Add(1)
+	s.advanceClusterGeneration()
 	s.clusterHNSWMu.Lock()
 	s.clusterHNSW = nil
 	s.clusterHNSWMu.Unlock()
@@ -100,4 +100,15 @@ func (s *Service) publishPersistedArtifact(sourceEpoch uint64, commit func() err
 		return false, nil
 	}
 	return true, commit()
+}
+
+// setVectorIndexLocked and setVectorFileStoreLocked replace the live vector
+// source. Caller holds indexMu and mu, and retires the replaced source
+// (retireVectorSourceLocked) after releasing mu.
+func (s *Service) setVectorIndexLocked(vi *VectorIndex) {
+	s.vectorIndex = vi
+}
+
+func (s *Service) setVectorFileStoreLocked(vfs *VectorFileStore) {
+	s.vectorFileStore = vfs
 }

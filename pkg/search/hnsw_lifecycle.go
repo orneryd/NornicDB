@@ -88,7 +88,7 @@ func (s *Service) invalidateHNSWLocked() {
 // ready graph whose vectors have only moved between equivalent stores.
 // Caller holds hnswMu. A caller already holding indexMu must never join here.
 func (s *Service) retireVectorSnapshotLocked() {
-	s.hnswGeneration.Add(1)
+	s.advanceSnapshotGeneration()
 	if s.hnswBuild != nil {
 		s.hnswBuild.cancel()
 	}

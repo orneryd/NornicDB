@@ -14,5 +14,5 @@ func (s *Service) clusterState() (*gpu.ClusterIndex, uint64) {
 // state. Caller holds mu, so readers of clusterState see the pointer and the
 // generation change together.
 func (s *Service) retireClusterGenerationLocked() {
-	s.clusterGeneration.Add(1)
+	s.advanceClusterGeneration()
 }

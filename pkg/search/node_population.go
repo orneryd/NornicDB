@@ -49,40 +49,6 @@ const (
 	nodeFulltextReset
 )
 
-// changeNodeSourcesLocked is the sole completion/authority writer. The
-// replacing operation supplies its actual meaning; no caller infers it from
-// counts, a dirty backend, a whole-service ready flag or pointer identity.
-func (s *Service) changeNodeSourcesLocked(change nodeSourceChange) {
-	switch change {
-	case nodeTextRestored:
-		s.nodeSources.textComplete = true
-	case nodeVectorsRestored:
-		s.nodeSources.vectorsComplete = true
-	case nodePopulationAdmitted:
-		s.nodeSources.textComplete, s.nodeSources.vectorsComplete = true, true
-		if s.vectorFileStore == nil {
-			s.nodeSources.memoryAuthoritative = true
-		}
-	case nodePopulationFailed:
-		s.nodeSources.textComplete, s.nodeSources.vectorsComplete = false, false
-	case nodeVectorMemoryMoved:
-		s.nodeSources.memoryAuthoritative = true
-	case nodeVectorCleared:
-		s.nodeSources.vectorsComplete, s.nodeSources.memoryAuthoritative = true, true
-	case nodeVectorReset:
-		s.nodeSources.vectorsComplete, s.nodeSources.memoryAuthoritative = false, true
-	case nodeVectorFileMoved:
-		s.nodeSources.memoryAuthoritative = false
-	case nodeFulltextReset:
-		s.nodeSources.textComplete = false
-	}
-}
-
-func (s *Service) setNodeFulltextCheckpointLocked(path string, count int) {
-	s.nodeSources.fulltextCheckpoint = path
-	s.nodeSources.fulltextCheckpointCount = count
-}
-
 // nodePopulationAdmission is the NODE phase of the existing base operation,
 // not another worker or ANN job. baseBuildControlMu protects publication; err
 // is immutable after done closes. A caller waiting for NODE never waits for ANN.
@@ -244,7 +210,7 @@ func (s *Service) resetBaseVectorSource() error {
 	s.mu.Lock()
 	if s.vectorFileStore != nil {
 		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
+		s.setVectorFileStoreLocked(nil)
 	}
 	if s.vectorIndex != nil {
 		s.vectorIndex.Clear()
