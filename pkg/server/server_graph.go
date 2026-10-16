@@ -414,11 +414,7 @@ func (s *Server) resolveGraphStorage(r *http.Request) (string, storage.Engine, e
 		return "", nil, fmt.Errorf("database path parameter is required")
 	}
 
-	claims := getClaims(r)
-	if !s.getDatabaseAccessMode(claims).CanAccessDatabase(dbName) {
-		return "", nil, errGraphForbidden
-	}
-	if claims != nil && !s.getResolvedAccess(claims, dbName).Read {
+	if _, readable := s.databaseReadAccess(getClaims(r), dbName); !readable {
 		return "", nil, errGraphForbidden
 	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
