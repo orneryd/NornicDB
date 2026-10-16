@@ -68,38 +68,19 @@ func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
 }
 
 // functionNameStartsAt prevents a builtin scanner from matching only the last
-// component of a qualified function name (custom.range is not range).
+// component of a qualified function name (custom.range is not range), and is
+// the one test for a word that follows a dot: a property key (x . and) or a
+// name component is never a keyword or a function of its own. Whitespace and
+// comments may stand around the dot.
 func functionNameStartsAt(text string, at int) bool {
 	if at == 0 {
 		return true
 	}
-	previous := at - 1
-	if strings.Contains(text[:at], "/*") || strings.Contains(text[:at], "//") {
-		// Comments can separate a namespace dot from its final component.
-		// Use the query trivia reader; comment-like text inside quotes is data.
-		previous = -1
-		for index := 0; index < at; {
-			if end := queryGapEnd(text, index); end > index {
-				index = end
-				continue
-			}
-			if text[index] == '\'' || text[index] == '"' || text[index] == '`' {
-				index = skipQuotedSemanticText(text, index)
-				previous = index - 1
-				continue
-			}
-			previous = index
-			index++
-		}
-	} else {
-		for previous >= 0 && isASCIIWhitespace(text[previous]) {
-			previous--
-		}
-	}
-	if previous >= 0 && text[previous] == '.' {
+	if isIdentByte(text[at-1]) {
 		return false
 	}
-	return !isIdentByte(text[at-1])
+	previous := queryGapStart(text, at) - 1
+	return previous < 0 || text[previous] != '.'
 }
 
 // canonicalCallableName shares the qualified identifier reader used by semantic
