@@ -30,6 +30,11 @@ type parserPrediction struct {
 	mu            sync.RWMutex
 	decisionToDFA []*antlr.DFA
 	contextCache  *antlr.PredictionContextCache
+
+	// busyChecks counts size checks in a row that found p busy; draining is
+	// set while drain measures p.
+	busyChecks atomic.Uint32
+	draining   atomic.Bool
 }
 
 // maxParserDFAStates bounds the DFA states of one prediction generation.
@@ -39,9 +44,19 @@ type parserPrediction struct {
 // 9,600 states. Tests lower it.
 var maxParserDFAStates = 25_000
 
+// maxBusyPredictionChecks is how many size checks in a row may find a
+// generation busy before it is drained and measured. A generation can
+// overshoot maxParserDFAStates by what the parses in that window add (a
+// large statement adds thousands of states), so the window is short; each
+// drain costs new parses a wait for at most the parses already running.
+// Tests lower it.
+var maxBusyPredictionChecks uint32 = 8
+
 var (
 	currentPrediction atomic.Pointer[parserPrediction]
 	predictionMu      sync.Mutex
+	// predictionDrains tracks running drains, so tests can wait for them.
+	predictionDrains sync.WaitGroup
 )
 
 func newParserPrediction() *parserPrediction {
@@ -74,17 +89,51 @@ func acquirePrediction() *parserPrediction {
 // grown past maxParserDFAStates. Counting is a sum over the grammar's
 // decisions, cheap next to a parse; it is checked after every parse because
 // one large statement can add thousands of states.
+//
+// Counting needs p to be idle. Under steady concurrent load some parse
+// nearly always holds p, so TryLock keeps failing; after
+// maxBusyPredictionChecks failures in a row, p is measured by draining it
+// instead (drain). A parse holds one generation at a time and never takes
+// another while holding it, so the pending lock cannot deadlock.
 func (p *parserPrediction) release() {
 	p.mu.RUnlock()
-	// A busy generation is checked on a later parse; never wait for one.
+	// Never wait for a busy generation here.
 	if !p.mu.TryLock() {
+		if p.busyChecks.Add(1) >= maxBusyPredictionChecks && p.draining.CompareAndSwap(false, true) {
+			p.drain()
+		}
 		return
 	}
+	p.busyChecks.Store(0)
 	states := p.dfaStates()
 	p.mu.Unlock()
 	if states > maxParserDFAStates {
 		currentPrediction.CompareAndSwap(p, newParserPrediction())
 	}
+}
+
+// drain measures a generation that is never idle, in the background. The
+// pending exclusive lock holds new parses of p back until the parses already
+// running end; the count then takes microseconds and they continue on p, or
+// on a fresh generation when p is past maxParserDFAStates.
+//
+// Waiting for one in-flight parse keeps p's predictions. The alternative,
+// sending new parses to a fresh generation while p drains and restoring p if
+// it was small, makes every parse in that window recompute its predictions
+// from nothing (seconds for a large statement) and discards them after.
+func (p *parserPrediction) drain() {
+	predictionDrains.Add(1)
+	go func() {
+		defer predictionDrains.Done()
+		p.mu.Lock()
+		states := p.dfaStates()
+		if states > maxParserDFAStates {
+			currentPrediction.CompareAndSwap(p, newParserPrediction())
+		}
+		p.busyChecks.Store(0)
+		p.draining.Store(false)
+		p.mu.Unlock()
+	}()
 }
 
 // dfaStates counts the states of every decision's DFA. The caller holds
