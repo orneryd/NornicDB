@@ -37,6 +37,13 @@ func TestSubqueryEvaluationOrderMatchesNeo4j(t *testing.T) {
 		{"return_exists_and", "UNWIND [0,0] AS x RETURN EXISTS_X AND x <> 0 AS v", nil, divisionByZero},
 		{"return_and_count", "UNWIND [0,0] AS x RETURN x <> 0 AND COUNT_X > 0 AS v", nil, divisionByZero},
 		{"return_and_exists", "UNWIND [0,0] AS x RETURN x <> 0 AND EXISTS_X AS v", nil, divisionByZero},
+		{"return_and_exists_beside_case", "UNWIND [0,0] AS x RETURN x<>0 AND (EXISTS_X = CASE WHEN x=0 THEN true ELSE false END) AS v", nil, divisionByZero},
+		{"return_and_exists_body_case", "UNWIND [0,0] AS x RETURN x<>0 AND EXISTS { WITH x WHERE CASE WHEN 1/x=1 THEN true ELSE false END RETURN x } AS v", nil, divisionByZero},
+		{"return_and_coalesce_exists", "UNWIND [0,0] AS x RETURN x<>0 AND coalesce(EXISTS_X, false) AS v", falses, ""},
+		{"return_or_coalesce_count", "UNWIND [0,0] AS x RETURN x=0 OR coalesce(COUNT_X,0)>0 AS v", trues, ""},
+		{"return_and_quantifier_input", "UNWIND [0,0] AS x RETURN x<>0 AND any(y IN COLLECT_X WHERE y=0) AS v", nil, divisionByZero},
+		{"return_and_comprehension_input", "UNWIND [0,0] AS x RETURN x<>0 AND [y IN COLLECT_X | y]=[] AS v", nil, divisionByZero},
+		{"return_and_reduce_input", "UNWIND [0,0] AS x RETURN x<>0 AND reduce(a=0,y IN COLLECT_X | a+y)>0 AS v", nil, divisionByZero},
 		{"return_not_exists_and", "UNWIND [0,0] AS x RETURN NOT EXISTS_X AND x <> 0 AS v", nil, divisionByZero},
 		{"return_and_not_exists", "UNWIND [0,0] AS x RETURN x <> 0 AND NOT EXISTS_X AS v", nil, divisionByZero},
 		{"return_and_size_collect", "UNWIND [0,0] AS x RETURN x <> 0 AND size(COLLECT_X) > 0 AS v", nil, divisionByZero},
@@ -64,6 +71,8 @@ func TestSubqueryEvaluationOrderMatchesNeo4j(t *testing.T) {
 		{"return_and_not_true", "UNWIND [0,0] AS x RETURN EXISTS_X AND NOT true AS v", falses, ""},
 		{"return_and_constant_comparison", "UNWIND [0,0] AS x RETURN EXISTS_X AND (1 = 2) AS v", falses, ""},
 		{"return_constant_chain_link", "UNWIND [0,0] AS x RETURN 1 < 0 < COUNT_X AS v", falses, ""},
+		{"return_promoted_true_chain", "RETURN 9007199254740993 = 9007199254740992.0 > COUNT { RETURN 1 } AS v", [][]interface{}{{true}}, ""},
+		{"return_promoted_false_chain", "UNWIND [0,0] AS x RETURN 9007199254740993 > 9007199254740992.0 > COUNT_X AS v", falses, ""},
 		{"return_folded_and_or", "UNWIND [0,0] AS x RETURN (EXISTS_X AND false) OR x = 0 AS v", trues, ""},
 		{"return_not_folded_and", "UNWIND [0,0] AS x RETURN NOT (EXISTS_X AND false) AS v", trues, ""},
 		{"where_exists_and_false", "UNWIND [0,0] AS x WITH x WHERE EXISTS_X AND false RETURN x", none, ""},
@@ -172,5 +181,39 @@ func TestSubqueryEvaluationOrderMatchesNeo4j(t *testing.T) {
 				require.Equal(t, tc.want, rows)
 			})
 		}
+	}
+}
+
+func TestSubqueryEvaluationOrderUsesEnclosingCaseScope(t *testing.T) {
+	for _, tc := range []struct {
+		expression string
+		liftable   bool
+	}{
+		{"EXISTS { RETURN 1 } = CASE WHEN x=0 THEN true ELSE false END", true},
+		{"CASE WHEN x=0 THEN true ELSE false END = EXISTS { RETURN 1 }", true},
+		{"EXISTS { RETURN CASE WHEN true THEN 1 ELSE 0 END }", true},
+		{"CASE WHEN x=0 THEN EXISTS { RETURN 1 } ELSE false END", false},
+		{"CASE WHEN x=0 THEN EXISTS { RETURN 1 } ELSE false END = EXISTS { RETURN 2 }", true},
+		{"[x IN [1] | EXISTS { RETURN x }]", false},
+		{"[EXISTS { RETURN 1 }]", true},
+		{"EXISTS { RETURN 1 } = 'CASE'", true},
+		{"coalesce(EXISTS { RETURN 1 }, false)", false},
+		{"coalesce (COUNT { RETURN 1 }, 0)", false},
+		{"`coalesce`(EXISTS { RETURN 1 }, false)", false},
+		{"custom.coalesce(EXISTS { RETURN 1 }, false)", true},
+		{"coalesce(EXISTS { RETURN 1 }, false) = EXISTS { RETURN 2 }", true},
+		{"any(y IN COLLECT { RETURN 1 } WHERE y=0)", true},
+		{"any(y IN [1] WHERE EXISTS { RETURN y })", false},
+		{"[y IN COLLECT { RETURN 1 } | y]", true},
+		{"[y IN [1] | EXISTS { RETURN y }]", false},
+		{"reduce(a=0,y IN COLLECT { RETURN 1 } | a+y)", true},
+		{"reduce(a=COUNT { RETURN 1 },y IN [1] | a+y)", true},
+		{"reduce(a=0,y IN [1] | a+COUNT { RETURN y })", false},
+		{"any(y IN CASE WHEN true THEN COLLECT { RETURN 1 } ELSE [] END WHERE y=1)", false},
+		{"reduce(a=CASE WHEN true THEN COUNT { RETURN 1 } ELSE 0 END,y IN [1] | a+y)", false},
+	} {
+		t.Run(tc.expression, func(t *testing.T) {
+			require.Equal(t, tc.liftable, liftableSubquery(tc.expression))
+		})
 	}
 }

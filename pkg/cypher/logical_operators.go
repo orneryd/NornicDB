@@ -84,9 +84,12 @@ const (
 // the plan (rowValueProgram) evaluates the operator without reading the
 // text again, through the same evaluate as evaluateLogicalExpression.
 type logicalPlan struct {
-	kind     logicalKind
-	operands []string
-	apply    []int
+	kind logicalKind
+	// The cache is shared across versions. Bits 1/2 mark a deciding constant
+	// in Cypher 5/25 that must be resolved from context before Apply runs.
+	decidingVersions uint8
+	operands         []string
+	apply            []int
 }
 
 // planLogicalExpression reads expr's top-level OR, XOR, AND or NOT,
@@ -106,12 +109,14 @@ func planLogicalExpression(expr string, buffer []string) logicalPlan {
 		case " OR ":
 			plan := logicalPlan{kind: logicalOr, operands: simplifyLogicalChain(operands, "false", subqueries)}
 			if subqueries {
+				plan.decidingVersions = constantDecidingVersions(plan.operands, truthTrue)
 				plan.apply = disjunctionApplyOperandIndexes(plan.operands)
 			}
 			return plan
 		case " AND ":
 			plan := logicalPlan{kind: logicalAnd, operands: simplifyLogicalChain(operands, "true", subqueries)}
 			if subqueries {
+				plan.decidingVersions = constantDecidingVersions(plan.operands, truthFalse)
 				plan.apply = applyOperandIndexes(len(plan.operands), func(i int) string { return plan.operands[i] })
 			}
 			return plan
@@ -140,9 +145,9 @@ func planLogicalExpression(expr string, buffer []string) logicalPlan {
 	if mayContainSubqueryExpression(operand) {
 		switch inner := planLogicalExpression(logicalOperandKey(operand), buffer[:0]); inner.kind {
 		case logicalAnd:
-			return logicalPlan{kind: logicalNotAnd, operands: inner.operands, apply: disjunctionApplyOperandIndexes(inner.operands)}
+			return logicalPlan{kind: logicalNotAnd, decidingVersions: inner.decidingVersions, operands: inner.operands, apply: disjunctionApplyOperandIndexes(inner.operands)}
 		case logicalOr:
-			plan := logicalPlan{kind: logicalNotOr, operands: inner.operands}
+			plan := logicalPlan{kind: logicalNotOr, decidingVersions: inner.decidingVersions, operands: inner.operands}
 			plan.apply = applyOperandIndexes(len(plan.operands), func(i int) string { return plan.operands[i] })
 			return plan
 		}
@@ -156,6 +161,16 @@ func (p logicalPlan) evaluate(eval func(index int) (interface{}, bool, error)) (
 	return p.evaluateInContext(context.Background(), eval)
 }
 func (p logicalPlan) evaluateInContext(ctx context.Context, eval func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
+	version := uint8(0)
+	if p.decidingVersions != 0 {
+		version = 1
+		if cypherVersionFromContext(ctx) == "25" {
+			version = 2
+		}
+		if p.decidingVersions&version != 0 {
+			return p.kind == logicalOr || p.kind == logicalNotAnd, true, nil
+		}
+	}
 	if len(p.apply) > 0 {
 		cached, err := evaluateApplyOperands(ctx, p.apply, eval)
 		if err != nil {
@@ -166,9 +181,9 @@ func (p logicalPlan) evaluateInContext(ctx context.Context, eval func(index int)
 	}
 	switch p.kind {
 	case logicalOr:
-		return evaluateLogicalChain(p.operands, true, eval)
+		return evaluateLogicalChain(p.operands, true, eval, version)
 	case logicalAnd:
-		return evaluateLogicalChain(p.operands, false, eval)
+		return evaluateLogicalChain(p.operands, false, eval, version)
 	case logicalXor:
 		return evaluateLogicalXor(p.operands, eval)
 	case logicalNotNot:
@@ -322,7 +337,13 @@ func logicalOperandTruth(operand string, constants bool) (cypherTruth, bool) {
 	case equalFoldASCII(key, "false"):
 		return truthFalse, true
 	case constants:
-		return constantPredicateTruth(key)
+		truth5, known5 := constantPredicateTruth(key, false)
+		truth25, known25 := constantPredicateTruth(key, true)
+		// A versionless plan may discard only predicates that agree in both
+		// supported policies. Keep differing ones for the statement context.
+		if known5 && known25 && truth5 == truth25 {
+			return truth5, true
+		}
 	}
 	return truthUnknown, false
 }
@@ -330,7 +351,7 @@ func logicalOperandTruth(operand string, constants bool) (cypherTruth, bool) {
 // constantPredicateTruth reads a predicate Neo4j folds to a constant before
 // it plans subqueries: a boolean literal or null, NOT of a constant, or a
 // comparison of literals (1 = 2, 1 < 0 < 2).
-func constantPredicateTruth(expression string) (cypherTruth, bool) {
+func constantPredicateTruth(expression string, cypher25 bool) (cypherTruth, bool) {
 	key := logicalOperandKey(expression)
 	switch {
 	case equalFoldASCII(key, "true"):
@@ -341,7 +362,7 @@ func constantPredicateTruth(expression string) (cypherTruth, bool) {
 		return truthUnknown, true
 	}
 	if inner, negated := logicalNotOperand(key); negated {
-		truth, constant := constantPredicateTruth(inner)
+		truth, constant := constantPredicateTruth(inner, cypher25)
 		return truth.not(), constant
 	}
 	scan, comparison := scanComparisonChain(key)
@@ -356,11 +377,32 @@ func constantPredicateTruth(expression string) (cypherTruth, bool) {
 	value, _, resolved, err := evaluateComparisonChain(key, func(text string, _ foldPosition) (interface{}, bool, error) {
 		operand, _ := parseRowOperand(text)
 		return operand.literal, true, nil
-	}, compareCypherPredicateValue, false)
+	}, compareCypherPredicateValue, cypher25)
 	if err != nil || !resolved {
 		return truthUnknown, false
 	}
 	return cypherBooleanTruth(value)
+}
+
+// constantDecidingVersions records only version-sensitive decisions. The
+// ordinary simplifier already handles constants that agree in both versions;
+// these remaining decisions must precede subquery Apply at evaluation time.
+func constantDecidingVersions(operands []string, decisive cypherTruth) uint8 {
+	var versions uint8
+	for _, operand := range operands {
+		truth5, known5 := constantPredicateTruth(operand, false)
+		truth25, known25 := constantPredicateTruth(operand, true)
+		if !known5 || !known25 || truth5 == truth25 {
+			continue
+		}
+		if truth5 == decisive {
+			versions |= 1
+		}
+		if truth25 == decisive {
+			versions |= 2
+		}
+	}
+	return versions
 }
 
 // logicalOperandKey is an operand's text without enclosing parentheses: the
@@ -378,13 +420,36 @@ func logicalOperandKey(operand string) string {
 
 // evaluateLogicalChain evaluates an AND chain (decisive false) or an OR
 // chain (decisive true). A chain of one operand is its value as it is.
-func evaluateLogicalChain(operands []string, decisive bool, eval func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
-	if len(operands) == 1 {
-		if strings.EqualFold(operands[0], "true") || strings.EqualFold(operands[0], "false") {
-			return strings.EqualFold(operands[0], "true"), true, nil
+func evaluateLogicalChain(operands []string, decisive bool, eval func(index int) (interface{}, bool, error), version uint8) (interface{}, bool, error) {
+	count, single := len(operands), 0
+	if version != 0 {
+		neutral := truthTrue
+		if decisive {
+			neutral = truthFalse
 		}
-		return eval(0)
+		count = 0
+		for index, operand := range operands {
+			if truth, known := constantPredicateTruth(operand, version == 2); known && truth == neutral {
+				continue
+			}
+			count++
+			single = index
+			if count > 1 {
+				break
+			}
+		}
 	}
+	if count == 0 {
+		return !decisive, true, nil
+	}
+	if count == 1 {
+		if strings.EqualFold(operands[single], "true") || strings.EqualFold(operands[single], "false") {
+			return strings.EqualFold(operands[single], "true"), true, nil
+		}
+		return eval(single)
+	}
+	// Neutral constants cannot change a genuine multi-operand predicate fold.
+	// Keep original indexes so compiled operands and Apply results stay aligned.
 	return evaluateLogicalOperands(len(operands), decisive, eval)
 }
 

@@ -95,7 +95,7 @@ func evaluateScannedComparisonChain(
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
 ) (interface{}, bool, error) {
-	if scan.count > 1 && mayContainSubqueryExpression(expression) && constantFalseLink(expression, scan) {
+	if scan.count > 1 && mayContainSubqueryExpression(expression) && constantFalseLink(expression, scan, cypher25) {
 		// Neo4j folds a link of two literals before it plans the chain's
 		// subqueries: a false one is the chain's value (1 < 0 < COUNT {…}).
 		return false, true, nil
@@ -119,18 +119,21 @@ func evaluateScannedComparisonChain(
 
 // constantFalseLink reports a link of the chain between two literals that is
 // false, as Neo4j folds it (constantPredicateTruth).
-func constantFalseLink(expression string, scan *comparisonChainScan) bool {
+func constantFalseLink(expression string, scan *comparisonChainScan, cypher25 bool) bool {
 	for i := 0; i < scan.count; i++ {
-		left, ok := parseRowOperand(scan.operand(expression, i))
+		leftText, rightText := scan.operand(expression, i), scan.operand(expression, i+1)
+		left, ok := parseRowOperand(leftText)
 		if !ok || left.kind != rowOperandLiteral {
 			continue
 		}
-		right, ok := parseRowOperand(scan.operand(expression, i+1))
+		right, ok := parseRowOperand(rightText)
 		if !ok || right.kind != rowOperandLiteral {
 			continue
 		}
 		span := scan.operator(i)
-		if held, known := compareCypherPredicateValue(left.literal, right.literal, expression[span.offset:span.offset+span.length]).(bool); known && !held {
+		operator := expression[span.offset : span.offset+span.length]
+		leftValue, rightValue := promoteConstantNumbers(operator, leftText, rightText, left.literal, right.literal, cypher25)
+		if held, known := compareCypherPredicateValue(leftValue, rightValue, operator).(bool); known && !held {
 			return true
 		}
 	}

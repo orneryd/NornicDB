@@ -12,6 +12,34 @@ import (
 var benchmarkComparisonScan comparisonChainScan
 var benchmarkComparisonIndex int
 
+func TestComparisonChainEarlyFoldUsesVersionedPromotion(t *testing.T) {
+	for _, cypher25 := range []bool{false, true} {
+		for _, tc := range []struct {
+			operator string
+			false5   bool
+			false25  bool
+		}{
+			{"=", false, false},
+			{">", true, true},
+			{"<>", false, true},
+			{"!=", false, true},
+		} {
+			expression := "9007199254740993 " + tc.operator + " 9007199254740992.0 < COUNT { RETURN 1 }"
+			scan, ok := scanComparisonChain(expression)
+			if !ok {
+				t.Fatal("comparison chain not recognized", expression)
+			}
+			want := tc.false5
+			if cypher25 {
+				want = tc.false25
+			}
+			if got := constantFalseLink(expression, &scan, cypher25); got != want {
+				t.Errorf("%s (Cypher25=%v): early false=%v, want %v", expression, cypher25, got, want)
+			}
+		}
+	}
+}
+
 func TestWhereComparisonChainsUseAdjacentOperands(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(baseStore, "test"))

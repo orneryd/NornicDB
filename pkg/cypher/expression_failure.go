@@ -468,61 +468,84 @@ func hasApplyingConjunction(expression string) bool {
 
 // liftableSubquery reports whether expression has a subquery Neo4j can run
 // before the expression: one outside a CASE, whose branches it evaluates
-// only when reached, and outside the scope of a list comprehension, a
-// pattern comprehension, reduce or a list predicate (any, all, none,
-// single), which evaluate it per element.
+// only when reached, coalesce's lazy arguments, and list-lambda bodies.
+// A list input or reduce initializer remains in the containing row scope.
 func liftableSubquery(expression string) bool {
-	if !mayContainSubqueryExpression(expression) || mayContainCaseKeyword(expression) {
+	if !mayContainSubqueryExpression(expression) {
 		return false
 	}
 	for _, found := range findSubqueryExpressions(expression) {
-		if !inListScope(expression, found.start) {
+		// Only an enclosing CASE makes this subquery local. A sibling CASE
+		// or one inside the subquery body does not change its Apply scope.
+		if !subqueryInsideCase(expression, found.start) && !inLocalExpressionScope(expression, found.start) {
 			return true
 		}
 	}
 	return false
 }
 
-// inListScope reports whether offset in expression is inside the body of a
-// list comprehension, a pattern comprehension, reduce or a list predicate.
-func inListScope(expression string, offset int) bool {
+func subqueryInsideCase(expression string, offset int) bool {
+	if mayContainCaseKeyword(expression) {
+		for _, span := range caseBlockSpans(expression) {
+			if span.start < offset && offset < span.end {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// inLocalExpressionScope reads lazy argument and lambda-body boundaries.
+// localBindingAt owns each lambda's input/body split; an input is not local
+// merely because it is textually inside the function's parentheses.
+func inLocalExpressionScope(expression string, offset int) bool {
 	for i := 0; i < offset; i++ {
 		switch expression[i] {
-		case '\'', '"':
-			i = skipQuotedSemanticText(expression, i) - 1
-		case '`':
-			if end := strings.IndexByte(expression[i+1:], '`'); end >= 0 {
-				i += end + 1
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(expression, i, expression[i]) - 1
+		case '/':
+			if end := queryCommentEnd(expression, i); end >= 0 {
+				i = end - 1
 			}
-		case '[':
-			closing := findMatchingDelimiter(expression, i, '[', ']')
+		case '[', '(':
+			if binding, ok := localBindingAt(expression, i); ok {
+				if binding.close < offset {
+					i = binding.close
+				} else if offset >= binding.scope {
+					return true
+				} else if subqueryInsideCase(expression[i+1:binding.scope], offset-i-1) {
+					// The CASE reader skips whole binding forms for substitution.
+					// Its input still has its own enclosing CASE boundaries.
+					return true
+				}
+				continue
+			}
+			closeBy := ')'
+			if expression[i] == '[' {
+				closeBy = ']'
+			}
+			closing := findMatchingDelimiter(expression, i, rune(expression[i]), closeBy)
 			if closing < 0 || closing < offset {
 				if closing > i {
 					i = closing
 				}
 				continue
 			}
-			inner := expression[i+1 : closing]
-			if _, _, _, _, comprehension := parseListComprehension(inner); comprehension {
-				return true
-			}
-			if _, _, comprehension := splitPatternComprehension(expression[i : closing+1]); comprehension {
-				return true
-			}
-		case '(':
-			closing := findMatchingDelimiter(expression, i, '(', ')')
-			if closing < 0 || closing < offset {
-				if closing > i {
-					i = closing
+			if expression[i] == '[' {
+				if _, _, pattern := splitPatternComprehension(expression[i : closing+1]); pattern {
+					return true
 				}
 				continue
 			}
-			word := i
+			end := i
+			for end > 0 && isASCIISpace(expression[end-1]) {
+				end--
+			}
+			word := end
 			for word > 0 && isRowReceiverIdentifierByte(expression[word-1]) {
 				word--
 			}
-			switch upperASCII(expression[word:i]) {
-			case "ANY", "ALL", "NONE", "SINGLE", "REDUCE":
+			if function, ok := canonicalCallableName(expression[word:end]); ok && equalFoldASCII(function, "coalesce") && functionNameStartsAt(expression, word) {
 				return true
 			}
 		}
