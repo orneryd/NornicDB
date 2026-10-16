@@ -156,6 +156,15 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 		return nil, false
 	}
 	return func(yield func(interface{}) bool) {
+		// The evaluated list stays counted against the statement's memory
+		// limit while its rows stream (#1343).
+		budget := expressionBudgetOf(ctx)
+		if budget.active() {
+			if budget.hold(shallowValueBytes(items)) != nil {
+				return
+			}
+			defer budget.release()
+		}
 		for _, value := range items {
 			if !yield(value) {
 				return

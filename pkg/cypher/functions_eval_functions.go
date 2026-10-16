@@ -279,7 +279,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 		for index, argument := range args {
 			arguments[index] = e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(argument), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
-		result, err := evaluateCypherRange(arguments)
+		budget := expressionBudgetOf(ctx)
+		result, err := evaluateCypherRange(&budget, arguments)
 		if err != nil {
 			return nil
 		}

@@ -1,6 +1,9 @@
 package cypher
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // memoryRetention is the one owner a growth site reserves through before it
 // retains anything (#1343): rows it appends, slots it preallocates, values
@@ -127,4 +130,98 @@ func saturatingProduct(a, b int64) int64 {
 		return maxReservation
 	}
 	return a * b
+}
+
+// transientCheckBytes is the smallest value build an expression checks
+// against the statement's limits: smaller builds cost less than the check.
+const transientCheckBytes = 64 << 10
+
+// expressionBudget is the statement's check on the values an expression
+// builds (#1343): range() lists, comprehension results, reduce
+// accumulators, an UNWIND's evaluated list while it streams. A build holds
+// what it will take before it allocates (an accumulator, as it grows) and
+// gives it back once built: the row or list that keeps the value counts it
+// there. A build over a limit fails the statement before it allocates; an
+// accumulator, within one step of its growth. The zero value checks
+// nothing, and nothing is sized when no limit is configured.
+type expressionBudget struct {
+	scope *memoryScope
+	held  int64
+}
+
+// expressionBudgetOf is the budget of the statement ctx runs.
+func expressionBudgetOf(ctx context.Context) expressionBudget {
+	return expressionBudget{scope: memoryScopeFromContext(ctx)}
+}
+
+// rowExpressionBudget is the budget of the statement a row carries
+// (rowStatementContextKey; bound while a limit is configured, for an
+// expression that builds values).
+func rowExpressionBudget(values map[string]interface{}) expressionBudget {
+	if !transactionMemoryActive.Load() {
+		return expressionBudget{}
+	}
+	return expressionBudget{scope: memoryScopeFromContext(rowStatementContext(values))}
+}
+
+// active reports whether the budget checks anything.
+func (b *expressionBudget) active() bool {
+	return b != nil && b.scope != nil
+}
+
+// hold makes the budget hold size bytes: what the build takes now.
+func (b *expressionBudget) hold(size int64) error {
+	if !b.active() || (size < transientCheckBytes && b.held == 0) {
+		return nil
+	}
+	switch {
+	case size > b.held:
+		if err := b.scope.grow(size - b.held); err != nil {
+			return err
+		}
+		b.held = size
+	case size < b.held:
+		b.scope.give(b.held - size)
+		b.held = size
+	}
+	return nil
+}
+
+// release gives back what the budget holds.
+func (b *expressionBudget) release() {
+	if b.active() && b.held > 0 {
+		b.scope.give(b.held)
+		b.held = 0
+	}
+}
+
+// shallowValueBytes is a value's own size without what its elements hold:
+// O(1), for a value that grows step by step (an accumulator), whose
+// elements were counted where they were built.
+func shallowValueBytes(value interface{}) int64 {
+	switch v := value.(type) {
+	case string:
+		return valueSlotBytes + stringHeaderBytes + int64(len(v))
+	case []interface{}:
+		return valueSlotBytes + sliceHeaderBytes + int64(cap(v))*valueSlotBytes
+	case []string:
+		return valueSlotBytes + sliceHeaderBytes + int64(cap(v))*stringHeaderBytes
+	case map[string]interface{}:
+		return valueSlotBytes + mapHeaderBytes + int64(len(v))*(mapEntryBytes+stringHeaderBytes+valueSlotBytes)
+	default:
+		return valueSlotBytes
+	}
+}
+
+// expressionBuildsValues reports whether an expression may build a large
+// value: it calls range() or reduce(), or has a list comprehension
+// ([x IN list | …] or [x IN list WHERE …]). A conservative read of the
+// text: a false positive only binds the statement context for the budget.
+func expressionBuildsValues(expression string) bool {
+	lower := lowerASCII(expression)
+	if strings.Contains(lower, "range(") || strings.Contains(lower, "reduce(") {
+		return true
+	}
+	return strings.Contains(lower, "[") && strings.Contains(lower, " in ") &&
+		(strings.Contains(lower, "|") || strings.Contains(lower, " where "))
 }

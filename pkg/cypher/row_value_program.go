@@ -1048,5 +1048,6 @@ func (n *rowComprehensionNode) eval(e *StorageExecutor, values map[string]interf
 	if n.projection != nil {
 		project = func() (interface{}, bool, error) { return n.projection.eval(e, scope, inner) }
 	}
-	return rowComprehensionLoop(coerceToUnwindItems(listValue), func(item interface{}) { scope[n.variable] = item }, holds, project)
+	budget := rowExpressionBudget(scope)
+	return rowComprehensionLoop(&budget, coerceToUnwindItems(listValue), func(item interface{}) { scope[n.variable] = item }, holds, project)
 }

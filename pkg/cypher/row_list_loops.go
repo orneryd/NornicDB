@@ -54,9 +54,27 @@ func rowQuantifierLoop(function string, items []interface{}, bind func(interface
 // holds (nil without a predicate) whether an element is kept, project (nil
 // without a projection) its value. An element either can't evaluate leaves
 // the comprehension unresolved.
-func rowComprehensionLoop(items []interface{}, bind func(interface{}), holds func() (bool, bool, error), project func() (interface{}, bool, error)) (interface{}, bool, error) {
+//
+// The result counts against the statement's memory limit while it is built
+// (budget, #1343): its capacity before it is made, its values as they are
+// added, checked every comprehensionCheckEvery elements. It is given back
+// once built; the row or list that keeps it counts it there.
+func rowComprehensionLoop(budget *expressionBudget, items []interface{}, bind func(interface{}), holds func() (bool, bool, error), project func() (interface{}, bool, error)) (interface{}, bool, error) {
+	var built int64
+	if budget.active() {
+		built = sliceHeaderBytes + int64(len(items))*valueSlotBytes
+		if err := budget.hold(built); err != nil {
+			return nil, false, err
+		}
+		defer budget.release()
+	}
 	result := make([]interface{}, 0, len(items))
-	for _, item := range items {
+	for index, item := range items {
+		if budget.active() && index > 0 && index%comprehensionCheckEvery == 0 {
+			if err := budget.hold(built); err != nil {
+				return nil, false, err
+			}
+		}
 		bind(item)
 		if holds != nil {
 			kept, evaluated, err := holds()
@@ -82,10 +100,17 @@ func rowComprehensionLoop(items []interface{}, bind func(interface{}), holds fun
 				return nil, false, nil
 			}
 		}
+		if budget.active() {
+			built += shallowValueBytes(value)
+		}
 		result = append(result, value)
 	}
 	return result, true, nil
 }
+
+// comprehensionCheckEvery is how many elements a comprehension adds between
+// checks of what it built against the statement's limits.
+const comprehensionCheckEvery = 1024
 
 // rowConditionHolds is a comprehension condition's value read as kept: only
 // true keeps the element; a value that isn't a boolean or null is the
@@ -116,7 +141,8 @@ func rowReduceLoop(form reduceForm, accumulator, listValue interface{}, scope ma
 			return value, err
 		}
 	}
-	result, err := runReduceForm(form, accumulator, coerceToUnwindItems(listValue), bind(step), bind(predicate))
+	budget := rowExpressionBudget(scope)
+	result, err := runReduceForm(&budget, form, accumulator, coerceToUnwindItems(listValue), bind(step), bind(predicate))
 	if err == errRowArgumentUnresolved {
 		return nil, false, nil
 	}

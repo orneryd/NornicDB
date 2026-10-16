@@ -70,14 +70,40 @@ func parseReduceForm(function, arguments string) (reduceForm, bool) {
 // step, and the result is false when it is false once, else null when it
 // is null once, else true (an empty list is true). The callbacks get the
 // accumulator and the item to bind.
-func runReduceForm(form reduceForm, accumulator interface{}, items []interface{},
+//
+// The accumulator counts against the statement's memory limit as it grows
+// (budget, #1343): checked after each step, so a step that takes it over
+// the limit fails the statement before the next step; given back at the end,
+// where the row or list that keeps the result counts it.
+func runReduceForm(budget *expressionBudget, form reduceForm, accumulator interface{}, items []interface{},
 	step func(accumulator, item interface{}) (interface{}, error),
 	predicate func(accumulator, item interface{}) (interface{}, error)) (interface{}, error) {
+	defer budget.release()
+	// A list accumulator grows by its new elements (acc + [x]): those are
+	// sized as they come, so a step costs what it added, not the whole list.
+	var counted int
+	var elementBytes int64
 	var result interface{} = true
 	for _, item := range items {
 		var err error
 		if accumulator, err = step(accumulator, item); err != nil {
 			return nil, err
+		}
+		if budget.active() {
+			size := shallowValueBytes(accumulator)
+			if list, isList := accumulator.([]interface{}); isList {
+				if len(list) < counted {
+					counted, elementBytes = 0, 0
+				}
+				for _, element := range list[counted:] {
+					elementBytes += estimateValueBytes(element)
+				}
+				counted = len(list)
+				size = valueSlotBytes + sliceHeaderBytes + int64(cap(list)-len(list))*valueSlotBytes + elementBytes
+			}
+			if err := budget.hold(size); err != nil {
+				return nil, err
+			}
 		}
 		if !form.all {
 			continue

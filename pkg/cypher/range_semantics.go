@@ -7,10 +7,21 @@ import (
 	"strings"
 )
 
-func evaluateCypherRange(arguments []interface{}) ([]interface{}, error) {
+// evaluateCypherRange builds range()'s list, every evaluator's one builder.
+// The list counts against the statement's memory limit before it is built
+// (budget, #1343); it is given back once built, and the row or list that
+// keeps it counts it there.
+func evaluateCypherRange(budget *expressionBudget, arguments []interface{}) ([]interface{}, error) {
 	sequence, err := newCypherRange(arguments)
 	if err != nil {
 		return nil, err
+	}
+	if budget.active() {
+		// Each element is an interface slot and its boxed integer.
+		if err := budget.hold(saturatingProduct(sequence.length(), valueSlotBytes+8) + sliceHeaderBytes); err != nil {
+			return nil, err
+		}
+		defer budget.release()
 	}
 	values := make([]interface{}, 0)
 	for value := range sequence.values() {
@@ -49,6 +60,24 @@ func newCypherRange(arguments []interface{}) (cypherRange, error) {
 	}
 
 	return cypherRange{start: start, end: end, step: step}, nil
+}
+
+// length is the number of values the range has, capped at maxReservation.
+func (sequence cypherRange) length() int64 {
+	var span, step uint64
+	switch {
+	case sequence.step > 0 && sequence.end >= sequence.start:
+		span, step = uint64(sequence.end)-uint64(sequence.start), uint64(sequence.step)
+	case sequence.step < 0 && sequence.end <= sequence.start:
+		span, step = uint64(sequence.start)-uint64(sequence.end), uint64(-(sequence.step+1))+1
+	default:
+		return 0
+	}
+	count := span/step + 1
+	if count > uint64(maxReservation) {
+		return maxReservation
+	}
+	return int64(count)
 }
 
 func (sequence cypherRange) values() iter.Seq[int64] {
