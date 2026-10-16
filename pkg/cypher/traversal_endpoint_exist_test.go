@@ -142,7 +142,7 @@ func TestLabelledEndpointCountReadsOnlyLabels(t *testing.T) {
 	require.NoError(t, err)
 
 	store.reset()
-	result, err := exec.Execute(ctx, "MATCH (p:P)-[:K]->(:Q) RETURN p.id AS id, count(*) AS d ORDER BY id", nil)
+	result, err := exec.Execute(ctx, "MATCH (p:P)-[:K]->(:Q) RETURN p.id AS id, count(*) AS d ORDER BY d DESC, id", nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1), int64(1)}}, result.Rows)
 	require.EqualValues(t, 2, store.reads.Load(), "one labels-only read for the anonymous labelled endpoint")
@@ -217,8 +217,8 @@ func TestParallelTraversalMatchesSequentialForEndpointShapes(t *testing.T) {
 	_, err := exec.Execute(ctx, "UNWIND range(1, 40) AS i CREATE (a:P {id: i})-[:K]->(:Q {id: i}), (a)-[:K]->(:P {id: 100 + i})", nil)
 	require.NoError(t, err)
 	queries := []string{
-		"MATCH (p:P)-[:K]->() RETURN p.id AS id, count(*) AS d ORDER BY id",
-		"MATCH (p:P)-[:K]->(:Q) RETURN p.id AS id, count(*) AS d ORDER BY id",
+		"MATCH (p:P)-[:K]->() RETURN p.id AS id, count(*) AS d ORDER BY d DESC, id",
+		"MATCH (p:P)-[:K]->(:Q) RETURN p.id AS id, count(*) AS d ORDER BY d DESC, id",
 		"MATCH (p:P)-[:K]->(q) RETURN p.id AS id, q.id AS q ORDER BY id, q",
 	}
 	sequential := make([][][]interface{}, len(queries))
