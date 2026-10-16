@@ -176,6 +176,7 @@ func (e *StorageExecutor) validatePipelineWithRows(rows []pipelineRow, clause st
 func (e *StorageExecutor) validatePipelineProjectionValues(_ []pipelineRow, clause, keyword string) error {
 	return validateProjectionSizeSyntax(clause, keyword)
 }
+
 func (e *StorageExecutor) pipelineApplyUnwindPrefix(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) ([]pipelineRow, int, bool) {
 	source, consumed, ok := e.pipelineUnwindSource(ctx, rows, clauses)
 	if !ok {
@@ -590,7 +591,18 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 }
 
 // projectionExpressionCache holds projectionExpressions results by clause.
-var projectionExpressionCache = newBoundedCache[string, []string](4096, boundedCacheStringShardIndex)
+var projectionExpressionCache = newBoundedCache[projectionExpressionKey, []string](4096, projectionExpressionKeyShardIndex)
+
+// projectionExpressionKey keys projectionExpressionCache: a struct, so a
+// lookup builds no key string (the streaming aggregation looks up every row).
+type projectionExpressionKey struct {
+	keyword string
+	clause  string
+}
+
+func projectionExpressionKeyShardIndex(k projectionExpressionKey) int {
+	return boundedCacheStringShardIndex(k.clause)
+}
 
 // projectionExpressions returns the projected expressions of a projection
 // clause given as text with its keyword: the items of RETURN or WITH, after
@@ -602,7 +614,7 @@ var projectionExpressionCache = newBoundedCache[string, []string](4096, boundedC
 // every row on its own, and parsing the clause per row and per validator
 // doubled nested-aggregation time (#823). The returned slice is shared.
 func projectionExpressions(clause, keyword string) []string {
-	key := keyword + "\x00" + clause
+	key := projectionExpressionKey{keyword: keyword, clause: clause}
 	if cached, ok := projectionExpressionCache.get(key); ok {
 		return cached
 	}

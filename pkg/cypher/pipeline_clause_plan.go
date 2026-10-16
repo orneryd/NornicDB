@@ -50,6 +50,12 @@ const (
 	clauseAnalysisAggregates
 	clauseAnalysisMatchParts
 	clauseAnalysisMatchBodyPartCount
+	clauseAnalysisReferences
+	clauseAnalysisIndexedEquality
+	clauseAnalysisSubqueryQueryExists
+	clauseAnalysisSubqueryQueryCount
+	clauseAnalysisSubqueryQueryCollect
+	clauseAnalysisBoundChain
 	clauseAnalysisCount
 )
 
@@ -182,6 +188,16 @@ func (r *pipelineVariableReferences) references(name string) bool {
 		r.known[name] = referenced
 	}
 	return referenced
+}
+
+// referencesVariableFor is referencesVariable(text, name), from text's plan
+// in ctx when there is one.
+func referencesVariableFor(ctx context.Context, text, name string) bool {
+	plan := pipelineClausePlanFor(ctx, text)
+	if plan == nil {
+		return referencesVariable(text, name)
+	}
+	return plannedAnalysis(plan, clauseAnalysisReferences, text, newPipelineVariableReferences).references(name)
 }
 
 // pipelineMatchWhere is a MATCH clause's pattern and its WHERE, whitespace
@@ -327,4 +343,41 @@ func pipelineMatchBodyPartCountFor(ctx context.Context, clause string) int {
 	return clauseAnalysisFor(ctx, clauseAnalysisMatchBodyPartCount, clause, func(clause string) int {
 		return len(splitTopLevelComma(pipelineClauseBody(clause, "MATCH")))
 	})
+}
+
+// simpleIndexedEqualityShapes is one WHERE's parseSimpleIndexedEqualityShape
+// by variable, filled as callers ask.
+type simpleIndexedEqualityShapes struct {
+	where      string
+	mu         sync.Mutex
+	byVariable map[string]simpleIndexedEqualityShape
+}
+
+func simpleIndexedEqualityShapeFor(ctx context.Context, variable, where string) simpleIndexedEqualityShape {
+	plan := pipelineClausePlanFor(ctx, where)
+	if plan == nil {
+		return parseSimpleIndexedEqualityShape(variable, where)
+	}
+	shapes := plannedAnalysis(plan, clauseAnalysisIndexedEquality, where, func(where string) *simpleIndexedEqualityShapes {
+		return &simpleIndexedEqualityShapes{where: where, byVariable: make(map[string]simpleIndexedEqualityShape)}
+	})
+	shapes.mu.Lock()
+	defer shapes.mu.Unlock()
+	shape, known := shapes.byVariable[variable]
+	if !known {
+		shape = parseSimpleIndexedEqualityShape(variable, where)
+		shapes.byVariable[variable] = shape
+	}
+	return shape
+}
+
+// withStatementClausePlans adds clause plans to the context of a statement
+// that may run a subquery for each row: a CALL subquery, or an EXISTS /
+// COUNT / COLLECT subquery expression, whose body every row runs again. A
+// statement without one runs without plans.
+func withStatementClausePlans(ctx context.Context, cypher string) context.Context {
+	if strings.IndexByte(cypher, '{') < 0 || !mayContainSubqueryExpression(cypher) && !containsFold(cypher, "CALL") {
+		return ctx
+	}
+	return withPipelineClausePlans(ctx)
 }

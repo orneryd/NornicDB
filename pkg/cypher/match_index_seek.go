@@ -1243,6 +1243,24 @@ func whereLabelDisjunction(variable, term string) ([]string, bool) {
 }
 
 func (e *StorageExecutor) parseSimpleIndexedEquality(ctx context.Context, variable, whereClause string) (property string, value interface{}, ok bool) {
+	shape := simpleIndexedEqualityShapeFor(ctx, variable, whereClause)
+	if !shape.ok {
+		return "", nil, false
+	}
+	value, constant := e.indexSeekConstant(ctx, shape.constant)
+	return shape.property, value, constant
+}
+
+// simpleIndexedEqualityShape is the text part of parseSimpleIndexedEquality:
+// the property of variable that a lone equality compares, and the
+// expression it compares with, which is evaluated per use.
+type simpleIndexedEqualityShape struct {
+	property string
+	constant string
+	ok       bool
+}
+
+func parseSimpleIndexedEqualityShape(variable, whereClause string) simpleIndexedEqualityShape {
 	clause := strings.TrimSpace(whereClause)
 	for strings.HasPrefix(clause, "(") && strings.HasSuffix(clause, ")") && len(clause) >= 2 {
 		inner := strings.TrimSpace(clause[1 : len(clause)-1])
@@ -1252,42 +1270,38 @@ func (e *StorageExecutor) parseSimpleIndexedEquality(ctx context.Context, variab
 		clause = inner
 	}
 	if clause == "" {
-		return "", nil, false
+		return simpleIndexedEqualityShape{}
 	}
 
 	// Only simple predicates are index-eligible: a = 1 XOR true is not an
 	// equality with (1 XOR true).
 	if hasTopLevelLogicalOperator(clause) {
-		return "", nil, false
+		return simpleIndexedEqualityShape{}
 	}
 	for _, kw := range []string{"NOT", " IN ", " IS ", "<>", "!=", ">=", "<=", ">", "<"} {
 		if topLevelKeywordIndex(clause, kw) >= 0 {
-			return "", nil, false
+			return simpleIndexedEqualityShape{}
 		}
 	}
 
 	eqIdx := topLevelEqualsIndex(clause)
 	if eqIdx <= 0 || eqIdx >= len(clause)-1 {
-		return "", nil, false
+		return simpleIndexedEqualityShape{}
 	}
 
 	left := strings.TrimSpace(clause[:eqIdx])
 	right := strings.TrimSpace(clause[eqIdx+1:])
 	if left == "" || right == "" {
-		return "", nil, false
+		return simpleIndexedEqualityShape{}
 	}
 
-	prop, isLeftVarProp := parseVariableProperty(left, variable)
-	if isLeftVarProp {
-		value, constant := e.indexSeekConstant(ctx, right)
-		return prop, value, constant
+	if prop, isLeftVarProp := parseVariableProperty(left, variable); isLeftVarProp {
+		return simpleIndexedEqualityShape{property: prop, constant: right, ok: true}
 	}
-	prop, isRightVarProp := parseVariableProperty(right, variable)
-	if isRightVarProp {
-		value, constant := e.indexSeekConstant(ctx, left)
-		return prop, value, constant
+	if prop, isRightVarProp := parseVariableProperty(right, variable); isRightVarProp {
+		return simpleIndexedEqualityShape{property: prop, constant: left, ok: true}
 	}
-	return "", nil, false
+	return simpleIndexedEqualityShape{}
 }
 
 func (e *StorageExecutor) parseSimpleIndexedInParam(variable, whereClause string, params map[string]interface{}) (property string, values []interface{}, ok bool) {
