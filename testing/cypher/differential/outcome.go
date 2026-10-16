@@ -119,7 +119,7 @@ func sameRows(reference, actual Outcome, how comparison) bool {
 	encode := func(rows [][]any) []string {
 		encoded := make([]string, len(rows))
 		for index, row := range rows {
-			encoded[index] = canonical(sortColumns(row, how.tokenColumns), how.unorderedLists)
+			encoded[index] = canonicalRow(sortColumns(row, how.tokenColumns), how.unorderedLists)
 		}
 		return encoded
 	}
@@ -137,7 +137,7 @@ func sameRows(reference, actual Outcome, how comparison) bool {
 			for index, column := range how.tieKeys {
 				values[index] = row[column]
 			}
-			return canonical(values, how.unorderedLists)
+			return canonicalRow(values, how.unorderedLists)
 		}
 		for start := 0; start < len(left); {
 			end := start + 1
@@ -178,6 +178,20 @@ func sortColumns(row []any, columns []int) []any {
 func unorderedCollect(query string) bool {
 	index := strings.Index(strings.ToLower(query), "collect(")
 	return index >= 0 && !orderBy.MatchString(query[:index])
+}
+
+// canonicalRow is a row's JSON with its columns kept in position: with
+// unorderedLists, list values inside each cell compare as multisets, but a
+// value never moves to another column.
+func canonicalRow(row []any, unorderedLists bool) string {
+	if !unorderedLists {
+		return canonical(row, false)
+	}
+	cells := make([]any, len(row))
+	for index, cell := range row {
+		cells[index] = sortLists(cell)
+	}
+	return canonical(cells, false)
 }
 
 // canonical is value's JSON with map keys sorted; with unorderedLists, the
