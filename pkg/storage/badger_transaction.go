@@ -2756,20 +2756,7 @@ func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []*Edge, includeP
 // and nothing is stored. Once the writes are being applied the commit runs to
 // completion, so a commit is never partially applied.
 func (tx *BadgerTransaction) CommitContext(ctx context.Context) error {
-	if ctx != nil {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-	}
-	tx.mu.Lock()
-	tx.commitCtx = ctx
-	tx.mu.Unlock()
-	defer func() {
-		tx.mu.Lock()
-		tx.commitCtx = nil
-		tx.mu.Unlock()
-	}()
-	return tx.Commit()
+	return tx.CommitContextWithPublication(ctx, nil)
 }
 
 // commitCancelledLocked reports the commit context's error once it is done.
@@ -2784,11 +2771,18 @@ func (tx *BadgerTransaction) commitCancelledLocked() error {
 // between polls of the commit context.
 const commitCancelPollEvery = 256
 
-func (tx *BadgerTransaction) Commit() error {
+func (tx *BadgerTransaction) Commit() error { return tx.commit(nil) }
+
+func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.mu.Lock()
 	var knowledgePolicyChanged func()
+	var notification *commitNotification
 	defer func() {
 		tx.mu.Unlock()
+		if commitErr == nil && afterPublication != nil {
+			afterPublication()
+		}
+		tx.engine.completeCommitNotification(notification)
 		if knowledgePolicyChanged != nil {
 			knowledgePolicyChanged()
 		}
@@ -2798,8 +2792,8 @@ func (tx *BadgerTransaction) Commit() error {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return err
 	}
-	// The engine's write barrier is held from here until Commit returns
-	// (releaseWriteBarrierLocked): exclusively for a schema transaction, so
+	// The engine's write barrier is held through publication, before listener
+	// delivery (releaseWriteBarrierLocked): exclusively for a schema transaction, so
 	// no data write publishes between its snapshot check and its schema
 	// publication; shared otherwise, so Close waits for the commit and a
 	// commit that arrives after Close finished fails here without touching
@@ -2995,6 +2989,9 @@ func (tx *BadgerTransaction) Commit() error {
 	tx.engine.idDict.markTxnCommitted(committingTxn)
 	tx.commitW = nil
 	knowledgePolicyChanged = tx.publishKnowledgePolicySchemaLocked()
+	if len(tx.operations) > 0 {
+		notification = tx.engine.reserveCommitOperations(tx.operations)
+	}
 	runCommitTailHook()
 
 	tx.endChangeCaptureLocked(true)
@@ -3049,41 +3046,34 @@ func (tx *BadgerTransaction) Commit() error {
 		switch op.Type {
 		case OpCreateNode:
 			tx.engine.cacheOnNodeCreated(op.Node)
-			tx.engine.notifyNodeCreated(op.Node)
 		case OpUpdateNode:
 			tx.engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
-			tx.engine.notifyNodeUpdated(op.Node)
 		case OpDeleteNode:
 			if op.OldNode != nil {
 				tx.engine.cacheOnNodeDeletedWithLabels(op.NodeID, op.OldNode.Labels, op.EdgesDeleted)
 			} else {
 				tx.engine.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
 			}
-			for _, edgeID := range op.DeletedEdgeIDs {
-				tx.engine.notifyEdgeDeleted(edgeID)
-			}
-			tx.engine.notifyNodeDeleted(op.NodeID)
 		case OpCreateEdge:
 			tx.engine.cacheOnEdgeCreated(op.Edge)
-			tx.engine.notifyEdgeCreated(op.Edge)
 		case OpUpdateEdge:
 			oldType := ""
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
 			tx.engine.cacheOnEdgeUpdated(oldType, op.Edge)
-			tx.engine.notifyEdgeUpdated(op.Edge)
 		case OpDeleteEdge:
 			oldType := ""
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
 			tx.engine.cacheOnEdgeDeleted(op.EdgeID, oldType)
-			tx.engine.notifyEdgeDeleted(op.EdgeID)
 		case OpUpdateEmbedding:
 			// Embeddings are regenerable; no-op for cached counts.
 		}
 	}
+
+	tx.engine.prepareCommitOperations(tx.operations, notification != nil)
 
 	// Update derived unique-constraint caches (in-memory) based on committed operations.
 	// This keeps non-transactional CreateNode() uniqueness checks consistent with transactional writes.

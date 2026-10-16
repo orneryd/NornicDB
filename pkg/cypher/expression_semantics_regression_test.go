@@ -161,7 +161,7 @@ func TestNonBooleanWhereFailsExplicitTransaction(t *testing.T) {
 	_, err = exec.Execute(ctx, "MATCH (n:NonBooleanWhere) WHERE 42 RETURN count(n) AS c", nil)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "Type mismatch: expected Boolean but was Integer")
-	if _, err := exec.handleCommit(); err != nil {
+	if _, err := exec.handleCommit(context.Background()); err != nil {
 		t.Logf("commit err (expected failed tx): %v", err)
 	}
 

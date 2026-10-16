@@ -3,7 +3,6 @@ package multidb
 import (
 	"context"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -17,7 +16,7 @@ type sizeTrackingEngine struct {
 	manager *DatabaseManager
 	dbName  string
 	checker *databaseLimitChecker
-	writeMu sync.Mutex
+	writeMu writeAdmission
 }
 
 var _ storage.Engine = (*sizeTrackingEngine)(nil)
