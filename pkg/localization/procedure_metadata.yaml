@@ -29,6 +29,21 @@
     es: "Establece una propiedad vectorial en una relación",
   }
 - {
+    name: db.embedding.pause,
+    en: "Pauses automatic embedding, kept across restarts; pending nodes stay pending",
+    es: "Pausa el embedding automático, también tras un reinicio; los nodos pendientes siguen pendientes",
+  }
+- {
+    name: db.embedding.resume,
+    en: "Resumes automatic embedding of pending nodes",
+    es: "Reanuda el embedding automático de los nodos pendientes",
+  }
+- {
+    name: db.embedding.status,
+    en: "Reports whether automatic embedding is paused and how many nodes are pending",
+    es: "Indica si el embedding automático está en pausa y cuántos nodos están pendientes",
+  }
+- {
     name: db.index.fulltext.createNodeIndex,
     en: "Creates fulltext index on nodes",
     es: "Crea un índice de texto completo en nodos",

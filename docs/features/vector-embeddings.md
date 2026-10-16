@@ -232,6 +232,41 @@ curl -X POST http://localhost:7474/nornicdb/embed/retry-failures \
   -d '{"node_ids":["picture-123"]}'
 ```
 
+### Pause and Resume Automatic Embedding
+
+An administrator can pause automatic embedding, for every database, while the
+database stays in use, for example to stop provider spend or for maintenance:
+
+```cypher
+CALL db.embedding.pause()   YIELD paused, pending
+CALL db.embedding.resume()  YIELD paused, pending
+CALL db.embedding.status()  YIELD paused, pending
+```
+
+```bash
+curl -X POST http://localhost:7474/nornicdb/embed/pause  -H "Authorization: Bearer $TOKEN"
+curl -X POST http://localhost:7474/nornicdb/embed/resume -H "Authorization: Bearer $TOKEN"
+curl http://localhost:7474/nornicdb/embed/status         -H "Authorization: Bearer $TOKEN"
+# {"paused": true, "pending": 42}
+```
+
+- All three need the **admin** role (Bolt, HTTP Cypher and the routes alike), and
+  can be called from any database, `system` included. They are idempotent and
+  return the state in effect; `pending` is the nodes waiting to be embedded,
+  those being embedded included.
+- While paused, the background workers take no new node and don't wake for
+  writes. A node already being embedded when the pause comes is finished and
+  written. Pending nodes stay pending: nothing is deleted or marked failed, and
+  nodes written during the pause join them. Relationship embedding (relationship
+  search) waits as well.
+- Resuming has the workers embed every pending node, the backlog included.
+- The paused state is stored in the `system` database: a restart starts paused,
+  before any worker runs, and loading or reloading the embedding provider does not
+  resume it. Turning automatic embedding off and on again keeps it too.
+- Foreground work is unaffected: queries, search, query-text embedding
+  (`db.index.vector.embed`, `db.retrieve`, `db.rretrieve`) and reranking.
+- `/nornicdb/embed/stats` reports `paused` among the worker's figures.
+
 ## Manual Embedding
 
 ### Embed Query

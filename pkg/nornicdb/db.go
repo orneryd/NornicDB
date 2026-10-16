@@ -187,6 +187,9 @@ type DB struct {
 	embedQueue        *EmbedQueue
 	embedWorkerConfig *EmbedWorkerConfig // Configurable via ENV vars
 	embedQueueYieldFn func() bool
+	// embeddingPause is an administrator's pause of automatic embedding
+	// (SetEmbeddingPaused), kept across restarts.
+	embeddingPause embeddingPause
 
 	// K-means clustering timer (runs on schedule instead of trigger)
 	clusterTicker           *time.Ticker
@@ -985,6 +988,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// Embedded callers that want explicit transactions create their own
 	// session executor (cypher.NewStorageExecutor(db.GetStorage())).
 	db.cypherExecutor.SetSharedExecutor(true)
+	// db.embedding.pause / resume / status; executors built from this one
+	// share it (ShareEmbedderFrom).
+	db.cypherExecutor.SetEmbeddingController(db)
 
 	// Configure executor with embedding dimensions for vector index creation
 	if config.Memory.EmbeddingDimensions > 0 {
@@ -1186,10 +1192,12 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// Start the embed queue (with nil embedder) when auto-embed is enabled. Worker goroutines
 	// are deferred until after search index build + k-means warmup to avoid slowing startup.
 	// SetEmbedder(embedder) is called by the server when the model loads.
+	// An administrator's pause holds from before the first worker starts.
+	db.loadEmbeddingPause()
 	if config.Memory.EmbeddingEnabled && db.baseStorage != nil && db.embedWorkerConfig != nil {
 		workerCfg := *db.embedWorkerConfig
 		workerCfg.DeferWorkerStart = true
-		db.embedQueue = NewEmbedQueue(nil, db.baseStorage, &workerCfg)
+		db.embedQueue = db.newEmbedQueue(nil, &workerCfg)
 		if db.embedQueueYieldFn != nil {
 			db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
 		}
@@ -1623,7 +1631,7 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) {
 
 	// Create embed queue against the un-namespaced base storage so it can pull work
 	// from ALL databases (node IDs are fully-qualified, e.g. "nornic:<id>").
-	db.embedQueue = NewEmbedQueue(embedder, db.baseStorage, db.embedWorkerConfig)
+	db.embedQueue = db.newEmbedQueue(embedder, db.embedWorkerConfig)
 	if db.embedQueueYieldFn != nil {
 		db.embedQueue.SetShouldYield(db.embedQueueYieldFn)
 	}

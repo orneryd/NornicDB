@@ -66,6 +66,10 @@ func (e *StorageExecutor) ShareEmbedderFrom(parent *StorageExecutor) {
 	if parent != nil && parent.queryEmbedder != nil {
 		e.queryEmbedder = parent.queryEmbedder
 	}
+	// Automatic embedding's pause control (db.embedding.*) comes with it.
+	if parent != nil && parent.embeddingController != nil {
+		e.embeddingController = parent.embeddingController
+	}
 }
 
 type queryEmbeddingStatementKey struct{}

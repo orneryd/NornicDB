@@ -102,6 +102,9 @@
 //	  POST /nornicdb/embed/trigger     - Trigger embedding generation
 //	  GET  /nornicdb/embed/stats       - Embedding statistics
 //	  POST /nornicdb/embed/clear       - Clear all embeddings (admin)
+//	  POST /nornicdb/embed/pause       - Pause automatic embedding (admin)
+//	  POST /nornicdb/embed/resume      - Resume automatic embedding (admin)
+//	  GET  /nornicdb/embed/status      - Whether paused, and pending nodes (admin)
 //	  POST /nornicdb/search/rebuild    - Rebuild search indexes
 //
 //	Admin & System:

@@ -382,6 +382,42 @@ func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, response)
 }
 
+// handleEmbedPause pauses automatic embedding for every database, kept
+// across restarts (POST, admin; db.embedding.pause, #1021). Pending nodes
+// stay pending; it returns the state in effect.
+func (s *Server) handleEmbedPause(w http.ResponseWriter, r *http.Request) {
+	s.setEmbeddingPaused(w, r, true)
+}
+
+// handleEmbedResume resumes automatic embedding (POST, admin;
+// db.embedding.resume).
+func (s *Server) handleEmbedResume(w http.ResponseWriter, r *http.Request) {
+	s.setEmbeddingPaused(w, r, false)
+}
+
+func (s *Server) setEmbeddingPaused(w http.ResponseWriter, r *http.Request, paused bool) {
+	if r.Method != http.MethodPost {
+		s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
+		return
+	}
+	status, err := s.db.SetEmbeddingPaused(r.Context(), paused)
+	if err != nil {
+		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, status)
+}
+
+// handleEmbedStatus reports whether automatic embedding is paused and how
+// many nodes are pending (GET, admin; db.embedding.status).
+func (s *Server) handleEmbedStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.Request.Invalid")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, s.db.EmbeddingStatus())
+}
+
 // handleSearchRebuild rebuilds search indexes from all nodes in the specified database.
 func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
