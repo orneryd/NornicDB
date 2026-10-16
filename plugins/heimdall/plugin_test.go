@@ -78,7 +78,7 @@ func (m *memoryDBRouter) Query(ctx context.Context, database string, cypher stri
 	}
 }
 
-func (m *memoryDBRouter) Stats(database string) (heimdall.DatabaseStats, error) {
+func (m *memoryDBRouter) Stats(ctx context.Context, database string) (heimdall.DatabaseStats, error) {
 	_ = database
 	return heimdall.DatabaseStats{}, nil
 }

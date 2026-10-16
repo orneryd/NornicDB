@@ -188,6 +188,9 @@ func (s *Server) authorizeDatabaseRead(w http.ResponseWriter, r *http.Request, d
 func (s *Server) withBifrostRBAC(r *http.Request) *http.Request {
 	claims := getClaims(r)
 	if claims == nil {
+		if !s.isRBACEnforced() {
+			return r.WithContext(auth.WithRequestAuthenticationDisabled(r.Context()))
+		}
 		return r
 	}
 	ctx := r.Context()
