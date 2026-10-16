@@ -129,6 +129,8 @@ func migrateBadgerToMsgpack(db badgerKV, newBatch func() migrationBatch, dataDir
 	stats.SkippedExisting += skipped
 	stats.TotalScanned += scanned
 
+	// Only the released embedding family can contain pre-msgpack vectors.
+	// The newer families were introduced after the serializer transition.
 	converted, skipped, scanned, err = migratePrefixToMsgpack(db, newBatch, prefixEmbedding, "embedding", func(data []byte) (any, error) {
 		return decodeEmbedding(data)
 	}, func(v any) ([]byte, error) {

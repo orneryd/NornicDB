@@ -148,6 +148,11 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	if err := b.loadPersistedSchemas(); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
+	// An old backup can contain an inline body and orphaned chunks. Establish
+	// the same absence guarantee as open before the no-chunk fast path runs.
+	if err := b.ensureEmbeddingKeyRepair(); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
 
 	b.invalidateCachesAfterRestore()
 	if err := b.initializeCounts(); err != nil {
