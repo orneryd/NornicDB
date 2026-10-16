@@ -46,7 +46,7 @@ func (nilSearchProbe) IndexSizeBytes(kind string) uint64 { return 0 }
 // increments requests_total per call.
 func TestSearch_RequestsTotalIncrement(t *testing.T) {
 	svc, reg, _ := newTestSearchService(t)
-	svc.ready.Store(true)
+	svc.setLifecycleState(lifecycleReady)
 
 	ctx := context.Background()
 	// BM25-only path: empty embedding flows through fullTextSearchOnly.
@@ -64,7 +64,7 @@ func TestSearch_RequestsTotalIncrement(t *testing.T) {
 // TestSearch_VectorOnlyMode asserts the empty-query branch routes mode=vector.
 func TestSearch_VectorOnlyMode(t *testing.T) {
 	svc, reg, _ := newTestSearchService(t)
-	svc.ready.Store(true)
+	svc.setLifecycleState(lifecycleReady)
 
 	ctx := context.Background()
 	embedding := []float32{0.1, 0.2, 0.3, 0.4} // matches dims=4
@@ -80,7 +80,7 @@ func TestSearch_VectorOnlyMode(t *testing.T) {
 func TestSearch_NilMetricsTolerated(t *testing.T) {
 	engine := storage.NewMemoryEngine()
 	svc := NewServiceWithDimensions(engine, 4)
-	svc.ready.Store(true)
+	svc.setLifecycleState(lifecycleReady)
 	// NO AttachMetrics call.
 
 	ctx := context.Background()
@@ -102,7 +102,7 @@ func TestSearch_AttachMetricsIdempotent(t *testing.T) {
 	bag2 := observability.NewSearchMetrics(reg2, false, &nilSearchProbe{})
 	svc.AttachMetrics(bag2)
 
-	svc.ready.Store(true)
+	svc.setLifecycleState(lifecycleReady)
 	ctx := context.Background()
 	_, _ = svc.Search(ctx, "test", nil, nil)
 
@@ -125,7 +125,7 @@ func TestSearch_AttachMetricsNilClearsBindings(t *testing.T) {
 	svc.AttachMetrics(bag)
 	svc.AttachMetrics(nil) // detach
 
-	svc.ready.Store(true)
+	svc.setLifecycleState(lifecycleReady)
 	ctx := context.Background()
 	// Should not panic.
 	_, _ = svc.Search(ctx, "test", nil, nil)

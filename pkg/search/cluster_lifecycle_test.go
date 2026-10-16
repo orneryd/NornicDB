@@ -106,7 +106,7 @@ func TestVectorTeardownJoinsClusteringFromAnyContext(t *testing.T) {
 				t.Cleanup(func() { require.NoError(t, svc.Close()) })
 			}
 			// A DB timer's context outlives a per-database reset or drop.
-			runCtx, finish, ok := svc.ownClusterRun(context.Background())
+			runCtx, finish, ok := svc.runWorker(context.Background(), workerClustering)
 			require.True(t, ok)
 			var finished bool
 			defer func() {
@@ -142,7 +142,7 @@ func TestVectorTeardownJoinsClusteringFromAnyContext(t *testing.T) {
 				t.Fatal("teardown did not finish after clustering returned")
 			}
 
-			_, again, ok := svc.ownClusterRun(context.Background())
+			_, again, ok := svc.runWorker(context.Background(), workerClustering)
 			if operation == "close" {
 				require.False(t, ok, "a closed service admitted clustering")
 				require.ErrorIs(t, svc.TriggerClustering(context.Background()), context.Canceled)

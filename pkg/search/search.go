@@ -840,7 +840,6 @@ type Service struct {
 	// without blocking read paths that use s.mu for lightweight config/state reads.
 	indexMu        sync.RWMutex
 	buildMu        baseOperationMutex
-	ready          atomic.Bool
 	buildAttempted atomic.Bool
 	embeddingSpace atomic.Value
 	// resumeVectorBuild skips re-adding vectors already present in vectorFileStore during BuildIndexes.
@@ -887,16 +886,12 @@ type Service struct {
 	clusterEnabled   bool
 	clusterUsesGPU   bool
 	kmeansInProgress atomic.Bool
+
 	// clusterGeneration retires cluster objects and their derived state: Clear,
 	// dimension replacement and cluster replacement advance it, and clustering
-	// publishes only into the generation it captured. clusterRun* let teardown
-	// cancel and join running clustering work whatever its caller context.
-	clusterGeneration     atomic.Uint64
-	clusterRunMu          sync.Mutex
-	clusterRunPaused      int
-	clusterRunScope       context.Context
-	clusterRunScopeCancel context.CancelFunc
-	clusterRuns           sync.WaitGroup
+	// publishes only into the generation it captured. Clustering runs are
+	// registered with the lifecycle owner (workerClustering).
+	clusterGeneration atomic.Uint64
 
 	// Optional IVF-HNSW acceleration: build one HNSW per cluster to use centroids
 	// as a routing layer for CPU-only large datasets.
@@ -1026,6 +1021,9 @@ type Service struct {
 
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
+
+	// life is the vector lifecycle owner (vector_lifecycle.go).
+	life vectorLifecycle
 
 	// relationships holds relationship search's indexes when it is enabled
 	// (#1065); nil otherwise.
@@ -1264,7 +1262,6 @@ func NewServiceWithDimensionsAndBM25EngineAndOptions(engine storage.Engine, dime
 		svc.vectorMemoryMaxBytes = options.VectorMemoryMaxBytes
 		svc.metadataMemoryMaxBytes = options.MetadataMemoryMaxBytes
 	}
-	svc.ready.Store(false)
 	svc.persistEnabled.Store(false)
 	svc.buildPhase.Store("idle")
 	svc.buildPhaseUnix.Store(time.Now().Unix())
@@ -1376,7 +1373,7 @@ func (s *Service) SetLazyWarming(lazy bool, fn WarmFunc) {
 //   - When warmingLazy=false (eager) or the service is already fully built,
 //     EnsureWarm returns immediately.
 func (s *Service) EnsureWarm(ctx context.Context) error {
-	if !s.warmingLazy.Load() || s.ready.Load() {
+	if !s.warmingLazy.Load() || s.IsReady() {
 		return nil
 	}
 	s.warmOnce.Do(func() {
@@ -1460,7 +1457,7 @@ func (s *Service) setFulltext(index bm25Index) {
 func (s *Service) MarkReadyDisabled() {
 	s.setFulltext(disabledBM25Index{})
 	s.setBuildPhase("ready")
-	s.ready.Store(true)
+	s.setLifecycleState(lifecycleReady)
 }
 
 // SetIndexFlags configures whether BM25 and vector search are enabled for
@@ -1522,7 +1519,7 @@ func (s *Service) FulltextDocCount() int {
 
 // IsReady reports whether the search indexes are fully built and ready.
 func (s *Service) IsReady() bool {
-	return s.ready.Load()
+	return s.lifecycleState() == lifecycleReady
 }
 
 // BM25Engine returns the configured BM25 engine for this service ("v1" or "v2").
@@ -1642,7 +1639,7 @@ func (s *Service) EnableClustering(gpuManager *gpu.Manager, numClusters int) {
 		return
 	}
 	// Work and derived state belong to the retired object.
-	s.cancelClusterRuns()
+	s.cancelWorkers(workerClustering)
 	s.clusterHNSWMu.Lock()
 	s.clusterHNSW = nil
 	s.clusterHNSWMu.Unlock()
@@ -1832,7 +1829,7 @@ func (s *Service) TriggerClustering(ctx context.Context) error {
 		return nil
 	}
 	defer s.kmeansInProgress.Store(false)
-	runCtx, finish, ok := s.ownClusterRun(ctx)
+	runCtx, finish, ok := s.runWorker(ctx, workerClustering)
 	if !ok {
 		if s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil {
 			return s.lifecycleCtx.Err()
@@ -2159,7 +2156,7 @@ func (s *Service) Close() error {
 	s.continuationMu.Unlock()
 	s.pauseHNSWBuild() // Close permanently prevents another build.
 	// Join clustering started from any context, including a DB timer's.
-	s.pauseClusterRuns()
+	s.closeWorkers()
 	s.stopHNSWMaintenance()
 
 	s.persistMu.Lock()
@@ -2810,7 +2807,7 @@ func (s *Service) replaceEmptyVectorDimensionsLocked(dimensions int) {
 func (s *Service) ClearVectorIndex() {
 	// Clustering copies the population and publishes into it later; join it
 	// whatever context its caller supplied.
-	resumeClusters := s.pauseClusterRuns()
+	resumeClusters := s.pauseWorkers(workerClustering)
 	defer resumeClusters()
 	resumeBase := s.pauseBaseBuild(true)
 	defer resumeBase()
@@ -3892,7 +3889,7 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 		s.logPrintf("📇 Search: both BM25 and vector disabled — skipping index build")
 		s.setFulltext(disabledBM25Index{})
 		s.setBuildPhase("ready")
-		s.ready.Store(true)
+		s.setLifecycleState(lifecycleReady)
 		return nil
 	}
 	s.indexMu.Lock()
@@ -3906,7 +3903,7 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 	defer s.hnswVectorsChanging.Store(false)
 	s.resetANNForBuild()
 	s.indexChanged()
-	s.ready.Store(false)
+	s.setLifecycleState(lifecyclePopulating)
 	s.buildInProgress.Store(true)
 	s.buildStartedUnix.Store(time.Now().Unix())
 	s.buildProcessed.Store(0)
@@ -3916,7 +3913,7 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 		s.buildInProgress.Store(false)
 		// Loading persisted indexes doesn't go through indexNodeLocked.
 		s.indexChanged()
-		if !s.ready.Load() {
+		if !s.IsReady() {
 			s.setBuildPhase("idle")
 		}
 	}()
@@ -4355,7 +4352,7 @@ func (s *Service) finishBuildWithFinalPersist(ctx context.Context) {
 	s.buildInProgress.Store(false)
 	s.indexChanged()
 	s.runPersistWithContext(ctx)
-	s.ready.Store(true)
+	s.setLifecycleState(lifecycleReady)
 	s.setBuildPhase("ready")
 }
 
@@ -4419,7 +4416,7 @@ func (s *Service) warmupClusteredStrategy(ctx context.Context, vectorCount int) 
 	s.mu.RUnlock()
 	// Backfill cluster index from vector store so k-means sees full count (same as TriggerClustering).
 	s.ensureClusterIndexBackfilled(vectorCount)
-	runCtx, finish, ok := s.ownClusterRun(ctx)
+	runCtx, finish, ok := s.runWorker(ctx, workerClustering)
 	if !ok {
 		return nil
 	}

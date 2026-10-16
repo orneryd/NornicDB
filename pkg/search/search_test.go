@@ -2545,7 +2545,7 @@ func TestVectorQueryNodes_ErrorAndContextBranches(t *testing.T) {
 func TestSearchCoreErrorsCarryDescriptorsAndPreserveSentinels(t *testing.T) {
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
 	svc.buildAttempted.Store(true)
-	svc.ready.Store(false)
+	svc.setLifecycleState(lifecyclePopulating)
 
 	_, err := svc.Search(context.Background(), "query", nil, DefaultSearchOptions())
 	require.ErrorIs(t, err, ErrSearchIndexBuilding)
@@ -2555,7 +2555,7 @@ func TestSearchCoreErrorsCarryDescriptorsAndPreserveSentinels(t *testing.T) {
 	require.Equal(t, localization.MessageSearchIndexBuilding, localizedErr.Message.ID)
 
 	svc.buildAttempted.Store(false)
-	svc.ready.Store(true)
+	svc.setLifecycleState(lifecycleReady)
 	_, err = svc.VectorSearchCandidates(context.Background(), nil, DefaultSearchOptions())
 	require.EqualError(t, err, "vector search requires embedding")
 	require.ErrorAs(t, err, &localizedErr)
