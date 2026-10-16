@@ -21,6 +21,12 @@ func TestCypherValueIndexCanonicalEquivalence(t *testing.T) {
 		[]interface{}{math.NaN()}, map[string]interface{}{"a": 1, "b": nil}, map[string]interface{}{"b": nil, "a": 1.0},
 		map[interface{}]interface{}{"a": 1, "b": nil}, &storage.Node{ID: "x"}, &storage.Edge{ID: "x"},
 		time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC),
+        storage.RemoteEntityValue(nil), storage.RemotePathValue(nil),
+        storage.RemoteEntityValue{"elementId": "remote-a", "name": "before"},
+        storage.RemoteEntityValue{"elementId": "remote-a", "name": "after"},
+        storage.RemoteEntityValue{"elementId": "remote-b"},
+        storage.RemotePathValue{storage.RemoteEntityValue{"elementId": "remote-a"}},
+        storage.RemotePathValue{storage.RemoteEntityValue{"elementId": "remote-b"}},
 	}
 	for _, left := range values {
 		for _, right := range values {
