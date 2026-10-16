@@ -2,10 +2,12 @@ package cypher
 
 import "context"
 
-// A worker borrows the same query context and cancellation owner, with its own
-// counter. Recursive operations inside that worker share this one probe.
+// pipelineWorkerContext gives a goroutine that runs part of the statement its
+// own probe (a probe's counter is not shared across goroutines). The fork
+// reads the same context and reports a cancellation it sees to the statement
+// probe (statementCancellationErr), so the statement's owner learns of it.
 func pipelineWorkerContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, pipelineCancellationKey{}, &pipelineCancellation{ctx: ctx})
+	return context.WithValue(ctx, pipelineCancellationKey{}, &pipelineCancellation{ctx: ctx, parent: contextPipelineProbe(ctx)})
 }
 
 func clearPipelineRow(row pipelineRow, probe *pipelineCancellation) bool {

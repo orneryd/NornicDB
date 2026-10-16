@@ -1853,6 +1853,11 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	if execErr == nil {
 		execErr = getExpressionFailure(txCtx)
 	}
+	// A statement that saw its deadline commits nothing: a reader that stopped
+	// early may have handed a partial value to a write.
+	if execErr == nil {
+		execErr = statementCancellationErr(txCtx)
+	}
 	// So is a memory limit it went over, whichever route ignored the
 	// cancellation that caused (#1343).
 	if execErr == nil {

@@ -5,6 +5,7 @@ import (
 	"hash/maphash"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
@@ -190,6 +191,12 @@ type pipelineCancellation struct {
 	ctx       context.Context
 	remaining int
 	err       error
+	// parent is the statement probe a goroutine's fork reports to.
+	parent *pipelineCancellation
+	// observed records, across goroutines, that this probe or one of its
+	// forks saw the statement cancelled: a value built after that point is
+	// not the statement's result.
+	observed atomic.Bool
 }
 
 func (probe *pipelineCancellation) check() bool {
@@ -213,6 +220,10 @@ func (probe *pipelineCancellation) poll() bool {
 	}
 	probe.err = probe.ctx.Err()
 	if probe.err != nil {
+		probe.observed.Store(true)
+		if probe.parent != nil {
+			probe.parent.observed.Store(true)
+		}
 		probe.remaining = 0
 		recordExpressionFailure(probe.ctx, probe.err)
 		return false
@@ -252,4 +263,24 @@ func (probe *pipelineCancellation) sort(values interface{}, less func(int, int) 
 func contextPipelineProbe(ctx context.Context) *pipelineCancellation {
 	probe, _ := ctx.Value(pipelineCancellationKey{}).(*pipelineCancellation)
 	return probe
+}
+
+// statementCancellationErr is the statement's cancellation once its probe (or
+// a fork) has seen it: from then on a value the statement builds may be
+// incomplete, so its result is the cancellation, not that value.
+func statementCancellationErr(ctx context.Context) error {
+	probe := contextPipelineProbe(ctx)
+	if probe == nil {
+		return nil
+	}
+	if probe.err != nil {
+		return probe.err
+	}
+	if probe.observed.Load() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return context.Canceled
+	}
+	return nil
 }

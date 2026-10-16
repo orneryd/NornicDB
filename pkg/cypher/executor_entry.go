@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -204,6 +205,23 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Normalize query: trim BOM (some clients send it) then whitespace
 	ctx = withPipelineCancellation(withExpressionFailureSlot(ctx))
+	// The statement's deadline has one owner, this context's probe. Once the
+	// statement is cancelled, a reader that stopped early may have handed a
+	// partial value on, so the deadline wins: an error the statement returns
+	// after its context ended is that context's error, and a result built
+	// after a reader saw the cancellation is not returned.
+	statementCtx := ctx
+	defer func() {
+		if retErr != nil {
+			if err := statementCtx.Err(); err != nil && !errors.Is(retErr, err) {
+				result, retErr = nil, err
+			}
+			return
+		}
+		if err := statementCancellationErr(statementCtx); err != nil {
+			result, retErr = nil, err
+		}
+	}()
 	preparationProbe := parameterCancellationForContext(ctx)
 	cypher = trimBOM(cypher)
 	cypher = normalizeCypherSyntaxConfusablesWithCancellation(cypher, preparationProbe)
