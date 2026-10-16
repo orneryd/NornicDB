@@ -112,6 +112,8 @@ func isComparableValue(v interface{}) bool {
 	// Graph pointers are Go-comparable, but their addresses are not Cypher
 	// identities. Leave them for the equality owner's non-indexed comparisons.
 	switch v.(type) {
+	case string, bool:
+		return true
 	case *storage.Node, *storage.Edge:
 		return false
 	}

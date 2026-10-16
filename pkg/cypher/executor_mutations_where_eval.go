@@ -26,7 +26,7 @@ func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, 
 		values[name] = value
 	}
 	return func(node *storage.Node) bool {
-		return e.evaluateRowPredicatePartScope(ctx, &plan.root, compiledRowScope{values: values, nodes: binding{variable: node}, parameters: parameters}, nil)
+		return e.evaluateRowPredicatePartScope(ctx, &plan.root, compiledRowScope{values: &values, nodes: binding{variable: node}, parameters: parameters}, nil)
 	}, true
 }
 

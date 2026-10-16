@@ -83,7 +83,7 @@ func (e *StorageExecutor) evaluateWithWhere(ctx context.Context, whereExpr strin
 	}
 	ctx = withExpressionFailureSlot(ctx)
 	if plan := planRowPredicate(expr); plan != nil && plan.complete {
-		accepted := e.evaluateRowPredicatePartScope(ctx, &plan.root, compiledRowScope{values: boundVars, parameters: getParamsFromContext(ctx)}, nil)
+		accepted := e.evaluateRowPredicatePartScope(ctx, &plan.root, compiledRowScope{values: &boundVars, parameters: getParamsFromContext(ctx)}, nil)
 		return accepted, getExpressionFailure(ctx)
 	}
 	values := boundVars
