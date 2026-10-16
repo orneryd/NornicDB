@@ -109,6 +109,15 @@ func WithRequestEntitlementResolver(ctx context.Context, resolver RequestEntitle
 	return context.WithValue(ctx, requestRBACKeyEntitlementResolver, resolver)
 }
 
+// WithRequestPrincipal attaches a principal as callers that authorize through
+// the request read it: its permission resolver (WithRequestEntitlementResolver)
+// and the databases and aliases it may select (WithRequestDatabaseScope),
+// together. A context with a resolver and no scope is an incomplete
+// principal, which those callers refuse.
+func WithRequestPrincipal(ctx context.Context, resolver RequestEntitlementResolver, scope *RequestDatabaseScope) context.Context {
+	return WithRequestDatabaseScope(WithRequestEntitlementResolver(ctx, resolver), scope)
+}
+
 // WithRequestAuthenticationDisabled marks a request the server serves with
 // authentication disabled, which therefore carries no principal. Callers that
 // authorize through the request principal (RequestEntitlementResolverFromContext)
