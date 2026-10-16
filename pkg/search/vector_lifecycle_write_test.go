@@ -170,8 +170,10 @@ func waitNodeAdmission(t *testing.T, svc *Service) error {
 
 // A write is visible to search as soon as it returns, even while the
 // population it started on a persisted, never-built service is still running
-// (F-I86 B1; orchestrator 16 Oct). The population is held at its storage
-// traversal, so this cannot pass by the population finishing first.
+// (F-I86 decision B). The population is held at its storage traversal, so
+// this cannot pass by the population finishing first. A later update and a
+// later delete during the same population stay authoritative, both while it
+// runs and after it re-applies its record.
 func TestWriteIsSearchableWhileItsPopulationRuns(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "10")
 	for _, backend := range []string{"v1", "v2"} {
@@ -179,12 +181,39 @@ func TestWriteIsSearchableWhileItsPopulationRuns(t *testing.T) {
 			ctx := context.Background()
 			engine := &traversalGatedEngine{MemoryEngine: storage.NewMemoryEngine()}
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
+			old := admissionNode("nornic:old", "oldterm", []float32{1, 0, 0}, "named")
+			_, err := engine.CreateNode(old)
+			require.NoError(t, err)
 			svc := configureNodeAdmissionService(t, engine, t.TempDir(), backend, nil)
 			entered, release := engine.arm()
 			defer release()
 
+			textHits := func(term string) []string {
+				t.Helper()
+				resp, err := svc.Search(ctx, term, nil, &SearchOptions{Limit: 10})
+				require.NoError(t, err)
+				ids := make([]string, 0, len(resp.Results))
+				for _, r := range resp.Results {
+					ids = append(ids, r.ID)
+				}
+				return ids
+			}
+			vectorHits := func(v []float32) []string {
+				t.Helper()
+				hits, err := svc.VectorQueryNodes(ctx, v, VectorQuerySpec{Label: "Doc", Property: "v", Similarity: "cosine", Limit: 10})
+				require.NoError(t, err)
+				ids := make([]string, 0, len(hits))
+				for _, h := range hits {
+					if h.Score < 0.99 {
+						continue // only an exact match counts
+					}
+					ids = append(ids, h.ID)
+				}
+				return ids
+			}
+
 			b := admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named")
-			_, err := engine.CreateNode(b)
+			_, err = engine.CreateNode(b)
 			require.NoError(t, err)
 			require.NoError(t, svc.IndexNode(b))
 			select {
@@ -192,22 +221,38 @@ func TestWriteIsSearchableWhileItsPopulationRuns(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("the write did not start the population")
 			}
+			require.False(t, svc.IsReady())
 
-			resp, err := svc.Search(ctx, "bterm", nil, &SearchOptions{Limit: 10})
-			require.NoError(t, err)
-			require.Len(t, resp.Results, 1, "text search must see the write while its population runs")
-			require.Equal(t, "nornic:b", resp.Results[0].ID)
-
-			hits, err := svc.VectorQueryNodes(ctx, []float32{0, 1, 0}, VectorQuerySpec{Label: "Doc", Property: "v", Similarity: "cosine", Limit: 10})
-			require.NoError(t, err)
-			require.Len(t, hits, 1, "vector search must see the write while its population runs")
-			require.Equal(t, "nornic:b", hits[0].ID)
-
+			// The write is searchable at once, by text, by vector and by candidates.
+			require.Equal(t, []string{"nornic:b"}, textHits("bterm"))
+			require.Equal(t, []string{"nornic:b"}, vectorHits([]float32{0, 1, 0}))
 			candidates, err := svc.VectorSearchCandidates(ctx, []float32{0, 1, 0}, &SearchOptions{Limit: 10})
 			require.NoError(t, err)
-			require.NotEmpty(t, candidates, "candidate search must see the write while its population runs")
+			require.NotEmpty(t, candidates)
 			require.Equal(t, "nornic:b", normalizeVectorResultIDToNodeID(candidates[0].ID))
+
+			// A newer update replaces it at once; a delete removes another node at once.
+			updated := admissionNode("nornic:b", "newterm", []float32{0, 0, 1}, "named")
+			require.NoError(t, engine.UpdateNode(updated))
+			require.NoError(t, svc.IndexNode(updated))
+			require.NoError(t, engine.DeleteNode(old.ID))
+			require.NoError(t, svc.RemoveNode(old.ID))
+			check := func(stage string) {
+				require.Empty(t, textHits("bterm"), "%s: the older copy is gone", stage)
+				require.Equal(t, []string{"nornic:b"}, textHits("newterm"), "%s: the update is searchable", stage)
+				require.Empty(t, vectorHits([]float32{0, 1, 0}), "%s: the older vector is gone", stage)
+				require.Equal(t, []string{"nornic:b"}, vectorHits([]float32{0, 0, 1}), "%s: the updated vector is searchable", stage)
+				require.Empty(t, textHits("oldterm"), "%s: the deleted node stays deleted", stage)
+				require.Empty(t, vectorHits([]float32{1, 0, 0}), "%s: the deleted vector stays deleted", stage)
+			}
+			check("while the population runs")
+
+			// The population re-applies its record over the batch it read before
+			// the update and the delete; neither older state may come back.
 			release()
+			require.NoError(t, waitNodeAdmission(t, svc))
+			check("after the population")
+			require.Equal(t, 1, svc.EmbeddingCount())
 		})
 	}
 }

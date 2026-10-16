@@ -566,6 +566,16 @@ LIMIT $limit
 }
 
 func TestMatchVectorCosineFastPath_UsesLiveIndexDuringBackgroundWarmup(t *testing.T) {
+	// In memory the write applies directly; persisted, it is provisional until
+	// the population restores the sources and re-applies it (F-I86 decision B).
+	for _, persisted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("persisted=%t", persisted), func(t *testing.T) {
+			liveIndexDuringBackgroundWarmup(t, persisted)
+		})
+	}
+}
+
+func liveIndexDuringBackgroundWarmup(t *testing.T, persisted bool) {
 	base := newTestMemoryEngine(t)
 	ns := storage.NewNamespacedEngine(base, "test")
 	counting := &countingStreamingEngine{Engine: ns}
@@ -582,6 +592,12 @@ func TestMatchVectorCosineFastPath_UsesLiveIndexDuringBackgroundWarmup(t *testin
 
 	searchSvc := search.NewServiceWithDimensions(blocking, 4)
 	t.Cleanup(func() { require.NoError(t, searchSvc.Close()) })
+	if persisted {
+		dir := t.TempDir()
+		searchSvc.SetFulltextIndexPath(filepath.Join(dir, "bm25"))
+		searchSvc.SetVectorIndexPath(filepath.Join(dir, "vectors"))
+		searchSvc.SetPersistenceEnabled(true)
+	}
 	exec.SetSearchService(searchSvc)
 
 	// Writes before the first build must not run the population: its
@@ -659,6 +675,10 @@ LIMIT $limit
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, "during", res.Rows[0][0])
 	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
+	res, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('entity_name_idx', 1, [0.0,0.0,1.0,0.0]) YIELD node RETURN node.uuid AS uuid", nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, "during", res.Rows[0][0], "the vector procedure must see the write during warmup")
 
 	releaseBuild()
 	select {

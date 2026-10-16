@@ -76,6 +76,10 @@ func TestBM25RejectedCheckpointRebuildsInitialNodePopulation(t *testing.T) {
 						_, err = engine.CreateNode(b)
 						require.NoError(t, err)
 						require.NoError(t, svc.IndexNode(b))
+						// The write is searchable at once; the restored node needs the population.
+						if written, err := svc.Search(ctx, "bterm", nil, &SearchOptions{Limit: 10}); assert.NoError(t, err) && assert.Len(t, written.Results, 1, "the write must be searchable without waiting") {
+							assert.Equal(t, "nornic:b", written.Results[0].ID)
+						}
 						require.NoError(t, waitNodeAdmission(t, svc), "the write-started population")
 						// In the live-first route these assertions precede any later
 						// BuildIndexes call that could repair a partial initial base.
@@ -207,6 +211,10 @@ func TestBM25AcceptedCheckpointPreservesNodeRestore(t *testing.T) {
 						_, err = engine.CreateNode(b)
 						require.NoError(t, err)
 						require.NoError(t, svc.IndexNode(b))
+						// The write is searchable at once; the restored node needs the population.
+						if written, err := svc.Search(ctx, "bterm", nil, &SearchOptions{Limit: 10}); assert.NoError(t, err) && assert.Len(t, written.Results, 1, "the write must be searchable without waiting") {
+							assert.Equal(t, "nornic:b", written.Results[0].ID)
+						}
 						require.NoError(t, waitNodeAdmission(t, svc), "the write-started population")
 						assert.Zero(t, engine.nodeReads, "accepted restoration must retain its no-traversal route")
 						response, err := svc.Search(ctx, "aterm", nil, &SearchOptions{Limit: 10})

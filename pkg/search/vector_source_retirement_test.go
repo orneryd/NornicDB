@@ -19,6 +19,15 @@ func sourceRetirementNode(t *testing.T, svc *Service, id string, vector []float3
 	_, err := svc.engine.CreateNode(node)
 	require.NoError(t, err)
 	require.NoError(t, svc.IndexNode(node))
+	// The write is searchable at once. Callers then run lifecycle transitions,
+	// which must not race the population the write may have started.
+	visible, err := svc.VectorSearchCandidates(context.Background(), vector, &SearchOptions{Limit: 100})
+	require.NoError(t, err)
+	found := false
+	for _, r := range visible {
+		found = found || normalizeVectorResultIDToNodeID(r.ID) == id
+	}
+	require.True(t, found, "the write must be searchable without waiting")
 	require.NoError(t, waitNodeAdmission(t, svc))
 }
 

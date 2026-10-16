@@ -45,6 +45,12 @@ func TestVectorScaleReplacementPreservesRawCoordinates(t *testing.T) {
 					}
 					for _, scale := range []float32{2, 3, 1, 2} {
 						require.NoError(t, svc.IndexNode(makeNode(scale)))
+						// The write is searchable at once; the population settles its
+						// representation (file-backed coordinates are normalized).
+						visible, err := svc.VectorQueryNodes(context.Background(), []float32{1, 0, 0}, VectorQuerySpec{Property: "v", Similarity: "cosine", Limit: 1})
+						require.NoError(t, err)
+						require.Len(t, visible, 1, "the write must be searchable without waiting")
+						require.InDelta(t, 1, visible[0].Score, 1e-6)
 						require.NoError(t, waitNodeAdmission(t, svc))
 						for _, similarity := range []string{"dot", "euclidean"} {
 							hits, err := svc.VectorQueryNodes(context.Background(), []float32{1, 0, 0}, VectorQuerySpec{Property: "v", Similarity: similarity, Limit: 1})
