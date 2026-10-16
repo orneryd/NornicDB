@@ -15,9 +15,6 @@ import (
 // serialized with ordinary writes until publication completes.
 func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.BadgerTransaction) error {
 	changes := tx.PendingChanges(false)
-	if changes.Operations == 0 {
-		return tx.CommitContext(ctx)
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -33,6 +30,18 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 	}()
 	if err := ctx.Err(); err != nil {
 		return nornicerrors.MarkCommitRolledBack(err)
+	}
+	commit := func(afterPublication func()) error {
+		err := tx.CommitContextWithPublication(ctx, afterPublication)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nornicerrors.MarkCommitRolledBack(err)
+		}
+		return err
+	}
+	if changes.Operations == 0 {
+		// Read-only commits bypass write admission but still own cancellation
+		// cleanup, including the snapshot and any acquired MERGE key.
+		return commit(func() { committed = true })
 	}
 	if changes.Namespace != t.dbName {
 		return nornicerrors.MarkCommitRolledBack(storage.ErrCrossNamespaceTransaction)
@@ -80,11 +89,7 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 		}
 	}
 	if !exclusive {
-		err := tx.CommitContextWithPublication(ctx, publish(0, 0))
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nornicerrors.MarkCommitRolledBack(err)
-		}
-		return err
+		return commit(publish(0, 0))
 	}
 	trackBytes := initialized || (limits != nil && limits.Storage.MaxBytes > 0)
 	if trackBytes || (limits != nil && (limits.Storage.MaxNodes > 0 || limits.Storage.MaxEdges > 0)) {
@@ -153,13 +158,7 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 			}
 		}
 	}
-	if err := tx.CommitContextWithPublication(ctx, publish(nodeBytes, edgeBytes)); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nornicerrors.MarkCommitRolledBack(err)
-		}
-		return err
-	}
-	return nil
+	return commit(publish(nodeBytes, edgeBytes))
 }
 
 // Compare final staged entities with the current committed state, rather than
