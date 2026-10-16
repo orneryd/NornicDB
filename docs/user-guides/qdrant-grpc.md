@@ -133,8 +133,9 @@ A Qdrant `Search` runs on the collection database's search index, the same index
 
 - **ANN strategy:** the configured strategy applies, `NORNICDB_VECTOR_ANN_QUALITY` included (HNSW presets, `compressed` IVF-PQ, k-means routing,
   brute force), with the same exact rescoring.
-- **`hnsw_ef`:** `params.hnsw_ef` sets the HNSW beam width for that request on HNSW-based strategies. IVF-PQ, k-means routing and
-  brute force don't search a graph and ignore it.
+- **`hnsw_ef`:** `params.hnsw_ef` sets the HNSW beam width for that request on HNSW-based strategies. Without it, a search uses
+  the configured preset's `efSearch` (50 for `fast`, 100 for `balanced`, 200 for `accurate`, or `NORNICDB_VECTOR_HNSW_EF_SEARCH`), as
+  Qdrant does. IVF-PQ, k-means routing and brute force don't search a graph and ignore it.
 - **Payload filters:** filters are applied while the search widens, so a selective filter still returns its top matches.
 - **Scores:** Qdrant's raw similarities: cosine and dot as-is, Euclid as `1 / (1 + distance)`.
 - **Restart:** points stay searchable across a restart, since the index is rebuilt from the stored vectors.
