@@ -113,6 +113,11 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			}
 		}
 	}
+	// What the call yields counts against the statement's memory limit
+	// before it is kept: each result once, each extended row before it is
+	// built (#1343).
+	retention := newMemoryRetention(ctx)
+	defer retention.close()
 	var shared *ExecuteResult
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
@@ -125,6 +130,13 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			result, err = e.executeProcedureCall(withValueBindings(ctx, row), invocation+" "+yieldText, true)
 			if err != nil {
 				return nil, nil, true, err
+			}
+			if result != nil {
+				for _, record := range result.Rows {
+					if err := retention.reserveResultRow(record); err != nil {
+						return nil, nil, true, err
+					}
+				}
 			}
 			if !rowDependent && procedure.Spec.Mode == ProcedureModeRead {
 				shared = result
@@ -142,6 +154,9 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		}
 		extended := make([]pipelineRow, 0, len(result.Rows))
 		for _, record := range result.Rows {
+			if err := retention.reserveExtendedRow(row, result.Columns, record); err != nil {
+				return nil, nil, true, err
+			}
 			next := make(pipelineRow, len(row)+len(result.Columns))
 			for key, value := range row {
 				next[key] = value
