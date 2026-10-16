@@ -231,7 +231,7 @@ These GDS names work as in GDS 2.13 (Neo4j 5.26), with its parameters, columns, 
 | Link prediction | `gds.alpha.linkprediction.adamicAdar`, `commonNeighbors`, `preferentialAttachment`, `resourceAllocation`, `totalNeighbors`, `sameCommunity` |
 | Utilities | `gds.util.asNode`, `asNodes`, `nodeProperty`, `NaN`, `infinity`, `isFinite`, `isInfinite`, `gds.version` |
 
-NornicDB's differences: `nodeId` is the node's id (a STRING, #1165); FastRP's `randomSeed` defaults to 42, so the same call gives the same embeddings, and `embeddingDimension` is at most 8,192; `memoryUsage` and `sizeInBytes` are reported as unmeasured (`""`, `-1`); the catalog isn't per user; `concurrency` and `readConcurrency` are accepted and change nothing (NornicDB runs these single-threaded).
+NornicDB's differences: `nodeId` is a stored node's id (a STRING, #1165), and for an aggregation projection's INTEGER ids (`RETURN gds.graph.project(name, 1, 2)`) the INTEGER as in GDS; FastRP's `randomSeed` defaults to 42, so the same call gives the same embeddings, and `embeddingDimension` is at most 8,192; `memoryUsage` and `sizeInBytes` are reported as unmeasured (`""`, `-1`); the catalog isn't per user; `concurrency` and `readConcurrency` are accepted and change nothing (NornicDB runs these single-threaded).
 
 **Not implemented** (a query using them fails with an unknown procedure or function):
 

@@ -53,7 +53,13 @@ func TestGDSLouvainRound2TypeSumOrder(t *testing.T) {
 			result, err := e.Execute(t.Context(), "CALL gds.louvain.stream('"+name+"',{concurrency:1,relationshipWeightProperty:'w',consecutiveIds:true})", nil)
 			require.NoError(t, err)
 			t.Logf("graph=%s typeOrder=%v relationships=%+v rows=%+v", name, p.relationshipTypeOrder, p.Relationships, result.Rows)
-			require.Equal(t, [][]interface{}{{"0", int64(0), nil}, {"1", int64(1), nil}, {"2", int64(1), nil}}, result.Rows)
+			id := louvainArithmeticID(name)
+			expected := [][]interface{}{{id(0), int64(0), nil}, {id(1), int64(1), nil}, {id(2), int64(1), nil}}
+			if name != "rev" {
+				// Aggregation rows come in first-occurrence order, as GDS gives them.
+				expected[1], expected[2] = expected[2], expected[1]
+			}
+			require.Equal(t, expected, result.Rows)
 		})
 	}
 }
@@ -73,7 +79,19 @@ func TestGDSLouvainRound2ParallelSums(t *testing.T) {
 			result, err := e.Execute(t.Context(), "CALL gds.louvain.stream('"+name+"',{concurrency:1,seedProperty:'seed',relationshipWeightProperty:'w'})", nil)
 			require.NoError(t, err)
 			t.Logf("graph=%s rows=%+v", name, result.Rows)
-			require.Equal(t, [][]interface{}{{"0", int64(100), nil}, {"1", int64(10), nil}, {"2", int64(10), nil}, {"3", int64(10), nil}}, result.Rows)
+			id := louvainArithmeticID(name)
+			require.Equal(t, [][]interface{}{{id(0), int64(100), nil}, {id(1), int64(10), nil}, {id(2), int64(10), nil}, {id(3), int64(10), nil}}, result.Rows)
 		})
+	}
+}
+
+// louvainArithmeticID is a node's id in a row: the stored string id of the
+// native graph "rev", or the INTEGER an aggregation row supplied.
+func louvainArithmeticID(graph string) func(int64) interface{} {
+	return func(id int64) interface{} {
+		if graph == "rev" {
+			return fmt.Sprint(id)
+		}
+		return id
 	}
 }

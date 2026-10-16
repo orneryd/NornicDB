@@ -18,7 +18,7 @@ func TestGDSSelectedConstituentRanks(t *testing.T) {
 		{Source: "a", Target: "b", Type: "S", Properties: map[string]float64{"w": 5}},
 	}
 	projection.RelationshipPropertyKeys = map[string][]string{"R": {"w"}, "S": {"w"}}
-	projection.indexNodes()
+	projection.indexNodes(true)
 	projection.finishCounts()
 	for _, tc := range []struct {
 		name     string

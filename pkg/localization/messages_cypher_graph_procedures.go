@@ -41,6 +41,7 @@ const (
 	MessageCypherGraphProceduresProjectDistinct                MessageID = "cyphergraphprocedures.project_distinct"
 	MessageCypherGraphProceduresUnsafeLongArrayConversion      MessageID = "cyphergraphprocedures.unsafe_long_array_conversion"
 	MessageCypherGraphProceduresNodeNotNodeOrInteger           MessageID = "cyphergraphprocedures.node_not_node_or_integer"
+	MessageCypherGraphProceduresNodeIDNegative                 MessageID = "cyphergraphprocedures.node_id_negative"
 	MessageCypherGraphProceduresConfigKeyMissingPair           MessageID = "cyphergraphprocedures.config_key_missing_pair"
 	MessageCypherGraphProceduresRelationshipTypeNotString      MessageID = "cyphergraphprocedures.relationship_type_not_string"
 	MessageCypherGraphProceduresUndirectedTypesNotProjected    MessageID = "cyphergraphprocedures.undirected_types_not_projected"
@@ -238,6 +239,11 @@ func CypherGraphProceduresJobIDType(typeName string) Message {
 // CypherGraphProceduresNodeNotNodeOrInteger is GDS's message for a projected node that is neither a node nor an INTEGER.
 func CypherGraphProceduresNodeNotNodeOrInteger(typeName string) Message {
 	return Message{ID: MessageCypherGraphProceduresNodeNotNodeOrInteger, Fallback: "The node has to be either a NODE or an INTEGER, but got " + typeName, Data: map[string]any{"Type": typeName}}
+}
+
+// CypherGraphProceduresNodeIDNegative is GDS's message for a negative INTEGER node id in an aggregation projection.
+func CypherGraphProceduresNodeIDNegative(id string) Message {
+	return Message{ID: MessageCypherGraphProceduresNodeIDNegative, Fallback: "GDS expects node ids to be positive. But got a negative id of `" + id + "`.", Data: map[string]any{"ID": id}}
 }
 
 // CypherGraphProceduresConfigKeyMissingPair is GDS's message for a source or target setting given without its pair.
