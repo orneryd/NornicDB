@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 
@@ -18,7 +19,11 @@ type pipelineCallMetadata struct {
 }
 
 func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
-	body, afterCall, inTransactions, batchSize := e.parseCallSubquery(clause)
+	// The statement parses the clause and its body once (pipelineClausePlans),
+	// however many outer rows run the operator.
+	ctx = withPipelineClausePlans(ctx)
+	parsed := e.callSubqueryParseFor(ctx, clause)
+	body, afterCall, inTransactions, batchSize := parsed.body, parsed.afterCall, parsed.inTransactions, parsed.batchSize
 	if body == "" {
 		return nil, nil, true, localizedError(localization.CypherSubqueriesCallBodyExpected(), nil)
 	}
@@ -27,10 +32,9 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 	// An unscoped body imports through its branches' leading WITHs
 	// (unscopedCallImports, #907).
-	callScope := readCallSubqueryScope(clause)
-	scopedImports, scoped := callScope.names, callScope.scoped
+	scoped := parsed.scoped
 	if metadata != nil {
-		declared := scopedImports
+		declared := parsed.scopedImports
 		if declared == nil && !scoped {
 			var importErr error
 			declared, _, importErr = unscopedCallImports(body, func(name string) bool {
@@ -49,7 +53,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 	if len(rows) == 0 {
 		if metadata != nil {
-			metadata.columns = e.inferTopLevelReturnColumns(body)
+			metadata.columns = slices.Clone(e.inferTopLevelReturnColumnsFor(ctx, body))
 			for _, name := range metadata.columns {
 				metadata.scope[name] = struct{}{}
 			}
@@ -74,6 +78,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		body = remaining
 	}
 
+	scopedImports := parsed.scopedImports
 	hasLegacyImports := false
 	if !scoped {
 		var importErr error
@@ -99,9 +104,9 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			}
 		}
 	}
-	write := callSubqueryQueryIsWrite(body)
+	write := callSubqueryQueryIsWriteFor(ctx, body)
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
-	_, unionAll, _, isUnion := parseTopLevelUnionBranches(body)
+	unionBranches, unionAll, _, isUnion := parseTopLevelUnionBranchesFor(ctx, body)
 
 	// A branch of an unscoped body that declares an outer variable's name
 	// itself (MATCH (n)-->(m)) gets a new variable, as in Cypher, not the
@@ -116,7 +121,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		}
 		branchLocals = map[string][]string{}
 		branches := []string{body}
-		if unionBranches, _, _, union := parseTopLevelUnionBranches(body); union {
+		if isUnion {
 			branches = unionBranches
 		}
 		for _, branch := range branches {

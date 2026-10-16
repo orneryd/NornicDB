@@ -15,12 +15,8 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	if len(rows) == 0 {
 		return rows, true, nil
 	}
-	pattern := strings.TrimSpace(clause[len("MATCH"):])
-	whereClause := ""
-	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
-		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:whereIndex])
-	}
+	split := pipelineMatchWhereFor(ctx, clause)
+	pattern, whereClause := split.pattern, split.where
 	if !containsRelationshipPattern(pattern) {
 		return nil, false, nil
 	}
@@ -33,10 +29,11 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	}
 
 	variables := make([]string, 0)
-	for _, variable := range extractNodeVariables(matchPatternStructure(pattern)) {
+	structure := matchPatternStructureFor(ctx, pattern)
+	for _, variable := range extractNodeVariables(structure) {
 		variables = appendUniquePipelineBinding(variables, variable)
 	}
-	for _, variable := range extractRelationshipVariables(matchPatternStructure(pattern)) {
+	for _, variable := range extractRelationshipVariables(structure) {
 		variables = appendUniquePipelineBinding(variables, variable)
 	}
 	pathVariable := extractPathAssignmentVariable(pattern)
@@ -58,7 +55,7 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 		rowCtx := withValueBindings(ctx, row)
 		materializedPattern := pattern
 		materializedWhere := whereClause
-		physicalWhere := pipelineTraversalPushdownPredicate(materializedWhere, row, variables)
+		physicalWhere := pipelineTraversalPushdownPredicate(ctx, materializedWhere, row, variables)
 		rowHint := hint
 		if physicalWhere != materializedWhere || pipelinePatternJoinsOuterBinding(row, variables) {
 			rowHint = pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1}
@@ -132,7 +129,11 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	return out, true, nil
 }
 
-func pipelineTraversalPushdownPredicate(whereClause string, row pipelineRow, localVariables []string) string {
+// pipelineTraversalPushdownPredicate returns the conjuncts of whereClause
+// that read no outer binding of row, which the traversal can apply itself.
+// The conjuncts, and which variables each reads, come from the statement's
+// clause plan: only the row's names are checked per row.
+func pipelineTraversalPushdownPredicate(ctx context.Context, whereClause string, row pipelineRow, localVariables []string) string {
 	if strings.TrimSpace(whereClause) == "" {
 		return ""
 	}
@@ -140,19 +141,15 @@ func pipelineTraversalPushdownPredicate(whereClause string, row pipelineRow, loc
 	for _, variable := range localVariables {
 		local[variable] = struct{}{}
 	}
-	terms := splitTopLevelAndConjuncts(whereClause)
-	pushable := make([]string, 0, len(terms))
-	for _, term := range terms {
-		term = strings.TrimSpace(term)
-		if term == "" {
-			continue
-		}
+	terms := pipelinePushdownTermsFor(ctx, whereClause)
+	pushable := make([]string, 0, len(terms.terms))
+	for index, term := range terms.terms {
 		dependsOnOuterBinding := false
 		for name := range row {
 			if _, isLocal := local[name]; isLocal || strings.HasPrefix(name, "$") {
 				continue
 			}
-			if referencesVariable(term, name) {
+			if terms.referencesVariable(index, name) {
 				dependsOnOuterBinding = true
 				break
 			}

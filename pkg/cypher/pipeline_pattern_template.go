@@ -86,12 +86,9 @@ func (e *StorageExecutor) pipelineNodeMatchTemplateFor(clause string) *pipelineN
 		return template
 	}
 	template := &pipelineNodeMatchTemplate{}
-	pattern := strings.TrimSpace(clause[len("MATCH"):])
-	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
-		template.where = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:whereIndex])
-	}
-	template.pattern = pattern
+	split := splitPipelineMatchWhere(clause)
+	pattern := split.pattern
+	template.pattern, template.where = split.pattern, split.where
 	if e.isSingleNodePattern(pattern) {
 		// A path assignment (p = (n)) takes the general route.
 		template.pathVariable = extractPathAssignmentVariable(pattern)

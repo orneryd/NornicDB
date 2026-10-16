@@ -238,9 +238,10 @@ func pipelineRowFromTraversalOptionalRow(row traversalOptRow) pipelineRow {
 // candidate are preserved with null bindings for the new variables — the
 // Apply + Optional contract.
 func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
-	pattern := ensureLeadingNodeNamed(clause.pattern)
-	nodeVars := extractNodeVariables(matchPatternStructure(pattern))
-	relVars := extractRelationshipVariables(matchPatternStructure(pattern))
+	pattern := ensureLeadingNodeNamedFor(ctx, clause.pattern)
+	structure := matchPatternStructureFor(ctx, pattern)
+	nodeVars := extractNodeVariables(structure)
+	relVars := extractRelationshipVariables(structure)
 	pathVar := extractPathAssignmentVariable(pattern)
 	allVars := append(append([]string{}, nodeVars...), relVars...)
 	if pathVar != "" {
