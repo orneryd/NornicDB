@@ -61,7 +61,7 @@ func TestInnerAggregateFFBodyOriginal(t *testing.T) {
 				"id": tc.id, "expression": tc.expression, "query": tc.query,
 				"keyword": keyword, "open": open, "scalar": scalar,
 				"boundary": boundary, "spans": spanTexts,
-				"planAggregate": plan.hasAggregate,
+				"planAggregate":       plan.hasAggregate,
 				"projectionAggregate": plan.projections[0].isAggr,
 			})
 			require.NoError(t, err)
