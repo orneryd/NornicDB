@@ -491,6 +491,13 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsNodeSimilarityStream(ctx, args, true)
 			})
+		// Node similarity over the statement's own incidence rows (B9): no
+		// projection, nothing read from storage, so it follows the graph as the
+		// statement sees it. A NornicDB extension.
+		registerBuiltInProcedure("nornicdb.similarity.stream", "nornicdb.similarity.stream(rows :: LIST<MAP>, configuration = {} :: MAP) :: (node1 :: ANY, node2 :: STRING, similarity :: FLOAT, shared :: LIST<MAP>)", localization.CypherProcedureMetadata("nornicdb.similarity.stream"), ProcedureModeRead, 1, 2, false,
+			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
+				return callNornicSimilarityStream(args)
+			})
 		registerBuiltInProcedure("gds.graph.exists", "gds.graph.exists(graphName :: STRING) :: (graphName :: STRING, exists :: BOOLEAN)", localization.CypherProcedureMetadata("gds.graph.exists"), ProcedureModeRead, 1, 1, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callGdsGraphExists(args)

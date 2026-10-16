@@ -367,7 +367,7 @@ func nodeSimilarityRows(proj *GraphProjection, graph *gdsSubgraph, config nodeSi
 			if component != nil && component[source] != component[target] {
 				continue
 			}
-			similarity, shared := nodeSimilarity(neighbors[source], neighbors[target], config.metric, weighted, graph.nodes)
+			similarity, shared := nodeSimilarity(neighbors[source], neighbors[target], config.metric, weighted, graph.nodes, true)
 			// An undefined score (0/0) is dropped, as GDS drops it.
 			if math.IsNaN(similarity) || similarity < config.cutoff || (similarity == 0 && !config.includeZero) {
 				continue
@@ -456,8 +456,9 @@ func nodeSimilarityBefore(a, b nodeSimilarityPair, bottom bool) bool {
 
 // nodeSimilarity is the similarity of two sorted neighbour vectors by metric,
 // and the neighbours they share (nodeId, and weight: the smaller of the two
-// weights, 1 unweighted), most weight first.
-func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string) (float64, []interface{}) {
+// weights, 1 unweighted), most weight first; without explain, only the
+// similarity.
+func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string, explain bool) (float64, []interface{}) {
 	weightOf := func(edge gdsEdge) float64 {
 		if weighted {
 			return edge.weight
@@ -506,8 +507,15 @@ func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string
 		similarity = intersection / math.Min(sumA, sumB)
 	case "COSINE":
 		similarity = dot / (math.Sqrt(normA) * math.Sqrt(normB))
+	case "RESOURCE_ALLOCATION":
+		// nornicdb.similarity.stream only (gds.nodeSimilarity refuses the
+		// metric): summed below, once the shared neighbours are in order.
 	default:
 		similarity = intersection / union
+	}
+	resourceAllocation := metric == "RESOURCE_ALLOCATION"
+	if !explain && !resourceAllocation {
+		return similarity, nil
 	}
 	sort.Slice(shared, func(i, j int) bool {
 		if shared[i].weight != shared[j].weight {
@@ -515,6 +523,17 @@ func nodeSimilarity(a, b []gdsEdge, metric string, weighted bool, nodes []string
 		}
 		return nodes[shared[i].node] < nodes[shared[j].node]
 	})
+	if resourceAllocation {
+		// The shared neighbours' weights (the smaller of the two), added
+		// most weight first: the order, and so the exact float, of a Cypher
+		// sum over the shared things rarest first.
+		for _, neighbor := range shared {
+			similarity += neighbor.weight
+		}
+	}
+	if !explain {
+		return similarity, nil
+	}
 	out := make([]interface{}, len(shared))
 	for i, neighbor := range shared {
 		out[i] = map[string]interface{}{"nodeId": nodes[neighbor.node], "weight": neighbor.weight}

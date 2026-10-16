@@ -91,6 +91,7 @@ const (
 	MessageCypherProcedureMetadataNornicdbKnowledgepolicyPolicies               MessageID = "cypherproceduremetadata.nornicdb_knowledgepolicy_policies"
 	MessageCypherProcedureMetadataNornicdbKnowledgepolicyProfiles               MessageID = "cypherproceduremetadata.nornicdb_knowledgepolicy_profiles"
 	MessageCypherProcedureMetadataNornicdbKnowledgepolicyResolve                MessageID = "cypherproceduremetadata.nornicdb_knowledgepolicy_resolve"
+	MessageCypherProcedureMetadataNornicdbSimilarityStream                      MessageID = "cypherproceduremetadata.nornicdb_similarity_stream"
 	MessageCypherProcedureMetadataNornicdbStats                                 MessageID = "cypherproceduremetadata.nornicdb_stats"
 	MessageCypherProcedureMetadataNornicdbVersion                               MessageID = "cypherproceduremetadata.nornicdb_version"
 	MessageCypherProcedureMetadataTxSetMetaData                                 MessageID = "cypherproceduremetadata.tx_setmetadata"
@@ -536,6 +537,11 @@ func CypherProcedureMetadataNornicdbKnowledgepolicyResolve() Message {
 	return Message{ID: MessageCypherProcedureMetadataNornicdbKnowledgepolicyResolve, Fallback: "Deprecated alias of kp.resolve: resolves the effective knowledge-layer scoring policy for an entity, label set, or edge type"}
 }
 
+// CypherProcedureMetadataNornicdbSimilarityStream describes nornicdb.similarity.stream in procedure listings.
+func CypherProcedureMetadataNornicdbSimilarityStream() Message {
+	return Message{ID: MessageCypherProcedureMetadataNornicdbSimilarityStream, Fallback: "Scores node similarity for one source node over incidence rows the statement supplies (source, thing, optional weight), by JACCARD, OVERLAP, COSINE or RESOURCE_ALLOCATION, with no graph projection. A NornicDB extension."}
+}
+
 // CypherProcedureMetadataNornicdbStats describes nornicdb.stats in procedure listings.
 func CypherProcedureMetadataNornicdbStats() Message {
 	return Message{ID: MessageCypherProcedureMetadataNornicdbStats, Fallback: "Returns NornicDB stats"}
@@ -640,6 +646,7 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"nornicdb.knowledgepolicy.policies":                CypherProcedureMetadataNornicdbKnowledgepolicyPolicies,
 	"nornicdb.knowledgepolicy.profiles":                CypherProcedureMetadataNornicdbKnowledgepolicyProfiles,
 	"nornicdb.knowledgepolicy.resolve":                 CypherProcedureMetadataNornicdbKnowledgepolicyResolve,
+	"nornicdb.similarity.stream":                       CypherProcedureMetadataNornicdbSimilarityStream,
 	"nornicdb.stats":                                   CypherProcedureMetadataNornicdbStats,
 	"nornicdb.version":                                 CypherProcedureMetadataNornicdbVersion,
 	"tx.setMetaData":                                   CypherProcedureMetadataTxSetMetaData,

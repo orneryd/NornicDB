@@ -227,7 +227,7 @@ These GDS names work as in GDS 2.13 (Neo4j 5.26), with its parameters, columns, 
 | Graph catalog | `gds.graph.project` (label / type projections, with `orientation`, `properties`, `aggregation` and the configuration map; and the Cypher aggregation projection, `RETURN gds.graph.project(name, source, target, dataConfig, configuration)`), `gds.graph.list`, `gds.graph.drop`, `gds.graph.exists` (procedure and function); one catalog per database |
 | FastRP | `gds.fastRP.stream`, `gds.fastRP.stats` |
 | Community detection | `gds.louvain.stream` (maxLevels, maxIterations, tolerance, seedProperty, includeIntermediateCommunities, consecutiveIds, minCommunitySize), GDS's modularity optimization and levels |
-| Similarity | `gds.nodeSimilarity.stream`, `gds.nodeSimilarity.filtered.stream` (JACCARD, weighted Jaccard, OVERLAP, COSINE; topK / bottomK, topN / bottomN, cutoffs, source and target filters), with a NornicDB extension column `shared` |
+| Similarity | `gds.nodeSimilarity.stream`, `gds.nodeSimilarity.filtered.stream` (JACCARD, weighted Jaccard, OVERLAP, COSINE; topK / bottomK, topN / bottomN, cutoffs, source and target filters), with a NornicDB extension column `shared`; NornicDB extension `nornicdb.similarity.stream` scores one source over the statement's own incidence rows (adds `RESOURCE_ALLOCATION` and `maxHolders`), with no projection |
 | Link prediction | `gds.alpha.linkprediction.adamicAdar`, `commonNeighbors`, `preferentialAttachment`, `resourceAllocation`, `totalNeighbors`, `sameCommunity` |
 | Utilities | `gds.util.asNode`, `asNodes`, `nodeProperty`, `NaN`, `infinity`, `isFinite`, `isInfinite`, `gds.version` |
 

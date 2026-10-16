@@ -426,3 +426,38 @@ func CypherGraphProceduresSeedPropertyNotLong(property string) Message {
 func CypherGraphProceduresSeedNegative() Message {
 	return Message{ID: MessageCypherGraphProceduresSeedNegative, Fallback: "Seeded values should be non-negative"}
 }
+
+// Messages of nornicdb.similarity.stream, node similarity over incidence rows
+// (a NornicDB extension; GDS has no such procedure).
+const (
+	MessageCypherGraphProceduresInvalidRowSimilarityMetric MessageID = "cyphergraphprocedures.invalid_row_similarity_metric"
+	MessageCypherGraphProceduresSimilarityRowNotMap        MessageID = "cyphergraphprocedures.similarity_row_not_map"
+	MessageCypherGraphProceduresSimilarityRowKey           MessageID = "cyphergraphprocedures.similarity_row_key"
+	MessageCypherGraphProceduresSimilarityRowNode          MessageID = "cyphergraphprocedures.similarity_row_node"
+	MessageCypherGraphProceduresSimilarityRowWeight        MessageID = "cyphergraphprocedures.similarity_row_weight"
+)
+
+// CypherGraphProceduresInvalidRowSimilarityMetric is nornicdb.similarity.stream's message for an unknown similarity metric.
+func CypherGraphProceduresInvalidRowSimilarityMetric(metric string) Message {
+	return Message{ID: MessageCypherGraphProceduresInvalidRowSimilarityMetric, Fallback: metric + " is not a valid metric. Available metrics are JACCARD, OVERLAP, COSINE and RESOURCE_ALLOCATION", Data: map[string]any{"Metric": metric}}
+}
+
+// CypherGraphProceduresSimilarityRowNotMap is nornicdb.similarity.stream's message for an input row that is not a map.
+func CypherGraphProceduresSimilarityRowNotMap(position, typeName string) Message {
+	return Message{ID: MessageCypherGraphProceduresSimilarityRowNotMap, Fallback: "Row " + position + " of the similarity rows must be a map with source and thing, but found: " + typeName, Data: map[string]any{"Position": position, "Type": typeName}}
+}
+
+// CypherGraphProceduresSimilarityRowKey is nornicdb.similarity.stream's message for a row key other than source, thing and weight.
+func CypherGraphProceduresSimilarityRowKey(position, key string) Message {
+	return Message{ID: MessageCypherGraphProceduresSimilarityRowKey, Fallback: "Row " + position + " of the similarity rows has the unexpected key `" + key + "`; rows take source, thing and weight", Data: map[string]any{"Key": key, "Position": position}}
+}
+
+// CypherGraphProceduresSimilarityRowNode is nornicdb.similarity.stream's message for a row's source or thing that is not a node or node id.
+func CypherGraphProceduresSimilarityRowNode(position, key, typeName string) Message {
+	return Message{ID: MessageCypherGraphProceduresSimilarityRowNode, Fallback: "Row " + position + " of the similarity rows needs a node or node id for `" + key + "`, but found: " + typeName, Data: map[string]any{"Key": key, "Position": position, "Type": typeName}}
+}
+
+// CypherGraphProceduresSimilarityRowWeight is nornicdb.similarity.stream's message for a row weight that is not a finite number of at least 0.
+func CypherGraphProceduresSimilarityRowWeight(position, weight string) Message {
+	return Message{ID: MessageCypherGraphProceduresSimilarityRowWeight, Fallback: "Row " + position + " of the similarity rows has the weight " + weight + "; a weight must be a finite number of at least 0", Data: map[string]any{"Position": position, "Weight": weight}}
+}

@@ -208,3 +208,18 @@
 - id: cyphergraphprocedures.seed_negative
   description: Expanded pseudo-locale seed negative.
   other: '[!! Seeded values should be non-negative !!]'
+- id: cyphergraphprocedures.invalid_row_similarity_metric
+  description: Expanded pseudo-locale invalid row similarity metric.
+  other: '[!! {{.Metric}} is not a valid metric. Available metrics are JACCARD, OVERLAP, COSINE and RESOURCE_ALLOCATION !!]'
+- id: cyphergraphprocedures.similarity_row_not_map
+  description: Expanded pseudo-locale similarity row not map.
+  other: '[!! Row {{.Position}} of the similarity rows must be a map with source and thing, but found: {{.Type}} !!]'
+- id: cyphergraphprocedures.similarity_row_key
+  description: Expanded pseudo-locale similarity row key.
+  other: '[!! Row {{.Position}} of the similarity rows has the unexpected key `{{.Key}}`; rows take source, thing and weight !!]'
+- id: cyphergraphprocedures.similarity_row_node
+  description: Expanded pseudo-locale similarity row node.
+  other: '[!! Row {{.Position}} of the similarity rows needs a node or node id for `{{.Key}}`, but found: {{.Type}} !!]'
+- id: cyphergraphprocedures.similarity_row_weight
+  description: Expanded pseudo-locale similarity row weight.
+  other: '[!! Row {{.Position}} of the similarity rows has the weight {{.Weight}}; a weight must be a finite number of at least 0 !!]'

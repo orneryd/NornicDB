@@ -208,3 +208,18 @@
 - id: cyphergraphprocedures.seed_negative
   description: GDS's message for a negative seed value.
   other: 'Seeded values should be non-negative'
+- id: cyphergraphprocedures.invalid_row_similarity_metric
+  description: nornicdb.similarity.stream's message for an unknown similarity metric. Metric untranslated.
+  other: '{{.Metric}} is not a valid metric. Available metrics are JACCARD, OVERLAP, COSINE and RESOURCE_ALLOCATION'
+- id: cyphergraphprocedures.similarity_row_not_map
+  description: nornicdb.similarity.stream's message for an input row that is not a map. Position, Type untranslated.
+  other: 'Row {{.Position}} of the similarity rows must be a map with source and thing, but found: {{.Type}}'
+- id: cyphergraphprocedures.similarity_row_key
+  description: nornicdb.similarity.stream's message for a row key other than source, thing and weight. Position, Key untranslated.
+  other: 'Row {{.Position}} of the similarity rows has the unexpected key `{{.Key}}`; rows take source, thing and weight'
+- id: cyphergraphprocedures.similarity_row_node
+  description: nornicdb.similarity.stream's message for a row's source or thing that is not a node or node id. Position, Key, Type untranslated.
+  other: 'Row {{.Position}} of the similarity rows needs a node or node id for `{{.Key}}`, but found: {{.Type}}'
+- id: cyphergraphprocedures.similarity_row_weight
+  description: nornicdb.similarity.stream's message for a row weight that is not a finite number of at least 0. Position, Weight untranslated.
+  other: 'Row {{.Position}} of the similarity rows has the weight {{.Weight}}; a weight must be a finite number of at least 0'
