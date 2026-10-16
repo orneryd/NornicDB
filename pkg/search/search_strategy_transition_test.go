@@ -83,9 +83,7 @@ func TestSwitchBruteStrategyFromGPUToCPUWithoutHardware(t *testing.T) {
 	require.Equal(t, strategyModeBruteCPU, svc.currentPipelineStrategy())
 	require.Nil(t, svc.hnswIndex)
 
-	svc.pipelineMu.RLock()
 	pipeline := cachedVectorPipeline(svc)
-	svc.pipelineMu.RUnlock()
 	require.IsType(t, &BruteForceCandidateGen{}, pipeline.candidateGen)
 	require.IsType(t, &CPUExactScorer{}, pipeline.exactScorer)
 	require.False(t, svc.switchBruteStrategy(strategyModeBruteGPU), "CPU-to-GPU must fail cleanly without a synchronized GPU index")

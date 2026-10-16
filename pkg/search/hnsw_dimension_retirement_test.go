@@ -62,9 +62,7 @@ func TestVectorDimensionReplacementRetiresConcurrentFactory(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("dimension replacement did not finish")
 			}
-			svc.pipelineMu.RLock()
 			cached := cachedVectorPipeline(svc)
-			svc.pipelineMu.RUnlock()
 			assert.Nil(t, cached, "dimension replacement retained a pipeline admitted before backend retirement")
 			// The stale HNSW pipeline rejects this valid new-dimension query
 			// before adaptive exact completion; no candidate cap is necessary.

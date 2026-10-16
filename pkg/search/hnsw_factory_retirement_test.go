@@ -94,9 +94,7 @@ func TestVectorFactorySnapshotRetiredByReset(t *testing.T) {
 				case <-time.After(5 * time.Second):
 					t.Fatal("factory waited for reset's mutation boundary")
 				}
-				svc.pipelineMu.RLock()
 				cached := cachedVectorPipeline(svc)
-				svc.pipelineMu.RUnlock()
 				releaseIndex()
 				select {
 				case <-resetDone:
@@ -108,9 +106,7 @@ func TestVectorFactorySnapshotRetiredByReset(t *testing.T) {
 				require.Nil(t, cached, "factory cached a snapshot whose generation reset already retired")
 				_, readyHNSW := answer.pipeline.candidateGen.(*HNSWCandidateGen)
 				require.False(t, readyHNSW, "paused construction returned a retired ready graph")
-				svc.pipelineMu.RLock()
 				cached = cachedVectorPipeline(svc)
-				svc.pipelineMu.RUnlock()
 				require.Nil(t, cached)
 				svc.ClearVectorIndex()
 				node := &storage.Node{ID: "replacement", ChunkEmbeddings: [][]float32{{0, 1, 0}}}
@@ -141,9 +137,7 @@ func TestVectorFactoryDoesNotCacheChangingSources(t *testing.T) {
 				p, err := svc.getOrCreateVectorPipeline(context.Background())
 				require.NoError(t, err)
 				require.NotNil(t, p)
-				svc.pipelineMu.RLock()
 				cached := cachedVectorPipeline(svc)
-				svc.pipelineMu.RUnlock()
 				require.Nil(t, cached, "factory cached a source while base vectors were changing")
 				_, readyHNSW := p.candidateGen.(*HNSWCandidateGen)
 				require.False(t, readyHNSW)
