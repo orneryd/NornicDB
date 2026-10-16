@@ -1,7 +1,6 @@
 package bolt
 
 import (
-	"context"
 	"strconv"
 	"testing"
 	"time"
@@ -30,15 +29,13 @@ func TestBoltPipelineStageDeadlines(t *testing.T) {
 				}
 				require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
 				require.NoError(t, SendRun(t, conn, "UNWIND range(1, 10000000) AS x "+tail, nil, timeout))
-				code, _, err := AssertFailure(t, conn)
+				code, message, err := AssertFailure(t, conn)
 				require.NoError(t, err)
 				elapsed := time.Since(started)
-				if explicit {
-					require.Equal(t, transactionTimedOutCode, code)
-				} else {
-					standard, _ := nornicerrors.Neo4jStatus(context.DeadlineExceeded)
-					require.Equal(t, standard, code)
-				}
+				// Neo4j 5.26 reports a client tx_timeout this way for both an
+				// auto-commit RUN and a RUN in an explicit transaction.
+				require.Equal(t, "Neo.ClientError.Transaction.TransactionTimedOutClientConfiguration", code)
+				require.Equal(t, nornicerrors.TransactionTimedOutClientConfigurationMessage, message)
 				require.Less(t, elapsed, 450*time.Millisecond)
 				require.Equal(t, baselineReaders, base.ActiveReaders(), "timeout response must follow snapshot cleanup")
 				t.Logf("tx_timeout=200ms response=%s overdue=%s explicit=%t", elapsed, elapsed-200*time.Millisecond, explicit)
