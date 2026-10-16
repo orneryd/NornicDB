@@ -1,9 +1,9 @@
 package cypher
 
 import (
-	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -72,7 +72,7 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 
 func listSubscriptIndexError(base, index interface{}) error {
 	if isRuntimeNumber(index) {
-		return runtimeTypeError("Cannot access a list using an non-integer number index, got " + neo4jValueRepr(index))
+		return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", localization.CypherCoreListIndexNonInteger(neo4jValueRepr(index)))
 	}
 	// Indexing reads a list value, including the context literal reader's
 	// homogeneous Go slices; render its items as Neo4j's virtual List.
@@ -81,15 +81,12 @@ func listSubscriptIndexError(base, index interface{}) error {
 	for i, item := range items {
 		parts[i] = neo4jValueRepr(item)
 	}
-	message := fmt.Sprintf("Cannot access a list 'List{%s}' using a non-number index, got %s", strings.Join(parts, ", "), neo4jValueRepr(index))
+	list, value := "List{"+strings.Join(parts, ", ")+"}", neo4jValueRepr(index)
+	message := localization.CypherCoreListIndexNonNumber(list, value)
 	if boolean, ok := index.(bool); ok {
-		class := "BooleanValue$2"
-		if boolean {
-			class = "BooleanValue$1"
-		}
-		message += fmt.Sprintf(": Expected %s to be a org.neo4j.values.storable.NumberValue, but it was a org.neo4j.values.storable.%s", neo4jValueRepr(index), class)
+		message = localization.CypherCoreListIndexBoolean(list, value, boolean)
 	}
-	return runtimeTypeError(message)
+	return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", message)
 }
 
 func evaluateCypherListSlice(base interface{}, lowerExpression, upperExpression string, evaluate func(string) (interface{}, bool, error)) (interface{}, bool, error) {
@@ -106,6 +103,11 @@ func evaluateCypherListSlice(base interface{}, lowerExpression, upperExpression 
 	upper, ok, err := bound(upperExpression)
 	if err != nil || !ok {
 		return nil, false, err
+	}
+	// Evaluate both bounds before null propagation so arithmetic failures
+	// remain visible, but a null slice needs no runtime bound-type check.
+	if base == nil || lowerExpression != "" && lower == nil || upperExpression != "" && upper == nil {
+		return nil, true, nil
 	}
 	for _, value := range []interface{}{lower, upper} {
 		if value != nil && !isCypherInteger(value) {

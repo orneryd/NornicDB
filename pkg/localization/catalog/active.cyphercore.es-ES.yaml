@@ -340,3 +340,9 @@
   other: "Métrica de distancia de vector no válida; se esperaba {{.Expected}}"
 - id: cyphercore.uuid_invalid_text
   other: "El argumento `input` de la función `uuid()` debe ser una cadena UUID válida."
+- id: cyphercore.list_index_non_integer
+  other: "No se puede acceder a una lista mediante un índice numérico no entero, se recibió {{.Value}}"
+- id: cyphercore.list_index_non_number
+  other: "No se puede acceder a la lista '{{.List}}' mediante un índice no numérico, se recibió {{.Value}}"
+- id: cyphercore.list_index_boolean
+  other: "No se puede acceder a la lista '{{.List}}' mediante un índice no numérico, se recibió {{.Value}}: se esperaba que {{.Value}} fuera org.neo4j.values.storable.NumberValue, pero era org.neo4j.values.storable.{{.Class}}"

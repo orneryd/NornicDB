@@ -340,3 +340,9 @@
   other: "Invalid vector distance metric, expected {{.Expected}}"
 - id: cyphercore.uuid_invalid_text
   other: "The argument `input` in the `uuid()` function must be a valid uuid string."
+- id: cyphercore.list_index_non_integer
+  other: "Cannot access a list using an non-integer number index, got {{.Value}}"
+- id: cyphercore.list_index_non_number
+  other: "Cannot access a list '{{.List}}' using a non-number index, got {{.Value}}"
+- id: cyphercore.list_index_boolean
+  other: "Cannot access a list '{{.List}}' using a non-number index, got {{.Value}}: Expected {{.Value}} to be a org.neo4j.values.storable.NumberValue, but it was a org.neo4j.values.storable.{{.Class}}"
