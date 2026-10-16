@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Run Qdrant gRPC searches on the collection database's search index, the same index, ANN strategy and query as Cypher's
   `db.index.vector.queryNodes`, instead of a separate in-memory HNSW graph per collection. `NORNICDB_VECTOR_ANN_QUALITY`
   (including `compressed` IVF-PQ), k-means routing and exact rescoring now apply to Qdrant searches. `hnsw_ef` sets the
-  request's HNSW beam. Selective payload filters widen the search instead of returning short. Points stay searchable
+  request's HNSW beam, and a search without it uses the configured preset's `efSearch`, as Qdrant does. Selective payload filters widen the search instead of returning short. Points stay searchable
   across a restart. A database with vector search disabled returns no hits. Vectors are no longer indexed twice (#1370).
 - Rebuild a search index from storage with the dimension of the first stored vector, not of the first stored node, when
   the dimension isn't fixed by an embedder, so a database storing its own vectors (such as a Qdrant collection) keeps

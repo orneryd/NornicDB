@@ -381,11 +381,6 @@ func (s *PointsService) Search(ctx context.Context, req *qpb.SearchPoints) (*qpb
 			return nil, localizedStatus(ctx, s.config.Localizer, codes.InvalidArgument, localization.QdrantHNSWEfTooLarge())
 		}
 		ef = int(raw)
-		// Keep `ef` sane: HNSW ef must be at least the number of candidates we need.
-		need := limit + offset
-		if ef > 0 && ef < need {
-			ef = need
-		}
 	}
 
 	minSimilarity := float64(-1)
@@ -1311,8 +1306,8 @@ func indexPoint(searchSvc *search.Service, node *storage.Node) error {
 // similarities. A database without a search service (vector search disabled
 // for it) has no hits, as for Cypher.
 //
-// ef is the request's hnsw_ef (0 for the configured preset); minScore < 0
-// means no score_threshold.
+// ef is the request's hnsw_ef (0 for the index's configured ef, see
+// qdrantSearchEf); minScore < 0 means no score_threshold.
 func searchCollection(ctx context.Context, searchSvc *search.Service, dist qpb.Distance, vectorName string, queryVec []float32, filter *qpb.Filter, limit int, offset int, minScore float64, ef int) ([]searchResult, error) {
 	if searchSvc == nil {
 		return nil, nil
@@ -1320,7 +1315,7 @@ func searchCollection(ctx context.Context, searchSvc *search.Service, dist qpb.D
 	if vectorName == "" {
 		vectorName = "default"
 	}
-	opts := &search.SearchOptions{HNSWEf: ef}
+	opts := &search.SearchOptions{HNSWEf: qdrantSearchEf(ef, limit+offset)}
 	if filter != nil {
 		opts.Where = func(node *storage.Node) bool { return matchesFilter(node, filter) }
 	}
@@ -1347,6 +1342,19 @@ func searchCollection(ctx context.Context, searchSvc *search.Service, dist qpb.D
 		return nil, nil
 	}
 	return results[offset:], nil
+}
+
+// qdrantSearchEf is the HNSW beam width (ef) of a Qdrant search: the request's
+// hnsw_ef, or, as Qdrant defaults it, the index's configured ef (the
+// NORNICDB_VECTOR_ANN_QUALITY preset's efSearch) when the request has none;
+// never less than the results it must return. A Cypher vector query without an
+// ef keeps the pipeline's wider default instead.
+func qdrantSearchEf(requested, need int) int {
+	ef := requested
+	if ef <= 0 {
+		ef = search.HNSWConfigFromEnv().EfSearch
+	}
+	return max(ef, need)
 }
 
 // similarityName is the search service's name for a Qdrant distance.

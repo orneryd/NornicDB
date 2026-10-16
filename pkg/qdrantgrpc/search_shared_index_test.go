@@ -192,3 +192,14 @@ func mustSearchCollection(t *testing.T, ctx context.Context, svc *search.Service
 	require.NoError(t, err)
 	return results
 }
+
+// A Qdrant search's ef is its hnsw_ef or, without one, the configured preset's
+// efSearch, as Qdrant defaults it; never less than the results it returns.
+func TestQdrantSearchEf(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_ANN_QUALITY", "balanced") // efSearch 100
+	t.Setenv("NORNICDB_VECTOR_HNSW_EF_SEARCH", "")
+	require.Equal(t, 100, qdrantSearchEf(0, 10), "no hnsw_ef: the preset's efSearch")
+	require.Equal(t, 32, qdrantSearchEf(32, 10), "the request's hnsw_ef")
+	require.Equal(t, 40, qdrantSearchEf(16, 40), "at least the results to return")
+	require.Equal(t, 500, qdrantSearchEf(0, 500))
+}
