@@ -185,6 +185,13 @@ type BifrostBridge interface {
 
 ### 5. Build as .so Plugin (Optional)
 
+Build the host and plugins together with the repository-pinned Go 1.26.9
+toolchain and matching build tags/race settings. Rebuild both after a toolchain
+upgrade. On macOS 27, Go 1.26.9 (or 1.27.2 for the 1.27 series) includes the
+[linker fix](https://github.com/golang/go/issues/81889) required to load plugins
+with debug information; earlier affected patches can fail with
+`chained fixups, seg_count does not match number of segments`.
+
 ```bash
 go build -buildmode=plugin -o my-plugin.so ./plugins/my-plugin
 ```

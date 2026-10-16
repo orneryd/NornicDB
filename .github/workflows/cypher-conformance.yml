@@ -66,7 +66,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.9"
           cache-dependency-path: head/go.sum
 
       - name: Verify allocation gate and compare fixed-count workloads
@@ -99,7 +99,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.9"
           cache: true
 
       - name: Download modules
