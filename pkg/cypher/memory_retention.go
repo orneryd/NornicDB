@@ -70,15 +70,13 @@ func (r *memoryRetention) reserveRow(row pipelineRow) error {
 }
 
 // reserveMergedRow reserves the row merging outer's and inner's bindings,
-// before it is built.
+// before it is built. outer's values were counted when its row was built:
+// the merged row adds only its slots for them (sharedBindingBytes).
 func (r *memoryRetention) reserveMergedRow(outer, inner pipelineRow) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
-	size := int64(pipelineRowExtraBytes + mapHeaderBytes)
-	for name, value := range outer {
-		size += r.rows.entry(name, value)
-	}
+	size := int64(pipelineRowExtraBytes+mapHeaderBytes) + sharedBindingBytes(outer)
 	for name, value := range inner {
 		size += r.rows.entry(name, value)
 	}
@@ -86,15 +84,14 @@ func (r *memoryRetention) reserveMergedRow(outer, inner pipelineRow) error {
 }
 
 // reserveExtendedRow reserves the row extending outer with columns bound
-// to values, before it is built.
+// to values, before it is built. Outer's values count as slots only, as in
+// reserveMergedRow: a CALL subquery's outer row is shared by every row its
+// body returns, not copied into each.
 func (r *memoryRetention) reserveExtendedRow(outer pipelineRow, columns []string, values []interface{}) error {
 	if r == nil || r.account.scope == nil {
 		return nil
 	}
-	size := int64(pipelineRowExtraBytes + mapHeaderBytes)
-	for name, value := range outer {
-		size += r.rows.entry(name, value)
-	}
+	size := int64(pipelineRowExtraBytes+mapHeaderBytes) + sharedBindingBytes(outer)
 	for index, column := range columns {
 		if index < len(values) {
 			size += r.rows.entry(column, values[index])
@@ -272,4 +269,15 @@ func (r *memoryRetention) release() {
 		r.account.scope.give(taken)
 	}
 	r.account.spent, r.account.credit = 0, 0
+}
+
+// sharedBindingBytes is what a new row takes for bindings it shares with an
+// existing row: an entry, its key and a value slot each. The values belong
+// to the row that already holds them and were counted when it was built.
+func sharedBindingBytes(row pipelineRow) int64 {
+	var size int64
+	for name := range row {
+		size += mapEntryBytes + stringHeaderBytes + int64(len(name)) + valueSlotBytes
+	}
+	return size
 }
