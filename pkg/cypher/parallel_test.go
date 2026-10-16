@@ -10,6 +10,7 @@ import (
 )
 
 func TestParallelFilterNodes(t *testing.T) {
+	keepParallelConfig(t)
 	// Create test nodes
 	nodes := make([]*storage.Node, 2000)
 	for i := 0; i < 2000; i++ {
@@ -86,6 +87,7 @@ func TestParallelFilterNodes(t *testing.T) {
 }
 
 func TestParallelCount(t *testing.T) {
+	keepParallelConfig(t)
 	nodes := make([]*storage.Node, 5000)
 	for i := 0; i < 5000; i++ {
 		nodes[i] = &storage.Node{
@@ -138,6 +140,7 @@ func TestParallelCount(t *testing.T) {
 }
 
 func TestParallelSum(t *testing.T) {
+	keepParallelConfig(t)
 	nodes := make([]*storage.Node, 2000)
 	var expectedSum float64
 	for i := 0; i < 2000; i++ {
@@ -164,6 +167,7 @@ func TestParallelSum(t *testing.T) {
 }
 
 func TestParallelSum_IgnoresMissingOrNonNumeric(t *testing.T) {
+	keepParallelConfig(t)
 	nodes := []*storage.Node{
 		{ID: "n1", Properties: map[string]interface{}{"amount": float64(10)}},
 		{ID: "n2", Properties: map[string]interface{}{"amount": "bad"}},
@@ -182,6 +186,7 @@ func TestParallelSum_IgnoresMissingOrNonNumeric(t *testing.T) {
 }
 
 func TestParallelCollect(t *testing.T) {
+	keepParallelConfig(t)
 	nodes := make([]*storage.Node, 1500)
 	for i := 0; i < 1500; i++ {
 		nodes[i] = &storage.Node{
@@ -206,6 +211,7 @@ func TestParallelCollect(t *testing.T) {
 }
 
 func TestParallelMap(t *testing.T) {
+	keepParallelConfig(t)
 	nodes := make([]*storage.Node, 2000)
 	for i := 0; i < 2000; i++ {
 		nodes[i] = &storage.Node{
@@ -237,6 +243,7 @@ func TestParallelMap(t *testing.T) {
 }
 
 func TestParallelCollectAndMap_SmallChunksBreakBranches(t *testing.T) {
+	keepParallelConfig(t)
 	nodes := []*storage.Node{
 		{ID: "n1", Properties: map[string]interface{}{"name": "a", "value": 1}},
 		{ID: "n2", Properties: map[string]interface{}{"value": 2}}, // missing "name"
@@ -289,6 +296,7 @@ func TestWorkerPool(t *testing.T) {
 }
 
 func TestParallelFilterEdges(t *testing.T) {
+	keepParallelConfig(t)
 	edges := []*storage.Edge{
 		{ID: "e1", Type: "KNOWS"},
 		{ID: "e2", Type: "LIKES"},
@@ -314,6 +322,7 @@ func TestParallelFilterEdges(t *testing.T) {
 // =============================================================================
 
 func BenchmarkFilterNodes(b *testing.B) {
+	keepParallelConfig(b)
 	// Create large dataset
 	nodes := make([]*storage.Node, 100000)
 	for i := 0; i < 100000; i++ {
@@ -368,6 +377,7 @@ func BenchmarkFilterNodes(b *testing.B) {
 }
 
 func BenchmarkParallelCount(b *testing.B) {
+	keepParallelConfig(b)
 	nodes := make([]*storage.Node, 100000)
 	for i := 0; i < 100000; i++ {
 		nodes[i] = &storage.Node{
@@ -404,6 +414,7 @@ func BenchmarkParallelCount(b *testing.B) {
 }
 
 func BenchmarkParallelSum(b *testing.B) {
+	keepParallelConfig(b)
 	nodes := make([]*storage.Node, 100000)
 	for i := 0; i < 100000; i++ {
 		nodes[i] = &storage.Node{
@@ -449,6 +460,7 @@ func TestParallelConfigDefaults(t *testing.T) {
 }
 
 func TestSetParallelConfig(t *testing.T) {
+	keepParallelConfig(t)
 	// Test invalid values get corrected
 	SetParallelConfig(ParallelConfig{
 		Enabled:      true,
@@ -480,6 +492,7 @@ func TestParallelFilterNodesEmpty(t *testing.T) {
 }
 
 func TestParallelExecutionCorrectness(t *testing.T) {
+	keepParallelConfig(t)
 	// Create nodes with unique IDs to verify all are processed
 	nodes := make([]*storage.Node, 5000)
 	for i := 0; i < 5000; i++ {
@@ -557,4 +570,14 @@ func TestWorkerPoolConcurrency(t *testing.T) {
 	if max < 2 {
 		t.Logf("max concurrent workers: %d (may vary based on timing)", max)
 	}
+}
+
+// keepParallelConfig restores the package-wide parallel configuration when
+// tb ends, so a test that lowers MinBatchSize does not send the traversals,
+// filters and aggregations of every later test in the package down their
+// parallel paths.
+func keepParallelConfig(tb testing.TB) {
+	tb.Helper()
+	previous := GetParallelConfig()
+	tb.Cleanup(func() { SetParallelConfig(previous) })
 }
