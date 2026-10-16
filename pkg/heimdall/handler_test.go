@@ -30,7 +30,7 @@ func (m *mockDBRouter) Query(ctx context.Context, database string, cypher string
 	return []map[string]interface{}{{"count": int64(42)}}, nil
 }
 
-func (m *mockDBRouter) Stats(database string) (DatabaseStats, error) {
+func (m *mockDBRouter) Stats(ctx context.Context, database string) (DatabaseStats, error) {
 	return DatabaseStats{NodeCount: 100, RelationshipCount: 50}, nil
 }
 

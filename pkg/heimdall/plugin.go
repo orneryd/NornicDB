@@ -627,7 +627,7 @@ type DatabaseRouter interface {
 	Query(ctx context.Context, database string, cypher string, params map[string]interface{}) ([]map[string]interface{}, error)
 
 	// Stats returns database statistics for the specified logical database.
-	Stats(database string) (DatabaseStats, error)
+	Stats(ctx context.Context, database string) (DatabaseStats, error)
 
 	// Discover performs semantic search with graph traversal in the specified database.
 	// Returns search results with related nodes up to the specified depth.
