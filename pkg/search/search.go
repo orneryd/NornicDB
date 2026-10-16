@@ -808,6 +808,9 @@ type Service struct {
 	// persisted service whose sources are not admitted: it stays in memory
 	// and runs no restore step. indexMu protects it.
 	provisionalWrite bool
+	// writeStartedPopulation is set while a population a live write started
+	// runs; persistence joins it (joinWriteStartedPopulation).
+	writeStartedPopulation atomic.Bool
 
 	baseBuildControlMu     sync.Mutex
 	baseBuildPaused        int
@@ -3870,6 +3873,11 @@ var baseSourceRestartHook func()
 func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopulationAdmission, explicit bool) (resultErr error) {
 	sourcesTouched := false
 	defer func() { s.finishNodeAdmission(job, resultErr, sourcesTouched) }()
+	if !explicit {
+		// Cleared after every other exit step, the build-in-progress mark included.
+		s.writeStartedPopulation.Store(true)
+		defer s.writeStartedPopulation.Store(false)
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}

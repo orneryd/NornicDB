@@ -234,6 +234,7 @@ func (s *Service) admitNodePopulationForPersist() {
 	needed := s.hasPopulationWritesLocked() && !s.nodeSourcesCompleteLocked()
 	s.indexMu.RUnlock()
 	if !needed {
+		s.joinWriteStartedPopulation()
 		return
 	}
 	ctx := s.lifecycleCtx
@@ -242,6 +243,19 @@ func (s *Service) admitNodePopulationForPersist() {
 	}
 	if err := s.waitOrRunNodeAdmission(ctx, s.claimNodeAdmission()); err != nil {
 		s.logPrintf("📇 Persist: node population for live writes did not complete: %v", err)
+	}
+	s.joinWriteStartedPopulation()
+}
+
+// joinWriteStartedPopulation waits for a population a live write started to
+// return completely, not only to admit NODE: until it returns it still marks
+// the build in progress, which defers the BM25 save. Explicit builds persist
+// their own result and are not joined, so a shutdown flush never waits out a
+// full build.
+func (s *Service) joinWriteStartedPopulation() {
+	if s.writeStartedPopulation.Load() {
+		s.buildMu.Lock()
+		s.buildMu.Unlock()
 	}
 }
 
