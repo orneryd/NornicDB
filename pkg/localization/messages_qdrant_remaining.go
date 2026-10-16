@@ -32,6 +32,7 @@ const (
 	MessageQdrantRecommendDimMismatch      MessageID = "qdrant.recommend_dimension_mismatch"
 	MessageQdrantVectorKindUnsupported     MessageID = "qdrant.vector_kind_unsupported"
 	MessageQdrantScanPointsFailed          MessageID = "qdrant.scan_points_failed"
+	MessageQdrantSearchFailed              MessageID = "qdrant.search_failed"
 	MessageQdrantSelectorInvalid           MessageID = "qdrant.points_selector_invalid"
 	MessageQdrantVectorsTypeUnsupported    MessageID = "qdrant.vectors_type_unsupported"
 	MessageQdrantGetCollectionPointsFailed MessageID = "qdrant.get_collection_points_failed"
@@ -145,6 +146,10 @@ func QdrantUnsupportedVectorKind() Message {
 
 func QdrantScanPointsFailed(cause error) Message {
 	return qdrantCauseMessage(MessageQdrantScanPointsFailed, "failed to scan points: ", cause)
+}
+
+func QdrantSearchFailed(cause error) Message {
+	return qdrantCauseMessage(MessageQdrantSearchFailed, "vector search failed: ", cause)
 }
 
 func QdrantInvalidPointsSelector() Message {

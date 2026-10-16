@@ -76,6 +76,9 @@
 - id: qdrant.scan_points_failed
   description: Pseudo-locale point scan failure.
   other: "[!! failed to scan points: {{.Cause}} !!]"
+- id: qdrant.search_failed
+  description: Pseudo-locale vector search failure.
+  other: "[!! vector search failed: {{.Cause}} !!]"
 - id: qdrant.points_selector_invalid
   description: Pseudo-locale invalid selector.
   other: "[!! invalid points selector !!]"

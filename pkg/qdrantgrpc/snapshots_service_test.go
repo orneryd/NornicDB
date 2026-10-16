@@ -52,8 +52,7 @@ func setupSnapshotsTest(t *testing.T) (*SnapshotsService, *PointsService, Collec
 	base := storage.NewMemoryEngine()
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
-	vecIndex := newVectorIndexCache()
-	collections, err := NewDatabaseCollectionStore(dbm, vecIndex)
+	collections, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)
 
 	snapshotDir := t.TempDir()
@@ -68,7 +67,7 @@ func setupSnapshotsTest(t *testing.T) (*SnapshotsService, *PointsService, Collec
 	}
 
 	snapshotsService := NewSnapshotsService(config, collections, base, snapshotDir, nil)
-	pointsService := NewPointsService(config, collections, nil, vecIndex, nil)
+	pointsService := NewPointsService(config, collections, sharedSearchProvider(), nil)
 
 	// Create test collection
 	ctx := context.Background()
@@ -380,7 +379,7 @@ func TestSnapshotsService_DefaultSnapshotDirBranch(t *testing.T) {
 	base := storage.NewMemoryEngine()
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
-	collections, err := NewDatabaseCollectionStore(dbm, newVectorIndexCache())
+	collections, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)
 
 	svc := NewSnapshotsService(DefaultConfig(), collections, base, "", nil)

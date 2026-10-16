@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	qpb "github.com/qdrant/go-client/qdrant"
@@ -41,14 +42,18 @@ type CollectionStore interface {
 
 type databaseCollectionStore struct {
 	dbManager *multidb.DatabaseManager
-	vecIndex  *vectorIndexCache
+	// dropDatabase drops a collection's database and the state derived from
+	// it (Config.DropDatabase); it defaults to dbManager.DropDatabase.
+	dropDatabase func(name string) error
 
 	// reserved database names that must not be used for Qdrant collections.
 	reserved map[string]struct{}
 }
 
-// NewDatabaseCollectionStore creates a CollectionStore backed by DatabaseManager namespaces.
-func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, vecIndex *vectorIndexCache) (CollectionStore, error) {
+// NewDatabaseCollectionStore creates a CollectionStore backed by DatabaseManager
+// namespaces. dropDatabase drops a collection's database together with its
+// derived state (Config.DropDatabase); nil uses dbManager.DropDatabase.
+func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, dropDatabase func(name string) error) (CollectionStore, error) {
 	if dbManager == nil {
 		return nil, fmt.Errorf("db manager required")
 	}
@@ -59,10 +64,14 @@ func NewDatabaseCollectionStore(dbManager *multidb.DatabaseManager, vecIndex *ve
 	// Reserve the default database name as well; Qdrant collections are dedicated namespaces.
 	reserved[strings.ToLower(dbManager.DefaultDatabaseName())] = struct{}{}
 
+	if dropDatabase == nil {
+		dropDatabase = dbManager.DropDatabase
+	}
+
 	return &databaseCollectionStore{
-		dbManager: dbManager,
-		vecIndex:  vecIndex,
-		reserved:  reserved,
+		dbManager:    dbManager,
+		dropDatabase: dropDatabase,
+		reserved:     reserved,
 	}, nil
 }
 
@@ -80,7 +89,7 @@ func (s *databaseCollectionStore) Create(ctx context.Context, name string, dims 
 
 	engine, err := s.dbManager.GetStorage(name)
 	if err != nil {
-		_ = s.dbManager.DropDatabase(name)
+		_ = s.dropDatabase(name)
 		return err
 	}
 
@@ -97,13 +106,8 @@ func (s *databaseCollectionStore) Create(ctx context.Context, name string, dims 
 		CreatedAt: now,
 	})
 	if err != nil {
-		_ = s.dbManager.DropDatabase(name)
+		_ = s.dropDatabase(name)
 		return err
-	}
-
-	if s.vecIndex != nil {
-		// Ensure an empty per-collection index exists with the correct dimension/distance.
-		_ = s.vecIndex.getOrCreate(name, "", dims, distance)
 	}
 
 	return nil
@@ -167,13 +171,7 @@ func (s *databaseCollectionStore) Drop(ctx context.Context, name string) error {
 		return ErrCollectionNotFound
 	}
 
-	if err := s.dbManager.DropDatabase(name); err != nil {
-		return err
-	}
-	if s.vecIndex != nil {
-		s.vecIndex.deleteCollection(name)
-	}
-	return nil
+	return s.dropDatabase(name)
 }
 
 func (s *databaseCollectionStore) Exists(name string) bool {
@@ -244,36 +242,22 @@ func readCollectionMeta(engine storage.Engine) (*CollectionMeta, error) {
 		return nil, ErrInvalidCollection
 	}
 
-	dims := 0
-	switch v := node.Properties["dimensions"].(type) {
-	case float64:
-		dims = int(v)
-	case int:
-		dims = v
-	case int64:
-		dims = int(v)
-	}
-	if dims <= 0 {
+	// Stored numbers come back as whichever integer type fits them (int8 for 4
+	// dimensions) once the node is decoded from disk, so read them as integers
+	// of any type.
+	dims, ok := convert.ToInt64(node.Properties["dimensions"])
+	if !ok || dims <= 0 {
 		return nil, ErrInvalidCollection
 	}
 
-	var distance qpb.Distance
-	switch v := node.Properties["distance"].(type) {
-	case float64:
+	distance := qpb.Distance_Cosine
+	if v, ok := convert.ToInt64(node.Properties["distance"]); ok {
 		distance = qpb.Distance(int32(v))
-	case int:
-		distance = qpb.Distance(int32(v))
-	case int64:
-		distance = qpb.Distance(int32(v))
-	case int32:
-		distance = qpb.Distance(v)
-	default:
-		distance = qpb.Distance_Cosine
 	}
 
 	return &CollectionMeta{
 		Name:       "", // Name is the database name (known by caller); keep empty here.
-		Dimensions: dims,
+		Dimensions: int(dims),
 		Distance:   distance,
 		Status:     qpb.CollectionStatus_Green,
 	}, nil

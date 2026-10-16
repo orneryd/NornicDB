@@ -25,7 +25,7 @@ func TestOfficialQdrantGRPC_BasicFlow(t *testing.T) {
 	cfg.ListenAddr = "127.0.0.1:0"
 	cfg.EnableReflection = false
 
-	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, nil, nil)
+	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, sharedSearchProvider(), nil)
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	t.Cleanup(srv.Stop)
@@ -185,7 +185,7 @@ func TestOfficialQdrantGRPC_NamedVectorsRoundTrip(t *testing.T) {
 	cfg.ListenAddr = "127.0.0.1:0"
 	cfg.EnableReflection = false
 
-	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, nil, nil)
+	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, sharedSearchProvider(), nil)
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	t.Cleanup(srv.Stop)
@@ -263,7 +263,7 @@ func TestOfficialQdrantGRPC_AdvancedFlow(t *testing.T) {
 	cfg.EnableReflection = false
 	cfg.AllowVectorMutations = true
 
-	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, nil, nil)
+	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, sharedSearchProvider(), nil)
 	require.NoError(t, err)
 	require.NoError(t, srv.Start())
 	t.Cleanup(srv.Stop)
