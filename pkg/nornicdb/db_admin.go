@@ -983,6 +983,12 @@ func mapSingleSearchResult(r search.SearchResult) *SearchResult {
 // Search performs full-text BM25 search.
 // For hybrid vector+text search, use HybridSearch with pre-computed query embedding.
 func (db *DB) Search(ctx context.Context, query string, labels []string, limit int) ([]*SearchResult, error) {
+	return db.SearchDatabase(ctx, db.defaultDatabaseName(), db.storage, query, labels, limit)
+}
+
+// SearchDatabase is Search over one database: database names it and engine
+// is its storage (the caller has resolved and authorized both).
+func (db *DB) SearchDatabase(ctx context.Context, database string, engine storage.Engine, query string, labels []string, limit int) ([]*SearchResult, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
@@ -990,7 +996,7 @@ func (db *DB) Search(ctx context.Context, query string, labels []string, limit i
 		return nil, ErrClosed
 	}
 
-	svc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage)
+	svc, err := db.GetOrCreateSearchService(database, engine)
 	if err != nil || svc == nil {
 		return nil, localizedError(localization.NornicDBCoreSearchServiceNotInitialized(), err)
 	}
@@ -1059,6 +1065,12 @@ func (db *DB) HybridSearchWithOptions(ctx context.Context, query string, queryEm
 
 // FindSimilar finds nodes similar to a given node by embedding.
 func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*SearchResult, error) {
+	return db.FindSimilarInDatabase(ctx, db.storage, nodeID, limit)
+}
+
+// FindSimilarInDatabase is FindSimilar over one database's storage, engine
+// (the caller has resolved and authorized it).
+func (db *DB) FindSimilarInDatabase(ctx context.Context, engine storage.Engine, nodeID string, limit int) ([]*SearchResult, error) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
@@ -1069,11 +1081,11 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
 		return nil, localizedError(localization.NornicDBCoreFindSimilarLimitInvalid(), nil)
 	}
 
-	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, db.storage)
+	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, engine)
 	defer releaseProjection()
 
 	// Get target node
-	target, err := db.storage.GetNode(storage.NodeID(nodeID))
+	target, err := engine.GetNode(storage.NodeID(nodeID))
 	if err != nil {
 		return nil, ErrNotFound
 	}
@@ -1089,7 +1101,7 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
 	}
 	var results []scored
 
-	err = storage.StreamNodesWithFallback(ctx, db.storage, 1000, func(n *storage.Node) error {
+	err = storage.StreamNodesWithFallback(ctx, engine, 1000, func(n *storage.Node) error {
 		// Skip self and nodes without embeddings
 		if string(n.ID) == nodeID || len(n.ChunkEmbeddings) == 0 || len(n.ChunkEmbeddings[0]) == 0 {
 			return nil

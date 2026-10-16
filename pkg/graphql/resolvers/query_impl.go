@@ -184,7 +184,11 @@ func (r *queryResolver) querySearch(ctx context.Context, query string, options *
 		labels = options.Labels
 	}
 
-	results, err := r.DB.Search(ctx, query, labels, limit)
+	database, engine, err := r.readDatabase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results, err := r.DB.SearchDatabase(ctx, database, engine, query, labels, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +230,11 @@ func (r *queryResolver) querySimilar(ctx context.Context, nodeID string, limit *
 	}
 	// threshold is ignored - FindSimilar doesn't support it
 
-	results, err := r.DB.FindSimilar(ctx, nodeID, lim)
+	_, engine, err := r.readDatabase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results, err := r.DB.FindSimilarInDatabase(ctx, engine, nodeID, lim)
 	if err != nil {
 		return nil, err
 	}
