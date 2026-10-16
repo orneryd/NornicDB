@@ -414,9 +414,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		vectorChunkQueries int
 	)
 
-	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.getDatabaseAccessMode(getClaims(r)).CanAccessDatabase(dbName) {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+	// Per-database RBAC: the principal must be allowed to use and to read
+	// this database (Neo4j-aligned).
+	if !s.authorizeDatabaseRead(w, r, dbName) {
 		return
 	}
 	if req.Discard && req.QID != "" {
@@ -828,9 +828,9 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 		dbName = s.dbManager.DefaultDatabaseName()
 	}
 
-	// Per-database RBAC: deny if principal may not access this database (Neo4j-aligned).
-	if !s.getDatabaseAccessMode(getClaims(r)).CanAccessDatabase(dbName) {
-		s.writeNeo4jDatabaseAccessDenied(w, r, dbName)
+	// Per-database RBAC: the principal must be allowed to use and to read
+	// this database (Neo4j-aligned).
+	if !s.authorizeDatabaseRead(w, r, dbName) {
 		return
 	}
 	if s.dbManager.IsCompositeDatabase(dbName) {
