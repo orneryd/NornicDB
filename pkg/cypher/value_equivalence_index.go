@@ -43,7 +43,15 @@ func cypherComparableKey(value interface{}) (interface{}, bool) {
 			return nil, true
 		}
 		return cypherEncodedKey(cypherEquivalenceKey(value)), true
-	case []byte, []interface{}, map[string]interface{}:
+	case map[string]interface{}:
+		// A genuine path wrapper keys by its ordered entities, as a native
+		// path does; any other map, including a forged _pathResult, is
+		// structural.
+		if cypherValueKindOf(value) == valueKindPath {
+			return cypherEncodedKey(cypherEquivalenceKey(value)), true
+		}
+		return nil, false
+	case []byte, []interface{}:
 		return nil, false
 	}
 	if signed, ok := cypherSignedInteger(value); ok {
