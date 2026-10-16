@@ -799,6 +799,12 @@ type Service struct {
 	// an empty source after clear or a persistence-off interval.
 	nodeSources            nodeSourceRecord
 	nodeAdmission          *nodePopulationAdmission
+
+	// Live writes a running NODE population folds in, latest state per ID
+	// (nil: removed); indexMu protects them (see applyWrite).
+	nodePopulationWrites map[string]*storage.Node
+	edgePopulationWrites map[string]*storage.Edge
+
 	baseBuildControlMu     sync.Mutex
 	baseBuildPaused        int
 	baseBuildCancel        context.CancelFunc
@@ -2257,6 +2263,7 @@ func (s *Service) schedulePersist() {
 		s.persistMu.Lock()
 		s.persistTimer = nil
 		s.persistMu.Unlock()
+		s.admitNodePopulationForPersist()
 		s.runPersistWithContext(s.lifecycleCtx)
 	})
 }
@@ -2548,6 +2555,7 @@ func (s *Service) PersistIndexesToDisk() {
 		s.persistTimer = nil
 	}
 	s.persistMu.Unlock()
+	s.admitNodePopulationForPersist()
 	s.runPersistWithContext(context.Background())
 }
 
@@ -2871,8 +2879,12 @@ func (s *Service) IndexNode(node *storage.Node) error {
 	if !bm25On && !vecOn {
 		return nil
 	}
-	release, err := s.lockNodeMutation(firstVectorDimensions(node))
-	if err != nil {
+	mutation := liveMutation{node: node}
+	if node != nil {
+		mutation.nodeID = string(node.ID)
+	}
+	release, apply, err := s.applyWrite(firstVectorDimensions(node), mutation)
+	if err != nil || !apply {
 		return err
 	}
 	if !s.buildInProgress.Load() {
@@ -3577,8 +3589,8 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 // RemoveNode removes a node from all search indexes.
 // Also removes all chunk embeddings (for nodes with multiple chunks).
 func (s *Service) RemoveNode(nodeID storage.NodeID) error {
-	release, err := s.lockNodeMutation(0)
-	if err != nil {
+	release, apply, err := s.applyWrite(0, liveMutation{nodeID: string(nodeID)})
+	if err != nil || !apply {
 		return err
 	}
 	if !s.buildInProgress.Load() {
@@ -3607,8 +3619,8 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 		s.IndexRelationship(edge)
 		return nil
 	}
-	release, err := s.lockNodeMutation(firstEdgeVectorDimensions(edge))
-	if err != nil {
+	release, apply, err := s.applyWrite(firstEdgeVectorDimensions(edge), liveMutation{edgeID: string(edge.ID), edge: edge})
+	if err != nil || !apply {
 		return err
 	}
 	s.IndexRelationship(edge)
@@ -3698,8 +3710,8 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	if s == nil {
 		return nil
 	}
-	release, err := s.lockNodeMutation(0)
-	if err != nil {
+	release, apply, err := s.applyWrite(0, liveMutation{edgeID: string(edgeID)})
+	if err != nil || !apply {
 		return err
 	}
 	s.RemoveRelationship(edgeID)
@@ -3861,7 +3873,8 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 // runBasePopulationOperation owns the existing base lifetime and NODE phase.
 // Caller holds buildMu. Live first mutation stops at NODE completion.
 func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopulationAdmission, explicit bool) (resultErr error) {
-	defer func() { s.finishNodeAdmission(job, resultErr) }()
+	sourcesTouched := false
+	defer func() { s.finishNodeAdmission(job, resultErr, sourcesTouched) }()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -3892,6 +3905,9 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 		s.setLifecycleState(lifecycleReady)
 		return nil
 	}
+	// From here the operation replaces sources and readiness; a cancelled or
+	// refused build before this point leaves the current indexes serving.
+	sourcesTouched = true
 	s.indexMu.Lock()
 	reloadErr := s.materializeNodeFulltextLocked()
 	s.indexMu.Unlock()

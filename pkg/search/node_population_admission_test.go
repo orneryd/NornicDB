@@ -164,7 +164,7 @@ func TestNodePopulationUninitializedPersistAndClosePreserveArtifacts(t *testing.
 	}
 }
 
-func TestNodePopulationWaiterProceedsWhileANNIsBlocked(t *testing.T) {
+func TestNodePopulationLiveWriteProceedsWhileNodeAndANNAreBlocked(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	for _, backend := range []string{"v1", "v2"} {
 		t.Run(backend, func(t *testing.T) {
@@ -200,21 +200,20 @@ func TestNodePopulationWaiterProceedsWhileANNIsBlocked(t *testing.T) {
 			b := admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named")
 			_, err = engine.CreateNode(b)
 			require.NoError(t, err)
-			writeDone, writerID := make(chan error, 1), make(chan string, 1)
-			go func() { writerID <- serviceTestGoroutineID(); writeDone <- svc.IndexNode(b) }()
-			id := <-writerID
-			require.Eventually(t, func() bool { return serviceStackContains(id, "waitOrRunNodeAdmission", "select") }, 5*time.Second, time.Millisecond)
+			// The write path neither runs nor waits for the blocked NODE phase.
+			writeDone := make(chan error, 1)
+			go func() { writeDone <- svc.IndexNode(b) }()
+			select {
+			case err := <-writeDone:
+				require.NoError(t, err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("live write waited for the NODE population")
+			}
 			releaseSource()
 			select {
 			case <-graphStarted:
 			case <-time.After(5 * time.Second):
 				t.Fatal("ANN did not reach retained hook")
-			}
-			select {
-			case err := <-writeDone:
-				require.NoError(t, err)
-			case <-time.After(5 * time.Second):
-				t.Fatal("NODE waiter waited for ANN/buildMu tail")
 			}
 			removeDone := make(chan error, 1)
 			require.NoError(t, engine.DeleteNode(a.ID))
@@ -249,7 +248,7 @@ func TestNodePopulationWaiterProceedsWhileANNIsBlocked(t *testing.T) {
 	}
 }
 
-func TestNodePopulationAdmissionErrorAndCloseWakeMutations(t *testing.T) {
+func TestNodePopulationFailureAndCloseKeepLiveWrites(t *testing.T) {
 	for _, closeOwner := range []bool{false, true} {
 		t.Run(fmt.Sprint("close=", closeOwner), func(t *testing.T) {
 			engine := storage.NewMemoryEngine()
@@ -271,41 +270,50 @@ func TestNodePopulationAdmissionErrorAndCloseWakeMutations(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("missing node gate")
 			}
-			mutationDone, writerID := make(chan error, 1), make(chan string, 1)
-			go func() {
-				writerID <- serviceTestGoroutineID()
-				mutationDone <- svc.IndexNode(admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named"))
-			}()
-			id := <-writerID
-			require.Eventually(t, func() bool { return serviceStackContains(id, "waitOrRunNodeAdmission", "select") }, 5*time.Second, time.Millisecond)
+			b := admissionNode("nornic:b", "bterm", []float32{0, 1, 0}, "named")
+			_, err = engine.CreateNode(b)
+			require.NoError(t, err)
+			mutationDone := make(chan error, 1)
+			go func() { mutationDone <- svc.IndexNode(b) }()
+			select {
+			case err := <-mutationDone:
+				require.NoError(t, err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("live write waited for the NODE population")
+			}
 			closed := make(chan error, 1)
 			if closeOwner {
 				go func() { closed <- svc.Close() }()
 			} else {
 				cancel()
 			}
-			if closeOwner {
-				select {
-				case err := <-mutationDone:
-					require.True(t, errors.Is(err, context.Canceled))
-				case <-time.After(5 * time.Second):
-					t.Fatal("Close did not wake NODE waiter")
-				}
-			}
 			release()
 			require.Error(t, <-buildDone)
 			if closeOwner {
 				require.NoError(t, <-closed)
-			} else {
-				require.ErrorIs(t, <-mutationDone, context.Canceled)
+				require.True(t, errors.Is(svc.IndexNode(b), context.Canceled), "a closed service refuses writes")
 			}
 			assert.False(t, svc.IsReady())
-			assert.Empty(t, svc.fulltext().Search("bterm", 10))
-			assert.NotContains(t, svc.nodeNamedVector, "nornic:b")
 			svc.persistMu.Lock()
 			timer := svc.persistTimer
 			svc.persistMu.Unlock()
 			assert.Nil(t, timer)
+			if closeOwner {
+				return
+			}
+			// The failed population keeps the recorded write for the next one.
+			require.NoError(t, svc.BuildIndexes(context.Background()))
+			require.True(t, svc.IsReady())
+			for term, id := range map[string]string{"aterm": "nornic:a", "bterm": "nornic:b"} {
+				resp, err := svc.Search(context.Background(), term, nil, &SearchOptions{Limit: 10})
+				require.NoError(t, err)
+				if assert.Len(t, resp.Results, 1, term) {
+					assert.Equal(t, id, resp.Results[0].ID)
+				}
+			}
+			svc.indexMu.RLock()
+			assert.Empty(t, svc.nodePopulationWrites)
+			svc.indexMu.RUnlock()
 		})
 	}
 }

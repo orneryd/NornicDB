@@ -581,8 +581,11 @@ func TestMatchVectorCosineFastPath_UsesLiveIndexDuringBackgroundWarmup(t *testin
 	require.NoError(t, err)
 
 	searchSvc := search.NewServiceWithDimensions(blocking, 4)
+	t.Cleanup(func() { require.NoError(t, searchSvc.Close()) })
 	exec.SetSearchService(searchSvc)
 
+	// Writes before the first build must not run the population: its
+	// iterator is blocked until releaseBuild.
 	_, err = exec.Execute(ctx, "CREATE (:Entity {uuid:'best', group_id:'g', name_embedding:[1.0,0.0,0.0,0.0]})", nil)
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "CREATE (:Entity {uuid:'other', group_id:'g', name_embedding:[0.0,1.0,0.0,0.0]})", nil)
@@ -633,6 +636,30 @@ LIMIT $limit
 	require.Equal(t, 0, counting.labelCalls, "background warmup must not force exact label-scan fallback")
 	require.Equal(t, 0, counting.streamNodesCalls, "background warmup must not force stream-scan fallback")
 
+	// A write during the warmup completes without waiting for the population
+	// and is answered by the live index at once.
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := exec.Execute(ctx, "CREATE (:Entity {uuid:'during', group_id:'g', name_embedding:[0.0,0.0,1.0,0.0]})", nil)
+		writeDone <- err
+	}()
+	select {
+	case err := <-writeDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a write during background warmup waited for the index population")
+	}
+	require.True(t, searchSvc.BuildInProgress())
+	res, err = exec.Execute(ctx, query, map[string]interface{}{
+		"group_id":      "g",
+		"search_vector": []float64{0, 0, 1, 0},
+		"limit":         1,
+	})
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, "during", res.Rows[0][0])
+	require.True(t, exec.LastHotPathTrace().CosineVectorIndexFastPath)
+
 	releaseBuild()
 	select {
 	case err := <-buildErr:
@@ -640,6 +667,7 @@ LIMIT $limit
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for BuildIndexes to finish")
 	}
+	require.Equal(t, 3, searchSvc.CountPropertyVectorEntries("name_embedding"))
 }
 
 func TestMatchVectorCosineFastPath_ExternalEmbeddingsUseLiveIndexBeforeReady(t *testing.T) {

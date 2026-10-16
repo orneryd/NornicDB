@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/security"
 )
@@ -88,6 +89,8 @@ func (s *Service) setNodeFulltextCheckpointLocked(path string, count int) {
 type nodePopulationAdmission struct {
 	done chan struct{}
 	err  error
+	// worker is set while a registered admission worker owns the job.
+	worker atomic.Bool
 }
 
 func (s *Service) nodeSourcesCompleteLocked() bool {
@@ -110,7 +113,10 @@ func (s *Service) claimNodeAdmission() *nodePopulationAdmission {
 	return job
 }
 
-func (s *Service) finishNodeAdmission(job *nodePopulationAdmission, err error) {
+// finishNodeAdmission publishes the job's outcome. A failure retires the
+// completeness record only when the operation had started replacing sources;
+// one refused or cancelled before that left the existing sources intact.
+func (s *Service) finishNodeAdmission(job *nodePopulationAdmission, err error, sourcesTouched bool) {
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
 	s.baseBuildControlMu.Lock()
@@ -120,18 +126,23 @@ func (s *Service) finishNodeAdmission(job *nodePopulationAdmission, err error) {
 		return
 	default:
 	}
-	if err != nil {
+	if err != nil && sourcesTouched {
 		s.changeNodeSourcesLocked(nodePopulationFailed)
+		s.setLifecycleState(lifecycleUnloaded)
+	}
+	if err == nil {
+		// Every recorded write was replayed at admission or applied to the
+		// complete source afterwards.
+		clear(s.nodePopulationWrites)
+		clear(s.edgePopulationWrites)
 	}
 	job.err = err
 	close(job.done)
 }
 
-func (s *Service) waitOrRunNodeAdmission(job *nodePopulationAdmission) error {
-	ctx := s.lifecycleCtx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+// waitOrRunNodeAdmission joins job or, once it owns buildMu, runs it. Only
+// background callers use it: the admission worker and persistence.
+func (s *Service) waitOrRunNodeAdmission(ctx context.Context, job *nodePopulationAdmission) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -145,86 +156,6 @@ func (s *Service) waitOrRunNodeAdmission(job *nodePopulationAdmission) error {
 		default:
 		}
 		return s.runBasePopulationOperation(ctx, job, false)
-	}
-}
-
-// lockNodeMutation admits the initial population before ANY mutation-side
-// effect. On success the caller owns indexMu and must call the returned release.
-// Private node/edge batch writers never enter this public boundary.
-func (s *Service) lockNodeMutation(dimensions int) (func(), error) {
-	for {
-		s.indexMu.Lock()
-		if s.lifecycleCtx != nil {
-			if err := s.lifecycleCtx.Err(); err != nil {
-				s.indexMu.Unlock()
-				return nil, err
-			}
-		}
-		s.baseBuildControlMu.Lock()
-		job, paused := s.nodeAdmission, s.baseBuildPaused > 0
-		pending := false
-		if job != nil {
-			select {
-			case <-job.done:
-			default:
-				pending = true
-			}
-		}
-		s.baseBuildControlMu.Unlock()
-		if !pending && s.nodeSourcesCompleteLocked() {
-			if err := s.materializeNodeFulltextLocked(); err != nil {
-				s.indexMu.Unlock()
-				return nil, err
-			}
-			if !s.needsVectorDimensionsLocked(dimensions) {
-				return s.indexMu.Unlock, nil
-			}
-			// Joining construction must precede indexMu. Recheck the SAME source
-			// record and dimensions after reacquiring mutation ownership.
-			s.indexMu.Unlock()
-			resume := s.pauseHNSWBuild()
-			s.indexMu.Lock()
-			if s.lifecycleCtx != nil && s.lifecycleCtx.Err() != nil {
-				err := s.lifecycleCtx.Err()
-				s.indexMu.Unlock()
-				resume()
-				return nil, err
-			}
-			s.baseBuildControlMu.Lock()
-			current := s.nodeAdmission
-			pending = false
-			if current != nil {
-				select {
-				case <-current.done:
-				default:
-					pending = true
-				}
-			}
-			s.baseBuildControlMu.Unlock()
-			if pending || !s.nodeSourcesCompleteLocked() {
-				s.indexMu.Unlock()
-				resume()
-				continue
-			}
-			if err := s.materializeNodeFulltextLocked(); err != nil {
-				s.indexMu.Unlock()
-				resume()
-				return nil, err
-			}
-			s.replaceEmptyVectorDimensionsLocked(dimensions)
-			return func() { s.indexMu.Unlock(); resume() }, nil
-		}
-		if paused {
-			s.indexMu.Unlock()
-			return nil, ErrSearchIndexBuilding
-		}
-		if !pending {
-			job = s.claimNodeAdmission()
-		}
-		s.indexMu.Unlock()
-		if err := s.waitOrRunNodeAdmission(job); err != nil {
-			return nil, err
-		}
 	}
 }
 
@@ -344,6 +275,9 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// Recorded live writes may carry the first vectors; adopt their dimensions
+	// the same way the population's own first batch does.
+	s.maybeAutoSetVectorDimensions(s.populationWriteDimensions())
 	s.indexMu.Lock()
 	if err := ctx.Err(); err != nil {
 		s.indexMu.Unlock()
@@ -352,11 +286,15 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 	// An unadopted saved graph cannot follow the first live mutation. Likewise
 	// a rebuilt/current live population cannot leave its older graph reusable
 	// if the following ANN warmup is cancelled or the process is restarted.
-	if !explicit || plan.nodesRebuilt || plan.forceHNSWRebuild {
+	if !explicit || plan.nodesRebuilt || plan.forceHNSWRebuild || s.hasPopulationWritesLocked() {
 		if err := s.removeSavedGlobalGraphLocked(); err != nil {
 			s.indexMu.Unlock()
 			return err
 		}
+	}
+	if err := s.replayPopulationWritesLocked(ctx); err != nil {
+		s.indexMu.Unlock()
+		return err
 	}
 	s.changeNodeSourcesLocked(nodePopulationAdmitted)
 	// An admitted empty population needs the same durable empty file source as
@@ -386,13 +324,20 @@ func (s *Service) completeNodePopulation(ctx context.Context, job *nodePopulatio
 		// excluded. After NODE publication every live delta must reach a graph
 		// already installed or the canonical construction job's snapshot/log.
 		s.indexMu.Lock()
+		if s.hasPopulationWritesLocked() {
+			// Writes since admission are in the source but not in a saved graph.
+			if err := s.removeSavedGlobalGraphLocked(); err != nil {
+				s.indexMu.Unlock()
+				return err
+			}
+		}
 		s.restoreNodePopulationANN(ctx, plan)
 		s.indexMu.Unlock()
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.finishNodeAdmission(job, nil)
+	s.finishNodeAdmission(job, nil, true)
 	if !explicit {
 		return nil
 	}
