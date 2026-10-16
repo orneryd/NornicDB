@@ -83,6 +83,7 @@ northwind_power_bench_ladybug
 bench-data
 lib-ladybug
 scripts/benchmark_reports
+testing/benchmarks/vector_ann/reports
 # Local localization review artifacts (regenerate with scripts/localization_inventory).
 /docs/plans/localization-*.csv
 metrics-doc-gen
