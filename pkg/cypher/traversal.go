@@ -1910,11 +1910,21 @@ func pathResultsReuseRelationship(left, right PathResult) bool {
 
 // traverseFromNode traverses from a specific node rather than finding start nodes by label
 func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNode *storage.Node, match *TraversalMatch) []PathResult {
-	// Verify the start node matches the expected pattern (labels and properties)
-	if len(match.StartNode.labels) > 0 {
+	if !e.traversalStartMatches(startNode, match.StartNode) {
+		return nil
+	}
+	ctx := e.newMatchTraversalContext(traversalCtx, startNode, match, &match.Relationship)
+	ctx.endNodeID = match.boundEndNodeID
+	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+}
+
+// traversalStartMatches reports whether a traversal's start node matches its
+// pattern's labels and properties.
+func (e *StorageExecutor) traversalStartMatches(startNode *storage.Node, pattern nodePatternInfo) bool {
+	if len(pattern.labels) > 0 {
 		found := false
 		for _, label := range startNode.Labels {
-			for _, requiredLabel := range match.StartNode.labels {
+			for _, requiredLabel := range pattern.labels {
 				if label == requiredLabel {
 					found = true
 					break
@@ -1925,25 +1935,23 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 			}
 		}
 		if !found {
-			return nil
+			return false
 		}
 	}
+	return len(pattern.properties) == 0 || e.nodeMatchesProps(startNode, pattern.properties)
+}
 
-	if len(match.StartNode.properties) > 0 {
-		if !e.nodeMatchesProps(startNode, match.StartNode.properties) {
-			return nil
-		}
-	}
-
-	ctx := e.newTraversalContext(traversalCtx, startNode, &match.Relationship)
-	ctx.endNodeID = match.boundEndNodeID
-	// Single-segment traversals (including each segment of a chain) share the
-	// planner's endpoint/relationship read analysis so the header and
-	// labels-only fast paths apply to chained patterns too (#1110).
+// newMatchTraversalContext is newTraversalContext for one segment of match,
+// expanding rel (match's relationship, or it reversed) from startNode.
+// Single-segment traversals (including each segment of a chain) share the
+// planner's endpoint/relationship read analysis so the header and
+// labels-only fast paths apply to chained patterns too (#1110).
+func (e *StorageExecutor) newMatchTraversalContext(traversalCtx context.Context, startNode *storage.Node, match *TraversalMatch, rel *RelationshipPattern) *TraversalContext {
+	ctx := e.newTraversalContext(traversalCtx, startNode, rel)
 	ctx.endpointsNeedOnlyExist = traversalEndpointsNeedOnlyExist(match)
 	ctx.endpointsNeedOnlyLabels = traversalEndpointsNeedOnlyLabels(match)
 	ctx.relationshipsNeedOnlyHeaders = traversalRelationshipsNeedOnlyHeaders(match)
-	return e.findPaths(ctx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+	return ctx
 }
 
 // newTraversalContext is the depth-first search state for relationship
@@ -2117,6 +2125,11 @@ func (e *StorageExecutor) findPaths(
 			nextNodeID = edge.EndNode
 		} else {
 			nextNodeID = edge.StartNode
+		}
+		// On its last possible hop a path bound to end at one node ends at
+		// no other: any other neighbour is skipped unread.
+		if ctx.endNodeID != "" && depth+1 >= ctx.maxHops && nextNodeID != ctx.endNodeID {
+			continue
 		}
 
 		nextNode, ok := e.loadTraversalEndpointNode(ctx, nextNodeID)
