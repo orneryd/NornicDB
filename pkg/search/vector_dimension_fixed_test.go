@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -58,4 +59,25 @@ func TestVectorDimensionReadersAndFirstIndex(t *testing.T) {
 	defer service.mu.RUnlock()
 	require.NotNil(t, service.vectorIndex)
 	require.Equal(t, 4, service.vectorIndex.GetDimensions())
+}
+
+// Rebuilding from storage follows the same rule: without an embedder, the
+// first stored vector sets an empty index's dimension, even when the first
+// node stored has none (a Qdrant collection's metadata node, a document). A
+// rebuild after a restart then indexes the database's vectors.
+func TestBuildIndexesUnfixedDimensionsFollowFirstStoredVector(t *testing.T) {
+	badger, err := storage.NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = badger.Close() })
+	engine := storage.NewNamespacedEngine(badger, "points")
+	// Badger iterates in key order: the vector-less node comes first.
+	_, err = engine.CreateNode(&storage.Node{ID: "a-meta", Labels: []string{"Meta"}, Properties: map[string]interface{}{"dimensions": int64(2)}})
+	require.NoError(t, err)
+	_, err = engine.CreateNode(&storage.Node{ID: "z-point", Labels: []string{"Point"}, NamedEmbeddings: map[string][]float32{"default": {1, 0}}})
+	require.NoError(t, err)
+
+	svc := NewServiceWithDimensions(engine, 4)
+	require.NoError(t, svc.BuildIndexes(context.Background()))
+	require.Equal(t, 2, svc.VectorIndexDimensions())
+	require.Equal(t, 1, svc.EmbeddingCount(), "the stored 2-dimension vector is indexed")
 }

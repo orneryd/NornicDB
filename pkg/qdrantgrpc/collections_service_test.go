@@ -27,21 +27,20 @@ func (denyCollectionChecker) VisibleDatabases(ctx context.Context, candidates []
 	return []string{}, nil
 }
 
-func newTestCollectionStore(t *testing.T) (CollectionStore, *vectorIndexCache) {
+func newTestCollectionStore(t *testing.T) CollectionStore {
 	t.Helper()
 	base := storage.NewMemoryEngine()
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
-	vec := newVectorIndexCache()
-	store, err := NewDatabaseCollectionStore(dbm, vec)
+	store, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)
-	return store, vec
+	return store
 }
 
 func TestCollectionsService_Create(t *testing.T) {
 	ctx := context.Background()
-	collections, vec := newTestCollectionStore(t)
-	service := NewCollectionsService(collections, vec, nil)
+	collections := newTestCollectionStore(t)
+	service := NewCollectionsService(collections, nil)
 
 	t.Run("create collection successfully", func(t *testing.T) {
 		req := &qpb.CreateCollection{
@@ -126,8 +125,8 @@ func TestCollectionsService_Create(t *testing.T) {
 
 func TestCollectionsService_Get(t *testing.T) {
 	ctx := context.Background()
-	collections, vec := newTestCollectionStore(t)
-	service := NewCollectionsService(collections, vec, nil)
+	collections := newTestCollectionStore(t)
+	service := NewCollectionsService(collections, nil)
 
 	// Create a test collection first
 	require.NoError(t, collections.Create(ctx, "my_collection", 512, qpb.Distance_Dot))
@@ -175,8 +174,8 @@ func TestCollectionsService_Get(t *testing.T) {
 
 func TestCollectionsService_List(t *testing.T) {
 	ctx := context.Background()
-	collections, vec := newTestCollectionStore(t)
-	service := NewCollectionsService(collections, vec, nil)
+	collections := newTestCollectionStore(t)
+	service := NewCollectionsService(collections, nil)
 
 	t.Run("list empty collections", func(t *testing.T) {
 		req := &qpb.ListCollectionsRequest{}
@@ -211,8 +210,8 @@ func TestCollectionsService_List(t *testing.T) {
 
 func TestCollectionsService_Delete(t *testing.T) {
 	ctx := context.Background()
-	collections, vec := newTestCollectionStore(t)
-	service := NewCollectionsService(collections, vec, nil)
+	collections := newTestCollectionStore(t)
+	service := NewCollectionsService(collections, nil)
 
 	// Create a collection first
 	require.NoError(t, collections.Create(ctx, "to_delete", 128, qpb.Distance_Cosine))
@@ -252,8 +251,8 @@ func TestCollectionsService_Delete(t *testing.T) {
 
 func TestCollectionsService_UpdateAndExists(t *testing.T) {
 	ctx := context.Background()
-	collections, vec := newTestCollectionStore(t)
-	service := NewCollectionsService(collections, vec, nil)
+	collections := newTestCollectionStore(t)
+	service := NewCollectionsService(collections, nil)
 
 	require.NoError(t, collections.Create(ctx, "existing_collection", 128, qpb.Distance_Cosine))
 
@@ -307,7 +306,7 @@ func TestCollectionsService_UpdateAndExists(t *testing.T) {
 
 func TestCollectionStore_PointCountAndNameValidation(t *testing.T) {
 	ctx := context.Background()
-	collections, _ := newTestCollectionStore(t)
+	collections := newTestCollectionStore(t)
 
 	require.NoError(t, collections.Create(ctx, "count_collection", 4, qpb.Distance_Cosine))
 	store, _, err := collections.Open(ctx, "count_collection")
@@ -344,11 +343,11 @@ func TestCollectionStore_PointCountAndNameValidation(t *testing.T) {
 
 func TestCollectionsService_AccessCheckerPaths(t *testing.T) {
 	ctx := context.Background()
-	collections, vec := newTestCollectionStore(t)
+	collections := newTestCollectionStore(t)
 	require.NoError(t, collections.Create(ctx, "visible_a", 4, qpb.Distance_Cosine))
 	require.NoError(t, collections.Create(ctx, "visible_b", 4, qpb.Distance_Cosine))
 
-	service := NewCollectionsService(collections, vec, denyCollectionChecker{})
+	service := NewCollectionsService(collections, denyCollectionChecker{})
 
 	_, err := service.Create(ctx, &qpb.CreateCollection{
 		CollectionName: "deny_create",
@@ -374,8 +373,7 @@ func TestCollectionStore_MetaAndOpenBranches(t *testing.T) {
 	base := storage.NewMemoryEngine()
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
-	vec := newVectorIndexCache()
-	storeI, err := NewDatabaseCollectionStore(dbm, vec)
+	storeI, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)
 	store := storeI.(*databaseCollectionStore)
 	ctx := context.Background()
@@ -471,8 +469,8 @@ func TestCollectionStore_MetaAndOpenBranches(t *testing.T) {
 
 func TestCollectionsService_CreateAdditionalBranches(t *testing.T) {
 	ctx := context.Background()
-	collections, vec := newTestCollectionStore(t)
-	service := NewCollectionsService(collections, vec, nil)
+	collections := newTestCollectionStore(t)
+	service := NewCollectionsService(collections, nil)
 
 	// ParamsMap branch.
 	_, err := service.Create(ctx, &qpb.CreateCollection{
@@ -507,7 +505,6 @@ func TestCollectionsService_CreateAdditionalBranches(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	// Store with nil vecIndex branch in Create.
 	base := storage.NewMemoryEngine()
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
@@ -518,7 +515,7 @@ func TestCollectionsService_CreateAdditionalBranches(t *testing.T) {
 
 func TestCollectionStore_DropExistsPointCountBranches(t *testing.T) {
 	ctx := context.Background()
-	collectionsI, _ := newTestCollectionStore(t)
+	collectionsI := newTestCollectionStore(t)
 	collections := collectionsI.(*databaseCollectionStore)
 
 	require.Error(t, collections.Drop(ctx, ""))

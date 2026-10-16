@@ -35,7 +35,7 @@ func TestQdrantQueriesProjectSuppressedPayload(t *testing.T) {
 	old := time.Now().Add(-time.Hour)
 	_, err = engine.CreateNode(&storage.Node{ID: "qdrant:point:1", Labels: []string{QdrantPointLabel}, Properties: map[string]interface{}{"public": "yes", "secret": "hidden"}, NamedEmbeddings: map[string][]float32{"default": {1, 0}}, CreatedAt: old, UpdatedAt: old})
 	require.NoError(t, err)
-	service := NewPointsService(DefaultConfig(), collections, nil, nil, nil)
+	service := NewPointsService(DefaultConfig(), collections, sharedSearchProvider(), nil)
 	payload := &qpb.WithPayloadSelector{SelectorOptions: &qpb.WithPayloadSelector_Enable{Enable: true}}
 	t.Run("search", func(t *testing.T) {
 		resp, err := service.Search(ctx, &qpb.SearchPoints{CollectionName: "tenant", Vector: []float32{1, 0}, Limit: 1, WithPayload: payload})

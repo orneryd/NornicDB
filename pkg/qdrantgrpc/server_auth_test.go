@@ -143,7 +143,7 @@ func TestServer_DatabaseAccessHelpers(t *testing.T) {
 	base := storage.NewMemoryEngine()
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
-	store, _ := newTestCollectionStore(t)
+	store := newTestCollectionStore(t)
 
 	cfg := DefaultConfig()
 	cfg.ListenAddr = "127.0.0.1:0"
@@ -281,7 +281,7 @@ func TestServer_AuthorizeMethodBranches(t *testing.T) {
 		"Points/Search": auth.PermDelete,
 	}
 
-	store, _ := newTestCollectionStore(t)
+	store := newTestCollectionStore(t)
 	srv, err := NewServer(cfg, store, storage.NewMemoryEngine(), nil, nil)
 	require.NoError(t, err)
 
@@ -300,7 +300,7 @@ func TestServer_AuthorizeMethodBranches(t *testing.T) {
 func TestServer_BasicAuthAndNoAuthInterceptorBranches(t *testing.T) {
 	t.Parallel()
 
-	store, _ := newTestCollectionStore(t)
+	store := newTestCollectionStore(t)
 	srvNoAuth, err := NewServer(DefaultConfig(), store, storage.NewMemoryEngine(), nil, nil)
 	require.NoError(t, err)
 
@@ -368,7 +368,7 @@ func TestServer_MiscBranches(t *testing.T) {
 
 	require.Nil(t, (*Server)(nil).CollectionStore())
 
-	store, _ := newTestCollectionStore(t)
+	store := newTestCollectionStore(t)
 	srv, err := NewServer(DefaultConfig(), store, storage.NewMemoryEngine(), nil, nil)
 	require.NoError(t, err)
 
@@ -437,7 +437,7 @@ func TestServer_AuthInterceptorErrorBranches(t *testing.T) {
 	_, err = authenticator.CreateUser("viewer4", "ViewerPass123!", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
 
-	store, _ := newTestCollectionStore(t)
+	store := newTestCollectionStore(t)
 	srv, err := NewServer(DefaultConfig(), store, storage.NewMemoryEngine(), nil, authenticator)
 	require.NoError(t, err)
 

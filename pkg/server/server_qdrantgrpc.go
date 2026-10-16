@@ -124,6 +124,10 @@ func (s *Server) startQdrantGRPC() error {
 		return svc, nil
 	}
 
+	// A dropped collection's database loses its search index too, as with
+	// Cypher's DROP DATABASE.
+	cfg.DropDatabase = s.databaseManager().DropDatabase
+
 	grpcServer, err := qdrantgrpc.NewServerWithDatabaseManager(cfg, s.dbManager, baseStorage, searchProvider, s.auth)
 	if err != nil {
 		return fmt.Errorf("qdrant grpc: failed to initialize server: %w", err)
