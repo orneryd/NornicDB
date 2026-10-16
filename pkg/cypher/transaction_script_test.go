@@ -224,11 +224,11 @@ func TestTransactionStatementHandlers_AdditionalBranches(t *testing.T) {
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
 
-	res, err := exec.parseTransactionStatement("MATCH (n) RETURN n")
+	res, err := exec.parseTransactionStatement(context.Background(), "MATCH (n) RETURN n")
 	require.NoError(t, err)
 	assert.Nil(t, res)
 
-	res, err = exec.parseTransactionStatement("BEGIN")
+	res, err = exec.parseTransactionStatement(context.Background(), "BEGIN")
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, []string{"status"}, res.Columns)
@@ -239,18 +239,18 @@ func TestTransactionStatementHandlers_AdditionalBranches(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transaction already active")
 
-	commitRes, err := exec.handleCommit()
+	commitRes, err := exec.handleCommit(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"status"}, commitRes.Columns)
 	assert.Equal(t, "Transaction committed", commitRes.Rows[0][0])
 	assert.Nil(t, exec.txContext)
 
-	_, err = exec.handleCommit()
+	_, err = exec.handleCommit(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no active transaction")
 
 	exec.txContext = &TransactionContext{tx: struct{}{}, active: true}
-	_, err = exec.handleCommit()
+	_, err = exec.handleCommit(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown transaction type")
 
@@ -285,14 +285,14 @@ func TestTransactionStatementHandlers_WithWALAsyncEngine(t *testing.T) {
 	store := storage.NewNamespacedEngine(asyncEngine, "test")
 	exec := NewStorageExecutor(store)
 
-	beginRes, err := exec.parseTransactionStatement("BEGIN TRANSACTION")
+	beginRes, err := exec.parseTransactionStatement(context.Background(), "BEGIN TRANSACTION")
 	require.NoError(t, err)
 	require.Equal(t, "Transaction started", beginRes.Rows[0][0])
 	require.NotNil(t, exec.txContext)
 	assert.NotNil(t, exec.txContext.wal)
 	assert.Greater(t, exec.txContext.walSeqStart, uint64(0))
 
-	commitRes, err := exec.parseTransactionStatement("COMMIT TRANSACTION")
+	commitRes, err := exec.parseTransactionStatement(context.Background(), "COMMIT TRANSACTION")
 	require.NoError(t, err)
 	require.Equal(t, "Transaction committed", commitRes.Rows[0][0])
 	require.NotNil(t, commitRes.Metadata)
@@ -312,7 +312,7 @@ func TestTransactionHandleCommit_ErrorBranchAfterClosedTx(t *testing.T) {
 	require.True(t, ok)
 	require.NoError(t, tx.Rollback())
 
-	_, err = exec.handleCommit()
+	_, err = exec.handleCommit(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "commit failed")
 	assert.Nil(t, exec.txContext)
@@ -345,7 +345,7 @@ func TestTransactionHandleCommit_ErrorBranchAfterClosedTx_WithWAL(t *testing.T) 
 	require.True(t, ok)
 	require.NoError(t, tx.Rollback())
 
-	_, err = exec.handleCommit()
+	_, err = exec.handleCommit(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "commit failed")
 	assert.Nil(t, exec.txContext)

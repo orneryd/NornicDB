@@ -506,3 +506,15 @@ func (l *transactionLifecycle) clearOwnedLocked() {
 	l.cleanupDone = nil
 	l.cleanupErr = nil
 }
+
+// commitContext is the lifecycle-owned context after COMMIT claims the terminal
+// operation. The timeout timer has stopped; disconnect/parent cancellation is
+// still meaningful until storage publication starts.
+func (l *transactionLifecycle) commitContext() context.Context {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.ctx != nil {
+		return l.ctx
+	}
+	return context.Background()
+}

@@ -18,29 +18,24 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 	if changes.Operations == 0 {
 		return tx.CommitContext(ctx)
 	}
-	// A transaction may already hold a MERGE key lock. Waiting for writeMu
-	// would deadlock with an ordinary writer holding writeMu and waiting for
-	// that key. Treat admission contention as a retryable storage conflict.
-	if changes.HoldsMergeKey {
-		if !t.writeMu.TryLock() {
-			_ = tx.Rollback()
-			return nornicerrors.MarkCommitRolledBack(storage.ErrConflict)
-		}
-	} else {
-		t.writeMu.Lock()
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	defer t.writeMu.Unlock()
 	committed := false
+	var release func()
 	defer func() {
+		if release != nil {
+			release()
+		}
 		if !committed {
 			_ = tx.Rollback()
 		}
 	}()
 	if err := ctx.Err(); err != nil {
-		return err
+		return nornicerrors.MarkCommitRolledBack(err)
 	}
-	if changes.Operations > 0 && changes.Namespace != t.dbName {
-		return storage.ErrCrossNamespaceTransaction
+	if changes.Namespace != t.dbName {
+		return nornicerrors.MarkCommitRolledBack(storage.ErrCrossNamespaceTransaction)
 	}
 	checker := t.checker
 	if checker == nil {
@@ -49,6 +44,46 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 	limits := checker.limitsSnapshot()
 	initialized, err := t.manager.storageSizeInitialized(t.dbName)
 	if err != nil {
+		return nornicerrors.MarkCommitRolledBack(err)
+	}
+	needsExclusive := func(l *Limits, initialized bool) bool {
+		return initialized || (l != nil && (l.Storage.MaxNodes > 0 || l.Storage.MaxEdges > 0 || l.Storage.MaxBytes > 0 || l.Rate.MaxWritesPerSecond > 0))
+	}
+	exclusive := needsExclusive(limits, initialized)
+	for {
+		release, err = t.writeMu.acquire(ctx, exclusive, changes.HoldsMergeKey)
+		if err != nil {
+			return nornicerrors.MarkCommitRolledBack(err)
+		}
+		// Initialization can win before our shared lease. Recheck inside the gate
+		// so a first size read cannot race a write that skips incremental accounting.
+		limits = checker.limitsSnapshot()
+		initialized, err = t.manager.storageSizeInitialized(t.dbName)
+		if err != nil {
+			return nornicerrors.MarkCommitRolledBack(err)
+		}
+		if exclusive || !needsExclusive(limits, initialized) {
+			break
+		}
+		release()
+		release = nil
+		exclusive = true
+	}
+	publish := func(nodeBytes, edgeBytes int64) func() {
+		return func() {
+			committed = true
+			if initialized || (limits != nil && limits.Storage.MaxBytes > 0) {
+				t.manager.applyStorageSizeDelta(t.dbName, nodeBytes, edgeBytes)
+			}
+			release()
+			release = nil
+		}
+	}
+	if !exclusive {
+		err := tx.CommitContextWithPublication(ctx, publish(0, 0))
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nornicerrors.MarkCommitRolledBack(err)
+		}
 		return err
 	}
 	trackBytes := initialized || (limits != nil && limits.Storage.MaxBytes > 0)
@@ -118,12 +153,11 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 			}
 		}
 	}
-	if err := tx.CommitContext(ctx); err != nil {
+	if err := tx.CommitContextWithPublication(ctx, publish(nodeBytes, edgeBytes)); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nornicerrors.MarkCommitRolledBack(err)
+		}
 		return err
-	}
-	committed = true
-	if trackBytes {
-		t.manager.applyStorageSizeDelta(t.dbName, nodeBytes, edgeBytes)
 	}
 	return nil
 }

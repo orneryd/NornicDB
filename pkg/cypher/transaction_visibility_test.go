@@ -241,7 +241,7 @@ func TestExplicitTransactionCreatesDependentWritesFromAcknowledgedState(t *testi
 	`, nil)
 	require.NoError(t, err)
 	require.Equal(t, 1, created.Stats.RelationshipsCreated)
-	_, err = executor.handleCommit()
+	_, err = executor.handleCommit(context.Background())
 	require.NoError(t, err)
 
 	result, err := executor.Execute(context.Background(),

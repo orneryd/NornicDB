@@ -428,10 +428,10 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 	// Normal buffered writes already advanced their logical revision at ACK.
 	// Replaying durability must not invalidate stable query results once per row.
 	// Recovery has no prior ACK in this process and still publishes its revision.
-	notifyNodeCreated, notifyNodeUpdated := b.dispatchNodeCreated, b.dispatchNodeUpdated
+	notifyNodeCreated, notifyNodeUpdated := b.publishNodeCreated, b.publishNodeUpdated
 	notifyNodeDeleted := b.publishNodeDeleted
-	notifyEdgeCreated, notifyEdgeUpdated := b.dispatchEdgeCreated, b.dispatchEdgeUpdated
-	notifyEdgeDeleted := b.dispatchEdgeDeleted
+	notifyEdgeCreated, notifyEdgeUpdated := b.publishEdgeCreated, b.publishEdgeUpdated
+	notifyEdgeDeleted := b.publishEdgeDeleted
 	if publishRevision {
 		notifyNodeCreated, notifyNodeUpdated, notifyNodeDeleted = b.notifyNodeCreated, b.notifyNodeUpdated, b.notifyNodeDeleted
 		notifyEdgeCreated, notifyEdgeUpdated, notifyEdgeDeleted = b.notifyEdgeCreated, b.notifyEdgeUpdated, b.notifyEdgeDeleted
