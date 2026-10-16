@@ -2413,6 +2413,7 @@ func (s *Session) getTransactionalExecutorForDatabase(dbName string) (QueryExecu
 	}
 	if adapter, ok := base.(*boltQueryExecutorAdapter); ok {
 		executor.ShareQueryStatisticsFrom(adapter.executor)
+		executor.ShareStatementCachesFrom(adapter.executor)
 	}
 	return &transactionalBoltQueryExecutorAdapter{
 		boltQueryExecutorAdapter: boltQueryExecutorAdapter{executor: executor},
