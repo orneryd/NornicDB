@@ -857,6 +857,24 @@ func (e *StorageExecutor) ensureSyntaxValidationCache() *syntaxValidationCache {
 	return e.syntaxValidationCache
 }
 
+// ShareStatementCachesFrom gives a fresh executor the source executor's
+// caches that depend only on the statement text: the syntax verdicts and
+// the upper-cased text. Configure it before executing queries. Protocol
+// transactions (Bolt and HTTP explicit transactions) build a new executor
+// per transaction; without the shared verdicts every statement in such a
+// transaction was validated again from scratch, which under
+// NORNICDB_PARSER=antlr is a full grammar parse of the statement.
+//
+//	transactionExecutor := NewStorageExecutor(databaseStorage)
+//	transactionExecutor.ShareStatementCachesFrom(databaseExecutor)
+func (e *StorageExecutor) ShareStatementCachesFrom(source *StorageExecutor) {
+	if source == nil || source == e {
+		return
+	}
+	e.syntaxValidationCache = source.ensureSyntaxValidationCache()
+	e.upperQueryCache = source.ensureUpperQueryCache()
+}
+
 // The validators a statement text is cached as valid for: each marks only
 // its own acceptance, so the Nornic validator, which also runs when the
 // ANTLR parse fails, never marks a text the ANTLR grammar rejected.
