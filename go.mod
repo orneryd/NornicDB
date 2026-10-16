@@ -1,6 +1,6 @@
 module github.com/orneryd/nornicdb
 
-go 1.26.6
+go 1.26.9
 
 require (
 	cloud.google.com/go/kms v1.33.0
