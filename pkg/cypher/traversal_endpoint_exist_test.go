@@ -229,9 +229,11 @@ func TestParallelTraversalMatchesSequentialForEndpointShapes(t *testing.T) {
 		sequential[i] = result.Rows
 	}
 	SetParallelConfig(ParallelConfig{Enabled: true, MaxWorkers: 8, MinBatchSize: 1})
+	// A fresh executor, so no cached result answers in place of the traversal.
+	parallel := NewStorageExecutor(store)
 	for i, query := range queries {
 		store.reset()
-		result, err := exec.Execute(ctx, query, nil)
+		result, err := parallel.Execute(ctx, query, nil)
 		require.NoError(t, err)
 		require.Equal(t, sequential[i], result.Rows, query)
 		if i == 0 {
