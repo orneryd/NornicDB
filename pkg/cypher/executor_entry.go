@@ -134,9 +134,9 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 
 	// D-04c slow-query log timing. Captured at the top so the threshold check
-	// covers every Execute return path (early-out, fabric, normal). Pre-bind
-	// the original query text — by the time the deferred emission fires,
-	// `cypher` has been normalized; we want to log what the client submitted.
+	// covers every Execute return path (early-out, fabric, normal). The log
+	// text is bound before the rewrites below run: the client's statement as
+	// normalization reads it (logCypher), not the text the rewrites produce.
 	slowStart := time.Now()
 	embeddingState := e.queryEmbeddingState(ctx)
 	var embeddingGeneration uint64
@@ -145,15 +145,19 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	}
 	ctx = &queryEmbeddingStatementContext{Context: ctx, instant: slowStart.UTC(), binding: e.queryEmbedder, state: embeddingState}
 	originalCypher := cypher
+	// The slow-query and rejection logs redact the canonical text (set below),
+	// the text validation caches its grammar verdict under, so a log record
+	// does not parse the statement again; until then, the text as sent.
+	logCypher := originalCypher
 	collectionGeneration := e.queryStatistics.start(originalCypher, slowStart)
 	defer func() {
 		dur := time.Since(slowStart)
 		e.queryStatistics.record(collectionGeneration, originalCypher, slowStart, dur, retErr == nil)
-		e.emitRejectionReport(originalCypher, retErr)
+		e.emitRejectionReport(logCypher, retErr)
 		// Plan is unavailable for non-EXPLAIN/PROFILE queries; pass nil and
 		// rely on PlanHash's zero-placeholder behavior. Phase 6 (TRC-04) will
 		// thread the planned tree here once cypher EXPLAIN refactoring is in.
-		e.emitSlowQueryLog(originalCypher, nil, dur)
+		e.emitSlowQueryLog(logCypher, nil, dur)
 		// Plan 04-03 / MET-08 slow_queries_total: increments only when
 		// duration meets the configured threshold (matches the D-04c
 		// emitSlowQueryLog gate semantics — single threshold, single
@@ -188,6 +192,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		cypher = canonical
 		defer func() { result, retErr = rewrite.restore(result, retErr) }()
 	}
+	logCypher = trimTrailingStatementDelimiters(strings.TrimSpace(cypher))
 	// Digit-grouping underscores (1_000) go here, on every route; columns
 	// and messages keep the client's text (#907).
 	if grouped, numericRewrite := canonicalizeNumericLiterals(cypher); numericRewrite != nil {

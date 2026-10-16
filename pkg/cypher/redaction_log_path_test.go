@@ -255,3 +255,36 @@ func TestRedactLiterals_LongValidStatementKeepsStructureOnly(t *testing.T) {
 		t.Fatalf("literal leaked: %.120q", out)
 	}
 }
+
+// TestSlowQueryLog_ReusesGrammarVerdictForNormalizedText checks the same
+// reuse for a statement that normalization rewrites (a comment, repeated
+// whitespace, a trailing semicolon): the log redacts the canonical text the
+// executor validated, so under the ANTLR parser it parses nothing.
+func TestSlowQueryLog_ReusesGrammarVerdictForNormalizedText(t *testing.T) {
+	if !config.IsCypherQueryNormalizationEnabled() {
+		t.Skip("query normalization disabled")
+	}
+	const query = "MATCH (n:Person)   /* who */ WHERE n.name = 'zzs16'\n\tRETURN n.name AS who ;"
+	exec, logged := captureSlowQueryLog(t)
+	calls := countRedactGrammarParses(t)
+	if _, err := exec.Execute(t.Context(), query, nil); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	wantParses := 1
+	if config.IsANTLRParser() {
+		wantParses = 0
+	}
+	if *calls != wantParses {
+		t.Fatalf("slow-query record ran %d grammar parses, want %d", *calls, wantParses)
+	}
+	got := logged()
+	if len(got) != 1 {
+		t.Fatalf("want 1 slow-query record, got %d", len(got))
+	}
+	if strings.Contains(got[0], "zzs16") || strings.Contains(got[0], "who */") {
+		t.Fatalf("literal or comment leaked: %q", got[0])
+	}
+	if !strings.Contains(got[0], "MATCH (n:Person)") || !strings.Contains(got[0], "RETURN n.name AS who") {
+		t.Fatalf("statement structure lost: %q", got[0])
+	}
+}
