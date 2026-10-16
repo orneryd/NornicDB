@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 )
 
@@ -20,8 +21,8 @@ import (
 //     x > 0 AND 1 / x > 0 never divides by zero.
 //   - OR is the same with true in place of false.
 //
-// Context evaluators capture operand errors until the chain decides whether
-// they count (deferredExpressionValue).
+//   - Which operand errors a deciding operand discards is one policy,
+//     isolateOperandErrors; every evaluator asks it for each operand.
 //   - XOR and NOT take predicates: a non-predicate operand is a TypeError,
 //     and null gives null.
 //
@@ -33,21 +34,26 @@ import (
 // when the statement is compiled are checked before it runs
 // (validateStaticOperatorTypes).
 
-// logicalOperandEvaluator evaluates one operand of a logical operator. ok is
+// logicalOperandEvaluator evaluates one operand of a logical operator at
+// position (isolateOperandErrors). ok is
 // false when the evaluator can't evaluate it; the caller then doesn't
 // handle the expression.
-type logicalOperandEvaluator func(operand string) (value interface{}, ok bool, err error)
+type logicalOperandEvaluator func(operand string, position foldPosition) (value interface{}, ok bool, err error)
 
 // evaluateLogicalExpression evaluates expr when its top level is OR, XOR,
 // AND or NOT (logical reports whether it is), each operand through eval.
 func evaluateLogicalExpression(expr string, eval logicalOperandEvaluator) (value interface{}, logical, ok bool, err error) {
+	return evaluateLogicalExpressionInContext(context.Background(), expr, eval)
+}
+func evaluateLogicalExpressionInContext(ctx context.Context, expr string, eval logicalOperandEvaluator) (value interface{}, logical, ok bool, err error) {
 	var buffer [8]string
 	plan := planLogicalExpression(expr, buffer[:0])
 	if plan.kind == logicalNone {
 		return nil, false, false, nil
 	}
-	value, ok, err = plan.evaluate(func(index int) (interface{}, bool, error) {
-		return eval(plan.operands[index])
+	position := logicalFoldPosition(plan.kind)
+	value, ok, err = plan.evaluateInContext(ctx, func(index int) (interface{}, bool, error) {
+		return eval(plan.operands[index], position)
 	})
 	return value, true, ok, err
 }
@@ -72,6 +78,7 @@ const (
 type logicalPlan struct {
 	kind     logicalKind
 	operands []string
+	apply    []int
 }
 
 // planLogicalExpression reads expr's top-level OR, XOR, AND or NOT,
@@ -90,7 +97,11 @@ func planLogicalExpression(expr string, buffer []string) logicalPlan {
 		case " OR ":
 			return logicalPlan{kind: logicalOr, operands: simplifyLogicalChain(operands, "false")}
 		case " AND ":
-			return logicalPlan{kind: logicalAnd, operands: simplifyLogicalChain(operands, "true")}
+			plan := logicalPlan{kind: logicalAnd, operands: simplifyLogicalChain(operands, "true")}
+			if mayContainSubqueryExpression(expr) {
+				plan.apply = applyOperandIndexes(len(plan.operands), func(i int) string { return plan.operands[i] })
+			}
+			return plan
 		default:
 			// false drops out of an XOR.
 			kept := operands[:0]
@@ -117,6 +128,17 @@ func planLogicalExpression(expr string, buffer []string) logicalPlan {
 // evaluate evaluates the plan, operand i through eval(i); operands are
 // evaluated in order, only as far as the result needs them.
 func (p logicalPlan) evaluate(eval func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
+	return p.evaluateInContext(context.Background(), eval)
+}
+func (p logicalPlan) evaluateInContext(ctx context.Context, eval func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
+	if len(p.apply) > 0 {
+		cached, err := evaluateApplyOperands(ctx, p.apply, eval)
+		if err != nil {
+			return nil, false, err
+		}
+		p.apply = nil
+		return p.evaluateInContext(ctx, func(index int) (interface{}, bool, error) { return resolveApplyOperand(cached, index, eval) })
+	}
 	switch p.kind {
 	case logicalOr:
 		return evaluateLogicalChain(p.operands, true, eval)
@@ -213,6 +235,15 @@ func appendLogicalOperands(operands []string, expr, operator string) []string {
 // simplifyLogicalChain drops the operands that are the literal neutral
 // (true in an AND, false in an OR) and the repeats of an operand, in place.
 func simplifyLogicalChain(operands []string, neutral string) []string {
+	// A literal deciding value is folded before subquery Apply planning,
+	// regardless of its textual position. Static type validation precedes us.
+	for _, operand := range operands {
+		key := logicalOperandKey(operand)
+		if neutral == "true" && equalFoldASCII(key, "false") || neutral == "false" && equalFoldASCII(key, "true") {
+			operands[0] = key
+			return operands[:1]
+		}
+	}
 	kept := operands[:0]
 	for _, operand := range operands {
 		key := logicalOperandKey(operand)
@@ -262,44 +293,113 @@ func evaluateLogicalChain(operands []string, decisive bool, eval func(index int)
 }
 
 func evaluateLogicalOperands(count int, decisive bool, eval func(int) (interface{}, bool, error)) (interface{}, bool, error) {
-	var evaluationErr, typeErr error
-	unknown := false
-	for index := 0; index < count; index++ {
-		value, ok, err := eval(index)
-		if err != nil {
-			if evaluationErr == nil {
-				evaluationErr = err
+	fold := logicalFold{decisive: decisive}
+	for index := 0; index < count && !fold.add(eval(index)); index++ {
+	}
+	return fold.result()
+}
+
+// logicalFold is the one AND (decisive false) / OR (decisive true) fold
+// (evaluateLogicalOperands): operands are added in order until add reports
+// the fold done. An evaluator that walks its own operands (the predicate
+// plan's junctions) adds them directly instead of through a callback.
+type logicalFold struct {
+	decisive      bool
+	unknown       bool
+	decided       bool
+	unresolved    bool
+	evaluationErr error
+	typeErr       error
+}
+
+// add folds one operand's evaluation, and reports whether the fold is done:
+// the operand decided it, or couldn't be evaluated (unresolved).
+func (fold *logicalFold) add(value interface{}, ok bool, err error) bool {
+	if err == nil && ok {
+		// A boolean or a null, the usual operand, as cypherPredicateTruth
+		// reads it, without the call.
+		switch truth := value.(type) {
+		case bool:
+			return fold.addTruth(truthOf(truth), nil)
+		case nil:
+			return fold.addTruth(truthUnknown, nil)
+		}
+	}
+	return fold.addValue(value, ok, err)
+}
+
+// logicalPredicateTypeError keeps predicate-conversion errors below operand
+// evaluation errors when a planned fold carries typed truth values.
+type logicalPredicateTypeError struct{ error }
+
+func (err *logicalPredicateTypeError) Unwrap() error { return err.error }
+
+func foldPredicateTruth(value interface{}) (cypherTruth, error) {
+	truth, err := cypherPredicateTruth(value)
+	if err != nil {
+		return truth, &logicalPredicateTypeError{err}
+	}
+	return truth, nil
+}
+
+func (fold *logicalFold) addValue(value interface{}, ok bool, err error) bool {
+	if err != nil {
+		if conversion, typed := err.(*logicalPredicateTypeError); typed {
+			if fold.typeErr == nil {
+				fold.typeErr = conversion.error
 			}
-			continue
+		} else if fold.evaluationErr == nil {
+			fold.evaluationErr = err
 		}
-		if !ok {
-			return nil, false, nil
-		}
-		truth, err := cypherPredicateTruth(value)
-		switch {
-		case err != nil:
-			if typeErr == nil {
-				typeErr = err
-			}
-		case truth == truthUnknown:
-			unknown = true
-		case (truth == truthTrue) == decisive:
-			// The deciding operand: the rest isn't evaluated (x > 0 AND
-			// 1 / x > 0 guards the division), and the errors of the ones
-			// before it don't count.
-			return decisive, true, nil
-		}
+		return false
 	}
-	if evaluationErr != nil {
-		return nil, true, evaluationErr
+	if !ok {
+		fold.unresolved = true
+		return true
 	}
-	if typeErr != nil {
-		return nil, true, typeErr
+	truth, err := foldPredicateTruth(value)
+	return fold.addTruth(truth, err)
+}
+
+// result is the fold's value: the deciding value; else an operand's
+// evaluation error, then a non-predicate's TypeError; else null when an
+// operand was null; else the non-deciding value.
+func (fold *logicalFold) result() (interface{}, bool, error) {
+	truth, err := fold.truthResult()
+	if fold.unresolved {
+		return nil, false, err
 	}
-	if unknown {
-		return nil, true, nil
+	return truth.value(), true, err
+}
+
+// addTruth accepts planned predicates without boxing each intermediate
+// boolean/null. It is also the fast entry used by add's ordinary values.
+func (fold *logicalFold) addTruth(truth cypherTruth, err error) bool {
+	if err != nil {
+		return fold.addValue(nil, true, err)
 	}
-	return !decisive, true, nil
+	if truth == truthUnknown {
+		fold.unknown = true
+		return false
+	}
+	fold.decided = (truth == truthTrue) == fold.decisive
+	return fold.decided
+}
+
+func (fold *logicalFold) truthResult() (cypherTruth, error) {
+	switch {
+	case fold.unresolved:
+		return truthUnknown, nil
+	case fold.decided:
+		return truthOf(fold.decisive), nil
+	case fold.evaluationErr != nil:
+		return truthUnknown, fold.evaluationErr
+	case fold.typeErr != nil:
+		return truthUnknown, fold.typeErr
+	case fold.unknown:
+		return truthUnknown, nil
+	}
+	return truthOf(!fold.decisive), nil
 }
 
 // evaluateLogicalXor evaluates an XOR chain left to right, its false

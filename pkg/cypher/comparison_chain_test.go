@@ -55,7 +55,7 @@ func TestComparisonChainsSupportArbitraryLength(t *testing.T) {
 		"e": int64(3),
 	}
 	resolutionCount := make(map[string]int)
-	resolve := func(operand string) (interface{}, bool, error) {
+	resolve := func(operand string, _ foldPosition) (interface{}, bool, error) {
 		resolutionCount[operand]++
 		return values[operand], true, nil
 	}
