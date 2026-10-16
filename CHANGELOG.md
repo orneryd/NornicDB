@@ -41,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Close owning test stores in Cypher fixtures and use admin requests for destructive embedding endpoint tests
   on develop, preserving the feature-dependent verification fixes outside the bugfix-only release.
+- Long Cypher pipeline stages observe statement cancellation and deadlines while processing rows, nested DISTINCT
+  values, sorting, aggregation and list expansion.
 
 ### Security
 

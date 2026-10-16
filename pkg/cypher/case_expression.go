@@ -45,30 +45,39 @@ func isCaseExpression(expr string) bool {
 // postfix expression is deliberately excluded so callers can treat CASE as an
 // atomic operand without allowing operators inside WHEN predicates to escape.
 func leadingCaseExpressionEnd(expr string) int {
-	expr = strings.TrimSpace(expr)
+	return leadingCaseExpressionEndWithCancellation(expr, nil)
+}
+func leadingCaseExpressionEndWithCancellation(expr string, probe *pipelineCancellation) int {
+	expr = trimSpaceWithCancellation(expr, probe)
 	// The first identifier token must be CASE itself; a CASE keyword nested
 	// inside a compound expression (acc + CASE … END) is not a leading CASE.
-	firstWord, firstNext, firstOK := scanIdentifierToken(expr, 0)
+	firstWord, firstNext, firstOK := scanIdentifierTokenWithCancellation(expr, 0, probe)
 	if !firstOK || !strings.EqualFold(firstWord, "case") {
 		return -1
 	}
 	depth := 1
 	for index := firstNext; index < len(expr); {
+		if probe != nil && !probe.check() {
+			return -1
+		}
 		if expr[index] == '\'' || expr[index] == '"' || expr[index] == '`' {
-			index = numericValidationSkipQuoted(expr, index)
+			index = numericValidationSkipQuotedWithCancellation(expr, index, probe)
 			continue
 		}
-		word, next, ok := scanIdentifierToken(expr, index)
+		word, next, ok := scanIdentifierTokenWithCancellation(expr, index, probe)
 		if !ok {
 			index++
 			continue
 		}
 		switch {
-		case strings.EqualFold(word, "case") && caseKeywordAt(expr, index, "CASE"):
+		case strings.EqualFold(word, "case") && caseKeywordAtWithCancellation(expr, index, "CASE", probe):
 			depth++
-		case strings.EqualFold(word, "end") && depth > 0 && caseKeywordAt(expr, index, "END"):
+		case strings.EqualFold(word, "end") && depth > 0 && caseKeywordAtWithCancellation(expr, index, "END", probe):
 			depth--
 			if depth == 0 {
+				if probe != nil && probe.err != nil {
+					return -1
+				}
 				return next
 			}
 		}
@@ -234,12 +243,28 @@ func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
 // caseOperandExpectedBefore). Every scanner of the CASE grammar reads its
 // keywords through it.
 func caseKeywordAt(s string, i int, keyword string) bool {
-	return caseKeywordAtMode(s, i, keyword, true)
+	return caseKeywordAtModeWithCancellation(s, i, keyword, true, nil)
+}
+
+// caseKeywordAtWithCancellation is caseKeywordAt with cooperative
+// cancellation checks.
+func caseKeywordAtWithCancellation(s string, i int, keyword string, probe *pipelineCancellation) bool {
+	return caseKeywordAtModeWithCancellation(s, i, keyword, true, probe)
 }
 
 // caseKeywordAtMode can use the non-balancing prefix reader when the closure
 // budget itself scans keywords, avoiding recursive balance scans.
 func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool {
+	return caseKeywordAtModeWithCancellation(s, i, keyword, balancePrefix, nil)
+}
+
+// caseKeywordAtModeWithCancellation is the single owner of the CASE keyword
+// reading; the other caseKeywordAt* forms are thin calls into it.
+func caseKeywordAtModeWithCancellation(s string, i int, keyword string, balancePrefix bool, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	if !matchKeywordAt(s, i, keyword) {
 		return false
 	}
@@ -253,18 +278,18 @@ func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool
 	case "END":
 		// END follows a complete operand; where one is expected the word is
 		// a variable (ELSE end.id END).
-		if caseOperandExpectedBeforeMode(s, i, balancePrefix) {
+		if caseOperandExpectedBeforeModeWithCancellation(s, i, balancePrefix, probe) {
 			return false
 		}
 	case "THEN", "ELSE":
 		// As END. Scanners also read a CASE's body (WHEN … THEN … ELSE …)
 		// as text of its own: at its start the word is a keyword unless it
 		// is a simple CASE's test (then WHEN 1 …).
-		if !caseHasPreviousToken(s, i) {
-			if caseSimpleTestContinuesAt(s, i+len(keyword)) {
+		if !caseHasPreviousTokenWithCancellation(s, i, probe) {
+			if caseSimpleTestContinuesAtWithCancellation(s, i+len(keyword), probe) {
 				return false
 			}
-		} else if caseOperandExpectedBeforeMode(s, i, balancePrefix) {
+		} else if caseOperandExpectedBeforeModeWithCancellation(s, i, balancePrefix, probe) {
 			return false
 		}
 	case "WHEN":
@@ -272,11 +297,11 @@ func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool
 		// after CASE or at the start of a CASE body: there the word is a
 		// variable only when what follows continues an operand (CASE when
 		// WHEN 1, CASE when.id WHEN 1).
-		if !caseHasPreviousToken(s, i) || casePreviousWordIsCase(s, i) {
-			if caseSimpleTestContinuesAt(s, i+len(keyword)) {
+		if !caseHasPreviousTokenWithCancellation(s, i, probe) || casePreviousWordIsCaseWithCancellation(s, i, probe) {
+			if caseSimpleTestContinuesAtWithCancellation(s, i+len(keyword), probe) {
 				return false
 			}
-		} else if caseOperandExpectedBeforeMode(s, i, balancePrefix) {
+		} else if caseOperandExpectedBeforeModeWithCancellation(s, i, balancePrefix, probe) {
 			return false
 		}
 	case "CASE":
@@ -286,13 +311,17 @@ func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool
 		// gives (WITH 1 AS case RETURN case), and right after CASE it is a
 		// simple CASE's test when a nested CASE would leave the outer one
 		// without its END (CASE case WHEN 1 THEN case END; #1162).
-		if caseVariableNamedCase(s, i+len(keyword)) || casePreviousWordIn(s, i, "as") ||
-			(casePreviousWordIsCase(s, i) && caseNestedLacksEnd(s, i, balancePrefix)) {
+		if caseVariableNamedCaseWithCancellation(s, i+len(keyword), probe) || casePreviousWordInWithCancellation(s, i, probe, "as") ||
+			(casePreviousWordIsCaseWithCancellation(s, i, probe) && caseNestedLacksEndModeWithCancellation(s, i, balancePrefix, probe)) {
 			return false
 		}
 	}
 	next := i + len(keyword)
 	for next < len(s) && isASCIISpace(s[next]) {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		next++
 	}
 	return next >= len(s) || s[next] != ':' || (next+1 < len(s) && s[next+1] == ':')
@@ -304,16 +333,29 @@ func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool
 // IN, AS, …). END always follows a complete operand, so a word end there is a
 // variable, as Neo4j reads ELSE end.id END and ELSE end END.id.
 func caseOperandExpectedBefore(s string, i int) bool {
-	return caseOperandExpectedBeforeMode(s, i, true)
+	return caseOperandExpectedBeforeModeWithCancellation(s, i, true, nil)
 }
 
-func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
+// caseOperandExpectedBeforeWithCancellation is caseOperandExpectedBefore
+// with cooperative cancellation checks.
+func caseOperandExpectedBeforeWithCancellation(s string, i int, probe *pipelineCancellation) bool {
+	return caseOperandExpectedBeforeModeWithCancellation(s, i, true, probe)
+}
+
+// caseOperandExpectedBeforeModeWithCancellation is the single owner of the
+// operand-expected reading; balancePrefix selects the closure-balancing
+// prefix reader (see caseKeywordAtMode).
+func caseOperandExpectedBeforeModeWithCancellation(s string, i int, balancePrefix bool, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	j := queryGapStart(s, i) - 1
 	if j < 0 {
 		return true
 	}
 	if !isIdentByte(s[j]) {
-		if s[j] == '>' && caseTypeParameterCloses(s, j) {
+		if s[j] == '>' && caseTypeParameterClosesWithCancellation(s, j, probe) {
 			return false // LIST<INTEGER> completes a type, as in x IS :: LIST<INTEGER>
 		}
 		if s[j] == '%' {
@@ -321,46 +363,54 @@ func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
 			// label (n:%), which completes an operand, not the modulo operator.
 			k := j - 1
 			for k >= 0 && isASCIISpace(s[k]) {
+				if probe != nil && !probe.check() {
+					return false
+				}
+
 				k--
 			}
-			if k >= 0 && strings.IndexByte(":|&!", s[k]) >= 0 {
+			if k >= 0 && indexByteWithCancellation(":|&!", s[k], probe) >= 0 {
 				return false
 			}
 		}
-		return strings.IndexByte("([{,=<>+-*/%^|", s[j]) >= 0
+		return indexByteWithCancellation("([{,=<>+-*/%^|", s[j], probe) >= 0
 	}
 	start := j
 	for start > 0 && isIdentByte(s[start-1]) {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		start--
 	}
 	if !functionNameStartsAt(s, start) || start > 0 && (s[start-1] == '$' || s[start-1] == ':') {
 		return false // a property, parameter or label completes an operand
 	}
-	switch word := lowerASCII(s[start : j+1]); word {
+	switch word := lowerASCIIWithCancellation(s[start:j+1], probe); word {
 	case "case", "when", "then", "else":
 		// After the keyword an operand is expected; after a variable of that
 		// name, it is complete.
-		return caseKeywordAtMode(s, start, upperASCII(word), balancePrefix)
+		return caseKeywordAtModeWithCancellation(s, start, upperASCIIWithCancellation(word, probe), balancePrefix, probe)
 	case "with", "where", "return":
-		if word == "with" && casePreviousWordIn(s, start, "starts", "ends") {
+		if word == "with" && casePreviousWordInWithCancellation(s, start, probe, "starts", "ends") {
 			return true // STARTS WITH, ENDS WITH
 		}
 		// Clause keywords start the text or follow a complete clause; where
 		// an operand is expected, or as a CASE body's test (where WHEN 1 …),
 		// the word is a variable that completes one.
-		if !caseHasPreviousToken(s, start) {
-			return !caseSimpleTestContinuesAt(s, j+1)
+		if !caseHasPreviousTokenWithCancellation(s, start, probe) {
+			return !caseSimpleTestContinuesAtWithCancellation(s, j+1, probe)
 		}
-		return !caseOperandExpectedBeforeMode(s, start, balancePrefix)
+		return !caseOperandExpectedBeforeModeWithCancellation(s, start, balancePrefix, probe)
 	case "and", "or", "xor", "in", "contains", "as":
 		// Infix keywords follow a complete operand. Where one is expected,
 		// or at the start of a CASE body read on its own (and WHEN 1 …), the
 		// word is a variable that completes one.
-		return caseHasPreviousToken(s, start) && !caseOperandExpectedBeforeMode(s, start, balancePrefix)
+		return caseHasPreviousTokenWithCancellation(s, start, probe) && !caseOperandExpectedBeforeModeWithCancellation(s, start, balancePrefix, probe)
 	case "not", "distinct":
 		// Prefix keywords stand where an operand is expected, as a variable
 		// does: the word is the keyword unless what follows ends an operand.
-		return !casePrefixWordIsVariable(s, j+1, balancePrefix)
+		return !casePrefixWordIsVariableModeWithCancellation(s, j+1, balancePrefix, probe)
 	}
 	return false
 }
@@ -370,8 +420,19 @@ func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
 // ones too), not the greater-than operator: its matching < follows a type
 // constructor word.
 func caseTypeParameterCloses(s string, j int) bool {
+	return caseTypeParameterClosesWithCancellation(s, j, nil)
+}
+func caseTypeParameterClosesWithCancellation(s string, j int, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	depth := 0
 	for k := j; k >= 0; k-- {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		switch s[k] {
 		case '>':
 			depth++
@@ -380,13 +441,21 @@ func caseTypeParameterCloses(s string, j int) bool {
 			if depth == 0 {
 				end := k
 				for end > 0 && isASCIISpace(s[end-1]) {
+					if probe != nil && !probe.check() {
+						return false
+					}
+
 					end--
 				}
 				start := end
 				for start > 0 && isIdentByte(s[start-1]) {
+					if probe != nil && !probe.check() {
+						return false
+					}
+
 					start--
 				}
-				switch lowerASCII(s[start:end]) {
+				switch lowerASCIIWithCancellation(s[start:end], probe) {
 				case "list", "array", "any":
 					return true
 				}
@@ -403,13 +472,28 @@ func caseTypeParameterCloses(s string, j int) bool {
 
 // casePreviousWordIn reports whether the word before s[i] is one of words.
 func casePreviousWordIn(s string, i int, words ...string) bool {
+	return casePreviousWordInWithCancellation(s, i, nil, words...)
+}
+func casePreviousWordInWithCancellation(s string, i int, probe *pipelineCancellation, words ...string) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	j := queryGapStart(s, i) - 1
 	end := j + 1
 	for j >= 0 && isIdentByte(s[j]) {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		j--
 	}
-	previous := lowerASCII(s[j+1 : end])
+	previous := lowerASCIIWithCancellation(s[j+1:end], probe)
 	for _, word := range words {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		if previous == word {
 			return true
 		}
@@ -422,32 +506,64 @@ func casePreviousWordIn(s string, i int, words ...string) bool {
 // word that is itself followed by what ends an operand (NOT end.x: end is
 // the variable and NOT the keyword; = not THEN 1: THEN is the keyword and
 // not the variable).
-func casePrefixWordIsVariable(s string, i int, balancePrefix bool) bool {
+func casePrefixWordIsVariable(s string, i int) bool {
+	return casePrefixWordIsVariableModeWithCancellation(s, i, true, nil)
+}
+
+// casePrefixWordIsVariableWithCancellation is casePrefixWordIsVariable with
+// cooperative cancellation checks.
+func casePrefixWordIsVariableWithCancellation(s string, i int, probe *pipelineCancellation) bool {
+	return casePrefixWordIsVariableModeWithCancellation(s, i, true, probe)
+}
+
+// casePrefixWordIsVariableModeWithCancellation is the single owner of the
+// prefix-word reading; balancePrefix enables the closure-balance check.
+func casePrefixWordIsVariableModeWithCancellation(s string, i int, balancePrefix bool, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	for i < len(s) && isASCIISpace(s[i]) {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		i++
 	}
 	if i >= len(s) || !isIdentStartByte(s[i]) {
 		return i >= len(s)
 	}
+	word := caseWordAtWithCancellation(s, i, probe)
 	// A terminal END closes the CASE after a variable named NOT or
 	// DISTINCT; treating it as their operand would leave no closing END.
-	if caseWordAt(s, i) == "end" && strings.TrimSpace(s[i+len("end"):]) == "" {
+	if word == "end" && strings.TrimSpace(s[i+len("end"):]) == "" {
 		return true
 	}
-	if balancePrefix && caseWordAt(s, i) == "end" && casePrefixEndRequired(s, i) {
+	if balancePrefix && word == "end" && casePrefixEndRequired(s, i) {
 		return true
 	}
 	// WHEN terminates a simple CASE's test, so NOT end WHEN ... reads
 	// END as the negated variable rather than NOT as the test variable.
-	if matchKeywordAt(s, queryGapEnd(s, i+len(caseWordAt(s, i))), "WHEN") {
+	if matchKeywordAt(s, queryGapEndWithCancellation(s, i+len(word), probe), "WHEN") {
 		return false
 	}
-	return !caseOperandEndsAt(s, i+len(caseWordAt(s, i)))
+	return !caseOperandEndsAtWithCancellation(s, i+len(word), probe)
 }
 
 // caseHasPreviousToken reports whether anything but space precedes s[i].
 func caseHasPreviousToken(s string, i int) bool {
+	return caseHasPreviousTokenWithCancellation(s, i, nil)
+}
+func caseHasPreviousTokenWithCancellation(s string, i int, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	for j := i - 1; j >= 0; j-- {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		if !isASCIISpace(s[j]) {
 			return true
 		}
@@ -460,12 +576,32 @@ func caseHasPreviousToken(s string, i int) bool {
 // reading it as a nested CASE leaves the outer CASE without an END before
 // the enclosing bracket or the text ends: CASE case WHEN 1 THEN case END has
 // one END, a nested CASE CASE WHEN … END WHEN … END two.
-func caseNestedLacksEnd(s string, i int, balancePrefix bool) bool {
+func caseNestedLacksEnd(s string, i int) bool {
+	return caseNestedLacksEndModeWithCancellation(s, i, true, nil)
+}
+
+// caseNestedLacksEndWithCancellation is caseNestedLacksEnd with cooperative
+// cancellation checks.
+func caseNestedLacksEndWithCancellation(s string, i int, probe *pipelineCancellation) bool {
+	return caseNestedLacksEndModeWithCancellation(s, i, true, probe)
+}
+
+// caseNestedLacksEndModeWithCancellation is the single owner of the nested
+// CASE END count; balancePrefix is passed through to caseKeywordAtMode.
+func caseNestedLacksEndModeWithCancellation(s string, i int, balancePrefix bool, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	open, depth := 2, 0
 	for j := i + len("CASE"); j < len(s); j++ {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		switch c := s[j]; c {
 		case '\'', '"', '`':
-			j = skipCypherQuotedText(s, j, c) - 1
+			j = skipCypherQuotedTextWithCancellation(s, j, c, probe) - 1
 			continue
 		case '(', '[', '{':
 			depth++
@@ -480,9 +616,9 @@ func caseNestedLacksEnd(s string, i int, balancePrefix bool) bool {
 		if depth != 0 || !isIdentStartByte(s[j]) || isIdentByte(s[j-1]) {
 			continue
 		}
-		if caseKeywordAtMode(s, j, "CASE", balancePrefix) {
+		if caseKeywordAtModeWithCancellation(s, j, "CASE", balancePrefix, probe) {
 			open++
-		} else if caseKeywordAtMode(s, j, "END", balancePrefix) {
+		} else if caseKeywordAtModeWithCancellation(s, j, "END", balancePrefix, probe) {
 			if open--; open == 0 {
 				return false
 			}
@@ -492,6 +628,13 @@ func caseNestedLacksEnd(s string, i int, balancePrefix bool) bool {
 }
 
 func casePreviousWordIsCase(s string, i int) bool {
+	return casePreviousWordIsCaseWithCancellation(s, i, nil)
+}
+func casePreviousWordIsCaseWithCancellation(s string, i int, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	j := queryGapStart(s, i) - 1
 	return j >= 3 && matchKeywordAt(s, j-3, "CASE")
 }
@@ -499,18 +642,27 @@ func casePreviousWordIsCase(s string, i int) bool {
 // caseOperandEndsAt reports whether what starts at s[i] can only follow a
 // complete operand: the end of the text, a property access, an infix or
 // closing symbol, or THEN, ELSE, END and the infix keywords.
-func caseOperandEndsAt(s string, i int) bool {
+func caseOperandEndsAt(s string, i int) bool { return caseOperandEndsAtWithCancellation(s, i, nil) }
+func caseOperandEndsAtWithCancellation(s string, i int, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	start := i
 	for i < len(s) && isASCIISpace(s[i]) {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		i++
 	}
 	if i >= len(s) {
 		return true
 	}
 	if !isIdentStartByte(s[i]) {
-		return strings.IndexByte(".=<>*/%^,)]}", s[i]) >= 0 || caseBinaryOperatorAt(s, i) || (s[i] == '[' && i == start)
+		return indexByteWithCancellation(".=<>*/%^,)]}", s[i], probe) >= 0 || caseBinaryOperatorAtWithCancellation(s, i, probe) || (s[i] == '[' && i == start)
 	}
-	switch caseWordAt(s, i) {
+	switch caseWordAtWithCancellation(s, i, probe) {
 	case "then", "else", "end", "as", "and", "or", "xor", "is", "in", "contains", "starts", "ends":
 		return true
 	}
@@ -524,15 +676,26 @@ func caseOperandEndsAt(s string, i int) bool {
 // case is read alike: WITH case WHERE … is the variable case, CASE where
 // WHEN 1 a simple CASE over where (#1162).
 func caseVariableNamedCase(s string, i int) bool {
-	if !caseOperandEndsAt(s, i) && !isNameableClauseKeyword(caseWordAt(s, skipSpaces(s, i))) {
+	return caseVariableNamedCaseWithCancellation(s, i, nil)
+}
+func caseVariableNamedCaseWithCancellation(s string, i int, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
+	if !caseOperandEndsAtWithCancellation(s, i, probe) && !isNameableClauseKeywordWithCancellation(caseWordAtWithCancellation(s, skipSpacesWithCancellation(s, i, probe), probe), probe) {
 		return false
 	}
 	for i < len(s) && isASCIISpace(s[i]) {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		i++
 	}
 	if i < len(s) && isIdentStartByte(s[i]) {
-		word := caseWordAt(s, i)
-		return !caseSimpleTestContinuesAt(s, i+len(word))
+		word := caseWordAtWithCancellation(s, i, probe)
+		return !caseSimpleTestContinuesAtWithCancellation(s, i+len(word), probe)
 	}
 	return true
 }
@@ -542,23 +705,34 @@ func caseVariableNamedCase(s string, i int) bool {
 // property access, an infix symbol or keyword, or the WHEN that ends the
 // test (a WHEN itself followed by an operand).
 func caseSimpleTestContinuesAt(s string, i int) bool {
+	return caseSimpleTestContinuesAtWithCancellation(s, i, nil)
+}
+func caseSimpleTestContinuesAtWithCancellation(s string, i int, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	start := i
 	for i < len(s) && isASCIISpace(s[i]) {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		i++
 	}
 	if i >= len(s) {
 		return false
 	}
 	if !isIdentStartByte(s[i]) {
-		return strings.IndexByte(".=<>*/%^", s[i]) >= 0 || caseBinaryOperatorAt(s, i) || (s[i] == '[' && i == start)
+		return indexByteWithCancellation(".=<>*/%^", s[i], probe) >= 0 || caseBinaryOperatorAtWithCancellation(s, i, probe) || (s[i] == '[' && i == start)
 	}
-	switch word := caseWordAt(s, i); word {
+	switch word := caseWordAtWithCancellation(s, i, probe); word {
 	case "and", "or", "xor", "is", "in", "contains", "starts", "ends":
 		// The infix keyword is followed by an operand; a variable of that
 		// name by what ends one (WHEN and.id, WHEN in > 1).
-		return !caseOperandEndsAt(s, i+len(word))
+		return !caseOperandEndsAtWithCancellation(s, i+len(word), probe)
 	case "when":
-		return !caseOperandEndsAt(s, i+len(word))
+		return !caseOperandEndsAtWithCancellation(s, i+len(word), probe)
 	}
 	return false
 }
@@ -568,16 +742,32 @@ func caseSimpleTestContinuesAt(s string, i int) bool {
 // starts one (CASE -1 WHEN …). A [ right against the word before it is a
 // subscript (when[0]); after a space it may open a list (CASE WHEN [1] …).
 func caseBinaryOperatorAt(s string, i int) bool {
+	return caseBinaryOperatorAtWithCancellation(s, i, nil)
+}
+func caseBinaryOperatorAtWithCancellation(s string, i int, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	return (s[i] == '+' || s[i] == '-') && i+1 < len(s) && isASCIISpace(s[i+1])
 }
 
 // caseWordAt is the lower-case identifier word starting at s[i].
-func caseWordAt(s string, i int) string {
+func caseWordAt(s string, i int) string { return caseWordAtWithCancellation(s, i, nil) }
+func caseWordAtWithCancellation(s string, i int, probe *pipelineCancellation) string {
+	if probe != nil && !probe.check() {
+		return ""
+	}
+
 	end := i
 	for end < len(s) && isIdentByte(s[end]) {
+		if probe != nil && !probe.check() {
+			return ""
+		}
+
 		end++
 	}
-	return lowerASCII(s[i:end])
+	return lowerASCIIWithCancellation(s[i:end], probe)
 }
 
 func isCaseWordStart(expression string, index int) bool {

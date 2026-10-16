@@ -71,14 +71,20 @@ func validateExpressionLexicalTokens(text string) error {
 // sequence `NOT IN` (only whitespace between them) outside quotes and
 // comments. `x NOT IN list` is not Cypher; the negation is `NOT x IN list`.
 func containsNotInOperator(cypher string) bool {
+	return containsNotInOperatorWithCancellation(cypher, nil)
+}
+func containsNotInOperatorWithCancellation(cypher string, probe *pipelineCancellation) bool {
 	for i := 0; i < len(cypher); i++ {
+		if probe != nil && !probe.check() {
+			return false
+		}
 		c := cypher[i]
 		if c == '\'' || c == '"' || c == '`' {
-			i = skipCypherQuotedText(cypher, i, c) - 1
+			i = skipCypherQuotedTextWithCancellation(cypher, i, c, probe) - 1
 			continue
 		}
 		if c == '/' && i+1 < len(cypher) && (cypher[i+1] == '/' || cypher[i+1] == '*') {
-			i = queryCommentEnd(cypher, i) - 1
+			i = queryCommentEndWithCancellation(cypher, i, probe) - 1
 			continue
 		}
 		// NOT is a valid local iterator name, read by the same declaration
@@ -93,7 +99,7 @@ func containsNotInOperator(cypher string) bool {
 		if !matchKeywordAt(cypher, i, "NOT") {
 			continue
 		}
-		next := queryGapEnd(cypher, i+len("NOT"))
+		next := queryGapEndWithCancellation(cypher, i+len("NOT"), probe)
 		if matchKeywordAt(cypher, next, "IN") {
 			return true
 		}
@@ -105,23 +111,29 @@ func containsNotInOperator(cypher string) bool {
 // expression after it (`[1, 2,]`) or no expression before it (`[, 1]`) —
 // both are syntax errors in Neo4j.
 func containsTrailingListComma(cypher string) bool {
+	return containsTrailingListCommaWithCancellation(cypher, nil)
+}
+func containsTrailingListCommaWithCancellation(cypher string, probe *pipelineCancellation) bool {
 	for i := 0; i < len(cypher); i++ {
+		if probe != nil && !probe.check() {
+			return false
+		}
 		c := cypher[i]
 		if c == '\'' || c == '"' || c == '`' {
-			i = skipCypherQuotedText(cypher, i, c) - 1
+			i = skipCypherQuotedTextWithCancellation(cypher, i, c, probe) - 1
 			continue
 		}
 		if c == '/' && i+1 < len(cypher) && (cypher[i+1] == '/' || cypher[i+1] == '*') {
-			i = queryCommentEnd(cypher, i) - 1
+			i = queryCommentEndWithCancellation(cypher, i, probe) - 1
 			continue
 		}
 		switch c {
 		case ',':
-			if queryGapEnd(cypher, i+1) < len(cypher) && cypher[queryGapEnd(cypher, i+1)] == ']' {
+			if next := queryGapEndWithCancellation(cypher, i+1, probe); next < len(cypher) && cypher[next] == ']' {
 				return true
 			}
 		case '[':
-			if next := queryGapEnd(cypher, i+1); next < len(cypher) && cypher[next] == ',' {
+			if next := queryGapEndWithCancellation(cypher, i+1, probe); next < len(cypher) && cypher[next] == ',' {
 				return true
 			}
 		}
@@ -134,13 +146,22 @@ func containsTrailingListComma(cypher string) bool {
 // a backslash; a doubled quote is not an escape, so `'a”b'` is two adjacent
 // literals and Neo4j rejects it.
 func hasAdjacentStringLiterals(cypher string) bool {
+	return hasAdjacentStringLiteralsWithCancellation(cypher, nil)
+}
+func hasAdjacentStringLiteralsWithCancellation(cypher string, probe *pipelineCancellation) bool {
 	for i := 0; i < len(cypher); i++ {
+		if probe != nil && !probe.check() {
+			return false
+		}
 		c := cypher[i]
 		if c != '\'' && c != '"' {
 			continue
 		}
 		end := i + 1
 		for end < len(cypher) {
+			if probe != nil && !probe.check() {
+				return false
+			}
 			if cypher[end] == '\\' {
 				end += 2
 				continue
@@ -206,10 +227,16 @@ func foldByte(b byte) int {
 // Keywords inside quotes, comments or nested delimiters do not count; keywords
 // used as names (aliases, property keys) do not count either.
 func lastTopLevelClauseWord(s string) string {
+	return lastTopLevelClauseWordWithCancellation(s, nil)
+}
+func lastTopLevelClauseWordWithCancellation(s string, probe *pipelineCancellation) string {
 	inQuote := byte(0)
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	last := ""
 	for i := 0; i < len(s); i++ {
+		if probe != nil && !probe.check() {
+			return ""
+		}
 		c := s[i]
 		if inQuote != 0 {
 			if c == '\\' && inQuote != '`' && i+1 < len(s) {
@@ -232,12 +259,15 @@ func lastTopLevelClauseWord(s string) string {
 		case '/':
 			if i+1 < len(s) && s[i+1] == '/' {
 				for i < len(s) && s[i] != '\n' && s[i] != '\r' {
+					if probe != nil && !probe.check() {
+						return ""
+					}
 					i++
 				}
 				continue
 			}
 			if i+1 < len(s) && s[i+1] == '*' {
-				end := strings.Index(s[i+2:], "*/")
+				end := indexTextWithCancellation(s[i+2:], "*/", probe)
 				if end < 0 {
 					return last
 				}
@@ -272,19 +302,19 @@ func lastTopLevelClauseWord(s string) string {
 		for _, keywordIndex := range validatorKeywordFirst[foldByte(c)] {
 			keyword := validatorClauseKeywords[keywordIndex]
 			if matchKeywordAt(s, i, keyword) &&
-				!clauseKeywordUsedAsName(s, i, i+len(keyword), keyword) {
+				!clauseKeywordUsedAsNameWithCancellation(s, i, i+len(keyword), keyword, probe) {
 				// A WITH inside an expression is not a clause start:
 				// `x STARTS WITH 'a'`, `x ENDS WITH 'a'` and the type
 				// predicate `IS :: TIME WITH TIME ZONE`. A real WITH clause
 				// cannot follow STARTS/ENDS or precede TIME ZONE.
-				if keyword == "WITH" && isExpressionWith(s, i, i+len(keyword)) {
+				if keyword == "WITH" && isExpressionWithWithCancellation(s, i, i+len(keyword), probe) {
 					continue
 				}
 				// FOR is only an iteration clause in the shared grammar: in
 				// schema and alias DDL it is a specifier (CREATE INDEX …
 				// FOR (n:Label), CREATE ALIAS … FOR DATABASE …), not a
 				// dangling reading clause.
-				if keyword == "FOR" && !forIterationClauseAt(s, i) {
+				if keyword == "FOR" && !forIterationClauseAtWithCancellation(s, i, probe) {
 					continue
 				}
 				last = keyword
@@ -301,12 +331,15 @@ func lastTopLevelClauseWord(s string) string {
 // DATABASE …). It scans without allocating, mirroring parsePipelineIteration's
 // whitespace-only prefix.
 func forIterationClauseAt(s string, pos int) bool {
-	end := skipSpaces(s, pos+len("FOR"))
-	_, end, ok := scanSymbolicName(s, end)
+	return forIterationClauseAtWithCancellation(s, pos, nil)
+}
+func forIterationClauseAtWithCancellation(s string, pos int, probe *pipelineCancellation) bool {
+	end := skipSpacesWithCancellation(s, pos+len("FOR"), probe)
+	_, end, ok := scanSymbolicNameWithCancellation(s, end, probe)
 	if !ok {
 		return false
 	}
-	end = skipSpaces(s, end)
+	end = skipSpacesWithCancellation(s, end, probe)
 	if end+2 > len(s) || !strings.EqualFold(s[end:end+2], "IN") {
 		return false
 	}
@@ -318,23 +351,35 @@ func forIterationClauseAt(s string, pos int) bool {
 // part of an expression rather than a clause: it follows STARTS or ENDS
 // (comments and whitespace may sit between), or it is followed by TIME ZONE.
 func isExpressionWith(s string, start, end int) bool {
-	if previous := previousSignificantWord(s, start); strings.EqualFold(previous, "STARTS") || strings.EqualFold(previous, "ENDS") {
+	return isExpressionWithWithCancellation(s, start, end, nil)
+}
+func isExpressionWithWithCancellation(s string, start, end int, probe *pipelineCancellation) bool {
+	if previous := previousSignificantWordWithCancellation(s, start, probe); strings.EqualFold(previous, "STARTS") || strings.EqualFold(previous, "ENDS") {
 		return true
 	}
-	next := nextSignificantWords(s, end)
+	next := nextSignificantWordsWithCancellation(s, end, probe)
 	return strings.EqualFold(next[0], "TIME") && strings.EqualFold(next[1], "ZONE")
 }
 
 // previousSignificantWord returns the word immediately before position i,
 // skipping whitespace and comments, or "".
 func previousSignificantWord(s string, i int) string {
+	return previousSignificantWordWithCancellation(s, i, nil)
+}
+func previousSignificantWordWithCancellation(s string, i int, probe *pipelineCancellation) string {
 	j := i
 	for {
+		if probe != nil && !probe.check() {
+			return ""
+		}
 		for j > 0 && isWhitespace(s[j-1]) {
+			if probe != nil && !probe.check() {
+				return ""
+			}
 			j--
 		}
 		if j >= 2 && s[j-2] == '*' && s[j-1] == '/' {
-			open := strings.LastIndex(s[:j-1], "/*")
+			open := lastIndexTextWithCancellation(s[:j-1], "/*", probe)
 			if open < 0 {
 				return ""
 			}
@@ -342,7 +387,7 @@ func previousSignificantWord(s string, i int) string {
 			continue
 		}
 		if j >= 2 && s[j-2] == '/' && s[j-1] == '/' {
-			line := strings.LastIndex(s[:j], "\n")
+			line := lastIndexTextWithCancellation(s[:j], "\n", probe)
 			if line >= 0 {
 				j = line
 				continue
@@ -353,6 +398,9 @@ func previousSignificantWord(s string, i int) string {
 	}
 	end := j
 	for j > 0 && isIdentByte(s[j-1]) {
+		if probe != nil && !probe.check() {
+			return ""
+		}
 		j--
 	}
 	if j == end {
@@ -364,21 +412,30 @@ func previousSignificantWord(s string, i int) string {
 // nextSignificantWords returns the two words that follow position j, skipping
 // whitespace and comments; missing words are "".
 func nextSignificantWords(s string, j int) [2]string {
+	return nextSignificantWordsWithCancellation(s, j, nil)
+}
+func nextSignificantWordsWithCancellation(s string, j int, probe *pipelineCancellation) [2]string {
 	var result [2]string
 	read := func() string {
 		for {
+			if probe != nil && !probe.check() {
+				return ""
+			}
 			for j < len(s) && isWhitespace(s[j]) {
+				if probe != nil && !probe.check() {
+					return ""
+				}
 				j++
 			}
 			if j+1 < len(s) && s[j] == '/' && s[j+1] == '*' {
-				if close := strings.Index(s[j+2:], "*/"); close >= 0 {
+				if close := indexTextWithCancellation(s[j+2:], "*/", probe); close >= 0 {
 					j += 2 + close + 2
 					continue
 				}
 				return ""
 			}
 			if j+1 < len(s) && s[j] == '/' && s[j+1] == '/' {
-				if nl := strings.IndexAny(s[j:], "\r\n"); nl >= 0 {
+				if nl := indexAnyWithCancellation(s[j:], "\r\n", probe); nl >= 0 {
 					j += nl
 					continue
 				}
@@ -388,6 +445,9 @@ func nextSignificantWords(s string, j int) [2]string {
 		}
 		start := j
 		for j < len(s) && isIdentByte(s[j]) {
+			if probe != nil && !probe.check() {
+				return ""
+			}
 			j++
 		}
 		return s[start:j]

@@ -781,10 +781,15 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 // them resolved (resolveRowDynamicTokens), as a MERGE of its own, in order,
 // so a row sees what the rows before it merged.
 func (e *StorageExecutor) pipelineApplyRowDynamicMerge(ctx context.Context, rows []pipelineRow, clause, pattern string) ([]pipelineRow, *QueryStats, error) {
+	ctx = withPipelineCancellation(ctx)
+	cancellation := pipelineCancellationForContext(ctx)
 	stats := &QueryStats{}
 	out := make([]pipelineRow, 0, len(rows))
 	at := strings.Index(clause, pattern)
 	for _, row := range rows {
+		if !cancellation.check() {
+			return nil, nil, cancellation.err
+		}
 		rowCtx, nodes, rels := e.pipelineRowWriteContext(ctx, row)
 		resolved, err := e.resolveRowDynamicTokens(rowCtx, pattern, nodes, rels)
 		if err != nil {

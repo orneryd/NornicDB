@@ -179,8 +179,9 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 		args = splitTopLevelComma(argument)
 	}
 	value, found, err := cypherfn.EvaluateFunction(function, args, cypherfn.Context{
-		Storage:  e.storage,
-		Cypher25: rowIsCypher25(values),
+		Cancellation: functionCancellation(rowPipelineCancellation(values)),
+		Storage:      e.storage,
+		Cypher25:     rowIsCypher25(values),
 		Eval: func(expression string) (interface{}, error) {
 			value, resolved, err := e.evaluateRowValue(expression, values)
 			if err != nil {

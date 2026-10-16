@@ -1,25 +1,25 @@
 package cypher
 
-import "strings"
-
 // parseQuantifierArguments splits the arguments of all / any / none /
 // single, "variable IN list WHERE predicate", for every evaluator.
-func parseQuantifierArguments(inner string) (variable, listExpression, predicate string, ok bool) {
-	// The declaration as every reader reads it (bindingDeclaration); WHERE at
-	// the top level: a list comprehension or subquery in the list expression
-	// has its own.
-	variable, _, listStart, declared := bindingDeclaration(inner, 0)
+func parseQuantifierArguments(inner string) (string, string, string, bool) {
+	return parseQuantifierArgumentsWithCancellation(inner, nil)
+}
+func parseQuantifierArgumentsWithCancellation(inner string, probe *pipelineCancellation) (variable, listExpression, predicate string, ok bool) {
+	variable, _, listStart, declared := bindingDeclarationWithCancellation(inner, 0, probe)
 	if !declared {
 		return "", "", "", false
 	}
 	rest := inner[listStart:]
-	whereIndex := topLevelKeywordIndex(rest, "WHERE")
+	opts := defaultKeywordScanOpts()
+	opts.SkipBraces = true
+	whereIndex := keywordIndexFromWithCancellation(rest, "WHERE", 0, opts, probe)
 	if whereIndex < 0 {
 		return "", "", "", false
 	}
-	listExpression = strings.TrimSpace(rest[:whereIndex])
-	predicate = strings.TrimSpace(rest[whereIndex+len("WHERE"):])
-	if listExpression == "" || predicate == "" {
+	listExpression = trimSpaceWithCancellation(rest[:whereIndex], probe)
+	predicate = trimSpaceWithCancellation(rest[whereIndex+len("WHERE"):], probe)
+	if listExpression == "" || predicate == "" || probe != nil && probe.err != nil {
 		return "", "", "", false
 	}
 	return variable, listExpression, predicate, true

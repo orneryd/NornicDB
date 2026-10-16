@@ -97,12 +97,27 @@ func (v CypherVector) CypherSize() int64 {
 
 // coordinates returns the coordinates as Cypher values: integers or floats.
 func (v CypherVector) coordinates() []interface{} {
-	out := make([]interface{}, v.Dimension())
-	for i := range out {
+	return v.coordinatesWithCancellation(nil)
+}
+
+func (v CypherVector) coordinatesWithCancellation(probe *pipelineCancellation) []interface{} {
+	out := make([]interface{}, 0, pipelineInitialCapacity(v.Dimension(), probe))
+	for i := 0; i < v.Dimension(); i++ {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		if v.Type.IsFloat() {
-			out[i] = v.Floats[i]
+			out = appendPipelineItem[interface{}](out, v.Floats[i], probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		} else {
-			out[i] = v.Ints[i]
+			out = appendPipelineItem[interface{}](out, v.Ints[i], probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 	}
 	return out
@@ -134,23 +149,53 @@ func (v CypherVector) Equal(other CypherVector) bool {
 
 // String is the vector as toString writes it: vector([1, 2], 2, INTEGER64).
 func (v CypherVector) String() string {
+	return v.stringWithCancellation(nil)
+}
+
+func (v CypherVector) stringWithCancellation(probe *pipelineCancellation) string {
 	var b strings.Builder
-	b.WriteString("vector([")
+	if !appendPipelineString(&b, "vector([", probe) {
+		return ""
+	}
+
 	for i := 0; i < v.Dimension(); i++ {
+		if probe != nil && !probe.check() {
+			return ""
+		}
 		if i > 0 {
-			b.WriteString(", ")
+			if !appendPipelineString(&b, ", ", probe) {
+				return ""
+			}
+
 		}
 		if v.Type.IsFloat() {
-			b.WriteString(vectorFloatText(v.Floats[i], v.Type == VectorFloat32))
+			if !appendPipelineString(&b, vectorFloatText(v.Floats[i], v.Type == VectorFloat32), probe) {
+				return ""
+			}
+
 		} else {
-			b.WriteString(strconv.FormatInt(v.Ints[i], 10))
+			if !appendPipelineString(&b, strconv.FormatInt(v.Ints[i], 10), probe) {
+				return ""
+			}
+
 		}
 	}
-	b.WriteString("], ")
-	b.WriteString(strconv.Itoa(v.Dimension()))
-	b.WriteString(", ")
-	b.WriteString(v.Type.String())
-	b.WriteString(")")
+	if !appendPipelineString(&b, "], ", probe) {
+		return ""
+	}
+	if !appendPipelineString(&b, strconv.Itoa(v.Dimension()), probe) {
+		return ""
+	}
+	if !appendPipelineString(&b, ", ", probe) {
+		return ""
+	}
+	if !appendPipelineString(&b, v.Type.String(), probe) {
+		return ""
+	}
+	if !appendPipelineString(&b, ")", probe) {
+		return ""
+	}
+
 	return b.String()
 }
 
@@ -172,6 +217,10 @@ var vectorCoordinateTypeOrder = [...]int{
 // compareVectors orders vectors as Neo4j does: by coordinate type, then
 // dimension, then coordinates.
 func compareVectors(left, right CypherVector) int {
+	return compareVectorsWithCancellation(left, right, nil)
+}
+
+func compareVectorsWithCancellation(left, right CypherVector, probe *pipelineCancellation) int {
 	if order := compareOrderedInts(vectorCoordinateTypeOrder[left.Type], vectorCoordinateTypeOrder[right.Type]); order != 0 {
 		return order
 	}
@@ -179,6 +228,9 @@ func compareVectors(left, right CypherVector) int {
 		return order
 	}
 	for i := 0; i < left.Dimension(); i++ {
+		if probe != nil && !probe.check() {
+			return 0
+		}
 		var order int
 		if left.Type.IsFloat() {
 			order = compareOrderedFloats(left.Floats[i], right.Floats[i])

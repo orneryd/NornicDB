@@ -182,11 +182,16 @@ func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr string,
 	return props
 }
 
-func normalizePropertyKey(key string) string {
-	key = strings.TrimSpace(key)
+func normalizePropertyKey(key string) string { return normalizePropertyKeyWithCancellation(key, nil) }
+func normalizePropertyKeyWithCancellation(key string, probe *pipelineCancellation) string {
+	if probe != nil && !probe.check() {
+		return ""
+	}
+
+	key = trimSpaceWithCancellation(key, probe)
 	if len(key) >= 2 {
 		if strings.HasPrefix(key, "`") && strings.HasSuffix(key, "`") {
-			return symbolicNameValue(key)
+			return symbolicNameValueWithCancellation(key, probe)
 		}
 		if (strings.HasPrefix(key, "'") && strings.HasSuffix(key, "'")) ||
 			(strings.HasPrefix(key, "\"") && strings.HasSuffix(key, "\"")) {
@@ -197,12 +202,23 @@ func normalizePropertyKey(key string) string {
 }
 
 func findTopLevelMapKeyValueSeparator(pair string) int {
+	return findTopLevelMapKeyValueSeparatorWithCancellation(pair, nil)
+}
+func findTopLevelMapKeyValueSeparatorWithCancellation(pair string, probe *pipelineCancellation) int {
+	if probe != nil && !probe.check() {
+		return -1
+	}
+
 	depth := 0
 	inSingle := false
 	inDouble := false
 	inBacktick := false
 
 	for i := 0; i < len(pair); i++ {
+		if probe != nil && !probe.check() {
+			return -1
+		}
+
 		ch := pair[i]
 
 		switch {
@@ -220,7 +236,7 @@ func findTopLevelMapKeyValueSeparator(pair string) int {
 					i++
 					continue
 				}
-				if !isBackslashEscaped(pair, i) {
+				if !isBackslashEscapedWithCancellation(pair, i, probe) {
 					inSingle = false
 				}
 			}
@@ -230,7 +246,7 @@ func findTopLevelMapKeyValueSeparator(pair string) int {
 					i++
 					continue
 				}
-				if !isBackslashEscaped(pair, i) {
+				if !isBackslashEscapedWithCancellation(pair, i, probe) {
 					inDouble = false
 				}
 			}
@@ -260,11 +276,22 @@ func findTopLevelMapKeyValueSeparator(pair string) int {
 }
 
 func isBackslashEscaped(s string, idx int) bool {
+	return isBackslashEscapedWithCancellation(s, idx, nil)
+}
+func isBackslashEscapedWithCancellation(s string, idx int, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	if idx <= 0 {
 		return false
 	}
 	backslashes := 0
 	for i := idx - 1; i >= 0 && s[i] == '\\'; i-- {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		backslashes++
 	}
 	return backslashes%2 == 1

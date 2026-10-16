@@ -45,11 +45,15 @@ func rowMapProjectionSplit(expression string) (variable, items string, ok bool) 
 }
 
 func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map[string]interface{}) (interface{}, bool, bool, error) {
+	return e.evaluateRowMapProjectionWithCancellation(expression, values, rowPipelineCancellation(values))
+}
+
+func (e *StorageExecutor) evaluateRowMapProjectionWithCancellation(expression string, values map[string]interface{}, probe *pipelineCancellation) (interface{}, bool, bool, error) {
 	variable, inner, projection := rowMapProjectionSplit(expression)
 	if !projection {
 		return nil, false, false, nil
 	}
-	base, resolved, err := e.evaluateRowValue(variable, values)
+	base, resolved, err := e.evaluateRowValueWithCancellation(variable, values, probe)
 	if err != nil {
 		return nil, true, false, err
 	}
@@ -60,7 +64,10 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 		return nil, true, true, nil
 	}
 	temporal := isRuntimeTemporal(base) || isRuntimeDuration(base)
-	properties, hasProperties := rowProjectionProperties(e.queryVisibleValue(base))
+	properties, hasProperties := rowProjectionPropertiesWithCancellation(e.queryVisibleValue(base), probe)
+	if probe != nil && probe.err != nil {
+		return nil, true, false, probe.err
+	}
 	if !hasProperties && !temporal {
 		if _, isPath := cypherPathElements(base); isPath {
 			return nil, true, false, runtimeTypeError("Type mismatch: expected a map but was Path")
@@ -72,6 +79,9 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 		return result, true, true, nil
 	}
 	for _, rawItem := range splitTopLevelComma(inner) {
+		if probe != nil && !probe.check() {
+			return nil, true, false, probe.err
+		}
 		item := strings.TrimSpace(rawItem)
 		switch {
 		case item == ".*":
@@ -80,6 +90,9 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 					localization.CypherCoreMapProjectionCoercion(formatCypherValueString(base)))
 			}
 			for name, value := range properties {
+				if probe != nil && !probe.check() {
+					return nil, true, false, probe.err
+				}
 				result[name] = value
 			}
 		case strings.HasPrefix(item, "."):
@@ -100,7 +113,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 			separator := findTopLevelMapKeyValueSeparator(item)
 			if separator > 0 {
 				name := normalizePropertyKey(strings.TrimSpace(item[:separator]))
-				value, ok, err := e.evaluateRowValue(strings.TrimSpace(item[separator+1:]), values)
+				value, ok, err := e.evaluateRowValueWithCancellation(strings.TrimSpace(item[separator+1:]), values, probe)
 				if err != nil {
 					return nil, true, false, err
 				}
@@ -113,7 +126,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 			if !isValidIdentifier(item) && !isBacktickQuotedName(item) {
 				return nil, true, false, nil
 			}
-			value, ok, err := e.evaluateRowValue(item, values)
+			value, ok, err := e.evaluateRowValueWithCancellation(item, values, probe)
 			if err != nil {
 				return nil, true, false, err
 			}
@@ -129,12 +142,19 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 // mapProjectionPropertySelector reads a map projection's property selector,
 // .name or .`quoted name`, and returns the property key (unquoted).
 func mapProjectionPropertySelector(item string) (string, bool) {
-	name := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "."))
+	return mapProjectionPropertySelectorWithCancellation(item, nil)
+}
+func mapProjectionPropertySelectorWithCancellation(item string, probe *pipelineCancellation) (string, bool) {
+	if probe != nil && !probe.check() {
+		return "", false
+	}
+
+	name := trimSpaceWithCancellation(strings.TrimPrefix(trimSpaceWithCancellation(item, probe), "."), probe)
 	switch {
-	case isValidIdentifier(name):
+	case isValidIdentifierWithCancellation(name, probe):
 		return name, true
-	case isBacktickQuotedName(name):
-		return normalizePropertyKey(name), true
+	case isBacktickQuotedNameWithCancellation(name, probe):
+		return normalizePropertyKeyWithCancellation(name, probe), true
 	}
 	return "", false
 }
@@ -142,6 +162,10 @@ func mapProjectionPropertySelector(item string) (string, bool) {
 // rowProjectionProperties returns the properties of a node, relationship or
 // map; ok is false for any other value.
 func rowProjectionProperties(value interface{}) (map[string]interface{}, bool) {
+	return rowProjectionPropertiesWithCancellation(value, nil)
+}
+
+func rowProjectionPropertiesWithCancellation(value interface{}, probe *pipelineCancellation) (map[string]interface{}, bool) {
 	switch typed := value.(type) {
 	case storage.RemoteEntityValue:
 		properties, _ := typed["properties"].(map[string]interface{})
@@ -157,10 +181,11 @@ func rowProjectionProperties(value interface{}) (map[string]interface{}, bool) {
 		}
 		return typed.Properties, true
 	}
-	if _, isPath := cypherPathElements(value); isPath {
+	object, isMap := toStringAnyMapWithCancellation(value, probe)
+	if _, isPath := cypherPathElementsOfWithCancellation(value, object, isMap, probe); isPath {
 		return nil, false
 	}
-	return toStringAnyMap(value)
+	return object, isMap
 }
 
 // A typed nil marker has the same null projection semantics as a nil entity.

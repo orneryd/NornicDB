@@ -254,10 +254,12 @@ type callSubqueryParse struct {
 	scopedImports  []string
 }
 
-func (e *StorageExecutor) callSubqueryParseFor(ctx context.Context, clause string) callSubqueryParse {
+// callSubqueryParseFor reads a CALL subquery clause once per statement; the
+// first reading checks probe, as pipelineClauseAggregatesFor's does.
+func (e *StorageExecutor) callSubqueryParseFor(ctx context.Context, clause string, probe *pipelineCancellation) callSubqueryParse {
 	return clauseAnalysisFor(ctx, clauseAnalysisCallSubquery, clause, func(clause string) callSubqueryParse {
 		var parsed callSubqueryParse
-		parsed.body, parsed.afterCall, parsed.inTransactions, parsed.batchSize = e.parseCallSubquery(clause)
+		parsed.body, parsed.afterCall, parsed.inTransactions, parsed.batchSize = e.parseCallSubqueryWithCancellation(clause, probe)
 		callScope := readCallSubqueryScope(clause)
 		parsed.scoped, parsed.scopedImports = callScope.scoped, callScope.names
 		return parsed
@@ -306,15 +308,19 @@ func (e *StorageExecutor) plannedPatternBindings(plan *pipelineClausePlan, claus
 	return parse(clause)
 }
 
-func pipelineClauseAggregatesFor(ctx context.Context, clause pipelineClause) bool {
+// pipelineClauseAggregatesFor reads pipelineClauseAggregates once per
+// statement. Its first reading checks probe; a cancelled reading is cached
+// only in the statement's own plans, which the cancelled statement abandons.
+func pipelineClauseAggregatesFor(ctx context.Context, clause pipelineClause, probe *pipelineCancellation) bool {
 	if clause.kind != pipelineClauseWith && clause.kind != pipelineClauseReturn {
 		return false
 	}
+	aggregates := func(string) bool { return pipelineClauseAggregatesWithCancellation(clause, probe) }
 	plan := pipelineClausePlanFor(ctx, clause.text)
 	if plan == nil {
-		return pipelineClauseAggregates(clause)
+		return aggregates(clause.text)
 	}
-	return plannedAnalysis(plan, clauseAnalysisAggregates, clause.text, func(string) bool { return pipelineClauseAggregates(clause) })
+	return plannedAnalysis(plan, clauseAnalysisAggregates, clause.text, aggregates)
 }
 
 // pipelineMatchParts is a MATCH body's pattern parts: the comma-separated

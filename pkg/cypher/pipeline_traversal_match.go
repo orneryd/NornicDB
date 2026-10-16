@@ -12,6 +12,8 @@ import (
 // operators to pipeline rows. It returns graph entities as bindings so every
 // later WITH, mutation, and RETURN clause continues through the same executor.
 func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
+	ctx = withPipelineCancellation(ctx)
+	cancellation := pipelineCancellationForContext(ctx)
 	if len(rows) == 0 {
 		return rows, true, nil
 	}
@@ -52,6 +54,9 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
+		if !cancellation.check() {
+			return nil, true, cancellation.err
+		}
 		rowCtx := withValueBindings(ctx, row)
 		materializedPattern := pattern
 		materializedWhere := whereClause
@@ -105,7 +110,10 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 			rowWhere = prepareRowPredicate(materializedWhere)
 		}
 		for _, resultRow := range result.Rows {
-			joined := make(pipelineRow, util.SafePreallocSum(len(row), len(result.Columns)))
+			if !cancellation.check() {
+				return nil, true, cancellation.err
+			}
+			joined :=make(pipelineRow, util.SafePreallocSum(len(row), len(result.Columns)))
 			for name, value := range row {
 				joined[name] = value
 			}
