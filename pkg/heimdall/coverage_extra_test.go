@@ -406,8 +406,8 @@ func TestHeimdallCoverage_ReflectPluginAndInvokers(t *testing.T) {
 	result, err = noOp.SendRawPrompt(context.Background(), "hello")
 	require.NoError(t, err)
 	assert.False(t, result.Success)
-	noOp.InvokeActionAsync("ignored", nil)
-	noOp.SendPromptAsync("ignored")
+	noOp.InvokeActionAsync(context.Background(), "ignored", nil)
+	noOp.SendPromptAsync(context.Background(), "ignored")
 
 	RegisterBuiltinAction(ActionFunc{
 		Name:        "heimdall_cov_echo",
@@ -452,17 +452,17 @@ func TestHeimdallCoverage_ReflectPluginAndInvokers(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "raw-response", result.Message)
 
-	invoker.InvokeActionAsync("heimdall_cov_echo", map[string]interface{}{"mode": "async"})
+	invoker.InvokeActionAsync(context.Background(), "heimdall_cov_echo", map[string]interface{}{"mode": "async"})
 	require.Eventually(t, func() bool {
 		return notificationCount(bifrost) >= 1
 	}, time.Second, 10*time.Millisecond)
 
-	invoker.SendPromptAsync("hello async")
+	invoker.SendPromptAsync(context.Background(), "hello async")
 	require.Eventually(t, func() bool {
 		return notificationCount(bifrost) >= 2
 	}, time.Second, 10*time.Millisecond)
 
-	invoker.InvokeActionAsync("heimdall_missing_action", nil)
+	invoker.InvokeActionAsync(context.Background(), "heimdall_missing_action", nil)
 	require.Eventually(t, func() bool {
 		return notificationCount(bifrost) >= 3
 	}, time.Second, 10*time.Millisecond)
@@ -1912,8 +1912,8 @@ func mustActionResultMessage(t *testing.T, result *ActionResult, err error) stri
 
 func TestCoverageExtra_NoOpAsyncAndDefaultLogger(t *testing.T) {
 	noop := &NoOpHeimdallInvoker{}
-	noop.InvokeActionAsync("ignored", map[string]interface{}{"k": "v"})
-	noop.SendPromptAsync("ignored")
+	noop.InvokeActionAsync(context.Background(), "ignored", map[string]interface{}{"k": "v"})
+	noop.SendPromptAsync(context.Background(), "ignored")
 
 	res, err := noop.InvokeAction(context.Background(), "ignored", nil)
 	require.NoError(t, err)
