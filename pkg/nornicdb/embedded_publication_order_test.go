@@ -97,11 +97,17 @@ func TestEmbeddedPublicationDoesNotOverwriteNewerUpdate(t *testing.T) {
 
 	require.Equal(t, []storage.NodeID{"source"}, textHitIDs(t, svc, "charlie"))
 	require.Empty(t, textHitIDs(t, svc, "bravo"), "the older text overwrote the update")
-	// Candidate search applies the similarity floor, so only a stored copy of
-	// the older vector could match it.
-	stale, err := svc.VectorSearchCandidates(context.Background(), oldVector, search.DefaultSearchOptions())
-	require.NoError(t, err)
-	require.Empty(t, stale, "the older vector overwrote the update")
+	// The indexed vector is the newer one: it scores 1 against the newer
+	// vector and 0 against the older one, which are orthogonal.
+	for _, probe := range []struct {
+		vector []float32
+		want   float64
+	}{{oldVector, 0}, {newVector, 1}} {
+		candidates, err := svc.VectorSearchCandidates(context.Background(), probe.vector, search.DefaultSearchOptions())
+		require.NoError(t, err)
+		require.Len(t, candidates, 1)
+		require.InDelta(t, probe.want, candidates[0].Score, 1e-6, "the older vector overwrote the update")
+	}
 	hits := vectorOnlySearch(t, svc, newVector).Results
 	require.Len(t, hits, 1)
 	require.Equal(t, storage.NodeID("source"), hits[0].NodeID)
