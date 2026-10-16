@@ -90,6 +90,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	if name, inner, ok := parseFunctionCallWS(expr); ok {
 		args := e.splitFunctionArgs(inner)
+		if equalFoldASCII(name, "size") && len(args) == 1 {
+			args[0] = sizeArgumentExpression(args[0])
+		}
 		fnCtx := cypherfn.Context{
 			Nodes:    nodes,
 			Rels:     rels,

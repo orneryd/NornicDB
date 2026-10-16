@@ -718,7 +718,7 @@ func staticPostfixSplit(expression string) (receiver, inner string, subscript, o
 // ".." nested in brackets or parentheses (m[head(l[0..1])]) or quoted
 // (r['a..b']) belongs to the key. It is the one reader of slice bounds, for
 // the static checks and every evaluator (evaluateRowValue,
-// validateRowSubscriptTypes, the context evaluator, applyArraySuffix).
+// evaluateCypherSubscript, applyArraySuffix).
 func staticSliceBounds(inner string) (from, to string, slice bool) {
 	depth := 0
 	for index := 0; index+1 < len(inner); index++ {

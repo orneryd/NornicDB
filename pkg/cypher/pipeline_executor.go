@@ -874,9 +874,6 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			rows = newRows
 			scope = pipelineProjectionScope(scope, clause.text, pipelineImports(ctx))
 		case pipelineClauseUnwind:
-			if err := e.validatePipelineRangeArguments(rows, clause.text, "UNWIND"); err != nil {
-				return nil, true, err
-			}
 			unwound, consumed, ok := e.pipelineUnwindSource(ctx, rows, clauses[idx:])
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)

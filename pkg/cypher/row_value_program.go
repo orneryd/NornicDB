@@ -424,6 +424,9 @@ func (c *rowValueCompiler) compileFunction(expr, name, argument string) (rowValu
 		}
 		return bound(expr, &rowEndpointNode{text: expr, function: name, variable: variable}, rowValueInfo{pure: true, refs: []string{variable}})
 	case "size", "head", "last", "reverse", "type":
+		if name == "size" {
+			argument = sizeArgumentExpression(argument)
+		}
 		operand, operandInfo := c.part(argument)
 		info := combineRowValueInfo(operandInfo)
 		parts, infos := []rowValueNode{operand}, []rowValueInfo{operandInfo}

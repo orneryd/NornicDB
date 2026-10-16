@@ -2,10 +2,7 @@ package cypher
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // validateStaticPropertySubscripts type-checks every subscript in text
@@ -49,104 +46,6 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 				return err
 			}
 		}
-	}
-	return nil
-}
-
-func (e *StorageExecutor) validatePipelineProjectionSubscripts(rows []pipelineRow, clause, keyword string) error {
-	for _, expression := range projectionExpressions(clause, keyword) {
-		for _, row := range rows {
-			if err := e.validateRowSubscriptTypes(expression, row); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipelineRow) error {
-	expression = strings.TrimSpace(expression)
-	if !strings.HasSuffix(expression, "]") {
-		return nil
-	}
-	// The subscript is the bracket group that closes the expression; a list
-	// literal or comprehension that is the whole expression ([x IN l | …])
-	// is not one.
-	open := closingBracketGroupStart(expression)
-	if open <= 0 {
-		return nil
-	}
-	receiverStart := rowSubscriptReceiverStart(expression, open)
-	if receiverStart < 0 || receiverStart >= open {
-		return nil
-	}
-	baseExpression := strings.TrimSpace(expression[receiverStart:open])
-	indexExpression := strings.TrimSpace(expression[open+1 : len(expression)-1])
-	if err := e.validateRowSubscriptTypes(baseExpression, row); err != nil {
-		return err
-	}
-	base, baseOK, err := e.evaluateRowValue(baseExpression, row)
-	if err != nil {
-		return err
-	}
-	if from, to, slice := staticSliceBounds(indexExpression); slice {
-		if !baseOK || base == nil {
-			return nil
-		}
-		// A value that isn't a list is sliced as a list of it
-		// (cypherListSlice); a type known before the statement runs is
-		// checked statically.
-		for _, boundExpression := range []string{strings.TrimSpace(from), strings.TrimSpace(to)} {
-			if boundExpression == "" {
-				continue
-			}
-			bound, ok, err := e.evaluateRowValue(boundExpression, row)
-			if err != nil {
-				return err
-			}
-			if ok && bound != nil && !isCypherInteger(bound) {
-				return invalidSubscriptTypeError("list slice bound requires an INTEGER", bound)
-			}
-		}
-		return nil
-	}
-	index, indexOK, err := e.evaluateRowValue(indexExpression, row)
-	if err != nil {
-		return err
-	}
-	if !baseOK || !indexOK || base == nil || index == nil {
-		return nil
-	}
-
-	if object, isMap := toStringAnyMap(base); isMap {
-		_ = object
-		if _, valid := index.(string); !valid {
-			return mapElementAccessByNonStringError(index)
-		}
-		return nil
-	}
-	switch base.(type) {
-	case *storage.Node, *storage.Edge, storage.RemoteEntityValue:
-		if _, valid := index.(string); !valid {
-			return invalidSubscriptTypeError("entity subscript requires a STRING property key", index)
-		}
-		return nil
-	}
-
-	if key, isKey := index.(string); isKey && (isRuntimeTemporal(base) || isRuntimeDuration(base)) {
-		// A temporal value's or duration's fields read like properties:
-		// d['year'] is d.year, and a field it doesn't have is a TypeError.
-		if _, _, supported := evaluateTemporalProperty(base, key); !supported {
-			return temporalNoSuchFieldError(key)
-		}
-		return nil
-	}
-	baseType := reflect.TypeOf(base)
-	if baseType == nil || (baseType.Kind() != reflect.Slice && baseType.Kind() != reflect.Array) {
-		return subscriptReceiverError(base, index)
-	}
-	if !isCypherInteger(index) {
-		return invalidSubscriptTypeError("list subscript requires an INTEGER index", index)
 	}
 	return nil
 }
@@ -220,7 +119,7 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		for before >= 0 && isASCIIWhitespace(expression[before]) {
 			before--
 		}
-		if before >= 0 && !isRowReceiverIdentifierByte(expression[before]) && !strings.ContainsRune(")]'\"`", rune(expression[before])) {
+		if before >= 0 && !isRowReceiverIdentifierByte(expression[before]) && !strings.ContainsRune(")]'\"`}", rune(expression[before])) {
 			return start
 		}
 		if start > 0 {
@@ -330,7 +229,7 @@ func mapElementAccessByNonStringError(value interface{}) error {
 	)
 }
 
-func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clause, keyword string) error {
+func validateProjectionSizeSyntax(clause, keyword string) error {
 	for _, expression := range projectionExpressions(clause, keyword) {
 		name, argument, functionCall := parseFunctionCallWS(expression)
 		if !functionCall || !strings.EqualFold(name, "size") {
@@ -344,20 +243,7 @@ func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clau
 				"size() does not accept a pattern predicate; use a pattern comprehension",
 			)
 		}
-		for _, row := range rows {
-			value, ok, err := e.evaluateRowValue(argument, row)
-			if err != nil {
-				return err
-			}
-			if !ok || value == nil {
-				continue
-			}
-			if path, isMap := toStringAnyMap(value); isMap {
-				if _, isPath := path["_pathResult"]; isPath {
-					return sizeArgumentError(value)
-				}
-			}
-		}
+
 	}
 	return nil
 }
