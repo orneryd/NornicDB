@@ -46,18 +46,38 @@ import (
 
 // getQueryNode reads a node as query rows carry it: labels, properties and
 // embedding metadata, without the separately stored embedding vectors a row
-// never reads (n.has_embedding reads the metadata). Only the transaction
-// wrapper reads it that way (BadgerTransaction.GetNodeWithoutEmbeddings): a
-// transaction's UpdateNode reconciles embeddings against the stored node, so
-// a row node written back keeps them, while an engine's own UpdateNode takes
-// the body as written and would clear them. Any other store reads the full
-// node. Code that reads vectors (link prediction, vector scoring, search
-// indexing) reads with GetNode.
-func getQueryNode(store storage.Engine, id storage.NodeID) (*storage.Node, error) {
+// never reads (n.has_embedding reads the metadata; storage.QueryNodeReader).
+// The transaction wrapper always reads it that way: a transaction's
+// UpdateNode reconciles embeddings against the stored node, so a row node
+// written back keeps them. Outside a transaction an engine's UpdateNode takes
+// the body as written and would clear them, so a store outside a transaction
+// reads it that way only for a statement that cannot write
+// (readOnlyQueryNodes); otherwise it reads the full node. Code that reads
+// vectors (link prediction, vector scoring, search indexing) reads with
+// GetNode.
+func (e *StorageExecutor) getQueryNode(store storage.Engine, id storage.NodeID) (*storage.Node, error) {
 	if wrapper, ok := store.(*transactionStorageWrapper); ok {
-		return wrapper.GetNodeWithoutEmbeddings(id)
+		return wrapper.GetQueryNode(id)
+	}
+	if e != nil && e.readOnlyQueryNodes {
+		if reader, ok := store.(storage.QueryNodeReader); ok {
+			return reader.GetQueryNode(id)
+		}
 	}
 	return store.GetNode(id)
+}
+
+// readsQueryNodesWithoutVectors reports whether an auto-commit statement
+// running without a transaction reads its row nodes without vectors: one
+// that matches nodes and cannot write. A write needs a write clause or a
+// procedure (CALL), which may write without one; both keep full reads, as
+// does a store without the query-node read.
+func (e *StorageExecutor) readsQueryNodesWithoutVectors(info *QueryInfo) bool {
+	if info == nil || !info.IsReadOnly || info.IsWriteQuery || !info.HasMatch || info.HasCall {
+		return false
+	}
+	_, ok := e.storage.(storage.QueryNodeReader)
+	return ok
 }
 
 type materializedAccessRecorder interface {

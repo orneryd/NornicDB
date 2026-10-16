@@ -63,6 +63,15 @@ func (t *sizeTrackingEngine) GetInnerEngine() storage.Engine {
 	return t.Engine
 }
 
+// GetQueryNode forwards the query-row node read (storage.QueryNodeReader),
+// else reads the full node.
+func (t *sizeTrackingEngine) GetQueryNode(id storage.NodeID) (*storage.Node, error) {
+	if reader, ok := t.Engine.(storage.QueryNodeReader); ok {
+		return reader.GetQueryNode(id)
+	}
+	return t.Engine.GetNode(id)
+}
+
 // RecordMaterializedAccess preserves result-access accounting across the
 // database size-tracking wrapper.
 func (t *sizeTrackingEngine) RecordMaterializedAccess(entityID string) {

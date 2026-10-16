@@ -415,7 +415,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 				ids := propertyIndexLookup(store, schema, key.label, key.prop, value)
 				matched := 0
 				for _, id := range ids {
-					node, err := getQueryNode(store, id)
+					node, err := e.getQueryNode(store, id)
 					if err == nil && nodeBatchMatchesValue(node, key, value) {
 						matched++
 						idx[valueKey] = node
