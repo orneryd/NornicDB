@@ -236,12 +236,16 @@ type HeimdallInvoker interface {
 
 	// InvokeActionAsync invokes an action without waiting for result.
 	// Use this for fire-and-forget scenarios where you don't need the result.
-	// Results will be broadcast via Bifrost to connected clients.
-	InvokeActionAsync(action string, params map[string]interface{})
+	// Results will be broadcast via Bifrost to connected clients. The action
+	// runs with ctx's values (such as the request principal the database
+	// router authorizes) but not its cancellation, so it can outlive the
+	// request.
+	InvokeActionAsync(ctx context.Context, action string, params map[string]interface{})
 
 	// SendPromptAsync sends a prompt without waiting for result.
-	// Results will be broadcast via Bifrost to connected clients.
-	SendPromptAsync(prompt string)
+	// Results will be broadcast via Bifrost to connected clients. Like
+	// InvokeActionAsync, it keeps ctx's values but not its cancellation.
+	SendPromptAsync(ctx context.Context, prompt string)
 
 	// SendRawPrompt sends a prompt directly to the LLM without action routing context.
 	// Use this for synthesis or direct question-answering where you don't want
@@ -267,8 +271,9 @@ func (n *NoOpHeimdallInvoker) SendRawPrompt(ctx context.Context, prompt string) 
 	_ = ctx
 	return &ActionResult{Success: false, Message: "Heimdall not available"}, nil
 }
-func (n *NoOpHeimdallInvoker) InvokeActionAsync(action string, params map[string]interface{}) {}
-func (n *NoOpHeimdallInvoker) SendPromptAsync(prompt string)                                  {}
+func (n *NoOpHeimdallInvoker) InvokeActionAsync(ctx context.Context, action string, params map[string]interface{}) {
+}
+func (n *NoOpHeimdallInvoker) SendPromptAsync(ctx context.Context, prompt string) {}
 
 // LiveHeimdallInvoker is the production implementation of HeimdallInvoker.
 // It uses the SubsystemManager to invoke actions and can optionally use
@@ -353,9 +358,11 @@ func (h *LiveHeimdallInvoker) SendRawPrompt(ctx context.Context, prompt string) 
 }
 
 // InvokeActionAsync invokes an action asynchronously, broadcasting results via Bifrost.
-func (h *LiveHeimdallInvoker) InvokeActionAsync(action string, params map[string]interface{}) {
+// The action runs with ctx's values but not its cancellation (detachedContext).
+func (h *LiveHeimdallInvoker) InvokeActionAsync(ctx context.Context, action string, params map[string]interface{}) {
+	ctx = detachedContext(ctx)
 	go func() {
-		result, err := h.InvokeAction(context.Background(), action, params)
+		result, err := h.InvokeAction(ctx, action, params)
 		if h.bifrost != nil && h.bifrost.IsConnected() {
 			if err != nil {
 				h.bifrost.SendNotification("error", "Action Failed", err.Error())
@@ -367,9 +374,11 @@ func (h *LiveHeimdallInvoker) InvokeActionAsync(action string, params map[string
 }
 
 // SendPromptAsync sends a prompt asynchronously, broadcasting results via Bifrost.
-func (h *LiveHeimdallInvoker) SendPromptAsync(prompt string) {
+// The prompt runs with ctx's values but not its cancellation (detachedContext).
+func (h *LiveHeimdallInvoker) SendPromptAsync(ctx context.Context, prompt string) {
+	ctx = detachedContext(ctx)
 	go func() {
-		result, err := h.SendPrompt(context.Background(), prompt)
+		result, err := h.SendPrompt(ctx, prompt)
 		if h.bifrost != nil && h.bifrost.IsConnected() {
 			if err != nil {
 				h.bifrost.SendNotification("error", "Prompt Failed", err.Error())
@@ -378,6 +387,16 @@ func (h *LiveHeimdallInvoker) SendPromptAsync(prompt string) {
 			}
 		}
 	}()
+}
+
+// detachedContext is ctx for work that outlives its caller: ctx's values,
+// such as the request principal, without its cancellation or deadline. A nil
+// ctx is an empty context, which carries no principal.
+func detachedContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
 }
 
 // parsedActionCmd is used internally to parse SLM action responses.
