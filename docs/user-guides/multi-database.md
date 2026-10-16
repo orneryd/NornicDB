@@ -369,8 +369,9 @@ independently, including disjoint unique-key MERGEs. A first storage-size read
 initializes accounting exclusively; it cannot race an unaccounted publication.
 A transaction already holding a unique MERGE key receives a retryable storage
 conflict when an incompatible admission lease is busy, avoiding lock inversion.
-Admission waits honor the caller context. Once atomic publication begins, it
-completes; a later cancellation does not turn committed data into a rollback.
+Admission waits honor the caller context. Canceled read-only commits also
+release transaction state without entering write admission. Once atomic
+publication begins, it completes; a later cancellation does not turn committed data into a rollback.
 Explicit Bolt COMMIT retains its existing terminal-owner/deadline arbitration;
 the claimed transaction/connection context still propagates to storage.
 
