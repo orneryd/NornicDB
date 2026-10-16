@@ -11,6 +11,11 @@ import (
 // implicit transactions must use this boundary.
 func (e *StorageExecutor) commitStorageTransaction(ctx context.Context, tx *storage.BadgerTransaction) error {
 	engine := e.storage
+	if e.txContext != nil && e.txContext.tx == tx && e.txContext.engine != nil {
+		// Administration can choose system after BEGIN. Commit through that
+		// transaction's managed owner, not the request's original user graph.
+		engine = e.txContext.engine
+	}
 	visited := make(map[storage.Engine]bool)
 	for engine != nil && !visited[engine] {
 		visited[engine] = true
