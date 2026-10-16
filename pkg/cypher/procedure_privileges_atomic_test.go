@@ -86,7 +86,7 @@ func TestRoleDeletionJoinsExplicitTransaction(t *testing.T) {
 			_, err = system.GetNode("role:ops")
 			require.NoError(t, err)
 			if commit {
-				_, err = exec.handleCommit()
+				_, err = exec.handleCommit(context.Background())
 			} else {
 				_, err = exec.handleRollback()
 			}
