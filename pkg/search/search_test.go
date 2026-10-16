@@ -2704,8 +2704,8 @@ func TestSearchHelpers_TryRestoreAndMaybeRebuildBranches(t *testing.T) {
 	s := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
 
 	// Restore shortcut branches.
-	assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, ""))
-	assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, "/tmp/nope"))
+	assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, 0, ""))
+	assert.False(t, s.tryRestoreClusteredWarmupFromDisk(context.Background(), nil, 0, "/tmp/nope"))
 
 	// maybeRebuild: no index and min-interval path should no-op.
 	require.NoError(t, s.maybeRebuildHNSW(context.Background(), 0.1, 1.1, time.Second))
@@ -2739,7 +2739,7 @@ func TestSearchHelpers_ClusterBackfillAndWarmupBranches(t *testing.T) {
 
 	// Invalid/missing IVF-HNSW path should deterministically return false (no panic).
 	svc.hnswIndexPath = filepath.Join(t.TempDir(), "missing_hnsw")
-	require.False(t, svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, svc.hnswIndexPath))
+	require.False(t, svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, svc.clusterGeneration.Load(), svc.hnswIndexPath))
 
 	// With clustering enabled and enough vectors, warmup should run clustering path.
 	require.NoError(t, svc.warmupClusteredStrategy(context.Background(), 2))
@@ -3032,7 +3032,7 @@ func TestSearchHelpers_TryRestoreClusteredWarmupFromDisk_Success(t *testing.T) {
 		1: cluster1,
 	}))
 
-	restored := svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, hnswPath)
+	restored := svc.tryRestoreClusteredWarmupFromDisk(context.Background(), svc.clusterIndex, svc.clusterGeneration.Load(), hnswPath)
 	require.True(t, restored)
 	require.True(t, svc.clusterIndex.IsClustered())
 	require.Equal(t, 2, svc.clusterIndex.NumClusters())

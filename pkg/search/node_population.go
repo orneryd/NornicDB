@@ -276,6 +276,13 @@ func (s *Service) removeVectorArtifactsLocked() error {
 			return err
 		}
 	}
+	// The compressed bundle encodes the retired coordinates. Its store-version
+	// check compares only count and slots, which a replacement can repeat.
+	if dir := ivfpqBundleDir(s.ivfpqPersistenceBasePath(s.vectorIndexPath, s.hnswIndexPath)); dir != "" {
+		if err := security.RemoveAllRootedPath(dir); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	return s.removeSavedGlobalGraphLocked()
 }
 
