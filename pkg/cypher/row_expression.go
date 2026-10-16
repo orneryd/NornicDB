@@ -97,7 +97,7 @@ func (e *StorageExecutor) evaluateRowValueWithCancellation(expr string, values m
 	if !probe.check() {
 		return nil, false, probe.err
 	}
-	value, resolved, err := e.evaluateRowValue(expr, values)
+	value, resolved, err := e.evaluateRowValueProbed(expr, values, probe)
 	if probe.err != nil {
 		return nil, false, probe.err
 	}

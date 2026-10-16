@@ -117,7 +117,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			}
 		}
 	}
-	var grouping cypherValueIndex
+	grouping := cypherValueIndex{probe: probe}
 	ordered := make([]*pipelineAggregateGroup, 0)
 	valid := true
 	values := make([]interface{}, 0, pipelineInitialCapacity(groupingCount, probe))
@@ -423,7 +423,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 		group   *pipelineAggregateGroup
 		ordinal int
 	}
-	var groups cypherValueIndex
+	groups := cypherValueIndex{probe: probe}
 	var ordered []*mergedGroup
 	for _, partition := range partitions {
 		if partition.err != nil {
@@ -601,7 +601,13 @@ func (state *pipelineAggregateState) addWithCancellation(ctx context.Context, ex
 		if state.seen == nil {
 			state.seen = &cypherValueIndex{}
 		}
-		if _, exists := state.seen.add(value); exists {
+		state.seen.probe = probe
+		_, exists := state.seen.add(value)
+		state.seen.probe = nil
+		if probe != nil && probe.err != nil {
+			return false
+		}
+		if exists {
 			return true
 		}
 	}

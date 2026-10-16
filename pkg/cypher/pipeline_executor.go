@@ -4190,7 +4190,7 @@ func deduplicatePipelineRows(ctx context.Context, rows []pipelineRow, columns []
 func deduplicatePipelineRowsWithScopes(ctx context.Context, rows, scopes []pipelineRow, columns []string) ([]pipelineRow, []pipelineRow) {
 	ctx = withPipelineCancellation(ctx)
 	probe := pipelineCancellationForContext(ctx)
-	var seen cypherValueIndex
+	seen := cypherValueIndex{probe: probe}
 	unique := make([]pipelineRow, 0, pipelineInitialCapacity(len(rows), probe))
 	uniqueScopes := make([]pipelineRow, 0, pipelineInitialCapacity(len(rows), probe))
 	values := make([]interface{}, len(columns))
@@ -5092,7 +5092,7 @@ func streamsReturn(ctx context.Context, clauses []pipelineClause, idx int) bool 
 func deduplicatePipelineResultRows(ctx context.Context, rows [][]interface{}) [][]interface{} {
 	ctx = withPipelineCancellation(ctx)
 	probe := pipelineCancellationForContext(ctx)
-	var seen cypherValueIndex
+	seen := cypherValueIndex{probe: probe}
 	unique := make([][]interface{}, 0, pipelineInitialCapacity(len(rows), probe))
 	for _, row := range rows {
 		if !probe.check() {

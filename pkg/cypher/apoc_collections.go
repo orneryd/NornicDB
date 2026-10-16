@@ -1133,7 +1133,7 @@ func apocCollFrequencies(val interface{}) []interface{} {
 func apocCollFrequenciesWithCancellation(val interface{}, probe *pipelineCancellation) []interface{} {
 	list, _ := val.([]interface{})
 	result := make([]interface{}, 0, pipelineInitialCapacity(len(list), probe))
-	var positions cypherValueIndex
+	positions := cypherValueIndex{probe: probe}
 	for _, item := range list {
 		if probe != nil && !probe.check() {
 			return nil

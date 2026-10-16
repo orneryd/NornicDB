@@ -35,7 +35,7 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 	ctx = withPipelineCancellation(ctx)
 	probe := pipelineCancellationForContext(ctx)
 	values := make([]percentileValue, 0, len(rows))
-	var seen cypherValueIndex
+	seen := cypherValueIndex{probe: probe}
 	for _, row := range rows {
 		if !probe.check() {
 			return nil, false

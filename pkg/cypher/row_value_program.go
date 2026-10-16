@@ -45,7 +45,7 @@ import (
 // statement error. frames holds the memo slots of the enclosing list
 // evaluations of this program.
 type rowValueNode interface {
-	eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error)
+	eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error)
 }
 
 // rowValueMemo is a part's value, kept for one list evaluation.
@@ -98,8 +98,18 @@ func rowValueProgramFor(expr string) *rowValueProgram {
 // resolved (an expression this evaluator can't evaluate is not), and the
 // statement error.
 func (e *StorageExecutor) evaluateRowValue(expr string, values map[string]interface{}) (interface{}, bool, error) {
+	return e.evaluateRowValueProbed(expr, values, nil)
+}
+
+// evaluateRowValueProbed is evaluateRowValue under the statement's probe:
+// compiled list loops check it once per element, so a cached program stops
+// at a deadline like the text evaluator does. A nil probe costs nothing.
+func (e *StorageExecutor) evaluateRowValueProbed(expr string, values map[string]interface{}, probe *pipelineCancellation) (interface{}, bool, error) {
 	if program := rowValueProgramFor(expr); program != nil {
-		return program.root.eval(e, values, nil)
+		return program.root.eval(e, values, nil, probe)
+	}
+	if probe != nil {
+		return e.evaluateRowValueTextWithCancellation(expr, values, probe)
 	}
 	return e.evaluateRowValueText(expr, values)
 }
@@ -513,12 +523,12 @@ type rowReduceNode struct {
 	loop            *rowValueLoop
 }
 
-func (n *rowReduceNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	accumulator, resolved, err := n.initial.eval(e, values, frames)
+func (n *rowReduceNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
+	accumulator, resolved, err := n.initial.eval(e, values, frames, probe)
 	if err != nil || !resolved {
 		return nil, false, err
 	}
-	listValue, resolved, err := n.list.eval(e, values, frames)
+	listValue, resolved, err := n.list.eval(e, values, frames, probe)
 	if err != nil || !resolved {
 		return nil, false, err
 	}
@@ -527,8 +537,13 @@ func (n *rowReduceNode) eval(e *StorageExecutor, values map[string]interface{}, 
 	}
 	scope, inner := rowLoopScope(values, frames, n.loop)
 	return rowReduceLoop(n.form, accumulator, listValue, scope,
-		func() (interface{}, bool, error) { return n.step.eval(e, scope, inner) },
-		func() (interface{}, bool, error) { return n.predicate.eval(e, scope, inner) })
+		func() (interface{}, bool, error) {
+			if err := rowLoopCheck(probe); err != nil {
+				return nil, false, err
+			}
+			return n.step.eval(e, scope, inner, probe)
+		},
+		func() (interface{}, bool, error) { return n.predicate.eval(e, scope, inner, probe) })
 }
 
 // compileCase compiles a CASE expression as evaluateRowCaseExpression
@@ -568,7 +583,7 @@ type rowCaseNode struct {
 	elseResult rowValueNode
 }
 
-func (n *rowCaseNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
+func (n *rowCaseNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
 	return runCaseExpression(n.parsed, rowIsCypher25(values), func(part caseValuePart, i int, text string) (interface{}, bool, error) {
 		var node rowValueNode
 		switch part {
@@ -581,7 +596,7 @@ func (n *rowCaseNode) eval(e *StorageExecutor, values map[string]interface{}, fr
 		case caseElse:
 			node = n.elseResult
 		}
-		value, ok, err := node.eval(e, values, frames)
+		value, ok, err := node.eval(e, values, frames, probe)
 		if part == caseWhen && !n.parsed.isSimple && err == nil && !ok {
 			ctx := rowStatementContextOrBackground(values)
 			return e.evaluateRowPredicate(ctx, text, values), true, getExpressionFailure(ctx)
@@ -593,7 +608,7 @@ func (n *rowCaseNode) eval(e *StorageExecutor, values map[string]interface{}, fr
 // rowTextNode evaluates its text with evaluateRowValueText.
 type rowTextNode struct{ text string }
 
-func (n *rowTextNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
+func (n *rowTextNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
 	return e.evaluateRowValueText(n.text, values)
 }
 
@@ -603,22 +618,22 @@ type rowBoundNode struct {
 	inner rowValueNode
 }
 
-func (n *rowBoundNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
+func (n *rowBoundNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
 	if value, ok := values[n.text]; ok {
 		return value, true, nil
 	}
-	return n.inner.eval(e, values, frames)
+	return n.inner.eval(e, values, frames, probe)
 }
 
 type rowUnresolvedNode struct{}
 
-func (rowUnresolvedNode) eval(*StorageExecutor, map[string]interface{}, [][]rowValueMemo) (interface{}, bool, error) {
+func (rowUnresolvedNode) eval(*StorageExecutor, map[string]interface{}, [][]rowValueMemo, *pipelineCancellation) (interface{}, bool, error) {
 	return nil, false, nil
 }
 
 type rowConstNode struct{ value interface{} }
 
-func (n rowConstNode) eval(*StorageExecutor, map[string]interface{}, [][]rowValueMemo) (interface{}, bool, error) {
+func (n rowConstNode) eval(*StorageExecutor, map[string]interface{}, [][]rowValueMemo, *pipelineCancellation) (interface{}, bool, error) {
 	return n.value, true, nil
 }
 
@@ -626,14 +641,14 @@ func (n rowConstNode) eval(*StorageExecutor, map[string]interface{}, [][]rowValu
 // is the caller's to change.
 type rowLiteralNode struct{ text string }
 
-func (n *rowLiteralNode) eval(*StorageExecutor, map[string]interface{}, [][]rowValueMemo) (interface{}, bool, error) {
+func (n *rowLiteralNode) eval(*StorageExecutor, map[string]interface{}, [][]rowValueMemo, *pipelineCancellation) (interface{}, bool, error) {
 	value, _ := parseLiteralValueFromComputedRow(n.text)
 	return value, true, nil
 }
 
 type rowEmptyListNode struct{}
 
-func (rowEmptyListNode) eval(*StorageExecutor, map[string]interface{}, [][]rowValueMemo) (interface{}, bool, error) {
+func (rowEmptyListNode) eval(*StorageExecutor, map[string]interface{}, [][]rowValueMemo, *pipelineCancellation) (interface{}, bool, error) {
 	return []interface{}{}, true, nil
 }
 
@@ -644,7 +659,7 @@ type rowPropertyChainNode struct {
 	literal               bool
 }
 
-func (n *rowPropertyChainNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
+func (n *rowPropertyChainNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
 	if value, ok := values[n.text]; ok && !n.literal {
 		return value, true, nil
 	}
@@ -663,7 +678,7 @@ func (n *rowPropertyChainNode) eval(e *StorageExecutor, values map[string]interf
 // the context evaluator's value (evaluateRowFallback).
 type rowFallbackNode struct{ text string }
 
-func (n *rowFallbackNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
+func (n *rowFallbackNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
 	return e.rowValueFallback(n.text, values)
 }
 
@@ -689,9 +704,9 @@ func (e *StorageExecutor) rowValueFallback(expr string, values map[string]interf
 
 type rowListNode struct{ items []rowValueNode }
 
-func (n *rowListNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
+func (n *rowListNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
 	return rowListLiteral(len(n.items), func(i int) (interface{}, bool, error) {
-		return n.items[i].eval(e, values, frames)
+		return n.items[i].eval(e, values, frames, probe)
 	})
 }
 
@@ -700,9 +715,9 @@ type rowLogicalNode struct {
 	operands []rowValueNode
 }
 
-func (n *rowLogicalNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
+func (n *rowLogicalNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
 	value, ok, err := n.plan.evaluate(func(index int) (interface{}, bool, error) {
-		return n.operands[index].eval(e, values, frames)
+		return n.operands[index].eval(e, values, frames, probe)
 	})
 	if err != nil || !ok {
 		return nil, false, err
@@ -712,9 +727,9 @@ func (n *rowLogicalNode) eval(e *StorageExecutor, values map[string]interface{},
 
 type rowDeferredOperandNode struct{ operand rowValueNode }
 
-func (n *rowDeferredOperandNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
+func (n *rowDeferredOperandNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
 	return deferredRowOperand(values, func(scope map[string]interface{}) (interface{}, bool, error) {
-		return n.operand.eval(e, scope, frames)
+		return n.operand.eval(e, scope, frames, probe)
 	})
 }
 
@@ -725,9 +740,9 @@ type rowComparisonNode struct {
 	normalizeIdentity bool
 }
 
-func (n *rowComparisonNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
+func (n *rowComparisonNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
 	return evaluateScannedComparisonChain(n.text, &n.scan, n.normalizeIdentity, func(index int, _ string) (interface{}, bool, error) {
-		return n.operands[index].eval(e, values, frames)
+		return n.operands[index].eval(e, values, frames, probe)
 	}, compareCypherPredicateValue, rowIsCypher25(values))
 }
 
@@ -736,8 +751,8 @@ type rowNullTestNode struct {
 	notNull bool
 }
 
-func (n *rowNullTestNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	value, ok, err := n.operand.eval(e, values, frames)
+func (n *rowNullTestNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
+	value, ok, err := n.operand.eval(e, values, frames, probe)
 	if err != nil {
 		return nil, false, err
 	}
@@ -753,12 +768,12 @@ type rowMembershipNode struct {
 	negated          bool
 }
 
-func (n *rowMembershipNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	needle, leftOK, err := n.needle.eval(e, values, frames)
+func (n *rowMembershipNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
+	needle, leftOK, err := n.needle.eval(e, values, frames, probe)
 	if err != nil {
 		return nil, false, err
 	}
-	haystack, rightOK, err := n.haystack.eval(e, values, frames)
+	haystack, rightOK, err := n.haystack.eval(e, values, frames, probe)
 	if err != nil {
 		return nil, false, err
 	}
@@ -777,12 +792,12 @@ type rowStringPredicateNode struct {
 	match       func(string, string) bool
 }
 
-func (n *rowStringPredicateNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	leftValue, leftOK, err := n.left.eval(e, values, frames)
+func (n *rowStringPredicateNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
+	leftValue, leftOK, err := n.left.eval(e, values, frames, probe)
 	if err != nil {
 		return nil, false, err
 	}
-	rightValue, rightOK, err := n.right.eval(e, values, frames)
+	rightValue, rightOK, err := n.right.eval(e, values, frames, probe)
 	if err != nil {
 		return nil, false, err
 	}
@@ -798,12 +813,12 @@ type rowArithmeticNode struct {
 	operator            byte
 }
 
-func (n *rowArithmeticNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	leftValue, leftOK, err := n.left.eval(e, values, frames)
+func (n *rowArithmeticNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
+	leftValue, leftOK, err := n.left.eval(e, values, frames, probe)
 	if err != nil {
 		return nil, false, err
 	}
-	rightValue, rightOK, err := n.right.eval(e, values, frames)
+	rightValue, rightOK, err := n.right.eval(e, values, frames, probe)
 	if err != nil {
 		return nil, false, err
 	}
@@ -826,8 +841,8 @@ type rowPropertyNode struct {
 	chain string
 }
 
-func (n *rowPropertyNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	base, ok, err := n.base.eval(e, values, frames)
+func (n *rowPropertyNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
+	base, ok, err := n.base.eval(e, values, frames, probe)
 	if err != nil {
 		return nil, false, err
 	}
@@ -848,7 +863,7 @@ type rowEndpointNode struct {
 	text, function, variable string
 }
 
-func (n *rowEndpointNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
+func (n *rowEndpointNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
 	if value, handled, err := e.rowRelationshipEndpoint(n.function, n.variable, values); handled || err != nil {
 		return value, handled, err
 	}
@@ -862,8 +877,8 @@ type rowUnaryFunctionNode struct {
 	operand  rowValueNode
 }
 
-func (n *rowUnaryFunctionNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	value, resolved, err := n.operand.eval(e, values, frames)
+func (n *rowUnaryFunctionNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
+	value, resolved, err := n.operand.eval(e, values, frames, probe)
 	if err != nil {
 		return nil, false, err
 	}
@@ -872,11 +887,14 @@ func (n *rowUnaryFunctionNode) eval(e *StorageExecutor, values map[string]interf
 	}
 	switch n.function {
 	case "size":
-		return evaluateCypherSize(value)
+		return evaluateCypherSizeWithCancellation(value, probe)
 	case "type":
 		return rowTypeOf(value)
 	}
-	result, err := evaluateListAccessFunction(n.function, value)
+	result, err := evaluateListAccessFunctionWithCancellation(n.function, value, probe)
+	if probe != nil && probe.err != nil {
+		return nil, false, probe.err
+	}
 	if err != nil {
 		return nil, false, err
 	}
@@ -885,9 +903,9 @@ func (n *rowUnaryFunctionNode) eval(e *StorageExecutor, values map[string]interf
 
 type rowCoalesceNode struct{ operands []rowValueNode }
 
-func (n *rowCoalesceNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
+func (n *rowCoalesceNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
 	return cypherfn.Coalesce(len(n.operands), func(index int) (interface{}, bool, error) {
-		return n.operands[index].eval(e, values, frames)
+		return n.operands[index].eval(e, values, frames, probe)
 	})
 }
 
@@ -898,10 +916,10 @@ type rowMemoNode struct {
 	inner       rowValueNode
 }
 
-func (n *rowMemoNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
+func (n *rowMemoNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
 	memo := &frames[n.depth][n.slot]
 	if !memo.done {
-		memo.value, memo.ok, memo.err = n.inner.eval(e, values, frames[:n.depth])
+		memo.value, memo.ok, memo.err = n.inner.eval(e, values, frames[:n.depth], probe)
 		memo.done = true
 	}
 	return memo.value, memo.ok, memo.err
@@ -931,8 +949,8 @@ type rowQuantifierNode struct {
 	loop               *rowValueLoop
 }
 
-func (n *rowQuantifierNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	listValue, ok, err := n.list.eval(e, values, frames)
+func (n *rowQuantifierNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
+	listValue, ok, err := n.list.eval(e, values, frames, probe)
 	if err != nil {
 		return nil, false, err
 	}
@@ -943,8 +961,15 @@ func (n *rowQuantifierNode) eval(e *StorageExecutor, values map[string]interface
 		return nil, true, nil
 	}
 	scope, inner := rowLoopScope(values, frames, n.loop)
-	return rowQuantifierLoop(n.function, coerceToUnwindItems(listValue), func(item interface{}) { scope[n.variable] = item }, func() (interface{}, bool, error) {
-		return n.predicate.eval(e, scope, inner)
+	items := coerceToUnwindItemsWithCancellation(listValue, probe)
+	if probe != nil && probe.err != nil {
+		return nil, false, probe.err
+	}
+	return rowQuantifierLoop(n.function, items, func(item interface{}) { scope[n.variable] = item }, func() (interface{}, bool, error) {
+		if err := rowLoopCheck(probe); err != nil {
+			return nil, false, err
+		}
+		return n.predicate.eval(e, scope, inner, probe)
 	})
 }
 
@@ -957,8 +982,8 @@ type rowComprehensionNode struct {
 	loop                  *rowValueLoop
 }
 
-func (n *rowComprehensionNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	listValue, ok, err := n.list.eval(e, values, frames)
+func (n *rowComprehensionNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo, probe *pipelineCancellation) (interface{}, bool, error) {
+	listValue, ok, err := n.list.eval(e, values, frames, probe)
 	if err != nil {
 		return nil, false, err
 	}
@@ -974,11 +999,34 @@ func (n *rowComprehensionNode) eval(e *StorageExecutor, values map[string]interf
 	scope, inner := rowLoopScope(values, frames, n.loop)
 	var holds func() (bool, bool, error)
 	if n.predicate != nil {
-		holds = func() (bool, bool, error) { return rowConditionHolds(n.predicate.eval(e, scope, inner)) }
+		holds = func() (bool, bool, error) {
+			if err := rowLoopCheck(probe); err != nil {
+				return false, false, err
+			}
+			return rowConditionHolds(n.predicate.eval(e, scope, inner, probe))
+		}
 	}
 	var project func() (interface{}, bool, error)
 	if n.projection != nil {
-		project = func() (interface{}, bool, error) { return n.projection.eval(e, scope, inner) }
+		project = func() (interface{}, bool, error) {
+			if err := rowLoopCheck(probe); err != nil {
+				return nil, false, err
+			}
+			return n.projection.eval(e, scope, inner, probe)
+		}
 	}
-	return rowComprehensionLoop(coerceToUnwindItems(listValue), func(item interface{}) { scope[n.variable] = item }, holds, project)
+	items := coerceToUnwindItemsWithCancellation(listValue, probe)
+	if probe != nil && probe.err != nil {
+		return nil, false, probe.err
+	}
+	return rowComprehensionLoop(items, func(item interface{}) { scope[n.variable] = item }, holds, project)
+}
+
+// rowLoopCheck is a compiled list loop's per-element cancellation check:
+// the probe's error once the statement is cancelled, nil otherwise.
+func rowLoopCheck(probe *pipelineCancellation) error {
+	if probe != nil && !probe.check() {
+		return probe.err
+	}
+	return nil
 }

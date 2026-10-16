@@ -632,10 +632,10 @@ func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *ro
 // Values and errors stay explicit inside a junction until its logical fold decides.
 func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) bool {
 	probe, _ := ctx.Value(pipelineCancellationKey{}).(*pipelineCancellation)
-	var local pipelineCancellation
+	// Only a cancellable context needs a probe; a never-cancelled one stays
+	// allocation-free (#728).
 	if probe == nil && ctx.Done() != nil {
-		local.ctx = ctx
-		probe = &local
+		probe = &pipelineCancellation{ctx: ctx}
 	}
 	return e.evaluateRowPredicatePartScopeWithCancellation(ctx, part, scope, memberships, probe)
 }

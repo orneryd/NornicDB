@@ -246,3 +246,10 @@ func (probe *pipelineCancellation) sort(values interface{}, less func(int, int) 
 	}
 	return probe.check()
 }
+
+// contextPipelineProbe is the statement probe ctx already carries, or nil:
+// it never allocates, so allocation-free evaluators can borrow it.
+func contextPipelineProbe(ctx context.Context) *pipelineCancellation {
+	probe, _ := ctx.Value(pipelineCancellationKey{}).(*pipelineCancellation)
+	return probe
+}

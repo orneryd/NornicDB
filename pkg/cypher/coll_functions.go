@@ -87,7 +87,7 @@ func fnCollDistinct(ctx cypherfn.Context, args []string) (interface{}, error) {
 		return nil, err
 	}
 	probe := functionPipelineProbe(ctx)
-	var seen cypherValueIndex
+	seen := cypherValueIndex{probe: probe}
 	out := make([]interface{}, 0, pipelineInitialCapacity(len(list), probe))
 	for _, item := range list {
 		if probe != nil && !probe.check() {

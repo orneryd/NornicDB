@@ -219,7 +219,7 @@ func (o *rowPredicateOperand) evaluate(e *StorageExecutor, ctx context.Context, 
 		value, ok := e.rowPredicateOperand(ctx, o.text, values)
 		return value, ok, getExpressionFailure(ctx)
 	}
-	return o.value.eval(e, values, nil)
+	return o.value.eval(e, values, nil, contextPipelineProbe(ctx))
 }
 
 func (o *rowPredicateOperand) resolve(e *StorageExecutor, ctx context.Context, values map[string]interface{}) (interface{}, bool) {
@@ -268,7 +268,7 @@ type rowPredicateStrictNode struct {
 }
 
 func (n *rowPredicateStrictNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	value, evaluated, err := n.value.eval(e, values, nil)
+	value, evaluated, err := n.value.eval(e, values, nil, contextPipelineProbe(ctx))
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false
@@ -354,12 +354,12 @@ type rowPredicateMembershipNode struct {
 }
 
 func (n *rowPredicateMembershipNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	needle, leftOK, err := n.needle.eval(e, values, nil)
+	needle, leftOK, err := n.needle.eval(e, values, nil, contextPipelineProbe(ctx))
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false
 	}
-	haystack, rightOK, err := n.haystack.eval(e, values, nil)
+	haystack, rightOK, err := n.haystack.eval(e, values, nil, contextPipelineProbe(ctx))
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false

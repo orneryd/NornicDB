@@ -1838,7 +1838,7 @@ func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher strin
 	var combinedResult *ExecuteResult
 	ctx = withPipelineCancellation(ctx)
 	probe := pipelineCancellationForContext(ctx)
-	var seen cypherValueIndex // Shared equivalence for UNION and DISTINCT.
+	seen := cypherValueIndex{probe: probe} // Shared equivalence for UNION and DISTINCT.
 
 	for i, query := range queries {
 		if !probe.poll() {
