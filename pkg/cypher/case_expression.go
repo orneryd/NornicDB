@@ -695,12 +695,12 @@ func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr strin
 		return nil
 	}
 	value, _, err := runCaseExpression(parsed, cypherVersionFromContext(ctx) == "25", func(part caseValuePart, _ int, text string) (interface{}, bool, error) {
-		if part == caseWhen && !parsed.isSimple {
-			return caseConditionScope(ctx, text, func(ctx context.Context) (interface{}, bool, error) {
+		return localSubqueryScope(ctx, text, func(ctx context.Context) (interface{}, bool, error) {
+			if part == caseWhen && !parsed.isSimple {
 				return e.conditionValue(ctx, text, nodes, rels), true, nil
-			})
-		}
-		return e.evaluateExpressionWithContextFull(ctx, text, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), true, nil
+			}
+			return e.evaluateExpressionWithContextFull(ctx, text, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), true, nil
+		})
 	})
 	if err != nil {
 		recordExpressionFailure(ctx, err)
