@@ -31,6 +31,7 @@ type commitWriter struct {
 	db                  *managedBadgerDB
 	large               *largeCommit
 	pendingEmbeddingIDs map[NodeID]struct{}
+	notification        *commitNotification
 	// prev is the batch most recently written, whose counters the next
 	// batch takes over.
 	prev *badger.Txn
@@ -55,7 +56,7 @@ func (cw *commitWriter) commitBatch(txn *badger.Txn) error {
 		if cw.beforeLarge != nil {
 			cw.beforeLarge()
 		}
-		lc, err := cw.db.beginLargeCommit()
+		lc, err := cw.db.beginLargeCommit(cw.reserveNotification)
 		if err != nil {
 			return err
 		}
@@ -110,7 +111,7 @@ func (cw *commitWriter) finish() error {
 		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
-		if err := cw.db.commit(cw.txn); err != nil {
+		if err := cw.db.commit(cw.txn, cw.reserveNotification); err != nil {
 			return err
 		}
 		cw.publishPendingEmbeddingAdds()
@@ -124,6 +125,10 @@ func (cw *commitWriter) finish() error {
 		cw.publishPendingEmbeddingAdds()
 	}
 	return err
+}
+
+func (cw *commitWriter) reserveNotification() {
+	cw.engine.reserveCommitNotification(cw.notification)
 }
 
 // abort rolls back the batches a large commit already wrote. The open batch

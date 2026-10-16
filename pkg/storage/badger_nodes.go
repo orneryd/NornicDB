@@ -31,11 +31,15 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return "", barrierErr
 	}
-	defer release()
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 	if node == nil {
 		return "", ErrInvalidData
 	}
@@ -71,7 +75,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	writeBody := func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
 			return err
@@ -127,7 +131,16 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		}
 		// Create-only path: primary key IS the current head body.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
-	})
+	}
+	err := b.commitEngineWrite(func(cw *commitWriter) error {
+		if err := cw.writeOnce(writeBody); err != nil {
+			return err
+		}
+		if persistSeparateEmbeddings {
+			return cw.replaceEmbeddingKeys(node.ID, embeddingsToPersist)
+		}
+		return nil
+	}, notification)
 	if err != nil {
 		releaseUniqueLocks()
 		return "", err
@@ -140,16 +153,13 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		}
 	}
 	releaseUniqueLocks()
-	if persistSeparateEmbeddings {
-		if err := b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist); err != nil {
-			return "", err
-		}
-	}
 
+	node.embeddingKeysPresent = persistSeparateEmbeddings
+	node.embeddingKeysKnown = true
 	b.cacheOnNodeCreated(node)
 
 	// Notify listeners (e.g., search service) to index the new node
-	b.notifyNodeCreated(node)
+	notification.ops = []Operation{{Type: OpCreateNode, Node: node}}
 
 	return node.ID, nil
 }
@@ -344,11 +354,15 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer release()
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 	if node == nil {
 		return ErrInvalidData
 	}
@@ -384,7 +398,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	writeBody := func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
 			return err
@@ -407,7 +421,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 				return err
 			}
 
-			// Persist separate embeddings in bounded txns after this txn commits.
+			// The commit writer publishes the body and separate chunks together.
 			if embeddingsSeparate {
 				persistSeparateEmbeddings = true
 				embeddingsToPersist = node.ChunkEmbeddings
@@ -496,21 +510,14 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			return err
 		}
 
-		// If embeddings are stored separately, write them after commit in bounded txns.
+		// Separate chunks join this body's atomic commit, including large commits.
 		if embeddingsSeparate {
 			persistSeparateEmbeddings = true
 			embeddingsToPersist = node.ChunkEmbeddings
-		} else {
+		} else if existingNode.embeddingKeysPresent {
 			// Node fits inline - clean up any old separately stored embeddings
-			embPrefix := embeddingPrefix(node.ID)
-			opts := badgerIteratorOptions()
-			opts.Prefix = embPrefix
-			it := txn.NewIterator(opts)
-			defer it.Close()
-			for it.Rewind(); it.Valid(); it.Next() {
-				if err := txn.Delete(it.Item().KeyCopy(nil)); err != nil {
-					return localizedError(localization.StorageClientNodeEmbeddingChunkDeleteFailed(err), err)
-				}
+			if err := deleteEmbeddingKeysInTxn(txn, node.ID); err != nil {
+				return localizedError(localization.StorageClientNodeEmbeddingChunkDeleteFailed(err), err)
 			}
 		}
 
@@ -570,13 +577,24 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		// Primary key now holds the new head body; archive of old body
 		// into mvccNodeVersionKey(oldHead.Version) happened above.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
-	})
-	if err == nil && persistSeparateEmbeddings {
-		err = b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist)
 	}
+	err := b.commitEngineWrite(func(cw *commitWriter) error {
+		if err := cw.writeOnce(writeBody); err != nil {
+			return err
+		}
+		if persistSeparateEmbeddings {
+			return cw.replaceEmbeddingKeys(node.ID, embeddingsToPersist)
+		}
+		return nil
+	}, notification)
 
 	// Update cache on successful operation
 	if err == nil {
+		node.embeddingKeysPresent = persistSeparateEmbeddings
+		node.embeddingKeysKnown = true
+		if existingNode != nil && existingNode.embeddingKeysPresent {
+			b.embeddingSidecarWrites.Delete(node.ID)
+		}
 		if wasInsert {
 			// Register unique constraint values
 			for _, label := range node.Labels {
@@ -587,7 +605,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 
 			b.cacheOnNodeCreated(node)
 			// Notify listeners about the new node
-			b.notifyNodeCreated(node)
+			notification.ops = []Operation{{Type: OpCreateNode, Node: node}}
 		} else {
 			if existingNode != nil {
 				for _, label := range existingNode.Labels {
@@ -604,7 +622,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 
 			b.cacheOnNodeUpdatedWithOldNode(node, existingNode)
 			// Notify listeners to re-index the updated node
-			b.notifyNodeUpdated(node)
+			notification.ops = []Operation{{Type: OpUpdateNode, Node: node}}
 		}
 	}
 
@@ -614,42 +632,12 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 // replaceSeparateEmbeddingChunks replaces a node's separately stored
 // embedding chunks with embeddings as one atomic commit of any size: the old
 // chunks' deletions come first, then the new chunks, each key its own unit
-// (withUpdateUnits). Readers see the old chunks or the new ones, never a mix
+// (commitWriter). Readers see the old chunks or the new ones, never a mix
 // (#703).
 func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings [][]float32) error {
-	prefix := embeddingPrefix(nodeID)
-	var units []func(txn *badger.Txn) error
-	if err := b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
-			key := it.Item().KeyCopy(nil)
-			units = append(units, func(txn *badger.Txn) error { return txn.Delete(key) })
-		}
-		return nil
-	}); err != nil {
-		return localizedError(localization.StorageClientNodeEmbeddingChunksDeleteFailed(err), err)
-	}
-	for i, emb := range embeddings {
-		kvs, err := buildEmbeddingChunkWriteKVs(nodeID, i, emb)
-		if err != nil {
-			return err
-		}
-		chunkIndex := i
-		for _, kv := range kvs {
-			kv := kv
-			units = append(units, func(txn *badger.Txn) error {
-				if err := txn.Set(kv.key, kv.val); err != nil {
-					return localizedError(localization.StorageClientNodeEmbeddingChunkStoreFailed(chunkIndex, err), err)
-				}
-				return nil
-			})
-		}
-	}
-	if len(units) == 0 {
-		return nil
-	}
-	return b.withUpdateUnits(units)
+	return b.commitEngineWrite(func(cw *commitWriter) error {
+		return cw.replaceEmbeddingKeys(nodeID, embeddings)
+	})
 }
 
 // DeleteNode removes a node and all its edges.
@@ -661,11 +649,15 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	release, barrierErr := b.beginWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer release()
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 	if id == "" {
 		return ErrInvalidID
 	}
@@ -680,7 +672,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	var deletedEdges []*Edge
 	var deletedNode *Node
 
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	err := b.withNotifyingUpdate(func(txn *badger.Txn) error {
 		version, allocErr := b.allocateMVCCVersion(txn, namespaceForNodeID(id), time.Now())
 		if allocErr != nil {
 			return allocErr
@@ -757,7 +749,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 			}
 		}
 		return nil
-	})
+	}, notification)
 
 	// Invalidate cache on successful delete
 	if err == nil {
@@ -780,12 +772,12 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		}
 
 		// Notify listeners about deleted edges
-		for _, edgeID := range deletedEdgeIDs {
-			b.notifyEdgeDeleted(edgeID)
+		if deletedNode != nil && deletedNode.embeddingKeysPresent {
+			b.embeddingSidecarWrites.Delete(id)
 		}
 
 		// Notify listeners (e.g., search service) to remove from indexes
-		b.notifyNodeDeleted(id)
+		notification.ops = []Operation{{Type: OpDeleteNode, NodeID: id, DeletedEdgeIDs: deletedEdgeIDs}}
 	}
 
 	return err

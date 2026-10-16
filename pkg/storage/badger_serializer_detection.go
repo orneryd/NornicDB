@@ -43,7 +43,9 @@ func detectStoredSerializer(db badgerKV) (detectedSerializer, bool, error) {
 		prefixes := [][]byte{
 			{prefixNode},
 			{prefixEdge},
-			{prefixEmbedding},
+		}
+		for _, family := range embeddingKeyFamilies {
+			prefixes = append(prefixes, []byte{family})
 		}
 
 		for _, prefix := range prefixes {

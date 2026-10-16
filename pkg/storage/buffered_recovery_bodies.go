@@ -10,7 +10,7 @@ import (
 // It runs only during WAL recovery; ordinary in-memory flushes already own typed
 // operations. Read prior bodies before applying raw writes/deletes: node deletion
 // also needs the committed relationship bodies for adjacency/history.
-func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *bufferedCommit) error {
+func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *bufferedCommit, references embeddingReferenceView) error {
 	states := newCommitStates(commit.ops)
 	read := func(key []byte) ([]byte, error) {
 		item, err := txn.Get(key)
@@ -69,6 +69,7 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 			return fmt.Errorf("recover final node %s: %w", id, err)
 		}
 		readFinal := embeddingRecordReader{txn: txn, commit: commit}
+		_, readFinal.rangeReplaced = references.replaced[id]
 		if err := restoreBufferedNodeVectors(node, id, readFinal); err != nil {
 			return err
 		}
@@ -150,7 +151,9 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 // transaction. Legacy operation JSON omits all vectors and embedding metadata.
 func restoreBufferedNodeVectors(node *Node, id NodeID, read embeddingRecordReader) error {
 	fresh := false
-	data, err := read.read(embeddingMetaKey(id), nil)
+	data, _, err := readEmbeddingRecord(id, reservedEmbeddingMetaChunkIndex, func(key []byte) ([]byte, error) {
+		return read.read(key, nil)
+	})
 	if err != nil && err != badger.ErrKeyNotFound {
 		return err
 	}

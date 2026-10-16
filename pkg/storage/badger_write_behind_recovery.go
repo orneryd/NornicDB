@@ -4,6 +4,26 @@ import (
 	"fmt"
 )
 
+// bufferedCommit restores the same range and point-write intent for both
+// startup recovery and individual WAL entry replay.
+func (data *WALBufferedCommitData) bufferedCommit() bufferedCommit {
+	c := bufferedCommit{
+		recovered: true,
+		namespace: data.Namespace, txID: data.TxID, ops: data.Ops,
+		writes: data.Writes, version: data.Version,
+		counterNodeMax: data.NodeMax, counterEdgeMax: data.EdgeMax,
+		hasCounters: data.HasCounters, propKeyDrain: data.propKeyDrain(),
+		embeddingRanges: data.EmbeddingRanges,
+	}
+	if len(data.Deletes) > 0 {
+		c.deletes = make(map[string]bool, len(data.Deletes))
+		for _, key := range data.Deletes {
+			c.deletes[key] = true
+		}
+	}
+	return c
+}
+
 // RecoverBufferedCommits replays write-behind commits that were acknowledged
 // into the WAL but never reached Badger before a crash lost the in-memory
 // buffer. It runs at engine open, after both the engine and the WAL are
@@ -53,24 +73,7 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 		if exists {
 			return nil // already applied to Badger
 		}
-		c := bufferedCommit{
-			recovered:      true,
-			namespace:      data.Namespace,
-			txID:           data.TxID,
-			ops:            data.Ops,
-			writes:         data.Writes,
-			version:        data.Version,
-			counterNodeMax: data.NodeMax,
-			counterEdgeMax: data.EdgeMax,
-			hasCounters:    data.HasCounters,
-			propKeyDrain:   data.propKeyDrain(),
-		}
-		if len(data.Deletes) > 0 {
-			c.deletes = make(map[string]bool, len(data.Deletes))
-			for _, key := range data.Deletes {
-				c.deletes[key] = true
-			}
-		}
+		c := data.bufferedCommit()
 		pending = append(pending, c)
 		return nil
 	})

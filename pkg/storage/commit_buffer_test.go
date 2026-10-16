@@ -370,3 +370,35 @@ func (k bufferedOpKind) String() string {
 	}
 	return "unknown"
 }
+
+// A long claimed apply must finish before Flush reports success. The wait is
+// deliberately longer than the error-retry window that used to return nil.
+func TestWriteBehindBuffer_FlushWaitsForClaimedGeneration(t *testing.T) {
+	entered, resume := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(resume) }) }
+	w := NewWriteBehindBuffer(time.Hour, 100, func(*CommitBuffer) error { close(entered); <-resume; return nil })
+	defer w.Close()
+	defer unblock()
+	w.AppendNode(&Node{ID: "test:claimed"})
+	w.rotate()
+	applied := make(chan struct{})
+	go func() { w.drainOne(); close(applied) }()
+	<-entered
+	flushed := make(chan error, 1)
+	go func() { flushed <- w.Flush() }()
+	select {
+	case err := <-flushed:
+		t.Fatalf("Flush returned before the claimed generation finished: %v", err)
+	case <-time.After(3 * time.Second):
+	}
+	unblock()
+	select {
+	case err := <-flushed:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Flush did not finish after apply")
+	}
+	<-applied
+	require.Zero(t, w.PendingOps())
+}

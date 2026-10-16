@@ -51,6 +51,9 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 		if tx.nodeHasEmbeddingSidecar(txn, node.ID) {
 			return
 		}
+		if txn != nil {
+			node.embeddingKeysKnown = true
+		}
 		sizes[index] = nodeBytes
 		bytes += nodeBytes
 	}
@@ -116,7 +119,7 @@ func (tx *BadgerTransaction) nodeHasEmbeddingSidecar(txn *badger.Txn, nodeID Nod
 	if txn == nil {
 		return false
 	}
-	_, err := txn.Get(embeddingMetaKey(nodeID))
+	_, _, err := getEmbeddingItem(txn, nodeID, reservedEmbeddingMetaChunkIndex)
 	return err == nil
 }
 
@@ -128,6 +131,9 @@ func (tx *BadgerTransaction) cacheSnapshotPrefixNodeByIDLocked(txn *badger.Txn, 
 	// Sidecar-bearing nodes must be re-read so embedding hydration runs.
 	if tx.nodeHasEmbeddingSidecar(txn, node.ID) {
 		return
+	}
+	if txn != nil {
+		node.embeddingKeysKnown = true
 	}
 	tx.cacheValidatedSnapshotPrefixNodeByIDLocked(node, nodeBytes)
 }
