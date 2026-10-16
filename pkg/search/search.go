@@ -103,6 +103,7 @@ import (
 	"log/slog"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -164,6 +165,9 @@ type bm25Index interface {
 	SearchAllowed(query string, limit int, allowed func(docID string) bool) []indexResult
 	PhraseSearch(query string, limit int) []indexResult
 	GetDocument(id string) (string, bool)
+	// forEachDocument visits the installed population under backend read
+	// ownership. The visitor must not reenter or mutate the fulltext index.
+	forEachDocument(visit func(id, text string))
 	LexicalSeedDocIDs(maxTerms, perTerm int) []string
 	LexicalSeedHints(maxTerms, perTerm int) []LexicalSeedHint
 	Clear()
@@ -171,6 +175,7 @@ type bm25Index interface {
 	Save(path string) error
 	SaveNoCopy(path string) error
 	Load(path string) error
+	loadSnapshot(path string) (bool, error)
 	IsDirty() bool
 	IndexBatch(entries []FulltextBatchEntry)
 }
@@ -220,6 +225,7 @@ func (disabledBM25Index) SearchAllowed(string, int, func(string) bool) []indexRe
 }
 func (disabledBM25Index) PhraseSearch(string, int) []indexResult      { return nil }
 func (disabledBM25Index) GetDocument(string) (string, bool)           { return "", false }
+func (disabledBM25Index) forEachDocument(func(string, string))        {}
 func (disabledBM25Index) LexicalSeedDocIDs(int, int) []string         { return nil }
 func (disabledBM25Index) LexicalSeedHints(int, int) []LexicalSeedHint { return nil }
 func (disabledBM25Index) Clear()                                      {}
@@ -227,6 +233,7 @@ func (disabledBM25Index) Count() int                                  { return 0
 func (disabledBM25Index) Save(string) error                           { return nil }
 func (disabledBM25Index) SaveNoCopy(string) error                     { return nil }
 func (disabledBM25Index) Load(string) error                           { return nil }
+func (disabledBM25Index) loadSnapshot(string) (bool, error)            { return false, nil }
 func (disabledBM25Index) IsDirty() bool                               { return false }
 func (disabledBM25Index) IndexBatch([]FulltextBatchEntry)             {}
 
@@ -359,17 +366,19 @@ func (r *SearchResponse) ResponseTrailers() map[string]string {
 
 // SearchMetrics contains timing and statistics.
 type SearchMetrics struct {
-	VectorSearchTimeMs     int `json:"vector_search_time_ms"`
-	BM25SearchTimeMs       int `json:"bm25_search_time_ms"`
-	FusionTimeMs           int `json:"fusion_time_ms"`
-	TotalTimeMs            int `json:"total_time_ms"`
-	VectorCandidates       int `json:"vector_candidates"`
-	VectorRawCandidates    int `json:"vector_raw_candidates"`
-	VectorOverfetchRetries int `json:"vector_overfetch_retries"`
-	BM25Candidates         int `json:"bm25_candidates"`
-	BM25RawCandidates      int `json:"bm25_raw_candidates"`
-	BM25OverfetchRetries   int `json:"bm25_overfetch_retries"`
-	FusedCandidates        int `json:"fused_candidates"`
+	// VectorSearchMethod identifies the backend that actually answered, including exact search during construction.
+	VectorSearchMethod     string `json:"vector_search_method,omitempty"`
+	VectorSearchTimeMs     int    `json:"vector_search_time_ms"`
+	BM25SearchTimeMs       int    `json:"bm25_search_time_ms"`
+	FusionTimeMs           int    `json:"fusion_time_ms"`
+	TotalTimeMs            int    `json:"total_time_ms"`
+	VectorCandidates       int    `json:"vector_candidates"`
+	VectorRawCandidates    int    `json:"vector_raw_candidates"`
+	VectorOverfetchRetries int    `json:"vector_overfetch_retries"`
+	BM25Candidates         int    `json:"bm25_candidates"`
+	BM25RawCandidates      int    `json:"bm25_raw_candidates"`
+	BM25OverfetchRetries   int    `json:"bm25_overfetch_retries"`
+	FusedCandidates        int    `json:"fused_candidates"`
 }
 
 // SearchOptions configures the search behavior.
@@ -780,9 +789,16 @@ func estimateSearchResponseBytes(response *SearchResponse) int64 {
 //		log.Printf("Failed to index: %v", err)
 //	}
 type Service struct {
-	engine                 storage.Engine
-	vectorIndex            *VectorIndex
-	vectorFileStore        *VectorFileStore // when set, vectors are stored on disk (low-RAM build)
+	engine          storage.Engine
+	vectorIndex     *VectorIndex
+	vectorFileStore *VectorFileStore // when set, vectors are stored on disk (low-RAM build)
+	// indexMu protects which complete source owns live membership, including
+	// an empty source after clear or a persistence-off interval.
+	nodeSources            nodeSourceRecord
+	nodeAdmission          *nodePopulationAdmission
+	baseBuildControlMu     sync.Mutex
+	baseBuildPaused        int
+	baseBuildCancel        context.CancelFunc
 	bm25MemoryMaxBytes     int64
 	vectorMemoryMaxBytes   int64
 	metadataMemoryMaxBytes int64
@@ -820,7 +836,7 @@ type Service struct {
 	// indexMu serializes index mutation operations (IndexNode/RemoveNode/BuildIndexes batches)
 	// without blocking read paths that use s.mu for lightweight config/state reads.
 	indexMu        sync.RWMutex
-	buildMu        sync.Mutex
+	buildMu        baseOperationMutex
 	ready          atomic.Bool
 	buildAttempted atomic.Bool
 	embeddingSpace atomic.Value
@@ -843,6 +859,9 @@ type Service struct {
 	// HNSW index for approximate nearest neighbor search (optional, lazy-initialized)
 	hnswIndex           *HNSWIndex
 	hnswMu              sync.RWMutex
+	hnswBuild           *hnswBuildJob
+	hnswBuildPaused     int
+	hnswVectorsChanging atomic.Bool
 	hnswMaintOnce       sync.Once
 	hnswMaintCancel     context.CancelFunc
 	hnswMaintDone       chan struct{}
@@ -851,6 +870,9 @@ type Service struct {
 	// hnswRebuildOverlay records only mutations that race an active rebuild.
 	// Normal writes always update HNSW synchronously at every index size.
 	hnswRebuildOverlay *annMutationOverlay
+
+	// hnswGeneration retires completed transition snapshots as well as builds.
+	hnswGeneration atomic.Uint64
 
 	// Optional GPU-accelerated brute-force embedding index.
 	// When enabled, this is used as an exact vector-search backend.
@@ -1540,14 +1562,14 @@ func (s *Service) setBuildPhase(phase string) {
 }
 
 func (s *Service) resetANNForBuild() {
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
-
+	resume := s.pauseHNSWBuild()
+	defer resume()
+	// Retirement and transition publication share the mutation boundary.
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
 	s.hnswMu.Lock()
 	// Drop the pointer without clearing the old graph; readers that already
 	// captured it can finish without contending with a reset we would discard.
-	s.hnswIndex = nil
 	s.hnswRebuildOverlay.Reset()
 	s.hnswMu.Unlock()
 
@@ -1558,6 +1580,9 @@ func (s *Service) resetANNForBuild() {
 	s.ivfpqIndex = nil
 	s.ivfpqOverlay.Reset()
 	s.ivfpqMu.Unlock()
+
+	// Retire every backend before releasing the cache publication boundary.
+	s.retireVectorSourceLocked(false)
 }
 
 // SetGPUManager enables GPU acceleration for exact brute-force vector search.
@@ -2067,9 +2092,12 @@ func (s *Service) SetHNSWIndexPath(path string) {
 // SetPersistenceEnabled controls whether index persistence is allowed.
 // When false, all persist paths (debounced writes, build checkpoints, and shutdown flush)
 // are treated as no-ops even if index paths are configured.
+// A live disable preserves vectors in memory. If that transfer fails or would
+// exceed the configured vector memory budget, it is logged and persistence
+// remains enabled so the existing source stays usable.
 func (s *Service) SetPersistenceEnabled(enabled bool) {
-	s.persistEnabled.Store(enabled)
 	if enabled {
+		s.persistEnabled.Store(true)
 		return
 	}
 	s.persistMu.Lock()
@@ -2078,14 +2106,9 @@ func (s *Service) SetPersistenceEnabled(enabled bool) {
 		s.persistTimer = nil
 	}
 	s.persistMu.Unlock()
-	s.persistRunMu.Lock()
-	s.indexMu.Lock()
-	if s.vectorFileStore != nil {
-		_ = s.vectorFileStore.Close()
-		s.vectorFileStore = nil
+	if !s.closeVectorFileStore(true) {
+		s.schedulePersist()
 	}
-	s.indexMu.Unlock()
-	s.persistRunMu.Unlock()
 }
 
 // Close stops search-service background workers and releases file-backed vector resources.
@@ -2105,6 +2128,7 @@ func (s *Service) Close() error {
 	s.continuationRegistry = nil
 	s.continuationOwned = false
 	s.continuationMu.Unlock()
+	s.pauseHNSWBuild() // Close permanently prevents another build.
 	s.stopHNSWMaintenance()
 
 	s.persistMu.Lock()
@@ -2122,15 +2146,53 @@ func (s *Service) Close() error {
 	s.strategyTransitionPending = strategyModeUnknown
 	s.strategyTransitionMu.Unlock()
 
+	s.closeVectorFileStore(false)
+	return nil
+}
+
+// closeVectorFileStore serializes teardown with persistence, vector mutation
+// and source snapshots, including late HNSW scheduling after lifecycle cancel.
+func (s *Service) closeVectorFileStore(preserveVectors bool) bool {
+	resume := s.pauseHNSWBuild()
+	defer resume()
+	// Join the enclosing base build as well as its ANN worker. Close cancels
+	// its lifecycle-linked context; a live toggle lets base loading finish.
+	resumeBase := s.pauseBaseBuild(!preserveVectors)
+	defer resumeBase()
 	s.persistRunMu.Lock()
+	defer s.persistRunMu.Unlock()
 	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	s.mu.Lock()
 	if s.vectorFileStore != nil {
+		if preserveVectors {
+			if err := s.checkVectorSourceCapacityLocked(s.vectorFileStore); err != nil {
+				s.mu.Unlock()
+				s.logPrintf("⚠️ Vector source migration failed; keeping file source available: %v", err)
+				return false
+			}
+			memory, err := vectorMemoryFromFileStore(s.vectorFileStore)
+			if err != nil {
+				s.mu.Unlock()
+				s.logPrintf("⚠️ Vector source migration failed; keeping file source available: %v", err)
+				return false
+			}
+			s.vectorIndex = memory
+			s.changeNodeSourcesLocked(nodeVectorMemoryMoved)
+			s.reconcileVectorSourceCapacityLocked(memory)
+		}
 		_ = s.vectorFileStore.Close()
 		s.vectorFileStore = nil
 	}
-	s.indexMu.Unlock()
-	s.persistRunMu.Unlock()
-	return nil
+	if preserveVectors {
+		// Publish a live disable only after the admitted base build has joined
+		// and transfer succeeded. Its captured paths must keep a working
+		// persistence policy through checkpoint, temporary clear and reload.
+		s.persistEnabled.Store(false)
+	}
+	s.mu.Unlock()
+	s.retireVectorSourceLocked(preserveVectors)
+	return true
 }
 
 // schedulePersist schedules a write of BM25 and vector indexes to disk after an idle delay.
@@ -2182,6 +2244,10 @@ func (s *Service) schedulePersist() {
 // persistBaseIndexes writes BM25 + vector store only (no HNSW/IVF-HNSW).
 // Used after BuildIndexes iteration to make base indexes durable before HNSW/k-means.
 func (s *Service) persistBaseIndexes() error {
+	if !s.nodePopulationCanPersist() {
+		s.logPrintf("📇 Persist: preserving unopened indexes; node population is not admitted")
+		return nil
+	}
 	if !s.persistEnabled.Load() {
 		return nil
 	}
@@ -2247,6 +2313,10 @@ func (s *Service) runPersist() {
 }
 
 func (s *Service) runPersistWithContext(ctx context.Context) {
+	if !s.nodePopulationCanPersist() {
+		s.logPrintf("📇 Persist: preserving unopened indexes; node population is not admitted")
+		return
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -2503,6 +2573,12 @@ func (s *Service) embeddingCountLocked() int {
 func (s *Service) VectorIndexDimensions() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.vectorIndexDimensionsLocked()
+}
+
+// vectorIndexDimensionsLocked reads the active dimensions. Caller holds s.mu
+// (at least RLock); taking a second RLock can deadlock behind a waiting writer.
+func (s *Service) vectorIndexDimensionsLocked() int {
 	if s.vectorFileStore != nil && s.vectorFileStore.Count() > 0 {
 		return s.vectorFileStore.GetDimensions()
 	}
@@ -2626,12 +2702,8 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 	}
 
 	s.mu.RLock()
-	currentDims := 0
-	currentCount := 0
-	if s.vectorIndex != nil {
-		currentDims = s.vectorIndex.GetDimensions()
-		currentCount = s.vectorIndex.Count()
-	}
+	currentDims := s.vectorIndexDimensionsLocked()
+	currentCount := s.embeddingCountLocked()
 	s.mu.RUnlock()
 
 	// Only auto-adjust when the index is still empty (first embedding wins).
@@ -2639,17 +2711,35 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 		return
 	}
 
-	// Lock order: pipelineMu -> indexMu -> mu -> hnswMu, matching index mutation paths.
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
+	// Dimension replacement shares the same build and publication owner as
+	// Clear/reset. Join before indexMu: a finishing worker needs that lock.
+	resume := s.pauseHNSWBuild()
+	defer resume()
+	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
+	s.replaceEmptyVectorDimensionsLocked(dimensions)
+}
 
+// replaceEmptyVectorDimensionsLocked is shared by initial batching and the
+// public mutation boundary. Caller owns indexMu and has paused ANN construction.
+func (s *Service) replaceEmptyVectorDimensionsLocked(dimensions int) {
 	s.mu.Lock()
-	if s.vectorIndex == nil {
-		s.vectorIndex = NewVectorIndex(dimensions)
-	} else if s.vectorIndex.Count() == 0 && s.vectorIndex.GetDimensions() != dimensions {
-		s.vectorIndex = NewVectorIndex(dimensions)
+	// Another first vector may have won while this caller waited for mutation
+	// ownership. A no-op must not retire the winner's sources or backends.
+	if s.vectorDimensionsFixed.Load() || s.embeddingCountLocked() > 0 || s.vectorIndexDimensionsLocked() == dimensions {
+		s.mu.Unlock()
+		return
 	}
+	s.vectorIndex = NewVectorIndex(dimensions)
+	// An empty file still has an immutable dimension and remains the writer
+	// until explicitly retired. Its old artifacts must not be reloaded by
+	// live ingestion after the first vector selects a different dimension.
+	if s.vectorFileStore != nil {
+		_ = s.vectorFileStore.Close()
+		s.vectorFileStore = nil
+	}
+	s.changeNodeSourcesLocked(nodeVectorCleared)
+	s.reconcileVectorSourceCapacityLocked(nil)
 
 	// Dimension changes invalidate all vector backends.
 	if s.gpuEmbeddingIndex != nil {
@@ -2673,23 +2763,29 @@ func (s *Service) maybeAutoSetVectorDimensions(dimensions int) {
 	s.hnswMu.Lock()
 	if s.hnswIndex != nil {
 		s.hnswIndex.Clear()
-		s.hnswIndex = nil
 	}
 	s.hnswMu.Unlock()
+	// Release all source/backend locks before the cache publication boundary.
+	// A factory that finished before retirement is removed here; a later one
+	// captures only the replacement sources and retired ANN state.
+	s.retireVectorSourceLocked(false)
 }
 
 // ClearVectorIndex removes all embeddings from the vector index.
 // This is used when regenerating all embeddings to reset the index count.
 // Also frees memory from HNSW tombstones which can accumulate over time.
 func (s *Service) ClearVectorIndex() {
+	resumeBase := s.pauseBaseBuild(true)
+	defer resumeBase()
+	resume := s.pauseHNSWBuild()
+	defer resume()
 	defer s.indexChanged()
-	// Lock order: pipelineMu -> mu -> hnswMu, matching pipeline construction paths.
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
-
+	// Serialize source retirement and final transition publication. Release mu
+	// before pipelineMu, matching pipeline snapshot ordering.
 	s.indexMu.Lock()
+	defer s.indexMu.Unlock()
 	s.mu.Lock()
+	s.changeNodeSourcesLocked(nodeVectorCleared)
 	if s.vectorFileStore != nil {
 		_ = s.vectorFileStore.Close()
 		s.vectorFileStore = nil
@@ -2703,16 +2799,15 @@ func (s *Service) ClearVectorIndex() {
 	if s.clusterIndex != nil {
 		s.clusterIndex.Clear()
 	}
-	clear(s.nodeLabels)
-	clear(s.nodeTypes)
-	clear(s.nodeNamedVector)
-	clear(s.nodePropVector)
-	clear(s.nodeChunkVectors)
-	clear(s.nodeChunkSpans)
+	s.clearNodeVectorMetadataLocked()
+
 	clear(s.edgeTypes)
 	clear(s.edgePropVector)
+	s.clearVectorIndexCapacityLocked()
 	s.mu.Unlock()
-	s.indexMu.Unlock()
+	if err := s.removeVectorArtifactsLocked(); err != nil {
+		s.logPrintf("⚠️ Vector artifact retirement failed: %v", err)
+	}
 
 	s.clusterHNSWMu.Lock()
 	s.clusterHNSW = nil
@@ -2728,23 +2823,21 @@ func (s *Service) ClearVectorIndex() {
 	s.hnswMu.Lock()
 	if s.hnswIndex != nil {
 		s.hnswIndex.Clear()
-		s.hnswIndex = nil // Reset to nil so it can be recreated lazily
 	}
 	s.hnswMu.Unlock()
+	s.retireVectorSourceLocked(false) // Recreate lazily from replacement vectors.
 }
 
 // IndexNode adds a node to all search indexes.
 // All embeddings are stored in ChunkEmbeddings (even single chunk = array of 1).
 func (s *Service) IndexNode(node *storage.Node) error {
-	// Per-DB master switches: when both indexes are off, IndexNode is a full
-	// no-op — the database has no search and never will until a flag flip
-	// triggers ResetSearchService. When one is off, indexNodeLocked still
-	// runs, but the BM25 stub or the vector nil guards drop the corresponding
-	// half. This keeps the write path silent and cheap when search is off.
-	bm25On := s.bm25Enabled.Load()
-	vecOn := s.vectorEnabled.Load()
+	bm25On, vecOn := s.bm25Enabled.Load(), s.vectorEnabled.Load()
 	if !bm25On && !vecOn {
 		return nil
+	}
+	release, err := s.lockNodeMutation(firstVectorDimensions(node))
+	if err != nil {
+		return err
 	}
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
@@ -2752,14 +2845,8 @@ func (s *Service) IndexNode(node *storage.Node) error {
 			s.resultCache.Invalidate()
 		}
 	}
-	s.maybeAutoSetVectorDimensions(firstVectorDimensions(node))
-
-	s.indexMu.Lock()
-	// skipFulltext piggybacks the bm25-disabled signal so the inner code
-	// paths that read `skipFulltext` (already exercised by checkpoint rewrites)
-	// also drop fulltext mutations when BM25 is disabled.
-	err := s.indexNodeLocked(node, !bm25On)
-	s.indexMu.Unlock()
+	err = s.indexNodeLocked(node, !bm25On)
+	release()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
 	}
@@ -2876,57 +2963,113 @@ func (s *Service) trackIVFPQRemove(id string) {
 // Caller holds s.indexMu.
 // When not resuming, BuildIndexes has already removed .vec/.meta so we start from 0; when resuming, existing files are appended to.
 func (s *Service) ensureVectorFileStore() {
+	s.admitVectorFileStore(false)
+}
+
+// admitVectorFileStore is the source-selection owner for live ingestion and
+// base restoration. An existing live source wins over its saved image; only a
+// fresh disk restore installs saved query metadata. The return value identifies
+// a live source, whose older persisted ANN graph must not be reused.
+// Caller holds indexMu; joining builders remains the caller's responsibility.
+func (s *Service) admitVectorFileStore(storageEmpty bool) bool {
+	restoreNodeMetadata := !s.nodeSources.vectorsComplete
 	if s.vectorStorageMode == "memory" {
-		return
+		return false
 	}
 	if !s.persistEnabled.Load() {
-		return
+		return false
 	}
 	if s.vectorIndexPath == "" {
-		return
+		return false
 	}
 	if s.vectorIndex == nil {
-		return
+		return false
 	}
 	dims := s.vectorIndex.GetDimensions()
 	if dims <= 0 {
-		return
+		return false
 	}
 	if s.vectorFileStore != nil {
-		return
+		return true
+	}
+	memoryCurrent := s.nodeSources.memoryAuthoritative || s.vectorIndex.Count() > 0
+	if restoreNodeMetadata && !memoryCurrent {
+		if _, err := security.RootedStat(s.vectorIndexPath + ".vec"); err != nil {
+			return false // Initial ingestion will create the store lazily.
+		}
+	}
+	if s.nodeSources.memoryAuthoritative {
+		// Clear/persistence-off left the complete live membership in memory,
+		// including deletions and possibly new dimensions. An older disk image
+		// must not become the source again when persistence is re-enabled.
+		if err := s.removeVectorArtifactsLocked(); err != nil {
+			s.logPrintf("⚠️ VectorFileStore restart failed (using in-memory index): %v", err)
+			return memoryCurrent
+		}
 	}
 	vfs, err := NewVectorFileStore(s.vectorIndexPath, dims)
 	if err != nil {
 		s.logPrintf("⚠️ VectorFileStore create failed (using in-memory index): %v", err)
-		return
+		return memoryCurrent
 	}
 	if err := vfs.Load(); err != nil {
 		_ = vfs.Close()
 		s.logPrintf("⚠️ VectorFileStore load failed (using in-memory index): %v", err)
-		return
+		return memoryCurrent
+	}
+	var restoreMetadata func()
+	if restoreNodeMetadata && !memoryCurrent {
+		labels, types, named, properties, chunks, ok := vfs.NodeQueryMetadataWithTypes()
+		if ok {
+			restoreMetadata = func() {
+				s.changeNodeSourcesLocked(nodeVectorsRestored)
+				s.nodeLabels, s.nodeTypes = labels, types
+				s.nodeNamedVector, s.nodePropVector = named, properties
+				s.nodeChunkVectors = chunks
+				clear(s.nodeChunkSpans) // Read on demand; not present in the snapshot.
+			}
+		} else if storageEmpty {
+			s.changeNodeSourcesLocked(nodeVectorsRestored)
+			s.logPrintf("BuildIndexes: vector metadata missing and storage empty; loading legacy vectors without query metadata")
+		} else {
+			s.logPrintf("BuildIndexes: vector metadata missing; rebuilding from storage")
+			_ = vfs.Close()
+			return false
+		}
 	}
 	// Build callers normally arrive with an empty in-memory index. If
 	// persistence was enabled after live ingestion began, migrate those vectors
 	// before publishing the file store so switching storage cannot lose data.
-	s.vectorIndex.mu.Lock()
+	s.vectorIndex.mu.RLock()
 	for id, normalized := range s.vectorIndex.vectors {
 		value := normalized
 		if raw, ok := s.vectorIndex.rawVectors[id]; ok {
 			value = raw
 		}
 		if err := vfs.Add(id, value); err != nil {
-			s.vectorIndex.mu.Unlock()
+			s.vectorIndex.mu.RUnlock()
 			_ = vfs.Close()
 			s.logPrintf("⚠️ VectorFileStore migration failed (using in-memory index): %v", err)
-			return
+			return memoryCurrent
 		}
 	}
+	s.vectorIndex.mu.RUnlock()
+	// Never acquire service ownership while holding the memory-store lock:
+	// pipeline snapshots use the canonical mu -> vectorIndex.mu order.
 	s.mu.Lock()
+	if restoreMetadata != nil {
+		restoreMetadata()
+	}
+	s.vectorIndex.mu.Lock()
 	s.vectorFileStore = vfs
-	s.mu.Unlock()
 	s.vectorIndex.vectors = make(map[string][]float32)
 	s.vectorIndex.rawVectors = make(map[string][]float32)
 	s.vectorIndex.mu.Unlock()
+	s.mu.Unlock()
+	s.changeNodeSourcesLocked(nodeVectorFileMoved)
+	s.reconcileVectorSourceCapacityLocked(nil)
+	s.retireVectorSourceLocked(true)
+	return memoryCurrent
 }
 
 // lastWriteTime returns the last known write time for the underlying storage, if available.
@@ -2958,7 +3101,8 @@ func (s *Service) shouldIndexNode(node *storage.Node) (bool, error) {
 
 // indexNodeLocked does the work of IndexNode. Caller must hold s.indexMu.
 // When skipFulltext is true, the fulltext index block is skipped (used when BuildIndexes batches fulltext).
-// When skipFulltext is true, removeNodeLocked is also skipped so we don't remove the doc just added by IndexBatch.
+// skipFulltext preserves a document already written by IndexBatch, while vector
+// replacement always removes the node's retired vector IDs.
 // A node whose searchable text is already in the fulltext index keeps that
 // document: re-indexing it would analyze the same text twice for no change.
 func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
@@ -2978,26 +3122,32 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 			fulltext.unchanged = ok && stored == fulltext.text
 		}
 	}
+	vectorOn := s.vectorEnabled.Load()
+	// Establish the real destination before admission. Re-enabling persistence
+	// can release a full memory source into a file; a failed migration leaves
+	// it in memory and is charged there. This does not change membership.
+	if shouldIndex && vectorOn && firstVectorDimensions(node) > 0 {
+		s.ensureVectorFileStore()
+	}
 	capacityUsage, err := s.checkNodeIndexCapacityLocked(node, fulltext)
 	if err != nil {
 		return err
 	}
-	vectorOn := s.vectorEnabled.Load()
 	skipVectorMutation := false
-	if vectorOn && nodeIDStr != "" && !skipFulltext && shouldIndex {
+	if vectorOn && nodeIDStr != "" && shouldIndex {
 		skipVectorMutation = s.nodeVectorStateUnchangedLocked(node)
 	}
-	if nodeIDStr != "" && !skipFulltext {
+	if nodeIDStr != "" {
 		// CRITICAL: IndexNode is called for both creates and updates.
 		// When a node is re-indexed with fewer chunks or fewer named vectors,
 		// we must remove the old vector IDs first, otherwise they become orphaned
 		// in the in-memory index and EmbeddingCount() will drift upward over time.
 		if skipVectorMutation {
-			if s.fulltext() != nil && !fulltext.unchanged {
+			if !skipFulltext && s.fulltext() != nil && !fulltext.unchanged {
 				s.fulltext().Remove(nodeIDStr)
 			}
 		} else {
-			s.removeNodeEntriesLocked(nodeIDStr, !fulltext.unchanged)
+			s.removeNodeEntriesLocked(nodeIDStr, !skipFulltext && !fulltext.unchanged)
 		}
 	}
 	if !shouldIndex {
@@ -3021,12 +3171,6 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	// short-circuit at this top level so we don't even iterate node
 	// properties looking for vector-shaped values.
 	indexVectorState := vectorOn && !skipVectorMutation
-
-	// Create the disk-backed store before the first vector mutation, including
-	// live ingestion into a database that was empty during startup.
-	if indexVectorState && firstVectorDimensions(node) > 0 && s.persistEnabled.Load() && s.vectorIndexPath != "" {
-		s.ensureVectorFileStore()
-	}
 
 	// Index all embeddings: NamedEmbeddings and ChunkEmbeddings
 	// Strategy:
@@ -3185,14 +3329,15 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	if !skipFulltext && !fulltext.unchanged && fulltext.text != "" {
 		s.fulltext().Index(string(node.ID), fulltext.text)
 	}
+	capacityUsage.vectorResident = s.nodeVectorResidentLocked(nodeIDStr)
 	s.commitNodeIndexCapacityLocked(nodeIDStr, capacityUsage)
 
 	return nil
 }
 
 // nodeVectorStateUnchangedLocked reports whether re-indexing node would produce
-// exactly the vector IDs and normalized vectors already present in the active
-// vector store. Caller must hold s.indexMu.
+// exactly the vector IDs and stored coordinates already present in the active
+// vector store, including memory-only raw coordinates. Caller holds s.indexMu.
 func (s *Service) nodeVectorStateUnchangedLocked(node *storage.Node) bool {
 	if node == nil || node.ID == "" {
 		return false
@@ -3296,26 +3441,11 @@ func sameStringSlice(expected, indexed []string) bool {
 }
 
 func (s *Service) storedVectorEqualsLocked(id string, vec []float32) bool {
-	var stored []float32
-	var ok bool
 	if s.vectorFileStore != nil {
-		stored, ok = s.vectorFileStore.GetVector(id)
-	} else if s.vectorIndex != nil {
-		stored, ok = s.vectorIndex.GetVector(id)
+		stored, ok := s.vectorFileStore.GetVector(id)
+		return ok && slices.Equal(stored, vector.Normalize(vec))
 	}
-	if !ok {
-		return false
-	}
-	normalized := vector.Normalize(vec)
-	if len(stored) != len(normalized) {
-		return false
-	}
-	for i := range stored {
-		if stored[i] != normalized[i] {
-			return false
-		}
-	}
-	return true
+	return s.vectorIndex != nil && s.vectorIndex.matchesStoredVector(id, vec)
 }
 
 // removeNodeLocked removes a node from all search indexes.
@@ -3411,19 +3541,21 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 // RemoveNode removes a node from all search indexes.
 // Also removes all chunk embeddings (for nodes with multiple chunks).
 func (s *Service) RemoveNode(nodeID storage.NodeID) error {
+	release, err := s.lockNodeMutation(0)
+	if err != nil {
+		return err
+	}
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
 			s.resultCache.Invalidate()
 		}
 	}
-	s.indexMu.Lock()
 	s.removeNodeLocked(string(nodeID))
-	s.indexMu.Unlock()
+	release()
 	if !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
 	}
-
 	return nil
 }
 
@@ -3435,21 +3567,23 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 	if s == nil || edge == nil {
 		return nil
 	}
-	s.IndexRelationship(edge)
 	if !s.vectorEnabled.Load() {
+		s.IndexRelationship(edge)
 		return nil
 	}
+	release, err := s.lockNodeMutation(firstEdgeVectorDimensions(edge))
+	if err != nil {
+		return err
+	}
+	s.IndexRelationship(edge)
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
 		if s.resultCache != nil {
 			s.resultCache.Invalidate()
 		}
 	}
-	s.maybeAutoSetVectorDimensions(firstEdgeVectorDimensions(edge))
-
-	s.indexMu.Lock()
-	err := s.indexEdgeLocked(edge)
-	s.indexMu.Unlock()
+	err = s.indexEdgeLocked(edge)
+	release()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
 	}
@@ -3528,6 +3662,10 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	if s == nil {
 		return nil
 	}
+	release, err := s.lockNodeMutation(0)
+	if err != nil {
+		return err
+	}
 	s.RemoveRelationship(edgeID)
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
@@ -3535,9 +3673,8 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 			s.resultCache.Invalidate()
 		}
 	}
-	s.indexMu.Lock()
 	s.removeEdgeLocked(string(edgeID))
-	s.indexMu.Unlock()
+	release()
 	if !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
 	}
@@ -3627,6 +3764,7 @@ func (s *Service) RemovePropertyVectorIndex(propertyKey string) {
 		if len(props) == 0 {
 			delete(s.nodePropVector, nodeID)
 		}
+		s.releaseNodeVectorCapacityLocked(nodeID, propID)
 	}
 }
 
@@ -3640,9 +3778,9 @@ func (s *Service) buildRelationshipVectorIndexes(ctx context.Context) error {
 		}
 		s.maybeAutoSetVectorDimensions(firstEdgeVectorDimensions(edge))
 		s.indexMu.Lock()
-		_ = s.indexEdgeLocked(edge)
+		err := s.indexEdgeLocked(edge)
 		s.indexMu.Unlock()
-		return nil
+		return err
 	})
 }
 
@@ -3677,15 +3815,32 @@ type NodeIterator interface {
 // BuildIndexes builds search indexes from all nodes in the engine.
 // Call this after storage (and WAL recovery) so indexes reflect durable state.
 // When both fulltext and vector index paths are set, tries to load both from disk;
-// if both load with count > 0 (and semver format version matches), the full iteration
-// is skipped. Otherwise iterates over storage and saves both indexes at the end when paths are set.
+// if both compatible sources are admitted, the full iteration is skipped. Otherwise iterates over storage and saves both indexes at the end when paths are set.
 func (s *Service) BuildIndexes(ctx context.Context) error {
 	s.buildMu.Lock()
 	defer s.buildMu.Unlock()
+	return s.runBasePopulationOperation(ctx, s.claimNodeAdmission(), true)
+}
+
+// runBasePopulationOperation owns the existing base lifetime and NODE phase.
+// Caller holds buildMu. Live first mutation stops at NODE completion.
+func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopulationAdmission, explicit bool) (resultErr error) {
+	defer func() { s.finishNodeAdmission(job, resultErr) }()
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	s.buildAttempted.Store(true)
+	// Base loading and its persisted graph install share service lifetime.
+	ctx, releaseBuild, buildErr := s.ownBaseBuildContext(ctx)
+	if buildErr != nil {
+		return buildErr
+	}
+	defer releaseBuild()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if explicit {
+		s.buildAttempted.Store(true)
+	}
 	// Per-DB master switches: when both indexes are disabled, mark ready
 	// (search handler returns 503 search_disabled_for_database upstream)
 	// and return BEFORE we touch s.ready/s.buildInProgress — otherwise a
@@ -3701,6 +3856,15 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		s.ready.Store(true)
 		return nil
 	}
+	s.indexMu.Lock()
+	reloadErr := s.materializeNodeFulltextLocked()
+	s.indexMu.Unlock()
+	if reloadErr != nil {
+		return reloadErr
+	}
+	// Prevent a new snapshot while the base vector store is being replaced.
+	s.hnswVectorsChanging.Store(true)
+	defer s.hnswVectorsChanging.Store(false)
 	s.resetANNForBuild()
 	s.indexChanged()
 	s.ready.Store(false)
@@ -3769,22 +3933,22 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 	if s.vectorEnabled.Load() && s.vectorStorageMode == "disk" && vectorPath == "" {
 		return fmt.Errorf("search: vector disk storage requires index persistence and a configured vector index path")
 	}
-	var storageNodeCount int64
-	if n, err := s.engine.NodeCount(); err == nil {
-		storageNodeCount = n
-		if n > 0 {
-			s.buildTotalNodes.Store(n)
+	storageEmptyKnown := s.engine == nil
+	if s.engine != nil {
+		if n, err := s.engine.NodeCount(); err == nil {
+			storageEmptyKnown = n == 0
+			if n > 0 {
+				s.buildTotalNodes.Store(n)
+			}
 		}
-	}
 
+	}
 	skipIteration := false
 	restartVectorStore := false
 	forceFulltextRebuild := false
 	forceVectorRebuild := false
 	forceHNSWRebuild := false
 	forceRoutingRebuild := false
-	hnswLoadedFromDisk := false
-	hnswWarmupReason := ""
 
 	settingsPath := searchBuildSettingsPath(fulltextPath, vectorPath, hnswPath)
 	currentSettings := s.currentSearchBuildSettings()
@@ -3812,74 +3976,53 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		}
 	}
 
-	if fulltextPath != "" {
-		_ = s.fulltext().Load(fulltextPath)
-		if s.fulltext().Count() == 0 {
+	// Live writes may be newer than the saved image after persistence was off.
+	// Only the source record establishes initial population completeness.
+	s.indexMu.RLock()
+	textComplete := s.nodeSources.textComplete
+	s.indexMu.RUnlock()
+	if fulltextPath != "" && !textComplete && !s.fulltext().IsDirty() {
+		accepted, loadErr := s.fulltext().loadSnapshot(fulltextPath)
+		if loadErr == nil && accepted {
+			s.indexMu.Lock()
+			s.changeNodeSourcesLocked(nodeTextRestored)
+			s.indexMu.Unlock()
+		}
+		if !accepted && s.fulltext().Count() == 0 {
 			if info, statErr := security.RootedStat(fulltextPath); statErr == nil {
 				s.logPrintf("📇 BuildIndexes: BM25 file present but loaded 0 docs (%s, %d bytes); rebuilding from storage",
 					fulltextPath, info.Size())
 			}
 		}
 	}
-	// Prefer file-backed vector store when .vec exists (low-RAM format); else legacy in-memory index.
-	if vectorPath != "" && s.vectorStorageMode != "memory" && s.vectorIndex != nil {
-		if _, err := security.RootedStat(vectorPath + ".vec"); err == nil {
-			dims := s.vectorIndex.GetDimensions()
-			if dims <= 0 {
-				dims = 384
-			}
-			if vfs, err := NewVectorFileStore(vectorPath, dims); err == nil {
-				if loadErr := vfs.Load(); loadErr != nil {
-					s.logPrintf("⚠️ VectorFileStore load failed; rebuilding from 0: %v", loadErr)
-					_ = vfs.Close()
-				} else if labels, types, named, properties, chunks, ok := vfs.NodeQueryMetadataWithTypes(); ok {
-					s.indexMu.Lock()
-					s.mu.Lock()
-					s.vectorFileStore = vfs
-					s.nodeLabels = labels
-					s.nodeTypes = types
-					s.nodeNamedVector = named
-					s.nodePropVector = properties
-					s.nodeChunkVectors = chunks
-					clear(s.nodeChunkSpans) // read on demand: the snapshot doesn't hold them
-					s.mu.Unlock()
-					s.indexMu.Unlock()
-				} else if storageNodeCount == 0 {
-					s.logPrintf("BuildIndexes: vector metadata missing and storage empty; loading legacy vectors without query metadata")
-					s.mu.Lock()
-					s.vectorFileStore = vfs
-					s.mu.Unlock()
-				} else {
-					s.logPrintf("BuildIndexes: vector metadata missing; rebuilding from storage")
-					_ = vfs.Close()
-				}
-			}
-		}
-	}
+	// Base restore and live writes share source admission. In particular, a
+	// persistence-off snapshot remains authoritative after re-enable, and an
+	// active VFS must not be reopened with older saved query metadata.
+	s.indexMu.Lock()
+	liveVectorSourceSelected := s.admitVectorFileStore(storageEmptyKnown)
+	s.indexMu.Unlock()
+	forceHNSWRebuild = forceHNSWRebuild || liveVectorSourceSelected
 
-	if forceFulltextRebuild && s.fulltext().Count() > 0 {
+	if forceFulltextRebuild {
+		s.indexMu.Lock()
 		s.fulltext().Clear()
+		s.changeNodeSourcesLocked(nodeFulltextReset)
+		s.indexMu.Unlock()
 	}
 	if forceVectorRebuild {
 		restartVectorStore = true
-		s.mu.Lock()
-		if s.vectorFileStore != nil {
-			_ = s.vectorFileStore.Close()
-			s.vectorFileStore = nil
-		}
-		s.mu.Unlock()
-		if s.vectorIndex != nil {
-			s.vectorIndex.Clear()
+		if err := s.resetBaseVectorSource(); err != nil {
+			return err
 		}
 	}
 	if forceRoutingRebuild {
 		forceHNSWRebuild = true
 		s.clearClusterLexicalProfiles()
 	}
-	// When both paths are set and both indexes have content, skip the full iteration.
+	// Compatible admitted sources can skip the full node iteration.
 	vectorCount := s.EmbeddingCount()
 	shouldClearStaleDisk := false
-	if storageNodeCount == 0 && (s.fulltext().Count() > 0 || vectorCount > 0) {
+	if storageEmptyKnown && (s.fulltext().Count() > 0 || vectorCount > 0) {
 		// Only clear disk-backed indexes when we can prove storage changed after
 		// those artifacts were written (e.g., DB dropped/recreated with same name).
 		// This avoids breaking valid "disk-only bootstrap" test/restore scenarios.
@@ -3892,36 +4035,37 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		}
 	}
 	if shouldClearStaleDisk {
+		s.indexMu.Lock()
+		s.changeNodeSourcesLocked(nodePopulationFailed)
+		s.indexMu.Unlock()
 		s.logPrintf("📇 BuildIndexes: storage is empty and newer than disk indexes; clearing stale search artifacts")
 		s.fulltext().Clear()
 		vectorCount = 0
 		restartVectorStore = true
 		forceHNSWRebuild = true
 		forceRoutingRebuild = true
-		s.mu.Lock()
-		if s.vectorFileStore != nil {
-			_ = s.vectorFileStore.Close()
-			s.vectorFileStore = nil
-		}
-		s.mu.Unlock()
-		if s.vectorIndex != nil {
-			s.vectorIndex.Clear()
+		if err := s.resetBaseVectorSource(); err != nil {
+			return err
 		}
 		s.hnswMu.Lock()
 		if s.hnswIndex != nil {
 			s.hnswIndex.Clear()
-			s.hnswIndex = nil
+			s.invalidateHNSWLocked()
 		}
 		s.hnswMu.Unlock()
 	}
-	if fulltextPath != "" && vectorPath != "" && s.fulltext().Count() > 0 && vectorCount > 0 {
+	s.indexMu.RLock()
+	nodePopulationComplete := s.nodeSourcesCompleteLocked()
+	textPopulationComplete := s.nodeSources.textComplete
+	s.indexMu.RUnlock()
+	if (fulltextPath != "" && vectorPath != "" && nodePopulationComplete) || (!explicit && storageEmptyKnown && ((fulltextPath == "" && vectorPath == "") || s.engine == nil)) {
 		skipIteration = true
 		s.logPrintf("📇 Search indexes loaded from disk (BM25: %d docs, vector: %d); skipping node-iteration rebuild",
 			s.fulltext().Count(), vectorCount)
 	}
 	// When only BM25 loaded with content but vector is empty, we still iterate to build vectors
 	// but skip re-indexing fulltext so we don't throw away the on-disk BM25.
-	skipFulltextRebuild := fulltextPath != "" && s.fulltext().Count() > 0 && vectorCount == 0
+	skipFulltextRebuild := fulltextPath != "" && textPopulationComplete && s.fulltext().Count() > 0 && vectorCount == 0
 	if skipFulltextRebuild {
 		s.logPrintf("📇 Search indexes loaded from disk (BM25: %d docs); rebuilding vector index only",
 			s.fulltext().Count())
@@ -3966,85 +4110,28 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		s.resumeVectorBuild = false
 		s.mu.Unlock()
 	}()
-
-	// When skipping iteration and HNSW is active, load HNSW from disk so warmup does not rebuild it.
-	cpuBruteMaxN := cpuBruteForceMaxN()
-	if skipIteration && hnswPath != "" && vectorCount > 0 && vectorCount >= cpuBruteMaxN {
-		vectorLookup := s.getVectorLookup()
-		dimensions := s.VectorIndexDimensions()
-		var loaded *HNSWIndex
-		var err error
-		// Graph-only HNSW loads in lookup mode to avoid duplicating vectors in RAM
-		// (canonical vectors remain in vector index / file store).
-		loaded, err = LoadHNSWIndex(hnswPath, vectorLookup)
-		if forceHNSWRebuild {
-			hnswWarmupReason = "settings changed"
-			s.logPrintf("📇 HNSW on-disk index ignored due to settings change; rebuilding")
-		} else if err == nil && loaded != nil && dimensions > 0 && loaded.GetDimensions() == dimensions {
-			want := HNSWConfigFromEnv()
-			have := loaded.Config()
-			if have.M != want.M || have.EfConstruction != want.EfConstruction || have.EfSearch != want.EfSearch {
-				hnswWarmupReason = "config changed"
-				s.logPrintf("📇 HNSW config changed (old m=%d efc=%d efs=%d, new m=%d efc=%d efs=%d); rebuilding",
-					have.M, have.EfConstruction, have.EfSearch, want.M, want.EfConstruction, want.EfSearch)
-			} else {
-				// Beam factor is query-only tuning and does not affect the persisted
-				// graph, so apply it without paying for an index rebuild.
-				loaded.setSearchBeamFactor(want.SearchBeamFactor)
-				loaded.SetBuildLexicalHints(lexicalHintValues(s.hnswLexicalSeedHints(s.fulltext(), want.M)))
-				s.hnswMu.Lock()
-				s.hnswIndex = loaded
-				s.hnswMu.Unlock()
-				hnswLoadedFromDisk = true
-				s.logPrintf("📇 HNSW index loaded from disk: vectors=%d tombstone_ratio=%.2f", loaded.Size(), loaded.TombstoneRatio())
-			}
-		} else if err != nil {
-			hnswWarmupReason = fmt.Sprintf("load failed: %v", err)
-		} else if loaded == nil {
-			if info, statErr := security.RootedStat(hnswPath); statErr == nil {
-				if info.Size() == 0 {
-					hnswWarmupReason = "index file exists but is empty"
-				} else {
-					hnswWarmupReason = fmt.Sprintf("index file exists (%d bytes) but could not be decoded", info.Size())
-				}
-			} else if errors.Is(statErr, os.ErrNotExist) {
-				hnswWarmupReason = "index file missing"
-			} else {
-				hnswWarmupReason = fmt.Sprintf("index file stat failed: %v", statErr)
-			}
-		} else if dimensions > 0 && loaded.GetDimensions() != dimensions {
-			hnswWarmupReason = fmt.Sprintf("dimension mismatch (disk=%d current=%d)", loaded.GetDimensions(), dimensions)
-		}
+	// Account only after settings/staleness checks have decided which loaded
+	// source survives. Both skip-iteration and resumed builds share this owner.
+	s.indexMu.Lock()
+	restoredCapacityErr := s.restoreNodeIndexCapacityLocked()
+	s.indexMu.Unlock()
+	if restoredCapacityErr != nil {
+		return restoredCapacityErr
 	}
-	if skipIteration && vectorCount > 0 && vectorCount >= cpuBruteMaxN && !hnswLoadedFromDisk {
-		if hnswWarmupReason == "" {
-			if hnswPath == "" {
-				hnswWarmupReason = "hnsw path not configured"
-			} else {
-				hnswWarmupReason = "no reusable on-disk HNSW"
-			}
-		}
-		s.logPrintf("📇 BuildIndexes: base indexes loaded; warmup will build HNSW (%s)", hnswWarmupReason)
+	// A disabled fulltext backend cannot produce a checkpoint to materialize.
+	if !bm25On {
+		fulltextPath = ""
 	}
 
 	if skipIteration {
-		s.setBuildPhase("warmup_hnsw_or_kmeans")
-		s.logPrintf("📇 BuildIndexes: starting vector pipeline warmup (k-means may run)...")
-		s.warmupVectorPipeline(ctx)
-		s.finishBuildWithFinalPersist(ctx)
-		return nil
+		return s.completeNodePopulation(ctx, job, nodePopulationPlan{fulltextPath: fulltextPath, hnswPath: hnswPath, skipIteration: true, forceHNSWRebuild: forceHNSWRebuild, vectorCount: vectorCount}, explicit)
 	}
 
 	// Start from 0 only when we cannot resume (missing/corrupt .vec/.meta). Otherwise keep existing .vec/.meta.
 	if vectorPath != "" && !resumeVectors {
-		_ = security.RemoveRootedPath(vectorPath + ".vec")
-		_ = security.RemoveRootedPath(vectorPath + ".meta")
-		s.mu.Lock()
-		if s.vectorFileStore != nil {
-			_ = s.vectorFileStore.Close()
-			s.vectorFileStore = nil
+		if err := s.resetBaseVectorSource(); err != nil {
+			return err
 		}
-		s.mu.Unlock()
 	}
 
 	if vectorPath != "" {
@@ -4053,150 +4140,13 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 		s.logPrintf("📇 BuildIndexes: building from storage (vector index in memory)")
 	}
 	s.setBuildPhase("iterating_nodes")
-	// Build indexes by iterating over storage.
-	if iterator, ok := s.engine.(NodeIterator); ok {
-		count := 0
-		var fulltextBatch []*storage.Node
-		var flushErr error
-		flushFulltextBatch := func(batch []*storage.Node) error {
-			if len(batch) == 0 {
-				return nil
-			}
-			if count == 0 && len(batch) > 0 {
-				s.maybeAutoSetVectorDimensions(firstVectorDimensions(batch[0]))
-			}
-			filtered := make([]*storage.Node, 0, len(batch))
-			for _, n := range batch {
-				shouldIndex, err := s.shouldIndexNode(n)
-				if err != nil {
-					return err
-				}
-				if shouldIndex {
-					filtered = append(filtered, n)
-				}
-			}
-			if s.bm25MemoryMaxBytes > 0 || s.vectorMemoryMaxBytes > 0 || s.metadataMemoryMaxBytes > 0 {
-				s.indexMu.Lock()
-				defer s.indexMu.Unlock()
-				if s.vectorStorageMode != "memory" && vectorPath != "" {
-					s.ensureVectorFileStore()
-				}
-				for _, node := range filtered {
-					if err := s.indexNodeLocked(node, false); err != nil {
-						return err
-					}
-				}
-				count += len(batch)
-				s.buildProcessed.Store(int64(count))
-				return nil
-			}
-			if !skipFulltextRebuild {
-				entries := make([]FulltextBatchEntry, 0, len(filtered))
-				for _, n := range filtered {
-					text := s.extractSearchableText(n)
-					entries = append(entries, FulltextBatchEntry{ID: string(n.ID), Text: text})
-				}
-				chunkSize := fulltextIndexChunkSize
-				if chunkSize <= 0 {
-					chunkSize = len(entries)
-				}
-				for i := 0; i < len(entries); i += chunkSize {
-					select {
-					case <-ctx.Done():
-						return ctx.Err()
-					default:
-					}
-					end := i + chunkSize
-					if end > len(entries) {
-						end = len(entries)
-					}
-					s.fulltext().IndexBatch(entries[i:end])
-					// Keep heartbeat progress moving during heavy BM25 batch work.
-					s.buildProcessed.Store(int64(count + end))
-				}
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-			}
-			s.indexMu.Lock()
-			for _, n := range filtered {
-				_ = s.indexNodeLocked(n, true)
-			}
-			s.indexMu.Unlock()
-			count += len(batch)
-			s.buildProcessed.Store(int64(count))
-			return nil
-		}
-		err := iterator.IterateNodes(func(node *storage.Node) bool {
-			select {
-			case <-ctx.Done():
-				return false
-			default:
-				fulltextBatch = append(fulltextBatch, node)
-				// Expose forward progress while accumulating a batch, so long BM25 batches
-				// don't appear "stuck" at 0 until the first flush completes.
-				s.buildProcessed.Store(int64(count + len(fulltextBatch)))
-				if len(fulltextBatch) >= fulltextBuildBatchSize {
-					if err := flushFulltextBatch(fulltextBatch); err != nil {
-						flushErr = err
-						return false
-					}
-					fulltextBatch = nil
-					if count%5000 == 0 {
-						s.logPrintf("📊 Indexed %d nodes...", count)
-					}
-				}
-				return true
-			}
-		})
-		if err != nil {
-			return err
-		}
-		if flushErr != nil {
-			return flushErr
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if err := flushFulltextBatch(fulltextBatch); err != nil {
-			return err
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		s.logPrintf("📊 Indexed %d total nodes", count)
-		s.logPrintf("📇 BuildIndexes: base index iteration complete (processed=%d)", count)
-		s.setBuildPhase("iterating_relationship_vectors")
-		if err := s.buildRelationshipVectorIndexes(ctx); err != nil {
-			return err
-		}
-		// Persist BM25 + vector store before HNSW/k-means build so base indexes are durable.
-		s.setBuildPhase("persisting_base_indexes")
-		if err := s.persistBaseIndexes(); err != nil {
-			return err
-		}
-		// Drop BM25 from RAM during HNSW/IVF build to keep memory bounded.
-		expectedFulltextCount := s.fulltext().Count()
-		if fulltextPath != "" {
-			s.fulltext().Clear()
-			s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
-		}
-		s.logPrintf("📇 BuildIndexes: starting vector pipeline warmup (k-means may run)...")
-		s.setBuildPhase("warmup_hnsw_or_kmeans")
-		s.warmupVectorPipeline(ctx)
-		if fulltextPath != "" {
-			if err := s.reloadFulltextAfterWarmup(fulltextPath, expectedFulltextCount); err != nil {
-				return err
-			}
-			s.logPrintf("📇 BuildIndexes: reloaded BM25 from disk after warmup")
-		}
-		s.finishBuildWithFinalPersist(ctx)
-		return nil
-	}
-
+	// Both storage traversal routes share one batch admission/mutation owner.
 	count := 0
 	var fulltextBatch []*storage.Node
-	flushFulltextBatchFallback := func(batch []*storage.Node) error {
+	flushFulltextBatch := func(batch []*storage.Node) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if len(batch) == 0 {
 			return nil
 		}
@@ -4212,6 +4162,24 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 			if shouldIndex {
 				filtered = append(filtered, n)
 			}
+		}
+		if s.bm25MemoryMaxBytes > 0 || s.vectorMemoryMaxBytes > 0 || s.metadataMemoryMaxBytes > 0 {
+			s.indexMu.Lock()
+			defer s.indexMu.Unlock()
+			if s.vectorStorageMode != "memory" && vectorPath != "" {
+				s.ensureVectorFileStore()
+			}
+			for _, node := range filtered {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				if err := s.indexNodeLocked(node, false); err != nil {
+					return err
+				}
+			}
+			count += len(batch)
+			s.buildProcessed.Store(int64(count))
+			return nil
 		}
 		if !skipFulltextRebuild {
 			entries := make([]FulltextBatchEntry, 0, len(filtered))
@@ -4242,24 +4210,27 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 			}
 		}
 		s.indexMu.Lock()
+		defer s.indexMu.Unlock()
 		for _, n := range filtered {
-			_ = s.indexNodeLocked(n, true)
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := s.indexNodeLocked(n, true); err != nil {
+				return err
+			}
 		}
-		s.indexMu.Unlock()
 		count += len(batch)
 		s.buildProcessed.Store(int64(count))
 		return nil
 	}
-	err := storage.StreamNodesWithFallback(ctx, s.engine, 1000, func(node *storage.Node) error {
-		if ctx.Err() != nil {
-			return ctx.Err()
+	acceptNode := func(node *storage.Node) error {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		fulltextBatch = append(fulltextBatch, node)
-		// Expose forward progress while accumulating a batch, so long BM25 batches
-		// don't appear "stuck" at 0 until the first flush completes.
 		s.buildProcessed.Store(int64(count + len(fulltextBatch)))
 		if len(fulltextBatch) >= fulltextBuildBatchSize {
-			if err := flushFulltextBatchFallback(fulltextBatch); err != nil {
+			if err := flushFulltextBatch(fulltextBatch); err != nil {
 				return err
 			}
 			fulltextBatch = nil
@@ -4268,52 +4239,71 @@ func (s *Service) BuildIndexes(ctx context.Context) error {
 			}
 		}
 		return nil
-	})
-	if err != nil {
+	}
+	var iterationErr, callbackErr error
+	if iterator, ok := s.engine.(NodeIterator); ok {
+		iterationErr = iterator.IterateNodes(func(node *storage.Node) bool {
+			callbackErr = acceptNode(node)
+			return callbackErr == nil
+		})
+	} else {
+		iterationErr = storage.StreamNodesWithFallback(ctx, s.engine, 1000, acceptNode)
+	}
+	if iterationErr != nil {
+		return iterationErr
+	}
+	if callbackErr != nil {
+		return callbackErr
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	if err := flushFulltextBatchFallback(fulltextBatch); err != nil {
+	if err := flushFulltextBatch(fulltextBatch); err != nil {
 		return err
 	}
-	if ctx.Err() != nil {
-		return ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	s.logPrintf("📊 Indexed %d total nodes", count)
 	s.logPrintf("📇 BuildIndexes: base index iteration complete (processed=%d)", count)
+	return s.completeNodePopulation(ctx, job, nodePopulationPlan{fulltextPath: fulltextPath, hnswPath: hnswPath, nodesRebuilt: true, forceHNSWRebuild: forceHNSWRebuild, vectorCount: s.EmbeddingCount()}, explicit)
+}
+
+// completeBaseIndexBuild is shared by restored and rebuilt node sources. Node
+// artifacts do not contain relationship property vectors, so both routes must
+// load those through the canonical mutation owner before publishing readiness.
+func (s *Service) completeBaseIndexBuild(ctx context.Context) error {
 	s.setBuildPhase("iterating_relationship_vectors")
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := s.buildRelationshipVectorIndexes(ctx); err != nil {
 		return err
 	}
-	// Persist BM25 + vector store before HNSW/k-means build so base indexes are durable.
-	s.setBuildPhase("persisting_base_indexes")
-	if err := s.persistBaseIndexes(); err != nil {
-		return err
-	}
-	// Drop BM25 from RAM during HNSW/IVF build to keep memory bounded.
-	expectedFulltextCount := s.fulltext().Count()
-	if fulltextPath != "" {
-		s.fulltext().Clear()
-		s.logPrintf("📇 BuildIndexes: cleared BM25 in-memory state (will reload after warmup)")
-	}
+
 	s.logPrintf("📇 BuildIndexes: starting vector pipeline warmup (k-means may run)...")
 	s.setBuildPhase("warmup_hnsw_or_kmeans")
 	s.warmupVectorPipeline(ctx)
-	if fulltextPath != "" {
-		if err := s.reloadFulltextAfterWarmup(fulltextPath, expectedFulltextCount); err != nil {
-			return err
-		}
-		s.logPrintf("📇 BuildIndexes: reloaded BM25 from disk after warmup")
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.indexMu.Lock()
+	reloadErr := s.materializeNodeFulltextLocked()
+	s.indexMu.Unlock()
+	if reloadErr != nil {
+		return reloadErr
 	}
 	s.finishBuildWithFinalPersist(ctx)
 	return nil
 }
 
 func (s *Service) reloadFulltextAfterWarmup(path string, expectedCount int) error {
-	if err := s.fulltext().Load(path); err != nil {
+	accepted, err := s.fulltext().loadSnapshot(path)
+	if err != nil {
 		return fmt.Errorf("reload BM25 index after vector warmup: %w", err)
+	}
+	if !accepted {
+		return fmt.Errorf("reload BM25 index after vector warmup: snapshot was not accepted: %s", path)
 	}
 	if actual := s.fulltext().Count(); actual != expectedCount {
 		return fmt.Errorf("reload BM25 index after vector warmup: document count mismatch: got %d, want %d", actual, expectedCount)
@@ -4337,6 +4327,8 @@ func (s *Service) warmupVectorPipeline(ctx context.Context) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// All base vectors have been loaded before warmup starts.
+	s.hnswVectorsChanging.Store(false)
 	if !s.vectorEnabled.Load() {
 		s.logPrintf("🔍 Vector search disabled — skipping ANN warmup")
 		return
@@ -4355,9 +4347,23 @@ func (s *Service) warmupVectorPipeline(ctx context.Context) {
 		s.logPrintf("⚠️ Clustering during warmup failed (will use global HNSW): %v", err)
 	}
 
-	if _, err := s.getOrCreateVectorPipeline(ctx); err != nil {
+	pipeline, err := s.getOrCreateVectorPipeline(ctx)
+	if err != nil {
 		s.logPrintf("⚠️ Vector pipeline warmup failed (first search may be slow): %v", err)
 		return
+	}
+	// Explicit index warmup may wait; retrieval requests never do. Construction
+	// still belongs to the service if this caller's wait is cancelled.
+	switch pipeline.candidateGen.(type) {
+	case *BruteForceCandidateGen, *FileStoreBruteForceCandidateGen:
+		if s.desiredRuntimeStrategy(n) == strategyModeHNSW {
+			if _, err := s.getOrCreateHNSWIndex(ctx, s.VectorIndexDimensions()); err != nil {
+				return
+			}
+			if _, err := s.getOrCreateVectorPipeline(ctx); err != nil {
+				return
+			}
+		}
 	}
 	s.logPrintf("🔍 Vector search pipeline ready in %v", time.Since(start))
 }
@@ -4577,6 +4583,10 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		return response, err
 	}
 
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+
 	// Fallback to vector-only
 	// Failed branches are replaced by the selected fallback. A successful but
 	// incomplete branch must still prevent false exhaustion of the whole search.
@@ -4596,6 +4606,10 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 		}
 		s.maybeLogSearchTiming(query, response, time.Since(start), false)
 		return response, nil
+	}
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
 	}
 
 	// Final fallback to full-text
@@ -4724,6 +4738,7 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	candidateBudgetReached := false
 
 	// Step 5: Apply MMR diversification if enabled
+	vectorMethod, _ := vectorSearchMethod(pipeline)
 	searchMethod := "rrf_hybrid"
 	message := "Reciprocal Rank Fusion (Vector + BM25)"
 	switch pipeline.candidateGen.(type) {
@@ -4791,6 +4806,7 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 		Message:                message,
 		Metrics: &SearchMetrics{
 			VectorSearchTimeMs:     vectorMs,
+			VectorSearchMethod:     vectorMethod,
 			BM25SearchTimeMs:       bm25Ms,
 			FusionTimeMs:           fusionMs,
 			TotalTimeMs:            totalMs,
@@ -5345,6 +5361,9 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Read the pointer once under the lock: resetANNForBuild may clear it as
 	// soon as the lock is released (#593).
 	s.pipelineMu.RLock()
@@ -5362,14 +5381,15 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 		return s.vectorPipeline, nil
 	}
 
+	snapshot := s.captureVectorSnapshot()
 	s.mu.RLock()
 	vectorCount := s.embeddingCountLocked()
-	dimensions := s.VectorIndexDimensions()
+	dimensions := s.vectorIndexDimensionsLocked()
 	vfs := s.vectorFileStore
 	vi := s.vectorIndex
 	s.mu.RUnlock()
 
-	strategy, err := s.resolveVectorStrategy(ctx, vectorCount, dimensions, vfs)
+	strategy, err := s.resolveVectorStrategy(ctx, vectorCount, dimensions, vfs, vi)
 	if err != nil {
 		return nil, err
 	}
@@ -5378,8 +5398,11 @@ func (s *Service) getOrCreateVectorPipeline(ctx context.Context) (*VectorSearchP
 
 	exactScorer := s.resolveVectorExactScorer(strategy.scorerPolicy, vi, vfs)
 
-	s.vectorPipeline = NewVectorSearchPipeline(strategy.candidateGen, exactScorer)
-	return s.vectorPipeline, nil
+	pipeline = NewVectorSearchPipeline(strategy.candidateGen, exactScorer)
+	if !strategy.pendingHNSW && s.vectorSnapshotCurrent(snapshot) {
+		s.vectorPipeline = pipeline
+	}
+	return pipeline, nil
 }
 
 func (s *Service) currentPipelineStrategy() strategyMode {
@@ -5488,7 +5511,11 @@ func (s *Service) runStrategyTransition(target strategyMode) {
 			s.scheduleDebouncedStrategyTransition(next)
 		}
 	}()
+	if s.lifecycleCtx.Err() != nil {
+		return
+	}
 
+	snapshot := s.captureVectorSnapshot()
 	vectorCount, vi, vfs := s.snapshotStrategyInputs()
 	current := s.currentPipelineStrategy()
 	if current == strategyModeUnknown || current == target {
@@ -5501,24 +5528,25 @@ func (s *Service) runStrategyTransition(target strategyMode) {
 	)
 	if target == strategyModeHNSW {
 		dim := s.VectorIndexDimensions()
-		targetHNSW, err = s.buildHNSWForTransition(s.lifecycleCtx, dim, vi, vfs)
+		targetHNSW, err = s.getOrCreateHNSWIndex(s.lifecycleCtx, dim)
 		if err != nil {
 			s.logPrintf("⚠️ Runtime strategy transition build failed: %v", err)
 			return
 		}
 	}
 
-	s.replayTransitionDeltas(targetHNSW, target, vi, vfs, 0)
 	s.indexMu.Lock()
-	lastSeq := s.replayTransitionDeltas(targetHNSW, target, vi, vfs, 0)
-	s.applyTransitionSwapLocked(target, targetHNSW, vi, vfs)
-	for {
-		nextSeq := s.replayTransitionDeltas(targetHNSW, target, vi, vfs, lastSeq)
-		if nextSeq == lastSeq {
-			break
-		}
-		lastSeq = nextSeq
+	if !s.vectorSnapshotCurrent(snapshot) {
+		s.indexMu.Unlock()
+		return
 	}
+	// The shared builder can return an already-published graph. Replay is a
+	// live mutation: validate captured sources and exclude source retirement
+	// and newer writes before touching either HNSW or GPU state.
+	lastSeq := s.replayTransitionDeltasLocked(targetHNSW, target, vi, vfs, 0)
+	s.applyTransitionSwapLocked(target, targetHNSW, vi, vfs)
+	// Every production delta append owns indexMu, so no later mutation can
+	// enter this interval; one replay covers the complete pre-swap log.
 	s.clearTransitionDeltaLogLocked(lastSeq)
 	s.indexMu.Unlock()
 	s.logPrintf("🔍 Runtime strategy switch complete: %s -> %s (N=%d)", current.String(), target.String(), vectorCount)
@@ -5538,13 +5566,14 @@ func (s *Service) applyTransitionSwapLocked(target strategyMode, targetHNSW *HNS
 	} else {
 		s.hnswMu.Lock()
 		old := s.hnswIndex
-		s.hnswIndex = nil
+		s.invalidateHNSWLocked()
 		s.hnswMu.Unlock()
 		if old != nil {
 			old.Clear()
 		}
 	}
-	s.hnswRebuildOverlay.Reset()
+	// The active construction job owns its overlay across snapshot and install.
+	// Adopting the ready graph must not discard another builder's mutations.
 	if target == strategyModeBruteGPU {
 		_ = s.ensureGPUIndexSynced(vi, vfs)
 	}
@@ -5597,6 +5626,7 @@ func (s *Service) buildPipelineForMode(mode strategyMode, vi *VectorIndex, vfs *
 }
 
 func (s *Service) switchBruteStrategy(target strategyMode) bool {
+	snapshot := s.captureVectorSnapshot()
 	vectorCount, vi, vfs := s.snapshotStrategyInputs()
 	current := s.currentPipelineStrategy()
 	if current == target || (current != strategyModeBruteCPU && current != strategyModeBruteGPU) {
@@ -5604,6 +5634,9 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 	}
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
+	if !s.vectorSnapshotCurrent(snapshot) {
+		return false
+	}
 	if target == strategyModeBruteGPU {
 		if err := s.ensureGPUIndexSynced(vi, vfs); err != nil {
 			s.logPrintf("⚠️ Runtime CPU->GPU brute switch skipped: %v", err)
@@ -5613,8 +5646,8 @@ func (s *Service) switchBruteStrategy(target strategyMode) bool {
 	s.hnswMu.Lock()
 	if s.hnswIndex != nil {
 		s.hnswIndex.Clear()
-		s.hnswIndex = nil
 	}
+	s.invalidateHNSWLocked()
 	s.hnswMu.Unlock()
 	p := s.buildPipelineForMode(target, vi, vfs)
 	s.pipelineMu.Lock()
@@ -5629,22 +5662,9 @@ func (s *Service) buildHNSWForTransition(ctx context.Context, dimensions int, vi
 	s.mu.RLock()
 	fulltext := s.fulltext()
 	s.mu.RUnlock()
-	seedHints := s.hnswLexicalSeedHints(fulltext, config.M)
-	if vfs != nil && vfs.Count() > 0 {
-		total := vfs.Count()
-		iter := hnswVectorFileStoreIterator(vfs, seedHints)
-		built, _, err := buildHNSWWithOptionalGPU(ctx, dimensions, config, s.getVectorLookup(), total, iter, nil)
-		return built, err
-	}
-	if vi == nil {
-		return nil, localizedError(localization.SearchVectorIndexUnavailable(), nil)
-	}
-	pairs := hnswOrderedVectorIndexPairs(vi, seedHints)
-	iter := hnswPairSliceIterator(pairs)
-	built, _, err := buildHNSWWithOptionalGPU(ctx, dimensions, config, VectorLookup(vi.getVectorRef), len(pairs), iter, nil)
+	built, _, err := s.buildHNSWSnapshot(ctx, dimensions, config, vi, vfs, s.hnswLexicalSeedHints(fulltext, config.M))
 	return built, err
 }
-
 func hnswPairSliceIterator(pairs []hnswBuildPair) hnswBuildIterator {
 	return func(batchSize int, fn func([]hnswBuildPair) error) error {
 		if batchSize <= 0 {
@@ -5711,7 +5731,9 @@ func (s *Service) ensureGPUIndexSynced(vi *VectorIndex, vfs *VectorFileStore) er
 	return nil
 }
 
-func (s *Service) replayTransitionDeltas(targetHNSW *HNSWIndex, mode strategyMode, vi *VectorIndex, vfs *VectorFileStore, after uint64) uint64 {
+// replayTransitionDeltasLocked mutates the shared backend. Caller holds indexMu
+// and, for transitions, has validated the captured vector snapshot token.
+func (s *Service) replayTransitionDeltasLocked(targetHNSW *HNSWIndex, mode strategyMode, vi *VectorIndex, vfs *VectorFileStore, after uint64) uint64 {
 	s.strategyTransitionMu.Lock()
 	deltas := make([]strategyDeltaMutation, 0, len(s.strategyTransitionDeltas))
 	for _, d := range s.strategyTransitionDeltas {
@@ -5819,22 +5841,25 @@ type vectorStrategyDescriptor struct {
 	name         string
 	candidateGen CandidateGenerator
 	scorerPolicy exactScorerPolicy
+	pendingHNSW  bool // Exact fallback is temporary, including during index reset.
 }
 
-func (s *Service) resolveVectorStrategy(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore) (*vectorStrategyDescriptor, error) {
+func (s *Service) resolveVectorStrategy(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore, source ...*VectorIndex) (*vectorStrategyDescriptor, error) {
+	vi := s.vectorMemorySnapshot(source)
 	if ANNQualityFromEnv() == ANNQualityCompressed {
-		return s.resolveCompressedVectorStrategy(ctx, vectorCount, dimensions, vfs)
+		return s.resolveCompressedVectorStrategy(ctx, vectorCount, dimensions, vfs, vi)
 	}
-	return s.resolveStandardVectorStrategy(ctx, vectorCount, dimensions, vfs)
+	return s.resolveStandardVectorStrategy(ctx, vectorCount, dimensions, vfs, vi)
 }
 
-func (s *Service) resolveCompressedVectorStrategy(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore) (*vectorStrategyDescriptor, error) {
+func (s *Service) resolveCompressedVectorStrategy(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore, source ...*VectorIndex) (*vectorStrategyDescriptor, error) {
+	vi := s.vectorMemorySnapshot(source)
 	profile := ResolveCompressedANNProfile(vectorCount, dimensions, vfs != nil && vfs.Count() > 0)
 	if !profile.Active {
 		for _, diag := range profile.Diagnostics {
 			s.logPrintf("[IVFPQ] ⏭️ compressed mode inactive | code=%s reason=%s", diag.Code, diag.Message)
 		}
-		strategy, err := s.resolveStandardVectorStrategy(ctx, vectorCount, dimensions, vfs)
+		strategy, err := s.resolveStandardVectorStrategy(ctx, vectorCount, dimensions, vfs, vi)
 		if err != nil {
 			return nil, err
 		}
@@ -5844,8 +5869,11 @@ func (s *Service) resolveCompressedVectorStrategy(ctx context.Context, vectorCou
 
 	idx, err := s.getOrBuildIVFPQIndex(ctx, ivfpqProfileFromCompressed(profile), vfs)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		s.logPrintf("[IVFPQ] ⚠️ compressed build/load failed, falling back to standard path: %v", err)
-		strategy, fallbackErr := s.resolveStandardVectorStrategy(ctx, vectorCount, dimensions, vfs)
+		strategy, fallbackErr := s.resolveStandardVectorStrategy(ctx, vectorCount, dimensions, vfs, vi)
 		if fallbackErr != nil {
 			return nil, fallbackErr
 		}
@@ -5873,7 +5901,11 @@ func ivfpqProfileFromCompressed(profile CompressedANNProfile) IVFPQProfile {
 	}
 }
 
-func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore) (*vectorStrategyDescriptor, error) {
+func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore, source ...*VectorIndex) (*vectorStrategyDescriptor, error) {
+	vi := s.vectorMemorySnapshot(source)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Auto strategy: choose candidate generator based on dataset size and clustering
 	gpuEnabled := s.gpuManager != nil && s.gpuManager.IsEnabled() && s.gpuEmbeddingIndex != nil
 	gpuMinN := envutil.GetInt("NORNICDB_VECTOR_GPU_BRUTE_MIN_N", 5000)
@@ -5900,17 +5932,23 @@ func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount
 		}
 		return &vectorStrategyDescriptor{
 			name:         "CPU brute-force",
-			candidateGen: NewBruteForceCandidateGen(s.vectorIndex),
+			candidateGen: NewBruteForceCandidateGen(vi),
 			scorerPolicy: exactScorerPolicyCPU,
 		}, nil
 	}
 	if s.clusterIndex != nil && s.clusterIndex.IsClustered() {
-		return s.resolveClusteredVectorStrategy(vectorCount, gpuEnabled, gpuMaxN)
+		return s.resolveClusteredVectorStrategy(vectorCount, gpuEnabled, gpuMaxN, vi)
 	}
 	// Large dataset: use HNSW (lazy-initialize if needed)
-	hnswIndex, err := s.getOrCreateHNSWIndex(ctx, dimensions)
+	hnswIndex, _, err := s.startHNSWBuild(dimensions)
 	if err != nil {
 		return nil, localizedError(localization.SearchHNSWIndexCreationFailed(err), err)
+	}
+	if hnswIndex == nil {
+		if vfs != nil {
+			return &vectorStrategyDescriptor{name: "CPU brute-force (HNSW building; file store scan)", pendingHNSW: true, candidateGen: NewFileStoreBruteForceCandidateGen(vfs), scorerPolicy: exactScorerPolicyCPU}, nil
+		}
+		return &vectorStrategyDescriptor{name: "CPU brute-force (HNSW building)", pendingHNSW: true, candidateGen: NewBruteForceCandidateGen(vi), scorerPolicy: exactScorerPolicyCPU}, nil
 	}
 	return &vectorStrategyDescriptor{
 		name:         "HNSW",
@@ -5919,7 +5957,8 @@ func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount
 	}, nil
 }
 
-func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled bool, gpuMaxN int) (*vectorStrategyDescriptor, error) {
+func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled bool, gpuMaxN int, source ...*VectorIndex) (*vectorStrategyDescriptor, error) {
+	vi := s.vectorMemorySnapshot(source)
 	// If clustering is enabled and clusters are built, use centroid routing on CPU
 	// (GPU subset scoring when GPU is enabled but full brute is out-of-range, else IVF-HNSW when available,
 	// else CPU k-means candidate generation).
@@ -5955,7 +5994,7 @@ func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled boo
 		}
 	}
 
-	gen := NewKMeansCandidateGen(s.clusterIndex, s.vectorIndex, numClustersToSearch).
+	gen := NewKMeansCandidateGen(s.clusterIndex, vi, numClustersToSearch).
 		SetClusterSelector(s.selectHybridClusters)
 	return &vectorStrategyDescriptor{
 		name:         "CPU k-means (cluster routing)",
@@ -5976,349 +6015,6 @@ func (s *Service) resolveVectorExactScorer(policy exactScorerPolicy, vi *VectorI
 		}
 		return NewCPUExactScorer(getter)
 	}
-}
-
-// hnswBeforeInstallHook, set by tests only, runs after an initial HNSW build
-// and before the graph is installed: where a vector stored during the build
-// used to be lost.
-var hnswBeforeInstallHook func()
-
-// getOrCreateHNSWIndex returns the HNSW index, creating it if needed.
-func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HNSWIndex, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	s.hnswMu.RLock()
-	if idx := s.hnswIndex; idx != nil {
-		s.hnswMu.RUnlock()
-		return idx, nil
-	}
-	s.hnswMu.RUnlock()
-
-	config := HNSWConfigFromEnv()
-
-	s.mu.RLock()
-	vfs := s.vectorFileStore
-	vi := s.vectorIndex
-	ft := s.fulltext()
-	s.mu.RUnlock()
-	seedHints := s.hnswLexicalSeedHints(ft, config.M)
-	if len(seedHints) > 0 {
-		s.logPrintf("[HNSW] 🧭 Lexical build metadata: %d ranked node IDs", len(seedHints))
-	}
-
-	var built *HNSWIndex
-	var buildStats hnswBuildStats
-
-	// A vector stored or removed while the graph is built from its snapshot
-	// would miss it: no index is installed yet to take the change. As during
-	// a rebuild, such changes go to hnswRebuildOverlay from before the
-	// snapshot, and are replayed once the graph is installed.
-	racesTracked := false
-	if !s.hnswRebuildInFlight.Load() {
-		s.hnswRebuildOverlay.Reset()
-		racesTracked = s.hnswRebuildInFlight.CompareAndSwap(false, true)
-	}
-	installed := false
-	defer func() {
-		if !racesTracked {
-			return
-		}
-		if installed {
-			go s.replayHNSWBuildRaces(built)
-			return
-		}
-		s.hnswRebuildOverlay.Reset()
-		s.hnswRebuildInFlight.Store(false)
-	}()
-
-	if vfs != nil && vfs.Count() > 0 {
-		total := vfs.Count()
-		s.logPrintf("[HNSW] 🔨 Building from file store: %d vectors (chunk size 10k)", total)
-		lookup := s.getVectorLookup()
-		iterator := hnswVectorFileStoreIterator(vfs, seedHints)
-		lease, leaseErr := vfs.beginReadLease()
-		if leaseErr == nil {
-			lookup = lease.Lookup
-			iterator = hnswVectorReadLeaseIterator(lease, seedHints)
-		} else {
-			s.logPrintf("[HNSW] read-only vector mapping unavailable; using copied reads: %v", leaseErr)
-		}
-		var err error
-		built, buildStats, err = buildHNSWWithOptionalGPU(ctx, dimensions, config, lookup, total, iterator, nil)
-		if built != nil && lease != nil {
-			// The lease accelerates construction only. Runtime lookup retains the
-			// owning-copy contract so compaction and close cannot invalidate views.
-			built.SetVectorLookup(s.getVectorLookup())
-		}
-		if lease != nil {
-			_ = lease.Close()
-		}
-		if err != nil {
-			return nil, err
-		}
-		s.logPrintf("[HNSW] 🔨 Built from file store: %d vectors", built.Size())
-	} else if vi != nil {
-		pairs := hnswOrderedVectorIndexPairs(vi, seedHints)
-		total := len(pairs)
-		s.logPrintf("[HNSW] 🔨 Building from in-memory index: %d vectors", total)
-		var err error
-		built, buildStats, err = buildHNSWWithOptionalGPU(ctx, dimensions, config, s.getVectorLookup(), total, hnswPairSliceIterator(pairs), nil)
-		if err != nil {
-			return nil, err
-		}
-		s.logPrintf("[HNSW] 🔨 Built from memory: %d vectors", total)
-	} else {
-		return nil, localizedError(localization.SearchVectorIndexNil(), nil)
-	}
-
-	if hnswBeforeInstallHook != nil {
-		hnswBeforeInstallHook()
-	}
-	// Install unless someone else won the race.
-	s.hnswMu.Lock()
-	if s.hnswIndex != nil {
-		existing := s.hnswIndex
-		s.hnswMu.Unlock()
-		return existing, nil
-	}
-
-	// Log configuration and stats for observability
-	quality := os.Getenv("NORNICDB_VECTOR_ANN_QUALITY")
-	if quality == "" {
-		quality = "fast"
-	}
-	s.logPrintf("🔍 HNSW index created: quality=%s M=%d efConstruction=%d efSearch=%d vectors=%d tombstone_ratio=%.2f build_strategy=%s build_backend=%s build_batches=%d build_kernel_errors=%d build_fallback=%t build_duration=%s",
-		quality, config.M, config.EfConstruction, config.EfSearch, built.Size(), built.TombstoneRatio(),
-		buildStats.Strategy, buildStats.Backend, buildStats.Batches, buildStats.KernelErrors, buildStats.Fallback, buildStats.Duration)
-
-	s.hnswIndex = built
-	s.hnswMu.Unlock()
-	installed = true
-
-	s.ensureHNSWMaintenance()
-	return built, nil
-}
-
-// replayHNSWBuildRaces applies to built, once installed, the vector changes
-// that raced its initial build (getOrCreateHNSWIndex), then stops recording
-// them. It holds indexMu, as a rebuild's swap does, so no change lands
-// between the replay and the end of recording; changes made after the
-// install reached built directly, and replaying the latest state of each
-// vector again is idempotent. It runs on its own goroutine because the
-// build runs under pipelineMu, and indexMu is taken before pipelineMu
-// elsewhere.
-func (s *Service) replayHNSWBuildRaces(built *HNSWIndex) {
-	s.indexMu.Lock()
-	defer s.indexMu.Unlock()
-	s.hnswMu.RLock()
-	current := s.hnswIndex == built
-	s.hnswMu.RUnlock()
-	if current {
-		if err := applyHNSWMutationSnapshot(built, s.hnswRebuildOverlay.snapshot()); err != nil {
-			s.logPrintf("⚠️ HNSW: replaying the vectors stored during the build failed: %v", err)
-		}
-	}
-	s.hnswRebuildOverlay.Reset()
-	s.hnswRebuildInFlight.Store(false)
-}
-
-func (s *Service) ensureHNSWMaintenance() {
-	s.hnswMaintOnce.Do(func() {
-		ctx := s.lifecycleCtx
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		ctx, cancel := context.WithCancel(ctx)
-		s.hnswMaintCancel = cancel
-		s.hnswMaintDone = make(chan struct{})
-
-		interval := envDurationMs("NORNICDB_HNSW_MAINT_INTERVAL_MS", 30_000)
-		minRebuildInterval := envDurationSec("NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC", 60)
-		rebuildRatio := envFloat("NORNICDB_HNSW_TOMBSTONE_REBUILD_RATIO", 0.50)
-		maxOverhead := envFloat("NORNICDB_HNSW_MAX_TOMBSTONE_OVERHEAD_FACTOR", 2.0)
-		enabled := envutil.GetBoolStrict("NORNICDB_HNSW_REBUILD_ENABLED", true)
-
-		ticker := time.NewTicker(interval)
-		go func() {
-			defer ticker.Stop()
-			defer close(s.hnswMaintDone)
-			for {
-				select {
-				case <-ticker.C:
-					if !enabled {
-						continue
-					}
-					if s.buildInProgress.Load() {
-						continue
-					}
-					_ = s.maybeRebuildHNSW(ctx, rebuildRatio, maxOverhead, minRebuildInterval)
-				case <-ctx.Done():
-					// stopHNSWMaintenance and the service's lifecycle
-					// cancel this context; it is the loop's only exit.
-					return
-				}
-			}
-		}()
-	})
-}
-
-func (s *Service) stopHNSWMaintenance() {
-	if s == nil {
-		return
-	}
-	if s.hnswMaintCancel != nil {
-		s.hnswMaintCancel()
-	}
-	if s.hnswMaintDone != nil {
-		<-s.hnswMaintDone
-	}
-}
-
-func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold, maxOverheadFactor float64, minInterval time.Duration) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if minInterval <= 0 {
-		minInterval = 60 * time.Second
-	}
-
-	last := time.Unix(s.hnswLastRebuildUnix.Load(), 0)
-	if !last.IsZero() && time.Since(last) < minInterval {
-		return nil
-	}
-	s.hnswMu.RLock()
-	old := s.hnswIndex
-	s.hnswMu.RUnlock()
-	if old == nil {
-		return nil
-	}
-
-	// Derive rebuild condition from a single read lock on the index.
-	old.mu.RLock()
-	total := len(old.nodeLevel)
-	live := old.liveCount
-	old.mu.RUnlock()
-	if total == 0 || live <= 0 {
-		return nil
-	}
-
-	deleted := total - live
-	ratio := float64(deleted) / float64(total)
-	overhead := float64(total) / float64(live)
-	if ratio <= tombstoneRatioThreshold && overhead <= maxOverheadFactor {
-		return nil
-	}
-
-	if !s.hnswRebuildInFlight.CompareAndSwap(false, true) {
-		return nil
-	}
-	s.indexMu.Lock()
-	s.hnswRebuildOverlay.Reset()
-	s.indexMu.Unlock()
-	defer func() {
-		s.indexMu.Lock()
-		s.hnswRebuildInFlight.Store(false)
-		s.hnswRebuildOverlay.Reset()
-		s.indexMu.Unlock()
-	}()
-
-	s.mu.RLock()
-	vfs := s.vectorFileStore
-	vi := s.vectorIndex
-	fulltext := s.fulltext()
-	s.mu.RUnlock()
-
-	rebuilt := NewHNSWIndex(old.dimensions, old.config)
-	rebuilt.SetVectorLookup(s.getVectorLookup())
-	seedHints := s.hnswLexicalSeedHints(fulltext, old.config.M)
-	rebuilt.SetBuildLexicalHints(lexicalHintValues(seedHints))
-	const rebuildProgressInterval = 50000
-	if vfs != nil && vfs.Count() > 0 {
-		total := vfs.Count()
-		s.logPrintf("[HNSW] 🔄 Rebuilding: vectors=%d reason=tombstone_ratio=%.3f overhead=%.3f",
-			total, ratio, overhead)
-		var added int
-		iterator := hnswVectorFileStoreIterator(vfs, seedHints)
-		if err := iterator(10000, func(batch []hnswBuildPair) error {
-			for i := range batch {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-				_ = rebuilt.Add(batch[i].id, batch[i].vec)
-			}
-			added += len(batch)
-			if added%rebuildProgressInterval == 0 || added == total {
-				s.logPrintf("[HNSW] 🔄 Rebuild progress: %d / %d vectors", added, total)
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-		s.logPrintf("[HNSW] 🔄 Rebuild complete: %d vectors", added)
-	} else if vi != nil {
-		pairs := hnswOrderedVectorIndexPairs(vi, seedHints)
-		total := len(pairs)
-		s.logPrintf("[HNSW] 🔄 Rebuilding: vectors=%d reason=tombstone_ratio=%.3f overhead=%.3f",
-			total, ratio, overhead)
-		for i, p := range pairs {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-			_ = rebuilt.Add(p.id, p.vec)
-			if (i+1)%rebuildProgressInterval == 0 || i+1 == total {
-				s.logPrintf("[HNSW] 🔄 Rebuild progress: %d / %d vectors", i+1, total)
-			}
-		}
-		s.logPrintf("[HNSW] 🔄 Rebuild complete: %d vectors", total)
-	} else {
-		return nil
-	}
-
-	// Close the rebuild race under the mutation lock. Replaying the complete
-	// overlay is idempotent for vectors already observed by the store snapshot,
-	// and captures mutations that arrived while the graph was being rebuilt.
-	s.indexMu.Lock()
-	s.hnswMu.RLock()
-	currentIsOld := s.hnswIndex == old
-	s.hnswMu.RUnlock()
-	if !currentIsOld {
-		s.indexMu.Unlock()
-		return nil
-	}
-	if s.hnswRebuildOverlay != nil {
-		pending := s.hnswRebuildOverlay.snapshot()
-		if err := applyHNSWMutationSnapshot(rebuilt, pending); err != nil {
-			s.indexMu.Unlock()
-			return err
-		}
-	}
-
-	// IMPORTANT: do NOT take pipelineMu while holding hnswMu.
-	// Search pipeline creation uses lock order pipelineMu -> hnswMu, so taking
-	// hnswMu -> pipelineMu here can deadlock.
-	swapped := false
-	s.hnswMu.Lock()
-	if s.hnswIndex == old {
-		s.hnswIndex = rebuilt
-		s.hnswLastRebuildUnix.Store(time.Now().Unix())
-		swapped = true
-	}
-	s.hnswMu.Unlock()
-	s.indexMu.Unlock()
-
-	if swapped {
-		// Invalidate pipeline after releasing hnswMu so lock order remains consistent.
-		s.pipelineMu.Lock()
-		s.vectorPipeline = nil
-		s.pipelineMu.Unlock()
-	}
-
-	return nil
 }
 
 func envFloat(key string, fallback float64) float64 {
@@ -7051,29 +6747,7 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 	if searchErr != nil {
 		return nil, searchErr
 	}
-	searchMethod := "vector"
-	message := "Vector similarity search (cosine)"
-
-	switch pipeline.candidateGen.(type) {
-	case *KMeansCandidateGen:
-		searchMethod = "vector_clustered"
-		message = "K-means routed vector search"
-	case *IVFHNSWCandidateGen:
-		searchMethod = "vector_ivf_hnsw"
-		message = "IVF-HNSW (centroid routing + per-cluster HNSW)"
-	case *IVFPQCandidateGen:
-		searchMethod = "vector_ivfpq"
-		message = "IVFPQ compressed ANN"
-	case *GPUBruteForceCandidateGen:
-		searchMethod = "vector_gpu_brute"
-		message = "GPU brute-force vector search (exact)"
-	case *HNSWCandidateGen:
-		searchMethod = "vector_hnsw"
-		message = "HNSW approximate nearest neighbor search"
-	case *BruteForceCandidateGen:
-		searchMethod = "vector_brute"
-		message = "CPU brute-force vector search (exact)"
-	}
+	searchMethod, message := vectorSearchMethod(pipeline)
 
 	s.mu.RLock()
 	clusterEnabled := s.clusterEnabled && s.clusterIndex != nil
@@ -7102,6 +6776,7 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 		Message:            message,
 		Metrics: &SearchMetrics{
 			VectorSearchTimeMs:     vectorMs,
+			VectorSearchMethod:     searchMethod,
 			TotalTimeMs:            totalMs,
 			VectorCandidates:       len(results),
 			VectorRawCandidates:    vectorStats.rawCandidates,

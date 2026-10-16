@@ -112,12 +112,19 @@ func saveBM25V2Snapshot(path string, snap bm25V2Snapshot, onSuccess func()) erro
 }
 
 func (f *FulltextIndexV2) Load(path string) error {
+	_, err := f.loadSnapshot(path)
+	return err
+}
+
+// loadSnapshot keeps native and legacy acceptance at the same decoder boundary
+// used by Load, including genuinely empty snapshots.
+func (f *FulltextIndexV2) loadSnapshot(path string) (bool, error) {
 	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
 	defer file.Close()
 
@@ -125,7 +132,7 @@ func (f *FulltextIndexV2) Load(path string) error {
 	if err := util.DecodeMsgpackFile(file.File, &v2); err == nil && v2.Version != "" &&
 		searchIndexVersionCompatible(v2.Version, bm25V2FormatVersion, "BM25 V2") {
 		f.applyV2Snapshot(v2)
-		return nil
+		return true, nil
 	} else if err != nil {
 		logSearchPrintf("⚠️ BM25 V2 load: failed decoding %s as v2 snapshot: %v", path, err)
 	}
@@ -134,9 +141,9 @@ func (f *FulltextIndexV2) Load(path string) error {
 	fileLegacy, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
 	defer fileLegacy.Close()
 
@@ -144,11 +151,11 @@ func (f *FulltextIndexV2) Load(path string) error {
 	if err := util.DecodeMsgpackFile(fileLegacy.File, &v1); err != nil {
 		logSearchPrintf("⚠️ BM25 V2 load: failed decoding %s as legacy snapshot: %v", path, err)
 		f.Clear()
-		return nil
+		return false, nil
 	}
 	if !searchIndexVersionCompatible(v1.Version, "1.0.0", "BM25") {
 		f.Clear()
-		return nil
+		return false, nil
 	}
 	if v1.Documents == nil {
 		v1.Documents = make(map[string]string)
@@ -160,7 +167,7 @@ func (f *FulltextIndexV2) Load(path string) error {
 		v1.DocLengths = make(map[string]int)
 	}
 	f.migrateFromV1Snapshot(v1)
-	return nil
+	return true, nil
 }
 
 func (f *FulltextIndexV2) applyV2Snapshot(s bm25V2Snapshot) {

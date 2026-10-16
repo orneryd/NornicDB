@@ -14,6 +14,8 @@ import (
 
 func TestHNSWMutationsRemainImmediatelySearchableAtAnyIndexSize(t *testing.T) {
 	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	require.NoError(t, svc.BuildIndexes(context.Background()))
 	// Cross the former live-update cutoff before indexing the new node. Keeping
 	// the large corpus in the canonical vector store makes this regression test
 	// cheap while exercising the same Service decision path as production.

@@ -151,12 +151,19 @@ func (f *FulltextIndex) SaveNoCopy(path string) error {
 // missing file) and no error is returned, so the caller can proceed with a full rebuild.
 // Returns an error only for unexpected I/O (e.g. permission denied).
 func (f *FulltextIndex) Load(path string) error {
+	_, err := f.loadSnapshot(path)
+	return err
+}
+
+// loadSnapshot reports whether the existing decoder installed a compatible
+// snapshot. Empty accepted snapshots are distinct from recovery-to-rebuild.
+func (f *FulltextIndex) loadSnapshot(path string) (bool, error) {
 	file, err := security.OpenRootedFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil // No saved index; caller will rebuild
+			return false, nil // No saved index; caller will rebuild
 		}
-		return err
+		return false, err
 	}
 	defer file.Close()
 
@@ -171,7 +178,7 @@ func (f *FulltextIndex) Load(path string) error {
 		f.docCount = 0
 		f.totalDocLength = 0
 		f.mu.Unlock()
-		return nil
+		return false, nil
 	}
 	if !searchIndexVersionCompatible(snap.Version, fulltextIndexFormatVersion, "BM25") {
 		f.mu.Lock()
@@ -182,7 +189,7 @@ func (f *FulltextIndex) Load(path string) error {
 		f.docCount = 0
 		f.totalDocLength = 0
 		f.mu.Unlock()
-		return nil
+		return false, nil
 	}
 	if snap.Documents == nil {
 		snap.Documents = make(map[string]string)
@@ -208,7 +215,7 @@ func (f *FulltextIndex) Load(path string) error {
 	}
 	f.version = 1
 	f.persistedVersion = 1
-	return nil
+	return true, nil
 }
 
 // IsDirty reports whether the index has changes not yet persisted to disk.
@@ -543,6 +550,20 @@ func (f *FulltextIndex) GetDocument(id string) (string, bool) {
 	defer f.mu.RUnlock()
 	text, exists := f.documents[id]
 	return text, exists
+}
+
+func (f *FulltextIndex) forEachDocument(visit func(string, string)) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	forEachFulltextDocument(f.documents, visit)
+}
+
+// forEachFulltextDocument shares population traversal across fulltext backends.
+// The caller holds backend read ownership; visit must not reenter that backend.
+func forEachFulltextDocument(documents map[string]string, visit func(string, string)) {
+	for id, text := range documents {
+		visit(id, text)
+	}
 }
 
 // LexicalSeedDocIDs returns document IDs selected from high-IDF terms to provide

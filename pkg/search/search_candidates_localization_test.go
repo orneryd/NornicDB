@@ -95,9 +95,12 @@ func TestSearchCandidateLocalizationDirectGenerators(t *testing.T) {
 }
 
 func TestSearchCandidateLocalizationHNSWInitializationCause(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	service := &Service{}
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	_, err := service.resolveStandardVectorStrategy(context.Background(), 0, 3, nil)
 	require.EqualError(t, err, "failed to create HNSW index: vector index is nil")
+	require.Nil(t, service.hnswBuild, "invalid initialization must not launch a background build")
 
 	var outer *nornicerrors.Localized
 	require.ErrorAs(t, err, &outer)

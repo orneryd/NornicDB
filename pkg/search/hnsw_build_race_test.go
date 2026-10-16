@@ -20,7 +20,7 @@ func TestHNSWInitialBuildKeepsChangesThatRaceIt(t *testing.T) {
 	svc := NewServiceWithDimensions(engine, 3)
 	require.NoError(t, svc.IndexNode(&storage.Node{ID: "before", ChunkEmbeddings: [][]float32{{0, 1, 0}}}))
 
-	hnswBeforeInstallHook = func() {
+	hnswBeforeInstallHook = func(context.Context) {
 		require.NoError(t, svc.IndexNode(&storage.Node{ID: "during", ChunkEmbeddings: [][]float32{{1, 0, 0}}}))
 		require.NoError(t, svc.RemoveNode("before"))
 	}

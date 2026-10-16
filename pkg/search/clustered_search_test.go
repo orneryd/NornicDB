@@ -343,7 +343,10 @@ func TestVectorSearchOnly_UsesClusterWhenAvailable(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, response)
 
-	// Without clustering, HNSW is the default vector search strategy.
+	// Without clustering, the default graph becomes ready in the background.
+	requireHNSWReady(t, svc)
+	response, err = svc.vectorSearchOnly(ctx, embedding, opts)
+	require.NoError(t, err)
 	assert.Equal(t, "vector_hnsw", response.SearchMethod)
 }
 

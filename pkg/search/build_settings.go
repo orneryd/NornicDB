@@ -149,7 +149,7 @@ func (s *Service) composeStrategyBuildSettings() string {
 		return ""
 	}
 	s.mu.RLock()
-	dimensions := s.VectorIndexDimensions()
+	dimensions := s.vectorIndexDimensionsLocked()
 	vectorCount := s.embeddingCountLocked()
 	vfsReady := s.vectorFileStore != nil && s.vectorFileStore.Count() > 0
 	s.mu.RUnlock()

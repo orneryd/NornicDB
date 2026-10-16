@@ -526,14 +526,24 @@ func (db *DB) ResetSearchService(dbName string) {
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
 	}
+	db.searchServiceCreationMu.Lock()
+	defer db.searchServiceCreationMu.Unlock()
+	db.resetSearchService(dbName)
+}
+
+// resetSearchService retires the old service before its replacement can be
+// created. Caller holds searchServiceCreationMu, including through artifact
+// removal on drop so a replacement cannot persist into the directory being removed.
+func (db *DB) resetSearchService(dbName string) {
 	db.searchServicesMu.Lock()
+	defer db.searchServicesMu.Unlock()
 	if entry, ok := db.searchServices[dbName]; ok && entry != nil && entry.svc != nil {
-		// Stop pending persist timers and close file-backed vector store
-		// so removed databases cannot later re-persist stale index state.
+		// Close is the lifecycle owner: cancel and join construction and
+		// maintenance before releasing the vector store or forgetting the service.
+		_ = entry.svc.Close()
 		entry.svc.SetPersistenceEnabled(false)
 	}
 	delete(db.searchServices, dbName)
-	db.searchServicesMu.Unlock()
 }
 
 // DropSearchServiceState removes cached search service state and best-effort purges
@@ -542,7 +552,9 @@ func (db *DB) DropSearchServiceState(dbName string) {
 	if dbName == "" {
 		dbName = db.defaultDatabaseName()
 	}
-	db.ResetSearchService(dbName)
+	db.searchServiceCreationMu.Lock()
+	defer db.searchServiceCreationMu.Unlock()
+	db.resetSearchService(dbName)
 	if db.config == nil || db.config.Database.DataDir == "" {
 		return
 	}
