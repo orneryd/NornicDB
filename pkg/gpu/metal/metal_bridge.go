@@ -96,6 +96,8 @@ void metal_get_device_capabilities(MetalDevice device, MetalDeviceCapabilities* 
 bool metal_mps_is_supported(void);
 int metal_mps_matrix_multiply(MetalDevice device, MetalBuffer a, MetalBuffer b, MetalBuffer c,
     unsigned int m, unsigned int n, unsigned int k, float alpha, float beta);
+int metal_mps_matrix_multiply_bt(MetalDevice device, MetalBuffer a, MetalBuffer b, MetalBuffer c,
+    unsigned int m, unsigned int n, unsigned int k);
 int metal_mps_matrix_vector_multiply(MetalDevice device, MetalBuffer a, MetalBuffer x, MetalBuffer y,
     unsigned int m, unsigned int n, float alpha, float beta);
 int metal_mps_batch_cosine_similarity(MetalDevice device, MetalBuffer embeddings, MetalBuffer query,
@@ -344,6 +346,20 @@ func (b *Buffer) ReadFloat32(count int) []float32 {
 	src := (*[1 << 30]float32)(contents)[:count:count]
 	copy(result, src)
 	return result
+}
+
+// Float32View returns the buffer's first count float32 values as a slice of
+// its shared memory, without copying. The slice is valid until the buffer is
+// released or written by the GPU again.
+func (b *Buffer) Float32View(count int) []float32 {
+	if count <= 0 || uint64(count)*4 > b.size {
+		return nil
+	}
+	contents := b.Contents()
+	if contents == nil {
+		return nil
+	}
+	return unsafe.Slice((*float32)(contents), count)
 }
 
 // ReadUint32 reads uint32 values from the buffer.
@@ -779,6 +795,25 @@ func (d *Device) MPSMatrixMultiply(a, b, c *Buffer, m, n, k uint32, alpha, beta 
 		return fmt.Errorf("MPS matrix multiply failed: %s", errMsg)
 	}
 
+	return nil
+}
+
+// MPSMatrixMultiplyTransposeB computes C = A × Bᵀ with Metal Performance
+// Shaders: a is m × k, b is n × k and c (output) is m × n, all row-major, so
+// c[i][j] is the dot product of row i of a and row j of b. It scores m query
+// vectors against n stored vectors at once.
+func (d *Device) MPSMatrixMultiplyTransposeB(a, b, c *Buffer, m, n, k uint32) error {
+	if uint64(m)*uint64(k)*4 > a.size || uint64(n)*uint64(k)*4 > b.size || uint64(m)*uint64(n)*4 > c.size {
+		return errors.New("metal: matrix exceeds buffer size")
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if C.metal_mps_matrix_multiply_bt(d.ptr, a.ptr, b.ptr, c.ptr, C.uint(m), C.uint(n), C.uint(k)) != 0 {
+		errMsg := C.GoString(C.metal_last_error())
+		C.metal_clear_error()
+		return fmt.Errorf("%w: %s", ErrKernelExecution, errMsg)
+	}
 	return nil
 }
 
