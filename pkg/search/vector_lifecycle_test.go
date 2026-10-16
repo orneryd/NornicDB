@@ -102,3 +102,50 @@ func cachedVectorPipeline(svc *Service) *VectorSearchPipeline {
 	defer svc.pipelineMu.Unlock()
 	return svc.vectorPipeline
 }
+
+// A search answered by the exact fallback while the graph builds is cached
+// under the current IndexRevision; publishing the graph advances the revision,
+// so the cached fallback answer is not served once the graph is ready.
+func TestGraphInstallRetiresCachedFallbackAnswers(t *testing.T) {
+	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
+	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 3)
+	t.Cleanup(func() { _ = svc.Close() })
+	for i := range 4 {
+		require.NoError(t, svc.IndexNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("nornic:n%d", i)), ChunkEmbeddings: [][]float32{{1, float32(i), 0}}}))
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	hnswBeforeInstallHook = func(ctx context.Context) {
+		once.Do(func() { close(entered) })
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+	}
+	t.Cleanup(func() { hnswBeforeInstallHook = nil })
+	var released sync.Once
+	releaseInstall := func() { released.Do(func() { close(release) }) }
+	defer releaseInstall()
+
+	ctx := context.Background()
+	opts := DefaultSearchOptions()
+	opts.Limit = 4
+	first, err := svc.Search(ctx, "", []float32{1, 0, 0}, opts)
+	require.NoError(t, err)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the graph build did not start")
+	}
+	again, err := svc.Search(ctx, "", []float32{1, 0, 0}, opts)
+	require.NoError(t, err)
+	require.Same(t, first, again, "precondition: the fallback answer is cached")
+
+	before := svc.IndexRevision()
+	releaseInstall()
+	requireHNSWReady(t, svc)
+	require.Greater(t, svc.IndexRevision(), before, "publishing the graph must advance the revision")
+	after, err := svc.Search(ctx, "", []float32{1, 0, 0}, opts)
+	require.NoError(t, err)
+	require.NotSame(t, first, after, "the cached fallback answer was served after the graph installed")
+}

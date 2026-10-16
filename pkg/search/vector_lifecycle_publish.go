@@ -11,11 +11,15 @@ import "github.com/orneryd/nornicdb/pkg/gpu"
 // pipelineMu never under mu or hnswMu.
 
 // invalidateVectorPipeline drops the cached query pipeline so the next query
-// rebuilds it from the current artifacts. Call without mu or hnswMu.
+// rebuilds it from the current artifacts, and advances IndexRevision: a
+// search answered by the retired artifacts (an exact fallback while a graph
+// was building, for instance) must not be served from the result cache once
+// the replacement is published. Call without mu or hnswMu.
 func (s *Service) invalidateVectorPipeline() {
 	s.pipelineMu.Lock()
 	s.vectorPipeline = nil
 	s.pipelineMu.Unlock()
+	s.indexChanged()
 }
 
 // storeVectorPipelineLocked caches p for later queries. Caller holds
@@ -29,6 +33,7 @@ func (s *Service) publishVectorPipeline(p *VectorSearchPipeline) {
 	s.pipelineMu.Lock()
 	s.storeVectorPipelineLocked(p)
 	s.pipelineMu.Unlock()
+	s.indexChanged()
 }
 
 // installHNSWLocked makes idx the native graph (nil retires it). Caller holds
