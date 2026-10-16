@@ -140,3 +140,64 @@ func TestRuntimeLimitDefaultsToAuto(t *testing.T) {
 	require.Equal(t, RuntimeLimitAuto, config.Memory.RuntimeLimitStr)
 	require.Zero(t, config.Memory.RuntimeLimit)
 }
+
+// TestDetectCgroupMemoryLimitFromMountinfo: the hierarchies are found where
+// mountinfo says they are mounted, the process's path is read relative to
+// each mount's root, and v1's inherited hierarchical limit counts.
+func TestDetectCgroupMemoryLimitFromMountinfo(t *testing.T) {
+	const gib = int64(1) << 30
+	type files = map[string]string
+	for _, test := range []struct {
+		name  string
+		files files
+		limit int64
+		found bool
+	}{
+		// The review's layout: hierarchy root /tenant mounted at
+		// /sys/fs/cgroup; the process is in /tenant/app, whose limit is
+		// sys/fs/cgroup/app/memory.max.
+		{"v2 partially mounted hierarchy", files{
+			"proc/self/cgroup":    "0::/tenant/app\n",
+			"proc/self/mountinfo": "30 25 0:26 /tenant /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime shared:4 - cgroup2 cgroup2 rw,nsdelegate\n",
+			"sys/fs/cgroup/app/memory.max": "6442450944\n",
+			"sys/fs/cgroup/memory.max":     "max\n",
+		}, 6 * gib, true},
+		{"v2 mounted elsewhere, with an escaped space", files{
+			"proc/self/cgroup":    "0::/c1\n",
+			"proc/self/mountinfo": "30 25 0:26 / /run/cg\040two rw,relatime - cgroup2 cgroup2 rw\n",
+			"run/cg two/c1/memory.max": "2147483648\n",
+		}, 2 * gib, true},
+		// v1 memory controller co-mounted with cpu at a combined mount point.
+		{"v1 combined controllers mount", files{
+			"proc/self/cgroup":    "5:cpu,memory:/docker/abc\n4:pids:/docker/abc\n",
+			"proc/self/mountinfo": "35 25 0:31 / /sys/fs/cgroup/cpu,memory rw,nosuid - cgroup cgroup rw,cpu,memory\n36 25 0:32 / /sys/fs/cgroup/pids rw - cgroup cgroup rw,pids\n",
+			"sys/fs/cgroup/cpu,memory/docker/abc/memory.limit_in_bytes": "5368709120\n",
+		}, 5 * gib, true},
+		// v1 with only the container's subtree mounted: its own file says
+		// unlimited, its parent's limit shows only in memory.stat.
+		{"v1 inherited hierarchical limit", files{
+			"proc/self/cgroup":    "9:memory:/docker/abc\n",
+			"proc/self/mountinfo": "40 25 0:35 /docker/abc /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n",
+			"sys/fs/cgroup/memory/memory.limit_in_bytes": "9223372036854771712\n",
+			"sys/fs/cgroup/memory/memory.stat":           "cache 0\nrss 0\nhierarchical_memory_limit 6442450944\nhierarchical_memsw_limit 9223372036854771712\n",
+		}, 6 * gib, true},
+		{"v1 hierarchical limit unlimited too", files{
+			"proc/self/cgroup":    "9:memory:/\n",
+			"proc/self/mountinfo": "40 25 0:35 / /sys/fs/cgroup/memory rw - cgroup cgroup rw,memory\n",
+			"sys/fs/cgroup/memory/memory.limit_in_bytes": "9223372036854771712\n",
+			"sys/fs/cgroup/memory/memory.stat":           "hierarchical_memory_limit 9223372036854771712\n",
+		}, 0, false},
+		{"mountinfo without cgroup mounts", files{
+			"proc/self/cgroup":    "0::/\n",
+			"proc/self/mountinfo": "22 1 8:1 / / rw,relatime - ext4 /dev/sda1 rw\n",
+		}, 0, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			limit, found := fakeCgroupFS(t, test.files).memoryLimit()
+			require.Equal(t, test.found, found)
+			require.Equal(t, test.limit, limit)
+		})
+	}
+	require.Equal(t, "a b\tc", unescapeMountPath(`a\040b\011c`))
+	require.Equal(t, `no\escape`, unescapeMountPath(`no\escape`))
+}

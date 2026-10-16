@@ -58,12 +58,157 @@ func DetectCgroupMemoryLimit() (int64, bool) {
 
 func (fs cgroupFS) memoryLimit() (int64, bool) {
 	unified, v1 := fs.selfCgroups()
-	// cgroup v2: one unified hierarchy.
-	if limit, ok := fs.tightestLimit("sys/fs/cgroup", unified, "memory.max"); ok {
-		return limit, true
+	mounts := fs.cgroupMounts()
+	if len(mounts) == 0 {
+		// No mountinfo (an older kernel, a test layout): the conventional
+		// mount points.
+		if limit, ok := fs.tightestLimit("sys/fs/cgroup", unified, "memory.max"); ok {
+			return limit, true
+		}
+		return fs.tightestV1Limit(cgroupMount{root: "/", point: "/sys/fs/cgroup/memory"}, v1)
 	}
-	// cgroup v1: the memory controller's hierarchy.
-	return fs.tightestLimit("sys/fs/cgroup/memory", v1, "memory.limit_in_bytes")
+	// cgroup v2: the unified hierarchy, wherever it is mounted.
+	for _, mount := range mounts {
+		if mount.unified {
+			if limit, ok := fs.tightestLimit(mount.point, mount.relative(unified), "memory.max"); ok {
+				return limit, true
+			}
+		}
+	}
+	// cgroup v1: the memory controller's hierarchy, possibly mounted with
+	// other controllers.
+	for _, mount := range mounts {
+		if mount.memory {
+			if limit, ok := fs.tightestV1Limit(mount, v1); ok {
+				return limit, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// tightestV1Limit is the v1 memory controller's limit for cgroup under
+// mount: the tightest of the visible memory.limit_in_bytes files and the
+// effective hierarchical limit memory.stat reports, which includes the
+// ancestors above the mount (a container sees only its own subtree).
+func (fs cgroupFS) tightestV1Limit(mount cgroupMount, cgroup string) (int64, bool) {
+	relative := mount.relative(cgroup)
+	limit, found := fs.tightestLimit(mount.point, relative, "memory.limit_in_bytes")
+	if hierarchical, ok := readHierarchicalLimit(fs.path(path.Join(mount.point, relative, "memory.stat"))); ok && (!found || hierarchical < limit) {
+		limit, found = hierarchical, true
+	}
+	return limit, found
+}
+
+// cgroupMount is a cgroup hierarchy mounted in the process's mount
+// namespace: root is the hierarchy path mounted, point where it is mounted.
+type cgroupMount struct {
+	root, point string
+	unified     bool // cgroup v2
+	memory      bool // cgroup v1 with the memory controller
+}
+
+// relative is cgroup's path below the mount's point: the process's cgroup
+// path (from /proc/self/cgroup, relative to the hierarchy's root) with the
+// mount's root removed. A path outside the mounted root (only part of the
+// hierarchy is mounted) reads the mount's own root.
+func (mount cgroupMount) relative(cgroup string) string {
+	cgroup, root := path.Clean("/"+cgroup), path.Clean("/"+mount.root)
+	if root == "/" {
+		return cgroup
+	}
+	if cgroup == root {
+		return "/"
+	}
+	if strings.HasPrefix(cgroup, root+"/") {
+		return cgroup[len(root):]
+	}
+	return "/"
+}
+
+// cgroupMounts reads the process's cgroup mounts from /proc/self/mountinfo
+// ("id parent major:minor root mount-point options [optional...] - type
+// source super-options"), nil when it can't be read.
+func (fs cgroupFS) cgroupMounts() []cgroupMount {
+	file, err := os.Open(fs.path("proc/self/mountinfo"))
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	var mounts []cgroupMount
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		separator := -1
+		for index := 6; index < len(fields); index++ {
+			if fields[index] == "-" {
+				separator = index
+				break
+			}
+		}
+		if separator < 0 || separator+1 >= len(fields) || len(fields) < 5 {
+			continue
+		}
+		mount := cgroupMount{root: unescapeMountPath(fields[3]), point: unescapeMountPath(fields[4])}
+		switch fields[separator+1] {
+		case "cgroup2":
+			mount.unified = true
+		case "cgroup":
+			if separator+3 < len(fields) {
+				for _, option := range strings.Split(fields[separator+3], ",") {
+					if option == "memory" {
+						mount.memory = true
+					}
+				}
+			}
+		}
+		if mount.unified || mount.memory {
+			mounts = append(mounts, mount)
+		}
+	}
+	return mounts
+}
+
+// unescapeMountPath undoes mountinfo's octal escapes (\040 for a space,
+// \011, \012, \134).
+func unescapeMountPath(value string) string {
+	if !strings.Contains(value, `\`) {
+		return value
+	}
+	var out strings.Builder
+	for index := 0; index < len(value); index++ {
+		if value[index] == '\\' && index+3 < len(value) {
+			if code, err := strconv.ParseUint(value[index+1:index+4], 8, 8); err == nil {
+				out.WriteByte(byte(code))
+				index += 3
+				continue
+			}
+		}
+		out.WriteByte(value[index])
+	}
+	return out.String()
+}
+
+// readHierarchicalLimit reads v1 memory.stat's hierarchical_memory_limit:
+// the effective limit of the cgroup and every ancestor.
+func readHierarchicalLimit(name string) (int64, bool) {
+	file, err := os.Open(name)
+	if err != nil {
+		return 0, false
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) == 2 && fields[0] == "hierarchical_memory_limit" {
+			limit, err := strconv.ParseInt(fields[1], 10, 64)
+			if err != nil || limit <= 0 || limit >= cgroupUnlimited {
+				return 0, false
+			}
+			return limit, true
+		}
+	}
+	return 0, false
 }
 
 // selfCgroups is the process's cgroup paths from /proc/self/cgroup: the v2
