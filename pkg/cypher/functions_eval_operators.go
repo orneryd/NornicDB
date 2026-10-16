@@ -148,25 +148,7 @@ func cypherMembership(value, listValue interface{}) (interface{}, bool) {
 	if !ok {
 		return nil, false
 	}
-	if len(list) == 0 {
-		return false, true
-	}
-	if value == nil {
-		return nil, true
-	}
-	containsUnknown := false
-	for _, item := range list {
-		equal := cypherEquality(value, item)
-		if equal == nil {
-			containsUnknown = true
-			continue
-		}
-		if equal.(bool) {
-			return true, true
-		}
-	}
-	if containsUnknown {
-		return nil, true
-	}
-	return false, true
+	return cypherMembershipValues(value, len(list), func(i int) interface{} {
+		return cypherEquality(value, list[i])
+	}), true
 }

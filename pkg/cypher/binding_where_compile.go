@@ -58,34 +58,25 @@ func (t cypherTruth) value() interface{} {
 	return t == truthTrue
 }
 
-// truthAndLazy is Kleene AND; right is evaluated only when left is not false.
+// truthAndLazy and truthOrLazy adapt binding predicates to the shared logical
+// fold. The callback preserves evaluation order and short-circuiting.
 func truthAndLazy(left cypherTruth, right func() cypherTruth) cypherTruth {
-	if left == truthFalse {
-		return truthFalse
-	}
-	r := right()
-	if r == truthFalse {
-		return truthFalse
-	}
-	if left == truthTrue && r == truthTrue {
-		return truthTrue
-	}
-	return truthUnknown
+	return truthLogicalLazy(left, right, false)
 }
 
-// truthOrLazy is Kleene OR; right is evaluated only when left is not true.
 func truthOrLazy(left cypherTruth, right func() cypherTruth) cypherTruth {
-	if left == truthTrue {
-		return truthTrue
-	}
-	r := right()
-	if r == truthTrue {
-		return truthTrue
-	}
-	if left == truthFalse && r == truthFalse {
-		return truthFalse
-	}
-	return truthUnknown
+	return truthLogicalLazy(left, right, true)
+}
+
+func truthLogicalLazy(left cypherTruth, right func() cypherTruth, decisive bool) cypherTruth {
+	value, _, _ := evaluateLogicalOperands(2, decisive, func(i int) (interface{}, bool, error) {
+		if i == 0 {
+			return left.value(), true, nil
+		}
+		return right().value(), true, nil
+	})
+	truth, _ := cypherPredicateTruth(value)
+	return truth
 }
 
 // bindingWhereTruth is the three-valued form of a compiled binding predicate.
@@ -695,7 +686,7 @@ func compileMembershipTruth[R any](e *StorageExecutor, clause, op string, negate
 				return truthUnknown
 			}
 			comparableSet, nonComparable := buildComparableMembershipIndex(items)
-			return membershipTruth(leftValue, comparableSet, nonComparable, listHasNull(items), e.compareBindingValuesEqual)
+			return membershipTruth(leftValue, comparableSet, nonComparable, listHasNull(items))
 		}
 	}
 	if negate {
@@ -708,20 +699,10 @@ func compileMembershipTruth[R any](e *StorageExecutor, clause, op string, negate
 
 // membershipTruth is the three-valued result of `actual IN list` for a list
 // indexed by buildComparableMembershipIndex (which leaves out null items).
-func membershipTruth(actual interface{}, comparableSet map[interface{}]struct{}, nonComparable []interface{}, hasNull bool, equals func(interface{}, interface{}) bool) cypherTruth {
-	if len(comparableSet) == 0 && len(nonComparable) == 0 && !hasNull {
-		return truthFalse // x IN [] is false, even for a null x
-	}
-	if actual == nil {
-		return truthUnknown
-	}
-	if evaluateComparableMembership(actual, comparableSet, nonComparable, equals) {
-		return truthTrue
-	}
-	if hasNull {
-		return truthUnknown
-	}
-	return truthFalse
+func membershipTruth(actual interface{}, comparableSet map[interface{}]struct{}, nonComparable []interface{}, hasNull bool) cypherTruth {
+	value := indexedMembershipValue(actual, comparableSet, nonComparable, hasNull, cypherEquality)
+	truth, _ := cypherPredicateTruth(value)
+	return truth
 }
 
 func listHasNull(items []interface{}) bool {
@@ -746,7 +727,7 @@ func staticMembershipTruth[R any, L ~func(R, map[string]interface{}) (interface{
 		if !ok {
 			return truthUnknown
 		}
-		return membershipTruth(leftValue, comparableSet, nonComparable, hasNull, e.compareBindingValuesEqual)
+		return membershipTruth(leftValue, comparableSet, nonComparable, hasNull)
 	}
 }
 
@@ -783,7 +764,7 @@ func paramMembershipTruth[R any, L ~func(R, map[string]interface{}) (interface{}
 		}
 		firstElement := firstInterfaceElement(items)
 		comparableSet, nonComparable, hasNull := cache.get(items, firstElement)
-		return membershipTruth(leftValue, comparableSet, nonComparable, hasNull, e.compareBindingValuesEqual)
+		return membershipTruth(leftValue, comparableSet, nonComparable, hasNull)
 	}
 }
 

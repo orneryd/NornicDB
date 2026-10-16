@@ -703,12 +703,12 @@ func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPr
 			switch needle.(type) {
 			case string, bool:
 				if prepared := memberships.find(part); prepared != nil && len(prepared.nonComparable) == 0 {
-					return membershipTruth(needle, prepared.comparable, nil, prepared.hasNull, e.compareBindingValuesEqual), nil
+					return membershipTruth(needle, prepared.comparable, nil, prepared.hasNull), nil
 				}
 				if items, ok := toInterfaceSlice(haystack); ok {
 					comparable, nonComparable, hasNull := part.membership.get(items, firstInterfaceElement(items))
 					if len(nonComparable) == 0 {
-						return membershipTruth(needle, comparable, nil, hasNull, e.compareBindingValuesEqual), nil
+						return membershipTruth(needle, comparable, nil, hasNull), nil
 					}
 				}
 			}
