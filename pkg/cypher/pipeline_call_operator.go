@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -19,10 +18,15 @@ type pipelineCallMetadata struct {
 }
 
 func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
+	ctx = withPipelineCancellation(ctx)
 	// The statement parses the clause and its body once (pipelineClausePlans),
 	// however many outer rows run the operator.
 	ctx = withPipelineClausePlans(ctx)
-	parsed := e.callSubqueryParseFor(ctx, clause)
+	preparationProbe := pipelineCancellationForContext(ctx)
+	parsed := e.callSubqueryParseFor(ctx, clause, preparationProbe)
+	if preparationProbe.err != nil {
+		return nil, nil, true, preparationProbe.err
+	}
 	body, afterCall, inTransactions, batchSize := parsed.body, parsed.afterCall, parsed.inTransactions, parsed.batchSize
 	if body == "" {
 		return nil, nil, true, localizedError(localization.CypherSubqueriesCallBodyExpected(), nil)
@@ -136,18 +140,29 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		if !ok && !isUnion {
 			return nil, nil, false, nil
 		}
+		runCtx = withPipelineCancellation(runCtx)
+		cancellation := pipelineCancellationForContext(runCtx)
 		stats := &QueryStats{}
 		out := make([]pipelineRow, 0, len(outerRows))
 		hasReturn := isUnion || pipelineHasClauseKind(clauses, pipelineClauseReturn)
 		for _, outer := range outerRows {
+			if !cancellation.check() {
+				return nil, stats, true, cancellation.err
+			}
 			input := pipelineRow{}
 			bindParameterRow(runCtx, input)
 			if hasLegacyImports {
 				for name, value := range outer {
+					if !cancellation.check() {
+						return nil, stats, true, cancellation.err
+					}
 					input[name] = value
 				}
 			} else {
 				for _, name := range imports {
+					if !cancellation.check() {
+						return nil, stats, true, cancellation.err
+					}
 					value, exists := outer[name]
 					if !exists {
 						return out, stats, true, localizedError(localization.CypherSubqueriesWithImportUnknownVariable(name), nil)
@@ -167,12 +182,18 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				branchInput := make(pipelineRow, len(input))
 				scope := make(map[string]struct{}, len(input))
 				for name, value := range input {
+					if !cancellation.check() {
+						return nil, cancellation.err
+					}
 					branchInput[name] = value
 					if !strings.HasPrefix(name, "$") {
 						scope[name] = struct{}{}
 					}
 				}
 				for _, name := range branchLocals[strings.TrimSpace(query)] {
+					if !cancellation.check() {
+						return nil, cancellation.err
+					}
 					delete(branchInput, name)
 					delete(scope, name)
 				}
@@ -197,7 +218,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			var inner *ExecuteResult
 			var execErr error
 			if isUnion {
-				inner, execErr = runExec.executeUnionBranches(body, unionAll, runBranch)
+				inner, execErr = runExec.executeUnionBranches(runCtx, body, unionAll, runBranch)
 			} else {
 				inner, execErr = runBranch(body)
 			}
@@ -205,8 +226,14 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				addQueryStats(stats, inner.Stats)
 				if len(inner.Columns) > 0 {
 					if metadata != nil {
-						metadata.columns = append(metadata.columns[:0], inner.Columns...)
+						metadata.columns = appendPipelineItems(metadata.columns[:0], inner.Columns, cancellation)
+						if cancellation.err != nil {
+							return nil, stats, true, cancellation.err
+						}
 						for _, name := range inner.Columns {
+							if !cancellation.check() {
+								return nil, stats, true, cancellation.err
+							}
 							metadata.scope[name] = struct{}{}
 						}
 					}
@@ -214,21 +241,30 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			}
 			if execErr != nil {
 				if hasReturn && inner != nil {
-					out = appendCallReturnRows(out, outer, inner.Columns, inner.Rows)
+					out = appendCallReturnRows(runCtx, out, outer, inner.Columns, inner.Rows)
 				}
 				return out, stats, true, execErr
 			}
 			if hasReturn {
 				if inner != nil {
-					out = appendCallReturnRows(out, outer, inner.Columns, inner.Rows)
+					out = appendCallReturnRows(runCtx, out, outer, inner.Columns, inner.Rows)
 				}
 			} else {
 				retained := make(pipelineRow, len(outer))
 				for name, value := range outer {
+					if !cancellation.check() {
+						return nil, stats, true, cancellation.err
+					}
 					retained[name] = value
 				}
-				out = append(out, retained)
+				out = appendPipelineItem(out, retained, cancellation)
+				if cancellation.err != nil {
+					return nil, stats, true, cancellation.err
+				}
 			}
+		}
+		if failure := getExpressionFailure(runCtx); failure != nil {
+			return nil, stats, true, failure
 		}
 		return out, stats, true, nil
 	}
@@ -239,10 +275,22 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			if err != nil || !ok {
 				return innerRows, stats, ok, err
 			}
+			ctx = withPipelineCancellation(ctx)
+			probe := pipelineCancellationForContext(ctx)
 			joined := make([]pipelineRow, 0, len(rows)*len(innerRows))
 			for _, outer := range rows {
 				for _, inner := range innerRows {
-					joined = append(joined, mergeCallPipelineRows(outer, inner))
+					if !probe.check() {
+						return nil, stats, true, probe.err
+					}
+					merged := mergeCallPipelineRowsWithCancellation(outer, inner, probe)
+					if probe.err != nil {
+						return nil, stats, true, probe.err
+					}
+					joined = appendPipelineItem(joined, merged, probe)
+					if probe.err != nil {
+						return nil, stats, true, probe.err
+					}
 				}
 			}
 			return joined, stats, true, nil
@@ -284,36 +332,67 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	return combined, stats, true, nil
 }
 
-func appendCallReturnRows(out []pipelineRow, outer pipelineRow, columns []string, rows [][]interface{}) []pipelineRow {
+func appendCallReturnRows(ctx context.Context, out []pipelineRow, outer pipelineRow, columns []string, rows [][]interface{}) []pipelineRow {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	for _, values := range rows {
+		if !probe.check() {
+			return nil
+		}
 		joined := make(pipelineRow, len(outer)+len(columns))
 		for name, value := range outer {
+			if !probe.check() {
+				return nil
+			}
 			joined[name] = value
 		}
 		for index, name := range columns {
+			if !probe.check() {
+				return nil
+			}
 			if index < len(values) {
 				joined[name] = values[index]
 			} else {
 				joined[name] = nil
 			}
 		}
-		out = append(out, joined)
+		out = appendPipelineItem(out, joined, probe)
+		if probe.err != nil {
+			return nil
+		}
 	}
 	return out
 }
 
 func mergeCallPipelineRows(outer, inner pipelineRow) pipelineRow {
+	return mergeCallPipelineRowsWithCancellation(outer, inner, nil)
+}
+func mergeCallPipelineRowsWithCancellation(outer, inner pipelineRow, probe *pipelineCancellation) pipelineRow {
+	if probe != nil && !probe.check() {
+		return nil
+	}
 	joined := make(pipelineRow, len(outer)+len(inner))
 	for name, value := range outer {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		joined[name] = value
 	}
 	for name, value := range inner {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		joined[name] = value
 	}
 	return joined
 }
 
 func callPipelineRowsFromResult(ctx context.Context, result *ExecuteResult) []pipelineRow {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
+	if !probe.check() {
+		return nil
+	}
 	if result == nil {
 		row := pipelineRow{}
 		bindParameterRow(ctx, row)
@@ -322,11 +401,17 @@ func callPipelineRowsFromResult(ctx context.Context, result *ExecuteResult) []pi
 	if len(result.Rows) == 0 {
 		return []pipelineRow{}
 	}
-	rows := make([]pipelineRow, 0, len(result.Rows))
+	rows := make([]pipelineRow, 0, pipelineInitialCapacity(len(result.Rows), probe))
 	params := getParamsFromContext(ctx)
 	for _, values := range result.Rows {
+		if !probe.check() {
+			return nil
+		}
 		row := make(pipelineRow, len(result.Columns)+len(params))
 		for index, name := range result.Columns {
+			if !probe.check() {
+				return nil
+			}
 			if index < len(values) {
 				row[name] = values[index]
 			} else {
@@ -334,51 +419,92 @@ func callPipelineRowsFromResult(ctx context.Context, result *ExecuteResult) []pi
 			}
 		}
 		bindParameterRow(ctx, row)
-		rows = append(rows, row)
+		if probe.err != nil {
+			return nil
+		}
+		rows = appendPipelineItem(rows, row, probe)
+		if probe.err != nil {
+			return nil
+		}
 	}
 	return rows
 }
 
-func callPipelineResultFromRows(rows []pipelineRow, seed *ExecuteResult, stats *QueryStats, callColumns []string) *ExecuteResult {
+func callPipelineResultFromRows(ctx context.Context, rows []pipelineRow, seed *ExecuteResult, stats *QueryStats, callColumns []string) *ExecuteResult {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
+	if !probe.check() {
+		return nil
+	}
 	columns := make([]string, 0)
-	seen := make(map[string]struct{})
+	seen := pipelineStringSet{probe: probe}
 	if seed != nil {
 		for _, name := range seed.Columns {
-			if _, exists := seen[name]; !exists {
-				seen[name] = struct{}{}
-				columns = append(columns, name)
+			if !probe.check() {
+				return nil
+			}
+			if !seen.add(name) {
+				columns = appendPipelineItem(columns, name, probe)
+			}
+			if probe.err != nil {
+				return nil
 			}
 		}
 	}
 	for _, name := range callColumns {
-		if _, exists := seen[name]; !exists {
-			seen[name] = struct{}{}
-			columns = append(columns, name)
+		if !probe.check() {
+			return nil
+		}
+		if !seen.add(name) {
+			columns = appendPipelineItem(columns, name, probe)
+		}
+		if probe.err != nil {
+			return nil
 		}
 	}
-	additional := make(map[string]struct{})
+	additional := pipelineStringSet{probe: probe}
+	var sorted []string
 	for _, row := range rows {
+		if !probe.check() {
+			return nil
+		}
 		for name := range row {
+			if !probe.check() {
+				return nil
+			}
 			if !strings.HasPrefix(name, "$") {
-				if _, exists := seen[name]; !exists {
-					additional[name] = struct{}{}
+				if !seen.contains(name) && !additional.add(name) {
+					sorted = appendPipelineItem(sorted, name, probe)
+				}
+				if probe.err != nil {
+					return nil
 				}
 			}
 		}
 	}
-	sorted := make([]string, 0, len(additional))
-	for name := range additional {
-		sorted = append(sorted, name)
+	if !probe.sort(sorted, func(i, j int) bool { return comparePipelineStrings(sorted[i], sorted[j], probe) < 0 }, false) {
+		return nil
 	}
-	sort.Strings(sorted)
-	columns = append(columns, sorted...)
-	result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows)), Stats: mergeQueryStats(seedStats(seed), stats)}
+	columns = appendPipelineItems(columns, sorted, probe)
+	if probe.err != nil {
+		return nil
+	}
+	result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, pipelineInitialCapacity(len(rows), probe)), Stats: mergeQueryStats(seedStats(seed), stats)}
 	for _, row := range rows {
+		if !probe.check() {
+			return nil
+		}
 		values := make([]interface{}, len(columns))
 		for index, name := range columns {
+			if !probe.check() {
+				return nil
+			}
 			values[index] = row[name]
 		}
-		result.Rows = append(result.Rows, values)
+		result.Rows = appendPipelineItem(result.Rows, values, probe)
+		if probe.err != nil {
+			return nil
+		}
 	}
 	return result
 }

@@ -58,23 +58,27 @@ func matchFuncStart(expr, funcName string) bool {
 }
 
 func hasFuncStart(expr, funcName string) bool {
-	expr = strings.TrimSpace(expr)
-	funcName = strings.TrimSpace(funcName)
-	if expr == "" || funcName == "" {
+	return hasFuncStartWithCancellation(expr, funcName, nil)
+}
+func hasFuncStartWithCancellation(expr, funcName string, probe *pipelineCancellation) bool {
+	expr = trimSpaceWithCancellation(expr, probe)
+	funcName = trimSpaceWithCancellation(funcName, probe)
+	if expr == "" || funcName == "" || len(expr) < len(funcName)+1 {
 		return false
 	}
-	if len(expr) < len(funcName)+1 {
-		return false
-	}
+	// Aggregate names are a fixed, short list. Keep Unicode EqualFold's
+	// existing semantics; other callers retain their context-free API.
 	if !strings.EqualFold(expr[:len(funcName)], funcName) {
 		return false
 	}
-	// Ensure next token is optional whitespace then '('
 	i := len(funcName)
 	for i < len(expr) && isSpaceByte(expr[i]) {
+		if probe != nil && !probe.check() {
+			return false
+		}
 		i++
 	}
-	return i < len(expr) && expr[i] == '('
+	return i < len(expr) && expr[i] == '(' && (probe == nil || probe.err == nil)
 }
 
 // matchFuncStartAndSuffix checks if expr starts with funcName( and ends with ).
@@ -138,12 +142,19 @@ func extractFuncArgsLen(expr, funcName string) (string, int) {
 //   - isFunctionCallWS("count (n) + 1", "count")      → false (not standalone)
 //   - isFunctionCallWS("toLower(count (n))", "count") → false (nested)
 func isFunctionCallWS(expr, funcName string) bool {
-	if !matchFuncStart(expr, funcName) {
+	return isFunctionCallWSWithCancellation(expr, funcName, nil)
+}
+func isFunctionCallWSWithCancellation(expr, funcName string, probe *pipelineCancellation) bool {
+	if probe == nil {
+		if !matchFuncStart(expr, funcName) {
+			return false
+		}
+	} else if !hasFuncStartWithCancellation(expr, funcName, probe) {
 		return false
 	}
-	// The call's closing parenthesis ends the expression.
-	open := strings.IndexByte(expr, '(')
-	return findMatchingParen(expr, open) == len(expr)-1
+	open := indexByteWithCancellation(expr, '(', probe)
+	close := findMatchingDelimiterWithCancellation(expr, open, '(', ')', probe)
+	return close == len(expr)-1 && (probe == nil || probe.err == nil)
 }
 
 // extractFuncArgsWithSuffix extracts function arguments and any suffix after the function call.

@@ -121,10 +121,16 @@ func validateReturnOrderBySemanticScopeIn(clause string, retained typeScope) err
 // semanticAggregateCalls is the text of expression's aggregate calls
 // (findAggregateSpans).
 func semanticAggregateCalls(expression string) []string {
-	spans := findAggregateSpans(expression)
-	calls := make([]string, 0, len(spans))
+	return semanticAggregateCallsWithCancellation(expression, nil)
+}
+func semanticAggregateCallsWithCancellation(expression string, probe *pipelineCancellation) []string {
+	spans := findAggregateSpansWithCancellation(expression, probe)
+	calls := make([]string, 0, pipelineInitialCapacity(len(spans), probe))
 	for _, span := range spans {
-		calls = append(calls, strings.TrimSpace(expression[span.start:span.end]))
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		calls = appendPipelineItem(calls, trimSpaceWithCancellation(expression[span.start:span.end], probe), probe)
 	}
 	return calls
 }
@@ -272,22 +278,40 @@ func containsFunctionCallNamed(expression, expected string) bool {
 }
 
 func pipelineReturnSourceColumns(clause string) []string {
-	body := strings.TrimSpace(clause[len("RETURN"):])
+	return pipelineReturnSourceColumnsWithCancellation(clause, nil)
+}
+func pipelineReturnSourceColumnsWithCancellation(clause string, probe *pipelineCancellation) []string {
+	body := trimSpaceWithCancellation(clause[len("RETURN"):], probe)
 	end := len(body)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		opts := defaultKeywordScanOpts()
+		opts.SkipBraces = true
+		if index := keywordIndexFromWithCancellation(body, keyword, 0, opts, probe); index >= 0 && index < end {
 			end = index
 		}
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 	}
-	body = strings.TrimSpace(body[:end])
-	body, _ = cutDistinct(body)
+	body = trimSpaceWithCancellation(body[:end], probe)
+	body, _ = cutDistinctWithCancellation(body, probe)
 	if body == "*" || body == "" {
 		return nil
 	}
 	columns := make([]string, 0)
-	for _, item := range splitTopLevelComma(body) {
-		_, alias := parseProjectionExprAlias(strings.TrimSpace(item))
-		columns = append(columns, alias)
+	items := splitTopLevelCommaWithCancellation(body, probe)
+	for _, item := range items {
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		_, alias := parseProjectionExprAliasWithCancellation(trimSpaceWithCancellation(item, probe), probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		columns = appendPipelineItem(columns, alias, probe)
 	}
 	return columns
 }

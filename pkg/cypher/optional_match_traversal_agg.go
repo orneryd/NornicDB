@@ -41,32 +41,46 @@ type aggregateSpan struct {
 // not reported separately. An EXISTS / COUNT / COLLECT { … } subquery's body
 // is skipped: its aggregates are the subquery's own (#907).
 func findAggregateSpans(expr string) []aggregateSpan {
+	return findAggregateSpansWithCancellation(expr, nil)
+}
+func findAggregateSpansWithCancellation(expr string, probe *pipelineCancellation) []aggregateSpan {
 	var spans []aggregateSpan
 	i := 0
 	for i < len(expr) {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		c := expr[i]
 		if c == '\'' || c == '"' || c == '`' {
 			j := i + 1
-			for j < len(expr) && (expr[j] != c || isBackslashEscaped(expr, j)) {
+			for j < len(expr) {
+				if probe != nil && !probe.check() {
+					return nil
+				}
+				if expr[j] == c && !isBackslashEscapedWithCancellation(expr, j, probe) {
+					break
+				}
+				if probe != nil && probe.err != nil {
+					return nil
+				}
 				j++
+			}
+			if probe != nil && probe.err != nil {
+				return nil
 			}
 			i = j + 1
 			continue
 		}
-		// Only a letter at a word start can begin an aggregate or a subquery
-		// expression. A qualified function whose terminal component happens to
-		// have an aggregate name (for example apoc.coll.sum()) is not a Cypher
-		// aggregate. It is evaluated once per row by the same expression path;
-		// a qualified aggregate (gds.graph.project) is matched by its whole
-		// name from its first component.
 		folded := asciiUpper(c)
-		if folded < 'A' || folded > 'Z' || aggregateStartMask&(uint32(1)<<(folded-'A')) == 0 ||
-			i > 0 && (isIdentByte(expr[i-1]) || expr[i-1] == '.') {
+		if folded < 'A' || folded > 'Z' || aggregateStartMask&(uint32(1)<<(folded-'A')) == 0 || i > 0 && (isIdentByte(expr[i-1]) || expr[i-1] == '.') {
 			i++
 			continue
 		}
 		matched := false
 		for _, fn := range traversalAggFnNames {
+			if probe != nil && !probe.check() {
+				return nil
+			}
 			if fn.upper[0] != folded {
 				continue
 			}
@@ -75,17 +89,26 @@ func findAggregateSpans(expr string) []aggregateSpan {
 			}
 			j := i + len(fn.lower)
 			for j < len(expr) && isWhitespace(expr[j]) {
+				if probe != nil && !probe.check() {
+					return nil
+				}
 				j++
 			}
 			if j >= len(expr) || expr[j] != '(' {
 				continue
 			}
-			close := findMatchingParen(expr, j)
+			close := findMatchingDelimiterWithCancellation(expr, j, '(', ')', probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
 			if close < 0 {
 				continue
 			}
 			end := close + 1
-			spans = append(spans, aggregateSpan{start: i, end: end})
+			spans = appendPipelineItem(spans, aggregateSpan{start: i, end: end}, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
 			i = end
 			matched = true
 			break
@@ -93,13 +116,13 @@ func findAggregateSpans(expr string) []aggregateSpan {
 		if matched {
 			continue
 		}
-		// EXISTS / COUNT / COLLECT { … } is skipped whole: its aggregates
-		// are the subquery's own. An aggregate call is read first: count(…)
-		// is not a subquery, and is then read once.
 		if folded == 'E' || folded == 'C' {
-			if end := subqueryExpressionEnd(expr, i); end > i {
+			if end := subqueryExpressionEndWithCancellation(expr, i, probe); end > i {
 				i = end
 				continue
+			}
+			if probe != nil && probe.err != nil {
+				return nil
 			}
 		}
 		i++
@@ -133,10 +156,13 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 // subqueryExpressionEnd is the index after the EXISTS / COUNT / COLLECT
 // { … } subquery that starts at expr[i], or -1.
 func subqueryExpressionEnd(expr string, i int) int {
+	return subqueryExpressionEndWithCancellation(expr, i, nil)
+}
+func subqueryExpressionEndWithCancellation(expr string, i int, probe *pipelineCancellation) int {
 	// Use the shared reader so comments between the keyword and brace do
 	// not expose the subquery's aggregates to the outer projection.
-	if _, open, ok := subqueryExpressionKeywordAt(expr, i); ok {
-		if closing := findMatchingDelimiter(expr, open, '{', '}'); closing > open {
+	if _, open, ok := subqueryExpressionKeywordAtWithCancellation(expr, i, probe); ok {
+		if closing := findMatchingDelimiterWithCancellation(expr, open, '{', '}', probe); closing > open {
 			return closing + 1
 		}
 	}

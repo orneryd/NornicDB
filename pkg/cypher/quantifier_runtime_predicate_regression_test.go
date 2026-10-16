@@ -38,7 +38,7 @@ func TestQuantifierRuntimePredicateEvaluatorParity(t *testing.T) {
 		t.Run(function+"/compiled", func(t *testing.T) {
 			program := rowValueProgramFor(expression)
 			require.NotNil(t, program)
-			_, _, err := program.root.eval(exec, values, nil)
+			_, _, err := program.root.eval(exec, values, nil, nil)
 			requireQuantifierRuntimeTypeError(t, err)
 		})
 		t.Run(function+"/context", func(t *testing.T) {

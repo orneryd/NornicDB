@@ -468,51 +468,54 @@ func (e *StorageExecutor) seedNodeFromIDString(id string) *storage.Node {
 // parseCallSubquery extracts the body from CALL { ... } and any trailing clauses
 // Returns: body, afterCall, inTransactions bool, batchSize int
 func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall string, inTransactions bool, batchSize int) {
+	return e.parseCallSubqueryWithCancellation(cypher, nil)
+}
+func (e *StorageExecutor) parseCallSubqueryWithCancellation(cypher string, probe *pipelineCancellation) (body, afterCall string, inTransactions bool, batchSize int) {
 	batchSize = 1000 // Default batch size
 
-	trimmed := strings.TrimSpace(cypher)
+	trimmed := trimSpaceWithCancellation(cypher, probe)
 
 	// Find the opening brace
-	braceStart := strings.Index(trimmed, "{")
+	braceStart := indexByteWithCancellation(trimmed, '{', probe)
 	if braceStart == -1 {
 		return "", "", false, batchSize
 	}
 
 	// The matching closing brace; a brace in quoted text isn't one
 	// (CALL () { RETURN '}' AS y } …).
-	braceEnd := findMatchingDelimiter(trimmed, braceStart, '{', '}')
+	braceEnd := findMatchingDelimiterWithCancellation(trimmed, braceStart, '{', '}', probe)
 	if braceEnd < 0 {
 		return "", "", false, batchSize
 	}
 
 	// Extract body (between braces)
-	body = strings.TrimSpace(trimmed[braceStart+1 : braceEnd])
-	if stripped, finishes := stripUnionBranchFinishes(body); finishes && strings.TrimSpace(stripped) != "" {
+	body = trimSpaceWithCancellation(trimmed[braceStart+1:braceEnd], probe)
+	if stripped, finishes := stripUnionBranchFinishesWithCancellation(body, probe); finishes && trimSpaceWithCancellation(stripped, probe) != "" {
 		body = stripped
 	}
 
 	// Get what's after the closing brace
-	afterCall = strings.TrimSpace(trimmed[braceEnd+1:])
+	afterCall = trimSpaceWithCancellation(trimmed[braceEnd+1:], probe)
 
 	// Check for IN TRANSACTIONS
-	upperAfter := upperASCII(afterCall)
+	upperAfter := upperASCIIWithCancellation(afterCall, probe)
 	if strings.HasPrefix(upperAfter, "IN TRANSACTIONS") {
 		inTransactions = true
-		afterTx := strings.TrimSpace(afterCall[15:])
-		upperAfterTx := upperASCII(afterTx)
+		afterTx := trimSpaceWithCancellation(afterCall[15:], probe)
+		upperAfterTx := upperASCIIWithCancellation(afterTx, probe)
 
 		// Check for OF n ROWS
 		if strings.HasPrefix(upperAfterTx, "OF ") {
 			// Parse batch size
 			ofPart := afterTx[3:]
 			// Find ROWS keyword
-			rowsIdx := strings.Index(upperASCII(ofPart), " ROWS")
+			rowsIdx := indexTextWithCancellation(upperASCIIWithCancellation(ofPart, probe), " ROWS", probe)
 			if rowsIdx > 0 {
-				sizeStr := strings.TrimSpace(ofPart[:rowsIdx])
-				if size, err := strconv.Atoi(sizeStr); err == nil && size > 0 {
+				sizeStr := trimSpaceWithCancellation(ofPart[:rowsIdx], probe)
+				if size, ok := callSubqueryBatchSizeWithCancellation(sizeStr, probe); ok {
 					batchSize = size
 				}
-				afterCall = strings.TrimSpace(ofPart[rowsIdx+5:])
+				afterCall = trimSpaceWithCancellation(ofPart[rowsIdx+5:], probe)
 			} else {
 				afterCall = ""
 			}
@@ -522,6 +525,33 @@ func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall stri
 	}
 
 	return body, afterCall, inTransactions, batchSize
+}
+
+// The batch grammar accepts a positive machine integer. Preserve Atoi's
+// leading-plus/zero behavior without an unchecked scan of a long zero prefix.
+func callSubqueryBatchSizeWithCancellation(text string, probe *pipelineCancellation) (int, bool) {
+	if probe == nil {
+		value, err := strconv.Atoi(text)
+		return value, err == nil && value > 0
+	}
+	if len(text) > 0 && text[0] == '+' {
+		text = text[1:]
+	}
+	if len(text) == 0 {
+		return 0, false
+	}
+	value, limit := 0, int(^uint(0)>>1)
+	for i := 0; i < len(text); i++ {
+		if !probe.check() {
+			return 0, false
+		}
+		digit := int(text[i] - '0')
+		if digit < 0 || digit > 9 || value > (limit-digit)/10 {
+			return 0, false
+		}
+		value = value*10 + digit
+	}
+	return value, value > 0
 }
 
 // callSubqueryHasScopeClause reports whether a CALL subquery declares its
@@ -1296,7 +1326,10 @@ func splitTopLevelUnionBranches(query string) ([]string, bool, bool) {
 // UNION ALL so callers can report the Cypher semantic error rather than
 // treating the statement as an unsplittable query.
 func parseTopLevelUnionBranches(query string) (branches []string, unionAllMode, mixed, ok bool) {
-	trimmed := strings.TrimSpace(query)
+	return parseTopLevelUnionBranchesWithCancellation(query, nil)
+}
+func parseTopLevelUnionBranchesWithCancellation(query string, probe *pipelineCancellation) (branches []string, unionAllMode, mixed, ok bool) {
+	trimmed := trimSpaceWithCancellation(query, probe)
 	if trimmed == "" {
 		return nil, false, false, false
 	}
@@ -1312,11 +1345,14 @@ func parseTopLevelUnionBranches(query string) (branches []string, unionAllMode, 
 	depthBrace := 0
 
 	for i := 0; i < len(trimmed); i++ {
+		if probe != nil && !probe.check() {
+			return nil, false, false, false
+		}
 		ch := trimmed[i]
 		switch ch {
 		case '\'', '"', '`':
 			// A string or a backticked name (`union`) holds no UNION.
-			i = skipCypherQuotedText(trimmed, i, ch) - 1
+			i = skipCypherQuotedTextWithCancellation(trimmed, i, ch, probe) - 1
 			continue
 		case '(':
 			depthParen++
@@ -1348,16 +1384,19 @@ func parseTopLevelUnionBranches(query string) (branches []string, unionAllMode, 
 			continue
 		}
 		// A variable named union is a name, not the operator (#894).
-		if !matchKeywordAt(trimmed, i, "UNION") || clauseKeywordUsedAsName(trimmed, i, i+len("UNION"), "UNION") {
+		if !matchKeywordAt(trimmed, i, "UNION") || clauseKeywordUsedAsNameWithCancellation(trimmed, i, i+len("UNION"), "UNION", probe) {
 			continue
 		}
-		j := skipSpaces(trimmed, i+len("UNION"))
+		j := skipSpacesWithCancellation(trimmed, i+len("UNION"), probe)
 		all := false
 		if matchKeywordAt(trimmed, j, "ALL") {
 			all = true
-			j = skipSpaces(trimmed, j+len("ALL"))
+			j = skipSpacesWithCancellation(trimmed, j+len("ALL"), probe)
 		}
-		seps = append(seps, sep{pos: i, end: j, all: all})
+		seps = appendPipelineItem(seps, sep{pos: i, end: j, all: all}, probe)
+		if probe != nil && probe.err != nil {
+			return nil, false, false, false
+		}
 		i = j - 1
 	}
 
@@ -1369,6 +1408,9 @@ func parseTopLevelUnionBranches(query string) (branches []string, unionAllMode, 
 	hasDistinct := false
 	hasAll := false
 	for _, s := range seps {
+		if probe != nil && !probe.check() {
+			return nil, false, false, false
+		}
 		if s.all {
 			hasAll = true
 		} else {
@@ -1381,18 +1423,27 @@ func parseTopLevelUnionBranches(query string) (branches []string, unionAllMode, 
 	branches = make([]string, 0, util.SafePreallocSum(len(seps), 1))
 	start := 0
 	for _, s := range seps {
-		part := strings.TrimSpace(trimmed[start:s.pos])
+		if probe != nil && !probe.check() {
+			return nil, false, false, false
+		}
+		part := trimSpaceWithCancellation(trimmed[start:s.pos], probe)
 		if part == "" {
 			return nil, false, false, false
 		}
-		branches = append(branches, part)
+		branches = appendPipelineItem(branches, part, probe)
+		if probe != nil && probe.err != nil {
+			return nil, false, false, false
+		}
 		start = s.end
 	}
-	last := strings.TrimSpace(trimmed[start:])
+	last := trimSpaceWithCancellation(trimmed[start:], probe)
 	if last == "" {
 		return nil, false, false, false
 	}
-	branches = append(branches, last)
+	branches = appendPipelineItem(branches, last, probe)
+	if probe != nil && probe.err != nil {
+		return nil, false, false, false
+	}
 	return branches, unionAllMode, mixed, true
 }
 
@@ -1935,20 +1986,36 @@ func callSubqueryQueryIsWrite(query string) bool {
 		findKeywordIndex(query, "REMOVE") >= 0
 }
 
-func isSimpleIdentifier(s string) bool {
-	s = strings.TrimSpace(strings.Trim(s, "`"))
+func isSimpleIdentifier(s string) bool { return isSimpleIdentifierWithCancellation(s, nil) }
+func isSimpleIdentifierWithCancellation(s string, probe *pipelineCancellation) bool {
+	start, end := 0, len(s)
+	for start < end && s[start] == '`' {
+		if probe != nil && !probe.check() {
+			return false
+		}
+		start++
+	}
+	for start < end && s[end-1] == '`' {
+		if probe != nil && !probe.check() {
+			return false
+		}
+		end--
+	}
+	s = trimSpaceWithCancellation(s[start:end], probe)
 	if s == "" {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
-		ch := s[i]
+		if probe != nil && !probe.check() {
+			return false
+		}
 		if i == 0 {
-			if !isIdentStartByte(ch) {
+			if !isIdentStartByte(s[i]) {
 				return false
 			}
 			continue
 		}
-		if !isIdentByte(ch) {
+		if !isIdentByte(s[i]) {
 			return false
 		}
 	}
@@ -2113,8 +2180,13 @@ func (e *StorageExecutor) applyOrderByToResult(result *ExecuteResult, orderByCla
 }
 
 func (e *StorageExecutor) applyCallResultOrderWindow(ctx context.Context, result *ExecuteResult, terms []orderByTerm, skip, limit int) (*ExecuteResult, error) {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	rows := make([]pipelineRow, 0, len(result.Rows))
 	for _, values := range result.Rows {
+		if !probe.check() {
+			return nil, probe.err
+		}
 		row := make(pipelineRow, len(result.Columns))
 		for index, column := range result.Columns {
 			if index < len(values) {
@@ -2144,6 +2216,9 @@ func (e *StorageExecutor) applyCallResultOrderWindow(ctx context.Context, result
 	rows = applyPipelineWindow(rows, skip, limit)
 	result.Rows = make([][]interface{}, 0, len(rows))
 	for _, row := range rows {
+		if !probe.check() {
+			return nil, probe.err
+		}
 		values := make([]interface{}, len(result.Columns))
 		for index, column := range result.Columns {
 			values[index] = row[column]
@@ -2162,11 +2237,16 @@ type orderByTerm struct {
 // inside braces (COLLECT { … ORDER BY … }, map literals) belong to nested
 // expressions, never to the projection (#652, #547).
 func parseOrderByTerms(modifiers string) []orderByTerm {
-	orderByIndex := topLevelKeywordIndex(modifiers, "ORDER BY")
+	return parseOrderByTermsWithCancellation(modifiers, nil)
+}
+func parseOrderByTermsWithCancellation(modifiers string, probe *pipelineCancellation) []orderByTerm {
+	opts := defaultKeywordScanOpts()
+	opts.SkipBraces = true
+	orderByIndex := keywordIndexFromWithCancellation(modifiers, "ORDER BY", 0, opts, probe)
 	if orderByIndex < 0 {
 		return nil
 	}
-	return parseOrderByClause(modifiers[orderByIndex+len("ORDER BY"):])
+	return parseOrderByClauseWithCancellation(modifiers[orderByIndex+len("ORDER BY"):], probe)
 }
 
 // parseOrderByClause parses the sort items that follow ORDER BY. The list ends
@@ -2174,37 +2254,58 @@ func parseOrderByTerms(modifiers string) []orderByTerm {
 // (WITH n ORDER BY n.x WHERE n.y > 0): that WHERE filters the sorted rows and
 // is not part of the last sort item.
 func parseOrderByClause(clause string) []orderByTerm {
-	clause = strings.TrimSpace(clause)
+	return parseOrderByClauseWithCancellation(clause, nil)
+}
+func parseOrderByClauseWithCancellation(clause string, probe *pipelineCancellation) []orderByTerm {
+	clause = trimSpaceWithCancellation(clause, probe)
 	end := len(clause)
-	for _, keyword := range []string{"LIMIT", "SKIP"} {
-		if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
+	opts := defaultKeywordScanOpts()
+	opts.SkipBraces = true
+	for _, keyword := range []string{"LIMIT", "SKIP", "WHERE"} {
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		if index := keywordIndexFromWithCancellation(clause, keyword, 0, opts, probe); index >= 0 && index < end {
 			end = index
 		}
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 	}
-	if index := topLevelKeywordIndex(clause, "WHERE"); index >= 0 && index < end {
-		end = index
-	}
-	clause = strings.TrimSpace(clause[:end])
-	parts := splitTopLevelComma(clause)
-	terms := make([]orderByTerm, 0, len(parts))
+	clause = trimSpaceWithCancellation(clause[:end], probe)
+	parts := splitTopLevelCommaWithCancellation(clause, probe)
+	terms := make([]orderByTerm, 0, pipelineInitialCapacity(len(parts), probe))
 	for _, part := range parts {
-		expression := strings.TrimSpace(part)
-		fields := strings.Fields(expression)
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		expression := trimSpaceWithCancellation(part, probe)
+		fields := fieldsWithCancellation(expression, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 		if len(fields) == 0 {
 			continue
 		}
 		term := orderByTerm{column: expression}
 		if len(fields) > 1 {
-			direction := upperASCII(fields[len(fields)-1])
+			direction := ""
+			if len(fields[len(fields)-1]) <= len("DESCENDING") {
+				direction = upperASCII(fields[len(fields)-1])
+			}
 			switch direction {
 			case "DESC", "DESCENDING":
 				term.descending = true
-				term.column = strings.TrimSpace(expression[:strings.LastIndex(expression, fields[len(fields)-1])])
+				fallthrough
 			case "ASC", "ASCENDING":
-				term.column = strings.TrimSpace(expression[:strings.LastIndex(expression, fields[len(fields)-1])])
+				index := lastIndexTextWithCancellation(expression, fields[len(fields)-1], probe)
+				if probe != nil && probe.err != nil {
+					return nil
+				}
+				term.column = trimSpaceWithCancellation(expression[:index], probe)
 			}
 		}
-		terms = append(terms, term)
+		terms = appendPipelineItem(terms, term, probe)
 	}
 	return terms
 }
@@ -2217,6 +2318,13 @@ func extractPropertyFromValue(val interface{}, propName string) interface{} {
 }
 
 func compareValuesForSort(a, b interface{}) int {
+	return compareValuesForSortWithCancellation(a, b, nil)
+}
+
+func compareValuesForSortWithCancellation(a, b interface{}, probe *pipelineCancellation) int {
+	if probe != nil && !probe.check() {
+		return 0
+	}
 	if a == nil && b == nil {
 		return 0
 	}
@@ -2241,6 +2349,9 @@ func compareValuesForSort(a, b interface{}) int {
 
 	aRank := cypherSortRank(a)
 	bRank := cypherSortRank(b)
+	if probe != nil && probe.err != nil {
+		return 0
+	}
 	if aRank != bRank {
 		if aRank < bRank {
 			return -1
@@ -2253,10 +2364,14 @@ func compareValuesForSort(a, b interface{}) int {
 		}
 	}
 
-	if aList, ok := cypherSortList(a); ok {
-		bList, _ := cypherSortList(b)
+	if aList, ok := cypherListValueWithCancellation(a, probe); ok {
+		bList, _ := cypherListValueWithCancellation(b, probe)
 		for index := 0; index < len(aList) && index < len(bList); index++ {
-			if comparison := compareValuesForSort(aList[index], bList[index]); comparison != 0 {
+			comparison := compareValuesForSortWithCancellation(aList[index], bList[index], probe)
+			if probe != nil && probe.err != nil {
+				return 0
+			}
+			if comparison != 0 {
 				return comparison
 			}
 		}
@@ -2290,18 +2405,12 @@ func compareValuesForSort(a, b interface{}) int {
 	}
 	switch left := a.(type) {
 	case CypherVector:
-		return compareVectors(left, b.(CypherVector))
+		return compareVectorsWithCancellation(left, b.(CypherVector), probe)
 	case CypherUUID:
 		return compareUUIDs(left, b.(CypherUUID))
 	case string:
 		right := b.(string)
-		if left < right {
-			return -1
-		}
-		if left > right {
-			return 1
-		}
-		return 0
+		return comparePipelineStrings(left, right, probe)
 	case bool:
 		right := b.(bool)
 		if left == right {
@@ -2313,17 +2422,29 @@ func compareValuesForSort(a, b interface{}) int {
 		return 1
 	}
 
-	if comparison, _, structured := compareCypherStructuredValues(a, b, compareSortableValues); structured {
+	if comparison, _, structured := compareCypherStructuredValuesWithCancellation(a, b, func(left, right interface{}) (int, bool) {
+		return compareValuesForSortWithCancellation(left, right, probe), true
+	}, probe); structured {
 		return comparison
 	}
-	sa := fmt.Sprintf("%v", a)
-	sb := fmt.Sprintf("%v", b)
-	if sa < sb {
-		return -1
-	} else if sa > sb {
-		return 1
+	if probe != nil && probe.err != nil {
+		return 0
 	}
-	return 0
+	var sa, sb string
+	if probe == nil {
+		sa = fmt.Sprintf("%v", a)
+		sb = fmt.Sprintf("%v", b)
+	} else {
+		sa = pipelineDisplayString(a, probe)
+		if probe.err != nil {
+			return 0
+		}
+		sb = pipelineDisplayString(b, probe)
+		if probe.err != nil {
+			return 0
+		}
+	}
+	return comparePipelineStrings(sa, sb, probe)
 }
 
 func compareOrderedInts(left, right int) int {

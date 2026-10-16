@@ -76,7 +76,7 @@ func TestPerRowRound4ContextIndexErrors(t *testing.T) {
 			return []interface{}{"a", "b"}, true, nil
 		}
 		return float64(1.5), true, nil
-	})
+	}, nil)
 	require.Error(t, err)
 	require.False(t, resolved)
 }

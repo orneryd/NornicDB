@@ -12,8 +12,9 @@ import (
 // Eval must evaluate a Cypher expression in the caller's scope (row bindings).
 // Functions can use Eval for lazy argument evaluation (e.g. coalesce).
 type Context struct {
-	Nodes map[string]*storage.Node
-	Rels  map[string]*storage.Edge
+	Cancellation Cancellation
+	Nodes        map[string]*storage.Node
+	Rels         map[string]*storage.Edge
 	// Storage is the graph the statement reads, for functions over the
 	// graph (GDS's link-prediction functions, gds.util.asNode).
 	Storage storage.Engine
@@ -32,6 +33,14 @@ type Context struct {
 	// results or errors Neo4j 2026.09 changed follows Neo4j 2026.09 then, and
 	// Neo4j 5.26 for a Cypher 5 statement (#907).
 	Cypher25 bool
+}
+
+// Cancellation borrows the caller's shared work budget. Function readers do
+// not create their own counter or consult the context independently.
+type Cancellation interface {
+	Continue() bool
+	Err() error
+	SortStrings([]string) bool
 }
 
 // GraphCatalog lists the graphs of the composite database a query runs on:

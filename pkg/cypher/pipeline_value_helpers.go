@@ -45,22 +45,26 @@ func evaluateListForPipeline(expr string, row pipelineRow) []interface{} {
 // variable, a property of one, or a literal list, without the row evaluator.
 // Its value is coerced as UNWIND coerces any value (coerceToUnwindItems).
 func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{}, bool) {
+	return evaluateStaticListForPipelineWithCancellation(expr, row, nil)
+}
+
+func evaluateStaticListForPipelineWithCancellation(expr string, row pipelineRow, probe *pipelineCancellation) ([]interface{}, bool) {
 	expr = strings.TrimSpace(expr)
 	// Bare variable.
 	if val, ok := row[expr]; ok {
-		return coerceToUnwindItems(val), true
+		return coerceToUnwindItemsWithCancellation(val, probe), true
 	}
 	// Property access (a.b): the whole expression only, not one that starts
 	// with it (UNWIND n.p + n.q is a list concatenation).
 	if base, field, property := parseVarPropertyRef(expr); property {
 		if baseVal, ok := row[base]; ok {
-			if asMap, ok := toStringAnyMap(baseVal); ok {
+			if asMap, ok := toStringAnyMapWithCancellation(baseVal, probe); ok {
 				if v, ok := asMap[field]; ok {
-					return coerceToUnwindItems(v), true
+					return coerceToUnwindItemsWithCancellation(v, probe), true
 				}
 			}
 			if node, ok := baseVal.(*storage.Node); ok && node != nil {
-				return coerceToUnwindItems(node.Properties[field]), true
+				return coerceToUnwindItemsWithCancellation(node.Properties[field], probe), true
 			}
 		}
 	}
@@ -73,21 +77,23 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 		if !ok {
 			return nil, false
 		}
-		return coerceToUnwindItems(parsed), true
+		return coerceToUnwindItemsWithCancellation(parsed, probe), true
 	}
 	return nil, false
 }
 
 func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context, expr string, row pipelineRow) ([]interface{}, bool) {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	if inner, wrapped := stripEnclosingExpressionParentheses(strings.TrimSpace(expr)); wrapped {
 		expr = inner
 	}
 	if mayContainSubqueryExpression(expr) {
 		if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
-			return coerceToUnwindItems(value), true
+			return coerceToUnwindItemsWithCancellation(value, probe), true
 		}
 	}
-	if items, ok := evaluateStaticListForPipeline(expr, row); ok {
+	if items, ok := evaluateStaticListForPipelineWithCancellation(expr, row, probe); ok {
 		return items, true
 	}
 	if matchFuncStartAndSuffix(expr, "range") {
@@ -103,7 +109,7 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 			}
 			arguments[index] = value
 		}
-		items, err := evaluateCypherRange(arguments)
+		items, err := evaluateCypherRangeWithCancellation(arguments, probe)
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil, false
@@ -111,7 +117,7 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 		return items, true
 	}
 	if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
-		return coerceToUnwindItems(value), true
+		return coerceToUnwindItemsWithCancellation(value, probe), true
 	}
 
 	value := e.evaluateExpressionWithContext(withValueBindings(ctx, row), expr, nil, nil)
@@ -121,53 +127,109 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 	if value == nil && !strings.EqualFold(strings.TrimSpace(expr), "null") && !looksLikeFunctionCall(expr) {
 		return nil, false
 	}
-	return coerceToUnwindItems(value), true
+	return coerceToUnwindItemsWithCancellation(value, probe), true
 }
 
 func toAnySlice(v interface{}) []interface{} {
+	return toAnySliceWithCancellation(v, nil)
+}
+
+func toAnySliceWithCancellation(v interface{}, probe *pipelineCancellation) []interface{} {
+	if probe != nil && !probe.check() {
+		return nil
+	}
 	switch s := v.(type) {
 	case []interface{}:
 		return s
 	case []map[string]interface{}:
-		out := make([]interface{}, len(s))
-		for i, m := range s {
-			out[i] = m
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
+		for _, m := range s {
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, m, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	case []string:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
-			out[i] = s[i]
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, s[i], probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	case []int:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
-			out[i] = int64(s[i])
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, int64(s[i]), probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	case []int64:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
-			out[i] = s[i]
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, s[i], probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	case []float64:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
-			out[i] = s[i]
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, s[i], probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	case []float32:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
-			out[i] = float64(s[i])
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, float64(s[i]), probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	case []bool:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
-			out[i] = s[i]
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, s[i], probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	}
@@ -175,9 +237,16 @@ func toAnySlice(v interface{}) []interface{} {
 	if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) {
 		return nil
 	}
-	out := make([]interface{}, rv.Len())
+	out := make([]interface{}, 0, pipelineInitialCapacity(rv.Len(), probe))
 	for i := 0; i < rv.Len(); i++ {
-		out[i] = rv.Index(i).Interface()
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		out = appendPipelineItem[interface{}](out, rv.Index(i).Interface(), probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+
 	}
 	return out
 }

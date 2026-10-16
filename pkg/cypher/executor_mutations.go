@@ -641,10 +641,14 @@ func hasOuterParens(s string) bool {
 // unwinds to no rows, a list to its elements (cypherListValue), and any other
 // value to one row holding it.
 func coerceToUnwindItems(value interface{}) []interface{} {
+	return coerceToUnwindItemsWithCancellation(value, nil)
+}
+
+func coerceToUnwindItemsWithCancellation(value interface{}, probe *pipelineCancellation) []interface{} {
 	if value == nil {
 		return nil
 	}
-	if items, isList := cypherListValue(value); isList {
+	if items, isList := cypherListValueWithCancellation(value, probe); isList {
 		return items
 	}
 	return []interface{}{value}
@@ -809,27 +813,50 @@ func (e *StorageExecutor) smartSplitReturnItems(returnPart string) []string {
 }
 
 func (e *StorageExecutor) parseReturnItems(returnPart string) []returnItem {
-	if strings.TrimSpace(returnPart) == "" {
+	return e.parseReturnItemsWithCancellation(returnPart, nil)
+}
+
+func (e *StorageExecutor) parseReturnItemsWithCancellation(returnPart string, probe *pipelineCancellation) []returnItem {
+	if probe != nil && !probe.poll() {
+		return nil
+	}
+	if trimSpaceWithCancellation(returnPart, probe) == "" {
 		returnPart = "*"
 	}
-	plan := returnProjectionPlanFor("RETURN " + returnPart)
+	clause := concatPipelineStrings("RETURN ", returnPart, probe)
+	plan := returnProjectionPlanForWithCancellation(clause, probe)
+	if probe != nil && probe.err != nil {
+		return nil
+	}
 	if plan.star {
 		items := []returnItem{{expr: "*", alias: "*"}}
 		for _, item := range plan.starItems {
-			expr, alias := parseProjectionExprAlias(item)
-			items = append(items, returnItem{expr: expr, alias: alias})
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			expr, alias := parseProjectionExprAliasWithCancellation(item, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+			items = appendPipelineItem(items, returnItem{expr: expr, alias: alias}, probe)
 		}
 		return items
 	}
-	items := make([]returnItem, 0, len(plan.projections))
+	items := make([]returnItem, 0, pipelineInitialCapacity(len(plan.projections), probe))
 	for _, projection := range plan.projections {
-		items = append(items, returnItem{expr: projection.expr, alias: projection.alias})
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		items = appendPipelineItem(items, returnItem{expr: projection.expr, alias: projection.alias}, probe)
 	}
 	return items
 }
 
 func normalizeProjectionColumnName(raw string) string {
-	return symbolicNameValue(strings.TrimSpace(raw))
+	return normalizeProjectionColumnNameWithCancellation(raw, nil)
+}
+func normalizeProjectionColumnNameWithCancellation(raw string, probe *pipelineCancellation) string {
+	return symbolicNameValueWithCancellation(trimSpaceWithCancellation(raw, probe), probe)
 }
 
 func (e *StorageExecutor) generateID() string {

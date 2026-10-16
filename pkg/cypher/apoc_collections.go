@@ -64,7 +64,6 @@
 package cypher
 
 import (
-	"fmt"
 	"math"
 )
 
@@ -81,6 +80,10 @@ import (
 //	flattenList([[1, [2]], [3]], false)  // [1, [2], 3]
 //	flattenList([[1, [2]], [3]], true)   // [1, 2, 3]
 func flattenList(val interface{}, recursive bool) []interface{} {
+	return flattenListWithCancellation(val, recursive, nil)
+}
+
+func flattenListWithCancellation(val interface{}, recursive bool, probe *pipelineCancellation) []interface{} {
 	depth := int64(1)
 	if recursive {
 		depth = math.MaxInt64
@@ -90,13 +93,24 @@ func flattenList(val interface{}, recursive bool) []interface{} {
 	case nil:
 		return []interface{}{}
 	case []interface{}:
-		return collFlatten(make([]interface{}, 0, len(v)), v, depth)
+		return collFlattenWithCancellation(make([]interface{}, 0, pipelineInitialCapacity(len(v), probe)), v, depth, probe)
 	case []string:
 		for _, s := range v {
-			result = append(result, s)
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			result = appendPipelineItem[interface{}](result, s, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 	default:
-		result = append(result, val)
+		result = appendPipelineItem[interface{}](result, val, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+
 	}
 	return result
 }
@@ -118,25 +132,50 @@ func flattenList(val interface{}, recursive bool) []interface{} {
 //	toSet([1, 2, 2, 3, 1])  // [1, 2, 3]
 //	toSet(["a", "b", "a"]) // ["a", "b"]
 func toSet(val interface{}) []interface{} {
+	return toSetWithCancellation(val, nil)
+}
+
+func toSetWithCancellation(val interface{}, probe *pipelineCancellation) []interface{} {
 	var result []interface{}
-	seen := make(map[string]bool)
+	seen := pipelineStringSet{probe: probe}
 
 	addUnique := func(item interface{}) {
-		key := fmt.Sprintf("%T:%v", item, item)
-		if !seen[key] {
-			seen[key] = true
-			result = append(result, item)
+		key := pipelineDisplayKey(item, probe)
+		if probe != nil && probe.err != nil {
+			return
+		}
+		if !seen.add(key) {
+			if probe != nil && probe.err != nil {
+				return
+			}
+			result = appendPipelineItem[interface{}](result, item, probe)
+			if probe != nil && probe.err != nil {
+				return
+			}
+
 		}
 	}
 
 	switch v := val.(type) {
 	case []interface{}:
 		for _, item := range v {
+			if probe != nil && !probe.check() {
+				return nil
+			}
 			addUnique(item)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
 		}
 	case []string:
 		for _, s := range v {
+			if probe != nil && !probe.check() {
+				return nil
+			}
 			addUnique(s)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
 		}
 	}
 	return result
@@ -163,10 +202,17 @@ func toSet(val interface{}) []interface{} {
 //	apocCollSum([1, 2, 3, 4])  // 10.0
 //	apocCollSum([1.5, 2.5])   // 4.0
 func apocCollSum(val interface{}) float64 {
+	return apocCollSumWithCancellation(val, nil)
+}
+
+func apocCollSumWithCancellation(val interface{}, probe *pipelineCancellation) float64 {
 	var sum float64
 	switch v := val.(type) {
 	case []interface{}:
 		for _, item := range v {
+			if probe != nil && !probe.check() {
+				return 0
+			}
 			if f, ok := toFloat64(item); ok {
 				sum += f
 			}
@@ -190,6 +236,10 @@ func apocCollSum(val interface{}) float64 {
 //	apocCollAvg([1, 2, 3, 4])  // 2.5
 //	apocCollAvg([])           // nil
 func apocCollAvg(val interface{}) interface{} {
+	return apocCollAvgWithCancellation(val, nil)
+}
+
+func apocCollAvgWithCancellation(val interface{}, probe *pipelineCancellation) interface{} {
 	switch v := val.(type) {
 	case []interface{}:
 		if len(v) == 0 {
@@ -197,6 +247,9 @@ func apocCollAvg(val interface{}) interface{} {
 		}
 		var sum float64
 		for _, item := range v {
+			if probe != nil && !probe.check() {
+				return nil
+			}
 			if f, ok := toFloat64(item); ok {
 				sum += f
 			}
@@ -221,6 +274,10 @@ func apocCollAvg(val interface{}) interface{} {
 //	apocCollMin([3, 1, 4, 1, 5])  // 1
 //	apocCollMin([])              // nil
 func apocCollMin(val interface{}) interface{} {
+	return apocCollMinWithCancellation(val, nil)
+}
+
+func apocCollMinWithCancellation(val interface{}, probe *pipelineCancellation) interface{} {
 	switch v := val.(type) {
 	case []interface{}:
 		if len(v) == 0 {
@@ -229,6 +286,9 @@ func apocCollMin(val interface{}) interface{} {
 		min := v[0]
 		minFloat, _ := toFloat64(min)
 		for _, item := range v[1:] {
+			if probe != nil && !probe.check() {
+				return nil
+			}
 			if f, ok := toFloat64(item); ok && f < minFloat {
 				min = item
 				minFloat = f
@@ -254,6 +314,10 @@ func apocCollMin(val interface{}) interface{} {
 //	apocCollMax([3, 1, 4, 1, 5])  // 5
 //	apocCollMax([])              // nil
 func apocCollMax(val interface{}) interface{} {
+	return apocCollMaxWithCancellation(val, nil)
+}
+
+func apocCollMaxWithCancellation(val interface{}, probe *pipelineCancellation) interface{} {
 	switch v := val.(type) {
 	case []interface{}:
 		if len(v) == 0 {
@@ -262,6 +326,9 @@ func apocCollMax(val interface{}) interface{} {
 		max := v[0]
 		maxFloat, _ := toFloat64(max)
 		for _, item := range v[1:] {
+			if probe != nil && !probe.check() {
+				return nil
+			}
 			if f, ok := toFloat64(item); ok && f > maxFloat {
 				max = item
 				maxFloat = f
@@ -292,11 +359,15 @@ func apocCollMax(val interface{}) interface{} {
 //
 //	apocCollSort([3, 1, 4, 1, 5])  // [1, 1, 3, 4, 5]
 func apocCollSort(val interface{}) []interface{} {
+	return apocCollSortWithCancellation(val, nil)
+}
+
+func apocCollSortWithCancellation(val interface{}, probe *pipelineCancellation) []interface{} {
 	switch v := val.(type) {
 	case []interface{}:
 		// In Cypher's order, as coll.sort and ORDER BY sort (strings too;
 		// null last).
-		return sortedCypherValues(v)
+		return sortedCypherValuesWithCancellation(v, probe)
 	}
 	return nil
 }
@@ -316,19 +387,36 @@ func apocCollSort(val interface{}) []interface{} {
 //
 //	apocCollSortNodes(nodes, "age")  // Nodes sorted by age property
 func apocCollSortNodes(val interface{}, propName string) []interface{} {
-	return apocCollSortNodesByProperty(val, propName, getNodeProperty)
+	return apocCollSortNodesWithCancellation(val, propName, nil)
+}
+
+func apocCollSortNodesWithCancellation(val interface{}, propName string, probe *pipelineCancellation) []interface{} {
+	return apocCollSortNodesByPropertyWithCancellation(val, propName, getNodeProperty, probe)
 }
 
 // The query route supplies its visible property reader while sorting the raw
 // entity bindings, so later mutations cannot persist a filtered property map.
 func apocCollSortNodesByProperty(val interface{}, propName string, property func(interface{}, string) interface{}) []interface{} {
+	return apocCollSortNodesByPropertyWithCancellation(val, propName, property, nil)
+}
+
+func apocCollSortNodesByPropertyWithCancellation(val interface{}, propName string, property func(interface{}, string) interface{}, probe *pipelineCancellation) []interface{} {
 	switch v := val.(type) {
 	case []interface{}:
-		result := make([]interface{}, len(v))
-		copy(result, v)
+		result := make([]interface{}, 0, pipelineInitialCapacity(len(v), probe))
+		result = appendPipelineValues(result, v, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 		// Sort by property value
 		for i := 0; i < len(result)-1; i++ {
+			if probe != nil && !probe.check() {
+				return nil
+			}
 			for j := i + 1; j < len(result); j++ {
+				if probe != nil && !probe.check() {
+					return nil
+				}
 				vi := property(result[i], propName)
 				vj := property(result[j], propName)
 				fj, _ := toFloat64(vj)
@@ -372,11 +460,22 @@ func getNodeProperty(node interface{}, propName string) interface{} {
 //
 //	apocCollReverse([1, 2, 3])  // [3, 2, 1]
 func apocCollReverse(val interface{}) []interface{} {
+	return apocCollReverseWithCancellation(val, nil)
+}
+
+func apocCollReverseWithCancellation(val interface{}, probe *pipelineCancellation) []interface{} {
 	switch v := val.(type) {
 	case []interface{}:
-		result := make([]interface{}, len(v))
-		for i, item := range v {
-			result[len(v)-1-i] = item
+		result := make([]interface{}, 0, pipelineInitialCapacity(len(v), probe))
+		for i := range v {
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			result = appendPipelineItem[interface{}](result, v[len(v)-1-i], probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return result
 	}
@@ -402,8 +501,15 @@ func apocCollReverse(val interface{}) []interface{} {
 //
 //	apocCollUnion([1, 2], [2, 3])  // [1, 2, 3]
 func apocCollUnion(list1, list2 interface{}) []interface{} {
-	combined := apocCollUnionAll(list1, list2)
-	return toSet(combined)
+	return apocCollUnionWithCancellation(list1, list2, nil)
+}
+
+func apocCollUnionWithCancellation(list1, list2 interface{}, probe *pipelineCancellation) []interface{} {
+	combined := apocCollUnionAllWithCancellation(list1, list2, probe)
+	if probe != nil && probe.err != nil {
+		return nil
+	}
+	return toSetWithCancellation(combined, probe)
 }
 
 // apocCollUnionAll returns union of two lists (including duplicates).
@@ -421,12 +527,22 @@ func apocCollUnion(list1, list2 interface{}) []interface{} {
 //
 //	apocCollUnionAll([1, 2], [2, 3])  // [1, 2, 2, 3]
 func apocCollUnionAll(list1, list2 interface{}) []interface{} {
+	return apocCollUnionAllWithCancellation(list1, list2, nil)
+}
+
+func apocCollUnionAllWithCancellation(list1, list2 interface{}, probe *pipelineCancellation) []interface{} {
 	var result []interface{}
 	if l1, ok := list1.([]interface{}); ok {
-		result = append(result, l1...)
+		result = appendPipelineValues(result, l1, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 	}
 	if l2, ok := list2.([]interface{}); ok {
-		result = append(result, l2...)
+		result = appendPipelineValues(result, l2, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 	}
 	return result
 }
@@ -446,6 +562,10 @@ func apocCollUnionAll(list1, list2 interface{}) []interface{} {
 //
 //	apocCollIntersection([1, 2, 3], [2, 3, 4])  // [2, 3]
 func apocCollIntersection(list1, list2 interface{}) []interface{} {
+	return apocCollIntersectionWithCancellation(list1, list2, nil)
+}
+
+func apocCollIntersectionWithCancellation(list1, list2 interface{}, probe *pipelineCancellation) []interface{} {
 	var result []interface{}
 	l1, ok1 := list1.([]interface{})
 	l2, ok2 := list2.([]interface{})
@@ -454,19 +574,48 @@ func apocCollIntersection(list1, list2 interface{}) []interface{} {
 	}
 
 	// Create lookup set from list2
-	set2 := make(map[string]bool)
+	set2 := pipelineStringSet{probe: probe}
 	for _, item := range l2 {
-		key := fmt.Sprintf("%T:%v", item, item)
-		set2[key] = true
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		key := pipelineDisplayKey(item, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		set2.add(key)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 	}
 
 	// Find elements in list1 that are also in list2
-	seen := make(map[string]bool)
+	seen := pipelineStringSet{probe: probe}
 	for _, item := range l1 {
-		key := fmt.Sprintf("%T:%v", item, item)
-		if set2[key] && !seen[key] {
-			result = append(result, item)
-			seen[key] = true
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		key := pipelineDisplayKey(item, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		present := set2.contains(key)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		if !present {
+			continue
+		}
+		duplicate := seen.add(key)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		if !duplicate {
+			result = appendPipelineItem[interface{}](result, item, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 	}
 	return result
@@ -487,6 +636,10 @@ func apocCollIntersection(list1, list2 interface{}) []interface{} {
 //
 //	apocCollSubtract([1, 2, 3], [2])  // [1, 3]
 func apocCollSubtract(list1, list2 interface{}) []interface{} {
+	return apocCollSubtractWithCancellation(list1, list2, nil)
+}
+
+func apocCollSubtractWithCancellation(list1, list2 interface{}, probe *pipelineCancellation) []interface{} {
 	var result []interface{}
 	l1, ok1 := list1.([]interface{})
 	l2, ok2 := list2.([]interface{})
@@ -495,17 +648,40 @@ func apocCollSubtract(list1, list2 interface{}) []interface{} {
 	}
 
 	// Create lookup set from list2
-	set2 := make(map[string]bool)
+	set2 := pipelineStringSet{probe: probe}
 	for _, item := range l2 {
-		key := fmt.Sprintf("%T:%v", item, item)
-		set2[key] = true
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		key := pipelineDisplayKey(item, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		set2.add(key)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 	}
 
 	// Find elements in list1 that are NOT in list2
 	for _, item := range l1 {
-		key := fmt.Sprintf("%T:%v", item, item)
-		if !set2[key] {
-			result = append(result, item)
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		key := pipelineDisplayKey(item, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		present := set2.contains(key)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		if !present {
+			result = appendPipelineItem[interface{}](result, item, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 	}
 	return result
@@ -531,14 +707,27 @@ func apocCollSubtract(list1, list2 interface{}) []interface{} {
 //	apocCollContains([1, 2, 3], 2)  // true
 //	apocCollContains([1, 2, 3], 5)  // false
 func apocCollContains(listVal, value interface{}) bool {
+	return apocCollContainsWithCancellation(listVal, value, nil)
+}
+
+func apocCollContainsWithCancellation(listVal, value interface{}, probe *pipelineCancellation) bool {
 	list, ok := listVal.([]interface{})
 	if !ok {
 		return false
 	}
-	valKey := fmt.Sprintf("%T:%v", value, value)
+	valKey := pipelineDisplayKey(value, probe)
+	if probe != nil && probe.err != nil {
+		return false
+	}
 	for _, item := range list {
-		itemKey := fmt.Sprintf("%T:%v", item, item)
-		if itemKey == valKey {
+		if probe != nil && !probe.check() {
+			return false
+		}
+		itemKey := pipelineDisplayKey(item, probe)
+		if probe != nil && probe.err != nil {
+			return false
+		}
+		if pipelineStringsEqual(itemKey, valKey, probe) {
 			return true
 		}
 	}
@@ -561,6 +750,10 @@ func apocCollContains(listVal, value interface{}) bool {
 //	apocCollContainsAll([1, 2, 3, 4], [2, 3])  // true
 //	apocCollContainsAll([1, 2, 3], [2, 5])    // false
 func apocCollContainsAll(list1, list2 interface{}) bool {
+	return apocCollContainsAllWithCancellation(list1, list2, nil)
+}
+
+func apocCollContainsAllWithCancellation(list1, list2 interface{}, probe *pipelineCancellation) bool {
 	l1, ok1 := list1.([]interface{})
 	l2, ok2 := list2.([]interface{})
 	if !ok1 || !ok2 {
@@ -568,16 +761,35 @@ func apocCollContainsAll(list1, list2 interface{}) bool {
 	}
 
 	// Create lookup set from list1
-	set1 := make(map[string]bool)
+	set1 := pipelineStringSet{probe: probe}
 	for _, item := range l1 {
-		key := fmt.Sprintf("%T:%v", item, item)
-		set1[key] = true
+		if probe != nil && !probe.check() {
+			return false
+		}
+		key := pipelineDisplayKey(item, probe)
+		if probe != nil && probe.err != nil {
+			return false
+		}
+		set1.add(key)
+		if probe != nil && probe.err != nil {
+			return false
+		}
 	}
 
 	// Check all items in list2 are in set1
 	for _, item := range l2 {
-		key := fmt.Sprintf("%T:%v", item, item)
-		if !set1[key] {
+		if probe != nil && !probe.check() {
+			return false
+		}
+		key := pipelineDisplayKey(item, probe)
+		if probe != nil && probe.err != nil {
+			return false
+		}
+		present := set1.contains(key)
+		if probe != nil && probe.err != nil {
+			return false
+		}
+		if !present {
 			return false
 		}
 	}
@@ -600,6 +812,10 @@ func apocCollContainsAll(list1, list2 interface{}) bool {
 //	apocCollContainsAny([1, 2, 3], [5, 2])  // true
 //	apocCollContainsAny([1, 2, 3], [5, 6]) // false
 func apocCollContainsAny(list1, list2 interface{}) bool {
+	return apocCollContainsAnyWithCancellation(list1, list2, nil)
+}
+
+func apocCollContainsAnyWithCancellation(list1, list2 interface{}, probe *pipelineCancellation) bool {
 	l1, ok1 := list1.([]interface{})
 	l2, ok2 := list2.([]interface{})
 	if !ok1 || !ok2 {
@@ -607,16 +823,35 @@ func apocCollContainsAny(list1, list2 interface{}) bool {
 	}
 
 	// Create lookup set from list1
-	set1 := make(map[string]bool)
+	set1 := pipelineStringSet{probe: probe}
 	for _, item := range l1 {
-		key := fmt.Sprintf("%T:%v", item, item)
-		set1[key] = true
+		if probe != nil && !probe.check() {
+			return false
+		}
+		key := pipelineDisplayKey(item, probe)
+		if probe != nil && probe.err != nil {
+			return false
+		}
+		set1.add(key)
+		if probe != nil && probe.err != nil {
+			return false
+		}
 	}
 
 	// Check if any item in list2 is in set1
 	for _, item := range l2 {
-		key := fmt.Sprintf("%T:%v", item, item)
-		if set1[key] {
+		if probe != nil && !probe.check() {
+			return false
+		}
+		key := pipelineDisplayKey(item, probe)
+		if probe != nil && probe.err != nil {
+			return false
+		}
+		present := set1.contains(key)
+		if probe != nil && probe.err != nil {
+			return false
+		}
+		if present {
 			return true
 		}
 	}
@@ -639,14 +874,27 @@ func apocCollContainsAny(list1, list2 interface{}) bool {
 //	apocCollIndexOf([1, 2, 3], 2)  // 1
 //	apocCollIndexOf([1, 2, 3], 5)  // -1
 func apocCollIndexOf(listVal, value interface{}) int64 {
+	return apocCollIndexOfWithCancellation(listVal, value, nil)
+}
+
+func apocCollIndexOfWithCancellation(listVal, value interface{}, probe *pipelineCancellation) int64 {
 	list, ok := listVal.([]interface{})
 	if !ok {
 		return -1
 	}
-	valKey := fmt.Sprintf("%T:%v", value, value)
+	valKey := pipelineDisplayKey(value, probe)
+	if probe != nil && probe.err != nil {
+		return 0
+	}
 	for i, item := range list {
-		itemKey := fmt.Sprintf("%T:%v", item, item)
-		if itemKey == valKey {
+		if probe != nil && !probe.check() {
+			return 0
+		}
+		itemKey := pipelineDisplayKey(item, probe)
+		if probe != nil && probe.err != nil {
+			return 0
+		}
+		if pipelineStringsEqual(itemKey, valKey, probe) {
 			return int64(i)
 		}
 	}
@@ -672,6 +920,10 @@ func apocCollIndexOf(listVal, value interface{}) int64 {
 //
 //	apocCollSplit([1, 0, 2, 0, 3], 0)  // [[1], [2], [3]]
 func apocCollSplit(listVal, value interface{}) []interface{} {
+	return apocCollSplitWithCancellation(listVal, value, nil)
+}
+
+func apocCollSplitWithCancellation(listVal, value interface{}, probe *pipelineCancellation) []interface{} {
 	list, ok := listVal.([]interface{})
 	if !ok {
 		return nil
@@ -679,21 +931,42 @@ func apocCollSplit(listVal, value interface{}) []interface{} {
 
 	var result []interface{}
 	var current []interface{}
-	valKey := fmt.Sprintf("%T:%v", value, value)
+	valKey := pipelineDisplayKey(value, probe)
+	if probe != nil && probe.err != nil {
+		return nil
+	}
 
 	for _, item := range list {
-		itemKey := fmt.Sprintf("%T:%v", item, item)
-		if itemKey == valKey {
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		itemKey := pipelineDisplayKey(item, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		if pipelineStringsEqual(itemKey, valKey, probe) {
 			if len(current) > 0 {
-				result = append(result, current)
+				result = appendPipelineItem[interface{}](result, current, probe)
+				if probe != nil && probe.err != nil {
+					return nil
+				}
+
 				current = []interface{}{}
 			}
 		} else {
-			current = append(current, item)
+			current = appendPipelineItem[interface{}](current, item, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 	}
 	if len(current) > 0 {
-		result = append(result, current)
+		result = appendPipelineItem[interface{}](result, current, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+
 	}
 	return result
 }
@@ -713,6 +986,10 @@ func apocCollSplit(listVal, value interface{}) []interface{} {
 //
 //	apocCollPartition([1, 2, 3, 4, 5], 2)  // [[1, 2], [3, 4], [5]]
 func apocCollPartition(listVal, sizeVal interface{}) []interface{} {
+	return apocCollPartitionWithCancellation(listVal, sizeVal, nil)
+}
+
+func apocCollPartitionWithCancellation(listVal, sizeVal interface{}, probe *pipelineCancellation) []interface{} {
 	list, ok := listVal.([]interface{})
 	if !ok {
 		return nil
@@ -724,11 +1001,18 @@ func apocCollPartition(listVal, sizeVal interface{}) []interface{} {
 
 	var result []interface{}
 	for i := int64(0); i < int64(len(list)); i += size {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		end := i + size
 		if end > int64(len(list)) {
 			end = int64(len(list))
 		}
-		result = append(result, list[i:end])
+		result = appendPipelineItem[interface{}](result, list[i:end], probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+
 	}
 	return result
 }
@@ -747,6 +1031,10 @@ func apocCollPartition(listVal, sizeVal interface{}) []interface{} {
 //
 //	apocCollPairs([1, 2, 3])  // [[1, 2], [2, 3], [3, nil]]
 func apocCollPairs(val interface{}) []interface{} {
+	return apocCollPairsWithCancellation(val, nil)
+}
+
+func apocCollPairsWithCancellation(val interface{}, probe *pipelineCancellation) []interface{} {
 	list, ok := val.([]interface{})
 	if !ok {
 		return nil
@@ -754,11 +1042,18 @@ func apocCollPairs(val interface{}) []interface{} {
 
 	var result []interface{}
 	for i := 0; i < len(list); i++ {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		var next interface{}
 		if i+1 < len(list) {
 			next = list[i+1]
 		}
-		result = append(result, []interface{}{list[i], next})
+		result = appendPipelineItem[interface{}](result, []interface{}{list[i], next}, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+
 	}
 	return result
 }
@@ -778,6 +1073,10 @@ func apocCollPairs(val interface{}) []interface{} {
 //
 //	apocCollZip([1, 2], ["a", "b"])  // [[1, "a"], [2, "b"]]
 func apocCollZip(list1, list2 interface{}) []interface{} {
+	return apocCollZipWithCancellation(list1, list2, nil)
+}
+
+func apocCollZipWithCancellation(list1, list2 interface{}, probe *pipelineCancellation) []interface{} {
 	l1, ok1 := list1.([]interface{})
 	l2, ok2 := list2.([]interface{})
 	if !ok1 || !ok2 {
@@ -792,6 +1091,9 @@ func apocCollZip(list1, list2 interface{}) []interface{} {
 
 	result := make([]interface{}, length)
 	for i := 0; i < length; i++ {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		result[i] = []interface{}{l1[i], l2[i]}
 	}
 	return result
@@ -804,7 +1106,11 @@ func apocCollZip(list1, list2 interface{}) []interface{} {
 // apocSameValue reports whether apoc.map.clean's value list holds value: an
 // equal value of the same kind, as APOC compares (2 is not 2.0) (#1164).
 func apocSameValue(value, listed interface{}) bool {
-	if equal, _ := cypherEquality(value, listed).(bool); !equal {
+	return apocSameValueWithCancellation(value, listed, nil)
+}
+
+func apocSameValueWithCancellation(value, listed interface{}, probe *pipelineCancellation) bool {
+	if equal, _ := cypherEqualityWithCancellation(value, listed, probe).(bool); !equal || probe != nil && probe.err != nil {
 		return false
 	}
 	_, valueFloat := value.(float64)
@@ -821,16 +1127,26 @@ func apocSameValue(value, listed interface{}) bool {
 //
 //	apocCollFrequencies([3, 1, 3])  // [{item: 3, count: 2}, {item: 1, count: 1}]
 func apocCollFrequencies(val interface{}) []interface{} {
+	return apocCollFrequenciesWithCancellation(val, nil)
+}
+
+func apocCollFrequenciesWithCancellation(val interface{}, probe *pipelineCancellation) []interface{} {
 	list, _ := val.([]interface{})
-	result := make([]interface{}, 0, len(list))
-	var positions cypherValueIndex
+	result := make([]interface{}, 0, pipelineInitialCapacity(len(list), probe))
+	positions := cypherValueIndex{probe: probe}
 	for _, item := range list {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		if position, seen := positions.add(item); seen {
 			entry := result[position].(map[string]interface{})
 			entry["count"] = entry["count"].(int64) + 1
 			continue
 		}
-		result = append(result, map[string]interface{}{"item": item, "count": int64(1)})
+		result = appendPipelineItem[interface{}](result, map[string]interface{}{"item": item, "count": int64(1)}, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 	}
 	return result
 }
@@ -851,15 +1167,28 @@ func apocCollFrequencies(val interface{}) []interface{} {
 //	apocCollOccurrences([1, 2, 2, 3], 2)  // 2
 //	apocCollOccurrences([1, 2, 3], 5)    // 0
 func apocCollOccurrences(listVal, value interface{}) int64 {
+	return apocCollOccurrencesWithCancellation(listVal, value, nil)
+}
+
+func apocCollOccurrencesWithCancellation(listVal, value interface{}, probe *pipelineCancellation) int64 {
 	list, ok := listVal.([]interface{})
 	if !ok {
 		return 0
 	}
-	valKey := fmt.Sprintf("%T:%v", value, value)
+	valKey := pipelineDisplayKey(value, probe)
+	if probe != nil && probe.err != nil {
+		return 0
+	}
 	var count int64
 	for _, item := range list {
-		itemKey := fmt.Sprintf("%T:%v", item, item)
-		if itemKey == valKey {
+		if probe != nil && !probe.check() {
+			return 0
+		}
+		itemKey := pipelineDisplayKey(item, probe)
+		if probe != nil && probe.err != nil {
+			return 0
+		}
+		if pipelineStringsEqual(itemKey, valKey, probe) {
 			count++
 		}
 	}
@@ -885,11 +1214,18 @@ func apocCollOccurrences(listVal, value interface{}) int64 {
 //
 //	mergeMaps({a: 1, b: 2}, {b: 3, c: 4})  // {a: 1, b: 3, c: 4}
 func mergeMaps(map1, map2 interface{}) map[string]interface{} {
+	return mergeMapsWithCancellation(map1, map2, nil)
+}
+
+func mergeMapsWithCancellation(map1, map2 interface{}, probe *pipelineCancellation) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	// Copy map1
 	if m1, ok := map1.(map[string]interface{}); ok {
 		for k, v := range m1 {
+			if probe != nil && !probe.check() {
+				return nil
+			}
 			result[k] = v
 		}
 	}
@@ -897,6 +1233,9 @@ func mergeMaps(map1, map2 interface{}) map[string]interface{} {
 	// Override with map2
 	if m2, ok := map2.(map[string]interface{}); ok {
 		for k, v := range m2 {
+			if probe != nil && !probe.check() {
+				return nil
+			}
 			result[k] = v
 		}
 	}
@@ -918,6 +1257,14 @@ func mergeMaps(map1, map2 interface{}) map[string]interface{} {
 //
 //	fromPairs([["name", "Alice"], ["age", 30]])  // {name: "Alice", age: 30}
 func fromPairs(val interface{}) map[string]interface{} {
+	return fromPairsWithCancellation(val, nil)
+}
+
+func fromPairsWithCancellation(val interface{}, probe *pipelineCancellation) map[string]interface{} {
+	return fromPairsWithKeyPolicy(val, true, probe)
+}
+
+func fromPairsWithKeyPolicy(val interface{}, formatKeys bool, probe *pipelineCancellation) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	list, ok := val.([]interface{})
@@ -926,13 +1273,22 @@ func fromPairs(val interface{}) map[string]interface{} {
 	}
 
 	for _, item := range list {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		pair, ok := item.([]interface{})
 		if !ok || len(pair) < 2 {
 			continue
 		}
 		key, ok := pair[0].(string)
 		if !ok {
-			key = fmt.Sprintf("%v", pair[0])
+			if !formatKeys {
+				continue
+			}
+			key = pipelineDisplayString(pair[0], probe)
+		}
+		if probe != nil && probe.err != nil {
+			return nil
 		}
 		result[key] = pair[1]
 	}
@@ -955,6 +1311,10 @@ func fromPairs(val interface{}) map[string]interface{} {
 //
 //	fromLists(["name", "age"], ["Alice", 30])  // {name: "Alice", age: 30}
 func fromLists(keys, values interface{}) map[string]interface{} {
+	return fromListsWithCancellation(keys, values, nil)
+}
+
+func fromListsWithCancellation(keys, values interface{}, probe *pipelineCancellation) map[string]interface{} {
 	result := make(map[string]interface{})
 
 	keyList, ok1 := keys.([]interface{})
@@ -964,9 +1324,15 @@ func fromLists(keys, values interface{}) map[string]interface{} {
 	}
 
 	for i := 0; i < len(keyList) && i < len(valList); i++ {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		key, ok := keyList[i].(string)
 		if !ok {
-			key = fmt.Sprintf("%v", keyList[i])
+			key = pipelineDisplayString(keyList[i], probe)
+		}
+		if probe != nil && probe.err != nil {
+			return nil
 		}
 		result[key] = valList[i]
 	}

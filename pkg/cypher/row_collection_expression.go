@@ -21,8 +21,21 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 		return nil, true, nil
 	}
 	scope := rowElementScope(values, 2, mayContainSubqueryExpression(form.step) || mayContainSubqueryExpression(form.predicate))
-	return rowReduceLoop(form, accumulator, listValue, scope,
-		func() (interface{}, bool, error) { return evaluate(form.step, scope) },
+	// rowReduceLoop is shared with the compiled row programs; the step
+	// closure samples this statement's cancellation once per element, as
+	// runReduceFormWithCancellation does.
+	probe := rowPipelineCancellation(values)
+	items := coerceToUnwindItemsWithCancellation(listValue, probe)
+	if probe != nil && probe.err != nil {
+		return nil, false, probe.err
+	}
+	return rowReduceLoop(form, accumulator, items, scope,
+		func() (interface{}, bool, error) {
+			if probe != nil && !probe.check() {
+				return nil, false, probe.err
+			}
+			return evaluate(form.step, scope)
+		},
 		func() (interface{}, bool, error) { return evaluate(form.predicate, scope) })
 }
 

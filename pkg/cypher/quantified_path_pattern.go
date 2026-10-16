@@ -663,18 +663,29 @@ func (r *labelExpressionRewriter) quantifiedGroup(open, close int) error {
 // quantifiedGroupQuantifierAt reports whether the + or * at s[at]
 // quantifies a parenthesised path: it follows a ')' that closes one.
 func quantifiedGroupQuantifierAt(s string, at int) bool {
-	close := trimRightIndex(s, 0, at) - 1
+	return quantifiedGroupQuantifierAtWithCancellation(s, at, nil)
+}
+func quantifiedGroupQuantifierAtWithCancellation(s string, at int, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
+	close := trimRightIndexWithCancellation(s, 0, at, probe) - 1
 	if close < 0 || s[close] != ')' {
 		return false
 	}
 	depth := 0
 	for open := close; open >= 0; open-- {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		switch s[open] {
 		case ')':
 			depth++
 		case '(':
 			if depth--; depth == 0 {
-				return parenthesisedPathAt(s, open, close)
+				return parenthesisedPathAtWithCancellation(s, open, close, probe)
 			}
 		}
 	}
@@ -684,16 +695,23 @@ func quantifiedGroupQuantifierAt(s string, at int) bool {
 // parenthesisedPathAt reports whether s[open:close+1] is a parenthesised
 // path pattern: a node pattern, then a relationship arrow.
 func parenthesisedPathAt(s string, open, close int) bool {
-	inner := skipASCIISpaces(s, open+1, close)
+	return parenthesisedPathAtWithCancellation(s, open, close, nil)
+}
+func parenthesisedPathAtWithCancellation(s string, open, close int, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
+	inner := skipASCIISpacesWithCancellation(s, open+1, close, probe)
 	if inner >= close || s[inner] != '(' {
 		return false
 	}
-	nodeEnd := findMatchingParen(s[:close], inner)
+	nodeEnd := findMatchingDelimiterWithCancellation(s[:close], inner, '(', ')', probe)
 	if nodeEnd < 0 {
 		return false
 	}
-	arrow := skipASCIISpaces(s, nodeEnd+1, close)
-	return arrow+1 < close && (s[arrow] == '-' || s[arrow] == '<') && strings.IndexByte("-[>", s[arrow+1]) >= 0
+	arrow := skipASCIISpacesWithCancellation(s, nodeEnd+1, close, probe)
+	return arrow+1 < close && (s[arrow] == '-' || s[arrow] == '<') && indexByteWithCancellation("-[>", s[arrow+1], probe) >= 0
 }
 
 // quantifiedGroupError is Neo4j's SyntaxError for the quantified group

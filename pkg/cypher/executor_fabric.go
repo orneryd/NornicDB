@@ -478,13 +478,19 @@ func (e *StorageExecutor) currentDatabaseName() string {
 // inferTopLevelReturnColumns best-effort derives outer RETURN columns for Fabric queries.
 // This is used when a distributed execution path returns zero rows and no columns.
 func (e *StorageExecutor) inferTopLevelReturnColumns(query string) []string {
+	return e.inferTopLevelReturnColumnsWithCancellation(query, nil)
+}
+func (e *StorageExecutor) inferTopLevelReturnColumnsWithCancellation(query string, probe *pipelineCancellation) []string {
 	opts := defaultKeywordScanOpts()
 	opts.SkipBraces = true
 
 	lastReturn := -1
 	searchFrom := 0
 	for {
-		idx := keywordIndexFrom(query, "RETURN", searchFrom, opts)
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		idx := keywordIndexFromWithCancellation(query, "RETURN", searchFrom, opts, probe)
 		if idx < 0 {
 			break
 		}
@@ -495,7 +501,7 @@ func (e *StorageExecutor) inferTopLevelReturnColumns(query string) []string {
 		return nil
 	}
 
-	clause := strings.TrimSpace(query[lastReturn+len("RETURN"):])
+	clause := trimSpaceWithCancellation(query[lastReturn+len("RETURN"):], probe)
 	if clause == "" {
 		return nil
 	}
@@ -503,22 +509,25 @@ func (e *StorageExecutor) inferTopLevelReturnColumns(query string) []string {
 	// Strip trailing ORDER BY / SKIP / LIMIT at top-level.
 	end := len(clause)
 	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := topLevelKeywordIndex(clause, kw); idx >= 0 && idx < end {
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		if idx := topLevelKeywordIndexWithCancellation(clause, kw, probe); idx >= 0 && idx < end {
 			end = idx
 		}
 	}
-	clause = strings.TrimSpace(clause[:end])
+	clause = trimSpaceWithCancellation(clause[:end], probe)
 	clause = strings.TrimSuffix(clause, ";")
-	clause = strings.TrimSpace(clause)
+	clause = trimSpaceWithCancellation(clause, probe)
 	if clause == "" {
 		return nil
 	}
 
-	items := e.parseReturnItems(clause)
+	items := e.parseReturnItemsWithCancellation(clause, probe)
 	if len(items) == 0 {
 		return nil
 	}
-	return e.buildColumnsFromReturnItems(items)
+	return e.buildColumnsFromReturnItemsWithCancellation(items, probe)
 }
 
 func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
@@ -674,6 +683,9 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 }
 
 func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+	// Fabric may execute sibling fragments concurrently. Keep their mutable
+	// budgets/failure slots private while retaining the caller's deadline.
+	ctx = pipelineWorkerContext(context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{}))
 	result, err := exec.executeInternal(ctx, query, params)
 	if err != nil {
 		return nil, nil, err
@@ -923,9 +935,16 @@ func (c *cypherFabricExecutor) bindCallbacksOnce(sub *fabric.SubTransaction, com
 // parameters and the current row's variables.
 func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
 	ctx = withQueryParams(ctx, values)
-	out := make([]string, len(expressions))
-	for i, expression := range expressions {
+	probe := parameterCancellationForContext(ctx)
+	out := make([]string, 0, pipelineInitialCapacity(len(expressions), probe))
+	for _, expression := range expressions {
+		if probe != nil && !probe.check() {
+			return nil, probe.err
+		}
 		value, ok := e.evaluateRowExpressionWithContext(ctx, expression, pipelineRow(values))
+		if err := getExpressionFailure(ctx); err != nil {
+			return nil, err
+		}
 		if !ok {
 			if err, undefined := undefinedVariableError(expression); undefined {
 				return nil, err
@@ -939,7 +958,10 @@ func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expression
 			return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "TypeError",
 				localization.CypherCommandRoutingGraphFunctionArgumentType(expression, cypherTypeSystemNameWithArticle(value)))
 		}
-		out[i] = text
+		out = appendPipelineItem(out, text, probe)
+		if probe != nil && probe.err != nil {
+			return nil, probe.err
+		}
 	}
 	return out, nil
 }

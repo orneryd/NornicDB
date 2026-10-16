@@ -101,21 +101,28 @@ func (e *StorageExecutor) evaluateMatchClauseNodes(ctx context.Context, clause s
 }
 
 func parseProjectionExprAlias(item string) (string, string) {
-	trimmed := strings.TrimSpace(item)
+	return parseProjectionExprAliasWithCancellation(item, nil)
+}
+func parseProjectionExprAliasWithCancellation(item string, probe *pipelineCancellation) (string, string) {
+	trimmed := trimSpaceWithCancellation(item, probe)
 	if trimmed == "" {
 		return "", ""
 	}
-	asIdx := projectionAliasIndex(trimmed)
+	asIdx := projectionAliasIndexWithCancellation(trimmed, probe)
+	if probe != nil && probe.err != nil {
+		return "", ""
+	}
 	if asIdx < 0 {
-		// A projected variable is named by the variable itself: `x` is the
-		// column x, as in Neo4j. Other expressions are named by their text.
-		if name := simpleSemanticIdentifier(trimmed); name != "" {
+		if name := simpleSemanticIdentifierWithCancellation(trimmed, probe); name != "" {
 			return trimmed, name
+		}
+		if probe != nil && probe.err != nil {
+			return "", ""
 		}
 		return trimmed, trimmed
 	}
-	expr := strings.TrimSpace(trimmed[:asIdx])
-	alias := normalizeProjectionColumnName(trimmed[asIdx+len("AS"):])
+	expr := trimSpaceWithCancellation(trimmed[:asIdx], probe)
+	alias := normalizeProjectionColumnNameWithCancellation(trimmed[asIdx+len("AS"):], probe)
 	return expr, alias
 }
 
@@ -124,17 +131,27 @@ func parseProjectionExprAlias(item string) (string, string) {
 // blocks, with whitespace on both sides. An AS inside a nested expression
 // (COLLECT { UNWIND l AS y RETURN y }, 'a AS b', CASE WHEN true THEN as END,
 // where as is a variable; #1162) is not the alias; -1 when there is none.
-func projectionAliasIndex(item string) int {
+func projectionAliasIndex(item string) int { return projectionAliasIndexWithCancellation(item, nil) }
+func projectionAliasIndexWithCancellation(item string, probe *pipelineCancellation) int {
 	opts := defaultKeywordScanOpts()
 	opts.SkipBraces = true
 	for from := 0; from < len(item); {
-		index := keywordIndexFrom(item, "AS", from, opts)
+		if probe != nil && !probe.check() {
+			return -1
+		}
+		index := keywordIndexFromWithCancellation(item, "AS", from, opts, probe)
 		if index < 0 {
 			return -1
 		}
 		end := index + len("AS")
-		if index > 0 && isWhitespace(item[index-1]) && end < len(item) && isWhitespace(item[end]) && !insideCaseBlock(item, index) {
+		if index > 0 && isWhitespace(item[index-1]) && end < len(item) && isWhitespace(item[end]) && !insideCaseBlockWithCancellation(item, index, probe) {
+			if probe != nil && probe.err != nil {
+				return -1
+			}
 			return index
+		}
+		if probe != nil && probe.err != nil {
+			return -1
 		}
 		from = end
 	}

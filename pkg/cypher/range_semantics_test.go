@@ -347,7 +347,14 @@ func TestPipelineAggregateSourceFailureDoesNotReturnPartialGroups(t *testing.T) 
 				}
 				if canceled {
 					cancel()
-					require.False(t, yield(pipelineRow{"x": int64(2)}))
+					stopped := false
+					for index := 0; index < pipelineCancellationInterval; index++ {
+						if !yield(pipelineRow{"x": int64(2)}) {
+							stopped = true
+							break
+						}
+					}
+					require.True(t, stopped, "aggregation must stop within one sampling interval")
 					return true
 				}
 				return false

@@ -342,6 +342,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercore.composite_target_required", Constructor: "CypherCoreCompositeTargetRequired", Fields: []string{"Code"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.conditional_column_count", Constructor: "CypherCoreConditionalColumnCount", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.conditional_column_names", Constructor: "CypherCoreConditionalColumnNames", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "cyphercore.custom_formatting_unsupported", Constructor: "CypherCustomFormattingUnsupported", Fields: []string{"Type"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.division_by_zero", Constructor: "CypherCoreDivisionByZero", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.duration_arithmetic_overflow", Constructor: "CypherCoreDurationArithmeticOverflow", Fields: []string{"Duration", "Operand", "Operator"}, PluralForms: []string{"other"}},
 	{ID: "cyphercore.duration_pattern_unbalanced_escapes", Constructor: "CypherCoreDurationPatternUnbalancedEscapes", Fields: []string{}, PluralForms: []string{"other"}},

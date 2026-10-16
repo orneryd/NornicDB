@@ -1,7 +1,5 @@
 package cypher
 
-import "strings"
-
 // parseFunctionCallWS parses a standalone function call expression, tolerating
 // whitespace between the function name and the opening parenthesis.
 //
@@ -10,19 +8,22 @@ import "strings"
 //   - "toLower ( n.name)" -> ("toLower", " n.name", true)
 //
 // Returns ok=false if the expression is not a standalone function call.
-func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
-	expr = strings.TrimSpace(expr)
+func parseFunctionCallWS(expr string) (string, string, bool) {
+	return parseFunctionCallWSWithCancellation(expr, nil)
+}
+func parseFunctionCallWSWithCancellation(expr string, probe *pipelineCancellation) (name string, inner string, ok bool) {
+	expr = trimSpaceWithCancellation(expr, probe)
 	if expr == "" {
 		return "", "", false
 	}
 
-	openIdx := strings.Index(expr, "(")
+	openIdx := indexByteWithCancellation(expr, '(', probe)
 	if openIdx <= 0 {
 		return "", "", false
 	}
 
 	var valid bool
-	name, valid = canonicalCallableName(expr[:openIdx])
+	name, valid = canonicalCallableNameWithCancellation(expr[:openIdx], probe)
 	if !valid {
 		return "", "", false
 	}
@@ -33,9 +34,12 @@ func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
 	quoteChar := rune(0)
 	closeIdx := -1
 	for i := openIdx; i < len(expr); i++ {
+		if probe != nil && !probe.check() {
+			return "", "", false
+		}
 		ch := rune(expr[i])
 		if inQuote {
-			if ch == quoteChar && !isBackslashEscaped(expr, i) {
+			if ch == quoteChar && !isBackslashEscapedWithCancellation(expr, i, probe) {
 				inQuote = false
 				quoteChar = 0
 			}
@@ -60,10 +64,13 @@ func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
 	}
 
 	// Ensure no trailing non-space content after the matching close paren.
-	if strings.TrimSpace(expr[closeIdx+1:]) != "" {
+	if trimSpaceWithCancellation(expr[closeIdx+1:], probe) != "" {
 		return "", "", false
 	}
 
+	if probe != nil && probe.err != nil {
+		return "", "", false
+	}
 	return name, expr[openIdx+1 : closeIdx], true
 }
 
@@ -86,12 +93,22 @@ func functionNameStartsAt(text string, at int) bool {
 // canonicalCallableName shares the qualified identifier reader used by semantic
 // validation, preserving component case while removing trivia around separators.
 func canonicalCallableName(text string) (string, bool) {
-	text = strings.TrimSpace(text)
+	return canonicalCallableNameWithCancellation(text, nil)
+}
+
+func canonicalCallableNameWithCancellation(text string, probe *pipelineCancellation) (string, bool) {
+	text = trimSpaceWithCancellation(text, probe)
+	if probe != nil && probe.err != nil {
+		return "", false
+	}
 	// Ordinary unquoted names need no normalization. Validate their lexical
 	// components in one pass before using the trivia/quoted-token reader.
 	if len(text) > 0 && isIdentStartByte(text[0]) {
 		compact := true
 		for index := 1; index < len(text); index++ {
+			if probe != nil && !probe.check() {
+				return "", false
+			}
 			if isIdentByte(text[index]) {
 				continue
 			}
@@ -106,7 +123,7 @@ func canonicalCallableName(text string) (string, bool) {
 			return text, true
 		}
 	}
-	name, end, ok := scanIdentifierToken(text, 0)
+	name, end, ok := scanIdentifierTokenWithCancellation(text, 0, probe)
 	if !ok {
 		return "", false
 	}
@@ -114,7 +131,7 @@ func canonicalCallableName(text string) (string, bool) {
 		return name, true
 	}
 	parts, end := dottedNameParts(text, end, true)
-	if end != len(text) && queryGapEnd(text, end) != len(text) {
+	if end != len(text) && queryGapEndWithCancellation(text, end, probe) != len(text) {
 		return "", false
 	}
 	if len(name)+len(parts) == len(text) {
