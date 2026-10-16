@@ -11,25 +11,25 @@ import (
 
 // Multi-database error types
 var (
-	ErrDatabaseNotFound        = errors.New("database not found")
-	ErrDatabaseExists          = errors.New("database already exists")
-	ErrInvalidDatabaseName     = errors.New("invalid database name")
-	ErrMaxDatabasesReached     = errors.New("maximum number of databases reached")
-	ErrCannotDropSystemDB      = errors.New("cannot drop system database")
-	ErrCannotDropDefaultDB     = errors.New("cannot drop default database")
-	ErrDatabaseOffline         = errors.New("database is offline")
-	ErrAliasExists             = errors.New("alias already exists")
-	ErrAliasNotFound           = errors.New("alias not found")
-	ErrInvalidAliasName        = errors.New("invalid alias name")
-	ErrAliasConflict           = errors.New("alias conflicts with existing database name")
-	ErrDatabaseHasAliases      = errors.New("database has aliases - drop aliases first")
-	ErrStorageLimitExceeded    = &quotaError{"storage limit exceeded", QuotaCapacityStatus}
-	ErrQueryLimitExceeded      = errors.New("query limit exceeded")
-	ErrConnectionLimitExceeded = errors.New("connection limit exceeded")
-	ErrRateLimitExceeded       = &quotaError{"rate limit exceeded", QuotaRateStatus}
-	ErrNotCompositeDatabase    = errors.New("database is not a composite database")
-	ErrConstituentNotFound     = errors.New("constituent not found")
-	ErrDuplicateConstituent    = errors.New("duplicate constituent alias")
+	ErrDatabaseNotFound              = errors.New("database not found")
+	ErrDatabaseExists                = errors.New("database already exists")
+	ErrInvalidDatabaseName           = errors.New("invalid database name")
+	ErrMaxDatabasesReached           = errors.New("maximum number of databases reached")
+	ErrCannotDropSystemDB            = errors.New("cannot drop system database")
+	ErrCannotDropDefaultDB           = errors.New("cannot drop default database")
+	ErrDatabaseOffline               = errors.New("database is offline")
+	ErrAliasExists                   = errors.New("alias already exists")
+	ErrAliasNotFound                 = errors.New("alias not found")
+	ErrInvalidAliasName              = errors.New("invalid alias name")
+	ErrAliasConflict                 = errors.New("alias conflicts with existing database name")
+	ErrDatabaseHasAliases            = errors.New("database has aliases - drop aliases first")
+	ErrStorageLimitExceeded    error = &quotaError{"storage limit exceeded", QuotaCapacityStatus}
+	ErrQueryLimitExceeded            = errors.New("query limit exceeded")
+	ErrConnectionLimitExceeded       = errors.New("connection limit exceeded")
+	ErrRateLimitExceeded       error = &quotaError{"rate limit exceeded", QuotaRateStatus}
+	ErrNotCompositeDatabase          = errors.New("database is not a composite database")
+	ErrConstituentNotFound           = errors.New("constituent not found")
+	ErrDuplicateConstituent          = errors.New("duplicate constituent alias")
 )
 
 // QuotaCapacityStatus and QuotaRateStatus are NornicDB resource-quota statuses.

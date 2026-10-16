@@ -391,6 +391,11 @@ Commit-time quota rejection has a known rolled-back outcome and no receipt or
 indexing event. A Bolt connection remains reusable after `RESET`. An uncertain
 transport/commit failure is not a quota rejection and is not made safe to retry.
 
+Byte quotas retain the legacy gob-based logical entity accounting model; they
+are not the physical msgpack/Badger/WAL disk footprint. Empty and nil property
+maps have the same canonical quota size across staged writes, point reads and
+streaming initialization.
+
 The write-rate token bucket starts with `max_writes_per_second` tokens and refills
 at that rate, capped at that capacity. Transactions consume one token per buffered
 storage operation, including deletes, rather than one per statement or commit.

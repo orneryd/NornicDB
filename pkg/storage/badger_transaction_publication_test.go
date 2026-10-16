@@ -132,3 +132,27 @@ func TestBadgerTransaction_RejectedCommitDoesNotPublish(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, count)
 }
+
+func TestBadgerTransaction_ListenerPanicPreservesPublicationAndQueue(t *testing.T) {
+	engine := NewMemoryEngine()
+	t.Cleanup(func() { _ = engine.Close() })
+	engine.OnNodeCreated(func(node *Node) {
+		if node.ID == "review:panic" {
+			panic("listener failed")
+		}
+	})
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	_, err = tx.CreateNode(&Node{ID: "review:panic"})
+	require.NoError(t, err)
+	published := false
+	require.PanicsWithValue(t, "listener failed", func() { _ = tx.CommitContextWithPublication(context.Background(), func() { published = true }) })
+	require.True(t, published)
+	_, err = engine.GetNode("review:panic")
+	require.NoError(t, err, "listener failure cannot erase committed data")
+	next, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	_, err = next.CreateNode(&Node{ID: "review:after-panic"})
+	require.NoError(t, err)
+	require.NoError(t, next.Commit(), "the notification queue remains usable after a surfaced callback panic")
+}
