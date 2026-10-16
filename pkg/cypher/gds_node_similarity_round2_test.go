@@ -28,6 +28,12 @@ func reviewGraph(t *testing.T, props []map[string]interface{}, edges []reviewEdg
 		require.NoError(t, engine.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("e%03d", i)), StartNode: storage.NodeID(r.from), EndNode: storage.NodeID(r.to), Type: r.kind, Properties: r.props}))
 	}
 	exec := NewStorageExecutor(engine)
+	t.Cleanup(func() {
+		for _, graph := range databaseProjections(exec.databaseName()) {
+			_, err := exec.Execute(context.Background(), "CALL gds.graph.drop($name)", map[string]interface{}{"name": graph.Name})
+			require.NoError(t, err)
+		}
+	})
 	_, err := exec.Execute(context.Background(), "CALL gds.graph.project('rev',"+nodeProjection+","+relProjection+")", nil)
 	require.NoError(t, err)
 	return exec

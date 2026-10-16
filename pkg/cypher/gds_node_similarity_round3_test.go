@@ -114,6 +114,16 @@ func TestNodeSimilarityRound3UnweightedTypeOrder(t *testing.T) {
 	rows := reviewRows(t, e, "")
 	require.Len(t, rows, 2)
 	require.Equal(t, 2.0/3.0, rows[0][2])
+	// GDS constructs a different constituent map for the aggregation import.
+	// The exact same edges yield 0.5 there, rather than the native list's 2/3.
+	_, err := e.Execute(context.Background(), "UNWIND [{s:0,t:2,k:'A'},{s:0,t:3,k:'a'},{s:0,t:2,k:'Z'},{s:0,t:3,k:'Z'},{s:1,t:2,k:'A'},{s:1,t:3,k:'A'}] AS r RETURN gds.graph.project('agg',r.s,r.t,{relationshipType:r.k})", nil)
+	require.NoError(t, err)
+	result, err := e.Execute(context.Background(), "CALL gds.nodeSimilarity.stream('agg',{concurrency:1})", nil)
+	require.NoError(t, err)
+	require.Len(t, result.Rows, 2)
+	for _, row := range result.Rows {
+		require.Equal(t, 0.5, row[2])
+	}
 }
 
 func TestNodeSimilarityRound3SelectedFilterLabel(t *testing.T) {

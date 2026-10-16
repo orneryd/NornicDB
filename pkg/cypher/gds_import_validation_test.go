@@ -96,4 +96,3 @@ func TestGDSFunctionDetectionCallSpellings(t *testing.T) {
 		require.NoError(t, gdsProjectDistinctError(q), q)
 	}
 }
-
