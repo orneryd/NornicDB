@@ -208,6 +208,7 @@ func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (in
 				switch {
 				case !seen:
 					side.reached[node] = pathSearchWalkReach{depth: reached, hop: hop}
+					s.retain(searchEntryBytes + 8)
 					next = append(next, node)
 					if met, both := other.reached[node]; both && shortest < 0 {
 						shortest = reached + met.depth
@@ -218,6 +219,7 @@ func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (in
 					}
 				case groups && known.depth == reached:
 					side.more[node] = append(side.more[node], hop)
+					s.retain(24)
 				}
 			}
 		}

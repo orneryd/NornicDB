@@ -293,6 +293,11 @@ type quantifiedDeferredCheck struct {
 // groups for each row; an OPTIONAL MATCH is handled by its caller.
 func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(ctx context.Context, rows []pipelineRow, m *quantifiedPathMatch) ([]pipelineRow, error) {
 	var out []pipelineRow
+	// Each match it keeps, with its path, counts against the statement's
+	// memory limit before it is kept; the search below it keeps only its
+	// current path (#1343).
+	retention := trackedRetention(ctx)
+	defer retention.close()
 	for _, row := range rows {
 		state := quantifiedPathState{row: row, used: map[storage.EdgeID]struct{}{}}
 		err := e.matchQuantifiedPieces(ctx, m, 0, state, func(done quantifiedPathState) error {
@@ -316,6 +321,9 @@ func (e *StorageExecutor) pipelineApplyQuantifiedPathMatch(ctx context.Context, 
 			}
 			if m.where != "" && !e.evaluateWithWhereCondition(ctx, m.where, map[string]interface{}(bound)) {
 				return getExpressionFailure(ctx)
+			}
+			if err := retention.reserveRow(bound); err != nil {
+				return err
 			}
 			out = append(out, bound)
 			return nil

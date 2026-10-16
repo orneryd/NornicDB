@@ -158,7 +158,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		position, exists := grouping.addTuple(values)
 		if !exists {
 			// A group keeps its first row, its key and its states (#1343).
-			if run.memory.grow(run.rows.bytes(row)+estimateValueBytes(values)+int64(len(templates))*aggregateStateBytes) != nil {
+			if run.memory.scope != nil && run.memory.grow(run.rows.bytes(row)+estimateValueBytes(values)+int64(len(templates))*aggregateStateBytes) != nil {
 				run.valid = false
 				return false
 			}
@@ -497,6 +497,17 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 				return false
 			}
 			stored[argument] = value
+		}
+		// A percentile keeps every input; each counts against the statement's
+		// memory limit before it is kept (#1343).
+		if state.memory.scope != nil {
+			size := int64(pipelineRowExtraBytes + mapHeaderBytes)
+			for name, value := range stored {
+				size += mapEntryBytes + stringHeaderBytes + int64(len(name)) + estimateValueBytes(value)
+			}
+			if state.memory.grow(size) != nil {
+				return false
+			}
 		}
 		state.percentileRows = append(state.percentileRows, stored)
 		return true

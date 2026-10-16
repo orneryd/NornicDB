@@ -1055,6 +1055,7 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 		return e.bindSelectedPath(ctx, plan, a, reversed, row, path)
 	}
 	s := e.newPathSearch(ctx, a, row, maxLength, source)
+	var rows []pipelineRow
 	if target != nil {
 		direct := len(plan.pathChecks) == 0 && len(plan.iterationChecks) == 0 && !plan.acyclic && !plan.repeated
 		for _, variable := range plan.listVariables {
@@ -1062,15 +1063,29 @@ func (e *StorageExecutor) searchSelectedPaths(ctx context.Context, plan *selecte
 				direct = false
 			}
 		}
-		return s.pair(source, target, count, groups, direct, bind)
+		rows = s.pair(source, target, count, groups, direct, bind)
+	} else {
+		if ends != nil {
+			s.ends = make(map[storage.NodeID]bool, len(ends))
+			s.retain(int64(len(ends)) * searchEntryBytes)
+			for _, node := range ends {
+				s.ends[node.ID] = true
+			}
+		}
+		rows = s.run(source, count, groups, bind)
 	}
-	if ends != nil {
-		s.ends = make(map[storage.NodeID]bool, len(ends))
-		for _, node := range ends {
-			s.ends[node.ID] = true
+	// The search's state goes back whether it found paths, none, or was
+	// cancelled; the rows it found count before they are kept (#1343).
+	s.releaseMemory()
+	if retention := trackedRetention(ctx); retention != nil {
+		defer retention.close()
+		for _, found := range rows {
+			if retention.reserveRow(found) != nil {
+				return nil
+			}
 		}
 	}
-	return s.run(source, count, groups, bind)
+	return rows
 }
 
 // pathLengthLimit is the longest length a length(p) <= value (strict: <)

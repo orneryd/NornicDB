@@ -260,3 +260,16 @@ func (r *memoryRetention) reserveTraversalRow(row traversalOptRow) error {
 	}
 	return r.account.grow(size)
 }
+
+// release gives back everything the owner reserved, for a working buffer
+// the site drops when it is done (a sort buffer, a finalization index):
+// what it retained is not kept past the site.
+func (r *memoryRetention) release() {
+	if r == nil || r.account.scope == nil {
+		return
+	}
+	if taken := r.account.spent + r.account.credit; taken > 0 {
+		r.account.scope.give(taken)
+	}
+	r.account.spent, r.account.credit = 0, 0
+}

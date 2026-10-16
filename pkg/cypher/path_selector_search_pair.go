@@ -80,11 +80,13 @@ func (s *pathSearch) expandForward(w *pathSearchWalks) {
 			if !seen {
 				distance = w.forwardRadius + 1
 				w.forward[step.to] = distance
+				s.retain(searchEntryBytes + 8)
 				next = append(next, step.to)
 				s.meet(w, step.to)
 			}
 			if distance == w.forwardRadius+1 {
 				w.preds[step.to] = append(w.preds[step.to], pathSearchHop{product: p, step: int32(stepIndex)})
+				s.retain(16)
 			}
 		}
 	}
@@ -111,6 +113,7 @@ func (s *pathSearch) expandBackward(w *pathSearchWalks) {
 				distance = w.backwardRadius + 1
 				w.backward[step.key] = distance
 				w.nodes[step.key] = step.node
+				s.retain(2*searchEntryBytes + 16)
 				next = append(next, step.key)
 				if p, exists := s.index[step.key]; exists {
 					s.meet(w, p)
@@ -170,6 +173,7 @@ func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direc
 	for _, entry := range s.levels[0].entries {
 		w.forward[entry.product] = 0
 		w.frontier = append(w.frontier, entry.product)
+		s.retain(searchEntryBytes + 8)
 	}
 	if end := (pathSearchKey{node: target.ID, slot: int32(s.a.final)}); s.slotHolds(s.a.final, target) {
 		w.backward[end] = 0
