@@ -8,6 +8,11 @@
 
 ## Mandatory task entry protocol
 
+Read and apply all 22 [standing design principles](.agents/standing-design-principles.md) on entry and
+throughout the task. They are mandatory alongside Rule 73 and sections 1–9. Their references to sections 5,
+6, and 9 resolve to this protocol's corresponding sections below. These current explicit instructions clarify
+older examples and general guidance without deleting them; they authorize no unrelated work.
+
 Read and apply sections 1–9 before implementation, and reapply them when resuming work or receiving new
 findings. These are binding instructions for scope, causal ownership, convergence, and readiness. Existing
 standards below remain in force. This protocol clarifies that a “minimal fix” must complete the applicable
@@ -99,6 +104,12 @@ resolves to [section 9, Verification and completion](#9-verification-and-complet
 
 ## 5. Reproduce the contract before correction
 
+Distinguish an established defect in required behavior from an unapproved precaution. Establish the approved
+product result, affected population, ordinary-operation likelihood, and meaningful product consequence before
+adding behavior. A merely reproducible exceptional scenario does not by itself authorize engineering for it.
+Tests of approved contracts do not authorize new safeguards or adjacent changes. Return ambiguous operator-owned
+meaning or necessary out-of-scope changes to the user; ordinary technical choices remain agent-owned.
+
 Use the [bug-fix workflow](.agents/bug-fix-workflow.md) to reproduce the actual reported operation, establish its
 expected contract, and observe the failure before fixing it. Preserve the original failing evidence. For
 compatibility work, use the applicable pinned reference and record its actual results; do not infer a reference
@@ -110,6 +121,19 @@ reasoning, statement coverage, a successful build, and an old green suite do not
 or proof of the relevant input boundary.
 
 ## 6. Correct the complete causal unit
+
+Apply the standing principles' single semantic owner, single writer per state field, exact scope, and prohibition
+on permanent migration behavior. Preserve an older contract only when a named current specification or explicit
+user decision requires it. The approved Neo4j compatibility contract and explicitly accepted ID-string contract
+remain current requirements; they are not blanket authorization for backward-compatibility adapters or models.
+Externally maintained code requires the explicit THIRD-PARTY COMPONENT PATCH approval described in principle 15.
+
+For Jev efficiency, load the TypeSafe skill from the session's actual available-skill catalog and use its
+capabilities as specified there. Main agents and authorized reviewer agents apply principle 22 when Jev improves
+useful coverage or saves time or tokens; set confidence thresholds by demonstrated reliability and consequences,
+accept sufficient judgments, and independently verify insufficient judgments. Do not invent a skill, tool,
+capability, invocation, or result. If TypeSafe or Jev is unavailable, report the exact missing capability and
+continue independent authorized work; do not silently claim that the required tool-assisted work was performed.
 
 Implement the smallest complete correction at the causal owner, carrying it through every affected consumer.
 Preserve unrelated contracts, public APIs, precision, error semantics, cancellation, concurrency, and resource
@@ -143,6 +167,13 @@ Reconcile concurrent work before readiness and rerun the affected proof against 
 Do not carry a pass claim across a source change without establishing and explaining its precise applicability.
 
 ## 9. Verification and completion
+
+Lead proof with the requested product outcome and its supported conclusion, followed by evidence and practical
+limits. Complete every requested part; route remaining work truthfully or return missing operator meaning.
+Establish completeness with a repeatable population extractor, query, parser, capture, or comparator, assess
+every member, and add relevant semantic members the extraction misses. Tools may assist semantic assessment
+under Jev's confidence rule; the agent retains responsibility for complete coverage and supported conclusions.
+Do not claim broad correctness from statement coverage, static candidates, or a narrower input population.
 
 Prove the complete current correction unit, not just its last failing example. Before declaring readiness:
 
