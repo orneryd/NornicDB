@@ -29,6 +29,9 @@ const (
 
 // estimateValueBytes is the estimated size of a value a statement keeps.
 func estimateValueBytes(value interface{}) int64 {
+	if estimateObserver != nil {
+		estimateObserver()
+	}
 	return estimateValueBytesAt(value, 0)
 }
 
@@ -119,20 +122,21 @@ func (r *rowEstimator) entry(name string, value interface{}) int64 {
 // value is the estimated size of a value in a row's column.
 func (r *rowEstimator) value(column string, value interface{}) int64 {
 	var identity unsafe.Pointer
+	var length int
 	switch v := value.(type) {
 	case []interface{}:
-		identity = unsafe.Pointer(unsafe.SliceData(v))
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
 	case []string:
-		identity = unsafe.Pointer(unsafe.SliceData(v))
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
 	case []int64:
-		identity = unsafe.Pointer(unsafe.SliceData(v))
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
 	case []float64:
-		identity = unsafe.Pointer(unsafe.SliceData(v))
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
 	case []float32:
-		identity = unsafe.Pointer(unsafe.SliceData(v))
+		identity, length = unsafe.Pointer(unsafe.SliceData(v)), len(v)
 	case map[string]interface{}:
 		if len(v) > 0 {
-			identity = reflect.ValueOf(v).UnsafePointer()
+			identity, length = reflect.ValueOf(v).UnsafePointer(), len(v)
 		}
 	default:
 		return estimateValueBytes(value)
@@ -146,14 +150,14 @@ func (r *rowEstimator) value(column string, value interface{}) int64 {
 				return valueSlotBytes + sliceHeaderBytes
 			}
 			r.columns[index].identity = identity
-			return r.known.valueBytes(value)
+			return r.known.sizedValue(identity, length, value)
 		}
 	}
 	if r.count < rowEstimatorColumns {
 		r.columns[r.count].name, r.columns[r.count].identity = column, identity
 		r.count++
 	}
-	return r.known.valueBytes(value)
+	return r.known.sizedValue(identity, length, value)
 }
 
 // estimateResultRowBytes is the estimated size of a result row; lists
@@ -174,3 +178,7 @@ func estimatePathResultBytes(nodes, relationships int) int64 {
 // aggregateStateBytes is the estimated size of one aggregation's running
 // state in a group.
 const aggregateStateBytes = 160
+
+// estimateObserver, when set (tests), is called on every estimateValueBytes:
+// with no limit configured, nothing may size a value.
+var estimateObserver func()

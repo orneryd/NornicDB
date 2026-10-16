@@ -216,6 +216,11 @@ type transactionMemoryTracker struct {
 	knownMu   sync.Mutex
 	known     [knownLists]knownList
 	knownNext int
+	// sizes caches the estimated size of the large lists and maps the
+	// statement's rows hold, by identity and length: a value every row of an
+	// operator, or of every per-row CALL run, carries is walked once (guarded
+	// by knownMu; sizedValue).
+	sizes map[sizedValueKey]int64
 
 	// resultMemory takes resultBytes of the reservation over when the
 	// statement ends: the caller keeps the result (keepResult). Guarded by mu.
@@ -338,6 +343,7 @@ func (t *transactionMemoryTracker) end() {
 	t.knownMu.Lock()
 	t.known = [knownLists]knownList{}
 	t.knownNext = 0
+	t.sizes = nil
 	t.knownMu.Unlock()
 	if reserved != 0 {
 		t.database.pool.release(reserved)
@@ -626,4 +632,49 @@ func formatMemoryBytes(n int64) string {
 		index++
 	}
 	return strconv.FormatFloat(value, 'f', 1, 64) + " " + units[index]
+}
+
+// sizedValueKey identifies a list or map by its backing storage and length.
+type sizedValueKey struct {
+	data   unsafe.Pointer
+	length int
+}
+
+const (
+	// sizedValueMin is the shortest list or map whose size is cached: a
+	// shorter one costs less to walk than to look up.
+	sizedValueMin = 32
+	// sizedValuesMax bounds the cache; values past it are walked each time.
+	sizedValuesMax = 4096
+)
+
+// sizedValue is estimateValueBytes of value, a list or map with identity
+// data and length elements: from collect()'s count or the statement's size
+// cache when known, walked (and cached) otherwise.
+func (t *transactionMemoryTracker) sizedValue(data unsafe.Pointer, length int, value interface{}) int64 {
+	if t == nil || length < sizedValueMin {
+		return t.valueBytes(value)
+	}
+	if list, ok := value.([]interface{}); ok {
+		if bytes, known := t.knownListBytes(list); known {
+			return bytes
+		}
+	}
+	key := sizedValueKey{data: data, length: length}
+	t.knownMu.Lock()
+	bytes, cached := t.sizes[key]
+	t.knownMu.Unlock()
+	if cached {
+		return bytes
+	}
+	bytes = estimateValueBytes(value)
+	t.knownMu.Lock()
+	if t.sizes == nil {
+		t.sizes = make(map[sizedValueKey]int64)
+	}
+	if len(t.sizes) < sizedValuesMax {
+		t.sizes[key] = bytes
+	}
+	t.knownMu.Unlock()
+	return bytes
 }

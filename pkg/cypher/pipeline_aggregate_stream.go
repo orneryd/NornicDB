@@ -73,6 +73,15 @@ type pipelineAggregateRun struct {
 	rows   rowEstimator
 }
 
+// reserveGroup reserves a new group: its first row, its key and its
+// states. Nothing is sized while no limit is configured (#1343).
+func (run *pipelineAggregateRun) reserveGroup(row pipelineRow, key []interface{}, states int) error {
+	if run.memory.scope == nil {
+		return nil
+	}
+	return run.memory.grow(run.rows.bytes(row) + estimateValueBytes(key) + int64(states)*aggregateStateBytes)
+}
+
 // pipelineAggregateGroups aggregates the rows of source into groups. Rows are
 // validated as they stream in, unless rowsValidated says the caller already
 // validated exactly these rows; validating them again doubled the cost of
@@ -158,7 +167,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		position, exists := grouping.addTuple(values)
 		if !exists {
 			// A group keeps its first row, its key and its states (#1343).
-			if run.memory.scope != nil && run.memory.grow(run.rows.bytes(row)+estimateValueBytes(values)+int64(len(templates))*aggregateStateBytes) != nil {
+			if run.reserveGroup(row, values, len(templates)) != nil {
 				run.valid = false
 				return false
 			}

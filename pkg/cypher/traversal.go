@@ -1086,7 +1086,7 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 				continue
 			}
 			seen[key] = struct{}{}
-			if memory.scope != nil && memory.grow(estimateValueBytes(val)+estimateValueBytes(key)) != nil {
+			if memory.growValue(val) != nil || memory.growValue(key) != nil {
 				break
 			}
 			collected = append(collected, val)

@@ -672,8 +672,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	// The rows a MATCH builds count against the statement's memory limit
 	// (#1343); OPTIONAL MATCH and WITH reserve theirs as they build them.
 	memory := memoryScopeFromContext(ctx)
+	// The estimate follows the rows the pipeline holds now, not the sum of
+	// every clause's output (rowGenerations).
+	generations := newRowGenerations(memory, rows)
 	for idx := 0; idx < len(clauses); idx++ {
 		clause := clauses[idx]
+		generations.next(rows)
 		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
 			clause.kind != pipelineClauseLet && clause.kind != pipelineClauseFilter &&
 			!(clause.kind == pipelineClauseCreate && independentCreate) &&

@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"strings"
+	"unsafe"
 )
 
 // memoryRetention is the one owner a growth site reserves through before it
@@ -280,4 +281,51 @@ func sharedBindingBytes(row pipelineRow) int64 {
 		size += mapEntryBytes + stringHeaderBytes + int64(len(name)) + valueSlotBytes
 	}
 	return size
+}
+
+// rowGenerations keeps a clause pipeline's estimate at the rows it holds
+// now (#1343): each clause's output replaces its input, which is garbage
+// once the next clause has built its rows. When a clause hands on new rows,
+// what it charged while it ran becomes their charge, and the rows it
+// replaced give theirs back. Without it the estimate was the sum of every
+// clause's output: 4.9 GiB counted while the statement held 0.3 GiB.
+//
+// The pipeline runs its clauses one after another, so what the statement
+// took between two clauses is the clause's. Values the new rows carry over
+// from the old ones were charged again where the new rows were built (as
+// shared values, once per column), so giving the old charge back drops
+// nothing the new rows still hold.
+type rowGenerations struct {
+	scope *memoryScope
+	mark  int64 // the statement's use when the current clause began
+	held  int64 // what the current rows hold
+	data  unsafe.Pointer
+	count int
+}
+
+func newRowGenerations(scope *memoryScope, rows []pipelineRow) rowGenerations {
+	if scope == nil {
+		return rowGenerations{}
+	}
+	return rowGenerations{scope: scope, mark: scope.mark(), data: unsafe.Pointer(unsafe.SliceData(rows)), count: len(rows)}
+}
+
+// next is called before each clause, with the rows the clause will read.
+func (g *rowGenerations) next(rows []pipelineRow) {
+	if g.scope == nil {
+		return
+	}
+	used := g.scope.mark()
+	if data := unsafe.Pointer(unsafe.SliceData(rows)); data != g.data || len(rows) != g.count {
+		charged := used - g.mark
+		if charged < 0 {
+			charged = 0
+		}
+		if g.held > 0 {
+			g.scope.give(g.held)
+			used -= g.held
+		}
+		g.held, g.data, g.count = charged, data, len(rows)
+	}
+	g.mark = used
 }
