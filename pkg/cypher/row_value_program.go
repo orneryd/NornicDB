@@ -721,7 +721,7 @@ type rowLogicalNode struct {
 
 func (n *rowLogicalNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
 	ctx := context.Background()
-	if len(n.plan.apply) > 0 {
+	if len(n.plan.apply) > 0 || n.plan.decidingVersions != 0 {
 		ctx = rowStatementContextOrBackground(values)
 	}
 	value, ok, err := n.plan.evaluateInContext(ctx, func(index int) (interface{}, bool, error) {
