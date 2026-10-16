@@ -491,8 +491,8 @@ func TestNoOpHeimdallInvoker(t *testing.T) {
 	assert.False(t, result.Success)
 
 	// These are fire-and-forget, just ensure no panic
-	invoker.InvokeActionAsync("test_action", nil)
-	invoker.SendPromptAsync("test prompt")
+	invoker.InvokeActionAsync(context.Background(), "test_action", nil)
+	invoker.SendPromptAsync(context.Background(), "test prompt")
 }
 
 // ============================================================================

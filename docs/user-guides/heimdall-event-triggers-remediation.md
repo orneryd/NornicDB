@@ -50,13 +50,13 @@ func (p *SecurityPlugin) OnDatabaseEvent(event *heimdall.DatabaseEvent) {
 
     if p.failedQueries >= 5 && p.ctx.Heimdall != nil {
         // Trigger model with context
-        p.ctx.Heimdall.InvokeActionAsync("heimdall.anomaly.detect", map[string]interface{}{
+        p.ctx.Heimdall.InvokeActionAsync(context.Background(), "heimdall.anomaly.detect", map[string]interface{}{
             "trigger": "autonomous",
             "reason":  "query_failures",
             "count":   p.failedQueries,
         })
         // Or natural language
-        p.ctx.Heimdall.SendPromptAsync(
+        p.ctx.Heimdall.SendPromptAsync(context.Background(),
             "Multiple query failures detected in the last window. Analyze and suggest remediation.")
         p.failedQueries = 0
     }
@@ -65,6 +65,7 @@ func (p *SecurityPlugin) OnDatabaseEvent(event *heimdall.DatabaseEvent) {
 
 - **InvokeActionAsync** – Fire-and-forget; results can be sent to Bifrost or handled inside the action.
 - **SendPromptAsync** – Same idea; the model gets a text prompt and can respond (e.g. via Bifrost) or trigger further actions.
+- Both run with the values of the context you pass, but not its cancellation, so work started from a request keeps that request's user. Database calls an action makes (`ctx.Database.Query`, `Discover`, `Stats`) are checked against the user the context carries: on a server with authentication enabled, a call made with `context.Background()`, as in the event hook above, carries no user, and those database calls are refused.
 
 Use **InvokeAction** / **SendPrompt** (synchronous) if you need the result in the plugin to decide remediation steps.
 
@@ -138,7 +139,7 @@ Use the database router from `SubsystemContext` so you target the correct logica
 ## End-to-end pattern: events → inference → remediation
 
 1. **Plugin** – Implements `OnDatabaseEvent`, accumulates events (e.g. failed queries, deletion rate).
-2. **Trigger** – When threshold or window condition is met, call `InvokeActionAsync("heimdall.myplugin.analyze", params)` or `SendPromptAsync("Summarize these events and suggest fixes")`.
+2. **Trigger** – When threshold or window condition is met, call `InvokeActionAsync(ctx, "heimdall.myplugin.analyze", params)` or `SendPromptAsync(ctx, "Summarize these events and suggest fixes")`.
 3. **Action / model** – The action or the model’s response can:
    - Produce a recommendation (e.g. “Create an index on X” or “Annotate node Y”).
    - Call another action that runs Cypher to apply the fix (create node, set property, create relationship).
