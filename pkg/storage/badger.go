@@ -252,8 +252,9 @@ type BadgerEngine struct {
 
 	// Edge type cache for mutual relationship queries
 	// Caches edges by type for O(1) lookup
-	edgeTypeCache   map[string][]*Edge // edgeType -> edges of that type
-	edgeTypeCacheMu sync.RWMutex
+	relationshipUniqueIndexes relationshipUniqueIndexSet
+	edgeTypeCache             map[string][]*Edge // edgeType -> edges of that type
+	edgeTypeCacheMu           sync.RWMutex
 
 	// Hot edge-body cache. BFS-style traversals (shortestPath, variable-
 	// length MATCH) re-read the same edges repeatedly across requests; the
@@ -288,8 +289,11 @@ type BadgerEngine struct {
 
 	// Cached counts for O(1) stats lookups (updated on create/delete)
 	// Eliminates expensive full table scans for node/edge counts
-	nodeCount atomic.Int64
-	edgeCount atomic.Int64
+	// totalCountWriteMu publishes cached totals and retires their buffered delta
+	// together. It is released before any storage callbacks.
+	totalCountWriteMu sync.RWMutex
+	nodeCount         atomic.Int64
+	edgeCount         atomic.Int64
 
 	// mvccByNamespace holds the per-database MVCC sequence counter and
 	// high-water clamp. Each transaction is pinned to one namespace at
@@ -524,6 +528,11 @@ func (b *BadgerEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
 // notifyNodeCreated calls the registered callbacks.
 func (b *BadgerEngine) notifyNodeCreated(node *Node) {
 	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
+	b.dispatchNodeCreated(node)
+}
+
+// dispatchNodeCreated publishes callbacks for an already visible graph mutation.
+func (b *BadgerEngine) dispatchNodeCreated(node *Node) {
 	b.callbackMu.RLock()
 	callbacks := b.onNodeCreated
 	b.callbackMu.RUnlock()
@@ -536,6 +545,11 @@ func (b *BadgerEngine) notifyNodeCreated(node *Node) {
 // notifyNodeUpdated calls the registered callbacks.
 func (b *BadgerEngine) notifyNodeUpdated(node *Node) {
 	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
+	b.dispatchNodeUpdated(node)
+}
+
+// dispatchNodeUpdated publishes callbacks for an already visible graph mutation.
+func (b *BadgerEngine) dispatchNodeUpdated(node *Node) {
 	b.callbackMu.RLock()
 	callbacks := b.onNodeUpdated
 	b.callbackMu.RUnlock()
@@ -547,8 +561,13 @@ func (b *BadgerEngine) notifyNodeUpdated(node *Node) {
 
 // notifyNodeDeleted calls the registered callbacks.
 func (b *BadgerEngine) notifyNodeDeleted(nodeID NodeID) {
-	b.forgetManualSuppression(manualSuppressionNode, string(nodeID))
 	b.graphMutationVersions.changed(namespaceForNodeID(nodeID))
+	b.publishNodeDeleted(nodeID)
+}
+
+// publishNodeDeleted publishes callbacks for an already visible graph mutation.
+func (b *BadgerEngine) publishNodeDeleted(nodeID NodeID) {
+	b.forgetManualSuppression(manualSuppressionNode, string(nodeID))
 	b.deleteCleanup.recordDelete()
 	b.dispatchNodeDeleted(nodeID)
 }
@@ -566,6 +585,11 @@ func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID) {
 // notifyEdgeCreated calls the registered callbacks.
 func (b *BadgerEngine) notifyEdgeCreated(edge *Edge) {
 	b.graphMutationVersions.changed(namespaceForEdgeID(edge.ID))
+	b.dispatchEdgeCreated(edge)
+}
+
+// dispatchEdgeCreated publishes callbacks for an already visible graph mutation.
+func (b *BadgerEngine) dispatchEdgeCreated(edge *Edge) {
 	b.callbackMu.RLock()
 	callbacks := b.onEdgeCreated
 	b.callbackMu.RUnlock()
@@ -578,6 +602,11 @@ func (b *BadgerEngine) notifyEdgeCreated(edge *Edge) {
 // notifyEdgeUpdated calls the registered callbacks.
 func (b *BadgerEngine) notifyEdgeUpdated(edge *Edge) {
 	b.graphMutationVersions.changed(namespaceForEdgeID(edge.ID))
+	b.dispatchEdgeUpdated(edge)
+}
+
+// dispatchEdgeUpdated publishes callbacks for an already visible graph mutation.
+func (b *BadgerEngine) dispatchEdgeUpdated(edge *Edge) {
 	b.callbackMu.RLock()
 	callbacks := b.onEdgeUpdated
 	b.callbackMu.RUnlock()
@@ -589,8 +618,13 @@ func (b *BadgerEngine) notifyEdgeUpdated(edge *Edge) {
 
 // notifyEdgeDeleted calls the registered callbacks.
 func (b *BadgerEngine) notifyEdgeDeleted(edgeID EdgeID) {
-	b.forgetManualSuppression(manualSuppressionEdge, string(edgeID))
 	b.graphMutationVersions.changed(namespaceForEdgeID(edgeID))
+	b.dispatchEdgeDeleted(edgeID)
+}
+
+// dispatchEdgeDeleted publishes callbacks for an already visible graph mutation.
+func (b *BadgerEngine) dispatchEdgeDeleted(edgeID EdgeID) {
+	b.forgetManualSuppression(manualSuppressionEdge, string(edgeID))
 	b.deleteCleanup.recordDelete()
 	b.callbackMu.RLock()
 	callbacks := b.onEdgeDeleted

@@ -1216,6 +1216,42 @@ func chunkCountFromMeta(meta map[string]any) int {
 // tolerated (readers see a partial set only while a replacement is in
 // flight).
 func (b *BadgerEngine) loadEmbeddingChunks(txn *badger.Txn, node *Node, nodeID NodeID, chunkCount int) error {
+	return loadEmbeddingChunksFrom(embeddingRecordReader{txn: txn}, node, nodeID, chunkCount)
+}
+
+// embeddingRecordReader uses the ordinary transaction directly for normal reads.
+// Only recovery supplies a commit overlay. Appending into dst preserves the
+// existing sharded-vector allocation behavior without reader closures.
+type embeddingRecordReader struct {
+	txn    *badger.Txn
+	commit *bufferedCommit
+}
+
+func (r embeddingRecordReader) read(key, dst []byte) ([]byte, error) {
+	if r.commit != nil {
+		if r.commit.deletes[string(key)] {
+			return nil, badger.ErrKeyNotFound
+		}
+		if data, ok := r.commit.writes[string(key)]; ok {
+			return append(dst, data...), nil
+		}
+	}
+	item, err := r.txn.Get(key)
+	if err != nil {
+		return nil, err
+	}
+	// ValueCopy replaces dst rather than appending. Preserve earlier shards
+	// when persisted and staged records share the same assembly buffer.
+	err = item.Value(func(value []byte) error {
+		dst = append(dst, value...)
+		return nil
+	})
+	return dst, err
+}
+
+// loadEmbeddingChunksFrom also reads an unflushed recovery write set without
+// applying its deletes or primary bodies before MVCC history is materialized.
+func loadEmbeddingChunksFrom(read embeddingRecordReader, node *Node, nodeID NodeID, chunkCount int) error {
 	if chunkCount <= 0 {
 		return nil
 	}
@@ -1224,21 +1260,12 @@ func (b *BadgerEngine) loadEmbeddingChunks(txn *badger.Txn, node *Node, nodeID N
 	// Load each chunk embedding
 	for i := 0; i < chunkCount; i++ {
 		embKey := embeddingKey(nodeID, i)
-		item, err := txn.Get(embKey)
+		embData, err := read.read(embKey, nil)
 		if err != nil {
 			if err == badger.ErrKeyNotFound {
-				// Missing chunk - continue with what we have
 				continue
 			}
 			return fmt.Errorf("failed to get embedding chunk %d: %w", i, err)
-		}
-
-		var embData []byte
-		if err := item.Value(func(val []byte) error {
-			embData = append([]byte(nil), val...)
-			return nil
-		}); err != nil {
-			return fmt.Errorf("failed to read embedding chunk %d: %w", i, err)
 		}
 
 		emb, err := decodeEmbedding(embData)
@@ -1249,15 +1276,10 @@ func (b *BadgerEngine) loadEmbeddingChunks(txn *badger.Txn, node *Node, nodeID N
 			}
 			assembled := make([]byte, 0, util.SafePreallocProduct(partCount, maxEmbeddingValueBytes))
 			for part := 0; part < partCount; part++ {
-				partItem, getErr := txn.Get(embeddingChunkPartKey(nodeID, i, part))
+				var getErr error
+				assembled, getErr = read.read(embeddingChunkPartKey(nodeID, i, part), assembled)
 				if getErr != nil {
 					return fmt.Errorf("failed to get embedding chunk %d part %d: %w", i, part, getErr)
-				}
-				if err := partItem.Value(func(val []byte) error {
-					assembled = append(assembled, val...)
-					return nil
-				}); err != nil {
-					return fmt.Errorf("failed to read embedding chunk %d part %d: %w", i, part, err)
 				}
 			}
 			emb, err = decodeEmbedding(assembled)

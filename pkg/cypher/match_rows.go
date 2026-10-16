@@ -35,29 +35,16 @@ func (e *StorageExecutor) evaluateCoalesceInContext(expr string, nodeMap map[str
 			varName := parts[0]
 			propName := parts[1]
 
-			if node, ok := nodeMap[varName]; ok && node != nil {
-				if propVal := node.Properties[propName]; propVal != nil {
-					return propVal
-				}
+			var receiver interface{}
+			if value, ok := computedValues[varName]; ok {
+				receiver = value
+			} else if node, ok := nodeMap[varName]; ok {
+				receiver = node
+			} else if edge, ok := edgeMap[varName]; ok {
+				receiver = edge
 			}
-			if edge, ok := edgeMap[varName]; ok && edge != nil {
-				if propVal := edge.Properties[propName]; propVal != nil {
-					return propVal
-				}
-			}
-			if computedValues != nil {
-				if raw, ok := computedValues[varName]; ok && raw != nil {
-					if valueMap, ok := raw.(map[string]interface{}); ok {
-						if propVal, ok := valueMap[propName]; ok && propVal != nil {
-							return propVal
-						}
-						if props, ok := valueMap["properties"].(map[string]interface{}); ok {
-							if propVal, ok := props[propName]; ok && propVal != nil {
-								return propVal
-							}
-						}
-					}
-				}
+			if value, supported := rowPropertyValue(e.queryVisibleValue(receiver), propName); supported && value != nil {
+				return value
 			}
 			continue
 		}
@@ -656,7 +643,7 @@ func (e *StorageExecutor) filterNodesByProperties(nodes []*storage.Node, props m
 	// The node-pattern property test (nodePropertiesMatch) is the one owner
 	// of pattern-property equality.
 	filterFn := func(node *storage.Node) bool {
-		return nodePropertiesMatch(node, props)
+		return e.nodeMatchesProps(node, props)
 	}
 
 	// Use parallel filtering for large datasets

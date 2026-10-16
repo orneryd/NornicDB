@@ -97,6 +97,11 @@ import (
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	// Every rejection of the caller's statement fails its explicit transaction,
+	// including errors before parsing, routing or the system statement policy.
+	if e.txContext != nil && e.txContext.active && ctx.Value(ctxKeyTxStorage) == nil {
+		defer func() { e.failTransaction(retErr) }()
+	}
 	defer func() {
 		if result != nil && retErr == nil && result.MapKeyOrders == nil {
 			if orders := snapshotMapKeyOrders(ctx); len(orders) > 0 {
@@ -158,9 +163,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		execSpan.End()
 	}()
 	if err := ctx.Err(); err != nil {
-		if ctx.Value(ctxKeyTxStorage) == nil {
-			e.failTransaction(err)
-		}
 		return nil, err
 	}
 	// Normalize query: trim BOM (some clients send it) then whitespace
@@ -316,6 +318,29 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	if err := clientTransactionCommand(ctx, cypher); err != nil {
 		return nil, err
 	}
+	// Only BEGIN can start a script; avoid its allocating classifier for
+	// ordinary statements while admitting them through the same owner.
+	if bareTransactionCommand(cypher) == "" && (!startsWithKeywordFold(cypher, "BEGIN") || !transactionScriptShape(cypher)) {
+		// Neo4j parses a statement before it checks it against its
+		// transaction, so a rejected USE clause (USE before an
+		// administration command among them) is the SyntaxError in an
+		// explicit transaction too.
+		if startsWithKeywordFold(cypher, "USE") {
+			if _, _, _, err := parseUseClause(cypher, false); err != nil {
+				return nil, err
+			}
+		}
+		if err := e.admitTransactionStatement(cypher); err != nil {
+			return nil, err
+		}
+		routed, err := e.routeAdministrationStatement(ctx, cypher)
+		if err != nil {
+			return nil, err
+		}
+		if routed != e {
+			return routed.Execute(ctx, cypher, params)
+		}
+	}
 	// A cached per-database executor is shared by every auto-commit client of
 	// its database. A bare transaction command must not open a transaction on
 	// it: any later statement (or one-statement script) would then run inside
@@ -332,7 +357,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// A query after :USE <db> runs on that database, like one after a USE
 	// clause (#738).
 	if useDB := GetUseDatabaseFromContext(ctx); useDB != "" && useDB != useBefore {
-		return e.executeOnDatabase(ctx, useDB, cypher, params)
+		return e.executeOnDatabase(ctx, useDB, cypher, params, false)
 	}
 
 	// The quoted-variable and label-expression rewrites map the finished
@@ -408,7 +433,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		// Mirror normal query-cache policy for Fabric reads (autocommit only).
 		// A cached result is served only to a caller the statement is
 		// authorized for (fabricResultCacheKey).
-		if allowResultCache && !inExplicitTx && info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) {
+		if allowResultCache && e.canUseResultCache(ctx, info, cypher) {
 			if key, cacheable := e.fabricResultCacheKey(ctx, preparedFabric, cypher, mergedParams); cacheable {
 				fabricResultCacheKey = key
 				if cached, _, _, found := e.cache.getWithTraceForEmbedding(fabricResultCacheKey, embeddingGeneration); found {
@@ -465,7 +490,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			if mode == ModeProfile {
 				keyword = "PROFILE "
 			}
-			return e.executeOnDatabase(ctx, use.Name, keyword+remaining, params)
+			return e.executeOnDatabase(ctx, use.Name, keyword+remaining, params, false)
 		}
 	}
 	// Handle leading Cypher USE clause (openCypher multi-graph syntax).
@@ -476,9 +501,12 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		if err := e.dynamicUseError(use); err != nil {
 			return nil, err
 		}
-		return e.executeOnDatabase(ctx, use.Name, remaining, params)
+		return e.executeOnDatabase(ctx, use.Name, remaining, params, false)
 	}
-	if err := AuthorizeQuery(ctx, cypher); err != nil {
+	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
+		return nil, err
+	}
+	if err := e.systemDatabaseWriteError(cypher); err != nil {
 		return nil, err
 	}
 
@@ -545,9 +573,6 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		if tx.failed != nil {
 			return nil, queryOnFailedTransactionError(tx.failed)
 		}
-		defer func() {
-			e.failTransaction(retErr)
-		}()
 	}
 	// SHOW TRANSACTIONS lists the statement while it runs; TERMINATE
 	// TRANSACTIONS cancels it (#718). A statement of an explicit
@@ -721,7 +746,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// the same text can mean different things in Cypher 5 and Cypher 25
 	// (#907); a Cypher 5 key pays for no version text.
 	resultCacheKey := ""
-	if info.IsReadOnly && e.cache != nil && isCacheableReadQuery(cypher) && !profileExecutionBypassesCache(ctx) {
+	if e.canUseResultCache(ctx, info, cypher) {
 		resultCacheKey = resultCacheEntryKey(cypher, params)
 		if version := cypherVersionFromContext(ctx); version != "5" {
 			resultCacheKey += ":cypher:" + version

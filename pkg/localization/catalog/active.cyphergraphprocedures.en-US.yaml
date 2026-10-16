@@ -91,6 +91,9 @@
 - id: cyphergraphprocedures.job_id_type
   description: GDS's message for a jobId that isn't a string. Type is untranslated.
   other: 'Expected JobId or String. Got {{.Type}}.'
+- id: cyphergraphprocedures.unsupported_gds_value
+  description: GDS's message for a projected property value that isn't a number. Type untranslated.
+  other: 'Unsupported conversion to GDS Value from Neo4j Value with type `{{.Type}}`.'
 - id: cyphergraphprocedures.relationship_end_not_projected
   description: GDS's message for validateRelationships and a relationship whose end isn't projected. Side, Node untranslated.
   other: 'Failed to load a relationship because its {{.Side}}-node with id {{.Node}} is not part of the node query or projection. To ignore the relationship, set the configuration parameter `validateRelationships` to false.'
@@ -118,6 +121,9 @@
 - id: cyphergraphprocedures.default_property_type
   description: GDS incompatible default property value. Expected and Actual are untranslated.
   other: 'Expected type of default value to be `{{.Expected}}`. But got `{{.Actual}}`.'
+- id: cyphergraphprocedures.unsafe_double_conversion
+  description: GDS's message for a Long outside the Double import bound. Value untranslated.
+  other: 'Cannot safely convert {{.Value}} into an double value'
 - id: cyphergraphprocedures.node_not_node_or_integer
   description: GDS's message for a projected node that is neither a node nor an INTEGER. Type untranslated.
   other: 'The node has to be either a NODE or an INTEGER, but got {{.Type}}'
@@ -142,15 +148,14 @@
 - id: cyphergraphprocedures.graph_exists_aggregation
   description: GDS's message for the Cypher aggregation projection of a graph name in use. Graph untranslated.
   other: 'Graph {{.Graph}} already exists'
-- id: cyphergraphprocedures.unsupported_gds_value
-  description: GDS's message for a projected property value that isn't a number. Type untranslated.
-  other: 'Unsupported conversion to GDS Value from Neo4j Value with type `{{.Type}}`.'
 - id: cyphergraphprocedures.relationship_type_empty
   description: GDS's message for an empty relationshipType.
   other: 'Relationship type cannot be empty'
+
 - id: cyphergraphprocedures.inverse_types_not_projected
   description: GDS's message for inverseIndexedRelationshipTypes the aggregation didn't project. Types, Projected untranslated.
   other: 'Specified inverseIndexedRelationshipTypes `{{.Types}}` were not projected in the graph. Projected types are: `{{.Projected}}`.'
+
 - id: cyphergraphprocedures.concurrency_below_one
   description: GDS's message for a readConcurrency below 1. Value untranslated.
   other: 'Valid values for Concurrency are int[1..], Value provided was `{{.Value}}`.'

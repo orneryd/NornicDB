@@ -25,7 +25,7 @@ type cypherFunctionSpec struct {
 }
 
 // cypherFunctionCatalog is the built-in function table.
-var cypherFunctionCatalog = []cypherFunctionSpec{
+var cypherFunctionCatalog = append([]cypherFunctionSpec{
 	{name: "file", category: "Scalar", signature: "file() :: STRING", description: "Returns the absolute path of the file that LOAD CSV is using.", arguments: []ProcedureParam{}, listed: true, aggregating: false, isDeprecated: false},
 	{name: "linenumber", category: "Scalar", signature: "linenumber() :: INTEGER", description: "Returns the line number that LOAD CSV is currently using.", arguments: []ProcedureParam{}, listed: true, aggregating: false, isDeprecated: false},
 	{name: "graph.byName", category: "Graph", signature: "graph.byName(name :: STRING) :: GRAPH", description: "Returns the graph reference of the given name. It is only supported in the `USE` clause, on composite databases.", arguments: []ProcedureParam{{Name: "name", Type: "STRING", Description: "The name of the graph to be resolved."}}, listed: true, aggregating: false, isDeprecated: false},
@@ -122,8 +122,8 @@ var cypherFunctionCatalog = []cypherFunctionSpec{
 	{name: "lineString", category: "Spatial", signature: "lineString(points :: LIST<POINT>) :: LINESTRING", description: "Creates a lineString from a list of points", aggregating: false, listed: true},
 	{name: "point.intersects", category: "Spatial", signature: "point.intersects(point :: POINT, polygon :: POLYGON) :: BOOLEAN", description: "Checks if point intersects with polygon", aggregating: false, listed: true},
 	{name: "point.contains", category: "Spatial", signature: "point.contains(polygon :: POLYGON, point :: POINT) :: BOOLEAN", description: "Checks if polygon contains point", aggregating: false, listed: true},
-	{name: "vector.similarity.cosine", category: "Vector", signature: "vector.similarity.cosine(a :: VECTOR | LIST<INTEGER | FLOAT>, b :: VECTOR | LIST<INTEGER | FLOAT>) :: FLOAT", description: "Returns a `FLOAT` representing the similarity between the argument vectors based on their cosine.", arguments: []ProcedureParam{{Name: "a", Type: "VECTOR | LIST<INTEGER | FLOAT>", Description: "A vector or list value representing the first vector."}, {Name: "b", Type: "VECTOR | LIST<INTEGER | FLOAT>", Description: "A vector or list value representing the second vector."}}, listed: true, aggregating: false, isDeprecated: false},
-	{name: "vector.similarity.euclidean", category: "Vector", signature: "vector.similarity.euclidean(a :: VECTOR | LIST<INTEGER | FLOAT>, b :: VECTOR | LIST<INTEGER | FLOAT>) :: FLOAT", description: "Returns a `FLOAT` representing the similarity between the argument vectors based on their Euclidean distance.", arguments: []ProcedureParam{{Name: "a", Type: "VECTOR | LIST<INTEGER | FLOAT>", Description: "A vector or list value representing the first vector."}, {Name: "b", Type: "VECTOR | LIST<INTEGER | FLOAT>", Description: "A vector or list value representing the second vector."}}, listed: true, aggregating: false, isDeprecated: false},
+	{name: "vector.similarity.cosine", category: "Vector", signature: "vector.similarity.cosine(a :: LIST<INTEGER | FLOAT>, b :: LIST<INTEGER | FLOAT>) :: FLOAT", description: "Returns a `FLOAT` representing the similarity between the argument vectors based on their cosine.", arguments: []ProcedureParam{{Name: "a", Type: "LIST<INTEGER | FLOAT>", Description: "A vector or list value representing the first vector."}, {Name: "b", Type: "LIST<INTEGER | FLOAT>", Description: "A vector or list value representing the second vector."}}, listed: true, aggregating: false, isDeprecated: false},
+	{name: "vector.similarity.euclidean", category: "Vector", signature: "vector.similarity.euclidean(a :: LIST<INTEGER | FLOAT>, b :: LIST<INTEGER | FLOAT>) :: FLOAT", description: "Returns a `FLOAT` representing the similarity between the argument vectors based on their Euclidean distance.", arguments: []ProcedureParam{{Name: "a", Type: "LIST<INTEGER | FLOAT>", Description: "A vector or list value representing the first vector."}, {Name: "b", Type: "LIST<INTEGER | FLOAT>", Description: "A vector or list value representing the second vector."}}, listed: true, aggregating: false, isDeprecated: false},
 	{name: "text.locate", category: "String", signature: "text.locate(text :: STRING, quote :: STRING, options? :: MAP) :: MAP", description: "Returns the span {start, end} of a quote's best occurrence in `text`, in code points, matched loosely (case, whitespace, typographic quotes and dashes, markdown emphasis and links, reply markers); options line, tolerance, from, to (a NornicDB extension).", arguments: []ProcedureParam{{Name: "text", Type: "STRING", Description: "The text to search."}, {Name: "quote", Type: "STRING", Description: "The quoted passage."}, {Name: "options", Type: "MAP", Description: "line (1-based), tolerance (lines, 3), from and to (code points).", Optional: true}}, listed: true, aggregating: false, isDeprecated: false},
 	{name: "kalman.init", category: "Kalman", signature: "kalman.init(config? :: MAP) :: STRING", description: "Create new Kalman filter state (basic scalar filter for noise smoothing)", aggregating: false, listed: true},
 	{name: "kalman.process", category: "Kalman", signature: "kalman.process(measurement :: FLOAT, state :: STRING, target? :: FLOAT) :: MAP", description: "Process measurement, returns {value, state}", aggregating: false, listed: true},
@@ -353,7 +353,8 @@ var cypherFunctionCatalog = []cypherFunctionSpec{
 	// The predicate a MATCH pattern's row-dependent dynamic label or type
 	// becomes (dynamicLabelTestFunction); not listed.
 	{name: dynamicLabelTestFunction},
-}
+	{name: dynamicLabelPredicateFunction},
+}, nativeAPOCFunctionCatalog()...)
 
 // builtInCypherFunctions is every catalog name, lower-cased, for the
 // unknown-function check.

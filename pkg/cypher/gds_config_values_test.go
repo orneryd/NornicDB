@@ -27,3 +27,22 @@ func TestGDSNumericConfigurationKinds(t *testing.T) {
 		require.Equal(t, 3, n)
 	}
 }
+
+func TestGDSConfigurationDoesNotUsePropertyImportBound(t *testing.T) {
+	const value int64 = 1<<53 + 2
+	cfg, err := fastRPConfiguration(map[string]interface{}{
+		"embeddingDimension":    int64(2),
+		"iterationWeights":      []interface{}{value},
+		"normalizationStrength": value,
+		"nodeSelfInfluence":     value,
+		"randomSeed":            value,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []float64{float64(value)}, cfg.IterationWeights)
+	require.Equal(t, float64(value), cfg.NormalizationStrength)
+	require.Equal(t, float64(value), cfg.NodeSelfInfluence)
+	require.Equal(t, value, cfg.RandomSeed)
+
+	_, _, _, err = gdsConvertPropertyValue(value, "Float", false)
+	require.ErrorContains(t, err, "Cannot safely convert")
+}

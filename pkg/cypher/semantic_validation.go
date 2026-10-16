@@ -51,6 +51,9 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := e.validateCallSubqueryScopes(cypher, cypher25); err != nil {
 		return err
 	}
+	if err := validateListComprehensionVariables(cypher); err != nil {
+		return err
+	}
 	if err := validateStaticQuantifierTypes(cypher); err != nil {
 		return err
 	}
@@ -310,7 +313,13 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 			continue
 		}
 		if scoped && imports != "" {
-			body = "WITH " + imports + " " + body
+			// The imports stay in scope through the body's WITH clauses,
+			// as when it runs (pipelineWithCarrying).
+			carried := pipelineRow{}
+			for _, name := range splitTopLevelComma(imports) {
+				carried[normalizeProjectionColumnName(strings.TrimSpace(name))] = nil
+			}
+			body = "WITH " + imports + " " + callSubqueryBodyCarrying(body, carried)
 		}
 		if body == "" {
 			continue
@@ -543,7 +552,7 @@ func maskPathFunctionCalls(expression string) string {
 				break
 			}
 			idx += searchStart
-			if idx > 0 && isIdentByte(expression[idx-1]) {
+			if !functionNameStartsAt(expression, idx) {
 				searchStart = idx + 1
 				continue
 			}
@@ -761,4 +770,37 @@ func invalidAggregationInListComprehension(cypher string) bool {
 		}
 	}
 	return false
+}
+
+// callSubqueryBodyCarrying is a CALL (…) body's text with each of its WITH
+// clauses projecting the imports it carries (pipelineWithCarrying), for the
+// update-clause scope check: SET x.p = y after WITH 1 AS y reads the
+// imported x. Each UNION branch is rewritten alike.
+func callSubqueryBodyCarrying(body string, carried pipelineRow) string {
+	branches, unionAll, mixed, union := parseTopLevelUnionBranches(body)
+	if !union || mixed || len(branches) < 2 {
+		branches = []string{body}
+	}
+	for index, branch := range branches {
+		clauses, ok := splitPipelineClauses(strings.TrimSpace(branch))
+		if !ok {
+			continue
+		}
+		texts := make([]string, len(clauses))
+		for position, clause := range clauses {
+			texts[position] = clause.text
+			if clause.kind == pipelineClauseWith {
+				texts[position] = pipelineWithCarrying(clause.text, carried)
+			}
+		}
+		branches[index] = strings.Join(texts, " ")
+	}
+	if len(branches) == 1 {
+		return branches[0]
+	}
+	separator := " UNION "
+	if unionAll {
+		separator = " UNION ALL "
+	}
+	return strings.Join(branches, separator)
 }

@@ -598,12 +598,12 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 	}
 
 	dataBuf := walJSONBufPool.Get().(*bytes.Buffer)
-	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
 	defer walJSONBufPool.Put(dataBuf)
+	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
 	defer walJSONBufPool.Put(entryBuf)
 
-	// Serialize data into a reusable buffer (reduces allocs vs json.Marshal).
-	dataBytes, err := marshalJSONCompact(dataBuf, data)
+	// Retain the pooled legacy JSON projection and append its lossless recovery sidecar.
+	dataBytes, err := marshalWALRecoveryPayload(dataBuf, data)
 	if err != nil {
 		return 0, fmt.Errorf("wal: failed to marshal data: %w", err)
 	}
@@ -1324,7 +1324,8 @@ func (w *WAL) CreateSnapshot(engine Engine) (*Snapshot, error) {
 }
 
 // SaveSnapshot writes a snapshot to disk with full durability guarantees.
-// Uses write-to-temp + atomic-rename pattern for crash safety.
+// It writes lossless NDS2 v2 frames using write-to-temp + atomic rename.
+// Older binaries reject this format; retain a pre-upgrade backup for rollback.
 func SaveSnapshot(snapshot *Snapshot, path string) error {
 	return saveSnapshot(snapshot, path, syncDir)
 }
@@ -1343,10 +1344,8 @@ func saveSnapshot(snapshot *Snapshot, path string, syncDirectory func(string) er
 		return fmt.Errorf("wal: failed to create snapshot file: %w", err)
 	}
 
-	// Compact JSON (no indent) to minimize snapshot size on disk.
-	// Indented JSON was 2–3x larger and caused multi-GB snapshot files.
-	encoder := json.NewEncoder(file)
-	if err := encoder.Encode(snapshot); err != nil {
+	// Use the versioned lossless framed transport; legacy JSON remains readable.
+	if err := writeSnapshotCollection(file, snapshot); err != nil {
 		file.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("wal: failed to encode snapshot: %w", err)
@@ -1374,7 +1373,7 @@ func saveSnapshot(snapshot *Snapshot, path string, syncDirectory func(string) er
 	return nil
 }
 
-// LoadSnapshot reads a snapshot from disk.
+// LoadSnapshot reads legacy JSON or NDS2 v1/v2 framed snapshots from disk.
 func LoadSnapshot(path string) (*Snapshot, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -1382,8 +1381,22 @@ func LoadSnapshot(path string) (*Snapshot, error) {
 	}
 	defer file.Close()
 
+	streaming, err := IsStreamingSnapshot(path)
+	if err != nil {
+		return nil, fmt.Errorf("wal: failed to inspect snapshot: %w", err)
+	}
 	var snapshot Snapshot
-	if err := json.NewDecoder(file).Decode(&snapshot); err != nil {
+	if streaming {
+		snapshot.Version = "1.0"
+		metadata, err := readSnapshot(file, snapshotCollectionVisitor{snapshot: &snapshot}, &snapshot, materializedSnapshotRecordSize)
+		if err != nil {
+			return nil, fmt.Errorf("wal: failed to decode snapshot: %w", err)
+		}
+		snapshot.Sequence = metadata.Sequence
+		snapshot.Timestamp = metadata.Timestamp
+		return &snapshot, nil
+	}
+	if err := decodeLegacyRecoveryJSON(file, &snapshot); err != nil {
 		return nil, fmt.Errorf("wal: failed to decode snapshot: %w", err)
 	}
 
@@ -2235,7 +2248,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 	switch entry.Operation {
 	case OpCreateNode:
 		var data WALNodeData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
 		_, err := namespacedEngine.CreateNode(data.Node)
@@ -2243,56 +2256,56 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 
 	case OpUpdateNode:
 		var data WALNodeData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node: %w", err)
 		}
 		return namespacedEngine.UpdateNode(data.Node)
 
 	case OpDeleteNode:
 		var data WALDeleteData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete: %w", err)
 		}
 		return namespacedEngine.DeleteNode(NodeID(data.ID))
 
 	case OpCreateEdge:
 		var data WALEdgeData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge: %w", err)
 		}
 		return namespacedEngine.CreateEdge(data.Edge)
 
 	case OpUpdateEdge:
 		var data WALEdgeData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge: %w", err)
 		}
 		return namespacedEngine.UpdateEdge(data.Edge)
 
 	case OpDeleteEdge:
 		var data WALDeleteData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete: %w", err)
 		}
 		return namespacedEngine.DeleteEdge(EdgeID(data.ID))
 
 	case OpBulkNodes:
 		var data WALBulkNodesData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk nodes: %w", err)
 		}
 		return namespacedEngine.BulkCreateNodes(data.Nodes)
 
 	case OpBulkEdges:
 		var data WALBulkEdgesData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk edges: %w", err)
 		}
 		return namespacedEngine.BulkCreateEdges(data.Edges)
 
 	case OpBulkDeleteNodes:
 		var data WALBulkDeleteNodesData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk delete nodes: %w", err)
 		}
 		ids := make([]NodeID, len(data.IDs))
@@ -2303,7 +2316,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 
 	case OpBulkDeleteEdges:
 		var data WALBulkDeleteEdgesData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk delete edges: %w", err)
 		}
 		ids := make([]EdgeID, len(data.IDs))
@@ -2322,7 +2335,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if err != nil {
 			return err
 		}
-		if err := json.Unmarshal(payload, &data); err != nil {
+		if err := decodeRecoveryPayload(payload, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal buffered commit: %w", err)
 		}
 		b, ok := baseEngine.(*BadgerEngine)
@@ -2333,6 +2346,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 			return nil
 		}
 		c := bufferedCommit{
+			recovered:      true,
 			namespace:      data.Namespace,
 			txID:           data.TxID,
 			ops:            data.Ops,
@@ -2398,7 +2412,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 	case OpCreateNode:
 		// Undo create = delete
 		var data WALNodeData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node for undo: %w", err)
 		}
 		if data.Node == nil {
@@ -2409,7 +2423,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 	case OpUpdateNode:
 		// Undo update = restore old node
 		var data WALNodeData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal node for undo: %w", err)
 		}
 		if data.OldNode == nil {
@@ -2420,7 +2434,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 	case OpDeleteNode:
 		// Undo delete = recreate old node
 		var data WALDeleteData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete for undo: %w", err)
 		}
 		if data.OldNode == nil {
@@ -2432,7 +2446,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 	case OpCreateEdge:
 		// Undo create = delete
 		var data WALEdgeData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge for undo: %w", err)
 		}
 		if data.Edge == nil {
@@ -2443,7 +2457,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 	case OpUpdateEdge:
 		// Undo update = restore old edge
 		var data WALEdgeData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal edge for undo: %w", err)
 		}
 		if data.OldEdge == nil {
@@ -2454,7 +2468,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 	case OpDeleteEdge:
 		// Undo delete = recreate old edge
 		var data WALDeleteData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal delete for undo: %w", err)
 		}
 		if data.OldEdge == nil {
@@ -2465,7 +2479,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 	case OpBulkNodes:
 		// Undo bulk create = delete all
 		var data WALBulkNodesData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk nodes for undo: %w", err)
 		}
 		ids := make([]NodeID, len(data.Nodes))
@@ -2477,7 +2491,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 	case OpBulkEdges:
 		// Undo bulk create = delete all
 		var data WALBulkEdgesData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk edges for undo: %w", err)
 		}
 		ids := make([]EdgeID, len(data.Edges))
@@ -2489,24 +2503,24 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 	case OpBulkDeleteNodes:
 		// Undo bulk delete = recreate all
 		var data WALBulkDeleteNodesData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk delete nodes for undo: %w", err)
 		}
 		if len(data.OldNodes) == 0 {
 			return ErrNoUndoData
 		}
-		return engine.BulkCreateNodes(data.OldNodes)
+		return namespacedEngine.BulkCreateNodes(data.OldNodes)
 
 	case OpBulkDeleteEdges:
 		// Undo bulk delete = recreate all
 		var data WALBulkDeleteEdgesData
-		if err := json.Unmarshal(entry.Data, &data); err != nil {
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal bulk delete edges for undo: %w", err)
 		}
 		if len(data.OldEdges) == 0 {
 			return ErrNoUndoData
 		}
-		return engine.BulkCreateEdges(data.OldEdges)
+		return namespacedEngine.BulkCreateEdges(data.OldEdges)
 
 	case OpCheckpoint, OpTxBegin, OpTxCommit, OpTxAbort, OpUpdateEmbedding:
 		// These don't need undo
@@ -2525,42 +2539,42 @@ func GetEntryTxID(entry WALEntry) string {
 	switch entry.Operation {
 	case OpCreateNode, OpUpdateNode:
 		var data WALNodeData
-		if json.Unmarshal(entry.Data, &data) == nil {
+		if decodeRecoveryPayload(entry.Data, &data) == nil {
 			txID = data.TxID
 		}
 	case OpCreateEdge, OpUpdateEdge:
 		var data WALEdgeData
-		if json.Unmarshal(entry.Data, &data) == nil {
+		if decodeRecoveryPayload(entry.Data, &data) == nil {
 			txID = data.TxID
 		}
 	case OpDeleteNode, OpDeleteEdge:
 		var data WALDeleteData
-		if json.Unmarshal(entry.Data, &data) == nil {
+		if decodeRecoveryPayload(entry.Data, &data) == nil {
 			txID = data.TxID
 		}
 	case OpBulkNodes:
 		var data WALBulkNodesData
-		if json.Unmarshal(entry.Data, &data) == nil {
+		if decodeRecoveryPayload(entry.Data, &data) == nil {
 			txID = data.TxID
 		}
 	case OpBulkEdges:
 		var data WALBulkEdgesData
-		if json.Unmarshal(entry.Data, &data) == nil {
+		if decodeRecoveryPayload(entry.Data, &data) == nil {
 			txID = data.TxID
 		}
 	case OpBulkDeleteNodes:
 		var data WALBulkDeleteNodesData
-		if json.Unmarshal(entry.Data, &data) == nil {
+		if decodeRecoveryPayload(entry.Data, &data) == nil {
 			txID = data.TxID
 		}
 	case OpBulkDeleteEdges:
 		var data WALBulkDeleteEdgesData
-		if json.Unmarshal(entry.Data, &data) == nil {
+		if decodeRecoveryPayload(entry.Data, &data) == nil {
 			txID = data.TxID
 		}
 	case OpTxBegin, OpTxCommit, OpTxAbort:
 		var data WALTxData
-		if json.Unmarshal(entry.Data, &data) == nil {
+		if decodeRecoveryPayload(entry.Data, &data) == nil {
 			txID = data.TxID
 		}
 	}
@@ -2629,7 +2643,7 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 		switch entry.Operation {
 		case OpTxBegin:
 			var data WALTxData
-			json.Unmarshal(entry.Data, &data)
+			decodeRecoveryPayload(entry.Data, &data)
 			result.Transactions[data.TxID] = &TransactionState{
 				TxID:    data.TxID,
 				Entries: []WALEntry{},
@@ -2638,14 +2652,14 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 
 		case OpTxCommit:
 			var data WALTxData
-			json.Unmarshal(entry.Data, &data)
+			decodeRecoveryPayload(entry.Data, &data)
 			if tx, ok := result.Transactions[data.TxID]; ok {
 				tx.Done = true
 			}
 
 		case OpTxAbort:
 			var data WALTxData
-			json.Unmarshal(entry.Data, &data)
+			decodeRecoveryPayload(entry.Data, &data)
 			if tx, ok := result.Transactions[data.TxID]; ok {
 				tx.Done = true
 				tx.Aborted = true
@@ -2807,7 +2821,7 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 			if err != nil {
 				return nil, result, fmt.Errorf("wal: failed to open snapshot: %w", err)
 			}
-			metadata, readErr := ReadSnapshot(file, engineSnapshotVisitor{engine: engine})
+			metadata, readErr := readSnapshot(file, engineSnapshotVisitor{engine: engine}, nil, materializedSnapshotRecordSize)
 			closeErr := file.Close()
 			if readErr != nil {
 				return nil, result, fmt.Errorf("wal: failed to load snapshot: %w", readErr)
@@ -2875,7 +2889,10 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 	// Ensure we don't have a torn tail record before reading for recovery.
 	// This is critical when recovery is invoked because the main server never started,
 	// so NewWAL() (which also repairs tails) was never called.
-	_, _, _ = repairWALTailIfNeeded(activePath, defaultWALLogger{})
+	if _, _, repairErr := repairWALTailIfNeeded(activePath, defaultWALLogger{}); repairErr != nil {
+		_ = engine.Close()
+		return nil, result, fmt.Errorf("wal: failed to inspect recovery log: %w", repairErr)
+	}
 
 	entries, err := ReadWALEntriesAfterFromDir(walDir, snapshotSeq)
 	if err != nil {
@@ -2894,12 +2911,18 @@ type engineSnapshotVisitor struct {
 }
 
 func (v engineSnapshotVisitor) VisitNode(node *Node) error {
-	_, err := v.engine.CreateNode(node)
-	return err
+	_, err := v.engine.CreateNode(qualifyRecoverySnapshotNode(node))
+	if err != nil {
+		return fmt.Errorf("wal: failed to restore nodes: %w", err)
+	}
+	return nil
 }
 
 func (v engineSnapshotVisitor) VisitEdge(edge *Edge) error {
-	return v.engine.CreateEdge(edge)
+	if err := v.engine.CreateEdge(qualifyRecoverySnapshotEdge(edge)); err != nil {
+		return fmt.Errorf("wal: failed to restore edges: %w", err)
+	}
+	return nil
 }
 
 // ReplayWALEntries replays multiple entries and tracks results.

@@ -92,26 +92,35 @@ func TestAuthorizeSelectedDatabase(t *testing.T) {
 	exec.SetDatabaseManager(&accessTestManager{})
 
 	// Without a resolver in the context nothing is checked.
-	require.NoError(t, exec.authorizeSelectedDatabase(context.Background(), "cmp.a"))
+	require.NoError(t, exec.authorizeSelectedDatabase(context.Background(), "cmp.a", "RETURN 1"))
 
 	asked, resolver := recording()
-	require.NoError(t, exec.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a"))
-	require.Equal(t, []string{"cmp:read", "dba:read"}, *asked)
+	require.NoError(t, exec.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a", "RETURN 1"))
+	require.Equal(t, []string{"cmp:access", "dba:read"}, *asked)
+	for query, permissions := range map[string][]string{
+		"CREATE (:Loaded)":                             {"cmp:access", "dba:write"},
+		"MATCH (n) SET n.loaded = true":                {"cmp:access", "dba:write", "dba:read"},
+		"CREATE INDEX loaded FOR (n:Loaded) ON (n.id)": {"cmp:access", "dba:schema", "dba:read"},
+	} {
+		asked, resolver := recording()
+		require.NoError(t, exec.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a", query))
+		require.Equal(t, permissions, *asked, query)
+	}
 
 	// Refusing the constituent's database refuses the constituent.
 	asked, resolver = recording("dba")
-	err := exec.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a")
+	err := exec.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a", "RETURN 1")
 	var denied *PermissionDeniedError
 	require.ErrorAs(t, err, &denied)
 	require.Equal(t, "read", denied.Permission)
 	requireStatusCode(t, err, "Neo.ClientError.Security.Forbidden")
-	require.Equal(t, []string{"cmp:read", "dba:read"}, *asked)
+	require.Equal(t, []string{"cmp:access", "dba:read"}, *asked)
 
 	// An alias needs its target too.
 	asked, resolver = recording("target")
-	err = exec.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "al")
+	err = exec.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "al", "RETURN 1")
 	require.ErrorAs(t, err, &denied)
-	require.Equal(t, []string{"al:read", "target:read"}, *asked)
+	require.Equal(t, []string{"al:access", "target:read"}, *asked)
 
 	// Constituents that can't be read: the composite is checked, then the
 	// lookup's error is returned; a refused composite is refused first.
@@ -119,11 +128,11 @@ func TestAuthorizeSelectedDatabase(t *testing.T) {
 	failing := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"))
 	failing.SetDatabaseManager(&accessTestManager{constituentsErr: lookupErr})
 	asked, resolver = recording()
-	err = failing.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a")
+	err = failing.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a", "RETURN 1")
 	require.ErrorIs(t, err, lookupErr)
 	require.Equal(t, []string{"cmp:read"}, *asked)
 	asked, resolver = recording("cmp")
-	err = failing.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a")
+	err = failing.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a", "RETURN 1")
 	require.ErrorAs(t, err, &denied)
 	require.NotErrorIs(t, err, lookupErr)
 	require.Equal(t, []string{"cmp:read"}, *asked)
@@ -131,7 +140,7 @@ func TestAuthorizeSelectedDatabase(t *testing.T) {
 	// No database manager: the name alone.
 	embedded := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"))
 	asked, resolver = recording()
-	require.NoError(t, embedded.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a"))
+	require.NoError(t, embedded.authorizeSelectedDatabase(WithDatabasePermissionResolver(context.Background(), "nornic", resolver), "cmp.a", "RETURN 1"))
 	require.Equal(t, []string{"cmp.a:read"}, *asked)
 }
 

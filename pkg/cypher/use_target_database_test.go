@@ -113,20 +113,25 @@ func TestStatementTargetDatabase(t *testing.T) {
 	// transaction runs on a plain namespaced engine, which supports BEGIN.)
 	exec = NewStorageExecutor(storage.NewNamespacedEngine(base, "nornic"))
 	exec.SetDatabaseManager(&standardDBManager{engines: map[string]storage.Engine{"nornic": home, "other": other}})
-	_, err = exec.Execute(ctx, "BEGIN", nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "CREATE (:InTx)", nil)
-	require.NoError(t, err)
+	// A refused statement fails its transaction, so each one gets its own.
 	for query, message := range map[string]string{
 		"USE other CREATE (:InTxOther)":            "Writing to more than one database per transaction is not allowed. Attempted write to other, currently writing to nornic",
 		":USE other\nCREATE (:InTxOther)":          "Writing to more than one database per transaction is not allowed. Attempted write to other, currently writing to nornic",
 		"USE other MATCH (n) RETURN count(n) AS c": "Accessing more than one database per transaction is not allowed. Attempted access to other, currently using nornic",
 	} {
+		_, err = exec.Execute(ctx, "BEGIN", nil)
+		require.NoError(t, err)
+		_, err = exec.Execute(ctx, "CREATE (:InTx)", nil)
+		require.NoError(t, err)
 		_, err = exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.AccessMode")
 		assert.Contains(t, err.Error(), message, query)
+		_, err = exec.Execute(ctx, "ROLLBACK", nil)
+		require.NoError(t, err)
 	}
+	_, err = exec.Execute(ctx, "BEGIN", nil)
+	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "USE nornic CREATE (:InTx)", nil)
 	require.NoError(t, err)
 	_, err = exec.Execute(ctx, "ROLLBACK", nil)

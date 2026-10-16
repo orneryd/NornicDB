@@ -190,3 +190,17 @@
   other: '[!! Label change would violate DISALLOWED policy: (:{{.SourceLabel}})-[:{{.RelationshipType}}]->(:{{.TargetLabel}}) (constraint {{printf "%q" .ConstraintName}}) !!]'
 - id: storage.validation.label_change_allowed
   other: "[!! Label change would violate ALLOWED policy: no ALLOWED policy permits (:{{.SourceLabels}})-[:{{.RelationshipType}}]->(:{{.TargetLabels}}) !!]"
+- id: storage.remote.rest_invalid_json
+  other: "[!! invalid remote HTTP REST JSON !!]"
+- id: storage.remote.path_entity_sequence_missing
+  other: "[!! remote path has no entity sequence !!]"
+- id: storage.remote.path_non_entity
+  other: "[!! remote path contains a non-entity !!]"
+- id: storage.remote.path_entities_inconsistent
+  other: "[!! remote HTTP path has inconsistent entities !!]"
+- id: storage.remote.rest_map_keys_mismatch
+  other: "[!! remote HTTP row/REST map keys differ !!]"
+- id: storage.remote.rest_list_length_mismatch
+  other: "[!! remote HTTP row/REST list lengths differ !!]"
+- id: storage.remote.rest_row_length_mismatch
+  other: "[!! remote HTTP row/REST lengths differ !!]"

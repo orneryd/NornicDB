@@ -124,9 +124,6 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		authToken:  authToken,
 		autoCommit: autoCommit,
 	}, func(dbName string) (storage.Engine, error) {
-		if err := e.authorizeSelectedDatabase(ctx, dbName); err != nil {
-			return nil, err
-		}
 		if e.dbManager != nil {
 			engineIface, err := e.dbManager.GetStorageForUse(dbName, authToken)
 			if err == nil {
@@ -161,6 +158,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	ctx = fabric.WithHotPathTrace(ctx, fabricTrace)
 	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
+	fabricExecutor.SetGraphAuthorizer(e.authorizeSelectedDatabase)
 	stream, err := fabricExecutor.Execute(ctx, tx, prepared.fragment, params, authToken)
 	if err != nil {
 		// In explicit transactions (autoCommit=false), preserve transaction lifecycle
@@ -208,17 +206,12 @@ type fabricPreparedExec struct {
 // uncached. The key carries the databases' combined graph version when
 // they report one.
 func (e *StorageExecutor) fabricResultCacheKey(ctx context.Context, prepared *fabricPreparedExec, cypher string, params map[string]interface{}) (string, bool) {
-	databases, local := fabricLocalDatabases(prepared)
+	databases, local := e.fabricLocalDatabases(ctx, prepared)
 	if !local {
 		return "", false
 	}
 	if len(databases) == 0 {
-		if AuthorizeQuery(ctx, cypher) != nil {
-			return "", false
-		}
-	}
-	for _, database := range databases {
-		if AuthorizeQuery(withExecutionDatabase(ctx, database), cypher) != nil {
+		if e.authorizeSelectedDatabase(ctx, "", cypher) != nil {
 			return "", false
 		}
 	}
@@ -230,9 +223,10 @@ func (e *StorageExecutor) fabricResultCacheKey(ctx context.Context, prepared *fa
 }
 
 // fabricLocalDatabases lists the local databases a prepared Fabric
-// statement reads, sorted; local is false when a fragment isn't a local
-// read the catalog resolves.
-func fabricLocalDatabases(prepared *fabricPreparedExec) (databases []string, local bool) {
+// statement reads, sorted, while checking each fragment's selection and
+// permissions with the execution owner. Dynamic and remote targets execute
+// through dispatch instead of using the local result cache.
+func (e *StorageExecutor) fabricLocalDatabases(ctx context.Context, prepared *fabricPreparedExec) (databases []string, local bool) {
 	if prepared == nil || prepared.catalog == nil || prepared.fragment == nil {
 		return nil, false
 	}
@@ -241,6 +235,10 @@ func fabricLocalDatabases(prepared *fabricPreparedExec) (databases []string, loc
 	collect = func(fragment fabric.Fragment) bool {
 		switch current := fragment.(type) {
 		case *fabric.FragmentExec:
+			if current.Graph != nil && current.Graph.IsDynamic() ||
+				e.authorizeSelectedDatabase(ctx, current.GraphName, current.Query) != nil {
+				return false
+			}
 			location, err := prepared.catalog.Resolve(current.GraphName)
 			if err != nil {
 				return false
@@ -927,7 +925,7 @@ func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expression
 	ctx = withQueryParams(ctx, values)
 	out := make([]string, len(expressions))
 	for i, expression := range expressions {
-		value, ok := e.evaluateRowExpressionWithContext(ctx, e.substituteParams(expression, values), pipelineRow(values))
+		value, ok := e.evaluateRowExpressionWithContext(ctx, expression, pipelineRow(values))
 		if !ok {
 			if err, undefined := undefinedVariableError(expression); undefined {
 				return nil, err

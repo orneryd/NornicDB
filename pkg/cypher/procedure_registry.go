@@ -91,16 +91,22 @@ type registeredProcedure struct {
 	User    bool
 }
 
+// ProcedureRegistry resolves each built-in or user procedure by its exact
+// registered name, including namespace and letter case, as Neo4j does.
+// For example, "tenant.Report" and "tenant.report" are distinct registrations;
+// CALL tenant.REPORT() cannot select either.
 type ProcedureRegistry struct {
 	mu       sync.RWMutex
 	builtins map[string]registeredProcedure
 	user     map[string]registeredProcedure
+	userFold map[string]struct{}
 }
 
 func NewProcedureRegistry() *ProcedureRegistry {
 	return &ProcedureRegistry{
 		builtins: make(map[string]registeredProcedure),
 		user:     make(map[string]registeredProcedure),
+		userFold: make(map[string]struct{}),
 	}
 }
 
@@ -111,7 +117,7 @@ func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler Procedur
 	if handler == nil {
 		return fmt.Errorf("procedure %q: nil handler", spec.Name)
 	}
-	key := lowerASCII(spec.Name)
+	key := spec.Name
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.builtins[key] = registeredProcedure{Spec: spec, Handler: handler}
@@ -122,18 +128,24 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	if err := validateProcedureSpec(spec); err != nil {
 		return err
 	}
+	// A user-defined or plugin procedure declares a mode, not an admin
+	// flag: an ADMIN or DBMS one is admin-only.
+	if spec.Mode == ProcedureModeAdmin || spec.Mode == ProcedureModeDBMS {
+		spec.Admin = true
+	}
 	if handler == nil {
 		return fmt.Errorf("procedure %q: nil handler", spec.Name)
 	}
-	key := lowerASCII(spec.Name)
+	key := spec.Name
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.user[key] = registeredProcedure{Spec: spec, Handler: handler, User: true}
+	r.userFold[lowerASCII(spec.Name)] = struct{}{}
 	return nil
 }
 
 func (r *ProcedureRegistry) Get(name string) (registeredProcedure, bool) {
-	key := lowerASCII(name)
+	key := name
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if p, ok := r.user[key]; ok {
@@ -141,6 +153,38 @@ func (r *ProcedureRegistry) Get(name string) (registeredProcedure, bool) {
 	}
 	p, ok := r.builtins[key]
 	return p, ok
+}
+
+// callsUserProcedure reports whether query calls a user-defined procedure:
+// a CALL of one anywhere in query, string literals included (a statement
+// query hands to apoc.cypher.run). A name matches in any letter case, so
+// the answer doesn't depend on how the registry keys a name; erring towards
+// "calls one" only skips the cache. It is false at once while none is
+// registered.
+func (r *ProcedureRegistry) callsUserProcedure(query string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if len(r.user) == 0 {
+		return false
+	}
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens = false
+	opts.SkipBrackets = false
+	opts.SkipBraces = false
+	opts.SkipStrings = false
+	for from := 0; from < len(query); {
+		at := keywordIndexFrom(query, "CALL", from, opts)
+		if at < 0 {
+			return false
+		}
+		from = at + len("CALL")
+		if name, ok := procedureNameAt(query, from); ok {
+			if _, exists := r.userFold[lowerASCII(name)]; exists {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *ProcedureRegistry) List() []ProcedureSpec {
@@ -172,6 +216,7 @@ func (r *ProcedureRegistry) ClearUser() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.user = make(map[string]registeredProcedure)
+	r.userFold = make(map[string]struct{})
 }
 
 func validateProcedureSpec(spec ProcedureSpec) error {

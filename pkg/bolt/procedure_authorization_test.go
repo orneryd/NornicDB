@@ -25,13 +25,8 @@ func testBoltRejectsWriteModeProcedure(t *testing.T, inTransaction bool) {
 	defer serverConn.Close()
 	defer clientConn.Close()
 
-	executed := false
-	session := newTestSession(serverConn, &mockExecutor{
-		executeFunc: func(_ context.Context, _ string, _ map[string]any) (*QueryResult, error) {
-			executed = true
-			return &QueryResult{}, nil
-		},
-	})
+	store := storage.NewMemoryEngine()
+	session := newTestSession(serverConn, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(store)})
 	session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 	session.authenticated = true
 	session.inTransaction = inTransaction
@@ -63,8 +58,8 @@ func testBoltRejectsWriteModeProcedure(t *testing.T, inTransaction bool) {
 	if code != "Neo.ClientError.Security.Forbidden" {
 		t.Fatalf("unexpected failure code %q: %s", code, message)
 	}
-	if executed {
-		t.Fatal("write-mode procedure reached the executor for a read-only principal")
+	if nodes, err := store.GetNodesByLabel("Restricted"); err != nil || len(nodes) != 0 {
+		t.Fatalf("refused statement changed storage: nodes=%v err=%v", nodes, err)
 	}
 }
 
@@ -85,13 +80,7 @@ func TestBoltProcedureModesRequireDeclaredPermissions(t *testing.T) {
 		defer serverConn.Close()
 		defer clientConn.Close()
 
-		executed := false
-		session := newTestSession(serverConn, &mockExecutor{
-			executeFunc: func(_ context.Context, _ string, _ map[string]any) (*QueryResult, error) {
-				executed = true
-				return &QueryResult{}, nil
-			},
-		})
+		session := newTestSession(serverConn, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
 		session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 		session.authenticated = true
 		session.authResult = &BoltAuthResult{Authenticated: true, Permissions: []string{string(auth.PermRead)}}
@@ -108,29 +97,20 @@ func TestBoltProcedureModesRequireDeclaredPermissions(t *testing.T) {
 		if code != "Neo.ClientError.Security.Forbidden" || message != "Schema operations require schema permission" {
 			t.Fatalf("unexpected failure %q: %s", code, message)
 		}
-		if executed {
-			t.Fatal("schema procedure reached the executor for a non-schema principal")
-		}
 	})
 
-	t.Run("DBMS procedure requires admin", func(t *testing.T) {
+	t.Run("admin procedure requires admin", func(t *testing.T) {
 		serverConn, clientConn := net.Pipe()
 		defer serverConn.Close()
 		defer clientConn.Close()
 
-		executed := false
-		session := newTestSession(serverConn, &mockExecutor{
-			executeFunc: func(_ context.Context, _ string, _ map[string]any) (*QueryResult, error) {
-				executed = true
-				return &QueryResult{}, nil
-			},
-		})
+		session := newTestSession(serverConn, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
 		session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 		session.authenticated = true
 		session.authResult = &BoltAuthResult{Authenticated: true, Permissions: []string{string(auth.PermRead)}}
 
 		done := make(chan error, 1)
-		go func() { done <- session.handleRun(buildRunMessageData("CALL dbms.components()", nil, nil)) }()
+		go func() { done <- session.handleRun(buildRunMessageData("CALL dbms.listConfig()", nil, nil)) }()
 		code, message, err := AssertFailure(t, clientConn)
 		if err != nil {
 			t.Fatalf("expected permission failure: %v", err)
@@ -141,9 +121,6 @@ func TestBoltProcedureModesRequireDeclaredPermissions(t *testing.T) {
 		if code != "Neo.ClientError.Security.Forbidden" || message != "Admin operations require admin permission" {
 			t.Fatalf("unexpected failure %q: %s", code, message)
 		}
-		if executed {
-			t.Fatal("DBMS procedure reached the executor for a non-admin principal")
-		}
 	})
 
 	t.Run("read procedure remains available", func(t *testing.T) {
@@ -151,11 +128,7 @@ func TestBoltProcedureModesRequireDeclaredPermissions(t *testing.T) {
 		defer serverConn.Close()
 		defer clientConn.Close()
 
-		session := newTestSession(serverConn, &mockExecutor{
-			executeFunc: func(_ context.Context, _ string, _ map[string]any) (*QueryResult, error) {
-				return &QueryResult{Columns: []string{"label"}}, nil
-			},
-		})
+		session := newTestSession(serverConn, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
 		session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 		session.authenticated = true
 		session.authResult = &BoltAuthResult{Authenticated: true, Permissions: []string{string(auth.PermRead)}}

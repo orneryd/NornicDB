@@ -2,7 +2,9 @@
 
 **Drop-in Replacement Validation**
 
-Last Updated: December 2025
+Last Updated: December 2025 (historical snapshot)
+
+This audit is a December 2025 snapshot of the v0.1.x surface. The current function, procedure, and plugin capability boundaries are maintained in [APOC Functions](../features/apoc-functions.md), the [APOC procedure capability audit](../features/apoc-procedure-capabilities.md), and `SHOW FUNCTIONS` / `SHOW PROCEDURES`; remaining gaps are tracked in [#1318](https://github.com/orneryd/NornicDB/issues/1318).
 
 Scope: Production workloads excluding plugins and multi-database orchestration.
 
@@ -16,12 +18,12 @@ NornicDB is a **drop-in replacement** for Neo4j with:
 | ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Core Data Model     | ✅ 100% | Nodes, relationships, properties, arrays, maps                                                                                                                |
 | Cypher Language     | ✅ 100% | All clauses, pattern matching, subqueries                                                                                                                     |
-| Functions           | ✅ 109% | 147 functions vs Neo4j's 135                                                                                                                                  |
+| Functions           | ✅ 109% | Dec 2025 measurement: 147 functions vs Neo4j's 135. Current built-in surface: `SHOW FUNCTIONS`; APOC surface: [APOC Functions](../features/apoc-functions.md)   |
 | Indexes             | ✅ 100% | B-tree, full-text, vector, composite, range                                                                                                                   |
 | Constraints         | ✅ 100% | UNIQUE, EXISTS, NODE KEY, RELATIONSHIP KEY, property type (nodes + relationships) + temporal no-overlap, domain/enum, cardinality, endpoint policy extensions |
 | Transactions        | ✅ 100% | Full ACID with BEGIN/COMMIT/ROLLBACK                                                                                                                          |
-| Built-in Procedures | ✅ 100% | 41 procedures (34 db._ + 7 dbms._)                                                                                                                            |
-| APOC                | ✅ 100% | 960+ (plugins provide all algorithms)                                                                                                                         |
+| Built-in Procedures | ✅ 100% | Dec 2025 measurement: 41 procedures (34 `db._` + 7 `dbms._`). Current surface: `SHOW PROCEDURES`                                                                 |
+| APOC                | ⚠️ Partial | Dec 2025 measurement: 960+. Current: [APOC Functions](../features/apoc-functions.md) and the [procedure capability audit](../features/apoc-procedure-capabilities.md); remaining gaps tracked in [#1318](https://github.com/orneryd/NornicDB/issues/1318) |
 | Protocol/Drivers    | ✅ 95%  | Bolt v4.x, all major drivers                                                                                                                                  |
 
 **New in 0.1.4:**
@@ -62,7 +64,7 @@ All 12 features fully implemented: node/relationship creation, multiple labels, 
 
 **Advanced Features (7/7):** List comprehension, pattern comprehension, CASE expressions, map projection, EXISTS subqueries, COUNT subqueries with comparisons
 
-### 3. Functions - 109% (147 vs 135)
+### 3. Functions - 109% (Dec 2025: 147 vs 135)
 
 | Category          | Count | Status                       |
 | ----------------- | ----- | ---------------------------- |
@@ -359,7 +361,7 @@ NornicDB v0.1.4 provides production-grade Neo4j replacement capability:
 
 - 96% overall feature parity
 - 100% core data model compatibility
-- 109% function parity (147 vs Neo4j's 135)
+- 109% function parity at the December 2025 audit (147 vs Neo4j's 135); see [APOC Functions](../features/apoc-functions.md) for the current catalog
 - Full ACID transactions
 - All constraint types enforced
 - Neo4j driver compatibility (Bolt v4.x)

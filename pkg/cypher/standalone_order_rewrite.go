@@ -52,6 +52,7 @@ const (
 // scanStandaloneOrderClauses scans the statement or subquery body
 // query[start:end], appending its edits in order.
 func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewriteEdit) {
+	braces := newSubqueryBraceScanner(query, start)
 	inProjection, stage := false, standaloneStageItems
 	// previousWord is the last word read, "" after any other token; last is
 	// the last character of the last token, comments and spaces skipped (0
@@ -78,6 +79,7 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 			if close < 0 {
 				return
 			}
+			scanStandaloneOrderContainers(query, index+1, close, edits)
 			index = close + 1
 			previousWord, last = "", closer
 			continue
@@ -86,8 +88,10 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 			if close < 0 {
 				return
 			}
-			if isSubqueryBrace(query, index) {
+			if braces.at(index) {
 				scanStandaloneOrderClauses(query, index+1, close, edits)
+			} else {
+				scanStandaloneOrderContainers(query, index+1, close, edits)
 			}
 			index = close + 1
 			previousWord, last = "", '}'
@@ -241,4 +245,31 @@ func standaloneClausePosition(previousWord string, last byte) bool {
 		return false
 	}
 	return isIdentByte(last) || strings.IndexByte(")]}'\"`", last) >= 0
+}
+
+// scanStandaloneOrderContainers visits expression containers without treating
+// their identifiers as statement clauses. Only classified subquery bodies have
+// an independent projection/order state; offsets stay in the original query.
+func scanStandaloneOrderContainers(query string, start, end int, edits *[]labelRewriteEdit) {
+	braces := newSubqueryBraceScanner(query, start)
+	for index := start; index < end; index++ {
+		switch query[index] {
+		case '\'', '"', '`':
+			index = skipCypherQuotedText(query, index, query[index]) - 1
+		case '/':
+			if next := queryCommentEnd(query, index); next > index {
+				index = next - 1
+			}
+		case '{':
+			if !braces.at(index) {
+				continue
+			}
+			close := findMatchingDelimiter(query[:end], index, '{', '}')
+			if close < 0 {
+				return
+			}
+			scanStandaloneOrderClauses(query, index+1, close, edits)
+			index = close
+		}
+	}
 }

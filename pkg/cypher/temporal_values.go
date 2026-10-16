@@ -178,7 +178,7 @@ const rowStatementContextKey = "\x00statement_context"
 // relationship pattern, which reads the graph of the statement's transaction.
 func needsRowStatementContext(expression string) bool {
 	return containsStatementClockCall(expression) || mayContainSubqueryExpression(expression) ||
-		containsRelationshipPattern(expression)
+		containsRelationshipPattern(expression) || containsContextPluginCall(expression)
 }
 
 // rowStatementContextOrBackground is the statement context a row carries, or
@@ -313,6 +313,9 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 		return value, true, nil
 	}
 	if strings.HasSuffix(kind, ".truncate") {
+		if _, builtin := builtInCypherFunctions[kind]; !builtin {
+			return nil, false, nil // A qualified plugin keeps its own handler.
+		}
 		kind = strings.TrimSuffix(kind, ".truncate")
 		arguments := e.splitFunctionArgs(argument)
 		if len(arguments) < 1 || len(arguments) > 3 {
@@ -382,7 +385,10 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, ctxEv
 			return nil, true, nil
 		}
 		if text, isString := value.(string); isString {
-			parsed, valid := parseTemporalText(kind, text)
+			parsed, valid, err := parseTemporalTextWithError(kind, text)
+			if err != nil {
+				return nil, true, err
+			}
 			if !valid {
 				return nil, true, nil
 			}
@@ -538,6 +544,10 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 		}
 	}
 	value := time.Date(date.Year(), date.Month(), date.Day(), int(hour), int(minute), int(second), int(nanosecond), zone)
+	if kind == "datetime" && zoneID != "" {
+		local := time.Date(date.Year(), date.Month(), date.Day(), int(hour), int(minute), int(second), int(nanosecond), time.UTC)
+		value = resolveNamedZoneLocalTime(local, zone, true)
+	}
 	value = normalizeTemporalNamedZone(value)
 	switch kind {
 	case "localtime":

@@ -40,11 +40,10 @@ func TestUserStatementsCannotCallInternalFunctions(t *testing.T) {
 		_, err := exec.Execute(ctx, query, nil)
 		require.ErrorContains(t, err, "unknown function: __", query)
 	}
-	// runMany reports each statement's error in its rows.
-	result, err := exec.Execute(ctx, "CALL apoc.cypher.runMany('RETURN __nornic_interpolate(1) AS v;', {}) YIELD result RETURN result.error AS e", nil)
-	require.NoError(t, err)
-	require.Len(t, result.Rows, 1)
-	require.Contains(t, result.Rows[0][0], "unknown function: __nornic_interpolate")
+	// A runMany statement that calls one is the call's error, as for
+	// apoc.cypher.run.
+	_, err = exec.Execute(ctx, "CALL apoc.cypher.runMany('RETURN __nornic_interpolate(1) AS v;', {}) YIELD result RETURN result", nil)
+	require.ErrorContains(t, err, "unknown function: __nornic_interpolate")
 	// A periodic.iterate action that calls one is the call's error, and runs
 	// for no row.
 	_, err = exec.Execute(ctx, "CALL apoc.periodic.iterate('UNWIND [1, 2] AS x RETURN x', 'CREATE (:IFX {v: __nornic_interpolate(x)})', {}) YIELD batches RETURN batches", nil)

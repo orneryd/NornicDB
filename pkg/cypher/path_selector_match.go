@@ -2,12 +2,10 @@ package cypher
 
 import (
 	"context"
-	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // pathSelector is a selective path selector as the statement rewrite
@@ -58,74 +56,47 @@ func splitPathSelectorTerm(where string) (*pathSelector, string, []string, bool)
 }
 
 // parseSelectedPathMatch reads a selected pattern, written
-// p = shortestPath(pattern) by the statement rewrite. A pattern of one
-// relationship (variable-length or not) between two node patterns is
-// searched from each start to each end; any other is matched whole. The
-// pattern's own predicates constrain the paths to select from; the clause's
-// WHERE conjuncts that read only the endpoints or earlier variables select
-// the endpoints, and the others filter the selected paths.
-func (e *StorageExecutor) parseSelectedPathMatch(ctx context.Context, pattern, pathVariable string, others []string, selector *pathSelector, predicate string, terms []string) (*shortestPathMatch, bool, error) {
+// p = shortestPath(pattern) by the statement rewrite, for the selected path
+// search (path_selector_search.go). The pattern's own predicates constrain
+// the paths to select from; the clause's WHERE conjuncts that read only the
+// endpoints select the pairs, and the others filter the selected paths.
+func (e *StorageExecutor) parseSelectedPathMatch(pattern, pathVariable string, others []string, selector *pathSelector, predicate string, terms []string) (*shortestPathMatch, bool, error) {
+	return e.parseSelectedPathMatchContext(context.Background(), pattern, pathVariable, others, selector, predicate, terms)
+}
+
+func (e *StorageExecutor) parseSelectedPathMatchContext(ctx context.Context, pattern, pathVariable string, others []string, selector *pathSelector, predicate string, terms []string) (*shortestPathMatch, bool, error) {
 	if len(others) > 0 || pathVariable == "" {
 		// The statement rewrite names the path and allows no other pattern
 		// (path_selector.go); a hand-written selector call may do neither.
 		return nil, true, labelExpressionSyntaxError(localization.CypherMatchingPathSelectorMultiplePatterns())
 	}
-	m := &shortestPathMatch{selector: selector, pathVariable: pathVariable}
-	startPattern, endPattern, ok := shortestPathEndpointPatterns(pattern)
-	var traversal *TraversalMatch
-	if ok {
-		traversal = e.parseTraversalPattern(ctx, pattern)
+	plan, filters, ok := compileSelectedPathPlanContext(ctx, pattern, pathVariable, predicate, terms)
+	if ctx.Err() != nil {
+		return nil, true, ctx.Err()
 	}
-	if traversal == nil || traversal.IsChained {
-		m.pattern = pattern
-		m.pathWhere = predicate
-		m.postWhere = strings.Join(terms, " AND ")
-		return m, true, nil
+	if !ok {
+		return nil, true, errSelectedPathPattern(pattern)
 	}
-	m.traversal = traversal
-	m.startPattern, m.endPattern = startPattern, endPattern
-	m.startVariable, m.endVariable = traversal.StartNode.variable, traversal.EndNode.variable
-	if m.startVariable == "" {
-		m.startVariable = generatedVariablePrefix + "sp_start"
-		m.startPattern = "(" + m.startVariable + m.startPattern[1:]
-		traversal.StartNode.variable = m.startVariable
+	// The compiled plan is shared (compileSelectedPathPlan): ACYCLIC goes on
+	// a copy.
+	if selector.acyclic {
+		acyclic := *plan
+		acyclic.acyclic = true
+		plan = &acyclic
 	}
-	if m.endVariable == "" {
-		m.endVariable = generatedVariablePrefix + "sp_end"
-		m.endPattern = "(" + m.endVariable + m.endPattern[1:]
-		traversal.EndNode.variable = m.endVariable
-	}
-	traversal.PathVariable = m.pathVariable
-	readsPath := func(term string) bool {
-		relationship := traversal.Relationship.Variable
-		return referencesVariable(term, m.pathVariable) || relationship != "" && referencesVariable(term, relationship)
-	}
-	var endpointTerms, pathTerms, postTerms []string
-	for _, term := range splitTopLevelAndConjuncts(predicate) {
-		if term = strings.TrimSpace(term); term == "" {
-			continue
-		}
-		if readsPath(term) {
-			pathTerms = append(pathTerms, term)
-		} else {
-			endpointTerms = append(endpointTerms, term)
-		}
-	}
-	for _, term := range terms {
-		if term = strings.TrimSpace(term); readsPath(term) {
-			postTerms = append(postTerms, term)
-		} else {
-			endpointTerms = append(endpointTerms, term)
-		}
-	}
-	m.endpointWhere = strings.Join(endpointTerms, " AND ")
-	m.pathWhere = strings.Join(pathTerms, " AND ")
-	m.postWhere = strings.Join(postTerms, " AND ")
-	return m, true, nil
+	return &shortestPathMatch{
+		selector:      selector,
+		pathVariable:  pathVariable,
+		pattern:       pattern,
+		plan:          plan,
+		startVariable: plan.start.variable,
+		endVariable:   plan.end.variable,
+		postWhere:     strings.Join(filters, " AND "),
+	}, true, nil
 }
 
 // pipelineApplySelectedPathMatch runs a selected pattern's MATCH for each
-// row: for each start and end node pair, the selector's paths, filtered by
+// row: the selector's paths for each start and end node pair, filtered by
 // the clause's path conjuncts. An OPTIONAL MATCH keeps a row that selects
 // nothing, with the clause's new variables null.
 func (e *StorageExecutor) pipelineApplySelectedPathMatch(ctx context.Context, rows []pipelineRow, m *shortestPathMatch, optional bool) ([]pipelineRow, error) {
@@ -135,12 +106,7 @@ func (e *StorageExecutor) pipelineApplySelectedPathMatch(ctx context.Context, ro
 	}
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		var selected []pipelineRow
-		if m.pattern != "" {
-			selected, err = e.selectMatchedPaths(ctx, m, row, count)
-		} else {
-			selected, err = e.selectSearchedPaths(ctx, m, row, count)
-		}
+		selected, err := e.selectPaths(ctx, m, row, count)
 		if err != nil {
 			return nil, err
 		}
@@ -233,150 +199,4 @@ func pathSelectorCountTypeName(value interface{}) string {
 		return "Map"
 	}
 	return "Any"
-}
-
-// selectSearchedPaths returns, for each start and end pair of one row, the
-// row with each selected path bound.
-func (e *StorageExecutor) selectSearchedPaths(ctx context.Context, m *shortestPathMatch, row pipelineRow, count int) ([]pipelineRow, error) {
-	pairs, err := e.shortestPathEndpointPairs(ctx, m, row)
-	if err != nil {
-		return nil, err
-	}
-	var out []pipelineRow
-	for _, pair := range pairs {
-		// The endpoint match binds both endpoints to nodes.
-		start, end := pair[m.startVariable].(*storage.Node), pair[m.endVariable].(*storage.Node)
-		paths, err := e.selectedPathsBetween(ctx, m, start, end, pair, count)
-		if err != nil {
-			return nil, err
-		}
-		for _, path := range paths {
-			out = append(out, e.bindShortestPath(ctx, m, pair, path))
-		}
-	}
-	return out, nil
-}
-
-// selectedPathsBetween returns the selector's paths from start to end:
-// the paths that satisfy the pattern's predicates, by increasing length,
-// until count paths (count lengths for GROUPS) are taken. A start that is
-// the end has the path of length 0 when the minimum length is 0, and paths
-// that return to it otherwise. Without predicates, one shortest path (or
-// all of them, for one group) is the breadth-first search's answer.
-func (e *StorageExecutor) selectedPathsBetween(ctx context.Context, m *shortestPathMatch, start, end *storage.Node, row pipelineRow, count int) ([]PathResult, error) {
-	relationship := m.traversal.Relationship
-	selector := m.selector
-	from := relationship.MinHops
-	if start.ID != end.ID {
-		// A shortest walk repeats no relationship or node, so its length is
-		// the least any selected path can have, and with none there is none.
-		shortest, err := e.shortestPath(ctx, start, end, relationship.Types, relationship.Direction, relationship.MaxHops)
-		if err != nil || shortest == nil {
-			return nil, err
-		}
-		if m.pathWhere == "" && len(relationship.Properties) == 0 && relationship.MinHops <= shortest.Length && count == 1 {
-			if !selector.groups {
-				return []PathResult{*shortest}, nil
-			}
-			return e.allShortestPaths(ctx, start, end, relationship.Types, relationship.Direction, relationship.MaxHops)
-		}
-		from = max(from, shortest.Length)
-	}
-	var selected []PathResult
-	lengths := 0
-	for length := from; length <= relationship.MaxHops; length++ {
-		var paths []PathResult
-		deepest := length
-		if length == 0 {
-			paths = []PathResult{{Nodes: []*storage.Node{start}}}
-		} else {
-			search := e.newTraversalContext(ctx, start, &relationship)
-			search.minHops, search.maxHops = length, length
-			search.endNodeID = end.ID
-			paths = e.findPaths(search, start, []*storage.Node{start}, nil, 0, nil)
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			deepest = search.deepest
-		}
-		paths = e.filterPathsByWhere(ctx, paths, m.traversal, m.pathWhere, map[string]interface{}(row))
-		if selector.acyclic {
-			paths = acyclicPaths(paths)
-		}
-		if len(paths) > 0 {
-			lengths++
-			if !selector.groups && len(paths) > count-len(selected) {
-				paths = paths[:count-len(selected)]
-			}
-			selected = append(selected, paths...)
-			if selector.groups && lengths >= count || !selector.groups && len(selected) >= count {
-				break
-			}
-		}
-		if deepest < length {
-			// No path from start is this long, so none is longer.
-			break
-		}
-	}
-	return selected, nil
-}
-
-// acyclicPaths returns the paths whose nodes are all distinct.
-func acyclicPaths(paths []PathResult) []PathResult {
-	kept := paths[:0]
-	for _, path := range paths {
-		if distinctNodeIDs(pathResultNodeIDs(&path)) {
-			kept = append(kept, path)
-		}
-	}
-	return kept
-}
-
-// selectMatchedPaths matches a selected pattern the search can't run
-// (more than one relationship, or none) whole, with its predicates, and
-// selects from the paths of each start and end node pair by increasing
-// length.
-func (e *StorageExecutor) selectMatchedPaths(ctx context.Context, m *shortestPathMatch, row pipelineRow, count int) ([]pipelineRow, error) {
-	clause := "MATCH " + m.pathVariable + " = " + m.pattern
-	if m.pathWhere != "" {
-		clause += " WHERE " + m.pathWhere
-	}
-	rows, err := e.pipelineMatchRows(ctx, row, clause)
-	if err != nil {
-		return nil, err
-	}
-	type candidate struct {
-		row    pipelineRow
-		length int
-	}
-	var order []string
-	groups := make(map[string][]candidate)
-	for _, matched := range rows {
-		ids, ok := pathNodeIDs(matched[m.pathVariable])
-		if !ok || len(ids) == 0 || m.selector.acyclic && !distinctNodeIDs(ids) {
-			continue
-		}
-		key := string(ids[0]) + "\x00" + string(ids[len(ids)-1])
-		if _, seen := groups[key]; !seen {
-			order = append(order, key)
-		}
-		groups[key] = append(groups[key], candidate{row: matched, length: len(ids) - 1})
-	}
-	var out []pipelineRow
-	for _, key := range order {
-		candidates := groups[key]
-		sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].length < candidates[j].length })
-		lengths, taken := 0, 0
-		for i, c := range candidates {
-			if i == 0 || c.length != candidates[i-1].length {
-				lengths++
-			}
-			if m.selector.groups && lengths > count || !m.selector.groups && taken >= count {
-				break
-			}
-			out = append(out, c.row)
-			taken++
-		}
-	}
-	return out, nil
 }

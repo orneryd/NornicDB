@@ -214,7 +214,7 @@ func TestSubqueryBodiesWalkTheirOwnScope(t *testing.T) {
 			requireStatementCode(t, exec, query, "Neo.ClientError.Statement.SyntaxError")
 		}
 	})
-	require.Equal(t, "COUNT {     } + CALL (x) {        }", maskNestedScopeBodies("COUNT { (n) } + CALL (x) { RETURN }"))
+	require.Equal(t, "0             + CALL (x) {        }", maskNestedScopeBodies("COUNT { (n) } + CALL (x) { RETURN }"))
 }
 
 // R3-6: the replacers' one walk of a text (localOccurrences.keeps) keeps

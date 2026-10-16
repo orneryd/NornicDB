@@ -497,14 +497,14 @@ func (e *StorageExecutor) tryCompileBindingWhereTruth(ctx context.Context, where
 		return liftBindingPredicate(predicate), true
 	}
 
-	if predicate, ok := e.compileBindingStringPredicate(clause, " STARTS WITH "); ok {
-		return liftBindingPredicate(predicate), true
+	if truth, ok := e.compileBindingStringTruth(clause, " STARTS WITH "); ok {
+		return truth, true
 	}
-	if predicate, ok := e.compileBindingStringPredicate(clause, " ENDS WITH "); ok {
-		return liftBindingPredicate(predicate), true
+	if truth, ok := e.compileBindingStringTruth(clause, " ENDS WITH "); ok {
+		return truth, true
 	}
-	if predicate, ok := e.compileBindingStringPredicate(clause, " CONTAINS "); ok {
-		return liftBindingPredicate(predicate), true
+	if truth, ok := e.compileBindingStringTruth(clause, " CONTAINS "); ok {
+		return truth, true
 	}
 	if truth, ok := e.compileBindingInPredicate(clause, " IN ", false); ok {
 		return truth, true
@@ -521,6 +521,14 @@ func (e *StorageExecutor) tryCompileBindingWhereTruth(ctx context.Context, where
 }
 
 func (e *StorageExecutor) compileBindingStringPredicate(clause, op string) (bindingWherePredicate, bool) {
+	truth, ok := e.compileBindingStringTruth(clause, op)
+	if !ok {
+		return nil, false
+	}
+	return func(b binding, params map[string]interface{}) bool { return truth(b, params) == truthTrue }, true
+}
+
+func (e *StorageExecutor) compileBindingStringTruth(clause, op string) (bindingWhereTruth, bool) {
 	idx := findTopLevelKeyword(clause, op)
 	if idx <= 0 {
 		return nil, false
@@ -535,33 +543,28 @@ func (e *StorageExecutor) compileBindingStringPredicate(clause, op string) (bind
 	if !ok {
 		return nil, false
 	}
-	return func(b binding, params map[string]interface{}) bool {
+	return func(b binding, params map[string]interface{}) cypherTruth {
 		leftValue, ok := leftResolver(b, params)
 		if !ok {
-			return false
+			return truthUnknown
 		}
 		rightValue, ok := rightResolver(b, params)
 		if !ok {
-			return false
+			return truthUnknown
 		}
-		leftStr, ok := leftValue.(string)
-		if !ok {
-			return false
-		}
-		rightStr, ok := rightValue.(string)
-		if !ok {
-			return false
-		}
+		var match func(string, string) bool
 		switch op {
 		case " STARTS WITH ":
-			return strings.HasPrefix(leftStr, rightStr)
+			match = strings.HasPrefix
 		case " ENDS WITH ":
-			return strings.HasSuffix(leftStr, rightStr)
+			match = strings.HasSuffix
 		case " CONTAINS ":
-			return strings.Contains(leftStr, rightStr)
+			match = strings.Contains
 		default:
-			return false
+			return truthUnknown
 		}
+		truth, _ := cypherPredicateTruth(rowStringPredicateValue(leftValue, rightValue, match))
+		return truth
 	}, true
 }
 
@@ -911,7 +914,7 @@ func (e *StorageExecutor) compileBindingValueResolver(expr string) (bindingValue
 			if node == nil {
 				return nil, false
 			}
-			return getBindingNodeValue(node, property)
+			return getBindingNodeValue(e.queryVisibleValue(node).(*storage.Node), property)
 		}, true
 	}
 	if isValidIdentifier(clause) {
@@ -953,7 +956,7 @@ func (e *StorageExecutor) resolveBindingFallbackValueWithOk(ctx context.Context,
 			return value, true
 		}
 	}
-	return e.evaluateExpressionWithContext(ctx, e.substituteParams(expr, params), b, nil), true
+	return e.evaluateExpressionWithContext(withParams(ctx, params), expr, b, nil), true
 }
 
 func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context, b binding, expr string, params map[string]interface{}) bool {

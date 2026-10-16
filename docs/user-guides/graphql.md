@@ -183,6 +183,13 @@ query ShortestPath {
 }
 ```
 
+`maxDepth` counts relationships and includes paths exactly at that depth.
+`allPaths(startNodeId: "start-id", endNodeId: "end-id", maxDepth: 5, limit: 10)`
+returns up to ten paths, rather than just a shortest path. Both fields traverse
+relationships in either direction; `shortestPath` can restrict relationship types.
+Nonpositive depth or limit returns an empty result.
+
+
 ## Mutations
 
 ### Property values

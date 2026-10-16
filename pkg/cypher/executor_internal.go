@@ -21,15 +21,32 @@ import (
 // executeUserStatement runs statement text a procedure was given to run
 // (apoc.cypher.run / runMany, apoc.periodic.iterate / commit,
 // apoc.export.*.query): a user's statement, which may not call NornicDB's
-// internal functions (#1105).
+// internal functions (#1105). It runs inside the caller's statement, a data
+// statement, so an administration command there is refused as after any
+// data statement (ForbiddenDueToTransactionType), in auto-commit as in an
+// explicit transaction.
 func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement string, params map[string]interface{}) (*ExecuteResult, error) {
 	if err := internalFunctionCallError(statement); err != nil {
-		return nil, err
+		// Refused like any statement of the caller's transaction: it fails
+		// an explicit transaction (executeInternal fails it for the rest).
+		return nil, e.failTransaction(err)
+	}
+	if StatementDatabase("", statement) == "system" {
+		var transaction any
+		if wrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok {
+			transaction = wrapper.tx
+		} else if e.txContext != nil && e.txContext.active {
+			transaction = e.txContext.tx
+		}
+		return nil, e.failTransaction(statementTypeError(statement, "Administration", "Data", transaction))
 	}
 	return e.executeInternal(withStatementText(ctx, statement), statement, params)
 }
 
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	if e.txContext != nil && e.txContext.active {
+		defer func() { e.failTransaction(retErr) }()
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -80,17 +97,22 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		if err := e.dynamicUseError(use); err != nil {
 			return nil, err
 		}
-		if err := e.authorizeSelectedDatabase(ctx, use.Name); err != nil {
-			return nil, err
-		}
-		scopedExec, resolvedDB, err := e.scopedExecutorForUse(use.Name, GetAuthTokenFromContext(ctx))
-		if err != nil {
-			return nil, err
-		}
-		ctx = withExecutionDatabase(ctx, resolvedDB)
-		return scopedExec.executeInternal(ctx, remaining, params)
+		return e.executeOnDatabase(ctx, use.Name, remaining, params, true)
 	}
-	if err := AuthorizeQuery(ctx, cypher); err != nil {
+	if err := e.admitTransactionStatement(cypher); err != nil {
+		return nil, err
+	}
+	routed, err := e.routeAdministrationStatement(ctx, cypher)
+	if err != nil {
+		return nil, err
+	}
+	if routed != e {
+		return routed.executeInternal(ctx, cypher, params)
+	}
+	if err := e.authorizeSelectedDatabase(ctx, "", cypher); err != nil {
+		return nil, err
+	}
+	if err := e.systemDatabaseWriteError(cypher); err != nil {
 		return nil, err
 	}
 

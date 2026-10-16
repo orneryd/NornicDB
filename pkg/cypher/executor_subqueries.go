@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -32,170 +31,6 @@ func isCallSubquery(cypher string) bool {
 // subquery later in the statement).
 func startsWithCallSubquery(cypher string) bool {
 	return callSubqueryAt(strings.TrimSpace(cypher), 0)
-}
-
-// substituteBoundVariablesInCall replaces node variable references in CALL
-// statements with actual values.
-//
-// Example:
-//
-//	CALL db.index.vector.queryNodes('idx', 10, n.embedding)
-//
-// becomes:
-//
-//	CALL db.index.vector.queryNodes('idx', 10, [0.1, 0.2, ...])
-//
-// substituteBoundVariablesInCall is the relationship-aware
-// variant used by MATCH ... WITH r CALL ... pipelines.
-func (e *StorageExecutor) substituteBoundVariablesInCall(callPart string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) string {
-	result := callPart
-
-	// Find all variable.property patterns in the CALL
-	// Pattern: varName.propertyName (but not inside strings)
-	// We need to be careful not to match patterns inside quoted strings
-	matches := callPropertyAccessPattern.FindAllStringSubmatchIndex(callPart, -1)
-	// A reference a local variable of the same name reads
-	// ([n IN list | n.x]) is the local's (localOccurrences).
-	local := localOccurrences{text: callPart}
-
-	// Process matches in reverse order to maintain indices
-	for i := len(matches) - 1; i >= 0; i-- {
-		match := matches[i]
-		startIdx := match[0]
-		endIdx := match[1]
-		varName := callPart[match[2]:match[3]]
-		propName := callPart[match[4]:match[5]]
-
-		// Check if this match is inside a quoted string (skip if so)
-		beforeMatch := callPart[:startIdx]
-		singleQuotes := strings.Count(beforeMatch, "'") - strings.Count(beforeMatch, "\\'")
-		doubleQuotes := strings.Count(beforeMatch, "\"") - strings.Count(beforeMatch, "\\\"")
-		if singleQuotes%2 != 0 || doubleQuotes%2 != 0 {
-			// Inside a quoted string - skip
-			continue
-		}
-		if local.keeps(callPart, varName, startIdx) {
-			continue
-		}
-
-		// Check if this variable is in our context
-		var value interface{}
-		found := false
-		if node, exists := nodeContext[varName]; exists {
-			// Evaluate the property access
-			{
-				// Regular property access — no special-casing for any property name.
-				// Users can store embeddings in any property and create a vector index for it.
-				if val, ok := node.Properties[propName]; ok {
-					value = val
-					found = true
-				}
-			}
-		}
-		if !found {
-			if rel, exists := relContext[varName]; exists && rel != nil {
-				if val, ok := rel.Properties[propName]; ok {
-					value = val
-					found = true
-				}
-			}
-		}
-
-		if found {
-			// Replace the variable.property with the actual value
-			if value != nil {
-				replacement := callLiteralForBoundValue(value)
-				// Replace from end to start to maintain indices
-				result = result[:startIdx] + replacement + result[endIdx:]
-			}
-		}
-	}
-
-	// Procedures that accept a bound node variable as the first argument need
-	// the variable rewritten to a concrete node identifier before executeCall.
-	// Example:
-	//   CALL db.create.setNodeVectorProperty(n, 'emb', [..])
-	// -> CALL db.create.setNodeVectorProperty('node-id', 'emb', [..])
-	upper := upperASCII(result)
-	procIdx := strings.Index(upper, "DB.CREATE.SETNODEVECTORPROPERTY")
-	if procIdx >= 0 {
-		openParen := strings.Index(result[procIdx:], "(")
-		if openParen >= 0 {
-			openParen += procIdx
-			closeParen := findMatchingCallParen(result, openParen)
-			if closeParen > openParen {
-				args := splitProcedureTopLevelComma(result[openParen+1 : closeParen])
-				if len(args) > 0 {
-					firstArg := strings.TrimSpace(args[0])
-					if node, ok := nodeContext[firstArg]; ok && node != nil {
-						args[0] = quoteCypherStringLiteral(string(node.ID))
-						result = result[:openParen+1] + strings.Join(args, ", ") + result[closeParen:]
-					}
-				}
-			}
-		}
-	}
-
-	procIdx = strings.Index(upper, "DB.CREATE.SETRELATIONSHIPVECTORPROPERTY")
-	if procIdx >= 0 {
-		openParen := strings.Index(result[procIdx:], "(")
-		if openParen >= 0 {
-			openParen += procIdx
-			closeParen := findMatchingCallParen(result, openParen)
-			if closeParen > openParen {
-				args := splitProcedureTopLevelComma(result[openParen+1 : closeParen])
-				if len(args) > 0 {
-					firstArg := strings.TrimSpace(args[0])
-					if rel, ok := relContext[firstArg]; ok && rel != nil {
-						args[0] = quoteCypherStringLiteral(string(rel.ID))
-						result = result[:openParen+1] + strings.Join(args, ", ") + result[closeParen:]
-					}
-				}
-			}
-		}
-	}
-
-	return result
-}
-
-func callLiteralForBoundValue(value interface{}) string {
-	switch v := value.(type) {
-	case []float32:
-		parts := make([]string, len(v))
-		for i, f := range v {
-			parts[i] = fmt.Sprintf("%g", f)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	case []float64:
-		parts := make([]string, len(v))
-		for i, f := range v {
-			parts[i] = fmt.Sprintf("%g", f)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	case string:
-		return quoteCypherStringLiteral(v)
-	case int:
-		return fmt.Sprintf("%d", v)
-	case int64:
-		return fmt.Sprintf("%d", v)
-	case float32:
-		return fmt.Sprintf("%g", v)
-	case float64:
-		return fmt.Sprintf("%g", v)
-	case []interface{}:
-		parts := make([]string, len(v))
-		for i, item := range v {
-			parts[i] = callLiteralForBoundValue(item)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	case bool:
-		if v {
-			return "true"
-		}
-		return "false"
-	default:
-		return fmt.Sprintf("%v", v)
-	}
 }
 
 func appendCorrelatedBinding(result *ExecuteResult, name string, value interface{}) *ExecuteResult {
@@ -2367,28 +2202,8 @@ func parseOrderByClause(clause string) []orderByTerm {
 // compareValuesForSort compares two values for sorting, returns -1, 0, or 1
 // extractPropertyFromValue extracts a named property from a value that may be a node map.
 func extractPropertyFromValue(val interface{}, propName string) interface{} {
-	switch entity := val.(type) {
-	case *storage.Node:
-		if entity != nil {
-			return entity.Properties[propName]
-		}
-	case *storage.Edge:
-		if entity != nil {
-			return entity.Properties[propName]
-		}
-	}
-	if m, ok := val.(map[string]interface{}); ok {
-		if pv, exists := m[propName]; exists {
-			return pv
-		}
-		// Check nested properties map
-		if props, ok := m["properties"].(map[string]interface{}); ok {
-			if pv, exists := props[propName]; exists {
-				return pv
-			}
-		}
-	}
-	return nil
+	property, _ := rowPropertyValue(val, propName)
+	return property
 }
 
 func compareValuesForSort(a, b interface{}) int {
@@ -2396,9 +2211,15 @@ func compareValuesForSort(a, b interface{}) int {
 		return 0
 	}
 	if a == nil {
+		if cypherValueKindOf(b) == valueKindNull {
+			return 0
+		}
 		return 1
 	}
 	if b == nil {
+		if cypherValueKindOf(a) == valueKindNull {
+			return 0
+		}
 		return -1
 	}
 	if comparison, temporal := compareTemporalOrdering(a, b); temporal {
@@ -2493,72 +2314,6 @@ func compareValuesForSort(a, b interface{}) int {
 		return 1
 	}
 	return 0
-}
-
-// cypherSortRank implements the openCypher comparability order used by ORDER
-// BY: maps, nodes, relationships, lists, paths, strings, booleans, numbers,
-// NaN, and null. Null is handled before this function.
-// cypherSortRank is a value's position in Neo4j's orderability across types:
-// map < node < relationship < list < path < point < zoned datetime < local
-// datetime < date < zoned time < local time < duration < string < boolean <
-// number < NaN (#817, #837).
-func cypherSortRank(value interface{}) int {
-	if _, ok := pointValue(value); ok {
-		return 6
-	}
-	if kind, _, ok := temporalOrderParts(value); ok {
-		return temporalSortRanks[kind]
-	}
-	switch value.(type) {
-	case *storage.Node:
-		return 1
-	case *storage.Edge:
-		return 2
-	case PathResult, *PathResult:
-		return 4
-	case CypherVector, *CypherVector:
-		return 5
-	case CypherDuration, *CypherDuration:
-		return 12
-	case string:
-		return 13
-	case bool:
-		return 14
-	case CypherUUID, *CypherUUID:
-		return 15
-	}
-	if object, isMap := toStringAnyMap(value); isMap {
-		if _, isPath := object["_pathResult"]; isPath {
-			return 4
-		}
-	}
-	if number, ok := strictNumericValue(value); ok {
-		if math.IsNaN(number) {
-			return 17
-		}
-		return 16
-	}
-	typeOf := reflect.TypeOf(value)
-	if typeOf != nil {
-		switch typeOf.Kind() {
-		case reflect.Map:
-			return 0
-		case reflect.Slice, reflect.Array:
-			return 3
-		}
-	}
-	return 20
-}
-
-// temporalSortRanks are the temporal kinds' positions in cypherSortRank.
-var temporalSortRanks = map[string]int{"datetime": 7, "localdatetime": 8, "date": 9, "time": 10, "localtime": 11}
-
-func cypherSortList(value interface{}) ([]interface{}, bool) {
-	typeOf := reflect.TypeOf(value)
-	if typeOf == nil || (typeOf.Kind() != reflect.Slice && typeOf.Kind() != reflect.Array) {
-		return nil, false
-	}
-	return toAnySlice(value), true
 }
 
 func compareOrderedInts(left, right int) int {

@@ -98,7 +98,7 @@ These apply server-wide and are assigned to roles by default (built-in roles) or
 | `write` | Write | Cypher CREATE/DELETE/SET/MERGE, registered `MODE WRITE` procedures, embed triggers, search rebuild, GraphQL mutations |
 | `create` | Create | Resource creation operations |
 | `delete` | Delete | Delete operations (e.g. GDPR delete) |
-| `admin` | Admin | Role management, database access/privileges, backup, GPU config, system administration, registered `MODE ADMIN` and `MODE DBMS` procedures |
+| `admin` | Admin | Role management, database access/privileges, backup, GPU config, system administration, and the procedures `SHOW PROCEDURES` lists as `admin` (for example `db.stats.*`, `dbms.listConfig`, `db.clearQueryCaches`, `db.cdc.query`, `db.txlog.*`; a registered `MODE ADMIN` or `MODE DBMS` procedure is one of them) |
 | `schema` | Schema | CREATE/DROP INDEX and CONSTRAINT via Bolt, registered `MODE SCHEMA` procedures |
 | `user_manage` | User Management | Create, update, delete user accounts (distinct from admin) |
 
@@ -165,7 +165,7 @@ curl -X PUT http://localhost:7474/auth/access/databases \
 
 ### Per-Database Privileges
 
-The privileges matrix provides fine-grained **read** and **write** control per (role, database) pair. When no privilege entry exists for a combination, access falls back to the role's global permissions (e.g. editor = read+write, viewer = read-only).
+The privileges matrix provides fine-grained **read** and **write** control per (role, database) pair, within the role's global entitlements: reading a database needs the global `read` entitlement, and writing it the `write` entitlement too. When none of a principal's roles has a privilege entry for a database, its global entitlements decide alone (the ones stored with `PUT /auth/role-entitlements`, else the built-in defaults: editor = read+write, viewer = read-only).
 
 **View current privileges:**
 
@@ -211,7 +211,18 @@ SHOW ROLE cdc_reader PRIVILEGES
 - A procedure is named exactly or with a glob: `*` stands for any characters, dots included, and `?` for one. Several names and several roles can be listed, separated by commas.
 - `BOOSTED` lets the role run the matching procedures even when they need administrator rights. A plain `EXECUTE PROCEDURE` grant is recorded and listed, but adds nothing to what the role may already run.
 - The grant doesn't widen database access. The role still needs the global `read` entitlement and read access to each database the procedure reads; give it read access only on that database to keep it to one.
-- The role must exist (built-in, or created with `POST /auth/roles`). Only administrators may run `GRANT`, `REVOKE` and `SHOW … PRIVILEGES`.
+- `GRANT` needs the role to exist (built-in, or created with `POST /auth/roles`); `REVOKE` from a role that doesn't exist changes nothing. Only administrators may run `GRANT`, `REVOKE` and `SHOW … PRIVILEGES`.
+- Grants are read from the system database on every check, so a change applies at once to every server over the same storage. In an explicit transaction, `GRANT` and `REVOKE` take effect when it commits and are undone by a rollback. They run on the system database whichever database the transaction was opened on, as in Neo4j: an administration command as a transaction's first statement makes it an administration transaction, and after a data statement (or in a statement a procedure such as `apoc.cypher.run` runs) it fails with `Neo.ClientError.Transaction.ForbiddenDueToTransactionType`.
+- Grants come only from `GRANT` and `REVOKE`: the system database runs no statement that writes graph data (`CREATE`, `MERGE`, `SET`, `DELETE`, `REMOVE`, write procedures), as in Neo4j. Deleting a role removes its grants.
+- The system database runs what Neo4j 5.26.30's runs: administration and `SHOW` commands, and calls of system procedures (`worksOnSystem` in `SHOW PROCEDURES`). Any other procedure, and any other statement (`RETURN 1`, `RETURN COUNT { … }`, `EXISTS { … }`, `UNWIND …`, `CALL { … }`), fails there with `Neo.ClientError.Statement.SemanticError`, and so does a procedure call whose `YIELD`, `WHERE` or `RETURN` reads the graph (a `COUNT`, `EXISTS` or `COLLECT` subquery, a pattern comprehension or a pattern expression). A `SHOW` command's tail filters, orders, pages and projects the command's columns only: another clause after `YIELD` (`WITH`, `UNWIND`, `CALL { … }`, `MATCH`, a write) and an expression that reads the graph fail with Neo4j's `Neo.ClientError.Statement.SyntaxError` ("The COUNT expression is not valid on SHOW commands.", "Pattern expressions are not valid on SHOW commands.", "Invalid input 'WITH' …"). All of this holds on every route (directly, after `USE system`, in a statement `apoc.cypher.run` or a `CALL { }` runs, and through the embedded executor: `DB.GetCypherExecutor`, `DB.ExecuteCypher`, `DB.Cypher`). On a user database a `SHOW` tail may read the graph, as in Neo4j. A system procedure that reads the graph, such as `db.labels()`, sees none of the records the system database keeps. `EXPLAIN` of an administration command runs nothing, and `PROFILE` runs it, on both parsers.
+- A custom procedure (`apoc.custom.installProcedure` / `declareProcedure`, `CREATE PROCEDURE`) is one for the whole server, whichever database it was installed from. Installing, replacing or dropping one (`apoc.custom.dropProcedure`, `DROP PROCEDURE`) needs the `admin` entitlement, as APOC 5 marks `installProcedure` and `dropProcedure` admin-only; `SHOW PROCEDURES` lists them with `admin` true. A call of a custom procedure is never answered from the result cache, so a call after a replacement runs the new body.
+- A custom procedure's body runs like a statement `apoc.cypher.run` runs, with the caller's permissions: an administration command in it fails with `Neo.ClientError.Transaction.ForbiddenDueToTransactionType`, whoever calls the procedure.
+- A role's name has one form everywhere: `ROLE_ops`, `Ops` and `ops` name the role `ops`.
+- "Admin" means the `admin` entitlement, whatever the role holding it is called: `dbms.listConnections` lists every connection only to a principal with it (any other sees its own, as in Neo4j), and creating an API token needs it.
+- A statement that selects a database with `USE`, at the top level, in `CALL { }` or in a statement a procedure runs, goes through one router: in a transaction it must stay on the transaction's database (`Neo.ClientError.Statement.AccessMode` otherwise), and on the system database the rules above apply.
+- `DROP ROLE` is Neo4j Community's `Neo.ClientError.Statement.UnsupportedAdministrationCommand`; roles are deleted with `DELETE /auth/roles/{name}`.
+- `GRANT IMMUTABLE` / `REVOKE IMMUTABLE` follow Neo4j: immutable privileges can be granted and revoked only while authentication is disabled; with it enabled, `GRANT IMMUTABLE` and any `REVOKE` of an immutable privilege fail with `Neo.ClientError.Security.Forbidden`. `REVOKE IMMUTABLE` removes only an immutable privilege; a plain `REVOKE` removes either. `SHOW PRIVILEGES` reports it in the `immutable` column.
+- A procedure name or glob may be backticked, whole or in parts (`` `db.cdc.*` ``, ``db.`cdc`.*``); it is stored unquoted.
 - `SHOW PRIVILEGES` lists the procedure privileges in Neo4j's columns (`access`, `action`, `resource`, `graph`, `segment`, `role`, `immutable`) and takes `YIELD` and `WHERE`. Other privilege statements (`GRANT ROLE`, `DENY`, graph privileges) aren't supported.
 
 A change-feed reader, set up once:
@@ -224,8 +235,11 @@ A change-feed reader, set up once:
 When a user queries a database, NornicDB resolves access in this order:
 
 1. **Allowlist check** — Can this user's role(s) see and access this database?
-2. **Privileges check** — Is there a (role, database) privilege entry? If yes, use it.
-3. **Global fallback** — If no privilege entry, use the role's global permissions (admin/editor = read+write, viewer = read-only).
+2. **Global entitlements** — The roles' global entitlements (stored overrides, else the built-in defaults) gate the rest: without `read` the user can use no database; without `write` it writes none.
+3. **Privileges check** — Is there a (role, database) privilege entry? If yes, it decides read and write within the entitlements.
+4. **Global fallback** — If no privilege entry, the global entitlements decide (admin/editor = read+write, viewer = read-only).
+
+HTTP, Bolt, gRPC, GraphQL, MCP and plugins resolve access through this one resolver, and decide a statement's permissions with one decision, so a change to a role's entitlements or privileges applies at once on every transport. A statement that only writes (`CREATE`, and `SET` or `DELETE` of what it created) needs write but not read on the database, as in Neo4j, where a principal with `WRITE` but no `READ` can run `CREATE`; a statement that reads the graph (`MATCH`, `MERGE`, `CALL`, a `WHERE`, a `COUNT { }` or `EXISTS { }` subquery, a pattern comprehension) needs read, since NornicDB doesn't hide individual records from a read.
 
 When a new database is created, the **admin** role and the creating user's roles are automatically granted full access.
 
@@ -389,6 +403,12 @@ Passwords are hashed using **bcrypt** with automatic salt generation. Plain-text
 ### Session Management
 
 Tokens can be revoked (logout) by adding them to a server-side blacklist. Revoked tokens are rejected on subsequent requests.
+
+A principal's roles are read from the user store on every request, by one owner: for a Bearer token and for Basic credentials (whose password check the server caches for 30 seconds, but not the roles; a changed password stops working at once, on HTTP, Bolt and gRPC) on HTTP and gRPC, and for a Bolt session before every statement and transaction. A role removed from a user, or deleted (which removes it from every user), stops applying at once, as Neo4j applies role changes at once. A deleted or disabled account, or another account created later under the same name, authorizes nothing: its token is refused (HTTP 401) and its open Bolt session runs no statement. A cluster node's token (from `/api/v1/auth/cluster-token`) is not a user account and keeps its own role.
+
+### Role Records
+
+A role's entitlement overrides, database allowlist and database privileges are written only for a role that exists: a write for a missing role fails (HTTP 400, `Neo.ClientError.General.SchemaViolation`) and changes nothing. Each request is one transaction, so a batch (`mappings`, the privilege matrix) applies all of its entries or none, and a write racing the role's deletion or rename can't commit alongside it.
 
 ---
 

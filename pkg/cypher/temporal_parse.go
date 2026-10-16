@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/localization"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strconv"
 	"strings"
@@ -11,27 +12,32 @@ import (
 // constructors. It scans slices of the input directly so the common numeric
 // forms do not require regular-expression or token allocations.
 func parseTemporalText(kind, text string) (interface{}, bool) {
+	value, ok, _ := parseTemporalTextWithError(kind, text)
+	return value, ok
+}
+
+func parseTemporalTextWithError(kind, text string) (interface{}, bool, error) {
 	switch kind {
 	case "date":
 		value, ok := parseCypherDateText(text)
-		return CypherDate{Time: value}, ok
+		return CypherDate{Time: value}, ok, nil
 	case "localtime":
 		value, ok := parseCypherClockText(text)
-		return CypherLocalTime{Time: value}, ok
+		return CypherLocalTime{Time: value}, ok, nil
 	case "time":
 		value, ok := parseCypherTimeText(text)
-		return CypherTime{Time: value}, ok
+		return CypherTime{Time: value}, ok, nil
 	case "localdatetime":
 		value, ok := parseCypherLocalDateTimeText(text)
-		return CypherLocalDateTime{Time: value}, ok
+		return CypherLocalDateTime{Time: value}, ok, nil
 	case "datetime":
-		value, zoneID, ok := parseCypherDateTimeText(text)
-		return CypherDateTime{Time: value, ZoneID: zoneID}, ok
+		value, zoneID, ok, err := parseCypherDateTimeTextWithError(text)
+		return CypherDateTime{Time: value, ZoneID: zoneID}, ok, err
 	case "duration":
 		value, ok := parseCypherDurationText(text)
-		return value, ok
+		return value, ok, nil
 	default:
-		return nil, false
+		return nil, false, nil
 	}
 }
 
@@ -185,22 +191,28 @@ func parseCypherLocalDateTimeText(text string) (time.Time, bool) {
 }
 
 func parseCypherDateTimeText(text string) (time.Time, string, bool) {
+	value, zoneID, ok, _ := parseCypherDateTimeTextWithError(text)
+	return value, zoneID, ok
+}
+
+func parseCypherDateTimeTextWithError(text string) (time.Time, string, bool, error) {
+	original := text
 	zoneID := ""
 	if len(text) > 0 && text[len(text)-1] == ']' {
 		open := strings.LastIndexByte(text, '[')
 		if open < 0 || open == len(text)-1 {
-			return time.Time{}, "", false
+			return time.Time{}, "", false, nil
 		}
 		zoneID = text[open+1 : len(text)-1]
 		text = text[:open]
 	}
 	separator := strings.IndexByte(text, 'T')
 	if separator < 0 {
-		return time.Time{}, "", false
+		return time.Time{}, "", false, nil
 	}
 	date, ok := parseCypherDateText(text[:separator])
 	if !ok {
-		return time.Time{}, "", false
+		return time.Time{}, "", false, nil
 	}
 	clockText := text[separator+1:]
 	clock, offset, hasOffset := splitClockOffset(clockText)
@@ -209,16 +221,51 @@ func parseCypherDateTimeText(text string) (time.Time, string, bool) {
 	}
 	hour, minute, second, nanos, ok := parseClockComponents(clock)
 	if !ok {
-		return time.Time{}, "", false
+		return time.Time{}, "", false, nil
 	}
 	location := time.FixedZone("", offset)
 	if zoneID != "" {
 		location, ok = loadTemporalLocationAt(zoneID, date)
 		if !ok {
-			return time.Time{}, "", false
+			return time.Time{}, "", false, nil
 		}
 	}
-	return time.Date(date.Year(), date.Month(), date.Day(), hour, minute, second, nanos, location), zoneID, true
+	// During a fall-back overlap both offsets are valid. Construct the instant
+	// from the supplied offset before applying the named zone; time.Date in
+	// the zone alone can choose the other occurrence of the same local clock.
+	if zoneID != "" && hasOffset {
+		instant := time.Date(date.Year(), date.Month(), date.Day(), hour, minute, second, nanos, time.FixedZone("", offset)).In(location)
+		if _, actualOffset := instant.Zone(); actualOffset == offset {
+			return instant, zoneID, true, nil
+		}
+		return time.Time{}, "", false, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", localization.CypherCoreTemporalOffsetMismatch(original))
+	}
+	local := time.Date(date.Year(), date.Month(), date.Day(), hour, minute, second, nanos, time.UTC)
+	if zoneID != "" {
+		return resolveNamedZoneLocalTime(local, location, false), zoneID, true, nil
+	}
+	return time.Date(date.Year(), date.Month(), date.Day(), hour, minute, second, nanos, location), zoneID, true, nil
+}
+
+// resolveNamedZoneLocalTime shifts gaps forward. String constructors prefer
+// the earlier overlap instant; map constructors prefer the later instant.
+func resolveNamedZoneLocalTime(local time.Time, location *time.Location, preferLater bool) time.Time {
+	_, before := local.Add(-48 * time.Hour).In(location).Zone()
+	_, after := local.Add(48 * time.Hour).In(location).Zone()
+	first := local.Add(-time.Duration(before) * time.Second).In(location)
+	second := local.Add(-time.Duration(after) * time.Second).In(location)
+	_, firstOffset := first.Zone()
+	_, secondOffset := second.Zone()
+	firstValid, secondValid := firstOffset == before, secondOffset == after
+	if firstValid && (!secondValid || (first.Before(second) != preferLater)) {
+		return first
+	}
+	if secondValid {
+		return second
+	}
+	// Neither offset reproduces the requested clock in a spring gap. The
+	// pre-transition offset produces the instant after the gap.
+	return first
 }
 
 func loadTemporalLocation(zoneID string) (*time.Location, bool) {

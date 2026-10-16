@@ -25,7 +25,7 @@ const (
 	maxSnapshotNodeLabelCacheBytes = 1 << 20
 )
 
-func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key string, nodes []*Node, indexNodesByID bool) {
+func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key snapshotLabelCacheKey, nodes []*Node, indexNodesByID bool) {
 	if len(nodes) == 0 || len(nodes) > maxSnapshotLabelPrefixNodes {
 		return
 	}
@@ -59,8 +59,8 @@ func (tx *BadgerTransaction) storeSnapshotLabelPrefixLocked(txn *badger.Txn, key
 		return
 	}
 	if tx.snapshotLabelPrefixNodes == nil {
-		tx.snapshotLabelPrefixNodes = make(map[string][]*Node, maxSnapshotLabelPrefixStreams)
-		tx.snapshotLabelPrefixNodeBytes = make(map[string]int, maxSnapshotLabelPrefixStreams)
+		tx.snapshotLabelPrefixNodes = make(map[snapshotLabelCacheKey][]*Node, maxSnapshotLabelPrefixStreams)
+		tx.snapshotLabelPrefixNodeBytes = make(map[snapshotLabelCacheKey]int, maxSnapshotLabelPrefixStreams)
 	}
 	tx.snapshotLabelPrefixNodes[key] = append([]*Node(nil), nodes...)
 	tx.snapshotLabelPrefixNodeBytes[key] = bytes
@@ -154,7 +154,7 @@ func (tx *BadgerTransaction) cacheValidatedSnapshotPrefixNodeByIDLocked(node *No
 	tx.snapshotPrefixNodeByID[node.ID] = node
 }
 
-func (tx *BadgerTransaction) clearSnapshotLabelPrefixLocked(key string) {
+func (tx *BadgerTransaction) clearSnapshotLabelPrefixLocked(key snapshotLabelCacheKey) {
 	if bytes, exists := tx.snapshotLabelPrefixNodeBytes[key]; exists {
 		tx.snapshotLabelPrefixBytes -= bytes
 		delete(tx.snapshotLabelPrefixNodeBytes, key)

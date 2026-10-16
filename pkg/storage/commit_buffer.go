@@ -14,7 +14,6 @@ package storage
 import (
 	"fmt"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,6 +40,7 @@ type bufferedMutation struct {
 // commit for background replay: its ordered physical operations, raw KV
 // writes/deletes, namespace, and staged ID-counter high-water marks.
 type bufferedCommit struct {
+	recovered bool // WAL operations require authoritative binary-body hydration before publication.
 	namespace string
 	txID      string // transaction ID, used for the WAL buffered-commit payload and flush marker
 	ops       []Operation
@@ -103,6 +103,8 @@ type CommitBuffer struct {
 
 	// edgeCreateCount / edgeDeleteCount feed the buffered total edge-count
 	// delta (creates minus deletes) the engine's EdgeCount readers overlay.
+	// Cardinality deltas exclude updates and are independent of entity overlays.
+	totalCounts     bufferedCardinalityDeltas
 	edgeCreateCount int
 	edgeDeleteCount int
 
@@ -116,8 +118,11 @@ type CommitBuffer struct {
 	// adaptive sizer uses it to measure drain throughput.
 	ops int
 
-	applied  atomic.Bool
-	draining atomic.Bool // claims the single flusher slot for this generation
+	applied atomic.Bool
+	// All counters publish before entity-cache callbacks finish.
+	// Retire only their overlay at that boundary; entity overlays remain live.
+	countsApplied atomic.Bool
+	draining      atomic.Bool // claims the single flusher slot for this generation
 
 	// retired guards the buffer's pending-node index retirement: a
 	// generation that reached the applied state retires its nodes from the
@@ -177,6 +182,7 @@ func (b *CommitBuffer) Commits() []bufferedCommit {
 func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 	b.commits = append(b.commits, c)
 	for _, op := range c.ops {
+		visitOperationTotalCounts(op, b.totalCounts.add)
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node != nil && op.Node.ID != "" {
@@ -268,6 +274,9 @@ func (b *CommitBuffer) addNode(n *Node) {
 	if n == nil || n.ID == "" {
 		return
 	}
+	if _, exists := b.nodes[n.ID]; !exists {
+		b.totalCounts.add(string(n.ID), false, 1)
+	}
 	copyNode := *n
 	b.nodes[n.ID] = &copyNode
 	b.order = append(b.order, bufferedMutation{kind: bufferedOpNode, id: string(n.ID), node: &copyNode})
@@ -279,6 +288,9 @@ func (b *CommitBuffer) addNode(n *Node) {
 func (b *CommitBuffer) addEdge(e *Edge) {
 	if e == nil || e.ID == "" {
 		return
+	}
+	if _, exists := b.edges[e.ID]; !exists {
+		b.totalCounts.add(string(e.ID), true, 1)
 	}
 	copyEdge := *e
 	b.edges[e.ID] = &copyEdge
@@ -1275,6 +1287,9 @@ func (w *WriteBehindBuffer) LabelCountDelta(label string) int64 {
 	defer w.mu.RUnlock()
 	var total int64
 	sum := func(buf *CommitBuffer) {
+		if buf.countsApplied.Load() {
+			return
+		}
 		for _, c := range buf.commits {
 			for key, delta := range c.labelDeltas {
 				if key.label == label {
@@ -1299,6 +1314,9 @@ func (w *WriteBehindBuffer) LabelCountDeltaInNamespace(namespace, label string) 
 	defer w.mu.RUnlock()
 	var total int64
 	sum := func(buf *CommitBuffer) {
+		if buf.countsApplied.Load() {
+			return
+		}
 		for _, c := range buf.commits {
 			if delta, ok := c.labelDeltas[namespaceLabel{namespace: namespace, label: label}]; ok {
 				total += delta
@@ -1322,6 +1340,9 @@ func (w *WriteBehindBuffer) EdgeTypeCountDelta(edgeType string) int64 {
 	defer w.mu.RUnlock()
 	var total int64
 	sum := func(buf *CommitBuffer) {
+		if buf.countsApplied.Load() {
+			return
+		}
 		for _, c := range buf.commits {
 			for key, delta := range c.edgeTypeDeltas {
 				if key.edgeType == edgeType {
@@ -1347,6 +1368,9 @@ func (w *WriteBehindBuffer) EdgeTypeCountDeltaInNamespace(namespace, edgeType st
 	defer w.mu.RUnlock()
 	var total int64
 	sum := func(buf *CommitBuffer) {
+		if buf.countsApplied.Load() {
+			return
+		}
 		for _, c := range buf.commits {
 			if delta, ok := c.edgeTypeDeltas[namespaceEdgeType{namespace: namespace, edgeType: edgeType}]; ok {
 				total += delta
@@ -1409,8 +1433,9 @@ func (w *WriteBehindBuffer) NodeDeletedOverlay(nodeID NodeID) bool {
 }
 
 // EdgeAdjacencyOverlay returns the buffered live edges adjacent to nodeID
-// (outgoing or incoming) plus every buffered-deleted edge ID, which committed
-// adjacency scans must suppress. nodeDeleted reports that a buffered delete
+// (outgoing or incoming) plus every buffered edge ID that committed adjacency
+// scans must suppress, including live IDs shadowed by the buffer.
+// nodeDeleted reports that a buffered delete
 // hides the node itself, which hides all of its committed adjacency too.
 // The returned edge pointers are buffer-owned; callers must copy them.
 func (w *WriteBehindBuffer) EdgeAdjacencyOverlay(nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
@@ -1450,6 +1475,9 @@ func (w *WriteBehindBuffer) EdgeAdjacencyOverlay(nodeID NodeID, outgoing bool) (
 				continue
 			}
 			if e, ok := buf.edges[id]; ok && e != nil {
+				// The buffered body shadows this identity even after its physical
+				// record is durable but publication has not retired the generation.
+				suppressed[id] = struct{}{}
 				live = append(live, e)
 			}
 		}
@@ -1477,13 +1505,7 @@ func (w *WriteBehindBuffer) EdgesBetweenOverlay(source, target NodeID) (live []*
 // EdgeCountDelta is the buffered total edge-count delta: creates minus
 // deletes across every generation that has not been replayed yet.
 func (w *WriteBehindBuffer) EdgeCountDelta() int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	var delta int64
-	for _, buf := range w.liveBuffers() {
-		delta += int64(buf.edgeCreateCount - buf.edgeDeleteCount)
-	}
-	return delta
+	return w.totalCountDeltaForPrefix("", true)
 }
 
 // EdgeTypeLabelCountDeltaInNamespace sums the buffered positional
@@ -1494,6 +1516,9 @@ func (w *WriteBehindBuffer) EdgeTypeLabelCountDeltaInNamespace(sub byte, namespa
 	defer w.mu.RUnlock()
 	var total int64
 	sum := func(buf *CommitBuffer) {
+		if buf.countsApplied.Load() {
+			return
+		}
 		for _, c := range buf.commits {
 			if c.edgeTypeLabelDeltas == nil {
 				continue
@@ -1518,6 +1543,9 @@ func (w *WriteBehindBuffer) EdgeTypeLabelCountDelta(sub byte, label, edgeType st
 	defer w.mu.RUnlock()
 	var total int64
 	sum := func(buf *CommitBuffer) {
+		if buf.countsApplied.Load() {
+			return
+		}
 		for _, c := range buf.commits {
 			if c.edgeTypeLabelDeltas == nil {
 				continue
@@ -1539,72 +1567,14 @@ func (w *WriteBehindBuffer) EdgeTypeLabelCountDelta(sub byte, label, edgeType st
 // edges whose ID starts with prefix: live buffered edge IDs minus buffered
 // deleted edge IDs. prefix may be empty for the whole graph.
 func (w *WriteBehindBuffer) EdgeCountDeltaForPrefix(prefix string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	live := make(map[EdgeID]struct{})
-	dead := make(map[EdgeID]struct{})
-	for _, buf := range w.liveBuffers() {
-		for id := range buf.edges {
-			live[id] = struct{}{}
-		}
-		for id := range buf.deletedEdgeIDs {
-			dead[id] = struct{}{}
-		}
-	}
-	var delta int64
-	for id := range live {
-		if _, isDead := dead[id]; isDead {
-			continue
-		}
-		if prefix == "" || strings.HasPrefix(string(id), prefix) {
-			delta++
-		}
-	}
-	for id := range dead {
-		if _, isLive := live[id]; isLive {
-			continue
-		}
-		if prefix == "" || strings.HasPrefix(string(id), prefix) {
-			delta--
-		}
-	}
-	return delta
+	return w.totalCountDeltaForPrefix(prefix, true)
 }
 
 // NodeCountDeltaForPrefix is the buffered total node-count delta restricted to
 // nodes whose ID starts with prefix: live buffered node IDs minus buffered
 // deleted node IDs. prefix may be empty for the whole graph.
 func (w *WriteBehindBuffer) NodeCountDeltaForPrefix(prefix string) int64 {
-	w.mu.RLock()
-	defer w.mu.RUnlock()
-	live := make(map[NodeID]struct{})
-	dead := make(map[NodeID]struct{})
-	for _, buf := range w.liveBuffers() {
-		for id := range buf.nodes {
-			live[id] = struct{}{}
-		}
-		for id := range buf.deletedNodeIDs {
-			dead[id] = struct{}{}
-		}
-	}
-	var delta int64
-	for id := range live {
-		if _, isDead := dead[id]; isDead {
-			continue
-		}
-		if prefix == "" || strings.HasPrefix(string(id), prefix) {
-			delta++
-		}
-	}
-	for id := range dead {
-		if _, isLive := live[id]; isLive {
-			continue
-		}
-		if prefix == "" || strings.HasPrefix(string(id), prefix) {
-			delta--
-		}
-	}
-	return delta
+	return w.totalCountDeltaForPrefix(prefix, false)
 }
 
 // PendingOps reports how many mutations are buffered but not yet applied.

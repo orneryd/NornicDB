@@ -43,10 +43,11 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 			return nil
 		}))
 
-		got, err := engine.GetNode(node.ID)
+		// This test calls a transaction-local helper directly, bypassing the
+		// public mutation/cache lifecycle. Assert its persisted state.
+		suppressed, _, err := engine.readNodeSuppressionState(node.ID)
 		require.NoError(t, err)
-		require.NotNil(t, got)
-		require.False(t, got.VisibilitySuppressed)
+		require.False(t, suppressed)
 	})
 
 	t.Run("evaluate edge suppression handles missing/corrupt edge and clears stale flag", func(t *testing.T) {
@@ -56,7 +57,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		require.NoError(t, err)
 
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			changed, err := engine.evaluateEdgeSuppressionInTxn(txn, EdgeID("test:missing-edge"))
+			changed, _, err := engine.evaluateEdgeSuppressionInTxn(txn, EdgeID("test:missing-edge"))
 			require.NoError(t, err)
 			require.False(t, changed)
 			return nil
@@ -65,7 +66,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
 			const badEdgeID = EdgeID("test:bad-edge")
 			require.NoError(t, txn.Set(edgeKey(badEdgeID), []byte("not-an-edge")))
-			changed, err := engine.evaluateEdgeSuppressionInTxn(txn, badEdgeID)
+			changed, _, err := engine.evaluateEdgeSuppressionInTxn(txn, badEdgeID)
 			require.NoError(t, err)
 			require.False(t, changed)
 			return nil
@@ -81,7 +82,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		require.NoError(t, engine.CreateEdge(edge))
 
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			changed, err := engine.evaluateEdgeSuppressionInTxn(txn, edge.ID)
+			changed, _, err := engine.evaluateEdgeSuppressionInTxn(txn, edge.ID)
 			require.NoError(t, err)
 			require.False(t, changed)
 			return nil
@@ -109,10 +110,11 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 			return engine.rescoreSuppressionAfterLabelChangeInTxn(txn, "test", node)
 		}))
 
-		got, err := engine.GetNode(node.ID)
+		// This test calls a transaction-local helper directly, bypassing the
+		// public mutation/cache lifecycle. Assert its persisted state.
+		suppressed, _, err := engine.readNodeSuppressionState(node.ID)
 		require.NoError(t, err)
-		require.NotNil(t, got)
-		require.False(t, got.VisibilitySuppressed)
+		require.False(t, suppressed)
 
 		node2 := &Node{ID: NodeID("test:rescore-no-change"), Labels: []string{"L"}}
 		_, err = engine.CreateNode(node2)

@@ -57,18 +57,34 @@ func cypherPredicateTruth(value interface{}) (cypherTruth, error) {
 }
 
 func predicateValueIsTrue(ctx context.Context, value interface{}, expression string) bool {
-	if mayContainArithmetic(expression) {
-		for {
-			inner, enclosed := stripEnclosingExpressionParentheses(expression)
-			if !enclosed {
-				break
-			}
-			expression = inner
+	return predicateValueHolds(ctx, value, predicateIsArithmetic(expression))
+}
+
+// predicateIsArithmetic reports a predicate whose top level is arithmetic:
+// its value holds only when it is true, and any other value is no type
+// error (predicateValueIsTrue). It reads only the text, so a compiled
+// predicate decides it once.
+func predicateIsArithmetic(expression string) bool {
+	if !mayContainArithmetic(expression) {
+		return false
+	}
+	for {
+		inner, enclosed := stripEnclosingExpressionParentheses(expression)
+		if !enclosed {
+			break
 		}
-		if _, _, _, arithmetic := splitRowArithmeticTier(expression, "+-*/%^"); arithmetic {
-			boolean, _ := value.(bool)
-			return boolean
-		}
+		expression = inner
+	}
+	_, _, _, arithmetic := splitRowArithmeticTier(expression, "+-*/%^")
+	return arithmetic
+}
+
+// predicateValueHolds is predicateValueIsTrue for a predicate whose
+// arithmetic shape (predicateIsArithmetic) is known.
+func predicateValueHolds(ctx context.Context, value interface{}, arithmetic bool) bool {
+	if arithmetic {
+		boolean, _ := value.(bool)
+		return boolean
 	}
 	truth, err := cypherPredicateTruth(value)
 	if err != nil {
@@ -184,17 +200,7 @@ func isRuntimeTemporal(v interface{}) bool {
 	return false
 }
 
-func isRuntimeList(v interface{}) bool {
-	if v == nil {
-		return false
-	}
-	switch v.(type) {
-	case string, map[string]interface{}:
-		return false
-	}
-	kind := reflect.TypeOf(v).Kind()
-	return kind == reflect.Slice || kind == reflect.Array
-}
+func isRuntimeList(v interface{}) bool { return cypherValueKindOf(v) == valueKindList }
 
 // runtimeArithmeticTypeError is the TypeError of left op right when an
 // operand is of a type the operator can't take, or nil. Null operands make the

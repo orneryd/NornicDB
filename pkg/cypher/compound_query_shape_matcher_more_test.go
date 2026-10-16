@@ -59,6 +59,7 @@ func TestSharedDelimiterSectionsUseCypherQuoting(t *testing.T) {
 func TestSharedIdentifierTokenSupportsQuotedNames(t *testing.T) {
 	for _, test := range []struct{ text, name, rest string }{
 		{"alpha_2 tail", "alpha_2", " tail"},
+		{"`` tail", "", " tail"},
 		{"`two words` tail", "two words", " tail"},
 		{"`a``b` tail", "a`b", " tail"},
 		{"`name]part` tail", "name]part", " tail"},
@@ -81,7 +82,7 @@ func TestSharedIdentifierTokenSupportsQuotedNames(t *testing.T) {
 }
 
 func TestSharedLexicalBoundaries(t *testing.T) {
-	for _, text := range []string{"", "1bad", "``", "`unclosed", "`a``"} {
+	for _, text := range []string{"", "1bad", "`unclosed", "`a``"} {
 		name, rest, ok := parseIdentifierToken(text)
 		require.False(t, ok, text)
 		require.Empty(t, name)

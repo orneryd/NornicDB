@@ -1172,6 +1172,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		dbConfigActive:       make(map[string]map[string]string),
 		dbConfigPending:      make(map[string]map[string]struct{}),
 	}
+	// A changed password stops working at once (auth.BasicAuthCache).
+	s.auth.OnPasswordChange(s.basicAuthCache.ForgetUser)
 	// Foreground-first policy: while tx requests are active, background embed work yields.
 	s.db.SetEmbedQueueShouldYield(func() bool {
 		return s.activeTxReqs.Load() > 0
@@ -1616,7 +1618,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	}
 
 	// Log authentication status
-	if authenticator == nil || !authenticator.IsSecurityEnabled() {
+	if auth.AuthenticationDisabled(authenticator) {
 		s.logEvent(context.Background(), slog.LevelWarn, localization.ServerAuthenticationDisabledEvent())
 	}
 
@@ -1686,7 +1688,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	}
 
 	// Per-database access: Full when auth disabled; when auth enabled, DenyAll until allowlist resolves.
-	if authenticator == nil || !authenticator.IsSecurityEnabled() {
+	if auth.AuthenticationDisabled(authenticator) {
 		s.databaseAccessMode = auth.FullDatabaseAccessMode
 	} else {
 		s.databaseAccessMode = auth.DenyAllDatabaseAccessMode
@@ -1721,12 +1723,9 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		} else {
 			s.privilegesStore = privilegesStore
 		}
-		procedurePrivileges := auth.NewProcedurePrivilegeStore(systemStorage)
-		if loadErr := procedurePrivileges.Load(ctx); loadErr != nil {
-			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACPrivilegesLoadFailedEvent(loadErr))
-		} else {
-			s.procedurePrivileges = procedurePrivileges
-		}
+		// Read on every check (ProcedureGrantChecker): a grant counts once
+		// committed, and a failed read denies.
+		s.procedurePrivileges = auth.NewProcedurePrivilegeStore(systemStorage)
 		roleEntitlementsStore := auth.NewRoleEntitlementsStore(systemStorage)
 		if loadErr := roleEntitlementsStore.Load(ctx); loadErr != nil {
 			s.logEvent(ctx, slog.LevelWarn, localization.ServerRBACRoleEntitlementsLoadFailedEvent(loadErr))

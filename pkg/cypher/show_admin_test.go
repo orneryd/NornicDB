@@ -32,7 +32,7 @@ func TestMonster530YieldWhereStaticType(t *testing.T) {
 // in Neo4j 5.26 (#718).
 func TestShowDefaultAndHomeDatabase(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	manager := newMockDatabaseManager()
+	manager := newMockDatabaseManager(t)
 	require.NoError(t, manager.CreateDatabase("nornic"))
 	require.NoError(t, manager.CreateDatabase("tenant_a"))
 	exec.SetDatabaseManager(manager)
@@ -113,6 +113,10 @@ func TestUnsupportedAdministrationCommands(t *testing.T) {
 	ctx := context.Background()
 	for query, code := range map[string]string{
 		"SHOW ROLES":                    "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
+		"CREATE ROLE ops":               "Neo.ClientError.Statement.SyntaxError",
+		"DROP ROLE ops":                 "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
+		"RENAME ROLE ops TO new":        "Neo.ClientError.Statement.SyntaxError",
+		"REVOKE ROLE reader FROM bob":   "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
 		"GRANT ROLE reader TO bob":      "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
 		"DENY TRAVERSE ON GRAPH * TO r": "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
 		"GRANT ADMIN TO user":           "Neo.ClientError.Statement.SyntaxError",

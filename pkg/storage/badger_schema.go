@@ -17,6 +17,8 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 		return err
 	}
 
+	b.resetRelationshipUniqueIndexes()
+
 	type loaded struct {
 		namespace string
 		schema    *SchemaManager
@@ -140,6 +142,8 @@ func (b *BadgerEngine) dropNamespaceSchema(namespace string) error {
 	if namespace == "" {
 		return fmt.Errorf("schema: namespace is required")
 	}
+	b.resetRelationshipUniqueIndexes()
+
 	b.schemasMu.Lock()
 	if sm := b.schemas[namespace]; sm != nil {
 		sm.SetPersister(nil)

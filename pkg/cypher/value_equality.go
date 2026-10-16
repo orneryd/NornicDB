@@ -3,15 +3,70 @@ package cypher
 import (
 	"cmp"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"reflect"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // cypherEquality applies Cypher's three-valued structural equality. A nil
 // result represents unknown, which occurs when no definite inequality exists
 // but at least one nested comparison involves null.
-func cypherEquality(left, right interface{}) interface{} {
+func cypherEquality[L, R any](left L, right R) interface{} {
+	// Keep typed arithmetic operands unboxed on the common integer path.
+	if actual, ok := any(left).(int64); ok {
+		if expected, ok := any(right).(int64); ok {
+			return actual == expected
+		}
+	}
+	return cypherEqualityValue(any(left), any(right))
+}
+
+func cypherEqualityValue(left, right interface{}) interface{} {
 	if left == nil || right == nil {
 		return nil
+	}
+	// Two strings or two booleans are none of the forms below:
+	// their equality is ==. The equality of every evaluator (= / <>, IN,
+	// CASE) starts here (#1214).
+	switch actual := left.(type) {
+	case string:
+		if expected, ok := right.(string); ok {
+			return actual == expected
+		}
+	case bool:
+		if expected, ok := right.(bool); ok {
+			return actual == expected
+		}
+	}
+	if cypherValueKindOf(left) == valueKindNull || cypherValueKindOf(right) == valueKindNull {
+		return nil
+	}
+	// Entity snapshots compare by identity even if their properties differ.
+	leftNode, leftIsNode := left.(*storage.Node)
+	rightNode, rightIsNode := right.(*storage.Node)
+	leftEdge, leftIsEdge := left.(*storage.Edge)
+	rightEdge, rightIsEdge := right.(*storage.Edge)
+	if leftIsNode || rightIsNode || leftIsEdge || rightIsEdge {
+		return (leftIsNode && rightIsNode && leftNode != nil && rightNode != nil && leftNode.ID == rightNode.ID) ||
+			(leftIsEdge && rightIsEdge && leftEdge != nil && rightEdge != nil && leftEdge.ID == rightEdge.ID)
+	}
+	// Source element identity survives property snapshots and optional legacy
+	// metadata. ORDER BY also distinguishes identity-availability domains to
+	// remain transitive; as with signed zero, sort order need not imply <>.
+	leftRemote, leftIsRemote := left.(storage.RemoteEntityValue)
+	rightRemote, rightIsRemote := right.(storage.RemoteEntityValue)
+	if leftIsRemote || rightIsRemote {
+		leftElement, leftHasElement := leftRemote["elementId"].(string)
+		rightElement, rightHasElement := rightRemote["elementId"].(string)
+		return leftIsRemote && rightIsRemote && leftHasElement && rightHasElement && cypherValueKindOf(leftRemote) == cypherValueKindOf(rightRemote) && leftElement == rightElement
+	}
+	// Compare actual path carriers, including the legacy typed _pathResult
+	// wrapper, through their ordered entity identities in either direction.
+	if cypherValueKindOf(left) == valueKindPath || cypherValueKindOf(right) == valueKindPath {
+		leftParts, leftPath := cypherPathElements(left)
+		rightParts, rightPath := cypherPathElements(right)
+		if leftPath || rightPath {
+			return leftPath && rightPath && cypherEquality(leftParts, rightParts) == true
+		}
 	}
 	leftList, leftIsList := cypherListValue(left)
 	rightList, rightIsList := cypherListValue(right)
@@ -296,8 +351,7 @@ func cypherUnsignedInteger(value interface{}) (uint64, bool) {
 }
 
 func cypherListValue(value interface{}) ([]interface{}, bool) {
-	valueType := reflect.TypeOf(value)
-	if valueType == nil || (valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array) {
+	if cypherValueKindOf(value) != valueKindList {
 		return nil, false
 	}
 	return toAnySlice(value), true

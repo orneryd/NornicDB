@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -16,9 +17,9 @@ func TestGDSProjectedEmptyTypeSelectionPoliciesShared(t *testing.T) {
 	require.NoError(t, err)
 	_, err = run("CALL gds.graph.project('selection', 'N', 'R')")
 	require.NoError(t, err)
-	all, degreeAll, err := exec.linkPredictionGraph(&linkPredictionConfig{GraphName: "selection", SourceNode: "a"})
+	all, degreeAll, err := exec.linkPredictionGraph(context.Background(), &linkPredictionConfig{GraphName: "selection", SourceNode: "a"})
 	require.NoError(t, err)
-	empty, degreeEmpty, err := exec.linkPredictionGraph(&linkPredictionConfig{GraphName: "selection", SourceNode: "a", RelationshipTypes: []string{}})
+	empty, degreeEmpty, err := exec.linkPredictionGraph(context.Background(), &linkPredictionConfig{GraphName: "selection", SourceNode: "a", RelationshipTypes: []string{}})
 	require.NoError(t, err)
 	require.NotEqual(t, all, empty)
 	require.Empty(t, empty[storage.NodeID("a")])
@@ -72,7 +73,7 @@ func TestGDSNativeAggregationReaderParity(t *testing.T) {
 		values, err := run("RETURN gds.util.nodeProperty('" + graph + "', 'a', 'x', 'A'), gds.util.nodeProperty('" + graph + "', 'b', 'x', 'A'), gds.util.nodeProperty('" + graph + "', 'a', 'x', 'B'), gds.util.nodeProperty('" + graph + "', 'b', 'x', 'B')")
 		require.NoError(t, err)
 		require.Equal(t, []interface{}{float64(9007199254740992), nil, nil, 2.0}, values.Rows[0])
-		selected, degree, err := exec.linkPredictionGraph(&linkPredictionConfig{GraphName: graph, SourceNode: "a"})
+		selected, degree, err := exec.linkPredictionGraph(context.Background(), &linkPredictionConfig{GraphName: graph, SourceNode: "a"})
 		require.NoError(t, err)
 		require.Contains(t, selected[storage.NodeID("a")], storage.NodeID("b"))
 		require.Equal(t, 1, degree(storage.NodeID("a")))

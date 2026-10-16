@@ -3417,50 +3417,6 @@ func TestSubqueryHelpers_ParseCallSubquery_EdgeBranches(t *testing.T) {
 	assert.Equal(t, 7, batch)
 }
 
-func TestSubqueryHelpers_SubstituteBoundVariablesInCall_Branches(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	node := &storage.Node{
-		ID: "n1",
-		Properties: map[string]interface{}{
-			"s":         "alice",
-			"i":         int64(7),
-			"f":         float64(1.5),
-			"b":         true,
-			"obj":       map[string]interface{}{"x": 1},
-			"embedding": []interface{}{float64(0.1), int64(2), float32(0.3)},
-		},
-	}
-	ctxMap := map[string]*storage.Node{"n": node}
-
-	// Replacements for scalar property types and []interface{} embedding conversion.
-	got := exec.substituteBoundVariablesInCall(
-		"CALL x(n.s, n.i, n.f, n.b, n.embedding, n.obj)",
-		ctxMap,
-		nil,
-	)
-	assert.Contains(t, got, "'alice'")
-	assert.Contains(t, got, "7")
-	assert.Contains(t, got, "1.5")
-	assert.Contains(t, got, "true")
-	assert.Contains(t, got, "[0.1, 2, 0.3]")
-	assert.Contains(t, got, "map[x:1]")
-
-	// Quoted references should not be replaced.
-	quoted := exec.substituteBoundVariablesInCall("CALL x('n.s', \"n.i\")", ctxMap, nil)
-	assert.Equal(t, "CALL x('n.s', \"n.i\")", quoted)
-
-	// embedding reads from Properties like any other property (no ChunkEmbeddings routing).
-	// []float64 embedding conversion path.
-	node.Properties["embedding"] = []float64{0.4, 0.5}
-	got = exec.substituteBoundVariablesInCall("CALL x(n.embedding)", ctxMap, nil)
-	assert.Contains(t, got, "[0.4, 0.5]")
-
-	// []float32 embedding conversion path.
-	node.Properties["embedding"] = []float32{0.6, 0.7}
-	got = exec.substituteBoundVariablesInCall("CALL x(n.embedding)", ctxMap, nil)
-	assert.Contains(t, got, "[0.6, 0.7]")
-}
-
 func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_ParamAndWhereBranches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")

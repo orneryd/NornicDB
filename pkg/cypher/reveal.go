@@ -88,17 +88,19 @@ func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (co
 	if hasFailure {
 		failure.mu.Lock()
 		activeEngine := failure.readScopeEngine
+		activeContext := failure.readScopeContext
 		failure.mu.Unlock()
 		if activeEngine == be {
-			return ctx, func() {}, nil
+			return storage.InheritQueryRevealScopes(ctx, activeContext), func() {}, nil
 		}
 	}
-	cleanup := be.BeginQueryRevealScope(reveal)
+	ctx, cleanup := storage.BeginQueryRevealScopeContext(ctx, eng, reveal)
 	if hasFailure {
 		failure.mu.Lock()
 		activeEngine := failure.readScopeEngine
 		if activeEngine == nil {
 			failure.readScopeEngine = be
+			failure.readScopeContext = ctx
 			failure.mu.Unlock()
 			return ctx, cleanup, be
 		}
@@ -123,6 +125,7 @@ func clearRevealScope(ctx context.Context, engine *storage.BadgerEngine) {
 	failure.mu.Lock()
 	if failure.readScopeEngine == engine {
 		failure.readScopeEngine = nil
+		failure.readScopeContext = nil
 	}
 	failure.mu.Unlock()
 }

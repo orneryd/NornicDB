@@ -26,7 +26,8 @@ import (
 //     two NaNs are two DISTINCT values, two groups and two UNION rows. (Neo4j
 //     counts the same bound NaN repeated once, by object identity; values here
 //     have no identity, so every NaN is apart.)
-//   - any other value (temporal, spatial, path) keeps its Go type and value.
+//   - paths are equivalent by their ordered entity identities;
+//   - any other value (temporal, spatial) keeps its Go type and value.
 func cypherEquivalenceKey(value interface{}) string {
 	// The common single values get their key in one allocation; the rest are
 	// written by appendEquivalenceKey.
@@ -45,6 +46,19 @@ func cypherEquivalenceKey(value interface{}) string {
 			return "r:" + string(typed.ID)
 		}
 		return "N"
+	case storage.RemotePathValue:
+		if typed == nil {
+			return "N"
+		}
+	case storage.RemoteEntityValue:
+		if typed == nil {
+			return "N"
+		}
+		element, _ := typed["elementId"].(string)
+		if cypherValueKindOf(typed) == valueKindRelationship {
+			return "rr:" + element
+		}
+		return "rn:" + element
 	case int64:
 		return "I" + strconv.FormatInt(typed, 10)
 	}
@@ -83,6 +97,16 @@ func appendEquivalenceKey(key *strings.Builder, value interface{}) {
 	if number, ok := cypherFloatValue(value); ok {
 		appendFloatEquivalenceKey(key, number)
 		return
+	}
+	if cypherValueKindOf(value) == valueKindPath {
+		if elements, valid := cypherPathElements(value); valid {
+			key.WriteByte('P')
+			key.WriteString(strconv.Itoa(len(elements)))
+			for _, entity := range elements {
+				appendNestedEquivalenceKey(key, entity)
+			}
+			return
+		}
 	}
 	if list, ok := cypherListValue(value); ok {
 		key.WriteByte('L')

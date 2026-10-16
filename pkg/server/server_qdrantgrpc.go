@@ -102,7 +102,7 @@ func (s *Server) startQdrantGRPC() error {
 		cfg.MethodPermissions = overrides
 	}
 	// Per-database RBAC: when auth is enabled, gRPC enforces same allowlist + privileges as HTTP/Bolt.
-	if s.auth != nil && s.auth.IsSecurityEnabled() {
+	if s.isRBACEnforced() {
 		cfg.DatabaseAccessModeResolver = s.GetDatabaseAccessModeForRoles
 		cfg.ResolvedAccessResolver = s.GetResolvedAccessForRoles
 	}

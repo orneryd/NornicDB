@@ -247,3 +247,90 @@ func CypherAdminTransactionIDUnparseable() Message {
 func CypherAdminTransactionIDDatabaseNameLength() Message {
 	return Message{ID: MessageCypherAdminTransactionIDDatabaseNameLength, Fallback: "The provided database name must have a length between 3 and 63 characters."}
 }
+
+// Procedure privileges: a GRANT to a role that does not exist, and immutable
+// privileges (GRANT / REVOKE IMMUTABLE …), which Neo4j lets anyone
+// administer only while authentication is disabled.
+const (
+	MessageCypherAdminImmutablePrivilegeGrantForbidden  MessageID = "cypheradmin.immutable_privilege_grant_forbidden"
+	MessageCypherAdminImmutablePrivilegeRevokeForbidden MessageID = "cypheradmin.immutable_privilege_revoke_forbidden"
+	MessageCypherAdminPrivilegeRoleNotFound             MessageID = "cypheradmin.privilege_role_not_found"
+)
+
+// CypherAdminImmutablePrivilegeGrantForbidden identifies a GRANT IMMUTABLE
+// while authentication is enabled.
+func CypherAdminImmutablePrivilegeGrantForbidden() Message {
+	return Message{ID: MessageCypherAdminImmutablePrivilegeGrantForbidden, Fallback: "Permission cannot be granted for ASSIGN IMMUTABLE PRIVILEGE."}
+}
+
+// CypherAdminImmutablePrivilegeRevokeForbidden identifies a REVOKE of an
+// immutable privilege while authentication is enabled.
+func CypherAdminImmutablePrivilegeRevokeForbidden() Message {
+	return Message{ID: MessageCypherAdminImmutablePrivilegeRevokeForbidden, Fallback: "Immutable privileges cannot be revoked."}
+}
+
+// CypherAdminPrivilegeRoleNotFound identifies a GRANT to a role that does
+// not exist; action is the privilege's action (execute, execute_boosted).
+func CypherAdminPrivilegeRoleNotFound(action, role string) Message {
+	return Message{ID: MessageCypherAdminPrivilegeRoleNotFound, Fallback: "Failed to grant " + action + " privilege to role '" + role + "': Role does not exist.", Data: map[string]any{"Action": action, "Role": role}}
+}
+
+const (
+	MessageCypherAdminSystemGraphAccessUnsupported MessageID = "cypheradmin.system_graph_access_unsupported"
+	MessageCypherAdminSystemProcedureUnsupported   MessageID = "cypheradmin.system_procedure_unsupported"
+	MessageCypherAdminTransactionStatementType     MessageID = "cypheradmin.transaction_statement_type"
+)
+
+// CypherAdminSystemGraphAccessUnsupported reports the system statement policy.
+func CypherAdminSystemGraphAccessUnsupported() Message {
+	return Message{ID: MessageCypherAdminSystemGraphAccessUnsupported, Fallback: "Graph access is not supported on the system database"}
+}
+
+// CypherAdminSystemProcedureUnsupported reports a call of a procedure that
+// doesn't run on the system database, in Neo4j's words; query is the
+// statement.
+func CypherAdminSystemProcedureUnsupported(query string) Message {
+	return Message{ID: MessageCypherAdminSystemProcedureUnsupported, Fallback: "Not a recognised system command or procedure. This Cypher command can only be executed in a user database: " + query, Data: map[string]any{"Query": query}}
+}
+
+// CypherAdminTransactionStatementType reports a statement whose type a
+// transaction can't take, in Neo4j's words; previous and requested are
+// Neo4j's statement type names ("Read query", "Write query", "Schema
+// modification", "Administration command").
+func CypherAdminTransactionStatementType(previous, requested string) Message {
+	return Message{ID: MessageCypherAdminTransactionStatementType, Fallback: "Tried to execute " + requested + " after executing " + previous, Data: map[string]any{"Previous": previous, "Requested": requested}}
+}
+
+const (
+	MessageCypherAdminShowClauseUnexpected            MessageID = "cypheradmin.show_clause_unexpected"
+	MessageCypherAdminShowExpressionInvalid           MessageID = "cypheradmin.show_expression_invalid"
+	MessageCypherAdminShowPatternComprehensionInvalid MessageID = "cypheradmin.show_pattern_comprehension_invalid"
+	MessageCypherAdminShowPatternExpressionInvalid    MessageID = "cypheradmin.show_pattern_expression_invalid"
+)
+
+// CypherAdminShowClauseUnexpected reports a clause after a SHOW command's
+// YIELD on the system database, in Neo4j's words; clause is the clause's
+// first keyword.
+func CypherAdminShowClauseUnexpected(clause string) Message {
+	return Message{ID: MessageCypherAdminShowClauseUnexpected, Fallback: "Invalid input '" + clause + "': expected ',', 'AS', 'ORDER BY', 'LIMIT', 'OFFSET', 'RETURN', 'SHOW', 'SKIP', 'TERMINATE', 'WHERE' or <EOF>", Data: map[string]any{"Clause": clause}}
+}
+
+// CypherAdminShowExpressionInvalid reports a COUNT, EXISTS or COLLECT
+// subquery in a SHOW command on the system database, in Neo4j's words;
+// expression is COUNT, EXISTS or COLLECT.
+func CypherAdminShowExpressionInvalid(expression string) Message {
+	return Message{ID: MessageCypherAdminShowExpressionInvalid, Fallback: "The " + expression + " expression is not valid on SHOW commands.", Data: map[string]any{"Expression": expression}}
+}
+
+// CypherAdminShowPatternComprehensionInvalid reports a pattern
+// comprehension in a SHOW command on the system database, in Neo4j's words.
+func CypherAdminShowPatternComprehensionInvalid() Message {
+	return Message{ID: MessageCypherAdminShowPatternComprehensionInvalid, Fallback: "Pattern comprehensions are not valid on SHOW commands."}
+}
+
+// CypherAdminShowPatternExpressionInvalid reports a pattern expression (a
+// pattern predicate, EXISTS of a pattern, shortestPath) in a SHOW command
+// on the system database, in Neo4j's words.
+func CypherAdminShowPatternExpressionInvalid() Message {
+	return Message{ID: MessageCypherAdminShowPatternExpressionInvalid, Fallback: "Pattern expressions are not valid on SHOW commands."}
+}

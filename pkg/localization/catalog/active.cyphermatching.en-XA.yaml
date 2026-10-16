@@ -190,3 +190,7 @@
 - id: cyphermatching.parenthesised_path_juxtaposed
   description: "Expanded pseudo-locale parenthesised path juxtaposed."
   other: "[!! Juxtaposition is currently only supported for quantified path patterns. !!]"
+
+- id: cyphermatching.bound_shortest_relationships
+  description: Neo4j 5.26.30 diagnostic, retained verbatim for compatibility.
+  other: Bound relationships not allowed in {{.Function}}(...)

@@ -115,15 +115,29 @@ func materializedValue(recorder materializedAccessRecorder, value interface{}) b
 			return false
 		}
 		id = string(v.ID)
+	case storage.RemotePathValue:
+		if _, _, valid := v.Parts(); !valid {
+			return false
+		}
+		found := false
+		for _, entity := range v {
+			if materializedValue(recorder, entity) {
+				if recorder == nil {
+					return true
+				}
+				found = true
+			}
+		}
+		return found
+	case storage.RemoteEntityValue:
+		if v == nil {
+			return false
+		}
+		id, _ = v["elementId"].(string)
+		if id == "" {
+			return false
+		}
 	case map[string]interface{}:
-		if nodeID, ok := v["_nodeId"].(string); ok && nodeID != "" {
-			id = nodeID
-			break
-		}
-		if edgeID, ok := v["_edgeId"].(string); ok && edgeID != "" {
-			id = edgeID
-			break
-		}
 		found := false
 		for _, nested := range v {
 			if materializedValue(recorder, nested) {
@@ -187,24 +201,7 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 	}
 
 	// Add properties both at top level (for Neo4j compatibility) and nested (for standard graph format)
-	be := unwrapBadgerEngine(e.storage)
-	var nowNanos int64
-	if be != nil {
-		nowNanos = storage.DecayScoringTime()
-	}
-	props := node.Properties
-	if be != nil {
-		createdAt := node.CreatedAt.UnixNano()
-		versionAt := nodeVersionAtNanos(node, createdAt)
-		filtered := make(map[string]interface{}, len(node.Properties))
-		for k, v := range node.Properties {
-			if be.FilterPropertyByDecay(node.ID, node.Labels, k, createdAt, versionAt, nowNanos) {
-				continue
-			}
-			filtered[k] = v
-		}
-		props = filtered
-	}
+	props := e.decayVisibleNodeProperties(node)
 	for k, v := range props {
 		result[k] = v
 	}
@@ -216,6 +213,15 @@ func (e *StorageExecutor) nodeToMap(node *storage.Node) map[string]interface{} {
 	}
 
 	return result
+}
+
+// decayVisibleNodeProperties is the shared property-visibility owner for node
+// maps and expression/result projections. It never changes the stored map.
+func (e *StorageExecutor) decayVisibleNodeProperties(node *storage.Node) map[string]interface{} {
+	if e.statementPropertyViews != nil {
+		return e.statementPropertyViews.node(node).Properties
+	}
+	return storage.NewQueryResultProjection(e.storage).NodeProperties(node)
 }
 
 func nodeVersionAtNanos(node *storage.Node, createdAt int64) int64 {
@@ -259,24 +265,10 @@ func (e *StorageExecutor) edgeToMap(edge *storage.Edge) map[string]interface{} {
 // hides at the current scoring time (the edge's own map when decay filtering
 // doesn't apply).
 func (e *StorageExecutor) decayVisibleEdgeProperties(edge *storage.Edge) map[string]interface{} {
-	be := unwrapBadgerEngine(e.storage)
-	if be == nil {
-		return edge.Properties
+	if e.statementPropertyViews != nil {
+		return e.statementPropertyViews.edge(edge).Properties
 	}
-	nowNanos := storage.DecayScoringTime()
-	createdAt := edge.CreatedAt.UnixNano()
-	versionAt := createdAt
-	if !edge.UpdatedAt.IsZero() {
-		versionAt = edge.UpdatedAt.UnixNano()
-	}
-	filtered := make(map[string]interface{}, len(edge.Properties))
-	for k, v := range edge.Properties {
-		if be.FilterEdgePropertyByDecay(edge.ID, edge.Type, k, createdAt, versionAt, nowNanos) {
-			continue
-		}
-		filtered[k] = v
-	}
-	return filtered
+	return storage.NewQueryResultProjection(e.storage).EdgeProperties(edge)
 }
 
 // procedureRelationship is a relationship a procedure yields: the

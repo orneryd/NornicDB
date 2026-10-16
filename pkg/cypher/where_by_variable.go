@@ -72,6 +72,7 @@ func joinWhereConjuncts(conjuncts []string) string {
 // or a braced subquery (EXISTS { … }, COUNT { … }, COLLECT { … }). It errs
 // towards true: a - -1 or id(a)-1 count as a pattern.
 func hasPatternOrSubquery(expression string) bool {
+	braces := newSubqueryBraceScanner(expression, 0)
 	for index := 0; index < len(expression); index++ {
 		switch character := expression[index]; character {
 		case '\'', '"', '`':
@@ -84,11 +85,8 @@ func hasPatternOrSubquery(expression string) bool {
 				return true
 			}
 		case '{':
-			word := strings.TrimSpace(expression[:index])
-			for _, keyword := range [...]string{"EXISTS", "COUNT", "COLLECT"} {
-				if len(word) >= len(keyword) && strings.EqualFold(word[len(word)-len(keyword):], keyword) {
-					return true
-				}
+			if braces.at(index) {
+				return true
 			}
 		}
 	}

@@ -13,30 +13,41 @@ func validateStaticMapKeys(query string) error {
 	if strings.HasPrefix(upper, "CREATE CONSTRAINT") && findKeywordIndex(query, "REQUIRE") >= 0 {
 		return nil
 	}
+	var patternContext *mapPatternContext
+	// Carry the predecessor through this lexical pass. Re-reading from byte
+	// zero for each brace makes a flat list of ordinary maps quadratic.
+	lastLive := -1
 	for index := 0; index < len(query); index++ {
 		if query[index] == '\'' || query[index] == '"' || query[index] == '`' {
 			index = numericValidationSkipQuoted(query, index) - 1
+			lastLive = index
 			continue
 		}
-		if index+1 < len(query) && query[index] == '/' && query[index+1] == '/' {
-			index += 2
-			for index < len(query) && query[index] != '\n' && query[index] != '\r' {
-				index++
+		if query[index] == '/' {
+			if end := queryCommentEnd(query, index); end >= 0 {
+				index = end - 1
+				continue
 			}
+		}
+		if size := queryWhitespaceAt(query, index); size > 0 {
+			index += size - 1
 			continue
 		}
-		if index+1 < len(query) && query[index] == '/' && query[index+1] == '*' {
-			index += 2
-			for index+1 < len(query) && (query[index] != '*' || query[index+1] != '/') {
-				index++
-			}
-			index++
-			continue
-		}
+		previous := lastLive
+		lastLive = index
 		if query[index] != '{' {
 			continue
 		}
-		if precedingSubqueryExpressionKeyword(query, index) {
+		if subqueryExpressionAfterLiveByte(query, index, previous) {
+			// Validate in the nearest statement scope: an outer RETURN must
+			// not turn a nested MATCH property map into a map projection.
+			if close := findMatchingDelimiter(query, index, '{', '}'); close >= 0 {
+				if err := validateStaticMapKeys(query[index+1 : close]); err != nil {
+					return err
+				}
+				index = close
+				lastLive = close
+			}
 			continue
 		}
 		// A {m,n} after a parenthesised path quantifies it
@@ -57,7 +68,13 @@ func validateStaticMapKeys(query string) error {
 			}
 		}
 		if !mapLiteral {
-			if strings.TrimSpace(query[index+1:close]) != "" && insidePatternDelimiter(query, index) && !inProjectionClause(query, index) {
+			if strings.TrimSpace(query[index+1:close]) == "" {
+				continue
+			}
+			if patternContext == nil {
+				patternContext = newMapPatternContext(query)
+			}
+			if patternContext.insidePatternDelimiter(query, index) && !inProjectionClause(query, index) {
 				return newSemanticError(
 					"Neo.ClientError.Statement.SyntaxError",
 					"UnexpectedSyntax",
@@ -86,8 +103,8 @@ func validateStaticMapKeys(query string) error {
 
 // precedingSubqueryExpressionKeyword reports whether the '{' at braceIndex
 // opens a brace-bodied subquery expression (EXISTS {, COUNT {, COLLECT {, or
-// CALL {) rather than a node/relationship pattern property map. It scans
-// backward over whitespace to the nearest identifier token and matches it
+// CALL {) rather than a node/relationship pattern property map. It finds the lexical
+// predecessor outside whitespace/comments and matches its identifier
 // case-insensitively against the subquery-introducing keywords the grammar
 // allows before a bare '{'.
 //
@@ -108,10 +125,13 @@ func validateStaticMapKeys(query string) error {
 //     expression, keyword also preceded by '(') from `(count {bad})` (a
 //     node pattern, invalid property map).
 func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
-	index := braceIndex - 1
-	for index >= 0 && isCypherWhitespace(query[index]) {
-		index--
-	}
+	scanner := newSubqueryBraceScanner(query, 0)
+	return scanner.at(braceIndex)
+}
+
+// subqueryExpressionAfterLiveByte shares the same classification with callers
+// that already know the last live byte from a forward lexical pass.
+func subqueryExpressionAfterLiveByte(query string, braceIndex, index int) bool {
 	// CALL (a, b) { … }: step back over the import list to the CALL.
 	if index >= 0 && query[index] == ')' {
 		depth := 0
@@ -146,6 +166,12 @@ func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
 	if start >= end {
 		return false
 	}
+	return subqueryExpressionKeywordBeforeBrace(query, start, end, braceIndex)
+}
+
+// subqueryExpressionKeywordBeforeBrace validates a known keyword token and its
+// brace without rescanning its prefix when the forward reader already found it.
+func subqueryExpressionKeywordBeforeBrace(query string, start, end, braceIndex int) bool {
 	switch upperASCII(query[start:end]) {
 	case "EXISTS", "COUNT", "COLLECT", "CALL":
 	default:
@@ -172,19 +198,24 @@ func precedingSubqueryExpressionKeyword(query string, braceIndex int) bool {
 	return subqueryBraceBodyStartsLikeClause(query, braceIndex)
 }
 
-// subqueryBraceBodyStartsLikeClause reports whether the body of the brace at
-// braceIndex opens with a subquery clause keyword (MATCH, OPTIONAL, CALL,
-// WITH, UNWIND, RETURN) or a bare pattern element ('('), which is how every
-// EXISTS/COUNT/COLLECT/CALL subquery body starts. A malformed pattern
-// property map's body is a bare (invalid) key/value list and never starts
-// this way, so this rejects `(count {bad})` and `(n:Count {bad})` even
-// though the preceding-token check above cannot always tell a node-pattern
-// '(' apart from an expression-grouping '(' (both precede the keyword with
-// '(' in `(count {bad})` and `(EXISTS { MATCH ... })`).
+// subqueryBraceBodyStartsLikeClause distinguishes a subquery's opening clause
+// from an identically named map-projection selector. A selector ends at a comma
+// or closing brace; a clause requires a following body. Standalone ordering and
+// pagination also open valid expression subqueries and must reach normalization.
 func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 	index := braceIndex + 1
-	for index < len(query) && isCypherWhitespace(query[index]) {
-		index++
+	for index < len(query) {
+		if isCypherWhitespace(query[index]) {
+			index++
+			continue
+		}
+		if query[index] == '/' {
+			if end := queryCommentEnd(query, index); end > index {
+				index = end
+				continue
+			}
+		}
+		break
 	}
 	if index >= len(query) {
 		return false
@@ -199,8 +230,13 @@ func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 	if index == start {
 		return false
 	}
+	// A clause keyword can name a map key or a standalone projection selector.
+	if next := queryGapEnd(query, index); next < len(query) && (query[next] == ':' || query[next] == ',' || query[next] == '}') {
+		return false
+	}
+
 	switch upperASCII(query[start:index]) {
-	case "MATCH", "OPTIONAL", "CALL", "WITH", "UNWIND", "RETURN":
+	case "MATCH", "OPTIONAL", "CALL", "WITH", "UNWIND", "RETURN", "ORDER", "LIMIT", "SKIP", "OFFSET":
 		return true
 	default:
 		return false
@@ -215,44 +251,12 @@ func isCypherWhitespace(c byte) bool {
 // or SET clause, where parentheses group an expression, such as a map
 // projection (n {.k}).k, rather than delimit a node pattern.
 func inProjectionClause(query string, position int) bool {
-	clause, last := "", -1
-	for _, keyword := range []string{"MATCH", "CREATE", "MERGE", "WHERE", "RETURN", "WITH", "UNWIND", "SET"} {
-		positions := findAllTopLevelPipelineKeywordPositions(query[:position], keyword)
-		if len(positions) > 0 && positions[len(positions)-1] > last {
-			clause, last = keyword, positions[len(positions)-1]
-		}
-	}
-	switch clause {
+
+	switch mapClauseBefore(query[:position]) {
 	case "RETURN", "WITH", "UNWIND", "SET":
 		return true
 	}
 	return false
-}
-
-func insidePatternDelimiter(query string, end int) bool {
-	parentheses := 0
-	brackets := 0
-	for index := 0; index < end; index++ {
-		if query[index] == '\'' || query[index] == '"' || query[index] == '`' {
-			index = numericValidationSkipQuoted(query, index) - 1
-			continue
-		}
-		switch query[index] {
-		case '(':
-			parentheses++
-		case ')':
-			if parentheses > 0 {
-				parentheses--
-			}
-		case '[':
-			brackets++
-		case ']':
-			if brackets > 0 {
-				brackets--
-			}
-		}
-	}
-	return parentheses > 0 || brackets > 0
 }
 
 func validMapLiteralKey(key string) bool {
@@ -325,4 +329,43 @@ func colonIsMapKeySeparator(query string, colon int) bool {
 		index--
 	}
 	return index >= 0 && (query[index] == '{' || query[index] == ',')
+}
+
+// subqueryBraceScanner retains lexical progress across increasing brace offsets.
+// Each query byte is read once even when a statement contains many plain maps.
+type subqueryBraceScanner struct {
+	query              string
+	position, lastLive int
+}
+
+func newSubqueryBraceScanner(query string, start int) subqueryBraceScanner {
+	return subqueryBraceScanner{query: query, position: start, lastLive: start - 1}
+}
+
+func (scanner *subqueryBraceScanner) at(brace int) bool {
+	if brace < 0 || brace >= len(scanner.query) || scanner.query[brace] != '{' {
+		return false
+	}
+	for scanner.position < brace {
+		i := scanner.position
+		c := scanner.query[i]
+		if c == '\'' || c == '"' || c == '`' {
+			scanner.position = skipCypherQuotedText(scanner.query, i, c)
+			scanner.lastLive = scanner.position - 1
+			continue
+		}
+		if c == '/' {
+			if end := queryCommentEnd(scanner.query, i); end > i {
+				scanner.position = end
+				continue
+			}
+		}
+		if size := queryWhitespaceAt(scanner.query, i); size > 0 {
+			scanner.position += size
+			continue
+		}
+		scanner.lastLive = i
+		scanner.position++
+	}
+	return scanner.position == brace && subqueryExpressionAfterLiveByte(scanner.query, brace, scanner.lastLive)
 }

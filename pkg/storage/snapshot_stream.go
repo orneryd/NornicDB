@@ -17,7 +17,7 @@ var ErrStreamingSnapshotUnsupported = errors.New("streaming snapshots require st
 
 const (
 	streamSnapshotMagic       = "NDS2"
-	streamSnapshotVersion     = byte(1)
+	streamSnapshotVersion     = byte(2)
 	streamSnapshotNode        = byte(1)
 	streamSnapshotEdge        = byte(2)
 	streamSnapshotFooter      = byte(0xff)
@@ -41,6 +41,8 @@ type SnapshotVisitor interface {
 	VisitEdge(*Edge) error
 }
 
+// WriteSnapshot writes lossless NDS2 v2 entity frames using streaming enumeration.
+// Its existing lightweight route does not fetch separately stored embeddings.
 func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options SnapshotOptions) error {
 	streamer, ok := engine.(StreamingEngine)
 	if !ok {
@@ -55,16 +57,7 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 	}
 
 	buffered := bufio.NewWriter(writer)
-	if _, err := buffered.WriteString(streamSnapshotMagic); err != nil {
-		return err
-	}
-	if err := buffered.WriteByte(streamSnapshotVersion); err != nil {
-		return err
-	}
-	if err := binary.Write(buffered, binary.LittleEndian, options.Sequence); err != nil {
-		return err
-	}
-	if err := binary.Write(buffered, binary.LittleEndian, time.Now().UnixNano()); err != nil {
+	if err := writeSnapshotHeader(buffered, options.Sequence, time.Now()); err != nil {
 		return err
 	}
 
@@ -74,7 +67,7 @@ func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options
 	}
 	var nodeCount uint64
 	if err := nodeStream(ctx, func(node *Node) error {
-		if err := writeSnapshotFrame(buffered, streamSnapshotNode, node, maxRecordBytes); err != nil {
+		if err := writeSnapshotFrame(buffered, streamSnapshotNode, snapshotNodeVectorMetadata(node), maxRecordBytes); err != nil {
 			return err
 		}
 		nodeCount++
@@ -156,7 +149,13 @@ func IsStreamingSnapshot(path string) (bool, error) {
 	return string(header) == streamSnapshotMagic, nil
 }
 
+// ReadSnapshot visits entities from NDS2 v1 JSON or v2 typed frames.
+// Unsupported versions fail before visiting entities.
 func ReadSnapshot(reader io.Reader, visitor SnapshotVisitor) (SnapshotMetadata, error) {
+	return readSnapshot(reader, visitor, nil, defaultSnapshotRecordSize)
+}
+
+func readSnapshot(reader io.Reader, visitor SnapshotVisitor, collection *Snapshot, maxRecordBytes int64) (SnapshotMetadata, error) {
 	var metadata SnapshotMetadata
 	buffered := bufio.NewReader(reader)
 	magic := make([]byte, len(streamSnapshotMagic))
@@ -164,7 +163,7 @@ func ReadSnapshot(reader io.Reader, visitor SnapshotVisitor) (SnapshotMetadata, 
 		return metadata, fmt.Errorf("invalid streaming snapshot header")
 	}
 	version, err := buffered.ReadByte()
-	if err != nil || version != streamSnapshotVersion {
+	if err != nil || (version != 1 && version != streamSnapshotVersion) {
 		return metadata, fmt.Errorf("unsupported streaming snapshot version")
 	}
 	var timestamp int64
@@ -177,14 +176,14 @@ func ReadSnapshot(reader io.Reader, visitor SnapshotVisitor) (SnapshotMetadata, 
 	metadata.Timestamp = time.Unix(0, timestamp)
 
 	for {
-		frameType, payload, err := readSnapshotFrame(buffered)
+		frameType, payload, err := readSnapshotFrameWithLimit(buffered, maxRecordBytes)
 		if err != nil {
 			return metadata, err
 		}
 		switch frameType {
 		case streamSnapshotNode:
 			var node Node
-			if err := json.Unmarshal(payload, &node); err != nil {
+			if err := decodeRecoveryPayload(payload, &node); err != nil {
 				return metadata, err
 			}
 			if err := visitor.VisitNode(&node); err != nil {
@@ -193,7 +192,7 @@ func ReadSnapshot(reader io.Reader, visitor SnapshotVisitor) (SnapshotMetadata, 
 			metadata.NodeCount++
 		case streamSnapshotEdge:
 			var edge Edge
-			if err := json.Unmarshal(payload, &edge); err != nil {
+			if err := decodeRecoveryPayload(payload, &edge); err != nil {
 				return metadata, err
 			}
 			if err := visitor.VisitEdge(&edge); err != nil {
@@ -201,12 +200,15 @@ func ReadSnapshot(reader io.Reader, visitor SnapshotVisitor) (SnapshotMetadata, 
 			}
 			metadata.EdgeCount++
 		case streamSnapshotFooter:
-			var footer struct {
-				Nodes uint64 `json:"nodes"`
-				Edges uint64 `json:"edges"`
-			}
+			var footer snapshotCompletion
 			if err := json.Unmarshal(payload, &footer); err != nil {
 				return metadata, err
+			}
+			if footer.Collection != nil {
+				metadata.Timestamp = footer.Collection.Timestamp
+				if collection != nil {
+					collection.Version = footer.Collection.Version
+				}
 			}
 			if footer.Nodes != metadata.NodeCount || footer.Edges != metadata.EdgeCount {
 				return metadata, fmt.Errorf("streaming snapshot footer count mismatch")
@@ -222,7 +224,7 @@ func ReadSnapshot(reader io.Reader, visitor SnapshotVisitor) (SnapshotMetadata, 
 }
 
 func writeSnapshotFrame(writer io.Writer, frameType byte, value any, maxRecordBytes int64) error {
-	payload, err := json.Marshal(value)
+	payload, err := encodeRecoveryPayload(value)
 	if err != nil {
 		return err
 	}
@@ -242,6 +244,10 @@ func writeSnapshotFrame(writer io.Writer, frameType byte, value any, maxRecordBy
 }
 
 func readSnapshotFrame(reader io.Reader) (byte, []byte, error) {
+	return readSnapshotFrameWithLimit(reader, defaultSnapshotRecordSize)
+}
+
+func readSnapshotFrameWithLimit(reader io.Reader, maxRecordBytes int64) (byte, []byte, error) {
 	var frameType [1]byte
 	if _, err := io.ReadFull(reader, frameType[:]); err != nil {
 		return 0, nil, fmt.Errorf("streaming snapshot missing completion footer: %w", err)
@@ -250,12 +256,26 @@ func readSnapshotFrame(reader io.Reader) (byte, []byte, error) {
 	if err := binary.Read(reader, binary.LittleEndian, &length); err != nil {
 		return 0, nil, err
 	}
-	if length > defaultSnapshotRecordSize {
+	if int64(length) > maxRecordBytes {
 		return 0, nil, fmt.Errorf("streaming snapshot record exceeds reader limit")
 	}
-	payload := make([]byte, length)
-	if _, err := io.ReadFull(reader, payload); err != nil {
-		return 0, nil, err
+	var payload []byte
+	if length <= defaultSnapshotRecordSize {
+		payload = make([]byte, length)
+		if _, err := io.ReadFull(reader, payload); err != nil {
+			return 0, nil, err
+		}
+	} else {
+		// Materialized backups historically had no streaming-record bound. Read
+		// progressively so a forged large length does not preallocate gigabytes.
+		var err error
+		payload, err = io.ReadAll(io.LimitReader(reader, int64(length)))
+		if err != nil {
+			return 0, nil, err
+		}
+		if int64(len(payload)) != int64(length) {
+			return 0, nil, io.ErrUnexpectedEOF
+		}
 	}
 	var expectedCRC uint32
 	if err := binary.Read(reader, binary.LittleEndian, &expectedCRC); err != nil {

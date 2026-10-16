@@ -120,7 +120,7 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 	cause := errors.New("forced admin failure")
 
 	t.Run("create database", func(t *testing.T) {
-		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(), createDatabaseErr: cause}
+		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t), createDatabaseErr: cause}
 		exec.SetDatabaseManager(manager)
 		_, err := exec.executeCreateDatabase(ctx, "CREATE DATABASE tenant_create")
 		localizedErr := requireCypherAdminLocalizedError(t, err, localization.MessageCypherAdminCreateDatabaseFailed, "failed to create database 'tenant_create': forced admin failure")
@@ -129,7 +129,7 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 	})
 
 	t.Run("drop database", func(t *testing.T) {
-		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(), dropDatabaseErr: cause}
+		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t), dropDatabaseErr: cause}
 		require.NoError(t, manager.mockDatabaseManager.CreateDatabase("tenant_drop"))
 		exec.SetDatabaseManager(manager)
 		_, err := exec.executeDropDatabase(ctx, "DROP DATABASE tenant_drop")
@@ -138,7 +138,7 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 	})
 
 	t.Run("create alias", func(t *testing.T) {
-		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(), createAliasErr: cause}
+		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t), createAliasErr: cause}
 		exec.SetDatabaseManager(manager)
 		_, err := exec.executeCreateAlias(ctx, "CREATE ALIAS tenant_alias FOR DATABASE tenant_target")
 		localizedErr := requireCypherAdminLocalizedError(t, err, localization.MessageCypherAdminCreateAliasFailed, "failed to create alias 'tenant_alias' for database 'tenant_target': forced admin failure")
@@ -148,7 +148,7 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 	})
 
 	t.Run("drop alias", func(t *testing.T) {
-		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(), dropAliasErr: cause}
+		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t), dropAliasErr: cause}
 		exec.SetDatabaseManager(manager)
 		_, err := exec.executeDropAlias(ctx, "DROP ALIAS tenant_alias")
 		requireCypherAdminLocalizedError(t, err, localization.MessageCypherAdminDropAliasFailed, "failed to drop alias 'tenant_alias': forced admin failure")
@@ -156,7 +156,7 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 	})
 
 	t.Run("database limit lookup", func(t *testing.T) {
-		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(), getLimitsErr: cause}
+		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t), getLimitsErr: cause}
 		exec.SetDatabaseManager(manager)
 		_, err := exec.executeShowLimits(ctx, "SHOW LIMITS FOR DATABASE tenant_limits")
 		localizedErr := requireCypherAdminLocalizedError(t, err, localization.MessageCypherAdminDatabaseNotFound, "database 'tenant_limits' not found: forced admin failure")
@@ -165,7 +165,7 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 	})
 
 	t.Run("database limit update", func(t *testing.T) {
-		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(), setLimitsErr: cause}
+		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t), setLimitsErr: cause}
 		require.NoError(t, manager.mockDatabaseManager.CreateDatabase("tenant_limits"))
 		exec.SetDatabaseManager(manager)
 		_, err := exec.executeAlterDatabase(ctx, "ALTER DATABASE tenant_limits SET LIMIT max_nodes = 42")
@@ -175,7 +175,7 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 	})
 
 	t.Run("invalid limit value", func(t *testing.T) {
-		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager()}
+		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t)}
 		require.NoError(t, manager.mockDatabaseManager.CreateDatabase("tenant_limits"))
 		manager.limits["tenant_limits"] = &multidb.Limits{}
 		exec.SetDatabaseManager(manager)

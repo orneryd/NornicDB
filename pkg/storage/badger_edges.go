@@ -39,6 +39,12 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	releaseConstraint, constraintErr := b.lockRelationshipConstraintEdge(edge)
+	if constraintErr != nil {
+		return constraintErr
+	}
+	defer releaseConstraint()
+
 	if edge.CreatedAt.IsZero() {
 		edge.CreatedAt = time.Now()
 	}
@@ -264,6 +270,11 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	releaseConstraint, constraintErr := b.lockRelationshipConstraintEdge(edge)
+	if constraintErr != nil {
+		return constraintErr
+	}
+	defer releaseConstraint()
 
 	var oldType string
 	err := b.withUpdate(func(txn *badger.Txn) error {
@@ -631,7 +642,7 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 	it := txn.NewIterator(opts)
 	defer it.Close()
 	for it.Rewind(); it.Valid(); it.Next() {
-		if err := txn.Delete(it.Item().Key()); err != nil {
+		if err := txn.Delete(it.Item().KeyCopy(nil)); err != nil {
 			return 0, nil, nil, nil, fmt.Errorf("failed to delete embedding chunk: %w", err)
 		}
 	}

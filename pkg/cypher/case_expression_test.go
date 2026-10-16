@@ -8,45 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCompareWithOperatorCoverage(t *testing.T) {
-	if !compareWithOperator(nil, nil, "=") {
-		t.Fatalf("nil = nil should be true")
-	}
-	if compareWithOperator(nil, 1, "<") {
-		t.Fatalf("nil < 1 should be false")
-	}
-	if !compareWithOperator(nil, 1, "<>") {
-		t.Fatalf("nil <> 1 should be true")
-	}
-	if !compareWithOperator(int64(1), int64(2), "<") {
-		t.Fatalf("1 < 2 should be true")
-	}
-	if !compareWithOperator(2, 1, ">") {
-		t.Fatalf("2 > 1 should be true")
-	}
-	if !compareWithOperator(2, 2, ">=") {
-		t.Fatalf("2 >= 2 should be true")
-	}
-	if !compareWithOperator(2, 2, "<=") {
-		t.Fatalf("2 <= 2 should be true")
-	}
-	if !compareWithOperator("a", "b", "<") {
-		t.Fatalf("a < b should be true")
-	}
-	if !compareWithOperator("b", "a", ">") {
-		t.Fatalf("b > a should be true")
-	}
-	if !compareWithOperator("x", "x", "=") {
-		t.Fatalf("x = x should be true")
-	}
-	if !compareWithOperator("x", "y", "<>") {
-		t.Fatalf("x <> y should be true")
-	}
-	if compareWithOperator("x", "y", "??") {
-		t.Fatalf("unknown operator should be false")
-	}
-}
-
 func TestSimpleCaseUsesTypedEquality(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(baseStore, "test"))
@@ -555,5 +516,7 @@ func TestListLiteralsAndComprehensions(t *testing.T) {
 	require.Equal(t, int64(5), exec.evaluateExpressionWithContextFull(ctx, "[x IN 5]", nil, nil, nil, nil, nil, 0))
 	require.Equal(t, []interface{}{"a"}, exec.evaluateExpressionWithContextFull(ctx, "[x IN ['a', 'b'] WHERE x = 'a']", nil, nil, nil, nil, nil, 0))
 	require.Equal(t, []interface{}{int64(10)}, exec.evaluateExpressionWithContextFull(ctx, "[x IN 5 | x * 2]", nil, nil, nil, nil, nil, 0))
-	require.Equal(t, []interface{}{"R"}, exec.evaluateExpressionWithContextFull(ctx, "[r IN [{type: 'R'}] | type(r)]", nil, nil, nil, nil, nil, 0))
+	failureCtx := withExpressionFailureSlot(ctx)
+	_ = exec.evaluateExpressionWithContextFull(failureCtx, "[r IN [{type: 'R'}] | type(r)]", nil, nil, nil, nil, nil, 0)
+	require.Error(t, getExpressionFailure(failureCtx), "ordinary maps are not relationships")
 }

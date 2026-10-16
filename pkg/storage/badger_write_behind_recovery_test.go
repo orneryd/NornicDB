@@ -185,9 +185,7 @@ func TestReplayWALEntry_AppliesBufferedCommit(t *testing.T) {
 
 	got, err := fresh.GetNode("test:n1")
 	require.NoError(t, err)
-	// ReplayWALEntry caches the JSON round-tripped operation (int64 property
-	// values decode as float64 through the WAL JSON hop — the same shape the
-	// snapshot+WAL corruption-recovery path produces). The semantic value is
-	// exact; only the Go scalar type differs.
-	require.Equal(t, float64(99), got.Properties["v"])
+	// Legacy integer lexemes retain exact signed-integer values through the
+	// same recovery reader used by ordinary WAL entries and startup replay.
+	require.Equal(t, int64(99), got.Properties["v"])
 }

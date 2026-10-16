@@ -14,8 +14,8 @@ var patternNodeVariables = newBoundedCache[string, []string](1024, boundedCacheS
 // (WITH x.node AS m MATCH (m) where m is a string). A variable whose type is
 // known before the statement runs is rejected then (projectedOperand); a
 // relationship position bound to another value only matches nothing, as in
-// Neo4j. A node projected as a map or a value of no Cypher type is not
-// rejected here.
+// Neo4j. Ordinary maps remain maps even when their keys resemble metadata;
+// typed graph values and values of no Cypher type retain their own handling.
 func validateBoundPatternNodes(rows []pipelineRow, body string) error {
 	if len(rows) == 0 || len(rows) == 1 && len(rows[0]) == 0 {
 		return nil
@@ -38,17 +38,12 @@ func validateBoundPatternNodes(rows []pipelineRow, body string) error {
 }
 
 // boundPatternNodeValueError is the TypeError for a pattern's node variable
-// bound to value, or nil when value is a node, null, a node projected as a
-// map, or a value of no Cypher type.
+// bound to value, or nil when value is a node, null, or a value of no Cypher
+// type. User maps cannot acquire node identity through metadata-shaped keys.
 func boundPatternNodeValueError(variable string, value interface{}) error {
 	switch cypherValueKindOf(value) {
 	case valueKindNode, valueKindNull, valueKindOther:
 		return nil
-	case valueKindMap:
-		object, _ := value.(map[string]interface{})
-		if _, node := object["_nodeId"]; node {
-			return nil
-		}
 	}
 	return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
 		localization.CypherCorePatternNodeValueType(variable, cypherTypeName(value)))

@@ -115,6 +115,8 @@ Cypher detects `reveal(...)` in the submitted query text and calls `setRevealOnE
 - Normal queries take a **shared** scope so they cannot observe another query's reveal mode.
 - This bypass lives at the storage/read layer. It does not rewrite scores or persisted suppression state.
 
+External query result owners use `storage.BeginQueryResultProjectionContext(ctx, engine)` and defer its returned release. Cypher records its existing reveal mutex ownership with `BeginQueryRevealScopeContext`, so a nested search service borrows a genuine live lease instead of recursively acquiring a read lock behind a waiting reveal writer. Nested work preserves the owning query's reveal mode. Distinct physical engines have distinct leases; database namespaces and property policies are always resolved from the supplied projection engine, never borrowed from another database. Derived expression contexts inherit only opaque live leases; released contexts cannot impersonate an active scope. Borrowed work must finish before its owner releases the scope.
+
 ### 2. Visibility is enforced twice on reads
 
 The visibility layer does not rely on a single check.
@@ -128,9 +130,15 @@ That second check matters because it keeps correctness even if a body is reached
 
 If an entity survives the node/edge visibility filter, the Cypher materialization path still removes properties whose property-level rules are currently suppressed.
 
-- Nodes are filtered in `nodeToMap`.
-- Edges are filtered in `edgeToMap`.
+- Entity projections, property expressions, `properties()`, `keys()`, map projections and entities inside paths share the node and relationship property filters.
+- Projections use detached property maps. Mutation owners retain full entities, so an unrelated `SET` preserves suppressed stored fields. Direct engine reads and `reveal()` expose the stored properties for debugging.
 - The property scorer uses the same namespace and access metadata inputs as the entity scorer, but evaluates per-property compiled overrides.
+
+Normal computed HTTP graph `neighborhood`, `expand`, and `path` responses use the same detached node/relationship property projection as Cypher. These operations are query results even though their traversal starts from supplied IDs. Their property filters also evaluate the visible property maps. Direct engine/Go CRUD lookups, explicit debug reads, `reveal()`, temporal/diff history views, snapshots, backups and GDPR exports retain stored properties. Property suppression is a query presentation policy, not an authorization or storage erasure boundary. The shared search service also projects node and relationship payloads before display fields or property matches are generated, and refreshes durable continuation payloads on each pull. Known matches on hidden properties are omitted without changing retained match slices. A cursor whose grouping property becomes hidden is invalidated rather than emitting a stale group key. Normal search bypasses result caching while decay is enabled because graph revisions cannot represent elapsed visibility. Index construction, ranking scores and trusted Go admission/authorization callbacks retain their existing stored inputs; this is query-result property projection, not index erasure or an authorization boundary. Other direct query integrations are tracked explicitly in issue #1229 until their result owners are covered.
+
+Within a read-only Cypher statement, inline/scalar/result readers reuse detached entity property views. Fresh-pointer index rechecks may reuse a scored map only when ID and the complete scoring input (labels/type, timestamps and stored property body) match a detached snapshot. The cloned-body guard still compares property bodies; this is not a globally constant-time projection claim. Memo state is private to that statement and does not survive another statement. Mixed-write and dynamically non-cacheable statements use uncached projection so mutations immediately observe their new fields and retain hidden stored fields. The disabled path does not discover the backend per value.
+
+While decay is enabled, Cypher bypasses result caching: visibility can change with elapsed time or access metadata without a graph-write revision. Ordinary reads retain result caching when decay is disabled.
 
 ### 4. Persisted suppression state is the fallback truth when no scorer exists
 
@@ -216,3 +224,19 @@ The scoring page ends when `SuppressionEligible` is determined. This page starts
 - [Visibility Suppression and Deindex](../user-guides/visibility-suppression-deindex.md) — user-facing semantics and operational usage
 - [Retention Policies](../user-guides/retention-policies.md) — operator-facing retention configuration and caveats
 - [Knowledge Policy Metrics](../observability/knowledge-policy-metrics.md) — counters and histograms emitted by the scoring and visibility paths
+
+### Normal subscription and related-node payloads
+
+GraphQL node/relationship created and updated events retain their whole-entity
+notification contract and synchronous publication order. Their detached property
+payloads use `storage.NewNormalEventResultProjection` before transport ID prefix
+removal, so the original namespace policy applies. Event projection deliberately
+ignores a mutation producer's REVEAL mode without changing that mode or acquiring
+another query mutex inside the callback. Stored values and the producer's own
+REVEAL results remain intact. Deleted notifications contain only IDs.
+
+MCP discover related-node title/name fallbacks and Heimdall related-node titles
+use the same contextual query-result projection as
+normal search payloads. A discover operation called from an already owned REVEAL
+query retains its owning scope. Neither integration changes raw storage/debug,
+history, backup or export APIs.

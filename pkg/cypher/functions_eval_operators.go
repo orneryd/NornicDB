@@ -34,7 +34,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 
 	// OR, XOR, AND and NOT (evaluateLogicalExpression).
 	if value, logical, _, err := evaluateLogicalExpression(expr, func(operand string) (interface{}, bool, error) {
-		return e.evaluateExpressionWithContextFull(ctx, operand, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), true, nil
+		return deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
+			return e.evaluateExpressionWithContextFull(ctx, operand, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		})
 	}); logical {
 		if err != nil {
 			recordExpressionFailure(ctx, err)
@@ -49,40 +51,28 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	if hasSuffixFoldASCII(expr, " is null") {
 		inner := strings.TrimSpace(expr[:len(expr)-8])
 		result := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		return result == nil
+		return nullEvaluationHandler(false).evaluate(result)
 	}
 	if hasSuffixFoldASCII(expr, " is not null") {
 		inner := strings.TrimSpace(expr[:len(expr)-12])
 		result := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		return result != nil
+		return nullEvaluationHandler(true).evaluate(result)
 	}
 
 	// ========================================
 	// String Predicates (STARTS WITH, ENDS WITH, CONTAINS)
 	// ========================================
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " STARTS WITH ", true, true); ok {
-		leftStr, ok1 := e.evaluateStringPredicateOperand(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		rightStr, ok2 := e.evaluateStringPredicateOperand(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if ok1 && ok2 {
-			return strings.HasPrefix(leftStr, rightStr)
+	for _, p := range []struct {
+		operator string
+		match    func(string, string) bool
+	}{
+		{" STARTS WITH ", strings.HasPrefix}, {" ENDS WITH ", strings.HasSuffix}, {" CONTAINS ", strings.Contains},
+	} {
+		if left, right, ok := splitByOperatorOutsideCase(expr, p.operator, true, true); ok {
+			l := e.evaluateExpressionWithContextFull(ctx, left, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			r := e.evaluateExpressionWithContextFull(ctx, right, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			return rowStringPredicateValue(l, r, p.match)
 		}
-		return false
-	}
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " ENDS WITH ", true, true); ok {
-		leftStr, ok1 := e.evaluateStringPredicateOperand(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		rightStr, ok2 := e.evaluateStringPredicateOperand(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if ok1 && ok2 {
-			return strings.HasSuffix(leftStr, rightStr)
-		}
-		return false
-	}
-	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " CONTAINS ", true, true); ok {
-		leftStr, ok1 := e.evaluateStringPredicateOperand(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		rightStr, ok2 := e.evaluateStringPredicateOperand(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		if ok1 && ok2 {
-			return strings.Contains(leftStr, rightStr)
-		}
-		return false
 	}
 
 	// ========================================
@@ -179,13 +169,4 @@ func cypherMembership(value, listValue interface{}) (interface{}, bool) {
 		return nil, true
 	}
 	return false, true
-}
-
-func (e *StorageExecutor) evaluateStringPredicateOperand(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (string, bool) {
-	if isWholeCypherQuotedString(expr) {
-		return decodeCypherQuotedString(expr)
-	}
-	value := e.evaluateExpressionWithContextFull(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-	str, ok := value.(string)
-	return str, ok
 }

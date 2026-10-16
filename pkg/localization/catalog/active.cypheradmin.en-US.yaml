@@ -113,3 +113,35 @@
 - id: cypheradmin.database_options_unavailable
   description: The database manager has no database options. Command is untranslated Cypher syntax.
   other: "database options are not available - {{.Command}} requires a database manager with options"
+- id: cypheradmin.immutable_privilege_grant_forbidden
+  description: A GRANT IMMUTABLE while authentication is enabled. ASSIGN IMMUTABLE PRIVILEGE is untranslated Neo4j privilege syntax.
+  other: "Permission cannot be granted for ASSIGN IMMUTABLE PRIVILEGE."
+- id: cypheradmin.immutable_privilege_revoke_forbidden
+  description: A REVOKE of an immutable privilege while authentication is enabled.
+  other: "Immutable privileges cannot be revoked."
+- id: cypheradmin.privilege_role_not_found
+  description: A GRANT to a role that does not exist. Action (execute, execute_boosted) and Role are untranslated.
+  other: "Failed to grant {{.Action}} privilege to role '{{.Role}}': Role does not exist."
+
+- id: cypheradmin.system_graph_access_unsupported
+  description: A graph or schema statement on the system database.
+  other: "Graph access is not supported on the system database"
+- id: cypheradmin.system_procedure_unsupported
+  description: A call of a procedure that does not run on the system database. Query is the untranslated statement.
+  other: "Not a recognised system command or procedure. This Cypher command can only be executed in a user database: {{.Query}}"
+- id: cypheradmin.transaction_statement_type
+  description: Incompatible statement types in an explicit transaction. Previous and Requested are Neo4j's untranslated statement type names.
+  other: "Tried to execute {{.Requested}} after executing {{.Previous}}"
+
+- id: cypheradmin.show_clause_unexpected
+  description: A clause after a SHOW command's YIELD on the system database. Clause is the clause's untranslated first keyword; the expected keywords are untranslated Cypher syntax.
+  other: "Invalid input '{{.Clause}}': expected ',', 'AS', 'ORDER BY', 'LIMIT', 'OFFSET', 'RETURN', 'SHOW', 'SKIP', 'TERMINATE', 'WHERE' or <EOF>"
+- id: cypheradmin.show_expression_invalid
+  description: A COUNT, EXISTS or COLLECT subquery in a SHOW command on the system database. Expression is the untranslated keyword.
+  other: "The {{.Expression}} expression is not valid on SHOW commands."
+- id: cypheradmin.show_pattern_comprehension_invalid
+  description: A pattern comprehension in a SHOW command on the system database.
+  other: "Pattern comprehensions are not valid on SHOW commands."
+- id: cypheradmin.show_pattern_expression_invalid
+  description: A pattern expression in a SHOW command on the system database.
+  other: "Pattern expressions are not valid on SHOW commands."

@@ -272,51 +272,19 @@ func TestShortestPath(t *testing.T) {
 	exec := setupTestExecutor(t)
 	setupTraversalTestData(t, exec)
 
-	// Get nodes
-	people, _ := exec.storage.GetNodesByLabel("Person")
-	var alice, carol *storage.Node
-	for _, n := range people {
-		switch n.Properties["name"] {
-		case "Alice":
-			alice = n
-		case "Carol":
-			carol = n
+	// Alice -[WORKS_WITH]-> Carol (length 1); Alice -[KNOWS]-> Bob -[KNOWS]->
+	// Carol (length 2).
+	for query, want := range map[string]int64{
+		"MATCH (a:Person {name: 'Alice'}), (c:Person {name: 'Carol'}) MATCH p = shortestPath((a)-[*..10]->(c)) RETURN length(p)":       1,
+		"MATCH (a:Person {name: 'Alice'}), (c:Person {name: 'Carol'}) MATCH p = shortestPath((a)-[:KNOWS*..10]->(c)) RETURN length(p)": 2,
+	} {
+		result, err := exec.Execute(context.Background(), query, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", query, err)
 		}
-	}
-
-	if alice == nil || carol == nil {
-		t.Fatal("Could not find Alice and Carol nodes")
-	}
-
-	// Test shortest path Alice -> Carol
-	// Direct: Alice -[WORKS_WITH]-> Carol (length 1)
-	// Via Bob: Alice -[KNOWS]-> Bob -[KNOWS]-> Carol (length 2)
-	path, err := exec.shortestPath(context.Background(), alice, carol, nil, "outgoing", 10)
-	if err != nil {
-		t.Fatalf("shortestPath: %v", err)
-	}
-
-	if path == nil {
-		t.Fatal("shortestPath returned nil")
-	}
-
-	// Should find the direct WORKS_WITH path (length 1)
-	if path.Length != 1 {
-		t.Errorf("shortestPath length = %d, want 1", path.Length)
-	}
-
-	// Test shortest path with type filter
-	pathKnows, err := exec.shortestPath(context.Background(), alice, carol, []string{"KNOWS"}, "outgoing", 10)
-	if err != nil {
-		t.Fatalf("shortestPath KNOWS: %v", err)
-	}
-	if pathKnows == nil {
-		t.Fatal("shortestPath with KNOWS filter returned nil")
-	}
-
-	// Should find Alice -> Bob -> Carol (length 2)
-	if pathKnows.Length != 2 {
-		t.Errorf("shortestPath KNOWS length = %d, want 2", pathKnows.Length)
+		if len(result.Rows) != 1 || result.Rows[0][0] != want {
+			t.Errorf("%s = %v, want length %d", query, result.Rows, want)
+		}
 	}
 }
 
@@ -324,38 +292,17 @@ func TestAllShortestPaths(t *testing.T) {
 	exec := setupTestExecutor(t)
 	setupTraversalTestData(t, exec)
 
-	// Get nodes
-	people, _ := exec.storage.GetNodesByLabel("Person")
-	var alice, carol *storage.Node
-	for _, n := range people {
-		switch n.Properties["name"] {
-		case "Alice":
-			alice = n
-		case "Carol":
-			carol = n
-		}
-	}
-
-	if alice == nil || carol == nil {
-		t.Fatal("Could not find Alice and Carol nodes")
-	}
-
-	// All shortest paths from Alice to Carol
-	paths, err := exec.allShortestPaths(context.Background(), alice, carol, nil, "outgoing", 10)
+	// All shortest paths from Alice to Carol: the direct one.
+	result, err := exec.Execute(context.Background(), "MATCH (a:Person {name: 'Alice'}), (c:Person {name: 'Carol'}) MATCH p = allShortestPaths((a)-[*..10]->(c)) RETURN length(p)", nil)
 	if err != nil {
 		t.Fatalf("allShortestPaths: %v", err)
 	}
-
-	// Should find at least the direct path
-	if len(paths) == 0 {
+	if len(result.Rows) == 0 {
 		t.Fatal("allShortestPaths returned empty")
 	}
-
-	// All returned paths should have the same (shortest) length
-	shortestLen := paths[0].Length
-	for i, p := range paths {
-		if p.Length != shortestLen {
-			t.Errorf("Path %d has length %d, expected %d", i, p.Length, shortestLen)
+	for i, row := range result.Rows {
+		if row[0] != int64(1) {
+			t.Errorf("Path %d has length %v, expected 1", i, row[0])
 		}
 	}
 }

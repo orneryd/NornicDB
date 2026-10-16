@@ -6,6 +6,40 @@
 
 ---
 
+## Coding and review principles
+
+Read and apply the [standing design principles](.agents/standing-design-principles.md)
+while choosing a solution, writing code, and correcting code. Apply
+[Rule 73](.agents/rule73.md) when corrections repeatedly fail or repeat an unsuccessful
+approach. Explicit user instructions take precedence over repository guidance.
+
+### Verification and review
+
+- Lead proof with the requested product outcome, its supported conclusion, evidence,
+  and practical limits. Verify the complete affected correction, including its public
+  paths and consumers; a helper-only test does not establish that the public path
+  reaches that helper.
+- Establish the approved contract and preserve the original failing evidence.
+  Distinguish an established defect from an unapproved precaution: reproducing an
+  exceptional scenario does not by itself justify adding behavior.
+- Scope regression checks to affected contracts and input boundaries. Do not claim
+  broad correctness from statement coverage, static candidates, or a narrower input
+  population.
+- Review and verify the integrated current source. Related fixes tested in separate
+  branches do not prove their combined implementation works. Evidence from changed
+  source must have its continuing applicability established.
+- Report what was actually checked, including failures, cancellations, cached results,
+  skips and limitations. A canceled or superseded run is incomplete; cached evidence
+  is not a fresh run.
+- Follow the applicable checks and baselines in [CONTRIBUTING.md](CONTRIBUTING.md).
+  Do not weaken assertions, waive regressions, or substitute an unrelated benchmark
+  to obtain a passing result.
+- When a failure recurs, reassess the causal owner, approach and verification that
+  missed it. Complete the integrated correction and its required review and proof
+  before declaring the issue resolved.
+
+---
+
 ## Core Philosophy
 
 NornicDB is an **enterprise-grade, high-performance graph database** that prioritizes:
@@ -44,6 +78,10 @@ func optimizeQuery() { /* new algorithm with proof */ }
 ```
 
 ### 2. **Test-Driven Bug Fixes**
+
+Apply the [standing design principles](.agents/standing-design-principles.md).
+When [Rule 73](.agents/rule73.md) applies, the minimal fix must correct the complete
+affected causal unit; the reproduction and regression requirements below remain mandatory.
 
 **MANDATORY WORKFLOW** for all bugs:
 
@@ -473,6 +511,26 @@ release ownership, milestones, and verification. Read it before choosing a branc
   Existing main push and tag publishing triggers remain active.
 - Choosing a PR route does not authorize pushing, merging, tagging, or changing repository settings.
 
+### Temporary local PR verification policy (through October 31, 2026)
+
+Through October 31, 2026 inclusive (America/Phoenix), run `make verify BASE=origin/<pr-base>` locally
+for every PR created. Post a result comment on the PR, not just a description: include the checked head SHA,
+base SHA, exact command, results, failures, and any skipped or unexecuted checks with reasons. Re-run after
+changes or rebases and post the updated result. Path-filtered no-op runs must be reported as such, not as a
+full-suite pass. GitHub Actions remains manual and administrator-approved.
+
+For a maintainer-approved release batch, focused-validated fixes that merge cleanly may be integrated before
+full verification. Run one combined `make verify ALL=1 BASE=<immutable-base>` on the frozen release head,
+and post its checked head, base, command, result, and skips on every participating PR. Clearly identify this
+as shared release verification, not an individual PR-head pass. Cancel redundant individual full runs, preserve
+their logs, and open follow-up PRs against the release branch for any integration regressions. Re-run the
+combined checks after fixes; do not declare the release verified while failures remain.
+
+Fix every regression found before declaring the PR or combined release verified. If several PRs share a root cause, open a dedicated
+fix PR against their common integration base, link it from affected PRs, and propagate it into each affected
+branch before re-running verification. Do not waive regressions or claim a blocked check passed. Report local
+toolchain blockers separately, resolve them where possible, and rerun the affected checks.
+
 ### 1. **Before Starting Work**
 
 Inspect the working tree and applicable instructions. Choose the PR base using the rules above and preserve
@@ -504,7 +562,7 @@ go test ./... -race
 
 ### 3. **Before Committing**
 
-Run `make verify BASE=origin/<pr-base>` for the actual target branch; `make verify` defaults to `origin/develop` on this branch.
+Run `make verify BASE=origin/<pr-base>` for the actual target branch; `make verify` defaults to `origin/main`.
 Use `make verify-help` for options and report any skips. Documentation-only changes need the applicable docs
 checks; runtime tests, coverage, and benchmarks below apply when the change affects code or performance.
 
@@ -680,6 +738,10 @@ See [.agents/performance-optimization.md](.agents/performance-optimization.md) f
 ---
 
 ## 🐛 Bug Fix Workflow
+
+Apply the [standing design principles](.agents/standing-design-principles.md) and
+[Rule 73](.agents/rule73.md) when its trigger is reached. A complete causal correction
+still requires the fail-first reproduction and proof in the five-step process below.
 
 **MANDATORY PROCESS** - No exceptions:
 

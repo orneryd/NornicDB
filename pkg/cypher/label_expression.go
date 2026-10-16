@@ -543,6 +543,12 @@ func labelExpressionBarAt(s string, start, at int) bool {
 // label test variable:Name, a dynamic term the dynamicLabelTestFunction call
 // that reads its value per row.
 func (x *labelExpression) predicate(variable string) string {
+	return x.predicateWithFunction(variable, dynamicLabelTestFunction)
+}
+
+// predicateWithFunction selects the generated callee before rendering so query
+// literals, property names and variables remain byte-for-byte unchanged.
+func (x *labelExpression) predicateWithFunction(variable, callee string) string {
 	switch x.kind {
 	case labelExpressionName:
 		return variable + ":" + labelExpressionNameText(x.name)
@@ -553,9 +559,9 @@ func (x *labelExpression) predicate(variable string) string {
 		if x.any {
 			any = "true"
 		}
-		return dynamicLabelTestFunction + "(" + variable + ", (" + x.expression + "), " + any + ")"
+		return callee + "(" + variable + ", (" + x.expression + "), " + any + ")"
 	case labelExpressionNot:
-		return "NOT (" + x.operands[0].predicate(variable) + ")"
+		return "NOT (" + x.operands[0].predicateWithFunction(variable, callee) + ")"
 	}
 	if len(x.operands) == 0 {
 		if x.kind == labelExpressionAnd {
@@ -569,7 +575,7 @@ func (x *labelExpression) predicate(variable string) string {
 	}
 	parts := make([]string, len(x.operands))
 	for i, operand := range x.operands {
-		parts[i] = operand.predicate(variable)
+		parts[i] = operand.predicateWithFunction(variable, callee)
 	}
 	return "(" + strings.Join(parts, separator) + ")"
 }
@@ -580,15 +586,19 @@ func (x *labelExpression) predicate(variable string) string {
 // is a dynamicLabelTestFunction call, which reads a node's labels or a
 // relationship's type, and null for any other value (#1181).
 func (x *labelExpression) entityPredicate(subject string) string {
+	return x.entityPredicateWithFunction(subject, dynamicLabelTestFunction)
+}
+
+func (x *labelExpression) entityPredicateWithFunction(subject, callee string) string {
 	switch x.kind {
 	case labelExpressionName:
-		return dynamicLabelTestFunction + "((" + subject + "), " + cypherStringLiteral(x.name) + ", false)"
+		return callee + "((" + subject + "), " + cypherStringLiteral(x.name) + ", false)"
 	case labelExpressionAny:
-		return dynamicLabelTestFunction + "((" + subject + "), [], " + cypherStringLiteral(labelWildcardMode) + ")"
+		return callee + "((" + subject + "), [], " + cypherStringLiteral(labelWildcardMode) + ")"
 	case labelExpressionDynamic:
-		return x.predicate("(" + subject + ")")
+		return x.predicateWithFunction("("+subject+")", callee)
 	case labelExpressionNot:
-		return "NOT (" + x.operands[0].entityPredicate(subject) + ")"
+		return "NOT (" + x.operands[0].entityPredicateWithFunction(subject, callee) + ")"
 	}
 	if len(x.operands) == 0 {
 		if x.kind == labelExpressionAnd {
@@ -602,7 +612,7 @@ func (x *labelExpression) entityPredicate(subject string) string {
 	}
 	parts := make([]string, len(x.operands))
 	for i, operand := range x.operands {
-		parts[i] = operand.entityPredicate(subject)
+		parts[i] = operand.entityPredicateWithFunction(subject, callee)
 	}
 	return "(" + strings.Join(parts, separator) + ")"
 }

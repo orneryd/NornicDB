@@ -16,9 +16,6 @@
 - id: server.new_role_already_exists
   description: Pseudo-locale new role conflict.
   other: "[!! new role name already exists !!]"
-- id: server.role_in_use
-  description: Pseudo-locale role in use.
-  other: "[!! cannot delete role: at least one user has this role !!]"
 - id: server.method_patch_or_delete_required
   description: Pseudo-locale PATCH or DELETE response.
   other: "[!! PATCH or DELETE required !!]"

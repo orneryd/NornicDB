@@ -613,6 +613,92 @@ for q in ["WITH 7 AS x RETURN COLLECT { CALL (x) { RETURN [x IN [1] | x] AS v } 
           "RETURN COUNT { MATCH (x:Q) WITH x WHERE EXISTS { MATCH (x)-[r:R]->() } } AS v"]:
     add("local-scope-references", "round4", q)
 
+# A CALL (x) body sees its imports through the whole body, after a WITH in
+# it too, and may declare them again: Neo4j rejects that ("is shadowing an
+# imported variable"), NornicDB keeps it as an extension (known_mismatches,
+# intended, #907). An expression subquery may not (#1227).
+for q in ["WITH 7 AS x CALL (x) { WITH 1 AS y RETURN x AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { WITH 1 AS y RETURN x AS v UNION WITH 2 AS y RETURN x AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { WITH x, 1 AS y WITH y RETURN x AS v } RETURN v",
+          "WITH 7 AS x, 8 AS z CALL (x) { WITH 1 AS z RETURN x + z AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { WITH x AS x RETURN x AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { WITH 1 AS x RETURN x AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { UNWIND [1] AS x RETURN x AS v } RETURN v",
+          "WITH 7 AS x CALL (x) { WITH 1 AS y RETURN x AS v UNION WITH 1 AS x RETURN x AS v } RETURN v",
+          "WITH 7 AS x RETURN EXISTS { WITH 1 AS x RETURN x } AS v",
+          "WITH 7 AS x RETURN COUNT { UNWIND [1] AS x RETURN x } AS v",
+          "WITH 7 AS x RETURN COLLECT { WITH x AS x RETURN x } AS v"]:
+    add("local-scope-references", "call-imports", q)
+# ... and when it runs, the imports stay bound through the body's WITH
+# clauses: a MATCH, OPTIONAL MATCH, WHERE pattern, MERGE or SET after a WITH
+# reads the imported variable (#1227).
+for q in ["MATCH (x:Q {id: 1}) CALL (x) { WITH 1 AS y MATCH (x)-->(m) RETURN m.id AS v } RETURN v",
+          "MATCH (x:Q {id: 3}) CALL (x) { WITH 1 AS y OPTIONAL MATCH (x)-->(m) RETURN m.id AS v } RETURN v",
+          "MATCH (x:Q {id: 1}) CALL (x) { WITH 1 AS y MATCH (m:Q) WHERE (x)-->(m) RETURN m.id AS v } RETURN v",
+          "MATCH (x:Q) CALL (x) { WITH 1 AS y WHERE (x)-->() RETURN x.id AS v } RETURN v ORDER BY v",
+          "MATCH (x:Q) CALL (x) { WITH 1 AS y WHERE EXISTS { (x)-->() } RETURN x.id AS v } RETURN v ORDER BY v",
+          "MATCH (x:Q {id: 1}) CALL (x) { OPTIONAL MATCH (n:Nope) WITH count(n) AS c MATCH (x)-->(m) RETURN c, m.id AS v } RETURN c, v",
+          "MATCH (x:Q {id: 1}) CALL (x) { MATCH (n:Nope) WITH count(*) AS c RETURN x.id AS i, c } RETURN i, c",
+          "MATCH (x:Q {id: 1}) CALL (*) { WITH 1 AS y MATCH (x)-->(m) RETURN m.id AS v } RETURN v",
+          "MATCH (x:Q {id: 1}) CALL (x) { WITH 1 AS y MATCH (x)-->(m) RETURN m.id AS v UNION WITH 2 AS y MATCH (m)-->(x) RETURN m.id AS v } RETURN v",
+          "MATCH (x:Q) CALL (x) { WITH 1 AS y MATCH (x)-->(m) RETURN m.id AS v } RETURN x.id AS i, v ORDER BY i",
+          "MATCH (x:Q {id: 1}) CALL (x) { UNWIND [1, 2] AS k WITH k MATCH (x)-->(m) RETURN k, m.id AS v } RETURN k, v ORDER BY k",
+          "MATCH (x:Q {id: 1}) CALL (x) { MATCH (m:Q {id: 3}) WITH m MATCH (x)-->(k) RETURN m.id AS mm, k.id AS v } RETURN mm, v"]:
+    add("local-scope-references", "call-imports", q)
+for q in ["MATCH (x:Q {id: 3}) CALL (x) { WITH 1 AS y MERGE (x)-[:S]->(t:T {id: 'z'}) RETURN t.id AS w } WITH count(*) AS c MATCH (n:Q)-[:S]->(:T) RETURN collect(n.id) AS v",
+          "MATCH (x:Q {id: 2}) CALL (x) { WITH 1 AS y SET x.p = y RETURN x.p AS w } WITH count(*) AS c MATCH (n:Q) WHERE n.p = 1 RETURN collect(n.id) AS v",
+          "MATCH (x:Q {id: 2}) CALL (x) { MATCH (n:Nope) WITH count(*) AS c SET x.q = c RETURN x.q AS w } WITH count(*) AS z MATCH (n:Q) WHERE n.q = 0 RETURN collect(n.id) AS v"]:
+    add("local-scope-references", "call-imports", q, mode="tx")
+
+# A list comprehension's elements are its projection's, typed with its
+# local as an element of the list it iterates (#1227).
+for q in ["UNWIND [at IN range(0, 1) | [at]] AS e RETURN collect(e[0]) AS v",
+          "UNWIND [at IN range(0, 1) | [at, 'p']] AS e WITH DISTINCT e[1] AS v RETURN collect(v) AS v",
+          "WITH [{reading: {party_ids: ['a', 'b'], party_versions: [1, 2]}}] AS readings UNWIND readings AS item WITH item.reading AS r UNWIND [at IN range(0, size(coalesce(r.party_ids, [])) - 1) | ['party', r.party_ids[at], r.party_versions[at]]] AS entry WITH DISTINCT entry[1] AS element RETURN collect(element) AS v",
+          "UNWIND [[0, 'p'], [1, 'p']] AS e WITH DISTINCT e[1] AS v RETURN collect(v) AS v",
+          "UNWIND [at IN range(0, 1) | [at]] + [at IN range(2, 3) | [at]] AS e RETURN collect(e[0]) AS v",
+          "UNWIND [at IN range(0, 3) WHERE at > 1] AS e RETURN collect(e + 1) AS v",
+          "UNWIND [at IN [[1], [2]] WHERE size(at) > 0] AS e RETURN collect(e[0]) AS v",
+          "UNWIND [at IN range(0, 1) | at > 0] AS e RETURN collect(NOT e) AS v",
+          "UNWIND [at IN range(0, 1) | {k: at}] AS e RETURN collect(e.k) AS v",
+          "WITH [at IN range(0, 1) | [at]] AS l RETURN l[0][0] AS v",
+          "RETURN [at IN range(0, 1) | [at]][1][0] AS v",
+          "UNWIND [at IN range(0, 1) | [at]] AS e RETURN collect(e.k) AS v"]:
+    add("unwind-source", "comprehension", q)
+add("unwind-source", "comprehension", "CREATE (r:Tmp {ids: ['a'], vs: [1]}) WITH r UNWIND [at IN range(0, size(r.ids) - 1) | ['p', r.ids[at], r.vs[at]]] AS entry WITH DISTINCT entry[1] AS e RETURN collect(e) AS v", mode="tx")
+
+# 12b''''''. A subscript on a map variable's property (#1227): v.h[k],
+# v.a.b[k] and v.l[i] read the row's map in a MATCH's own WHERE, a
+# variable-length or quantified step's, an EXISTS / COUNT / CALL
+# subquery's, and after WITH, as h[k] does; v comes from WITH, a CALL
+# result or UNWIND.
+MAP_HEADS = ["WITH {h: {`1`: true, `2`: false}, l: [2, 3], a: {b: {k: 2}}} AS v ",
+             "CALL () { RETURN {`1`: true, `2`: false} AS hh } WITH {h: hh, l: [2, 3], a: {b: {k: 2}}} AS v ",
+             "UNWIND [{h: {`1`: true, `2`: false}, l: [2, 3], a: {b: {k: 2}}}] AS v "]
+MAP_FORMS = ["MATCH (n:Q) WHERE v.h[toString(n.id)] IS NULL RETURN n.id AS v ORDER BY v",
+             "MATCH (n:Q) WHERE v.h[toString(n.id)] RETURN n.id AS v ORDER BY v",
+             "MATCH (s:Q {id: 1})-[rs:R*1..2]->(e) WHERE all(x IN rs WHERE v.h[toString(startNode(x).id)] IS NULL) RETURN e.id AS v ORDER BY v",
+             "MATCH (s:Q {id: 1})-[rs:R*1..2]->(e) WHERE any(x IN rs WHERE v.h[toString(x.w)] IS NOT NULL) RETURN e.id AS v ORDER BY v",
+             "MATCH (s:Q {id: 1})(()-[r:R WHERE v.h[toString(r.w)] IS NULL]->()){1,2}(e) RETURN e.id AS v ORDER BY v",
+             "MATCH (s:Q {id: 1})((x)-[r:R]->(y) WHERE v.h[toString(x.id)] IS NOT NULL)+(e) RETURN e.id AS v ORDER BY v",
+             "MATCH (s:Q)-[r:R]->(e)-[r2:R]->(f) WHERE any(k IN [r.w, r2.w] WHERE v.h[toString(k)] IS NOT NULL) RETURN count(*) AS v",
+             "MATCH (n:Q) WHERE EXISTS { MATCH (n)-[r:R]->() WHERE v.h[toString(r.w)] } RETURN n.id AS v ORDER BY v",
+             "MATCH (n:Q) WHERE NOT EXISTS { MATCH (n)-[r:R]->() WHERE v.h[toString(r.w)] IS NOT NULL } RETURN n.id AS v ORDER BY v",
+             "MATCH (n:Q) RETURN n.id AS id, COUNT { MATCH (n)-[r:R]->() WHERE v.h[toString(r.w)] IS NULL } AS v ORDER BY id",
+             "MATCH (n:Q) CALL (n, v) { MATCH (n)-[r:R]->(m) WHERE v.h[toString(r.w)] IS NULL RETURN count(m) AS c } RETURN n.id AS id, c AS v ORDER BY id",
+             "MATCH (n:Q) WITH v, n WHERE v.h[toString(n.id)] IS NULL RETURN n.id AS v ORDER BY v",
+             "WITH v.h AS h MATCH (n:Q) WHERE h[toString(n.id)] IS NULL RETURN n.id AS v ORDER BY v",
+             "MATCH (n:Q) WHERE v.a.b['k'] = n.id RETURN n.id AS v",
+             "MATCH (n:Q) WHERE v.a.b[toString(n.id)] IS NULL RETURN count(n) AS v",
+             "MATCH (n:Q) WHERE v.l[0] = n.id RETURN n.id AS v",
+             "MATCH (n:Q) WHERE v.l[n.id - 2] = n.id RETURN n.id AS v ORDER BY v",
+             "MATCH (n:Q) WHERE n.id IN v.l[0..1] RETURN n.id AS v",
+             "MATCH (n:Q) WHERE v.h[toString(n.id)] = true AND n.id IN v.l RETURN n.id AS v",
+             "MATCH (n:Q) RETURN n.id AS id, {b: true, `1`: 7}[toString(n.id)] AS v ORDER BY id"]
+for head in MAP_HEADS:
+    for form in MAP_FORMS:
+        add("map-property-subscript", "where", head + form)
+
 # 12c. Subquery bodies that start from the row's own variables (#1055): the
 # bound node, relationship and path fast paths against the pipeline. Bodies
 # read a bound relationship, a row value in a property map or WHERE, a path,
@@ -801,6 +887,148 @@ UNWIND_SOURCES = ["n.l", "n.l + n.l", "n.l + [4]", "[0] + n.l", "(n.l + n.l)", "
 for e in UNWIND_SOURCES:
     add("unwind-source", "unwind", PREFIX + f" UNWIND {e} AS v RETURN v")
     add("unwind-source", "unwind-count", PREFIX + f" UNWIND {e} AS v RETURN count(v) AS c")
+
+# 16. Selected shortest paths (#1212): SHORTEST k, ANY SHORTEST, ALL SHORTEST
+# and SHORTEST k GROUPS over quantified path patterns, quantified and
+# variable-length relationships, with a bound or unbound end, both ends
+# bound, a cycle back to the start, filters on the end, length bounds, and
+# no path. Each statement creates its own small graph (a directed triangle
+# 1->2->3->1 with the chord 1->3, a tail 3->4, a cycle 4->5->6->4, a :U
+# shortcut 2->5 and the isolated 7) and is rolled back. A SHORTEST k may take
+# any of the paths tied at its last length, so only the lengths and end
+# nodes of its paths are returned; ALL SHORTEST and GROUPS take every path
+# of their lengths, so their nodes are returned too.
+SHORTEST_GRAPH = ("CREATE (s1:S {id: 1}), (s2:S {id: 2}), (s3:S {id: 3}), (s4:S {id: 4}), (s5:S {id: 5}), "
+                  "(s6:S {id: 6}), (s7:S {id: 7}), (s1)-[:T {w: 1}]->(s2), (s2)-[:T {w: 2}]->(s3), "
+                  "(s3)-[:T {w: 3}]->(s1), (s1)-[:T {w: 2}]->(s3), (s3)-[:T {w: 1}]->(s4), (s4)-[:T {w: 2}]->(s5), "
+                  "(s5)-[:T {w: 3}]->(s6), (s6)-[:T {w: 1}]->(s4), (s2)-[:U {w: 5}]->(s5) WITH count(*) AS created ")
+SHORTEST_SELECTORS = ["ANY SHORTEST", "SHORTEST 1", "SHORTEST 2", "SHORTEST 3", "ALL SHORTEST", "SHORTEST 2 GROUPS",
+                      "SHORTEST 1 PATHS"]
+SHORTEST_PATTERNS = ["(()-[:T]->())+", "(()-[:T]-())+", "(()<-[:T]-())+", "(()-[:T]->()){2,}", "(()-[:T]-())*",
+                     "(()-[:T|U]->())+", "(()-[r:T WHERE r.w > 1]-())+", "((x)-[:T]->(y) WHERE x.id < y.id)+",
+                     "(()-[:T]-(x WHERE x.id <> 3))+", "-[:T]->+", "-[:T*]-", "-[:T]->{1,3}",
+                     "-[:T]->(m)(()-[:T]-())+", "(()-[:T]->()-[:T]->())+"]
+SHORTEST_ENDS = {
+    "start": ("(a:S {id: 1})", "(b)", "b.id AS e"),
+    "end": ("(a)", "(b:S {id: 5})", "a.id AS e"),
+    "pair": ("(a:S {id: 1})", "(b:S {id: 5})", "a.id AS e"),
+    "cycle": ("(a:S {id: 1})", "(a)", "a.id AS e"),
+    "none": ("(a:S {id: 4})", "(b:S {id: 7})", "b.id AS e"),
+    "filtered": ("(a:S {id: 2})", "(b:S WHERE b.id >= 4)", "b.id AS e"),
+}
+for selector in SHORTEST_SELECTORS:
+    whole = "GROUP" in selector or selector.startswith("ALL")
+    for pattern in SHORTEST_PATTERNS:
+        for position, (start, end, projected) in SHORTEST_ENDS.items():
+            match = f"MATCH p = {selector} {start}{pattern}{end}"
+            add("shortest-selector", position, SHORTEST_GRAPH + match + f" RETURN {projected}, length(p) AS l ORDER BY e, l", mode="tx")
+            if whole:
+                add("shortest-selector", position + "-nodes", SHORTEST_GRAPH + match
+                    + " RETURN [n IN nodes(p) | n.id] AS ns ORDER BY ns", mode="tx")
+# Length bounds on the clause's WHERE, a bound start from an earlier MATCH,
+# an end filter in the WHERE, and a parameter-free bound expression.
+for selector in ["SHORTEST 1", "SHORTEST 2", "ALL SHORTEST", "SHORTEST 2 GROUPS"]:
+    for pattern in ["(()-[:T]-())+", "(()-[:T]->())+", "-[:T]-+", "(()-[:T|U]-())*"]:
+        for where in ["length(p) <= 2", "length(p) < 2", "2 >= length(p)", "length(p) <= 1 + 1", "length(p) <= 0",
+                      "length(p) <= 2.5", "b.id > 2", "b.id > 2 AND length(p) <= 3", "length(p) > 2"]:
+            add("shortest-selector", "where", SHORTEST_GRAPH + f"MATCH p = {selector} (a:S {{id: 1}}){pattern}(b) WHERE {where}"
+                " RETURN b.id AS e, length(p) AS l ORDER BY e, l", mode="tx")
+            add("shortest-selector", "bound-start", SHORTEST_GRAPH + f"MATCH (a:S {{id: 3}}) MATCH p = {selector} (a){pattern}(b:S)"
+                f" WHERE {where} RETURN count(*) AS c, sum(length(p)) AS l", mode="tx")
+# Pre-filters on the whole path (a parenthesised path's WHERE) select among
+# the paths that hold them; the clause's WHERE filters the selected ones.
+for selector in ["SHORTEST 1", "ALL SHORTEST", "SHORTEST 2 GROUPS"]:
+    for inner, outer in [("((a:S {id: 1})(()-[:T]-(n))+(b:S {id: 4}) WHERE none(x IN n WHERE x.id = 3))", ""),
+                         ("(a:S {id: 1})(()-[:T]-(n))+(b:S {id: 4})", " WHERE none(x IN n WHERE x.id = 3)"),
+                         ("((a:S {id: 1})(()-[r:T]-())+(b) WHERE size(r) > 2)", ""),
+                         ("(a:S {id: 1})(()-[r:T]-())+(b)", " WHERE size(r) > 2")]:
+        add("shortest-selector", "path-filter", SHORTEST_GRAPH + f"MATCH p = {selector} {inner}{outer}"
+            " RETURN length(p) AS l ORDER BY l", mode="tx")
+# System statement policy and administration transactions share one owner.
+# Database-scoped statements cover session and USE routes. Sequences retain
+# one transaction, so routing and incompatible statement types are compared.
+for schema in ["CREATE INDEX review_sweep FOR (n:Review) ON (n.x)",
+               "CREATE CONSTRAINT review_sweep FOR (n:Review) REQUIRE n.x IS UNIQUE",
+               "DROP INDEX review_sweep IF EXISTS", "MATCH (n:Review) RETURN count(n) AS n"]:
+    for mode in ["", "EXPLAIN ", "PROFILE "]:
+        query = mode + schema
+        add("system-administration", "session", query, "tx")
+        cases[-1]["database"] = "system"
+        add("system-administration", "use", "USE system " + query, "tx")
+for statements in [
+        ["SHOW USERS", "CALL dbms.components()"],
+        ["SHOW USERS", "RETURN 1 AS n"],
+        ["SHOW USERS", "EXPLAIN CREATE (:Review)"],
+        ["RETURN 1 AS n", "SHOW USERS"],
+        ["SHOW DATABASES YIELD name WHERE name = 'system' RETURN count(*) AS n"] * 2]:
+    query = "; ".join(statements)
+    add("system-administration", "transaction", query, "tx")
+    cases[-1]["statements"] = statements
+
+# TemporalBinding: a named-zone overlap must retain the selected offset through every
+# mutation source and action. WITH-bound maps exercise the same expression
+# paths as parameter maps; the Bolt regression supplies driver temporals.
+for text in ["2026-10-25T01:30:00+01:00[Europe/London]",
+             "2026-10-25T01:30:00.123456789+01:00[Europe/London]",
+             "2026-10-25T01:30:00Z[Europe/London]",
+             "2026-11-01T01:30:00.123456789-04:00[America/New_York]",
+             "2026-11-01T01:30:00.123456789-05:00[America/New_York]",
+             "2026-10-25T01:30:00[Europe/London]",
+             "2026-03-29T01:30:00[Europe/London]",
+             "2026-11-01T01:30:00[America/New_York]",
+             "2026-03-08T02:30:00[America/New_York]"]:
+    dt = f"datetime('{text}')"
+    add("temporal-map-offset", "constructor", f"WITH {dt} AS d RETURN d.epochSeconds AS e, toString(d) AS s")
+    for relationship in [False, True]:
+        pattern = "(n:TemporalBinding {id:'v'})"
+        lead = ""
+        if relationship:
+            pattern = "(a)-[n:TemporalBinding {id:'v'}]->(b)"
+            lead = "MATCH (a:Q {id:1}), (b:Q {id:2}) "
+        for source in ["m", "{t:d, ts:[d]}", f"{{t:{dt}, ts:[{dt}]}}"]:
+            binding = f"WITH {dt} AS d WITH d, {{t:d, ts:[d]}} AS m "
+            for route in ["create", "property", "replace", "create-add", "merge", "where-merge", "on-create", "on-match"]:
+                prefix = binding + lead
+                if route == "create":
+                    body = "CREATE " + ("(a)-[n:TemporalBinding {id:'v', t:d, ts:[d]}]->(b)" if relationship else "(n:TemporalBinding {id:'v', t:d, ts:[d]})")
+                elif route == "property":
+                    body = "CREATE " + pattern + " SET n.t=d, n.ts=[d]"
+                elif route == "replace":
+                    body = "CREATE " + pattern + f" SET n={source}, n.id='v'"
+                elif route == "create-add":
+                    body = "CREATE " + pattern + f" SET n += {source}"
+                elif route == "merge":
+                    body = "MERGE " + pattern + f" SET n += {source}"
+                elif route == "where-merge":
+                    prefix = binding + "WITH d, m WHERE m.t IS NOT NULL " + lead
+                    body = "MERGE " + pattern + f" SET n += {source}"
+                elif route == "on-create":
+                    body = "MERGE " + pattern + f" ON CREATE SET n += {source}"
+                else:
+                    body = "CREATE " + pattern + " WITH " + ("a, b, " if relationship else "") + "d, m MERGE " + pattern + f" ON MATCH SET n += {source}"
+                query = prefix + body + " RETURN n.t.epochSeconds AS e, toString(n.t) AS s, n.ts[0].epochSeconds AS le, toString(n.ts[0]) AS ls"
+                add("temporal-map-offset", ("rel-" if relationship else "node-") + route, query, "tx")
+
+
+for text in ["2026-10-25T01:30:00+02:00[Europe/London]",
+             "2026-03-29T01:30:00Z[Europe/London]",
+             "2026-03-29T01:30:00+01:00[Europe/London]",
+             "2026-03-08T02:30:00-05:00[America/New_York]",
+             "2026-03-08T02:30:00-04:00[America/New_York]",
+             "2026-11-01T01:30:00-06:00[America/New_York]",
+             "2026-07-01T12:00:00Z[Europe/London]",
+             "2026-01-01T12:00:00+01:00[Europe/London]"]:
+    add("temporal-map-offset", "conflicting-zone-offset", f"RETURN datetime('{text}')")
+
+for value in ["point({x:1.25,y:2.5})", "[true,false]"]:
+    for relationship in [False, True]:
+        pattern = "(n:TypedBinding)"
+        read = "MATCH (n:TypedBinding)"
+        if relationship:
+            pattern = "(a:TypedStart)-[n:TYPED_BINDING]->(b:TypedEnd)"
+            read = "MATCH (:TypedStart)-[n:TYPED_BINDING]->(:TypedEnd)"
+        add("temporal-map-offset", "typed-predicate", f"WITH {value} AS p CREATE {pattern} SET n.v=p WITH p {read} WHERE n.v=p MERGE (h:TypedHit) RETURN count(h)", "tx")
+        add("temporal-map-offset", "typed-case", f"WITH {value} AS p MERGE {pattern} SET n.v=CASE WHEN true THEN p ELSE null END RETURN n.v=p", "tx")
 
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:

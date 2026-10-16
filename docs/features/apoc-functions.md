@@ -2,10 +2,95 @@
 
 NornicDB has `apoc.*` functions and procedures from two sources:
 
-- **Built into the executor**, always available: 36 `apoc.*` functions and 47 `apoc.*` / `gds.*` procedures.
-- **The optional APOC plugin** (`apoc.so`, built from `apoc/plugin-src/apoc`), which registers 983 function names. Today 81 of them can be called from a statement: plugin names with an upper-case letter aren't found (#1163), and most Go function types and every plugin procedure can't be called yet (#1167).
+- **Built into the executor**, always available: inspect `SHOW FUNCTIONS` and `SHOW PROCEDURES` for the current registered surface.
+- **The optional APOC plugin** (`apoc.so`, built from `apoc/plugin-src/apoc`) has an inventory of 983 names. Registered names preserve their exact case. Its supported Go handler bindings are described below; registration alone does not establish that a name implements Neo4j APOC semantics or can accept Cypher values.
 
 Some of these names aren't APOC names at all: NornicDB adds its own under the `apoc.*` and `gds.*` namespaces. They are listed under [NornicDB extensions](#nornicdb-extensions); a query that uses them won't run on Neo4j with APOC or GDS.
+
+## Native graph and temporal values
+
+The native executor implements `apoc.node.id`, `apoc.node.labels`,
+`apoc.node.degree`, `apoc.rel.id`, `apoc.rel.type`, `apoc.rel.startNode`,
+`apoc.rel.endNode`, `apoc.nodes.connected`, `apoc.path.elements`,
+`apoc.path.slice`, `apoc.path.combine`, and `apoc.temporal.format` for query
+values. These functions are available without the optional plugin. Compatible
+custom plugin handlers keep precedence; standalone APOC Go graph structs use a
+separate store and cannot replace the current query's graph reader.
+
+```cypher
+MATCH (a:Person {name: 'Alice'})
+RETURN apoc.node.labels(a), apoc.node.degree(a, 'KNOWS>');
+
+MATCH p=(:Person {name: 'Alice'})-[:KNOWS*1..3]->()
+RETURN apoc.path.elements(apoc.path.slice(p, 0, 1));
+
+RETURN apoc.temporal.format(datetime('2020-01-02T03:04:05Z'), 'yyyy-MM-dd');
+```
+
+Degree and connectivity read the current database and transaction. Relationship
+filters use APOC direction notation such as `KNOWS>`, `<KNOWS`, and `KNOWS|LIKES`.
+An undirected degree counts a self-relationship twice. Path slicing takes an
+offset and a relationship count, with defaults `0` and `-1` (remaining path).
+Offsets past the end return the terminal node's zero-hop path. Combining paths
+requires the first path's end to equal the second path's start; genuine remote
+path carriers retain their source identities.
+
+Native `apoc.node.id` and `apoc.rel.id` preserve NornicDB's accepted string ID
+contract; they do not implement Neo4j's numeric internal IDs. Remote values use
+the existing remote identity owner. Temporal formatting uses Java-style patterns
+and APOC's null/error and scalar text rules, rather than the standalone Go
+helper's `time.Format` layout. APOC duration fraction formatting is intentionally
+different from Cypher `format(duration, pattern)` and follows the pinned APOC
+5.26.30 behavior.
+
+`apoc.nodes.isDense` is **not implemented** for native graph values. Neo4j's
+answer reflects retained storage representation, including after relationships
+are deleted; a current degree threshold would give incorrect results. This and
+missing procedure capabilities remain tracked in [#1318](https://github.com/orneryd/NornicDB/issues/1318).
+
+## Plugin handler bindings
+
+Both expression evaluators use the same checked invocation owner. Common Go
+signatures retain direct calls; other supported signatures use a reflection
+fallback. For example, plugin `Functions()` entries can contain:
+
+```go
+// Cypher Integer arguments bind to declared int64 values.
+Handler: func(a, b int64) int64 { return a & b },
+
+// A Cypher numeric list binds element by element to []float64.
+Handler: func(xs []float64) float64 {
+    var sum float64
+    for _, x := range xs { sum += x }
+    return sum
+},
+
+// Map results remain maps, including property/subscript access in queries.
+Handler: func() map[string]interface{} {
+    return map[string]interface{}{"status": "ready"}
+},
+```
+
+Handlers may take fixed or variadic arguments and return no value, one value,
+`error`, or `(value, error)`. An optional first `context.Context` argument
+receives the calling statement context and is not a Cypher argument. Cancellation
+is checked before invocation; panics and returned errors become query errors.
+The Go callback remains responsible for observing cancellation during its work.
+
+Arity must match. Integer conversion rejects fractions, overflow, NaN, infinity,
+and negative values for unsigned arguments. Lists and maps convert recursively
+to their declared element types. Null binds to nullable Go interfaces, pointers,
+slices, or maps; it does not silently become an integer or other scalar zero.
+
+This removes the previous 18-signature dispatcher ceiling, not every capability
+limitation in the 983-name inventory. Cypher does not supply Go callbacks,
+`io.Reader` instances, or private APOC entity structs. Multiple non-error return
+values and function/channel return types are unsupported handler contracts.
+Transporting an arbitrary Go object is not guaranteed by accepting its Go
+signature. Such entries require explicit adapters and semantic tests before they
+can be described as supported Cypher functions. Procedure names require a real
+procedure declaration/implementation; scalar functions are not automatically
+promoted to `CALL`.
 
 ## Quick Start
 
@@ -376,6 +461,11 @@ RETURN node.name, score
 // Pathfinding
 MATCH (start:Person {name:'Alice'}), (end:Person {name:'Bob'})
 CALL apoc.algo.dijkstra(start, end, 'KNOWS', 'weight') YIELD path, weight
+RETURN path, weight
+
+// Explicit cost for relationships without the weight property
+MATCH (start:Person {name:'Alice'}), (end:Person {name:'Bob'})
+CALL apoc.algo.dijkstra(start, end, 'KNOWS', 'weight', 10.0) YIELD path, weight
 RETURN path, weight
 
 // Community detection
@@ -1027,9 +1117,9 @@ Build plugins on the same platform/architecture as your NornicDB deployment.
 
 What carries over from Neo4j with APOC, and what doesn't:
 
-- **Built-in functions:** 31 of the 36 are real APOC functions. Four are [NornicDB extensions](#nornicdb-extensions), and `apoc.coll.split` is an APOC procedure offered here as a function.
-- **Built-in procedures:** 33 of the 47 `apoc.*` / `gds.*` procedures are real APOC or GDS names; 14 are NornicDB extensions. `gds.*` procedures with GDS's names don't yet take GDS's parameters or return its columns (#1161).
-- **The APOC plugin:** 176 of its 983 names are real APOC functions and 118 are real APOC *procedures* it registers as functions; the other 689 aren't APOC names. 81 of the 983 can be called today (#1163, #1167), and none appears in `SHOW FUNCTIONS` (#1168).
+- **Built-in functions:** `SHOW FUNCTIONS` lists 48 built-in `apoc.*` functions (49 beside a loaded plugin's case-distinct `apoc.coll.SUM`). Of the original 36, 31 are real APOC functions, four are [NornicDB extensions](#nornicdb-extensions), and `apoc.coll.split` is an APOC procedure offered here as a function. The twelve [native graph, path and temporal functions](#native-graph-and-temporal-values) — `apoc.node.id`, `apoc.node.labels`, `apoc.node.degree`, `apoc.rel.id`, `apoc.rel.type`, `apoc.rel.startNode`, `apoc.rel.endNode`, `apoc.nodes.connected`, `apoc.path.elements`, `apoc.path.slice`, `apoc.path.combine`, and `apoc.temporal.format` — bring the total to 48. `apoc.node.id` and `apoc.rel.id` keep NornicDB's accepted string-ID design exception; they do not implement Neo4j's numeric internal IDs.
+- **Built-in procedures:** `SHOW PROCEDURES` lists the current registered surface. The GDS-named graph catalog — `gds.graph.list`, `gds.graph.drop`, `gds.graph.exists`, and `gds.graph.project` — now takes GDS's parameters and returns GDS's columns, as do `gds.fastRP.stream` / `gds.fastRP.stats` (#1161 closed); `gds.version` answers as a function. The `gds.linkPrediction.*.stream` names and the `apoc.algo.*` family remain [NornicDB extensions](#nornicdb-extensions). The remaining procedure capability gaps — the 102 of 118 historical procedure-only catalog entries with no bundled `CALL` contract — are tracked in the [versioned procedure capability audit](apoc-procedure-capabilities.md) and [#1318](https://github.com/orneryd/NornicDB/issues/1318).
+- **The APOC plugin:** the Go library catalog has 983 names, including genuine functions, procedure-only entries and NornicDB extensions. The plugin excludes the 118 confirmed procedure-only entries from scalar function exports, exporting the other 865. See the [versioned procedure capability audit](apoc-procedure-capabilities.md) for every entry, available native contracts, and remaining gaps; the typed handler dispatcher does not certify full APOC semantics. Loaded function metadata is available through `SHOW FUNCTIONS`.
 - File operations respect security settings, and the plugin system allows custom extensions. Performance characteristics may differ.
 
 ## NornicDB extensions
@@ -1048,9 +1138,9 @@ These names are NornicDB's own: they don't exist in APOC Core, APOC Extended or 
 
 **Built-in functions (4, and one procedure offered as a function):** `apoc.coll.containsAny`, `apoc.coll.reverse`, `apoc.meta.isType` and `apoc.meta.type` (APOC 5's are `apoc.meta.cypher.isType` / `apoc.meta.cypher.type`); `apoc.coll.split` is an APOC procedure.
 
-**The APOC plugin:** 689 of its names aren't APOC names, and 118 are APOC procedures that it registers as functions:
+**The APOC plugin:** the historical catalog includes NornicDB extensions and 118 procedure-only entries, now excluded from function exports. The following historical inventory is not a declaration that every listed capability is implemented:
 
-<details><summary>The plugin's names that aren't APOC names: 689 (the 55 callable today in <b>bold</b>)</summary>
+<details><summary>The plugin's names that aren't APOC names: 689 (historical inventory; the original audit's 55 measured-callable names are in <b>bold</b> and are not a current capability claim)</summary>
 
 - `apoc.math` (37): **abs**, **acos**, **asin**, **atan**, atan2, **ceil**, clamp, **cos**, **exp**, factorial, fibonacci, **floor**, gcd, isPrime, lcm, lerp, **log**, **log10**, **logit**, mean, median, mode, nextPrime, normalize, percentile, pow, product, **random**, randomInt, range, round, **sin**, **sqrt**, stdev, sum, **tan**, variance
 - `apoc.number` (35): **abs**, arabize, **ceil**, clamp, exact, **exp**, factorial, fibonacci, **floor**, fromBase, fromBinary, fromHex, fromOctal, gcd, isEven, isOdd, isPrime, lcm, lerp, **log**, **log10**, map, normalize, parse, power, **random**, randomInt, romanize, round, sign, **sqrt**, toBase, toBinary, toHex, toOctal
@@ -1099,7 +1189,7 @@ These names are NornicDB's own: they don't exist in APOC Core, APOC Extended or 
 
 </details>
 
-<details><summary>APOC procedures the plugin registers as functions: 118 (none callable today)</summary>
+<details><summary>Historical procedure-only catalog entries: 118 (16 have registered native contracts; 102 have no bundled CALL contract — see the capability audit)</summary>
 
 - `apoc.create` (13): addLabels, node, nodes, relationship, removeLabels, removeProperties, removeRelProperties, setProperties, setProperty, setRelProperties, setRelProperty, uuids, vNodes
 - `apoc.load` (12): csv, directory, driver, html, jdbc, jdbcUpdate, json, jsonArray, jsonParams, ldap, parquet, xml

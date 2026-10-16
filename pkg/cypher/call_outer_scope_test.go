@@ -91,6 +91,12 @@ func TestScopedCallBodyRedeclaresImportedName(t *testing.T) {
 		"WITH 1 AS a CALL (a) { UNWIND [2, 3] AS a RETURN a AS b } RETURN a, b":                     {{int64(1), int64(2)}, {int64(1), int64(3)}},
 		"UNWIND [1, 2] AS a CALL (a) { WITH a * 10 AS a RETURN a AS b } RETURN a, b":                {{int64(1), int64(10)}, {int64(2), int64(20)}},
 		"WITH 1 AS a CALL (a) { CALL (a) { WITH 2 AS a RETURN a AS c } RETURN c AS b } RETURN a, b": {{int64(1), int64(2)}},
+		// The imports stay bound through the body's WITH clauses; a
+		// redeclared one is the body's own there too.
+		"WITH 1 AS a CALL (a) { WITH 2 AS a WHERE a = 2 RETURN a AS b } RETURN a, b":             {{int64(1), int64(2)}},
+		"WITH 1 AS a CALL (a) { UNWIND [2, 3] AS a WITH a AS c RETURN c AS b } RETURN a, b":      {{int64(1), int64(2)}, {int64(1), int64(3)}},
+		"WITH 1 AS a CALL (a) { UNWIND [5, 6] AS n WITH sum(n) AS a RETURN a AS b } RETURN a, b": {{int64(1), int64(11)}},
+		"WITH 1 AS a CALL (a) { WITH 2 AS a RETURN a AS b UNION RETURN a AS b } RETURN a, b":     {{int64(1), int64(2)}, {int64(1), int64(1)}},
 	} {
 		result, err := exec.Execute(ctx, query, nil)
 		require.NoError(t, err, query)

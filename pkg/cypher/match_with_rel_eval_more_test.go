@@ -18,7 +18,8 @@ func TestEvaluateExpressionFromValues_AdditionalBranches(t *testing.T) {
 		Properties: map[string]interface{}{"name": "alice"},
 	}
 	values := map[string]interface{}{
-		"n": n,
+		"n":         n,
+		"typedNode": &storage.Node{ID: "map-id", Labels: []string{"A", "B"}},
 		"nodeMap": map[string]interface{}{
 			"id":         "map-id",
 			"labels":     []interface{}{"A", "B"},
@@ -43,7 +44,7 @@ func TestEvaluateExpressionFromValues_AdditionalBranches(t *testing.T) {
 
 	require.Nil(t, exec.evaluateExpressionFromValues("", values))
 	require.Equal(t, "alice", exec.evaluateExpressionFromValues("n.name", values))
-	require.Equal(t, "T", exec.evaluateExpressionFromValues("nodeMap.title", values))
+	require.Equal(t, "T2", exec.evaluateExpressionFromValues("nodeMap.title", values))
 	require.Equal(t, int64(2), exec.evaluateExpressionFromValues("length(path)", values))
 	require.Equal(t, int64(3), exec.evaluateExpressionFromValues("size(xs)", values))
 	require.Equal(t, int64(4), exec.evaluateExpressionFromValues("size(asText)", values))
@@ -52,7 +53,7 @@ func TestEvaluateExpressionFromValues_AdditionalBranches(t *testing.T) {
 	// semantics in computed rows.
 	require.Nil(t, exec.evaluateExpressionFromValues("size(missing)", values))
 
-	labels := exec.evaluateExpressionFromValues("labels(nodeMap)", values).([]interface{})
+	labels := exec.evaluateExpressionFromValues("labels(typedNode)", values).([]interface{})
 	require.Equal(t, []interface{}{"A", "B"}, labels)
 
 	relTypes := exec.evaluateExpressionFromValues("[r IN relationships(path) | type(r)]", values).([]interface{})
@@ -70,7 +71,7 @@ func TestEvaluateExpressionFromValues_AdditionalBranches(t *testing.T) {
 	require.Equal(t, "bob", nodeList[1].(*storage.Node).Properties["name"])
 
 	require.Equal(t, "4:match_with_rel_eval_cov:n1", exec.evaluateExpressionFromValues("elementId(n)", values))
-	require.Equal(t, "map-id", exec.evaluateExpressionFromValues("id(nodeMap)", values))
+	require.Equal(t, "map-id", exec.evaluateExpressionFromValues("id(typedNode)", values))
 
 	mapLit := exec.evaluateExpressionFromValues("{name: n.name, cnt: size(xs)}", values).(map[string]interface{})
 	require.Equal(t, "alice", mapLit["name"])

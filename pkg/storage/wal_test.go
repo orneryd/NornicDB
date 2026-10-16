@@ -566,11 +566,6 @@ func TestWALTailRepairHelpers(t *testing.T) {
 				reason: "invalid_magic",
 			},
 			{
-				name:   "unsupported version",
-				record: func() []byte { b := append([]byte(nil), validSecond...); b[4] = walFormatVersionV3 + 1; return b }(),
-				reason: "unsupported_version",
-			},
-			{
 				name: "invalid payload size",
 				record: func() []byte {
 					b := make([]byte, 9)

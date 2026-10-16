@@ -1048,6 +1048,9 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
 		return nil, localizedError(localization.NornicDBCoreFindSimilarLimitInvalid(), nil)
 	}
 
+	ctx, projection, releaseProjection := storage.BeginQueryResultProjectionContext(ctx, db.storage)
+	defer releaseProjection()
+
 	// Get target node
 	target, err := db.storage.GetNode(storage.NodeID(nodeID))
 	if err != nil {
@@ -1106,7 +1109,7 @@ func (db *DB) FindSimilar(ctx context.Context, nodeID string, limit int) ([]*Sea
 			Node: &Node{
 				ID:         string(r.node.ID),
 				Labels:     r.node.Labels,
-				Properties: r.node.Properties,
+				Properties: projection.NodeProperties(r.node),
 				CreatedAt:  r.node.CreatedAt,
 			},
 			Score: r.score,
@@ -1830,11 +1833,12 @@ func (db *DB) nodeMatchesSubject(node *storage.Node, subjectID string) bool {
 
 func (db *DB) anonymizedNodeCopy(node *storage.Node, anonymousID string) *storage.Node {
 	nodeCopy := &storage.Node{
-		ID:         node.ID,
-		Labels:     append([]string(nil), node.Labels...),
-		Properties: make(map[string]any, len(node.Properties)),
-		CreatedAt:  node.CreatedAt,
-		UpdatedAt:  node.UpdatedAt,
+		ID:                   node.ID,
+		VisibilitySuppressed: node.VisibilitySuppressed,
+		Labels:               append([]string(nil), node.Labels...),
+		Properties:           make(map[string]any, len(node.Properties)),
+		CreatedAt:            node.CreatedAt,
+		UpdatedAt:            node.UpdatedAt,
 		ChunkEmbeddings: func() [][]float32 {
 			chunks := make([][]float32, len(node.ChunkEmbeddings))
 			for i, emb := range node.ChunkEmbeddings {

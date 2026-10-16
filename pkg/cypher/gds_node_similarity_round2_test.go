@@ -386,7 +386,7 @@ func TestReviewRound2LinkProjectionSelection(t *testing.T) {
 		degree0, degree2 int
 	}{{"all", nil, 3, 3}, {"A", []string{"A"}, 2, 3}, {"none", []string{}, 0, 0}} {
 		t.Run(tc.name, func(t *testing.T) {
-			graph, degree, err := e.linkPredictionGraph(&linkPredictionConfig{GraphName: "rev", SourceNode: "0", RelationshipTypes: tc.types})
+			graph, degree, err := e.linkPredictionGraph(context.Background(), &linkPredictionConfig{GraphName: "rev", SourceNode: "0", RelationshipTypes: tc.types})
 			require.NoError(t, err)
 			require.Len(t, graph, 4)
 			require.Empty(t, graph["3"])
@@ -401,7 +401,7 @@ func TestReviewRound2LinkProjectionSelection(t *testing.T) {
 			}
 		})
 	}
-	_, _, err := e.linkPredictionGraph(&linkPredictionConfig{GraphName: "rev", SourceNode: "0", RelationshipTypes: []string{"missing"}})
+	_, _, err := e.linkPredictionGraph(context.Background(), &linkPredictionConfig{GraphName: "rev", SourceNode: "0", RelationshipTypes: []string{"missing"}})
 	require.ErrorContains(t, err, "missing")
 	result, err := e.Execute(context.Background(), "CALL gds.linkPrediction.commonNeighbors.stream('rev', {sourceNode:'0'})", nil)
 	require.NoError(t, err)

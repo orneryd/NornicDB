@@ -218,6 +218,14 @@ For cross-origin browser clients (e.g. a UI on `https://app.example.com` connect
 
 See `docs/operations/configuration.md` for the YAML and CLI equivalents.
 
+## Disconnect cancellation
+
+On Linux and macOS, closing the TCP connection cancels an active statement even when pipelined
+messages fill the 16-message input queue. This also applies to TCP sockets beneath TLS and WebSocket
+transports. The queue remains bounded and keeps message order; a full queue on an open connection
+does not cancel the statement. Other platforms retain normal reader/context cancellation and should
+use a statement timeout to bound work while the queue is blocked.
+
 ## Troubleshooting
 
 ### `Handshake failed: invalid magic number: 47455420`

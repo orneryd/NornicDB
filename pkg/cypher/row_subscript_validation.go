@@ -126,7 +126,7 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		return nil
 	}
 	switch base.(type) {
-	case *storage.Node, *storage.Edge:
+	case *storage.Node, *storage.Edge, storage.RemoteEntityValue:
 		if _, valid := index.(string); !valid {
 			return invalidSubscriptTypeError("entity subscript requires a STRING property key", index)
 		}
@@ -149,6 +149,19 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 		return invalidSubscriptTypeError("list subscript requires an INTEGER index", index)
 	}
 	return nil
+}
+
+// rowSubscriptStart returns where the subscript or slice that ends expr
+// starts (expr[open:] is [key] or [from..to] applied to expr[:open]), or -1:
+// the bracket group that closes expr (its key may hold brackets of its own:
+// m[r[k]], m[l[0].id]) on a receiver that is the whole rest of expr. The one
+// reader of the form, for the row evaluator (evaluateRowValueText) and its
+// compiled programs (rowValueCompiler.compile).
+func rowSubscriptStart(expr string) int {
+	if open := closingBracketGroupStart(expr); open > 0 && rowSubscriptReceiverStart(expr, open) == 0 {
+		return open
+	}
+	return -1
 }
 
 // closingBracketGroupStart returns where the [ … ] group that ends
@@ -194,6 +207,9 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 	if end < 0 {
 		return -1
 	}
+	if !isRowReceiverIdentifierByte(expression[end]) && !strings.ContainsRune(")]'\"`}", rune(expression[end])) {
+		return -1
+	}
 	start := end
 	switch expression[end] {
 	case ']':
@@ -237,23 +253,28 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		}
 		return -1
 	case '}':
+		open := matchingRowDelimiterStart(expression, end, '{', '}')
+		if open < 0 {
+			return -1
+		}
+		wordEnd := open - 1
+		for wordEnd >= 0 && isASCIIWhitespace(expression[wordEnd]) {
+			wordEnd--
+		}
+		word := wordEnd
+		for word >= 0 && isRowReceiverIdentifierByte(expression[word]) {
+			word--
+		}
 		// EXISTS / COUNT / COLLECT { … }: the receiver starts at its keyword.
-		if open := matchingRowDelimiterStart(expression, end, '{', '}'); open > 0 {
-			word := open - 1
-			for word >= 0 && isASCIIWhitespace(expression[word]) {
-				word--
-			}
-			for word >= 0 && isRowReceiverIdentifierByte(expression[word]) {
-				word--
-			}
-			if _, keywordOpen, ok := subqueryExpressionKeywordAt(expression, word+1); ok && keywordOpen == open {
-				return word + 1
-			}
+		if _, keywordOpen, ok := subqueryExpressionKeywordAt(expression, word+1); ok && keywordOpen == open {
+			return word + 1
 		}
-		for start > 0 && isRowReceiverIdentifierByte(expression[start-1]) {
-			start--
+		// A map projection (n {.k}) starts at its variable; a map literal
+		// ({b: true}[k], RETURN {b: true}[k]) at its brace.
+		if word < wordEnd && !isCypherKeyword(expression[word+1:wordEnd+1]) {
+			return word + 1
 		}
-		return start
+		return open
 	default:
 		for start > 0 && isRowReceiverIdentifierByte(expression[start-1]) {
 			start--
@@ -333,7 +354,7 @@ func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clau
 			}
 			if path, isMap := toStringAnyMap(value); isMap {
 				if _, isPath := path["_pathResult"]; isPath {
-					return typeMismatchError(sizeArgumentTypes, pathTypeMarker{})
+					return sizeArgumentError(value)
 				}
 			}
 		}

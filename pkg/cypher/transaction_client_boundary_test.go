@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestClientTransactionControlPreservesOwnedTransaction(t *testing.T) {
+func TestRejectedClientTransactionControlFailsOwnedTransaction(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "client_boundary")
 	executor := NewStorageExecutor(store)
 	ctx := context.Background()
@@ -28,18 +28,19 @@ func TestClientTransactionControlPreservesOwnedTransaction(t *testing.T) {
 		require.True(t, executor.HasActiveTransaction(), command)
 	}
 	_, err = executor.Execute(owner, "COMMIT", nil)
-	require.NoError(t, err)
+	code, _ := nornicerrors.Neo4jStatus(err)
+	require.Equal(t, "Neo.ClientError.Transaction.TransactionMarkedAsFailed", code)
 	require.False(t, executor.HasActiveTransaction())
 	result, err := executor.Execute(client, "MATCH (n:ClientBoundary) RETURN count(n)", nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), result.Rows[0][0])
+	require.Equal(t, int64(0), result.Rows[0][0])
 }
 
 // TestClientTransactionCommandsAreSyntaxErrors: a client statement can't be a
 // bare BEGIN, COMMIT or ROLLBACK (Neo4j 5.26: SyntaxError "Invalid input
-// 'BEGIN'"); it leaves the executor it ran on as it found it. The
+// 'BEGIN'"); an active transaction is marked failed by the rejection. The
 // one-statement script form still runs and an embedded caller keeps the bare
-// commands (the owner of a transaction: TestClientTransactionControlPreservesOwnedTransaction).
+// commands (the owner of a transaction: TestRejectedClientTransactionControlFailsOwnedTransaction).
 func TestClientTransactionCommandsAreSyntaxErrors(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "client_tx")
 	exec := NewStorageExecutor(store)

@@ -1,7 +1,8 @@
 // Package auth: per-database read/write privileges (Phase 4 RBAC).
 //
 // Privileges are stored in the system database as _DbPrivilege nodes.
-// ResolvedAccess is resolved from the matrix; when no entry exists, fall back to global RolePermissions.
+// ResolveDatabaseAccess resolves read/write from the matrix within the roles' global
+// entitlements; when no entry exists, from the entitlements alone.
 // See docs/plans/per-database-rbac-neo4j-style.md §4.4.
 
 package auth
@@ -68,45 +69,70 @@ func (p *PrivilegesStore) Load(ctx context.Context) error {
 	return nil
 }
 
-// Resolve returns ResolvedAccess for (principalRoles, dbName).
-// If any role has an entry for this db, aggregate read/write. If none have an entry, fall back to global RolePermissions.
-func (p *PrivilegesStore) Resolve(principalRoles []string, dbName string) ResolvedAccess {
+// Granted is the read and write the privileges matrix records for roles on
+// database, the union of their entries, and whether any of the roles has an
+// entry there. A nil store records none.
+func (p *PrivilegesStore) Granted(roles []string, database string) (ResolvedAccess, bool) {
+	if p == nil {
+		return ResolvedAccess{}, false
+	}
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	var read, write bool
-	matchedMatrixEntry := false
-	for _, role := range principalRoles {
-		role = strings.ToLower(strings.TrimSpace(role))
-		role = strings.TrimPrefix(role, "role_")
-		if perDb, ok := p.matrix[role]; ok {
-			if priv, ok := perDb[dbName]; ok {
-				matchedMatrixEntry = true
-				read = read || priv.Read
-				write = write || priv.Write
-			}
+	var access ResolvedAccess
+	found := false
+	for _, role := range roles {
+		if priv, ok := p.matrix[NormalizeRoleName(role)][database]; ok {
+			found = true
+			access.Read = access.Read || priv.Read
+			access.Write = access.Write || priv.Write
 		}
 	}
-	if matchedMatrixEntry {
-		return ResolvedAccess{Read: read, Write: write}
+	return access, found
+}
+
+// Resolve preserves the legacy database-access contract: explicit matrix grants
+// win, otherwise built-in role permissions supply the defaults. For example,
+// store.Resolve([]string{"viewer"}, "reports") returns that role's matrix grant
+// when present, even if it differs from the role's global entitlements.
+//
+// Deprecated: production authorization should use ResolveDatabaseAccess with
+// the stored entitlement policy; Resolve intentionally retains legacy semantics.
+func (p *PrivilegesStore) Resolve(principalRoles []string, dbName string) ResolvedAccess {
+	if granted, found := p.Granted(principalRoles, dbName); found {
+		return granted
 	}
-	// Fall back to global role permissions
-	for _, role := range principalRoles {
-		role = strings.ToLower(strings.TrimSpace(role))
-		role = strings.TrimPrefix(role, "role_")
-		perms, ok := RolePermissions[Role(role)]
-		if !ok {
-			continue
-		}
-		for _, perm := range perms {
-			if perm == PermRead {
-				read = true
-			}
-			if perm == PermWrite || perm == PermAdmin {
-				write = true
-			}
+	var access ResolvedAccess
+	for _, permission := range PermissionsForRoles(principalRoles, nil) {
+		switch permission {
+		case string(PermRead):
+			access.Read = true
+		case string(PermWrite), string(PermAdmin):
+			access.Write = true
 		}
 	}
-	return ResolvedAccess{Read: read, Write: write}
+	return access
+}
+
+// ResolveDatabaseAccess is the one resolver of a principal's read and write
+// on a database, which HTTP, Bolt, gRPC, GraphQL, MCP and plugins all use
+// (through cypher.PrincipalAccess or the server's resolved-access
+// resolver). The roles' global entitlements (PermissionsForRoles: stored
+// overrides, else the built-in roles' defaults) gate it: the read
+// entitlement is what lets a principal use a database at all, and write
+// needs the write entitlement too. Within that, the privileges matrix
+// decides when any of the roles has an entry for the database; otherwise
+// the entitlements decide alone. So removing a role's write entitlement
+// stops its writes on every database at once.
+func ResolveDatabaseAccess(roles []string, database string, privileges *PrivilegesStore, entitlements *RoleEntitlementsStore) ResolvedAccess {
+	global := PermissionsForRoles(roles, entitlements)
+	if !EntitlementsAllow(global, string(PermRead)) {
+		return ResolvedAccess{}
+	}
+	write := EntitlementsAllow(global, string(PermWrite))
+	if granted, found := privileges.Granted(roles, database); found {
+		return ResolvedAccess{Read: granted.Read, Write: granted.Write && write}
+	}
+	return ResolvedAccess{Read: true, Write: write}
 }
 
 // Matrix returns a copy of the full matrix for GET API.
@@ -137,12 +163,29 @@ func (p *PrivilegesStore) Matrix() []struct {
 	return out
 }
 
-// SavePrivilege persists one (role, database, read, write) and refreshes in-memory.
+// SavePrivilege persists one (role, database, read, write) and refreshes
+// in-memory, through the role-record owner (WithRoleRecords). The role must
+// exist (ErrRoleNotFound).
 func (p *PrivilegesStore) SavePrivilege(ctx context.Context, role, dbName string, read, write bool) error {
-	role = strings.ToLower(strings.TrimSpace(role))
-	nodeID := storage.NodeID(dbPrivPrefix + role + ":" + dbName)
-	node := &storage.Node{
-		ID:     nodeID,
+	role = NormalizeRoleName(role)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := WithRoleRecords(ctx, p.storage, []string{role}, func(view storage.Engine) error {
+		return putDbPrivilege(view, role, dbName, read, write)
+	}); err != nil {
+		return err
+	}
+	if p.matrix[role] == nil {
+		p.matrix[role] = make(map[string]DbPrivilege)
+	}
+	p.matrix[role][dbName] = DbPrivilege{Read: read, Write: write}
+	return nil
+}
+
+// putDbPrivilege stores one database privilege record in view.
+func putDbPrivilege(view storage.Engine, role, dbName string, read, write bool) error {
+	return putRoleRecord(view, &storage.Node{
+		ID:     storage.NodeID(dbPrivPrefix + role + ":" + dbName),
 		Labels: []string{dbPrivLabel, dbPrivSystems},
 		Properties: map[string]any{
 			"role":     role,
@@ -150,69 +193,56 @@ func (p *PrivilegesStore) SavePrivilege(ctx context.Context, role, dbName string
 			"read":     read,
 			"write":    write,
 		},
-	}
-	existing, err := p.storage.GetNode(nodeID)
-	if err == storage.ErrNotFound {
-		_, err = p.storage.CreateNode(node)
-		if err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	} else {
-		node.CreatedAt = existing.CreatedAt
-		err = p.storage.UpdateNode(node)
-		if err != nil {
-			return err
-		}
-	}
-	p.mu.Lock()
-	if p.matrix[role] == nil {
-		p.matrix[role] = make(map[string]DbPrivilege)
-	}
-	p.matrix[role][dbName] = DbPrivilege{Read: read, Write: write}
-	p.mu.Unlock()
-	return nil
+	}, false)
 }
 
-// PutMatrix replaces the stored matrix with the given list (for PUT /auth/access/privileges).
-// Deletes all existing _DbPrivilege nodes then creates nodes for each entry.
+// PutMatrix replaces the stored matrix with the given list (for PUT
+// /auth/access/privileges): it deletes every _DbPrivilege node and creates
+// one per entry, in one transaction through the role-record owner, so the
+// matrix changes entirely or not at all, and every entry's role must exist.
 func (p *PrivilegesStore) PutMatrix(ctx context.Context, entries []struct {
 	Role     string `json:"role"`
 	Database string `json:"database"`
 	Read     bool   `json:"read"`
 	Write    bool   `json:"write"`
 }) error {
-	var toDelete []storage.NodeID
-	_ = storage.StreamNodesWithFallback(ctx, p.storage, 1000, func(n *storage.Node) error {
-		for _, l := range n.Labels {
-			if l == dbPrivLabel {
-				toDelete = append(toDelete, n.ID)
-				break
+	roles := make([]string, 0, len(entries))
+	for _, e := range entries {
+		roles = append(roles, e.Role)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	matrix := make(map[string]map[string]DbPrivilege)
+	err := WithRoleRecords(ctx, p.storage, roles, func(view storage.Engine) error {
+		nodes, err := view.GetNodesByLabel(dbPrivLabel)
+		if err != nil {
+			return err
+		}
+		for _, node := range nodes {
+			role, database := roleDbFromNodeID(string(node.ID))
+			if role == "" || database == "" {
+				continue
 			}
+			if err := view.DeleteNode(node.ID); err != nil {
+				return err
+			}
+		}
+		for _, e := range entries {
+			role := NormalizeRoleName(e.Role)
+			if err := putDbPrivilege(view, role, e.Database, e.Read, e.Write); err != nil {
+				return err
+			}
+			if matrix[role] == nil {
+				matrix[role] = make(map[string]DbPrivilege)
+			}
+			matrix[role][e.Database] = DbPrivilege{Read: e.Read, Write: e.Write}
 		}
 		return nil
 	})
-	for _, id := range toDelete {
-		_ = p.storage.DeleteNode(id)
+	if err != nil {
+		return err
 	}
-	p.mu.Lock()
-	p.matrix = make(map[string]map[string]DbPrivilege)
-	p.mu.Unlock()
-	newMatrix := make(map[string]map[string]DbPrivilege)
-	for _, e := range entries {
-		role := strings.ToLower(strings.TrimSpace(e.Role))
-		if newMatrix[role] == nil {
-			newMatrix[role] = make(map[string]DbPrivilege)
-		}
-		newMatrix[role][e.Database] = DbPrivilege{Read: e.Read, Write: e.Write}
-		if err := p.SavePrivilege(ctx, e.Role, e.Database, e.Read, e.Write); err != nil {
-			return err
-		}
-	}
-	p.mu.Lock()
-	p.matrix = newMatrix
-	p.mu.Unlock()
+	p.matrix = matrix
 	return nil
 }
 

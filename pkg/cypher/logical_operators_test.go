@@ -187,6 +187,8 @@ func TestLogicalOperatorsEvaluationOrderMatchesNeo4j(t *testing.T) {
 		{"WITH 0 AS x RETURN x > 0 AND 1 / x > 0 AS v", false},
 		{"WITH 0 AS x RETURN x = 0 OR 1 / x > 0 AS v", true},
 		{"WITH 0 AS x RETURN x > 0 AND 1 / x > 0 AND false AS v", false},
+		{"WITH 0 AS x RETURN 1 / x > 0 AND x > 0 AS v", false},
+		{"WITH 0 AS x RETURN 1 / x > 0 OR x = 0 AS v", true},
 		{"RETURN [x IN [1] WHERE x > 0 AND x < 5 OR x = 7] AS v", []interface{}{int64(1)}},
 		{"RETURN [x IN [1, 0] WHERE x > 0 AND 1 / x > 0] AS v", []interface{}{int64(1)}},
 	} {
@@ -196,12 +198,8 @@ func TestLogicalOperatorsEvaluationOrderMatchesNeo4j(t *testing.T) {
 			require.Equal(t, [][]interface{}{{testCase.want}}, result.Rows)
 		})
 	}
-	// Where an operand's error is recorded on the statement as it happens
-	// (evaluateLogicalExpression), an error before the deciding operand
-	// still fails it; Neo4j returns false / true for these.
+	// With no deciding operand, evaluation errors beat type errors.
 	for _, query := range []string{
-		"WITH 0 AS x RETURN 1 / x > 0 AND x > 0 AS v",
-		"WITH 0 AS x RETURN 1 / x > 0 OR x = 0 AS v",
 		"WITH 0 AS x, {i: 1} AS m RETURN 1 / x > 0 AND m.i AS v",
 		"WITH 0 AS x, {i: 1} AS m RETURN m.i AND 1 / x > 0 AS v",
 		"RETURN [x IN [1, 0] WHERE x > 0 AND 1 / x > 0 OR NOT 1 / x = 1] AS v",

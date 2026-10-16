@@ -484,13 +484,13 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 		varName := expr[:dotIdx]
 		propName := expr[dotIdx+1:]
 		if node := b[varName]; node != nil {
-			if val, ok := getBindingNodeValue(node, propName); ok {
+			if val, ok := getBindingNodeValue(e.queryVisibleValue(node).(*storage.Node), propName); ok {
 				return val
 			}
 			return nil
 		}
 		if edge, ok := rels[varName].(*storage.Edge); ok && edge != nil {
-			return edge.Properties[propName]
+			return e.queryEntityProperties(edge)[propName]
 		}
 		return nil
 	}
@@ -1458,7 +1458,7 @@ func (e *StorageExecutor) evaluateBoundOneHopPattern(ctx context.Context, match 
 		reversed := reverseTraversalMatch(match)
 		return reversed != nil && e.evaluateBoundOneHopPattern(ctx, reversed, nodes)
 	}
-	if !pipelineNodeMatchesPattern(start, match.StartNode) {
+	if !e.pipelineNodeMatchesPattern(start, match.StartNode) {
 		return false
 	}
 	viewport, _ := TemporalViewportFromContext(ctx)

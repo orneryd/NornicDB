@@ -49,54 +49,88 @@ func (scan *comparisonChainScan) operand(expression string, index int) string {
 // which decides how constant numbers compare (promoteConstantNumbers).
 func evaluateComparisonChain(
 	expression string,
-	resolve func(string) interface{},
+	resolve func(string) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
-) (interface{}, bool) {
+) (interface{}, bool, bool, error) {
 	scan, ok := scanComparisonChain(expression)
 	if !ok {
-		return nil, false
+		return nil, false, false, nil
 	}
-	normalizeIdentity := false
+	value, resolved, err := evaluateScannedComparisonChain(expression, &scan, comparisonChainHasIdentity(expression, &scan), func(_ int, operand string) (interface{}, bool, error) {
+		return resolve(operand)
+	}, compare, cypher25)
+	return value, true, resolved, err
+}
+
+// comparisonChainHasIdentity reports a chain with an id() / elementId()
+// operand: all its operands compare by identity payload.
+func comparisonChainHasIdentity(expression string, scan *comparisonChainScan) bool {
 	for index := 0; index <= scan.count; index++ {
 		if isRowIdentityExpression(scan.operand(expression, index)) {
-			normalizeIdentity = true
-			break
+			return true
 		}
 	}
+	return false
+}
 
-	left := resolve(scan.operand(expression, 0))
+// evaluateScannedComparisonChain is evaluateComparisonChain for an
+// expression already scanned: an evaluator that keeps the scan
+// (rowValueProgram) evaluates the chain without reading the text again.
+// resolve gets each operand's index and text; normalizeIdentity is
+// comparisonChainHasIdentity.
+func evaluateScannedComparisonChain(
+	expression string,
+	scan *comparisonChainScan,
+	normalizeIdentity bool,
+	resolve func(int, string) (interface{}, bool, error),
+	compare func(interface{}, interface{}, string) interface{},
+	cypher25 bool,
+) (interface{}, bool, error) {
+	left, leftOK, leftErr := resolve(0, scan.operand(expression, 0))
 	if normalizeIdentity {
 		left = rowIdentityPayload(left)
 	}
-	hasNull := false
+	hasNull, resolved := false, leftOK
+	firstErr := leftErr
 	for index := 0; index < scan.count; index++ {
 		span := scan.operator(index)
 		operator := expression[span.offset : span.offset+span.length]
-		right := resolve(scan.operand(expression, index+1))
+		right, rightOK, rightErr := resolve(index+1, scan.operand(expression, index+1))
+		if firstErr == nil {
+			firstErr = rightErr
+		}
+		resolved = resolved && rightOK
 		if normalizeIdentity {
 			right = rowIdentityPayload(right)
 		}
-		if left == nil || right == nil {
-			hasNull = true
-		} else {
-			if operator == "!=" {
-				operator = "<>"
-			}
-			leftValue, rightValue := promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), left, right, cypher25)
-			comparison := compare(leftValue, rightValue, operator)
-			if comparison == nil {
+		// A later false discards an earlier error; a decided false never
+		// evaluates the remaining operands. Each operand is evaluated once.
+		if leftOK && rightOK && leftErr == nil && rightErr == nil {
+			if left == nil || right == nil {
 				hasNull = true
-			} else if matched, ok := comparison.(bool); !ok || !matched {
-				return false, true
+			} else {
+				if operator == "!=" {
+					operator = "<>"
+				}
+				leftValue, rightValue := promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), left, right, cypher25)
+				comparison := compare(leftValue, rightValue, operator)
+				if comparison == nil {
+					hasNull = true
+				} else if matched, ok := comparison.(bool); !ok || !matched {
+					return false, true, nil
+				}
 			}
 		}
-		left = right
+		left, leftOK, leftErr = right, rightOK, rightErr
+	}
+	if firstErr != nil || !resolved {
+		return nil, false, firstErr
 	}
 	if hasNull {
-		return nil, true
+		return nil, true, nil
 	}
-	return true, true
+	return true, true, nil
 }
 
 // incomingArrowAt reports whether expression[index] ('<') starts an

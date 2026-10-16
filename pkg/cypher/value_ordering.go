@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"math"
 	"slices"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -33,30 +34,20 @@ func cypherPathElements(value interface{}) ([]interface{}, bool) {
 // cypherPathElementsOf is cypherPathElements for a value already converted
 // with toStringAnyMap, so a map is converted only once.
 func cypherPathElementsOf(value interface{}, object map[string]interface{}, isMap bool) ([]interface{}, bool) {
-	var path PathResult
-	switch typed := value.(type) {
-	case PathResult:
-		path = typed
-	case *PathResult:
-		if typed == nil {
+	if remote, ok := value.(storage.RemotePathValue); ok {
+		if _, _, valid := remote.Parts(); !valid {
 			return nil, false
 		}
-		path = *typed
-	default:
-		if !isMap {
-			return nil, false
+		elements := make([]interface{}, len(remote))
+		for i, entity := range remote {
+			elements[i] = entity
 		}
-		switch inner := object["_pathResult"].(type) {
-		case PathResult:
-			path = inner
-		case *PathResult:
-			if inner == nil {
-				return nil, false
-			}
-			path = *inner
-		default:
-			return nil, false
-		}
+		return elements, true
+	}
+
+	path, ok := cypherPathResultOf(value, object, isMap)
+	if !ok {
+		return nil, false
 	}
 	elements := make([]interface{}, 0, len(path.Nodes)+len(path.Relationships))
 	for index, node := range path.Nodes {
@@ -68,40 +59,89 @@ func cypherPathElementsOf(value interface{}, object map[string]interface{}, isMa
 	return elements, true
 }
 
+// cypherPathResultOf recognizes an actual path carrier, rather than a user map
+// with coincidentally named keys such as length or _pathResult.
+func cypherPathResultOf(value interface{}, object map[string]interface{}, isMap bool) (PathResult, bool) {
+	var path PathResult
+	switch typed := value.(type) {
+	case PathResult:
+		path = typed
+	case *PathResult:
+		if typed == nil {
+			return PathResult{}, false
+		}
+		path = *typed
+	default:
+		if !isMap {
+			return PathResult{}, false
+		}
+		switch inner := object["_pathResult"].(type) {
+		case PathResult:
+			path = inner
+		case *PathResult:
+			if inner == nil {
+				return PathResult{}, false
+			}
+			path = *inner
+		default:
+			return PathResult{}, false
+		}
+	}
+	return path, true
+}
+
 // compareCypherStructuredValues orders two values when either is a map, node,
 // relationship or path. handled is false when neither is; comparable is false
 // for values of different kinds and for maps holding values compareValue
 // can't order.
 func compareCypherStructuredValues(left, right interface{}, compareValue func(a, b interface{}) (int, bool)) (order int, comparable bool, handled bool) {
-	switch leftValue := left.(type) {
-	case *storage.Node:
-		rightValue, ok := right.(*storage.Node)
-		if !ok || leftValue == nil || rightValue == nil {
+	if leftKey, leftEntity := cypherEntityOrderingKey(left); leftEntity {
+		rightKey, rightEntity := cypherEntityOrderingKey(right)
+		if !rightEntity || leftKey.kind != rightKey.kind || leftKey.kind == valueKindNull {
 			return 0, false, true
 		}
-		return compareStrings(string(leftValue.ID), string(rightValue.ID)), true, true
-	case *storage.Edge:
-		rightValue, ok := right.(*storage.Edge)
-		if !ok || leftValue == nil || rightValue == nil {
-			return 0, false, true
+		// A total sort key does not manufacture relational comparability
+		// across ID domains, or for a nil native entity carrier.
+		comparable := leftKey.carrier == rightKey.carrier && leftKey.carrier != 0
+		if order := compareOrderedInts(leftKey.carrier, rightKey.carrier); order != 0 {
+			return order, comparable, true
 		}
-		return compareStrings(string(leftValue.ID), string(rightValue.ID)), true, true
+		if leftKey.legacy < rightKey.legacy {
+			return -1, comparable, true
+		}
+		if leftKey.legacy > rightKey.legacy {
+			return 1, comparable, true
+		}
+		return compareStrings(leftKey.identity, rightKey.identity), comparable, true
 	}
-	switch right.(type) {
-	case *storage.Node, *storage.Edge:
+	if _, rightEntity := cypherEntityOrderingKey(right); rightEntity {
 		return 0, false, true
 	}
 	leftMap, leftIsMap := toStringAnyMap(left)
 	rightMap, rightIsMap := toStringAnyMap(right)
 	leftPath, leftIsPath := cypherPathElementsOf(left, leftMap, leftIsMap)
 	rightPath, rightIsPath := cypherPathElementsOf(right, rightMap, rightIsMap)
-	if leftIsPath || rightIsPath {
-		if !leftIsPath || !rightIsPath {
+	leftPathCarrier := leftIsPath || cypherValueKindOf(left) == valueKindPath
+	rightPathCarrier := rightIsPath || cypherValueKindOf(right) == valueKindPath
+	if leftPathCarrier || rightPathCarrier {
+		if !leftPathCarrier || !rightPathCarrier {
 			return 0, false, true
 		}
+		if !leftIsPath || !rightIsPath {
+			// Invalid/nil path carriers must not sort equal to every valid
+			// path. They remain incomparable to comparison operators.
+			leftValid, rightValid := 0, 0
+			if leftIsPath {
+				leftValid = 1
+			}
+			if rightIsPath {
+				rightValid = 1
+			}
+			return compareOrderedInts(leftValid, rightValid), false, true
+		}
 		for index := 0; index < len(leftPath) && index < len(rightPath); index++ {
-			if order, _, _ := compareCypherStructuredValues(leftPath[index], rightPath[index], compareValue); order != 0 {
-				return order, true, true
+			if order, comparable := compareValue(leftPath[index], rightPath[index]); !comparable || order != 0 {
+				return order, comparable, true
 			}
 		}
 		return compareOrderedInts(len(leftPath), len(rightPath)), true, true
@@ -114,6 +154,47 @@ func compareCypherStructuredValues(left, right interface{}, compareValue func(a,
 		return order, comparable, true
 	}
 	return 0, false, false
+}
+
+// cypherEntityOrderKey is a per-value key, never a pairwise fallback. Native
+// IDs and remote numeric IDs belong to different identity domains. Remote
+// carriers without a legacy numeric ID form a further domain ordered by
+// element ID. Mixing numeric and element-only comparisons pairwise would
+// violate transitivity. Properties never participate in entity ordering.
+// Typed nil native carriers are distinguished from every real native entity.
+type cypherEntityOrderKey struct {
+	kind     cypherValueKind
+	carrier  int
+	legacy   int64
+	identity string
+}
+
+func cypherEntityOrderingKey(value interface{}) (cypherEntityOrderKey, bool) {
+	switch entity := value.(type) {
+	case *storage.Node:
+		key := cypherEntityOrderKey{kind: valueKindNode}
+		if entity != nil {
+			key.carrier = 1
+			key.identity = string(entity.ID)
+		}
+		return key, true
+	case *storage.Edge:
+		key := cypherEntityOrderKey{kind: valueKindRelationship}
+		if entity != nil {
+			key.carrier = 1
+			key.identity = string(entity.ID)
+		}
+		return key, true
+	case storage.RemoteEntityValue:
+		element, _ := entity["elementId"].(string)
+		key := cypherEntityOrderKey{kind: cypherValueKindOf(entity), carrier: 2, identity: element}
+		if id, _, _ := entity.LegacyIDs(); id >= 0 {
+			key.carrier = 3
+			key.legacy = id
+		}
+		return key, true
+	}
+	return cypherEntityOrderKey{}, false
 }
 
 // compareCypherMaps orders two maps: fewer keys first, then the sorted key
@@ -179,3 +260,54 @@ func compareCypherComparableValues(left, right interface{}) (int, bool) {
 func compareSortableValues(left, right interface{}) (int, bool) {
 	return compareValuesForSort(left, right), true
 }
+
+// cypherSortRank implements the openCypher comparability order used by ORDER
+// BY: maps, nodes, relationships, lists, paths, strings, booleans, numbers,
+// NaN, and null. Null is handled before this function.
+// cypherSortRank is a value's position in Neo4j's orderability across types:
+// map < node < relationship < list < path < point < zoned datetime < local
+// datetime < date < zoned time < local time < duration < string < boolean <
+// number < NaN (#817, #837).
+
+func cypherSortRank(value interface{}) int {
+	if _, ok := pointValue(value); ok {
+		return 6
+	}
+	if kind, _, ok := temporalOrderParts(value); ok {
+		return temporalSortRanks[kind]
+	}
+	switch cypherValueKindOf(value) {
+	case valueKindMap:
+		return 0
+	case valueKindNode:
+		return 1
+	case valueKindRelationship:
+		return 2
+	case valueKindList:
+		return 3
+	case valueKindPath:
+		return 4
+	case valueKindVector:
+		return 5
+	case valueKindDuration:
+		return 12
+	case valueKindString:
+		return 13
+	case valueKindBoolean:
+		return 14
+	case valueKindUUID:
+		return 15
+	}
+	if number, ok := strictNumericValue(value); ok {
+		if math.IsNaN(number) {
+			return 17
+		}
+		return 16
+	}
+	return 20
+}
+
+// temporalSortRanks are the temporal kinds' positions in cypherSortRank.
+var temporalSortRanks = map[string]int{"datetime": 7, "localdatetime": 8, "date": 9, "time": 10, "localtime": 11}
+
+func cypherSortList(value interface{}) ([]interface{}, bool) { return cypherListValue(value) }

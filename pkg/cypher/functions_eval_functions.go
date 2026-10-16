@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -125,12 +124,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 					return value[key]
 				case *storage.Node:
 					if value != nil {
-						return value.Properties[key]
+						return e.queryEntityProperties(value)[key]
 					}
 					return nil
 				case *storage.Edge:
 					if value != nil {
-						return value.Properties[key]
+						return e.queryEntityProperties(value)[key]
 					}
 					return nil
 				}
@@ -199,8 +198,8 @@ skipArrayIndexing:
 	// ========================================
 	// A plugin function overrides a built-in of the same name, so plugins
 	// are asked first, as the row evaluator does (#1163).
-	if strings.Contains(expr, ".") && looksLikeFunctionCall(expr) {
-		if result, handled := e.tryCallPluginFunction(ctx, expr, nodes, rels); handled {
+	if _, _, call := parseFunctionCallWS(expr); call && strings.Contains(expr, ".") {
+		if result, handled := e.tryCallPluginFunction(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); handled {
 			return result
 		}
 	}
@@ -216,13 +215,32 @@ skipArrayIndexing:
 			Storage:  e.storage,
 			Database: e.executionDatabaseName(ctx),
 			Eval: func(argExpr string) (interface{}, error) {
-				return e.evaluateExpressionWithContextFull(ctx, argExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), nil
+				value := e.evaluateExpressionWithContextFull(ctx, argExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+				if err := getExpressionFailure(ctx); err != nil {
+					return nil, err
+				}
+				return value, nil
 			},
 			Now:      time.Now,
 			Graphs:   e,
 			Cypher25: cypherVersionFromContext(ctx) == "25",
 		}
 
+		if (strings.EqualFold(name, "properties") || strings.EqualFold(name, "keys")) && e.queryPropertyDecayEnabled() {
+			originalEval := fnCtx.Eval
+			fnCtx.Eval = func(expression string) (interface{}, error) {
+				value, err := originalEval(expression)
+				return e.queryVisibleValue(value), err
+			}
+			fnCtx.Nodes = make(map[string]*storage.Node, len(nodes))
+			for key, node := range nodes {
+				fnCtx.Nodes[key] = e.queryVisibleValue(node).(*storage.Node)
+			}
+			fnCtx.Rels = make(map[string]*storage.Edge, len(rels))
+			for key, rel := range rels {
+				fnCtx.Rels[key] = e.queryVisibleValue(rel).(*storage.Edge)
+			}
+		}
 		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {
 			if err != nil {
 				functionEvaluationFailure(ctx, err)
@@ -272,6 +290,11 @@ skipArrayIndexing:
 			// not report a fabricated zero-length value (#581).
 			return nil
 		}
+		if remote, ok := innerVal.(storage.RemotePathValue); ok {
+			value, err := remotePathFunctionValue("length", remote)
+			recordExpressionFailure(ctx, err)
+			return value
+		}
 		switch v := innerVal.(type) {
 		case string:
 			return int64(cyphertext.Length(v))
@@ -311,7 +334,7 @@ skipArrayIndexing:
 			varName := inner[:dotIdx]
 			propName := inner[dotIdx+1:]
 			if node, ok := nodes[varName]; ok {
-				_, exists := node.Properties[propName]
+				_, exists := e.queryEntityProperties(node)[propName]
 				return exists
 			}
 		}
@@ -1105,7 +1128,10 @@ skipArrayIndexing:
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			propName := strings.Trim(args[1], "'\"")
-			return apocCollSortNodes(listVal, propName)
+			return apocCollSortNodesByProperty(listVal, propName, func(value interface{}, property string) interface{} {
+				result, _ := rowPropertyValue(e.queryVisibleValue(value), property)
+				return result
+			})
 		}
 		return nil
 	}
@@ -1375,7 +1401,7 @@ func randomCypherFloat() float64 {
 // string or a list. Any other value is the function's TypeError (Neo4j 5.26
 // and 2026.09; head('ab') too).
 func evaluateListAccessFunction(function string, value interface{}) (interface{}, error) {
-	if value == nil {
+	if cypherValueKindOf(value) == valueKindNull {
 		return nil, nil
 	}
 	if text, isString := value.(string); isString && function == "reverse" {
@@ -1386,8 +1412,7 @@ func evaluateListAccessFunction(function string, value interface{}) (interface{}
 		return string(runes), nil
 	}
 	if _, isString := value.(string); !isString {
-		if valueType := reflect.TypeOf(value); valueType.Kind() == reflect.Slice || valueType.Kind() == reflect.Array {
-			items := toAnySlice(value)
+		if items, isList := cypherListValue(value); isList {
 			switch function {
 			case "head":
 				if len(items) == 0 {

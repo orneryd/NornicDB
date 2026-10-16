@@ -612,20 +612,17 @@ func TestApocDynamicRunAndRunMany_Direct(t *testing.T) {
 	_, err = exec.callApocCypherRunMany(ctx, nil)
 	require.ErrorContains(t, err, "argument statements is null")
 
-	res, err = exec.callApocCypherRunMany(ctx, []interface{}{"RETURN 1 AS n; INVALID CYPHER; RETURN 2 AS n", map[string]interface{}{}})
+	// A failed statement fails the call, as in apoc.cypher.run.
+	_, err = exec.callApocCypherRunMany(ctx, []interface{}{"RETURN 1 AS n; INVALID CYPHER; RETURN 2 AS n", map[string]interface{}{}})
+	require.Error(t, err)
+
+	// Each statement's rows from 0, then its statistics row -1.
+	res, err = exec.callApocCypherRunMany(ctx, []interface{}{"RETURN 1 AS n; RETURN 2 AS n", map[string]interface{}{}})
 	require.NoError(t, err)
 	require.Equal(t, []string{"row", "result"}, res.Columns)
-	require.NotEmpty(t, res.Rows)
-	// Ensure row index and error payload branches are deterministic.
-	// Each statement's rows from 0, then its statistics row -1; the failed
-	// statement is one row -1 with its error.
-	require.Len(t, res.Rows, 5)
-	require.Equal(t, []interface{}{int64(0), int64(-1), int64(-1), int64(0), int64(-1)},
-		[]interface{}{res.Rows[0][0], res.Rows[1][0], res.Rows[2][0], res.Rows[3][0], res.Rows[4][0]})
-	errMap, ok := res.Rows[2][1].(map[string]interface{})
-	require.True(t, ok)
-	_, hasErr := errMap["error"]
-	require.True(t, hasErr)
+	require.Len(t, res.Rows, 4)
+	require.Equal(t, []interface{}{int64(0), int64(-1), int64(0), int64(-1)},
+		[]interface{}{res.Rows[0][0], res.Rows[1][0], res.Rows[2][0], res.Rows[3][0]})
 
 	// Stats accumulation branch: runMany with CREATE should increment NodesCreated.
 	createRes, err := exec.callApocCypherRunMany(ctx, []interface{}{`CREATE (:Dyn {name:"x"}); CREATE (:Dyn {name:"y"})`})
@@ -837,244 +834,6 @@ func TestExecuteQueryAgainstStorage_DispatchBranches(t *testing.T) {
 // =============================================================================
 // Tests for Parameter Substitution (substituteParams and valueToLiteral)
 // =============================================================================
-
-func TestSubstituteParamsBasic(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	tests := []struct {
-		name     string
-		query    string
-		params   map[string]interface{}
-		expected string
-	}{
-		{
-			name:     "string parameter",
-			query:    "MATCH (n {name: $name}) RETURN n",
-			params:   map[string]interface{}{"name": "Alice"},
-			expected: "MATCH (n {name: 'Alice'}) RETURN n",
-		},
-		{
-			name:     "integer parameter",
-			query:    "MATCH (n) WHERE n.age = $age RETURN n",
-			params:   map[string]interface{}{"age": 25},
-			expected: "MATCH (n) WHERE n.age = 25 RETURN n",
-		},
-		{
-			name:     "float parameter",
-			query:    "MATCH (n) WHERE n.score > $score RETURN n",
-			params:   map[string]interface{}{"score": 85.5},
-			expected: "MATCH (n) WHERE n.score > 85.5 RETURN n",
-		},
-		{
-			name:     "boolean parameter true",
-			query:    "MATCH (n) WHERE n.active = $active RETURN n",
-			params:   map[string]interface{}{"active": true},
-			expected: "MATCH (n) WHERE n.active = true RETURN n",
-		},
-		{
-			name:     "boolean parameter false",
-			query:    "MATCH (n) WHERE n.active = $active RETURN n",
-			params:   map[string]interface{}{"active": false},
-			expected: "MATCH (n) WHERE n.active = false RETURN n",
-		},
-		{
-			name:     "null parameter",
-			query:    "MATCH (n) WHERE n.value = $value RETURN n",
-			params:   map[string]interface{}{"value": nil},
-			expected: "MATCH (n) WHERE n.value = null RETURN n",
-		},
-		{
-			name:     "multiple parameters",
-			query:    "MATCH (n {name: $name, age: $age}) RETURN n",
-			params:   map[string]interface{}{"name": "Bob", "age": 30},
-			expected: "MATCH (n {name: 'Bob', age: 30}) RETURN n",
-		},
-		{
-			name:     "missing parameter unchanged",
-			query:    "MATCH (n {name: $name}) RETURN n",
-			params:   map[string]interface{}{},
-			expected: "MATCH (n {name: $name}) RETURN n",
-		},
-		{
-			name:     "empty params",
-			query:    "MATCH (n) RETURN n",
-			params:   nil,
-			expected: "MATCH (n) RETURN n",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := exec.substituteParams(tt.query, tt.params)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-
-	// Verify queries execute correctly after substitution
-	_, err := exec.Execute(ctx, "CREATE (n:ParamTest {name: 'Test'})", nil)
-	require.NoError(t, err)
-
-	result, err := exec.Execute(ctx, "MATCH (n:ParamTest {name: $name}) RETURN n", map[string]interface{}{"name": "Test"})
-	require.NoError(t, err)
-	assert.Len(t, result.Rows, 1)
-}
-
-func TestSubstituteParamsStringEscaping(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-
-	tests := []struct {
-		name     string
-		value    string
-		expected string
-	}{
-		{
-			name:     "single quote escaping",
-			value:    "O'Connor",
-			expected: "'O''Connor'",
-		},
-		{
-			name:     "backslash escaping",
-			value:    "path\\to\\file",
-			expected: "'path\\\\to\\\\file'",
-		},
-		{
-			name:     "both quotes and backslashes",
-			value:    "It's a\\path",
-			expected: "'It''s a\\\\path'",
-		},
-		{
-			name:     "empty string",
-			value:    "",
-			expected: "''",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := exec.valueToLiteral(tt.value)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestValueToLiteralArrays(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-
-	tests := []struct {
-		name     string
-		value    interface{}
-		expected string
-	}{
-		{
-			name:     "string array",
-			value:    []string{"a", "b", "c"},
-			expected: "['a', 'b', 'c']",
-		},
-		{
-			name:     "int array",
-			value:    []int{1, 2, 3},
-			expected: "[1, 2, 3]",
-		},
-		{
-			name:     "int64 array",
-			value:    []int64{100, 200, 300},
-			expected: "[100, 200, 300]",
-		},
-		{
-			name:     "float64 array",
-			value:    []float64{1.5, 2.5, 3.5},
-			expected: "[1.5, 2.5, 3.5]",
-		},
-		{
-			name:     "interface array",
-			value:    []interface{}{"hello", 42, true},
-			expected: "['hello', 42, true]",
-		},
-		{
-			name:     "empty array",
-			value:    []interface{}{},
-			expected: "[]",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := exec.valueToLiteral(tt.value)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestValueToLiteralMaps(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-
-	// Map with single key (deterministic)
-	result := exec.valueToLiteral(map[string]interface{}{"name": "Alice"})
-	assert.Equal(t, "{name: 'Alice'}", result)
-
-	// Empty map
-	result = exec.valueToLiteral(map[string]interface{}{})
-	assert.Equal(t, "{}", result)
-}
-
-func TestValueToLiteralIntegerTypes(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-
-	tests := []struct {
-		name     string
-		value    interface{}
-		expected string
-	}{
-		{"int", int(42), "42"},
-		{"int8", int8(8), "8"},
-		{"int16", int16(16), "16"},
-		{"int32", int32(32), "32"},
-		{"int64", int64(64), "64"},
-		{"uint", uint(100), "100"},
-		{"uint8", uint8(8), "8"},
-		{"uint16", uint16(16), "16"},
-		{"uint32", uint32(32), "32"},
-		{"uint64", uint64(64), "64"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := exec.valueToLiteral(tt.value)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestValueToLiteralFloats(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-
-	// float32
-	result := exec.valueToLiteral(float32(3.14))
-	assert.Contains(t, result, "3.14")
-
-	// float64
-	result = exec.valueToLiteral(float64(2.718281828))
-	assert.Contains(t, result, "2.718")
-}
 
 // =============================================================================
 // Tests for RETURN Clause Parsing
@@ -1402,56 +1161,6 @@ func TestDropIndexNoOp(t *testing.T) {
 // =============================================================================
 // Tests for Edge Cases in Parameter Substitution
 // =============================================================================
-
-func TestSubstituteParamsEdgeCases(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutor(store)
-
-	tests := []struct {
-		name   string
-		query  string
-		params map[string]interface{}
-	}{
-		{
-			name:   "parameter at start",
-			query:  "$name is the name",
-			params: map[string]interface{}{"name": "test"},
-		},
-		{
-			name:   "parameter at end",
-			query:  "The name is $name",
-			params: map[string]interface{}{"name": "test"},
-		},
-		{
-			// $ goes on a name, as in Neo4j: $a$b is the parameter a$b.
-			name:   "dollar inside a parameter name",
-			query:  "Values: $a$b",
-			params: map[string]interface{}{"a$b": "x"},
-		},
-		{
-			name:   "underscore in param name",
-			query:  "Path: $host_path",
-			params: map[string]interface{}{"host_path": "/app/docs"},
-		},
-		{
-			name:   "number in param name",
-			query:  "Value: $param123",
-			params: map[string]interface{}{"param123": "test"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := exec.substituteParams(tt.query, tt.params)
-			// Should not contain the original parameter placeholders
-			for key := range tt.params {
-				assert.NotContains(t, result, "$"+key)
-			}
-		})
-	}
-}
 
 func TestSubstituteParamsComplexQuery(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
@@ -2723,7 +2432,7 @@ func TestEvaluateExpressionFromValues_Branches(t *testing.T) {
 	}
 
 	require.Equal(t, "alice", exec.evaluateExpressionFromValues("n.name", values))
-	require.Equal(t, "eng", exec.evaluateExpressionFromValues("m.title", values))
+	require.Nil(t, exec.evaluateExpressionFromValues("m.title", values))
 	require.Equal(t, int64(2), exec.evaluateExpressionFromValues("length(path)", values))
 	require.Equal(t, int64(3), exec.evaluateExpressionFromValues("size(xs)", values))
 	require.Equal(t, int64(4), exec.evaluateExpressionFromValues("size('abcd')", values))

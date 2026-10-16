@@ -353,7 +353,8 @@ func TestFunctionEvaluator_AdditionalBranches(t *testing.T) {
 	rels := map[string]*storage.Edge{"r": rel}
 	ctx := context.Background()
 
-	assertEqual(t, "type({type:'KNOWS'})", "KNOWS", e.evaluateExpressionWithContext(ctx, "type({type:'KNOWS'})", nodes, rels))
+	assertEqual(t, "type(r)", "KNOWS", e.evaluateExpressionWithContext(ctx, "type(r)", nodes, rels))
+	assertEqual(t, "type({type:'KNOWS'})", nil, e.evaluateExpressionWithContext(ctx, "type({type:'KNOWS'})", nodes, rels))
 	assertEqual(t, "exists(n.missing)", false, e.evaluateExpressionWithContext(ctx, "exists(n.missing)", nodes, rels))
 	assertEqual(t, "head([])", nil, e.evaluateExpressionWithContext(ctx, "head([])", nodes, rels))
 	assertEqual(t, "last([])", nil, e.evaluateExpressionWithContext(ctx, "last([])", nodes, rels))

@@ -528,31 +528,16 @@ func (r *BoltAuthResult) HasRole(role string) bool {
 	return false
 }
 
-// boltRolePermsFallback is the default role→permission IDs when Permissions is not set (from auth.RolePermissions).
-var boltRolePermsFallback = auth.RolePermissionsAsStrings()
-
-// HasPermission checks if the auth result has a specific permission.
-// When Permissions is set (from role entitlements store), uses that list; else falls back to auth.RolePermissions.
+// HasPermission checks if the auth result has a specific permission, through
+// the one entitlement check (auth.EntitlementsAllow). When Permissions is set
+// (from role entitlements store), uses that list; else the built-in roles'
+// entitlements (auth.PermissionsForRoles).
 func (r *BoltAuthResult) HasPermission(perm string) bool {
-	perm = strings.ToLower(strings.TrimSpace(perm))
-	if len(r.Permissions) > 0 {
-		for _, p := range r.Permissions {
-			if p == perm || p == string(auth.PermAdmin) {
-				return true
-			}
-		}
-		return false
+	entitlements := r.Permissions
+	if len(entitlements) == 0 {
+		entitlements = auth.PermissionsForRoles(r.Roles, nil)
 	}
-	for _, role := range r.Roles {
-		if perms, ok := boltRolePermsFallback[role]; ok {
-			for _, p := range perms {
-				if p == perm {
-					return true
-				}
-			}
-		}
-	}
-	return false
+	return auth.EntitlementsAllow(entitlements, perm)
 }
 
 // Config holds Bolt protocol server configuration.
@@ -1782,43 +1767,6 @@ func (s *Session) processMessage(msg *boltMessage) error {
 	return s.dispatchMessage(msg.msgType, msg.data)
 }
 
-func (s *Session) startMessageReader() {
-	if s.reader == nil || s.messageQueue == nil || s.readErrQueue == nil {
-		return
-	}
-	var connDone <-chan struct{}
-	if s.connCtx != nil {
-		connDone = s.connCtx.Done()
-	}
-
-	go func() {
-		for {
-			msg, err := s.readMessage()
-			if err != nil {
-				if s.connCancel != nil {
-					s.connCancel()
-				}
-				s.cancelActiveRun(0)
-				select {
-				case s.readErrQueue <- err:
-				default:
-				}
-				return
-			}
-			if msg == nil {
-				continue
-			}
-			if msg.msgType == MsgReset || msg.msgType == MsgGoodbye {
-				s.cancelActiveRun(msg.msgType)
-			}
-			select {
-			case s.messageQueue <- msg:
-			case <-connDone:
-				return
-			}
-		}
-	}()
-}
 
 func (s *Session) handleQueuedMessage() error {
 	if s.messageQueue == nil || s.readErrQueue == nil {

@@ -66,8 +66,6 @@ package cypher
 import (
 	"fmt"
 	"math"
-
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // ========================================
@@ -318,6 +316,12 @@ func apocCollSort(val interface{}) []interface{} {
 //
 //	apocCollSortNodes(nodes, "age")  // Nodes sorted by age property
 func apocCollSortNodes(val interface{}, propName string) []interface{} {
+	return apocCollSortNodesByProperty(val, propName, getNodeProperty)
+}
+
+// The query route supplies its visible property reader while sorting the raw
+// entity bindings, so later mutations cannot persist a filtered property map.
+func apocCollSortNodesByProperty(val interface{}, propName string, property func(interface{}, string) interface{}) []interface{} {
 	switch v := val.(type) {
 	case []interface{}:
 		result := make([]interface{}, len(v))
@@ -325,8 +329,8 @@ func apocCollSortNodes(val interface{}, propName string) []interface{} {
 		// Sort by property value
 		for i := 0; i < len(result)-1; i++ {
 			for j := i + 1; j < len(result); j++ {
-				vi := getNodeProperty(result[i], propName)
-				vj := getNodeProperty(result[j], propName)
+				vi := property(result[i], propName)
+				vj := property(result[j], propName)
 				fj, _ := toFloat64(vj)
 				fi, _ := toFloat64(vi)
 				if fj < fi {
@@ -350,16 +354,8 @@ func apocCollSortNodes(val interface{}, propName string) []interface{} {
 //
 //   - The property value, or nil if not found
 func getNodeProperty(node interface{}, propName string) interface{} {
-	switch n := node.(type) {
-	case map[string]interface{}:
-		if props, ok := n["properties"].(map[string]interface{}); ok {
-			return props[propName]
-		}
-		return n[propName]
-	case *storage.Node:
-		return n.Properties[propName]
-	}
-	return nil
+	property, _ := rowPropertyValue(node, propName)
+	return property
 }
 
 // apocCollReverse reverses a list.

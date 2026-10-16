@@ -175,7 +175,7 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 	if len(commits) == 0 {
 		return nil
 	}
-	if err := b.applyBufferedCommits(commits); err != nil {
+	if err := b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }); err != nil {
 		return err
 	}
 	buf.markApplied()
@@ -190,6 +190,12 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 // durable exactly when the data is — recovery at open skips any commit whose
 // marker exists.
 func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
+	return b.applyBufferedCommitsWithCountPublication(commits, nil)
+}
+
+// publishCounts retires the generation count overlay under the same locks that
+// publish persisted counters. Entity/cache callbacks run afterward without locks.
+func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func()) error {
 	if len(commits) == 0 {
 		return nil
 	}
@@ -225,7 +231,8 @@ func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
 		return err
 	}
 
-	for _, c := range commits {
+	for commitIndex := range commits {
+		c := &commits[commitIndex]
 		// The commit's MVCC version was allocated at ACK time; the flusher
 		// only materializes it, so head order matches commit order.
 		v := c.version
@@ -255,7 +262,12 @@ func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
 		if err := b.persistReplayTxnCounters(cw, c.propKeyDrain); err != nil {
 			return abort(err)
 		}
-		if err := b.materializeMVCCCommit(w, versions[c.namespace], c.ops); err != nil {
+		if c.recovered {
+			if err := b.restoreBufferedOperationBodies(cw.txn, c); err != nil {
+				return abort(err)
+			}
+		}
+		if err := b.materializeMVCCCommitWithHeads(w, versions[c.namespace], c.ops, true); err != nil {
 			return abort(err)
 		}
 		for keyStr := range c.deletes {
@@ -307,11 +319,17 @@ func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
 		b.edgeTypeCountWriteMu.Lock()
 	}
 
+	// Total readers also cover cold prefix scans: keep the durable publication
+	// and counter-overlay retirement in one read boundary. Lock order is
+	// label, edge type, total; callbacks execute after all three unlock.
+	b.totalCountWriteMu.Lock()
+
 	// The replay resolves IDs too: entries it found pending are persisted
 	// by its commit, as the sync path's (markTxnCommitted).
 	b.idDict.flushTxnCounters(cw.txn)
 	committing := cw.txn
 	if err := cw.finish(); err != nil {
+		b.totalCountWriteMu.Unlock()
 		b.idDict.discardTxnCounters(committing)
 		if holdEdge {
 			b.edgeTypeCountWriteMu.Unlock()
@@ -373,6 +391,11 @@ func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
 			}
 		}
 	}
+	b.publishBufferedTotalCounts(commits)
+	if publishCounts != nil {
+		publishCounts()
+	}
+	b.totalCountWriteMu.Unlock()
 	// Close the double-count window before releasing the count locks: the
 	// derived-count fast paths hold these same locks, so they observe
 	// either the persisted deltas AND the applied flag, or neither —
@@ -394,22 +417,34 @@ func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
 			schema = b.GetSchemaForNamespace(c.namespace)
 			schemas[c.namespace] = schema
 		}
-		b.publishCommitOperations(c.namespace, schema, c.ops)
+		b.publishCommitOperations(c.namespace, schema, c.ops, c.recovered)
 	}
 	return nil
 }
 
 // publishCommitOperations mirrors the commit tail's callback and unique-value
 // cache updates for one buffered statement.
-func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation) {
+func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation, publishRevision bool) {
+	// Normal buffered writes already advanced their logical revision at ACK.
+	// Replaying durability must not invalidate stable query results once per row.
+	// Recovery has no prior ACK in this process and still publishes its revision.
+	notifyNodeCreated, notifyNodeUpdated := b.dispatchNodeCreated, b.dispatchNodeUpdated
+	notifyNodeDeleted := b.publishNodeDeleted
+	notifyEdgeCreated, notifyEdgeUpdated := b.dispatchEdgeCreated, b.dispatchEdgeUpdated
+	notifyEdgeDeleted := b.dispatchEdgeDeleted
+	if publishRevision {
+		notifyNodeCreated, notifyNodeUpdated, notifyNodeDeleted = b.notifyNodeCreated, b.notifyNodeUpdated, b.notifyNodeDeleted
+		notifyEdgeCreated, notifyEdgeUpdated, notifyEdgeDeleted = b.notifyEdgeCreated, b.notifyEdgeUpdated, b.notifyEdgeDeleted
+	}
+
 	for _, op := range ops {
 		switch op.Type {
 		case OpCreateNode:
-			b.cacheOnNodeCreated(op.Node)
-			b.notifyNodeCreated(op.Node)
+			b.cacheOnNodeCreatedWithCounts(op.Node, false)
+			notifyNodeCreated(op.Node)
 		case OpUpdateNode:
 			b.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
-			b.notifyNodeUpdated(op.Node)
+			notifyNodeUpdated(op.Node)
 		case OpDeleteNode:
 			if op.OldNode != nil {
 				// The replay's own pre-delete snapshot drives the property
@@ -417,31 +452,31 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 				// cache, so the cache-based maintenance would leave their
 				// committed index entries dangling.
 				b.maintainPropertyIndexesOnNodeDeletedWithNode(op.NodeID, op.OldNode)
-				b.cacheOnNodeDeletedWithLabels(op.NodeID, op.OldNode.Labels, op.EdgesDeleted)
+				b.cacheOnNodeDeletedWithLabelsAndCounts(op.NodeID, op.OldNode.Labels, op.EdgesDeleted, false)
 			} else {
-				b.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
+				b.cacheOnNodeDeletedWithCounts(op.NodeID, op.EdgesDeleted, false)
 			}
 			for _, edgeID := range op.DeletedEdgeIDs {
-				b.notifyEdgeDeleted(edgeID)
+				notifyEdgeDeleted(edgeID)
 			}
-			b.notifyNodeDeleted(op.NodeID)
+			notifyNodeDeleted(op.NodeID)
 		case OpCreateEdge:
-			b.cacheOnEdgeCreated(op.Edge)
-			b.notifyEdgeCreated(op.Edge)
+			b.cacheOnEdgeCreatedWithCounts(op.Edge, false)
+			notifyEdgeCreated(op.Edge)
 		case OpUpdateEdge:
 			oldType := ""
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
 			b.cacheOnEdgeUpdated(oldType, op.Edge)
-			b.notifyEdgeUpdated(op.Edge)
+			notifyEdgeUpdated(op.Edge)
 		case OpDeleteEdge:
 			oldType := ""
 			if op.OldEdge != nil {
 				oldType = op.OldEdge.Type
 			}
-			b.cacheOnEdgeDeleted(op.EdgeID, oldType)
-			b.notifyEdgeDeleted(op.EdgeID)
+			b.cacheOnEdgeDeletedWithCounts(op.EdgeID, oldType, false)
+			notifyEdgeDeleted(op.EdgeID)
 		}
 	}
 

@@ -150,6 +150,12 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 
 	for i := 0; i <= len(expr)-len(op); i++ {
 		c := expr[i]
+		if c == '/' {
+			if end := queryCommentEnd(expr, i); end >= 0 {
+				i = end - 1
+				continue
+			}
+		}
 		switch {
 		case c == '\'' || c == '"' || c == '`':
 			i = skipCypherQuotedText(expr, i, c) - 1
@@ -710,6 +716,13 @@ func (e *StorageExecutor) add(left, right interface{}) interface{} {
 	// A null operand makes the sum null, for lists and strings too.
 	if left == nil || right == nil {
 		return nil
+	}
+	// Two strings are none of the temporal, list or duration forms below:
+	// concatenated first, for every evaluator (#1214).
+	if leftText, ok := left.(string); ok {
+		if rightText, ok := right.(string); ok {
+			return leftText + rightText
+		}
 	}
 	if result, handled := addTemporalValues(left, right); handled {
 		return result

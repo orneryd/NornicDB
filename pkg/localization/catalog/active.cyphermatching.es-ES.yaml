@@ -190,3 +190,7 @@
 - id: cyphermatching.parenthesised_path_juxtaposed
   description: "Un camino entre paréntesis sin cuantificador junto a otro elemento del patrón."
   other: "La yuxtaposición solo se admite por ahora en los patrones de camino cuantificados."
+
+- id: cyphermatching.bound_shortest_relationships
+  description: Neo4j 5.26.30 diagnostic, retained verbatim for compatibility.
+  other: Bound relationships not allowed in {{.Function}}(...)

@@ -54,6 +54,7 @@ func (s *Session) handleRun(data []byte) error {
 	if s.server != nil && s.server.config.RequireAuth && !s.authenticated {
 		return s.sendLocalizedRunFailure("Neo.ClientError.Security.Unauthorized", localization.NotAuthenticated())
 	}
+	s.refreshAuthResult()
 
 	// Parse PackStream to extract query, params, and metadata
 	query, params, metadata, err := s.parseRunMessage(data)
@@ -117,24 +118,7 @@ func (s *Session) handleRun(data []byte) error {
 	// outer query text, so keyword matching alone is not an authorization boundary.
 	requirements := cypher.QueryPermissionRequirements(query)
 	isWrite := requirements.Write
-	isSchema := requirements.Schema
-	isAdmin := requirements.Admin
 
-	// Check permissions based on query type (use canonical entitlement IDs from auth)
-	if s.authResult != nil {
-		if isSchema && !s.authResult.HasPermission(string(auth.PermSchema)) {
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.SchemaPermissionRequired())
-		}
-		if isAdmin && !s.authResult.HasPermission(string(auth.PermAdmin)) && !requirements.AdminGrantedBy(s.server.procedureGrants(s.authResult.Roles)) {
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.AdminPermissionRequired())
-		}
-		if isWrite && !s.authResult.HasPermission(string(auth.PermWrite)) {
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.WritePermissionRequired())
-		}
-		if !s.authResult.HasPermission(string(auth.PermRead)) {
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.ReadPermissionRequired())
-		}
-	}
 	// Log query if enabled
 	if s.server != nil && s.server.config.LogQueries {
 		remoteAddr := "unknown"
@@ -184,36 +168,10 @@ func (s *Session) handleRun(data []byte) error {
 		return s.sendRunFailure("Neo.TransientError.General.DatabaseUnavailable", err.Error())
 	}
 	// Per-database access: deny if principal may not access this database (Neo4j-aligned).
-	var mode auth.DatabaseAccessMode
-	if s.server != nil && s.server.databaseAccessModeResolver != nil {
-		var roles []string
-		if s.authResult != nil {
-			roles = s.authResult.Roles
-		}
-		mode = s.server.databaseAccessModeResolver(roles)
-	} else if s.server != nil && s.server.databaseAccessMode != nil {
-		mode = s.server.databaseAccessMode
-	}
-	// When auth is required but no resolver/mode was set (e.g. standalone Bolt), deny all DB access (secure default).
-	if mode == nil && s.server != nil && s.server.config.RequireAuth {
-		mode = auth.DenyAllDatabaseAccessMode
-	}
+	mode := s.accessMode()
 	if mode != nil {
 		if _, allowed := s.graphAccess(mode, dbName); !allowed {
 			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseAccessDenied(dbName))
-		}
-	}
-
-	// Per-DB write: for mutations, require ResolvedAccess.Write for this (principal, db).
-	if isWrite && s.server != nil && s.server.resolvedAccessResolver != nil {
-		var roles []string
-		if s.authResult != nil {
-			roles = s.authResult.Roles
-		}
-		target, _ := s.graphAccess(nil, dbName)
-		ra := s.server.resolvedAccessResolver(roles, target)
-		if !ra.Write {
-			return s.sendLocalizedRunFailure("Neo.ClientError.Security.Forbidden", localization.DatabaseWriteDenied(dbName))
 		}
 	}
 
@@ -267,33 +225,14 @@ func (s *Session) handleRun(data []byte) error {
 	defer s.clearActiveRun()
 	ctx = s.withSessionIdentity(ctx)
 	ctx = cypher.WithClientStatement(ctx)
-	if mode != nil {
-		// A name is checked like the session's database (graphAccess: a
-		// composite constituent needs its composite and its database), and
-		// read / write are the privileges of the database its data is in.
-		ctx = cypher.WithDatabasePermissionResolver(ctx, dbName, func(database, permission string) bool {
-			target, allowed := s.graphAccess(mode, database)
-			if !allowed {
-				return false
-			}
-			if s.server != nil && s.server.resolvedAccessResolver != nil {
-				var roles []string
-				if s.authResult != nil {
-					roles = s.authResult.Roles
-				}
-				access := s.server.resolvedAccessResolver(roles, target)
-				switch permission {
-				case "read":
-					return access.Read
-				case "write":
-					return access.Write
-				}
-			}
-			if s.authResult != nil {
-				return s.authResult.HasPermission(permission)
-			}
-			return true
-		})
+	if mode != nil || s.authResult != nil {
+		// The principal's one permission resolver (principalAccess), which the
+		// executor authorizes the statement, the databases it selects and the
+		// procedures it calls with: a name is checked like the session's
+		// database (graphAccess: a composite constituent needs its composite
+		// and its database), and read / write are the privileges of the
+		// database its data is in.
+		ctx = cypher.WithDatabasePermissionResolver(ctx, dbName, s.principalAccess(mode).Allows)
 	}
 
 	runStart := time.Now()
@@ -368,7 +307,13 @@ func (s *Session) handleRun(data []byte) error {
 		s.pendingFlush = true
 	}
 	s.lastQueryIsWrite = isWrite
-	s.lastQueryDatabase = dbName
+	resultDatabase := dbName
+	if result != nil {
+		if selected, ok := result.Metadata["db"].(string); ok && selected != "" {
+			resultDatabase = selected
+		}
+	}
+	s.lastQueryDatabase = resultDatabase
 	if s.inTransaction {
 		s.recordExplicitTransactionWrite(query, params, isWrite)
 	}
@@ -389,7 +334,7 @@ func (s *Session) handleRun(data []byte) error {
 		s.resultStreams[statementID] = &resultStream{
 			result:   result,
 			isWrite:  isWrite,
-			database: dbName,
+			database: resultDatabase,
 		}
 		s.latestStatementID = statementID
 		successMetadata := map[string]any{
@@ -1129,6 +1074,7 @@ func (s *Session) handleBegin(data []byte) error {
 		return s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionStartFailed",
 			"an explicit transaction is already active")
 	}
+	s.refreshAuthResult()
 
 	// Parse BEGIN metadata (contains tx_timeout, bookmarks, etc.)
 	var metadata map[string]any
@@ -1791,6 +1737,27 @@ func (s *Session) writeMessageNoFlush(data []byte) error {
 	return s.writer.WriteByte(0x00)
 }
 
+// principalAccess is the session principal's permission resolver
+// (cypher.PrincipalAccess), the one HTTP builds too: graph access from mode,
+// read and write from the server's database privileges, and the other
+// permissions from the principal's entitlements. Without an authenticated
+// principal every permission the graph access allows is open.
+func (s *Session) principalAccess(mode auth.DatabaseAccessMode) cypher.PrincipalAccess {
+	access := cypher.PrincipalAccess{
+		GraphAccess: func(graph string) (string, bool) { return s.graphAccess(mode, graph) },
+	}
+	if s.authResult == nil {
+		return access
+	}
+	roles := s.authResult.Roles
+	if s.server != nil && s.server.resolvedAccessResolver != nil {
+		resolve := s.server.resolvedAccessResolver
+		access.DatabaseAccess = func(database string) auth.ResolvedAccess { return resolve(roles, database) }
+	}
+	access.Entitlement = s.authResult.HasPermission
+	return access
+}
+
 // graphAccess reports whether mode allows graph, a RUN's or BEGIN's
 // database, and the database its data is in (cypher.GraphAccess: a
 // composite constituent needs its composite and its database, as the
@@ -1810,10 +1777,50 @@ func (s *Session) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataD
 	return cypher.GraphAccess(manager, graph, canAccess)
 }
 
+// refreshAuthResult reads the session's roles and permissions again, from
+// the authenticator, before a statement or transaction runs: a role removed
+// from the user or deleted since HELLO no longer applies (CurrentAuthResult).
+func (s *Session) refreshAuthResult() {
+	if s.authResult == nil || s.server == nil {
+		return
+	}
+	if current, ok := s.server.config.Authenticator.(interface {
+		CurrentAuthResult(*BoltAuthResult) *BoltAuthResult
+	}); ok {
+		s.authResult = current.CurrentAuthResult(s.authResult)
+	}
+}
+
+// accessMode is the databases the session's principal may use: the server's
+// resolver for its roles, or the server's fixed mode; nil allows every
+// database. When authentication is required and neither is set (a
+// standalone Bolt server), no database (secure default).
+func (s *Session) accessMode() auth.DatabaseAccessMode {
+	if s.server == nil {
+		return nil
+	}
+	if s.server.databaseAccessModeResolver != nil {
+		var roles []string
+		if s.authResult != nil {
+			roles = s.authResult.Roles
+		}
+		return s.server.databaseAccessModeResolver(roles)
+	}
+	if s.server.databaseAccessMode != nil {
+		return s.server.databaseAccessMode
+	}
+	if s.server.config.RequireAuth {
+		return auth.DenyAllDatabaseAccessMode
+	}
+	return nil
+}
+
 // withSessionIdentity adds what the executor knows about the session to a
 // statement's or transaction's context: the forwarded auth header, the
 // client connection, the user directory, and the authenticated user with
-// their principal and permissions.
+// their principal and boosted procedure grants. A statement's permissions
+// are the principal's one resolver, which handleRun adds for the
+// statement's database (principalAccess).
 func (s *Session) withSessionIdentity(ctx context.Context) context.Context {
 	ctx = cypher.WithAuthToken(ctx, s.forwardedAuthHeader)
 	ctx = cypher.WithRequestIdentity(ctx, s.requestIdentity())
@@ -1823,12 +1830,26 @@ func (s *Session) withSessionIdentity(ctx context.Context) context.Context {
 			principal = auth.UsernamePrincipalID(s.authResult.Username)
 		}
 		ctx = cypher.WithAuthenticatedPrincipal(ctx, principal)
-		ctx = cypher.WithPermissionChecker(ctx, func(permission string) bool {
-			return s.authResult.HasPermission(permission)
-		})
 		ctx = cypher.WithProcedureGrantChecker(ctx, s.server.procedureGrants(s.authResult.Roles))
 	}
+	if s.authenticationDisabled() {
+		// No authentication: immutable privileges can be administered, as
+		// in Neo4j with authentication disabled.
+		ctx = cypher.WithAuthenticationDisabled(ctx)
+	}
 	return ctx
+}
+
+// authenticationDisabled is auth.AuthenticationDisabled for the session: no
+// authenticator configured, or one whose user store has security disabled.
+func (s *Session) authenticationDisabled() bool {
+	if s.server == nil || s.server.config.Authenticator == nil {
+		return true
+	}
+	if authenticator, ok := s.server.config.Authenticator.(interface{ AuthenticationDisabled() bool }); ok {
+		return authenticator.AuthenticationDisabled()
+	}
+	return false
 }
 
 // requestIdentity is the session's identity for SHOW USERS, SHOW CURRENT

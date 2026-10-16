@@ -56,7 +56,17 @@ type Pair struct {
 	mu           sync.Mutex
 }
 
+// StatementSequenceExecutor runs one database-scoped request, retaining the
+// transaction across statements and returning the last statement or first error.
+type StatementSequenceExecutor interface {
+	ExecuteStatements(context.Context, string, []string) Outcome
+}
+
 func (pair *Pair) execute(ctx context.Context, options Options, query string) (Outcome, Outcome) {
+	return pair.executeCase(ctx, options, SweepCase{Query: query})
+}
+
+func (pair *Pair) executeCase(ctx context.Context, options Options, test SweepCase) (Outcome, Outcome) {
 	var reference, actual Outcome
 	var wait sync.WaitGroup
 	wait.Add(2)
@@ -64,7 +74,19 @@ func (pair *Pair) execute(ctx context.Context, options Options, query string) (O
 		defer wait.Done()
 		statementCtx, cancel := context.WithTimeout(ctx, options.StatementTimeout)
 		defer cancel()
-		*into = executor.Execute(statementCtx, query)
+		if len(test.Statements) > 0 || test.Database != "" {
+			queries := test.Statements
+			if len(queries) == 0 {
+				queries = []string{test.Query}
+			}
+			if scoped, ok := executor.(StatementSequenceExecutor); ok {
+				*into = scoped.ExecuteStatements(statementCtx, test.Database, queries)
+			} else {
+				*into = Outcome{Code: "client: statement sequence route unavailable"}
+			}
+		} else {
+			*into = executor.Execute(statementCtx, test.Query)
+		}
 	}
 	go run(pair.Neo4j, &reference)
 	go run(pair.NornicDB, &actual)
@@ -175,7 +197,7 @@ func RunSweep(ctx context.Context, corpus SweepCorpus, pair *Pair, options Optio
 			defer wait.Done()
 			for index := range jobs {
 				sweepCase := reads[index]
-				reference, actual := pair.execute(ctx, options, sweepCase.Query)
+				reference, actual := pair.executeCase(ctx, options, sweepCase)
 				readResults[index] = Result{ID: sweepCase.ID, Issue: SweepIssue, Kind: "statement", Query: sweepCase.Query,
 					Neo4j: reference, NornicDB: actual, Match: Same(sweepCase.Query, reference, actual)}
 			}
@@ -194,7 +216,7 @@ func RunSweep(ctx context.Context, corpus SweepCorpus, pair *Pair, options Optio
 	}
 	results = append(results, readResults...)
 	for _, sweepCase := range writes {
-		reference, actual := pair.execute(ctx, options, sweepCase.Query)
+		reference, actual := pair.executeCase(ctx, options, sweepCase)
 		results = append(results,
 			Result{ID: sweepCase.ID, Issue: SweepIssue, Kind: "statement", Query: sweepCase.Query,
 				Neo4j: reference, NornicDB: actual, Match: Same(sweepCase.Query, reference, actual)},

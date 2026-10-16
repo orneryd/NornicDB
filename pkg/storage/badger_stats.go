@@ -77,6 +77,8 @@ func (b *BadgerEngine) initializeCounts() error {
 }
 
 func (b *BadgerEngine) NodeCount() (int64, error) {
+	b.totalCountWriteMu.RLock()
+	defer b.totalCountWriteMu.RUnlock()
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
@@ -132,6 +134,8 @@ func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[stri
 // This is an optional fast-path used by NamespacedEngine to provide accurate
 // per-database counts without decoding values.
 func (b *BadgerEngine) NodeCountByPrefix(prefix string) (int64, error) {
+	b.totalCountWriteMu.RLock()
+	defer b.totalCountWriteMu.RUnlock()
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
@@ -150,6 +154,8 @@ func (b *BadgerEngine) NodeCountByPrefix(prefix string) (int64, error) {
 // EdgeCount returns the total number of valid, decodable edges.
 // This is consistent with AllEdges() - only counts edges that can be successfully decoded.
 func (b *BadgerEngine) EdgeCount() (int64, error) {
+	b.totalCountWriteMu.RLock()
+	defer b.totalCountWriteMu.RUnlock()
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
@@ -167,6 +173,8 @@ func (b *BadgerEngine) EdgeCount() (int64, error) {
 // EdgeCountByPrefix counts edges whose EdgeID begins with the provided prefix.
 // The prefix refers to the EdgeID string prefix (e.g., database namespace "nornic:").
 func (b *BadgerEngine) EdgeCountByPrefix(prefix string) (int64, error) {
+	b.totalCountWriteMu.RLock()
+	defer b.totalCountWriteMu.RUnlock()
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}

@@ -427,6 +427,7 @@ RETURN nodeId, embedding
 - **Projection:** a relationship projection's `orientation` (`NATURAL`, `REVERSE` or `UNDIRECTED`; an undirected relationship counts twice), `properties` (with `defaultValue`) and `aggregation` (parallel relationships merged with `SINGLE`, `SUM`, `MIN`, `MAX` or `COUNT`) apply. A label, type or property no stored element has, and a graph name already in use, are refused with GDS's messages, and `projectMillis` is the time the projection took.
 - **FastRP:** each iteration gives every node the relationship-weighted sum of the previous iteration's vectors over its relationships as projected, L2-normalised, and the embedding adds the iterations, each times its `iterationWeights` entry (default `[0.0, 1.0, 1.0]`), plus `nodeSelfInfluence` times the node's start vector. A node nothing propagates to gets a zero vector. `normalizationStrength` scales the start vectors by degree, and `featureProperties` fill the last `propertyRatio` of the dimensions. `embeddingDimension` is required, the weight and feature properties must be projected, and a key FastRP doesn't take, or a value of the wrong type or range, is refused with GDS's messages. `stats` runs FastRP and reports its time and configuration.
 - **Catalog:** each database has its own catalog. `gds.graph.list([name])` and `gds.graph.drop(name or list, failIfMissing, dbName)` give GDS's columns (schema, configuration, density, degree distribution, times), `gds.graph.exists` answers as a procedure and as a function, `gds.util.nodeProperty(graph, node, key)` reads a projected node property (NaN where the node has none), and `gds.graph.project` takes GDS's configuration map (`nodeProperties` / `relationshipProperties` add properties to every projection). A graph that doesn't exist gives GDS's "does not exist on database" error.
+- **Numeric values:** native projections retain `Integer`, `Float`, and numeric list properties in their projected types. Numeric list defaults use the same validation as stored values. Imports reject positive integers above `2^53` when converting them to Double, including list elements. Reading an already stored Integer as Double can round it; read it as Integer when exactness matters.
 - **Projection from a query:** GDS's Cypher aggregation projection projects the rows of any query, so relationships can be computed rather than stored:
 
   ```cypher
@@ -447,6 +448,19 @@ RETURN nodeId, embedding
   RETURN node2, similarity, shared
   ```
 - **NornicDB differences:** `randomSeed` defaults to 42, so the same call gives the same embeddings (GDS picks a random seed); `embeddingDimension` is at most 8,192; `nodeId` is the node's id.
+
+For Go integrations, `cypher.GraphProjection.NodeProperties` now has the underlying type
+`map[string]map[string]interface{}` instead of `map[string]map[string]float64`. Values are
+`int64`, `float64`, `[]int64`, or `[]float64`; code that directly constructs or reads this
+exported field must use its projected type. This preserves integer precision instead of
+converting every property to floating point. For example, an Integer property can be read as:
+
+```go
+age, ok := projection.NodeProperties["alice"]["age"].(int64)
+if ok {
+    fmt.Println(age)
+}
+```
 
 ---
 

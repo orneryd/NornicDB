@@ -20,7 +20,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
-	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -77,79 +76,8 @@ func hasPrefixFold(s, prefix string) bool {
 	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
 }
 
-func statementTargetDatabase(defaultDB string, statement string) (string, error) {
-	db := strings.TrimSpace(defaultDB)
-	trimmed := strings.TrimSpace(statement)
-	if trimmed == "" {
-		return db, nil
-	}
-
-	if hasPrefixFold(trimmed, ":USE ") {
-		parts := strings.Fields(trimmed)
-		if len(parts) < 2 {
-			return "", fmt.Errorf(":USE requires a database name")
-		}
-		target := strings.TrimSpace(parts[1])
-		if target == "" {
-			return "", fmt.Errorf(":USE requires a database name")
-		}
-		return target, nil
-	}
-
-	// A USE clause runs on the request's database's executor, which routes
-	// it (resolving aliases, composite constituents and dynamic references),
-	// checks the principal's access to its target and keeps a transaction on
-	// its database: one USE rule for every route (#738).
-	return db, nil
-}
-
-func normalizeStatementForExecution(defaultDB string, statement string) (effectiveDB string, query string, err error) {
-	effectiveDB = strings.TrimSpace(defaultDB)
-	query = statement
-	trimmed := strings.TrimSpace(statement)
-	if trimmed == "" {
-		return effectiveDB, "", nil
-	}
-
-	if strings.HasPrefix(strings.ToUpper(trimmed), ":USE") {
-		lines := strings.Split(statement, "\n")
-		remainingLines := make([]string, 0, len(lines))
-		foundUse := false
-		for _, line := range lines {
-			lineTrimmed := strings.TrimSpace(line)
-			if !foundUse && strings.HasPrefix(strings.ToUpper(lineTrimmed), ":USE") {
-				parts := strings.Fields(lineTrimmed)
-				if len(parts) < 2 {
-					return "", "", fmt.Errorf(":USE requires a database name")
-				}
-				effectiveDB = strings.TrimSpace(parts[1])
-				if effectiveDB == "" {
-					return "", "", fmt.Errorf(":USE requires a database name")
-				}
-				foundUse = true
-				if len(parts) > 2 {
-					remainingLines = append(remainingLines, strings.Join(parts[2:], " "))
-				}
-				continue
-			}
-			remainingLines = append(remainingLines, line)
-		}
-		if foundUse {
-			query = strings.TrimSpace(strings.Join(remainingLines, "\n"))
-		}
-		return effectiveDB, query, nil
-	}
-
-	target, targetErr := statementTargetDatabase(defaultDB, statement)
-	if targetErr != nil {
-		return "", "", targetErr
-	}
-	return target, query, nil
-}
-
-// withRequestIdentity attaches the signed-in user, the user directory and
-// the request's connection, for SHOW USERS, SHOW CURRENT USER and SHOW
-// TRANSACTIONS (#718).
+// withRequestIdentity attaches the signed-in user, user directory and client
+// connection to administration statements.
 func (s *Server) withRequestIdentity(ctx context.Context, r *http.Request, claims *auth.JWTClaims) context.Context {
 	identity := &cypher.RequestIdentity{Connection: cypher.ClientConnection{Protocol: "http"}}
 	identity.Connections = s.connectionLister
@@ -1022,6 +950,7 @@ type ResultRow struct {
 	Row   []interface{} `json:"row"`
 	Meta  []interface{} `json:"meta,omitempty"`
 	Graph *GraphResult  `json:"graph,omitempty"`
+	REST  []interface{} `json:"rest,omitempty"`
 }
 
 // GraphResult holds graph-format results.
@@ -1040,12 +969,14 @@ type GraphNode struct {
 
 // GraphRelationship is a relationship in graph format.
 type GraphRelationship struct {
-	ID         string                 `json:"id"`
-	ElementID  string                 `json:"elementId"`
-	Type       string                 `json:"type"`
-	StartNode  string                 `json:"startNodeElementId"`
-	EndNode    string                 `json:"endNodeElementId"`
-	Properties map[string]interface{} `json:"properties"`
+	StartNodeID string                 `json:"startNode,omitempty"`
+	EndNodeID   string                 `json:"endNode,omitempty"`
+	ID          string                 `json:"id"`
+	ElementID   string                 `json:"elementId"`
+	Type        string                 `json:"type"`
+	StartNode   string                 `json:"startNodeElementId"`
+	EndNode     string                 `json:"endNodeElementId"`
+	Properties  map[string]interface{} `json:"properties"`
 }
 
 // QueryStats holds query execution statistics.
@@ -1212,12 +1143,6 @@ func (s *Server) grantAccessToNewDatabase(ctx context.Context, dbName string, cl
 		return
 	}
 	allowlist := s.allowlistStore.Allowlist()
-	normalizeRole := func(r string) string {
-		r = strings.TrimSpace(r)
-		r = strings.ToLower(r)
-		r = strings.TrimPrefix(r, "role_")
-		return r
-	}
 
 	// Ensure admin role has full access to the new database.
 	adminRole := string(auth.RoleAdmin)
@@ -1240,7 +1165,7 @@ func (s *Server) grantAccessToNewDatabase(ctx context.Context, dbName string, cl
 	if claims != nil && len(claims.Roles) > 0 {
 		seenRoles := map[string]struct{}{adminRole: {}}
 		for _, r := range claims.Roles {
-			role := normalizeRole(r)
+			role := auth.NormalizeRoleName(r)
 			if role == "" {
 				continue
 			}
@@ -1289,6 +1214,13 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		}}
 	}
 	switch typed := value.(type) {
+	case []byte:
+		// Neo4j HTTP writes the signed Java byte values, including in maps.
+		bytes := make([]int8, len(typed))
+		for index, value := range typed {
+			bytes[index] = int8(value)
+		}
+		return bytes, []interface{}{nil}
 	case float32:
 		return transactionHTTPFloat(float64(typed), 32), []interface{}{nil}
 	case float64:
@@ -1311,6 +1243,58 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 			return nil, []interface{}{nil}
 		}
 		return transactionHTTPPoint(*typed), []interface{}{map[string]interface{}{"type": "point"}}
+	case storage.RemoteEntityValue:
+		if typed == nil {
+			return nil, []interface{}{nil}
+		}
+		id, startID, endID := typed.LegacyIDs()
+		elementID, _ := typed["elementId"].(string)
+		props, _ := typed["properties"].(map[string]interface{})
+		if props == nil {
+			props = map[string]interface{}{}
+		}
+		converted, _ := s.transactionHTTPValue(props, dbName)
+		properties := converted.(map[string]interface{})
+		kind := "node"
+		if relationshipType, relationship := typed["type"].(string); relationship {
+			kind = "relationship"
+			if len(graph) > 0 && graph[0].graph != nil {
+				start, _ := typed["startNodeElementId"].(string)
+				end, _ := typed["endNodeElementId"].(string)
+				graph[0].addEdge(GraphRelationship{StartNodeID: strconv.FormatInt(startID, 10), EndNodeID: strconv.FormatInt(endID, 10), ID: strconv.FormatInt(id, 10), ElementID: elementID, Type: relationshipType, StartNode: start, EndNode: end, Properties: properties})
+			}
+		} else if len(graph) > 0 && graph[0].graph != nil {
+			var labels []string
+			switch values := typed["labels"].(type) {
+			case []string:
+				labels = values
+			case []interface{}:
+				for _, value := range values {
+					if label, ok := value.(string); ok {
+						labels = append(labels, label)
+					}
+				}
+			}
+			graph[0].addNode(GraphNode{ID: strconv.FormatInt(id, 10), ElementID: elementID, Labels: labels, Properties: properties})
+		}
+		meta := map[string]interface{}{"id": id, "elementId": elementID, "type": kind, "deleted": false}
+		if transactionHTTPWantsREST(graph) {
+			return transactionHTTPRESTEntity(kind, dbName, meta, properties, typed), []interface{}{meta}
+		}
+		return properties, []interface{}{meta}
+	case storage.RemotePathValue:
+		if _, _, valid := typed.Parts(); !valid {
+			return nil, []interface{}{nil}
+		}
+		entities := make([]interface{}, len(typed))
+		for i, entity := range typed {
+			entities[i] = entity
+		}
+		if transactionHTTPWantsREST(graph) {
+			return s.transactionHTTPRESTPath(entities, dbName, graph[0]), nil
+		}
+		row, metadata := s.transactionHTTPValue(entities, dbName, graph...)
+		return row, []interface{}{metadata}
 	case *storage.Node:
 		if typed == nil {
 			return nil, []interface{}{nil}
@@ -1321,7 +1305,11 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		if len(graph) > 0 && graph[0].graph != nil {
 			graph[0].addNode(GraphNode{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Labels: typed.Labels, Properties: properties})
 		}
-		return properties, entityMeta(string(typed.ID), elementID, "node")
+		meta := entityMeta(string(typed.ID), elementID, "node")
+		if transactionHTTPWantsREST(graph) {
+			return transactionHTTPRESTEntity("node", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"labels": typed.Labels}), meta
+		}
+		return properties, meta
 	case *storage.Edge:
 		if typed == nil {
 			return nil, []interface{}{nil}
@@ -1330,9 +1318,13 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		properties := converted.(map[string]interface{})
 		elementID := storage.RelationshipElementID(s.entityDatabase(dbName, "", typed.ID), typed.ID)
 		if len(graph) > 0 && graph[0].graph != nil {
-			graph[0].addEdge(GraphRelationship{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: storage.NodeElementID(s.entityDatabase(dbName, typed.StartNode, ""), typed.StartNode), EndNode: storage.NodeElementID(s.entityDatabase(dbName, typed.EndNode, ""), typed.EndNode), Properties: properties})
+			graph[0].addEdge(GraphRelationship{StartNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.StartNode)), 10), EndNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.EndNode)), 10), ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: storage.NodeElementID(s.entityDatabase(dbName, typed.StartNode, ""), typed.StartNode), EndNode: storage.NodeElementID(s.entityDatabase(dbName, typed.EndNode, ""), typed.EndNode), Properties: properties})
 		}
-		return properties, entityMeta(string(typed.ID), elementID, "relationship")
+		meta := entityMeta(string(typed.ID), elementID, "relationship")
+		if transactionHTTPWantsREST(graph) {
+			return transactionHTTPRESTEntity("relationship", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"type": typed.Type, "startNodeElementId": storage.NodeElementID(s.entityDatabase(dbName, typed.StartNode, ""), typed.StartNode), "endNodeElementId": storage.NodeElementID(s.entityDatabase(dbName, typed.EndNode, ""), typed.EndNode)}), meta
+		}
+		return properties, meta
 	case *cypher.PathResult:
 		if typed == nil {
 			return nil, []interface{}{nil}
@@ -1346,9 +1338,13 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 				entities = append(entities, typed.Relationships[index])
 			}
 		}
+		if transactionHTTPWantsREST(graph) {
+			return s.transactionHTTPRESTPath(entities, dbName, graph[0]), nil
+		}
 		row, metadata := s.transactionHTTPValue(entities, dbName, graph...)
 		return row, []interface{}{metadata}
 	case map[string]interface{}:
+		typed = storage.PublicRemoteMap(typed)
 		switch path := typed["_pathResult"].(type) {
 		case cypher.PathResult:
 			return s.transactionHTTPValue(path, dbName, graph...)
@@ -1478,6 +1474,9 @@ func (s *Server) transactionCommitURL(r *http.Request, dbName, txID string) stri
 }
 
 func (s *Server) appendStatementResult(response *TransactionResponse, result *cypher.ExecuteResult, dbName string, includeStats bool, contents ...[]string) {
+	if selected, ok := result.Metadata["db"].(string); ok && selected != "" {
+		dbName = selected
+	}
 	columns := result.Columns
 	if columns == nil {
 		columns = []string{}
@@ -1507,6 +1506,18 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 			metadata = append(metadata, nested...)
 		}
 		qr.Data[i] = ResultRow{Row: convertedRow, Meta: metadata}
+		if len(contents) > 0 {
+			for _, format := range contents[0] {
+				if format == "rest" {
+					state := &transactionHTTPValueState{rest: true, mapKeyOrders: result.MapKeyOrders}
+					qr.Data[i].REST = make([]interface{}, len(row))
+					for column, value := range row {
+						qr.Data[i].REST[column], _ = s.transactionHTTPValue(value, dbName, state)
+					}
+					break
+				}
+			}
+		}
 		if len(graph) > 0 && graph[0].graph != nil {
 			qr.Data[i].Graph = graph[0].graph
 		}
@@ -1589,78 +1600,13 @@ func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 	}
 }
 
-// sessionStatementRunner runs a statement in an open transaction. A
-// statement whose :USE names a constituent of the transaction's composite
-// database reaches it through a USE clause, the one way a composite
-// transaction targets a constituent (as in Neo4j); a statement with its own
-// USE clause keeps it.
+// sessionStatementRunner runs the original statement in an open transaction.
+// The executor owns USE, :USE and the transaction's database selection rules.
 func (s *Server) sessionStatementRunner(session *txsession.Session) statementRunner {
 	return func(ctx context.Context, dbName, query string, params map[string]interface{}) (*cypher.ExecuteResult, *cypher.StorageExecutor, error) {
-		if queryErr := s.otherDatabaseInTransactionError(session.Database, dbName, query); queryErr != nil {
-			return nil, nil, &requestStatementError{QueryError: *queryErr}
-		}
-		if s.isConstituentOf(session.Database, dbName) {
-			if _, _, hasUse, _ := fabric.ParseUseClause(query, false); !hasUse {
-				query = "USE " + dbName + " " + query
-			}
-		}
 		result, err := s.txSessions.ExecuteInSession(cypher.WithClientStatement(ctx), session, query, params)
 		return result, session.Executor, err
 	}
-}
-
-// otherDatabaseInTransactionError is the error for a statement of a
-// transaction on txDB that targets database target (with USE or :USE), or
-// nil when target is txDB (by name or alias) or one of composite txDB's
-// constituents. A transaction cannot span databases (Neo4j Operations
-// Manual: "a transaction cannot span across multiple databases"), and a
-// request that switches database with :USE partway through fails as a
-// whole (#683). The statement fails, so the request's transaction is rolled
-// back and nothing it wrote is kept.
-//
-// A write gets Neo4j's error, Neo.ClientError.Statement.AccessMode "Writing
-// to more than one database per transaction is not allowed" (verified
-// against Neo4j 5.26). Neo4j Community has one user database, so its error
-// for a read of a second one could not be observed; a read gets the same
-// code with the message worded for a read.
-func (s *Server) otherDatabaseInTransactionError(txDB, target, query string) *QueryError {
-	if s.sameDatabase(txDB, target) {
-		return nil
-	}
-	if s.isConstituentOf(txDB, target) {
-		return nil
-	}
-	requirements := cypher.QueryPermissionRequirements(query)
-	if requirements.Write || requirements.Schema {
-		return &QueryError{
-			Code:    "Neo.ClientError.Statement.AccessMode",
-			Message: fmt.Sprintf("Writing to more than one database per transaction is not allowed. Attempted write to %s, currently writing to %s", target, txDB),
-		}
-	}
-	return &QueryError{
-		Code:    "Neo.ClientError.Statement.AccessMode",
-		Message: fmt.Sprintf("Accessing more than one database per transaction is not allowed. Attempted access to %s, currently using %s", target, txDB),
-	}
-}
-
-// isConstituentOf reports whether target names a constituent of composite
-// database composite (composite.alias).
-func (s *Server) isConstituentOf(composite, target string) bool {
-	return s.dbManager != nil && s.dbManager.IsCompositeDatabase(composite) && strings.HasPrefix(target, composite+".")
-}
-
-// sameDatabase reports whether two database names or aliases name the same
-// database.
-func (s *Server) sameDatabase(a, b string) bool {
-	if a == b {
-		return true
-	}
-	if s.dbManager == nil {
-		return false
-	}
-	resolvedA, errA := s.dbManager.ResolveDatabase(a)
-	resolvedB, errB := s.dbManager.ResolveDatabase(b)
-	return errA == nil && errB == nil && resolvedA == resolvedB
 }
 
 // runRequestStatements runs an HTTP /tx request's statements in order with
@@ -1686,28 +1632,16 @@ func (s *Server) runRequestStatements(
 	if claims != nil {
 		ctx = cypher.WithProcedureGrantChecker(ctx, s.ProcedureGrantChecker(claims.Roles))
 	}
-	mode := s.getDatabaseAccessMode(claims)
+	if !s.isRBACEnforced() {
+		// Immutable privileges are administered only with authentication
+		// disabled, as in Neo4j.
+		ctx = cypher.WithAuthenticationDisabled(ctx)
+	}
 	// A name is checked like the request's database (graphAccess: a
 	// composite constituent needs its composite and its database), and
-	// read / write are the privileges of the database its data is in.
-	ctx = cypher.WithDatabasePermissionResolver(ctx, defaultDB, func(database, permission string) bool {
-		target, allowed := s.graphAccess(mode, database)
-		if !allowed {
-			return false
-		}
-		if !s.isRBACEnforced() {
-			return true
-		}
-		switch permission {
-		case "read":
-			return s.getResolvedAccess(claims, target).Read
-		case "write":
-			return s.getResolvedAccess(claims, target).Write
-		case "schema", "admin":
-			return claims != nil && hasPermission(s, claims.Roles, auth.Permission(permission))
-		}
-		return false
-	})
+	// read / write are the privileges of the database its data is in: the
+	// principal's one resolver (principalAccess).
+	ctx = cypher.WithDatabasePermissionResolver(ctx, defaultDB, s.principalAccess(claims).Allows)
 	for _, stmt := range statements {
 		if queryErr := s.runRequestStatement(ctx, claims, defaultDB, stmt, run, localize, response); queryErr != nil {
 			response.Errors = append(response.Errors, *queryErr)
@@ -1728,38 +1662,7 @@ func (s *Server) runRequestStatement(
 	localize func(localization.Message) string,
 	response *TransactionResponse,
 ) *QueryError {
-	// Each statement can override the URL's database with its own :USE.
-	effectiveDB, queryStatement, resolveErr := normalizeStatementForExecution(defaultDB, stmt.Statement)
-	if resolveErr != nil {
-		queryErr := statementError(resolveErr)
-		return &queryErr
-	}
-
-	// Per-database access: deny if principal may not access this database
-	// (Neo4j-aligned). A statement's leading USE clause names the database
-	// it runs on: its access and permissions are checked here with the
-	// same messages as the request's database, before the executor routes
-	// the statement there (the executor checks every database a statement
-	// selects again, including subquery USE and composite constituents).
-	checkedDB := effectiveDB
-	if use, _, hasUse, err := fabric.ParseUseClause(queryStatement, false); err == nil && hasUse && !use.IsDynamic() {
-		checkedDB = use.Name
-	}
-	if !s.canAccessGraph(claims, checkedDB) {
-		return &QueryError{
-			Code:    "Neo.ClientError.Security.Forbidden",
-			Message: localize(localization.DatabaseAccessDenied(checkedDB)),
-		}
-	}
-	if missing := s.missingQueryPermission(claims, checkedDB, queryStatement); missing != "" {
-		message := localization.DatabaseWriteDenied(checkedDB)
-		if missing == auth.PermSchema {
-			message = localization.SchemaPermissionRequired()
-		} else if missing == auth.PermAdmin {
-			message = localization.AdminPermissionRequired()
-		}
-		return &QueryError{Code: "Neo.ClientError.Security.Forbidden", Message: localize(message)}
-	}
+	effectiveDB, queryStatement := defaultDB, stmt.Statement
 
 	// Use ExistsOrIsConstituent to accept dotted composite.alias references.
 	if !s.dbManager.ExistsOrIsConstituent(effectiveDB) {
@@ -1787,14 +1690,21 @@ func (s *Server) runRequestStatement(
 	}
 
 	queryStart := time.Now()
-	result, executor, err := run(s.withDatabasePermissionChecker(ctx, claims, effectiveDB), effectiveDB, queryStatement, stmt.Parameters)
+	result, executor, err := run(ctx, effectiveDB, queryStatement, stmt.Parameters)
 	s.logSlowQuery(stmt.Statement, stmt.Parameters, time.Since(queryStart), err)
 	if err != nil {
 		var own *requestStatementError
 		if errors.As(err, &own) {
 			return &own.QueryError
 		}
-		if failure := statementError(err); result != nil && len(result.Columns) > 0 && !nornicerrors.IsCompileTimeStatus(failure.Code) {
+		failure := statementError(err)
+		// Authorization failures never publish a statement result, even when
+		// the executor supplies column metadata alongside the denial. Keep
+		// runtime partial results for non-security statement failures below.
+		if strings.HasPrefix(failure.Code, "Neo.ClientError.Security.") {
+			return &failure
+		}
+		if result != nil && len(result.Columns) > 0 && !nornicerrors.IsCompileTimeStatus(failure.Code) {
 			s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
 			return &failure
 		}

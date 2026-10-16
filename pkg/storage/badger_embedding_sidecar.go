@@ -361,6 +361,10 @@ func (b *BadgerEngine) loadEmbeddingSidecar(txn *badger.Txn, node *Node, nodeID 
 	}); err != nil {
 		return nil, false, fmt.Errorf("failed to decode embedding metadata for node %s: %w", nodeID, err)
 	}
+	return validateEmbeddingSidecarMeta(meta, node)
+}
+
+func validateEmbeddingSidecarMeta(meta map[string]any, node *Node) (map[string]any, bool, error) {
 	if meta == nil {
 		return nil, false, nil
 	}

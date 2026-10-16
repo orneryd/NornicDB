@@ -181,10 +181,14 @@ func date(t *testing.T, text string) CypherDate {
 // on input the statements in other tests don't reach.
 func TestReduceFormAndPatternHelpers(t *testing.T) {
 	for _, arguments := range []string{"a = 0", "a, x IN l | x", "a = 0, 1 IN l | x", "a = 0, x l | x", "a = 0, x IN l x",
-		"a = , x IN l | x", "a = 0, x IN l | ", "`` = 0, x IN l | x"} {
+		"a = , x IN l | x", "a = 0, x IN l | ", "= 0, x IN l | x"} {
 		_, ok := parseReduceForm("reduce", arguments)
 		require.False(t, ok, arguments)
 	}
+	// A quoted empty symbolic name is valid; success is independent of name length.
+	empty, valid := parseReduceForm("reduce", "`` = 0, x IN l | x")
+	require.True(t, valid)
+	require.Empty(t, empty.accumulator)
 	_, ok := parseReduceForm("allReduce", "a = 0, x IN l | x, ")
 	require.False(t, ok)
 	form, ok := parseReduceForm("allReduce", "a = 0, x IN l | a + x, a < 3")
@@ -220,4 +224,18 @@ func TestReduceFormAndPatternHelpers(t *testing.T) {
 	rewritten, rewrite := canonicalizeFunctionAliases("WITH 1 AS ln RETURN ln, PROPERTY_EXISTS(n.s, s), property_exists(n s), property_exists(n, s t)")
 	require.Nil(t, rewrite)
 	require.Equal(t, "WITH 1 AS ln RETURN ln, PROPERTY_EXISTS(n.s, s), property_exists(n s), property_exists(n, s t)", rewritten)
+}
+
+func TestReduceEmptyQuotedBindings(t *testing.T) {
+	for _, query := range []string{
+		"RETURN reduce(`` = 0, x IN [1,2] | `` + x) AS v",
+		"RETURN reduce(s = 0, `` IN [1,2] | s + ``) AS v",
+	} {
+		t.Run(query, func(t *testing.T) {
+			e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "empty_reduce"))
+			r, err := e.Execute(context.Background(), query, nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]interface{}{{int64(3)}}, r.Rows)
+		})
+	}
 }

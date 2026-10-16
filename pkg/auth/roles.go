@@ -70,7 +70,7 @@ func (r *RoleStore) AllRoles() []string {
 
 // IsBuiltin returns true if the role name is a built-in (admin, editor, viewer).
 func IsBuiltinRole(name string) bool {
-	n := strings.ToLower(strings.TrimSpace(name))
+	n := NormalizeRoleName(name)
 	for _, b := range builtinRoleNames {
 		if b == n {
 			return true
@@ -81,7 +81,7 @@ func IsBuiltinRole(name string) bool {
 
 // CreateRole creates a user-defined role. Fails if name is built-in or already exists.
 func (r *RoleStore) CreateRole(ctx context.Context, name string) error {
-	name = strings.ToLower(strings.TrimSpace(name))
+	name = NormalizeRoleName(name)
 	if name == "" {
 		return ErrInvalidRoleName
 	}
@@ -109,70 +109,21 @@ func (r *RoleStore) CreateRole(ctx context.Context, name string) error {
 	return nil
 }
 
-// DeleteRole removes a user-defined role. Fails if name is built-in or does not exist.
-// Caller must ensure no user has this role (e.g. check auth.ListUsers()).
+// DeleteRole removes the role, its grants and stored user assignments atomically.
+// Servers use DeleteRoleWithStores to publish their loaded caches after commit.
 func (r *RoleStore) DeleteRole(ctx context.Context, name string) error {
-	name = strings.ToLower(strings.TrimSpace(name))
-	if IsBuiltinRole(name) {
-		return ErrCannotDeleteBuiltinRole
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, exists := r.roles[name]; !exists {
-		return ErrRoleNotFound
-	}
-	nodeID := storage.NodeID(rolePrefix + name)
-	if err := r.storage.DeleteNode(nodeID); err != nil {
-		return err
-	}
-	delete(r.roles, name)
-	return nil
+	return r.DeleteRoleWithStores(ctx, name, RoleMutationStores{})
 }
 
-// RenameRole renames a user-defined role (oldName -> newName). Fails if old is built-in,
-// new is built-in or exists, or old does not exist. Does not update user nodes or allowlist;
-// caller should update those or document that rename is for the role list only and
-// allowlist/user assignments use the new name going forward.
+// RenameRole moves the role and all its stored grants and assignments atomically.
+// Servers use RenameRoleWithStores to publish their loaded caches after commit.
 func (r *RoleStore) RenameRole(ctx context.Context, oldName, newName string) error {
-	oldName = strings.ToLower(strings.TrimSpace(oldName))
-	newName = strings.ToLower(strings.TrimSpace(newName))
-	if IsBuiltinRole(oldName) {
-		return ErrCannotDeleteBuiltinRole
-	}
-	if IsBuiltinRole(newName) || newName == "" {
-		return ErrRoleExists
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, exists := r.roles[oldName]; !exists {
-		return ErrRoleNotFound
-	}
-	if _, exists := r.roles[newName]; exists {
-		return ErrRoleExists
-	}
-	oldID := storage.NodeID(rolePrefix + oldName)
-	newNode := &storage.Node{
-		ID:     storage.NodeID(rolePrefix + newName),
-		Labels: []string{roleLabel, roleSystems},
-		Properties: map[string]any{
-			"name": newName,
-		},
-	}
-	if _, err := r.storage.CreateNode(newNode); err != nil {
-		return err
-	}
-	if err := r.storage.DeleteNode(oldID); err != nil {
-		_ = r.storage.DeleteNode(newNode.ID)
-		return err
-	}
-	delete(r.roles, oldName)
-	r.roles[newName] = struct{}{}
-	return nil
+	return r.RenameRoleWithStores(ctx, oldName, newName, RoleMutationStores{})
 }
 
 // Exists returns true if the role exists (built-in or user-defined).
 func (r *RoleStore) Exists(name string) bool {
-	name = strings.ToLower(strings.TrimSpace(name))
+	name = NormalizeRoleName(name)
 	if IsBuiltinRole(name) {
 		return true
 	}
@@ -196,3 +147,26 @@ var (
 	ErrRoleNotFound            = errors.New("role not found")
 	ErrCannotDeleteBuiltinRole = errors.New("cannot delete or rename built-in role")
 )
+
+// LockRoleForGrant reads and writes the role record in the grant transaction.
+// Role deletion writes that same record, so their commits serialize: neither
+// can commit from a snapshot that missed the other's role or grant changes.
+func (r *RoleStore) LockRoleForGrant(ctx context.Context, name string) (bool, error) {
+	name = NormalizeRoleName(name)
+	if IsBuiltinRole(name) {
+		return true, nil
+	}
+	node, err := r.storage.GetNode(storage.NodeID(rolePrefix + name))
+	if errors.Is(err, storage.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, label := range node.Labels {
+		if label == roleLabel {
+			return true, r.storage.UpdateNode(node)
+		}
+	}
+	return false, nil
+}

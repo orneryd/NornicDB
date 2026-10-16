@@ -143,14 +143,17 @@ func (e *StorageExecutor) callDbmsListConnectionsWithContext(ctx context.Context
 	if identity == nil || identity.Connections == nil {
 		return result, nil
 	}
-	viewAll := identity.User == nil
-	if identity.User != nil {
-		for _, role := range identity.User.Roles {
-			viewAll = viewAll || strings.EqualFold(role, "admin")
-		}
+	// A principal holding the admin entitlement (whatever its role is
+	// called) sees every connection; any other sees its own, as in Neo4j.
+	// The principal's permissions are principalPermissions; a statement with
+	// neither a resolver nor a signed-in user (an embedded caller) lists
+	// every connection.
+	viewAll := true
+	if allows := principalPermissions(ctx); allows != nil {
+		viewAll = allows("admin")
 	}
 	for _, connection := range identity.Connections() {
-		if !viewAll && connection.Username != identity.User.Name {
+		if !viewAll && (identity.User == nil || connection.Username != identity.User.Name) {
 			continue
 		}
 		result.Rows = append(result.Rows, []interface{}{connection.ConnectionID, connection.ConnectTime, connection.Connector, connection.Username, connection.UserAgent, connection.ServerAddress, connection.ClientAddress})
@@ -1022,13 +1025,14 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		}
 		if current, ok := toFloat64Slice(edge.Properties[propertyKey]); !ok || !slices.Equal(current, vector) {
 			edge.Properties[propertyKey] = vector
-			if err := store.UpdateEdge(edge); err != nil {
+			if err := updateMutatedEdge(store, edge); err != nil {
 				return nil, localizedError(localization.CypherProceduresUpdateRelationshipFailed(err), err)
 			}
 			e.notifyEdgeMutated(string(edge.ID))
 		}
 		if entity, ok := arguments[0].(*storage.Edge); ok {
 			entity.Properties = edge.Properties
+			entity.UpdatedAt = edge.UpdatedAt
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
@@ -1038,13 +1042,14 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 	}
 	if current, ok := toFloat64Slice(node.Properties[propertyKey]); !ok || !slices.Equal(current, vector) {
 		node.Properties[propertyKey] = vector
-		if err := store.UpdateNode(node); err != nil {
+		if err := updateMutatedNode(store, node); err != nil {
 			return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
 		}
 		e.notifyNodeMutated(string(node.ID))
 	}
 	if entity, ok := arguments[0].(*storage.Node); ok {
 		entity.Properties = node.Properties
+		entity.UpdatedAt = node.UpdatedAt
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }

@@ -56,7 +56,7 @@ func TestCypherCompositeLocalizedErrorPreservesCause(t *testing.T) {
 	cause := errors.New("forced composite failure")
 	exec := &StorageExecutor{}
 	exec.SetDatabaseManager(&cypherCompositeErrorManager{
-		mockDatabaseManager: newMockDatabaseManager(),
+		mockDatabaseManager: newMockDatabaseManager(t),
 		createCompositeErr:  cause,
 	})
 

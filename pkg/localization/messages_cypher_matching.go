@@ -6,6 +6,7 @@ import (
 )
 
 const (
+	MessageCypherMatchingBoundShortestRelationships               MessageID = "cyphermatching.bound_shortest_relationships"
 	MessageCypherMatchingMatchPatternRequired                     MessageID = "cyphermatching.match_pattern_required"
 	MessageCypherMatchingMatchNodePatternRequired                 MessageID = "cyphermatching.match_node_pattern_required"
 	MessageCypherMatchingReturnExpressionRequired                 MessageID = "cyphermatching.return_expression_required"
@@ -429,4 +430,10 @@ func CypherMatchingQuantifiedPathVariableBound(variable string) Message {
 // parenthesised path without a quantifier written next to another element.
 func CypherMatchingParenthesisedPathJuxtaposed() Message {
 	return cypherMatchingMessage(MessageCypherMatchingParenthesisedPathJuxtaposed, "Juxtaposition is currently only supported for quantified path patterns.", nil)
+}
+
+// CypherMatchingBoundShortestRelationships is Neo4j's diagnostic for bound
+// relationship variables in shortestPath and allShortestPaths patterns.
+func CypherMatchingBoundShortestRelationships(function string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingBoundShortestRelationships, "Bound relationships not allowed in "+function+"(...)", map[string]any{"Function": function})
 }

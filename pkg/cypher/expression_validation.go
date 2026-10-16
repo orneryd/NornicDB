@@ -673,10 +673,12 @@ func withoutLocalVariables(scope staticTypeScope, text string, at int) (staticTy
 	}
 	local := scope
 	local.kinds, local.values, local.members = maps.Clone(scope.kinds), maps.Clone(scope.values), maps.Clone(scope.members)
+	local.derived = maps.Clone(scope.derived)
 	for _, name := range shadowed {
 		delete(local.kinds, name)
 		delete(local.values, name)
 		delete(local.members, name)
+		delete(local.derived, name)
 	}
 	return local, true
 }
@@ -829,4 +831,31 @@ func (e *StorageExecutor) staticBooleanOperandValue(ctx context.Context, express
 		return nil, false
 	}
 	return value, true
+}
+
+// validateListComprehensionVariables rejects a property expression where
+// Cypher requires a local iterator name, including nested projections.
+func validateListComprehensionVariables(text string) error {
+	for index := 0; index < len(text); index++ {
+		if text[index] == '\'' || text[index] == '"' || text[index] == '`' {
+			index = skipCypherQuotedText(text, index, text[index]) - 1
+			continue
+		}
+		if text[index] != '[' {
+			continue
+		}
+		close := findMatchingBracket(text, index)
+		if close < 0 {
+			break
+		}
+		inner := text[index+1 : close]
+		in := findListComprehensionToken(inner, " IN ")
+		pipe := findListComprehensionToken(inner, "|")
+		_, _, _, declared := bindingDeclaration(inner, 0)
+		emptyIterator := matchKeywordAt(inner, queryGapEnd(inner, 0), "IN")
+		if pipe >= 0 && (in >= 0 && pipe > in || emptyIterator) && !patternComprehensionHead(inner) && !declared {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "a list comprehension iterator must be a variable")
+		}
+	}
+	return nil
 }

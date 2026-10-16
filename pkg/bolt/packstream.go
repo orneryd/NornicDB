@@ -169,16 +169,15 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 	case storage.EdgeID:
 		return encodePackStreamStringInto(dst, string(val))
 	// Map types
+	case storage.RemotePathValue:
+		return encodeRemotePathInto(dst, val, useUTCDateTimeStructs, false)
+	case storage.RemoteEntityValue:
+		return encodeRemoteEntityInto(dst, val, useUTCDateTimeStructs, false)
 	case map[string]any:
 		if path, ok := extractPathFromMap(val); ok {
 			return encodePathIntoWithUTC(dst, path.Nodes, path.Relationships, useUTCDateTimeStructs)
 		}
-		// Check if this is a node (has _nodeId and labels)
-		if nodeId, hasNodeId := val["_nodeId"]; hasNodeId {
-			if labels, hasLabels := val["labels"]; hasLabels {
-				return encodeNodeIntoWithUTC(dst, nodeId, labels, val, useUTCDateTimeStructs)
-			}
-		}
+
 		return encodePackStreamMapIntoWithUTC(dst, val, useUTCDateTimeStructs)
 	case map[string]string:
 		if len(val) == 0 {
@@ -481,13 +480,12 @@ func encodePackStreamValue(v any) []byte {
 		}
 		return encodePackStreamList(items)
 	// Map types
+	case storage.RemotePathValue:
+		return encodeRemotePathInto(nil, val, true, false)
+	case storage.RemoteEntityValue:
+		return encodeRemoteEntityInto(nil, val, true, false)
 	case map[string]any:
-		// Check if this is a node (has _nodeId and labels)
-		if nodeId, hasNodeId := val["_nodeId"]; hasNodeId {
-			if labels, hasLabels := val["labels"]; hasLabels {
-				return encodeNode(nodeId, labels, val)
-			}
-		}
+
 		return encodePackStreamMap(val)
 	// Storage types - Neo4j compatible node/edge encoding
 	case *storage.Node:
@@ -867,13 +865,12 @@ func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool,
 			dst = encodeRecordValueInto(dst, m, useUTCDateTimeStructs, true, dbName, resolvers...)
 		}
 		return dst
+	case storage.RemotePathValue:
+		return encodeRemotePathInto(dst, val, useUTCDateTimeStructs, true)
+	case storage.RemoteEntityValue:
+		return encodeRemoteEntityInto(dst, val, useUTCDateTimeStructs, true)
 	case map[string]any:
-		// Node maps (_nodeId + labels) and paths carry entities.
-		if nodeId, hasNodeId := val["_nodeId"]; hasNodeId {
-			if labels, hasLabels := val["labels"]; hasLabels {
-				return encodeNodeV5Into(dst, nodeId, labels, val, recordEntityDatabase(dbName, storage.NodeID(fmt.Sprint(nodeId)), "", resolvers))
-			}
-		}
+
 		if path, ok := extractPathFromMap(val); ok {
 			return encodePathV5Into(dst, path.Nodes, path.Relationships, dbName, resolvers...)
 		}
@@ -890,6 +887,7 @@ func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool,
 // encoder. The _pathResult sentinel key is always dropped (the shared 4.x
 // behavior).
 func encodeRecordMapInto(dst []byte, m map[string]any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+	m = storage.PublicRemoteMap(m)
 	if len(m) == 0 {
 		return append(dst, 0xA0)
 	}

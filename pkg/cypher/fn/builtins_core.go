@@ -37,35 +37,47 @@ func evalID(ctx Context, args []string) (interface{}, error) {
 		return nil, nil
 	}
 	inner := strings.TrimSpace(args[0])
-	if node, ok := ctx.Nodes[inner]; ok && node != nil {
-		return string(node.ID), nil
+	if node, ok := ctx.Nodes[inner]; ok {
+		return entityID(node)
 	}
-	if rel, ok := ctx.Rels[inner]; ok && rel != nil {
-		return string(rel.ID), nil
+	if edge, ok := ctx.Rels[inner]; ok {
+		return entityID(edge)
 	}
-	v, _ := ctx.Eval(inner)
-	switch vv := v.(type) {
+	value, err := ctx.Eval(inner)
+	if err != nil {
+		return nil, err
+	}
+	return entityID(value)
+}
+
+// entityID returns an entity's existing identifier, null for null, or a type
+// error. For example, entityID(&storage.Node{ID: "n1"}) returns "n1".
+func entityID(value interface{}) (interface{}, error) {
+	switch entity := value.(type) {
+	case nil:
+		return nil, nil
 	case *storage.Node:
-		if vv != nil {
-			return string(vv.ID), nil
+		if entity == nil {
+			return nil, nil
 		}
+		return string(entity.ID), nil
 	case *storage.Edge:
-		if vv != nil {
-			return string(vv.ID), nil
+		if entity == nil {
+			return nil, nil
 		}
-	case map[string]interface{}:
-		// A node or relationship projected as a computed-row map.
+		return string(entity.ID), nil
+	case storage.RemoteEntityValue:
 		for _, key := range []string{"id", "_id"} {
-			if id, ok := vv[key]; ok {
-				if text, isString := id.(string); isString {
-					return text, nil
-				}
+			if id, ok := entity[key].(string); ok {
+				return id, nil
 			}
 		}
+		return nil, nil
 	case interface{ GetID() string }:
-		return vv.GetID(), nil
+		return entity.GetID(), nil
+	default:
+		return nil, &ArgumentTypeError{Function: "id", Value: value}
 	}
-	return nil, nil
 }
 
 func evalElementID(ctx Context, args []string) (interface{}, error) {
@@ -73,20 +85,38 @@ func evalElementID(ctx Context, args []string) (interface{}, error) {
 		return nil, nil
 	}
 	inner := strings.TrimSpace(args[0])
-	if node, ok := ctx.Nodes[inner]; ok && node != nil {
-		return storage.NodeElementID(ctx.Database, node.ID), nil
+	if node, ok := ctx.Nodes[inner]; ok {
+		return entityElementID(node, ctx.Database)
 	}
-	if rel, ok := ctx.Rels[inner]; ok && rel != nil {
-		return storage.RelationshipElementID(ctx.Database, rel.ID), nil
+	if edge, ok := ctx.Rels[inner]; ok {
+		return entityElementID(edge, ctx.Database)
 	}
-	v, _ := ctx.Eval(inner)
-	if m, ok := v.(map[string]interface{}); ok {
-		// A node projected as a computed-row map carries its elementId.
-		if elementID, present := m["elementId"]; present {
-			return elementID, nil
+	value, err := ctx.Eval(inner)
+	if err != nil {
+		return nil, err
+	}
+	return entityElementID(value, ctx.Database)
+}
+
+func entityElementID(value interface{}, database string) (interface{}, error) {
+	switch entity := value.(type) {
+	case nil:
+		return nil, nil
+	case *storage.Node:
+		if entity == nil {
+			return nil, nil
 		}
+		return storage.NodeElementID(database, entity.ID), nil
+	case *storage.Edge:
+		if entity == nil {
+			return nil, nil
+		}
+		return storage.RelationshipElementID(database, entity.ID), nil
+	case storage.RemoteEntityValue:
+		return entity["elementId"], nil
+	default:
+		return nil, &ArgumentTypeError{Function: "elementid", Value: value}
 	}
-	return nil, nil
 }
 
 func evalLabels(ctx Context, args []string) (interface{}, error) {
@@ -94,37 +124,43 @@ func evalLabels(ctx Context, args []string) (interface{}, error) {
 		return nil, nil
 	}
 	inner := strings.TrimSpace(args[0])
-	if node, ok := ctx.Nodes[inner]; ok && node != nil {
-		result := make([]interface{}, len(node.Labels))
-		for i, label := range node.Labels {
-			result[i] = label
-		}
-		return result, nil
+	if node, ok := ctx.Nodes[inner]; ok {
+		return Labels(node)
 	}
-	v, _ := ctx.Eval(inner)
-	switch value := v.(type) {
-	case nil:
+	value, err := ctx.Eval(inner)
+	if err != nil {
+		return nil, err
+	}
+	return Labels(value)
+}
+
+// Labels returns the labels of a node, null for null, or an argument error.
+// For example, Labels(&storage.Node{Labels: []string{"N"}}) returns ["N"].
+func Labels(value interface{}) (interface{}, error) {
+	if value == nil {
 		return nil, nil
-	case *storage.Node:
-		if value == nil {
+	}
+	if remote, ok := value.(storage.RemoteEntityValue); ok {
+		if remote == nil {
 			return nil, nil
 		}
-		result := make([]interface{}, len(value.Labels))
-		for i, label := range value.Labels {
-			result[i] = label
-		}
-		return result, nil
-	case map[string]interface{}:
-		// A node projected as a map: the projected label list is the
-		// contract, with or without the nodeToMap _nodeId marker.
-		if labels, ok := value["labels"]; ok {
+		if labels, node := remote["labels"]; node {
 			return labels, nil
 		}
-		if _, isNode := value["_nodeId"]; isNode {
-			return value["labels"], nil
-		}
+		return nil, &ArgumentTypeError{Function: "labels", Value: value}
 	}
-	return nil, &ArgumentTypeError{Function: "labels", Value: v}
+	node, ok := value.(*storage.Node)
+	if !ok {
+		return nil, &ArgumentTypeError{Function: "labels", Value: value}
+	}
+	if node == nil {
+		return nil, nil
+	}
+	result := make([]interface{}, len(node.Labels))
+	for i, label := range node.Labels {
+		result[i] = label
+	}
+	return result, nil
 }
 
 func evalType(ctx Context, args []string) (interface{}, error) {
@@ -132,16 +168,39 @@ func evalType(ctx Context, args []string) (interface{}, error) {
 		return nil, nil
 	}
 	inner := strings.TrimSpace(args[0])
-	if rel, ok := ctx.Rels[inner]; ok && rel != nil {
-		return rel.Type, nil
+	if edge, ok := ctx.Rels[inner]; ok {
+		return RelationshipType(edge)
 	}
-	v, _ := ctx.Eval(inner)
-	if m, ok := v.(map[string]interface{}); ok {
-		if t, ok := m["type"]; ok {
-			return t, nil
+	value, err := ctx.Eval(inner)
+	if err != nil {
+		return nil, err
+	}
+	return RelationshipType(value)
+}
+
+// RelationshipType returns a relationship's type, null for null, or an argument
+// error. For example, RelationshipType(&storage.Edge{Type: "R"}) returns "R".
+func RelationshipType(value interface{}) (interface{}, error) {
+	if value == nil {
+		return nil, nil
+	}
+	if remote, ok := value.(storage.RemoteEntityValue); ok {
+		if remote == nil {
+			return nil, nil
 		}
+		if kind, edge := remote["type"]; edge {
+			return kind, nil
+		}
+		return nil, &ArgumentTypeError{Function: "type", Value: value}
 	}
-	return nil, nil
+	edge, ok := value.(*storage.Edge)
+	if !ok {
+		return nil, &ArgumentTypeError{Function: "type", Value: value}
+	}
+	if edge == nil {
+		return nil, nil
+	}
+	return edge.Type, nil
 }
 
 func evalKeys(ctx Context, args []string) (interface{}, error) {
@@ -169,9 +228,7 @@ func evalKeys(ctx Context, args []string) (interface{}, error) {
 //
 //   - a node or relationship: the keys of its properties, all of them
 //     (a property may be named "labels", "type", "_x", ...);
-//   - a node or relationship converted to a map (nodeToMap / edgeToMap:
-//     "_nodeId" / "_edgeId" with the properties under "properties"): the
-//     keys of those properties;
+//   - a RemoteEngine graph value: the keys of its nested properties;
 //   - any other map: all of its keys.
 //
 // It returns false for any other value.
@@ -188,13 +245,10 @@ func PropertyKeys(value interface{}) ([]interface{}, bool) {
 			return nil, false
 		}
 		properties = v.Properties
+	case storage.RemoteEntityValue:
+		properties, _ = v["properties"].(map[string]interface{})
 	case map[string]interface{}:
-		properties = v
-		if isConvertedEntityMap(v) {
-			if nested, ok := v["properties"].(map[string]interface{}); ok {
-				properties = nested
-			}
-		}
+		properties = storage.PublicRemoteMap(v)
 	default:
 		return nil, false
 	}
@@ -210,16 +264,6 @@ func PropertyKeys(value interface{}) ([]interface{}, bool) {
 	return keys, true
 }
 
-// isConvertedEntityMap reports whether m is a node or relationship converted
-// to a result map (it carries the internal "_nodeId" / "_edgeId").
-func isConvertedEntityMap(m map[string]interface{}) bool {
-	if id, ok := m["_nodeId"].(string); ok && id != "" {
-		return true
-	}
-	id, ok := m["_edgeId"].(string)
-	return ok && id != ""
-}
-
 func evalProperties(ctx Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, nil
@@ -231,14 +275,22 @@ func evalProperties(ctx Context, args []string) (interface{}, error) {
 	if rel, ok := ctx.Rels[inner]; ok && rel != nil {
 		return EntityProperties(rel.Properties), nil
 	}
-	value, _ := ctx.Eval(inner)
-	if object, ok := value.(map[string]interface{}); ok {
-		// A node projected as a map: properties live in the "properties"
-		// sub-map, which takes precedence over same-named top-level keys.
-		if props, nested := object["properties"].(map[string]interface{}); nested {
-			return props, nil
+	value, err := ctx.Eval(inner)
+	if err != nil {
+		return nil, err
+	}
+	if remote, ok := value.(storage.RemoteEntityValue); ok {
+		if remote == nil {
+			return nil, nil
 		}
-		return object, nil
+		properties, _ := remote["properties"].(map[string]interface{})
+		if properties == nil {
+			properties = map[string]interface{}{}
+		}
+		return properties, nil
+	}
+	if object, ok := value.(map[string]interface{}); ok {
+		return storage.PublicRemoteMap(object), nil
 	}
 	return nil, nil
 }
@@ -250,6 +302,12 @@ func evalSize(ctx Context, args []string) (interface{}, error) {
 	v, _ := ctx.Eval(args[0])
 	if v == nil {
 		return nil, nil
+	}
+	if path, ok := v.(storage.RemotePathValue); ok {
+		if path == nil {
+			return nil, nil
+		}
+		return nil, &TypeMismatchError{Function: "size", Expected: sizeArgumentTypes, Value: v}
 	}
 	switch vv := v.(type) {
 	case string:
@@ -312,16 +370,11 @@ func evalStringCase(ctx Context, args []string, function string, convert func(st
 }
 
 func evalCoalesce(ctx Context, args []string) (interface{}, error) {
-	for _, a := range args {
-		v, err := ctx.Eval(a)
-		if err != nil {
-			return nil, err
-		}
-		if v != nil {
-			return v, nil
-		}
-	}
-	return nil, nil
+	value, _, err := Coalesce(len(args), func(i int) (interface{}, bool, error) {
+		value, err := ctx.Eval(args[i])
+		return value, true, err
+	})
+	return value, err
 }
 
 // EntityProperties is properties() of a node or relationship: its property
@@ -332,4 +385,20 @@ func EntityProperties(properties map[string]interface{}) map[string]interface{} 
 		return map[string]interface{}{}
 	}
 	return properties
+}
+
+// Coalesce is coalesce over n operands, operand i evaluated by eval(i):
+// the first resolved non-null value; an unresolved operand counts as null,
+// returning null when every operand is null or unresolved.
+func Coalesce(n int, eval func(index int) (interface{}, bool, error)) (interface{}, bool, error) {
+	for index := 0; index < n; index++ {
+		value, resolved, err := eval(index)
+		if err != nil {
+			return nil, false, err
+		}
+		if resolved && value != nil {
+			return value, true, nil
+		}
+	}
+	return nil, true, nil
 }

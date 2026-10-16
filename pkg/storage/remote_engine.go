@@ -324,19 +324,29 @@ func accessModeForStatement(statement string) neo4j.AccessMode {
 // normalizeBoltValue converts neo4j dbtype values into the map shapes that
 // valueToNode/valueToEdge expect, so all downstream code works for both transports.
 func normalizeBoltValue(v interface{}) interface{} {
+	value, _ := normalizeBoltGraphValue(v)
+	return value
+}
+
+// normalizeBoltGraphValue copies a container only when an actual graph child
+// needs normalization. Ordinary remote row maps/lists retain their zero-allocation
+// baseline; a recursive graph conversion never mutates the driver's input value.
+func normalizeBoltGraphValue(v interface{}) (interface{}, bool) {
 	switch n := v.(type) {
 	case dbtype.Node:
-		m := map[string]interface{}{
-			"elementId":  n.ElementId,
-			"labels":     toInterfaceSlice(n.Labels),
-			"properties": n.Props,
+		m := RemoteEntityValue{
+			remoteIdentityKey: remoteNumericIdentity{id: n.Id, start: -1, end: -1},
+			"elementId":       n.ElementId,
+			"labels":          toInterfaceSlice(n.Labels),
+			"properties":      n.Props,
 		}
 		if id, ok := n.Props["id"]; ok {
 			m["id"] = id
 		}
-		return m
+		return m, true
 	case dbtype.Relationship:
-		m := map[string]interface{}{
+		m := RemoteEntityValue{
+			remoteIdentityKey:    remoteNumericIdentity{id: n.Id, start: n.StartId, end: n.EndId},
 			"elementId":          n.ElementId,
 			"type":               n.Type,
 			"startNodeElementId": n.StartElementId,
@@ -346,9 +356,53 @@ func normalizeBoltValue(v interface{}) interface{} {
 		if id, ok := n.Props["id"]; ok {
 			m["id"] = id
 		}
-		return m
+		return m, true
+	case dbtype.Path:
+		path := make(RemotePathValue, 0, len(n.Nodes)+len(n.Relationships))
+		for i, node := range n.Nodes {
+			path = append(path, normalizeBoltValue(node).(RemoteEntityValue))
+			if i < len(n.Relationships) {
+				path = append(path, normalizeBoltValue(n.Relationships[i]).(RemoteEntityValue))
+			}
+		}
+		return path, true
+	case []interface{}:
+		var result []interface{}
+		for index, value := range n {
+			normalized, changed := normalizeBoltGraphValue(value)
+			if !changed {
+				continue
+			}
+			if result == nil {
+				result = append([]interface{}(nil), n...)
+			}
+			result[index] = normalized
+		}
+		if result == nil {
+			return v, false
+		}
+		return result, true
+	case map[string]interface{}:
+		var result map[string]interface{}
+		for key, value := range n {
+			normalized, changed := normalizeBoltGraphValue(value)
+			if !changed {
+				continue
+			}
+			if result == nil {
+				result = make(map[string]interface{}, len(n))
+				for originalKey, originalValue := range n {
+					result[originalKey] = originalValue
+				}
+			}
+			result[key] = normalized
+		}
+		if result == nil {
+			return v, false
+		}
+		return result, true
 	default:
-		return v
+		return v, false
 	}
 }
 
@@ -392,6 +446,7 @@ type remoteTxResponse struct {
 			RawRow []json.RawMessage `json:"row"`
 			Row    []interface{}     `json:"-"`
 			Meta   []interface{}     `json:"meta"`
+			REST   []json.RawMessage `json:"rest"`
 			Graph  struct {
 				Nodes         []map[string]interface{} `json:"nodes"`
 				Relationships []map[string]interface{} `json:"relationships"`
@@ -482,22 +537,31 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 	for resultIndex := range txResp.Results {
 		for rowIndex := range txResp.Results[resultIndex].Data {
 			data := &txResp.Results[resultIndex].Data[rowIndex]
+			if data.REST != nil && len(data.REST) != len(data.RawRow) {
+				return nil, localizedError(localization.StorageRemoteRESTRowLengthMismatch(), nil)
+			}
 			entities := make(map[string]interface{})
 			for _, node := range data.Graph.Nodes {
 				entities[fmt.Sprint(node["elementId"])] = map[string]interface{}{
-					"elementId": node["elementId"], "labels": node["labels"], "properties": node["properties"],
+					remoteIdentityKey: remoteNumericIdentity{id: remoteHTTPNumericID(node["id"]), start: -1, end: -1},
+					"elementId":       node["elementId"], "labels": node["labels"], "properties": node["properties"],
 				}
 			}
 			for _, edge := range data.Graph.Relationships {
 				entities[fmt.Sprint(edge["elementId"])] = map[string]interface{}{
-					"elementId": edge["elementId"], "type": edge["type"], "properties": edge["properties"],
+					remoteIdentityKey: remoteNumericIdentity{id: remoteHTTPNumericID(edge["id"]), start: remoteHTTPEndpointID(edge, "startNode", entities), end: remoteHTTPEndpointID(edge, "endNode", entities)},
+					"elementId":       edge["elementId"], "type": edge["type"], "properties": edge["properties"],
 					"startNodeElementId": edge["startNodeElementId"], "endNodeElementId": edge["endNodeElementId"],
 				}
 			}
 			metadataIndex := 0
 			data.Row = make([]interface{}, len(data.RawRow))
 			for column, raw := range data.RawRow {
-				value, err := decodeRemoteHTTPValue(raw, data.Meta, &metadataIndex, entities)
+				var rest json.RawMessage
+				if len(data.REST) == len(data.RawRow) {
+					rest = data.REST[column]
+				}
+				value, err := decodeRemoteHTTPValueWithREST(raw, rest, data.Meta, &metadataIndex, entities)
 				if err != nil {
 					return nil, err
 				}
@@ -510,7 +574,7 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 
 func (h *httpTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error) {
 	txResp, err := h.doRequest(ctx, remoteTxRequest{
-		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph"}}},
+		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph", "rest"}}},
 	})
 	if err != nil {
 		return nil, err
@@ -527,7 +591,7 @@ func (h *httpTransport) query(ctx context.Context, statement string, params map[
 
 func (h *httpTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
 	txResp, err := h.doRequest(ctx, remoteTxRequest{
-		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph"}}},
+		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph", "rest"}}},
 	})
 	if err != nil {
 		return nil, nil, err
@@ -605,7 +669,7 @@ func (t *httpCypherTx) QueryCypher(ctx context.Context, statement string, params
 		return nil, nil, localizedError(localization.StorageRemoteTransactionClosed(), nil)
 	}
 	txResp, err := t.transport.doRequestToURL(ctx, http.MethodPost, t.executeURL, remoteTxRequest{
-		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph"}}},
+		Statements: []remoteStatement{{Statement: statement, Parameters: params, ResultDataContents: []string{"row", "graph", "rest"}}},
 	})
 	if err != nil {
 		return nil, nil, err
@@ -662,6 +726,9 @@ func labelsExpr(labels []string) string {
 }
 
 func asMap(v interface{}) map[string]interface{} {
+	if remote, ok := v.(RemoteEntityValue); ok {
+		return map[string]interface{}(remote)
+	}
 	if m, ok := v.(map[string]interface{}); ok {
 		return m
 	}

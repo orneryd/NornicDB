@@ -436,11 +436,24 @@ func TestLocalOccurrences(t *testing.T) {
 
 // The readers that go through the one owners: an element's inline WHERE is
 // no pattern structure, a reference inside a binding's list is the clause's,
-// and a CALL argument's local keeps its text.
+// and a CALL argument keeps its local binding.
 func TestLocalScopeAndPatternStructureReaders(t *testing.T) {
 	require.Equal(t, []string{"s", "t"}, extractNodeVariables(matchPatternStructure("(s WHERE s.k IN (l))-->(t) WHERE (z)")))
 	require.False(t, localVariableShadowsAt("[r  IN l | r]", 2, "r"))
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_locals"))
-	node := &storage.Node{ID: "n1", Properties: map[string]interface{}{"x": int64(5)}}
-	require.Equal(t, "CALL f([n IN l | n.x], 5)", exec.substituteBoundVariablesInCall("CALL f([n IN l | n.x], n.x)", map[string]*storage.Node{"n": node}, nil))
+	engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_locals")
+	exec := NewStorageExecutor(engine)
+	node := &storage.Node{ID: "n1", Labels: []string{"Outer"}, Properties: map[string]interface{}{"x": int64(5)}}
+	_, createErr := engine.CreateNode(node)
+	require.NoError(t, createErr)
+	require.NoError(t, RegisterUserProcedure(
+		ProcedureSpec{Name: "custom.lexical_call_args", Mode: ProcedureModeRead, MinArgs: 2, MaxArgs: 2,
+			Params:  []ProcedureParam{{Name: "inside", Type: "ANY"}, {Name: "outside", Type: "ANY"}},
+			Returns: []ProcedureColumn{{Name: "inside", Type: "ANY"}, {Name: "outside", Type: "ANY"}}},
+		func(_ context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
+			return &ExecuteResult{Columns: []string{"inside", "outside"}, Rows: [][]interface{}{args}}, nil
+		}))
+	t.Cleanup(ClearUserProcedures)
+	result, err := exec.Execute(context.Background(), "MATCH (n:Outer) WITH n, [{x: 7}] AS l CALL custom.lexical_call_args([n IN l | n.x], n.x) YIELD inside, outside RETURN inside, outside", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{[]interface{}{int64(7)}, int64(5)}}, result.Rows)
 }

@@ -46,23 +46,23 @@ func TestPipelineCreateSkipsUnusedMapPropertyLiteral(t *testing.T) {
 func TestPipelinePredicateSkipsUnusedRowLiteral(t *testing.T) {
 	called := 0
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	expression := exec.materializePipelinePredicateExpressions("42 > 1", pipelineRow{
+	matched := exec.evaluateWithWhereCondition(context.Background(), "42 > 1", map[string]interface{}{
 		"unused": countedLiteralStringer{calls: &called},
 	})
-	require.Equal(t, "42 > 1", expression)
+	require.True(t, matched)
 	require.Zero(t, called)
 }
 
 func TestPipelinePredicateSkipsUnusedMapPropertyLiteral(t *testing.T) {
 	called := 0
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	expression := exec.materializePipelinePredicateExpressions("item.id = 42", pipelineRow{
+	matched := exec.evaluateWithWhereCondition(context.Background(), "item.id = 42", map[string]interface{}{
 		"item": map[string]interface{}{
 			"id":     42,
 			"unused": countedLiteralStringer{calls: &called},
 		},
 	})
-	require.Equal(t, "42 = 42", expression)
+	require.True(t, matched)
 	require.Zero(t, called)
 }
 

@@ -84,6 +84,12 @@ CALL custom.reach($start, 3) YIELD n RETURN n;
 - `apoc.custom.dropProcedure(name, databaseName = 'neo4j')` removes it;
   `apoc.custom.list()` and `apoc.custom.show()` list the installed procedures
   (type, name, description, mode, statement, inputs, outputs, forceSingle).
+- A custom procedure is one for the whole server: whoever calls it, on any
+  database, runs its statement with their own permissions. Installing,
+  replacing and dropping one need the `admin` entitlement, as `CREATE` /
+  `DROP PROCEDURE` do and as APOC 5 marks `installProcedure` and
+  `dropProcedure`. A call of a custom procedure is never answered from the
+  result cache, so the call after a replacement runs the new statement.
 - Custom functions (`apoc.custom.installFunction`) are not provided.
 
 ## Startup Precompile and Persistence
@@ -162,9 +168,48 @@ Procedure plugins remain supported via the plugin system:
 - procedure handlers are registered in the same global runtime registry
 - plugin procedures are visible in both `SHOW PROCEDURES` and `CALL dbms.procedures()`
 
-Supported plugin handler shape:
+Supported plugin handler shapes:
 
-- `func(context.Context, string, []interface{}) (*cypher.ExecuteResult, error)`
+- `cypher.ProcedureHandler`, or its equivalent Go function type:
+  `func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error)`
+- The existing `func(context.Context, string, []interface{}) (*cypher.ExecuteResult, error)` ABI remains supported.
+
+The canonical ABI receives the calling executor and statement context, rather
+than a captured global storage backend. For example, a plugin's `Procedures()`
+entry can declare a read procedure using:
+
+```go
+Handler: cypher.ProcedureHandler(func(ctx context.Context, exec *cypher.StorageExecutor, query string, args []interface{}) (*cypher.ExecuteResult, error) {
+    return &cypher.ExecuteResult{
+        Columns: []string{"value"},
+        Rows: [][]interface{}{{args[0]}},
+    }, nil
+}),
+Mode: "READ",
+MinArgs: 1,
+MaxArgs: 1,
+```
+
+Names preserve their registered case. Declare `WRITE`, `SCHEMA`, `ADMIN`, or
+`DBMS` when appropriate; an unknown mode or unsupported/nil handler fails the
+plugin load. Every procedure declaration is validated before any procedure from
+that plugin is published. Arity, authorization, database selection, and `YIELD`
+continue through the shared procedure registry.
+
+`CALL apoc.cypher.doIt(statement, params) YIELD value` is a built-in `WRITE`
+procedure. It runs parameterized data statements through the calling
+transaction, and returns each inner row as a `value` map. For example:
+
+```cypher
+CALL apoc.cypher.doIt('CREATE (n:Person {name:$name}) RETURN n.name AS name',
+                     {name:'Ada'})
+YIELD value RETURN value.name
+```
+
+Rolling back the caller rolls back the inner write. The same statement policy
+as the other dynamic procedures rejects administrative/internal statements.
+This is the two-argument [APOC procedure contract](https://neo4j.com/docs/apoc/current/overview/apoc.cypher/apoc.cypher.doIt/);
+it does not promote scalar functions such as `apoc.math.sigmoid` to procedures.
 
 ## Tests Covering This Feature
 

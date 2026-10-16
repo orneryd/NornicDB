@@ -55,15 +55,15 @@ func TestComparisonChainsSupportArbitraryLength(t *testing.T) {
 		"e": int64(3),
 	}
 	resolutionCount := make(map[string]int)
-	resolve := func(operand string) interface{} {
+	resolve := func(operand string) (interface{}, bool, error) {
 		resolutionCount[operand]++
-		return values[operand]
+		return values[operand], true, nil
 	}
 
-	result, ok := evaluateComparisonChain("a < b = c <> d <= e", resolve, func(left, right interface{}, operator string) interface{} {
-		return compareWithOperator(left, right, operator)
+	result, ok, resolved, err := evaluateComparisonChain("a < b = c <> d <= e", resolve, func(left, right interface{}, operator string) interface{} {
+		return compareCypherPredicateValue(left, right, operator)
 	}, false)
-	if !ok || result != true {
+	if !ok || !resolved || err != nil || result != true {
 		t.Fatalf("expected an arbitrary-length comparison chain to match, got %#v, %v", result, ok)
 	}
 	for operand := range values {

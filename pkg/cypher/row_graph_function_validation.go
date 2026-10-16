@@ -4,99 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
-
-func (e *StorageExecutor) validatePipelineGraphFunctionArguments(rows []pipelineRow, clause, keyword string) error {
-	for _, expression := range projectionExpressions(clause, keyword) {
-		for _, row := range rows {
-			if err := e.validateRowGraphFunctionArguments(expression, row); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (e *StorageExecutor) validateRowGraphFunctionArguments(expression string, row pipelineRow) error {
-	expression = strings.TrimSpace(expression)
-	// (labels(x)) is checked like labels(x), as the conversion-function
-	// validator does.
-	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
-		return e.validateRowGraphFunctionArguments(inner, row)
-	}
-	if inner, enclosed := stripEnclosingRowDelimiter(expression, '[', ']'); enclosed {
-		variable, listExpression, predicate, projection, comprehension := parseListComprehension(inner)
-		if comprehension {
-			if err := e.validateRowGraphFunctionArguments(listExpression, row); err != nil {
-				return err
-			}
-			listValue, evaluated, err := e.evaluateRowValue(listExpression, row)
-			if err != nil {
-				return err
-			}
-			if !evaluated || listValue == nil {
-				return nil
-			}
-			valueType := reflect.TypeOf(listValue)
-			if valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array {
-				return nil
-			}
-			scope := make(pipelineRow, len(row)+1)
-			for _, item := range toAnySlice(listValue) {
-				clear(scope)
-				for name, value := range row {
-					scope[name] = value
-				}
-				scope[variable] = item
-				for _, part := range []string{predicate, projection} {
-					if err := e.validateRowGraphFunctionArguments(part, scope); err != nil {
-						return err
-					}
-				}
-			}
-			return nil
-		}
-		for _, item := range splitTopLevelComma(inner) {
-			if err := e.validateRowGraphFunctionArguments(item, row); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	function, argument, ok := parseFunctionCallWS(expression)
-	if !ok {
-		return nil
-	}
-	for _, item := range splitTopLevelComma(argument) {
-		if err := e.validateRowGraphFunctionArguments(item, row); err != nil {
-			return err
-		}
-	}
-	if !strings.EqualFold(function, "labels") && !strings.EqualFold(function, "type") {
-		return nil
-	}
-	value, evaluated, err := e.evaluateRowValue(argument, row)
-	if err != nil {
-		return err
-	}
-	if !evaluated || value == nil {
-		return nil
-	}
-	if strings.EqualFold(function, "labels") {
-		if node, valid := value.(*storage.Node); valid && node != nil {
-			return nil
-		}
-	} else if relationship, valid := value.(*storage.Edge); valid && relationship != nil {
-		return nil
-	}
-	return invalidFunctionArgument(function, value)
-}
 
 // invalidFunctionArgument is the TypeError for a function argument of the
 // wrong type, shared by RETURN-row validation and the expression evaluator
@@ -266,7 +178,7 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 	if strings.TrimSpace(argument) != "" {
 		args = splitTopLevelComma(argument)
 	}
-	value, _, err := cypherfn.EvaluateFunction(function, args, cypherfn.Context{
+	value, found, err := cypherfn.EvaluateFunction(function, args, cypherfn.Context{
 		Storage:  e.storage,
 		Cypher25: rowIsCypher25(values),
 		Eval: func(expression string) (interface{}, error) {
@@ -281,7 +193,7 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 		},
 		Graphs: e,
 	})
-	if errors.Is(err, errRowArgumentUnresolved) {
+	if !found || errors.Is(err, errRowArgumentUnresolved) {
 		return nil, false, nil
 	}
 	if err != nil {

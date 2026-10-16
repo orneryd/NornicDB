@@ -180,8 +180,22 @@ func fnRound(ctx cypherfn.Context, args []string) (interface{}, error) {
 		if !validMode {
 			return nil, newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", "Unknown rounding mode. Valid values are: CEILING, FLOOR, UP, DOWN, HALF_EVEN, HALF_UP, HALF_DOWN, UNNECESSARY.")
 		}
+	} else if len(values) == 2 && precision > 0 {
+		// Positive precision uses HALF_UP; zero precision (including a
+		// fractional precision truncated to zero) retains ties toward +infinity.
+		rounded = math.Round(number * factor)
 	} else {
-		rounded = math.Floor(number*factor + 0.5)
+		// Default zero precision breaks ties toward +infinity. Reuse the
+		// shared modes rather than adding 0.5, which changes near-half and
+		// large integral doubles before rounding even begins.
+		defaultMode := "HALF_UP"
+		if number < 0 {
+			defaultMode = "HALF_DOWN"
+		}
+		rounded, _ = roundRowNumber(number, defaultMode)
+		if rounded == 0 {
+			rounded = 0 // Neo4j returns positive zero for default rounding.
+		}
 	}
 	return rounded / factor, nil
 }

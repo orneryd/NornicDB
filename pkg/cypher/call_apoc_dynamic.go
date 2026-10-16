@@ -30,7 +30,7 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 	// Execute the inner query
 	innerResult, err := e.executeUserStatement(ctx, innerQuery, params)
 	if err != nil {
-		return nil, fmt.Errorf("apoc.cypher.run inner query failed: %w", err)
+		return nil, fmt.Errorf("%s inner query failed: %w", procedure, err)
 	}
 
 	// Transform result to match APOC format (YIELD value)
@@ -121,13 +121,10 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 		started := time.Now()
 		innerResult, err := e.executeUserStatement(ctx, query, params)
 		if err != nil {
-			// A failed statement is a row -1 with its error, instead of
-			// failing the call.
-			result.Rows = append(result.Rows, []interface{}{
-				int64(-1),
-				map[string]interface{}{"error": err.Error()},
-			})
-			continue
+			// A failed statement fails the call, as in apoc.cypher.run, and
+			// with it the caller's transaction: nothing the earlier
+			// statements wrote is kept.
+			return nil, err
 		}
 
 		// Add each row from the inner result

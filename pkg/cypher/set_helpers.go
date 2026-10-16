@@ -45,18 +45,15 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"strconv"
 	"strings"
-	"time"
 
-	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // applySetMapMergeToNode applies SET n += <expr>: every key of the map (or of
 // the node / relationship) is written, and a null value removes the key.
-// Row bindings from UNWIND / WITH that travel in the parameter context are
-// visible to the expression. Non-map values are an error (setSourceMap).
+// Row bindings from UNWIND / WITH are visible in the value scope.
+// Non-map values are an error (setSourceMap).
 func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *storage.Node, varName string, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, writes *setWrites) error {
 	if node == nil {
 		return nil
@@ -77,30 +74,17 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 		}
 		writes.mapEntries(node.Properties, props, false)
 		for k, v := range props {
-			setNodeProperty(node, k, normalizePropValue(v))
+			setNodeProperty(node, k, v)
 		}
 		return nil
 	}
-	// Row bindings from UNWIND / WITH that travel in the parameter context on
-	// fallback mutation paths are variables in the value scope.
-	params := getParamsFromContext(ctx)
-	evalCtx := ctx
-	if len(params) > 0 {
-		values := valueBindingsLayer(ctx, len(params))
-		for name, value := range params {
-			if _, isNode := nodes[name]; !isNode {
-				values[name] = value
-			}
-		}
-		evalCtx = withValueBindings(ctx, values)
-	}
-	props, err := e.setSourceMap(evalCtx, rightExpr, "+=", nodes, rels)
+	props, err := e.setSourceMap(ctx, rightExpr, "+=", nodes, rels)
 	if err != nil {
 		return err
 	}
 	writes.mapEntries(node.Properties, props, false)
 	for k, v := range props {
-		setNodeProperty(node, k, normalizePropValue(v))
+		setNodeProperty(node, k, v)
 	}
 	return nil
 }
@@ -124,7 +108,7 @@ func setNodeProperty(node *storage.Node, propName string, value interface{}) {
 	if node.Properties == nil {
 		node.Properties = make(map[string]interface{})
 	}
-	value = normalizePropValue(value)
+	value = copyStoredPropertyValue(value)
 	if value == nil {
 		delete(node.Properties, propName)
 		return
@@ -136,7 +120,7 @@ func setRelationshipProperty(relationship *storage.Edge, propName string, value 
 	if relationship.Properties == nil {
 		relationship.Properties = make(map[string]interface{})
 	}
-	value = normalizePropValue(value)
+	value = copyStoredPropertyValue(value)
 	if value == nil {
 		delete(relationship.Properties, propName)
 		return
@@ -148,10 +132,22 @@ func setPropertyMap(properties map[string]interface{}) map[string]interface{} {
 	result := make(map[string]interface{}, len(properties))
 	for key, value := range properties {
 		if value != nil {
-			result[key] = normalizePropValue(value)
+			result[key] = copyStoredPropertyValue(value)
 		}
 	}
 	return result
+}
+
+// copyStoredPropertyValue gives a writer ownership of a generic property list.
+// Its elements were already normalized and validated by storablePropertyValue;
+// storage copies typed slices at its own boundary, as before.
+func copyStoredPropertyValue(value interface{}) interface{} {
+	if list, ok := value.([]interface{}); ok {
+		copied := make([]interface{}, len(list))
+		copy(copied, list)
+		return copied
+	}
+	return value
 }
 
 // propertyMapForSetValue implements Cypher's entity-as-property-map semantics
@@ -259,139 +255,6 @@ func splitSetAssignments(setClause string) []string {
 	return assignments
 }
 
-// evaluateSetExpression evaluates a Cypher expression for SET clauses.
-//
-// Handles various expression types including literals, arrays, function calls,
-// and string concatenation.
-//
-// # Parameters
-//
-//   - expr: The expression string to evaluate
-//
-// # Returns
-//
-//   - The evaluated value
-//
-// # Example
-//
-//	evaluateSetExpression("'Alice'")      // "Alice"
-//	evaluateSetExpression("42")           // int64(42)
-//	evaluateSetExpression("true")         // true
-//	evaluateSetExpression("[1, 2, 3]")    // []interface{}{1, 2, 3}
-//	evaluateSetExpression("timestamp()") // current timestamp
-func (e *StorageExecutor) evaluateSetExpression(expr string) interface{} {
-	expr = strings.TrimSpace(expr)
-
-	// Handle null
-	if strings.EqualFold(expr, "null") {
-		return nil
-	}
-
-	// Handle simple literals
-	if strings.HasPrefix(expr, "'") && strings.HasSuffix(expr, "'") {
-		return expr[1 : len(expr)-1]
-	}
-	if strings.HasPrefix(expr, "\"") && strings.HasSuffix(expr, "\"") {
-		return expr[1 : len(expr)-1]
-	}
-	if expr == "true" {
-		return true
-	}
-	if expr == "false" {
-		return false
-	}
-
-	// Handle numbers
-	if val, err := strconv.ParseInt(expr, 10, 64); err == nil {
-		return val
-	}
-	if val, err := strconv.ParseFloat(expr, 64); err == nil {
-		return val
-	}
-
-	// Handle arrays (simplified)
-	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {
-		inner := strings.TrimSpace(expr[1 : len(expr)-1])
-		if inner == "" {
-			return []interface{}{}
-		}
-		// Simple split for basic arrays
-		parts := strings.Split(inner, ",")
-		result := make([]interface{}, len(parts))
-		for i, p := range parts {
-			result[i] = e.evaluateSetExpression(strings.TrimSpace(p))
-		}
-		return result
-	}
-
-	// Handle function calls and expressions
-	lowerExpr := lowerASCII(expr)
-
-	// timestamp() - returns current timestamp in milliseconds
-	if lowerExpr == "timestamp()" {
-		return time.Now().UnixMilli()
-	}
-
-	// datetime() - returns typed datetime
-	if lowerExpr == "datetime()" {
-		return CypherDateTime{Time: time.Now().UTC()}
-	}
-
-	// randomUUID() or randomuuid()
-	if lowerExpr == "randomuuid()" {
-		return e.generateUUID()
-	}
-
-	// Handle string concatenation: 'prefix-' + toString(timestamp()) + '-' + substring(randomUUID(), 0, 8)
-	if strings.Contains(expr, " + ") {
-		return e.evaluateStringConcat(expr)
-	}
-
-	// Handle toString(expr)
-	if matchFuncStartAndSuffix(expr, "tostring") {
-		inner := extractFuncArgs(expr, "tostring")
-		val := e.evaluateSetExpression(inner)
-		return fmt.Sprintf("%v", val)
-	}
-
-	// Handle substring(str, start, length)
-	if matchFuncStartAndSuffix(expr, "substring") {
-		return e.evaluateSubstringForSet(expr)
-	}
-
-	// If nothing else matched, return as-is (already substituted parameter value)
-	return expr
-}
-
-// evaluateStringConcat handles string concatenation with +
-//
-// # Parameters
-//
-//   - expr: The expression with + operators
-//
-// # Returns
-//
-//   - The concatenated string
-//
-// # Example
-//
-//	evaluateStringConcat("'Hello' + ' ' + 'World'")
-//	// Returns: "Hello World"
-func (e *StorageExecutor) evaluateStringConcat(expr string) string {
-	var result strings.Builder
-
-	// Split by + but respect quotes and parentheses
-	parts := e.splitByPlus(expr)
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		val := e.evaluateSetExpression(part)
-		result.WriteString(fmt.Sprintf("%v", val))
-	}
-
-	return result.String()
-}
-
 // hasConcatOperator checks if the expression has a + operator outside of quotes.
 // This prevents infinite recursion when property values contain " + " in text.
 //
@@ -431,96 +294,6 @@ func (e *StorageExecutor) hasConcatOperator(expr string) bool {
 		}
 	}
 	return false
-}
-
-// splitByPlus splits an expression by + operator, respecting quotes and parentheses.
-//
-// # Parameters
-//
-//   - expr: The expression to split
-//
-// # Returns
-//
-//   - Slice of parts separated by +
-func (e *StorageExecutor) splitByPlus(expr string) []string {
-	var parts []string
-	var current strings.Builder
-	parenDepth := 0
-	inQuote := false
-	quoteChar := rune(0)
-
-	for i := 0; i < len(expr); i++ {
-		c := rune(expr[i])
-		switch {
-		case c == '\'' || c == '"':
-			if !inQuote {
-				inQuote = true
-				quoteChar = c
-			} else if c == quoteChar {
-				inQuote = false
-			}
-			current.WriteRune(c)
-		case c == '(' && !inQuote:
-			parenDepth++
-			current.WriteRune(c)
-		case c == ')' && !inQuote:
-			parenDepth--
-			current.WriteRune(c)
-		case c == '+' && !inQuote && parenDepth == 0:
-			if s := strings.TrimSpace(current.String()); s != "" {
-				parts = append(parts, s)
-			}
-			current.Reset()
-		default:
-			current.WriteRune(c)
-		}
-	}
-
-	if s := strings.TrimSpace(current.String()); s != "" {
-		parts = append(parts, s)
-	}
-
-	return parts
-}
-
-// evaluateSubstringForSet handles substring(str, start, length) for SET expressions.
-//
-// # Parameters
-//
-//   - expr: The substring function call
-//
-// # Returns
-//
-//   - The extracted substring
-func (e *StorageExecutor) evaluateSubstringForSet(expr string) string {
-	// Extract arguments from substring(str, start, length)
-	inner := expr[10 : len(expr)-1] // Remove "substring(" and ")"
-
-	// Split by comma, respecting parentheses
-	args := e.splitFunctionArgs(inner)
-	if len(args) < 2 {
-		return ""
-	}
-
-	// Evaluate the string argument
-	str := fmt.Sprintf("%v", e.evaluateSetExpression(args[0]))
-
-	// Parse start
-	start, err := strconv.Atoi(strings.TrimSpace(args[1]))
-	if err != nil {
-		start = 0
-	}
-
-	// Parse optional length
-	length := cyphertext.Length(str) - start
-	if len(args) >= 3 {
-		if l, err := strconv.Atoi(strings.TrimSpace(args[2])); err == nil {
-			length = l
-		}
-	}
-
-	// Apply substring
-	return cyphertext.Substring(str, start, length)
 }
 
 // splitFunctionArgs splits a function call's argument text at its top-level
@@ -577,7 +350,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 			if stats != nil {
 				stats.LabelsAdded += labelsAdded
 			}
-			if err := store.UpdateNode(node); err != nil {
+			if err := updateMutatedNode(store, node); err != nil {
 				restore()
 				return wrap(*state, err)
 			}
@@ -588,7 +361,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 		if changedPropertyCount(state.properties, relationship.Properties) == 0 {
 			continue
 		}
-		if err := store.UpdateEdge(relationship); err != nil {
+		if err := updateMutatedEdge(store, relationship); err != nil {
 			relationship.Properties = state.properties
 			return wrap(*state, err)
 		}

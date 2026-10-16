@@ -27,7 +27,12 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		return value, ok
 	}
 	one := func() (interface{}, bool) { return eval(argument) }
+	var cachedArgs []interface{}
+	var argsEvaluated bool
 	args := func() ([]interface{}, bool) {
+		if argsEvaluated {
+			return cachedArgs, true
+		}
 		parts := splitTopLevelComma(argument)
 		out := make([]interface{}, len(parts))
 		for index, part := range parts {
@@ -37,6 +42,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 			}
 			out[index] = value
 		}
+		cachedArgs, argsEvaluated = out, true
 		return out, true
 	}
 	if handler, found := pluginFunctionHandler(function); found {
@@ -44,13 +50,21 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		if !ok {
 			return nil, true, false, nil
 		}
-		result, handled, err := callPluginFunction(function, handler, arguments)
+		result, handled, err := callPluginFunction(rowStatementContextOrBackground(values), function, handler, arguments)
 		if err != nil {
 			return nil, true, false, err
 		}
 		if handled {
 			return result, true, true, nil
 		}
+	}
+	if isNativeAPOCFunction(function) {
+		arguments, ok := args()
+		if !ok {
+			return nil, true, false, nil
+		}
+		value, matched, err := e.evaluateNativeAPOCFunction(rowStatementContextOrBackground(values), function, arguments)
+		return value, matched, err == nil, err
 	}
 	if value, matched, resolved, err := e.evaluateRowTemporalComponent(name, argument, values); matched {
 		return value, true, resolved, err

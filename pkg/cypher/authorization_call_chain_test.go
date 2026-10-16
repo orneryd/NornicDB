@@ -43,7 +43,8 @@ func TestStorageExecutorEnforcesPermissionsOfChainedCalls(t *testing.T) {
 	for _, query := range []string{
 		"CALL db.cdc.earliest() YIELD id CALL db.cdc.query(id, [], 5) YIELD id AS change RETURN count(*) AS n",
 		"CALL db.cdc.earliest() YIELD id CALL `db`.`cdc`.`query`(id) YIELD id AS change RETURN count(*) AS n",
-		"CALL db.cdc.earliest() YIELD id CALL dbms.info() YIELD id AS dbmsID RETURN dbmsID",
+		"CALL db.cdc.earliest() YIELD id CALL dbms.listConfig() YIELD name RETURN name",
+		"call db.cdc.earliest() yield id call DB.CDC.QUERY(id) yield id as c return c",
 	} {
 		t.Run(query, func(t *testing.T) {
 			_, err := executor.Execute(readOnlyCtx, query, nil)
@@ -52,4 +53,28 @@ func TestStorageExecutorEnforcesPermissionsOfChainedCalls(t *testing.T) {
 			require.Equal(t, "admin", denied.Permission)
 		})
 	}
+}
+
+func TestProcedureCaseAuthorizationPreservesExactContracts(t *testing.T) {
+	ensureBuiltInProceduresRegistered()
+	names := []string{"caseAuthorization.Read", "caseAuthorization.read"}
+	for i, name := range names {
+		require.NoError(t, RegisterUserProcedure(ProcedureSpec{Name: name, Mode: ProcedureModeRead, Admin: i == 1}, func(context.Context, *StorageExecutor, string, []interface{}) (*ExecuteResult, error) {
+			return &ExecuteResult{}, nil
+		}))
+	}
+	t.Cleanup(func() {
+		globalProcedureRegistry.mu.Lock()
+		defer globalProcedureRegistry.mu.Unlock()
+		for _, name := range names {
+			delete(globalProcedureRegistry.user, name)
+		}
+	})
+	require.False(t, QueryPermissionRequirements("CALL caseAuthorization.Read()").Admin)
+	require.True(t, QueryPermissionRequirements("CALL caseAuthorization.read()").Admin)
+	unknownCase := QueryPermissionRequirements("CALL CASEAUTHORIZATION.READ()")
+	require.True(t, unknownCase.Admin)
+	require.Equal(t, []string{"caseAuthorization.read"}, unknownCase.BoostedProcedures)
+	_, found := globalProcedureRegistry.Get("CASEAUTHORIZATION.READ")
+	require.False(t, found, "authorization fallback must not register an executable alias")
 }

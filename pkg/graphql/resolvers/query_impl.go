@@ -380,84 +380,32 @@ func (r *queryResolver) queryRelationshipTypes(ctx context.Context) ([]string, e
 	return r.getRelationshipTypes(ctx)
 }
 
-// QueryShortestPath finds shortest path between nodes
+// QueryShortestPath finds a shortest path, including paths at maxDepth.
 func (r *queryResolver) queryShortestPath(ctx context.Context, startNodeID string, endNodeID string, maxDepth *int, relationshipTypes []string) ([]models.Node, error) {
 	depth := 10
 	if maxDepth != nil {
 		depth = *maxDepth
 	}
-
-	visited := make(map[string]string)
-	queue := []string{startNodeID}
-	visited[startNodeID] = ""
-
-	for len(queue) > 0 && depth > 0 {
-		depth--
-		nextQueue := []string{}
-
-		for _, nodeID := range queue {
-			if nodeID == endNodeID {
-				path := []models.Node{}
-				current := endNodeID
-				for current != "" {
-					node, err := r.getNode(ctx, current)
-					if err != nil {
-						break
-					}
-					path = append([]models.Node{*dbNodeToModel(node)}, path...)
-					current = visited[current]
-				}
-				return path, nil
-			}
-
-			edges, err := r.getEdgesForNode(ctx, nodeID)
-			if err != nil {
-				continue
-			}
-
-			for _, edge := range edges {
-				if len(relationshipTypes) > 0 {
-					found := false
-					for _, t := range relationshipTypes {
-						if edge.Type == t {
-							found = true
-							break
-						}
-					}
-					if !found {
-						continue
-					}
-				}
-
-				var neighborID string
-				if edge.Source == nodeID {
-					neighborID = edge.Target
-				} else {
-					neighborID = edge.Source
-				}
-
-				if _, seen := visited[neighborID]; !seen {
-					visited[neighborID] = nodeID
-					nextQueue = append(nextQueue, neighborID)
-				}
-			}
-		}
-		queue = nextQueue
-	}
-
-	return []models.Node{}, nil
-}
-
-// QueryAllPaths finds all paths between nodes
-func (r *queryResolver) queryAllPaths(ctx context.Context, startNodeID string, endNodeID string, maxDepth *int, limit *int) ([][]models.Node, error) {
-	path, err := r.queryShortestPath(ctx, startNodeID, endNodeID, maxDepth, nil)
+	paths, err := r.queryPaths(ctx, startNodeID, endNodeID, depth, 1, relationshipTypes, true)
 	if err != nil {
 		return nil, err
 	}
-	if len(path) == 0 {
-		return [][]models.Node{}, nil
+	if len(paths) == 0 {
+		return []models.Node{}, nil
 	}
-	return [][]models.Node{path}, nil
+	return paths[0], nil
+}
+
+// QueryAllPaths returns up to limit paths using the shared Cypher traversal owner.
+func (r *queryResolver) queryAllPaths(ctx context.Context, startNodeID string, endNodeID string, maxDepth *int, limit *int) ([][]models.Node, error) {
+	depth, count := 5, 10
+	if maxDepth != nil {
+		depth = *maxDepth
+	}
+	if limit != nil {
+		count = *limit
+	}
+	return r.queryPaths(ctx, startNodeID, endNodeID, depth, count, nil, false)
 }
 
 // QueryNeighborhood returns the neighborhood subgraph

@@ -194,6 +194,21 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 	scannedNodes := 0
 	passageCount := 0
 	var retainedBytes int64
+	// Foreign authorization/Where callbacks run before projection and outside
+	// newly acquired scopes, so they may safely execute their own queries.
+	var projectNode func(*storage.Node) *storage.Node
+	if options.Where == nil && request.AuthorizeNode == nil {
+		scoped, view, release := storage.BeginQueryResultProjectionContext(ctx, s.engine)
+		defer release()
+		ctx = scoped
+		projectNode = view.Node
+	} else {
+		projectNode = func(n *storage.Node) *storage.Node {
+			_, view, release := storage.BeginQueryResultProjectionContext(ctx, s.engine)
+			defer release()
+			return view.Node(n)
+		}
+	}
 	err := s.streamCompleteContinuationNodes(ctx, &options, request, func(node *storage.Node) error {
 		if time.Since(started) > policy.MaxBuildDuration {
 			return resultstream.ErrCapacity
@@ -206,6 +221,7 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 		if err != nil || !eligible {
 			return err
 		}
+		node = projectNode(node)
 		groupKey := ""
 		if request.GroupBy != "" {
 			value, valid := node.Properties[request.GroupBy].(string)
@@ -338,6 +354,8 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 	if s.completePolicyGen.Load() != policyID {
 		return nil, resultstream.ErrInvalidated
 	}
+	resultProjection := newResultPropertyProjection(options.IncludeProperties, options.ExcludeProperties)
+	resultProjection.groupBy = request.GroupBy
 	return &catalogContinuationStream{
 		results:       results,
 		engine:        s.engine,
@@ -358,7 +376,7 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 			"max_results_reached":   maxResultsReached,
 		},
 		retainedBytes: retainedBytes,
-		projection:    newResultPropertyProjection(options.IncludeProperties, options.ExcludeProperties),
+		projection:    resultProjection,
 	}, nil
 }
 
@@ -516,7 +534,7 @@ func (s *catalogContinuationStream) Pull(ctx context.Context, position uint64, n
 		metadata[key] = value
 	}
 	maxResultsReached, _ := metadata["max_results_reached"].(bool)
-	results, err := hydrateContinuationResults(s.engine, compact, s.authorizeNode, s.projection)
+	results, err := hydrateContinuationResultsContext(ctx, s.engine, compact, s.authorizeNode, s.projection)
 	if err != nil {
 		return nil, err
 	}
@@ -541,6 +559,10 @@ func (s *catalogContinuationStream) Pull(ctx context.Context, position uint64, n
 }
 
 func hydrateContinuationResults(engine storage.Engine, compact []SearchResult, authorizeNode NodeAuthorizationFunc, projection resultPropertyProjection) ([]SearchResult, error) {
+	return hydrateContinuationResultsContext(context.Background(), engine, compact, authorizeNode, projection)
+}
+
+func hydrateContinuationResultsContext(ctx context.Context, engine storage.Engine, compact []SearchResult, authorizeNode NodeAuthorizationFunc, projection resultPropertyProjection) ([]SearchResult, error) {
 	idCount := 0
 	for index := range compact {
 		if len(compact[index].Passages) > 0 {
@@ -574,13 +596,24 @@ func hydrateContinuationResults(engine storage.Engine, compact []SearchResult, a
 			}
 		}
 	}
+	_, visible, release := storage.BeginQueryResultProjectionContext(ctx, engine)
+	defer release()
 	results := make([]SearchResult, len(compact))
 	for index := range compact {
 		node := nodes[compact[index].NodeID]
 		if node == nil {
 			return nil, resultstream.ErrInvalidated
 		}
+		node = visible.Node(node)
+		if projection.groupBy != "" {
+			if _, ok := node.Properties[projection.groupBy]; !ok {
+				return nil, resultstream.ErrInvalidated
+			}
+		}
 		results[index] = hydrateContinuationResult(compact[index], searchResultFromContinuationNode(node, projection))
+		if visible.Enabled() {
+			results[index].Matches = visibleSearchMatches(results[index].Matches, node.Properties)
+		}
 		if len(compact[index].Passages) == 0 {
 			continue
 		}
@@ -591,8 +624,17 @@ func hydrateContinuationResults(engine storage.Engine, compact []SearchResult, a
 			if passageNode == nil {
 				return nil, resultstream.ErrInvalidated
 			}
+			passageNode = visible.Node(passageNode)
+			if projection.groupBy != "" {
+				if _, ok := passageNode.Properties[projection.groupBy]; !ok {
+					return nil, resultstream.ErrInvalidated
+				}
+			}
 			passageResult := passage
 			passageResult = hydrateContinuationResult(passageResult, searchResultFromContinuationNode(passageNode, projection))
+			if visible.Enabled() {
+				passageResult.Matches = visibleSearchMatches(passageResult.Matches, passageNode.Properties)
+			}
 			results[index].Passages[passageIndex] = searchPassageFromResult(passageResult)
 		}
 	}

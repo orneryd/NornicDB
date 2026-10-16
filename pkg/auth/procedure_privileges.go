@@ -1,19 +1,39 @@
-// Package auth: procedure execution privileges (Neo4j's GRANT EXECUTE
-// [BOOSTED] PROCEDURE … ON DBMS TO role).
+// Package auth: procedure execution privileges (Neo4j's GRANT [IMMUTABLE]
+// EXECUTE [BOOSTED] PROCEDURE … ON DBMS TO role).
 //
-// A grant names a role, a procedure name or glob (db.cdc.*), and whether it
-// is boosted. A boosted grant lets the role run a matching procedure that
-// needs administrator rights; a plain EXECUTE grant adds nothing to what the
-// role may already run. Grants are stored in the system database as
-// _ProcedurePrivilege nodes.
+// A grant names a role, a procedure name or glob (db.cdc.*) and whether it
+// is boosted; a role holds at most one such grant, which is immutable or
+// not. A boosted grant lets the role run a matching procedure that needs
+// administrator rights; a plain EXECUTE grant adds nothing to what the role
+// may already run.
+//
+// Grants are stored in the system database as _ProcedurePrivilege nodes,
+// kept apart from graph data the way the other system stores keep theirs:
+//   - the system database runs no Cypher graph writes (the cypher package
+//     refuses CREATE, MERGE, SET, DELETE, REMOVE and write procedures there,
+//     on every route), so grants originate in GRANT and REVOKE through this
+//     store; role changes move or remove them through the shared transaction owner;
+//   - as RoleStore and PrivilegesStore key their nodes by an ID only the
+//     store chooses (role:…, db_priv:…), a node counts as a grant only when
+//     its ID is the one Grant gives that grant, so a node made any other way
+//     (a Cypher CREATE gets a generated ID) is never read as a grant.
+//
+// The store keeps no copy of the grants: it reads them from storage each
+// time it is asked (a label lookup over the few grant nodes, done only when
+// a caller without administrator rights calls a procedure that needs them).
+// So a change is seen as soon as it is committed, by this process and by
+// any other process or server instance over the same storage (a GRANT in
+// an explicit transaction when that transaction commits), and a read that
+// fails denies and returns its error. A version marker that every check
+// compares would also cost a storage read per check, and would add a write
+// to every change that must stay in step with it.
 package auth
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -22,25 +42,18 @@ const procedurePrivilegeLabel = "_ProcedurePrivilege"
 
 // ProcedurePrivilege is one EXECUTE grant: Role may run the procedures
 // Procedure (a name or glob) names; Boosted lifts their administrator
-// requirement.
+// requirement; Immutable marks a grant made with GRANT IMMUTABLE.
 type ProcedurePrivilege struct {
 	Role      string
 	Procedure string
 	Boosted   bool
+	Immutable bool
 }
 
-// procedurePrivilegesVersion counts grant changes in this process, so a
-// store that cached the grants reloads them after another store changed them.
-var procedurePrivilegesVersion atomic.Uint64
-
 // ProcedurePrivilegeStore reads and writes procedure grants in the system
-// database.
+// database (or in an explicit transaction's view of it).
 type ProcedurePrivilegeStore struct {
 	storage storage.Engine
-	mu      sync.RWMutex
-	grants  []ProcedurePrivilege
-	version uint64
-	loaded  bool
 }
 
 // NewProcedurePrivilegeStore creates a store over the system database.
@@ -48,12 +61,15 @@ func NewProcedurePrivilegeStore(systemStorage storage.Engine) *ProcedurePrivileg
 	return &ProcedurePrivilegeStore{storage: systemStorage}
 }
 
-// normalizeGrantRole is a role's name as privileges store it: lower case,
-// without a role_ prefix (PrivilegesStore.Resolve).
-func normalizeGrantRole(role string) string {
+// NormalizeRoleName is the one form of a role's name, for every role store,
+// record and lookup: trimmed, lower case, without the role_ prefix identity
+// providers add (ROLE_ops is the role ops).
+func NormalizeRoleName(role string) string {
 	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(role)), "role_")
 }
 
+// procedurePrivilegeNodeID is the ID of the node holding role's grant for
+// procedure (boosted or not), which only this store chooses.
 func procedurePrivilegeNodeID(grant ProcedurePrivilege) storage.NodeID {
 	kind := "execute"
 	if grant.Boosted {
@@ -62,36 +78,33 @@ func procedurePrivilegeNodeID(grant ProcedurePrivilege) storage.NodeID {
 	return storage.NodeID("proc_priv:" + kind + ":" + grant.Role + ":" + grant.Procedure)
 }
 
-// Load reads every grant from the system database.
-func (p *ProcedurePrivilegeStore) Load(ctx context.Context) error {
+// procedurePrivilegeNode is the grant a node holds, if it is one: a node
+// whose ID is the one Grant gives its grant.
+func procedurePrivilegeNode(n *storage.Node) (ProcedurePrivilege, bool) {
+	role, _ := n.Properties["role"].(string)
+	procedure, _ := n.Properties["procedure"].(string)
+	boosted, _ := n.Properties["boosted"].(bool)
+	immutable, _ := n.Properties["immutable"].(bool)
+	grant := ProcedurePrivilege{Role: role, Procedure: procedure, Boosted: boosted, Immutable: immutable}
+	return grant, role != "" && procedure != "" && n.ID == procedurePrivilegeNodeID(grant)
+}
+
+// grants reads every grant from the system database.
+func (p *ProcedurePrivilegeStore) grants() ([]ProcedurePrivilege, error) {
 	if p == nil || p.storage == nil {
-		return nil
+		return nil, nil
 	}
-	version := procedurePrivilegesVersion.Load()
-	var grants []ProcedurePrivilege
-	err := storage.StreamNodesWithFallback(ctx, p.storage, 1000, func(n *storage.Node) error {
-		for _, label := range n.Labels {
-			if label != procedurePrivilegeLabel {
-				continue
-			}
-			role, _ := n.Properties["role"].(string)
-			procedure, _ := n.Properties["procedure"].(string)
-			boosted, _ := n.Properties["boosted"].(bool)
-			if role != "" && procedure != "" {
-				grants = append(grants, ProcedurePrivilege{Role: role, Procedure: procedure, Boosted: boosted})
-			}
-			break
-		}
-		return nil
-	})
+	nodes, err := p.storage.GetNodesByLabel(procedurePrivilegeLabel)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	sortProcedurePrivileges(grants)
-	p.mu.Lock()
-	p.grants, p.version, p.loaded = grants, version, true
-	p.mu.Unlock()
-	return nil
+	var grants []ProcedurePrivilege
+	for _, n := range nodes {
+		if grant, ok := procedurePrivilegeNode(n); ok {
+			grants = append(grants, grant)
+		}
+	}
+	return grants, nil
 }
 
 func sortProcedurePrivileges(grants []ProcedurePrivilege) {
@@ -106,109 +119,122 @@ func sortProcedurePrivileges(grants []ProcedurePrivilege) {
 	})
 }
 
-// current returns the grants, reloading them when they changed since the
-// store last read them.
-func (p *ProcedurePrivilegeStore) current() []ProcedurePrivilege {
-	p.mu.RLock()
-	fresh := p.loaded && p.version == procedurePrivilegesVersion.Load()
-	grants := p.grants
-	p.mu.RUnlock()
-	if fresh {
-		return grants
+// Lookup returns role's grant for procedure (boosted or not), if it holds
+// one. A read that fails is an error, never "no grant".
+func (p *ProcedurePrivilegeStore) Lookup(ctx context.Context, role, procedure string, boosted bool) (ProcedurePrivilege, bool, error) {
+	key := ProcedurePrivilege{Role: NormalizeRoleName(role), Procedure: strings.TrimSpace(procedure), Boosted: boosted}
+	node, err := p.storage.GetNode(procedurePrivilegeNodeID(key))
+	if errors.Is(err, storage.ErrNotFound) {
+		return ProcedurePrivilege{}, false, nil
 	}
-	if err := p.Load(context.Background()); err != nil {
-		return grants
+	if err != nil {
+		return ProcedurePrivilege{}, false, err
 	}
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.grants
+	grant, ok := procedurePrivilegeNode(node)
+	return grant, ok, nil
 }
 
 // Grant records that role may execute the procedures procedure names
-// (boosted or not). Granting what is already granted changes nothing.
-func (p *ProcedurePrivilegeStore) Grant(ctx context.Context, role, procedure string, boosted bool) error {
-	grant := ProcedurePrivilege{Role: normalizeGrantRole(role), Procedure: strings.TrimSpace(procedure), Boosted: boosted}
-	node := &storage.Node{
-		ID:         procedurePrivilegeNodeID(grant),
-		Labels:     []string{procedurePrivilegeLabel, "_System"},
-		Properties: map[string]any{"role": grant.Role, "procedure": grant.Procedure, "boosted": grant.Boosted},
-	}
-	if _, err := p.storage.GetNode(node.ID); err == nil {
-		return nil
-	}
-	if _, err := p.storage.CreateNode(node); err != nil {
+// (boosted or not). As in Neo4j, a role holds one such grant: granting it
+// again changes nothing, except that GRANT IMMUTABLE makes a regular grant
+// immutable.
+func (p *ProcedurePrivilegeStore) Grant(ctx context.Context, role, procedure string, boosted, immutable bool) error {
+	existing, found, err := p.Lookup(ctx, role, procedure, boosted)
+	if err != nil {
 		return err
 	}
-	procedurePrivilegesVersion.Add(1)
-	return p.Load(ctx)
+	if found && (existing.Immutable || !immutable) {
+		return nil
+	}
+	grant := ProcedurePrivilege{Role: NormalizeRoleName(role), Procedure: strings.TrimSpace(procedure), Boosted: boosted, Immutable: immutable}
+	node := &storage.Node{
+		ID:     procedurePrivilegeNodeID(grant),
+		Labels: []string{procedurePrivilegeLabel, "_System"},
+		Properties: map[string]any{
+			"role": grant.Role, "procedure": grant.Procedure, "boosted": grant.Boosted, "immutable": grant.Immutable,
+		},
+	}
+	if found {
+		return p.storage.UpdateNode(node)
+	}
+	_, err = p.storage.CreateNode(node)
+	return err
 }
 
 // Revoke removes role's grant for procedure (boosted or not), and reports
-// whether there was one.
-func (p *ProcedurePrivilegeStore) Revoke(ctx context.Context, role, procedure string, boosted bool) (bool, error) {
-	grant := ProcedurePrivilege{Role: normalizeGrantRole(role), Procedure: strings.TrimSpace(procedure), Boosted: boosted}
-	id := procedurePrivilegeNodeID(grant)
-	if _, err := p.storage.GetNode(id); err != nil {
-		return false, nil
-	}
-	if err := p.storage.DeleteNode(id); err != nil {
+// whether there was one. With immutableOnly (REVOKE IMMUTABLE) it removes
+// only an immutable grant, as Neo4j does; without, either.
+func (p *ProcedurePrivilegeStore) Revoke(ctx context.Context, role, procedure string, boosted, immutableOnly bool) (bool, error) {
+	grant, found, err := p.Lookup(ctx, role, procedure, boosted)
+	if err != nil || !found || (immutableOnly && !grant.Immutable) {
 		return false, err
 	}
-	procedurePrivilegesVersion.Add(1)
-	return true, p.Load(ctx)
+	if err := p.storage.DeleteNode(procedurePrivilegeNodeID(grant)); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // List returns every grant, in role, procedure order.
-func (p *ProcedurePrivilegeStore) List() []ProcedurePrivilege {
-	if p == nil {
-		return nil
+func (p *ProcedurePrivilegeStore) List(ctx context.Context) ([]ProcedurePrivilege, error) {
+	grants, err := p.grants()
+	if err != nil {
+		return nil, err
 	}
-	return append([]ProcedurePrivilege(nil), p.current()...)
+	sortProcedurePrivileges(grants)
+	return grants, nil
 }
 
 // AllowsBoosted reports whether any of roles holds a boosted grant whose
-// name or glob matches procedure.
-func (p *ProcedurePrivilegeStore) AllowsBoosted(roles []string, procedure string) bool {
+// name or glob matches procedure: a principal's privileges are the union of
+// its roles'. When the grants can't be read it denies, and returns the
+// error.
+func (p *ProcedurePrivilegeStore) AllowsBoosted(roles []string, procedure string) (bool, error) {
 	if p == nil || procedure == "" || len(roles) == 0 {
-		return false
+		return false, nil
 	}
-	grants := p.current()
+	grants, err := p.grants()
+	if err != nil {
+		return false, err
+	}
 	for _, role := range roles {
-		role = normalizeGrantRole(role)
+		role = NormalizeRoleName(role)
 		for _, grant := range grants {
 			if grant.Boosted && grant.Role == role && ProcedureGlobMatches(grant.Procedure, procedure) {
-				return true
+				return true, nil
 			}
 		}
 	}
-	return false
+	return false, nil
 }
 
 // ProcedureGlobMatches reports whether a procedure name matches a grant's
 // name or glob, as Neo4j matches them: * stands for any characters, dots
-// included, and ? for one; names compare case-insensitively.
+// included, and ? for one character; names compare case-insensitively.
 func ProcedureGlobMatches(glob, name string) bool {
-	glob, name = strings.ToLower(glob), strings.ToLower(name)
+	// Characters, not bytes: ? matches one character however many bytes
+	// it takes.
+	g, n := []rune(strings.ToLower(glob)), []rune(strings.ToLower(name))
 	// Iterative wildcard match with backtracking to the last *.
-	g, n, star, mark := 0, 0, -1, 0
-	for n < len(name) {
+	gi, ni, star, mark := 0, 0, -1, 0
+	for ni < len(n) {
 		switch {
-		case g < len(glob) && (glob[g] == '?' || glob[g] == name[n]):
-			g++
-			n++
-		case g < len(glob) && glob[g] == '*':
-			star, mark = g, n
-			g++
+		case gi < len(g) && (g[gi] == '?' || g[gi] == n[ni]):
+			gi++
+			ni++
+		case gi < len(g) && g[gi] == '*':
+			star, mark = gi, ni
+			gi++
 		case star >= 0:
-			g = star + 1
+			gi = star + 1
 			mark++
-			n = mark
+			ni = mark
 		default:
 			return false
 		}
 	}
-	for g < len(glob) && glob[g] == '*' {
-		g++
+	for gi < len(g) && g[gi] == '*' {
+		gi++
 	}
-	return g == len(glob)
+	return gi == len(g)
 }

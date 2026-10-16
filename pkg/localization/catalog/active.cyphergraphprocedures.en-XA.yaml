@@ -91,6 +91,9 @@
 - id: cyphergraphprocedures.job_id_type
   description: Expanded pseudo-locale job id type.
   other: '[!! Expected JobId or String. Got {{.Type}}. !!]'
+- id: cyphergraphprocedures.unsupported_gds_value
+  description: Expanded pseudo-locale unsupported gds value.
+  other: '[!! Unsupported conversion to GDS Value from Neo4j Value with type `{{.Type}}`. !!]'
 - id: cyphergraphprocedures.relationship_end_not_projected
   description: Expanded pseudo-locale relationship end not projected.
   other: '[!! Failed to load a relationship because its {{.Side}}-node with id {{.Node}} is not part of the node query or projection. To ignore the relationship, set the configuration parameter `validateRelationships` to false. !!]'
@@ -118,6 +121,9 @@
 - id: cyphergraphprocedures.default_property_type
   description: GDS incompatible default property value. Expected and Actual are untranslated.
   other: '[!! Expected type of default value to be `{{.Expected}}`. But got `{{.Actual}}`. !!]'
+- id: cyphergraphprocedures.unsafe_double_conversion
+  description: Expanded pseudo-locale Long to Double import bound.
+  other: '[!! Cannot safely convert {{.Value}} into an double value !!]'
 - id: cyphergraphprocedures.node_not_node_or_integer
   description: Expanded pseudo-locale node not node or integer.
   other: '[!! The node has to be either a NODE or an INTEGER, but got {{.Type}} !!]'
@@ -142,15 +148,14 @@
 - id: cyphergraphprocedures.graph_exists_aggregation
   description: Expanded pseudo-locale graph exists aggregation.
   other: '[!! Graph {{.Graph}} already exists !!]'
-- id: cyphergraphprocedures.unsupported_gds_value
-  description: Expanded pseudo-locale unsupported gds value.
-  other: '[!! Unsupported conversion to GDS Value from Neo4j Value with type `{{.Type}}`. !!]'
 - id: cyphergraphprocedures.relationship_type_empty
   description: Expanded pseudo-locale relationship type empty.
   other: '[!! Relationship type cannot be empty !!]'
+
 - id: cyphergraphprocedures.inverse_types_not_projected
   description: Expanded pseudo-locale inverse types not projected.
   other: '[!! Specified inverseIndexedRelationshipTypes `{{.Types}}` were not projected in the graph. Projected types are: `{{.Projected}}`. !!]'
+
 - id: cyphergraphprocedures.concurrency_below_one
   description: Expanded pseudo-locale concurrency below one.
   other: '[!! Valid values for Concurrency are int[1..], Value provided was `{{.Value}}`. !!]'

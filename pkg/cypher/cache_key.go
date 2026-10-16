@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"reflect"
 	"sort"
 	"time"
@@ -15,17 +16,18 @@ import (
 // share a tag; a typed Go list or map is written like the Cypher list or
 // map it stands for.
 const (
-	cacheKeyNull    byte = 'n'
-	cacheKeyBoolean byte = 'b'
-	cacheKeyInteger byte = 'i'
-	cacheKeyUint    byte = 'u'
-	cacheKeyFloat   byte = 'd'
-	cacheKeyString  byte = 's'
-	cacheKeyBytes   byte = 'y'
-	cacheKeyList    byte = 'l'
-	cacheKeyMap     byte = 'm'
-	cacheKeyTime    byte = 't'
-	cacheKeyOther   byte = 'o'
+	cacheKeyNull         byte = 'n'
+	cacheKeyBoolean      byte = 'b'
+	cacheKeyInteger      byte = 'i'
+	cacheKeyUint         byte = 'u'
+	cacheKeyFloat        byte = 'd'
+	cacheKeyString       byte = 's'
+	cacheKeyBytes        byte = 'y'
+	cacheKeyList         byte = 'l'
+	cacheKeyMap          byte = 'm'
+	cacheKeyRemoteEntity byte = 'e'
+	cacheKeyTime         byte = 't'
+	cacheKeyOther        byte = 'o'
 )
 
 // cacheKeyBuilder builds a cache key: the statement text and its
@@ -132,6 +134,12 @@ func writeCacheKeyValue(h *cacheKeyBuilder, scratch *[binary.MaxVarintLen64 + 1]
 		for _, item := range typed {
 			writeCacheKeyValue(h, scratch, item)
 		}
+		return
+	case storage.RemoteEntityValue:
+		// Graph functions distinguish a transport graph entity from an ordinary
+		// map with identical contents; the result cache must distinguish them too.
+		h.Write([]byte{cacheKeyRemoteEntity})
+		writeCacheKeyValue(h, scratch, map[string]interface{}(typed))
 		return
 	case map[string]interface{}:
 		keys := make([]string, 0, len(typed))

@@ -24,24 +24,9 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 	for name, value := range values {
 		scope[name] = value
 	}
-	step := func(expression string) func(accumulator, item interface{}) (interface{}, error) {
-		return func(accumulator, item interface{}) (interface{}, error) {
-			scope[form.accumulator], scope[form.variable] = accumulator, item
-			value, resolved, err := evaluate(expression, scope)
-			if err == nil && !resolved {
-				err = errRowArgumentUnresolved
-			}
-			return value, err
-		}
-	}
-	result, err := runReduceForm(form, accumulator, coerceToUnwindItems(listValue), step(form.step), step(form.predicate))
-	if err == errRowArgumentUnresolved {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	return result, true, nil
+	return rowReduceLoop(form, accumulator, listValue, scope,
+		func() (interface{}, bool, error) { return evaluate(form.step, scope) },
+		func() (interface{}, bool, error) { return evaluate(form.predicate, scope) })
 }
 
 func rowTopLevelPipeIndex(expression string) int {

@@ -252,28 +252,21 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// Relationship Functions
 	// ========================================
 
-	// startNode(r) - return start node of relationship
-	if matchFuncStartAndSuffix(expr, "startnode") {
-		inner := extractFuncArgs(expr, "startnode")
-		if rel, ok := rels[inner]; ok {
-			node, err := e.storage.GetNode(rel.StartNode)
-			if err == nil {
-				return node
+	// startNode(r) / endNode(r): relationshipEndpoint, as the row evaluator
+	// reads them.
+	for _, function := range []string{"startnode", "endnode"} {
+		if matchFuncStartAndSuffix(expr, function) {
+			value := e.evaluateExpressionWithContextFull(ctx, extractFuncArgs(expr, function), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			if getExpressionFailure(ctx) != nil {
+				return nil
 			}
-		}
-		return nil
-	}
-
-	// endNode(r) - return end node of relationship
-	if matchFuncStartAndSuffix(expr, "endnode") {
-		inner := extractFuncArgs(expr, "endnode")
-		if rel, ok := rels[inner]; ok {
-			node, err := e.storage.GetNode(rel.EndNode)
-			if err == nil {
-				return node
+			result, err := e.relationshipEndpointValue(value, function == "endnode")
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
 			}
+			return result
 		}
-		return nil
 	}
 
 	// nodes(path) - return list of nodes in a path
@@ -303,6 +296,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		}
 		// A path carried as a computed-row map (WITH p AS path).
 		if innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); innerVal != nil {
+			if remote, ok := innerVal.(storage.RemotePathValue); ok {
+				value, err := remotePathFunctionValue("nodes", remote)
+				recordExpressionFailure(ctx, err)
+				return value
+			}
 			if pathMap, ok := innerVal.(map[string]interface{}); ok {
 				if nodesList, _, hasNodes, _ := pathValueParts(pathMap); hasNodes {
 					return nodesList
@@ -339,6 +337,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		}
 		// A path carried as a computed-row map (WITH p AS path).
 		if innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); innerVal != nil {
+			if remote, ok := innerVal.(storage.RemotePathValue); ok {
+				value, err := remotePathFunctionValue("relationships", remote)
+				recordExpressionFailure(ctx, err)
+				return value
+			}
 			if pathMap, ok := innerVal.(map[string]interface{}); ok {
 				if _, relationshipsList, _, hasRelationships := pathValueParts(pathMap); hasRelationships {
 					return relationshipsList
@@ -1095,7 +1098,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// ========================================
 	// CASE WHEN Expressions (must be before operators)
 	// ========================================
-	if strings.HasPrefix(lowerExpr, "case") && strings.HasSuffix(lowerExpr, "end") {
+	if isCaseExpression(expr) {
 		return e.evaluateCaseExpression(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
@@ -1136,25 +1139,10 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 			}
 		}
 	}
-	fold := quantifierFold{function: function}
-	for _, item := range coerceToUnwindItems(list) {
-		result, _ := e.evaluateQuantifierPredicate(ctx, predicate, varName, item, nodes, rels, pathValues)
-		if value, decided := fold.add(result); decided {
-			return value
-		}
-	}
-	return fold.result()
-}
-
-func (e *StorageExecutor) evaluateQuantifierPredicate(
-	ctx context.Context,
-	predicate string,
-	variable string,
-	item interface{},
-	nodes map[string]*storage.Node,
-	rels map[string]*storage.Edge,
-	pathValues map[string]interface{},
-) (interface{}, bool) {
+	// One row for every element, the variable rebound per element, with
+	// the context's value bindings, parameters and statement context bound
+	// once: evaluateRowExpressionWithContext binds the ones a row lacks,
+	// and copied the row to do it for every element (#1214).
 	values := make(map[string]interface{}, len(pathValues)+len(nodes)+len(rels)+1)
 	for name, value := range pathValues {
 		values[name] = value
@@ -1165,19 +1153,33 @@ func (e *StorageExecutor) evaluateQuantifierPredicate(
 	for name, relationship := range rels {
 		values[name] = relationship
 	}
-	values[variable] = item
-	value, ok := e.evaluateRowExpressionWithContext(ctx, predicate, values)
-	if !ok {
-		return nil, false
+	values[varName] = nil
+	bindAbsent := func(name string, value interface{}) {
+		if _, exists := values[name]; !exists {
+			values[name] = value
+		}
 	}
-	if value == nil {
-		return nil, true
+	for name, value := range valueBindingsFromContext(ctx) {
+		bindAbsent(name, value)
 	}
-	boolean, ok := value.(bool)
-	if !ok {
-		return nil, false
+	for name, value := range parameterRowValues(ctx) {
+		bindAbsent(name, value)
 	}
-	return boolean, true
+	if needsRowStatementContext(predicate) {
+		bindAbsent(rowStatementContextKey, ctx)
+	}
+	value, _, err := rowQuantifierLoop(function, coerceToUnwindItems(list), func(item interface{}) { values[varName] = item }, func() (interface{}, bool, error) {
+		value, ok := e.evaluateQuantifierPredicate(ctx, predicate, values)
+		return value, ok, getExpressionFailure(ctx)
+	})
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+	}
+	return value
+}
+
+func (e *StorageExecutor) evaluateQuantifierPredicate(ctx context.Context, predicate string, values map[string]interface{}) (interface{}, bool) {
+	return e.evaluateRowExpressionWithContext(ctx, predicate, values)
 }
 
 // evaluateListComprehension evaluates [x IN list WHERE predicate |
@@ -1204,7 +1206,6 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 	if !ok {
 		items = []interface{}{list}
 	}
-	result := make([]interface{}, 0, len(items))
 	boundNodes := make(map[string]*storage.Node, len(nodes)+1)
 	for name, node := range nodes {
 		boundNodes[name] = node
@@ -1215,55 +1216,27 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 	}
 	values := valueBindingsLayer(ctx, 1)
 	itemCtx := withValueBindings(ctx, values)
-	for _, item := range items {
+	var holds func() (bool, bool, error)
+	if condition != "" {
+		holds = func() (bool, bool, error) {
+			value := e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
+			return rowConditionHolds(value, true, getExpressionFailure(itemCtx))
+		}
+	}
+	var project func() (interface{}, bool, error)
+	if projection != "" {
+		project = func() (interface{}, bool, error) {
+			value := e.evaluateExpressionWithContextFull(itemCtx, projection, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
+			return value, true, getExpressionFailure(itemCtx)
+		}
+	}
+	result, _, err := rowComprehensionLoop(items, func(item interface{}) {
 		bindEvaluationValue(varName, item, boundNodes, boundRels, values)
-		if condition != "" {
-			predicate := e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
-			truth, err := cypherPredicateTruth(predicate)
-			if err != nil {
-				recordExpressionFailure(ctx, err)
-				return nil
-			}
-			if truth != truthTrue {
-				continue
-			}
-		}
-		value := item
-		if projection != "" {
-			if relationshipValue, handled := relationshipMapProjection(projection, item); handled {
-				value = relationshipValue
-			} else {
-				value = e.evaluateExpressionWithContextFull(itemCtx, projection, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
-			}
-		}
-		result = append(result, value)
+	}, holds, project)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
 	}
 	return result
-}
-
-// relationshipMapProjection is type(x) or id(x) of a relationship item held
-// as a map (its type / _edgeId) or an edge; handled is false otherwise.
-func relationshipMapProjection(projection string, item interface{}) (interface{}, bool) {
-	isType, isID := matchFuncStartAndSuffix(projection, "type"), matchFuncStartAndSuffix(projection, "id")
-	if !isType && !isID {
-		return nil, false
-	}
-	key := "type"
-	if isID {
-		key = "_edgeId"
-	}
-	if mapItem, ok := item.(map[string]interface{}); ok {
-		if value, ok := mapItem[key]; ok {
-			return value, true
-		}
-	}
-	if edge, ok := item.(*storage.Edge); ok {
-		if isType {
-			return edge.Type, true
-		}
-		return string(edge.ID), true
-	}
-	return nil, false
 }
 
 // evaluateReduceForm evaluates reduce and allReduce (parseReduceForm) in the

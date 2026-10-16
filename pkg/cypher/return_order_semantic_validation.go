@@ -306,6 +306,10 @@ func semanticExpressionReferences(expression string) []string {
 // semanticExpressionReferences finds and the offset of its variable.
 func forEachSemanticExpressionReference(expression string, visit func(reference string, at int)) {
 	for index := 0; index < len(expression); {
+		if end := queryGapEnd(expression, index); end > index {
+			index = end
+			continue
+		}
 		if expression[index] == '\'' || expression[index] == '"' {
 			index = skipQuotedSemanticText(expression, index)
 			continue
@@ -372,20 +376,9 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 // a namespace path (.name …) that a call's '(' follows, and where the path
 // ends.
 func qualifiedFunctionNameEnd(expression string, at int) (int, bool) {
-	cursor := at
-	segments := 0
-	for cursor < len(expression) && expression[cursor] == '.' {
-		_, end, ok := scanSymbolicName(expression, cursor+1)
-		if !ok {
-			return at, false
-		}
-		segments++
-		cursor = end
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
-			cursor++
-		}
-	}
-	if segments == 0 || cursor >= len(expression) || expression[cursor] != '(' {
+	parts, end := dottedNameParts(expression, at, true)
+	cursor := queryGapEnd(expression, end)
+	if parts == "" || cursor >= len(expression) || expression[cursor] != '(' {
 		return at, false
 	}
 	return cursor, true
@@ -425,6 +418,9 @@ func maskSemanticBraceBodies(expression string) string {
 	if strings.IndexByte(expression, '{') < 0 {
 		return expression
 	}
+	// Classify operands before blanking their bodies, using the same lexical
+	// reader as evaluation so a comment cannot expose COUNT as a variable.
+	expression = maskSubqueryBodies(expression)
 	masked := []byte(expression)
 	for index := 0; index < len(expression); index++ {
 		switch expression[index] {

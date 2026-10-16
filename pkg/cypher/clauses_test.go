@@ -2059,17 +2059,14 @@ func TestAllShortestPathsMultiple(t *testing.T) {
 	store.CreateEdge(&storage.Edge{ID: "e3", Type: "LINK", StartNode: "b", EndNode: "d"})
 	store.CreateEdge(&storage.Edge{ID: "e4", Type: "LINK", StartNode: "c", EndNode: "d"})
 
-	startNode, _ := store.GetNode("a")
-	endNode, _ := store.GetNode("d")
-
-	// allShortestPaths(ctx, start, end, relTypes, direction, maxHops)
-	paths, err := e.allShortestPaths(context.Background(), startNode, endNode, nil, "both", 10)
+	result, err := e.Execute(context.Background(), "MATCH (a:Node {name: 'A'}), (d:Node {name: 'D'}) MATCH p = allShortestPaths((a)-[*..10]-(d)) RETURN [n IN nodes(p) | n.name] AS names ORDER BY names", nil)
 	if err != nil {
 		t.Fatalf("allShortestPaths: %v", err)
 	}
-	if len(paths) < 2 {
-		t.Errorf("Expected at least 2 shortest paths in diamond graph, got %d", len(paths))
+	if len(result.Rows) != 2 {
+		t.Fatalf("Expected the 2 shortest paths of the diamond graph, got %v", result.Rows)
 	}
+	require.Equal(t, [][]interface{}{{[]interface{}{"A", "B", "D"}}, {[]interface{}{"A", "C", "D"}}}, result.Rows)
 }
 
 // ========================================
@@ -2690,83 +2687,6 @@ func TestExecuteMergeWithContextDirect(t *testing.T) {
 		}
 		if parents.Rows[0][0] != "3.18.5" || parents.Rows[1][0] != "3.18.6" {
 			t.Fatalf("unexpected parent codes: %+v", parents.Rows)
-		}
-	})
-}
-
-func TestEvaluateStringConcatDirect(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	defer store.Close()
-
-	e := NewStorageExecutor(store)
-
-	t.Run("simple_concat", func(t *testing.T) {
-		result := e.evaluateStringConcat("'Hello' + ' ' + 'World'")
-		if result != "Hello World" {
-			t.Errorf("Expected 'Hello World', got '%s'", result)
-		}
-	})
-
-	t.Run("single_string", func(t *testing.T) {
-		result := e.evaluateStringConcat("'Hello'")
-		if result != "Hello" {
-			t.Errorf("Expected 'Hello', got '%s'", result)
-		}
-	})
-
-	t.Run("numbers", func(t *testing.T) {
-		result := e.evaluateStringConcat("1 + 2")
-		// String concat of numbers should produce concatenation or numeric result
-		if result != "12" && result != "3" {
-			t.Logf("Number concat result: '%s'", result)
-		}
-	})
-
-	t.Run("mixed_types", func(t *testing.T) {
-		result := e.evaluateStringConcat("'Count: ' + 5")
-		if !strings.Contains(result, "Count") {
-			t.Errorf("Expected result containing 'Count', got '%s'", result)
-		}
-	})
-}
-
-func TestSplitByPlusDirect(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	defer store.Close()
-
-	e := NewStorageExecutor(store)
-
-	t.Run("simple_split", func(t *testing.T) {
-		parts := e.splitByPlus("'a' + 'b' + 'c'")
-		if len(parts) != 3 {
-			t.Errorf("Expected 3 parts, got %d: %v", len(parts), parts)
-		}
-	})
-
-	t.Run("no_plus", func(t *testing.T) {
-		parts := e.splitByPlus("'hello'")
-		if len(parts) != 1 {
-			t.Errorf("Expected 1 part, got %d", len(parts))
-		}
-	})
-
-	t.Run("plus_in_string", func(t *testing.T) {
-		// Plus inside quotes should not split
-		parts := e.splitByPlus("'a + b'")
-		if len(parts) != 1 {
-			t.Errorf("Expected 1 part (plus inside string), got %d: %v", len(parts), parts)
-		}
-	})
-
-	t.Run("plus_in_function", func(t *testing.T) {
-		// Plus inside parentheses should not split at top level
-		parts := e.splitByPlus("func(a + b) + c")
-		if len(parts) != 2 {
-			t.Logf("Function split result: %v", parts)
 		}
 	})
 }

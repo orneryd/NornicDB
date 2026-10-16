@@ -66,7 +66,7 @@ func roleFromEntitlementNodeID(id string) string {
 	if !strings.HasPrefix(id, roleEntitlementPrefix) {
 		return ""
 	}
-	return strings.ToLower(strings.TrimSpace(id[len(roleEntitlementPrefix):]))
+	return NormalizeRoleName(id[len(roleEntitlementPrefix):])
 }
 
 func entitlementIDsFromProperties(prop map[string]any) []string {
@@ -95,7 +95,7 @@ func entitlementIDsFromProperties(prop map[string]any) []string {
 // Get returns the stored entitlement IDs for a role. Returns nil if no override is stored.
 // For permission resolution use PermissionsForRole so built-in roles use RolePermissions when not overridden.
 func (r *RoleEntitlementsStore) Get(role string) []string {
-	role = strings.ToLower(strings.TrimSpace(role))
+	role = NormalizeRoleName(role)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	ids, ok := r.entitlements[role]
@@ -107,51 +107,56 @@ func (r *RoleEntitlementsStore) Get(role string) []string {
 	return out
 }
 
-// Set persists one role's entitlement IDs and refreshes in-memory. Empty list removes override (built-in will use RolePermissions).
+// Set persists one role's entitlement IDs and refreshes in-memory. Empty list
+// removes the override (a built-in role then uses RolePermissions). The role
+// must exist (ErrRoleNotFound).
 func (r *RoleEntitlementsStore) Set(ctx context.Context, role string, entitlementIDs []string) error {
-	role = strings.ToLower(strings.TrimSpace(role))
-	if role == "" {
-		return ErrInvalidRoleName
-	}
-	nodeID := storage.NodeID(roleEntitlementPrefix + role)
-	entitlementsJSON, _ := json.Marshal(entitlementIDs)
-	node := &storage.Node{
-		ID:     nodeID,
-		Labels: []string{roleEntitlementLabel, roleEntitlementSystems},
-		Properties: map[string]any{
-			"role":         role,
-			"entitlements": string(entitlementsJSON),
-		},
-	}
-	existing, err := r.storage.GetNode(nodeID)
-	if err == storage.ErrNotFound {
-		if len(entitlementIDs) == 0 {
-			return nil
+	return r.SetMappings(ctx, map[string][]string{role: entitlementIDs})
+}
+
+// SetMappings persists every role's entitlement IDs in one transaction
+// through the role-record owner (WithRoleRecords): all of them are stored,
+// or, when one fails or names a role that doesn't exist, none. The cache
+// changes only after commit.
+func (r *RoleEntitlementsStore) SetMappings(ctx context.Context, mappings map[string][]string) error {
+	normalized := make(map[string][]string, len(mappings))
+	roles := make([]string, 0, len(mappings))
+	for role, ids := range mappings {
+		role = NormalizeRoleName(role)
+		if role == "" {
+			return ErrInvalidRoleName
 		}
-		_, err = r.storage.CreateNode(node)
-		if err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	} else {
-		node.CreatedAt = existing.CreatedAt
-		if len(entitlementIDs) == 0 {
-			_ = r.storage.DeleteNode(nodeID)
-		} else {
-			err = r.storage.UpdateNode(node)
-			if err != nil {
+		normalized[role] = ids
+		roles = append(roles, role)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := WithRoleRecords(ctx, r.storage, roles, func(view storage.Engine) error {
+		for role, ids := range normalized {
+			entitlementsJSON, _ := json.Marshal(ids)
+			node := &storage.Node{
+				ID:     storage.NodeID(roleEntitlementPrefix + role),
+				Labels: []string{roleEntitlementLabel, roleEntitlementSystems},
+				Properties: map[string]any{
+					"role":         role,
+					"entitlements": string(entitlementsJSON),
+				},
+			}
+			if err := putRoleRecord(view, node, len(ids) == 0); err != nil {
 				return err
 			}
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
-	r.mu.Lock()
-	if len(entitlementIDs) == 0 {
-		delete(r.entitlements, role)
-	} else {
-		r.entitlements[role] = append([]string(nil), entitlementIDs...)
+	for role, ids := range normalized {
+		if len(ids) == 0 {
+			delete(r.entitlements, role)
+		} else {
+			r.entitlements[role] = append([]string(nil), ids...)
+		}
 	}
-	r.mu.Unlock()
 	return nil
 }
 
@@ -170,7 +175,7 @@ func (r *RoleEntitlementsStore) All() map[string][]string {
 // PermissionsForRole returns the effective entitlement IDs (permission strings) for a single role.
 // If store is nil or has no override for role, built-in roles use RolePermissions; user-defined return nil.
 func PermissionsForRole(role string, store *RoleEntitlementsStore) []string {
-	role = strings.ToLower(strings.TrimSpace(role))
+	role = NormalizeRoleName(role)
 	if store != nil {
 		if ids := store.Get(role); len(ids) > 0 {
 			return ids
@@ -186,6 +191,20 @@ func PermissionsForRole(role string, store *RoleEntitlementsStore) []string {
 		ids[i] = string(p)
 	}
 	return ids
+}
+
+// EntitlementsAllow is the one check of a global entitlement: entitlements
+// (IDs, from PermissionsForRoles) hold permission, or admin, which holds
+// every permission. HTTP, Bolt and the "is admin" checks all decide through
+// it.
+func EntitlementsAllow(entitlements []string, permission string) bool {
+	permission = strings.ToLower(strings.TrimSpace(permission))
+	for _, id := range entitlements {
+		if id == permission || id == string(PermAdmin) {
+			return true
+		}
+	}
+	return false
 }
 
 // PermissionsForRoles returns the union of effective entitlement IDs for the given roles.

@@ -179,7 +179,7 @@ func TestCallPluginHandler(t *testing.T) {
 	})
 
 	t.Run("unsupported signature returns error", func(t *testing.T) {
-		handler := func(a, b, c, d int) int { return a + b + c + d }
+		handler := func(a, b, c, d int) (int, string) { return a + b + c + d, "invalid second result" }
 		_, err := callPluginHandler(handler, []interface{}{1, 2, 3, 4})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported")

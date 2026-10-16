@@ -296,12 +296,16 @@ func TestTemporalValuesRoundTripThroughStringInComputedRows(t *testing.T) {
 		{name: "negative fractional duration text", expression: "toString(duration({seconds: -2, milliseconds: 1}))", want: "PT-1.999S"},
 		{name: "negative subsecond duration text", expression: "toString(duration({days: 1, milliseconds: -1}))", want: "P1DT-0.001S"},
 		{name: "date round trip equality", expression: "date(toString(d)) = d", want: true},
+		{name: "local time round trip equality", expression: "localtime(toString(lt)) = lt", want: true},
+		{name: "local date time round trip equality", expression: "localdatetime(toString(ldt)) = ldt", want: true},
 		{name: "date time round trip equality", expression: "datetime(toString(dt)) = dt", want: true},
 		{name: "duration round trip equality", expression: "duration(toString(duration({seconds: -2, milliseconds: -1}))) = duration({seconds: -2, milliseconds: -1})", want: true},
 	}
 	values := pipelineRow{
-		"d":  CypherDate{Time: time.Date(1984, 10, 11, 0, 0, 0, 0, time.UTC)},
-		"dt": time.Date(1984, 10, 11, 12, 31, 14, 645876123, time.FixedZone("+01:00", 3600)),
+		"d":   CypherDate{Time: time.Date(1984, 10, 11, 0, 0, 0, 0, time.UTC)},
+		"lt":  CypherLocalTime{Time: time.Date(0, 1, 1, 12, 31, 14, 645876123, time.UTC)},
+		"ldt": CypherLocalDateTime{Time: time.Date(1984, 10, 11, 12, 31, 14, 645876123, time.UTC)},
+		"dt":  time.Date(1984, 10, 11, 12, 31, 14, 645876123, time.FixedZone("+01:00", 3600)),
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

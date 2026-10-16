@@ -779,15 +779,9 @@ func TestHandleGenerateAPIToken(t *testing.T) {
 		assert.Equal(t, "not authenticated", payload["message"])
 	})
 
-	t.Run("requires admin role", func(t *testing.T) {
-		rec, payload := makeReq(http.MethodPost, `{}`, &auth.JWTClaims{
-			Sub:      "reader-id",
-			Username: "reader",
-			Roles:    []string{string(auth.RoleViewer)},
-		})
-		assert.Equal(t, http.StatusForbidden, rec.Code)
-		assert.Equal(t, "admin role required to generate API tokens", payload["message"])
-	})
+	// The admin requirement is the route guard's (withAuth with
+	// auth.PermAdmin): TestAPITokenNeedsTheAdminEntitlement goes through the
+	// router; the handler itself makes no second decision.
 
 	t.Run("validates request body and expiry", func(t *testing.T) {
 		adminClaims := &auth.JWTClaims{
@@ -811,11 +805,11 @@ func TestHandleGenerateAPIToken(t *testing.T) {
 	})
 
 	t.Run("returns signed token with defaults and day parsing", func(t *testing.T) {
-		adminClaims := &auth.JWTClaims{
-			Sub:      "admin-id",
-			Username: "admin",
-			Email:    "admin@example.com",
-			Roles:    []string{string(auth.RoleAdmin)},
+		// The stored admin's own claims: a token's roles are the ones its
+		// stored account holds now, so the claims must name that account.
+		adminClaims, err := authenticator.ValidateToken(getAuthToken(t, authenticator, "admin"))
+		if err != nil {
+			t.Fatalf("ValidateToken failed: %v", err)
 		}
 
 		rec, payload := makeReq(http.MethodPost, `{"expires_in":"7d"}`, adminClaims)
@@ -831,7 +825,7 @@ func TestHandleGenerateAPIToken(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ValidateToken failed: %v", err)
 		}
-		assert.Equal(t, "admin-id", claims.Sub)
+		assert.Equal(t, adminClaims.Sub, claims.Sub)
 		assert.Equal(t, "admin", claims.Username)
 		assert.Contains(t, claims.Roles, string(auth.RoleAdmin))
 
@@ -1935,18 +1929,23 @@ func TestAuthMeAndRoleByIDBranches(t *testing.T) {
 	server.handleRoleByID(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
-	// DELETE conflict when user has role.
+	// DELETE detaches the role while retaining the user.
 	_, _ = authn.CreateUser("role_user", "password123", []auth.Role{"r1"})
 	req = httptest.NewRequest(http.MethodDelete, "/auth/roles/r1", nil)
 	rec = httptest.NewRecorder()
 	server.handleRoleByID(rec, req)
-	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	roleUser, err := authn.GetUser("role_user")
+	assert.NoError(t, err)
+	assert.Empty(t, roleUser.Roles)
+	assert.False(t, server.roleStore.Exists("r1"))
 
 	// DELETE builtin role branch.
 	req = httptest.NewRequest(http.MethodDelete, "/auth/roles/admin", nil)
 	rec = httptest.NewRecorder()
 	server.handleRoleByID(rec, req)
-	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.True(t, server.roleStore.Exists("admin"))
 }
 
 func TestSearchAndRebuildAdditionalBranches(t *testing.T) {
@@ -2120,6 +2119,7 @@ func TestGrantAccessAndRBACResolverBranches(t *testing.T) {
 
 	// Seed explicit allowlists and grant with claims.
 	requireAllow := []string{"nornic"}
+	require.NoError(t, server.roleStore.CreateRole(context.Background(), "custom"))
 	_ = server.allowlistStore.SaveRoleDatabases(context.Background(), "admin", requireAllow)
 	_ = server.allowlistStore.SaveRoleDatabases(context.Background(), "custom", requireAllow)
 	claims := &auth.JWTClaims{Roles: []string{"role_custom", "admin", "role_custom"}}
@@ -2128,8 +2128,8 @@ func TestGrantAccessAndRBACResolverBranches(t *testing.T) {
 	al := server.allowlistStore.Allowlist()
 	assert.Contains(t, al["admin"], "db_new")
 	assert.Contains(t, al["custom"], "db_new")
-	assert.True(t, server.privilegesStore.Resolve([]string{"admin"}, "db_new").Write)
-	assert.True(t, server.privilegesStore.Resolve([]string{"custom"}, "db_new").Read)
+	assert.True(t, grantedAccess(server.privilegesStore, []string{"admin"}, "db_new").Write)
+	assert.True(t, grantedAccess(server.privilegesStore, []string{"custom"}, "db_new").Read)
 
 	// Explicit helper branches.
 	server.auth = nil
@@ -2349,7 +2349,7 @@ func TestAccessControlHandlersAdditionalBranches(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// access/databases: mappings branch
-	req = httptest.NewRequest(http.MethodPut, "/auth/access/databases", strings.NewReader(`{"mappings":[{"role":"reader","databases":["nornic","system"]}]}`))
+	req = httptest.NewRequest(http.MethodPut, "/auth/access/databases", strings.NewReader(`{"mappings":[{"role":"viewer","databases":["nornic","system"]}]}`))
 	rec = httptest.NewRecorder()
 	server.handleAccessDatabases(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
@@ -2376,7 +2376,7 @@ func TestAccessControlHandlersAdditionalBranches(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// access/privileges: valid matrix update
-	req = httptest.NewRequest(http.MethodPut, "/auth/access/privileges", strings.NewReader(`[{"role":"reader","database":"nornic","read":true,"write":false}]`))
+	req = httptest.NewRequest(http.MethodPut, "/auth/access/privileges", strings.NewReader(`[{"role":"viewer","database":"nornic","read":true,"write":false}]`))
 	rec = httptest.NewRecorder()
 	server.handleAccessPrivileges(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
@@ -3046,7 +3046,7 @@ func TestImplicitTransactionGenericPathAdditionalBranches(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
 		require.Len(t, response.Errors, 1)
 		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", response.Errors[0].Code)
-		require.Contains(t, response.Errors[0].Message, ":USE requires a database name")
+		require.Equal(t, ":use requires a database name", response.Errors[0].Message)
 		require.Empty(t, response.Results)
 	})
 

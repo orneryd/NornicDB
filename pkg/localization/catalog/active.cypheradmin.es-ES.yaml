@@ -113,3 +113,35 @@
 - id: cypheradmin.database_options_unavailable
   description: El gestor de bases de datos no tiene opciones. Command no se traduce.
   other: "las opciones de base de datos no están disponibles: {{.Command}} requiere un gestor de bases de datos con opciones"
+- id: cypheradmin.immutable_privilege_grant_forbidden
+  description: Un GRANT IMMUTABLE con la autenticación activada. ASSIGN IMMUTABLE PRIVILEGE es sintaxis de privilegios de Neo4j y no se traduce.
+  other: "No se puede conceder el permiso ASSIGN IMMUTABLE PRIVILEGE."
+- id: cypheradmin.immutable_privilege_revoke_forbidden
+  description: Un REVOKE de un privilegio inmutable con la autenticación activada.
+  other: "Los privilegios inmutables no se pueden revocar."
+- id: cypheradmin.privilege_role_not_found
+  description: Un GRANT a un rol que no existe. Action (execute, execute_boosted) y Role no se traducen.
+  other: "No se pudo conceder el privilegio {{.Action}} al rol '{{.Role}}': el rol no existe."
+
+- id: cypheradmin.system_graph_access_unsupported
+  description: A graph or schema statement on the system database.
+  other: "El acceso al grafo no se admite en la base de datos del sistema"
+- id: cypheradmin.system_procedure_unsupported
+  description: Una llamada a un procedimiento que no se ejecuta en la base de datos del sistema. Query es la sentencia sin traducir.
+  other: "No es un comando ni un procedimiento de sistema reconocido. Este comando Cypher solo se puede ejecutar en una base de datos de usuario: {{.Query}}"
+- id: cypheradmin.transaction_statement_type
+  description: Incompatible statement types in an explicit transaction. Previous and Requested are Neo4j's untranslated statement type names.
+  other: "Se intentó ejecutar {{.Requested}} después de ejecutar {{.Previous}}"
+
+- id: cypheradmin.show_clause_unexpected
+  description: Una cláusula tras el YIELD de un comando SHOW en la base de datos del sistema. Clause es la primera palabra clave de la cláusula, sin traducir; las palabras clave esperadas son sintaxis Cypher sin traducir.
+  other: "Entrada no válida '{{.Clause}}': se esperaba ',', 'AS', 'ORDER BY', 'LIMIT', 'OFFSET', 'RETURN', 'SHOW', 'SKIP', 'TERMINATE', 'WHERE' o <EOF>"
+- id: cypheradmin.show_expression_invalid
+  description: Una subconsulta COUNT, EXISTS o COLLECT en un comando SHOW en la base de datos del sistema. Expression es la palabra clave sin traducir.
+  other: "La expresión {{.Expression}} no es válida en los comandos SHOW."
+- id: cypheradmin.show_pattern_comprehension_invalid
+  description: Una comprensión de patrón en un comando SHOW en la base de datos del sistema.
+  other: "Las comprensiones de patrón no son válidas en los comandos SHOW."
+- id: cypheradmin.show_pattern_expression_invalid
+  description: Una expresión de patrón en un comando SHOW en la base de datos del sistema.
+  other: "Las expresiones de patrón no son válidas en los comandos SHOW."

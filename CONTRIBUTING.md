@@ -109,6 +109,26 @@ rollout and only re-enable them after merging and syncing this policy to `develo
 
 Run `python3 scripts/check-actions-policy.py` to check trigger and runner approval policy locally.
 
+### Temporary local PR verification policy (through October 31, 2026)
+
+Through October 31, 2026 inclusive (America/Phoenix), run `make verify BASE=origin/<pr-base>` locally
+for every PR created. Post a result comment on the PR, not just a description: include the checked head SHA,
+base SHA, exact command, results, failures, and any skipped or unexecuted checks with reasons. Re-run after
+changes or rebases and post the updated result. Path-filtered no-op runs must be reported as such, not as a
+full-suite pass. GitHub Actions remains manual and administrator-approved.
+
+For a maintainer-approved release batch, focused-validated fixes that merge cleanly may be integrated before
+full verification. Run one combined `make verify ALL=1 BASE=<immutable-base>` on the frozen release head,
+and post its checked head, base, command, result, and skips on every participating PR. Clearly identify this
+as shared release verification, not an individual PR-head pass. Cancel redundant individual full runs, preserve
+their logs, and open follow-up PRs against the release branch for any integration regressions. Re-run the
+combined checks after fixes; do not declare the release verified while failures remain.
+
+Fix every regression found before declaring the PR or combined release verified. If several PRs share a root cause, open a dedicated
+fix PR against their common integration base, link it from affected PRs, and propagate it into each affected
+branch before re-running verification. Do not waive regressions or claim a blocked check passed. Report local
+toolchain blockers separately, resolve them where possible, and rerun the affected checks.
+
 ### Releases and milestones
 
 Every release has a milestone with the same name (`v1.4.3`); features and fixes for that release are assigned to it.

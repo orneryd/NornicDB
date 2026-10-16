@@ -16,9 +16,6 @@
 - id: server.new_role_already_exists
   description: Conflicto cuando ya existe el nuevo nombre de rol.
   other: el nuevo nombre de rol ya existe
-- id: server.role_in_use
-  description: Conflicto cuando un usuario todavía tiene el rol.
-  other: "no se puede eliminar el rol: al menos un usuario tiene este rol"
 - id: server.method_patch_or_delete_required
   description: Respuesta para un endpoint que acepta PATCH o DELETE.
   other: se requiere PATCH o DELETE

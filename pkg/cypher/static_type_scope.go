@@ -133,6 +133,18 @@ func (types typeScope) kinds() matchSemanticScope {
 func (types typeScope) static(cypher25 bool) staticTypeScope {
 	scope := staticTypeScope{kinds: types.kinds(), complete: true, cypher25: cypher25}
 	for name, operand := range types {
+		if operand.kind == "" && operand.nonInteger {
+			if scope.derived == nil {
+				scope.derived = make(map[string]staticOperand)
+			}
+			scope.derived[name] = operand
+			if operand.display != "" {
+				if scope.values == nil {
+					scope.values = make(map[string]string)
+				}
+				scope.values[name] = operand.display
+			}
+		}
 		if typeName := operand.typeName(); typeName != "" && !isEntityTypeName(typeName) {
 			if scope.values == nil {
 				scope.values = make(map[string]string)
@@ -164,6 +176,9 @@ func typeScopeOf(scope staticTypeScope) typeScope {
 	for name, members := range scope.members {
 		operand := types[name]
 		operand.members = members
+		types[name] = operand
+	}
+	for name, operand := range scope.derived {
 		types[name] = operand
 	}
 	return types
@@ -374,9 +389,11 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, boo
 // as a query of its own, with the one clause walk (semanticScopeWalk) from
 // the variables it imports (callSubqueryImports), and returns the static
 // type of each column a one-branch body returns. Its expression subqueries
-// see the body's scope, not the enclosing query's. A body whose walk stops
-// early, or that doesn't end in RETURN, gives no types; a scoped body's
-// walk error is the statement's.
+// see the body's scope, not the enclosing query's. A CALL (a, b) body sees
+// its imports through the whole body, after a WITH in it too, and may
+// declare them again (subqueryScope). A body whose walk stops early, or that
+// doesn't end in RETURN, gives no types; a scoped body's walk error is the
+// statement's.
 func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
 	initial, scoped, ok := callSubqueryImports(callText, outer)
 	if !ok {
@@ -388,7 +405,11 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 		if !ok || len(clauses) == 0 {
 			continue
 		}
-		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, nil)
+		body := subqueryScope{}
+		if scoped {
+			body.visible = initial
+		}
+		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, body)
 		if err != nil {
 			if !scoped {
 				// An old-style CALL { … } keeps NornicDB's implicit imports
@@ -440,23 +461,26 @@ func projectedFunctionOperand(types typeScope, input staticTypeScope, function, 
 // projectedListOperand is the static type of a list literal or list
 // comprehension (inner is the text between the brackets): a list of the one
 // type every element has ([p], [coalesce(1, 2)]), a map widened to "Map, Node
-// or Relationship" as Neo4j types a list of maps; a comprehension's list of
-// its projection's type. typed is false when the elements' types differ or
+// or Relationship" as Neo4j types a list of maps. A comprehension is a list
+// of its projection's type, typed with its local as an element of the list
+// it iterates (listElementOperand: [at IN range(0, 1) | [at]] is a
+// List<List<Integer>>), or of that element's type when it projects nothing
+// ([at IN l WHERE …]). typed is false when the elements' types differ or
 // aren't known.
 func projectedListOperand(types typeScope, input staticTypeScope, inner string) (staticOperand, bool) {
 	if variable, listExpression, _, projection, comprehension := parseListComprehension(inner); comprehension {
-		element := elementOfType(projectedOperand(types, input, listExpression).kind)
-		if element == "" {
-			return staticOperand{}, false
-		}
+		element := listElementOperand(types, input, listExpression)
 		if strings.TrimSpace(projection) == "" {
-			return knownOperand(listOfType(element)), true
+			if typeName := element.typeName(); typeName != "" && typeName != "Null" {
+				return knownOperand(listOfType(typeName)), true
+			}
+			return staticOperand{}, false
 		}
 		scope := make(typeScope, len(types)+1)
 		for name, operand := range types {
 			scope[name] = operand
 		}
-		scope[variable] = typedOperand(element)
+		scope[variable] = element
 		projected := projectedOperand(scope, scope.static(input.cypher25), projection).typeName()
 		if projected == "" || projected == "Null" {
 			return staticOperand{}, false

@@ -472,9 +472,15 @@ func (b *BadgerEngine) cacheStoreWrittenNode(node *Node) {
 }
 
 func (b *BadgerEngine) cacheOnNodeCreated(node *Node) {
+	b.cacheOnNodeCreatedWithCounts(node, true)
+}
+
+func (b *BadgerEngine) cacheOnNodeCreatedWithCounts(node *Node, publishCounts bool) {
 	b.cacheStoreWrittenNode(node)
-	b.nodeCount.Add(1)
-	b.addNamespaceNodeCount(node.ID, 1)
+	if publishCounts {
+		b.nodeCount.Add(1)
+		b.addNamespaceNodeCount(node.ID, 1)
+	}
 	b.maintainPropertyIndexesOnNodeCreated(node)
 }
 
@@ -499,33 +505,49 @@ func (b *BadgerEngine) cacheOnNodeUpdatedWithOldNode(node *Node, oldNode *Node) 
 // cacheOnNodeDeleted invalidates node cache and updates cached counts.
 // edgesDeleted is the number of edges removed as part of deleting this node.
 func (b *BadgerEngine) cacheOnNodeDeleted(id NodeID, edgesDeleted int64) {
+	b.cacheOnNodeDeletedWithCounts(id, edgesDeleted, true)
+}
+
+func (b *BadgerEngine) cacheOnNodeDeletedWithCounts(id NodeID, edgesDeleted int64, publishCounts bool) {
 	b.cacheDeleteNode(id)
 
 	// Decrement cached node count for O(1) stats.
-	b.nodeCount.Add(-1)
-	b.addNamespaceNodeCount(id, -1)
+	if publishCounts {
+		b.nodeCount.Add(-1)
+		b.addNamespaceNodeCount(id, -1)
+	}
 
 	// Decrement cached edge count for edges deleted with this node.
 	if edgesDeleted > 0 {
-		b.edgeCount.Add(-edgesDeleted)
-		b.addNamespaceEdgeCountFromNode(id, -edgesDeleted)
+		if publishCounts {
+			b.edgeCount.Add(-edgesDeleted)
+			b.addNamespaceEdgeCountFromNode(id, -edgesDeleted)
+		}
 		// We don't know which types were removed cheaply; invalidate whole type cache.
 		b.InvalidateEdgeTypeCache()
 	}
 }
 
 func (b *BadgerEngine) cacheOnNodeDeletedWithLabels(nodeID NodeID, labels []string, edgesDeleted int64) {
+	b.cacheOnNodeDeletedWithLabelsAndCounts(nodeID, labels, edgesDeleted, true)
+}
+
+func (b *BadgerEngine) cacheOnNodeDeletedWithLabelsAndCounts(nodeID NodeID, labels []string, edgesDeleted int64, publishCounts bool) {
 	b.cacheDeleteNode(nodeID)
 	b.labelCacheInvalidateForNodeLabels(labels, nodeID)
 
 	// Decrement cached node count for O(1) stats.
-	b.nodeCount.Add(-1)
-	b.addNamespaceNodeCount(nodeID, -1)
+	if publishCounts {
+		b.nodeCount.Add(-1)
+		b.addNamespaceNodeCount(nodeID, -1)
+	}
 
 	// Decrement cached edge count for edges deleted with this node.
 	if edgesDeleted > 0 {
-		b.edgeCount.Add(-edgesDeleted)
-		b.addNamespaceEdgeCountFromNode(nodeID, -edgesDeleted)
+		if publishCounts {
+			b.edgeCount.Add(-edgesDeleted)
+			b.addNamespaceEdgeCountFromNode(nodeID, -edgesDeleted)
+		}
 		// We don't know which types were removed cheaply; invalidate whole type cache.
 		b.InvalidateEdgeTypeCache()
 	}
@@ -538,14 +560,21 @@ func (b *BadgerEngine) cacheOnNodeDeletedWithLabels(nodeID NodeID, labels []stri
 }
 
 func (b *BadgerEngine) cacheOnEdgeCreated(edge *Edge) {
+	b.cacheOnEdgeCreatedWithCounts(edge, true)
+}
+
+func (b *BadgerEngine) cacheOnEdgeCreatedWithCounts(edge *Edge, publishCounts bool) {
 	if edge == nil {
 		return
 	}
+	b.updateRelationshipUniqueIndexes(edge)
 	b.InvalidateEdgeTypeCacheForType(edge.Type)
 	b.cacheStoreEdge(edge)
 	b.adjCacheInvalidateForEdge(edge)
-	b.edgeCount.Add(1)
-	b.addNamespaceEdgeCount(edge.ID, 1)
+	if publishCounts {
+		b.edgeCount.Add(1)
+		b.addNamespaceEdgeCount(edge.ID, 1)
+	}
 }
 
 // cacheOnEdgeUpdated invalidates relevant edge type cache entries when an edge changes.
@@ -553,6 +582,7 @@ func (b *BadgerEngine) cacheOnEdgeUpdated(oldType string, newEdge *Edge) {
 	if newEdge == nil {
 		return
 	}
+	b.updateRelationshipUniqueIndexes(newEdge)
 	// If type changed, invalidate both old and new (old cache would still contain this edge).
 	if oldType != "" && oldType != newEdge.Type {
 		b.InvalidateEdgeTypeCacheForType(oldType)
@@ -568,6 +598,11 @@ func (b *BadgerEngine) cacheOnEdgeUpdated(oldType string, newEdge *Edge) {
 }
 
 func (b *BadgerEngine) cacheOnEdgeDeleted(id EdgeID, edgeType string) {
+	b.cacheOnEdgeDeletedWithCounts(id, edgeType, true)
+}
+
+func (b *BadgerEngine) cacheOnEdgeDeletedWithCounts(id EdgeID, edgeType string, publishCounts bool) {
+	b.deleteRelationshipUniqueIndexes(id)
 	if edgeType != "" {
 		b.InvalidateEdgeTypeCacheForType(edgeType)
 	} else {
@@ -579,14 +614,17 @@ func (b *BadgerEngine) cacheOnEdgeDeleted(id EdgeID, edgeType string) {
 	// cache misses recover via a single index iteration on the next
 	// read, so the worst case is one extra iteration per affected node.
 	b.adjCacheInvalidateAll()
-	b.edgeCount.Add(-1)
-	b.addNamespaceEdgeCount(id, -1)
+	if publishCounts {
+		b.edgeCount.Add(-1)
+		b.addNamespaceEdgeCount(id, -1)
+	}
 }
 
 func (b *BadgerEngine) cacheOnEdgesDeleted(deletedIDs []EdgeID) {
 	if len(deletedIDs) == 0 {
 		return
 	}
+	b.deleteRelationshipUniqueIndexes(deletedIDs...)
 	// Bulk delete may cover many types; invalidate once.
 	b.InvalidateEdgeTypeCache()
 	b.cacheInvalidateEdges()

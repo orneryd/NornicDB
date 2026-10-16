@@ -18,8 +18,8 @@ import (
 var _ Engine = (*RemoteEngine)(nil)
 
 func TestRemoteHTTPValueDecoding(t *testing.T) {
-	node := map[string]interface{}{"elementId": "4:db:n", "properties": map[string]interface{}{"a": float64(1)}}
-	entities := map[string]interface{}{"4:db:n": node}
+	node := RemoteEntityValue{"elementId": "4:db:n", "properties": map[string]interface{}{"a": float64(1)}}
+	entities := map[string]interface{}{"4:db:n": map[string]interface{}(node)}
 	meta := map[string]interface{}{"elementId": "4:db:n", "type": "node"}
 	for _, testCase := range []struct {
 		name, raw string
@@ -36,7 +36,7 @@ func TestRemoteHTTPValueDecoding(t *testing.T) {
 		{"wire ordered map", `{"node":{"a":1},"k":1}`, []interface{}{meta, nil}, entities, map[string]interface{}{"node": node, "k": float64(1)}, 2, false},
 		{"entity wrapper is ordinary map", `{"node":{"a":1}}`, []interface{}{meta}, entities, map[string]interface{}{"node": node}, 1, false},
 		{"list", `[{"a":1},1]`, []interface{}{meta, nil}, entities, []interface{}{node, float64(1)}, 2, false},
-		{"path", `[{"a":1}]`, []interface{}{[]interface{}{meta}}, entities, []interface{}{node}, 1, false},
+		{"path", `[{"a":1}]`, []interface{}{[]interface{}{meta}}, entities, RemotePathValue{node}, 1, false},
 		{"unknown identity", `{"a":1}`, []interface{}{map[string]interface{}{"elementId": "missing"}}, entities, map[string]interface{}{"a": float64(1)}, 1, false},
 		{"empty map", `{}`, nil, entities, map[string]interface{}{}, 0, false},
 		{"empty list", `[]`, nil, entities, []interface{}{}, 0, false},

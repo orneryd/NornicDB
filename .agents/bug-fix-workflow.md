@@ -6,6 +6,16 @@
 
 ---
 
+## Coding principles and recurring failures
+
+Apply the [standing design principles](standing-design-principles.md) while fixing the
+bug. When corrections repeatedly fail or repeat an unsuccessful approach, apply the
+trigger and course change in [Rule 73](rule73.md).
+
+When [Rule 73](rule73.md) is active, it supersedes leaf-only “minimal fix” guidance: correct the complete current
+unit through its shared causal owner and all affected consumers. The failing-test and
+regression requirements below still apply.
+
 ## The Golden Rule
 
 **Every bug MUST have a test that:**
@@ -122,6 +132,10 @@ FAIL    github.com/orneryd/nornicdb/pkg/cypher    0.123s
 ### Step 3: Fix the Bug
 
 **Implement the minimal fix:**
+
+“Minimal” means the smallest complete correction for the affected causal unit. Under
+active Rule 73, change the failed causal approach across that complete unit before
+presenting another correction; do not stop at a per-finding or per-consumer patch.
 
 ```go
 // pkg/cypher/executor.go

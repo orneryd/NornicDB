@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"reflect"
 	"strings"
 )
@@ -115,10 +114,6 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 						continue
 					}
 					name = normalizeProjectionColumnName(name)
-					if _, imported := outer[name]; imported && simpleSemanticIdentifier(expression) != name {
-						return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
-							localization.CypherCoreVariableDeclaredInOuterScope(name))
-					}
 					next[name] = propertyAccessExpressionType(expression, types, params)
 				}
 			}
@@ -146,10 +141,6 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 				return err
 			}
 			variable := normalizeProjectionColumnName(alias)
-			if _, imported := outer[variable]; imported {
-				return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
-					localization.CypherCoreVariableDeclaredInOuterScope(variable))
-			}
 			element := ""
 			listType := propertyAccessExpressionType(expression, types, params)
 			if strings.HasPrefix(listType, "List<") && strings.HasSuffix(listType, ">") && !strings.Contains(listType, ",") {
@@ -293,6 +284,7 @@ func checkExpressionPropertyAccesses(text string, types map[string]string, param
 // scanPropertyAccesses checks the property accesses (and, in expression
 // text, the map projections) of text; see checkPropertyAccesses.
 func scanPropertyAccesses(text string, types map[string]string, params map[string]interface{}, expressions bool) error {
+	braces := newSubqueryBraceScanner(text, 0)
 	if strings.IndexByte(text, '.') < 0 && strings.IndexByte(text, '{') < 0 {
 		return nil
 	}
@@ -341,7 +333,7 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 				index = end
 			}
 		case c == '{':
-			if index > 0 && isSubqueryBrace(text, index) {
+			if index > 0 && braces.at(index) {
 				end := findMatchingDelimiter(text, index, '{', '}')
 				if end < 0 {
 					return nil
@@ -379,7 +371,7 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 					return err
 				}
 			}
-			if after := skipSpaces(text, next); expressions && after < len(text) && text[after] == '{' && rejectsPropertyAccess(typeName) && !isSubqueryBrace(text, after) {
+			if after := skipSpaces(text, next); expressions && after < len(text) && text[after] == '{' && rejectsPropertyAccess(typeName) && !braces.at(after) {
 				return typeNameMismatchError("Map, Node or Relationship", typeName)
 			}
 			index = next - 1
@@ -427,19 +419,7 @@ func namespacedCallFollows(text string, index int) bool {
 // isSubqueryBrace reports whether the { at text[index] opens a subquery body
 // (EXISTS { … }, COUNT { … }, COLLECT { … }, CALL { … }) rather than a map.
 func isSubqueryBrace(text string, index int) bool {
-	before := index - 1
-	for before >= 0 && isWhitespace(text[before]) {
-		before--
-	}
-	start := before
-	for start >= 0 && isIdentByte(text[start]) {
-		start--
-	}
-	switch upperASCII(text[start+1 : before+1]) {
-	case "EXISTS", "COUNT", "COLLECT", "CALL":
-		return true
-	}
-	return false
+	return precedingSubqueryExpressionKeyword(text, index)
 }
 
 // parameterMayRejectPropertyAccess reports whether a parameter whose value a

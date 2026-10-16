@@ -26,7 +26,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 		traceAuth := os.Getenv("NORNICDB_TRACE_AUTH") != ""
 
 		// Check if auth is enabled
-		if s.auth == nil || !s.auth.IsSecurityEnabled() {
+		if !s.isRBACEnforced() {
 			// Auth disabled - allow all
 			handler(w, r)
 			return
@@ -69,18 +69,23 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 			start := time.Now()
 
 			// Cache successful Basic auth results so clients that send Basic on every request
-			// (Neo4j compatibility) don't pay bcrypt+JWT generation each time.
+			// (Neo4j compatibility) don't pay bcrypt+JWT generation each time. The cache
+			// spares the password check only: the roles are the account's current ones,
+			// read through the same owner as a Bearer token's (auth.CurrentClaims). A
+			// cached account that is gone (deleted, disabled, replaced) is checked again
+			// in full.
 			if s.basicAuthCache != nil {
 				if cached, ok := s.basicAuthCache.GetFromHeader(authHeader); ok {
-					claims = cached
-					err = nil
-					if traceAuth && r.URL.Path == "/graphql" {
-						s.logEvent(r.Context(), slog.LevelDebug, localization.ServerAuthTraceEvent(r.Method, r.URL.Path, "basic_auth_cache", time.Since(start), err))
+					if claims, err = s.auth.CurrentClaims(cached); err == nil {
+						if traceAuth && r.URL.Path == "/graphql" {
+							s.logEvent(r.Context(), slog.LevelDebug, localization.ServerAuthTraceEvent(r.Method, r.URL.Path, "basic_auth_cache", time.Since(start), err))
+						}
+						goto doneAuth
 					}
-					goto doneAuth
 				}
 			}
 
+			generation := s.basicAuthCache.Generation()
 			var tokenResp *auth.TokenResponse
 			tokenResp, claims, err = s.handleBasicAuth(authHeader, r)
 			if err == nil && tokenResp != nil && tokenResp.AccessToken != "" {
@@ -88,7 +93,7 @@ func (s *Server) withAuth(handler http.HandlerFunc, requiredPerm auth.Permission
 				http.SetCookie(w, sessionTokenCookie(r, tokenResp.AccessToken, 86400*7))
 			}
 			if err == nil && s.basicAuthCache != nil && claims != nil {
-				s.basicAuthCache.SetFromHeader(authHeader, claims)
+				s.basicAuthCache.SetFromHeaderAtGeneration(authHeader, claims, generation)
 			}
 			if traceAuth && r.URL.Path == "/graphql" {
 				s.logEvent(r.Context(), slog.LevelDebug, localization.ServerAuthTraceEvent(r.Method, r.URL.Path, "basic_auth", time.Since(start), err))

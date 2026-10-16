@@ -100,3 +100,6 @@ testing/cypher/tck/testdata/differential/sweep.json.gz
 
 # make verify: worktrees, logs, docs venv
 .verify/
+
+# Local coordination notes must never be recommitted.
+/AGENT_STATUS.md

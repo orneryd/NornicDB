@@ -15,7 +15,7 @@ func TestApplyOrderByToResult_DottedPropertyBranches(t *testing.T) {
 		Columns: []string{"t"},
 		Rows: [][]interface{}{
 			{map[string]interface{}{"createdAt": int64(2)}},
-			{map[string]interface{}{"properties": map[string]interface{}{"createdAt": int64(1)}}},
+			{storage.RemoteEntityValue{"properties": map[string]interface{}{"createdAt": int64(1)}}},
 			{map[string]interface{}{"createdAt": int64(3)}},
 		},
 	}

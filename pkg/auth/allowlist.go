@@ -83,69 +83,52 @@ func (a *AllowlistStore) Allowlist() map[string][]string {
 	return out
 }
 
-// SaveRoleDatabases persists one role's database list and refreshes in-memory allowlist.
+// SaveRoleDatabases persists one role's database list and refreshes the
+// in-memory allowlist. The role must exist (ErrRoleNotFound).
 func (a *AllowlistStore) SaveRoleDatabases(ctx context.Context, role string, databases []string) error {
-	nodeID := storage.NodeID(roleDbAccessPrefix + role)
-	databasesJSON, _ := json.Marshal(databases)
-	node := &storage.Node{
-		ID:     nodeID,
-		Labels: []string{roleDbAccessLabel, roleDbAccessSystems},
-		Properties: map[string]any{
-			"role":      role,
-			"databases": string(databasesJSON),
-		},
+	return a.SaveMappings(ctx, map[string][]string{role: databases})
+}
+
+// SaveMappings persists a batch in one transaction through the role-record
+// owner (WithRoleRecords): every role's list is stored, or none when one
+// fails or names a role that doesn't exist. The cache changes only after
+// commit.
+func (a *AllowlistStore) SaveMappings(ctx context.Context, mappings map[string][]string) error {
+	roles := make([]string, 0, len(mappings))
+	normalized := make(map[string][]string, len(mappings))
+	for role, databases := range mappings {
+		roles = append(roles, role)
+		normalized[NormalizeRoleName(role)] = databases
 	}
-	existing, err := a.storage.GetNode(nodeID)
-	if err == storage.ErrNotFound {
-		_, err = a.storage.CreateNode(node)
-		if err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	} else {
-		node.CreatedAt = existing.CreatedAt
-		err = a.storage.UpdateNode(node)
-		if err != nil {
-			return err
-		}
-	}
-	// Refresh in-memory
+	mappings = normalized
 	a.mu.Lock()
+	defer a.mu.Unlock()
+	if err := WithRoleRecords(ctx, a.storage, roles, func(view storage.Engine) error {
+		for role, databases := range mappings {
+			databasesJSON, _ := json.Marshal(databases)
+			node := &storage.Node{
+				ID:     storage.NodeID(roleDbAccessPrefix + role),
+				Labels: []string{roleDbAccessLabel, roleDbAccessSystems},
+				Properties: map[string]any{
+					"role":      role,
+					"databases": string(databasesJSON),
+				},
+			}
+			if err := putRoleRecord(view, node, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
 	if a.allowlist == nil {
 		a.allowlist = make(map[string][]string)
 	}
-	a.allowlist[role] = databases
-	a.mu.Unlock()
+	for role, databases := range mappings {
+		a.allowlist[role] = append([]string(nil), databases...)
+	}
 	return nil
-}
-
-// DeleteRoleDatabases removes one role's allowlist entry (node + in-memory).
-// Used when a user-defined role is deleted or renamed.
-func (a *AllowlistStore) DeleteRoleDatabases(ctx context.Context, role string) error {
-	nodeID := storage.NodeID(roleDbAccessPrefix + role)
-	if err := a.storage.DeleteNode(nodeID); err != nil && err != storage.ErrNotFound {
-		return err
-	}
-	a.mu.Lock()
-	delete(a.allowlist, role)
-	a.mu.Unlock()
-	return nil
-}
-
-// RenameRoleInAllowlist copies allowlist entry from oldName to newName and deletes old.
-// Call when a user-defined role is renamed so DB access is preserved.
-func (a *AllowlistStore) RenameRoleInAllowlist(ctx context.Context, oldName, newName string) error {
-	a.mu.RLock()
-	dbs := a.allowlist[oldName]
-	if dbs != nil {
-		dbs = append([]string(nil), dbs...)
-	}
-	a.mu.RUnlock()
-	if err := a.SaveRoleDatabases(ctx, newName, dbs); err != nil {
-		return err
-	}
-	return a.DeleteRoleDatabases(ctx, oldName)
 }
 
 // SeedIfEmpty creates default allowlist entries for admin, editor, viewer if no allowlist data exists.
@@ -160,12 +143,11 @@ func (a *AllowlistStore) SeedIfEmpty(ctx context.Context, databaseNames []string
 	}
 	// Empty list means "all databases" in NewAllowlistDatabaseAccessMode, so dynamically
 	// created databases (e.g. test_db_a) are accessible without re-seeding.
+	mappings := make(map[string][]string)
 	for _, role := range builtinRoleNames {
-		if err := a.SaveRoleDatabases(ctx, role, []string{}); err != nil {
-			return err
-		}
+		mappings[role] = []string{}
 	}
-	return nil
+	return a.SaveMappings(ctx, mappings)
 }
 
 // HasAllowlistData returns true if any allowlist entry exists in storage (for seed skip).
@@ -229,8 +211,7 @@ func (m *allowlistDBAccessMode) CanAccessDatabase(dbName string) bool {
 
 func (m *allowlistDBAccessMode) canAccess(dbName string) bool {
 	for _, role := range m.roles {
-		role = strings.ToLower(strings.TrimSpace(role))
-		role = strings.TrimPrefix(role, "role_")
+		role = NormalizeRoleName(role)
 		dbs, ok := m.allowlist[role]
 		if !ok {
 			// No allowlist for this role → "all databases"

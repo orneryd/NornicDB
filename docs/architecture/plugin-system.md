@@ -4,7 +4,7 @@ NornicDB ships a unified plugin loader that auto-detects and routes plugins to t
 
 | Type | Interface | Subsystem | Example |
 |---|---|---|---|
-| **Function** | `apoc.Plugin` (in `apoc/`) | Cypher executor — registers functions callable from queries | APOC (`apoc.coll.sum`, `apoc.text.join`, 983 function names, 81 callable today: #1163, #1167; many are [NornicDB extensions](../features/apoc-functions.md#nornicdb-extensions)) |
+| **Function** | `apoc.Plugin` (in `apoc/`) | Cypher executor — registers functions callable from queries | APOC (`apoc.coll.sum`, `apoc.text.join`, a 983-name library catalog; 865 scalar-exported names after the 118 procedure-only entries are excluded; callability follows the checked typed dispatch and native adapters, not a fixed count — see the [APOC procedure capability audit](../features/apoc-procedure-capabilities.md); many are [NornicDB extensions](../features/apoc-functions.md#nornicdb-extensions)) |
 | **Heimdall** | `heimdall.HeimdallPlugin` (in `pkg/heimdall/`) | SLM subsystem — registers actions invokable by the AI assistant | Watcher plugin (`heimdall_watcher_query`, `heimdall_watcher_status`, …) |
 
 Plugins are dynamic Go shared objects (`.so` files on Linux/macOS) loaded at startup from configured directories. Each plugin's `Type()` method tells the loader which subsystem to route it to, so neither type requires manual registration in the host binary.

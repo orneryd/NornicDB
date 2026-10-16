@@ -33,6 +33,7 @@ func TestCallSubqueryIdentifierHelpers(t *testing.T) {
 	require.False(t, containsStandaloneIdentifier("obj.n = 1", "n"))
 	require.False(t, containsStandaloneIdentifier("'n'", "n"))
 	require.False(t, containsStandaloneIdentifier("prefix_n", "n"))
+
 }
 
 func TestSplitTopLevelResultModifiersCallSubquery(t *testing.T) {

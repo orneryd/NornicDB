@@ -22,9 +22,6 @@
 - id: cyphersubqueries.call_body_empty
   description: Empty CALL subquery body. CALL syntax is untranslated.
   other: "invalid CALL {} subquery: empty body"
-- id: cyphersubqueries.use_database_failed
-  description: CALL USE database failure. Database and Cause are untranslated diagnostic values.
-  other: "CALL subquery USE {{.Database}} failed: {{.Cause}}"
 - id: cyphersubqueries.correlated_union_parse_failed
   description: Correlated CALL UNION parse failure. Keywords are untranslated Cypher syntax.
   other: failed to parse UNION branches in correlated CALL subquery

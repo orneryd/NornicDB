@@ -23,6 +23,11 @@ import (
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
+type snapshotLabelCacheKey struct {
+	projectionKey string
+	reveal        bool
+}
+
 // BadgerTransaction wraps Badger's native transaction with constraint validation.
 //
 // Provides ACID guarantees:
@@ -140,7 +145,7 @@ type BadgerTransaction struct {
 	// snapshotLabelNodes retains completed, immutable label streams for the
 	// lifetime of this pinned snapshot. Bounded/aborted streams are never
 	// cached, so LIMIT preserves early termination and memory proportionality.
-	snapshotLabelNodes map[string][]*Node
+	snapshotLabelNodes map[snapshotLabelCacheKey][]*Node
 	// snapshotLabelNodeByID indexes the whole nodes of those completed label
 	// streams by ID, so a write to a node the statement just read from the
 	// snapshot (MATCH (n:L) SET ...) doesn't read the node again
@@ -152,12 +157,12 @@ type BadgerTransaction struct {
 	// snapshotProjectedLabelNodes applies the same rule to exact property
 	// projections. Keeping it separate preserves full-node cache reuse while
 	// avoiding a full physical snapshot walk for every repeated projected read.
-	snapshotProjectedLabelNodes map[string][]*Node
+	snapshotProjectedLabelNodes map[snapshotLabelCacheKey][]*Node
 	// snapshotLabelPrefixNodes retains small, early-stopped physical prefixes.
 	// These are never treated as complete streams; a later caller resumes the
 	// pinned label index after the last cached node when it needs more rows.
-	snapshotLabelPrefixNodes     map[string][]*Node
-	snapshotLabelPrefixNodeBytes map[string]int
+	snapshotLabelPrefixNodes     map[snapshotLabelCacheKey][]*Node
+	snapshotLabelPrefixNodeBytes map[snapshotLabelCacheKey]int
 	snapshotLabelPrefixBytes     int
 	snapshotPrefixNodeByID       map[NodeID]*Node
 	snapshotPrefixNodeBytesByID  map[NodeID]int
@@ -734,6 +739,8 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	// PERFORMANCE OPTIMIZATION: Buffer all writes and flush at commit time
 	// This batches all writes together for better performance while maintaining ACID guarantees
 
+	// Stamp creation times before encoding, as direct engine creation does (#1228).
+	initializeCreationTimes(&node.CreatedAt, &node.UpdatedAt)
 	// Serialize node (may store embeddings separately if too large)
 	data, embeddingsSeparate, err := tx.engine.encodeNodeInTxn(tx.badgerTx, namespaceForNodeID(node.ID), node)
 	if err != nil {
@@ -832,11 +839,8 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 		if err != nil {
 			return fmt.Errorf("reading node: %w", err)
 		}
-		// Snapshot body reads use a separate view. Enroll only this write's
-		// primary key in Badger's conflict set so a peer publishing after
-		// precommit validation cannot be overwritten by the buffered update.
-		if _, err := tx.badgerTx.Get(nodeKey(node.ID)); err != nil && err != badger.ErrKeyNotFound {
-			return fmt.Errorf("tracking node write conflict: %w", err)
+		if err := tx.enrollCommittedWriteLocked(nodeKey(node.ID), "node"); err != nil {
+			return err
 		}
 	}
 
@@ -956,12 +960,8 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 	if len(node.ChunkEmbeddings) > 0 && !sameChunkEmbeddings(node.ChunkEmbeddings, oldNode.ChunkEmbeddings) {
 		return node, nil
 	}
-	var sidecar bool
-	if err := tx.withSnapshotViewLocked(func(txn *badger.Txn) error {
-		_, fresh, err := tx.engine.loadEmbeddingSidecar(txn, oldNode, node.ID)
-		sidecar = fresh
-		return err
-	}); err != nil {
+	meta, sidecar, err := tx.retainedSidecarMetadataLocked(oldNode)
+	if err != nil {
 		return nil, err
 	}
 	if tx.engine.sameEmbeddingSource(oldNode, node) {
@@ -969,6 +969,17 @@ func (tx *BadgerTransaction) reconcileManagedEmbeddingsLocked(oldNode, node *Nod
 		node.EmbedMeta = oldNode.EmbedMeta
 		if !sidecar {
 			return node, nil
+		}
+		// An unrelated user mutation advances the body version without
+		// changing the embedded source. Publish the retained sidecar's new
+		// freshness stamp atomically with that body, including repeated writes.
+		if !oldNode.UpdatedAt.Equal(node.UpdatedAt) {
+			meta[embeddingContentUpdatedAtKey] = node.UpdatedAt.UTC().Format(time.RFC3339Nano)
+			data, err := encodeValue(meta)
+			if err != nil {
+				return nil, err
+			}
+			tx.bufferSet(embeddingMetaKey(node.ID), data)
 		}
 		body := *node
 		body.ChunkEmbeddings = nil
@@ -1355,9 +1366,25 @@ func (tx *BadgerTransaction) DeleteNode(nodeID NodeID) error {
 		if err != nil {
 			return err
 		}
+		if err := tx.enrollCommittedWriteLocked(nodeKey(nodeID), "node"); err != nil {
+			return err
+		}
 	}
 
 	return tx.deleteNodeLocked(nodeID, oldNode)
+}
+
+// enrollCommittedWriteLocked adds key, the primary key of a committed node or
+// relationship this transaction updates or deletes, to Badger's conflict
+// set. Snapshot body reads use a separate view, so without it a peer that
+// commits the same key after this transaction's snapshot validation and
+// before its Badger commit would be overwritten or deleted, and both
+// transactions would commit. A missing key still enrolls the read.
+func (tx *BadgerTransaction) enrollCommittedWriteLocked(key []byte, kind string) error {
+	if _, err := tx.badgerTx.Get(key); err != nil && err != badger.ErrKeyNotFound {
+		return fmt.Errorf("tracking %s write conflict: %w", kind, err)
+	}
+	return nil
 }
 
 // deleteNodeLocked deletes nodeID, whose state before is oldNode, with the
@@ -1420,6 +1447,9 @@ func (tx *BadgerTransaction) DeleteConnectedNode(nodeID NodeID) error {
 	} else {
 		var err error
 		if oldNode, err = tx.getCommittedNodeLocked(nodeID); err != nil {
+			return err
+		}
+		if err := tx.enrollCommittedWriteLocked(nodeKey(nodeID), "node"); err != nil {
 			return err
 		}
 	}
@@ -1592,6 +1622,7 @@ func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(Nod
 // counters for its endpoints' labels (as validateNewEdgeLocked returned
 // them), the read-your-writes copy and the create operation.
 func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLabels []string) error {
+	initializeCreationTimes(&edge.CreatedAt, &edge.UpdatedAt)
 	tx.engine.NotePropertyKeysInNamespace(namespaceForEdgeID(edge.ID), edge.Properties)
 	delete(tx.cancelledEdgeWrites, edge.ID)
 	_, recreated := tx.deletedEdges[edge.ID]
@@ -1678,12 +1709,8 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 		if err != nil {
 			return fmt.Errorf("reading edge: %w", err)
 		}
-		// Snapshot body reads use a separate view. Enroll only this write's
-		// primary key in Badger's conflict set so a peer publishing after
-		// precommit validation cannot be overwritten by the buffered update.
-		// A missing key still enrolls the read; retain snapshot body semantics.
-		if _, err := tx.badgerTx.Get(edgeKey(edge.ID)); err != nil && err != badger.ErrKeyNotFound {
-			return fmt.Errorf("tracking edge write conflict: %w", err)
+		if err := tx.enrollCommittedWriteLocked(edgeKey(edge.ID), "edge"); err != nil {
+			return err
 		}
 	}
 
@@ -1836,6 +1863,9 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 		}
 		if err != nil {
 			return fmt.Errorf("reading edge: %w", err)
+		}
+		if err := tx.enrollCommittedWriteLocked(edgeKey(edgeID), "edge"); err != nil {
+			return err
 		}
 	}
 
@@ -2351,12 +2381,16 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		return invokeVisit(forCaller(node))
 	}
 
-	cacheKey := label
+	cacheKey := snapshotLabelCacheKey{projectionKey: label, reveal: tx.engine.revealAll.Load()}
 	cache := tx.snapshotLabelNodes
 	if properties != nil {
-		cacheKey = snapshotLabelProjectionKey(label, properties)
+		cacheKey.projectionKey = snapshotLabelProjectionKey(label, properties)
 		cache = tx.snapshotProjectedLabelNodes
 	}
+	// Label streams have already applied entity visibility. A transaction
+	// outlives each statement's REVEAL scope, so its filtered population must
+	// never answer a reveal read (or the reverse). Keep both views pinned to
+	// the same physical snapshot, but cache their populations independently.
 	if cached, ok := cache[cacheKey]; ok {
 		for _, node := range cached {
 			if err := emitCommitted(node); err != nil {
@@ -2405,7 +2439,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 	}
 	if properties == nil {
 		if tx.snapshotLabelNodes == nil {
-			tx.snapshotLabelNodes = make(map[string][]*Node)
+			tx.snapshotLabelNodes = make(map[snapshotLabelCacheKey][]*Node)
 		}
 		tx.snapshotLabelNodes[cacheKey] = completed
 		tx.clearSnapshotLabelPrefixLocked(cacheKey)
@@ -2419,7 +2453,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		}
 	} else if len(tx.snapshotProjectedLabelNodes) < maxSnapshotProjectedLabelStreams {
 		if tx.snapshotProjectedLabelNodes == nil {
-			tx.snapshotProjectedLabelNodes = make(map[string][]*Node)
+			tx.snapshotProjectedLabelNodes = make(map[snapshotLabelCacheKey][]*Node)
 		}
 		tx.snapshotProjectedLabelNodes[cacheKey] = completed
 		tx.clearSnapshotLabelPrefixLocked(cacheKey)
@@ -4397,7 +4431,8 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 
 // acquireUniqueConstraintCommitLocks acquires the commit locks of the
 // constraint keys (UNIQUE values, NODE KEY composite values, TEMPORAL keys)
-// touched by this transaction's pending nodes, on the transaction's pinned
+// touched by this transaction's pending nodes and relationship scalar keys, on
+// the transaction's pinned
 // namespace's schema (SchemaManager.lockConstraintKeysOf, shared with the
 // engine's direct writes). Returns a release function that unlocks in reverse
 // order; safe to defer.
@@ -4425,7 +4460,7 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 // already locked for it is taken without waiting. A wait that would close a
 // cycle of transactions fails with ErrDeadlock.
 func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() (func(), error) {
-	if len(tx.pendingNodes) == 0 || tx.namespace == "" {
+	if (len(tx.pendingNodes) == 0 && len(tx.pendingEdges) == 0) || tx.namespace == "" {
 		return func() {}, nil
 	}
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
@@ -4433,7 +4468,20 @@ func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() (func(), error
 	for _, node := range tx.pendingNodes {
 		nodes = append(nodes, node)
 	}
-	return schema.lockConstraintKeysOf(context.Background(), tx.ID, nodes...)
+	releaseNodes, err := schema.lockConstraintKeysOf(context.Background(), tx.ID, nodes...)
+	if err != nil {
+		return nil, err
+	}
+	edges := make([]*Edge, 0, len(tx.pendingEdges))
+	for _, edge := range tx.pendingEdges {
+		edges = append(edges, edge)
+	}
+	releaseEdges, err := schema.lockRelationshipConstraintKeysOf(tx.ID, edges...)
+	if err != nil {
+		releaseNodes()
+		return nil, err
+	}
+	return func() { releaseEdges(); releaseNodes() }, nil
 }
 
 // PrepareMergeKey readies the transaction for a MERGE that looks up the node
@@ -4703,7 +4751,35 @@ func (tx *BadgerTransaction) checkEdgeUniqueness(edge *Edge, c Constraint, names
 		}
 	}
 
+	if candidates, indexed, err := tx.engine.relationshipUniqueCandidates(edge, c, namespace); err != nil {
+		return err
+	} else if indexed {
+		for _, candidate := range candidates {
+			id := EdgeID(candidate)
+			if id == edge.ID || tx.committedEdgeSupersededLocked(id) {
+				continue
+			}
+			existing, err := tx.engine.GetEdge(id)
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if existing.Type != edge.Type {
+				continue
+			}
+			if err := collides(existing); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	// Check against committed edges via the engine
+	if hook := getUniqueConstraintScanHook(); hook != nil {
+		hook()
+	}
 	existingEdges, err := tx.engine.GetEdgesByType(edge.Type)
 	if err != nil {
 		return err

@@ -27,7 +27,7 @@ func (m systemOnlyManager) GetStorageForUse(name string, _ string) (interface{},
 // failingScanEngine fails node scans, or node creation, when switched on.
 type failingScanEngine struct {
 	storage.Engine
-	failScan, failCreate bool
+	failScan, failCreate, failGet bool
 }
 
 var errSystemStorage = errors.New("system storage unavailable")
@@ -37,6 +37,13 @@ func (e *failingScanEngine) AllNodes() ([]*storage.Node, error) {
 		return nil, errSystemStorage
 	}
 	return e.Engine.AllNodes()
+}
+
+func (e *failingScanEngine) GetNodesByLabel(label string) ([]*storage.Node, error) {
+	if e.failScan {
+		return nil, errSystemStorage
+	}
+	return e.Engine.GetNodesByLabel(label)
 }
 
 func (e *failingScanEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
@@ -71,8 +78,8 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	require.Error(t, err)
 
 	// The system database through the database manager.
-	system := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = system.Close() })
+	systemBase := newTestMemoryEngine(t)
+	system := storage.NewNamespacedEngine(systemBase, "system")
 	require.NoError(t, auth.NewRoleStore(system).CreateRole(ctx, "a"))
 	require.NoError(t, auth.NewRoleStore(system).CreateRole(ctx, "b"))
 	user := storage.NewMemoryEngine()
@@ -81,7 +88,7 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	exec.SetDatabaseManager(systemOnlyManager{engine: system})
 	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO a, b")
 	require.NoError(t, err)
-	require.True(t, auth.NewProcedurePrivilegeStore(system).AllowsBoosted([]string{"b"}, "db.cdc.query"))
+	require.True(t, allowsBoosted(t, system, "b", "db.cdc.query"))
 	result, err := exec.executeShowPrivileges(ctx, "SHOW ROLE a PRIVILEGES")
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
@@ -90,7 +97,7 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.x TO a")
 	require.ErrorContains(t, err, "expected ON DBMS")
 	_, err = exec.executeProcedurePrivilegeCommand(ctx, "REVOKE EXECUTE PROCEDURE db.x ON DBMS FROM nobody")
-	require.ErrorContains(t, err, "Failed to revoke privilege to role 'nobody'")
+	require.NoError(t, err) // REVOKE from a role that does not exist changes nothing
 
 	// The database manager can't resolve the system database.
 	exec.SetDatabaseManager(systemOnlyManager{err: errSystemStorage})
@@ -105,9 +112,30 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	failing.failCreate = true
 	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.y ON DBMS TO a")
 	require.ErrorIs(t, err, errSystemStorage)
-	failing.failCreate, failing.failScan = false, true
+	failing.failCreate, failing.failGet = false, true
 	_, err = exec.executeProcedurePrivilegeCommand(ctx, "GRANT EXECUTE PROCEDURE db.y ON DBMS TO a")
 	require.ErrorIs(t, err, errSystemStorage)
+	failing.failScan = true
 	_, err = exec.executeShowPrivileges(ctx, "SHOW PRIVILEGES")
 	require.ErrorIs(t, err, errSystemStorage)
+	// A REVOKE checks for immutable grants first: a read that fails is its
+	// error, not "no grant".
+	failing.failScan, failing.failGet = false, true
+	_, err = exec.executeProcedurePrivilegeCommand(ctx, "REVOKE EXECUTE PROCEDURE db.y ON DBMS FROM a")
+	require.ErrorIs(t, err, errSystemStorage)
+}
+
+func (e *failingScanEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+	if e.failGet {
+		return nil, errSystemStorage
+	}
+	return e.Engine.GetNode(id)
+}
+
+func (e *failingScanEngine) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
+	return auth.WithStoreTransaction(ctx, e.Engine, func(view storage.Engine) error {
+		staged := *e
+		staged.Engine = view
+		return mutate(&staged)
+	})
 }

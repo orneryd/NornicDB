@@ -74,8 +74,8 @@ describe() {
 # The `paths:` filters of each workflow, as extended regexes over changed files.
 watched() {
   case "$1" in
-    ci)          echo '^(docker|lib|macos|pkg|plugins|scripts|ui)/|^cmd/nornicdb/|^cmd/nornicdb-admin/|^go\.(mod|sum)$' ;;
-    conformance) echo '^pkg/|^testing/cypher/|^scripts/cypher-tck/|^docs/plans/cypher-convergence-[^/]*\.md$|^openspec/|^\.github/workflows/cypher-conformance\.yml$|^go\.(mod|sum)$' ;;
+    ci)          echo '^(docker|lib|macos|pkg|plugins|scripts|ui)/|^cmd/nornicdb/|^cmd/nornicdb-admin/|^go\.(mod|sum)$|^Makefile$|^\.github/workflows/ci\.yml$' ;;
+    conformance) echo '^pkg/|^testing/cypher/|^scripts/cypher-tck/|^docs/plans/cypher-convergence-[^/]*\.md$|^openspec/|^\.github/workflows/cypher-conformance\.yml$|^go\.(mod|sum)$|^Makefile$' ;;
     docs)        echo '^docs/|^mkdocs\.yml$|^\.github/workflows/docs-pages\.yml$|^requirements-docs\.txt$' ;;
   esac
 }
@@ -118,9 +118,10 @@ HEAD_SHA="$(git -C "${TREE}" rev-parse HEAD)"
 MERGE_BASE="$(git -C "${TREE}" merge-base "${BASE}" HEAD 2>/dev/null || true)"
 [[ -n "${MERGE_BASE}" ]] || die "${LABEL} has no merge base with ${BASE}"
 
-CHANGED="$(git -C "${TREE}" diff --name-only "${MERGE_BASE}" HEAD)"
+# Treat renames as deletion/addition so both paths reach the single matcher.
+CHANGED="$(git -C "${TREE}" diff --no-renames --name-only "${MERGE_BASE}" HEAD)"
 if [[ -n "${DIRTY}" ]]; then
-  CHANGED="$(printf '%s\n%s\n%s' "${CHANGED}" "$(git -C "${TREE}" diff --name-only HEAD)" \
+  CHANGED="$(printf '%s\n%s\n%s' "${CHANGED}" "$(git -C "${TREE}" diff --no-renames --name-only HEAD)" \
     "$(git -C "${TREE}" ls-files --others --exclude-standard)" | sed '/^$/d' | sort -u)"
 fi
 CHANGED_COUNT="$(printf '%s\n' "${CHANGED}" | sed '/^$/d' | wc -l | tr -d ' ')"

@@ -61,7 +61,7 @@ func dynamicLabelValueError() error {
 }
 
 // dynamicPropertyKey reads the value of a dynamic property key n[expr] that
-// a SET writes or a REMOVE removes. REMOVE n[''] removes nothing, as in
+// a SET writes or a REMOVE removes. REMOVE n[”] removes nothing, as in
 // Neo4j: for removing, the empty name is returned without an error.
 func dynamicPropertyKey(value interface{}, removing bool) (string, error) {
 	name, ok := value.(string)
@@ -97,7 +97,7 @@ func (e *StorageExecutor) dynamicTokenValue(ctx context.Context, expression stri
 	if value, ok := resolveContextPathRef(ctx, expression); ok {
 		return value, nil
 	}
-	return e.evaluateSetExpressionWithContext(ctx, expression, nodes, rels), nil
+	return e.evaluateSetExpressionWithContext(ctx, expression, nodes, rels)
 }
 
 // chainLabelNames resolves the items of a SET or REMOVE label chain
@@ -306,8 +306,8 @@ const (
 )
 
 // staticDynamicTokenError is the compile-time error of a dynamic token whose
-// value is known: a literal null, a literal '' (in REMOVE x[''] too, though a
-// '' computed at run time removes nothing), a list literal holding either
+// value is known: a literal null, a literal ” (in REMOVE x[”] too, though a
+// ” computed at run time removes nothing), a list literal holding either
 // (for a label), or an expression whose static type a label (STRING,
 // LIST<STRING>) or a key (STRING) can't take.
 func staticDynamicTokenError(expression string, scope staticTypeScope, use dynamicTokenUse) error {
@@ -356,8 +356,13 @@ func staticDynamicTokenError(expression string, scope staticTypeScope, use dynam
 // resolved to plain labels instead (resolveDynamicChain).
 const dynamicLabelTestFunction = "__nornic_haslabels"
 
+// This spelling retains predicate provenance through the pattern rewrite:
+// its argument types are checked only when a row reaches the predicate.
+const dynamicLabelPredicateFunction = "__nornic_labelpredicate"
+
 func init() {
 	cypherfn.Register(dynamicLabelTestFunction, fnDynamicLabelTest)
+	cypherfn.Register(dynamicLabelPredicateFunction, fnDynamicLabelTest)
 }
 
 func fnDynamicLabelTest(ctx cypherfn.Context, args []string) (interface{}, error) {
@@ -507,7 +512,7 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 // keeps until its rows run.
 func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error {
 	text := clause.text
-	if strings.IndexByte(text, '$') < 0 && !strings.Contains(text, dynamicLabelTestFunction) {
+	if strings.IndexByte(text, '$') < 0 && !strings.Contains(text, dynamicLabelTestFunction) && !strings.Contains(text, dynamicLabelPredicateFunction) {
 		return nil
 	}
 	for i := 0; i < len(text); i++ {
@@ -528,19 +533,31 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 			}
 			i = closing
 		case '_':
-			if !strings.HasPrefix(text[i:], dynamicLabelTestFunction+"(") {
+			function := dynamicLabelTestFunction
+			predicate := strings.HasPrefix(text[i:], dynamicLabelPredicateFunction+"(")
+			if predicate {
+				function = dynamicLabelPredicateFunction
+			}
+			if !strings.HasPrefix(text[i:], function+"(") {
 				continue
 			}
-			open := i + len(dynamicLabelTestFunction)
+			open := i + len(function)
 			closing := findMatchingDelimiter(text, open, '(', ')')
 			if closing < 0 {
 				return nil
 			}
 			if args := splitTopLevelComma(text[open+1 : closing]); len(args) == 3 {
+				if predicate && scope.kinds[simpleSemanticIdentifier(strings.Trim(args[0], "() "))] != matchBindingRelationship {
+					i = closing
+					continue
+				}
 				if err := staticDynamicTokenError(args[1], scope, dynamicTokenLabel); err != nil {
 					// all(l IN ['A'] WHERE x:$(l)) reads the list's l.
 					local, shadowed := withoutLocalVariables(scope, text, open)
 					if !shadowed || staticDynamicTokenError(args[1], local, dynamicTokenLabel) != nil {
+						if predicate {
+							return runtimeTypeError(err.Error())
+						}
 						return err
 					}
 				}

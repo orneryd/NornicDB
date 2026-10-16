@@ -52,6 +52,10 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if readScopeEngine != nil {
 		defer clearRevealScope(ctx, readScopeEngine)
 	}
+	if scoped := e.withStatementPropertyViews(cypher); scoped != nil {
+		return scoped.executeWithoutTransaction(ctx, cypher, upperQuery)
+	}
+	defer func() { e.projectQueryResultProperties(result) }()
 	defer func() {
 		if recorded := getExpressionFailure(ctx); recorded != nil && err == nil {
 			result, err = nil, recorded
@@ -231,6 +235,9 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeDropProcedure(ctx, cypher)
 	case startsWithKeywords(cypher, "DROP", "INDEX"):
 		return e.executeSchemaCommand(ctx, cypher)
+	case isDropRoleCommand(cypher):
+		return nil, localizedStatusError("Neo.ClientError.Statement.UnsupportedAdministrationCommand", "UnsupportedAdministrationCommand",
+			localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(cypher)))
 	case findKeywordIndex(cypher, "DROP") == 0:
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid DROP clause: "+truncateQuery(cypher, 80))
 	case findKeywordIndex(cypher, "WITH") == 0:
@@ -318,9 +325,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		if err := e.validateRowSubscriptTypes(part, pipelineRow{}); err != nil {
 			return nil, err
 		}
-		if err := e.validateRowConversionArguments(part, row); err != nil {
-			return nil, err
-		}
+
 		if variable := undefinedStandaloneMapValue(part); variable != "" {
 			return nil, newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
@@ -441,13 +446,25 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) erro
 // the grammar doesn't model yet (CREATE DATABASE … OPTIONS, ALTER DATABASE …
 // SET / REMOVE OPTION, #937).
 func isNornicExtensionStatement(cypher string) bool {
+	// EXPLAIN / PROFILE of one is one too, so both parsers treat EXPLAIN
+	// GRANT … as the default parser does.
+	_, cypher = parseExecutionMode(cypher)
+	cypher = strings.TrimSpace(cypher)
 	return isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
-		isPrivilegeAdministrationCommand(cypher) ||
+		isPrivilegeAdministrationCommand(cypher) || isDropRoleCommand(cypher) ||
 		startsWithKeywords(cypher, "SHOW", "LIMITS") ||
 		(startsWithKeywords(cypher, "ALTER", "DATABASE") && (findKeywordIndex(cypher, "SET LIMIT") >= 0 ||
 			findKeywordIndex(cypher, "SET OPTION") >= 0 || findKeywordIndex(cypher, "REMOVE OPTION") >= 0)) ||
 		((startsWithKeywords(cypher, "CREATE", "DATABASE") || startsWithKeywords(cypher, "CREATE", "OR")) &&
 			findKeywordIndex(cypher, "DATABASE") >= 0 && findKeywordIndex(cypher, "OPTIONS") >= 0)
+}
+
+// isDropRoleCommand reports DROP ROLE, which Neo4j parses and Neo4j
+// Community refuses as an unsupported administration command; NornicDB
+// does the same on both parsers. Roles are deleted through the HTTP role
+// API, whose owner also updates the server's loaded role caches.
+func isDropRoleCommand(cypher string) bool {
+	return startsWithKeywords(cypher, "DROP", "ROLE")
 }
 
 // validateSyntaxNornic performs fast inline syntax validation.
@@ -462,6 +479,12 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 	if containsTrailingListComma(cypher) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			"Invalid input ']': expected an expression")
+	}
+	if singleNodePatternComprehension(cypher) {
+		// [(n) | …]: a pattern comprehension needs a relationship, as the
+		// ANTLR parser and Neo4j require ("Invalid input '|'").
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherCoreInvalidInputExpectedExpression("|"))
 	}
 	if hasAdjacentStringLiterals(cypher) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
@@ -509,6 +532,12 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 			}
 			continue
 		}
+		if c == '/' {
+			if end := queryCommentEnd(cypher, i); end >= 0 {
+				i = end - 1
+				continue
+			}
+		}
 		if c == '.' && i+1 < len(cypher) && cypher[i+1] == '.' && bracketCount == 0 {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: malformed expression")
 		}
@@ -516,7 +545,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 			// A dot other than a range's (1..2) starts a property key (n.k,
 			// n.`k`), a map projection's all-properties (.*) or a number's
 			// digits: RETURN n. is Neo4j's "expected an identifier".
-			if next := skipSpaces(cypher, i+1); next == len(cypher) || (!isIdentByte(cypher[next]) || cypher[next] == '$') && cypher[next] != '`' && cypher[next] != '*' {
+			if next := queryGapEnd(cypher, i+1); next == len(cypher) || (!isIdentByte(cypher[next]) || cypher[next] == '$') && cypher[next] != '`' && cypher[next] != '*' {
 				token := ""
 				if next < len(cypher) {
 					token = cypher[next : next+1]

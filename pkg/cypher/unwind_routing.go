@@ -60,9 +60,6 @@ func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher stri
 			return topLevelUnwindPlan{}, localizedError(localization.CypherMutationsUnwindParameterNotFound(plan.parameterName), nil)
 		}
 	} else {
-		if params != nil {
-			listExpr = e.substituteParams(listExpr, params)
-		}
 		list = e.evaluateExpressionWithContext(ctx, listExpr, map[string]*storage.Node{}, map[string]*storage.Edge{})
 	}
 

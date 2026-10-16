@@ -249,14 +249,18 @@ func (b *BadgerEngine) NodeCountByLabelInNamespace(namespace, label string) (int
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
+	b.labelCountWriteMu.RLock()
+	defer b.labelCountWriteMu.RUnlock()
 	count, _, err := b.readNodeCountByLabelInNamespace(namespace, label)
 	if errors.Is(err, errMalformedDerivedCount) {
 		// A malformed persisted base count is repaired from the label index
 		// and the read retries once, as the pre-delta read-modify-write path
 		// repaired it (PR #1043 item #2).
+		b.labelCountWriteMu.RUnlock()
 		b.labelCountWriteMu.Lock()
 		repairErr := b.repairLabelCountLocked(namespace, label)
 		b.labelCountWriteMu.Unlock()
+		b.labelCountWriteMu.RLock()
 		if repairErr != nil {
 			return 0, repairErr
 		}
@@ -372,6 +376,8 @@ func (b *BadgerEngine) NodeCountByLabel(label string) (int64, error) {
 	if err := b.ensureOpen(); err != nil {
 		return 0, err
 	}
+	b.labelCountWriteMu.RLock()
+	defer b.labelCountWriteMu.RUnlock()
 	needle := []byte(label)
 	var total int64
 	err := b.withView(func(txn *badger.Txn) error {

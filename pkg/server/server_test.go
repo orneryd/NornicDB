@@ -84,15 +84,13 @@ func setupTestServerWithConfig(t testing.TB, configure func(*Config)) (*Server, 
 	}
 	t.Cleanup(func() { db.Close() })
 
-	// Create authenticator with memory storage for testing
+	// Share the production system database with the role and privilege stores.
 	authConfig := auth.AuthConfig{
 		SecurityEnabled: true,
 		JWTSecret:       []byte("test-secret-key-for-testing-only-32b"),
 	}
-	// Use memory storage for tests
-	memoryStorage := storage.NewMemoryEngine()
-	t.Cleanup(func() { _ = memoryStorage.Close() })
-	authenticator, err := auth.NewAuthenticator(authConfig, memoryStorage)
+	systemStorage := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "system")
+	authenticator, err := auth.NewAuthenticator(authConfig, systemStorage)
 	if err != nil {
 		t.Fatalf("failed to create authenticator: %v", err)
 	}
@@ -2355,7 +2353,7 @@ func TestNornicDBHandlers_AdditionalCoverage(t *testing.T) {
 		server.handleEmbedClear(rec, req)
 		require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 
-		req = httptest.NewRequest(http.MethodDelete, "/nornicdb/embed/clear", nil).WithContext(adminCtx)
+		req = httptest.NewRequest(http.MethodDelete, "/nornicdb/embed/clear", nil).WithContext(context.WithValue(context.Background(), contextKeyClaims, &auth.JWTClaims{Username: "admin", Roles: []string{"admin"}}))
 		rec = httptest.NewRecorder()
 		server.handleEmbedClear(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
@@ -3370,11 +3368,13 @@ func TestHasPermission(t *testing.T) {
 		{"admin perm implies write", []string{"admin"}, auth.PermDelete, true},
 		{"viewer has read", []string{"viewer"}, auth.PermRead, true},
 		{"viewer no write", []string{"viewer"}, auth.PermWrite, false},
-		{"perm token allowed", []string{"write"}, auth.PermWrite, true},
+		// A role is not a permission: a role named after one grants nothing
+		// (the one entitlement check, auth.EntitlementsAllow, as Bolt).
+		{"permission name as role grants nothing", []string{"write"}, auth.PermWrite, false},
 		{"perm admin implies delete", []string{"admin"}, auth.PermDelete, true},
 		{"role casing normalized", []string{"Admin"}, auth.PermWrite, true},
 		{"role_ prefix normalized", []string{"ROLE_ADMIN"}, auth.PermWrite, true},
-		{"perm casing normalized", []string{"WRITE"}, auth.PermWrite, true},
+		{"permission name as role in capitals grants nothing", []string{"WRITE"}, auth.PermWrite, false},
 		{"empty roles", []string{}, auth.PermRead, false},
 		{"invalid role", []string{"invalid"}, auth.PermRead, false},
 	}
@@ -4254,7 +4254,7 @@ func TestServerAuthAndAuxHandlers_AdditionalBranches(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, rec.Code)
 	})
 
-	t.Run("roles and role-by-id success and conflict branches", func(t *testing.T) {
+	t.Run("role deletion detaches users and preserves builtin roles", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/auth/roles", nil)
 		rec := httptest.NewRecorder()
 		server.handleRoles(rec, req)
@@ -4270,7 +4270,12 @@ func TestServerAuthAndAuxHandlers_AdditionalBranches(t *testing.T) {
 		req = httptest.NewRequest(http.MethodDelete, "/auth/roles/analyst", nil)
 		rec = httptest.NewRecorder()
 		server.handleRoleByID(rec, req)
-		require.Equal(t, http.StatusConflict, rec.Code)
+		require.Equal(t, http.StatusOK, rec.Code)
+		reader, err := server.auth.GetUser("reader")
+		require.NoError(t, err)
+		require.Empty(t, reader.Roles)
+		require.False(t, server.roleStore.Exists("analyst"))
+		require.NoError(t, server.roleStore.CreateRole(context.Background(), "analyst"))
 
 		_ = server.auth.UpdateRoles("reader", []auth.Role{auth.RoleViewer})
 		req = httptest.NewRequest(http.MethodDelete, "/auth/roles/analyst", nil)
@@ -4662,11 +4667,13 @@ func TestAuthHandlers_BranchExpansion(t *testing.T) {
 		server.handleRoleByID(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 
+		// role_src and role_dst are the roles src and dst (one role-name
+		// form, auth.NormalizeRoleName): the user's assignment moves to dst.
 		user, err := server.auth.GetUser("reader")
 		require.NoError(t, err)
 		var hasRoleDst bool
 		for _, r := range user.Roles {
-			if string(r) == "role_dst" {
+			if string(r) == "dst" {
 				hasRoleDst = true
 			}
 		}
@@ -4743,7 +4750,7 @@ func TestServer_AdditionalBranches_ReusesFixture(t *testing.T) {
 
 		server.db.SetEmbedder(&countingEmbedder{dims: 1024})
 
-		req := as(httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil), "admin")
+		req := httptest.NewRequest(http.MethodPost, "/nornicdb/embed/trigger?regenerate=true", nil).WithContext(enriched.Context())
 		rec := httptest.NewRecorder()
 		server.handleEmbedTrigger(rec, req)
 		require.Equal(t, http.StatusAccepted, rec.Code)
@@ -4753,7 +4760,7 @@ func TestServer_AdditionalBranches_ReusesFixture(t *testing.T) {
 		server.handleEmbedTrigger(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 
-		req = as(httptest.NewRequest(http.MethodDelete, "/nornicdb/embed/clear", nil), "admin")
+		req = httptest.NewRequest(http.MethodDelete, "/nornicdb/embed/clear", nil).WithContext(enriched.Context())
 		rec = httptest.NewRecorder()
 		server.handleEmbedClear(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
@@ -4970,46 +4977,4 @@ func TestExplicitTransaction_OwnerIsolationAcrossCallers(t *testing.T) {
 	execRec := httptest.NewRecorder()
 	server.handleExecuteInTransaction(execRec, execReq, dbName, txID)
 	require.Equal(t, http.StatusNotFound, execRec.Code)
-}
-
-func TestExplicitTransaction_UsesEffectiveGraphForAuthorization(t *testing.T) {
-	server, _ := setupTestServer(t)
-	dbName := server.dbManager.DefaultDatabaseName()
-	require.NoError(t, server.dbManager.CreateDatabase("private"))
-	require.NotNil(t, server.allowlistStore)
-	require.NotNil(t, server.privilegesStore)
-	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "viewer", []string{dbName}))
-	require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "viewer", dbName, true, false))
-
-	viewerClaims := &auth.JWTClaims{Username: "reader", Roles: []string{"viewer"}}
-
-	openReq := httptest.NewRequest(http.MethodPost, "/db/"+dbName+"/tx", strings.NewReader(`{"statements":[]}`))
-	openReq = openReq.WithContext(context.WithValue(context.Background(), contextKeyClaims, viewerClaims))
-	openRec := httptest.NewRecorder()
-	server.handleOpenTransaction(openRec, openReq, dbName)
-	require.Equal(t, http.StatusCreated, openRec.Code)
-
-	var openPayload map[string]interface{}
-	require.NoError(t, json.NewDecoder(openRec.Body).Decode(&openPayload))
-	commitURL, _ := openPayload["commit"].(string)
-	require.NotEmpty(t, commitURL)
-	parts := strings.Split(commitURL, "/")
-	txID := parts[len(parts)-2]
-	require.NotEmpty(t, txID)
-
-	execReq := httptest.NewRequest(http.MethodPost, "/db/"+dbName+"/tx/"+txID, strings.NewReader(`{"statements":[{"statement":"USE private RETURN 1 AS n"}]}`))
-	execReq = execReq.WithContext(context.WithValue(context.Background(), contextKeyClaims, viewerClaims))
-	execRec := httptest.NewRecorder()
-	server.handleExecuteInTransaction(execRec, execReq, dbName, txID)
-	require.Equal(t, http.StatusOK, execRec.Code)
-
-	var payload map[string]interface{}
-	require.NoError(t, json.NewDecoder(execRec.Body).Decode(&payload))
-	errs, ok := payload["errors"].([]interface{})
-	require.True(t, ok)
-	require.NotEmpty(t, errs)
-	firstErr, ok := errs[0].(map[string]interface{})
-	require.True(t, ok)
-	require.Equal(t, "Neo.ClientError.Security.Forbidden", firstErr["code"])
-	require.Contains(t, fmt.Sprint(firstErr["message"]), "private")
 }

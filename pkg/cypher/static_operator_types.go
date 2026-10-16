@@ -36,6 +36,11 @@ type staticOperand struct {
 	display    string
 	parameter  string
 	nonBoolean bool
+	// predicateDeferred preserves union constraints for property/binding checks
+	// while deferring Neo4j's row-dependent addition predicate errors to runtime.
+	predicateDeferred bool
+	// nonInteger excludes Integer from an otherwise unresolved union.
+	nonInteger bool
 	// nonEntity is set for a value known not to be a node, relationship,
 	// path or list of them whose type isn't otherwise known (a node's
 	// property, an aggregate): the match validator's value kind (#1055).
@@ -60,7 +65,8 @@ func knownOperand(kind string) staticOperand {
 func (operand staticOperand) known() bool { return operand.kind != "" }
 
 func (operand staticOperand) numeric() bool {
-	return operand.kind == "Integer" || operand.kind == "Float"
+	return operand.kind == "Integer" || operand.kind == "Float" || operand.kind == "Number" ||
+		operand.kind == "Float, Integer or Number"
 }
 
 func (operand staticOperand) list() bool { return strings.HasPrefix(operand.kind, "List<") }
@@ -101,7 +107,7 @@ var staticFunctionResultTypes = map[string]string{
 	"btrim": "String", "replace": "String", "substring": "String", "left": "String",
 	"right": "String", "type": "String", "elementid": "String",
 	"toboolean": "Boolean", "allreduce": "Boolean", "property_exists": "Boolean",
-	"keys": "List<String>", "labels": "List<String>", "split": "List<String>",
+	"range": "List<Integer>", "keys": "List<String>", "labels": "List<String>", "split": "List<String>",
 	"date": "Date", "datetime": "DateTime", "localdatetime": "LocalDateTime",
 	"time": "Time", "localtime": "LocalTime", "duration": "Duration",
 	"point": "Point", "properties": "Map",
@@ -185,6 +191,9 @@ func operandMismatch(operand staticOperand, expected string) error {
 // Neo4j's coercion error, any other known type with a type mismatch. Null
 // and unknown types pass.
 func requireBooleanOperand(operand staticOperand) error {
+	if operand.predicateDeferred {
+		return nil
+	}
 	switch {
 	case operand.list():
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreListCoercionToBoolean())
@@ -198,7 +207,14 @@ func requireBooleanOperand(operand staticOperand) error {
 // the result type. cypher25 applies Neo4j 2026.09's rules for a Cypher 25
 // statement: a string joins any value but a map or a graph entity ('a' +
 // true, date('2020-01-02') + 's').
-func checkOperator(op byte, left, right staticOperand, cypher25 bool) (staticOperand, error) {
+func checkOperator(op byte, left, right staticOperand, cypher25 bool) (result staticOperand, err error) {
+	defer func() {
+		// No arithmetic signature can turn an excluded Integer operand into
+		// an Integer result. Preserve this constraint through composition.
+		if err == nil && !result.known() && (left.nonInteger || right.nonInteger || left.kind == "Float" || right.kind == "Float") {
+			result.nonInteger = true
+		}
+	}()
 	switch op {
 	case '+':
 		if cypher25 && (left.kind == "String" && right.joinsStringStatically() || right.kind == "String" && left.joinsStringStatically()) {
@@ -227,7 +243,7 @@ func checkOperator(op byte, left, right staticOperand, cypher25 bool) (staticOpe
 			if right.list() {
 				return knownOperand("List<T>"), nil
 			}
-			if right.known() && !right.duration() {
+			if right.known() && !right.duration() && right.kind != "Number" {
 				return staticOperand{}, operandMismatch(right, "Duration or List<T>")
 			}
 			return left, nil
@@ -253,22 +269,30 @@ func checkOperator(op byte, left, right staticOperand, cypher25 bool) (staticOpe
 		}
 		switch {
 		case left.numeric() && right.numeric():
-			if left.kind == "Integer" && right.kind == "Integer" {
-				return knownOperand("Integer"), nil
-			}
-			return knownOperand("Float"), nil
+			return numericOperatorResult(left, right), nil
 		case (left.kind == "String" && (right.numeric() || right.kind == "String")) || (right.kind == "String" && left.numeric()):
 			return knownOperand("String"), nil
 		case left.list() || right.list():
 			return knownOperand("List<T>"), nil
 		}
+		if left.kind == "String" && !right.known() || right.kind == "String" && !left.known() {
+			// Unknown + String cannot be an integer subscript, but Neo4j
+			// defers its predicate semantics: WHERE filters a resulting string,
+			// while NOT reports a runtime TypeError. Keep the union for index
+			// validation without marking the row-dependent operand nonBoolean.
+			return staticOperand{display: "String or List<T>", nonInteger: true}, nil
+		}
 		if left.numeric() || right.numeric() {
-			return staticOperand{display: "Float, Integer, String or List<T>", nonBoolean: true}, nil
+			// Pinned Neo4j also defers numeric + row-dependent operands:
+			// comprehensions report runtime TypeError, and an empty MATCH never
+			// evaluates the predicate. Retain its union for property/binding checks
+			// independently of this deferred predicate error phase.
+			return staticOperand{display: "Float, Integer, String or List<T>", nonBoolean: true, predicateDeferred: true}, nil
 		}
 		return staticOperand{}, nil
 	case '-':
 		if left.temporal() || left.duration() {
-			if right.known() && !right.duration() {
+			if right.known() && !right.duration() && right.kind != "Number" {
 				return staticOperand{}, operandMismatch(right, "Duration")
 			}
 			return left, nil
@@ -326,10 +350,17 @@ func checkOperator(op byte, left, right staticOperand, cypher25 bool) (staticOpe
 		return knownOperand("Float"), nil
 	}
 	if left.numeric() && right.numeric() {
-		if left.kind == "Integer" && right.kind == "Integer" {
-			return knownOperand("Integer"), nil
-		}
-		return knownOperand("Float"), nil
+		return numericOperatorResult(left, right), nil
+	}
+	// Multiplying a Float by an unresolved value can produce a Float or a
+	// Duration, never an Integer. Retain this exclusion for list subscripts.
+	if op == '*' && (left.kind == "Float" || right.kind == "Float") {
+		return staticOperand{display: "Float or Duration", nonBoolean: true, nonInteger: true}, nil
+	}
+	// Multiplying a Float by an unresolved value can produce a Float or a
+	// Duration, never an Integer. Retain this exclusion for list subscripts.
+	if op == '*' && (left.kind == "Float" || right.kind == "Float") {
+		return staticOperand{display: "Float or Duration", nonBoolean: true, nonInteger: true}, nil
 	}
 	return staticOperand{display: "Float, Integer or Duration", nonBoolean: true}, nil
 }
@@ -476,7 +507,7 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		}
 		if !operand.known() || operand.kind == "Null" {
 			// -null and -n.x are numbers to Neo4j's type check.
-			return staticOperand{display: "Float or Integer", nonBoolean: true}, nil
+			return staticOperand{display: "Float or Integer", nonBoolean: true, nonInteger: operand.nonInteger}, nil
 		}
 		return operand, nil
 	}
@@ -493,7 +524,7 @@ func (checker staticOperatorChecker) check(expression string) (staticOperand, er
 		}
 		if !operand.known() || operand.kind == "Null" {
 			// +null and +n.x are numbers to Neo4j's type check.
-			return staticOperand{display: "Float or Integer", nonBoolean: true}, nil
+			return staticOperand{display: "Float or Integer", nonBoolean: true, nonInteger: operand.nonInteger}, nil
 		}
 		return operand, nil
 	}
@@ -520,6 +551,11 @@ func (checker staticOperatorChecker) checkCase(parsed *caseExpression) (staticOp
 			agree = false
 		case !result.known():
 			result = operand
+		case result.kind != operand.kind && result.numeric() && operand.numeric():
+			// Integer/Float alternatives are a numeric union, not an unknown
+			// result. Keep that constraint even when the selected branch depends
+			// on a row (and when an outer stream is empty).
+			result = knownOperand("Number")
 		case result.kind != operand.kind:
 			agree = false
 		}
@@ -569,7 +605,7 @@ func infixKeywordIndex(s, keyword string) int {
 		if index < 0 {
 			return -1
 		}
-		if !caseOperandExpectedBefore(s, index) {
+		if functionNameStartsAt(s, index) && !caseOperandExpectedBefore(s, index) {
 			return index
 		}
 		from = index + len(keyword)
@@ -700,8 +736,12 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 	}
 	if from, to, slice := staticSliceBounds(inner); slice {
 		for _, bound := range [2]string{from, to} {
-			if _, err := checker.check(bound); err != nil {
+			operand, err := checker.check(bound)
+			if err != nil {
 				return staticOperand{}, err
+			}
+			if operand.nonInteger || operand.known() && operand.kind != "Integer" && operand.kind != "Number" && operand.kind != "Null" {
+				return staticOperand{}, operandMismatch(operand, "Integer")
 			}
 		}
 		if receiver.known() && !receiver.list() && receiver.kind != "Null" {
@@ -719,25 +759,26 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		return staticOperand{}, err
 	}
 	keyKnown := key.known() && key.kind != "Null"
+	invalidIntegerKey := keyKnown && key.kind != "Integer" && key.kind != "Number" || key.nonInteger
 	const syntaxError, detail = "Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType"
 	switch {
 	case !receiver.known():
 		// A node's or relationship's property can't be a map, so it takes
 		// only a list index (#882).
-		if base, _, property := rowPropertyChainShape(receiverText); property && keyKnown && key.kind != "Integer" {
+		if base, _, property := rowPropertyChainShape(receiverText); property && invalidIntegerKey {
 			if kind := checker.scope.typeOf(base); kind == "Node" || kind == "Relationship" {
 				return staticOperand{}, operandMismatch(key, "Integer")
 			}
 		}
 	case receiver.kind == "Null":
 	case receiver.list():
-		if keyKnown && key.kind != "Integer" {
+		if invalidIntegerKey {
 			return staticOperand{}, localizedStatusError(syntaxError, detail, localization.CypherCoreListIndexTypeMismatch(key.display))
 		}
 		if element := strings.TrimSuffix(strings.TrimPrefix(receiver.kind, "List<"), ">"); element != "T" && !strings.ContainsAny(element, "<,") {
 			return knownOperand(element), nil
 		}
-	case receiver.kind == "Map":
+	case receiver.kind == "Map" || receiver.kind == "Map, Node or Relationship":
 		if keyKnown && key.kind != "String" {
 			return staticOperand{}, localizedStatusError(syntaxError, detail, localization.CypherCoreMapKeyTypeMismatch(key.display))
 		}
@@ -786,7 +827,7 @@ func staticPatternExpressionType(expression string) staticOperand {
 	for open < len(expression) && isASCIIWhitespace(expression[open]) {
 		open++
 	}
-	if open < len(expression) && expression[open] == '{' && findMatchingDelimiter(expression, open, '{', '}') == len(expression)-1 {
+	if open < len(expression) && expression[open] == '{' && isSubqueryBrace(expression, open) && findMatchingDelimiter(expression, open, '{', '}') == len(expression)-1 {
 		return knownOperand(staticSubqueryExpressionTypes[upperASCII(name)])
 	}
 	return staticOperand{}
@@ -817,7 +858,8 @@ func staticMapProjectionReceiver(expression string) (receiver string, projected 
 		case '{':
 			if findMatchingDelimiter(expression, open, '{', '}') == len(expression)-1 {
 				receiver = strings.TrimSpace(expression[:open])
-				if !endsWithOperand(receiver) {
+				_, subqueryName := staticSubqueryExpressionTypes[upperASCII(receiver)]
+				if !endsWithOperand(receiver) && (!subqueryName || isSubqueryBrace(expression, open)) {
 					// After an operator, a comma or a keyword ({a: 1} + x,
 					// x = {a: 1}, THEN {a: 1}, and EXISTS / COUNT / COLLECT
 					// { … } subqueries) the brace opens a map literal or a
@@ -883,7 +925,8 @@ func staticMapProjectionSplit(expression string) (variable, items string, projec
 		return "", "", false
 	}
 	variable = simpleSemanticIdentifier(strings.TrimSpace(expression[:open]))
-	if variable == "" || isCypherKeyword(variable) {
+	_, subqueryName := staticSubqueryExpressionTypes[upperASCII(variable)]
+	if variable == "" || isCypherKeyword(variable) && !subqueryName || isSubqueryBrace(expression, open) {
 		return "", "", false
 	}
 	return variable, expression[open+1 : len(expression)-1], true
@@ -909,9 +952,8 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		return checker.checkPostfix(receiver, inner, subscript)
 	}
 	if inner, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
-		if _, _, _, _, comprehension := parseListComprehension(inner); comprehension {
-			// The comprehension binds its own variable; only its type is known.
-			return knownOperand("List<T>"), nil
+		if variable, list, predicate, projection, comprehension := parseListComprehension(inner); comprehension {
+			return checker.checkListComprehension(variable, list, predicate, projection)
 		}
 		for _, item := range splitTopLevelComma(inner) {
 			if _, err := checker.check(item); err != nil {
@@ -954,6 +996,43 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		return knownOperand("Map"), nil
 	}
 	if function, arguments, call := parseFunctionCallWS(expression); call && function != "" {
+		if strings.EqualFold(function, "coalesce") {
+			result := knownOperand("Null")
+			agree := true
+			for _, text := range splitTopLevelComma(arguments) {
+				operand, err := checker.check(text)
+				if err != nil {
+					return staticOperand{}, err
+				}
+				if !operand.known() {
+					agree = false
+					continue
+				}
+				if operand.kind == "Null" {
+					continue
+				}
+				if result.kind == "Null" {
+					result = operand
+				} else if result.kind != operand.kind {
+					agree = false
+				}
+			}
+			if !agree {
+				return staticOperand{}, nil
+			}
+			return result, nil
+		}
+		if isQuantifierFunction(lowerASCII(function)) {
+			if variable, list, predicate, ok := parseQuantifierArguments(arguments); ok {
+				_, err := checker.checkListComprehension(variable, list, predicate, "")
+				return knownOperand("Boolean"), err
+			}
+		}
+		if isReduceFormFunction(function) {
+			if form, ok := parseReduceForm(function, arguments); ok {
+				return checker.checkReduceTypes(form)
+			}
+		}
 		if !isQuantifierOrReduceFunction(function) {
 			for index, argument := range splitTopLevelComma(arguments) {
 				// normalize(s, NFC) names its normal form, not a variable.
@@ -971,6 +1050,9 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		return knownOperand(typeName), nil
 	}
 	if variable := simpleSemanticIdentifier(expression); variable != "" {
+		if operand, ok := checker.scope.derived[variable]; ok {
+			return operand, nil
+		}
 		if typeName := checker.scope.typeOf(variable); typeName != "" {
 			operand := typedOperand(typeName)
 			if typeName == "Map" {
@@ -1222,6 +1304,11 @@ func forEachProjectedTailExpression(projection, rest string, visit func(expressi
 // projection's aliases replace the variables they rename
 // (RETURN n.num AS n ORDER BY n + 2).
 func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, scope staticTypeScope, projectedScope func() staticTypeScope, params map[string]interface{}) error {
+	if clause.kind == pipelineClauseDelete {
+		if err := staticDeleteTargetTypeError(clause.text, scope); err != nil {
+			return err
+		}
+	}
 	if where := topLevelKeywordIndex(clause.text, "WHERE"); where >= 0 {
 		predicate := clause.text[where+len("WHERE"):]
 		for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
@@ -1352,4 +1439,15 @@ func parameterMayMismatchOperator(cypher string, params map[string]interface{}) 
 		index = end - 1
 	}
 	return false
+}
+
+// numericOperatorResult retains Number when an Integer or Float remains possible.
+func numericOperatorResult(left, right staticOperand) staticOperand {
+	if left.kind == "Float" || right.kind == "Float" {
+		return knownOperand("Float")
+	}
+	if left.kind == "Integer" && right.kind == "Integer" {
+		return knownOperand("Integer")
+	}
+	return knownOperand("Number")
 }

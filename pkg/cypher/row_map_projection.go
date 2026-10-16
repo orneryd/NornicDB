@@ -37,10 +37,10 @@ func rowMapProjectionSplit(expression string) (variable, items string, ok bool) 
 	if !isValidIdentifier(variable) && !isBacktickQuotedName(variable) {
 		return "", "", false
 	}
-	switch upperASCII(variable) {
-	case "EXISTS", "COUNT", "COLLECT", "CALL":
+	if precedingSubqueryExpressionKeyword(trimmed, open) {
 		return "", "", false
 	}
+
 	return variable, strings.TrimSpace(trimmed[open+1 : len(trimmed)-1]), true
 }
 
@@ -56,11 +56,11 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 	if !resolved {
 		return nil, true, false, nil
 	}
-	if base == nil {
+	if base == nil || isNilRemoteEntity(base) {
 		return nil, true, true, nil
 	}
 	temporal := isRuntimeTemporal(base) || isRuntimeDuration(base)
-	properties, hasProperties := rowProjectionProperties(base)
+	properties, hasProperties := rowProjectionProperties(e.queryVisibleValue(base))
 	if !hasProperties && !temporal {
 		if _, isPath := cypherPathElements(base); isPath {
 			return nil, true, false, runtimeTypeError("Type mismatch: expected a map but was Path")
@@ -143,6 +143,9 @@ func mapProjectionPropertySelector(item string) (string, bool) {
 // map; ok is false for any other value.
 func rowProjectionProperties(value interface{}) (map[string]interface{}, bool) {
 	switch typed := value.(type) {
+	case storage.RemoteEntityValue:
+		properties, _ := typed["properties"].(map[string]interface{})
+		return properties, true
 	case *storage.Node:
 		if typed == nil {
 			return nil, false
@@ -158,4 +161,10 @@ func rowProjectionProperties(value interface{}) (map[string]interface{}, bool) {
 		return nil, false
 	}
 	return toStringAnyMap(value)
+}
+
+// A typed nil marker has the same null projection semantics as a nil entity.
+func isNilRemoteEntity(value interface{}) bool {
+	remote, ok := value.(storage.RemoteEntityValue)
+	return ok && remote == nil
 }

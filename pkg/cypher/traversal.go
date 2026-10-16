@@ -52,13 +52,14 @@ type TraversalContext struct {
 	resultCount      int                              // Count of results found so far
 	temporalViewport TemporalViewport
 	temporalChecker  temporalCurrentNodeChecker
-	// cancelCtx is consulted periodically inside findPaths so callers can
+	// cancelCtx is consulted at DFS entry and sibling expansion so callers can
 	// abandon long traversals on client disconnect / server shutdown. It is
 	// allowed to be nil for legacy call sites that pass through Background.
-	cancelCtx context.Context
-	// findPathsCalls counts entries into the recursive search; used to amortise
-	// the ctx.Err() probe (one check per N calls).
-	findPathsCalls int
+	cancelCtx            context.Context
+	cancelDone           <-chan struct{}
+	cancelParentDone     <-chan struct{}
+	cancelInitialized    bool
+	cancellationObserved bool
 	// endNodeID, when set, is the only node a path may end at (a shortestPath
 	// pair, #863).
 	endNodeID storage.NodeID
@@ -275,6 +276,9 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	matches := e.parseTraversalPattern(ctx, pattern)
 	if matches == nil {
 		return result, localizedError(localization.CypherMatchingTraversalPatternInvalid(pattern), nil)
+	}
+	if !matches.IsChained && len(seedNodes) > 0 && len(endSeedNodes) == 1 {
+		matches.boundEndNodeID = endSeedNodes[0].ID
 	}
 	returnItems = expandTraversalWildcardReturnItems(returnItems, matches, pathVariable)
 	for _, item := range returnItems {
@@ -1093,6 +1097,8 @@ type TraversalMatch struct {
 	IsChained         bool               // True if this is a multi-segment pattern
 	PathVariable      string             // Variable name for path assignment (e.g., "path" in "path = (a)-[r]-(b)")
 	TraversalLimit    int                // Early traversal cap for LIMIT-only shapes (0 = disabled)
+	// boundEndNodeID filters endpoints before they count toward TraversalLimit.
+	boundEndNodeID storage.NodeID
 	// UnusedPropertyVariables lists pattern node variables whose properties no
 	// later clause (RETURN, WHERE) reads, so the traversal may load a named
 	// labelled endpoint by ID + labels alone. nil means "not analysed": every
@@ -1449,7 +1455,7 @@ func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMat
 	if len(match.StartNode.properties) > 0 || len(match.StartNode.labels) > 0 {
 		var filtered []*storage.Node
 		for _, n := range startNodes {
-			if pipelineNodeMatchesPattern(n, match.StartNode) {
+			if e.pipelineNodeMatchesPattern(n, match.StartNode) {
 				filtered = append(filtered, n)
 			}
 		}
@@ -1594,6 +1600,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 		}
 		traversalCtx := &TraversalContext{
 			startNode:                    startNode,
+			endNodeID:                    match.boundEndNodeID,
 			relTypes:                     match.Relationship.Types,
 			relTypeSet:                   buildRelTypeSet(match.Relationship.Types),
 			relProperties:                match.Relationship.Properties,
@@ -1665,6 +1672,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 				// Each goroutine gets its own traversal state (no shared state)
 				traversalCtx := &TraversalContext{
 					startNode:                    startNode,
+					endNodeID:                    match.boundEndNodeID,
 					relTypes:                     match.Relationship.Types,
 					relTypeSet:                   buildRelTypeSet(match.Relationship.Types),
 					relProperties:                match.Relationship.Properties,
@@ -1906,6 +1914,7 @@ func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNo
 	}
 
 	ctx := e.newTraversalContext(traversalCtx, startNode, &match.Relationship)
+	ctx.endNodeID = match.boundEndNodeID
 	// Single-segment traversals (including each segment of a chain) share the
 	// planner's endpoint/relationship read analysis so the header and
 	// labels-only fast paths apply to chained patterns too (#1110).
@@ -1994,16 +2003,11 @@ func (e *StorageExecutor) findPaths(
 ) []PathResult {
 	var results []PathResult
 
-	// Cancellation probe — amortised across recursive entries to keep the
-	// per-call cost negligible. When ctx.cancelCtx is canceled we unwind the
-	// recursion immediately by returning whatever we've gathered so far.
-	if ctx.cancelCtx != nil {
-		ctx.findPathsCalls++
-		if ctx.findPathsCalls&bfsCancelCheckMask == 0 {
-			if ctx.cancelCtx.Err() != nil {
-				return results
-			}
-		}
+	// Every frame and sibling expansion must observe cancellation. Sampling
+	// recursive entries alone leaves callers expanding the remaining siblings
+	// after a cancelled child returns.
+	if ctx.traversalCancelled() {
+		return results
 	}
 
 	// OPTIMIZATION: Early termination if limit reached
@@ -2055,6 +2059,9 @@ func (e *StorageExecutor) findPaths(
 
 	// Traverse each edge
 	for _, edge := range edges {
+		if ctx.traversalCancelled() {
+			return results
+		}
 		// A Cypher path may revisit a node, but it cannot reuse a relationship.
 		// This also prevents an undirected expansion from walking the same edge
 		// immediately back in the opposite direction.
@@ -2303,301 +2310,6 @@ func (e *StorageExecutor) buildPathContext(path PathResult, match *TraversalMatc
 	return ctx
 }
 
-// shortestPath finds the shortest path between two nodes.
-// ctx is checked periodically inside the BFS so the caller can cancel a
-// long-running traversal (client disconnect, server shutdown).
-//
-// Implementation notes:
-//
-//   - When the storage chain implements AdjacentEdgesEngine, BFS fetches both
-//     directions in a single underlying view per frontier node. Profiling
-//     showed ~64% of per-request CPU was in Badger view-transaction setup;
-//     halving the open-count is the dominant win.
-//   - The frontier stores parent pointers (predecessor edge + node ID) only,
-//     not full path slices. Old behavior copied O(L) nodes/edges per
-//     discovered neighbor — for paths of length ~50 that's tens of thousands
-//     of unused allocations because BFS visits far more nodes than it ends
-//     up keeping. We rebuild the path once, after the end is hit, fetching
-//     the materialized node bodies in a single BatchGetNodes call.
-func (e *StorageExecutor) shortestPath(ctx context.Context, startNode, endNode *storage.Node, relTypes []string, direction string, maxHops int) (*PathResult, error) {
-	if startNode == nil || endNode == nil {
-		return nil, nil
-	}
-
-	relTypeSet := buildRelTypeSet(relTypes)
-
-	preds := map[storage.NodeID]bfsPredecessor{startNode.ID: {}}
-	queue := []storage.NodeID{startNode.ID}
-
-	adj, hasAdj := e.storage.(storage.AdjacentEdgesEngine)
-
-	for head := 0; head < len(queue); head++ {
-		if head&bfsCancelCheckMask == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
-		currentID := queue[head]
-		currentDepth := preds[currentID].depth
-		if currentDepth >= maxHops {
-			continue
-		}
-
-		var outgoing, incoming []*storage.Edge
-		switch direction {
-		case "outgoing":
-			outgoing, _ = e.storage.GetOutgoingEdges(currentID)
-		case "incoming":
-			incoming, _ = e.storage.GetIncomingEdges(currentID)
-		default:
-			if hasAdj {
-				outgoing, incoming, _ = adj.GetAdjacentEdges(currentID)
-			} else {
-				outgoing, _ = e.storage.GetOutgoingEdges(currentID)
-				incoming, _ = e.storage.GetIncomingEdges(currentID)
-			}
-		}
-
-		expand := func(edge *storage.Edge, fromOutgoing bool) (done bool) {
-			if len(relTypes) == 1 {
-				if edge.Type != relTypes[0] {
-					return false
-				}
-			} else if len(relTypes) > 1 {
-				if _, ok := relTypeSet[edge.Type]; !ok {
-					return false
-				}
-			}
-
-			var nextNodeID storage.NodeID
-			switch {
-			case direction == "outgoing":
-				nextNodeID = edge.EndNode
-			case direction == "incoming":
-				nextNodeID = edge.StartNode
-			case fromOutgoing:
-				nextNodeID = edge.EndNode
-			default:
-				nextNodeID = edge.StartNode
-			}
-			if _, seen := preds[nextNodeID]; seen {
-				return false
-			}
-			preds[nextNodeID] = bfsPredecessor{parent: currentID, edge: edge, depth: currentDepth + 1}
-			if nextNodeID == endNode.ID {
-				return true
-			}
-			queue = append(queue, nextNodeID)
-			return false
-		}
-
-		for _, edge := range outgoing {
-			if expand(edge, true) {
-				return e.reconstructShortestPath(ctx, startNode, endNode, preds)
-			}
-		}
-		for _, edge := range incoming {
-			if expand(edge, false) {
-				return e.reconstructShortestPath(ctx, startNode, endNode, preds)
-			}
-		}
-	}
-
-	return nil, nil // No path found
-}
-
-// bfsPredecessor records, for every node BFS visits, the edge it was
-// discovered through and the parent NodeID. We rebuild the path by walking
-// these pointers from end → start once the goal is reached.
-type bfsPredecessor struct {
-	parent storage.NodeID
-	edge   *storage.Edge
-	depth  int
-}
-
-// reconstructShortestPath walks the predecessor map from end → start and
-// materializes the *Node bodies for every node on the path in a single
-// BatchGetNodes call. The startNode/endNode bodies are used as-is when
-// available (the executor already had to fetch them to start BFS).
-func (e *StorageExecutor) reconstructShortestPath(ctx context.Context, startNode, endNode *storage.Node, preds map[storage.NodeID]bfsPredecessor) (*PathResult, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	var revIDs []storage.NodeID
-	var revEdges []*storage.Edge
-	cur := endNode.ID
-	for cur != startNode.ID {
-		p := preds[cur]
-		revIDs = append(revIDs, cur)
-		revEdges = append(revEdges, p.edge)
-		cur = p.parent
-		if cur == "" {
-			return nil, nil
-		}
-	}
-	revIDs = append(revIDs, startNode.ID)
-
-	// Reverse path order: start → end.
-	pathIDs := make([]storage.NodeID, len(revIDs))
-	for i, id := range revIDs {
-		pathIDs[len(revIDs)-1-i] = id
-	}
-	pathEdges := make([]*storage.Edge, len(revEdges))
-	for i, edge := range revEdges {
-		pathEdges[len(revEdges)-1-i] = edge
-	}
-
-	nodeBodies, err := e.storage.BatchGetNodes(pathIDs)
-	if err != nil {
-		return nil, err
-	}
-	pathNodes := make([]*storage.Node, len(pathIDs))
-	for i, id := range pathIDs {
-		switch id {
-		case startNode.ID:
-			pathNodes[i] = startNode
-		case endNode.ID:
-			pathNodes[i] = endNode
-		default:
-			n, ok := nodeBodies[id]
-			if !ok || n == nil {
-				return nil, nil
-			}
-			pathNodes[i] = n
-		}
-	}
-
-	return &PathResult{
-		Nodes:         pathNodes,
-		Relationships: pathEdges,
-		Length:        len(pathEdges),
-	}, nil
-}
-
-// allShortestPaths finds all shortest paths between two nodes.
-// ctx is checked periodically inside the BFS so the caller can cancel.
-func (e *StorageExecutor) allShortestPaths(ctx context.Context, startNode, endNode *storage.Node, relTypes []string, direction string, maxHops int) ([]PathResult, error) {
-	if startNode == nil || endNode == nil {
-		return nil, nil
-	}
-
-	relTypeSet := buildRelTypeSet(relTypes)
-
-	var results []PathResult
-	shortestLen := -1
-
-	// BFS for all shortest paths
-	type queueItem struct {
-		node *storage.Node
-		path PathResult
-	}
-
-	queue := []queueItem{{
-		node: startNode,
-		path: PathResult{
-			Nodes:         []*storage.Node{startNode},
-			Relationships: []*storage.Edge{},
-			Length:        0,
-		},
-	}}
-
-	// Track visited at each depth
-	visitedDepth := map[storage.NodeID]int{startNode.ID: 0}
-
-	for head := 0; head < len(queue); head++ {
-		if head&bfsCancelCheckMask == 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-		}
-		current := queue[head]
-
-		// If we've found a path, don't explore beyond that length
-		if shortestLen >= 0 && current.path.Length >= shortestLen {
-			continue
-		}
-
-		if current.path.Length >= maxHops {
-			continue
-		}
-
-		// Get edges
-		var edges []*storage.Edge
-		switch direction {
-		case "outgoing":
-			edges, _ = e.storage.GetOutgoingEdges(current.node.ID)
-		case "incoming":
-			edges, _ = e.storage.GetIncomingEdges(current.node.ID)
-		default:
-			edges, _ = undirectedIncidentEdges(e.storage, current.node.ID)
-		}
-
-		for _, edge := range edges {
-			// Filter by type
-			if len(relTypes) > 0 {
-				if len(relTypes) == 1 {
-					if edge.Type != relTypes[0] {
-						continue
-					}
-				} else {
-					if _, ok := relTypeSet[edge.Type]; !ok {
-						continue
-					}
-				}
-			}
-
-			var nextNodeID storage.NodeID
-			if direction == "outgoing" || (direction == "both" && edge.StartNode == current.node.ID) {
-				nextNodeID = edge.EndNode
-			} else {
-				nextNodeID = edge.StartNode
-			}
-
-			// Allow revisit if at same depth (for multiple paths)
-			prevDepth, seen := visitedDepth[nextNodeID]
-			if seen && prevDepth < current.path.Length+1 {
-				continue
-			}
-
-			nextNode, err := e.storage.GetNode(nextNodeID)
-			if err != nil || nextNode == nil {
-				continue
-			}
-
-			newNodes := make([]*storage.Node, len(current.path.Nodes)+1)
-			copy(newNodes, current.path.Nodes)
-			newNodes[len(current.path.Nodes)] = nextNode
-
-			newRels := make([]*storage.Edge, len(current.path.Relationships)+1)
-			copy(newRels, current.path.Relationships)
-			newRels[len(current.path.Relationships)] = edge
-
-			newPath := PathResult{
-				Nodes:         newNodes,
-				Relationships: newRels,
-				Length:        current.path.Length + 1,
-			}
-
-			// Check if we've reached the end
-			if nextNodeID == endNode.ID {
-				if shortestLen < 0 {
-					shortestLen = newPath.Length
-				}
-				if newPath.Length == shortestLen {
-					results = append(results, newPath)
-				}
-				continue
-			}
-
-			visitedDepth[nextNodeID] = current.path.Length + 1
-			queue = append(queue, queueItem{node: nextNode, path: newPath})
-		}
-	}
-
-	return results, nil
-}
-
 // getRelType gets the type of a relationship - used for type(r) function
 func (e *StorageExecutor) getRelType(relID storage.EdgeID) string {
 	edge, err := e.storage.GetEdge(relID)
@@ -2618,6 +2330,7 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 	}
 
 	var filtered []PathResult
+	where := prepareRowPredicate(strings.TrimSpace(whereClause))
 	for _, path := range paths {
 		context := e.buildPathContext(path, matches)
 		for name, value := range extra {
@@ -2632,7 +2345,9 @@ func (e *StorageExecutor) filterPathsByWhere(ctx context.Context, paths []PathRe
 				}
 			}
 		}
-		if e.evaluateWhereOnPath(ctx, whereClause, context) {
+		values := e.pathContextValues(context)
+		bindParameterRow(ctx, values)
+		if where.holds(e, ctx, values) {
 			filtered = append(filtered, path)
 		}
 	}

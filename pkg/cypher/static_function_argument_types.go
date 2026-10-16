@@ -65,9 +65,11 @@ var staticListAcceptingFunctions = map[string]bool{"tointeger": true}
 // staticUnlistedArgumentTypes are the Cypher 25 types (VECTOR, UUID) a
 // function accepts that its Neo4j 5.26 "Type mismatch" error, the one this
 // check writes, doesn't name: toString takes both; size, toIntegerList and
-// toFloatList a vector (not toStringList or toBooleanList).
+// toFloatList and vector similarity accept a vector (not toStringList or
+// toBooleanList). Keep extension types out of the pinned 5.26 catalog.
 var staticUnlistedArgumentTypes = map[string][]string{
 	"tostring": {"Vector", "UUID"}, "size": {"Vector"}, "tointegerlist": {"Vector"}, "tofloatlist": {"Vector"},
+	"vector.similarity.cosine": {"Vector"}, "vector.similarity.euclidean": {"Vector"},
 }
 
 // staticCatalogTypeNames are the catalog's argument types
@@ -330,6 +332,9 @@ func (argument staticArgumentType) accepts(typeName string) bool {
 		}
 		return false
 	}
+	if typeName == "Number" {
+		return argument.accepts("Integer") || argument.accepts("Float")
+	}
 	isList := strings.HasPrefix(typeName, "List<")
 	if isList && argument.acceptsLists || containsString(argument.unlisted, typeName) {
 		return true
@@ -372,12 +377,6 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		case '\'', '"':
 			index = skipQuotedSemanticText(text, index)
 			continue
-		case '`':
-			if end := strings.IndexByte(text[index+1:], '`'); end >= 0 {
-				index += end + 2
-				continue
-			}
-			return nil
 		}
 		name, next, ok := scanIdentifierToken(text, index)
 		if !ok {
@@ -395,12 +394,10 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			index = next
 			continue
 		}
-		// A namespaced name (date.truncate, vector.similarity.cosine) is one
-		// function name.
-		for next < len(text) && text[next] == '.' && next+1 < len(text) && isIdentStartByte(text[next+1]) {
-			_, end, _ := scanIdentifierToken(text, next+1)
-			name, next = text[index:end], end
-		}
+		// A qualified name has one canonical identity in validation and dispatch.
+		parts, end := dottedNameParts(text, next, true)
+		name, next = name+parts, end
+
 		open := skipSpaces(text, next)
 		if open >= len(text) || text[open] != '(' {
 			index = next
@@ -681,6 +678,8 @@ func parameterMayBeFunctionArgument(cypher string) bool {
 type staticTypeScope struct {
 	kinds  matchSemanticScope
 	values map[string]string
+	// derived preserves operator constraints of projected expressions whose exact type is unknown.
+	derived map[string]staticOperand
 	// members are the member types of the variables a WITH bound to a map
 	// literal in a Cypher 25 statement (projectStaticValueMembers).
 	members map[string]map[string]staticOperand
@@ -778,7 +777,8 @@ func (scope staticTypeScope) staticExpressionType(expression string) string {
 		}
 		return ""
 	}
-	if mayContainArithmetic(expression) {
+	function, _, call := parseFunctionCallWS(strings.TrimSpace(expression))
+	if mayNeedStaticTypeCheck(expression) || call && strings.EqualFold(function, "coalesce") {
 		operand, err := (staticOperatorChecker{scope: scope}).check(expression)
 		if err == nil {
 			if operand.known() {
@@ -829,7 +829,7 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 		default:
 			if memberBase, member := staticMemberAccessBase(expression); member {
 				variable = memberBase // its members' types (Cypher 25)
-			} else if variable == "" && !mayContainArithmetic(expression) {
+			} else if variable == "" && !mayNeedStaticTypeCheck(expression) && !strings.EqualFold(function, "coalesce") {
 				return nil
 			}
 		}
@@ -838,6 +838,13 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 			scope = &built
 		}
 		argument = argument.inVersion(scope.cypher25)
+		if startsWithKeywordFold(strings.TrimSpace(expression), "CASE") {
+			for _, reference := range semanticExpressionReferences(expression) {
+				if localVariableShadowsAt(text, at, reference) {
+					return nil // the comprehension owner checks its local types
+				}
+			}
+		}
 		typeName := scope.staticExpressionType(expression)
 		if property {
 			// A node's or relationship's property is a property value,
@@ -921,6 +928,12 @@ func literalListElementType(body string) string {
 func uniformListElementType(list string) string {
 	inner, isList := stripEnclosingRowDelimiter(strings.TrimSpace(list), '[', ']')
 	if !isList || strings.TrimSpace(inner) == "" {
+		return ""
+	}
+	// A comprehension isn't a list literal: its elements are its
+	// projection's (projectedListOperand), not the one element
+	// at IN l | [at] would read as.
+	if _, _, _, _, comprehension := parseListComprehension(inner); comprehension {
 		return ""
 	}
 	elementType := ""

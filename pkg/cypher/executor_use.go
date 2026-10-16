@@ -177,9 +177,18 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 	return e.cloneForStorage(storage.NewNamespacedEngine(ns.GetInnerEngine(), targetDB)), targetDB, nil
 }
 
-// otherDatabaseInTransactionError is the error for a statement of an
-// explicit transaction that targets database target (with USE or :USE)
-// other than the transaction's own, or nil. A transaction cannot span
+// TransactionDatabases resolves database names for TransactionDatabaseError:
+// aliases, and whether a name is a composite database.
+type TransactionDatabases interface {
+	ResolveDatabase(name string) (string, error)
+	IsCompositeDatabase(name string) bool
+}
+
+// TransactionDatabaseError is the one check that a transaction stays on one
+// database: the error for a statement of a transaction on txDB that targets
+// database target (with USE or :USE), or nil when target is txDB (by name or
+// alias, through databases) or a constituent of composite txDB. The executor
+// and the HTTP transaction boundary both use it. A transaction cannot span
 // databases (Neo4j Operations Manual: "a transaction cannot span across
 // multiple databases"); composite databases read several constituents
 // through Fabric instead. A write gets Neo4j's
@@ -188,48 +197,231 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (*St
 // Community has one user database, so its error for a read of a second one
 // could not be observed; a read gets the same code with the message worded
 // for a read.
-func (e *StorageExecutor) otherDatabaseInTransactionError(target, query string) error {
-	if e.txContext == nil || !e.txContext.active {
-		return nil
-	}
-	current := e.currentDatabaseName()
-	if strings.EqualFold(current, target) {
+func TransactionDatabaseError(databases TransactionDatabases, txDB, target, query string) error {
+	txDB = StatementDatabase(txDB, query)
+	target = StatementDatabase(target, query)
+	if sameTransactionDatabase(databases, txDB, target) {
 		return nil
 	}
 	requirements := QueryPermissionRequirements(query)
 	if requirements.Write || requirements.Schema {
 		return localizedStatusError("Neo.ClientError.Statement.AccessMode", "AccessMode",
-			localization.CypherCommandRoutingTransactionSecondDatabaseWrite(target, current))
+			localization.CypherCommandRoutingTransactionSecondDatabaseWrite(target, txDB))
 	}
 	return localizedStatusError("Neo.ClientError.Statement.AccessMode", "AccessMode",
-		localization.CypherCommandRoutingTransactionSecondDatabaseAccess(target, current))
+		localization.CypherCommandRoutingTransactionSecondDatabaseAccess(target, txDB))
 }
 
-// executeOnDatabase runs query on database db, the target a leading USE
-// clause or :USE command names: on this executor for its own database,
-// else on db's executor. In an explicit transaction the target must be the
-// transaction's database.
-func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query string, params map[string]interface{}) (*ExecuteResult, error) {
-	if err := e.authorizeSelectedDatabase(ctx, db); err != nil {
-		return nil, err
+// sameTransactionDatabase reports whether target is txDB, by name or alias,
+// or a constituent of composite txDB.
+func sameTransactionDatabase(databases TransactionDatabases, txDB, target string) bool {
+	if strings.EqualFold(txDB, target) {
+		return true
 	}
-	scopedExec, resolvedDB, err := e.scopedExecutorForUse(db, GetAuthTokenFromContext(ctx))
+	if databases == nil {
+		return false
+	}
+	if databases.IsCompositeDatabase(txDB) && strings.HasPrefix(target, txDB+".") {
+		return true
+	}
+	resolvedTx, txErr := databases.ResolveDatabase(txDB)
+	resolvedTarget, targetErr := databases.ResolveDatabase(target)
+	return txErr == nil && targetErr == nil && resolvedTx == resolvedTarget
+}
+
+// inTransaction reports whether a statement run with ctx belongs to a
+// transaction: this executor's explicit one, or the transaction of the
+// statement it is nested in (an implicit transaction's storage wrapper
+// carried on ctx), or the transaction pinned to this executor's storage view.
+func (e *StorageExecutor) inTransaction(ctx context.Context) bool {
+	if e.txContext != nil && e.txContext.active {
+		return true
+	}
+	if _, nested := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); nested {
+		return true
+	}
+	_, scoped := e.storage.(*transactionStorageWrapper)
+	return scoped
+}
+
+// executeOnDatabase is the one database router: it runs query on database
+// db, the target a leading USE clause or :USE command names, on this
+// executor for its own database, else on db's executor. Every route that
+// selects a database with USE goes through useDatabase: a top-level
+// statement, a statement a procedure runs (nested, run with executeInternal
+// so it stays in the caller's execution) and a CALL { USE … } body.
+func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query string, params map[string]interface{}, nested bool) (*ExecuteResult, error) {
+	scopedExec, ctx, err := e.useDatabase(ctx, db, query)
 	if err != nil {
 		return nil, err
 	}
-	if strings.EqualFold(resolvedDB, "system") && !isSystemCommandNoGraph(query) {
-		requirements := QueryPermissionRequirements(query)
-		if requirements.Write || requirements.Schema || queryKeywords(query)["MATCH"] {
-			return nil, newSemanticError("Neo.ClientError.Statement.SemanticError", "SemanticError", "Graph access is not supported on the system database")
+	var result *ExecuteResult
+	if nested {
+		result, err = scopedExec.executeInternal(ctx, query, params)
+	} else {
+		result, err = scopedExec.Execute(ctx, query, params)
+	}
+	if result != nil {
+		// A routed result can come from a shared cache. Attach the selected
+		// database to a private copy for transport metadata and entity ids.
+		routed := *result
+		routed.Metadata = make(map[string]interface{}, len(result.Metadata)+1)
+		for key, value := range result.Metadata {
+			routed.Metadata[key] = value
+		}
+		routed.Metadata["db"] = GetUseDatabaseFromContext(ctx)
+		result = &routed
+	}
+	return result, err
+}
+
+// useDatabase resolves the database db a USE selects for query and applies
+// the rules every such statement follows: the caller may use db, the system
+// database runs only what its statement policy allows, and a statement of a
+// transaction (explicit, or the one the statement is nested in) stays on
+// that transaction's database. It returns db's executor and ctx scoped to db.
+func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*StorageExecutor, context.Context, error) {
+	if err := e.authorizeSelectedDatabase(ctx, db, query); err != nil {
+		return nil, ctx, err
+	}
+	scopedExec, resolvedDB, err := e.scopedExecutorForUse(db, GetAuthTokenFromContext(ctx))
+	if err != nil {
+		return nil, ctx, err
+	}
+	if strings.EqualFold(resolvedDB, "system") {
+		if err := systemDatabaseStatementError(query); err != nil {
+			return nil, ctx, err
 		}
 	}
-	if scopedExec != e {
-		if err := e.otherDatabaseInTransactionError(resolvedDB, query); err != nil {
-			return nil, err
+	if scopedExec != e && e.inTransaction(ctx) {
+		if err := TransactionDatabaseError(e.dbManager, e.currentDatabaseName(), resolvedDB, query); err != nil {
+			return nil, ctx, err
 		}
 	}
-	ctx = withExecutionDatabase(ctx, resolvedDB)
-	return scopedExec.Execute(ctx, query, params)
+	return scopedExec, withExecutionDatabase(ctx, resolvedDB), nil
+}
+
+// systemDatabaseStatementError is the error for a statement the system
+// database doesn't run, or nil. The system database holds NornicDB's own
+// data (users, roles, privileges, procedure grants), which only its
+// administration commands write, so a statement that writes graph data
+// there (CREATE, MERGE, SET, DELETE, REMOVE, a write procedure) is refused
+// on every route, as Neo4j refuses it (Neo.ClientError.Statement.SemanticError);
+// this keeps procedure grants coming only from GRANT and REVOKE. Schema
+// commands and graph reads are refused too. The system database runs what
+// Neo4j's runs: administration commands, SHOW commands whose tail reads no
+// graph (systemShowTailError), and calls of system
+// procedures (ProcedureSpec.WorksOnSystem) whose results read no graph. A
+// call of any other registered procedure, wherever it stands in the
+// statement, and any other statement (RETURN 1, RETURN COUNT { … },
+// UNWIND …) fail with Neo4j's SemanticError "Not a recognised system
+// command or procedure". A system procedure that reads the graph sees none
+// of the system database's records (systemProcedureScope). This is the one
+// policy, applied on every route: the request's or session's database, USE,
+// a statement a procedure runs, and CALL { USE … }.
+func systemDatabaseStatementError(query string) error {
+	_, query = parseExecutionMode(query)
+	query = strings.TrimSpace(query)
+	// A SHOW command runs, and its tail is held to Neo4j's rules for it
+	// (systemShowTailError).
+	if startsWithKeywordFold(query, "SHOW") {
+		return systemShowTailError(query)
+	}
+	// Transaction control (BEGIN, COMMIT, ROLLBACK) is no statement on a
+	// graph; a BEGIN … COMMIT script is its statement.
+	if isSystemCommandNoGraph(query) || bareTransactionCommand(query) != "" {
+		return nil
+	}
+	if startsWithKeywordFold(query, "BEGIN") && transactionScriptShape(query) {
+		body, _ := stripBeginTransactionPrefix(query)
+		if statement, _, ok := splitTransactionScriptTailAction(body); ok {
+			body = statement
+		}
+		return systemDatabaseStatementError(body)
+	}
+	notRecognised := localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError",
+		localization.CypherAdminSystemProcedureUnsupported(query))
+	for _, procedure := range registeredProceduresForCalls(query) {
+		if !procedure.WorksOnSystem {
+			return notRecognised
+		}
+	}
+	requirements := QueryPermissionRequirements(query)
+	graphAccess := localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError", localization.CypherAdminSystemGraphAccessUnsupported())
+	if requirements.Write || requirements.Schema || queryKeywords(query)["MATCH"] {
+		return graphAccess
+	}
+	if StatementDatabase("", query) == "system" || startsWithKeywordFold(query, "TERMINATE") || isNornicExtensionStatement(query) {
+		return nil
+	}
+	if startsWithKeywordFold(query, "CALL") {
+		if _, procedureCall := procedureNameAt(query, len("CALL")); procedureCall {
+			if expressionReadsGraphText(query) {
+				return graphAccess
+			}
+			return nil
+		}
+	}
+	return notRecognised
+}
+
+// systemShowTailError is the system database's rule for the tail of a SHOW
+// command (YIELD, WHERE, ORDER BY, SKIP, LIMIT, RETURN), as Neo4j 5.26.30
+// applies it there: the tail filters, orders, pages and projects the
+// command's own columns, and reads no graph. Another clause after YIELD
+// (WITH, UNWIND, CALL { }, MATCH, a write, …) is a SyntaxError "Invalid
+// input …"; a COUNT, EXISTS or COLLECT subquery ("The COUNT expression is
+// not valid on SHOW commands."), a pattern comprehension or a pattern
+// expression (graphReadingExpression) is Neo4j's SyntaxError for it. On a
+// user database a SHOW tail is not limited this way (the Cypher 25 clauses
+// after YIELD and graph-reading expressions run there, as Neo4j runs the
+// expressions).
+func systemShowTailError(query string) error {
+	query = strings.TrimSpace(strings.TrimSuffix(query, ";"))
+	tail := strings.TrimSpace(query[len(showCommandHead(query)):])
+	if tail == "" {
+		return nil
+	}
+	body := tail
+	if startsWithKeywordFold(body, "YIELD") {
+		body = body[len("YIELD"):]
+	}
+	if start := showContinuationStart(body); start >= 0 {
+		clause := body[start:]
+		end := 0
+		for end < len(clause) && isIdentByte(clause[end]) {
+			end++
+		}
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherAdminShowClauseUnexpected(clause[:end]))
+	}
+	switch kind := graphReadingExpression(tail); kind {
+	case "":
+		return nil
+	case "COUNT", "EXISTS", "COLLECT":
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherAdminShowExpressionInvalid(kind))
+	case graphReadingPatternComprehension:
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherAdminShowPatternComprehensionInvalid())
+	default:
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+			localization.CypherAdminShowPatternExpressionInvalid())
+	}
+}
+
+// systemDatabaseWriteError is systemDatabaseStatementError for a statement
+// run on this executor's own database (a request's or session's database,
+// not one a USE selects): nil unless that is the system database.
+func (e *StorageExecutor) systemDatabaseWriteError(query string) error {
+	database := e.currentDatabaseName()
+	if e.txContext != nil && e.txContext.active && e.txContext.statementKind == "Administration" {
+		database = "system"
+	}
+	if !strings.EqualFold(database, "system") {
+		return nil
+	}
+	return systemDatabaseStatementError(query)
 }
 
 // resolveCompositeStorage resolves USE <composite> to a CompositeEngine-backed executor.

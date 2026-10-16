@@ -614,9 +614,13 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		types[relType] = true
 	}
 	projection := newResultPropertyProjection(opts.IncludeProperties, opts.ExcludeProperties)
-	results := make([]SearchResult, 0, min(limit, len(ordered)))
+	type admittedRelationship struct {
+		edge      *storage.Edge
+		candidate *relationshipCandidate
+	}
+	admitted := make([]admittedRelationship, 0, min(limit, len(ordered)))
 	for _, c := range ordered {
-		if len(results) >= limit {
+		if len(admitted) >= limit {
 			break
 		}
 		edge, err := s.engine.GetEdge(storage.EdgeID(c.id))
@@ -638,6 +642,13 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 				continue
 			}
 		}
+		admitted = append(admitted, admittedRelationship{edge, c})
+	}
+	ctx, visible, release := storage.BeginQueryResultProjectionContext(ctx, s.engine)
+	defer release()
+	results := make([]SearchResult, 0, len(admitted))
+	for _, hit := range admitted {
+		c, edge := hit.candidate, visible.Edge(hit.edge)
 		properties := projection.apply(edge.Properties)
 		result := SearchResult{
 			ID:         string(edge.ID),
@@ -673,6 +684,9 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		}
 		if c.bm25Rank > 0 && len(terms) > 0 {
 			result.Matches = append(result.Matches, termMatches(&storage.Node{Properties: edge.Properties}, s.RelationshipFulltextProperties(), analyzer, terms)...)
+		}
+		if visible.Enabled() {
+			result.Matches = visibleSearchMatches(result.Matches, edge.Properties)
 		}
 		results = append(results, result)
 	}

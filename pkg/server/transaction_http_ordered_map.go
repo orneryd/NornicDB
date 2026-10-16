@@ -13,6 +13,7 @@ type transactionHTTPOrderedMap struct {
 }
 
 type transactionHTTPValueState struct {
+	rest         bool
 	graph        *GraphResult
 	mapKeyOrders map[uintptr][]string
 	nodes        map[string]struct{}

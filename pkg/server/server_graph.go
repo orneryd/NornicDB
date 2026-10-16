@@ -933,6 +933,8 @@ func (c graphCollection) components() []graphPayload {
 }
 
 func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.Engine, seedIDs []string, depth, limit int, direction string, filters graphFilterSet) (graphCollection, error) {
+	projection, releaseProjection := storage.BeginQueryResultProjection(engine)
+	defer releaseProjection()
 	collection := newGraphCollection()
 	type queueEntry struct {
 		nodeID string
@@ -958,6 +960,7 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 			continue
 		}
 		node, err := engine.GetNode(storage.NodeID(seedID))
+		node = projection.Node(node)
 		if err != nil || node == nil {
 			continue
 		}
@@ -983,6 +986,7 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 			return collection, err
 		}
 		for _, edge := range edges {
+			edge = projection.Edge(edge)
 			select {
 			case <-ctx.Done():
 				return collection, ctx.Err()
@@ -996,6 +1000,7 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 				otherID = string(edge.EndNode)
 			}
 			neighbor, err := engine.GetNode(storage.NodeID(otherID))
+			neighbor = projection.Node(neighbor)
 			if err != nil || neighbor == nil {
 				continue
 			}
@@ -1026,9 +1031,12 @@ func (s *Server) collectLatestNeighborhood(ctx context.Context, engine storage.E
 }
 
 func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, sourceID, targetID string, limit int, filters graphFilterSet) (graphCollection, error) {
+	projection, releaseProjection := storage.BeginQueryResultProjection(engine)
+	defer releaseProjection()
 	if sourceID == targetID {
 		collection := newGraphCollection()
 		node, err := engine.GetNode(storage.NodeID(sourceID))
+		node = projection.Node(node)
 		if err != nil || node == nil {
 			return collection, storage.ErrNotFound
 		}
@@ -1065,6 +1073,7 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 			return graphCollection{}, err
 		}
 		for _, edge := range edges {
+			edge = projection.Edge(edge)
 			select {
 			case <-ctx.Done():
 				return graphCollection{}, ctx.Err()
@@ -1078,6 +1087,7 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 				nextID = string(edge.EndNode)
 			}
 			node, err := engine.GetNode(storage.NodeID(nextID))
+			node = projection.Node(node)
 			if err != nil || node == nil || !filters.allowNode(node) {
 				continue
 			}
@@ -1112,6 +1122,7 @@ func (s *Server) collectLatestPath(ctx context.Context, engine storage.Engine, s
 	current := targetID
 	for {
 		node, err := engine.GetNode(storage.NodeID(current))
+		node = projection.Node(node)
 		if err == nil && node != nil {
 			collection.addNode(node, "")
 		}

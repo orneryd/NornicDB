@@ -3,6 +3,8 @@ package bolt
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -89,6 +91,8 @@ func NewAuthenticatorAdapter(authenticator *auth.Authenticator) *AuthenticatorAd
 		auth:           authenticator,
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 	}
+	// A changed password stops working at once (auth.BasicAuthCache).
+	authenticator.OnPasswordChange(adapter.basicAuthCache.ForgetUser)
 	adapter.allowAnonymous.Store(false)
 	return adapter
 }
@@ -106,6 +110,8 @@ func NewAuthenticatorAdapterWithAnonymous(authenticator *auth.Authenticator) *Au
 		auth:           authenticator,
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 	}
+	// A changed password stops working at once (auth.BasicAuthCache).
+	authenticator.OnPasswordChange(adapter.basicAuthCache.ForgetUser)
 	adapter.allowAnonymous.Store(true)
 	return adapter
 }
@@ -152,7 +158,7 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 			return nil, fmt.Errorf("anonymous authentication not allowed")
 		}
 		roles := []string{string(auth.RoleViewer)}
-		result := &BoltAuthResult{Authenticated: true, Username: "anonymous", PrincipalID: "anonymous", Roles: roles}
+		result := &BoltAuthResult{Authenticated: true, Username: anonymousPrincipal, PrincipalID: anonymousPrincipal, Roles: roles}
 		if a.getEffectivePermissions != nil {
 			result.Permissions = a.getEffectivePermissions(roles)
 		}
@@ -203,16 +209,21 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 
 	if a.basicAuthCache != nil {
 		if cached, ok := a.basicAuthCache.Get(principal, credentials); ok {
-			result := &BoltAuthResult{
-				Authenticated: true,
-				Username:      cached.Username,
-				PrincipalID:   auth.PrincipalID(cached),
-				Roles:         cached.Roles,
+			// The cache spares the password check, not the current roles. A
+			// cached account that is gone (deleted, disabled, replaced) is
+			// checked again in full below.
+			if current, err := a.auth.CurrentClaims(cached); err == nil {
+				result := &BoltAuthResult{
+					Authenticated: true,
+					Username:      current.Username,
+					PrincipalID:   auth.PrincipalID(current),
+					Roles:         current.Roles,
+				}
+				if a.getEffectivePermissions != nil {
+					result.Permissions = a.getEffectivePermissions(current.Roles)
+				}
+				return result, nil
 			}
-			if a.getEffectivePermissions != nil {
-				result.Permissions = a.getEffectivePermissions(cached.Roles)
-			}
-			return result, nil
 		}
 	}
 
@@ -222,6 +233,7 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 	// - Account lockout (after failed attempts)
 	// - Account disabled status
 	// - Audit logging
+	generation := a.basicAuthCache.Generation()
 	_, user, err := a.auth.Authenticate(principal, credentials, "bolt", "Bolt/4.4")
 	if err != nil {
 		return nil, err
@@ -234,12 +246,12 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 	}
 
 	if a.basicAuthCache != nil {
-		a.basicAuthCache.Set(principal, credentials, &auth.JWTClaims{
+		a.basicAuthCache.SetAtGeneration(principal, credentials, &auth.JWTClaims{
 			Sub:      user.ID,
 			Username: user.Username,
 			Email:    user.Email,
 			Roles:    roles,
-		})
+		}, generation)
 	}
 
 	result := &BoltAuthResult{
@@ -252,6 +264,50 @@ func (a *AuthenticatorAdapter) Authenticate(scheme, principal, credentials strin
 		result.Permissions = a.getEffectivePermissions(roles)
 	}
 	return result, nil
+}
+
+// anonymousPrincipal is the principal of a session the adapter admits
+// without credentials (SetAllowAnonymous).
+const anonymousPrincipal = "anonymous"
+
+// CurrentAuthResult is result with the roles its principal holds now
+// (auth.Authenticator.CurrentClaims, the one owner HTTP uses too) and the
+// permissions those roles give, so a session's privileges follow changes to
+// the user's roles and the roles' deletion as soon as they commit, as in
+// Neo4j. A deleted or disabled account, or another account created under the
+// same name, holds no roles and no permissions. The anonymous principal, while
+// the adapter allows anonymous access, is not a user account and keeps its
+// roles. A result whose roles and permissions haven't changed is returned as
+// it is.
+func (a *AuthenticatorAdapter) CurrentAuthResult(result *BoltAuthResult) *BoltAuthResult {
+	if result == nil || (result.PrincipalID == anonymousPrincipal && a.allowAnonymous.Load()) {
+		return result
+	}
+	userID, isUserID := strings.CutPrefix(result.PrincipalID, "sub:")
+	if !isUserID {
+		userID = ""
+	}
+	roles, permissions := []string{}, []string{}
+	if current, err := a.auth.CurrentClaims(&auth.JWTClaims{Sub: userID, Username: result.Username, Roles: result.Roles}); err == nil {
+		roles = current.Roles
+		permissions = result.Permissions
+		if a.getEffectivePermissions != nil {
+			permissions = a.getEffectivePermissions(roles)
+		}
+	}
+	if slices.Equal(roles, result.Roles) && slices.Equal(permissions, result.Permissions) {
+		return result
+	}
+	current := *result
+	current.Roles = roles
+	current.Permissions = permissions
+	return &current
+}
+
+// AuthenticationDisabled reports auth.AuthenticationDisabled for the
+// adapter's authenticator.
+func (a *AuthenticatorAdapter) AuthenticationDisabled() bool {
+	return auth.AuthenticationDisabled(a.auth)
 }
 
 // SetAllowAnonymous enables or disables anonymous authentication for direct

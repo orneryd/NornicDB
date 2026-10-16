@@ -247,13 +247,13 @@ func TestKnowledgePolicyFunctionHelpers_Branches(t *testing.T) {
 
 	ent, ok := exec.resolveEntityForDecay("n", map[string]*storage.Node{"n": node}, nil)
 	require.True(t, ok)
-	require.Equal(t, "n1", ent.entityID)
+	require.Equal(t, "test:n1", ent.entityID)
 	require.Equal(t, []string{"Fact"}, ent.labels)
 	require.False(t, ent.isEdge)
 
 	ent, ok = exec.resolveEntityForDecay("r", nil, map[string]*storage.Edge{"r": edge})
 	require.True(t, ok)
-	require.Equal(t, "e1", ent.entityID)
+	require.Equal(t, "test:e1", ent.entityID)
 	require.True(t, ent.isEdge)
 	require.Equal(t, "REL", ent.edgeType)
 

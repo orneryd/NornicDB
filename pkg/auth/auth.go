@@ -405,6 +405,10 @@ type Authenticator struct {
 	// auth_attempts_total{result, protocol} counter (D-11 / D-05e / GAP-6).
 	// Injected via SetAuthMetrics; nil-safe pre-injection.
 	metrics authMetricsHolder
+
+	// passwordListeners are told a user's name once the user's password
+	// has changed (OnPasswordChange).
+	passwordListeners []func(username string)
 }
 
 // AuditEvent represents an authentication-related event for compliance logging.
@@ -716,6 +720,13 @@ func (a *Authenticator) loadUsers() error {
 // saveUser saves a user to the system database.
 // Users are stored as nodes with labels ["_User", "_System"].
 func (a *Authenticator) saveUser(user *User) error {
+	return WithStoreTransaction(context.Background(), a.storage, func(view storage.Engine) error {
+		staged := &Authenticator{storage: view}
+		return staged.saveUserInTransaction(user)
+	})
+}
+
+func (a *Authenticator) saveUserInTransaction(user *User) error {
 	node := a.userToNode(user)
 
 	// Check if node exists
@@ -740,7 +751,9 @@ func (a *Authenticator) saveUser(user *User) error {
 // deleteUserNode deletes a user node from the system database.
 func (a *Authenticator) deleteUserNode(username string) error {
 	nodeID := storage.NodeID("user:" + username)
-	return a.storage.DeleteNode(nodeID)
+	return WithStoreTransaction(context.Background(), a.storage, func(view storage.Engine) error {
+		return view.DeleteNode(nodeID)
+	})
 }
 
 // userToNode converts a User to a storage.Node for persistence.
@@ -923,13 +936,12 @@ func (a *Authenticator) CreateUser(username, password string, roles []Role) (*Us
 		Metadata:     make(map[string]string),
 	}
 
-	a.users[username] = user
-
 	// Save to storage
 	if err := a.saveUser(user); err != nil {
-		delete(a.users, username) // Rollback in-memory change
 		return nil, fmt.Errorf("failed to persist user: %w", err)
 	}
+
+	a.users[username] = user
 
 	a.logAudit(AuditEvent{
 		EventType: "user_create",
@@ -1202,7 +1214,7 @@ func (a *Authenticator) ValidateToken(token string) (*JWTClaims, error) {
 
 	if a.tokenCache != nil {
 		if cached, ok := a.tokenCache.get(token); ok {
-			return cached, nil
+			return a.CurrentClaims(cached)
 		}
 	}
 
@@ -1213,7 +1225,42 @@ func (a *Authenticator) ValidateToken(token string) (*JWTClaims, error) {
 	if a.tokenCache != nil {
 		a.tokenCache.set(token, claims)
 	}
-	return claims, nil
+	return a.CurrentClaims(claims)
+}
+
+// clusterSubjectPrefix starts the subject of a cluster node's token
+// (GenerateClusterToken): an identity that is not a user account.
+const clusterSubjectPrefix = "cluster-"
+
+// CurrentClaims is the one owner of a principal's roles on every request:
+// claims with the roles its user account holds now, as the user store
+// records them. Bearer tokens, cached Basic authentication and Bolt
+// sessions all read a principal's roles through it. A role removed from the
+// user, or deleted (which detaches it from every user), stops applying at
+// once, as in Neo4j, where privileges follow the current role membership.
+// A deleted or disabled account, or another account created under the same
+// name, authorizes nothing: ErrInvalidToken. The one identity that is not a
+// user account is a cluster node's token, which keeps its own roles. claims
+// is never changed.
+func (a *Authenticator) CurrentClaims(claims *JWTClaims) (*JWTClaims, error) {
+	if claims == nil {
+		return nil, ErrInvalidToken
+	}
+	if strings.HasPrefix(claims.Sub, clusterSubjectPrefix) {
+		return claims, nil
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	user, stored := a.users[claims.Username]
+	if !stored || user.Disabled || (claims.Sub != "" && user.ID != claims.Sub) {
+		return nil, ErrInvalidToken
+	}
+	current := *claims
+	current.Roles = make([]string, len(user.Roles))
+	for i, role := range user.Roles {
+		current.Roles[i] = string(role)
+	}
+	return &current, nil
 }
 
 // GetUserByID retrieves a user by their ID.
@@ -1268,6 +1315,20 @@ func (a *Authenticator) ListUsers() []*User {
 	return users
 }
 
+// OnPasswordChange registers fn, called with a user's name once the user's
+// password has changed. Every cache of Basic credentials registers its
+// ForgetUser (HTTP, Bolt, gRPC), so the old password stops working at
+// once instead of when its cache entry expires. fn runs while the
+// authenticator is locked, so it must not call back into it.
+func (a *Authenticator) OnPasswordChange(fn func(username string)) {
+	if a == nil || fn == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.passwordListeners = append(a.passwordListeners, fn)
+}
+
 // ChangePassword updates a user's password.
 func (a *Authenticator) ChangePassword(username, oldPassword, newPassword string) error {
 	a.mu.Lock()
@@ -1277,6 +1338,8 @@ func (a *Authenticator) ChangePassword(username, oldPassword, newPassword string
 	if !exists {
 		return ErrUserNotFound
 	}
+
+	user = cloneStoredUser(user)
 
 	// Verify old password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)); err != nil {
@@ -1309,12 +1372,17 @@ func (a *Authenticator) ChangePassword(username, oldPassword, newPassword string
 		return fmt.Errorf("failed to persist password change: %w", err)
 	}
 
+	a.users[username] = user
+
 	a.logAudit(AuditEvent{
 		EventType: "password_change",
 		Username:  username,
 		UserID:    user.ID,
 		Success:   true,
 	})
+	for _, forget := range a.passwordListeners {
+		forget(username)
+	}
 
 	return nil
 }
@@ -1329,14 +1397,18 @@ func (a *Authenticator) UpdateRoles(username string, newRoles []Role) error {
 		return ErrUserNotFound
 	}
 
+	user = cloneStoredUser(user)
+
 	oldRoles := user.Roles
-	user.Roles = newRoles
+	user.Roles = append([]Role(nil), newRoles...)
 	user.UpdatedAt = time.Now()
 
 	// Persist role change
 	if err := a.saveUser(user); err != nil {
 		return fmt.Errorf("failed to persist role change: %w", err)
 	}
+
+	a.users[username] = user
 
 	a.logAudit(AuditEvent{
 		EventType: "role_change",
@@ -1359,6 +1431,8 @@ func (a *Authenticator) DisableUser(username string) error {
 		return ErrUserNotFound
 	}
 
+	user = cloneStoredUser(user)
+
 	user.Disabled = true
 	user.UpdatedAt = time.Now()
 
@@ -1366,6 +1440,8 @@ func (a *Authenticator) DisableUser(username string) error {
 	if err := a.saveUser(user); err != nil {
 		return fmt.Errorf("failed to persist user disable: %w", err)
 	}
+
+	a.users[username] = user
 
 	a.logAudit(AuditEvent{
 		EventType: "user_disable",
@@ -1387,6 +1463,8 @@ func (a *Authenticator) EnableUser(username string) error {
 		return ErrUserNotFound
 	}
 
+	user = cloneStoredUser(user)
+
 	user.Disabled = false
 	user.FailedLogins = 0
 	user.LockedUntil = time.Time{}
@@ -1396,6 +1474,8 @@ func (a *Authenticator) EnableUser(username string) error {
 	if err := a.saveUser(user); err != nil {
 		return fmt.Errorf("failed to persist user enable: %w", err)
 	}
+
+	a.users[username] = user
 
 	a.logAudit(AuditEvent{
 		EventType: "user_enable",
@@ -1417,6 +1497,8 @@ func (a *Authenticator) UnlockUser(username string) error {
 		return ErrUserNotFound
 	}
 
+	user = cloneStoredUser(user)
+
 	user.FailedLogins = 0
 	user.LockedUntil = time.Time{}
 	user.UpdatedAt = time.Now()
@@ -1425,6 +1507,8 @@ func (a *Authenticator) UnlockUser(username string) error {
 	if err := a.saveUser(user); err != nil {
 		return fmt.Errorf("failed to persist user unlock: %w", err)
 	}
+
+	a.users[username] = user
 
 	a.logAudit(AuditEvent{
 		EventType: "user_unlock",
@@ -1447,6 +1531,8 @@ func (a *Authenticator) UpdateUser(username string, email string, metadata map[s
 		return ErrUserNotFound
 	}
 
+	user = cloneStoredUser(user)
+
 	// Update email if provided
 	if email != "" {
 		user.Email = email
@@ -1468,6 +1554,8 @@ func (a *Authenticator) UpdateUser(username string, email string, metadata map[s
 	if err := a.saveUser(user); err != nil {
 		return fmt.Errorf("failed to persist user update: %w", err)
 	}
+
+	a.users[username] = user
 
 	a.logAudit(AuditEvent{
 		EventType: "user_update",
@@ -1520,6 +1608,15 @@ func (a *Authenticator) UserCount() int {
 // IsSecurityEnabled returns whether security is enabled.
 func (a *Authenticator) IsSecurityEnabled() bool {
 	return a.config.SecurityEnabled
+}
+
+// AuthenticationDisabled is the one definition of "authentication is
+// disabled", which HTTP and Bolt both read: no authenticator, or one with
+// security disabled. Then every request runs with full access, and
+// immutable privileges can be administered, as in Neo4j with
+// authentication disabled.
+func AuthenticationDisabled(a *Authenticator) bool {
+	return a == nil || !a.IsSecurityEnabled()
 }
 
 // GenerateClusterToken creates a JWT token for cluster inter-node authentication.
@@ -1575,7 +1672,7 @@ func (a *Authenticator) GenerateClusterToken(nodeID string, role Role) (string, 
 
 	// Create a virtual user for the cluster node
 	user := &User{
-		ID:       "cluster-" + nodeID,
+		ID:       clusterSubjectPrefix + nodeID,
 		Username: nodeID,
 		Roles:    []Role{role},
 	}
@@ -1617,7 +1714,7 @@ func (a *Authenticator) GenerateClusterTokenWithExpiry(nodeID string, role Role,
 	now := time.Now().Unix()
 
 	claims := JWTClaims{
-		Sub:      "cluster-" + nodeID,
+		Sub:      clusterSubjectPrefix + nodeID,
 		Username: nodeID,
 		Roles:    []string{string(role)},
 		Iat:      now,
@@ -1652,7 +1749,7 @@ func (a *Authenticator) GenerateClusterTokenWithExpiry(nodeID string, role Role,
 		Timestamp: time.Now(),
 		EventType: "cluster_token_generated",
 		Username:  nodeID,
-		UserID:    "cluster-" + nodeID,
+		UserID:    clusterSubjectPrefix + nodeID,
 		Success:   true,
 		Details:   fmt.Sprintf("cluster token generated for node %s with role %s, expiry=%v", nodeID, role, expiry),
 	})
@@ -1918,4 +2015,15 @@ func ExtractToken(authHeader, apiKeyHeader, cookie, queryToken, queryAPIKey stri
 	}
 
 	return ""
+}
+
+// cloneStoredUser stages changes without changing the published user on error.
+func cloneStoredUser(user *User) *User {
+	copy := *user
+	copy.Roles = append([]Role(nil), user.Roles...)
+	copy.Metadata = make(map[string]string, len(user.Metadata))
+	for key, value := range user.Metadata {
+		copy.Metadata[key] = value
+	}
+	return &copy
 }

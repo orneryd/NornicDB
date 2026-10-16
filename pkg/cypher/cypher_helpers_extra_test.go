@@ -112,7 +112,10 @@ func TestCypherHelpers_ExtractorsAndEnsureLabel(t *testing.T) {
 
 func TestCypherHelpers_ProcedureCatalogNodeID(t *testing.T) {
 	id := procedureCatalogNodeID("  Db.Labels  ")
-	assert.Equal(t, storage.NodeID(procedureCatalogPrefix+"db.labels"), id)
+	// Procedure persistence uses the same exact-case identity as CALL.
+	assert.Equal(t, storage.NodeID(procedureCatalogPrefix+"Db.Labels"), id)
+	assert.Equal(t, storage.NodeID(procedureCatalogPrefix+"db.labels"), procedureCatalogNodeID("db.labels"))
+	assert.NotEqual(t, id, procedureCatalogNodeID("db.labels"))
 }
 
 func TestCypherHelpers_NodeMapAndProperties(t *testing.T) {
@@ -276,13 +279,6 @@ func TestCypherHelpers_ClauseAndMapLiterals(t *testing.T) {
 	assert.Equal(t, 1, m["k"])
 	assert.Equal(t, "v", m["2"])
 
-	assert.Equal(t, "'x'", valueToCypherLiteral("x"))
-	assert.Equal(t, "'x''y'", valueToCypherLiteral("x'y"))
-	assert.Equal(t, "true", valueToCypherLiteral(true))
-	assert.Equal(t, "3.5", valueToCypherLiteral(3.5))
-	assert.Equal(t, "null", valueToCypherLiteral(nil))
-	assert.Equal(t, "[1, 'a']", valueToCypherLiteral([]interface{}{1, "a"}))
-	assert.Contains(t, valueToCypherLiteral(map[string]interface{}{"a": 1}), "a: 1")
 }
 
 func TestCypherHelpers_WithRemainderEscapesBoundStringValues(t *testing.T) {
@@ -412,7 +408,7 @@ func TestCypherHelpers_MatchRowsAndTransactionProjection(t *testing.T) {
 	require.Equal(t, []interface{}{nodes["n"], int64(7)}, empty.Rows[0])
 }
 
-func TestCypherHelpers_ToStringAnyMapAndSubstringSet(t *testing.T) {
+func TestCypherHelpers_ToStringAnyMap(t *testing.T) {
 	m, ok := toStringAnyMap(map[string]interface{}{"a": 1})
 	require.True(t, ok)
 	assert.Equal(t, 1, m["a"])
@@ -426,12 +422,6 @@ func TestCypherHelpers_ToStringAnyMapAndSubstringSet(t *testing.T) {
 	_, ok = toStringAnyMap([]int{1, 2})
 	assert.False(t, ok)
 
-	exec := &StorageExecutor{}
-	assert.Equal(t, "bc", exec.evaluateSubstringForSet("substring('abc', 1, 2)"))
-	assert.Equal(t, "c", exec.evaluateSubstringForSet("substring('abc', 2)"))
-	assert.Equal(t, "", exec.evaluateSubstringForSet("substring('abc', 9, 1)"))
-	assert.Equal(t, "ab", exec.evaluateSubstringForSet("substring('abc', bad, 2)"))
-	assert.Equal(t, "", exec.evaluateSubstringForSet("substring('abc')"))
 }
 
 func TestCypherHelpers_RagToFloat64Branches(t *testing.T) {
@@ -496,7 +486,8 @@ func TestCypherHelpers_EvaluateExpressionWithContextFullOperators_Branches(t *te
 	assert.Equal(t, true, eval("n.name STARTS WITH 'al'"))
 	assert.Equal(t, true, eval("n.name ENDS WITH 'ce'"))
 	assert.Equal(t, true, eval("n.name CONTAINS 'lic'"))
-	assert.Equal(t, false, eval("n.age STARTS WITH '3'"))
+	// The value helper leaves a non-string predicate unresolved.
+	assert.Nil(t, eval("n.age STARTS WITH '3'"))
 	assert.Equal(t, true, eval("'a' IN ['a','b']"))
 	assert.Equal(t, true, eval("30 IN [20,30]"))
 	assert.Equal(t, false, eval("'a' IN 42"))
@@ -1254,7 +1245,7 @@ func TestCypherHelpers_CallPluginHandlerSignatures(t *testing.T) {
 		{name: "two_strings_float", handler: func(a, b string) float64 { return float64(len(a) * len(b)) }, args: []interface{}{"aa", "bbb"}, expect: 6.0},
 		{name: "two_float_slices", handler: func(a, b []float64) float64 { return a[0] + b[0] }, args: []interface{}{[]interface{}{1.0}, []interface{}{2.0}}, expect: 3.0},
 		{name: "three_strings", handler: func(a, b, c string) string { return a + b + c }, args: []interface{}{"a", "b", "c"}, expect: "abc"},
-		{name: "unsupported", handler: func(int) int { return 1 }, args: []interface{}{1}, expectErr: true},
+		{name: "typed_integer", handler: func(int) int { return 1 }, args: []interface{}{1}, expect: 1},
 	}
 
 	for _, c := range cases {
@@ -1321,74 +1312,6 @@ func TestCypherHelpers_CallDbIndexVectorEmbed_Branches(t *testing.T) {
 	res, err = exec.Execute(ctx, "CALL db.index.vector.embed('hello')", nil)
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 1)
-}
-
-func TestCypherHelpers_SubstituteBoundVariablesInCall(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	node := &storage.Node{
-		ID:              "n1",
-		Labels:          []string{"Doc"},
-		ChunkEmbeddings: [][]float32{{0.1, 0.2}},
-		Properties: map[string]interface{}{
-			"id":        "doc-1",
-			"score":     float64(1.5),
-			"intScore":  int64(7),
-			"published": true,
-			"embedding": []interface{}{1.0, 2.0, int64(3)},
-		},
-	}
-	ctxNodes := map[string]*storage.Node{"n": node}
-
-	// Regular property replacement.
-	out := exec.substituteBoundVariablesInCall("CALL proc(n.id, n.score, n.intScore, n.published)", ctxNodes, nil)
-	assert.Contains(t, out, "'doc-1'")
-	assert.Contains(t, out, "1.5")
-	assert.Contains(t, out, "7")
-	assert.Contains(t, out, "true")
-
-	// Embedding from Properties (stored as regular property, no special routing).
-	out = exec.substituteBoundVariablesInCall("CALL db.index.vector.queryNodes('idx', 5, n.embedding)", ctxNodes, nil)
-	assert.Contains(t, out, "[1, 2, 3]")
-
-	// Embedding from []float64 property.
-	nodeFloat64 := &storage.Node{
-		ID:     "n2",
-		Labels: []string{"Doc"},
-		Properties: map[string]interface{}{
-			"embedding": []float64{0.3, 0.4},
-		},
-	}
-	out = exec.substituteBoundVariablesInCall(
-		"CALL db.index.vector.queryNodes('idx', 5, n.embedding)",
-		map[string]*storage.Node{"n": nodeFloat64},
-		nil,
-	)
-	assert.Contains(t, out, "[0.3, 0.4]")
-
-	// Embedding from []interface{} property.
-	nodeIface := &storage.Node{
-		ID:     "n3",
-		Labels: []string{"Doc"},
-		Properties: map[string]interface{}{
-			"embedding": []interface{}{1.0, int64(2), float32(3)},
-		},
-	}
-	out = exec.substituteBoundVariablesInCall(
-		"CALL db.index.vector.queryNodes('idx', 5, n.embedding)",
-		map[string]*storage.Node{"n": nodeIface},
-		nil,
-	)
-	assert.Contains(t, out, "[1, 2, 3]")
-
-	// Unknown variable/property should remain unchanged.
-	orig := "CALL proc(missing.value)"
-	out = exec.substituteBoundVariablesInCall(orig, ctxNodes, nil)
-	assert.Equal(t, orig, out)
-
-	// Patterns inside quoted strings should not be replaced.
-	inQuoted := "CALL proc('n.id', \"n.score\")"
-	out = exec.substituteBoundVariablesInCall(inQuoted, ctxNodes, nil)
-	assert.Equal(t, inQuoted, out)
 }
 
 func TestCypherHelpers_PrefixNodeIDIfNeeded(t *testing.T) {
@@ -1556,21 +1479,8 @@ func TestCypherHelpers_ParseFulltextQueryAndShowDatabase(t *testing.T) {
 	assert.Equal(t, "ctx_db", res.Rows[0][0])
 }
 
-func TestCypherHelpers_EvaluateSetExpressionAndArraySuffix(t *testing.T) {
+func TestCypherHelpers_ArraySuffix(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-
-	assert.Nil(t, exec.evaluateSetExpression("null"))
-	assert.Equal(t, "x", exec.evaluateSetExpression("'x'"))
-	assert.Equal(t, "y", exec.evaluateSetExpression("\"y\""))
-	assert.Equal(t, true, exec.evaluateSetExpression("true"))
-	assert.Equal(t, false, exec.evaluateSetExpression("false"))
-	assert.Equal(t, int64(42), exec.evaluateSetExpression("42"))
-	assert.Equal(t, float64(3.5), exec.evaluateSetExpression("3.5"))
-	assert.Equal(t, []interface{}{}, exec.evaluateSetExpression("[]"))
-	assert.Equal(t, []interface{}{int64(1), "a", true}, exec.evaluateSetExpression("[1, 'a', true]"))
-	assert.IsType(t, int64(0), exec.evaluateSetExpression("timestamp()"))
-	assert.IsType(t, CypherDateTime{}, exec.evaluateSetExpression("datetime()"))
-	assert.IsType(t, "", exec.evaluateSetExpression("randomUUID()"))
 
 	collected := []interface{}{int64(1), int64(2), int64(3), int64(4)}
 	assert.Equal(t, collected, exec.applyArraySuffix(collected, ""))
@@ -1870,8 +1780,8 @@ func TestCypherHelpers_EvaluateMapLiteralFromValues_Branches(t *testing.T) {
 		"name": "alice",
 		"age":  int64(30),
 		"rels": []interface{}{
-			map[string]interface{}{"type": "KNOWS"},
-			map[string]interface{}{"type": "WORKS_WITH"},
+			&storage.Edge{ID: "e1", Type: "KNOWS"},
+			&storage.Edge{ID: "e2", Type: "WORKS_WITH"},
 		},
 	}
 
@@ -2620,23 +2530,7 @@ func TestCypherHelpers_EvaluateWhereAsBooleanBranches(t *testing.T) {
 	}
 }
 
-func TestCypherHelpers_ComparisonHelpers_Branches(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	node := &storage.Node{
-		ID:              "n1",
-		Labels:          []string{"Doc"},
-		ChunkEmbeddings: [][]float32{{0.1, 0.2}},
-		EmbedMeta: map[string]interface{}{
-			"source":        "model-a",
-			"nullable_meta": nil,
-		},
-		Properties: map[string]interface{}{
-			"name": "alice",
-			"age":  int64(42),
-			"nick": nil,
-		},
-	}
-
+func TestCypherHelpers_ListCoercion_Branches(t *testing.T) {
 	items, ok := toInterfaceSlice([]string{"a", "b"})
 	require.True(t, ok)
 	assert.Equal(t, []interface{}{"a", "b"}, items)
@@ -2648,25 +2542,6 @@ func TestCypherHelpers_ComparisonHelpers_Branches(t *testing.T) {
 	_, ok = toInterfaceSlice(123)
 	assert.False(t, ok)
 
-	ctx := context.Background()
-	// Variable mismatch keeps historical pass-through semantics.
-	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "other.name IS NULL", false))
-	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "other.name IS NOT NULL", true))
-
-	// Standard property null checks.
-	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "n.nick IS NULL", false))
-	assert.False(t, exec.evaluateIsNull(ctx, node, "n", "n.nick IS NOT NULL", true))
-	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "n.name IS NOT NULL", true))
-	assert.False(t, exec.evaluateIsNull(ctx, node, "n", "n.missing IS NOT NULL", true))
-
-	// EmbedMeta-backed properties.
-	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "n.source IS NOT NULL", true))
-	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "n.nullable_meta IS NULL", false))
-
-	// embedding is a regular property — no special routing.
-	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "n.embedding IS NULL", false)) // not in Properties
-	node.Properties["embedding"] = []float32{0.1, 0.2}
-	assert.True(t, exec.evaluateIsNull(ctx, node, "n", "n.embedding IS NOT NULL", true)) // now in Properties
 }
 
 func TestCypherHelpers_ExecuteUnwind_Branches(t *testing.T) {
@@ -3279,19 +3154,6 @@ func TestCypherHelpers_ExecuteSetTrailingPipelinesAndHelpers(t *testing.T) {
 }
 
 func TestCypherHelpers_ValueToCypherLiteralAndPipelineRowsBranches(t *testing.T) {
-	// valueToCypherLiteral/mapToCypherLiteral branches.
-	assert.Equal(t, "'x'", valueToCypherLiteral("x"))
-	assert.Equal(t, "'x''y'", valueToCypherLiteral("x'y"))
-	assert.Equal(t, "true", valueToCypherLiteral(true))
-	assert.Equal(t, "null", valueToCypherLiteral(nil))
-	assert.Equal(t, "9", valueToCypherLiteral(9))
-	assert.Equal(t, "[1, 'a', [2, false]]", valueToCypherLiteral([]interface{}{1, "a", []interface{}{2, false}}))
-
-	mixed := valueToCypherLiteral(map[interface{}]interface{}{"a": 1, "b": "x"})
-	assert.True(t, strings.HasPrefix(mixed, "{") && strings.HasSuffix(mixed, "}"))
-	assert.Contains(t, mixed, "a: 1")
-	assert.Contains(t, mixed, "b: 'x'")
-
 	// executeMatchWithPipelineToRows branches for multi-label/property/where filtering.
 	base := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(base, "test")

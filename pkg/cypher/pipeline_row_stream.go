@@ -170,7 +170,6 @@ func (e *StorageExecutor) validatePipelineWithRows(rows []pipelineRow, clause st
 func (e *StorageExecutor) validatePipelineProjectionValues(rows []pipelineRow, clause, keyword string) error {
 	for _, validate := range []func([]pipelineRow, string, string) error{
 		e.validatePipelineRangeArguments,
-		e.validatePipelineConversionArguments, e.validatePipelineGraphFunctionArguments,
 		e.validatePipelineProjectionSubscripts, e.validatePipelineSizeArguments,
 	} {
 		if err := validate(rows, clause, keyword); err != nil {
@@ -394,13 +393,13 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 							return false
 						}
 					}
-					if !typed || node == nil || !pipelineNodeMatchesPattern(node, pattern) {
+					if !typed || node == nil || !e.pipelineNodeMatchesPattern(node, pattern) {
 						return true
 					}
 					return visit(index + 1)
 				}
 				for _, node := range candidates[index] {
-					if !pipelineNodeMatchesPattern(node, pattern) {
+					if !e.pipelineNodeMatchesPattern(node, pattern) {
 						continue
 					}
 					current[pattern.variable] = node
@@ -449,7 +448,7 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				if !pipelineNodeMatchesPattern(node, pattern) {
+				if !e.pipelineNodeMatchesPattern(node, pattern) {
 					return nil
 				}
 				current[pattern.variable] = node
