@@ -180,7 +180,10 @@ func TestEmbeddingCleanup_DualSeparateBuffered(t *testing.T) {
 						want = second
 					}
 					require.Equal(t, want.ChunkEmbeddings, published.ChunkEmbeddings, "callback owns exact final sharded vectors")
-					require.Equal(t, want.EmbedMeta, published.EmbedMeta, "callback owns final metadata rather than the retired sidecar")
+					// Recovered callbacks carry decoded bodies, so integer widths follow the storage codec.
+					require.Len(t, published.EmbedMeta, len(want.EmbedMeta), "callback owns final metadata rather than the retired sidecar")
+					require.Equal(t, chunkCountFromMeta(want.EmbedMeta), chunkCountFromMeta(published.EmbedMeta))
+					require.Equal(t, want.EmbedMeta["replacement_owner"], published.EmbedMeta["replacement_owner"])
 				}
 				require.Zero(t, r7AExtensionLegacyKeys(t, b), "obsolete compatibility range stays retired through captured replay")
 			})
