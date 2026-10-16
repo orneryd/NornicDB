@@ -18,6 +18,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the dimension isn't fixed by an embedder, so a database storing its own vectors (such as a Qdrant collection) keeps
   them searchable after a restart.
 - Drop a Qdrant collection's search index with the collection, as Cypher's `DROP DATABASE` does.
+- Fix the GPU-assisted HNSW build (on by default on macOS) building a poor graph: on 88k 1024-d vectors recall@10 fell
+  to 0.60. Every query of a GPU graph search started from the global entry point and searched two hops inside one
+  4,096-node set shared by 512 queries. Each vector's search now starts at its own level-0 entry point (the upper-layer
+  descent an insert makes), adds inserted vectors sharing a BM25 lexical signature band as seeds when hints exist,
+  expands until its beam stops changing, and groups queries by entry point so each group keeps its own region; equal
+  distances are ordered by lexical closeness. Vectors of one build batch also get each other as candidates (the batch
+  scored against itself), which the graph search cannot see. CUDA, Metal and Vulkan share the fixed search.
+- Build HNSW indexes on the CPU in parallel: each batch's level-0 candidate searches run concurrently (the insert's own
+  search), then vectors are linked in order. Recall matches one-at-a-time inserts.
+- Make exact (brute-force) vector search about 8x faster: keep the best results in a bounded heap rather than sorting
+  every score, and score in parallel (24 ms to 3 ms for 50k 1024-d vectors).
+- Lower the default IVF-PQ exact re-rank depth (`NORNICDB_VECTOR_IVFPQ_RERANK_TOPK`) from 2000 to 200: the same
+  recall@10 on 88k 1024-d vectors at a sixth of the latency.
+- Probe an eighth of the k-means clusters (at least 16) per query instead of a fixed 3, the rule IVF-PQ already used
+  (recall@10 was 0.80 with 210 clusters); `NORNICDB_KMEANS_NPROBE` overrides it.
+- Report IVF-PQ, k-means and IVF-HNSW strategies by name in a database's `searchStrategy` instead of `unknown`; runtime
+  strategy transitions still only move between brute force and HNSW.
 - Keep a Qdrant collection usable after its metadata is read back from storage. Stored numbers decode as the smallest
   integer type that fits (`int8` for 4 dimensions), which the collection reader rejected once roughly 10,000 points had
   pushed the metadata out of the node cache: the collection then reported "not found", or a Dot/Euclid collection fell

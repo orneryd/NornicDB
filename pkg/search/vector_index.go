@@ -107,7 +107,7 @@ import (
 	"errors"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"os"
-	"sort"
+	"runtime"
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/math/vector"
@@ -345,47 +345,108 @@ func (v *VectorIndex) Search(ctx context.Context, query []float32, limit int, mi
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 
-	// Normalize query
+	n := len(v.vectors)
+	if n == 0 {
+		return []indexResult{}, nil
+	}
+	if limit <= 0 || limit > n {
+		limit = n
+	}
+	// Dot product of normalized vectors = cosine similarity.
 	normalizedQuery := vector.Normalize(query)
 
-	// Calculate similarities (brute force)
-	type scored struct {
-		id    string
-		score float64
-	}
-	var results []scored
-
-	for id, vec := range v.vectors {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
+	// Keep only the best limit scores (a bounded min-heap) rather than scoring
+	// into one list and sorting all n. Large indexes are scored in parallel: one
+	// goroutine walks the map, handing chunks of vectors to workers that each
+	// keep their own top limit, merged at the end.
+	workers := min(runtime.GOMAXPROCS(0), n/vectorIndexScanChunk)
+	var top *candidateMinHeap
+	if workers <= 1 {
+		top = newCandidateMinHeap(limit)
+		scanned := 0
+		for id, vec := range v.vectors {
+			if scanned%vectorIndexScanChunk == 0 {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+			}
+			scanned++
+			if sim := float64(vector.DotProductSIMD(normalizedQuery, vec)); sim >= minSimilarity {
+				top.push(Candidate{ID: id, Score: sim})
+			}
 		}
-
-		// Dot product of normalized vectors = cosine similarity
-		sim := vector.DotProduct(normalizedQuery, vec)
-		if sim >= minSimilarity {
-			results = append(results, scored{id: id, score: sim})
+	} else {
+		var err error
+		if top, err = v.scanParallelLocked(ctx, normalizedQuery, limit, minSimilarity, workers); err != nil {
+			return nil, err
 		}
 	}
 
-	// Sort by score descending
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].score > results[j].score
-	})
-
-	// Limit results
-	if len(results) > limit {
-		results = results[:limit]
+	best := top.toSortedDescending()
+	output := make([]indexResult, len(best))
+	for i, c := range best {
+		output[i] = indexResult{ID: c.ID, Score: c.Score}
 	}
-
-	// Convert to indexResult
-	output := make([]indexResult, len(results))
-	for i, r := range results {
-		output[i] = indexResult{ID: r.id, Score: r.score}
-	}
-
 	return output, nil
+}
+
+// vectorIndexScanChunk is the number of vectors a scan worker scores per chunk,
+// and the index size below which Search scans on one goroutine.
+const vectorIndexScanChunk = 2048
+
+type vectorIndexEntry struct {
+	id  string
+	vec []float32
+}
+
+// scanParallelLocked scores every vector against normalizedQuery on workers
+// goroutines and returns the best limit scores at or above minSimilarity.
+// Caller holds v.mu for reading.
+func (v *VectorIndex) scanParallelLocked(ctx context.Context, normalizedQuery []float32, limit int, minSimilarity float64, workers int) (*candidateMinHeap, error) {
+	chunks := make(chan []vectorIndexEntry, workers*2)
+	tops := make([]*candidateMinHeap, workers)
+	var wg sync.WaitGroup
+	for w := range tops {
+		tops[w] = newCandidateMinHeap(limit)
+		wg.Add(1)
+		go func(top *candidateMinHeap) {
+			defer wg.Done()
+			for chunk := range chunks {
+				for _, e := range chunk {
+					if sim := float64(vector.DotProductSIMD(normalizedQuery, e.vec)); sim >= minSimilarity {
+						top.push(Candidate{ID: e.id, Score: sim})
+					}
+				}
+			}
+		}(tops[w])
+	}
+	var err error
+	chunk := make([]vectorIndexEntry, 0, vectorIndexScanChunk)
+	for id, vec := range v.vectors {
+		chunk = append(chunk, vectorIndexEntry{id: id, vec: vec})
+		if len(chunk) == vectorIndexScanChunk {
+			if err = ctx.Err(); err != nil {
+				break
+			}
+			chunks <- chunk
+			chunk = make([]vectorIndexEntry, 0, vectorIndexScanChunk)
+		}
+	}
+	if err == nil && len(chunk) > 0 {
+		chunks <- chunk
+	}
+	close(chunks)
+	wg.Wait()
+	if err != nil {
+		return nil, err
+	}
+	merged := tops[0]
+	for _, top := range tops[1:] {
+		for _, c := range top.data {
+			merged.push(c)
+		}
+	}
+	return merged, nil
 }
 
 // Count returns the number of vectors in the index.
