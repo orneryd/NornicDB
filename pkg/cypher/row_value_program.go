@@ -307,6 +307,9 @@ func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
 		}
 		info := combineRowValueInfo(infos...)
 		c.compose(info, parts, infos)
+		if (plan.kind == logicalAnd || plan.kind == logicalOr) && len(parts) == 1 {
+			return bound(expr, parts[0], info)
+		}
 		return bound(expr, &rowLogicalNode{plan: plan, operands: parts}, info)
 	}
 	if _, _, regex := splitByOperatorOutsideCase(expr, "=~", false, true); regex {
@@ -325,7 +328,8 @@ func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
 		}
 		info := combineRowValueInfo(infos...)
 		c.compose(info, parts, infos)
-		return bound(expr, &rowComparisonNode{text: expr, scan: scan, operands: parts, normalizeIdentity: comparisonChainHasIdentity(expr, &scan)}, info)
+		return bound(expr, &rowComparisonNode{text: expr, scan: scan, operands: parts, normalizeIdentity: comparisonChainHasIdentity(expr, &scan),
+			subqueries: scan.count > 1 && mayContainSubqueryExpression(expr)}, info)
 	}
 	if _, _, _, isTypePredicate, _ := splitTypePredicate(expr); isTypePredicate {
 		return rowTextValue(expr)
@@ -716,7 +720,11 @@ type rowLogicalNode struct {
 }
 
 func (n *rowLogicalNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	value, ok, err := n.plan.evaluateInContext(rowStatementContextOrBackground(values), func(index int) (interface{}, bool, error) {
+	ctx := context.Background()
+	if len(n.plan.apply) > 0 {
+		ctx = rowStatementContextOrBackground(values)
+	}
+	value, ok, err := n.plan.evaluateInContext(ctx, func(index int) (interface{}, bool, error) {
 		return n.operands[index].eval(e, values, frames)
 	})
 	if err != nil || !ok {
@@ -741,12 +749,17 @@ type rowComparisonNode struct {
 	scan              comparisonChainScan
 	operands          []rowValueNode
 	normalizeIdentity bool
+	subqueries        bool
 }
 
 func (n *rowComparisonNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	return evaluateScannedComparisonChain(rowStatementContextOrBackground(values), n.text, &n.scan, n.normalizeIdentity, func(index int, _ string) (interface{}, bool, error) {
+	resolve := func(index int, _ string) (interface{}, bool, error) {
 		return n.operands[index].eval(e, values, frames)
-	}, compareCypherPredicateValue, rowIsCypher25(values))
+	}
+	if n.subqueries {
+		return evaluateScannedComparisonChain(rowStatementContextOrBackground(values), n.text, &n.scan, n.normalizeIdentity, resolve, compareCypherPredicateValue, rowIsCypher25(values))
+	}
+	return evaluateComparisonLinks(n.text, &n.scan, n.normalizeIdentity, resolve, compareCypherPredicateValue, rowIsCypher25(values), false)
 }
 
 type rowNullTestNode struct {
