@@ -82,27 +82,21 @@ func (b *BadgerEngine) cacheFillNode(gen uint64, node *Node) {
 
 // putNodeLocked stores a copy of node; the caller holds nodeCacheMu.
 func (b *BadgerEngine) putNodeLocked(node *Node) {
-	// Simple eviction: if cache is too large, clear it.
-	// Keeps behavior consistent with existing code paths.
-	if b.nodeCacheMaxEntries > 0 && len(b.nodeCache) > b.nodeCacheMaxEntries {
-		b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
-	}
+	b.evictNodeCachesWhenFullLocked()
 	cached := copyNode(node)
 	normalizePropertyMapShapes(cached.Properties)
 	b.nodeCache[node.ID] = cached
 	delete(b.queryNodeCache, node.ID)
 }
 
-// cacheLoadQueryNode returns a copy of id's GetQueryNode entry, sharing its
-// in-memory vectors.
-func (b *BadgerEngine) cacheLoadQueryNode(id NodeID) (*Node, bool) {
-	b.nodeCacheMu.RLock()
-	defer b.nodeCacheMu.RUnlock()
-	cached, ok := b.queryNodeCache[id]
-	if !ok {
-		return nil, false
+// evictNodeCachesWhenFullLocked keeps nodeCache and queryNodeCache within
+// the one configured entry limit (nodeCacheMaxEntries). Simple eviction: when
+// together they are over it, both are cleared. The caller holds nodeCacheMu.
+func (b *BadgerEngine) evictNodeCachesWhenFullLocked() {
+	if b.nodeCacheMaxEntries > 0 && len(b.nodeCache)+len(b.queryNodeCache) > b.nodeCacheMaxEntries {
+		b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
+		b.queryNodeCache = nil
 	}
-	return copyNodeForCaller(cached), true
 }
 
 // cacheFillQueryNode caches node as GetQueryNode read it, under
@@ -120,8 +114,8 @@ func (b *BadgerEngine) cacheFillQueryNode(gen uint64, node *Node) {
 	if _, full := b.nodeCache[node.ID]; full {
 		return
 	}
-	// Bounded like nodeCache: cleared when full.
-	if b.queryNodeCache == nil || (b.nodeCacheMaxEntries > 0 && len(b.queryNodeCache) > b.nodeCacheMaxEntries) {
+	b.evictNodeCachesWhenFullLocked()
+	if b.queryNodeCache == nil {
 		b.queryNodeCache = make(map[NodeID]*Node)
 	}
 	cached := copyNodeForCaller(node)

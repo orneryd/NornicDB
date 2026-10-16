@@ -250,7 +250,8 @@ type BadgerEngine struct {
 	nodeCacheMu sync.RWMutex
 	// queryNodeCache holds nodes as GetQueryNode reads them (no stored
 	// vectors) that nodeCache doesn't hold in full. It is guarded by
-	// nodeCacheMu and invalidated wherever nodeCache is.
+	// nodeCacheMu and invalidated wherever nodeCache is. The two share the
+	// nodeCacheMaxEntries limit.
 	queryNodeCache map[NodeID]*Node
 	// The generations order each read cache's fills against its writes
 	// (see cacheGeneration).

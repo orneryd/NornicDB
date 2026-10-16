@@ -164,11 +164,12 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	return node.ID, nil
 }
 
-// getNodeByID is the shared cached node read: cache hit (copy via hitCopy),
-// miss decode via decode, decay filter and optional cache store. GetNode and
-// GetNodeWithoutEmbeddings differ only in the decode function, the cache-hit
-// copy shape and whether the decoded node is cached.
-func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val []byte) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node)) (*Node, error) {
+// getNodeByID is the shared cached node read, timed as one get operation:
+// cache hit (copy via hitCopy), miss decode via decode, decay filter and
+// optional cache store. GetNode, GetQueryNode and GetNodeWithoutEmbeddings
+// differ only in the decode function, the cache-hit copy shape, whether the
+// query-node cache also answers (query) and whether the decoded node is cached.
+func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val []byte) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node), query bool) (*Node, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
@@ -179,7 +180,11 @@ func (b *BadgerEngine) getNodeByID(id NodeID, decode func(txn *badger.Txn, val [
 	}
 
 	b.nodeCacheMu.RLock()
-	if cached, ok := b.nodeCache[id]; ok {
+	cached, ok := b.nodeCache[id]
+	if !ok && query {
+		cached, ok = b.queryNodeCache[id]
+	}
+	if ok {
 		b.nodeCacheMu.RUnlock()
 		atomic.AddInt64(&b.cacheHits, 1)
 		nodeCopy := hitCopy(cached)
@@ -240,6 +245,7 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 		},
 		copyNode,
 		b.cacheFillNode,
+		false,
 	)
 }
 
@@ -258,19 +264,13 @@ func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
 			return copyNodeForCaller(n), nil
 		}
 	}
-	if node, ok := b.cacheLoadQueryNode(id); ok {
-		atomic.AddInt64(&b.cacheHits, 1)
-		if b.filterNodeByDecay(node, DecayScoringTime()) {
-			return nil, ErrNotFound
-		}
-		return node, nil
-	}
 	return b.getNodeByID(id,
 		func(txn *badger.Txn, val []byte) (*Node, error) {
 			return b.decodeNodeEmbeddingState(txn, val, id, false)
 		},
 		copyNodeForCaller,
 		b.cacheFillQueryNode,
+		true,
 	)
 }
 
@@ -375,6 +375,7 @@ func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
 		},
 		copyNodeWithoutEmbeddings,
 		nil,
+		false,
 	)
 }
 
