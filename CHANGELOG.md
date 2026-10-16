@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Restore Neo4j zero-precision rounding for negative ties when no rounding mode is supplied;
+  retain positive-precision and explicit `HALF_UP` behavior.
+
 - Correct path-carrier regression fixtures to cover typed paths and ordinary boolean-marker maps separately,
   retaining public-query type-name and Cypher 25 rendering controls. Make the total-count recovery fixture
   enable WAL explicitly and verify its durable ACK record independently of test order.
