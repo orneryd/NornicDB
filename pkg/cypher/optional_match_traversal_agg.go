@@ -142,15 +142,8 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 // subqueryExpressionEnd is the index after the EXISTS / COUNT / COLLECT
 // { … } subquery that starts at expr[i], or -1.
 func subqueryExpressionEnd(expr string, i int) int {
-	// A subquery's keyword is followed by '{': any other word ends here,
-	// before the keyword comparisons.
-	end := i
-	for end < len(expr) && isIdentByte(expr[end]) {
-		end++
-	}
-	if open := skipSpaces(expr, end); end == i || open >= len(expr) || expr[open] != '{' {
-		return -1
-	}
+	// Use the shared reader so comments between the keyword and brace do
+	// not expose the subquery's aggregates to the outer projection.
 	if _, open, ok := subqueryExpressionKeywordAt(expr, i); ok {
 		if closing := findMatchingDelimiter(expr, open, '{', '}'); closing > open {
 			return closing + 1
