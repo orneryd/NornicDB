@@ -11,6 +11,15 @@ Tests live alongside the code they test:
 
 ## Running Tests
 
+Use the repository-pinned Go **1.26.9** toolchain for local tests and CI. This
+patch includes the [macOS 27 plugin-linker fix](https://github.com/golang/go/issues/81889):
+earlier Go 1.26 patches can build `.so` files whose Mach-O chained-fixup segment
+count disagrees with the debug segments, causing `plugin.Open` to fail with
+`seg_count does not match number of segments`. Go 1.27 users need **1.27.2** or
+later for the corresponding fix. Build the host and its plugins with the same
+exact Go toolchain, build tags and race setting; rebuild both after upgrading.
+Keep the real plugin-loading assertions and debug information enabled.
+
 ```bash
 # All tests
 go test ./...
