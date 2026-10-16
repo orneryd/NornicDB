@@ -45,135 +45,16 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 		}
 	}
 
-	// ========================================
-	// Array Indexing - handle expr[index] patterns
-	// ========================================
-	// This handles expressions like labels(n)[0], collect(...)[..10], etc.
-	if strings.HasSuffix(expr, "]") {
-		// Find the matching opening bracket
-		bracketEnd := len(expr) - 1
-		depth := 1
-		bracketStart := -1
-		for i := bracketEnd - 1; i >= 0; i-- {
-			if expr[i] == ']' {
-				depth++
-			} else if expr[i] == '[' {
-				depth--
-				if depth == 0 {
-					bracketStart = i
-					break
-				}
-			}
+	if open := rowSubscriptStart(expr); open > 0 {
+		value, _, err := e.evaluateCypherSubscript(expr[:open], strings.TrimSpace(expr[open+1:len(expr)-1]), func(part string) (interface{}, bool, error) {
+			value := e.evaluateExpressionWithContextFull(ctx, part, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			return value, true, getExpressionFailure(ctx)
+		})
+		if err != nil {
+			recordExpressionFailure(ctx, err)
 		}
-		if bracketStart > 0 {
-			baseExpr := expr[:bracketStart]
-			indexExpr := expr[bracketStart+1 : bracketEnd]
-
-			// Avoid misclassifying list literals in larger expressions as indexing.
-			// Example: "file_tags + ['hello']" should parse as list concatenation,
-			// not "(file_tags +)['hello']".
-			lastNonSpace := byte(0)
-			for i := len(baseExpr) - 1; i >= 0; i-- {
-				if baseExpr[i] != ' ' && baseExpr[i] != '\t' && baseExpr[i] != '\n' && baseExpr[i] != '\r' {
-					lastNonSpace = baseExpr[i]
-					break
-				}
-			}
-			switch lastNonSpace {
-			case '+', '-', '*', '/', '%', '(', ',', '=', '<', '>', '|':
-				goto skipArrayIndexing
-			}
-
-			// Skip if this is an IN expression (e.g., "1 IN [1, 2, 3]")
-			// The base would be "1 IN " which ends with " IN "
-			baseUpper := upperASCII(strings.TrimSpace(baseExpr))
-			if strings.HasSuffix(baseUpper, " IN") || strings.HasSuffix(baseUpper, " NOT IN") {
-				// This is an IN expression, not array indexing - skip this section
-				goto skipArrayIndexing
-			}
-
-			// Check for slice notation [..N] or [N..M] or [N..]
-			if lowerExpr, upperExpr, slice := staticSliceBounds(indexExpr); slice {
-				// This is a slice, not an index
-				baseVal := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				lowerExpr, upperExpr = strings.TrimSpace(lowerExpr), strings.TrimSpace(upperExpr)
-				var lower, upper interface{}
-				if lowerExpr != "" {
-					lower = e.evaluateExpressionWithContextFull(ctx, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				}
-				if upperExpr != "" {
-					upper = e.evaluateExpressionWithContextFull(ctx, upperExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-				}
-				if value, ok := cypherListSlice(baseVal, lower, upper, lowerExpr != "", upperExpr != ""); ok {
-					return value
-				}
-				return nil
-			}
-
-			// Single index access [N]
-			baseVal := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if baseVal == nil {
-				return nil
-			}
-
-			// Evaluate the index
-			index := e.evaluateExpressionWithContextFull(ctx, indexExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			if key, ok := index.(string); ok {
-				switch value := baseVal.(type) {
-				case map[string]interface{}:
-					return value[key]
-				case *storage.Node:
-					if value != nil {
-						return e.queryEntityProperties(value)[key]
-					}
-					return nil
-				case *storage.Edge:
-					if value != nil {
-						return e.queryEntityProperties(value)[key]
-					}
-					return nil
-				}
-			}
-			var idx int64
-			switch v := index.(type) {
-			case int64:
-				idx = v
-			case int:
-				idx = int64(v)
-			case float64:
-				idx = int64(v)
-			case string:
-				// Try to parse as number
-				idx, _ = strconv.ParseInt(v, 10, 64)
-			}
-
-			// Apply the index to the base value
-			switch list := baseVal.(type) {
-			case []interface{}:
-				if idx < 0 {
-					idx = int64(len(list)) + idx
-				}
-				if idx >= 0 && idx < int64(len(list)) {
-					return list[idx]
-				}
-				return nil
-			case []string:
-				if idx < 0 {
-					idx = int64(len(list)) + idx
-				}
-				if idx >= 0 && idx < int64(len(list)) {
-					return list[idx]
-				}
-				return nil
-			case string:
-				if character, ok := cyphertext.At(list, int(idx)); ok {
-					return character
-				}
-				return nil
-			}
-		}
+		return value
 	}
-skipArrayIndexing:
 
 	// ========================================
 	// Map Literals - handle { key: value, ... } patterns

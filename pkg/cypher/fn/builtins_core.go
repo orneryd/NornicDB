@@ -299,33 +299,45 @@ func evalSize(ctx Context, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return int64(0), nil
 	}
-	v, _ := ctx.Eval(args[0])
-	if v == nil {
-		return nil, nil
+	value, err := ctx.Eval(args[0])
+	if err != nil {
+		return nil, err
 	}
-	if path, ok := v.(storage.RemotePathValue); ok {
+	return Size(value)
+}
+
+// Size returns size(value), including null for null. For example, Size("abc")
+// returns int64(3); typed length consumers call SizeInteger without boxing it.
+func Size(value interface{}) (interface{}, error) {
+	length, nonNull, err := SizeInteger(value)
+	if err != nil || !nonNull {
+		return nil, err
+	}
+	return length, nil
+}
+
+// SizeInteger returns the same length as Size, with nonNull false for null.
+// For example, SizeInteger([]string{"a", "b"}) returns (2, true, nil).
+func SizeInteger(value interface{}) (length int64, nonNull bool, err error) {
+	if value == nil {
+		return 0, false, nil
+	}
+	if path, ok := value.(storage.RemotePathValue); ok {
 		if path == nil {
-			return nil, nil
+			return 0, false, nil
 		}
-		return nil, &TypeMismatchError{Function: "size", Expected: sizeArgumentTypes, Value: v}
+		return 0, false, &TypeMismatchError{Function: "size", Expected: sizeArgumentTypes, Value: value}
 	}
-	switch vv := v.(type) {
-	case string:
-		return int64(cyphertext.Length(vv)), nil
-	case []interface{}:
-		return int64(len(vv)), nil
-	case []string:
-		return int64(len(vv)), nil
+	if text, ok := value.(string); ok {
+		return int64(cyphertext.Length(text)), true, nil
 	}
-	if kind := reflect.TypeOf(v).Kind(); kind == reflect.Slice || kind == reflect.Array {
-		return int64(reflect.ValueOf(v).Len()), nil
+	if sized, ok := value.(Sized); ok {
+		return sized.CypherSize(), true, nil
 	}
-	if sized, ok := v.(Sized); ok {
-		return sized.CypherSize(), nil
+	if kind := reflect.TypeOf(value).Kind(); kind == reflect.Slice || kind == reflect.Array {
+		return int64(reflect.ValueOf(value).Len()), true, nil
 	}
-	// size() takes a String or a List; a map, node, relationship, path,
-	// number or boolean is a type error, not null.
-	return nil, &TypeMismatchError{Function: "size", Expected: sizeArgumentTypes, Value: v}
+	return 0, false, &TypeMismatchError{Function: "size", Expected: sizeArgumentTypes, Value: value}
 }
 
 // Sized is a value size() measures that is neither a string nor a list (a

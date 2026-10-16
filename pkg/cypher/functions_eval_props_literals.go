@@ -117,15 +117,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 	// same context (as the row and path evaluators do), so [a.v, b.v] yields
 	// the property values rather than their text.
 	if inner, isList := stripEnclosingRowDelimiter(expr, '[', ']'); isList {
-		inner = strings.TrimSpace(inner)
-		if inner == "" {
-			return []interface{}{}
-		}
-		elements := e.splitArrayElements(inner)
-		result := make([]interface{}, len(elements))
-		for i, element := range elements {
-			result[i] = e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(element), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		}
+		elements := e.splitArrayElements(strings.TrimSpace(inner))
+		result, _, _ := rowListLiteral(len(elements), func(i int) (interface{}, bool, error) {
+			value := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(elements[i]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			return value, true, getExpressionFailure(ctx)
+		})
 		return result
 	}
 	if strings.HasPrefix(expr, "[") && strings.HasSuffix(expr, "]") {

@@ -3,9 +3,7 @@ package cypher
 import (
 	"context"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"reflect"
 	"strings"
-	"unicode/utf8"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -562,64 +560,9 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	// The subscript is the bracket group that closes expr (rowSubscriptStart):
 	// its key may hold brackets of its own (m[r[k]], m[l[0].id]).
 	if open := rowSubscriptStart(expr); open > 0 {
-		base, ok, err := e.evaluateRowValue(expr[:open], values)
-		if err != nil {
-			return nil, false, err
-		}
-		if !ok {
-			return nil, false, nil
-		}
-		subscript := strings.TrimSpace(expr[open+1 : len(expr)-1])
-		if from, to, slice := staticSliceBounds(subscript); slice {
-			return e.evaluateRowListSlice(base, strings.TrimSpace(from), strings.TrimSpace(to), values)
-		}
-		indexValue, ok, err := e.evaluateRowValue(subscript, values)
-		if err != nil {
-			return nil, false, err
-		}
-		if !ok {
-			return nil, false, nil
-		}
-		if base == nil || indexValue == nil {
-			return nil, true, nil
-		}
-		_, isNode := base.(*storage.Node)
-		_, isRelationship := base.(*storage.Edge)
-		_, isRemote := base.(storage.RemoteEntityValue)
-		if _, isObject := toStringAnyMap(base); isObject || isNode || isRelationship || isRemote {
-			// A dynamic property access: n[key] is n.key.
-			key, isString := indexValue.(string)
-			if !isString {
-				return nil, false, nil
-			}
-			value, ok := rowPropertyValue(e.queryVisibleValue(base), key)
-			return value, ok, nil
-		}
-		if key, isKey := indexValue.(string); isKey && (isRuntimeTemporal(base) || isRuntimeDuration(base)) {
-			// d['year'] reads the field d.year does.
-			value, _, supported := evaluateTemporalProperty(base, key)
-			if !supported {
-				return nil, false, temporalNoSuchFieldError(key)
-			}
-			return value, true, nil
-		}
-		index, ok := rowSubscriptIndex(indexValue)
-		if !ok {
-			return nil, false, nil
-		}
-		// Only a list is indexed by an integer: n.big[0] on a number is a
-		// TypeError wherever it is read, a WHERE included (#907).
-		items, isList := cypherListValue(base)
-		if !isList {
-			return nil, false, subscriptReceiverError(base, indexValue)
-		}
-		if index < 0 {
-			index += len(items)
-		}
-		if index < 0 || index >= len(items) {
-			return nil, true, nil
-		}
-		return items[index], true, nil
+		return e.evaluateCypherSubscript(expr[:open], strings.TrimSpace(expr[open+1:len(expr)-1]), func(part string) (interface{}, bool, error) {
+			return e.evaluateRowValue(part, values)
+		})
 	}
 
 	if left, right, operator, ok := splitRowArithmeticTier(expr, "+-"); ok {
@@ -991,25 +934,6 @@ func cypherComparisonResult(comparison int, operator string) interface{} {
 func compareCypherPredicateValues(left, right interface{}, operator string) bool {
 	matched, known := compareCypherPredicateValue(left, right, operator).(bool)
 	return known && matched
-}
-
-func (e *StorageExecutor) evaluateRowListSlice(base interface{}, lowerExpression, upperExpression string, values map[string]interface{}) (interface{}, bool, error) {
-	bound := func(expression string) (interface{}, bool, error) {
-		if expression == "" {
-			return nil, true, nil
-		}
-		return e.evaluateRowValue(expression, values)
-	}
-	lower, ok, err := bound(lowerExpression)
-	if err != nil || !ok {
-		return nil, false, err
-	}
-	upper, ok, err := bound(upperExpression)
-	if err != nil || !ok {
-		return nil, false, err
-	}
-	value, ok := cypherListSlice(base, lower, upper, lowerExpression != "", upperExpression != "")
-	return value, ok, nil
 }
 
 // cypherListSlice is base[lower..upper], the one list slice of every
@@ -1812,39 +1736,19 @@ func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Con
 // of the same evaluator, #728): null stays null, a string sizes in runes, a
 // list or array in items, and anything else is the argument type error.
 func evaluateCypherSize(value interface{}) (interface{}, bool, error) {
-	if nilRemotePath(value) {
-		return nil, true, nil
+	result, err := cypherfn.Size(value)
+	if err != nil {
+		return nil, false, functionEvaluationError(err)
 	}
-	if value == nil {
-		return nil, true, nil
-	}
-	length, ok, err := evaluateCypherSizeInteger(value)
-	if !ok || err != nil {
-		return nil, ok, err
-	}
-	return length, true, nil
+	return result, true, nil
 }
 
 func evaluateCypherSizeInteger(value interface{}) (int64, bool, error) {
-	if _, path := value.(storage.RemotePathValue); path {
-		return 0, false, sizeArgumentError(value)
+	length, nonNull, err := cypherfn.SizeInteger(value)
+	if err != nil {
+		return 0, false, functionEvaluationError(err)
 	}
-	if text, isString := value.(string); isString {
-		// RuneCountInString counts code points the way len([]rune(s)) does
-		// (invalid UTF-8 bytes become U+FFFD), without the allocation.
-		return int64(utf8.RuneCountInString(text)), true, nil
-	}
-	if sized, ok := value.(cypherfn.Sized); ok {
-		return sized.CypherSize(), true, nil
-	}
-	valueType := reflect.TypeOf(value)
-	if valueType == nil || (valueType.Kind() != reflect.Slice && valueType.Kind() != reflect.Array) {
-		if err := sizeArgumentError(value); err != nil {
-			return 0, false, err
-		}
-		return 0, false, nil
-	}
-	return int64(reflect.ValueOf(value).Len()), true, nil
+	return length, nonNull, nil
 }
 
 // rowTextFoldOperand is an operand of a text predicate's logical or
@@ -2029,37 +1933,16 @@ func (e *StorageExecutor) evaluateRowMembershipValue(left, right string, values 
 // elementId() expression, compared by its identity payload.
 func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interface{}, bool) {
 	if haystack == nil {
-		return nil, true
+		return cypherMembership(needle, nil)
 	}
 	items := coerceToUnwindItems(haystack)
-	if len(items) == 0 {
-		return false, true
+	if !identity {
+		return cypherMembership(needle, items)
 	}
-	if needle == nil {
-		return nil, true
-	}
-	identityMembership := identity
-	if identityMembership {
-		needle = rowIdentityPayload(needle)
-	}
-	containsUnknown := false
-	for _, item := range items {
-		if identityMembership {
-			item = rowIdentityPayload(item)
-		}
-		equal := cypherEquality(needle, item)
-		if equal == nil {
-			containsUnknown = true
-			continue
-		}
-		if equal.(bool) {
-			return true, true
-		}
-	}
-	if containsUnknown {
-		return nil, true
-	}
-	return false, true
+	needle = rowIdentityPayload(needle)
+	return cypherMembershipValues(needle, len(items), func(i int) interface{} {
+		return cypherEquality(needle, rowIdentityPayload(items[i]))
+	}), true
 }
 
 // [NOT] EXISTS { } predicate; recognized is false otherwise.

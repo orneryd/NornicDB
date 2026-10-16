@@ -507,20 +507,11 @@ type invalidPropertyValue struct {
 //	parseArrayValue("['a', 'b']")    // []interface{}{"a", "b"}
 //	parseArrayValue("[[1], [2]]")    // []interface{}{[]interface{}{1}, []interface{}{2}}
 func (e *StorageExecutor) parseArrayValue(ctx context.Context, arrayStr string) []interface{} {
-	// Remove brackets
-	inner := strings.TrimSpace(arrayStr[1 : len(arrayStr)-1])
-	if inner == "" {
-		return []interface{}{}
-	}
-
-	// Split array elements respecting nested structures
-	elements := e.splitArrayElements(inner)
-	result := make([]interface{}, len(elements))
-
-	for i, elem := range elements {
-		result[i] = e.parsePropertyValue(ctx, strings.TrimSpace(elem))
-	}
-
+	elements := e.splitArrayElements(strings.TrimSpace(arrayStr[1 : len(arrayStr)-1]))
+	value, _, _ := rowListLiteral(len(elements), func(i int) (interface{}, bool, error) {
+		return e.parsePropertyValue(ctx, strings.TrimSpace(elements[i])), true, getExpressionFailure(ctx)
+	})
+	result, _ := value.([]interface{})
 	return result
 }
 
