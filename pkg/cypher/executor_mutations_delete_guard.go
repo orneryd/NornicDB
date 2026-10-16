@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -164,7 +165,34 @@ func deleteExpressionRootIdentifier(expression string) string {
 	return name
 }
 
-func addPipelinePatternBindings(executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {
+// addPipelinePatternBindings adds the variables a pattern clause binds to
+// scope (eachPipelinePatternBinding), from the statement's clause plan when
+// there is one.
+func addPipelinePatternBindings(ctx context.Context, executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {
+	if plan := pipelineClausePlanFor(ctx, clause); plan != nil {
+		for _, variable := range executor.plannedPatternBindings(plan, clause, keyword) {
+			scope[variable] = struct{}{}
+		}
+		return
+	}
+	executor.eachPipelinePatternBinding(clause, keyword, func(variable string) {
+		scope[variable] = struct{}{}
+	})
+}
+
+// pipelinePatternBindingNames returns the variables a pattern clause binds
+// (eachPipelinePatternBinding).
+func (executor *StorageExecutor) pipelinePatternBindingNames(clause, keyword string) []string {
+	var names []string
+	executor.eachPipelinePatternBinding(clause, keyword, func(variable string) {
+		names = append(names, variable)
+	})
+	return names
+}
+
+// eachPipelinePatternBinding visits the node, relationship and path
+// variables of a pattern clause (its text after keyword, before WHERE).
+func (executor *StorageExecutor) eachPipelinePatternBinding(clause, keyword string, visit func(string)) {
 	pattern := strings.TrimSpace(clause)
 	if len(pattern) >= len(keyword) && strings.EqualFold(pattern[:len(keyword)], keyword) {
 		pattern = strings.TrimSpace(pattern[len(keyword):])
@@ -174,16 +202,16 @@ func addPipelinePatternBindings(executor *StorageExecutor, scope map[string]stru
 	}
 	for _, variable := range executor.extractVariableNamesFromPattern(pattern) {
 		if variable != "" {
-			scope[variable] = struct{}{}
+			visit(variable)
 		}
 	}
 	for _, variable := range extractRelationshipVariables(pattern) {
 		if variable != "" {
-			scope[variable] = struct{}{}
+			visit(variable)
 		}
 	}
 	if variable := extractPathAssignmentVariable(pattern); variable != "" {
-		scope[variable] = struct{}{}
+		visit(variable)
 	}
 }
 
@@ -209,7 +237,58 @@ func appendUniquePipelineBinding(bindings []string, binding string) []string {
 	return append(bindings, binding)
 }
 
-func pipelineProjectionScope(previous map[string]struct{}, clause string, imports pipelineRow) map[string]struct{} {
+// pipelineProjectionScope returns the variables in scope after a WITH
+// clause: its aliases (every previous variable for *) and the imports.
+func pipelineProjectionScope(ctx context.Context, previous map[string]struct{}, clause string, imports pipelineRow) map[string]struct{} {
+	next := make(map[string]struct{})
+	add := func(alias string, star bool) {
+		if !star {
+			next[alias] = struct{}{}
+			return
+		}
+		for name := range previous {
+			next[name] = struct{}{}
+		}
+	}
+	if plan := pipelineClausePlanFor(ctx, clause); plan != nil {
+		names := plannedAnalysis(plan, clauseAnalysisProjectionNames, clause, parsePipelineProjectionNames)
+		if names.star {
+			add("", true)
+		}
+		for _, alias := range names.aliases {
+			add(alias, false)
+		}
+	} else {
+		eachPipelineProjectionName(clause, add)
+	}
+	for name := range imports {
+		next[name] = struct{}{}
+	}
+	return next
+}
+
+// pipelineProjectionNames is what a WITH clause projects: its aliases, and
+// whether it has a * item.
+type pipelineProjectionNames struct {
+	star    bool
+	aliases []string
+}
+
+func parsePipelineProjectionNames(clause string) pipelineProjectionNames {
+	var names pipelineProjectionNames
+	eachPipelineProjectionName(clause, func(alias string, star bool) {
+		if star {
+			names.star = true
+		} else {
+			names.aliases = append(names.aliases, alias)
+		}
+	})
+	return names
+}
+
+// eachPipelineProjectionName visits a WITH clause's aliases, and its *
+// items (star).
+func eachPipelineProjectionName(clause string, visit func(alias string, star bool)) {
 	body := strings.TrimSpace(clause)
 	if len(body) >= len("WITH") && strings.EqualFold(body[:len("WITH")], "WITH") {
 		body = strings.TrimSpace(body[len("WITH"):])
@@ -223,23 +302,16 @@ func pipelineProjectionScope(previous map[string]struct{}, clause string, import
 		}
 	}
 	body, _ = cutDistinct(body)
-	next := make(map[string]struct{})
 	for _, item := range splitTopLevelComma(body) {
 		if strings.TrimSpace(item) == "*" {
-			for name := range previous {
-				next[name] = struct{}{}
-			}
+			visit("", true)
 			continue
 		}
 		_, alias := parseProjectionExprAlias(strings.TrimSpace(item))
 		if alias != "" {
-			next[alias] = struct{}{}
+			visit(alias, false)
 		}
 	}
-	for name := range imports {
-		next[name] = struct{}{}
-	}
-	return next
 }
 
 func pipelineUnwindAlias(clause string) string {
