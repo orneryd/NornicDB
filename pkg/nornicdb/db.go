@@ -1568,15 +1568,22 @@ func (db *DB) maybeEnableReplication(base storage.Engine) (storage.Engine, error
 // SetEmbedder configures the auto-embed queue with the given embedder.
 // This should be called by the server after creating a working embedder.
 // The embedder is shared with the MCP server and Cypher executor for consistency.
+// A closing or closed database ignores it.
 func (db *DB) SetEmbedder(embedder embed.Embedder) {
 	if embedder == nil {
+		return
+	}
+
+	db.mu.Lock()
+	if db.closed {
+		// Close has stopped, or is stopping, the queue and timers this
+		// would start.
+		db.mu.Unlock()
 		return
 	}
 	// Relationships whose embedding failed for want of an embedder are
 	// embedded now, not after the retry delay (#1065).
 	defer db.wakeRelationshipEmbedding()
-
-	db.mu.Lock()
 
 	if db.baseStorage == nil {
 		// baseStorage is required for correctness (it’s the only engine that can see all namespaces).
@@ -1675,8 +1682,9 @@ func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
 	}
 	db.mu.Lock()
 	eq := db.embedQueue
+	closed := db.closed
 	db.mu.Unlock()
-	if eq == nil {
+	if eq == nil || closed {
 		return
 	}
 	defaultEmbedder := eq.currentEmbedder()

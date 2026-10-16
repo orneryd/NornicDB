@@ -25,6 +25,15 @@ func (db *DB) Close() error {
 	return db.closeInternal()
 }
 
+// LifetimeContext returns a context that is cancelled when the database
+// closes, for background work that must stop with it.
+func (db *DB) LifetimeContext() context.Context {
+	if db == nil || db.buildCtx == nil {
+		return context.Background()
+	}
+	return db.buildCtx
+}
+
 // HealthCheck reports whether the underlying storage engine is responsive.
 func (db *DB) HealthCheck(ctx context.Context) error {
 	if db == nil {
@@ -59,16 +68,18 @@ func (db *DB) retentionPoliciesPath() string {
 // closeInternal performs cleanup without requiring the lock.
 // Used during initialization failures and normal close.
 func (db *DB) closeInternal() error {
+	// SetEmbedder refuses once closed is set, so embedQueue is final here.
 	db.mu.Lock()
 	db.closed = true
+	embedQueue := db.embedQueue
 	db.mu.Unlock()
 
 	db.stopClusteringTimer()
 	if db.buildCancel != nil {
 		db.buildCancel()
 	}
-	if db.embedQueue != nil {
-		db.embedQueue.Close()
+	if embedQueue != nil {
+		embedQueue.Close()
 	}
 	db.bgWg.Wait()
 
