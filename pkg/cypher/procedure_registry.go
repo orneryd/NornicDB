@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -107,6 +108,11 @@ type ProcedureRegistry struct {
 	builtins map[string]registeredProcedure
 	user     map[string]registeredProcedure
 	userFold map[string]struct{}
+
+	// generation counts registrations and removals, so a decision
+	// memoized from the registry (statement result-cache eligibility) is
+	// recomputed after a procedure is added, replaced or removed.
+	generation atomic.Uint64
 }
 
 func NewProcedureRegistry() *ProcedureRegistry {
@@ -132,6 +138,7 @@ func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler Procedur
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.builtins[key] = registeredProcedure{Spec: spec, Handler: handler}
+	r.generation.Add(1)
 	return nil
 }
 
@@ -160,6 +167,7 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	defer r.mu.Unlock()
 	r.user[key] = registeredProcedure{Spec: spec, Handler: handler, User: true}
 	r.userFold[lowerASCII(spec.Name)] = struct{}{}
+	r.generation.Add(1)
 	return nil
 }
 
@@ -244,6 +252,7 @@ func (r *ProcedureRegistry) ClearUser() {
 	defer r.mu.Unlock()
 	r.user = make(map[string]registeredProcedure)
 	r.userFold = make(map[string]struct{})
+	r.generation.Add(1)
 }
 
 func validateProcedureSpec(spec ProcedureSpec) error {

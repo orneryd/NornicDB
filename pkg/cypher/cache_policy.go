@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // canUseResultCache applies the same transaction boundary to local and Fabric
@@ -30,10 +31,73 @@ var (
 // functions can vary over time (or be inherently non-deterministic) without any writes.
 // Those queries should not be cached.
 func isCacheableReadQuery(cypher string) bool {
-	return cacheableReadQuery(cypher, 0)
+	// The decision is memoized per statement text: it classifies the
+	// statement's privileges and callables, which would otherwise run on every
+	// execution of a repeated read. A procedure registration changes the
+	// registry generation and so recomputes it. Plugin functions can be
+	// installed at any time, so the dotted function names a statement calls
+	// are checked again on every call.
+	generation := globalProcedureRegistry.generation.Load()
+	entry, found := cacheabilityMemo.get(cypher)
+	if !found || entry.generation != generation {
+		var plugins []string
+		entry = cacheabilityEntry{generation: generation, cacheable: cacheableReadQuery(cypher, 0, &plugins), plugins: plugins}
+		cacheabilityMemo.put(cypher, entry)
+	}
+	if !entry.cacheable {
+		return false
+	}
+	for _, name := range entry.plugins {
+		// An extension's privilege contract does not promise determinism or
+		// principal-independent output. Always invoke its actual handler.
+		if _, installed := pluginFunctionHandler(name); installed {
+			return false
+		}
+	}
+	return true
 }
 
-func cacheableReadQuery(cypher string, depth int) bool {
+// cacheabilityEntry is a memoized isCacheableReadQuery decision: whether the
+// statement is cacheable as far as the registries at generation say, and the
+// dotted function names it calls, which a plugin may provide later.
+type cacheabilityEntry struct {
+	generation uint64
+	cacheable  bool
+	plugins    []string
+}
+
+// cacheabilityMemo bounds the memoized decisions like the executor's other
+// statement-text caches (upperQueryCache).
+var cacheabilityMemo = &statementCacheabilityMemo{entries: make(map[string]cacheabilityEntry, 1024), max: 4096}
+
+type statementCacheabilityMemo struct {
+	mu      sync.RWMutex
+	entries map[string]cacheabilityEntry
+	max     int
+}
+
+func (m *statementCacheabilityMemo) get(cypher string) (cacheabilityEntry, bool) {
+	m.mu.RLock()
+	entry, found := m.entries[cypher]
+	m.mu.RUnlock()
+	return entry, found
+}
+
+func (m *statementCacheabilityMemo) put(cypher string, entry cacheabilityEntry) {
+	m.mu.Lock()
+	if len(m.entries) >= m.max {
+		for key := range m.entries {
+			delete(m.entries, key)
+			break
+		}
+	}
+	m.entries[cypher] = entry
+	m.mu.Unlock()
+}
+
+// cacheableReadQuery is the uncached decision. It appends to plugins every
+// dotted function name the statement calls (a plugin may provide it).
+func cacheableReadQuery(cypher string, depth int, plugins *[]string) bool {
 	if depth >= 16 {
 		return false
 	}
@@ -53,11 +117,10 @@ func cacheableReadQuery(cypher string, depth int) bool {
 		if procedure {
 			return nil
 		}
-		// An extension's privilege contract does not promise determinism or
-		// principal-independent output. Always invoke its actual handler.
-		if _, installed := pluginFunctionHandler(name); installed {
-			cacheableFunctions = false
-			return nil
+		// A plugin may provide a dotted function: isCacheableReadQuery checks
+		// these names on every call.
+		if strings.Contains(name, ".") {
+			*plugins = append(*plugins, name)
 		}
 		if class, found := functionPrivilegeClass(name); found && class.Has(PrivilegeFileIO|PrivilegeSharedState|PrivilegeDBMS|PrivilegeWrite|PrivilegeSchema|PrivilegeAdmin) {
 			cacheableFunctions = false
@@ -119,7 +182,7 @@ func cacheableReadQuery(cypher string, depth int) bool {
 		if globalProcedureRegistry.callsUserProcedure(cypher) {
 			return false
 		}
-		if strings.Contains(upper, "APOC.") && !cacheableDynamicStatements(cypher, depth) {
+		if strings.Contains(upper, "APOC.") && !cacheableDynamicStatements(cypher, depth, plugins) {
 			return false
 		}
 		for _, procedure := range registeredProceduresForCalls(cypher) {
@@ -135,7 +198,7 @@ func cacheableReadQuery(cypher string, depth int) bool {
 // cacheableDynamicStatements follows literal executable arguments through the
 // same cache policy as the outer statement. Parameters and row expressions
 // are resolved during execution, so their outer results cannot be reused.
-func cacheableDynamicStatements(query string, depth int) bool {
+func cacheableDynamicStatements(query string, depth int, plugins *[]string) bool {
 	opts := defaultKeywordScanOpts()
 	opts.SkipParens, opts.SkipBrackets, opts.SkipBraces = false, false, false
 	for from := 0; from < len(query); {
@@ -156,7 +219,7 @@ func cacheableDynamicStatements(query string, depth int) bool {
 			}
 			statement, decoded := decodeCypherQuotedString(args[0])
 			requirements := QueryPermissionRequirements(statement)
-			if !decoded || requirements.Write || requirements.Schema || requirements.Admin || !cacheableReadQuery(statement, depth+1) {
+			if !decoded || requirements.Write || requirements.Schema || requirements.Admin || !cacheableReadQuery(statement, depth+1, plugins) {
 				return false
 			}
 		default:

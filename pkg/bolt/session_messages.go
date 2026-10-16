@@ -1601,6 +1601,21 @@ func (s *Session) recordEntityDatabaseResolver(dbName string, provided ...boltEn
 	if len(provided) > 0 {
 		return provided[0]
 	}
+	if s.server == nil || s.server.dbManager == nil {
+		return nil
+	}
+	// Only a composite's entities need attribution. Answer that from the
+	// manager's metadata first, so a record of a standard database builds
+	// no context: this runs per record on the streaming path.
+	if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
+		canonical := dbName
+		if resolved, err := mgr.ResolveDatabase(dbName); err == nil {
+			canonical = resolved
+		}
+		if !mgr.IsCompositeDatabase(canonical) {
+			return nil
+		}
+	}
 	ctx := s.withSessionIdentity(context.Background())
 	if s.server != nil && s.authResult != nil {
 		ctx = cypher.WithDatabasePermissionResolver(ctx, dbName, s.principalAccess(s.accessMode()).Allows)
