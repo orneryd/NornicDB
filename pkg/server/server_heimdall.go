@@ -7,9 +7,11 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/auth"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
+	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -163,8 +165,32 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 	return dbName, exec, engine, nil
 }
 
+// authorizeDatabase is the request principal's check on dbName, which the
+// server attaches to the request (auth.WithRequestEntitlementResolver, the
+// one resolver HTTP, Bolt and GraphQL use): it refuses a principal that may
+// not hold permission there, and returns ctx carrying the resolver for the
+// executor, which then authorizes each statement as on the other
+// transports. A context without a resolver (no authentication) is unchanged.
+func authorizeHeimdallDatabase(ctx context.Context, dbName string, permission auth.Permission) (context.Context, error) {
+	allows := auth.RequestEntitlementResolverFromContext(ctx)
+	if allows == nil {
+		return ctx, nil
+	}
+	if !allows(dbName, permission) {
+		denied := localization.DatabaseAccessDenied(dbName)
+		return nil, localization.NewLocalizedError("Neo.ClientError.Security.Forbidden", denied, nil)
+	}
+	return cypher.WithDatabasePermissionResolver(ctx, dbName, func(database, permission string) bool {
+		return allows(database, auth.Permission(permission))
+	}), nil
+}
+
 func (r *heimdallDBRouter) Query(ctx context.Context, database string, cypherQuery string, params map[string]interface{}) ([]map[string]interface{}, error) {
-	_, exec, _, err := r.executorForDatabase(database)
+	dbName, exec, _, err := r.executorForDatabase(database)
+	if err != nil {
+		return nil, err
+	}
+	ctx, err = authorizeHeimdallDatabase(ctx, dbName, auth.Permission("access"))
 	if err != nil {
 		return nil, err
 	}
@@ -258,6 +284,9 @@ func (r *heimdallDBRouter) Stats(database string) (heimdall.DatabaseStats, error
 func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query string, nodeTypes []string, limit int, depth int) (*heimdall.DiscoverResult, error) {
 	dbName, engine, err := r.storageForDatabase(database)
 	if err != nil {
+		return nil, err
+	}
+	if ctx, err = authorizeHeimdallDatabase(ctx, dbName, auth.PermRead); err != nil {
 		return nil, err
 	}
 	if r.db == nil {
