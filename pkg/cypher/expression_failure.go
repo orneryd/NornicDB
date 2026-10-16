@@ -74,7 +74,7 @@ func handedBackByRowEvaluator(ctx context.Context, expr string) bool {
 // or comparison fold. That evaluator records errors on ctx; the operand gets
 // its own error slot where the policy asks for one (isolateOperandErrors).
 func contextFoldOperand(ctx context.Context, operand string, position foldPosition, evaluate func(context.Context) interface{}) (interface{}, bool, error) {
-	if isolateOperandErrors(operand, foldPositionInContext(ctx, position), true) {
+	if rowOperandFactsFor(ctx, operand).isolate(foldPositionInContext(ctx, position), true) {
 		return deferredExpressionValue(ctx, evaluate)
 	}
 	return evaluate(ctx), true, nil
@@ -370,7 +370,7 @@ var wherePredicatePlans = newBoundedCache[string, *wherePredicatePlan](4096, bou
 // does (as for every predicate without a subquery) or ctx is a local
 // subquery scope (a CASE condition), where nothing is lifted.
 func wherePredicatePlanFor(ctx context.Context, expression string) *wherePredicatePlan {
-	if !mayContainSubqueryExpression(expression) || inLocalSubqueryScope(ctx) {
+	if !mayContainSubqueryExpressionFor(ctx, expression) || inLocalSubqueryScope(ctx) {
 		return nil
 	}
 	if plan, cached := wherePredicatePlans.get(expression); cached {
@@ -642,13 +642,41 @@ func comparisonFoldPosition(scan *comparisonChainScan) foldPosition {
 // A pattern comprehension is an expression operand in this sense: its atom
 // returns its errors (evaluateRowPatternComprehensionAtom).
 func isolateOperandErrors(operand string, position foldPosition, contextRecorded bool) bool {
+	return rowOperandFactsOf(operand).isolate(position, contextRecorded)
+}
+
+// rowOperandFacts is what the isolation policy and the text fold read from
+// an operand's text, read once (rowOperandFactsFor keeps it per statement).
+type rowOperandFacts struct {
+	// recordsFailure is rowOperandRecordsFailure; apply is applyOperand,
+	// read only for such an operand, and cannotFail is operandCannotFail,
+	// read only for any other.
+	recordsFailure bool
+	apply          bool
+	cannotFail     bool
+	// pattern is isRelationshipPatternOperand.
+	pattern bool
+}
+
+func rowOperandFactsOf(operand string) rowOperandFacts {
+	facts := rowOperandFacts{recordsFailure: rowOperandRecordsFailure(operand), pattern: isRelationshipPatternOperand(operand)}
+	if facts.recordsFailure {
+		facts.apply = applyOperand(operand)
+	} else {
+		facts.cannotFail = operandCannotFail(operand)
+	}
+	return facts
+}
+
+// isolate is isolateOperandErrors for the operand the facts describe.
+func (f rowOperandFacts) isolate(position foldPosition, contextRecorded bool) bool {
 	if position == foldUndecided {
 		return false
 	}
-	if rowOperandRecordsFailure(operand) {
-		return position == foldOr || position == foldLocalAnd || !applyOperand(operand)
+	if f.recordsFailure {
+		return position == foldOr || position == foldLocalAnd || !f.apply
 	}
-	return contextRecorded && !operandCannotFail(operand)
+	return contextRecorded && !f.cannotFail
 }
 
 // operandIsolation is isolateOperandErrors decided once for an operand: for
@@ -659,10 +687,15 @@ func isolateOperandErrors(operand string, position foldPosition, contextRecorded
 type operandIsolation struct{ value, fallback, local bool }
 
 func operandIsolationAt(operand string, position foldPosition, contextRecorded bool) operandIsolation {
+	return rowOperandFactsOf(operand).isolationAt(position, contextRecorded)
+}
+
+// isolationAt is operandIsolationAt for the operand the facts describe.
+func (f rowOperandFacts) isolationAt(position foldPosition, contextRecorded bool) operandIsolation {
 	return operandIsolation{
-		value:    isolateOperandErrors(operand, position, contextRecorded),
-		fallback: isolateOperandErrors(operand, position, true),
-		local:    position == foldAnd && isolateOperandErrors(operand, foldLocalAnd, contextRecorded),
+		value:    f.isolate(position, contextRecorded),
+		fallback: f.isolate(position, true),
+		local:    position == foldAnd && f.isolate(foldLocalAnd, contextRecorded),
 	}
 }
 

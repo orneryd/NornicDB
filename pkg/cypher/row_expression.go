@@ -1830,10 +1830,11 @@ func evaluateCypherSizeInteger(value interface{}) (int64, bool, error) {
 // the error slots the policy asks for (isolateOperandErrors). A value is
 // returned with its error; the predicate evaluator records its own.
 func (e *StorageExecutor) rowTextFoldOperand(ctx context.Context, operand string, position foldPosition, values map[string]interface{}, predicateFallback bool) (interface{}, bool, error) {
-	isolation := operandIsolationAt(operand, position, false)
+	// The operand's facts are read from its text once per statement.
+	facts := rowOperandFactsFor(ctx, operand)
+	isolation := facts.isolationAt(position, false)
 	var fallback func(context.Context, map[string]interface{}) interface{}
 	if predicateFallback {
-		isolation = operandIsolationAt(operand, position, false)
 		fallback = func(ctx context.Context, scope map[string]interface{}) interface{} {
 			return e.evaluateRowPredicateParts(ctx, operand, scope)
 		}
@@ -1841,7 +1842,7 @@ func (e *StorageExecutor) rowTextFoldOperand(ctx context.Context, operand string
 	resolve := func(_ context.Context, scope map[string]interface{}) (interface{}, bool, error) {
 		return e.evaluateRowValue(operand, scope)
 	}
-	if predicateFallback && isRelationshipPatternOperand(operand) {
+	if predicateFallback && facts.pattern {
 		// A pattern has no value: only the predicate evaluator reads it.
 		resolve = nil
 	}

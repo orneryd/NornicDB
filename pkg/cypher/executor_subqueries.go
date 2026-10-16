@@ -2352,9 +2352,31 @@ func parseOrderByModifier(modifiers string) (column string, descending bool, ok 
 // ok is false when the keyword is absent or the value is not a non-negative
 // integer.
 func (e *StorageExecutor) parseIntModifier(ctx context.Context, modifiers, keyword string) (value int, ok bool) {
+	modifier := intModifierTextFor(ctx, modifiers, keyword)
+	if !modifier.found {
+		return 0, false
+	}
+	vs := modifier.text
+	if v, err := strconv.Atoi(vs); err == nil {
+		return v, true
+	}
+	if vs == "" {
+		return 0, false
+	}
+	return e.evaluatePipelinePagination(ctx, vs, nil)
+}
+
+// intModifier is the text of a LIMIT or SKIP modifier's expression: what
+// follows keyword up to the next modifier (found: the keyword is there).
+type intModifier struct {
+	text  string
+	found bool
+}
+
+func parseIntModifierText(modifiers, keyword string) intModifier {
 	idx := findKeywordIndex(modifiers, keyword)
 	if idx == -1 {
-		return 0, false
+		return intModifier{}
 	}
 	kwPart := strings.TrimSpace(modifiers[idx+len(keyword):])
 	nextKw := len(kwPart)
@@ -2366,14 +2388,7 @@ func (e *StorageExecutor) parseIntModifier(ctx context.Context, modifiers, keywo
 			nextKw = kidx
 		}
 	}
-	vs := strings.TrimSpace(kwPart[:nextKw])
-	if v, err := strconv.Atoi(vs); err == nil {
-		return v, true
-	}
-	if vs == "" {
-		return 0, false
-	}
-	return e.evaluatePipelinePagination(ctx, vs, nil)
+	return intModifier{text: strings.TrimSpace(kwPart[:nextKw]), found: true}
 }
 
 func findColumnIndexByName(cols []string, name string) int {
