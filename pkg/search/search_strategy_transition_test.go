@@ -59,7 +59,7 @@ func TestRuntimeStrategy_DefaultsToHNSW(t *testing.T) {
 
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, strategyModeHNSW, svc.currentPipelineStrategy())
+	requireHNSWReady(t, svc)
 }
 
 func TestRuntimeStrategy_CPUBruteForceThresholdOptIn(t *testing.T) {
@@ -98,13 +98,13 @@ func TestRuntimeStrategyTransition_DisabledByDefaultDoesNotScheduleBuild(t *test
 
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, strategyModeHNSW, svc.currentPipelineStrategy())
+	requireHNSWReady(t, svc)
 
 	for i := 0; i < 8; i++ {
 		indexTestNode(t, svc, fmt.Sprintf("node-%d", i), testVec4(i))
 	}
 
-	require.Equal(t, strategyModeHNSW, svc.currentPipelineStrategy())
+	requireHNSWReady(t, svc)
 	svc.strategyTransitionMu.Lock()
 	defer svc.strategyTransitionMu.Unlock()
 	require.Equal(t, uint64(0), svc.strategyTransitionStarts)
@@ -119,7 +119,7 @@ func TestRuntimeStrategy_HNSWDefaultIndexesLiveWrites(t *testing.T) {
 
 	_, err := svc.getOrCreateVectorPipeline(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, strategyModeHNSW, svc.currentPipelineStrategy())
+	requireHNSWReady(t, svc)
 
 	for i := 0; i < 8; i++ {
 		indexTestNode(t, svc, fmt.Sprintf("seed-%d", i), testVec4(i))
@@ -189,7 +189,9 @@ func TestRuntimeStrategyTransition_ReplayAndClearDeltaLog(t *testing.T) {
 	svc.appendStrategyDelta("delta-a", true)
 	svc.appendStrategyDelta("delta-b", true)
 
-	last := svc.replayTransitionDeltas(target, strategyModeHNSW, vi, nil, 0)
+	svc.indexMu.Lock()
+	last := svc.replayTransitionDeltasLocked(target, strategyModeHNSW, vi, nil, 0)
+	svc.indexMu.Unlock()
 	require.Greater(t, last, uint64(0))
 
 	results, err := target.Search(context.Background(), []float32{1, 0, 0, 0}, 10, 0.0)
@@ -205,7 +207,9 @@ func TestRuntimeStrategyTransition_ReplayAndClearDeltaLog(t *testing.T) {
 
 	// Replay only deltas after the prior sequence and validate remove path.
 	svc.appendStrategyDelta("delta-a", false)
-	next := svc.replayTransitionDeltas(target, strategyModeHNSW, vi, nil, last)
+	svc.indexMu.Lock()
+	next := svc.replayTransitionDeltasLocked(target, strategyModeHNSW, vi, nil, last)
+	svc.indexMu.Unlock()
 	require.Greater(t, next, last)
 
 	svc.clearTransitionDeltaLogLocked(next)
@@ -240,7 +244,9 @@ func TestRuntimeStrategyTransition_ReplayHelpers_BruteGPUAndClear(t *testing.T) 
 	svc.appendStrategyDelta("gpu-delta", false)
 
 	// BruteGPU branch with nil gpuEmbeddingIndex should still be a no-op without panic.
-	last := svc.replayTransitionDeltas(nil, strategyModeBruteGPU, vi, nil, 0)
+	svc.indexMu.Lock()
+	last := svc.replayTransitionDeltasLocked(nil, strategyModeBruteGPU, vi, nil, 0)
+	svc.indexMu.Unlock()
 	require.Greater(t, last, uint64(0))
 
 	// applied == 0 clears full log branch.

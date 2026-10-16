@@ -146,6 +146,12 @@ func (f *FulltextIndexV2) GetDocument(id string) (string, bool) {
 	return text, ok
 }
 
+func (f *FulltextIndexV2) forEachDocument(visit func(string, string)) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	forEachFulltextDocument(f.documents, visit)
+}
+
 func (f *FulltextIndexV2) Clear() {
 	f.mu.Lock()
 	defer f.mu.Unlock()

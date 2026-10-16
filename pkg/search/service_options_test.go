@@ -121,6 +121,7 @@ func TestVectorStorageModeControlsFileStore(t *testing.T) {
 			service := NewServiceWithDimensionsAndBM25EngineAndOptions(storage.NewMemoryEngine(), 3, "v2", &ServiceOptions{VectorStorageMode: test.mode})
 			service.SetPersistenceEnabled(true)
 			service.SetVectorIndexPath(t.TempDir() + "/vectors")
+			require.NoError(t, service.BuildIndexes(context.Background()))
 
 			service.indexMu.Lock()
 			service.ensureVectorFileStore()
