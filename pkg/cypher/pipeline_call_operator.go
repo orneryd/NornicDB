@@ -179,7 +179,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 					}
 				}
 				branchCtx := withPipelineImports(withValueBindings(runCtx, branchInput), carried)
-				
+
 				inner, handled, execErr := runExec.runPipelineClauseRows(branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
 				if execErr == nil {
 					execErr = getExpressionFailure(runCtx)
