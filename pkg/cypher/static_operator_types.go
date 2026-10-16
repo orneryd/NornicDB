@@ -857,6 +857,11 @@ func staticMapProjectionReceiver(expression string) (receiver string, projected 
 			open = closing
 		case '{':
 			if findMatchingDelimiter(expression, open, '{', '}') == len(expression)-1 {
+				// Comments belong to the shared subquery boundary reader,
+				// rather than the textual map-projection receiver heuristic.
+				if _, subqueryOpen, subquery := subqueryExpressionKeywordAt(expression, 0); subquery && subqueryOpen == open {
+					return "", false
+				}
 				receiver = strings.TrimSpace(expression[:open])
 				_, subqueryName := staticSubqueryExpressionTypes[upperASCII(receiver)]
 				if !endsWithOperand(receiver) && (!subqueryName || isSubqueryBrace(expression, open)) {
