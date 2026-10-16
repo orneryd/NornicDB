@@ -82,7 +82,7 @@ func (e *StorageExecutor) callGdsNodeSimilarityStream(ctx context.Context, args 
 		return nil, err
 	}
 	config, err := readNodeSimilarityConfig(ctx, projection, options, filtered, func(id string) bool {
-		_, err := getQueryNode(e.storage, storage.NodeID(id))
+		_, err := e.getQueryNode(e.storage, storage.NodeID(id))
 		return err == nil
 	})
 	if err != nil {

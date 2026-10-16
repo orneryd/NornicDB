@@ -179,6 +179,7 @@ func (b *BadgerEngine) invalidateCachesAfterRestore() {
 	b.nodeCacheMu.Lock()
 	b.nodeCacheGen.advance()
 	b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
+	b.queryNodeCache = nil
 	b.nodeCacheMu.Unlock()
 
 	b.nodeBodyCacheMu.Lock()
@@ -458,6 +459,11 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	for id := range b.nodeCache {
 		if strings.HasPrefix(string(id), prefix) {
 			delete(b.nodeCache, id)
+		}
+	}
+	for id := range b.queryNodeCache {
+		if strings.HasPrefix(string(id), prefix) {
+			delete(b.queryNodeCache, id)
 		}
 	}
 	b.nodeCacheMu.Unlock()

@@ -299,6 +299,7 @@ func (b *BadgerEngine) releaseClosedStateLocked() {
 	b.embeddingSidecarWrites.Clear()
 	b.db = nil
 	b.nodeCache = nil
+	b.queryNodeCache = nil
 	b.nodeBodyCache = nil
 	b.nodeBodyCacheLRU.Init()
 	b.nodeBodyCacheBytes = 0
