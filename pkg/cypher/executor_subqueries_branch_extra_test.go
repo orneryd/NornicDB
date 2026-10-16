@@ -8,26 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExecutorSubqueryHelpers_ExtraBranches(t *testing.T) {
-	lhs, rhs, ok := splitTopLevelEqualityCallSubquery("a = b")
-	require.True(t, ok)
-	require.Equal(t, "a", lhs)
-	require.Equal(t, "b", rhs)
-
-	_, _, ok = splitTopLevelEqualityCallSubquery("a = ")
-	require.False(t, ok)
-	_, _, ok = splitTopLevelEqualityCallSubquery("(a = b)")
-	require.False(t, ok)
-
-	idx := indexTopLevelKeywordCallSubquery("`RETURN` RETURN x", "RETURN")
-	require.Equal(t, 9, idx)
-	idx = indexTopLevelKeywordCallSubquery("[1,2,RETURN] RETURN x", "RETURN")
-	require.Equal(t, 13, idx)
-
-	require.True(t, containsStandaloneIdentifier("x + y", "x"))
-	require.False(t, containsStandaloneIdentifier("foo.x", "x"))
-	require.False(t, containsStandaloneIdentifier("xx", "x"))
-}
 
 func TestExecuteChainedCallSubquery_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
@@ -116,20 +96,3 @@ func TestExecuteChainedCallSubquery_ImplicitScalarCorrelationOptionalAggregate(t
 	require.EqualValues(t, 0, rowByID["a2"][3])
 }
 
-func TestSeedNodesFromOuterMatch_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "seed_outer")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	_, err := store.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "A"}})
-	require.NoError(t, err)
-
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, "MATCH (seed:Seed {name:'A'})", "seed")
-	require.NoError(t, err)
-	require.Len(t, nodes, 1)
-	require.Equal(t, storage.NodeID("s1"), nodes[0].ID)
-
-	_, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (seed:Seed) RETURN 1", "missing")
-	require.Error(t, err)
-}

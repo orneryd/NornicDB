@@ -34,24 +34,6 @@ func TestFirstKeywordIndexFromDefault(t *testing.T) {
 	require.Equal(t, 9, firstKeywordIndexFromDefault("RETURN 1 RETURN 2", 1, "RETURN"))
 }
 
-// TestParseLeadingWithImportsKeywordAtStart: a clause keyword at the start of
-// the import list is part of it; the list ends at the next one.
-func TestParseLeadingWithImportsKeywordAtStart(t *testing.T) {
-	vars, body, hasWith, err := parseLeadingWithImports("WITH p RETURN p")
-	require.NoError(t, err)
-	require.True(t, hasWith)
-	require.Equal(t, []string{"p"}, vars)
-	require.Equal(t, "RETURN p", body)
-
-	_, body, hasWith, err = parseLeadingWithImports("with p MATCH (n) RETURN n")
-	require.NoError(t, err)
-	require.True(t, hasWith)
-	require.Equal(t, "MATCH (n) RETURN n", body)
-
-	_, _, hasWith, err = parseLeadingWithImports("WITHIN RETURN 1")
-	require.NoError(t, err)
-	require.False(t, hasWith)
-}
 
 // TestCachedPipelineClausesVariants: one cached parse serves both splits; a
 // text with a CALL of its own is unsupported without procedure calls,

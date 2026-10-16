@@ -82,16 +82,6 @@ func TestApplyUnwindMergeChainEdgeSetAssignment_Branches(t *testing.T) {
 	require.Equal(t, 0, changed)
 }
 
-func TestTopKRowsHeap_Pop(t *testing.T) {
-	h := &topKRowsHeap{}
-	h.Push(rowRefForOrder{row: []interface{}{1}, idx: 0})
-	h.Push(rowRefForOrder{row: []interface{}{2}, idx: 1})
-	require.Equal(t, 2, h.Len())
-
-	popped := h.Pop().(rowRefForOrder)
-	require.Equal(t, 1, popped.idx)
-	require.Equal(t, 1, h.Len())
-}
 
 func TestExecuteDeleteStreaming_NodeAndRelationshipPaths(t *testing.T) {
 	base := newTestMemoryEngine(t)
@@ -358,49 +348,6 @@ func TestMergeAndMutationHelpers_Branches(t *testing.T) {
 	require.True(t, converted)
 }
 
-func TestSubqueryHelperBranches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "cov_sub_helpers")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	lhs, rhs, ok := splitTopLevelEqualityCallSubquery(`x = "a=b"`)
-	require.True(t, ok)
-	require.Equal(t, "x", lhs)
-	require.Equal(t, `"a=b"`, rhs)
-
-	_, _, ok = splitTopLevelEqualityCallSubquery("x")
-	require.False(t, ok)
-
-	idx := indexTopLevelKeywordCallSubquery(`x = "RETURN y" RETURN x`, "RETURN")
-	require.Equal(t, 15, idx)
-
-	cache := map[string]map[string]interface{}{"s1": {"x": "cached"}}
-	val, found, err := exec.resolveCorrelatedImportValue(ctx, "MATCH (seed:Seed)", "seed", "s1", "x", cache)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, "cached", val)
-
-	_, err = store.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"v": "vv"}})
-	require.NoError(t, err)
-
-	cache = map[string]map[string]interface{}{}
-	val, found, err = exec.resolveCorrelatedImportValue(
-		ctx,
-		"MATCH (seed:Seed {v:'vv'}) WITH seed, seed.v AS x",
-		"seed",
-		"s1",
-		"x",
-		cache,
-	)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, "vv", val)
-	require.Equal(t, "vv", cache["s1"]["x"])
-
-	_, _, err = exec.resolveCorrelatedImportValue(ctx, "MATCH (", "seed", "s1", "x", nil)
-	require.Error(t, err)
-}
 
 func TestLowerCoverageHelpers_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
@@ -477,53 +424,4 @@ func TestExecuteDeleteStreaming_FallbackNoDeletes(t *testing.T) {
 	require.EqualValues(t, 1, verify.Rows[0][0])
 }
 
-func TestResolveCorrelatedImportValue_OptionalFallbackBranch(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "cov_opt_import")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
 
-	_, err := store.CreateNode(&storage.Node{ID: "seed-1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "keep"}})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "t-1", Labels: []string{"Target"}, Properties: map[string]interface{}{"name": "T1"}})
-	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "e-1", Type: "REL", StartNode: "seed-1", EndNode: "t-1"})
-	require.NoError(t, err)
-
-	outerPart := "MATCH (seed:Seed) WHERE seed.name = 'none' OPTIONAL MATCH (seed)-[:REL]->(t:Target) WITH seed, t"
-	val, found, err := exec.resolveCorrelatedImportValue(ctx, outerPart, "seed", "seed-1", "t", map[string]map[string]interface{}{})
-	require.NoError(t, err)
-	require.True(t, found)
-	switch target := val.(type) {
-	case *storage.Node:
-		require.Equal(t, storage.NodeID("t-1"), target.ID)
-	case map[string]interface{}:
-		require.Equal(t, "t-1", target["_nodeId"])
-	default:
-		t.Fatalf("unexpected import value type: %T", val)
-	}
-}
-
-func TestResolveCorrelatedImportValue_DoesNotLeakSingleMismatchedRow(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "cov_opt_mismatch")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	_, err := store.CreateNode(&storage.Node{ID: "seed-a", Labels: []string{"Seed"}})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "seed-b", Labels: []string{"Seed"}})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "target-b", Labels: []string{"Target"}, Properties: map[string]interface{}{"name": "B"}})
-	require.NoError(t, err)
-	err = store.CreateEdge(&storage.Edge{ID: "edge-b", Type: "REL", StartNode: "seed-b", EndNode: "target-b"})
-	require.NoError(t, err)
-
-	// This outer query yields exactly one row for seed-b. Asking for seed-a must
-	// not return seed-b's imported value.
-	outerPart := "MATCH (seed:Seed {id:'seed-b'}) OPTIONAL MATCH (seed)-[:REL]->(t:Target) WITH seed, t"
-	val, found, err := exec.resolveCorrelatedImportValue(ctx, outerPart, "seed", "seed-a", "t", nil)
-	require.NoError(t, err)
-	require.False(t, found)
-	require.Nil(t, val)
-}

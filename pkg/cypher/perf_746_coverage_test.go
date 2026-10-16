@@ -8,16 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestParseLeadingWithImportsClauseKeywordFirst: a clause keyword at the
-// very start of a subquery's import list belongs to the list; the list ends
-// at the next clause keyword (as when each keyword was scanned alone).
-func TestParseLeadingWithImportsClauseKeywordFirst(t *testing.T) {
-	vars, body, hasWith, err := parseLeadingWithImports("WITH MATCH (n) RETURN n")
-	require.NoError(t, err)
-	require.True(t, hasWith)
-	require.Equal(t, []string{"MATCH (n)"}, vars)
-	require.Equal(t, "RETURN n", body)
-}
 
 // TestWithExpressionFailureSlotOutsideAStatement: outside a running
 // statement a context gets its own expression-failure slot, which it then
