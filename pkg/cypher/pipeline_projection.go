@@ -93,7 +93,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if withDistinct {
 			// WITH DISTINCT * keeps one row per distinct set of the
 			// variables in scope (#883).
-			out = deduplicatePipelineRows(out, pipelineWildcardColumns(out))
+			out = deduplicatePipelineRows(memoryScopeFromContext(ctx), out, pipelineWildcardColumns(out))
 		}
 		out = e.filterPipelineRows(ctx, out, postWithWhere)
 		if !e.orderPipelineRows(ctx, out, orderTerms) {
@@ -218,7 +218,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			orderScopes = append(orderScopes, orderScope)
 		}
 		if withDistinct {
-			out, orderScopes = deduplicatePipelineRowsWithScopes(out, orderScopes, projectionAliases)
+			out, orderScopes = deduplicatePipelineRowsWithScopes(memoryScopeFromContext(ctx), out, orderScopes, projectionAliases)
 		}
 		if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 			return nil, false
@@ -265,7 +265,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		}
 	}
 	if withDistinct {
-		out, orderScopes = deduplicatePipelineRowsWithScopes(out, orderScopes, projectionAliases)
+		out, orderScopes = deduplicatePipelineRowsWithScopes(memoryScopeFromContext(ctx), out, orderScopes, projectionAliases)
 	}
 	if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 		return nil, false
@@ -499,6 +499,10 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 		row    pipelineRow
 	}
 	ordered := make([]orderValue, 0, len(rows))
+	// The sort keys count against the statement's memory limit (#1343).
+	if memoryScopeFromContext(ctx).grow(int64(len(rows))*(sliceHeaderBytes+int64(len(terms))*valueSlotBytes)) != nil {
+		return false
+	}
 	for index, row := range rows {
 		values := make([]interface{}, len(terms))
 		for termIndex, term := range terms {
@@ -574,12 +578,18 @@ func pipelineRowColumns(rows []pipelineRow) []string {
 	return columns
 }
 
-func deduplicatePipelineRows(rows []pipelineRow, columns []string) []pipelineRow {
-	unique, _ := deduplicatePipelineRowsWithScopes(rows, rows, columns)
+func deduplicatePipelineRows(memory *memoryScope, rows []pipelineRow, columns []string) []pipelineRow {
+	unique, _ := deduplicatePipelineRowsWithScopes(memory, rows, rows, columns)
 	return unique
 }
 
-func deduplicatePipelineRowsWithScopes(rows, scopes []pipelineRow, columns []string) ([]pipelineRow, []pipelineRow) {
+// deduplicatePipelineRowsWithScopes keeps the first row of each distinct
+// tuple of columns; each kept key counts against memory's limit, and going
+// over stops the deduplication (the statement fails with the limit's
+// error, #1343).
+func deduplicatePipelineRowsWithScopes(memory *memoryScope, rows, scopes []pipelineRow, columns []string) ([]pipelineRow, []pipelineRow) {
+	keys := memoryAccount{scope: memory}
+	defer keys.close()
 	var seen cypherValueIndex
 	unique := make([]pipelineRow, 0, len(rows))
 	uniqueScopes := make([]pipelineRow, 0, len(rows))
@@ -590,6 +600,9 @@ func deduplicatePipelineRowsWithScopes(rows, scopes []pipelineRow, columns []str
 		}
 		if _, exists := seen.addTuple(values); exists {
 			continue
+		}
+		if keys.scope != nil && keys.grow(estimateValueBytes(values)+mapEntryBytes) != nil {
+			break
 		}
 		unique = append(unique, row)
 		uniqueScopes = append(uniqueScopes, scopes[rowIndex])
@@ -716,7 +729,7 @@ func (e *StorageExecutor) evaluatePipelineAggregateWithContext(ctx context.Conte
 	if name == "percentilecont" || name == "percentiledisc" {
 		return e.evaluatePipelinePercentile(ctx, rows, name, expr, distinct)
 	}
-	state := pipelineAggregateState{name: name, expression: expr, distinct: distinct}
+	state := pipelineAggregateState{name: name, expression: expr, distinct: distinct, memory: memoryAccount{scope: memoryScopeFromContext(ctx)}}
 	for _, row := range rows {
 		if !state.add(ctx, e, row) {
 			return nil, false
@@ -953,7 +966,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	}
 	if rows == nil && source != nil && (plan.star || (!plan.hasAggregate && (plan.modifiers != "" || plan.distinct))) {
 		var materialized bool
-		rows, materialized = materializePipelineSource(source)
+		rows, materialized = materializePipelineSource(ctx, source)
 		if !materialized {
 			return nil, false
 		}
@@ -1108,7 +1121,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 // them to result in its column order.
 func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *ExecuteResult, projectedRows, orderScopes []pipelineRow, orderTerms []orderByTerm, modifiers string, returnDistinct bool) (*ExecuteResult, bool) {
 	if returnDistinct {
-		projectedRows, orderScopes = deduplicatePipelineRowsWithScopes(projectedRows, orderScopes, result.Columns)
+		projectedRows, orderScopes = deduplicatePipelineRowsWithScopes(memoryScopeFromContext(ctx), projectedRows, orderScopes, result.Columns)
 	}
 	if !e.orderPipelineRowsWithScopes(ctx, projectedRows, orderScopes, orderTerms) {
 		return nil, false

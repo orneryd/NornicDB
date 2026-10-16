@@ -1132,6 +1132,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphertransactions.engine_unsupported", Constructor: "CypherTransactionsEngineUnsupported", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphertransactions.invalid_script_action", Constructor: "CypherTransactionsInvalidScriptAction", Fields: []string{"Action"}, PluralForms: []string{"other"}},
 	{ID: "cyphertransactions.match_with_unwind_clauses_required", Constructor: "CypherTransactionsMatchWithUnwindClausesRequired", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "cyphertransactions.memory_limit_exceeded", Constructor: "CypherTransactionsMemoryLimitExceeded", Fields: []string{"Allocation", "Limit", "Setting", "Used"}, PluralForms: []string{"other"}},
 	{ID: "cyphertransactions.multi_match_return_required", Constructor: "CypherTransactionsMultiMatchReturnRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphertransactions.multiple_match_expected", Constructor: "CypherTransactionsMultipleMatchExpected", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphertransactions.no_active", Constructor: "CypherTransactionsNoActive", Fields: []string{}, PluralForms: []string{"other"}},

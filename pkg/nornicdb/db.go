@@ -581,6 +581,11 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		config = DefaultConfig()
 	}
 	config.Database.DataDir = dataDir
+	// Transaction memory limits (#1343): the process-wide pool
+	// (dbms.memory.transaction.total.max) and the default limit of one
+	// transaction (db.memory.transaction.max); a database's own settings
+	// override the latter.
+	cypher.ConfigureTransactionMemory(config.Memory.EffectiveTransactionTotalMax(), cypher.TransactionMemoryLimits{TransactionMax: config.Memory.TransactionMax})
 	// Defensive defaults for the per-DB search-index master switches.
 	// Two distinct cases to handle correctly:
 	//

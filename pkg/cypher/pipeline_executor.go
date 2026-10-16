@@ -669,6 +669,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	}
 	var source pipelineRowSource
 	var terminalCallColumns []string
+	// The rows a MATCH, OPTIONAL MATCH or WITH builds count against the
+	// statement's memory limit (#1343).
+	memory := memoryScopeFromContext(ctx)
 	for idx := 0; idx < len(clauses); idx++ {
 		clause := clauses[idx]
 		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
@@ -676,7 +679,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			!(clause.kind == pipelineClauseCreate && independentCreate) &&
 			!(clause.kind == pipelineClauseReturn && (pipelineClauseAggregatesFor(ctx, clause) || streamsReturn(ctx, clauses, idx))) {
 			var completed bool
-			rows, completed = materializePipelineSource(source)
+			rows, completed = materializePipelineSource(ctx, source)
 			source = nil
 			if !completed {
 				return pipelineDecline(ctx, wrote, clause.text)
@@ -726,7 +729,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			if source != nil {
 				var completed bool
-				rows, completed = materializePipelineSource(source)
+				rows, completed = materializePipelineSource(ctx, source)
 				source = nil
 				if !completed {
 					return pipelineDecline(ctx, wrote, clause.text)
@@ -739,11 +742,17 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
+			if err := memory.growRows(newRows); err != nil {
+				return nil, true, err
+			}
 			rows = newRows
 			addPipelinePatternBindings(ctx, e, scope, clause.text, "MATCH")
 		case pipelineClauseOptionalMatch:
 			newRows, err := e.pipelineApplyOptionalMatch(ctx, rows, clause.text)
 			if err != nil {
+				return nil, true, err
+			}
+			if err := memory.growRows(newRows); err != nil {
 				return nil, true, err
 			}
 			rows = newRows
@@ -850,7 +859,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if source != nil {
 				if !pipelineClauseAggregatesFor(ctx, clause) {
 					var completed bool
-					rows, completed = materializePipelineSource(source)
+					rows, completed = materializePipelineSource(ctx, source)
 					source = nil
 					if !completed {
 						return pipelineDecline(ctx, wrote, clause.text)
@@ -871,6 +880,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
+			if err := memory.growRows(newRows); err != nil {
+				return nil, true, err
+			}
 			rows = newRows
 			scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
 		case pipelineClauseUnwind:
@@ -890,7 +902,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				rows = nil
 				continue
 			}
-			rows, ok = materializePipelineSource(unwound)
+			rows, ok = materializePipelineSource(ctx, unwound)
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
@@ -1026,7 +1038,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	}
 	if source != nil {
 		var completed bool
-		rows, completed = materializePipelineSource(source)
+		rows, completed = materializePipelineSource(ctx, source)
 		if !completed {
 			return pipelineDecline(ctx, wrote, "end of pipeline")
 		}
@@ -1579,7 +1591,7 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 		if err != nil {
 			return nil, true, err
 		}
-		expanded, resolved := materializePipelineSource(product)
+		expanded, resolved := materializePipelineSource(ctx, product)
 		if !resolved {
 			return nil, true, getExpressionFailure(ctx)
 		}
