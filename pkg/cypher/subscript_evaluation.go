@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -37,7 +38,7 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 		// A dynamic property access: n[key] is n.key.
 		key, isString := indexValue.(string)
 		if !isString {
-			return nil, false, nil
+			return nil, false, mapElementAccessByNonStringError(indexValue)
 		}
 		value, ok := rowPropertyValue(e.queryVisibleValue(base), key)
 		return value, ok, nil
@@ -50,15 +51,15 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 		}
 		return value, true, nil
 	}
-	index, ok := rowSubscriptIndex(indexValue)
-	if !ok {
-		return nil, false, nil
-	}
 	// Only a list is indexed by an integer: n.big[0] on a number is a
 	// TypeError wherever it is read, a WHERE included (#907).
 	items, isList := cypherListValue(base)
 	if !isList {
 		return nil, false, subscriptReceiverError(base, indexValue)
+	}
+	index, ok := rowSubscriptIndex(indexValue)
+	if !ok {
+		return nil, false, listSubscriptIndexError(base, indexValue)
 	}
 	if index < 0 {
 		index += len(items)
@@ -67,6 +68,28 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 		return nil, true, nil
 	}
 	return items[index], true, nil
+}
+
+func listSubscriptIndexError(base, index interface{}) error {
+	if isRuntimeNumber(index) {
+		return runtimeTypeError("Cannot access a list using an non-integer number index, got " + neo4jValueRepr(index))
+	}
+	// Indexing reads a list value, including the context literal reader's
+	// homogeneous Go slices; render its items as Neo4j's virtual List.
+	items, _ := cypherListValue(base)
+	parts := make([]string, len(items))
+	for i, item := range items {
+		parts[i] = neo4jValueRepr(item)
+	}
+	message := fmt.Sprintf("Cannot access a list 'List{%s}' using a non-number index, got %s", strings.Join(parts, ", "), neo4jValueRepr(index))
+	if boolean, ok := index.(bool); ok {
+		class := "BooleanValue$2"
+		if boolean {
+			class = "BooleanValue$1"
+		}
+		message += fmt.Sprintf(": Expected %s to be a org.neo4j.values.storable.NumberValue, but it was a org.neo4j.values.storable.%s", neo4jValueRepr(index), class)
+	}
+	return runtimeTypeError(message)
 }
 
 func evaluateCypherListSlice(base interface{}, lowerExpression, upperExpression string, evaluate func(string) (interface{}, bool, error)) (interface{}, bool, error) {
@@ -83,6 +106,11 @@ func evaluateCypherListSlice(base interface{}, lowerExpression, upperExpression 
 	upper, ok, err := bound(upperExpression)
 	if err != nil || !ok {
 		return nil, false, err
+	}
+	for _, value := range []interface{}{lower, upper} {
+		if value != nil && !isCypherInteger(value) {
+			return nil, false, invalidSubscriptTypeError("list slice bound requires an INTEGER", value)
+		}
 	}
 	value, ok := cypherListSlice(base, lower, upper, lowerExpression != "", upperExpression != "")
 	return value, ok, nil

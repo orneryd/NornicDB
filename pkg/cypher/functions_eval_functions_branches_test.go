@@ -132,11 +132,18 @@ func TestEvaluateExpression_FullFunctionAdvancedBranches(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, []interface{}{int64(20), int64(30)}, sliceList)
 
-	// Indexing on string.
-	assert.Equal(t, "e", exec.evaluateExpressionWithContextFullFunctions(ctx,
+	// A string has no element access: Neo4j 5.26.30 raises a TypeError for
+	// n.text[1] ("String(...) is not a collection or a map"), and so does
+	// every statement here. The shared subscript (evaluateCypherSubscript)
+	// gives the context evaluator no value and records that error.
+	stringIndexCtx := withExpressionFailureSlot(ctx)
+	assert.Nil(t, exec.evaluateExpressionWithContextFullFunctions(stringIndexCtx,
 		"n.text[1]",
 		nodes, nil, nil, nil, nil, 0,
 	))
+	stringIndexErr := getExpressionFailure(stringIndexCtx)
+	require.Error(t, stringIndexErr)
+	assert.Contains(t, statusText(stringIndexErr), "Neo.ClientError.Statement.TypeError")
 
 	// Ensure list concatenation is not misdetected as indexing.
 	concatVal := exec.evaluateExpressionWithContextFullFunctions(ctx,

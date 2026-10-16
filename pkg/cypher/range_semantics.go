@@ -122,49 +122,6 @@ func invalidRangeArgumentType(message string, value interface{}) error {
 	)
 }
 
-func (e *StorageExecutor) validateRangeCalls(expression string, row pipelineRow) error {
-	for _, argumentText := range namedFunctionArguments(expression, "range") {
-		parts := e.splitFunctionArgs(argumentText)
-		arguments := make([]interface{}, len(parts))
-		for index, part := range parts {
-			value, resolved, err := e.evaluateRowValue(strings.TrimSpace(part), row)
-			if err != nil {
-				return err
-			}
-			if !resolved {
-				arguments = nil
-				break
-			}
-			arguments[index] = value
-		}
-		if arguments == nil {
-			continue
-		}
-		if _, err := newCypherRange(arguments); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (e *StorageExecutor) validatePipelineRangeArguments(rows []pipelineRow, clause, keyword string) error {
-	expressions := projectionExpressions(clause, keyword)
-	if len(expressions) == 0 {
-		return nil
-	}
-	if len(rows) == 0 {
-		rows = []pipelineRow{{}}
-	}
-	for _, expression := range expressions {
-		for _, row := range rows {
-			if err := e.validateRangeCalls(expression, row); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func namedFunctionArguments(expression, function string) []string {
 	lower := lowerASCII(expression)
 	function = lowerASCII(function)

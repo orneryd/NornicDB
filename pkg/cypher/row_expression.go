@@ -320,6 +320,9 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			}
 			return result, true, nil
 		case "head", "last", "reverse", "size":
+			if equalFoldASCII(function, "size") {
+				argument = sizeArgumentExpression(argument)
+			}
 			value, resolved, err := e.evaluateRowValue(argument, values)
 			if err != nil {
 				return nil, false, err
@@ -1411,17 +1414,13 @@ func stripEnclosingRowDelimiter(expr string, open, close byte) (string, bool) {
 }
 
 func rowSubscriptIndex(value interface{}) (int, bool) {
-	switch number := value.(type) {
-	case int:
-		return number, true
-	case int64:
+	if number, ok := cypherSignedInteger(value); ok {
 		return int(number), true
-	case float64:
-		integer := int(number)
-		return integer, float64(integer) == number
-	default:
-		return 0, false
 	}
+	if number, ok := cypherUnsignedInteger(value); ok {
+		return int(number), true
+	}
+	return 0, false
 }
 
 // evaluateRowPredicate evaluates a WHERE predicate against a row.

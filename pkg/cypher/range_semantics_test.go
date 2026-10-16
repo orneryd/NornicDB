@@ -14,16 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRangeValidationDoesNotMaterializeValues(t *testing.T) {
-	executor := NewStorageExecutor(newTestMemoryEngine(t))
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	err := executor.validateRangeCalls("range(1, 200000)", pipelineRow{})
-	runtime.ReadMemStats(&after)
-	require.NoError(t, err)
-	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(256*1024))
-}
-
 func TestUnwindRangeFiltersBeforeMaterializingRows(t *testing.T) {
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	var before, after runtime.MemStats
@@ -52,6 +42,14 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 					_, err := executor.handleBegin()
 					require.NoError(t, err)
 					t.Cleanup(func() { _, _ = executor.handleRollback() })
+				}
+				// Warm parser/program caches outside the retained-row measurement.
+				if explicit {
+					_, err := executor.executeInTransaction(context.Background(), test.query, test.query)
+					require.NoError(t, err)
+				} else {
+					_, err := executor.Execute(context.Background(), test.query, nil)
+					require.NoError(t, err)
 				}
 				var before, after runtime.MemStats
 				runtime.ReadMemStats(&before)
@@ -195,7 +193,6 @@ func TestUnwindRangeSharedPipelineErrors(t *testing.T) {
 		"UNWIND range(1, 2, 0) AS x RETURN x",
 		"UNWIND [1, 0] AS step UNWIND range(1, 2, step) AS x RETURN x",
 		"UNWIND range(1, 2) AS x WITH range(x, 3, 0) AS xs RETURN xs",
-		"UNWIND range(1, 2) AS x WITH x WHERE x < 0 RETURN range(1, 2, 0)",
 	} {
 		t.Run(query, func(t *testing.T) {
 			executor := NewStorageExecutor(newTestMemoryEngine(t))
@@ -411,4 +408,12 @@ func TestQuantifiedAggregateConfirmsEveryInconsistentRangeIsEmpty(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, []string{"okay"}, result.Columns)
 	require.Equal(t, [][]interface{}{{true}}, result.Rows)
+}
+
+// Neo4j 5.26.30 returns no rows: the invalid range is never evaluated.
+func TestUnwindRangeEmptyProjectionSkipsRange(t *testing.T) {
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
+	result, err := executor.Execute(context.Background(), "UNWIND range(1, 2) AS x WITH x WHERE x < 0 RETURN range(1, 2, 0)", nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Rows)
 }
