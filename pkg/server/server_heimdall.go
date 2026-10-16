@@ -29,9 +29,8 @@ type heimdallDBRouter struct {
 	dbManager *multidb.DatabaseManager
 	features  *nornicConfig.FeatureFlagsConfig
 
-	statementCacheIndex multidb.StatementCacheIndex
-	executorsMu         sync.RWMutex
-	executors           map[string]*cypher.StorageExecutor
+	executorsMu sync.RWMutex
+	executors   map[string]*cypher.StorageExecutor
 }
 
 func newHeimdallDBRouter(db *nornicdb.DB, dbManager *multidb.DatabaseManager, features *nornicConfig.FeatureFlagsConfig) *heimdallDBRouter {
@@ -81,7 +80,6 @@ func (r *heimdallDBRouter) ListDatabases() []string {
 }
 
 func (r *heimdallDBRouter) storageForDatabase(database string) (dbName string, engine storage.Engine, err error) {
-	r.bindStatementCacheIndex()
 	dbName, err = r.ResolveDatabase(database)
 	if err != nil {
 		return "", nil, err
@@ -106,26 +104,36 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 		return "", nil, nil, err
 	}
 
-	selection := database
-	if selection == "" {
-		selection = dbName
+	if cached := r.cachedExecutor(dbName); cached != nil {
+		return dbName, cached, engine, nil
 	}
+	exec, err = r.newExecutor(engine, dbName)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	r.finishExecutor(dbName, engine, exec)
+	return dbName, r.publishExecutor(dbName, exec), engine, nil
+}
 
-	// Fast path: cached executor
+// cachedExecutor is the executor the router shares for dbName, or nil.
+func (r *heimdallDBRouter) cachedExecutor(dbName string) *cypher.StorageExecutor {
 	r.executorsMu.RLock()
-	if r.executors != nil {
-		if cached := r.executors[selection]; cached != nil && cached.StatementCacheSelectionValid() {
-			r.executorsMu.RUnlock()
-			return dbName, cached, engine, nil
-		}
+	defer r.executorsMu.RUnlock()
+	cached := r.executors[dbName]
+	if cached != nil && cached.StatementCacheSelectionValid() {
+		return cached
 	}
-	r.executorsMu.RUnlock()
+	return nil
+}
 
-	// Create executor scoped to this database.
-	exec = cypher.NewStorageExecutor(engine)
+// newExecutor is an executor scoped to engine with the base executor's
+// embedder, localization and logging, and multi-database commands, but not
+// yet the database's search service or embed queue (finishExecutor).
+func (r *heimdallDBRouter) newExecutor(engine storage.Engine, database string) (*cypher.StorageExecutor, error) {
+	exec := cypher.NewStorageExecutor(engine)
 	if r.dbManager != nil {
-		if err := exec.UseDatabaseStatementCaches(r.dbManager, selection); err != nil {
-			return "", nil, nil, err
+		if err := exec.UseDatabaseStatementCaches(r.dbManager, database); err != nil {
+			return nil, err
 		}
 	} else if r.db != nil {
 		exec.ShareStatementCachesFrom(r.db.GetCypherExecutor())
@@ -147,7 +155,11 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 	if r.dbManager != nil {
 		exec.SetDatabaseManager(&databaseManagerAdapter{manager: r.dbManager, db: r.db, server: nil})
 	}
+	return exec
+}
 
+// finishExecutor gives exec dbName's search service and the embed queue.
+func (r *heimdallDBRouter) finishExecutor(dbName string, engine storage.Engine, exec *cypher.StorageExecutor) {
 	// Reuse DB's cached search service instead of creating a new one.
 	if r.db != nil {
 		if searchSvc, err := r.db.GetOrCreateSearchService(dbName, engine); err == nil && searchSvc != nil {
@@ -163,24 +175,52 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 			})
 		}
 	}
+}
 
-	// Cache executor
+// publishExecutor shares exec as dbName's executor, or returns the one
+// another call shared first.
+func (r *heimdallDBRouter) publishExecutor(dbName string, exec *cypher.StorageExecutor) *cypher.StorageExecutor {
 	r.executorsMu.Lock()
+	defer r.executorsMu.Unlock()
 	if r.executors == nil {
 		r.executors = make(map[string]*cypher.StorageExecutor)
 	}
-	if existing := r.executors[selection]; existing != nil && existing.StatementCacheSelectionValid() {
-		r.executorsMu.Unlock()
-		return dbName, existing, engine, nil
+	if existing := r.executors[dbName]; existing != nil && existing.StatementCacheSelectionValid() {
+		return existing
 	}
 	if !exec.StatementCacheSelectionValid() {
-		r.executorsMu.Unlock()
-		return "", nil, nil, multidb.ErrDatabaseNotFound
+		return exec
 	}
-	r.executors[selection] = exec
-	r.executorsMu.Unlock()
+	r.executors[dbName] = exec
+	return exec
+}
 
-	return dbName, exec, engine, nil
+// statementExecutor is the executor a statement runs on in dbName. The
+// shared one when there is one; otherwise a new executor, which gets the
+// database's search service and embed queue and is shared only once it has
+// admitted the statement (cypher.WithStatementAdmitted), so a statement the
+// principal may not run there opens no search service and leaves nothing
+// cached. It returns ctx with that hook.
+func (r *heimdallDBRouter) statementExecutor(ctx context.Context, database string) (context.Context, *cypher.StorageExecutor, error) {
+	dbName, engine, err := r.storageForDatabase(database)
+	if err != nil {
+		return nil, nil, err
+	}
+	if cached := r.cachedExecutor(dbName); cached != nil {
+		return ctx, cached, nil
+	}
+	exec, err := r.newExecutor(engine, dbName)
+	if err != nil {
+		return nil, nil, err
+	}
+	var admit sync.Once
+	ctx = cypher.WithStatementAdmitted(ctx, exec, func() {
+		admit.Do(func() {
+			r.finishExecutor(dbName, engine, exec)
+			r.publishExecutor(dbName, exec)
+		})
+	})
+	return ctx, exec, nil
 }
 
 // authorizeDatabase is the request principal's decision on the database a
@@ -193,8 +233,12 @@ func (r *heimdallDBRouter) executorForDatabase(database string) (dbName string, 
 // carrying the resolver for the executor, which then authorizes each
 // statement as on the other transports. A context the server marked as
 // served with authentication disabled resolves the name as given; a context
-// with no principal and no such mark is refused.
+// with no principal and no such mark, a principal without its database scope
+// (auth.WithRequestPrincipal attaches both), or no context at all is refused.
 func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database string, permission auth.Permission) (context.Context, string, error) {
+	if ctx == nil {
+		return nil, "", r.databaseForbidden(database)
+	}
 	allows := auth.RequestEntitlementResolverFromContext(ctx)
 	if allows == nil {
 		if !auth.RequestAuthenticationDisabledFromContext(ctx) {
@@ -206,7 +250,11 @@ func (r *heimdallDBRouter) authorizeDatabase(ctx context.Context, database strin
 		}
 		return ctx, dbName, nil
 	}
-	dbName, selectable := auth.RequestDatabaseScopeFromContext(ctx).Resolve(database)
+	scope := auth.RequestDatabaseScopeFromContext(ctx)
+	if scope == nil {
+		return nil, "", r.databaseForbidden(database)
+	}
+	dbName, selectable := scope.Resolve(database)
 	if !selectable || !allows(dbName, permission) {
 		return nil, "", r.databaseForbidden(database)
 	}
@@ -241,7 +289,7 @@ func (r *heimdallDBRouter) Query(ctx context.Context, database string, cypherQue
 	if err != nil {
 		return nil, err
 	}
-	dbName, exec, _, err := r.executorForDatabase(dbName)
+	ctx, exec, err := r.statementExecutor(ctx, dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -538,23 +586,4 @@ func (r *heimdallMetricsReader) Runtime() heimdall.RuntimeMetrics {
 		MemoryAllocMB:  m.Alloc / 1024 / 1024,
 		NumGC:          m.NumGC,
 	}
-}
-
-func (r *heimdallDBRouter) bindStatementCacheIndex() {
-	r.statementCacheIndex.Bind(r.dbManager, func() {
-		r.executorsMu.Lock()
-		defer r.executorsMu.Unlock()
-		for name, executor := range r.executors {
-			if !executor.StatementCacheSelectionValid() {
-				delete(r.executors, name)
-			}
-		}
-	})
-}
-
-func (r *heimdallDBRouter) Close() {
-	r.statementCacheIndex.Close()
-	r.executorsMu.Lock()
-	r.executors = nil
-	r.executorsMu.Unlock()
 }
