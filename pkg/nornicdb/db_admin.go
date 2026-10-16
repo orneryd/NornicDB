@@ -17,6 +17,7 @@ import (
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
+	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
@@ -117,6 +118,12 @@ func (db *DB) TriggerSearchClustering() error {
 // at a regular interval. This is preferred over trigger-based clustering which
 // can cause performance issues when embeddings are created frequently.
 // Runs immediately on startup, then every interval thereafter (skipping if no changes).
+//
+// Between ticks, a growth check every NORNICDB_KMEANS_GROWTH_CHECK_INTERVAL
+// (default 10s) clusters a database whose vectors grew by
+// NORNICDB_KMEANS_GROWTH_RATIO (default 0.2, 0 disables) since its last
+// clustering and then stopped changing, so a bulk load is clustered once it
+// finishes rather than up to an interval later.
 func (db *DB) startClusteringTimer(interval time.Duration) {
 	db.mu.Lock()
 	if db.clusterTicker != nil || db.closed {
@@ -143,6 +150,18 @@ func (db *DB) startClusteringTimer(interval time.Duration) {
 		// Run immediately on startup
 		db.runClusteringOnceAllDatabases(ctx)
 
+		var growthC <-chan time.Time
+		growthRatio := envutil.GetFloat("NORNICDB_KMEANS_GROWTH_RATIO", 0.2)
+		if growthRatio > 0 {
+			every := envutil.GetDuration("NORNICDB_KMEANS_GROWTH_CHECK_INTERVAL", 10*time.Second)
+			if every <= 0 {
+				every = 10 * time.Second
+			}
+			growth := time.NewTicker(every)
+			defer growth.Stop()
+			growthC = growth.C
+		}
+
 		// Then run on timer
 		for {
 			select {
@@ -151,6 +170,8 @@ func (db *DB) startClusteringTimer(interval time.Duration) {
 				return
 			case <-t.C:
 				db.runClusteringOnceAllDatabases(ctx)
+			case <-growthC:
+				db.runClusteringAllDatabases(ctx, clusteringGrowthDue(growthRatio), false)
 			}
 		}
 	}(ticker, stopCh)

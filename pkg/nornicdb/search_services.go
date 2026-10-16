@@ -34,6 +34,9 @@ type dbSearchService struct {
 
 	clusterMu               sync.Mutex
 	lastClusteredEmbedCount int
+	// growthObservedCount is the vector count the last growth check saw
+	// (clusteringGrowthDue).
+	growthObservedCount int
 
 	pendingMu           sync.Mutex
 	pendingOps          map[string]pendingSearchMutation
@@ -1057,6 +1060,33 @@ func (db *DB) runClusteringOnceAllDatabases(ctx context.Context) {
 		}
 	}
 
+	db.runClusteringAllDatabases(ctx, clusteringStale, true)
+}
+
+// clusteringStale is the timer's and manual trigger's rule: a database is
+// clustered when its vector count changed since its last clustering.
+func clusteringStale(entry *dbSearchService, count int) bool {
+	return count != entry.lastClusteredEmbedCount || entry.lastClusteredEmbedCount == 0
+}
+
+// clusteringGrowthDue is the growth check's rule: a database is clustered once
+// its vector count has grown by at least ratio since its last clustering and
+// then held still for one check, so a bulk load is clustered when it finishes
+// instead of at the next timer tick. It records the count it observed.
+func clusteringGrowthDue(ratio float64) func(entry *dbSearchService, count int) bool {
+	return func(entry *dbSearchService, count int) bool {
+		previous := entry.growthObservedCount
+		entry.growthObservedCount = count
+		grown := float64(count-entry.lastClusteredEmbedCount) >= ratio*float64(max(entry.lastClusteredEmbedCount, 1))
+		return grown && count > entry.lastClusteredEmbedCount && count == previous
+	}
+}
+
+// runClusteringAllDatabases runs k-means for each open database for which due
+// (called under the entry's clusterMu with its vector count) reports true.
+// logDeferred logs a due database skipped because its search build is not
+// ready.
+func (db *DB) runClusteringAllDatabases(ctx context.Context, due func(entry *dbSearchService, count int) bool, logDeferred bool) {
 	db.searchServicesMu.RLock()
 	entries := make([]*dbSearchService, 0, len(db.searchServices))
 	for _, entry := range db.searchServices {
@@ -1082,7 +1112,7 @@ func (db *DB) runClusteringOnceAllDatabases(ctx context.Context) {
 		// A clustering run already in progress is skipped quietly.
 		clustering := entry.svc.ClusteringInProgress()
 		if progress.Building || !progress.Ready || clustering {
-			if !clustering {
+			if !clustering && logDeferred {
 				log.Printf("🔬 K-means clustering deferred for db %s: search build in progress or not ready (building=%t, phase=%s)", entry.dbName, progress.Building, progress.Phase)
 			}
 			continue
@@ -1096,7 +1126,7 @@ func (db *DB) runClusteringOnceAllDatabases(ctx context.Context) {
 		// holds vector index read lock).
 		entry.clusterMu.Lock()
 		currentCount := entry.svc.EmbeddingCount()
-		shouldRun := currentCount != entry.lastClusteredEmbedCount || entry.lastClusteredEmbedCount == 0
+		shouldRun := due(entry, currentCount)
 		entry.clusterMu.Unlock()
 		if !shouldRun {
 			continue

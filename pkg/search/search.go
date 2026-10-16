@@ -1582,6 +1582,9 @@ func (s *Service) resetANNForBuild() {
 //
 // This is independent from k-means clustering. When enabled, the vector pipeline
 // may choose GPU brute-force search (exact) for datasets where it outperforms HNSW.
+// The GPU copy of the vectors is built when that strategy is first chosen
+// (ensureGPUIndexSynced), not here: outside NORNICDB_VECTOR_GPU_BRUTE_MIN_N..MAX_N
+// it is never used, and it holds every vector in host and GPU memory.
 func (s *Service) SetGPUManager(manager *gpu.Manager) {
 	s.pipelineMu.Lock()
 	s.vectorPipeline = nil
@@ -1591,42 +1594,10 @@ func (s *Service) SetGPUManager(manager *gpu.Manager) {
 	defer s.mu.Unlock()
 
 	s.gpuManager = manager
-	if manager == nil || !manager.IsEnabled() {
+	if s.gpuEmbeddingIndex != nil {
+		s.gpuEmbeddingIndex.Clear()
 		s.gpuEmbeddingIndex = nil
-		return
 	}
-
-	dimensions := 0
-	if s.vectorIndex != nil {
-		dimensions = s.vectorIndex.GetDimensions()
-	}
-	if dimensions <= 0 {
-		return
-	}
-
-	cfg := gpu.DefaultEmbeddingIndexConfig(dimensions)
-	cfg.GPUEnabled = true
-	cfg.AutoSync = true
-	cfg.BatchThreshold = 1000
-	gi := gpu.NewEmbeddingIndex(manager, cfg)
-
-	// Snapshot current vectors.
-	s.vectorIndex.mu.RLock()
-	ids := make([]string, 0, len(s.vectorIndex.vectors))
-	embs := make([][]float32, 0, len(s.vectorIndex.vectors))
-	for id, vec := range s.vectorIndex.vectors {
-		if len(vec) == 0 {
-			continue
-		}
-		ids = append(ids, id)
-		embs = append(embs, vec)
-	}
-	s.vectorIndex.mu.RUnlock()
-
-	_ = gi.AddBatch(ids, embs)
-	_ = gi.SyncToGPU()
-
-	s.gpuEmbeddingIndex = gi
 }
 
 // EnableClustering enables GPU k-means clustering for accelerated vector search.
@@ -5922,18 +5893,26 @@ func ivfpqProfileFromCompressed(profile CompressedANNProfile) IVFPQProfile {
 
 func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount, dimensions int, vfs *VectorFileStore) (*vectorStrategyDescriptor, error) {
 	// Auto strategy: choose candidate generator based on dataset size and clustering
-	gpuEnabled := s.gpuManager != nil && s.gpuManager.IsEnabled() && s.gpuEmbeddingIndex != nil
-	gpuMinN := envutil.GetInt("NORNICDB_VECTOR_GPU_BRUTE_MIN_N", 5000)
+	gpuEnabled := s.gpuManager != nil && s.gpuManager.IsEnabled()
 	gpuMaxN := envutil.GetInt("NORNICDB_VECTOR_GPU_BRUTE_MAX_N", 15000)
 
 	// Prefer GPU brute-force (exact) when enabled and within configured thresholds.
 	// This path is exact and typically highest-throughput within its tuned N range.
-	if gpuEnabled && vectorCount >= gpuMinN && vectorCount <= gpuMaxN {
-		return &vectorStrategyDescriptor{
-			name:         "GPU brute-force",
-			candidateGen: NewGPUBruteForceCandidateGen(s.gpuEmbeddingIndex),
-			scorerPolicy: exactScorerPolicyIdentity,
-		}, nil
+	// Its GPU copy of the vectors is built here, the first time it is chosen.
+	if s.desiredRuntimeStrategy(vectorCount) == strategyModeBruteGPU {
+		_, vi, _ := s.snapshotStrategyInputs()
+		if err := s.ensureGPUIndexSynced(vi, vfs); err != nil {
+			s.logPrintf("⚠️ GPU brute-force unavailable, choosing another strategy: %v", err)
+		} else {
+			s.mu.RLock()
+			gi := s.gpuEmbeddingIndex
+			s.mu.RUnlock()
+			return &vectorStrategyDescriptor{
+				name:         "GPU brute-force",
+				candidateGen: NewGPUBruteForceCandidateGen(gi),
+				scorerPolicy: exactScorerPolicyIdentity,
+			}, nil
+		}
 	}
 	if cpuBruteMaxN := cpuBruteForceMaxN(); cpuBruteMaxN > 0 && vectorCount < cpuBruteMaxN {
 		// Small dataset: use brute-force on CPU (exact) when vectors are in memory;
