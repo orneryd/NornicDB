@@ -43,10 +43,9 @@ func TestEmbeddingCleanup_LiveSeparatorID(t *testing.T) {
 					}
 					require.Equal(t, 16, separatorIDKeyCount(t, b, id))
 					if reopen {
-						require.NoError(t, b.withUpdate(func(txn *badger.Txn) error { return txn.Delete(embeddingRepairReadyKey) }))
+						require.NoError(t, b.withUpdate(setReleasedStoreVersion))
 						require.NoError(t, b.Close())
-						b, err = NewBadgerEngine(dir)
-						require.NoError(t, err)
+						b = reopenReleasedStore(t, dir)
 					} else {
 						removed, repairErr := b.RepairOrphanedEmbeddingKeys()
 						require.NoError(t, repairErr)

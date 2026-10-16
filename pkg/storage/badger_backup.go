@@ -148,10 +148,14 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	if err := b.loadPersistedSchemas(); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
-	// An old backup can contain an inline body and orphaned chunks. Establish
-	// the same absence guarantee as open before the no-chunk fast path runs.
-	if err := b.ensureEmbeddingKeyRepair(); err != nil {
+	// A V3 backup can contain an inline body and orphaned chunks. Upgrade it
+	// as open does before the no-chunk fast path runs.
+	if version, err := b.readSchemaVersionHeld(); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
+	} else if version == storageVersionEdgeAdjacencyV3 {
+		if err := b.migrateV3ToV4(); err != nil {
+			return localizedError(localization.StorageClientBackupFailed(err), err)
+		}
 	}
 
 	b.invalidateCachesAfterRestore()

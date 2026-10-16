@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pre-selected) and a "Select all" box.
 ### Changed
 
+- Storage version 4: the removal of embedding keys left behind by older delete and shrink paths is now the
+  V3→V4 upgrade arm instead of a check on every open. Existing data directories need one restart with
+  `--upgrade-storage` (or `NORNICDB_UPGRADE_STORAGE=1`); restoring a V3 backup upgrades the restored data.
 - Idle automatic embedding workers wait for enqueue notifications. Recovery scans have a 30-second minimum
   interval, and all embedding batch paths honor foreground-pressure pauses. Model readiness and resume
   wake the worker pool; skipping deleted candidates continues draining pending work (#1230).

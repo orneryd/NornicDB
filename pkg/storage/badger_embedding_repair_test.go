@@ -1,12 +1,37 @@
 package storage
 
 import (
+	"encoding/binary"
 	"fmt"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
+
+// setReleasedStoreVersion gives a store the version released builds wrote,
+// whose delete and shrink paths could leave orphaned embedding keys.
+func setReleasedStoreVersion(txn *badger.Txn) error {
+	version := make([]byte, 8)
+	binary.BigEndian.PutUint64(version, uint64(storageVersionEdgeAdjacencyV3))
+	return txn.Set(mvccSchemaVersionKey(), version)
+}
+
+// reopenReleasedStore checks that an old store needs the upgrade, then opens
+// it as the operator's authorized upgrade does.
+func reopenReleasedStore(t *testing.T, dir string) *BadgerEngine {
+	t.Helper()
+	_, err := NewBadgerEngine(dir)
+	var upgrade *ErrStorageUpgradeRequired
+	require.ErrorAs(t, err, &upgrade)
+	require.Equal(t, storageVersionEdgeAdjacencyV3, upgrade.OnDisk)
+	b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true})
+	require.NoError(t, err)
+	version, err := b.readSchemaVersion()
+	require.NoError(t, err)
+	require.Equal(t, storageVersionEmbedKeysV4, version)
+	return b
+}
 
 // An old #1218 shrink persisted an inline body but left 14 of 16 chunk
 // keys. Reopen that exact disk shape before exercising the new fast path.
@@ -31,8 +56,7 @@ func TestEmbeddingCleanup_LegacyShrinkOrphans(t *testing.T) {
 				if err = txn.Set(nodeKey(id), body); err != nil {
 					return err
 				}
-				// Old binaries did not write the new repair-completion marker.
-				if err := txn.Delete(embeddingRepairReadyKey); err != nil {
+				if err := setReleasedStoreVersion(txn); err != nil {
 					return err
 				}
 				// Run the pre-#1218 cleanup verbatim: Badger retains each borrowed
@@ -50,10 +74,9 @@ func TestEmbeddingCleanup_LegacyShrinkOrphans(t *testing.T) {
 			}))
 			require.Equal(t, 14, countEmbeddingKeys(t, b, id))
 			require.NoError(t, b.Close())
-			b, err = NewBadgerEngine(dir)
-			require.NoError(t, err)
+			b = reopenReleasedStore(t, dir)
 			defer b.Close()
-			require.Zero(t, countEmbeddingKeys(t, b, id), "open repairs the legacy range before absence can be trusted")
+			require.Zero(t, countEmbeddingKeys(t, b, id), "the upgrade repairs the legacy range before absence can be trusted")
 			next, err := b.GetNode(id)
 			require.NoError(t, err)
 			require.True(t, next.embeddingKeysKnown)

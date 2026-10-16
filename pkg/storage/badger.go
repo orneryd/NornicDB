@@ -124,6 +124,8 @@ const (
 	// prefixMVCCMetaTemporalIndexFormat records the temporal history index's
 	// key format; see temporalIndexFormatKey.
 	prefixMVCCMetaTemporalIndexFormat = byte(0x12)
+	// 0x13 is retired: unreleased builds wrote an embedding repair marker
+	// there before the V3→V4 upgrade arm replaced it. Do not reassign it.
 )
 
 // maxNodeSize is the maximum size for a node to be stored inline (50KB to leave room for BadgerDB overhead)
@@ -1103,13 +1105,6 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to load mvcc prune floors: %w", err)
 	}
 
-	// Old shrink/delete code could leave orphan chunks behind an inline or
-	// missing body. Repair once before reads may trust body/meta absence.
-	if err := engine.ensureEmbeddingKeyRepair(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to repair orphaned embedding keys: %w", err)
-	}
-
 	// Now bodies are guaranteed v2. Schema load + unique-value rebuild
 	// can decode them.
 	if err := engine.loadPersistedSchemas(); err != nil {
@@ -1340,8 +1335,17 @@ func (b *BadgerEngine) persistMVCCSequence(namespace string) {
 }
 
 func (b *BadgerEngine) readSchemaVersion() (int, error) {
+	return readSchemaVersionWith(b.db.View)
+}
+
+// readSchemaVersionHeld reads it while Restore holds reads.
+func (b *BadgerEngine) readSchemaVersionHeld() (int, error) {
+	return readSchemaVersionWith(b.db.viewHeld)
+}
+
+func readSchemaVersionWith(view func(func(txn *badger.Txn) error) error) (int, error) {
 	var version int
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := view(func(txn *badger.Txn) error {
 		item, err := txn.Get(mvccSchemaVersionKey())
 		if err == badger.ErrKeyNotFound {
 			return nil

@@ -1,46 +1,41 @@
 package storage
 
 import (
+	"encoding/binary"
+
 	"github.com/dgraph-io/badger/v4"
 )
 
-const prefixMVCCMetaEmbeddingRepairReady = byte(0x13)
 const embeddingRepairBatchSize = 128
 
-var embeddingRepairReadyKey = []byte{prefixMVCCMeta, prefixMVCCMetaEmbeddingRepairReady}
-
-// Called at open or during offline Restore, before readers or writers resume.
-func (b *BadgerEngine) ensureEmbeddingKeyRepair() error {
-	ready := false
-	if err := b.db.viewHeld(func(txn *badger.Txn) error {
-		_, err := txn.Get(embeddingRepairReadyKey)
-		if err == badger.ErrKeyNotFound {
-			return nil
-		}
-		ready = err == nil
-		return err
-	}); err != nil {
+// migrateV3ToV4 is the upgrade arm for stores written before the #1218
+// cleanup fix, whose shrink and delete paths could leave chunks behind an
+// inline or missing body. Reads trust body and metadata absence only from V4.
+// It also upgrades a V3 backup during offline Restore, so it runs on the
+// held read path; a crash before the version write repeats the remaining work.
+func (b *BadgerEngine) migrateV3ToV4() error {
+	if _, err := b.repairOrphanedEmbeddingKeysLocked(); err != nil {
 		return err
 	}
-	if ready {
-		return nil
-	}
-	_, err := b.repairOrphanedEmbeddingKeysLocked()
-	return err
+	return b.commitEngineWriteHeld(func(cw *commitWriter) error {
+		return cw.writeOnce(func(txn *badger.Txn) error {
+			version := make([]byte, 8)
+			binary.BigEndian.PutUint64(version, uint64(storageVersionEmbedKeysV4))
+			return txn.Set(mvccSchemaVersionKey(), version)
+		})
+	})
 }
 
 // RepairOrphanedEmbeddingKeys removes separately stored keys with no owning
 // node, or with an inline owner and no sidecar metadata. It preserves ranges
 // referenced by a separate body or a sidecar, including stale sidecars.
-// Open and Restore run this once for stores written before the #1218 cleanup
-// fix; it can also be run explicitly, for example:
+// The V3→V4 upgrade runs it once; it can also be run explicitly, for example:
 //
 //	removed, err := engine.RepairOrphanedEmbeddingKeys()
 //
 // Discovery retains at most 256 candidate owners and each deletion transaction
 // copies at most 128 keys. The
 // repair excludes writers and drains buffered data before inspecting owners.
-// A crash before the completion marker safely repeats the remaining work.
 func (b *BadgerEngine) RepairOrphanedEmbeddingKeys() (int, error) {
 	for {
 		if err := b.FlushWriteBehind(); err != nil {
@@ -135,13 +130,6 @@ func (b *BadgerEngine) repairOrphanedEmbeddingKeysLocked() (int, error) {
 				}
 			}
 		}
-	}
-	if err := b.commitEngineWriteHeld(func(cw *commitWriter) error {
-		return cw.writeOnce(func(txn *badger.Txn) error {
-			return txn.Set(embeddingRepairReadyKey, []byte{1})
-		})
-	}); err != nil {
-		return removed, err
 	}
 	return removed, nil
 }

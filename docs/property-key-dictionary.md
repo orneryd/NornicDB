@@ -139,8 +139,9 @@ the one-way upgrade
 | V0 → V1   | on-disk version 0   | Existing — extracts legacy access state into AccessMeta records. Idempotent, body bytes intact. |
 | V1 → V2   | on-disk version 1   | Eager rewrite of every node + edge body to the tokenized codec. Bumps version on clean pass.    |
 | V2 → V3   | on-disk version 2   | Restore missing versioned edge adjacency from live bodies and retained edge versions; body encoding remains V2. |
+| V3 → V4   | on-disk version 3   | Remove separately stored embedding keys left behind an inline or missing node body by older delete and shrink paths. Body encoding remains V2. |
 
-A V0 store with `--upgrade-storage` runs all applicable arms in sequence through V3. The V2→V3 repair uses bounded scans and only advances the version after both passes succeed; an interrupted upgrade retries safely. It preserves existing adjacency entries and tombstones. Historical adjacency can only be restored where the corresponding edge version body is still retained; pruned history cannot be recreated.
+A V0 store with `--upgrade-storage` runs all applicable arms in sequence through V4. Restoring a V3 backup runs the V3→V4 arm on the restored data before reads resume. `RepairOrphanedEmbeddingKeys` runs the same repair explicitly. The V2→V3 repair uses bounded scans and only advances the version after both passes succeed; an interrupted upgrade retries safely. It preserves existing adjacency entries and tombstones. Historical adjacency can only be restored where the corresponding edge version body is still retained; pruned history cannot be recreated.
 
 ### V1→V2 rewrite
 
