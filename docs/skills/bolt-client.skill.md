@@ -43,8 +43,8 @@ the text after it (Bolt and HTTP alike).
 ### Retry these — transient
 
 | Wire shape | Code class | When |
-| Write/query rate quota exceeded | `Neo.TransientError.General.ResourceExhaustion` | NornicDB quota status; retry with bounded backoff after refill. Commit-time rejection is pre-publication and fully rolled back. |
 |---|---|---|
+| Write/query rate quota exceeded | `Neo.TransientError.General.ResourceExhaustion` | NornicDB quota status; retry with bounded backoff after refill. Commit-time rejection is pre-publication and fully rolled back. |
 | `commit failed: conflict: node <id> changed after transaction start` | `Neo.TransientError.Transaction.Outdated` | Optimistic write conflict on a node — another transaction committed first. |
 | `commit failed: conflict: edge <id> changed after transaction start` | `Neo.TransientError.Transaction.Outdated` | Same, for edges. |
 | `commit failed: conflict: node <id> has adjacent edge <eid> changed after transaction start` | `Neo.TransientError.Transaction.Outdated` | Same, propagated through an adjacent edge. |

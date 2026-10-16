@@ -205,3 +205,17 @@ func TestTransactionQuotaCanonicalPropertylessSize(t *testing.T) {
 	require.Equal(t, nilSize, emptySize)
 	require.NotNil(t, edge.Properties)
 }
+
+func TestTransactionQuotaCanceledReadOnlyReleasesTransaction(t *testing.T) {
+	manager, db := setupTestManager(t)
+	engine, err := manager.GetStorage(db)
+	require.NoError(t, err)
+	read, err := manager.inner.(*storage.MemoryEngine).BeginTransaction()
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = engine.(*sizeTrackingEngine).CommitTransaction(ctx, read)
+	require.ErrorIs(t, err, context.Canceled)
+	require.False(t, read.IsActive(), "canceled read-only commit must close its snapshot")
+	require.True(t, nornicerrors.IsCommitRolledBack(err))
+}
