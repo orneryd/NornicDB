@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep scoped CALL imports available after WITH while excluding unprojected imports from DISTINCT and grouping keys.
+  Use structural value comparison for DISTINCT, grouping and collection deduplication without serializing lists or maps.
+
 - Use store-owned read-only mappings for file-backed query rescoring and final
   vector selection, avoiding repeated file reads and internal vector copies.
   Keep public owning-copy semantics and retire mappings on growth, reload,
