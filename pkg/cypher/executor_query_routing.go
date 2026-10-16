@@ -423,7 +423,7 @@ func (e *StorageExecutor) validateSyntaxANTLR(cypher string, cypher25 bool) erro
 	}
 	parserError := antlr.Validate(cypher)
 	if parserError == nil {
-		e.markCachedValidSyntax(cypher, syntaxValidANTLR)
+		e.markCachedValidSyntax(cypher, syntaxValidANTLR|syntaxGrammarAccepted)
 		return nil
 	}
 	if err := e.validateSyntaxNornic(cypher); err != nil {
@@ -869,6 +869,11 @@ func (e *StorageExecutor) ensureSyntaxValidationCache() *syntaxValidationCache {
 const (
 	syntaxValidNornic uint8 = 1 << iota
 	syntaxValidANTLR
+	// syntaxGrammarAccepted marks a text the ANTLR grammar itself accepted.
+	// It is not a validator: syntaxValidANTLR also covers NornicDB's
+	// extension statements, which the grammar rejects. The log redactor
+	// reads it on both parsers (redactForLog).
+	syntaxGrammarAccepted
 )
 
 // activeSyntaxValidator is the validator the configured parser selects.
