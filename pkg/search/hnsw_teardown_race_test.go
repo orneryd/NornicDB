@@ -47,9 +47,7 @@ func TestHNSWPreflightSynchronizesWithFileStoreTeardown(t *testing.T) {
 					return true
 				default:
 				}
-				buf := make([]byte, 1<<20)
-				n := runtime.Stack(buf, true)
-				for _, stack := range strings.Split(string(buf[:n]), "\n\n") {
+				for _, stack := range allGoroutineStacks() {
 					if strings.Contains(stack, "(*Service).closeVectorFileStore") && strings.Contains(stack, "sync.(*RWMutex).Lock") {
 						return true
 					}
@@ -184,10 +182,21 @@ func serviceTestGoroutineID() string {
 	return strings.Fields(string(buf[:n]))[1]
 }
 
-func serviceStackContains(id string, frames ...string) bool {
+// allGoroutineStacks grows its buffer until the dump fits: a full package run
+// can exceed any fixed size and silently drop the goroutine being looked for.
+func allGoroutineStacks() []string {
 	buf := make([]byte, 1<<20)
-	n := runtime.Stack(buf, true)
-	for _, stack := range strings.Split(string(buf[:n]), "\n\n") {
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return strings.Split(string(buf[:n]), "\n\n")
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+}
+
+func serviceStackContains(id string, frames ...string) bool {
+	for _, stack := range allGoroutineStacks() {
 		if !strings.HasPrefix(stack, "goroutine "+id+" ") {
 			continue
 		}
