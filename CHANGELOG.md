@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Require Go 1.26.9 and align the 1.26 CI/release/build pins with its upstream
+  macOS 27 plugin-linker fix. Real Heimdall and function/procedure plugin loading
+  tests retain their assertions and debug information (#1366).
+- Enforce database node, relationship, byte and write-rate quotas when committing
+  implicit and explicit transactions, including HTTP and Bolt. Reject an entire
+  over-quota transaction before publication and keep cached byte usage in sync
+  with committed updates and cascading deletes. Release admission/accounting
+  before ordered synchronous listener delivery, allow concurrent unlimited
+  transactions, honor cancellation while waiting, and preserve explicit quota
+  statuses and Bolt connection reuse after rejection (#1366). Preserve the
+  managed system-database owner for routed administration commits and canonical
+  byte accounting across propertyless staged/point/stream representations.
 ### Added
 
 - Default application HNSW traversal to scalar int8 with original-vector rescoring;
