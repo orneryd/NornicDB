@@ -74,7 +74,7 @@ func TestNestedUseRunsThroughDatabaseRouter(t *testing.T) {
 					require.NoError(t, err)
 				}
 				if c.tx {
-					_, commitErr := exec.handleCommit()
+					_, commitErr := exec.handleCommit(context.Background())
 					if c.code != "" {
 						require.Error(t, commitErr, "a rejected statement fails its transaction")
 					} else {

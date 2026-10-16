@@ -369,11 +369,11 @@ func TestExecuteInternal_Branches(t *testing.T) {
 	assert.Equal(t, int64(1), res.Rows[0][0])
 
 	// Active transaction path delegates to executeInTransaction.
-	_, err = exec.parseTransactionStatement("BEGIN")
+	_, err = exec.parseTransactionStatement(context.Background(), "BEGIN")
 	require.NoError(t, err)
 	res, err = exec.executeInternal(ctx, "CREATE (:InternalBranch {id:'ib-1'})", nil)
 	require.NoError(t, err)
-	_, err = exec.parseTransactionStatement("COMMIT")
+	_, err = exec.parseTransactionStatement(context.Background(), "COMMIT")
 	require.NoError(t, err)
 
 	verify, err := exec.Execute(ctx, "MATCH (n:InternalBranch {id:'ib-1'}) RETURN count(n) AS c", nil)

@@ -26,7 +26,7 @@ func TestRunManyFailedStatementFailsTheTransaction(t *testing.T) {
 			_, err := exec.Execute(ctx, "CALL apoc.cypher.runMany('CREATE (:InRunMany); RETURN __nornic_interpolate(1) AS v;', {}) YIELD row RETURN row", nil)
 			require.ErrorContains(t, err, "unknown function: __nornic_interpolate")
 			if explicit {
-				_, err = exec.handleCommit()
+				_, err = exec.handleCommit(context.Background())
 				require.Error(t, err, "the refused statement failed the transaction")
 			}
 			for _, label := range []string{"BeforeRunMany", "InRunMany"} {
@@ -54,7 +54,7 @@ func TestAdministrationCommandInProcedureStatementIsRefused(t *testing.T) {
 			_, err := exec.Execute(ctx, "CALL apoc.cypher.run('GRANT EXECUTE BOOSTED PROCEDURE db.cdc.* ON DBMS TO viewer', {}) YIELD value RETURN value", nil)
 			requireStatusCode(t, err, "Neo.ClientError.Transaction.ForbiddenDueToTransactionType")
 			if explicit {
-				_, err = exec.handleCommit()
+				_, err = exec.handleCommit(context.Background())
 				require.Error(t, err)
 			}
 			grants, err := auth.NewProcedurePrivilegeStore(stores["system"]).List(ctx)

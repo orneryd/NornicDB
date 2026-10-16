@@ -98,7 +98,7 @@ func TestTypedListPropertyExplicitTransactionRollsBack(t *testing.T) {
 	require.Error(t, err)
 	code, _ := nornicerrors.Neo4jStatus(err)
 	require.Equal(t, "Neo.ClientError.Statement.TypeError", code)
-	if _, err := exec.handleCommit(); err != nil {
+	if _, err := exec.handleCommit(context.Background()); err != nil {
 		t.Logf("commit (expected failed tx): %v", err)
 	}
 	res, err := exec.Execute(ctx, "MATCH (n:T) RETURN count(n) AS c", nil)
