@@ -33,7 +33,15 @@ func cypherComparableKey(value interface{}) (interface{}, bool) {
 			return nil, true
 		}
 		return cypherEntityKey{'r', string(value.ID)}, true
-	case storage.RemoteEntityValue, storage.RemotePathValue:
+	case storage.RemoteEntityValue:
+		if value == nil {
+			return nil, true
+		}
+		return cypherEncodedKey(cypherEquivalenceKey(value)), true
+	case storage.RemotePathValue:
+		if value == nil {
+			return nil, true
+		}
 		return cypherEncodedKey(cypherEquivalenceKey(value)), true
 	case []byte, []interface{}, map[string]interface{}:
 		return nil, false
