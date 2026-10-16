@@ -69,6 +69,11 @@ func TestHTTPTransactionQuotas(t *testing.T) {
 				rejected := request(endpoint, queries...)
 				require.NotEmpty(t, rejected.Errors)
 				require.Contains(t, strings.ToLower(rejected.Errors[0].Message), tc.message)
+				expectedCode := multidb.QuotaCapacityStatus
+				if tc.name == "rate" {
+					expectedCode = multidb.QuotaRateStatus
+				}
+				require.Equal(t, expectedCode, rejected.Errors[0].Code)
 				require.Nil(t, rejected.Receipt)
 				read := request("/db/"+db+"/tx/commit", "MATCH (n:Quota) RETURN count(n)")
 				require.Empty(t, read.Errors)

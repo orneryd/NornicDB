@@ -23,11 +23,23 @@ var (
 	ErrInvalidAliasName        = errors.New("invalid alias name")
 	ErrAliasConflict           = errors.New("alias conflicts with existing database name")
 	ErrDatabaseHasAliases      = errors.New("database has aliases - drop aliases first")
-	ErrStorageLimitExceeded    = errors.New("storage limit exceeded")
+	ErrStorageLimitExceeded    = &quotaError{"storage limit exceeded", QuotaCapacityStatus}
 	ErrQueryLimitExceeded      = errors.New("query limit exceeded")
 	ErrConnectionLimitExceeded = errors.New("connection limit exceeded")
-	ErrRateLimitExceeded       = errors.New("rate limit exceeded")
+	ErrRateLimitExceeded       = &quotaError{"rate limit exceeded", QuotaRateStatus}
 	ErrNotCompositeDatabase    = errors.New("database is not a composite database")
 	ErrConstituentNotFound     = errors.New("constituent not found")
 	ErrDuplicateConstituent    = errors.New("duplicate constituent alias")
 )
+
+// QuotaCapacityStatus and QuotaRateStatus are NornicDB resource-quota statuses.
+// Capacity needs an operator/data change; rate exhaustion admits a later retry.
+const (
+	QuotaCapacityStatus = "Neo.ClientError.General.ResourceLimit"
+	QuotaRateStatus     = "Neo.TransientError.General.ResourceExhaustion"
+)
+
+type quotaError struct{ message, code string }
+
+func (e *quotaError) Error() string         { return e.message }
+func (e *quotaError) BoltErrorCode() string { return e.code }

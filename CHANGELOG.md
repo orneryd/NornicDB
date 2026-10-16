@@ -39,7 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enforce database node, relationship, byte and write-rate quotas when committing
   implicit and explicit transactions, including HTTP and Bolt. Reject an entire
   over-quota transaction before publication and keep cached byte usage in sync
-  with committed updates and cascading deletes.
+  with committed updates and cascading deletes. Release admission/accounting
+  before ordered synchronous listener delivery, allow concurrent unlimited
+  transactions, honor cancellation while waiting, and preserve explicit quota
+  statuses and Bolt connection reuse after rejection (#1366).
 - A statement stopped at its deadline reports Neo4j's `Neo.ClientError.Transaction.TransactionTimedOut` (server-configured
   limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
   `Neo.ClientError.Statement.SyntaxError` (#1339).

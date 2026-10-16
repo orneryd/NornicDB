@@ -1231,7 +1231,7 @@ func (s *Session) handleCommit(data []byte) error {
 	// executor, so a COMMIT that starts before the deadline remains the sole
 	// terminal owner even if storage work crosses the deadline.
 	if txExec != nil {
-		ctx := context.Background()
+		ctx := s.txLifecycle.commitContext()
 		commitCallStarted = true
 		commitCallErr = txExec.CommitTransaction(ctx)
 		commitCallReturned = true

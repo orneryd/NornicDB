@@ -2801,20 +2801,7 @@ func (tx *BadgerTransaction) mergePendingEdgesLocked(committed []*Edge, includeP
 // and nothing is stored. Once the writes are being applied the commit runs to
 // completion, so a commit is never partially applied.
 func (tx *BadgerTransaction) CommitContext(ctx context.Context) error {
-	if ctx != nil {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-	}
-	tx.mu.Lock()
-	tx.commitCtx = ctx
-	tx.mu.Unlock()
-	defer func() {
-		tx.mu.Lock()
-		tx.commitCtx = nil
-		tx.mu.Unlock()
-	}()
-	return tx.Commit()
+	return tx.CommitContextWithPublication(ctx, nil)
 }
 
 // commitCancelledLocked reports the commit context's error once it is done.
@@ -2829,12 +2816,17 @@ func (tx *BadgerTransaction) commitCancelledLocked() error {
 // between polls of the commit context.
 const commitCancelPollEvery = 256
 
-func (tx *BadgerTransaction) Commit() error {
+func (tx *BadgerTransaction) Commit() error { return tx.commit(nil) }
+
+func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	tx.mu.Lock()
 	var knowledgePolicyChanged func()
 	notification := &commitNotification{}
 	defer func() {
 		tx.mu.Unlock()
+		if commitErr == nil && afterPublication != nil {
+			afterPublication()
+		}
 		tx.engine.completeCommitNotification(notification)
 		if knowledgePolicyChanged != nil {
 			knowledgePolicyChanged()
@@ -2845,9 +2837,9 @@ func (tx *BadgerTransaction) Commit() error {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return err
 	}
-	// The engine's write barrier is held through publication, with event
-	// callbacks dispatched after it and tx.mu are released
-	// (releaseWriteBarrierLocked): exclusively for a schema transaction, so
+	// The engine's write barrier is held through publication, with the
+	// afterPublication hook and then the event callbacks run after it and
+	// tx.mu are released (releaseWriteBarrierLocked): exclusively for a schema transaction, so
 	// no data write publishes between its snapshot check and its schema
 	// publication; shared otherwise, so Close waits for the commit and a
 	// commit that arrives after Close finished fails here without touching
