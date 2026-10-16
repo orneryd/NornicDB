@@ -43,6 +43,10 @@ func (s *Service) applyWrite(dimensions int, m liveMutation, load func() (liveMu
 		unlock()
 		return m, nil, err
 	}
+	if err := s.awaitBudgetAdmissionLocked(); err != nil {
+		unlock()
+		return m, nil, err
+	}
 	for loaded := false; ; {
 		if load != nil && !loaded {
 			if m, dimensions, err = load(); err != nil {
@@ -268,4 +272,54 @@ func (s *Service) isRecordedWriteLocked(id string) bool {
 func (s *Service) clearPopulationWritesLocked() {
 	clear(s.nodePopulationWrites)
 	clear(s.edgePopulationWrites)
+}
+
+// indexBudgeted reports whether the service enforces any index memory budget.
+func (s *Service) indexBudgeted() bool {
+	return s.bm25MemoryMaxBytes > 0 || s.vectorMemoryMaxBytes > 0 || s.metadataMemoryMaxBytes > 0
+}
+
+// awaitBudgetAdmissionLocked is the one exception to "a write never waits for
+// a population" (F-I86, orchestrator decision on budgets). On a service with
+// an index memory budget, whether a write fits is only known once its
+// population has admitted NODE with the restored usage, and callers act on
+// ErrIndexMemoryBudgetExceeded, so such a write waits for NODE admission (not
+// for ANN) and returns that population's error if it failed, as before.
+// Unbudgeted services never wait. Caller holds indexMu; it is released while
+// waiting and held again on a nil return.
+func (s *Service) awaitBudgetAdmissionLocked() error {
+	for s.indexBudgeted() {
+		job := s.pendingNodeAdmission()
+		if job == nil {
+			if !s.nodePopulationRestorable() || s.nodeSourcesCompleteLocked() {
+				return nil
+			}
+			job = s.claimNodeAdmission()
+		}
+		s.indexMu.Unlock()
+		s.ensureAdmissionWorker(job)
+		lifetime := s.lifecycleCtx
+		if lifetime == nil {
+			lifetime = context.Background()
+		}
+		select {
+		case <-job.done:
+		case <-lifetime.Done():
+		}
+		s.indexMu.Lock()
+		if err := s.lifecycleErr(); err != nil {
+			return err
+		}
+		select {
+		case <-job.done:
+			// A population refused or cancelled before it replaced anything
+			// leaves complete sources; only one that left them incomplete fails
+			// the write.
+			if job.err != nil && !s.nodeSourcesCompleteLocked() {
+				return job.err
+			}
+		default:
+		}
+	}
+	return nil
 }
