@@ -39,6 +39,7 @@ const (
 	MessageCypherTransactionsMultiMatchReturnRequired       MessageID = "cyphertransactions.multi_match_return_required"
 	MessageCypherTransactionsMultipleMatchExpected          MessageID = "cyphertransactions.multiple_match_expected"
 	MessageCypherTransactionsCommandNotStatement            MessageID = "cyphertransactions.command_not_statement"
+	MessageCypherTransactionsMemoryLimitExceeded            MessageID = "cyphertransactions.memory_limit_exceeded"
 )
 
 const (
@@ -192,4 +193,14 @@ func CypherTransactionsMultipleMatchExpected() Message {
 // transaction statements (Neo4j rejects them the same way).
 func CypherTransactionsCommandNotStatement(word string) Message {
 	return cypherTransactionsMessage(MessageCypherTransactionsCommandNotStatement, "Invalid input '"+word+"': expected a Cypher statement (a transaction is begun, committed and rolled back by the driver or the HTTP transaction API, not by a statement)", map[string]any{"Word": word})
+}
+
+// CypherTransactionsMemoryLimitExceeded is Neo4j's message for a
+// transaction whose estimated memory would go over a limit (#1343):
+// allocation, limit and used are formatted byte sizes ("197.7 MiB"),
+// setting the limit's setting name.
+func CypherTransactionsMemoryLimitExceeded(allocation, limit, used, setting string) Message {
+	return cypherTransactionsMessage(MessageCypherTransactionsMemoryLimitExceeded,
+		"The allocation of an extra "+allocation+" would use more than the limit "+limit+". Currently using "+used+". "+setting+" threshold reached",
+		map[string]any{"Allocation": allocation, "Limit": limit, "Used": used, "Setting": setting})
 }

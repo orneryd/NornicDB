@@ -592,6 +592,19 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 		if running.tx != nil && running.tx.terminated.Load() && !running.tx.committed.Load() {
 			result, retErr = nil, transactionTerminatedError()
 		}
+		// A statement that went over a memory limit fails with that error,
+		// whichever route noticed the cancellation it caused (#1343).
+		if err := running.memoryFailure(); err != nil {
+			result, retErr = nil, err
+		} else if retErr == nil && result != nil && running.memory != nil {
+			// A nested execution's caller keeps its rows: they count, and
+			// what the execution took goes back here, not in done.
+			err := running.memory.handOver(running.memoryMark, result.Rows)
+			running.memory = nil
+			if err != nil {
+				result, retErr = nil, err
+			}
+		}
 		running.done()
 	}()
 	registerStatement := func() error {
@@ -766,7 +779,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 			return cached, nil
 		}
 	}
-	if running.tx == nil {
+	if running.tx == nil && running.memory == nil {
 		// Registering an auto-commit statement can't fail: only a
 		// terminated explicit transaction refuses a statement, and a
 		// statement of one is registered above.

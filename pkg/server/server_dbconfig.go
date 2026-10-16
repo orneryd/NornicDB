@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
+	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -215,6 +216,7 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	previousResolved := dbconfig.Resolve(s.processConfig, previousOverrides)
 	hasSearchRebuildChange := false
 	hasSearchCacheChange := false
+	hasTransactionMemoryChange := false
 	for key, value := range body.Overrides {
 		if !dbconfig.IsAllowedKey(key) {
 			s.writeLocalizedNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.BadRequest", localization.DisallowedOrUnknownConfigKey(key))
@@ -246,6 +248,8 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 			hasSearchCacheChange = true
 		case dbconfig.HotReloadSearchRebuild:
 			hasSearchRebuildChange = true
+		case dbconfig.HotReloadTransactionMemory:
+			hasTransactionMemoryChange = true
 		}
 	}
 	if err := s.dbConfigStore.SetOverrides(r.Context(), dbName, body.Overrides); err != nil {
@@ -259,6 +263,9 @@ func (s *Server) handlePutDbConfig(w http.ResponseWriter, r *http.Request, dbNam
 	rebuildTriggered := false
 	// Per-db overrides must apply via fresh search service initialization,
 	// not runtime in-place strategy transitions.
+	if hasTransactionMemoryChange {
+		s.applyTransactionMemoryLimits(dbName, nextResolved)
+	}
 	if hasSearchCacheChange {
 		s.db.SetSearchResultCachePolicy(dbName, nextResolved.SearchResultCacheMaxEntries, nextResolved.SearchResultCacheTTL)
 	}
@@ -315,6 +322,17 @@ func redactDatabaseSettings(values map[string]string) map[string]string {
 	return redacted
 }
 
+// databaseSettingsResolver is SHOW SETTINGS' view of dbName: its stored
+// overrides and the values active now.
+func (s *Server) databaseSettingsResolver(dbName string) cypher.SettingsResolver {
+	return func() cypher.SettingsSnapshot {
+		overrides := s.dbConfigStore.GetOverrides(dbName)
+		current := dbconfig.Resolve(s.processConfig, overrides)
+		active, _ := s.databaseConfigRuntimeState(dbName, current)
+		return cypher.SettingsSnapshot{Configured: overrides, Active: active}
+	}
+}
+
 func (s *Server) databaseConfigRuntimeState(dbName string, resolved *dbconfig.ResolvedDbConfig) (map[string]string, bool) {
 	s.dbConfigStateMu.Lock()
 	defer s.dbConfigStateMu.Unlock()
@@ -355,4 +373,14 @@ func (s *Server) updateDatabaseConfigRuntimeState(dbName string, previous, next 
 		delete(s.dbConfigPending, dbName)
 	}
 	return cloneStringMap(active), len(pending) > 0
+}
+
+// applyTransactionMemoryLimits applies a database's resolved transaction
+// memory limits (db.memory.transaction.max, db.memory.transaction.total.max)
+// to the statements that start from now on (#1343).
+func (s *Server) applyTransactionMemoryLimits(dbName string, resolved *dbconfig.ResolvedDbConfig) {
+	cypher.SetDatabaseTransactionMemoryLimits(dbName, cypher.TransactionMemoryLimits{
+		TransactionMax:   resolved.TransactionMemoryMaxBytes,
+		DatabaseTotalMax: resolved.TransactionMemoryTotalMaxBytes,
+	})
 }

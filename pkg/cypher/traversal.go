@@ -60,6 +60,10 @@ type TraversalContext struct {
 	cancelParentDone     <-chan struct{}
 	cancelInitialized    bool
 	cancellationObserved bool
+	// memory is the traversal's account in the statement's memory scope,
+	// resolved once from cancelCtx (#1343).
+	memory         memoryAccount
+	memoryResolved bool
 	// endNodeID, when set, is the only node a path may end at (a shortestPath
 	// pair, #863).
 	endNodeID storage.NodeID
@@ -642,7 +646,14 @@ func expandTraversalWildcardReturnItems(items []returnItem, match *TraversalMatc
 }
 
 func (e *StorageExecutor) appendTraversalRows(ctx context.Context, result *ExecuteResult, paths []PathResult, matches *TraversalMatch, returnItems []returnItem, rowLimit int) {
+	// The rows count against the statement's memory limit; going over
+	// cancels the statement, which then fails with the limit's error (#1343).
+	memory := memoryAccount{scope: memoryScopeFromContext(ctx)}
+	defer memory.close()
 	for _, path := range paths {
+		if memory.grow(sliceHeaderBytes+int64(len(returnItems))*valueSlotBytes) != nil {
+			break
+		}
 		if rowLimit >= 0 && len(result.Rows) >= rowLimit {
 			break
 		}
@@ -1059,6 +1070,9 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 	}
 
 	collected := make([]interface{}, 0, len(paths))
+	// Collected values count against the statement's memory limit (#1343).
+	memory := memoryAccount{scope: memoryScopeFromContext(ctx)}
+	defer memory.close()
 	if distinct {
 		seen := make(map[string]struct{}, len(paths))
 		for _, path := range paths {
@@ -1072,12 +1086,19 @@ func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []Path
 				continue
 			}
 			seen[key] = struct{}{}
+			if memory.grow(estimateValueBytes(val)+estimateValueBytes(key)) != nil {
+				break
+			}
 			collected = append(collected, val)
 		}
 	} else {
 		for _, path := range paths {
 			context := e.buildPathContext(path, matches)
-			collected = append(collected, e.evaluateExpressionWithPathContext(ctx, inner, context))
+			val := e.evaluateExpressionWithPathContext(ctx, inner, context)
+			if memory.growValue(val) != nil {
+				break
+			}
+			collected = append(collected, val)
 		}
 	}
 	if suffix == "" {
@@ -1620,6 +1641,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 		}
 
 		paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
+		traversalCtx.memory.close()
 		results = append(results, paths...)
 		if remaining > 0 {
 			remaining -= len(paths)
@@ -2022,6 +2044,11 @@ func (e *StorageExecutor) findPaths(
 	// Check if current path meets minimum length and endpoint requirements
 	if depth >= ctx.minHops && (ctx.endNodeID == "" || currentNode.ID == ctx.endNodeID) {
 		if e.matchesEndPattern(currentNode, endPattern) {
+			// A path the expansion keeps counts against the statement's
+			// memory limit; going over cancels the statement (#1343).
+			if err := ctx.memoryAccount().grow(estimatePathResultBytes(len(pathNodes), len(pathEdges))); err != nil {
+				return results
+			}
 			results = append(results, PathResult{
 				Nodes:         append([]*storage.Node{}, pathNodes...),
 				Relationships: append([]*storage.Edge{}, pathEdges...),

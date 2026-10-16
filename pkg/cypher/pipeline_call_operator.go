@@ -139,7 +139,14 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		stats := &QueryStats{}
 		out := make([]pipelineRow, 0, len(outerRows))
 		hasReturn := isUnion || pipelineHasClauseKind(clauses, pipelineClauseReturn)
+		// What each outer row's run of the body takes goes back when the run
+		// ends; the rows kept from it count below (#1343).
+		memory := memoryScopeFromContext(runCtx)
+		kept := memoryAccount{scope: memory}
+		keptRows := rowEstimator{known: memory.knownLists()}
+		defer kept.close()
 		for _, outer := range outerRows {
+			rowMark := memory.mark()
 			input := pipelineRow{}
 			bindParameterRow(runCtx, input)
 			if hasLegacyImports {
@@ -200,6 +207,15 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				inner, execErr = runExec.executeUnionBranches(body, unionAll, runBranch)
 			} else {
 				inner, execErr = runBranch(body)
+			}
+			memory.releaseSince(rowMark)
+			if memory != nil && execErr == nil && hasReturn && inner != nil {
+				outerBytes := keptRows.bytes(outer)
+				for _, values := range inner.Rows {
+					if execErr = kept.grow(estimateResultRowBytes(values, keptRows.known) + outerBytes); execErr != nil {
+						break
+					}
+				}
 			}
 			if inner != nil {
 				addQueryStats(stats, inner.Stats)

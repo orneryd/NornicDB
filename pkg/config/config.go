@@ -761,6 +761,17 @@ type MemoryConfig struct {
 	RuntimeLimit int64
 	// RuntimeLimitStr is the configured value in megabytes as a string (e.g., "500")
 	RuntimeLimitStr string
+	// TransactionMax is Neo4j's db.memory.transaction.max: the estimated
+	// memory, in bytes, one transaction may use (0 = unlimited). A
+	// database's own setting overrides it.
+	// Env: NORNICDB_MEMORY_TRANSACTION_MAX (default: 0)
+	TransactionMax int64
+	// TransactionTotalMax is Neo4j's dbms.memory.transaction.total.max: the
+	// estimated memory, in bytes, all transactions together may use
+	// (0 = unlimited). -1 (unset) is Neo4j's default, 70% of the Go memory
+	// limit (EffectiveTransactionTotalMax).
+	// Env: NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX (default: unset)
+	TransactionTotalMax int64
 	// GCPercent controls GC aggressiveness (GOGC)
 	// 100 = default, lower = more aggressive (less memory, more CPU)
 	GCPercent int
@@ -1691,6 +1702,8 @@ type YAMLConfig struct {
 		AutoLinksEnabled             bool    `yaml:"auto_links_enabled"`
 		AutoLinksSimilarityThreshold float64 `yaml:"auto_links_similarity_threshold"`
 		RuntimeLimit                 string  `yaml:"runtime_limit"`
+		TransactionMax               string  `yaml:"transaction_max"`
+		TransactionTotalMax          string  `yaml:"transaction_total_max"`
 		GCPercent                    int     `yaml:"gc_percent"`
 		PoolEnabled                  bool    `yaml:"pool_enabled"`
 		PoolMaxSize                  int     `yaml:"pool_max_size"`
@@ -2076,6 +2089,8 @@ func LoadDefaults() *Config {
 	config.Memory.KmeansClusterInterval = 15 * time.Minute // timer-based clustering every 15 min (skips if no changes)
 	config.Memory.RuntimeLimitStr = "0"
 	config.Memory.RuntimeLimit = 0
+	config.Memory.TransactionMax = 0
+	config.Memory.TransactionTotalMax = -1
 	config.Memory.GCPercent = 100
 	config.Memory.PoolEnabled = true
 	config.Memory.PoolMaxSize = 1000
@@ -2740,6 +2755,20 @@ func applyEnvVars(config *Config) error {
 		}
 		config.Memory.RuntimeLimitStr = v
 		config.Memory.RuntimeLimit = runtimeLimit
+	}
+	if v := getEnv("NORNICDB_MEMORY_TRANSACTION_MAX", ""); v != "" {
+		limit, err := ParseByteSize(v)
+		if err != nil {
+			return fmt.Errorf("invalid NORNICDB_MEMORY_TRANSACTION_MAX value %q: %w", v, err)
+		}
+		config.Memory.TransactionMax = limit
+	}
+	if v := getEnv("NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX", ""); v != "" {
+		limit, err := ParseByteSize(v)
+		if err != nil {
+			return fmt.Errorf("invalid NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX value %q: %w", v, err)
+		}
+		config.Memory.TransactionTotalMax = limit
 	}
 	if v := getEnvInt("NORNICDB_GC_PERCENT", 0); v != 0 {
 		config.Memory.GCPercent = v
@@ -3732,6 +3761,20 @@ func LoadFromFile(configPath string) (*Config, error) {
 		config.Memory.RuntimeLimitStr = yamlCfg.Memory.RuntimeLimit
 		config.Memory.RuntimeLimit = runtimeLimit
 	}
+	if yamlCfg.Memory.TransactionMax != "" {
+		limit, err := ParseByteSize(yamlCfg.Memory.TransactionMax)
+		if err != nil {
+			return nil, fmt.Errorf("invalid memory.transaction_max value %q: %w", yamlCfg.Memory.TransactionMax, err)
+		}
+		config.Memory.TransactionMax = limit
+	}
+	if yamlCfg.Memory.TransactionTotalMax != "" {
+		limit, err := ParseByteSize(yamlCfg.Memory.TransactionTotalMax)
+		if err != nil {
+			return nil, fmt.Errorf("invalid memory.transaction_total_max value %q: %w", yamlCfg.Memory.TransactionTotalMax, err)
+		}
+		config.Memory.TransactionTotalMax = limit
+	}
 	if yamlCfg.Memory.GCPercent > 0 {
 		config.Memory.GCPercent = yamlCfg.Memory.GCPercent
 	}
@@ -4352,6 +4395,60 @@ func ParseMemoryLimitMB(s string) (int64, error) {
 	}
 
 	return mb * bytesPerMB, nil
+}
+
+// ParseByteSize parses a byte size as the memory settings take it: a whole
+// number of bytes, optionally with a k, m, g or t suffix (kibibytes,
+// mebibytes, gibibytes, tebibytes): "0", "512m", "2g".
+func ParseByteSize(raw string) (int64, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return 0, fmt.Errorf("byte size is empty")
+	}
+	multiplier := int64(1)
+	if suffix := value[len(value)-1]; suffix < '0' || suffix > '9' {
+		switch suffix {
+		case 'k':
+			multiplier = 1 << 10
+		case 'm':
+			multiplier = 1 << 20
+		case 'g':
+			multiplier = 1 << 30
+		case 't':
+			multiplier = 1 << 40
+		default:
+			return 0, fmt.Errorf("invalid byte-size suffix in %q", raw)
+		}
+		value = strings.TrimSpace(value[:len(value)-1])
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("invalid byte size %q", raw)
+	}
+	if parsed > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("byte size overflows int64: %q", raw)
+	}
+	return parsed * multiplier, nil
+}
+
+// EffectiveTransactionTotalMax is dbms.memory.transaction.total.max in
+// bytes (0 = unlimited): the configured value, or, unset, Neo4j's default
+// of 70% of the memory limit - the Go runtime's (memory.runtime_limit,
+// NORNICDB_MEMORY_LIMIT or GOMEMLIMIT), unlimited when it has none.
+func (c *MemoryConfig) EffectiveTransactionTotalMax() int64 {
+	if c.TransactionTotalMax >= 0 {
+		return c.TransactionTotalMax
+	}
+	limit := c.RuntimeLimit
+	if limit <= 0 {
+		if current := debug.SetMemoryLimit(-1); current > 0 && current < math.MaxInt64 {
+			limit = current
+		}
+	}
+	if limit <= 0 {
+		return 0
+	}
+	return limit / 10 * 7
 }
 
 // FormatMemorySize formats bytes as human-readable string.

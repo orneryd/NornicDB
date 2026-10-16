@@ -139,8 +139,8 @@ func TestDistinctTupleBoundaries(t *testing.T) {
 		{"eff_view": map[string]interface{}{"active": true}, "thing": int64(1)},
 		{"eff_view": map[string]interface{}{"active": false}, "thing": int64(1)},
 	}
-	require.Len(t, deduplicatePipelineRows(projected, []string{"eff_view", "thing"}), 2, "a projected import belongs in the key")
-	require.Len(t, deduplicatePipelineRows(projected, []string{"thing"}), 1)
+	require.Len(t, deduplicatePipelineRows(nil, projected, []string{"eff_view", "thing"}), 2, "a projected import belongs in the key")
+	require.Len(t, deduplicatePipelineRows(nil, projected, []string{"thing"}), 1)
 }
 
 func BenchmarkScopedCallDistinct(b *testing.B) {

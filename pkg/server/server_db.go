@@ -179,14 +179,10 @@ func (s *Server) getExecutorForDatabaseWithAuth(dbName string, authToken string)
 
 	overrides := s.dbConfigStore.GetOverrides(dbName)
 	resolved := dbconfig.Resolve(s.processConfig, overrides)
+	s.applyTransactionMemoryLimits(dbName, resolved)
 	executor := cypher.NewStorageExecutorWithQueryCachePolicy(storageEngine, resolved.QueryCacheMaxEntries, resolved.QueryCacheTTL)
 	executor.SetLocalizationRenderer(s.localizer)
-	executor.SetSettingsResolver(func() cypher.SettingsSnapshot {
-		overrides := s.dbConfigStore.GetOverrides(dbName)
-		current := dbconfig.Resolve(s.processConfig, overrides)
-		active, _ := s.databaseConfigRuntimeState(dbName, current)
-		return cypher.SettingsSnapshot{Configured: overrides, Active: active}
-	})
+	executor.SetSettingsResolver(s.databaseSettingsResolver(dbName))
 	executor.SetDatabaseManager(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s})
 
 	if !s.dbManager.IsCompositeDatabase(dbName) {
@@ -255,8 +251,12 @@ func (s *Server) newDatabaseScopedExecutor(dbName string) (*cypher.StorageExecut
 
 	overrides := s.dbConfigStore.GetOverrides(dbName)
 	resolved := dbconfig.Resolve(s.processConfig, overrides)
+	s.applyTransactionMemoryLimits(dbName, resolved)
 	executor := cypher.NewStorageExecutorWithQueryCachePolicy(storageEngine, resolved.QueryCacheMaxEntries, resolved.QueryCacheTTL)
 	executor.SetLocalizationRenderer(s.localizer)
+	// SHOW SETTINGS reports the database's own and active values, dynamic
+	// changes included (db.memory.transaction.max, #1343).
+	executor.SetSettingsResolver(s.databaseSettingsResolver(dbName))
 	executor.SetDatabaseManager(&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s})
 
 	// Reuse DB's cached search service instead of creating a new one.
