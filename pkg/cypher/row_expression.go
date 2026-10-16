@@ -1954,7 +1954,7 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) int
 	if end {
 		id = edge.EndNode
 	}
-	node, err := e.storage.GetNode(id)
+	node, err := getQueryNode(e.storage, id)
 	if err != nil {
 		return nil
 	}

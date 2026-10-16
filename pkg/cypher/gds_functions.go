@@ -403,7 +403,7 @@ func gdsNodeByID(store storage.Engine, value interface{}) interface{} {
 		// Preserve asNode's extension: other values may name string IDs.
 		id = storage.NodeID(fmt.Sprint(value))
 	}
-	if node, err := store.GetNode(id); err == nil && node != nil {
+	if node, err := getQueryNode(store, id); err == nil && node != nil {
 		return node
 	}
 	return nil

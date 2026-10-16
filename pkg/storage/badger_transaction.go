@@ -1968,6 +1968,36 @@ func (tx *BadgerTransaction) GetNode(nodeID NodeID) (*Node, error) {
 	return tx.getCommittedNodeLocked(nodeID)
 }
 
+// GetNodeWithoutEmbeddings implements NodeWithoutEmbeddingsReader inside the
+// transaction: GetNode's visibility (pending writes, deletes, connected
+// deletes, the MVCC snapshot) and the node's settled embedding metadata, the
+// worker sidecar's included, without reading separately stored chunk
+// vectors. Vectors already in memory (pending nodes, snapshot caches, the
+// body) may be present, shared rather than copied; a caller that needs the
+// vectors reads with GetNode. Query execution reads nodes this way: rows
+// never carry vectors, and an update reconciles embeddings against the stored
+// node (reconcileManagedEmbeddingsLocked), not the caller's copy.
+func (tx *BadgerTransaction) GetNodeWithoutEmbeddings(nodeID NodeID) (*Node, error) {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+		return nil, err
+	}
+	if err := tx.pinNamespaceFromIDLocked(string(nodeID)); err != nil {
+		return nil, err
+	}
+	if node, connected := tx.connectedDeletes[nodeID]; connected {
+		return copyNodeForCaller(node), nil
+	}
+	if _, deleted := tx.deletedNodes[nodeID]; deleted {
+		return nil, ErrNotFound
+	}
+	if node, exists := tx.pendingNodes[nodeID]; exists {
+		return copyNodeForCaller(node), nil
+	}
+	return tx.getCommittedNodeReadLocked(nodeID, false)
+}
+
 // GetNodeProjected implements ProjectedNodeReader inside the transaction: it
 // decodes only the requested user properties (none when properties is an empty
 // non-nil slice) while preserving ID, labels, timestamps and embedding
@@ -3259,6 +3289,17 @@ func (tx *BadgerTransaction) OperationCount() int {
 }
 
 func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error) {
+	return tx.getCommittedNodeReadLocked(nodeID, true)
+}
+
+// getCommittedNodeReadLocked is getCommittedNodeLocked; with vectors false it
+// reads no separately stored embedding vector (GetNodeWithoutEmbeddings), and
+// a node already held in memory shares its vectors instead of copying them.
+func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors bool) (*Node, error) {
+	copyRead := copyNode
+	if !vectors {
+		copyRead = copyNodeForCaller
+	}
 	// Write-behind overlay: buffered-but-unflushed writes are committed and
 	// visible to every later transaction, ahead of any snapshot read.
 	if tx.engine != nil {
@@ -3267,12 +3308,12 @@ func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error
 				return nil, ErrNotFound
 			}
 			if node, ok := wb.LookupNode(nodeID); ok {
-				return copyNode(node), nil
+				return copyRead(node), nil
 			}
 		}
 	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
-		return copyNode(node), nil
+		return copyRead(node), nil
 	}
 	if node, ok := tx.snapshotLabelNodeByID[nodeID]; ok {
 		// Like the prefix cache, a node with worker-sidecar embeddings is
@@ -3286,13 +3327,13 @@ func (tx *BadgerTransaction) getCommittedNodeLocked(nodeID NodeID) (*Node, error
 			return nil
 		})
 		if !sidecar {
-			return copyNode(node), nil
+			return copyRead(node), nil
 		}
 	}
 	if tx.readTS.IsZero() {
 		return tx.getNodeFromBadgerSnapshotLocked(nodeID)
 	}
-	node, err := tx.engine.getNodeVisibleAtWithView(nodeID, tx.readTS, tx.withSnapshotViewLocked)
+	node, err := tx.engine.getNodeVisibleAtWithView(nodeID, tx.readTS, vectors, tx.withSnapshotViewLocked)
 	if err == ErrNotVisibleAtSnapshot {
 		// The head exists but isn't visible at the reader's snapshot.
 		// Treat as a hard miss — falling back to a primary-key read
