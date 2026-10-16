@@ -761,28 +761,14 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 				}
 				sort.Strings(ids)
 				for _, id := range ids {
-					op := ops[id]
-					if op.remove {
-						if err := entry.svc.RemoveNode(storage.NodeID(id)); err != nil {
-							if db.shouldIgnoreSearchIndexingError(err) {
-								continue
-							}
-							log.Printf("⚠️ Failed to remove node %s from deferred search mutation in db %s: %v", id, entry.dbName, err)
-						}
-						continue
-					}
-					if op.node == nil {
-						continue
-					}
-					node := op.node
-					if !carriesChunkEmbedding(node) && entry.svc.VectorEnabled() {
-						node = db.storedNodeForSearch(entry.dbName, id, node)
-					}
-					if err := entry.svc.IndexNode(node); err != nil {
+					// Publish the node's current stored state, not the queued copy:
+					// a later update or removal, applied by another publisher after
+					// leaving this queue, stays authoritative (F-I86).
+					if err := entry.svc.PublishStoredNode(storage.NodeID(id)); err != nil {
 						if db.shouldIgnoreSearchIndexingError(err) {
 							continue
 						}
-						log.Printf("⚠️ Failed to index node %s from deferred search mutation in db %s: %v", id, entry.dbName, err)
+						log.Printf("⚠️ Failed to publish node %s from deferred search mutation in db %s: %v", id, entry.dbName, err)
 					}
 				}
 			}
@@ -794,29 +780,6 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 		}
 	})
 	entry.pendingFlushMu.Unlock()
-}
-
-// carriesChunkEmbedding reports whether node carries its managed embedding.
-func carriesChunkEmbedding(node *storage.Node) bool {
-	return len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0
-}
-
-// storedNodeForSearch is the stored state of a node whose queued copy came
-// without an embedding, or queued when the node can't be read. A write
-// event's copy can be older than the node's embedding: the embed worker
-// writes the embedding without a node event and queues its own copy, which a
-// bulk write's creation event, still being delivered, can replace. Indexing
-// that copy would drop the vector for good.
-func (db *DB) storedNodeForSearch(dbName, localID string, queued *storage.Node) *storage.Node {
-	engine, err := db.resolveDatabaseStorage(dbName)
-	if err != nil || engine == nil {
-		return queued
-	}
-	stored, err := engine.GetNode(storage.NodeID(localID))
-	if err != nil || stored == nil {
-		return queued
-	}
-	return stored
 }
 
 func (db *DB) ensureSearchIndexesBuilt(ctx context.Context, dbName string) error {
@@ -994,10 +957,10 @@ func (db *DB) indexNodeFromEvent(node *storage.Node) {
 // running or not yet run, or indexing failed) the caller queues the node like
 // any write event, and the build or the deferred flush publishes it.
 //
-// A queued mutation of the same node is honoured: a pending removal wins and
-// nothing is indexed, and a pending index takes this copy, as queueing this
-// node used to. While a flush runs, the copy is queued too, so an older copy
-// it already drained can't be indexed over this one.
+// It publishes the node's current stored state through the search owner,
+// like the deferred flush: a removal or newer update of the same node, applied
+// by any publisher before or after this one, stays authoritative (F-I86;
+// #1360 review). A queued mutation of the node republishes the same state.
 func (db *DB) publishEmbeddedNode(node *storage.Node) bool {
 	if db == nil || node == nil {
 		return false
@@ -1015,27 +978,7 @@ func (db *DB) publishEmbeddedNode(node *storage.Node) bool {
 	if progress := entry.svc.GetBuildProgress(); !progress.Ready || progress.Building {
 		return false
 	}
-	userNode := storage.CopyNode(node)
-	userNode.ID = storage.NodeID(local)
-
-	entry.pendingMu.Lock()
-	queued, hasQueued := entry.pendingOps[local]
-	if hasQueued && !queued.remove {
-		entry.pendingOps[local] = pendingSearchMutation{node: storage.CopyNode(userNode)}
-	}
-	entry.pendingMu.Unlock()
-	if hasQueued && queued.remove {
-		return true
-	}
-	entry.pendingFlushMu.Lock()
-	flushing := entry.pendingFlushRunning
-	entry.pendingFlushMu.Unlock()
-	if flushing {
-		entry.queueIndex(userNode)
-		db.ensurePendingFlush(entry)
-	}
-
-	if err := entry.svc.IndexNode(userNode); err != nil {
+	if err := entry.svc.PublishStoredNode(storage.NodeID(local)); err != nil {
 		if db.shouldIgnoreSearchIndexingError(err) {
 			return true
 		}

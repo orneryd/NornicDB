@@ -16,74 +16,85 @@ type liveMutation struct {
 	edge   *storage.Edge
 }
 
-// applyWrite is the owner's live-mutation boundary (F-I86 B1). A write never
-// runs or waits for a NODE population:
-//   - While one is pending on a restorable (persisted) service, the mutation
-//     is recorded and not applied (apply=false): the population may still
-//     replace the sources with the saved image, so it folds the record in
-//     before admitting NODE (completeNodePopulation).
-//   - While one is pending on an in-memory service, nothing can replace the
-//     live source; the node is applied at once and also recorded, so a batch
-//     the population read earlier cannot hide it.
-//   - With none pending, a restorable service whose initial population was
-//     never admitted records the mutation and starts admission as a
-//     registered background worker.
+// applyWrite is the owner's live-mutation boundary (F-I86 B1, decision B).
+// A write is applied to the live indexes on return and never runs or waits
+// for a population:
+//   - While a population is pending, the write is also recorded (latest op
+//     per node and edge; a removal is an op). The population re-applies the
+//     record in the same locked step as each source replacement and again
+//     before it admits NODE, so the write stays visible and no older batch
+//     or restored image hides it (completeNodePopulation, population start).
+//   - On a persisted service whose sources are not yet admitted, the write is
+//     provisional: it stays in memory and performs no restore step (file-store
+//     creation, saved-metadata restore); the population withdraws and
+//     re-applies it around the restore. If no population is running, the write
+//     starts one as a registered background worker.
 //
-// With apply=true the caller owns indexMu and must call release; with
-// apply=false there is nothing to release. Private node/edge batch writers
-// never enter this public boundary.
-func (s *Service) applyWrite(dimensions int, m liveMutation) (release func(), apply bool, err error) {
-	s.indexMu.Lock()
-	if err := s.lifecycleErr(); err != nil {
-		s.indexMu.Unlock()
-		return nil, false, err
-	}
-	restorable := s.nodePopulationRestorable()
-	if job := s.pendingNodeAdmission(); job != nil {
-		if restorable {
-			s.recordPopulationWriteLocked(m)
-			s.indexMu.Unlock()
-			s.ensureAdmissionWorker(job)
-			return nil, false, nil
-		}
-		if m.nodeID != "" {
-			s.recordPopulationWriteLocked(m)
-		}
-	} else if restorable && !s.nodeSourcesCompleteLocked() {
-		s.baseBuildControlMu.Lock()
-		paused := s.baseBuildPaused > 0
-		s.baseBuildControlMu.Unlock()
-		if paused {
-			s.indexMu.Unlock()
-			return nil, false, ErrSearchIndexBuilding
-		}
-		job := s.claimNodeAdmission()
-		s.recordPopulationWriteLocked(m)
-		s.indexMu.Unlock()
-		s.ensureAdmissionWorker(job)
-		return nil, false, nil
-	}
+// load, when set, supplies the mutation under the boundary instead of m: the
+// node's current stored state (nil: removed). Publishers that may run out of
+// order use it, so a later update or removal stays authoritative.
+//
+// On success the caller owns indexMu and must call release.
+func (s *Service) applyWrite(dimensions int, m liveMutation, load func() (liveMutation, int, error)) (mutation liveMutation, release func(), err error) {
 	resume := func() {}
-	if s.needsVectorDimensionsLocked(dimensions) {
-		// Joining construction must precede indexMu; the replacement rechecks
-		// the dimensions after mutation ownership is reacquired. Retirement
-		// cancels the build, so this join is prompt.
+	s.indexMu.Lock()
+	unlock := func() { s.indexMu.Unlock(); resume() }
+	if err := s.lifecycleErr(); err != nil {
+		unlock()
+		return m, nil, err
+	}
+	for loaded := false; ; {
+		if load != nil && !loaded {
+			if m, dimensions, err = load(); err != nil {
+				unlock()
+				return m, nil, err
+			}
+			loaded = true
+		}
+		if !s.needsVectorDimensionsLocked(dimensions) {
+			break
+		}
+		// Joining construction must precede indexMu. Retirement cancels the
+		// build, so this join is prompt; a loader reads storage again after.
 		s.indexMu.Unlock()
 		resume = s.pauseHNSWBuild()
 		s.indexMu.Lock()
 		if err := s.lifecycleErr(); err != nil {
-			s.indexMu.Unlock()
-			resume()
-			return nil, false, err
+			unlock()
+			return m, nil, err
+		}
+		if load != nil {
+			if m, dimensions, err = load(); err != nil {
+				unlock()
+				return m, nil, err
+			}
 		}
 		s.replaceEmptyVectorDimensionsLocked(dimensions)
+		break
+	}
+	restorable := s.nodePopulationRestorable()
+	var start *nodePopulationAdmission
+	if job := s.pendingNodeAdmission(); job != nil {
+		s.recordPopulationWriteLocked(m)
+		if restorable {
+			start = job
+		}
+	} else if restorable && !s.nodeSourcesCompleteLocked() {
+		start = s.claimNodeAdmission()
+		s.recordPopulationWriteLocked(m)
 	}
 	if err := s.materializeNodeFulltextLocked(); err != nil {
-		s.indexMu.Unlock()
-		resume()
-		return nil, false, err
+		unlock()
+		return m, nil, err
 	}
-	return func() { s.indexMu.Unlock(); resume() }, true, nil
+	s.provisionalWrite = restorable && !s.nodeSourcesCompleteLocked()
+	return m, func() {
+		s.provisionalWrite = false
+		unlock()
+		if start != nil {
+			s.ensureAdmissionWorker(start)
+		}
+	}, nil
 }
 
 // ensureAdmissionWorker runs job in the background unless a worker already
@@ -228,4 +239,33 @@ func (s *Service) admitNodePopulationForPersist() {
 	if err := s.waitOrRunNodeAdmission(ctx, s.claimNodeAdmission()); err != nil {
 		s.logPrintf("📇 Persist: node population for live writes did not complete: %v", err)
 	}
+}
+
+// withdrawPopulationWritesLocked removes the recorded writes from the live
+// indexes before a population replaces the sources, so provisional live
+// entries cannot make a saved image or a fresh store look out of date. The
+// caller re-applies the record (replayPopulationWritesLocked) before it
+// releases indexMu, so the writes never leave search.
+func (s *Service) withdrawPopulationWritesLocked() {
+	for id := range s.nodePopulationWrites {
+		s.removeNodeLocked(id)
+	}
+	for id := range s.edgePopulationWrites {
+		s.RemoveRelationship(storage.EdgeID(id))
+		s.removeEdgeLocked(id)
+	}
+}
+
+// isRecordedWriteLocked reports whether the record holds a newer state of
+// node id than a population batch read from storage. Caller holds indexMu.
+func (s *Service) isRecordedWriteLocked(id string) bool {
+	_, ok := s.nodePopulationWrites[id]
+	return ok
+}
+
+// clearPopulationWritesLocked forgets the record once a population has
+// admitted NODE with every write applied. Caller holds indexMu.
+func (s *Service) clearPopulationWritesLocked() {
+	clear(s.nodePopulationWrites)
+	clear(s.edgePopulationWrites)
 }

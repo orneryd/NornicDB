@@ -26,23 +26,27 @@ type lifecycleWriteRule struct {
 const (
 	lifecycleOwnerFile = "vector_lifecycle.go"
 	publishOwnerFile   = "vector_lifecycle_publish.go"
+	writeOwnerFile     = "vector_lifecycle_write.go"
 )
 
 var lifecycleWriteRules = map[string]lifecycleWriteRule{
-	"vectorPipeline":      {publishOwnerFile, "pointer"},
-	"hnswIndex":           {publishOwnerFile, "pointer"},
-	"clusterHNSW":         {publishOwnerFile, "pointer"},
-	"ivfpqIndex":          {publishOwnerFile, "pointer"},
-	"ivfpqEpoch":          {publishOwnerFile, "pointer"},
-	"gpuEmbeddingIndex":   {publishOwnerFile, "pointer"},
-	"vectorIndex":         {publishOwnerFile, "pointer"},
-	"vectorFileStore":     {publishOwnerFile, "pointer"},
-	"nodeSources":         {lifecycleOwnerFile, "state"},
-	"life":                {lifecycleOwnerFile, "state"},
-	"hnswGeneration":      {lifecycleOwnerFile, "atomic"},
-	"vectorSourceEpoch":   {lifecycleOwnerFile, "atomic"},
-	"clusterGeneration":   {lifecycleOwnerFile, "atomic"},
-	"hnswVectorsChanging": {lifecycleOwnerFile, "atomic"},
+	"vectorPipeline":       {publishOwnerFile, "pointer"},
+	"hnswIndex":            {publishOwnerFile, "pointer"},
+	"clusterHNSW":          {publishOwnerFile, "pointer"},
+	"ivfpqIndex":           {publishOwnerFile, "pointer"},
+	"ivfpqEpoch":           {publishOwnerFile, "pointer"},
+	"gpuEmbeddingIndex":    {publishOwnerFile, "pointer"},
+	"vectorIndex":          {publishOwnerFile, "pointer"},
+	"vectorFileStore":      {publishOwnerFile, "pointer"},
+	"nodeSources":          {lifecycleOwnerFile, "state"},
+	"life":                 {lifecycleOwnerFile, "state"},
+	"hnswGeneration":       {lifecycleOwnerFile, "atomic"},
+	"vectorSourceEpoch":    {lifecycleOwnerFile, "atomic"},
+	"clusterGeneration":    {lifecycleOwnerFile, "atomic"},
+	"hnswVectorsChanging":  {lifecycleOwnerFile, "atomic"},
+	"nodePopulationWrites": {writeOwnerFile, "state"},
+	"edgePopulationWrites": {writeOwnerFile, "state"},
+	"provisionalWrite":     {writeOwnerFile, "pointer"},
 }
 
 var atomicMutators = map[string]bool{"Store": true, "Add": true, "Swap": true, "CompareAndSwap": true}

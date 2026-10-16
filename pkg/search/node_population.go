@@ -99,8 +99,7 @@ func (s *Service) finishNodeAdmission(job *nodePopulationAdmission, err error, s
 	if err == nil {
 		// Every recorded write was replayed at admission or applied to the
 		// complete source afterwards.
-		clear(s.nodePopulationWrites)
-		clear(s.edgePopulationWrites)
+		s.clearPopulationWritesLocked()
 	}
 	job.err = err
 	close(job.done)
@@ -223,7 +222,12 @@ func (s *Service) resetBaseVectorSource() error {
 	if capacityErr != nil {
 		return capacityErr
 	}
-	return s.removeVectorArtifactsLocked()
+	if err := s.removeVectorArtifactsLocked(); err != nil {
+		return err
+	}
+	// The replacement is a source transition: re-apply the live writes in the
+	// same locked step, so they never leave search (F-I86, decision B).
+	return s.replayPopulationWritesLocked(context.Background())
 }
 
 type nodePopulationPlan struct {

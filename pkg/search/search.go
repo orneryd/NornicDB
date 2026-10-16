@@ -804,6 +804,10 @@ type Service struct {
 	// (nil: removed); indexMu protects them (see applyWrite).
 	nodePopulationWrites map[string]*storage.Node
 	edgePopulationWrites map[string]*storage.Edge
+	// provisionalWrite is set while applyWrite's caller applies a write to a
+	// persisted service whose sources are not admitted: it stays in memory
+	// and runs no restore step. indexMu protects it.
+	provisionalWrite bool
 
 	baseBuildControlMu     sync.Mutex
 	baseBuildPaused        int
@@ -2845,8 +2849,40 @@ func (s *Service) IndexNode(node *storage.Node) error {
 	if node != nil {
 		mutation.nodeID = string(node.ID)
 	}
-	release, apply, err := s.applyWrite(firstVectorDimensions(node), mutation)
-	if err != nil || !apply {
+	return s.applyNodeMutation(firstVectorDimensions(node), mutation, nil)
+}
+
+// PublishStoredNode makes the search indexes reflect the node's current stored
+// state: it is read from storage under the owner's mutation boundary and
+// indexed, or removed when storage no longer has it. Publishers that can run
+// out of order with other mutations of the same node (deferred flushes,
+// embedding completion) use it, so a later update or removal stays
+// authoritative however the publications interleave.
+func (s *Service) PublishStoredNode(nodeID storage.NodeID) error {
+	if !s.bm25Enabled.Load() && !s.vectorEnabled.Load() {
+		return nil
+	}
+	if s.engine == nil {
+		return nil
+	}
+	load := func() (liveMutation, int, error) {
+		node, err := s.engine.GetNode(nodeID)
+		if errors.Is(err, storage.ErrNotFound) {
+			return liveMutation{nodeID: string(nodeID)}, 0, nil
+		}
+		if err != nil {
+			return liveMutation{}, 0, err
+		}
+		return liveMutation{nodeID: string(nodeID), node: node}, firstVectorDimensions(node), nil
+	}
+	return s.applyNodeMutation(0, liveMutation{}, load)
+}
+
+// applyNodeMutation applies one node index or removal (nil node) through the
+// owner's boundary.
+func (s *Service) applyNodeMutation(dimensions int, m liveMutation, load func() (liveMutation, int, error)) error {
+	m, release, err := s.applyWrite(dimensions, m, load)
+	if err != nil {
 		return err
 	}
 	if !s.buildInProgress.Load() {
@@ -2855,7 +2891,13 @@ func (s *Service) IndexNode(node *storage.Node) error {
 			s.resultCache.Invalidate()
 		}
 	}
-	err = s.indexNodeLocked(node, !bm25On)
+	if m.node == nil {
+		if m.nodeID != "" {
+			s.removeNodeLocked(m.nodeID)
+		}
+	} else {
+		err = s.indexNodeLocked(m.node, !s.bm25Enabled.Load())
+	}
 	release()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
@@ -3136,7 +3178,9 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 	// Establish the real destination before admission. Re-enabling persistence
 	// can release a full memory source into a file; a failed migration leaves
 	// it in memory and is charged there. This does not change membership.
-	if shouldIndex && vectorOn && firstVectorDimensions(node) > 0 {
+	// A provisional write stays in memory: the population restores the
+	// destination and then re-applies it.
+	if shouldIndex && vectorOn && firstVectorDimensions(node) > 0 && !s.provisionalWrite {
 		s.ensureVectorFileStore()
 	}
 	capacityUsage, err := s.checkNodeIndexCapacityLocked(node, fulltext)
@@ -3551,22 +3595,7 @@ func (s *Service) removeNodeEntriesLocked(nodeIDStr string, removeFulltext bool)
 // RemoveNode removes a node from all search indexes.
 // Also removes all chunk embeddings (for nodes with multiple chunks).
 func (s *Service) RemoveNode(nodeID storage.NodeID) error {
-	release, apply, err := s.applyWrite(0, liveMutation{nodeID: string(nodeID)})
-	if err != nil || !apply {
-		return err
-	}
-	if !s.buildInProgress.Load() {
-		defer s.schedulePersist()
-		if s.resultCache != nil {
-			s.resultCache.Invalidate()
-		}
-	}
-	s.removeNodeLocked(string(nodeID))
-	release()
-	if !s.buildInProgress.Load() {
-		s.scheduleStrategyTransitionCheck()
-	}
-	return nil
+	return s.applyNodeMutation(0, liveMutation{nodeID: string(nodeID)}, nil)
 }
 
 // IndexEdge adds vector-shaped relationship properties to in-memory search metadata.
@@ -3581,8 +3610,8 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 		s.IndexRelationship(edge)
 		return nil
 	}
-	release, apply, err := s.applyWrite(firstEdgeVectorDimensions(edge), liveMutation{edgeID: string(edge.ID), edge: edge})
-	if err != nil || !apply {
+	_, release, err := s.applyWrite(firstEdgeVectorDimensions(edge), liveMutation{edgeID: string(edge.ID), edge: edge}, nil)
+	if err != nil {
 		return err
 	}
 	s.IndexRelationship(edge)
@@ -3672,8 +3701,8 @@ func (s *Service) RemoveEdge(edgeID storage.EdgeID) error {
 	if s == nil {
 		return nil
 	}
-	release, apply, err := s.applyWrite(0, liveMutation{edgeID: string(edgeID)})
-	if err != nil || !apply {
+	_, release, err := s.applyWrite(0, liveMutation{edgeID: string(edgeID)}, nil)
+	if err != nil {
 		return err
 	}
 	s.RemoveRelationship(edgeID)
@@ -3995,17 +4024,20 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 		}
 	}
 
-	// Live writes may be newer than the saved image after persistence was off.
-	// Only the source record establishes initial population completeness.
-	s.indexMu.RLock()
+	// Restoring the sources and the live writes share one locked step (F-I86,
+	// decision B): the recorded writes are withdrawn, so their provisional
+	// entries cannot make the saved image look out of date; the sources are
+	// restored or selected; and the record is re-applied before any reader can
+	// see the step. Live writes may still be newer than the saved image after
+	// persistence was off; only the source record establishes completeness.
+	s.indexMu.Lock()
+	s.withdrawPopulationWritesLocked()
 	textComplete := s.nodeSources.textComplete
-	s.indexMu.RUnlock()
-	if fulltextPath != "" && !textComplete && !s.fulltext().IsDirty() {
+	fulltextUnchanged := !s.fulltext().IsDirty() || s.fulltext().Count() == 0
+	if fulltextPath != "" && !textComplete && fulltextUnchanged {
 		accepted, loadErr := s.fulltext().loadSnapshot(fulltextPath)
 		if loadErr == nil && accepted {
-			s.indexMu.Lock()
 			s.changeNodeSourcesLocked(nodeTextRestored)
-			s.indexMu.Unlock()
 		}
 		if !accepted && s.fulltext().Count() == 0 {
 			if info, statErr := security.RootedStat(fulltextPath); statErr == nil {
@@ -4014,19 +4046,25 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 			}
 		}
 	}
-	// Base restore and live writes share source admission. In particular, a
-	// persistence-off snapshot remains authoritative after re-enable, and an
+	// A persistence-off snapshot remains authoritative after re-enable, and an
 	// active VFS must not be reopened with older saved query metadata.
-	s.indexMu.Lock()
 	liveVectorSourceSelected := s.admitVectorFileStore(storageEmptyKnown)
+	replayErr := s.replayPopulationWritesLocked(ctx)
 	s.indexMu.Unlock()
+	if replayErr != nil {
+		return replayErr
+	}
 	forceHNSWRebuild = forceHNSWRebuild || liveVectorSourceSelected
 
 	if forceFulltextRebuild {
 		s.indexMu.Lock()
 		s.fulltext().Clear()
 		s.changeNodeSourcesLocked(nodeFulltextReset)
+		replayErr := s.replayPopulationWritesLocked(ctx)
 		s.indexMu.Unlock()
+		if replayErr != nil {
+			return replayErr
+		}
 	}
 	if forceVectorRebuild {
 		restartVectorStore = true
@@ -4054,11 +4092,15 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 		}
 	}
 	if shouldClearStaleDisk {
+		s.logPrintf("📇 BuildIndexes: storage is empty and newer than disk indexes; clearing stale search artifacts")
 		s.indexMu.Lock()
 		s.changeNodeSourcesLocked(nodePopulationFailed)
-		s.indexMu.Unlock()
-		s.logPrintf("📇 BuildIndexes: storage is empty and newer than disk indexes; clearing stale search artifacts")
 		s.fulltext().Clear()
+		replayErr := s.replayPopulationWritesLocked(ctx)
+		s.indexMu.Unlock()
+		if replayErr != nil {
+			return replayErr
+		}
 		vectorCount = 0
 		restartVectorStore = true
 		forceHNSWRebuild = true
@@ -4197,6 +4239,9 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 				if err := ctx.Err(); err != nil {
 					return err
 				}
+				if s.isRecordedWriteLocked(string(node.ID)) {
+					continue // the live write is newer than this read
+				}
 				if err := s.indexNodeLocked(node, false); err != nil {
 					return err
 				}
@@ -4205,12 +4250,26 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 			s.buildProcessed.Store(int64(count))
 			return nil
 		}
+		var entries []FulltextBatchEntry
 		if !skipFulltextRebuild {
-			entries := make([]FulltextBatchEntry, 0, len(filtered))
+			entries = make([]FulltextBatchEntry, 0, len(filtered))
 			for _, n := range filtered {
 				text := s.extractSearchableText(n)
 				entries = append(entries, FulltextBatchEntry{ID: string(n.ID), Text: text})
 			}
+		}
+		// Live writes recorded since this batch was read are newer: skip them,
+		// under the same lock as the batch, for text and vectors alike.
+		s.indexMu.Lock()
+		defer s.indexMu.Unlock()
+		if len(entries) > 0 {
+			current := entries[:0]
+			for _, entry := range entries {
+				if !s.isRecordedWriteLocked(entry.ID) {
+					current = append(current, entry)
+				}
+			}
+			entries = current
 			chunkSize := fulltextIndexChunkSize
 			if chunkSize <= 0 {
 				chunkSize = len(entries)
@@ -4233,11 +4292,12 @@ func (s *Service) runBasePopulationOperation(ctx context.Context, job *nodePopul
 				return ctx.Err()
 			}
 		}
-		s.indexMu.Lock()
-		defer s.indexMu.Unlock()
 		for _, n := range filtered {
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			if s.isRecordedWriteLocked(string(n.ID)) {
+				continue
 			}
 			if err := s.indexNodeLocked(n, true); err != nil {
 				return err
