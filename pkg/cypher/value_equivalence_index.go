@@ -33,6 +33,8 @@ func cypherComparableKey(value interface{}, contract cypherComparisonContract) (
 			return nil, true
 		}
 		return cypherEntityKey{'r', string(value.ID)}, true
+	case storage.RemoteEntityValue, storage.RemotePathValue:
+		return cypherEncodedKey(cypherValueKey(value, contract)), true
 	case []byte, []interface{}, map[string]interface{}:
 		return nil, false
 	}
@@ -60,6 +62,9 @@ func cypherComparableKey(value interface{}, contract cypherComparisonContract) (
 			// have this exact value; keep the float itself as its key.
 		}
 		return number, true
+	}
+	if cypherValueKindOf(value) == valueKindPath {
+		return cypherEncodedKey(cypherValueKey(value, contract)), true
 	}
 	if _, list := cypherListValue(value); list {
 		return nil, false
