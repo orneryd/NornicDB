@@ -486,7 +486,7 @@ func TestCypherHelpers_EvaluateExpressionWithContextFullOperators_Branches(t *te
 	assert.Equal(t, true, eval("n.name STARTS WITH 'al'"))
 	assert.Equal(t, true, eval("n.name ENDS WITH 'ce'"))
 	assert.Equal(t, true, eval("n.name CONTAINS 'lic'"))
-	// The value helper leaves a non-string predicate unresolved.
+	// A non-string operand makes a string predicate null (Neo4j: 30 STARTS WITH '3' is null).
 	assert.Nil(t, eval("n.age STARTS WITH '3'"))
 	assert.Equal(t, true, eval("'a' IN ['a','b']"))
 	assert.Equal(t, true, eval("30 IN [20,30]"))

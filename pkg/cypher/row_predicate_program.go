@@ -138,7 +138,7 @@ func compileRowPredicateFromSubqueries(expr string) rowPredicateNode {
 		plan.operands = append([]string(nil), plan.operands...)
 		node := &rowPredicateLogicalNode{plan: plan, arithmetic: predicateIsArithmetic(expr)}
 		for _, operand := range plan.operands {
-			node.operands = append(node.operands, compileRowPredicateOperand(operand))
+			node.operands = append(node.operands, compileRowPredicateOperand(operand, logicalFoldPosition(plan.kind)))
 		}
 		return node
 	}
@@ -160,7 +160,7 @@ func compileRowPredicateLeaf(expr string) rowPredicateNode {
 		match    func(string, string) bool
 	}{{" STARTS WITH ", strings.HasPrefix}, {" ENDS WITH ", strings.HasSuffix}, {" CONTAINS ", strings.Contains}} {
 		if left, right, ok := splitByOperatorOutsideCase(expr, predicate.operator, true, true); ok {
-			return &rowPredicateStringNode{left: compileRowPredicateOperand(left), right: compileRowPredicateOperand(right), match: predicate.match}
+			return &rowPredicateStringNode{left: compileRowPredicateOperand(left, foldUndecided), right: compileRowPredicateOperand(right, foldUndecided), match: predicate.match}
 		}
 	}
 	if _, _, ok := splitByOperatorOutsideCase(expr, "=~", false, true); ok {
@@ -182,32 +182,35 @@ func compileRowPredicateLeaf(expr string) rowPredicateNode {
 	}
 	for _, operator := range []string{" IS NOT NULL", " IS NULL"} {
 		if hasSuffixFoldASCII(expr, operator) {
-			return &rowPredicateNullNode{operand: compileRowPredicateOperand(strings.TrimSpace(expr[:len(expr)-len(operator)])), isNull: operator == " IS NULL"}
+			return &rowPredicateNullNode{operand: compileRowPredicateOperand(strings.TrimSpace(expr[:len(expr)-len(operator)]), foldUndecided), isNull: operator == " IS NULL"}
 		}
 	}
 	if scan, comparison := scanComparisonChain(expr); comparison {
 		node := &rowPredicateComparisonNode{text: expr, scan: scan, normalizeIdentity: comparisonChainHasIdentity(expr, &scan)}
 		for i := 0; i <= scan.count; i++ {
 			operand := scan.operand(expr, i)
-			node.operands = append(node.operands, compileRowPredicateOperand(operand))
+			node.operands = append(node.operands, compileRowPredicateOperand(operand, comparisonFoldPosition(&scan)))
 		}
 		return node
 	}
-	return &rowPredicateValueNode{operand: compileRowPredicateOperand(expr), arithmetic: predicateIsArithmetic(expr)}
+	return &rowPredicateValueNode{operand: compileRowPredicateOperand(expr, foldUndecided), arithmetic: predicateIsArithmetic(expr)}
 }
 
 // rowPredicateOperand is an operand of a predicate, resolved as
-// rowPredicateOperand resolves it.
+// rowPredicateOperand resolves it. isolation is isolateOperandErrors for the
+// operand at its position in the predicate.
 type rowPredicateOperand struct {
-	text           string
-	pattern        bool
-	recordsFailure bool
-	value          rowValueNode
+	text      string
+	pattern   bool
+	isolation operandIsolation
+	value     rowValueNode
 }
 
-func compileRowPredicateOperand(text string) rowPredicateOperand {
+func compileRowPredicateOperand(text string, position foldPosition) rowPredicateOperand {
 	pattern := isRelationshipPatternOperand(text)
-	o := rowPredicateOperand{text: text, pattern: pattern, recordsFailure: pattern || rowOperandRecordsFailure(text)}
+	// A pattern's evaluator records its errors on the context; a value
+	// program returns them.
+	o := rowPredicateOperand{text: text, pattern: pattern, isolation: operandIsolationAt(text, position, pattern)}
 	if !pattern {
 		o.value = compileRowPredicateValue(text)
 	}
@@ -231,25 +234,19 @@ func (o *rowPredicateOperand) resolve(e *StorageExecutor, ctx context.Context, v
 	return value, ok
 }
 
-// Only context-writing operands need an isolated error slot and row scope.
-// Value programs return errors explicitly, so the deciding common operand
-// can go directly to the logical/comparison fold without these allocations.
-func (e *StorageExecutor) evaluateRowLogicalPredicateOperand(ctx context.Context, text string, values map[string]interface{}, recordsFailure bool,
-	resolve func(context.Context, map[string]interface{}) (interface{}, bool, error), predicateFallback bool) (interface{}, bool, error) {
-	if !recordsFailure {
-		value, ok, err := resolve(ctx, values)
-		if ok || err != nil || !predicateFallback {
-			return value, ok, err
+// foldOperand evaluates the operand for its logical or comparison fold: its
+// value, or (predicateFallback) whether it holds when only the predicate
+// evaluator reads it, with the error slots its isolation asks for.
+func (o *rowPredicateOperand) foldOperand(e *StorageExecutor, ctx context.Context, values map[string]interface{}, predicateFallback bool) (interface{}, bool, error) {
+	var fallback func(context.Context, map[string]interface{}) interface{}
+	if predicateFallback {
+		fallback = func(ctx context.Context, scope map[string]interface{}) interface{} {
+			return e.evaluateRowPredicateParts(ctx, o.text, scope)
 		}
 	}
-	return deferredExpressionResult(ctx, func(ctx context.Context) (interface{}, bool, error) {
-		scope := rowValuesInExpressionContext(ctx, values)
-		value, ok, err := resolve(ctx, scope)
-		if ok || err != nil || !predicateFallback {
-			return value, ok, err
-		}
-		return e.evaluateRowPredicateParts(ctx, text, scope), true, nil
-	})
+	return o.isolation.evaluate(ctx, values, func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
+		return o.evaluate(e, ctx, scope)
+	}, fallback)
 }
 
 type rowPredicateConstNode bool
@@ -323,11 +320,8 @@ type rowPredicateLogicalNode struct {
 }
 
 func (n *rowPredicateLogicalNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	value, ok, err := n.plan.evaluate(func(index int) (interface{}, bool, error) {
-		o := &n.operands[index]
-		return e.evaluateRowLogicalPredicateOperand(ctx, o.text, values, o.recordsFailure, func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
-			return o.evaluate(e, ctx, scope)
-		}, true)
+	value, ok, err := n.plan.evaluateInContext(ctx, func(index int) (interface{}, bool, error) {
+		return n.operands[index].foldOperand(e, ctx, values, true)
 	})
 	if err != nil {
 		recordExpressionFailure(ctx, err)
@@ -389,11 +383,8 @@ type rowPredicateComparisonNode struct {
 }
 
 func (n *rowPredicateComparisonNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	result, resolved, err := evaluateScannedComparisonChain(n.text, &n.scan, n.normalizeIdentity, func(index int, _ string) (interface{}, bool, error) {
-		o := &n.operands[index]
-		return e.evaluateRowLogicalPredicateOperand(ctx, o.text, values, o.recordsFailure, func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
-			return o.evaluate(e, ctx, scope)
-		}, false)
+	result, resolved, err := evaluateScannedComparisonChain(ctx, n.text, &n.scan, n.normalizeIdentity, func(index int, _ string) (interface{}, bool, error) {
+		return n.operands[index].foldOperand(e, ctx, values, false)
 	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		recordExpressionFailure(ctx, err)

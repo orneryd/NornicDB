@@ -111,7 +111,9 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 // rather than returning it; the row evaluator reports the expression as
 // unresolved and evaluateRowExpressionWithContext records err.
 func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}) (interface{}, error) {
-	ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{})
+	// The slot names expr as the row evaluator's: the shared evaluator
+	// evaluates it itself rather than hand it back (handedBackByRowEvaluator).
+	ctx := context.WithValue(context.Background(), expressionFailureKey{}, &expressionFailure{rowFallback: expr})
 	// Keep the statement's clock for the functions that read it (decay, #866).
 	if statement, ok := values[rowStatementContextKey].(context.Context); ok {
 		if instant, ok := statement.Value(temporalStatementTimeKey{}).(time.Time); ok {

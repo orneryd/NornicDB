@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 type comparisonOperatorSpan struct {
 	offset int
@@ -49,16 +52,20 @@ func (scan *comparisonChainScan) operand(expression string, index int) string {
 // which decides how constant numbers compare (promoteConstantNumbers).
 func evaluateComparisonChain(
 	expression string,
-	resolve func(string) (interface{}, bool, error),
+	resolve func(string, foldPosition) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
 ) (interface{}, bool, bool, error) {
+	return evaluateComparisonChainInContext(context.Background(), expression, resolve, compare, cypher25)
+}
+func evaluateComparisonChainInContext(ctx context.Context, expression string, resolve func(string, foldPosition) (interface{}, bool, error), compare func(interface{}, interface{}, string) interface{}, cypher25 bool) (interface{}, bool, bool, error) {
 	scan, ok := scanComparisonChain(expression)
 	if !ok {
 		return nil, false, false, nil
 	}
-	value, resolved, err := evaluateScannedComparisonChain(expression, &scan, comparisonChainHasIdentity(expression, &scan), func(_ int, operand string) (interface{}, bool, error) {
-		return resolve(operand)
+	position := comparisonFoldPosition(&scan)
+	value, resolved, err := evaluateScannedComparisonChain(ctx, expression, &scan, comparisonChainHasIdentity(expression, &scan), func(_ int, operand string) (interface{}, bool, error) {
+		return resolve(operand, position)
 	}, compare, cypher25)
 	return value, true, resolved, err
 }
@@ -80,6 +87,7 @@ func comparisonChainHasIdentity(expression string, scan *comparisonChainScan) bo
 // resolve gets each operand's index and text; normalizeIdentity is
 // comparisonChainHasIdentity.
 func evaluateScannedComparisonChain(
+	ctx context.Context,
 	expression string,
 	scan *comparisonChainScan,
 	normalizeIdentity bool,
@@ -87,6 +95,24 @@ func evaluateScannedComparisonChain(
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
 ) (interface{}, bool, error) {
+	if scan.count > 1 && mayContainSubqueryExpression(expression) && ctx.Value(caseConditionScopeKey{}) == nil {
+		indexes := applyOperandIndexes(scan.count+1, func(i int) string { return scan.operand(expression, i) })
+		cached, err := evaluateApplyOperands(ctx, indexes, func(i int) (interface{}, bool, error) { return resolve(i, scan.operand(expression, i)) })
+		if err != nil {
+			return nil, false, err
+		}
+		if len(cached) > 0 {
+			// Strip Apply metadata through a separate fold entry, retaining the
+			// same comparison implementation and exactly one evaluation per operand.
+			return evaluateComparisonLinks(expression, scan, normalizeIdentity, func(i int, text string) (interface{}, bool, error) {
+				return resolveApplyOperand(cached, i, func(i int) (interface{}, bool, error) { return resolve(i, text) })
+			}, compare, cypher25)
+		}
+	}
+	return evaluateComparisonLinks(expression, scan, normalizeIdentity, resolve, compare, cypher25)
+}
+
+func evaluateComparisonLinks(expression string, scan *comparisonChainScan, normalizeIdentity bool, resolve func(int, string) (interface{}, bool, error), compare func(interface{}, interface{}, string) interface{}, cypher25 bool) (interface{}, bool, error) {
 	left, leftOK, leftErr := resolve(0, scan.operand(expression, 0))
 	if normalizeIdentity {
 		left = rowIdentityPayload(left)
