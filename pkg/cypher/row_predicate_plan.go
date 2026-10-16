@@ -47,8 +47,10 @@ type plannedRowValue struct {
 }
 
 type compiledRowScope struct {
-	executor   *StorageExecutor
-	values     map[string]interface{}
+	executor *StorageExecutor
+	// Indirection lets materialize return the values map without making the
+	// scope's temporary node/relationship maps escape along with it.
+	values     *map[string]interface{}
 	nodes      binding
 	rels       relationshipBinding
 	parameters map[string]interface{}
@@ -61,7 +63,7 @@ func (scope compiledRowScope) lookup(name string) (interface{}, bool) {
 		}
 	}
 	if scope.values != nil {
-		if value, ok := scope.values[name]; ok {
+		if value, ok := (*scope.values)[name]; ok {
 			return value, true
 		}
 	}
@@ -85,11 +87,15 @@ func (scope compiledRowScope) lookup(name string) (interface{}, bool) {
 }
 
 func (scope compiledRowScope) materialize() map[string]interface{} {
-	if scope.nodes == nil && scope.rels == nil && scope.parameters == nil {
-		return scope.values
+	var row map[string]interface{}
+	if scope.values != nil {
+		row = *scope.values
 	}
-	values := make(map[string]interface{}, len(scope.values)+len(scope.nodes)+len(scope.rels)+len(scope.parameters))
-	for name, value := range scope.values {
+	if scope.nodes == nil && scope.rels == nil && scope.parameters == nil {
+		return row
+	}
+	values := make(map[string]interface{}, len(row)+len(scope.nodes)+len(scope.rels)+len(scope.parameters))
+	for name, value := range row {
 		values[name] = value
 	}
 	for name, value := range scope.nodes {
@@ -176,7 +182,7 @@ func (handler nullEvaluationHandler) evaluate(value interface{}) bool {
 // doesn't bind the operand's variable or parameter; the caller then evaluates
 // the part as text, as evaluateRowExpression would resolve it further.
 func (o *rowOperand) resolve(values map[string]interface{}) (interface{}, bool) {
-	return o.resolveScope(compiledRowScope{values: values})
+	return o.resolveScope(compiledRowScope{values: &values})
 }
 
 func (o *rowOperand) resolveScope(scope compiledRowScope) (interface{}, bool) {
@@ -624,7 +630,7 @@ func (e *StorageExecutor) evaluateRowPredicatePlan(ctx context.Context, plan *ro
 }
 
 func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *rowPredicatePart, values map[string]interface{}) bool {
-	return e.evaluateRowPredicatePartScope(ctx, part, compiledRowScope{values: values}, nil)
+	return e.evaluateRowPredicatePartScope(ctx, part, compiledRowScope{values: &values}, nil)
 }
 
 // evaluateRowPredicatePartScope reads the plan's value as a WHERE predicate.
@@ -651,7 +657,7 @@ func (e *StorageExecutor) rowPredicateJunctionTruth(ctx context.Context, part *r
 			continue
 		}
 		if fold.addKnown(value) {
-			break
+			return value, nil
 		}
 	}
 	return fold.truthResult()
@@ -708,21 +714,28 @@ func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPr
 		return truth, nil
 	case rowPredicateIn:
 		needle, needleOK := part.left.resolveScope(scope)
-		haystack, haystackOK := part.right.resolveScope(scope)
-		if !needleOK || !haystackOK {
+		if !needleOK {
 			return e.rowPredicatePartTextTruth(ctx, part, scope)
 		}
+		indexed := false
 		if part.membership != nil {
 			switch needle.(type) {
 			case string, bool:
+				indexed = true
 				if prepared := memberships.find(part); prepared != nil && len(prepared.nonComparable) == 0 {
 					return membershipTruth(needle, prepared.comparable, nil, prepared.hasNull), nil
 				}
-				if items, ok := toInterfaceSlice(haystack); ok {
-					comparable, nonComparable, hasNull := part.membership.get(items, firstInterfaceElement(items))
-					if len(nonComparable) == 0 {
-						return membershipTruth(needle, comparable, nil, hasNull), nil
-					}
+			}
+		}
+		haystack, haystackOK := part.right.resolveScope(scope)
+		if !haystackOK {
+			return e.rowPredicatePartTextTruth(ctx, part, scope)
+		}
+		if indexed {
+			if items, ok := toInterfaceSlice(haystack); ok {
+				comparable, nonComparable, hasNull := part.membership.get(items, firstInterfaceElement(items))
+				if len(nonComparable) == 0 {
+					return membershipTruth(needle, comparable, nil, hasNull), nil
 				}
 			}
 		}

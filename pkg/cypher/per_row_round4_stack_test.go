@@ -70,7 +70,8 @@ func TestPerRowRound4ContextIndexErrors(t *testing.T) {
 		}
 	}
 	// Reaching the context owner itself must produce an error, not unresolved.
-	_, resolved, err := evaluateCypherSubscript("list", "key", func(expr string) (interface{}, bool, error) {
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
+	_, resolved, err := exec.evaluateCypherSubscript("list", "key", func(expr string) (interface{}, bool, error) {
 		if expr == "list" {
 			return []interface{}{"a", "b"}, true, nil
 		}

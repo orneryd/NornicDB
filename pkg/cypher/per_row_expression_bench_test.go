@@ -94,6 +94,8 @@ func perRowLongPredicate() string {
 
 func runPerRowBench(b *testing.B, exec *StorageExecutor, query string, params map[string]interface{}, want int64) {
 	b.Helper()
+	// Calibration restarts nonce values, so they cannot prevent result-cache hits.
+	exec.cache = nil
 	ctx := context.Background()
 	run := func(nonce int) {
 		p := make(map[string]interface{}, len(params)+1)

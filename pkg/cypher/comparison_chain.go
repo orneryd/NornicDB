@@ -111,10 +111,10 @@ func evaluateScannedComparisonChain(
 			// same comparison implementation and exactly one evaluation per operand.
 			return evaluateComparisonLinks(expression, scan, normalizeIdentity, func(i int, text string) (interface{}, bool, error) {
 				return resolveApplyOperand(cached, i, func(i int) (interface{}, bool, error) { return resolve(i, text) })
-			}, compare, cypher25)
+			}, compare, cypher25, true)
 		}
 	}
-	return evaluateComparisonLinks(expression, scan, normalizeIdentity, resolve, compare, cypher25)
+	return evaluateComparisonLinks(expression, scan, normalizeIdentity, resolve, compare, cypher25, true)
 }
 
 // constantFalseLink reports a link of the chain between two literals that is
@@ -137,8 +137,14 @@ func constantFalseLink(expression string, scan *comparisonChainScan) bool {
 	return false
 }
 
-func evaluateComparisonLinks(expression string, scan *comparisonChainScan, normalizeIdentity bool, resolve func(int, string) (interface{}, bool, error), compare func(interface{}, interface{}, string) interface{}, cypher25 bool) (interface{}, bool, error) {
-	left, leftOK, leftErr := resolve(0, scan.operand(expression, 0))
+// resolveText is false for compiled operands, which already retain their text.
+// Numeric constant folding still reads the text when promotion can apply.
+func evaluateComparisonLinks(expression string, scan *comparisonChainScan, normalizeIdentity bool, resolve func(int, string) (interface{}, bool, error), compare func(interface{}, interface{}, string) interface{}, cypher25, resolveText bool) (interface{}, bool, error) {
+	leftText := ""
+	if resolveText {
+		leftText = scan.operand(expression, 0)
+	}
+	left, leftOK, leftErr := resolve(0, leftText)
 	if normalizeIdentity {
 		left = rowIdentityPayload(left)
 	}
@@ -147,7 +153,11 @@ func evaluateComparisonLinks(expression string, scan *comparisonChainScan, norma
 	for index := 0; index < scan.count; index++ {
 		span := scan.operator(index)
 		operator := expression[span.offset : span.offset+span.length]
-		right, rightOK, rightErr := resolve(index+1, scan.operand(expression, index+1))
+		rightText := ""
+		if resolveText {
+			rightText = scan.operand(expression, index+1)
+		}
+		right, rightOK, rightErr := resolve(index+1, rightText)
 		if firstErr == nil {
 			firstErr = rightErr
 		}
@@ -164,7 +174,12 @@ func evaluateComparisonLinks(expression string, scan *comparisonChainScan, norma
 				if operator == "!=" {
 					operator = "<>"
 				}
-				leftValue, rightValue := promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), left, right, cypher25)
+				leftValue, rightValue := left, right
+				_, leftFloat := cypherFloatValue(left)
+				_, rightFloat := cypherFloatValue(right)
+				if leftFloat != rightFloat {
+					leftValue, rightValue = promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), left, right, cypher25)
+				}
 				comparison := compare(leftValue, rightValue, operator)
 				if comparison == nil {
 					hasNull = true
