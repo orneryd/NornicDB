@@ -1318,6 +1318,9 @@ func sameNodeIDs(a, b []string) bool {
 	return true
 }
 
+// clusterRemoveHook lets tests run a concurrent mutation inside Remove.
+var clusterRemoveHook func()
+
 // Remove deletes an embedding and keeps cluster membership consistent with
 // the slot the base removal actually swap-moves into the removed position.
 // clusterMu then mu stay held across both, so an append cannot change which
@@ -1330,6 +1333,9 @@ func (ci *ClusterIndex) Remove(nodeID string) bool {
 	idx, last, ok := ci.removeLocked(nodeID)
 	if !ok {
 		return false
+	}
+	if hook := clusterRemoveHook; hook != nil {
+		hook()
 	}
 	if idx >= len(ci.assignments) {
 		return true
