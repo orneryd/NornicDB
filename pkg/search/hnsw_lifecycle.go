@@ -36,11 +36,11 @@ func (s *Service) startHNSWBuild(dimensions int) (*HNSWIndex, *hnswBuildJob, err
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	if s.hnswIndex != nil {
-		return s.hnswIndex, nil, nil
-	}
 	if s.hnswBuildPaused > 0 || s.hnswVectorsChanging.Load() {
 		return nil, nil, nil
+	}
+	if s.hnswIndex != nil {
+		return s.hnswIndex, nil, nil
 	}
 	if job := s.hnswBuild; job != nil {
 		select {
@@ -80,10 +80,18 @@ func validateHNSWVectorSource(vi *VectorIndex, vfs *VectorFileStore) error {
 // invalidateHNSWLocked prevents an obsolete generation from publishing after a
 // dimension change, strategy switch or index drop. Caller holds hnswMu.
 func (s *Service) invalidateHNSWLocked() {
+	s.retireVectorSnapshotLocked()
+	s.hnswIndex = nil
+}
+
+// retireVectorSnapshotLocked retires captured sources without discarding a
+// ready graph whose vectors have only moved between equivalent stores.
+// Caller holds hnswMu. A caller already holding indexMu must never join here.
+func (s *Service) retireVectorSnapshotLocked() {
+	s.hnswGeneration.Add(1)
 	if s.hnswBuild != nil {
 		s.hnswBuild.cancel()
 	}
-	s.hnswIndex = nil
 }
 
 // getOrCreateHNSWIndex waits only for internal callers that need a ready graph.
@@ -117,10 +125,8 @@ func (s *Service) getOrCreateHNSWIndex(ctx context.Context, dimensions int) (*HN
 func (s *Service) pauseHNSWBuild() func() {
 	s.hnswMu.Lock()
 	s.hnswBuildPaused++
+	s.retireVectorSnapshotLocked()
 	job := s.hnswBuild
-	if job != nil {
-		job.cancel()
-	}
 	s.hnswMu.Unlock()
 	if job != nil {
 		<-job.done
@@ -133,6 +139,30 @@ func (s *Service) pauseHNSWBuild() func() {
 		s.hnswBuildPaused--
 		s.hnswMu.Unlock()
 	}
+}
+
+// vectorSnapshotToken records admission before reading any source pointers.
+// A snapshot begun while sources are changing stays unavailable even when the
+// same generation becomes ready: warmup cannot make its old pointers current.
+type vectorSnapshotToken struct {
+	generation uint64
+	available  bool
+}
+
+func (s *Service) captureVectorSnapshot() vectorSnapshotToken {
+	return vectorSnapshotToken{
+		generation: s.hnswGeneration.Load(),
+		available:  !s.hnswVectorsChanging.Load(),
+	}
+}
+
+// vectorSnapshotCurrent is the shared admission check for pipeline factories,
+// asynchronous transitions and direct brute switches. Retirement advances the
+// generation before clearing the cache under pipelineMu; transitions serialize
+// their final swap with retirement under indexMu. Callers retain their own
+// publication boundary rather than reversing pipelineMu -> indexMu ordering.
+func (s *Service) vectorSnapshotCurrent(snapshot vectorSnapshotToken) bool {
+	return snapshot.available && s.lifecycleCtx.Err() == nil && s.hnswGeneration.Load() == snapshot.generation && !s.hnswVectorsChanging.Load()
 }
 
 // reserveHNSWRebuild gives maintenance the same cancellation/join ownership as

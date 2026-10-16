@@ -43,7 +43,7 @@ func TestSearchResultCacheKeyedByIndexRevision(t *testing.T) {
 	store := storage.NewMemoryEngine()
 	svc := NewService(store)
 	ctx := context.Background()
-	for _, id := range []string{"nornic:a", "nornic:b"} {
+	for _, id := range []string{"nornic:a"} {
 		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha"}})
 		require.NoError(t, err)
 	}
@@ -52,6 +52,8 @@ func TestSearchResultCacheKeyedByIndexRevision(t *testing.T) {
 	first, err := svc.Search(ctx, "alpha", nil, opts)
 	require.NoError(t, err)
 	require.Len(t, first.Results, 1)
+	_, err = store.CreateNode(&storage.Node{ID: "nornic:b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "alpha"}})
+	require.NoError(t, err)
 
 	// Index b without the cache invalidation IndexNode does, as a search
 	// that cached its result while b was being indexed would leave it.

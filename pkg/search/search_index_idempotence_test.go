@@ -12,6 +12,10 @@ import (
 func TestSearchService_IndexNodeSkipsUnchangedVectorReindex(t *testing.T) {
 	engine := storage.NewMemoryEngine()
 	svc := NewServiceWithDimensions(engine, 4)
+	t.Cleanup(func() { _ = svc.Close() })
+	// The first NODE population legitimately retires an unadmitted graph.
+	// Install this graph only after the real empty population is admitted.
+	require.NoError(t, svc.BuildIndexes(context.Background()))
 	svc.hnswMu.Lock()
 	svc.hnswIndex = NewHNSWIndex(4, DefaultHNSWConfig())
 	svc.hnswMu.Unlock()
@@ -27,6 +31,7 @@ func TestSearchService_IndexNodeSkipsUnchangedVectorReindex(t *testing.T) {
 	}
 	require.NoError(t, svc.IndexNode(node))
 	require.Equal(t, 1, svc.EmbeddingCount())
+	require.NotNil(t, svc.hnswIndex)
 	initialHNSWSlots := hnswAllocatedSlots(svc.hnswIndex)
 
 	unchangedVector := &storage.Node{
@@ -40,6 +45,7 @@ func TestSearchService_IndexNodeSkipsUnchangedVectorReindex(t *testing.T) {
 	}
 	require.NoError(t, svc.IndexNode(unchangedVector))
 	require.Equal(t, 1, svc.EmbeddingCount())
+	require.NotNil(t, svc.hnswIndex)
 	afterUnchangedSlots := hnswAllocatedSlots(svc.hnswIndex)
 	require.Equal(t, initialHNSWSlots, afterUnchangedSlots, "unchanged vector writes must not mutate HNSW")
 
@@ -54,6 +60,7 @@ func TestSearchService_IndexNodeSkipsUnchangedVectorReindex(t *testing.T) {
 	}
 	require.NoError(t, svc.IndexNode(changedVector))
 	require.Equal(t, 1, svc.EmbeddingCount())
+	require.NotNil(t, svc.hnswIndex)
 	afterChangedSlots := hnswAllocatedSlots(svc.hnswIndex)
 	require.Greater(t, afterChangedSlots, afterUnchangedSlots, "changed vector writes must still update HNSW state")
 }

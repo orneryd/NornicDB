@@ -1532,6 +1532,8 @@ func TestSearchService_BuildIndexes_SkipIterationWarmsHNSWWhenDiskIndexMissing(t
 func TestSearchService_PersistBaseIndexes_Branches(t *testing.T) {
 	engine := storage.NewNamespacedEngine(newNamespacedEngine(t), "test")
 	svc := NewServiceWithDimensions(engine, 2)
+	t.Cleanup(func() { _ = svc.Close() })
+	require.NoError(t, svc.BuildIndexes(context.Background()))
 
 	tmp := t.TempDir()
 	bm25Path := filepath.Join(tmp, "bm25")
@@ -3074,7 +3076,9 @@ func TestSearchHelpers_TransitionDeltaVectorAndReplay(t *testing.T) {
 	svc.strategyTransitionMu.Unlock()
 
 	target := NewHNSWIndex(2, DefaultHNSWConfig())
-	last := svc.replayTransitionDeltas(target, strategyModeHNSW, vi, vfs, 0)
+	svc.indexMu.Lock()
+	last := svc.replayTransitionDeltasLocked(target, strategyModeHNSW, vi, vfs, 0)
+	svc.indexMu.Unlock()
 	require.Equal(t, uint64(3), last)
 	require.Equal(t, 1, target.Size())
 
@@ -3082,7 +3086,9 @@ func TestSearchHelpers_TransitionDeltaVectorAndReplay(t *testing.T) {
 	svc.strategyTransitionMu.Lock()
 	svc.strategyTransitionDeltas = append(svc.strategyTransitionDeltas, strategyDeltaMutation{seq: 4, id: "vfs_only", add: false})
 	svc.strategyTransitionMu.Unlock()
-	last = svc.replayTransitionDeltas(target, strategyModeHNSW, vi, vfs, 3)
+	svc.indexMu.Lock()
+	last = svc.replayTransitionDeltasLocked(target, strategyModeHNSW, vi, vfs, 3)
+	svc.indexMu.Unlock()
 	require.Equal(t, uint64(4), last)
 	require.Equal(t, 0, target.Size())
 }

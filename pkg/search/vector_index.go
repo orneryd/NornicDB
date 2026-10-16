@@ -107,6 +107,7 @@ import (
 	"errors"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"os"
+	"slices"
 	"sort"
 	"sync"
 
@@ -260,6 +261,22 @@ func rawVectorNeeded(vec []float32) bool {
 		normSquared += float64(value) * float64(value)
 	}
 	return normSquared != 0 && math.Abs(math.Sqrt(normSquared)-1) > 1e-5
+}
+
+// matchesStoredVector compares the complete representation Add would retain.
+// Cosine-equivalent inputs can still have different raw dot/euclidean values.
+func (v *VectorIndex) matchesStoredVector(id string, vec []float32) bool {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	stored, ok := v.vectors[id]
+	if !ok {
+		return false
+	}
+	raw, hasRaw := v.rawVectors[id]
+	if rawVectorNeeded(vec) != hasRaw || (hasRaw && !slices.Equal(raw, vec)) {
+		return false
+	}
+	return slices.Equal(stored, vector.Normalize(vec))
 }
 
 // Remove removes a vector from the index by its ID.
