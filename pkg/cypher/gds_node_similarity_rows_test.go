@@ -133,13 +133,13 @@ func TestSimilarityRowsContract(t *testing.T) {
 		"sourceNode: 'a', topK: 2"))
 	// maxHolders unset or 0: no limit, every thing counts.
 	hub := "[{source: 'a', thing: 'x'}, {source: 'b', thing: 'x'}, {source: 'c', thing: 'x'}, {source: 'b', thing: 'y'}, {source: 'a', thing: 'y'}]"
-	unlimited := [][]interface{}{{"a", "b", 0.5 + 1.0/3}, {"a", "c", 1.0 / 3}}
+	unlimited := [][]interface{}{{"a", "b", floatSum(0.5, 1.0/3)}, {"a", "c", 1.0 / 3}}
 	require.Equal(t, unlimited, run(hub, "sourceNode: 'a', similarityMetric: 'RESOURCE_ALLOCATION'"))
 	require.Equal(t, unlimited, run(hub, "sourceNode: 'a', similarityMetric: 'RESOURCE_ALLOCATION', maxHolders: 0"))
 	require.Equal(t, [][]interface{}{{"a", "b", 0.5}}, run(hub, "sourceNode: 'a', similarityMetric: 'RESOURCE_ALLOCATION', maxHolders: 2"))
 	// A list sourceNode is one source: its nodes' things together, none of
 	// them a candidate, node1 their ids.
-	require.Equal(t, [][]interface{}{{[]interface{}{"a1", "a2"}, "b", 1.0/3 + 1.0/3}, {[]interface{}{"a1", "a2"}, "c", 1.0 / 3}}, run(
+	require.Equal(t, [][]interface{}{{[]interface{}{"a1", "a2"}, "b", floatSum(1.0/3, 1.0/3)}, {[]interface{}{"a1", "a2"}, "c", 1.0 / 3}}, run(
 		"[{source: 'a1', thing: 'x'}, {source: 'a2', thing: 'y'}, {source: 'b', thing: 'x'}, {source: 'b', thing: 'y'}, {source: 'c', thing: 'y'}, {source: 'a2', thing: 'x'}]",
 		"sourceNode: ['a2', 'a1'], similarityMetric: 'RESOURCE_ALLOCATION'"))
 	require.Equal(t, [][]interface{}{}, run("[{source: 'b', thing: 'x'}]", "sourceNode: ['a1', 'a2']"))
@@ -288,4 +288,67 @@ func TestSimilarityRowsErrors(t *testing.T) {
 	_, err := readNodeSimilarityConfig(context.Background(), &GraphProjection{}, map[string]interface{}{"similarityMetric": "RESOURCE_ALLOCATION"}, false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "RESOURCE_ALLOCATION is not a valid metric. Available metrics include Jaccard and Overlap")
+}
+
+// similarityRowsExampleGraph and similarityRowsExampleQuery are the worked
+// example handed to callers: two seed documents, library-wide weights,
+// candidates kept to one collection, duplicate links, ties by id.
+const similarityRowsExampleGraph = `CREATE (h:D {id: 'doc-h'}), (g:D {id: 'doc-g'}), (f:D {id: 'doc-f'}), (e:D {id: 'doc-e'}),
+       (d:D {id: 'doc-d'}), (c:D {id: 'doc-c'}), (b:D {id: 'doc-b'}), (a:D {id: 'doc-a'}),
+       (t1:T {id: 'thing-f'}), (t2:T {id: 'thing-e'}), (t3:T {id: 'thing-d'}),
+       (t4:T {id: 'thing-c'}), (t5:T {id: 'thing-b'}), (t6:T {id: 'thing-a'}),
+       (c1:C {id: 'c1'}), (c2:C {id: 'c2'}),
+       (h)-[:HAS]->(t1), (h)-[:HAS]->(t1), (h)-[:HAS]->(t2), (h)-[:HAS]->(t5),
+       (g)-[:HAS]->(t2), (g)-[:HAS]->(t3),
+       (f)-[:HAS]->(t1), (f)-[:HAS]->(t1), (f)-[:HAS]->(t3), (f)-[:HAS]->(t5),
+       (e)-[:HAS]->(t1), (e)-[:HAS]->(t3), (e)-[:HAS]->(t5),
+       (d)-[:HAS]->(t2), (c)-[:HAS]->(t2), (b)-[:HAS]->(t1), (a)-[:HAS]->(t4), (a)-[:HAS]->(t5)
+WITH [h, g, f, e, d, c, b, a] AS docs, t6, c1, c2
+UNWIND range(0, 7) AS i
+WITH docs[i] AS doc, i, t6, c1, c2
+CREATE (doc)-[:HAS]->(t6)
+FOREACH (_ IN CASE WHEN i < 6 THEN [1] ELSE [] END | CREATE (doc)-[:MEMBER_OF]->(c1))
+FOREACH (_ IN CASE WHEN i >= 6 THEN [1] ELSE [] END | CREATE (doc)-[:MEMBER_OF]->(c2))`
+
+const similarityRowsExampleQuery = `MATCH (seed:D) WHERE seed.id IN ['doc-h', 'doc-g']
+WITH collect(seed) AS seeds
+UNWIND seeds AS s
+MATCH (s)-[:HAS]->(thing:T)
+WITH seeds, collect(DISTINCT thing) AS things
+UNWIND things AS thing
+MATCH (holder:D)-[:HAS]->(thing)
+WITH seeds, thing, count(DISTINCT holder) AS having
+MATCH (holder:D)-[:HAS]->(thing)
+WHERE having > 0 AND (holder IN seeds OR EXISTS {
+      MATCH (holder)-[:MEMBER_OF]->(c:C) WHERE c.id IN ['c1'] })
+WITH seeds, collect({source: holder, thing: thing, weight: 1.0 / having}) AS rows
+CALL nornicdb.similarity.stream(rows, {sourceNode: seeds, similarityMetric: 'RESOURCE_ALLOCATION',
+                                       tieBreakProperty: 'id', topK: 10})
+YIELD node2, similarity, shared
+RETURN gds.util.asNode(node2).id AS document, similarity,
+       [s IN shared | gds.util.asNode(s.nodeId).id] AS things`
+
+// TestSimilarityRowsWorkedExample pins the worked example's result.
+func TestSimilarityRowsWorkedExample(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "ns"))
+	_, err := exec.Execute(context.Background(), similarityRowsExampleGraph, nil)
+	require.NoError(t, err)
+	result, err := exec.Execute(context.Background(), similarityRowsExampleQuery, nil)
+	require.NoError(t, err)
+	top := floatSum(1.0/3, 1.0/4, 1.0/4, 1.0/8)
+	near := []interface{}{"thing-d", "thing-b", "thing-f", "thing-a"}
+	far := []interface{}{"thing-e", "thing-a"}
+	require.Equal(t, [][]interface{}{
+		{"doc-e", top, near}, {"doc-f", top, near}, {"doc-c", 0.375, far}, {"doc-d", 0.375, far},
+	}, result.Rows)
+}
+
+// floatSum adds float64 values left to right at run time, as a Cypher
+// reduce does; a Go constant expression would be rounded only once.
+func floatSum(values ...float64) float64 {
+	total := 0.0
+	for _, value := range values {
+		total += value
+	}
+	return total
 }
