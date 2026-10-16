@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expands until its beam stops changing, and groups queries by entry point so each group keeps its own region; equal
   distances are ordered by lexical closeness. Vectors of one build batch also get each other as candidates (the batch
   scored against itself), which the graph search cannot see. CUDA, Metal and Vulkan share the fixed search.
+- Make the Metal HNSW build 43x faster: on 88k 1024-d vectors the index is ready in 38 s instead of 1,660 s (the CPU
+  build: 69 s), at the same recall. The build keeps the vectors it has inserted on the GPU (4 bytes per dimension per
+  vector, for the build only), so each batch's level-0 candidates are its exact nearest inserted vectors from one pass,
+  instead of a graph search that uploaded its candidates' vectors every round. Scores come from a Metal Performance
+  Shaders matrix product, and each query's top candidates are picked on the CPU from the shared score matrix; the
+  previous kernel computed both serially per query. CUDA and Vulkan keep the graph search.
 - Build HNSW indexes on the CPU in parallel: each batch's level-0 candidate searches run concurrently (the insert's own
   search), then vectors are linked in order. Recall matches one-at-a-time inserts.
 - Make exact (brute-force) vector search about 8x faster: keep the best results in a bounded heap rather than sorting

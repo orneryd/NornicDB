@@ -80,6 +80,15 @@ func (b *Buffer) Release() {}
 // Size returns the buffer size in bytes.
 func (b *Buffer) Size() uint64 { return 0 }
 
+// ReadFloat32 reads float32 values from the buffer (stub).
+func (b *Buffer) ReadFloat32(count int) []float32 { return nil }
+
+// Float32View returns the buffer's contents as a slice (stub).
+func (b *Buffer) Float32View(count int) []float32 { return nil }
+
+// WriteFloat32 writes float32 values into the buffer (stub).
+func (b *Buffer) WriteFloat32(data []float32, offset int) error { return ErrMetalNotAvailable }
+
 // ComputeCosineSimilarity computes cosine similarity (stub).
 func (d *Device) ComputeCosineSimilarity(embeddings, query, scores *Buffer, n, dimensions uint32, normalized bool) error {
 	return ErrMetalNotAvailable
@@ -162,6 +171,11 @@ func MPSIsSupported() bool {
 
 // MPSMatrixMultiply performs GPU-accelerated matrix multiplication (stub).
 func (d *Device) MPSMatrixMultiply(a, b, c *Buffer, m, n, k uint32, alpha, beta float32) error {
+	return ErrMetalNotAvailable
+}
+
+// MPSMatrixMultiplyTransposeB computes C = A × Bᵀ (stub).
+func (d *Device) MPSMatrixMultiplyTransposeB(a, b, c *Buffer, m, n, k uint32) error {
 	return ErrMetalNotAvailable
 }
 
