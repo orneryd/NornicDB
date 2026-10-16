@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// This virtual test file is the fresh published-develop family original. It
-// asserts list-bearing preconditions locally because 4db intentionally has no
-// future temporalKeySpec.listBearing helper. Product behavior is exercised only
-// through the existing 4db functions and public storage routes.
+// Temporal constraints over composite keys that include list-valued
+// properties. List-bearing preconditions are asserted locally in the test so
+// the tests do not depend on temporalKeySpec internals; behaviour is exercised
+// through the storage engine's public write routes.
 
 func tlfTemporalConstraint(label string, keyProps []string, relationship bool) Constraint {
 	properties := append(append([]string(nil), keyProps...), "from", "to")
