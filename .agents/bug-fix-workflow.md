@@ -6,6 +6,16 @@
 
 ---
 
+## Mandatory entry and family scope
+
+Before using this workflow, apply [AGENTS.md’s mandatory task entry protocol](../AGENTS.md#mandatory-task-entry-protocol),
+choose Direct, Stage 2, or the owning Stage-2 family for a Stage-3 fix-forward, and check
+[Convergence and Rule 73](../AGENTS.md#4-convergence-and-rule-73).
+
+When [Rule 73](rule73.md) is active, it supersedes leaf-only “minimal fix” guidance: correct the complete current
+unit through its shared causal owner and all affected consumers. The failing-test and regression requirements
+below still apply. Readiness and completion require [AGENTS.md section 9](../AGENTS.md#9-verification-and-completion).
+
 ## The Golden Rule
 
 **Every bug MUST have a test that:**
@@ -122,6 +132,10 @@ FAIL    github.com/orneryd/nornicdb/pkg/cypher    0.123s
 ### Step 3: Fix the Bug
 
 **Implement the minimal fix:**
+
+“Minimal” means the smallest complete correction for the selected unit. Under Stage 2 or its owned Stage-3
+fix-forward, cover the affected implementation family. Under active Rule 73, change the failed causal approach
+across that complete unit before presenting another candidate; do not stop at a per-finding or per-consumer patch.
 
 ```go
 // pkg/cypher/executor.go
