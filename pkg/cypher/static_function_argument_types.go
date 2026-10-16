@@ -316,21 +316,49 @@ func lookupLowerASCII[V any](table map[string]V, name string) (V, bool) {
 // ("Float, Integer, String or List<T>", the type of 1 + x for an unknown x)
 // into them; a single type is itself.
 func staticTypeChoices(typeName string) []string {
-	return strings.Split(strings.ReplaceAll(typeName, " or ", ", "), ", ")
+	if !strings.Contains(typeName, ", ") && !strings.Contains(typeName, " or ") {
+		return []string{typeName}
+	}
+	var choices []string
+	start, depth := 0, 0
+	for index := 0; index < len(typeName); index++ {
+		switch typeName[index] {
+		case '<':
+			depth++
+		case '>':
+			depth--
+		}
+		if depth != 0 {
+			continue
+		}
+		width := 0
+		if strings.HasPrefix(typeName[index:], ", ") {
+			width = 2
+		} else if strings.HasPrefix(typeName[index:], " or ") {
+			width = 4
+		}
+		if width > 0 {
+			choices = append(choices, typeName[start:index])
+			start = index + width
+			index = start - 1
+		}
+	}
+	return append(choices, typeName[start:])
 }
 
 func (argument staticArgumentType) accepts(typeName string) bool {
-	if typeName == "" || len(argument.options) == 0 {
+	if typeName == "" || typeName == "Null" || len(argument.options) == 0 {
 		return true
 	}
 	if strings.Contains(typeName, ", ") || strings.Contains(typeName, " or ") {
-		choices := staticTypeChoices(typeName)
-		for _, choice := range choices {
-			if argument.accepts(choice) {
-				return true
+		if choices := staticTypeChoices(typeName); len(choices) > 1 {
+			for _, choice := range choices {
+				if argument.accepts(choice) {
+					return true
+				}
 			}
+			return false
 		}
-		return false
 	}
 	if typeName == "Number" {
 		return argument.accepts("Integer") || argument.accepts("Float")
@@ -773,7 +801,7 @@ func (scope staticTypeScope) staticExpressionType(expression string) string {
 	}
 	if _, member := staticMemberAccessBase(expression); member && scope.cypher25 {
 		if operand, err := (staticOperatorChecker{scope: scope}).check(expression); err == nil {
-			return operand.kind
+			return operand.typeName()
 		}
 		return ""
 	}
@@ -781,8 +809,8 @@ func (scope staticTypeScope) staticExpressionType(expression string) string {
 	if mayNeedStaticTypeCheck(expression) || call && strings.EqualFold(function, "coalesce") {
 		operand, err := (staticOperatorChecker{scope: scope}).check(expression)
 		if err == nil {
-			if operand.known() {
-				return operand.kind
+			if name := operand.typeName(); name != "" {
+				return name
 			}
 			if operand.nonBoolean {
 				return operand.display
@@ -845,6 +873,9 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 				}
 			}
 		}
+		// The shared CASE result-type owner combines branches before checking
+		// the signature: reject only when no result type fits, otherwise
+		// retain runtime validation of the selected branch.
 		typeName := scope.staticExpressionType(expression)
 		if property {
 			// A node's or relationship's property is a property value,
