@@ -466,6 +466,13 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	if count, expanded := e.boundExpandCount(ctx, matches, seed, where, values, first); expanded {
 		return count, true
 	}
+	return e.boundTraversalCount(ctx, matches, seed, where, values, first), true
+}
+
+// boundTraversalCount is boundChainCount for any chain: the paths the
+// traversal finds from seed that agree with the row's nodes and
+// relationships and pass where.
+func (e *StorageExecutor) boundTraversalCount(ctx context.Context, matches *TraversalMatch, seed *storage.Node, where string, values map[string]interface{}, first bool) int64 {
 	var paths []PathResult
 	if matches.IsChained && len(matches.Segments) > 1 {
 		paths = e.traverseChainedGraph(ctx, matches, []*storage.Node{seed})
@@ -512,10 +519,10 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 		}
 		count++
 		if first {
-			return count, true
+			return count
 		}
 	}
-	return count, true
+	return count
 }
 
 // boundExpandCount is boundChainCount for one relationship of length one,
