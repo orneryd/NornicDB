@@ -126,6 +126,20 @@ NornicDB also supports **named vectors** in Qdrant:
 - Qdrant named vectors → `node.NamedEmbeddings[vectorName]`
 - This enables multiple independent embedding fields per point (e.g. `title` and `content`).
 
+### Vector search uses the database's index
+
+A Qdrant `Search` runs on the collection database's search index, the same index and query as Cypher's
+`db.index.vector.queryNodes` on that database:
+
+- **ANN strategy:** the configured strategy applies, `NORNICDB_VECTOR_ANN_QUALITY` included (HNSW presets, `compressed` IVF-PQ, k-means routing,
+  brute force), with the same exact rescoring.
+- **`hnsw_ef`:** `params.hnsw_ef` sets the HNSW beam width for that request on HNSW-based strategies. IVF-PQ, k-means routing and
+  brute force don't search a graph and ignore it.
+- **Payload filters:** filters are applied while the search widens, so a selective filter still returns its top matches.
+- **Scores:** Qdrant's raw similarities: cosine and dot as-is, Euclid as `1 / (1 + distance)`.
+- **Restart:** points stay searchable across a restart, since the index is rebuilt from the stored vectors.
+- **Vector search disabled:** a database with vector search disabled returns no hits, as it does for Cypher.
+
 ### Cypher access (collection = database)
 
 Because collections are databases, you can query points with Cypher:

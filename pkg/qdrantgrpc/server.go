@@ -150,6 +150,12 @@ type Config struct {
 	// If nil, those query variants return FailedPrecondition.
 	EmbedQuery func(ctx context.Context, text string) ([]float32, error)
 
+	// DropDatabase drops a collection's database together with the state the
+	// server derives from it, such as its search index, as Cypher's DROP
+	// DATABASE does. nil drops it from the database manager only, which leaves
+	// a dropped collection's vectors in its search service.
+	DropDatabase func(name string) error
+
 	// BindQueryEmbedding captures the provider used by EmbedQuery for a text
 	// request. It must preserve an existing binding in nested batch calls.
 	// ID and numeric-vector requests never invoke it.
@@ -215,7 +221,6 @@ type Server struct {
 	collections    CollectionStore
 	baseStorage    storage.Engine
 	searchService  SearchServiceProvider
-	vecIndex       *vectorIndexCache
 	authenticator  *auth.Authenticator // Authentication for gRPC requests
 	basicAuthCache *auth.BasicAuthCache
 
@@ -309,7 +314,6 @@ func NewServer(config *Config, collections CollectionStore, baseStorage storage.
 		collections:    collections,
 		baseStorage:    baseStorage,
 		searchService:  searchProvider,
-		vecIndex:       newVectorIndexCache(),
 		authenticator:  authenticator,
 		basicAuthCache: auth.NewBasicAuthCache(auth.DefaultAuthCacheEntries, auth.DefaultAuthCacheTTL),
 		register:       nil,
@@ -404,11 +408,11 @@ func (s *Server) Start() error {
 	if s.databaseAccessModeResolver == nil {
 		checker = nil // no per-DB RBAC when resolvers not set
 	}
-	collectionsService := NewCollectionsService(s.collections, s.vecIndex, checker)
+	collectionsService := NewCollectionsService(s.collections, checker)
 	collectionsService.localizer = s.config.Localizer
 	qpb.RegisterCollectionsServer(s.grpcServer, collectionsService)
 
-	pointsService := NewPointsService(s.config, s.collections, s.searchService, s.vecIndex, checker)
+	pointsService := NewPointsService(s.config, s.collections, s.searchService, checker)
 	qpb.RegisterPointsServer(s.grpcServer, pointsService)
 
 	snapshotsService := NewSnapshotsService(s.config, s.collections, s.baseStorage, s.config.SnapshotDir, checker)
@@ -827,16 +831,13 @@ func NewServerWithDatabaseManager(config *Config, dbManager *multidb.DatabaseMan
 	if dbManager == nil {
 		return nil, fmt.Errorf("db manager required")
 	}
-	vecIndex := newVectorIndexCache()
-	collections, err := NewDatabaseCollectionStore(dbManager, vecIndex)
+	var dropDatabase func(name string) error
+	if config != nil {
+		dropDatabase = config.DropDatabase
+	}
+	collections, err := NewDatabaseCollectionStore(dbManager, dropDatabase)
 	if err != nil {
 		return nil, err
 	}
-	srv, err := NewServer(config, collections, baseStorage, searchProvider, authenticator)
-	if err != nil {
-		return nil, err
-	}
-	// Ensure server and store share the same index cache.
-	srv.vecIndex = vecIndex
-	return srv, nil
+	return NewServer(config, collections, baseStorage, searchProvider, authenticator)
 }
