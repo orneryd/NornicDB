@@ -1030,6 +1030,24 @@ for value in ["point({x:1.25,y:2.5})", "[true,false]"]:
         add("temporal-map-offset", "typed-predicate", f"WITH {value} AS p CREATE {pattern} SET n.v=p WITH p {read} WHERE n.v=p MERGE (h:TypedHit) RETURN count(h)", "tx")
         add("temporal-map-offset", "typed-case", f"WITH {value} AS p MERGE {pattern} SET n.v=CASE WHEN true THEN p ELSE null END RETURN n.v=p", "tx")
 
+# Pattern predicates (#1317 slice 1): a relationship pattern as a predicate
+# reads the whole row, as EXISTS { pattern } does: a bound relationship
+# variable, a row scalar or map value in a property map, a row with no node
+# binding, a path's nodes; as an operand of NOT, AND, OR and XOR; in WHERE,
+# WITH ... WHERE and RETURN exists().
+PATTERN_OUTER = "MATCH (a:Q)-[r:R]->(b:Q) WITH a, r, b, a.id AS k, {id: b.id} AS mp"
+for pattern in ["(a)-[r]->(b)", "(b)-[r]->(a)", "(a)-[r]->(:Q {id: k + 1})", "(a)-[:R]->(:Q {id: k})",
+                "(a)-[:R]->(:Q {id: mp.id})", "(a)-[:R {w: k}]->()", "()-[r]->(:Q {id: 3})", "()-[r]->(b)",
+                "(a)-->()-->()", "(b)<-[:R]-(:Q {id: k})"]:
+    for template in ["{p}", "NOT {p}", "{p} AND k > 1", "{p} OR k = 1", "{p} XOR k = 2"]:
+        predicate = template.format(p=pattern)
+        add("pattern-predicate", "where", f"{PATTERN_OUTER} WHERE {predicate} RETURN k AS id ORDER BY id")
+        add("pattern-predicate", "with-where", f"{PATTERN_OUTER} WITH a, r, b, k, mp WHERE {predicate} RETURN k AS id ORDER BY id")
+    add("pattern-predicate", "exists", f"{PATTERN_OUTER} RETURN k AS id, exists({pattern}) AS v ORDER BY id")
+add("pattern-predicate", "path", "MATCH p = (a:Q)-[:R]->(b:Q) WITH nodes(p)[0] AS x, nodes(p)[1] AS y WHERE (x)-[:R]->(y) RETURN x.id AS id ORDER BY id")
+add("pattern-predicate", "null", "OPTIONAL MATCH (z:Nope) RETURN exists((z)-[:R]->()) AS v")
+add("pattern-predicate", "null", "OPTIONAL MATCH (z:Nope) WITH z MATCH (a:Q {id: 1}) WHERE NOT (z)-[:R]->() RETURN a.id AS id")
+
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:
     json.dump({"setup": SETUP, "cases": cases}, out, separators=(",", ":"))

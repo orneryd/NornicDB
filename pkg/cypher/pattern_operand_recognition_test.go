@@ -120,15 +120,13 @@ func TestCompiledBindingWhereXor(t *testing.T) {
 		"a.age = 31 XOR (a)-[:XR]->(b)": true,
 		"a.age = 31 XOR (b)-[:XR]->(a)": false,
 	} {
-		predicate, ok := exec.tryCompileExecutorBindingWhere(ctx, clause)
-		require.True(t, ok, clause)
+		// A pattern operand is decided by the EXISTS owner (#1317).
+		predicate := exec.getCompiledBindingWhere(ctx, clause)
 		require.Equal(t, want, predicate(bind, nil), clause)
 	}
-	// An XOR whose operand neither compiler supports isn't compiled; the
+	// An XOR whose operand the compiler doesn't support isn't compiled; the
 	// generic evaluator answers it.
 	_, ok = exec.getCompiledBindingWhereTruthIfSupported(ctx, "a.age = 30 XOR (")
-	require.False(t, ok)
-	_, ok = exec.tryCompileExecutorBindingWhere(ctx, "a.age = 30 XOR (")
 	require.False(t, ok)
 }
 
