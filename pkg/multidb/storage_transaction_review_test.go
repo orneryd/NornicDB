@@ -80,13 +80,13 @@ func TestTransactionQuotaAdmissionCancellationWhileWaiting(t *testing.T) {
 	tracker := engine.(*sizeTrackingEngine)
 	tx := stagedQuotaNode(t, manager, db, "canceled")
 	tracker.writeMu.Lock()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	done := make(chan error, 1)
 	started := make(chan struct{})
 	go func() { close(started); done <- tracker.CommitTransaction(ctx, tx) }()
 	<-started
-	cancel()
+	<-ctx.Done()
 	var commitErr error
 	select {
 	case commitErr = <-done:
@@ -96,7 +96,7 @@ func TestTransactionQuotaAdmissionCancellationWhileWaiting(t *testing.T) {
 		commitErr = <-done
 		t.Error("cancellation did not interrupt admission wait")
 	}
-	require.ErrorIs(t, commitErr, context.Canceled)
+	require.ErrorIs(t, commitErr, context.DeadlineExceeded)
 	require.True(t, nornicerrors.IsCommitRolledBack(commitErr), "pre-publication cancellation has a known rollback outcome")
 	count, err := engine.NodeCount()
 	require.NoError(t, err)
