@@ -26,9 +26,10 @@ func (e *settableWriteTimeEngine) LastWriteTime() time.Time {
 	return time.Time{}
 }
 
-// F-I86 B2: a rebuild that finds storage newer than the saved vector store
-// replaces that store. The replacement is a source transition: the closed
-// store must not stay published to queries for the rest of the rebuild.
+// F-I86 B2 (suspected, refuted; pinned): a rebuild that finds storage newer
+// than the saved vector store replaces that store. The replacement is a source
+// transition through the owner: the closed store is never published to
+// queries, and the rebuilt source answers completely.
 func TestBaseRestartRetiresReplacedVectorStore(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100") // keep the exact pipeline
 	ctx := context.Background()
@@ -45,7 +46,9 @@ func TestBaseRestartRetiresReplacedVectorStore(t *testing.T) {
 	svc.SetPersistenceEnabled(true)
 	require.NoError(t, svc.BuildIndexes(ctx))
 
-	query, opts := []float32{1, 0, 0}, &SearchOptions{Limit: 10}
+	// Accept every stored vector: the count, not the threshold, is under test.
+	minSimilarity := -1.0
+	query, opts := []float32{1, 0, 0}, &SearchOptions{Limit: 10, MinSimilarity: &minSimilarity}
 	_, err := svc.VectorSearchCandidates(ctx, query, opts)
 	require.NoError(t, err)
 	require.NotNil(t, cachedVectorPipeline(svc), "a query caches the exact pipeline over the saved store")
