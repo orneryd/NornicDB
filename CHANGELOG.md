@@ -39,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recall@10 on 88k 1024-d vectors at a sixth of the latency.
 - Probe an eighth of the k-means clusters (at least 16) per query instead of a fixed 3, the rule IVF-PQ already used
   (recall@10 was 0.80 with 210 clusters); `NORNICDB_KMEANS_NPROBE` overrides it.
+- Cluster a database with k-means soon after a bulk load finishes instead of at the next
+  `NORNICDB_KMEANS_CLUSTER_INTERVAL` tick (15 minutes by default): a check every 10 seconds clusters a database whose
+  vectors grew by a fifth since its last clustering and then stopped changing. `NORNICDB_KMEANS_GROWTH_RATIO` (0
+  disables) and `NORNICDB_KMEANS_GROWTH_CHECK_INTERVAL` tune it.
+- Build the GPU brute-force copy of the vectors only when a search first chooses GPU brute force. Attaching the GPU
+  built it for every database, which held every vector again in host and GPU memory (about 690 MB for 88k 1024-d
+  vectors) even when the vector count was outside the GPU brute-force range and it was never searched.
 - Report IVF-PQ, k-means and IVF-HNSW strategies by name in a database's `searchStrategy` instead of `unknown`; runtime
   strategy transitions still only move between brute force and HNSW.
 - Keep a Qdrant collection usable after its metadata is read back from storage. Stored numbers decode as the smallest
