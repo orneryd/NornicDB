@@ -137,7 +137,7 @@ func TestIssue883ReturnColumnHelpers(t *testing.T) {
 
 	// Without the statement's own text the columns stay as executed.
 	final := &ExecuteResult{Columns: []string{"a"}, Rows: [][]interface{}{{int64(1)}}}
-	pipelineNameReturnColumns(final, "RETURN a", "", nil)
+	pipelineNameReturnColumns(context.Background(), final, "RETURN a", "", nil)
 	require.Equal(t, []string{"a"}, final.Columns)
 
 	require.Equal(t, "a", projectionVariableText("a"))

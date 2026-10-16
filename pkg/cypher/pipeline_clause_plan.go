@@ -25,7 +25,7 @@ type pipelineClausePlans struct {
 // pipelineClausePlanLimit bounds a statement's plans: a body that builds a
 // new text for each row gets no plan beyond it, and parses that text as it
 // would without plans.
-const pipelineClausePlanLimit = 1024
+const pipelineClausePlanLimit = 4096
 
 type pipelineClausePlansKey struct{}
 
@@ -56,6 +56,16 @@ const (
 	clauseAnalysisSubqueryQueryCount
 	clauseAnalysisSubqueryQueryCollect
 	clauseAnalysisBoundChain
+	clauseAnalysisLogicalPlan
+	clauseAnalysisOperandFacts
+	clauseAnalysisTopLevelAnd
+	clauseAnalysisTopLevelOr
+	clauseAnalysisMaySubquery
+	clauseAnalysisOrTerms
+	clauseAnalysisMatchBodyWhere
+	clauseAnalysisReturnSourceColumns
+	clauseAnalysisLimitModifier
+	clauseAnalysisSkipModifier
 	clauseAnalysisCount
 )
 
@@ -380,4 +390,109 @@ func withStatementClausePlans(ctx context.Context, cypher string) context.Contex
 		return ctx
 	}
 	return withPipelineClausePlans(ctx)
+}
+
+// logicalPlanFor is planLogicalExpression(expr) from expr's plan in ctx. A
+// row evaluated through the text route plans its logical operators once
+// per statement instead of once per row. Without a plan it plans into
+// buffer, as before.
+func logicalPlanFor(ctx context.Context, expr string, buffer []string) logicalPlan {
+	plan := pipelineClausePlanFor(ctx, expr)
+	if plan == nil {
+		return planLogicalExpression(expr, buffer)
+	}
+	return plannedAnalysis(plan, clauseAnalysisLogicalPlan, expr, func(expr string) logicalPlan {
+		return planLogicalExpression(expr, nil)
+	})
+}
+
+// rowOperandFactsFor is rowOperandFactsOf(operand) from operand's plan in
+// ctx: what isolateOperandErrors and the text fold read from an operand's
+// text, once per statement.
+func rowOperandFactsFor(ctx context.Context, operand string) rowOperandFacts {
+	plan := pipelineClausePlanFor(ctx, operand)
+	if plan == nil {
+		return rowOperandFactsOf(operand)
+	}
+	return plannedAnalysis(plan, clauseAnalysisOperandFacts, operand, rowOperandFactsOf)
+}
+
+// findTopLevelKeywordFor is findTopLevelKeyword(clause, keyword) for the
+// " AND " and " OR " splits the index-seek parsers test, from clause's plan
+// in ctx.
+func findTopLevelKeywordFor(ctx context.Context, clause, keyword string) int {
+	var analysis pipelineClauseAnalysis
+	switch keyword {
+	case " AND ":
+		analysis = clauseAnalysisTopLevelAnd
+	case " OR ":
+		analysis = clauseAnalysisTopLevelOr
+	default:
+		return findTopLevelKeyword(clause, keyword)
+	}
+	plan := pipelineClausePlanFor(ctx, clause)
+	if plan == nil {
+		return findTopLevelKeyword(clause, keyword)
+	}
+	return plannedAnalysis(plan, analysis, clause, func(clause string) int { return findTopLevelKeyword(clause, keyword) })
+}
+
+// mayContainSubqueryExpressionFor is mayContainSubqueryExpression(expr)
+// from expr's plan in ctx: a WHERE evaluated per row asks it every time.
+func mayContainSubqueryExpressionFor(ctx context.Context, expr string) bool {
+	return clauseAnalysisFor(ctx, clauseAnalysisMaySubquery, expr, mayContainSubqueryExpression)
+}
+
+// splitTopLevelOrTermsFor is splitTopLevelOrTerms(expr) from expr's plan in
+// ctx. Callers don't modify the terms.
+func splitTopLevelOrTermsFor(ctx context.Context, expr string) []string {
+	return clauseAnalysisFor(ctx, clauseAnalysisOrTerms, expr, splitTopLevelOrTerms)
+}
+
+// pipelineMatchBodyWhere is a MATCH clause's body split at its WHERE, each
+// part trimmed (hasWhere: it has one); the WHERE keeps its own whitespace.
+type pipelineMatchBodyWhere struct {
+	body     string
+	where    string
+	hasWhere bool
+}
+
+func splitPipelineMatchBodyWhere(clause string) pipelineMatchBodyWhere {
+	split := pipelineMatchBodyWhere{body: strings.TrimSpace(clause[len("MATCH"):])}
+	if whereIndex := topLevelKeywordIndex(split.body, "WHERE"); whereIndex >= 0 {
+		split.hasWhere = true
+		split.where = strings.TrimSpace(split.body[whereIndex+len("WHERE"):])
+		split.body = strings.TrimSpace(split.body[:whereIndex])
+	}
+	return split
+}
+
+func pipelineMatchBodyWhereFor(ctx context.Context, clause string) pipelineMatchBodyWhere {
+	return clauseAnalysisFor(ctx, clauseAnalysisMatchBodyWhere, clause, splitPipelineMatchBodyWhere)
+}
+
+// pipelineReturnSourceColumnsFor is pipelineReturnSourceColumns(clause) from
+// clause's plan in ctx. The columns are shared: callers copy them before
+// handing them on.
+func pipelineReturnSourceColumnsFor(ctx context.Context, clause string) []string {
+	return clauseAnalysisFor(ctx, clauseAnalysisReturnSourceColumns, clause, pipelineReturnSourceColumns)
+}
+
+// intModifierTextFor is parseIntModifierText(modifiers, keyword) for LIMIT
+// and SKIP, from modifiers' plan in ctx; the value is evaluated per use.
+func intModifierTextFor(ctx context.Context, modifiers, keyword string) intModifier {
+	var analysis pipelineClauseAnalysis
+	switch keyword {
+	case "LIMIT":
+		analysis = clauseAnalysisLimitModifier
+	case "SKIP":
+		analysis = clauseAnalysisSkipModifier
+	default:
+		return parseIntModifierText(modifiers, keyword)
+	}
+	plan := pipelineClausePlanFor(ctx, modifiers)
+	if plan == nil {
+		return parseIntModifierText(modifiers, keyword)
+	}
+	return plannedAnalysis(plan, analysis, modifiers, func(modifiers string) intModifier { return parseIntModifierText(modifiers, keyword) })
 }

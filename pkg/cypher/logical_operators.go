@@ -47,7 +47,8 @@ func evaluateLogicalExpression(expr string, eval logicalOperandEvaluator) (value
 }
 func evaluateLogicalExpressionInContext(ctx context.Context, expr string, eval logicalOperandEvaluator) (value interface{}, logical, ok bool, err error) {
 	var buffer [8]string
-	plan := planLogicalExpression(expr, buffer[:0])
+	// Planned once per statement for a statement with clause plans.
+	plan := logicalPlanFor(ctx, expr, buffer[:0])
 	if plan.kind == logicalNone {
 		return nil, false, false, nil
 	}
