@@ -123,7 +123,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 			}
 		}
 	}
-	if expr[len(expr)-1] == '}' {
+	if expr[len(expr)-1] == '}' && !handedBackByRowEvaluator(ctx, expr) {
 		// A map projection (o {.s}, n {.*, k: 1}) has one implementation, the
 		// row evaluator's (evaluateRowMapProjection), whatever evaluates it:
 		// SET n = o {.s} among others (#907).
@@ -132,10 +132,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 			return value
 		}
 	}
-	if mayContainSubqueryExpression(expr) && len(findSubqueryExpressions(expr)) > 0 {
+	if mayContainSubqueryExpression(expr) && !handedBackByRowEvaluator(ctx, expr) && len(findSubqueryExpressions(expr)) > 0 {
 		// A subquery expression, alone or in a larger expression, is
 		// evaluated by the row evaluator where it stands, with this row's
-		// entities, paths and values (#1055).
+		// entities, paths and values (#1055). Text the row evaluator handed
+		// here is evaluated below instead, its subqueries reached through
+		// its parts.
 		value, _ := e.evaluateRowExpressionWithContext(ctx, expr, e.entityRowWithPaths(ctx, nodes, rels, paths))
 		return value
 	}

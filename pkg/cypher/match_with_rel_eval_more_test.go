@@ -55,6 +55,10 @@ func TestEvaluateExpressionFromValues_AdditionalBranches(t *testing.T) {
 
 	labels := exec.evaluateExpressionFromValues("labels(typedNode)", values).([]interface{})
 	require.Equal(t, []interface{}{"A", "B"}, labels)
+	// labels() of a map is a type error, as in Neo4j: a map is not a node.
+	labelsCtx := withExpressionFailureSlot(context.Background())
+	require.Nil(t, exec.evaluateExpressionFromValuesContext(labelsCtx, "labels(nodeMap)", values))
+	require.Error(t, getExpressionFailure(labelsCtx))
 
 	relTypes := exec.evaluateExpressionFromValues("[r IN relationships(path) | type(r)]", values).([]interface{})
 	require.Equal(t, []interface{}{"KNOWS"}, relTypes)

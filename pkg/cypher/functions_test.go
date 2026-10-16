@@ -354,7 +354,12 @@ func TestFunctionEvaluator_AdditionalBranches(t *testing.T) {
 	ctx := context.Background()
 
 	assertEqual(t, "type(r)", "KNOWS", e.evaluateExpressionWithContext(ctx, "type(r)", nodes, rels))
-	assertEqual(t, "type({type:'KNOWS'})", nil, e.evaluateExpressionWithContext(ctx, "type({type:'KNOWS'})", nodes, rels))
+	// type() of a map is a type error, as in Neo4j: a map is not a relationship.
+	typeCtx := withExpressionFailureSlot(context.Background())
+	assertEqual(t, "type({type:'KNOWS'})", nil, e.evaluateExpressionWithContext(typeCtx, "type({type:'KNOWS'})", nodes, rels))
+	if getExpressionFailure(typeCtx) == nil {
+		t.Fatal("type({type:'KNOWS'}) must record a type error")
+	}
 	assertEqual(t, "exists(n.missing)", false, e.evaluateExpressionWithContext(ctx, "exists(n.missing)", nodes, rels))
 	assertEqual(t, "head([])", nil, e.evaluateExpressionWithContext(ctx, "head([])", nodes, rels))
 	assertEqual(t, "last([])", nil, e.evaluateExpressionWithContext(ctx, "last([])", nodes, rels))

@@ -173,6 +173,14 @@ func (v *deletedEntityViews) edge(edge *storage.Edge) *storage.Edge {
 	return &storage.Edge{ID: edge.ID, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
 }
 
+// mayBeDeletedRelationshipView reports whether edge has the shape of a deleted
+// relationship's view (edge above): no properties and no timestamps. Only
+// such a value needs a storage check before its endpoints are read; a
+// relationship with properties or a timestamp is not a view.
+func mayBeDeletedRelationshipView(edge *storage.Edge) bool {
+	return edge.Properties == nil && edge.CreatedAt.IsZero() && edge.UpdatedAt.IsZero()
+}
+
 // validateDeletedEntityReads rejects a clause that, after a DELETE in the
 // statement, reads a property or the labels of a deleted node or
 // relationship, or the keys or properties() of a deleted relationship,

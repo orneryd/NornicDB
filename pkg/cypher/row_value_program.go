@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 	"sync/atomic"
 
@@ -296,10 +297,10 @@ func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
 		infos := make([]rowValueInfo, len(plan.operands))
 		for i, operand := range plan.operands {
 			parts[i], infos[i] = c.part(operand)
-			if plan.kind == logicalOr && rowOperandRecordsFailure(operand) {
-				parts[i] = &rowDeferredOperandNode{operand: parts[i]}
+			isolation := operandIsolationAt(operand, logicalFoldPosition(plan.kind), false)
+			if isolation.value || isolation.caseValue {
+				parts[i] = &rowDeferredOperandNode{operand: parts[i], isolation: isolation}
 			}
-
 		}
 		info := combineRowValueInfo(infos...)
 		c.compose(info, parts, infos)
@@ -314,7 +315,10 @@ func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
 		for i := 0; i <= scan.count; i++ {
 			operand := scan.operand(expr, i)
 			parts[i], infos[i] = c.part(operand)
-
+			isolation := operandIsolationAt(operand, comparisonFoldPosition(&scan), false)
+			if isolation.value || isolation.caseValue {
+				parts[i] = &rowDeferredOperandNode{operand: parts[i], isolation: isolation}
+			}
 		}
 		info := combineRowValueInfo(infos...)
 		c.compose(info, parts, infos)
@@ -581,12 +585,18 @@ func (n *rowCaseNode) eval(e *StorageExecutor, values map[string]interface{}, fr
 		case caseElse:
 			node = n.elseResult
 		}
-		value, ok, err := node.eval(e, values, frames)
-		if part == caseWhen && !n.parsed.isSimple && err == nil && !ok {
-			ctx := rowStatementContextOrBackground(values)
-			return e.evaluateRowPredicate(ctx, text, values), true, getExpressionFailure(ctx)
+		evaluate := func(scope map[string]interface{}) (interface{}, bool, error) {
+			value, ok, err := node.eval(e, scope, frames)
+			if part == caseWhen && !n.parsed.isSimple && err == nil && !ok {
+				ctx := rowStatementContextOrBackground(scope)
+				return e.evaluateRowPredicate(ctx, text, scope), true, getExpressionFailure(ctx)
+			}
+			return value, ok, err
 		}
-		return value, ok, err
+		if part == caseWhen && !n.parsed.isSimple {
+			return evaluateRowCaseCondition(values, text, evaluate)
+		}
+		return evaluate(values)
 	})
 }
 
@@ -669,14 +679,8 @@ func (n *rowFallbackNode) eval(e *StorageExecutor, values map[string]interface{}
 
 // rowValueFallback is evaluateRowValueText's last step for expr.
 func (e *StorageExecutor) rowValueFallback(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	// The context evaluator sends expressions containing subqueries back to
-	// this evaluator. Resolve a containing function here instead of returning
-	// the unchanged expression to that dispatcher indefinitely.
-	if mayContainSubqueryExpression(expr) {
-		if function, argument, call := parseFunctionCallWS(expr); call {
-			return e.evaluateRowGraphFunction(function, argument, values)
-		}
-	}
+	// The shared evaluator evaluates the text it is handed itself and hands
+	// back only its parts, subqueries included (handedBackByRowEvaluator).
 	value, err := e.evaluateRowFallback(expr, values)
 	if err != nil {
 		return nil, false, err
@@ -701,7 +705,7 @@ type rowLogicalNode struct {
 }
 
 func (n *rowLogicalNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	value, ok, err := n.plan.evaluate(func(index int) (interface{}, bool, error) {
+	value, ok, err := n.plan.evaluateInContext(rowStatementContextOrBackground(values), func(index int) (interface{}, bool, error) {
 		return n.operands[index].eval(e, values, frames)
 	})
 	if err != nil || !ok {
@@ -710,12 +714,15 @@ func (n *rowLogicalNode) eval(e *StorageExecutor, values map[string]interface{},
 	return value, true, nil
 }
 
-type rowDeferredOperandNode struct{ operand rowValueNode }
+type rowDeferredOperandNode struct {
+	operand   rowValueNode
+	isolation operandIsolation
+}
 
 func (n *rowDeferredOperandNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	return deferredRowOperand(values, func(scope map[string]interface{}) (interface{}, bool, error) {
+	return n.isolation.evaluate(rowStatementContextOrBackground(values), values, func(_ context.Context, scope map[string]interface{}) (interface{}, bool, error) {
 		return n.operand.eval(e, scope, frames)
-	})
+	}, nil)
 }
 
 type rowComparisonNode struct {
@@ -726,7 +733,7 @@ type rowComparisonNode struct {
 }
 
 func (n *rowComparisonNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
-	return evaluateScannedComparisonChain(n.text, &n.scan, n.normalizeIdentity, func(index int, _ string) (interface{}, bool, error) {
+	return evaluateScannedComparisonChain(rowStatementContextOrBackground(values), n.text, &n.scan, n.normalizeIdentity, func(index int, _ string) (interface{}, bool, error) {
 		return n.operands[index].eval(e, values, frames)
 	}, compareCypherPredicateValue, rowIsCypher25(values))
 }

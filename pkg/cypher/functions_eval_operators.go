@@ -33,8 +33,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	}
 
 	// OR, XOR, AND and NOT (evaluateLogicalExpression).
-	if value, logical, _, err := evaluateLogicalExpression(expr, func(operand string) (interface{}, bool, error) {
-		return deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
+	if value, logical, _, err := evaluateLogicalExpressionInContext(ctx, expr, func(operand string, position foldPosition) (interface{}, bool, error) {
+		return contextFoldOperand(ctx, operand, position, func(ctx context.Context) interface{} {
 			return e.evaluateExpressionWithContextFull(ctx, operand, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		})
 	}); logical {

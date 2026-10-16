@@ -261,7 +261,7 @@ func TestLogicalOperatorsPredicateReading(t *testing.T) {
 func TestEvaluateLogicalExpressionHoldsOperandErrors(t *testing.T) {
 	failed := errors.New("/ by zero")
 	values := map[string]interface{}{"t": true, "f": false, "i": int64(1)}
-	eval := func(operand string) (interface{}, bool, error) {
+	eval := func(operand string, _ foldPosition) (interface{}, bool, error) {
 		if operand == "boom" {
 			return nil, true, failed
 		}

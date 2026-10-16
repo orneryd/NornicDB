@@ -449,14 +449,8 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	// OR, XOR, AND and NOT (evaluateLogicalExpression). NOT binds less
 	// tightly than comparisons and postfix predicates, so NOT a = b, NOT a
 	// IS NULL and NOT a IN xs negate the whole remainder.
-	_, _, isOr := splitByOperatorOutsideCase(expr, " OR ", true, true)
-	if value, logical, ok, err := evaluateLogicalExpression(expr, func(operand string) (interface{}, bool, error) {
-		if isOr && rowOperandRecordsFailure(operand) {
-			return deferredRowOperand(values, func(scope map[string]interface{}) (interface{}, bool, error) {
-				return e.evaluateRowValue(operand, scope)
-			})
-		}
-		return e.evaluateRowValue(operand, values)
+	if value, logical, ok, err := evaluateLogicalExpressionInContext(rowStatementContextOrBackground(values), expr, func(operand string, position foldPosition) (interface{}, bool, error) {
+		return e.rowTextFoldOperand(rowStatementContextOrBackground(values), operand, position, values, false)
 	}); logical {
 		if err != nil || !ok {
 			return nil, false, err
@@ -486,8 +480,8 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 		return matched, true, nil
 	}
-	result, comparison, resolved, err := evaluateComparisonChain(expr, func(operand string) (interface{}, bool, error) {
-		return e.evaluateRowValue(operand, values)
+	result, comparison, resolved, err := evaluateComparisonChainInContext(rowStatementContextOrBackground(values), expr, func(operand string, position foldPosition) (interface{}, bool, error) {
+		return e.rowTextFoldOperand(rowStatementContextOrBackground(values), operand, position, values, false)
 	}, compareCypherPredicateValue, rowIsCypher25(values))
 	if comparison {
 		return result, resolved, err
@@ -1075,12 +1069,18 @@ func (e *StorageExecutor) evaluateRowCaseExpression(expr string, values map[stri
 		return nil, false, nil
 	}
 	return runCaseExpression(parsed, rowIsCypher25(values), func(part caseValuePart, _ int, text string) (interface{}, bool, error) {
-		value, ok, err := e.evaluateRowValue(text, values)
-		if part == caseWhen && !parsed.isSimple && err == nil && !ok {
-			ctx := rowStatementContextOrBackground(values)
-			return e.evaluateRowPredicate(ctx, text, values), true, getExpressionFailure(ctx)
+		evaluate := func(scope map[string]interface{}) (interface{}, bool, error) {
+			value, ok, err := e.evaluateRowValue(text, scope)
+			if part == caseWhen && !parsed.isSimple && err == nil && !ok {
+				ctx := rowStatementContextOrBackground(scope)
+				return e.evaluateRowPredicate(ctx, text, scope), true, getExpressionFailure(ctx)
+			}
+			return value, ok, err
 		}
-		return value, ok, err
+		if part == caseWhen && !parsed.isSimple {
+			return evaluateRowCaseCondition(values, text, evaluate)
+		}
+		return evaluate(values)
 	})
 }
 
@@ -1706,11 +1706,10 @@ func (e *StorageExecutor) evaluateRowPredicateText(ctx context.Context, expressi
 		return matched
 	}
 	// OR, XOR, AND and NOT (evaluateLogicalExpression) over the operands'
-	// values (rowPredicateValue); the result is read as a predicate.
-	if value, logical, ok, err := evaluateLogicalExpression(expression, func(operand string) (interface{}, bool, error) {
-		return e.evaluateRowLogicalPredicateOperand(ctx, operand, values, rowOperandRecordsFailure(operand) || isRelationshipPatternOperand(operand), func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
-			return e.evaluateRowValue(operand, scope)
-		}, true)
+	// values, or whether an operand only the predicate evaluator reads holds
+	// (rowTextFoldOperand); the result is read as a predicate.
+	if value, logical, ok, err := evaluateLogicalExpressionInContext(ctx, expression, func(operand string, position foldPosition) (interface{}, bool, error) {
+		return e.rowTextFoldOperand(ctx, operand, position, values, true)
 	}); logical {
 		if err != nil {
 			recordExpressionFailure(ctx, err)
@@ -1790,10 +1789,8 @@ func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Con
 			return nullEvaluationHandler(operator == " IS NOT NULL").evaluate(value)
 		}
 	}
-	comparisonResult, comparison, resolved, err := evaluateComparisonChain(expression, func(operand string) (interface{}, bool, error) {
-		return e.evaluateRowLogicalPredicateOperand(ctx, operand, values, rowOperandRecordsFailure(operand) || isRelationshipPatternOperand(operand), func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
-			return e.evaluateRowValue(operand, scope)
-		}, false)
+	comparisonResult, comparison, resolved, err := evaluateComparisonChainInContext(ctx, expression, func(operand string, position foldPosition) (interface{}, bool, error) {
+		return e.rowTextFoldOperand(ctx, operand, position, values, false)
 	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25")
 	if comparison {
 		if err != nil {
@@ -1850,15 +1847,28 @@ func evaluateCypherSizeInteger(value interface{}) (int64, bool, error) {
 	return int64(reflect.ValueOf(value).Len()), true, nil
 }
 
-// rowPredicateValue is the value of an operand of a row predicate's AND,
-// OR, XOR or NOT: its expression value (rowPredicateOperand), or, for a
-// predicate form only the predicate evaluator reads (a pattern, EXISTS),
-// whether it holds.
-func (e *StorageExecutor) rowPredicateValue(ctx context.Context, operand string, values map[string]interface{}) interface{} {
-	if value, resolved := e.rowPredicateOperand(ctx, operand, values); resolved {
-		return value
+// rowTextFoldOperand is an operand of a text predicate's logical or
+// comparison fold at position: its value, or (predicateFallback) whether a
+// form only the predicate evaluator reads (a pattern, EXISTS) holds, with
+// the error slots the policy asks for (isolateOperandErrors). A value is
+// returned with its error; the predicate evaluator records its own.
+func (e *StorageExecutor) rowTextFoldOperand(ctx context.Context, operand string, position foldPosition, values map[string]interface{}, predicateFallback bool) (interface{}, bool, error) {
+	isolation := operandIsolationAt(operand, position, false)
+	var fallback func(context.Context, map[string]interface{}) interface{}
+	if predicateFallback {
+		isolation = operandIsolationAt(operand, position, false)
+		fallback = func(ctx context.Context, scope map[string]interface{}) interface{} {
+			return e.evaluateRowPredicateParts(ctx, operand, scope)
+		}
 	}
-	return e.evaluateRowPredicateParts(ctx, operand, values)
+	resolve := func(_ context.Context, scope map[string]interface{}) (interface{}, bool, error) {
+		return e.evaluateRowValue(operand, scope)
+	}
+	if predicateFallback && isRelationshipPatternOperand(operand) {
+		// A pattern has no value: only the predicate evaluator reads it.
+		resolve = nil
+	}
+	return isolation.evaluate(ctx, values, resolve, fallback)
 }
 
 // rowPredicateOperand evaluates an operand of a row predicate. An error is
@@ -1947,8 +1957,13 @@ func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool) int
 	if edge == nil {
 		return nil
 	}
-	if current, err := e.storage.GetEdge(edge.ID); err != nil || current == nil {
-		return nil
+	// A deleted relationship has no endpoints. Only a value shaped like its
+	// view (deletedEntityViews.edge) can be one, and storage confirms it: a
+	// relationship carrying its properties costs no second read.
+	if mayBeDeletedRelationshipView(edge) {
+		if current, err := e.storage.GetEdge(edge.ID); err != nil || current == nil {
+			return nil
+		}
 	}
 	id := edge.StartNode
 	if end {

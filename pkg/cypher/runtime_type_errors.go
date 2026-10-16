@@ -30,17 +30,34 @@ func runtimeTypeError(message string) error {
 	return newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", message)
 }
 
+// cypherBooleanTruth is the typed boolean/null entry shared with consumers
+// whose operation guarantees a predicate value (comparison/string predicates).
+func cypherBooleanTruth(value interface{}) (cypherTruth, bool) {
+	switch boolean := value.(type) {
+	case bool:
+		return truthOf(boolean), true
+	case nil:
+		return truthUnknown, true
+	}
+	return truthUnknown, false
+}
+
 // cypherPredicateTruth is a value read as a predicate, as Neo4j reads a
 // WHERE, a CASE WHEN, a list predicate's WHERE and the operands of AND, OR,
 // XOR and NOT (evaluateLogicalExpression): a Boolean is itself, null is
 // unknown, and a list or a path is true when it isn't empty (a conversion
 // Neo4j 5 deprecates but still makes). Any other value is a TypeError (#907).
 func cypherPredicateTruth(value interface{}) (cypherTruth, error) {
+	if truth, known := cypherBooleanTruth(value); known {
+		return truth, nil
+	}
+	return cypherPredicateOtherTruth(value)
+}
+
+// Non-scalar predicate conversions and their diagnostics stay outside the
+// inlinable boolean/null entry used by compiled predicate plans.
+func cypherPredicateOtherTruth(value interface{}) (cypherTruth, error) {
 	switch boolean := value.(type) {
-	case bool:
-		return truthOf(boolean), nil
-	case nil:
-		return truthUnknown, nil
 	case *PathResult:
 		return truthOf(boolean != nil), nil
 	case []byte:

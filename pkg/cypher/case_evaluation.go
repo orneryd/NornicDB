@@ -1,5 +1,19 @@
 package cypher
 
+import "context"
+
+// evaluateRowCaseCondition supplies the CASE planning scope to any row
+// adapter. Only subquery conditions need a new context and bindings.
+func evaluateRowCaseCondition(values map[string]interface{}, expression string, evaluate func(map[string]interface{}) (interface{}, bool, error)) (interface{}, bool, error) {
+	ctx := rowStatementContextOrBackground(values)
+	return caseConditionScope(ctx, expression, func(scoped context.Context) (interface{}, bool, error) {
+		if scoped != ctx {
+			return evaluate(rowValuesInExpressionContext(scoped, values))
+		}
+		return evaluate(values)
+	})
+}
+
 // caseValuePart identifies an already parsed (and possibly compiled) CASE part.
 type caseValuePart uint8
 

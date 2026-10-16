@@ -507,7 +507,11 @@ func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, exp
 		matched, _ := e.evaluateRowExistsPredicate(ctx, "EXISTS { "+trimmed+" }", values)
 		return matched, true, true
 	}
-	logicalValue, logical, logicalOK, err := evaluateLogicalExpression(trimmed, func(operand string) (interface{}, bool, error) {
+	logicalValue, logical, logicalOK, err := evaluateLogicalExpressionInContext(ctx, trimmed, func(operand string, position foldPosition) (interface{}, bool, error) {
+		if !isolateOperandErrors(operand, position, true) {
+			value, resolved := e.evaluateRowExpressionWithContext(ctx, operand, values)
+			return value, resolved, nil
+		}
 		var resolved bool
 		value, _, err := deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
 			var value interface{}
