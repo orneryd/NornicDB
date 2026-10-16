@@ -2,11 +2,13 @@ package cypher
 
 import "context"
 
-// evaluateRowCaseCondition supplies the CASE planning scope to any row
-// adapter. Only subquery conditions need a new context and bindings.
-func evaluateRowCaseCondition(values map[string]interface{}, expression string, evaluate func(map[string]interface{}) (interface{}, bool, error)) (interface{}, bool, error) {
+// evaluateRowLocalSubqueries evaluates expression, a part Neo4j evaluates
+// only when reached (a CASE part, a coalesce argument), in a local subquery
+// scope (localSubqueryScope), for any row adapter. Only an expression with a
+// subquery needs a new context and bindings.
+func evaluateRowLocalSubqueries(values map[string]interface{}, expression string, evaluate func(map[string]interface{}) (interface{}, bool, error)) (interface{}, bool, error) {
 	ctx := rowStatementContextOrBackground(values)
-	return caseConditionScope(ctx, expression, func(scoped context.Context) (interface{}, bool, error) {
+	return localSubqueryScope(ctx, expression, func(scoped context.Context) (interface{}, bool, error) {
 		if scoped != ctx {
 			return evaluate(rowValuesInExpressionContext(scoped, values))
 		}

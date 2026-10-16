@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -271,14 +272,17 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			return e.evaluateRowReduce(function, argument, values, e.evaluateRowValue)
 		case "coalesce":
 			// EXISTS subqueries are non-null booleans and end coalesce
-			// immediately.
+			// immediately. An argument is evaluated only when reached, its
+			// subqueries too (evaluateRowLocalSubqueries).
 			operands := splitTopLevelComma(argument)
 			return cypherfn.Coalesce(len(operands), func(index int) (interface{}, bool, error) {
 				trimmed := strings.TrimSpace(operands[index])
-				if matched, recognized := e.evaluateRowExistsPredicate(rowStatementContextOrBackground(values), trimmed, values); recognized {
-					return matched, true, nil
-				}
-				return e.evaluateRowValue(trimmed, values)
+				return evaluateRowLocalSubqueries(values, trimmed, func(values map[string]interface{}) (interface{}, bool, error) {
+					if matched, recognized := e.evaluateRowExistsPredicate(rowStatementContextOrBackground(values), trimmed, values); recognized {
+						return matched, true, nil
+					}
+					return e.evaluateRowValue(trimmed, values)
+				})
 			})
 		case "length":
 			value, resolved, err := e.evaluateRowValue(argument, values)
@@ -920,18 +924,66 @@ func compareCypherPredicateGeneralValue(left, right interface{}, operator string
 }
 
 func cypherComparisonResult(comparison int, operator string) interface{} {
-	switch operator {
-	case "<":
-		return comparison < 0
-	case ">":
-		return comparison > 0
-	case "<=":
-		return comparison <= 0
-	case ">=":
-		return comparison >= 0
-	default:
-		return nil
+	switch op := comparisonOperatorOf(operator); op {
+	case comparisonLess, comparisonGreater, comparisonLessOrEqual, comparisonGreaterOrEqual:
+		held, _ := op.orders(comparison)
+		return held
 	}
+	return nil
+}
+
+// comparisonOperator is a comparison operator read once from its text, for a
+// plan that compares many rows with it (rowPredicatePart.op).
+type comparisonOperator uint8
+
+const (
+	// comparisonOther is =~ or any other operator that doesn't compare order.
+	comparisonOther comparisonOperator = iota
+	comparisonEqual
+	comparisonNotEqual
+	comparisonLess
+	comparisonGreater
+	comparisonLessOrEqual
+	comparisonGreaterOrEqual
+)
+
+func comparisonOperatorOf(operator string) comparisonOperator {
+	switch operator {
+	case "=":
+		return comparisonEqual
+	case "<>", "!=":
+		return comparisonNotEqual
+	case "<":
+		return comparisonLess
+	case ">":
+		return comparisonGreater
+	case "<=":
+		return comparisonLessOrEqual
+	case ">=":
+		return comparisonGreaterOrEqual
+	}
+	return comparisonOther
+}
+
+// orders reads an order between two values (-1, 0 or 1, as compareInt64
+// gives it) as the operator's answer, the one reading of an order for every
+// comparison (cypherComparisonResult); ok is false for comparisonOther.
+func (op comparisonOperator) orders(comparison int) (held, ok bool) {
+	switch op {
+	case comparisonEqual:
+		return comparison == 0, true
+	case comparisonNotEqual:
+		return comparison != 0, true
+	case comparisonLess:
+		return comparison < 0, true
+	case comparisonGreater:
+		return comparison > 0, true
+	case comparisonLessOrEqual:
+		return comparison <= 0, true
+	case comparisonGreaterOrEqual:
+		return comparison >= 0, true
+	}
+	return false, false
 }
 
 func compareCypherPredicateValues(left, right interface{}, operator string) bool {
@@ -1004,10 +1056,7 @@ func (e *StorageExecutor) evaluateRowCaseExpression(expr string, values map[stri
 			}
 			return value, ok, err
 		}
-		if part == caseWhen && !parsed.isSimple {
-			return evaluateRowCaseCondition(values, text, evaluate)
-		}
-		return evaluate(values)
+		return evaluateRowLocalSubqueries(values, text, evaluate)
 	})
 }
 
@@ -1038,10 +1087,7 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 		return listValue, true, true, nil
 	}
 	// One scope for every element, as in evaluateRowQuantifier.
-	scope := make(map[string]interface{}, len(values)+1)
-	for name, value := range values {
-		scope[name] = value
-	}
+	scope := rowElementScope(values, 1, mayContainSubqueryExpression(predicate) || mayContainSubqueryExpression(projection))
 	var holds func() (bool, bool, error)
 	switch {
 	case predicate != "" && containsRelationshipPattern(predicate):
@@ -1191,10 +1237,7 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 	// One scope for every element, the variable rebound per element, as
 	// reduce does: copying the row per element cost an allocation of the
 	// whole row for each one (#1214).
-	scope := make(map[string]interface{}, len(values)+1)
-	for name, value := range values {
-		scope[name] = value
-	}
+	scope := rowElementScope(values, 1, mayContainSubqueryExpression(predicate))
 	value, resolved, err := rowQuantifierLoop(function, coerceToUnwindItems(listValue), func(item interface{}) { scope[variable] = item }, func() (interface{}, bool, error) {
 		return evaluate(predicate, scope)
 	})
@@ -1431,7 +1474,32 @@ func rowSubscriptIndex(value interface{}) (int, bool) {
 // first, once per predicate, as the context evaluator substitutes them
 // (evaluateExpressionWithCASESubstituted).
 func (e *StorageExecutor) evaluateRowPredicate(ctx context.Context, expression string, values map[string]interface{}) bool {
+	if plan := wherePredicatePlanFor(ctx, expression); plan != nil {
+		return e.evaluateWherePredicatePlan(ctx, plan, expression, values)
+	}
 	return e.evaluateRowPredicateMode(ctx, expression, values)
+}
+
+// evaluateWherePredicatePlan evaluates a WHERE predicate as Neo4j plans its
+// subqueries (wherePredicatePlan): the positive subquery conjuncts first
+// (Apply), then the fold, with the plan's local operands evaluated in a
+// local subquery scope.
+func (e *StorageExecutor) evaluateWherePredicatePlan(ctx context.Context, plan *wherePredicatePlan, expression string, values map[string]interface{}) bool {
+	values = rowValuesWithStatementContext(ctx, expression, values)
+	position := logicalFoldPosition(plan.logical.kind)
+	value, ok, err := plan.logical.evaluateInContext(ctx, func(index int) (interface{}, bool, error) {
+		operand := plan.logical.operands[index]
+		if plan.local[index] {
+			local := context.WithValue(ctx, localSubqueryScopeKey{}, true)
+			return e.rowTextFoldOperand(local, operand, foldPositionInContext(local, position), values, true)
+		}
+		return e.rowTextFoldOperand(ctx, operand, position, values, true)
+	})
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
+	}
+	return ok && predicateValueIsTrue(ctx, value, expression)
 }
 
 // evaluateMatchRowPredicate is the MATCH-clause entry into the same shared
@@ -1743,6 +1811,12 @@ func evaluateCypherSize(value interface{}) (interface{}, bool, error) {
 }
 
 func evaluateCypherSizeInteger(value interface{}) (int64, bool, error) {
+	// A string, the usual argument of a planned size(), counts its code
+	// points (cyphertext.Length, as cypherfn.SizeInteger counts them)
+	// without the call into the function package for every row.
+	if text, ok := value.(string); ok {
+		return int64(cyphertext.Length(text)), true, nil
+	}
 	length, nonNull, err := cypherfn.SizeInteger(value)
 	if err != nil {
 		return 0, false, functionEvaluationError(err)

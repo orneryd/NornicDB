@@ -25,56 +25,87 @@ func rowStringPredicateValue(left, right interface{}, predicate func(string, str
 	return predicate(leftText, rightText)
 }
 
-// cypherMembershipValues owns the IN fold over comparisons supplied by an
-// ordered scan or an index adapter. Empty lists decide before a null needle;
-// a match decides before any unknown comparison.
-func cypherMembershipValues(value interface{}, count int, compare func(int) interface{}) interface{} {
+// membershipFold is the one IN fold: x IN list over the comparisons of x
+// with the list's items, supplied by an ordered scan (cypherMembershipValues)
+// or an index adapter (indexedMembershipTruth). An empty list decides before
+// a null needle (membershipDecided); a match decides before any unknown
+// comparison.
+type membershipFold struct{ unknown bool }
+
+// membershipDecided is the fold's answer when the list's size or the needle
+// decides it before any comparison: false for an empty list, even for a
+// null needle, then null for a null needle.
+func membershipDecided(value interface{}, count int) (cypherTruth, bool) {
 	if count == 0 {
-		return false
+		return truthFalse, true
 	}
 	if value == nil {
-		return nil
+		return truthUnknown, true
 	}
-	unknown := false
-	for i := 0; i < count; i++ {
-		equal := compare(i)
-		if equal == true {
-			return true
-		}
-		if equal == nil {
-			unknown = true
-		}
+	return truthUnknown, false
+}
+
+// add folds one comparison and reports a match, which decides the fold.
+func (fold *membershipFold) add(equal interface{}) bool {
+	if equal == true {
+		return true
 	}
-	if unknown {
-		return nil
+	if equal == nil {
+		fold.unknown = true
 	}
 	return false
 }
 
-// indexedMembershipValue supplies the same fold with a single indexed probe,
+// result is the fold's answer after every comparison failed to match.
+func (fold *membershipFold) result() cypherTruth {
+	if fold.unknown {
+		return truthUnknown
+	}
+	return truthFalse
+}
+
+// cypherMembershipValues is the IN fold over an ordered scan's comparisons.
+func cypherMembershipValues(value interface{}, count int, compare func(int) interface{}) interface{} {
+	if truth, decided := membershipDecided(value, count); decided {
+		return truth.value()
+	}
+	var fold membershipFold
+	for i := 0; i < count; i++ {
+		if fold.add(compare(i)) {
+			return true
+		}
+	}
+	return fold.result().value()
+}
+
+// indexedMembershipTruth supplies the same fold with a single indexed probe,
 // followed by comparisons for values that cannot be indexed. A null list item
 // is an unknown probe; non-comparable items preserve Cypher equality's nulls.
-func indexedMembershipValue(actual interface{}, comparableSet map[interface{}]struct{}, nonComparable []interface{}, hasNull bool, equals func(interface{}, interface{}) interface{}) interface{} {
+// It runs once per row and comparison, so it takes no callback per probe.
+func indexedMembershipTruth(actual interface{}, comparableSet map[interface{}]struct{}, nonComparable []interface{}, hasNull bool, equals func(interface{}, interface{}) interface{}) cypherTruth {
 	indexed := len(comparableSet) > 0 || hasNull
 	count := len(nonComparable)
 	if indexed {
 		count++
 	}
-	return cypherMembershipValues(actual, count, func(i int) interface{} {
-		if indexed {
-			if i == 0 {
-				if isComparableValue(actual) {
-					if _, hit := comparableSet[membershipKey(actual)]; hit {
-						return true
-					}
-				}
-				if hasNull {
-					return nil
-				}
-				return false
+	if truth, decided := membershipDecided(actual, count); decided {
+		return truth
+	}
+	var fold membershipFold
+	if indexed {
+		if isComparableValue(actual) {
+			if _, hit := comparableSet[membershipKey(actual)]; hit {
+				return truthTrue
 			}
-			i--
 		}
-		return equals(actual, nonComparable[i])
-	})
+		if hasNull {
+			fold.add(nil)
+		}
+	}
+	for _, item := range nonComparable {
+		if fold.add(equals(actual, item)) {
+			return truthTrue
+		}
+	}
+	return fold.result()
 }
