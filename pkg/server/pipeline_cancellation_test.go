@@ -62,8 +62,9 @@ func TestHTTPPipelineStageDeadlines(t *testing.T) {
 				var response TransactionResponse
 				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
 				require.NotEmpty(t, response.Errors, recorder.Body.String())
-				standard, _ := nornicerrors.Neo4jStatus(context.DeadlineExceeded)
+				standard := "Neo.ClientError.Transaction.TransactionTimedOut"
 				require.Equal(t, standard, response.Errors[0].Code)
+				require.Equal(t, nornicerrors.TransactionTimedOutMessage, response.Errors[0].Message)
 				require.Less(t, returned.Sub(deadline), 250*time.Millisecond)
 				t.Logf("context_deadline=%s response=%s overdue=%s explicit=%t", deadline.Format(time.RFC3339Nano), returned.Format(time.RFC3339Nano), returned.Sub(deadline), explicit)
 				healthy := makeRequest(t, server, "POST", "/db/nornic/tx/commit", map[string]interface{}{"statements": []map[string]interface{}{{"statement": "RETURN 1"}}}, "Bearer "+token)

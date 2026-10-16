@@ -93,7 +93,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Procedure `YIELD ... WHERE` predicates can reference yielded variables in correlated `EXISTS`, `COUNT` and `COLLECT` subqueries, using the same scope rules as `WITH ... WHERE`. Expression subqueries also reject declarations that shadow outer variables in `WITH`, `RETURN` and `UNWIND`.
 
 - Long Cypher pipeline stages observe statement cancellation and deadlines while processing rows, nested DISTINCT
-  values, sorting, aggregation and list expansion.
+  values, sorting, aggregation and list expansion. A statement stopped at its deadline reports Neo4j's
+  `Neo.ClientError.Transaction.TransactionTimedOut` (or `TransactionTimedOutClientConfiguration` for a Bolt client
+  `tx_timeout`) instead of `Neo.ClientError.Statement.SyntaxError`.
 
 - With an OpenAI-compatible embedder (`openai`, `orca`, or a gateway in front of another provider), text longer
   than `NORNICDB_EMBED_CHUNK_SIZE` is split into chunks as with the other providers. The OpenAI provider sent it

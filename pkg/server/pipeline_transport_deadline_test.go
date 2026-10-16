@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -77,8 +76,9 @@ func TestHTTPPipelineTransportQueryDeadline(t *testing.T) {
 				elapsed := time.Since(started)
 				require.Equal(t, http.StatusOK, status)
 				require.NotEmpty(t, body.Errors)
-				standard, _ := nornicerrors.Neo4jStatus(context.DeadlineExceeded)
+				standard := "Neo.ClientError.Transaction.TransactionTimedOut"
 				require.Equal(t, standard, body.Errors[0].Code)
+				require.Equal(t, nornicerrors.TransactionTimedOutMessage, body.Errors[0].Message)
 				require.Less(t, elapsed, 450*time.Millisecond)
 				require.Zero(t, server.activeTxReqs.Load(), "router returned while its transaction handler was active")
 				if explicit {
