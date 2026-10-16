@@ -94,8 +94,11 @@ type logicalPlan struct {
 
 // planLogicalExpression reads expr's top-level OR, XOR, AND or NOT,
 // simplified as Neo4j's planner does (see above); kind is logicalNone for
-// any other expression. operands are appended to buffer.
+// any other expression. operands are appended to buffer. Enclosing
+// parentheses don't change the plan: (NOT a OR b) is an OR, as logicalNotOperand
+// would otherwise read it as NOT (a OR b).
 func planLogicalExpression(expr string, buffer []string) logicalPlan {
+	expr = logicalOperandKey(expr)
 	if !mayBeLogicalExpression(expr) {
 		return logicalPlan{}
 	}
