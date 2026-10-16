@@ -2917,7 +2917,10 @@ func (tx *BadgerTransaction) Commit() error {
 		return err
 	}
 
-	tx.collectLateEmbeddingChangesLocked()
+	if err := tx.collectLateEmbeddingChangesLocked(); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
 
 	temporalTargets, err := tx.bufferTemporalIndexWrites()
 	if err != nil {

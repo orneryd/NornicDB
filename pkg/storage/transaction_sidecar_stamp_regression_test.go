@@ -144,3 +144,52 @@ func TestTransactionRetainedSidecarMetadataStates(t *testing.T) {
 		})
 	}
 }
+
+// A sidecar publication that lands after a transaction read the sidecar it
+// retains (an update that kept the embedding source) is a conflict on both
+// commit paths. The buffered ACK never commits badgerTx's read set, so it
+// must see removals as well as replacements, or its replay writes the
+// snapshot's refreshed metadata over the newer sidecar state.
+func TestTransactionRetainedSidecarLatePublicationConflicts(t *testing.T) {
+	for _, mode := range []string{"sync", "buffered"} {
+		for _, late := range []string{"removal", "replacement"} {
+			t.Run(mode+"/"+late, func(t *testing.T) {
+				b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: mode == "buffered", WriteBehindInterval: time.Hour})
+				require.NoError(t, err)
+				defer b.Close()
+				b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
+				at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+				n := sidecarTestNode(t, b, "late-"+late, map[string]any{"text": "source"}, at)
+				require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, n.ID, [][]float32{{1, 2}}, map[string]any{"chunk_count": 1}, time.Time{})))
+				tx, err := b.BeginTransaction()
+				require.NoError(t, err)
+				require.NoError(t, tx.SetImplicit(mode == "buffered"))
+				v, err := tx.GetNode(n.ID)
+				require.NoError(t, err)
+				require.Equal(t, [][]float32{{1, 2}}, v.ChunkEmbeddings)
+				v.UpdatedAt = at.Add(time.Second)
+				v.Properties["other"] = true
+				require.NoError(t, tx.UpdateNode(v))
+				var chunks [][]float32
+				var meta map[string]any
+				if late == "replacement" {
+					chunks, meta = [][]float32{{3, 4}}, map[string]any{"chunk_count": 1}
+				}
+				require.NoError(t, b.UpdateNodeEmbeddingSidecar(embeddingWriteback(t, b, n.ID, chunks, meta, time.Time{})))
+				require.ErrorIs(t, tx.Commit(), ErrConflict)
+				require.False(t, tx.AcknowledgedBuffered())
+				require.NoError(t, b.FlushWriteBehind())
+				got := embeddingCleanupColdNode(t, b, n.ID)
+				require.Equal(t, chunks, got.ChunkEmbeddings)
+				if meta == nil {
+					require.Empty(t, got.EmbedMeta, "a removed sidecar stays removed")
+					require.Zero(t, countEmbeddingKeys(t, b, n.ID))
+				} else {
+					require.EqualValues(t, 1, got.EmbedMeta["chunk_count"])
+				}
+				require.True(t, at.Equal(got.UpdatedAt))
+				require.NotContains(t, got.Properties, "other")
+			})
+		}
+	}
+}

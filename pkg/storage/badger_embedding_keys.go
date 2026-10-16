@@ -16,7 +16,9 @@ var embeddingKeyScanHook atomic.Pointer[func(NodeID)]
 // not change a node body. Body writes already hold writeBarrier shared, so
 // their current-range cleanup needs no new lock or sentinel point read.
 // The exclusive barrier is released before the caller fires listeners.
-func (b *BadgerEngine) commitEmbeddingSidecar(id NodeID, hasKeys bool, notification *commitNotification, write func(*commitWriter) error) error {
+// Every publication is versioned, a removal too: a transaction that retained
+// the removed sidecar must see that it changed after its snapshot.
+func (b *BadgerEngine) commitEmbeddingSidecar(id NodeID, notification *commitNotification, write func(*commitWriter) error) error {
 	for {
 		// Replay dispatches callbacks. Drain outside the barrier, then check
 		// under it that another ACK did not slip in before source validation.
@@ -33,12 +35,8 @@ func (b *BadgerEngine) commitEmbeddingSidecar(id NodeID, hasKeys bool, notificat
 		}
 		err = b.commitEngineWrite(write, notification)
 		if err == nil {
-			if hasKeys {
-				b.lastEmbeddingSidecarWrite = b.db.oracle.published.Load()
-				b.embeddingSidecarWrites.Store(id, b.lastEmbeddingSidecarWrite)
-			} else {
-				b.embeddingSidecarWrites.Delete(id)
-			}
+			b.lastEmbeddingSidecarWrite = b.db.oracle.published.Load()
+			b.embeddingSidecarWrites.Store(id, b.lastEmbeddingSidecarWrite)
 		}
 		release()
 		return err
@@ -126,31 +124,40 @@ func (tx *BadgerTransaction) stageEmbeddingReplacementLocked(id NodeID, embeddin
 // collectLateEmbeddingChangesLocked accounts for sidecars that the node's
 // snapshot read could not see. Commit holds writeBarrier shared, excluding
 // further sidecar publication until the body commit or buffered ACK.
-func (tx *BadgerTransaction) collectLateEmbeddingChangesLocked() {
+// An update that retained the sidecar it read (embeddingKeysPresent without
+// a replacement) conflicts with a late publication, removal included, as a
+// synchronous commit's read set does; a buffered ACK never commits that set.
+func (tx *BadgerTransaction) collectLateEmbeddingChangesLocked() error {
 	// No per-node probes, intents, views or iterators for a plain body write.
 	// A sidecar published after the physical snapshot is the exceptional
 	// case: discover only its touched nodes while publication is excluded.
 	if tx.engine.lastEmbeddingSidecarWrite <= tx.badgerReadTs {
-		return
+		return nil
 	}
-	stage := func(id NodeID) {
+	late := func(id NodeID) bool {
 		if _, replaced := tx.embeddingChanges[id]; replaced {
-			return
+			return false
 		}
-		if version, exists := tx.engine.embeddingSidecarWrites.Load(id); exists && version.(uint64) > tx.badgerReadTs {
-			tx.stageEmbeddingReplacementLocked(id, nil)
-		}
+		version, exists := tx.engine.embeddingSidecarWrites.Load(id)
+		return exists && version.(uint64) > tx.badgerReadTs
 	}
 	// Never walk the engine's sidecar population: an unrelated embedding
 	// publication must not make a plain update scale with the database.
 	for id := range tx.deletedNodes {
-		stage(id)
-	}
-	for id, pending := range tx.pendingNodes {
-		if pending != nil && !pending.embeddingKeysPresent {
-			stage(id)
+		if late(id) {
+			tx.stageEmbeddingReplacementLocked(id, nil)
 		}
 	}
+	for id, pending := range tx.pendingNodes {
+		if pending == nil || !late(id) {
+			continue
+		}
+		if pending.embeddingKeysPresent {
+			return localizedError(localization.StorageTransactionNodeChanged(string(id)), ErrConflict)
+		}
+		tx.stageEmbeddingReplacementLocked(id, nil)
+	}
+	return nil
 }
 
 // materializeEmbeddingChangesLocked encodes the desired vectors through the

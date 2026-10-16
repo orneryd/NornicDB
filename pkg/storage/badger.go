@@ -203,7 +203,7 @@ type BadgerEngine struct {
 	// backfills before taking the barrier so they cannot wait on it.
 	writeBarrier sync.RWMutex
 	// Sidecar publication is the only writer that does not change a body.
-	// Versions are recorded only for live sidecar ranges; the scalar is read
+	// Every publication, a removal too, records its version; the scalar is read
 	// under writeBarrier and avoids any registry walk on ordinary commits.
 	lastEmbeddingSidecarWrite uint64
 	embeddingSidecarWrites    sync.Map // NodeID -> physical publication version
