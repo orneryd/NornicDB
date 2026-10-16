@@ -260,7 +260,9 @@ type SearchResult struct {
 	ContentPreview string          `json:"content_preview,omitempty"`
 	Properties     map[string]any  `json:"properties,omitempty"`
 
-	// Scoring
+	// Scoring. Similarity is the vector similarity when VectorRank is
+	// positive (for a chunked search, the best of the chunks that found it by
+	// vector), else the keyword score; graph fusion and MCP rely on this.
 	Score      float64 `json:"score"`
 	Similarity float64 `json:"similarity,omitempty"`
 
