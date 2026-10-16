@@ -109,11 +109,8 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	// Relationship arrows contain comparison and subtraction characters.
 	// Resolve the complete pattern before scalar operator parsing sees them.
 	if isRelationshipPatternOperand(expr) {
-		if nodes, _ := withWhereValueContext(values); len(nodes) > 0 {
-			ctx := rowStatementContextOrBackground(values)
-			if matched, recognized := e.evaluateBoundRelationshipPattern(ctx, expr, nodes); recognized {
-				return matched, true, nil
-			}
+		if matched, recognized := e.rowPatternPredicate(rowStatementContextOrBackground(values), expr, values); recognized {
+			return matched, true, nil
 		}
 	}
 	// A plain property chain on a row variable (e.uuid, n.a.b) can't match
@@ -245,8 +242,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		switch lowerASCII(function) {
 		case "exists":
 			if isRelationshipPatternOperand(strings.TrimSpace(argument)) {
-				nodes, _ := withWhereValueContext(values)
-				matched, recognized := e.evaluateBoundRelationshipPattern(rowStatementContextOrBackground(values), argument, nodes)
+				matched, recognized := e.rowPatternPredicate(rowStatementContextOrBackground(values), argument, values)
 				return matched, recognized, nil
 			}
 		case "graph.names", "graph.propertiesbyname", "graph.byname", "graph.byelementid":
@@ -1862,10 +1858,8 @@ func (e *StorageExecutor) rowTextFoldOperand(ctx context.Context, operand string
 // the predicate doesn't hold.
 func (e *StorageExecutor) rowPredicateOperand(ctx context.Context, expr string, values map[string]interface{}) (interface{}, bool) {
 	if isRelationshipPatternOperand(expr) {
-		if nodes, _ := withWhereValueContext(values); len(nodes) > 0 {
-			if matched, recognized := e.evaluateBoundRelationshipPattern(ctx, expr, nodes); recognized {
-				return matched, true
-			}
+		if matched, recognized := e.rowPatternPredicate(ctx, expr, values); recognized {
+			return matched, true
 		}
 	}
 	value, ok, err := e.evaluateRowValue(expr, values)
@@ -2074,6 +2068,14 @@ func (e *StorageExecutor) evaluateRowExistsPredicate(ctx context.Context, expres
 	}
 	matched, recognized = e.rowExistsSubqueryMatches(ctx, exists, values)
 	return matched != negated, recognized
+}
+
+// rowPatternPredicate is a relationship pattern used as a predicate (in
+// WHERE, bare, or as exists(pattern)): whether it matches, decided by the
+// EXISTS { pattern } owner with the whole row, so bound relationships, row
+// values in property maps and rows without a node binding are all seen.
+func (e *StorageExecutor) rowPatternPredicate(ctx context.Context, pattern string, values map[string]interface{}) (matched bool, recognized bool) {
+	return e.evaluateRowExistsPredicate(ctx, "EXISTS { "+strings.TrimSpace(pattern)+" }", values)
 }
 
 // rowExistsSubqueryMatches is EXISTS { subquery } for a row: exists is the
