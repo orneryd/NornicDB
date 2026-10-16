@@ -212,7 +212,7 @@ func materializePipelineSource(source pipelineRowSource) ([]pipelineRow, bool) {
 }
 
 func (e *StorageExecutor) pipelineNodeProductSource(ctx context.Context, rows []pipelineRow, clause string) (pipelineRowSource, bool, error) {
-	if len(splitTopLevelComma(pipelineClauseBody(clause, "MATCH"))) < 2 {
+	if pipelineMatchBodyPartCountFor(ctx, clause) < 2 {
 		return nil, false, nil
 	}
 	return e.pipelineNodeMatchSource(ctx, pipelineRowsSource(rows), clause, nil)

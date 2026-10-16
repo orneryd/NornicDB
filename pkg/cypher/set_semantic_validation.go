@@ -37,9 +37,7 @@ func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause,
 				scope.bind(name)
 			}
 			// Path variables (p = (…)), with the pipeline's own binder.
-			patternBindings := make(map[string]struct{})
-			addPipelinePatternBindings(e, patternBindings, clause.text, pipelineClauseKeyword(clause.kind))
-			for name := range patternBindings {
+			for _, name := range e.pipelinePatternBindingNames(clause.text, pipelineClauseKeyword(clause.kind)) {
 				scope.bind(name)
 			}
 		case pipelineClauseWith:

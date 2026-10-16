@@ -674,7 +674,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
 			clause.kind != pipelineClauseLet && clause.kind != pipelineClauseFilter &&
 			!(clause.kind == pipelineClauseCreate && independentCreate) &&
-			!(clause.kind == pipelineClauseReturn && (pipelineClauseAggregates(clause) || streamsReturn(ctx, clauses, idx))) {
+			!(clause.kind == pipelineClauseReturn && (pipelineClauseAggregatesFor(ctx, clause) || streamsReturn(ctx, clauses, idx))) {
 			var completed bool
 			rows, completed = materializePipelineSource(source)
 			source = nil
@@ -721,7 +721,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			if supported {
 				source, rows = matched, nil
-				addPipelinePatternBindings(e, scope, clause.text, "MATCH")
+				addPipelinePatternBindings(ctx, e, scope, clause.text, "MATCH")
 				continue
 			}
 			if source != nil {
@@ -740,14 +740,14 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			rows = newRows
-			addPipelinePatternBindings(e, scope, clause.text, "MATCH")
+			addPipelinePatternBindings(ctx, e, scope, clause.text, "MATCH")
 		case pipelineClauseOptionalMatch:
 			newRows, err := e.pipelineApplyOptionalMatch(ctx, rows, clause.text)
 			if err != nil {
 				return nil, true, err
 			}
 			rows = newRows
-			addPipelinePatternBindings(e, scope, clause.text, "OPTIONAL MATCH")
+			addPipelinePatternBindings(ctx, e, scope, clause.text, "OPTIONAL MATCH")
 		case pipelineClauseCreate:
 			end := idx + 1
 			for end < len(clauses) && clauses[end].kind == pipelineClauseCreate {
@@ -771,7 +771,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			rows = newRows
 			for _, createClause := range clauses[idx:end] {
-				addPipelinePatternBindings(e, scope, createClause.text, "CREATE")
+				addPipelinePatternBindings(ctx, e, scope, createClause.text, "CREATE")
 			}
 			addQueryStats(result.Stats, created.Stats)
 			if created.Metadata != nil {
@@ -785,7 +785,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return nil, true, err
 			}
 			rows = newRows
-			addPipelinePatternBindings(e, scope, clause.text, "MERGE")
+			addPipelinePatternBindings(ctx, e, scope, clause.text, "MERGE")
 			if stats != nil {
 				addQueryStats(result.Stats, stats)
 			}
@@ -838,17 +838,17 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if source != nil {
 				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause.text); supported {
 					source = windowed
-					scope = pipelineProjectionScope(scope, clause.text, pipelineImports(ctx))
+					scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
 					continue
 				}
 				if plan, local := parsePipelineRowWith(clause.text); local {
 					source = e.pipelineWithRowSource(ctx, source, plan)
-					scope = pipelineProjectionScope(scope, clause.text, pipelineImports(ctx))
+					scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
 					continue
 				}
 			}
 			if source != nil {
-				if !pipelineClauseAggregates(clause) {
+				if !pipelineClauseAggregatesFor(ctx, clause) {
 					var completed bool
 					rows, completed = materializePipelineSource(source)
 					source = nil
@@ -872,7 +872,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
 			rows = newRows
-			scope = pipelineProjectionScope(scope, clause.text, pipelineImports(ctx))
+			scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
 		case pipelineClauseUnwind:
 			unwound, consumed, ok := e.pipelineUnwindSource(ctx, rows, clauses[idx:])
 			if !ok {
@@ -882,10 +882,10 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				scope[alias] = struct{}{}
 			}
 			for offset := 1; offset <= consumed; offset++ {
-				scope = pipelineProjectionScope(scope, clauses[idx+offset].text, pipelineImports(ctx))
+				scope = pipelineProjectionScope(ctx, scope, clauses[idx+offset].text, pipelineImports(ctx))
 			}
 			idx += consumed
-			if idx+1 < len(clauses) && (pipelineClauseAggregates(clauses[idx+1]) || streamsReturn(ctx, clauses, idx+1)) {
+			if idx+1 < len(clauses) && (pipelineClauseAggregatesFor(ctx, clauses[idx+1]) || streamsReturn(ctx, clauses, idx+1)) {
 				source = unwound
 				rows = nil
 				continue
@@ -1448,12 +1448,13 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 	if len(optionalClause) != 1 {
 		return nil, localizedError(localization.CypherCoreOptionalMatchRequired(), nil)
 	}
+	structure := matchPatternStructureFor(ctx, clause)
 	nodeVariables := make(map[string]struct{})
-	for _, variable := range extractNodeVariables(matchPatternStructure(clause)) {
+	for _, variable := range extractNodeVariables(structure) {
 		nodeVariables[variable] = struct{}{}
 	}
 	relationshipVariables := make(map[string]struct{})
-	for _, variable := range extractRelationshipVariables(matchPatternStructure(clause)) {
+	for _, variable := range extractRelationshipVariables(structure) {
 		relationshipVariables[variable] = struct{}{}
 	}
 
@@ -1543,18 +1544,15 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 		expanded, err := e.pipelineApplyShortestPathMatch(ctx, rows, shortest, false)
 		return expanded, true, err
 	}
-	if quantified, ok, err := parseQuantifiedPathMatch(body); ok || err != nil {
+	if quantified, ok, err := quantifiedPathMatchFor(ctx, body); ok || err != nil {
 		if err != nil {
 			return nil, true, err
 		}
 		expanded, err := e.pipelineApplyQuantifiedPathMatch(ctx, rows, quantified)
 		return expanded, true, err
 	}
-	patternEnd := len(body)
-	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
-		patternEnd = where
-	}
-	parts := splitTopLevelComma(body[:patternEnd])
+	split := pipelineMatchPartsFor(ctx, body)
+	patternEnd, parts := split.patternEnd, split.parts
 	if len(parts) > 1 && extractPathAssignmentVariable(parts[len(parts)-1]) != "" {
 		nodePrefix := true
 		for _, part := range parts[:len(parts)-1] {
@@ -1628,12 +1626,8 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 	if len(rows) == 0 {
 		return rows, true, nil
 	}
-	pattern := strings.TrimSpace(clause[len("MATCH"):])
-	whereClause := ""
-	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
-		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:whereIndex])
-	}
+	split := pipelineMatchWhereFor(ctx, clause)
+	pattern, whereClause := split.pattern, split.where
 	if !e.isSingleNodePattern(pattern) {
 		return nil, false, nil
 	}
@@ -1960,12 +1954,8 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 		return nil, false
 	}
 
-	pattern := strings.TrimSpace(clause[len("MATCH"):])
-	whereClause := ""
-	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
-		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:whereIndex])
-	}
+	split := pipelineMatchWhereFor(ctx, clause)
+	pattern, whereClause := split.pattern, split.where
 	// executeChainedMatch runs one pattern part. A MATCH of several parts
 	// ((a)-->(x), (b)-->(x)) needs its relationships distinct across the
 	// parts, which the MATCH executor below enforces.
