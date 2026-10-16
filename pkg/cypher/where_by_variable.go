@@ -75,6 +75,11 @@ func hasPatternOrSubquery(expression string) bool {
 	braces := newSubqueryBraceScanner(expression, 0)
 	for index := 0; index < len(expression); index++ {
 		switch character := expression[index]; character {
+		case '/':
+			if end := queryCommentEnd(expression, index); end >= 0 {
+				index = end - 1
+				continue
+			}
 		case '\'', '"', '`':
 			index = skipQuotedSemanticText(expression, index) - 1
 		case '-':
