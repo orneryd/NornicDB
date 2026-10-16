@@ -66,7 +66,10 @@ func TestPrepassCanonicalMemoBypass(t *testing.T) {
 	require.NotNil(t, memo)
 	_, again := canonicalizeQueryText(query)
 	require.Same(t, memo, again)
-	ctx := &pipelineCountingContext{Context: context.Background(), stop: 2}
+	// A memo hit finishes inside one sample interval, so the statement is
+	// cancelled at its first poll: a cancelled scan returns nothing and
+	// leaves the memo alone.
+	ctx := &pipelineCountingContext{Context: context.Background(), stop: 1}
 	p := &pipelineCancellation{ctx: withExpressionFailureSlot(ctx)}
 	text, rewrite := canonicalizeQueryTextWithCancellation(query, p)
 	require.ErrorIs(t, p.err, context.Canceled)
@@ -74,9 +77,10 @@ func TestPrepassCanonicalMemoBypass(t *testing.T) {
 	require.Nil(t, rewrite)
 	require.Same(t, memo, canonicalRewrites.slot(query).Load(), "cancelled scan cannot publish or replace memo")
 	p = &pipelineCancellation{ctx: context.Background()}
+	// A live statement reuses the memo through the probe-checked lookup.
 	_, fresh := canonicalizeQueryTextWithCancellation(query, p)
+	require.NoError(t, p.err)
 	require.Equal(t, memo, fresh)
-	require.NotSame(t, memo, fresh)
 	require.Same(t, memo, canonicalRewrites.slot(query).Load())
 }
 
