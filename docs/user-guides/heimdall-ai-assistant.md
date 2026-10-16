@@ -606,10 +606,10 @@ func (p *SecurityPlugin) OnDatabaseEvent(event *heimdall.DatabaseEvent) {
         p.failureCount++
         if p.failureCount >= 5 {
             // Directly invoke an action
-            p.ctx.Heimdall.InvokeActionAsync("heimdall.anomaly.detect", nil)
+            p.ctx.Heimdall.InvokeActionAsync(context.Background(), "heimdall.anomaly.detect", nil)
             
             // Or send a natural language prompt
-            p.ctx.Heimdall.SendPromptAsync("Analyze recent query failures")
+            p.ctx.Heimdall.SendPromptAsync(context.Background(), "Analyze recent query failures")
         }
     }
 }
