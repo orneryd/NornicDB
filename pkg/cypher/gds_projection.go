@@ -771,17 +771,17 @@ func gdsProjectionSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes
 		}
 		for _, property := range spec.properties {
 			kind := nodePropertyTypes[gdsPropertyTypeKey(spec.name, property.key)]
-			defaultNumber, numericDefault := toFloat64(property.defaultValue)
-			fractionalDefault := numericDefault && defaultNumber != math.Trunc(defaultNumber)
+			// A fractional default makes the property Float, as in GDS.
+			integerDefault, _, integral, _ := gdsConvertPropertyValue(property.defaultValue, "Integer", false, gdsStoredValue)
 			switch {
 			case kind == "List of Integer" || kind == "List of Float":
 				properties[property.key] = kind + " (DefaultValue(null), PERSISTENT)"
-			case kind == "Float" || fractionalDefault:
+			case kind == "Float" || property.defaultValue != nil && !integral:
 				properties[property.key] = "Float (DefaultValue(" + gdsDefaultText(property.defaultValue, "NaN") + "), PERSISTENT)"
 			default:
 				defaultText := "-9223372036854775808"
-				if property.defaultValue != nil {
-					defaultText = strconv.FormatInt(gdsInteger(property.defaultValue), 10)
+				if integral {
+					defaultText = strconv.FormatInt(integerDefault.(int64), 10)
 				}
 				properties[property.key] = "Integer (DefaultValue(" + defaultText + "), PERSISTENT)"
 			}
@@ -811,13 +811,15 @@ func gdsProjectionSchema(nodeSpecs, relSpecs []gdsElementSpec, nodePropertyTypes
 
 // gdsDefaultText is a Float default as GDS prints it (1.0, 0.5), or none.
 func gdsDefaultText(value interface{}, none string) string {
-	if value == nil {
+	exact, _, present, _ := gdsConvertPropertyValue(value, "Float", false, gdsStoredValue)
+	if !present {
 		return none
 	}
-	if gdsDefaultNumber(value) == math.Trunc(gdsDefaultNumber(value)) {
-		return gdsNumberText(gdsDefaultNumber(value), 'f', 1)
+	number := exact.(float64)
+	if number == math.Trunc(number) {
+		return gdsNumberText(number, 'f', 1)
 	}
-	return gdsNumberText(gdsDefaultNumber(value), 'g', -1)
+	return gdsNumberText(number, 'g', -1)
 }
 
 // gdsNumberText is the shared formatter for floating-point GDS values and
@@ -1123,18 +1125,15 @@ func gdsConfigIntegerValue(value interface{}, coerce bool) (int64, bool) {
 	return 0, false
 }
 
-// gdsScalarNumber retains numeric configuration acceptance independently of
-// property import bounds. Configuration readers keep their own type errors.
+// gdsScalarNumber supplies numeric configuration values through the projected
+// value converter, without the import bound. Configuration readers keep their
+// own type-error messages.
 func gdsScalarNumber(value interface{}) (float64, bool) {
-	if isIntegerProcedureValue(value) {
-		number, err := gdsLongToDouble(gdsInteger(value), false)
-		return number, err == nil
+	exact, _, ok, err := gdsConvertPropertyValue(value, "Float", false, gdsConfigurationValue)
+	if ok && err == nil {
+		return exact.(float64), true
 	}
-	number, ok := toFloat64(value)
-	if _, isText := value.(string); !ok || isText {
-		return 0, false
-	}
-	return number, true
+	return 0, false
 }
 
 // integer is key's INTEGER value, at least min: fallback when absent, or an
@@ -1372,5 +1371,3 @@ func gdsTypeProjected(relSpecs []gdsElementSpec, relType string) bool {
 	}
 	return false
 }
-
-func gdsDefaultNumber(value interface{}) float64 { number, _ := toFloat64(value); return number }

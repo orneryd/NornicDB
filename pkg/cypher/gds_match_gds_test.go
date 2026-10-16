@@ -73,7 +73,7 @@ func TestGraphProjectAsGDS(t *testing.T) {
 		"CALL gds.graph.project('x', 'P', {K: {properties: {w: 5}}})":                                        "Cannot construct a property projection out of a java.lang.Long",
 		"CALL gds.graph.project('x', 'P', {K: {orientation: 5}})":                                            "The value of `orientation` must be of type `String` but was `Long`.",
 		"CALL gds.graph.project('x', 'P', {K: {indexInverse: 'yes'}})":                                       "The value of `indexInverse` must be of type `Boolean` but was `String`.",
-		"CALL gds.graph.project('x', 'P', {K: {properties: {w: {defaultValue: 'x'}}}})":                      "The value of `defaultValue` must be of type `Double` but was `String`.",
+		"CALL gds.graph.project('x', 'P', {K: {properties: {w: {defaultValue: 'x'}}}})":                      "Expected type of default value to be `Double`. But got `String`.",
 		"CALL gds.graph.project('x', ['P', 5], 'K')":                                                         "Cannot construct a node projection out of a java.lang.Long",
 	} {
 		_, err := run(query)

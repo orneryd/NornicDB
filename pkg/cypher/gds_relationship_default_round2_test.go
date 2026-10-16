@@ -12,6 +12,7 @@ func TestGDSRelationshipDefaultValidation(t *testing.T) {
 	for _, tc := range []struct{ value, message string }{
 		{"[1,2]", "Expected type of default value to be `Double`. But got `long[]`."},
 		{"[1.0,2.0]", "Expected type of default value to be `Double`. But got `double[]`."},
+		{"'x'", "Expected type of default value to be `Double`. But got `String`."},
 		{"9007199254740993", "Cannot safely convert 9007199254740993 into an double value"},
 		{"9007199254740994", "Cannot safely convert 9007199254740994 into an double value"},
 	} {
