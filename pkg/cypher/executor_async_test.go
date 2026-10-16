@@ -505,6 +505,9 @@ func TestExecuteImplicitAsync_MatchCreateDeleteSingleQuery(t *testing.T) {
 // Run with: go test -v -run BenchmarkMatchCreateDelete -count 1 ./pkg/cypher/
 // KEEP THIS TEST - it's the primary test for relationship write performance
 func TestBenchmarkMatchCreateDelete(t *testing.T) {
+	// A throughput floor: like every timing test here it runs on an opted-in
+	// quiet machine (NORNICDB_RUN_PERFORMANCE_TESTS=1), not under -race.
+	requirePerformanceWorkload(t)
 	baseEngine := newTestMemoryEngine(t)
 
 	asyncBase := baseEngine
@@ -638,6 +641,12 @@ func BenchmarkPipelineLimitedCartesianCreateDelete(b *testing.B) {
 }
 
 func TestBenchmarkMatchCreateDelete_LargeDataset_Direct(t *testing.T) {
+	// The 15K floor is an absolute number, meaningful only on an opted-in
+	// quiet machine (NORNICDB_RUN_PERFORMANCE_TESTS=1, no -race); a shared
+	// box measures its load. Drift on any machine is caught by comparing
+	// BenchmarkPipelineLimitedCartesianCreateDelete (the same statement on the
+	// same 100 + 150 nodes) between base and head.
+	requirePerformanceWorkload(t)
 	baseEngine := newTestMemoryEngine(t)
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
