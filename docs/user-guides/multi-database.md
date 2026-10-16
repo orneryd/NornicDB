@@ -360,6 +360,19 @@ Limits are **fully persisted** to disk as part of database metadata:
 
 All limits are enforced at runtime with clear, actionable error messages:
 
+Implicit and explicit transactions (HTTP and Bolt) check storage quotas against
+their cumulative final changes at commit. An over-quota transaction is rolled
+back in full. Admission is serialized per database with ordinary writes, so
+concurrent commits cannot jointly exceed a quota. A transaction already holding
+a unique MERGE key may receive a retryable storage conflict if admission is busy.
+
+The write-rate token bucket starts with `max_writes_per_second` tokens and refills
+at that rate, capped at that capacity. Transactions consume one token per buffered
+storage operation, including deletes, rather than one per statement or commit.
+The transaction engine can coalesce updates to a newly created entity into its
+create operation. Rejected attempts retain tokens already consumed, as ordinary
+writes do; rollback never retains storage usage.
+
 **MaxNodes/MaxEdges**: When the count limit is reached, create operations fail with:
 
 ```
