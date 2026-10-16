@@ -1,10 +1,29 @@
 package cypher
 
+import "context"
+
 // The element loops of the row evaluator's list forms, one implementation
 // each for the text path (evaluateRowValueText) and the compiled programs
 // (row_value_program.go) (#1214). The caller binds the row in scope once and
 // evaluates each part for the element the loop binds; the loop decides the
 // form's value, and when an element leaves it unresolved or fails.
+
+// rowElementScope is the one row map a list form's element parts see: the
+// row copied once, its variables (extra of them) rebound per element. A body
+// with a subquery (localSubqueries) evaluates it per element, only where
+// reached, so the scope is a local subquery scope (localSubqueryScope).
+func rowElementScope(values map[string]interface{}, extra int, localSubqueries bool) map[string]interface{} {
+	scope := make(map[string]interface{}, len(values)+extra)
+	for name, value := range values {
+		scope[name] = value
+	}
+	if localSubqueries {
+		if ctx := rowStatementContext(values); ctx != nil && !inLocalSubqueryScope(ctx) {
+			scope[rowStatementContextKey] = context.WithValue(ctx, localSubqueryScopeKey{}, true)
+		}
+	}
+	return scope
+}
 
 // rowQuantifierLoop is all / any / none / single(variable IN items WHERE
 // predicate), folded by quantifierFold. An unevaluated predicate leaves the

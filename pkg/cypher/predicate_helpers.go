@@ -59,9 +59,9 @@ func buildComparableMembershipIndex(items []interface{}) (map[interface{}]struct
 }
 
 func evaluateComparableMembership(actual interface{}, comparableSet map[interface{}]struct{}, nonComparable []interface{}, equals func(interface{}, interface{}) bool) bool {
-	return indexedMembershipValue(actual, comparableSet, nonComparable, false, func(left, right interface{}) interface{} {
+	return indexedMembershipTruth(actual, comparableSet, nonComparable, false, func(left, right interface{}) interface{} {
 		return equals(left, right)
-	}) == true
+	}) == truthTrue
 }
 
 // membershipKey is the key of a comparable value in a membership index

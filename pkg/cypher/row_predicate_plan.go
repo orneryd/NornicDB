@@ -276,6 +276,8 @@ type rowPredicatePart struct {
 	left     rowOperand
 	right    rowOperand
 	operator comparisonEvaluationHandler
+	// op is operator read once, for comparing two planned integers.
+	op comparisonOperator
 	// constantNumbers marks a comparison of two constant numeric
 	// expressions, compared as Neo4j folds them (promoteConstantNumbers).
 	constantNumbers bool
@@ -410,7 +412,7 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 				left, leftOK := parseCompiledRowOperand(scan.operand(text, 0))
 				right, rightOK := parseCompiledRowOperand(scan.operand(text, 1))
 				if leftOK && rightOK {
-					return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: comparisonEvaluationHandler(operator),
+					return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: comparisonEvaluationHandler(operator), op: comparisonOperatorOf(operator),
 						constantNumbers: constantNumericComparison(operator, scan.operand(text, 0), scan.operand(text, 1))}, true
 				}
 			}
@@ -477,7 +479,7 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 	if operator == "!=" {
 		operator = "<>"
 	}
-	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: comparisonEvaluationHandler(operator),
+	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: comparisonEvaluationHandler(operator), op: comparisonOperatorOf(operator),
 		constantNumbers: constantNumericComparison(operator, operands[0], operands[1])}, true
 }
 
@@ -562,7 +564,7 @@ func planRowStringComparison(text string) (rowPredicatePart, bool) {
 		// text.
 		return rowPredicatePart{}, false
 	}
-	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: sides[0], right: sides[1], operator: comparisonEvaluationHandler(operator),
+	return rowPredicatePart{kind: rowPredicateComparison, text: text, left: sides[0], right: sides[1], operator: comparisonEvaluationHandler(operator), op: comparisonOperatorOf(operator),
 		constantNumbers: constantNumericComparison(operator, operands[0], operands[1])}, true
 }
 
@@ -636,21 +638,31 @@ func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, par
 	return truth == truthTrue
 }
 
-// rowPredicatePartTruth is the truth value of a planned part. A junction folds its
-// parts through the one AND / OR fold (logicalFold), adding them as it
-// evaluates them.
+// rowPredicateJunctionTruth folds a planned AND / OR's parts through the one
+// AND / OR fold (logicalFold), adding them as it evaluates them. It is its
+// own function so that the leaves' frame (rowPredicatePartTruth) doesn't
+// carry the fold's errors.
+func (e *StorageExecutor) rowPredicateJunctionTruth(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) (cypherTruth, error) {
+	fold := logicalFold{decisive: part.kind == rowPredicateOr}
+	for i := range part.parts {
+		value, err := e.rowPredicatePartTruth(ctx, &part.parts[i], scope, memberships)
+		if err != nil {
+			fold.addError(err)
+			continue
+		}
+		if fold.addKnown(value) {
+			break
+		}
+	}
+	return fold.truthResult()
+}
+
+// rowPredicatePartTruth is the truth value of a planned part.
 func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) (cypherTruth, error) {
 	scope.executor = e
 	switch part.kind {
 	case rowPredicateAnd, rowPredicateOr:
-		fold := logicalFold{decisive: part.kind == rowPredicateOr}
-		for i := range part.parts {
-			value, err := e.rowPredicatePartTruth(ctx, &part.parts[i], scope, memberships)
-			if fold.addTruth(value, err) {
-				break
-			}
-		}
-		return fold.truthResult()
+		return e.rowPredicateJunctionTruth(ctx, part, scope, memberships)
 	case rowPredicateComparison:
 		if part.left.compiled != nil || part.right.compiled != nil {
 			left, leftOK, err := part.left.evaluate(e, scope)
@@ -665,8 +677,9 @@ func (e *StorageExecutor) rowPredicatePartTruth(ctx context.Context, part *rowPr
 				return e.rowPredicatePartTextTruth(ctx, part, scope)
 			}
 			if left.isInteger && right.isInteger && !(part.constantNumbers && foldsConstantNumbers(string(part.operator), cypherVersionFromContext(ctx) == "25")) {
-				truth, _ := cypherBooleanTruth(compareCypherPredicateValue(left.integer, right.integer, string(part.operator)))
-				return truth, nil
+				if held, ordered := part.op.orders(compareInt64(left.integer, right.integer)); ordered {
+					return truthOf(held), nil
+				}
 			}
 			leftValue, rightValue := left.materialize(), right.materialize()
 			if part.constantNumbers && foldsConstantNumbers(string(part.operator), cypherVersionFromContext(ctx) == "25") {

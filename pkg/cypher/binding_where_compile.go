@@ -700,9 +700,7 @@ func compileMembershipTruth[R any](e *StorageExecutor, clause, op string, negate
 // membershipTruth is the three-valued result of `actual IN list` for a list
 // indexed by buildComparableMembershipIndex (which leaves out null items).
 func membershipTruth(actual interface{}, comparableSet map[interface{}]struct{}, nonComparable []interface{}, hasNull bool) cypherTruth {
-	value := indexedMembershipValue(actual, comparableSet, nonComparable, hasNull, cypherEquality)
-	truth, _ := cypherPredicateTruth(value)
-	return truth
+	return indexedMembershipTruth(actual, comparableSet, nonComparable, hasNull, cypherEquality)
 }
 
 func listHasNull(items []interface{}) bool {

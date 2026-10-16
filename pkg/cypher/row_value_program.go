@@ -164,6 +164,9 @@ func (info rowValueInfo) readsAny(names []string) bool {
 type rowValueLoop struct {
 	variables []string
 	slots     int
+	// localSubqueries: a part of the loop's body has a subquery, which it
+	// evaluates per element, only where reached (rowElementScope).
+	localSubqueries bool
 }
 
 type rowValueCompiler struct {
@@ -298,7 +301,7 @@ func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
 		for i, operand := range plan.operands {
 			parts[i], infos[i] = c.part(operand)
 			isolation := operandIsolationAt(operand, logicalFoldPosition(plan.kind), false)
-			if isolation.value || isolation.caseValue {
+			if isolation.value || isolation.local {
 				parts[i] = &rowDeferredOperandNode{operand: parts[i], isolation: isolation}
 			}
 		}
@@ -316,7 +319,7 @@ func (c *rowValueCompiler) compile(expr string) (rowValueNode, rowValueInfo) {
 			operand := scan.operand(expr, i)
 			parts[i], infos[i] = c.part(operand)
 			isolation := operandIsolationAt(operand, comparisonFoldPosition(&scan), false)
-			if isolation.value || isolation.caseValue {
+			if isolation.value || isolation.local {
 				parts[i] = &rowDeferredOperandNode{operand: parts[i], isolation: isolation}
 			}
 		}
@@ -445,7 +448,14 @@ func (c *rowValueCompiler) compileFunction(expr, name, argument string) (rowValu
 		}
 		info := combineRowValueInfo(infos...)
 		c.compose(info, parts, infos)
-		return bound(expr, &rowCoalesceNode{operands: parts}, info)
+		node := &rowCoalesceNode{operands: parts}
+		for _, operand := range operands {
+			if mayContainSubqueryExpression(operand) {
+				node.texts = operands
+				break
+			}
+		}
+		return bound(expr, node, info)
 	case "reduce", "allreduce":
 		form, ok := parseReduceForm(name, argument)
 		if !ok {
@@ -462,6 +472,7 @@ func (c *rowValueCompiler) compileLoopBody(loop *rowValueLoop, expr string) rowV
 	if expr == "" {
 		return nil
 	}
+	loop.localSubqueries = loop.localSubqueries || mayContainSubqueryExpression(expr)
 	c.loops = append(c.loops, loop)
 	node, info := c.compile(expr)
 	node = c.hoist(node, info)
@@ -596,10 +607,7 @@ func (n *rowCaseNode) eval(e *StorageExecutor, values map[string]interface{}, fr
 			}
 			return value, ok, err
 		}
-		if part == caseWhen && !n.parsed.isSimple {
-			return evaluateRowCaseCondition(values, text, evaluate)
-		}
-		return evaluate(values)
+		return evaluateRowLocalSubqueries(values, text, evaluate)
 	})
 }
 
@@ -893,11 +901,22 @@ func (n *rowUnaryFunctionNode) eval(e *StorageExecutor, values map[string]interf
 	return result, true, nil
 }
 
-type rowCoalesceNode struct{ operands []rowValueNode }
+// rowCoalesceNode is coalesce(...). texts holds the arguments' texts when one
+// has a subquery: an argument is evaluated only when reached, its subqueries
+// too (evaluateRowLocalSubqueries).
+type rowCoalesceNode struct {
+	operands []rowValueNode
+	texts    []string
+}
 
 func (n *rowCoalesceNode) eval(e *StorageExecutor, values map[string]interface{}, frames [][]rowValueMemo) (interface{}, bool, error) {
 	return cypherfn.Coalesce(len(n.operands), func(index int) (interface{}, bool, error) {
-		return n.operands[index].eval(e, values, frames)
+		if n.texts == nil {
+			return n.operands[index].eval(e, values, frames)
+		}
+		return evaluateRowLocalSubqueries(values, n.texts[index], func(scope map[string]interface{}) (interface{}, bool, error) {
+			return n.operands[index].eval(e, scope, frames)
+		})
 	})
 }
 
@@ -921,10 +940,7 @@ func (n *rowMemoNode) eval(e *StorageExecutor, values map[string]interface{}, fr
 // with the element variable bound, one map for every element (as reduce
 // keeps one), and the list's memo frame.
 func rowLoopScope(values map[string]interface{}, frames [][]rowValueMemo, loop *rowValueLoop) (map[string]interface{}, [][]rowValueMemo) {
-	scope := make(map[string]interface{}, len(values)+1)
-	for name, value := range values {
-		scope[name] = value
-	}
+	scope := rowElementScope(values, len(loop.variables), loop.localSubqueries)
 	if loop.slots > 0 {
 		frames = append(frames[:len(frames):len(frames)], make([]rowValueMemo, loop.slots))
 	} else {

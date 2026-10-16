@@ -69,6 +69,14 @@ const (
 	logicalNot
 	// logicalNotNot is NOT NOT x: x's value as it is.
 	logicalNotNot
+	// logicalNotAnd is NOT (a AND b) with a subquery, evaluated as
+	// NOT a OR NOT b, as Neo4j normalizes it: its operands are a and b, and
+	// a subquery among them runs only when the others don't decide.
+	logicalNotAnd
+	// logicalNotOr is NOT (a OR b) with a subquery, evaluated as
+	// NOT a AND NOT b: its operands are a and b, whose subqueries run before
+	// the fold, as any AND's (applyOperand).
+	logicalNotOr
 )
 
 // logicalPlan is an expression's top-level logical operator and the
@@ -93,12 +101,17 @@ func planLogicalExpression(expr string, buffer []string) logicalPlan {
 		if len(operands) == 0 {
 			continue
 		}
+		subqueries := mayContainSubqueryExpression(expr)
 		switch operator {
 		case " OR ":
-			return logicalPlan{kind: logicalOr, operands: simplifyLogicalChain(operands, "false")}
+			plan := logicalPlan{kind: logicalOr, operands: simplifyLogicalChain(operands, "false", subqueries)}
+			if subqueries {
+				plan.apply = disjunctionApplyOperandIndexes(plan.operands)
+			}
+			return plan
 		case " AND ":
-			plan := logicalPlan{kind: logicalAnd, operands: simplifyLogicalChain(operands, "true")}
-			if mayContainSubqueryExpression(expr) {
+			plan := logicalPlan{kind: logicalAnd, operands: simplifyLogicalChain(operands, "true", subqueries)}
+			if subqueries {
 				plan.apply = applyOperandIndexes(len(plan.operands), func(i int) string { return plan.operands[i] })
 			}
 			return plan
@@ -121,6 +134,18 @@ func planLogicalExpression(expr string, buffer []string) logicalPlan {
 	// NOT (NOT a OR b) negates the OR, whose left operand is NOT a.
 	if inner, doubled := logicalNotOperand(operand); doubled && !hasTopLevelLogicalOperator(logicalOperandKey(operand)) {
 		return logicalPlan{kind: logicalNotNot, operands: append(buffer[:0], inner)}
+	}
+	// NOT over an AND or an OR with a subquery is normalized as Neo4j does
+	// (De Morgan), so that its subqueries are planned as the result's.
+	if mayContainSubqueryExpression(operand) {
+		switch inner := planLogicalExpression(logicalOperandKey(operand), buffer[:0]); inner.kind {
+		case logicalAnd:
+			return logicalPlan{kind: logicalNotAnd, operands: inner.operands, apply: disjunctionApplyOperandIndexes(inner.operands)}
+		case logicalOr:
+			plan := logicalPlan{kind: logicalNotOr, operands: inner.operands}
+			plan.apply = applyOperandIndexes(len(plan.operands), func(i int) string { return plan.operands[i] })
+			return plan
+		}
 	}
 	return logicalPlan{kind: logicalNot, operands: append(buffer[:0], operand)}
 }
@@ -148,6 +173,18 @@ func (p logicalPlan) evaluateInContext(ctx context.Context, eval func(index int)
 		return evaluateLogicalXor(p.operands, eval)
 	case logicalNotNot:
 		return eval(0)
+	case logicalNotAnd, logicalNotOr:
+		return evaluateLogicalOperands(len(p.operands), p.kind == logicalNotAnd, func(index int) (interface{}, bool, error) {
+			value, ok, err := eval(index)
+			if !ok || err != nil {
+				return value, ok, err
+			}
+			truth, err := foldPredicateTruth(value)
+			if err != nil {
+				return nil, true, err
+			}
+			return truth.not().value(), true, nil
+		})
 	}
 	value, ok, err := eval(0)
 	if !ok || err != nil {
@@ -234,20 +271,28 @@ func appendLogicalOperands(operands []string, expr, operator string) []string {
 
 // simplifyLogicalChain drops the operands that are the literal neutral
 // (true in an AND, false in an OR) and the repeats of an operand, in place.
-func simplifyLogicalChain(operands []string, neutral string) []string {
-	// A literal deciding value is folded before subquery Apply planning,
-	// regardless of its textual position. Static type validation precedes us.
+//
+// A deciding literal (false in an AND, true in an OR) is the chain's value
+// wherever it stands: Neo4j folds it before it plans subqueries. With
+// constants (the chain has a subquery) so is any predicate Neo4j folds to a
+// constant (constantPredicateTruth: NOT true, 1 = 2). Static type validation
+// precedes us.
+func simplifyLogicalChain(operands []string, neutral string, constants bool) []string {
+	decisive, decisiveText := truthFalse, "false"
+	if neutral == "false" {
+		decisive, decisiveText = truthTrue, "true"
+	}
 	for _, operand := range operands {
-		key := logicalOperandKey(operand)
-		if neutral == "true" && equalFoldASCII(key, "false") || neutral == "false" && equalFoldASCII(key, "true") {
-			operands[0] = key
+		if truth, constant := logicalOperandTruth(operand, constants); constant && truth == decisive {
+			operands[0] = decisiveText
 			return operands[:1]
 		}
 	}
 	kept := operands[:0]
 	for _, operand := range operands {
 		key := logicalOperandKey(operand)
-		if strings.EqualFold(key, neutral) {
+		if truth, constant := logicalOperandTruth(operand, constants); constant && truth != truthUnknown {
+			// The neutral value: the deciding one returned above.
 			continue
 		}
 		repeated := false
@@ -265,6 +310,57 @@ func simplifyLogicalChain(operands []string, neutral string) []string {
 		return append(kept, neutral)
 	}
 	return kept
+}
+
+// logicalOperandTruth is an AND / OR operand's constant truth: a boolean
+// literal, or with constants any constant predicate.
+func logicalOperandTruth(operand string, constants bool) (cypherTruth, bool) {
+	key := logicalOperandKey(operand)
+	switch {
+	case equalFoldASCII(key, "true"):
+		return truthTrue, true
+	case equalFoldASCII(key, "false"):
+		return truthFalse, true
+	case constants:
+		return constantPredicateTruth(key)
+	}
+	return truthUnknown, false
+}
+
+// constantPredicateTruth reads a predicate Neo4j folds to a constant before
+// it plans subqueries: a boolean literal or null, NOT of a constant, or a
+// comparison of literals (1 = 2, 1 < 0 < 2).
+func constantPredicateTruth(expression string) (cypherTruth, bool) {
+	key := logicalOperandKey(expression)
+	switch {
+	case equalFoldASCII(key, "true"):
+		return truthTrue, true
+	case equalFoldASCII(key, "false"):
+		return truthFalse, true
+	case equalFoldASCII(key, "null"):
+		return truthUnknown, true
+	}
+	if inner, negated := logicalNotOperand(key); negated {
+		truth, constant := constantPredicateTruth(inner)
+		return truth.not(), constant
+	}
+	scan, comparison := scanComparisonChain(key)
+	if !comparison {
+		return truthUnknown, false
+	}
+	for i := 0; i <= scan.count; i++ {
+		if operand, ok := parseRowOperand(scan.operand(key, i)); !ok || operand.kind != rowOperandLiteral {
+			return truthUnknown, false
+		}
+	}
+	value, _, resolved, err := evaluateComparisonChain(key, func(text string, _ foldPosition) (interface{}, bool, error) {
+		operand, _ := parseRowOperand(text)
+		return operand.literal, true, nil
+	}, compareCypherPredicateValue, false)
+	if err != nil || !resolved {
+		return truthUnknown, false
+	}
+	return cypherBooleanTruth(value)
 }
 
 // logicalOperandKey is an operand's text without enclosing parentheses: the
@@ -320,9 +416,9 @@ func (fold *logicalFold) add(value interface{}, ok bool, err error) bool {
 		// reads it, without the call.
 		switch truth := value.(type) {
 		case bool:
-			return fold.addTruth(truthOf(truth), nil)
+			return fold.addKnown(truthOf(truth))
 		case nil:
-			return fold.addTruth(truthUnknown, nil)
+			return fold.addKnown(truthUnknown)
 		}
 	}
 	return fold.addValue(value, ok, err)
@@ -344,14 +440,7 @@ func foldPredicateTruth(value interface{}) (cypherTruth, error) {
 
 func (fold *logicalFold) addValue(value interface{}, ok bool, err error) bool {
 	if err != nil {
-		if conversion, typed := err.(*logicalPredicateTypeError); typed {
-			if fold.typeErr == nil {
-				fold.typeErr = conversion.error
-			}
-		} else if fold.evaluationErr == nil {
-			fold.evaluationErr = err
-		}
-		return false
+		return fold.addError(err)
 	}
 	if !ok {
 		fold.unresolved = true
@@ -373,17 +462,38 @@ func (fold *logicalFold) result() (interface{}, bool, error) {
 }
 
 // addTruth accepts planned predicates without boxing each intermediate
-// boolean/null. It is also the fast entry used by add's ordinary values.
+// boolean/null.
 func (fold *logicalFold) addTruth(truth cypherTruth, err error) bool {
 	if err != nil {
-		return fold.addValue(nil, true, err)
+		return fold.addError(err)
 	}
+	return fold.addKnown(truth)
+}
+
+// addKnown folds an operand's truth value. It is small enough to inline, so
+// an evaluator that walks its own operands (the predicate plan's junctions)
+// folds each without a call.
+func (fold *logicalFold) addKnown(truth cypherTruth) bool {
 	if truth == truthUnknown {
 		fold.unknown = true
 		return false
 	}
 	fold.decided = (truth == truthTrue) == fold.decisive
 	return fold.decided
+}
+
+// addError folds an operand's error: an evaluation error ranks above a
+// non-predicate's TypeError (foldPredicateTruth); a later deciding operand
+// still discards both.
+func (fold *logicalFold) addError(err error) bool {
+	if conversion, typed := err.(*logicalPredicateTypeError); typed {
+		if fold.typeErr == nil {
+			fold.typeErr = conversion.error
+		}
+	} else if fold.evaluationErr == nil {
+		fold.evaluationErr = err
+	}
+	return false
 }
 
 func (fold *logicalFold) truthResult() (cypherTruth, error) {

@@ -87,7 +87,11 @@ func (p *preparedRowPredicate) holds(e *StorageExecutor, ctx context.Context, va
 	}
 	held := e.evaluateRowPredicate(ctx, p.expression, values)
 	// The evaluation decided how the next row is evaluated: from the
-	// predicate's complete plan, or once it is compiled, from its program.
+	// predicate's complete plan, or once it is compiled, from its program,
+	// unless its subqueries are planned as a WHERE's (wherePredicatePlan).
+	if wherePredicatePlanFor(ctx, p.expression) != nil {
+		return held
+	}
 	if plan, cached := rowPredicatePlans.get(p.expression); cached && plan != nil && plan.complete {
 		p.plan = plan
 	} else if program, cached := rowPredicatePrograms.get(p.expression); cached && program != rowPredicateSeen && !rowPredicateProgramsDisabled.Load() && !rowValueProgramsDisabled.Load() {

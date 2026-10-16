@@ -166,41 +166,368 @@ const (
 	foldAnd
 	// foldOr is an OR: a true decides.
 	foldOr
-	// CASE conditions evaluate subqueries as expression operands, not Apply.
-	foldCaseAnd
+	// foldLocalAnd is an AND in a local subquery scope
+	// (localSubqueryScope): a false decides, and it discards a subquery's
+	// error too, as the subquery runs only where the fold reaches it.
+	foldLocalAnd
 )
 
-type caseConditionScopeKey struct{}
+// Neo4j runs a subquery expression (EXISTS, COUNT, COLLECT) of a projection
+// or of a WHERE's conjunct for the row before the expression (Apply), so its
+// error counts even when another AND operand is false (applyOperand). Some
+// subqueries its planner keeps inside the expression instead, where only
+// reaching them runs them: those of a CASE condition, those of a WHERE's
+// negated or disjunctive conjunct and its disjuncts (anti-semi-apply and
+// select-or-semi-apply after the WHERE's filters, wherePredicatePlan), and
+// the disjuncts NOT (a AND b) is normalized to (logicalNotAnd). Their
+// operands are evaluated in a local subquery scope: no Apply, and a
+// deciding operand discards a subquery's error (foldLocalAnd).
+type localSubqueryScopeKey struct{}
 
 func foldPositionInContext(ctx context.Context, position foldPosition) foldPosition {
-	if position == foldAnd && ctx.Value(caseConditionScopeKey{}) != nil {
-		return foldCaseAnd
+	if position == foldAnd && inLocalSubqueryScope(ctx) {
+		return foldLocalAnd
 	}
 	return position
 }
 
-// caseConditionScope changes planning scope only for conditions containing
-// subqueries. Ordinary CASE expressions keep their allocation-free path.
-func caseConditionScope(ctx context.Context, expression string, evaluate func(context.Context) (interface{}, bool, error)) (interface{}, bool, error) {
+func inLocalSubqueryScope(ctx context.Context) bool {
+	return ctx.Value(localSubqueryScopeKey{}) != nil
+}
+
+// localSubqueryScope evaluates expression in a local subquery scope, with
+// its own error slot. An expression without a subquery keeps its context and
+// its allocation-free path.
+func localSubqueryScope(ctx context.Context, expression string, evaluate func(context.Context) (interface{}, bool, error)) (interface{}, bool, error) {
 	if !mayContainSubqueryExpression(expression) {
 		return evaluate(ctx)
 	}
-	ctx = context.WithValue(ctx, caseConditionScopeKey{}, true)
+	ctx = context.WithValue(ctx, localSubqueryScopeKey{}, true)
 	return deferredExpressionResult(ctx, evaluate)
 }
 
-// applyOperand identifies a subquery lifted outside a conjunction or chain.
-// A negated existence test and a CASE are expression-local instead.
+// withoutLocalSubqueryScope is ctx for running a subquery's body: Neo4j plans
+// the body as its own query, so the body's WHERE plans its subqueries again,
+// whatever scope the subquery expression stands in.
+func withoutLocalSubqueryScope(ctx context.Context) context.Context {
+	if inLocalSubqueryScope(ctx) {
+		return context.WithValue(ctx, localSubqueryScopeKey{}, nil)
+	}
+	return ctx
+}
+
+// applyOperand reports an operand of an AND or a comparison chain whose
+// subqueries Neo4j runs for the row before the fold (Apply), negated or not
+// (RETURN x <> 0 AND NOT EXISTS {...} raises the subquery's error): one with
+// a subquery outside a CASE and outside a list scope (liftableSubquery).
 func applyOperand(expression string) bool {
+	return liftableSubquery(expression)
+}
+
+// semiApplyPredicate reports a predicate Neo4j plans as a semi-apply, or as
+// an anti-semi-apply when negated: a whole EXISTS { … }, or a COUNT { … }
+// compared with 0 in the forms Neo4j rewrites to one (COUNT { … } > 0 and
+// 0 < COUNT { … } are EXISTS, COUNT { … } = 0 and 0 = COUNT { … } are
+// NOT EXISTS), under any number of NOTs. Only such a subquery can wait for
+// an OR's other disjuncts, or, negated, for a WHERE's filters; any other
+// subquery (COUNT { … } >= 1, COLLECT { … } = [], EXISTS { … } = true) is a
+// value an Apply computes for the row first (liftsValueSubquery).
+func semiApplyPredicate(expression string) (negated, ok bool) {
+	operand := logicalOperandKey(expression)
+	for {
+		inner, not := logicalNotOperand(operand)
+		if !not || hasTopLevelLogicalOperator(logicalOperandKey(inner)) {
+			break
+		}
+		negated, operand = !negated, logicalOperandKey(inner)
+	}
+	if isStandaloneExistsSubquery(operand) {
+		return negated, true
+	}
+	scan, comparison := scanComparisonChain(operand)
+	if !comparison || scan.count != 1 {
+		return false, false
+	}
+	span := scan.operator(0)
+	operator := operand[span.offset : span.offset+span.length]
+	left, right := strings.TrimSpace(scan.operand(operand, 0)), strings.TrimSpace(scan.operand(operand, 1))
+	var count string
+	switch {
+	case operator == ">" && right == "0":
+		count = left
+	case operator == "<" && left == "0":
+		count = right
+	case operator == "=" && right == "0":
+		count, negated = left, !negated
+	case operator == "=" && left == "0":
+		count, negated = right, !negated
+	default:
+		return false, false
+	}
+	if found, whole := standaloneSubqueryExpression(count); whole && found.kind == "COUNT" {
+		return negated, true
+	}
+	return false, false
+}
+
+// liftsValueSubquery reports an operand whose subqueries Neo4j computes for
+// the row before the expression even as an OR's disjunct: one with a
+// liftable subquery (liftableSubquery) that isn't a semi-apply predicate of
+// the operand's AND / OR / NOT structure (semiApplyPredicate).
+func liftsValueSubquery(expression string) bool {
+	if !liftableSubquery(expression) {
+		return false
+	}
+	if _, semi := semiApplyPredicate(expression); semi {
+		return false
+	}
+	var buffer [8]string
+	plan := planLogicalExpression(logicalOperandKey(expression), buffer[:0])
+	if plan.kind == logicalNone {
+		return true
+	}
+	for _, operand := range plan.operands {
+		if liftsValueSubquery(operand) {
+			return true
+		}
+	}
+	return false
+}
+
+// disjunctionApplyOperandIndexes is the Apply set of an OR (and of
+// NOT (a AND b), its disjunction of negations): the operands that compute a
+// value subquery (liftsValueSubquery). A semi-apply disjunct waits for the
+// others (SelectOrSemiApply).
+func disjunctionApplyOperandIndexes(operands []string) []int {
+	var indexes []int
+	for i, operand := range operands {
+		if liftsValueSubquery(operand) {
+			indexes = append(indexes, i)
+		}
+	}
+	return indexes
+}
+
+// whereConjunctApplies reports a WHERE conjunct whose subqueries Neo4j runs
+// for the row before the WHERE's filters. A negated semi-apply runs after
+// them (anti-semi-apply), and so does a disjunction of semi-apply
+// predicates (select-or-semi-apply); a positive semi-apply or a value
+// subquery runs first, unless a filter is selective (selective).
+func whereConjunctApplies(conjunct string, selective bool) bool {
+	if selective {
+		return false
+	}
+	if negated, semi := semiApplyPredicate(conjunct); semi {
+		return !negated
+	}
+	var buffer [8]string
+	if len(appendLogicalOperands(buffer[:0], logicalOperandKey(conjunct), " OR ")) > 0 {
+		return liftsValueSubquery(conjunct)
+	}
+	return liftableSubquery(conjunct)
+}
+
+// selectiveComparison reports a WHERE filter Neo4j's planner runs before the
+// WHERE's subqueries: a comparison link of two subquery-free operands with =,
+// <, >, <= or >=, whose estimated selectivity (0.1, 0.3) makes filtering
+// first cheaper. <>, IS [NOT] NULL, IN and the string predicates run after
+// the subqueries (EXPLAIN on Neo4j 5.26.30).
+func selectiveComparison(expression string) bool {
+	key := logicalOperandKey(expression)
+	if _, negated := logicalNotOperand(key); negated || hasTopLevelLogicalOperator(key) {
+		return false
+	}
+	scan, comparison := scanComparisonChain(key)
+	if !comparison {
+		return false
+	}
+	for i := 0; i < scan.count; i++ {
+		span := scan.operator(i)
+		switch key[span.offset : span.offset+span.length] {
+		case "=", "<", ">", "<=", ">=":
+			if !mayContainSubqueryExpression(scan.operand(key, i)) && !mayContainSubqueryExpression(scan.operand(key, i+1)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// wherePredicatePlan is a WHERE predicate whose top-level AND or OR Neo4j
+// plans differently from the same expression's value: the conjuncts whose
+// subqueries run after the WHERE's filters (whereConjunctApplies), and the
+// disjuncts of semi-apply predicates, are evaluated in a local subquery
+// scope (local), so a subquery in them runs only when the fold reaches it.
+type wherePredicatePlan struct {
+	logical logicalPlan
+	local   []bool
+}
+
+var wherePredicatePlans = newBoundedCache[string, *wherePredicatePlan](4096, boundedCacheStringShardIndex)
+
+// wherePredicatePlanFor returns expression's WHERE plan, or nil when the
+// expression's own evaluation already runs its subqueries as Neo4j's WHERE
+// does (as for every predicate without a subquery) or ctx is a local
+// subquery scope (a CASE condition), where nothing is lifted.
+func wherePredicatePlanFor(ctx context.Context, expression string) *wherePredicatePlan {
+	if !mayContainSubqueryExpression(expression) || inLocalSubqueryScope(ctx) {
+		return nil
+	}
+	if plan, cached := wherePredicatePlans.get(expression); cached {
+		return plan
+	}
+	plan := planWherePredicate(expression)
+	wherePredicatePlans.put(expression, plan)
+	return plan
+}
+
+func planWherePredicate(expression string) *wherePredicatePlan {
+	logical := planLogicalExpression(expression, nil)
+	var conjunction bool
+	switch logical.kind {
+	case logicalAnd, logicalNotOr:
+		conjunction = true
+	case logicalOr, logicalNotAnd:
+	case logicalNone:
+		// A comparison chain is the conjunction of its links: a selective
+		// link filters before the chain's subqueries (x < -1 < COUNT {…}).
+		if scan, chain := scanComparisonChain(expression); chain && scan.count > 1 && liftableSubquery(expression) && selectiveComparison(expression) {
+			return &wherePredicatePlan{logical: logicalPlan{kind: logicalAnd, operands: []string{expression}}, local: []bool{true}}
+		}
+		return nil
+	default:
+		return nil
+	}
+	selective := false
+	if logical.kind == logicalAnd {
+		for _, operand := range logical.operands {
+			if selectiveComparison(operand) {
+				selective = true
+				break
+			}
+		}
+	}
+	plan := &wherePredicatePlan{logical: logical, local: make([]bool, len(logical.operands))}
+	plan.logical.apply = nil
+	differs := false
+	for index, operand := range logical.operands {
+		if !mayContainSubqueryExpression(operand) {
+			continue
+		}
+		var applies, valueApplies bool
+		if conjunction {
+			conjunct := operand
+			if logical.kind == logicalNotOr {
+				// NOT (a OR b) is the conjunction NOT a AND NOT b.
+				conjunct = "NOT (" + operand + ")"
+			}
+			applies, valueApplies = whereConjunctApplies(conjunct, selective), applyOperand(operand)
+		} else {
+			applies = liftsValueSubquery(operand)
+			valueApplies = applies
+		}
+		if applies {
+			plan.logical.apply = append(plan.logical.apply, index)
+			continue
+		}
+		plan.local[index] = true
+		// The expression's value would run this operand's subqueries before
+		// the fold, or an AND inside it would run its own.
+		differs = differs || valueApplies || hasApplyingConjunction(operand)
+	}
+	if !differs {
+		return nil
+	}
+	return plan
+}
+
+// hasApplyingConjunction reports a fold in expression, outside a CASE, that
+// runs a subquery operand before it (an AND's or a chain's applyOperand, an
+// OR's value subquery): in a local subquery scope it waits instead.
+func hasApplyingConjunction(expression string) bool {
+	if !mayContainSubqueryExpression(expression) {
+		return false
+	}
+	key := logicalOperandKey(expression)
+	var buffer [8]string
+	plan := planLogicalExpression(key, buffer[:0])
+	if len(plan.apply) > 0 {
+		return true
+	}
+	if plan.kind == logicalNone {
+		scan, chain := scanComparisonChain(key)
+		return chain && scan.count > 1 && liftableSubquery(key)
+	}
+	for _, operand := range plan.operands {
+		if hasApplyingConjunction(operand) {
+			return true
+		}
+	}
+	return false
+}
+
+// liftableSubquery reports whether expression has a subquery Neo4j can run
+// before the expression: one outside a CASE, whose branches it evaluates
+// only when reached, and outside the scope of a list comprehension, a
+// pattern comprehension, reduce or a list predicate (any, all, none,
+// single), which evaluate it per element.
+func liftableSubquery(expression string) bool {
 	if !mayContainSubqueryExpression(expression) || mayContainCaseKeyword(expression) {
 		return false
 	}
-	if inner, negated := logicalNotOperand(expression); negated {
-		if isStandaloneExistsSubquery(logicalOperandKey(inner)) {
-			return false
+	for _, found := range findSubqueryExpressions(expression) {
+		if !inListScope(expression, found.start) {
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+// inListScope reports whether offset in expression is inside the body of a
+// list comprehension, a pattern comprehension, reduce or a list predicate.
+func inListScope(expression string, offset int) bool {
+	for i := 0; i < offset; i++ {
+		switch expression[i] {
+		case '\'', '"':
+			i = skipQuotedSemanticText(expression, i) - 1
+		case '`':
+			if end := strings.IndexByte(expression[i+1:], '`'); end >= 0 {
+				i += end + 1
+			}
+		case '[':
+			closing := findMatchingDelimiter(expression, i, '[', ']')
+			if closing < 0 || closing < offset {
+				if closing > i {
+					i = closing
+				}
+				continue
+			}
+			inner := expression[i+1 : closing]
+			if _, _, _, _, comprehension := parseListComprehension(inner); comprehension {
+				return true
+			}
+			if _, _, comprehension := splitPatternComprehension(expression[i : closing+1]); comprehension {
+				return true
+			}
+		case '(':
+			closing := findMatchingDelimiter(expression, i, '(', ')')
+			if closing < 0 || closing < offset {
+				if closing > i {
+					i = closing
+				}
+				continue
+			}
+			word := i
+			for word > 0 && isRowReceiverIdentifierByte(expression[word-1]) {
+				word--
+			}
+			switch upperASCII(expression[word:i]) {
+			case "ANY", "ALL", "NONE", "SINGLE", "REDUCE":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func applyOperandIndexes(count int, operand func(int) string) []int {
@@ -223,7 +550,7 @@ type applyOperandResult struct {
 // evaluateApplyOperands owns eager Apply evaluation. Cached results are
 // reused when the fold reaches each operand; callbacks never escape.
 func evaluateApplyOperands(ctx context.Context, indexes []int, evaluate func(int) (interface{}, bool, error)) ([]applyOperandResult, error) {
-	if len(indexes) == 0 || ctx.Value(caseConditionScopeKey{}) != nil {
+	if len(indexes) == 0 || inLocalSubqueryScope(ctx) {
 		return nil, nil
 	}
 	results := make([]applyOperandResult, len(indexes))
@@ -252,9 +579,9 @@ func resolveApplyOperand(results []applyOperandResult, index int, evaluate func(
 // logicalFoldPosition is the position of the operands of a logical plan.
 func logicalFoldPosition(kind logicalKind) foldPosition {
 	switch kind {
-	case logicalAnd:
+	case logicalAnd, logicalNotOr:
 		return foldAnd
-	case logicalOr:
+	case logicalOr, logicalNotAnd:
 		return foldOr
 	}
 	return foldUndecided
@@ -278,17 +605,15 @@ func comparisonFoldPosition(scan *comparisonChainScan) foldPosition {
 //
 //   - A subquery (EXISTS, COUNT, COLLECT) or a relationship pattern
 //     predicate that can fail (rowOperandRecordsFailure) is planned by
-//     Neo4j outside the expression (SemiApply, Apply) and runs for the row,
-//     so its error counts, even when another AND operand is false. Only an
-//     OR, which Neo4j plans to test the other operand first
-//     (SelectOrSemiApply), lets a deciding operand discard it.
+//     Neo4j outside the expression (SemiApply, Apply, applyOperand) and runs
+//     for the row, so its error counts, even when another AND operand is
+//     false. An OR, which Neo4j plans to test the other operand first
+//     (SelectOrSemiApply), and a local subquery scope (foldLocalAnd), where
+//     the subquery runs only when reached, let a deciding operand discard it.
 //   - Any other operand's error is discarded by a deciding operand, as
 //     Neo4j's Ands / Ors do. It needs a slot only when its evaluator records
 //     errors on the statement context (contextRecorded) instead of
 //     returning them, and only when it can fail at all (operandCannotFail).
-//   - CASE conditions use expression-local subqueries; a deciding AND can
-//     discard their errors. Positive subqueries outside CASE are Apply
-//     operands evaluated before the fold, including after a false operand.
 //   - Nothing discards an error in an undecided position.
 //
 // A pattern comprehension is an expression operand in this sense: its atom
@@ -298,22 +623,23 @@ func isolateOperandErrors(operand string, position foldPosition, contextRecorded
 		return false
 	}
 	if rowOperandRecordsFailure(operand) {
-		return position == foldOr || position == foldCaseAnd || !applyOperand(operand)
+		return position == foldOr || position == foldLocalAnd || !applyOperand(operand)
 	}
 	return contextRecorded && !operandCannotFail(operand)
 }
 
 // operandIsolation is isolateOperandErrors decided once for an operand: for
-// its value (contextRecorded as its evaluator is), and for the predicate
+// its value (contextRecorded as its evaluator is), for the predicate
 // fallback that runs when that evaluator leaves it unresolved, which records
-// its errors on the context.
-type operandIsolation struct{ value, fallback, caseValue bool }
+// its errors on the context, and (local) for an AND operand evaluated in a
+// local subquery scope.
+type operandIsolation struct{ value, fallback, local bool }
 
 func operandIsolationAt(operand string, position foldPosition, contextRecorded bool) operandIsolation {
 	return operandIsolation{
-		value:     isolateOperandErrors(operand, position, contextRecorded),
-		fallback:  isolateOperandErrors(operand, position, true),
-		caseValue: position == foldAnd && isolateOperandErrors(operand, foldCaseAnd, contextRecorded),
+		value:    isolateOperandErrors(operand, position, contextRecorded),
+		fallback: isolateOperandErrors(operand, position, true),
+		local:    position == foldAnd && isolateOperandErrors(operand, foldLocalAnd, contextRecorded),
 	}
 }
 
@@ -324,7 +650,7 @@ func operandIsolationAt(operand string, position foldPosition, contextRecorded b
 func (isolation operandIsolation) evaluate(ctx context.Context, values map[string]interface{},
 	resolve func(context.Context, map[string]interface{}) (interface{}, bool, error),
 	fallback func(context.Context, map[string]interface{}) interface{}) (interface{}, bool, error) {
-	if isolation.caseValue && ctx.Value(caseConditionScopeKey{}) != nil {
+	if isolation.local && inLocalSubqueryScope(ctx) {
 		isolation.value, isolation.fallback = true, true
 	}
 	run := func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {

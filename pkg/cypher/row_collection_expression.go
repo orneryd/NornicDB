@@ -20,10 +20,7 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 	if listValue == nil {
 		return nil, true, nil
 	}
-	scope := make(map[string]interface{}, len(values)+2)
-	for name, value := range values {
-		scope[name] = value
-	}
+	scope := rowElementScope(values, 2, mayContainSubqueryExpression(form.step) || mayContainSubqueryExpression(form.predicate))
 	return rowReduceLoop(form, accumulator, listValue, scope,
 		func() (interface{}, bool, error) { return evaluate(form.step, scope) },
 		func() (interface{}, bool, error) { return evaluate(form.predicate, scope) })
