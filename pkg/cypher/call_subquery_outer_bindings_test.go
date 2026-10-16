@@ -293,7 +293,7 @@ func TestCallSubqueryRefreshesOuterNodeAfterWrite(t *testing.T) {
 			require.Equal(t, []string{"y", "id"}, result.Columns)
 			require.Equal(t, [][]interface{}{{int64(4), "b"}}, result.Rows)
 			if explicitTx {
-				_, err = exec.handleCommit()
+				_, err = exec.handleCommit(context.Background())
 				require.NoError(t, err)
 			}
 		})
