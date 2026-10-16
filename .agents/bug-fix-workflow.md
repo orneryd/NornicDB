@@ -6,15 +6,15 @@
 
 ---
 
-## Mandatory entry and family scope
+## Coding principles and recurring failures
 
-Before using this workflow, apply [AGENTS.md’s mandatory task entry protocol](../AGENTS.md#mandatory-task-entry-protocol),
-choose Direct, Stage 2, or the owning Stage-2 family for a Stage-3 fix-forward, and check
-[Convergence and Rule 73](../AGENTS.md#4-convergence-and-rule-73).
+Apply the [standing design principles](standing-design-principles.md) while fixing the
+bug. When corrections repeatedly fail or repeat an unsuccessful approach, apply the
+trigger and course change in [Rule 73](rule73.md).
 
 When [Rule 73](rule73.md) is active, it supersedes leaf-only “minimal fix” guidance: correct the complete current
-unit through its shared causal owner and all affected consumers. The failing-test and regression requirements
-below still apply. Readiness and completion require [AGENTS.md section 9](../AGENTS.md#9-verification-and-completion).
+unit through its shared causal owner and all affected consumers. The failing-test and
+regression requirements below still apply.
 
 ## The Golden Rule
 
@@ -133,9 +133,9 @@ FAIL    github.com/orneryd/nornicdb/pkg/cypher    0.123s
 
 **Implement the minimal fix:**
 
-“Minimal” means the smallest complete correction for the selected unit. Under Stage 2 or its owned Stage-3
-fix-forward, cover the affected implementation family. Under active Rule 73, change the failed causal approach
-across that complete unit before presenting another candidate; do not stop at a per-finding or per-consumer patch.
+“Minimal” means the smallest complete correction for the affected causal unit. Under
+active Rule 73, change the failed causal approach across that complete unit before
+presenting another correction; do not stop at a per-finding or per-consumer patch.
 
 ```go
 // pkg/cypher/executor.go

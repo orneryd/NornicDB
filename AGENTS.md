@@ -6,215 +6,37 @@
 
 ---
 
-## Mandatory task entry protocol
+## Coding and review principles
 
-Read and apply all 22 [standing design principles](.agents/standing-design-principles.md) on entry and
-throughout the task. They are mandatory alongside Rule 73 and sections 1–9. Their references to sections 5,
-6, and 9 resolve to this protocol's corresponding sections below. These current explicit instructions clarify
-older examples and general guidance without deleting them; they authorize no unrelated work.
+Read and apply the [standing design principles](.agents/standing-design-principles.md)
+while choosing a solution, writing code, and correcting code. Apply
+[Rule 73](.agents/rule73.md) when corrections repeatedly fail or repeat an unsuccessful
+approach. Explicit user instructions take precedence over repository guidance.
 
-Read and apply sections 1–9 before implementation, and reapply them when resuming work or receiving new
-findings. These are binding instructions for scope, causal ownership, convergence, and readiness. Existing
-standards below remain in force. This protocol clarifies that a “minimal fix” must complete the applicable
-correction unit; active Rule 73 takes precedence over per-finding or per-consumer patch guidance. Explicit
-user instructions take precedence over repository guidance.
+### Verification and review
 
-## 1. Choose and record the execution route
-
-Inspect the working tree, applicable instructions, and [CONTRIBUTING.md](CONTRIBUTING.md#development-workflow).
-Preserve unrelated work. Record the requested outcome, current evidence, execution route, and correction unit
-before writing code. Execution routes describe how work is corrected; they do not replace Git branch/PR routing
-or authorize pushes, merges, releases, or repository settings changes.
-
-- **Direct:** a bounded target with a clear contract and completion boundary. Its correction unit is the complete
-  bounded target, including affected consumers of an existing shared owner, not just the reported example.
-- **Stage 2:** implementation organized around a family when the contract or causal mechanism crosses consumers,
-  implementations, or execution paths. Its correction unit is the affected implementation family and its current
-  accepted correction set.
-- **Stage 3:** a narrow fix-forward discovered in work owned by an existing Stage-2 implementation family. Record
-  it against that owning family; it does not become a separate family or restart convergence history.
-
-If discovery changes the applicable route or boundary, update the record before continuing. Do not choose a
-narrower label to avoid a family-wide correction or proof obligation.
-
-## 2. Establish family identity, boundary, and history
-
-A family is the set of implementations and consumers that must satisfy the same affected contract or causal
-invariant. Identify its shared causal owner, affected public operations, representations, execution paths,
-accepted corrections, and required proof. Bound it by evidence and the user’s requested outcome; do not import
-unrelated features or turn an affected family into an unrestricted repository rewrite.
-
-Maintain one current family record across follow-ups: identity, boundary, accepted correction set, owner,
-implementation state, prior readiness claims, review/live-proof outcomes, and unresolved obligations. New
-findings in that unit update this record. Work on another family is tracked separately. Preserve the distinction
-between ordinary implementation feedback and a correction presented as ready that fails required review or
-live proof, as defined in section 4.
-
-## 3. Find the existing owner before writing
-
-Search existing helpers, interfaces, tests, and call sites before adding or changing an implementation. Record
-which existing owner can implement the contract, its current consumers, and why reuse or extension is sufficient
-or insufficient. Search the relevant symbols and behavior, not only the file named in the report.
-
-Trace the actual public path to that owner and inventory sibling consumers: argument/arity variants, registry
-and evaluator paths, planned/text execution, parsers, transports, transaction modes, and representations where
-applicable. Reuse the existing helper and migrate affected consumers to it. Do not add a parallel helper, local
-formula, route workaround, or test-only substitute while an existing shared owner can carry the correction.
-When evidence requires a different causal owner, document that decision and remove superseded duplication.
-
-Creating new behavioral divergence is prohibited. Do not add parser-, route-, transport-, or evaluator-specific
-leaf workarounds, duplicate formulas, or parallel implementations of the same contract. Converge affected
-existing divergence encountered in the current correction unit through one shared semantic owner. If the
-existing owner cannot carry the contract, change the causal architecture and migrate the complete unit; do
-not retain parallel implementations or defer that convergence. Preserve genuine protocol boundaries, but do not use those boundaries to excuse duplicated behavior.
-
-Graphify is mandatory for finding overlapping implementations and verifying that a correction converges the
-whole affected family. Follow [the local Graphify workflow](docs/user-guides/graphify-local.md): extract fresh
-base and candidate code graphs, ingest with this repository's custom `scripts/graphify_local.py`, and use the
-configured local NornicDB MCP server to perform semantic searches over the ingested `nornicdbcode` graph (or
-its explicitly configured repository/database target). Inspect actual callers, callees, sibling consumers, and
-source contracts after semantic discovery. Standalone Graphify MCP, an AST export, `rg`, or source inspection
-alone does not replace custom ingestion and NornicDB MCP semantic search.
-
-Record the repository, database, base/candidate source SHAs, graph artifacts, extraction/ingestion commands,
-`CodeRepository` commit metadata, embedding readiness, semantic search requests/results, and call-graph/source
-review. Verify that ingested metadata and searchable affected symbols match the candidate source; stale graphs
-or unfinished embeddings are not current proof. Use configured credentials without printing or hardcoding
-secrets. Preserve unrelated graph data and repository snapshots; use explicit snapshot/database targets when
-extracting or ingesting different worktrees, and never relabel stale graph contents as a current revision. Missing Graphify, ingestion, authenticated MCP access, or current searchable graph evidence blocks
-readiness; report the missing prerequisite rather than waiving it. Keep generated graph artifacts ignored.
-
-## 4. Convergence and Rule 73
-
-A failed correction attempt is a family correction presented as ready that still fails its required review or live proof. Ordinary implementation work before the family is presented as ready is not a failed correction attempt.
-
-- Two failed correction attempts in the same family without an intervening PASS enter Rule 73.
-- PASS ends the active failed-attempt sequence. It preserves the family history.
-- If materially the same failed treatment later recurs, use that preserved history and enter Rule 73 instead of treating it as new work.
-- Work in another family neither consumes nor resets this family's sequence.
-- A failed Stage-3 narrow fix-forward belongs to the existing Stage-2 implementation family that owns its correction and uses this same convergence rule.
-
-Enter Rule 73 sooner when the agent is already repeating materially the same failed treatment without new evidence, changed conditions, corrected implementation, or another concrete reason it should now succeed.
-
-When this trigger is reached, apply `rule73.md` to the complete affected implementation family. Family identity, boundary, history, and current accepted correction set remain governed here; the shared module owns the course change, readiness boundary, repeated-failure behavior, and completion rule.
-
-
-The shared module named `rule73.md` above is [.agents/rule73.md](.agents/rule73.md). Its verification reference
-resolves to [section 9, Verification and completion](#9-verification-and-completion), below.
-
-## 5. Reproduce the contract before correction
-
-Distinguish an established defect in required behavior from an unapproved precaution. Establish the approved
-product result, affected population, ordinary-operation likelihood, and meaningful product consequence before
-adding behavior. A merely reproducible exceptional scenario does not by itself authorize engineering for it.
-Tests of approved contracts do not authorize new safeguards or adjacent changes. Return ambiguous operator-owned
-meaning or necessary out-of-scope changes to the user; ordinary technical choices remain agent-owned.
-
-Use the [bug-fix workflow](.agents/bug-fix-workflow.md) to reproduce the actual reported operation, establish its
-expected contract, and observe the failure before fixing it. Preserve the original failing evidence. For
-compatibility work, use the applicable pinned reference and record its actual results; do not infer a reference
-result from the current implementation or rewrite an assertion to accept the failure.
-
-Add discriminating controls for neighboring valid and invalid inputs and for affected consumers identified in
-section 3. A helper-only test does not establish that the public path reaches that helper. Static source
-reasoning, statement coverage, a successful build, and an old green suite do not replace a failing reproduction
-or proof of the relevant input boundary.
-
-## 6. Correct the complete causal unit
-
-Apply the standing principles' single semantic owner, single writer per state field, exact scope, and prohibition
-on permanent migration behavior. Preserve an older contract only when a named current specification or explicit
-user decision requires it. The approved Neo4j compatibility contract and explicitly accepted ID-string contract
-remain current requirements; they are not blanket authorization for backward-compatibility adapters or models.
-Externally maintained code requires the explicit THIRD-PARTY COMPONENT PATCH approval described in principle 15.
-
-For Jev efficiency, load the TypeSafe skill from the session's actual available-skill catalog and use its
-capabilities as specified there. Main agents and authorized reviewer agents apply principle 22 when Jev improves
-useful coverage or saves time or tokens; set confidence thresholds by demonstrated reliability and consequences,
-accept sufficient judgments, and independently verify insufficient judgments. Do not invent a skill, tool,
-capability, invocation, or result. If TypeSafe or Jev is unavailable, report the exact missing capability and
-continue independent authorized work; do not silently claim that the required tool-assisted work was performed.
-
-Implement the smallest complete correction at the causal owner, carrying it through every affected consumer.
-Preserve unrelated contracts, public APIs, precision, error semantics, cancellation, concurrency, and resource
-ownership. Keep the original reproduction and meaningful neighboring regression controls permanent.
-
-Under Stage 2 or an owned Stage-3 fix-forward, “minimal” does not permit stopping at one leaf while the same
-cause survives in the owning family. When Rule 73 is active, follow its changed causal approach across the
-complete current unit; do not resume serial leaf corrections or present an incomplete intermediate state as a
-new ready candidate. Rule 73 prescribes no particular architecture or technical recipe.
-
-## 7. Coordinate owners and integration
-
-Before parallel work, identify existing issue/PR ownership and assign disjoint causal owners and files. Share
-the accepted family boundary, dependencies, immutable candidate SHAs, and proof receipts. Avoid duplicate
-implementations or competing fixes for the same owner. Coordinate merges, rebases, and shared baseline changes
-with the maintainer under CONTRIBUTING.md; an execution route is not authorization to publish work.
-
-Integrate the current accepted correction set before presenting the family as ready. Related fixes in separate
-branches or separate test runs are not proof that their combined implementation works. Keep unrelated families
-separate without dropping obligations in the owning family.
-
-## 8. Protect sources, measurements, and evidence
-
-Keep an actively verified source tree immutable, including untracked source files. Use an isolated worktree for
-follow-up investigation. Pin source and baseline SHAs, retain failed-run logs, and distinguish a changed source
-candidate from an unchanged candidate whose environment was repaired. Respect coordinated resource limits;
-isolate timing measurements from competing workloads.
-
-A canceled or superseded run is incomplete, not PASS. A cached result is cached evidence, not a fresh run.
-Reconcile concurrent work before readiness and rerun the affected proof against the integrated current source.
-Do not carry a pass claim across a source change without establishing and explaining its precise applicability.
-
-## 9. Verification and completion
-
-Lead proof with the requested product outcome and its supported conclusion, followed by evidence and practical
-limits. Complete every requested part; route remaining work truthfully or return missing operator meaning.
-Establish completeness with a repeatable population extractor, query, parser, capture, or comparator, assess
-every member, and add relevant semantic members the extraction misses. Tools may assist semantic assessment
-under Jev's confidence rule; the agent retains responsibility for complete coverage and supported conclusions.
-Do not claim broad correctness from statement coverage, static candidates, or a narrower input population.
-
-Prove the complete current correction unit, not just its last failing example. Before declaring readiness:
-
-- Complete the required Graphify extraction, custom ingestion, NornicDB MCP semantic searches, and actual
-  caller/callee/consumer review for the fresh base and candidate. Retain commands, artifact locations, full SHAs,
-  repository/database and `CodeRepository` provenance, embedding readiness, search results, reviewed graph
-  paths, and limitations. The local extraction command is
-  `"$(uv tool dir --bin)/graphify" extract . --code-only --no-cluster`; use the documented custom importer and
-  configured authenticated MCP target rather than assuming a default server or credentials. Where available,
-  `scripts/graphify_divergence.py --graph <candidate> --compare-graph <base> --component pkg/cypher` supplements
-  that review. A static candidate report is not semantic proof; zero reported candidates does not establish
-  completeness. Missing required graph evidence blocks readiness and cannot be replaced by `rg` alone.
-- Recheck the existing-helper and consumer inventory against the integrated source. Prove that every affected
-  consumer uses the accepted shared correction and that no active duplicate or bypass retains the cause.
-- Exercise the relevant family matrix: public and helper paths, argument/arity and default/explicit modes,
-  literals, parameters, stored properties, projection stages, parsers, transports, transaction modes, and native
-  or remote representations as applicable. Include error, null/empty, concurrency, recovery, and cache/publication
-  boundaries where the contract depends on them. Scope checks by evidence; do not silently exclude an affected
-  path or require unrelated feature implementation.
-- For numeric work, test both sides of decision boundaries and representational limits, not only simple decimal
-  examples: adjacent IEEE values, half ties, large integral floats near 2^52 and 2^53, signs and signed zero,
-  precision/arity/mode changes, and NaN/infinity or integer limits when supported. Assert the actual reference
-  contract and retain exactness where required; coverage percentages do not prove these input domains.
-- Run the applicable checks required by CONTRIBUTING.md and current user instructions against the actual PR
-  base and current head. Include the necessary regressions, race checks, conformance/differential checks, and
-  workload-scoped performance/allocation comparisons. Existing baselines and thresholds remain binding: do not
-  waive them, weaken assertions, accept a wrong result, or substitute an unrelated benchmark to obtain PASS.
-- Record full head/base SHAs, exact commands and relevant flags/configuration, tested scope, pass/fail results,
-  cached results, failures, cancellations, and skips with reasons. Distinguish proposed commands from commands
-  actually executed. Explain any explicitly authorized reduction in checks; do not claim unperformed proof.
-
-Recurring failures require reassessing the causal owner and approach, using the preserved family history and
-section 4. Do not blindly rerun materially the same failed treatment or call a later retry a clean original run.
-An infrastructure retry needs evidence of the repaired condition and retains the original failure record; it is
-not a waiver of a product regression or a performance baseline. An active Rule-73 candidate that fails required
-review or live proof remains in Rule 73 and must materially change its failed causal approach before a successor
-is presented as ready.
-
-Completion requires the integrated current unit to pass its required review and proof. State unresolved work
-honestly and keep the owning family open until its accepted obligations are satisfied. This is the verification
-and completion section referenced by [.agents/rule73.md](.agents/rule73.md).
+- Lead proof with the requested product outcome, its supported conclusion, evidence,
+  and practical limits. Verify the complete affected correction, including its public
+  paths and consumers; a helper-only test does not establish that the public path
+  reaches that helper.
+- Establish the approved contract and preserve the original failing evidence.
+  Distinguish an established defect from an unapproved precaution: reproducing an
+  exceptional scenario does not by itself justify adding behavior.
+- Scope regression checks to affected contracts and input boundaries. Do not claim
+  broad correctness from statement coverage, static candidates, or a narrower input
+  population.
+- Review and verify the integrated current source. Related fixes tested in separate
+  branches do not prove their combined implementation works. Evidence from changed
+  source must have its continuing applicability established.
+- Report what was actually checked, including failures, cancellations, cached results,
+  skips and limitations. A canceled or superseded run is incomplete; cached evidence
+  is not a fresh run.
+- Follow the applicable checks and baselines in [CONTRIBUTING.md](CONTRIBUTING.md).
+  Do not weaken assertions, waive regressions, or substitute an unrelated benchmark
+  to obtain a passing result.
+- When a failure recurs, reassess the causal owner, approach and verification that
+  missed it. Complete the integrated correction and its required review and proof
+  before declaring the issue resolved.
 
 ---
 
@@ -257,9 +79,9 @@ func optimizeQuery() { /* new algorithm with proof */ }
 
 ### 2. **Test-Driven Bug Fixes**
 
-Apply the [mandatory task entry protocol](#mandatory-task-entry-protocol) first. When Stage 2, an owned
-Stage-3 fix-forward, or Rule 73 applies, the minimal fix must complete that correction unit; the reproduction
-and regression requirements below remain mandatory.
+Apply the [standing design principles](.agents/standing-design-principles.md).
+When [Rule 73](.agents/rule73.md) applies, the minimal fix must correct the complete
+affected causal unit; the reproduction and regression requirements below remain mandatory.
 
 **MANDATORY WORKFLOW** for all bugs:
 
@@ -917,9 +739,9 @@ See [.agents/performance-optimization.md](.agents/performance-optimization.md) f
 
 ## 🐛 Bug Fix Workflow
 
-Start with the [mandatory task entry protocol](#mandatory-task-entry-protocol) and
-[Rule 73 convergence requirements](#4-convergence-and-rule-73). An active family correction supersedes a
-leaf-only interpretation of the five-step process below; it does not waive fail-first reproduction or proof.
+Apply the [standing design principles](.agents/standing-design-principles.md) and
+[Rule 73](.agents/rule73.md) when its trigger is reached. A complete causal correction
+still requires the fail-first reproduction and proof in the five-step process below.
 
 **MANDATORY PROCESS** - No exceptions:
 
