@@ -417,6 +417,85 @@ func (h *HNSWIndex) addLocked(id string, vec []float32, level0Candidates []uint3
 	return nil
 }
 
+// levelZeroSearchLocked is the level-0 beam search a query or an insert of
+// normalized makes: the greedy descent through the upper layers from the entry
+// point, then a beam of width ef at level 0 from the reached node and the live
+// nodes of entryIDs (lexical seeds). It returns the candidates closest first in
+// a slice from h.itemsPool, which the caller returns. Caller holds h.mu for
+// reading.
+func (h *HNSWIndex) levelZeroSearchLocked(ctx context.Context, normalized []float32, ef int, entryIDs []string) ([]hnswDistItem, error) {
+	ep, err := h.descendLocked(ctx, normalized)
+	if err != nil {
+		return nil, err
+	}
+
+	entryBufAny := h.idsPool.Get()
+	entries := entryBufAny.([]uint32)[:0]
+	defer h.idsPool.Put(entries[:0])
+	entries = append(entries, ep)
+	for _, id := range entryIDs {
+		internalID, ok := h.idToInternal[id]
+		if !ok || !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
+			continue
+		}
+		entries = append(entries, internalID)
+	}
+	return h.searchLayerHeapPooledFromEntriesWithContext(ctx, normalized, entries, ef, 0)
+}
+
+// descendLocked is the greedy descent through the upper layers from the entry
+// point that a query or an insert of normalized makes before its level-0
+// search. Caller holds h.mu for reading and checked h.hasEntryPoint.
+func (h *HNSWIndex) descendLocked(ctx context.Context, normalized []float32) (uint32, error) {
+	ep := h.entryPoint
+	for l := h.maxLevel; l > 0; l-- {
+		var err error
+		if ep, err = h.searchLayerSingleWithContext(ctx, normalized, ep, l); err != nil {
+			return 0, err
+		}
+	}
+	return ep, nil
+}
+
+// levelZeroEntry is where an insert of normalized starts its level-0 search
+// (descendLocked): a GPU build seeds the vector's graph search there.
+func (h *HNSWIndex) levelZeroEntry(ctx context.Context, normalized []float32) (uint32, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.hasEntryPoint || len(normalized) != h.dimensions {
+		return 0, false
+	}
+	ep, err := h.descendLocked(ctx, normalized)
+	return ep, err == nil
+}
+
+// buildLevelZeroCandidates is an insert's level-0 candidate search for a
+// vector not in the index yet (levelZeroSearchLocked at width ef), run under
+// the read lock so a build batch's searches run in parallel. It returns the
+// live candidates' internal IDs and distances, closest first.
+func (h *HNSWIndex) buildLevelZeroCandidates(ctx context.Context, normalized []float32, ef int, entryIDs []string) ([]uint32, []float32, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if !h.hasEntryPoint || len(normalized) != h.dimensions {
+		return nil, nil, nil
+	}
+	items, err := h.levelZeroSearchLocked(ctx, normalized, ef, entryIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer h.itemsPool.Put(items[:0])
+	ids := make([]uint32, 0, len(items))
+	dists := make([]float32, 0, len(items))
+	for _, item := range items {
+		if !validHNSWIndex(item.id, len(h.deleted)) || h.deleted[item.id] {
+			continue
+		}
+		ids = append(ids, item.id)
+		dists = append(dists, item.dist)
+	}
+	return ids, dists, nil
+}
+
 func (h *HNSWIndex) addWithLevel0Candidates(id string, vec []float32, level0Candidates []uint32) error {
 	if len(level0Candidates) == 0 {
 		return h.Add(id, vec)
@@ -586,28 +665,7 @@ func (h *HNSWIndex) searchWithEfExhaustionFromEntries(ctx context.Context, query
 	if minSimilarity <= -1 {
 		minSim32 = float32(math.Inf(-1))
 	}
-	ep := h.entryPoint
-
-	for l := h.maxLevel; l > 0; l-- {
-		var err error
-		ep, err = h.searchLayerSingleWithContext(ctx, normalized, ep, l)
-		if err != nil {
-			return nil, false, err
-		}
-	}
-
-	entryBufAny := h.idsPool.Get()
-	entries := entryBufAny.([]uint32)[:0]
-	defer h.idsPool.Put(entries[:0])
-	entries = append(entries, ep)
-	for _, id := range entryIDs {
-		internalID, ok := h.idToInternal[id]
-		if !ok || !validHNSWIndex(internalID, len(h.deleted)) || h.deleted[internalID] {
-			continue
-		}
-		entries = append(entries, internalID)
-	}
-	candidates, err := h.searchLayerHeapPooledFromEntriesWithContext(ctx, normalized, entries, ef, 0)
+	candidates, err := h.levelZeroSearchLocked(ctx, normalized, ef, entryIDs)
 	if err != nil {
 		return nil, false, err
 	}

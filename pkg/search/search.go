@@ -1004,7 +1004,18 @@ const (
 	strategyModeBruteCPU
 	strategyModeBruteGPU
 	strategyModeHNSW
+	strategyModeIVFPQ
+	strategyModeKMeansCPU
+	strategyModeKMeansGPU
+	strategyModeIVFHNSW
 )
+
+// runtimeManaged reports whether runtime strategy transitions may move a
+// pipeline of this mode: only between brute force and HNSW. IVF-PQ and k-means
+// routing are configured strategies a transition never replaces.
+func (m strategyMode) runtimeManaged() bool {
+	return m == strategyModeBruteCPU || m == strategyModeBruteGPU || m == strategyModeHNSW
+}
 
 type strategyDeltaMutation struct {
 	seq uint64
@@ -5416,6 +5427,14 @@ func (s *Service) currentPipelineStrategy() strategyMode {
 		return strategyModeBruteCPU
 	case *HNSWCandidateGen:
 		return strategyModeHNSW
+	case *IVFPQCandidateGen:
+		return strategyModeIVFPQ
+	case *KMeansCandidateGen:
+		return strategyModeKMeansCPU
+	case *GPUKMeansCandidateGen:
+		return strategyModeKMeansGPU
+	case *IVFHNSWCandidateGen:
+		return strategyModeIVFHNSW
 	default:
 		return strategyModeUnknown
 	}
@@ -5449,7 +5468,7 @@ func (s *Service) scheduleStrategyTransitionCheck() {
 	}
 	vectorCount, _, _ := s.snapshotStrategyInputs()
 	current := s.currentPipelineStrategy()
-	if current == strategyModeUnknown {
+	if !current.runtimeManaged() {
 		return
 	}
 	desired := s.desiredRuntimeStrategy(vectorCount)
@@ -5511,7 +5530,7 @@ func (s *Service) runStrategyTransition(target strategyMode) {
 
 	vectorCount, vi, vfs := s.snapshotStrategyInputs()
 	current := s.currentPipelineStrategy()
-	if current == strategyModeUnknown || current == target {
+	if !current.runtimeManaged() || current == target {
 		return
 	}
 
@@ -5823,6 +5842,14 @@ func (m strategyMode) String() string {
 		return "GPU brute-force"
 	case strategyModeHNSW:
 		return "HNSW"
+	case strategyModeIVFPQ:
+		return "IVFPQ compressed"
+	case strategyModeKMeansCPU:
+		return "CPU k-means (cluster routing)"
+	case strategyModeKMeansGPU:
+		return "GPU k-means (cluster routing)"
+	case strategyModeIVFHNSW:
+		return "IVF-HNSW (per-cluster HNSW)"
 	default:
 		return "unknown"
 	}
@@ -5943,7 +5970,13 @@ func (s *Service) resolveClusteredVectorStrategy(vectorCount int, gpuEnabled boo
 	// If clustering is enabled and clusters are built, use centroid routing on CPU
 	// (GPU subset scoring when GPU is enabled but full brute is out-of-range, else IVF-HNSW when available,
 	// else CPU k-means candidate generation).
-	numClustersToSearch := 3 // Default: search 3 nearest clusters
+	// Clusters each query searches: NORNICDB_KMEANS_NPROBE, by default the IVF
+	// rule (defaultListsToProbe) over the clusters k-means built.
+	numClusters := 0
+	if s.clusterIndex != nil {
+		numClusters = s.clusterIndex.NumClusters()
+	}
+	numClustersToSearch := clampInt(envutil.GetInt("NORNICDB_KMEANS_NPROBE", defaultListsToProbe(numClusters)), 1, max(1, numClusters))
 	// When GPU is enabled but full brute-force is not selected (e.g. N too large),
 	// still use k-means centroids to route and score only the cluster subset.
 	// ScoreSubset uses GPU when possible and falls back to CPU gracefully.

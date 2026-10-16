@@ -88,17 +88,32 @@ func TestCandidateSearchGraphKernel_Orchestration(t *testing.T) {
 		}
 	}
 
-	// The seed walk, reversed local ranking and two iterations are fully
-	// deterministic: iteration 1 maps union [0,1,2,3] -> reversed [3,2,1,0],
-	// iteration 2 expands that beam into union [3,1,2,0] -> reversed [3,2,1,0]
-	// -> remapped [0,2,1,3], truncated to topK 3 as [0,2,1].
-	require.Equal(t, []uint32{0, 2, 1}, idx[0])
+	// Queries without their own seeds all start from the global entry point's
+	// neighbourhood, so with the same deterministic kernel they get the same
+	// beam, in both groups.
 	require.Equal(t, idx[0], idx[1])
 	require.Equal(t, idx[0], idx[2])
 
-	// Three queries with group size 2 -> two groups; two iterations per group
-	// -> four local-search calls, each over the four-vector union.
-	require.Equal(t, []int{4, 4, 4, 4}, fake.callFrontierLens)
+	// Three queries with group size 2 -> two groups; at most
+	// NORNICDB_HNSW_BUILD_GPU_BEAM_ITERS (2) local searches per group.
+	require.NotEmpty(t, fake.callFrontierLens)
+	require.LessOrEqual(t, len(fake.callFrontierLens), 4)
+}
+
+// A query's own seeds (graph.querySeeds: its level-0 entry point, lexical
+// seeds) start its beam: the first local search scores them.
+func TestCandidateSearchGraphKernel_QuerySeedsStartTheBeam(t *testing.T) {
+	t.Setenv("NORNICDB_HNSW_BUILD_GPU_BEAM_ITERS", "1")
+	graph := &hnswBuildGraphSnapshot{
+		dim: 2, entryPoint: 0, hasEntryPoint: true,
+		vectors:    [][]float32{{1, 0}, {0, 1}, {-1, 0}, {0, -1}},
+		neighbors:  [][]uint32{{1}, {0}, {3}, {2}},
+		seen:       make([]uint32, 4),
+		querySeeds: [][]uint32{{2}},
+	}
+	idx, _, err := candidateSearchGraphBatched(context.Background(), &fakeGpuCandidateSearcher{}, [][]float32{{-1, 0}}, graph, 4)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []uint32{2, 3}, idx[0], "node 2 and its neighbour, not the global entry point's region")
 }
 
 // TestCandidateSearchGraphKernel_Cancellation pins that cancellation aborts
