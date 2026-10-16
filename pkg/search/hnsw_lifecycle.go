@@ -321,55 +321,52 @@ func (s *Service) buildInitialHNSWIndex(ctx context.Context, dimensions int) (*H
 }
 
 func (s *Service) ensureHNSWMaintenance() {
-	s.hnswMaintOnce.Do(func() {
-		ctx := s.lifecycleCtx
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		ctx, cancel := context.WithCancel(ctx)
-		s.hnswMaintCancel = cancel
-		s.hnswMaintDone = make(chan struct{})
-
-		interval := envDurationMs("NORNICDB_HNSW_MAINT_INTERVAL_MS", 30_000)
-		minRebuildInterval := envDurationSec("NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC", 60)
-		rebuildRatio := envFloat("NORNICDB_HNSW_TOMBSTONE_REBUILD_RATIO", 0.50)
-		maxOverhead := envFloat("NORNICDB_HNSW_MAX_TOMBSTONE_OVERHEAD_FACTOR", 2.0)
-		enabled := envutil.GetBoolStrict("NORNICDB_HNSW_REBUILD_ENABLED", true)
-
-		ticker := time.NewTicker(interval)
-		go func() {
-			defer ticker.Stop()
-			defer close(s.hnswMaintDone)
-			for {
-				select {
-				case <-ticker.C:
-					if !enabled {
-						continue
-					}
-					if s.buildInProgress.Load() {
-						continue
-					}
-					_ = s.maybeRebuildHNSW(ctx, rebuildRatio, maxOverhead, minRebuildInterval)
-				case <-ctx.Done():
-					// stopHNSWMaintenance and the service's lifecycle
-					// cancel this context; it is the loop's only exit.
-					return
-				}
-			}
-		}()
-	})
+	// One loop at a time, registered with the lifecycle owner: Close cancels
+	// and joins it, and a loop that was cancelled can be started again.
+	if !s.hnswMaintRunning.CompareAndSwap(false, true) {
+		return
+	}
+	ctx, done, ok := s.runWorker(context.Background(), workerMaintenance)
+	if !ok {
+		s.hnswMaintRunning.Store(false)
+		return
+	}
+	interval := envDurationMs("NORNICDB_HNSW_MAINT_INTERVAL_MS", 30_000)
+	minRebuildInterval := envDurationSec("NORNICDB_HNSW_MIN_REBUILD_INTERVAL_SEC", 60)
+	rebuildRatio := envFloat("NORNICDB_HNSW_TOMBSTONE_REBUILD_RATIO", 0.50)
+	maxOverhead := envFloat("NORNICDB_HNSW_MAX_TOMBSTONE_OVERHEAD_FACTOR", 2.0)
+	enabled := envutil.GetBoolStrict("NORNICDB_HNSW_REBUILD_ENABLED", true)
+	go func() {
+		defer done()
+		defer s.hnswMaintRunning.Store(false)
+		s.runHNSWMaintenance(ctx, interval, minRebuildInterval, rebuildRatio, maxOverhead, enabled)
+	}()
 }
 
+// runHNSWMaintenance is the maintenance loop; its only exit is ctx, which the
+// lifecycle owner cancels on stop and Close.
+func (s *Service) runHNSWMaintenance(ctx context.Context, interval, minRebuildInterval time.Duration, rebuildRatio, maxOverhead float64, enabled bool) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if !enabled || s.buildInProgress.Load() {
+				continue
+			}
+			_ = s.maybeRebuildHNSW(ctx, rebuildRatio, maxOverhead, minRebuildInterval)
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// stopHNSWMaintenance cancels and joins the maintenance loop.
 func (s *Service) stopHNSWMaintenance() {
 	if s == nil {
 		return
 	}
-	if s.hnswMaintCancel != nil {
-		s.hnswMaintCancel()
-	}
-	if s.hnswMaintDone != nil {
-		<-s.hnswMaintDone
-	}
+	s.pauseWorkers(workerMaintenance)()
 }
 
 func (s *Service) maybeRebuildHNSW(ctx context.Context, tombstoneRatioThreshold, maxOverheadFactor float64, minInterval time.Duration) error {

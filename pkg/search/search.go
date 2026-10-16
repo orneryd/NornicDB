@@ -870,9 +870,7 @@ type Service struct {
 	hnswBuild           *hnswBuildJob
 	hnswBuildPaused     int
 	hnswVectorsChanging atomic.Bool
-	hnswMaintOnce       sync.Once
-	hnswMaintCancel     context.CancelFunc
-	hnswMaintDone       chan struct{}
+	hnswMaintRunning    atomic.Bool
 	hnswRebuildInFlight atomic.Bool
 	hnswLastRebuildUnix atomic.Int64
 	// hnswRebuildOverlay records only mutations that race an active rebuild.
