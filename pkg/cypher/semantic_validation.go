@@ -769,4 +769,3 @@ func invalidAggregationInListComprehension(cypher string) bool {
 	}
 	return false
 }
-
