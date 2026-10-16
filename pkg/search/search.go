@@ -1585,57 +1585,6 @@ func (s *Service) resetANNForBuild() {
 	s.retireVectorSourceLocked(false)
 }
 
-// SetGPUManager enables GPU acceleration for exact brute-force vector search.
-//
-// This is independent from k-means clustering. When enabled, the vector pipeline
-// may choose GPU brute-force search (exact) for datasets where it outperforms HNSW.
-func (s *Service) SetGPUManager(manager *gpu.Manager) {
-	s.pipelineMu.Lock()
-	s.vectorPipeline = nil
-	s.pipelineMu.Unlock()
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.gpuManager = manager
-	if manager == nil || !manager.IsEnabled() {
-		s.gpuEmbeddingIndex = nil
-		return
-	}
-
-	dimensions := 0
-	if s.vectorIndex != nil {
-		dimensions = s.vectorIndex.GetDimensions()
-	}
-	if dimensions <= 0 {
-		return
-	}
-
-	cfg := gpu.DefaultEmbeddingIndexConfig(dimensions)
-	cfg.GPUEnabled = true
-	cfg.AutoSync = true
-	cfg.BatchThreshold = 1000
-	gi := gpu.NewEmbeddingIndex(manager, cfg)
-
-	// Snapshot current vectors.
-	s.vectorIndex.mu.RLock()
-	ids := make([]string, 0, len(s.vectorIndex.vectors))
-	embs := make([][]float32, 0, len(s.vectorIndex.vectors))
-	for id, vec := range s.vectorIndex.vectors {
-		if len(vec) == 0 {
-			continue
-		}
-		ids = append(ids, id)
-		embs = append(embs, vec)
-	}
-	s.vectorIndex.mu.RUnlock()
-
-	_ = gi.AddBatch(ids, embs)
-	_ = gi.SyncToGPU()
-
-	s.gpuEmbeddingIndex = gi
-}
-
 // EnableClustering enables GPU k-means clustering for accelerated vector search.
 //
 // Performance Improvements (Real-World Benchmarks):
@@ -5425,7 +5374,8 @@ func (s *Service) currentPipelineStrategy() strategyMode {
 }
 
 func (s *Service) desiredRuntimeStrategy(vectorCount int) strategyMode {
-	gpuEnabled := s.gpuManager != nil && s.gpuManager.IsEnabled()
+	manager, _ := s.gpuVectorState()
+	gpuEnabled := manager != nil && manager.IsEnabled()
 	gpuMinN := envutil.GetInt("NORNICDB_VECTOR_GPU_BRUTE_MIN_N", 5000)
 	gpuMaxN := envutil.GetInt("NORNICDB_VECTOR_GPU_BRUTE_MAX_N", 15000)
 	if gpuEnabled && vectorCount >= gpuMinN && vectorCount <= gpuMaxN {
@@ -5581,7 +5531,8 @@ func (s *Service) applyTransitionSwapLocked(target strategyMode, targetHNSW *HNS
 	var p *VectorSearchPipeline
 	switch target {
 	case strategyModeBruteGPU:
-		p = NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(s.gpuEmbeddingIndex), &IdentityExactScorer{})
+		_, gpuIndex := s.gpuVectorState()
+		p = NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(gpuIndex), &IdentityExactScorer{})
 	case strategyModeBruteCPU:
 		if vfs != nil {
 			p = NewVectorSearchPipeline(NewFileStoreBruteForceCandidateGen(vfs), NewCPUExactScorer(vfs))
@@ -5605,7 +5556,8 @@ func (s *Service) applyTransitionSwapLocked(target strategyMode, targetHNSW *HNS
 func (s *Service) buildPipelineForMode(mode strategyMode, vi *VectorIndex, vfs *VectorFileStore) *VectorSearchPipeline {
 	switch mode {
 	case strategyModeBruteGPU:
-		return NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(s.gpuEmbeddingIndex), &IdentityExactScorer{})
+		_, gpuIndex := s.gpuVectorState()
+		return NewVectorSearchPipeline(NewGPUBruteForceCandidateGen(gpuIndex), &IdentityExactScorer{})
 	case strategyModeBruteCPU:
 		if vfs != nil {
 			return NewVectorSearchPipeline(NewFileStoreBruteForceCandidateGen(vfs), NewCPUExactScorer(vfs))
@@ -5683,54 +5635,6 @@ func hnswPairSliceIterator(pairs []hnswBuildPair) hnswBuildIterator {
 	}
 }
 
-func (s *Service) ensureGPUIndexSynced(vi *VectorIndex, vfs *VectorFileStore) error {
-	if s.gpuManager == nil || !s.gpuManager.IsEnabled() {
-		return localizedError(localization.SearchGPUNotEnabled(), nil)
-	}
-	if s.gpuEmbeddingIndex != nil {
-		return nil
-	}
-	dim := s.VectorIndexDimensions()
-	if dim <= 0 {
-		return localizedError(localization.SearchVectorDimensionsInvalid(), nil)
-	}
-	cfg := gpu.DefaultEmbeddingIndexConfig(dim)
-	cfg.GPUEnabled = true
-	cfg.AutoSync = true
-	cfg.BatchThreshold = 1000
-	gi := gpu.NewEmbeddingIndex(s.gpuManager, cfg)
-
-	if vfs != nil && vfs.Count() > 0 {
-		if err := vfs.IterateChunked(10000, func(ids []string, vecs [][]float32) error {
-			return gi.AddBatch(ids, vecs)
-		}); err != nil {
-			return err
-		}
-	} else if vi != nil {
-		vi.mu.RLock()
-		ids := make([]string, 0, len(vi.vectors))
-		vecs := make([][]float32, 0, len(vi.vectors))
-		for id, vec := range vi.vectors {
-			if len(vec) == 0 {
-				continue
-			}
-			ids = append(ids, id)
-			vecs = append(vecs, vec)
-		}
-		vi.mu.RUnlock()
-		if err := gi.AddBatch(ids, vecs); err != nil {
-			return err
-		}
-	}
-	if err := gi.SyncToGPU(); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	s.gpuEmbeddingIndex = gi
-	s.mu.Unlock()
-	return nil
-}
-
 // replayTransitionDeltasLocked mutates the shared backend. Caller holds indexMu
 // and, for transitions, has validated the captured vector snapshot token.
 func (s *Service) replayTransitionDeltasLocked(targetHNSW *HNSWIndex, mode strategyMode, vi *VectorIndex, vfs *VectorFileStore, after uint64) uint64 {
@@ -5753,9 +5657,7 @@ func (s *Service) replayTransitionDeltasLocked(targetHNSW *HNSWIndex, mode strat
 				targetHNSW.Remove(d.id)
 			}
 		} else if mode == strategyModeBruteGPU {
-			s.mu.RLock()
-			gi := s.gpuEmbeddingIndex
-			s.mu.RUnlock()
+			_, gi := s.gpuVectorState()
 			if gi != nil {
 				if d.add {
 					if vec, ok := getTransitionDeltaVector(d.id, vi, vfs); ok {
@@ -5907,7 +5809,8 @@ func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount
 		return nil, err
 	}
 	// Auto strategy: choose candidate generator based on dataset size and clustering
-	gpuEnabled := s.gpuManager != nil && s.gpuManager.IsEnabled() && s.gpuEmbeddingIndex != nil
+	manager, gpuIndex := s.gpuVectorState()
+	gpuEnabled := manager != nil && manager.IsEnabled() && gpuIndex != nil
 	gpuMinN := envutil.GetInt("NORNICDB_VECTOR_GPU_BRUTE_MIN_N", 5000)
 	gpuMaxN := envutil.GetInt("NORNICDB_VECTOR_GPU_BRUTE_MAX_N", 15000)
 
@@ -5916,7 +5819,7 @@ func (s *Service) resolveStandardVectorStrategy(ctx context.Context, vectorCount
 	if gpuEnabled && vectorCount >= gpuMinN && vectorCount <= gpuMaxN {
 		return &vectorStrategyDescriptor{
 			name:         "GPU brute-force",
-			candidateGen: NewGPUBruteForceCandidateGen(s.gpuEmbeddingIndex),
+			candidateGen: NewGPUBruteForceCandidateGen(gpuIndex),
 			scorerPolicy: exactScorerPolicyIdentity,
 		}, nil
 	}
