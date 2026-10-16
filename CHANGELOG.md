@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Restore Neo4j zero-precision rounding for negative ties when no rounding mode is supplied;
-  retain positive-precision and explicit `HALF_UP` behavior.
+  retain positive-precision and explicit `HALF_UP` behavior. Reuse shared rounding modes to preserve
+  adjacent half values, large integers and positive zero in both one- and two-argument calls.
 
 - Correct path-carrier regression fixtures to cover typed paths and ordinary boolean-marker maps separately,
   retaining public-query type-name and Cypher 25 rendering controls. Make the total-count recovery fixture

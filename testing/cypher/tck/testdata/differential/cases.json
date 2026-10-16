@@ -3047,5 +3047,141 @@
       "CREATE (:W1 {id:1})"
     ],
     "query": "MATCH (n:W1) RETURN [x IN [1,2] WHERE x * n.id] AS l"
+  },
+  {
+    "name": "round IEEE boundary one argument unwind",
+    "query": "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x RETURN x, round(x) AS v"
+  },
+  {
+    "name": "round IEEE boundary one argument parameters",
+    "parameters": {
+      "values": [
+        0.49999999999999994,
+        4503599627370497.0,
+        -4503599627370497.0,
+        9007199254740991.0,
+        -9007199254740991.0,
+        -2.5,
+        -0.5,
+        0.5
+      ]
+    },
+    "query": "UNWIND $values AS x RETURN x, round(x) AS v"
+  },
+  {
+    "name": "round IEEE boundary one argument property",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) RETURN n.x AS x, round(n.x) AS v"
+  },
+  {
+    "name": "round IEEE boundary one argument with",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) WITH n.x AS x, round(n.x) AS v RETURN x,v"
+  },
+  {
+    "name": "round IEEE boundary integer zero unwind",
+    "query": "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x RETURN x, round(x, 0) AS v"
+  },
+  {
+    "name": "round IEEE boundary integer zero parameters",
+    "parameters": {
+      "values": [
+        0.49999999999999994,
+        4503599627370497.0,
+        -4503599627370497.0,
+        9007199254740991.0,
+        -9007199254740991.0,
+        -2.5,
+        -0.5,
+        0.5
+      ]
+    },
+    "query": "UNWIND $values AS x RETURN x, round(x, 0) AS v"
+  },
+  {
+    "name": "round IEEE boundary integer zero property",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) RETURN n.x AS x, round(n.x, 0) AS v"
+  },
+  {
+    "name": "round IEEE boundary integer zero with",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) WITH n.x AS x, round(n.x, 0) AS v RETURN x,v"
+  },
+  {
+    "name": "round IEEE boundary float zero unwind",
+    "query": "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x RETURN x, round(x, 0.0) AS v"
+  },
+  {
+    "name": "round IEEE boundary float zero parameters",
+    "parameters": {
+      "values": [
+        0.49999999999999994,
+        4503599627370497.0,
+        -4503599627370497.0,
+        9007199254740991.0,
+        -9007199254740991.0,
+        -2.5,
+        -0.5,
+        0.5
+      ]
+    },
+    "query": "UNWIND $values AS x RETURN x, round(x, 0.0) AS v"
+  },
+  {
+    "name": "round IEEE boundary float zero property",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) RETURN n.x AS x, round(n.x, 0.0) AS v"
+  },
+  {
+    "name": "round IEEE boundary float zero with",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) WITH n.x AS x, round(n.x, 0.0) AS v RETURN x,v"
+  },
+  {
+    "name": "round IEEE boundary fraction zero unwind",
+    "query": "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x RETURN x, round(x, 0.5) AS v"
+  },
+  {
+    "name": "round IEEE boundary fraction zero parameters",
+    "parameters": {
+      "values": [
+        0.49999999999999994,
+        4503599627370497.0,
+        -4503599627370497.0,
+        9007199254740991.0,
+        -9007199254740991.0,
+        -2.5,
+        -0.5,
+        0.5
+      ]
+    },
+    "query": "UNWIND $values AS x RETURN x, round(x, 0.5) AS v"
+  },
+  {
+    "name": "round IEEE boundary fraction zero property",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) RETURN n.x AS x, round(n.x, 0.5) AS v"
+  },
+  {
+    "name": "round IEEE boundary fraction zero with",
+    "setup": [
+      "UNWIND [0.49999999999999994, 4503599627370497.0, -4503599627370497.0, 9007199254740991.0, -9007199254740991.0, -2.5, -0.5, 0.5] AS x CREATE (:RoundBoundary {x:x})"
+    ],
+    "query": "MATCH (n:RoundBoundary) WITH n.x AS x, round(n.x, 0.5) AS v RETURN x,v"
   }
 ]
