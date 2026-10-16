@@ -120,6 +120,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	apoccfg "github.com/orneryd/nornicdb/apoc"
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -245,8 +246,17 @@ func hasKeywordFollowedByBrace(query, keyword string) bool {
 	return false
 }
 
-func skipSpaces(s string, i int) int {
+func skipSpaces(s string, i int) int { return skipSpacesWithCancellation(s, i, nil) }
+func skipSpacesWithCancellation(s string, i int, probe *pipelineCancellation) int {
+	if probe != nil && !probe.check() {
+		return len(s)
+	}
+
 	for i < len(s) {
+		if probe != nil && !probe.check() {
+			return len(s)
+		}
+
 		switch s[i] {
 		case ' ', '\t', '\n', '\r':
 			i++
@@ -488,7 +498,7 @@ type unwindMergeChainPlanCache struct {
 
 type upperQueryCache struct {
 	mu    sync.RWMutex
-	cache map[string]string
+	cache pipelineStringMap[string]
 	max   int
 }
 
@@ -501,7 +511,7 @@ type syntaxValidationCacheShard struct {
 	mu sync.RWMutex
 	// cache holds, per statement text, which validators accepted it
 	// (syntaxValidNornic, syntaxValidANTLR).
-	cache map[string]uint8
+	cache pipelineStringMap[uint8]
 }
 
 func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExecutor {
@@ -1062,7 +1072,7 @@ func (e *StorageExecutor) emitSlowQueryLog(query string, plan *ExecutionPlan, du
 	if e.slowQueryThreshold <= 0 || duration < e.slowQueryThreshold {
 		return
 	}
-	redacted := RedactLiterals(StripComments(query))
+	redacted := redactDiagnosticQuery(query)
 	hash := PlanHash(plan)
 	if plan == nil || plan.Root == nil {
 		// The normal (non-EXPLAIN/PROFILE) Execute() path never builds an
@@ -1256,20 +1266,29 @@ func queryDeletesNodes(query string) bool {
 // delimiter (';') and whitespace, leaving any additional semicolon for validation.
 // This mirrors Neo4j-compatible client behavior where a final semicolon is optional.
 func trimTrailingStatementDelimiters(query string) string {
-	s := strings.TrimSpace(query)
+	return trimTrailingStatementDelimitersWithCancellation(query, nil)
+}
+func trimTrailingStatementDelimitersWithCancellation(query string, probe *pipelineCancellation) string {
+	s := trimSpaceWithCancellation(query, probe)
 	if strings.HasSuffix(s, ";") {
-		s = strings.TrimSpace(strings.TrimSuffix(s, ";"))
+		s = trimSpaceWithCancellation(strings.TrimSuffix(s, ";"), probe)
 	}
 	return s
 }
 
 func normalizeCypherSyntaxConfusables(query string) string {
+	return normalizeCypherSyntaxConfusablesWithCancellation(query, nil)
+}
+func normalizeCypherSyntaxConfusablesWithCancellation(query string, probe *pipelineCancellation) string {
 	if query == "" {
 		return query
 	}
 	// Fast path: common ASCII-only Cypher text has no confusables to normalize.
-	if isLikelyPlainASCIICypher(query) {
+	if isLikelyPlainASCIICypherWithCancellation(query, probe) {
 		return query
+	}
+	if probe != nil && probe.err != nil {
+		return ""
 	}
 
 	const (
@@ -1281,13 +1300,34 @@ func normalizeCypherSyntaxConfusables(query string) string {
 		normalizeBlockComment
 	)
 
-	runes := []rune(query)
+	runes := pipelineRunes(query, probe)
+	if probe != nil && probe.err != nil {
+		return ""
+	}
 	var builder strings.Builder
-	builder.Grow(len(query) + 8)
+	capacity := len(query) + 8
+	if probe != nil {
+		// Invalid UTF-8 becomes RuneError during the historical []rune
+		// conversion. Reserve its exact encoded size so writes never grow.
+		capacity = 8
+		for _, r := range runes {
+			if !probe.check() {
+				return ""
+			}
+			capacity += utf8.RuneLen(r)
+		}
+		if !probe.poll() {
+			return ""
+		}
+	}
+	builder.Grow(capacity)
 	changed := false
 	state := normalizeDefault
 
 	for i := 0; i < len(runes); i++ {
+		if probe != nil && !probe.check() {
+			return ""
+		}
 		r := runes[i]
 		next := rune(0)
 		if i+1 < len(runes) {
@@ -1323,7 +1363,11 @@ func normalizeCypherSyntaxConfusables(query string) string {
 				continue
 			}
 
-			if replacement, ok := cypherArrowReplacement(runes, i); ok {
+			replacement, arrow := cypherArrowReplacementWithCancellation(runes, i, probe)
+			if probe != nil && probe.err != nil {
+				return ""
+			}
+			if arrow {
 				builder.WriteByte(replacement)
 				changed = true
 				continue
@@ -1415,7 +1459,14 @@ func normalizeCypherSyntaxConfusables(query string) string {
 }
 
 func isLikelyPlainASCIICypher(query string) bool {
+	return isLikelyPlainASCIICypherWithCancellation(query, nil)
+}
+
+func isLikelyPlainASCIICypherWithCancellation(query string, probe *pipelineCancellation) bool {
 	for i := 0; i < len(query); i++ {
+		if probe != nil && !probe.check() {
+			return false
+		}
 		if query[i] >= 0x80 {
 			return false
 		}
@@ -1430,7 +1481,7 @@ func (e *StorageExecutor) ensureUpperQueryCache() *upperQueryCache {
 	e.upperQueryCacheOnce.Do(func() {
 		if e.upperQueryCache == nil {
 			e.upperQueryCache = &upperQueryCache{
-				cache: make(map[string]string, 1024),
+				cache: pipelineStringMap[string]{},
 				max:   4096,
 			}
 		}
@@ -1439,28 +1490,35 @@ func (e *StorageExecutor) ensureUpperQueryCache() *upperQueryCache {
 }
 
 func (e *StorageExecutor) cachedUpperQuery(query string) string {
-	trimmed := strings.TrimSpace(query)
+	return e.cachedUpperQueryWithCancellation(query, nil)
+}
+func (e *StorageExecutor) cachedUpperQueryWithCancellation(query string, probe *pipelineCancellation) string {
+	trimmed := trimSpaceWithCancellation(query, probe)
+	if probe != nil && probe.err != nil {
+		return ""
+	}
 	if trimmed == "" {
 		return ""
 	}
 	c := e.ensureUpperQueryCache()
-	c.mu.RLock()
-	if upper, ok := c.cache[trimmed]; ok {
-		c.mu.RUnlock()
+	upper, ok := getQueryTextCache(&c.cache, &c.mu, trimmed, probe)
+	if probe != nil && probe.err != nil {
+		return ""
+	}
+	if ok {
 		return upper
 	}
-	c.mu.RUnlock()
-
-	upper := upperASCII(trimmed)
-	c.mu.Lock()
-	if len(c.cache) >= c.max {
-		for k := range c.cache {
-			delete(c.cache, k)
-			break
-		}
+	upper = upperASCIIWithCancellation(trimmed, probe)
+	if probe != nil && probe.err != nil {
+		return ""
 	}
-	c.cache[trimmed] = upper
-	c.mu.Unlock()
+	if !lockQueryTextCache(&c.mu, false, probe) {
+		return ""
+	}
+	defer c.mu.Unlock()
+	if !putQueryTextCache(&c.cache, c.max, trimmed, upper, probe) {
+		return ""
+	}
 	return upper
 }
 
@@ -1512,8 +1570,14 @@ func cypherSyntaxConfusableReplacement(r rune) (string, bool) {
 // rejected by validateUnicodeOperators) and the soft hyphen is part of a
 // name.
 func cypherArrowReplacement(runes []rune, i int) (byte, bool) {
+	return cypherArrowReplacementWithCancellation(runes, i, nil)
+}
+func cypherArrowReplacementWithCancellation(runes []rune, i int, probe *pipelineCancellation) (byte, bool) {
 	neighbour := func(step int) rune {
 		for j := i + step; j >= 0 && j < len(runes); j += step {
+			if probe != nil && !probe.check() {
+				return 0
+			}
 			if !unicode.IsSpace(runes[j]) {
 				return runes[j]
 			}

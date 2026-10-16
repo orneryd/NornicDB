@@ -115,6 +115,8 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 	}
 	var shared *ExecuteResult
 	out := make([]pipelineRow, 0, len(rows))
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, true, err
@@ -142,6 +144,9 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		}
 		extended := make([]pipelineRow, 0, len(result.Rows))
 		for _, record := range result.Rows {
+			if !probe.check() {
+				return nil, nil, true, probe.err
+			}
 			next := make(pipelineRow, len(row)+len(result.Columns))
 			for key, value := range row {
 				next[key] = value

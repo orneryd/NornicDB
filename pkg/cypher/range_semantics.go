@@ -8,12 +8,19 @@ import (
 )
 
 func evaluateCypherRange(arguments []interface{}) ([]interface{}, error) {
+	return evaluateCypherRangeWithCancellation(arguments, nil)
+}
+
+func evaluateCypherRangeWithCancellation(arguments []interface{}, probe *pipelineCancellation) ([]interface{}, error) {
 	sequence, err := newCypherRange(arguments)
 	if err != nil {
 		return nil, err
 	}
 	values := make([]interface{}, 0)
 	for value := range sequence.values() {
+		if probe != nil && !probe.check() {
+			return nil, probe.err
+		}
 		values = append(values, value)
 	}
 	return values, nil

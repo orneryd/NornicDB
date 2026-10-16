@@ -83,11 +83,17 @@ func findSubqueryExpressions(expr string) []subqueryExpression {
 // subquery expression starts at expr[i]: the keyword, then its body's '{'
 // (at open). It is the one reader of where a subquery expression starts.
 func subqueryExpressionKeywordAt(expr string, i int) (keyword string, open int, ok bool) {
+	return subqueryExpressionKeywordAtWithCancellation(expr, i, nil)
+}
+func subqueryExpressionKeywordAtWithCancellation(expr string, i int, probe *pipelineCancellation) (keyword string, open int, ok bool) {
 	for _, keyword := range subqueryExpressionKeywords {
+		if probe != nil && !probe.check() {
+			return "", 0, false
+		}
 		if !matchKeywordAt(expr, i, keyword) {
 			continue
 		}
-		if open := skipSpaces(expr, i+len(keyword)); open < len(expr) && expr[open] == '{' && precedingSubqueryExpressionKeyword(expr, open) {
+		if open := skipSpacesWithCancellation(expr, i+len(keyword), probe); open < len(expr) && expr[open] == '{' && (probe == nil || probe.err == nil) && precedingSubqueryExpressionKeywordWithCancellation(expr, open, probe) {
 			return keyword, open, true
 		}
 	}
@@ -386,7 +392,7 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 	// A UNION body: each branch runs for the row, and the shared UNION
 	// combiner (executeUnionBranches) joins them, as for a top-level UNION.
 	if _, unionAll, _, union := parseTopLevelUnionBranches(query); union {
-		return e.executeUnionBranches(query, unionAll, func(branch string) (*ExecuteResult, error) {
+		return e.executeUnionBranches(ctx, query, unionAll, func(branch string) (*ExecuteResult, error) {
 			return e.runCorrelatedSubquery(ctx, branch, values)
 		})
 	}

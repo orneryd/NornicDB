@@ -37,9 +37,16 @@ func getBindingNodeValue(node *storage.Node, propName string) (any, bool) {
 }
 
 func buildComparableMembershipIndex(items []interface{}) (map[interface{}]struct{}, []interface{}) {
+	return buildComparableMembershipIndexWithCancellation(items, nil)
+}
+
+func buildComparableMembershipIndexWithCancellation(items []interface{}, probe *pipelineCancellation) (map[interface{}]struct{}, []interface{}) {
 	comparableSet := make(map[interface{}]struct{}, len(items))
 	nonComparable := make([]interface{}, 0)
 	for _, item := range items {
+		if probe != nil && !probe.check() {
+			return nil, nil
+		}
 		if item == nil {
 			continue
 		}
@@ -120,11 +127,17 @@ func isComparableValue(v interface{}) bool {
 	if v == nil {
 		return false
 	}
-	// Graph pointers are Go-comparable, but their addresses are not Cypher
-	// identities. Leave them for the equality owner's non-indexed comparisons.
-	switch v.(type) {
+	switch value := v.(type) {
 	case *storage.Node, *storage.Edge:
+		// Graph pointers are Go-comparable, but their addresses are not Cypher
+		// identities. Leave them for the equality owner's non-indexed comparisons.
 		return false
+	case string:
+		// Large strings use structural comparison so a native map hash/equality
+		// cannot hide an unbounded byte scan between cancellation samples.
+		if len(value) > 4096 {
+			return false
+		}
 	}
 	return reflect.TypeOf(v).Comparable()
 }

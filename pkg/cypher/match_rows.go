@@ -374,9 +374,9 @@ func (e *StorageExecutor) filterNodesByWhereClause(ctx context.Context, nodes []
 		return nodes
 	}
 
-	filterFn := e.compileNodeWhereFilter(ctx, variable, whereClause)
-
-	return parallelFilterNodes(nodes, filterFn)
+	return parallelFilterNodesWithCancellation(ctx, nodes, func(workerContext context.Context) FilterFunc {
+		return e.compileNodeWhereFilter(workerContext, variable, whereClause)
+	})
 }
 
 // orderSpec represents a single ORDER BY column specification

@@ -152,3 +152,6 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
 )
+
+// v4.13.1 with query-owned bounded cancellation; upstream identity in PROVENANCE.md.
+replace github.com/antlr4-go/antlr/v4 => ./third_party/antlr

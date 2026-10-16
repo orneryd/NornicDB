@@ -1774,7 +1774,18 @@ func clauseKeywordStart(q string, bodyStart int) int {
 }
 
 func skipASCIISpaces(q string, i, end int) int {
+	return skipASCIISpacesWithCancellation(q, i, end, nil)
+}
+func skipASCIISpacesWithCancellation(q string, i, end int, probe *pipelineCancellation) int {
+	if probe != nil && !probe.check() {
+		return end
+	}
+
 	for i < end && isASCIISpace(q[i]) {
+		if probe != nil && !probe.check() {
+			return end
+		}
+
 		i++
 	}
 	return i
@@ -1783,7 +1794,18 @@ func skipASCIISpaces(q string, i, end int) int {
 // trimRightIndex returns end moved back over trailing spaces, not before
 // start.
 func trimRightIndex(q string, start, end int) int {
+	return trimRightIndexWithCancellation(q, start, end, nil)
+}
+func trimRightIndexWithCancellation(q string, start, end int, probe *pipelineCancellation) int {
+	if probe != nil && !probe.check() {
+		return start
+	}
+
 	for end > start && isASCIISpace(q[end-1]) {
+		if probe != nil && !probe.check() {
+			return start
+		}
+
 		end--
 	}
 	return end

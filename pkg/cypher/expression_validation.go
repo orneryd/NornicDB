@@ -268,16 +268,22 @@ func localBindingAt(text string, open int) (localBinding, bool) {
 // a named pattern comprehension's head, for localBindingAt,
 // patternComprehensionHead and the quoted-variable classifier.
 func namedPathDeclaration(text string, from int) (name string, at, pattern int, ok bool) {
-	at = queryGapEnd(text, from)
-	name, end, ok := scanIdentifierToken(text, at)
+	return namedPathDeclarationWithCancellation(text, from, nil)
+}
+func namedPathDeclarationWithCancellation(text string, from int, probe *pipelineCancellation) (name string, at, pattern int, ok bool) {
+	if probe != nil && !probe.check() {
+		return "", 0, 0, false
+	}
+	at = queryGapEndWithCancellation(text, from, probe)
+	name, end, ok := scanIdentifierTokenWithCancellation(text, at, probe)
 	if !ok {
 		return "", 0, 0, false
 	}
-	next := queryGapEnd(text, end)
+	next := queryGapEndWithCancellation(text, end, probe)
 	if next+1 >= len(text) || text[next] != '=' || text[next+1] == '~' {
 		return "", 0, 0, false
 	}
-	pattern = queryGapEnd(text, next+1)
+	pattern = queryGapEndWithCancellation(text, next+1, probe)
 	if pattern >= len(text) || text[pattern] != '(' {
 		return "", 0, 0, false
 	}
@@ -291,12 +297,18 @@ func namedPathDeclaration(text string, from int) (name string, at, pattern int, 
 // (localBindingAt) and the evaluators (parseListComprehension,
 // parseQuantifierArguments).
 func bindingDeclaration(text string, from int) (name string, at, list int, ok bool) {
-	at = queryGapEnd(text, from)
-	name, end, ok := scanIdentifierToken(text, at)
+	return bindingDeclarationWithCancellation(text, from, nil)
+}
+func bindingDeclarationWithCancellation(text string, from int, probe *pipelineCancellation) (name string, at, list int, ok bool) {
+	if probe != nil && !probe.check() {
+		return "", 0, 0, false
+	}
+	at = queryGapEndWithCancellation(text, from, probe)
+	name, end, ok := scanIdentifierTokenWithCancellation(text, at, probe)
 	if !ok {
 		return "", 0, 0, false
 	}
-	next := queryGapEnd(text, end)
+	next := queryGapEndWithCancellation(text, end, probe)
 	if next+2 > len(text) || !strings.EqualFold(text[next:next+2], "IN") || next+2 < len(text) && isIdentByte(text[next+2]) {
 		return "", 0, 0, false
 	}

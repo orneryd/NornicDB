@@ -102,6 +102,21 @@ func (l *redactSilentErrorListener) SyntaxError(_ antlr4.Recognizer, _ interface
 // slow-query log emission path (cypher.duration_ms >= SlowQueryThreshold),
 // so per-call cost (~1 lexer pass) is acceptable.
 func RedactLiterals(query string) string {
+	return redactQueryLiterals(query, true)
+}
+
+// Diagnostic redaction has a fixed input bound and never parses a statement.
+// Without grammar validation it preserves proven bindings and their property
+// names; uncertain words are redacted as well as literals. Oversized input
+// is redacted in full, before any scan, allocation, or comment stripping.
+func redactDiagnosticQuery(query string) string {
+	if len(query) > 4096 {
+		return RedactedPlaceholder
+	}
+	return redactQueryLiterals(query, false)
+}
+
+func redactQueryLiterals(query string, validateGrammar bool) string {
 	if strings.TrimSpace(query) == "" {
 		return RedactedPlaceholder
 	}
@@ -109,7 +124,11 @@ func RedactLiterals(query string) string {
 	if !ok {
 		return RedactedPlaceholder
 	}
-	grammarValid := cantlr.Validate(query) == nil
+	grammarValid := validateGrammar && cantlr.Validate(query) == nil
+	var knownIdentifiers map[int]bool
+	if !validateGrammar {
+		knownIdentifiers = diagnosticBoundIdentifiers(toks)
+	}
 
 	var b strings.Builder
 	b.Grow(len(query))
@@ -117,7 +136,7 @@ func RedactLiterals(query string) string {
 	// inside a node or relationship pattern, never inside a map.
 	var stack []int
 	prev := noPrevToken
-	for _, tok := range toks {
+	for index, tok := range toks {
 		ttype := tok.GetTokenType()
 		text := tok.GetText()
 		switch ttype {
@@ -127,12 +146,16 @@ func RedactLiterals(query string) string {
 			stack = stack[:len(stack)-1]
 		}
 		switch {
+		case ttype == cantlr.CypherLexerCOMMENT, ttype == cantlr.CypherLexerLINE_COMMENT:
+			// Keep a separator so removing a comment cannot join two tokens.
+			b.WriteByte(' ')
 		case ttype == cantlr.CypherLexerSTRING_LITERAL,
 			ttype == cantlr.CypherLexerCHAR_LITERAL,
 			ttype == cantlr.CypherLexerINTEGER,
+			ttype == cantlr.CypherLexerDIGIT,
 			ttype == cantlr.CypherLexerFLOAT:
 			b.WriteString(RedactedPlaceholder)
-		case !grammarValid && redactStructuralOnly(ttype, prev, stack):
+		case !grammarValid && !knownIdentifiers[index] && redactStructuralOnly(ttype, prev, stack):
 			b.WriteString(RedactedPlaceholder)
 		default:
 			b.WriteString(text)

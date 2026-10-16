@@ -1,11 +1,11 @@
 package fn
 
 import (
+	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"reflect"
 	"sort"
 	"strings"
 
-	cyphertext "github.com/orneryd/nornicdb/pkg/cypher/internal/text"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -125,18 +125,24 @@ func evalLabels(ctx Context, args []string) (interface{}, error) {
 	}
 	inner := strings.TrimSpace(args[0])
 	if node, ok := ctx.Nodes[inner]; ok {
-		return Labels(node)
+		return LabelsWithCancellation(node, ctx.Cancellation)
 	}
 	value, err := ctx.Eval(inner)
 	if err != nil {
 		return nil, err
 	}
-	return Labels(value)
+	return LabelsWithCancellation(value, ctx.Cancellation)
 }
 
 // Labels returns the labels of a node, null for null, or an argument error.
 // For example, Labels(&storage.Node{Labels: []string{"N"}}) returns ["N"].
 func Labels(value interface{}) (interface{}, error) {
+	return LabelsWithCancellation(value, nil)
+}
+
+// LabelsWithCancellation is Labels with the label list built under the
+// statement's cancellation and bounded-growth budget.
+func LabelsWithCancellation(value interface{}, cancellation Cancellation) (interface{}, error) {
 	if value == nil {
 		return nil, nil
 	}
@@ -156,11 +162,14 @@ func Labels(value interface{}) (interface{}, error) {
 	if node == nil {
 		return nil, nil
 	}
-	result := make([]interface{}, len(node.Labels))
-	for i, label := range node.Labels {
-		result[i] = label
+	if cancellation == nil {
+		result := make([]interface{}, len(node.Labels))
+		for i, label := range node.Labels {
+			result[i] = label
+		}
+		return result, nil
 	}
-	return result, nil
+	return labelValues(node.Labels, cancellation)
 }
 
 func evalType(ctx Context, args []string) (interface{}, error) {
@@ -209,16 +218,25 @@ func evalKeys(ctx Context, args []string) (interface{}, error) {
 	}
 	inner := strings.TrimSpace(args[0])
 	if node, ok := ctx.Nodes[inner]; ok && node != nil {
-		keys, _ := PropertyKeys(node)
+		keys, _ := PropertyKeysWithCancellation(node, ctx.Cancellation)
+		if ctx.Cancellation != nil {
+			return keys, ctx.Cancellation.Err()
+		}
 		return keys, nil
 	}
 	if rel, ok := ctx.Rels[inner]; ok && rel != nil {
-		keys, _ := PropertyKeys(rel)
+		keys, _ := PropertyKeysWithCancellation(rel, ctx.Cancellation)
+		if ctx.Cancellation != nil {
+			return keys, ctx.Cancellation.Err()
+		}
 		return keys, nil
 	}
 	value, _ := ctx.Eval(inner)
-	if keys, ok := PropertyKeys(value); ok {
+	if keys, ok := PropertyKeysWithCancellation(value, ctx.Cancellation); ok {
 		return keys, nil
+	}
+	if ctx.Cancellation != nil {
+		return nil, ctx.Cancellation.Err()
 	}
 	return nil, nil
 }
@@ -233,6 +251,10 @@ func evalKeys(ctx Context, args []string) (interface{}, error) {
 //
 // It returns false for any other value.
 func PropertyKeys(value interface{}) ([]interface{}, bool) {
+	return PropertyKeysWithCancellation(value, nil)
+}
+
+func PropertyKeysWithCancellation(value interface{}, cancellation Cancellation) ([]interface{}, bool) {
 	var properties map[string]interface{}
 	switch v := value.(type) {
 	case *storage.Node:
@@ -252,14 +274,39 @@ func PropertyKeys(value interface{}) ([]interface{}, bool) {
 	default:
 		return nil, false
 	}
-	names := make([]string, 0, len(properties))
-	for key := range properties {
-		names = append(names, key)
+	capacity := len(properties)
+	if cancellation != nil {
+		if !cancellation.Continue() {
+			return nil, false
+		}
+		capacity = min(capacity, 128)
 	}
-	sort.Strings(names)
-	keys := make([]interface{}, len(names))
-	for i, name := range names {
-		keys[i] = name
+	names := make([]string, 0, capacity)
+	for key := range properties {
+		if cancellation != nil && !cancellation.Continue() {
+			return nil, false
+		}
+		var ok bool
+		names, ok = cyphertext.AppendItem(names, key, cancellation)
+		if !ok {
+			return nil, false
+		}
+	}
+	if cancellation == nil {
+		sort.Strings(names)
+	} else if !cancellation.SortStrings(names) {
+		return nil, false
+	}
+	keys := make([]interface{}, 0, capacity)
+	for _, name := range names {
+		if cancellation != nil && !cancellation.Continue() {
+			return nil, false
+		}
+		var ok bool
+		keys, ok = cyphertext.AppendItem(keys, interface{}(name), cancellation)
+		if !ok {
+			return nil, false
+		}
 	}
 	return keys, true
 }
@@ -303,7 +350,8 @@ func evalSize(ctx Context, args []string) (interface{}, error) {
 	}
 	switch vv := v.(type) {
 	case string:
-		return int64(cyphertext.Length(vv)), nil
+		length, err := CharacterCount(vv, ctx.Cancellation)
+		return int64(length), err
 	case []interface{}:
 		return int64(len(vv)), nil
 	case []string:
@@ -358,7 +406,7 @@ func evalStringCase(ctx Context, args []string, function string, convert func(st
 	if !isString {
 		return nil, &TypeMismatchError{Function: function, Expected: "String", Value: v}
 	}
-	return convert(text), nil
+	return MapStringCase(text, function == "toUpper", ctx.Cancellation)
 }
 
 func evalCoalesce(ctx Context, args []string) (interface{}, error) {

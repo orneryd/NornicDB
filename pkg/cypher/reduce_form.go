@@ -73,8 +73,17 @@ func parseReduceForm(function, arguments string) (reduceForm, bool) {
 func runReduceForm(form reduceForm, accumulator interface{}, items []interface{},
 	step func(accumulator, item interface{}) (interface{}, error),
 	predicate func(accumulator, item interface{}) (interface{}, error)) (interface{}, error) {
+	return runReduceFormWithCancellation(form, accumulator, items, step, predicate, nil)
+}
+
+func runReduceFormWithCancellation(form reduceForm, accumulator interface{}, items []interface{},
+	step func(accumulator, item interface{}) (interface{}, error),
+	predicate func(accumulator, item interface{}) (interface{}, error), probe *pipelineCancellation) (interface{}, error) {
 	var result interface{} = true
 	for _, item := range items {
+		if probe != nil && !probe.check() {
+			return nil, probe.err
+		}
 		var err error
 		if accumulator, err = step(accumulator, item); err != nil {
 			return nil, err

@@ -5,7 +5,6 @@ import (
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"strings"
-	"unicode/utf8"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -46,9 +45,17 @@ func rowTypeOf(value interface{}) (interface{}, bool, error) {
 }
 
 func (e *StorageExecutor) evaluateRowArithmeticValues(operator byte, left, right interface{}) (interface{}, bool, error) {
+	return e.evaluateRowArithmeticValuesWithCancellation(operator, left, right, nil)
+}
+
+func (e *StorageExecutor) evaluateRowArithmeticValuesWithCancellation(operator byte, left, right interface{}, probe *pipelineCancellation) (interface{}, bool, error) {
 	switch operator {
 	case '+':
-		return rowArithmeticResult(operator, e.add(left, right), left, right)
+		value := e.addWithCancellation(left, right, probe)
+		if probe != nil && probe.err != nil {
+			return nil, false, probe.err
+		}
+		return rowArithmeticResult(operator, value, left, right)
 	case '-':
 		return rowArithmeticResult(operator, e.subtract(left, right), left, right)
 	case '*':
@@ -79,20 +86,52 @@ func (e *StorageExecutor) evaluateRowArithmeticValues(operator byte, left, right
 // doesn't handle the expression; and an error, the statement's error for an
 // expression it handles (a division by zero, a type error, a function's
 // argument error). Nothing in between turns an error into a value.
+//
+// evaluateRowValueWithCancellation is evaluateRowValue (the compiled
+// rowValueProgram, or the text) checked against probe: a canceled statement
+// stops before the expression and wins over its result.
+func (e *StorageExecutor) evaluateRowValueWithCancellation(expr string, values map[string]interface{}, probe *pipelineCancellation) (interface{}, bool, error) {
+	if probe == nil {
+		return e.evaluateRowValue(expr, values)
+	}
+	if !probe.check() {
+		return nil, false, probe.err
+	}
+	value, resolved, err := e.evaluateRowValue(expr, values)
+	if probe.err != nil {
+		return nil, false, probe.err
+	}
+	return value, resolved, err
+}
+
 // evaluateRowValueText is evaluateRowValue read from the text: one level of
 // the expression, its parts evaluated through evaluateRowValue. A
 // rowValueProgram keeps the decisions it makes about a text and calls it
 // for the forms it doesn't compile.
 func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	expr = strings.TrimSpace(expr)
+	return e.evaluateRowValueTextWithCancellation(expr, values, rowPipelineCancellation(values))
+}
+
+func (e *StorageExecutor) evaluateRowValueTextWithCancellation(expr string, values map[string]interface{}, probe *pipelineCancellation) (resultValue interface{}, resultResolved bool, resultErr error) {
+	if probe != nil {
+		if !probe.check() {
+			return nil, false, probe.err
+		}
+		defer func() {
+			if probe.err != nil {
+				resultValue, resultResolved, resultErr = nil, false, probe.err
+			}
+		}()
+	}
+	expr = trimSpaceWithCancellation(expr, probe)
 	if expr == "" {
 		return nil, false, nil
 	}
-	if inner, ok := stripEnclosingExpressionParentheses(expr); ok {
-		return e.evaluateRowValue(inner, values)
+	if inner, ok := stripEnclosingExpressionParenthesesWithCancellation(expr, probe); ok {
+		return e.evaluateRowValueWithCancellation(inner, values, probe)
 	}
-	if caseEnd := leadingCaseExpressionEnd(expr); caseEnd > 0 && strings.TrimSpace(expr[caseEnd:]) != "" && !hasTopLevelLogicalOperator(expr) {
-		caseValue, ok, err := e.evaluateRowCaseExpression(strings.TrimSpace(expr[:caseEnd]), values)
+	if caseEnd := leadingCaseExpressionEndWithCancellation(expr, probe); caseEnd > 0 && strings.TrimSpace(expr[caseEnd:]) != "" && !hasTopLevelLogicalOperator(expr) {
+		caseValue, ok, err := e.evaluateRowCaseExpressionWithCancellation(strings.TrimSpace(expr[:caseEnd]), values, probe)
 		if err != nil || !ok {
 			return nil, false, err
 		}
@@ -102,7 +141,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			scope[name] = value
 		}
 		scope[caseBinding] = caseValue
-		return e.evaluateRowValue(caseBinding+expr[caseEnd:], scope)
+		return e.evaluateRowValueWithCancellation(caseBinding+expr[caseEnd:], scope, probe)
 	}
 	if value, ok := values[expr]; ok && !isLiteralKeyword(expr) {
 		return value, true, nil
@@ -120,7 +159,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	// A plain property chain on a row variable (e.uuid, n.a.b) can't match
 	// any branch below but the property access at the end: resolve it there
 	// directly instead of scanning for literals, operators and subscripts.
-	if variable, chain, ok := rowPropertyChainShape(expr); ok {
+	if variable, chain, ok := rowPropertyChainShapeWithCancellation(expr, probe); ok {
 		if base, bound := values[variable]; bound {
 			value, ok := evaluateRowPropertyChain(base, chain)
 			if !ok {
@@ -131,7 +170,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	}
 	// A backtick-quoted variable (`my x`) names the same binding as its
 	// unquoted form, which is how projection aliases are keyed.
-	if name := normalizeProjectionColumnName(expr); name != expr {
+	if name := normalizeProjectionColumnNameWithCancellation(expr, probe); name != expr {
 		if value, ok := values[name]; ok {
 			return value, true, nil
 		}
@@ -149,24 +188,27 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		return entityHasAllLabelsOrTypes(values[variable], labels), true, nil
 	}
 	if isCaseExpression(expr) {
-		return e.evaluateRowCaseExpression(expr, values)
+		return e.evaluateRowCaseExpressionWithCancellation(expr, values, probe)
 	}
-	if value, matched, resolved, err := e.evaluateRowMapProjection(expr, values); matched {
+	if value, matched, resolved, err := e.evaluateRowMapProjectionWithCancellation(expr, values, probe); matched {
 		return value, resolved, err
 	}
-	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
+	if inner, enclosed := stripEnclosingRowDelimiterWithCancellation(expr, '{', '}', probe); enclosed {
 		result := make(map[string]interface{})
 		keys := make([]string, 0)
 		if inner == "" {
 			return result, true, nil
 		}
-		for _, pair := range splitTopLevelComma(inner) {
-			separator := findTopLevelMapKeyValueSeparator(pair)
+		for _, pair := range splitTopLevelCommaWithCancellation(inner, probe) {
+			if probe != nil && !probe.check() {
+				return nil, false, probe.err
+			}
+			separator := findTopLevelMapKeyValueSeparatorWithCancellation(pair, probe)
 			if separator <= 0 {
 				return nil, false, nil
 			}
-			key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
-			value, ok, err := e.evaluateRowValue(strings.TrimSpace(pair[separator+1:]), values)
+			key := normalizePropertyKeyWithCancellation(trimSpaceWithCancellation(pair[:separator], probe), probe)
+			value, ok, err := e.evaluateRowValueWithCancellation(strings.TrimSpace(pair[separator+1:]), values, probe)
 			if err != nil {
 				return nil, false, err
 			}
@@ -174,7 +216,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 				return nil, false, nil
 			}
 			if _, exists := result[key]; !exists {
-				keys = append(keys, key)
+				keys = appendPipelineItem(keys, key, probe)
 			}
 			result[key] = value
 		}
@@ -183,32 +225,40 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 		return result, true, nil
 	}
-	if value, matched, ok, err := e.evaluateRowListComprehension(expr, values); matched {
+	if value, matched, ok, err := e.evaluateRowListComprehension(expr, values, probe); matched {
 		return value, ok, err
 	}
 
-	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
+	if inner, enclosed := stripEnclosingRowDelimiterWithCancellation(expr, '[', ']', probe); enclosed {
 		if inner == "" {
 			return []interface{}{}, true, nil
 		}
-		items := splitTopLevelComma(inner)
+		items := splitTopLevelCommaWithCancellation(inner, probe)
+		if probe != nil && probe.err != nil {
+			return nil, false, probe.err
+		}
 		return rowListLiteral(len(items), func(i int) (interface{}, bool, error) {
-			return e.evaluateRowValue(items[i], values)
+			if probe != nil && !probe.check() {
+				return nil, false, probe.err
+			}
+			return e.evaluateRowValueWithCancellation(items[i], values, probe)
 		})
 	}
 
-	if value, matched, ok, err := e.evaluateRowQuantifier(expr, values, e.evaluateRowValue); matched {
+	if value, matched, ok, err := e.evaluateRowQuantifier(expr, values, func(text string, scope map[string]interface{}) (interface{}, bool, error) {
+		return e.evaluateRowValueWithCancellation(text, scope, probe)
+	}, probe); matched {
 		return value, ok, err
 	}
 
-	if function, argument, ok := parseFunctionCallWS(expr); ok {
+	if function, argument, ok := parseFunctionCallWSWithCancellation(expr, probe); ok {
 		var argumentErr error
 		temporalContext, _ := values[rowStatementContextKey].(context.Context)
 		if temporalContext == nil {
 			temporalContext = context.Background()
 		}
 		if value, handled, callErr := e.evaluateTemporalConstructor(temporalContext, func(inner string) interface{} {
-			value, evaluated, err := e.evaluateRowValue(inner, values)
+			value, evaluated, err := e.evaluateRowValueWithCancellation(inner, values, probe)
 			if err != nil && argumentErr == nil {
 				argumentErr = err
 			}
@@ -224,7 +274,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 				return nil, false, callErr
 			}
 			if value == nil && isTemporalConstructor(function) && strings.TrimSpace(argument) != "" {
-				input, resolved, err := e.evaluateRowValue(argument, values)
+				input, resolved, err := e.evaluateRowValueWithCancellation(argument, values, probe)
 				if err != nil {
 					return nil, false, err
 				}
@@ -268,16 +318,22 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		case "coalesce":
 			// EXISTS subqueries are non-null booleans and end coalesce
 			// immediately.
-			operands := splitTopLevelComma(argument)
+			operands := splitTopLevelCommaWithCancellation(argument, probe)
+			if probe != nil && probe.err != nil {
+				return nil, false, probe.err
+			}
 			return cypherfn.Coalesce(len(operands), func(index int) (interface{}, bool, error) {
+				if probe != nil && !probe.check() {
+					return nil, false, probe.err
+				}
 				trimmed := strings.TrimSpace(operands[index])
 				if matched, recognized := e.evaluateRowExistsPredicate(rowStatementContextOrBackground(values), trimmed, values); recognized {
 					return matched, true, nil
 				}
-				return e.evaluateRowValue(trimmed, values)
+				return e.evaluateRowValueWithCancellation(trimmed, values, probe)
 			})
 		case "length":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValueWithCancellation(argument, values, probe)
 			if err != nil {
 				return nil, false, err
 			}
@@ -287,7 +343,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			if value == nil {
 				return nil, true, nil
 			}
-			if path, isPath := toStringAnyMap(value); isPath {
+			if path, isPath := toStringAnyMapWithCancellation(value, probe); isPath {
 				if length, exists := path["length"]; exists {
 					switch distance := length.(type) {
 					case int:
@@ -297,7 +353,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 					}
 				}
 				if relationships, exists := path["relationships"]; exists {
-					return int64(len(toAnySlice(relationships))), true, nil
+					return int64(len(toAnySliceWithCancellation(relationships, probe))), true, nil
 				}
 			}
 			switch cypherValueKindOf(value) {
@@ -310,7 +366,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			parts := e.splitFunctionArgs(argument)
 			arguments := make([]interface{}, len(parts))
 			for index, part := range parts {
-				value, resolved, err := e.evaluateRowValue(strings.TrimSpace(part), values)
+				value, resolved, err := e.evaluateRowValueWithCancellation(strings.TrimSpace(part), values, probe)
 				if err != nil {
 					return nil, false, err
 				}
@@ -319,13 +375,13 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 				}
 				arguments[index] = value
 			}
-			result, err := evaluateCypherRange(arguments)
+			result, err := evaluateCypherRangeWithCancellation(arguments, probe)
 			if err != nil {
 				return nil, false, err
 			}
 			return result, true, nil
 		case "head", "last", "reverse", "size":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValueWithCancellation(argument, values, probe)
 			if err != nil {
 				return nil, false, err
 			}
@@ -333,15 +389,15 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 				return nil, false, nil
 			}
 			if strings.EqualFold(function, "size") {
-				return evaluateCypherSize(value)
+				return evaluateCypherSizeWithCancellation(value, probe)
 			}
-			result, err := evaluateListAccessFunction(lowerASCII(function), value)
+			result, err := evaluateListAccessFunctionWithCancellation(lowerASCII(function), value, probe)
 			if err != nil {
 				return nil, false, err
 			}
 			return result, true, nil
 		case "nodes", "relationships":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValueWithCancellation(argument, values, probe)
 			if err != nil {
 				return nil, false, err
 			}
@@ -351,7 +407,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			if value == nil {
 				return nil, true, nil
 			}
-			path, isPath := toStringAnyMap(value)
+			path, isPath := toStringAnyMapWithCancellation(value, probe)
 			if !isPath {
 				return nil, false, nil
 			}
@@ -361,7 +417,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			}
 			return nodes, hasNodes, nil
 		case "properties":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValueWithCancellation(argument, values, probe)
 			if err != nil {
 				return nil, false, err
 			}
@@ -385,11 +441,11 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			case storage.RemoteEntityValue:
 				return entity["properties"], true, nil
 			default:
-				object, isMap := toStringAnyMap(value)
+				object, isMap := toStringAnyMapWithCancellation(value, probe)
 				return object, isMap, nil
 			}
 		case "keys":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValueWithCancellation(argument, values, probe)
 			if err != nil {
 				return nil, false, err
 			}
@@ -408,13 +464,16 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 					return nil, true, nil
 				}
 			}
-			if object, isMap := toStringAnyMap(value); isMap {
+			if object, isMap := toStringAnyMapWithCancellation(value, probe); isMap {
 				value = object
 			}
-			keys, ok := cypherfn.PropertyKeys(value)
+			keys, ok := cypherfn.PropertyKeysWithCancellation(value, functionCancellation(probe))
+			if probe != nil && probe.err != nil {
+				return nil, false, probe.err
+			}
 			return keys, ok, nil
 		case "labels":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValueWithCancellation(argument, values, probe)
 			if err != nil {
 				return nil, false, err
 			}
@@ -427,7 +486,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			}
 			return result, true, nil
 		case "type":
-			value, resolved, err := e.evaluateRowValue(argument, values)
+			value, resolved, err := e.evaluateRowValueWithCancellation(argument, values, probe)
 			if err != nil {
 				return nil, false, err
 			}
@@ -445,10 +504,10 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	if value, logical, ok, err := evaluateLogicalExpression(expr, func(operand string) (interface{}, bool, error) {
 		if isOr && rowOperandRecordsFailure(operand) {
 			return deferredRowOperand(values, func(scope map[string]interface{}) (interface{}, bool, error) {
-				return e.evaluateRowValue(operand, scope)
+				return e.evaluateRowValueWithCancellation(operand, scope, probe)
 			})
 		}
-		return e.evaluateRowValue(operand, values)
+		return e.evaluateRowValueWithCancellation(operand, values, probe)
 	}); logical {
 		if err != nil || !ok {
 			return nil, false, err
@@ -458,11 +517,11 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 
 	// =~ raises a type or pattern error, which the comparison chain can't.
 	if left, right, regex := splitByOperatorOutsideCase(expr, "=~", false, true); regex {
-		leftValue, leftOK, err := e.evaluateRowValue(left, values)
+		leftValue, leftOK, err := e.evaluateRowValueWithCancellation(left, values, probe)
 		if err != nil {
 			return nil, false, err
 		}
-		rightValue, rightOK, err := e.evaluateRowValue(right, values)
+		rightValue, rightOK, err := e.evaluateRowValueWithCancellation(right, values, probe)
 		if err != nil {
 			return nil, false, err
 		}
@@ -479,23 +538,28 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		return matched, true, nil
 	}
 	result, comparison, resolved, err := evaluateComparisonChain(expr, func(operand string) (interface{}, bool, error) {
-		return e.evaluateRowValue(operand, values)
-	}, compareCypherPredicateValue, rowIsCypher25(values))
+		return e.evaluateRowValueWithCancellation(operand, values, probe)
+	}, func(left, right interface{}, operator string) interface{} {
+		return compareCypherPredicateValueWithCancellation(left, right, operator, probe)
+	}, rowIsCypher25(values))
 	if comparison {
+		if probe != nil && probe.err != nil {
+			return nil, false, probe.err
+		}
 		return result, resolved, err
 	}
 	if operand, negated, spec, isTypePredicate, err := splitTypePredicate(expr); isTypePredicate {
 		if err != nil {
 			return nil, false, err
 		}
-		value, ok, err := e.evaluateRowValue(operand, values)
+		value, ok, err := e.evaluateRowValueWithCancellation(operand, values, probe)
 		if err != nil || !ok {
 			return nil, false, err
 		}
 		return evaluateTypePredicate(value, negated, spec), true, nil
 	}
 	if operand, negated, form, isNormalization := splitNormalizationPredicate(expr); isNormalization {
-		value, ok, err := e.evaluateRowValue(operand, values)
+		value, ok, err := e.evaluateRowValueWithCancellation(operand, values, probe)
 		if err != nil || !ok {
 			return nil, false, err
 		}
@@ -509,7 +573,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		{suffix: " IS NULL"},
 	} {
 		if hasSuffixFoldASCII(expr, lowerASCII(predicate.suffix)) {
-			value, ok, err := e.evaluateRowValue(strings.TrimSpace(expr[:len(expr)-len(predicate.suffix)]), values)
+			value, ok, err := e.evaluateRowValueWithCancellation(strings.TrimSpace(expr[:len(expr)-len(predicate.suffix)]), values, probe)
 			if err != nil {
 				return nil, false, err
 			}
@@ -521,14 +585,14 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	}
 
 	if left, right, ok := splitByOperatorOutsideCase(expr, " NOT IN ", true, true); ok {
-		value, evaluated, err := e.evaluateRowMembershipValue(left, right, values)
+		value, evaluated, err := e.evaluateRowMembershipValueWithCancellation(left, right, values, probe)
 		if err != nil || !evaluated || value == nil {
 			return value, evaluated, err
 		}
 		return !value.(bool), true, nil
 	}
 	if left, right, ok := splitByOperatorOutsideCase(expr, " IN ", true, true); ok {
-		return e.evaluateRowMembershipValue(left, right, values)
+		return e.evaluateRowMembershipValueWithCancellation(left, right, values, probe)
 	}
 
 	for _, predicate := range []struct {
@@ -543,11 +607,11 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		if !matched {
 			continue
 		}
-		leftValue, leftOK, err := e.evaluateRowValue(left, values)
+		leftValue, leftOK, err := e.evaluateRowValueWithCancellation(left, values, probe)
 		if err != nil {
 			return nil, false, err
 		}
-		rightValue, rightOK, err := e.evaluateRowValue(right, values)
+		rightValue, rightOK, err := e.evaluateRowValueWithCancellation(right, values, probe)
 		if err != nil {
 			return nil, false, err
 		}
@@ -560,7 +624,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	// The subscript is the bracket group that closes expr (rowSubscriptStart):
 	// its key may hold brackets of its own (m[r[k]], m[l[0].id]).
 	if open := rowSubscriptStart(expr); open > 0 {
-		base, ok, err := e.evaluateRowValue(expr[:open], values)
+		base, ok, err := e.evaluateRowValueWithCancellation(expr[:open], values, probe)
 		if err != nil {
 			return nil, false, err
 		}
@@ -571,7 +635,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		if from, to, slice := staticSliceBounds(subscript); slice {
 			return e.evaluateRowListSlice(base, strings.TrimSpace(from), strings.TrimSpace(to), values)
 		}
-		indexValue, ok, err := e.evaluateRowValue(subscript, values)
+		indexValue, ok, err := e.evaluateRowValueWithCancellation(subscript, values, probe)
 		if err != nil {
 			return nil, false, err
 		}
@@ -583,7 +647,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 		_, isNode := base.(*storage.Node)
 		_, isRelationship := base.(*storage.Edge)
-		if _, isObject := toStringAnyMap(base); isObject || isNode || isRelationship {
+		if _, isObject := toStringAnyMapWithCancellation(base, probe); isObject || isNode || isRelationship {
 			// A dynamic property access: n[key] is n.key.
 			key, isString := indexValue.(string)
 			if !isString {
@@ -606,7 +670,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 		// Only a list is indexed by an integer: n.big[0] on a number is a
 		// TypeError wherever it is read, a WHERE included (#907).
-		items, isList := cypherListValue(base)
+		items, isList := cypherListValueWithCancellation(base, probe)
 		if !isList {
 			return nil, false, subscriptReceiverError(base, indexValue)
 		}
@@ -620,26 +684,26 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	}
 
 	if left, right, operator, ok := splitRowArithmeticTier(expr, "+-"); ok {
-		leftValue, leftOK, err := e.evaluateRowValue(left, values)
+		leftValue, leftOK, err := e.evaluateRowValueWithCancellation(left, values, probe)
 		if err != nil {
 			return nil, false, err
 		}
-		rightValue, rightOK, err := e.evaluateRowValue(right, values)
+		rightValue, rightOK, err := e.evaluateRowValueWithCancellation(right, values, probe)
 		if err != nil {
 			return nil, false, err
 		}
 		if !leftOK || !rightOK {
 			return nil, false, nil
 		}
-		return e.evaluateRowArithmeticValues(operator, leftValue, rightValue)
+		return e.evaluateRowArithmeticValuesWithCancellation(operator, leftValue, rightValue, probe)
 	}
 
 	if left, right, operator, ok := splitRowArithmeticTier(expr, "*/%"); ok {
-		leftValue, leftOK, err := e.evaluateRowValue(left, values)
+		leftValue, leftOK, err := e.evaluateRowValueWithCancellation(left, values, probe)
 		if err != nil {
 			return nil, false, err
 		}
-		rightValue, rightOK, err := e.evaluateRowValue(right, values)
+		rightValue, rightOK, err := e.evaluateRowValueWithCancellation(right, values, probe)
 		if err != nil {
 			return nil, false, err
 		}
@@ -651,15 +715,15 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 				return value, true, nil
 			}
 		}
-		return e.evaluateRowArithmeticValues(operator, leftValue, rightValue)
+		return e.evaluateRowArithmeticValuesWithCancellation(operator, leftValue, rightValue, probe)
 	}
 
 	if left, right, _, ok := splitRowArithmeticTier(expr, "^"); ok {
-		leftValue, leftOK, err := e.evaluateRowValue(left, values)
+		leftValue, leftOK, err := e.evaluateRowValueWithCancellation(left, values, probe)
 		if err != nil {
 			return nil, false, err
 		}
-		rightValue, rightOK, err := e.evaluateRowValue(right, values)
+		rightValue, rightOK, err := e.evaluateRowValueWithCancellation(right, values, probe)
 		if err != nil {
 			return nil, false, err
 		}
@@ -681,7 +745,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	}
 
 	if len(expr) > 1 && (expr[0] == '-' || expr[0] == '+') {
-		value, ok, err := e.evaluateRowValue(strings.TrimSpace(expr[1:]), values)
+		value, ok, err := e.evaluateRowValueWithCancellation(strings.TrimSpace(expr[1:]), values, probe)
 		if err != nil {
 			return nil, false, err
 		}
@@ -730,7 +794,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			}
 			dot += next + 1
 		}
-		base, ok, err := e.evaluateRowValue(strings.TrimSpace(expr[:dot]), values)
+		base, ok, err := e.evaluateRowValueWithCancellation(strings.TrimSpace(expr[:dot]), values, probe)
 		if err != nil {
 			return nil, false, err
 		}
@@ -820,6 +884,10 @@ func rowArithmeticSignIsUnary(expr string, index int) bool {
 // (comparability): comparable is false for values that have no order between
 // them (different kinds, durations, points, null inside a list or map).
 func compareCypherOrderedValues(left, right interface{}) (int, bool) {
+	return compareCypherOrderedValuesWithCancellation(left, right, nil)
+}
+
+func compareCypherOrderedValuesWithCancellation(left, right interface{}, probe *pipelineCancellation) (int, bool) {
 	if comparison, temporal := compareTemporalOrdering(left, right); temporal {
 		return comparison, true
 	}
@@ -847,14 +915,7 @@ func compareCypherOrderedValues(left, right interface{}) (int, bool) {
 		if !leftIsText || !rightIsText {
 			return 0, false
 		}
-		switch {
-		case leftText < rightText:
-			return -1, true
-		case leftText > rightText:
-			return 1, true
-		default:
-			return 0, true
-		}
+		return comparePipelineStrings(leftText, rightText, probe), true
 	}
 	leftBoolean, leftIsBoolean := left.(bool)
 	rightBoolean, rightIsBoolean := right.(bool)
@@ -871,8 +932,8 @@ func compareCypherOrderedValues(left, right interface{}) (int, bool) {
 			return 1, true
 		}
 	}
-	leftList, leftIsList := cypherListValue(left)
-	rightList, rightIsList := cypherListValue(right)
+	leftList, leftIsList := cypherListValueWithCancellation(left, probe)
+	rightList, rightIsList := cypherListValueWithCancellation(right, probe)
 	if leftIsList || rightIsList {
 		if !leftIsList || !rightIsList {
 			return 0, false
@@ -882,7 +943,10 @@ func compareCypherOrderedValues(left, right interface{}) (int, bool) {
 			sharedLength = len(rightList)
 		}
 		for index := 0; index < sharedLength; index++ {
-			comparison, comparable := compareCypherComparableValues(leftList[index], rightList[index])
+			comparison, comparable := compareCypherComparableValuesWithCancellation(leftList[index], rightList[index], probe)
+			if probe != nil && probe.err != nil {
+				return 0, false
+			}
 			if !comparable || comparison != 0 {
 				return comparison, comparable
 			}
@@ -897,7 +961,7 @@ func compareCypherOrderedValues(left, right interface{}) (int, bool) {
 		}
 	}
 	// Maps, nodes, relationships and paths, after the scalar kinds above.
-	if comparison, comparable, structured := compareCypherStructuredValues(left, right, compareCypherComparableValues); structured {
+	if comparison, comparable, structured := compareCypherStructuredValuesWithCancellation(left, right, func(a, b interface{}) (int, bool) { return compareCypherComparableValuesWithCancellation(a, b, probe) }, probe); structured {
 		return comparison, comparable
 	}
 	return 0, false
@@ -922,6 +986,19 @@ func compareCypherPredicateValue[L, R any](left L, right R, operator string) int
 }
 
 func compareCypherPredicateGeneralValue(left, right interface{}, operator string) interface{} {
+	return compareCypherPredicateValueWithCancellation(left, right, operator, nil)
+}
+
+// compareCypherPredicateValueWithCancellation is compareCypherPredicateValue
+// on boxed values, its structural equality and ordering checked against probe.
+func compareCypherPredicateValueWithCancellation(left, right interface{}, operator string, probe *pipelineCancellation) interface{} {
+	if operator == "=" || operator == "<>" || operator == "!=" {
+		equal, known := cypherEqualityWithCancellation(left, right, probe).(bool)
+		if !known {
+			return nil
+		}
+		return equal == (operator == "=")
+	}
 	if left == nil || right == nil {
 		return nil
 	}
@@ -942,12 +1019,12 @@ func compareCypherPredicateGeneralValue(left, right interface{}, operator string
 			return nil
 		}
 	}
-	comparison, comparable := compareCypherOrderedValues(left, right)
+	comparison, comparable := compareCypherOrderedValuesWithCancellation(left, right, probe)
 	if !comparable {
 		// Values with no order between them (two durations, two points) are
 		// still <= and >= when equal, as Neo4j reads a <= b as a < b OR a = b.
 		if operator == "<=" || operator == ">=" {
-			if equal, known := cypherEquality(left, right).(bool); known && equal {
+			if equal, known := cypherEqualityWithCancellation(left, right, probe).(bool); known && equal {
 				return true
 			}
 		}
@@ -1047,12 +1124,19 @@ func cypherListSlice(base, lower, upper interface{}, hasLower, hasUpper bool) (i
 // row. This keeps CASE semantics available after WITH/UNWIND and in the
 // converged pipeline, where bindings are not limited to graph entities.
 func (e *StorageExecutor) evaluateRowCaseExpression(expr string, values map[string]interface{}) (interface{}, bool, error) {
+	return e.evaluateRowCaseExpressionWithCancellation(expr, values, rowPipelineCancellation(values))
+}
+
+func (e *StorageExecutor) evaluateRowCaseExpressionWithCancellation(expr string, values map[string]interface{}, probe *pipelineCancellation) (interface{}, bool, error) {
 	parsed, err := parseCaseExpression(expr)
 	if err != nil {
 		return nil, false, nil
 	}
 	return runCaseExpression(parsed, rowIsCypher25(values), func(part caseValuePart, _ int, text string) (interface{}, bool, error) {
-		value, ok, err := e.evaluateRowValue(text, values)
+		if probe != nil && !probe.check() {
+			return nil, false, probe.err
+		}
+		value, ok, err := e.evaluateRowValueWithCancellation(text, values, probe)
 		if part == caseWhen && !parsed.isSimple && err == nil && !ok {
 			ctx := rowStatementContextOrBackground(values)
 			return e.evaluateRowPredicate(ctx, text, values), true, getExpressionFailure(ctx)
@@ -1064,16 +1148,20 @@ func (e *StorageExecutor) evaluateRowCaseExpression(expr string, values map[stri
 // evaluateRowListComprehension evaluates a comprehension against typed row
 // bindings. The loop value remains a node, relationship, map, path, or scalar;
 // it is never converted to query text.
-func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[string]interface{}) (interface{}, bool, bool, error) {
-	inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']')
+func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[string]interface{}, budgets ...*pipelineCancellation) (interface{}, bool, bool, error) {
+	probe := rowPipelineCancellation(values)
+	if len(budgets) > 0 {
+		probe = budgets[0]
+	}
+	inner, enclosed := stripEnclosingRowDelimiterWithCancellation(expr, '[', ']', probe)
 	if !enclosed {
 		return nil, false, false, nil
 	}
-	variable, listExpression, predicate, projection, matched := parseListComprehension(inner)
+	variable, listExpression, predicate, projection, matched := parseListComprehensionWithCancellation(inner, probe)
 	if !matched {
 		return nil, false, false, nil
 	}
-	listValue, ok, err := e.evaluateRowValue(listExpression, values)
+	listValue, ok, err := e.evaluateRowValueWithCancellation(listExpression, values, probe)
 	if err != nil {
 		return nil, true, false, err
 	}
@@ -1087,9 +1175,16 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 		// [x IN v] is v itself, list or not, as in Neo4j.
 		return listValue, true, true, nil
 	}
+	items := coerceToUnwindItemsWithCancellation(listValue, probe)
+	if probe != nil && probe.err != nil {
+		return nil, true, false, probe.err
+	}
 	// One scope for every element, as in evaluateRowQuantifier.
 	scope := make(map[string]interface{}, len(values)+1)
 	for name, value := range values {
+		if probe != nil && !probe.check() {
+			return nil, true, false, probe.err
+		}
 		scope[name] = value
 	}
 	var holds func() (bool, bool, error)
@@ -1098,33 +1193,50 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 		// A pattern predicate reads the graph: the row predicate evaluator
 		// tests it as WHERE does (#907).
 		holds = func() (bool, bool, error) {
+			if probe != nil && !probe.check() {
+				return false, false, probe.err
+			}
 			ctx := withExpressionFailureSlot(rowStatementContextOrBackground(scope))
 			held := e.evaluateRowPredicateText(ctx, predicate, scope)
 			return held, true, getExpressionFailure(ctx)
 		}
 	case predicate != "":
 		holds = func() (bool, bool, error) {
-			return rowConditionHolds(e.evaluateRowValue(predicate, scope))
+			if probe != nil && !probe.check() {
+				return false, false, probe.err
+			}
+			return rowConditionHolds(e.evaluateRowValueWithCancellation(predicate, scope, probe))
 		}
 	}
 	var project func() (interface{}, bool, error)
 	if projection != "" {
-		project = func() (interface{}, bool, error) { return e.evaluateRowValue(projection, scope) }
+		project = func() (interface{}, bool, error) {
+			if holds == nil && probe != nil && !probe.check() {
+				return nil, false, probe.err
+			}
+			return e.evaluateRowValueWithCancellation(projection, scope, probe)
+		}
 	}
-	value, resolved, err := rowComprehensionLoop(coerceToUnwindItems(listValue), func(item interface{}) { scope[variable] = item }, holds, project)
+	value, resolved, err := rowComprehensionLoop(items, func(item interface{}) { scope[variable] = item }, holds, project)
+	if probe != nil && probe.err != nil {
+		return nil, true, false, probe.err
+	}
 	return value, true, resolved, err
 }
 
-func parseListComprehension(inner string) (variable, listExpression, predicate, projection string, ok bool) {
+func parseListComprehension(inner string) (string, string, string, string, bool) {
+	return parseListComprehensionWithCancellation(inner, nil)
+}
+func parseListComprehensionWithCancellation(inner string, probe *pipelineCancellation) (variable, listExpression, predicate, projection string, ok bool) {
 	// The declaration as every reader reads it (bindingDeclaration): x IN[1]
 	// and x /* … */ IN l too.
-	variable, _, listStart, declared := bindingDeclaration(inner, 0)
+	variable, _, listStart, declared := bindingDeclarationWithCancellation(inner, 0, probe)
 	if !declared {
 		return "", "", "", "", false
 	}
 	rest := inner[listStart:]
-	whereIndex := findListComprehensionToken(rest, " WHERE ")
-	pipeIndex := findListComprehensionToken(rest, "|")
+	whereIndex := findListComprehensionTokenWithCancellation(rest, " WHERE ", probe)
+	pipeIndex := findListComprehensionTokenWithCancellation(rest, "|", probe)
 	endList := len(rest)
 	if whereIndex >= 0 && whereIndex < endList {
 		endList = whereIndex
@@ -1132,7 +1244,7 @@ func parseListComprehension(inner string) (variable, listExpression, predicate, 
 	if pipeIndex >= 0 && pipeIndex < endList {
 		endList = pipeIndex
 	}
-	listExpression = strings.TrimSpace(rest[:endList])
+	listExpression = trimSpaceWithCancellation(rest[:endList], probe)
 	if listExpression == "" {
 		return "", "", "", "", false
 	}
@@ -1141,25 +1253,34 @@ func parseListComprehension(inner string) (variable, listExpression, predicate, 
 		if pipeIndex > whereIndex {
 			conditionEnd = pipeIndex
 		}
-		predicate = strings.TrimSpace(rest[whereIndex+len(" WHERE ") : conditionEnd])
+		predicate = trimSpaceWithCancellation(rest[whereIndex+len(" WHERE "):conditionEnd], probe)
 		if predicate == "" {
 			return "", "", "", "", false
 		}
 	}
 	if pipeIndex >= 0 {
-		projection = strings.TrimSpace(rest[pipeIndex+1:])
+		projection = trimSpaceWithCancellation(rest[pipeIndex+1:], probe)
 		if projection == "" {
 			return "", "", "", "", false
 		}
+	}
+	if probe != nil && probe.err != nil {
+		return "", "", "", "", false
 	}
 	return variable, listExpression, predicate, projection, true
 }
 
 func findListComprehensionToken(expression, token string) int {
+	return findListComprehensionTokenWithCancellation(expression, token, nil)
+}
+func findListComprehensionTokenWithCancellation(expression, token string, probe *pipelineCancellation) int {
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
 	var quote rune
 	escaped := false
 	for index, current := range expression {
+		if probe != nil && !probe.check() {
+			return -1
+		}
 		if quote != 0 {
 			if escaped {
 				escaped = false
@@ -1191,7 +1312,10 @@ func findListComprehensionToken(expression, token string) int {
 			braceDepth--
 		}
 		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && index+len(token) <= len(expression) && strings.EqualFold(expression[index:index+len(token)], token) &&
-			!insideCaseBlock(expression, index) {
+			!insideCaseBlockWithCancellation(expression, index, probe) {
+			if probe != nil && probe.err != nil {
+				return -1
+			}
 			return index
 		}
 	}
@@ -1215,13 +1339,17 @@ type rowValueEvaluator func(expr string, values map[string]interface{}) (interfa
 // evaluateRowQuantifier is all / any / none / single(x IN list WHERE p) for a
 // row, each predicate evaluated by evaluate with x bound; matched is false for
 // any other expression.
-func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]interface{}, evaluate rowValueEvaluator) (interface{}, bool, bool, error) {
-	function, inner, isFunction := parseFunctionCallWS(expr)
-	function = lowerASCII(function)
+func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]interface{}, evaluate rowValueEvaluator, budgets ...*pipelineCancellation) (interface{}, bool, bool, error) {
+	probe := rowPipelineCancellation(values)
+	if len(budgets) > 0 {
+		probe = budgets[0]
+	}
+	function, inner, isFunction := parseFunctionCallWSWithCancellation(expr, probe)
+	function = lowerASCIIWithCancellation(function, probe)
 	if !isFunction || !isQuantifierFunction(function) {
 		return nil, false, false, nil
 	}
-	variable, listExpression, predicate, parsed := parseQuantifierArguments(inner)
+	variable, listExpression, predicate, parsed := parseQuantifierArgumentsWithCancellation(inner, probe)
 	if !parsed {
 		return nil, true, false, nil
 	}
@@ -1235,16 +1363,29 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 	if listValue == nil {
 		return nil, true, true, nil
 	}
+	items := coerceToUnwindItemsWithCancellation(listValue, probe)
+	if probe != nil && probe.err != nil {
+		return nil, true, false, probe.err
+	}
 	// One scope for every element, the variable rebound per element, as
 	// reduce does: copying the row per element cost an allocation of the
 	// whole row for each one (#1214).
 	scope := make(map[string]interface{}, len(values)+1)
 	for name, value := range values {
+		if probe != nil && !probe.check() {
+			return nil, true, false, probe.err
+		}
 		scope[name] = value
 	}
-	value, resolved, err := rowQuantifierLoop(function, coerceToUnwindItems(listValue), func(item interface{}) { scope[variable] = item }, func() (interface{}, bool, error) {
+	value, resolved, err := rowQuantifierLoop(function, items, func(item interface{}) { scope[variable] = item }, func() (interface{}, bool, error) {
+		if probe != nil && !probe.check() {
+			return nil, false, probe.err
+		}
 		return evaluate(predicate, scope)
 	})
+	if probe != nil && probe.err != nil {
+		return nil, true, false, probe.err
+	}
 	return value, true, resolved, err
 }
 
@@ -1380,15 +1521,21 @@ func nextRowPropertySeparator(chain string, start int) int {
 }
 
 func stripEnclosingExpressionParentheses(expr string) (string, bool) {
+	return stripEnclosingExpressionParenthesesWithCancellation(expr, nil)
+}
+func stripEnclosingExpressionParenthesesWithCancellation(expr string, probe *pipelineCancellation) (string, bool) {
 	if len(expr) < 2 || expr[0] != '(' || expr[len(expr)-1] != ')' {
 		return "", false
 	}
 	depth := 0
 	quote := byte(0)
 	for i := 0; i < len(expr); i++ {
+		if probe != nil && !probe.check() {
+			return "", false
+		}
 		character := expr[i]
 		if quote != 0 {
-			if character == quote && !isBackslashEscaped(expr, i) {
+			if character == quote && !isBackslashEscapedWithCancellation(expr, i, probe) {
 				quote = 0
 			}
 			continue
@@ -1413,16 +1560,23 @@ func stripEnclosingExpressionParentheses(expr string) (string, bool) {
 	if depth != 0 || quote != 0 {
 		return "", false
 	}
-	return strings.TrimSpace(expr[1 : len(expr)-1]), true
+	inner := trimSpaceWithCancellation(expr[1:len(expr)-1], probe)
+	return inner, probe == nil || probe.err == nil
 }
 
 func stripEnclosingRowDelimiter(expr string, open, close byte) (string, bool) {
+	return stripEnclosingRowDelimiterWithCancellation(expr, open, close, nil)
+}
+func stripEnclosingRowDelimiterWithCancellation(expr string, open, close byte, probe *pipelineCancellation) (string, bool) {
 	if len(expr) < 2 || expr[0] != open || expr[len(expr)-1] != close {
 		return "", false
 	}
 	depth := 0
 	quote := byte(0)
 	for index := 0; index < len(expr); index++ {
+		if probe != nil && !probe.check() {
+			return "", false
+		}
 		current := expr[index]
 		if quote != 0 {
 			if current == quote {
@@ -1454,7 +1608,8 @@ func stripEnclosingRowDelimiter(expr string, open, close byte) (string, bool) {
 	if depth != 0 || quote != 0 {
 		return "", false
 	}
-	return strings.TrimSpace(expr[1 : len(expr)-1]), true
+	inner := trimSpaceWithCancellation(expr[1:len(expr)-1], probe)
+	return inner, probe == nil || probe.err == nil
 }
 
 func rowSubscriptIndex(value interface{}) (int, bool) {
@@ -1517,7 +1672,7 @@ func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expressi
 // projection: every clock call of one statement then reads one instant
 // (#872). values itself is not modified.
 func rowValuesWithStatementContext(ctx context.Context, expression string, values map[string]interface{}) map[string]interface{} {
-	if _, bound := values[rowStatementContextKey]; bound || !rowPredicateNeedsStatementContext(expression) {
+	if _, bound := values[rowStatementContextKey]; bound || ctx.Done() == nil && !rowPredicateNeedsStatementContext(expression) {
 		return values
 	}
 	return rowValuesBindingStatementContext(ctx, values)
@@ -1533,7 +1688,7 @@ func rowValuesBindingStatementContext(ctx context.Context, values map[string]int
 	for key, value := range values {
 		extended[key] = value
 	}
-	extended[rowStatementContextKey] = ctx
+	extended[rowStatementContextKey] = withPipelineCancellation(ctx)
 	return extended
 }
 
@@ -1786,10 +1941,14 @@ func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Con
 // of the same evaluator, #728): null stays null, a string sizes in runes, a
 // list or array in items, and anything else is the argument type error.
 func evaluateCypherSize(value interface{}) (interface{}, bool, error) {
+	return evaluateCypherSizeWithCancellation(value, nil)
+}
+
+func evaluateCypherSizeWithCancellation(value interface{}, probe *pipelineCancellation) (interface{}, bool, error) {
 	if value == nil {
 		return nil, true, nil
 	}
-	length, ok, err := evaluateCypherSizeInteger(value)
+	length, ok, err := evaluateCypherSizeIntegerWithCancellation(value, probe)
 	if !ok || err != nil {
 		return nil, ok, err
 	}
@@ -1797,10 +1956,13 @@ func evaluateCypherSize(value interface{}) (interface{}, bool, error) {
 }
 
 func evaluateCypherSizeInteger(value interface{}) (int64, bool, error) {
+	return evaluateCypherSizeIntegerWithCancellation(value, nil)
+}
+
+func evaluateCypherSizeIntegerWithCancellation(value interface{}, probe *pipelineCancellation) (int64, bool, error) {
 	if text, isString := value.(string); isString {
-		// RuneCountInString counts code points the way len([]rune(s)) does
-		// (invalid UTF-8 bytes become U+FFFD), without the allocation.
-		return int64(utf8.RuneCountInString(text)), true, nil
+		length, err := cypherfn.CharacterCount(text, functionCancellation(probe))
+		return int64(length), err == nil, err
 	}
 	if sized, ok := value.(cypherfn.Sized); ok {
 		return sized.CypherSize(), true, nil
@@ -1959,18 +2121,25 @@ func containsRelationshipPattern(expression string) bool {
 }
 
 func (e *StorageExecutor) evaluateRowMembershipValue(left, right string, values map[string]interface{}) (interface{}, bool, error) {
-	needle, leftOK, err := e.evaluateRowValue(left, values)
+	return e.evaluateRowMembershipValueWithCancellation(left, right, values, rowPipelineCancellation(values))
+}
+
+func (e *StorageExecutor) evaluateRowMembershipValueWithCancellation(left, right string, values map[string]interface{}, probe *pipelineCancellation) (interface{}, bool, error) {
+	needle, leftOK, err := e.evaluateRowValueWithCancellation(left, values, probe)
 	if err != nil {
 		return nil, false, err
 	}
-	haystack, rightOK, err := e.evaluateRowValue(right, values)
+	haystack, rightOK, err := e.evaluateRowValueWithCancellation(right, values, probe)
 	if err != nil {
 		return nil, false, err
 	}
 	if !leftOK || !rightOK {
 		return nil, false, nil
 	}
-	value, ok := rowMembershipOfValues(needle, haystack, isRowIdentityExpression(left))
+	value, ok := rowMembershipOfValuesWithCancellation(needle, haystack, isRowIdentityExpression(left), probe)
+	if probe != nil && probe.err != nil {
+		return nil, false, probe.err
+	}
 	return value, ok, nil
 }
 
@@ -1978,10 +2147,14 @@ func (e *StorageExecutor) evaluateRowMembershipValue(left, right string, values 
 // Cypher's three-valued rules. identity is set when the needle is an id() /
 // elementId() expression, compared by its identity payload.
 func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interface{}, bool) {
+	return rowMembershipOfValuesWithCancellation(needle, haystack, identity, nil)
+}
+
+func rowMembershipOfValuesWithCancellation(needle, haystack interface{}, identity bool, probe *pipelineCancellation) (interface{}, bool) {
 	if haystack == nil {
 		return nil, true
 	}
-	items := coerceToUnwindItems(haystack)
+	items := coerceToUnwindItemsWithCancellation(haystack, probe)
 	if len(items) == 0 {
 		return false, true
 	}
@@ -1994,10 +2167,16 @@ func rowMembershipOfValues(needle, haystack interface{}, identity bool) (interfa
 	}
 	containsUnknown := false
 	for _, item := range items {
+		if probe != nil && !probe.check() {
+			return nil, false
+		}
 		if identityMembership {
 			item = rowIdentityPayload(item)
 		}
-		equal := cypherEquality(needle, item)
+		equal := cypherEqualityWithCancellation(needle, item, probe)
+		if probe != nil && probe.err != nil {
+			return nil, false
+		}
 		if equal == nil {
 			containsUnknown = true
 			continue

@@ -50,14 +50,31 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	cypher = normalizeCypherSyntaxConfusables(cypher)
-	if config.IsCypherQueryNormalizationEnabled() {
-		cypher, _ = canonicalizeQueryText(cypher)
+	ctx = withPipelineCancellation(withExpressionFailureSlot(ctx))
+	preparationProbe := parameterCancellationForContext(ctx)
+	cypher = normalizeCypherSyntaxConfusablesWithCancellation(cypher, preparationProbe)
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
 	}
-	cypher, _ = canonicalizeNumericLiterals(cypher)
-	cypher, _ = canonicalizeFunctionAliases(cypher)
+	if config.IsCypherQueryNormalizationEnabled() {
+		cypher, _ = canonicalizeQueryTextWithCancellation(cypher, preparationProbe)
+		if preparationProbe != nil && preparationProbe.err != nil {
+			return nil, preparationProbe.err
+		}
+	}
+	cypher, _ = canonicalizeNumericLiteralsWithCancellation(cypher, preparationProbe)
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
+	cypher, _ = canonicalizeFunctionAliasesWithCancellation(cypher, preparationProbe)
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
 	if cypherVersionFromContext(ctx) == "25" {
-		cypher, _ = separateCypher25Parameters(cypher)
+		cypher, _ = separateCypher25ParametersWithCancellation(cypher, preparationProbe)
+		if preparationProbe != nil && preparationProbe.err != nil {
+			return nil, preparationProbe.err
+		}
 	}
 	cypher, _, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
@@ -65,15 +82,18 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	cypher, _ = desugarStandaloneOrderClauses(cypher)
 	cypher = strings.TrimSpace(cypher)
-	cypher = trimTrailingStatementDelimiters(cypher)
-	if err := e.validateStatementFraming(cypher); err != nil {
+	cypher = trimTrailingStatementDelimitersWithCancellation(cypher, preparationProbe)
+	if err := e.validateStatementFramingWithCancellation(cypher, preparationProbe); err != nil {
 		return nil, err
 	}
 	finishTerminated := false
-	if stripped, ok := stripUnionBranchFinishes(cypher); ok {
-		cypher = strings.TrimSpace(stripped)
+	if stripped, ok := stripUnionBranchFinishesWithCancellation(cypher, preparationProbe); ok {
+		cypher = trimSpaceWithCancellation(stripped, preparationProbe)
 		finishTerminated = true
 		ctx = withFinishedStatement(ctx, cypher)
+	}
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
 	}
 	if cypher == "" {
 		if finishTerminated {
@@ -117,7 +137,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 
 	// Basic syntax validation to preserve existing error behavior.
-	if err := e.validateSyntax(cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
+	if err := e.validateSyntaxWithCancellation(cypher, cypherVersionFromContext(ctx) == "25", parameterCancellationForContext(ctx)); err != nil {
 		return nil, err
 	}
 	if err := e.validateDuplicateReturnColumnName(cypher, quotedVariableNamesFor(ctx, cypher)); err != nil {
@@ -128,12 +148,21 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 
 	params = mergeInheritedQueryParams(ctx, params)
-	params = normalizeQueryParameters(params)
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
+	params = normalizeQueryParametersWithCancellation(params, parameterCancellationForContext(ctx))
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, failure
+	}
 	ctx = withQueryParams(ctx, params)
 	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {
 		return nil, err
 	}
-	upper := e.cachedUpperQuery(cypher)
+	upper := e.cachedUpperQueryWithCancellation(cypher, preparationProbe)
+	if preparationProbe != nil && preparationProbe.err != nil {
+		return nil, preparationProbe.err
+	}
 
 	// If we're in an explicit transaction, execute within it.
 	if e.txContext != nil && e.txContext.active {

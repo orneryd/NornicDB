@@ -18,15 +18,26 @@ import (
 )
 
 func prevWordEqualsIgnoreCase(s string, pos int, word string) bool {
+	return prevWordEqualsIgnoreCaseWithCancellation(s, pos, word, nil)
+}
+func prevWordEqualsIgnoreCaseWithCancellation(s string, pos int, word string, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
+
 	if pos <= 0 {
 		return false
 	}
-	i := lastLiveByte(s, pos)
+	i := lastLiveByteWithCancellation(s, pos, probe)
 	if i < 0 {
 		return false
 	}
 	end := i + 1
 	for i >= 0 && isIdentByte(s[i]) {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		i--
 	}
 	start := i + 1
@@ -34,6 +45,10 @@ func prevWordEqualsIgnoreCase(s string, pos int, word string) bool {
 		return false
 	}
 	for j := 0; j < len(word); j++ {
+		if probe != nil && !probe.check() {
+			return false
+		}
+
 		if asciiUpper(s[start+j]) != asciiUpper(word[j]) {
 			return false
 		}
@@ -1794,12 +1809,13 @@ func normalizeMultiMatchWhereClauses(query string) string {
 // Supports both single UNION (query1 UNION query2) and chained UNIONs (query1 UNION query2 UNION query3 ...)
 // Handles UNION with flexible whitespace (spaces, newlines, tabs)
 func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool) (*ExecuteResult, error) {
-	return e.executeUnionBranches(cypher, unionAll, func(query string) (*ExecuteResult, error) {
+	return e.executeUnionBranches(ctx, cypher, unionAll, func(query string) (*ExecuteResult, error) {
 		return e.executeInternal(ctx, query, nil)
 	})
 }
 
-func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	ctx = withExpressionFailureSlot(ctx)
 	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(cypher)
 	if !ok || len(queries) < 2 {
 		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
@@ -1820,9 +1836,14 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 
 	// Execute all queries and combine results
 	var combinedResult *ExecuteResult
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	var seen cypherValueIndex // Shared equivalence for UNION and DISTINCT.
 
 	for i, query := range queries {
+		if !probe.poll() {
+			return nil, probe.err
+		}
 		result, err := runBranch(query)
 		if err != nil {
 			return nil, localizedError(localization.CypherResidualUnionBranchFailed(i+1, truncateQuery(query, 50), err), err)
@@ -1850,7 +1871,10 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 			// The same names in another order: the branch's rows are
 			// reordered into the first branch's columns, as in Neo4j 5.26.
 			if order != nil {
-				result.Rows = reorderUnionRows(result.Rows, order)
+				result.Rows = reorderUnionRows(ctx, result.Rows, order)
+				if err := getExpressionFailure(ctx); err != nil {
+					return nil, err
+				}
 			}
 		} else {
 			message := fmt.Sprintf(
@@ -1872,12 +1896,21 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 		// Add rows from this query
 		if unionAll {
 			// UNION ALL - include all rows
-			combinedResult.Rows = append(combinedResult.Rows, result.Rows...)
+			combinedResult.Rows = appendPipelineItems(combinedResult.Rows, result.Rows, probe)
+			if probe.err != nil {
+				return nil, probe.err
+			}
 		} else {
 			// UNION (distinct) - deduplicate rows
 			for _, row := range result.Rows {
+				if !probe.check() {
+					return nil, probe.err
+				}
 				if _, exists := seen.addTuple(row); !exists {
-					combinedResult.Rows = append(combinedResult.Rows, row)
+					combinedResult.Rows = appendPipelineItem(combinedResult.Rows, row, probe)
+					if probe.err != nil {
+						return nil, probe.err
+					}
 				}
 			}
 		}
@@ -1924,9 +1957,14 @@ func unionColumnOrder(columns, branch []string) (order []int, sameNames bool) {
 }
 
 // reorderUnionRows rewrites rows into the column order unionColumnOrder gave.
-func reorderUnionRows(rows [][]interface{}, order []int) [][]interface{} {
+func reorderUnionRows(ctx context.Context, rows [][]interface{}, order []int) [][]interface{} {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	reordered := make([][]interface{}, len(rows))
 	for index, row := range rows {
+		if !probe.check() {
+			return nil
+		}
 		values := make([]interface{}, len(order))
 		for column, position := range order {
 			if position < len(row) {
@@ -2225,12 +2263,19 @@ func nextNonSpaceByte(s string, pos int) byte {
 }
 
 func toStringAnyMap(value interface{}) (map[string]interface{}, bool) {
+	return toStringAnyMapWithCancellation(value, nil)
+}
+
+func toStringAnyMapWithCancellation(value interface{}, probe *pipelineCancellation) (map[string]interface{}, bool) {
 	if m, ok := value.(map[string]interface{}); ok {
 		return m, true
 	}
 	if m, ok := value.(map[interface{}]interface{}); ok {
-		out := make(map[string]interface{}, len(m))
+		out := make(map[string]interface{}, pipelineInitialCapacity(len(m), probe))
 		for k, v := range m {
+			if probe != nil && !probe.check() {
+				return nil, false
+			}
 			ks, ok := k.(string)
 			if !ok {
 				return nil, false

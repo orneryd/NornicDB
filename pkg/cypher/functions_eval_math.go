@@ -1105,6 +1105,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 // arguments of any other shape before evaluation; here they, and a list
 // expression this evaluator can't evaluate, are null.
 func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, function, inner string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	varName, listExpr, predicate, parsed := parseQuantifierArguments(inner)
 	if !parsed {
 		return nil
@@ -1158,10 +1160,21 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 	if needsRowStatementContext(predicate) {
 		bindAbsent(rowStatementContextKey, ctx)
 	}
-	value, _, err := rowQuantifierLoop(function, coerceToUnwindItems(list), func(item interface{}) { values[varName] = item }, func() (interface{}, bool, error) {
+	items := coerceToUnwindItemsWithCancellation(list, probe)
+	if probe.err != nil {
+		return nil
+	}
+	value, _, err := rowQuantifierLoop(function, items, func(item interface{}) { values[varName] = item }, func() (interface{}, bool, error) {
+		if !probe.check() {
+			return nil, false, probe.err
+		}
 		value, ok := e.evaluateQuantifierPredicate(ctx, predicate, values)
 		return value, ok, getExpressionFailure(ctx)
 	})
+	if probe.err != nil {
+		// The probe recorded the cancellation when it observed it.
+		return nil
+	}
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 	}
@@ -1189,6 +1202,8 @@ func (e *StorageExecutor) evaluateQuantifierPredicate(ctx context.Context, predi
 // predicate doesn't hold for is left out. A relationship item's type(x) /
 // id(x) projection reads a relationship map's type / _edgeId as well.
 func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName, listExpr, condition, projection string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	if list == nil {
 		return nil
@@ -1197,13 +1212,16 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 		if texts, isTexts := list.([]string); isTexts {
 			items := make([]interface{}, len(texts))
 			for index, item := range texts {
+				if !probe.check() {
+					return nil
+				}
 				items[index] = item
 			}
 			return items
 		}
 		return list
 	}
-	items, ok := toInterfaceSlice(list)
+	items, ok := cypherListValueWithCancellation(list, probe)
 	if !ok {
 		items = []interface{}{list}
 	}
@@ -1218,12 +1236,17 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 	values := valueBindingsLayer(ctx, 1)
 	itemCtx := withValueBindings(ctx, values)
 	var current interface{}
-	var holds func() (bool, bool, error)
-	if condition != "" {
-		holds = func() (bool, bool, error) {
-			value := e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
-			return rowConditionHolds(value, true, getExpressionFailure(itemCtx))
+	// holds is always set so the shared loop polls cancellation once per
+	// element, with or without a WHERE predicate.
+	holds := func() (bool, bool, error) {
+		if !probe.check() {
+			return false, false, probe.err
 		}
+		if condition == "" {
+			return true, true, nil
+		}
+		value := e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
+		return rowConditionHolds(value, true, getExpressionFailure(itemCtx))
 	}
 	var project func() (interface{}, bool, error)
 	if projection != "" {
@@ -1239,6 +1262,10 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 		current = item
 		bindEvaluationValue(varName, item, boundNodes, boundRels, values)
 	}, holds, project)
+	if probe.err != nil {
+		// The probe recorded the cancellation when it observed it.
+		return nil
+	}
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 	}
@@ -1274,6 +1301,8 @@ func relationshipMapProjection(projection string, item interface{}) (interface{}
 // expression evaluator: a list that isn't one is a one-item list, and an
 // error is recorded on ctx, giving null.
 func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inner string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	form, ok := parseReduceForm(function, inner)
 	if !ok {
 		return nil
@@ -1306,7 +1335,7 @@ func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inne
 			return e.evaluateExpressionWithContextFull(itemCtx, expression, tempNodes, tempRels, paths, allPathEdges, allPathNodes, pathLength), nil
 		}
 	}
-	result, err := runReduceForm(form, acc, items, evaluate(form.step), evaluate(form.predicate))
+	result, err := runReduceFormWithCancellation(form, acc, items, evaluate(form.step), evaluate(form.predicate), probe)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil

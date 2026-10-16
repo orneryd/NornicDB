@@ -414,9 +414,15 @@ func (e *StorageExecutor) extractReturnItemsFromQuery(query string) []returnItem
 
 // buildColumnsFromReturnItems builds column names from parsed return items
 func (e *StorageExecutor) buildColumnsFromReturnItems(items []returnItem) []string {
-	columns := make([]string, len(items))
-	for i, item := range items {
-		columns[i] = item.column()
+	return e.buildColumnsFromReturnItemsWithCancellation(items, nil)
+}
+func (e *StorageExecutor) buildColumnsFromReturnItemsWithCancellation(items []returnItem, probe *pipelineCancellation) []string {
+	columns := make([]string, 0, pipelineInitialCapacity(len(items), probe))
+	for _, item := range items {
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		columns = appendPipelineItem(columns, item.column(), probe)
 	}
 	return columns
 }

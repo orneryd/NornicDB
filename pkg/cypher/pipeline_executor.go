@@ -211,11 +211,14 @@ func splitUnwindBody(body string) (list, alias string, ok bool) {
 // pipelineClauseBody is a clause's text after its keyword, which the
 // clause splitter matched in any letter case (Return, rEtUrN).
 func pipelineClauseBody(text, keyword string) string {
-	text = strings.TrimSpace(text)
+	return pipelineClauseBodyWithCancellation(text, keyword, nil)
+}
+func pipelineClauseBodyWithCancellation(text, keyword string, probe *pipelineCancellation) string {
+	text = trimSpaceWithCancellation(text, probe)
 	if len(text) >= len(keyword) && strings.EqualFold(text[:len(keyword)], keyword) {
 		text = text[len(keyword):]
 	}
-	return strings.TrimSpace(text)
+	return trimSpaceWithCancellation(text, probe)
 }
 
 // pipelineClauseSplits caches parsePipelineClauses by statement text: one
@@ -409,9 +412,14 @@ func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, top
 // produces no row for is kept, with null for each of the call's columns, as
 // Neo4j's OPTIONAL CALL does (#907). *ok reports false when apply can't run
 // the call.
-func pipelineApplyOptionally(rows []pipelineRow, apply func(row []pipelineRow) ([]pipelineRow, []string, bool, error), ok *bool) ([]pipelineRow, error) {
-	out := make([]pipelineRow, 0, len(rows))
+func pipelineApplyOptionally(ctx context.Context, rows []pipelineRow, apply func(row []pipelineRow) ([]pipelineRow, []string, bool, error), ok *bool) ([]pipelineRow, error) {
+	ctx = withPipelineCancellation(ctx)
+	cancellation := pipelineCancellationForContext(ctx)
+	out := make([]pipelineRow, 0, pipelineInitialCapacity(len(rows), cancellation))
 	for index := range rows {
+		if !cancellation.check() {
+			return nil, cancellation.err
+		}
 		produced, columns, handled, err := apply(rows[index : index+1])
 		if err != nil {
 			return nil, err
@@ -421,19 +429,31 @@ func pipelineApplyOptionally(rows []pipelineRow, apply func(row []pipelineRow) (
 			return nil, nil
 		}
 		if len(produced) > 0 {
-			out = append(out, produced...)
+			out = appendPipelineItems(out, produced, cancellation)
+			if cancellation.err != nil {
+				return nil, cancellation.err
+			}
 			continue
 		}
 		kept := make(pipelineRow, len(rows[index])+len(columns))
 		for name, value := range rows[index] {
+			if !cancellation.check() {
+				return nil, cancellation.err
+			}
 			kept[name] = value
 		}
 		for _, name := range columns {
+			if !cancellation.check() {
+				return nil, cancellation.err
+			}
 			if _, bound := kept[name]; !bound {
 				kept[name] = nil
 			}
 		}
-		out = append(out, kept)
+		out = appendPipelineItem(out, kept, cancellation)
+		if cancellation.err != nil {
+			return nil, cancellation.err
+		}
 	}
 	return out, nil
 }
@@ -443,6 +463,13 @@ func pipelineApplyOptionally(rows []pipelineRow, apply func(row []pipelineRow) (
 // EXISTS { MATCH ... } belongs to the predicate and must never become a new
 // outer pipeline clause.
 func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
+	return findAllTopLevelPipelineKeywordPositionsWithCancellation(query, keyword, nil)
+}
+func findAllTopLevelPipelineKeywordPositionsWithCancellation(query, keyword string, probe *pipelineCancellation) []int {
+	if probe != nil && !probe.check() {
+		return nil
+	}
+
 	// Allocated on the first match: most scans find nothing.
 	var positions []int
 	parenDepth, bracketDepth, braceDepth := 0, 0, 0
@@ -454,13 +481,17 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 	// most positions cost one byte comparison instead of an EqualFold call.
 	first := asciiUpper(keyword[0])
 	for i := 0; i < len(query); i++ {
+		if probe != nil && !probe.check() {
+			return nil
+		}
+
 		character := query[i]
 		switch character {
 		case '\'', '"', '`':
-			i = skipCypherQuotedText(query, i, character) - 1
+			i = skipCypherQuotedTextWithCancellation(query, i, character, probe) - 1
 			continue
 		case '/':
-			if end := queryCommentEnd(query, i); end >= 0 {
+			if end := queryCommentEndWithCancellation(query, i, probe); end >= 0 {
 				i = end - 1
 				continue
 			}
@@ -469,7 +500,7 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 			i+len(keyword) <= len(query) && strings.EqualFold(query[i:i+len(keyword)], keyword) &&
 			(i == 0 || !isIdentByte(query[i-1])) &&
 			(i+len(keyword) == len(query) || !isIdentByte(query[i+len(keyword)])) {
-			if (!withSearch || !isOperatorWith(query, i)) && !clauseKeywordUsedAsName(query, i, i+len(keyword), keyword) {
+			if (!withSearch || !isOperatorWithWithCancellation(query, i, probe)) && !clauseKeywordUsedAsNameWithCancellation(query, i, i+len(keyword), keyword, probe) {
 				if positions == nil {
 					positions = make([]int, 0, 4)
 				}
@@ -525,8 +556,12 @@ func sortBoundariesByPos(bs []pipelineBoundary) {
 func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (outcome pipelineDispatchOutcome) {
 	statement := cypher
 	cypher = e.substituteParams(cypher, getParamsFromContext(ctx))
-	ctx = withExpressionFailureSlot(ctx)
+	ctx = withPipelineCancellation(withExpressionFailureSlot(ctx))
+	completion := pipelineCancellationForContext(ctx)
 	defer func() {
+		if outcome.err == nil {
+			completion.poll()
+		}
 		if recorded := getExpressionFailure(ctx); recorded != nil && outcome.err == nil {
 			outcome = newPipelineDispatchOutcome(nil, true, recorded)
 		}
@@ -613,6 +648,8 @@ type pipelineRowOutput struct {
 }
 
 func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clauses, originalClauses []pipelineClause, output *pipelineRowOutput) (*ExecuteResult, bool, error) {
+	ctx = withPipelineCancellation(ctx)
+	cancellation := pipelineCancellationForContext(ctx)
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -653,6 +690,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		if writes && !pipelineWriteStretchConflicts(clauses[:prefix], clauses[prefix:]) {
 			var retained []pipelineRow
 			for _, row := range rows {
+				if !cancellation.check() {
+					return nil, true, cancellation.err
+				}
 				rowScope := make(map[string]struct{}, len(scope))
 				for name := range scope {
 					rowScope[name] = struct{}{}
@@ -675,13 +715,16 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	var source pipelineRowSource
 	var terminalCallColumns []string
 	for idx := 0; idx < len(clauses); idx++ {
+		if !cancellation.poll() {
+			return nil, true, cancellation.err
+		}
 		clause := clauses[idx]
 		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
 			clause.kind != pipelineClauseLet && clause.kind != pipelineClauseFilter &&
 			!(clause.kind == pipelineClauseCreate && independentCreate) &&
-			!(clause.kind == pipelineClauseReturn && (pipelineClauseAggregates(clause) || streamsReturn(ctx, clauses, idx))) {
+			!(clause.kind == pipelineClauseReturn && (pipelineClauseAggregatesWithCancellation(clause, cancellation) || streamsReturn(ctx, clauses, idx))) {
 			var completed bool
-			rows, completed = materializePipelineSource(source)
+			rows, completed = materializePipelineSource(ctx, source)
 			source = nil
 			if !completed {
 				return pipelineDecline(ctx, wrote, clause.text)
@@ -731,7 +774,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			if source != nil {
 				var completed bool
-				rows, completed = materializePipelineSource(source)
+				rows, completed = materializePipelineSource(ctx, source)
 				source = nil
 				if !completed {
 					return pipelineDecline(ctx, wrote, clause.text)
@@ -852,16 +895,16 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				}
 			}
 			if source != nil {
-				if !pipelineClauseAggregates(clause) {
+				if !pipelineClauseAggregatesWithCancellation(clause, cancellation) {
 					var completed bool
-					rows, completed = materializePipelineSource(source)
+					rows, completed = materializePipelineSource(ctx, source)
 					source = nil
 					if !completed {
 						return pipelineDecline(ctx, wrote, clause.text)
 					}
 				}
 			}
-			if err := e.validatePipelineWithRows(rows, clause.text); err != nil {
+			if err := e.validatePipelineWithRows(ctx, rows, clause.text); err != nil {
 				return nil, true, err
 			}
 			// The rows just validated are the clause's input when no
@@ -892,12 +935,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				scope = pipelineProjectionScope(scope, clauses[idx+offset].text, pipelineImports(ctx))
 			}
 			idx += consumed
-			if idx+1 < len(clauses) && (pipelineClauseAggregates(clauses[idx+1]) || streamsReturn(ctx, clauses, idx+1)) {
+			if idx+1 < len(clauses) && (pipelineClauseAggregatesWithCancellation(clauses[idx+1], cancellation) || streamsReturn(ctx, clauses, idx+1)) {
 				source = unwound
 				rows = nil
 				continue
 			}
-			rows, ok = materializePipelineSource(unwound)
+			rows, ok = materializePipelineSource(ctx, unwound)
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
@@ -919,7 +962,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			ok := true
 			var err error
 			if clause.optional {
-				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
+				newRows, err = pipelineApplyOptionally(ctx, rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
 					rowsOut, names, handled, err := e.pipelineApplyProcedureCall(ctx, row, clause.text)
 					yielded = names
 					return rowsOut, names, handled, err
@@ -947,10 +990,13 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			ok := true
 			var err error
 			if clause.optional {
-				body, _, _, _ := e.parseCallSubquery(clause.text)
-				columns := e.inferTopLevelReturnColumns(body)
+				body, _, _, _ := e.parseCallSubqueryWithCancellation(clause.text, cancellation)
+				if cancellation.err != nil {
+					return nil, true, cancellation.err
+				}
+				columns := e.inferTopLevelReturnColumnsWithCancellation(body, cancellation)
 				stats = &QueryStats{}
-				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
+				newRows, err = pipelineApplyOptionally(ctx, rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
 					rowsOut, rowStats, handled, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, row, clause.text, callMetadata)
 					addQueryStats(stats, rowStats)
 					return rowsOut, columns, handled, err
@@ -969,6 +1015,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			rows = newRows
 			terminalCallColumns = append(terminalCallColumns[:0], callMetadata.columns...)
 			for _, row := range rows {
+				if !cancellation.check() {
+					return nil, true, cancellation.err
+				}
 				for name := range row {
 					if !strings.HasPrefix(name, "$") {
 						scope[name] = struct{}{}
@@ -1001,7 +1050,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if err := e.validatePipelinePercentileArguments(rows, clause.text, "RETURN"); err != nil {
 				return nil, true, err
 			}
-			if err := e.validatePipelineProjectionValues(rows, clause.text, "RETURN"); err != nil {
+			if err := e.validatePipelineProjectionValues(ctx, rows, clause.text, "RETURN"); err != nil {
 				return nil, true, err
 			}
 			// The rows just validated are the clause's input when no
@@ -1010,20 +1059,20 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if source == nil {
 				source = pipelineRowsSource(rows)
 			}
-			plan := returnProjectionPlanFor(clause.text)
+			plan := returnProjectionPlanForWithCancellation(clause.text, pipelineCancellationForContext(ctx))
 			if plan.star && len(rows) == 0 {
-				plan = plan.withStarExpanded(pipelineScopeColumns(scope))
+				plan = plan.withStarExpandedWithCancellation(pipelineScopeColumnsWithCancellation(scope, cancellation), cancellation)
 			}
 			final, ok := e.pipelineApplyReturnPlan(ctx, rows, plan, source, rowsValidated)
 			source = nil
 			if !ok {
 				if failure := getExpressionFailure(ctx); failure != nil && final != nil {
-					pipelineNameReturnColumns(final, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
+					pipelineNameReturnColumnsWithCancellation(final, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope, cancellation)
 					return final, true, failure
 				}
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
-			pipelineNameReturnColumns(final, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
+			pipelineNameReturnColumnsWithCancellation(final, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope, cancellation)
 			result.Columns = final.Columns
 			result.Rows = final.Rows
 			// RETURN is always last.
@@ -1033,7 +1082,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	}
 	if source != nil {
 		var completed bool
-		rows, completed = materializePipelineSource(source)
+		rows, completed = materializePipelineSource(ctx, source)
 		if !completed {
 			return pipelineDecline(ctx, wrote, "end of pipeline")
 		}
@@ -1046,10 +1095,16 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		output.wrote = wrote
 	}
 	if output == nil && len(clauses) > 0 && clauses[len(clauses)-1].kind == pipelineClauseCallSubquery {
-		body, _, _, _ := e.parseCallSubquery(clauses[len(clauses)-1].text)
-		if topLevelKeywordIndex(body, "RETURN") >= 0 {
-			result = callPipelineResultFromRows(rows, nil, result.Stats, terminalCallColumns)
+		body, _, _, _ := e.parseCallSubqueryWithCancellation(clauses[len(clauses)-1].text, cancellation)
+		if cancellation.err != nil {
+			return nil, true, cancellation.err
 		}
+		if topLevelKeywordIndex(body, "RETURN") >= 0 {
+			result = callPipelineResultFromRows(ctx, rows, nil, result.Stats, terminalCallColumns)
+		}
+	}
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, true, failure
 	}
 	return result, true, nil
 }
@@ -1171,7 +1226,9 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		}
 	}
 
-	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereClause, params)
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
+	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParamWithCancellation(nodePattern, whereClause, params, probe)
 	if err != nil {
 		return nil, true, err
 	}
@@ -1195,16 +1252,22 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		if len(candidates) > hint.earlyLimit {
 			candidates = candidates[:hint.earlyLimit]
 		}
-		return projectPipelineSimpleNodeRead(candidates, items, nodePattern.variable), true, nil
+		return projectPipelineSimpleNodeRead(ctx, candidates, items, nodePattern.variable), true, nil
 	}
 	rows := make([]pipelineRow, 0, len(candidates))
 	for _, node := range candidates {
+		if !probe.check() {
+			return nil, true, probe.err
+		}
 		row := pipelineNodeRow(ctx, nodePattern.variable, node)
 		if whereClause == "" || e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(row)) {
 			rows = append(rows, row)
 		}
 	}
 	result, projected := e.pipelineApplyReturn(ctx, rows, clauses[1].text)
+	if failure := getExpressionFailure(ctx); failure != nil {
+		return nil, true, failure
+	}
 	if !projected {
 		return nil, false, nil
 	}
@@ -1243,6 +1306,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 	whereClause string,
 	column string,
 ) (*ExecuteResult, bool, error) {
+	ctx = withPipelineCancellation(ctx)
 	if len(nodePattern.labels) == 0 {
 		return nil, false, nil
 	}
@@ -1268,8 +1332,13 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 	hideSystemNodes := shouldHideSystemNodes(store)
 	viewport, hasViewport := TemporalViewportFromContext(ctx)
 	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	var count int64
 	countNode := func(node *storage.Node, whereApplied bool) error {
+		if !probe.check() {
+			return probe.err
+		}
 		if node == nil || (hideSystemNodes && isSystemNode(node)) {
 			return nil
 		}
@@ -1348,7 +1417,9 @@ func pipelineNodePredicateProperties(variable, expression string, inline map[str
 	return properties
 }
 
-func projectPipelineSimpleNodeRead(nodes []*storage.Node, items []returnItem, variable string) *ExecuteResult {
+func projectPipelineSimpleNodeRead(ctx context.Context, nodes []*storage.Node, items []returnItem, variable string) *ExecuteResult {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	result := &ExecuteResult{
 		Columns: make([]string, len(items)),
 		Rows:    make([][]interface{}, 0, len(nodes)),
@@ -1359,6 +1430,9 @@ func projectPipelineSimpleNodeRead(nodes []*storage.Node, items []returnItem, va
 	}
 	prefix := variable + "."
 	for _, node := range nodes {
+		if !probe.check() {
+			return nil
+		}
 		row := make([]interface{}, len(items))
 		for index, item := range items {
 			expression := strings.TrimSpace(item.expr)
@@ -1788,6 +1862,8 @@ func samePropertyValue(a, b interface{}) bool {
 // ---- clause appliers ----
 
 func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, error) {
+	ctx = withPipelineCancellation(ctx)
+	cancellation := pipelineCancellationForContext(ctx)
 	if body, repeatable := stripRepeatableElements(strings.TrimSpace(clause[len("OPTIONAL MATCH"):])); repeatable {
 		ctx, clause = withRepeatableElements(ctx), "OPTIONAL MATCH "+body
 	}
@@ -1797,7 +1873,7 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 		}
 		return e.pipelineApplyShortestPathMatch(ctx, rows, shortest, true)
 	}
-	if err := validateBoundPatternNodes(rows, strings.TrimSpace(clause[len("OPTIONAL MATCH"):])); err != nil {
+	if err := validateBoundPatternNodes(ctx, rows, strings.TrimSpace(clause[len("OPTIONAL MATCH"):])); err != nil {
 		return nil, err
 	}
 	optionalClause := splitOptionalMatchClauses(strings.TrimSpace(clause[len("OPTIONAL MATCH"):]))
@@ -1817,6 +1893,9 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 	// output row starts from a full copy of its input row, in input order.
 	traversalRows := make([]traversalOptRow, 0, len(rows))
 	for _, row := range rows {
+		if !cancellation.check() {
+			return nil, cancellation.err
+		}
 		traversalRow := traversalOptRow{
 			nodes: make(map[string]*storage.Node),
 			rels:  make(map[string]*storage.Edge),
@@ -1853,6 +1932,9 @@ func (e *StorageExecutor) pipelineApplyOptionalMatch(ctx context.Context, rows [
 	}
 	out := make([]pipelineRow, 0, len(expanded))
 	for _, expandedRow := range expanded {
+		if !cancellation.check() {
+			return nil, cancellation.err
+		}
 		joined := make(pipelineRow, len(expandedRow.nodes)+len(expandedRow.rels)+len(expandedRow.values))
 		for name, node := range expandedRow.nodes {
 			if node == nil {
@@ -1889,7 +1971,7 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 	if stripped, repeatable := stripRepeatableElements(body); repeatable {
 		ctx, body, clause = withRepeatableElements(ctx), stripped, "MATCH "+stripped
 	}
-	if err := validateBoundPatternNodes(rows, body); err != nil {
+	if err := validateBoundPatternNodes(ctx, rows, body); err != nil {
 		return nil, true, err
 	}
 	if shortest, ok, err := e.parseShortestPathMatch(ctx, body); ok || err != nil {
@@ -1937,7 +2019,7 @@ func (e *StorageExecutor) pipelineApplyMatchWithHint(ctx context.Context, rows [
 		if err != nil {
 			return nil, true, err
 		}
-		expanded, resolved := materializePipelineSource(product)
+		expanded, resolved := materializePipelineSource(ctx, product)
 		if !resolved {
 			return nil, true, getExpressionFailure(ctx)
 		}
@@ -2038,6 +2120,8 @@ func (e *StorageExecutor) pipelineMatchHint(remaining []pipelineClause) pipeline
 // operators to pipeline rows. It returns graph entities as bindings so every
 // later WITH, mutation, and RETURN clause continues through the same executor.
 func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
+	ctx = withPipelineCancellation(ctx)
+	cancellation := pipelineCancellationForContext(ctx)
 	if len(rows) == 0 {
 		return rows, true, nil
 	}
@@ -2081,6 +2165,9 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
+		if !cancellation.check() {
+			return nil, true, cancellation.err
+		}
 		rowCtx := withValueBindings(ctx, row)
 		materializedPattern := pattern
 		materializedWhere := whereClause
@@ -2130,6 +2217,9 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 			rowWhere = prepareRowPredicate(materializedWhere)
 		}
 		for _, resultRow := range result.Rows {
+			if !cancellation.check() {
+				return nil, true, cancellation.err
+			}
 			joined := make(pipelineRow, util.SafePreallocSum(len(row), len(result.Columns)))
 			for name, value := range row {
 				joined[name] = value
@@ -2259,6 +2349,8 @@ func pipelineBindingValuesEqual(left, right interface{}) bool {
 }
 
 func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
+	ctx = withPipelineCancellation(ctx)
+	cancellation := pipelineCancellationForContext(ctx)
 	if len(rows) == 0 {
 		return rows, true, nil
 	}
@@ -2290,6 +2382,9 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 	template := e.pipelineNodeMatchTemplateFor(clause)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
+		if !cancellation.check() {
+			return nil, true, cancellation.err
+		}
 		materializedWhere := whereClause
 		// The pattern parsed once and its properties evaluated for the row;
 		// the text route for a row the template can't evaluate.
@@ -2357,6 +2452,9 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 			}
 		}
 		for _, node := range candidates.nodes {
+			if !cancellation.check() {
+				return nil, true, cancellation.err
+			}
 			var path interface{}
 			if pathVariable != "" {
 				path = e.pathToMap(PathResult{Nodes: []*storage.Node{node}})
@@ -2373,7 +2471,7 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 					probe[pathVariable] = path
 				}
 				if plan != nil {
-					if !e.evaluateRowPredicatePlan(ctx, plan, map[string]interface{}(probe)) {
+					if !e.evaluateRowPredicatePlanWithCancellation(ctx, plan, map[string]interface{}(probe), cancellation) {
 						continue
 					}
 				} else if !e.evaluateMatchWhereCondition(ctx, materializedWhere, map[string]interface{}(probe)) {
@@ -2467,8 +2565,12 @@ func replaceQualifiedReferenceOutsideQuotesUnless(input, reference, replacement 
 // <variable>.<property> IN <parameter or literal list>, the form the IN-list
 // plan answers completely.
 func (e *StorageExecutor) whereIsSimpleIndexedIn(ctx context.Context, variable, whereClause string, params map[string]interface{}) bool {
-	if _, _, ok := e.parseSimpleIndexedInParam(variable, whereClause, params); ok {
+	probe := pipelineCancellationForContext(ctx)
+	if _, _, ok := e.parseSimpleIndexedInParamWithCancellation(variable, whereClause, params, probe); ok {
 		return true
+	}
+	if probe != nil && probe.err != nil {
+		return false
 	}
 	_, _, ok := e.parseSimpleIndexedInLiteral(ctx, variable, whereClause)
 	return ok
@@ -2568,6 +2670,8 @@ func (e *StorageExecutor) pipelineLabelScanArguments(ctx context.Context, nodePa
 // node and relationship identity conflicts are rejected during the join, and
 // WHERE is evaluated once against the complete joined row.
 func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool) {
+	ctx = withPipelineCancellation(ctx)
+	cancellation := pipelineCancellationForContext(ctx)
 	if len(rows) == 0 || extractPathAssignmentVariable(clause) != "" {
 		return nil, false
 	}
@@ -2580,6 +2684,9 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 	}
 	hasGraphBinding := false
 	for _, row := range rows {
+		if !cancellation.check() {
+			return nil, false
+		}
 		for name, value := range row {
 			if _, referenced := patternBindings[name]; !referenced {
 				continue
@@ -2608,6 +2715,9 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 	}
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
+		if !cancellation.check() {
+			return nil, false
+		}
 		nodes := make(binding)
 		relationships := make(relationshipBinding)
 		for name, value := range row {
@@ -2624,6 +2734,9 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 		}
 		joinedNodes, joinedRelationships := e.executeChainedMatch(ctx, pattern, []binding{nodes}, []relationshipBinding{relationships})
 		for index, nodeBindings := range joinedNodes {
+			if !cancellation.check() {
+				return nil, false
+			}
 			joined := make(pipelineRow, util.SafePreallocSum(len(row), len(nodeBindings)))
 			for name, value := range row {
 				joined[name] = value
@@ -2645,12 +2758,17 @@ func (e *StorageExecutor) pipelineApplyChainedMatch(ctx context.Context, rows []
 }
 
 func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool, error) {
+	ctx = withPipelineCancellation(ctx)
+	cancellation := pipelineCancellationForContext(ctx)
 	pattern := strings.TrimSpace(clause[len("MATCH"):])
 	match := e.parseTraversalPattern(ctx, pattern)
 	if match == nil || match.IsChained || !match.Relationship.VariableLength || match.Relationship.Variable == "" {
 		return nil, false, nil
 	}
 	for _, row := range rows {
+		if !cancellation.check() {
+			return nil, true, cancellation.err
+		}
 		if _, exists := row[match.Relationship.Variable]; !exists {
 			return nil, false, nil
 		}
@@ -2659,11 +2777,25 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		relationships, ok := pipelineRelationshipList(row[match.Relationship.Variable])
-		if !ok || len(relationships) == 0 || !repeatableElements(ctx) && relationshipListReusesEdge(relationships) {
+		if !cancellation.check() {
+			return nil, true, cancellation.err
+		}
+		relationships, ok := pipelineRelationshipListWithCancellation(row[match.Relationship.Variable], cancellation)
+		reused := !repeatableElements(ctx) && relationshipListReusesEdgeWithCancellation(relationships, cancellation)
+		if cancellation.err != nil {
+			return nil, true, cancellation.err
+		}
+		if !ok || len(relationships) == 0 || reused {
 			continue
 		}
-		for _, endpoints := range traceRelationshipList(relationships, match.Relationship.Direction) {
+		traced := traceRelationshipListWithCancellation(relationships, match.Relationship.Direction, cancellation)
+		if cancellation.err != nil {
+			return nil, true, cancellation.err
+		}
+		for _, endpoints := range traced {
+			if !cancellation.check() {
+				return nil, true, cancellation.err
+			}
 			start, startErr := store.GetNode(endpoints[0])
 			end, endErr := store.GetNode(endpoints[1])
 			if startErr != nil || endErr != nil || start == nil || end == nil ||
@@ -2699,12 +2831,19 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 }
 
 func pipelineRelationshipList(value interface{}) ([]*storage.Edge, bool) {
+	return pipelineRelationshipListWithCancellation(value, nil)
+}
+
+func pipelineRelationshipListWithCancellation(value interface{}, probe *pipelineCancellation) ([]*storage.Edge, bool) {
 	switch relationships := value.(type) {
 	case []*storage.Edge:
 		return relationships, true
 	case []interface{}:
 		result := make([]*storage.Edge, len(relationships))
 		for index, value := range relationships {
+			if probe != nil && !probe.check() {
+				return nil, false
+			}
 			relationship, ok := value.(*storage.Edge)
 			if !ok || relationship == nil {
 				return nil, false
@@ -2718,8 +2857,15 @@ func pipelineRelationshipList(value interface{}) ([]*storage.Edge, bool) {
 }
 
 func relationshipListReusesEdge(relationships []*storage.Edge) bool {
+	return relationshipListReusesEdgeWithCancellation(relationships, nil)
+}
+
+func relationshipListReusesEdgeWithCancellation(relationships []*storage.Edge, probe *pipelineCancellation) bool {
 	seen := make(map[storage.EdgeID]struct{}, len(relationships))
 	for _, relationship := range relationships {
+		if probe != nil && !probe.check() {
+			return true
+		}
 		if relationship == nil {
 			return true
 		}
@@ -2732,6 +2878,10 @@ func relationshipListReusesEdge(relationships []*storage.Edge) bool {
 }
 
 func traceRelationshipList(relationships []*storage.Edge, direction string) [][2]storage.NodeID {
+	return traceRelationshipListWithCancellation(relationships, direction, nil)
+}
+
+func traceRelationshipListWithCancellation(relationships []*storage.Edge, direction string, probe *pipelineCancellation) [][2]storage.NodeID {
 	if len(relationships) == 0 {
 		return nil
 	}
@@ -2742,6 +2892,9 @@ func traceRelationshipList(relationships []*storage.Edge, direction string) [][2
 		starts = append(starts, [2]storage.NodeID{relationships[0].EndNode, relationships[0].StartNode})
 	}
 	for _, relationship := range relationships[1:] {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		next := starts[:0]
 		for _, endpoints := range starts {
 			switch direction {
@@ -3192,10 +3345,15 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 // them resolved (resolveRowDynamicTokens), as a MERGE of its own, in order,
 // so a row sees what the rows before it merged.
 func (e *StorageExecutor) pipelineApplyRowDynamicMerge(ctx context.Context, rows []pipelineRow, clause, pattern string) ([]pipelineRow, *QueryStats, error) {
+	ctx = withPipelineCancellation(ctx)
+	cancellation := pipelineCancellationForContext(ctx)
 	stats := &QueryStats{}
 	out := make([]pipelineRow, 0, len(rows))
 	at := strings.Index(clause, pattern)
 	for _, row := range rows {
+		if !cancellation.check() {
+			return nil, nil, cancellation.err
+		}
 		rowCtx, nodes, rels := e.pipelineRowWriteContext(ctx, row)
 		resolved, err := e.resolveRowDynamicTokens(rowCtx, pattern, nodes, rels)
 		if err != nil {
@@ -3264,16 +3422,24 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 }
 
 func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	if plan, ok := parsePipelineRowWith(clause); ok {
 		plan.imports = pipelineImports(ctx)
-		out := make([]pipelineRow, 0, len(rows))
+		out := make([]pipelineRow, 0, pipelineInitialCapacity(len(rows), probe))
 		for _, row := range rows {
-			projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, nil, nil)
+			if !probe.check() {
+				return nil, false
+			}
+			projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, nil, nil, probe)
 			if !resolved {
 				return nil, false
 			}
 			if accepted {
-				out = append(out, projected)
+				out = appendPipelineItem(out, projected, probe)
+				if probe.err != nil {
+					return nil, false
+				}
 			}
 		}
 		return out, true
@@ -3281,7 +3447,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	// The clause is scanned with its keyword, which tells a keyword-named
 	// first item from a clause (WITH with WHERE with = 3, #894).
 	body := strings.TrimSpace(clause)
-	orderTerms := parseOrderByTerms(body)
+	orderTerms := parseOrderByTermsWithCancellation(body, probe)
 	withSkip, withLimit := 0, -1
 	if skipIndex := topLevelKeywordIndex(body, "SKIP"); skipIndex >= 0 {
 		value, ok := e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(body, "SKIP"), rows)
@@ -3311,39 +3477,55 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		windowedWhere, postWithWhere = postWithWhere, ""
 	}
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
+		if !probe.check() {
+			return nil, false
+		}
 		if index := topLevelKeywordIndex(body, keyword); index >= 0 {
 			body = strings.TrimSpace(body[:index])
 		}
 	}
 	withDistinct := false
-	body, withDistinct = cutDistinct(pipelineClauseBody(body, "WITH"))
+	body, withDistinct = cutDistinctWithCancellation(pipelineClauseBodyWithCancellation(body, "WITH", probe), probe)
 	if strings.TrimSpace(body) == "*" {
-		out := make([]pipelineRow, 0, len(rows))
+		out := make([]pipelineRow, 0, pipelineInitialCapacity(len(rows), probe))
 		for _, row := range rows {
+			if !probe.check() {
+				return nil, false
+			}
 			projected := make(pipelineRow, len(row))
 			for name, value := range row {
+				if !probe.check() {
+					return nil, false
+				}
 				projected[name] = value
 			}
-			out = append(out, projected)
+			out = appendPipelineItem(out, projected, probe)
+			if probe.err != nil {
+				return nil, false
+			}
 		}
 		if withDistinct {
 			// WITH DISTINCT * keeps one row per distinct set of the
 			// variables in scope (#883).
-			out = deduplicatePipelineRows(out, pipelineWildcardColumns(out))
+			out = deduplicatePipelineRows(ctx, out, pipelineWildcardColumns(ctx, out))
 		}
 		out = e.filterPipelineRows(ctx, out, postWithWhere)
 		if !e.orderPipelineRows(ctx, out, orderTerms) {
 			return nil, false
 		}
-		return e.filterPipelineRows(ctx, applyPipelineWindow(out, withSkip, withLimit), windowedWhere), true
+		out = e.filterPipelineRows(ctx, applyPipelineWindow(out, withSkip, withLimit), windowedWhere)
+		return out, probe.err == nil && getExpressionFailure(ctx) == nil
 	}
-	items := splitTopLevelComma(body)
+	items := splitTopLevelCommaWithCancellation(body, probe)
+	if probe.err != nil {
+		return nil, false
+	}
 	if len(items) == 0 {
 		return rows, true
 	}
 	if strings.TrimSpace(items[0]) == "*" {
 		// WITH *, items: the * is every variable in scope (#883).
-		items = starProjectionItems(pipelineWildcardColumns(rows), items[1:])
+		items = starProjectionItemsWithCancellation(pipelineWildcardColumns(ctx, rows), items[1:], probe)
 	}
 
 	type withProjection struct {
@@ -3354,21 +3536,24 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		aggregateExpr string
 		distinct      bool
 	}
-	projections := make([]withProjection, 0, len(items))
-	projectionAliases := make([]string, 0, len(items))
+	projections := make([]withProjection, 0, pipelineInitialCapacity(len(items), probe))
+	projectionAliases := make([]string, 0, pipelineInitialCapacity(len(items), probe))
 	hasAggregate := false
 	for _, rawItem := range items {
+		if !probe.check() {
+			return nil, false
+		}
 		item := strings.TrimSpace(rawItem)
 		if item == "" || item == "{}" {
 			continue
 		}
-		expr, alias := parseProjectionExprAlias(item)
+		expr, alias := parseProjectionExprAliasWithCancellation(item, probe)
 		if expr == "" {
 			return nil, false
 		}
 		projection := withProjection{expr: expr, alias: alias}
-		if aggregateName, aggregateExpr, distinct, aggregate := parsePipelineAggregate(expr); aggregate {
-			if !strings.Contains(upperASCII(item), " AS ") {
+		if aggregateName, aggregateExpr, distinct, aggregate := parsePipelineAggregateWithCancellation(expr, probe); aggregate {
+			if !containsFoldWithCancellation(item, " AS ", probe) {
 				return nil, false
 			}
 			projection.aggregate = true
@@ -3376,20 +3561,29 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			projection.aggregateExpr = aggregateExpr
 			projection.distinct = distinct
 			hasAggregate = true
-		} else if pipelineExpressionContainsAggregate(expr) {
-			if !strings.Contains(upperASCII(item), " AS ") {
+		} else if pipelineExpressionContainsAggregateWithCancellation(expr, probe) {
+			if !containsFoldWithCancellation(item, " AS ", probe) {
 				return nil, false
 			}
 			projection.aggregate = true
 			projection.aggregateExpr = expr
 			hasAggregate = true
 		}
-		projections = append(projections, projection)
-		projectionAliases = append(projectionAliases, alias)
+		projections = appendPipelineItem(projections, projection, probe)
+		if probe.err != nil {
+			return nil, false
+		}
+		projectionAliases = appendPipelineItem(projectionAliases, alias, probe)
+		if probe.err != nil {
+			return nil, false
+		}
 	}
 	if hasAggregate {
 		aggregates := make([]returnProjection, len(projections))
 		for index, projection := range projections {
+			if !probe.check() {
+				return nil, false
+			}
 			aggregates[index] = returnProjection{expr: projection.expr, alias: projection.alias, isAggr: projection.aggregate}
 		}
 		groups, ok := e.pipelineAggregateGroups(ctx, source, aggregates, rowsValidated)
@@ -3399,29 +3593,41 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if len(orderTerms) > 0 {
 			expressions := make([]string, len(projections))
 			for index, projection := range projections {
+				if !probe.check() {
+					return nil, false
+				}
 				expressions[index] = projection.expr
 			}
-			orderTerms = alignOrderTerms(orderTerms, expressions)
+			orderTerms = alignOrderTermsWithCancellation(orderTerms, expressions, probe)
 		}
 
-		out := make([]pipelineRow, 0, len(groups))
+		out := make([]pipelineRow, 0, pipelineInitialCapacity(len(groups), probe))
 		needsOrderScopes := len(orderTerms) > 0 || postWithWhere != "" || withDistinct || windowedWhere != ""
 		var orderScopes []pipelineRow
 		if needsOrderScopes {
-			orderScopes = make([]pipelineRow, 0, len(groups))
+			orderScopes = make([]pipelineRow, 0, pipelineInitialCapacity(len(groups), probe))
 		}
 		for _, group := range groups {
+			if !probe.check() {
+				return nil, false
+			}
 			newRow := pipelineRow{}
 			var projectedExpressions pipelineRow
 			if needsOrderScopes {
 				projectedExpressions = make(pipelineRow, len(projections))
 			}
 			for name, value := range group.first {
+				if !probe.check() {
+					return nil, false
+				}
 				if strings.HasPrefix(name, "$") {
 					newRow[name] = value
 				}
 			}
 			for index, projection := range projections {
+				if !probe.check() {
+					return nil, false
+				}
 				value, ok := group.value(ctx, e, index)
 				if !ok {
 					pipelineItemUnevaluable(ctx, projection.expr)
@@ -3434,85 +3640,125 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			}
 			carryPipelineRowImports(newRow, group.first, pipelineImports(ctx))
 			if !needsOrderScopes {
-				out = append(out, newRow)
+				out = appendPipelineItem(out, newRow, probe)
+				if probe.err != nil {
+					return nil, false
+				}
 				continue
 			}
 			orderScope := make(pipelineRow, len(group.first)+len(projectedExpressions)+len(newRow))
 			for name, value := range group.first {
+				if !probe.check() {
+					return nil, false
+				}
 				orderScope[name] = value
 			}
 			for expression, value := range projectedExpressions {
+				if !probe.check() {
+					return nil, false
+				}
 				orderScope[expression] = value
 			}
 			for name, value := range newRow {
+				if !probe.check() {
+					return nil, false
+				}
 				orderScope[name] = value
 			}
 			if postWithWhere != "" && !e.evaluateWithWhereCondition(ctx, postWithWhere, orderScope) {
 				continue
 			}
-			out = append(out, newRow)
-			orderScopes = append(orderScopes, orderScope)
+			out = appendPipelineItem(out, newRow, probe)
+			if probe.err != nil {
+				return nil, false
+			}
+			orderScopes = appendPipelineItem(orderScopes, orderScope, probe)
+			if probe.err != nil {
+				return nil, false
+			}
 		}
 		if withDistinct {
-			out, orderScopes = deduplicatePipelineRowsWithScopes(out, orderScopes, projectionAliases)
+			out, orderScopes = deduplicatePipelineRowsWithScopes(ctx, out, orderScopes, projectionAliases)
 		}
 		if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 			return nil, false
 		}
-		return e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), true
+		out = e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere)
+		return out, probe.err == nil && getExpressionFailure(ctx) == nil
 	}
 
 	orderedExpressions := orderedProjectionExpressions(orderTerms, len(projections), func(index int) (string, string) {
 		return projections[index].expr, projections[index].alias
 	})
-	out := make([]pipelineRow, 0, len(rows))
+	out := make([]pipelineRow, 0, pipelineInitialCapacity(len(rows), probe))
 	needsOrderScopes := len(orderTerms) > 0 || withDistinct || windowedWhere != ""
 	var orderScopes []pipelineRow
 	if needsOrderScopes {
-		orderScopes = make([]pipelineRow, 0, len(rows))
+		orderScopes = make([]pipelineRow, 0, pipelineInitialCapacity(len(rows), probe))
 	}
 	rowPlan := pipelineRowWith{where: postWithWhere, imports: pipelineImports(ctx)}
 	for _, projection := range projections {
-		rowPlan.projections = append(rowPlan.projections, pipelineRowProjection{projection.expr, projection.alias})
+		if !probe.check() {
+			return nil, false
+		}
+		rowPlan.projections = appendPipelineItem(rowPlan.projections, pipelineRowProjection{projection.expr, projection.alias}, probe)
+		if probe.err != nil {
+			return nil, false
+		}
 	}
 	for _, row := range rows {
+		if !probe.check() {
+			return nil, false
+		}
 		var scope pipelineRow
 		if postWithWhere != "" || needsOrderScopes {
 			scope = make(pipelineRow, len(row)+len(projections))
 		}
-		newRow, accepted, ok := e.pipelineProjectWithRow(ctx, row, rowPlan, nil, scope)
+		newRow, accepted, ok := e.pipelineProjectWithRow(ctx, row, rowPlan, nil, scope, probe)
 		if !ok {
 			return nil, false
 		}
 		if !accepted {
 			continue
 		}
-		out = append(out, newRow)
+		out = appendPipelineItem(out, newRow, probe)
+		if probe.err != nil {
+			return nil, false
+		}
 		if needsOrderScopes {
 			// ORDER BY may name a projected expression by its text; its value
 			// is the projection's (orderedProjectionExpressions). A projected
 			// name keeps its own value.
 			for _, ordered := range orderedExpressions {
+				if !probe.check() {
+					return nil, false
+				}
 				if _, projected := newRow[ordered.expression]; !projected {
 					scope[ordered.expression] = newRow[ordered.alias]
 				}
 			}
-			orderScopes = append(orderScopes, scope)
+			orderScopes = appendPipelineItem(orderScopes, scope, probe)
+			if probe.err != nil {
+				return nil, false
+			}
 		}
 	}
 	if withDistinct {
-		out, orderScopes = deduplicatePipelineRowsWithScopes(out, orderScopes, projectionAliases)
+		out, orderScopes = deduplicatePipelineRowsWithScopes(ctx, out, orderScopes, projectionAliases)
 	}
 	if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 		return nil, false
 	}
-	return e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere), true
+	out = e.filterPipelineWindow(ctx, out, orderScopes, withSkip, withLimit, windowedWhere)
+	return out, probe.err == nil && getExpressionFailure(ctx) == nil
 }
 
 // filterPipelineWindow applies SKIP / LIMIT to rows, then keeps the rows of
 // the window whose scope (the row's projected and incoming values) satisfies
 // whereClause: the WHERE after WITH … SKIP / LIMIT.
 func (e *StorageExecutor) filterPipelineWindow(ctx context.Context, rows, scopes []pipelineRow, skip, limit int, whereClause string) []pipelineRow {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	if whereClause == "" {
 		return applyPipelineWindow(rows, skip, limit)
 	}
@@ -3528,7 +3774,14 @@ func (e *StorageExecutor) filterPipelineWindow(ctx context.Context, rows, scopes
 	}
 	filtered := make([]pipelineRow, 0, end-start)
 	for index := start; index < end; index++ {
-		if e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(scopes[index])) {
+		if !probe.check() {
+			return nil
+		}
+		accepted := e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(scopes[index]))
+		if probe.err != nil || getExpressionFailure(ctx) != nil {
+			return nil
+		}
+		if accepted {
 			filtered = append(filtered, rows[index])
 		}
 	}
@@ -3615,22 +3868,56 @@ func orderedProjectionExpressions(terms []orderByTerm, count int, item func(inde
 // the whitespace between tokens don't change an expression. Terms are
 // returned unchanged (not copied) when nothing differs.
 func alignOrderTerms(terms []orderByTerm, expressions []string) []orderByTerm {
-	spellings := aggregateCallSpellings(expressions)
+	return alignOrderTermsWithCancellation(terms, expressions, nil)
+}
+func alignOrderTermsWithCancellation(terms []orderByTerm, expressions []string, probe *pipelineCancellation) []orderByTerm {
+	lookup := aggregateCallLookupWithCancellation(expressions, probe)
+	if probe != nil && probe.err != nil {
+		return nil
+	}
 	var aligned []orderByTerm
 	for index, term := range terms {
-		column := respellAggregateCalls(term.column, spellings)
-		key := stripExpressionWhitespace(column)
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		column := respellAggregateCallsWithLookup(term.column, lookup, probe)
+		key := stripExpressionWhitespaceWithCancellation(column, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
 		for _, expression := range expressions {
-			if expression != column && stripExpressionWhitespace(expression) == key {
-				column = expression
-				break
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			if comparePipelineStrings(expression, column, probe) != 0 {
+				normalized := stripExpressionWhitespaceWithCancellation(expression, probe)
+				if probe != nil && probe.err != nil {
+					return nil
+				}
+				if comparePipelineStrings(normalized, key, probe) == 0 {
+					column = expression
+					break
+				}
+			}
+			if probe != nil && probe.err != nil {
+				return nil
 			}
 		}
-		if column == term.column {
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		same := comparePipelineStrings(column, term.column, probe) == 0
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		if same {
 			continue
 		}
 		if aligned == nil {
-			aligned = append([]orderByTerm(nil), terms...)
+			aligned = appendPipelineItems([]orderByTerm(nil), terms, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
 		}
 		aligned[index].column = column
 	}
@@ -3644,23 +3931,83 @@ func alignOrderTerms(terms []orderByTerm, expressions []string) []orderByTerm {
 // call in expressions to its text there. Nil when there is none.
 func aggregateCallSpellings(expressions []string) map[string]string {
 	var spellings map[string]string
+	readAggregateCallSpellings(expressions, func(key, call string) bool {
+		if spellings == nil {
+			spellings = make(map[string]string)
+		}
+		spellings[key] = call
+		return true
+	}, nil)
+	return spellings
+}
+func readAggregateCallSpellings(expressions []string, put func(string, string) bool, probe *pipelineCancellation) bool {
 	for _, expression := range expressions {
-		for _, call := range semanticAggregateCalls(expression) {
-			if spellings == nil {
-				spellings = make(map[string]string)
+		if probe != nil && !probe.check() {
+			return false
+		}
+		calls := semanticAggregateCallsWithCancellation(expression, probe)
+		if probe != nil && probe.err != nil {
+			return false
+		}
+		for _, call := range calls {
+			if probe != nil && !probe.check() {
+				return false
 			}
-			spellings[aggregateCallKey(call)] = call
+			key := aggregateCallKeyWithCancellation(call, probe)
+			if probe != nil && probe.err != nil {
+				return false
+			}
+			if !put(key, call) {
+				return false
+			}
 		}
 	}
-	return spellings
+	return true
+}
+func aggregateCallLookupWithCancellation(expressions []string, probe *pipelineCancellation) func(string) (string, bool) {
+	if probe == nil {
+		spellings := aggregateCallSpellings(expressions)
+		return func(key string) (string, bool) { value, ok := spellings[key]; return value, ok }
+	}
+	var spellings pipelineStringMap[string]
+	readAggregateCallSpellings(expressions, func(key, call string) bool { return spellings.SetWithCancellation(key, call, probe) }, probe)
+	return func(key string) (string, bool) { return spellings.GetWithCancellation(key, probe) }
 }
 
 // respellAggregateCalls writes each aggregate call of text that spellings
 // holds as spellings spells it: COUNT(distinct n) as count(DISTINCT n).
 func respellAggregateCalls(text string, spellings map[string]string) string {
-	for _, call := range semanticAggregateCalls(text) {
-		if spelling, ok := spellings[aggregateCallKey(call)]; ok && spelling != call {
-			text = strings.Replace(text, call, spelling, 1)
+	return respellAggregateCallsWithLookup(text, func(key string) (string, bool) { value, ok := spellings[key]; return value, ok }, nil)
+}
+func respellAggregateCallsWithLookup(text string, lookup func(string) (string, bool), probe *pipelineCancellation) string {
+	calls := semanticAggregateCallsWithCancellation(text, probe)
+	for _, call := range calls {
+		if probe != nil && !probe.check() {
+			return ""
+		}
+		key := aggregateCallKeyWithCancellation(call, probe)
+		if probe != nil && probe.err != nil {
+			return ""
+		}
+		spelling, ok := lookup(key)
+		if probe != nil && probe.err != nil {
+			return ""
+		}
+		if ok && comparePipelineStrings(spelling, call, probe) != 0 {
+			if probe != nil && probe.err != nil {
+				return ""
+			}
+			// Replace only the first occurrence, as the original semantic reader did.
+			index := indexTextWithCancellation(text, call, probe)
+			if probe != nil && probe.err != nil {
+				return ""
+			}
+			if index >= 0 {
+				text = concatPipelineStrings(concatPipelineStrings(text[:index], spelling, probe), text[index+len(call):], probe)
+			}
+		}
+		if probe != nil && probe.err != nil {
+			return ""
 		}
 	}
 	return text
@@ -3670,27 +4017,39 @@ func respellAggregateCalls(text string, spellings map[string]string) string {
 // leading DISTINCT upper-cased and whitespace outside quotes removed: two
 // calls with one key are one expression. call is a call semanticAggregateCalls
 // found: a name, then its parenthesized arguments.
-func aggregateCallKey(call string) string {
-	open := strings.IndexByte(call, '(')
-	arguments := strings.TrimSpace(call[open+1:])
+func aggregateCallKey(call string) string { return aggregateCallKeyWithCancellation(call, nil) }
+func aggregateCallKeyWithCancellation(call string, probe *pipelineCancellation) string {
+	open := indexByteWithCancellation(call, '(', probe)
+	arguments := trimSpaceWithCancellation(call[open+1:], probe)
 	if len(arguments) > len("DISTINCT") && strings.EqualFold(arguments[:len("DISTINCT")], "DISTINCT") && !isIdentByte(arguments[len("DISTINCT")]) {
-		arguments = "DISTINCT " + arguments[len("DISTINCT"):]
+		arguments = concatPipelineStrings("DISTINCT ", arguments[len("DISTINCT"):], probe)
 	}
-	return upperASCII(strings.TrimSpace(call[:open])) + "(" + stripExpressionWhitespace(arguments)
+	name := upperASCIIWithCancellation(trimSpaceWithCancellation(call[:open], probe), probe)
+	normalized := stripExpressionWhitespaceWithCancellation(arguments, probe)
+	return concatPipelineStrings(concatPipelineStrings(name, "(", probe), normalized, probe)
 }
 
 // stripExpressionWhitespace removes the whitespace outside quoted text, but
 // for one space between two identifier characters, so NOT a stays apart
 // from NOTa.
 func stripExpressionWhitespace(expression string) string {
-	expression = strings.TrimSpace(expression)
-	if strings.IndexAny(expression, " \t\n\r") < 0 {
+	return stripExpressionWhitespaceWithCancellation(expression, nil)
+}
+func stripExpressionWhitespaceWithCancellation(expression string, probe *pipelineCancellation) string {
+	expression = trimSpaceWithCancellation(expression, probe)
+	if indexAnyWithCancellation(expression, " \t\n\r", probe) < 0 {
 		return expression
 	}
 	var stripped strings.Builder
-	stripped.Grow(len(expression))
+	stripped.Grow(pipelineInitialCapacity(len(expression), probe))
 	var quote byte
 	for index := 0; index < len(expression); index++ {
+		if probe != nil && !probe.check() {
+			return ""
+		}
+		if probe != nil && !reservePipelineString(&stripped, 2, probe) {
+			return ""
+		}
 		current := expression[index]
 		switch {
 		case quote != 0:
@@ -3706,6 +4065,9 @@ func stripExpressionWhitespace(expression string) string {
 		case isASCIIWhitespace(current):
 			next := index + 1
 			for next < len(expression) && isASCIIWhitespace(expression[next]) {
+				if probe != nil && !probe.check() {
+					return ""
+				}
 				next++
 			}
 			if isIdentByte(expression[index-1]) && isIdentByte(expression[next]) {
@@ -3724,6 +4086,11 @@ func stripExpressionWhitespace(expression string) string {
 // false; when an operator of it failed (1/0, a runtime TypeError) that failure
 // is recorded as the statement's error, as for a projection item.
 func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows, scopes []pipelineRow, terms []orderByTerm) bool {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
+	if !probe.check() {
+		return false
+	}
 	if len(terms) == 0 || len(rows) < 2 {
 		return true
 	}
@@ -3734,23 +4101,35 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 		values []interface{}
 		row    pipelineRow
 	}
-	ordered := make([]orderValue, 0, len(rows))
+	ordered := make([]orderValue, 0, pipelineInitialCapacity(len(rows), probe))
 	for index, row := range rows {
-		values := make([]interface{}, len(terms))
-		for termIndex, term := range terms {
+		if !probe.check() {
+			return false
+		}
+		values := make([]interface{}, 0, pipelineInitialCapacity(len(terms), probe))
+		for _, term := range terms {
+			if !probe.check() {
+				return false
+			}
 			// The projections' evaluator: subquery values (COUNT { … }) and
 			// recorded failures behave as in a RETURN item.
-			value, ok := e.evaluateRowExpressionWithContext(ctx, term.column, scopes[index])
+			value, ok := e.evaluateRowExpressionWithContext(ctx, term.column, scopes[index], probe)
 			if !ok {
 				return false
 			}
-			values[termIndex] = value
+			values = appendPipelineItem(values, value, probe)
+			if probe.err != nil {
+				return false
+			}
 		}
-		ordered = append(ordered, orderValue{values: values, row: row})
+		ordered = appendPipelineItem(ordered, orderValue{values: values, row: row}, probe)
+		if probe.err != nil {
+			return false
+		}
 	}
-	sort.SliceStable(ordered, func(left, right int) bool {
+	if !probe.sort(ordered, func(left, right int) bool {
 		for index, term := range terms {
-			comparison := compareValuesForSort(ordered[left].values[index], ordered[right].values[index])
+			comparison := probe.compareForSort(ordered[left].values[index], ordered[right].values[index])
 			if comparison == 0 {
 				continue
 			}
@@ -3760,8 +4139,13 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 			return comparison < 0
 		}
 		return false
-	})
+	}, true) {
+		return false
+	}
 	for index := range rows {
+		if !probe.check() {
+			return false
+		}
 		rows[index] = ordered[index].row
 	}
 	return true
@@ -3781,11 +4165,16 @@ func applyPipelineWindow(rows []pipelineRow, skip, limit int) []pipelineRow {
 }
 
 func (e *StorageExecutor) filterPipelineRows(ctx context.Context, rows []pipelineRow, whereClause string) []pipelineRow {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	if whereClause == "" {
 		return rows
 	}
 	filtered := rows[:0]
 	for _, row := range rows {
+		if !probe.check() {
+			return nil
+		}
 		if e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(row)) {
 			filtered = append(filtered, row)
 		}
@@ -3793,25 +4182,33 @@ func (e *StorageExecutor) filterPipelineRows(ctx context.Context, rows []pipelin
 	return filtered
 }
 
-func deduplicatePipelineRows(rows []pipelineRow, columns []string) []pipelineRow {
-	unique, _ := deduplicatePipelineRowsWithScopes(rows, rows, columns)
+func deduplicatePipelineRows(ctx context.Context, rows []pipelineRow, columns []string) []pipelineRow {
+	unique, _ := deduplicatePipelineRowsWithScopes(ctx, rows, rows, columns)
 	return unique
 }
 
-func deduplicatePipelineRowsWithScopes(rows, scopes []pipelineRow, columns []string) ([]pipelineRow, []pipelineRow) {
+func deduplicatePipelineRowsWithScopes(ctx context.Context, rows, scopes []pipelineRow, columns []string) ([]pipelineRow, []pipelineRow) {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	var seen cypherValueIndex
-	unique := make([]pipelineRow, 0, len(rows))
-	uniqueScopes := make([]pipelineRow, 0, len(rows))
+	unique := make([]pipelineRow, 0, pipelineInitialCapacity(len(rows), probe))
+	uniqueScopes := make([]pipelineRow, 0, pipelineInitialCapacity(len(rows), probe))
 	values := make([]interface{}, len(columns))
 	for rowIndex, row := range rows {
+		if !probe.check() {
+			return nil, nil
+		}
 		for i, column := range columns {
 			values[i] = row[column]
 		}
 		if _, exists := seen.addTuple(values); exists {
 			continue
 		}
-		unique = append(unique, row)
-		uniqueScopes = append(uniqueScopes, scopes[rowIndex])
+		unique = appendPipelineItem(unique, row, probe)
+		uniqueScopes = appendPipelineItem(uniqueScopes, scopes[rowIndex], probe)
+		if probe.err != nil {
+			return nil, nil
+		}
 	}
 	return unique, uniqueScopes
 }
@@ -3869,50 +4266,66 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 // parsePipelineAggregate recognizes the standard Cypher aggregate functions
 // and separates their input expression from an optional DISTINCT modifier.
 func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool) {
-	// An aggregate is a function call: without a parenthesis there is none.
-	if strings.IndexByte(expr, '(') < 0 || !isAggregateFunc(expr) {
+	return parsePipelineAggregateWithCancellation(expr, nil)
+}
+func parsePipelineAggregateWithCancellation(expr string, probe *pipelineCancellation) (name, inner string, distinct, ok bool) {
+	open := indexByteWithCancellation(expr, '(', probe)
+	if open < 0 || !isAggregateFuncWithCancellation(expr, probe) {
 		return "", "", false, false
 	}
-	open := strings.Index(expr, "(")
-	if open < 0 {
-		return "", "", false, false
-	}
-	name = lowerASCII(strings.TrimSpace(expr[:open]))
-	inner = strings.TrimSpace(extractFuncInner(expr))
-	inner, distinct = cutDistinctArgument(inner)
-	if inner == "" {
+	name = lowerASCII(trimSpaceWithCancellation(expr[:open], probe))
+	inner = trimSpaceWithCancellation(extractFuncInnerWithCancellation(expr, probe), probe)
+	inner, distinct = cutDistinctArgumentWithCancellation(inner, probe)
+	if inner == "" || probe != nil && probe.err != nil {
 		return "", "", false, false
 	}
 	return name, inner, distinct, true
 }
 
 func pipelineExpressionContainsAggregate(expr string) bool {
-	if strings.IndexByte(expr, '(') < 0 {
+	return pipelineExpressionContainsAggregateWithCancellation(expr, nil)
+}
+func pipelineExpressionContainsAggregateWithCancellation(expr string, probe *pipelineCancellation) bool {
+	if indexByteWithCancellation(expr, '(', probe) < 0 {
 		return false
 	}
-	return len(findAggregateSpans(strings.TrimSpace(expr))) > 0
+	spans := findAggregateSpansWithCancellation(trimSpaceWithCancellation(expr, probe), probe)
+	return len(spans) > 0 && (probe == nil || probe.err == nil)
 }
 
 func (e *StorageExecutor) evaluatePipelineAggregateExpression(rows []pipelineRow, expr string) (interface{}, bool) {
 	return e.evaluatePipelineAggregateExpressionWithContext(context.Background(), rows, expr)
 }
 
-func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx context.Context, rows []pipelineRow, expr string) (interface{}, bool) {
-	expr = strings.TrimSpace(expr)
-	if name, inner, distinct, ok := parsePipelineAggregate(expr); ok {
+func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx context.Context, rows []pipelineRow, expr string) (resultValue interface{}, resultOK bool) {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
+	defer func() {
+		if probe.err != nil {
+			resultValue, resultOK = nil, false
+		}
+	}()
+	if !probe.check() {
+		return nil, false
+	}
+	expr = trimSpaceWithCancellation(expr, probe)
+	if name, inner, distinct, ok := parsePipelineAggregateWithCancellation(expr, probe); ok {
 		return e.evaluatePipelineAggregateWithContext(ctx, rows, name, inner, distinct)
 	}
-	if inner, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
+	if inner, enclosed := stripEnclosingRowDelimiterWithCancellation(expr, '{', '}', probe); enclosed {
 		result := make(map[string]interface{})
 		if inner == "" {
 			return result, true
 		}
-		for _, pair := range splitTopLevelComma(inner) {
-			separator := findTopLevelMapKeyValueSeparator(pair)
+		for _, pair := range splitTopLevelCommaWithCancellation(inner, probe) {
+			if probe != nil && !probe.check() {
+				return nil, false
+			}
+			separator := findTopLevelMapKeyValueSeparatorWithCancellation(pair, probe)
 			if separator <= 0 {
 				return nil, false
 			}
-			key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
+			key := normalizePropertyKeyWithCancellation(trimSpaceWithCancellation(pair[:separator], probe), probe)
 			value, ok := e.evaluatePipelineAggregateExpressionWithContext(ctx, rows, pair[separator+1:])
 			if !ok {
 				return nil, false
@@ -3921,23 +4334,26 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 		}
 		return result, true
 	}
-	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
+	if inner, enclosed := stripEnclosingRowDelimiterWithCancellation(expr, '[', ']', probe); enclosed {
 		if inner == "" {
 			return []interface{}{}, true
 		}
-		if _, _, _, _, comprehension := parseListComprehension(inner); !comprehension {
+		if _, _, _, _, comprehension := parseListComprehensionWithCancellation(inner, probe); !comprehension {
 			result := make([]interface{}, 0)
-			for _, item := range splitTopLevelComma(inner) {
+			for _, item := range splitTopLevelCommaWithCancellation(inner, probe) {
+				if probe != nil && !probe.check() {
+					return nil, false
+				}
 				value, ok := e.evaluatePipelineAggregateExpressionWithContext(ctx, rows, item)
 				if !ok {
 					return nil, false
 				}
-				result = append(result, value)
+				result = appendPipelineItem(result, value, probe)
 			}
 			return result, true
 		}
 	}
-	if spans := findAggregateSpans(expr); len(spans) > 0 {
+	if spans := findAggregateSpansWithCancellation(expr, probe); len(spans) > 0 {
 		values := make(pipelineRow, len(spans))
 		// Mixed aggregate expressions are evaluated after isolating aggregate
 		// calls, but their non-aggregate terms still resolve against the group's
@@ -3946,13 +4362,19 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 		if len(rows) > 0 {
 			values = make(pipelineRow, len(rows[0])+len(spans))
 			for name, value := range rows[0] {
+				if probe != nil && !probe.check() {
+					return nil, false
+				}
 				values[name] = value
 			}
 		}
 		var rewritten strings.Builder
 		last := 0
 		for index, span := range spans {
-			name, inner, distinct, ok := parsePipelineAggregate(expr[span.start:span.end])
+			if probe != nil && !probe.check() {
+				return nil, false
+			}
+			name, inner, distinct, ok := parsePipelineAggregateWithCancellation(expr[span.start:span.end], probe)
 			if !ok {
 				return nil, false
 			}
@@ -3961,12 +4383,18 @@ func (e *StorageExecutor) evaluatePipelineAggregateExpressionWithContext(ctx con
 				return nil, false
 			}
 			placeholder := traversalAggPlaceholder(index)
-			rewritten.WriteString(expr[last:span.start])
-			rewritten.WriteString(placeholder)
+			if !appendPipelineString(&rewritten, expr[last:span.start], probe) {
+				return nil, false
+			}
+			if !appendPipelineString(&rewritten, placeholder, probe) {
+				return nil, false
+			}
 			values[placeholder] = value
 			last = span.end
 		}
-		rewritten.WriteString(expr[last:])
+		if !appendPipelineString(&rewritten, expr[last:], probe) {
+			return nil, false
+		}
 		return e.evaluateRowExpressionWithContext(ctx, rewritten.String(), values)
 	}
 	if len(rows) == 0 {
@@ -3982,12 +4410,17 @@ func (e *StorageExecutor) evaluatePipelineAggregate(rows []pipelineRow, name, ex
 }
 
 func (e *StorageExecutor) evaluatePipelineAggregateWithContext(ctx context.Context, rows []pipelineRow, name, expr string, distinct bool) (interface{}, bool) {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	if name == "percentilecont" || name == "percentiledisc" {
 		return e.evaluatePipelinePercentile(ctx, rows, name, expr, distinct)
 	}
 	state := pipelineAggregateState{name: name, expression: expr, distinct: distinct}
 	for _, row := range rows {
-		if !state.add(ctx, e, row) {
+		if !probe.check() {
+			return nil, false
+		}
+		if !state.addWithCancellation(ctx, e, row, probe) {
 			return nil, false
 		}
 	}
@@ -4061,62 +4494,41 @@ type returnProjectionPlan struct {
 // unbounded distinct query texts.
 var returnProjectionPlans = struct {
 	sync.RWMutex
-	plans map[string]*returnProjectionPlan
-}{plans: make(map[string]*returnProjectionPlan)}
+	plans pipelineStringMap[*returnProjectionPlan]
+}{}
 
 const returnProjectionPlanLimit = 4096
 
 func returnProjectionPlanFor(clause string) *returnProjectionPlan {
-	returnProjectionPlans.RLock()
-	plan, cached := returnProjectionPlans.plans[clause]
-	returnProjectionPlans.RUnlock()
-	if cached {
-		return plan
-	}
-	plan = parseReturnProjectionPlan(clause)
-	returnProjectionPlans.Lock()
-	if len(returnProjectionPlans.plans) >= returnProjectionPlanLimit {
-		returnProjectionPlans.plans = make(map[string]*returnProjectionPlan)
-	}
-	returnProjectionPlans.plans[clause] = plan
-	returnProjectionPlans.Unlock()
-	return plan
+	return returnProjectionPlanForWithCancellation(clause, nil)
 }
 
 func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
-	// The clause is scanned with its keyword, which tells a keyword-named
-	// first item from a clause (RETURN by ORDER BY by, #894).
-	body := strings.TrimSpace(clause)
-	modifierStart := len(body)
-	if cut := firstTopLevelModifierIndex(body); cut >= 0 {
-		modifierStart = cut
-	}
-	plan := &returnProjectionPlan{modifiers: strings.TrimSpace(body[modifierStart:])}
-	body, plan.distinct = cutDistinct(pipelineClauseBody(body[:modifierStart], "RETURN"))
-	items := splitTopLevelComma(body)
-	if len(items) > 0 && strings.TrimSpace(items[0]) == "*" {
-		plan.valid, plan.star = true, true
-		for _, item := range items[1:] {
-			plan.starItems = append(plan.starItems, strings.TrimSpace(item))
-		}
-		return plan
-	}
-	for _, rawItem := range items {
-		// Semantic validation rejects an empty item (RETURN 1,,2).
-		// Same alias parsing as WITH (parseProjectionExprAlias, #547).
-		expr, alias := parseProjectionExprAlias(strings.TrimSpace(rawItem))
-		plan.addProjection(expr, alias)
-	}
-	plan.valid = len(plan.projections) > 0
-	return plan
+	return parseReturnProjectionPlanWithCancellation(clause, nil)
 }
 
 // withStarExpanded is the plan of RETURN *, items with the * written out
 // (starProjectionItems, #883).
 func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProjectionPlan {
+	return plan.withStarExpandedWithCancellation(columns, nil)
+}
+func (plan *returnProjectionPlan) withStarExpandedWithCancellation(columns []string, probe *pipelineCancellation) *returnProjectionPlan {
 	expanded := &returnProjectionPlan{valid: true, distinct: plan.distinct, modifiers: plan.modifiers}
-	for _, item := range starProjectionItems(columns, plan.starItems) {
-		expanded.addProjection(parseProjectionExprAlias(item))
+	items := starProjectionItemsWithCancellation(columns, plan.starItems, probe)
+	if probe != nil && probe.err != nil {
+		return &returnProjectionPlan{}
+	}
+	for _, item := range items {
+		if probe != nil && !probe.check() {
+			return &returnProjectionPlan{}
+		}
+		expr, alias := parseProjectionExprAliasWithCancellation(item, probe)
+		if probe != nil && probe.err != nil {
+			return &returnProjectionPlan{}
+		}
+		if !expanded.addProjectionWithCancellation(expr, alias, probe) {
+			return &returnProjectionPlan{}
+		}
 	}
 	return expanded
 }
@@ -4135,16 +4547,31 @@ func pipelineOriginalReturnText(originalClauses []pipelineClause, idx int) strin
 // Neo4j does, since no row carries them (#883). Otherwise the columns take
 // the statement's own item texts (original), which rewrites may have changed.
 func pipelineNameReturnColumns(final *ExecuteResult, clause, original string, scope map[string]struct{}) {
-	if plan := returnProjectionPlanFor(clause); plan.star {
+	pipelineNameReturnColumnsWithCancellation(final, clause, original, scope, nil)
+}
+func pipelineNameReturnColumnsWithCancellation(final *ExecuteResult, clause, original string, scope map[string]struct{}, probe *pipelineCancellation) {
+	plan := returnProjectionPlanForWithCancellation(clause, probe)
+	if probe != nil && probe.err != nil {
+		return
+	}
+	if plan.star {
 		if len(final.Rows) == 0 {
-			final.Columns = plan.withStarExpanded(pipelineScopeColumns(scope)).columns
+			columns := plan.withStarExpandedWithCancellation(pipelineScopeColumnsWithCancellation(scope, probe), probe).columns
+			if probe != nil && probe.err != nil {
+				return
+			}
+			final.Columns = columns
 		}
 		return
 	}
 	if original == "" {
 		return
 	}
-	if columns := pipelineReturnSourceColumns(original); len(columns) == len(final.Columns) {
+	columns := pipelineReturnSourceColumnsWithCancellation(original, probe)
+	if probe != nil && probe.err != nil {
+		return
+	}
+	if len(columns) == len(final.Columns) {
 		final.Columns = columns
 	}
 }
@@ -4154,39 +4581,60 @@ func pipelineNameReturnColumns(final *ExecuteResult, clause, original string, sc
 // the given (name) order, as a variable item, except a column one of items
 // names (`RETURN *, a + 1 AS a` has the one column a), then items.
 func starProjectionItems(columns, items []string) []string {
-	named := make(map[string]bool, len(items))
+	return starProjectionItemsWithCancellation(columns, items, nil)
+}
+func starProjectionItemsWithCancellation(columns, items []string, probe *pipelineCancellation) []string {
+	named := pipelineStringMap[struct{}]{}
 	for _, item := range items {
-		_, alias := parseProjectionExprAlias(item)
-		named[alias] = true
-	}
-	out := make([]string, 0, len(columns)+len(items))
-	for _, column := range columns {
-		if !named[column] {
-			variable := projectionVariableText(column)
-			out = append(out, variable+" AS "+variable)
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		_, alias := parseProjectionExprAliasWithCancellation(item, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		if !named.SetWithCancellation(alias, struct{}{}, probe) {
+			return nil
 		}
 	}
-	return append(out, items...)
+	out := make([]string, 0, pipelineInitialCapacity(len(columns)+len(items), probe))
+	for _, column := range columns {
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		_, exists := named.GetWithCancellation(column, probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+		if !exists {
+			variable := projectionVariableTextWithCancellation(column, probe)
+			item := concatPipelineStrings(concatPipelineStrings(variable, " AS ", probe), variable, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+			out = appendPipelineItem(out, item, probe)
+		}
+	}
+	return appendPipelineItems(out, items, probe)
 }
 
 // projectionVariableText is a variable as an expression: backtick-quoted when
 // it isn't a plain identifier.
 func projectionVariableText(name string) string {
-	if isSimpleIdentifier(name) && !strings.Contains(name, "`") {
+	return projectionVariableTextWithCancellation(name, nil)
+}
+func projectionVariableTextWithCancellation(name string, probe *pipelineCancellation) string {
+	if isSimpleIdentifierWithCancellation(name, probe) && !containsTextWithCancellation(name, "`", probe) {
 		return name
 	}
-	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+	if probe != nil && probe.err != nil {
+		return ""
+	}
+	return concatPipelineStrings(concatPipelineStrings("`", replaceTextWithCancellation(name, "`", "``", probe), probe), "`", probe)
 }
 
 func (plan *returnProjectionPlan) addProjection(expr, alias string) {
-	aggregateName, aggregateExpr, distinct, isAggr := parsePipelineAggregate(expr)
-	if !isAggr && pipelineExpressionContainsAggregate(expr) {
-		isAggr = true
-		aggregateExpr = expr
-	}
-	plan.hasAggregate = plan.hasAggregate || isAggr
-	plan.projections = append(plan.projections, returnProjection{expr: expr, alias: alias, isAggr: isAggr, aggregateName: aggregateName, aggregateExpr: aggregateExpr, distinct: distinct})
-	plan.columns = append(plan.columns, alias)
+	plan.addProjectionWithCancellation(expr, alias, nil)
 }
 
 func returnProjectionPlanFromItems(items []returnItem) *returnProjectionPlan {
@@ -4213,42 +4661,68 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 }
 
 func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
-	return e.pipelineApplyReturnPlan(ctx, rows, returnProjectionPlanFor(clause), source, rowsValidated, preparedGroups...)
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
+	plan := returnProjectionPlanForWithCancellation(clause, probe)
+	if probe.err != nil {
+		return nil, false
+	}
+	return e.pipelineApplyReturnPlan(ctx, rows, plan, source, rowsValidated, preparedGroups...)
 }
 
 func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pipelineRow, plan *returnProjectionPlan, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
-	if !plan.valid {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
+	if !probe.check() || !plan.valid {
 		return nil, false
 	}
 	if rows == nil && source != nil && (plan.star || (!plan.hasAggregate && (plan.modifiers != "" || plan.distinct))) {
 		var materialized bool
-		rows, materialized = materializePipelineSource(source)
+		rows, materialized = materializePipelineSource(ctx, source)
 		if !materialized {
 			return nil, false
 		}
 	}
 	modifiers, returnDistinct := plan.modifiers, plan.distinct
 	if plan.star && len(plan.starItems) > 0 {
-		return e.pipelineApplyReturnPlan(ctx, rows, plan.withStarExpanded(pipelineWildcardColumns(rows)), source, rowsValidated)
+		return e.pipelineApplyReturnPlan(ctx, rows, plan.withStarExpandedWithCancellation(pipelineWildcardColumns(ctx, rows), probe), source, rowsValidated)
 	}
 	if plan.star {
-		columns := pipelineWildcardColumns(rows)
-		result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows))}
+		columns := pipelineWildcardColumns(ctx, rows)
+		if probe.err != nil {
+			return nil, false
+		}
+		result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, pipelineInitialCapacity(len(rows), probe))}
 		for _, row := range rows {
+			if !probe.check() {
+				return nil, false
+			}
 			projected := make([]interface{}, len(columns))
 			for index, column := range columns {
+				if !probe.check() {
+					return nil, false
+				}
 				projected[index] = row[column]
 			}
-			result.Rows = append(result.Rows, projected)
+			result.Rows = appendPipelineItem(result.Rows, projected, probe)
+			if probe.err != nil {
+				return nil, false
+			}
 		}
 		if returnDistinct {
-			result.Rows = deduplicatePipelineResultRows(result.Rows)
+			result.Rows = deduplicatePipelineResultRows(ctx, result.Rows)
+			if probe.err != nil {
+				return nil, false
+			}
 		}
 		result, err := e.applyResultModifiers(ctx, result, modifiers)
 		return result, err == nil
 	}
 	projs, hasAggregate := plan.projections, plan.hasAggregate
-	result := &ExecuteResult{Columns: append([]string(nil), plan.columns...)}
+	result := &ExecuteResult{Columns: appendPipelineItems([]string(nil), plan.columns, probe)}
+	if probe.err != nil {
+		return nil, false
+	}
 
 	if hasAggregate {
 		var groups []*pipelineAggregateGroup
@@ -4266,49 +4740,82 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 		// a projection's expression text as its value (count(*) in
 		// RETURN k, count(*) AS c ORDER BY count(*) DESC, k), as after an
 		// aggregating WITH.
-		orderTerms := parseOrderByTerms(modifiers)
+		orderTerms := parseOrderByTermsWithCancellation(modifiers, probe)
 		if len(orderTerms) > 0 {
 			expressions := make([]string, len(projs))
 			for index, projection := range projs {
+				if !probe.check() {
+					return nil, false
+				}
 				expressions[index] = projection.expr
 			}
-			orderTerms = alignOrderTerms(orderTerms, expressions)
+			orderTerms = alignOrderTermsWithCancellation(orderTerms, expressions, probe)
 		}
 		var projectedRows, orderScopes []pipelineRow
 		for _, group := range groups {
-			outRow := make([]interface{}, 0, len(projs))
+			if !probe.check() {
+				return nil, false
+			}
+			outRow := make([]interface{}, 0, pipelineInitialCapacity(len(projs), probe))
 			for index, projection := range projs {
+				if !probe.check() {
+					return nil, false
+				}
 				value, ok := group.value(ctx, e, index)
 				if !ok {
 					pipelineItemUnevaluable(ctx, projection.expr)
 					return nil, false
 				}
-				outRow = append(outRow, value)
+				outRow = appendPipelineItem(outRow, value, probe)
+				if probe.err != nil {
+					return nil, false
+				}
 			}
 			if len(orderTerms) == 0 {
-				result.Rows = append(result.Rows, outRow)
+				result.Rows = appendPipelineItem(result.Rows, outRow, probe)
+				if probe.err != nil {
+					return nil, false
+				}
 				continue
 			}
 			projected := make(pipelineRow, len(projs))
 			scope := make(pipelineRow, len(group.first)+2*len(projs))
 			for name, value := range group.first {
+				if !probe.check() {
+					return nil, false
+				}
 				scope[name] = value
 			}
 			for index, projection := range projs {
+				if !probe.check() {
+					return nil, false
+				}
 				scope[projection.expr] = outRow[index]
 			}
 			for index, column := range result.Columns {
+				if !probe.check() {
+					return nil, false
+				}
 				projected[column] = outRow[index]
 				scope[column] = outRow[index]
 			}
-			projectedRows = append(projectedRows, projected)
-			orderScopes = append(orderScopes, scope)
+			projectedRows = appendPipelineItem(projectedRows, projected, probe)
+			if probe.err != nil {
+				return nil, false
+			}
+			orderScopes = appendPipelineItem(orderScopes, scope, probe)
+			if probe.err != nil {
+				return nil, false
+			}
 		}
 		if len(orderTerms) > 0 {
 			return e.finishPipelineReturn(ctx, result, projectedRows, orderScopes, orderTerms, modifiers, returnDistinct)
 		}
 		if returnDistinct {
-			result.Rows = deduplicatePipelineResultRows(result.Rows)
+			result.Rows = deduplicatePipelineResultRows(ctx, result.Rows)
+			if probe.err != nil {
+				return nil, false
+			}
 		}
 		result, err := e.applyResultModifiers(ctx, result, modifiers)
 		return result, err == nil
@@ -4317,7 +4824,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	// Without DISTINCT, ORDER BY, SKIP or LIMIT the projected values are the
 	// result rows: no per-row map or ORDER BY scope is needed.
 	if modifiers == "" && !returnDistinct {
-		result.Rows = make([][]interface{}, 0, len(rows))
+		result.Rows = make([][]interface{}, 0, pipelineInitialCapacity(len(rows), probe))
 		projected, completed := e.pipelineProjectPlainReturn(ctx, projs, rows, source, &result.Rows, nil)
 		if !completed {
 			return nil, false
@@ -4333,19 +4840,25 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 
 	// ORDER BY and DISTINCT see the incoming row with the projection over
 	// it; the merged scope is built only when one of them needs it.
-	orderTerms := parseOrderByTerms(modifiers)
+	orderTerms := parseOrderByTermsWithCancellation(modifiers, probe)
 	orderedExpressions := orderedProjectionExpressions(orderTerms, len(projs), func(index int) (string, string) {
 		return projs[index].expr, projs[index].alias
 	})
 	needsOrderScopes := len(orderTerms) > 0 || returnDistinct
-	projectedRows := make([]pipelineRow, 0, len(rows))
+	projectedRows := make([]pipelineRow, 0, pipelineInitialCapacity(len(rows), probe))
 	var orderScopes []pipelineRow
 	if needsOrderScopes {
-		orderScopes = make([]pipelineRow, 0, len(rows))
+		orderScopes = make([]pipelineRow, 0, pipelineInitialCapacity(len(rows), probe))
 	}
 	for _, row := range rows {
+		if !probe.check() {
+			return nil, false
+		}
 		projected := make(pipelineRow, len(projs))
 		for _, p := range projs {
+			if !probe.check() {
+				return nil, false
+			}
 			val, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
 			if !ok {
 				pipelineItemUnevaluable(ctx, p.expr)
@@ -4353,21 +4866,36 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 			}
 			projected[p.alias] = val
 		}
-		projectedRows = append(projectedRows, projected)
+		projectedRows = appendPipelineItem(projectedRows, projected, probe)
+		if probe.err != nil {
+			return nil, false
+		}
 		if !needsOrderScopes {
 			continue
 		}
 		scope := make(pipelineRow, len(row)+len(projected)+len(orderedExpressions))
 		for name, value := range row {
+			if !probe.check() {
+				return nil, false
+			}
 			scope[name] = value
 		}
 		for _, ordered := range orderedExpressions {
+			if !probe.check() {
+				return nil, false
+			}
 			scope[ordered.expression] = projected[ordered.alias]
 		}
 		for name, value := range projected {
+			if !probe.check() {
+				return nil, false
+			}
 			scope[name] = value
 		}
-		orderScopes = append(orderScopes, scope)
+		orderScopes = appendPipelineItem(orderScopes, scope, probe)
+		if probe.err != nil {
+			return nil, false
+		}
 	}
 	return e.finishPipelineReturn(ctx, result, projectedRows, orderScopes, orderTerms, modifiers, returnDistinct)
 }
@@ -4376,8 +4904,13 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 // orderScopes[i]), SKIP and LIMIT to a RETURN's projected rows and writes
 // them to result in its column order.
 func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *ExecuteResult, projectedRows, orderScopes []pipelineRow, orderTerms []orderByTerm, modifiers string, returnDistinct bool) (*ExecuteResult, bool) {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	if returnDistinct {
-		projectedRows, orderScopes = deduplicatePipelineRowsWithScopes(projectedRows, orderScopes, result.Columns)
+		projectedRows, orderScopes = deduplicatePipelineRowsWithScopes(ctx, projectedRows, orderScopes, result.Columns)
+		if probe.err != nil {
+			return nil, false
+		}
 	}
 	if !e.orderPipelineRowsWithScopes(ctx, projectedRows, orderScopes, orderTerms) {
 		return nil, false
@@ -4391,13 +4924,22 @@ func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *Exec
 		limit = value
 	}
 	projectedRows = applyPipelineWindow(projectedRows, skip, limit)
-	result.Rows = make([][]interface{}, 0, len(projectedRows))
+	result.Rows = make([][]interface{}, 0, pipelineInitialCapacity(len(projectedRows), probe))
 	for _, projected := range projectedRows {
+		if !probe.check() {
+			return nil, false
+		}
 		outRow := make([]interface{}, len(result.Columns))
 		for index, column := range result.Columns {
+			if !probe.check() {
+				return nil, false
+			}
 			outRow[index] = projected[column]
 		}
-		result.Rows = append(result.Rows, outRow)
+		result.Rows = appendPipelineItem(result.Rows, outRow, probe)
+		if probe.err != nil {
+			return nil, false
+		}
 	}
 	return result, true
 }
@@ -4409,11 +4951,17 @@ func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *Exec
 // when a row could not be projected (the expression error, if any, is
 // recorded); completed is false when source declined its shape.
 func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs []returnProjection, rows []pipelineRow, source pipelineRowSource, out *[][]interface{}, emit func([]interface{}) bool) (projected, completed bool) {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	if rows == nil && source != nil {
 		// A local the closure captures, so the rows path below doesn't pay
 		// for a captured result variable.
 		sourceProjected := true
 		sourceCompleted := source(func(row pipelineRow) bool {
+			if !probe.check() {
+				sourceProjected = false
+				return false
+			}
 			values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
 			if !evaluated {
 				sourceProjected = false
@@ -4422,18 +4970,28 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 			if emit != nil {
 				return emit(values)
 			}
-			*out = append(*out, values)
+			*out = appendPipelineItem(*out, values, probe)
+			if probe.err != nil {
+				sourceProjected = false
+				return false
+			}
 			return true
 		})
 		return sourceProjected, sourceCompleted
 	}
 	for _, row := range rows {
+		if !probe.check() {
+			return false, true
+		}
 		values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
 		if !evaluated {
 			return false, true
 		}
 		if emit == nil {
-			*out = append(*out, values)
+			*out = appendPipelineItem(*out, values, probe)
+			if probe.err != nil {
+				return false, true
+			}
 		} else if !emit(values) {
 			break
 		}
@@ -4450,13 +5008,13 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 // client already has rows and no other route may run the statement again.
 func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *ResultStream, rows []pipelineRow, source pipelineRowSource, clauses, originalClauses []pipelineClause, idx int, scope map[string]struct{}, wrote bool) (columns []string, out [][]interface{}, handled bool, err error) {
 	clause := clauses[idx]
-	plan := returnProjectionPlanFor(clause.text)
+	plan := returnProjectionPlanForWithCancellation(clause.text, pipelineCancellationForContext(ctx))
 	// The statement only reads, so no row holds an entity it deleted
 	// (validateDeletedEntityReads), and the RETURN doesn't aggregate
 	// (validatePipelinePercentileArguments). The argument checks run on each
 	// row as it arrives, as WITH's do: a row that fails them fails the
 	// statement where the row is, as in Neo4j.
-	if err := e.validatePipelineProjectionValues(rows, clause.text, "RETURN"); err != nil {
+	if err := e.validatePipelineProjectionValues(ctx, rows, clause.text, "RETURN"); err != nil {
 		return nil, nil, true, err
 	}
 	var validationErr error
@@ -4464,7 +5022,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 		input := source
 		source = func(yield func(pipelineRow) bool) bool {
 			return input(func(row pipelineRow) bool {
-				if err := e.validatePipelineProjectionValues([]pipelineRow{row}, clause.text, "RETURN"); err != nil {
+				if err := e.validatePipelineProjectionValues(ctx, []pipelineRow{row}, clause.text, "RETURN"); err != nil {
 					validationErr = err
 					return false
 				}
@@ -4473,7 +5031,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 		}
 	}
 	named := &ExecuteResult{Columns: append([]string(nil), plan.columns...)}
-	pipelineNameReturnColumns(named, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
+	pipelineNameReturnColumnsWithCancellation(named, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope, pipelineCancellationForContext(ctx))
 	stream.begin(named.Columns)
 	stopped := false
 	projected, completed := e.pipelineProjectPlainReturn(ctx, plan.projections, rows, source, nil, func(values []interface{}) bool {
@@ -4528,47 +5086,85 @@ func streamableReturnPlan(plan *returnProjectionPlan) bool {
 // source.
 func streamsReturn(ctx context.Context, clauses []pipelineClause, idx int) bool {
 	return clauses[idx].kind == pipelineClauseReturn && boundResultStream(ctx, &clauses[idx]) != nil &&
-		streamableReturnPlan(returnProjectionPlanFor(clauses[idx].text))
+		streamableReturnPlan(returnProjectionPlanForWithCancellation(clauses[idx].text, pipelineCancellationForContext(ctx)))
 }
 
-func deduplicatePipelineResultRows(rows [][]interface{}) [][]interface{} {
+func deduplicatePipelineResultRows(ctx context.Context, rows [][]interface{}) [][]interface{} {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	var seen cypherValueIndex
-	unique := make([][]interface{}, 0, len(rows))
+	unique := make([][]interface{}, 0, pipelineInitialCapacity(len(rows), probe))
 	for _, row := range rows {
+		if !probe.check() {
+			return nil
+		}
 		if _, exists := seen.addTuple(row); exists {
 			continue
 		}
-		unique = append(unique, row)
+		unique = appendPipelineItem(unique, row, probe)
+		if probe.err != nil {
+			return nil
+		}
 	}
 	return unique
 }
 
-func pipelineWildcardColumns(rows []pipelineRow) []string {
-	seen := make(map[string]struct{})
+func pipelineWildcardColumns(ctx context.Context, rows []pipelineRow) []string {
+	return pipelineColumns(ctx, rows, false)
+}
+
+func pipelineColumns(ctx context.Context, rows []pipelineRow, includeInternal bool) []string {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
+	seen := pipelineStringSet{probe: probe}
+	columns := make([]string, 0)
 	for _, row := range rows {
+		if !probe.check() {
+			return nil
+		}
 		for column := range row {
-			if strings.HasPrefix(column, "$") || isGeneratedVariable(column) {
+			if !probe.check() {
+				return nil
+			}
+			if !includeInternal && (strings.HasPrefix(column, "$") || isGeneratedVariable(column)) {
 				continue
 			}
-			seen[column] = struct{}{}
+			exists := seen.add(column)
+			if probe.err != nil {
+				return nil
+			}
+			if !exists {
+				columns = appendPipelineItem(columns, column, probe)
+				if probe.err != nil {
+					return nil
+				}
+			}
 		}
 	}
-	columns := make([]string, 0, len(seen))
-	for column := range seen {
-		columns = append(columns, column)
+	if !probe.sort(columns, func(i, j int) bool { return comparePipelineStrings(columns[i], columns[j], probe) < 0 }, false) {
+		return nil
 	}
-	sort.Strings(columns)
 	return columns
 }
 
 func pipelineScopeColumns(scope map[string]struct{}) []string {
-	columns := make([]string, 0, len(scope))
+	return pipelineScopeColumnsWithCancellation(scope, nil)
+}
+func pipelineScopeColumnsWithCancellation(scope map[string]struct{}, probe *pipelineCancellation) []string {
+	columns := make([]string, 0, pipelineInitialCapacity(len(scope), probe))
 	for column := range scope {
+		if probe != nil && !probe.check() {
+			return nil
+		}
 		if !strings.HasPrefix(column, "$") && !isGeneratedVariable(column) {
-			columns = append(columns, column)
+			columns = appendPipelineItem(columns, column, probe)
 		}
 	}
-	sort.Strings(columns)
+	if probe == nil {
+		sort.Strings(columns)
+	} else if probe.err != nil || !probe.SortStrings(columns) {
+		return nil
+	}
 	return columns
 }
 
@@ -4641,22 +5237,26 @@ func evaluateListForPipeline(expr string, row pipelineRow) []interface{} {
 // variable, a property of one, or a literal list, without the row evaluator.
 // Its value is coerced as UNWIND coerces any value (coerceToUnwindItems).
 func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{}, bool) {
+	return evaluateStaticListForPipelineWithCancellation(expr, row, nil)
+}
+
+func evaluateStaticListForPipelineWithCancellation(expr string, row pipelineRow, probe *pipelineCancellation) ([]interface{}, bool) {
 	expr = strings.TrimSpace(expr)
 	// Bare variable.
 	if val, ok := row[expr]; ok {
-		return coerceToUnwindItems(val), true
+		return coerceToUnwindItemsWithCancellation(val, probe), true
 	}
 	// Property access (a.b): the whole expression only, not one that starts
 	// with it (UNWIND n.p + n.q is a list concatenation).
 	if base, field, property := parseVarPropertyRef(expr); property {
 		if baseVal, ok := row[base]; ok {
-			if asMap, ok := toStringAnyMap(baseVal); ok {
+			if asMap, ok := toStringAnyMapWithCancellation(baseVal, probe); ok {
 				if v, ok := asMap[field]; ok {
-					return coerceToUnwindItems(v), true
+					return coerceToUnwindItemsWithCancellation(v, probe), true
 				}
 			}
 			if node, ok := baseVal.(*storage.Node); ok && node != nil {
-				return coerceToUnwindItems(node.Properties[field]), true
+				return coerceToUnwindItemsWithCancellation(node.Properties[field], probe), true
 			}
 		}
 	}
@@ -4669,21 +5269,23 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 		if !ok {
 			return nil, false
 		}
-		return coerceToUnwindItems(parsed), true
+		return coerceToUnwindItemsWithCancellation(parsed, probe), true
 	}
 	return nil, false
 }
 
 func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context, expr string, row pipelineRow) ([]interface{}, bool) {
+	ctx = withPipelineCancellation(ctx)
+	probe := pipelineCancellationForContext(ctx)
 	if inner, wrapped := stripEnclosingExpressionParentheses(strings.TrimSpace(expr)); wrapped {
 		expr = inner
 	}
 	if mayContainSubqueryExpression(expr) {
 		if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
-			return coerceToUnwindItems(value), true
+			return coerceToUnwindItemsWithCancellation(value, probe), true
 		}
 	}
-	if items, ok := evaluateStaticListForPipeline(expr, row); ok {
+	if items, ok := evaluateStaticListForPipelineWithCancellation(expr, row, probe); ok {
 		return items, true
 	}
 	if matchFuncStartAndSuffix(expr, "range") {
@@ -4699,7 +5301,7 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 			}
 			arguments[index] = value
 		}
-		items, err := evaluateCypherRange(arguments)
+		items, err := evaluateCypherRangeWithCancellation(arguments, probe)
 		if err != nil {
 			recordExpressionFailure(ctx, err)
 			return nil, false
@@ -4707,7 +5309,7 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 		return items, true
 	}
 	if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, row); ok {
-		return coerceToUnwindItems(value), true
+		return coerceToUnwindItemsWithCancellation(value, probe), true
 	}
 
 	value := e.evaluateExpressionWithContext(withValueBindings(ctx, row), expr, nil, nil)
@@ -4717,53 +5319,109 @@ func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context
 	if value == nil && !strings.EqualFold(strings.TrimSpace(expr), "null") && !looksLikeFunctionCall(expr) {
 		return nil, false
 	}
-	return coerceToUnwindItems(value), true
+	return coerceToUnwindItemsWithCancellation(value, probe), true
 }
 
 func toAnySlice(v interface{}) []interface{} {
+	return toAnySliceWithCancellation(v, nil)
+}
+
+func toAnySliceWithCancellation(v interface{}, probe *pipelineCancellation) []interface{} {
+	if probe != nil && !probe.check() {
+		return nil
+	}
 	switch s := v.(type) {
 	case []interface{}:
 		return s
 	case []map[string]interface{}:
-		out := make([]interface{}, len(s))
-		for i, m := range s {
-			out[i] = m
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
+		for _, m := range s {
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, m, probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	case []string:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
-			out[i] = s[i]
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, s[i], probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	case []int:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
-			out[i] = int64(s[i])
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, int64(s[i]), probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	case []int64:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
-			out[i] = s[i]
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, s[i], probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	case []float64:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
-			out[i] = s[i]
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, s[i], probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	case []float32:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
-			out[i] = float64(s[i])
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, float64(s[i]), probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	case []bool:
-		out := make([]interface{}, len(s))
+		out := make([]interface{}, 0, pipelineInitialCapacity(len(s), probe))
 		for i := range s {
-			out[i] = s[i]
+			if probe != nil && !probe.check() {
+				return nil
+			}
+			out = appendPipelineItem[interface{}](out, s[i], probe)
+			if probe != nil && probe.err != nil {
+				return nil
+			}
+
 		}
 		return out
 	}
@@ -4771,9 +5429,16 @@ func toAnySlice(v interface{}) []interface{} {
 	if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) {
 		return nil
 	}
-	out := make([]interface{}, rv.Len())
+	out := make([]interface{}, 0, pipelineInitialCapacity(rv.Len(), probe))
 	for i := 0; i < rv.Len(); i++ {
-		out[i] = rv.Index(i).Interface()
+		if probe != nil && !probe.check() {
+			return nil
+		}
+		out = appendPipelineItem[interface{}](out, rv.Index(i).Interface(), probe)
+		if probe != nil && probe.err != nil {
+			return nil
+		}
+
 	}
 	return out
 }

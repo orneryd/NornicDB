@@ -1,0 +1,3 @@
+- id: cyphercore.custom_formatting_unsupported
+  description: A custom Go formatter cannot participate in query cancellation. Type is a machine value.
+  other: "custom formatting is unsupported for value type {{.Type}} in a cancellable query"

@@ -1,17 +1,21 @@
 package cypher
 
 import (
-	"fmt"
 	"strings"
 	"time"
 )
 
 func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string, values map[string]interface{}) (value interface{}, matched bool, resolved bool, err error) {
+	probe := rowPipelineCancellation(values)
 	name := lowerASCII(function)
 	// An argument's error is the function's: eval keeps the first one, and it
 	// replaces whatever the function would return.
 	var argumentErr error
 	defer func() {
+		if probe != nil && probe.err != nil {
+			value, resolved, err = nil, false, probe.err
+			return
+		}
 		if argumentErr != nil {
 			value, resolved, err = nil, false, argumentErr
 		}
@@ -90,7 +94,8 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 				return nil, true, false, nil
 			}
 		}
-		return padRowString(text, length, padding, name == "lpad"), true, true, nil
+		result, padErr := padRowStringWithCancellation(text, length, padding, name == "lpad", probe)
+		return result, true, padErr == nil, padErr
 	case "format":
 		value, resolved, err := e.evaluateRowGraphFunction(function, argument, values)
 		return value, true, resolved, err
@@ -105,18 +110,13 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		if !separatorOK {
 			return nil, true, false, nil
 		}
-		items := toAnySlice(values[0])
-		parts := make([]string, len(items))
-		for index, item := range items {
-			parts[index] = fmt.Sprint(item)
-		}
-		return strings.Join(parts, separator), true, true, nil
+		return joinPipelineValues(values[0], separator, probe), true, true, nil
 	case "apoc.coll.flatten":
 		values, ok := args()
 		if !ok || len(values) == 0 || len(values) > 2 {
 			return nil, true, false, nil
 		}
-		return flattenList(values[0], len(values) == 2 && values[1] == true), true, true, nil
+		return flattenListWithCancellation(values[0], len(values) == 2 && values[1] == true, probe), true, true, nil
 	case "apoc.coll.toset", "apoc.coll.sum", "apoc.coll.avg", "apoc.coll.min", "apoc.coll.max", "apoc.coll.reverse":
 		value, ok := one()
 		if !ok {
@@ -124,17 +124,17 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		switch name {
 		case "apoc.coll.toset":
-			return toSet(value), true, true, nil
+			return toSetWithCancellation(value, probe), true, true, nil
 		case "apoc.coll.sum":
-			return apocCollSum(value), true, true, nil
+			return apocCollSumWithCancellation(value, probe), true, true, nil
 		case "apoc.coll.avg":
-			return apocCollAvg(value), true, true, nil
+			return apocCollAvgWithCancellation(value, probe), true, true, nil
 		case "apoc.coll.min":
-			return apocCollMin(value), true, true, nil
+			return apocCollMinWithCancellation(value, probe), true, true, nil
 		case "apoc.coll.reverse":
-			return apocCollReverse(value), true, true, nil
+			return apocCollReverseWithCancellation(value, probe), true, true, nil
 		default:
-			return apocCollMax(value), true, true, nil
+			return apocCollMaxWithCancellation(value, probe), true, true, nil
 		}
 	case "apoc.convert.tojson":
 		value, ok := one()
@@ -166,12 +166,12 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 			return nil, true, false, nil
 		}
 		if name == "apoc.map.merge" {
-			return mergeMaps(values[0], values[1]), true, true, nil
+			return mergeMapsWithCancellation(values[0], values[1], probe), true, true, nil
 		}
-		return fromLists(values[0], values[1]), true, true, nil
+		return fromListsWithCancellation(values[0], values[1], probe), true, true, nil
 	case "apoc.map.frompairs":
 		value, ok := one()
-		return fromPairs(value), true, ok, nil
+		return fromPairsWithCancellation(value, probe), true, ok, nil
 	case "kalman.init", "kalman.adaptive.init":
 		var config map[string]interface{}
 		if strings.TrimSpace(argument) != "" {
@@ -196,23 +196,48 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 }
 
 func padRowString(value string, length int, padding string, left bool) string {
-	characters := []rune(value)
-	if len(characters) >= length {
-		return string(characters[:length])
+	result, _ := padRowStringWithCancellation(value, length, padding, left, nil)
+	return result
+}
+
+func padRowStringWithCancellation(value string, length int, padding string, left bool, probe *pipelineCancellation) (string, error) {
+	characters := pipelineRunes(value, probe)
+	if probe != nil && probe.err != nil {
+		return "", probe.err
 	}
-	padCharacters := []rune(padding)
+	if len(characters) >= length {
+		return pipelineStringFromRunes(characters[:length], probe)
+	}
+	padCharacters := pipelineRunes(padding, probe)
+	if probe != nil && probe.err != nil {
+		return "", probe.err
+	}
 	needed := length - len(characters)
-	result := make([]rune, 0, length)
+	value, err := pipelineStringFromRunes(characters, probe)
+	if err != nil {
+		return "", err
+	}
+	var result strings.Builder
 	if !left {
-		result = append(result, characters...)
+		if !appendPipelineString(&result, value, probe) {
+			return "", probe.err
+		}
 	}
 	for index := 0; index < needed; index++ {
-		result = append(result, padCharacters[index%len(padCharacters)])
+		if probe != nil && !probe.check() {
+			return "", probe.err
+		}
+		if !appendPipelineRune(&result, padCharacters[index%len(padCharacters)], probe) {
+			return "", probe.err
+		}
+
 	}
 	if left {
-		result = append(result, characters...)
+		if !appendPipelineString(&result, value, probe) {
+			return "", probe.err
+		}
 	}
-	return string(result)
+	return result.String(), nil
 }
 
 func (e *StorageExecutor) evaluateRowTemporalComponent(name, argument string, values map[string]interface{}) (interface{}, bool, bool, error) {

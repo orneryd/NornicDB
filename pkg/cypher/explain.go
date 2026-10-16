@@ -834,118 +834,193 @@ func neo4jPlanOperatorMap(op *PlanOperator, profile bool) map[string]any {
 // top-level RETURN), which its EXPLAIN reports, and which a statement that
 // failed while running reports with no rows over HTTP (#668).
 func (e *StorageExecutor) StatementColumns(query string) []string {
-	return e.inferExplainColumns(query)
+	return e.StatementColumnsWithCancellation(query, nil)
+}
+func (e *StorageExecutor) StatementColumnsWithCancellation(query string, probe *pipelineCancellation) []string {
+	return e.inferExplainColumnsWithCancellation(query, probe)
 }
 
 func (e *StorageExecutor) inferExplainColumns(query string) []string {
+	return e.inferExplainColumnsWithCancellation(query, nil)
+}
+func (e *StorageExecutor) inferExplainColumnsWithCancellation(query string, probe *pipelineCancellation) (columns []string) {
+	defer func() {
+		if probe != nil && probe.err != nil {
+			columns = nil
+		}
+	}()
 	// Neo4j EXPLAIN returns the same columns as the underlying query but no rows.
-	if y := parseYieldClause(query); y != nil {
+	if y := parseYieldClauseWithCancellation(query, probe); y != nil {
 		// The statement's own RETURN, without its ORDER BY / SKIP / LIMIT.
 		returnExpr := ""
-		if returnIdx := topLevelKeywordIndex(query, "RETURN"); returnIdx >= 0 {
-			returnExpr = strings.TrimSpace(query[returnIdx+len("RETURN"):])
+		if returnIdx := topLevelKeywordIndexWithCancellation(query, "RETURN", probe); returnIdx >= 0 {
+			returnExpr = trimSpaceWithCancellation(query[returnIdx+len("RETURN"):], probe)
 			for _, keyword := range []string{"ORDER", "SKIP", "LIMIT"} {
-				if index := topLevelKeywordIndex(returnExpr, keyword); index >= 0 {
-					returnExpr = strings.TrimSpace(returnExpr[:index])
+				if probe != nil && !probe.check() {
+					return nil
+				}
+				if index := topLevelKeywordIndexWithCancellation(returnExpr, keyword, probe); index >= 0 {
+					returnExpr = trimSpaceWithCancellation(returnExpr[:index], probe)
 				}
 			}
 		}
 		if returnExpr != "" {
-			items := e.parseReturnItems(returnExpr)
+			items := e.parseReturnItemsWithCancellation(returnExpr, probe)
 			// For RETURN * after explicit YIELD items, project yielded aliases/names.
-			if len(items) == 1 && strings.TrimSpace(items[0].expr) == "*" && len(y.items) > 0 {
-				cols := make([]string, 0, len(y.items))
+			if len(items) == 1 && trimSpaceWithCancellation(items[0].expr, probe) == "*" && len(y.items) > 0 {
+				cols := make([]string, 0, pipelineInitialCapacity(len(y.items), probe))
 				for _, item := range y.items {
+					if probe != nil && !probe.check() {
+						return nil
+					}
 					if item.alias != "" {
-						cols = append(cols, item.alias)
+						cols = appendPipelineItem(cols, item.alias, probe)
 					} else {
-						cols = append(cols, item.name)
+						cols = appendPipelineItem(cols, item.name, probe)
 					}
 				}
 				return cols
 			}
-			cols := make([]string, 0, len(items))
+			cols := make([]string, 0, pipelineInitialCapacity(len(items), probe))
 			for _, item := range items {
-				cols = append(cols, item.column())
+				if probe != nil && !probe.check() {
+					return nil
+				}
+				cols = appendPipelineItem(cols, item.column(), probe)
 			}
 			return cols
 		}
 		if !y.yieldAll {
-			cols := make([]string, 0, len(y.items))
+			cols := make([]string, 0, pipelineInitialCapacity(len(y.items), probe))
 			for _, item := range y.items {
+				if probe != nil && !probe.check() {
+					return nil
+				}
 				if item.alias != "" {
-					cols = append(cols, item.alias)
+					cols = appendPipelineItem(cols, item.alias, probe)
 				} else {
-					cols = append(cols, item.name)
+					cols = appendPipelineItem(cols, item.name, probe)
 				}
 			}
 			return cols
 		}
 	}
 
-	if cols := e.inferTopLevelReturnColumns(query); cols != nil {
+	if cols := e.inferTopLevelReturnColumnsWithCancellation(query, probe); cols != nil {
 		return cols
 	}
 	return []string{}
 }
 
 // formatPlan formats the execution plan as a string (tree visualization)
-func formatPlan(plan *ExecutionPlan) string {
-	var sb strings.Builder
-
-	sb.WriteString(fmt.Sprintf("+-%s-+\n", strings.Repeat("-", 60)))
-	sb.WriteString(fmt.Sprintf("| %-60s |\n", fmt.Sprintf("%s %s", plan.Mode, "Query Plan")))
-	sb.WriteString(fmt.Sprintf("+-%s-+\n", strings.Repeat("-", 60)))
-
-	if plan.Mode == ModeProfile {
-		sb.WriteString(fmt.Sprintf("| Total Time: %-47s |\n", plan.TotalTime.String()))
-		sb.WriteString(fmt.Sprintf("| Total Rows: %-47d |\n", plan.TotalRows))
-		sb.WriteString(fmt.Sprintf("| Total DB Hits: %-44d |\n", plan.TotalDBHits))
-		sb.WriteString(fmt.Sprintf("+-%s-+\n", strings.Repeat("-", 60)))
+func formatPlan(plan *ExecutionPlan) string { return formatPlanWithCancellation(plan, nil) }
+func formatPlanWithCancellation(plan *ExecutionPlan, probe *pipelineCancellation) string {
+	if probe != nil && !probe.check() {
+		return ""
 	}
-
-	formatOperator(&sb, plan.Root, 0, plan.Mode == ModeProfile)
-
-	sb.WriteString(fmt.Sprintf("+-%s-+\n", strings.Repeat("-", 60)))
-
+	var sb strings.Builder
+	const border = "+--------------------------------------------------------------+\n"
+	if !appendPipelineString(&sb, border, probe) || !appendPlanLine(&sb, concatPipelineStrings(string(plan.Mode), " Query Plan", probe), probe) || !appendPipelineString(&sb, border, probe) {
+		return ""
+	}
+	if plan.Mode == ModeProfile {
+		// Only scalar integer/duration formatting reaches fmt; source strings
+		// and accumulated prefixes go through the shared growing-output owner.
+		for _, line := range []string{
+			fmt.Sprintf("| Total Time: %-47s |\n", plan.TotalTime.String()),
+			fmt.Sprintf("| Total Rows: %-47d |\n", plan.TotalRows),
+			fmt.Sprintf("| Total DB Hits: %-44d |\n", plan.TotalDBHits),
+		} {
+			if !appendPipelineString(&sb, line, probe) {
+				return ""
+			}
+		}
+		if !appendPipelineString(&sb, border, probe) {
+			return ""
+		}
+	}
+	if !formatOperatorWithCancellation(&sb, plan.Root, 0, plan.Mode == ModeProfile, probe) || !appendPipelineString(&sb, border, probe) {
+		return ""
+	}
 	return sb.String()
 }
 
-// formatOperator formats a single operator in the plan tree
+func appendPlanLine(out *strings.Builder, line string, probe *pipelineCancellation) bool {
+	if probe == nil {
+		out.WriteString(fmt.Sprintf("| %-60s |\n", line))
+		return true
+	}
+	width := 0
+	for range line {
+		if !probe.check() {
+			return false
+		}
+		width++
+	}
+	if !appendPipelineString(out, "| ", probe) || !appendPipelineString(out, line, probe) {
+		return false
+	}
+	for ; width < 60; width++ {
+		if !appendPipelineByte(out, ' ', probe) {
+			return false
+		}
+	}
+	return appendPipelineString(out, " |\n", probe)
+}
+
 func formatOperator(sb *strings.Builder, op *PlanOperator, depth int, showStats bool) {
+	formatOperatorWithCancellation(sb, op, depth, showStats, nil)
+}
+func formatOperatorWithCancellation(sb *strings.Builder, op *PlanOperator, depth int, showStats bool, probe *pipelineCancellation) bool {
+	if probe != nil && !probe.check() {
+		return false
+	}
 	if op == nil {
-		return
+		return true
 	}
-
-	indent := strings.Repeat("  ", depth)
-	prefix := "+-"
+	var indent strings.Builder
+	for level := 0; level < depth; level++ {
+		if !appendPipelineString(&indent, "  ", probe) {
+			return false
+		}
+	}
+	var line strings.Builder
 	if depth > 0 {
-		prefix = "|" + indent + "+-"
+		if !appendPipelineByte(&line, '|', probe) || !appendPipelineString(&line, indent.String(), probe) {
+			return false
+		}
 	}
-
-	// Operator line
-	line := fmt.Sprintf("%s %s", prefix, op.OperatorType)
-	if op.Description != "" && op.Description != op.OperatorType {
-		line += fmt.Sprintf(" (%s)", truncate(op.Description, 40))
+	if !appendPipelineString(&line, "+- ", probe) || !appendPipelineString(&line, op.OperatorType, probe) {
+		return false
 	}
-
-	sb.WriteString(fmt.Sprintf("| %-60s |\n", line))
-
-	// Statistics line for PROFILE mode
+	if op.Description != "" && comparePipelineStrings(op.Description, op.OperatorType, probe) != 0 {
+		if !appendPipelineString(&line, " (", probe) || !appendPipelineString(&line, truncate(op.Description, 40), probe) || !appendPipelineByte(&line, ')', probe) {
+			return false
+		}
+	}
+	if !appendPlanLine(sb, line.String(), probe) {
+		return false
+	}
+	var stats strings.Builder
+	if !appendPipelineString(&stats, indent.String(), probe) {
+		return false
+	}
 	if showStats {
-		statsLine := fmt.Sprintf("%s|   Est: %d, Actual: %d, Hits: %d",
-			indent, op.EstimatedRows, op.ActualRows, op.DBHits)
-		sb.WriteString(fmt.Sprintf("| %-60s |\n", statsLine))
-	} else {
-		// Just show estimates for EXPLAIN
-		statsLine := fmt.Sprintf("%s|   Estimated Rows: %d", indent, op.EstimatedRows)
-		sb.WriteString(fmt.Sprintf("| %-60s |\n", statsLine))
+		if !appendPipelineString(&stats, fmt.Sprintf("|   Est: %d, Actual: %d, Hits: %d", op.EstimatedRows, op.ActualRows, op.DBHits), probe) {
+			return false
+		}
+	} else if !appendPipelineString(&stats, fmt.Sprintf("|   Estimated Rows: %d", op.EstimatedRows), probe) {
+		return false
 	}
-
-	// Format children
+	if !appendPlanLine(sb, stats.String(), probe) {
+		return false
+	}
 	for _, child := range op.Children {
-		formatOperator(sb, child, depth+1, showStats)
+		if !formatOperatorWithCancellation(sb, child, depth+1, showStats, probe) {
+			return false
+		}
 	}
+	return probe == nil || probe.err == nil
 }
 
 // truncate truncates a string to maxLen characters
