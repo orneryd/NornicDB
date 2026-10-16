@@ -655,6 +655,15 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// proportional to the matching label, applies residual predicates before
 	// materialising rows, and lets LIMIT stop the storage iterator early.
 	if len(labels) > 0 {
+		// Whole row nodes carry no separately stored vectors where the store
+		// reads them that way (a transaction, as getQueryNode does).
+		if reader, ok := store.(storage.QueryLabelNodeReader); ok && projection == nil {
+			err := reader.StreamQueryNodesByLabel(labels[0], collect)
+			if err == nil || err == storage.ErrIterationStopped {
+				return nil
+			}
+			return err
+		}
 		if reader, ok := store.(storage.ProjectedLabelNodeReader); ok {
 			err := reader.StreamNodesByLabelProjected(labels[0], projection, collect)
 			if err == nil || err == storage.ErrIterationStopped {

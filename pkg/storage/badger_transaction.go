@@ -26,6 +26,7 @@ import (
 type snapshotLabelCacheKey struct {
 	projectionKey string
 	reveal        bool
+	vectorFree    bool
 }
 
 // BadgerTransaction wraps Badger's native transaction with constraint validation.
@@ -2336,6 +2337,18 @@ func (tx *BadgerTransaction) GetNodesByLabel(label string) ([]*Node, error) {
 // stop iteration without forcing the transaction to resolve or copy the rest
 // of the label population.
 func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
+	return tx.streamNodesByLabel(label, properties, true, visit)
+}
+
+// StreamQueryNodesByLabel implements QueryLabelNodeReader: whole nodes as
+// query rows carry them (GetQueryNode), without separately stored vectors.
+func (tx *BadgerTransaction) StreamQueryNodesByLabel(label string, visit func(*Node) error) error {
+	return tx.streamNodesByLabel(label, nil, false, visit)
+}
+
+// streamNodesByLabel is the one label stream; vectors false reads whole
+// nodes without separately stored vectors (properties must be nil).
+func (tx *BadgerTransaction) streamNodesByLabel(label string, properties []string, vectors bool, visit func(*Node) error) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -2376,7 +2389,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 			if !nodeIDInScope(n.ID, scope) || tx.engine.filterNodeByDecay(n, nowNanos) {
 				continue
 			}
-			if err := invokeVisit(projectCachedNodeForRead(n, properties)); err != nil {
+			if err := invokeVisit(labelStreamNodeForRead(n, properties, vectors)); err != nil {
 				if err == ErrIterationStopped {
 					return nil
 				}
@@ -2426,7 +2439,7 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		return invokeVisit(forCaller(node))
 	}
 
-	cacheKey := snapshotLabelCacheKey{projectionKey: label, reveal: tx.engine.revealAll.Load()}
+	cacheKey := snapshotLabelCacheKey{projectionKey: label, reveal: tx.engine.revealAll.Load(), vectorFree: !vectors}
 	cache := tx.snapshotLabelNodes
 	if properties != nil {
 		cacheKey.projectionKey = snapshotLabelProjectionKey(label, properties)
@@ -2466,13 +2479,13 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 		return emitCommitted(node)
 	}
 	if tx.snapshotTx != nil && tx.engine.writeBehind == nil {
-		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfter(tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, properties, afterNodeID, streamVisit)
+		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfter(tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, properties, vectors, afterNodeID, streamVisit)
 	} else if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
-		err = tx.engine.StreamNodesByLabelProjectedInScope(tx.labelScanScopeLocked(), label, properties, streamVisit)
+		err = tx.engine.streamNodesByLabelInScope(tx.labelScanScopeLocked(), label, properties, vectors, streamVisit)
 	} else {
 		err = tx.engine.streamNodesByLabelVisibleAtSnapshotWithView(
 			tx.labelScanScopeLocked(),
-			label, tx.readTS, tx.withSnapshotViewLocked, properties, streamVisit,
+			label, tx.readTS, tx.withSnapshotViewLocked, properties, vectors, streamVisit,
 		)
 	}
 	if err != nil {
@@ -3315,10 +3328,15 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 			}
 		}
 	}
-	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
+	// A vector-free label stream fills these caches too: a node it read
+	// without its separately stored vectors cannot answer a vector read.
+	lacksVectors := func(node *Node) bool {
+		return vectors && node.embeddingKeysPresent && len(node.ChunkEmbeddings) == 0
+	}
+	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok && !lacksVectors(node) {
 		return copyRead(node), nil
 	}
-	if node, ok := tx.snapshotLabelNodeByID[nodeID]; ok {
+	if node, ok := tx.snapshotLabelNodeByID[nodeID]; ok && !lacksVectors(node) {
 		// Like the prefix cache, a node with worker-sidecar embeddings is
 		// read again so their hydration runs.
 		sidecar := false

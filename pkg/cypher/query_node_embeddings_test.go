@@ -126,6 +126,44 @@ func TestQueryNodeReadsLeaveEmbeddingsInStorage(t *testing.T) {
 	require.Equal(t, [][]interface{}{{true}}, g.run(t, "MATCH (n:Doc {k: 3}) RETURN n.has_embedding", nil).Rows)
 }
 
+// TestQueryNodeLabelScanInTransactionLeavesEmbeddingsInStorage: a whole-node
+// label scan in a transaction (MATCH (n:Doc) RETURN n, no projection) gives
+// rows without stored vectors, for worker sidecar embeddings and for chunks a
+// large body stored apart; a SET over the same scan keeps them stored.
+func TestQueryNodeLabelScanInTransactionLeavesEmbeddingsInStorage(t *testing.T) {
+	g := newLargeEmbeddingGraph(t, 4)
+	large := make([][]float32, 4)
+	for c := range large {
+		large[c] = make([]float32, 4000) // ~64KB in all: stored apart from the body
+		large[c][c] = 1
+	}
+	_, err := g.store.CreateNode(&storage.Node{ID: "big", Labels: []string{"Doc"}, Properties: map[string]interface{}{"k": int64(100), "title": "big"}, ChunkEmbeddings: large})
+	require.NoError(t, err)
+	want := map[storage.NodeID][][]float32{}
+	for _, id := range []storage.NodeID{"doc-3", "big"} {
+		want[id] = g.storedChunks(t, id)
+		require.NotEmpty(t, want[id])
+	}
+
+	g.run(t, "BEGIN", nil)
+	result := g.run(t, "MATCH (n:Doc) RETURN n", nil)
+	require.Len(t, result.Rows, 5)
+	for _, row := range result.Rows {
+		node, ok := row[0].(*storage.Node)
+		require.True(t, ok, "row value %T", row[0])
+		require.Zero(t, len(node.ChunkEmbeddings), "row %s carries stored vectors", node.ID)
+		if node.ID != "big" {
+			require.Equal(t, true, node.EmbedMeta["has_embedding"])
+		}
+	}
+	g.run(t, "MATCH (n:Doc) SET n.seen = 7", nil)
+	g.run(t, "COMMIT", nil)
+	for id, chunks := range want {
+		require.Equal(t, chunks, g.storedChunks(t, id), "%s keeps its stored vectors", id)
+	}
+	require.Equal(t, [][]interface{}{{int64(5)}}, g.run(t, "MATCH (n:Doc) WHERE n.seen = 7 RETURN count(n)", nil).Rows)
+}
+
 // TestQueryNodeWritesKeepStoredEmbeddings: a SET written from a node a
 // statement read without its vectors keeps the stored embedding, in an
 // auto-commit statement and in an explicit transaction, for a worker sidecar

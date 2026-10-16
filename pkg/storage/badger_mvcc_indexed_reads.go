@@ -252,7 +252,7 @@ func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(scope, label string, ver
 // proportional to the matching label rather than every stored node.
 func (b *BadgerEngine) getNodesByLabelVisibleAtSnapshotWithView(scope, label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
 	nodes := make([]*Node, 0)
-	err := b.streamNodesByLabelVisibleAtSnapshotWithView(scope, label, version, view, nil, func(node *Node) error {
+	err := b.streamNodesByLabelVisibleAtSnapshotWithView(scope, label, version, view, nil, true, func(node *Node) error {
 		nodes = append(nodes, node)
 		return nil
 	})
@@ -272,6 +272,7 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 	version MVCCVersion,
 	view func(func(*badger.Txn) error) error,
 	properties []string,
+	vectors bool,
 	visit func(*Node) error,
 ) error {
 	if visit == nil {
@@ -288,7 +289,7 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 		defer it.Close()
 		for it.Next() {
 			nodeID := it.NodeID()
-			node, getErr := b.getNodeVisibleAtInTxn(txn, nodeID, version, true)
+			node, getErr := b.getNodeVisibleAtInTxn(txn, nodeID, version, vectors)
 			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
 				continue
 			}
@@ -317,12 +318,14 @@ func (b *BadgerEngine) streamNodesByLabelVisibleAtSnapshotWithView(
 // order after afterNodeID ("" from the start), within scope ("" every
 // database). Because both the label index and node key are read from the same
 // immutable physical snapshot, no per-candidate logical MVCC-head lookup is
-// required.
+// required. With vectors false a whole node is read without its separately
+// stored vectors (loadNodeEmbeddingState).
 func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 	scope string,
 	label string,
 	view func(func(*badger.Txn) error) error,
 	properties []string,
+	vectors bool,
 	afterNodeID NodeID,
 	visit func(*Node) error,
 ) error {
@@ -346,7 +349,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 			itemVersion := item.Version()
 			if cached, ok := b.cacheLoadNodeBody(nodeID, itemVersion); ok {
 				if properties == nil {
-					return b.loadNodeEmbeddings(txn, cached, nodeID)
+					return b.loadNodeEmbeddingState(txn, cached, nodeID, vectors)
 				}
 				return projectCachedNodeForRead(cached, properties), nil
 			}
@@ -358,7 +361,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 						return decodeErr
 					}
 					b.cacheStoreNodeBody(nodeID, itemVersion, decoded)
-					node, decodeErr = b.loadNodeEmbeddings(txn, decoded, nodeID)
+					node, decodeErr = b.loadNodeEmbeddingState(txn, decoded, nodeID, vectors)
 					return decodeErr
 				}
 				var decodeErr error

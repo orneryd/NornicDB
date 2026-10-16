@@ -574,6 +574,13 @@ type QueryNodeReader interface {
 	GetQueryNode(id NodeID) (*Node, error)
 }
 
+// QueryLabelNodeReader streams a label's nodes as GetQueryNode reads them:
+// whole nodes without separately stored chunk vectors. A caller that needs
+// the vectors streams with StreamNodesByLabelProjected and a nil projection.
+type QueryLabelNodeReader interface {
+	StreamQueryNodesByLabel(label string, visit func(*Node) error) error
+}
+
 // BatchNodeWithoutEmbeddingsReader is an optional extension interface for
 // fetching several nodes without stored embedding vectors in one storage
 // operation. Missing IDs are omitted from the returned map, matching

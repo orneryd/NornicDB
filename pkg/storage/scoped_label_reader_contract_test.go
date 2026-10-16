@@ -175,7 +175,7 @@ func TestScopedLabelSnapshotCursorErrors(t *testing.T) {
 	engine := scopedLabelOrderFixture(t)
 	for _, scope := range []string{"", "a:"} {
 		var ids []NodeID
-		err := engine.streamNodesByLabelFromPhysicalSnapshotAfter(scope, "Person", engine.withView, nil, "missing:n", func(node *Node) error {
+		err := engine.streamNodesByLabelFromPhysicalSnapshotAfter(scope, "Person", engine.withView, nil, true, "missing:n", func(node *Node) error {
 			ids = append(ids, node.ID)
 			return nil
 		})
@@ -183,7 +183,7 @@ func TestScopedLabelSnapshotCursorErrors(t *testing.T) {
 		require.Empty(t, ids)
 	}
 	var resumed []NodeID
-	require.NoError(t, engine.streamNodesByLabelFromPhysicalSnapshotAfter("", "Person", engine.withView, nil, "a:z", func(node *Node) error {
+	require.NoError(t, engine.streamNodesByLabelFromPhysicalSnapshotAfter("", "Person", engine.withView, nil, true, "a:z", func(node *Node) error {
 		resumed = append(resumed, node.ID)
 		return nil
 	}))
@@ -192,7 +192,7 @@ func TestScopedLabelSnapshotCursorErrors(t *testing.T) {
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
 		return txn.Set(nodeIDForwardKey("a:z"), []byte{1})
 	}))
-	require.ErrorIs(t, engine.streamNodesByLabelFromPhysicalSnapshotAfter("a:", "Person", engine.withView, nil, "a:z", func(*Node) error {
+	require.ErrorIs(t, engine.streamNodesByLabelFromPhysicalSnapshotAfter("a:", "Person", engine.withView, nil, true, "a:z", func(*Node) error {
 		t.Fatal("corrupt cursor must not produce rows")
 		return nil
 	}), ErrInvalidData)

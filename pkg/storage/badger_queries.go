@@ -265,6 +265,12 @@ func (b *BadgerEngine) StreamNodesByLabelProjected(label string, properties []st
 // labelScanPointLookups switch to one pass over the node records when the
 // label is on at least half of the scope's nodes.
 func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
+	return b.streamNodesByLabelInScope(scope, label, properties, true, visit)
+}
+
+// streamNodesByLabelInScope is StreamNodesByLabelProjectedInScope; with
+// vectors false a whole node is read without its separately stored vectors.
+func (b *BadgerEngine) streamNodesByLabelInScope(scope, label string, properties []string, vectors bool, visit func(*Node) error) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -293,7 +299,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 	err := b.withView(func(txn *badger.Txn) error {
 		decodeValue := func(nodeID NodeID, value []byte) (*Node, error) {
 			if properties == nil {
-				return b.decodeNodeWithEmbeddings(txn, value, nodeID)
+				return b.decodeNodeEmbeddingState(txn, value, nodeID, vectors)
 			}
 			return b.decodeNodeProjected(namespaceForNodeID(nodeID), value, include)
 		}
@@ -304,7 +310,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 			if !ok {
 				return nil, false
 			}
-			return projectCachedNodeForRead(cached, properties), true
+			return labelStreamNodeForRead(cached, properties, vectors), true
 		}
 		emit := func(node *Node) error {
 			if node == nil || b.filterNodeByDecay(node, nowNanos) {
@@ -423,7 +429,7 @@ func (b *BadgerEngine) StreamNodesByLabelProjectedInScope(scope, label string, p
 		if !nodeIDInScope(n.ID, scope) || b.filterNodeByDecay(n, nowNanos) {
 			continue
 		}
-		if err := visit(projectCachedNodeForRead(n, properties)); err != nil {
+		if err := visit(labelStreamNodeForRead(n, properties, vectors)); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}
@@ -456,6 +462,17 @@ func (b *BadgerEngine) mergeWriteBehindNodes(nodes []*Node, label, scope string,
 		out = append(out, projectCachedNodeForRead(n, projected))
 	}
 	return out
+}
+
+// labelStreamNodeForRead is projectCachedNodeForRead for a label stream. A
+// whole node read without vectors is an in-memory node (node cache or
+// write-behind overlay): its vectors are already in memory, so it is shared,
+// not copied, as GetQueryNode shares them (QueryNodeReader).
+func labelStreamNodeForRead(node *Node, properties []string, vectors bool) *Node {
+	if properties != nil || vectors {
+		return projectCachedNodeForRead(node, properties)
+	}
+	return copyNodeForCaller(node)
 }
 
 func projectCachedNodeForRead(node *Node, properties []string) *Node {

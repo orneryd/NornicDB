@@ -367,7 +367,22 @@ func (w *transactionStorageWrapper) StreamNodesByLabelProjected(label string, pr
 	if visit == nil {
 		return storage.ErrInvalidData
 	}
-	return w.tx.StreamNodesByLabelProjected(label, properties, func(node *storage.Node) error {
+	return w.tx.StreamNodesByLabelProjected(label, properties, w.labelStreamVisitor(visit))
+}
+
+// StreamQueryNodesByLabel implements storage.QueryLabelNodeReader: the row
+// nodes of a whole-node label MATCH, without separately stored vectors, as
+// GetQueryNode reads them in a transaction.
+func (w *transactionStorageWrapper) StreamQueryNodesByLabel(label string, visit func(*storage.Node) error) error {
+	if visit == nil {
+		return storage.ErrInvalidData
+	}
+	return w.tx.StreamQueryNodesByLabel(label, w.labelStreamVisitor(visit))
+}
+
+// labelStreamVisitor hands visit the nodes of this wrapper's namespace.
+func (w *transactionStorageWrapper) labelStreamVisitor(visit func(*storage.Node) error) func(*storage.Node) error {
+	return func(node *storage.Node) error {
 		if node == nil {
 			return nil
 		}
@@ -384,7 +399,7 @@ func (w *transactionStorageWrapper) StreamNodesByLabelProjected(label string, pr
 		out := *node
 		out.ID = w.unprefixNodeID(out.ID)
 		return visit(&out)
-	})
+	}
 }
 
 // StreamNodesWithOptions satisfies the storage.Engine streaming contract on the

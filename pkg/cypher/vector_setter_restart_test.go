@@ -144,7 +144,14 @@ func TestVectorSettersPreserveEmbeddingsAfterRestart(t *testing.T) {
 							require.True(t, ok)
 							require.Equal(t, wantVectors[step], value)
 						}
-						require.Equal(t, chunks, n.ChunkEmbeddings)
+						if explicit && (layout == "separate-chunks" || layout == "sidecar") && len(n.ChunkEmbeddings) == 0 {
+							// A row node in a transaction carries no separately stored
+							// vectors (GetQueryNode, StreamQueryNodesByLabel); its
+							// metadata answers, and the restart check reads the vectors.
+							require.True(t, n.HasChunkEmbeddings())
+						} else {
+							require.Equal(t, chunks, n.ChunkEmbeddings)
+						}
 						require.Len(t, n.EmbedMeta, len(initial.EmbedMeta))
 						for key, value := range initial.EmbedMeta {
 							require.Contains(t, n.EmbedMeta, key)
