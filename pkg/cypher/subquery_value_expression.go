@@ -335,19 +335,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		}
 		body = grouped
 	}
-	query := strings.TrimSpace(body)
-	patternOnly := strings.HasPrefix(query, "(")
-	if patternOnly {
-		query = "MATCH " + query
-	}
-	if topLevelKeywordIndex(query, "RETURN") < 0 {
-		switch kind {
-		case "COUNT":
-			query += " RETURN 1 AS __count"
-		case "EXISTS":
-			query += " RETURN 1 AS __exists LIMIT 1"
-		}
-	}
+	query := rowSubqueryQueryFor(ctx, kind, body)
 	result, err := e.runCorrelatedSubquery(ctx, query, values)
 	if err != nil {
 		return nil, false, err
@@ -390,7 +378,7 @@ func rowCountValue(kind string, rows int64) interface{} {
 func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
 	// A UNION body: each branch runs for the row, and the shared UNION
 	// combiner (executeUnionBranches) joins them, as for a top-level UNION.
-	if _, unionAll, _, union := parseTopLevelUnionBranches(query); union {
+	if _, unionAll, _, union := parseTopLevelUnionBranchesFor(ctx, query); union {
 		return e.executeUnionBranches(query, unionAll, func(branch string) (*ExecuteResult, error) {
 			return e.runCorrelatedSubquery(ctx, branch, values)
 		})
@@ -462,27 +450,11 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 // of the row that isn't a node or relationship, a property map reading the
 // row, a shortest path, or no bound start node.
 func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
-	pattern := strings.TrimSpace(body)
-	if hasPrefixFold(pattern, "MATCH ") {
-		pattern = strings.TrimSpace(pattern[len("MATCH"):])
-	}
-	// One MATCH clause, its WHERE included: a RETURN or any other clause is
-	// the kernel's or the pipeline's.
-	if clauses, ok := splitPipelineClauses("MATCH " + pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+	shape := boundChainShapeFor(ctx, body)
+	if !shape.ok {
 		return 0, false
 	}
-	where := ""
-	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
-		where = strings.TrimSpace(pattern[index+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:index])
-	}
-	// A match mode or path selector (REPEATABLE ELEMENTS, ANY SHORTEST)
-	// precedes the pattern; only the pipeline's MATCH runs those.
-	if !strings.HasPrefix(pattern, "(") || len(splitTopLevelComma(pattern)) != 1 || !containsRelationshipPattern(pattern) ||
-		extractPathAssignmentVariable(pattern) != "" || !patternMapsAreConstant(pattern) ||
-		indexASCIIFold(body, "shortestpath") >= 0 || indexASCIIFold(body, repeatableElementsFunction) >= 0 {
-		return 0, false
-	}
+	pattern, where := shape.pattern, shape.where
 	matches := e.parseTraversalPattern(ctx, pattern)
 	if matches == nil || !chainVariablesBindEntities(matches, values) {
 		return 0, false
@@ -541,6 +513,43 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 		}
 	}
 	return count, true
+}
+
+// boundChainShape is the text part of boundChainCount: a body that is one
+// relationship chain with an optional WHERE (ok), split into the two.
+type boundChainShape struct {
+	pattern string
+	where   string
+	ok      bool
+}
+
+func parseBoundChainShape(body string) boundChainShape {
+	pattern := strings.TrimSpace(body)
+	if hasPrefixFold(pattern, "MATCH ") {
+		pattern = strings.TrimSpace(pattern[len("MATCH"):])
+	}
+	// One MATCH clause, its WHERE included: a RETURN or any other clause is
+	// the kernel's or the pipeline's.
+	if clauses, ok := splitPipelineClauses("MATCH " + pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+		return boundChainShape{}
+	}
+	where := ""
+	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
+		where = strings.TrimSpace(pattern[index+len("WHERE"):])
+		pattern = strings.TrimSpace(pattern[:index])
+	}
+	// A match mode or path selector (REPEATABLE ELEMENTS, ANY SHORTEST)
+	// precedes the pattern; only the pipeline's MATCH runs those.
+	if !strings.HasPrefix(pattern, "(") || len(splitTopLevelComma(pattern)) != 1 || !containsRelationshipPattern(pattern) ||
+		extractPathAssignmentVariable(pattern) != "" || !patternMapsAreConstant(pattern) ||
+		indexASCIIFold(body, "shortestpath") >= 0 || indexASCIIFold(body, repeatableElementsFunction) >= 0 {
+		return boundChainShape{}
+	}
+	return boundChainShape{pattern: pattern, where: where, ok: true}
+}
+
+func boundChainShapeFor(ctx context.Context, body string) boundChainShape {
+	return clauseAnalysisFor(ctx, clauseAnalysisBoundChain, body, parseBoundChainShape)
 }
 
 // patternMapsAreConstant reports whether every property map in a node or
@@ -886,4 +895,42 @@ func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Nod
 		}
 	}
 	return count
+}
+
+// rowSubqueryQuery is the query a subquery body runs as: a body that is
+// only a pattern is matched as MATCH <pattern>, and a body without RETURN
+// returns a row per match (one row for EXISTS).
+func rowSubqueryQuery(kind, body string) string {
+	query := strings.TrimSpace(body)
+	if strings.HasPrefix(query, "(") {
+		query = "MATCH " + query
+	}
+	if topLevelKeywordIndex(query, "RETURN") < 0 {
+		switch kind {
+		case "COUNT":
+			query += " RETURN 1 AS __count"
+		case "EXISTS":
+			query += " RETURN 1 AS __exists LIMIT 1"
+		}
+	}
+	return query
+}
+
+// rowSubqueryQueryFor is rowSubqueryQuery from body's plan in ctx.
+func rowSubqueryQueryFor(ctx context.Context, kind, body string) string {
+	analysis := clauseAnalysisSubqueryQueryCollect
+	switch kind {
+	case "EXISTS":
+		analysis = clauseAnalysisSubqueryQueryExists
+	case "COUNT":
+		analysis = clauseAnalysisSubqueryQueryCount
+	case "COLLECT":
+	default:
+		return rowSubqueryQuery(kind, body)
+	}
+	plan := pipelineClausePlanFor(ctx, body)
+	if plan == nil {
+		return rowSubqueryQuery(kind, body)
+	}
+	return plannedAnalysis(plan, analysis, body, func(body string) string { return rowSubqueryQuery(kind, body) })
 }

@@ -797,6 +797,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 	// If in explicit transaction, execute within it
 	if e.txContext != nil && e.txContext.active {
 		ctx = withExpressionFailureSlot(ctx)
+		ctx = withStatementClausePlans(ctx, cypher)
 		result, err := e.executeInTransaction(ctx, cypher, upperQuery)
 		if failure := getExpressionFailure(ctx); failure != nil {
 			return result, failure
@@ -831,6 +832,7 @@ func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map
 
 	// Auto-commit single query through the implicit-transaction write path.
 	ctx = withExpressionFailureSlot(ctx)
+	ctx = withStatementClausePlans(ctx, cypher)
 	result, err = e.executeImplicitAsync(ctx, cypher, upperQuery)
 	if result != nil && err == nil {
 		if orders := snapshotMapKeyOrders(ctx); len(orders) > 0 {

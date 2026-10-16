@@ -20,6 +20,9 @@ func TestCallSubqueryClausePlanMatchesNeo4j(t *testing.T) {
 		"scoped_traversal_pushdown": {{int64(900)}},
 		"optional_quantified":       {{int64(1200)}},
 		"with_grouping":             {{int64(1600), int64(400)}},
+		"exists_where":              {{int64(299)}},
+		"count_return":              {{int64(1201)}},
+		"count_in_call":             {{int64(1200)}},
 	}
 	for _, tc := range callPlanBenchQueries {
 		result, err := exec.Execute(ctx, tc.query, nil)
@@ -87,6 +90,9 @@ func TestCallSubqueryClausePlanParsesOncePerStatement(t *testing.T) {
 		"scoped_traversal_pushdown": {clauseAnalysisCallSubquery, clauseAnalysisMatchWhere, clauseAnalysisPushdownTerms},
 		"optional_quantified":       {clauseAnalysisCallSubquery, clauseAnalysisPatternStructure, clauseAnalysisQuantifiedPath},
 		"with_grouping":             {clauseAnalysisCallSubquery, clauseAnalysisMatchWhere, clauseAnalysisPatternBindingsMatch},
+		"exists_where":              {clauseAnalysisBoundChain},
+		"count_return":              {clauseAnalysisBoundChain},
+		"count_in_call":             {clauseAnalysisCallSubquery, clauseAnalysisBoundChain},
 	}
 	for _, tc := range callPlanBenchQueries {
 		mu.Lock()
@@ -137,4 +143,44 @@ func TestPipelineClausePlanWithoutPlansParses(t *testing.T) {
 	}
 	require.Nil(t, pipelineClausePlanFor(ctx, "beyond the limit"))
 	require.Equal(t, plain.terms, pipelinePushdownTermsFor(ctx, "q.k <> 3 AND r.w >= p.m AND coalesce(q.name, '') <> 'none' ").terms)
+}
+
+// A correlated COLLECT and an EXISTS beside an OR return what Neo4j 5.26.30
+// returns, and each subquery atom compiles to its own row node, read once.
+func TestRowSubqueryAtomCompilesOnce(t *testing.T) {
+	exec := callPlanBenchExecutor(t)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		query string
+		want  [][]interface{}
+	}{
+		{"MATCH (p:P) WHERE p.i < 5 RETURN p.i AS i, COLLECT { MATCH (p)-[r:R]->(q:Q) WHERE coalesce(q.name, 'callplan-once') <> 'none' RETURN q.name ORDER BY q.name } AS names ORDER BY i", [][]interface{}{
+			{int64(0), []interface{}{"q0", "q14", "q21", "q7"}},
+			{int64(1), []interface{}{"q1", "q15", "q22", "q8"}},
+			{int64(2), []interface{}{"q16", "q2", "q23", "q9"}},
+			{int64(3), []interface{}{"q10", "q17", "q24", "q3"}},
+			{int64(4), []interface{}{"q11", "q18", "q25", "q4"}},
+		}},
+		{"MATCH (p:P) WHERE p.i < 5 AND (p.m = 0 OR EXISTS { (p)-[:R {w: 3}]->(:Q {k: 2}) }) RETURN collect(p.i) AS kept", [][]interface{}{
+			{[]interface{}{int64(0), int64(1), int64(3)}},
+		}},
+	} {
+		result, err := exec.Execute(ctx, tc.query, nil)
+		require.NoError(t, err, tc.query)
+		require.Equal(t, tc.want, result.Rows, tc.query)
+	}
+
+	root, _ := (&rowValueCompiler{}).compile("COUNT { MATCH (p)-[r:R]->(q:Q) WHERE q.k = 1 }")
+	node, ok := root.(*rowBoundNode).inner.(*rowSubqueryNode)
+	require.True(t, ok, "a subquery atom compiles to a rowSubqueryNode")
+	require.Equal(t, "COUNT", node.kind)
+	require.Equal(t, "MATCH (p)-[r:R]->(q:Q) WHERE q.k = 1", node.body)
+
+	// Without a statement context the node reads its text, as the text
+	// route does.
+	value, resolved, err := node.eval(exec, map[string]interface{}{}, nil)
+	textValue, textResolved, textErr := exec.evaluateRowValueText(node.text, map[string]interface{}{})
+	require.Equal(t, textValue, value)
+	require.Equal(t, textResolved, resolved)
+	require.Equal(t, textErr, err)
 }

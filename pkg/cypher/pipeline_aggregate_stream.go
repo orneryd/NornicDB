@@ -112,14 +112,17 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 	ordered := make([]*pipelineAggregateGroup, 0)
 	valid := true
 	values := make([]interface{}, 0, groupingCount)
+	// One row validated at a time, through one reused slice.
+	validated := make([]pipelineRow, 1)
 	completed := source(func(row pipelineRow) bool {
 		if err := ctx.Err(); err != nil {
 			recordExpressionFailure(ctx, err)
 			valid = false
 			return false
 		}
+		validated[0] = row
 		for _, clause := range validationClauses {
-			if err := e.validatePipelineProjectionValues([]pipelineRow{row}, clause, "WITH"); err != nil {
+			if err := e.validatePipelineProjectionValues(validated, clause, "WITH"); err != nil {
 				recordExpressionFailure(ctx, err)
 				valid = false
 				return false
