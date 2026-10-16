@@ -120,6 +120,8 @@
   other: "[!! List all accepted network connections at this instance that are visible to the user. !!]"
 - id: cypherproceduremetadata.dbms_procedures
   other: "[!! Lists procedures !!]"
+- id: cypherproceduremetadata.dbms_setconfigvalue
+  other: "[!! Change the value of a dynamic setting of the running DBMS until it restarts. !!]"
 - id: cypherproceduremetadata.gds_fastrp_stats
   other: "[!! Runs FastRP and returns statistics !!]"
 - id: cypherproceduremetadata.gds_fastrp_stream

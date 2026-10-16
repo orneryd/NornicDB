@@ -1,0 +1,15 @@
+- id: cyphersettings.database_setting
+  description: Expanded pseudo-locale database setting.
+  other: "[!! Setting '{{.Setting}}' is a database setting: change it for a database with PUT /admin/databases/{database}/config !!]"
+- id: cyphersettings.invalid_setting_value
+  description: Expanded pseudo-locale invalid setting value.
+  other: "[!! '{{.Value}}' is not a valid value for setting '{{.Setting}}': {{.Cause}} !!]"
+- id: cyphersettings.set_config_value_arguments
+  description: Expanded pseudo-locale dbms.setConfigValue arguments.
+  other: "[!! dbms.setConfigValue requires two STRING arguments: the setting's name and its value !!]"
+- id: cyphersettings.setting_not_dynamic
+  description: Expanded pseudo-locale setting not dynamic.
+  other: "[!! Setting '{{.Setting}}' is not dynamic and can not be changed at runtime !!]"
+- id: cyphersettings.unknown_setting
+  description: Expanded pseudo-locale unknown setting.
+  other: "[!! Unknown setting: {{.Setting}} !!]"

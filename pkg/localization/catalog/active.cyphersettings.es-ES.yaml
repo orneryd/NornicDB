@@ -1,0 +1,15 @@
+- id: cyphersettings.database_setting
+  description: dbms.setConfigValue nombró un ajuste propio de una base de datos. Setting y la ruta no se traducen.
+  other: "El ajuste '{{.Setting}}' es de una base de datos: cámbielo para una base de datos con PUT /admin/databases/{database}/config"
+- id: cyphersettings.invalid_setting_value
+  description: dbms.setConfigValue recibió un valor que el ajuste no admite. Setting es un nombre de ajuste que no se traduce; Cause no se traduce.
+  other: "'{{.Value}}' no es un valor válido para el ajuste '{{.Setting}}': {{.Cause}}"
+- id: cyphersettings.set_config_value_arguments
+  description: dbms.setConfigValue sin sus dos argumentos STRING. dbms.setConfigValue y STRING no se traducen.
+  other: "dbms.setConfigValue requiere dos argumentos STRING: el nombre del ajuste y su valor"
+- id: cyphersettings.setting_not_dynamic
+  description: dbms.setConfigValue nombró un ajuste que no puede cambiar mientras el proceso se ejecuta. Setting no se traduce.
+  other: "El ajuste '{{.Setting}}' no es dinámico y no puede cambiarse en tiempo de ejecución"
+- id: cyphersettings.unknown_setting
+  description: dbms.setConfigValue nombró un ajuste desconocido. Setting es el nombre dado, sin traducir.
+  other: "Ajuste desconocido: {{.Setting}}"

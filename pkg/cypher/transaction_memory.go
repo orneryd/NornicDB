@@ -771,3 +771,14 @@ type heldListSize struct {
 	bytes int64
 	list  heldList
 }
+
+// SetGlobalTransactionMemoryLimit changes dbms.memory.transaction.total.max
+// while the process runs (dbms.setConfigValue): a running statement keeps
+// the limit it started with, and statements started later meet the new one.
+func SetGlobalTransactionMemoryLimit(limit int64) {
+	r := transactionMemory
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.global.limit.Store(nonNegativeBytes(limit))
+	r.updateActiveLocked()
+}
