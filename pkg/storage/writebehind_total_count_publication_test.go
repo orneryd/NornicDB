@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -195,6 +196,9 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 }
 
 func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
+	// Other WAL tests may leave the process flag disabled; this crash fixture
+	// requires durable ACK capture, independently of test execution order.
+	defer config.WithWALEnabled()()
 	dir := t.TempDir()
 	engine, wal := newWriteBehindWALTestEngine(t, dir, time.Hour)
 	_, err := engine.CreateNode(&Node{ID: "test:a"})
@@ -212,6 +216,22 @@ func TestWriteBehindTotalCountsRecoveryPublication(t *testing.T) {
 	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered(), "fixture must recover a genuinely buffered ACK")
+	entries, err := ReadWALEntriesFromDir(wal.Config().Dir)
+	require.NoError(t, err)
+	found := false
+	for _, entry := range entries {
+		if entry.Operation != OpBufferedCommit {
+			continue
+		}
+		payload, err := decompressWALBufferedCommitPayload(entry.Data)
+		require.NoError(t, err)
+		var data WALBufferedCommitData
+		require.NoError(t, decodeRecoveryPayload(payload, &data))
+		if data.TxID == tx.ID {
+			found = true
+		}
+	}
+	require.True(t, found, "buffered ACK must have an actual recoverable WAL payload before crash")
 	flushed, err := engine.bufferedFlushMarkerExists(tx.ID)
 	require.NoError(t, err)
 	require.False(t, flushed, "crash fixture must not be durably replayed")
