@@ -1,0 +1,15 @@
+- id: cyphersettings.database_setting
+  description: dbms.setConfigValue named a database's own setting. Setting is an untranslated setting name; the path is untranslated.
+  other: "Setting '{{.Setting}}' is a database setting: change it for a database with PUT /admin/databases/{database}/config"
+- id: cyphersettings.invalid_setting_value
+  description: dbms.setConfigValue was given a value the setting does not take. Setting is an untranslated setting name; Cause is untranslated diagnostic text.
+  other: "'{{.Value}}' is not a valid value for setting '{{.Setting}}': {{.Cause}}"
+- id: cyphersettings.set_config_value_arguments
+  description: dbms.setConfigValue called without its two STRING arguments. dbms.setConfigValue and STRING are untranslated.
+  other: "dbms.setConfigValue requires two STRING arguments: the setting's name and its value"
+- id: cyphersettings.setting_not_dynamic
+  description: dbms.setConfigValue named a setting that cannot change while the process runs. Setting is an untranslated setting name.
+  other: "Setting '{{.Setting}}' is not dynamic and can not be changed at runtime"
+- id: cyphersettings.unknown_setting
+  description: dbms.setConfigValue named no known setting. Setting is the untranslated name given.
+  other: "Unknown setting: {{.Setting}}"

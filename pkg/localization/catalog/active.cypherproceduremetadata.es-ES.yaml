@@ -120,6 +120,8 @@
   other: "Enumera las conexiones activas del DBMS"
 - id: cypherproceduremetadata.dbms_procedures
   other: "Enumera los procedimientos"
+- id: cypherproceduremetadata.dbms_setconfigvalue
+  other: "Cambia el valor de un ajuste dinámico del DBMS hasta que se reinicie"
 - id: cypherproceduremetadata.gds_fastrp_stats
   other: "Ejecuta FastRP y devuelve estadísticas"
 - id: cypherproceduremetadata.gds_fastrp_stream

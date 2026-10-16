@@ -70,6 +70,11 @@ func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) 
 			value = activeValue
 			startupValue = activeValue
 		}
+		// A dynamic process setting dbms.setConfigValue changed (#1343).
+		if live, ok := liveProcessSetting(definition.Name); ok {
+			value = live
+			explicitlySet = true
+		}
 		if definition.Redacted {
 			if value != "" {
 				value = "<REDACTED>"

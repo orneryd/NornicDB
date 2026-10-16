@@ -300,6 +300,11 @@
     es: "Enumera los procedimientos",
   }
 - {
+    name: dbms.setConfigValue,
+    en: "Change the value of a dynamic setting of the running DBMS until it restarts.",
+    es: "Cambia el valor de un ajuste dinámico del DBMS hasta que se reinicie",
+  }
+- {
     name: gds.fastRP.stats,
     en: "Runs FastRP and returns statistics",
     es: "Ejecuta FastRP y devuelve estadísticas",

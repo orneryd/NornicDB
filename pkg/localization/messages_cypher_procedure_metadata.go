@@ -64,6 +64,7 @@ const (
 	MessageCypherProcedureMetadataDbmsListConfig                                MessageID = "cypherproceduremetadata.dbms_listconfig"
 	MessageCypherProcedureMetadataDbmsListConnections                           MessageID = "cypherproceduremetadata.dbms_listconnections"
 	MessageCypherProcedureMetadataDbmsProcedures                                MessageID = "cypherproceduremetadata.dbms_procedures"
+	MessageCypherProcedureMetadataDbmsSetConfigValue                            MessageID = "cypherproceduremetadata.dbms_setconfigvalue"
 	MessageCypherProcedureMetadataGdsFastRPStats                                MessageID = "cypherproceduremetadata.gds_fastrp_stats"
 	MessageCypherProcedureMetadataGdsFastRPStream                               MessageID = "cypherproceduremetadata.gds_fastrp_stream"
 	MessageCypherProcedureMetadataGdsGraphDrop                                  MessageID = "cypherproceduremetadata.gds_graph_drop"
@@ -405,6 +406,11 @@ func CypherProcedureMetadataDbmsProcedures() Message {
 	return Message{ID: MessageCypherProcedureMetadataDbmsProcedures, Fallback: "Lists procedures"}
 }
 
+// CypherProcedureMetadataDbmsSetConfigValue describes dbms.setConfigValue in procedure listings.
+func CypherProcedureMetadataDbmsSetConfigValue() Message {
+	return Message{ID: MessageCypherProcedureMetadataDbmsSetConfigValue, Fallback: "Change the value of a dynamic setting of the running DBMS until it restarts."}
+}
+
 // CypherProcedureMetadataGdsFastRPStats describes gds.fastRP.stats in procedure listings.
 func CypherProcedureMetadataGdsFastRPStats() Message {
 	return Message{ID: MessageCypherProcedureMetadataGdsFastRPStats, Fallback: "Runs FastRP and returns statistics"}
@@ -637,6 +643,7 @@ var cypherProcedureMetadata = map[string]func() Message{
 	"dbms.listConfig":                                  CypherProcedureMetadataDbmsListConfig,
 	"dbms.listConnections":                             CypherProcedureMetadataDbmsListConnections,
 	"dbms.procedures":                                  CypherProcedureMetadataDbmsProcedures,
+	"dbms.setConfigValue":                              CypherProcedureMetadataDbmsSetConfigValue,
 	"gds.fastRP.stats":                                 CypherProcedureMetadataGdsFastRPStats,
 	"gds.fastRP.stream":                                CypherProcedureMetadataGdsFastRPStream,
 	"gds.graph.drop":                                   CypherProcedureMetadataGdsGraphDrop,
