@@ -179,3 +179,60 @@ func TestNodeHasChunkEmbeddings(t *testing.T) {
 	require.True(t, (&Node{EmbedMeta: map[string]any{"chunk_count": int64(2)}}).HasChunkEmbeddings())
 	require.False(t, (&Node{EmbedMeta: map[string]any{"chunk_count": 0}}).HasChunkEmbeddings())
 }
+
+// TestTransactionGetNodeWithoutEmbeddingsKeepsEmbeddingKeyLifecycle: a node
+// read without vectors and then written back or deleted in the same
+// transaction leaves the stored embedding keys exactly as a full read does:
+// the write-back keeps what the full read keeps, and the delete removes them.
+func TestTransactionGetNodeWithoutEmbeddingsKeepsEmbeddingKeyLifecycle(t *testing.T) {
+	type outcome struct {
+		keysAfterCreate int
+		keysAfterUpdate int
+		chunksAfter     [][]float32
+		keysAfterDelete int
+	}
+	run := func(t *testing.T, tc lazyEmbeddingCase, vectorFree bool) outcome {
+		b := newSidecarTestBadger(t)
+		id := NodeID("test:lazy-lifecycle")
+		tc.create(t, b, id)
+		read := func(tx *BadgerTransaction) (*Node, error) {
+			if vectorFree {
+				return tx.GetNodeWithoutEmbeddings(id)
+			}
+			return tx.GetNode(id)
+		}
+		var out outcome
+		out.keysAfterCreate = countEmbeddingKeys(t, b, id)
+
+		tx, err := b.BeginTransaction()
+		require.NoError(t, err)
+		node, err := read(tx)
+		require.NoError(t, err)
+		node.Properties["seen"] = true
+		require.NoError(t, tx.UpdateNode(node))
+		require.NoError(t, tx.Commit())
+		out.keysAfterUpdate = countEmbeddingKeys(t, b, id)
+		b.invalidateCachesAfterRestore()
+		stored, err := b.GetNode(id)
+		require.NoError(t, err)
+		out.chunksAfter = stored.ChunkEmbeddings
+
+		tx, err = b.BeginTransaction()
+		require.NoError(t, err)
+		_, err = read(tx)
+		require.NoError(t, err)
+		require.NoError(t, tx.DeleteNode(id))
+		require.NoError(t, tx.Commit())
+		out.keysAfterDelete = countEmbeddingKeys(t, b, id)
+		return out
+	}
+	for _, tc := range lazyEmbeddingCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			full := run(t, tc, false)
+			lazy := run(t, tc, true)
+			require.Positive(t, full.keysAfterCreate)
+			require.Equal(t, full, lazy)
+			require.Zero(t, lazy.keysAfterDelete, "delete must remove the stored embedding keys")
+		})
+	}
+}
