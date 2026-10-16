@@ -1372,17 +1372,17 @@ func TestHeimdallRouterAndHelpers(t *testing.T) {
 	assert.NotEmpty(t, dbName)
 	assert.NotEmpty(t, router.ListDatabases())
 
-	rows, err := router.Query(context.Background(), dbName, "RETURN 1 AS n", nil)
+	rows, err := router.Query(heimdallAuthDisabled(), dbName, "RETURN 1 AS n", nil)
 	assert.NoError(t, err)
 	assert.NotNil(t, rows)
 
-	stats, err := router.Stats(dbName)
+	stats, err := router.Stats(heimdallAuthDisabled(), dbName)
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, stats.NodeCount, int64(0))
 
 	// discover path with nil db/search unavailable
 	routerNoDB := newHeimdallDBRouter(nil, server.dbManager, nil)
-	_, err = routerNoDB.Discover(context.Background(), dbName, "x", nil, 1, 1)
+	_, err = routerNoDB.Discover(heimdallAuthDisabled(), dbName, "x", nil, 1, 1)
 	assert.Error(t, err)
 
 	// discover path on initialized router (may return empty results, but should be callable)
@@ -1395,7 +1395,7 @@ func TestHeimdallRouterAndHelpers(t *testing.T) {
 			Properties: map[string]interface{}{"title": "hello", "content": "world"},
 		})
 	}
-	discoverRes, discoverErr := router.Discover(context.Background(), dbName, "hello", []string{"Document"}, 0, 1)
+	discoverRes, discoverErr := router.Discover(heimdallAuthDisabled(), dbName, "hello", []string{"Document"}, 0, 1)
 	if discoverErr == nil {
 		assert.NotNil(t, discoverRes)
 	}
@@ -2100,7 +2100,7 @@ func TestHeimdallRouterFallbackBranches(t *testing.T) {
 	assert.Error(t, err)
 
 	// system DB discover path.
-	_, err = r.Discover(context.Background(), "system", "q", nil, 1, 1)
+	_, err = r.Discover(heimdallAuthDisabled(), "system", "q", nil, 1, 1)
 	assert.Error(t, err)
 }
 
@@ -2829,21 +2829,21 @@ func TestHeimdallRouterStatsAndDiscoverDeeperBranches(t *testing.T) {
 	router := newHeimdallDBRouter(server.db, server.dbManager, features)
 
 	// Stats with features and search service path.
-	stats, err := router.Stats(dbName)
+	stats, err := router.Stats(heimdallAuthDisabled(), dbName)
 	assert.NoError(t, err)
 	assert.NotNil(t, stats.FeatureFlags)
 
 	// Stats system-db branch (no search stats).
-	systemStats, err := router.Stats("system")
+	systemStats, err := router.Stats(heimdallAuthDisabled(), "system")
 	assert.NoError(t, err)
 	assert.GreaterOrEqual(t, systemStats.NodeCount, int64(0))
 
 	// Stats unknown db error branch.
-	_, err = router.Stats("does-not-exist-db")
+	_, err = router.Stats(heimdallAuthDisabled(), "does-not-exist-db")
 	assert.Error(t, err)
 
 	// Discover successful branch with traversal and content preview truncation.
-	res, err := router.Discover(context.Background(), dbName, "alpha", []string{"Document"}, 2, 2)
+	res, err := router.Discover(heimdallAuthDisabled(), dbName, "alpha", []string{"Document"}, 2, 2)
 	if err == nil {
 		assert.NotNil(t, res)
 		assert.Equal(t, "keyword", res.Method)
