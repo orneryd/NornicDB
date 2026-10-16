@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -161,4 +162,60 @@ func TestHandleSearch_CancelledRebuildBeforeStartKeepsServing(t *testing.T) {
 	response := makeRequest(t, server, http.MethodPost, "/nornicdb/search", body, "")
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.Contains(t, response.Body.String(), "seed", "the complete indexes still return the seed")
+}
+
+// A write to a persisted search service that has never been built starts its
+// population in the background (F-I86 decision B). HTTP search gates on the
+// database's readiness, which only a completed build establishes, so while
+// that population is held the handler answers the documented retryable 503;
+// once the database's build returns, the write is found with no further wait.
+func TestHandleSearch_WriteDuringHeldPopulationIsFoundOnceReady(t *testing.T) {
+	server, _ := setupTestServer(t)
+	server.auth = nil
+	const database = "write_during_population"
+	require.NoError(t, server.dbManager.CreateDatabase(database))
+	engine, err := server.dbManager.GetStorage(database)
+	require.NoError(t, err)
+	gated := &iterationGatedEngine{Engine: engine}
+	server.db.ResetSearchService(database)
+	service, err := server.db.GetOrCreateSearchService(database, gated)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	service.SetFulltextIndexPath(filepath.Join(dir, "bm25"))
+	service.SetVectorIndexPath(filepath.Join(dir, "vectors"))
+	service.SetPersistenceEnabled(true)
+	server.db.SetEmbedder(&countingEmbedder{dims: 1024})
+
+	entered, release := gated.arm()
+	released := false
+	releaseOnce := func() {
+		if !released {
+			released = true
+			close(release)
+		}
+	}
+	defer releaseOnce()
+	node := &storage.Node{ID: "written", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "zephyrine"}}
+	_, err = engine.CreateNode(node)
+	require.NoError(t, err)
+	require.NoError(t, service.IndexNode(node))
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the write did not start the population")
+	}
+
+	body := map[string]interface{}{"database": database, "query": "zephyrine", "limit": 1}
+	response := makeRequest(t, server, http.MethodPost, "/nornicdb/search", body, "")
+	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+	var unavailable map[string]interface{}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &unavailable))
+	require.Equal(t, "search_not_ready", unavailable["request_status"])
+	require.Equal(t, true, unavailable["retryable"])
+
+	releaseOnce()
+	require.NoError(t, service.BuildIndexes(context.Background()))
+	response = makeRequest(t, server, http.MethodPost, "/nornicdb/search", body, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "written")
 }
