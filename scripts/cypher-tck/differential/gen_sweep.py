@@ -1030,6 +1030,28 @@ for value in ["point({x:1.25,y:2.5})", "[true,false]"]:
         add("temporal-map-offset", "typed-predicate", f"WITH {value} AS p CREATE {pattern} SET n.v=p WITH p {read} WHERE n.v=p MERGE (h:TypedHit) RETURN count(h)", "tx")
         add("temporal-map-offset", "typed-case", f"WITH {value} AS p MERGE {pattern} SET n.v=CASE WHEN true THEN p ELSE null END RETURN n.v=p", "tx")
 
+# Correlated subquery bodies (#1317 slice 7): every body shape a statement
+# shortcut accepts (label count, typed relationship count, LIMIT projection,
+# filtered count) over an imported node (a) or scalar (k), as EXISTS, COUNT,
+# COLLECT and CALL, plus uncorrelated controls that keep the shortcuts.
+CORRELATED_OUTER = "MATCH (a:Q) WITH a, a.id AS k"
+for match, ret in [("MATCH (a:Q)", "RETURN count(a) AS c"),
+                   ("MATCH (a)-[r:R]->()", "RETURN count(r) AS c"),
+                   ("MATCH (a)<-[r:R]-()", "RETURN count(r) AS c"),
+                   ("MATCH (a)", "RETURN a.id AS c LIMIT 5"),
+                   ("MATCH (b:Q) WHERE b.id > k", "RETURN count(b) AS c"),
+                   ("MATCH (b:Q) WHERE b.id > a.id", "RETURN count(b) AS c"),
+                   ("MATCH (b:Q {id: k})", "RETURN count(b) AS c"),
+                   ("MATCH (b:Q {id: a.id})", "RETURN b.id AS c LIMIT 5"),
+                   ("MATCH (b:Q)", "RETURN count(b) AS c"),
+                   ("MATCH ()-[r:R]->()", "RETURN count(r) AS c"),
+                   ("MATCH (b:Q)", "RETURN b.id AS c ORDER BY c LIMIT 2")]:
+    add("correlated-body", "exists", f"{CORRELATED_OUTER} RETURN k AS id, EXISTS {{ {match} }} AS v ORDER BY id")
+    add("correlated-body", "count", f"{CORRELATED_OUTER} RETURN k AS id, COUNT {{ {match} }} AS v ORDER BY id")
+    add("correlated-body", "collect", f"{CORRELATED_OUTER} RETURN k AS id, COLLECT {{ {match} {ret} }} AS v ORDER BY id")
+    add("correlated-body", "where", f"{CORRELATED_OUTER} WHERE COUNT {{ {match} }} > 0 RETURN k AS id ORDER BY id")
+    add("correlated-body", "call", f"{CORRELATED_OUTER} CALL (a, k) {{ {match} {ret} }} RETURN k AS id, c AS v ORDER BY id, v")
+
 out_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
 with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=9) as out:
     json.dump({"setup": SETUP, "cases": cases}, out, separators=(",", ":"))
