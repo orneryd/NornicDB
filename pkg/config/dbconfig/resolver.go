@@ -251,7 +251,7 @@ func effectiveFromGlobal(c *config.Config, m map[string]string) {
 	setEffective("NORNICDB_QUERY_CACHE_SIZE", strconv.Itoa(c.Memory.QueryCacheSize))
 	setEffective("NORNICDB_QUERY_CACHE_TTL", strconv.FormatInt(c.Memory.QueryCacheTTL.Milliseconds(), 10))
 	// Transaction memory (#1343): the process default of one transaction's
-	// limit, and the process-wide pool, Neo4j's 70% default resolved.
+	// limit, and the process-wide pool (unset: unlimited).
 	setEffective("NORNICDB_MEMORY_TRANSACTION_MAX", strconv.FormatInt(c.Memory.TransactionMax, 10))
 	setEffective("NORNICDB_MEMORY_TRANSACTION_TOTAL_MAX", strconv.FormatInt(c.Memory.EffectiveTransactionTotalMax(), 10))
 	// Feature flags for Auto-TLP (from Features; K-means clustering is env-only in feature_flags)

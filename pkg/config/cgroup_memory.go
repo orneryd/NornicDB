@@ -156,8 +156,8 @@ type RuntimeLimitResolution struct {
 //     to the derived limit (the caller warns);
 //   - "0" stays unlimited.
 //
-// dbms.memory.transaction.total.max, unset, follows: Neo4j's 70% of the
-// resolved limit (EffectiveTransactionTotalMax).
+// dbms.memory.transaction.total.max does not follow it: unset, the pool is
+// unlimited (EffectiveTransactionTotalMax).
 func (c *MemoryConfig) ResolveRuntimeLimit() RuntimeLimitResolution {
 	cgroup, _ := DetectCgroupMemoryLimit()
 	return c.resolveRuntimeLimit(cgroup, environmentMemoryLimit())
