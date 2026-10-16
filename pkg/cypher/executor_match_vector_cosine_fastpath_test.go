@@ -688,6 +688,13 @@ LIMIT $limit
 		t.Fatal("timed out waiting for BuildIndexes to finish")
 	}
 	require.Equal(t, 3, searchSvc.CountPropertyVectorEntries("name_embedding"))
+	// The write made during the blocked build stays admitted once the build
+	// publishes: the population folded it in rather than overwriting it.
+	require.True(t, searchSvc.IsReady())
+	res, err = exec.Execute(ctx, "CALL db.index.vector.queryNodes('entity_name_idx', 1, [0.0,0.0,1.0,0.0]) YIELD node RETURN node.uuid AS uuid", nil)
+	require.NoError(t, err)
+	require.Len(t, res.Rows, 1)
+	require.Equal(t, "during", res.Rows[0][0], "the write during the build must be found after it publishes")
 }
 
 func TestMatchVectorCosineFastPath_ExternalEmbeddingsUseLiveIndexBeforeReady(t *testing.T) {
