@@ -589,23 +589,9 @@ func looksLikeFunctionCall(s string) bool {
 		return false
 	}
 
-	// The part before ( must be a valid identifier (possibly with dots for namespacing)
-	name := s[:parenIdx]
-
-	// Allow dots for namespaced functions like apoc.coll.sum
-	for i, c := range name {
-		if i == 0 {
-			// First char must be letter or underscore
-			if !isIdentStartRune(c) {
-				return false
-			}
-		} else {
-			// Subsequent chars can be alphanumeric, underscore, or dot
-			if !(isIdentRune(c) || c == '.') {
-				return false
-			}
-		}
-	}
-
-	return true
+	// The part before ( must be a function name, possibly qualified
+	// (apoc.coll.sum, custom . range, `custom`.`and`): the one callable name
+	// reader parseFunctionCallWS and dispatch use.
+	_, ok := canonicalCallableName(s[:parenIdx])
+	return ok
 }

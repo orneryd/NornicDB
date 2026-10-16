@@ -1317,6 +1317,37 @@ func queryGapEnd(query string, index int) int {
 	return end
 }
 
+// queryGapStart is queryGapEnd read backwards: the start of the run of
+// whitespace and comments that ends at index, index itself when none does.
+// Comment text may hold quotes, dots or slashes, so when the text before
+// index has a comment the boundary is read with the forward reader (quoted
+// text that looks like a comment is data); otherwise it is a short backward
+// whitespace scan.
+func queryGapStart(query string, index int) int {
+	before := query[:index]
+	if !strings.Contains(before, "/*") && !strings.Contains(before, "//") {
+		start := index
+		for start > 0 && isASCIISpace(query[start-1]) {
+			start--
+		}
+		return start
+	}
+	start := 0
+	for at := 0; at < index; {
+		if end := queryGapEnd(before, at); end > at {
+			at = end
+			continue
+		}
+		if c := before[at]; c == '\'' || c == '"' || c == '`' {
+			at = skipCypherQuotedText(before, at, c)
+		} else {
+			at++
+		}
+		start = at
+	}
+	return start
+}
+
 // hasOwnStatementSyntax reports whether query is one of NornicDB's
 // statements with a syntax of its own, which canonicalizeQueryText leaves as
 // written but for its comments: the knowledge-policy DDL (CREATE / ALTER /

@@ -373,6 +373,11 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 	// A type after :: or TYPED is no call (x IS :: VECTOR(3)).
 	text = maskTypePredicateTypes(text)
 	for index := 0; index < len(text); {
+		// Comment contents are never code.
+		if end := queryGapEnd(text, index); end > index {
+			index = end
+			continue
+		}
 		switch text[index] {
 		case '\'', '"':
 			index = skipQuotedSemanticText(text, index)
@@ -398,7 +403,7 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		parts, end := dottedNameParts(text, next, true)
 		name, next = name+parts, end
 
-		open := skipSpaces(text, next)
+		open := queryGapEnd(text, next)
 		if open >= len(text) || text[open] != '(' {
 			index = next
 			continue
