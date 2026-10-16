@@ -34,7 +34,7 @@ NornicDB exposes a single gRPC surface: the **official upstream Qdrant gRPC cont
 | `Get` | ✅ | With payload/vectors selectors |
 | `Delete` | ✅ | By ID list or filter |
 | `Count` | ✅ | |
-| `Search` / `SearchBatch` | ✅ | `vector_name` supported |
+| `Search` / `SearchBatch` | ✅ | `vector_name` supported. Runs on the collection database's search index and ANN strategy (`NORNICDB_VECTOR_ANN_QUALITY`), the same as Cypher's `db.index.vector.queryNodes`; `params.hnsw_ef` sets the HNSW beam for HNSW-based strategies |
 | `Query` / `QueryBatch` | ✅ | Supports `VectorInput` (Dense/Id) and `Document` when embeddings are enabled |
 | `Scroll` | ✅ | |
 | `SetPayload` / `OverwritePayload` / `DeletePayload` / `ClearPayload` | ✅ | |

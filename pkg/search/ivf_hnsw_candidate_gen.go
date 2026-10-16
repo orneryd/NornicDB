@@ -95,7 +95,9 @@ func (g *IVFHNSWCandidateGen) SearchCandidates(ctx context.Context, query []floa
 		if idx == nil {
 			continue
 		}
-		results, err := idx.Search(ctx, query, perCluster, minSimilarity)
+		// SearchWithEf with ef 0 uses the cluster graph's configured EfSearch; a
+		// request's own ef (SearchOptions.HNSWEf) replaces it.
+		results, err := idx.SearchWithEf(ctx, query, perCluster, minSimilarity, hnswEfFromContext(ctx))
 		if err != nil {
 			return nil, err
 		}

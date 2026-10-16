@@ -13,16 +13,14 @@ import (
 type CollectionsService struct {
 	qpb.UnimplementedCollectionsServer
 	collections CollectionStore
-	vecIndex    *vectorIndexCache
 	checker     DatabaseAccessChecker // optional; when set, enforces per-database (per-collection) RBAC
 	localizer   *localization.Manager
 }
 
 // NewCollectionsService creates a new Collections service.
-func NewCollectionsService(collections CollectionStore, vecIndex *vectorIndexCache, checker DatabaseAccessChecker) *CollectionsService {
+func NewCollectionsService(collections CollectionStore, checker DatabaseAccessChecker) *CollectionsService {
 	return &CollectionsService{
 		collections: collections,
-		vecIndex:    vecIndex,
 		checker:     checker,
 	}
 }
@@ -191,12 +189,6 @@ func (s *CollectionsService) Delete(ctx context.Context, req *qpb.DeleteCollecti
 
 	if err := s.collections.Drop(ctx, req.CollectionName); err != nil {
 		return nil, localizedStatus(ctx, s.localizer, codes.NotFound, localization.QdrantDeleteCollectionFailed(err))
-	}
-
-	// Drop per-collection in-memory index cache (persistent storage already
-	// removed by collections.Drop.
-	if s.vecIndex != nil {
-		s.vecIndex.deleteCollection(req.CollectionName)
 	}
 
 	return &qpb.CollectionOperationResponse{

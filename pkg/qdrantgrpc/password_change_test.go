@@ -13,7 +13,7 @@ import (
 // Over gRPC Basic, the old password stops working as soon as it is
 // changed, though the server caches the password check.
 func TestChangedPasswordStopsWorkingOverGRPC(t *testing.T) {
-	store, _ := newTestCollectionStore(t)
+	store := newTestCollectionStore(t)
 	config := auth.DefaultAuthConfig()
 	config.JWTSecret = []byte("0123456789abcdef0123456789abcdef")
 	config.SecurityEnabled = true

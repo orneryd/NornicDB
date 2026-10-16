@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Run Qdrant gRPC searches on the collection database's search index, the same index, ANN strategy and query as Cypher's
+  `db.index.vector.queryNodes`, instead of a separate in-memory HNSW graph per collection. `NORNICDB_VECTOR_ANN_QUALITY`
+  (including `compressed` IVF-PQ), k-means routing and exact rescoring now apply to Qdrant searches. `hnsw_ef` sets the
+  request's HNSW beam. Selective payload filters widen the search instead of returning short. Points stay searchable
+  across a restart. A database with vector search disabled returns no hits. Vectors are no longer indexed twice (#1370).
+- Rebuild a search index from storage with the dimension of the first stored vector, not of the first stored node, when
+  the dimension isn't fixed by an embedder, so a database storing its own vectors (such as a Qdrant collection) keeps
+  them searchable after a restart.
+- Drop a Qdrant collection's search index with the collection, as Cypher's `DROP DATABASE` does.
+- Keep a Qdrant collection usable after its metadata is read back from storage. Stored numbers decode as the smallest
+  integer type that fits (`int8` for 4 dimensions), which the collection reader rejected once roughly 10,000 points had
+  pushed the metadata out of the node cache: the collection then reported "not found", or a Dot/Euclid collection fell
+  back to Cosine. `convert.ToInt64` now accepts `int8`, `int16`, `uint8` and `uint16`.
+
 ## [1.4.3] - 2026-10-15
 
 ### Fixed
