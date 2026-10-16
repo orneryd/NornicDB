@@ -171,18 +171,11 @@ func (e *StorageExecutor) validatePipelineWithRows(rows []pipelineRow, clause st
 	return e.validatePipelineProjectionValues(rows, clause, "WITH")
 }
 
-func (e *StorageExecutor) validatePipelineProjectionValues(rows []pipelineRow, clause, keyword string) error {
-	for _, validate := range []func([]pipelineRow, string, string) error{
-		e.validatePipelineRangeArguments,
-		e.validatePipelineProjectionSubscripts, e.validatePipelineSizeArguments,
-	} {
-		if err := validate(rows, clause, keyword); err != nil {
-			return err
-		}
-	}
-	return nil
+// Projection validation is static. Runtime operand checks belong to the
+// reached operation, so skipped operands are never evaluated here.
+func (e *StorageExecutor) validatePipelineProjectionValues(_ []pipelineRow, clause, keyword string) error {
+	return validateProjectionSizeSyntax(clause, keyword)
 }
-
 func (e *StorageExecutor) pipelineApplyUnwindPrefix(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) ([]pipelineRow, int, bool) {
 	source, consumed, ok := e.pipelineUnwindSource(ctx, rows, clauses)
 	if !ok {

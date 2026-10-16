@@ -93,15 +93,11 @@ func TestMapSubscriptPropagatesNullAndClassifiesNonStringKeys(t *testing.T) {
 }
 
 func TestSizeRejectsPathsAndPatternPredicates(t *testing.T) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "size_argument_types"))
-	rows := []pipelineRow{{"p": map[string]interface{}{"_pathResult": PathResult{}}}}
-
-	err := exec.validatePipelineSizeArguments(rows, "RETURN size(p)", "RETURN")
+	_, _, err := evaluateCypherSize(map[string]interface{}{"_pathResult": PathResult{}})
 	require.Error(t, err)
-	err = exec.validatePipelineSizeArguments(nil, "RETURN size((a)-->(b))", "RETURN")
+	err = validateProjectionSizeSyntax("RETURN size((a)-->(b))", "RETURN")
 	require.Error(t, err)
 }
-
 func TestStaticSizeRejectsPathBindingsAcrossProjectionHorizons(t *testing.T) {
 	for _, query := range []string{
 		"MATCH p = (a)-[*]->(b) RETURN size(p)",

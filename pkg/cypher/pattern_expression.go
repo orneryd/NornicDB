@@ -529,3 +529,13 @@ func (e *StorageExecutor) evaluatePatternPredicateValue(ctx context.Context, exp
 	}
 	return logicalValue, logicalOK, true
 }
+
+// sizeArgumentExpression removes a pattern comprehension's projection when
+// only its cardinality is consumed. Matching and WHERE still evaluate at the
+// shared comprehension owner; size never reaches a discarded projection.
+func sizeArgumentExpression(argument string) string {
+	if pattern, _, ok := splitPatternComprehension(strings.TrimSpace(argument)); ok {
+		return "[" + pattern + " | null]"
+	}
+	return argument
+}

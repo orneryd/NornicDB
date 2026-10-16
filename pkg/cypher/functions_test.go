@@ -302,7 +302,9 @@ func TestFunctionEvaluator_ArrayIndexSliceAndMapLiteral(t *testing.T) {
 	// Array/string indexing paths
 	assertEqual(t, "labels(n)[0]", "Person", e.evaluateExpressionWithContext(ctx, "labels(n)[0]", nodes, nil))
 	assertEqual(t, "labels(n)[-1]", "Employee", e.evaluateExpressionWithContext(ctx, "labels(n)[-1]", nodes, nil))
-	assertEqual(t, "'abc'[1]", "b", e.evaluateExpressionWithContext(ctx, "'abc'[1]", nodes, nil))
+	// A string has no element access: the shared subscript
+	// (evaluateCypherSubscript) raises the type error every statement does.
+	requireContextSubscriptError(t, e, "'abc'[1]", nodes)
 
 	// Slice notation paths
 	s1 := e.evaluateExpressionWithContext(ctx, "labels(n)[..1]", nodes, nil)
@@ -2427,6 +2429,19 @@ func TestFunctionEvaluator_KalmanAdditionalBranches(t *testing.T) {
 	}
 }
 
+// requireContextSubscriptError asserts that the context evaluator gives a
+// subscript Neo4j rejects no value and records its error.
+func requireContextSubscriptError(t *testing.T, e *StorageExecutor, expr string, nodes map[string]*storage.Node) {
+	t.Helper()
+	ctx := withExpressionFailureSlot(context.Background())
+	if got := e.evaluateExpressionWithContext(ctx, expr, nodes, nil); got != nil {
+		t.Fatalf("%s = %#v, want no value", expr, got)
+	}
+	if getExpressionFailure(ctx) == nil {
+		t.Fatalf("%s must record a type error", expr)
+	}
+}
+
 func TestFunctionEvaluator_ArrayIndexingAdditionalBranches(t *testing.T) {
 	e := setupTestExecutor(t)
 	node := createTestNode(t, e, "idx-n", []string{"Person"}, map[string]interface{}{
@@ -2441,8 +2456,8 @@ func TestFunctionEvaluator_ArrayIndexingAdditionalBranches(t *testing.T) {
 	assertEqual(t, "n.arrAny[-1]", int64(9), e.evaluateExpressionWithContext(ctx, "n.arrAny[-1]", nodes, nil))
 	assertEqual(t, "n.arrStr[0]", "aa", e.evaluateExpressionWithContext(ctx, "n.arrStr[0]", nodes, nil))
 	assertEqual(t, "n.arrStr[-1]", "cc", e.evaluateExpressionWithContext(ctx, "n.arrStr[-1]", nodes, nil))
-	assertEqual(t, "n.text[1]", "e", e.evaluateExpressionWithContext(ctx, "n.text[1]", nodes, nil))
-	assertEqual(t, "n.text[-1]", "o", e.evaluateExpressionWithContext(ctx, "n.text[-1]", nodes, nil))
+	requireContextSubscriptError(t, e, "n.text[1]", nodes)
+	requireContextSubscriptError(t, e, "n.text[-1]", nodes)
 
 	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny[99]", nodes, nil); got != nil {
 		t.Fatalf("n.arrAny[99] should be nil, got %#v", got)
@@ -2488,9 +2503,8 @@ func TestFunctionEvaluator_ConversionAndStringFallbackBranches(t *testing.T) {
 	if got := e.evaluateExpressionWithContext(ctx, "n.text[..1]", nodes, nil); !reflect.DeepEqual([]interface{}{"xy"}, got) {
 		t.Fatalf("n.text[..1] unexpected: %#v", got)
 	}
-	if got := e.evaluateExpressionWithContext(ctx, "n.arrAny['2']", nodes, nil); got != int64(3) {
-		t.Fatalf("n.arrAny['2'] unexpected: %#v", got)
-	}
+	// A list index must be an integer, as in every statement.
+	requireContextSubscriptError(t, e, "n.arrAny['2']", nodes)
 
 	// Scalar conversions.
 	if got := e.evaluateExpressionWithContext(ctx, "toInteger(2.9)", nodes, nil); got != int64(2) {
