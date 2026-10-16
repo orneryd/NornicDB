@@ -208,3 +208,18 @@
 - id: cyphergraphprocedures.seed_negative
   description: Mensaje de GDS (seed negative).
   other: 'Los valores semilla no deben ser negativos'
+- id: cyphergraphprocedures.invalid_row_similarity_metric
+  description: Mensaje de nornicdb.similarity.stream (invalid row similarity metric).
+  other: '{{.Metric}} no es una métrica válida. Las métricas disponibles son JACCARD, OVERLAP, COSINE y RESOURCE_ALLOCATION'
+- id: cyphergraphprocedures.similarity_row_not_map
+  description: Mensaje de nornicdb.similarity.stream (similarity row not map).
+  other: 'La fila {{.Position}} de las filas de similitud debe ser un mapa con source y thing, pero se encontró: {{.Type}}'
+- id: cyphergraphprocedures.similarity_row_key
+  description: Mensaje de nornicdb.similarity.stream (similarity row key).
+  other: 'La fila {{.Position}} de las filas de similitud tiene la clave inesperada `{{.Key}}`; las filas admiten source, thing y weight'
+- id: cyphergraphprocedures.similarity_row_node
+  description: Mensaje de nornicdb.similarity.stream (similarity row node).
+  other: 'La fila {{.Position}} de las filas de similitud necesita un nodo o un id de nodo para `{{.Key}}`, pero se encontró: {{.Type}}'
+- id: cyphergraphprocedures.similarity_row_weight
+  description: Mensaje de nornicdb.similarity.stream (similarity row weight).
+  other: 'La fila {{.Position}} de las filas de similitud tiene el peso {{.Weight}}; un peso debe ser un número finito mayor o igual que 0'

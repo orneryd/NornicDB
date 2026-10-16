@@ -435,6 +435,11 @@
     es: "Alias obsoleto de kp.resolve: resuelve la política de puntuación efectiva de la capa de conocimiento para una entidad, un conjunto de etiquetas o un tipo de arista",
   }
 - {
+    name: nornicdb.similarity.stream,
+    en: "Scores node similarity for one source node over incidence rows the statement supplies (source, thing, optional weight), by JACCARD, OVERLAP, COSINE or RESOURCE_ALLOCATION, with no graph projection. A NornicDB extension.",
+    es: "Calcula la similitud de nodos para un nodo de origen a partir de las filas de incidencia que aporta la sentencia (source, thing, weight opcional), por JACCARD, OVERLAP, COSINE o RESOURCE_ALLOCATION, sin proyección del grafo. Extensión de NornicDB.",
+  }
+- {
     name: nornicdb.stats,
     en: "Returns NornicDB stats",
     es: "Devuelve estadísticas de NornicDB",
