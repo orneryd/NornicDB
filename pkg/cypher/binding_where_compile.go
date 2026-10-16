@@ -228,7 +228,7 @@ func (e *StorageExecutor) getCompiledBindingWhere(ctx context.Context, whereClau
 		return predicate
 	}
 	// Generic predicates may consult this executor's graph (for example, a
-	// bound relationship-pattern predicate). They must not enter the global
+	// relationship-pattern predicate). They must not enter the global
 	// cache, where the closure would retain one database and leak it into a
 	// later executor using the same predicate text.
 	return e.compileBindingWhere(ctx, key)
@@ -242,75 +242,10 @@ func (e *StorageExecutor) compileBindingWhere(ctx context.Context, whereClause s
 	if predicate, ok := e.tryCompileBindingWhere(ctx, whereClause); ok {
 		return predicate
 	}
-	if predicate, ok := e.tryCompileExecutorBindingWhere(ctx, whereClause); ok {
-		return predicate
-	}
 	clause := strings.TrimSpace(whereClause)
 	return func(b binding, params map[string]interface{}) bool {
 		return e.evaluateBindingWhereGeneric(ctx, b, clause, params)
 	}
-}
-
-// tryCompileExecutorBindingWhere compiles predicates that depend on this
-// executor's graph. These closures intentionally remain executor-local and
-// therefore never enter compiledBindingWhereCache.
-func (e *StorageExecutor) tryCompileExecutorBindingWhere(ctx context.Context, whereClause string) (bindingWherePredicate, bool) {
-	truth, ok := e.tryCompileExecutorBindingWhereTruth(ctx, whereClause)
-	if !ok {
-		return nil, false
-	}
-	return truth.predicate(), true
-}
-
-func (e *StorageExecutor) tryCompileExecutorBindingWhereTruth(ctx context.Context, whereClause string) (bindingWhereTruth, bool) {
-	clause := strings.TrimSpace(whereClause)
-	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
-		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, clause[:orIdx])
-		right, rightOK := e.compileExecutorBindingWhereBranch(ctx, clause[orIdx+4:])
-		if !leftOK || !rightOK {
-			return nil, false
-		}
-		return orTruth(left, right), true
-	}
-	if xorIdx := findTopLevelKeyword(clause, " XOR "); xorIdx > 0 {
-		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, clause[:xorIdx])
-		right, rightOK := e.compileExecutorBindingWhereBranch(ctx, clause[xorIdx+5:])
-		if !leftOK || !rightOK {
-			return nil, false
-		}
-		return xorTruth(left, right), true
-	}
-	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
-		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, clause[:andIdx])
-		right, rightOK := e.compileExecutorBindingWhereBranch(ctx, clause[andIdx+5:])
-		if !leftOK || !rightOK {
-			return nil, false
-		}
-		return andTruth(left, right), true
-	}
-	if hasPrefixFold(clause, "NOT ") {
-		inner, ok := e.compileExecutorBindingWhereBranch(ctx, clause[4:])
-		if !ok {
-			return nil, false
-		}
-		return notTruth(inner), true
-	}
-	match, ok := e.parseBoundRelationshipPattern(ctx, clause)
-	if !ok {
-		return nil, false
-	}
-	return func(b binding, params map[string]interface{}) cypherTruth {
-		_ = params
-		return truthOf(e.evaluateParsedBoundRelationshipPattern(ctx, match, map[string]*storage.Node(b)))
-	}, true
-}
-
-func (e *StorageExecutor) compileExecutorBindingWhereBranch(ctx context.Context, clause string) (bindingWhereTruth, bool) {
-	clause = strings.TrimSpace(clause)
-	if truth, ok := e.tryCompileBindingWhereTruth(ctx, clause); ok {
-		return truth, true
-	}
-	return e.tryCompileExecutorBindingWhereTruth(ctx, clause)
 }
 
 func (e *StorageExecutor) getCompiledBindingWhereIfSupported(ctx context.Context, whereClause string) (bindingWherePredicate, bool) {
