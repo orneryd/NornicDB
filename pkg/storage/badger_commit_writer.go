@@ -27,9 +27,10 @@ import (
 // commit: a batch of their own ahead of each batch).
 type commitWriter struct {
 	batchWriter
-	engine *BadgerEngine
-	db     *managedBadgerDB
-	large  *largeCommit
+	engine       *BadgerEngine
+	db           *managedBadgerDB
+	large        *largeCommit
+	notification *commitNotification
 	// prev is the batch most recently written, whose counters the next
 	// batch takes over.
 	prev *badger.Txn
@@ -53,7 +54,7 @@ func (cw *commitWriter) commitBatch(txn *badger.Txn) error {
 		if cw.beforeLarge != nil {
 			cw.beforeLarge()
 		}
-		lc, err := cw.db.beginLargeCommit()
+		lc, err := cw.db.beginLargeCommit(cw.reserveNotification)
 		if err != nil {
 			return err
 		}
@@ -107,13 +108,17 @@ func (cw *commitWriter) finish() error {
 		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
-		return cw.db.commit(cw.txn)
+		return cw.db.commit(cw.txn, cw.reserveNotification)
 	}
 	err := cw.commitTokens(cw.txn)
 	if err == nil {
 		err = cw.large.finish(&cw.batchWriter)
 	}
 	return err
+}
+
+func (cw *commitWriter) reserveNotification() {
+	cw.engine.reserveCommitNotification(cw.notification)
 }
 
 // abort rolls back the batches a large commit already wrote. The open batch

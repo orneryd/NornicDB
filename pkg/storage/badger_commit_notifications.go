@@ -1,26 +1,27 @@
 package storage
 
-// A commit reserves its notification position while publishing, then becomes
-// ready after storage locks and the database's quota/accounting lease release.
-// A reentrant write enqueues behind its caller instead of waiting for itself.
+// commitNotification is reserved in publication order, before the writer can
+// be overtaken. It becomes ready only after its caches and publication locks
+// are released. A buffered ACK reserves its place until replay retires the
+// read overlay. Failed commits make their reserved place ready without ops.
 type commitNotification struct {
-	ops   []Operation
-	ready bool
-	next  *commitNotification
+	ops             []Operation
+	ready, reserved bool
+	// Buffered commits advance the logical revision at ACK, not again on flush.
+	revisionPublished bool
+	next              *commitNotification
 }
 
-func (b *BadgerEngine) hasCommitListeners() bool {
-	b.callbackMu.RLock()
-	defer b.callbackMu.RUnlock()
-	return len(b.onNodeCreated)+len(b.onNodeUpdated)+len(b.onNodeDeleted)+len(b.onEdgeCreated)+len(b.onEdgeUpdated)+len(b.onEdgeDeleted) > 0
-}
-
-func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotification {
-	if !b.hasCommitListeners() {
-		return nil
+func (b *BadgerEngine) reserveCommitNotification(n *commitNotification) {
+	if n == nil {
+		return
 	}
-	n := &commitNotification{ops: ops}
 	b.notificationMu.Lock()
+	defer b.notificationMu.Unlock()
+	if n.reserved {
+		return
+	}
+	n.reserved = true
 	b.notifyWG.Add(1)
 	if b.notificationTail == nil {
 		b.notificationHead = n
@@ -28,61 +29,80 @@ func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotificat
 		b.notificationTail.next = n
 	}
 	b.notificationTail = n
-	b.notificationMu.Unlock()
-	return n
 }
 
-func (b *BadgerEngine) enqueueCommitOperation(op Operation) {
-	if !b.hasCommitListeners() {
-		return
+// beginNotifyingWrite gives nodes and edges the same lifetime transfer. The
+// returned finish must be deferred before taking any other publication locks.
+func (b *BadgerEngine) beginNotifyingWrite() (*commitNotification, func(), error) {
+	release, err := b.beginWrite()
+	if err != nil {
+		return nil, nil, err
 	}
-	if op.Node != nil {
-		op.Node = copyNode(op.Node)
-	}
-	if op.Edge != nil {
-		op.Edge = copyEdge(op.Edge)
-	}
-	n := b.reserveCommitOperations([]Operation{op})
-	b.completeCommitNotification(n)
-}
-
-func (b *BadgerEngine) prepareCommitOperations(ops []Operation, snapshot bool) {
-	for i := range ops {
-		op := &ops[i]
-		switch op.Type {
-		case OpCreateNode, OpUpdateNode:
-			b.graphMutationVersions.changed(namespaceForNodeID(op.Node.ID))
-			if snapshot {
-				op.Node = copyNode(op.Node)
-			}
-		case OpDeleteNode:
-			b.graphMutationVersions.changed(namespaceForNodeID(op.NodeID))
-			b.forgetManualSuppression(manualSuppressionNode, string(op.NodeID))
-			b.deleteCleanup.recordDelete()
-			for _, id := range op.DeletedEdgeIDs {
-				b.graphMutationVersions.changed(namespaceForEdgeID(id))
-				b.forgetManualSuppression(manualSuppressionEdge, string(id))
-				b.deleteCleanup.recordDelete()
-			}
-		case OpCreateEdge, OpUpdateEdge:
-			b.graphMutationVersions.changed(namespaceForEdgeID(op.Edge.ID))
-			if snapshot {
-				op.Edge = copyEdge(op.Edge)
-			}
-		case OpDeleteEdge:
-			b.graphMutationVersions.changed(namespaceForEdgeID(op.EdgeID))
-			b.forgetManualSuppression(manualSuppressionEdge, string(op.EdgeID))
-			b.deleteCleanup.recordDelete()
-		}
-	}
+	n := &commitNotification{}
+	return n, func() { release(); b.completeCommitNotification(n) }, nil
 }
 
 func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
+	if b.readyCommitNotification(n) {
+		b.drainCommitNotifications()
+	}
+}
+
+func (b *BadgerEngine) readyCommitNotification(n *commitNotification) bool {
 	if n == nil {
-		return
+		return false
+	}
+	// Mutation bookkeeping belongs to publication, even if a busy listener
+	// delays delivery. Keep event payloads independent of subsequent caller edits.
+	for i := range n.ops {
+		op := &n.ops[i]
+		switch op.Type {
+		case OpCreateNode, OpUpdateNode:
+			if !n.revisionPublished {
+				b.graphMutationVersions.changed(namespaceForNodeID(op.Node.ID))
+			}
+			op.Node = copyNode(op.Node)
+		case OpDeleteNode:
+			for _, id := range op.DeletedEdgeIDs {
+				b.recordEdgeDeletion(id, !n.revisionPublished)
+			}
+			b.forgetManualSuppression(manualSuppressionNode, string(op.NodeID))
+			if !n.revisionPublished {
+				b.graphMutationVersions.changed(namespaceForNodeID(op.NodeID))
+			}
+			b.deleteCleanup.recordDelete()
+		case OpCreateEdge, OpUpdateEdge:
+			if !n.revisionPublished {
+				b.graphMutationVersions.changed(namespaceForEdgeID(op.Edge.ID))
+			}
+			op.Edge = copyEdge(op.Edge)
+		case OpDeleteEdge:
+			b.recordEdgeDeletion(op.EdgeID, !n.revisionPublished)
+		}
 	}
 	b.notificationMu.Lock()
-	n.ready = true
+	reserved := n.reserved
+	if reserved {
+		n.ready = true
+	}
+	b.notificationMu.Unlock()
+	return reserved
+}
+
+func (b *BadgerEngine) recordEdgeDeletion(id EdgeID, publishRevision bool) {
+	b.forgetManualSuppression(manualSuppressionEdge, string(id))
+	if publishRevision {
+		b.graphMutationVersions.changed(namespaceForEdgeID(id))
+	}
+	b.deleteCleanup.recordDelete()
+}
+
+// One drainer delivers every subscriber of a commit before the next commit.
+// Reentrant writes/flushes only enqueue: waiting for their own notification
+// here would deadlock the callback that the drainer is currently executing.
+// The next ready writer resumes a drain stopped at an unfinished publication.
+func (b *BadgerEngine) drainCommitNotifications() {
+	b.notificationMu.Lock()
 	if b.notificationDraining {
 		b.notificationMu.Unlock()
 		return
@@ -90,7 +110,7 @@ func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
 	b.notificationDraining = true
 	var firstPanic any
 	for {
-		n = b.notificationHead
+		n := b.notificationHead
 		if n == nil || !n.ready {
 			b.notificationDraining = false
 			b.notificationMu.Unlock()
@@ -100,6 +120,7 @@ func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
 			return
 		}
 		b.notificationHead = n.next
+		n.next = nil
 		if b.notificationHead == nil {
 			b.notificationTail = nil
 		}
@@ -111,13 +132,14 @@ func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
 					firstPanic = p
 				}
 			}()
-			b.dispatchCommitOperations(n.ops)
+			b.notifyCommitOperations(n.ops)
 		}()
 		b.notificationMu.Lock()
 	}
 }
 
-func (b *BadgerEngine) dispatchCommitOperations(ops []Operation) {
+// notifyCommitOperations is called only by the ordered drainer, outside locks.
+func (b *BadgerEngine) notifyCommitOperations(ops []Operation) {
 	for _, op := range ops {
 		switch op.Type {
 		case OpCreateNode:

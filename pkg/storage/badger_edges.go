@@ -24,7 +24,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -96,7 +96,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		return ErrAlreadyExists
 	}
 
-	err = b.withUpdate(func(txn *badger.Txn) error {
+	err = b.withNotifyingUpdate(func(txn *badger.Txn) error {
 		// Validate relationship constraints before writing
 		dbName, _, _ := ParseDatabasePrefix(string(edge.ID))
 		schema := b.GetSchemaForNamespace(dbName)
@@ -171,14 +171,14 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		}
 		// Create-only: primary key IS the current head body.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
-	})
+	}, notification)
 
 	// Invalidate only this edge type (not entire cache)
 	if err == nil {
 		b.cacheOnEdgeCreated(edge)
 
 		// Notify listeners (e.g., graph analyzers) about the new edge
-		b.notifyEdgeCreated(edge)
+		notification.ops = []Operation{{Type: OpCreateEdge, Edge: edge}}
 	}
 
 	return err
@@ -255,7 +255,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -277,7 +277,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	defer releaseConstraint()
 
 	var oldType string
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	err := b.withNotifyingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), time.Now())
 		if err != nil {
 			return err
@@ -459,12 +459,12 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		}
 		// Primary key now holds the new body; archival above handled history.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
-	})
+	}, notification)
 
 	// Notify listeners on successful update
 	if err == nil {
 		b.cacheOnEdgeUpdated(oldType, edge)
-		b.notifyEdgeUpdated(edge)
+		notification.ops = []Operation{{Type: OpUpdateEdge, Edge: edge}}
 	}
 
 	return err
@@ -479,7 +479,7 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	release, barrierErr := b.beginWrite()
+	notification, release, barrierErr := b.beginNotifyingWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
@@ -499,7 +499,7 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		edgeType = edge.Type
 	}
 
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	err := b.withNotifyingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(id), time.Now())
 		if err != nil {
 			return err
@@ -546,7 +546,7 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 			return err
 		}
 		return b.writeEdgeMVCCHeadInTxn(txn, id, version, true)
-	})
+	}, notification)
 
 	// Invalidate only this edge type (not entire cache)
 	if err == nil {
@@ -557,7 +557,7 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		}
 
 		// Notify listeners (e.g., graph analyzers) about the deleted edge
-		b.notifyEdgeDeleted(id)
+		notification.ops = []Operation{{Type: OpDeleteEdge, EdgeID: id}}
 	}
 
 	return err
@@ -634,23 +634,13 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted int64, deletedEdgeIDs []EdgeID, deletedEdges []*Edge, deletedNode *Node, err error) {
 	key := nodeKey(id)
 
-	// CRITICAL: Delete separately stored embeddings FIRST, before checking if node exists.
-	// This ensures embeddings are cleaned up even if the node record is missing or corrupted.
-	embPrefix := embeddingPrefix(id)
-	opts := badgerIteratorOptions()
-	opts.Prefix = embPrefix
-	it := txn.NewIterator(opts)
-	defer it.Close()
-	for it.Rewind(); it.Valid(); it.Next() {
-		if err := txn.Delete(it.Item().KeyCopy(nil)); err != nil {
-			return 0, nil, nil, nil, fmt.Errorf("failed to delete embedding chunk: %w", err)
-		}
-	}
-
 	// Get node for label cleanup
 	item, err := txn.Get(key)
 	if err == badger.ErrKeyNotFound {
-		// Node doesn't exist, but we've already cleaned up embeddings above.
+		// Without a body, absence cannot be established from its flags.
+		if err := deleteEmbeddingKeysInTxn(txn, id); err != nil {
+			return 0, nil, nil, nil, fmt.Errorf("failed to delete embedding chunk: %w", err)
+		}
 		// Also clean up pending embeddings index.
 		txn.Delete(pendingEmbedKey(id))
 		return 0, nil, nil, nil, ErrNotFound
@@ -667,6 +657,12 @@ func (b *BadgerEngine) deleteNodeInTxn(txn *badger.Txn, id NodeID) (edgesDeleted
 		return decodeErr
 	}); err != nil {
 		return 0, nil, nil, nil, err
+	}
+
+	if deletedNode.embeddingKeysPresent {
+		if err := deleteEmbeddingKeysInTxn(txn, id); err != nil {
+			return 0, nil, nil, nil, fmt.Errorf("failed to delete embedding chunk: %w", err)
+		}
 	}
 
 	// Archive the node body at the current head's version BEFORE we

@@ -14,7 +14,7 @@ func writeLegacyGobEmbedding(t *testing.T, db *badger.DB, nodeID NodeID, chunk i
 	var buf bytes.Buffer
 	require.NoError(t, gob.NewEncoder(&buf).Encode(emb))
 	require.NoError(t, db.Update(func(txn *badger.Txn) error {
-		return txn.Set(embeddingKey(nodeID, chunk), buf.Bytes())
+		return txn.Set(legacyEmbeddingKey(nodeID, chunk), buf.Bytes())
 	}))
 }
 
